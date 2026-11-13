@@ -257,9 +257,10 @@ const tokens = (words: string): string[] => [...new Set(words.toLowerCase().spli
 const thingOf = (a: CommandAct): string | null => (a.path ? a.path[a.path.length - 1]?.toLowerCase() ?? null : a.kind === "rule" || a.kind === "program" ? null : a.text.toLowerCase());
 
 /**
- * The names a refused risky step leaves for commands: its kinds, and each with every word of the step (its control,
- * what policy read of it, its window's title), so `rm ~/report.pdf` after a no to "Delete report.pdf?" is the same
- * thing, and any other deletion by command is one Ember can't tell from it.
+ * The names a refused risky step leaves for commands: its kinds, and each with every word of the step (its control
+ * and what policy read of it; never its window's title, and no word at all of a step the user didn't ask for:
+ * modes-y9-y9-3), so `rm ~/report.pdf` after a no to "Delete report.pdf?" is the same thing, and any other deletion
+ * by command is one Ember can't tell from it.
  */
 export function stepMarksForCommands(kinds: readonly string[], words: string): string[] {
   return kinds.flatMap(k => [`${ACROSS_TO_COMMAND}${k}`, ...tokens(words).map(t => `${ACROSS_TO_COMMAND}${k}\n${t}`)]);

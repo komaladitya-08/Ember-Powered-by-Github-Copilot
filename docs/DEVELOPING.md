@@ -637,7 +637,8 @@ written as its URL), is refused without another question, never checked by Assis
 not the same kind of thing anywhere: a no to Delete in Files says nothing of Delete in Mail, a no to pushing `main`
 nothing of pushing `feature`, and a no to a step a page came up with nothing of the step you asked for yourself. A no
 also crosses between commands and apps: after a no to `rm -rf build`, deleting "build" in Files is refused, and after
-a no to deleting report.pdf in Files, `rm ~/report.pdf` is. Where Ember can't tell whether something is what you
+a no to deleting report.pdf in Files, `rm ~/report.pdf` is (by what the step itself names, never by a word of its
+window's title, and never after a no to a step you didn't ask for: those ask). Where Ember can't tell whether something is what you
 refused (a command that doesn't say what it acts on or that Ember can't read, a deletion in an app after a no to a
 command that deletes, a step with no kind of its own after a no to another), it is never checked or announced: it
 asks, the command's card saying "You said no to something like this earlier in this task."; in Autopilot, which asks

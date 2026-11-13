@@ -4989,19 +4989,24 @@ export class Worker {
    * kinds in its app; the kinds refused off-task, for a step that isn't the user's own words either; what a refused
    * command did to something this step's words name). `like`: what it may be, though Ember can't tell (authorize).
    * `kept`: what a no to it leaves behind, for app steps and for commands; a step the user didn't ask for is kept
-   * apart, so that a no to it is no word on their own request (evalfix-x9-1).
+   * apart, so that a no to it is no word on their own request (evalfix-x9-1). Across commands and steps the thing is
+   * named by the step's own words (its control and what policy read of it), never its window's title: a no to
+   * `rm -rf build` refused Delete on an email titled "Re: build failed" (modes-y9-y9-4). And a step the user didn't ask
+   * for leaves commands its kind only, no word to refuse one by: a page's "Delete repository" in a window titled
+   * "build-tools · GitHub" refused the user's own `rm -rf build-tools` (modes-y9-y9-3). What those would have matched
+   * may still be the refused thing: it asks (`like`).
    */
-  private riskOf(req: Pick<ActionRequest, "element" | "app" | "kind" | "value" | "window">, d: Pick<Decision, "about" | "reason" | "aligned">) {
+  private riskOf(req: Pick<ActionRequest, "element" | "app" | "kind" | "value">, d: Pick<Decision, "about" | "reason" | "aligned">) {
     const asked = this.riskAsked(req, d);
     const { said, why } = riskKinds(asked);
     const kinds = [...new Set([...said, ...why])];
-    const words = `${asked.name} ${asked.about} ${req.window ?? ""}`;
+    const words = `${asked.name} ${asked.about}`;
     const across = stepAcrossNames(kinds, words);
     const offTask = d.aligned === false;
     return {
       lookup: [...riskNames(asked), ...offTaskLookup(asked, offTask), ...across.same],
       like: [...(said.length === 0 ? [noKindName(req.app)] : []), ...across.like],
-      kept: [...(offTask ? offTaskNames(asked) : riskNames(asked)), ...(kinds.length === 0 ? [noKindName(req.app)] : []), ...stepMarksForCommands(kinds, words)],
+      kept: [...(offTask ? offTaskNames(asked) : riskNames(asked)), ...(kinds.length === 0 ? [noKindName(req.app)] : []), ...stepMarksForCommands(kinds, offTask ? "" : words)],
     };
   }
 

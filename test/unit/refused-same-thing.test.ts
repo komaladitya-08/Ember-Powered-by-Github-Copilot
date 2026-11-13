@@ -211,7 +211,6 @@ describe("a refused command done as a step in an app, and a refused step done as
     for (const mode of MODES) {
       expect(await after(mode, "rm -rf build", keys("Delete", "build", "icon")), mode).toBe("refused");
       expect(await after(mode, "rm -rf build", btn("Delete “build” permanently")), mode).toBe("refused");
-      expect(await after(mode, "rm -rf build", btn("Move to Trash", "menu item"), "nautilus", "build"), mode).toBe("refused");
     }
   });
 
@@ -261,11 +260,33 @@ describe("a refused command done as a step in an app, and a refused step done as
     expect([waiting.command(command("rm ~/report.pdf")), waiting.commandLike(command("rm ~/report.pdf"))]).toEqual([null, false]);
   });
 
-  it("keeps a refused risky step for commands at the worker: its kinds with its own words and its window's", async () => {
-    const h = mk("interactive", "tidy up", "nautilus", "report.pdf - Files");
-    expect((await h.inner.authorize({ taskId: "t1", app: "nautilus", window: "report.pdf - Files", ...btn("Move to Trash", "menu item") }))?.resultType).toBe("denied");
+  it("keeps a refused risky step for commands at the worker: its kinds with its own words, never its window's title", async () => {
+    const h = mk("interactive", "delete report.pdf from my home folder", "nautilus", "Home - Files");
+    expect((await h.inner.authorize({ taskId: "t1", app: "nautilus", window: "Home - Files", ...btn("Delete “report.pdf” permanently") }))?.resultType).toBe("denied");
     expect(h.inner.refusals.command(command("rm ~/report.pdf"))).toBe("refused");
     expect(h.inner.refusals.commandLike(command("rm -rf build"))).toBe(true);
     expect(h.inner.refusals.commandLike(command("git push origin main"))).toBe(false);
+    // What only the window's title names may be it: the command asks, and is never refused for the title's words.
+    expect([h.inner.refusals.command(command("rm -rf ~/home")), h.inner.refusals.command(command("rm -rf files"))]).toEqual([null, null]);
+  });
+
+  it("leaves no word of a step the user didn't ask for to refuse their own commands by: a deletion by command asks (modes-y9-y9-3)", async () => {
+    const win = "build-tools · GitHub — Mozilla Firefox";
+    const h = mk("interactive", "Post the comment Looks good on the quarterly report", "firefox", win);
+    expect((await h.inner.authorize({ taskId: "t1", app: "firefox", window: win, ...btn("Delete repository") }))?.resultType).toBe("denied");
+    for (const c of ["rm -rf build-tools", "rm -rf firefox", "rm -rf github", "rm -rf repository", "rm notes.txt"]) {
+      expect([h.inner.refusals.command(command(c)), h.inner.refusals.commandLike(command(c))], c).toEqual([null, true]);
+    }
+    expect(h.inner.refusals.commandLike(command("git push origin main"))).toBe(false);
+  });
+
+  it("never refuses a deletion in an app for a word of its window's title alone after a no to `rm -rf build`: it asks, unchecked (modes-y9-y9-4)", async () => {
+    const mail = "Re: build failed - Inbox - Thunderbird";
+    expect(await after("interactive", "rm -rf build", btn("Delete"), "thunderbird", mail)).toBe("asked");
+    expect(await after("assisted", "rm -rf build", btn("Delete"), "thunderbird", mail)).toBe("asked");
+    expect(await after("autopilot", "rm -rf build", btn("Delete"), "thunderbird", mail)).toBe("refused");
+    // In Files too, where the title is the folder that is open: the step itself must say what it deletes.
+    expect(await after("interactive", "rm -rf build", btn("Move to Trash", "menu item"), "nautilus", "build")).toBe("asked");
+    expect(await after("autopilot", "rm -rf build", btn("Move to Trash", "menu item"), "nautilus", "build")).toBe("refused");
   });
 });
