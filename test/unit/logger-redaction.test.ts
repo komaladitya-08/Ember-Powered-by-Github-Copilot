@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { createLogger, type Logger } from "../../app/main/logger";
 import { redactingLogger } from "../../app/main/provider";
+import { redactSecretText } from "../../app/main/secret-text";
 
 const GH = "ghu_TESTMARKER_LOGGER_0123456789abcdef";
 const PAT = "github_pat_TESTMARKER_LOGGER_0123456789";
@@ -133,5 +134,26 @@ describe("the logger's emitted lines hold no token (BE audit #1)", () => {
       count: 3, ok: true, none: null, tokens: 12, label: "ghost_writer", note: "github_pattern",
       resembles: "the token count is high", words: ["secret agent", "password manager"], obj: { a: 1, b: [true, null] },
     });
+  });
+});
+
+describe("redactSecretText on a provider's or the runtime's error text", () => {
+  it.each([["Authorization: Token abcd1234efgh5678", "abcd1234efgh5678"], ["authorization: Digest username=ana, response=6629fae49393a053", "6629fae49393a053"],
+    ["client_secret=s3cr3tValue0001", "s3cr3tValue0001"], ["aws_secret_access_key = wJalrXUtnFEMIK7MDENG", "wJalrXUtnFEMIK7MDENG"], ["pwd=hunter2hunter2", "hunter2hunter2"],
+    ["refresh_token: opaque0123456789", "opaque0123456789"], ["private_key=abcd0123456789", "abcd0123456789"]])(
+    "hides the secret of “%s”, not only the word in front of it (safety-privacy-r9-4)", (text, secret) => {
+      expect(redactSecretText(text)).not.toContain(secret);
+    });
+
+  it("keeps the scheme's word and ordinary words as they were (safety-privacy-r9-4)", () => {
+    expect(redactSecretText("Authorization: Token abcd1234efgh5678")).toBe("Authorization: Token [token]");
+    expect(redactSecretText("Authorization: Bearer abcd1234efgh5678")).toBe("Authorization: Bearer [token]");
+    expect(redactSecretText("ghost_writer asked about a token count, sort by key")).toBe("ghost_writer asked about a token count, sort by key");
+  });
+});
+
+describe("redactSecretText after a word it doesn't know as a scheme", () => {
+  it("hides that word and the long value after it (safety-privacy-r9-4)", () => {
+    expect(redactSecretText("Authorization: Custom abcd1234efgh5678")).not.toContain("abcd1234efgh5678");
   });
 });
