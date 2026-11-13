@@ -260,8 +260,9 @@ Ember stops and asks before a command that:
 - **downloads code and runs it, or keeps running after Ember stops**: `curl … | sh`, `iwr … | iex`, running a file
   downloaded in this task (one fetched with `curl`, `wget` and the like, cloned, or handed over by another tool:
   `gh release download` and `gh run download`, `aws s3 cp`, `gsutil cp` and `gcloud storage cp` from a bucket, `az
-  storage blob download`, `docker cp` and `kubectl cp` out of a container or a pod, `scp` and `rsync` from another
-  computer, or what `ssh host …` prints, saved with `>` or piped into a shell; checked out or fetched with `svn
+  storage blob download`, `s3cmd get` and `sync`, `b2` downloads, `gdown`, `yt-dlp`, `huggingface-cli download`,
+  `npm pack` of a registry's package, `docker cp` and `kubectl cp` out of a container or a pod, `scp` and `rsync` from
+  another computer, or what `ssh host …` prints, saved with `>` (or a bare `exec >` before it) or piped into a shell; checked out or fetched with `svn
   checkout`, `svn export`, `hg clone`, `rclone copy`, `pip download` or `git archive --remote`; anything at all once
   the task has used a settings file curl or wget reads, a `wget -e` setting or a file-transfer client that can fetch
   (`curl -K cfg.txt`, `wget --config=w.rc`, `sftp`, `ftp`, `lftp`, `tftp`, `smbclient`), since Ember can't tell what

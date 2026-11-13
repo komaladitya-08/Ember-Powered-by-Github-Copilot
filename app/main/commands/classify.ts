@@ -417,6 +417,11 @@ class Classifier {
   /** Whether the refusal is only for reading Ember's own files (a later change or input refusal says more). */
   private refusedRead = false;
   downloads: string[] = [];
+  /**
+   * Where a bare `exec > file` sends the shell's output from then on: what a later fetch on the line prints lands
+   * there, so it is a download (commands-remote-r10-5).
+   */
+  execOut: Arg[] = [];
   /** Of `downloads`, those to drop when the target says they are a folder (ClassificationExtra.downloadsIfFile). */
   downloadsIfFile: string[] = [];
   needsGit = false;
@@ -3591,11 +3596,14 @@ class Engine extends Classifier {
     }
     if (s.fetchBefore || fetches(key) || carried || s.fetched === true) {
       for (const r of s.redirs) if ((r.kind === "write" || r.kind === "append") && r.target?.v) this.download(r.target.v, shellSc);
+      // What it prints into a file a bare `exec >` opened (commands-remote-r10-5).
+      for (const t of this.execOut) if (t.v) this.download(t.v, shellSc); else this.downloadTo(t, shellSc);
       if (/^(tee|tee-object|out-file|set-content|add-content|sponge)$/.test(key)) {
         for (const a of args) if (a.v !== null && a.param === undefined && !isOption(a) && !NULL_SINKS.has(a.v.toLowerCase())) this.download(a.v, sc);
       }
       if (key === "dd") for (const a of args) { const m = a.v === null ? null : /^of=(.+)$/.exec(a.v); if (m && !NULL_SINKS.has(m[1].toLowerCase())) this.download(m[1], sc); }
     }
+    fetchToolSaves(this, key, args, sc);
     const ownEnd = this.downloads.length;
     // A compiler builds a program from a downloaded source: the file it writes is the download too, so running it later
     // asks (commands-remote-r8-2). Carried to `-o`/`-oX` (gcc, rustc), else the default output: `a.out` for a cc-family
@@ -7252,6 +7260,8 @@ reg(NATIVE, Object.keys(WRAPPERS), h => {
   if (h.key === "strace" && values(p, "u").length) h.e.add("system", "system.sudo", "Runs as another user.");
   rest = rest.slice(rule.positional ?? 0);
   if (rest.length === 0) {
+    // `exec > a.sh` sends everything printed after it into a.sh (commands-remote-r10-5).
+    if (h.key === "exec") for (const r of h.s.redirs) if ((r.kind === "write" || r.kind === "append") && r.target && !/^[02-9]/.test(r.op)) h.e.execOut.push(r.target);
     if (rule.aloneInteractive) h.e.unclear("unclear.interactive", SAYS.interactive);
     return;
   }
@@ -8033,7 +8043,8 @@ reg(NATIVE, ["docker", "podman", "nerdctl", "docker-compose", "podman-compose"],
   if (v === "cp") {
     const ops = rest.filter(a => !isOption(a));
     const [src, dst] = ops;
-    const remote = (a: Arg | undefined): boolean => !!a?.v && /^[A-Za-z0-9_.-]+:/.test(a.v) && !/^[A-Za-z]:[\\/]/.test(a.v);
+    // A one-letter container is a drive only on Windows (`c:/a.py` is container c's file elsewhere: commands-remote-r10-5).
+    const remote = (a: Arg | undefined): boolean => !!a?.v && /^[A-Za-z0-9_.-]+:/.test(a.v) && !(h.sc.path.flavour === "win32" && /^[A-Za-z]:[\\/]/.test(a.v));
     if (src && !remote(src)) h.e.usePath(src, "readTree", h.sc);
     if (dst && !remote(dst)) { const obj = h.e.usePath(dst, "write", h.sc); if (obj.abs) h.e.add("destroy", "posix.cp", `Replaces ${obj.text} if it exists.`, { objects: [obj], ifExists: obj.abs }); }
     // A file copied out of a container is a download where it lands (commands-remote-r7-3).
@@ -9119,6 +9130,27 @@ function optionWords(args: readonly Arg[], p: Parsed, ...names: string[]): Arg[]
   });
 }
 
+/**
+ * An option's value Ember can't see all of, attached to it (`-o"$f"`, `-sSLo"$f"`, `--output="$f"`): the parser reads
+ * such a word as an operand, so each is found here, its value's pieces kept as optionWords gives them
+ * (commands-remote-r10-5). `short` is the letter; `values` the program's short options that take a value, none of
+ * which may come before it in the cluster.
+ */
+function attachedUnseen(args: readonly Arg[], short: string, long: string, values: string): Arg[] {
+  const out: Arg[] = [];
+  for (const a of args) {
+    if (a.v !== null || a.param !== undefined || !a.parts || typeof a.parts[0] !== "string") continue;
+    const head = a.parts[0];
+    const l = head.startsWith(`--${long}=`) ? `--${long}=`.length : -1;
+    const m = /^-([A-Za-z0-9]*)/.exec(head);
+    const at = l >= 0 ? l : m && !head.startsWith("--") && m[1].includes(short) && ![...m[1].slice(0, m[1].indexOf(short))].some(c => values.includes(c)) ? m[1].indexOf(short) + 2 : -1;
+    if (at < 0) continue;
+    const first = head.slice(at);
+    out.push({ v: null, raw: a.raw.slice(at), glob: false, parts: [...(first ? [first] : []), ...a.parts.slice(1)] });
+  }
+  return out;
+}
+
 /** The host of a URL or `user@host:path`. */
 function hostOf(s: string): string {
   const u = /^[a-z][a-z0-9+.-]*:\/\/(?:[^@/]*@)?(\[[^\]]+\]|[^/:?#]+)/i.exec(s);
@@ -9178,6 +9210,7 @@ reg(NATIVE, ["curl", "curl.exe"], h => {
     // `-o '#1.sh'` with an address's {a,b} or [1-3]: a name from each address, none of which Ember names.
     if (/#\d/.test(o)) h.e.downloadUnnamed(path.includes("/") ? path.slice(0, path.lastIndexOf("/") + 1) : ".", h.sc);
   }
+  for (const w of attachedUnseen(h.args, "o", "output", "AbcCdeEFHKmPrtTuUwXxyYzDQ")) h.e.downloadTo(outDir ? { ...w, parts: [`${outDir}/`, ...(w.parts ?? [])] } : w, h.sc);
   // -J saves under the name the server sends, when it sends one (commands-remote-c5-2).
   if (has(p, "O", "remote-name", "remote-name-all") && has(p, "J", "remote-header-name")) h.e.downloadUnnamed(outDir ?? ".", h.sc);
   if (has(p, "O", "remote-name", "remote-name-all")) {
@@ -9219,6 +9252,9 @@ reg(NATIVE, ["wget", "wget2"], h => {
   if (h.args.some(a => /^--use-askpass/.test(a.v ?? ""))) h.e.unclear("unclear.wget-askpass", "It runs a program Ember can't see.");
   if (values(p, "config").length) { h.e.unclear("unclear.curl-config", "It reads its options from a file Ember can't see."); h.e.markUnnamed(null, h.sc); }
   const dir = values(p, "P", "directory-prefix")[0];
+  // `-O"$f"`, `--output-document="$f"`: a name Ember can't see all of, which the parser takes for an address
+  // (commands-remote-r10-5).
+  for (const w of attachedUnseen(h.args, "O", "output-document", "oaPiBtTwQeUlAIRDXlY")) h.e.downloadTo(w, h.sc);
   const out = values(p, "O", "output-document")[0];
   if (out !== undefined) {
     if (out === null) h.e.downloadTo(optionWords(h.args, p, "O", "output-document")[0] ?? { v: null, raw: "", glob: false }, h.sc);
@@ -9706,6 +9742,67 @@ reg(NATIVE, ["mail", "mailx", "sendmail", "msmtp", "swaks", "mutt", "neomutt", "
   h.e.add("publish", "send.mail", "Sends an email.");
   for (const a of h.args) if (h.args[h.args.indexOf(a) - 1]?.v === "-a" || h.args[h.args.indexOf(a) - 1]?.v === "-A") h.e.usePath(a, "read", h.sc);
 });
+/**
+ * Fetch tools whose rows (or lack of one) say nothing of what they save: the files or folders they save into are this
+ * task's downloads, so running one later asks (commands-remote-r10-5). A name Ember can't tell is a file of unknown
+ * name in the folder it saves into; a listing or a dry run saves nothing.
+ */
+function fetchToolSaves(e: Engine, key: string, args: readonly Arg[], sc: Scope): void {
+  const ops = args.filter(a => !isOption(a));
+  const opt = (...names: string[]): (string | null)[] => {
+    const out: (string | null)[] = [];
+    for (let k = 0; k < args.length; k++) {
+      const v = args[k].v;
+      if (v === null) continue;
+      for (const n of names) {
+        if (v === n) out.push(args[k + 1]?.v ?? null);
+        else if (n.startsWith("--") && v.startsWith(`${n}=`)) out.push(v.slice(n.length + 1));
+        else if (!n.startsWith("--") && v.startsWith(n) && v.length > n.length) out.push(v.slice(n.length));
+      }
+    }
+    return out;
+  };
+  const into = (d: string | null | undefined): void => { if (d === null) e.markUnnamed(null, sc); else e.markUnnamed(d ?? ".", sc); };
+  const file = (f: string | null | undefined): void => { if (f === null || f === undefined) into(f === null ? null : "."); else if (/[\\/]$/.test(f)) into(f); else e.download(f, sc); };
+  const remote = (v: string | null): boolean => v !== null && /^(s3|b2|gs|hf):\/\//i.test(v);
+  if (key === "s3cmd") {
+    const verb = ops[0]?.v ?? "";
+    const rest = ops.slice(1);
+    if (verb === "get" && rest.some(a => remote(a.v))) {
+      const dest = rest.length > 1 && !remote(rest[rest.length - 1].v) ? rest[rest.length - 1] : undefined;
+      if (args.some(a => /^(-r|--recursive)$/.test(a.v ?? "")) || rest.slice(0, dest ? -1 : undefined).some(a => a.v === null || /\/$/.test(a.v ?? "")) || rest.length > 2) into(dest ? dest.v : ".");
+      else if (dest) file(dest.v);
+      else file((rest[0].v ?? "").split("/").pop() || null);
+    } else if (verb === "sync" && rest.length >= 2 && remote(rest[0].v)) into(rest[rest.length - 1].v);
+  } else if (key === "b2") {
+    const verb = ops[0]?.v ?? "";
+    if (/^download-file(-by-(name|id))?$/.test(verb) || (verb === "file" && ops[1]?.v === "download")) file(ops[ops.length - 1]?.v ?? null);
+    else if (verb === "sync" && ops.length >= 3 && remote(ops[1].v)) into(ops[ops.length - 1].v);
+  } else if (key === "gdown") {
+    if (args.some(a => /^(-h|--help|--version)$/.test(a.v ?? ""))) return;
+    const out = opt("-O", "--output");
+    if (args.some(a => a.v === "--folder")) into(out[0] ?? ".");
+    else if (out.length) file(out[0]);
+    else into(".");
+  } else if (key === "yt-dlp" || key === "youtube-dl") {
+    if (args.some(a => /^(-F|--list-formats|-s|--simulate|--skip-download|-j|--dump-json|-J|--dump-single-json|--get-url|-g|-h|--help|--version)$/.test(a.v ?? ""))) return;
+    const out = opt("-o", "--output");
+    const paths = opt("-P", "--paths");
+    if (out.length && out[0] !== null && !/%|\{/.test(out[0]) && paths.length === 0) file(out[0]);
+    else into(paths.length ? paths[0] : out[0] === null ? null : out.length && /[\\/]/.test(out[0]!) ? out[0]!.slice(0, out[0]!.search(/[^\\/]*$/)) : ".");
+  } else if (key === "huggingface-cli" || key === "hf") {
+    if (ops[0]?.v !== "download") return;
+    const dir = opt("--local-dir")[0];
+    const cache = opt("--cache-dir")[0];
+    into(dir !== undefined ? dir : cache !== undefined ? cache : null);
+  } else if (/^(npm|pnpm|yarn|bun)$/.test(key) && ops[0]?.v === "pack") {
+    // A package of the registry's packed here (`npm pack x`); the project's own pack (`npm pack`, `npm pack .`) is not.
+    const specs = args.filter((a, k) => !isOption(a) && !/^(--pack-destination|-w|--workspace|--filter|-F)$/.test(args[k - 1]?.v ?? "")).slice(1);
+    if (args.some(a => a.v === "--dry-run") || !specs.some(a => a.v === null || !/^\.{1,2}([\\/].*)?$|^[\\/]/.test(a.v))) return;
+    into(opt("--pack-destination")[0]);
+  }
+}
+
 reg(NATIVE, ["s3cmd", "azcopy", "gdrive", "dropbox_uploader", "megaput", "transfer"], h => {
   const verb = firstOperand(h.args).v ?? "";
   if (/^(del|rm|rb|delete|remove)$/.test(verb)) h.e.add("remote-delete", "cloud.delete", "Deletes files on a remote service.");

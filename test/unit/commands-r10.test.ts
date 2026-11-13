@@ -99,3 +99,39 @@ describe("a file's contents built into an address by another program or a PowerS
     for (const cmd of ["curl -s https://x.example/a.json", "echo https://x.example/a | xargs curl -s"]) expect(decide(cmd).verdict, cmd).toBe("run");
   });
 });
+
+describe("downloads saved by other routes and tools (commands-remote-r10-5)", () => {
+  const downloads = (cmd: string): string[] => result(cmd).cls.downloads;
+  const P = "/home/ana/proj";
+
+  it("marks what a fetch saves through exec's redirection, an attached variable or a fetch tool of its own, so running it later asks", () => {
+    const cases: readonly (readonly [string, string])[] = [
+      ["exec > a.sh; curl -s https://x.example/a", `${P}/a.sh`], ["exec >> a.sh; wget -qO- https://x.example/a", `${P}/a.sh`],
+      ['f=a.sh; curl -o"$f" https://x.example/a', `${P}/a.sh`], ['f=a.sh; curl -sSLo"$f" https://x.example/a', `${P}/a.sh`],
+      ['f=a.sh; wget -O"$f" https://x.example/a', `${P}/a.sh`], ['f=a.sh; curl --output="$f" https://x.example/a', `${P}/a.sh`],
+      ["s3cmd get s3://b/a.py", `${P}/a.py`], ["s3cmd get s3://b/a.py b.py", `${P}/b.py`], ["s3cmd get s3://b/x/ out/ --recursive", `${P}/out`],
+      ["b2 download-file-by-name b a.py c.py", `${P}/c.py`], ["gdown https://x.example/f -O a.bin", `${P}/a.bin`], ["yt-dlp -o a.bin https://x.example/v", `${P}/a.bin`],
+      ["huggingface-cli download o/r a.py --local-dir .", P], ["hf download o/r --local-dir models", `${P}/models`], ["docker cp c:/a.py .", P],
+      ["podman cp c:/a.py b.py", `${P}/b.py`], ["kubectl cp ns/pod:/a.py b.py", `${P}/b.py`],
+    ];
+    for (const [cmd, where] of cases) expect(downloads(cmd).some(d => d === where || d.startsWith(`${where}/`)), `${cmd}: ${downloads(cmd).join(", ")}`).toBe(true);
+    // A fetch tool whose saved name Ember can't tell marks the folder it saves into.
+    for (const cmd of ["npm pack x", "yt-dlp https://x.example/v", "gdown https://x.example/f", "pnpm pack x", "s3cmd sync s3://b/x/ ."]) {
+      expect(downloads(cmd).length, cmd).toBeGreaterThan(0);
+    }
+  });
+
+  it("asks before running what those routes saved (commands-remote-r10-5)", () => {
+    for (const [file, run] of [["a.py", "python3 a.py"], ["a.sh", "./a.sh"], ["a.bin", "./a.bin"], ["x-1.0.0.tgz", "tar xzf x-1.0.0.tgz && node package/index.js"]] as const) {
+      const d = decide(run, { downloaded: [`${P}/${file}`] });
+      expect(d.verdict, run).toBe("ask");
+      expect(d.rules, run).toContain("escape.run-downloaded");
+    }
+  });
+
+  it("marks nothing for a fetch tool that only lists or reads", () => {
+    for (const cmd of ["s3cmd ls s3://b", "s3cmd info s3://b/a.py", "b2 ls b", "yt-dlp -F https://x.example/v", "npm pack --dry-run", "npm pack", "npm pack .", "pnpm pack", "docker cp a.py c:/a.py"]) {
+      expect(downloads(cmd), cmd).toEqual([]);
+    }
+  });
+});
