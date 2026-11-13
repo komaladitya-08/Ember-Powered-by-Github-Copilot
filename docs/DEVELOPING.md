@@ -1338,7 +1338,12 @@ be another language's in an answer that looked English so far ("Okay, reading it
 itself, from its own first 60 letters, and waits until then unless it is clearly English: counted with the lead-in, whose
 English short words outnumber a first sentence's, a Spanish, Italian or Portuguese email was read by Kitten for 14 of
 16 ordinary lead-ins and layouts (now none; an Italian or Portuguese passage's first sentence with no accent still is,
-after a lead-in without a colon or on the same line). A passage is judged without the clearly English pieces it ends
+after a lead-in without a colon or on the same line). A message's header lines at the start of what is judged ("From:
+José", "To:", "Subject: Proyecto", "Date:": `HEADER`) are Kitten's, each said as it comes, and so is a lead-in in no
+other language whose only accented letters are in a name ("José's email says:": `leadsIn`); the message after them is
+judged by itself. Judged as its first letters, the sender and subject diluted its short words, and a Spanish or Italian
+email was Kitten's with English sounds in 22 of 44 cases for "**From:** José / **Subject:** Proyecto", and after
+"José's email says:" in 3 of 5 languages (voice-speaking-r10-2, voice-speaking-c10-1; now none). A passage is judged without the clearly English pieces it ends
 with: counted with Ember's own "Shall I reply to it?", a chat message of two sentences was Kitten's for 15 of 15 (now
 6: a passage under 60 letters still needs two different short words of its language, or Spanish's "¿" or "¡", so
 "Ciao Alex, come stai? Ci vediamo domani." and "Olá Alex, tudo bem? Até amanhã no escritório." are Kitten's). Until then a piece that may be another language's ("Bien sûr !", with letters

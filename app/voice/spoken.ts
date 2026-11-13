@@ -588,6 +588,25 @@ const mayBeAnother = (text: string) => (FOREIGN_MARKS.test(text) || ACCENTED.tes
 
 /** A piece that leads in to what follows it: it ends with a colon ("The message reads:"). */
 const LEAD_IN = /[:：]["”’'*_)\]]*\s*$/u;
+/** A message's header line ("From: José.", "Subject: Proyecto.", as the stream writes "**From:** José"). */
+const HEADER = /^\s*(?:from|to|cc|bcc|subject|date|sent|re|reply-to)\s*[:：]/iu;
+
+/**
+ * Whether `piece`, which starts what is being judged, is Ember's own and leads in to a passage: a message's header line
+ * (HEADER), or a lead-in (LEAD_IN) in no other language whose only letters with an accent are in a name ("José's email
+ * says:"). Judged as the passage's first letters, a sender and a subject diluted its short words and the whole Spanish
+ * or Italian email was Kitten's with English sounds, in 22 of 44 cases for "**From:** José / **Subject:** Proyecto"
+ * (voice-speaking-r10-2), and so after "José's email says:" in 3 of 5 languages (voice-speaking-c10-1). A name is a
+ * capitalised word after the first, or one with "'s".
+ */
+function leadsIn(piece: string): boolean {
+  if (HEADER.test(piece)) return true;
+  if (!LEAD_IN.test(piece) || FOREIGN_MARKS.test(piece) || languageOf(piece, 1) !== null) return false;
+  const tokens = piece.split(/\s+/u).filter(t => /\p{L}/u.test(t));
+  const own = tokens.filter((t, i) => !/^\p{Lu}/u.test(t) || (i === 0 && !/['’]s\W*$/u.test(t)));
+  return !ACCENTED.test(own.join(" ")) && !/[^\p{Script=Latin}\P{L}]/u.test(piece);
+}
+
 /** A short lead-in and what it leads in to, in one piece ("It says: Hola Alex, ¿cómo estás?"). */
 const INLINE_LEAD = /^([^:：\n]{1,80}[:：])\s+(\S[\s\S]*)$/u;
 
@@ -643,6 +662,14 @@ export class AnswerLanguage {
   /** take, for one piece (null: none, the message only ended). */
   private one(piece: string | null, end: boolean, more: boolean): { text: string; lang: string | null }[] {
     const another = (text: string) => mayBeAnother(text) || speechLanguage(text, this.asked) !== null;
+    if (piece !== null && this.lang === undefined && !this.asked && !this.held.length && !(end && !more) && leadsIn(piece)) {
+      // A header line or a lead-in of Ember's own at the start of what is judged: said in Ember's voice, and what follows
+      // it is judged by itself (leadsIn).
+      this.text = "";
+      this.spoken = false;
+      this.passage = true;
+      return [{ text: piece, lang: null }];
+    }
     if (piece !== null && !this.lang && !this.asked) {
       // A lead-in and the passage's first sentence in one piece ("It says: Hola Alex, ¿cómo estás?"): each on its own.
       // Not after a request in another language, whose answer is judged whole ("Hecho: abrí «Ventas.xlsx».").

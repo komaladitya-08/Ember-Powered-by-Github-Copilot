@@ -627,6 +627,32 @@ describe("AnswerLanguage judges a passage read out after an English lead-in by t
     expect(said.at(-1)).toEqual({ text: close, lang: null });
     expect(said.slice(1, -1).map(p => p.lang)).toEqual(said.slice(1, -1).map(() => lang));
   });
+
+  // An email shown with its sender and subject lines: they were judged as the passage's first letters, which they
+  // diluted, and the message was Kitten's with English sounds in 22 of 44 cases for "**From:** José / **Subject:**
+  // Proyecto" (voice-speaking-r10-2). So for a lead-in whose only word with an accent is a name ("José's email says:"),
+  // which was held and judged with the email (voice-speaking-c10-1).
+  const HEADERS = [
+    "**From:** José\n**Subject:** Proyecto\n\n", "From: José\nSubject: Proyecto\n\n", "From: José\nSubject: Project update\n\n",
+    "From: **José**\nSubject: **Proyecto**\n\n", "**From:** Marco Rossi\n**Subject:** Riunione di lunedì\n\n", "From: José García\nSubject: Proyecto\n\n",
+    "From: Ana\nDate: Monday\nSubject: Hola\n\n", "Here is the email:\n\n**From:** José\n**To:** Alex\n**Subject:** Proyecto\n\n", "José's email says:\n\n",
+    "Sure. José's email says:\n\n",
+  ];
+  it.each(LATIN.flatMap(lang => HEADERS.map(head => [lang, head] as const)))("reads a %s email in its own voice after the header lines or lead-in %j, said in Ember's (voice-speaking-r10-2)", (lang, head) => {
+    const said = streamed(`${head}${PASSAGES[lang]}\n\nWant me to reply?`);
+    const passage = said.filter(p => flat(PASSAGES[lang]).includes(flat(p.text)) && !flat(head).includes(flat(p.text)));
+    expect(flat(passage.map(p => p.text).join(" "))).toBe(flat(PASSAGES[lang]));
+    expect(passage.map(p => [flat(p.text), p.lang])).toEqual(passage.map(p => [flat(p.text), lang]));
+    expect(said.filter(p => !passage.includes(p)).map(p => [flat(p.text), p.lang])).toEqual(said.filter(p => !passage.includes(p)).map(p => [flat(p.text), null]));
+  });
+
+  it.each([
+    ["From: Sam\nSubject: Lunch\n\nAre we still on for lunch on Friday? Let me know.\n\nWant me to reply?"],
+    ["Subject: the café meeting is moved to Monday, and the room is booked."],
+    ["Here is the email:\n\nFrom: José\nSubject: Résumé\n\nThanks for sending your résumé, I will read it tonight.\n\nAnything else?"],
+  ])("still says an English email with header lines wholly in Ember's own voice (%j) (voice-speaking-r10-2)", answer => {
+    expect(streamed(answer, "read me the latest email").map(p => p.lang).filter(Boolean)).toEqual([]);
+  });
 });
 
 describe("AnswerLanguage says an English answer's own closing words in Ember's voice after a passage it read out in another language", () => {
