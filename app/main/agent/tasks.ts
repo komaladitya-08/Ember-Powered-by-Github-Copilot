@@ -197,6 +197,8 @@ export interface StartOptions {
   commandWords?: string;
   /** TaskSpec.typedOnly. */
   typedOnly?: boolean;
+  /** TaskSpec.checkWords. */
+  checkWords?: string;
   /** TaskSpec.partWay: an earlier try of it stopped part-way (a retry). */
   partWay?: boolean;
   /**
@@ -212,6 +214,8 @@ export interface RetriedWords {
   userWords: string;
   commandWords?: string;
   typedOnly?: boolean;
+  /** Those words for Assisted's check, when they differ from the ones for commands (TaskSpec.checkWords). */
+  checkWords?: string;
   /** What they agreed to for it (TaskOpts.agreed). */
   agreed?: Agreement[];
   /** It changed something before it ended, so a new try is told an earlier one stopped part-way (TaskSpec.partWay). */
@@ -424,7 +428,8 @@ export class TaskManager {
       ...(opts.agreed ? { agreed: [...opts.agreed] } : {}) } });
     this.queue.push({ task, spec: { id, goal, target, mode: opts.mode ?? "do", ...(opts.userWords !== undefined ? { userWords: opts.userWords } : {}),
       ...(opts.agreed?.length ? { agreed: opts.agreed } : {}), ...(opts.screen ? { screen: opts.screen } : {}), ...(opts.targetId ? { targetId: opts.targetId } : {}),
-      ...(opts.commandWords !== undefined ? { commandWords: opts.commandWords } : {}), ...(opts.typedOnly ? { typedOnly: true } : {}), ...(opts.partWay ? { partWay: true } : {}) } });
+      ...(opts.commandWords !== undefined ? { commandWords: opts.commandWords } : {}), ...(opts.typedOnly ? { typedOnly: true } : {}), ...(opts.partWay ? { partWay: true } : {}),
+      ...(opts.checkWords !== undefined ? { checkWords: opts.checkWords } : {}) } });
     // The goal and window title are the user's words and screen text: the log keeps only their size.
     this.d.log.info("task.queued", { id, chars: goal.length, mode: opts.mode ?? "do" });
     this.record({ event: "task", task: id, phase: "asked", mode: opts.mode ?? "do", goal: goal.slice(0, 300), window: target.title,
@@ -555,6 +560,7 @@ export class TaskManager {
     const o = spec.opts;
     return {
       userWords: o.userWords!, ...(o.commandWords !== undefined ? { commandWords: o.commandWords } : {}), ...(o.typedOnly ? { typedOnly: true } : {}),
+      ...(o.checkWords !== undefined ? { checkWords: o.checkWords } : {}),
       ...(o.agreed?.length ? { agreed: o.agreed.map(a => ({ ...a })) } : {}), ...(this.changedSomething(id) ? { partWay: true } : {}),
     };
   }
@@ -592,14 +598,14 @@ export class TaskManager {
     for (const id of [...this.running.keys()]) this.cancel(id);
   }
 
-  /** The user's new instruction for a task: a running one is told now, a waiting one starts with it. `userWords`, `screen`, `agreed`, `commandWords`: as for start(). */
-  async steer(id: string, text: string, userWords?: string, screen?: string, agreed?: Agreement[], commandWords?: string): Promise<boolean> {
+  /** The user's new instruction for a task: a running one is told now, a waiting one starts with it. `userWords`, `screen`, `agreed`, `commandWords`, `checkWords`: as for start(). */
+  async steer(id: string, text: string, userWords?: string, screen?: string, agreed?: Agreement[], commandWords?: string, checkWords?: string): Promise<boolean> {
     if (!this.specs.has(id)) return false;
     const r = this.running.get(id);
     const q = this.queue.find(x => x.task.id === id);
     if (!r && !q) return false;
     if (r) {
-      const accepted = await r.worker.steer(text, userWords, screen, agreed, commandWords);
+      const accepted = await r.worker.steer(text, userWords, screen, agreed, commandWords, checkWords);
       if (!accepted) return false;
     }
     // Only accepted instructions become retryable. Read the latest recipe after the await so concurrent accepted
@@ -613,17 +619,20 @@ export class TaskManager {
     // Commands never inherit model-authored steering, or a legacy goal without separately supplied user words.
     const heard = commandWords !== undefined || opts.commandWords !== undefined
       ? { commandWords: [opts.commandWords ?? opts.userWords ?? "", commandWords ?? userWords ?? ""].filter(w => w.trim()).join("\n") } : {};
+    // The words for Assisted's check, kept apart only once some differ from the ones commands hear (TaskSpec.checkWords).
+    const check = checkWords !== undefined || opts.checkWords !== undefined
+      ? { checkWords: [opts.checkWords ?? opts.commandWords ?? opts.userWords ?? "", checkWords ?? commandWords ?? userWords ?? ""].filter(w => w.trim()).join("\n") } : {};
     const provenance = commandWords !== undefined ? { typedOnly: false }
       : heard.commandWords !== undefined && opts.commandWords === undefined ? { typedOnly: true } : {};
     const next = {
       goal: `${current.goal}\n(The user then added: ${text.replace(/</g, "‹")})`,
-      opts: { ...opts, ...words, ...seen, ...yes, ...heard,
+      opts: { ...opts, ...words, ...seen, ...yes, ...heard, ...check,
         ...provenance },
     };
     // (Words added in another turn, which may be about other tasks too: they aren't this task's alone, integrations-w5-1.)
     delete next.opts.alone;
     this.specs.set(id, next);
-    if (q) q.spec = { ...q.spec, goal: next.goal, ...words, ...seen, ...yes, ...heard,
+    if (q) q.spec = { ...q.spec, goal: next.goal, ...words, ...seen, ...yes, ...heard, ...check,
       ...provenance };
     return true;
   }

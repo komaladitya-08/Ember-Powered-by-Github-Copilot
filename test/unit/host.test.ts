@@ -3163,7 +3163,8 @@ describe("review round 6: a task's bubbles say whose they are", () => {
   it("its work and its question name the task (the corner card pairs them with its row and Stop), titled as its card is", async () => {
     const bubbles: BubbleState[] = [];
     const confirmer = new Confirmer(p => { if (p.bubble) bubbles.push(p.bubble); }, { armMs: 0, gapMs: 0 });
-    const policy = { decide: () => ({ verdict: "confirm", tier: "confirm", reason: "test", prompt: "Turn on Night Light?", needsGrant: false, remember: false }) };
+    // (A stand-in engine: it asks about everything, and has no check to send a question to first.)
+    const policy = { decide: () => ({ verdict: "confirm", tier: "confirm", reason: "test", prompt: "Turn on Night Light?", needsGrant: false, remember: false }), assistAll: async (steps: { d: unknown }[]) => steps.map(s => s.d) };
     const { host } = makeHost({ hands: { ...hands(), confirmer, policy } as never });
     await host.start(TOKEN, "stored");
     await host.ask("turn on night light");

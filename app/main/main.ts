@@ -1384,7 +1384,8 @@ function start(): void {
    * `how.suggested`: one of Ember's suggestions the user chose (never their own words for commands: host.ts
    * UserRequest.suggested); `how.heardId`: the request Ember heard, for "That's not what I said" (personal/service.ts).
    */
-  const askEmber = async (text: string, how: { voiceUnchecked?: boolean; spoken?: boolean; manual?: true; verified?: boolean; short?: boolean; suggested?: boolean; heardId?: number; replaces?: boolean } = {}, read = callContext, stillCurrent?: () => boolean) => {
+  /** `how.overEmber`: heard over Ember's own voice (never the user's own words for Assisted's check: host.ts UserRequest.overEmber). */
+  const askEmber = async (text: string, how: { voiceUnchecked?: boolean; spoken?: boolean; manual?: true; verified?: boolean; short?: boolean; suggested?: boolean; heardId?: number; replaces?: boolean; overEmber?: boolean } = {}, read = callContext, stillCurrent?: () => boolean) => {
     if (!consented()) { showHome(); return; }
     recentAsks = [...recentAsks, { text, ...(how.voiceUnchecked ? { voiceUnchecked: true } : {}), ...(how.suggested ? { suggested: true } : {}) }].slice(-4);
     // What the user might say next is worked out again once this is answered (app/main/personal/predict.ts).
@@ -1394,7 +1395,7 @@ function start(): void {
     // who sees it (the lock read wrongly) knows why nothing happened.
     if (screenLock?.locked) { log.info("ask.refused", { reason: "screen_locked" }); showNotice(LOCKED_ASK, 6000); return; }
     // A typed "stop" while a task is at work stops everything at once, before any screen read (tasks-approvals-v2).
-    if (agent?.stopsNow(text, { voiceUnchecked: how.voiceUnchecked, suggested: how.suggested, heardId: how.heardId })) return;
+    if (agent?.stopsNow(text, { voiceUnchecked: how.voiceUnchecked, suggested: how.suggested, overEmber: how.overEmber, heardId: how.heardId })) return;
     // A hidden Ember shows itself for the answer to a question the user just asked (and hides again after).
     if ((overlay ? overlay.isHidden() : keptHidden) && !shownForAnswer) { shownForAnswer = true; overlay?.setHidden(false); syncHandle(); }
     // A Stop while the screen is read (or the brain connects) drops the request.
@@ -1405,7 +1406,7 @@ function start(): void {
     if (stillCurrent && (!stillCurrent() || !consented() || screenLock?.locked)) return;
     if (how.spoken) turnLatency.mark("sent");
     if (!agent) return;
-    return agent.ask(text, context, epoch, { voiceUnchecked: how.voiceUnchecked, ...(how.replaces ? { replaces: true } : {}), ...(how.spoken ? { spoken: true } : {}), ...(how.manual ? { manual: true } : {}), ...(how.verified ? { verified: true } : {}), ...(how.short ? { short: true } : {}), ...(how.suggested ? { suggested: true } : {}), ...(how.heardId ? { heardId: how.heardId } : {}) }).catch(err => { log.error("ask.failed", { err }); });
+    return agent.ask(text, context, epoch, { voiceUnchecked: how.voiceUnchecked, ...(how.replaces ? { replaces: true } : {}), ...(how.spoken ? { spoken: true } : {}), ...(how.manual ? { manual: true } : {}), ...(how.verified ? { verified: true } : {}), ...(how.short ? { short: true } : {}), ...(how.suggested ? { suggested: true } : {}), ...(how.heardId ? { heardId: how.heardId } : {}), ...(how.overEmber ? { overEmber: true } : {}) }).catch(err => { log.error("ask.failed", { err }); });
   };
   /**
    * `look: false`: what the user is in was read already (the handle's menu reads it before taking focus), and
@@ -2089,7 +2090,10 @@ function start(): void {
           // Said while a reply was on its way: that reply stops, and this is answered with it in mind (host.ts replaceTurn).
           // A permission question stays up: its tool is waiting, and only its own answer ends it.
           const replaces = e.window === "conversation" && !confirmer?.waiting;
-          void askEmber(heard.text, { heardId: heard.id, voiceUnchecked: heardUnchecked(e, !!manual, !!voice?.rejectsSpeakers), spoken: true, ...(replaces ? { replaces: true } : {}), ...(manual ? { manual: true } : {}), ...(matchOn && e.verified === true ? { verified: true } : {}), ...(matchOn && e.short === true ? { short: true } : {}) }, manual?.context, stillCurrent);
+          void askEmber(heard.text, { heardId: heard.id, voiceUnchecked: heardUnchecked(e, !!manual, !!voice?.rejectsSpeakers), spoken: true, ...(replaces ? { replaces: true } : {}), ...(manual ? { manual: true } : {}), ...(matchOn && e.verified === true ? { verified: true } : {}), ...(matchOn && e.short === true ? { short: true } : {}),
+            // Said over Ember's own voice (or, where Ember can't tell its voice from the user's, since it last spoke): never
+            // the user's own words for Assisted's check, as it is never a yes to a question.
+            ...(e.overEmber === true || (voice?.selfSpokeSince(heardFrom) ?? true) ? { overEmber: true } : {}) }, manual?.context, stillCurrent);
         }
         break;
       }
@@ -3428,6 +3432,7 @@ function start(): void {
         // allows it; below Interactive, every ordinary step asks.
         trustAskedApps: () => approvalsNow().askedApps,
         autonomy: () => approvalsNow().scopes,
+        assisted: () => approvalsNow().check,
         // On macOS also by the installed app with that name's bundle id (Terminal renamed is still Terminal); a WSLg
         // app's also as a Linux app (§4.5).
         isTerminalApp: name => privacy.isTerminalApp({ id: name, name }),

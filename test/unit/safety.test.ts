@@ -50,7 +50,7 @@ describe("admin policy file", () => {
     expect(s.privacy.neverLook.filter(x => x.toLowerCase() === "keepassxc")).toHaveLength(1);
     // Without grants nobody may let Ember work without asking either: it is below Interactive (policy/autonomy.ts).
     expect(managedKeys(admin)).toEqual(["wakeWord", "speak", "naturalVoice", "models", "grants", "autonomy"]);
-    expect(approvalInputs(modeInForce(s.approvals, admin))).toEqual({ scopes: null, askedApps: false, reviewCommands: false });
+    expect(approvalInputs(modeInForce(s.approvals, admin))).toEqual({ scopes: null, askedApps: false, check: false });
     // An admin can't turn on what the user turned off.
     expect(applyAdminPolicy({ ...DEFAULT_SETTINGS, wakeWord: false }, AdminPolicySchema.parse({ features: { voice: true } })).wakeWord).toBe(false);
   });
@@ -61,11 +61,11 @@ describe("admin policy file", () => {
     const assisted = { mode: "assisted" as const, consent: { interactive: { version: modeCardVersion("interactive"), at }, assisted: { version: modeCardVersion("assisted"), at }, autopilot: { version: 0, at: null } } };
     const s = applyAdminPolicy({ ...DEFAULT_SETTINGS, approvals: assisted }, admin);
     expect(modeInForce(s.approvals, admin)).toBe("interactive");
-    expect(approvalInputs(modeInForce(s.approvals, admin)).reviewCommands).toBe(false);
+    expect(approvalInputs(modeInForce(s.approvals, admin)).check).toBe(false);
     // Its true turns nothing on: only the user's own Assisted, with its card agreed to, reviews commands.
     const on = AdminPolicySchema.parse({ features: { aiReview: true } });
-    expect(approvalInputs(modeInForce(applyAdminPolicy(DEFAULT_SETTINGS, on).approvals, on)).reviewCommands).toBe(false);
-    expect(approvalInputs(modeInForce(applyAdminPolicy({ ...DEFAULT_SETTINGS, approvals: assisted }, on).approvals, on)).reviewCommands).toBe(true);
+    expect(approvalInputs(modeInForce(applyAdminPolicy(DEFAULT_SETTINGS, on).approvals, on)).check).toBe(false);
+    expect(approvalInputs(modeInForce(applyAdminPolicy({ ...DEFAULT_SETTINGS, approvals: assisted }, on).approvals, on)).check).toBe(true);
     expect(applyAdminPolicy(DEFAULT_SETTINGS, on).approvals).toEqual(DEFAULT_SETTINGS.approvals);
   });
 

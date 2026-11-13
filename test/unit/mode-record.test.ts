@@ -127,10 +127,11 @@ describe("the record of the mode in force (modes-A7)", () => {
     expect(main).toContain("autonomy: () => approvalsNow().scopes,");
     expect(main).not.toMatch(/settings\.get\(\)\.(trust|autonomy)\b/);
     const host = fs.readFileSync("app/main/agent/host.ts", "utf8");
-    expect(host).toContain("reviewCommands: () => approvalInputs(modeInForce(this.o.settings.get().approvals, this.o.admin?.() ?? null)).reviewCommands,");
+    expect(main).toContain("assisted: () => approvalsNow().check,");
+    expect(host).toContain("check: () => approvalInputs(modeInForce(this.o.settings.get().approvals, this.o.admin?.() ?? null)).check,");
     expect(host).toContain("autonomy: () => approvalInputs(modeInForce(this.o.settings.get().approvals, this.o.admin?.() ?? null)).scopes,");
     expect(fs.readFileSync("app/main/targets/runtime.ts", "utf8")).toContain("trustAskedApps: () => approvalInputs(modeInForce(settings.get().approvals, admin().policy)).askedApps,");
-    expect(approvalInputs("interactive").reviewCommands).toBe(false);
+    expect(approvalInputs("interactive").check).toBe(false);
   });
 });
 

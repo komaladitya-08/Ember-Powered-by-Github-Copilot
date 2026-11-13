@@ -55,9 +55,8 @@ export const autonomyPermitted = (admin: AutonomyAdmin | null | undefined): bool
 export const OFFERED_MODES: readonly ApprovalMode[] = ["interactive"];
 
 /**
- * The modes that can be in force. Until Assisted's check is built, Assisted is Interactive plus the command reviewer,
- * as the old "Ask only about dangerous commands" switch was; Autopilot isn't built, so a settings.json that names it
- * (by hand: Home doesn't offer it) is Interactive at most.
+ * The modes that can be in force. Autopilot isn't built, so a settings.json that names it (by hand: Home doesn't
+ * offer it) is Interactive at most.
  */
 const BUILT: readonly ApprovalMode[] = ["interactive", "assisted"];
 
@@ -113,18 +112,21 @@ export interface ApprovalInputs {
   scopes: AutonomyScopes | null;
   /** PolicyInputs.trustAskedApps: no "Let me work in …?" in an app the user asked for help in. */
   askedApps: boolean;
-  /** A command that would ask goes to the reviewer first (commands/review.ts). */
-  reviewCommands: boolean;
+  /**
+   * Assisted's check (PolicyInputs.assisted, PolicyEngine.assist; for commands the reviewer, commands/review.ts): a step
+   * or a command that would ask goes to it first, and goes ahead announced when it finds it in the user's own words.
+   */
+  check: boolean;
 }
 
-const ASKING: Readonly<ApprovalInputs> = Object.freeze({ scopes: null, askedApps: false, reviewCommands: false });
-const INTERACTIVE: Readonly<ApprovalInputs> = Object.freeze({ scopes: ALL_SCOPES, askedApps: true, reviewCommands: false });
-const ASSISTED: Readonly<ApprovalInputs> = Object.freeze({ scopes: ALL_SCOPES, askedApps: true, reviewCommands: true });
+const ASKING: Readonly<ApprovalInputs> = Object.freeze({ scopes: null, askedApps: false, check: false });
+const INTERACTIVE: Readonly<ApprovalInputs> = Object.freeze({ scopes: ALL_SCOPES, askedApps: true, check: false });
+const ASSISTED: Readonly<ApprovalInputs> = Object.freeze({ scopes: ALL_SCOPES, askedApps: true, check: true });
 
 /**
  * The inputs `mode` gives: below Interactive, what all three of the old switches off gave; in Interactive, what Work
  * without asking with every scope and the app switch gave, so the policy engine decides exactly as it did; in
- * Assisted, the command reviewer too, as the old switch ran it.
+ * Assisted, the same with its check on top, which can only turn a question into an announced step.
  */
 export function approvalInputs(mode: ModeInForce): Readonly<ApprovalInputs> {
   return mode === "asking" ? ASKING : mode === "assisted" ? ASSISTED : INTERACTIVE;
