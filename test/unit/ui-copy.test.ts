@@ -126,6 +126,13 @@ describe("settings window words", () => {
     expect(describeEntry({ t, event: "action", kind: "keys", ok: true, value: "ctrl+s", element: { role: "text", name: "" }, app: "mousepad" })?.what).toBe("Press Ctrl+S in Mousepad");
     expect(describeEntry({ t, event: "decision", kind: "keys", verdict: "confirm", value: "Return", app: "soffice" })?.what).toBe("Press Enter in LibreOffice");
     expect(describeEntry({ t, event: "action", kind: "keys", ok: true, app: "mousepad" })?.what).toBe("Press keys in Mousepad");
+    // A fill from the vault, done or refused, in words (integ-x-4): never the raw kind, and never what was filled.
+    expect(describeEntry({ t, event: "decision", kind: "vault_fill", verdict: "allow", autonomy: true, mode: "autopilot", app: "firefox", element: { role: "password text", name: "Password" } }))
+      .toMatchObject({ tag: "Without asking", what: "Fill from the vault “Password” in Firefox" });
+    expect(describeEntry({ t, event: "decision", kind: "vault_fill", verdict: "deny", reason: "Ember fills from its vault only in Autopilot", app: "firefox", element: { role: "password text", name: "Password" } }))
+      .toMatchObject({ tag: "Refused", what: "Fill from the vault “Password” in Firefox" });
+    expect(describeEntry({ t, event: "action", kind: "vault_fill", ok: true, app: "firefox", element: { role: "entry", name: "Username or email address" } })?.what)
+      .toBe("Fill from the vault “Username or email address” in Firefox");
     expect(describeEntry({ t, event: "action", kind: "user_clicked", ok: true, element: { role: "push button", name: "Save draft" }, app: "electron" })?.what)
       .toBe("You used “Save draft” in Electron");
     expect(describeEntry({ t, event: "action", kind: "select", ok: true, value: "Vegetarian", element: { role: "combo box", name: "Meal" }, app: "firefox" })?.what)
