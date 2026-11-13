@@ -7,7 +7,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { RunExit } from "../../app/main/commands/types";
 import {
-  boundOutput, capLines, CLEAN_MAX_LINE, cleanOutput, OUTPUT_HEAD_LINES, OUTPUT_MAX_BYTES, OUTPUT_MAX_LINE, OUTPUT_TAIL_LINES, SECRET_ANSWERED, SECRET_UNANSWERED,
+  boundOutput, capLines, CLEAN_MAX_LINE, cleanOutput, clearCut, CUT_SLACK, CUT_TRIES, OUTPUT_HEAD_LINES, OUTPUT_MAX_BYTES, OUTPUT_MAX_LINE, OUTPUT_TAIL_LINES, SECRET_ANSWERED, SECRET_UNANSWERED,
   setOutputRedactor, shapeOutput, stripTerminal, TYPED_BY_USER, type ShapeOptions,
 } from "../../app/main/commands/output";
 import { VAULT_REDACTED, VaultRedactor } from "../../app/main/vault/redact";
@@ -342,6 +342,45 @@ describe("output after a fill from the vault (vault-3)", () => {
       expect(keep(other).text, `${inside}`).toBe(before.text);
     }
   }, 60_000);
+
+  it("stops looking for a place to cut after a fixed amount of work, and keeps nothing of that side (integ-z-4)", () => {
+    filled();
+    // The checker's worst case (P-7): the value on the cut, in a line a carriage return later writes over, the line
+    // longer than what is looked at. No place in it is clear, and every one of 8,192 was tried.
+    const before = "y".repeat(CUT_SLACK - 5) + ` ${PASSWORD.slice(0, 4)}`;
+    const after = `${PASSWORD.slice(4)} ` + "z".repeat(7000) + "\rdone\n" + filler(CUT_SLACK - 7019);
+    for (const side of ["before", "after"] as const) {
+      const work = { tried: 0 };
+      expect(clearCut(before, after, side, work), side).toBeNull();
+      expect(work.tried, side).toBe(CUT_TRIES);
+    }
+    expect(CUT_TRIES).toBeLessThanOrEqual(64);
+    // A place within that many is still found, at the same place as before, and counted.
+    const near = { tried: 0 };
+    expect(clearCut(`0123456789 ${PASSWORD.slice(0, 2)}`, `${PASSWORD.slice(2)} abc\n`, "before", near)).toBe(2);
+    expect(near.tried).toBe(3);
+    // The last place within the count is taken, and the one after it is not: a value 63 characters into the head, and 64.
+    const far = "Xy9!".repeat(40);
+    const long = new VaultRedactor();
+    long.note("password", far);
+    setOutputRedactor(text => long.text(text));
+    const at = (inside: number) => clearCut(`0123456789\n ${far.slice(0, inside)}`, `${far.slice(inside)} abc\n`, "before");
+    expect(at(CUT_TRIES - 1)).toBe(CUT_TRIES - 1);
+    expect(at(CUT_TRIES)).toBeNull();
+    filled();
+    // Through the flow's own keeper, both sides at their worst at once: neither side is kept, in well under Stop's
+    // 300 ms (measured here: about 15 ms, 2.7 s before). The limit is wide for a loaded machine: the count above is the bound.
+    const text = "y".repeat(HEAD - 5) + ` ${PASSWORD} ` + "z".repeat(7000) + "\rdone\n" + filler(20_000)
+      + "y".repeat(8000) + ` ${PASSWORD} ` + "z".repeat(8000) + "\rdone\n" + filler(ROOM - 8010);
+    const k = new OutputKeeper(trackSecretPrompts({ interactive: false }));
+    for (let i = 0; i < text.length; i += 1 << 20) k.push(bytes(text.slice(i, i + (1 << 20))));
+    k.end();
+    const start = performance.now();
+    const kept = k.kept([]);
+    const ms = performance.now() - start;
+    expect(kept.text).toMatch(/^\n\[… \d+ characters of output left out …\]\n$/);
+    expect(ms).toBeLessThan(1500);
+  }, 30_000);
 
   it("keeps a long run's output as before where no filled value is near the cut, a whole value still redacted, and its secret spans in place (integ-x-1)", () => {
     const text = filler(HEAD + 5000) + filler(ROOM - 100) + `mail: ${EMAIL}\n` + filler(100 - 7 - EMAIL.length);

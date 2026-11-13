@@ -164,6 +164,18 @@ export function redactedWhole(s: string): string {
  */
 export const CUT_SLACK = 8192;
 
+/**
+ * How many places are tried for one side's cut, nearest first (integ-z-4). Each place tried reads the whole window
+ * several times, on Ember's main thread, the one that hears Stop: where no place is clear (the value in a line a
+ * carriage return writes over, longer than the window) all 8,192 were tried, 1.3 s a side as measured, far past
+ * Stop's 300 ms. A value an ordinary program prints is cleared within its own printed length, so 64 places cover
+ * it (an address or a password of up to 63 characters, or a shorter one `grep --color` put its codes in). Past them
+ * that side isn't kept, as where no place is clear. (A count, not a time: a clock would give up sooner on a busy
+ * computer, and the same output would be kept one time and not the next. And no more than 64: a place costs what
+ * the redactor costs, about 3 ms each as measured while the vault watches a password of 1,024 characters.)
+ */
+export const CUT_TRIES = 64;
+
 /** What stands for the note that follows the kept head, to see that nothing at the head's end would take it in. */
 const AFTER_HEAD = "\n[…]\n";
 
@@ -182,8 +194,11 @@ const AFTER_HEAD = "\n[…]\n";
  * sides clean to the same text as the whole does (so never inside an escape sequence, nor in a line a carriage return
  * or a backspace later writes over), where the redactor finds the same in them, cleaned and as printed, and, for the
  * head, where nothing at its end would take in the note that follows it (an unfinished escape sequence).
+ *
+ * Only the nearest CUT_TRIES places are tried: past them the answer is null (integ-z-4). `work` counts the places
+ * tried, for the tests.
  */
-export function clearCut(before: string, after: string, side: "before" | "after"): number | null {
+export function clearCut(before: string, after: string, side: "before" | "after", work?: { tried: number }): number | null {
   if (!beforeCut) return 0;
   try {
     const R = beforeCut;
@@ -197,16 +212,25 @@ export function clearCut(before: string, after: string, side: "before" | "after"
     }
     const clear = (c: number): boolean => {
       const left = text.slice(0, c), right = text.slice(c);
-      if (R(left) + R(right) !== all) return false;
+      // (How the text is built first: it costs the same however many values the vault has filled: integ-z-4.)
       const l = stripTerminal(left), r = stripTerminal(right);
-      if (l + r !== cleaned || R(l) + R(r) !== allCleaned) return false;
+      if (l + r !== cleaned) return false;
+      if (R(left) + R(right) !== all || R(l) + R(r) !== allCleaned) return false;
       return side === "after" || stripTerminal(left + AFTER_HEAD) === l + AFTER_HEAD;
     };
+    let tried = 0;
+    /** May another place be tried? */
+    const more = (): boolean => {
+      if (tried >= CUT_TRIES) return false;
+      tried++;
+      if (work) work.tried = tried;
+      return true;
+    };
     if (side === "before") {
-      for (let c = at; c > 0; c--) if (clear(c)) return at - c;
+      for (let c = at; c > 0 && more(); c--) if (clear(c)) return at - c;
       return null;
     }
-    for (let c = at; c < text.length; c++) if (clear(c)) return c - at;
+    for (let c = at; c < text.length && more(); c++) if (clear(c)) return c - at;
     return null;
   } catch {
     return null; // fail closed: nothing of text that couldn't be checked
