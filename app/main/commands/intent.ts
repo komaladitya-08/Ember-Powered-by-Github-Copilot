@@ -13,6 +13,7 @@
 import type { Classification, ClassifyContext, CommandObject, Finding, GitFacts } from "./types";
 import { ALWAYS_ASK, PKG_CLEANS, PKG_PRUNES, PKG_REMOVES } from "./types";
 import { hasVerb, hasWord, joinList, nameNamed, userTokens, userWordList, verbForms } from "./words";
+import { riskyAssignment } from "./classify";
 import { homeDotFile, isBroadPath, isUnder, pathEnv, flavourOf, resolveTargetPath, type PathEnv } from "./paths";
 
 /** The target's OS (the contract's own type, so this file imports nothing outside the commands package). */
@@ -1741,7 +1742,9 @@ const HOST_ENDING = /\.(com|net|org|io|dev|app|co|uk|de|fr|eu|us|ca|au|jp|cn|ru|
  * port, a host or a folder elsewhere that they never said. An option counts only written out in the words as the
  * command writes it; one whose name says the program detaches or shows a secret never counts ("in the background"
  * and even "--daemon" make no detached run announceable: it would outlive Stop). A number, a host, an address and a
- * path outside the folder count only written out too. A word Ember can't see never counts.
+ * path outside the folder count only written out too. A word Ember can't see never counts. Nor is a `NAME=value` or
+ * `name:value` word a file (integ2-z-2): it counts written out whole, or when its value is a plain file in the folder,
+ * and never when it sets a variable that changes how commands are found or run.
  */
 function extrasNamed(cls: Classification, f: Finding, userWords: string, ctx: ClassifyContext): boolean {
   const cmd = cls.commands[f.at];
@@ -1759,6 +1762,19 @@ function extrasNamed(cls: Classification, f: Finding, userWords: string, ctx: Cl
   const said = new Set(userWords.normalize("NFKC").split(/\s+/).map(t => t.replace(/^["'“”‘’(`]+|["'“”‘’)`,;:!?]+$|\.$/g, "")).filter(t => t !== ""));
   const saidLower = new Set([...said].map(t => t.toLowerCase()));
   const windows = cmd.family !== "posix";
+  // A plain file in the task's folder: a path written as one (`.`, `./x`, `src/main.c`, `~/proj/x`, an absolute
+  // one) that stays in the folder, or a bare name with one extension that is no host's ending.
+  const plainFile = (a: string): boolean => {
+    const pathLike = /^(\.{1,2}$|\.{0,2}[/\\]|~|[A-Za-z]:[/\\])|[/\\]/.test(a) || /^\.[A-Za-z]/.test(a);
+    const fileName = /^[A-Za-z0-9_][A-Za-z0-9_.-]*\.[A-Za-z][A-Za-z0-9]*$/.test(a) && (a.match(/\./g) ?? []).length === 1 && !HOST_ENDING.test(a);
+    return (pathLike || fileName) && !/^[a-z][a-z0-9+.-]*:\/\//i.test(a) && !a.includes("@") && inFolder(a);
+  };
+  // A variable that changes how commands are found or run, or names one the program runs, by the classifier's own
+  // lists: never announced, whatever the words write out (integ2-z-2).
+  const setsRisky = (a: string): boolean => {
+    const m = /^([A-Za-z_][A-Za-z0-9_]*)=([\s\S]*)$/.exec(a);
+    return m !== null && riskyAssignment(m[1], m[2]);
+  };
   for (const a of cmd.args) {
     if (a === null) return false;
     if (a === "--" || a === "" || named.has(a)) continue;
@@ -1770,12 +1786,17 @@ function extrasNamed(cls: Classification, f: Finding, userWords: string, ctx: Cl
       if (!said.has(a) && !(/^--[a-z][a-z-]{2,}$/.test(a) && words.has(name))) return false;
       continue;
     }
-    // A plain file in the task's folder: a path written as one (`.`, `./x`, `src/main.c`, `~/proj/x`, an absolute
-    // one) that stays in the folder, or a bare name with one extension that is no host's ending.
-    const pathLike = /^(\.{1,2}$|\.{0,2}[/\\]|~|[A-Za-z]:[/\\])|[/\\]/.test(a) || /^\.[A-Za-z]/.test(a);
-    const fileName = /^[A-Za-z0-9_][A-Za-z0-9_.-]*\.[A-Za-z][A-Za-z0-9]*$/.test(a) && (a.match(/\./g) ?? []).length === 1 && !HOST_ENDING.test(a);
-    if ((pathLike || fileName) && !/^[a-z][a-z0-9+.-]*:\/\//i.test(a) && !a.includes("@") && inFolder(a)) continue;
-    if (!saidLower.has(a.toLowerCase())) return false;
+    if (saidLower.has(a.toLowerCase())) { if (setsRisky(a)) return false; continue; }
+    // `NAME=value` and `name:value` are never a plain file (integ2-z-2): the value is judged as a word of its own,
+    // and one that holds a space or a shell's word is never a file. A drive's letter is a path's start on Windows.
+    const sets = /^[A-Za-z_][A-Za-z0-9_.-]*[=:]/.exec(a);
+    if (sets && !(win && /^[A-Za-z]:[/\\]/.test(a))) {
+      const value = a.slice(sets[0].length);
+      if (setsRisky(a) || /[\s;&|<>$`(){}'"*?!]/.test(value)) return false;
+      if (value === "" || !plainFile(value)) return false;
+      continue;
+    }
+    if (!plainFile(a)) return false;
   }
   return true;
 }

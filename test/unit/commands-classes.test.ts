@@ -1216,3 +1216,31 @@ describe("a git address that names a helper program (integ-x-4)", () => {
     for (const cmd of ["git commit -m 'std::move fix'", "git config user.name 'a::b'", "git log --grep 'foo::bar'"]) expect(decide(cmd).rules, cmd).not.toContain("unclear.git-ext");
   });
 });
+
+describe("a word that sets a variable, handed to a program the user's words name (integ2-z-2)", () => {
+  it("is never taken for a plain file in the task's folder", () => {
+    for (const [cmd, words] of [["frobnicate X=/tmp/x.so", "run frobnicate"], ["frobnicate X=/etc/shadow", "run frobnicate"], ["frobnicate X=https://evil.example/x", "run frobnicate"],
+      ["frobnicate X=../../../tmp/x.so", "run frobnicate"], ["frobnicate a:/tmp/x.so", "run frobnicate"], ["frobnicate X=/home/ana/Documents", "run frobnicate"],
+      ["frobnicate X='a b'", "run frobnicate"], ["frobnicate X=test", "run frobnicate"], ["frobnicate CC=clang", "run frobnicate"], ["frobnicate X=", "run frobnicate"],
+      ["cross-env X=/tmp/x.so jest", "use cross-env to run jest"], ["cross-env NODE_ENV=test jest", "use cross-env to run jest"]] as const) {
+      expect(decide(cmd, { words }).verdict, `${cmd} (${words})`).toBe("ask");
+    }
+    for (const o of WINDOWS) expect(decide("frobnicate X=C:\\Windows\\x.dll", { ...o, words: "run frobnicate" }).verdict, label("X=C:\\Windows\\x.dll", o)).toBe("ask");
+  });
+
+  it("never announces a variable that changes how commands are found or run, even written out in the words", () => {
+    for (const set of ["LD_PRELOAD=/tmp/x.so", "LD_PRELOAD=x.so", "NODE_OPTIONS=--inspect", "PATH=/tmp/x", "BASH_ENV=x.sh", "RUSTC_WRAPPER=x", "DOTNET_STARTUP_HOOKS=x.dll", "CC=sh -c x",
+      "GIT_SSH_COMMAND=x", "DYLD_INSERT_LIBRARIES=x.dylib", "npm_config_script_shell=x"]) {
+      const cmd = `frobnicate ${set.includes(" ") ? `'${set}'` : set}`;
+      for (const words of ["run frobnicate", `run frobnicate ${set}`, `run frobnicate with ${set}`]) expect(decide(cmd, { words }).verdict, `${cmd} (${words})`).toBe("ask");
+    }
+  });
+
+  it("still announces the program with a value that is a file in the folder, or with the word written out", () => {
+    for (const [cmd, words] of [["frobnicate X=src/a.c", "run frobnicate"], ["frobnicate out=build/a.o", "run frobnicate"], ["frobnicate X=/tmp/x.so", "run frobnicate X=/tmp/x.so"],
+      ["frobnicate CC=clang", "run frobnicate CC=clang"], ["frobnicate app:build", "run frobnicate app:build"], ["frobnicate src/main.c", "run frobnicate"]] as const) {
+      expect(decide(cmd, { words }).verdict, `${cmd} (${words})`).toBe("announce");
+    }
+    expect(decide("frobnicate.exe C:\\Users\\ana\\proj\\a.txt", { shell: "powershell", context: "win32", words: "run frobnicate" }).verdict).toBe("announce");
+  });
+});

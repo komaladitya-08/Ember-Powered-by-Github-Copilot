@@ -1843,6 +1843,15 @@ function namesProgram(name: string, value: string | null, raw?: string): boolean
 }
 
 /**
+ * Whether a `NAME=value` word sets a variable that changes how commands are found or run, or names a command the
+ * program runs: the lists the shell's own assignments and `env`'s are judged by (RISKY_ASSIGNMENTS, its prefixes,
+ * PROGRAM_CMD_VARS and the options variables), for the words a user's request may announce (intent.ts, integ2-z-2).
+ */
+export function riskyAssignment(name: string, value: string | null): boolean {
+  return RISKY_ASSIGNMENTS.has(name) || RISKY_ASSIGNMENTS.has(name.toUpperCase()) || RISKY_ASSIGNMENT_PREFIX.test(name) || namesProgram(name, value);
+}
+
+/**
  * A build tool's own sources, on top of the shared PROJECT_FILE list: `go run .` and `cargo run` build a folder, so a
  * downloaded `.go`/`go.mod` or `.rs` there runs (commands-remote-r8-2). Kept per tool, never widened into PROJECT_FILE.
  */
