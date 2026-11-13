@@ -293,7 +293,8 @@ environment, only through `scripts/runtime-env-live.sh`, which gives it a networ
   - **Tell Ember about you** (Settings › Memory, and first run's optional personalisation detour): what to call you, your role
     and work, the apps you use most, short or detailed and spoken or not, your timezone or hours, each optional, kept
     as things you told it. "Ember, get to know me" asks the same aloud; an answer heard where Ember can't tell you
-    from its speakers isn't kept. Spoken or not changes Ember's speaking choice in Voice too. While memory is paused
+    from its speakers isn't kept, and asked for in such a voice (on Windows and macOS, or with Listen once) Ember
+    says so and opens the form instead, which offers the spoken version only on Linux with the speakers' check on. Spoken or not changes Ember's speaking choice in Voice too. While memory is paused
     (your own model provider or your organisation's model service in force), both places say why instead of asking,
     and first run's step offers only Continue.
   - **Better recall** (under the list, while memory is on): **Download (23 MB)** fetches a small language model
@@ -804,7 +805,9 @@ call, tell, invite…), keeps every name as heard, and a person's name from Memo
 something up (find, who, what, where…). **Suggest what I might say next** shows two or three likely next requests under
 Ember's answers and in Ask Ember, made on this computer; choosing one asks Ember as typing it would, but never counts
 as your own words for a command (a dangerous one always asks), and nothing risky is suggested unless built from what
-you just asked. Both are in “Before Ember starts” (added in `CONSENT_VERSION` 2). After a “Hey Ember” request the microphone stays open as a conversation
+you just asked. They are made from what was asked since Ember started, kept in memory only; signing out, another
+account signing in and Memory's Forget everything let go of it (`PersonalVoice.forgetSession`), so the next person is
+never offered the last one's requests. Both are in “Before Ember starts” (added in `CONSENT_VERSION` 2). After a “Hey Ember” request the microphone stays open as a conversation
 (**Keep listening after I call Ember**, on by default): what you say next needs no name, also while Ember speaks and works,
 until “That's all” or 30 seconds after everything has gone quiet (`CONVERSATION_IDLE_MS`, app/voice/engine.ts). Speech over
 Ember drops its voice at once (`duck`, 0.15 of its level: without it the echo canceller left almost nothing of the user's
@@ -1509,7 +1512,7 @@ reads the new policy whole. Every key is optional:
 | `confirmEveryAction` | A click before every action and every command, every time |
 | `maxActionsPerMinute` | At most this many actions a minute across all tasks together (1 to 40; Ember's own limit is 40). A step past it pauses until the minute frees a slot, its card saying "Pausing to keep to 20 steps a minute…", rather than ending the task |
 | `allowGrants` | `false` removes "Always in this app", and Ember asks before working in an app even when the user asked for help in it |
-| `features.memory` | `false`: Ember remembers nothing between runs ("Remember what I tell you" off, managed), learns nothing on its own (no extraction, refinement or questions, so none of memory's own model requests), and "Tell Ember about you" says memory is managed; a memory file already there is left unused (signing out still deletes it). Better recall's model isn't downloaded or run either |
+| `features.memory` | `false`: Ember remembers nothing between runs ("Remember what I tell you" off, managed), learns nothing on its own (no extraction, refinement or questions, so none of memory's own model requests), and "Tell Ember about you" says memory is managed; a memory file already there is left unused (signing out still deletes it), and Settings › Memory says "Your organisation has turned memory off" and still lists what was saved for its verified owner, with Forget and Forget everything (no Correct…, and a Forget has no Undo: nothing is put back). Better recall's model isn't downloaded or run either. Under a lockdown (a policy Ember can't use, or one that changed while it ran) nothing connects, so the saved memory's owner can't be checked: it stays hidden, Memory says the policy has stopped Ember, and Forget everything clears it |
 | `features.updates` | `false`: Ember never asks GitHub about new versions ("Tell me when a new version is out" off, managed) |
 | `features.routines` | `false`: no routines, and reminders end when Ember quits ("Keep my routines and reminders" off, managed); a routines file already there is left unused (signing out still deletes it). An Ember from before this key reads a policy that has it as broken and locks down, so update Ember first |
 | `features.extensions` | `false`: no extension loads or runs, and none can be added (the Extensions section says so and lists what was added, read only); what was installed is left untouched and unused. LOCKDOWN turns it off too. An Ember from before this key reads a policy that has it as broken and locks down, so update Ember first |

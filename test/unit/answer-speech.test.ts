@@ -43,6 +43,7 @@ function wiring() {
     const signInAbort = { abort() {} }, keeper = { use() {} }, tokens = { clear() {} }, providers = { forget() {} }, refusedTokens = new Set();
     const conversationNow = (entries = []) => entries;
     const forgetProject = () => {};
+    const forgetSessionWords = () => {};
     ${speech}
     ${signOut}
     return {

@@ -7,11 +7,13 @@ export type MemoryOwnership = "waiting" | "ready" | "locked";
 /**
  * Why saved memory isn't open, so Home can say it truthfully (memory-2, integrations-2): Ember is still connecting
  * (`checking`), nobody is signed in to GitHub (`signed-out`), the user's own model provider or the organisation's model
- * service is in force and memory works only with GitHub Copilot (`own-provider`, `org-provider`), or GitHub didn't
- * answer (`unverified`). Only the last two belong to the saved memory itself: another GitHub account's
- * (`other-account`), or with no owner Ember can read (`unowned`). None of the first five is a reason to erase it.
+ * service is in force and memory works only with GitHub Copilot (`own-provider`, `org-provider`), GitHub didn't
+ * answer (`unverified`), or the organisation's policy has stopped Ember connecting at all (`lockdown`: it can't be
+ * used, or changed while Ember ran; memory-r9-3). Only the last two belong to the saved memory itself: another GitHub
+ * account's (`other-account`), or with no owner Ember can read (`unowned`). None of the first five is a reason to
+ * erase it; a lockdown may last until an administrator mends the policy, so what is saved can be cleared meanwhile.
  */
-export type MemoryOwnerReason = "checking" | "signed-out" | "own-provider" | "org-provider" | "unverified" | "other-account" | "unowned";
+export type MemoryOwnerReason = "checking" | "signed-out" | "own-provider" | "org-provider" | "unverified" | "lockdown" | "other-account" | "unowned";
 /** Why there is no account to check: what the host says when it has none. */
 export type MemoryWait = Exclude<MemoryOwnerReason, "other-account" | "unowned">;
 

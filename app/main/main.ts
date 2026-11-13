@@ -110,6 +110,7 @@ import { hello, keysLine } from "./hello";
 import { TurnLatency } from "./turn-latency";
 import { ACK_MS, acknowledgement, afterAck } from "./acknowledge";
 import { MemoryService } from "./memory/service";
+import { memoryViewOf } from "./memory/view";
 import { githubMemoryAccount, MemoryEpochAccount, MemoryOwner, type MemoryWait } from "./memory/owner";
 import { MemoryLearning, linesAfterAskedForget, linesAfterForget, linesAfterRestore, withLearned, type MemoryLine } from "./memory/learning";
 import type { OneShot } from "./memory/learn";
@@ -1033,7 +1034,7 @@ function start(): void {
    * Settings › Memory: at its list for a forget request, else at its note's words (shown while memory is off or waits
    * for it). Never at the note's "I agree, remember", where an Enter or a space typed on would agree (memory-r7).
    */
-  const openMemory = (at: "list" | "note" = "note") => { showHome(); sendToHome(IPC.focusSection, at === "list" ? "memory:memory-query" : "memory:memory-consent-text"); };
+  const openMemory = (at: "list" | "note" | "about" = "note") => { showHome(); sendToHome(IPC.focusSection, at === "list" ? "memory:memory-query" : at === "about" ? "memory:about-you" : "memory:memory-consent-text"); };
 
   const sendToHome = (channel: string, value: unknown) => {
     const send = () => { if (home && !home.isDestroyed()) home.webContents.send(channel, value); };
@@ -1362,6 +1363,15 @@ function start(): void {
    */
   let personalRef: PersonalVoice | null = null;
   /**
+   * Sign-out, another account or Forget everything: what the person asked this session goes, so the next one is never
+   * offered it as a suggestion, and the chips showing go with it (memory-r9-2).
+   */
+  const forgetSessionWords = () => {
+    recentAsks = [];
+    personalRef?.forgetSession();
+    if (lastState.suggest) showState({ suggest: null });
+  };
+  /**
    * What the Ask box suggests now (askSuggestions): none while a question is up, those that follow the answer only
    * while it shows, and those that answer its last words only while those show: opened in full, once the overlay says
    * its end has, or without a compositor the corner card (companion-r2-1, companion-c2-2, companion-v6-2,
@@ -1665,13 +1675,8 @@ function start(): void {
     if (!memoryOn()) learningRef?.stopNow();
     betterRecall.settingsChanged();
   });
-  const memoryView = () => ({
-    // What holds now, then what is no longer true: it is kept and can reach the model, so it is shown too (memory-c7-2).
-    rows: memoryAllowed() && consented() && memoryOwner.ready ? memory.review() : [],
-    ownership: memoryOwner.state, epoch: memoryEpoch, reason: memoryOwner.reason, erasesOnSignOut: memoryOwner.mayEraseOnSignOut,
-    // After the rows, which read memory.json first: what was wrong with it, only for the account's open memory (memory-r2).
-    trouble: memoryOwner.ready ? memory.trouble : null,
-  });
+  // The verified account's saved facts, also while the organisation has memory off: theirs to see and forget (memory-r9-3).
+  const memoryView = () => memoryViewOf({ consented: consented(), owner: memoryOwner, epoch: memoryEpoch, memory });
   const memory: MemoryService = new MemoryService({ dir: userData, log: log.child("memory"), semantic: betterRecall.semantic, inForce: memoryOn, onChange: () => broadcast(IPC.memoryChanged, memoryView()) });
   const publishMemoryOwner = () => {
     if (!memoryOn()) learningRef?.stopNow();
@@ -1709,6 +1714,8 @@ function start(): void {
     paused: () => (memoryConfigured() ? (memoryOwner.ready ? null : memoryOwner.reason ?? "checking")
       : consented() && memoryAllowed() && memoryNoteOutdated(settings.get().memory) ? "note" : null),
     questionsOn: () => settings.get().memory.questions,
+    // Ember never asks who or what an installed app is (memory-r9-8).
+    apps: () => sys.apps.list().map(a => a.name),
     askedAt: () => settings.get().memory.askedAt,
     setAskedAt: at => { try { settings.update({ memory: { ...settings.get().memory, askedAt: at } }); } catch (err) { log.warn("memory.asked_not_saved", { err }); } },
     idle: () => agent?.idle ?? false,
@@ -1768,6 +1775,7 @@ function start(): void {
     taskDone: (title: string, result: string, asked?: number) => learning.taskDone(title, result, asked),
     intent: (text: string, how: { own: boolean }) => learning.intent(text, how),
     rememberNote: (text: string) => learning.rememberNote(text),
+    conversationEnded: () => learning.conversationEnded(),
   };
   // Extensions (app/main/extensions/, docs/DEVELOPING.md "Extensions"): plugins' MCP tools, used only while the user has
   // them on and agreed, and the organisation allows them. Home's Extensions section calls this (ExtensionsApi).
@@ -2280,6 +2288,7 @@ function start(): void {
           finally {
             refusedTokens.clear();
             askHistory = [];
+            forgetSessionWords();
             await agent?.start(null);
           }
         }
@@ -2763,6 +2772,8 @@ function start(): void {
   // Through learning: what waits to be learned, the "Ember learned" lines and Better recall's vectors go too.
   ipcMain.handle(IPC.memoryForgetAll, guard(() => {
     learning.forgetAll();
+    // What was asked this session is about the person too: no suggestion comes from it afterwards (memory-r9-2).
+    forgetSessionWords();
     // The saved copy of the conversation is part of what Ember keeps about the person: it goes too.
     const savedGone = agent?.forgetHistory() ?? true;
     memoryOwner.clear();
@@ -3672,7 +3683,7 @@ function start(): void {
         broadcast(IPC.conversationChanged, conversationNow(entries));
       },
       // Another account signed in: its conversation went, and with it what the ask box remembers (as at sign-out).
-      onAccountChanged: () => { askHistory = []; forgetProject("all"); },
+      onAccountChanged: () => { askHistory = []; forgetSessionWords(); forgetProject("all"); },
       // A reminder the user set is due (reminders.ts): said too when replies are spoken, and a notification while away.
       onReminder: r => {
         // After what Ember is saying (an answer under way), not cutting it off.

@@ -15,8 +15,9 @@ import { consolidateInSlices } from "./consolidate";
 import type { SemanticMemory } from "./embed";
 import { memoryBlock } from "./format";
 import { ENTITY_KINDS, MAX_FACT_CHARS, type AddResult, type Entity, type EntityKind, type Fact, type GraphClock, MemoryGraph, type NewFact, type Source } from "./graph";
-import { memoryRefusal } from "./guard";
+import { factRefusal } from "./fact-guard";
 import { recall, type Recalled } from "./recall";
+import { profileKind, profileSaid } from "./profile";
 import { memoryFile, type MemoryFile } from "./store";
 import { samePolarity, terms } from "./text";
 
@@ -101,6 +102,15 @@ export function ownWords(fact: string, said: string): boolean {
  */
 export function ownFact(fact: string, said: string): boolean {
   return ownWords(fact, said) && samePolarity(fact, said);
+}
+
+/**
+ * Whose a fact the model saves is: the user's when it is mostly their own words said the same way round (`ownFact`),
+ * or it is about them alone (`about`) and their own words this turn tell Ember the name or the answer length it holds
+ * (`profileSaid`: memory-r9-5, memory-x9-1); otherwise the conversation's.
+ */
+export function rememberedSource(fact: string, said: string, about: readonly AboutRef[] = [{ name: "User" }]): Extract<Source, "user" | "conversation"> {
+  return ownFact(fact, said) || profileSaid(fact, about, said) ? "user" : "conversation";
 }
 
 /** The predicates of what the user said about themselves that bear on every request (the introduction's: ./intro.ts). */
@@ -201,7 +211,11 @@ export class MemoryService {
     const refs = (about.length ? about : [{ name: "User", kind: "person" }]).map(a => ({ name: a.name, kind: kindOf(a.kind) }));
     const source: Source = ownFact(fact, said) ? "user" : "conversation";
     if (this.unreadable) return "Not remembered: Ember couldn't read its saved memory, so nothing new is kept until it starts again. Tell the user plainly.";
-    const r = this.g.add({ text: fact, about: refs, source, ...(replaces ? { predicate: replaces, single: true } : {}) });
+    // What to call the user, or how long answers should be, told in their own words this turn and saved as a fact
+    // about them alone: the profile's own fact, theirs, which replaces the one before whatever the model called the
+    // relation (memory-r9-5). A fact about anyone or anything else is kept as the model gave it (memory-x9-1).
+    const own = profileSaid(fact, refs, said, source === "user");
+    const r = this.g.add(own ?? { text: fact, about: refs, source, ...(replaces ? { predicate: replaces, single: true } : {}) });
     if (r.kind === "refused") return `Not remembered: ${r.reason}. Tell the user plainly if they asked you to remember it.`;
     this.dirty();
     this.o.semantic?.changed(this.g);
@@ -209,8 +223,29 @@ export class MemoryService {
     // Saving is failing (memory.json couldn't be saved this run): kept for now, and the model is told so it never
     // promises more (memory-r2).
     const unkept = this.problem === "unsaved" ? " Saving memory on this computer is failing, so tell the user it may be gone when Ember closes." : "";
-    if (r.kind === "reinforced") return `Already remembered [${r.fact.id}].${unkept}`;
-    return `Remembered [${r.fact.id}]${r.closed.length ? `, replacing ${r.closed.map(f => `[${f.id}]`).join(", ")}` : ""}.${unkept}`;
+    const beside = this.besideUsers(r.fact);
+    if (r.kind === "reinforced") return `Already remembered [${r.fact.id}].${beside}${unkept}`;
+    return `Remembered [${r.fact.id}]${r.closed.length ? `, replacing ${r.closed.map(f => `[${f.id}]`).join(", ")}` : ""}.${beside}${unkept}`;
+  }
+
+  /**
+   * What the model is told when a fact that isn't the user's own stands beside what they told Ember about the same
+   * thing (the same single relation, or the profile's name or answer length): the weaker source never overrules it
+   * (./graph.ts), so that one still holds, and Ember says so rather than "I'll remember that" (memory-r9-5). And when a
+   * fact of the user's own that says only their name or answer length stands beside the profile's, in words Ember
+   * didn't take as telling it ("Name is Sam Lee, that is all"): the profile's still goes with every request, and
+   * Ember says that too (memory-x9-4). "" otherwise.
+   */
+  private besideUsers(fact: Fact): string {
+    const kind = profileKind(fact.text);
+    const own = fact.source === "user";
+    const theirs = this.g.allFacts(true).find(f => f.id !== fact.id && f.source === "user" && f.entities[0] === fact.entities[0] && f.text !== fact.text
+      && (own ? !!kind && f.predicate === kind && fact.predicate !== kind : (!!fact.predicate && f.predicate === fact.predicate) || (!!kind && f.predicate === kind)));
+    if (!theirs) return "";
+    const always = (PROFILE_PREDICATES as readonly string[]).includes(theirs.predicate) ? " and goes with every request" : "";
+    const held = `[${theirs.id}] “${theirs.text.replace(/[“”]/g, "")}”, which still holds${always}`;
+    if (own) return ` It didn't replace ${held}: Ember couldn't tell from the user's words that this takes its place. Tell the user plainly, and that they can say it plainly (“Call me …”, “Give me shorter answers”) or use Correct… in Settings › Memory.`;
+    return ` It didn't replace what the user told Ember themselves, ${held}: only their own words change it. Tell the user plainly, and that they can say it again themselves or use Correct… in Settings › Memory.`;
   }
 
   /** The facts that bear on `query` (each counts as used); `semantic`: its matches by meaning (./embed.ts), if any. */
@@ -264,7 +299,7 @@ export class MemoryService {
     }
     const clean = text.replace(/\s+/g, " ").trim();
     if (!clean || clean.length > MAX_FACT_CHARS) throw new Error(`Keep the correction between 1 and ${MAX_FACT_CHARS} characters.`);
-    if (memoryRefusal(clean)) throw new Error("This correction holds a secret, so Ember hasn't saved it.");
+    if (factRefusal(clean)) throw new Error("This correction holds a secret, so Ember hasn't saved it.");
     const revision = (current.revision ?? 0) + 1;
     if (!Number.isSafeInteger(revision)) throw new Error("This memory changed. Close this edit and open it again before saving.");
     const next = new MemoryGraph(structuredClone(this.g.toJSON()), this.o.clock);
@@ -423,6 +458,11 @@ export class MemoryService {
     this.problem = null;
     this.o.log.info("memory.forgot_all");
     try { this.o.onChange?.(); } catch { this.o.log.warn("memory.delete_notice_failed"); }
+  }
+
+  /** How many facts are kept: what holds now, or (`history`) with what is no longer true, as `review` lists it. */
+  kept(history = false): number {
+    return history ? this.review().length : this.g.allFacts(true).length;
   }
 
   /** What Ember remembers now, newest first (what still holds). */

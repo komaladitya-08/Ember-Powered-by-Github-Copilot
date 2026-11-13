@@ -8,6 +8,7 @@ import { DEFAULT_SETTINGS } from "../../app/main/settings";
 import { FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
 import type { MemoryCorrection } from "../../app/shared/memory-correction";
 import type { EmberHomeApi, MemoryView, VoiceWord } from "../../app/shared/ipc";
+import { FALLBACK_SHORTCUTS, SHORTCUTS, heldShortcuts, shownShortcuts } from "../../app/shared/shortcuts";
 
 declare global {
   interface Window {
@@ -57,7 +58,8 @@ it.skipIf(process.env.EMBER_MEMORY_TEST !== "1")("keeps Undo truthful, preserves
         if (name === "memory") return async () => ({ rows: seed.facts, ownership: "ready" });
         if (name === "voiceWords") return async () => seed.words;
         if (name === "reminders") return async () => [];
-        if (name === "conversation") return async () => [{ t: "2026-11-04T12:00:00Z", who: "learned", text: "Prefers tea", fact: "fact-0" }];
+        // (Learned just now: its button says Undo for ten minutes, then Forget: memory-r9-10.)
+        if (name === "conversation") return async () => [{ t: new Date().toISOString(), who: "learned", text: "Prefers tea", fact: "fact-0" }];
         if (name === "forgetMemory") return () => { test.forgetCalls++; return new Promise<void>((resolve, reject) => { test.resolve = resolve; test.reject = message => reject(new Error(message)); }); };
         if (name === "forgetVoiceWord") return async (word: VoiceWord) => { test.words = test.words.filter(row => JSON.stringify(row) !== JSON.stringify(word)); return test.words; };
         if (name === "forgetVoiceWords") return async () => { throw new Error("Private filesystem detail"); };
@@ -372,8 +374,8 @@ it.skipIf(process.env.EMBER_MEMORY_TEST !== "1")("forgets one memory for two Ent
       const push = () => listeners.onMemory?.({ rows: shown, ownership: "ready", reason: null });
       // The conversation's memory lines, changed in place as main changes them (memory-c1-3).
       let convo: { t: string; who: "learned"; text: string; fact?: string; forgot?: string; derived?: number; again?: true }[] = [
-        { t: "2026-11-04T12:00:00Z", who: "learned", text: "Prefers tea", forgot: "token-forgot-1" },
-        { t: "2026-11-04T12:01:00Z", who: "learned", text: "Uses Firefox", fact: "c" },
+        { t: new Date(Date.now() - 60_000).toISOString(), who: "learned", text: "Prefers tea", forgot: "token-forgot-1" },
+        { t: new Date().toISOString(), who: "learned", text: "Uses Firefox", fact: "c" },
       ];
       const pushConvo = () => listeners.onConversation?.(convo);
       window.ember = new Proxy({}, { get: (_target, name: string) => {
@@ -785,12 +787,16 @@ it.skipIf(process.env.EMBER_MEMORY_TEST !== "1")("never lands a forget or rememb
 }, 60_000);
 
 /** Built Home at Settings › Memory with `view` as main's first answer: `run` gets the page and a way to push another view. */
-async function atMemory(view: MemoryView, run: (page: Page, push: (next: MemoryView) => Promise<void>) => Promise<void>): Promise<void> {
+async function atMemory(view: MemoryView, run: (page: Page, push: (next: MemoryView) => Promise<void>) => Promise<void>, managed: string[] = [], os?: "linux" | "win32"): Promise<void> {
   const settings = structuredClone(DEFAULT_SETTINGS);
   settings.onboarded = true; settings.consent = { version: 99, at: "2026-11-04T12:00:00Z" };
-  settings.memory = { ...settings.memory, on: true, consent: { version: 99, at: "2026-11-04T12:00:00Z" } };
+  // (`managed` with "memory": the settings as main gives them under the organisation's policy, memory off.)
+  settings.memory = { ...settings.memory, on: !managed.includes("memory"), consent: { version: 99, at: "2026-11-04T12:00:00Z" } };
   const status = { appVersion: "0.1.1", settings, environment: { checks: [], versions: { node: "24", electron: "44", chrome: "152" } }, logFile: "/test/ember.log", settingsNotice: null,
-    admin: { source: null, error: null, managed: [], features: {}, provider: null, confirmEveryAction: false, allowGrants: true, retentionDays: 30, neverLook: [] } };
+    admin: { source: managed.length ? "/etc/ember/policy.json" : null, error: null, managed, features: managed.includes("memory") ? { memory: false } : {}, provider: null, confirmEveryAction: false, allowGrants: true, retentionDays: 30, neverLook: [] },
+    // (`os`: the platform as main reports it; only Linux can tell the user's voice from its speakers.)
+    ...(os ? { platform: { os, shortcuts: shownShortcuts(SHORTCUTS[os], heldShortcuts(SHORTCUTS[os], FALLBACK_SHORTCUTS[os], [])), dataDir: "~/.config/ember", settingsFile: "~/.config/ember/settings.json",
+      auditCopy: null, micIndicator: "", permissionsNote: "", speakerRejection: os === "linux", outputLevel: false, fixLabels: {}, desk: os === "linux", autostartNote: null } } : {}) };
   const browser = await chromium.launch({ executablePath: process.env.EMBER_CHROMIUM_PATH ?? "/usr/bin/chromium", headless: true, args: ["--no-sandbox"] });
   const dist = path.resolve("dist");
   const server = http.createServer((req, res) => {
@@ -911,3 +917,61 @@ it.skipIf(process.env.EMBER_MEMORY_TEST !== "1")("takes a failed Forget's alert 
   });
 }, 60_000);
 
+
+it.skipIf(process.env.EMBER_MEMORY_TEST !== "1")("lists what was saved while the organisation has memory off, with Forget and Forget everything but no Correct… and no Undo, and gives a lockdown its own words (memory-r9-3)", async () => {
+  const rows: MemoryView["rows"] = [{ id: "d", text: "Has type 1 diabetes", source: "user", at: "2026-11-04" }, { id: "g", text: "Works at Globex", source: "conversation", at: "2026-11-04" }];
+  await atMemory({ rows, ownership: "ready", reason: null }, async (page, send) => {
+    await expect.poll(() => page.locator("#memory-list [data-memory-forget]").count()).toBe(2);
+    // The switch is off and locked, and the pane says why in words: never "Nothing remembered." over what is kept.
+    expect(await page.locator("#memory-on").isChecked()).toBe(false);
+    expect(await page.locator("#memory-on").isDisabled()).toBe(true);
+    expect(await page.locator("#memory-managed").innerText()).toBe("Your organisation has turned memory off, so Ember keeps nothing new and uses none of this. What it saved before is still on this computer: you can see it and forget it here. A Forget can't be undone while memory is off.");
+    expect(await page.locator("#memory-list").innerText()).not.toContain("Nothing remembered");
+    expect(await page.locator("#memory-count").innerText()).toBe("2 of 2 memories");
+    // Nothing is saved to memory the organisation turned off: no Correct…; Forget and Forget everything stay.
+    expect(await page.locator("#memory-list [data-memory-correct]:visible").count()).toBe(0);
+    expect(await page.locator("#memory-forget-all").isVisible()).toBe(true);
+    for (const width of [560, 1000]) {
+      await page.setViewportSize({ width, height: 900 });
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${width}px`).toBe(true);
+      if (process.env.EMBER_UI_EVIDENCE) {
+        fs.mkdirSync(process.env.EMBER_UI_EVIDENCE, { recursive: true });
+        await page.screenshot({ path: path.join(process.env.EMBER_UI_EVIDENCE, `memory-managed-off-${width}.png`) });
+      }
+    }
+    // A Forget goes to main, and its line offers no Undo, which main would refuse, and says so.
+    await page.locator("#memory-list li").first().locator("[data-memory-forget]").click();
+    await expect.poll(() => page.locator("#memory-forgotten-text").innerText()).toBe("Forgotten: “Has type 1 diabetes”. It can't be put back while your organisation has memory off.");
+    expect(await page.evaluate(() => (window as unknown as { __c72: { forgot: string[] } }).__c72.forgot)).toEqual(["d"]);
+    expect(await page.locator("#memory-undo").isHidden()).toBe(true);
+    expect(await page.evaluate(() => document.activeElement?.id)).toBe("memory-forgotten-text");
+    // With nothing saved, it is true that nothing is remembered.
+    await send({ rows: [], ownership: "ready", reason: null });
+    await expect.poll(() => page.locator("#memory-list").innerText()).toBe("Nothing remembered.");
+    expect(await page.locator("#memory-managed").innerText()).toBe("Your organisation has turned memory off.");
+    expect(await page.locator("#memory-forget-all").isHidden()).toBe(true);
+    // A lockdown (a policy Ember can't use): its own words, never a GitHub check that comes back, and Forget everything.
+    await send({ rows: [], ownership: "locked", reason: "lockdown", erasesOnSignOut: false });
+    await expect.poll(() => page.locator("#memory-owner").innerText()).toBe("Your organisation's policy has stopped Ember for now, so it can't check whose saved memory this is. It stays hidden on this computer, and Forget everything clears it.");
+    expect(await page.locator("#memory-managed").isHidden()).toBe(true);
+    expect(await page.locator("#memory-list").isHidden()).toBe(true);
+    expect(await page.locator("#memory-forget-all").isVisible()).toBe(true);
+    if (process.env.EMBER_UI_EVIDENCE) await page.screenshot({ path: path.join(process.env.EMBER_UI_EVIDENCE, "memory-lockdown.png") });
+  }, ["memory"]);
+}, 60_000);
+
+it.skipIf(process.env.EMBER_MEMORY_TEST !== "1")("offers the spoken “get to know me” under Tell Ember about you only where Ember can tell the user's voice from its speakers (memory-r9-6)", async () => {
+  const LEAD = "A few short questions, each one optional. Ember keeps your answers as things you told it, and you can forget any of them here.";
+  const hint = (page: Page) => page.locator("#about-you > p.hint").last().innerText();
+  // Linux, where a spoken request is checked against the speakers: the spoken version is offered.
+  await atMemory({ rows: [], ownership: "ready", reason: null }, async page => {
+    await expect.poll(() => hint(page)).toBe(`${LEAD} You can also say “Ember, get to know me” for a short spoken version.`);
+  }, [], "linux");
+  // Windows: every spoken request is unchecked, so the interview could keep nothing, and only the form is offered.
+  await atMemory({ rows: [], ownership: "ready", reason: null }, async page => {
+    await expect.poll(() => page.locator("#ay-name").isVisible()).toBe(true);
+    expect(await hint(page)).toBe(LEAD);
+    expect(await page.locator("#about-you").innerText()).not.toContain("get to know me");
+    if (process.env.EMBER_UI_EVIDENCE) await page.locator("#about-you").screenshot({ path: path.join(process.env.EMBER_UI_EVIDENCE, "about-you-no-spoken-version.png") });
+  }, [], "win32");
+}, 90_000);
