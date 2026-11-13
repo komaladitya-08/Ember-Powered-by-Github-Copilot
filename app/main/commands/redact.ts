@@ -59,6 +59,8 @@ export const TOKEN_PATTERNS: readonly RegExp[] = [
   /\b\d{8,10}:[A-Za-z0-9_-]{35}(?![A-Za-z0-9_-])/g,
   /\b[MNO][A-Za-z0-9_-]{23,25}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,40}(?![A-Za-z0-9_-])/g,
   /\$(?:1|2[aby]?|5|6|y|apr1|argon2(?:id|i|d)?)\$[A-Za-z0-9./$=,+-]{20,}/g,
+  // Django's generated secret key (commands-remote-r10-6).
+  /\bdjango-insecure-[^\s"',;]{8,}/g,
 ];
 
 /**
@@ -94,6 +96,20 @@ const VALUE_PATTERNS: readonly RegExp[] = [
   // (regression review of round seven, safety-privacy-x7-2).
   /("auth"\s{0,8}:\s{0,8}")[A-Za-z0-9+/]{16,}={0,2}(?=")/g,
   /(\b(?:(?:machine[ \t]+\S+|default)(?:[ \t]+(?:login|account)[ \t]+\S+){1,2}|machine[ \t]+[\w-]+(?:\.[\w-]+)+)[ \t]+password[ \t]+)\S+/g,
+  // A webhook's address is its own key: whoever has it can post (Slack, Discord, Teams; commands-remote-r10-6).
+  /(hooks\.slack\.com\/(?:services|workflows|triggers)\/)[A-Za-z0-9_/-]+/g,
+  /(discord(?:app)?\.com\/api\/webhooks\/\d{1,30}\/)[A-Za-z0-9_-]+/g,
+  /(\.webhook\.office\.com\/webhookb2\/)[^\s"'<>]+/g,
+  // A variable as `env`, `ps e` and a .env file print it whose name ends in a short secret word after a `_` or is that
+  // word (`DB_PASS=`, `REDIS_AUTH=`, `MYSQL_PW=`, `SIGNING_KEY=`, `AUTH=`, `PASSPHRASE=`), which KEY_VALUE's words
+  // miss; never a variable, a placeholder or what is already hidden, nor PWD and OLDPWD, which are folders
+  // (commands-remote-r10-6). The name is at most 64
+  // characters before its word, so each start is a bounded look.
+  /((?<![A-Za-z0-9_.-])(?!(?:OLD)?PWD=)(?:[A-Za-z0-9_]{0,64}_)?(?:PASS|PASSPHRASE|AUTH|PW|PWD|KEY|pass|passphrase|auth|pw|pwd|key)=["']?)(?![$%{<*[])[^\s"',;]+/g,
+  // A table's row whose first column names a secret, as `pulumi config --show-secrets`, `pulumi stack output` and
+  // `netlify env:list` print them (`dbPassword   Tr0ub4dor&3`, `│ DB_PASSWORD │ hunter2 │`): the next column is hidden
+  // (commands-remote-c10-1). Only at a line's start, the name a bounded look.
+  /((?:^|\n)[ \t]*(?:[│|][ \t]*)?[A-Za-z0-9_.-]{0,64}?(?:[Pp]assword|PASSWORD|[Pp]asswd|PASSWD|[Pp]assphrase|PASSPHRASE|[Ss]ecret|SECRET|[Tt]oken|TOKEN|[Cc]redentials?|CREDENTIALS?|(?<=[a-z0-9])Key|(?<=[_.-])(?:[Kk]ey|KEY|[Pp]ass|PASS|[Pp]wd|PWD|[Aa]uth|AUTH))(?![A-Za-z0-9_.-])(?:[ \t]{2,}|[ \t]*[│|][ \t]*))(?![│|[])[^\s│|]+/g,
   // The same secret-named options OPTION_SECRET notices (`--db-pass=x`): the option name with its `=` stays, the
   // value is hidden. The leading space or quote is kept too, prose words like "compass" never reach a value this way.
   /((?:^|[\s"'])--?(?:[A-Za-z0-9]+[-_.])*(?:password|passwd|pass|pwd|token|secret|api[-_]?key|access[-_]?key|private[-_]?key|client[-_]?secret)=)[^\s"',;]+/gi,
@@ -257,8 +273,8 @@ function inMapping(text: string, at: number, end: number, q: string): boolean {
   return /:[ \t]*$/.test(text.slice(Math.max(0, at - 32), at)) && new RegExp(String.raw`^${q}[ \t]*:`).test(text.slice(end, end + 34));
 }
 
-/** URL credentials: `://user:pass@` becomes `://[secret hidden]@`. */
-const URL_CREDENTIALS = /:\/\/[^/\s:@]+:[^/\s@]+@/g;
+/** URL credentials: `://user:pass@` (and `://:pass@`, a password with no user: commands-remote-r10-6) becomes `://[secret hidden]@`. */
+const URL_CREDENTIALS = /:\/\/[^/\s:@]*:[^/\s@]+@/g;
 
 /**
  * Key-value pairs whose key names a secret: `password=…`, `token: …`, `"api_key": "…"` (the value only). The key may

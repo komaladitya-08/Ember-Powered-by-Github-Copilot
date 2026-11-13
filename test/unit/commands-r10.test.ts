@@ -135,3 +135,29 @@ describe("downloads saved by other routes and tools (commands-remote-r10-5)", ()
     }
   });
 });
+
+describe("commands that print other programs' environments or a committed secret (commands-remote-r10-6)", () => {
+  it("asks as a secret before ps shows environments, an inspect or compose config shows a container's, or git prints a secret file", () => {
+    for (const cmd of [
+      "ps e", "ps eww", "ps auxe", "ps axe", "ps -ef e", "ps aux e", "ps -o pid,args,env -A", "ps -eo pid,environ", "ps -o env= -p 1", "ps -Ao pid,command,env", "ps o pid,env",
+      "docker inspect x", "podman inspect x", "nerdctl inspect x", 'docker inspect --format "{{.Config.Env}}" db', "docker container inspect x", "docker image inspect x",
+      'docker inspect -f "{{json .}}" x', "docker compose config", "podman-compose config",
+      "git show HEAD:.env", "git show :.env", "git cat-file -p HEAD:.env", "git show HEAD:config/.env.production", "git show main:./.env", "git log -p -- .env",
+      "git diff HEAD~1 -- .env", "git show HEAD -- .env",
+      "systemctl show foo -p Environment", "systemctl show foo", "systemctl --user show-environment", "systemctl show-environment", "systemctl show --property=Environment foo",
+      "grep -r PASSWORD .", "grep -rn secret src/", "rg -i api_key", "grep -ri token .", "git grep -i password",
+    ]) {
+      const d = decide(cmd);
+      expect(d.verdict, cmd).toBe("ask");
+      expect(d.classes, cmd).toContain("secret");
+    }
+  });
+
+  it("still runs ps, inspect, git show and systemctl show that print no environment and no secret file", () => {
+    for (const cmd of ["ps aux", "ps -ef", "ps -e", "ps -C chrome", "ps -o pid,cmd", "ps U ana", "ps -p 123 -o etime", "ps axo pid,ppid,stat,etime,cmd",
+      "docker inspect --format '{{.State.Status}}' x", "docker inspect -f '{{.NetworkSettings.IPAddress}}' x", "git show HEAD:README.md", "git show HEAD", "git log -p -- src/a.ts",
+      "systemctl show foo -p ActiveState", "systemctl status foo", "grep -r TODO .", "grep -r keyboard src/"]) {
+      expect(decide(cmd).verdict, cmd).toBe("run");
+    }
+  });
+});

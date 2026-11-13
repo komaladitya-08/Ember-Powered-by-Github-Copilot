@@ -518,3 +518,45 @@ describe("an Azure Key Vault secret printed with its tags (commands-classes-x9-7
     }
   });
 });
+
+describe("redactSecrets: environments, tables and webhook addresses (commands-remote-r10-6, -c10-1)", () => {
+  it.each([
+    ["DB_PASS=hunter2horse", `DB_PASS=${SECRET_HIDDEN}`],
+    ["ADMIN_PASS=hunter2horse\nSMTP_PASS=x9y8z7", `ADMIN_PASS=${SECRET_HIDDEN}\nSMTP_PASS=${SECRET_HIDDEN}`],
+    ["PASSPHRASE=hunter2horse", `PASSPHRASE=${SECRET_HIDDEN}`],
+    ["AUTH=hunter2horse", `AUTH=${SECRET_HIDDEN}`],
+    ["REDIS_AUTH=hunter2horse", `REDIS_AUTH=${SECRET_HIDDEN}`],
+    ["MYSQL_PW=hunter2horse", `MYSQL_PW=${SECRET_HIDDEN}`],
+    ["SIGNING_KEY=abcdef0123", `SIGNING_KEY=${SECRET_HIDDEN}`],
+    ["PATH=/usr/bin DB_PASS=hunter2horse HOME=/root", `PATH=/usr/bin DB_PASS=${SECRET_HIDDEN} HOME=/root`],
+    ["REDIS_URL=redis://:Sekr1tPw@cache:6379", `REDIS_URL=redis://${SECRET_HIDDEN}@cache:6379`],
+    ["amqp://:guestpw@rabbit/", `amqp://${SECRET_HIDDEN}@rabbit/`],
+    ["DJANGO_KEY=django-insecure-abcdefghijklmnop", `DJANGO_KEY=${SECRET_HIDDEN}`],
+    ["SECRET=django-insecure-a8#k!z@q2&w", `SECRET=${SECRET_HIDDEN}`],
+    ["hook https://hooks.slack.com/services/T000/B000/XXXXXXXXXXXXXXXX done", `hook https://hooks.slack.com/services/${SECRET_HIDDEN} done`],
+    ["https://discord.com/api/webhooks/123456789/abcDEF_ghi-jkl", `https://discord.com/api/webhooks/123456789/${SECRET_HIDDEN}`],
+    ["https://acme.webhook.office.com/webhookb2/abc-123@def/IncomingWebhook/xyz/0", `https://acme.webhook.office.com/webhookb2/${SECRET_HIDDEN}`],
+    ["KEY                VALUE\ndbPassword         hunter2-correct-horse\napiToken           ZXhhbXBsZV90b2tlbl92YWx1ZQ",
+      `KEY                VALUE\ndbPassword         ${SECRET_HIDDEN}\napiToken           ${SECRET_HIDDEN}`],
+    ["    OUTPUT       VALUE\n    dbPassword   Tr0ub4dor&3xyz\n    adminKey     a1b2c3d4e5f6g7h8i9j0",
+      `    OUTPUT       VALUE\n    dbPassword   ${SECRET_HIDDEN}\n    adminKey     ${SECRET_HIDDEN}`],
+    ["│ DB_PASSWORD │ hunter2 │ All │", `│ DB_PASSWORD │ ${SECRET_HIDDEN} │ All │`],
+  ])("hides the value in %j", (text, want) => {
+    expect(redactSecrets(text)).toBe(want);
+  });
+
+  it.each([
+    "tests pass: 12, fail: 0", "PATH=/usr/bin HOME=/root", "secretstorage   3.3.1", "tokenizer.json   12K", "monkey    3", "Bypass the cache",
+    "https://example.com/a?b=c", "keyboard  us",
+  ])("leaves ordinary text alone: %j", text => {
+    expect(redactSecrets(text)).toBe(text);
+  });
+
+  it.each([["names ending like a secret", "a_pass=b "], ["table rows", "dbPassword   x\n"], ["webhook prefixes", "hooks.slack.com/services/"], ["empty users", "://:@"]])(
+    "takes linear time on a run of %s (1 MiB)", (_name, unit) => {
+      const text = unit.repeat(Math.ceil((1024 * 1024) / unit.length));
+      const t0 = performance.now();
+      redactSecrets(text);
+      expect(performance.now() - t0).toBeLessThan(1500);
+    });
+});

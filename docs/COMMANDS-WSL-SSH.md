@@ -212,7 +212,10 @@ Ember stops and asks before a command that:
   and hosting tools' sign-ins (`~/.config/gcloud`, `~/.oci`, `~/.config/doctl`), Kerberos tickets, the display's key
   (`~/.Xauthority`), chat apps' and VS Code's stored sign-ins, keychains and credential stores, browser profiles,
   password managers, `/etc/shadow`, your shell history; printing tokens or environment variables that may hold them (`gh auth token`,
-  `env`, `printenv`), also with a PowerShell cmdlet Ember has no rule for whose name says a secret, credential,
+  `env`, `printenv`), other programs' environments (`ps e`, `ps eww`, `ps -o env`, `docker inspect` without a
+  `--format` that leaves them out, `docker compose config`, `systemctl show` of a unit's Environment,
+  `systemctl show-environment`), a secret file as a commit or the index holds it (`git show HEAD:.env`, `git cat-file
+  -p :.env`, `git log -p -- .env`), a search of files for a secret's word (`grep -r PASSWORD .`), also with a PowerShell cmdlet Ember has no rule for whose name says a secret, credential,
   token, password, key, vault or certificate, or that is given `-AsPlainText` (`Get-Secret`, `Get-AzKeyVaultSecret`);
   reading the clipboard; taking a screenshot without Ember's privacy filters; recording from the microphone or the
   camera ("Records from the microphone or the camera.": `arecord`, `parecord`, `rec`, `sox -d`, `fswebcam`, `ffmpeg`

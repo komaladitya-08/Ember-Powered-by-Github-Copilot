@@ -4295,6 +4295,46 @@ function runners(): ReadonlySet<string> {
  * An unknown program: its operands read as paths; an operand naming a program may mean it runs it. With `noRow` (a
  * program with no row at all, not a row's own fallback such as busybox's or sponge's), a broad folder asks too.
  */
+/**
+ * Whether ps is asked for other programs' environments (passwords and tokens they were started with): BSD's `e`
+ * (`ps eww`, `ps auxe`, `ps -ef e`), macOS's `-E`, or the `env`/`environ` keyword in a format (`-o pid,env`,
+ * `-eo pid,environ`, `o env`). Option values (`-C chrome`, `U ana`, `-p 1`) are skipped; a value Ember can't see may
+ * name one (commands-remote-r10-6).
+ */
+function psShowsEnv(args: readonly Arg[]): boolean {
+  const FORMAT = /(^|[\s,])(env|environ)(=|[\s,:]|$)/i;
+  let format = false;
+  let skip = false;
+  for (const a of args) {
+    const v = a.v;
+    if (skip) { skip = false; if (format && (v === null || FORMAT.test(v))) return true; format = false; continue; }
+    if (v === null) continue;
+    if (v.startsWith("--")) {
+      const [name, value] = [v.split("=")[0], v.includes("=") ? v.slice(v.indexOf("=") + 1) : undefined];
+      const isFormat = /^--(format|forma|form|o)$/.test(name);
+      if (value !== undefined) { if (isFormat && FORMAT.test(value)) return true; continue; }
+      if (/^--(format|sort|pid|ppid|user|group|cols|columns|rows|tty|sid|quick-pid|width|context)$/.test(name)) { skip = true; format = isFormat; }
+      continue;
+    }
+    const dash = v.startsWith("-");
+    const letters = dash ? v.slice(1) : v;
+    if (!/^[A-Za-z]/.test(letters)) continue;
+    // A cluster's value option takes the rest of the word, or the next word.
+    const valueLetters = dash ? "oOpqtuUgGCsk" : "oOptUkq";
+    for (let j = 0; j < letters.length; j++) {
+      const c = letters[j];
+      if (dash ? c === "E" : c === "e") return true;
+      if (valueLetters.includes(c)) {
+        const rest = letters.slice(j + 1);
+        const isFormat = c === "o" || c === "O";
+        if (rest) { if (isFormat && FORMAT.test(rest)) return true; } else { skip = true; format = isFormat; }
+        break;
+      }
+    }
+  }
+  return false;
+}
+
 function generic(h: H, noRow = false): void {
   const k = h.key;
   if (INPUT_SYNTH.has(k)) { h.e.refuseWith("ember.input", "input"); return; }
@@ -4304,6 +4344,7 @@ function generic(h: H, noRow = false): void {
   if (INTERACTIVE.has(k)) interactive(h);
   if (LAUNCHERS.has(k)) { launcher(h); return; }
   if (SECRET_PROGRAMS.has(k)) h.e.add("secret", "secret.program", SAYS.secrets);
+  if (k === "ps" && psShowsEnv(h.args)) h.e.add("secret", "secret.env", SAYS.env);
   if (CLIPBOARD_READERS.has(k)) h.e.add("secret", "secret.clipboard", SAYS.clipboard);
   if (SCREENSHOTTERS.has(k)) h.e.add("secret", "secret.screen", SAYS.screen);
   if (RECORDERS.has(k)) h.e.add("secret", "secret.record", SAYS.records);
@@ -5345,6 +5386,12 @@ reg(NATIVE, ["ls", "ll", "dir", "vdir", "tree", "du", "stat", "file", "lsd", "ex
     if (obj.abs === null) h.e.unclear("unclear.unresolved-arg", `Ember can't tell which arguments ${h.prog} gets.`);
   }
 });
+/** A word of a search pattern that names a secret: what it finds is the secret's line (commands-remote-r10-6). */
+const SECRET_WORD = /passw(or)?d|passphrase|secret|token|api[_-]?key|private[_ -]?key|credential|[_-]pass\b|\bpass[_-]|bearer|BEGIN [A-Z ]*PRIVATE/i;
+/** A search whose pattern names a secret, or one Ember can't see: it asks as a secret. */
+function secretSearch(h: H, patterns: readonly Arg[]): void {
+  if (patterns.some(a => a.v !== null && !isOption(a) && SECRET_WORD.test(a.v))) h.e.add("secret", "path.secret", "Searches files for passwords, keys or other secrets.");
+}
 // grep and friends: a recursive search reads every file under its folders (secrets included unless hidden files are skipped).
 reg(NATIVE, ["grep", "egrep", "fgrep", "rg", "ag", "ack", "ugrep", "git-grep"], h => {
   // git grep's and ugrep's pager value is optional and only follows `=`: written alone, the option takes the default
@@ -5377,6 +5424,10 @@ reg(NATIVE, ["grep", "egrep", "fgrep", "rg", "ag", "ack", "ugrep", "git-grep"], 
   const patternGiven = values(p, "e", "regexp", "f", "file", ...(h.key === "ack" ? ["match"] : [])).length > 0;
   for (const f of values(p, "f", "file")) if (f) h.e.usePath(lit(f), "read", h.sc);
   const files = patternGiven ? p.operands : p.operands.slice(1);
+  // A search of files for a secret's word prints the lines that hold one (commands-remote-r10-6).
+  if (files.length > 0 || h.key === "rg" || h.key === "ag" || h.key === "ack" || h.args.some(a => /^-[A-Za-z]*[rR]|^--(recursive|dereference-recursive)$/.test(a.v ?? ""))) {
+    secretSearch(h, patternGiven ? values(p, "e", "regexp").map(v => (v === null ? { v: null, raw: "?", glob: false } : lit(v))) : p.operands.slice(0, 1));
+  }
   const hiddenToo = h.key === "grep" || h.key === "egrep" || h.key === "fgrep" || h.key === "ack" || h.key === "ugrep" || has(p, "hidden", "u", "uu", "uuu", "unrestricted", "a", "all-types", "no-ignore");
   const recursive = h.key === "rg" || h.key === "ag" || h.key === "ack" || has(p, "r", "R", "recursive", "dereference-recursive") || values(p, "d", "directories").includes("recurse");
   const use: PathUse = recursive && hiddenToo ? "readTree" : "read";
@@ -7402,6 +7453,19 @@ reg(NATIVE, ["git"], h => {
   const rest = h.args.slice(g.verbAt + 1);
   if (h.args.some(a => /^ext::/i.test(a.v ?? "")) || (GIT_ADDRESS_VERBS.has(verb) && rest.some(a => GIT_HELPER_ADDRESS.test(a.v ?? "")))) h.e.unclear("unclear.git-ext", GIT_EXT_SAYS);
   const gh: H = { ...h, sc, args: rest, shellSc: h.shellSc ?? h.sc };
+  // A file of a commit or of the index printed whole (`git show HEAD:.env`, `git cat-file -p :.env`), or a path whose
+  // changes are printed (`git log -p -- .env`), is read as that file is: a secret's asks (commands-remote-r10-6). And
+  // a search of the tree for a secret's word prints the lines that hold one.
+  if (/^(show|cat-file|log|diff|blame|annotate|whatchanged|grep|diff-tree|range-diff|format-patch)$/.test(verb)) {
+    const dash = rest.findIndex(a => a.v === "--");
+    rest.forEach((a, k) => {
+      if (a.v === null || isOption(a)) return;
+      const blob = /^[^:\s/]*:(?!\/\/)(.+)$/.exec(a.v);
+      if (blob) h.e.usePath(lit(blob[1]), "read", sc);
+      else if (dash >= 0 && k > dash) h.e.usePath(a, "read", sc);
+    });
+    if (verb === "grep") secretSearch(h, rest);
+  }
   const fn = GIT[verb];
   if (fn) { fn(gh, widen); return; }
   if (!GIT_READ.has(verb)) { h.e.unclear("unclear.git-verb", "Ember can't tell which git command this runs (an alias or an add-on)."); return; }
@@ -7997,6 +8061,23 @@ reg(NATIVE, ["hg"], h => {
 reg(NATIVE, ["bzr", "brz"], h => { if (/^(push|send|commit|ci)$/.test(h.args[0]?.v ?? "")) h.e.add("publish", "bzr.push", "Sends changes to another repository."); });
 
 // Containers (§3.5.1, §3.5.2, §3.5.5).
+/**
+ * Whether `docker inspect`'s words print the environment: no --format (the whole JSON), or a format that names Env,
+ * Config, the whole object (`{{.}}`, `{{json .}}`) or one Ember can't read (commands-remote-r10-6).
+ */
+function inspectShowsEnv(rest: readonly Arg[]): boolean {
+  const formats: (string | null)[] = [];
+  for (let k = 0; k < rest.length; k++) {
+    const v = rest[k].v;
+    if (v === null) continue;
+    if (v === "-f" || v === "--format") formats.push(rest[k + 1]?.v ?? null);
+    else if (v.startsWith("--format=")) formats.push(v.slice(9));
+    else if (/^-f./.test(v)) formats.push(v.slice(2));
+  }
+  if (formats.length === 0) return true;
+  return formats.some(f => f === null || /env|config|secret|label|\{\{\s*(json\s+)?\.\s*\}\}|\bjson\s+\.\s*\}|\.Spec\b/i.test(f));
+}
+
 reg(NATIVE, ["docker", "podman", "nerdctl", "docker-compose", "podman-compose"], h => {
   const prog = h.key === "docker-compose" ? "docker" : h.key === "podman-compose" ? "podman" : h.key;
   const isCompose = h.key.endsWith("-compose");
@@ -8062,6 +8143,9 @@ reg(NATIVE, ["docker", "podman", "nerdctl", "docker-compose", "podman-compose"],
     return;
   }
   if (group === "network" && /^(create|connect|disconnect)$/.test(v)) return;
+  // inspect prints a container's or an image's settings, its environment (passwords and tokens) among them, unless
+  // its --format picks only parts that hold none (commands-remote-r10-6).
+  if (v === "inspect" && inspectShowsEnv(rest)) { h.e.add("secret", "secret.env", SAYS.env); return; }
   if (["ps", "images", "inspect", "logs", "top", "stats", "version", "info", "history", "search", "events", "port", "diff", "wait", "pull", "build", "tag", "load", "import", "commit", "start", "unpause", "rename", "update", "ls", "df", "use", "show", "help", "--help", "scan", "sbom", "init", "debug", "volumes", "bake"].includes(v)) {
     if (v === "start" && rest.some(a => /^-[a-z]*i/.test(a.v ?? "") || a.v === "--interactive")) h.e.unclear("unclear.interactive", SAYS.interactive);
     return;
@@ -8178,6 +8262,9 @@ function compose(h: H, prog: string, rest: Arg[]): void {
   if (sub === "stop" || sub === "restart" || sub === "pause") { h.e.add("system", "kill.process", "Stops programs that are running (containers)."); return; }
   if (sub === "push") { h.e.add("publish", `${prog}.push`, "Pushes the images it builds.", { program: `${prog} compose push` }); return; }
   if (sub === "exec") { h.e.payload(subRest.slice(1), h.sc, `${prog} compose exec`); return; }
+  // config prints the file with its .env's values filled in, passwords too, unless it only lists names
+  // (commands-remote-r10-6).
+  if (sub === "config" && !subRest.some(a => /^(--services|--volumes|--profiles|--images|--networks|--hash|-q|--quiet)$/.test(a.v ?? ""))) { h.e.add("secret", "secret.env", SAYS.env); return; }
   if (["ps", "logs", "config", "build", "pull", "images", "top", "ls", "version", "port", "events", "convert", "ls", "wait", "watch", "stats", "cp", "attach", "scale", "unpause", "alpha", "help"].includes(sub)) return;
   h.e.unclear("unclear.docker-verb", "Ember can't tell which container command this runs.");
 }
@@ -9990,6 +10077,14 @@ reg(NATIVE, ["systemctl"], h => {
   const verb = h.args[g.verbAt]?.v ?? null;
   const units = h.args.slice(g.verbAt + 1).filter(a => !isOption(a));
   if (verb === null) return;
+  // The service manager's environment, and a unit's properties with its Environment= (passwords and tokens a unit is
+  // given) unless only other properties are asked for (commands-remote-r10-6).
+  if (verb === "show-environment") { h.e.add("secret", "secret.env", SAYS.env); return; }
+  if (verb === "show") {
+    const props = h.args.flatMap((a, k) => (a.v === "-p" || a.v === "--property" ? [h.args[k + 1]?.v ?? null] : a.v !== null && /^(-p.|--property=)/.test(a.v) ? [a.v.replace(/^(-p|--property=)/, "")] : []));
+    if (props.length === 0 || props.some(p => p === null || /environment|^$/i.test(p))) h.e.add("secret", "secret.env", SAYS.env);
+    return;
+  }
   if (/^(poweroff|reboot|halt|suspend|hibernate|hybrid-sleep|suspend-then-hibernate|kexec|emergency|rescue|default|exit|soft-reboot)$/.test(verb)) { h.e.add("system", "system.power", "Shuts down, restarts or logs out."); return; }
   if (/^(start|stop|restart|reload|try-restart|reload-or-restart|try-reload-or-restart|condrestart|force-reload)$/.test(verb)) {
     h.e.add("system", "service.unit", "Starts, stops or changes a system service.", { objects: units.map(u => ({ kind: "other" as const, text: u.v ?? u.raw, abs: null })), widening: [verb], program: `systemctl ${verb}` });
