@@ -741,9 +741,11 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1" && process.env.EM
     expect(sent.map(e => e.type)).toEqual(["utterance"]);
   });
 
-  // The test-only Ryan voice reads the prompts (node scripts/voice/prepare.mjs --voice ryan): skipped without it.
+  // The test-only Ryan voice reads the prompts (node scripts/voice/prepare.mjs --voice ryan). Under EMBER_VOICE_TEST=1 (the
+  // gate and CI) its tests fail without it rather than skip: no job fetched it, so they never ran (V2-F6).
   const readerVoice = path.join(dir, "vits-piper-en_US-ryan-low");
-  it.skipIf(!fs.existsSync(path.join(readerVoice, "en_US-ryan-low.onnx")))("doesn't wake when a screen reader reads the Teach button Home moved focus to, or the composer's line on a typed send (voice-listening-r6-2, voice-listening-q6-1, voice-listening-r6-1)", () => {
+  const noReader = !fs.existsSync(path.join(readerVoice, "en_US-ryan-low.onnx")) && process.env.EMBER_VOICE_TEST !== "1";
+  it.skipIf(noReader)("doesn't wake when a screen reader reads the Teach button Home moved focus to, or the composer's line on a typed send (voice-listening-r6-2, voice-listening-q6-1, voice-listening-r6-1)", () => {
     // Where Ember can't hear its speakers (Windows, macOS, Linux without parec), "Teach Ember my voice, button. Ember
     // hears anyone who talks to it. Teach it your voice…" woke Ember and was sent as a request in 18 of 20 placements,
     // the button's name alone in 14 of 20, and "Thinking… Ember's reply will appear above." in 2 of 24.
@@ -772,7 +774,7 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1" && process.env.EM
     expect(woke).toEqual([]);
   }, 600_000);
 
-  it.skipIf(!fs.existsSync(path.join(readerVoice, "en_US-ryan-low.onnx")))("hears a bare answer said once one of Ember's questions is asked, without the name, and nothing of the room's talk then (owner's report of 2026-11-12)", () => {
+  it.skipIf(noReader)("hears a bare answer said once one of Ember's questions is asked, without the name, and nothing of the room's talk then (owner's report of 2026-11-12)", () => {
     const tts = sherpa.createOfflineTts({ offlineTtsModelConfig: { offlineTtsVitsModelConfig: { model: path.join(readerVoice, "en_US-ryan-low.onnx"), tokens: path.join(readerVoice, "tokens.txt"), dataDir: path.join(readerVoice, "espeak-ng-data") }, numThreads: 1, debug: 0 }, maxNumSentences: 1 });
     expect(tts.sampleRate).toBe(16000);
     const rms = (x: Float32Array) => Math.sqrt(x.reduce((n, v) => n + v * v, 0) / x.length);
@@ -815,7 +817,7 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1" && process.env.EM
     for (const room of [inRoom(cat(silence(0.5), trimmed("chat"), silence(2))), said("Let's meet at the station after lunch.")]) expect(sent(asked(room))).toEqual([]);
   }, 120_000);
 
-  it.skipIf(!fs.existsSync(path.join(readerVoice, "en_US-ryan-low.onnx")))("never takes a refusal said as Ember stops reading its question for a yes, and hears an answer said just after it whole (owner's report of 2026-11-12)", () => {
+  it.skipIf(noReader)("never takes a refusal said as Ember stops reading its question for a yes, and hears an answer said just after it whole (owner's report of 2026-11-12)", () => {
     // As on Windows and macOS: the microphone hears Ember's read-out (an echo 10 dB under the user) until 0.1 s after the
     // page says it stopped, when main opens the answer window (or a follow-up). The answer starts `on` s from "stopped".
     const tts = sherpa.createOfflineTts({ offlineTtsModelConfig: { offlineTtsVitsModelConfig: { model: path.join(readerVoice, "en_US-ryan-low.onnx"), tokens: path.join(readerVoice, "tokens.txt"), dataDir: path.join(readerVoice, "espeak-ng-data") }, numThreads: 1, debug: 0 }, maxNumSentences: 1 });
@@ -1017,7 +1019,7 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1" && process.env.EM
     expect(left).toEqual([]);
   }, 300_000);
 
-  it.skipIf(!fs.existsSync(path.join(readerVoice, "en_US-ryan-low.onnx")))("learns the owner's voice, not a screen reader's reading each prompt aloud 14 dB down just before each phrase (voice-listening-r4-1)", async () => {
+  it.skipIf(noReader)("learns the owner's voice, not a screen reader's reading each prompt aloud 14 dB down just before each phrase (voice-listening-r4-1)", async () => {
     // Over speakers, the teaching microphone heard Home's prompts as a screen reader read them, and took them for
     // phrases: the owner's held-out clips then scored 0.47-0.66 against the voiceprint, the screen reader's 0.70-0.82.
     const ort = createRequire(import.meta.url)("onnxruntime-web");

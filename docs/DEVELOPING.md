@@ -127,8 +127,10 @@ runtime. It does not change the app's consent or speaking settings.
 
 Three more switches belong to the tests themselves (the test process reads them, not Ember):
 `EMBER_VOICE_TEST=1` makes the voice suite (test/integration/voice.test.ts, on the models from
-`node scripts/voice/prepare.mjs`) fail instead of skipping when the models aren't there, which is how the gate and CI
-run it; `EMBER_UI_EVIDENCE=<folder>` saves the renderer journeys' screenshots there (the conversation, memory,
+`node scripts/voice/prepare.mjs --voice ryan`, which also fetches the second, test-only voice that reads its screen
+reader and spoken-answer prompts) fail instead of skipping when the models or that voice aren't there, which is how
+the gate and CI run it (without `--voice ryan` four of its tests failed, where they had skipped, unseen, in every job:
+V2-F6); `EMBER_UI_EVIDENCE=<folder>` saves the renderer journeys' screenshots there (the conversation, memory,
 natural-voice, panes, integrations and first-run journeys, and project-live), for a visual check, and should point
 outside the repository; and `EMBER_RUNTIME_ENV_LIVE=1` runs the offline check of the real Copilot runtime's
 environment, only through `scripts/runtime-env-live.sh`, which gives it a network namespace with nothing but loopback
