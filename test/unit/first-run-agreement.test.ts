@@ -204,6 +204,16 @@ describe("first run's agreement", () => {
     expect(firstRunAllowsVoice({ speak: false })).toBe(false);
   });
 
+  it("records what the “Hey Ember” card's yes records, voice rejection over Ember's own voice included (slice4-x9-4)", () => {
+    const r = rig();
+    r.store.update({ voice: { ...r.store.own().voice, speakerRejection: false } });
+    agreeFirstRun(r.d, { commands: false, memory: false, voice: true, screenshots: false, interactive: false }, SHA);
+    expect(r.store.own().voice).toMatchObject({ consent: true, speakerRejection: true, match: false });
+    // Home's card records the same, from the one constant.
+    const home = fs.readFileSync(path.join(__dirname, "../../app/renderer/home/main.ts"), "utf8");
+    expect(home).toMatch(/\.\.\.\(settings\?\.voice \?\? \{\}\), \.\.\.HEY_EMBER_YES \} \}\)/);
+  });
+
   it("doesn't turn commands on for a card other than the one the row showed (slice4-11)", () => {
     const r = rig();
     expect(agreeFirstRun(r.d, ALL, "b".repeat(64))).toEqual({ ok: true, failed: ["commands"] });

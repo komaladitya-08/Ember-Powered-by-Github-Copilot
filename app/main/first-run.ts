@@ -12,7 +12,7 @@
 
 import { z } from "zod";
 import { CONSENT_VERSION } from "../shared/consent";
-import { FIRST_RUN_IPC, FIRST_RUN_ROWS, firstRunPlan, firstRunRows, type FirstRunCard, type FirstRunChoice, type FirstRunDone, type FirstRunFacts, type FirstRunRow, type FirstRunView } from "../shared/first-run";
+import { FIRST_RUN_IPC, FIRST_RUN_ROWS, HEY_EMBER_YES, firstRunPlan, firstRunRows, type FirstRunCard, type FirstRunChoice, type FirstRunDone, type FirstRunFacts, type FirstRunRow, type FirstRunView } from "../shared/first-run";
 import type { Settings, SettingsPatch } from "./settings";
 import { consentGiven } from "./targets/consent";
 
@@ -44,7 +44,7 @@ export function firstRunView(d: Pick<FirstRunDeps, "facts" | "consented" | "comm
 function patchOn(row: "memory" | "voice" | "screenshots", own: Settings, now: Date): SettingsPatch {
   if (row === "memory") return { memory: { ...own.memory, on: true, consent: consentGiven("memory", now) } };
   // The “Hey Ember” card's yes (Home's consent-yes), with spoken replies on; Voice Match stays as it is (off).
-  if (row === "voice") return { wakeWord: true, speak: true, voice: { ...own.voice, consent: true, muted: false } };
+  if (row === "voice") return { wakeWord: true, speak: true, voice: { ...own.voice, ...HEY_EMBER_YES, muted: false } };
   return { screenImages: true };
 }
 

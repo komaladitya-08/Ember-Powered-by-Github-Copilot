@@ -85,6 +85,13 @@ export function firstRunAllowsVoice(features: { voice?: boolean; speak?: boolean
   return features.voice !== false && features.speak !== false;
 }
 
+/**
+ * What the “Hey Ember” card's yes records in the voice settings, over what is there (Home's consent-yes and first run's
+ * listening row both use it, so the two can't differ, slice4-x9-4): the consent, and nothing heard over Ember's own
+ * voice taken as the user's.
+ */
+export const HEY_EMBER_YES = { consent: true, speakerRejection: true } as const;
+
 /** Main's answer to the agreement. */
 export interface FirstRunDone {
   /** CONSENT_VERSION was recorded: false, nothing was recorded or turned on (the notice says why). */

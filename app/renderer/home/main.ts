@@ -27,6 +27,7 @@ import { MATCH_TEXT, matchAnnouncement, matchRefusalHolds, matchView } from "./m
 import { ISSUES_URL } from "../../shared/support";
 import { CONSENT_VERSION } from "../../shared/consent";
 import { AGREE_ARM_MS } from "../../shared/provider";
+import { HEY_EMBER_YES } from "../../shared/first-run";
 import { useAppNames } from "../../shared/apps";
 import { speakChoice, speakSettings, type SpeakChoice } from "../../shared/speech";
 import type { Settings, SettingsPatch } from "../../main/settings";
@@ -2916,7 +2917,7 @@ $("consent-yes").addEventListener("click", () => {
   const run = ++consentRun;
   consentError("");
   $("consent-yes").setAttribute("aria-busy", "true");
-  void save({ wakeWord: true, voice: { muted: false, match: false, natural: false, naturalModel: "kokoro", learn: true, words: true, suggest: true, conversation: true, clearHearing: false, rate: 1, ...(settings?.voice ?? {}), consent: true, speakerRejection: true } }).then(ok => {
+  void save({ wakeWord: true, voice: { muted: false, match: false, natural: false, naturalModel: "kokoro", learn: true, words: true, suggest: true, conversation: true, clearHearing: false, rate: 1, ...(settings?.voice ?? {}), ...HEY_EMBER_YES } }).then(ok => {
     if (run !== consentRun) return; // closed meanwhile: nothing more to do here
     consentSaving = false;
     $("consent-yes").removeAttribute("aria-busy");
