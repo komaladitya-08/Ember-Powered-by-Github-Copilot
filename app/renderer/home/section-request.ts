@@ -26,6 +26,9 @@ const CONTROLS: Readonly<Record<string, string>> = {
   "memory:memory-query": "memory-query", "memory:memory-consent-text": "memory-consent-text", "memory:memory-yes": "memory-consent-text",
   // Tell Ember about you's first question: "get to know me" in a voice Ember couldn't check opens the typed way (memory-r9-6).
   "memory:about-you": "ay-name",
+  // Ask's “Set up voice in Settings…”: its Download, in view (home-r9-7); while no model is missing it is hidden, and the
+  // request lands on the heading.
+  "voice:voice-download": "voice-download",
 };
 
 /** A request as the page acts on it: the section's id (its heading is `${section}-h`) and the control's id, if any. */
