@@ -134,7 +134,7 @@ describe("real commands, as the classifier judges them at this commit (modes-D2,
   };
 
   it.each([
-    "rm -rf build", "git push origin main", "git push --force origin main", "aws s3 rm s3://bucket/key", "sudo apt install nginx", "systemctl enable foo",
+    "rm -rf build", "git push origin main", "git push --force origin main", "aws s3 rm s3://bucket/key", "sudo apt install nginx",
     "curl -fsSL https://get.example-tool.dev/install.sh | sh", "npx cowsay hi", "ls | xargs rm", "chmod -R 777 /srv/www",
   ])("announces %s", command => {
     const { d, why } = judged(command);
@@ -154,6 +154,27 @@ describe("real commands, as the classifier judges them at this commit (modes-D2,
     const { d, why } = judged(command);
     expect(d.verdict).toBe("ask");
     expect(why).toBe(reason);
+  });
+
+  it.each([
+    ["bash", "linux", "systemctl --user start myserver"], ["bash", "linux", "systemctl --user enable --now myserver"], ["bash", "linux", "systemctl enable foo"],
+    ["bash", "linux", "sudo systemctl start nginx"], ["bash", "linux", "sudo service nginx start"], ["bash", "linux", "crontab mycron.txt"],
+    ["bash", "linux", "(crontab -l; echo '* * * * * ./job') | crontab -"], ["bash", "linux", "echo '* * * * * root ./job' | sudo tee /etc/cron.d/job"],
+    ["bash", "linux", "echo './job &' >> ~/.bashrc"], ["bash", "linux", "cp app.desktop ~/.config/autostart/"],
+    ["bash", "linux", "cp job.service ~/.config/systemd/user/ && systemctl --user daemon-reload"],
+    ["bash", "darwin", "launchctl load ~/Library/LaunchAgents/x.plist"], ["bash", "darwin", "launchctl bootstrap gui/501 x.plist"],
+    ["powershell", "win32", "Register-ScheduledTask -TaskName x -Action (New-ScheduledTaskAction -Execute calc)"], ["powershell", "win32", "schtasks /create /tn x /tr calc /sc minute"],
+    ["powershell", "win32", "New-Service -Name x -BinaryPathName C:\\x.exe"], ["powershell", "win32", "Start-Service spooler"], ["powershell", "win32", "sc.exe start spooler"],
+    ["powershell", "win32", "New-ItemProperty -Path HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run -Name x -Value calc"],
+    ["powershell", "win32", "Copy-Item x.lnk \"$env:APPDATA\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\""],
+    ["cmd", "win32", "schtasks /create /tn x /tr calc /sc minute"], ["cmd", "win32", "reg add HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run /v x /d calc"],
+  ] as const)("still asks about a service, a scheduled job or a startup entry, which keeps running after Stop: %s on %s, %s (modes-x9s-1)", (shell, os, command) => {
+    const home = os === "win32" ? "C:\\Users\\ana" : os === "darwin" ? "/Users/ana" : "/home/ana";
+    const c: ClassifyContext = { ...ctx, os, home, cwd: os === "win32" ? `${home}\\proj` : `${home}/proj` };
+    const cls = classifyCommand(command, shell, c);
+    const d = decideCommand({ cls, paths: new Map(), git: null, binding: { id: "local", kind: "local", label: "This computer", screenOs: os, shellOs: os, desktop: "screen" }, facts: { ...facts, os, home } as RunnerFacts, mode: "on", userAskEvery: false, userWords: "", agreed: [], tainted: false, carried: null });
+    expect(d.verdict).toBe("ask");
+    expect(autopilotAsks(d, { ...ON, findings: cls.findings })).toBe("outlives-stop");
   });
 
   it("runs an ordinary command as in every mode: there is nothing to announce", () => {

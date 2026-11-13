@@ -57,8 +57,16 @@ export const NEVER_REVIEWED: ReadonlySet<DangerClass> = new Set(["secret"]);
  * Stop stops everything. Read this way round so a rule the classifier gains later is held until it is listed here.
  */
 const DOWNLOADS_ONLY: ReadonlySet<string> = new Set(["escape.download-run", "escape.run-downloaded", "escape.npx", "escape.run-remote"]);
+/**
+ * The classifier's rules outside "escape" that set something running, or to run later on its own, that Stop can't end:
+ * a service started, enabled or loaded (`service.*`: the classifier files start and stop alike, so both count), a
+ * scheduled job (`*.schedule`, never `*.unschedule`), a login or startup entry (`*autostart`, `*startup`) and a
+ * registry write (`system.registry`, which may be a Run key: the classifier doesn't say which key). Read by pattern,
+ * so a rule of these kinds the classifier gains later is held too (modes-x9s-1).
+ */
+const RUNS_LATER = /^service\.|\.([a-z-]*-)?schedule$|autostart$|startup$|^system\.registry$/;
 /** Does this rule of the classifier's say the command would outlive the kill switch? */
-export const outlivesStop = (rule: string): boolean => rule.startsWith("escape.") && !DOWNLOADS_ONLY.has(rule);
+export const outlivesStop = (rule: string): boolean => (rule.startsWith("escape.") && !DOWNLOADS_ONLY.has(rule)) || RUNS_LATER.test(rule);
 
 /** The most the reviewer is shown of each part (characters): a command or a list of findings over its limit isn't cut, it asks. */
 export const REVIEW_LIMITS = { words: 6000, command: 4000, why: 400, findings: 1500 } as const;

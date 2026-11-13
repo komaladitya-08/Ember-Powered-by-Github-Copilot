@@ -1,5 +1,7 @@
 /** The command reviewer's prompt and answer (commands/review.ts), and when a question may be reviewed at all. */
 
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { REVIEW_LIMITS, REVIEW_SYSTEM, notReviewable, outlivesStop, parseReview, reviewPrompt, reviewedDecision } from "../../app/main/commands/review";
 import type { CommandDecision } from "../../app/main/commands/types";
@@ -29,6 +31,21 @@ describe("notReviewable (modes-C2, modes-C7; PLAN.md §10 \"Settled\" (7))", () 
       expect(outlivesStop(rule), rule).toBe(true);
       expect(notReviewable(ask({ classes: ["escape"], rules: ["posix.rm", rule] }), ok), rule).toBe("it would keep running after Stop");
     }
+  });
+  it("never a service, a scheduled job or a startup entry, which keeps running after Stop whatever rule the classifier files it under (modes-x9s-1)", () => {
+    for (const rule of ["service.unit", "service.change", "service.a-rule-added-later", "system.schedule", "system.autostart", "path.autostart", "path.startup", "system.registry",
+      "launchd.schedule", "win.autostart", "shell.startup"]) {
+      expect(outlivesStop(rule), rule).toBe(true);
+      expect(notReviewable(ask({ classes: ["system"], rules: [rule] }), ok), rule).toBe("it would keep running after Stop");
+    }
+    // Taking a job away, or a setting that runs nothing, still goes to the check.
+    for (const rule of ["system.unschedule", "system.power", "system.settings", "system.sudo"]) expect(outlivesStop(rule), rule).toBe(false);
+  });
+  it("counts as outliving Stop every rule id the classifier has for a service, a schedule, a startup entry or the registry, so none is reviewed or announced (modes-x9s-1)", () => {
+    const src = readFileSync(path.join(__dirname, "../../app/main/commands/classify.ts"), "utf8");
+    const ids = [...new Set([...src.matchAll(/"((?:service\.[a-z-]+)|(?:[a-z]+\.(?:[a-z-]*schedule|[a-z-]*autostart|[a-z-]*startup))|system\.registry)"/g)].map(m => m[1]))].filter(id => !/unschedule$/.test(id));
+    expect(ids.length).toBeGreaterThanOrEqual(7);
+    for (const id of ids) expect(outlivesStop(id), id).toBe(true);
   });
   it("may now review what the old reviewer was never shown: a system change, download-and-run, an administrator's command, carried text, a steered task, another computer", () => {
     expect(notReviewable(ask({ classes: ["system"], rules: ["systemctl"] }), ok)).toBeNull();
