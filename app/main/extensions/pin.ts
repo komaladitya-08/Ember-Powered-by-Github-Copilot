@@ -82,3 +82,56 @@ export function checkPins(pinned: PinnedTool[], served: ServedTool[]): PinnedToo
 export function isReadOnly(t: { annotations: ToolHints }): boolean {
   return t.annotations.readOnlyHint === true && t.annotations.destructiveHint !== true && t.annotations.openWorldHint !== true;
 }
+
+/** JSON Schema's own type names: no words of the server's. */
+const JSON_TYPES = new Set(["string", "number", "integer", "boolean", "object", "array", "null"]);
+/** Keys whose values are values, not more schema: shown as they are written. */
+const VALUE_KEYS: Record<string, string> = { enum: "choices", const: "always", default: "default", examples: "examples" };
+const valueText = (v: unknown) => (typeof v === "string" ? v : JSON.stringify(v));
+
+/**
+ * Every word of a tool's input schema the model reads, as lines for the review card (integrations-c9-1: the card showed
+ * a tool's name and description while the model also read the schema's description and each parameter's, where a
+ * server can write instructions). One line per parameter, by its path ("q", "filter.from"), with its title,
+ * description, choices, default, examples and any other text it carries; the schema's own description first. Only
+ * JSON's type names, numbers, booleans, a `$schema` address and a `#/…` reference are left out: none is the server's
+ * prose. Nothing is cut: the card shows what the model is sent.
+ */
+export function schemaWords(schema: unknown): string[] {
+  const out: string[] = [];
+  const walk = (node: unknown, at: string[], named: boolean) => {
+    if (Array.isArray(node)) { for (const n of node) walk(n, at, false); return; }
+    if (!node || typeof node !== "object") {
+      if (typeof node === "string" && node) out.push(at.length ? `${at.join(".")}: ${node}` : node);
+      return;
+    }
+    const o = node as Record<string, unknown>;
+    const texts: string[] = [];
+    const later: (() => void)[] = [];
+    const props = o.properties && typeof o.properties === "object" && !Array.isArray(o.properties) ? Object.keys(o.properties) : [];
+    for (const [k, v] of Object.entries(o)) {
+      if (k === "properties" && v && typeof v === "object" && !Array.isArray(v)) {
+        for (const [name, sub] of Object.entries(v)) later.push(() => walk(sub, [...at, name], true));
+      } else if ((k === "$defs" || k === "definitions") && v && typeof v === "object" && !Array.isArray(v)) {
+        for (const [name, sub] of Object.entries(v)) later.push(() => walk(sub, [...at, name], true));
+      } else if (k in VALUE_KEYS) {
+        texts.push(`${VALUE_KEYS[k]}: ${Array.isArray(v) && k !== "const" && k !== "default" ? v.map(valueText).join(", ") : valueText(v)}`);
+      } else if (k === "type") {
+        const odd = (Array.isArray(v) ? v : [v]).filter(t => typeof t === "string" && !JSON_TYPES.has(t));
+        if (odd.length) texts.push(`type: ${odd.join(", ")}`);
+      } else if (k === "required" && Array.isArray(v)) {
+        const odd = v.filter(n => typeof n !== "string" || !props.includes(n));
+        if (odd.length) texts.push(`required: ${odd.map(valueText).join(", ")}`);
+      } else if (typeof v === "string") {
+        if ((k === "$schema" && /^https?:\/\/\S+$/.test(v)) || (k === "$ref" && /^#[\w/$.-]*$/.test(v))) continue;
+        if (v) texts.push(k === "description" || k === "title" ? v : `${k}: ${v}`);
+      } else if (v && typeof v === "object") {
+        later.push(() => walk(v, at, false));
+      }
+    }
+    if (texts.length || (named && at.length)) out.push(at.length ? `${at.join(".")}${texts.length ? `: ${texts.join(" · ")}` : ""}` : texts.join(" · "));
+    for (const f of later) f();
+  };
+  walk(schema, [], false);
+  return out;
+}

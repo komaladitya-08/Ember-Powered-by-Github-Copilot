@@ -342,6 +342,10 @@ export function consentCard(e: Pick<MarketplaceEntry, "name" | "kind" | "source"
 }
 
 /** The re-agree card for an item whose tools changed: the same promises, and the tools as they are now. */
+/** Above a tool's inputs on the review card: the words the model reads of them as well (integrations-c9-1). */
+export const TOOL_INPUTS_HEADING = "What the AI model also reads about its inputs:";
+export const toolInputsLabel = (tool: string) => `Inputs of ${tool}`;
+
 export function reagreeCard(i: Installed): ConsentCard {
   // "Read-only" only where some are (integrations-r10-3: a plugin with none was promised "these read-only tools").
   const readOnly = (i.reviewTools ?? i.tools).some(t => t.readOnly);

@@ -34,7 +34,7 @@ import { EXTENSION_ON_UNSAVED, MARKETPLACE_BUILT_IN_KEPT, MARKETPLACE_MANAGED_KE
 import type { OS } from "../../shared/shortcuts";
 import { REFUSED, classify, failureNote, gateAnnouncement, gateQuestion, wrapResult } from "./gate";
 import { pluginPath, readMarketplace, readPlugin, reachOf, firstFile, MARKETPLACE_PLACES, type ServerSpec } from "./manifest";
-import { canonical, checkPins, isReadOnly, pinAll, shownHash, toolHash, type PinnedTool } from "./pin";
+import { canonical, checkPins, isReadOnly, pinAll, schemaWords, shownHash, toolHash, type PinnedTool } from "./pin";
 import { probeHttp, probeStdio, servedTools, type ProbeResult } from "./probe";
 import { SAVED_OUTPUT } from "../agent/runtime-temp";
 import { ExtensionStore, copyPlugin, type StoredItem, type StoredServer } from "./store";
@@ -109,6 +109,8 @@ function toolInfo(server: StoredServer, tools: PinnedTool[], review = false): To
   return tools.map(t => ({
     ...(review ? { server: server.name } : {}),
     name: t.name, description: t.description, readOnly: isReadOnly(t),
+    // The words of its inputs the model reads too, for the review card (integrations-c9-1).
+    ...(review ? { inputs: schemaWords(t.inputSchema) } : {}),
     ...(!review && t.changed ? { changed: true } : {}),
     ...(clashes.has(modelToolName(server.key, t.name)) ? { nameConflict: true } : {}),
   }));

@@ -881,9 +881,12 @@ it builds on:
   would be readable by every user.
 - **Pins.** At install and at each start (and when an item is turned on) Ember lists each server's tools itself
   (`probe.ts`, in its own process group, ended whole) and compares SHA-256 pins of name, description, schema and hints
-  (`pin.ts`); a changed tool is off until the user agrees again in Home. Known gap: **Agree again** (and install)
-  pins the tools the server serves at that moment without showing them to the user first; the card naming the served
-  tools, with a hash carried back on the yes, is a follow-up.
+  (`pin.ts`); a changed tool is off until the user agrees again in Home. The review card (**Review and agree**,
+  **Review tools**) shows each served tool's name, description and badge, and under them every word of its input
+  schema the model reads too (`schemaWords`: each parameter by its path with its title, description, choices,
+  default and examples, and the schema's own description; integrations-c9-1: the model read parameter descriptions
+  the card never showed). Its yes carries a hash of exactly that list (`reviewToken`), so a server that changes
+  between the card and the click is refused.
 - **Servers' environment.** The runtime would start a stdio server with its whole environment (the spike saw
   `GH_TOKEN` and cloud keys reach it), so it starts Ember's launcher (`dist/app/mcp-launch.cjs`, plain Node), which
   starts the server with `appEnv()`'s allowlist and the plugin's own values only, no shell, and records its process id
