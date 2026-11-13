@@ -571,7 +571,8 @@ any dialog with a Cancel, a check box or another control, or a title bar's Close
 short, is a web page's, a browser's, an installer's or a permission prompt, or names something risky), or before
 typing line breaks into a plain text editor's main document with the borrowed keyboard (Notepad, gedit, Mousepad, Kate,
 TextEdit and the like, when it is the window's main document; their consoles, any other app, a spreadsheet's cell, a web page and a tab still ask). Controls in a separate top-level window a dialog owns can't be detected (no reader lists them under the dialog). While
-Ember runs as an administrator or as root every command asks, and the note under the modes says so; an ordinary command on this
+Ember runs as an administrator or as root every command asks, but in Autopilot, which runs them so without asking, each
+with its Stop countdown; the note under the modes says which; an ordinary command on this
 computer that asks only because it carries text read elsewhere runs after its Stop countdown (WSL and SSH commands ask
 as before). Steps in the system's Settings and security apps always ask. It says each such step in its bubble and on
 the task's card by its kind, app and size ("Clicking in Text Editor, without asking as you let me."), never with

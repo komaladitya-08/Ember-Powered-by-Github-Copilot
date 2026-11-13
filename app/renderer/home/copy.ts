@@ -1012,6 +1012,14 @@ export function approvalsNote(state: ApprovalsState | null, managed: boolean, el
   const lockedRow = below || !state ? "" : state.checkOff && state.why !== "check-off" && state.offered.includes("assisted") ? ` ${CHECK_OFF_TEXT}, so ${MODE_NAME.assisted} can't be chosen.`
     : state.cap && state.why !== "cap" && state.offered.some(m => modeRank(m) > modeRank(state.cap)) ? ` Your organisation allows ${MODE_NAME[state.cap]} at most.` : "";
   const said = `${base}${lockedRow}`;
+  // Autopilot doesn't ask for that (commands/autopilot.ts autopilotAsks: root is no reason to ask there): say what
+  // happens instead (modes-x9p-1).
+  if (state?.inForce === "autopilot" && !below) {
+    if (elevated === "administrator") return `${said} Ember is running as an administrator, so in Autopilot its commands run as an administrator without asking, each with a few seconds to stop it. Start it normally to change that.`;
+    if (elevated === "maybe-administrator") return `${said} Ember may be running as an administrator (it couldn't tell), and then in Autopilot its commands run so without asking, each with a few seconds to stop it. Start it normally to be sure.`;
+    if (elevated === "root") return `${said} Ember is running as root, so in Autopilot its commands run as root without asking, each with a few seconds to stop it. Start it as yourself to change that.`;
+    return said;
+  }
   if (elevated === "administrator") return `${said} Ember is running as an administrator, so it asks before every command. Start it normally to change that.`;
   if (elevated === "maybe-administrator") return `${said} Ember may be running as an administrator (it couldn't tell), and then it asks before every command. Start it normally to be sure.`;
   if (elevated === "root") return `${said} Ember is running as root, so it asks before every command. Start it as yourself to change that.`;
