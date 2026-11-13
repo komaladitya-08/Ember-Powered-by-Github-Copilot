@@ -965,8 +965,12 @@ const CHECK_OFF_TEXT = `Your organisation turned off the check ${MODE_NAME.assis
 const ASKS_BEFORE = "Ember asks before its first step in an app, before using your mouse and keyboard, before pressing OK on an app's message box and before moving text between apps";
 /** Under the modes while Autopilot is in force: that it is, what that means, and how to stop it (never left unsaid). */
 const AUTOPILOT_ON = `${MODE_NAME.autopilot} is on: Ember sends, deletes, pays and installs without asking, and tells you as it goes. “Ember, stop” or Ember's stop shortcut stops it.`;
-/** That a question can be answered by voice (by anyone heard while Voice Match is off, its default: 2026-11-12). */
-const ANSWER_BY_VOICE = "You can answer a question by voice too: say “allow” or “not now” once Ember has asked, or “Ember, allow” later.";
+/**
+ * That a question can be answered by voice (by anyone heard while Voice Match is off, its default: 2026-11-12), and that
+ * a mode can be chosen by saying its name (app/main/agent/autonomy-intent.ts: one that asks less only with its card
+ * agreed to here).
+ */
+const ANSWER_BY_VOICE = "You can answer a question by voice too: say “allow” or “not now” once Ember has asked, or “Ember, allow” later. To change the mode by voice, say its name, such as “Ember, switch to Interactive”: one that asks less needs its card agreed to here first.";
 
 /**
  * Under the modes: what is in force and, where that isn't the mode chosen, why in one sentence; then that questions

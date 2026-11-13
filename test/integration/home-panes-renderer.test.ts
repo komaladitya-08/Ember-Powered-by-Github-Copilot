@@ -912,7 +912,7 @@ describe.skipIf(gate)("Apps & privacy › How Ember asks, with a keyboard and a 
     await expect.poll(() => page.locator("#mode-interactive").getAttribute("aria-checked")).toBe("true");
     expect(await page.locator("#approvals-card").isHidden()).toBe(true);
     expect(await focused(page)).toBe("mode-interactive");
-    expect(await page.locator("#approvals-note").innerText()).toBe("You can answer a question by voice too: say “allow” or “not now” once Ember has asked, or “Ember, allow” later.");
+    expect(await page.locator("#approvals-note").innerText()).toBe("You can answer a question by voice too: say “allow” or “not now” once Ember has asked, or “Ember, allow” later. To change the mode by voice, say its name, such as “Ember, switch to Interactive”: one that asks less needs its card agreed to here first.");
     expect(await page.locator("#approvals-msg").innerText()).toBe("");
     // The mode in force has nothing more to agree to: pressing it opens no card and sends nothing.
     await page.keyboard.press("Space");
@@ -1021,7 +1021,7 @@ describe.skipIf(gate)("Apps & privacy › How Ember asks, with a keyboard and a 
     const row = page.locator("#mode-assisted");
     expect(await row.isDisabled()).toBe(true);
     expect(await row.getAttribute("title")).toBe("Your organisation turned off the check Assisted needs");
-    expect(await page.locator("#approvals-note").innerText()).toBe("You can answer a question by voice too: say “allow” or “not now” once Ember has asked, or “Ember, allow” later. Your organisation turned off the check Assisted needs, so Assisted can't be chosen.");
+    expect(await page.locator("#approvals-note").innerText()).toBe("You can answer a question by voice too: say “allow” or “not now” once Ember has asked, or “Ember, allow” later. To change the mode by voice, say its name, such as “Ember, switch to Interactive”: one that asks less needs its card agreed to here first. Your organisation turned off the check Assisted needs, so Assisted can't be chosen.");
     // The arrow keys pass over the locked row to the next one that can be chosen; a click on the locked one opens no card.
     await page.locator("#mode-interactive").focus();
     await page.keyboard.press("ArrowDown");

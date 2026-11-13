@@ -525,7 +525,7 @@ in that task; and for a step it can't show the check whole (a name the screen re
 a name over 200 characters, typed text over 1,500, a request over 6,000). It never checks what Ember refuses, and a
 step you said no to stays refused without reaching it. A task that text on screen tried to steer, that went off-task
 or where you said no has its steps checked too, the check being told so. On another computer reached over SSH every
-step still asks (its own policy asks for each one), and steps in WSL apps ask as below Interactive.
+step still asks (its own policy asks for each one); steps in WSL apps, on this screen, are checked as any other here.
 
 **Autopilot** never asks about a step in an app. Every question Interactive would put up goes ahead instead,
 announced, a risky one included (`PolicyEngine.autopilotStep`, at the end of the engine's own judgement, on
