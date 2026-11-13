@@ -7,7 +7,10 @@
 
 import { describe, expect, it } from "vitest";
 import { PolicyEngine, vaultTarget, type ActionRequest, type PolicyInputs, type VaultFill } from "../../app/main/policy/policy";
-import { ALL_SCOPES } from "../../app/main/policy/autonomy";
+import { ALL_SCOPES, approvalInputs, modeInForce } from "../../app/main/policy/autonomy";
+import { AdminPolicySchema, heldUntilRestart, lockedDown, vaultAllowed, type LoadedAdminPolicy } from "../../app/main/admin";
+import { APPROVAL_MODES } from "../../app/shared/approvals";
+import { FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
 import { VAULT_FILL, VAULT_WHATS, savedPart } from "../../app/shared/vault";
 
 const engine = (o: Partial<PolicyInputs> = {}) => new PolicyEngine({
@@ -68,6 +71,50 @@ describe("the vault's fill, as the policy decides it (vault-2)", () => {
         }
       }
     }
+  });
+
+  it("fills only where Autopilot is in force, by main's own wiring, under every mode chosen and every organisation's policy (a hard check: integ-x-5)", () => {
+    const at = "2026-11-13T10:00:00.000Z";
+    const consent = { interactive: { version: FEATURE_CONSENT_VERSION.autonomy, at }, assisted: { version: FEATURE_CONSENT_VERSION.assisted, at }, autopilot: { version: FEATURE_CONSENT_VERSION.autopilot, at } };
+    const loaded = (raw: unknown): LoadedAdminPolicy => ({ policy: AdminPolicySchema.parse(raw), source: null });
+    const admins: Record<string, LoadedAdminPolicy> = {
+      "no policy": loaded({}),
+      "capped at Interactive": loaded({ approvals: { maxMode: "interactive" } }),
+      "capped at Assisted": loaded({ approvals: { maxMode: "assisted" } }),
+      "confirm every action": loaded({ confirmEveryAction: true }),
+      "acting off": loaded({ features: { actions: false } }),
+      "modes off": loaded({ features: { autonomy: false } }),
+      "no grants": loaded({ allowGrants: false }),
+      "the check off": loaded({ features: { aiReview: false } }),
+      "the vault off": loaded({ features: { vault: false } }),
+      "locked down": lockedDown("policy.json", "it can't be read"),
+      "held until restart": heldUntilRestart(loaded({})),
+    };
+    const filled: string[] = [];
+    for (const [name, admin] of Object.entries(admins)) {
+      for (const mode of APPROVAL_MODES) {
+        const policy = admin.policy;
+        // As main.ts builds this screen's engine: the mode in force, the organisation's switches and the vault's.
+        const now = () => approvalInputs(modeInForce({ mode, consent }, policy));
+        const p = new PolicyEngine({
+          neverLook: () => [], grants: () => ({}), rateLimit: policy.maxActionsPerMinute,
+          actionsAllowed: () => policy.features.actions !== false, confirmEveryAction: () => policy.confirmEveryAction, allowGrants: () => policy.allowGrants,
+          trustAskedApps: () => now().askedApps, autonomy: () => now().scopes, assisted: () => now().check, autopilot: () => now().autopilot,
+          vaultAllowed: () => vaultAllowed(admin), isTerminalApp: n => /terminal/i.test(n),
+        });
+        const fills = modeInForce({ mode, consent }, policy) === "autopilot" && name !== "the vault off";
+        for (const r of [...EVERY, APP]) {
+          for (const d of [p.decide(r), p.recheck(r)]) {
+            // Never a question, in any mode: a fill is done, announced, or refused before any form.
+            expect([name, mode, r.vault!.part, d.verdict, d.tier]).toEqual([name, mode, r.vault!.part, fills ? "allow" : "deny", fills ? d.tier : "never"]);
+            if (!fills) expect(d.announce).toBeUndefined();
+          }
+        }
+        if (fills) filled.push(`${name}: ${mode}`);
+      }
+    }
+    // Autopilot, chosen and agreed to, where the organisation neither caps the mode nor keeps Ember below Interactive.
+    expect(filled).toEqual(["no policy: autopilot", "the check off: autopilot"]);
   });
 
   it("keeps every \"never\" a never in Autopilot, decided before anything about the vault", () => {
