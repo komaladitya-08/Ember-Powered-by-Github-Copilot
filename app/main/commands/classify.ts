@@ -3751,11 +3751,18 @@ class Engine extends Classifier {
    * (`$(uname -m)`, `$(date +%s)`, `$(curl …/latest)`), nor a variable the line didn't fill.
    */
   private sendsContents(key: string, args: readonly Arg[], s: Simple): void {
-    if (this.asMain || !FETCHERS.has(key)) return;
+    if (this.asMain) return;
+    const says = "May send what a file or a command holds to another computer.";
+    if (!FETCHERS.has(key)) {
+      // Any other program given a web address that holds what a command or a read gave sends it as well (`git
+      // ls-remote "https://x.io/$(cat notes.txt)"`, `pip download …`: commands-classes-y9-6).
+      const { own: words } = this.ownWords(args);
+      if (words.some(a => a.v === null && /^["']?(https?|ftps?|ssh|git):\/\//i.test(a.raw) && substituted(a.raw).some(inner => !saysLittle(inner)))) this.add("publish", "send.contents", says);
+      return;
+    }
     // The address a cloud computer hands out its own sign-in at (the instance metadata service): what a fetch of it
     // prints is a credential (commands-remote-r9-9).
     if (args.some(a => a.v !== null && cloudMetadata(a.v))) this.add("secret", "secret.cloud", SAYS.secrets);
-    const says = "May send what a file or a command holds to another computer.";
     // A PowerShell variable the line filled from a command counts as a POSIX one does (commands-classes-y9-6).
     const filled = (name: string): boolean => (this.varValues.get(name) ?? []).some(f => f.includes(UNSEEN)) || this.loopVars.get(name) === "read"
       || (this.psVarValues.get(name.toLowerCase().replace(/^(script|global|local|private|using):/, "")) ?? []).some(f => f.includes(UNSEEN));
@@ -3764,8 +3771,8 @@ class Engine extends Classifier {
     for (let k = 0; k < args.length && !hit; k++) {
       const a = args[k];
       if (!own.includes(a)) continue;
-      // curl reads a header's lines from a file (`-H @file`).
-      // curl reads a variable's value from a file too (`--variable name@file`: commands-classes-y9-6).
+      // curl reads a header's lines from a file (`-H @file`), and a variable's value (`--variable name@file`:
+      // commands-classes-y9-6).
       if (a.v !== null) {
         hit = /^curl/.test(key) && ((/^(-H|--header|--proxy-header)$/.test(args[k - 1]?.v ?? "") && /^@./.test(a.v)) || (args[k - 1]?.v === "--variable" && /^[^=@]+@./.test(a.v)) || /^--variable=[^=@]+@./.test(a.v));
         continue;
