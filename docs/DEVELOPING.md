@@ -745,8 +745,11 @@ window, a follow-up and a conversation, means by the user (`namedByUser` in engi
 first, and the speakers didn't say it. Where their own stream arrives (Linux with `parec`) it is asked, as it is for a
 wake: a name the microphone's spotter heard counts only if the stream's spotter didn't hear it too, and if the
 recognizer, reading what the stream played through that speech, finds neither the name (inside “remember” too) nor
-most of the words heard with it (`speakersSaid`); while the stream holds sound, the recognizer's “Ember, …” alone is
-no name. Before, nothing asked the stream in these windows, and a video's, a call's or a web page's own “Ember, allow”
+most of the words heard with it (`speakersSaid`: read from where the stream's sound began, as the VAD dates a speech
+from a moment into it and of a name cut at its start the recognizer writes nothing, and again from the stream's first
+pause on where the first reading finds nothing of it, as with the end of what a video said before in front it wrote
+nothing at all for 9 of 192 cuts of “Ember, allow.” and its like, and for none from the pause on); while the stream
+holds sound, the recognizer's “Ember, …” alone is no name. Before, nothing asked the stream in these windows, and a video's, a call's or a web page's own “Ember, allow”
 answered the question it was heard in, where the same words at idle are ignored (second review of the voice lane,
 V2-S2). Measured on the real models, a video saying “Ember, okay.” and its like to a question, 80 runs: 25 were taken
 as a yes by name before, 3 with the two spotters alone (the stream's spotter misses a name now and then), none with the
@@ -766,7 +769,14 @@ through as said by name (`NAME_HEARD_MS`), and after a video's “…September�
 (V2-S4). A yes is judged on its own speech. So in a wake's own window: a yes that doesn't hold the wake phrase in its
 own speech (“Hey Ember”, a pause, then “Okay.”) is dropped where other sound is known to play, as the name was yours
 and the yes may be the video's (V2-S6); “Hey Ember, allow” in one breath is taken, and where nothing can tell (macOS,
-Linux without `parec`) the two-breath answer is taken as before, being how one answers there. The first
+Linux without `parec`) the two-breath answer is taken as before, being how one answers there. A name said after that
+pause is judged as in the windows that need none (`namedByUser`): once a wake's own window was open nothing asked the
+speakers' stream, so after your “Hey Ember” and a pause a video's own “Ember, okay.” was a yes said by name (V2-S2 in
+this window; on the real models taken 28 times in 40, never now, and your own “Ember, allow it.” then, with nothing in
+the stream, is taken as before, 40 of 40). And a wake itself is checked against that stream by the two spotters alone,
+whose miss now and then left a video's own “Ember, go ahead.” a wake from idle and a yes by name (2 of 96 runs): a yes
+a wake carries is the speakers' where the recognizer reads it in what their stream played (`speakersSaid`; none of 96
+now, and your own “Hey Ember, allow it.” over a video's talk is taken as before, 7 of 8). The first
 time something said then without the name isn't heard, the status line says “Music or a video is playing: say “Ember”
 first.” for 5 s (engine.ts `dropped`), once a conversation; while a question is up, an answer dropped so, in the answer
 window, a follow-up, a conversation or after a wake, makes the question say once why and to say the answer right after the name, in one go (`dropped` says which

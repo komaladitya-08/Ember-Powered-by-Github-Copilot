@@ -966,6 +966,35 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1" && process.env.EM
     expect(own).toBe(1);
   }, 300_000);
 
+  it("never takes “Ember, allow it.” out of the speakers for a yes said by name after the user's own “Hey Ember” and a pause (Linux with parec; V2-S2 and voice-listening-r9-2 in a wake's own window)", () => {
+    // A question is up and no window open. The user says "Hey Ember." (the microphone only) and pauses; 1.5 s later
+    // the name and a yes: a video's own (the speakers' stream and, 6 dB down and 64 ms late, the microphone), or the
+    // user's (the microphone only, the stream silent).
+    const after = (wake: Float32Array, said: Float32Array, by: "video" | "user") => {
+      const tSay = 0.7 + wake.length / 16000 + 1.5;
+      const total = at(tSay + said.length / 16000 + 3);
+      const speakers = new Float32Array(total), mic = new Float32Array(total);
+      mix(mic, wake, at(0.7));
+      if (by === "user") mix(mic, said, at(tSay));
+      else { mix(speakers, said, at(tSay)); mix(mic, said, at(tSay) + SPEAKERS_LAG, 0.5); }
+      const s = session({ speakers: true });
+      s.hear(inRoom(mic), { speakers, onFrame: k => { if (k === 3) s.engine.questionUp(true); } });
+      s.end();
+      return s.events;
+    };
+    // (Before, a wake's own window asked the speakers' stream nothing once it was open, and the name in the video's words
+    // made them a yes said by name: taken 28 times in 40 such runs, where the same words in the answer window are theirs.)
+    const taken: string[] = [];
+    for (const text of ["Ember, allow it.", "Ember, okay."]) for (const sid of [2, 3, 4, 5, 6, 7]) {
+      for (const e of yeses(after(speak("Hey Ember.", (sid + 3) % 8, 0.1), speak(text, sid, 0.1), "video"))) taken.push(`${text} (voice ${sid}): “${e.text}”`);
+    }
+    expect(taken).toEqual([]);
+    // The user's own, with nothing in the stream then, is taken as before (up to four renditions, as above).
+    let own = 0;
+    for (let take = 0; take < 4 && !own; take++) own = yeses(after(speak("Hey Ember.", 0, 0.1), speak("Ember, allow it.", 5, 0.1), "user")).length;
+    expect(own).toBe(1);
+  }, 300_000);
+
   it("sends nothing of the room's talk that starts like the name from a question's answer window, and opens no conversation on it (V2-S3, voice-listening-r9-3)", () => {
     // Conversations are on, as by default; a question is up and its answer window open; the microphone only. Someone
     // says a sentence that never names Ember, and another after it.
