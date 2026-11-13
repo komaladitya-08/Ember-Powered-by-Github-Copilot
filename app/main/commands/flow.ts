@@ -35,7 +35,7 @@ import { classifyCommand } from "./classify";
 import { LINES, decideCommand } from "./decide";
 import { covers, type AutonomyScopes } from "../policy/autonomy";
 import { heldByWords, mentioned, namedKind, ruledOut } from "./intent";
-import { capLines, cleanOutput, clearCut, CUT_SLACK, redactedWhole, shapeOutput, type ShapeOptions } from "./output";
+import { capLines, cleanOutput, clearCut, CUT_SLACK, redactedWhole, shapeCleaned, shapeOutput, type ShapeOptions } from "./output";
 import { resolveTargetPath } from "./paths";
 import { trackSecretPrompts, type SecretTracker } from "./prompts";
 import { redactSecrets } from "./redact";
@@ -1531,12 +1531,15 @@ function finishRun(ctx: CommandFlowContext, j: CommandJudge, run: RunOutcome, o:
   const theirs = (running as RunningCommand & { secretSpans?: () => { from: number; to: number }[] }).secretSpans?.() ?? [];
   const kept = out.kept([...tracker.spans(), ...theirs]);
   const raw = new TextEncoder().encode(kept.text);
-  const shaped = j.shapeOutput(raw, { target: ctx.service.binding.id, label: o.label, shell: o.shell, exit, typed, secretSpans: kept.spans });
   const task = ctx.task.id;
   const target = ctx.service.binding.id;
   // What it printed is checked whole, before shaping cuts it to size (CL's cleaned text, as the model's copy is made
   // from it; and the flow's own copy, which keeps what a carriage return overwrote), and as the model gets it.
   const clean = j.cleanOutput ? j.cleanOutput(raw, { typed, secretSpans: kept.spans }) : null;
+  const shape: ShapeOptions = { target, label: o.label, shell: o.shell, exit, typed, secretSpans: kept.spans };
+  // CL's own shaping is that same cleaned text bounded and wrapped: made from it, so the kept output (up to 4 MiB) is
+  // cleaned once on Ember's main thread, not twice (integ-y-2). A judge a test passes shapes as it does.
+  const shaped = clean !== null && j.shapeOutput === shapeOutput && j.cleanOutput === cleanOutput ? shapeCleaned(clean, shape) : j.shapeOutput(raw, shape);
   const taint = (clean !== null ? j.outputTaint(clean) : null) ?? j.outputTaint(j.redactSecrets(checkedText(kept.text, kept.spans, typed))) ?? j.outputTaint(shaped);
   if (taint) {
     ctx.state.outputTainted = true;

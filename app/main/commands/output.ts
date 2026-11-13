@@ -333,7 +333,16 @@ function exitWord(e: RunExit): string {
  * untrusted="true">`, the cleaned and bounded text with every `<` made `‹`, and the line saying it is data.
  */
 export function shapeOutput(raw: Uint8Array, o: ShapeOptions): string {
-  const body = boundOutput(cleanOutput(raw, o)).replace(/</g, "‹");
+  return shapeCleaned(cleanOutput(raw, o), o);
+}
+
+/**
+ * shapeOutput from text cleanOutput already made of the same bytes with the same typed lines and spans: the run's end
+ * cleans its kept output once for both the model's copy and the instruction check (a second pass over 4 MiB held
+ * Ember's main thread about 0.45 s more, 0.75 s with a login, a card and contact details filled: integ-y-2).
+ */
+export function shapeCleaned(clean: string, o: Omit<ShapeOptions, "typed" | "secretSpans">): string {
+  const body = boundOutput(clean).replace(/</g, "‹");
   const seconds = (Math.max(0, o.exit.ms) / 1000).toFixed(1);
   const open = `<command_output target="${attr(o.label)}" shell="${attr(o.shell)}" exit="${attr(exitWord(o.exit))}" seconds="${seconds}" untrusted="true">`;
   if (body === "") return `${open}\n</command_output>`;
