@@ -2908,6 +2908,34 @@
    "rules": [
     "unknown.program"
    ]
+  },
+  {
+   "cmd": ".\\node_modules\\.bin\\shx.cmd rm -rf %USERPROFILE%\\Documents",
+   "verdict": "ask",
+   "rules": [
+    "unclear.hidden-command",
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "node_modules\\.bin\\shx.cmd rm -rf %USERPROFILE%\\Documents",
+   "verdict": "ask",
+   "rules": [
+    "unclear.hidden-command",
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "node_modules\\.bin\\cross-env.cmd NODE_OPTIONS=--require=C:\\Temp\\x.js jest",
+   "verdict": "ask",
+   "rules": [
+    "unknown.program",
+    "unclear.assignment"
+   ]
+  },
+  {
+   "cmd": "node_modules\\.bin\\eslint.cmd .",
+   "verdict": "run"
   }
  ]
 }

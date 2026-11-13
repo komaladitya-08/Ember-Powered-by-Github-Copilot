@@ -367,8 +367,9 @@ Ember stops and asks before a command that:
   develop -c …`, `pixi run …`, `devbox run …` and `direnv exec . …` are read the same way and still ask as programs
   Ember doesn't know. `dotenv`, `dotenvx`, `env-cmd`, `cross-env`, `cross-env-shell` and `with-contenv` ask as programs
   Ember doesn't know whatever they are handed (`cross-env NODE_ENV=test jest` asks): the variables and the files
-  they load can name code the command then runs. So does the project's own copy, by its path or through `node`
-  (`./node_modules/.bin/cross-env …`, `node node_modules/.bin/cross-env …`), and so does one a package manager runs
+  they load can name code the command then runs. So does the project's own copy, by its path, by npm's Windows
+  shim or through `node` (`./node_modules/.bin/cross-env …`, `.\node_modules\.bin\cross-env.ps1 …`, `cross-env.cmd
+  …`, `node node_modules/.bin/cross-env …`), and so does one a package manager runs
   (`yarn cross-env …`, `pnpm run cross-env …`). A variable one of them sets that changes how commands are found or run
   (`LD_PRELOAD`, `NODE_OPTIONS`, `CC`, `BASH_ENV`) asks as it does set directly, behind `npx` too, and your words
   naming the launcher never announce it. What a package manager runs by name is read as well (`yarn x …`, `pnpm run

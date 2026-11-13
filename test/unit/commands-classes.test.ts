@@ -1386,6 +1386,22 @@ describe("the project's own copy of a launcher or a program, run by its path or 
     }
   });
 
+  it("judges npm's Windows shims of a bin as the bin by its name (commands-runners-x9-4)", () => {
+    for (const o of WINDOWS) {
+      for (const [bin, line] of [["cross-env", "NODE_OPTIONS=--require=C:\\Temp\\x.js jest"], ["cross-env", "NODE_ENV=test jest"], ["shx", "rm -rf C:\\Users\\ana\\Documents"],
+        ["frobnicate", "npm publish"], ["frobnicate", "C:\\Users\\ana\\.ssh\\id_rsa"]] as const) {
+        for (const ext of [".cmd", ".ps1"]) {
+          if (o.shell === "cmd" && ext === ".ps1") continue;
+          const cmd = `.\\node_modules\\.bin\\${bin}${ext} ${line}`;
+          expect(decide(cmd, o).verdict, label(cmd, o)).toBe("ask");
+          expect(decide(cmd, o).rules, label(cmd, o)).toEqual(expect.arrayContaining(decide(`yarn ${bin} ${line}`, o).rules));
+        }
+      }
+      for (const cmd of [".\\node_modules\\.bin\\eslint.cmd .", ".\\node_modules\\.bin\\jest.cmd --ci", ".\\node_modules\\.bin\\tsc.cmd --noEmit"]) expect(decide(cmd, o).verdict, label(cmd, o)).toBe("run");
+    }
+    expect(decide(".\\node_modules\\.bin\\eslint.ps1 .", WINDOWS[0]).verdict).toBe("run");
+  });
+
   it("behind a runner that downloads it, a launcher's variable that names code asks as the variable does (integ2-z-5)", () => {
     for (const front of ["npx", "npx -y", "pnpm dlx", "pnpm exec", "yarn dlx", "npm exec --", "npm x", "bunx", "bun x"]) {
       const d = decide(`${front} cross-env LD_PRELOAD=/tmp/x.so jest`);

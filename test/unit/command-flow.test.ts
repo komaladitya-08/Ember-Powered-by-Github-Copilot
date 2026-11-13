@@ -4014,6 +4014,24 @@ describe("what a package manager or the project's own launcher hands on (integ2-
     await asks(command);
   });
 
+  it.each<["powershell", string]>([
+    ["powershell", ".\\node_modules\\.bin\\cross-env.ps1 NODE_OPTIONS=--require=C:\\Temp\\x.js jest"], ["powershell", "& .\\node_modules\\.bin\\cross-env.ps1 NODE_ENV=test jest"],
+    ["powershell", "node_modules/.bin/cross-env.ps1 NODE_OPTIONS=--require=C:\\Temp\\x.js jest"], ["powershell", ".\\node_modules\\.bin\\shx.cmd rm -rf $HOME\\Documents"],
+    ["powershell", ".\\node_modules\\.bin\\frobnicate.cmd npm publish"], ["powershell", "cmd /c node_modules\\.bin\\shx.cmd rm -rf %USERPROFILE%\\Documents"],
+  ])("asks before npm's Windows shim of a bin as before the bin by its name, in every mode: %s %s (commands-runners-x9-4)", async (shell, command) => {
+    const WIN: TargetBinding = { ...LOCAL, screenOs: "win32", shellOs: "win32" };
+    const facts: Partial<RunnerFacts> = {
+      os: "win32", shells: ["powershell", "cmd"], shellPaths: { powershell: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", cmd: "C:\\Windows\\System32\\cmd.exe" },
+      script: null, home: "C:\\Users\\ana", user: "ana", ember: { paths: ["C:\\Users\\ana\\AppData\\Local\\ember"], pids: [10], names: /^ember$/ },
+    };
+    for (const [mode, o] of MODES) {
+      setCommandJudge(null);
+      const h = harness({ binding: WIN, facts, words: "run the tests", answers: ["deny"], state: { cwd: "C:\\Users\\ana\\proj", downloaded: new Set(), running: false }, ...o() });
+      const r = await call(h, { target: "this computer", shell, command });
+      expect([r.resultType, h.announced.length + h.windowAnnounce.length, h.starts.length], `${command} ${mode}`).toEqual(["denied", 0, 0]);
+    }
+  });
+
   it.each([
     "npm test", "npm run build", "yarn lint", "pnpm dev", "yarn test --watch", "npm run test -- --coverage", "pnpm vitest run test/unit/x.test.ts", "yarn eslint .",
     "yarn tsc --noEmit", "npm run build -- --mode production", "yarn format", "yarn start", "yarn watch", "yarn bundle", "pnpm test src/a.test.ts", "yarn jest -t 'adds two'",

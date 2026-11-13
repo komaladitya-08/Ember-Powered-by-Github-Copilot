@@ -6176,6 +6176,63 @@
    "rules": [
     "unclear.inline-code"
    ]
+  },
+  {
+   "cmd": ".\\node_modules\\.bin\\cross-env.ps1 NODE_OPTIONS=--require=C:\\Temp\\x.js jest",
+   "verdict": "ask",
+   "rules": [
+    "unclear.cmdlet"
+   ]
+  },
+  {
+   "cmd": "& .\\node_modules\\.bin\\cross-env.ps1 NODE_OPTIONS=--require=C:\\Temp\\x.js jest",
+   "verdict": "ask",
+   "rules": [
+    "unclear.cmdlet"
+   ]
+  },
+  {
+   "cmd": "node_modules/.bin/cross-env.ps1 NODE_OPTIONS=--require=C:\\Temp\\x.js jest",
+   "verdict": "ask",
+   "rules": [
+    "unclear.cmdlet"
+   ]
+  },
+  {
+   "cmd": ".\\node_modules\\.bin\\cross-env.ps1 NODE_ENV=test jest",
+   "verdict": "ask",
+   "rules": [
+    "unclear.cmdlet"
+   ]
+  },
+  {
+   "cmd": ".\\node_modules\\.bin\\shx.cmd rm -rf $HOME\\Documents",
+   "verdict": "ask",
+   "rules": [
+    "unclear.hidden-command",
+    "ps.Remove-Item"
+   ]
+  },
+  {
+   "cmd": ".\\node_modules\\.bin\\frobnicate.cmd npm publish",
+   "verdict": "ask",
+   "rules": [
+    "script.publish",
+    "unclear.hidden-command",
+    "npm.publish"
+   ]
+  },
+  {
+   "cmd": ".\\node_modules\\.bin\\eslint.ps1 .",
+   "verdict": "run"
+  },
+  {
+   "cmd": ".\\node_modules\\.bin\\eslint.cmd .",
+   "verdict": "run"
+  },
+  {
+   "cmd": ".\\node_modules\\.bin\\jest.cmd --ci",
+   "verdict": "run"
   }
  ]
 }

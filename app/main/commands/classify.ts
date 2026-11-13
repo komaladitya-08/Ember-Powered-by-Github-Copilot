@@ -3214,6 +3214,10 @@ class Engine extends Classifier {
       if (!this.onRecord(nameArg, sc)) this.scriptByPath(nameArg, pn, sc);
       scriptName(h, nameArg.v ?? "");
       if (!NATIVE[key] && nameArg.v !== null) scriptVerbs(h, nameArg.v, args);
+      // npm's Windows shims of a bin (`node_modules\.bin\cross-env.ps1`, `shx.cmd`) are that bin: judged by its name,
+      // with its words read as `yarn <name> …` reads them (commands-runners-x9-4).
+      const shim = nameArg.v !== null && IN_NODE_MODULES.test(nameArg.v) ? /^(.+)\.(cmd|bat|ps1)$/i.exec(pn.base) : null;
+      if (shim) runnerLine(h, lit(shim[1]), args, h.prog);
     } else if (sc.wrappers.length > 0 && nameArg.v !== null && this.holdsAnyDownload() && this.isDownloaded(nameArg, sc, false)) {
       // A command handed to a program by a bare word that is a download of this task (`mytool r`, where generic()
       // took `r` for a program's name): it may be what runs (commands-remote-r9-5).
