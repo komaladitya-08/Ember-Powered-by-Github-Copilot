@@ -26,7 +26,7 @@ import { TURN_START_MS, TurnWatch, within } from "./conductor";
 import { asPasteClipboard, ClipboardTimeout, holdsPassword, type ClipboardSnapshot, type PasteClipboard, type TextClipboard } from "./clipboard";
 import { handStep, plainText, stepOf, type HandStep, type Presenter } from "./presenter";
 import { askedWords, type ActivityEvent } from "./activity";
-import { Refusals, stepNames, type Standing } from "../policy/refusals";
+import { Refusals, riskNames, stepNames, type Standing } from "../policy/refusals";
 import { pageBinding, pageBindingOf } from "./page-binding";
 import { cardApp } from "../../shared/activity";
 import type { Confirmer, Question } from "./confirm";
@@ -3819,7 +3819,7 @@ export class Worker {
     const no = judged.find(j => j.d.verdict === "deny");
     // A batch with a cell the user already said no to filling in this task (or left unanswered): refused whole, with
     // no question, as one step is (authorize).
-    const names = judged.flatMap(j => this.namesOf(j.req));
+    const names = judged.flatMap(j => [...this.namesOf(j.req), ...this.risksOf(j.req, j.d)]);
     const stood = no ? null : this.refusals.step(names);
     if (stood) return this.refusedBefore({ ...base, element: { role: "table cell", name: jobs.map(j => j.cell).join(", ") } }, { tier: "confirm" }, stood);
     let asks = judged.find(j => j.d.verdict !== "allow");
@@ -4782,7 +4782,7 @@ export class Worker {
     if (decision.aligned === false) this.tainted = true;
     // A step the user already said no to in this task, or whose question nobody answered and they haven't spoken since:
     // never asked about again, checked or announced, whatever the mode would do with it now (Refusals).
-    const names = this.namesOf(req);
+    const names = [...this.namesOf(req), ...this.risksOf(req, decision)];
     const stood = decision.verdict === "deny" ? null : this.refusals.step(names);
     if (stood) return this.refusedBefore(req, decision, stood);
     // "Work without asking" is suspended for the rest of a task the user already said no in (fail closed): the step asks
@@ -4929,6 +4929,15 @@ export class Worker {
     const says = req.kind === "keys" || req.kind === "open_app" || req.kind === "setting";
     return stepNames({ kind: req.kind, key: this.stepKey(req.element), named: !!req.element?.role, ...(says ? { value: req.value ?? "" } : {}),
       ...(req.kind === "keys" ? { activates: isActivatingKey(req.value ?? "", this.kc) } : {}) });
+  }
+
+  /**
+   * What a risky step does (refusals.ts riskNames: sending, deleting, paying…), by policy's own words for it, never the
+   * text it would type: after a no, the same thing done another way (a key, a menu item, another window) is refused for
+   * the rest of the task, in every mode (modes-x9s-3). An ordinary step goes by its own names alone.
+   */
+  private risksOf(req: Pick<ActionRequest, "element">, d: Pick<Decision, "risky" | "about" | "reason">): string[] {
+    return d.risky ? riskNames(`${d.about ?? ""} ${req.element?.name ?? ""} ${d.reason}`, !!d.about) : [];
   }
 
   /**

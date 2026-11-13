@@ -10,7 +10,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { PolicyEngine, type ActionKind } from "../../app/main/policy/policy";
 import { ALL_SCOPES, type AutonomyScopes } from "../../app/main/policy/autonomy";
-import { Refusals, commandActs, sameCommand, stepNames, type CommandAsked } from "../../app/main/policy/refusals";
+import { Refusals, commandActs, riskNames, sameCommand, stepNames, type CommandAsked } from "../../app/main/policy/refusals";
 import { Worker, leftUndone, type WorkerDeps } from "../../app/main/agent/worker";
 import { commandSha256, runCommandTool, setCommandJudge, type CommandFlowContext } from "../../app/main/commands/flow";
 import { classifyCommand } from "../../app/main/commands/classify";
@@ -164,7 +164,7 @@ const STILL_UNANSWERED = "Ember already asked the user about this step and the q
  * A worker on a window with Bold and Delete, in Interactive (every scope on) unless `scopes` says otherwise. Each
  * question is answered by `answers` in turn: null is a question that ran out of time, "deny" a "Not now".
  */
-function worker(answers: (string | null)[], o: { scopes?: () => AutonomyScopes | null } = {}) {
+function worker(answers: (string | null)[], o: { scopes?: () => AutonomyScopes | null; autopilot?: () => boolean } = {}) {
   const audit: Record<string, unknown>[] = [];
   const askedOf: string[] = [];
   const activity: Record<string, unknown>[] = [];
@@ -178,7 +178,7 @@ function worker(answers: (string | null)[], o: { scopes?: () => AutonomyScopes |
       readElement: async (id: number) => { const n = seen.nodes.find(x => x.id === id); return n ? { role: n.role, name: n.name, states: n.states, bounds: n.bounds } : null; },
       doAction: async () => ({ ok: true, after: { role: "push button", name: "Bold", states: [], bounds: BOLD.bounds } }),
     } as never,
-    policy: new PolicyEngine({ neverLook: () => [], grants: () => ({}), autonomy: scopes }),
+    policy: new PolicyEngine({ neverLook: () => [], grants: () => ({}), autonomy: scopes, ...(o.autopilot ? { autopilot: o.autopilot } : {}) }),
     autonomy: scopes,
     confirmer: { ask: async (q: { prompt: string }) => { askedOf.push(q.prompt); return answers.length ? answers.shift() : "once"; } } as never,
     audit: { write: (e: Record<string, unknown>) => audit.push(e) } as never,
@@ -277,6 +277,63 @@ describe("a step the user said no to, sent again by the model (tasks-approvals-r
     await h.call("click", { id: 3 });
     const r = await h.inner.authorize({ taskId: "t1", kind: "click", app: "gedit", window: "notes.txt", element: { role: "password text", name: "Delete" } });
     expect(r?.textResultForLlm).toMatch(/^Not allowed: password fields are for the user only\./);
+  });
+});
+
+describe("the refused step done another way: what it does, not only the control (modes-x9s-3)", () => {
+  const mail = { taskId: "t1", app: "thunderbird", window: "Write: Q3 report - Thunderbird" };
+  const send = { ...mail, kind: "click", element: { role: "push button", name: "Send" } };
+  const shortcut = { ...mail, kind: "keys", value: "ctrl+Return", element: { role: "text", name: "Message body" } };
+  const menu = { ...mail, kind: "click", element: { role: "menu item", name: "Send Now" } };
+  const later = { ...mail, window: "Write: Q3 report (2) - Thunderbird", kind: "click", element: { role: "push button", name: "Send" } };
+
+  it("refuses the shortcut, the menu item and a second compose window's Send without a question, after a no to Send", async () => {
+    const h = worker(["deny", "once", "once", "once"]);
+    expect(await h.inner.authorize(send)).toMatchObject({ resultType: "denied", textResultForLlm: expect.stringMatching(/^The user said no\./) });
+    for (const again of [shortcut, menu, later]) expect(await h.inner.authorize(again), again.element.name).toMatchObject({ resultType: "denied", textResultForLlm: REFUSED_BEFORE });
+    expect(h.asked).toHaveLength(1);
+  });
+
+  it("refuses it so in Autopilot too, after a switch mid-task: never announced, never done", async () => {
+    let auto = false;
+    const h = worker(["deny"], { autopilot: () => auto });
+    expect((await h.inner.authorize(send))?.resultType).toBe("denied");
+    auto = true;
+    for (const again of [send, shortcut, menu, later]) expect(await h.inner.authorize(again), again.element.name).toMatchObject({ resultType: "denied", textResultForLlm: REFUSED_BEFORE });
+    expect(h.activity.some(e => e.type === "announce")).toBe(false);
+    expect(h.audit.some(e => e.mode === "autopilot")).toBe(false);
+  });
+
+  it("takes a deletion done with a key, or reworded, for the refused deletion; another kind of risky step still asks", async () => {
+    const h = worker(["deny", "once"]);
+    const files = { taskId: "t1", app: "nautilus", window: "Documents" };
+    expect((await h.inner.authorize({ ...files, kind: "click", element: { role: "menu item", name: "Move to Trash" } }))?.resultType).toBe("denied");
+    expect(await h.inner.authorize({ ...files, kind: "click", element: { role: "push button", name: "Delete permanently" } })).toMatchObject({ textResultForLlm: REFUSED_BEFORE });
+    expect(await h.inner.authorize({ ...files, kind: "click", element: { role: "menu item", name: "Remove" } })).toMatchObject({ textResultForLlm: REFUSED_BEFORE });
+    // Sending is another thing: asked, as in any task the user said no in.
+    expect(await h.inner.authorize({ ...files, kind: "click", element: { role: "menu item", name: "Send to…" } })).toBeNull();
+    expect(h.asked).toHaveLength(2);
+  });
+
+  it("names a risky step by what it does, and one it can't tell as every kind", () => {
+    const r = new Refusals();
+    r.noteStep(riskNames("Send"), "refused");
+    expect(r.step(riskNames("this shortcut can delete, send or close things"))).toBe("refused");
+    expect(r.step(riskNames("Send Now"))).toBe("refused");
+    expect(r.step(riskNames("Delete"))).toBeNull();
+    // A label Ember can't put a kind to (another language, a bare risk) is every kind, both ways.
+    expect(r.step(riskNames("Absenden"))).toBe("refused");
+    const any = new Refusals();
+    any.noteStep(riskNames("Absenden"), "refused");
+    expect(any.step(riskNames("Delete"))).toBe("refused");
+    // A borrow that is risky only because it takes the mouse and keyboard does nothing of these kinds.
+    expect(riskNames("Ember needs your mouse or keyboard for this", false)).toEqual([]);
+    // Unanswered: until the user next says something, as for one step.
+    const w = new Refusals();
+    w.noteStep(riskNames("Pay now"), "waiting");
+    expect(w.step(riskNames("Place order"))).toBe("waiting");
+    w.userSpoke();
+    expect(w.step(riskNames("Place order"))).toBeNull();
   });
 });
 
