@@ -63,7 +63,13 @@ export const HANDED_SAYS = "Gives a password, key or other secret to code it dow
 /** The most words of one command, and variables of one line, that handedSecrets judges: past it, it counts as handed. */
 const HANDED_MAX = 32;
 /** A variable a shell would expand, wherever it stands in the line: `$NAME`, `${NAME…}`, `$env:NAME`, `%NAME%`. */
-const EXPANDS = /\$\{?(?:env:)?([A-Za-z_][A-Za-z0-9_]*)|%([A-Za-z_][A-Za-z0-9_]*)%/gi;
+const EXPANDS = /\$\{?(?:env:)?([A-Za-z_][A-Za-z0-9_]*)|%([A-Za-z_][A-Za-z0-9_]*)%|!([A-Za-z_][A-Za-z0-9_]*)!/gi;
+/**
+ * What makes a word one Ember can't resolve, beside a plain variable: a command or process substitution, arithmetic,
+ * a positional or indirect expansion (any `$` a plain variable doesn't account for), another user's home (`~ana`),
+ * and in PowerShell a parenthesised expression.
+ */
+const OPAQUE = (family: string) => (family === "powershell" ? /[$`(]|~[A-Za-z0-9_+-]/ : /[$`]|[<>]\(|~[A-Za-z0-9_+-]/);
 /** A word as a POSIX shell, and as PowerShell, would take it back whole. */
 const posixWord = (a: string) => `'${a.replace(/'/g, "'\\''")}'`;
 const psWord = (a: string) => `'${a.replace(/'/g, "''")}'`;
@@ -78,7 +84,10 @@ const psWord = (a: string) => `'${a.replace(/'/g, "''")}'`;
  * shown to it (`judge`) as the file a plain reader would open, each variable as one printed, and a finding there that
  * says secrets (readsSecrets) makes this one. It only ever adds a question, in every mode and on every target (the
  * flow and a remote's gate 2 both call it); once the classifier judges such a line itself, this finds the same thing
- * a second time. A word that can't be judged, or more words than it judges, counts as handed.
+ * a second time. A word that can't be judged, or more words than it judges, counts as handed; so does a word the
+ * classifier couldn't resolve (`$(echo ~/.ssh/id_rsa)`, `~ana/.ssh/id_rsa`, `$D/id_rsa` after `D=~/.ssh`), unless all
+ * the line expands is plain variables it sets nowhere itself, whose names were judged above (`--port $PORT`)
+ * (modes-y9-x9-2).
  */
 export function handedSecrets(cls: Pick<Classification, "commands" | "findings">, command: string, shell: ShellId, judge: (text: string) => readonly Pick<Finding, "cls" | "rule">[]): Finding[] {
   const downloads = cls.findings.filter(f => DOWNLOADS_ONLY.has(f.rule.replace(/^in-script:/, "")));
@@ -91,14 +100,27 @@ export function handedSecrets(cls: Pick<Classification, "commands" | "findings">
   };
   const first = downloads[0];
   const found = (): Finding[] => [{ cls: "secret", rule: HANDED_RULE, says: HANDED_SAYS, program: first.program, objects: [], widening: [], at: first.at }];
-  const names = [...new Set([...command.matchAll(EXPANDS)].map(m => m[1] ?? m[2]))];
+  const names = [...new Set([...command.matchAll(EXPANDS)].map(m => m[1] ?? m[2] ?? m[3]))];
+  // Is every word of the line that can't be resolved a plain variable from outside it? Its names stand nowhere bare
+  // (an assignment, `read K`, `for f in`: the line sets it, to what Ember doesn't follow), and nothing else expands.
+  const plain = (): boolean => {
+    // (`$_` is the last command's word or the pipeline's item; PowerShell's own variables are set with the same `$x`
+    // that reads them, so only its `$env:` ones count as from outside.)
+    const outside = family === "powershell" ? /\$\{?env:[A-Za-z_][A-Za-z0-9_]*\}?(?!\s*[-+*/]?=(?!=))/gi : EXPANDS;
+    if (names.length === 0 || names.includes("_") || OPAQUE(family).test(command.replace(outside, ""))) return false;
+    if (family === "powershell") return true;
+    const fold = family === "posix" ? "" : "i";
+    return !names.some(n => new RegExp(`(^|[^$%!{:A-Za-z0-9_])${n}(?![A-Za-z0-9_])`, fold).test(command));
+  };
   if (names.length > HANDED_MAX || names.some(n => secret(prints(n)))) return found();
   for (const at of new Set(downloads.map(f => f.at))) {
-    const words = (cls.commands[at]?.args ?? []).filter((a): a is string => a !== null);
-    if (words.length > HANDED_MAX) return found();
+    const args = cls.commands[at]?.args ?? [];
+    const words = args.filter((a): a is string => a !== null);
+    if (words.length > HANDED_MAX || (words.length < args.length && !plain())) return found();
     for (const w of words) {
-      // The word itself, and what an option carries: `--key=PATH`, `-kPATH`.
-      const values = !w.startsWith("-") ? [w] : [w.includes("=") ? w.slice(w.indexOf("=") + 1) : "", /^-[A-Za-z]./.test(w) ? w.slice(2) : ""];
+      // The word itself, and what an option carries: `--key=PATH`, `--key:PATH`, `-kPATH`.
+      const after = (sep: string) => (w.includes(sep) ? w.slice(w.indexOf(sep) + 1) : "");
+      const values = !w.startsWith("-") ? [w] : [after("="), after(":"), /^-[A-Za-z]./.test(w) ? w.slice(2) : ""];
       if (values.some(v => v !== "" && !v.startsWith("-") && secret(reads(v)))) return found();
     }
   }
