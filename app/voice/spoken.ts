@@ -215,15 +215,21 @@ const worth = (n: string, scale?: string) => Number(n.replace(/,/g, "")) * (scal
  * paragraph" keep their words; a footnote's mark only right after the word or stop it notes ("the regex [^abc]" is
  * said), and its definition's "[^1]:" at the start of a line.
  */
-const EYE_ONLY = /(`+)(?!`)[^\n]*?(?<!`)\1(?!`)|<(br)\s*\/?>|<(?:b|i|u|s|em|strong|sub|sup|kbd|span|mark|small|del|ins|p|div|font|center)(?:\s+[\w:-]+=(?:"[^"<>\n]*"|'[^'<>\n]*'|[^\s"'<>=]+))*\s*>(?=[^\s.,;:!?)])|(?<=\S)<\/(?:b|i|u|s|em|strong|sub|sup|kbd|span|mark|small|del|ins|p|div|font|center)>|(?<=[A-Za-z0-9\u00C0-\u024F.,;:!?)"”’])\[\^[\w-]{1,24}\](?!:)|^[ \t]*\[\^[\w-]{1,24}\]:[ \t]*|&(amp|lt|gt|quot|apos|nbsp|#39);/gim;
-const ENTITY: Readonly<Record<string, string>> = { amp: "&", lt: "<", gt: ">", quot: "\"", apos: "'", "#39": "'", nbsp: " " };
+const EYE_ONLY = /(`+)(?!`)[^\n]*?(?<!`)\1(?!`)|<(br)\s*\/?>|<(?:b|i|u|s|em|strong|sub|sup|kbd|span|mark|small|del|ins|p|div|font|center)(?:\s+[\w:-]+=(?:"[^"<>\n]*"|'[^'<>\n]*'|[^\s"'<>=]+))*\s*>(?=[^\s.,;:!?)])|(?<=\S)<\/(?:b|i|u|s|em|strong|sub|sup|kbd|span|mark|small|del|ins|p|div|font|center)>|(?<=[A-Za-z0-9\u00C0-\u024F.,;:!?)"”’])\[\^[\w-]{1,24}\](?!:)|^[ \t]*\[\^[\w-]{1,24}\]:[ \t]*|&(amp|lt|gt|quot|apos|nbsp|#39|mdash|ndash|hellip|copy|reg|trade|rarr|larr|times|deg|lsquo|rsquo|ldquo|rdquo|bull|middot);/gim;
+const ENTITY: Readonly<Record<string, string>> = {
+  amp: "&", lt: "<", gt: ">", quot: "\"", apos: "'", "#39": "'", nbsp: " ",
+  // The common named ones, as the marks they stand for (said letter by letter before: voice-speaking-r9-6).
+  mdash: "—", ndash: "–", hellip: "…", copy: "©", reg: "®", trade: "™", rarr: "→", larr: "←", times: "×", deg: "°",
+  lsquo: "‘", rsquo: "’", ldquo: "“", rdquo: "”", bull: "•", middot: "·",
+};
 const withoutEyeOnly = (text: string): string =>
   text.replace(EYE_ONLY, (m: string, code: string | undefined, br: string | undefined, entity: string | undefined) => (code ? m : br ? " " : entity ? ENTITY[entity.toLowerCase()] : ""));
 /**
  * A task list's box: an open one is unsaid, a ticked one is "Done:" (it was read "x": voice-speaking-r7-3), unless its
- * item says so itself ("[x] Done: paid rent" was "Done: Done:": voice-speaking-x7-5).
+ * item says so itself ("[x] Done: paid rent" was "Done: Done:": voice-speaking-x7-5), in bold or italics too
+ * ("[x] **Done**: paid rent": voice-speaking-r9-6).
  */
-const TASK_BOX = /^([ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+)\[([ xX])\][ \t]+(?=(done\b)|\S)/gim;
+const TASK_BOX = /^([ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+)\[([ xX])\][ \t]+(?=((?:\*{1,3}|_{1,3})?done(?![a-z0-9]))|\S)/gim;
 
 /** What is written for the eye said for the ear (voice-speaking-2): money, clock times, paths, "~75%", "#45", "2h 15m". */
 function sayable(text: string): string {

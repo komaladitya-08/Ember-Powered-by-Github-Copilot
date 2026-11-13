@@ -221,6 +221,13 @@ describe("spokenText leaves markup that is only for the eye unsaid, and says a p
     // A ticked item that says it is done isn't told twice.
     ["* [x] Done: paid rent", "Done: paid rent."],
     ["1. [x] Done already\n2. [ ] Not yet", "1. Done already.\n2. Not yet."],
+    // Nor one that says so in bold or italics (voice-speaking-r9-6).
+    ["- [x] **Done**: paid rent", "Done: paid rent."],
+    ["- [x] __Done__: paid rent\n- [x] *done* already", "Done: paid rent.\ndone already."],
+    ["- [x] **Paid** rent", "Done: Paid rent."],
+    // The common named entities are said as the marks they stand for, never letter by letter (voice-speaking-r9-6).
+    ["Fish &amp; chips &mdash; today&hellip;", "Fish and chips — today…"],
+    ["Pages 3&ndash;5, &copy; 2026 Ember &rarr; next.", "Pages 3 to 5, © 2026 Ember to next."],
     // Markup around words is still unsaid.
     ["<b>Important.</b> Press <kbd>Ctrl</kbd>, then <span style=\"color:red\">red</span>.", "Important. Press Ctrl, then red."],
   ])("says %j as %j, dropping no words that only look like markup (voice-speaking-x7-5)", (text, said) => expect(spokenText(text)).toBe(said));
