@@ -1691,11 +1691,32 @@ function substituted(raw: string): string[] {
 }
 /** Programs whose output only says the machine's kind, the time, a version, or what another fetch returned. */
 const SAYS_LITTLE = new Set(["uname", "date", "arch", "nproc", "getconf", "lsb_release", "dpkg", "rpm", "hostname", "whoami", "id", "curl", "wget", "echo", "printf", "mktemp", "sw_vers", "go", "rustc", "node", "python3", "python"]);
-/** Filters such output may pass through. */
-const PASSES_ON = new Set(["tr", "cut", "sed", "awk", "grep", "head", "tail", "jq", "sort", "uniq", "wc", "xargs", "tolower"]);
+/** The words of a fetch that only gets a web address: the address, and the options that take no value and name no file. */
+const FETCH_ONLY = /^(https?:\/\/[^\s"'@]+|-[sSfLkqI46]+|-q?O-|-|--(silent|show-error|fail|location|quiet|insecure|compressed|head|no-progress-meter|no-verbose))$/i;
+/**
+ * Filters such output may pass through, each with how many plain words it takes that aren't files (tr's two sets; a
+ * sed, awk, grep or jq program): a word past those may be a file it reads instead of the pipe (`sed p notes`, `head
+ * -c 500 notes`), and so may an option that names one (`grep -f notes`, `jq --rawfile`). Never xargs, which runs a
+ * command (commands-classes-x9-5).
+ */
+const PASSES_ON: Readonly<Record<string, number>> = { tr: 2, sed: 1, awk: 1, grep: 1, jq: 1, cut: 0, head: 0, tail: 0, sort: 0, uniq: 0, wc: 0, tolower: 0 };
+/** Whether a filter stage is given a file to read: more plain words than its own, or an option that names a file. */
+function filterReadsFile(st: readonly string[]): boolean {
+  const own = PASSES_ON[st[0]];
+  let plain = 0;
+  for (let k = 1; k < st.length; k++) {
+    const w = st[k];
+    if (w.startsWith("-")) { if (own === 1 && (/^-[A-Za-z]*f/.test(w) || /^--(file|from-file|rawfile|slurpfile|args|jsonargs)/.test(w))) return true; continue; }
+    // An option's value that is a count, a field list or one separator character (`head -n 5`, `cut -d , -f 1,3`).
+    if (st[k - 1].startsWith("-") && /^([+-]?[\d,-]+|[^A-Za-z0-9])$/.test(w)) continue;
+    plain++;
+  }
+  return plain > own;
+}
 /**
  * Whether a substitution's text holds nothing of the user's files (sendsContents): each pipeline in it starts with a
- * program that says little (git only with rev-parse, describe or symbolic-ref; an interpreter only for its version)
+ * program that says little (git only with rev-parse, describe or symbolic-ref; an interpreter only for its version;
+ * a fetch only of web addresses, with no option that reads a file)
  * and goes on through filters given no file, with no redirection from a file and no substitution inside.
  */
 function saysLittle(inner: string): boolean {
@@ -1708,7 +1729,11 @@ function saysLittle(inner: string): boolean {
     const versionOnly = /^(go|rustc|node|python3?)$/.test(prog) && !(words.length === 1 && /^(-v|-V|--version|version)$/.test(words[0]));
     const ok = prog === "git" ? /^(rev-parse|describe|symbolic-ref)$/.test(words[0] ?? "") : SAYS_LITTLE.has(prog) && !versionOnly;
     if (!ok) return false;
-    for (const st of stages.slice(1)) if (!PASSES_ON.has(st[0]) || st.slice(1).some(w => !/^(-|'|"|[A-Za-z0-9_]*$)/.test(w) && /[/.]/.test(w))) return false;
+    // A fetch says what another computer returned only when every address is a web one: `curl file:///…`, `-K file`,
+    // `--data @file` and their like read this computer's files (commands-classes-x9-5).
+    if (/^(curl|wget)$/.test(prog) && !words.every(w => FETCH_ONLY.test(w.replace(/^(["'])(.*)\1$/, "$2")))) return false;
+    if (prog === "date" && words.some(w => /^(-[A-Za-z]*f|--file)/.test(w))) return false;
+    for (const st of stages.slice(1)) if (!Object.hasOwn(PASSES_ON, st[0]) || filterReadsFile(st) || st.slice(1).some(w => !/^(-|'|"|[A-Za-z0-9_]*$)/.test(w) && /[/.]/.test(w))) return false;
   }
   return true;
 }
