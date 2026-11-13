@@ -733,12 +733,12 @@ export const ORDINARY_VERBS: Readonly<Record<string, OrdinaryVerbs>> = {
     sub: { env: ["info", "list", "use", "activate"], cache: ["list"] },
     values: ["-C", "--directory", "-P", "--project"],
   },
-  pdm: { verbs: ["install", "add", "remove", "update", "lock", "list", "show", "build", "run", "sync", "init", "info", "venv", "export", "import", "cache", "fix", "outdated", "use", "search", "--version", "-V", "help"], sub: { cache: ["info", "list"] } },
+  pdm: { verbs: ["install", "add", "remove", "update", "lock", "list", "show", "build", "run", "sync", "init", "info", "venv", "export", "import", "cache", "fix", "outdated", "use", "search", "--version", "-V", "help"], sub: { cache: ["info", "list"], venv: ["list", "create", "activate"] } },
   conda: CONDA_VERBS,
   mamba: CONDA_VERBS,
   micromamba: CONDA_VERBS,
-  hatch: { verbs: ["build", "test", "run", "env", "fmt", "version", "shell", "project", "status", "new", "clean", "dep", "python", "--version", "help"] },
-  rye: { verbs: ["sync", "add", "remove", "lock", "run", "build", "fetch", "list", "show", "init", "pin", "fmt", "lint", "test", "toolchain", "version", "help", "--version"] },
+  hatch: { verbs: ["build", "test", "run", "env", "fmt", "version", "shell", "project", "status", "new", "clean", "dep", "python", "--version", "help"], sub: { python: ["show", "find", "install"] } },
+  rye: { verbs: ["sync", "add", "remove", "lock", "run", "build", "fetch", "list", "show", "init", "pin", "fmt", "lint", "test", "toolchain", "version", "help", "--version"], sub: { toolchain: ["list", "fetch"] } },
   dotnet: {
     files: /\.dll$/i,
     verbs: ["build", "test", "run", "restore", "clean", "publish", "pack", "new", "add", "remove", "list", "sln", "format", "watch", "--info", "--version", "--list-sdks",
@@ -772,8 +772,10 @@ export const ORDINARY_VERBS: Readonly<Record<string, OrdinaryVerbs>> = {
       "labels", "branches", "streams", "workspaces", "status", "help", "edit", "add", "changelists", "counters", "dirs", "grep", "sizes", "reconcile", "-V", "--version"],
   },
   pyenv: { verbs: ["versions", "version", "which", "whence", "root", "prefix", "global", "local", "shell", "install", "rehash", "init", "commands", "help", "--version", "latest", "version-name", "version-file", "virtualenvs", "activate", "deactivate", "virtualenv", "doctor"] },
-  rbenv: { verbs: ["versions", "version", "which", "whence", "root", "prefix", "global", "local", "shell", "install", "rehash", "init", "commands", "help", "--version", "version-name", "version-file"] },
-  nodenv: { verbs: ["versions", "version", "which", "whence", "root", "prefix", "global", "local", "shell", "install", "rehash", "init", "commands", "help", "--version", "version-name"] },
+  // Not `init`: since rbenv 1.3 it writes the shell's start-up file with no `-` (commands-closed-y9-6).
+  rbenv: { verbs: ["versions", "version", "which", "whence", "root", "prefix", "global", "local", "shell", "install", "rehash", "commands", "help", "--version", "version-name", "version-file"] },
+  // nodenv has no row to judge `global` (a home-wide default), so it isn't listed here.
+  nodenv: { verbs: ["versions", "version", "which", "whence", "root", "prefix", "local", "shell", "install", "rehash", "commands", "help", "--version", "version-name"] },
   asdf: { verbs: ["list", "current", "which", "where", "plugin", "install", "latest", "help", "version", "--version", "info", "reshim", "set", "local", "global", "shim-versions"], sub: { plugin: ["list", "add", "update"] }, asks: { set: ["-u", "--home", "-p", "--parent"] } },
   nvm: { verbs: ["ls", "list", "ls-remote", "current", "which", "version", "version-remote", "use", "install", "alias", "cache", "--version", "help", "run"], sub: { cache: ["dir"] } },
   fnm: { verbs: ["list", "ls", "list-remote", "ls-remote", "current", "use", "install", "env", "alias", "completions", "--version", "help"] },

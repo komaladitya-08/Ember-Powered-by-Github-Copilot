@@ -127,7 +127,8 @@ that only read, list, search, measure, convert, compile, test or build what they
 cmdlet it has no rule for only when its verb only reads (`Get-`, `Test-`, `Measure-`, `Select-`, `Where-`, `Sort-`,
 `Group-`, `Format-`, `ConvertTo-`, `ConvertFrom-`, `Compare-`, `Resolve-`, `Split-`, `Join-`). A program given by a path
 in the task's folder (your project's `./build.sh`, `bin/tool`, `node_modules/.bin/x`, `.venv/bin/x`) is judged as before: the folder
-the task started in, not one a `cd` on the same line moved to, and never a folder programs are usually found in
+the command runs in (the task's folder, which Copilot can move with a command that is only a `cd`, or name for one
+command), not one a `cd` on the same line moved to, and never a folder programs are usually found in
 (`/usr/bin`, `/usr/local/bin`, `~/bin`, `~/.local/bin`, `C:\Windows\System32`). So is a program Ember doesn't know
 inside a script there that the task didn't write or download (`hugo` in your `build.sh`); what else the script does is
 still judged. Of a tool
@@ -195,7 +196,9 @@ Ember stops and asks before a command that:
   and hosting tools' sign-ins (`~/.config/gcloud`, `~/.oci`, `~/.config/doctl`), Kerberos tickets, the display's key
   (`~/.Xauthority`), chat apps' and VS Code's stored sign-ins, keychains and credential stores, browser profiles,
   password managers, `/etc/shadow`, your shell history; printing tokens or environment variables that may hold them (`gh auth token`,
-  `env`, `printenv`); reading the clipboard; taking a screenshot without Ember's privacy filters; a password or token
+  `env`, `printenv`), also with a PowerShell cmdlet Ember has no rule for whose name says a secret, credential,
+  token, password, key, vault or certificate, or that is given `-AsPlainText` (`Get-Secret`, `Get-AzKeyVaultSecret`);
+  reading the clipboard; taking a screenshot without Ember's privacy filters; a password or token
   written on the command line;
 - **changes the system or needs privileges**: `sudo`, `su`, `runas`, installing or removing packages (`apt`, `dnf`,
   `brew`, `winget`, `npm install`, `pip install`), services, the registry and desktop settings (`gsettings set`,
@@ -276,7 +279,10 @@ Ember stops and asks before a command that:
   follows `stack exec --`, `pyenv exec`, `rustup run stable` or `entr`, and the shell text in `cargo watch -s`,
   `nodemon --exec` and `hyperfine '…'` are judged as commands of their own, and one Ember can't read (a tmux shell
   command, `watchexec` without `--`, Maven's `-Dexec.executable`, Gradle's `--init-script`) asks, whatever your words
-  say, and a `busybox` or `toybox` applet is judged as that program;
+  say, and a `busybox` or `toybox` applet is judged as that program. An everyday tool given a command to run asks the
+  same way: a tmux format with `#(…)`, `gcc -wrapper`, `ctest --build-and-test … --test-command` and `ctest -S`,
+  `prove --exec`, and `cmake -P` with a script outside the task's folder. `deno` given an address instead of a file
+  asks, and so does `convert` on Windows, where it is the system's disk converter (ImageMagick is `magick` there);
 - **Ember can't read with certainty**: `eval`, encoded commands (`powershell -EncodedCommand`, `base64 -d | sh`),
   aliases it can't see, unusual syntax, interactive programs such as `vim`, `less`, `top` or `python` with no
   script ("This opens an interactive program; you'd have to use it yourself in the command window."), a job count

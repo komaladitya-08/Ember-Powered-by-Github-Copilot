@@ -3883,7 +3883,8 @@ function unknownProgram(h: H): void {
   if (h.pn.isPath && ownFolder(h.nameArg.v, h.sc, h.e.ctx.cwd || null)) return;
   const tool = ORDINARY_VERBS[h.key] ?? ORDINARY_VERBS[unversioned(h.key)];
   if (tool) { toolVerbs(h, tool, true); return; }
-  if (knownProgram(h.key)) {
+  // On Windows `convert` is the system's own FAT-to-NTFS converter; ImageMagick is `magick` there (commands-closed-y9-4).
+  if (knownProgram(h.key) && !(h.key === "convert" && h.sc.os === "win32")) {
     // A TeX engine's shell escape runs the commands the document names (`\write18`).
     if (TEX_ENGINES.has(h.key) && h.args.some(a => a.v === null || /^--?(shell-escape|enable-write18)$/.test(a.v))) {
       const escape = h.args.find(a => a.v === null || /escape|write18/.test(a.v))?.v ?? "";
@@ -3957,6 +3958,8 @@ function toolPayload(h: H): void {
     else h.e.payload(words, h.sc, `${h.key} ${ex[0]}`);
     return;
   }
+  const key = unversioned(h.key);
+  if (RUNS_BY_OPTION.some(([prog, opt]) => prog.test(key) && args.some(a => a.v !== null && opt.test(a.v)))) hidden();
   switch (h.key) {
     case "cargo": {
       const first = firstOperand(args);
@@ -4033,10 +4036,30 @@ function toolPayload(h: H): void {
     case "tmux": {
       const first = firstOperand(args);
       if (first.v !== null && TMUX_RUNS.has(first.v) && args.slice(first.at + 1).some(a => a.v === null || !a.v.startsWith("-"))) hidden();
+      // A format's `#(…)` is a shell command tmux runs (`tmux display-message -p '#(…)'`: commands-closed-y9-4).
+      else if (args.some(a => a.v !== null && a.v.includes("#("))) hidden();
+      return;
+    }
+    case "cmake": {
+      // `cmake -P` runs a script: one from outside the task's folder isn't the project's (commands-closed-y9-4).
+      const at = args.findIndex(a => a.v === "-P");
+      const script = at < 0 ? undefined : args[at + 1]?.v;
+      if (at >= 0 && (!script || !ownFolder(script, h.sc, h.e.ctx.cwd || null))) hidden();
       return;
     }
   }
 }
+
+/**
+ * Options of everyday programs that run a command they are given (commands-closed-y9-4): a GNU compiler's `-wrapper`,
+ * ctest's `--build-and-test … --test-command` and `-S` scripts, prove's `--exec`. By the program's key, its version
+ * suffix dropped.
+ */
+const RUNS_BY_OPTION: readonly (readonly [RegExp, RegExp])[] = [
+  [/^(.+-)?(gcc|g\+\+|cc|c\+\+|cpp|gfortran|gccgo|gdc|gnat)$/, /^-wrapper$/],
+  [/^ctest$/, /^(--build-and-test|--test-command|-S|-SP|--script|--script-new-process)(=|$)/],
+  [/^prove$/, /^(-e|--exec)(=|$)/],
+];
 
 /**
  * The card's line for a tool's command Ember doesn't know, naming it (commands-closed-x9-8): "It runs cargo watch, a
@@ -4080,7 +4103,8 @@ function toolVerbs(h: H, tool: OrdinaryVerbs, noRow: boolean): void {
   const bad = args.find(a => a.v !== null && always.includes(a.v.split("=")[0]));
   if (bad) { say(bad.v ?? ""); return; }
   if (at < 0) { if (noRow || tool.bare === "asks") say(""); return; }
-  const known = (w: string): boolean => tool.verbs.includes(w) || (tool.files?.test(w) ?? false);
+  // A file is the project's own, never an address (`deno https://x/y.ts`, `npm:`, `jsr:`: commands-closed-y9-4).
+  const known = (w: string): boolean => tool.verbs.includes(w) || ((tool.files?.test(w) ?? false) && !/^[a-z][a-z0-9+.-]+:/i.test(w));
   const words: Arg[] = [args[at]];
   for (let k = at + 1; tool.all && k < args.length; k++) {
     const v = args[k].v;
@@ -4284,6 +4308,11 @@ function unknownCmdlet(h: H): void {
   const verb = h.key.split("-")[0];
   if (!PS_READ_VERBS.has(verb)) h.e.unclear("unclear.cmdlet", `Ember can't tell what ${h.prog} changes.`);
   else if (!PS_ORDINARY_VERBS.has(verb) && !h.e.readsAsMain) h.e.add("unknown", "unknown.program", SAYS.unknownProgram);
+  // One whose noun names a secret, or that prints one as plain text, hands it to the output whatever its verb
+  // (`Get-Secret`, `Get-AzKeyVaultSecret -AsPlainText`, `Get-AzStorageAccountKey`: commands-closed-y9-5).
+  if (/secret|credential|token|passw(or)?d|apikey|vault|certificate|keys?$/.test(h.key.slice(verb.length + 1)) || h.args.some(a => /^-asplaintext\b/i.test(a.v ?? a.raw))) {
+    h.e.add("secret", "secret.program", SAYS.secrets);
+  }
   for (const a of h.args) if (a.v === null && a.raw.startsWith("{")) h.e.unclear("unclear.script-block", "It runs a script block Ember can't follow.");
   h.e.readArgs(h.args.filter(a => a.param === undefined && !(a.v ?? "").startsWith("-")), h.sc);
 }
