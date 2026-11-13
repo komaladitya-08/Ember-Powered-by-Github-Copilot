@@ -904,3 +904,39 @@ describe("framework verbs that empty or replace a database without saying so (co
     }
   });
 });
+
+describe("smaller forms of a secret handed to a program (commands-classes-x9-9)", () => {
+  it("files a secret-named variable under secrets in the expansions the shell keeps whole, and through .NET in PowerShell", () => {
+    for (const o of POSIX.filter(x => x.shell !== "sh")) for (const cmd of ["frobnicate ${GITHUB_TOKEN@Q}", "frobnicate ${GITHUB_TOKEN^^}", "frobnicate ${GITHUB_TOKEN/a/b}", "frobnicate ${!GITHUB_TOKEN}",
+      "frobnicate --token=${NPM_TOKEN@Q}", "git frob ${GITHUB_TOKEN@Q}", "ls ${AWS_SECRET_ACCESS_KEY@Q}"]) {
+      const d = decide(cmd, o);
+      expect(d.verdict, label(cmd, o)).toBe("ask");
+      expect(d.rules, label(cmd, o)).toContain("secret.env");
+      expect(d.classes, label(cmd, o)).toContain("secret");
+    }
+    for (const cmd of ["frobnicate ([Environment]::GetEnvironmentVariable(\"GITHUB_TOKEN\"))", "frobnicate $([System.Environment]::GetEnvironmentVariable(\"GITHUB_TOKEN\"))",
+      "git frob ([Environment]::GetEnvironmentVariable('NPM_TOKEN'))", "[Environment]::GetEnvironmentVariable(\"AWS_SECRET_ACCESS_KEY\", \"User\")"]) {
+      const d = decide(cmd, { shell: "powershell", context: "win32" });
+      expect(d.verdict, cmd).toBe("ask");
+      expect(d.rules, cmd).toContain("secret.env");
+    }
+    // Never a variable the line set itself, a variable not named for a secret, or only a secret's length.
+    expect(decide("T=1; frobnicate ${T@Q}").rules).not.toContain("secret.env");
+    expect(decide("frobnicate ([Environment]::GetEnvironmentVariable(\"PATH\"))", { shell: "powershell", context: "win32" }).rules).not.toContain("secret.env");
+    expect(decide("echo ${#GITHUB_TOKEN}").verdict).toBe("run");
+  });
+
+  it("reads the package's line behind deno x, gem exec, dotnet tool exec and dnx, and a path attached to a one-letter option", () => {
+    for (const o of POSIX) {
+      for (const cmd of ["deno x frobnicate ~/.ssh/id_rsa", "gem exec frobnicate ~/.ssh/id_rsa", "dotnet tool exec frobnicate ~/.ssh/id_rsa", "dnx frobnicate ~/.ssh/id_rsa",
+        "npx frobnicate -f$HOME/.ssh/id_rsa", "npx -y frobnicate -f~/.ssh/id_rsa", "frobnicate -f$HOME/.ssh/id_rsa", "uvx frobnicate -k$HOME/.aws/credentials"]) {
+        const d = decide(cmd, o);
+        expect(d.verdict, label(cmd, o)).toBe("ask");
+        expect(d.rules, label(cmd, o)).toContain("path.secret");
+      }
+      expect(decide("gem exec pm2 start a.js", o).rules, label("gem exec pm2", o)).toContain("escape.pm2");
+      expect(decide("deno x frobnicate --token=$GITHUB_TOKEN", o).rules, label("deno x", o)).toContain("secret.env");
+    }
+    for (const cmd of ["gem list", "deno run a.ts", "dotnet build"]) expect(decide(cmd).verdict, cmd).toBe("run");
+  });
+});

@@ -2444,6 +2444,11 @@ class Engine extends Classifier {
       && /download(string|data|file)|net\.webclient|invoke-webrequest|invoke-restmethod|(^|[^\w-])(iwr|irm|curl|wget|start-bitstransfer)([^\w-]|$)/i.test(text)) {
       this.add("escape", "escape.download-run", SAYS.downloadsAndRuns);
     }
+    // .NET's own way to a variable named for a secret, wherever it stands (`[Environment]::GetEnvironmentVariable(
+    // "GITHUB_TOKEN")`): the text hands it on or prints it (commands-classes-x9-9).
+    for (const m of text.matchAll(/GetEnvironmentVariable\(\s*["']([A-Za-z_][A-Za-z0-9_]*)["']/gi)) {
+      if (SECRET_VAR.test(m[1])) { this.add("secret", "secret.env", SAYS.env); break; }
+    }
   }
 
   /** Classifies a whole command text in a family (nested `sh -c`, `cmd /c`, `powershell -Command` too). */
@@ -3272,9 +3277,12 @@ class Engine extends Classifier {
     const secret = (n: string): boolean => SECRET_VAR.test(n) && !this.loopVars.has(n) && !this.varValues.has(n);
     for (const a of args) {
       if (a.v !== null) continue;
-      const names = a.parts
-        ? a.parts.flatMap(p => (typeof p === "string" || p.name === null ? [] : [p.name]))
-        : [...a.raw.replace(/'[^']*'/g, "").matchAll(/\$\{?(?:env:)?([A-Za-z_][A-Za-z0-9_]*)|%([A-Za-z_][A-Za-z0-9_]*)%/gi)].map(m => m[1] ?? m[2]);
+      // The names the parser found, and those written in the word in a form it keeps whole: `${NAME@Q}`, `${NAME^^}`,
+      // `${!NAME}` (commands-classes-x9-9).
+      const names = [
+        ...(a.parts ?? []).flatMap(p => (typeof p === "string" || p.name === null ? [] : [p.name])),
+        ...[...a.raw.replace(/'[^']*'/g, "").matchAll(/\$\{?!?(?:env:)?([A-Za-z_][A-Za-z0-9_]*)|%([A-Za-z_][A-Za-z0-9_]*)%/gi)].map(m => m[1] ?? m[2]),
+      ];
       if (names.some(secret)) { this.add("secret", "secret.env", SAYS.env); return; }
     }
   }
@@ -4462,6 +4470,11 @@ function toolPayload(h: H): void {
     if (a.v === null) hidden();
     else h.e.nested(a.v, "sh", h.sc, wrapper);
   };
+  // More runners of a package by its name, whose verb asks already (`deno x`, `gem exec`, `dotnet tool exec`, `dnx`):
+  // the package's own line is read as npx's is, for what it is handed (commands-classes-x9-9).
+  const runs = h.key === "dnx" ? 0 : h.key === "deno" && args[0]?.v === "x" ? 1 : h.key === "gem" && args[0]?.v === "exec" ? 1
+    : h.key === "dotnet" && args[0]?.v === "tool" && /^(exec|run)$/.test(args[1]?.v ?? "") ? 2 : -1;
+  if (runs >= 0) packageLine(h, args.slice(runs), `${h.key} ${args.slice(0, runs).map(a => a.v).join(" ")}`.trim());
   const ex = EXEC_VERBS[h.key];
   if (ex) {
     const first = firstOperand(args);
@@ -4831,6 +4844,10 @@ function optionPaths(h: H, unknown: boolean): void {
     if (a.param !== undefined && !short) continue;
     // A word Ember can't see is still an option by its written name (`--file="$F"`): its value is unknown.
     const m = /^--([A-Za-z][A-Za-z0-9-]*)(=([\s\S]*))?$/.exec(a.v ?? a.raw);
+    // An unknown program's one-letter option with a whole path attached (`-f/home/ana/.ssh/id_rsa`) reads it
+    // (commands-classes-x9-9).
+    const attached = unknown && a.v !== null ? /^-[A-Za-z]((?:\/|~\/)[\s\S]+)$/.exec(a.v) : null;
+    if (attached) { h.e.usePath({ ...a, v: attached[1], param: undefined }, "read", h.sc); continue; }
     const name = m ? m[1].toLowerCase() : short ? "o" : null;
     if (name === null) continue;
     const output = name === "o" || OUTPUT_OPTION.test(name);
