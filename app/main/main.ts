@@ -3407,9 +3407,9 @@ function start(): void {
       neverLook: () => settings.get().privacy.neverLook,
       // Every display in the window system's units; Electron's displays (X11's arithmetic) when none opened.
       screenBounds: () => (ws ? ws.screenBounds() : primaryScaledUnion(screen)),
-      words: sys.words,
       // What Ember filled from its vault is dropped from every read and blacked out of every picture (redact.ts).
       holdsVaultValue: text => vaultRedactor.holds(text), vaultShown: () => vaultRedactor.shown,
+      words: sys.words,
       isSecurityWindow: privacy.isSecurityWindow,
       // Linux: a pinentry, ssh-askpass or polkit agent's window, focused or not, stops all reading (safety-privacy-3).
       isPromptWindow: sys.privacy.isPromptWindow,

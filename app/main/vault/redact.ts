@@ -7,7 +7,7 @@
  * card number a receipt repeats, a value an app puts in its address or its title.
  *
  * What counts as the value: the text as filled; a card number with spaces or dashes between its digits; the text as an
- * address, a JSON line or markup escapes it; runs of white space of any length (an address's lines joined by commas too); and, for the parts that aren't
+ * address, a JSON line or markup escapes it; with its accented letters composed or in parts; runs of white space of any length (an address's lines joined by commas too); and, for the parts that aren't
  * secret (a user name, an email, an address), any letter case. A part that isn't secret is replaced only where
  * it stands alone (a user name "ada", an expiry's "12/27"), never inside a longer word or number ("adamant"), which
  * would say where it is without hiding anything; a password, a card number and a security code are replaced wherever
@@ -69,7 +69,8 @@ export class VaultRedactor {
     const secret = SECRET_PARTS.has(part);
     const card = part === "cardNumber" && /^\d+$/.test(value);
     const alone = !secret;
-    const forms = new Set([value, asMarkup(value), asJson(value), ...asAddress(value)]);
+    // An app may hand an accented letter back composed or in parts: both.
+    const forms = new Set([value, value.normalize("NFC"), value.normalize("NFD"), asMarkup(value), asJson(value), ...asAddress(value)]);
     const trimmed = value.trim();
     if (trimmed && trimmed !== value) forms.add(trimmed);
     const patterns: RegExp[] = [];

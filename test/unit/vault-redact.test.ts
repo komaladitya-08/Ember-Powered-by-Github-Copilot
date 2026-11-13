@@ -91,6 +91,13 @@ describe("VaultRedactor (vault-3)", () => {
     expect(r.text("call +44 20 7946 0958 now")).toBe(`call ${VAULT_REDACTED} now`);
   });
 
+  it("finds a value whose accented letters an app hands back composed or in parts", () => {
+    const r = new VaultRedactor();
+    r.note("name", "Zo\u00eb Canari\u00e9re");
+    expect(r.text("Hello Zoe\u0308 Canarie\u0301re!")).toBe(`Hello ${VAULT_REDACTED}!`);
+    expect(r.text("Hello ZO\u00cb CANARI\u00c9RE!")).toBe(`Hello ${VAULT_REDACTED}!`);
+  });
+
   it("never looks for one value inside the words that stand for another", () => {
     const r = new VaultRedactor();
     r.note("email", EMAIL);
