@@ -46,7 +46,8 @@ export type ActivityEvent =
   /** The task now works with another hand. */
   | { type: "hand"; hand: TaskHand }
   /** A call to the model failed and is tried again. */
-  | { type: "retry" }
+  /** A model request failed and is tried again; `ownService`: not Copilot (the organisation's or the user's own service). */
+  | { type: "retry"; ownService?: true }
   /** Copilot answered again (a retry worked). */
   | { type: "heard" }
   /** Copilot has been quiet a while (true), or is heard again (false). */
@@ -224,7 +225,7 @@ export class ActivityLog {
         return true;
       case "retry": {
         a.retry++;
-        if (!this.retrying) this.retrying = this.push({ id: this.id("retry"), kind: "retry", at, state: "running", words: "Copilot didn't answer, so I'm trying again" });
+        if (!this.retrying) this.retrying = this.push({ id: this.id("retry"), kind: "retry", at, state: "running", words: `${e.ownService ? "The model service" : "Copilot"} didn't answer, so I'm trying again` });
         a.live = this.liveNow();
         return true;
       }

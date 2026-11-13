@@ -478,6 +478,10 @@ function followStatus(runner: unknown, show: (text: string) => void): () => void
 const NO_GUIDE = "Ember can't point at things in this session (no desktop access). Explain the steps in words instead.";
 
 /** What a task cut off by a runtime that stopped says (it didn't finish, and the user didn't stop it). */
+/** What a task stopped because the organisation's policy changed says, in place of "Stopped." (tasks-approvals-r9-5). */
+export const POLICY_CHANGED_STOP = "Your organisation changed my policy, so I stopped this.";
+/** What a task this computer's screen lock stopped says (tasks-approvals-r9-5). */
+export const SCREEN_LOCKED_STOP = "The screen locked, so I stopped this.";
 export const CUT_OFF = "Copilot stopped unexpectedly; the task didn't finish.";
 /** The same when the runtime was reconnected because it stopped answering the conversation (it didn't stop). */
 export const CUT_OFF_STALLED = "Copilot didn't answer; the task didn't finish.";
@@ -3520,6 +3524,15 @@ export class AgentHost {
   /** The organisation lets tasks act (its policy's features.actions); a failed card's Try again shows only then. */
   private actionsAllowed(): boolean {
     return this.o.admin?.().features.actions !== false;
+  }
+
+  /**
+   * Every task running or waiting now is about to be stopped for `why` (the organisation's policy changed: the kill
+   * switch follows): each one's result says so, and "What did I miss?" too, instead of "you stopped it"
+   * (tasks-approvals-r9-5).
+   */
+  stoppingBecause(why: string): void {
+    for (const t of this.tasks?.list() ?? []) if (t.status === "running" || t.status === "queued") this.stoppedWhy.set(t.id, why);
   }
 
   /**

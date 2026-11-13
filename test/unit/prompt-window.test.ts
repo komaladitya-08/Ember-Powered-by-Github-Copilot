@@ -613,6 +613,13 @@ describe("the page's hint line", () => {
 describe("the page's semantics", () => {
   const html = readFileSync(new URL("../../app/renderer/prompt/index.html", import.meta.url), "utf8");
 
+  it("is a window titled for what it is, not “Ember” as Home and the handle are (accessibility-r9-6, WCAG 2.4.2)", () => {
+    expect(html).toContain("<title>Ember needs you</title>");
+    const windows = readFileSync(new URL("../../app/main/windows.ts", import.meta.url), "utf8");
+    const factory = windows.slice(windows.indexOf("export function createPromptWindow("));
+    expect(factory.slice(0, factory.indexOf("webPreferences("))).toContain('title: "Ember needs you",');
+  });
+
   it("keeps the main landmark and puts the dialog inside it, named by its title and described by its words (review #60)", () => {
     const main = /<main\b[^>]*>/.exec(html)?.[0] ?? "";
     expect(main).not.toBe("");

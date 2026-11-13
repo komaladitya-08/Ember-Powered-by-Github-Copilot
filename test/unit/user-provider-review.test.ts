@@ -23,7 +23,7 @@ import type { SecretBox } from "../../app/main/agent/auth";
 import type { Logger } from "../../app/main/logger";
 import { friendlyError } from "../../app/main/agent/presenter";
 import { settingsFromHome } from "../../app/main/windows";
-import { AGREE_ARM_MS, AgreeGuard, agreeAction, heldAnswer } from "../../app/shared/provider";
+import { AGREE_ARM_MS, AgreeGuard, agreeAction, heldAnswer, heldPress } from "../../app/shared/provider";
 
 const KEY = "sk-" + "r".repeat(40); // not a real key
 const NONE: LoadedAdminPolicy = { policy: AdminPolicySchema.parse({}), source: null };
@@ -420,6 +420,17 @@ describe("the card's I agree, armed as Ember's questions are (third review #136)
     g.press();
     expect(g.activate()).toBe("b.example");
     expect(AGREE_ARM_MS).toBe(500);
+  });
+
+  it("knows a held Enter's or Space's repeat from a press of its own, which is what an agree button takes (product-ui-x9-3)", () => {
+    expect(heldPress({ key: "Enter", repeat: true })).toBe(true);
+    expect(heldPress({ key: " ", repeat: true })).toBe(true);
+    expect(heldPress({ key: "Enter", repeat: false })).toBe(false);
+    expect(heldPress({ key: " ", repeat: false })).toBe(false);
+    // Other keys held (Tab moving on) are left to do what they do.
+    expect(heldPress({ key: "Tab", repeat: true })).toBe(false);
+    // Each of Home's agree buttons drops them: the cards' shared listener, Extensions' card and the provider's.
+    for (const f of ["main.ts", "extensions.ts", "provider.ts"]) expect(fs.readFileSync(`app/renderer/home/${f}`, "utf8")).toMatch(/if \(heldPress\(e\)[^\n]*e\.preventDefault\(\)/);
   });
 
   it("agrees to nothing when the card was redrawn at all between the press and the click, even for the same host (fourth review #136)", () => {

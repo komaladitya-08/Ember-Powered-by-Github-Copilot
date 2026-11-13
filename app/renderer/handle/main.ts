@@ -276,6 +276,9 @@ api.onState(s => {
   // The most urgent thing that is true now: a task that needs you, why Ember can't answer, the tasks under way, a
   // failure, the setup row that holds Ember back (by name), the microphone, else Ready (line.ts, review #5).
   const idle = handleLine(s);
+  // A task's end, said in the pill's own region on a composited desktop too: the overlay's task cards are in no live
+  // region, and a task that ended in the corner shows no bubble (accessibility-r9-1).
+  tasksNews(s);
   if (!fallback) {
     if (micNews) $("live").textContent = micNews;
     // The pill: one line. An answer's title is the character's name, already shown above: the line shows what it said.
@@ -286,7 +289,6 @@ api.onState(s => {
     return;
   }
   announce(b, s.status ?? null, micNews);
-  tasksNews(s);
   // The card:a short label or title in bold, the words under it, then the question's buttons and the running task.
   const task = cardTask(s.tasks, b.visible ? b : undefined);
   // Beside Ember's name: where the bubble's task acts (its question is about that computer), else the picker's choice.

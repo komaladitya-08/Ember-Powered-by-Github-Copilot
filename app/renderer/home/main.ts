@@ -26,7 +26,7 @@ import { modeCardVersion, type ApprovalMode, type ApprovalsState } from "../../s
 import { MATCH_TEXT, matchAnnouncement, matchRefusalHolds, matchView } from "./match-copy";
 import { ISSUES_URL } from "../../shared/support";
 import { CONSENT_VERSION } from "../../shared/consent";
-import { AGREE_ARM_MS } from "../../shared/provider";
+import { AGREE_ARM_MS, heldPress } from "../../shared/provider";
 import { HEY_EMBER_YES } from "../../shared/first-run";
 import { useAppNames } from "../../shared/apps";
 import { speakChoice, speakSettings, type SpeakChoice } from "../../shared/speech";
@@ -656,7 +656,8 @@ function renderAdmin(a: Status["admin"]): void {
   if (agent) renderAgent(agent);
   renderRecipient();
   renderTagline();
-  for (const [id, key] of [["wake", "wakeWord"], ["speak", "speak"], ["speak-results", "speak"], ["speak-rate", "speak"], ["natural-model", "naturalVoice"], ["m-conductor", "models"], ["m-worker", "models"], ["memory-on", "memory"], ["updates-on", "updates"], ["routines-on", "routines"], ["screen-images", "screenImages"]] as const) {
+  // Hear me more clearly is held off wherever listening is (applyAdminPolicy): managed with it (home-r9-3).
+  for (const [id, key] of [["wake", "wakeWord"], ["clear-on", "wakeWord"], ["speak", "speak"], ["speak-results", "speak"], ["speak-rate", "speak"], ["natural-model", "naturalVoice"], ["m-conductor", "models"], ["m-worker", "models"], ["memory-on", "memory"], ["updates-on", "updates"], ["routines-on", "routines"], ["screen-images", "screenImages"]] as const) {
     const input = $(id) as HTMLInputElement | HTMLSelectElement;
     input.disabled = managed.has(key);
     (input.closest(MANAGED_ROW) ?? input).classList.toggle("locked", managed.has(key));
@@ -1785,6 +1786,9 @@ const memoryOn = () => !!settings?.memory.on && (settings?.memory.consent.versio
 const agreeShownAt = new Map<string, number>();
 const showConsentCard = (card: string, agree: string) => { $(card).hidden = false; agreeShownAt.set(agree, performance.now()); };
 const agreeArmed = (agree: string) => performance.now() - (agreeShownAt.get(agree) ?? -Infinity) >= AGREE_ARM_MS;
+// A key held since before the press (the desktop's autorepeat, which starts about as the card arms) agrees to nothing
+// on any of these cards' agree buttons, however long the card has been up (product-ui-x9-3).
+document.addEventListener("keydown", e => { if (heldPress(e) && e.target instanceof HTMLElement && agreeShownAt.has(e.target.id)) e.preventDefault(); }, true);
 /**
  * Where focus waits while Memory's list is out of sight (a reconnect's account check) or a control in it goes: the
  * section's heading, which does nothing on a key. Never the switch, where a typed space turns memory off, or on again
@@ -2110,10 +2114,12 @@ $("routines-on").addEventListener("change", e => {
   const on = (e.target as HTMLInputElement).checked;
   const consent = settings?.routines.consent ?? { version: 0, at: null };
   // First time: the note comes first, and focus moves to it so it is read and answered.
-  if (on && consent.version < ROUTINES_VERSION) { $("routines-consent").hidden = false; (e.target as HTMLInputElement).checked = false; $("routines-yes").focus(); return; }
+  if (on && consent.version < ROUTINES_VERSION) { showConsentCard("routines-consent", "routines-yes"); (e.target as HTMLInputElement).checked = false; $("routines-yes").focus(); return; }
   void save({ routines: { consent, on } });
 });
 $("routines-yes").addEventListener("click", () => {
+  // A doubled or held key from the switch agrees to nothing (accessibility-r9-2).
+  if (!agreeArmed("routines-yes")) return;
   $("routines-consent").hidden = true;
   void save({ routines: { on: true, consent: { version: ROUTINES_VERSION, at: new Date().toISOString() } } });
   $("routines-on").focus();
@@ -2151,10 +2157,11 @@ $("updates-on").addEventListener("change", e => {
   const on = (e.target as HTMLInputElement).checked;
   const own = settings?.updates ?? { on: false, consent: { version: 0, at: null }, told: null, checkedAt: null };
   // First time: the note comes first, and focus moves to it so it is read and answered.
-  if (on && own.consent.version < UPDATES_VERSION) { $("updates-consent").hidden = false; (e.target as HTMLInputElement).checked = false; $("updates-yes").focus(); return; }
+  if (on && own.consent.version < UPDATES_VERSION) { showConsentCard("updates-consent", "updates-yes"); (e.target as HTMLInputElement).checked = false; $("updates-yes").focus(); return; }
   void save({ updates: { ...own, on } });
 });
 $("updates-yes").addEventListener("click", () => {
+  if (!agreeArmed("updates-yes")) return;
   $("updates-consent").hidden = true;
   void save({ updates: { on: true, told: settings?.updates.told ?? null, checkedAt: settings?.updates.checkedAt ?? null, consent: { version: UPDATES_VERSION, at: new Date().toISOString() } } });
   $("updates-on").focus();
@@ -2542,6 +2549,13 @@ search.addEventListener("focus", renderSearchResults);
 for (const event of ["pointerdown", "focusin"]) document.addEventListener(event, e => {
   if (e.target instanceof Element && !e.target.closest(".search, #search-results")) $("search-results").hidden = true;
 });
+/**
+ * How long typing in Search settings must pause before its status line says how many settings match: written at every
+ * keystroke, a screen reader read six counts for "text size" (accessibility-r9-5; design-system.md asks for live regions
+ * to be throttled). The results themselves follow each keystroke.
+ */
+const SEARCH_SETTLE_MS = 600;
+let searchSoon: ReturnType<typeof setTimeout> | undefined;
 search.addEventListener("input", () => {
   const q = search.value;
   found = searchMatches(q, searchItems());
@@ -2552,7 +2566,9 @@ search.addEventListener("input", () => {
     const h = document.getElementById(`${sectionOf(a)}-h`);
     a.classList.toggle("unmatched", !!q.trim() && !(h && panes.has(paneOf(h) ?? "")));
   }
-  setText("search-msg", searchMessage(q, found.length, panes.size));
+  const said = searchMessage(q, found.length, panes.size);
+  clearTimeout(searchSoon);
+  searchSoon = setTimeout(() => setText("search-msg", said), q.trim() ? SEARCH_SETTLE_MS : 0);
   // Nothing found is said where the links were too (an empty sidebar read as broken).
   const none = !!q.trim() && !found.length;
   $("search-none").hidden = !none;
@@ -2905,7 +2921,7 @@ function applyVoiceSettings(s: Status["settings"]): void {
 $("wake").addEventListener("change", e => {
   const on = (e.target as HTMLInputElement).checked;
   // First time: the microphone note comes first, and focus moves to it so it is read and answered.
-  if (on && !voiceSettings.consent) { consentClosed(); $("consent").hidden = false; (e.target as HTMLInputElement).checked = false; $("consent-yes").focus(); return; }
+  if (on && !voiceSettings.consent) { consentClosed(); showConsentCard("consent", "consent-yes"); (e.target as HTMLInputElement).checked = false; $("consent-yes").focus(); return; }
   void save({ wakeWord: on });
 });
 /**
@@ -2919,7 +2935,7 @@ let consentSaving = false;
 const consentError = (text: string) => { $("consent-error").textContent = text; $("consent-error").hidden = !text; if (text) voiceLive(text); };
 const consentClosed = () => { consentRun++; consentSaving = false; consentError(""); $("consent-yes").removeAttribute("aria-busy"); };
 $("consent-yes").addEventListener("click", () => {
-  if ($("consent-yes").getAttribute("aria-disabled") === "true" || consentSaving) return;
+  if ($("consent-yes").getAttribute("aria-disabled") === "true" || consentSaving || !agreeArmed("consent-yes")) return;
   consentSaving = true;
   const run = ++consentRun;
   consentError("");

@@ -45,7 +45,7 @@ vi.mock("@github/copilot-sdk", async importOriginal => {
   return { ...real, CopilotClient: FakeClient, RuntimeConnection: { forStdio: () => ({}) } };
 });
 
-import { AgentHost, localTargetHands, type Hands, type HostOptions } from "../../app/main/agent/host";
+import { AgentHost, POLICY_CHANGED_STOP, SCREEN_LOCKED_STOP, localTargetHands, type Hands, type HostOptions } from "../../app/main/agent/host";
 import { LINUX_WORKER_SYSTEM, type TaskSpec, type Worker, type WorkerSystem } from "../../app/main/agent/worker";
 import { emberSystemMessage } from "../../app/main/agent/persona";
 import { SettingsStore } from "../../app/main/settings";
@@ -232,6 +232,31 @@ describe("stopping the tasks on one computer (INT: §5.3.9, §5.1.11)", () => {
     expect(finished[0]).toMatchObject({ status: "cancelled", summary: "build-01's connection dropped, so I stopped this.", text: "On build-01: check the disk space: build-01's connection dropped, so I stopped this." });
     expect(host.getTranscript().at(-1)).toMatchObject({ who: "task", text: "check the disk space: build-01's connection dropped, so I stopped this." });
     await host.stop();
+  });
+});
+
+describe("a task stopped by the organisation's policy or a screen lock (tasks-approvals-r9-5)", () => {
+  it("says the policy stopped it, not that you did, when every task is stopped for a policy change", async () => {
+    const { t } = fakeTargets();
+    const { host, specs, tool } = await started({ hands: hands(), targets: t });
+    await host.ask("tidy my downloads");
+    await tool("start_task")({ goal: "tidy the downloads" });
+    await vi.waitFor(() => expect(specs).toHaveLength(1));
+    const [task] = host.tasks!.list();
+    host.stoppingBecause(POLICY_CHANGED_STOP);
+    await host.abortAll();
+    // The kill switch's message says it all on screen; what is kept ("What did I miss?", the conversation) says why.
+    await vi.waitFor(() => expect(host.tasks!.get(task.id)!.stopReason).toBe(POLICY_CHANGED_STOP));
+    expect(host.getTranscript().at(-1)).toMatchObject({ who: "task", text: `tidy the downloads: ${POLICY_CHANGED_STOP}` });
+    expect(POLICY_CHANGED_STOP).toBe("Your organisation changed my policy, so I stopped this.");
+    await host.stop();
+  });
+
+  it("says the screen lock stopped a task on this computer's desktop", () => {
+    const main = fs.readFileSync("app/main/main.ts", "utf8");
+    expect(main).toContain('stopDesktopTasks: () => agent?.cancelTasksOn("local", "desktop", SCREEN_LOCKED_STOP) ?? 0,');
+    expect(main).toContain("agent?.stoppingBecause(POLICY_CHANGED_STOP);\n        void killSwitch.pull(\"policy\")");
+    expect(SCREEN_LOCKED_STOP).toBe("The screen locked, so I stopped this.");
   });
 });
 

@@ -425,6 +425,12 @@ describe("stopRequest", () => {
     for (const t of ["stop typing", "Stop doing that!", "stop working", "stop what you're doing", "abort", "halt", "stop stop", "no, stop", "wait stop", "Ember, abort the task"]) expect(stopRequest(t), t).toBe(true);
   });
 
+  it("hears a run of stops, “just stop”, “can you stop” and a stop of this task or its command (tasks-approvals-r9-6)", () => {
+    for (const t of ["stop stop stop", "stop, stop, stop", "Stop!! Stop!!", "just stop", "stop this task", "stop immediately", "can you stop", "you can stop now", "stop the command", "stop running", "wait wait stop", "no no no stop", "could you please stop", "STOP NOW!!"]) expect(stopRequest(t), t).toBe(true);
+    // Still never a stop of something else, nor a question about stopping.
+    for (const t of ["can you stop the music", "you can stop worrying", "just stop the timer", "stop running the tests at 5", "can you stop a task by voice?"]) expect(stopRequest(t), t).toBe(false);
+  });
+
   it("leaves a stop of something else to the conversation", () => {
     for (const t of ["stop the music", "stop the timer at 5", "cancel my 3pm meeting", "don't stop", "stop sharing my screen", "how do I stop a task?", "stop typing in caps", "forget that", "abort the merge", ""]) expect(stopRequest(t), t).toBe(false);
   });

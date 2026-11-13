@@ -10,6 +10,7 @@ import { chromium, type Browser, type Page } from "playwright-core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { DEFAULT_SETTINGS } from "../../app/main/settings";
 import type { ExtensionsState } from "../../app/shared/ipc";
+import { AGREE_ARM_MS } from "../../app/shared/provider";
 import type { Installed, MarketplaceEntry } from "../../app/shared/extensions";
 
 declare global {
@@ -374,17 +375,70 @@ describe.skipIf(gate)("Home's Extensions, as the person sets them up (2026-11-07
     await page.close();
   });
 
-  it("keeps keyboard focus on the item after Agree and use tools, and says Ember can use it now, not again (integrations-8)", async () => {
+  it("takes no doubled or held Enter from Add as agreeing to the card it opens, nor to the tools card after it (accessibility-r9-2)", async () => {
     const page = await open("extensions");
     await page.getByRole("button", { name: "Browse awesome-copilot" }).click();
     await page.getByRole("button", { name: "Add fake" }).focus();
     await page.keyboard.press("Enter");
     await expect.poll(() => focused(page)).toBe("consent-yes");
     await page.keyboard.press("Enter");
+    await page.keyboard.press("Enter");
+    await page.waitForTimeout(100);
+    expect(await calls(page)).toEqual([]);
+    expect(await page.locator(".ext-consent").isVisible()).toBe(true);
+    await page.waitForTimeout(AGREE_ARM_MS);
+    await page.keyboard.press("Enter");
+    await expect.poll(() => page.locator(".ext-consent").innerText()).toContain("Review the tools in “fake”");
+    // The tools card that follows is a card of its own: a press as it comes up agrees to nothing either.
+    await page.keyboard.press("Enter");
+    await page.waitForTimeout(100);
+    expect(await calls(page)).toEqual(["agree", "install(awesome-copilot,fake)"]);
+    expect((page as Page & { errors: string[] }).errors).toEqual([]);
+    await page.close();
+  });
+
+  it("takes no Enter held on Add as agreeing, however long it repeats, and a fresh press after it agrees (product-ui-x9-3)", async () => {
+    const page = await open("extensions");
+    await page.getByRole("button", { name: "Browse awesome-copilot" }).click();
+    await page.getByRole("button", { name: "Add fake" }).focus();
+    // The desktop's autorepeat: a first repeat about as the card arms (500 ms on GNOME, Windows and macOS), then ~30 a second.
+    await page.keyboard.down("Enter");
+    await expect.poll(() => focused(page)).toBe("consent-yes");
+    await page.waitForTimeout(AGREE_ARM_MS);
+    for (let i = 0; i < 10; i++) { await page.keyboard.down("Enter"); await page.waitForTimeout(33); }
+    await page.keyboard.up("Enter");
+    await page.waitForTimeout(100);
+    expect(await calls(page)).toEqual([]);
+    expect(await page.locator(".ext-consent").innerText()).not.toContain("Review the tools");
+    // Space held the same way: its release on the armed button is no press either.
+    await page.evaluate(() => (document.activeElement as HTMLElement).blur());
+    await page.keyboard.down("Space");
+    await page.evaluate(() => document.querySelector<HTMLElement>('[data-key="consent-yes"]')!.focus());
+    for (let i = 0; i < 5; i++) { await page.keyboard.down("Space"); await page.waitForTimeout(33); }
+    await page.keyboard.up("Space");
+    await page.waitForTimeout(100);
+    expect(await calls(page)).toEqual([]);
+    // A press of its own agrees.
+    await page.keyboard.press("Enter");
+    await expect.poll(() => page.locator(".ext-consent").innerText()).toContain("Review the tools in “fake”");
+    expect((page as Page & { errors: string[] }).errors).toEqual([]);
+    await page.close();
+  });
+
+  it("keeps keyboard focus on the item after Agree and use tools, and says Ember can use it now, not again (integrations-8)", async () => {
+    const page = await open("extensions");
+    await page.getByRole("button", { name: "Browse awesome-copilot" }).click();
+    await page.getByRole("button", { name: "Add fake" }).focus();
+    await page.keyboard.press("Enter");
+    await expect.poll(() => focused(page)).toBe("consent-yes");
+    // Each card's yes takes a press only once it has been up half a second (accessibility-r9-2).
+    await page.waitForTimeout(AGREE_ARM_MS + 100);
+    await page.keyboard.press("Enter");
     // Added: the tools are listed for review, and the card's yes has focus.
     await expect.poll(() => page.locator(".ext-consent").innerText()).toContain("Review the tools in “fake”");
     await expect.poll(() => focused(page)).toBe("consent-yes");
     expect(await page.locator("[data-key='consent-yes']").innerText()).toBe("Agree and use tools");
+    await page.waitForTimeout(AGREE_ARM_MS + 100);
     await page.keyboard.press("Enter");
     await expect.poll(() => page.locator("#extensions-msg").innerText()).toBe("Ember can use “fake” now.");
     await expect.poll(() => focused(page)).toBe("item:plugin:fake:switch");

@@ -1,5 +1,6 @@
 /**
- * The prompt window's controller ("Ember", §8.6): one card at a time for what an SSH connection needs from the user (a
+ * The prompt window's controller ("Ember needs you", §8.6): one card at a time for what an SSH connection needs from the
+ * user (a
  * host key to trust, a password, a key's passphrase, a code, a security key touch, any other prompt) and for the
  * first-use consent cards (§8.4), whether a Confirmer question (showConsent) or asked directly (ask, settings' switches).
  *

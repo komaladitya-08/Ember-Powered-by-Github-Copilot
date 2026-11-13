@@ -220,7 +220,8 @@ function closeWhenGone(win: BrowserWindow): void {
 }
 
 /**
- * The prompt window ("Ember", §8.6): one card at a time (a host key, a password, a consent card), always on top. It
+ * The prompt window ("Ember needs you", §8.6; EMBER_WINDOW in policy.ts lists that title, so no task reads or acts in
+ * it): one card at a time (a host key, a password, a consent card), always on top. It
  * takes the keyboard, as it takes typing: `takeKeyboard` is main's (as settings is brought to the front: macOS
  * activates Ember, Windows asks through the input backend), else show() and focus(); on macOS its first click counts
  * (review #235). On Windows and macOS it is left out of screen captures. Its controller fits it to each card (`fit`:
@@ -237,7 +238,8 @@ export function createPromptWindow(os: OS, hooks: { takeKeyboard?: (win: Browser
     minimizable: false,
     maximizable: false,
     fullscreenable: false,
-    title: "Ember",
+    // Told apart from Home and the handle in the window switcher and a screen reader's window name (accessibility-r9-6).
+    title: "Ember needs you",
     show: false,
     alwaysOnTop: true,
     skipTaskbar: false,

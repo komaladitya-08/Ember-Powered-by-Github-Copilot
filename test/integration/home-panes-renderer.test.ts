@@ -13,6 +13,7 @@ import { DEFAULT_SETTINGS } from "../../app/main/settings";
 import { approvalsState, type ApprovalsSetting } from "../../app/main/policy/autonomy";
 import type { ApprovalsState } from "../../app/shared/approvals";
 import { FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
+import { AGREE_ARM_MS } from "../../app/shared/provider";
 import { unbrokenRuns } from "../../app/renderer/home/computers-copy";
 import type { TaskEntry, ActivityItem } from "../../app/shared/activity";
 import type { ActivityEntry, StatusPlatform, UpdateStatus } from "../../app/shared/ipc";
@@ -1321,5 +1322,78 @@ describe.skipIf(gate)("Home's Updates, when a new version is out (2026-11-07 pro
     await expect.poll(() => dev.locator("#updates-status").textContent()).toBe("Version 0.1.2 is out.");
     expect(await dev.locator("#updates-how").isVisible()).toBe(false);
     await dev.close();
+  });
+});
+
+describe.skipIf(gate)("Home's consent cards, by keyboard (accessibility-r9-2, home-r9-6)", () => {
+  for (const [pane, sw, card, yes, field] of [
+    ["voice", "wake", "consent", "consent-yes", "wakeWord"],
+    ["memory", "routines-on", "routines-consent", "routines-yes", "routines"],
+    ["checks", "updates-on", "updates-consent", "updates-yes", "updates"],
+  ] as const) {
+    it(`agrees to the card under “${sw}” only with a separate press once it has been up half a second, never a doubled or held key (accessibility-r9-2)`, async () => {
+      const page = await open(pane, { settings: { updates: { on: false, told: null, checkedAt: null, consent: { version: 0, at: null } } }, updates: { phase: "off", latest: null, checkedAt: null } as UpdateStatus });
+      const saves = () => page.evaluate(f => window.__pane.calls.filter(c => c.startsWith("save:") && c.includes(`"${f}"`)), field);
+      await page.locator(`#${sw}`).focus();
+      await page.keyboard.press("Space");
+      await expect.poll(() => page.locator(`#${card}`).isVisible()).toBe(true);
+      expect(await page.evaluate(() => document.activeElement?.id)).toBe(yes);
+      // The doubled press, the second Space of a repeat and Enter's own repeat: nothing agreed, the card still up.
+      await page.keyboard.press("Space");
+      await page.keyboard.press("Enter");
+      await page.waitForTimeout(100);
+      expect(await saves()).toEqual([]);
+      expect(await page.locator(`#${card}`).isVisible()).toBe(true);
+      await page.waitForTimeout(AGREE_ARM_MS);
+      // A key held since before it armed (the desktop's autorepeat, or the release of a held Space) is no press
+      // either, however long it has been up (product-ui-x9-3).
+      for (const key of ["Enter", "Space"]) {
+        await page.evaluate(() => (document.activeElement as HTMLElement).blur());
+        await page.keyboard.down(key);
+        await page.evaluate(id => document.getElementById(id)!.focus(), yes);
+        for (let i = 0; i < 5; i++) { await page.keyboard.down(key); await page.waitForTimeout(33); }
+        await page.keyboard.up(key);
+      }
+      await page.waitForTimeout(100);
+      expect(await saves()).toEqual([]);
+      expect(await page.locator(`#${card}`).isVisible()).toBe(true);
+      // A deliberate press once it has been up half a second agrees.
+      await page.keyboard.press("Enter");
+      await expect.poll(async () => (await saves()).length).toBe(1);
+      expect(page.errors).toEqual([]);
+      await page.close();
+    });
+  }
+});
+
+describe.skipIf(gate)("Voice under an organisation that turned listening off", () => {
+  it("shows Hear me more clearly as managed, as the policy holds it off, not as a switch that flips back (home-r9-3)", async () => {
+    const page = await open("voice", { admin: { managed: ["wakeWord", "naturalVoice"], features: { voice: false } } });
+    const clear = page.locator("#clear-on");
+    await expect.poll(() => clear.isDisabled()).toBe(true);
+    expect(await clear.getAttribute("title")).toBe("Managed by your organisation");
+    expect(await page.locator("#wake").isDisabled()).toBe(true);
+    expect(page.errors).toEqual([]);
+    await page.close();
+  });
+});
+
+describe.skipIf(gate)("Search settings, typed", () => {
+  it("says how many settings match once typing pauses, not at every keystroke (accessibility-r9-5)", async () => {
+    const page = await open("home");
+    await page.evaluate(() => {
+      const out: string[] = (window as unknown as { __said: string[] }).__said = [];
+      const r = document.getElementById("search-msg")!;
+      new MutationObserver(() => { if (r.textContent) out.push(r.textContent); }).observe(r, { subtree: true, childList: true, characterData: true });
+    });
+    await page.locator("#search").focus();
+    await page.keyboard.type("text size", { delay: 60 });
+    await expect.poll(() => page.evaluate(() => (window as unknown as { __said: string[] }).__said.length), { timeout: 3000 }).toBeGreaterThan(0);
+    await page.waitForTimeout(1000);
+    const said = await page.evaluate(() => (window as unknown as { __said: string[] }).__said);
+    expect(said).toHaveLength(1);
+    expect(said[0]).toMatch(/^\d+ match(es)? in \d+ sections?\./);
+    expect(page.errors).toEqual([]);
+    await page.close();
   });
 });

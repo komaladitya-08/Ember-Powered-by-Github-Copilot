@@ -254,8 +254,14 @@ describe("the sign-in step", () => {
     expect(signInView({ phase: "ready", signingIn: false, managedProvider: false, service: { kind: "user", host: "api.example.com", listed: true } }).line).toBe("Using your own provider (api.example.com).");
   });
 
+  it("titles the organisation's step for what is so: connecting while it connects, its service once connected (first-run-r9-11)", () => {
+    expect(signInText({ managed: true, ownPhase: "ready" }).title).toBe("Your organisation's model service");
+    expect(signInText({ managed: true, ownPhase: "error" }).title).toBe("Your organisation's model service");
+    expect(signInText({ managed: true, ownPhase: "starting" }).title).toBe("Connecting to your organisation's service");
+  });
+
   it("never offers sign-in with the organisation's own service, under lockdown, or when the policy refused (review of #124)", () => {
-    expect(signInText({ managed: true }).title).toBe("Connecting to your organisation's service");
+    expect(signInText({ managed: true, ownPhase: "starting" }).title).toBe("Connecting to your organisation's service");
     expect(signInText({ managed: false })).toBe(STEP_TEXT["sign-in"]);
     expect(signInView({ phase: "starting", signingIn: false, managedProvider: true })).toMatchObject({ primary: "continue", why: "Still connecting to your organisation's model service." });
     expect(signInView({ phase: "error", signingIn: false, managedProvider: true })).toMatchObject({ primary: "continue", why: "", retry: false });

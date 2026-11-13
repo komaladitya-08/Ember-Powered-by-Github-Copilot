@@ -216,6 +216,37 @@ describe("main's answer speech ownership", () => {
     expect((w.personal.answered.mock.calls[0] as unknown[])[0]).toBe("The capital of France is Paris. It is on the Seine.");
   });
 
+  it("counts an answer that ends while a task's question is still up as the answer, with no follow-up window over the question (product-ui-x9-4)", () => {
+    vi.useFakeTimers();
+    const w = wiring();
+    w.onTurnStart({ text: "What is the capital of France?", spoken: true });
+    w.agent.answerOpen = true;
+    w.onAnswerDelta("The capital");
+    w.confirmer.waiting = true;
+    w.pause(false);
+    // The usual order: the answer finishes before the user answers the task's question. A second task's question
+    // over the same answer leaves it the answer too.
+    w.onAnswerDelta(" of France is Paris.");
+    w.pause(false);
+    w.onAnswer("The capital of France is Paris.");
+    w.onTurnEnd(false);
+    expect(w.voice.speak).not.toHaveBeenCalled();
+    expect(w.personal.answered).toHaveBeenCalledOnce();
+    expect((w.personal.answered.mock.calls[0] as unknown[])[0]).toBe("The capital of France is Paris.");
+    // Nothing more is heard for it while the question is up: its own answer window is the only one.
+    expect(w.voice.followUp).not.toHaveBeenCalled();
+    // The turn's own question still retires its answer: a later turn stopped by its own card is no answer.
+    w.confirmer.waiting = false;
+    w.onTurnStart({ text: "Delete the old notes", spoken: true });
+    w.agent.answerOpen = true;
+    w.confirmer.waiting = true;
+    w.pause();
+    w.onAnswer("A reply under its own question.");
+    w.onTurnEnd(false);
+    expect(w.personal.answered).toHaveBeenCalledOnce();
+    expect(w.voice.followUp).not.toHaveBeenCalled();
+  });
+
   it("retires the answer only for a question of the conversation's own turn, never a task's (tasks-approvals-r9-2)", () => {
     const source = fs.readFileSync("app/main/main.ts", "utf8");
     expect(source).toContain("    pauseAnswerSpeech(questionPausesAnswer(q.question));\n");
