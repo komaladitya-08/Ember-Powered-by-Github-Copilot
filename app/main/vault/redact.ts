@@ -211,7 +211,10 @@ export class VaultRedactor {
       p.lastIndex = 0;
       out = out.replace(p, MARK);
     }
-    return out === text ? text : out.replace(MARKS, VAULT_REDACTED);
+    if (out === text) return text;
+    // The wording is a whole-text pass too: a step of its own (stop-yield-x9-1).
+    yield;
+    return out.replace(MARKS, VAULT_REDACTED);
   }
 
   /**

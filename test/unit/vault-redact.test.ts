@@ -161,6 +161,23 @@ describe("VaultRedactor (vault-3)", () => {
     expect(r.text(`to ${EMAIL} now`)).toBe(`to ${VAULT_REDACTED} now`);
   });
 
+  it("words the marks it left in a step of its own, after its last pattern's pass, so a caller can give Ember's thread back between them (stop-yield-x9-1)", () => {
+    const r = new VaultRedactor();
+    r.note("email", EMAIL);
+    r.note("password", PASSWORD);
+    const patterns = (r as unknown as { noted: { patterns: RegExp[] }[] }).noted.flatMap(n => n.patterns).length;
+    const count = (text: string): { steps: number; out: string } => {
+      const g = r.textSteps(text);
+      let steps = 0;
+      for (;;) { const n = g.next(); if (n.done) return { steps, out: n.value }; steps++; }
+    };
+    const hit = count(`to ${EMAIL} now`);
+    expect(hit.out).toBe(r.text(`to ${EMAIL} now`));
+    expect(hit.steps).toBe(patterns + 1);
+    // Nothing found: nothing to word, and no step for it.
+    expect(count("nothing here").steps).toBe(patterns);
+  });
+
   it("goes through arrays and plain objects, keys too, and leaves what it is told to skip and what isn't text", () => {
     const r = new VaultRedactor();
     r.note("password", PASSWORD);

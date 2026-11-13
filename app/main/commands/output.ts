@@ -78,24 +78,38 @@ function applyCarriageReturns(line: string): string {
   return "";
 }
 
+/** Step 1's first half, in order: every escape sequence out, the text between them as it was printed. */
+const ESCAPES = [STRINGS, OSC, CSI, CHARSET, OTHER_ESC, LONE_ESC];
+
 /** Step 1's first half: every escape sequence out, the text between them as it was printed. */
 function stripEscapes(text: string): string {
-  return text
-    .replace(STRINGS, "")
-    .replace(OSC, "")
-    .replace(CSI, "")
-    .replace(CHARSET, "")
-    .replace(OTHER_ESC, "")
-    .replace(LONE_ESC, "");
+  return ESCAPES.reduce((out, re) => out.replace(re, ""), text);
 }
 
 /** Step 1 on decoded text: terminal codes out, line endings and progress bars collapsed, other controls removed. */
 export function stripTerminal(text: string): string {
-  const noEsc = stripEscapes(text).replace(/\r\n/g, "\n");
-  return noEsc
-    .split("\n")
-    .map(l => applyBackspaces(applyCarriageReturns(l)).replace(CONTROLS, ""))
-    .join("\n");
+  return runSteps(stripTerminalSteps(text));
+}
+
+/**
+ * stripTerminal as steps, a step before each of its whole-text passes: on 4 MiB with a colour code on every character
+ * the whole of it is about 200 ms, more than a run's end may hold Ember's main thread at once (stop-yield-x9-1).
+ * stripTerminal runs the same steps at once, so the two give the same bytes.
+ */
+export function* stripTerminalSteps(text: string): Generator<void, string, void> {
+  let out = text;
+  for (const re of ESCAPES) {
+    yield;
+    out = out.replace(re, "");
+  }
+  yield;
+  const noEsc = out.replace(/\r\n/g, "\n");
+  yield;
+  const lines = noEsc.split("\n");
+  yield;
+  const collapsed = lines.map(l => applyBackspaces(applyCarriageReturns(l)).replace(CONTROLS, ""));
+  yield;
+  return collapsed.join("\n");
 }
 
 /** Decodes UTF-8, replacing invalid sequences (as the command window does). */
@@ -196,7 +210,14 @@ function wholeAsPrinted(s: string): string {
 /** wholeAsPrinted as steps. */
 function* wholeAsPrintedSteps(s: string, R: ((text: string) => string) | null, steps: ((text: string) => Generator<void, string, void>) | null): Generator<void, string, void> {
   if (!R || !ANY_CONTROL.test(s)) return s;
-  return (yield* wholeSteps(s.replace(/\ue002/g, "\ufffd").replace(CSI_OPEN, `$&${MARK_CSI}`), R, steps)).replace(/\ue002/g, "");
+  // Each whole-text operation a step of its own: on 4 MiB of colour on every character, the marking, the redactor's
+  // last pass and the unmarking were one step of 300-480 ms together (stop-yield-x9-1).
+  const own = s.replace(/\ue002/g, "\ufffd");
+  yield;
+  const marked = own.replace(CSI_OPEN, `$&${MARK_CSI}`);
+  const redacted = yield* wholeSteps(marked, R, steps);
+  yield;
+  return redacted.replace(/\ue002/g, "");
 }
 
 /**
@@ -332,21 +353,35 @@ function* cleanSteps(
   R: ((text: string) => string) | null, steps: ((text: string) => Generator<void, string, void>) | null,
 ): Generator<void, string, void> {
   // The output's own private-use markers can't pose as a cut span: replaced one for one, so offsets hold.
-  const decoded = decode(raw).replace(/[\ue000-\ue002]/g, "\ufffd");
+  // Every whole-text operation is a step of its own, none bundled with the next: a step is what holds Ember's main
+  // thread, and on dense colour stripTerminal alone is about 200 ms of 4 MiB (stop-yield-x9-1).
+  const text = decode(raw);
+  yield;
+  const decoded = text.replace(/[\ue000-\ue002]/g, "\ufffd");
   yield;
   // What the vault filled goes before the terminal codes do, where it stands whole as printed (integ-z-1): between
   // the markers, as below, so a marker is never taken for the redactor's own.
   const parts = cutSpans(decoded, o.secretSpans).split(/([\ue000\ue001])/);
   for (let i = 0; i < parts.length; i += 2) parts[i] = yield* wholeAsPrintedSteps(parts[i], R, steps);
-  const plain = stripTerminal(parts.join(""));
+  yield;
+  const joined = parts.join("");
+  yield;
+  const plain = yield* stripTerminalSteps(joined);
   yield;
   // What the vault filled goes first, from the whole text (vault-3-y9-1). Typed lines and secrets are handled between the markers, so a marker's own words ("secret: the …") are never taken
   // for a key and its value.
   const out = plain.split(/([\ue000\ue001])/);
   for (let i = 0; i < out.length; i++) {
     const part = out[i];
-    out[i] = part === MARK_ANSWERED ? SECRET_ANSWERED : part === MARK_UNANSWERED ? SECRET_UNANSWERED
-      : yield* redactSteps(capLines(cutTyped(yield* wholeSteps(part, R, steps), o.typed)));
+    if (part === MARK_ANSWERED || part === MARK_UNANSWERED) {
+      out[i] = part === MARK_ANSWERED ? SECRET_ANSWERED : SECRET_UNANSWERED;
+      continue;
+    }
+    const checked = yield* wholeSteps(part, R, steps);
+    yield;
+    const untyped = cutTyped(checked, o.typed);
+    yield;
+    out[i] = yield* redactSteps(capLines(untyped));
   }
   return out.join("");
 }

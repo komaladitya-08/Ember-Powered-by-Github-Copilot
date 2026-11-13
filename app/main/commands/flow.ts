@@ -1537,10 +1537,12 @@ const nextTurn = (): Promise<void> => new Promise(resolve => setImmediate(resolv
  * Steps 14: shape, check for instructions, note downloads, audit the end, and say how it went. A run keeps up to 4 MiB
  * of output, and cleaning it held Ember's main thread about 1 s (1.7 s with three of each vault entry filled) where
  * Stop must answer within 300 ms (merge review integ-y-2): the cut, CL's own cleaning and the check copy's redaction
- * run a whole-text pass at a time with a macrotask at least every 8 ms of them (runStepsYielding), and a Stop seen
- * between them ends the call as stopped, with nothing of the output, cleaned or not, for the model, the audit or the
- * log. Measured on 4 MiB of coloured build output with a login, a card and contact details filled, one to three of
- * each: the longest stretch went from 1,163-1,901 ms to 134-175 ms (132-188 ms with nothing filled).
+ * run a whole-text operation a step (stop-yield-x9-1), with a macrotask between two steps once 8 ms of them have run
+ * (runStepsYielding), and a Stop seen between them ends the call as stopped, with nothing of the output, cleaned or
+ * not, for the model, the audit or the log. Measured on 4 MiB of coloured build output with a login, a card and
+ * contact details filled, one to three of each: the longest stretch went from 1,163-1,901 ms to 134-175 ms (132-188
+ * ms with nothing filled); with a colour code on every character, 115-216 ms. One known pass is longer still: the
+ * Key Vault value pattern over 4 MiB of secret ids with no value, about 1.6 s.
  */
 async function finishRun(ctx: CommandFlowContext, j: CommandJudge, run: RunOutcome, o: { cls: Classification; label: string; shell: ShellId; timeoutS: number; runId: string }): Promise<ToolResultObject> {
   const { exit, out, tracker, running } = run;
@@ -1563,7 +1565,12 @@ async function finishRun(ctx: CommandFlowContext, j: CommandJudge, run: RunOutco
   const theirs = (running as RunningCommand & { secretSpans?: () => { from: number; to: number }[] }).secretSpans?.() ?? [];
   const kept = await runStepsYielding(out.keptSteps([...tracker.spans(), ...theirs]), () => ctx.isOver());
   if (kept === null || ctx.isOver()) return stopped();
+  // The cut's last step, encoding and decoding are each a whole-text pass: a turn between them (stop-yield-x9-1).
+  await nextTurn();
+  if (ctx.isOver()) return stopped();
   const raw = new TextEncoder().encode(kept.text);
+  await nextTurn();
+  if (ctx.isOver()) return stopped();
   // What it printed is checked whole, before shaping cuts it to size (CL's cleaned text, as the model's copy is made
   // from it; and the flow's own copy, which keeps what a carriage return overwrote), and as the model gets it.
   const own = j.cleanOutput === cleanOutput;

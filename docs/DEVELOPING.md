@@ -2810,12 +2810,17 @@ downloads it on first use per target and checks it before sending.
   thread about 1 s (1.7 s with three logins, cards and contacts filled in the vault), where Stop must answer within
   300 ms. So the run's end (flow.ts `finishRun`) makes the cut between its first and last output
   (`OutputKeeper.keptSteps`), cleans (`cleanOutputAsync`) and redacts its own check copy (`redactSecretsYielding`) a
-  whole-text pass at a time, with a macrotask at least every 8 ms (`runStepsYielding`), and a Stop seen there ends
-  the call as stopped with nothing of the output for the model, the audit or the log. Never cut the text into slices
-  to do this: several passes match across lines. The passes are one list for both ways (`REDACT_PASSES`, the vault's
-  `textSteps`, `cleanSteps`), so `cleanOutput` and `cleanOutputAsync` give the same bytes; give a new pass to that
-  list, never to only one of them. The longest single step is MySQL's `-p` pattern, about 140 ms on 4 MiB of build
-  output.
+  whole-text pass at a time: every whole-text operation (decoding, each of `stripTerminal`'s passes, the marking and
+  unmarking around the vault's pass, each redaction pass) is a step of its own, and `runStepsYielding` gives a
+  macrotask between two steps once 8 ms of them have run, and a Stop seen there ends the call as stopped with nothing
+  of the output for the model, the audit or the log. So the longest hold is one step plus up to 8 ms. Never cut the
+  text into slices to do this: several passes match across lines. The passes are one list for both ways
+  (`REDACT_PASSES`, the vault's `textSteps`, `cleanSteps`, `stripTerminalSteps`), so `cleanOutput` and
+  `cleanOutputAsync` give the same bytes; give a new pass to that list, never to only one of them, and never two
+  whole-text operations in one step. The long single steps on 4 MiB, measured on a loaded 4-core machine: a pass
+  over a colour code on every few characters (`stripTerminal`'s CSI pass, the marking and unmarking around the
+  vault's pass) about 150-200 ms, MySQL's `-p` pattern about 140-200 ms, and one known past 300 ms: the Azure Key
+  Vault value pattern over 4 MiB of secret ids with no value, about 1.6 s in one pass.
 - **Command output is not completion status**: remote runs use the child process's exit code and signal. Printed
   `ember-exit` sequences on stdout or stderr cannot override them, including on pipes and Linux/macOS PTYs.
 - **Nothing changes without them**: with commands off everywhere and only this computer, the prompts are today's

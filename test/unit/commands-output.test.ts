@@ -553,13 +553,36 @@ describe("cleaning a run's kept output a pass at a time (merge review integ-y-2)
     }
   }, 120_000);
 
+  it("gives a turn's chance before and after each whole-text operation around taking the terminal codes out, so no step bundles several of them (stop-yield-x9-1)", async () => {
+    // "|" is a step's start (stopped() is asked before each); "<" and ">" the redactor's own start and end.
+    const events: string[] = [];
+    setOutputRedactor(t => t, function* (t) { events.push("<"); yield; events.push(">"); return t; });
+    const stopped = (): boolean => { events.push("|"); return false; };
+    const out = `${ESC}[ma${ESC}[mb\x9bmc\n`.repeat(4);
+    const atOnce = cleanOutput(bytes(out), OPTIONS[0]);
+    events.length = 0;
+    expect(await cleanOutputAsync(bytes(out), OPTIONS[0], stopped)).toBe(atOnce);
+    const s = events.join("");
+    // Decoding, the output's own marks, the cut spans and the CSI marking are steps of their own before the redactor.
+    expect(s.indexOf("<")).toBeGreaterThanOrEqual(4);
+    // Between the redactor's pass over the text as printed and its pass over the plain text: the unmarking, the join,
+    // stripTerminal's ten (its six escape passes, the line endings, the split into lines, the lines collapsed, the
+    // join) and the split at the markers each start a step: fourteen.
+    const first = s.indexOf(">"), next = s.indexOf("<", first);
+    expect(s.slice(first, next).split("|").length - 1).toBe(14);
+    // And cutting the typed lines is a step, and the long lines another, before the secret passes, a step each.
+    const after = s.indexOf(">", next);
+    expect(s.slice(after).split("|").length - 1).toBe(REDACT_PASSES.length + 2);
+  });
+
   it("stops at the next pass once told to, with nothing of the text (merge review integ-y-2)", async () => {
     let calls = 0;
     setOutputRedactor(t => t, function* (t) { for (let i = 0; i < 10; i++) { calls++; yield; } return t; });
     let turns = 0;
-    const stopped = (): boolean => ++turns > 5;
+    const stopped = (): boolean => ++turns > 18;
     expect(await cleanOutputAsync(bytes("token=abcdef123456\n"), OPTIONS[0], stopped)).toBeNull();
-    // (Decoding is a step, and the terminal codes another; then the redactor's first three passes, and no more.)
+    // (Decoding, the output's own marks, the cut spans and the join are a step each, and the terminal codes eleven
+    // (stop-yield-x9-1); then the redactor's first three passes, and no more.)
     expect(calls).toBe(3);
     expect(await redactSecretsYielding("token=abcdef123456", () => true)).toBeNull();
   });

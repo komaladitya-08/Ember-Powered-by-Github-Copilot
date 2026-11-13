@@ -372,8 +372,8 @@ describe("Stop while a run's kept output is cleaned (merge review integ-y-2)", (
     expect(r.textResultForLlm).toContain(`mail: ${VAULT_REDACTED}`);
     expect(r.textResultForLlm).not.toMatch(/canary/i);
     expect(r.textResultForLlm).toContain("src/module.ts compiled ok");
-    // Turns all the way through: a macrotask at least every 8 ms of passes (about 1.8 s of them here; 138-172 ms the
-    // longest stretch between two turns as measured on a loaded 4-core machine, 1,698-1,901 ms before).
+    // Turns all the way through: a macrotask between two passes once 8 ms of them have run (about 1.8 s of them here;
+    // 138-172 ms the longest stretch between two turns as measured on a loaded 4-core machine, 1,698-1,901 ms before).
     expect(w.turns).toBeGreaterThan(20);
   }, 60_000);
 
