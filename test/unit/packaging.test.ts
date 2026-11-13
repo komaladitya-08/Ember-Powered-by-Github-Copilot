@@ -178,6 +178,11 @@ describe("the RPM", () => {
     // The README beside it names every key the policy takes, and the rule about `commands`.
     const readme = fs.readFileSync(path.resolve("packaging/policy.README"), "utf8");
     for (const key of Object.keys(AdminPolicySchema.shape)) expect(readme, key).toContain(`"${key}"`);
+    // And every key of the provider, down to Azure's API version: a guess at one locks every Ember down (install-docs-r9-7).
+    const provider = AdminPolicySchema.shape.provider.unwrap().shape;
+    for (const key of [...Object.keys(provider), ...Object.keys(provider.azure.unwrap().shape)]) expect(readme, `provider's ${key}`).toContain(`"${key}"`);
+    const admins = fs.readFileSync(path.resolve("docs/DEVELOPING.md"), "utf8").split("\n").find(l => l.startsWith("| `provider` |"))!;
+    for (const key of ["wireApi", "azure", "apiVersion"]) expect(admins, key).toContain(`\`${key}\``);
     expect(readme).toMatch(/without "commands" turns commands off/);
     expect(readme).toMatch(/"ssh": \{ "allowedHosts": \[/);
     for (const f of ["policy.example.json", "policy.README"]) {
