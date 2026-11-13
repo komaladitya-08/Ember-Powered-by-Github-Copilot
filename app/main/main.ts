@@ -22,7 +22,7 @@ import { readTextFile } from "./text-file";
 import { SettingsStore, checkHomePatch, hasConsent, plainSaveError, withOwnExtensions, withOwnProvider, withOwnTrust, type Settings, type SettingsPatch } from "./settings";
 import { auditRetentionDays, autonomyAllowed, heldUntilRestart, homeAdmin, modelServiceRefusal } from "./admin";
 import { autonomyConsented, autonomyHeld, autonomyInForce, holdAutonomyOff, releaseAutonomyHold, ALL_SCOPES } from "./policy/autonomy";
-import { TaskVoiceTrust, VoiceRefusals, heardAnswer, heardUnchecked, refusalEndsTrust, rejectionEndsTrust, voiceAnswer, type VoiceAnswerNote, type VoiceAnswerOutcome } from "./agent/voice-answer";
+import { ANSWER_CLOSED_STATUS, TaskVoiceTrust, VoiceRefusals, answerWindowStatus, heardAnswer, heardUnchecked, refusalEndsTrust, rejectionEndsTrust, voiceAnswer, type VoiceAnswerNote, type VoiceAnswerOutcome } from "./agent/voice-answer";
 import { inspectEnvironment, keyboardRoute, sessionGreeting, type EnvReport } from "./environment";
 import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSender, keepClearOf, quitQuestion, setTextScale, settingsFromHome, setUpAppChrome } from "./windows";
 import { UPDATED_QUESTION, createUpdateCheck, restartAfterUpdate, updatedDetail } from "./install-watch";
@@ -1975,11 +1975,17 @@ function start(): void {
         setState({ emotion: "listening", talking: false, bubble: { visible: true, mood: "listening", title: "Listening…", thought: "", step: null, streaming: true, actions: [] } });
         break;
       case "listening":
-        // A question's answer window (engine.ts answerWindow): nothing shows for it, as the question is up meanwhile, and
+        // A question's answer window (engine.ts answerWindow): the bubble shows nothing of it, as the question is up, and
         // nothing of the bubble is taken or let go; each answer is dated from its own start (the "speech" case).
         answerListening = e.window === "answer" && e.on;
         followUpListening = e.window === "follow-up" && e.on;
-        if (e.window === "answer") break;
+        if (e.window === "answer") {
+          // Only the status line says so (V2-F4): while it listens, and for a few seconds after it closed unanswered.
+          const next = answerWindowStatus(e, { status: statusBy.listen, questionUp: !!confirmer?.waiting, conversing });
+          if (next !== undefined) setStatus("listen", next);
+          if (next === ANSWER_CLOSED_STATUS) setTimeout(() => { if (statusBy.listen === ANSWER_CLOSED_STATUS) setStatus("listen", null); }, 8000).unref?.();
+          break;
+        }
         if (e.window === "conversation") {
           // The microphone stays open through replies and tasks: nothing here may take the bubble from them.
           conversationOpen(e.on);

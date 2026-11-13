@@ -503,7 +503,10 @@ bare “allow” or “not now” is heard then (the answer window, `answerWindo
 taken there only where Ember can tell whether something else is playing (Linux with the speakers' stream through
 PulseAudio's parec, Windows once its output watch has looked); on macOS and on Linux without parec it is dropped as
 `sound-unknown`, the question says once to say the name first, and a second one is dropped without a word or a new
-window. Home › Voice words its hint by platform (`voiceAnswerHint`, app/renderer/home/copy.ts: V2-F3, V2-F12). Only what the list
+window. Home › Voice words its hint by platform (`voiceAnswerHint`, app/renderer/home/copy.ts: V2-F3, V2-F12). While the window
+is open, Ember's status line says “Listening for your answer…”; when it closes unanswered with the question still up,
+it says for 8 s “To answer by voice now, start with my name.” (`answerWindowStatus`, V2-F4). In a conversation neither
+shows: bare answers are heard there throughout. Only what the list
 reads as an answer leaves that window; a request said with the name in it (“Ember, open my mail”) is heard as at a
 wake, and by a wake's two stages: the spotter heard you say the name in it, and the recognizer wrote it. On the
 recognizer's words alone, which take “Number, …”, “Member, …” and “Amber, open…” for the name after the spotter, talk

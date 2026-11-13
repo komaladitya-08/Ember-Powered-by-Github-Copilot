@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { SHORT_YES_FLOOR, TASK_VOICE_MS, TaskVoiceTrust, VoiceRefusals, heardAnswer, heardUnchecked, refusalEndsTrust, refusalLine, refusalNote, rejectionEndsTrust, spokenAnswer, voiceAnswer, voiceAnswerSaid, VOICE_ANSWER_REFUSED, type VoiceAnswerInput } from "../../app/main/agent/voice-answer";
+import { ANSWER_CLOSED_STATUS, ANSWER_LISTENING_STATUS, SHORT_YES_FLOOR, TASK_VOICE_MS, TaskVoiceTrust, VoiceRefusals, answerWindowStatus, heardAnswer, heardUnchecked, refusalEndsTrust, refusalLine, refusalNote, rejectionEndsTrust, spokenAnswer, voiceAnswer, voiceAnswerSaid, VOICE_ANSWER_REFUSED, type VoiceAnswerInput } from "../../app/main/agent/voice-answer";
 import { Confirmer, type Question } from "../../app/main/agent/confirm";
 import { questionAloud } from "../../app/main/agent/presenter";
 import { AUTONOMY_NOT_SAVED, autonomyIntent, planAutonomyIntent } from "../../app/main/agent/autonomy-intent";
@@ -873,5 +873,30 @@ describe("VoiceRefusals: what Ember shows and says when a spoken answer isn't ta
     const o = journey();
     o.r.refuse("unclear", "deny");
     expect(String(o.bubbles.at(-1)?.step)).toContain(VOICE_ANSWER_REFUSED.unclear);
+  });
+});
+
+describe("what shows while a question's answer window is open, and once it has closed (V2-F4; voice-listening-r9-8)", () => {
+  const idle = { status: null, questionUp: true, conversing: false };
+  it("shows the window while it listens, and how to answer by voice once it closed with the question still up", () => {
+    expect(answerWindowStatus({ on: true }, idle)).toBe("Listening for your answer…");
+    const open = { ...idle, status: ANSWER_LISTENING_STATUS };
+    expect(answerWindowStatus({ on: false, reason: "timeout" }, open)).toBe("To answer by voice now, start with my name.");
+    // Answered (or the question went): the line goes.
+    expect(answerWindowStatus({ on: false, reason: "done" }, open)).toBeNull();
+    expect(answerWindowStatus({ on: false, reason: "timeout" }, { ...open, questionUp: false })).toBeNull();
+    // Another line owns the status (a cut request's note): left alone. A conversation hears bare answers and keeps its own.
+    expect(answerWindowStatus({ on: false, reason: "timeout" }, { ...idle, status: "Something else" })).toBeUndefined();
+    expect(answerWindowStatus({ on: true }, { ...idle, conversing: true })).toBeUndefined();
+  });
+
+  it("ends neither line on words that read as an answer, and is wired in main (source pins)", () => {
+    for (const line of [ANSWER_LISTENING_STATUS, ANSWER_CLOSED_STATUS]) {
+      const words = line.split(/\s+/);
+      for (let i = 0; i < words.length; i++) expect(spokenAnswer(words.slice(i).join(" ")), line).toBeNull();
+      expect(line.toLowerCase()).not.toMatch(/\b(?:ember|amber|emma)\b/);
+    }
+    const main = fs.readFileSync(path.join(__dirname, "../../app/main/main.ts"), "utf8");
+    expect(main).toContain("const next = answerWindowStatus(e, { status: statusBy.listen, questionUp: !!confirmer?.waiting, conversing });");
   });
 });

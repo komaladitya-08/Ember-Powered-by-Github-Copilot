@@ -342,3 +342,22 @@ export function keysSaid(keys: readonly string[]): string {
   const s = parts.join("; ");
   return `${s.charAt(0).toUpperCase()}${s.slice(1)}.`;
 }
+
+/** The status line while a question's answer window listens for a bare answer (V2-F4). */
+export const ANSWER_LISTENING_STATUS = "Listening for your answer…";
+/** For a few seconds after that window closed with the question still up: how to answer by voice now (V2-F4). */
+export const ANSWER_CLOSED_STATUS = "To answer by voice now, start with my name.";
+
+/**
+ * The status line for a question's answer window opening or closing (VoiceEvent "listening", window "answer"): the
+ * window while it is open, and once it timed out with the question still up, how to answer now. A bare "Okay." said
+ * after the 8 s vanished without a sign, and nothing said the window was open (V2-F4, voice-listening-r9-8). Undefined:
+ * leave the status as it is (a conversation hears bare answers and keeps its own line; another line owns it).
+ * Neither line ends on an answer or names Ember, as the status can be read out while the microphone listens.
+ */
+export function answerWindowStatus(e: { on: boolean; reason?: string }, now: { status: string | null; questionUp: boolean; conversing: boolean }): string | null | undefined {
+  if (now.conversing) return undefined;
+  if (e.on) return now.questionUp ? ANSWER_LISTENING_STATUS : undefined;
+  if (now.status !== ANSWER_LISTENING_STATUS) return undefined;
+  return e.reason === "timeout" && now.questionUp ? ANSWER_CLOSED_STATUS : null;
+}
