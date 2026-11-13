@@ -194,6 +194,14 @@ describe("the verbs a tool is known to have only read, build or test (commands-c
 });
 
 describe("busybox's applets, Maven's exec plugin and Gradle's init scripts (commands-closed-x9-6)", () => {
+  it("reads toybox's options and operands as an unknown program's, as main did before it had a row (commands-closed-y9-1)", () => {
+    expect(decide("toybox -o ~/.bashrc").verdict).toBe("ask");
+    expect(decide("toybox -o ~/.bashrc").rules).toContain("path.startup");
+    expect(decide("toybox --long ~").rules).toContain("unclear.broad-folder");
+    expect(decide("toybox sh ~/x.sh -o ~/.bashrc").classes).toContain("system");
+    for (const cmd of ["toybox ls", "toybox --help", "toybox wc -l a"]) expect(decide(cmd).verdict, cmd).toBe("run");
+  });
+
   it("judges a busybox or toybox applet as that program, and asks before Maven's exec properties and a Gradle init script (commands-closed-x9-6)", () => {
     for (const cmd of ["busybox telnetd", "busybox crond", "busybox inetd", "busybox syslogd", "busybox dropdb"]) expect(decide(cmd).rules, cmd).toContain("unknown.program");
     expect(decide("busybox rm -rf ~/Documents").rules).toContain("posix.rm");

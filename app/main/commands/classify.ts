@@ -3090,8 +3090,9 @@ class Engine extends Classifier {
     if (n) { this.runRow(n, h); this.verbGuard(h, from); }
     else { unknownProgram(h); generic(h, true); }
     toolPayload(h);
-    // A deleter that had no row before commands-remote-c8-2 keeps an unknown program's `-o` (commands-remote-x8-5).
-    optionPaths(h, !n || NEW_DELETERS.has(key));
+    // A deleter that had no row before commands-remote-c8-2 keeps an unknown program's `-o` (commands-remote-x8-5),
+    // and so does toybox (commands-closed-y9-1).
+    optionPaths(h, !n || UNKNOWN_OPTIONS.has(key));
   }
 
   /**
@@ -3262,7 +3263,7 @@ class Engine extends Classifier {
     if (n) { this.runRow(n, inner); this.verbGuard(inner, from); }
     else { unknownProgram(inner); generic(inner, true); }
     toolPayload(inner);
-    optionPaths(inner, !n || NEW_DELETERS.has(key));
+    optionPaths(inner, !n || UNKNOWN_OPTIONS.has(key));
     this.unnamedWrites(key, inner.args, sc);
     this.afterArgs(inner.args);
     // The command's own redirections are this program's (`then curl … > x.py`, `time curl … > x.py`): what it fetches
@@ -4782,6 +4783,8 @@ const NEW_DELETERS = new Set([
   "grm", "grmdir", "gunlink", "gshred", "scrub", "rimraf", "del", "del-cli", "gvfs-rm", "gvfs-trash", "rmtrash", "trash-rm", "fdupes", "jdupes",
   "bfg", "git-filter-repo",
 ]);
+/** Programs with a row now that keep an unknown program's reading of `-o` and its like (optionPaths), as before it. */
+const UNKNOWN_OPTIONS = new Set([...NEW_DELETERS, "toybox"]);
 const asBefore = (h: H): void => {
   if (!NEW_DELETERS.has(h.key)) return;
   // A PowerShell word shaped like a cmdlet's name (`del-cli`, `gvfs-rm`) was an unknown cmdlet's, which asked.
@@ -8408,12 +8411,15 @@ reg(NATIVE, ["busybox", "toybox"], h => {
   // An applet is that program, judged by its own row or the closed default (`busybox rm -rf ~`, `busybox telnetd`:
   // commands-closed-x9-6); with no applet (`busybox --list`) it only says what it holds.
   const first = h.args[0];
-  if (first && first.v === null) { h.e.unclear("unclear.hidden-command", `Ember can't tell what ${h.prog} runs.`); return; }
-  if (!first || first.v === null || first.v.startsWith("-")) { generic(h); return; }
-  if (h.key === "toybox" || lower(first) !== "httpd") {
+  // toybox had no row at main: it keeps an unknown program's reading there (a broad folder, and `-o` by
+  // UNKNOWN_OPTIONS at the dispatch), with the applet judged on top (commands-closed-y9-1).
+  const noRow = h.key === "toybox";
+  if (first && first.v === null) { if (noRow) generic(h, true); h.e.unclear("unclear.hidden-command", `Ember can't tell what ${h.prog} runs.`); return; }
+  if (!first || first.v === null || first.v.startsWith("-")) { generic(h, noRow); return; }
+  if (noRow || lower(first) !== "httpd") {
     // Main's reading stays (generic(): one that runs others, `busybox sh -c …`, asks how), and an applet that isn't
     // one of those is judged as itself as well.
-    generic(h);
+    generic(h, noRow);
     if (!runners().has(first.v.toLowerCase())) h.e.payload(h.args, h.sc, h.key);
     return;
   }
