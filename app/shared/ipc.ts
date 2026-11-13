@@ -269,6 +269,8 @@ export const listenOnceShown = (s: ListenOnceStatus | undefined): boolean => !(s
 export interface VoiceStatus {
   state: MicState;
   detail: string | null;
+  /** With `state` "error": the microphone is what failed (VoiceService.micFault), not the voice process or its models. */
+  micFault?: boolean;
   /** The microphone Ember hears through while it captures, as the system names it (kept on this computer). */
   micLabel?: string;
   /** Listening can start: the wake word, voice activity and speech recognition models are in. */

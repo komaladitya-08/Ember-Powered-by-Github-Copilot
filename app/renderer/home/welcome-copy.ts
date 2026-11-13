@@ -440,8 +440,13 @@ export const TRY_TEXT = {
   voiceLater: "To talk to me, turn on “Hey Ember” later in Settings › Voice. Then say, for example, “Hey Ember, what's in this window?”",
   /** Voice is on and agreed to, but its speech models aren't here and nothing fetches them by itself (first-run-r7-2). */
   voiceNoModels: "I can't listen for “Hey Ember” yet: my speech models aren't on this computer. Download them later in Settings › Voice.",
-  /** Voice is on and agreed to, but the microphone isn't working (the voice state's "error": first-run-r10-1). */
+  /** Voice is on and agreed to, but the microphone isn't working (an "error" the microphone caused: first-run-r10-1). */
   voiceNoMic: "“Hey Ember” is on, but I can't hear you: my microphone isn't working. Check it in Settings › Voice.",
+  /**
+   * Voice is on and agreed to, but listening failed for another reason (damaged models Ember can't replace, the voice
+   * process's error or its restarts): the microphone isn't named, and Settings › Voice says why (r10-modes-copy-x10-3).
+   */
+  voiceCantListen: "“Hey Ember” is on, but I can't listen right now. Settings › Voice says why.",
   /** Voice is on and agreed to, but the user turned the microphone off (muted). */
   voiceMicOff: "“Hey Ember” is on, but my microphone is off, so I can't hear you. Unmute microphone, in my handle's menu, turns it back on.",
   /** Voice is on but not listening yet (models downloading, or starting). */
@@ -454,19 +459,21 @@ export function askWhy(o: { locked: boolean; noSignIn: boolean }): string {
 }
 
 /** Where “Hey Ember” stands on the try step and in the last step's card (voiceTry). */
-export type VoiceTry = "listening" | "waiting" | "off" | "no-models" | "no-mic" | "mic-off";
+export type VoiceTry = "listening" | "waiting" | "off" | "no-models" | "no-mic" | "cant-listen" | "mic-off";
 
 /**
  * "Say “Hey Ember”" shows only while Ember listens for it: on, agreed to, allowed by the organisation
  * (`features.voice`), not muted, and the microphone open. Off or not allowed counts as off; on with its speech models
  * missing is "no-models": it won't listen until they are downloaded, so neither "not yet, once I am" nor "On" is said
  * (first-run-r7-2). On with the microphone not working is "no-mic", and with it turned off "mic-off": the setting is
- * on, so neither says to turn “Hey Ember” on, and each names the microphone (first-run-r10-1).
+ * on, so neither says to turn “Hey Ember” on, and each names the microphone (first-run-r10-1). An "error" the
+ * microphone didn't cause (`micFault` false: the voice process, its models) is "cant-listen", which doesn't name it
+ * (r10-modes-copy-x10-3).
  */
-export function voiceTry(o: { wakeWord: boolean; voiceConsent: boolean; state: string | null; allowed?: boolean; muted?: boolean }): VoiceTry {
+export function voiceTry(o: { wakeWord: boolean; voiceConsent: boolean; state: string | null; allowed?: boolean; muted?: boolean; micFault?: boolean }): VoiceTry {
   if (!o.wakeWord || !o.voiceConsent || o.allowed === false) return "off";
   if (o.muted || o.state === "muted") return "mic-off";
-  if (o.state === "error") return "no-mic";
+  if (o.state === "error") return o.micFault ? "no-mic" : "cant-listen";
   if (o.state === "off") return "off";
   if (o.state === "needs-models") return "no-models";
   return o.state === "waiting" || o.state === "active" ? "listening" : "waiting";
@@ -490,7 +497,7 @@ export function summaryRows(o: {
     // The size in pixels only once the user changed it: "Default size" says as much without a number to decode.
     { label: "Character", value: o.size === DEFAULT_SIZE ? `${o.character}, default size` : `${o.character}, ${o.size} px` },
     { label: o.copilot === false ? "Model service" : "Copilot", value: o.signedIn ?? "Not signed in yet" },
-    { label: "“Hey Ember”", value: o.voice === "off" ? "Off" : o.voice === "no-models" ? "Not yet: its speech models need downloading" : o.voice === "no-mic" ? "On, but the microphone isn't working" : o.voice === "mic-off" ? "On, but the microphone is off" : "On" },
+    { label: "“Hey Ember”", value: o.voice === "off" ? "Off" : o.voice === "no-models" ? "Not yet: its speech models need downloading" : o.voice === "no-mic" ? "On, but the microphone isn't working" : o.voice === "cant-listen" ? "On, but not listening right now" : o.voice === "mic-off" ? "On, but the microphone is off" : "On" },
   ];
   if (o.keys?.ask) rows.push({ label: "Ask", value: o.keys.ask });
   if (o.keys?.stop) rows.push({ label: "Stop everything", value: o.keys.stop });

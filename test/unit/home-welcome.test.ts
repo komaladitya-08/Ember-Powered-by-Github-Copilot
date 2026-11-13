@@ -419,7 +419,7 @@ describe("the try step", () => {
     expect(voiceTry({ ...on, state: "off" })).toBe("off");
     expect(voiceTry({ ...on, muted: true })).toBe("mic-off");
     expect(voiceTry({ ...on, state: "muted" })).toBe("mic-off");
-    expect(voiceTry({ ...on, state: "error" })).toBe("no-mic");
+    expect(voiceTry({ ...on, state: "error", micFault: true })).toBe("no-mic");
     expect(SCRIPT).toContain("allowed: status?.admin.features.voice !== false, muted: !!settings?.voice.muted,");
   });
 
@@ -432,7 +432,23 @@ describe("the try step", () => {
     expect(row("no-mic")).toEqual({ label: "“Hey Ember”", value: "On, but the microphone isn't working" });
     expect(row("mic-off")).toEqual({ label: "“Hey Ember”", value: "On, but the microphone is off" });
     expect(SCRIPT).toContain('$("w-try-voice").hidden = vs !== "listening" && vs !== "waiting";');
-    expect(SCRIPT).toContain('$("w-voice-later").textContent = vs === "no-models" ? TRY_TEXT.voiceNoModels : vs === "no-mic" ? TRY_TEXT.voiceNoMic : vs === "mic-off" ? TRY_TEXT.voiceMicOff : TRY_TEXT.voiceLater;');
+    expect(SCRIPT).toContain('$("w-voice-later").textContent = vs === "no-models" ? TRY_TEXT.voiceNoModels : vs === "no-mic" ? TRY_TEXT.voiceNoMic : vs === "cant-listen" ? TRY_TEXT.voiceCantListen : vs === "mic-off" ? TRY_TEXT.voiceMicOff : TRY_TEXT.voiceLater;');
+  });
+
+  it("names the microphone only when the microphone is what failed, and otherwise says Ember can't listen and Settings says why (r10-modes-copy-x10-3)", () => {
+    // Every voice "error" was "no-mic": damaged models Ember can't replace, the voice process's own error and its
+    // restarts were all called a microphone that isn't working.
+    const on = { wakeWord: true, voiceConsent: true };
+    expect(voiceTry({ ...on, state: "error", micFault: true })).toBe("no-mic");
+    expect(voiceTry({ ...on, state: "error" })).toBe("cant-listen");
+    expect(voiceTry({ ...on, state: "error", micFault: false })).toBe("cant-listen");
+    expect(TRY_TEXT.voiceCantListen).toBe("“Hey Ember” is on, but I can't listen right now. Settings › Voice says why.");
+    expect(TRY_TEXT.voiceCantListen).not.toMatch(/microphone/i);
+    const row = (voice: Parameters<typeof summaryRows>[0]["voice"]) => summaryRows({ character: "Cinder", size: 60, signedIn: null, voice, keys: null })[2];
+    expect(row("cant-listen")).toEqual({ label: "“Hey Ember”", value: "On, but not listening right now" });
+    expect(SCRIPT).toContain("muted: !!settings?.voice.muted, micFault: !!voice?.micFault,");
+    expect(SCRIPT).toContain('vs === "cant-listen" ? TRY_TEXT.voiceCantListen');
+    expect(MAIN).toContain("...(voice?.micFault ? { micFault: true } : {}),");
   });
 
   it("names the handle menu's item as it reads while the microphone is off (r10-modes-copy-x10-2)", () => {

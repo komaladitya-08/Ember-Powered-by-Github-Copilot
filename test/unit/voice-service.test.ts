@@ -1387,6 +1387,27 @@ describe("VoiceService keeps listening going", () => {
     expect(electron.procs).toHaveLength(2);
   });
 
+  it("says the error is the microphone's only when the microphone caused it, not when the voice process or its models did (r10-modes-copy-x10-3)", async () => {
+    vi.useFakeTimers();
+    const { v, states } = service();
+    await v.setWanted(true);
+    electron.procs[0].emit("message", { type: "ready", loadMs: 900 });
+    micStatus({ state: "lost", message: "The microphone was disconnected." });
+    expect(states.at(-1)?.s).toBe("error");
+    expect(v.micFault).toBe(true);
+    micStatus({ state: "capturing", device: "USB Headset", rate: 16000, context: "running" });
+    expect(v.micFault).toBe(false);
+    electron.procs[0].emit("message", { type: "stalled", ms: 3100 });
+    expect(states.at(-1)?.detail).toBe("No sound is arriving from the microphone. Trying again in 1 s…");
+    expect(v.micFault).toBe(true);
+    await vi.advanceTimersByTimeAsync(1000);
+    electron.procs[1].emit("message", { type: "ready", loadMs: 900 });
+    // The voice process's own error, and its dying, are an error that isn't the microphone's.
+    electron.procs[1].emit("message", { type: "error", message: "The speech recognizer failed." });
+    expect(states.at(-1)).toEqual({ s: "error", detail: "The speech recognizer failed." });
+    expect(v.micFault).toBe(false);
+  });
+
   it("keeps the mic page while it waits for a microphone that isn't there yet (no headset, PulseAudio late at login)", async () => {
     vi.useFakeTimers();
     const { v, states } = service();

@@ -881,7 +881,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
 
   const voiceState = () => voiceTry({
     wakeWord: !!settings?.wakeWord, voiceConsent: !!settings?.voice.consent, state: voice?.state ?? null,
-    allowed: status?.admin.features.voice !== false, muted: !!settings?.voice.muted,
+    allowed: status?.admin.features.voice !== false, muted: !!settings?.voice.muted, micFault: !!voice?.micFault,
   });
   const signedIn = () => agent?.phase === "ready";
 
@@ -914,7 +914,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     const vs = voiceState();
     $("w-try-voice").hidden = vs !== "listening" && vs !== "waiting";
     $("w-voice-later").hidden = !$("w-try-voice").hidden;
-    $("w-voice-later").textContent = vs === "no-models" ? TRY_TEXT.voiceNoModels : vs === "no-mic" ? TRY_TEXT.voiceNoMic : vs === "mic-off" ? TRY_TEXT.voiceMicOff : TRY_TEXT.voiceLater;
+    $("w-voice-later").textContent = vs === "no-models" ? TRY_TEXT.voiceNoModels : vs === "no-mic" ? TRY_TEXT.voiceNoMic : vs === "cant-listen" ? TRY_TEXT.voiceCantListen : vs === "mic-off" ? TRY_TEXT.voiceMicOff : TRY_TEXT.voiceLater;
     mark("w-try-voice", tried.voice, tried.voice ? TRY_TEXT.voice.done : vs === "listening" ? TRY_TEXT.voice.ask : TRY_TEXT.voiceWaiting);
     $("w-meter").classList.toggle("off", vs !== "listening");
     // (While Ember finishes before it moves to Copilot, there is no sign-in to do yet: first-run-v4-1.)

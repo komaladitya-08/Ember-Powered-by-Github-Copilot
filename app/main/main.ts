@@ -1647,6 +1647,7 @@ function start(): void {
   };
   const voiceStatus = (detail?: string) => ({
     state: voice?.micState ?? "off", detail: detail ?? null,
+    ...(voice?.micFault ? { micFault: true } : {}),
     ...(voice?.micLabel ? { micLabel: voice.micLabel } : {}),
     modelsReady: voice?.modelsReady ?? false,
     modelsMissing: (voice?.missingModels ?? VOICE_MODELS).map(m => m.id), modelsBytes: voice ? modelsBytes(voice.missingModels) : VOICE_MODELS_BYTES,
