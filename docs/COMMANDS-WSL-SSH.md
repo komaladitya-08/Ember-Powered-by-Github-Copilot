@@ -275,8 +275,9 @@ Ember stops and asks before a command that:
   its like, pkill): a word the older reading took for a file, a target, a command or an option of its own is still
   judged as one, so `tar -xf a.tar --exclude-tag ~/.ssh/id_rsa` and `uv run --cache-dir printenv` ask, `ls --cached
   ~/.config/ember/settings.json` is refused, and so is `zip -T -n ~/.config/ember/settings.json`. The word after
-  `dos2unix -c` or `-D` is still judged as a file too, and `-I` asks for every tar ("It runs a command Ember can't
-  see."): on a Mac it names a list of files, but the `tar` there may be GNU's, which runs the program `-I` names;
+  `dos2unix -c` or `-D` is still judged as a file too, and `-I` asks for any tar wherever the older reading saw one
+  ("It runs a command Ember can't see."; `bsdtar -HI list.txt`, where it was part of `-H`, runs as it did): on a Mac
+  it names a list of files, but the `tar` there may be GNU's, which runs the program `-I` names;
   write `tar -T list.txt` for a list and it runs. `git checkout
   --track -b feature origin/feature` asks for the same reason (the older reading took `-b` for `--track`'s word and
   the rest for files to throw changes away in); write `git checkout -b feature --track origin/feature` or `git switch
