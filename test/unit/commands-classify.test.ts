@@ -290,7 +290,8 @@ describe("deleting with a tool Ember had no row for (commands-remote-c8-2)", () 
     // still let it be announced.
     for (const cmd of ["mytool .", "mytool src", "mytool ~/Documents", "mytool ../other"]) {
       expect(run(cmd).decision.rules, cmd).toEqual(["unknown.program"]);
-      expect(runCase({ cmd, verdict: "run", words: "run mytool" }, { shell: "bash", context: "linux" }).decision.verdict, cmd).toBe("announce");
+      // A plain word after it says what it is to do, so the words name that too (commands-closed-x9-1).
+      expect(runCase({ cmd, verdict: "run", words: cmd === "mytool src" ? "run mytool on src" : "run mytool" }, { shell: "bash", context: "linux" }).decision.verdict, cmd).toBe("announce");
     }
   });
 

@@ -263,8 +263,10 @@ Ember stops and asks before a command that:
   whose verb isn't one of those in §2.3 (`Show-Thing`); or **a command of a tool Ember doesn't know** ("It runs a
   command of this tool that Ember doesn't know."): `cargo watch -s …`, `stack exec -- …`, `mix ecto.drop`, `tmux
   send-keys …`, `go env -w …`, `pip config set …`, `deno publish`, `vercel` with no command (it deploys). When your own
-  words for the task name the program (or the tool and its command) whole, "run dropdb on the scratch database", it is
-  announced instead, as in §2.5; what else the command does is judged as before;
+  words for the task ask to run the program by name (or the tool and its command), with the words after it that say
+  what it is to do ("run dropdb on the scratch database" for `dropdb scratch`, "run rails db:migrate"), it is announced
+  instead, as in §2.5, and the announcement names them; a question about the program or a mention of it asks for
+  nothing. What else the command does is judged as before;
 - **Ember can't read with certainty**: `eval`, encoded commands (`powershell -EncodedCommand`, `base64 -d | sh`),
   aliases it can't see, unusual syntax, interactive programs such as `vim`, `less`, `top` or `python` with no
   script ("This opens an interactive program; you'd have to use it yourself in the command window."), a job count

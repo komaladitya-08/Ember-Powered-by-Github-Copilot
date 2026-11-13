@@ -12001,54 +12001,54 @@
   {
    "cmd": "mise trust",
    "verdict": "announce",
-   "words": "run mise"
+   "words": "run mise trust"
   },
   {
    "cmd": "mise trust .mise.toml",
    "verdict": "announce",
-   "words": "run mise"
+   "words": "run mise trust"
   },
   {
    "cmd": "somecli trust list",
    "verdict": "announce",
-   "words": "run somecli"
+   "words": "run somecli trust list"
   },
   {
    "cmd": "foo bazelisk",
    "verdict": "announce",
-   "words": "run foo"
+   "words": "run foo bazelisk"
   },
   {
    "cmd": "foo systemsetup",
    "verdict": "announce",
-   "words": "run foo"
+   "words": "run foo systemsetup"
   },
   {
    "cmd": "foo plutil",
    "verdict": "announce",
-   "words": "run foo"
+   "words": "run foo plutil"
   },
   {
    "cmd": "foo update-ca-trust",
    "verdict": "announce",
-   "words": "run foo"
+   "words": "run foo update-ca-trust"
   },
   {
    "cmd": "foo update-ca-certificates",
    "verdict": "announce",
-   "words": "run foo"
+   "words": "run foo update-ca-certificates"
   },
   {
    "cmd": "mytool plistbuddy",
    "verdict": "announce",
-   "words": "run mytool"
+   "words": "run mytool plistbuddy"
   },
   {
    "cmd": "foo PlistBuddy",
    "verdict": "announce",
    "context": "darwin",
    "shell": "zsh",
-   "words": "run foo"
+   "words": "run foo PlistBuddy"
   },
   {
    "cmd": "mise exec -- rm -rf build",
@@ -13307,17 +13307,17 @@
   {
    "cmd": "foo sponge",
    "verdict": "announce",
-   "words": "run foo"
+   "words": "run foo sponge"
   },
   {
    "cmd": "foo unrar",
    "verdict": "announce",
-   "words": "run foo"
+   "words": "run foo unrar"
   },
   {
    "cmd": "foo dpkg-deb",
    "verdict": "announce",
-   "words": "run foo"
+   "words": "run foo dpkg-deb"
   },
   {
    "cmd": "nm -o /usr/lib/libc.so.6",
@@ -15011,12 +15011,12 @@
   {
    "cmd": "foo caddy",
    "verdict": "announce",
-   "words": "run foo"
+   "words": "run foo caddy"
   },
   {
    "cmd": "mise use ngrok",
    "verdict": "announce",
-   "words": "run mise"
+   "words": "run mise use ngrok"
   },
   {
    "cmd": "gdb -batch --ex 'shell id' a.out",
@@ -18834,7 +18834,7 @@
   {
    "cmd": "mytool src",
    "verdict": "announce",
-   "words": "run mytool"
+   "words": "run mytool on src"
   },
   {
    "cmd": "mytool ~/proj",

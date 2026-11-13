@@ -1623,6 +1623,36 @@ function wholeName(name: string, list: readonly string[]): boolean {
   return false;
 }
 
+/** Verbs that ask Ember to run a program named after them ("run dropdb", "use kafka-topics to list the topics"). */
+const RUN_VERBS = ["run", "rerun", "use", "call", "execute", "exec", "invoke", "launch", "start", "try"];
+/** Words that make a program the tool a request is done with ("drop the scratch database with dropdb"). */
+const WITH_TOOL = new Set(["with", "using", "via", "through"]);
+/** Words between a run verb, or "with", and the program it names ("run the dropdb tool", "with a quick kafka-topics"). */
+const BEFORE_TOOL = new Set(["the", "a", "an", "our", "my", "this", "that", "quick"]);
+
+/**
+ * Whether a request in the user's words asks to run a program Ember doesn't know (commands-closed-x9-1): its tool, the
+ * first word of `name`, stands as what a run verb acts on ("run dropdb", "use the kafka-topics tool") or as the tool a
+ * request is done with ("drop the scratch database with dropdb"), and every other word of `name` (the tool's verb or
+ * its first operands: "cargo watch", "rails db:drop", "dropdb scratch") is whole in the same request. A question ("what
+ * does dropdb do?"), a mention ("the docs mention dropdb", "explain dropdb") and what the user will do themselves ("I
+ * want to run dropdb myself") ask nothing. `asked` is requestStarts' clauses.
+ */
+function runAsked(name: string, asked: readonly string[][]): boolean {
+  const [tool, ...rest] = name.split(" ");
+  const parts = userWordList(tool);
+  if (parts.length === 0 || parts.join("").length < 3) return false;
+  const at = (c: readonly string[], k: number): boolean => {
+    while (BEFORE_TOOL.has(c[k] ?? "")) k++;
+    return parts.every((p, j) => c[k + j] === p);
+  };
+  return asked.some(c => {
+    if (c.some(x => x === "myself" || x === "yourself" || x === "ourselves")) return false;
+    const named = (RUN_VERBS.includes(c[0]) && at(c, 1)) || c.some((x, k) => WITH_TOOL.has(x) && at(c, k + 1));
+    return named && rest.every(r => wholeName(r, c));
+  });
+}
+
 /**
  * Matches a dangerous command against the user's own words (§3.7): the row's announcement when every finding is
  * covered by a row the words name, else null (the command asks). Empty or whitespace words never match.
@@ -1640,10 +1670,10 @@ export function matchIntent(cls: Classification, userWords: string, ctx: Classif
   // command does is matched as before.
   const unknown = F.filter(f => f.cls === "unknown");
   if (unknown.length > 0) {
-    const asked = userWordList(affirmed(userWords));
-    const names = [...new Set(unknown.map(f => f.program.replace(/\.(exe|com|bat|cmd)$/i, "")))];
-    if (!names.every(n => wholeName(n, asked))) return null;
-    if (holdsBack(userWords, ["run", "use", ...names], false)) return null;
+    const asked = requestStarts(affirmed(userWords).normalize("NFKC"));
+    const names = [...new Set(unknown.map(f => f.program.replace(/\.(exe|com|bat|cmd)(?= |$)/i, "")))];
+    if (!names.every(n => runAsked(n, asked))) return null;
+    if (holdsBack(userWords, [...RUN_VERBS, ...names.map(n => n.split(" ")[0])], false)) return null;
     const announce = `Running ${joinList(names)}, as you asked.`;
     const rest = F.filter(f => f.cls !== "unknown");
     if (rest.length === 0) return { intent: "unknown", announce };

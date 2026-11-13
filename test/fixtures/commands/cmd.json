@@ -2786,7 +2786,7 @@
   {
    "cmd": "mytool src",
    "verdict": "announce",
-   "words": "run mytool"
+   "words": "run mytool on src"
   },
   {
    "cmd": "rimraf build",

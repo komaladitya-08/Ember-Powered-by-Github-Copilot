@@ -3883,7 +3883,24 @@ function unknownProgram(h: H): void {
   }
   // A cmd name that is a batch file in the folder (`build` for build.bat) is the project's own, read as a script.
   if (h.sc.family === "cmd" && !h.pn.isPath && h.pn.ext === "" && [".bat", ".cmd"].some(e => h.e.onRecord(lit(h.nameArg.v + e), h.sc))) return;
-  h.e.add("unknown", "unknown.program", SAYS.unknownProgram);
+  h.e.add("unknown", "unknown.program", SAYS.unknownProgram, { program: withOperandVerb(h) });
+}
+
+/**
+ * An unknown program named with the words that say what it is to do (commands-closed-x9-1): its first operands, up to
+ * two, while they are plain words (`rails db:drop`, `supabase db reset`, `dropdb prod`), never an option, a path or a
+ * file name. The user's words must name them too for it to be announced, and the announcement says them.
+ */
+function withOperandVerb(h: H): string {
+  const words: string[] = [];
+  for (const a of h.args) {
+    if (a.v === null) break;
+    if (words.length === 0 && a.v.startsWith("-")) continue;
+    if (!/^[A-Za-z][A-Za-z0-9_:-]*$/.test(a.v)) break;
+    words.push(a.v);
+    if (words.length === 2) break;
+  }
+  return [h.prog, ...words].join(" ");
 }
 
 /** TeX engines, whose shell escape (off by default) runs the commands a document names. */

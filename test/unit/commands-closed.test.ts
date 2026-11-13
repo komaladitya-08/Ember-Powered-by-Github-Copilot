@@ -62,7 +62,7 @@ describe("a program Ember doesn't know (commands-closed A)", () => {
   it("announces a program the user's own words name whole, and asks when they don't, hold it back or say no (commands-closed)", () => {
     const d = decide("dropdb scratch", { words: "drop the scratch database with dropdb" });
     expect(d.verdict).toBe("announce");
-    expect(d.requested?.announce).toBe("Running dropdb, as you asked.");
+    expect(d.requested?.announce).toBe("Running dropdb scratch, as you asked.");
     expect(decide("kafka-topics --list", { words: "use kafka-topics to list the topics" }).verdict).toBe("announce");
     for (const words of ["run dropdbx", "drop it with dropdb tomorrow", "don't use dropdb", "drop the scratch database", "run the db tool"]) {
       expect(decide("dropdb scratch", { words }).verdict, words).toBe("ask");
@@ -71,6 +71,24 @@ describe("a program Ember doesn't know (commands-closed A)", () => {
     expect(decide("dropdb scratch && rm -rf ~/x", { words: "run dropdb" }).verdict).toBe("ask");
     // Its operands are judged as before: a secret read still asks whatever the words say.
     expect(decide("mytool ~/.ssh/id_rsa", { words: "run mytool" }).verdict).toBe("ask");
+  });
+});
+
+describe("the user's own words for a program Ember doesn't know (commands-closed-x9-1)", () => {
+  it("asks when the words only mention the program, ask about it or say the user will run it (commands-closed-x9-1)", () => {
+    for (const words of ["what does dropdb do?", "explain dropdb to me", "is dropdb installed?", "check whether dropdb exists",
+      "the docs mention dropdb; summarise them", "show me the dropdb man page", "I'll run dropdb myself", "I want to run dropdb myself"]) {
+      expect(decide("dropdb prod", { words }).verdict, words).toBe("ask");
+    }
+  });
+
+  it("asks unless the words name what the program is to do as well, and says it in the announcement (commands-closed-x9-1)", () => {
+    expect(decide("rails db:drop", { words: "run rails tests" }).verdict).toBe("ask");
+    expect(decide("dropdb prod", { words: "run dropdb on the test database" }).verdict).toBe("ask");
+    const d = decide("rails db:drop", { words: "run rails db:drop" });
+    expect(d.verdict).toBe("announce");
+    expect(d.requested?.announce).toBe("Running rails db:drop, as you asked.");
+    expect(decide("dropdb prod", { words: "run dropdb on prod" }).requested?.announce).toBe("Running dropdb prod, as you asked.");
   });
 });
 
