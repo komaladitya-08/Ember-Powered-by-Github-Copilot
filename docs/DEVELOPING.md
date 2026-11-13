@@ -537,7 +537,14 @@ you, Voice Match has turned another voice away since, you forgot or taught your 
 or the task was changed by a request it didn't recognise (typed, say); never for a command card, a consent card or
 another task's question (owner decision of 2026-11-03; the audit says `trust: "task-voice"`). A yes asked as a
 question (“Proceed?”), or padded with more than one filler word, isn't one; “thanks”, “please” or the name after an
-answer are taken off first, so “Okay, thanks.” is the yes that “Okay.” is (V2-S10). Otherwise the bubble says how, and the question stays (naming the keys only while Ember holds them: `refusalLine`). Measured on
+answer are taken off first, so “Okay, thanks.” is the yes that “Okay.” is (V2-S10). The asked-yes rule reads the
+recognizer's text, so it holds where the recognizer writes the question: it does for a question in its words (“Is that
+okay?” was never an answer), but not for a one- or two-word yes asked only by the voice's rise. The recognizer writes “?” from the words, not the voice: the second review's verifier synthesized “Okay?”,
+“Allow it?”, “Go ahead?”, “Proceed?”, “Sure?”, “Yes?” and “Fine?” in four voices, and 21 of the 28 came out with a
+full stop or none and were read as a yes (most of those clips had no rise in pitch; the few that rose were written
+with a full stop all the same). So a lone “Okay?” said as a question is taken as a yes today (V2-S5). Nothing in the
+audio is read for it yet: that needs measuring on recorded people first, and would at most turn such a yes into one
+Ember asks for again, never one it takes. Otherwise the bubble says how, and the question stays (naming the keys only while Ember holds them: `refusalLine`). Measured on
 LibriSpeech dev-clean (33 speakers): half a second of another voice passes 0.5 % of the time. With the task trust,
 someone else saying “Hey Ember, allow” is taken about 2.5 % of the time, and someone who plays your recorded “Hey
 Ember” then says “allow” 35–40 %, once: any voice turned away ends the trust; a yes too
