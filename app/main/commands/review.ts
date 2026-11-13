@@ -70,10 +70,18 @@ export const DOWNLOADS_ONLY: ReadonlySet<string> = new Set(["escape.download-run
  * `docker.cluster`: the classifier doesn't say whether they detach), and a program that opens a window
  * (`unclear.gui`). Every other rule id of the classifier's was looked at and left: command-review.test.ts lists them,
  * and fails on an id it has not seen, so a rule the classifier gains is judged here before it ships.
+ *
+ * And among what the classifier can't tell (`unclear.*`, which Autopilot asks about whatever it is, but Assisted's
+ * check reads), what may start something or run later (modes-y9-x9-3): a message to a desktop service, which may
+ * start a unit or a program (`unclear.dbus`), WMI and CIM calls, which create processes (`unclear.wmic`, the
+ * cmdlets), a start verb, event registrations and DSC, an alias, a hash entry, a trap and a coprocess, a git template
+ * (it plants hooks), and Windows programs that register or inject code. The same test lists every other `unclear.*`
+ * id as looked at and left.
  */
-const RUNS_LATER = /^service\.|\.([a-z-]*-)?schedule$|autostart$|startup$|^system\.registry$|^path\.(hook|program-config|wsl-config|bin)$|^git\.(config\.code|daemon)$|^net\.(tunnel|tailscale)$|^docker\.cluster$|^unclear\.gui$/;
+const UNCLEAR_RUNS_LATER = /^unclear\.(gui|dbus|wmic|start-verb|git-template|alias|unalias|hash|trap|coproc|nircmd|(set|new)-alias|register-[a-z]+|(invoke|set|new|remove)-(wmi|cim)[a-z]+|start-dscconfiguration|invoke-dscresource|regsvr32|regsvr|installutil|regasm|regsvcs|cmstp|mavinject)$/;
+const RUNS_LATER = /^service\.|\.([a-z-]*-)?schedule$|autostart$|startup$|^system\.registry$|^path\.(hook|program-config|wsl-config|bin)$|^git\.(config\.code|daemon)$|^net\.(tunnel|tailscale)$|^docker\.cluster$/;
 /** Does this rule of the classifier's say the command would outlive the kill switch? */
-export const outlivesStop = (rule: string): boolean => (rule.startsWith("escape.") && !DOWNLOADS_ONLY.has(rule)) || RUNS_LATER.test(rule);
+export const outlivesStop = (rule: string): boolean => (rule.startsWith("escape.") && !DOWNLOADS_ONLY.has(rule)) || RUNS_LATER.test(rule) || UNCLEAR_RUNS_LATER.test(rule);
 
 /** The most the reviewer is shown of each part (characters): a command or a list of findings over its limit isn't cut, it asks. */
 export const REVIEW_LIMITS = { words: 6000, command: 4000, why: 400, findings: 1500 } as const;

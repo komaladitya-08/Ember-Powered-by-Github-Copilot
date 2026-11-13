@@ -629,9 +629,11 @@ Never reviewed, always asked: a command that would read or print passwords, keys
 model); a command that would keep running after Stop (a background job, `nohup`, `setsid`, a detached `screen` or
 `tmux` session, `docker run -d`, a process manager, a scheduled job, a program it opens, a service started, enabled,
 stopped or loaded, a login or startup entry, a change to the Windows registry, a git hook or a git setting that
-names a program, a shell's start-up file, a program put on the command path, a tunnel), so that Stop stops
-everything; a downloaded program that is handed a key, credentials or a token (`npx tool ~/.ssh/id_rsa`); a program,
-or a tool's command, Ember doesn't know, since nobody can tell what it does; every command when your organisation, or
+names a program, a shell's start-up file, a program put on the command path, a tunnel, a message to a desktop
+service over D-Bus, a WMI or CIM call, an alias or a `trap`), so that Stop stops everything; a downloaded program
+that is handed a key, credentials or a token (`npx tool ~/.ssh/id_rsa`), or a word Ember can't resolve
+(`npx tool $(…)`); a program, or a tool's command, Ember doesn't know, and one that runs code nobody is shown
+(`rundll32`, `mshta`, `wscript`, `run-parts`), since nobody can tell what it does; every command when your organisation, or
 you (**Ask before every command**), asked for that; a task
 without your own words; and a command, a request or a list of findings too long to show whole (a command over 4,000
 characters). A command you said no to is refused without being reviewed, and one that may be it, where Ember can't

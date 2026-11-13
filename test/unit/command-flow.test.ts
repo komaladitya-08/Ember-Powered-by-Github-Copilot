@@ -2704,6 +2704,21 @@ describe("Assisted's check for commands that would ask (review.ts; modes-C2, mod
     expect(h.asked).toHaveLength(1);
   });
 
+  it.each<[string, string]>([
+    ["start the backup service in the background", "busctl --user call org.freedesktop.systemd1 /org/freedesktop/systemd1 org.freedesktop.systemd1.Manager StartUnit ss backup.service replace"],
+    ["start the backup service in the background", "gdbus call --session --dest org.freedesktop.systemd1 --object-path /org/freedesktop/systemd1 --method org.freedesktop.systemd1.Manager.StartUnit backup.service replace"],
+    ["start the backup service in the background", "dbus-send --session --dest=org.freedesktop.systemd1 --type=method_call /org/freedesktop/systemd1 org.freedesktop.systemd1.Manager.StartUnit string:backup.service string:replace"],
+    ["clean up the build folder when the shell exits", "trap 'rm -rf build' EXIT"], ["make ll list files", "alias ll='ls -la'"],
+  ])("is never shown a command Ember can't tell that may start something or run later: “%s” / %s asks (modes-y9-x9-3)", async (words, command) => {
+    setCommandJudge(null);
+    const r = reviewer(YES);
+    const h = harness({ binding: LOCAL, words, answers: ["deny"], review: r.review });
+    expect((await call(h, { target: "this computer", command })).resultType).toBe("denied");
+    expect(r.seen).toEqual([]);
+    expect(h.asked).toHaveLength(1);
+    expect([h.windowAnnounce, h.starts]).toEqual([[], []]);
+  });
+
   it("is still shown a loop or inline code whose programs Ember knows (modes-y9-6)", async () => {
     setCommandJudge(null);
     for (const command of ["for f in *.log; do rm $f; done", "python3 -c 'import shutil; shutil.rmtree(\"build\")'"]) {

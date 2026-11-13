@@ -79,6 +79,39 @@ describe("notReviewable (modes-C2, modes-C7; PLAN.md §10 \"Settled\" (7))", () 
     const built = [...new Set([...src.matchAll(/add\(\s*"[a-z-]+",\s*`([^`$]*\$\{[^`]*)`/g)].map(m => m[1].replace(/\$\{[^}]*\}/g, "*")))].sort();
     expect(built).toEqual(["*.publish", "*.push", "*.remote-host", "*.rm", "escape.*", "gh.*.*", "gh.*.delete", "posix.*"]);
   });
+  it("has looked at every rule id the classifier has for what it can't tell: Assisted's check reads a loop or inline code, never one that may leave something running or whose code nobody sees (modes-y9-x9-3)", () => {
+    const dir = path.join(__dirname, "../../app/main/commands");
+    const src = ["classify.ts", "tables.ts", "scripts.ts", "decide.ts"].map(f => readFileSync(path.join(dir, f), "utf8")).join("\n");
+    const ids = [...new Set([...src.matchAll(/"(unclear\.[a-z0-9-]+)"/g)].map(m => m[1]))];
+    expect(ids.length).toBeGreaterThanOrEqual(120);
+    // Looked at and left (2026-11-13): text the reviewer is shown and can read, of programs Ember knows, that runs now and ends with Stop.
+    const left = new Set(("arithmetic-command assignment assignment-program assignment-unseen awk-program batch-args broad-folder cargo-config cdable-vars chase-links cmake-command cmd-caret cmd-label "
+      + "cmd-linux-folder cmd-sort command-p cpio-command curl-config depth do done ed-shell elif else encoded-command env-split eval execution-context fi find-exec folder for git-config git-exec-path "
+      + "git-receive-pack glob-parent global-option guarded-word hg-config hidden-characters if in inline-code input-devices input-in-code interactive interop-args ip-netns keyword kill-pattern listener "
+      + "login-shell make-eval make-variable named-keyword nc-exec ninja-tool openssl-engine option-value other-shell output-folder parallel pathspec-file powershell-option ps-parameter rclone-operands "
+      + "read-text rg-pre rsync-rsh script script-block script-path script-pattern script-stream script-unread script-written scripts sed-script shell-text short-name socat-exec sort-program source sql "
+      + "ssh-command-option start-args stdin-code syntax tar-command target then too-long too-many too-many-paths unresolved-arg until wget-askpass wget-execute while windows windows-path wsl-join "
+      + "wsl-option xargs-input zip-command").split(" ").map(id => `unclear.${id}`));
+    const held = (rule: string) => notReviewable(ask({ classes: ["unclear"], rules: [rule] }), ok);
+    expect(ids.filter(id => held(id) === null && !left.has(id))).toEqual([]);
+    expect([...left].filter(id => held(id) !== null)).toEqual([]);
+    // A message to a desktop service may start a unit or a program; WMI creates processes; a start verb opens something;
+    // an alias, a hash entry and a trap run later; a git template plants hooks.
+    for (const rule of ["unclear.dbus", "unclear.wmic", "unclear.start-verb", "unclear.git-template", "unclear.alias", "unclear.hash", "unclear.trap", "unclear.coproc", "unclear.nircmd", "unclear.set-alias",
+      "unclear.register-objectevent", "unclear.register-wmievent", "unclear.invoke-wmimethod", "unclear.invoke-cimmethod", "unclear.new-ciminstance", "unclear.start-dscconfiguration", "unclear.regsvr32", "unclear.cmstp",
+      "unclear.installutil", "unclear.mavinject", "in-script:unclear.dbus"]) {
+      expect(held(rule), rule).toBe("it would keep running after Stop");
+    }
+    // Code nobody is shown: a Windows script host and its like, every script of a folder, a module, a hook.
+    for (const rule of ["unclear.rundll32", "unclear.mshta", "unclear.wscript", "unclear.cscript", "unclear.msdt", "unclear.pcalua", "unclear.scriptrunner", "unclear.odbcconf", "unclear.msxsl", "unclear.ieexec",
+      "unclear.control", "unclear.presentationhost", "unclear.syncappvpublishingserver", "unclear.run-parts", "unclear.import-module", "unclear.git-hook"]) {
+      expect(held(rule), rule).toBe("it runs a program Ember doesn't know");
+    }
+    // The ids the classifier builds stay the ones looked at: a shell's own word, a program's or a cmdlet's name, a form the lexer can't follow, cmd's flow words, git's plumbing.
+    const built = [...new Set([...src.matchAll(/unclear\(\s*`([^`]*)`/g)].map(m => m[1].replace(/\$\{[^}]*\}.*$/, "*")))].sort();
+    expect(built).toEqual(["unclear.*", "unclear.cmd-*", "unclear.git-*"]);
+    for (const rule of ["unclear.for", "unclear.while", "unclear.case", "unclear.function", "unclear.cmd-for", "unclear.cmd-if", "unclear.command-substitution", "unclear.subexpression", "unclear.firejail", "unclear.expect"]) expect(held(rule), rule).toBeNull();
+  });
   it("never reviews a program, or a tool's command, Ember doesn't know: nobody can tell what it does, so it asks as in Autopilot (modes-y9-6)", () => {
     expect(notReviewable(ask({ classes: ["unknown"], rules: ["unknown.program"] }), ok)).toBe("it runs a program Ember doesn't know");
     expect(notReviewable(ask({ classes: ["system", "unknown"], rules: ["system.sudo", "unknown.program"] }), ok)).toBe("it runs a program Ember doesn't know");
