@@ -3115,6 +3115,26 @@
    "cmd": "yarn export",
    "shell": "bash",
    "context": "linux"
+  },
+  {
+   "cmd": "corepack enable",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn build production",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "pnpm build prod",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "corepack prepare pnpm@9.1.0 --activate",
+   "shell": "bash",
+   "context": "linux"
   }
  ]
 }

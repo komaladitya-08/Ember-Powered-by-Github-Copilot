@@ -21964,13 +21964,6 @@
    ]
   },
   {
-   "cmd": "corepack enable",
-   "verdict": "ask",
-   "rules": [
-    "unclear.enable"
-   ]
-  },
-  {
    "cmd": "sudo yarn cross-env X=1 npm publish",
    "verdict": "ask",
    "rules": [
@@ -23009,13 +23002,6 @@
    "verdict": "ask",
    "rules": [
     "cloud.change"
-   ]
-  },
-  {
-   "cmd": "yarn build production",
-   "verdict": "ask",
-   "rules": [
-    "script.publish"
    ]
   },
   {

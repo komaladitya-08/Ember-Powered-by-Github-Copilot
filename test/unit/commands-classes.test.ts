@@ -1298,7 +1298,9 @@ describe("what a package manager hands to the script or program it runs by name 
       "pnpm test src/a.test.ts", "yarn jest -t 'adds two'", "npm run lint -- src/a.ts", "yarn expo start --ios", "yarn react-scripts start", "yarn husky install",
       "yarn playwright install", "yarn gulp watch", "pnpm tsx watch src/index.ts", "yarn next start", "yarn prisma db push", "yarn turbo run build", "yarn nx build app",
       "yarn concurrently \"npm run a\" \"npm run b\"", "yarn build -o dist/out.js", "yarn workspace web test --watch", "pnpm --filter web test -- --run", "bun test src/a.test.ts",
-      "yarn scrub", "yarn rimraf", "corepack yarn lint", "corepack pnpm test"];
+      "yarn scrub", "yarn rimraf", "corepack yarn lint", "corepack pnpm test",
+      // A build's target named after where it goes is no publish, and corepack's own verbs are no script (commands-runners-4).
+      "yarn build production", "npm run build -- production", "pnpm build prod", "corepack enable", "corepack enable pnpm", "corepack prepare pnpm@9.1.0 --activate"];
     for (const o of [...POSIX, ...WINDOWS]) for (const cmd of RUNS) {
       const d = decide(cmd, o);
       expect([d.verdict, d.rules], label(cmd, o)).toEqual(["run", []]);

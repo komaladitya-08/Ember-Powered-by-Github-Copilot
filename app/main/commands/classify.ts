@@ -4403,8 +4403,9 @@ function runnerLine(h: H, name: Arg, given: readonly Arg[], wrapper: string): vo
   if (program && !(NEW_DELETERS.has(key) && given.length === 0)) { h.e.payload([name, ...rest], h.sc, wrapper); return; }
   h.e.readArgs(rest, h.sc, { unresolvedUnclear: true });
   // The tool's own verb, where its name says it publishes (`yarn lerna publish`, `pnpm vercel deploy`), as a script's
-  // name is read. Only the first word: `--mode production` is a build's everyday option.
-  const verb = rest[0]?.v ?? "";
+  // name is read. Only the first word, and never a script's everyday name's: `--mode production` and `yarn build
+  // production` are a build's everyday target (commands-runners-4).
+  const verb = SCRIPT_WORDS.has(key) ? "" : rest[0]?.v ?? "";
   if (/^[A-Za-z][A-Za-z0-9]*([:_-][A-Za-z0-9]+)*$/.test(verb) && nameWords(verb).some(w => NAME_PUBLISH.has(w))) {
     h.e.add("publish", "script.publish", `Runs ${wrapper} ${verb}, whose name says it publishes.`, { objects: [{ kind: "other", text: `${wrapper} ${verb}`, abs: null }] });
   }
@@ -8423,10 +8424,11 @@ reg(NATIVE, ["npm", "pnpm", "yarn", "bun", "corepack"], h => {
     // (commands-remote-c8-2). Only a deleter's name, so `yarn build` or `yarn format` stay a script's, and only with
     // something after it (`yarn scrub` alone: commands-remote-x8-13).
     if (h.e.readsAsMain) { if (NEW_DELETERS.has(verb.toLowerCase()) && h.key !== "corepack" && h.args.length > g.verbAt + 1) h.e.payload(h.args.slice(g.verbAt), h.sc, `${h.key} ${verb}`); }
-    else runnerLine(h, verbArg, h.args.slice(g.verbAt + 1), `${h.key} ${verb}`);
+    // corepack runs nothing by name but a package manager (above): its own verbs are no script (commands-runners-4).
+    else if (h.key !== "corepack") runnerLine(h, verbArg, h.args.slice(g.verbAt + 1), `${h.key} ${verb}`);
   } else if (/^(test|start|stop|restart)$/.test(verb)) nameCheck(h, verb);
   // The project's scripts the managers run by a word of their own (`npm test -- x`, `pnpm build x`: integ2-z-1).
-  if (/^(test|t|tst|start|stop|restart)$/.test(verb) || (h.key !== "npm" && verb === "build")) runnerLine(h, verbArg, h.args.slice(g.verbAt + 1), `${h.key} ${verb}`);
+  if (h.key !== "corepack" && (/^(test|t|tst|start|stop|restart)$/.test(verb) || (h.key !== "npm" && verb === "build"))) runnerLine(h, verbArg, h.args.slice(g.verbAt + 1), `${h.key} ${verb}`);
   // Yarn's `env` prints the variables scripts run with (commands-runners-2).
   if (h.key === "yarn" && verb === "env" && !h.e.readsAsMain) h.e.add("secret", "secret.env", SAYS.env);
 });
