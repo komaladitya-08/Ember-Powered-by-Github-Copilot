@@ -2705,6 +2705,20 @@ describe("Assisted's check for commands that would ask (review.ts; modes-C2, mod
   });
 
   it.each<[string, string]>([
+    ["run the sandboxed job", "bwrap --dev-bind / / systemd-run --user sleep 9999"], ["run the sandboxed job", "firejail --noprofile systemd-run --user sleep 9999"],
+    ["run the job with envdir", "envdir ./env systemd-run --user sleep 9999"], ["run the job with envdir", "envdir ./env setsid -f sleep 9999"],
+    ["run the expect script", "expect -c 'spawn setsid -f sleep 9999'"],
+  ])("is never shown a sandbox or a wrapper whose command Ember doesn't judge, which may start something that outlives Stop: “%s” / %s asks (modes-y9-y9-5)", async (words, command) => {
+    setCommandJudge(null);
+    const r = reviewer(YES);
+    const h = harness({ binding: LOCAL, words, answers: ["deny"], review: r.review });
+    expect((await call(h, { target: "this computer", command })).resultType).toBe("denied");
+    expect(r.seen).toEqual([]);
+    expect(h.asked).toHaveLength(1);
+    expect([h.windowAnnounce, h.starts]).toEqual([[], []]);
+  });
+
+  it.each<[string, string]>([
     ["start the backup service in the background", "busctl --user call org.freedesktop.systemd1 /org/freedesktop/systemd1 org.freedesktop.systemd1.Manager StartUnit ss backup.service replace"],
     ["start the backup service in the background", "gdbus call --session --dest org.freedesktop.systemd1 --object-path /org/freedesktop/systemd1 --method org.freedesktop.systemd1.Manager.StartUnit backup.service replace"],
     ["start the backup service in the background", "dbus-send --session --dest=org.freedesktop.systemd1 --type=method_call /org/freedesktop/systemd1 org.freedesktop.systemd1.Manager.StartUnit string:backup.service string:replace"],

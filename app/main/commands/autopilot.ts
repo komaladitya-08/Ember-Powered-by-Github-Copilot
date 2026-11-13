@@ -153,9 +153,11 @@ const UNKNOWN_BY_ANOTHER_NAME = /^unclear\.(([a-z0-9]+-)?verb|program|program-le
 /**
  * And those that say the command runs code nobody is shown, the checking model included: a Windows script host and
  * the programs that load code for another (`rundll32`, `mshta`, `wscript`…), every script of a folder (`run-parts`),
- * a PowerShell module, a git hook run by name (modes-y9-x9-3).
+ * a PowerShell module, a git hook run by name (modes-y9-x9-3); and a sandbox or a wrapper whose command the classifier
+ * doesn't judge (`bwrap`, `firejail`, `envdir`, `expect`: `bwrap … systemd-run …` starts what outlives Stop, and its
+ * only finding is the wrapper's name; modes-y9-y9-5).
  */
-const CODE_NOBODY_SEES = /^unclear\.(rundll32|mshta|wscript|cscript|msdt|pcalua|scriptrunner|syncappvpublishingserver|odbcconf|msxsl|ieexec|control|presentationhost|run-parts|import-module|git-hook)$/;
+const CODE_NOBODY_SEES = /^unclear\.(rundll32|mshta|wscript|cscript|msdt|pcalua|scriptrunner|syncappvpublishingserver|odbcconf|msxsl|ieexec|control|presentationhost|run-parts|import-module|git-hook|bwrap|firejail|envdir|expect)$/;
 /** Is this a program, or a tool's command, the classifier doesn't know (the closed default, and its older rules for the same)? */
 const unknownTo = (f: { cls?: DangerClass; rule: string }): boolean => {
   const rule = f.rule.replace(/^in-script:/, "");

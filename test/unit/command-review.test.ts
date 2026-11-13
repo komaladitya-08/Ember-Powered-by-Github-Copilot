@@ -104,13 +104,18 @@ describe("notReviewable (modes-C2, modes-C7; PLAN.md §10 \"Settled\" (7))", () 
     }
     // Code nobody is shown: a Windows script host and its like, every script of a folder, a module, a hook.
     for (const rule of ["unclear.rundll32", "unclear.mshta", "unclear.wscript", "unclear.cscript", "unclear.msdt", "unclear.pcalua", "unclear.scriptrunner", "unclear.odbcconf", "unclear.msxsl", "unclear.ieexec",
-      "unclear.control", "unclear.presentationhost", "unclear.syncappvpublishingserver", "unclear.run-parts", "unclear.import-module", "unclear.git-hook"]) {
+      "unclear.control", "unclear.presentationhost", "unclear.syncappvpublishingserver", "unclear.run-parts", "unclear.import-module", "unclear.git-hook",
+      // And a sandbox or a wrapper whose command the classifier doesn't judge (`bwrap … systemd-run …`): modes-y9-y9-5.
+      "unclear.bwrap", "unclear.firejail", "unclear.envdir", "unclear.expect"]) {
       expect(held(rule), rule).toBe("it runs a program Ember doesn't know");
     }
     // The ids the classifier builds stay the ones looked at: a shell's own word, a program's or a cmdlet's name, a form the lexer can't follow, cmd's flow words, git's plumbing.
     const built = [...new Set([...src.matchAll(/unclear\(\s*`([^`]*)`/g)].map(m => m[1].replace(/\$\{[^}]*\}.*$/, "*")))].sort();
     expect(built).toEqual(["unclear.*", "unclear.cmd-*", "unclear.git-*"]);
-    for (const rule of ["unclear.for", "unclear.while", "unclear.case", "unclear.function", "unclear.cmd-for", "unclear.cmd-if", "unclear.command-substitution", "unclear.subexpression", "unclear.firejail", "unclear.expect"]) expect(held(rule), rule).toBeNull();
+    for (const rule of ["unclear.for", "unclear.while", "unclear.case", "unclear.function", "unclear.cmd-for", "unclear.cmd-if", "unclear.command-substitution", "unclear.subexpression"]) expect(held(rule), rule).toBeNull();
+    // Every program whose id is built from its name alone, with its command unjudged, is held.
+    const named = /reg\(NATIVE, \[([^\]]+)\], h => \{\s*h\.e\.unclear\(`unclear\.\$\{h\.key\}`/.exec(src);
+    expect(named?.[1].match(/[a-z-]+/g)).toEqual(["firejail", "bwrap", "run-parts", "envdir", "expect"]);
   });
   it("never reviews a program, or a tool's command, Ember doesn't know: nobody can tell what it does, so it asks as in Autopilot (modes-y9-6)", () => {
     expect(notReviewable(ask({ classes: ["unknown"], rules: ["unknown.program"] }), ok)).toBe("it runs a program Ember doesn't know");

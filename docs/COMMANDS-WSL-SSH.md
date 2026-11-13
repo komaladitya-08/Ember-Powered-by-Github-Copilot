@@ -641,8 +641,9 @@ stopped or loaded, a login or startup entry, a change to the Windows registry, a
 names a program, a shell's start-up file, a program put on the command path, a tunnel, a message to a desktop
 service over D-Bus, a WMI or CIM call, an alias or a `trap`), so that Stop stops everything; a downloaded program
 that is handed a key, credentials or a token (`npx tool ~/.ssh/id_rsa`), or a word Ember can't resolve
-(`npx tool $(…)`); a program, or a tool's command, Ember doesn't know, and one that runs code nobody is shown
-(`rundll32`, `mshta`, `wscript`, `run-parts`), since nobody can tell what it does; every command when your organisation, or
+(`npx tool $(…)`); a program, or a tool's command, Ember doesn't know, one that runs code nobody is shown
+(`rundll32`, `mshta`, `wscript`, `run-parts`) and a sandbox or a wrapper whose command Ember doesn't judge (`bwrap`,
+`firejail`, `envdir`, `expect`), since nobody can tell what it does; every command when your organisation, or
 you (**Ask before every command**), asked for that; a task
 without your own words; and a command, a request or a list of findings too long to show whole (a command over 4,000
 characters). A command you said no to is refused without being reviewed, and one that may be it, where Ember can't
