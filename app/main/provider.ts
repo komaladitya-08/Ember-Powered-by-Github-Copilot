@@ -161,12 +161,24 @@ export function providerSummary(p: ActiveProvider | null): ProviderSummary | nul
   return { kind: p.kind, host };
 }
 
+/**
+ * Said of a key that holds anything but printable ASCII (integrations-r9-5): a zero-width space, a word joiner, curly
+ * quotes or a look-alike letter picked up from a chat message, a document or a page that wraps long strings. Such a
+ * key was saved, and Electron's fetch then refused the header before sending ("Cannot convert argument to a
+ * ByteString"), which every check read as nothing answering: the address and the network were blamed. Never with the
+ * key or the character in it.
+ */
+export const KEY_HIDDEN_CHARACTER = "That key has a character an API key can't hold, such as a hidden character or curly quotes picked up in copying. Copy it again from your provider.";
+/** Said of a key in use that can't go in a request's header at all: nothing was sent, and the address isn't at fault. */
+export const keyUnsendable = (host: string): string => `The saved API key has a character that can't be sent to ${host}. Replace the key.`;
+
 /** Why `key` can't be saved as an API key, in one plain sentence, or null when it can. */
 export function apiKeyProblem(key: unknown): string | null {
   if (typeof key !== "string" || !key.trim()) return "Enter the API key first.";
   if (key.length > MAX_API_KEY) return "That key is too long to be an API key.";
   // eslint-disable-next-line no-control-regex -- control characters and spaces are exactly what's refused here
   if (/[\u0000- \u007f-\u009f]/.test(key.trim())) return "An API key has no spaces or line breaks in it. Copy it again from your provider.";
+  if (/[^\u0021-\u007e]/.test(key.trim())) return KEY_HIDDEN_CHARACTER;
   return null;
 }
 
@@ -662,6 +674,8 @@ export async function testConnection(p: UserProviderSettings, stored: StoredKey 
   if (!host) return { ok: false, why: PROVIDER_NO_ADDRESS };
   if (!providerAgreed(p)) return { ok: false, why: providerNotAgreed(host) };
   const key = keyFor(p.baseUrl, stored);
+  // A key that can't go in a header: said as the key's trouble, with nothing sent (integrations-r9-5).
+  if (key && apiKeyProblem(key)) return { ok: false, why: keyUnsendable(host) };
   const { url, headers } = testRequest(p, key);
   try {
     const res = await fetch(url, { method: "GET", headers, redirect: "error", signal: AbortSignal.timeout(timeoutMs) });
@@ -680,6 +694,9 @@ export async function testConnection(p: UserProviderSettings, stored: StoredKey 
     const msg = err instanceof Error ? `${err.name} ${err.message} ${(err as { cause?: { code?: string } }).cause?.code ?? ""}` : String(err);
     if (/TimeoutError|AbortError/i.test(msg)) return { ok: false, why: `${host} didn't answer within ${Math.round(timeoutMs / 1000)} seconds.`, cause: "timeout" };
     if (/redirect/i.test(msg)) return { ok: false, why: `${host} sent Ember to another address. Enter the address it moved to.` };
+    // The request never left: fetch refused a header's value, and the key is the only one that isn't Ember's own text.
+    // No cause, so nothing downstream says the address or the network (or "Start it" for a server on this computer).
+    if (/ByteString|header (?:value|content)|Invalid character in header/i.test(msg)) return { ok: false, why: keyUnsendable(host) };
     if (/certificate|self.signed|ERR_CERT_/i.test(msg)) return { ok: false, why: `Ember can't verify ${host}'s certificate.` };
     // Electron's fetch says net::ERR_CONNECTION_REFUSED (ERR_ADDRESS_UNREACHABLE for an ::1 with no IPv6), Node's ECONNREFUSED.
     const refused = /ECONNREFUSED|ERR_CONNECTION_REFUSED|ERR_ADDRESS_UNREACHABLE/.test(msg);

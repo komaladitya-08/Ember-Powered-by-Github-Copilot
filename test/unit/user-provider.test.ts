@@ -21,6 +21,7 @@ import { FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
 import { PROVIDER_IPC } from "../../app/shared/ipc";
 import type { SecretBox } from "../../app/main/agent/auth";
 import { friendlyError, problemTitle } from "../../app/main/agent/presenter";
+import { providerFailField } from "../../app/renderer/home/first-run-copy";
 import { doctorChecks } from "../../app/main/doctor";
 import { wslConsent } from "../../app/main/targets/consent";
 
@@ -227,6 +228,41 @@ describe("the API key's store", () => {
     expect(apiKeyProblem("k".repeat(9000))).not.toBeNull();
     expect(apiKeyProblem(42)).not.toBeNull();
     expect(apiKeyProblem(KEY)).toBeNull();
+  });
+
+  it("refuses a key pasted with a hidden character or curly quotes, in words about the key and without it, before anything is saved or sent (integrations-r9-5)", async () => {
+    const HIDDEN = "That key has a character an API key can't hold, such as a hidden character or curly quotes picked up in copying. Copy it again from your provider.";
+    // As they come out of a chat message, a document or a page that wraps long strings: a zero-width space, curly
+    // quotes, a word joiner, a full-width letter, a letter with an accent.
+    const pasted = ["sk-proj-abcdefghijklmnop\u200b", "\u201csk-proj-abcdefghijklmnop\u201d", "sk-proj-abcd\u2060efghijklmnop", "sk-proj-abcdefghijklmno\uff50", "sk-proj-abc\u00e9defghijklmnop", "sk-proj-\u00a0abcdefghijklmnop"];
+    const dir = tmp();
+    const store = new ProviderKeyStore(path.join(dir, "k.bin"), box());
+    for (const key of pasted) {
+      // Each was saved, and every check then said "Ember can't reach api.openai.com. Check the address and the network."
+      expect(apiKeyProblem(key)).toBe(HIDDEN);
+      expect(await store.save(key, "api.openai.com")).toEqual({ ok: false, why: HIDDEN });
+      // A check of a key just typed (first run's, Home's held edit): refused before the keyring or the network.
+      const fetch = vi.fn<FetchLike>();
+      expect(await testConnection(withProvider({ baseUrl: "https://api.openai.com/v1" }).provider, { key, host: "api.openai.com" }, fetch)).toEqual({ ok: false, why: "The saved API key has a character that can't be sent to api.openai.com. Replace the key." });
+      expect(fetch).not.toHaveBeenCalled();
+    }
+    expect(fs.readdirSync(dir)).toEqual([]);
+    // The sentence says what is wrong without the key or the character, and first run puts the focus on the key.
+    expect(HIDDEN).not.toMatch(/sk-|\u200b|\u201c/);
+    expect(providerFailField({ why: HIDDEN })).toBe("key");
+    expect(providerFailField({ why: "The saved API key has a character that can't be sent to api.openai.com. Replace the key." })).toBe("key");
+    // Spaces a paste leaves around the key are cut as before, a byte-order mark in front too; a key is still a key.
+    for (const key of [` ${KEY}\n`, `\ufeff${KEY}`, "sk-ant-api03-AbC_dEf-123", "0123456789abcdef0123456789abcdef", "a.b~c+d/e=="]) expect(apiKeyProblem(key)).toBeNull();
+  });
+
+  it("never blames the address or the network for a request its own key header stopped (integrations-r9-5)", async () => {
+    // Electron's fetch, as measured in this tree's Electron: a header value above U+00FF throws this before sending.
+    const refused = vi.fn<FetchLike>(async () => { throw new TypeError("Cannot convert argument to a ByteString because the character at index 26 has a value of 8203 which is greater than 255."); });
+    const r = await testConnection(withProvider().provider, STORED, refused);
+    expect(r).toEqual({ ok: false, why: "The saved API key has a character that can't be sent to models.example.com. Replace the key." });
+    // No cause: the start doesn't say "Start it" for a server on this computer, and the address isn't what gets the focus.
+    expect(providerDown(r, "localhost:11434", true)).toBeNull();
+    expect(providerFailField(r as { why: string })).toBe("key");
   });
 
   it("gives null for a key the keyring won't open, keeping the file to try again", async () => {
