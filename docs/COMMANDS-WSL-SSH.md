@@ -694,6 +694,22 @@ When the command would do that only by the way an earlier Ember read one of its 
 tell instead: "Ember won't run this: it can't tell whether one of its options takes the word after it, so it may
 change Ember's own safety settings, records or programs." ("may read …", "may press keys or click in Ember's own
 windows.").
+
+Ember never types into your own terminals or editors with a command either. A command that would type into one or
+run something there is refused, whatever you asked for: "Ember won't run this: it would type or run commands in your
+own terminal or editor." That covers tmux (`send-keys`, `paste-buffer`, `run-shell`, `new-window`, `split-window`,
+`respawn-pane`, `pipe-pane`, `display-popup`, `if-shell`, `set-hook`, `source-file`, `bind-key` and their short
+names, in each command of a `\;` list), byobu, `screen -X stuff`, `paste`, `exec`, `eval` and `source`, zellij
+(`action write-chars`, `run`, `edit`, new panes and tabs), kitty's and wezterm's remote control (`kitty @ send-text`,
+`kitten @ launch`, `wezterm cli send-text`, `spawn`, `split-pane`), iTerm's `it2api`, an editor's `--remote-send` and
+`--remote-expr` (vim, nvim, `nvr`, and `nvr -c`), `emacsclient --eval`, Guake's `-e`, the desktop-bus calls that type
+into Konsole or Yakuake, and an AppleScript that tells Terminal or iTerm to `do script` or `write text`. A command
+that prints what a terminal of yours shows, or a paste buffer (`tmux capture-pane`, `show-buffer`, `save-buffer`,
+`list-buffers`, `show-environment`, `screen -X hardcopy`, `zellij action dump-screen`, `kitty @ get-text`, `wezterm
+cli get-text`), asks first in every mode: "Reads what your own terminal shows, which may hold passwords." The
+commands that only list sessions, windows and panes run (`tmux ls`, `zellij list-sessions`, `kitten @ ls`), and any
+other command of these tools asks.
+
 The same goes for the folder a command works in, named after `cd --` or `pushd --` (`cd -- ~/.config/ember && sed -i …
 settings.json`) or given to `patch -d` or `--directory` (also shortened, down to `--di`), which changes the files the
 patch names there (`patch -d ~/.config/ember -p0 < x.patch`; a folder Ember can't see there asks), and when a shell

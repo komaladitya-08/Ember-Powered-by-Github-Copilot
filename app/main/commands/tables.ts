@@ -813,4 +813,9 @@ export const ORDINARY_VERBS: Readonly<Record<string, OrdinaryVerbs>> = {
     verbs: ["ls", "list-sessions", "list-windows", "lsw", "list-panes", "lsp", "list-clients", "lsc", "list-buffers", "lsb", "list-commands", "lscm", "list-keys", "lsk",
       "has-session", "has", "info", "server-info", "display-message", "display", "show-options", "show", "show-window-options", "showw", "-V"],
   },
+  // The other ways into a terminal or an editor of the user's (commands-remote-r9-1): only what lists runs.
+  zellij: { verbs: ["list-sessions", "ls", "action", "--version", "-V", "--help", "-h"], values: ["-s", "--session", "-l", "--layout", "-c", "--config", "--config-dir", "--data-dir"], sub: { action: ["query-tab-names", "list-clients", "dump-layout"] }, bare: "asks" },
+  kitten: { verbs: ["@", "--version", "--help"], sub: { "@": ["ls", "get-colors"] }, bare: "asks" },
+  nvr: { verbs: ["--serverlist", "--version", "--help", "-h"], bare: "asks" },
+  it2api: { verbs: ["list-sessions", "show-hierarchy", "show-focus", "--help", "-h"], bare: "asks" },
 };

@@ -230,10 +230,13 @@ export const SAYS = {
   refuseSafety: "Ember won't run this: it would change Ember's own safety settings, records or programs.",
   refuseRead: "Ember won't run this: it would read Ember's own safety settings, records or programs.",
   refuseInput: "Ember won't run this: it could press keys or click in Ember's own windows.",
+  refuseTerminal: "Ember won't run this: it would type or run commands in your own terminal or editor.",
+  terminalText: "Reads what your own terminal shows, which may hold passwords.",
   // The same refusals when only an earlier reading of one of the command's options makes them (Classifier.heldRefusal).
   heldRefuseSafety: "Ember won't run this: it can't tell whether one of its options takes the word after it, so it may change Ember's own safety settings, records or programs.",
   heldRefuseRead: "Ember won't run this: it can't tell whether one of its options takes the word after it, so it may read Ember's own safety settings, records or programs.",
   heldRefuseInput: "Ember won't run this: it can't tell whether one of its options takes the word after it, so it may press keys or click in Ember's own windows.",
+  heldRefuseTerminal: "Ember won't run this: it can't tell whether one of its options takes the word after it, so it may type or run commands in your own terminal or editor.",
 } as const;
 
 /** Where a part of the command is judged. */
@@ -553,12 +556,13 @@ class Classifier {
 
   /**
    * Ember's own flat refusal (D4.5), in words for what the command would do: change ("safety"), only read ("read") or
-   * press keys in Ember's windows ("input"). The first one stands, except that a refusal for reading gives way to one
-   * for anything more.
+   * press keys in Ember's windows ("input"), or type or run commands in a terminal or an editor of the user's
+   * ("terminal", commands-remote-r9-1). The first one stands, except that a refusal for reading gives way to one for
+   * anything more.
    */
-  refuseWith(rule: string, kind: "safety" | "read" | "input"): void {
+  refuseWith(rule: string, kind: "safety" | "read" | "input" | "terminal"): void {
     if (this.refuse && !(this.refusedRead && kind !== "read")) return;
-    this.refuse = { rule, says: kind === "safety" ? SAYS.refuseSafety : kind === "read" ? SAYS.refuseRead : SAYS.refuseInput };
+    this.refuse = { rule, says: kind === "safety" ? SAYS.refuseSafety : kind === "read" ? SAYS.refuseRead : kind === "terminal" ? SAYS.refuseTerminal : SAYS.refuseInput };
     this.refusedRead = kind === "read";
   }
 
@@ -582,7 +586,8 @@ class Classifier {
    */
   heldRefusal(): void {
     if (!this.refuse) return;
-    const says = this.refuse.says === SAYS.refuseRead ? SAYS.heldRefuseRead : this.refuse.says === SAYS.refuseInput ? SAYS.heldRefuseInput : SAYS.heldRefuseSafety;
+    const says = this.refuse.says === SAYS.refuseRead ? SAYS.heldRefuseRead : this.refuse.says === SAYS.refuseInput ? SAYS.heldRefuseInput
+      : this.refuse.says === SAYS.refuseTerminal ? SAYS.heldRefuseTerminal : SAYS.heldRefuseSafety;
     this.refuse = { rule: this.refuse.rule, says };
   }
 
@@ -3923,6 +3928,119 @@ const EXEC_VALUES = new Set(["--using", "--node", "--npm", "--pnpm", "--yarn", "
 const TMUX_RUNS = new Set(["run-shell", "run", "if-shell", "if", "new-window", "neww", "new-session", "new", "split-window", "splitw", "respawn-pane", "respawnp", "respawn-window", "respawnw", "pipe-pane", "pipep", "display-popup", "popup"]);
 
 /**
+ * tmux's commands that type into a pane or run a command in the user's own tmux (commands-remote-r9-1), by the names
+ * and the short names tmux gives them. A pane, a window, a hook, a key binding and a sourced file are all the user's
+ * terminal, outside Ember's command window and outside Stop.
+ */
+const TMUX_DRIVES = new Set([
+  "send-keys", "send", "send-prefix", "paste-buffer", "pasteb", "run-shell", "run", "if-shell", "if", "new-window", "neww", "split-window", "splitw",
+  "respawn-pane", "respawnp", "respawn-window", "respawnw", "pipe-pane", "pipep", "display-popup", "popup", "display-menu", "menu", "set-hook",
+  "source-file", "source", "bind-key", "bind", "command-prompt", "confirm-before", "confirm",
+]);
+/** tmux's commands that print what a pane shows, a paste buffer or the session's environment. */
+const TMUX_READS = new Set(["capture-pane", "capturep", "show-buffer", "showb", "save-buffer", "saveb", "list-buffers", "lsb", "show-environment", "showenv", "choose-buffer"]);
+/** screen's `-X` commands that type, paste or run in a session, and those that write out what it shows. */
+const SCREEN_DRIVES = new Set(["stuff", "paste", "exec", "screen", "eval", "source", "process", "at", "colon", "bind", "bindkey", "register", "readreg", "readbuf"]);
+const SCREEN_READS = new Set(["hardcopy", "writebuf", "copy", "log", "logfile"]);
+/** The remote-control verbs of kitty (`kitty @`, `kitten @`), wezterm (`wezterm cli`), zellij and iTerm's `it2api`. */
+const REMOTE_DRIVES: Readonly<Record<string, ReadonlySet<string>>> = {
+  kitty: new Set(["send-text", "send-key", "launch", "run", "new-window", "kitten", "action", "env", "load-config", "remote-control"]),
+  wezterm: new Set(["send-text", "spawn", "split-pane"]),
+  zellij: new Set(["write", "write-chars", "new-pane", "new-tab", "edit", "run", "plugin", "pipe", "launch-or-focus-plugin", "launch-plugin", "start-or-reload-plugin"]),
+  it2api: new Set(["send-text", "create-tab", "split-pane", "inject", "activate-app", "invoke-function", "sendtext"]),
+};
+const REMOTE_READS: Readonly<Record<string, ReadonlySet<string>>> = {
+  kitty: new Set(["get-text"]),
+  wezterm: new Set(["get-text"]),
+  zellij: new Set(["dump-screen", "edit-scrollback"]),
+  it2api: new Set(["get-buffer", "get-prompt"]),
+};
+/** Their options that take the next word, before the verb (`zellij -s work action …`, `kitten @ --to unix:/x …`). */
+const REMOTE_VALUES = new Set(["-s", "--session", "-l", "--layout", "-c", "--config", "--config-dir", "--data-dir", "--to", "--password", "--password-file", "--password-env", "--use-password", "--class", "--pane-id", "--window-id"]);
+/** An editor's options that send keys or code to one the user has open (`--remote-send`, `--remote-expr`). */
+const EDITOR_SENDS = /^--remote-(send|expr)(=|$)/;
+/** Desktop-bus methods of the terminal emulators that type or run in a session (Konsole, Yakuake, Guake, Tilix). */
+const BUS_TYPES = /\b(sendText|runCommand|sendInput|feed_child|execute_command|runCommandInTerminal|RunCommand)\b/;
+
+/**
+ * Programs that drive a terminal or an editor of the user's own (commands-remote-r9-1): Ember never types into or
+ * acts in the user's terminals, so a verb that types there or runs a command there is refused as `xdotool` is,
+ * whatever the user's words say, and one that prints what a terminal shows asks as a secret. The verbs that only list
+ * run and every other verb asks, by the tools' own rows (ORDINARY_VERBS, the closed default). Read by the verb's
+ * place in the tool's grammar, wherever its options stand, for each command of a `\;` list.
+ */
+function terminalDriver(h: H): void {
+  const key = h.key.replace(/^byobu-(tmux|screen)$/, "$1");
+  const vals = h.args.map(a => a.v);
+  const drives = (): void => h.e.refuseWith("ember.terminal", "terminal");
+  const reads = (): void => h.e.add("secret", "secret.terminal", SAYS.terminalText);
+  const tmux = (): void => {
+    // Each command of the line: tmux ends one at a word that is `;` or ends in one.
+    let verb = true;
+    for (let k = 0; k < vals.length; k++) {
+      const v = vals[k];
+      if (v === null) continue;
+      if (verb) {
+        if (v.startsWith("-") && v !== "-") { if (/^-[LSfcT]$/.test(v)) k++; continue; }
+        const name = v.replace(/;$/, "");
+        if (TMUX_DRIVES.has(name)) drives();
+        else if (TMUX_READS.has(name)) reads();
+        verb = false;
+      }
+      if (v === ";" || (v.endsWith(";") && !v.endsWith("\\;"))) verb = true;
+    }
+  };
+  const screen = (): void => {
+    const at = vals.findIndex(v => v === "-X");
+    const verb = at < 0 ? undefined : vals[at + 1];
+    if (verb === undefined || verb === null) return;
+    if (SCREEN_DRIVES.has(verb)) drives();
+    else if (SCREEN_READS.has(verb)) reads();
+  };
+  switch (key) {
+    case "tmux": tmux(); return;
+    case "screen": screen(); return;
+    case "byobu": tmux(); screen(); return;
+    case "kitty": case "kitten": case "wezterm": case "zellij": case "it2api": {
+      const tool = key === "kitten" ? "kitty" : key;
+      // kitty's remote control follows `@`, wezterm's follows `cli`; zellij's and it2api's verbs stand anywhere.
+      const gate = tool === "kitty" ? "@" : tool === "wezterm" ? "cli" : null;
+      const from = gate === null ? 0 : vals.indexOf(gate) + 1;
+      if (gate !== null && from === 0) return;
+      for (let k = from; k < vals.length; k++) {
+        const v = vals[k];
+        if (v === null) continue;
+        if (v.startsWith("-")) { if (REMOTE_VALUES.has(v)) k++; continue; }
+        if (REMOTE_DRIVES[tool].has(v)) { drives(); return; }
+        if (REMOTE_READS[tool].has(v)) { reads(); return; }
+        if (tool !== "zellij" || v !== "action") return;
+      }
+      return;
+    }
+    case "nvr":
+      if (vals.some(v => v !== null && (EDITOR_SENDS.test(v) || /^(-c|-cc|--cmd|\+.+)$/.test(v)))) drives();
+      return;
+    case "vim": case "nvim": case "gvim": case "mvim": case "vi": case "view": case "gview": case "vimx":
+      if (vals.some(v => v !== null && EDITOR_SENDS.test(v))) drives();
+      return;
+    case "emacsclient":
+      if (vals.some(v => v !== null && /^(-e|--eval)(=|$)/.test(v))) drives();
+      return;
+    case "guake":
+      if (vals.some(v => v !== null && /^(-e|--execute-command|-n|--new-tab|--split-vertical|--split-horizontal)(=|$)/.test(v))) drives();
+      return;
+    case "gdbus": case "dbus-send": case "busctl": case "qdbus": case "qdbus6": case "qdbus-qt5": case "qdbus-qt6":
+      if (vals.some(v => v !== null && BUS_TYPES.test(v))) drives();
+      return;
+    case "osascript": {
+      const code = vals.filter((v, k) => vals[k - 1] === "-e" && v !== null).join("\n");
+      if (/\b(terminal|iterm2?|ghostty|warp|kitty|alacritty|wezterm|hyper)\b/i.test(code) && /\b(do script|write text|write contents|create (window|tab))\b/i.test(code)) drives();
+      return;
+    }
+  }
+}
+
+/**
  * The command a tool runs for its user, read as a command of its own (commands-closed-x9-2): an exec-shaped verb's
  * payload (`stack exec -- x`, `pyenv exec x`, `rustup run stable x`), the shell text in `cargo watch -s`/`-x`,
  * `nodemon --exec`, `hyperfine`'s commands and its `--prepare`/`--setup`/`--cleanup`/`--conclude`, and `entr`'s
@@ -3932,6 +4050,7 @@ const TMUX_RUNS = new Set(["run-shell", "run", "if-shell", "if", "new-window", "
  */
 function toolPayload(h: H): void {
   if (h.e.readsAsMain) return;
+  terminalDriver(h);
   const args = h.args;
   const hidden = (): void => h.e.unclear("unclear.hidden-command", `Ember can't tell what ${h.prog} runs.`);
   const shellText = (a: Arg | undefined, wrapper: string): void => {
