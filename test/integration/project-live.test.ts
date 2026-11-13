@@ -672,10 +672,11 @@ async function firstRunJourney(opts: { off?: readonly FirstRunRow[]; models?: st
       await home.keyboard.press("Space");
       expect(await home.locator(`#w-row-${row}`).isChecked(), `${row}'s switch after Space`).toBe(false);
     }
-    // Nothing read, heard, sent or recorded before the agreement.
-    const before = { requests: mock.requests.length, mic: await micPages(), audit: audit(), settings: readSettings() };
     // Agree takes a press once it has been on screen a moment, so a double click on Get started agrees to nothing.
     await home.waitForTimeout(AGREE_ARM_MS);
+    // Nothing read, heard, sent or recorded before the agreement: looked at after that wait, just before the press,
+    // so that a microphone page opened while the button armed is counted too (cifix-x9-2).
+    const before = { requests: mock.requests.length, mic: await micPages(), audit: audit(), settings: readSettings() };
     const agreedAfter = Date.now();
     await home.locator("#w-next").click();
     await expect.poll(() => home.locator("#welcome").getAttribute("data-step")).toBe("sign-in");
