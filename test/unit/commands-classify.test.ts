@@ -3369,4 +3369,32 @@ describe("commands held to main at 4d64d3a: no way of reading one decides less s
     expect(decided("sudo -h rm -rf ~").reason).toBe(CHANGE);
     expect(decided("rm -rf ~/.config/ember; pkill -n server").reason).toBe(CHANGE);
   });
+
+  it("judges what follows the end of an && chain that moved the folder as run where the chain started too (commands-held-y9-1, y9-2: second review)", () => {
+    // When `cd /srv/x` fails, `&& true` is skipped and what follows `;`, `||` or a new line runs in the task's folder,
+    // where ../.config/ember is Ember's own folder. Every tree judged it in /srv/x only and ran it.
+    for (const tail of ["sed -i s/on/off/ ../.config/ember/settings.json", "cat ../.config/ember/settings.json"]) {
+      for (const cmd of [`cd /srv/x && true ; ${tail}`, `cd /srv/x && ls || ${tail}`, `cd /srv/x && make\n${tail}`, `cd /srv/x && cd -- /srv/x ; ${tail}`,
+        `cd /srv/x && pushd /srv/x ; ${tail}`, `cd /srv/x && cd -L /srv/x ; ${tail}`]) {
+        for (const missing of [[], ["/srv/x"]]) expect(decided(cmd, "linux", { missing }).verdict, `${cmd} ${missing.join()}`).toBe("ask");
+        expect(decided(cmd).rules, cmd).toContain("unclear.folder");
+      }
+      // A backgrounded chain moves no folder for what follows: judged where the line started, Ember's own file.
+      expect(decided(`cd /srv/x && true & ${tail}`).verdict).toBe("refuse");
+    }
+    expect(decided("cd /srv/x && cd -- /srv/x ; cat ../Library/Application\\ Support/ember/settings.json", "darwin").verdict).toBe("refuse");
+    expect(decided("cd /srv/x && true ; sed -i '' s/on/off/ ../Library/Application\\ Support/ember/settings.json", "darwin").verdict).toBe("refuse");
+    const other = (cmd: string, shell: "cmd" | "bash" | "sh", context: ContextName) => runCase({ cmd, verdict: "run", context }, { shell, context }).decision.verdict;
+    expect(other("cd /d D:\\x && ver & type ..\\AppData\\Local\\ember\\settings.json", "cmd", "win32")).toBe("ask");
+    expect(other("cd /d D:\\x && ver || type ..\\AppData\\Local\\ember\\settings.json", "cmd", "win32")).toBe("ask");
+    expect(other("cd /srv/x && true ; cat ../.local/state/ember-remote/x", "bash", "wsl")).toBe("ask");
+    expect(other("cd /srv/x && true || cat ../.config/ember/settings.json", "sh", "linux")).toBe("ask");
+    // What the chain's own folder refuses is still refused, in its own words.
+    expect(decided("cd ~/.config && ls ; rm -rf ember").rules).toEqual(["ember.path"]);
+    expect(decided("cd ~/.config && ls ; rm -rf ember").verdict).toBe("refuse");
+    // Everyday lines decide as before: nothing in them depends on the folder.
+    for (const cmd of ["cd /srv/x && make ; make test", "cd build && cmake .. ; make", "cd /srv/x || exit; make", "cd /srv/x && ls ; ls /tmp"]) {
+      expect(decided(cmd).verdict, cmd).toBe("run");
+    }
+  });
 });

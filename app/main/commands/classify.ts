@@ -2133,6 +2133,10 @@ class Engine extends Classifier {
   private foldersDiffer = false;
   /** The line is being judged again with the folder main's reading of each such row leaves (heldToMainFolders). */
   private mainFolders = false;
+  /** An && chain on this line moved the folder, and what follows its end may run where it started (chainEnds). */
+  private chainMoved = false;
+  /** The line is being judged again with the folder unknown after each such chain (heldToChainFolders). */
+  private chainUnknown = false;
 
   /**
    * Whether the row is being judged main's way (runRow). A check the row has learned since, which main's row at 4d64d3a
@@ -2207,7 +2211,25 @@ class Engine extends Classifier {
     this.checkCharacters(text, sc.family);
     this.classifyText(text, this.topShell, sc);
     if (this.foldersDiffer) this.heldToMainFolders(text);
+    if (this.chainMoved) this.heldToChainFolders(text);
     return this.result();
+  }
+
+  /**
+   * Holds a line whose && chain moved the folder to what follows the chain's end being judged in an unknown folder
+   * (commands-held-y9-1): in `cd /srv/x && true ; sed -i … ../.config/ember/settings.json` the sed runs where the line
+   * started when the cd fails. The line is judged again apart with the folder unknown after each such chain; its
+   * refusal stands, and unless everything it found the line's own judging found too, the line asks with the dangers it
+   * named kept on the card (heldTo). The line's own refusal, judged in the chain's folder, stands first.
+   */
+  private heldToChainFolders(text: string): void {
+    const own = this.refusal();
+    let was: Finding[];
+    this.chainUnknown = true;
+    try { was = this.foundApartWhole(() => this.classifyText(text, this.topShell, this.topScope()), undefined, true); } finally { this.chainUnknown = false; }
+    if (own.refuse) this.putRefusal(own);
+    if (was.every(f => this.findings.some(g => sameFinding(f, g)))) return;
+    this.heldTo(was, 0, "unclear.folder", "Ember can't tell which folder this command runs in.");
   }
 
   /**
@@ -2361,17 +2383,32 @@ class Engine extends Classifier {
 
   private posixList(list: PList, sc: Scope): void {
     for (const item of list.items) {
+      let from = sc.cwd;
       for (let k = 0; k < item.pipes.length; k++) {
         this.cdTarget = undefined;
         const before = sc.cwd;
         const cd = this.posixPipeline(item.pipes[k], sc, item.background);
+        const next = item.ops[k];
         if (cd !== undefined) {
-          const next = item.ops[k];
           // A cd joined by && holds for what follows; after ; or || it may have failed: the folder is unknown.
           sc.cwd = next === "&&" ? cd : cd === before ? before : null;
         }
+        if (next !== "&&") from = this.chainEnds(from, sc);
       }
     }
+  }
+
+  /**
+   * Where an && chain ends (`;`, `||`, `&`, a new line), a cd in it may have failed, so what follows may run in the
+   * folder the chain started in (commands-held-y9-1, y9-2): the line is judged again with that folder unknown, as after
+   * a lone `cd x ;` (heldToChainFolders). Returns the folder the next chain starts in.
+   */
+  private chainEnds(from: string | null, sc: Scope): string | null {
+    if (sc.cwd !== from && sc.cwd !== null) {
+      this.chainMoved = true;
+      if (this.chainUnknown) sc.cwd = null;
+    }
+    return sc.cwd;
   }
 
   /** Classifies a pipeline; returns the folder when it is a lone `cd` (not in the background). */
@@ -2822,6 +2859,7 @@ class Engine extends Classifier {
   // cmd.
 
   private cmdLine(p: ReturnType<typeof lexCmd>, sc: Scope): void {
+    let from = sc.cwd;
     p.pipes.forEach((pipe, k) => {
       this.pipe = { fetch: false, program: "" };
       let prev: number | undefined;
@@ -2834,6 +2872,7 @@ class Engine extends Classifier {
           sc.cwd = next === "&&" ? this.cdTarget : this.cdTarget === sc.cwd ? sc.cwd : null;
         }
       });
+      if (p.ops[k] !== "&&") from = this.chainEnds(from, sc);
     });
   }
 

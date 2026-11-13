@@ -674,7 +674,10 @@ an earlier command printed text that looked like instructions.").
   it (by the name as written, links included, `cd -P` too); a `cd` inside a longer command affects only that command.
   Each command's shell (on this computer, in WSL and on SSH computers) is told the task's folder as Ember named it,
   so its `cd ..` goes where Ember judged (a shell not told starts from the folder's real path, and `cd ..` would land
-  beside a link's target). Inside a longer command, what follows `cd -P`, and what `env -C <folder>` runs, has no
+  beside a link's target). After `cd <folder> && …`, what follows a `;`, `||` or new line may run where the line
+  started (the `cd` may have failed), so a name relative to it asks too, unless the folder the chain moved to refuses
+  it: `cd /srv/x && true ; cat ../.config/ember/settings.json` asks, `cd ~/.config && ls ; rm -rf ember` is refused,
+  and `cd build && make ; make test` runs. Inside a longer command, what follows `cd -P`, and what `env -C <folder>` runs, has no
   folder Ember knows (only the computer knows where a link leads), so a name relative to it asks ("Ember can't tell
   which folder this command runs in."); `set -P`, `set -o physical` (also as `set -euo physical`), zsh's `-w`,
   `chase_links`, `chase_dots` or `cdable_vars`, a command that sets or removes `PWD` itself, and a shell started without it (`env -i`,
