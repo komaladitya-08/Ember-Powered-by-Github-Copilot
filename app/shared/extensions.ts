@@ -34,6 +34,11 @@ export interface ExtensionsApi {
   consented(): boolean;
   /** Ember's model connection is up, so the runtime can list marketplaces and run what was added (absent: assumed so). */
   connected?(): boolean;
+  /**
+   * Ember filled something from its vault in this run, so it uses no extension until it starts again (gate.ts
+   * VAULT_FILLED; integrations-r10-2). A check that fails says yes. Absent: never.
+   */
+  heldByVault?(): boolean;
   /** Records that agreement (and turns extensions on); Home calls it from the card's yes. */
   agree(): Promise<void>;
   list(): Promise<Installed[]>;

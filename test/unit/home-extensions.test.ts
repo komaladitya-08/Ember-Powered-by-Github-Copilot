@@ -217,6 +217,26 @@ describe("while Ember isn't connected, the section says so instead of an empty l
   });
 });
 
+describe("after a fill from the vault, the section says extensions are off until Ember restarts (integrations-r10-2)", () => {
+  it("never says “Ready” for an item the gate refuses, and says why", () => {
+    expect(xc.installedStatus(item(), true, true, true)).toEqual({ text: "Off until Ember starts again", tone: "off" });
+    expect(xc.installedStatus(item({ kind: "connector" }), true, true, true).text).toBe("Off until Ember starts again");
+    expect(xc.installedRow(item(), true, true, true).note).toBe("Ember filled something from your vault, so it uses no extension until it starts again.");
+    expect(xc.extensionsOnHint(true, true)).toBe("Ember filled something from your vault, so it uses no extension until it starts again. What you added stays here.");
+    // What the user must do comes first: a changed tool, an item not agreed to, an item turned off.
+    expect(xc.installedStatus(item({ consented: false }), true, true, true).text).toBe("Waiting for you to agree");
+    expect(xc.installedStatus(item({ enabled: false }), true, true, true).text).toBe("Off");
+    expect(xc.installedStatus(item(), true, true, false)).toEqual({ text: "Ready", tone: "ok" });
+  });
+
+  it("tells the page, and only then", async () => {
+    expect(await setUp(fakeApi({ heldByVault: () => true })).call(EXTENSIONS_IPC.state)).toMatchObject({ available: true, heldByVault: true });
+    expect(await setUp(fakeApi({ heldByVault: () => false })).call(EXTENSIONS_IPC.state)).not.toHaveProperty("heldByVault");
+    // A check that fails says so (fail closed: the gate refuses then too).
+    expect(await setUp(fakeApi({ heldByVault: () => { throw new Error("down"); } })).call(EXTENSIONS_IPC.state)).toMatchObject({ heldByVault: true });
+  });
+});
+
 describe("a marketplace row says whose it is, and offers Remove only where it can work (integrations-4)", () => {
   it("shows Copilot's own and the organisation's as kept, with no Remove, and the user's with Remove", () => {
     expect(xc.marketplaceRow({ name: "awesome-copilot", source: "GitHub: github/awesome-copilot", builtIn: true })).toEqual({ name: "awesome-copilot", meta: "Built into Copilot · GitHub: github/awesome-copilot", removable: false });

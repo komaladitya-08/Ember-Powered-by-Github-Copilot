@@ -867,7 +867,10 @@ it builds on:
 - **Failures are untrusted too.** The SDK can't rewrite a failed call's text, so `onPostToolUseFailure` adds Ember's
   note that it is untrusted data, audits its size, and taints the conversation (any extension failure).
   For the same reason no extension is called once Ember has filled something from its vault in this run (the
-  gate's `vaultFilled`; "The vault", After a fill): the failure's text couldn't have the value taken out.
+  gate's `vaultFilled`; "The vault", After a fill): the failure's text couldn't have the value taken out. At the
+  first fill the conversation reloads without extension tools (`vaultFilledNow`; `forSession` gives none from then
+  on), and Home says **Off until Ember starts again** for each item, with why (integrations-r10-2: it said
+  **Ready** while the gate refused every call).
 - **Taint lasts the conversation**, across reconnects; it ends when the conversation is forgotten.
 - **Results are untrusted.** `onPostToolUse` replaces each result with `<extension_result untrusted="true">` text (`<`
   escaped, capped at 60 000 characters, images dropped); `injection.ts` scans it, and a flagged result makes every

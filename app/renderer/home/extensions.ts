@@ -246,7 +246,7 @@ function statusLine(text: string, tone: keyof typeof PHASE): HTMLElement {
 }
 
 function installedItem(i: Installed): HTMLLIElement {
-  const r = installedRow(i, sectionOn(), state?.connected !== false);
+  const r = installedRow(i, sectionOn(), state?.connected !== false, state?.heldByVault === true);
   const li = el("li", "ext-item");
   const head = el("div", "ext-head");
   const text = el("span", "ext-text");
@@ -423,7 +423,7 @@ function draw(): void {
   $("ext-on-group").hidden = !state.allowed || !agreed;
   $("ext-on-hint").hidden = !state.allowed || !agreed;
   ($("ext-on") as HTMLInputElement).checked = sectionOn();
-  $("ext-on-hint").textContent = extensionsOnHint(sectionOn());
+  $("ext-on-hint").textContent = extensionsOnHint(sectionOn(), state.heldByVault === true);
   const key = JSON.stringify([state, browsing, connectors, connectorsError, [...pending], asking, [...busy], sectionOn()]);
   if (key === drawn) return;
   drawn = key;

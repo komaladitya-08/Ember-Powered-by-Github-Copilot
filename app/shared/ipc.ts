@@ -721,6 +721,8 @@ export interface ExtensionsState {
   consented?: boolean;
   /** false while Ember isn't connected (signed out, connecting): no marketplace can be listed, and nothing added runs. */
   connected?: boolean;
+  /** true once Ember filled something from its vault in this run: nothing added runs until Ember starts again. */
+  heldByVault?: boolean;
   /** Set when the list couldn't be read: one plain sentence. */
   error?: string;
 }

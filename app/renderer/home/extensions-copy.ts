@@ -90,11 +90,13 @@ export function toolCounts(tools: readonly ToolInfo[]): string {
  * An installed item's status, as words beside its symbol (never colour alone). `on`: the section's Use extensions
  * switch; while it is off nothing added runs (integrations-11).
  */
-export function installedStatus(i: Installed, on = true, connected = true): { text: string; tone: "ok" | "wait" | "fail" | "off" } {
+export function installedStatus(i: Installed, on = true, connected = true, heldByVault = false): { text: string; tone: "ok" | "wait" | "fail" | "off" } {
   if (i.needsReview || i.tools.some(t => t.changed)) return { text: "Changed since you agreed", tone: "fail" };
   if (!i.consented) return { text: "Waiting for you to agree", tone: "wait" };
   if (!i.enabled || i.status === "disabled") return { text: "Off", tone: "off" };
   if (!on) return { text: "Off: extensions are off", tone: "off" };
+  // The gate refuses every call after a fill from the vault, until Ember starts again (integrations-r10-2).
+  if (heldByVault) return { text: "Off until Ember starts again", tone: "off" };
   // Nothing runs before Ember is connected: "Ready" then said it did (integrations-v2).
   if (!connected && i.status === "ready") return { text: "Ready once Ember connects", tone: "wait" };
   switch (i.status) {
@@ -130,8 +132,11 @@ const detailLine = (d: string | undefined): string | null => {
   return s === EXTENSIONS_FAILED ? null : s;
 };
 
-export function installedRow(i: Installed, on = true, connected = true): InstalledRow {
-  const status = installedStatus(i, on, connected);
+/** Why nothing added runs after a fill from the vault (integrations-r10-2). */
+export const HELD_BY_VAULT = "Ember filled something from your vault, so it uses no extension until it starts again.";
+
+export function installedRow(i: Installed, on = true, connected = true, heldByVault = false): InstalledRow {
+  const status = installedStatus(i, on, connected, heldByVault);
   const changed = i.needsReview || i.tools.some(t => t.changed);
   const meta = [kindLabel(i.kind), ...(i.publisher ? [`by ${i.publisher}`] : []), i.source, ...(i.version ? [i.version] : [])].join(" · ");
   const note = changed ? "Its tools changed since you agreed, so Ember stopped using the ones that changed. Check what they do now, then agree again."
@@ -139,6 +144,7 @@ export function installedRow(i: Installed, on = true, connected = true): Install
     : i.status === "needs-auth" ? i.kind === "connector" ? `Connect “${i.name}” again to sign in on GitHub's page.`
       : "Check this plugin's authentication setup with its provider, then remove it and add it again."
     : i.status === "failed" && i.enabled ? detailLine(i.detail) ?? "Turn it off and on again, or remove it and add it again."
+    : i.enabled && on && heldByVault ? HELD_BY_VAULT
     : i.enabled && i.tools.some(t => t.nameConflict) ? "Some tool names clash in Copilot. Ember leaves those tools off."
     : null;
   const actions: ItemAction[] = [];
@@ -165,7 +171,8 @@ export const INSTALLED_EMPTY = "Nothing added yet. Browse a marketplace below.";
 
 /** The section's own switch, shown once extensions are agreed to: off stops every server and uses no tool. */
 export const EXTENSIONS_ON_LABEL = "Use extensions";
-export function extensionsOnHint(on: boolean): string {
+export function extensionsOnHint(on: boolean, heldByVault = false): string {
+  if (on && heldByVault) return `${HELD_BY_VAULT} What you added stays here.`;
   return on ? "Ember may use the tools you agreed to. Turn this off to stop them all: what you added stays here."
     : "Off: Ember uses no extension's tools and runs nothing you added. What you added stays here.";
 }

@@ -985,6 +985,28 @@ describe("ExtensionsService", () => {
     expect(await call(ext, "fake-lookup", { q: "x" })).toEqual({ permissionDecision: "deny", permissionDecisionReason: VAULT_FILLED });
   });
 
+  it("gives no new conversation an extension's tools after a fill from the vault, and tells Home (integrations-r10-2)", async () => {
+    let filled: boolean | "unknown" = false;
+    const s = await installed({ vaultFilled: () => { if (filled === "unknown") throw new Error("down"); return filled; } });
+    let changes = 0;
+    s.onChange(() => { changes++; });
+    expect(s.forSession()).toBeDefined();
+    expect(s.heldByVault()).toBe(false);
+    const gen = s.generation;
+    filled = true;
+    s.vaultFilledNow();
+    // The conversation reloads (generation moves) without them, and Home is told to read the state again.
+    expect(s.generation).not.toBe(gen);
+    expect(changes).toBe(1);
+    expect(s.heldByVault()).toBe(true);
+    expect(s.forSession()).toBeUndefined();
+    s.vaultFilledNow();
+    expect(changes).toBe(1);
+    filled = "unknown";
+    expect(s.heldByVault()).toBe(true);
+    expect(s.forSession()).toBeUndefined();
+  });
+
   it("announces a changing tool's call instead of asking in Autopilot, recorded with the mode (modes-D3)", async () => {
     const said: string[] = [];
     let on = true;

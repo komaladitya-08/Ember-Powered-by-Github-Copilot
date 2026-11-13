@@ -2242,7 +2242,8 @@ function start(): void {
     appName: friendlyApp, log: log.child("vault"),
     changed: () => sendToHome(VAULT_IPC.changed, null),
     // Every value is noted by the redactor before it is put anywhere (nothing read back holds it).
-    filling: (part, value) => vaultRedactor.note(part, value),
+    // Extensions stop at the first fill (gate.ts VAULT_FILLED): the conversation reloads without them and Home says so.
+    filling: (part, value) => { vaultRedactor.note(part, value); extensionsRef?.vaultFilledNow(); },
   });
   vaultRef = vault;
   /** The endpoint in force now: the administrator's (or a development test server) once main has set it, else the user's own. */

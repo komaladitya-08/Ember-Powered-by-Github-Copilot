@@ -741,7 +741,8 @@ export class ExtensionsService implements ExtensionsApi {
 
   /** The extension tools for a new session (the conductor's), or undefined while extensions aren't active or none is ready. */
   forSession(): SessionExtensions | undefined {
-    if (!this.active()) return undefined;
+    // After a fill from the vault every call is refused (gate.ts): the model isn't offered them (integrations-r10-2).
+    if (!this.active() || this.vaultFilled()) return undefined;
     const gate: SessionGate = { refused: new Set(), shown: new Map(), live: null, listChanged: new Set(), epoch: this.epoch, withdrawn: new Set(), mute: new Set(), stops: new Map(), tools: new Map() };
     this.session = gate;
     const mcpServers: Record<string, MCPServerConfig> = {};
@@ -1004,6 +1005,22 @@ export class ExtensionsService implements ExtensionsApi {
     if (gate !== this.session || generation !== this.generation) return { verdict: "deny" as const, reason: "Extensions changed. Wait for the conversation to reload before trying again." };
     return decision;
   }
+
+  /** Ember filled something from its vault in this run: no extension is used until it starts again (Home says so). */
+  heldByVault(): boolean {
+    return this.vaultFilled();
+  }
+
+  /**
+   * The vault has just filled something (main's `filling`): the conversation reloads without extension tools, and Home
+   * reads the state again, so it never says "Ready" for what the gate now refuses (integrations-r10-2). Once a run.
+   */
+  vaultFilledNow(): void {
+    if (this.vaultTold) return;
+    this.vaultTold = true;
+    this.changed();
+  }
+  private vaultTold = false;
 
   /** Has the vault filled something in this run? A check that fails says yes (fail closed). */
   private vaultFilled(): boolean {
