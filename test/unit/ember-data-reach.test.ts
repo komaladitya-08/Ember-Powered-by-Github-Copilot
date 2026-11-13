@@ -118,15 +118,16 @@ describe("Ember's own settings, audit log and policy reached through another app
     expect(mayReachEmberData(req("org.gnome.Nautilus", "Documents", { kind: "keys", value: "Delete", afterSelectAll: true, element: view("linux") }))).toBe(false);
   });
 
-  it("takes a VS Code title that names another workspace as showing whose settings.json it is, and still asks for one named ember (r10-safety-x10-3)", () => {
-    expect(mayReachEmberData(req("code", "settings.json - myapp - Visual Studio Code", { kind: "keys", value: "ctrl+s" }))).toBe(false);
-    expect(mayReachEmberData(req("code", "● settings.json - myapp - Visual Studio Code", { kind: "text", value: "x" }))).toBe(false);
-    expect(engine("autopilot", "linux", { code: "act" }).decide(req("code", "settings.json - myapp - Visual Studio Code", { kind: "text", value: "x" })).verdict).not.toBe("deny");
-    expect(mayReachEmberData(req("code", "settings.json - ember - Visual Studio Code", { kind: "text", value: "x" }))).toBe(true);
-    expect(mayReachEmberData(req("code", "settings.json - Visual Studio Code", { kind: "text", value: "x" }))).toBe(true);
-    // Notepad's and Kate's own titles have no workspace part: still asked.
-    expect(mayReachEmberData(req("notepad", "*settings.json - Notepad", { kind: "text", value: "x" }))).toBe(true);
-    expect(mayReachEmberData(req("kate", "settings.json — Kate", { kind: "text", value: "x" }))).toBe(true);
+  it("asks every time, and Autopilot refuses, typing and saving a settings.json in VS Code whatever workspace its title names, since the title doesn't say which folder the file is in (r10-safety-y10-1)", () => {
+    for (const w of ["settings.json - myapp - Visual Studio Code", "● settings.json - myapp - Visual Studio Code", "settings.json - ember - Visual Studio Code", "settings.json - Visual Studio Code"]) {
+      for (const step of [{ kind: "keys", value: "ctrl+a" }, { kind: "text", value: "{\"privacy\":{\"neverLook\":[]}}" }, { kind: "keys", value: "ctrl+s" }] as Partial<ActionRequest>[]) {
+        expect(mayReachEmberData(req("code", w, step)), `${w} ${step.value}`).toBe(true);
+        expect(engine("autopilot", "linux", { code: "act" }).decide(req("code", w, step)).verdict, `${w} ${step.value} autopilot`).toBe("deny");
+        const inter = engine("interactive", "linux", { code: "act" }).decide(req("code", w, step));
+        expect(inter.verdict, `${w} ${step.value} interactive`).toBe("confirm");
+        expect(inter.autonomy).toBeUndefined();
+      }
+    }
   });
 
   it("never sends such a step to Assisted's check, and Autopilot refuses the worker's held question about it (safety-privacy-r10-1)", async () => {

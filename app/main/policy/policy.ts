@@ -796,7 +796,7 @@ export function mayReachEmberData(r: Pick<ActionRequest, "kind" | "window" | "el
   if (r.kind === "read") return false;
   const title = r.window ?? "";
   const name = titleName(title);
-  if (!/[/\\]/.test(title) && !otherWorkspace(title) && (EMBER_FILE.test(name) || EMBER_FOLDER.test(name))) return true;
+  if (!/[/\\]/.test(title) && (EMBER_FILE.test(name) || EMBER_FOLDER.test(name))) return true;
   if (inEmberDataParent(r, name)) return true;
   const item = (r.element?.name ?? "").trim();
   if (EMBER_FILE.test(item) || EMBER_FOLDER.test(item)) return true;
@@ -818,17 +818,6 @@ const FILE_MANAGER_APP = /^(?:(?:org\.gnome\.)?nautilus|files|(?:org\.kde\.)?dol
 const MOVING_KEY = /^(?:(?:shift\+)?tab|up|down|left|right|home|end|prior|next|page_up|page_down|escape|[a-z0-9])$/;
 /** A control there that removes, moves or renames what is selected: any menu item (the context menu's), or a button so named. */
 const MOVES_ITEMS = /delete|trash|\bbin\b|remove|erase|rename|\bcut\b|move/i;
-/** VS Code's title: the file, the workspace's folder, then the app ("settings.json - myapp - Visual Studio Code"). */
-const CODE_TITLE = /^.+?\s+[-—–]\s+(.+?)\s+[-—–]\s+(?:visual studio code(?: - insiders)?|vscodium|code - oss)\s*$/i;
-/**
- * Does a VS Code title name a workspace other than Ember's data folder or the folders that hold it (r10-safety-x10-3)?
- * Then the file is that project's: a file outside it is reached only by a step that asks already (an Open dialog's
- * "ember" row, its path typed).
- */
-const otherWorkspace = (title: string): boolean => {
-  const ws = CODE_TITLE.exec(title)?.[1]?.trim();
-  return !!ws && !EMBER_FOLDER.test(ws) && !EMBER_DATA_PARENT.test(ws) && !/ember/i.test(ws);
-};
 /** Is `r` a step in a file manager showing the folder that holds Ember's data or policy folder that may move or remove it? */
 function inEmberDataParent(r: Pick<ActionRequest, "kind" | "element" | "value"> & { app?: string }, name: string): boolean {
   if (!FILE_MANAGER_APP.test((r.app ?? "").trim())) return false;
