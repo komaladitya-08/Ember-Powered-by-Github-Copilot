@@ -34,7 +34,7 @@ const box = (o: Partial<SecretBox> = {}): SecretBox => ({
 });
 const GITHUB: VaultDestination = { site: "https://github.com" };
 const MAIL: VaultDestination = { app: "thunderbird" };
-const login = { user: "ada", password: CANARY };
+const login = { user: "quillon", password: CANARY };
 const card = { cardName: "Ada L", cardNumber: "4242 4242 4242 4242", expiry: "08/2029", securityCode: "123" };
 
 describe("a vault destination", () => {
@@ -164,7 +164,7 @@ describe("VaultStore", () => {
     if (process.platform !== "win32") expect(fs.statSync(file).mode & 0o777).toBe(0o600);
     const text = fs.readFileSync(file, "utf8");
     expect(text).not.toContain(CANARY);
-    expect(text).not.toContain("ada");
+    expect(text).not.toContain("quillon");
     const parsed = JSON.parse(text) as { v: number; entries: Record<string, unknown>[] };
     expect(parsed.v).toBe(1);
     expect(Object.keys(parsed.entries[0]).sort()).toEqual(["dest", "id", "kind", "savedAt", "sealed"]);

@@ -53,7 +53,7 @@ function harness(o: { keep?: (kind: string, dest: unknown, values: unknown) => P
 }
 const GITHUB = { site: "https://github.com" };
 const req = (o: Partial<VaultFormRequest> = {}): VaultFormRequest => ({ kind: "login", dest: GITHUB, where: "github.com", via: "Firefox", keyring: true, ...o });
-const login = { user: "ada", password: CANARY };
+const login = { user: "quillon", password: CANARY };
 
 describe("the Secure Form's view", () => {
   it("is built from the kind and the destination: its title, where it is for, and each part's label and limits (vault-2)", () => {
@@ -303,7 +303,7 @@ describe("the Secure Form", () => {
     const w = h.wins[0];
     const said = [await h.submit(w, h.view(w)!.id, { password: `${CANARY}\u0000` }), await h.submit(7, "x", login), await h.submit(w, h.view(w)!.id, login), await answer, h.view(w)];
     expect(JSON.stringify([said, h.logged])).not.toContain(CANARY);
-    expect(JSON.stringify(h.logged)).not.toContain("ada");
+    expect(JSON.stringify(h.logged)).not.toContain("quillon");
     expect(JSON.stringify(h.logged)).not.toContain("github");
   });
 

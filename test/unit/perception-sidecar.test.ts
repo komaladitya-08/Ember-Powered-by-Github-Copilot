@@ -195,7 +195,9 @@ describe("AtspiSidecar", () => {
     // lists the desktop: a helper killed for taking too long, or crashed, is replaced and connects right away.
     const log = path.join(dir, `status-${Date.now()}.log`);
     const { s } = sidecar(fake, process.execPath, { ...process.env, EMBER_FAKE_STATUS_LOG: log });
-    const asked = () => (fs.existsSync(log) ? fs.readFileSync(log, "utf8").trim().split("\n").map(Number) : []);
+    // Whole lines only: the file exists a moment before the helper's line is in it, and an empty read is no helper
+    // (macOS at bc47669 read it then, and took 0 for the new helper).
+    const asked = () => (fs.existsSync(log) ? fs.readFileSync(log, "utf8").split("\n").slice(0, -1).filter(l => l !== "").map(Number) : []);
     const waitAsked = async (n: number) => { for (let i = 0; i < 50 && asked().length < n; i++) await new Promise(r => setTimeout(r, 40)); return asked(); };
     const first = await s.request<Who>("whoami");
     expect(await failure(s.request("hang", {}, 100))).toMatch(/did not answer/);

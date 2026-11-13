@@ -28,7 +28,8 @@ const box = (o: Partial<SecretBox> = {}): SecretBox => ({
 });
 const GITHUB: VaultDestination = { site: "https://github.com" };
 const MAIL: VaultDestination = { app: "thunderbird" };
-const login = { user: "ada", password: CANARY };
+// A user name no random id can spell: an entry's id is hexadecimal, and "ada" once turned up inside one (macOS, bc47669).
+const login = { user: "quillon", password: CANARY };
 const appName = (key: string) => (key === "thunderbird" ? "Thunderbird" : key === "firefox" ? "Firefox" : "");
 
 function make(o: { allowed?: boolean | (() => boolean); consented?: boolean; autopilot?: boolean; box?: Partial<SecretBox>; answer?: "saved" | "cancelled" | "unavailable" | "stopped" } = {}) {
@@ -136,8 +137,9 @@ describe("Home's list of the vault", () => {
       { id: b.id, kind: "card", where: "Thunderbird", site: false, savedAt: 1_700_000_000_001 },
       { id: a.id, kind: "login", where: "github.com", site: true, savedAt: 1_700_000_000_000 },
     ] });
-    const said = JSON.stringify(state);
-    for (const secret of [CANARY, "ada", "4242", "08/29", "123\"", "sealed"]) expect(said).not.toContain(secret);
+    // The ids are random: taken out, so that none can spell a part of a value by chance.
+    const said = JSON.stringify(state).split(a.id).join("").split(b.id).join("");
+    for (const secret of [CANARY, "quillon", "4242", "08/29", "123\"", "sealed"]) expect(said).not.toContain(secret);
     expect(Object.keys(entryRow({ id: "x", kind: "login", dest: GITHUB, savedAt: 1 }, appName)).sort()).toEqual(["id", "kind", "savedAt", "site", "where"]);
     expect(h.changes()).toBe(2);
   });
@@ -204,7 +206,7 @@ describe("Home's list of the vault", () => {
     h.service.forgetAll();
     const said = JSON.stringify(h.logged);
     expect(said).toContain("vault.kept");
-    for (const secret of [CANARY, "ada", "github"]) expect(said).not.toContain(secret);
+    for (const secret of [CANARY, "quillon", "github"]) expect(said).not.toContain(secret);
   });
 });
 
