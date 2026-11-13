@@ -4948,6 +4948,18 @@ describe("memory erasure at account boundaries", () => {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
+  it("tells memory the organisation's policy stopped the connection, never that GitHub couldn't be checked (memory-r9-3)", async () => {
+    const why: string[] = [];
+    const memory = { ...failingMemory(), pauseAccount: (reason?: string) => { why.push(`pause:${reason ?? "checking"}`); } };
+    const { host } = makeHost({ memory, refuseConnect: () => "Your organisation's Ember policy has a problem, so Ember won't send anything to a model service until it's fixed." });
+    try {
+      expect(await host.start(TOKEN, "stored")).toBe("error");
+      expect(why.at(-1)).toBe("pause:lockdown");
+    } finally {
+      await host.stop();
+    }
+  });
+
   it("tells memory why it can't check the owner: signed out, a model provider in force, or GitHub not answering (memory-2, integrations-2)", async () => {
     const why: string[] = [];
     const memory = {

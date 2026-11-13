@@ -775,8 +775,18 @@ export const undoForgotLabel = (text: string) => `Undo: remember “${text}” a
  * What Memory's list says after Forget, where focus goes (never the next row's Forget, so a second Enter forgets
  * nothing more: memory-7), with Undo after it; and after Undo.
  */
-export const memoryForgottenText = (text: string, derived = 0, back: readonly string[] = []) =>
-  `Forgotten: “${text.replace(/[“”]/g, "")}”${derived ? `, and ${derived === 1 ? "a note" : `${derived} notes`} Ember made from it` : ""}.${back.length ? ` Ember remembers ${quotedAnd(back)} again.` : ""}`;
+export const memoryForgottenText = (text: string, derived = 0, back: readonly string[] = [], managed = false) =>
+  `Forgotten: “${text.replace(/[“”]/g, "")}”${derived ? `, and ${derived === 1 ? "a note" : `${derived} notes`} Ember made from it` : ""}.${back.length ? ` Ember remembers ${quotedAnd(back)} again.` : ""}${managed ? " It can't be put back while your organisation has memory off." : ""}`;
+/**
+ * Settings › Memory while the organisation has memory off (memory-r9-3): what Ember saved before is still on this
+ * computer, and its owner can see it and forget it. `saved`: something is listed. A Forget has no Undo then: nothing
+ * is put back into memory the organisation turned off.
+ */
+export function memoryManagedText(saved: boolean): string {
+  return saved
+    ? "Your organisation has turned memory off, so Ember keeps nothing new and uses none of this. What it saved before is still on this computer: you can see it and forget it here. A Forget can't be undone while memory is off."
+    : "Your organisation has turned memory off.";
+}
 /** “A”, “A” and “B”, “A”, “B” and “C”: what is current again after a Forget undid what Ember kept just now (memory-12). */
 const quotedAnd = (texts: readonly string[]) => {
   const q = texts.map(t => `“${t.replace(/[“”]/g, "")}”`);

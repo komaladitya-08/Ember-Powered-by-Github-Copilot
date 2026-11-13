@@ -110,6 +110,7 @@ import { hello, keysLine } from "./hello";
 import { TurnLatency } from "./turn-latency";
 import { ACK_MS, acknowledgement, afterAck } from "./acknowledge";
 import { MemoryService } from "./memory/service";
+import { memoryViewOf } from "./memory/view";
 import { githubMemoryAccount, MemoryEpochAccount, MemoryOwner, type MemoryWait } from "./memory/owner";
 import { MemoryLearning, linesAfterAskedForget, linesAfterForget, linesAfterRestore, withLearned, type MemoryLine } from "./memory/learning";
 import type { OneShot } from "./memory/learn";
@@ -1674,13 +1675,8 @@ function start(): void {
     if (!memoryOn()) learningRef?.stopNow();
     betterRecall.settingsChanged();
   });
-  const memoryView = () => ({
-    // What holds now, then what is no longer true: it is kept and can reach the model, so it is shown too (memory-c7-2).
-    rows: memoryAllowed() && consented() && memoryOwner.ready ? memory.review() : [],
-    ownership: memoryOwner.state, epoch: memoryEpoch, reason: memoryOwner.reason, erasesOnSignOut: memoryOwner.mayEraseOnSignOut,
-    // After the rows, which read memory.json first: what was wrong with it, only for the account's open memory (memory-r2).
-    trouble: memoryOwner.ready ? memory.trouble : null,
-  });
+  // The verified account's saved facts, also while the organisation has memory off: theirs to see and forget (memory-r9-3).
+  const memoryView = () => memoryViewOf({ consented: consented(), owner: memoryOwner, epoch: memoryEpoch, memory });
   const memory: MemoryService = new MemoryService({ dir: userData, log: log.child("memory"), semantic: betterRecall.semantic, inForce: memoryOn, onChange: () => broadcast(IPC.memoryChanged, memoryView()) });
   const publishMemoryOwner = () => {
     if (!memoryOn()) learningRef?.stopNow();

@@ -785,12 +785,13 @@ it.skipIf(process.env.EMBER_MEMORY_TEST !== "1")("never lands a forget or rememb
 }, 60_000);
 
 /** Built Home at Settings › Memory with `view` as main's first answer: `run` gets the page and a way to push another view. */
-async function atMemory(view: MemoryView, run: (page: Page, push: (next: MemoryView) => Promise<void>) => Promise<void>): Promise<void> {
+async function atMemory(view: MemoryView, run: (page: Page, push: (next: MemoryView) => Promise<void>) => Promise<void>, managed: string[] = []): Promise<void> {
   const settings = structuredClone(DEFAULT_SETTINGS);
   settings.onboarded = true; settings.consent = { version: 99, at: "2026-11-04T12:00:00Z" };
-  settings.memory = { ...settings.memory, on: true, consent: { version: 99, at: "2026-11-04T12:00:00Z" } };
+  // (`managed` with "memory": the settings as main gives them under the organisation's policy, memory off.)
+  settings.memory = { ...settings.memory, on: !managed.includes("memory"), consent: { version: 99, at: "2026-11-04T12:00:00Z" } };
   const status = { appVersion: "0.1.1", settings, environment: { checks: [], versions: { node: "24", electron: "44", chrome: "152" } }, logFile: "/test/ember.log", settingsNotice: null,
-    admin: { source: null, error: null, managed: [], features: {}, provider: null, confirmEveryAction: false, allowGrants: true, retentionDays: 30, neverLook: [] } };
+    admin: { source: managed.length ? "/etc/ember/policy.json" : null, error: null, managed, features: managed.includes("memory") ? { memory: false } : {}, provider: null, confirmEveryAction: false, allowGrants: true, retentionDays: 30, neverLook: [] } };
   const browser = await chromium.launch({ executablePath: process.env.EMBER_CHROMIUM_PATH ?? "/usr/bin/chromium", headless: true, args: ["--no-sandbox"] });
   const dist = path.resolve("dist");
   const server = http.createServer((req, res) => {
@@ -911,3 +912,45 @@ it.skipIf(process.env.EMBER_MEMORY_TEST !== "1")("takes a failed Forget's alert 
   });
 }, 60_000);
 
+
+it.skipIf(process.env.EMBER_MEMORY_TEST !== "1")("lists what was saved while the organisation has memory off, with Forget and Forget everything but no Correct… and no Undo, and gives a lockdown its own words (memory-r9-3)", async () => {
+  const rows: MemoryView["rows"] = [{ id: "d", text: "Has type 1 diabetes", source: "user", at: "2026-11-04" }, { id: "g", text: "Works at Globex", source: "conversation", at: "2026-11-04" }];
+  await atMemory({ rows, ownership: "ready", reason: null }, async (page, send) => {
+    await expect.poll(() => page.locator("#memory-list [data-memory-forget]").count()).toBe(2);
+    // The switch is off and locked, and the pane says why in words: never "Nothing remembered." over what is kept.
+    expect(await page.locator("#memory-on").isChecked()).toBe(false);
+    expect(await page.locator("#memory-on").isDisabled()).toBe(true);
+    expect(await page.locator("#memory-managed").innerText()).toBe("Your organisation has turned memory off, so Ember keeps nothing new and uses none of this. What it saved before is still on this computer: you can see it and forget it here. A Forget can't be undone while memory is off.");
+    expect(await page.locator("#memory-list").innerText()).not.toContain("Nothing remembered");
+    expect(await page.locator("#memory-count").innerText()).toBe("2 of 2 memories");
+    // Nothing is saved to memory the organisation turned off: no Correct…; Forget and Forget everything stay.
+    expect(await page.locator("#memory-list [data-memory-correct]:visible").count()).toBe(0);
+    expect(await page.locator("#memory-forget-all").isVisible()).toBe(true);
+    for (const width of [560, 1000]) {
+      await page.setViewportSize({ width, height: 900 });
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${width}px`).toBe(true);
+      if (process.env.EMBER_UI_EVIDENCE) {
+        fs.mkdirSync(process.env.EMBER_UI_EVIDENCE, { recursive: true });
+        await page.screenshot({ path: path.join(process.env.EMBER_UI_EVIDENCE, `memory-managed-off-${width}.png`) });
+      }
+    }
+    // A Forget goes to main, and its line offers no Undo, which main would refuse, and says so.
+    await page.locator("#memory-list li").first().locator("[data-memory-forget]").click();
+    await expect.poll(() => page.locator("#memory-forgotten-text").innerText()).toBe("Forgotten: “Has type 1 diabetes”. It can't be put back while your organisation has memory off.");
+    expect(await page.evaluate(() => (window as unknown as { __c72: { forgot: string[] } }).__c72.forgot)).toEqual(["d"]);
+    expect(await page.locator("#memory-undo").isHidden()).toBe(true);
+    expect(await page.evaluate(() => document.activeElement?.id)).toBe("memory-forgotten-text");
+    // With nothing saved, it is true that nothing is remembered.
+    await send({ rows: [], ownership: "ready", reason: null });
+    await expect.poll(() => page.locator("#memory-list").innerText()).toBe("Nothing remembered.");
+    expect(await page.locator("#memory-managed").innerText()).toBe("Your organisation has turned memory off.");
+    expect(await page.locator("#memory-forget-all").isHidden()).toBe(true);
+    // A lockdown (a policy Ember can't use): its own words, never a GitHub check that comes back, and Forget everything.
+    await send({ rows: [], ownership: "locked", reason: "lockdown", erasesOnSignOut: false });
+    await expect.poll(() => page.locator("#memory-owner").innerText()).toBe("Your organisation's policy has stopped Ember for now, so it can't check whose saved memory this is. It stays hidden on this computer, and Forget everything clears it.");
+    expect(await page.locator("#memory-managed").isHidden()).toBe(true);
+    expect(await page.locator("#memory-list").isHidden()).toBe(true);
+    expect(await page.locator("#memory-forget-all").isVisible()).toBe(true);
+    if (process.env.EMBER_UI_EVIDENCE) await page.screenshot({ path: path.join(process.env.EMBER_UI_EVIDENCE, "memory-lockdown.png") });
+  }, ["memory"]);
+}, 60_000);

@@ -505,6 +505,7 @@ const NOT_NOW: Record<MemoryNotNow, string> = {
   "own-provider": "Memory is paused while I use your own model provider",
   "org-provider": "Memory is paused while I use your organisation's model service",
   unverified: "I couldn't check your GitHub account",
+  lockdown: "Your organisation's policy has stopped me for now",
   "other-account": "The memory saved on this computer isn't matched to your GitHub account",
   unowned: "The memory saved on this computer isn't matched to your GitHub account",
 };

@@ -1876,7 +1876,8 @@ export class AgentHost {
     const refused = this.o.refuseConnect?.() ?? null;
     if (refused) {
       this.setStatus({ phase: "error", reason: "policy", detail: refused, login: undefined, source: undefined, service: undefined });
-      this.o.memory?.pauseAccount?.("unverified");
+      // Said as what it is: memory waits for the policy, not for a GitHub check that comes back on its own (memory-r9-3).
+      this.o.memory?.pauseAccount?.("lockdown");
       this.dropHanded();
       return;
     }

@@ -318,10 +318,14 @@ docs/MEMORY.md is the design. The core (app/main/memory/) is pure and has no Ele
   memory stays (`erasesOnSignOut` in the view, `kept`), and an account change that erased memory says so in the new
   conversation (`ACCOUNT_CHANGED_FORGOT`).
 - **Saying why memory is closed.** The host tells `MemoryOwner` why it has no account (`pauseAccount(why)`,
-  `verifyAccount(null, why)`: `checking`, `signed-out`, `own-provider`, `org-provider`, `unverified`), and the owner
+  `verifyAccount(null, why)`: `checking`, `signed-out`, `own-provider`, `org-provider`, `unverified`, and `lockdown`
+  when the organisation's policy refuses the connection), and the owner
   adds `other-account` or `unowned` for data it can't open (`MemoryOwner.reason`, in every `MemoryView`). Home and
-  the conversation word it through app/shared/memory-owner.ts; only `other-account`, `unowned` and memory left after
-  signing out are offered Forget everything (`memoryOwnerOffersErase`). Main's `memoryEpoch` (in every view) moves on
+  the conversation word it through app/shared/memory-owner.ts; only `other-account`, `unowned`, `lockdown` and memory
+  left after signing out are offered Forget everything (`memoryOwnerOffersErase`). The view's rows (`memoryViewOf`,
+  view.ts) need consent and a verified owner, never the policy: with `features.memory` false the account's facts are
+  still listed with Forget and Forget everything, without Correct… or Undo (main refuses `restore` then), and Home
+  says the organisation turned memory off (memory-r9-3). Main's `memoryEpoch` (in every view) moves on
   only when memory is for another account or none (`MemoryEpochAccount`): a reconnect's `checking`, a failed check's
   `unverified` and the same account verified again hold it, so Home keeps a correction draft, the "Forgotten" line
   with its Undo and focus out of sight and brings them back; memory itself still opens only once `MemoryOwner.ready`

@@ -307,14 +307,23 @@ download, so English-only MiniLM is the trade-off for now.
   Memory pauses while the model connection lacks a verified GitHub account, and Settings › Memory says why
   (`MemoryOwner.reason`, app/shared/memory-owner.ts): Ember is still checking the account, nobody is signed in, the
   user's own model provider or the organisation's model service is in force (memory works only with GitHub Copilot),
-  or GitHub didn't answer. Only another account's memory, memory with no owner Ember can read, or memory left after
-  signing out is offered Forget everything; Home's status line says "Memory paused", Tell Ember about you says why
+  GitHub didn't answer, or the organisation's policy has stopped Ember connecting (`lockdown`). Only another
+  account's memory, memory with no owner Ember can read, memory left after signing out or memory out of reach under
+  a lockdown is offered Forget everything; Home's status line says "Memory paused", Tell Ember about you says why
   instead of its questions, and "get to know me" answers with the same reason. A reconnect (a network retry, the
   runtime restarting) checks the account again: the list is hidden meanwhile, but if the same account comes back
   Home keeps its correction draft, the search, a "Forgotten" line with its Undo and where focus was, and a Better recall download goes on (only the
   model's use waits). Main's epoch moves on, and Home lets go of them, only for another account or none
   (`MemoryEpochAccount`, memory-8).
-- **Admin.** A new `features.memory` key lets an administrator turn memory off. LOCKDOWN turns it off.
+- **Admin.** A new `features.memory` key lets an administrator turn memory off. LOCKDOWN turns it off. Off means
+  Ember keeps nothing new and uses nothing saved; it never hides what was saved before from the person it is about
+  (memory-r9-3). Settings › Memory says the organisation turned memory off and still lists the verified account's
+  facts (`memoryViewOf`, view.ts: consent and a verified owner, never the policy), with **Forget** and **Forget
+  everything**; there is no Correct…, and a Forget has no Undo there, since nothing is put back into memory the
+  organisation turned off (main refuses `restore`, and the line says so). Under a lockdown nothing connects, so the
+  owner can't be verified and the facts stay hidden as for any unverified memory: the host says why
+  (`pauseAccount("lockdown")`), Memory says "Your organisation's policy has stopped Ember for now…", never that a
+  GitHub check will come back, and offers Forget everything.
 
 ## 4. Plan
 
