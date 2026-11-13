@@ -3291,6 +3291,10 @@ export class Worker {
       if (this.isOver) return STOPPED();
       if (asked === "cancelled") {
         this.refusals.noteStep(closed, "refused");
+        // Closing the form is the user's no, as a "Not now" is: the task is held as one they said no in, and with
+        // nothing done after it, it ends as their choice, never as done or as a failure (afterNo: integ-x-3).
+        this.saidNoThisTask = true;
+        this.declined = true;
         return this.vaultRefused(element, "the user closed Ember's Secure Form without saving", NOT_SAVED);
       }
       if (asked !== "saved" && asked !== "kept") {

@@ -13,7 +13,7 @@ import path from "node:path";
 import { PolicyEngine } from "../../app/main/policy/policy";
 import { ALL_SCOPES } from "../../app/main/policy/autonomy";
 import { noKindName, type Refusals } from "../../app/main/policy/refusals";
-import { Worker, type TaskSpec, type WorkerDeps, type WorkerVault } from "../../app/main/agent/worker";
+import { Worker, afterNo, type TaskSpec, type WorkerDeps, type WorkerVault } from "../../app/main/agent/worker";
 import { workerSystemMessage, VAULT_RULE } from "../../app/main/agent/worker-persona";
 import { Presenter } from "../../app/main/agent/presenter";
 import { VaultService } from "../../app/main/vault/service";
@@ -415,6 +415,22 @@ describe("fill_from_vault and what the user turned down earlier in the task (the
     expect(book.step(names("keys", field, "Tab"))).toBeNull();
     expect(book.step(names("text", { role: SEARCH.role, name: SEARCH.name }, "github"))).toBeNull();
     expect(book.step(names("keys", { role: SEARCH.role, name: SEARCH.name }, "a"))).toBeNull();
+  });
+
+  it("ends the task as the user's no, never as done, after they closed the Secure Form and nothing was done since (integ-x-3)", async () => {
+    const h = await worker({ form: [null] });
+    await h.call("perceive_window", {});
+    await h.call("fill_from_vault", { id: 2, what: "password" });
+    const flags = h.w as unknown as { declined: boolean; expired: boolean; worked: boolean; saidNoThisTask: boolean };
+    expect(flags.saidNoThisTask).toBe(true);
+    expect(afterNo({ declined: flags.declined, expired: flags.expired, worked: flags.worked }, { success: true, summary: "Signed you in." }))
+      .toEqual({ success: false, stopped: true, declined: true, summary: "You said not now, so I left it. Signed you in." });
+    // A fill refused for any other reason is nobody's no.
+    const other = await worker({ saved: [["login", GITHUB, { password: CANARY }]] });
+    await other.call("perceive_window", {});
+    expect((await other.call("fill_from_vault", { id: 1, what: "user name" })).resultType).toBe("denied");
+    const kept = other.w as unknown as { declined: boolean; saidNoThisTask: boolean };
+    expect([kept.declined, kept.saidNoThisTask]).toEqual([false, false]);
   });
 });
 
