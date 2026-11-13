@@ -196,4 +196,15 @@ describe("the corner card's live region", () => {
     expect(main).toContain("const news = live.taskNews(tasksNow, newsHeld);");
     expect(main).toContain("newsSoon = setTimeout(() => { newsSoon = undefined; newsHeld = false; sayTasks(); }, LIVE_SETTLE_MS);");
   });
+
+  it("says a task's end in the pill's region on a composited desktop too, where the overlay's cards say it to no one (accessibility-r9-1)", () => {
+    const main = readFileSync("app/renderer/handle/main.ts", "utf8");
+    const at = main.indexOf("  if (!fallback) {");
+    expect(at).toBeGreaterThan(0);
+    // Before the pill's early return, not only on the corner card's path.
+    const said = main.indexOf("  tasksNews(s);\n");
+    expect(said).toBeGreaterThan(0);
+    expect(said).toBeLessThan(at);
+    expect(main.indexOf("  tasksNews(s);\n", at)).toBe(-1);
+  });
 });
