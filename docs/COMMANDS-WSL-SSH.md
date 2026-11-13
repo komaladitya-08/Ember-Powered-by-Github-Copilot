@@ -216,8 +216,10 @@ Ember stops and asks before a command that:
   keyvault secret show`, `az storage account keys list`, `terraform output -raw` or `-json`, `terraform show -json`);
   a Wi-Fi password (`nmcli device wifi show-password`); a file named for what it holds (`password.txt`,
   `secrets.txt`, `credentials.txt`, `.vault_pass`, `.htpasswd`, `~/.boto`, `~/.s3cfg`, Composer's `auth.json`,
-  FileZilla's and Pidgin's saved sign-ins); a fetch of a cloud computer's own sign-in address (`curl
-  http://169.254.169.254/…`); a password or token
+  FileZilla's and Pidgin's saved sign-ins); a fetch of a cloud computer's own sign-in address, however it
+  is written (`curl http://169.254.169.254/…`, `http://0xa9fea9fe/`, `http://2852039166/`, `--resolve
+  a:80:169.254.169.254`); a package manager asked for a stored token (`npm config get //registry.npmjs.org/:_authToken`,
+  `composer config github-oauth.github.com`); a password or token
   written on the command line; and a variable named for one handed to any program as an argument or on its input,
   known to Ember or not (`mytool --token "$GITHUB_TOKEN"`, `curl -H "Authorization: Bearer $API_KEY" …`,
   `$env:NPM_TOKEN`, `%NPM_TOKEN%`, `base64 <<< $GITHUB_TOKEN`):

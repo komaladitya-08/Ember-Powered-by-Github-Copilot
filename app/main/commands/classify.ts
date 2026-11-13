@@ -1674,7 +1674,25 @@ const COMPILERS = new Set([
  */
 const TEXT_FETCHERS = new Set(["gh", "glab", "hub", "s3cmd", "b2", "gdown", "ipfs", "yt-dlp", "youtube-dl", "ncftpget", "lftp", "huggingface-cli", "hf", "az", "aws", "gcloud", "kubectl", "doctl", "mc", "rclone", "adb"]);
 /** The instance metadata services of the clouds, by address and by name. */
-const CLOUD_METADATA = /(^|[/@[])(169\.254\.169\.254|169\.254\.170\.2|100\.100\.100\.200|fd00:ec2::254|metadata\.google\.internal|metadata\.azure\.com|instance-data)([\]/:?#]|$)/i;
+const CLOUD_METADATA = /(^|[/@[:])(169\.254\.169\.254|169\.254\.170\.2|100\.100\.100\.200|fd00:ec2::254|a9fe:a9fe|metadata\.google\.internal|metadata\.azure\.com|instance-data)\.?([\]/:?#]|$)/i;
+/**
+ * A word that names one of them, also with its address written another way a resolver takes (commands-classes-y9-7):
+ * one number, hex or octal parts, fewer than four parts (`0xa9fea9fe`, `2852039166`, `0251.0376.0251.0376`,
+ * `169.254.43518`), a dot after it, inside an IPv6 address, or after the colons of curl's `--resolve`.
+ */
+function cloudMetadata(word: string): boolean {
+  if (CLOUD_METADATA.test(word)) return true;
+  for (const m of word.matchAll(/(?:^|\/\/|@)([0-9a-fx.]+)(?=[:/?#]|$)/gi)) {
+    const parts = m[1].replace(/\.$/, "").split(".");
+    if (parts.length > 4 || parts.some(p => !/^(0x[0-9a-f]+|\d+)$/i.test(p))) continue;
+    const nums = parts.map(p => (/^0x/i.test(p) ? parseInt(p, 16) : /^0\d/.test(p) ? parseInt(p, 8) : parseInt(p, 10)));
+    if (nums.some(n => Number.isNaN(n))) continue;
+    // inet_aton's reading: the last part fills the bytes the earlier parts leave.
+    const n = nums.slice(0, -1).reduce((sum, v, k) => sum + v * 256 ** (3 - k), 0) + nums[nums.length - 1];
+    if (n === 0xa9fea9fe || n === 0xa9feaa02 || n === 0x646464c8) return true;
+  }
+  return false;
+}
 /** The text of each command substitution in a word as written: `$( … )` (never `$(( … ))`) and backticks. */
 function substituted(raw: string): string[] {
   const text = raw.replace(/'[^']*'/g, "");
@@ -3736,7 +3754,7 @@ class Engine extends Classifier {
     if (this.asMain || !FETCHERS.has(key)) return;
     // The address a cloud computer hands out its own sign-in at (the instance metadata service): what a fetch of it
     // prints is a credential (commands-remote-r9-9).
-    if (args.some(a => a.v !== null && CLOUD_METADATA.test(a.v))) this.add("secret", "secret.cloud", SAYS.secrets);
+    if (args.some(a => a.v !== null && cloudMetadata(a.v))) this.add("secret", "secret.cloud", SAYS.secrets);
     const says = "May send what a file or a command holds to another computer.";
     const filled = (name: string): boolean => (this.varValues.get(name) ?? []).some(f => f.includes(UNSEEN)) || this.loopVars.get(name) === "read";
     let hit = /^(http|https|xh|xhs)$/.test(key) && s.stdin === "file";
@@ -8147,6 +8165,9 @@ reg(NATIVE, ["npm", "pnpm", "yarn", "bun", "corepack"], h => {
   if (h.args.some(a => /^--script-shell(=|$)/.test(a.v ?? ""))) h.e.unclear("unclear.assignment", "It changes how package scripts are run.");
   const configVerb = verb === "config" || verb === "c" ? h.args[g.verbAt + 1]?.v ?? null : verb;
   if (configVerb === "set" && h.args.some(a => /^script-shell(=|$)/.test(a.v ?? ""))) h.e.unclear("unclear.assignment", "It changes how package scripts are run.");
+  // `npm config get //registry.npmjs.org/:_authToken`, `npm get _auth`, `yarn config get npmAuthToken`: a stored token
+  // printed (commands-classes-y9-7).
+  if (/^(config|c|get)$/.test(verb ?? "") && rest.some(a => /_auth|_password|token|password|secret/i.test(a.v ?? ""))) h.e.add("secret", "secret.program", SAYS.secrets);
   const global = g.opts.some(o => o.name === "-g" || o.name === "--global") || rest.some(a => a.v === "-g" || a.v === "--global" || a.v === "--location=global");
   const widening = global ? ["--global"] : [];
   if (verbArg && verb === null) { h.e.unclear("unclear.npm-verb", "Ember can't tell which command this runs."); return; }
@@ -8411,6 +8432,8 @@ reg(NATIVE, ["pipx", "poetry", "pipenv", "uv", "rye", "pdm", "hatch", "conda", "
   if (h.key === "composer" && verb === "run-script") { nameCheck(h, specs[0]?.v ?? ""); return; }
   // `composer config <key> <value>` writes a setting later commands obey (commands-remote-r9-11); `--list` and one
   // key alone only read.
+  // Its stored sign-ins, printed or set (commands-classes-y9-7).
+  if (h.key === "composer" && verb === "config" && specs.some(a => /^(github-oauth|gitlab-oauth|gitlab-token|bitbucket-oauth|http-basic|bearer)(\.|$)/i.test(a.v ?? ""))) h.e.add("secret", "secret.program", SAYS.secrets);
   if (h.key === "composer" && verb === "config" && (specs.length >= 2 || rest.some(a => a.v === "--unset")) && !rest.some(a => a.v === "-l" || a.v === "--list")) {
     h.e.add("system", "pkg.config", "Changes a setting later commands obey, such as where packages come from.", { program: "composer config" });
     return;

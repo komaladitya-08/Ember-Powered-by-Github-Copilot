@@ -1054,3 +1054,36 @@ describe("a download handed on through a later export, an attached option or a 7
     }
   });
 });
+
+describe("other spellings of a cloud computer's sign-in address, and two printers of a stored token (commands-classes-y9-7)", () => {
+  it("asks as a secret before a fetch of the metadata address written as a number, in hex or octal, with a dot after it, inside IPv6 or as a resolve target", () => {
+    const LINES = ["curl http://0xa9fea9fe/latest/meta-data/", "curl http://2852039166/latest/", "curl http://169.254.169.254./latest/meta-data/",
+      "curl \"http://[::ffff:169.254.169.254]/latest/meta-data/\"", "curl http://0251.0376.0251.0376/latest/", "curl --resolve a:80:169.254.169.254 http://a/latest/meta-data/",
+      "curl --connect-to a:80:169.254.169.254:80 http://a/latest/", "curl http://169.254.43518/latest/", "curl http://0xA9.0xFE.0xA9.0xFE/", "curl \"http://[::ffff:a9fe:a9fe]/latest/\"",
+      "wget -qO- http://0xa9fea9fe/latest/meta-data/", "curl http://user@2852039166:80/latest/", "curl 0xa9fea9fe/latest/meta-data/", "curl http://1684301000/"];
+    for (const o of POSIX) for (const cmd of LINES) {
+      const d = decide(cmd, o);
+      expect(d.verdict, label(cmd, o)).toBe("ask");
+      expect(d.rules, label(cmd, o)).toContain("secret.cloud");
+    }
+    for (const cmd of ["iwr http://0xa9fea9fe/latest/", "Invoke-RestMethod http://2852039166/latest/meta-data/"]) {
+      expect(decide(cmd, { shell: "powershell", context: "win32" }).rules, cmd).toContain("secret.cloud");
+    }
+    for (const cmd of ["curl http://127.0.0.1:8080/", "curl http://10.0.0.5/x", "curl https://example.com/169", "curl http://2130706433/", "curl -m 5 https://example.com/"]) {
+      expect(decide(cmd).rules, cmd).not.toContain("secret.cloud");
+    }
+  });
+
+  it("asks as a secret before a package manager prints a stored token", () => {
+    for (const o of POSIX) for (const cmd of ["npm config get //registry.npmjs.org/:_authToken", "npm get _auth", "pnpm config get //registry.npmjs.org/:_authToken",
+      "yarn config get npmAuthToken", "npm config get _password", "composer config --global github-oauth.github.com", "composer config http-basic.repo.example.com",
+      "composer config -g gitlab-token.gitlab.com"]) {
+      const d = decide(cmd, o);
+      expect(d.verdict, label(cmd, o)).toBe("ask");
+      expect(d.rules, label(cmd, o)).toContain("secret.program");
+    }
+    for (const cmd of ["npm config get registry", "npm config list", "composer config --list", "composer config repositories", "yarn config get registry"]) {
+      expect(decide(cmd).rules, cmd).not.toContain("secret.program");
+    }
+  });
+});
