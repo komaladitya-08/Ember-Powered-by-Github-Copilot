@@ -1619,8 +1619,9 @@ details the user gives Ember in its own **Secure Form**, each bound to one desti
   Firefox, from the vault: Autopilot is on.") and audited with the kind, the part and the destination. The task's
   model hears only whether it was filled.
 - **After a fill.** Nothing Ember reads or captures afterwards holds the value. `VaultService.use` gives every value to
-  the redactor (app/main/vault/redact.ts, `VaultRedactor`) before it is put anywhere; a value it can't take (a pattern that can't be built, or more than the 400 values it
-  watches in a run) is not filled. The list lives in main's memory for the run and is never written. From then on the value is replaced by
+  the redactor (app/main/vault/redact.ts, `VaultRedactor`) before it is put anywhere; a value it can't take (a
+  pattern that can't be built, or more than the 400 values it watches in a run) is not filled. The list lives in
+  main's memory for the run and is never written. From then on the value is replaced by
   "[hidden: filled from Ember's vault]":
   - in everything a model is sent: `AgentHost` wraps the runtime client in `redactingClient`
     (app/main/agent/redacting-client.ts), so every session's system message, prompts, tool results (a tree read, a
@@ -1639,7 +1640,11 @@ details the user gives Ember in its own **Secure Form**, each bound to one desti
   who knows the text around it which three they are, on any page for the rest of the run, so such a value is kept
   by its field alone, which is secret from the fill on (never read, black in every picture); a page that repeats a
   security code outside its field is not covered. Text cut short in the middle of a value
-  before it gets there isn't recognised, so `Perception` asks the redactor about every element first
+  before it gets there isn't recognised, so screen text is redacted whole before it is cut: every title, name and
+  text quoted for a model goes through perception/elements.ts's quoting (`quoteUntrusted`, `serializeElements`,
+  the worker's `list_windows` and a click's landing place, Assisted's description of a step), which main hands the
+  redactor (`setQuoteRedactor`); code that cuts screen text for a model some other way must do the same. And
+  `Perception` asks the redactor about every element first
   (`holdsVaultValue`): whatever says a filled value (the field itself, a line that repeats it, a tab named after it)
   loses its words and is blacked out of every picture as a secret field is, and a field is kept secret by the helper
   too. There is no picture of a window whose own title says a value, nor, once a part an app shows as it is (a user

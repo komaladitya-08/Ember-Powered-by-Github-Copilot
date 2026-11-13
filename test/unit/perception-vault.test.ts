@@ -5,9 +5,10 @@
  * Perception and redactor over a pretend desktop, with real pixels.
  */
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import sharp from "sharp";
 import { Perception } from "../../app/main/perception";
+import { quoteUntrusted, screenWord, setQuoteRedactor } from "../../app/main/perception/elements";
 import { VaultRedactor } from "../../app/main/vault/redact";
 import type { AtspiSidecar, AxNode, AxWindow, Bounds, ReadWindowResult } from "../../app/main/perception/sidecar";
 import type { StackedWindow, X11 } from "../../app/main/x11";
@@ -94,6 +95,33 @@ describe("a checkout after a card's security code was filled (vault-3)", () => {
     expect(p.nodes[1].text).toBe("Flat 437, ring twice");
     expect(d.marked).toEqual([]);
     expect(p.capture).toBeTruthy();
+  });
+});
+
+describe("text cut short for a model after a fill from the vault (vault-3)", () => {
+  afterEach(() => setQuoteRedactor(null));
+  const LONG = `Re: the quarterly planning notes for the northern region office move and budget — ${EMAIL} — Example Mail — Mozilla Firefox`;
+
+  it("never hands on the first part of a value that the cut falls in: a window's title, a name, a click's landing place (vault-3-x9-2)", async () => {
+    const d = desktop({ nodes: [{ id: 1, parent: null, depth: 1, role: "entry", name: "Search", states: EDIT, bounds: at(100), text: "" }], title: LONG });
+    d.redactor!.note("email", EMAIL);
+    setQuoteRedactor(t => d.redactor!.text(t));
+    // The title is cut at 100 characters, in the middle of the address: the boundary can't know "ada.canary@example…".
+    expect(LONG.slice(0, 100)).toContain("ada.canary@example");
+    const p = await d.perception.perceive({ image: true, scope: "window", target: { pid: 42 } });
+    const sent = d.redactor!.text(p.text);
+    expect(sent).not.toMatch(/ada\.can|canary@/i);
+    expect(sent.split("\n")[0]).toContain('budget — [hidden: filled fr…" untrusted="true">');
+    // list_windows' line and a click's landing place use the same quoting (worker.ts `q`), at 100 and 80 characters.
+    for (const max of [100, 97, 90, 80, 40]) expect(quoteUntrusted(LONG, max), String(max)).not.toMatch(/ada|canary/i);
+    expect(quoteUntrusted(`${"x".repeat(70)} ${EMAIL}`, 80)).toBe(JSON.stringify(`${"x".repeat(70)} [hidden: …`));
+    expect(screenWord(`role ${EMAIL} ${"y".repeat(40)}`)).not.toMatch(/canary/);
+  });
+
+  it("hands on nothing of a text it couldn't check, and everything as it is while nothing was filled (vault-3-x9-2)", () => {
+    expect(quoteUntrusted(LONG, 100)).toBe(JSON.stringify(`${LONG.slice(0, 100)}…`));
+    setQuoteRedactor(() => { throw new Error("down"); });
+    expect(quoteUntrusted(LONG, 100)).toBe('""');
   });
 });
 

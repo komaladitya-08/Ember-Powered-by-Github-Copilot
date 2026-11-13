@@ -320,8 +320,26 @@ export function insideSecrets(nodes: AxNode[], secret: Set<number>): Set<number>
   return out;
 }
 
+/**
+ * What screen text passes before it is cut short for a model (main: the vault's redactor, app/main/vault/redact.ts).
+ * Where text leaves for a model a value the vault filled is replaced, but a value the cut fell in is no longer the
+ * value there, and its first part would go on (a window's title cut at 100 characters in the middle of the address
+ * that was filled: review vault-3-x9-2). So the whole text is redacted here, and then cut. Unset (the tests, Ember's
+ * agent on another computer, where nothing is filled): text is quoted as it is.
+ */
+let beforeCut: ((text: string) => string) | null = null;
+/** Sets (or, with null, clears) what every quoted screen text passes before it is cut. Main calls it once, before any read. */
+export function setQuoteRedactor(redact: ((text: string) => string) | null): void {
+  beforeCut = redact;
+}
+/** `s` as it may be cut: nothing of a text that couldn't be checked. */
+function whole(s: string): string {
+  if (!beforeCut) return s;
+  try { return beforeCut(s); } catch { return ""; }
+}
+
 /** JSON-quoted and truncated; "<" is escaped so screen text can't close the <screen> wrapper. */
-const quote = (s: string, max: number) => JSON.stringify(s.length > max ? s.slice(0, max) + "…" : s).replace(/</g, "\\u003c");
+const quote = (text: string, max: number) => { const s = whole(text); return JSON.stringify(s.length > max ? s.slice(0, max) + "…" : s).replace(/</g, "\\u003c"); };
 /** The same quoting for screen text that reaches the model anywhere else (titles, names, values). */
 export const quoteUntrusted = (s: string, max = 120) => quote(s, max);
 /**

@@ -240,6 +240,8 @@ describe("redactingClient: where text leaves for a model (vault-3)", () => {
     expect(main).toContain("redact: text => vaultRedactor.text(text),");
     expect(main).toContain("entry => vaultRedactor.deep(entry));");
     expect(main).toContain("filling: (part, value) => vaultRedactor.note(part, value),");
+    // Screen text passes it whole before it is cut short for a model (vault-3-x9-2).
+    expect(main).toContain("setQuoteRedactor(text => vaultRedactor.text(text));");
     expect(main).toContain("holdsVaultValue: text => vaultRedactor.holds(text), vaultShown: () => vaultRedactor.shown,");
   });
 });

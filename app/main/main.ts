@@ -38,7 +38,7 @@ import { revive } from "./revive";
 import { memoryReport } from "./memory-report";
 import { friendlyApp, useAppNames } from "../shared/apps";
 import { AtspiSidecar, type FocusBefore } from "./perception/sidecar";
-import { isNeverLook } from "./perception/elements";
+import { isNeverLook, setQuoteRedactor } from "./perception/elements";
 import { Perception, type QuickContext } from "./perception";
 import { warmText } from "./perception/capture";
 import { TEXT_WARM_DELAY_MS, scheduleTextWarm } from "./perception/text-warm";
@@ -212,6 +212,8 @@ const wantedLevel = logLevel(process.env.EMBER_LOG_LEVEL);
 // The vault's redactor (app/main/vault/redact.ts): every value the vault fills is noted here, in memory only, and
 // replaced wherever text leaves for a model, the audit log or the logs. Made before the logger, which passes every line through it.
 const vaultRedactor = new VaultRedactor();
+// Screen text is redacted whole before it is cut short for a model: a value the cut fell in would pass the boundary (vault-3-x9-2).
+setQuoteRedactor(text => vaultRedactor.text(text));
 const log = createLogger({
   dir: path.join(userData, "logs"),
   level: wantedLevel.level,

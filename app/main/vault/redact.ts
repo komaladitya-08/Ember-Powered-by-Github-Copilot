@@ -22,7 +22,8 @@
  * secret from the fill on (the helper's fill and the worker's mark), never read and blacked out of every picture.
  *
  * Text cut short in the middle of a value before it gets here isn't recognised: readers that cut text ask `holds`
- * first (Perception does, for every element).
+ * first (Perception does, for every element), and screen text is redacted whole before it is cut (perception/elements.ts
+ * `setQuoteRedactor`, which main sets: review vault-3-x9-2).
  *
  * Plain Node, no Electron: the list lives in main's memory and is never written, sent or logged.
  */
