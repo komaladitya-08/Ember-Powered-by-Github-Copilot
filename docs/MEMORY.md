@@ -627,9 +627,11 @@ never the user's own writing or someone else's ("Keep my replies to customers sh
 Ember or the name itself), and wholly about that (`profileKind`: "Likes to be called Sam", "Name is Sam", "Prefers
 short answers"; never "Boss likes to be called Dave", "Has a brother called Sam" or "Prefers short, polite replies
 to customers"), with the very name the user said. Anything else is kept as the model gave it, whose it is by the
-usual rule, and the profile stays as it was. A fact said again as a relation's one value by a source at least as strong takes that
-relation and closes what held it (`MemoryGraph.add`'s reinforce path), so "Call me Sam", typed after the
-conversation kept that name from unchecked speech, makes it theirs and lets go of the old one. And when a fact that
+usual rule, and the profile stays as it was. A fact said again as a relation's one value takes that relation and closes what held it (`MemoryGraph.add`'s
+reinforce path) only when it had none, or a stronger source says it now: so "Call me Sam", typed after the
+conversation kept that name from unchecked speech, makes it theirs and lets go of the old one, while a relation is
+never re-labelled by its own source or a weaker one (a turn that restates the name, read under `preferred_name`,
+leaves it under `called`, where the profile finds it: memory-x9-5). And when a fact that
 isn't the user's own is kept beside what they told Ember about the same thing (the same single relation, or the
 profile's name or answer length), the remember tool's answer says which of theirs still holds, and for the profile
 that it goes with every request, so Ember tells the user and points to saying it themselves or Correct… instead of

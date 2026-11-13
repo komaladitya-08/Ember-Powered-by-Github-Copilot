@@ -211,10 +211,13 @@ export class MemoryGraph {
     if (same) {
       // Said again: surer (the stronger source wins), and fresh. A note made again records what it rests on now too.
       const from = mergeDerived(same.derivedFrom, input.derivedFrom);
-      // Said again as the one value of a relation, by a source at least as strong ("Call me Sam", typed, after the
-      // conversation kept "Likes to be called Sam" from speech it couldn't check): it takes that relation, and what
-      // held it before is closed as a new fact would close it (memory-r9-5).
-      const takes = !!input.single && !!predicate && same.predicate !== predicate && rank(input.source) <= rank(same.source);
+      // Said again as the one value of a relation ("Call me Sam", typed, after the conversation kept "Likes to be
+      // called Sam" from speech it couldn't check): it takes that relation, and what held it before is closed as a new
+      // fact would close it (memory-r9-5). Only when the fact had no relation, or a stronger source says it now: a
+      // relation is never re-labelled by its own source or a weaker one, since the profile and a later "single" fact
+      // find it by that name ("I like to be called Sam, as you know", read as `preferred_name`, left nothing under
+      // `called` to go with requests: memory-x9-5).
+      const takes = !!input.single && !!predicate && same.predicate !== predicate && (!same.predicate || rank(input.source) < rank(same.source));
       const fact: Fact = { ...same, confidence: Math.max(same.confidence, confidence), uses: same.uses + 1, lastUsedAt: now, source: stronger(same.source, input.source), ...(from ? { derivedFrom: from } : {}), ...(takes ? { predicate } : {}) };
       this.facts.set(fact.id, fact);
       if (takes) {

@@ -9,6 +9,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { MemoryGraph } from "../../app/main/memory/graph";
 import type { OneShot } from "../../app/main/memory/learn";
 import { MemoryLearning } from "../../app/main/memory/learning";
 import { aboutUser, lengthSaid, nameSaid, profileKind, profileSaid } from "../../app/main/memory/profile";
@@ -166,5 +167,51 @@ describe("a length that is about something else never becomes how long Ember's a
       expect(profileSaid(fact, USER, "Your answers are too long. I prefer short answers"), fact).toBeNull();
       expect(profileKind(fact), fact).toBeNull();
     }
+  });
+});
+
+describe("saying your name again keeps it in the profile (memory-x9-5)", () => {
+  const SAM = "<memory untrusted=\"true\">\n- Likes to be called Sam\n</memory>";
+
+  it("leaves the name under the profile's relation when the turn that restates it is read under another relation's name (memory-x9-5)", async () => {
+    const r = rig();
+    r.l.introduce({ name: "Sam" });
+    r.day();
+    await r.read("I like to be called Sam, as you know", "Likes to be called Sam", USER, "I like to be called Sam", { predicate: "preferred_name", single: true });
+    expect(r.review()).toEqual(["user: Likes to be called Sam"]);
+    r.day();
+    expect(await r.profile()).toBe(SAM);
+    // And a later answer in Tell Ember about you still replaces it.
+    r.l.introduce({ name: "Samuel" });
+    expect(r.review()).toEqual(["user: Likes to be called Samuel", "user: Likes to be called Sam (closed)"]);
+  });
+
+  it("leaves it there when the remember tool restates it as another relation's one value (memory-x9-5)", async () => {
+    const r = rig();
+    r.l.introduce({ name: "Sam", length: "short" });
+    r.day();
+    expect(r.remember("Remember: likes to be called Sam.", "Likes to be called Sam", USER, "preferred_name")).toBe("Already remembered [f1].");
+    expect(await r.profile()).toBe("<memory untrusted=\"true\">\n- Likes to be called Sam\n- Prefers short answers\n</memory>");
+  });
+
+  it("re-labels a fact said again only when it had no relation or a stronger source says it (memory-x9-5)", () => {
+    const n = { e: 0, f: 0 };
+    const g = new MemoryGraph(undefined, { now: () => new Date("2026-11-12T10:00:00Z"), id: p => `${p}${++n[p]}` });
+    const add = (text: string, source: "user" | "conversation", predicate?: string) => g.add({ text, about: USER.map(a => ({ name: a.name, kind: "person" as const })), source, ...(predicate ? { predicate, single: true } : {}) });
+    add("Lives in Leeds", "user", "lives_in");
+    // The same source, another name for the relation: the fact stays where the user's later "Lives in York" will find it.
+    expect(add("Lives in Leeds", "user", "home_city")).toMatchObject({ kind: "reinforced", fact: { predicate: "lives_in" } });
+    expect(add("Lives in Leeds", "conversation", "based_in")).toMatchObject({ kind: "reinforced", fact: { predicate: "lives_in", source: "user" } });
+    expect(add("Lives in York", "user", "lives_in")).toMatchObject({ kind: "added", closed: [{ text: "Lives in Leeds" }] });
+    // No relation yet: it takes the one it is said again under (memory-r9-5).
+    add("Likes to be called Ram", "user", "called");
+    add("Likes to be called Sam", "conversation");
+    expect(add("Likes to be called Sam", "user", "called")).toMatchObject({ kind: "reinforced", fact: { predicate: "called", source: "user" } });
+    expect(g.allFacts(true).map(f => f.text).sort()).toEqual(["Likes to be called Sam", "Lives in York"]);
+    // The conversation's, under a model's own name for the relation: the user's telling takes it over.
+    add("Works at Globex", "user", "works_at");
+    add("Works at Initech", "conversation", "employer");
+    expect(add("Works at Initech", "user", "works_at")).toMatchObject({ kind: "reinforced", fact: { predicate: "works_at", source: "user" } });
+    expect(g.allFacts(true).map(f => f.text).sort()).toEqual(["Likes to be called Sam", "Lives in York", "Works at Initech"]);
   });
 });
