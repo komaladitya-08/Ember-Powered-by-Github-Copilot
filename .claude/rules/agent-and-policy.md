@@ -268,7 +268,12 @@ docs/MEMORY.md is the design. The core (app/main/memory/) is pure and has no Ele
   stored words ("Ember forgot: …", `onAskedForget`), with Undo through `MemoryService.restore` (UNDO_FORGET_MS).
 - **A saved fact is the user's only in their own words, said the same way round** (`ownFact`, service.ts: `ownWords`
   and `samePolarity`, so "Priya is not my manager" never makes "Priya is the manager" theirs). Anything else is
-  `conversation`.
+  `conversation`. The one other way (`profileSaid`, profile.ts; memory-r9-5): what to call the user and how long
+  answers should be, when their own words that turn say it (`nameSaid`, `lengthSaid`) and the fact says the same name
+  or length; it is kept as the profile's own fact (`called`, `answer_length`) under Ember's label, by the remember
+  tool and when a turn is read, never from a question, a negation or unchecked speech. A fact kept beside a `user`
+  fact it would have replaced is said so in the tool's answer (`besideUsers`); the weaker source still never
+  overrules.
 - **Learning on its own** (`MemoryLearning`, learning.ts; docs/MEMORY.md steps 3–5) runs only while memory is in force,
   and the host and conductor reach it only through `HostOptions.memory` (`asked`, `heard`, `forRequest`, `taskDone`,
   `useModel`, `intent`, `rememberNote`):

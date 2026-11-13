@@ -578,6 +578,23 @@ nothing. With memory on, the conductor's rules say a stated answer length wins o
 replies" in Tell Ember about you, and "spoken aloud or not" in the spoken interview (the user's own words only), set
 Ember's real speaking choice (Settings › Voice), not only a fact.
 
+A new name or answer length told in conversation takes the profile's place too (profile.ts, memory-r9-5). When the
+user's own words in a turn say what to call them ("Call me Sam from now on", "my name is Sam", "I go by Sam now",
+"I'd like to be called Sam": `nameSaid`, never a question, "don't call me…", a condition or "call me back") or how
+long Ember's answers should be ("Stop being so brief, I want the full detail", "your answers are too long":
+`lengthSaid`, only from words about its answers, read the right way round), and the fact the model saves for it, by
+the remember tool or when the turn is read, says the same name or length, the fact kept is the profile's own: "Likes
+to be called Sam" under `called`, or the answer length under `answer_length` (in the user's words when the fact is
+mostly theirs already, else "Prefers short answers" or "Prefers detailed answers"), `user`, replacing the one
+before, whatever relation the model named. The user's words decide, never the model's: speech Ember couldn't check
+reaches here as no words. A fact said again as a relation's one value by a source at least as strong takes that
+relation and closes what held it (`MemoryGraph.add`'s reinforce path), so "Call me Sam", typed after the
+conversation kept that name from unchecked speech, makes it theirs and lets go of the old one. And when a fact that
+isn't the user's own is kept beside what they told Ember about the same thing (the same single relation, or the
+profile's name or answer length), the remember tool's answer says which of theirs still holds, and for the profile
+that it goes with every request, so Ember tells the user and points to saying it themselves or Correct… instead of
+"I'll remember that". The weaker source still never overrules.
+
 **Cost.** In model requests on the conversation's model: extraction at most 12 an hour and 60 a day (typically one
 per three turns, plus one per finished task), refinement at most 6 a day, questions none. At the extremes, 12 + 6 = 18
 in one hour; a day of steady use stays under 66.

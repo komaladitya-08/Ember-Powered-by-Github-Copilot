@@ -25,7 +25,8 @@ import {
   remembersWithMore, type MemoryNote, type MemoryNotNow,
 } from "./questions";
 import { REFINE_SYSTEM, applyRefinement, parseRefinement, recentFacts, refinePrompt } from "./refine";
-import { ownFact, type AboutRef, type MemoryItem, type MemoryLog, type MemoryService } from "./service";
+import { profileSaid } from "./profile";
+import { ownFact, rememberedSource, type AboutRef, type MemoryItem, type MemoryLog, type MemoryService } from "./service";
 import { fold, negated, similarity } from "./text";
 
 /** Idle this long (no turn, no task, screen unlocked) before the sleep-time pass or a question (ms). */
@@ -221,7 +222,7 @@ export class MemoryLearning {
           return "Not remembered: it reads like an instruction, and only what the user says themselves may tell me what to do.";
         }
         // What the user had Ember forget in this conversation comes back only in their own words (memory-r9-1).
-        const held = this.hold.heldBack(fact, ownFact(fact, said) ? "user" : "conversation", "tool");
+        const held = this.hold.heldBack(fact, rememberedSource(fact, said), "tool");
         if (held) {
           this.d.log.info("memory.learn_skipped", { why: "forgotten_here" });
           return held === "all" ? HELD_ALL : HELD_FORGOTTEN;
@@ -381,7 +382,10 @@ export class MemoryLearning {
    * holds back much the same words from what came in since (a task's result) for FORGOTTEN_TURN_MS. A later turn that
    * says it again is learned from as usual after that.
    */
-  private keepLearned(f: NewFact, since: number, said: string | null): AddResult {
+  private keepLearned(found: NewFact, since: number, said: string | null): AddResult {
+    // What to call the user or how long answers should be, in their own words in that turn: the profile's own fact,
+    // as the remember tool keeps it (memory-r9-5).
+    const f = (said ? profileSaid(found.text, said, found.source === "user") : null) ?? found;
     // Forgotten or corrected in this conversation: only the user's own words bring it back (memory-r9-1).
     if (this.hold.heldBack(f.text, f.source, said === null ? "task" : { said })) {
       this.d.log.info("memory.learn_skipped", { why: "forgotten_here" });

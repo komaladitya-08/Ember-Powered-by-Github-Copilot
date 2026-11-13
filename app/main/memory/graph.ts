@@ -211,8 +211,18 @@ export class MemoryGraph {
     if (same) {
       // Said again: surer (the stronger source wins), and fresh. A note made again records what it rests on now too.
       const from = mergeDerived(same.derivedFrom, input.derivedFrom);
-      const fact: Fact = { ...same, confidence: Math.max(same.confidence, confidence), uses: same.uses + 1, lastUsedAt: now, source: stronger(same.source, input.source), ...(from ? { derivedFrom: from } : {}) };
+      // Said again as the one value of a relation, by a source at least as strong ("Call me Sam", typed, after the
+      // conversation kept "Likes to be called Sam" from speech it couldn't check): it takes that relation, and what
+      // held it before is closed as a new fact would close it (memory-r9-5).
+      const takes = !!input.single && !!predicate && same.predicate !== predicate && rank(input.source) <= rank(same.source);
+      const fact: Fact = { ...same, confidence: Math.max(same.confidence, confidence), uses: same.uses + 1, lastUsedAt: now, source: stronger(same.source, input.source), ...(from ? { derivedFrom: from } : {}), ...(takes ? { predicate } : {}) };
       this.facts.set(fact.id, fact);
+      if (takes) {
+        for (const f of this.allFacts(true)) {
+          if (f.id === fact.id || f.entities[0] !== fact.entities[0] || f.predicate !== predicate || rank(fact.source) > rank(f.source)) continue;
+          this.facts.set(f.id, { ...f, invalidAt: now, supersededBy: fact.id });
+        }
+      }
       return { kind: "reinforced", fact };
     }
 
