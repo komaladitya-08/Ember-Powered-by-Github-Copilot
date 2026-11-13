@@ -47,7 +47,7 @@ import type { Capture } from "../../app/main/perception/capture";
 import { startOverlayChild, type OverlayChild } from "./overlay-child";
 import { PROBE_PACE_MS, PROBE_TEXT, probeTimeline, probeVerdict } from "./typeahead-probe";
 import { askWant, closeAsk, openAskAt, setTextSize, type InEmber } from "./ask-size";
-import { focusTrail, waitForWindowAt, type TrailEvent, type WindowAt } from "./window-at";
+import { focusTrail, hoverActivation, waitForWindowAt, type TrailEvent, type WindowAt } from "./window-at";
 
 const required = process.env.EMBER_WIN32_TEST === "1";
 const onWindows = process.platform === "win32";
@@ -72,6 +72,13 @@ const ASK_FIELD_WAIT_MS = 22_000;
  */
 const OWN_OVER_MS = 2_000;
 const notTestable = (what: string, reason: string) => console.log(`not testable on this runner: ${what}: ${reason}`);
+/**
+ * Whether this runner activates the window under the pointer (window-at.ts hoverActivation), read from its registry.
+ */
+function windowTracking(): string {
+  const q = (v: string) => spawnSync("reg", ["query", "HKCU\\Control Panel\\Desktop", "/v", v], { encoding: "utf8", windowsHide: true, timeout: 5_000 }).stdout ?? "";
+  return hoverActivation(q("UserPreferencesMask"), q("ActiveWndTrkTimeout"));
+}
 
 interface BenchReady { hwnd: number; pid: number; window: Rect; controls: Record<string, Rect> }
 
@@ -421,8 +428,16 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
         const who = !id ? "no window" : id === ready.hwnd ? "the bench"
           : emberPid !== undefined && pid === emberPid ? `Ember's ${JSON.stringify(api.title(id, false))}`
           : `a window of ${api.processImage(pid) ?? `pid ${pid}`} (class ${api.className(id)}, title ${JSON.stringify(api.title(id, false))})`;
-        trail.push({ t: Date.now(), what: `foreground: ${who} (window ${id})` });
+        // Where the pointer was then, and the window under it (cifix-x9-3: the third failure's bench took the keyboard
+        // about when the suite moved the pointer onto the box).
+        const p = api.cursorPos();
+        const under = p ? api.root(api.windowFromPoint(p.x, p.y)) : 0;
+        const pointer = !p ? "the pointer unknown" : `the pointer at ${p.x},${p.y} over ${!under ? "no window" : under === ready.hwnd ? "the bench"
+          : `${api.className(under)} ${JSON.stringify(api.title(under, false))} (window ${under}, pid ${api.threadProcess(under).pid})`}`;
+        trail.push({ t: Date.now(), what: `foreground: ${who} (window ${id}); ${pointer}` });
       };
+      /** One of the suite's own steps, on the same clock. */
+      const step = (what: string) => trail.push({ t: Date.now(), what: `test: ${what}` });
       fgTimer = setInterval(readForeground, 20);
       await ember.evaluate(({ app, BrowserWindow }) => {
         const seen: { t: number; what: string }[] = [];
@@ -453,7 +468,7 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
             // a line still being written
           }
         }
-        return focusTrail("from the chord", pressedFrom, [...trail, ...inEmber, ...logged], 100);
+        return `${focusTrail("from the chord", pressedFrom, [...trail, ...inEmber, ...logged], 100)}; ${windowTracking()}`;
       };
       await front();
       const x = input!;
@@ -470,6 +485,7 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
       const space = x.keysymOf("space");
       for (const k of mods) expect(x.keysym(k, true)).toBe(true);
       const pressedAt = pressedFrom = Date.now();
+      step("the ask chord");
       x.keysym(space, true);
       x.keysym(space, false);
       for (const k of [...mods].reverse()) x.keysym(k, false);
@@ -480,9 +496,11 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
         x.textKey!(ch, false);
         await sleep(PROBE_PACE_MS);
       }
+      step("the letters typed");
       await waitFor("the ask box from the real chord", async () => (await askWindow())?.visible, 5_000)
         .catch(async (e: unknown) => { throw new Error(`${(e as Error).message} (the ask window: ${JSON.stringify(await askWindow())})`); });
       await sleep(800);
+      step("reading what the box holds");
       const { held, tip } = await ember.evaluate(async ({ BrowserWindow }) => {
         const w = BrowserWindow.getAllWindows().find(b => b.getTitle() === "Ask Ember");
         return w ? await w.webContents.executeJavaScript(`({ held: document.querySelector("#q")?.value ?? "", tip: document.getElementById("tip")?.hidden === false ? document.getElementById("tip").textContent : null })`) as { held: string; tip: string | null } : { held: "", tip: null };
@@ -556,7 +574,9 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
         console.log(seen.line);
         if (!seen.reached) throw new Error(`${seen.line}; Ember's side: ${JSON.stringify(await emberFacts().catch((e: unknown) => String(e)))}; ${await trailNow()}`);
       };
+      step(`the pointer onto the Ask field, at ${at.x},${at.y}`);
       x.move(at.x, at.y);
+      step("the pointer moved");
       await sleep(150);
       // The box is topmost, and so are Ember's overlay and handle, which raise themselves and take the pointer where
       // they have something to click (the hello's buttons, for as long as it stays up: 15 s at most, from up to 6 s
@@ -565,6 +585,8 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
       // must still be up: one that has closed is never waited for, and the failure says what took the keyboard (cifix-x9-2).
       const box = await askWindow();
       if (!box?.visible) throw new Error(`the Ask box before the right-click (review #77): ${box ? "closed" : "gone"} since it was shown, so there is no field to press; ${await trailNow()}`);
+      // Printed when it passes too: what a pass looked like is the comparison a failure needs (cifix-x9-3).
+      console.log(`the Ask box up before the right-click (review #77); ${await trailNow()}`);
       await reaches("the Ask field under the pointer before the right-click (review #77)", askId, at.x, at.y, ASK_FIELD_WAIT_MS);
       expect(hit(at.x, at.y), "the right-click reaches the Ask field").toBe(askId);
       x.button(3, true);
