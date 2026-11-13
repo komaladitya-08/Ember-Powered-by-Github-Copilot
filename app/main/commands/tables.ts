@@ -307,6 +307,35 @@ export const DOWNLOAD_READERS: ReadonlySet<string> = new Set([
   "copy", "xcopy", "robocopy", "move", "ren", "rename", "del", "erase", "rd", "md", "attrib", "findstr", "fc", "comp", "where", "certutil", "expand", "icacls",
 ]);
 
+/**
+ * The words of those readers and of the fetch tools that make them run or load a file they are given, where the
+ * program's own row doesn't ask about the word (commands-classes-x9-3): a comparison's or a pager's program
+ * (`sdiff --diff-program=`, `ack --pager=`, `svn --diff-cmd`), a desktop entry started (`gio launch`), an engine, a
+ * provider or a config that names one (`openssl engine`, `-config`), gpg's helper programs and settings folder, a
+ * linker plugin (`ar --plugin`), a hook on a finished download. With such a word on its line the program is no reader:
+ * a download named anywhere on the line asks. GNU and gpg take a long option cut short, so these match from its start.
+ */
+export const READER_RUNS: Readonly<Record<string, RegExp>> = {
+  sdiff: /^--d[a-z-]*(=|$)/,
+  gio: /^launch$/,
+  openssl: /^(engine|-engine|-config|-provider|-provider-path|-provider_path|-propquery|-keyform)$/,
+  gpg: /^--(photo|exec|home|opt|agent|dirmngr|keyboxd|pinentry|load)/,
+  gpgv: /^--(photo|exec|home|opt|agent|dirmngr|keyboxd|pinentry|load)/,
+  svn: /^--(diff-cmd|diff3-cmd|merge-cmd|editor-cmd|config-dir|config-option)(=|$)/,
+  ack: /^--(pager|ackrc)(=|$)/,
+  ag: /^--pager(=|$)/,
+  delta: /^--(pager|config)(=|$)/,
+  rg: /^--hostname-bin(=|$)/,
+  ar: /^--plugin(=|$)/,
+  nm: /^--plugin(=|$)/,
+  cpio: /^--rsh-command(=|$)/,
+  hash: /^-[a-z]*p/,
+  aria2c: /^--(on-|conf-path)/,
+  wget: /^(-e|--execute|--config|--use-askpass)(=|$)/,
+  scp: /^-S/,
+  sftp: /^-S/,
+};
+
 /** Interactive full-screen programs (§3.5.7): unclear unless arguments make them finish. */
 export const INTERACTIVE = new Set([
   "vim", "vi", "nvim", "view", "vimdiff", "nano", "pico", "emacs", "joe", "micro", "ne", "mcedit", "ed", "ex", "less", "more", "most", "pg",

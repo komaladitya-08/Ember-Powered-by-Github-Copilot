@@ -297,9 +297,14 @@ Ember stops and asks before a command that:
   an option's value attached or apart (`make -Cr`, `mvn -fr/pom.xml test`, `gradle -pr test`, `--config=r/x.js`), a
   variable set for the command or exported (`CC=./cc.sh make`, `make CC=./cc.sh`, `export CC=./cc.sh`, `cmake
   -DCMAKE_C_COMPILER=$PWD/cc.sh`, `$env:CC = '.\cc.sh'`), a module's or a test's path (`python3 -m pytest r`), and
-  the folder it runs in (`cd r && vite build`). `cat`, `grep`, `ls`, `cp`, `mv`, `tar`, `rm`, `git` and their like
-  run, and a copy carries the mark on. A download whose name says plain data (a `.csv`, `.txt`, `.json`, a picture,
-  a document) isn't code a program runs, so `python3 analyze.py data.csv` runs. What `gh api`, `gh gist view` and
+  the folder it runs in (`cd r && vite build`), a file of options given after `@` (`gcc @opts m.c`, `javac
+  @args.txt`), and a name in quotes or brackets inside one word (`cargo build --config
+  'build.rustc-wrapper="./cc.sh"'`). `cat`, `grep`, `ls`, `cp`, `mv`, `tar`, `rm`, `git` and their like
+  run, and a copy carries the mark on, unless an option tells one of them to run or load a file (`sdiff
+  --diff-program=./fix a b`, `gio launch x.desktop`, `openssl req -config cfg`, `gpg --homedir cfg`), which asks
+  the same way. A download whose name says plain data (a `.csv`, `.txt`, `.json`, a picture,
+  a document) isn't code a program runs, so `python3 analyze.py data.csv` runs; a file of options after `@` counts
+  whatever it is called. What `gh api`, `gh gist view` and
   `glab api` print into a file is a download too, and so is fetched text copied from the pipe (`curl … | install
   -m755 /dev/stdin a.sh`, `cp <(curl …) a.sh`) and what any compiler builds from a downloaded source (`javac
   r/Main.java -d out`, then `java -cp out Main` asks). A download Ember can name never

@@ -19,6 +19,9 @@ const refusal = (cmd: string, o: Opts = {}) => result(cmd, o).cls.refuse;
 const POSIX: readonly Opts[] = [{}, { shell: "sh" }, { shell: "zsh", context: "darwin" }, { context: "wsl" }];
 const WINDOWS: readonly Opts[] = [{ shell: "powershell", context: "win32" }, { shell: "cmd", context: "win32" }];
 const label = (cmd: string, o: Opts): string => `${cmd} (${o.shell ?? "bash"}, ${o.context ?? "linux"})`;
+/** The task's folder on a POSIX target of the fixture, and files of it as this task's downloads. */
+const proj = (o: Opts): string => (o.context === "darwin" ? "/Users/ana/proj" : "/home/ana/proj");
+const got = (o: Opts, ...names: string[]): Opts => ({ ...o, downloaded: names.map(n => `${proj(o)}/${n}`) });
 
 describe("programs that drive the user's own terminals and editors (commands-remote-r9-1)", () => {
   const TYPES_OR_RUNS = [
@@ -697,5 +700,68 @@ describe("tmux's verbs written short (commands-classes-x9-1)", () => {
     // What lists still runs by its own names, and a prefix of a listing verb asks.
     for (const cmd of ["tmux ls", "tmux list-sessions", "tmux lsw", "tmux has -t work", "tmux display -p '#S'"]) expect(decide(cmd).verdict, cmd).toBe("run");
     for (const cmd of ["tmux list-s", "tmux list-w", "tmux has-s -t work"]) expect(decide(cmd).verdict, cmd).toBe("ask");
+  });
+});
+
+describe("a download named in a response file or inside a quoted setting (commands-classes-x9-2)", () => {
+  const asks = (cmd: string, o: Opts): void => {
+    const d = decide(cmd, o);
+    expect(d.verdict, label(cmd, o)).toBe("ask");
+    expect(d.rules, label(cmd, o)).toContain("escape.run-downloaded");
+  };
+
+  it("asks when a compiler or a Java tool is given a downloaded file of options after @, whatever the file is called", () => {
+    for (const o of POSIX) for (const name of ["opts", "opts.txt", "args.json", "build.rsp"]) {
+      for (const cmd of [`gcc @${name} m.c`, `cc @${name} m.c`, `clang @${name} m.c`, `g++ @${name} m.cc`, `ld @${name}`, `java @${name} Main`, `javac @${name}`, `javac -d out @${name}`,
+        `gcc @./${name} m.c`, `env gcc @${name} m.c`, `frobnicate @${name}`]) {
+        asks(cmd, got(o, name));
+      }
+    }
+    asks("javac @opts.txt", { shell: "cmd", context: "win32", downloaded: ["C:\\Users\\ana\\proj\\opts.txt"] });
+    // PowerShell reads a bare @name as its own splatting, which asks already.
+    expect(decide("javac @opts.txt", { shell: "powershell", context: "win32", downloaded: ["C:\\Users\\ana\\proj\\opts.txt"] }).verdict).toBe("ask");
+  });
+
+  it("asks when the download stands in quotes or brackets inside one word, as a tool's own settings are written", () => {
+    for (const o of POSIX) for (const cmd of ["cargo build --config 'build.rustc-wrapper=\"./cc.sh\"'", "cargo build --offline --config 'build.rustc-wrapper = \"./cc.sh\"'",
+      "cargo test --config 'target.x86_64-unknown-linux-gnu.runner = [\"./cc.sh\"]'", "cargo build --config \"build.rustc-wrapper='./cc.sh'\"",
+      "frobnicate '{\"cmd\":\"./cc.sh\"}'", "frobnicate --set 'hook=(./cc.sh)'", "make 'CC=\"./cc.sh\"'"]) {
+      asks(cmd, got(o, "cc.sh"));
+    }
+  });
+
+  it("still runs a compiler that names no download, and a reader given the same words", () => {
+    for (const cmd of ["gcc m.c", "gcc -o x m.c", "cargo build", "cargo build --config 'build.jobs=2'", "cat opts.txt", "wc -l opts.txt", "grep -c x @opts.txt"]) {
+      expect(decide(cmd, { downloaded: ["/home/ana/proj/opts.txt", "/home/ana/proj/cc.sh"] }).verdict, cmd).toBe("run");
+    }
+    // A download whose name says plain data still leaves a program that reads it as it was (commands-remote-c2-2).
+    expect(decide("python3 -m json.tool args.json", { downloaded: ["/home/ana/proj/args.json"] }).verdict).toBe("run");
+  });
+});
+
+describe("a reader given an option that runs or loads a file (commands-classes-x9-3)", () => {
+  const DL = got({}, "fix", "x.desktop", "fix.so", "cfg");
+
+  it("asks when a program that otherwise only reads is told to run or load a download", () => {
+    for (const o of POSIX) for (const cmd of ["sdiff --diff-program=./fix a b", "sdiff --diff-program ./fix a b", "sdiff --diff-prog=./fix a b", "gio launch x.desktop",
+      "gio launch ./x.desktop a.txt", `openssl engine dynamic -pre SO_PATH:${proj(o)}/fix.so -pre LOAD`, "openssl engine dynamic -pre SO_PATH:$PWD/fix.so -pre LOAD",
+      "openssl req -new -config cfg", "openssl req -engine ./fix.so -new", "openssl dgst -provider-path . -provider fix a", "OPENSSL_CONF=cfg openssl req -new",
+      "gpg --photo-viewer ./fix --list-keys", "gpg --homedir cfg -k", "gpg --options cfg -k", "gpg --agent-program ./fix -k", "gpgv --homedir cfg a.sig", "svn diff --diff-cmd ./fix",
+      "svn --config-dir cfg status", "ack --pager=./fix foo", "ag --pager ./fix foo", "delta --pager ./fix a b", "rg --hostname-bin ./fix foo", "ar --plugin ./fix.so t a.a",
+      "nm --plugin ./fix.so a.o", "cpio --rsh-command=./fix -i -F h:a.cpio", "hash -p ./fix ls", "aria2c --on-download-complete=./fix https://x.example/a",
+      "aria2c --conf-path=cfg https://x.example/a", "wget --use-askpass=./fix https://x.example/a", "wget --config=cfg https://x.example/a", "scp -S ./fix h:a .", "sftp -S ./fix h"]) {
+      const d = decide(cmd, got(o, "fix", "x.desktop", "fix.so", "cfg"));
+      expect(d.verdict, label(cmd, o)).toBe("ask");
+      expect(d.rules, label(cmd, o)).toContain("escape.run-downloaded");
+    }
+  });
+
+  it("still runs the same programs reading, checking and comparing a download", () => {
+    for (const cmd of ["sdiff fix b", "sdiff -d a fix", "gio info x.desktop", "gio list .", "openssl sha256 fix", "openssl dgst -sha256 fix.so", "openssl x509 -in cfg -noout -text",
+      "gpg --verify fix.sig fix", "svn diff cfg", "ack foo cfg", "rg foo cfg", "ar t fix", "nm fix.so", "aria2c https://x.example/a", "cat cfg", "sha256sum fix"]) {
+      expect(decide(cmd, DL).verdict, cmd).toBe("run");
+    }
+    // Without a download in the task, the options are judged as they were.
+    for (const cmd of ["sdiff --diff-program=./fix a b", "gio launch x.desktop", "openssl req -new -config cfg", "gpg --homedir cfg -k"]) expect(decide(cmd).rules, cmd).not.toContain("escape.run-downloaded");
   });
 });

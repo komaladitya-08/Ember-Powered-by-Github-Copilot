@@ -26,7 +26,7 @@ import {
 } from "./paths";
 import {
   CLIPBOARD_READERS, CLOUD_CLIS, CLOUD_DELETE, CLOUD_READ, CLOUD_READ_PHRASES, DECODERS, DISK_TOOLS, FETCHERS, GIT_CODE_KEYS, GLOBAL_OPTIONS,
-  DOWNLOAD_READERS, GUI_PROGRAMS, INPUT_SYNTH, INTERACTIVE, INTERPRETERS, LANGUAGE_INSTALL_VERBS, LAUNCHERS, NAME_DESTROY, NAME_PUBLISH, NAME_SYSTEM,
+  DOWNLOAD_READERS, READER_RUNS, GUI_PROGRAMS, INPUT_SYNTH, INTERACTIVE, INTERPRETERS, LANGUAGE_INSTALL_VERBS, LAUNCHERS, NAME_DESTROY, NAME_PUBLISH, NAME_SYSTEM,
   ORDINARY_PROGRAMS, ORDINARY_VERBS, OTHER_SHELLS, POSIX_SHELLS, PS_ALIASES, PS_CMDLETS, PS_COMMON, PS_COMMON_ALIASES, RISKY_ASSIGNMENTS, RISKY_ASSIGNMENT_PREFIX,
   RECORDERS, SCREENSHOTTERS, SECRET_PROGRAMS, SECRET_VAR, SUDO_LIKE, SYSTEM_PACKAGERS, WRAPPERS, type GlobalGrammar, type OrdinaryVerbs, type PsCmdletSpec,
   type PsParamKind,
@@ -3610,24 +3610,30 @@ class Engine extends Classifier {
    * Whether a word names a file this task downloaded, or a folder that holds one of its project files, anywhere in
    * it (commands-remote-r9-5): the word itself; the value attached to an option (`-Cr`, `-fr/pom.xml`,
    * `--file=r/x`, `/c:x`); the value of a `NAME=value` or a `-DNAME=value`; each part of a list or of quoted words
-   * (`'project r'`, `a,b`); a build label's folder (`//r/...`).
+   * (`'project r'`, `a,b`, `'key="./x.sh"'`); a response file after `@`; a build label's folder (`//r/...`).
    */
   namesDownload(word: string, sc: Scope): boolean {
     if (!sc.cwd || URL_LIKE.test(word)) return false;
     const win = sc.path.flavour === "win32";
     const at = { os: sc.os, home: sc.home ?? "", cwd: sc.cwd };
     const seen = new Set<string>();
-    const hit = (c: string): boolean => {
+    const hit = (c0: string): boolean => {
+      // A response file (`gcc @opts`, `javac @args`, `java @fix`): its lines are the program's own options, a wrapper
+      // or a plugin among them, whatever the file is called (commands-classes-x9-2).
+      const response = /^@[^@({]/.test(c0);
+      const c = response ? c0.slice(1) : c0;
       const t = c.replace(/^\/\/(?=[^/])/, "").replace(/\/\.\.\.$|(?<=.):[A-Za-z0-9_.-]*$/, m => (win && m.length > 1 ? m : ""));
       if (t === "" || t.startsWith("-") || seen.has(t) || URL_LIKE.test(t)) return false;
       seen.add(t);
       // A file whose name says plain data (a table, text, a picture, a document) isn't code a program runs: it leaves
       // the command as it was (commands-remote-c2-2), unless a build tool follows it by name (PROJECT_FILE).
       const base = baseName(t.replace(/[\\/]+$/, ""), sc.path.flavour);
-      if (DATA_FILE.test(base) && !PROJECT_FILE.test(base)) return false;
+      if (!response && DATA_FILE.test(base) && !PROJECT_FILE.test(base)) return false;
       return this.isDownloaded(lit(t), sc, false) || this.downloadedProjectFile(resolveTargetPath(t, at), sc);
     };
-    const parts = (text: string): string[] => [text, ...text.split(win ? /[\s=,;]+/ : /[\s=,;:]+/)];
+    // Also what stands in quotes or brackets inside the word, as a tool's own settings are written
+    // (`--config 'build.rustc-wrapper="./cc.sh"'`, `'runner = ["./run.sh"]'`).
+    const parts = (text: string): string[] => [text, ...text.split(win ? /[\s=,;"'`()[\]{}]+/ : /[\s=,;:"'`()[\]{}]+/)];
     const texts = [word];
     // A short option with its value attached, a long one after `=`, and cmd's `/x:value`.
     const short = /^-[A-Za-z](.+)$/.exec(word);
@@ -3645,7 +3651,11 @@ class Engine extends Classifier {
    */
   private runsNamedDownload(key: string, args: readonly Arg[], sc: Scope, dlBefore: number): void {
     // A shell or a program given its command as text judges that text as commands of their own (nested()).
-    if (this.asMain || DOWNLOAD_READERS.has(key) || fetches(key) || NESTS_TEXT.has(key) || key === "") return;
+    if (this.asMain || NESTS_TEXT.has(key) || key === "") return;
+    // A reader or a fetch tool stays one unless a word of its line makes it run or load a file (READER_RUNS).
+    const runs = READER_RUNS[key];
+    const reader = DOWNLOAD_READERS.has(key) || fetches(key);
+    if (reader && !(runs !== undefined && args.some(a => a.v !== null && runs.test(a.v)))) return;
     const saved = this.downloads;
     const cut = Math.max(dlBefore, this.innerMarks);
     if (this.downloads.length > cut) this.downloads = this.downloads.slice(0, cut);
@@ -3656,7 +3666,9 @@ class Engine extends Classifier {
       const { own: all, wraps } = this.ownWords(args);
       let own = all;
       if (wraps && NATIVE[key]) own = own.filter(a => a.v !== null && /^[A-Za-z_][A-Za-z0-9_]*=/.test(a.v));
-      const hit = own.some(a => a.v !== null && this.namesDownload(a.v, sc)) || (!wraps && (sc.cwd === null || this.isDownloaded(lit("."), sc, false)));
+      // Such a reader given a word Ember can't read (`-pre SO_PATH:$PWD/fix.so`) may be given the download too.
+      const hit = own.some(a => (a.v !== null ? this.namesDownload(a.v, sc) : reader))
+        || (!wraps && !reader && (sc.cwd === null || this.isDownloaded(lit("."), sc, false)));
       if (hit) this.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
     } finally {
       this.downloads = saved;
