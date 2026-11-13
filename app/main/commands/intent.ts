@@ -1613,6 +1613,17 @@ function p4Row(intent: string, verb: string, ing: string, where: string): RowFn 
 }
 
 /**
+ * Whether a program's name (and a verb after it: "cargo foo") is in the words whole, its parts in a row, as the words
+ * split ("kafka-topics" as "kafka topics"): never a part of a longer word, and never a name shorter than three letters.
+ */
+function wholeName(name: string, list: readonly string[]): boolean {
+  const parts = userWordList(name);
+  if (parts.length === 0 || parts.join("").length < 3) return false;
+  for (let k = 0; k + parts.length <= list.length; k++) if (parts.every((p, j) => list[k + j] === p)) return true;
+  return false;
+}
+
+/**
  * Matches a dangerous command against the user's own words (§3.7): the row's announcement when every finding is
  * covered by a row the words name, else null (the command asks). Empty or whitespace words never match.
  */
@@ -1624,6 +1635,21 @@ export function matchIntent(cls: Classification, userWords: string, ctx: Classif
   if (F.some(f => ALWAYS_ASK.has(f.cls))) return null;
   if (F.some(f => f.widening.some(x => ALWAYS_BROADER.has(x)))) return null;
   if (NEGATION.test(userWords.normalize("NFKC")) || KEEPS.test(userWords.normalize("NFKC"))) return null;
+  // A program, or a verb of a tool, that Ember doesn't know (commands-closed): the user's own words naming it whole
+  // ("run dropdb on the test database", "use kafka-topics") announce it, unless they hold it back; what else the
+  // command does is matched as before.
+  const unknown = F.filter(f => f.cls === "unknown");
+  if (unknown.length > 0) {
+    const asked = userWordList(affirmed(userWords));
+    const names = [...new Set(unknown.map(f => f.program.replace(/\.(exe|com|bat|cmd)$/i, "")))];
+    if (!names.every(n => wholeName(n, asked))) return null;
+    if (holdsBack(userWords, ["run", "use", ...names], false)) return null;
+    const announce = `Running ${joinList(names)}, as you asked.`;
+    const rest = F.filter(f => f.cls !== "unknown");
+    if (rest.length === 0) return { intent: "unknown", announce };
+    const m = matchIntent({ ...cls, findings: rest }, userWords, ctx);
+    return m && { intent: `${m.intent}+unknown`, announce: `${m.announce} ${announce}` };
+  }
   const groups = new Map<string, Finding[]>();
   for (const f of F) {
     const row = rowOf(f, F);

@@ -4339,7 +4339,10 @@
   },
   {
    "cmd": "& 'C:\\Program Files\\x\\$name.exe'",
-   "verdict": "run"
+   "verdict": "ask",
+   "rules": [
+    "unknown.program"
+   ]
   },
   {
    "cmd": "& \"$env:ProgramFiles\\x.exe\"",
@@ -5914,11 +5917,13 @@
   },
   {
    "cmd": "mytool .",
-   "verdict": "run"
+   "verdict": "announce",
+   "words": "run mytool"
   },
   {
    "cmd": "mytool src",
-   "verdict": "run"
+   "verdict": "announce",
+   "words": "run mytool"
   },
   {
    "cmd": "rimraf C:\\Users\\ana",

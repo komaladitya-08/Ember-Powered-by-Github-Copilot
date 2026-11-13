@@ -2365,7 +2365,8 @@
   },
   {
    "cmd": "mytool src",
-   "verdict": "run"
+   "verdict": "announce",
+   "words": "run mytool"
   },
   {
    "cmd": "fdupes -o ~/.bashrc .",

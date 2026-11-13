@@ -1,0 +1,2275 @@
+{
+ "about": "Everyday commands a worker runs for ordinary tasks (listing, searching, reading, git, package scripts, builds and tests, archives, media, system information): each runs with no question (commands-closed's guard against over-asking). Only commands that ran at main 01493d0 are here.",
+ "cases": [
+  {
+   "cmd": "ls",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "ls -la",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "ls -lh src",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "ls -1 *.json",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "ls -lt | head -20",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "tree -L 2",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "tree -I node_modules",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "pwd",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "cat package.json",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "cat README.md | head -50",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "head -n 40 src/index.ts",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "tail -n 100 logs/app.log",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "wc -l src/*.ts",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "find src -type f -newer package.json",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "find . -maxdepth 2 -type d",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "fd -e ts",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "fd test src",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "rg TODO",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "rg -n \"useState\" src",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "rg -l 'import React' --type ts",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "grep -rn \"FIXME\" src",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "grep -c error build.log",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "grep -v '^#' config.ini",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "sort data.csv | uniq -c | sort -rn | head",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "cut -d, -f1,3 data.csv",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "awk -F, '{print $2}' data.csv",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "sed -n '10,20p' src/main.c",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "sed 's/foo/bar/g' input.txt",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "tr '[:lower:]' '[:upper:]' < names.txt",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "diff -u old.txt new.txt",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "diff -r dir1 dir2",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "cmp a.bin b.bin",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "comm -12 a.txt b.txt",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "file dist/app",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "stat package.json",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "du -sh node_modules",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "du -h --max-depth=1 .",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "df -h",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "md5sum dist/app.tar.gz",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "sha256sum release.zip",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "xxd -l 64 image.png",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "hexdump -C header.bin | head",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "strings build/app | grep version",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "jq '.dependencies' package.json",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "jq -r '.scripts | keys[]' package.json",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yq '.services' docker-compose.yml",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "column -t -s, data.csv",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "nl -ba src/app.py",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "paste a.txt b.txt",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "join a.txt b.txt",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "basename src/app/main.ts",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "dirname src/app/main.ts",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "realpath ../shared",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "readlink -f build/latest",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "date",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "date -u +%Y-%m-%dT%H:%M:%SZ",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "cal",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "uptime",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "uname -a",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "hostname",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "whoami",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "id",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "nproc",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "free -h",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "lscpu",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "lsblk",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "lsusb",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "lspci",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "ps aux | grep node",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "pgrep -a python",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "top -b -n 1 | head -20",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "ss -tlnp",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "netstat -an | grep LISTEN",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "ping -c 3 example.com",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "dig example.com",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "nslookup example.com",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "host example.com",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "traceroute example.com",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "curl -I https://example.com",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "curl -s https://api.github.com/repos/nodejs/node | jq .stargazers_count",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "wget -q -O - https://example.com | head",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "printenv PATH",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "echo $PATH",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "printf '%s\\n' a b c",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "which node",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "type python3",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "command -v git",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "mkdir -p build/out",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "mkdir reports",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "touch notes.md",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "ln -s ../shared shared",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "tar -xzf archive.tar.gz",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "tar -tf archive.tar.gz",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "zip -r site.zip public",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "unzip -l site.zip",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "unzip site.zip -d site",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "gzip -k data.csv",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "gunzip -k data.csv.gz",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "xz -k big.log",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "7z l archive.7z",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "git status",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "git status -s",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "git diff",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "git diff --staged",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "git diff HEAD~1 -- src",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "git log --oneline -20",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "git log --graph --oneline --all",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "git show HEAD",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "git show --stat HEAD~2",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "git blame src/main.ts",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "git branch",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "git branch -a",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "git remote -v",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "git fetch",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "git pull",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "git add .",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "git add src/main.ts",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "git commit -m \"Fix the parser\"",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "git stash",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "git stash list",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "git switch -c feature/x",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "git rev-parse HEAD",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "git describe --tags",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "git shortlog -sn",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "git tag",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "git ls-files",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "git grep TODO",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "git config user.name",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "git worktree list",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "git cherry-pick abc123",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "git merge feature/x",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "git rebase main",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "npm test",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "npm run build",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "npm run lint",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "npm run dev",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "npm ls",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "npm outdated",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "npm view react version",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "npm audit",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "pnpm test",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "pnpm build",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "pnpm run lint",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn test",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn build",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn lint",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "node scripts/build.mjs",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "node --version",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "python3 --version",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "python3 script.py",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "python3 -m pytest",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "python3 -m pytest -q tests/test_api.py",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "python3 -m venv .venv",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "python3 manage.py test",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "pytest",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "pytest -x -k parser",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "pip list",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "pip show requests",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "pip freeze",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "ruff check .",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "black --check .",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "mypy src",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "flake8",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "pylint src",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "uv run pytest",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "poetry run pytest",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "cargo build",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "cargo build --release",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "cargo test",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "cargo check",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "cargo clippy",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "cargo fmt",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "cargo run",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "cargo doc",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "cargo tree",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "go build ./...",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "go test ./...",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "go vet ./...",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "go fmt ./...",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "go mod tidy",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "go run .",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "go version",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "go env GOPATH",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "dotnet build",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "dotnet test",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "dotnet run",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "dotnet --info",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "mvn test",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "mvn package",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "mvn -q compile",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "gradle build",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "./gradlew test",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "./gradlew assembleDebug",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "make",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "make test",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "make -j4",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "cmake -S . -B build",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "cmake --build build",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "ctest --test-dir build",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "ninja -C build",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "meson setup build",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "meson compile -C build",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "gcc -o hello hello.c",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "gcc -Wall -O2 -c main.c",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "g++ -std=c++17 main.cpp -o main",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "clang -fsyntax-only main.c",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "rustc main.rs",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "javac Main.java",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "java Main",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "tsc",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "tsc -p tsconfig.json",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "eslint .",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "prettier --write src",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "shellcheck scripts/*.sh",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "docker ps",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "docker images",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "docker build -t myapp .",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "docker compose ps",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "docker logs web",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "kubectl get pods",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "kubectl describe pod web-1",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "helm list",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "terraform plan",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "terraform validate",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "gh pr list",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "gh pr view 12",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "gh issue list",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "gh run list",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "convert input.png -resize 50% output.png",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "magick logo.svg logo.png",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "identify photo.jpg",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "ffprobe video.mp4",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "ffmpeg -i input.mov -vcodec libx264 output.mp4",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "ffmpeg -i song.wav song.mp3",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "pandoc README.md -o README.html",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "pdftotext report.pdf report.txt",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "pdfinfo report.pdf",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "optipng image.png",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "cwebp photo.jpg -o photo.webp",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "dot -Tpng graph.dot -o graph.png",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "sqlite3 app.db .tables",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "sqlite3 app.db 'select count(*) from users'",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "journalctl --user -n 50",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "dmesg | tail",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "systemctl status nginx",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "lsb_release -a",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "cat /etc/os-release",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "locale",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "timedatectl status",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "history",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "true",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "sleep 2",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "seq 1 10",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "expr 1 + 2",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "bc <<< '2^10'",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "base64 secret-free.txt",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "iconv -f latin1 -t utf-8 in.txt",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "dos2unix script.sh",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "split -l 1000 big.csv part_",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "shuf -n 5 names.txt",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "xargs -n1 echo < list.txt",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "time make",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "timeout 60 npm test",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "nice -n 10 make -j8",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "cd src && ls",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "cd .. && git status",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "cd build && make",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "export NODE_ENV=production",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "Get-ChildItem",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "Get-ChildItem -Recurse -Filter *.cs",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "Get-ChildItem src | Sort-Object LastWriteTime -Descending | Select-Object -First 10",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "ls",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "dir",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "Get-Content README.md",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "Get-Content logs\\app.log -Tail 50",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "gc package.json | ConvertFrom-Json | Select-Object -ExpandProperty scripts",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "cat notes.txt",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "Select-String -Path src\\*.ts -Pattern TODO",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "sls -Path *.log -Pattern error",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "Get-Item package.json | Format-List",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "Get-Location",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "pwd",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "Test-Path .\\build",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "Measure-Object -Line -InputObject (Get-Content README.md)",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "Get-Content data.csv | Measure-Object -Line",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "Import-Csv data.csv | Group-Object Region | Sort-Object Count",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "Import-Csv data.csv | Where-Object { $_.Total -gt 100 } | Format-Table",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "Get-Process | Sort-Object CPU -Descending | Select-Object -First 5",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "Get-Service | Where-Object Status -eq Running",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "Get-Date",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "Get-Date -Format o",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "Get-ComputerInfo",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "Get-CimInstance Win32_OperatingSystem",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "Get-Volume",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "Get-PSDrive",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "Get-Command git",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "Get-Help Get-Process",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "Get-Module -ListAvailable",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "Get-FileHash release.zip",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "Get-FileHash -Algorithm MD5 app.exe",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "Compare-Object (Get-Content a.txt) (Get-Content b.txt)",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "Resolve-Path ..\\shared",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "Split-Path C:\\work\\app\\main.cs -Leaf",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "Join-Path src main.ts",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "Get-NetIPAddress",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "Test-NetConnection example.com -Port 443",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "Resolve-DnsName example.com",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "$PSVersionTable",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "$env:PATH",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "Write-Output hello",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "echo hello",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "New-Item -ItemType Directory build",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "mkdir reports",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "New-Item notes.md",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "Compress-Archive -Path src -DestinationPath src.zip",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "Expand-Archive site.zip -DestinationPath site",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "git status",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "git diff",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "git log --oneline -20",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "git add .",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "git commit -m \"Fix the parser\"",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "git branch",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "git pull",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "npm test",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "npm run build",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "pnpm test",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "yarn build",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "node scripts\\build.mjs",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "node --version",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "python --version",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "python script.py",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "python -m pytest",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "py -3 -m pytest",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "pytest",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "pip list",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "dotnet build",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "dotnet test",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "dotnet run",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "dotnet --info",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "cargo build",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "cargo test",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "go build ./...",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "go test ./...",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "mvn test",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "gradle build",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": ".\\gradlew.bat test",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "cmake -S . -B build",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "cmake --build build --config Release",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "where.exe git",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "whoami",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "hostname",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "ipconfig",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "ipconfig /all",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "systeminfo",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "tasklist",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "ping example.com",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "tracert example.com",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "nslookup example.com",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "netstat -ano",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "Get-WinEvent -LogName System -MaxEvents 20",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "Get-ItemProperty HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "dir",
+   "shell": "cmd",
+   "context": "win32"
+  },
+  {
+   "cmd": "dir /s /b *.cs",
+   "shell": "cmd",
+   "context": "win32"
+  },
+  {
+   "cmd": "type README.md",
+   "shell": "cmd",
+   "context": "win32"
+  },
+  {
+   "cmd": "cd",
+   "shell": "cmd",
+   "context": "win32"
+  },
+  {
+   "cmd": "echo hello",
+   "shell": "cmd",
+   "context": "win32"
+  },
+  {
+   "cmd": "ver",
+   "shell": "cmd",
+   "context": "win32"
+  },
+  {
+   "cmd": "vol",
+   "shell": "cmd",
+   "context": "win32"
+  },
+  {
+   "cmd": "date /t",
+   "shell": "cmd",
+   "context": "win32"
+  },
+  {
+   "cmd": "time /t",
+   "shell": "cmd",
+   "context": "win32"
+  },
+  {
+   "cmd": "hostname",
+   "shell": "cmd",
+   "context": "win32"
+  },
+  {
+   "cmd": "whoami",
+   "shell": "cmd",
+   "context": "win32"
+  },
+  {
+   "cmd": "ipconfig",
+   "shell": "cmd",
+   "context": "win32"
+  },
+  {
+   "cmd": "ipconfig /all",
+   "shell": "cmd",
+   "context": "win32"
+  },
+  {
+   "cmd": "systeminfo",
+   "shell": "cmd",
+   "context": "win32"
+  },
+  {
+   "cmd": "tasklist",
+   "shell": "cmd",
+   "context": "win32"
+  },
+  {
+   "cmd": "ping -n 3 example.com",
+   "shell": "cmd",
+   "context": "win32"
+  },
+  {
+   "cmd": "tracert example.com",
+   "shell": "cmd",
+   "context": "win32"
+  },
+  {
+   "cmd": "nslookup example.com",
+   "shell": "cmd",
+   "context": "win32"
+  },
+  {
+   "cmd": "netstat -ano",
+   "shell": "cmd",
+   "context": "win32"
+  },
+  {
+   "cmd": "where git",
+   "shell": "cmd",
+   "context": "win32"
+  },
+  {
+   "cmd": "findstr /s /i TODO *.cs",
+   "shell": "cmd",
+   "context": "win32"
+  },
+  {
+   "cmd": "find \"error\" build.log",
+   "shell": "cmd",
+   "context": "win32"
+  },
+  {
+   "cmd": "fc a.txt b.txt",
+   "shell": "cmd",
+   "context": "win32"
+  },
+  {
+   "cmd": "tree /f",
+   "shell": "cmd",
+   "context": "win32"
+  },
+  {
+   "cmd": "mkdir build",
+   "shell": "cmd",
+   "context": "win32"
+  },
+  {
+   "cmd": "git status",
+   "shell": "cmd",
+   "context": "win32"
+  },
+  {
+   "cmd": "git log --oneline -10",
+   "shell": "cmd",
+   "context": "win32"
+  },
+  {
+   "cmd": "npm test",
+   "shell": "cmd",
+   "context": "win32"
+  },
+  {
+   "cmd": "npm run build",
+   "shell": "cmd",
+   "context": "win32"
+  },
+  {
+   "cmd": "node --version",
+   "shell": "cmd",
+   "context": "win32"
+  },
+  {
+   "cmd": "python --version",
+   "shell": "cmd",
+   "context": "win32"
+  },
+  {
+   "cmd": "python script.py",
+   "shell": "cmd",
+   "context": "win32"
+  },
+  {
+   "cmd": "dotnet build",
+   "shell": "cmd",
+   "context": "win32"
+  },
+  {
+   "cmd": "dotnet test",
+   "shell": "cmd",
+   "context": "win32"
+  },
+  {
+   "cmd": "cargo build",
+   "shell": "cmd",
+   "context": "win32"
+  },
+  {
+   "cmd": "go test ./...",
+   "shell": "cmd",
+   "context": "win32"
+  },
+  {
+   "cmd": "mvn test",
+   "shell": "cmd",
+   "context": "win32"
+  },
+  {
+   "cmd": "gradlew.bat build",
+   "shell": "cmd",
+   "context": "win32"
+  },
+  {
+   "cmd": "cmake --build build",
+   "shell": "cmd",
+   "context": "win32"
+  },
+  {
+   "cmd": "ls -la",
+   "shell": "zsh",
+   "context": "darwin"
+  },
+  {
+   "cmd": "sw_vers",
+   "shell": "zsh",
+   "context": "darwin"
+  },
+  {
+   "cmd": "system_profiler SPHardwareDataType",
+   "shell": "zsh",
+   "context": "darwin"
+  },
+  {
+   "cmd": "diskutil list",
+   "shell": "zsh",
+   "context": "darwin"
+  },
+  {
+   "cmd": "mdls photo.jpg",
+   "shell": "zsh",
+   "context": "darwin"
+  },
+  {
+   "cmd": "sips -g pixelWidth photo.jpg",
+   "shell": "zsh",
+   "context": "darwin"
+  },
+  {
+   "cmd": "brew list",
+   "shell": "zsh",
+   "context": "darwin"
+  },
+  {
+   "cmd": "brew info node",
+   "shell": "zsh",
+   "context": "darwin"
+  },
+  {
+   "cmd": "xcode-select -p",
+   "shell": "zsh",
+   "context": "darwin"
+  },
+  {
+   "cmd": "swift build",
+   "shell": "zsh",
+   "context": "darwin"
+  },
+  {
+   "cmd": "swift test",
+   "shell": "zsh",
+   "context": "darwin"
+  },
+  {
+   "cmd": "xcrun --show-sdk-path",
+   "shell": "zsh",
+   "context": "darwin"
+  },
+  {
+   "cmd": "defaults read com.apple.finder",
+   "shell": "zsh",
+   "context": "darwin"
+  },
+  {
+   "cmd": "git status",
+   "shell": "zsh",
+   "context": "darwin"
+  },
+  {
+   "cmd": "npm test",
+   "shell": "zsh",
+   "context": "darwin"
+  },
+  {
+   "cmd": "pwd",
+   "shell": "zsh",
+   "context": "darwin"
+  },
+  {
+   "cmd": "cat package.json",
+   "shell": "zsh",
+   "context": "darwin"
+  },
+  {
+   "cmd": "head -n 20 README.md",
+   "shell": "zsh",
+   "context": "darwin"
+  },
+  {
+   "cmd": "rg TODO src",
+   "shell": "zsh",
+   "context": "darwin"
+  },
+  {
+   "cmd": "grep -rn FIXME src",
+   "shell": "zsh",
+   "context": "darwin"
+  },
+  {
+   "cmd": "find . -name '*.swift'",
+   "shell": "zsh",
+   "context": "darwin"
+  },
+  {
+   "cmd": "wc -l Sources/*.swift",
+   "shell": "zsh",
+   "context": "darwin"
+  },
+  {
+   "cmd": "du -sh .",
+   "shell": "zsh",
+   "context": "darwin"
+  },
+  {
+   "cmd": "df -h",
+   "shell": "zsh",
+   "context": "darwin"
+  },
+  {
+   "cmd": "uname -a",
+   "shell": "zsh",
+   "context": "darwin"
+  },
+  {
+   "cmd": "sysctl -n hw.ncpu",
+   "shell": "zsh",
+   "context": "darwin"
+  },
+  {
+   "cmd": "vm_stat",
+   "shell": "zsh",
+   "context": "darwin"
+  },
+  {
+   "cmd": "ps aux | head",
+   "shell": "zsh",
+   "context": "darwin"
+  },
+  {
+   "cmd": "git log --oneline -10",
+   "shell": "zsh",
+   "context": "darwin"
+  },
+  {
+   "cmd": "git diff",
+   "shell": "zsh",
+   "context": "darwin"
+  },
+  {
+   "cmd": "git add .",
+   "shell": "zsh",
+   "context": "darwin"
+  },
+  {
+   "cmd": "git commit -m \"Tidy the build\"",
+   "shell": "zsh",
+   "context": "darwin"
+  },
+  {
+   "cmd": "npm run build",
+   "shell": "zsh",
+   "context": "darwin"
+  },
+  {
+   "cmd": "pnpm test",
+   "shell": "zsh",
+   "context": "darwin"
+  },
+  {
+   "cmd": "yarn build",
+   "shell": "zsh",
+   "context": "darwin"
+  },
+  {
+   "cmd": "node --version",
+   "shell": "zsh",
+   "context": "darwin"
+  },
+  {
+   "cmd": "python3 script.py",
+   "shell": "zsh",
+   "context": "darwin"
+  },
+  {
+   "cmd": "python3 -m pytest",
+   "shell": "zsh",
+   "context": "darwin"
+  },
+  {
+   "cmd": "cargo build",
+   "shell": "zsh",
+   "context": "darwin"
+  },
+  {
+   "cmd": "go test ./...",
+   "shell": "zsh",
+   "context": "darwin"
+  },
+  {
+   "cmd": "make",
+   "shell": "zsh",
+   "context": "darwin"
+  },
+  {
+   "cmd": "cmake --build build",
+   "shell": "zsh",
+   "context": "darwin"
+  },
+  {
+   "cmd": "xcodebuild -version",
+   "shell": "zsh",
+   "context": "darwin"
+  },
+  {
+   "cmd": "xcrun --show-sdk-path",
+   "shell": "zsh",
+   "context": "darwin"
+  },
+  {
+   "cmd": "xcode-select -p",
+   "shell": "zsh",
+   "context": "darwin"
+  },
+  {
+   "cmd": "otool -L build/app",
+   "shell": "zsh",
+   "context": "darwin"
+  },
+  {
+   "cmd": "lipo -info build/app",
+   "shell": "zsh",
+   "context": "darwin"
+  },
+  {
+   "cmd": "plutil -lint Info.plist",
+   "shell": "zsh",
+   "context": "darwin"
+  },
+  {
+   "cmd": "md5 file.zip",
+   "shell": "zsh",
+   "context": "darwin"
+  },
+  {
+   "cmd": "shasum -a 256 file.zip",
+   "shell": "zsh",
+   "context": "darwin"
+  },
+  {
+   "cmd": "tar -tzf a.tgz",
+   "shell": "zsh",
+   "context": "darwin"
+  },
+  {
+   "cmd": "unzip -l a.zip",
+   "shell": "zsh",
+   "context": "darwin"
+  },
+  {
+   "cmd": "ffprobe clip.mov",
+   "shell": "zsh",
+   "context": "darwin"
+  },
+  {
+   "cmd": "sips -g pixelHeight photo.jpg",
+   "shell": "zsh",
+   "context": "darwin"
+  }
+ ]
+}

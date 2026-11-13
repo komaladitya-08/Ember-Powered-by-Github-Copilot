@@ -27,8 +27,8 @@ import {
 import {
   CLIPBOARD_READERS, CLOUD_CLIS, CLOUD_DELETE, CLOUD_READ, CLOUD_READ_PHRASES, DECODERS, DISK_TOOLS, FETCHERS, GIT_CODE_KEYS, GLOBAL_OPTIONS,
   GUI_PROGRAMS, INPUT_SYNTH, INTERACTIVE, INTERPRETERS, LANGUAGE_INSTALL_VERBS, LAUNCHERS, NAME_DESTROY, NAME_PUBLISH, NAME_SYSTEM,
-  OTHER_SHELLS, POSIX_SHELLS, PS_ALIASES, PS_CMDLETS, PS_COMMON, PS_COMMON_ALIASES, RISKY_ASSIGNMENTS, RISKY_ASSIGNMENT_PREFIX,
-  SCREENSHOTTERS, SECRET_PROGRAMS, SECRET_VAR, SUDO_LIKE, SYSTEM_PACKAGERS, WRAPPERS, type GlobalGrammar, type PsCmdletSpec,
+  ORDINARY_PROGRAMS, ORDINARY_VERBS, OTHER_SHELLS, POSIX_SHELLS, PS_ALIASES, PS_CMDLETS, PS_COMMON, PS_COMMON_ALIASES, RISKY_ASSIGNMENTS, RISKY_ASSIGNMENT_PREFIX,
+  SCREENSHOTTERS, SECRET_PROGRAMS, SECRET_VAR, SUDO_LIKE, SYSTEM_PACKAGERS, WRAPPERS, type GlobalGrammar, type OrdinaryVerbs, type PsCmdletSpec,
   type PsParamKind,
 } from "./tables";
 import { commandLineSecret } from "./redact";
@@ -210,6 +210,8 @@ export const SAYS = {
   namedKeyword: "It runs a program named like one of the shell's own words.",
   scriptStream: "It runs a script from a stream, which Ember can't read first.",
   downloadsProgram: "Downloads a program and runs it.",
+  unknownProgram: "It runs a program Ember doesn't know.",
+  unknownVerb: "It runs a command of this tool that Ember doesn't know.",
   unclear: "Ember can't tell exactly what this does.",
   interactive: "This opens an interactive program; you'd have to use it yourself in the command window.",
   openApp: "This opens an app window, which Ember can do itself without a command. Say no and ask Ember to open it.",
@@ -3078,10 +3080,22 @@ class Engine extends Classifier {
     const windowsSide = sc.os === "win32" || sc.family !== "posix" || pn.interop;
     if (windowsSide && (key === "bash" || (!NATIVE[key] && DISTRO_LAUNCHER.test(key)))) { distroLauncher(h); return; }
     const n = NATIVE[key];
-    if (n) this.runRow(n, h);
-    else generic(h, true);
+    const from = this.findings.length;
+    if (n) { this.runRow(n, h); this.verbGuard(h, from); }
+    else { unknownProgram(h); generic(h, true); }
     // A deleter that had no row before commands-remote-c8-2 keeps an unknown program's `-o` (commands-remote-x8-5).
     optionPaths(h, !n || NEW_DELETERS.has(key));
+  }
+
+  /**
+   * A verb-keyed tool's row that found nothing to ask about (since `from`, standing whatever the target's files are)
+   * for a verb that isn't among the ones Ember knows it to have (ORDINARY_VERBS): it asks (commands-closed).
+   */
+  verbGuard(h: H, from: number): void {
+    if (this.asMain || this.refuse) return;
+    const tool = ORDINARY_VERBS[h.key] ?? ORDINARY_VERBS[unversioned(h.key)];
+    if (!tool || this.findings.slice(from).some(f => f.ifExists === undefined)) return;
+    toolVerbs(h, tool, false);
   }
 
   /** Every argument read as a possible path (an unknown program's operands): secrets and Ember's paths judged. */
@@ -3237,8 +3251,9 @@ class Engine extends Classifier {
     }
     const n = NATIVE[key];
     const dlBefore = this.downloads.length;
-    if (n) this.runRow(n, inner);
-    else generic(inner, true);
+    const from = this.findings.length;
+    if (n) { this.runRow(n, inner); this.verbGuard(inner, from); }
+    else { unknownProgram(inner); generic(inner, true); }
     optionPaths(inner, !n || NEW_DELETERS.has(key));
     this.unnamedWrites(key, inner.args, sc);
     this.afterArgs(inner.args);
@@ -3845,6 +3860,119 @@ function generic(h: H, noRow = false): void {
   }
 }
 
+/**
+ * The closed default (commands-closed, the integrator's decision of round nine, recorded for the owner): a program
+ * Ember has no row for and that isn't on ORDINARY_PROGRAMS asks, class "unknown", rule `unknown.program`, whatever
+ * its operands. A program given by a path in the command's own folder (the project's scripts and binaries: `./build.sh`,
+ * `bin/tool`, `node_modules/.bin/x`) is judged as before (a download in the task still asks); one given by a path
+ * elsewhere (`/usr/local/bin/x`, `~/bin/x`) is known by its name as a bare name is. The user's own words naming the
+ * program announce it (intent.ts). generic() still judges its operands.
+ */
+function unknownProgram(h: H): void {
+  // Main's reading of a held row (runRow) ran what it took for the program, as every program with no row ran there.
+  if (h.e.readsAsMain || h.nameArg.v === null) return;
+  if (h.pn.isPath && ownFolder(h.nameArg.v, h.sc)) return;
+  const tool = ORDINARY_VERBS[h.key] ?? ORDINARY_VERBS[unversioned(h.key)];
+  if (tool) { toolVerbs(h, tool, true); return; }
+  if (knownProgram(h.key)) {
+    // A TeX engine's shell escape runs the commands the document names (`\write18`).
+    if (TEX_ENGINES.has(h.key) && h.args.some(a => a.v === null || /^--?(shell-escape|enable-write18)$/.test(a.v))) {
+      h.e.add("unknown", "unknown.verb", SAYS.unknownVerb, { program: `${h.prog} ${h.args.find(a => a.v === null || /escape|write18/.test(a.v))?.v ?? ""}`.trim() });
+    }
+    return;
+  }
+  // A cmd name that is a batch file in the folder (`build` for build.bat) is the project's own, read as a script.
+  if (h.sc.family === "cmd" && !h.pn.isPath && h.pn.ext === "" && [".bat", ".cmd"].some(e => h.e.onRecord(lit(h.nameArg.v + e), h.sc))) return;
+  h.e.add("unknown", "unknown.program", SAYS.unknownProgram);
+}
+
+/** TeX engines, whose shell escape (off by default) runs the commands a document names. */
+const TEX_ENGINES = new Set(["latex", "pdflatex", "xelatex", "lualatex", "tex", "pdftex", "xetex", "luatex", "latexmk"]);
+
+/**
+ * A verb-keyed tool's verb against the ones Ember knows (ORDINARY_VERBS, commands-closed): the verb is the first word
+ * that isn't an option or an option's value (by the tool's global grammar where it has one). One off the list, a
+ * sub-verb off its list, an option that makes a known verb change a setting, or (`noRow`: a tool with no row) no verb
+ * at all asks (`unknown.verb`), named with the verb for the user's words to match ("cabal exec", "stack exec").
+ */
+function toolVerbs(h: H, tool: OrdinaryVerbs, noRow: boolean): void {
+  const args = h.args;
+  const say = (verb: string): void => { h.e.add("unknown", "unknown.verb", SAYS.unknownVerb, { program: `${h.prog} ${verb}`.trim() }); };
+  const vals = new Set(tool.values ?? []);
+  const operand = (start: number): number => {
+    for (let k = start; k < args.length; k++) {
+      const v = args[k].v;
+      if (v === null) return k;
+      if (v === "--") return k + 1 < args.length ? k + 1 : -1;
+      if (v.startsWith("-") && v !== "-" && !tool.verbs.includes(v)) { if (vals.has(v)) k++; continue; }
+      return k;
+    }
+    return -1;
+  };
+  let at: number;
+  if (GLOBAL_OPTIONS[h.key]) {
+    const g = globals(h, h.key);
+    if (g.unknown) return;
+    at = g.verbAt < args.length ? g.verbAt : -1;
+  } else at = operand(0);
+  const always = tool.asks?.[""] ?? [];
+  const bad = args.find(a => a.v !== null && always.includes(a.v.split("=")[0]));
+  if (bad) { say(bad.v ?? ""); return; }
+  if (at < 0) { if (noRow || tool.bare === "asks") say(""); return; }
+  const known = (w: string): boolean => tool.verbs.includes(w) || (tool.files?.test(w) ?? false);
+  const words: Arg[] = [args[at]];
+  for (let k = at + 1; tool.all && k < args.length; k++) {
+    const v = args[k].v;
+    if (v !== null && v.startsWith("-")) { if (vals.has(v)) k++; continue; }
+    words.push(args[k]);
+  }
+  for (const a of words) {
+    if (a.v === null) { say(a.raw); return; }
+    const parts = tool.all ? a.v.split(";").map(p => p.trim().split(/\s+/)[0]).filter(p => p !== "") : [a.v];
+    for (const p of parts) if (!known(p)) { say(p); return; }
+  }
+  const verb = args[at].v ?? "";
+  const sub = tool.sub?.[verb];
+  if (sub) {
+    const k = operand(at + 1);
+    const w = k < 0 ? null : args[k];
+    if (w && (w.v === null || !sub.includes(w.v))) { say(`${verb} ${w.v ?? w.raw}`); return; }
+  }
+  const asks = tool.asks?.[verb] ?? [];
+  const opt = args.slice(at + 1).find(a => a.v !== null && asks.includes(a.v.split("=")[0]));
+  if (opt) say(`${verb} ${opt.v}`);
+}
+
+/** A program word's key as the allow-list knows it: a version suffix dropped (`python3.12`, `gcc-13`, `clang-17`). */
+const unversioned = (key: string): string => key.replace(/(?<=[a-z+])-?\d+(\.\d+)*$/, "");
+
+/** Whether Ember knows a program with no row: on the allow-list, or in one of the tables generic() reads. */
+function knownProgram(key: string): boolean {
+  for (const k of [key, unversioned(key)]) {
+    if (ORDINARY_PROGRAMS.has(k) || KNOWN_ORDINARY.has(k) || TEXT.has(k) || LISTS_ONLY.has(k)) return true;
+    if (INPUT_SYNTH.has(k) || GUI_PROGRAMS.has(k) || INTERACTIVE.has(k) || LAUNCHERS.has(k) || SECRET_PROGRAMS.has(k)) return true;
+    if (CLIPBOARD_READERS.has(k) || SCREENSHOTTERS.has(k) || DISK_TOOLS.has(k) || /^mkfs(\.|$)/.test(k)) return true;
+  }
+  return false;
+}
+
+/**
+ * Whether a program's path is in the command's own folder: relative and staying in it, or absolute (or from ~) and
+ * under it, never through a hidden folder of its own (`.git/hooks/x`, `.cache/x`) but a package manager's `.bin`.
+ * With no folder known, a relative path that doesn't climb out (`..`) is.
+ */
+function ownFolder(word: string, sc: Scope): boolean {
+  const env = sc.path;
+  const sep = env.flavour === "posix" ? /\// : /[\\/]/;
+  const relative = !word.startsWith("~") && !isAbsolute(word, env.flavour);
+  if (!sc.cwd) return relative && !word.split(sep).includes("..");
+  if (word.startsWith("~") && !sc.home) return false;
+  const abs = resolveTargetPath(word, { os: sc.os, home: sc.home ?? "", cwd: sc.cwd });
+  if (!isUnder(abs, sc.cwd, env) || abs === sc.cwd) return false;
+  const rest = abs.slice(sc.cwd.length).split(sep).filter(Boolean);
+  return !rest.slice(0, -1).some(seg => seg.startsWith(".") && seg !== ".bin");
+}
+
 /** Programs Ember has no row for that only list or measure what a folder holds (`eza -la ~`, `fd foo ~`, `dust ~`). */
 const LISTS_ONLY = new Set(["eza", "exa", "lsd", "fd", "fdfind", "dust", "duf", "gdu", "erdtree", "erd"]);
 
@@ -3967,9 +4095,16 @@ function optionFiles(h: H, args: readonly Arg[], p: Parsed, files: Partial<Recor
 
 /** PowerShell's approved verbs that change things: an unknown cmdlet with one is unclear (§3.4.2's conservative rule). */
 const PS_READ_VERBS = new Set(["get", "find", "search", "select", "measure", "test", "compare", "convertto", "convertfrom", "format", "resolve", "trace", "join", "split", "group", "sort", "where", "foreach", "show", "read", "out", "write", "debug", "wait", "use", "watch", "confirm", "assert", "ping", "receive", "convert", "expand", "limit"]);
+/**
+ * The verbs of an unknown cmdlet that run with no question (commands-closed): PowerShell's verbs that only read, show,
+ * measure or convert. One with another of PS_READ_VERBS (`Show-`, `Find-`, `Read-`, `Write-`, `Use-`, …) asks as a
+ * program Ember doesn't know; one with a verb that changes something asks as before (unclear.cmdlet).
+ */
+const PS_ORDINARY_VERBS = new Set(["get", "test", "measure", "select", "where", "sort", "group", "format", "convertto", "convertfrom", "compare", "resolve", "split", "join"]);
 function unknownCmdlet(h: H): void {
   const verb = h.key.split("-")[0];
   if (!PS_READ_VERBS.has(verb)) h.e.unclear("unclear.cmdlet", `Ember can't tell what ${h.prog} changes.`);
+  else if (!PS_ORDINARY_VERBS.has(verb) && !h.e.readsAsMain) h.e.add("unknown", "unknown.program", SAYS.unknownProgram);
   for (const a of h.args) if (a.v === null && a.raw.startsWith("{")) h.e.unclear("unclear.script-block", "It runs a script block Ember can't follow.");
   h.e.readArgs(h.args.filter(a => a.param === undefined && !(a.v ?? "").startsWith("-")), h.sc);
 }

@@ -281,10 +281,16 @@ describe("deleting with a tool Ember had no row for (commands-remote-c8-2)", () 
   });
 
   it("keeps running a known tool given those folders, and an unknown one given the project or a folder in it (commands-remote-c8-2)", () => {
-    for (const cmd of ["ls ~", "du -sh ~", "tree ~", "fd foo ~", "eza -la ~", "mytool .", "mytool src", "mytool ~/Documents", "mytool ../other",
+    for (const cmd of ["ls ~", "du -sh ~", "tree ~", "fd foo ~", "eza -la ~",
       "cd build && qmake ..", "cd build && cmake ..", "./configure --prefix=$HOME/.local", "fdupes -r ~/Pictures", "jdupes -r .", "git-filter-repo --analyze",
       "yarn build", "yarn format", "yarn eslint .", "pnpm build", "eslint .", "npm test", "make", "rimraf --help"]) {
       expect(run(cmd).decision.verdict, cmd).toBe("run");
+    }
+    // A program Ember doesn't know asks for itself now (commands-closed); named in the user's words, these folders
+    // still let it be announced.
+    for (const cmd of ["mytool .", "mytool src", "mytool ~/Documents", "mytool ../other"]) {
+      expect(run(cmd).decision.rules, cmd).toEqual(["unknown.program"]);
+      expect(runCase({ cmd, verdict: "run", words: "run mytool" }, { shell: "bash", context: "linux" }).decision.verdict, cmd).toBe("announce");
     }
   });
 
@@ -3187,7 +3193,8 @@ describe("commands held to main at 4d64d3a: no way of reading one decides less s
     }
     // Where the row's own reading runs `set +a`, it is off, as on main; and without Ember's folder nothing is refused.
     expect(decided("set -a; env --block-signal set +a; d=~/.config/ember; make").verdict).toBe("run");
-    expect(decided("set -a; env -a set +a; d=build; make").verdict).toBe("run");
+    // There env's -a takes `set` and runs `+a`, a program Ember doesn't know (commands-closed).
+    expect(decided("set -a; env -a set +a; d=build; make").rules).toEqual(["unknown.program"]);
   });
 
   it("judges what follows in the folder main's reading leaves the shell in too, when a wrapper's two tables disagree about a cd (commands-held-y9-1)", () => {
