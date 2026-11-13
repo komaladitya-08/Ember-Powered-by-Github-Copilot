@@ -2838,6 +2838,11 @@ service's, and stays where it is (`project-workspaces-<hash>.bin` in the data fo
 
 With a build ready, run `EMBER_PROJECT_TEST=1 npm run test:integration -- test/integration/project-live.test.ts`
 to exercise the Home workflow through Electron and the Copilot runtime against an offline mock model.
+The same file walks first run on a fresh profile in the real app: before the agreement no request, no microphone
+page and nothing recorded; after it, each default left on with what its own card records (and Interactive's audit
+entry), and memory off with no consent when its row was switched off by keyboard. With the speech models in
+`.cache/voice/models` (`node scripts/voice/prepare.mjs`) the second walk has the listening row offered and turned on;
+without them it prints that this wasn't checked.
 
 ## 15. Publishing a release
 
