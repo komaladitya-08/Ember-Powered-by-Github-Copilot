@@ -427,12 +427,19 @@ describe("the try step", () => {
     // Agreed with listening left on, on a computer whose microphone doesn't work: it said to turn “Hey Ember” on later
     // and that it was Off.
     expect(TRY_TEXT.voiceNoMic).toBe("“Hey Ember” is on, but I can't hear you: my microphone isn't working. Check it in Settings › Voice.");
-    expect(TRY_TEXT.voiceMicOff).toBe("“Hey Ember” is on, but my microphone is off, so I can't hear you. Mute microphone, in my handle's menu, turns it back on.");
+    expect(TRY_TEXT.voiceMicOff).toBe("“Hey Ember” is on, but my microphone is off, so I can't hear you. Unmute microphone, in my handle's menu, turns it back on.");
     const row = (voice: Parameters<typeof summaryRows>[0]["voice"]) => summaryRows({ character: "Cinder", size: 60, signedIn: null, voice, keys: null })[2];
     expect(row("no-mic")).toEqual({ label: "“Hey Ember”", value: "On, but the microphone isn't working" });
     expect(row("mic-off")).toEqual({ label: "“Hey Ember”", value: "On, but the microphone is off" });
     expect(SCRIPT).toContain('$("w-try-voice").hidden = vs !== "listening" && vs !== "waiting";');
     expect(SCRIPT).toContain('$("w-voice-later").textContent = vs === "no-models" ? TRY_TEXT.voiceNoModels : vs === "no-mic" ? TRY_TEXT.voiceNoMic : vs === "mic-off" ? TRY_TEXT.voiceMicOff : TRY_TEXT.voiceLater;');
+  });
+
+  it("names the handle menu's item as it reads while the microphone is off (r10-modes-copy-x10-2)", () => {
+    // While muted the item reads "Unmute microphone", so first run named an item the user wouldn't find.
+    expect(MAIN).toContain('keyed(voice.isMuted ? "Unmute microphone" : "Mute microphone", sc.mute)');
+    expect(TRY_TEXT.voiceMicOff).toContain("Unmute microphone, in my handle's menu");
+    expect(TRY_TEXT.voiceMicOff).not.toMatch(/(^|[^n])Mute microphone/);
   });
 
   it("hears the stop shortcut and the microphone's level from main, never audio", () => {

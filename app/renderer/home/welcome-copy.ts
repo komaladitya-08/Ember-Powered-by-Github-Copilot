@@ -443,7 +443,7 @@ export const TRY_TEXT = {
   /** Voice is on and agreed to, but the microphone isn't working (the voice state's "error": first-run-r10-1). */
   voiceNoMic: "“Hey Ember” is on, but I can't hear you: my microphone isn't working. Check it in Settings › Voice.",
   /** Voice is on and agreed to, but the user turned the microphone off (muted). */
-  voiceMicOff: "“Hey Ember” is on, but my microphone is off, so I can't hear you. Mute microphone, in my handle's menu, turns it back on.",
+  voiceMicOff: "“Hey Ember” is on, but my microphone is off, so I can't hear you. Unmute microphone, in my handle's menu, turns it back on.",
   /** Voice is on but not listening yet (models downloading, or starting). */
   voiceWaiting: "I'm not listening yet. Once I am, say “Hey Ember”.",
 } as const;
