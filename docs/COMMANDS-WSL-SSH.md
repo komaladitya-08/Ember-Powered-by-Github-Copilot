@@ -287,7 +287,14 @@ Ember stops and asks before a command that:
   say, and a `busybox` or `toybox` applet is judged as that program. An everyday tool given a command to run asks the
   same way: a tmux format with `#(…)`, `gcc -wrapper`, `ctest --build-and-test … --test-command` and `ctest -S`,
   `prove --exec`, and `cmake -P` with a script outside the task's folder. `deno` given an address instead of a file
-  asks, and so does `convert` on Windows, where it is the system's disk converter (ImageMagick is `magick` there);
+  asks, and so does `convert` on Windows, where it is the system's disk converter (ImageMagick is `magick` there).
+  A command handed to a program Ember doesn't know is read as a command too, so the whole asks at least as that
+  command would alone: one quoted word (`mytool 'rm -rf build'`), the value of an option named like one that runs
+  things (`--exec`, `--command`, `--cmd`, `--run`, `-x`, `-c`, `-s`, `-e`), and the words after `--` or after a first
+  word such as `exec` or `run`; naming the program in your words never announces it then. The project's own script
+  given one (`./run.sh --exec 'npm publish'`) asks about that command, and runs as before when Ember finds nothing
+  in it. `fd -x` and `-X`, `bat --pager`, `pandoc --filter`, `protoc --plugin`, a compiler's `-fplugin=` and
+  `just --shell` are read or ask the same way;
 - **Ember can't read with certainty**: `eval`, encoded commands (`powershell -EncodedCommand`, `base64 -d | sh`),
   aliases it can't see, unusual syntax, interactive programs such as `vim`, `less`, `top` or `python` with no
   script ("This opens an interactive program; you'd have to use it yourself in the command window."), a job count

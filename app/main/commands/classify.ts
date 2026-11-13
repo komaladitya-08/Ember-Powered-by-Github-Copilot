@@ -3090,6 +3090,7 @@ class Engine extends Classifier {
     }
     const windowsSide = sc.os === "win32" || sc.family !== "posix" || pn.interop;
     if (windowsSide && (key === "bash" || (!NATIVE[key] && DISTRO_LAUNCHER.test(key)))) { distroLauncher(h); return; }
+    terminalDriver(h);
     const n = NATIVE[key];
     const from = this.findings.length;
     if (n) { this.runRow(n, h); this.verbGuard(h, from); }
@@ -3262,6 +3263,7 @@ class Engine extends Classifier {
       }
       scriptName(inner, nameArg.v);
     }
+    terminalDriver(inner);
     const n = NATIVE[key];
     const dlBefore = this.downloads.length;
     const from = this.findings.length;
@@ -3872,6 +3874,67 @@ function generic(h: H, noRow = false): void {
     h.e.unclear("unclear.hidden-command", `Ember can't tell how ${h.prog} runs ${h.args[at].v}.`);
     h.e.payload(h.args.slice(at), h.sc, h.prog);
   }
+  // Never a program Ember knows by name, whose -c, -e, -s and -x are its own options (`shellcheck -x`, `fd -X`).
+  if (noRow && !knownProgram(k) && !ORDINARY_VERBS[k] && !ORDINARY_VERBS[unversioned(k)]) handedCommand(h, at);
+}
+
+/** Options whose value is a command the tool runs, by the names tools give them (`--exec`, `--command`, `-x`, `-c`). */
+const EXEC_OPTION = /^(--exec|--exec-batch|--command|--cmd|--run|--shell-cmd|--shell-command|-x|-X|-c|-s|-e)$/;
+/** A first word after which the rest is a command to run (`mytool exec x`, `mytool run -- x`). */
+const EXEC_WORDS = new Set(["exec", "run", "x", "do", "sh", "shell", "spawn", "watch", "with", "wrap"]);
+
+/**
+ * A command handed to a program with no row (commands-remote-r9-2): as one quoted word (`mytool 'rm -rf build'`), as
+ * the value of an exec-like option (`--exec 'npm publish'`, `-x make`), or as the words after `--` or an exec-like
+ * first word (`mytool -- ./a.sh`, `mytool exec dropdb prod`). It is read as a command of its own, so the whole
+ * decides at least as strictly as that command would alone. A quoted word counts when its first word names a program
+ * Ember has a row for; an exec-like option's value with a space in it always does. Behind a program Ember doesn't
+ * know it also asks how the one runs the other (`unclear.hidden-command`), which the user's words naming the program
+ * never announce; the project's own script (a path in the task's folder) is judged by the handed command alone.
+ * `runnerAt`: where generic() already found a runner's name among the words, and read on from there.
+ */
+function handedCommand(h: H, runnerAt: number): void {
+  const args = h.args;
+  const unknown = !(h.pn.isPath && h.nameArg.v !== null && ownFolder(h.nameArg.v, h.sc, h.e.ctx.cwd || null));
+  const shell: ShellId = h.sc.family === "powershell" ? "powershell" : h.sc.family === "cmd" ? "cmd" : "sh";
+  const names = (word: string): boolean => {
+    const base = (word.split(/[\\/]/).pop() ?? "").toLowerCase().replace(/\.(exe|com)$/, "");
+    if (!/^[a-z]/.test(base)) return false;
+    if (runners().has(base) || NATIVE[base] !== undefined) return true;
+    if (h.sc.family === "powershell") return CMDLETS[base] !== undefined || PS_ALIASES[base] !== undefined;
+    return h.sc.family === "cmd" && CMD_BUILTINS[base] !== undefined;
+  };
+  const hidden = (what: string): void => { if (unknown) h.e.unclear("unclear.hidden-command", `Ember can't tell how ${h.prog} runs ${what}.`); };
+  const text = (t: string, option: boolean): void => {
+    const first = t.trim().split(/\s+/)[0] ?? "";
+    if (first === "" || !(names(first) || (option && /\s/.test(t.trim())))) return;
+    hidden(first);
+    h.e.nested(t, shell, h.sc, h.prog);
+  };
+  for (let k = 0; k < args.length; k++) {
+    const v = args[k].v;
+    if (v === null || k === runnerAt) continue;
+    const eq = v.startsWith("-") ? v.indexOf("=") : -1;
+    if (EXEC_OPTION.test(eq < 0 ? v : v.slice(0, eq))) {
+      const value = eq < 0 ? args[k + 1]?.v : v.slice(eq + 1);
+      if (eq < 0) k++;
+      if (value !== null && value !== undefined) text(value, true);
+      continue;
+    }
+    if (!v.startsWith("-") && /\s/.test(v.trim())) text(v, false);
+  }
+  // The words after `--`, or after an exec-like first word and its own `--`.
+  const first = firstOperand(args);
+  let at = args.findIndex(a => a.v === "--");
+  if (at < 0 && first.v !== null && EXEC_WORDS.has(first.v)) at = first.at;
+  if (at < 0 || at + 1 >= args.length || (runnerAt >= 0 && runnerAt <= at + 1 + (args[at + 1].v === "--" ? 1 : 0))) return;
+  const rest = args.slice(args[at + 1].v === "--" ? at + 2 : at + 1);
+  const next = rest[0];
+  if (!next || next.v === null || next.v.startsWith("-")) return;
+  if (unknown ? args[at].v === "--" || /[\\/]/.test(next.v) : names(next.v) || h.e.isDownloaded(next, h.sc)) {
+    hidden(next.v);
+    h.e.payload(rest, h.sc, h.prog);
+  }
 }
 
 /**
@@ -4050,7 +4113,6 @@ function terminalDriver(h: H): void {
  */
 function toolPayload(h: H): void {
   if (h.e.readsAsMain) return;
-  terminalDriver(h);
   const args = h.args;
   const hidden = (): void => h.e.unclear("unclear.hidden-command", `Ember can't tell what ${h.prog} runs.`);
   const shellText = (a: Arg | undefined, wrapper: string): void => {
@@ -4137,6 +4199,24 @@ function toolPayload(h: H): void {
       else if (args.some(a => a.v === null || !a.v.startsWith("-"))) hidden();
       return;
     }
+    case "fd": case "fdfind": {
+      // The command fd runs for each file it finds (`-x`), or once for all of them (`-X`), up to a lone `;`.
+      const at = args.findIndex(a => a.v !== null && /^(-x|--exec|-X|--exec-batch)$/.test(a.v));
+      if (at < 0) return;
+      const end = args.findIndex((a, k) => k > at && a.v === ";");
+      const words = args.slice(at + 1, end < 0 ? args.length : end);
+      if (words.some(a => a.v === null)) hidden();
+      else h.e.payload(words, h.sc, `${h.key} -x`);
+      return;
+    }
+    case "bat": case "batcat": {
+      // The pager is a command line bat hands to the shell.
+      for (let k = 0; k < args.length; k++) {
+        const m = /^--pager(?:=(.*))?$/.exec(args[k].v ?? "");
+        if (m) shellText(m[1] !== undefined ? { ...args[k], v: m[1] } : args[++k], h.key);
+      }
+      return;
+    }
     case "deno": {
       // Not a payload: `deno compile -o` writes an executable, which outside the task's folder (`-o ~/bin/x`) is a
       // program later commands find by name (commands-closed-x9-5).
@@ -4177,7 +4257,12 @@ function toolPayload(h: H): void {
 const RUNS_BY_OPTION: readonly (readonly [RegExp, RegExp])[] = [
   [/^(.+-)?(gcc|g\+\+|cc|c\+\+|cpp|gfortran|gccgo|gdc|gnat)$/, /^-wrapper$/],
   [/^ctest$/, /^(--build-and-test|--test-command|-S|-SP|--script|--script-new-process)(=|$)/],
-  [/^prove$/, /^(-e|--exec)(=|$)/],
+  // prove's -e in a bundle too (`-ve`); a compiler's plug-in is code it loads (commands-remote-r9-2, commands-closed-4).
+  [/^prove$/, /^(-[A-Za-z]*e|--exec)(=|$)/],
+  [/^(.+-)?(gcc|g\+\+|cc|c\+\+|cpp|gfortran|clang|clang\+\+|clang-cl)$/, /^(-fplugin=|-fpass-plugin=|-load$)/],
+  [/^pandoc$/, /^(-F|--filter|-L|--lua-filter)(=|.|$)/],
+  [/^protoc$/, /^--plugin(=|$)/],
+  [/^just$/, /^(--shell|--shell-arg|--command|-c)(=|$)/],
 ];
 
 /**
@@ -6359,8 +6444,11 @@ reg(NATIVE, Object.keys(WRAPPERS), h => {
   if (h.key === "timeout" && (h.sc.os === "win32" || h.sc.family !== "posix")) return;
   if (rule.finding) h.e.add(rule.finding.cls, rule.finding.rule, rule.finding.says);
   if (h.key === "disown") return;
-  if (rule.noCommand && h.args.some(a => a.v !== null && rule.noCommand!.test(a.v))) { h.e.readArgs([], h.sc); return; }
   const spec: OptSpec = { shortValue: rule.shortValue ?? "", shortOptional: rule.shortOptional ?? "", longValue: rule.longValue ?? [], stopAtOperand: true };
+  // An option after which there is no command is the wrapper's own, before the command: never one of the command's
+  // (`ionice -c3 shred -u notes.txt`: commands-remote-r9-14).
+  const own = h.args.slice(0, h.args.length - parseOpts(h.args, spec).operands.slice(rule.positional ?? 0).length);
+  if (rule.noCommand && own.some(a => a.v !== null && rule.noCommand!.test(a.v))) { h.e.readArgs([], h.sc); return; }
   // A wrapper whose table was corrected since main's is judged by main's too: the word after an option that took a
   // value there was not the command, and what stood after it was (`numactl -H x printenv`: commands-held-5).
   const was: OptSpec = rule.main ? { shortValue: rule.main.shortValue ?? "", longValue: rule.main.longValue ?? [], stopAtOperand: true } : spec;
