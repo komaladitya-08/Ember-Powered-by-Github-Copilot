@@ -62,6 +62,7 @@ import type { RoutineBook } from "./routines";
 import { AUTONOMY_NOT_SAVED, autonomyIntent, planAutonomyIntent } from "./autonomy-intent";
 import type { TaskVoiceTrust } from "./voice-answer";
 import { approvalInputs, modeInForce } from "../policy/autonomy";
+import { WATCHES_NEEDED } from "../doctor";
 import { CATCH_UP_MS, catchUpQuestion, catchUpReply, healthQuestion, healthReply, type Health, READ_OUT_REPLY, readOutRequest, resultsReply, resultsRequest, retryRequest, statusQuestion, statusReply, stopRequest } from "./status";
 import { CONVERSATION_LIMIT, retainedConversationText, type ConversationTurn, type ConversationTurnEnd } from "../../shared/conversation";
 import type { HistoryStore } from "./conversation-store";
@@ -388,8 +389,8 @@ export interface HostOptions {
   turnSlowMs?: number;
   /** How long a turn under way may hear nothing before it is given up on (ms; TURN_SILENT_MS). */
   turnSilentMs?: number;
-  /** Whether this user's inotify instances are all in use (inotifyUsedUp; tests pass their own). */
-  inotifyUsedUp?: () => boolean;
+  /** Whether this user's inotify instances, or its watches ("watches"), are used up (inotifyUsedUp; tests pass their own). */
+  inotifyUsedUp?: () => boolean | "watches";
   /** Where tasks act (§2): the targets runtime's view for the host (absent: this computer only, as before). */
   targets?: TargetsForAgent;
   /** The audit log and Confirmer tasks use when there are no `hands` (no window system: commands-only targets, §2.6). */
@@ -550,37 +551,59 @@ export function runtimeWords(service: ServiceKind) {
   };
 }
 
+/** The inotify use of one user: instances, and the files and folders they watch where those can be counted. */
+export interface InotifyUse { used: number; max: number; watches?: { used: number; max: number } }
+
 /**
  * This user's inotify instances in use and the limit (fs.inotify.max_user_instances: 128 on RHEL 8, and every app
  * takes some; Ember's Copilot runtime takes one per conversation or task), or null when they can't be counted.
- * Counted in `proc`: the instances held by processes of `uid`.
+ * Counted in `proc`: the instances held by processes of `uid`. `watches`: the files and folders those instances watch
+ * (each "inotify wd:" line of an instance's fdinfo) against fs.inotify.max_user_watches (8,192 on RHEL 8, which an
+ * editor, a sync client or the desktop's file indexer can use up) or the user namespace's own lower limit
+ * (user.max_inotify_watches); left out where there is no limit to read. With the watches used up the runtime took a
+ * request and never began it, as with the instances, while the count of instances said all was well (reliability-r9-1).
  */
-export function inotifyUse(proc = "/proc", uid = process.getuid?.()): { used: number; max: number } | null {
+export function inotifyUse(proc = "/proc", uid = process.getuid?.()): InotifyUse | null {
   try {
     const max = Number(fs.readFileSync(path.join(proc, "sys/fs/inotify/max_user_instances"), "utf8"));
     if (!(max > 0)) return null;
-    let n = 0;
+    let n = 0, watched = 0;
     for (const pid of fs.readdirSync(proc)) {
       if (!/^\d+$/.test(pid)) continue;
       const dir = path.join(proc, pid, "fd");
       try {
         if (uid !== undefined && fs.statSync(path.join(proc, pid)).uid !== uid) continue;
         for (const fd of fs.readdirSync(dir)) {
-          try { if (fs.readlinkSync(path.join(dir, fd)) === "anon_inode:inotify") n++; } catch { /* closed meanwhile */ }
+          try {
+            if (fs.readlinkSync(path.join(dir, fd)) !== "anon_inode:inotify") continue;
+            n++;
+            watched += (fs.readFileSync(path.join(proc, pid, "fdinfo", fd), "utf8").match(/^inotify wd:/gm) ?? []).length;
+          } catch { /* closed meanwhile */ }
         }
       } catch { /* gone, or another user's */ }
     }
-    return { used: n, max };
+    const limits = ["sys/fs/inotify/max_user_watches", "sys/user/max_inotify_watches"].flatMap(file => {
+      try { const v = Number(fs.readFileSync(path.join(proc, file), "utf8")); return Number.isFinite(v) && v >= 0 ? [v] : []; } catch { return []; /* no such limit here */ }
+    });
+    return { used: n, max, ...(limits.length ? { watches: { used: watched, max: Math.min(...limits) } } : {}) };
   } catch {
     return null;
   }
 }
 
-/** Whether they are all in use: the Copilot runtime then takes requests but never begins them. */
-export function inotifyUsedUp(proc = "/proc", uid = process.getuid?.()): boolean {
+/**
+ * Whether they are all in use: the Copilot runtime then takes requests but never begins them. "watches" when it is the
+ * watched files and folders that are used up (fewer than WATCHES_NEEDED free), not the instances.
+ */
+export function inotifyUsedUp(proc = "/proc", uid = process.getuid?.()): boolean | "watches" {
   const u = inotifyUse(proc, uid);
-  return !!u && u.used >= u.max;
+  if (!u) return false;
+  if (u.used >= u.max) return true;
+  return u.watches && u.watches.max - u.watches.used < WATCHES_NEEDED ? "watches" : false;
 }
+
+/** runtimeWords' noWatchersWhy, for the watched files and folders: the limit an administrator raises is another one. */
+const watchesWhy = (why: string) => why.replace("file watchers (fs.inotify.max_user_instances)", "watched files and folders (fs.inotify.max_user_watches)");
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 /** A promise and the call that settles it: a Stop's word to a request that waits (AgentHost.stopSignal). */
@@ -2265,18 +2288,19 @@ export class AgentHost {
           this.queued = [];
           this.turnChanged();
           const full = why === "not-started" && (this.o.inotifyUsedUp ?? inotifyUsedUp)();
-          const reason = why === "silent" ? "turn went silent and didn't end" : full ? "turn didn't start: inotify instances used up" : "turn didn't start";
+          const reason = why === "silent" ? "turn went silent and didn't end" : full === "watches" ? "turn didn't start: inotify watches used up" : full ? "turn didn't start: inotify instances used up" : "turn didn't start";
           // Named for the service in use, never Copilot when it isn't (integrations-v1).
           const words = reconnectWords(this.serviceKind());
           const runtime = runtimeWords(this.serviceKind());
-          const noWatchersDetail = `${runtime.noWatchersWhy} Reconnecting…`;
+          const noWatchersWhy = full === "watches" ? watchesWhy(runtime.noWatchersWhy) : runtime.noWatchersWhy;
+          const noWatchersDetail = `${noWatchersWhy} Reconnecting…`;
           if (this.tasksAtWork()) {
             this.o.log.warn("agent.reconnect_after_tasks", { why: reason });
             // (A silent turn: the conductor said Copilot didn't answer.)
             if (why === "not-started") this.presenter.fail(full ? runtime.noWatchers : words.notAnsweringAfterTasks);
             // (Set first: the status says the reconnect waits for the tasks, so settings doesn't offer one that stops them.)
             this.reconnectAfterTasks = () => { this.reconnectAfterTasks = null; this.lost(gen, reason, undefined, why === "silent" ? words.noAnswerDetail : full ? noWatchersDetail : words.notAnsweringDetail, asked, runtime.cutOffStalled); };
-            this.setStatus({ phase: "error", reason: "not-answering", detail: full ? `${runtime.noWatchersWhy} ${AFTER_TASKS}` : `${words.notAnsweringNow} ${AFTER_TASKS}` });
+            this.setStatus({ phase: "error", reason: "not-answering", detail: full ? `${noWatchersWhy} ${AFTER_TASKS}` : `${words.notAnsweringNow} ${AFTER_TASKS}` });
             return;
           }
           if (why === "silent") this.lost(gen, reason, noAnswer(this.serviceKind()), words.noAnswerDetail, asked, runtime.cutOffStalled);

@@ -3353,6 +3353,57 @@ describe("review round 7: a request the runtime takes but never begins", () => {
     fs.rmSync(proc, { recursive: true, force: true });
   });
 
+  it("out of inotify watches (the runtime can't begin a turn then either): Ember says so, and names that limit, not the instances' (reliability-r9-1)", async () => {
+    vi.useFakeTimers();
+    const { host, screen, statuses } = makeHost({ inotifyUsedUp: () => "watches" });
+    await host.start(TOKEN, "stored");
+    sim.stall = () => true;
+    await host.ask("what time is it?");
+    await vi.advanceTimersByTimeAsync(20_500);
+    expect(screen().bubble).toMatchObject({ mood: "error", thought: "Copilot can't work right now: this computer has run out of file watchers. Close a few apps, then ask me again." });
+    expect(statuses.map(x => x.detail)).toContainEqual("Copilot isn't answering: the system's limit on watched files and folders (fs.inotify.max_user_watches) is used up. Close some apps, or ask IT to raise the limit. Reconnecting…");
+    expect(statuses.map(x => x.detail).join(" ")).not.toMatch(/max_user_instances/);
+    await host.stop();
+  });
+
+  // Linux only, as above.
+  it.skipIf(process.platform !== "linux")("this user's inotify watches are counted in /proc against the system's and the user namespace's limit (reliability-r9-1)", async () => {
+    const { inotifyUse, inotifyUsedUp } = await import("../../app/main/agent/host");
+    const proc = fs.mkdtempSync(path.join(os.tmpdir(), "ember-proc-"));
+    fs.mkdirSync(path.join(proc, "sys/fs/inotify"), { recursive: true });
+    fs.mkdirSync(path.join(proc, "sys/user"), { recursive: true });
+    fs.writeFileSync(path.join(proc, "sys/fs/inotify/max_user_instances"), "128\n");
+    fs.writeFileSync(path.join(proc, "sys/fs/inotify/max_user_watches"), "8192\n");
+    const watching = (pid: string, watches: number) => {
+      fs.mkdirSync(path.join(proc, pid, "fd"), { recursive: true });
+      fs.mkdirSync(path.join(proc, pid, "fdinfo"), { recursive: true });
+      fs.symlinkSync("anon_inode:inotify", path.join(proc, pid, "fd", "5"));
+      fs.symlinkSync("/dev/null", path.join(proc, pid, "fd", "6"));
+      fs.writeFileSync(path.join(proc, pid, "fdinfo", "5"), `pos:\t0\nflags:\t02004000\nmnt_id:\t17\nino:\t26\n${Array.from({ length: watches }, (_x, i) => `inotify wd:${i + 1} ino:${i + 14} sdev:fe00000 mask:fc6 ignored_mask:0 fhandle-bytes:8 fhandle-type:1 f_handle:1400000000000000\n`).join("")}`);
+      fs.writeFileSync(path.join(proc, pid, "fdinfo", "6"), "pos:\t0\ninotify wd:1 in a file that is no inotify instance\n");
+    };
+    const uid = process.getuid!();
+    watching("10", 3);
+    watching("11", 4);
+    expect(inotifyUse(proc, uid)).toEqual({ used: 2, max: 128, watches: { used: 7, max: 8192 } });
+    expect(inotifyUsedUp(proc, uid)).toBe(false);
+    // Another app holds nearly all of them: the runtime's few can't be added.
+    watching("12", 8183);
+    expect(inotifyUse(proc, uid)?.watches).toEqual({ used: 8190, max: 8192 });
+    expect(inotifyUsedUp(proc, uid)).toBe("watches");
+    expect(inotifyUsedUp(proc, uid + 1)).toBe(false);
+    fs.rmSync(path.join(proc, "12"), { recursive: true });
+    // A user namespace's own, lower limit counts (a container, a sandboxed session).
+    fs.writeFileSync(path.join(proc, "sys/user/max_inotify_watches"), "0\n");
+    expect(inotifyUse(proc, uid)?.watches).toEqual({ used: 7, max: 0 });
+    expect(inotifyUsedUp(proc, uid)).toBe("watches");
+    // No watch limit to read: only the instances are judged, as before.
+    fs.rmSync(path.join(proc, "sys/user"), { recursive: true });
+    fs.rmSync(path.join(proc, "sys/fs/inotify/max_user_watches"));
+    expect(inotifyUse(proc, uid)).toEqual({ used: 2, max: 128 });
+    fs.rmSync(proc, { recursive: true, force: true });
+  });
+
   it("Stop drops the request waiting for its turn: nothing is owed, nothing reconnects", async () => {
     vi.useFakeTimers();
     const { host, statuses } = makeHost();

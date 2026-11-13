@@ -65,7 +65,7 @@ export interface DoctorProbes {
   /** Chromium's sandbox (Linux); null where the OS provides it (the row is left out). appImage: running as an AppImage. */
   sandbox: { userNamespaces: boolean; suidHelper: boolean; appImage?: boolean } | null;
   /** This user's file watchers (inotify instances) in use and the limit; null when they can't be counted. */
-  fileWatchers?: { used: number; max: number } | null;
+  fileWatchers?: { used: number; max: number; watches?: { used: number; max: number } } | null;
   /** Windows and macOS: the shared accessibility helper's status answer (null: it didn't answer); its own row. */
   helper?: HelperStatus | null;
   /** Rows the platform adds in doctor wording (permissions, PowerShell, elevation…), before the Copilot row. */
@@ -285,8 +285,29 @@ export function doctorChecks(p: DoctorProbes): DoctorCheck[] {
     : w.used >= w.max
       ? { id: "file-watchers", status: "fail", label: watchers.label, detail: `All ${w.max} are in use, ${watchers.none} a free one for each conversation and task.`, fix: watchersFix }
       : { id: "file-watchers", status: "warn", label: watchers.label, detail: `${w.used} of ${w.max} in use: ${watchers.low} a free one for each conversation and task, and stops answering without.`, fix: watchersFix });
+  // The files and folders those watchers watch have a limit of their own (8,192 on RHEL 8), which an editor, a sync
+  // client or the desktop's file indexer can use up: the runtime then never begins a request, and the row above said
+  // all was well (reliability-r9-1).
+  const f = w?.watches;
+  if (f) {
+    const n = (v: number) => v.toLocaleString("en-GB");
+    const free = f.max - f.used;
+    const watchesFix = "sudo sysctl -w fs.inotify.max_user_watches=524288, and put fs.inotify.max_user_watches=524288 in /etc/sysctl.d/90-ember.conf to keep it";
+    const needs = `${other ? "so Ember can't answer: its model connection needs" : "so Copilot can't answer: it needs"} to watch a few for each conversation and task.`;
+    out.push(free >= 64
+      ? { id: "file-watches", status: "ok", label: "Watched files and folders", detail: `${n(f.used)} of ${n(f.max)} in use.` }
+      : free < WATCHES_NEEDED
+        ? { id: "file-watches", status: "fail", label: "Watched files and folders", detail: `${f.max <= 0 ? "This session may watch none" : free <= 0 ? `All ${n(f.max)} are in use` : `${n(f.used)} of ${n(f.max)} in use`}, ${needs}`, fix: watchesFix }
+        : { id: "file-watches", status: "warn", label: "Watched files and folders", detail: `${n(f.used)} of ${n(f.max)} in use: ${watchers.low} to watch a few for each conversation and task, and stops answering without.`, fix: watchesFix });
+  }
   return out;
 }
+
+/**
+ * The Copilot runtime adds a few inotify watches for each conversation and task (three, measured): with fewer than
+ * this many free it can't begin a request (host.ts inotifyUsedUp), and the setup check fails its row.
+ */
+export const WATCHES_NEEDED = 8;
 
 const MARK: Record<DoctorStatus, string> = { ok: "ok  ", warn: "warn", fail: "FAIL" };
 
