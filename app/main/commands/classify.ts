@@ -8410,7 +8410,13 @@ reg(NATIVE, ["busybox", "toybox"], h => {
   const first = h.args[0];
   if (first && first.v === null) { h.e.unclear("unclear.hidden-command", `Ember can't tell what ${h.prog} runs.`); return; }
   if (!first || first.v === null || first.v.startsWith("-")) { generic(h); return; }
-  if (h.key === "toybox" || lower(first) !== "httpd") { h.e.payload(h.args, h.sc, h.key); return; }
+  if (h.key === "toybox" || lower(first) !== "httpd") {
+    // Main's reading stays (generic(): one that runs others, `busybox sh -c …`, asks how), and an applet that isn't
+    // one of those is judged as itself as well.
+    generic(h);
+    if (!runners().has(first.v.toLowerCase())) h.e.payload(h.args, h.sc, h.key);
+    return;
+  }
   // busybox httpd [-f] [-p [IP:]PORT] [-h HOME] [-c CONF]: port 80 on every address, this folder; without -f it
   // carries on in the background.
   const q = parseOpts(h.args.slice(1), { shortValue: "pchurmedP" });
