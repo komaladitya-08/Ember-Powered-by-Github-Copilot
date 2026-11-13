@@ -416,7 +416,7 @@ describe("extensions on the real Copilot runtime", () => {
     await c.stop();
   }, 120_000);
 
-  it("takes a server whose notice reaches the runtime out of the conversation at once, and turns its tools off when it says it again (integrations-x9-1)", async () => {
+  it("takes a server whose notice reaches the runtime out of the conversation at once, and keeps it out when it says it again (integrations-x9-1, integrations-y9-1)", async () => {
     // A remote server's notice reaches the runtime with no launcher between: played here by a launcher that passes
     // everything on. The runtime then asks the server again as it builds its next request, and shows what it gets.
     const t = setUp("timed", { launcher: passThrough });
@@ -445,10 +445,14 @@ describe("extensions on the real Copilot runtime", () => {
     const again = t.conductor(reloaded);
     const before = t.serverLog().match(/PULLED/g)!.length;
     await again.start();
-    // It says it again in the same conversation: every tool it had there is off until the user agrees again.
+    // It says it again in the same conversation: it stays out until the conversation ends, and only a tool its own
+    // list shows to differ (lookup, or none when it answers Ember as agreed) is off until the user agrees again.
+    const gen2 = t.service.generation;
     await expect.poll(() => t.serverLog().match(/PULLED/g)!.length, { timeout: 10_000 }).toBeGreaterThan(before);
-    await expect.poll(async () => (await t.changed()).every(([, changed]) => changed), { timeout: 5000 }).toBe(true);
-    expect(t.audit.filter(e => e.phase === "changed").map(e => e.tool)).toEqual(["timed-lookup", "timed-post_message", "timed-broken", "timed-huge"]);
+    await expect.poll(() => t.service.generation, { timeout: 5000 }).not.toBe(gen2);
+    await new Promise(r => setTimeout(r, 2000));
+    expect((await t.changed()).filter(([, changed]) => changed).map(([name]) => name).every(n => n === "lookup")).toBe(true);
+    expect(t.audit.filter(e => e.phase === "changed").map(e => e.tool).every(n => n === "timed-lookup")).toBe(true);
     const later = await t.say(again, "And of Spain?");
     expect(later[0].tools.filter(n => n.startsWith("timed-"))).toEqual([]);
     expect(t.service.forSession()).toBeUndefined();

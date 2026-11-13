@@ -1370,20 +1370,28 @@ describe("ExtensionsService", () => {
     expect(fresh.tools).toEqual(["fake-lookup", "fake-post_message", "fake-peek"]);
     live = asShown([LOOKUP, POST, PEEK]);
     const again: string[][] = [];
-    fresh.bind!(async () => live, async keys => { again.push(keys); });
+    // The server's own list now has one tool's text changed; the other two are as agreed.
+    let rereads = 0;
+    fresh.bind!(async () => live, async keys => { again.push(keys); }, async () => { rereads++; return { tools: [LOOKUP, { ...POST, description: "Posts a message to everyone." }, PEEK] }; });
     await fresh.verify(live);
     answers = [null];
     expect(await call(fresh, "fake-peek")).toMatchObject({ permissionDecision: "deny" });
     expect(asked).toHaveLength(1);
     expect(audit).toContainEqual(expect.objectContaining({ phase: "decision", tool: "fake-peek", verdict: "ask", reason: "tainted" }));
-    // Said again in the same conversation: every tool it had in the session is off until the user agrees again.
+    // Said again in the same conversation: the server leaves this session again, and only the tool whose text
+    // differs from its pin is off until the user agrees again (integrations-y9-1).
+    const gen2 = s.generation;
     fresh.listChanged!("fake");
     await fresh.settled!();
+    await vi.waitFor(() => expect(audit.filter(e => e.phase === "changed").map(e => e.tool)).toEqual(["fake-post_message"]));
     expect(again).toEqual([["fake"]]);
+    expect(rereads).toBe(1);
+    expect(s.generation).not.toBe(gen2);
+    expect(await call(fresh, "fake-lookup")).toMatchObject({ permissionDecision: "deny", permissionDecisionReason: expect.stringMatching(/stopped this extension's server/) });
     const [item] = await s.list();
-    expect(item.tools.map(t => !!t.changed)).toEqual([true, true, true]);
+    expect(item.tools.map(t => !!t.changed)).toEqual([false, true, false]);
     expect(installedRow(item)).toMatchObject({ status: { text: "Changed since you agreed", tone: "fail" }, actions: [{ act: "reagree", label: "Review tools" }, { act: "uninstall" }] });
-    expect(audit.filter(e => e.phase === "changed").map(e => e.tool)).toEqual(["fake-lookup", "fake-post_message", "fake-peek"]);
+    // The server stays out for the rest of this conversation: a second word is not answered with another reload.
     expect(s.forSession()).toBeUndefined();
     // A new conversation starts the count again.
     await s.reagree(item.id, item.reviewToken!);
@@ -1396,6 +1404,32 @@ describe("ExtensionsService", () => {
     next.listChanged!("fake");
     await next.settled!();
     expect((await s.list())[0].tools.every(t => !t.changed)).toBe(true);
+  });
+
+  it("keeps a server that says twice its tools changed out of the conversation without calling tools changed that it can't show differ (integrations-y9-1)", async () => {
+    const s = await installed();
+    const ext = s.forSession()!;
+    live = asShown([LOOKUP, POST]);
+    ext.bind!(async () => live, async () => undefined, async () => ({ tools: [LOOKUP, POST] }));
+    await ext.verify(live);
+    ext.listChanged!("fake");
+    await ext.settled!();
+    const fresh = s.forSession()!;
+    const again: string[][] = [];
+    // A server whose list can't be read after its second notice.
+    fresh.bind!(async () => live, async keys => { again.push(keys); }, async () => { throw new Error("no list"); });
+    await fresh.verify(live);
+    fresh.listChanged!("fake");
+    await fresh.settled!();
+    await new Promise(r => setTimeout(r, 20));
+    expect(again).toEqual([["fake"]]);
+    expect(await call(fresh, "fake-lookup")).toMatchObject({ permissionDecision: "deny", permissionDecisionReason: expect.stringMatching(/stopped this extension's server/) });
+    expect((await s.list())[0].tools.every(t => !t.changed)).toBe(true);
+    expect(audit.filter(e => e.phase === "changed")).toEqual([]);
+    // Off for the rest of the conversation all the same, and back, as agreed, in the next.
+    expect(s.forSession()).toBeUndefined();
+    s.conversationEnded();
+    expect(s.forSession()!.tools).toEqual(["fake-lookup", "fake-post_message"]);
   });
 
   it("takes a server that said its tools changed before the session was bound out as soon as it is (integrations-x9-1)", async () => {

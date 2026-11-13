@@ -701,8 +701,9 @@ it builds on:
   - *When the runtime does hear that a server's list changed* (`mcp.tools.list_changed`: a remote server, which has
     no launcher between, or anything that got past it), that word is the change. The server is disabled in the
     session at once, unasked, the conversation is tainted and reloads between turns, where the runtime's first list
-    is checked against the pins as at every load. A server that says it again in the same conversation has every
-    tool it had in the session marked changed (off until the user agrees again). The event is heard from the
+    is checked against the pins as at every load. A server that says it again in the same conversation stays out
+    of it until the conversation ends, and each of its tools whose entry in its own list then differs from the pin is
+    marked changed (off until the user agrees again); the others come back in the next conversation. The event is heard from the
     session's first moment (`onEvent` in the session's config). Not closed for a remote server: a notice that
     reaches the runtime a few milliseconds before it builds a request can put the new text in that one request,
     before Ember hears of it; after that the server is out and every extension call asks. Closing it needs the
