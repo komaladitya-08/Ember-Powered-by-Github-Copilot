@@ -647,7 +647,7 @@ export interface OrdinaryVerbs {
   bare?: "asks";
 }
 
-const CONDA_VERBS: OrdinaryVerbs = { verbs: ["list", "info", "search", "create", "install", "update", "upgrade", "env", "run", "activate", "deactivate", "clean", "doctor", "compare", "--version", "-V", "help", "init", "notices"], sub: { env: ["list", "create", "export", "update", "config"] } };
+const CONDA_VERBS: OrdinaryVerbs = { verbs: ["list", "info", "search", "create", "install", "update", "upgrade", "env", "run", "activate", "deactivate", "doctor", "compare", "--version", "-V", "help", "notices"], sub: { env: ["list", "create", "export", "update", "config"] } };
 const BUNDLE_VERBS: OrdinaryVerbs = {
     verbs: ["install", "update", "exec", "check", "list", "show", "info", "outdated", "init", "add", "remove", "lock", "binstubs", "package", "cache", "platform", "doctor",
       "gem", "version", "help", "--version", "-v"],
@@ -658,7 +658,9 @@ const BUNDLE_VERBS: OrdinaryVerbs = {
  * test or run the project's own code. A tool Ember has no row for runs only with one of these (and asks with no verb);
  * a tool with a row asks for a verb off the list that its row judged ordinary (`cargo zzz` runs `cargo-zzz`, `mix
  * ecto.drop`, `tmux send-keys`, `stack exec`), "It runs a command of this tool that Ember doesn't know." What a row
- * judges dangerous it still says in its own words.
+ * judges dangerous it still says in its own words. Never a verb that writes shell start-up files (`conda init`), a
+ * home-wide default (`sdk default`, `asdf set -u`), or empties a cache or an environment (`pip cache purge`, `poetry env
+ * remove`): those ask as a prune does (commands-closed-x9-5).
  */
 export const ORDINARY_VERBS: Readonly<Record<string, OrdinaryVerbs>> = {
   // Tools with no row.
@@ -715,19 +717,19 @@ export const ORDINARY_VERBS: Readonly<Record<string, OrdinaryVerbs>> = {
   },
   pip: {
     verbs: ["install", "download", "freeze", "list", "show", "check", "search", "config", "cache", "index", "wheel", "hash", "completion", "debug", "inspect", "help", "--version", "-V", "lock"],
-    sub: { config: ["list", "get", "debug"], cache: ["dir", "info", "list", "purge", "remove"], index: ["versions"] },
+    sub: { config: ["list", "get", "debug"], cache: ["dir", "info", "list"], index: ["versions"] },
   },
   pipx: { verbs: ["list", "environment", "completions", "--version", "help"] },
   uv: {
     verbs: ["run", "sync", "lock", "add", "remove", "tree", "pip", "venv", "build", "init", "export", "cache", "version", "help", "--version", "-V", "python", "format"],
-    sub: { python: ["list", "find", "install", "pin", "dir"], cache: ["dir", "clean", "prune"] },
+    sub: { python: ["list", "find", "install", "pin", "dir"], cache: ["dir"] },
   },
   poetry: {
     verbs: ["install", "update", "add", "remove", "lock", "show", "build", "check", "run", "shell", "env", "version", "about", "help", "init", "new", "search", "export", "debug", "list", "cache", "sync", "--version", "-V"],
-    sub: { env: ["info", "list", "use", "remove", "activate"], cache: ["list", "clear"] },
+    sub: { env: ["info", "list", "use", "activate"], cache: ["list"] },
     values: ["-C", "--directory", "-P", "--project"],
   },
-  pdm: { verbs: ["install", "add", "remove", "update", "lock", "list", "show", "build", "run", "sync", "init", "info", "venv", "export", "import", "cache", "fix", "outdated", "use", "search", "--version", "-V", "help"] },
+  pdm: { verbs: ["install", "add", "remove", "update", "lock", "list", "show", "build", "run", "sync", "init", "info", "venv", "export", "import", "cache", "fix", "outdated", "use", "search", "--version", "-V", "help"], sub: { cache: ["info", "list"] } },
   conda: CONDA_VERBS,
   mamba: CONDA_VERBS,
   micromamba: CONDA_VERBS,
@@ -768,13 +770,13 @@ export const ORDINARY_VERBS: Readonly<Record<string, OrdinaryVerbs>> = {
   pyenv: { verbs: ["versions", "version", "which", "whence", "root", "prefix", "global", "local", "shell", "install", "rehash", "init", "commands", "help", "--version", "latest", "version-name", "version-file", "virtualenvs", "activate", "deactivate", "virtualenv", "doctor"] },
   rbenv: { verbs: ["versions", "version", "which", "whence", "root", "prefix", "global", "local", "shell", "install", "rehash", "init", "commands", "help", "--version", "version-name", "version-file"] },
   nodenv: { verbs: ["versions", "version", "which", "whence", "root", "prefix", "global", "local", "shell", "install", "rehash", "init", "commands", "help", "--version", "version-name"] },
-  asdf: { verbs: ["list", "current", "which", "where", "plugin", "install", "latest", "help", "version", "--version", "info", "reshim", "set", "local", "global", "shim-versions"], sub: { plugin: ["list", "add", "update"] } },
-  nvm: { verbs: ["ls", "list", "ls-remote", "current", "which", "version", "version-remote", "use", "install", "alias", "cache", "--version", "help", "run"] },
-  fnm: { verbs: ["list", "ls", "list-remote", "ls-remote", "current", "use", "install", "default", "env", "alias", "completions", "--version", "help"] },
+  asdf: { verbs: ["list", "current", "which", "where", "plugin", "install", "latest", "help", "version", "--version", "info", "reshim", "set", "local", "global", "shim-versions"], sub: { plugin: ["list", "add", "update"] }, asks: { set: ["-u", "--home", "-p", "--parent"] } },
+  nvm: { verbs: ["ls", "list", "ls-remote", "current", "which", "version", "version-remote", "use", "install", "alias", "cache", "--version", "help", "run"], sub: { cache: ["dir"] } },
+  fnm: { verbs: ["list", "ls", "list-remote", "ls-remote", "current", "use", "install", "env", "alias", "completions", "--version", "help"] },
   volta: { verbs: ["list", "which", "install", "pin", "fetch", "help", "--version", "-v"] },
   opam: { verbs: ["list", "show", "info", "search", "install", "switch", "env", "init", "update", "upgrade", "pin", "var", "--version", "help", "lint", "source"], sub: { switch: ["list", "show", "create", "set"] } },
   pipenv: { verbs: ["install", "lock", "sync", "update", "graph", "check", "requirements", "run", "shell", "--venv", "--where", "--py", "--version", "clean", "verify", "scripts", "--help"] },
-  sdk: { verbs: ["list", "ls", "current", "c", "use", "u", "default", "d", "install", "i", "home", "h", "env", "version", "v", "help", "update", "offline", "flush"] },
+  sdk: { verbs: ["list", "ls", "current", "c", "use", "u", "install", "i", "home", "h", "env", "version", "v", "help", "update", "offline"] },
   dart: { verbs: ["analyze", "compile", "create", "doc", "fix", "format", "info", "pub", "run", "test", "--version", "help"], sub: { pub: ["get", "upgrade", "add", "remove", "deps", "outdated", "downgrade", "global", "run", "cache"] }, files: /\.dart$/i },
   flutter: { verbs: ["analyze", "build", "clean", "create", "devices", "doctor", "drive", "emulators", "gen-l10n", "install", "logs", "pub", "run", "test", "--version", "help", "precache", "attach", "assemble"], sub: { pub: ["get", "upgrade", "add", "remove", "deps", "outdated", "downgrade", "run", "cache"] } },
   vcpkg: { verbs: ["install", "search", "list", "depend-info", "help", "version", "integrate", "x-update-baseline", "new", "add", "format-manifest", "owns", "update"], sub: { integrate: ["project", "install"] } },

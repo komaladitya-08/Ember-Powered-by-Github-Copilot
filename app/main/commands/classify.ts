@@ -4019,6 +4019,21 @@ function toolPayload(h: H): void {
       else if (args.some(a => a.v === null || !a.v.startsWith("-"))) hidden();
       return;
     }
+    case "deno": {
+      // Not a payload: `deno compile -o` writes an executable, which outside the task's folder (`-o ~/bin/x`) is a
+      // program later commands find by name (commands-closed-x9-5).
+      const first = firstOperand(args);
+      if (first.v !== "compile") return;
+      for (let k = first.at + 1; k < args.length; k++) {
+        const v = args[k].v;
+        const m = v === null ? null : /^(-o|--output)(?:=(.*))?$/.exec(v);
+        if (!m) continue;
+        const out = m[2] !== undefined ? m[2] : args[k + 1]?.v ?? null;
+        if (out === null || !ownFolder(out, h.sc, h.e.ctx.cwd || null)) h.e.add("unknown", "unknown.verb", SAYS.unknownVerb, { program: "deno compile -o" });
+        return;
+      }
+      return;
+    }
     case "tmux": {
       const first = firstOperand(args);
       if (first.v !== null && TMUX_RUNS.has(first.v) && args.slice(first.at + 1).some(a => a.v === null || !a.v.startsWith("-"))) hidden();

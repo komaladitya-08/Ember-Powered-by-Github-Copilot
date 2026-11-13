@@ -179,6 +179,20 @@ describe("a verb Ember doesn't know, of a tool it knows (commands-closed B)", ()
   });
 });
 
+describe("the verbs a tool is known to have only read, build or test (commands-closed-x9-5)", () => {
+  it("asks before a known tool's verb that writes shell start-up files, a home-wide default or an executable outside the project, or that empties a cache (commands-closed-x9-5)", () => {
+    for (const cmd of ["conda init", "conda init bash", "mamba init", "micromamba init", "asdf set -u nodejs 18", "asdf set --home nodejs 18", "sdk default java 17",
+      "poetry env remove --all", "poetry cache clear pypi --all", "pip cache purge", "pip cache remove x", "uv cache clean", "uv cache prune", "conda clean --all",
+      "pdm cache clear", "nvm cache clear", "deno compile -o ~/bin/x main.ts", "deno compile --output=/usr/local/bin/x main.ts"]) {
+      const d = decide(cmd);
+      expect(d.verdict, cmd).toBe("ask");
+    }
+    for (const cmd of ["asdf set nodejs 18", "pip cache dir", "uv cache dir", "deno compile -o dist/app main.ts", "deno compile main.ts", "poetry env info", "conda info"]) {
+      expect(decide(cmd).verdict, cmd).toBe("run");
+    }
+  });
+});
+
 describe("everyday commands with the closed default (commands-closed, the guard against over-asking)", () => {
   const fixture = JSON.parse(fs.readFileSync(path.join(__dirname, "../fixtures/commands/everyday.json"), "utf8")) as { cases: { cmd: string; shell: ShellId; context: ContextName }[] };
 
