@@ -574,7 +574,9 @@ TextEdit and the like, when it is the window's main document; their consoles, an
 Ember runs as an administrator or as root every command asks, but in Autopilot, which runs them so without asking, each
 with its Stop countdown; the note under the modes says which; an ordinary command on this
 computer that asks only because it carries text read elsewhere runs after its Stop countdown (WSL and SSH commands ask
-as before). Steps in the system's Settings and security apps always ask. It says each such step in its bubble and on
+as before). In the system's Settings and security apps it asks more often: a switch or a choice there asks every time,
+and so does a first step there that you didn't ask for; a plain click there (another page of Settings) in a task you
+asked for there goes ahead as anywhere else. It says each such step in its bubble and on
 the task's card by its kind, app and size ("Clicking in Text Editor, without asking as you let me."), never with
 typed text or words from the screen, once the check for a password prompt right before the step has passed (a step that
 check stops is said and listed only as refused), and **What Ember did** lists it as "Without asking" (the audit entry has
