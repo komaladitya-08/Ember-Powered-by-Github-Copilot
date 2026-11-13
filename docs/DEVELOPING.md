@@ -1409,8 +1409,12 @@ the address in force and its saved key are kept and come back with the switch (i
   before it is saved or sent, in words about the key and never with it ("That key has a character an API key can't
   hold, such as a hidden character or curly quotes picked up in copying. Copy it again from your provider.";
   integrations-r9-5: it was saved, Electron's fetch refused the header before sending, and every check then blamed
-  the address and the network). One saved by an earlier build counts as no key, and a request a header's value stops
-  says the key is at fault, with no cause for the status to turn into "Start it" or "check the network".
+  the address and the network). One saved by an earlier build is still said to be saved (Home's row has **Replace**
+  beside it) and is never sent or given to the runtime (`StoredKey.unsendable`, `keyFor`): Test connection sends
+  nothing and says "The saved API key has a character that can't be sent to <host>. Replace the key."
+  (integrations-x9-8: counted as no key, the check went out without one and said the service needs a key). A request
+  a header's value stops says the key is at fault, with no cause for the status to turn into "Start it" or "check
+  the network".
 - **When it fails** (no model named, a refused key, a host that doesn't answer), the status names the provider from the
   moment Ember starts connecting to it, so Home's Models & connections leads with **Check my provider's details**
   (it goes to the provider's fields) or **Check again**, never a GitHub account or a Copilot sign-in, and the bubble's
