@@ -255,7 +255,10 @@ docs/MEMORY.md is the design. The core (app/main/memory/) is pure and has no Ele
   facts alone, never Projects' files or a task's view (code reads like it), and may only refuse more than
   `memoryRefusal`; add a shape there with its look-alike fact pinned as kept in memory-said-secrets.test.ts.
 - **Recalled facts reach a model only through `memoryBlock()`** (`<memory untrusted="true">`). Only `user`-sourced
-  facts may shape what Ember does. Policy never checks a risky step against memory.
+  facts may shape what Ember does. Policy never checks a risky step against memory. The recall tool gives at most
+  `CONTEXT_FACTS` facts and then Ember's own line of how many there are in all (`recallNote`: two counts, never a
+  fact), so six are never passed off as everything (memory-r9-7); giving more facts for one question is a change to
+  what memory sends, and needs its note changed and bumped.
 - **`memory.json` is 0600** and written whole through `memoryFile()`. A broken file is moved aside, never overwritten.
 - **Nothing is remembered until memory has its own consent.** That means `settings.memory.on` with
   `memory.consent.version >= FEATURE_CONSENT_VERSION.memory` (from its note, or from first run's one agreement while

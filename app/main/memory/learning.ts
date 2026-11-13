@@ -14,6 +14,7 @@
  */
 
 import { memoryPausedReply } from "../../shared/memory-owner";
+import { memoryIds, recallNote } from "./format";
 import { DUPLICATE, type AddResult, type Fact, type NewFact, type Source } from "./graph";
 import { ConversationHold, HELD_ALL, HELD_FORGOTTEN } from "./hold";
 import { IntroSchema, Interview, INTRO_DONE, INTRO_MANAGED, INTRO_NOTHING, INTRO_OFF, INTRO_UNCHECKED, SPOKEN_FACT, introFacts, isGetToKnowMe, type Intro } from "./intro";
@@ -214,7 +215,9 @@ export class MemoryLearning {
       if (!this.d.inForce()) return "";
       const revision = this.recallRevision;
       const text = await m.context(query, history, () => this.d.inForce() && revision === this.recallRevision);
-      return this.d.inForce() && revision === this.recallRevision ? this.hold.gave(text) : "";
+      if (!this.d.inForce() || revision !== this.recallRevision) return "";
+      // The few that match best, as before, and how many there are in all: never passed off as everything (memory-r9-7).
+      return [this.hold.gave(text), recallNote(memoryIds(text).length, m.kept(history), history)].filter(Boolean).join("\n");
     };
     return {
       remember: (fact, about, said, replaces) => {

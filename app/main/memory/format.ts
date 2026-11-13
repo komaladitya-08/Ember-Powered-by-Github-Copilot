@@ -65,3 +65,21 @@ export function memoryChanged(c: MemoryChanges): string {
   if (back.length) lines.push(`The user had Ember remember ${back.join(", ")} again.`);
   return lines.length ? `<memory_changed>\n${lines.join("\n")}\n</memory_changed>` : "";
 }
+
+/**
+ * What the recall tool says after the facts it gives (memory-r9-7): how many there are in all and where the full list
+ * is, so Ember never passes the few that match best off as everything, nor says nothing is remembered when the
+ * query's words matched none. Ember's own line, built from two counts alone: no more facts go to the model for it.
+ * `shown`: the facts in the block; `total`: what Ember remembers (`history`: with what is no longer true). "" when
+ * nothing is kept at all.
+ */
+export function recallNote(shown: number, total: number, history = false): string {
+  if (total <= 0) return "";
+  const kept = history ? "Ember keeps, what is no longer true included" : "Ember remembers";
+  const facts = (n: number) => (n === 1 ? "1 fact" : `${n} facts`);
+  if (shown <= 0) {
+    return `Nothing matched that, of the ${facts(total)} ${kept}. recall finds facts by the words they share with the query, so search for a subject's own words (a name, their work, an app). The user can see the full list in Settings › Memory.`;
+  }
+  if (shown >= total) return `(${total === 1 ? "The only fact" : total === 2 ? "Both facts" : `All ${total} facts`} ${kept}.)`;
+  return `(${shown} of the ${total} facts ${kept}: the ${shown === 1 ? "one that matches" : "ones that match"} best. The user can see them all in Settings › Memory.)`;
+}

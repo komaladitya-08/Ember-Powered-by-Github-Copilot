@@ -383,6 +383,14 @@ download, so English-only MiniLM is the trade-off for now.
      it had replaced closed again, its vector rebuilt (`MemoryService.restore`, once per Forget, within 60 seconds,
      held in main's memory only and dropped at Forget everything).
    - Before each turn, the host recalls against the request and adds a `<memory>` block.
+   - The recall tool gives the same few facts that match its query's words best (`CONTEXT_FACTS`, six), never more,
+     and ends with Ember's own line of how many there are in all and where the full list is (`recallNote`,
+     format.ts: "(6 of the 14 facts Ember remembers: the ones that match best. The user can see them all in Settings
+     › Memory.)"); when the words match none it says "Nothing matched that, of the 14 facts Ember remembers…",
+     never that nothing is remembered. The rules tell the conversation to say that number and point to Settings ›
+     Memory when asked what it remembers (memory-r9-7). The line is two counts: no more facts reach the model for
+     it, and the `<memory>` block that goes with a request is unchanged. Listing more than the six for "what do you
+     remember about me?" would send more to the model than memory's note says, so it is not built.
    - The persona rule appears only while memory is on, so today's prompts stay byte-identical (persona tests).
    - A `MemoryService` in main owns the graph, saves it after changes, and registers as a `StopPart`.
 3. **Learning from conversation and from work** (done; `learn.ts`, `learning.ts`, `agent/one-shot.ts`;

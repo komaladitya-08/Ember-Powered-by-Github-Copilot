@@ -454,6 +454,11 @@ export class MemoryService {
     try { this.o.onChange?.(); } catch { this.o.log.warn("memory.delete_notice_failed"); }
   }
 
+  /** How many facts are kept: what holds now, or (`history`) with what is no longer true, as `review` lists it. */
+  kept(history = false): number {
+    return history ? this.review().length : this.g.allFacts(true).length;
+  }
+
   /** What Ember remembers now, newest first (what still holds). */
   list(): MemoryItem[] {
     return this.g.allFacts(true)
