@@ -269,10 +269,15 @@ Ember stops and asks before a command that:
   host rm -rf ~` is refused and `sudo -h host printenv` still says what printenv prints. Write the value attached
   (`git commit -SKEY -m wip`, `redis-cli --tls=1 PING`) or after the message (`git commit -m wip -S`) and it runs.
   The same holds for every tool whose options Ember has learned to read better since (tar, rsync, cp, grep, ls, curl,
-  gh, make and Maven, pip, `docker run`, `uv run` and its like, pkill): a word the older reading took for a file, a
-  target or a command is still judged as one, so `tar -xf a.tar --exclude-tag ~/.ssh/id_rsa` and `uv run --cache-dir
-  printenv` ask, and `ls --cached ~/.config/ember/settings.json` is refused. Everyday lines are untouched: `tar -xf
-  a.tar --strip-components 1`, `uv run --cache-dir .cache pytest`, `mvn -T 4 package` and `docker run -P nginx` run.
+  wget, gh, git's branch, tag, checkout, switch and rebase, make and Maven, pip, zip, cpio, `docker run`, `uv run` and
+  its like, pkill): a word the older reading took for a file, a target, a command or an option of its own is still
+  judged as one, so `tar -xf a.tar --exclude-tag ~/.ssh/id_rsa` and `uv run --cache-dir printenv` ask, `ls --cached
+  ~/.config/ember/settings.json` is refused, and so is `zip -T -n ~/.config/ember/settings.json`. `git checkout
+  --track -b feature origin/feature` asks for the same reason (the older reading took `-b` for `--track`'s word and
+  the rest for files to throw changes away in); write `git checkout -b feature --track origin/feature` or `git switch
+  -c feature --track origin/feature` and it runs. Everyday lines are untouched: `tar -xf a.tar --strip-components 1`,
+  `uv run --cache-dir .cache pytest`, `mvn -T 4 package`, `docker run -P nginx`, `git branch --color`, `git rebase -S
+  main` and `wget --progress bar https://example.com/a.txt` run.
 
 **Loops on a command line** in bash or sh always ask, whatever their body: a line with `for`, `while`, `until` or
 `select` anywhere in it asks with the loop's own words ("Ember can't tell exactly what this does."), so `for i in 1 2

@@ -4330,7 +4330,11 @@ reg(NATIVE, ["rm", "unlink", "shred", "srm", "wipe", "rmdir", "grm", "grmdir", "
   const shred = key === "shred";
   // shred's -u (remove) takes no value, and --remove only one after = (commands-remote-r4-2); scrub's -p, -b, -s and -D
   // take one.
-  const p = opts(h, { shortValue: shred ? "ns" : key === "scrub" ? "pbsD" : "", longValue: shred ? ["iterations", "size", "random-source"] : key === "scrub" ? ["pattern", "blocksize", "device-size", "dirent"] : [], longOptional: ["remove"] });
+  const spec: OptSpec = { shortValue: shred ? "ns" : key === "scrub" ? "pbsD" : "", longValue: shred ? ["iterations", "size", "random-source"] : key === "scrub" ? ["pattern", "blocksize", "device-size", "dirent"] : [], longOptional: ["remove"] };
+  // Main's table gave shred's -u the next word, so the file after the option it swallowed (`shred -u -n <file>`) was
+  // shredded: judged that way too. The names main had no row for were judged as unknown programs (asBefore) and have
+  // no table to be held to (commands-held-9).
+  const p = heldOpts(h, spec, NEW_DELETERS.has(h.key) ? spec : { shortValue: h.key === "shred" ? "nsu" : "", longValue: h.key === "shred" ? ["iterations", "size", "random-source"] : [] });
   const rec = (key === "rm" || key === "srm" || key === "wipe") && has(p, "r", "R", "recursive");
   const objs = objsOf(h, p.operands, rec ? "deleteTree" : "delete");
   const widening: string[] = [];
@@ -4941,7 +4945,9 @@ reg(NATIVE, ["tar", "bsdtar", "gtar"], h => {
 reg(NATIVE, ["zip"], h => {
   // -T tests the archive and takes no value; -TT and -tt are one option each, written with one dash (commands-remote-i5a).
   const two: Readonly<Record<string, string>> = { "-TT": "--unzip-command", "-tt": "--tt" };
-  const p = parseOpts(h.args.map(a => (a.v !== null && two[a.v] ? { ...a, v: two[a.v] } : a)), { shortValue: "bnPtZ", longValue: ["temp-path", "suffixes", "password", "unzip-command", "tt"] });
+  // Main's table gave -T the next word and read -TT and -tt as written, so the file or the option after -T's word was
+  // read (`zip -T -n <file>`): judged that way too (commands-held-9).
+  const p = heldOpts(h, { shortValue: "bnPtZ", longValue: ["temp-path", "suffixes", "password", "unzip-command", "tt"] }, { shortValue: "bnPtTZ", longValue: ["temp-path", "suffixes", "password", "unzip-command", "tt"] }, h.args.map(a => (a.v !== null && two[a.v] ? { ...a, v: two[a.v] } : a)), h.args);
   if (has(p, "unzip-command") || h.args.some(a => /^(-TT|--unzip-command|--tt)/.test(a.v ?? ""))) h.e.unclear("unclear.zip-command", "It runs a command Ember can't see.");
   const [arc, ...inputs] = p.operands;
   if (arc) {
@@ -5014,7 +5020,9 @@ reg(NATIVE, ["unzip"], h => {
 
 reg(NATIVE, ["cpio"], h => {
   // -s swaps bytes and takes no value; -C is the block size (commands-remote-i5a).
-  const p = opts(h, { shortValue: "EFHIMORCD", longValue: ["file", "format", "pattern-file", "rsh-command", "owner", "directory", "io-size", "message", "block-size"] });
+  // Main's table gave -s the next word and knew no -C, --io-size, --message or --block-size, so the option after one of
+  // those (`cpio -i -C -u`) was read: judged that way too (commands-held-9).
+  const p = heldOpts(h, { shortValue: "EFHIMORCD", longValue: ["file", "format", "pattern-file", "rsh-command", "owner", "directory", "io-size", "message", "block-size"] }, { shortValue: "EFHIMORsD", longValue: ["file", "format", "pattern-file", "rsh-command", "owner", "directory"] });
   if (has(p, "rsh-command")) h.e.unclear("unclear.cpio-command", "It runs a command Ember can't see.");
   if (has(p, "i", "extract")) {
     // -D/--directory: the folder it unpacks into (review #169).
@@ -5997,7 +6005,9 @@ git(["reset"], h => {
 
 git(["checkout"], h => {
   // --track takes a mode only after = (commands-remote-i5a).
-  const p = opts(h, { shortValue: "bB", longValue: ["orphan", "conflict", "pathspec-from-file"], longOptional: ["track"] });
+  // Main's table gave it the next word, so the -b or -B after it named no branch and the words behind were files to
+  // throw changes away in: judged that way too (commands-held-9).
+  const p = heldOpts(h, { shortValue: "bB", longValue: ["orphan", "conflict", "pathspec-from-file"], longOptional: ["track"] }, { shortValue: "bB", longValue: ["orphan", "conflict", "pathspec-from-file", "track"] });
   if (has(p, "p", "patch")) h.e.unclear("unclear.interactive", SAYS.interactive);
   if (has(p, "pathspec-from-file")) h.e.unclear("unclear.pathspec-file", "Ember can't see which files it names.");
   if (has(p, "f", "force")) h.e.add("destroy", "git.checkout.force", "Throws away uncommitted changes.", { program: "git checkout" });
@@ -6036,13 +6046,17 @@ git(["restore"], h => {
 });
 
 git(["switch"], h => {
-  const p = opts(h, { shortValue: "cC", longValue: ["create", "force-create", "orphan", "conflict"], longOptional: ["track"] });
+  // Main's table gave --track the next word, so the -C or -f behind a -c it swallowed was read: judged that way too
+  // (commands-held-9).
+  const p = heldOpts(h, { shortValue: "cC", longValue: ["create", "force-create", "orphan", "conflict"], longOptional: ["track"] }, { shortValue: "cC", longValue: ["create", "force-create", "orphan", "conflict", "track"] });
   if (has(p, "discard-changes", "f", "force") || values(p, "C", "force-create").length) h.e.add("destroy", "git.switch", "Throws away uncommitted changes.", { program: "git switch" });
 });
 
 git(["branch"], h => {
   // -t (--track) takes no value, and --track, --color and --column one only after = (commands-remote-i5a).
-  const p = opts(h, { shortValue: "u", longValue: ["set-upstream-to", "contains", "no-contains", "merged", "no-merged", "points-at", "sort", "format"], longOptional: ["track", "color", "column"] });
+  // Main's table gave all four the next word, so the -D or -M behind a `--` or an option one of them swallowed was
+  // read: judged that way too (commands-held-9).
+  const p = heldOpts(h, { shortValue: "u", longValue: ["set-upstream-to", "contains", "no-contains", "merged", "no-merged", "points-at", "sort", "format"], longOptional: ["track", "color", "column"] }, { shortValue: "tu", longValue: ["set-upstream-to", "contains", "no-contains", "merged", "no-merged", "points-at", "sort", "format", "color", "column", "track"] });
   const names = p.operands;
   if (has(p, "D") || (has(p, "d", "delete") && has(p, "f", "force"))) {
     h.e.add("destroy", "git.branch.D", `Deletes the branch ${joinList(names.map(n => n.v ?? n.raw)) || "?"} even if it isn't merged.`, { objects: names.map(GIT_BRANCH_OBJ), program: "git branch" });
@@ -6063,7 +6077,9 @@ git(["stash"], h => {
 
 git(["tag"], h => {
   // --create-reflog takes no value, and --color and --column one only after = (commands-remote-i5a).
-  const p = opts(h, { shortValue: "umF", longValue: ["local-user", "message", "file", "sort", "format", "contains", "no-contains", "points-at", "merged", "no-merged", "cleanup"], longOptional: ["color", "column"] });
+  // Main's table gave all three the next word, so the -d or -f behind a -m or -u one of them swallowed was read:
+  // judged that way too (commands-held-9).
+  const p = heldOpts(h, { shortValue: "umF", longValue: ["local-user", "message", "file", "sort", "format", "contains", "no-contains", "points-at", "merged", "no-merged", "cleanup"], longOptional: ["color", "column"] }, { shortValue: "umF", longValue: ["local-user", "message", "file", "sort", "format", "contains", "no-contains", "points-at", "merged", "no-merged", "color", "column", "cleanup", "create-reflog"] });
   if (has(p, "d", "delete")) h.e.add("destroy", "git.tag.delete", `Deletes the tag ${joinList(p.operands.map(a => a.v ?? a.raw)) || "?"}.`, { objects: p.operands.map(a => ({ kind: "tag", text: a.v ?? a.raw, abs: null })), program: "git tag" });
   if (has(p, "f", "force")) h.e.add("destroy", "git.tag.force", `Replaces the tag ${p.operands[0]?.v ?? "?"} if it exists.`, { program: "git tag" });
   if ((has(p, "a", "annotate", "s", "sign") || values(p, "u", "local-user").length) && !values(p, "m", "message", "F", "file").length) h.e.unclear("unclear.interactive", SAYS.interactive);
@@ -6172,7 +6188,9 @@ git(["grep"], h => { NATIVE["git-grep"]({ ...h, key: "git-grep", prog: "git grep
 git(["bisect"], h => { if (h.args[0]?.v === "run") h.e.payload(h.args.slice(1), h.sc, "git bisect run"); });
 git(["rebase"], h => {
   // -S and --gpg-sign take a key only attached or after = (commands-remote-i5a).
-  const p = opts(h, { shortValue: "xsX", shortOptional: "S", longValue: ["exec", "onto", "strategy", "strategy-option", "whitespace", "empty"], longOptional: ["gpg-sign"] });
+  // Main's table gave --gpg-sign the next word and read -S's letters one by one, so the -i or --exec behind an option
+  // it swallowed was read: judged that way too (commands-held-9).
+  const p = heldOpts(h, { shortValue: "xsX", shortOptional: "S", longValue: ["exec", "onto", "strategy", "strategy-option", "whitespace", "empty"], longOptional: ["gpg-sign"] }, { shortValue: "xsX", longValue: ["exec", "onto", "strategy", "strategy-option", "gpg-sign", "whitespace", "empty"] });
   if (has(p, "i", "interactive", "edit-todo")) h.e.unclear("unclear.interactive", SAYS.interactive);
   for (const x of values(p, "x", "exec")) {
     if (x === null) h.e.unclear("unclear.shell-text", "It runs shell text Ember can't see.");
@@ -6479,7 +6497,9 @@ reg(NATIVE, ["docker", "podman", "nerdctl", "docker-compose", "podman-compose"],
   if (v === "run" || v === "create") { containerRun(h, prog, rest); return; }
   if (v === "exec") {
     // -d (detach) takes no value (commands-remote-c4-2).
-    const p = parseOpts(rest, { shortValue: "euw", longValue: ["env", "user", "workdir", "detach-keys", "env-file"], stopAtOperand: true });
+    // Main's table gave -d the next word, so the container was the word after it and the command began one word later:
+    // judged that way too (commands-held-9).
+    const p = heldOpts(h, { shortValue: "euw", longValue: ["env", "user", "workdir", "detach-keys", "env-file"], stopAtOperand: true }, { shortValue: "euwd", longValue: ["env", "user", "workdir", "detach-keys", "env-file"], stopAtOperand: true }, rest);
     if (has(p, "i") && has(p, "t")) h.e.unclear("unclear.interactive", SAYS.interactive);
     if (has(p, "d", "detach")) h.e.add("escape", "escape.background", SAYS.keepsRunning);
     h.e.payload(p.operands.slice(1), h.sc, `${prog} exec`);
@@ -7510,14 +7530,17 @@ reg(NATIVE, ["curl", "curl.exe"], h => {
   for (const f of values(p, "c", "cookie-jar", "D", "dump-header", "trace", "trace-ascii", "stderr", "etag-save", "hsts", "alt-svc")) if (f && f !== "-") h.e.usePath(lit(f), "write", h.sc);
 });
 reg(NATIVE, ["wget", "wget2"], h => {
-  const p = opts(h, {
+  // The value options main's table had; it knew none of the others, so the option after one of them (`wget --backups -O
+  // run.sh URL`, `--ciphers -o FILE`) was read as an option of its own: judged that way too (commands-held-9).
+  const mainLong = ["output-document", "output-file", "append-output", "directory-prefix", "input-file", "base", "tries", "timeout", "wait", "quota", "execute", "user-agent", "level", "accept", "reject", "include-directories", "exclude-directories", "domains", "exclude-domains", "post-data", "post-file", "method", "body-data", "body-file", "header", "user", "password", "http-user", "http-password", "ftp-user", "ftp-password", "load-cookies", "save-cookies", "certificate", "private-key", "ca-certificate", "config", "referer", "limit-rate", "restrict-file-names", "default-page", "bind-address", "proxy-user", "proxy-password"];
+  const p = heldOpts(h, {
     shortValue: "OoaPiBtTwQeUlAIRDXlY",
-    longValue: ["output-document", "output-file", "append-output", "directory-prefix", "input-file", "base", "tries", "timeout", "wait", "quota", "execute", "user-agent", "level", "accept", "reject", "include-directories", "exclude-directories", "domains", "exclude-domains", "post-data", "post-file", "method", "body-data", "body-file", "header", "user", "password", "http-user", "http-password", "ftp-user", "ftp-password", "load-cookies", "save-cookies", "certificate", "private-key", "ca-certificate", "config", "referer", "limit-rate", "restrict-file-names", "default-page", "bind-address", "proxy-user", "proxy-password",
+    longValue: [...mainLong,
       "accept-regex", "backups", "ca-directory", "certificate-type", "ciphers", "compression", "connect-timeout", "crl-file", "cut-dirs", "dns-timeout",
       "follow-tags", "ignore-tags", "local-encoding", "pinnedpubkey", "prefer-family", "private-key-type", "progress", "random-file", "read-timeout",
       "regex-type", "reject-regex", "rejected-log", "remote-encoding", "report-speed", "retry-on-http-error", "secure-protocol", "start-pos", "use-askpass",
       "waitretry", "warc-dedup", "warc-file", "warc-header", "warc-max-size", "warc-tempdir"],
-  });
+  }, { shortValue: "OoaPiBtTwQeUlAIRDXlY", longValue: mainLong });
   const host = hostOf(p.operands.map(a => a.v ?? "").filter(u => u)[0] ?? "") || "another computer";
   const method = (values(p, "method")[0] ?? "").toUpperCase();
   for (const f of values(p, "post-file", "body-file", "i", "input-file", "load-cookies", "certificate", "private-key")) if (f && f !== "-") h.e.usePath(lit(f), "read", h.sc);
@@ -7846,6 +7869,10 @@ reg(NATIVE, ["rclone"], h => {
       h.e.add("publish", "upload.rclone", `Sends data to ${sentTo.split(":")[0]}.`);
       if (verb === "sync" || verb === "bisync") h.e.add("remote-delete", "rsync.delete-remote", "Deletes files on the other side that aren't here.");
     }
+    // Main took the last word that isn't an option for the destination, so with a value option behind a remote one
+    // (`rclone sync . remote:x --backup-dir x`) a sync deleted files here: that danger stays on the card, for no intent
+    // row to cover (commands-held-9).
+    if (remote(dest) && verb === "sync" && !remote(mainOps[mainOps.length - 1] ?? "")) h.e.add("destroy", "posix.rsync", "Deletes files here that aren't on the other side.", { widening: ["fed"] });
     if (!remote(dest)) {
       if (verb === "sync") h.e.add("destroy", "posix.rsync", "Deletes files here that aren't on the other side.");
       // Files copied here from a remote (`rclone copy remote:x .`, `copyurl URL file`) are downloads: running one later
@@ -8014,7 +8041,8 @@ reg(NATIVE, ["security"], h => {
 });
 reg(NATIVE, ["keyctl"], h => { if (/^(print|read|pipe|show|add|padd|request|update|newring|unlink|clear|purge|invalidate)$/.test(h.args[0]?.v ?? "")) h.e.add("secret", "secret.program", SAYS.secrets); });
 reg(NATIVE, ["ssh-keygen"], h => {
-  const p = opts(h, { shortValue: "aCEfFIJjKmMnNOPrstVwYzZbD", longValue: [] });
+  // Main's table knew no -P, so the -f after it still named the key file: judged that way too (commands-held-9).
+  const p = heldOpts(h, { shortValue: "aCEfFIJjKmMnNOPrstVwYzZbD", longValue: [] }, { shortValue: "aCEfFIJjKmMnNOrstVwYzZbD", longValue: [] });
   for (const f of values(p, "f")) if (f) h.e.usePath(lit(f), has(p, "l", "F", "B") ? "read" : "write", h.sc);
   if (has(p, "l", "F", "B", "H") || (has(p, "R") && false)) return;
   h.e.add("secret", "secret.program", SAYS.secrets);
