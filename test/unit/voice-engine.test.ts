@@ -2867,4 +2867,48 @@ describe("whose a spoken answer is (second review of the voice lane, 2026-11-12)
       }
     });
   });
+
+  describe("room talk in a question's answer window (V2-S3, voice-listening-r9-3)", () => {
+    /** What the room says next (tag 6): sent too, once a conversation had opened. */
+    const NEXT = "And then we can book the flights to Lisbon.";
+
+    it("sends nothing of talk that never says the name, though the recognizer's words alone read as called by name: no wake, no request, no conversation", () => {
+      // "(nothing else it hears then is sent)", the consent says of this window. The transcript check is the second stage
+      // after the spotter, and lenient: without the spotter's own hit each of these left the window as a wake's request,
+      // went to Copilot, and opened a conversation that sent the next sentence too.
+      for (const words of ["A number of people called today.", "Number, can you believe it?", "Hey, number five is ready.", "Member, I told you.", "Amber, open the window please.", "Umber is a nice colour."]) {
+        for (const otherSound of [null, false]) {
+          const s = waiting({ 5: words, 6: NEXT }, "answer", { otherSound, conversations: true });
+          says(s, 5, 0, "user");
+          says(s, 6, 0, "user");
+          expect(s.heard(), words).toEqual([]);
+          expect(s.events.filter(v => v.type === "listening"), words).toEqual([]);
+        }
+      }
+    });
+
+    it("so for the name as the recognizer writes it, where the microphone's spotter heard none: a request leaves the window only as a wake would have it, by both stages", () => {
+      const s = waiting({ 5: "Ember, open my mail.", 6: NEXT }, "answer", { otherSound: null, conversations: true });
+      says(s, 5, 0, "user");
+      says(s, 6, 0, "user");
+      expect(s.heard()).toEqual([]);
+      expect(s.events.filter(v => v.type === "listening")).toEqual([]);
+    });
+
+    it("still takes a request said by name in it as a wake's, where the spotter heard the name: “Ember, open my mail.”", () => {
+      const s = waiting({ 5: "Ember, open my mail." }, "answer", { otherSound: null, conversations: true });
+      says(s, 5, 1, "user");
+      expect(s.heard()).toEqual(["wake", "Open my mail. | wake"]);
+      // (A conversation opens after a wake's request, as ever.)
+      expect(s.events.at(-1)).toEqual({ type: "listening", on: true, reason: "conversation", window: "conversation" });
+    });
+
+    it("never takes a request the speakers' own stream said by name in it (Linux with parec)", () => {
+      const s = waiting({ 5: "Ember, open my mail." }, "answer", { speakers: true, conversations: true });
+      videoOn(s);
+      says(s, 5, 1, "video");
+      expect(s.heard()).toEqual([]);
+      expect(s.events.filter(v => v.type === "listening")).toEqual([]);
+    });
+  });
 });

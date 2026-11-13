@@ -966,6 +966,28 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1" && process.env.EM
     expect(own).toBe(1);
   }, 300_000);
 
+  it("sends nothing of the room's talk that starts like the name from a question's answer window, and opens no conversation on it (V2-S3, voice-listening-r9-3)", () => {
+    // Conversations are on, as by default; a question is up and its answer window open; the microphone only. Someone
+    // says a sentence that never names Ember, and another after it.
+    const next = speak("And then we can book the flights to Lisbon.", 3, 0.1);
+    const room = (talk: Float32Array) => {
+      const s = session({ conversation: true });
+      s.engine.questionUp(true);
+      s.engine.answerWindow(8000);
+      s.hear(inRoom(cat(silence(0.5), talk, silence(1.2), next, silence(2))));
+      s.end();
+      return s.events;
+    };
+    // (Before, the recognizer's words alone made these a request by name, "Number, …" as it writes them: 8 of 8 here
+    // left as a wake's request, and the next sentence went to Copilot in the conversation that opened. At idle none wakes.)
+    const left: string[] = [];
+    for (const text of ["A number of people called today.", "Number, can you pass the salt?"]) for (const sid of [1, 4, 5, 7]) {
+      const events = room(speak(text, sid, 0.1));
+      for (const e of events) if (e.type === "utterance" || e.type === "wake" || (e.type === "listening" && e.window !== "answer")) left.push(`${text} (voice ${sid}): ${e.type}${e.type === "utterance" ? ` “${e.text}”` : ""}`);
+    }
+    expect(left).toEqual([]);
+  }, 300_000);
+
   it.skipIf(!fs.existsSync(path.join(readerVoice, "en_US-ryan-low.onnx")))("learns the owner's voice, not a screen reader's reading each prompt aloud 14 dB down just before each phrase (voice-listening-r4-1)", async () => {
     // Over speakers, the teaching microphone heard Home's prompts as a screen reader read them, and took them for
     // phrases: the owner's held-out clips then scored 0.47-0.66 against the voiceprint, the screen reader's 0.70-0.82.

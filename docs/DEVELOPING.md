@@ -501,7 +501,11 @@ Once Ember has said the question (or at once, where it doesn't speak), and again
 answer it didn't take, it listens for 8 s (`ANSWER_WINDOW_MS`, app/main/voice.ts) for the answer without its name: a
 bare “allow” or “not now” is heard then (the answer window, `answerWindow` in app/voice/engine.ts). Only what the list
 reads as an answer leaves that window; a request said with the name in it (“Ember, open my mail”) is heard as at a
-wake, “Hey Ember” starts a wake as from idle, and anything else heard there goes nowhere; a word or two that read as
+wake, and by a wake's two stages: the spotter heard you say the name in it, and the recognizer wrote it. On the
+recognizer's words alone, which take “Number, …”, “Member, …” and “Amber, open…” for the name after the spotter, talk
+that never named Ember left the window as a request and opened a conversation that sent what was said next (second
+review of the voice lane, V2-S3; on the real models “A number of people called today.” and “Number, can you pass the
+salt?” did 8 times in 8, and never now). “Hey Ember” starts a wake as from idle, and anything else heard there goes nowhere; a word or two that read as
 no answer (most likely one misheard: one test voice's lone “Allow.” comes out “Hello”) make the question say once how
 to answer (`unclear`). It opens no conversation, is
 no follow-up, ends with the question, and takes nothing said over other sound unless it is said with the name (the

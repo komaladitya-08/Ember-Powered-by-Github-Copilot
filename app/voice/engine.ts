@@ -232,7 +232,8 @@ const MISHEARD_NAME = /^\W*(?:member(?=\s*(?:[,.?!]|$))|(?:embra|embro|embo|emba
 /**
  * Did the recognizer write the name itself where calledByName found it: "Ember, allow.", "Hey Ember, yes please."? Not
  * its near words, which calledByName takes after the spotter ("Number, …", "Member, …", "Amber, open…", "Umber…"): on
- * their own they are the room's talk.
+ * their own they are the room's talk (V2-S3: "A number of people called today." left a question's answer window as a
+ * wake's request).
  */
 export function saidNameItself(transcript: string): boolean {
   return calledByName(transcript) && /^(?:hey|hay|pay|pey)?ember$/i.test(NAME_LIKE.exec(transcript)?.[0] ?? "");
@@ -1501,16 +1502,17 @@ export class VoiceEngine {
    * 48 of 80 were taken where 73 are, 32 of the answer window's 37 and 16 of a conversation's 36), and where no stream
    * can contradict it the spotter's hit says nothing more of who spoke than the recognizer's "Ember" does. While their stream holds sound, the user's
    * "Ember, allow" is told from the video's by the two spotters, and by what the recognizer reads in the stream
-   * (speakersSaid).
+   * (speakersSaid). `spotted`: only the spotter's own hit will do, as for a wake from idle (a request that leaves a
+   * question's answer window).
    */
-  private namedByUser(heard: string, from: number, now: number): boolean {
+  private namedByUser(heard: string, from: number, now: number, spotted = false): boolean {
     if (!calledByName(heard)) return false;
     const names = this.names.filter(n => n.at >= from);
     if (names.some(n => n.by !== "user")) return false;
     const sounded = this.speakersSounded(from, now);
     if (sounded && this.speakersSaid(from, heard)) return false;
     if (names.length) return true;
-    return saidNameItself(heard) && !sounded;
+    return !spotted && saidNameItself(heard) && !sounded;
   }
 
   /** Did the speakers' own stream hold any sound in the speech that began at `from` (it arrives, and wasn't silent since)? */
@@ -2181,8 +2183,12 @@ export class VoiceEngine {
     }
     if (this.mode.reason === "answer" && !this.answering(text)) {
       // Not an answer, in a question's answer window: the room's talk goes nowhere (nothing without the name leaves this
-      // computer here). Said by name, it is a request, as at a wake (the bare name isn't spotted as one in this window).
-      if (!calledByName(heard)) {
+      // computer here). Said by name, it is a request, as at a wake (the bare name isn't spotted as one in this window),
+      // and by a wake's two stages: the spotter heard the user say the name in it, and the recognizer wrote it. On the
+      // recognizer's words alone, which are lenient, "A number of people called today." and "Amber, open the window
+      // please." left as a wake's request, went to Copilot and opened a conversation that sent what was said next,
+      // against "(nothing else it hears then is sent)" (V2-S3).
+      if (!this.namedByUser(heard, spokenFrom, t0, true)) {
         this.peak = 0;
         if (wordsOf(text).length <= UNCLEAR_WORDS) this.emit({ type: "unclear" });
         return;
