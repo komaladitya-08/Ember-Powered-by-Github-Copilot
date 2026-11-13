@@ -1160,6 +1160,11 @@ function start(): void {
    * transcript, and it is still the answer (the suggestions, Read the last answer: voice-speaking-c1-1).
    */
   let answerHushed = false;
+  /**
+   * A task's question came up while this answer was being written (pauseAnswerSpeech(false)): that question is not the
+   * turn's own, so the answer that ends under it is still the answer, unsaid, not a stopped turn (product-ui-x9-4).
+   */
+  let answerUnderQuestion = false;
   let answerEpoch = 0;
   /** How long each spoken request takes to be answered aloud, step by step: one `voice.latency` line, times only. */
   const turnLatency = new TurnLatency({ log: times => log.info("voice.latency", { ...times }) });
@@ -1223,6 +1228,7 @@ function start(): void {
     turnAnswer = "";
     lastReply = "";
     answerHushed = false;
+    answerUnderQuestion = false;
     voice?.hush();
   };
   /**
@@ -1264,7 +1270,7 @@ function start(): void {
       answerInterrupted = interrupted;
       answerHushed = hushed;
       agent?.pauseAnswer();
-    } else answerHushed = open && !interrupted;
+    } else answerUnderQuestion = answerHushed = open && (!interrupted || hushed); // (already unsaid, by Stop speaking or an earlier task's question: still the answer)
   };
 
   // ───── Copilot brain ─────
@@ -3647,11 +3653,12 @@ function start(): void {
       onAnswerInterrupted: resetAnswerSpeech,
       onAnswerDelta: delta => { if (answerInterrupted || confirmer?.waiting) return; cancelAck(); turnLatency.mark("firstToken"); sayStreamed(answerSpeech.push(delta)); },
       // An answer whose voice Stop speaking silenced is still the answer, unsaid (voice-speaking-c1-1).
-      onAnswerEnd: text => { if ((answerInterrupted && !answerHushed) || confirmer?.waiting) return; cancelAck(); lastReply = text; if (!answerHushed) sayStreamed(answerSpeech.finish(text), true, true); },
-      onAnswer: text => { if ((answerInterrupted && !answerHushed) || confirmer?.waiting) return; cancelAck(); turnAnswer = text; lastReply = text; if (!answerHushed) sayStreamed(answerSpeech.finish(text), true); },
+      // Nor is one a task's question came up over, though that question is still up (product-ui-x9-4).
+      onAnswerEnd: text => { if ((answerInterrupted && !answerHushed) || (confirmer?.waiting && !answerUnderQuestion)) return; cancelAck(); lastReply = text; if (!answerHushed) sayStreamed(answerSpeech.finish(text), true, true); },
+      onAnswer: text => { if ((answerInterrupted && !answerHushed) || (confirmer?.waiting && !answerUnderQuestion)) return; cancelAck(); turnAnswer = text; lastReply = text; if (!answerHushed) sayStreamed(answerSpeech.finish(text), true); },
       // A spoken request gets a short follow-up window: no need to say "Hey Ember" again.
       onTurnEnd: aborted => {
-        aborted ||= (answerInterrupted && !answerHushed) || !!confirmer?.waiting;
+        aborted ||= (answerInterrupted && !answerHushed) || (!!confirmer?.waiting && !answerUnderQuestion);
         cancelAck();
         // Nothing will be heard of a turn that was stopped, or not spoken: it is logged as it stands.
         if (aborted || !answerSpoken) turnLatency.end();
@@ -3659,17 +3666,19 @@ function start(): void {
         // after a spoken reply when a follow-up is likely.
         const task = aborted ? null : agent?.tasks?.list().filter(t => t.started >= askedAt).at(-1);
         const next = aborted ? null : personal.answered(lastReply || turnAnswer, { spoken: answerSpoken, speaks: !!voice && maySpeak(), task: task ? { status: task.status === "cancelled" ? "stopped" : task.status === "queued" ? "running" : task.status } : null });
-        if (next?.suggestions.length && lastState.bubble.visible) showState({ suggest: { thought: lastState.bubble.thought, items: next.suggestions.map(s => s.text) } });
+        // (Not over a question that is still up: the bubble is the question's, and so is what is heard next.)
+        if (next?.suggestions.length && lastState.bubble.visible && !confirmer?.waiting) showState({ suggest: { thought: lastState.bubble.thought, items: next.suggestions.map(s => s.text) } });
         lastReply = "";
         answerSpeech.reset();
         answerLanguage.reset();
         answerSpoken = false;
         ackSaid = null;
-        if (lastAskByVoice && !aborted) voice?.followUp(next?.followUpMs ?? 8000, { afterQuestion: endsWithQuestion(turnAnswer) });
+        if (lastAskByVoice && !aborted && !confirmer?.waiting) voice?.followUp(next?.followUpMs ?? 8000, { afterQuestion: endsWithQuestion(turnAnswer) });
         lastAskByVoice = false;
         turnAnswer = "";
         answerInterrupted = true;
         answerHushed = false;
+        answerUnderQuestion = false;
         syncListenOnce();
       },
       onStatus: status => {
