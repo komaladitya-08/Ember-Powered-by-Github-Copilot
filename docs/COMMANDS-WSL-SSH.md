@@ -150,7 +150,9 @@ Ember stops and asks before a command that:
   `./manage.py flush`, `python manage.py flush`, `php artisan migrate:fresh`, `./build.sh clean`: clean, reset, drop,
   wipe, purge, destroy, rollback, flush, fresh, truncate, downgrade, erase, delete, teardown, also written
   together as in `make dropdb` or `npm run dbreset`, and `migrate:refresh`, `migrate:redo`, `schema:load` and
-  `manage.py migrate app zero`, which empty or replace tables; "Runs ./manage.py
+  `manage.py migrate app zero`, which empty or replace tables; empty, clear, remove, recreate and refresh beside a
+  word for a database, as in `npm run db:empty`; and such a word handed to a package script, as in `npm run db --
+  drop` or `npm run migrate -- --reset`; "Runs ./manage.py
   flush, whose name says it deletes things."; the same for deploy, publish, release, push, upload, ship and
   production, which ask as publishing, `./run.sh deploy`), the deleters a project's
   scripts reach for (`rimraf` and `del-cli`, also from `node_modules/.bin` or as `yarn rimraf` or `yarn run rimraf`,

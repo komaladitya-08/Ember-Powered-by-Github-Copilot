@@ -3917,11 +3917,34 @@ const JOINED_NAME = /^(db|database)(?=.)|(?<=.)(db|database|all|data|tables|sche
  * tables with the schema's.
  */
 const DB_REPLACES = /(^|[^A-Za-z])migrate[:_-](refresh|redo)($|[^A-Za-z])|(^|[^A-Za-z])(schema|structure)[:_-]load($|[^A-Za-z])/i;
+/** Words that empty or replace a database only beside a word for one (`db:empty`, `db:clear`, `cleardb`, `database:recreate`: commands-classes-y9-9). */
+const DB_EMPTIES = new Set(["empty", "clear", "remove", "rm", "recreate", "refresh", "zap"]);
+/** Whether a name's words say it deletes things. */
+function namesDestroy(name: string): boolean {
+  const words = nameWords(name);
+  if (words.some(w => NAME_DESTROY.has(w) || NAME_DESTROY.has(w.replace(JOINED_NAME, ""))) || DB_REPLACES.test(name)) return true;
+  return (words.some(w => /^(db|database)$/.test(w)) && words.some(w => DB_EMPTIES.has(w))) || words.some(w => /^(db|database)/.test(w) !== /(db|database)$/.test(w) && DB_EMPTIES.has(w.replace(JOINED_NAME, "")));
+}
+/**
+ * The words handed to a package script after its name or after `--` (`npm run db -- drop`, `npm run migrate --
+ * --reset`, `yarn db drop`: commands-classes-y9-9): a plain word or an option's name that says destroy asks as the
+ * script's own name would. Only destroying words: `--prod` and `--watch` are everyday options of a build.
+ */
+function scriptGiven(h: H, script: string, words: readonly Arg[]): void {
+  if (h.e.readsAsMain) return;
+  for (const a of words) {
+    const m = a.v === null ? null : /^(?:--?)?([A-Za-z][A-Za-z0-9]*(?:[:_-][A-Za-z0-9]+)*)(?:=.*)?$/.exec(a.v);
+    if (!m || !namesDestroy(m[1])) continue;
+    const display = `${script} ${m[1]}`;
+    h.e.add("destroy", "script.destroy", `Runs ${display}, whose name says it deletes things.`, { objects: [{ kind: "other", text: display, abs: null }] });
+    return;
+  }
+}
 /** §3.5.9: a script, target or package-script name that says it publishes (b), deletes (a) or installs (e). */
 function nameCheck(h: H, name: string, display = name): void {
   const words = nameWords(name);
   if (words.some(w => NAME_PUBLISH.has(w))) h.e.add("publish", "script.publish", `Runs ${display}, whose name says it publishes.`, { objects: [{ kind: "other", text: display, abs: null }] });
-  if (words.some(w => NAME_DESTROY.has(w) || NAME_DESTROY.has(w.replace(JOINED_NAME, ""))) || DB_REPLACES.test(name)) h.e.add("destroy", "script.destroy", `Runs ${display}, whose name says it deletes things.`, { objects: [{ kind: "other", text: display, abs: null }] });
+  if (namesDestroy(name)) h.e.add("destroy", "script.destroy", `Runs ${display}, whose name says it deletes things.`, { objects: [{ kind: "other", text: display, abs: null }] });
   if (words.some(w => NAME_SYSTEM.has(w))) h.e.add("system", "script.system", `Runs ${display}, whose name says it installs or sets up software.`, { objects: [{ kind: "other", text: display, abs: null }] });
 }
 
@@ -8199,6 +8222,7 @@ reg(NATIVE, ["npm", "pnpm", "yarn", "bun", "corepack"], h => {
       // (commands-remote-c8-2). With nothing after the name it is the project's script of that name, or a deleter
       // given nothing to delete (`yarn scrub`: commands-remote-x8-13).
       const given = rest.slice(rest.indexOf(specs[0]));
+      scriptGiven(h, `${h.key} run ${name}`, given.slice(1));
       if (h.key !== "npm" && h.key !== "corepack" && NEW_DELETERS.has(name.toLowerCase()) && given.length > 1) h.e.payload(given, h.sc, `${h.key} run ${name}`);
       return;
     }
@@ -8243,6 +8267,7 @@ reg(NATIVE, ["npm", "pnpm", "yarn", "bun", "corepack"], h => {
   if (verb === "star" || verb === "unstar" || verb === "hook" || verb === "profile") { h.e.add("publish", "npm.registry", "Changes something on the registry."); return; }
   if (h.key !== "npm" && !builtins.has(verb)) {
     nameCheck(h, verb);
+    scriptGiven(h, `${h.key} ${verb}`, h.args.slice(g.verbAt + 1));
     // `yarn rimraf src` runs the project's rimraf when no script has that name: judged as that program would be
     // (commands-remote-c8-2). Only a deleter's name, so `yarn build` or `yarn format` stay a script's, and only with
     // something after it (`yarn scrub` alone: commands-remote-x8-13).

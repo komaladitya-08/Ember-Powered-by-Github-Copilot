@@ -1104,3 +1104,31 @@ describe("a deletion the user's words send to the trash or a stash (commands-cla
     }
   });
 });
+
+describe("a destroying verb handed to a package script, and a database emptied under another word (commands-classes-y9-9)", () => {
+  it("asks before words given to the script after its name or after `--` that say destroy", () => {
+    for (const o of POSIX) for (const cmd of ["npm run db -- drop", "npm run typeorm -- schema:drop", "npm run migrate -- --reset", "pnpm run db drop", "yarn db drop", "yarn db -- drop",
+      "pnpm db -- drop", "yarn run db -- drop", "bun run db drop", "npm run typeorm -- migration:revert --drop", "npm run db -- --purge=all"]) {
+      const d = decide(cmd, o);
+      expect(d.verdict, label(cmd, o)).toBe("ask");
+      expect(d.rules, label(cmd, o)).toContain("script.destroy");
+    }
+    expect(decide("npm run db -- drop").says).toContain("Runs npm run db drop, whose name says it deletes things.");
+  });
+
+  it("asks before a script named for emptying, clearing, removing or recreating a database", () => {
+    for (const o of POSIX) for (const cmd of ["npm run db:empty", "npm run db:clear", "npm run db:remove", "npm run db:rm", "npm run db:recreate", "npm run db:refresh", "npm run db:zap",
+      "yarn database:clear", "make db-recreate", "npm run cleardb", "bin/rails db:refresh"]) {
+      const d = decide(cmd, o);
+      expect(d.verdict, label(cmd, o)).toBe("ask");
+      expect(d.rules, label(cmd, o)).toContain("script.destroy");
+    }
+  });
+
+  it("still runs the everyday scripts with their everyday words", () => {
+    for (const o of POSIX) for (const cmd of ["npm run build -- --watch", "npm run lint -- --fix", "npm test -- --clearCache", "npm run cache:clear", "npm run refresh", "npm run db:migrate",
+      "npm run db:seed", "yarn test --coverage", "npm run build -- --prod", "pnpm run dev -- --port 3000", "yarn build src/index.ts", "npm run db -- status"]) {
+      expect(decide(cmd, o).verdict, label(cmd, o)).toBe("run");
+    }
+  });
+});
