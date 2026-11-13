@@ -112,9 +112,26 @@ export function argsSummary(args: unknown, max = 200): string {
   return text ? quoteUntrusted(text, max).replace(INVISIBLE, c => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`) : "";
 }
 
+/** The most of a call's arguments its question's sentence shows (argsSummary); the rest is in its `detail`. */
+const SUMMARY_MAX = 200;
+
+/**
+ * The whole of a call's arguments, to read where the question's sentence shows only their start (integrations-c9-3:
+ * a second address and an attachment past the first 200 characters were nowhere to read). One field to a line, as
+ * JSON with its keys in order, its hidden characters written out. Undefined when the sentence shows them all.
+ */
+export function argsDetail(args: unknown, max = SUMMARY_MAX): string | undefined {
+  if (args === undefined || args === null || (typeof args === "object" && !Object.keys(args as object).length)) return undefined;
+  const text = canonical(args);
+  if (text.length <= max) return undefined;
+  return JSON.stringify(JSON.parse(text), null, 2).replace(INVISIBLE, c => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`);
+}
+
 /** The question for a call the gate asks about: built by Ember from the request alone; no "Always". */
 export function gateQuestion(extName: string, toolName: string, args: unknown): Question {
-  const summary = argsSummary(args);
+  const summary = argsSummary(args, SUMMARY_MAX);
+  // What the sentence cuts off is there to read whole, and Allow waits until it has all been in view (confirm.ts).
+  const detail = argsDetail(args);
   return {
     title: "May I?",
     context: plainName(extName),
@@ -123,6 +140,7 @@ export function gateQuestion(extName: string, toolName: string, args: unknown): 
     taskLine: "",
     prompt: `Use “${plainName(toolName, 40)}” from ${plainName(extName)}?${summary ? ` With ${summary}.` : ""}`,
     options: [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }],
+    ...(detail ? { detail } : {}),
   };
 }
 
