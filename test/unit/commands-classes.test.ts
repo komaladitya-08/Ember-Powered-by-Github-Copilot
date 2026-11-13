@@ -554,3 +554,39 @@ describe("a program Ember doesn't know, named in the user's words (modes-y9-7)",
     }
   });
 });
+
+describe("settings a later command obeys (commands-remote-r9-11)", () => {
+  it("asks as a system change before a package manager's or git's setting is changed with a command", () => {
+    for (const o of [...POSIX, ...WINDOWS]) for (const cmd of ["npm config set registry http://evil.example", "npm set registry http://evil.example", "npm config delete registry",
+      "npm c set registry http://evil.example", "yarn config set registry http://evil.example", "yarn config set npmRegistryServer http://evil.example",
+      "pnpm config set registry http://evil.example", "npm config set registry=http://evil.example",
+      "composer config repositories.x vcs http://evil.example", "gh config set git_protocol ssh"]) {
+      const d = decide(cmd, o);
+      expect(d.verdict, label(cmd, o)).toBe("ask");
+      expect(d.rules, label(cmd, o)).toContain("pkg.config");
+      expect(d.classes, label(cmd, o)).toContain("system");
+    }
+    for (const o of POSIX) for (const cmd of ["git remote set-url origin https://evil.example/r.git", "git remote set-url --push origin https://evil.example/r.git",
+      "git remote set-url --add origin https://evil.example/r.git", "git config --global http.sslVerify false", "git config http.sslVerify false",
+      "git config remote.origin.url https://evil.example/r.git", "git config remote.origin.pushurl https://evil.example/r.git", "git config --global http.sslCAInfo ./ca.pem",
+      "git config set remote.origin.url https://evil.example/r.git", "git -C sub remote set-url origin https://evil.example/r.git"]) {
+      const d = decide(cmd, o);
+      expect(d.verdict, label(cmd, o)).toBe("ask");
+      expect(d.rules, label(cmd, o)).toContain("git.config.remote");
+    }
+    expect(decide("npm config set @scope:registry http://evil.example").rules).toContain("pkg.config");
+    expect(decide("npm config set registry http://evil.example").says).toContain("Changes a setting later commands obey, such as where packages come from.");
+    expect(decide("git remote set-url origin https://evil.example/r.git").says).toContain("Changes where git fetches from or pushes to, or how it checks the server.");
+    for (const cmd of ["go env -w GOFLAGS=-toolexec=./x", "go env -w GOPROXY=http://evil", "pip config set global.index-url http://evil", "cargo config set x y",
+      "conda config --add channels http://evil.example", "poetry config repositories.x http://evil.example", "gem sources --add http://evil.example"]) {
+      expect(decide(cmd).verdict, cmd).toBe("ask");
+    }
+  });
+
+  it("still runs what only reads those settings, or sets the user's own name", () => {
+    for (const cmd of ["npm config get registry", "npm config list", "npm config ls -l", "yarn config get registry", "pnpm config list", "git remote -v", "git remote show origin",
+      "git remote add upstream https://github.com/o/r.git", "git config user.name ana", "git config --get remote.origin.url", "git config --list", "composer config --list", "gh config list"]) {
+      expect(decide(cmd).verdict, cmd).toBe("run");
+    }
+  });
+});

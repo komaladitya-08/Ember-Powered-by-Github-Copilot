@@ -6870,6 +6870,10 @@ const GIT_READ = new Set([
   "replay", "last-modified", "refs", "multi-pack-index", "commit-graph", "prune-packed", "pack-objects", "pack-redundant",
 ]);
 
+/** git settings that say where it fetches from and pushes to, or whether it checks the server (commands-remote-r9-11). */
+const GIT_REMOTE_KEYS = /^remote\..+\.(url|pushurl)$|^http\.(.+\.)?(sslverify|sslcainfo|sslcapath|sslcert|sslkey)$|^branch\..+\.(remote|pushremote)$|^remote\.pushdefault$/i;
+const GIT_REMOTE_SAYS = "Changes where git fetches from or pushes to, or how it checks the server.";
+
 reg(NATIVE, ["git"], h => {
   const g = globals(h, "git");
   checkGlobals(h, "git", g);
@@ -6972,6 +6976,8 @@ git(["remote"], h => {
   h.e.readArgs(h.args.filter(a => !isOption(a)), h.sc);
   const p = opts(h, { shortValue: "tm" });
   const [verb, name, url] = p.operands;
+  // Where a later fetch or push goes (commands-remote-r9-11): changing an existing remote's address asks.
+  if (verb?.v === "set-url") h.e.add("system", "git.config.remote", GIT_REMOTE_SAYS, { program: "git remote set-url" });
   if (!(verb?.v === "add" || verb?.v === "set-url") || !name || !url) return;
   if (url.v !== null && !URL_LIKE.test(url.v) && !SCP_LIKE.test(url.v)) return;
   h.e.addedRemotes.add(name.v ?? UNSEEN);
@@ -7192,6 +7198,8 @@ git(["config"], h => {
   const key = keyArg?.v ?? null;
   if (write) {
     if (key === null || GIT_CODE_KEYS.some(re => re.test(key))) h.e.add("system", "git.config.code", "Changes what git runs later.", { program: "git config" });
+    // A remote's address, and whether git checks the server it talks to (commands-remote-r9-11).
+    if (key !== null && GIT_REMOTE_KEYS.test(key)) h.e.add("system", "git.config.remote", GIT_REMOTE_SAYS, { program: "git config" });
     if (has(p, "system")) h.e.add("system", "git.config.system", "Changes settings for every user.", { program: "git config" });
     for (const f of values(p, "f", "file")) if (f) h.e.usePath(lit(f), "write", h.sc);
   } else if (key !== null && /^credential\./i.test(key)) h.e.add("secret", "secret.git-credential", SAYS.secrets, { program: "git config" });
@@ -7320,6 +7328,7 @@ reg(NATIVE, ["gh"], h => {
   const objects: Obj[] = repoOpt ? [{ kind: "repo", text: repoOpt, abs: null }] : [];
   if (group === null) { if (h.args[g.verbAt]) h.e.unclear("unclear.gh-verb", "Ember can't tell which gh command this runs."); return; }
   const sub = rest.find(a => !isOption(a))?.v ?? null;
+  if (group === "config" && (sub === "set" || sub === "clear-cache")) { h.e.add("system", "pkg.config", "Changes a setting later commands obey, such as where packages come from.", { program: "gh config" }); return; }
   if (group === "auth") {
     if (sub === "status" && !rest.some(a => /^(-t|--show-token)$/.test(a.v ?? ""))) return;
     if (sub === "switch") return;
@@ -7981,7 +7990,10 @@ reg(NATIVE, ["npm", "pnpm", "yarn", "bun", "corepack"], h => {
       else if (!rest.some(a => /^(-y|--yes|-f|--force)$/.test(a.v ?? ""))) h.e.unclear("unclear.interactive", SAYS.interactive);
       return;
     case "config": case "c": case "set":
-      if (/^(set|delete|edit|fix)$/.test(specs[0]?.v ?? "") || verb === "set") {
+      if (/^(set|delete|rm|unset|edit|fix)$/.test(specs[0]?.v ?? "") || verb === "set") {
+        // A setting every later command of the tool obeys: the registry packages come from, an auth line, a proxy
+        // (commands-remote-r9-11).
+        h.e.add("system", "pkg.config", "Changes a setting later commands obey, such as where packages come from.", { program: `${h.key} config` });
         if (global || rest.some(a => a.v === "--location=global" || a.v === "--global")) h.e.add("system", "npm.config.global", "Changes settings for every user.");
         if (specs[0]?.v === "edit") h.e.unclear("unclear.interactive", SAYS.interactive);
       }
@@ -8178,6 +8190,12 @@ reg(NATIVE, ["pipx", "poetry", "pipenv", "uv", "rye", "pdm", "hatch", "conda", "
   if (h.key === "conan" && verb === "upload") { h.e.add("publish", "conan.upload", "Publishes a package to the registry."); return; }
   if (h.key === "mix" && /^hex\.(publish|owner|retire)/.test(verb)) { h.e.add("publish", "mix.publish", "Publishes a package to the registry."); return; }
   if (h.key === "composer" && verb === "run-script") { nameCheck(h, specs[0]?.v ?? ""); return; }
+  // `composer config <key> <value>` writes a setting later commands obey (commands-remote-r9-11); `--list` and one
+  // key alone only read.
+  if (h.key === "composer" && verb === "config" && (specs.length >= 2 || rest.some(a => a.v === "--unset")) && !rest.some(a => a.v === "-l" || a.v === "--list")) {
+    h.e.add("system", "pkg.config", "Changes a setting later commands obey, such as where packages come from.", { program: "composer config" });
+    return;
+  }
   if (h.key === "dart" && verb === "pub" && specs[0]?.v === "publish") { h.e.add("publish", "dart.publish", "Publishes a package to the registry."); return; }
   if (h.key === "conda" && verb === "env" && /^(create|remove|update)$/.test(specs[0]?.v ?? "")) { languageInstall(h, []); return; }
   const verbs = LANGUAGE_INSTALL_VERBS[h.key] ?? [];

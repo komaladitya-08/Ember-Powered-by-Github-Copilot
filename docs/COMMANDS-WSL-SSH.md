@@ -222,7 +222,11 @@ Ember stops and asks before a command that:
 - **changes the system or needs privileges**: `sudo`, `su`, `runas`, installing or removing packages (`apt`, `dnf`,
   `brew`, `winget`, `npm install`, `pip install`), services (`systemctl start`, `launchctl load`, and a package
   manager's own: `brew services start`, `snap start`, `snap set`; these keep running after Stop, so Assisted's check
-  never clears them and Autopilot asks), the registry and desktop settings (`gsettings set`,
+  never clears them and Autopilot asks), a setting later commands obey ("Changes a setting later commands obey,
+  such as where packages come from.": `npm config set registry …`, `npm set …`, `yarn config set`, `pnpm config
+  set`, `composer config <key> <value>`, `gh config set`; `go env -w`, `pip config set` and their like ask as
+  commands Ember doesn't know), where git fetches from and pushes to and whether it checks the server (`git remote
+  set-url`, `git config remote.origin.url …`, `git config http.sslVerify false`), the registry and desktop settings (`gsettings set`,
   `dconf write`, and `defaults write` to the screen saver, firewall and remote-access settings), the firewall, the
   certificates the computer trusts, users and groups, giving a container the container engine's socket or a system
   folder (`docker run -v /var/run/docker.sock:…`, `-v /usr:…`),
