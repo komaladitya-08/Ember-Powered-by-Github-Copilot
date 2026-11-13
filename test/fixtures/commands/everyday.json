@@ -1,5 +1,5 @@
 {
- "about": "Everyday commands a worker runs for ordinary tasks (listing, searching, reading, git, package scripts, builds and tests, archives, media, system information): each runs with no question (commands-closed's guard against over-asking). They ran at main 01493d0, but for the last few, which ran only once the closed default knew them (lbzip2, prove, mkdocs build, pbcopy, swift build, bazel test, and commands-closed-x9-7's mdfind, fc-list, upower, sphinx-build, jekyll build, rebar3 eunit and the project's .venv/bin).",
+ "about": "Everyday commands a worker runs for ordinary tasks (listing, searching, reading, git, package scripts, builds and tests, archives, media, system information): each runs with no question (commands-closed's guard against over-asking). They ran at main 01493d0, but for the last few, which ran only once the closed default knew them (lbzip2, prove, mkdocs build, pbcopy, swift build, bazel test, and commands-closed-x9-7's mdfind, fc-list, upower, sphinx-build, jekyll build, rebar3 eunit and the project's .venv/bin, and commands-closed-y9-7's tsx and ts-node on a project file, next, ng, turbo, nx, lerna, zola and pre-commit's build, test and run commands, pip-compile, pip-audit, ansible-lint, lame, uuidgen, findmnt, blkid, Write-Progress, Wait-Process and Find-Module).",
  "cases": [
   {
    "cmd": "ls",
@@ -2355,6 +2355,101 @@
    "cmd": ".venv/bin/pytest -q",
    "shell": "bash",
    "context": "linux"
+  },
+  {
+   "cmd": "tsx scripts/gen.ts",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "ts-node scripts/gen.ts",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "next build",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "ng build",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "turbo run build",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "nx build app",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "lerna run test",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "zola build",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "pre-commit run --all-files",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "pip-compile requirements.in",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "pip-audit",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "ansible-lint",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "lame a.wav a.mp3",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "uuidgen",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "findmnt",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "blkid",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "Write-Progress -Activity a",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "Wait-Process -Id 1234",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "Find-Module Pester",
+   "shell": "powershell",
+   "context": "win32"
   }
  ]
 }

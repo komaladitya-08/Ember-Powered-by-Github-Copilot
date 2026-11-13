@@ -1652,7 +1652,26 @@ function runAsked(name: string, asked: readonly string[][], others: readonly str
   return asked.some(c => {
     if (c.some(x => x === "myself" || x === "yourself" || x === "ourselves")) return false;
     const named = (RUN_VERBS.includes(c[0]) && at(c, 1)) || c.some((x, k) => WITH_TOOL.has(x) && at(c, k + 1));
-    return named && rest.every(r => wholeName(r, c));
+    // What stands after "while" and its like is about something else ("on staging while prod keeps running").
+    const aside = c.findIndex(x => MEANWHILE.has(x));
+    const said = aside < 0 ? c : c.slice(0, aside);
+    return named && rest.every(r => wholeName(r, said));
+  });
+}
+/** Words after which a clause speaks of something other than what is to run (commands-closed-y9-3). */
+const MEANWHILE = new Set(["while", "whilst", "whereas", "although", "though"]);
+
+/**
+ * Whether the words hold `name` only as part of a longer name ("prod" in "prod-copy", "prod_copy" or
+ * "prod.example.com"): such words don't name it (commands-closed-y9-3).
+ */
+function insideLonger(name: string, raw: string): boolean {
+  const parts = userWordList(name);
+  return raw.split(/\s+/).some(token => {
+    const t = userWordList(token);
+    if (t.length <= parts.length) return false;
+    for (let k = 0; k + parts.length <= t.length; k++) if (parts.every((p, j) => t[k + j] === p)) return true;
+    return false;
   });
 }
 
@@ -1676,6 +1695,7 @@ export function matchIntent(cls: Classification, userWords: string, ctx: Classif
     const asked = requestStarts(affirmed(userWords).normalize("NFKC"));
     const names = [...new Set(unknown.map(f => f.program.replace(/\.(exe|com|bat|cmd)(?= |$)/i, "")))];
     if (!names.every(n => runAsked(n, asked, names.filter(o => o !== n)))) return null;
+    if (names.some(n => n.split(" ").slice(1).some(r => insideLonger(r, affirmed(userWords).normalize("NFKC"))))) return null;
     if (holdsBack(userWords, [...RUN_VERBS, ...names.map(n => n.split(" ")[0])], false)) return null;
     const announce = `Running ${joinList(names)}, as you asked.`;
     const rest = F.filter(f => f.cls !== "unknown");

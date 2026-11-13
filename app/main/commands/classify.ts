@@ -3090,8 +3090,9 @@ class Engine extends Classifier {
     if (n) { this.runRow(n, h); this.verbGuard(h, from); }
     else { unknownProgram(h); generic(h, true); }
     toolPayload(h);
-    // A deleter that had no row before commands-remote-c8-2 keeps an unknown program's `-o` (commands-remote-x8-5).
-    optionPaths(h, !n || NEW_DELETERS.has(key));
+    // A deleter that had no row before commands-remote-c8-2 keeps an unknown program's `-o` (commands-remote-x8-5),
+    // and so does toybox (commands-closed-y9-1).
+    optionPaths(h, !n || UNKNOWN_OPTIONS.has(key));
   }
 
   /**
@@ -3262,7 +3263,7 @@ class Engine extends Classifier {
     if (n) { this.runRow(n, inner); this.verbGuard(inner, from); }
     else { unknownProgram(inner); generic(inner, true); }
     toolPayload(inner);
-    optionPaths(inner, !n || NEW_DELETERS.has(key));
+    optionPaths(inner, !n || UNKNOWN_OPTIONS.has(key));
     this.unnamedWrites(key, inner.args, sc);
     this.afterArgs(inner.args);
     // The command's own redirections are this program's (`then curl … > x.py`, `time curl … > x.py`): what it fetches
@@ -3882,7 +3883,8 @@ function unknownProgram(h: H): void {
   if (h.pn.isPath && ownFolder(h.nameArg.v, h.sc, h.e.ctx.cwd || null)) return;
   const tool = ORDINARY_VERBS[h.key] ?? ORDINARY_VERBS[unversioned(h.key)];
   if (tool) { toolVerbs(h, tool, true); return; }
-  if (knownProgram(h.key)) {
+  // On Windows `convert` is the system's own FAT-to-NTFS converter; ImageMagick is `magick` there (commands-closed-y9-4).
+  if (knownProgram(h.key) && !(h.key === "convert" && h.sc.os === "win32")) {
     // A TeX engine's shell escape runs the commands the document names (`\write18`).
     if (TEX_ENGINES.has(h.key) && h.args.some(a => a.v === null || /^--?(shell-escape|enable-write18)$/.test(a.v))) {
       const escape = h.args.find(a => a.v === null || /escape|write18/.test(a.v))?.v ?? "";
@@ -3896,19 +3898,14 @@ function unknownProgram(h: H): void {
 }
 
 /**
- * An unknown program named with the words that say what it is to do (commands-closed-x9-1): its first operands, up to
- * two, while they are plain words (`rails db:drop`, `supabase db reset`, `dropdb prod`), never an option, a path or a
- * file name. The user's words must name them too for it to be announced, and the announcement says them.
+ * An unknown program named with the words that say what it is to do (commands-closed-x9-1): every operand that is a
+ * plain word (`rails db:drop`, `supabase db reset`, `dropdb prod`, and `production` in `dropdb -p 5433 production`:
+ * commands-closed-y9-3), never an option, a path, a number or a file name. The user's words must name them too for it
+ * to be announced, and the announcement says them.
  */
 function withOperandVerb(h: H): string {
   const words: string[] = [];
-  for (const a of h.args) {
-    if (a.v === null) break;
-    if (words.length === 0 && a.v.startsWith("-")) continue;
-    if (!/^[A-Za-z][A-Za-z0-9_:-]*$/.test(a.v)) break;
-    words.push(a.v);
-    if (words.length === 2) break;
-  }
+  for (const a of h.args) if (a.v !== null && /^[A-Za-z][A-Za-z0-9_:-]*$/.test(a.v)) words.push(a.v);
   return [h.prog, ...words].join(" ");
 }
 
@@ -3961,6 +3958,8 @@ function toolPayload(h: H): void {
     else h.e.payload(words, h.sc, `${h.key} ${ex[0]}`);
     return;
   }
+  const key = unversioned(h.key);
+  if (RUNS_BY_OPTION.some(([prog, opt]) => prog.test(key) && args.some(a => a.v !== null && opt.test(a.v)))) hidden();
   switch (h.key) {
     case "cargo": {
       const first = firstOperand(args);
@@ -4037,10 +4036,30 @@ function toolPayload(h: H): void {
     case "tmux": {
       const first = firstOperand(args);
       if (first.v !== null && TMUX_RUNS.has(first.v) && args.slice(first.at + 1).some(a => a.v === null || !a.v.startsWith("-"))) hidden();
+      // A format's `#(…)` is a shell command tmux runs (`tmux display-message -p '#(…)'`: commands-closed-y9-4).
+      else if (args.some(a => a.v !== null && a.v.includes("#("))) hidden();
+      return;
+    }
+    case "cmake": {
+      // `cmake -P` runs a script: one from outside the task's folder isn't the project's (commands-closed-y9-4).
+      const at = args.findIndex(a => a.v === "-P");
+      const script = at < 0 ? undefined : args[at + 1]?.v;
+      if (at >= 0 && (!script || !ownFolder(script, h.sc, h.e.ctx.cwd || null))) hidden();
       return;
     }
   }
 }
+
+/**
+ * Options of everyday programs that run a command they are given (commands-closed-y9-4): a GNU compiler's `-wrapper`,
+ * ctest's `--build-and-test … --test-command` and `-S` scripts, prove's `--exec`. By the program's key, its version
+ * suffix dropped.
+ */
+const RUNS_BY_OPTION: readonly (readonly [RegExp, RegExp])[] = [
+  [/^(.+-)?(gcc|g\+\+|cc|c\+\+|cpp|gfortran|gccgo|gdc|gnat)$/, /^-wrapper$/],
+  [/^ctest$/, /^(--build-and-test|--test-command|-S|-SP|--script|--script-new-process)(=|$)/],
+  [/^prove$/, /^(-e|--exec)(=|$)/],
+];
 
 /**
  * The card's line for a tool's command Ember doesn't know, naming it (commands-closed-x9-8): "It runs cargo watch, a
@@ -4084,7 +4103,8 @@ function toolVerbs(h: H, tool: OrdinaryVerbs, noRow: boolean): void {
   const bad = args.find(a => a.v !== null && always.includes(a.v.split("=")[0]));
   if (bad) { say(bad.v ?? ""); return; }
   if (at < 0) { if (noRow || tool.bare === "asks") say(""); return; }
-  const known = (w: string): boolean => tool.verbs.includes(w) || (tool.files?.test(w) ?? false);
+  // A file is the project's own, never an address (`deno https://x/y.ts`, `npm:`, `jsr:`: commands-closed-y9-4).
+  const known = (w: string): boolean => tool.verbs.includes(w) || ((tool.files?.test(w) ?? false) && !/^[a-z][a-z0-9+.-]+:/i.test(w));
   const words: Arg[] = [args[at]];
   for (let k = at + 1; tool.all && k < args.length; k++) {
     const v = args[k].v;
@@ -4284,10 +4304,17 @@ const PS_READ_VERBS = new Set(["get", "find", "search", "select", "measure", "te
  * program Ember doesn't know; one with a verb that changes something asks as before (unclear.cmdlet).
  */
 const PS_ORDINARY_VERBS = new Set(["get", "test", "measure", "select", "where", "sort", "group", "format", "convertto", "convertfrom", "compare", "resolve", "split", "join"]);
+/** Cmdlets with other verbs that only show progress, wait or search the gallery (commands-closed-y9-7). */
+const PS_ORDINARY_CMDLETS = new Set(["write-progress", "wait-process", "find-module"]);
 function unknownCmdlet(h: H): void {
   const verb = h.key.split("-")[0];
   if (!PS_READ_VERBS.has(verb)) h.e.unclear("unclear.cmdlet", `Ember can't tell what ${h.prog} changes.`);
-  else if (!PS_ORDINARY_VERBS.has(verb) && !h.e.readsAsMain) h.e.add("unknown", "unknown.program", SAYS.unknownProgram);
+  else if (!PS_ORDINARY_VERBS.has(verb) && !PS_ORDINARY_CMDLETS.has(h.key) && !h.e.readsAsMain) h.e.add("unknown", "unknown.program", SAYS.unknownProgram);
+  // One whose noun names a secret, or that prints one as plain text, hands it to the output whatever its verb
+  // (`Get-Secret`, `Get-AzKeyVaultSecret -AsPlainText`, `Get-AzStorageAccountKey`: commands-closed-y9-5).
+  if (/secret|credential|token|passw(or)?d|apikey|vault|certificate|keys?$/.test(h.key.slice(verb.length + 1)) || h.args.some(a => /^-asplaintext\b/i.test(a.v ?? a.raw))) {
+    h.e.add("secret", "secret.program", SAYS.secrets);
+  }
   for (const a of h.args) if (a.v === null && a.raw.startsWith("{")) h.e.unclear("unclear.script-block", "It runs a script block Ember can't follow.");
   h.e.readArgs(h.args.filter(a => a.param === undefined && !(a.v ?? "").startsWith("-")), h.sc);
 }
@@ -4782,6 +4809,8 @@ const NEW_DELETERS = new Set([
   "grm", "grmdir", "gunlink", "gshred", "scrub", "rimraf", "del", "del-cli", "gvfs-rm", "gvfs-trash", "rmtrash", "trash-rm", "fdupes", "jdupes",
   "bfg", "git-filter-repo",
 ]);
+/** Programs with a row now that keep an unknown program's reading of `-o` and its like (optionPaths), as before it. */
+const UNKNOWN_OPTIONS = new Set([...NEW_DELETERS, "toybox"]);
 const asBefore = (h: H): void => {
   if (!NEW_DELETERS.has(h.key)) return;
   // A PowerShell word shaped like a cmdlet's name (`del-cli`, `gvfs-rm`) was an unknown cmdlet's, which asked.
@@ -8408,9 +8437,18 @@ reg(NATIVE, ["busybox", "toybox"], h => {
   // An applet is that program, judged by its own row or the closed default (`busybox rm -rf ~`, `busybox telnetd`:
   // commands-closed-x9-6); with no applet (`busybox --list`) it only says what it holds.
   const first = h.args[0];
-  if (first && first.v === null) { h.e.unclear("unclear.hidden-command", `Ember can't tell what ${h.prog} runs.`); return; }
-  if (!first || first.v === null || first.v.startsWith("-")) { generic(h); return; }
-  if (h.key === "toybox" || lower(first) !== "httpd") { h.e.payload(h.args, h.sc, h.key); return; }
+  // toybox had no row at main: it keeps an unknown program's reading there (a broad folder, and `-o` by
+  // UNKNOWN_OPTIONS at the dispatch), with the applet judged on top (commands-closed-y9-1).
+  const noRow = h.key === "toybox";
+  if (first && first.v === null) { if (noRow) generic(h, true); h.e.unclear("unclear.hidden-command", `Ember can't tell what ${h.prog} runs.`); return; }
+  if (!first || first.v === null || first.v.startsWith("-")) { generic(h, noRow); return; }
+  if (noRow || lower(first) !== "httpd") {
+    // Main's reading stays (generic(): one that runs others, `busybox sh -c …`, asks how), and an applet that isn't
+    // one of those is judged as itself as well.
+    generic(h, noRow);
+    if (!runners().has(first.v.toLowerCase())) h.e.payload(h.args, h.sc, h.key);
+    return;
+  }
   // busybox httpd [-f] [-p [IP:]PORT] [-h HOME] [-c CONF]: port 80 on every address, this folder; without -f it
   // carries on in the background.
   const q = parseOpts(h.args.slice(1), { shortValue: "pchurmedP" });
