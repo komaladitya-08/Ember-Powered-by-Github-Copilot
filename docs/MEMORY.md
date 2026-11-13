@@ -606,7 +606,9 @@ Ember's real speaking choice (Settings › Voice), not only a fact.
 
 A new name or answer length told in conversation takes the profile's place too (profile.ts, memory-r9-5). When the
 user's own words in a turn tell Ember what to call them ("Call me Sam from now on", "my name is Sam", "I go by Sam
-now", "I'd like to be called Sam": `nameSaid`) or how long its answers should be ("Stop being so brief, I want the
+now", "I'd like to be called Sam", and the other ways people say it: "Can you call me Sam?", "Call me Sam, not
+Ram", "I'm Sam, not Ram", "Don't call me Ram, call me Sam", "I'd rather be called Sam", "My name is Sam and I work
+at Globex": `nameSaid`, memory-x9-4) or how long its answers should be ("Stop being so brief, I want the
 full detail", "your answers are too long": `lengthSaid`, read the right way round), and the fact the model saves
 for it, by the remember tool or when the turn is read, says the same name or length, the fact kept is the profile's
 own: "Likes to be called Sam" under `called`, or the answer length under `answer_length` (in the user's words when
@@ -616,9 +618,11 @@ check reaches here as no words.
 
 This is the one place a fact that isn't mostly the user's own words becomes theirs, and it goes to the model with
 every request, so both sides must say it plainly (memory-x9-1). The user's words: a name only from a clause that
-begins with the telling (after "Ember,", "Actually,", "Please"…) and holds nothing but the name, in a turn of one
-line and at most `TOLD_MAX_CHARS` (200) characters. Never a report ("My boss said call me Dave"), an errand ("Tell
-Priya to call me Sam", "Play Call Me Al"), a question, "don't call me…", a condition, "call me back", what follows
+begins with the telling (after "Ember,", "Actually,", "Please"…) and after the name holds only words that end it
+("from now on", "please"), a name it is set against, or how the user goes on to something else, in a turn of one
+line and at most `TOLD_MAX_CHARS` (200) characters. Never a report ("My boss said call me Dave", "Call me Sam, said
+my boss"), an errand ("Tell Priya to call me Sam", "Play Call Me Al"), a question other than the polite request, a
+bare "don't call me…" or "I'm Sam", a condition, "call me back", "call me Thursday", what follows
 a colon or stands in quotes ("Write to Priya: my name is Bob"), or a turn that hands Ember words to work on
 ("Summarise this email. Hi, my name is Daniel…", `HANDS_OVER`). A length only from a clause about Ember's answers
 to the user (`aboutAnswers`: "be brief", "your answers", "give me long answers", "I prefer detailed answers"),
@@ -635,7 +639,10 @@ leaves it under `called`, where the profile finds it: memory-x9-5). And when a f
 isn't the user's own is kept beside what they told Ember about the same thing (the same single relation, or the
 profile's name or answer length), the remember tool's answer says which of theirs still holds, and for the profile
 that it goes with every request, so Ember tells the user and points to saying it themselves or Correct… instead of
-"I'll remember that". The weaker source still never overrules.
+"I'll remember that". The weaker source still never overrules. The same is said when a fact of the user's own that
+says only their name or answer length stands beside the profile's, in words Ember didn't take as telling it ("Name
+is Sam Lee, that is all"; "It's Sam actually" and "Just Sam is fine" are not taken either): the profile's still
+goes with every request, so the answer says so and how to change it (memory-x9-4).
 
 **Cost.** In model requests on the conversation's model: extraction at most 12 an hour and 60 a day (typically one
 per three turns, plus one per finished task), refinement at most 6 a day, questions none. At the extremes, 12 + 6 = 18

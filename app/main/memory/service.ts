@@ -231,16 +231,21 @@ export class MemoryService {
   /**
    * What the model is told when a fact that isn't the user's own stands beside what they told Ember about the same
    * thing (the same single relation, or the profile's name or answer length): the weaker source never overrules it
-   * (./graph.ts), so that one still holds, and Ember says so rather than "I'll remember that" (memory-r9-5). "" otherwise.
+   * (./graph.ts), so that one still holds, and Ember says so rather than "I'll remember that" (memory-r9-5). And when a
+   * fact of the user's own that says only their name or answer length stands beside the profile's, in words Ember
+   * didn't take as telling it ("Name is Sam Lee, that is all"): the profile's still goes with every request, and
+   * Ember says that too (memory-x9-4). "" otherwise.
    */
   private besideUsers(fact: Fact): string {
-    if (fact.source === "user") return "";
     const kind = profileKind(fact.text);
+    const own = fact.source === "user";
     const theirs = this.g.allFacts(true).find(f => f.id !== fact.id && f.source === "user" && f.entities[0] === fact.entities[0] && f.text !== fact.text
-      && ((!!fact.predicate && f.predicate === fact.predicate) || (!!kind && f.predicate === kind)));
+      && (own ? !!kind && f.predicate === kind && fact.predicate !== kind : (!!fact.predicate && f.predicate === fact.predicate) || (!!kind && f.predicate === kind)));
     if (!theirs) return "";
     const always = (PROFILE_PREDICATES as readonly string[]).includes(theirs.predicate) ? " and goes with every request" : "";
-    return ` It didn't replace what the user told Ember themselves, [${theirs.id}] “${theirs.text.replace(/[“”]/g, "")}”, which still holds${always}: only their own words change it. Tell the user plainly, and that they can say it again themselves or use Correct… in Settings › Memory.`;
+    const held = `[${theirs.id}] “${theirs.text.replace(/[“”]/g, "")}”, which still holds${always}`;
+    if (own) return ` It didn't replace ${held}: Ember couldn't tell from the user's words that this takes its place. Tell the user plainly, and that they can say it plainly (“Call me …”, “Give me shorter answers”) or use Correct… in Settings › Memory.`;
+    return ` It didn't replace what the user told Ember themselves, ${held}: only their own words change it. Tell the user plainly, and that they can say it again themselves or use Correct… in Settings › Memory.`;
   }
 
   /** The facts that bear on `query` (each counts as used); `semantic`: its matches by meaning (./embed.ts), if any. */

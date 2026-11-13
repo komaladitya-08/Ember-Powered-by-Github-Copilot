@@ -343,7 +343,8 @@ export function subjectOf(fact: string): string | null {
   const first = name.split(/\s+/)[0];
   // "Prefers short answers", "Uses these apps": the first word is the verb.
   if (/s$/.test(first) && !/^(?:is|are|was|were|has|have|had)$/.test(verb)) return null;
-  if (fold(name) === "user") return null;
+  // "Name is Sam", "Nickname is Sam": the user's own, never someone called Name (memory-x9-4).
+  if (["user", "name", "nickname"].includes(fold(name))) return null;
   return /^(?:is|are|was|were|has|have|had|\p{Ll}+s)$/u.test(verb) ? name : null;
 }
 

@@ -280,7 +280,8 @@ docs/MEMORY.md is the design. The core (app/main/memory/) is pure and has no Ele
   quotes, a turn that hands Ember words to work on, the user's own writing or someone else's answers); the fact about
   the user alone (`aboutUser`) and wholly about that (`profileKind`). Anything else is kept as the model gave it; a
   new wording `nameSaid` or `lengthSaid` takes comes with its look-alikes pinned as not taken. A fact kept beside a `user`
-  fact it would have replaced is said so in the tool's answer (`besideUsers`); the weaker source still never
+  fact it would have replaced is said so in the tool's answer (`besideUsers`), and so is a fact of the user's own
+  about their name or answer length kept beside the profile's (memory-x9-4); the weaker source still never
   overrules.
 - **Learning on its own** (`MemoryLearning`, learning.ts; docs/MEMORY.md steps 3–5) runs only while memory is in force,
   and the host and conductor reach it only through `HostOptions.memory` (`asked`, `heard`, `forRequest`, `taskDone`,

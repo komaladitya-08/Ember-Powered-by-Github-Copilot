@@ -215,3 +215,56 @@ describe("saying your name again keeps it in the profile (memory-x9-5)", () => {
     expect(g.allFacts(true).map(f => f.text).sort()).toEqual(["Likes to be called Sam", "Lives in York", "Works at Initech"]);
   });
 });
+
+describe("the natural ways of giving a new name replace the one from Tell Ember about you (memory-x9-4)", () => {
+  const WORDINGS: [string, string, string | undefined][] = [
+    ["Call me Sam, not Ram.", "Likes to be called Sam", undefined],
+    ["Can you call me Sam?", "Likes to be called Sam", undefined],
+    ["Could you call me Sam from now on?", "Likes to be called Sam", "called"],
+    ["Would you call me Sam please?", "Prefers to be called Sam", "preferred_name"],
+    ["Please call me Sam instead of Ram.", "Likes to be called Sam instead of Ram", undefined],
+    ["I'm Sam, not Ram.", "Name is Sam", "name"],
+    ["My name's Sam, not Ram.", "Name is Sam, not Ram", "name"],
+    ["Don't call me Ram, call me Sam.", "Likes to be called Sam", undefined],
+    ["Stop calling me Ram, it's Sam", "Goes by Sam", undefined],
+    ["I'd rather be called Sam.", "Would rather be called Sam", undefined],
+    ["I'd rather you called me Sam.", "Likes to be called Sam", undefined],
+    ["My name is Sam and I work at Globex.", "Name is Sam", "name"],
+    ["Call me Sam please, and open Firefox", "Likes to be called Sam", undefined],
+  ];
+  it.each(WORDINGS)("“%s” saved as “%s” leaves one name, the new one, with every request (memory-x9-4)", async (said, fact, replaces) => {
+    const r = rig();
+    r.l.introduce({ name: "Ram", length: "detailed" });
+    r.day();
+    expect(r.remember(said, fact, USER, replaces)).toBe("Remembered [f3], replacing [f1].");
+    // The same turn, read afterwards, keeps no second copy under another subject.
+    await r.read(said, fact, undefined, said.replace(/[.!?]$/, ""), replaces ? { predicate: replaces, single: true } : {});
+    expect(r.review()).toEqual(["user: Likes to be called Sam", "user: Prefers detailed answers", "user: Likes to be called Ram (closed)"]);
+    r.day();
+    expect(await r.profile()).toBe("<memory untrusted=\"true\">\n- Likes to be called Sam\n- Prefers detailed answers\n</memory>");
+  });
+
+  it("takes them only as tellings: never a call to make, a comparison, a report or a condition (memory-x9-4)", () => {
+    for (const [said] of WORDINGS) expect(nameSaid(said), said).toBe("Sam");
+    for (const said of [
+      "Can you call me?", "Can you call me a taxi?", "Could you call me back?", "Can you call me tomorrow?", "Can you call me Thursday?", "Would you call me Sam if you were me?",
+      "Can you call me Sam's number?", "Call me Sam?", "Call me Sam, will you?", "Don't call me Sam", "Don't call me Ram, call Sam", "Never call me Ram",
+      "I'm tired, not hungry", "I'm Sam's brother, not Ram's", "I'm sure, not certain", "I'm Sam", "I'm in Leeds, not York", "Call me Sam, said my boss",
+      "Call me Sam, not Ram, said the email", "Call me Sam and tell Priya I said hi", "Call me Sam when you're ready", "Call me crazy but I love Mondays",
+      "I'd rather be called back", "I'd rather you called me tomorrow", "My name is Sam said nobody ever", "It's Sam actually.", "Just Sam is fine.",
+    ]) expect(nameSaid(said), said).toBeNull();
+  });
+
+  it("says which name still goes with every request when a fact of the user's own about their name stands beside it (memory-x9-4)", async () => {
+    const r = rig();
+    r.l.introduce({ name: "Ram", length: "detailed" });
+    r.day();
+    // In the user's own words, so theirs, but not in words Ember takes as what to call them.
+    expect(r.remember("Name is Sam Lee, that is all", "Name is Sam Lee", USER, "name"))
+      .toBe("Remembered [f3]. It didn't replace [f1] “Likes to be called Ram”, which still holds and goes with every request: Ember couldn't tell from the user's words that this takes its place. Tell the user plainly, and that they can say it plainly (“Call me …”, “Give me shorter answers”) or use Correct… in Settings › Memory.");
+    expect(r.review()).toEqual(["user: Name is Sam Lee", "user: Prefers detailed answers", "user: Likes to be called Ram"]);
+    expect(await r.profile()).toContain("- Likes to be called Ram");
+    // Nothing to say for a fact of theirs about something else.
+    expect(r.remember("I have a brother called Sam", "Has a brother called Sam", USER)).toMatch(/^Remembered \[f\d+\]\.$/);
+  });
+});
