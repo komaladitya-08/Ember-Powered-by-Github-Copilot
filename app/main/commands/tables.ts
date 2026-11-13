@@ -335,7 +335,12 @@ export const DISK_TOOLS = new Set(["mke2fs", "mkswap", "wipefs", "fdisk", "sfdis
 
 /** Script, target and package-script names (§3.5.9, L8). */
 export const NAME_PUBLISH = new Set(["deploy", "publish", "release", "push", "upload", "ship", "prod", "production", "promote"]);
-export const NAME_DESTROY = new Set(["clean", "clobber", "distclean", "reset", "wipe", "purge", "nuke", "destroy", "drop", "rollback"]);
+export const NAME_DESTROY = new Set([
+  "clean", "clobber", "distclean", "reset", "wipe", "purge", "nuke", "destroy", "drop", "rollback",
+  // The frameworks' own words for emptying a database or taking it back (commands-remote-r9-4): `manage.py flush`,
+  // `artisan migrate:fresh`, `alembic downgrade`, `db:truncate`, `teardown`.
+  "flush", "fresh", "truncate", "downgrade", "erase", "delete", "teardown",
+]);
 export const NAME_SYSTEM = new Set(["install", "setup", "bootstrap", "provision"]);
 
 /**

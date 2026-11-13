@@ -145,7 +145,12 @@ build`, `pre-commit run`, and `tsx` or `ts-node` with one of the project's files
 
 Ember stops and asks before a command that:
 
-- **deletes or destroys data**: `rm`, `rmdir`, `del`, `Remove-Item`, `find -delete`, the deleters a project's
+- **deletes or destroys data**: `rm`, `rmdir`, `del`, `Remove-Item`, `find -delete`, a task or a script whose name
+  says so, and the project's own script given such a word (`make clean`, `npm run db:reset`, `bin/rails db:drop`,
+  `./manage.py flush`, `python manage.py flush`, `php artisan migrate:fresh`, `./build.sh clean`: clean, reset, drop,
+  wipe, purge, destroy, rollback, flush, fresh, truncate, downgrade, erase, delete, teardown; "Runs ./manage.py
+  flush, whose name says it deletes things."; the same for deploy, publish, release, push, upload, ship and
+  production, which ask as publishing, `./run.sh deploy`), the deleters a project's
   scripts reach for (`rimraf` and `del-cli`, also from `node_modules/.bin` or as `yarn rimraf` or `yarn run rimraf`,
   which expand a pattern themselves, so a quoted one is read as a pattern too; one whose braces or `+(…)`, read as
   a shell reads them, could reach Ember's files, such as `'{..,x}'` from a project in your home folder, is refused,

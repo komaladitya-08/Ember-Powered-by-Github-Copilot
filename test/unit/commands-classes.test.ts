@@ -310,10 +310,51 @@ describe("launchers that run a tool by its name (commands-remote-r9-3, modes-y9-
     }
     // (A word naming a program that runs others still asks how the launcher runs it, as on main: `dotenv -- npm test`.)
     expect(decide("dotenv -- npm test").rules).toEqual(["unclear.hidden-command"]);
+    // In PowerShell a hyphenated name is shaped like a cmdlet Ember doesn't know, which asked on main and still does.
+    for (const cmd of ["cross-env NODE_ENV=test jest", "with-contenv ls", "env-cmd jest"]) expect(decide(cmd, { shell: "powershell", context: "win32" }).verdict, cmd).toBe("ask");
     // The ones that fetch or build an environment first still ask as before, and what downloads a program says so.
     for (const cmd of ["nix develop -c make", "mise exec -- node x.js", "pixi run pytest", "devbox run test", "direnv exec . make"]) expect(decide(cmd).verdict, cmd).toBe("ask");
     for (const cmd of ["nix run nixpkgs#hello", "nix run github:o/r", "nix shell nixpkgs#x -c make", "nix-shell -p x --run make"]) expect(decide(cmd).rules, cmd).toContain("escape.npx");
     // Their own verbs that read or change the stored variables are not a launch.
     for (const cmd of ["dotenv list", "dotenv get API_KEY", "dotenvx decrypt", "direnv allow"]) expect(decide(cmd).verdict, cmd).toBe("ask");
+  });
+});
+
+describe("the project's own script wrappers given a verb that destroys or publishes (commands-remote-r9-4)", () => {
+  const DESTROYS = ["bin/rails db:drop", "bin/rails db:reset", "./bin/rails db:drop", "./manage.py flush", "./manage.py flush --noinput", "python manage.py flush --noinput",
+    "python3 manage.py flush", "python3.12 manage.py flush", "php artisan migrate:fresh", "./artisan migrate:fresh", "ruby bin/rails db:drop", "node ace migration:reset",
+    "bash scripts/db.sh reset", "sh ./scripts/db.sh drop", "bin/console doctrine:schema:drop --force", "php bin/console doctrine:database:drop --force", "./vendor/bin/phinx rollback",
+    "./node_modules/.bin/prisma migrate reset --force", "node_modules/.bin/sequelize db:drop", "node_modules/.bin/typeorm schema:drop", "./build.sh clean", "./tools/db truncate users",
+    "bin/alembic downgrade base", "./liquibase dropAll", "./flyway clean", "env RAILS_ENV=test bin/rails db:drop", "sudo ./manage.py flush", "bundle exec bin/rails db:drop",
+    "poetry run python manage.py flush", "npm run db:reset", "yarn db:reset", "pnpm run db:drop", "rake db:drop", "./gradlew dropAll", "make db-teardown", "npm run delete-data"];
+  const PUBLISHES = ["./scripts/run.sh deploy", "./run.sh publish", "bin/kamal deploy", "python manage.py deploy", "./manage.py release", "node scripts/tasks.js publish",
+    "bash ci.sh upload", "./tool ship", "./cli.py --verbose deploy production", "bin/cap production deploy", "./scripts/deploy.sh", "npm run deploy", "make release"];
+
+  it("asks by the verb's or the target's name, with the task runners' own word lists, on every POSIX target", () => {
+    for (const o of POSIX) {
+      for (const cmd of DESTROYS) {
+        const d = decide(cmd, o);
+        expect(d.verdict, label(cmd, o)).toBe("ask");
+        expect(d.rules, label(cmd, o)).toContain("script.destroy");
+        expect(d.classes, label(cmd, o)).toContain("destroy");
+      }
+      for (const cmd of PUBLISHES) {
+        const d = decide(cmd, o);
+        expect(d.verdict, label(cmd, o)).toBe("ask");
+        expect(d.rules, label(cmd, o)).toContain("script.publish");
+      }
+    }
+    expect(decide("./manage.py flush").says).toContain("Runs ./manage.py flush, whose name says it deletes things.");
+    for (const [cmd, shell] of [[".\\manage.py flush", "powershell"], ["python manage.py flush", "powershell"], ["php artisan migrate:fresh", "cmd"], [".\\build.bat clean", "cmd"]] as const) {
+      expect(decide(cmd, { shell, context: "win32" }).rules, `${cmd} (${shell})`).toContain("script.destroy");
+    }
+  });
+
+  it("runs the same wrappers with a verb that builds, tests or reads, and never reads a file's name or an option as a verb", () => {
+    for (const cmd of ["python manage.py migrate", "./manage.py test", "./manage.py runserver", "bin/rails test", "bin/rails db:migrate", "./configure --prefix=/usr/local", "./build.sh",
+      "./build.sh all", "php artisan test", "node scripts/gen.js types", "./manage.py loaddata reset.json", "./run.sh --mode=release-notes", "bash scripts/lint.sh src",
+      "./manage.py makemigrations", "bin/console cache:warmup"]) {
+      expect(decide(cmd).verdict, cmd).toBe("run");
+    }
   });
 });

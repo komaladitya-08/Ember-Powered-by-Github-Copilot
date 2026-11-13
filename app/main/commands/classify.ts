@@ -3047,6 +3047,7 @@ class Engine extends Classifier {
       if (this.isDownloaded(nameArg, sc)) this.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
       if (!this.onRecord(nameArg, sc)) this.scriptByPath(nameArg, pn, sc);
       scriptName(h, nameArg.v ?? "");
+      if (!NATIVE[key] && nameArg.v !== null) scriptVerbs(h, nameArg.v, args);
     } else if (sc.family === "cmd" && nameArg.v !== null && !CMD_BUILTINS[key]) {
       // cmd looks in the current folder first, with each runnable extension when none is written.
       const names = pn.ext ? [nameArg.v] : [nameArg.v, ...[".exe", ".com", ".bat", ".cmd"].map(e => nameArg.v + e)];
@@ -3288,6 +3289,7 @@ class Engine extends Classifier {
         if (pn.ext === ".bat" || pn.ext === ".cmd") this.recordScript(nameArg, "cmd", sc);
       }
       scriptName(inner, nameArg.v);
+      if (!NATIVE[key]) scriptVerbs(inner, nameArg.v, inner.args);
     }
     terminalDriver(inner);
     const n = NATIVE[key];
@@ -3649,6 +3651,21 @@ function nameCheck(h: H, name: string, display = name): void {
   if (words.some(w => NAME_PUBLISH.has(w))) h.e.add("publish", "script.publish", `Runs ${display}, whose name says it publishes.`, { objects: [{ kind: "other", text: display, abs: null }] });
   if (words.some(w => NAME_DESTROY.has(w))) h.e.add("destroy", "script.destroy", `Runs ${display}, whose name says it deletes things.`, { objects: [{ kind: "other", text: display, abs: null }] });
   if (words.some(w => NAME_SYSTEM.has(w))) h.e.add("system", "script.system", `Runs ${display}, whose name says it installs or sets up software.`, { objects: [{ kind: "other", text: display, abs: null }] });
+}
+
+/**
+ * The verbs and targets handed to the project's own script wrapper (commands-remote-r9-4): `bin/rails db:drop`,
+ * `./manage.py flush`, `python manage.py flush`, `php artisan migrate:fresh`, `./run.sh deploy`. Each plain word after
+ * the script is judged by its name as a task runner's target is (nameCheck, the same word lists), said with the
+ * script: "Runs ./manage.py flush, whose name says it deletes things." Never an option, a path or a file's name.
+ */
+function scriptVerbs(h: H, script: string, words: readonly Arg[]): void {
+  if (h.e.readsAsMain) return;
+  for (const a of words) {
+    const v = a.v;
+    if (v === null || !/^[A-Za-z][A-Za-z0-9]*([:_-][A-Za-z0-9]+)*$/.test(v)) continue;
+    nameCheck(h, v, `${script} ${v}`);
+  }
 }
 
 /** A program run by its path (`./deploy.sh`, `scripts/release.ps1`): judged by its name's words. */
@@ -6020,6 +6037,7 @@ reg(NATIVE, [...Object.keys(POSIX_SHELLS), ...OTHER_SHELLS], h => {
   const readAs: ScriptRef["as"] | undefined = posixShell;
   if (script && !has(p, "s")) {
     runScript(h, script, readAs);
+    if (script.v !== null) scriptVerbs(h, script.v, p.operands.slice(1));
     if (!posixShell) h.e.unclear("unclear.other-shell", `Ember can't read ${h.key}'s language.`);
     return;
   }
@@ -6258,6 +6276,7 @@ reg(NATIVE, Object.keys(INTERPRETERS).filter(k => !["awk", "gawk", "mawk", "nawk
   if (script) {
     if (/^(deno|bun)$/.test(h.key) && script.v && URL_LIKE.test(script.v)) { h.e.add("escape", "escape.npx", SAYS.downloadsProgram); packageLine(h, p.operands, h.key); return; }
     runScript(h, script);
+    if (script.v !== null) scriptVerbs(h, script.v, p.operands.slice(1));
     h.e.readArgs(p.operands.slice(1), h.sc);
     return;
   }
@@ -7824,6 +7843,9 @@ const ENV_LAUNCH_VALUES = new Set(["-e", "-f", "--file", "--env-file", "--env", 
 reg(NATIVE, ["dotenv", "dotenvx", "env-cmd", "cross-env", "cross-env-shell", "with-contenv"], h => {
   const args = h.args;
   const asUnknown = (): void => { unknownProgram(h); generic(h, true); };
+  // A PowerShell word shaped like a cmdlet's name (`cross-env`, `env-cmd`, `with-contenv`) was an unknown cmdlet's,
+  // which asked, and still does.
+  if (h.sc.family === "powershell" && /^[a-z]+-[a-z0-9]+$/.test(h.key)) unknownCmdlet(h);
   const dd = args.findIndex(a => a.v === "--");
   let k = 0;
   for (; k < (dd >= 0 ? dd : args.length); k++) {
