@@ -24,9 +24,9 @@ function refuseRenames(code: string, times: number) {
 afterEach(() => { vi.restoreAllMocks(); });
 
 describe("the never-look default", () => {
-  it("is this OS's list from app/shared/never-look.ts (on Linux, today's six entries)", () => {
+  it("is this OS's list from app/shared/never-look.ts (on Linux, the six it had and the password managers after them, safety-privacy-r9-3)", () => {
     expect(DEFAULT_SETTINGS.privacy.neverLook).toEqual([...NEVER_LOOK_DEFAULTS[HOST_OS]]);
-    if (HOST_OS === "linux") expect(DEFAULT_SETTINGS.privacy.neverLook).toEqual(["keepassxc", "seahorse", "passwords and keys", "1password", "bitwarden", "polkit"]);
+    if (HOST_OS === "linux") expect(DEFAULT_SETTINGS.privacy.neverLook).toEqual(["keepassxc", "seahorse", "passwords and keys", "1password", "bitwarden", "polkit", "keepass", "lastpass", "dashlane", "enpass", "proton pass", "kwallet"]);
   });
 
   it("is a copy, so a change to one settings object never reaches the shared list", () => {

@@ -104,7 +104,8 @@ describe("settings window words", () => {
     expect(neverLookLabel("keepassxc")).toBe("KeePassXC");
     expect(neverLookLabel("polkit")).toBe("Password prompts (polkit)");
     expect(neverLookLabel("Thunderbird")).toBe("Thunderbird");
-    expect(missingDefaults(["KeePassXC", "Signal"])).toEqual(["seahorse", "passwords and keys", "1password", "bitwarden", "polkit"]);
+    expect(missingDefaults(["KeePassXC", "Signal"])).toEqual(["seahorse", "passwords and keys", "1password", "bitwarden", "polkit", "keepass", "lastpass", "dashlane",
+      "enpass", "proton pass", "kwallet"]);
     expect(missingDefaults(NEVER_LOOK_DEFAULTS)).toEqual([]);
   });
 
