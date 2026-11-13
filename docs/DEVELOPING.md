@@ -351,7 +351,7 @@ environment, only through `scripts/runtime-env-live.sh`, which gives it a networ
     `isDefault`) is listed as **Built into Copilot** and one the organisation's managed settings provide as **Set by
     your organisation**, neither with **Remove** (the runtime refuses to remove them, and main says so in a sentence
     rather than nothing); a plugin from Copilot's own says it is listed in a marketplace built into Copilot, never
-    one "you added" (`FEATURE_CONSENT_VERSION.extensions` 3). Browsing fetches the list from GitHub (Copilot's own) or
+    one "you added" (since `FEATURE_CONSENT_VERSION.extensions` 3). Browsing fetches the list from GitHub (Copilot's own) or
     from the address the user added. A list Ember couldn't fetch or read says so (`browseFailed`: "Ember couldn't
     reach “<name>”. Check the network, then press Browse again." when git couldn't reach it, a proxy refused or TLS
     inspection got in the way) with **Browse again**, never "This marketplace lists nothing yet.", which is only for a
