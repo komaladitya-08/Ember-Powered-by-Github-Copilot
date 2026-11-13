@@ -1175,8 +1175,8 @@ describe("Home's conversation words (2026-11-07 product audit)", () => {
 
   it("writes every apostrophe Ember shows straight, never U+2019 (accessibility-visual-6, home-11)", () => {
     const files = [...listFiles("app"), ...listFiles("packages")].filter(f => /\.(ts|html)$/.test(f) && !f.endsWith(".test.ts"));
-    // Matching data, not words Ember shows: a quote character set and an app's own localised name.
-    const MATCHING: Record<string, RegExp> = { "app/main/commands/lex-powershell.ts": /SINGLE_QUOTES = /, "app/main/policy/vocabulary.ts": /trousseaux d’accès/ };
+    // Matching data, not words Ember shows: quote character sets and an app's own localised name.
+    const MATCHING: Record<string, RegExp> = { "app/main/commands/lex-powershell.ts": /SINGLE_QUOTES = /, "app/main/policy/vocabulary.ts": /trousseaux d’accès/, "app/main/memory/profile.ts": /^const QUOTED = / };
     const curly: string[] = [];
     for (const f of files) {
       readFileSync(f, "utf8").split("\n").forEach((line, i) => {
