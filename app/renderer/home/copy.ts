@@ -1301,6 +1301,9 @@ export function userWords(why: string | undefined): string | undefined {
   return /[.!?…]$/.test(first) ? first : `${first}.`;
 }
 
+/** Why a step or a command Autopilot let through wasn't asked about, in "What Ember did". */
+const AUTOPILOT_WHY = "Autopilot was on, so Ember didn't ask.";
+
 /** Shell names as people write them (the command window's own). */
 const SHELL_NAME: Readonly<Record<string, string>> = { bash: "bash", zsh: "zsh", sh: "sh", powershell: "PowerShell", cmd: "cmd" };
 
@@ -1457,8 +1460,9 @@ export function describeEntry(e: ActivityEntry, words: EntryWords = LINUX_ENTRY_
         return { tag: e.batchVerdict === "deny" ? "Refused" : "Asked you", cls: e.batchVerdict === "deny" ? "no" : "ask", what: fill, why: typeof e.batchReason === "string" ? userWords(e.batchReason) : undefined };
       }
       // Gone ahead without asking (Work without asking): said, so the record shows which steps weren't asked about.
-      // One that Assisted's check cleared says so (the audit's `review`), so the record shows why it wasn't asked about.
-      if (e.verdict === "allow") return e.autonomy === true ? { tag: "Without asking", cls: "", what, ...(e.review === "match" ? { why: "Ember's check found this step in what you asked." } : {}) } : null; // (otherwise the action line says it)
+      // One that Assisted's check cleared says so (the audit's `review`), and so does one Autopilot let through (its
+      // `mode`), so the record shows why it wasn't asked about.
+      if (e.verdict === "allow") return e.autonomy === true ? { tag: "Without asking", cls: "", what, ...(e.mode === "autopilot" ? { why: AUTOPILOT_WHY } : e.review === "match" ? { why: "Ember's check found this step in what you asked." } : {}) } : null; // (otherwise the action line says it)
       return { tag: e.verdict === "deny" ? "Refused" : "Asked you", cls: e.verdict === "deny" ? "no" : "ask", what, why: userWords(e.reason) };
     case "confirm":
       // A lasting grant says what it changes, as Apps & privacy's list of them does.

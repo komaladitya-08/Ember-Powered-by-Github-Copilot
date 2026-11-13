@@ -3433,6 +3433,7 @@ function start(): void {
         trustAskedApps: () => approvalsNow().askedApps,
         autonomy: () => approvalsNow().scopes,
         assisted: () => approvalsNow().check,
+        autopilot: () => approvalsNow().autopilot,
         // On macOS also by the installed app with that name's bundle id (Terminal renamed is still Terminal); a WSLg
         // app's also as a Linux app (§4.5).
         isTerminalApp: name => privacy.isTerminalApp({ id: name, name }),

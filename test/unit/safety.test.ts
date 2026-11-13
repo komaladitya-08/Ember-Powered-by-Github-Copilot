@@ -50,7 +50,7 @@ describe("admin policy file", () => {
     expect(s.privacy.neverLook.filter(x => x.toLowerCase() === "keepassxc")).toHaveLength(1);
     // Without grants nobody may let Ember work without asking either: it is below Interactive (policy/autonomy.ts).
     expect(managedKeys(admin)).toEqual(["wakeWord", "speak", "naturalVoice", "models", "grants", "autonomy"]);
-    expect(approvalInputs(modeInForce(s.approvals, admin))).toEqual({ scopes: null, askedApps: false, check: false });
+    expect(approvalInputs(modeInForce(s.approvals, admin))).toEqual({ scopes: null, askedApps: false, check: false, autopilot: false });
     // An admin can't turn on what the user turned off.
     expect(applyAdminPolicy({ ...DEFAULT_SETTINGS, wakeWord: false }, AdminPolicySchema.parse({ features: { voice: true } })).wakeWord).toBe(false);
   });

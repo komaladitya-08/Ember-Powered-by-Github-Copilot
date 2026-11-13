@@ -34,7 +34,7 @@ import type { WindowTarget } from "../perception";
 import type { AxNode, AxWindow, Bounds, ActionResult, ElementInfo, PointElement } from "../perception/sidecar";
 import { helperCantRun } from "../perception/sidecar";
 import type { PolicyEngine, ActionKind, ActionRequest, Agreement, Decision, DialogControl, ReadSource, TextMode, WindowId } from "../policy/policy";
-import { CHECKED_WORDS, riskyOnPage } from "../policy/policy";
+import { AUTOPILOT_WORDS, CHECKED_WORDS, riskyOnPage } from "../policy/policy";
 import type { CommandReviewer, StepChecker } from "../commands/review";
 import { afterTheStep, type AuditEntry, type AuditLog } from "../policy/audit";
 import type { AutonomyScopes } from "../policy/autonomy";
@@ -107,6 +107,12 @@ export interface WorkerDeps {
    * hear of it through the policy engine; this is for run_command's flow (an ordinary command carrying text from elsewhere).
    */
   autonomy?: () => AutonomyScopes | null;
+  /**
+   * Autopilot is the approval mode in force (policy/autonomy.ts approvalInputs().autopilot): a command that would ask
+   * is announced with its Stop instead, but for the few that still ask there (commands/flow.ts autopilotCommand). App
+   * steps hear of it through the policy engine (PolicyInputs.autopilot, PolicyEngine.autopilotStep).
+   */
+  autopilot?: () => boolean;
   log: Logger;
   model: string | null;
   /** The levels the connected Copilot catalog advertises for this worker's model. */
@@ -273,6 +279,8 @@ const REFUSED_BEFORE = "The user already said no to this step in this task, so E
 /** To a step whose question went unanswered, sent again before the user said anything more to the task: not asked twice. */
 const STILL_UNANSWERED = "Ember already asked the user about this step and the question went unanswered; they haven't said anything to this task since, so Ember didn't ask again and the step wasn't taken. Don't retry it or work around it; finish the task now, saying that the question went unanswered and what wasn't done.";
 /** The audit's reasons for those two refusals (Ember's own words: "What Ember did" shows them). */
+/** Why a borrow is refused in Autopilot once the user took the mouse or keyboard back from this task (refusedAfterTakeover). */
+const TOOK_BACK_REFUSED = "the user took the mouse back earlier in this task, and Autopilot doesn't ask before using it again";
 const STANDING_REASON: Readonly<Record<Standing, string>> = {
   refused: "the user said no to this step earlier in this task",
   waiting: "the question about this step went unanswered, and the user hasn't said anything to this task since",
@@ -3794,6 +3802,9 @@ export class Worker {
         ...(job.expected !== undefined ? { currentText: job.expected, ...this.ownText(field, job.expected) } : {}) };
       if (job.text) typed = { field, text: (typedHere ?? job.text).slice(-TYPED_MAX) };
       const d = i === 0 ? this.d.policy.decide(req) : this.d.policy.recheck(req);
+      // Autopilot never asks: its own decision stands in a task the user said no in, and a borrow after the user took the
+      // mouse back is refused, as for one step (authorize).
+      if (this.d.policy.autopilot) return { job, req, d: d.autonomy && this.takenBack(req.kind) ? this.refusedAfterTakeover(d) : d };
       // "Work without asking" is suspended for the rest of a task the user already said no in, as for one step (authorize),
       // and for its borrows once the user took the mouse back.
       if (d.autonomy && !this.saidNoThisTask && this.takenBack(req.kind)) return { job, req, d: this.askedAfterTakeover(d) };
@@ -3827,7 +3838,7 @@ export class Worker {
     const batchVerdict = no ? "deny" : alone || !asks ? "none" : "ask";
     const entries: AuditEntry[] = judged.map(({ req, d }, i) => {
       const batch = jobs.length > 1 ? { batch: jobs.length, at: i, ...(i === jobs.length - 1 ? { batchVerdict, ...(no ?? asks ? { batchReason: (no ?? asks)!.d.reason } : {}) } : {}) } : {};
-      return { event: "decision", task: this.spec.id, kind: req.kind, app: req.app, window: req.window, element: req.element, ...auditValue(req), tier: d.tier, verdict: d.verdict, reason: d.reason, ...(d.aligned === false ? { aligned: false } : {}), ...(req.onDesk ? { onDesk: true } : {}), ...(d.autonomy ? { autonomy: true } : {}), ...(d.review ? { review: d.review } : {}), ...batch };
+      return { event: "decision", task: this.spec.id, kind: req.kind, app: req.app, window: req.window, element: req.element, ...auditValue(req), tier: d.tier, verdict: d.verdict, reason: d.reason, ...(d.aligned === false ? { aligned: false } : {}), ...(req.onDesk ? { onDesk: true } : {}), ...(d.autonomy ? { autonomy: true } : {}), ...(d.mode ? { mode: d.mode } : {}), ...(d.review ? { review: d.review } : {}), ...batch };
     });
     // A batch going ahead without asking is recorded, and said, once the borrow's look right before acting has passed
     // (goAhead), as one step is (authorize; safety-privacy-v4-2).
@@ -3845,7 +3856,7 @@ export class Worker {
       const waived = judged.filter(j => j.d.autonomy && j.d.announce);
       const app = this.window.app ? friendlyApp(this.window.app) : "this app";
       const words = waived.length === 1 && jobs.length === 1 ? waived[0].d.announce!
-        : waived.length ? `${this.place ? "Filling" : "Using your keyboard to fill"} ${jobs.length} cells in ${app}, ${waived.some(j => j.d.review === "match") ? CHECKED_WORDS : "without asking as you let me."}${this.place ? "" : " Move the mouse or press a key to take it back."}` : null;
+        : waived.length ? `${this.place ? "Filling" : "Using your keyboard to fill"} ${jobs.length} cells in ${app}, ${waived.some(j => j.d.mode === "autopilot") ? AUTOPILOT_WORDS : waived.some(j => j.d.review === "match") ? CHECKED_WORDS : "without asking as you let me."}${this.place ? "" : " Move the mouse or press a key to take it back."}` : null;
       if (ahead) this.ahead = { entries, words };
       return null;
     }
@@ -4773,7 +4784,8 @@ export class Worker {
     if (stood) return this.refusedBefore(req, decision, stood);
     // "Work without asking" is suspended for the rest of a task the user already said no in (fail closed): the step asks
     // as it would have. A task that was steered or went off-task is held to asking just below, as before.
-    if (decision.autonomy && this.saidNoThisTask && !this.tainted) {
+    // (Autopilot's own decision, `mode`, is no waiver of Interactive's: it stands, and is said as Autopilot's below.)
+    if (decision.autonomy && this.saidNoThisTask && !this.tainted && !decision.mode) {
       const { autonomy: _a, announce: _n, ...asked } = decision;
       decision = { ...asked, verdict: "confirm", tier: "confirm", reason: `${decision.reason.replace(/; the user lets Ember work without asking$/, "")}; working without asking is suspended after the user said no` };
     }
@@ -4785,7 +4797,7 @@ export class Worker {
     // After a step the user didn't ask for came up (a page may have steered Ember, or the model went its own way),
     // nothing more happens without the user's click, and every question says why (one that would have been asked
     // anyway too; the step that was flagged says so itself).
-    if (this.tainted && decision.verdict !== "deny" && decision.tier !== "read" && decision.aligned !== false) {
+    if (this.tainted && decision.verdict !== "deny" && decision.tier !== "read" && decision.aligned !== false && !decision.mode) {
       // An app the user already allowed for this task: the step alone is asked about, not working in the app again.
       const step = decision.stepPrompt && this.allowedApps.has(req.app.toLowerCase()) ? decision.stepPrompt : decision.prompt;
       const prompt = this.steered
@@ -4797,6 +4809,13 @@ export class Worker {
       decision = decision.verdict === "allow"
         ? { ...held, verdict: "confirm", tier: "confirm", everyTime: true, remember: false, reason: `${base}; ${this.steered ? "text on screen tried to give Ember instructions" : "a step came up that the user didn't ask for"}`, prompt }
         : { ...held, everyTime: true, remember: false, prompt };
+    }
+    // Autopilot never asks (PLAN.md §2 "Approvals"): what this task's holds turned back into a question (the task was
+    // steered, went off-task, or the user said no in it) goes ahead announced instead, recorded as Autopilot's with why
+    // it would have asked. But never a borrow after the user took the mouse or keyboard back: Ember never moves the
+    // pointer again after that, and with no question to put, the borrow is refused for the rest of the task.
+    if (decision.verdict === "confirm" && this.d.policy.autopilot) {
+      decision = this.takenBack(req.kind) ? this.refusedAfterTakeover(decision) : this.d.policy.autopilotStep(req, decision);
     }
     if (o.covered && decision.verdict === "confirm" && !this.tainted && decision.aligned !== false && this.harmlessKeys(req)) {
       decision = { ...decision, verdict: "allow", tier: "reversible", reason: "a key that only moves, after the user said yes to moving there" };
@@ -4819,7 +4838,7 @@ export class Worker {
       [decision] = await this.checkFirst([{ r: req, d: decision }]);
       if (this.isOver) return STOPPED();
     }
-    const entry: AuditEntry = { event: "decision", task: this.spec.id, kind: req.kind, app: req.app, window: req.window, element: req.element, ...auditValue(req), tier: decision.tier, verdict: sessionAllowed ? "allow" : decision.verdict, reason: decision.reason, ...(decision.aligned === false ? { aligned: false } : {}), ...(req.onDesk ? { onDesk: true } : {}), ...(decision.autonomy ? { autonomy: true } : {}), ...(decision.review ? { review: decision.review } : {}) };
+    const entry: AuditEntry = { event: "decision", task: this.spec.id, kind: req.kind, app: req.app, window: req.window, element: req.element, ...auditValue(req), tier: decision.tier, verdict: sessionAllowed ? "allow" : decision.verdict, reason: decision.reason, ...(decision.aligned === false ? { aligned: false } : {}), ...(req.onDesk ? { onDesk: true } : {}), ...(decision.autonomy ? { autonomy: true } : {}), ...(decision.mode ? { mode: decision.mode } : {}), ...(decision.review ? { review: decision.review } : {}) };
     // Going ahead without asking is recorded, and said, once the look right before acting has passed (goAhead), so a
     // step that look refuses is recorded only as refused (safety-privacy-v4-2).
     if (decision.verdict === "allow" && decision.autonomy) this.ahead = { entries: [entry], words: decision.announce ?? null };
@@ -5000,9 +5019,18 @@ export class Worker {
 
   /** A borrow a mode would announce, turned back into the question it would be below Interactive, saying why it is asked. */
   private askedAfterTakeover(d: Decision): Decision {
-    const { autonomy: _a, announce: _n, ...asked } = d;
+    const { autonomy: _a, announce: _n, mode: _m, ...asked } = d;
     return { ...asked, verdict: "confirm", tier: "confirm", reason: `${d.reason.replace(/; the user lets Ember work without asking$/, "")}; the user took the mouse back earlier in this task`,
       prompt: `${d.prompt} (You took the mouse back earlier, so I'm asking before I use it again.)` };
+  }
+
+  /**
+   * That borrow in Autopilot, which never asks: refused, since Ember never moves the pointer again after the user takes
+   * over (CLAUDE.md "Least intrusive tier first") and there is no question to put. For the rest of the task.
+   */
+  private refusedAfterTakeover(d: Decision): Decision {
+    const { autonomy: _a, announce: _n, mode: _m, ...rest } = d;
+    return { ...rest, verdict: "deny", tier: "never", reason: TOOK_BACK_REFUSED };
   }
 
   /**

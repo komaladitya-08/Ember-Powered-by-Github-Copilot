@@ -117,19 +117,28 @@ export interface ApprovalInputs {
    * or a command that would ask goes to it first, and goes ahead announced when it finds it in the user's own words.
    */
   check: boolean;
+  /**
+   * Autopilot (PolicyInputs.autopilot, the command flow's and the extensions gate's): a question is announced instead of
+   * asked, a risky one included. What still asks there is each consumer's own to keep (a command that would read or
+   * print secrets or outlive the kill switch, the organisation's and the user's "ask every command"), and so is every
+   * refusal.
+   */
+  autopilot: boolean;
 }
 
-const ASKING: Readonly<ApprovalInputs> = Object.freeze({ scopes: null, askedApps: false, check: false });
-const INTERACTIVE: Readonly<ApprovalInputs> = Object.freeze({ scopes: ALL_SCOPES, askedApps: true, check: false });
-const ASSISTED: Readonly<ApprovalInputs> = Object.freeze({ scopes: ALL_SCOPES, askedApps: true, check: true });
+const ASKING: Readonly<ApprovalInputs> = Object.freeze({ scopes: null, askedApps: false, check: false, autopilot: false });
+const INTERACTIVE: Readonly<ApprovalInputs> = Object.freeze({ scopes: ALL_SCOPES, askedApps: true, check: false, autopilot: false });
+const ASSISTED: Readonly<ApprovalInputs> = Object.freeze({ scopes: ALL_SCOPES, askedApps: true, check: true, autopilot: false });
+const AUTOPILOT: Readonly<ApprovalInputs> = Object.freeze({ scopes: ALL_SCOPES, askedApps: true, check: false, autopilot: true });
 
 /**
  * The inputs `mode` gives: below Interactive, what all three of the old switches off gave; in Interactive, what Work
  * without asking with every scope and the app switch gave, so the policy engine decides exactly as it did; in
- * Assisted, the same with its check on top, which can only turn a question into an announced step.
+ * Assisted, the same with its check on top, which can only turn a question into an announced step; in Autopilot, the
+ * same as Interactive with every remaining question announced instead (never Assisted's check: no model decides there).
  */
 export function approvalInputs(mode: ModeInForce): Readonly<ApprovalInputs> {
-  return mode === "asking" ? ASKING : mode === "assisted" ? ASSISTED : INTERACTIVE;
+  return mode === "asking" ? ASKING : mode === "assisted" ? ASSISTED : mode === "autopilot" ? AUTOPILOT : INTERACTIVE;
 }
 
 /** The scopes in force now (approvalInputs' view of modeInForce): every one, or null below Interactive. */

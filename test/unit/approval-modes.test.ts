@@ -99,7 +99,7 @@ describe("a settings.json from before the modes (modes-A2)", () => {
         expect(s.approvals.consent.interactive).toEqual(was.version > 0 ? { version: Math.min(was.version, OLD_CARD), at: was.at } : NONE);
         expect(s.approvals.consent.interactive.version).toBeLessThan(FEATURE_CONSENT_VERSION.autonomy);
         expect(modeInForce(s.approvals), JSON.stringify(old)).toBe("asking");
-        expect(approvalInputs(modeInForce(s.approvals))).toEqual({ scopes: null, askedApps: false, check: false });
+        expect(approvalInputs(modeInForce(s.approvals))).toEqual({ scopes: null, askedApps: false, check: false, autopilot: false });
       }
     }
     expect(combos).toBe(autonomies.length * trusts.length - 1);
@@ -308,8 +308,8 @@ describe("what each state gives the policy engine (modes-A4)", () => {
   };
 
   it("gives Interactive exactly what Work without asking with every scope and the app switch gave, and below it what all three switches off gave", () => {
-    expect(approvalInputs("asking")).toEqual({ scopes: null, askedApps: false, check: false });
-    expect(approvalInputs("interactive")).toEqual({ scopes: { apps: true, commands: true, cursor: true, crossWindow: true }, askedApps: true, check: false });
+    expect(approvalInputs("asking")).toEqual({ scopes: null, askedApps: false, check: false, autopilot: false });
+    expect(approvalInputs("interactive")).toEqual({ scopes: { apps: true, commands: true, cursor: true, crossWindow: true }, askedApps: true, check: false, autopilot: false });
     expect(approvalInputs("interactive").scopes).toEqual(ALL_SCOPES);
     // Decided through the engine, whose inputs keep their shape: the same decisions as the old switches' values.
     const from = (m: ModeInForce) => { const i = approvalInputs(m); return verdicts({ autonomy: i.scopes, trustAskedApps: i.askedApps }); };
@@ -324,7 +324,8 @@ describe("what each state gives the policy engine (modes-A4)", () => {
 
   it("turns Assisted's check on only in Assisted, on top of Interactive's inputs (modes-C1)", () => {
     expect(approvalInputs("assisted")).toEqual({ ...approvalInputs("interactive"), check: true });
-    expect(approvalInputs("autopilot")).toEqual(approvalInputs("interactive"));
+    // Autopilot is Interactive's inputs with its own switch: no model decides there, so never the check (modes-D1).
+    expect(approvalInputs("autopilot")).toEqual({ ...approvalInputs("interactive"), autopilot: true });
     for (const m of ["asking", "interactive", "autopilot"] as const) expect(approvalInputs(m).check).toBe(false);
   });
 });
