@@ -318,7 +318,7 @@ export const DOWNLOAD_READERS: ReadonlySet<string> = new Set([
 export const READER_RUNS: Readonly<Record<string, RegExp>> = {
   sdiff: /^--d[a-z-]*(=|$)/,
   gio: /^launch$/,
-  openssl: /^(engine|-engine|-config|-provider|-provider-path|-provider_path|-propquery|-keyform)$/,
+  openssl: /^(engine$|-(engine|config|provider|provider-path|provider_path|propquery|keyform)(=|$))/,
   gpg: /^--(photo|exec|home|opt|agent|dirmngr|keyboxd|pinentry|load)/,
   gpgv: /^--(photo|exec|home|opt|agent|dirmngr|keyboxd|pinentry|load)/,
   svn: /^--(diff-cmd|diff3-cmd|merge-cmd|editor-cmd|config-dir|config-option)(=|$)/,

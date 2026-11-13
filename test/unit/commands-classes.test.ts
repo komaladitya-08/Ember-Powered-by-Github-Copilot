@@ -1022,3 +1022,35 @@ describe("kitty's list of windows, which prints their environment and command li
     expect(decide("kitten @ get-colors").verdict).toBe("run");
   });
 });
+
+describe("a download handed on through a later export, an attached option or a 7-Zip or RAR archive (commands-classes-y9-5)", () => {
+  it("asks before a build that follows a download set as a variable and then exported, or set after `set -a`", () => {
+    for (const o of POSIX) for (const cmd of ["CC=./cc.sh; export CC; make", "CC=./cc.sh && export CC && make", "set -a; CC=./cc.sh; make", "CC=./cc.sh; declare -x CC; make",
+      "set -o allexport; CC=./cc.sh; make", "CC=./cc.sh; export FOO CC; make"]) {
+      if (o.shell === "sh" && cmd.includes("declare")) continue;
+      const d = decide(cmd, got(o, "cc.sh"));
+      expect(d.verdict, label(cmd, o)).toBe("ask");
+      expect(d.rules, label(cmd, o)).toContain("escape.run-downloaded");
+    }
+    for (const cmd of ["CC=clang; export CC; make", "set -a; CC=clang; make", "X=./notes.txt; export X; make"]) expect(decide(cmd, got({}, "cc.sh")).verdict, cmd).toBe("run");
+  });
+
+  it("asks before openssl given a download as a config or an engine written with `=`", () => {
+    for (const o of POSIX) for (const cmd of ["openssl req -new -config=cfg", "openssl dgst -engine=./cfg f", "openssl req -provider-path=./cfg -new"]) {
+      const d = decide(cmd, got(o, "cfg"));
+      expect(d.verdict, label(cmd, o)).toBe("ask");
+      expect(d.rules, label(cmd, o)).toContain("escape.run-downloaded");
+    }
+    expect(decide("openssl dgst -sha256 cfg", got({}, "cfg")).verdict).toBe("run");
+  });
+
+  it("marks what 7-Zip and unrar unpack from a download as downloaded, as tar and unzip do", () => {
+    for (const o of POSIX) {
+      for (const [unpack, into] of [["7z x a.7z", proj(o)], ["7z x a.7z -oout", `${proj(o)}/out`], ["7za e a.7z", proj(o)], ["unrar x a.7z out/", `${proj(o)}/out`], ["unrar e a.7z", proj(o)]] as const) {
+        expect(result(unpack, got(o, "a.7z")).cls.downloads, label(unpack, o)).toContain(into);
+      }
+      expect(result("7z l a.7z", got(o, "a.7z")).cls.downloads ?? [], label("7z l", o)).toEqual([]);
+      expect(result("7z x b.7z", got(o, "a.7z")).cls.downloads ?? [], label("7z x b.7z", o)).toEqual([]);
+    }
+  });
+});

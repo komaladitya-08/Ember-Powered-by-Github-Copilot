@@ -827,6 +827,11 @@ class Classifier {
    * is kept, earlier ones too, so a value set again inside a loop still counts. A name set again no longer says the
    * loop's files on the card.
    */
+  /** The values this line gave a variable, as far as Ember can read them. */
+  valuesOf(name: string): readonly string[] {
+    return (this.varValues.get(name) ?? []).filter(f => !f.includes(UNSEEN) && !f.startsWith(PATTERN));
+  }
+
   setVar(name: string, values: readonly Arg[] | null, sc: Scope, loop = false, exported = false): void {
     if (!loop) this.setsVars = true;
     if (!/^([A-Za-z_]\w*|[1-9@*])$/.test(name)) return;
@@ -2802,7 +2807,8 @@ class Engine extends Classifier {
       else if (beforeCommand && namesProgram(a.name, a.value.v, a.value.raw)) this.unclear("unclear.assignment", "It changes how commands are found or run.");
       // One set in front of a command to a file this task downloaded, or a folder that holds one, may be a program the
       // command runs (`CC=./cc.sh make`, `EDITOR=./x git commit`): whatever its name (commands-remote-r9-5).
-      if (beforeCommand && a.value.v !== null && this.namesDownload(a.value.v, sc)) this.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
+      // After `set -a` a variable set alone is handed to every later program too (commands-classes-y9-5).
+      if ((beforeCommand || this.allExport) && a.value.v !== null && this.namesDownload(a.value.v, sc)) this.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
       if (a.value.v !== null && commandLineSecret(`${a.name}=${a.value.v}`)) this.add("secret", "secret.token-arg", SAYS.tokenArg);
       this.setVar(a.name, [a.value], sc, false, beforeCommand);
     }
@@ -6108,6 +6114,8 @@ reg(NATIVE, ["7z", "7za", "7zz", "7zr"], h => {
     if (sw.some(s => s === "-aoa" || s === "-y") || into.abs === null || !inWorkTree(into.abs, h.sc.path)) {
       h.e.add("destroy", "archive.unpack", `Unpacks ${ops[0]?.v ?? "an archive"} over files in ${outDir || thisFolder(h, into)}.`, { objects: [into] });
     }
+    // What a downloaded archive unpacks is downloaded too, as unzip's is (commands-classes-y9-5).
+    if (ops[0] && h.e.isDownloaded(ops[0], h.sc) && into.abs) h.e.downloads.push(into.abs);
     return;
   }
   if (verb === "a" || verb === "u") {
@@ -6134,6 +6142,7 @@ reg(NATIVE, ["rar", "unrar"], h => {
   if (verb === "x" || verb === "e") {
     const into = h.e.usePath(ops[1] ?? lit("."), "write", h.sc);
     if (sw.some(s => s === "-o+" || s === "-y") || into.abs === null || !inWorkTree(into.abs, h.sc.path)) h.e.add("destroy", "archive.unpack", `Unpacks ${ops[0]?.v ?? "an archive"} over files in ${into.text}.`, { objects: [into] });
+    if (ops[0] && h.e.isDownloaded(ops[0], h.sc) && into.abs) h.e.downloads.push(into.abs);
     return;
   }
   h.e.readArgs(ops, h.sc);
@@ -6850,7 +6859,12 @@ reg(NATIVE, ["export", "declare", "typeset", "local", "readonly"], h => {
     // `export d=~/.config/ember` gives d a value as an assignment does (commands-remote-c3-2); `export d` hands the value
     // it has to the programs that run, so it is judged as when it is exported as it is set (commands-remote-v5-2).
     if ((n.v ?? n.raw).includes("=")) h.e.setVar(name, n.v !== null ? [lit(n.v.slice(n.v.indexOf("=") + 1))] : null, h.sc, false, h.key === "export" || has(p, "x"));
-    else if (h.key === "export" || has(p, "x")) h.e.useUnjudged([name], true);
+    else if (h.key === "export" || has(p, "x")) {
+      h.e.useUnjudged([name], true);
+      // `CC=./cc.sh; export CC; make`: the value the line gave it is handed to the programs that run, as when it is
+      // exported as it is set (commands-classes-y9-5).
+      if (h.e.valuesOf(name).some(f => h.e.namesDownload(f, h.sc))) h.e.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
+    }
   }
 });
 reg(NATIVE, ["compgen"], h => { if (h.args.some(a => /^-[a-zA-Z]*[ev]/.test(a.v ?? ""))) h.e.add("secret", "secret.env", SAYS.env); });
