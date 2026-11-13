@@ -386,13 +386,26 @@ describe("Test connection", () => {
     expect(testRequest(settings({ baseUrl: "https://api.anthropic.com", type: "anthropic" }), KEY))
       .toEqual({ url: "https://api.anthropic.com/v1/models", headers: { "anthropic-version": "2023-06-01", "x-api-key": KEY } });
     expect(testRequest(settings({ baseUrl: "http://localhost:11434/v1" }), null)).toEqual({ url: "http://localhost:11434/v1/models", headers: {} });
-    // An address with a query or a fragment (a gateway's tenant): the model list is asked at its path, and the query
-    // stays a query (integrations-r9-9: it asked "…/v1?tenant=a/models").
-    expect(testRequest(settings({ baseUrl: "https://gw.example.com/v1?tenant=a" }), null).url).toBe("https://gw.example.com/v1/models?tenant=a");
-    expect(testRequest(settings({ baseUrl: "https://gw.example.com/v1/?tenant=a&x=1#top" }), null).url).toBe("https://gw.example.com/v1/models?tenant=a&x=1");
-    expect(testRequest(settings({ baseUrl: "https://gw.example.com/v1#top" }), null).url).toBe("https://gw.example.com/v1/models");
-    expect(testRequest(settings({ baseUrl: "https://corp.openai.azure.com/?tenant=a", type: "azure" }), null).url).toBe("https://corp.openai.azure.com/openai/models?api-version=2024-10-21&tenant=a");
-    expect(testRequest(settings({ baseUrl: "https://gw.example.com?tenant=a", type: "anthropic" }), null).url).toBe("https://gw.example.com/v1/models?tenant=a");
+  });
+
+  it("asks an address with a query where the runtime will ask it, so it never says Connected for one whose requests go elsewhere (integrations-x9-5)", async () => {
+    // The runtime puts its own path after the address as typed (measured on the bundled runtime, in
+    // test/integration/user-provider.test.ts: "POST /v1?tenant=a/chat/completions"), and so does the check. Moving the
+    // query behind "/models" asked a path the runtime never uses, and said "Connected" where no request could answer.
+    expect(testRequest(settings({ baseUrl: "https://gw.example.com/v1?tenant=a" }), null).url).toBe("https://gw.example.com/v1?tenant=a/models");
+    // A forwarder that takes the service's address as its query is asked for that service's list, as chat will be.
+    expect(testRequest(settings({ baseUrl: "https://fwd.example.com/to?url=https://api.openai.com/v1" }), null).url).toBe("https://fwd.example.com/to?url=https://api.openai.com/v1/models");
+    // A gateway that answers /v1/models and /v1/chat/completions and nothing else, as the review's did.
+    const asked: string[] = [];
+    const gateway: FetchLike = async url => {
+      asked.push(url);
+      const ok = new URL(url).pathname === "/v1/models";
+      return { ok, status: ok ? 200 : 404, json: async () => ({ object: "list", data: [{ id: "gpt-4.1" }] }) };
+    };
+    const p = settings({ baseUrl: "https://gw.example.com/v1?tenant=a" });
+    expect(await testConnection(p, null, gateway)).toEqual({ ok: false, why: "gw.example.com answered, but has no model list at that address. Check the endpoint and the provider.", cause: "no-list" });
+    expect(asked).toEqual(["https://gw.example.com/v1?tenant=a/models"]);
+    expect(await testConnection(settings({ baseUrl: "https://gw.example.com/v1" }), null, gateway)).toMatchObject({ ok: true, models: 1 });
   });
 
   it("makes one GET that refuses redirects, so the key goes nowhere but the address entered", async () => {

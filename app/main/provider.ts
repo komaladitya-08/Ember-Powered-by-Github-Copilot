@@ -575,25 +575,22 @@ const AZURE_TEST_VERSION = "2024-10-21";
 /**
  * The one small request "Test connection" makes: the service's model list (GET, no request body, nothing of the user's).
  * OpenAI-compatible: {base}/models with a bearer key; Azure: {base}/openai/models with api-key; Anthropic: {base}/v1/models
- * with x-api-key.
+ * with x-api-key. `{base}` is the address as typed, a query included: the runtime puts its own path after the whole
+ * address too (measured: "POST /v1?tenant=a/chat/completions"), so the list is asked where chat will be, and an address
+ * whose requests can't answer never tests as connected (integrations-x9-5: with the query moved behind "/models" it
+ * did, and a forwarder that takes the service's address as its query was asked the wrong one).
  */
 export function testRequest(p: Pick<UserProviderSettings, "type" | "baseUrl" | "azureApiVersion">, key: string | null): { url: string; headers: Record<string, string> } {
-  // An address with a query or a fragment (a gateway's "?tenant=a", which endpointProblem takes): the list is asked at
-  // its path and the query stays a query (integrations-r9-9: it asked "…/v1?tenant=a/models").
-  const cut = p.baseUrl.search(/[?#]/);
-  let query = "";
-  if (cut >= 0) { try { query = new URL(p.baseUrl).search.slice(1); } catch { /* not an address: none */ } }
-  const base = (cut < 0 ? p.baseUrl : p.baseUrl.slice(0, cut)).replace(/\/+$/, "");
+  const base = p.baseUrl.replace(/\/+$/, "");
   if (p.type === "azure") {
     const root = /\/openai$/i.test(base) ? base : `${base}/openai`;
-    return { url: `${root}/models?api-version=${encodeURIComponent(p.azureApiVersion ?? AZURE_TEST_VERSION)}${query ? `&${query}` : ""}`, headers: key ? { "api-key": key } : {} };
+    return { url: `${root}/models?api-version=${encodeURIComponent(p.azureApiVersion ?? AZURE_TEST_VERSION)}`, headers: key ? { "api-key": key } : {} };
   }
-  const asked = query ? `?${query}` : "";
   if (p.type === "anthropic") {
     const root = /\/v1$/i.test(base) ? base : `${base}/v1`;
-    return { url: `${root}/models${asked}`, headers: { "anthropic-version": "2023-06-01", ...(key ? { "x-api-key": key } : {}) } };
+    return { url: `${root}/models`, headers: { "anthropic-version": "2023-06-01", ...(key ? { "x-api-key": key } : {}) } };
   }
-  return { url: `${base}/models${asked}`, headers: key ? { authorization: `Bearer ${key}` } : {} };
+  return { url: `${base}/models`, headers: key ? { authorization: `Bearer ${key}` } : {} };
 }
 
 /**
