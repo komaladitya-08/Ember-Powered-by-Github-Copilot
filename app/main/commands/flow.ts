@@ -640,16 +640,35 @@ export function heldDecision(d: CommandDecision, r: AskReasons, kind: TargetBind
 const SAYS_NOT = /(^|[^\p{L}\p{N}])(do\s+not|don['’]?t|does\s+not|doesn['’]?t|never|not|without|except|no|nothing|avoid)(?=$|[^\p{L}\p{N}])/giu;
 
 /**
+ * Words that hold a part of a request back without a "not": "leave the build folder alone", "keep build", "hold off on
+ * publishing", "wait before pushing", "push later", "skip build", "leave it as it is for now" (modes-y9-4).
+ */
+const HOLDS_BACK = /(^|[^\p{L}\p{N}])(leave|leaving|keep|keeping|preserve|spare|hold(ing)?\s+off|wait|waiting|not\s+yet|later|skip|skipping|untouched|as\s+(it|they)\s+(is|are)|hands\s+off|stay\s+away|for\s+now)(?=$|[^\p{L}\p{N}])/iu;
+/** Where one part of a request ends and the next begins. */
+const PARTS = /[,;:.!?()\n]+|\s+(?:but|and|then|though|however)\s+/iu;
+
+/** Does this part of the user's words name what a finding acts on (its last path segment, a branch, a package, a service)? */
+function namesObject(findings: readonly Finding[], part: string): boolean {
+  const said = new Set(part.toLowerCase().split(/[^\p{L}\p{N}._-]+/u).filter(Boolean));
+  return findings.some(f => f.objects.some(o => {
+    const name = o.text.replace(/[\\/]+$/, "").split(/[\\/]/).pop()?.toLowerCase() ?? "";
+    return name.length >= 2 && said.has(name);
+  }));
+}
+
+/**
  * Do the user's own words rule out what these findings say the command does? What the card's "You didn't ask for
  * this." already reads (intent.ts ruledOut: a part that says not to names the kind of step and nothing else), and also
  * a step the words name only where they say not to ("do not push feature-x to GitHub yet": read without its "not" the
- * words name the push, read as said they don't). Autopilot keeps the question for such a command: the user's no, said
- * in advance. It only ever keeps a question, so a doubt counts as ruled out.
+ * words name the push, read as said they don't), and a part that holds back what the command acts on or the kind of
+ * step it is ("leave the build folder alone", "hold off on publishing": HOLDS_BACK). Autopilot keeps the question for
+ * such a command: the user's no, said in advance. It only ever keeps a question, so a doubt counts as ruled out.
  */
 export function wordsRuleOut(findings: readonly Finding[], words: string): boolean {
   if (!words.trim() || findings.length === 0) return false;
   if (ruledOut(findings, words)) return true;
-  return !mentioned(findings, words) && mentioned(findings, words.replace(SAYS_NOT, "$1 "));
+  if (!mentioned(findings, words) && mentioned(findings, words.replace(SAYS_NOT, "$1 "))) return true;
+  return words.split(PARTS).some(part => HOLDS_BACK.test(part) && (namesObject(findings, part) || namedKind(findings, part) || mentioned(findings, part)));
 }
 
 /** A bare program name: no path, option, assignment or quoting. */

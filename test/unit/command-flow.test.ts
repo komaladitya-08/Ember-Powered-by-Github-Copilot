@@ -2966,6 +2966,32 @@ describe("a command that would ask, in Autopilot (autopilot.ts; modes-D2, modes-
     ]) expect(ruled(words, command), `${words} / ${command}`).toBe(false);
   });
 
+  it("reads a part that holds something back as their no to it too: leave alone, keep, hold off, not yet, wait, later (wordsRuleOut; modes-y9-4)", () => {
+    const ctx = { os: "linux" as const, home: "/home/ana", cwd: "/home/ana/proj", ember: FACTS.ember, downloaded: new Set<string>() };
+    const ruled = (words: string, command: string) => wordsRuleOut(classifyCommand(command, "bash", ctx).findings, words);
+    for (const [words, command] of [
+      ["tidy the project, leave the build folder alone", "rm -rf build"], ["tidy the project; keep build", "rm -rf build"], ["bump the version but hold off on publishing", "npm publish"],
+      ["commit my work, wait before pushing", "git push origin main"], ["commit it and push later", "git push origin main"], ["clean up but leave build/ as it is", "rm -rf build"],
+      ["fix the config, leave nginx alone for now", "sudo systemctl restart nginx"], ["tag the release. Keep main untouched", "git push --force origin main"], ["delete the logs; skip build", "find build -delete"],
+      ["Tidy up, but KEEP the build folder", "rm -rf build"], ["hold off on deleting anything", "rm -rf build"],
+    ]) expect(ruled(words, command), `${words} / ${command}`).toBe(true);
+    // A part that holds something else back, or holds nothing back, rules nothing out.
+    for (const [words, command] of [
+      ["delete the build folder and keep going", "rm -rf build"], ["wait for the tests, then push to origin", "git push origin main"], ["keep src, delete build", "rm -rf build"],
+      ["leave the logs alone and delete the build folder", "rm -rf build"], ["delete the build folder", "rm -rf build"], ["keep build", "ls -la"],
+    ]) expect(ruled(words, command), `${words} / ${command}`).toBe(false);
+  });
+
+  it.each<[string, string]>([
+    ["tidy the project, leave the build folder alone", "rm -rf build"], ["tidy the project; keep build", "rm -rf build"], ["bump the version but hold off on publishing", "npm publish"],
+  ])("still asks about a command the user's own words hold back: %s (modes-y9-4)", async (words, command) => {
+    setCommandJudge(null);
+    const h = auto({ words, answers: ["deny"] });
+    expect((await run(h, command)).resultType).toBe("denied");
+    expect(h.asked).toHaveLength(1);
+    expect([h.windowAnnounce, h.announced, h.starts]).toEqual([[], [], []]);
+  });
+
   it("announces the part of such a request the user did ask for", async () => {
     setCommandJudge(null);
     const h = auto({ words: "delete the build folder but don't delete src" });
