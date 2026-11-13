@@ -1204,6 +1204,11 @@ export class AgentHost {
   /** The answer streaming now (Home shows it as it comes); null between answers. */
   private stream: { id: number; text: string; unsaved: boolean } | null = null;
   private streamSeq = 0;
+  /**
+   * The answer Home was showing when Ember began to quit, kept then as a line (stop()): its own message may still come
+   * while Ember quits, and it is that line, never a second one.
+   */
+  private keptAtQuit: TranscriptEntry | null = null;
   /** A "New conversation" under way: a second one joins it. */
   private resetting: Promise<void> | null = null;
   private readonly stateFile: string;
@@ -1260,7 +1265,7 @@ export class AgentHost {
     const c = this.confirmer;
     this.owner = new BubbleOwner(c ? { up: () => c.waiting, answered: () => c.settled().then(() => this.dropAnnouncement()) } : undefined);
     // Every change of the conversation's bubble may change what Home says of its turn (its stall: home-c1-1).
-    this.presenter = new Presenter(patch => { o.setState(patch); this.turnChanged(); }, undefined, () => "Ember", this.owner, text => this.remember("ember", text, undefined, undefined, this.stream?.id, this.stream?.unsaved), () => this.serviceKind(),
+    this.presenter = new Presenter(patch => { o.setState(patch); this.turnChanged(); }, undefined, () => "Ember", this.owner, text => this.rememberAnswer(text), () => this.serviceKind(),
       { onEvent: e => this.conversationEvent(e), onProblem: text => this.rememberProblem(text), ...this.bubbleOptions });
     this.noticeBoard = new Presenter(o.setState, undefined, () => "Ember", this.owner, undefined, () => this.serviceKind(), this.bubbleOptions);
     this.offerBoard = new Presenter(o.setState, undefined, () => "Ember", this.owner, undefined, () => this.serviceKind(), this.bubbleOptions);
@@ -1785,7 +1790,8 @@ export class AgentHost {
 
   /** A word of the answer (of the chat `chat`: a retired chat's late words are dropped). */
   private streamDelta(delta: string, chat: number): void {
-    if (chat !== this.conversationEpoch || !delta) return;
+    // (Quitting: the answer Home showed was kept as it stood; no words are shown after it.)
+    if (chat !== this.conversationEpoch || !delta || this.quitting) return;
     if (!this.stream) {
       if (!delta.trim()) return;
       this.stream = { id: ++this.streamSeq, text: "", unsaved: this.staleSource() };
@@ -1795,15 +1801,35 @@ export class AgentHost {
   }
 
   /** The answer open now is complete or stopped short; `chat` undefined: ended by this chat's own doing. */
-  private endStream(state: "done" | "interrupted", chat?: number): void {
+  private endStream(state: "done" | "interrupted", chat?: number): TranscriptEntry | undefined {
     const s = this.stream;
-    if (!s || (chat !== undefined && chat !== this.conversationEpoch)) return;
+    if (!s || (chat !== undefined && chat !== this.conversationEpoch)) return undefined;
     this.stream = null;
     const text = plainText(s.text);
     // The words said so far are kept in the transcript (the host's record, so a reopened Home shows them), before the
     // stream's own event so Home never sees the row go and come back.
-    if (state === "interrupted" && text.trim()) this.remember("ember", text, undefined, true, s.id, s.unsaved);
+    const kept = state === "interrupted" && text.trim() ? this.remember("ember", text, undefined, true, s.id, s.unsaved) : undefined;
     this.o.onAnswerStream?.({ id: s.id, text, state });
+    return kept;
+  }
+
+  /**
+   * A finished answer, from the presenter (after its words streamed to Home). Quitting after the words Home showed were
+   * kept (stop()), it is that line: the same words mark it whole (no longer stopped short), and words Home never
+   * showed are not kept. Nothing else is said while Ember quits.
+   */
+  private rememberAnswer(text: string): void {
+    const kept = this.keptAtQuit;
+    if (!this.quitting || !kept) { this.remember("ember", text, undefined, undefined, this.stream?.id, this.stream?.unsaved); return; }
+    const at = this.transcript.indexOf(kept);
+    if (at < 0 || !kept.stopped || retainedConversationText(text).text.trim() !== kept.text.trim()) return;
+    const whole: TranscriptEntry = { ...kept };
+    delete whole.stopped;
+    this.transcript[at] = whole;
+    if (this.unsaved.has(kept)) this.unsaved.add(whole);
+    this.keptAtQuit = whole;
+    this.o.onTranscript?.(this.getTranscript());
+    this.saveHistory();
   }
 
   private remember(who: TranscriptEntry["who"], text: string, heardId?: number, stopped?: true, answerId?: number, fenced = false): TranscriptEntry {
@@ -1902,6 +1928,7 @@ export class AgentHost {
    */
   start(token: string | null, source?: string, how: "user" | "auto" = "user", name?: string): Promise<AgentPhase> {
     this.quitting = false;
+    this.keptAtQuit = null;
     this.sourceName = source === "environment" ? name : undefined;
     const automatic = source === "environment" || source === "github-cli";
     // A start after Ember gave up on a runtime that kept stopping is someone's own try (Check again, a sign-in): the
@@ -1961,6 +1988,9 @@ export class AgentHost {
    */
   stop(): Promise<void> {
     this.quitting = true;
+    // An answer whose words Home shows is kept as they stand (if the person keeps their conversation), whether or not its
+    // own message comes before the runtime goes: quitting in that gap lost an answer the person had read (CI el8).
+    this.keptAtQuit = this.endStream("interrupted") ?? null;
     // Requests held for a new model service go with Ember (not doStop, which every reconnect runs: the switch itself).
     this.dropHeld();
     const halted = this.halt(true);

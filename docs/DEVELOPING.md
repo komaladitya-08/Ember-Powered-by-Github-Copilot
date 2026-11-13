@@ -248,8 +248,11 @@ environment, only through `scripts/runtime-env-live.sh`, which gives it a networ
     same key doesn't bring the earlier provider conversation back (the account is unverified on launch).
     Nothing is saved until the saved copy of that owner has been
     looked at, and lines said before then are added after the saved ones, so an earlier copy is never silently replaced. A
-    saved line never carries a per-run id (`answerId`, `heardId`). The file's folder is flushed after the rename (best
-    effort). The organisation's policy has no key for it. Code: app/main/agent/conversation-store.ts, host.ts (`restoreHistory`, `forgetHistory`). With a build ready,
+    saved line never carries a per-run id (`answerId`, `heardId`). Quitting writes what is queued before Ember exits, and
+    an answer whose words Home was showing is kept as they stood, marked stopped short as Stop keeps one, even if its own
+    message never arrives; if that message does arrive while Ember quits with the same words, the one line is marked
+    whole, and words Home never showed are not saved (`stop()`, `rememberAnswer`). The file's folder is flushed after the
+    rename (best effort). The organisation's policy has no key for it. Code: app/main/agent/conversation-store.ts, host.ts (`restoreHistory`, `forgetHistory`). With a build ready,
     `EMBER_CONVERSATION_LIVE=1 npm run test:integration -- test/integration/conversation-history-live.test.ts` launches the
     real app three times on one data folder against a mock model (the switch found by its label, quit, relaunch, off).
 - When a task closes its window with keys (Ctrl+W or Ctrl+Q, Command+W or Command+Q on macOS), the next read tells it
