@@ -1852,6 +1852,8 @@ function start(): void {
   let heardOverFor: number | null = null;
   /** A question's answer window is open (engine.ts answerWindow): its speech dates each answer, and shows nothing. */
   let answerListening = false;
+  /** A follow-up window is open: each thing said in it dates from its own start too (the "speech" case). */
+  let followUpListening = false;
   /** The question Ember last said an answer over other sound wasn't taken for (said once a question). */
   let overSoundFor: number | null = null;
   /** The question Ember last said it didn't catch an answer to (engine.ts "unclear", said once a question). */
@@ -1963,6 +1965,7 @@ function start(): void {
     switch (e.type) {
       case "wake":
         answerListening = false;
+        followUpListening = false;
         heardFrom = Date.now();
         speechStarts();
         beforeWake = { emotion: lastState.emotion, bubble: lastState.bubble };
@@ -1978,6 +1981,7 @@ function start(): void {
         // A question's answer window (engine.ts answerWindow): nothing shows for it, as the question is up meanwhile, and
         // nothing of the bubble is taken or let go; each answer is dated from its own start (the "speech" case).
         answerListening = e.window === "answer" && e.on;
+        followUpListening = e.window === "follow-up" && e.on;
         if (e.window === "answer") break;
         if (e.window === "conversation") {
           // The microphone stays open through replies and tasks: nothing here may take the bubble from them.
@@ -2039,8 +2043,12 @@ function start(): void {
         if (conversing) { if (e.on) { heardFrom = Date.now(); speechStarts(); } break; }
         // So in a question's answer window, which shows nothing of its own while the question is up.
         if (answerListening) { if (e.on) { heardFrom = Date.now(); speechStarts(); } break; }
-        // In a follow-up window the speech itself starts later than the window: the answer is tied to then.
-        if (e.on && saidFrom < heardFrom + 1) speechStarts();
+        // In a follow-up window the speech itself starts later than the window: the answer is tied to then, and so is the
+        // echo guard, as in a conversation and the answer window. Dated from the window's opening, a question that came up
+        // and was read out after it made the first answer one "said over Ember", long after Ember had stopped, and a no
+        // took two tries (V2-S9). What began under Ember's voice is the voice process's to refuse (engine.ts `clipped`).
+        if (e.on && followUpListening) { heardFrom = Date.now(); speechStarts(); }
+        else if (e.on && saidFrom < heardFrom + 1) speechStarts();
         if (e.on) agent?.claimBubble();
         if (e.on) setState({ bubble: { visible: true, mood: "listening", title: "Listening…", thought: "…", step: null, streaming: true, actions: [] } });
         break;

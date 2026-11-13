@@ -252,13 +252,14 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1" && process.env.EM
   const inRoom = (s: Float32Array) => { let seed = 5; return s.map(x => x + ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff - 0.5) * 0.001 / 0.2887); };
   /**
    * One engine fed in turns (`hear`), with the speakers' stream when given, and what it said (`at`: when, in ms).
-   * `speakers`: the session feeds the speakers' stream (it runs on forSpeakers()).
+   * `speakers`: the session feeds the speakers' stream (it runs on forSpeakers()); `conversation`: conversations are on,
+   * as by default in Ember (a wake's request opens one).
    */
-  const session = (o: { speakers?: boolean } = {}) => {
+  const session = (o: { speakers?: boolean; conversation?: boolean } = {}) => {
     const events: (VoiceEvent & { at: number })[] = [];
     let t = 0;
     const b = o.speakers ? forSpeakers() : backend;
-    const engine = new VoiceEngine(b, e => { if (e.type !== "speech") events.push({ ...e, at: t }); }, { now: () => t });
+    const engine = new VoiceEngine(b, e => { if (e.type !== "speech") events.push({ ...e, at: t }); }, { now: () => t, ...(o.conversation ? { conversation: true } : {}) });
     const hear = (mic: Float32Array, o: { speakers?: Float32Array; onFrame?: (frame: number) => void } = {}) => {
       for (let i = 0, k = 0; i + 512 <= mic.length; i += 512, k++) {
         o.onFrame?.(k);
@@ -867,6 +868,125 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1" && process.env.EM
     // Ember's own read-out, and nothing after it: nothing, and nothing to say it again for.
     expect(heard(null, 0).filter(e => e.type === "utterance" || e.type === "answer-over")).toEqual([]);
   }, 180_000);
+
+  /**
+   * Words in one of the default voice's speakers (Kitten, which comes with the listening models: nothing more to fetch),
+   * on the WebAssembly build, at 16 kHz, cut to the words, at `level` RMS: other voices than the clips', for what a video,
+   * a call or the room says. Each rendition comes out a little different.
+   */
+  let kitten: { generate(o: { text: string; sid: number; speed: number }): { samples: Float32Array; sampleRate: number } } | null = null;
+  const speak = (text: string, sid: number, level: number): Float32Array => {
+    const { kind: _kind, ...files } = kittenSpec(path.join(dir, "models", DEFAULT_VOICE.target));
+    kitten ??= sherpa.createOfflineTts({ offlineTtsModelConfig: { offlineTtsKittenModelConfig: files, numThreads: 1, debug: 0, provider: "cpu" }, maxNumSentences: 1 });
+    const a = kitten!.generate({ text, sid, speed: 1 });
+    const raw = new Float32Array(Math.floor(a.samples.length * 16000 / a.sampleRate));
+    for (let i = 0; i < raw.length; i++) { const x = i * a.sampleRate / 16000, k = Math.floor(x), f = x - k; raw[i] = a.samples[k] * (1 - f) + (a.samples[Math.min(k + 1, a.samples.length - 1)] ?? 0) * f; }
+    let from = 0, to = raw.length;
+    while (from < to && Math.abs(raw[from]) < 0.01) from++;
+    while (to > from && Math.abs(raw[to - 1]) < 0.01) to--;
+    const cut = raw.subarray(from, to);
+    const gain = level / Math.sqrt(cut.reduce((n, v) => n + v * v, 0) / Math.max(1, cut.length));
+    return cut.map(x => x * gain);
+  };
+  /** `x` added into `into` from sample `from`, at `gain`. */
+  const mix = (into: Float32Array, x: Float32Array, from: number, gain = 1) => { for (let i = 0; i < x.length && from + i < into.length; i++) into[from + i] += x[i] * gain; };
+  /** The microphone hears the speakers 64 ms after their own stream has the sound. */
+  const SPEAKERS_LAG = at(0.064);
+  /** The utterances that read as a yes and carry no mark: what main would take from anyone heard. */
+  const yeses = (events: VoiceEvent[]) => sent(events).filter(e => spokenAnswer(e.text) === "allow" && !e.overSound && !e.overEmber);
+
+  it("takes a video's or a call's lone yes begun right after Ember reads its question out for no one's, where the speakers' own stream says it played (Linux with parec; V2-S1)", () => {
+    // A video is on (its last sentence 2 s before the question), Ember reads the question out through the speakers
+    // (their stream has it; the microphone hears it 12 dB down), the page says it stopped as its audio ends and main
+    // opens the answer window. Then a lone yes, `on` s after Ember's voice: the video's (in the stream, and in the
+    // microphone 6 dB down), or the user's own (the microphone only).
+    const ember = speak("To allow, press Control Alt Y; for not now, press Control Alt N.", 0, 0.1);
+    const before = speak("And then we can book the flights to Lisbon.", 3, 0.1);
+    const tAsk = 0.5 + before.length / 16000 + 2, tStop = tAsk + ember.length / 16000;
+    const after = (yes: Float32Array, on: number, by: "video" | "user") => {
+      const total = at(tStop + on + yes.length / 16000 + 3);
+      const speakers = new Float32Array(total), mic = new Float32Array(total);
+      mix(speakers, before, at(0.5)); mix(mic, before, at(0.5) + SPEAKERS_LAG, 0.5);
+      mix(speakers, ember, at(tAsk)); mix(mic, ember, at(tAsk) + SPEAKERS_LAG, 0.25);
+      if (by === "user") mix(mic, yes, at(tStop + on));
+      else { mix(speakers, yes, at(tStop + on)); mix(mic, yes, at(tStop + on) + SPEAKERS_LAG, 0.5); }
+      const s = session({ speakers: true });
+      const asks = Math.round(at(tAsk) / 512), stops = Math.round(at(tStop) / 512);
+      s.hear(inRoom(mic), { speakers, onFrame: k => {
+        if (k === asks - 30) s.engine.questionUp(true);
+        if (k === asks) s.engine.selfSpeaking(true);
+        if (k === stops) { s.engine.selfSpeaking(false); s.engine.answerWindow(8000); }
+      } });
+      s.end();
+      return s.events;
+    };
+    // (On 01493d0 nothing in the stream counted as other sound for 1.5 s after Ember's voice: "Yes." and "Sure." begun
+    // 0.2 to 0.3 s after it went out unmarked, 7 of 72 runs with a video quiet between its sentences.)
+    const taken: string[] = [];
+    for (const [text, sid] of [["Yes.", 3], ["Yes.", 5], ["Sure.", 3], ["Sure.", 5]] as const) {
+      const yes = speak(text, sid, 0.1);
+      for (const on of [0.2, 0.3, 0.4]) for (const e of yeses(after(yes, on, "video"))) taken.push(`${text} (voice ${sid}) ${on} s after Ember: “${e.text}”`);
+    }
+    expect(taken).toEqual([]);
+    // The user's own, with nothing else in the stream then, is taken as before (a rendition the recognizer writes as
+    // other words leaves nothing: up to four are tried).
+    let own = 0;
+    for (let take = 0; take < 4 && !own; take++) own = yeses(after(speak("Yes, please.", 5, 0.1), 0.3, "user")).length;
+    expect(own).toBe(1);
+  }, 300_000);
+
+  it("never takes “Ember, allow it.” out of the speakers for a yes said by name, in a question's answer window (Linux with parec; V2-S2, voice-listening-r9-2)", () => {
+    // A video is on (in the speakers' stream and, 6 dB down and 64 ms late, in the microphone) while a question is up and
+    // its answer window open. Then the name and a yes: the video's own (the stream and the microphone), or the user's
+    // (the microphone only, the stream silent meanwhile).
+    const talk = speak("And then we can book the flights to Lisbon.", 3, 0.1);
+    const tSay = 0.7 + talk.length / 16000 + 0.9;
+    const after = (said: Float32Array, by: "video" | "user") => {
+      const total = at(tSay + said.length / 16000 + 3);
+      const speakers = new Float32Array(total), mic = new Float32Array(total);
+      mix(speakers, talk, at(0.7)); mix(mic, talk, at(0.7) + SPEAKERS_LAG, 0.5);
+      if (by === "user") mix(mic, said, at(tSay));
+      else { mix(speakers, said, at(tSay)); mix(mic, said, at(tSay) + SPEAKERS_LAG, 0.5); }
+      const s = session({ speakers: true });
+      s.hear(inRoom(mic), { speakers, onFrame: k => { if (k === 6) s.engine.questionUp(true); if (k === 8) s.engine.answerWindow(8000); } });
+      s.end();
+      return s.events;
+    };
+    // (Before, the recognizer's "Ember, …" alone exempted it from every other-sound mark: taken 16 of 16 here, where the
+    // same words at idle are rejected as the speakers'. With the two spotters and the name read in the stream, one was
+    // still taken in 2 of 5 such runs: the recognizer wrote the stream's "Ember, yes please." as "Yes, please.".)
+    const taken: string[] = [];
+    for (const text of ["Ember, allow it.", "Ember, yes please."]) for (const sid of [0, 1, 2, 4, 5, 6, 7, 3]) {
+      for (const e of yeses(after(speak(text, sid, 0.1), "video"))) taken.push(`${text} (voice ${sid}): “${e.text}”`);
+    }
+    expect(taken).toEqual([]);
+    // The user's own, with nothing in the stream then, is taken as before (up to four renditions, as above).
+    let own = 0;
+    for (let take = 0; take < 4 && !own; take++) own = yeses(after(speak("Ember, allow it.", 5, 0.1), "user")).length;
+    expect(own).toBe(1);
+  }, 300_000);
+
+  it("sends nothing of the room's talk that starts like the name from a question's answer window, and opens no conversation on it (V2-S3, voice-listening-r9-3)", () => {
+    // Conversations are on, as by default; a question is up and its answer window open; the microphone only. Someone
+    // says a sentence that never names Ember, and another after it.
+    const next = speak("And then we can book the flights to Lisbon.", 3, 0.1);
+    const room = (talk: Float32Array) => {
+      const s = session({ conversation: true });
+      s.engine.questionUp(true);
+      s.engine.answerWindow(8000);
+      s.hear(inRoom(cat(silence(0.5), talk, silence(1.2), next, silence(2))));
+      s.end();
+      return s.events;
+    };
+    // (Before, the recognizer's words alone made these a request by name, "Number, …" as it writes them: 8 of 8 here
+    // left as a wake's request, and the next sentence went to Copilot in the conversation that opened. At idle none wakes.)
+    const left: string[] = [];
+    for (const text of ["A number of people called today.", "Number, can you pass the salt?"]) for (const sid of [1, 4, 5, 7]) {
+      const events = room(speak(text, sid, 0.1));
+      for (const e of events) if (e.type === "utterance" || e.type === "wake" || (e.type === "listening" && e.window !== "answer")) left.push(`${text} (voice ${sid}): ${e.type}${e.type === "utterance" ? ` “${e.text}”` : ""}`);
+    }
+    expect(left).toEqual([]);
+  }, 300_000);
 
   it.skipIf(!fs.existsSync(path.join(readerVoice, "en_US-ryan-low.onnx")))("learns the owner's voice, not a screen reader's reading each prompt aloud 14 dB down just before each phrase (voice-listening-r4-1)", async () => {
     // Over speakers, the teaching microphone heard Home's prompts as a screen reader read them, and took them for

@@ -501,11 +501,21 @@ Once Ember has said the question (or at once, where it doesn't speak), and again
 answer it didn't take, it listens for 8 s (`ANSWER_WINDOW_MS`, app/main/voice.ts) for the answer without its name: a
 bare “allow” or “not now” is heard then (the answer window, `answerWindow` in app/voice/engine.ts). Only what the list
 reads as an answer leaves that window; a request said with the name in it (“Ember, open my mail”) is heard as at a
-wake, “Hey Ember” starts a wake as from idle, and anything else heard there goes nowhere; a word or two that read as
+wake, and by a wake's two stages: the spotter heard you say the name in it, and the recognizer wrote it. On the
+recognizer's words alone, which take “Number, …”, “Member, …” and “Amber, open…” for the name after the spotter, talk
+that never named Ember left the window as a request and opened a conversation that sent what was said next (second
+review of the voice lane, V2-S3; on the real models “A number of people called today.” and “Number, can you pass the
+salt?” did 8 times in 8, and never now). “Hey Ember” starts a wake as from idle, and anything else heard there goes nowhere.
+“Stop” said there without the name still stops everything (“Stop.”, “Stop it.”, and “Step.” or “Stuff.” as the
+recognizer writes it: `saidStop`); the other ways to ask for quiet (“Never mind”, “Cancel”, “That's enough”, “Quiet”)
+stop Ember there only with its name, as it is silent then and hears the room, whose every such word pulled the kill
+switch (V2-S8); in a follow-up window and after “Hey Ember” they stop as before. A word or two that read as
 no answer (most likely one misheard: one test voice's lone “Allow.” comes out “Hello”) make the question say once how
 to answer (`unclear`). It opens no conversation, is
-no follow-up, ends with the question, and takes nothing said over other sound unless it is said with the name (the
-question then says so, once). An answer begun a moment (160 ms of quiet, `TURN_GAP_FRAMES` in engine.ts) after Ember's
+no follow-up, ends with the question, and takes no yes said over other sound unless it is said with the name (the
+question then says so, once); a no is anyone's there too, as it is in a conversation and a follow-up: “No.”, “Not
+now.” and “Don't do it.” over a playing video were dropped in the answer window and a conversation, and the question
+stayed up, open to the next yes (V2-S7). A video's own “No.” declines, the safe side. An answer begun a moment (160 ms of quiet, `TURN_GAP_FRAMES` in engine.ts) after Ember's
 voice ended is heard whole from its start, also when it starts in the 400 ms after Ember says it stopped; one that
 runs on from Ember's voice with no such gap began under it, so only its end was heard (“Don't do it.” came out as “Do
 it.” and allowed: owner's report of 2026-11-12). That one is never taken, in the answer window or a follow-up: Ember
@@ -526,14 +536,24 @@ yes (“Ember, allow”) counts too for a question asked by a task you asked for
 you, Voice Match has turned another voice away since, you forgot or taught your voice again,
 or the task was changed by a request it didn't recognise (typed, say); never for a command card, a consent card or
 another task's question (owner decision of 2026-11-03; the audit says `trust: "task-voice"`). A yes asked as a
-question (“Proceed?”), or padded with more than one filler word, isn't one. Otherwise the bubble says how, and the question stays (naming the keys only while Ember holds them: `refusalLine`). Measured on
+question (“Proceed?”), or padded with more than one filler word, isn't one; “thanks”, “please” or the name after an
+answer are taken off first, so “Okay, thanks.” is the yes that “Okay.” is (V2-S10). The asked-yes rule reads the
+recognizer's text, so it holds where the recognizer writes the question: it does for a question in its words (“Is that
+okay?” was never an answer), but not for a one- or two-word yes asked only by the voice's rise. The recognizer writes “?” from the words, not the voice: the second review's verifier synthesized “Okay?”,
+“Allow it?”, “Go ahead?”, “Proceed?”, “Sure?”, “Yes?” and “Fine?” in four voices, and 21 of the 28 came out with a
+full stop or none and were read as a yes (most of those clips had no rise in pitch; the few that rose were written
+with a full stop all the same). So a lone “Okay?” said as a question is taken as a yes today (V2-S5). Nothing in the
+audio is read for it yet: that needs measuring on recorded people first, and would at most turn such a yes into one
+Ember asks for again, never one it takes. Otherwise the bubble says how, and the question stays (naming the keys only while Ember holds them: `refusalLine`). Measured on
 LibriSpeech dev-clean (33 speakers): half a second of another voice passes 0.5 % of the time. With the task trust,
 someone else saying “Hey Ember, allow” is taken about 2.5 % of the time, and someone who plays your recorded “Hey
 Ember” then says “allow” 35–40 %, once: any voice turned away ends the trust; a yes too
 quiet or clipped to score is refused (PLAN.md §2 “Approvals”). It counts only for the question that was up, and armed, when you started speaking, and
 once Voice Match turned another voice away during a question, that question takes a click or the keys only, and every
 later spoken yes to it is told so, never to say it again. “Not now” works for anyone, also in a follow-up window (“Cancel” and “never mind” aren't answers). Ember never takes its
-own voice as an answer (nothing it hears while it speaks, or that started before it last spoke, counts): an answer said
+own voice as an answer (nothing it hears while it speaks, or that started before it last spoke, counts; each thing
+said is dated from its own start, in a follow-up window too, where a question read out after the window opened made
+the first answer one “said over Ember” and a no took two tries: V2-S9): an answer said
 over Ember (as it reads the question out, or says a note), in a conversation or with its name, stops Ember speaking,
 and the question says, once, that Ember was still speaking and to say it again, which the answer window then hears
 (`answerOverEmber` in app/main/main.ts; the engine's `answer-over` event for one in Ember's own words, such as “allow”,
@@ -714,16 +734,42 @@ words), and stops it when what the recognizer made of it isn't Ember's own words
 approves anything (`overEmber`). With other sound playing, only what is said by name counts: Windows reads the output's
 level while a conversation is open, a question is up or a task is at work (app/renderer/mic/output-watch.ts: Chromium
 gives system audio only with a screen's video, which is stopped at once; main's `syncOutputWatch`), Linux uses the
-speakers' stream, macOS can't tell yet. Where nothing can tell (macOS, Linux without `parec`, Windows before its watch
+speakers' stream, macOS can't tell yet. Ember's own voice isn't other sound, and what follows it is, at once: on Linux
+whatever sounds in the speakers' stream after Ember's voice left it (`ownSoundUntil` in engine.ts: its last sound
+before the stream was quiet for 160 ms, or 400 ms after it says it stopped); on Windows whatever the watch sees from
+0.4 s after its last look at Ember speaking (`EMBER_LINGER_MS`), and what played up to Ember's voice counts as playing
+through it and for 2.5 s after. Before, neither counted anything for the first second or so after Ember's voice, and
+a video's or a call's lone “Okay.” right after Ember read a question out was taken (second review of the voice lane,
+V2-S1); a word that starts and ends within those 0.4 s on Windows is still not seen. “By name”, in a question's answer
+window, a follow-up and a conversation, means by the user (`namedByUser` in engine.ts): the recognizer wrote the name
+first, and the speakers didn't say it. Where their own stream arrives (Linux with `parec`) it is asked, as it is for a
+wake: a name the microphone's spotter heard counts only if the stream's spotter didn't hear it too, and if the
+recognizer, reading what the stream played through that speech, finds neither the name (inside “remember” too) nor
+most of the words heard with it (`speakersSaid`); while the stream holds sound, the recognizer's “Ember, …” alone is
+no name. Before, nothing asked the stream in these windows, and a video's, a call's or a web page's own “Ember, allow”
+answered the question it was heard in, where the same words at idle are ignored (second review of the voice lane,
+V2-S2). Measured on the real models, a video saying “Ember, okay.” and its like to a question, 80 runs: 25 were taken
+as a yes by name before, 3 with the two spotters alone (the stream's spotter misses a name now and then), none with the
+recognizer's reading too. Where no such stream arrives, or it was silent through the speech, the name as the
+recognizer writes it (“Ember, allow.”) counts without the spotter, which misses the name in a window that is already
+listening (with its hit asked for there too, 48 of the user's own 80 answers by name were taken, 32 of the answer
+window's 37 and 16 of a conversation's 36; as it is, 73 are, as before); what the transcript check takes for the name only after the spotter
+(“Number, …”, “Member, …”, “Amber, open…”, “Umber…”) never counts without it. Where nothing can tell (macOS, Linux without `parec`, Windows before its watch
 has looked past Ember's own voice, or after it stopped or was refused: `soundKnown` in engine.ts), a yes to a question
 said without the name, in the answer window, a follow-up or a conversation, is taken as said over other sound: with
 Voice Match off it isn't taken, and the question says once to say the name first (`sound-unknown`); a no and anything
 said by name are taken as ever (owner's report of 2026-11-12: a video's “Okay.” outside a conversation allowed a
 question; settled by the integrator on the owner's direction, and the owner can overrule it). So is one said without the
-name in a follow-up window while other sound is known to play, as in the answer window (Codex review of #211). The first
+name in a follow-up window while other sound is known to play, as in the answer window (Codex review of #211), and in
+a conversation, whatever the spotter heard just before it: a name spotted in the last 3 s lets the next thing said
+through as said by name (`NAME_HEARD_MS`), and after a video's “…September…” its own “Okay.” went out as anyone's yes
+(V2-S4). A yes is judged on its own speech. So in a wake's own window: a yes that doesn't hold the wake phrase in its
+own speech (“Hey Ember”, a pause, then “Okay.”) is dropped where other sound is known to play, as the name was yours
+and the yes may be the video's (V2-S6); “Hey Ember, allow” in one breath is taken, and where nothing can tell (macOS,
+Linux without `parec`) the two-breath answer is taken as before, being how one answers there. The first
 time something said then without the name isn't heard, the status line says “Music or a video is playing: say “Ember”
 first.” for 5 s (engine.ts `dropped`), once a conversation; while a question is up, an answer dropped so, in the answer
-window, a follow-up or a conversation, makes the question say once why and to say the name first (`dropped` says which
+window, a follow-up, a conversation or after a wake, makes the question say once why and to say the answer right after the name, in one go (`dropped` says which
 answer it read as, never the words: in a conversation over a playing video a nameless “allow” vanished, owner's report
 of 2026-11-12). With the switch off, after Ember answers you have 8 seconds (12 when it asked you something) for
 a follow-up without the wake word (up to three in a row; “Hey Ember” works then too); “Thanks”, “OK” or “that's all” ends that window (when Ember asked something,
