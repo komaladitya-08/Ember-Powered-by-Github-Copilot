@@ -13,6 +13,7 @@ import {
 import { VAULT_REDACTED, VaultRedactor } from "../../app/main/vault/redact";
 import { OPEN_SPAN_END, trackSecretPrompts } from "../../app/main/commands/prompts";
 import { SECRET_HIDDEN } from "../../app/main/commands/redact";
+import { OutputKeeper } from "../../app/main/commands/flow";
 
 const bytes = (s: string): Uint8Array => new TextEncoder().encode(s);
 const EXIT: RunExit = { code: 0, signal: null, ended: "exit", ms: 3400 };
@@ -228,4 +229,67 @@ describe("output after a fill from the vault (vault-3)", () => {
     // A secret prompt's marker stands as before.
     expect(clean("Password: ", { secretSpans: [{ from: 10, to: OPEN_SPAN_END }] })).toBe(SECRET_UNANSWERED);
   });
+
+  // The flow keeps a run's first 64 KiB and its last characters up to 4 MiB, before any of this cleaning (flow.ts).
+  const HEAD = 64 * 1024, ROOM = 4 * 1024 * 1024 - HEAD;
+  const LEAK = /ada\.|canary|example\.org|Hunter2|Canary!x/i;
+  const filler = (n: number): string => "0123456789abcde\n".repeat(Math.ceil(n / 16)).slice(0, n);
+  /** What the flow keeps of `text`, printed in chunks of `chunk` characters, with `spans` moved into it. */
+  const keep = (text: string, chunk = 1 << 20, spans: { from: number; to: number }[] = []) => {
+    const k = new OutputKeeper(trackSecretPrompts({ interactive: false }));
+    for (let i = 0; i < text.length; i += chunk) k.push(bytes(text.slice(i, i + chunk)));
+    k.end();
+    return k.kept(spans);
+  };
+
+  it("never hands on a part of a filled value that the cut between a long run's first and last output falls in (integ-x-1)", () => {
+    filled();
+    // (Each with a space either side: an address is a value only where it stands alone.)
+    for (const value of [` ${EMAIL} `, ` ${PASSWORD} `]) {
+      for (const inside of [2, 8, value.length - 2]) {
+        // The tail starts `inside` characters into the value: its end would go on as "…canary@example.org".
+        const atTail = filler(HEAD + 5000 - inside) + value + filler(ROOM - (value.length - inside));
+        // The head ends `inside` characters into the value: its start would go on.
+        const atHead = filler(HEAD - inside) + value + filler(ROOM + 5000);
+        for (const [where, text] of [["tail", atTail], ["head", atHead]] as const) {
+          const kept = keep(text);
+          expect(kept.text, `${where} ${value} ${inside}`).toMatch(/characters of output left out/);
+          expect(kept.text, `${where} ${value} ${inside}`).not.toMatch(LEAK);
+          // (As the model's copy is made, from the text around the cut: cleaning 4 MiB a case is slow.)
+          expect(clean(kept.text.slice(HEAD - 3000, HEAD + 3000)), `${where} ${value} ${inside}`).not.toMatch(LEAK);
+          // Only the value's own characters went with it (and what the cut left out anyway).
+          expect(kept.text.length).toBeGreaterThan(HEAD + ROOM - value.length);
+        }
+      }
+    }
+    // Printed in small pieces over more than twice what is kept (the tail is cut back on the way), and a value that
+    // reaches from the head over a few characters left out into the tail.
+    const long = filler(HEAD + 2 * ROOM + 70_000 - 9) + ` ${EMAIL} ` + filler(ROOM - (EMAIL.length + 2 - 9));
+    expect(keep(long, 300_000).text).not.toMatch(LEAK);
+    const across = filler(HEAD - 4) + ` ${EMAIL} ` + filler(ROOM - (EMAIL.length + 2) + 4 + 6);
+    const kept = keep(across);
+    expect(kept.text).toMatch(/characters of output left out/);
+    expect(kept.text).not.toMatch(LEAK);
+  }, 30_000);
+
+  it("keeps a long run's output as before where no filled value is near the cut, a whole value still redacted, and its secret spans in place (integ-x-1)", () => {
+    const text = filler(HEAD + 5000) + filler(ROOM - 100) + `mail: ${EMAIL}\n` + filler(100 - 7 - EMAIL.length);
+    const span = { from: text.length - 50, to: text.length - 40 };
+    const note = "\n[… 5000 characters of output left out …]\n";
+    const plain = keep(text, 1 << 20, [span]);
+    expect(plain.text).toBe(text.slice(0, HEAD) + note + text.slice(HEAD + 5000));
+    filled();
+    const kept = keep(text, 1 << 20, [span]);
+    expect(kept.text).toBe(plain.text);
+    expect(kept.text.slice(kept.spans[0].from, kept.spans[0].to)).toBe(text.slice(span.from, span.to));
+    expect(clean(kept.text)).toContain(`mail: ${VAULT_REDACTED}`);
+    // A value the cut moved for: the spans after it still name the same characters.
+    const moved = filler(HEAD + 5000 - 5) + ` ${EMAIL} ` + filler(ROOM - (EMAIL.length + 2 - 5));
+    const at = { from: moved.length - 50, to: moved.length - 40 };
+    const m = keep(moved, 1 << 20, [at]);
+    expect(m.text.slice(m.spans[0].from, m.spans[0].to)).toBe(moved.slice(at.from, at.to));
+    // Text that couldn't be checked: neither side of the cut is kept.
+    setOutputRedactor(() => { throw new Error("down"); });
+    expect(keep(text).text).toMatch(/^\n\[… \d+ characters of output left out …\]\n$/);
+  }, 30_000);
 });

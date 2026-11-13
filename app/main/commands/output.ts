@@ -145,6 +145,45 @@ function whole(s: string): string {
   try { return beforeCut(s); } catch { return ""; }
 }
 
+/** `s` redacted whole, for text that is cut before it is cleaned (a start failure's reason): "" where it couldn't be checked. */
+export function redactedWhole(s: string): string {
+  return whole(s);
+}
+
+/**
+ * How far each side of a cut is looked at for a value the cut would fall in: eight times the longest value the vault
+ * keeps (a password's 1,024 characters), so one a page wrote again with every character as an entity still fits.
+ */
+export const CUT_SLACK = 8192;
+
+/**
+ * Where output may be cut so that no value falls in two (integ-x-1): the flow keeps a run's first characters and its
+ * last (OutputKeeper), and that cut comes before any text is cleaned here, so a value it fell in would go on as a
+ * fragment no redactor knows. `before` and `after` are the text each side of the cut as the run printed it (CUT_SLACK
+ * characters is enough). The answer is how many characters to give up beside the cut so that it falls where the
+ * redactor finds the same on both sides as in the whole: from the end of `before` ("before"), or from the start of
+ * `after` ("after"). null: no such place (the caller keeps nothing of that side), or the text couldn't be checked.
+ * 0 while no redactor is set.
+ */
+export function clearCut(before: string, after: string, side: "before" | "after"): number | null {
+  if (!beforeCut) return 0;
+  try {
+    const text = before + after, at = before.length;
+    const all = beforeCut(text);
+    // Nothing the vault filled is near the cut.
+    if (all === text) return 0;
+    const clear = (c: number) => beforeCut!(text.slice(0, c)) + beforeCut!(text.slice(c)) === all;
+    if (side === "before") {
+      for (let c = at; c > 0; c--) if (clear(c)) return at - c;
+      return null;
+    }
+    for (let c = at; c < text.length; c++) if (clear(c)) return c - at;
+    return null;
+  } catch {
+    return null; // fail closed: nothing of text that couldn't be checked
+  }
+}
+
 /**
  * Steps 1-4 (§3.11): the text before it is bounded and wrapped, each line cut to CLEAN_MAX_LINE after the user's typed
  * lines are taken out. outputTaint (step 7) reads this, so nothing can hide in the lines step 5 leaves out.
