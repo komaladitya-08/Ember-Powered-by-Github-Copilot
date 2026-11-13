@@ -46,9 +46,11 @@ export function consentChangesSince(agreed: number): string[] {
  * the user, how they like answers) goes with every request, and that the idle tidy sends up to 40 facts up to 6 times
  * a day (memory-5, memory-9). The approval modes' cards (app/shared/approvals.ts MODE_CARD; owner decision of
  * 2026-11-12): `autonomy` is Interactive's, 3 since it replaced Work without asking's card (2), so an agreement to
- * that one is no agreement to this; `assisted` and `autopilot` are those modes' own.
+ * that one is no agreement to this; `assisted` and `autopilot` are those modes' own. `assisted` 2 (2026-11-13): its
+ * card names everything the check is sent, a dialog's words, the text a step would replace, a cell's formula, where
+ * carried text came from and a command's computer, shell and folder among them (modes-x9p-4).
  */
-export const FEATURE_CONSENT_VERSION = { wsl: 1, ssh: 1, commands: 1, memory: 4, routines: 1, extensions: 3, autonomy: 3, provider: 1, updates: 1, assisted: 1, autopilot: 1 } as const;
+export const FEATURE_CONSENT_VERSION = { wsl: 1, ssh: 1, commands: 1, memory: 4, routines: 1, extensions: 3, autonomy: 3, provider: 1, updates: 1, assisted: 2, autopilot: 1 } as const;
 
 /**
  * A first-use consent card (§8.4): its exact text, and a hash of it that the yes must carry back. Shown in Ember's

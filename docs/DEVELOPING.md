@@ -519,8 +519,10 @@ own with no tools, deleted once it has answered, on the conversation's lighter m
 the task (typed or spoken, also where Ember can't tell your voice from its speakers; never a suggestion you clicked,
 words heard over Ember's own voice or a routine's saved steps, for which the request that ran the routine counts) and
 Ember's own description of the step, a line for each part: what kind of step it is, the app, the window's title, the
-control's role and name, a dialog's words, the text to type or the option chosen, where carried text came from, and
-why Ember's rules would ask. Every part that came from the screen, an app or the task's model is quoted as untrusted
+control's role and name, a dialog's title and words, the text to type and, where it would replace what a field holds,
+up to 200 characters of that, the option or value chosen, a cell's formula, the apps carried text came from, and why
+Ember's rules would ask; for a command, the command, the computer, its system, shell and folder, and what the rules
+found. Assisted's card names these parts (`FEATURE_CONSENT_VERSION.assisted`, now 2). Every part that came from the screen, an app or the task's model is quoted as untrusted
 data; the check never sees the screen, a read or a command's output. It answers with one of two fixed words. A match
 lets the step go ahead, a risky one included: the bubble and the task's card say "…, without asking: I checked it
 against what you asked.", the audit entry carries `autonomy: true` and `review: "match"`, and What Ember did shows

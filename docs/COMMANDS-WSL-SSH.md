@@ -579,7 +579,7 @@ In the **Assisted** approval mode (Settings › **Apps & privacy** › **How Emb
 **Ask only about dangerous commands** switch), a command that would ask is first shown to a lighter AI model on
 Copilot, in a conversation of its own with no tools: your own words for the task (typed or spoken, also where Ember
 can't tell your voice from its speakers; never a suggestion you clicked, words heard over Ember's own voice or a
-routine's saved steps), the command, where and in which folder it runs, the task's reason and what Ember's checks
+routine's saved steps), the command, the computer, its system, the shell and the folder it runs in, the task's reason and what Ember's checks
 found. Never a command's output or your screen, where text aimed at the reviewer would come from. While it is asked,
 the task's bubble says "Checking this command against what you asked…". When it answers that your words ask for what
 the command does, the command runs after the announcement above (the bubble says what it does; the command window adds
