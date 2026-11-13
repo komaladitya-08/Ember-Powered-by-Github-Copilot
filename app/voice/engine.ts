@@ -2242,11 +2242,9 @@ export class VoiceEngine {
       // said their request yet.
       text = "";
     }
-    // "Okay, Ember." while a question waits: the wake phrase is itself the answer, by name. It closed the answer window,
-    // started a wake that heard nothing more, and answered nothing (V2-F7). Only where nobody else talked in the same
-    // breath: with the room's talk split off (ownWords), all that was heard holds theirs, and a colleague's "okay" after
-    // the user's bare "Hey Ember" was sent as a yes by name (voice-product-x9-1). There, it is said again on its own.
-    if (!saysSomething(text) && wakePhrase && this.questionWaiting && ownWords === null && spokenAnswer(heard) !== null) text = heard.trim();
+    // "Okay, Ember." while a question waits is only the wake phrase, and answers nothing: the "Okay" comes before the
+    // name, where nothing tells whose it is (a video's or a colleague's word ran into the user's own name and was taken
+    // as their yes by name, unmarked on Windows and macOS: voice-product-y9-2). "Okay" said after it answers.
     if (!saysSomething(text)) {
       // Only the wake phrase (or a cough, or "um"): keep listening for the request.
       if (this.mode.reason !== "manual") this.mode.until = Math.max(this.mode.until, this.now() + 4000);
