@@ -528,8 +528,9 @@ and, in any window, a yes asked as a question said by name (“Ember, okay?”: 
 they went to Copilot or vanished (V2-F5, V2-F7). “Why?” and “Which file?” are requests as ever. So are words that hold
 a stop (“No, stop the task.”, “Okay, stop typing.”): never a near-miss, they reach main, which stops everything on
 them while a task is at work (voice-product-y9-1). “Okay, Ember.”, which
-the spotter hears as “Hey Ember”, is the yes it reads as, by name, but not where others talked in the same breath:
-there what followed the user's bare “Hey Ember” is theirs, and goes nowhere (voice-product-x9-1). “Okay, that's all.”
+the spotter hears as “Hey Ember”, is only a wake and answers nothing: nothing tells whose the “Okay” before the name
+is, and a video's or a colleague's rode on the user's name as their yes (voice-product-y9-2); what others say right
+after the user's bare “Hey Ember” goes nowhere either (voice-product-x9-1). “Okay, that's all.”
 still ends a conversation or a follow-up, the closers judged before the near-miss check (voice-product-x9-3). The answer window opens no conversation, is
 no follow-up, ends with the question, and takes no yes said over other sound unless it is said with the name (the
 question then says so, once); a no is anyone's there too, as it is in a conversation and a follow-up: “No.”, “Not

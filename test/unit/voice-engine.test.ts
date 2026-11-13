@@ -3240,11 +3240,26 @@ describe("whose a spoken answer is (second review of the voice lane, 2026-11-12)
       }
     });
 
-    it("takes “Okay, Ember.” said in the answer window as the yes it is, by name, rather than a wake that answers nothing (V2-F7)", () => {
-      // The spotter hears "Okay, Ember" as its "Hey Ember" (2): a wake, which heard nothing after the name.
+    it("takes no yes from “Okay, Ember.”: the “Okay” before the user's name may be a video's or a colleague's, and it is a wake that heard nothing more, as before (voice-product-y9-2)", () => {
+      // The spotter hears "Okay, Ember" as its "Hey Ember" (2). Another source's "Okay" (softer, 400 ms) runs straight
+      // into the user's own name, and the recognizer writes "Okay, Ember." for the whole. Only Linux's speakers' stream
+      // could tell whose the "Okay" was: on Windows (a video playing, no stream) and macOS (nothing known) it left as a
+      // yes by name, unmarked, and main allowed the question on it.
+      for (const [variant, o] of [["windows, a video playing", { speakers: false, otherSound: true }], ["macOS", { speakers: false, otherSound: null }], ["a quiet room", { speakers: false, otherSound: false }]] as const) {
+        const video = o.otherSound === true;
+        const s = waiting({ 5: "Okay, Ember." }, "answer", o);
+        if (video) { s.run(frames(1500), () => mic(0, 0.03), () => out(0.05)); s.run(frames(300)); }
+        s.events.length = 0;
+        for (let i = 0; i < frames(400); i++) s.run(1, () => mic(5, 0.03), () => out(0.05, 0, 0));
+        for (let i = 0; i < frames(600); i++) s.run(1, () => mic(5, 0.05, i === 10 ? 2 : 0), () => out(video ? 0.05 : 0));
+        s.run(frames(1500), () => mic(0, 0), () => out(video ? 0.05 : 0));
+        s.run(frames(5000));
+        expect(s.heard(), variant).toEqual(["wake"]);
+      }
+      // Said whole by the user in a quiet room, too: nothing tells the two apart, so it is a wake, and "Okay" said after it answers.
       const s = waiting({ 5: "Okay, Ember." }, "answer", { otherSound: false });
       says(s, 5, 2, "user");
-      expect(s.heard().filter(h => h !== "wake")).toEqual(["Okay, Ember. | wake"]);
+      expect(s.heard()).toEqual(["wake"]);
     });
   });
 });
