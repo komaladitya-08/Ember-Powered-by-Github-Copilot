@@ -3172,6 +3172,24 @@ describe("commands held to main at 4d64d3a: no way of reading one decides less s
     expect(decided("d=build; ls | parallel --tagstring \"{= system('rm -rf $d') =}\" echo").rules).toEqual(["unclear.option-value"]);
   });
 
+  it("keeps `set -a` in force when only main's table makes a wrapper run `set +a` (commands-held-x9-1)", () => {
+    // After `set -a` every variable set is exported, so one that holds Ember's folder is refused. By today's table the
+    // option in front takes `set` for its value and nothing switches that off; main's table ran `set +a` there, and
+    // what that reading switched off must not stay off: today's main refuses each of these.
+    for (const cmd of [
+      "set -a; env -a set +a; d=~/.config/ember; make", "set -a; sudo --auth-type set +a; d=~/.config/ember; make", "set -a; env -a set +o allexport; d=~/.config/ember; ls",
+      "set -o allexport; env -a set +a; d=~/.config/ember; ls", "set -a; ls | parallel --timeout set +a; d=~/.config/ember; ls", "set -a; uv run --cache-dir set +a; d=~/.config/ember; ls",
+    ]) {
+      for (const context of ["linux", "darwin"] as const) {
+        expect(decided(cmd, context).verdict, `${cmd} (${context})`).toBe("refuse");
+        expect(decided(cmd, context).rules, `${cmd} (${context})`).toEqual(["ember.path"]);
+      }
+    }
+    // Where the row's own reading runs `set +a`, it is off, as on main; and without Ember's folder nothing is refused.
+    expect(decided("set -a; env --block-signal set +a; d=~/.config/ember; make").verdict).toBe("run");
+    expect(decided("set -a; env -a set +a; d=build; make").verdict).toBe("run");
+  });
+
   it("keeps what a read behind a wrapper noted of its own text when main's table reads the line another way (commands-held-x9-3)", () => {
     // By today's table env and numactl run `read -u 3 …` and `read -N "$x" …`, whose text Ember can't see; main's table
     // took the first word for the option's value and saw a plain `read v` with its here-string.

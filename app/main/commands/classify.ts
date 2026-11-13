@@ -637,25 +637,33 @@ class Classifier {
   }
 
   /**
-   * Starts a row's second reading (Engine.runRow), whose marks and notes must never stand for the row's own: the words
-   * it judges or hands on are marked in a layer of their own (WordMarks), and what is kept by a command's index is
-   * copied. The function returned puts both back as the row's own reading left them. That covers the commands the
-   * reading registered, whose indexes the commands registered next take (a read's seen text or a listing kept for
-   * another command must never count for them), and the current command too: a wrapper's unwrap judges at the wrapper's
-   * own index, so main's `read v`, text seen, would stand for the row's `read -u 3 …`, which asks (commands-held-x9-1,
-   * x9-3).
+   * Starts a row's second reading (Engine.runRow), which must leave nothing behind that could pass for the row's own
+   * or make a later command decide more loosely. The function returned puts back, as the row's own reading left them:
+   * - the words judged as paths or handed to a command, which that reading marks in a layer of its own (WordMarks:
+   *   commands-held-x9-1);
+   * - everything kept by a command's index: the commands the reading registered, whose indexes the commands registered
+   *   next take (a read's seen text or a listing kept for another command must never count for them), and the current
+   *   command's too, since a wrapper's unwrap judges at the wrapper's own index and main's `read v`, text seen, would
+   *   stand for the row's `read -u 3 …`, which asks (commands-held-x9-3);
+   * - what a command can switch off or replace: `set -a` (main's `env -a set +a` ran `set +a`, the row's own ran nothing,
+   *   so a variable set to Ember's folder afterwards is still exported and refused: commands-held-x9-1), a loop's
+   *   variables for the card's words, and the downloads that stop counting once the target says they are folders.
+   * What that reading only adds to stays, because more of it only ever asks or refuses: paths to probe, download marks
+   * (which never stop a script being read: recordScript), scripts to read, files written, variables' values and uses.
    */
   protected readApart(): () => void {
     const marks = [this.judgedWords.apart(), this.payloadWords.apart()];
-    const maps: Map<number, unknown>[] = [this.listed, this.readText, this.closerInput, this.hereVarsAt, this.hereAt, this.readSets];
+    const maps: Map<unknown, unknown>[] = [this.listed, this.readText, this.closerInput, this.hereVarsAt, this.hereAt, this.readSets, this.loopVars];
     const sets = [this.globalOpts, this.stdinGiven];
-    const was = { maps: maps.map(m => [...m]), sets: sets.map(x => [...x]), probeFull: this.probeFull };
+    const was = { maps: maps.map(m => [...m]), sets: sets.map(x => [...x]), probeFull: this.probeFull, allExport: this.allExport, ifFile: this.downloadsIfFile.length };
     return () => {
       for (const back of marks) back();
       maps.forEach((m, k) => { m.clear(); for (const [i, v] of was.maps[k]) m.set(i, v); });
       sets.forEach((x, k) => { x.clear(); for (const i of was.sets[k]) x.add(i); });
       // Its finding for more paths than Ember checks went with its other findings: a later command that names one more says so.
       this.probeFull = was.probeFull;
+      this.allExport = was.allExport;
+      this.downloadsIfFile.length = was.ifFile;
     };
   }
 
