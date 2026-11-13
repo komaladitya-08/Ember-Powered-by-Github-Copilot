@@ -291,7 +291,7 @@ function namesListed(id: string, typed: string): boolean {
 /**
  * A model name typed on the provider step that the service, which answered, doesn't list: the check fails on that
  * field and names what is listed, instead of passing a name the first request then fails on ("That model isn't
- * available.", first-run-c7-1). Only where the list was read whole (every model's id, at most main's 50, and no word
+ * available.", first-run-c7-1). Only where the list was read whole (every model's id, at most main's 1,000, and no word
  * from the service that more follow on another page: `more`, first-run-x7-1) and holds
  * model names: Azure asks for a deployment's name, which its list doesn't hold, and a list of model files
  * (MODEL_FILE) says nothing of the names taken. A name the service may still take (namesListed) passes. Null when nothing is known to be missing.

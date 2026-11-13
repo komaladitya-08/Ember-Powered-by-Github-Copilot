@@ -622,8 +622,11 @@ export function testRequest(p: Pick<UserProviderSettings, "type" | "baseUrl" | "
  */
 export type TestResult = { ok: true; host: string; models: number | null; ids?: string[]; more?: true } | { ok: false; why: string; cause?: "refused" | "timeout" | "unreachable" | "no-list" };
 
-/** The most model ids the test passes on for the model fields' suggestions. */
-export const TEST_IDS_MAX = 50;
+/**
+ * The most model ids the test passes on: first run checks the names typed against all of them, so a list of more than
+ * 50 (OpenAI's is one page of many) is checked whole (first-run-r9-1); the model fields suggest the first 50.
+ */
+export const TEST_IDS_MAX = 1000;
 
 /**
  * The model ids a model list names (`data[].id`, as OpenAI, Azure and Anthropic write them; `models[].name` or `.model`,
