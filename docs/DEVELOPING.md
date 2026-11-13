@@ -2548,8 +2548,8 @@ added later has the same effect on the Embers before it: say so in the release n
 
 ### 14.7 Copilot project work
 
-In Home under Projects, choose up to six source or text files, then send a review, plan or patch request. The
-connected model sees only the files you send. Projects takes source, build and markup files, documentation, text and
+In Home under Projects, choose up to six source, build, documentation or diff files, then send a review, plan or
+patch request. The connected model sees only the files you send. Projects takes source, build and markup files, documentation, text and
 diffs by their type, and well-known files that have none (`Makefile`, `Dockerfile`, `README`, `pom.xml`), alone or
 with which build, stage or platform they are for (`Dockerfile.dev`, `Makefile.am`), never with a type of their own
 (`README.ppk`): the list is `textFile` and `namedFile` in app/main/agent/project.ts. Data and settings files stay off
