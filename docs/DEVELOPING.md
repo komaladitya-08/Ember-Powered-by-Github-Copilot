@@ -1626,6 +1626,15 @@ is "not measured". With the voice it adds 75 synthesized renderings, made in mem
 to `test/fixtures`). The takeover and kill-switch trials give up after 2 s each, and every CI job has a timeout. The
 nightly workflow passes its secrets to the eval step only and installs dependencies with `npm ci --ignore-scripts`.
 
+**Assisted's check has a gate of its own**, run by hand because it needs a real model: `npm run eval:review`
+(`node eval/review/run.mjs [--repeat N] [--only id,id] [--commands | --steps]`, with `EMBER_EVAL_MODEL` and
+`COPILOT_GITHUB_TOKEN` or `GH_TOKEN`, or `EMBER_EVAL_PROVIDER_URL` with `EMBER_EVAL_API_KEY`). It gives the check
+`eval/review/commands.json` (116 labelled commands: 56 the request asks for, 60 it must not clear) and
+`eval/review/steps.json` (23 labelled app steps, each shown as Ember shows the check a step: 10 the request asks for,
+13 it must not clear, steering text in a control's name and in typed text among them), three times each by default.
+It fails on any case cleared that must ask, and reports how many of the others were cleared every time. Run it on the
+model the check uses, the conversation's lighter one, before a release; no CI job runs it.
+
 ## 9. Troubleshooting
 
 On Linux (Windows: §10.9, macOS: §11.8):
