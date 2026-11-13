@@ -499,7 +499,11 @@ list in `app/shared/spoken-answer.ts`, which the voice process also reads, so th
 conversation such an answer reaches the question and isn't taken for “that's all” or for a “yeah” said over Ember.
 Once Ember has said the question (or at once, where it doesn't speak), and again after each note it says about an
 answer it didn't take, it listens for 8 s (`ANSWER_WINDOW_MS`, app/main/voice.ts) for the answer without its name: a
-bare “allow” or “not now” is heard then (the answer window, `answerWindow` in app/voice/engine.ts). Only what the list
+bare “allow” or “not now” is heard then (the answer window, `answerWindow` in app/voice/engine.ts). A bare yes is
+taken there only where Ember can tell whether something else is playing (Linux with the speakers' stream through
+PulseAudio's parec, Windows once its output watch has looked); on macOS and on Linux without parec it is dropped as
+`sound-unknown`, the question says once to say the name first, and a second one is dropped without a word or a new
+window. Home › Voice words its hint by platform (`voiceAnswerHint`, app/renderer/home/copy.ts: V2-F3, V2-F12). Only what the list
 reads as an answer leaves that window; a request said with the name in it (“Ember, open my mail”) is heard as at a
 wake, and by a wake's two stages: the spotter heard you say the name in it, and the recognizer wrote it. On the
 recognizer's words alone, which take “Number, …”, “Member, …” and “Amber, open…” for the name after the spotter, talk

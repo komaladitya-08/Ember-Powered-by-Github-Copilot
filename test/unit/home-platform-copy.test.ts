@@ -245,6 +245,16 @@ describe("the settings window with a Windows or macOS status", () => {
     expect(byId(root, "autostart-note").attrs).toHaveProperty("hidden");
   });
 
+  it("says per platform where a bare answer needs no name, and for how long (V2-F3; voice-listening-r9-7)", () => {
+    const hint = (p: StatusPlatform) => visible(byId(apply(page(), homePatches(p)), "voice-answer-hint"));
+    // Linux keeps the page's own words (the speakers' stream tells another sound apart, where PulseAudio's parec is there).
+    expect(hint(LINUX)).toBe(visible(byId(page(), "voice-answer-hint")));
+    expect(hint(LINUX)).toBe("To answer one of Ember's questions, say “allow” or “not now” in the few seconds after it asks, no name needed, and later “Ember, allow” or “Ember, not now”. Where Ember can't hear what your speakers play (without PulseAudio's parec), a yes always needs its name.");
+    expect(hint(WINDOWS)).toBe("To answer one of Ember's questions, say “allow” or “not now” in the few seconds after it asks, no name needed, and later “Ember, allow” or “Ember, not now”.");
+    // macOS can't tell whether something else plays, so a nameless yes is never taken there.
+    expect(hint(MAC)).toBe("To answer one of Ember's questions, say “Ember, allow”, or “not now” in the few seconds after it asks: Ember can't tell here whether something else is playing, so a yes needs its name.");
+  });
+
   it("shows the Mac's chords, folder, permissions and orange dot, and the login note when there is one", () => {
     const root = apply(page(), homePatches(MAC));
     const chip = select(root, "[data-shortcut=\"stop\"]")[0];
