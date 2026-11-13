@@ -792,17 +792,44 @@ const titleName = (title: string): string => title.replace(/\s+[-—–]\s+.*$/,
  * step asks every time in every mode that asks, is never announced, waived or checked, and Autopilot, which has no
  * question to put, refuses it.
  */
-export function mayReachEmberData(r: Pick<ActionRequest, "kind" | "window" | "element" | "value">): boolean {
+export function mayReachEmberData(r: Pick<ActionRequest, "kind" | "window" | "element" | "value"> & { app?: string }): boolean {
   if (r.kind === "read") return false;
   const title = r.window ?? "";
   const name = titleName(title);
   if (!/[/\\]/.test(title) && (EMBER_FILE.test(name) || EMBER_FOLDER.test(name))) return true;
+  if (inEmberDataParent(r, name)) return true;
   const item = (r.element?.name ?? "").trim();
   if (EMBER_FILE.test(item) || EMBER_FOLDER.test(item)) return true;
   if ((r.kind === "text" || r.kind === "cursor_text" || r.kind === "value") && r.value) {
     return r.value.split(/[/\\\n]/).some(part => { const p = part.trim().replace(/^["'“]|["'”]$/g, ""); return EMBER_FILE.test(p) || EMBER_FOLDER.test(p); });
   }
   return false;
+}
+/**
+ * The folders a file manager shows Ember's data or policy folder in (r10-safety-x10-2): its parent (".config",
+ * "Local", "Application Support", "etc") and the parent's parent where that is the folder people open (AppData,
+ * Library). A select-all Delete there, or Delete with the view focused after type-ahead, names neither the folder nor
+ * its files.
+ */
+const EMBER_DATA_PARENT = /^(?:\.config|local|appdata|application support|library|etc)$/i;
+/** File managers by the app name the platform reports (Files, Dolphin, Thunar, Nemo, Caja, PCManFM, File Explorer, Finder). */
+const FILE_MANAGER_APP = /^(?:(?:org\.gnome\.)?nautilus|files|(?:org\.kde\.)?dolphin|thunar|nemo|caja|pcmanfm(?:-qt)?|explorer(?:\.exe)?|file explorer|finder|com\.apple\.finder)$/i;
+/** Keys that only move about or pick by type-ahead there: every other key (Delete, a cut, F2, Finder's Return) may move or remove what is selected. */
+const MOVING_KEY = /^(?:(?:shift\+)?tab|up|down|left|right|home|end|prior|next|page_up|page_down|escape|[a-z0-9])$/;
+/** A control there that removes, moves or renames what is selected: any menu item (the context menu's), or a button so named. */
+const MOVES_ITEMS = /delete|trash|\bbin\b|remove|erase|rename|\bcut\b|move/i;
+/** Is `r` a step in a file manager showing the folder that holds Ember's data or policy folder that may move or remove it? */
+function inEmberDataParent(r: Pick<ActionRequest, "kind" | "element" | "value"> & { app?: string }, name: string): boolean {
+  if (!FILE_MANAGER_APP.test((r.app ?? "").trim())) return false;
+  const folder = name.split(/[/\\]/).filter(Boolean).pop() ?? "";
+  if (!EMBER_DATA_PARENT.test(folder)) return false;
+  if (r.kind === "keys") {
+    const k = canonicalKeys(r.value ?? "");
+    return !k || !MOVING_KEY.test(keyFamily(k));
+  }
+  if (r.kind !== "click" && r.kind !== "cursor_click" && r.kind !== "toggle") return false;
+  const role = r.element?.role ?? "";
+  return /menu item/.test(role) || (/button/.test(role) && MOVES_ITEMS.test(normalizeLabel(r.element?.name ?? "")));
 }
 /** Why such a step asks, or is refused in Autopilot (mayReachEmberData). */
 export const EMBER_DATA_DOUBT = "this may be Ember's own settings, audit log or policy, which are for the user only";

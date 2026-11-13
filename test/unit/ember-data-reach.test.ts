@@ -84,6 +84,40 @@ describe("Ember's own settings, audit log and policy reached through another app
     expect(engine("autopilot").decide(req("org.gnome.Nautilus", "audit", { kind: "read" })).verdict).toBe("allow");
   });
 
+  it("refuses in Autopilot, and asks elsewhere, a Delete, a cut or a rename in the folder that holds Ember's data or policy folder (r10-safety-x10-2)", () => {
+    const view = (os: OS) => ({ role: os === "linux" ? "table" : os === "win32" ? "list" : "AXOutline", name: os === "win32" ? "Items View" : "" });
+    const rows: [OS, string, string, Partial<ActionRequest>][] = [
+      ["linux", "org.gnome.Nautilus", ".config", { kind: "keys", value: "Delete", afterSelectAll: true }],
+      ["linux", "org.gnome.Nautilus", ".config", { kind: "keys", value: "Delete" }],
+      ["linux", "org.gnome.Nautilus", ".config", { kind: "keys", value: "shift+Delete" }],
+      ["linux", "org.gnome.Nautilus", ".config", { kind: "keys", value: "ctrl+x" }],
+      ["linux", "org.gnome.Nautilus", ".config", { kind: "keys", value: "F2" }],
+      ["linux", "org.gnome.Nautilus", "/home/u/.config", { kind: "keys", value: "Delete" }],
+      ["linux", "org.gnome.Nautilus", "etc", { kind: "keys", value: "Delete" }],
+      ["linux", "org.gnome.Nautilus", ".config", { kind: "click", element: { role: "menu item", name: "Move to Trash" } }],
+      ["win32", "explorer", "Local - File Explorer", { kind: "keys", value: "Delete" }],
+      ["win32", "explorer", "C:\\Users\\u\\AppData\\Local - File Explorer", { kind: "keys", value: "ctrl+d" }],
+      ["win32", "explorer", "AppData - File Explorer", { kind: "keys", value: "shift+Delete" }],
+      ["win32", "explorer", "Local - File Explorer", { kind: "click", element: { role: "button", name: "Delete" } }],
+      ["darwin", "Finder", "Application Support", { kind: "keys", value: "cmd+BackSpace" }],
+      ["darwin", "Finder", "Application Support", { kind: "keys", value: "Return" }],
+      ["darwin", "Finder", "Library", { kind: "keys", value: "cmd+alt+BackSpace" }],
+    ];
+    for (const [os, app, w, step] of rows) {
+      const r = req(app, w, { element: view(os), ...step });
+      expect(engine("autopilot", os).decide(r).verdict, `${w} ${step.value ?? step.element?.name} autopilot`).toBe("deny");
+      const inter = engine("interactive", os).decide(r);
+      expect(inter.verdict, `${w} ${step.value ?? step.element?.name} interactive`).toBe("confirm");
+      expect(inter.autonomy).toBeUndefined();
+    }
+    // Moving about there, type-ahead and reading stay as they were; so does another app titled like that folder.
+    for (const step of [{ kind: "keys", value: "Down" }, { kind: "keys", value: "Tab" }, { kind: "text", value: "auto" }, { kind: "read" }] as Partial<ActionRequest>[]) {
+      expect(mayReachEmberData(req("org.gnome.Nautilus", ".config", { element: view("linux"), ...step })), `${step.value}`).toBe(false);
+    }
+    expect(mayReachEmberData(req("rhythmbox", "Library", { kind: "keys", value: "Delete", element: { role: "table", name: "" } }))).toBe(false);
+    expect(mayReachEmberData(req("org.gnome.Nautilus", "Documents", { kind: "keys", value: "Delete", afterSelectAll: true, element: view("linux") }))).toBe(false);
+  });
+
   it("never sends such a step to Assisted's check, and Autopilot refuses the worker's held question about it (safety-privacy-r10-1)", async () => {
     const e = engine("assisted", "linux", { kate: "act" });
     const r = req("kate", "settings.json — Kate", { kind: "text", value: "x" });
