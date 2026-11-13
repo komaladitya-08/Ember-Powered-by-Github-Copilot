@@ -96,7 +96,7 @@ const live = new HandleLive();
 function announce(b: BubbleState, status: string | null, micNews: string | null): void {
   const parts: string[] = [];
   const view: BubbleView = b.visible
-    ? { visible: true, mood: b.mood, title: b.title, thought: b.thought, streaming: b.streaming, where: b.where, step: b.step, ...(b.whole ? { whole: b.whole.text, wholeSeen: b.whole.seen } : {}), ...(b.risky ? { risky: true } : {}), ...(b.stalled ? { stalled: true } : {}) }
+    ? { visible: true, mood: b.mood, title: b.title, thought: b.thought, streaming: b.streaming, where: b.where, step: b.step, ...(b.whole ? { whole: b.whole.text, wholeSeen: b.whole.seen } : {}), ...(b.risky ? { risky: true } : {}), ...(b.stalled ? { stalled: true } : {}), ...(b.autonomous ? { autonomous: true } : {}) }
     : { visible: false, mood: b.mood, title: "", thought: "", streaming: false };
   const said = live.bubble(view, questionOf(b.actions), name);
   if (said) parts.push(said);
