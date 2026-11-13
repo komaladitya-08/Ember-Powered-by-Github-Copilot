@@ -724,7 +724,8 @@ command's output tried to steer. The card's lines say each of those, and the mod
 
 Never reviewed, always asked: a command that would read or print passwords, keys or other secrets (so none reaches a
 model); a command that would keep running after Stop (a background job, `nohup`, `setsid`, a detached `screen` or
-`tmux` session, `docker run -d`, a process manager, a scheduled job, a program it opens, a service started, enabled,
+`tmux` session, `docker run -d`, a process manager, a downloaded program told to detach (`npx tool --daemon`, `curl …
+| sh -s -- --detach`), a scheduled job, a program it opens, a service started, enabled,
 stopped or loaded, a login or startup entry, a change to the Windows registry, a git hook or a git setting that
 names a program, a shell's start-up file, a program put on the command path, a tunnel, a message to a desktop
 service over D-Bus, a WMI or CIM call, an alias or a `trap`), so that Stop stops everything; a downloaded program
@@ -757,7 +758,8 @@ It still asks, with the card of §2.4, before:
   program that is handed one counts (`npx tool ~/.ssh/id_rsa`, `npx tool --token=$GITHUB_TOKEN`: the card says "Gives
   a password, key or other secret to code it downloads.");
 - a command that would keep running after Stop (a background job, `nohup`, `setsid`, a detached `screen` or `tmux`
-  session, `docker run -d`, a process manager, a scheduled job, a program it opens, a service started, enabled,
+  session, `docker run -d`, a process manager, a downloaded program told to detach (`npx tool --daemon`), a
+  scheduled job, a program it opens, a service started, enabled,
   stopped or loaded, a login or startup entry, a change to the Windows registry), or that plants code to run later (a
   git hook, a git setting that names a program, a shell's start-up file, a program put on the command path, a
   tunnel), so that Stop stops everything;

@@ -6454,6 +6454,8 @@ reg(NATIVE, [...Object.keys(POSIX_SHELLS), ...OTHER_SHELLS], h => {
     return;
   }
   intoInterpreter(h, readAs);
+  // `curl … | sh -s -- --daemon`: the words after -s are the downloaded script's own (integ-x-2).
+  if (has(p, "s") && h.s.fetchBefore) detachWords(h, p.operands);
 });
 
 /**
@@ -8355,6 +8357,21 @@ const PACKAGE_RUN_VALUES = new Set([
 ]);
 
 /**
+ * An option that asks a program to leave the command and keep running (`--daemon`, `--detach`, `--fork`,
+ * `--background`: the detach words of intent.ts's NEVER_BY_WORDS), never one that turns it off (`--daemon=false`).
+ */
+const DETACH_OPTION = /^--?(fork|detach|detached|daemon|daemonize|daemonise|background|bg|nohup)(?:[=:](?!(?:false|no|off|0)$).*)?$/i;
+
+/**
+ * A downloaded program's own words that ask it to detach (integ-x-2): Ember knows nothing else of the program, and
+ * the option says it would outlive Stop, so it is filed where the modes hold it (`escape.background`), as a known
+ * process manager in the same place is.
+ */
+function detachWords(h: H, words: readonly Arg[]): void {
+  if (words.some(a => a.v !== null && DETACH_OPTION.test(a.v))) h.e.add("escape", "escape.background", SAYS.keepsRunning);
+}
+
+/**
  * The command line of a package a runner downloads and runs (modes-y9-5; `npx`, `pnpx`, `bunx`, `uvx`, `pipx run`,
  * `npm exec`, `pnpm dlx`, `yarn dlx`, `bun x`): judged as a command of its own beside the runner's `escape.npx`, so
  * a secret path or a secret-named variable it is handed, and what the package is known to do (`pm2 start` outlives
@@ -8379,7 +8396,7 @@ function packageLine(h: H, words: readonly Arg[], wrapper: string): void {
       continue;
     }
     // An address or a registry spec (`https://…/a.ts`, `npm:pkg`): a program Ember can't name, its words read as paths.
-    if (URL_LIKE.test(v) || /^[a-z][a-z0-9+.-]*:/i.test(v)) { h.e.readArgs(words.slice(k + 1), h.sc, { unresolvedUnclear: true }); h.e.afterArgs(words.slice(k + 1), wrapper); return; }
+    if (URL_LIKE.test(v) || /^[a-z][a-z0-9+.-]*:/i.test(v)) { h.e.readArgs(words.slice(k + 1), h.sc, { unresolvedUnclear: true }); h.e.afterArgs(words.slice(k + 1), wrapper); detachWords(h, words.slice(k + 1)); return; }
     const bin = (v.replace(/^@[^/]+\//, "").replace(/@[^@/]*$/, "").split(/[\\/]/).pop() ?? v) || v;
     const from = h.e.findings.length;
     // The runner drops one `--` after the package (`npm exec pm2 -- start app.js` runs `pm2 start app.js`).
@@ -8389,6 +8406,7 @@ function packageLine(h: H, words: readonly Arg[], wrapper: string): void {
     // program and runs it."): only what its line is handed, and what Ember knows of the package, is added, so `npx
     // cowsay hi` decides as it did (the approval modes read `unknown` as "can't tell").
     h.e.dropFindings(from, f => f.rule === "unknown.program");
+    detachWords(h, rest);
     return;
   }
 }
