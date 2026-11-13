@@ -382,14 +382,23 @@ function overlaps(a: readonly string[], b: readonly string[]): boolean {
   return true;
 }
 
+/**
+ * A remote written as a URL or a path, not by its name (`https://github.com/o/r.git`, `git@host:o/r.git`, `../mirror`,
+ * `.`): Ember doesn't know which named remote that is, so it may be any of them, and a push there is never taken for
+ * a push somewhere else (modes-y9-y9-1: a refused push of main to origin went ahead by origin's URL).
+ */
+const unmappedRemote = (r: string) => /[/:\\]/.test(r) || r.startsWith(".") || r.startsWith("~");
+const sameRemote = (a: string, b: string) => a === b || unmappedRemote(a) || unmappedRemote(b);
+
 function sameAct(a: CommandAct, b: CommandAct): boolean {
   if (a.cls !== b.cls) return false;
   if (a.path && b.path) return overlaps(a.path, b.path);
   // A push of whatever is current to a remote, and a push of a named branch to that remote.
-  if (a.kind === "remote" && b.to !== undefined) return a.text === b.to;
-  if (b.kind === "remote" && a.to !== undefined) return b.text === a.to;
+  if (a.kind === "remote" && b.to !== undefined) return sameRemote(a.text, b.to);
+  if (b.kind === "remote" && a.to !== undefined) return sameRemote(b.text, a.to);
+  if (a.kind === "remote" && b.kind === "remote") return sameRemote(a.text, b.text);
   if (a.kind !== b.kind || a.text !== b.text) return false;
-  return a.to === undefined || b.to === undefined || a.to === b.to;
+  return a.to === undefined || b.to === undefined || sameRemote(a.to, b.to);
 }
 
 /** A word of a command read as a path on its target: where it would point from the command's folder. */
@@ -410,11 +419,13 @@ function wordPath(word: string, c: Pick<CommandAsked, "cwd" | "os" | "home">): s
 }
 
 /** Does this finding's command name what `a` acted on, however it writes it: a path at or inside it, the branch in a refspec or an API path, the package or host itself? */
-function namesAct(n: CommandNamed, a: CommandAct, now: CommandAsked): boolean {
+function namesAct(n: CommandNamed, a: CommandAct, now: CommandAsked, around = false): boolean {
   if (a.kind === "rule" || a.kind === "program") return false;
   if (a.path) {
     const at = a.path;
-    return at.length > 0 && n.words.some(w => { const p = wordPath(w, now); return p !== null && p.length >= at.length && overlaps(at, p); });
+    // (`around`: the word may also name a folder the act is inside, one below the folder the command ran in.)
+    const floor = around ? pathParts((now.os ?? "linux") === "linux" ? now.cwd : now.cwd.toLowerCase(), now.os ?? "linux").length : Infinity;
+    return at.length > 0 && n.words.some(w => { const p = wordPath(w, now); return p !== null && (p.length >= at.length || p.length > floor) && overlaps(at, p); });
   }
   if (a.kind === "branch" || a.kind === "tag") return n.words.some(w => ref(w) === a.text || new RegExp(`(^|/)(heads|branches|tags|refs)/${a.text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`).test(w));
   return n.words.includes(a.text);
@@ -434,26 +445,38 @@ const MOVES_ITS_SOURCE = /(^|\.)(mv|move|Move-Item|robocopy)$/i;
  * deletion inside the folder or of the folder around it. And the same thing however the later command names it
  * (modes-y9-9): a finding of that class that names nothing itself, or a move, whose command's words name the refused
  * thing (`mv build /tmp/x`; `gh api -X PUT repos/o/r/git/refs/heads/main` after a refused force push of main), and
- * code Ember can't read that names it and says what it does to it (`shutil.rmtree("build")`). A different danger, or
- * the same one to something else, isn't.
+ * code Ember can't read that names it and says what it does to it (`shutil.rmtree("build")`), in either order: such
+ * code refused first, then the plain command (modes-y9-y9-2). A different danger, or the same one to something else,
+ * isn't.
  */
 export function sameCommand(before: CommandAsked, now: CommandAsked): boolean {
   if (before.sha256 === now.sha256) return true;
   if (before.cwd === now.cwd && before.command.trim() === now.command.trim()) return true;
   if (before.acts.some(a => now.acts.some(b => sameAct(a, b)))) return true;
+  // The other order (modes-y9-y9-2): the refused command was code Ember can't read, or a program it doesn't know, that
+  // named the thing and said what it does to it; the later one does that to it in plain words (`rm -rf build`).
+  if ((before.named ?? []).some(n => n.opaque && now.acts.some(b => evident(n, b.cls) && namesAct(n, b, before, true)))) return true;
   return (now.named ?? []).some(n => before.acts.some(a =>
     (n.opaque ? evident(n, a.cls) : n.cls === a.cls && (n.bare || MOVES_ITS_SOURCE.test(n.rule))) && namesAct(n, a, now)));
 }
+
+/** An act on something the command names only by what a shell would expand (`rm -rf $d` in a loop): Ember can't tell what. */
+const unresolved = (a: CommandAct): boolean => !a.path && a.kind !== "rule" && a.kind !== "program" && /[$`%]/.test(a.text);
 
 /**
  * May `now` be the command the user turned down, though Ember can't tell? Where it has a finding that names nothing
  * it acts on, of a class the refused command had (`npm publish` after a refused push; `gh api -X PUT …` that names
  * no refused branch), or one Ember can't read at all (a loop, inline code, a program it doesn't know: it may be any
- * class). Such a command is never announced or shown to Assisted's check: it asks, in every mode, which is the
- * user's to answer (modes-y9-9). It refuses nothing.
+ * class), and the other way round: the refused command was one Ember couldn't read and the later one acts on what its
+ * words name, or it named what it acted on only by a variable. Such a command is never announced or shown to
+ * Assisted's check: it asks, in every mode, which is the user's to answer (modes-y9-9). It refuses nothing.
  */
 export function likeCommand(before: CommandAsked, now: CommandAsked): boolean {
-  if (before.acts.length === 0) return false;
+  const unread = (before.named ?? []).filter(n => n.opaque);
+  // The refused command was one Ember couldn't read, and the later one acts on something its words name; or it acted
+  // on something Ember couldn't resolve, and the later one is that class of danger (modes-y9-y9-2).
+  if (now.acts.some(b => unread.some(n => namesAct(n, b, before, true)) || before.acts.some(a => a.cls === b.cls && unresolved(a)))) return true;
+  if (before.acts.length === 0 && unread.length === 0) return false;
   return (now.named ?? []).some(n => n.opaque || (n.bare && before.acts.some(a => a.cls === n.cls)));
 }
 

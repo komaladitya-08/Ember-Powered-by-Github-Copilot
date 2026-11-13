@@ -631,7 +631,8 @@ overwriting, resetting, closing, leaving, blocking and security, read in English
 reads risky words in; a risky step of none of these kinds, "Add comment" say, is only itself, so after a no to
 something else it still asks, is checked or is announced as the mode says), or the same command or one that does the
 same to the same thing however it names it (`find build -delete`, `mv build /tmp/x` or inline code that removes
-`build` after `rm -rf build`), is refused without another question, never checked by Assisted and never announced, and
+`build` after `rm -rf build`, and `rm -rf build` after a no to such code; a push of `main` to the same repository
+written as its URL), is refused without another question, never checked by Assisted and never announced, and
 "What Ember did" says "You said no to this step earlier in this task." The rule is the same danger to the same thing,
 not the same kind of thing anywhere: a no to Delete in Files says nothing of Delete in Mail, a no to pushing `main`
 nothing of pushing `feature`, and a no to a step a page came up with nothing of the step you asked for yourself. A no
