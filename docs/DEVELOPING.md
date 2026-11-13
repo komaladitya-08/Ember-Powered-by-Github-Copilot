@@ -3104,8 +3104,10 @@ needs both. CI publishes them when a `v<v>` tag is pushed:
    `Ember-<v>-x86_64.AppImage`, `Ember-voice-models-<v>.zip`, `Ember-<v>-win-x64.zip`,
    `Ember-<v>-mac-arm64.dmg`, `Ember-<v>-mac-arm64.zip`, `Ember-<v>-mac-x64.dmg` and `Ember-<v>-mac-x64.zip`. It
    refuses a tag that isn't package.json's version, and takes the notes from CHANGELOG.md, with relative links made
-   absolute at the tag and wrapped lines joined. The job then writes the checksums, one line per file (a hash, two
-   spaces and the file name, which is what `sha256sum -c` reads):
+   absolute at the tag and wrapped lines joined, and refuses notes of 125,000 characters or UTF-8 bytes or more
+   (GitHub refuses a longer release body and doesn't say which it counts; curly quotes and `…` take 3 bytes each).
+   The job then writes the checksums, one line per file (a hash, two spaces and the file name, which is what
+   `sha256sum -c` reads):
 
    ```bash
    sha256sum ember-*.rpm Ember-*.AppImage Ember-*.zip Ember-*.dmg source-*.zip > SHA256SUMS

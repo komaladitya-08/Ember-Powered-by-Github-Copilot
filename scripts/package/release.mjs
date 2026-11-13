@@ -6,7 +6,7 @@
 // more, a version CHANGELOG.md has no "## <version> (" section for, and a README whose Download section still says the
 // version isn't out: the notes link the README at the tag, so it is what everyone reads (install-docs-c1-1). The notes
 // are that section, its relative links made absolute at the tag (a release page resolves them elsewhere) and its
-// wrapped lines joined.
+// wrapped lines joined, and it refuses notes GitHub would refuse (install-docs-r10-2).
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -45,6 +45,27 @@ export function releaseNotes(changelog, version, o) {
   const base = `https://github.com/${o.repo}/blob/${o.ref}/`;
   // [text](target): a target with no scheme, not an anchor and not site-absolute is a file in the repository.
   return `${body.replace(/\]\((?![a-z][a-z0-9+.-]*:|#|\/)([^)\s]+)\)/gi, (_m, target) => `](${base}${target})`)}\n`;
+}
+
+/**
+ * GitHub's limit for a release body ("body is too long (maximum is 125000 characters)"). GitHub doesn't document
+ * the unit, and its neighbouring limits are counted both ways (an issue comment in bytes, a pull request's body in
+ * code points), so the notes are held under it in UTF-16 units and in UTF-8 bytes, the stricter of the two.
+ */
+export const RELEASE_BODY_LIMIT = 125_000;
+
+/**
+ * What would make GitHub refuse `notes` as a release body: one line per unit it is too long in, or none.
+ * @param {string} notes
+ */
+export function notesProblems(notes) {
+  const n = (/** @type {number} */ v) => v.toLocaleString("en-GB");
+  const limit = `GitHub takes a release body under ${n(RELEASE_BODY_LIMIT)}`;
+  const bytes = Buffer.byteLength(notes, "utf8");
+  return [
+    ...(notes.length >= RELEASE_BODY_LIMIT ? [`the notes are ${n(notes.length)} characters; ${limit}`] : []),
+    ...(bytes >= RELEASE_BODY_LIMIT ? [`the notes are ${n(bytes)} bytes; ${limit}`] : []),
+  ];
 }
 
 /**
@@ -124,7 +145,10 @@ function main() {
   readme();
   const problems = releaseProblems(fs.readdirSync(dir).filter(f => fs.statSync(path.join(dir, f)).isFile()), version);
   if (problems.length) throw new Error(`the release folder isn't what the README downloads:\n  ${problems.join("\n  ")}`);
-  fs.writeFileSync(notesFile, releaseNotes(fs.readFileSync(path.join(root, "CHANGELOG.md"), "utf8"), version, { repo, ref: tag }));
+  const notes = releaseNotes(fs.readFileSync(path.join(root, "CHANGELOG.md"), "utf8"), version, { repo, ref: tag });
+  const long = notesProblems(notes);
+  if (long.length) throw new Error(`CHANGELOG.md's ${version} section is too long for a release:\n  ${long.join("\n  ")}`);
+  fs.writeFileSync(notesFile, notes);
   console.log(`release ${tag}: ${releaseFiles(version).length} files, notes in ${notesFile}`);
 }
 

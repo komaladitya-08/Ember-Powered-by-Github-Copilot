@@ -7,7 +7,7 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import { describe, expect, it } from "vitest";
-import { readmeProblems, releaseFiles, releaseNotes, releaseProblems, unwrap } from "../../scripts/package/release.mjs";
+import { RELEASE_BODY_LIMIT, notesProblems, readmeProblems, releaseFiles, releaseNotes, releaseProblems, unwrap } from "../../scripts/package/release.mjs";
 
 const read = (p: string) => fs.readFileSync(p, "utf8");
 const version = JSON.parse(read("package.json")).version as string;
@@ -94,6 +94,24 @@ describe("release.mjs", () => {
     expect(flat(section15())).toContain("In the commit you tag, replace that line");
   });
 
+  it("refuses notes over GitHub's 125,000 limit counted in characters or in UTF-8 bytes, since which one GitHub counts isn't documented (install-docs-r10-2)", () => {
+    expect(RELEASE_BODY_LIMIT).toBe(125_000);
+    expect(notesProblems("a".repeat(124_999))).toEqual([]);
+    // 0.1.1's notes were 124,577 characters and 126,844 bytes: its curly quotes, ellipses and › take 3 bytes each.
+    const quoted = "\u201c".repeat(1_000) + "a".repeat(123_000);
+    expect(quoted.length).toBe(124_000);
+    expect(notesProblems(quoted)).toEqual(["the notes are 126,000 bytes; GitHub takes a release body under 125,000"]);
+    expect(notesProblems("a".repeat(125_000))).toEqual([
+      "the notes are 125,000 characters; GitHub takes a release body under 125,000",
+      "the notes are 125,000 bytes; GitHub takes a release body under 125,000",
+    ]);
+    // The release job refuses them before `gh release create`, which would fail only after every other job passed.
+    const script = read("scripts/package/release.mjs");
+    const whole = script.slice(script.indexOf("const [dir, tag, repo, notesFile]"));
+    expect(whole.indexOf("notesProblems(")).toBeGreaterThan(0);
+    expect(whole.indexOf("notesProblems(")).toBeLessThan(whole.indexOf("fs.writeFileSync(notesFile"));
+  });
+
   it("has notes for this version in CHANGELOG.md", () => {
     const notes = releaseNotes(read("CHANGELOG.md"), version, { repo: "o/r", ref: `v${version}` });
     expect(notes.length).toBeGreaterThan(1000);
@@ -104,11 +122,10 @@ describe("release.mjs", () => {
   it("keeps this version's notes, as releaseNotes builds them, under GitHub's 125,000-character limit for a release body", () => {
     // GitHub refuses a release body longer than this, so the release job's `gh release create` would fail at the tag.
     // The notes are measured as the job writes them: links made absolute for the repository Ember's releases come from.
-    const GITHUB_RELEASE_BODY_LIMIT = 125_000;
     const repo = /const REPO = "([^"]+)"/.exec(read("app/main/updates.ts"))?.[1] ?? "";
     expect(repo).toMatch(/^[\w.-]+\/[\w.-]+$/);
     const notes = releaseNotes(read("CHANGELOG.md"), version, { repo, ref: `v${version}` });
-    expect(notes.length).toBeLessThan(GITHUB_RELEASE_BODY_LIMIT);
+    expect(notes.length).toBeLessThan(RELEASE_BODY_LIMIT);
   });
 });
 
