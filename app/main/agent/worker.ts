@@ -2207,7 +2207,7 @@ export class Worker {
           this.activity({ type: "tool-end", id: String(data.toolCallId ?? ""), ok: data.success !== false });
         }
         // A model call failed and the runtime tries again: the card says so, and stops saying it once Copilot answers.
-        if (e.type === "model.call_failure") this.activity({ type: "retry" });
+        if (e.type === "model.call_failure") this.activity({ type: "retry", ...(this.d.provider ? { ownService: true as const } : {}) });
         if (e.type === "assistant.usage" || e.type === "assistant.message") this.activity({ type: "heard" });
       });
       if (!this.halted) {
