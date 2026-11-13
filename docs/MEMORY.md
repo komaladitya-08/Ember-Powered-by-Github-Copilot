@@ -653,8 +653,12 @@ A new name or answer length told in conversation takes the profile's place too (
 user's own words in a turn tell Ember what to call them ("Call me Sam from now on", "my name is Sam", "I go by Sam
 now", "I'd like to be called Sam", and the other ways people say it: "Can you call me Sam?", "Call me Sam, not
 Ram", "I'm Sam, not Ram", "Don't call me Ram, call me Sam", "I'd rather be called Sam", "My name is Sam and I work
-at Globex": `nameSaid`, memory-x9-4) or how long its answers should be ("Stop being so brief, I want the
-full detail", "your answers are too long": `lengthSaid`, read the right way round), and the fact the model saves
+at Globex", and the everyday ways of memory-r10-2: "I go by Raj these days, not Ram", "It's Raj, not Ram", a title,
+"Call me Dr. Patel please", and what others call them offered to Ember, "My friends call me Raj, and so can you") or
+how long its answers should be ("Stop being so brief, I want the full detail", "your answers are too long":
+`lengthSaid`, read the right way round; and, in a turn that hands Ember nothing to write and speaks of no one else,
+"Keep it brief", "Stop rambling", "Less waffle please", or a length as the whole turn, "Shorter, please":
+memory-r10-2), and the fact the model saves
 for it, by the remember tool or when the turn is read, says the same name or length, the fact kept is the profile's
 own: "Likes to be called Sam" under `called`, or the answer length under `answer_length` (in the user's words when
 the fact is mostly theirs already, else "Prefers short answers" or "Prefers detailed answers"), `user`, replacing
