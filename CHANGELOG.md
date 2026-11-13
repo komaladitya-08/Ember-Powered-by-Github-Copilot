@@ -583,11 +583,11 @@ the automated tests don't stand in for them.
   sensibly.
 - **`ember doctor` no longer says Ember can't speak** when it speaks in its own Kitten voice and only
   speech-dispatcher, its fallback, is missing.
-- **A spoken yes has to be yours.** On Linux (with PulseAudio's parec) what the computer's own speakers play no longer
-  answers a question: a video's or a call's “Okay.” in the moment after Ember's read-out, or its “Ember, allow”. On
-  Windows that moment is covered too, but there and on a Mac Ember can't tell who said its name. A no is taken from
-  anyone, over other sound too. In the few seconds after a question, talk without Ember's name is never sent to Copilot,
-  and only “stop” itself stops Ember.
+- **What your speakers play doesn't say yes.** On Linux (with PulseAudio's parec) what the computer's own speakers play
+  no longer answers a question: a video's or a call's “Okay.” in the moment after Ember's read-out, or its “Ember,
+  allow”. On Windows that moment is covered too, but there and on a Mac Ember can't tell who said its name. A no is
+  taken from anyone, over other sound too. In the few seconds after a question, talk without Ember's name is never sent
+  to Copilot, and only “stop” itself stops Ember.
 - **Ember says what became of a spoken answer**: “Listening for your answer…” while a bare answer is heard, then “To
   answer by voice now, start with my name.”; each reason an answer wasn't taken is said aloud once a question; a
   near-miss answer is told as not caught instead of going to Copilot; more everyday answers count (“you may go ahead”,
@@ -697,19 +697,19 @@ the automated tests don't stand in for them.
   rest of the task asking), any control on a page whose title only mentions a payment (the question now says why: “The
   window's title mentions billing, so this may pay for something.”), and “Disable Line Numbers” in a window titled for
   security.
-- **Going past a warning asks every time.** “Enable Macros”, “Keep anyway”, “Proceed to example.com (unsafe)”, “Turn off
-  Safe Browsing”, “Load Remote Content” and their like ask by a click or by Enter, never with Always and never only
-  announced, and the question says it goes past a warning or turns off a protection; “Go to page 2” and “Disable spell
-  check” don't. In a dialog whose words ask (“Are you sure…?”), or a message box on Linux, an answer that doesn't back
-  off asks every time, quoting the dialog: a browser's “Leave page”, “Reload”, “Close tabs” and “Resend” (on every
-  system) and “No” to saving your changes; Cancel, Stay, “Not now” and “Remind Me Later” don't. In a window Ember could
-  read only in part, a question written in it, as in a mail you're composing, makes its buttons ask too. In Interactive,
-  Enter in a search box that also types a message or picks people (“Search or type a message”, “Search people to add”),
-  or in a window for sending money or sharing, asks.
-- **Enter in a dialog that asks or warns asks every time** while none of its buttons has the keyboard (on Windows a bare
-  letter too), since Ember can't tell which button it presses. So do warnings under the names browsers and mail apps
-  give them: “Keep dangerous file”, “Continue to HTTP Site”, a bare “Keep” or “Open” under words of danger, “Show
-  images” in a mail.
+- **Going past a warning is a risky step.** “Enable Macros”, “Keep anyway”, “Proceed to example.com (unsafe)”, “Turn off
+  Safe Browsing”, “Load Remote Content” and their like ask by a click or by Enter as risky steps do, never with Always
+  and in Interactive never only announced, and the question says it goes past a warning or turns off a protection; “Go
+  to page 2” and “Disable spell check” don't. In a dialog whose words ask (“Are you sure…?”), or a message box on Linux,
+  an answer that doesn't back off asks every time, quoting the dialog: a browser's “Leave page”, “Reload”, “Close tabs”
+  and “Resend” (on every system) and “No” to saving your changes; Cancel, Stay, “Not now” and “Remind Me Later” don't.
+  In a window Ember could read only in part, a question written in it, as in a mail you're composing, makes its buttons
+  ask too. In Interactive, Enter in a search box that also types a message or picks people (“Search or type a message”,
+  “Search people to add”), or in a window for sending money or sharing, asks.
+- **Enter in a dialog that asks or warns asks as a risky step does** while none of its buttons has the keyboard (on
+  Windows a bare letter too), since Ember can't tell which button it presses. So do warnings under the names browsers
+  and mail apps give them: “Keep dangerous file”, “Continue to HTTP Site”, a bare “Keep” or “Open” under words of
+  danger, “Show images” in a mail.
 - **Linux's default never-look list gains KeePass, LastPass, Dashlane, Enpass, Proton Pass and KDE Wallet** (new
   installs, and **Restore defaults**). The audit log records a typed key as a count, and logs hide the value after any
   `Authorization:` scheme and in `…PASSWORD=`.
@@ -869,7 +869,7 @@ the automated tests don't stand in for them.
   can't be looked up only because the network is down is kept. A long host name in Computers and Commands wraps
   instead of making Home scroll sideways at Larger text.
 - **A program Ember doesn't know asks first** (“It runs a program Ember doesn't know.”). A command runs unasked only
-  when Ember knows its program (about 700 everyday tools that read, list, convert, compile, test or build, or a program
+  when Ember knows its program (about 750 everyday tools that read, list, convert, compile, test or build, or a program
   in the task's own folder) and, for a tool with commands of its own, the command (`cargo build` runs, `cargo watch`
   asks). Asking for it by name (“run dropdb on scratch”) announces it with its Stop instead. It asks in Autopilot too.
 - **An option Ember once read differently can't loosen a command.** Where the tool's manual and Ember's earlier reading
