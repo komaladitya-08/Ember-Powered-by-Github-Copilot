@@ -283,7 +283,9 @@ describe("launchers that run a tool by its name (commands-remote-r9-3, modes-y9-
     }
     expect(decide("npx --call 'pm2 start app.js'").rules).toContain("escape.pm2");
     // A package's everyday line keeps the one finding it had.
-    for (const cmd of ["npx prettier --check .", "npx eslint .", "npx tsc --noEmit", "pnpm dlx prettier .", "uvx ruff check ."]) expect(decide(cmd).rules, cmd).toEqual(["escape.npx"]);
+    // The package itself is the program the runner downloads: that Ember doesn't know its name adds nothing.
+    for (const cmd of ["npx prettier --check .", "npx eslint .", "npx tsc --noEmit", "pnpm dlx prettier .", "uvx ruff check .", "npx cowsay hi", "npx -y frobnicate build",
+      "pipx run cowsay hi", "bunx frobnicate"]) expect(decide(cmd).rules, cmd).toEqual(["escape.npx"]);
   });
 
   it("reads the command behind a launcher that only sets up an environment, and asks before a tool Ember doesn't know there", () => {

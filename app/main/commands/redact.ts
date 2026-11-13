@@ -76,7 +76,7 @@ const VALUE_PATTERNS: readonly RegExp[] = [
   // an Azure Key Vault secret in `az keyvault secret show`'s JSON (commands-remote-r9-9).
   /([?&;]sig=)[A-Za-z0-9%+/=_-]{20,}/g,
   /(set-cookie:[ \t]*[^=;\s]{0,64}=)[^;\s]+/gi,
-  /((?:802-11-wireless-security\.)?(?:psk|wep-key\d|leap-password)[ \t]*:[ \t]*)\S+/gi,
+  /((?:802-11-wireless-security|wifi-sec)\.(?:psk|wep-key\d|leap-password)[ \t]*:[ \t]*)\S+/g,
   /(Key Content[ \t]*:[ \t]*)\S+/g,
   /(vault\.azure\.net\/secrets\/[^"]{0,200}"[^{}]{0,600}?"value"\s{0,8}:\s{0,8}")[^"]*(?=")/g,
   // A Docker config's `"auth": "<base64 of user:password>"`, and a .netrc entry written on one line

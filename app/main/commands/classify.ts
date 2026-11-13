@@ -553,6 +553,11 @@ class Classifier {
     this.findings.push(f);
   }
 
+  /** Takes back findings added since `from` that `drop` picks: a nested reading's, which the caller's own finding covers. */
+  dropFindings(from: number, drop: (f: Finding) => boolean): void {
+    this.findings = [...this.findings.slice(0, from), ...this.findings.slice(from).filter(f => !drop(f))];
+  }
+
   unclear(rule: string, says: string = SAYS.unclear): void {
     this.add("unclear", rule, says);
   }
@@ -8124,7 +8129,12 @@ function packageLine(h: H, words: readonly Arg[], wrapper: string): void {
     // An address or a registry spec (`https://…/a.ts`, `npm:pkg`): a program Ember can't name, its words read as paths.
     if (URL_LIKE.test(v) || /^[a-z][a-z0-9+.-]*:/i.test(v)) { h.e.readArgs(words.slice(k + 1), h.sc, { unresolvedUnclear: true }); h.e.afterArgs(words.slice(k + 1), wrapper); return; }
     const bin = (v.replace(/^@[^/]+\//, "").replace(/@[^@/]*$/, "").split(/[\\/]/).pop() ?? v) || v;
+    const from = h.e.findings.length;
     h.e.payload([{ ...words[k], v: bin, raw: bin }, ...words.slice(k + 1)], h.sc, wrapper);
+    // That the package is a program Ember doesn't know is what the runner's own finding already says ("Downloads a
+    // program and runs it."): only what its line is handed, and what Ember knows of the package, is added, so `npx
+    // cowsay hi` decides as it did (the approval modes read `unknown` as "can't tell").
+    h.e.dropFindings(from, f => f.rule === "unknown.program");
     return;
   }
 }
