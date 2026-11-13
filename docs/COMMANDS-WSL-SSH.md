@@ -372,7 +372,8 @@ Ember stops and asks before a command that:
   (`yarn cross-env …`, `pnpm run cross-env …`). A variable one of them sets that changes how commands are found or run
   (`LD_PRELOAD`, `NODE_OPTIONS`, `CC`, `BASH_ENV`) asks as it does set directly, behind `npx` too, and your words
   naming the launcher never announce it. What a package manager runs by name is read as well (`yarn x …`, `pnpm run
-  x …`, `bun run x …`, `npm run x -- …`, `npm test -- …`, `corepack yarn …`): a program Ember has a row for (a shell,
+  x …`, `bun run x …`, `npm run x -- …`, `npm test -- …`, `corepack yarn …`, `corepack yarn@4 …`), and so is what
+  `node` hands the project's own tool (`node node_modules/.bin/x …`): a program Ember has a row for (a shell,
   an interpreter, `npm`, `git`, `rm`) is judged as that program's own line (`yarn sh -c '…'` as `sh -c '…'`), and the
   words handed to the project's own script or tool are read for a secret's path, Ember's own files, a command handed
   on, a variable that names code and a first word that says it publishes; its plain options, test names, globs and

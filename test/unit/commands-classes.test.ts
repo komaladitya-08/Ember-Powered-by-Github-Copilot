@@ -1372,6 +1372,20 @@ describe("the project's own copy of a launcher or a program, run by its path or 
     }
   });
 
+  it("reads the words handed to a bin with no row through node as `yarn <name>` reads them (commands-runners-x9-3)", () => {
+    for (const line of ["rm -rf ~/Documents", "-o ~/.bashrc", "sh -c 'rm -rf ~/Documents'", "~/.ssh/id_rsa", "npm publish", "LD_PRELOAD=/tmp/x.so"]) {
+      for (const name of ["shx", "frobnicate"]) {
+        const byName = decide(`yarn ${name} ${line}`);
+        expect(byName.verdict, `yarn ${name} ${line}`).toBe("ask");
+        for (const file of [`node_modules/.bin/${name}`, `node_modules/${name}/lib/cli.js`, `node_modules/@acme/${name}/bin/cli.js`]) {
+          const d = decide(`node ${file} ${line}`);
+          expect(d.verdict, `node ${file} ${line}`).toBe("ask");
+          expect(d.rules, `node ${file} ${line}`).toEqual(expect.arrayContaining(byName.rules));
+        }
+      }
+    }
+  });
+
   it("behind a runner that downloads it, a launcher's variable that names code asks as the variable does (integ2-z-5)", () => {
     for (const front of ["npx", "npx -y", "pnpm dlx", "pnpm exec", "yarn dlx", "npm exec --", "npm x", "bunx", "bun x"]) {
       const d = decide(`${front} cross-env LD_PRELOAD=/tmp/x.so jest`);

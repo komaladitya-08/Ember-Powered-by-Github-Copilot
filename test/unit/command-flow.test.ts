@@ -4008,6 +4008,13 @@ describe("what a package manager or the project's own launcher hands on (integ2-
   });
 
   it.each([
+    "node node_modules/.bin/shx rm -rf ~/Documents", "node node_modules/shx/lib/cli.js rm -rf ~/Documents", "node node_modules/.bin/frobnicate rm -rf ~/Documents",
+    "node node_modules/.bin/frobnicate -o ~/.bashrc", "node node_modules/.bin/frobnicate sh -c 'rm -rf ~/Documents'",
+  ])("asks before what node hands the project's own bin with no row, in every mode: %s (commands-runners-x9-3)", async command => {
+    await asks(command);
+  });
+
+  it.each([
     "npm test", "npm run build", "yarn lint", "pnpm dev", "yarn test --watch", "npm run test -- --coverage", "pnpm vitest run test/unit/x.test.ts", "yarn eslint .",
     "yarn tsc --noEmit", "npm run build -- --mode production", "yarn format", "yarn start", "yarn watch", "yarn bundle", "pnpm test src/a.test.ts", "yarn jest -t 'adds two'",
     "npm run lint -- src/a.ts", "./node_modules/.bin/eslint .", "node node_modules/.bin/jest --runInBand", "node node_modules/typescript/bin/tsc --noEmit",

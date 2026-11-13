@@ -4356,7 +4356,7 @@ const IN_NODE_MODULES = /(^|[\\/])node_modules[\\/]/;
  * A file of an installed package handed to an interpreter (`node node_modules/.bin/cross-env …`, `node
  * node_modules/cross-env/src/bin/cross-env.js …`: integ2-z-3): where its name in `.bin`, its own name or its package's
  * is a launcher or a program Ember has a row for, the words after it are judged as that program's line, so it decides
- * no less safely than the program by its name.
+ * no less safely than the program by its name; any other bin's words are read as a script's (runnerLine).
  */
 function moduleProgram(h: H, path: string, rest: Arg[]): void {
   if (h.e.readsAsMain || !IN_NODE_MODULES.test(path)) return;
@@ -4366,7 +4366,10 @@ function moduleProgram(h: H, path: string, rest: Arg[]): void {
   const pkg = parts[from + 1]?.startsWith("@") ? parts[from + 2] : parts[from + 1];
   const names = [...new Set([strip(parts[parts.length - 1]), pkg === ".bin" ? "" : strip(pkg)])].filter(n => n !== "");
   const name = names.find(n => ENV_LAUNCHERS.has(n)) ?? names.find(n => NATIVE[n] !== undefined || ORDINARY_VERBS[n] !== undefined);
-  if (name !== undefined && name !== h.key) h.e.payload([lit(name), ...rest], h.sc, h.prog);
+  if (name !== undefined && name !== h.key) { h.e.payload([lit(name), ...rest], h.sc, h.prog); return; }
+  // Any other bin is the project's own, and its words are read as `./node_modules/.bin/<name> …` and `yarn <name> …`
+  // read them (commands-runners-x9-3): a command, a secret's path or a variable that names code among them.
+  if (name === undefined && names[0] !== undefined) runnerLine(h, lit(names[0]), rest, h.prog);
 }
 
 /**

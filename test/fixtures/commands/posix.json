@@ -23152,6 +23152,69 @@
    "rules": [
     "unclear.inline-code"
    ]
+  },
+  {
+   "cmd": "node node_modules/.bin/shx rm -rf ~/Documents",
+   "verdict": "ask",
+   "rules": [
+    "unclear.hidden-command",
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "node node_modules/shx/lib/cli.js rm -rf ~/Documents",
+   "verdict": "ask",
+   "rules": [
+    "unclear.hidden-command",
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "node node_modules/.bin/frobnicate rm -rf ~/Documents",
+   "verdict": "ask",
+   "rules": [
+    "unclear.hidden-command",
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "node node_modules/.bin/frobnicate -o ~/.bashrc",
+   "verdict": "ask",
+   "rules": [
+    "path.startup"
+   ]
+  },
+  {
+   "cmd": "node node_modules/.bin/frobnicate sh -c 'rm -rf ~/Documents'",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm",
+    "unclear.hidden-command"
+   ]
+  },
+  {
+   "cmd": "node node_modules/@acme/frobnicate/bin/cli.js npm publish",
+   "verdict": "ask",
+   "rules": [
+    "unclear.hidden-command",
+    "npm.publish",
+    "script.publish"
+   ]
+  },
+  {
+   "cmd": "node node_modules/.bin/frobnicate LD_PRELOAD=/tmp/x.so",
+   "verdict": "ask",
+   "rules": [
+    "unclear.assignment"
+   ]
+  },
+  {
+   "cmd": "node node_modules/.bin/frobnicate src/a.ts",
+   "verdict": "run"
+  },
+  {
+   "cmd": "node node_modules/vite/bin/vite.js build",
+   "verdict": "run"
   }
  ]
 }
