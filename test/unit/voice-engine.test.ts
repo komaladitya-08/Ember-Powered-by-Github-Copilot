@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { MANUAL_MAX_MS, Ring, TRAIL_HOLD_MS, VoiceEngine, heardOtherStop, trailsOff, heardStopWord, holdsWake, isCloser, isFiller, isStop, saidWakeStop, stopSaidAlone, stripWake, withoutAnnounced, type VoiceBackend, type VoiceEvent } from "../../app/voice/engine";
 import { withoutRepeats } from "../../app/voice/sherpa";
+import { stopRequest } from "../../app/main/agent/status";
 
 /** A scripted backend: frames are tagged by their first sample. */
 const KW = { 1: "hey_ember", 2: "ember_stop" } as Record<number, string>;
@@ -3203,6 +3204,23 @@ describe("whose a spoken answer is (second review of the voice lane, 2026-11-12)
       const long = waiting({ 5: "No, open the other file instead please." }, "conversation", { otherSound: false });
       says(long, 5, 0, "user");
       expect(long.heard()).toEqual(["No, open the other file instead please. | conversation"]);
+    });
+
+    it("never takes a stop for a near-miss answer: “No, stop the task.” said while a question waits still reaches the stop, as before (voice-product-y9-1)", () => {
+      // Main stops everything on these (stopRequest) while a task is at work; as near-misses they stopped nothing.
+      for (const words of ["No, stop the task.", "No, stop typing.", "No, halt.", "Okay, stop working.", "No, cancel my task.", "No, stop all tasks.", "Okay, stop clicking."]) {
+        expect(stopRequest(words), words).toBe(true);
+        for (const where of ["follow-up", "conversation"] as const) {
+          const s = waiting({ 5: words }, where, { otherSound: false });
+          says(s, 5, 0, "user");
+          expect(s.heard(), `${words} in ${where}`).toEqual([`${words} | ${where}`]);
+        }
+      }
+      for (const words of ["No, stop it.", "No, stop.", "No, abort."]) for (const where of ["follow-up", "conversation"] as const) {
+        const s = waiting({ 5: words }, where, { otherSound: false });
+        says(s, 5, 0, "user");
+        expect(s.heard(), `${words} in ${where}`).toEqual(["stop"]);
+      }
     });
 
     it("still ends a conversation or a follow-up on “Okay, that's all.” said while a question waits, sending nothing (voice-product-x9-3)", () => {
