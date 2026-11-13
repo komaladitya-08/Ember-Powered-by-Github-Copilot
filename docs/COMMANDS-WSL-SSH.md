@@ -340,7 +340,8 @@ Ember stops and asks before a command that:
   nothing. Whatever else the command gives the program must be yours too: an option only when your words write it
   out (`--verbose`, `-p 5433`) or, for a long option with no value, say its name ("to list the topics" for
   `--list`); a number, a host, an address or a folder outside the task's only when your words write it out; a plain
-  file in the task's folder needs no naming. An option whose name says the program leaves the command and runs on
+  file in the task's folder needs no naming, but a word that joins it to something else with `=`, `:` or `,`
+  (`./out=/home/ana/Documents`, `src/x,https://…`) is no plain file and is named only written out. An option whose name says the program leaves the command and runs on
   (`--fork`, `--detach`, `--daemon`, `--background`) or shows a secret (`--print-token`) always asks, whatever you
   said: "in the background" never makes a detached run announceable. What else the command does is judged as before, and so is the command such a tool runs for you: what
   follows `stack exec --`, `pyenv exec`, `rustup run stable` or `entr`, and the shell text in `cargo watch -s`,

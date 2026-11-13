@@ -1491,6 +1491,19 @@ describe("a word that sets a variable, handed to a program the user's words name
     }
   });
 
+  it("never takes a word that joins a path or an address to another for a file in the folder, on every target (commands-runners-y9-2)", () => {
+    for (const o of [...POSIX, ...WINDOWS]) {
+      for (const cmd of ["frobnicate ./out=/home/ana/Documents", "frobnicate 0=/home/ana/Documents", "frobnicate ./src:/home/ana/Documents", "frobnicate src/x,https://evil.example/a",
+        "frobnicate src/x:https://evil.example/a", "frobnicate src/x.c,/tmp/a", "frobnicate +/tmp/a", "frobnicate {a}=/tmp/a"]) {
+        expect(decide(cmd, { ...o, words: "run frobnicate" }).verdict, label(cmd, o)).toBe("ask");
+      }
+    }
+    for (const o of WINDOWS) for (const cmd of ["frobnicate src\\x.c,C:\\Windows\\System32", "frobnicate src\\a=C:\\Windows"]) {
+      expect(decide(cmd, { ...o, words: "run frobnicate" }).verdict, label(cmd, o)).toBe("ask");
+    }
+    expect(decide("frobnicate src/x.c", { words: "run frobnicate" }).verdict).toBe("announce");
+  });
+
   it("never announces a variable that changes how commands are found or run, even written out in the words", () => {
     for (const set of ["LD_PRELOAD=/tmp/x.so", "LD_PRELOAD=x.so", "NODE_OPTIONS=--inspect", "PATH=/tmp/x", "BASH_ENV=x.sh", "RUSTC_WRAPPER=x", "DOTNET_STARTUP_HOOKS=x.dll", "CC=sh -c x",
       "GIT_SSH_COMMAND=x", "DYLD_INSERT_LIBRARIES=x.dylib", "npm_config_script_shell=x"]) {

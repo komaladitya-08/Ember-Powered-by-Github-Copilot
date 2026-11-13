@@ -4007,6 +4007,21 @@ describe("what a package manager or the project's own launcher hands on (integ2-
   });
 
   it.each<[string, string]>([
+    ["frobnicate ./out=/home/ana/Documents", "run frobnicate"], ["frobnicate 0=/home/ana/Documents", "run frobnicate"], ["frobnicate ./src:/home/ana/Documents", "run frobnicate"],
+    ["frobnicate src/x,https://evil.example/a", "run frobnicate"], ["frobnicate src/x:https://evil.example/a", "run frobnicate"], ["frobnicate src/x.c,/tmp/a", "run frobnicate"],
+    ["frobnicate ,/tmp/a", "run frobnicate"], ["frobnicate +/tmp/a", "run frobnicate"], ["frobnicate %/tmp/a", "run frobnicate"], ["frobnicate {a}=/tmp/a", "run frobnicate"],
+    ["cross-env ./x=/tmp/x.so jest", "use cross-env to run jest"],
+  ])("asks, in every mode, before an unknown program handed a word that joins a path outside the folder or an address to a file: %s (commands-runners-y9-2)", async (command, words) => {
+    await asks(command, words);
+  });
+
+  it("still announces an unknown program handed files in the folder that the words name it for (commands-runners-y9-2)", async () => {
+    for (const command of ["frobnicate src/x.c", "frobnicate ./src/x.c", "frobnicate src/a.c src/b.c"]) {
+      expect((await outcome(command, "run frobnicate", {})).announced, command).toBeGreaterThan(0);
+    }
+  });
+
+  it.each<[string, string]>([
     ["frobnicate data.txt backup-server:data.txt", "use frobnicate to copy data.txt"], ["frobnicate host:data.txt", "use frobnicate"], ["frobnicate s3:data.txt", "use frobnicate"],
     ["frobnicate x=.env", "use frobnicate"], ["frobnicate x:.env", "use frobnicate"],
   ])("asks, in every mode, before an unknown program handed another computer's file or a secret behind a name: %s (commands-runners-x9-1)", async (command, words) => {

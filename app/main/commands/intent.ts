@@ -1763,9 +1763,12 @@ function extrasNamed(cls: Classification, f: Finding, userWords: string, ctx: Cl
   const saidLower = new Set([...said].map(t => t.toLowerCase()));
   const windows = cmd.family !== "posix";
   // A plain file in the task's folder: a path written as one (`.`, `./x`, `src/main.c`, `~/proj/x`, an absolute
-  // one) that stays in the folder, or a bare name with one extension that is no host's ending.
+  // one) that stays in the folder, or a bare name with one extension that is no host's ending. A word that starts
+  // with no path's start, or joins values with `=`, `:` or `,` after a drive (`./out=/home/x`, `src/x,https://…`),
+  // is no single file, whatever its first part (commands-runners-y9-2).
   const plainFile = (a: string): boolean => {
-    const pathLike = /^(\.{1,2}$|\.{0,2}[/\\]|~|[A-Za-z]:[/\\])|[/\\]/.test(a) || /^\.[A-Za-z]/.test(a);
+    if (/[=:,]/.test(win && /^[A-Za-z]:[/\\]/.test(a) ? a.slice(2) : a)) return false;
+    const pathLike = /^(\.{1,2}$|\.{0,2}[/\\]|~|[A-Za-z]:[/\\])/.test(a) || /^[A-Za-z0-9_][^/\\]*[/\\]/.test(a) || /^\.[A-Za-z]/.test(a);
     const fileName = /^[A-Za-z0-9_][A-Za-z0-9_.-]*\.[A-Za-z][A-Za-z0-9]*$/.test(a) && (a.match(/\./g) ?? []).length === 1 && !HOST_ENDING.test(a);
     return (pathLike || fileName) && !/^[a-z][a-z0-9+.-]*:\/\//i.test(a) && !a.includes("@") && inFolder(a);
   };
