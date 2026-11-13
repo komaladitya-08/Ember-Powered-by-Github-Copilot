@@ -748,7 +748,8 @@ export class ExtensionsService implements ExtensionsApi {
     for (const item of this.items) {
       if (!item.enabled || item.consentedAt === null) continue;
       for (const s of item.servers) {
-        if (s.status !== "ready" || !s.spec || (s.spec.type === "stdio" && !this.o.launcher) || this.heldOut.has(s.key)) continue;
+        // Every server runs through Ember's launcher, a remote one too (integrations-c9-4): with none, none loads.
+        if (s.status !== "ready" || !s.spec || !this.o.launcher || this.heldOut.has(s.key)) continue;
         const clashes = clashingToolNames(s.key, s.tools.map(t => t.name));
         const tools = s.tools.filter(t => !t.changed && MCP_TOOL_NAME.test(t.name) && !clashes.has(modelToolName(s.key, t.name)));
         if (!tools.length) continue;
@@ -783,20 +784,36 @@ export class ExtensionsService implements ExtensionsApi {
 
   private serverConfig(item: StoredItem, s: StoredServer, tools: string[]): MCPServerConfig {
     const spec = s.spec!;
-    if (spec.type !== "stdio") return { type: spec.type, url: spec.url, headers: spec.headers, tools, timeout: 60_000 } as MCPServerConfig;
+    if (spec.type !== "stdio") {
+      // Never handed to the runtime as a remote server: it followed a redirect to another host with the plugin's
+      // headers and the call's arguments (integrations-c9-4). The launcher posts to this address alone instead.
+      const proxies = Object.fromEntries(Object.entries(this.command({ type: "stdio", command: "", args: [], env: {} }).env).filter(([k]) => /_proxy$/i.test(k)));
+      const launch = this.launchRemote(item.id, spec, this.store.pluginDir(item.id), proxies);
+      return { type: "stdio", command: this.o.launcher!.execPath, args: [this.o.launcher!.script], env: { ...proxies, NODE_USE_ENV_PROXY: "1", ELECTRON_RUN_AS_NODE: "1", EMBER_MCP_SPEC: JSON.stringify(launch) }, workingDirectory: launch.cwd, tools, timeout: 60_000 };
+    }
     const launch = this.launch(item.id, spec, this.store.pluginDir(item.id));
     return { type: "stdio", command: this.o.launcher!.execPath, args: [this.o.launcher!.script], env: { ELECTRON_RUN_AS_NODE: "1", EMBER_MCP_SPEC: JSON.stringify(launch) }, workingDirectory: launch.cwd, tools, timeout: 60_000 };
   }
 
   private launch(id: string, spec: Extract<ServerSpec, { type: "stdio" }>, cwd: string) {
     const c = this.command(spec);
+    return { command: c.command, args: c.args, env: c.env, cwd, runDir: this.store.runDir, leaseFile: this.lease(id), group: this.o.os !== "win32" };
+  }
+
+  /** The launcher's spec for a remote server (launch.ts `bridge()`): its address and headers, no program. */
+  private launchRemote(id: string, spec: Extract<ServerSpec, { type: "http" | "sse" }>, cwd: string, env: Record<string, string>) {
+    return { command: "", args: [], env, cwd, runDir: this.store.runDir, leaseFile: this.lease(id), group: this.o.os !== "win32", remote: { url: spec.url, headers: spec.headers } };
+  }
+
+  /** A new private lease for one launch of an item's server, revoked when the item stops (launch.ts). */
+  private lease(id: string): string {
     this.store.ensure();
     const leaseFile = path.join(this.store.runDir, `${crypto.randomUUID()}.lease`);
     fs.writeFileSync(leaseFile, "", { mode: 0o600, flag: "wx" });
     const leases = this.leases.get(id) ?? new Set<string>();
     leases.add(leaseFile);
     this.leases.set(id, leases);
-    return { command: c.command, args: c.args, env: c.env, cwd, runDir: this.store.runDir, leaseFile, group: this.o.os !== "win32" };
+    return leaseFile;
   }
 
   /**

@@ -834,16 +834,14 @@ it builds on:
     the one checked as the session loaded. Nothing Ember asks a server can stand in for that: a server can answer
     Ember's question as agreed and the runtime's with new text (integrations-x9-1: it did, in every request of the
     conversation, 5 of 5).
-  - *When the runtime does hear that a server's list changed* (`mcp.tools.list_changed`: a remote server, which has
-    no launcher between, or anything that got past it), that word is the change. The server is disabled in the
+  - *When the runtime does hear that a server's list changed* (`mcp.tools.list_changed`: anything that got past the
+    launcher), that word is the change. The server is disabled in the
     session at once, unasked, the conversation is tainted and reloads between turns, where the runtime's first list
     is checked against the pins as at every load. A server that says it again in the same conversation stays out
     of it until the conversation ends, and each of its tools whose entry in its own list then differs from the pin is
     marked changed (off until the user agrees again); the others come back in the next conversation. The event is heard from the
-    session's first moment (`onEvent` in the session's config). Not closed for a remote server: a notice that
-    reaches the runtime a few milliseconds before it builds a request can put the new text in that one request,
-    before Ember hears of it; after that the server is out and every extension call asks. Closing it needs the
-    runtime not to refresh a tool list mid-session, or Ember between the runtime and a remote server too.
+    session's first moment (`onEvent` in the session's config). A remote server's notice no longer reaches the
+    runtime either: the launcher stands between them too (below).
   - *After each of a server's calls*, before the result goes back, Ember asks that server for its list
     (`session.rpc.mcp.listTools`, at most 1.5 s, and not again in that session once unanswered) and compares each
     admitted tool with its pin whole, hints too: a head start on a server that changes a tool as it answers and says
@@ -893,7 +891,18 @@ it builds on:
   own environment; it is not a sandbox. A stdio server runs as the user and can read what the user can, including the
   environment of the Copilot runtime that started it (`/proc/<pid>/environ` on Linux), which holds the GitHub token
   (the SDK passes it as `COPILOT_SDK_AUTH_TOKEN`). Install only extensions you would run yourself. `node` is Ember's own
-  Node. macOS has no plain-Node mode, so stdio servers don't run there yet; remote servers must use HTTPS.
+  Node. Remote servers must use HTTPS (plain http on loopback only).
+- **A remote server runs through the launcher too** (integrations-c9-4). Given a remote server's address, the
+  runtime followed its 307 to another host with the plugin's header and the call's arguments, and gave the model that
+  host's answer: a request from the user's own computer, loopback and the LAN included, to an address no consent
+  card names. So the runtime never gets a remote server's address: it starts the launcher as a stdio server with the
+  address and headers in its spec (`remote`), and the launcher's `bridge()` posts each message to that address alone
+  (the server's `mcp-session-id` and protocol version carried), with `redirect: "manual"`: any 3xx is refused, and the
+  runtime is answered "The extension's server sent Ember to another address…" (also for a sign-in it can't do, and a
+  server it can't reach, so no request waits). Answers, JSON or an event stream, go through `passedOn` like a stdio
+  server's lines, one message a line, so a remote server's notice that its list changed never reaches the runtime.
+  The launcher reaches a proxy from the environment (`NODE_USE_ENV_PROXY`, the proxy without its user name and
+  password). macOS has no plain-Node mode, so neither stdio nor remote servers run there yet.
 - **Hot reload.** Installing, removing, turning an item on or off, agreeing again and the kill switch move
   `generation`; the host reconnects between turns (the conversation resumed), as memory does. The kill switch moves
   it only when the conversation had extension tools loaded or a server launched, so a stop with none installed or

@@ -1836,6 +1836,30 @@ describe("ExtensionsService", () => {
     expect(asked).toEqual(['Use “lookup” from remote? With "{\\"q\\":\\"x\\"}".']);
   });
 
+  it("hands the runtime a remote server only through Ember's launcher, which posts to its own address alone (integrations-c9-4)", async () => {
+    writeJson("market/.claude-plugin/marketplace.json", { name: "local-market", plugins: [{ name: "remote", source: "./plugins/remote" }] });
+    writeJson("market/plugins/remote/.claude-plugin/plugin.json", { name: "remote", mcpServers: { web: { type: "http", url: "https://mcp.example.com/mcp", headers: { "x-key": "k" } } } });
+    const s = new ExtensionsService(deps({ env: { PATH: "/usr/bin", HTTPS_PROXY: "http://me:secret@proxy.example:8080" } }));
+    expect(await s.install("local-market", "remote")).toMatchObject({ ok: true });
+    const [review] = await s.list();
+    await s.reagree(review.id, review.reviewToken!);
+    const config = s.forSession()!.mcpServers.web as { type: string; command: string; args: string[]; env: Record<string, string>; url?: string; headers?: unknown };
+    // Never the runtime's own remote client, which followed a 307 to another host with the header and the arguments.
+    expect(config.type).toBe("stdio");
+    expect(config.url).toBeUndefined();
+    expect(config.headers).toBeUndefined();
+    expect([config.command, ...config.args]).toEqual(["/opt/ember/ember", "/opt/ember/mcp-launch.cjs"]);
+    const spec = JSON.parse(config.env.EMBER_MCP_SPEC);
+    expect(spec.remote).toEqual({ url: "https://mcp.example.com/mcp", headers: { "x-key": "k" } });
+    expect(fs.existsSync(spec.leaseFile)).toBe(true);
+    // The proxy reaches the launcher as it reaches a stdio server, without its user name and password.
+    expect(config.env.HTTPS_PROXY).toBe("http://proxy.example:8080/");
+    expect(config.env.NODE_USE_ENV_PROXY).toBe("1");
+    // With no launcher (macOS), a remote server doesn't load either: nothing would stand between it and the runtime.
+    const mac = new ExtensionsService(deps({ launcher: null }));
+    expect(mac.forSession()).toBeUndefined();
+  });
+
   it("refuses to install, enable or agree again before extensions' own consent (audit nit)", async () => {
     const s = await installed();
     const id = (await s.list())[0].id;

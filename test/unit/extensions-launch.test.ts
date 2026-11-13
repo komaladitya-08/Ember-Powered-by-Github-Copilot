@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
+import http from "node:http";
 import { build } from "esbuild";
 import { appEnv } from "../../app/main/hands/system";
 
@@ -89,6 +90,90 @@ describe("the launcher between the runtime and a real server (integrations-x9-1)
     // The server's last words were passed on before the launcher ended with the server's own code.
     expect(code).toBe(5);
     expect(leaseLeft).toBe(false);
+  });
+});
+
+describe("the launcher between the runtime and a remote server (integrations-c9-4)", () => {
+  // A streamable-HTTP server on loopback: JSON answers, an event stream for tools/call, its notice that its list
+  // changed with each, and a 307 to another listener for tools/call once `redirect` is set.
+  const seen: { at: string; method?: string; session?: string; protocol?: string; key?: string; body: string }[] = [];
+  let redirect = false;
+  let server: http.Server, other: http.Server, url = "", elsewhere = "";
+  const listen = (s: http.Server) => new Promise<string>(r => s.listen(0, "127.0.0.1", () => r(`http://127.0.0.1:${(s.address() as { port: number }).port}`)));
+  beforeAll(async () => {
+    other = http.createServer(async (req, res) => {
+      let b = ""; for await (const c of req) b += c;
+      seen.push({ at: "other", key: String(req.headers["x-plugin-key"] ?? ""), body: b });
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ jsonrpc: "2.0", id: JSON.parse(b).id, result: { content: [{ type: "text", text: "from the other host" }] } }));
+    });
+    server = http.createServer(async (req, res) => {
+      let b = ""; for await (const c of req) b += c;
+      const m = JSON.parse(b) as { id?: number; method?: string };
+      seen.push({ at: "server", method: m.method, session: req.headers["mcp-session-id"] as string | undefined, protocol: req.headers["mcp-protocol-version"] as string | undefined, key: String(req.headers["x-plugin-key"] ?? ""), body: b });
+      const notice = { jsonrpc: "2.0", method: "notifications/tools/list_changed" };
+      if (m.id === undefined) { res.writeHead(202); res.end(); return; }
+      if (m.method === "tools/call" && redirect) { res.writeHead(307, { location: `${elsewhere}/elsewhere` }); res.end(); return; }
+      if (m.method === "tools/call") {
+        res.writeHead(200, { "content-type": "text/event-stream" });
+        res.write(`data: ${JSON.stringify(notice)}\n\n`);
+        res.end(`event: message\ndata: ${JSON.stringify({ jsonrpc: "2.0", id: m.id, result: { content: [{ type: "text", text: "sunny" }] } })}\n\n`);
+        return;
+      }
+      res.writeHead(200, { "content-type": "application/json", ...(m.method === "initialize" ? { "mcp-session-id": "sess-1" } : {}) });
+      res.end(JSON.stringify(m.method === "initialize" ? { jsonrpc: "2.0", id: m.id, result: { protocolVersion: "2025-06-18", capabilities: { tools: {} }, serverInfo: { name: "web", version: "1" } } } : [notice, { jsonrpc: "2.0", id: m.id, result: { tools: [] } }]));
+    });
+    url = `${await listen(server)}/mcp`;
+    elsewhere = (await listen(other)).replace("127.0.0.1", "localhost");
+  });
+  afterAll(() => { server.close(); other.close(); });
+
+  const run = async (requests: object[]) => {
+    const leaseFile = path.join(dir, `${crypto.randomUUID()}.lease`);
+    fs.writeFileSync(leaseFile, "", { mode: 0o600 });
+    const spec = { command: "", args: [], env: {}, cwd: dir, runDir: dir, leaseFile, group: os.platform() !== "win32", remote: { url, headers: { "x-plugin-key": "PLUGINKEY" } } };
+    const child = spawn(process.execPath, [launcher], { env: { ...process.env, NO_PROXY: "*", no_proxy: "*", NODE_PATH: path.resolve("node_modules"), EMBER_MCP_SPEC: JSON.stringify(spec) }, stdio: ["pipe", "pipe", "ignore"] });
+    let output = "";
+    child.stdout.on("data", data => { output += data; });
+    // One at a time, as the runtime sends them: each waits for the answer before the next goes.
+    for (const r of requests) {
+      const lines = output.split("\n").filter(Boolean).length;
+      child.stdin.write(`${JSON.stringify(r)}\n`);
+      if ((r as { id?: number }).id === undefined) continue;
+      const t0 = Date.now();
+      while (output.split("\n").filter(Boolean).length === lines && Date.now() - t0 < 5000) await new Promise(r => setTimeout(r, 10));
+    }
+    child.stdin.end();
+    const [code] = await once(child, "close");
+    return { code, lines: output.split("\n").filter(Boolean).map(l => JSON.parse(l) as { id?: number; method?: string; result?: unknown; error?: { message: string } }) };
+  };
+  const SESSION = [
+    { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "copilot", version: "1" } } },
+    { jsonrpc: "2.0", method: "notifications/initialized" },
+    { jsonrpc: "2.0", id: 2, method: "tools/list" },
+  ];
+
+  it("posts the runtime's messages to the server's own address, with its session, and never passes on its notice that its list changed", async () => {
+    seen.length = 0;
+    redirect = false;
+    const { code, lines } = await run([...SESSION, { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "lookup", arguments: { q: "x" } } }]);
+    expect(code).toBe(0);
+    expect(lines.map(l => l.id ?? l.method)).toEqual([1, 2, 3]);
+    expect(lines[2].result).toEqual({ content: [{ type: "text", text: "sunny" }] });
+    expect(seen.map(s => [s.at, s.method, s.session ?? null, s.key])).toEqual([
+      ["server", "initialize", null, "PLUGINKEY"], ["server", "notifications/initialized", "sess-1", "PLUGINKEY"],
+      ["server", "tools/list", "sess-1", "PLUGINKEY"], ["server", "tools/call", "sess-1", "PLUGINKEY"],
+    ]);
+    expect(seen.slice(1).every(s => s.protocol === "2025-06-18")).toBe(true);
+  });
+
+  it("refuses a server's redirect to another host: the header and the call's arguments never reach it, and the runtime hears why (integrations-c9-4)", async () => {
+    seen.length = 0;
+    redirect = true;
+    const { lines } = await run([...SESSION, { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "lookup", arguments: { q: "second secret" } } }]);
+    expect(seen.filter(s => s.at === "other")).toEqual([]);
+    expect(lines.find(l => l.id === 3)).toMatchObject({ error: { message: expect.stringMatching(/sent Ember to another address/) } });
+    expect(JSON.stringify(lines)).not.toContain("from the other host");
   });
 });
 

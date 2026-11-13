@@ -243,10 +243,10 @@ docs/DEVELOPING.md "Extensions: the runtime and the gate" is the design; app/mai
   and at every call against the session's live tool list (`bind`). Never decide that a server may stay from an
   answer it gives to a question of Ember's own (`served`, `session.rpc.mcp.listTools`): it can answer Ember as
   agreed and the runtime otherwise (integrations-x9-1). Ember's list after each call only ever turns a tool off
-  (`afterCall`). A stdio server's notice that its list changed never reaches the runtime (`passedOn` in launch.ts
+  (`afterCall`). A server's notice that its list changed never reaches the runtime (`passedOn` in launch.ts
   drops it; the runtime asks a server again only after that notice), so keep every line a server writes going
-  through `passedOn`. Where the runtime does hear it (`listChanged`, from `onEvent` in the session's config: a
-  remote server), take the server out of the session at once, unasked, and taint (`announced`); said twice in a
+  through `passedOn`, a remote server's answers too (`bridge()`). Where the runtime does hear it (`listChanged`, from
+  `onEvent` in the session's config: anything that got past the launcher), take the server out of the session at once, unasked, and taint (`announced`); said twice in a
   conversation, it stays out until the conversation ends (`heldOut`), and only the tools its own list shows to
   differ are marked changed (integrations-y9-1). A tool that differs is marked changed, audited without its text,
   and its server disabled in that session (`withdraw`); a withdrawn server's tools are denied there. The session's
@@ -259,6 +259,9 @@ docs/DEVELOPING.md "Extensions: the runtime and the gate" is the design; app/mai
 - **Pins** (pin.ts) are checked at install, start and re-enable, and against what the session shows; a changed tool
   stays off until `reagree`.
 - **Servers start through the launcher** (launch.ts) with `appEnv()`'s allowlist, never the runtime's environment.
+  Never hand the runtime a remote server's address (`type: "http"`): it follows a redirect to another host with the
+  plugin's headers and the call's arguments (integrations-c9-4). A remote server is the launcher's `remote` spec,
+  whose `bridge()` posts to that address alone and refuses every 3xx.
 - **Nothing runs** until `settings.extensions` is on with consent `>= FEATURE_CONSENT_VERSION.extensions` and the
   admin's `features.extensions` isn't false (LOCKDOWN sets it false). The kill switch's `extensions` part stops them.
 
