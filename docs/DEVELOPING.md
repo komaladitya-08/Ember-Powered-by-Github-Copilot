@@ -889,8 +889,11 @@ it builds on:
   (`pin.ts`); a changed tool is off until the user agrees again in Home. The review card (**Review and agree**,
   **Review tools**) shows each served tool's name, description and badge, and under them every word of its input
   schema the model reads too (`schemaWords`: each parameter by its path with its title, description, choices,
-  default and examples, and the schema's own description; integrations-c9-1: the model read parameter descriptions
-  the card never showed). Its yes carries a hash of exactly that list (`reviewToken`), so a server that changes
+  default and examples, and the schema's own description; every key that isn't JSON Schema's own word, with its
+  value, numbers and booleans too, and the names in `patternProperties`, `dependentRequired` and their like; only
+  JSON Schema's own words, a dialect's own `$schema` address and a `#/$defs/…` reference to a definition on the card
+  are left out; integrations-c9-1 and r10-integrations-x10-1: the model read parameter descriptions, such keys and
+  names the card never showed). Its yes carries a hash of exactly that list (`reviewToken`), so a server that changes
   between the card and the click is refused.
 - **Servers' environment.** The runtime would start a stdio server with its whole environment (the spike saw
   `GH_TOKEN` and cloud keys reach it), so it starts Ember's launcher (`dist/app/mcp-launch.cjs`, plain Node), which

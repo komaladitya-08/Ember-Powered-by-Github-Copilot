@@ -87,18 +87,45 @@ export function isReadOnly(t: { annotations: ToolHints }): boolean {
 const JSON_TYPES = new Set(["string", "number", "integer", "boolean", "object", "array", "null"]);
 /** Keys whose values are values, not more schema: shown as they are written. */
 const VALUE_KEYS: Record<string, string> = { enum: "choices", const: "always", default: "default", examples: "examples" };
+/** Keys whose values are maps from the server's own names (patterns, property names) to more schema or names. */
+const NAME_MAP_KEYS = new Set(["patternProperties", "dependentSchemas", "dependentRequired", "dependencies"]);
+/**
+ * JSON Schema's own vocabulary: a number, a boolean or a nested schema under one of these carries no word of the
+ * server's. Under any other key (an `x-…` key, a misspelt or invented one) the key itself is the server's text.
+ */
+const VOCABULARY = new Set([
+  "type", "properties", "$defs", "definitions", "items", "prefixItems", "additionalItems", "additionalProperties",
+  "unevaluatedProperties", "unevaluatedItems", "contains", "propertyNames", "if", "then", "else", "allOf", "anyOf",
+  "oneOf", "not", "required", "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "multipleOf", "minLength",
+  "maxLength", "pattern", "format", "minItems", "maxItems", "uniqueItems", "minContains", "maxContains",
+  "minProperties", "maxProperties", "title", "description", "$schema", "$ref", "$id", "$anchor", "$comment",
+  "readOnly", "writeOnly", "deprecated", "nullable", "contentEncoding", "contentMediaType", "contentSchema",
+  ...Object.keys(VALUE_KEYS), ...NAME_MAP_KEYS,
+]);
+/** The addresses of JSON Schema's own dialects: an address anywhere else is the server's text. */
+const SCHEMA_DIALECT = /^https?:\/\/json-schema\.org\/(?:draft-0[4-7]\/schema|draft\/20(?:19-09|20-12)\/schema)#?$/;
 const valueText = (v: unknown) => (typeof v === "string" ? v : JSON.stringify(v));
+const isMap = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 
 /**
  * Every word of a tool's input schema the model reads, as lines for the review card (integrations-c9-1: the card showed
  * a tool's name and description while the model also read the schema's description and each parameter's, where a
  * server can write instructions). One line per parameter, by its path ("q", "filter.from"), with its title,
- * description, choices, default, examples and any other text it carries; the schema's own description first. Only
- * JSON's type names, numbers, booleans, a `$schema` address and a `#/…` reference are left out: none is the server's
- * prose. Nothing is cut: the card shows what the model is sent.
+ * description, choices, default, examples and any other text it carries; the schema's own description first. Every
+ * key that isn't JSON Schema's own word is shown with its value, numbers and booleans included, and so are the names
+ * in patternProperties, dependentRequired and their like (r10-integrations-x10-1: the runtime sends all of them). Only
+ * JSON Schema's own words, numbers and booleans, a dialect's own `$schema` address and a `#/$defs/…` reference to a
+ * definition shown on the card are left out: none is the server's prose. Nothing is cut: the card shows what the
+ * model is sent.
  */
 export function schemaWords(schema: unknown): string[] {
   const out: string[] = [];
+  const root = isMap(schema) ? schema : {};
+  const defined = (kind: string, name: string) => isMap(root[kind]) && Object.prototype.hasOwnProperty.call(root[kind], name);
+  const ownRef = (v: string) => {
+    const m = /^#\/(\$defs|definitions)\/([^/]+)$/.exec(v);
+    return !!m && defined(m[1], m[2]);
+  };
   const walk = (node: unknown, at: string[], named: boolean) => {
     if (Array.isArray(node)) { for (const n of node) walk(n, at, false); return; }
     if (!node || typeof node !== "object") {
@@ -108,22 +135,30 @@ export function schemaWords(schema: unknown): string[] {
     const o = node as Record<string, unknown>;
     const texts: string[] = [];
     const later: (() => void)[] = [];
-    const props = o.properties && typeof o.properties === "object" && !Array.isArray(o.properties) ? Object.keys(o.properties) : [];
+    const props = isMap(o.properties) ? Object.keys(o.properties) : [];
     for (const [k, v] of Object.entries(o)) {
-      if (k === "properties" && v && typeof v === "object" && !Array.isArray(v)) {
+      if (!VOCABULARY.has(k)) {
+        // The key is the server's own text, whatever its value.
+        if (v && typeof v === "object") { texts.push(k); later.push(() => walk(v, at, false)); }
+        else texts.push(typeof v === "string" ? (v ? `${k}: ${v}` : k) : `${k}: ${JSON.stringify(v)}`);
+      } else if (k === "properties" && isMap(v)) {
         for (const [name, sub] of Object.entries(v)) later.push(() => walk(sub, [...at, name], true));
-      } else if ((k === "$defs" || k === "definitions") && v && typeof v === "object" && !Array.isArray(v)) {
+      } else if ((k === "$defs" || k === "definitions") && isMap(v)) {
         for (const [name, sub] of Object.entries(v)) later.push(() => walk(sub, [...at, name], true));
+      } else if (NAME_MAP_KEYS.has(k) && isMap(v)) {
+        const names = Object.keys(v);
+        if (names.length) texts.push(`${k}: ${names.join(", ")}`);
+        for (const sub of Object.values(v)) later.push(() => walk(sub, at, false));
       } else if (k in VALUE_KEYS) {
         texts.push(`${VALUE_KEYS[k]}: ${Array.isArray(v) && k !== "const" && k !== "default" ? v.map(valueText).join(", ") : valueText(v)}`);
       } else if (k === "type") {
-        const odd = (Array.isArray(v) ? v : [v]).filter(t => typeof t === "string" && !JSON_TYPES.has(t));
-        if (odd.length) texts.push(`type: ${odd.join(", ")}`);
+        const odd = (Array.isArray(v) ? v : [v]).filter(t => !(typeof t === "string" && JSON_TYPES.has(t)));
+        if (odd.length) texts.push(`type: ${odd.map(valueText).join(", ")}`);
       } else if (k === "required" && Array.isArray(v)) {
         const odd = v.filter(n => typeof n !== "string" || !props.includes(n));
         if (odd.length) texts.push(`required: ${odd.map(valueText).join(", ")}`);
       } else if (typeof v === "string") {
-        if ((k === "$schema" && /^https?:\/\/\S+$/.test(v)) || (k === "$ref" && /^#[\w/$.-]*$/.test(v))) continue;
+        if ((k === "$schema" && SCHEMA_DIALECT.test(v)) || (k === "$ref" && ownRef(v))) continue;
         if (v) texts.push(k === "description" || k === "title" ? v : `${k}: ${v}`);
       } else if (v && typeof v === "object") {
         later.push(() => walk(v, at, false));
