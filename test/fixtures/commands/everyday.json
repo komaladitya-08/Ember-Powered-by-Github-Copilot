@@ -2450,6 +2450,671 @@
    "cmd": "Find-Module Pester",
    "shell": "powershell",
    "context": "win32"
+  },
+  {
+   "cmd": "pnpm dev",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn test --watch",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "npm run test -- --coverage",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "pnpm vitest run test/unit/x.test.ts",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn eslint .",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn tsc --noEmit",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "npm run build -- --mode production",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "./node_modules/.bin/eslint .",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "node_modules/.bin/tsc --noEmit",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "lerna run build",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "nx run app:build",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn build -o dist/out.js",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn build -o dist\\out.js",
+   "shell": "cmd",
+   "context": "win32"
+  },
+  {
+   "cmd": "yarn jest",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn tsc",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn concurrently \"npm run a\" \"npm run b\"",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn nodemon --exec \"node x.js\"",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn turbo run build",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn lerna run build",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn nx build app",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn expo start --ios",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn cap sync ios",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn prisma migrate dev",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn prisma db push",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn playwright test",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn playwright install",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn react-scripts start",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn next build",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn next start",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn vite build",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn vite",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn electron .",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn electron-builder --mac",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn gulp watch",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn storybook dev -p 6006",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn changeset version",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn husky install",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn wait-on http://localhost:3000",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn start-server-and-test start http://localhost:3000 test",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn jest --coverage --ci",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn vitest run",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn tsc -p tsconfig.json",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn eslint src --ext .ts --fix",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn prettier --write .",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn webpack --mode production",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn rollup -c",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn ts-node scripts/gen.ts",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn tsx scripts/gen.ts",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn node scripts/gen.js",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn node --test",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "pnpm node scripts/gen.js",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "pnpm tsx watch src/index.ts",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "pnpm -r build",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "pnpm --filter web dev",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "pnpm --filter web test -- --run",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "pnpm -F web run build",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "pnpm test:unit",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "pnpm lint:fix",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "pnpm typecheck",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "pnpm format",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "pnpm start",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "pnpm watch",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "pnpm serve",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "pnpm export",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "pnpm db:migrate",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "bun dev",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "bun test",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "bun test src/a.test.ts",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "bun run build",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "bun run index.ts",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "bun index.ts",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "bun build ./src/index.ts --outdir dist",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "npm start",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "npm stop",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "npm restart",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "npm t",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "npm run start:dev",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "npm run test:unit -- --watch",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "npm run lint -- --fix",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "npm run build --workspace=web",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "npm run test --workspaces",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "npm test -- -t \"adds two\"",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "npm test -- src/a.test.ts",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "npm run e2e -- --headed",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "npm run format",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "npm run watch",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "npm run make",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "npm run storybook",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "npm run db:migrate",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "npm run typecheck",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn workspace web build",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn workspace web test --watch",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn workspaces foreach run build",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn dev --port 3000",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn dev --host 0.0.0.0",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn build --mode=production",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn test -u",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn test path/to/file.test.ts",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn lint --fix",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn package",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn docs",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn bundle",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn check",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn coverage",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "node node_modules/.bin/jest",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "node node_modules/typescript/bin/tsc --noEmit",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "node node_modules/eslint/bin/eslint.js .",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "node node_modules/vite/bin/vite.js build",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "node node_modules/next/dist/bin/next dev",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "node node_modules/webpack/bin/webpack.js",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "./node_modules/.bin/jest --ci",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "./node_modules/.bin/vitest run",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "./node_modules/.bin/prettier --check .",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn test",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "yarn start",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "yarn lint",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "pnpm dev",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "npm run build -- --mode production",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": ".\\node_modules\\.bin\\eslint .",
+   "shell": "powershell",
+   "context": "win32"
+  },
+  {
+   "cmd": "yarn test",
+   "shell": "cmd",
+   "context": "win32"
+  },
+  {
+   "cmd": "yarn start",
+   "shell": "cmd",
+   "context": "win32"
+  },
+  {
+   "cmd": "yarn build",
+   "shell": "cmd",
+   "context": "win32"
+  },
+  {
+   "cmd": "yarn lint",
+   "shell": "cmd",
+   "context": "win32"
+  },
+  {
+   "cmd": "pnpm dev",
+   "shell": "cmd",
+   "context": "win32"
+  },
+  {
+   "cmd": "npm run build -- --mode production",
+   "shell": "cmd",
+   "context": "win32"
+  },
+  {
+   "cmd": "node_modules\\.bin\\eslint .",
+   "shell": "cmd",
+   "context": "win32"
+  },
+  {
+   "cmd": "yarn test",
+   "shell": "bash",
+   "context": "wsl"
+  },
+  {
+   "cmd": "yarn test --watch",
+   "shell": "zsh",
+   "context": "darwin"
+  },
+  {
+   "cmd": "yarn start",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn format --check",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn watch",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn serve",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn export",
+   "shell": "bash",
+   "context": "linux"
   }
  ]
 }

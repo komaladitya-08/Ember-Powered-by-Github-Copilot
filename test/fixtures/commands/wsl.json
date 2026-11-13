@@ -2392,6 +2392,48 @@
    "rules": [
     "ember.path"
    ]
+  },
+  {
+   "cmd": "yarn cross-env NODE_ENV=x cat ~/.ssh/id_rsa",
+   "verdict": "ask",
+   "rules": [
+    "unknown.program",
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "./node_modules/.bin/cross-env LD_PRELOAD=/tmp/x.so jest",
+   "verdict": "ask",
+   "rules": [
+    "unknown.program",
+    "unclear.assignment"
+   ]
+  },
+  {
+   "cmd": "pnpm cmd.exe /c del x",
+   "verdict": "ask",
+   "rules": [
+    "unclear.cmd-linux-folder",
+    "path.system",
+    "cmd.del"
+   ]
+  },
+  {
+   "cmd": "./node_modules/.bin/cross-env.cmd NODE_ENV=test jest",
+   "verdict": "ask",
+   "rules": [
+    "unclear.cmd-linux-folder",
+    "unknown.program"
+   ]
+  },
+  {
+   "cmd": "yarn cross-env NODE_ENV=prod npm publish",
+   "verdict": "ask",
+   "rules": [
+    "unknown.program",
+    "unclear.hidden-command",
+    "npm.publish"
+   ]
   }
  ]
 }

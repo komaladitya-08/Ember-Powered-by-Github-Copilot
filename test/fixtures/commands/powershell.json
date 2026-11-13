@@ -5981,6 +5981,134 @@
    "rules": [
     "ember.path"
    ]
+  },
+  {
+   "cmd": "yarn cross-env NODE_ENV=x cat ~/.ssh/id_rsa",
+   "verdict": "ask",
+   "rules": [
+    "unclear.cmdlet",
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "yarn node -e \"require('fs').rmSync('C:/Users/ana/Documents',{recursive:true})\"",
+   "verdict": "ask",
+   "rules": [
+    "unclear.inline-code"
+   ]
+  },
+  {
+   "cmd": "pnpm rm -rf $HOME\\Documents",
+   "verdict": "ask",
+   "rules": [
+    "pkg.off-registry",
+    "pkg.language"
+   ]
+  },
+  {
+   "cmd": "npm run build -- $HOME\\.ssh\\id_rsa",
+   "verdict": "ask",
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": ".\\node_modules\\.bin\\cross-env.cmd LD_PRELOAD=x jest",
+   "verdict": "ask",
+   "rules": [
+    "unknown.program",
+    "unclear.assignment"
+   ]
+  },
+  {
+   "cmd": "node node_modules\\cross-env\\src\\bin\\cross-env.js LD_PRELOAD=x jest",
+   "verdict": "ask",
+   "rules": [
+    "unclear.cmdlet"
+   ]
+  },
+  {
+   "cmd": "yarn powershell -Command \"Remove-Item -Recurse C:\\x\"",
+   "verdict": "ask",
+   "rules": [
+    "ps.Remove-Item"
+   ]
+  },
+  {
+   "cmd": "yarn cmd /c \"del /s /q C:\\x\"",
+   "verdict": "ask",
+   "rules": [
+    "cmd.del"
+   ]
+  },
+  {
+   "cmd": "frobnicate $env:APPDATA\\ember\\settings.json",
+   "verdict": "ask",
+   "rules": [
+    "unknown.program"
+   ]
+  },
+  {
+   "cmd": "yarn frobnicate C:\\Users\\ana\\AppData\\Local\\ember\\settings.json",
+   "verdict": "refuse"
+  },
+  {
+   "cmd": "yarn frobnicate $HOME\\.ssh\\id_rsa",
+   "verdict": "ask",
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "yarn build $x",
+   "verdict": "ask",
+   "rules": [
+    "unclear.unresolved-arg"
+   ]
+  },
+  {
+   "cmd": ".\\node_modules\\.bin\\cross-env.cmd NODE_ENV=test jest",
+   "verdict": "ask",
+   "rules": [
+    "unknown.program"
+   ]
+  },
+  {
+   "cmd": ".\\node_modules\\.bin\\cross-env NODE_ENV=test jest",
+   "verdict": "ask",
+   "rules": [
+    "unclear.cmdlet"
+   ]
+  },
+  {
+   "cmd": "yarn cross-env NODE_ENV=prod npm publish",
+   "verdict": "ask",
+   "rules": [
+    "unclear.cmdlet"
+   ]
+  },
+  {
+   "cmd": ".\\node_modules\\.bin\\cross-env LD_PRELOAD=x jest",
+   "verdict": "ask",
+   "rules": [
+    "unclear.cmdlet"
+   ]
+  },
+  {
+   "cmd": "frobnicate.exe X=C:\\Windows\\x.dll",
+   "verdict": "ask",
+   "rules": [
+    "unknown.program"
+   ],
+   "words": "run frobnicate"
+  },
+  {
+   "cmd": "frobnicate.exe C:\\Users\\ana\\proj\\a.txt",
+   "verdict": "announce",
+   "rules": [
+    "unknown.program"
+   ],
+   "words": "run frobnicate"
   }
  ]
 }

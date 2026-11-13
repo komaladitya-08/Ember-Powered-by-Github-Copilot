@@ -367,7 +367,17 @@ Ember stops and asks before a command that:
   develop -c …`, `pixi run …`, `devbox run …` and `direnv exec . …` are read the same way and still ask as programs
   Ember doesn't know. `dotenv`, `dotenvx`, `env-cmd`, `cross-env`, `cross-env-shell` and `with-contenv` ask as programs
   Ember doesn't know whatever they are handed (`cross-env NODE_ENV=test jest` asks): the variables and the files
-  they load can name code the command then runs. What a runner downloads and runs (`npx`, `pnpx`, `bunx`, `uvx`,
+  they load can name code the command then runs. So does the project's own copy, by its path or through `node`
+  (`./node_modules/.bin/cross-env …`, `node node_modules/.bin/cross-env …`), and so does one a package manager runs
+  (`yarn cross-env …`, `pnpm run cross-env …`). A variable one of them sets that changes how commands are found or run
+  (`LD_PRELOAD`, `NODE_OPTIONS`, `CC`, `BASH_ENV`) asks as it does set directly, behind `npx` too, and your words
+  naming the launcher never announce it. What a package manager runs by name is read as well (`yarn x …`, `pnpm run
+  x …`, `bun run x …`, `npm run x -- …`, `npm test -- …`, `corepack yarn …`): a program Ember has a row for (a shell,
+  an interpreter, `npm`, `git`, `rm`) is judged as that program's own line (`yarn sh -c '…'` as `sh -c '…'`), and the
+  words handed to the project's own script or tool are read for a secret's path, Ember's own files, a command handed
+  on, a variable that names code and a first word that says it publishes; its plain options, test names, globs and
+  files in the folder run as before (`yarn test --watch`, `npm run build -- --mode production`). `yarn env` and `npm
+  run env` print the environment and ask. What a runner downloads and runs (`npx`, `pnpx`, `bunx`, `uvx`,
   `pipx run`, `npm exec`, `pnpm dlx`, `yarn dlx`, `deno run` with an address or `npm:`, `nix run`) asks as before, and its command line is judged as well, so
   `npx -y sometool ~/.ssh/id_rsa` also says it reads a key and `npx pm2 start app.js` that it keeps running
   (`npm exec pm2 -- start app.js` and `pm2 --silent start app.js` too: pm2 and forever ask this way for every verb
