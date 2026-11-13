@@ -266,7 +266,10 @@ Ember stops and asks before a command that:
   words for the task ask to run the program by name (or the tool and its command), with the words after it that say
   what it is to do ("run dropdb on the scratch database" for `dropdb scratch`, "run rails db:migrate"), it is announced
   instead, as in §2.5, and the announcement names them; a question about the program or a mention of it asks for
-  nothing. What else the command does is judged as before;
+  nothing. What else the command does is judged as before, and so is the command such a tool runs for you: what
+  follows `stack exec --`, `pyenv exec`, `rustup run stable` or `entr`, and the shell text in `cargo watch -s`,
+  `nodemon --exec` and `hyperfine '…'` are judged as commands of their own, and one Ember can't read (a tmux shell
+  command, `watchexec` without `--`) asks, whatever your words say;
 - **Ember can't read with certainty**: `eval`, encoded commands (`powershell -EncodedCommand`, `base64 -d | sh`),
   aliases it can't see, unusual syntax, interactive programs such as `vim`, `less`, `top` or `python` with no
   script ("This opens an interactive program; you'd have to use it yourself in the command window."), a job count

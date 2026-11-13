@@ -1636,14 +1636,17 @@ const BEFORE_TOOL = new Set(["the", "a", "an", "our", "my", "this", "that", "qui
  * request is done with ("drop the scratch database with dropdb"), and every other word of `name` (the tool's verb or
  * its first operands: "cargo watch", "rails db:drop", "dropdb scratch") is whole in the same request. A question ("what
  * does dropdb do?"), a mention ("the docs mention dropdb", "explain dropdb") and what the user will do themselves ("I
- * want to run dropdb myself") ask nothing. `asked` is requestStarts' clauses.
+ * want to run dropdb myself") ask nothing. `asked` is requestStarts' clauses; the words of `others`, the command's other
+ * unknown programs, may stand between the verb and the tool ("run stack exec hpack" for `stack exec -- hpack`).
  */
-function runAsked(name: string, asked: readonly string[][]): boolean {
+function runAsked(name: string, asked: readonly string[][], others: readonly string[] = []): boolean {
   const [tool, ...rest] = name.split(" ");
   const parts = userWordList(tool);
   if (parts.length === 0 || parts.join("").length < 3) return false;
+  // The words of the other unknown programs the command runs stand before it too ("run stack exec hpack").
+  const skip = new Set(others.flatMap(o => userWordList(o)));
   const at = (c: readonly string[], k: number): boolean => {
-    while (BEFORE_TOOL.has(c[k] ?? "")) k++;
+    while (BEFORE_TOOL.has(c[k] ?? "") || skip.has(c[k] ?? "")) k++;
     return parts.every((p, j) => c[k + j] === p);
   };
   return asked.some(c => {
@@ -1672,7 +1675,7 @@ export function matchIntent(cls: Classification, userWords: string, ctx: Classif
   if (unknown.length > 0) {
     const asked = requestStarts(affirmed(userWords).normalize("NFKC"));
     const names = [...new Set(unknown.map(f => f.program.replace(/\.(exe|com|bat|cmd)(?= |$)/i, "")))];
-    if (!names.every(n => runAsked(n, asked))) return null;
+    if (!names.every(n => runAsked(n, asked, names.filter(o => o !== n)))) return null;
     if (holdsBack(userWords, [...RUN_VERBS, ...names.map(n => n.split(" ")[0])], false)) return null;
     const announce = `Running ${joinList(names)}, as you asked.`;
     const rest = F.filter(f => f.cls !== "unknown");

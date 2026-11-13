@@ -3083,6 +3083,7 @@ class Engine extends Classifier {
     const from = this.findings.length;
     if (n) { this.runRow(n, h); this.verbGuard(h, from); }
     else { unknownProgram(h); generic(h, true); }
+    toolPayload(h);
     // A deleter that had no row before commands-remote-c8-2 keeps an unknown program's `-o` (commands-remote-x8-5).
     optionPaths(h, !n || NEW_DELETERS.has(key));
   }
@@ -3254,6 +3255,7 @@ class Engine extends Classifier {
     const from = this.findings.length;
     if (n) { this.runRow(n, inner); this.verbGuard(inner, from); }
     else { unknownProgram(inner); generic(inner, true); }
+    toolPayload(inner);
     optionPaths(inner, !n || NEW_DELETERS.has(key));
     this.unnamedWrites(key, inner.args, sc);
     this.afterArgs(inner.args);
@@ -3901,6 +3903,121 @@ function withOperandVerb(h: H): string {
     if (words.length === 2) break;
   }
   return [h.prog, ...words].join(" ");
+}
+
+/**
+ * Tools whose verb runs the command after it in an environment (commands-closed-x9-2): the key's verb, and how many
+ * words after the verb (and its options) say the environment (`nvm exec 20 x`, `rustup run stable x`).
+ */
+const EXEC_VERBS: Readonly<Record<string, readonly [string, number]>> = {
+  stack: ["exec", 0], cabal: ["exec", 0], pyenv: ["exec", 0], rbenv: ["exec", 0], nodenv: ["exec", 0], asdf: ["exec", 0], nvm: ["exec", 1],
+  fnm: ["exec", 0], volta: ["run", 0], opam: ["exec", 0], rustup: ["run", 1], goenv: ["exec", 0], jenv: ["exec", 0], plenv: ["exec", 0],
+};
+/** The value options of those verbs (`fnm exec --using 18`, `volta run --node 18`, `stack exec --package x`). */
+const EXEC_VALUES = new Set(["--using", "--node", "--npm", "--pnpm", "--yarn", "--package", "--cwd", "--switch", "--stack-yaml", "--resolver", "--work-dir", "--project-file", "--builddir"]);
+/** tmux verbs that run a shell command they are given (`tmux run-shell 'rm -rf ~'`, `tmux new-window x`). */
+const TMUX_RUNS = new Set(["run-shell", "run", "if-shell", "if", "new-window", "neww", "new-session", "new", "split-window", "splitw", "respawn-pane", "respawnp", "respawn-window", "respawnw", "pipe-pane", "pipep", "display-popup", "popup"]);
+
+/**
+ * The command a tool runs for its user, read as a command of its own (commands-closed-x9-2): an exec-shaped verb's
+ * payload (`stack exec -- x`, `pyenv exec x`, `rustup run stable x`), the shell text in `cargo watch -s`/`-x`,
+ * `nodemon --exec`, `hyperfine`'s commands and its `--prepare`/`--setup`/`--cleanup`/`--conclude`, and `entr`'s
+ * utility. Their own words naming the tool never announce what those payloads do: the payload is judged as any
+ * command. One Ember can't read (tmux's shell commands, `watchexec` without `--`, a word it can't see) asks
+ * (`unclear.hidden-command`), which no words announce.
+ */
+function toolPayload(h: H): void {
+  if (h.e.readsAsMain) return;
+  const args = h.args;
+  const hidden = (): void => h.e.unclear("unclear.hidden-command", `Ember can't tell what ${h.prog} runs.`);
+  const shellText = (a: Arg | undefined, wrapper: string): void => {
+    if (!a) return;
+    if (a.v === null) hidden();
+    else h.e.nested(a.v, "sh", h.sc, wrapper);
+  };
+  const ex = EXEC_VERBS[h.key];
+  if (ex) {
+    const first = firstOperand(args);
+    if (first.v !== ex[0]) return;
+    let k = first.at + 1;
+    let env = ex[1];
+    for (; k < args.length; k++) {
+      const v = args[k].v;
+      if (v === null) break;
+      if (v === "--") { k++; break; }
+      if (v.startsWith("-")) { if (EXEC_VALUES.has(v)) k++; continue; }
+      if (env > 0) { env--; continue; }
+      break;
+    }
+    const words = args.slice(k);
+    if (words.some(a => a.v === null)) hidden();
+    else h.e.payload(words, h.sc, `${h.key} ${ex[0]}`);
+    return;
+  }
+  switch (h.key) {
+    case "cargo": {
+      const first = firstOperand(args);
+      if (first.v !== "watch") return;
+      for (let k = first.at + 1; k < args.length; k++) {
+        const v = args[k].v;
+        if (v === null) { hidden(); return; }
+        const m = /^(-s|--shell|-x|--exec)(?:=(.*))?$/.exec(v);
+        if (!m) continue;
+        const text = m[2] !== undefined ? { ...args[k], v: m[2] } : args[++k];
+        if (!text) return;
+        if (/^-x|^--exec/.test(m[1])) { if (text.v === null) hidden(); else h.e.nested(`cargo ${text.v}`, "sh", h.sc, "cargo watch"); }
+        else shellText(text, "cargo watch");
+      }
+      return;
+    }
+    case "nodemon": {
+      for (let k = 0; k < args.length; k++) {
+        const v = args[k].v;
+        if (v === null) { hidden(); return; }
+        const m = /^(-x|--exec)(?:=(.*))?$/.exec(v);
+        if (m) shellText(m[2] !== undefined ? { ...args[k], v: m[2] } : args[++k], "nodemon");
+      }
+      return;
+    }
+    case "hyperfine": {
+      // Every operand is a command, and so is the value of these options; other options' values are words.
+      const commands = /^(-p|--prepare|-s|--setup|-c|--cleanup|-C|--conclude)$/;
+      const values: Readonly<Record<string, number>> = { "-r": 1, "--runs": 1, "-w": 1, "--warmup": 1, "-m": 1, "--min-runs": 1, "-M": 1, "--max-runs": 1, "-S": 1, "--shell": 1, "-n": 1, "--command-name": 1, "-u": 1, "--time-unit": 1, "--style": 1, "--sort": 1, "--output": 1, "--input": 1, "--export-json": 1, "--export-csv": 1, "--export-markdown": 1, "--export-asciidoc": 1, "--export-orgmode": 1, "-P": 3, "--parameter-scan": 3, "-L": 2, "--parameter-list": 2, "-D": 1, "--parameter-step-size": 1 };
+      for (let k = 0; k < args.length; k++) {
+        const v = args[k].v;
+        if (v === null) { hidden(); return; }
+        if (v.startsWith("-") && v !== "-") {
+          const eq = v.indexOf("=");
+          const name = eq < 0 ? v : v.slice(0, eq);
+          if (commands.test(name)) { shellText(eq < 0 ? args[++k] : { ...args[k], v: v.slice(eq + 1) }, "hyperfine"); continue; }
+          if (eq < 0) k += values[name] ?? 0;
+          continue;
+        }
+        shellText(args[k], "hyperfine");
+      }
+      return;
+    }
+    case "entr": {
+      const at = args.findIndex(a => a.v === null || !/^-[acdnprsz]+$/.test(a.v));
+      if (at < 0) return;
+      const shell = args.slice(0, at).some(a => /s/.test(a.v ?? ""));
+      if (shell) shellText(args[at], "entr");
+      else if (args.slice(at).some(a => a.v === null)) hidden();
+      else h.e.payload(args.slice(at), h.sc, "entr");
+      return;
+    }
+    case "watchexec": {
+      const dd = args.findIndex(a => a.v === "--");
+      if (dd >= 0 && !args.slice(dd + 1).some(a => a.v === null)) h.e.payload(args.slice(dd + 1), h.sc, "watchexec");
+      else if (args.some(a => a.v === null || !a.v.startsWith("-"))) hidden();
+      return;
+    }
+    case "tmux": {
+      const first = firstOperand(args);
+      if (first.v !== null && TMUX_RUNS.has(first.v) && args.slice(first.at + 1).some(a => a.v === null || !a.v.startsWith("-"))) hidden();
+      return;
+    }
+  }
 }
 
 /** TeX engines, whose shell escape (off by default) runs the commands a document names. */
