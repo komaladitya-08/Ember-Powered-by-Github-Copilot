@@ -488,4 +488,23 @@ describe("an Azure Key Vault secret printed with its tags (commands-classes-x9-7
       expect(Date.now() - t).toBeLessThan(2000);
     }
   });
+
+  it("takes no longer on a run of secret ids than on plain output of the same size (merge review integ-x-4)", () => {
+    // Each id's look for its value once stepped over the next 4,000 characters, ids included: 1.4 MB of ids took
+    // 0.7 s against 0.16 s for plain text, on Ember's main thread while Stop waits. Best of three of each, so a busy
+    // machine slows both alike.
+    const id = '"id": "https://v.vault.azure.net/secrets/a/1", ';
+    const ids = id.repeat(30_000);
+    const plain = ("p".repeat(id.length - 1) + "\n").repeat(30_000);
+    const best = (text: string): number => {
+      let ms = Infinity;
+      for (let i = 0; i < 3; i++) {
+        const t0 = performance.now();
+        redactSecrets(text);
+        ms = Math.min(ms, performance.now() - t0);
+      }
+      return ms;
+    };
+    expect(best(ids)).toBeLessThan(2 * best(plain) + 50);
+  });
 });

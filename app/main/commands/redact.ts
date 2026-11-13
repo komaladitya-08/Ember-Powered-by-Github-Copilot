@@ -80,8 +80,11 @@ const VALUE_PATTERNS: readonly RegExp[] = [
   /(Key Content[ \t]*:[ \t]*)\S+/g,
   // Between the id and the value stand the secret's other fields, its tags among them, which are an object of their
   // own (`"tags": {}`, `{"env": "prod"}`): each is stepped over whole, so a tag named "value" is never taken for the
-  // secret's, and the value ends at its closing quote, not at one written `\"` inside it (commands-classes-x9-7).
-  /(vault\.azure\.net\/secrets\/[^"]{0,200}"(?:[^{}]|\{[^{}]{0,4000}\}){0,4000}?"value"\s{0,8}:\s{0,8}")(?:[^"\\]|\\.)*(?=")/g,
+  // secret's, and the value ends at its closing quote, not at one written `\"` inside it (commands-classes-x9-7). The
+  // run never crosses the next secret's id: that id's own match takes the value from there, and so each character is
+  // stepped over for one id, not for every id in the 4,000 before it (a run of ids took 0.7 s on 1.4 MB, merge
+  // review integ-x-4).
+  /(vault\.azure\.net\/secrets\/[^"]{0,200}"(?:(?!vault\.azure\.net\/secrets\/)[^{}]|\{[^{}]{0,4000}\}){0,4000}?"value"\s{0,8}:\s{0,8}")(?:[^"\\]|\\.)*(?=")/g,
   // A Docker config's `"auth": "<base64 of user:password>"`, and a .netrc entry written on one line
   // (`machine host login bob password …`); a password on a line of its own is not told from prose (safety-privacy-r7-3).
   // An entry is told by its login, or with none by a dotted host: "the default password is admin" and "machine learning
