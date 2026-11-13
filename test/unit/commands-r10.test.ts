@@ -34,9 +34,11 @@ describe("python's own options bundled before -m (commands-remote-r10-1)", () =>
   });
 
   it("still runs everyday modules written the same way", () => {
-    for (const cmd of ["python3 -Im pytest", "python3 -Bm pytest -q", "python3 -Im json.tool a.json", "python3 -um unittest", "python3 -Im pip list"]) {
+    for (const cmd of ["python3 -Im pytest", "python3 -Bm pytest -q", "python3 -Im json.tool a.json", "python3 -um unittest"]) {
       expect(decide(cmd).verdict, cmd).toBe("run");
     }
+    // pip behind a cluster still asks as main read it (every word pip's: "-Im" an option it doesn't know).
+    expect(decide("python3 -Im pip list").rules).toContain("unclear.global-option");
   });
 });
 
@@ -116,6 +118,9 @@ describe("downloads saved by other routes and tools (commands-remote-r10-5)", ()
       ["podman cp c:/a.py b.py", `${P}/b.py`], ["kubectl cp ns/pod:/a.py b.py", `${P}/b.py`],
     ];
     for (const [cmd, where] of cases) expect(downloads(cmd).some(d => d === where || d.startsWith(`${where}/`)), `${cmd}: ${downloads(cmd).join(", ")}`).toBe(true);
+    // A copy into a one-letter container still asks as a copy over a local `c:/`, as on main.
+    expect(decide("docker cp .env.example c:/").rules).toContain("posix.cp");
+    expect(downloads("docker cp a.py c:/a.py")).toEqual([]);
     // A fetch tool whose saved name Ember can't tell marks the folder it saves into.
     for (const cmd of ["npm pack x", "yt-dlp https://x.example/v", "gdown https://x.example/f", "pnpm pack x", "s3cmd sync s3://b/x/ ."]) {
       expect(downloads(cmd).length, cmd).toBeGreaterThan(0);
@@ -131,7 +136,7 @@ describe("downloads saved by other routes and tools (commands-remote-r10-5)", ()
   });
 
   it("marks nothing for a fetch tool that only lists or reads", () => {
-    for (const cmd of ["s3cmd ls s3://b", "s3cmd info s3://b/a.py", "b2 ls b", "yt-dlp -F https://x.example/v", "npm pack --dry-run", "npm pack", "npm pack .", "pnpm pack", "docker cp a.py c:/a.py"]) {
+    for (const cmd of ["s3cmd ls s3://b", "s3cmd info s3://b/a.py", "b2 ls b", "yt-dlp -F https://x.example/v", "npm pack --dry-run", "npm pack", "npm pack .", "pnpm pack"]) {
       expect(downloads(cmd), cmd).toEqual([]);
     }
   });

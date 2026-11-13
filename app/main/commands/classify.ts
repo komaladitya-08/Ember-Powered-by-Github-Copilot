@@ -6926,6 +6926,11 @@ reg(NATIVE, Object.keys(INTERPRETERS).filter(k => !["awk", "gawk", "mawk", "nawk
   if (mod !== undefined && /^python|^pypy|^py$/.test(h.key)) {
     if (mod === "pip" || mod === "pip3") {
       pip({ ...h, key: "pip", args: afterModule(h, p) ?? [] });
+      // As main read it too where that differs (`-Im pip`: every word, its cluster included, was pip's), so no way of
+      // writing it decides less safely than it did there (commands-remote-r10-1).
+      const at = h.args.findIndex(a => a.v === "-m" || a.v === `-m${mod}`);
+      const was = h.args.slice(at + (h.args[at]?.v === "-m" ? 2 : 1));
+      if (at < 0) pip({ ...h, key: "pip", args: was });
       return;
     }
     if (mod === "timeit" || mod === "code" || mod === "pdb") { h.e.unclear("unclear.inline-code", "It runs code given on the command line."); return; }
@@ -8134,12 +8139,14 @@ reg(NATIVE, ["docker", "podman", "nerdctl", "docker-compose", "podman-compose"],
   if (v === "cp") {
     const ops = rest.filter(a => !isOption(a));
     const [src, dst] = ops;
-    // A one-letter container is a drive only on Windows (`c:/a.py` is container c's file elsewhere: commands-remote-r10-5).
-    const remote = (a: Arg | undefined): boolean => !!a?.v && /^[A-Za-z0-9_.-]+:/.test(a.v) && !(h.sc.path.flavour === "win32" && /^[A-Za-z]:[\\/]/.test(a.v));
+    const remote = (a: Arg | undefined): boolean => !!a?.v && /^[A-Za-z0-9_.-]+:/.test(a.v) && !/^[A-Za-z]:[\\/]/.test(a.v);
+    // A one-letter container is a drive only on Windows: `c:/a.py` elsewhere is container c's file, so what it copies
+    // out is a download too (commands-remote-r10-5). Only the mark: the copy is judged as before, as a local path.
+    const container = (a: Arg | undefined): boolean => remote(a) || (!!a?.v && h.sc.path.flavour !== "win32" && /^[A-Za-z]:[\\/]/.test(a.v));
     if (src && !remote(src)) h.e.usePath(src, "readTree", h.sc);
     if (dst && !remote(dst)) { const obj = h.e.usePath(dst, "write", h.sc); if (obj.abs) h.e.add("destroy", "posix.cp", `Replaces ${obj.text} if it exists.`, { objects: [obj], ifExists: obj.abs }); }
     // A file copied out of a container is a download where it lands (commands-remote-r7-3).
-    if (dst && !remote(dst) && src && (remote(src) || src.v === null)) { if (dst.v) h.e.download(dst.v, h.sc); else h.e.markUnnamed(null, h.sc); }
+    if (dst && !remote(dst) && src && (container(src) || src.v === null)) { if (dst.v) h.e.download(dst.v, h.sc); else h.e.markUnnamed(null, h.sc); }
     return;
   }
   if (v === "save" || v === "export") { for (const o of values(parseOpts(rest, { shortValue: "o", longValue: ["output"] }), "o", "output")) if (o) { const obj = h.e.usePath(lit(o), "write", h.sc); if (obj.abs) h.e.add("destroy", "redirect.overwrite", `Overwrites ${obj.text} if it exists.`, { objects: [obj], ifExists: obj.abs }); } return; }
