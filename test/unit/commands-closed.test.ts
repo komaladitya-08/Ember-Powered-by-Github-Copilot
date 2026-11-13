@@ -10,6 +10,8 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { runCase, type ContextName } from "../fixtures/commands/corpus";
 import type { ShellId } from "../../app/main/commands/types";
+import { classifyCommand } from "../../app/main/commands/classify";
+import { judgeScripts, newTaskWrites } from "../../app/main/commands/scripts";
 
 const decide = (cmd: string, o: { words?: string; shell?: ShellId; context?: ContextName; downloaded?: string[] } = {}) =>
   runCase({ cmd, verdict: "run", ...(o.words ? { words: o.words } : {}), ...(o.downloaded ? { downloaded: o.downloaded } : {}) },
@@ -100,6 +102,33 @@ describe("the task's own folder for a program given by a path (commands-closed-x
     }
     // The project's own scripts, also after a cd inside it, run as before.
     for (const cmd of ["./build.sh", "cd src && ./gen.sh", "bin/tool", "cd packages/app && node_modules/.bin/tsc"]) expect(decide(cmd).verdict, cmd).toBe("run");
+  });
+});
+
+describe("a script of the task's own folder (commands-closed-x9-4)", () => {
+  const ember = { paths: ["/home/ana/.config/ember"], pids: [] as number[], names: /(?!)/ };
+  /** What a command's scripts add when the script holds `text`, the task folder being /home/ana/proj. */
+  const inScript = async (cmd: string, text: string, downloaded: string[] = [], wrote: string[] = []) => {
+    const written = newTaskWrites();
+    for (const p of wrote) written.paths.add(p);
+    const ctx = { os: "linux" as const, home: "/home/ana", cwd: "/home/ana/proj", downloaded: new Set(downloaded), ember };
+    const cls = classifyCommand(cmd, "bash", ctx);
+    const io = { read: async () => text, inspect: async (ps: string[]) => ps.map(p => ({ exists: true, real: p })) };
+    const got = await judgeScripts(cls, io, classifyCommand, { os: "linux", home: "/home/ana", ember, wsl: undefined, downloaded: new Set(downloaded), written: wrote.length ? written : null, paths: new Map(), isOver: () => false });
+    return got.findings.map(f => f.rule);
+  };
+
+  it("runs the project's build script that calls a tool Ember doesn't know, as before the closed default (commands-closed-x9-4)", async () => {
+    for (const tool of ["hugo --minify", "sphinx-build docs out", "jekyll build", "wasm-pack build", "sqlc generate", "prisma generate"]) {
+      for (const cmd of ["./build.sh", "bash build.sh", "sh scripts/build.sh"]) expect(await inScript(cmd, `#!/bin/sh\n${tool}\n`), `${cmd}: ${tool}`).toEqual([]);
+    }
+  });
+
+  it("still asks for what else the script does, for one outside the task's folder and for one the task wrote or downloaded (commands-closed-x9-4)", async () => {
+    expect(await inScript("./build.sh", "#!/bin/sh\nrm -rf ~/Documents\n")).toContain("posix.rm");
+    expect(await inScript("bash /tmp/build.sh", "#!/bin/sh\nhugo --minify\n")).toContain("unknown.program");
+    expect(await inScript("bash build.sh", "#!/bin/sh\nhugo --minify\n", [], ["/home/ana/proj/build.sh"])).toContain("unknown.program");
+    expect(await inScript("bash build.sh", "#!/bin/sh\nhugo --minify\n", ["/home/ana/proj/build.sh"])).toContain("escape.run-downloaded");
   });
 });
 

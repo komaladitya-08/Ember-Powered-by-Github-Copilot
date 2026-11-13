@@ -1122,8 +1122,9 @@ describe("variable names Ember can't see (name-taking built-ins, D4.3 g)", () =>
 });
 
 describe("shell scripts to read (L8, the lead's ruling)", () => {
+  // Whether a script is the task folder's own (`project`) is commands-closed.test.ts's (commands-closed-x9-4).
   const scripts = (cmd: string, shell: "bash" | "zsh" | "sh" | "powershell" | "cmd", ctx: "linux" | "win32") =>
-    (classifyCommand(cmd, shell, contextOf(ctx)) as ClassificationExtra).scripts;
+    (classifyCommand(cmd, shell, contextOf(ctx)) as ClassificationExtra).scripts?.map(({ project: _project, ...r }) => r);
 
   it("records the shell scripts a command runs by path, with how to read each and the folder each runs in", () => {
     const P = "/home/ana/proj";
@@ -1140,7 +1141,7 @@ describe("shell scripts to read (L8, the lead's ruling)", () => {
     // It runs in the command's folder, not beside the script (its relative paths resolve there). A `..` in its name is
     // walked by the kernel through links, so it is read by the name as written once the target says where that leads.
     const back = classifyCommand("cd sub && sh ../tools/t.sh", "bash", { ...contextOf("linux"), real: new Map([[`${P}/sub/../tools/t.sh`, `${P}/tools/t.sh`]]) });
-    expect((back as ClassificationExtra).scripts).toEqual([{ path: `${P}/tools/t.sh`, as: "sh", cwd: `${P}/sub`, open: `${P}/sub/../tools/t.sh` }]);
+    expect((back as ClassificationExtra).scripts).toEqual([{ path: `${P}/tools/t.sh`, as: "sh", cwd: `${P}/sub`, open: `${P}/sub/../tools/t.sh`, project: true }]);
     // Through a wrapper, and from stdin.
     for (const cmd of ["env FOO=1 ./x.sh", "exec ./x.sh", "nice ./x.sh", "timeout 5 ./x.sh", "command ./x.sh"]) {
       expect(scripts(cmd, "bash", "linux"), cmd).toEqual([{ path: `${P}/x.sh`, as: "shebang", cwd: P }]);
@@ -1228,13 +1229,13 @@ describe("`..` in a path, walked by the kernel through links (§3.6, L25)", () =
   });
 
   it("keeps the shell's own `cd ..` lexical, and PowerShell's and cmd's `..` (they remove it themselves)", () => {
-    expect(extra("cd sub/.. && sh t.sh").scripts).toEqual([{ path: `${P}/t.sh`, as: "sh", cwd: P }]);
+    expect(extra("cd sub/.. && sh t.sh").scripts).toEqual([{ path: `${P}/t.sh`, as: "sh", cwd: P, project: true }]);
     const W = "C:\\Users\\ana\\proj";
     const ps = classifyCommand("& .\\sub\\..\\t.ps1", "powershell", contextOf("win32")) as ClassificationExtra;
-    expect(ps.scripts).toEqual([{ path: `${W}\\t.ps1`, as: "powershell", cwd: W }]);
+    expect(ps.scripts).toEqual([{ path: `${W}\\t.ps1`, as: "powershell", cwd: W, project: true }]);
     expect(ps.findings.map(f => f.rule)).not.toContain("unclear.script-path");
     const cmd = classifyCommand("sub\\..\\build.bat", "cmd", contextOf("win32")) as ClassificationExtra;
-    expect(cmd.scripts).toEqual([{ path: `${W}\\build.bat`, as: "cmd", cwd: W }]);
+    expect(cmd.scripts).toEqual([{ path: `${W}\\build.bat`, as: "cmd", cwd: W, project: true }]);
   });
 
   it("judges every path with `..` by where it really leads: a secret, Ember's own, a download", () => {

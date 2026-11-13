@@ -181,6 +181,11 @@ export interface ScriptRef {
    * writes and downloads are compared with, beside `path`. Absent: not known (no `..`, no link, or not asked yet).
    */
   real?: string;
+  /**
+   * The script is in the task's own folder (ownFolder, its real path too when known): an unknown program inside it is
+   * the project's tooling and is judged as before the closed default, as the script itself is (commands-closed-x9-4).
+   */
+  project?: true;
 }
 
 /** The administrator's policy key (HKLM\SOFTWARE\Policies\Ember, in any spelling of the hive), refused (D4.5). */
@@ -1223,7 +1228,9 @@ class Classifier {
     const known = real !== undefined && real !== abs ? real : undefined;
     if (this.scripts.some(r => r.path === abs && r.as === as && r.cwd === cwd && r.open === (open ?? undefined))) return;
     if (this.scripts.length >= MAX_SCRIPTS) { this.unclear("unclear.scripts", "It runs more scripts than Ember reads first."); return; }
-    const ref: ScriptRef = { path: abs, as, cwd, ...(open !== null ? { open } : {}), ...(known !== undefined ? { real: known } : {}) };
+    const start = this.ctx.cwd || null;
+    const project = ownFolder(a.v, sc, start) && (known === undefined || (start !== null && isUnder(known, start, sc.path)));
+    const ref: ScriptRef = { path: abs, as, cwd, ...(open !== null ? { open } : {}), ...(known !== undefined ? { real: known } : {}), ...(project ? { project: true as const } : {}) };
     this.scripts.push(ref);
     if (candidate) this.candidates.set(ref, { written: this.written.length, unnamed: this.writesUnnamed });
     if (savedHere) this.savedHere.add(ref);
