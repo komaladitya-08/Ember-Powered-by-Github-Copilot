@@ -5258,6 +5258,69 @@ describe("keeping the recent conversation across restarts (opt-in)", () => {
     await second.host.stop();
   });
 
+  it("keeps an answer whose words Home showed when Ember quits before the answer's own message comes, once (CI el8 conversation-history-live)", async () => {
+    const dir = tmpDir();
+    const first = kept(dir);
+    await first.host.start(TOKEN, "stored");
+    await first.host.ask("Please repeat the marker.");
+    conductorSession().emit("assistant.message_delta", { messageId: "m", deltaContent: "Noted: answer-history-marker." });
+    // Quit in the gap: Home shows the words, the presenter hasn't recorded the answer yet.
+    await first.host.stop();
+    const saved = JSON.parse(fs.readFileSync(first.file, "utf8")).entries as { who: string; text: string; stopped?: true }[];
+    expect(saved.map(e => [e.who, e.text])).toEqual([["you", "Please repeat the marker."], ["ember", "Noted: answer-history-marker."]]);
+    // Ember didn't see it finish: kept as an answer stopped short, as Stop keeps one, so it is never "the last answer".
+    expect(saved[1].stopped).toBe(true);
+    expect(fs.readFileSync(first.file, "utf8")).not.toMatch(/answerId|heardId/);
+
+    // The answer's own message arrives while Ember is quitting: still one line, no longer marked stopped short.
+    const second = kept(fs.mkdtempSync(path.join(os.tmpdir(), "ember-keep-")));
+    await second.host.start(TOKEN, "stored");
+    await second.host.ask("Again?");
+    const session = conductorSession();
+    session.emit("assistant.message_delta", { messageId: "n", deltaContent: "Yes, again." });
+    const quitting = second.host.stop();
+    session.emit("assistant.message", { messageId: "n", content: "Yes, again." });
+    session.emit("session.idle", {});
+    await quitting;
+    const lines = JSON.parse(fs.readFileSync(second.file, "utf8")).entries as { who: string; text: string; stopped?: true }[];
+    expect(lines.map(e => [e.who, e.text])).toEqual([["you", "Again?"], ["ember", "Yes, again."]]);
+    expect(lines[1].stopped).toBeUndefined();
+  });
+
+  it("at quit keeps only the words Home showed, never a later message's further words, and nothing after Forget everything or with the switch off", async () => {
+    const dir = tmpDir();
+    const k = kept(dir);
+    await k.host.start(TOKEN, "stored");
+    await k.host.ask("Tell me more");
+    const session = conductorSession();
+    session.emit("assistant.message_delta", { messageId: "m", deltaContent: "The first part" });
+    const quitting = k.host.stop();
+    session.emit("assistant.message_delta", { messageId: "m", deltaContent: " and words never shown" });
+    session.emit("assistant.message", { messageId: "m", content: "The first part and words never shown" });
+    session.emit("session.idle", {});
+    await quitting;
+    const lines = JSON.parse(fs.readFileSync(k.file, "utf8")).entries as { who: string; text: string; stopped?: true }[];
+    expect(lines.map(e => [e.who, e.text, e.stopped])).toEqual([["you", "Tell me more", undefined], ["ember", "The first part", true]]);
+
+    // Forget everything mid-answer: the shown words are not saved at quit either.
+    const f = kept(tmpDir());
+    await f.host.start(TOKEN, "stored");
+    await f.host.ask("secret-ish question");
+    await f.store.flush();
+    conductorSession().emit("assistant.message_delta", { messageId: "x", deltaContent: "forgotten-answer-marker" });
+    f.host.forgetHistory();
+    await f.host.stop();
+    expect(fs.existsSync(f.file) ? fs.readFileSync(f.file, "utf8") : "").not.toContain("forgotten-answer-marker");
+
+    // The switch off: nothing is written at quit.
+    const off = kept(tmpDir(), { on: () => false });
+    await off.host.start(TOKEN, "stored");
+    await off.host.ask("hello");
+    conductorSession().emit("assistant.message_delta", { messageId: "y", deltaContent: "hi there" });
+    await off.host.stop();
+    expect(fs.existsSync(off.file)).toBe(false);
+  });
+
   it("marks the lines it brought back as restored for Home, and none said since (home-8)", async () => {
     const dir = tmpDir();
     const first = kept(dir);
