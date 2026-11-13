@@ -682,7 +682,7 @@ describe("the command and prompt windows' factories (§3.10, §8.6)", () => {
     for (const os of ["linux", "win32", "darwin"] as const) {
       createPromptWindow(os);
       const { options, calls } = made();
-      expect(options).toMatchObject({ width: 440, height: 300, resizable: false, title: "Ember", show: false, alwaysOnTop: true, skipTaskbar: false, webPreferences: secure });
+      expect(options).toMatchObject({ width: 440, height: 300, resizable: false, title: "Ember needs you", show: false, alwaysOnTop: true, skipTaskbar: false, webPreferences: secure });
       expect(options).not.toHaveProperty("focusable");
       expect(String((options.webPreferences as { preload: string }).preload).split(path.sep).slice(-2)).toEqual(["preload", "prompt.cjs"]);
       expect(calls.find(c => c[0] === "loadURL")?.[1]).toMatch(/^file:\/\/.*\/renderer\/prompt\/index\.html$/);
