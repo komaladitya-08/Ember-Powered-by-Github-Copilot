@@ -119,6 +119,16 @@ export function modeInForce(s: ApprovalsSetting | undefined, admin?: AutonomyAdm
   return sealing && modeRank(mode) > modeRank("interactive") ? "interactive" : mode;
 }
 
+/**
+ * Is Ember below Interactive only for want of its card (not the organisation's, not the hold)? An existing user is, after
+ * the update that brought the modes: the old switches carry no agreement (settings.ts migrateApprovals), so they are
+ * asked more than before until they agree to Interactive (modes-x9p-3).
+ */
+export const belowInteractiveForCard = (s: ApprovalsSetting | undefined, admin: AutonomyAdmin | null | undefined): boolean =>
+  !held && autonomyPermitted(admin) && !modeAgreed(s, "interactive") && modeInForce(s, admin) === "asking";
+/** Said once a run with the first question Interactive would have announced instead, while belowInteractiveForCard. */
+export const BELOW_INTERACTIVE_HINT = "(I ask before ordinary steps like this until you agree to Interactive in Settings, under Apps & privacy. Then I tell you about them as I go instead.)";
+
 /** What a state gives the machinery that decides: the policy engine's inputs keep their shape. */
 export interface ApprovalInputs {
   /** PolicyInputs.autonomy and the command flow's: every scope, or null below Interactive. */

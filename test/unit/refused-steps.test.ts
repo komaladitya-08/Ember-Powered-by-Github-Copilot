@@ -9,7 +9,11 @@
 
 import { afterEach, describe, expect, it } from "vitest";
 import { PolicyEngine, type ActionKind } from "../../app/main/policy/policy";
-import { ALL_SCOPES, type AutonomyScopes } from "../../app/main/policy/autonomy";
+import { ALL_SCOPES, BELOW_INTERACTIVE_HINT, belowInteractiveForCard, type AutonomyScopes } from "../../app/main/policy/autonomy";
+import { DEFAULT_SETTINGS } from "../../app/main/settings";
+import { AdminPolicySchema } from "../../app/main/admin";
+import { modeCardVersion } from "../../app/shared/approvals";
+import { readFileSync } from "node:fs";
 import { Refusals, commandActs, riskNames, sameCommand, stepNames, type CommandAsked } from "../../app/main/policy/refusals";
 import { Worker, leftUndone, type WorkerDeps } from "../../app/main/agent/worker";
 import { commandSha256, runCommandTool, setCommandJudge, type CommandFlowContext } from "../../app/main/commands/flow";
@@ -164,7 +168,7 @@ const STILL_UNANSWERED = "Ember already asked the user about this step and the q
  * A worker on a window with Bold and Delete, in Interactive (every scope on) unless `scopes` says otherwise. Each
  * question is answered by `answers` in turn: null is a question that ran out of time, "deny" a "Not now".
  */
-function worker(answers: (string | null)[], o: { scopes?: () => AutonomyScopes | null; autopilot?: () => boolean } = {}) {
+function worker(answers: (string | null)[], o: { scopes?: () => AutonomyScopes | null; autopilot?: () => boolean; hint?: () => string | null } = {}) {
   const audit: Record<string, unknown>[] = [];
   const askedOf: string[] = [];
   const activity: Record<string, unknown>[] = [];
@@ -180,6 +184,7 @@ function worker(answers: (string | null)[], o: { scopes?: () => AutonomyScopes |
     } as never,
     policy: new PolicyEngine({ neverLook: () => [], grants: () => ({}), autonomy: scopes, ...(o.autopilot ? { autopilot: o.autopilot } : {}) }),
     autonomy: scopes,
+    ...(o.hint ? { belowInteractiveHint: o.hint } : {}),
     confirmer: { ask: async (q: { prompt: string }) => { askedOf.push(q.prompt); return answers.length ? answers.shift() : "once"; } } as never,
     audit: { write: (e: Record<string, unknown>) => audit.push(e) } as never,
     settings: { get: () => ({ grants: {} }), update: () => undefined } as never,
@@ -334,6 +339,35 @@ describe("the refused step done another way: what it does, not only the control 
     expect(w.step(riskNames("Place order"))).toBe("waiting");
     w.userSpoke();
     expect(w.step(riskNames("Place order"))).toBeNull();
+  });
+});
+
+describe("below Interactive after the update: why Ember asks, said once (modes-x9p-3)", () => {
+  it("adds to the first question Interactive would have announced how to stop such questions, once a run, and to no risky one", async () => {
+    let told = false;
+    const hint = () => { if (told) return null; told = true; return BELOW_INTERACTIVE_HINT; };
+    const h = worker(["once", "once", "once"], { scopes: () => null, hint });
+    await h.call("perceive_window", {});
+    await h.call("click", { id: 1 });
+    await h.call("click", { id: 3 });
+    expect(h.asked[0]).toBe(`Let me work in gedit? First step: click the “Bold” button. ${BELOW_INTERACTIVE_HINT}`);
+    expect(h.asked[1]).not.toContain(BELOW_INTERACTIVE_HINT);
+    // A risky step (Delete) isn't what Interactive changes: no hint there, and it isn't spent on it.
+    let spent = false;
+    const r = worker(["once", "once"], { scopes: () => null, hint: () => { spent = true; return BELOW_INTERACTIVE_HINT; } });
+    await r.call("perceive_window", {});
+    await r.inner.authorize({ taskId: "t1", kind: "click", app: "gedit", window: "notes.txt", element: { role: "push button", name: "Delete" } });
+    expect(r.asked[0]).not.toContain(BELOW_INTERACTIVE_HINT);
+    expect(spent).toBe(false);
+  });
+
+  it("is given only below Interactive for want of its card, never where the organisation keeps Ember there", () => {
+    const own = DEFAULT_SETTINGS.approvals;
+    expect(belowInteractiveForCard(own, null)).toBe(true);
+    expect(belowInteractiveForCard({ ...own, consent: { ...own.consent, interactive: { version: modeCardVersion("interactive"), at: "t" } } }, null)).toBe(false);
+    expect(belowInteractiveForCard(own, AdminPolicySchema.parse({ features: { autonomy: false } }))).toBe(false);
+    expect(BELOW_INTERACTIVE_HINT).toBe("(I ask before ordinary steps like this until you agree to Interactive in Settings, under Apps & privacy. Then I tell you about them as I go instead.)");
+    expect(readFileSync("app/main/agent/host.ts", "utf8")).toContain("belowInteractiveHint: () => this.belowInteractiveHint(),");
   });
 });
 

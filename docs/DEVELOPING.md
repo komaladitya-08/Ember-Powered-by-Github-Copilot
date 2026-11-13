@@ -487,7 +487,10 @@ one, and the keyboard goes back to the mode's row when its card closes. Until In
 (`FEATURE_CONSENT_VERSION.autonomy`, now 3: an agreement to Work without asking's card is none to this one, so whoever
 had that on agrees once more) Ember is below Interactive: the section shows the card ready to agree, and says that
 until then Ember asks before its first step in an app, before using your mouse and keyboard, before pressing OK on an
-app's message box and before moving text between apps. The choice is kept in `settings.json` as `approvals` (`mode`,
+app's message box and before moving text between apps. So that a user who updated isn't left wondering why they are
+asked more, the first such question each run (one Interactive would have announced, never a risky one) ends "(I ask
+before ordinary steps like this until you agree to Interactive in Settings, under Apps & privacy. Then I tell you
+about them as I go instead.)"; never where the organisation keeps Ember below Interactive. The choice is kept in `settings.json` as `approvals` (`mode`,
 and under `consent` each mode's card as agreed to); the `autonomy` and `trust` keys of an earlier `settings.json` are
 read once and gone with Ember's next save, and nothing in them chooses a mode or agrees to a card. A mode is in force
 only with its own card agreed to as it reads now and where the organisation allows it: Assisted needs its own card's

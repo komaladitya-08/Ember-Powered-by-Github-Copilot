@@ -62,7 +62,7 @@ import type { RoutineBook } from "./routines";
 import { AUTONOMY_NOT_SAVED, modeIntent, planModeIntent, type ModeIntentState } from "./autonomy-intent";
 import type { ApprovalMode } from "../../shared/approvals";
 import type { TaskVoiceTrust } from "./voice-answer";
-import { approvalInputs, modeInForce } from "../policy/autonomy";
+import { BELOW_INTERACTIVE_HINT, approvalInputs, belowInteractiveForCard, modeInForce } from "../policy/autonomy";
 import { CATCH_UP_MS, catchUpQuestion, catchUpReply, healthQuestion, healthReply, type Health, READ_OUT_REPLY, readOutRequest, resultsReply, resultsRequest, retryRequest, statusQuestion, statusReply, stopRequest } from "./status";
 import { CONVERSATION_LIMIT, retainedConversationText, type ConversationTurn, type ConversationTurnEnd } from "../../shared/conversation";
 import type { HistoryStore } from "./conversation-store";
@@ -1186,6 +1186,18 @@ export class AgentHost {
     };
   }
 
+  /** Said once a run (BELOW_INTERACTIVE_HINT); taken by the first question it is added to. */
+  private belowInteractiveTold = false;
+  /**
+   * The words for the first question Interactive would have announced instead, while Ember is below Interactive for
+   * want of its card (an existing user after the update): once a run (modes-x9p-3).
+   */
+  private belowInteractiveHint(): string | null {
+    if (this.belowInteractiveTold || !belowInteractiveForCard(this.o.settings.get().approvals, this.o.admin?.() ?? null)) return null;
+    this.belowInteractiveTold = true;
+    return BELOW_INTERACTIVE_HINT;
+  }
+
   /** The user's own model service in use runs on this computer (Ollama, LM Studio): unreachable, it is asked about as not running. */
   private ownServiceHere(): boolean {
     const p = this.active ?? this.providerNow();
@@ -2166,6 +2178,7 @@ export class AgentHost {
             checkModel: this.status.conductorModel,
             autonomy: () => approvalInputs(modeInForce(this.o.settings.get().approvals, this.o.admin?.() ?? null)).scopes,
             autopilot: () => approvalInputs(modeInForce(this.o.settings.get().approvals, this.o.admin?.() ?? null)).autopilot,
+            belowInteractiveHint: () => this.belowInteractiveHint(),
             lease: (key, owner, signal) => this.tasks!.lease(h.leaseKey(key), owner, signal),
             flyTo: h.flyTo, cursor: h.cursor, clipboard: h.clipboard, pointer: h.pointer, activationKey: h.activationKey,
             desk: h.desk, onDesk: h.onDesk, onProgress: progress, onUpdate: update, onActivity: activity, onUsage: (i, o) => this.recordUsage(i, o),

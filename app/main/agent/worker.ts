@@ -108,6 +108,11 @@ export interface WorkerDeps {
    */
   autonomy?: () => AutonomyScopes | null;
   /**
+   * Below Interactive for want of its card: the words for the first question Interactive would have announced instead,
+   * given once a run (null after, or where it doesn't apply). The host keeps the once (modes-x9p-3).
+   */
+  belowInteractiveHint?: () => string | null;
+  /**
    * Autopilot is the approval mode in force (policy/autonomy.ts approvalInputs().autopilot): a command that would ask
    * is announced with its Stop instead, but for the few that still ask there (commands/flow.ts autopilotCommand). App
    * steps hear of it through the policy engine (PolicyInputs.autopilot, PolicyEngine.autopilotStep).
@@ -4879,7 +4884,10 @@ export class Worker {
     const risky = !!decision.risky || this.steered;
     const again = this.reask?.key === step ? `${this.reask.words} ` : "";
     this.reask = null;
-    const question: WhereQuestion = { title: "May I?", context, ...(taskLine !== undefined ? { taskLine } : {}), prompt: `${again}${decision.prompt}`, options, task: this.spec.id, ...(where ? { where } : {}), ...(decision.detail ? { detail: decision.detail } : {}), ...(risky ? { risky: true } : {}) };
+    // A question Interactive would have announced instead (it has waivable scopes and nothing risky): once a run, how
+    // to make such steps announced (modes-x9p-3).
+    const hint = decision.waivable?.length && !decision.risky ? this.d.belowInteractiveHint?.() ?? null : null;
+    const question: WhereQuestion = { title: "May I?", context, ...(taskLine !== undefined ? { taskLine } : {}), prompt: `${again}${decision.prompt}${hint ? ` ${hint}` : ""}`, options, task: this.spec.id, ...(where ? { where } : {}), ...(decision.detail ? { detail: decision.detail } : {}), ...(risky ? { risky: true } : {}) };
     const answer = await this.ask(question, this.overSignal, askedWords({ kind: req.kind, ...(req.app ? { app: friendlyApp(req.app) } : {}), onDesk: !!req.onDesk }));
     this.audit({ event: "confirm", task: this.spec.id, kind: req.kind, app: req.app, element: req.element, ...auditValue(req), ...(req.onDesk ? { onDesk: true } : {}), answer: this.isOver ? "stopped" : answer ?? "expired", ...this.channelOf(question) });
     if (this.isOver) return STOPPED();
