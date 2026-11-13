@@ -14,9 +14,11 @@
  * straight after is printed (review #78: Windows has no typed-ahead hold; typeahead-probe.ts), with when Ember heard
  * the chord, showed the box and had the keyboard (its log), how many letters the bench got, and the box's tip to wait
  * for it (its first openings); then its right-click menu, opened once the field is the window under the pointer (waited
- * for and named in the output, window-at.ts: cifix-2) and dismissed by a click on the bench, leaves the bench the
- * keyboard (review #77). Last, Ember started again with Text size set to Larger through its settings opens the box
- * 728 × 142 DIP (173 with the tip's row), its page and field at that size (review #57; ask-size.ts).
+ * for and named in the output, window-at.ts: cifix-2; a box that closed before then fails at once, with which window
+ * had the foreground and what Ember's windows did from the chord on: cifix-x9-2) and dismissed by a click on the bench,
+ * leaves the bench the keyboard (review #77). Last, Ember started again with Text size set to Larger through its
+ * settings opens the box 728 × 142 DIP (173 with the tip's row), its page and field at that size (review #57;
+ * ask-size.ts).
  *
  * Skipped off Windows; with EMBER_WIN32_TEST=1 it fails instead of skipping when Windows, the backends, Windows
  * PowerShell, Electron or (with EMBER_PACKAGED_APP set) the packaged app is missing. What this runner can't show is
@@ -45,7 +47,7 @@ import type { Capture } from "../../app/main/perception/capture";
 import { startOverlayChild, type OverlayChild } from "./overlay-child";
 import { PROBE_PACE_MS, PROBE_TEXT, probeTimeline, probeVerdict } from "./typeahead-probe";
 import { askWant, closeAsk, openAskAt, setTextSize, type InEmber } from "./ask-size";
-import { waitForWindowAt, type WindowAt } from "./window-at";
+import { focusTrail, waitForWindowAt, type TrailEvent, type WindowAt } from "./window-at";
 
 const required = process.env.EMBER_WIN32_TEST === "1";
 const onWindows = process.platform === "win32";
@@ -396,6 +398,7 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
       const w = BrowserWindow.getAllWindows().find(x => x.getTitle() === "Ask Ember");
       return w ? { visible: w.isVisible(), focused: w.isFocused() } : null;
     });
+    let fgTimer: ReturnType<typeof setInterval> | undefined;
     try {
       await waitFor("Ember's test hooks", () => ember.evaluate(() => !!(globalThis as { __ember?: unknown }).__ember), 60_000);
       const accel = "Super+Alt+Space";
@@ -403,6 +406,55 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
         notTestable("letters typed straight after the ask chord", `another app holds ${accel}`);
         return;
       }
+      // Watched from before the chord to the right-click (cifix-x9-2): which window had the foreground (read every
+      // 20 ms here) and what each of Ember's windows went through (its own events, in Ember), so a box gone by the
+      // right-click is told with what took the keyboard from it and when, not only with what was left under the point.
+      const api = loadWin32()!;
+      const trail: TrailEvent[] = [];
+      const emberPid = ember.process().pid;
+      let fgLast = -1;
+      const readForeground = () => {
+        const id = api.foregroundWindow();
+        if (id === fgLast) return;
+        fgLast = id;
+        const pid = id ? api.threadProcess(id).pid : 0;
+        const who = !id ? "no window" : id === ready.hwnd ? "the bench"
+          : emberPid !== undefined && pid === emberPid ? `Ember's ${JSON.stringify(api.title(id, false))}`
+          : `a window of ${api.processImage(pid) ?? `pid ${pid}`} (class ${api.className(id)}, title ${JSON.stringify(api.title(id, false))})`;
+        trail.push({ t: Date.now(), what: `foreground: ${who} (window ${id})` });
+      };
+      fgTimer = setInterval(readForeground, 20);
+      await ember.evaluate(({ app, BrowserWindow }) => {
+        const seen: { t: number; what: string }[] = [];
+        (globalThis as { __winTrail?: typeof seen }).__winTrail = seen;
+        const watch = (w: InstanceType<typeof BrowserWindow>) => {
+          const note = (e: string) => () => seen.push({ t: Date.now(), what: `Ember's ${JSON.stringify(w.isDestroyed() ? "?" : w.getTitle())} ${e}` });
+          w.on("show", note("show"));
+          w.on("hide", note("hide"));
+          w.on("focus", note("focus"));
+          w.on("blur", note("blur"));
+        };
+        BrowserWindow.getAllWindows().forEach(watch);
+        app.on("browser-window-created", (_e, w) => watch(w));
+      });
+      let pressedFrom = Date.now();
+      /** The trail so far, with Ember's own log lines since the chord, as one line. */
+      const trailNow = async () => {
+        readForeground();
+        const inEmber = await ember.evaluate(() => (globalThis as { __winTrail?: { t: number; what: string }[] }).__winTrail ?? []).catch(() => []);
+        const emberLog = path.join(userData, "logs", "ember.log");
+        const logged: TrailEvent[] = [];
+        for (const raw of fs.existsSync(emberLog) ? fs.readFileSync(emberLog, "utf8").split("\n") : []) {
+          try {
+            const e = JSON.parse(raw) as { t?: unknown; msg?: unknown };
+            const t = typeof e.t === "string" ? Date.parse(e.t) : NaN;
+            if (typeof e.msg === "string" && t >= pressedFrom) logged.push({ t, what: `log ${e.msg}` });
+          } catch {
+            // a line still being written
+          }
+        }
+        return focusTrail("from the chord", pressedFrom, [...trail, ...inEmber, ...logged], 100);
+      };
       await front();
       const x = input!;
       // The user is typing in the bench's Name field: letters that go there instead of the box are in the bench's log.
@@ -417,7 +469,7 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
       const mods = ["Super_L", "Alt_L"].map(n => x.keysymOf(n));
       const space = x.keysymOf("space");
       for (const k of mods) expect(x.keysym(k, true)).toBe(true);
-      const pressedAt = Date.now();
+      const pressedAt = pressedFrom = Date.now();
       x.keysym(space, true);
       x.keysym(space, false);
       for (const k of [...mods].reverse()) x.keysym(k, false);
@@ -473,7 +525,6 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
         return { at: screen.dipToScreenPoint({ x: Math.round(box.x + field.x), y: Math.round(box.y + field.y) }), askId: w.getNativeWindowHandle().readUInt32LE(0) };
       });
       const menuState = () => ember.evaluate(() => (globalThis as { __askMenuProbe?: AskMenuProbe }).__askMenuProbe);
-      const api = loadWin32()!;
       const hit = (x: number, y: number) => api.root(api.windowFromPoint(x, y));
       // What is under a point, named in this suite's words: Ember's own windows by their titles, the bench, or the
       // program another window belongs to (cifix-2: CI found "262636" over the field, and nothing said what it was).
@@ -492,7 +543,6 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
       });
       const own = new Map((await emberFacts()).windows.map(w => [w.id, w.title]));
       // Ember's own: its windows as Electron lists them, and anything else of its main process (a native menu).
-      const emberPid = ember.process().pid;
       const named = (w: WindowAt) => (w.id === ready.hwnd ? "the bench" : own.has(w.id) ? `Ember's window ${JSON.stringify(own.get(w.id))}`
         : emberPid !== undefined && w.pid === emberPid ? "a window of Ember's that it doesn't list"
         : `a window of ${api.processImage(w.pid) ?? "a program that can't be named"}`);
@@ -504,14 +554,17 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
       const reaches = async (what: string, want: number, px: number, py: number, limitMs: number) => {
         const seen = await waitForWindowAt({ what, want, limitMs, own: emberOwn, ownLimitMs: OWN_OVER_MS, read: () => windowAt(px, py), name: named, now: Date.now, sleep });
         console.log(seen.line);
-        if (!seen.reached) throw new Error(`${seen.line}; Ember's side: ${JSON.stringify(await emberFacts().catch((e: unknown) => String(e)))}`);
+        if (!seen.reached) throw new Error(`${seen.line}; Ember's side: ${JSON.stringify(await emberFacts().catch((e: unknown) => String(e)))}; ${await trailNow()}`);
       };
       x.move(at.x, at.y);
       await sleep(150);
       // The box is topmost, and so are Ember's overlay and handle, which raise themselves and take the pointer where
       // they have something to click (the hello's buttons, for as long as it stays up: 15 s at most, from up to 6 s
       // after start). The right-click needs the field itself under the pointer: waited for, never assumed. Ember's
-      // own window staying over the field is not waited out (cifix-x9-1): it would take the user's click.
+      // own window staying over the field is not waited out (cifix-x9-1): it would take the user's click. The box itself
+      // must still be up: one that has closed is never waited for, and the failure says what took the keyboard (cifix-x9-2).
+      const box = await askWindow();
+      if (!box?.visible) throw new Error(`the Ask box before the right-click (review #77): ${box ? "closed" : "gone"} since it was shown, so there is no field to press; ${await trailNow()}`);
       await reaches("the Ask field under the pointer before the right-click (review #77)", askId, at.x, at.y, ASK_FIELD_WAIT_MS);
       expect(hit(at.x, at.y), "the right-click reaches the Ask field").toBe(askId);
       x.button(3, true);
@@ -544,6 +597,7 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
       }
       expect((await askWindow())?.visible, "the box after a click activated the bench").toBe(false);
     } finally {
+      clearInterval(fgTimer);
       const proc = ember.process();
       await Promise.race([ember.close().catch(() => undefined), sleep(10_000)]);
       if (proc.exitCode === null) proc.kill();

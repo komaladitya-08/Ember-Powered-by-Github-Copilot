@@ -65,3 +65,20 @@ export async function waitForWindowAt(o: {
     await o.sleep(o.everyMs ?? 50);
   }
 }
+
+/** One moment the suite watched while the Ask box was up: the foreground changing, an Ember window's event, a log line. */
+export interface TrailEvent { t: number; what: string }
+
+/**
+ * What had the keyboard and what Ember's windows did, as one line for a failure (cifix-x9-2): CI found the Ask box
+ * shown, then gone by the right-click, with only the window left under the point to go on. The events in time order
+ * (a tie keeps the order they were recorded in), each in ms from `t0` (the chord); past `max`, the earliest are left
+ * out and counted, since the end is where the box went.
+ */
+export function focusTrail(what: string, t0: number, events: readonly TrailEvent[], max = 40): string {
+  if (!events.length) return `${what}: nothing recorded`;
+  const sorted = events.map((e, i) => ({ e, i })).sort((a, b) => a.e.t - b.e.t || a.i - b.i).map(x => x.e);
+  const kept = sorted.slice(-max);
+  const cut = sorted.length - kept.length;
+  return `${what}: ${cut ? `(${cut} earlier left out) ` : ""}${kept.map(e => `${e.t - t0} ms ${e.what}`).join("; ")}`;
+}

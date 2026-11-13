@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { waitForWindowAt, type WindowAt } from "../integration/window-at";
+import { focusTrail, waitForWindowAt, type WindowAt } from "../integration/window-at";
 
 const ASK: WindowAt = { id: 459336, className: "Chrome_WidgetWin_1", title: "Ask Ember", pid: 4000 };
 const OTHER: WindowAt = { id: 262636, className: "Chrome_WidgetWin_1", title: "Ember overlay", pid: 4000 };
@@ -82,5 +82,29 @@ describe("waitForWindowAt (cifix-2)", () => {
     const d = desk(ms => (ms < 20_000 ? BENCH : ASK));
     const r = await waitForWindowAt({ what: "the Ask field", want: ASK.id, limitMs: 22_000, ownLimitMs: 2_000, own, name, ...d });
     expect(r).toMatchObject({ reached: true, ownOver: false, waitedMs: 20_000 });
+  });
+});
+
+describe("focusTrail (cifix-x9-2)", () => {
+  it("says, in ms from the chord and in time order, what took the foreground and what the box did", () => {
+    const line = focusTrail("before the right-click", 1000, [
+      { t: 1043, what: "Ember's \"Ask Ember\" show" },
+      { t: 1000, what: "foreground: the bench" },
+      { t: 1064, what: "foreground: Ember's \"Ask Ember\"" },
+      { t: 2630, what: "Ember's \"Ask Ember\" hide" },
+      { t: 2630, what: "Ember's \"Ask Ember\" blur" },
+      { t: 2625, what: "foreground: another program's window" },
+    ]);
+    expect(line).toBe("before the right-click: 0 ms foreground: the bench; 43 ms Ember's \"Ask Ember\" show; 64 ms foreground: Ember's \"Ask Ember\"; "
+      + "1625 ms foreground: another program's window; 1630 ms Ember's \"Ask Ember\" hide; 1630 ms Ember's \"Ask Ember\" blur");
+  });
+
+  it("keeps the latest events past its limit and counts the ones it leaves out", () => {
+    const events = Array.from({ length: 5 }, (_, i) => ({ t: i * 10, what: `e${i}` }));
+    expect(focusTrail("w", 0, events, 2)).toBe("w: (3 earlier left out) 30 ms e3; 40 ms e4");
+  });
+
+  it("says when nothing was recorded rather than printing an empty trail", () => {
+    expect(focusTrail("w", 0, [])).toBe("w: nothing recorded");
   });
 });
