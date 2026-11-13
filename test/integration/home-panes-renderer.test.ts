@@ -263,7 +263,12 @@ describe.skipIf(gate)("Home's Search settings, as the person reads the results (
   it("finds the conversation's history, deleting, starting at log-in and the shortcuts by everyday words (home-13)", async () => {
     const page = await open("home");
     for (const q of ["history", "clear history", "chat"]) expect((await results(page, q))[0], q).toMatch(/^Home: /);
-    for (const q of ["start at login", "login", "autostart"]) expect((await results(page, q))[0], q).toMatch(/^Your Ember: /);
+    for (const q of ["start at login", "autostart"]) expect((await results(page, q))[0], q).toMatch(/^Your Ember: /);
+    // "login" alone is also what the vault keeps (its own words, so it comes first); starting at log-in is still found (vault-3).
+    const login = await results(page, "login");
+    expect(login.some(r => r.startsWith("Your Ember: "))).toBe(true);
+    expect(login.some(r => r.startsWith("Apps & privacy: Logins, cards and contact details"))).toBe(true);
+    for (const q of ["vault", "saved password", "card number"]) expect((await results(page, q)).some(r => r.startsWith("Apps & privacy: ")), q).toBe(true);
     for (const q of ["shortcut", "keyboard shortcut", "hotkeys"]) expect((await results(page, q)).length, q).toBeGreaterThan(0);
     expect((await results(page, "delete")).some(r => r.startsWith("Memory: "))).toBe(true);
     expect(await page.locator("#search-none").isHidden()).toBe(true);
