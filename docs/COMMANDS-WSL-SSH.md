@@ -272,7 +272,10 @@ Ember stops and asks before a command that:
   wget, gh, git's branch, tag, checkout, switch and rebase, make and Maven, pip, zip, cpio, `docker run`, `uv run` and
   its like, pkill): a word the older reading took for a file, a target, a command or an option of its own is still
   judged as one, so `tar -xf a.tar --exclude-tag ~/.ssh/id_rsa` and `uv run --cache-dir printenv` ask, `ls --cached
-  ~/.config/ember/settings.json` is refused, and so is `zip -T -n ~/.config/ember/settings.json`. `git checkout
+  ~/.config/ember/settings.json` is refused, and so is `zip -T -n ~/.config/ember/settings.json`. The word after
+  `dos2unix -c` or `-D` is still judged as a file too, and `-I` asks for every tar ("It runs a command Ember can't
+  see."): on a Mac it names a list of files, but the `tar` there may be GNU's, which runs the program `-I` names;
+  write `tar -T list.txt` for a list and it runs. `git checkout
   --track -b feature origin/feature` asks for the same reason (the older reading took `-b` for `--track`'s word and
   the rest for files to throw changes away in); write `git checkout -b feature --track origin/feature` or `git switch
   -c feature --track origin/feature` and it runs. Everyday lines are untouched: `tar -xf a.tar --strip-components 1`,

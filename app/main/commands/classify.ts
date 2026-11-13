@@ -4942,10 +4942,12 @@ function tarSpec(bsd: boolean): OptSpec {
 }
 /**
  * Whether tar's options name a command it runs: a filter, a compressor, a volume script, a checkpoint's action, a shell.
- * GNU's `-F` is `--info-script` (commands-remote-y8-4).
+ * GNU's `-F` is `--info-script` (commands-remote-y8-4). `-I` counts for every tar, as it did at 4d64d3a: bsdtar and a
+ * Mac's own tar read a list of names from its file (the row reads that file too), but the `tar` on a Mac may be GNU's,
+ * which runs the program it names (commands-held-x9-5).
  */
 function tarRunsCommand(p: Parsed, bsd: boolean): boolean {
-  return has(p, "to-command", "use-compress-program", "info-script", "new-volume-script", "checkpoint-action", "rsh-command") || (!bsd && has(p, "I", "F")) || values(p, "checkpoint-action").length > 0;
+  return has(p, "to-command", "use-compress-program", "info-script", "new-volume-script", "checkpoint-action", "rsh-command", "I") || (!bsd && has(p, "F")) || values(p, "checkpoint-action").length > 0;
 }
 reg(NATIVE, ["tar", "bsdtar", "gtar"], h => {
   const a = [...h.args];
@@ -8163,6 +8165,11 @@ reg(NATIVE, ["sort", "gsort"], h => {
 // dos2unix and its kin convert in place, or with -n into the new file after each input (`dos2unix -n x.sh y.sh`, the
 // usual fix for a downloaded script's line endings): that file is the download too (commands-remote-c2-2).
 reg(NATIVE, ["dos2unix", "unix2dos", "mac2unix", "unix2mac"], h => {
+  // This row is newer than 4d64d3a, where dos2unix and unix2dos were ordinary programs whose every word was read as a
+  // file, the one after -c or -D too, and mac2unix and unix2mac programs Ember didn't know, whose word that names a
+  // program may be a command they run: judged that way first, with this row's own findings on top, so none decides
+  // less safely than it did (`dos2unix -c <Ember's file>` is refused, `unix2mac -f rm -rf ~` too: commands-held-x9-5).
+  generic(h);
   let newFile = false;
   const pairs: Arg[] = [];
   const kept: Arg[] = [];

@@ -3253,4 +3253,38 @@ describe("commands held to main at 4d64d3a: no way of reading one decides less s
     expect(decided("xz -Tk a.txt").rules).toEqual(["archive.in-place"]);
     expect(decided("pigz -pS ~/.config/ember/settings.json a.txt").verdict).toBe("refuse");
   });
+
+  it("judges the word after dos2unix's -c or -D, mac2unix's words and any tar's -I as main did, where a row written since reads them another way (commands-held-x9-5)", () => {
+    // At 4d64d3a dos2unix and unix2dos had no row, so every word was read as a file, the one after -c or -D too; mac2unix
+    // and unix2mac were programs Ember didn't know, whose word that names a program may be a command it runs; and -I
+    // asked for every tar (GNU's runs the program it names, and the `tar` on a Mac may be GNU's).
+    const rows: [string, "ask" | "refuse", string[]][] = [
+      ["dos2unix -c ~/.config/ember/settings.json", "refuse", []], ["unix2dos -D ~/.config/ember/settings.json", "refuse", []], ["dos2unix -D ~/.ssh/id_rsa", "ask", ["secret"]],
+      ["dos2unix --convmode ~/.ssh/id_rsa a.txt", "ask", ["secret"]], ["unix2mac -c ~/.config/ember/settings.json", "refuse", []], ["mac2unix -D ~/.ssh/id_rsa", "ask", ["secret"]],
+      ["unix2mac -f rm -rf ~", "refuse", []], ["mac2unix -k rm -rf build", "ask", ["destroy"]], ["bsdtar -xf a.tar -I list.txt", "ask", []], ["bsdtar -I a.txt b.txt", "ask", []],
+    ];
+    for (const [cmd, verdict, classes] of rows) {
+      for (const context of ["linux", "darwin"] as const) {
+        const got = decided(cmd, context);
+        expect(got.verdict, `${cmd} (${context})`).toBe(verdict);
+        for (const c of classes) expect(got.classes, `${cmd} (${context})`).toContain(c);
+      }
+    }
+    for (const cmd of ["tar -xf a.tar -I 'sh -c \"rm -rf build\"'", "tar -xf a.tar -I zstd", "tar -tf a.tar -I list.txt", "bsdtar -xf a.tar -I zstd"]) {
+      expect(decided(cmd, "darwin").verdict, cmd).toBe("ask");
+      expect(decided(cmd, "darwin").rules, cmd).toContain("unclear.tar-command");
+      expect(decided(cmd, "darwin").says, cmd).toContain("It runs a command Ember can't see.");
+    }
+    // What the rows have learned since still stands: the file -n writes, and a Mac's -I list read as a file.
+    expect(decided("dos2unix -n in.txt out.txt").rules).toEqual(["redirect.overwrite"]);
+    expect(decided("tar -cf out.tar -I ~/.ssh/id_rsa", "darwin").classes).toContain("secret");
+    // Everyday lines run as before: a conversion mode or an encoding is no file Ember has anything to say about, and a
+    // Mac's tar with -T, or GNU's -F on bsdtar (no such option there), is as it was.
+    for (const cmd of [
+      "dos2unix a.txt", "dos2unix -c mac a.txt", "unix2dos -D utf8 a.txt", "dos2unix -f -q a.txt b.txt", "dos2unix --convmode iso a.txt", "mac2unix a.txt", "unix2mac -k a.txt b.txt",
+      "mac2unix ~", "bsdtar -xf a.tar", "bsdtar -xf a.tar -T list.txt", "bsdtar -xf a.tar -F ./x",
+    ]) {
+      for (const context of ["linux", "darwin"] as const) expect(decided(cmd, context).verdict, `${cmd} (${context})`).toBe("run");
+    }
+  });
 });
