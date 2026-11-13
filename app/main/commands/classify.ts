@@ -4304,10 +4304,12 @@ const PS_READ_VERBS = new Set(["get", "find", "search", "select", "measure", "te
  * program Ember doesn't know; one with a verb that changes something asks as before (unclear.cmdlet).
  */
 const PS_ORDINARY_VERBS = new Set(["get", "test", "measure", "select", "where", "sort", "group", "format", "convertto", "convertfrom", "compare", "resolve", "split", "join"]);
+/** Cmdlets with other verbs that only show progress, wait or search the gallery (commands-closed-y9-7). */
+const PS_ORDINARY_CMDLETS = new Set(["write-progress", "wait-process", "find-module"]);
 function unknownCmdlet(h: H): void {
   const verb = h.key.split("-")[0];
   if (!PS_READ_VERBS.has(verb)) h.e.unclear("unclear.cmdlet", `Ember can't tell what ${h.prog} changes.`);
-  else if (!PS_ORDINARY_VERBS.has(verb) && !h.e.readsAsMain) h.e.add("unknown", "unknown.program", SAYS.unknownProgram);
+  else if (!PS_ORDINARY_VERBS.has(verb) && !PS_ORDINARY_CMDLETS.has(h.key) && !h.e.readsAsMain) h.e.add("unknown", "unknown.program", SAYS.unknownProgram);
   // One whose noun names a secret, or that prints one as plain text, hands it to the output whatever its verb
   // (`Get-Secret`, `Get-AzKeyVaultSecret -AsPlainText`, `Get-AzStorageAccountKey`: commands-closed-y9-5).
   if (/secret|credential|token|passw(or)?d|apikey|vault|certificate|keys?$/.test(h.key.slice(verb.length + 1)) || h.args.some(a => /^-asplaintext\b/i.test(a.v ?? a.raw))) {

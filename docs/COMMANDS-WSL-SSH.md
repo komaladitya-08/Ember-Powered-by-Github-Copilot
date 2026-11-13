@@ -133,8 +133,9 @@ command), not one a `cd` on the same line moved to, and never a folder programs 
 inside a script there that the task didn't write or download (`hugo` in your `build.sh`); what else the script does is
 still judged. Of a tool
 with several commands (`cargo`, `go`, `pip`, `uv`, `poetry`, `stack`, `cabal`, `mix`, `sbt`, `bazel`, `deno`, `dotnet`,
-`systemctl`, `tmux`, `pyenv`, `nvm` and others), only the commands Ember knows run straight away: `cargo build`, `go
-mod tidy`, `pip config list`, `tmux ls`. Anything else asks (§2.4).
+`systemctl`, `tmux`, `pyenv`, `nvm`, `next`, `ng`, `turbo`, `nx`, `lerna`, `pre-commit` and others), only the commands
+Ember knows run straight away: `cargo build`, `go mod tidy`, `pip config list`, `tmux ls`, `next build`, `turbo run
+build`, `pre-commit run`, and `tsx` or `ts-node` with one of the project's files. Anything else asks (§2.4).
 
 ### 2.4 What asks first
 

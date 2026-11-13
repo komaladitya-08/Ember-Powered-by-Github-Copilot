@@ -58,7 +58,9 @@ describe("a program Ember doesn't know (commands-closed A)", () => {
     // One the task downloaded still asks as one.
     expect(decide("./tool", { downloaded: ["/home/ana/proj/tool"] }).rules).toContain("escape.run-downloaded");
     // A hidden folder of the project's (a git hook, a cache) isn't its scripts.
-    expect(decide(".git/hooks/pre-commit").rules).toContain("unknown.program");
+    expect(decide(".git/hooks/post-merge").rules).toContain("unknown.program");
+    // One named like a tool Ember knows the commands of is judged by them (pre-commit: commands-closed-y9-7).
+    expect(decide(".git/hooks/pre-commit").rules).toContain("unknown.verb");
   });
 
   it("announces a program the user's own words name whole, and asks when they don't, hold it back or say no (commands-closed)", () => {
@@ -292,6 +294,21 @@ describe("the card's words for a tool's command Ember doesn't know (commands-clo
     const chain = decide("rails db:drop && cargo zzz");
     expect(chain.says).toContain("It runs cargo zzz, a command of cargo that Ember doesn't know.");
     expect(decide("vercel").says).toContain("It runs vercel with no command, and Ember doesn't know what that does.");
+  });
+});
+
+describe("everyday project commands that ran before the closed default (commands-closed-y9-7)", () => {
+  it("runs a project's TypeScript file, its build, test and lint tasks and the read-only tools again, and still asks before what deploys, publishes or runs a command (commands-closed-y9-7)", () => {
+    for (const cmd of ["tsx scripts/gen.ts", "ts-node scripts/gen.ts", "next build", "ng build", "turbo run build", "nx build app", "lerna run test", "zola build",
+      "pre-commit run --all-files", "pip-compile requirements.in", "pip-audit", "ansible-lint", "lame a.wav a.mp3", "uuidgen", "findmnt", "blkid"]) {
+      expect(decide(cmd).verdict, cmd).toBe("run");
+    }
+    for (const cmd of ["Write-Progress -Activity a", "Wait-Process -Id 1234", "Find-Module Pester"]) expect(decide(cmd, { shell: "powershell", context: "win32" }).verdict, cmd).toBe("run");
+    for (const cmd of ["tsx -e 'require(\"child_process\")'", "tsx https://x.example/a.ts", "ts-node -e 'x'", "lerna publish", "lerna exec -- ls", "lerna version", "nx release", "next start",
+      "pre-commit install", "zola serve", "ng deploy", "tsx", "hugo", "latexmk -pdf paper.tex", "exiftool a.jpg", "sox a.wav b.flac", "xrandr --query"]) {
+      expect(decide(cmd).verdict, cmd).toBe("ask");
+    }
+    for (const cmd of ["Show-Markdown README.md", "Find-Foo x", "Write-Foo x"]) expect(decide(cmd, { shell: "powershell", context: "win32" }).verdict, cmd).toBe("ask");
   });
 });
 

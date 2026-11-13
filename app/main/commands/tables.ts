@@ -587,7 +587,8 @@ export const ORDINARY_PROGRAMS: ReadonlySet<string> = new Set([
   "phpcs", "phpstan", "psalm", "php-cs-fixer", "ktlint", "detekt", "checkstyle", "pmd", "spotbugs", "swiftlint", "clippy-driver",
   "cppcheck", "cpplint", "include-what-you-use", "iwyu", "luacheck", "stylua", "selene", "hlint", "ormolu", "fourmolu",
   "sqlfluff", "sqlformat", "pgformatter", "pg_format", "tflint", "tfsec", "checkov", "kubeval", "kubeconform",
-  "kube-linter", "editorconfig-checker", "ec", "commitlint", "cspell", "lychee", "markdown-link-check",
+  "kube-linter", "editorconfig-checker", "ec", "commitlint", "cspell", "lychee", "markdown-link-check", "ansible-lint", "pip-audit",
+  "pip-compile",
   // Test runners and coverage.
   "nox", "prove", "pytest", "py.test", "nose2", "jest", "vitest", "mocha", "ava", "tap", "jasmine", "karma", "rspec", "minitest",
   "phpunit", "pest", "ctest", "bats", "shunit2", "busted", "gcov", "gcovr", "lcov", "genhtml", "llvm-cov",
@@ -603,7 +604,7 @@ export const ORDINARY_PROGRAMS: ReadonlySet<string> = new Set([
   "djpeg", "mozjpeg", "cwebp", "dwebp", "gif2webp", "img2webp", "avifenc", "avifdec", "heif-convert", "heif-enc", "gifsicle", "svgo",
   "rsvg-convert", "potrace", "pdftotext", "pdfinfo", "pdffonts", "pdfimages", "pdftoppm", "pdftocairo", "pdfseparate",
   "pdfunite", "qpdf", "pdftk", "ps2pdf", "pdf2ps", "img2pdf", "ocrmypdf", "tesseract", "soxi",
-  "flac", "metaflac", "oggenc", "oggdec", "opusenc", "opusdec", "mpg123", "mp3info", "id3v2", "x264", "x265",
+  "flac", "metaflac", "lame", "oggenc", "oggdec", "opusenc", "opusdec", "mpg123", "mp3info", "id3v2", "x264", "x265",
   "handbrakecli", "mkvmerge", "mkvinfo", "mkvextract", "mp4box", "atomicparsley", "fc-scan", "fc-query", "otfinfo",
   "ttx", "pyftsubset", "fonttools", "woff2_compress", "woff2_decompress", "dot", "neato", "circo", "fdp", "sfdp", "twopi", 
   "graph-easy", "qrencode", "zbarimg", 
@@ -624,7 +625,7 @@ export const ORDINARY_PROGRAMS: ReadonlySet<string> = new Set([
   "traceroute6", "tracepath", "mtr", "dig", "nslookup", "host", "drill", "whois", "getmac", "ipconfig", "systeminfo", "tasklist",
   "tracert", "pathping", "driverquery", "quser", "qwinsta", "query", "gpresult", "ver", "vol", "sw_vers",
   "system_profiler", "vm_stat", "ioreg", "machinfo", "getprop", "dpkg-query",
-  "apt-cache", "apt-file", "repoquery", "vulkaninfo", "glxinfo", "eglinfo", "clinfo", "xdpyinfo",
+  "apt-cache", "apt-file", "repoquery", "vulkaninfo", "glxinfo", "eglinfo", "clinfo", "xdpyinfo", "uuidgen", "findmnt", "blkid",
   
   // Windows' own read-only programs.
   "findstr", "where", "fc", "comp", "sort", "whoami", "hostname", "chcp", "tree", 
@@ -695,6 +696,17 @@ export const ORDINARY_VERBS: Readonly<Record<string, OrdinaryVerbs>> = {
   },
   mkdocs: { verbs: ["build", "serve", "new", "--version", "-V", "--help", "-h", "get-deps"] },
   buf: { verbs: ["build", "lint", "format", "breaking", "ls-files", "convert", "--version", "--help"] },
+  // The project's own files and tasks (commands-closed-y9-7): a TypeScript file run as node runs one, and the build,
+  // test and lint commands of the web and monorepo tools. Never their deploy, publish, exec or version commands.
+  tsx: { verbs: ["--version", "-v", "--help", "-h"], files: /\.(m|c)?(j|t)sx?$/i },
+  "ts-node": { verbs: ["--version", "-v", "-vv", "--help", "-h"], files: /\.(m|c)?(j|t)sx?$/i, values: ["-P", "--project", "-O", "--compiler-options", "--cwd", "--scope-dir"] },
+  next: { verbs: ["build", "dev", "lint", "info", "--version", "-v", "--help", "-h"] },
+  ng: { verbs: ["build", "b", "test", "t", "lint", "version", "v", "help", "--version", "--help"] },
+  turbo: { verbs: ["run", "build", "test", "lint", "typecheck", "check", "dev", "ls", "--version", "--help"] },
+  nx: { verbs: ["build", "test", "lint", "run", "run-many", "affected", "show", "list", "report", "format:check", "--version", "--help"] },
+  lerna: { verbs: ["run", "list", "ls", "ll", "la", "changed", "diff", "info", "--version", "--help"] },
+  zola: { verbs: ["build", "check", "--version", "-V", "--help"] },
+  "pre-commit": { verbs: ["run", "validate-config", "validate-manifest", "sample-config", "--version", "-V", "help", "--help"] },
   // Tools with a row: the verbs their rows judge ordinary that are.
   stack: { verbs: ["build", "test", "bench", "haddock", "run", "ls", "path", "query", "ide", "clean", "purge", "init", "new", "templates", "dot", "list", "setup", "--version", "--help"], values: ["--stack-yaml", "--resolver", "--work-dir"] },
   cabal: { verbs: ["build", "test", "bench", "run", "haddock", "check", "list", "info", "sdist", "clean", "freeze", "outdated", "configure", "update", "gen-bounds", "init", "repl", "v2-build", "v2-test", "v2-run", "new-build", "new-test", "new-run", "--version", "--help"], values: ["--project-file", "--builddir", "--config-file"] },
