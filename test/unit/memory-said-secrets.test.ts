@@ -84,7 +84,42 @@ const LOOK_ALIKES = [
   "The three digits on the back of the shirt are 123",
 ];
 
+/** The same secrets in other words: a value shaped like a password wherever it stands, digits beside what they open. */
+const BY_SHAPE = [
+  "Password-wise, Netflix is Winter#2024", "Netflix is Winter#2024", "Uses the same Winter#2024 everywhere", "Reuses Winter#2024 for most sites",
+  "Everything is Winter#2024", "All accounts: Winter#2024", "The work VPN wants Summer2024!", "VPN = Summer2024!", "Laptop login Summer2024!",
+  "Unlocks the laptop by typing Summer2024!", "Their laptop opens with Summer2024!", "Wi-Fi at the office is Summer2024!",
+  "SSH into the server as root with Summer2024!", "sudo is Summer2024!", "Root is Summer2024!", "Spotify = Pa55word!",
+  "The door keypad takes 4821", "Punches in 4821 to get into the office", "The lock opens on 4821", "The safe opens with 32-18-04",
+  "Garage keypad 4821", "To disarm, press 4821", "Press 4821 then # at the gate", "The padlock is set to 4821", "Luggage lock 482",
+  "Suitcase combination 482", "Phone unlock is 482913", "Phone: 482913", "iPhone is 482913", "PIN-wise the card is 4821", "ATM number is 4821",
+  "Cash machine code 4821", "Withdraws cash with 4821", "Voicemail is 4821", "The tablet's lock is 4821", "The SIM is 4821",
+  "Default login admin/admin123", "Router admin is admin123", "Login: jsmith/Spring2023", "Hotspot password-free, key BlueSky99",
+  "First pet was called Biscuit (security question)", "Security question: Biscuit", "Passport number 123456789", "Driving licence: MORGA753116SM9IJ",
+  "The login is p4ss@word", "Netflix is Winter@2024",
+];
+/** Ordinary facts beside those shapes. */
+const BESIDE_SHAPES = [
+  "Phone number is 07700 900123", "Bought the phone in 2023", "The phone costs 1000", "Phone contract is 2400 a year", "Card ending 4242 is the work one",
+  "Has 5000 in cash", "The door is 1200 mm wide", "The safe holds 2000 documents", "Feels safe with 2000 people around", "The laptop has 1600 pixels",
+  "The laptop was bought in 2021", "The alarm goes off at 0630", "Sets the alarm for 0630", "The tablet is a 2022 model", "Keeps the iPad since 2019",
+  "Locker 4821 at the gym", "The gate is 4821 Elm Street", "Unlocks at level 4821 in the game", "Gets in with the 0742 train", "Unlocks achievements with 5000 points",
+  "Loves C++17", "Twitter handle is @ram_42", "Email is ram42@example.com", "Hashtag #100DaysOfCode", "Raised $20k for charity", "Favourite band is Blink-182",
+  "Admin is Priya", "Root cause was DNS", "Login is through Okta", "Security questions are annoying", "Passport expires in 2030", "Passport is in the drawer",
+  "Hotspot key is in the drawer", "Network key is printed on the router", "The phone code for Leeds is 0113", "Bengaluru, PIN code: 560001",
+  "Login was #142 in the issue tracker", "The login is root@127.0.0.1:2222", "Deploys as deploy@build-01:22", "Network key: WPA2-PSK",
+];
+
 describe("what a fact may not say with a verb, or under another name (memory-r9-4)", () => {
+  it.each(BY_SHAPE.map(s => [s]))("refuses %j, a secret in other words, by the value's shape or what it opens (memory-x9-6)", text => {
+    expect(factRefusal(text)).not.toBeNull();
+    expect(new MemoryGraph().add({ text, about: USER, source: "user" }).kind).toBe("refused");
+  });
+
+  it.each(BESIDE_SHAPES.map(s => [s]))("keeps the ordinary fact %j beside those shapes (memory-x9-6)", text => {
+    expect(saidSecret(text)).toBeNull();
+  });
+
   it.each(LOOK_ALIKES.map(s => [s]))("keeps the ordinary fact %j (memory-x9-8)", text => {
     expect(saidSecret(text)).toBeNull();
     expect(new MemoryGraph().add({ text, about: USER, source: "user" }).kind).toBe("added");
