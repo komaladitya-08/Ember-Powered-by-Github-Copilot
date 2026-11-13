@@ -114,11 +114,16 @@ export function spokenAnswer(text: string): "allow" | "deny" | null {
 /** The words a near-miss answer starts with (nearAnswer). */
 const ANSWER_LEADS = new Set(["yes", "yeah", "yep", "okay", "ok", "sure", "fine", "allow", "no", "nope", "don't", "not", "absolutely", "deny"]);
 
+/** The words main's stop takes (stopRequest in app/main/agent/status.ts): what holds one is never a near-miss answer. */
+const STOP_WORDS = new Set(["stop", "cancel", "abort", "halt"]);
+
 /**
  * A few words that start like an answer and aren't one ("Yes, but wait.", "No, hang on.", "Sure, why?"): up to four words,
  * after "hey" and the name, the first a yes or no word ("do not" too). While a question waits they are most likely an
  * answer misheard or hedged, so the voice process sends nothing and the question says once how to answer (V2-F5). "Why?"
- * and "Which file?" don't start so, and are requests as ever.
+ * and "Which file?" don't start so, and are requests as ever. Never words that hold a stop ("No, stop the task.", "Okay, stop
+ * typing."): main stops everything on those while a task is at work, and as near-misses they stopped nothing
+ * (voice-product-y9-1).
  */
 export function nearAnswer(text: string): boolean {
   if (spokenAnswer(text) !== null) return false;
@@ -128,6 +133,7 @@ export function nearAnswer(text: string): boolean {
   if (NAMES.has(words[i])) i++;
   const rest = words.slice(i);
   if (!rest.length || rest.length > 4) return false;
+  if (rest.some(w => STOP_WORDS.has(w))) return false;
   return ANSWER_LEADS.has(rest[0]) || (rest[0] === "do" && rest[1] === "not");
 }
 
