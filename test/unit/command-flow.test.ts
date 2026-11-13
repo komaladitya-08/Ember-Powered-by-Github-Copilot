@@ -2672,6 +2672,26 @@ describe("Assisted's check for commands that would ask (review.ts; modes-C2, mod
     }
   });
 
+  it("never reaches a command on Ember's own settings, audit log or policy: it is refused before any check, whatever the user's words say (D4)", async () => {
+    setCommandJudge(null);
+    const cases = [
+      "sed -i 's/\"mode\": \"interactive\"/\"mode\": \"assisted\"/' ~/.config/ember/settings.json",
+      "echo '{}' > ~/.config/ember/settings.json",
+      "rm -rf ~/.config/ember/audit",
+      "cat ~/.config/ember/settings.json",
+      "sudo rm /etc/ember/policy.json",
+    ];
+    for (const command of cases) {
+      const r = reviewer(YES);
+      const h = harness({ binding: LOCAL, words: `run this for me: ${command}`, review: r.review });
+      const out = await call(h, { target: "this computer", command });
+      expect(out.resultType, command).toBe("denied");
+      expect(out.textResultForLlm, command).toMatch(/^Not allowed: /);
+      expect([r.seen, h.asked, h.windowAnnounce, h.starts, h.progressed], command).toEqual([[], [], [], [], []]);
+      expect(h.audit.find(e => e.phase === "decided"), command).toMatchObject({ verdict: "refuse" });
+    }
+  });
+
   it("reads the command against the words the check takes: unchecked speech counts, as it doesn't for the command's own rules (Settled 2)", async () => {
     setCommandJudge(null);
     // Heard where Ember can't tell the user from its speakers: no words for commands (so no announcement by the rules),
