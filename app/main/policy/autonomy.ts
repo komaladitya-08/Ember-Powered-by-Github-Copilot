@@ -77,6 +77,15 @@ export const releaseAutonomyHold = (): void => { held = false; };
 /** Is it held below Interactive now? */
 export const autonomyHeld = (): boolean => held;
 
+/**
+ * At most Interactive in this process while the keyring's seal of the setting is read at start (policy/mode-seal.ts,
+ * modes-x9s-2): a mode above it, or its card's agreement, is taken from settings.json only once the seal says Ember
+ * recorded it itself. Set and lifted by policy/mode-record.ts.
+ */
+let sealing = false;
+/** Hold every mode in force at Interactive at most, or (false) let the setting give it again. */
+export const holdUntilSealed = (on: boolean): void => { sealing = on; };
+
 /** The mode the setting and the administrator give, the hold apart, and why it is below the one chosen. */
 function standing(s: ApprovalsSetting | undefined, admin: AutonomyAdmin | null | undefined): { mode: ModeInForce; why: ModeWhy | null } {
   if (!autonomyPermitted(admin)) return { mode: "asking", why: "organisation" };
@@ -106,7 +115,8 @@ export const modeWithoutHold = (s: ApprovalsSetting | undefined, admin?: Autonom
  * Assisted's check is off, so a chosen Assisted is in force as Interactive.
  */
 export function modeInForce(s: ApprovalsSetting | undefined, admin?: AutonomyAdmin | null): ModeInForce {
-  return held ? "asking" : standing(s, admin).mode;
+  const mode = held ? "asking" : standing(s, admin).mode;
+  return sealing && modeRank(mode) > modeRank("interactive") ? "interactive" : mode;
 }
 
 /** What a state gives the machinery that decides: the policy engine's inputs keep their shape. */
@@ -154,10 +164,12 @@ export function approvalsState(own: ApprovalsSetting, admin: AutonomyAdmin | nul
   const at = standing(own, admin);
   // The organisation's reason holds whatever else does; then the hold.
   const lowered = held && at.why !== "organisation";
+  // Above Interactive only once the seal is read (holdUntilSealed): until then it is not yet recorded.
+  const unsealed = !lowered && sealing && modeRank(at.mode) > modeRank("interactive");
   return {
     chosen: own.mode,
-    inForce: lowered ? "asking" : at.mode,
-    why: lowered ? "not-recorded" : at.why,
+    inForce: lowered ? "asking" : unsealed ? "interactive" : at.mode,
+    why: lowered || unsealed ? "not-recorded" : at.why,
     offered: [...OFFERED_MODES],
     agreed: APPROVAL_MODES.filter(m => modeAgreed(own, m)),
     cap: admin?.approvals?.maxMode ?? null,

@@ -490,12 +490,19 @@ until then Ember asks before its first step in an app, before using your mouse a
 app's message box and before moving text between apps. The choice is kept in `settings.json` as `approvals` (`mode`,
 and under `consent` each mode's card as agreed to); the `autonomy` and `trust` keys of an earlier `settings.json` are
 read once and gone with Ember's next save, and nothing in them chooses a mode or agrees to a card. A mode is in force
-only with its own card agreed to as it reads now and where the organisation allows it, so a `settings.json` edited by
-hand gets no more than Home gives: Assisted needs its own card's record (`FEATURE_CONSENT_VERSION.assisted`) and
-Autopilot its own (`FEATURE_CONSENT_VERSION.autopilot`), each working as the next mode down that is agreed to
-without it. Autopilot is never the default and is chosen only in Home: a `settings.json` changed to it while Ember
-runs is put back as it was (the log says `autonomy.autopilot_by_file`), since a program that edited the file could
-write the agreement too; one found at start is taken as the last run left it and recorded (`via: "file"`). While
+only with its own card agreed to as it reads now and where the organisation allows it: Assisted needs its own card's
+record (`FEATURE_CONSENT_VERSION.assisted`) and Autopilot its own (`FEATURE_CONSENT_VERSION.autopilot`), each working
+as the next mode down that is agreed to without it. `settings.json` is a file any program can write, a text editor
+Ember drives included, so it never raises the mode on its own: a change to it while Ember runs that raises the mode
+in force or agrees to a card is put back as it was (the log says `autonomy.raised_by_file`), and at start a mode above
+Interactive, and the agreement to Assisted's or Autopilot's card, count only where they match what Ember last
+recorded itself, which it seals with the system's keyring in `approvals-seal.bin` (0600) after every change made in
+Home or by voice or typed words. Until that seal is read at start Ember is at most Interactive; where it doesn't
+match, or there is none, the file is put right (`autonomy.unsealed`): at most Interactive, those two cards not agreed.
+Without a keyring (`basic_text`) nothing is sealed, so an agreement to Assisted or Autopilot lasts until Ember quits.
+A lower mode or a withdrawn card in the file is taken, at start or while running, and recorded (`via: "file"`). Ember
+also never acts in an app's window whose title shows a file in its data folder or in the organisation's policy folder
+("settings.json (~/.config/ember) - gedit"). While
 Autopilot is in force the note under the modes says so first: "Autopilot is on: Ember sends, deletes, pays and
 installs without asking, and tells you as it goes. “Ember, stop” or Ember's stop shortcut stops it." Where the organisation keeps Ember below
 Interactive (`features.autonomy: false`, `allowGrants: false`, `confirmEveryAction`, `features.actions: false`, a
@@ -1342,7 +1349,7 @@ On Linux (Windows: §10.6, macOS: §11.6):
 | What Ember made on its desk | `~/Ember/` |
 | App profiles used on the desk (kept separate from yours) | `~/.config/ember/desk-profiles/` |
 | Computers added over SSH, WSL's switch, and each computer's command switches | `settings.json` (`targets`, `commands`) |
-| The approval mode chosen, and each mode's card as agreed to (How Ember asks) | `settings.json` (`approvals`) |
+| The approval mode chosen, and each mode's card as agreed to (How Ember asks); the same as Ember last recorded it itself, sealed with the keyring (0600) | `settings.json` (`approvals`); `~/.config/ember/approvals-seal.bin` |
 | When the update check last asked GitHub, so a restart keeps to once a day (the first look waits until a day after it, at most a day; a failed look counts), and the last newer version it told you of, still shown as out after a restart until you run it (`updates.told`) | `settings.json` (`updates.checkedAt`, `updates.told`) |
 | SSH's password helper: a two-line wrapper, and a socket for each connection while it asks | `~/.config/ember/ssh/askpass`; `$XDG_RUNTIME_DIR/ea-*/` |
 | Node.js downloaded for other computers (SHA-256 checked) | `~/.config/ember/remote/runtime/` |

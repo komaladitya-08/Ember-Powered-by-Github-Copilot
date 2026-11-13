@@ -23,6 +23,7 @@ import { SettingsStore, checkHomePatch, hasConsent, plainSaveError, withOwnExten
 import { auditRetentionDays, heldUntilRestart, homeAdmin, modelServiceRefusal } from "./admin";
 import { approvalInputs, approvalsState, chooseMode, modeInForce } from "./policy/autonomy";
 import { ModeRecord, modeIntents } from "./policy/mode-record";
+import { ModeSeal } from "./policy/mode-seal";
 import { TaskVoiceTrust, heardAnswer, heardUnchecked, refusalEndsTrust, refusalLine, refusalNote, rejectionEndsTrust, voiceAnswer, voiceAnswerSaid, type VoiceAnswerNote, type VoiceAnswerOutcome } from "./agent/voice-answer";
 import { inspectEnvironment, keyboardRoute, sessionGreeting, type EnvReport } from "./environment";
 import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSender, keepClearOf, quitQuestion, setTextScale, settingsFromHome, setUpAppChrome } from "./windows";
@@ -1830,7 +1831,10 @@ function start(): void {
    * by Home's choice, voice or typed words (the host's intent says which, as it saves), the file or the policy; one to
    * a mode that asks less that can't be recorded is undone (policy/mode-record.ts).
    */
-  const modes = new ModeRecord({ settings, admin: () => policy, log });
+  const modes = new ModeRecord({ settings, admin: () => policy, log,
+    // What Ember recorded itself, sealed with the keyring: a mode above Interactive is taken from settings.json at start
+    // only where it matches (modes-x9s-2). On macOS the keychain is asked off the main thread, as the sign-in's is.
+    seal: new ModeSeal(path.join(userData, "approvals-seal.bin"), safeStorage, { asyncKeyring: platform.os === "darwin" }) });
   /** What the mode in force gives the policy engines and the workers: read at each decision, never kept. */
   const approvalsNow = () => approvalInputs(modeInForce(settings.get().approvals, policy));
   /**

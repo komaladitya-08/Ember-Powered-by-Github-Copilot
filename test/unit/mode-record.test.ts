@@ -13,7 +13,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { SettingsStore, DEFAULT_SETTINGS } from "../../app/main/settings";
 import { AuditLog } from "../../app/main/policy/audit";
 import { autonomyHeld, autonomyInForce, approvalInputs, approvalsState, chooseMode, modeInForce, releaseAutonomyHold, type ApprovalsSetting } from "../../app/main/policy/autonomy";
-import { ModeRecord, modeIntents } from "../../app/main/policy/mode-record";
+import { ModeRecord, modeIntents, trustedAtStart } from "../../app/main/policy/mode-record";
+import { ModeSeal, type ModeSealStore } from "../../app/main/policy/mode-seal";
 import { AdminPolicySchema, heldUntilRestart } from "../../app/main/admin";
 import { modeCardVersion } from "../../app/shared/approvals";
 import { PolicyEngine } from "../../app/main/policy/policy";
@@ -31,14 +32,14 @@ const ASSISTED: ApprovalsSetting = { mode: "assisted", consent: { ...INTERACTIVE
 const base = { ...DEFAULT_SETTINGS, consent: { version: 99, at: "t" }, onboarded: true };
 const quiet = { info: () => {}, warn: () => {} };
 
-function setup(approvals: ApprovalsSetting, o: { open?: boolean } = {}) {
+function setup(approvals: ApprovalsSetting, o: { open?: boolean; seal?: ModeSealStore } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mode-record-")); dirs.push(dir);
   const file = path.join(dir, "settings.json");
   fs.writeFileSync(file, JSON.stringify({ ...base, approvals }));
   const settings = new SettingsStore(file); settings.load();
   const audit = new AuditLog(path.join(dir, "audit"));
   let policy: ReturnType<typeof AdminPolicySchema.parse> | null = null;
-  const record = new ModeRecord({ settings, admin: () => policy, log: quiet });
+  const record = new ModeRecord({ settings, admin: () => policy, log: quiet, ...(o.seal ? { seal: o.seal } : {}) });
   if (o.open !== false) record.opened(audit);
   /** The `autonomy` entries written so far, oldest first, without their times. */
   const entries = () => audit.recent(100).filter(e => e.event === "autonomy").reverse().map(({ t: _t, event: _e, ...rest }) => rest);
@@ -106,11 +107,7 @@ describe("Autopilot and the record (modes-D5)", () => {
       c.record.as({ via: "home", verified: false }, () => c.settings.update({ approvals: AUTOPILOT }));
       expect(c.inForce()).toBe("autopilot");
     }
-    // A file edit to a mode below it is taken as before (the file's, recorded), and one that asks more always is.
-    const c = setup(ASKING);
-    fs.writeFileSync(c.file, JSON.stringify({ ...base, approvals: ASSISTED }));
-    c.settings.reloadIfChanged();
-    expect(c.inForce()).toBe("assisted");
+    // A file edit to a mode that asks more is taken (the file's, recorded); none to a mode that asks less is (modes-x9p-5).
     const down = setup(AUTOPILOT);
     expect(down.inForce()).toBe("autopilot");
     fs.writeFileSync(down.file, JSON.stringify({ ...base, approvals: INTERACTIVE }));
@@ -139,6 +136,138 @@ describe("Autopilot and the record (modes-D5)", () => {
   });
 });
 
+
+/** The keyring's seal, in memory: what Ember last sealed, and how often. */
+function memorySeal(start: ApprovalsSetting | null = null) {
+  let value = start;
+  const writes: ApprovalsSetting[] = [];
+  const store: ModeSealStore = { read: async () => value, write: async s => { value = s; writes.push(s); return true; } };
+  return { store, writes, value: () => value };
+}
+const FORGED = (v = 99): ApprovalsSetting => ({ mode: "autopilot", consent: { interactive: { version: modeCardVersion("interactive"), at: AT }, assisted: { version: v, at: "x" }, autopilot: { version: v, at: "x" } } });
+
+describe("a settings.json a program wrote (modes-x9s-2, modes-x9p-5)", () => {
+  it("never raises the mode while Ember runs, to any mode: the file is put back, and nothing is recorded", () => {
+    for (const [from, to] of [[ASKING, INTERACTIVE], [ASKING, ASSISTED], [INTERACTIVE, ASSISTED], [INTERACTIVE, { ...ASSISTED, consent: { ...ASSISTED.consent, assisted: { version: 99, at: "x" } } }], [ASSISTED, AUTOPILOT]] as const) {
+      const c = setup(from);
+      const before = c.inForce();
+      const written = c.entries().length;
+      fs.writeFileSync(c.file, JSON.stringify({ ...base, approvals: to }));
+      expect(c.settings.reloadIfChanged()).toBe(true);
+      expect(c.inForce(), to.mode).toBe(before);
+      expect(JSON.parse(fs.readFileSync(c.file, "utf8")).approvals, to.mode).toEqual(from);
+      expect(c.entries()).toHaveLength(written);
+    }
+  });
+
+  it("never agrees to a card while Ember runs, so no switch by voice can use an agreement the file forged", () => {
+    const c = setup(INTERACTIVE);
+    // The mode stays Interactive; only Autopilot's card is forged.
+    fs.writeFileSync(c.file, JSON.stringify({ ...base, approvals: { ...INTERACTIVE, consent: { ...INTERACTIVE.consent, autopilot: { version: modeCardVersion("autopilot"), at: AT } } } }));
+    c.settings.reloadIfChanged();
+    expect(c.settings.own().approvals).toEqual(INTERACTIVE);
+    const intents = modeIntents({ settings: c.settings, modes: c.record, admin: c.policy, voiceMatch: () => "off" });
+    expect(intents.state().agreed).toEqual(["interactive"]);
+    expect(intents.set("autopilot", { via: "voice", verified: false })).toBe(false);
+    expect(c.inForce()).toBe("interactive");
+  });
+
+  it("takes a mode above Interactive at start only as Ember sealed it itself: a forged Autopilot starts in Interactive, with its cards withdrawn", async () => {
+    const seal = memorySeal(null);
+    const c = setup(FORGED(), { seal: seal.store });
+    // Until the seal is read, at most Interactive.
+    expect(c.inForce()).toBe("interactive");
+    await c.record.sealed;
+    expect(c.inForce()).toBe("interactive");
+    const kept = JSON.parse(fs.readFileSync(c.file, "utf8")).approvals;
+    expect(kept).toEqual({ mode: "interactive", consent: { ...FORGED().consent, assisted: NONE, autopilot: NONE } });
+    expect(c.entries()).toEqual([{ mode: "interactive", via: "file", verified: false, atStart: true }]);
+    // A forged record at the card's exact version and a sealed one of another time don't match either.
+    const other = setup({ ...AUTOPILOT }, { seal: memorySeal({ ...AUTOPILOT, consent: { ...AUTOPILOT.consent, autopilot: { version: modeCardVersion("autopilot"), at: "2026-01-01T00:00:00.000Z" } } }).store });
+    await other.record.sealed;
+    expect(other.inForce()).toBe("assisted");
+  });
+
+  it("takes what Home chose at the next start, as sealed then, and records it as found at start", async () => {
+    const seal = memorySeal(null);
+    const c = setup(INTERACTIVE, { seal: seal.store });
+    c.record.as({ via: "home", verified: false }, () => c.settings.update({ approvals: AUTOPILOT }));
+    expect(c.inForce()).toBe("autopilot");
+    await Promise.resolve();
+    expect(seal.value()).toEqual(AUTOPILOT);
+    // The next start, with the same file and seal.
+    const next = setup(AUTOPILOT, { seal: seal.store });
+    expect(next.inForce()).toBe("interactive");
+    await next.record.sealed;
+    expect(next.inForce()).toBe("autopilot");
+    expect(next.entries()).toEqual([{ mode: "interactive", via: "file", verified: false, atStart: true }, { mode: "autopilot", before: "interactive", via: "file", verified: false, atStart: true }]);
+    // Going back by voice is sealed too: the file can't bring Autopilot back at the start after.
+    next.record.as({ via: "voice", verified: false }, () => next.settings.update({ approvals: { ...AUTOPILOT, mode: "interactive" } }));
+    await Promise.resolve();
+    expect(trustedAtStart(AUTOPILOT, seal.value())).toEqual({ ...AUTOPILOT, mode: "interactive" });
+  });
+
+  it("never acts, in any mode, in an app's window that shows a file in Ember's data folder or the organisation's policy folder", () => {
+    const steps = [
+      { kind: "text", app: "gedit", window: "settings.json (~/.config/ember) - gedit", element: { role: "text", name: "" }, text: "{}" },
+      { kind: "keys", app: "gedit", window: "*settings.json (~/.config/ember) - gedit", element: { role: "text", name: "" }, keys: "ctrl+s" },
+      { kind: "click", app: "Files", window: "/home/ana/.config/ember/audit", element: { role: "push button", name: "Move to Trash" } },
+      { kind: "text", app: "notepad", window: "settings.json - C:\\Users\\ana\\AppData\\Local\\ember - Notepad++", element: { role: "text", name: "" }, text: "{}" },
+      { kind: "text", app: "TextEdit", window: "settings.json — ~/Library/Application Support/ember", element: { role: "text", name: "" }, text: "{}" },
+      { kind: "text", app: "gedit", window: "policy.json (/etc/ember) - gedit", element: { role: "text", name: "" }, text: "{}" },
+    ];
+    for (const inputs of [{}, { autonomy: () => ({ apps: true, commands: true, cursor: true, crossWindow: true }), trustAskedApps: () => true }, { autonomy: () => ({ apps: true, commands: true, cursor: true, crossWindow: true }), autopilot: () => true }]) {
+      const engine = new PolicyEngine({ neverLook: () => [], grants: () => ({}), ...inputs });
+      for (const step of steps) {
+        expect(engine.decide({ taskId: "t", ...step } as never), step.window).toMatchObject({ tier: "never", verdict: "deny" });
+      }
+    }
+    // A file merely called settings.json elsewhere, or a folder called ember outside those, isn't one.
+    const engine = new PolicyEngine({ neverLook: () => [], grants: () => ({}) });
+    expect(engine.decide({ taskId: "t", kind: "click", app: "nautilus", window: "~/projects/ember", element: { role: "push button", name: "Bold" } } as never).tier).not.toBe("never");
+    expect(engine.decide({ taskId: "t", kind: "text", app: "gedit", window: "settings.json (~/proj/.vscode) - gedit", element: { role: "text", name: "" }, text: "{}" } as never).tier).not.toBe("never");
+  });
+
+  it("keeps a lower mode or a withdrawn card the file says at start, whatever the seal says", () => {
+    expect(trustedAtStart(INTERACTIVE, AUTOPILOT)).toEqual(INTERACTIVE);
+    expect(trustedAtStart({ ...AUTOPILOT, mode: "assisted" }, AUTOPILOT)).toEqual({ ...AUTOPILOT, mode: "assisted" });
+    expect(trustedAtStart(ASKING, null)).toEqual(ASKING);
+    expect(trustedAtStart(INTERACTIVE, null)).toEqual(INTERACTIVE);
+  });
+});
+
+describe("the keyring's seal of the setting (mode-seal.ts; modes-x9s-2)", () => {
+  const box = (backend = "gnome_libsecret") => ({
+    isEncryptionAvailable: () => true, getSelectedStorageBackend: () => backend,
+    encryptString: (t: string) => Buffer.from(`sealed:${Buffer.from(t).toString("base64")}`),
+    decryptString: (b: Buffer) => { const t = b.toString(); if (!t.startsWith("sealed:")) throw new Error("not ours"); return Buffer.from(t.slice(7), "base64").toString(); },
+  });
+  const dir = () => { const d = fs.mkdtempSync(path.join(os.tmpdir(), "mode-seal-")); dirs.push(d); return d; };
+
+  it("gives back what it sealed, owner-only, and nothing for a file it didn't seal", async () => {
+    const file = path.join(dir(), "approvals-seal.bin");
+    const s = new ModeSeal(file, box());
+    expect(await s.read()).toBeNull();
+    expect(await s.write(AUTOPILOT)).toBe(true);
+    expect(await s.read()).toEqual(AUTOPILOT);
+    if (process.platform !== "win32") expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+    // Written by something else (no keyring's seal), or not a setting at all.
+    fs.writeFileSync(file, JSON.stringify(AUTOPILOT));
+    expect(await s.read()).toBeNull();
+    fs.writeFileSync(file, box().encryptString(JSON.stringify({ mode: "autopilot" })));
+    expect(await s.read()).toBeNull();
+  });
+
+  it("seals nothing without a keyring (basic_text): those agreements last until Ember quits", async () => {
+    const file = path.join(dir(), "approvals-seal.bin");
+    const s = new ModeSeal(file, box("basic_text"));
+    expect(await s.write(AUTOPILOT)).toBe(false);
+    expect(fs.existsSync(file)).toBe(false);
+    fs.writeFileSync(file, box().encryptString(JSON.stringify(AUTOPILOT)));
+    expect(await s.read()).toBeNull();
+  });
+});
+
 describe("the record of the mode in force (modes-A7)", () => {
   it("writes an entry for every change of the mode in force: the mode, the one before, how, and whether the voice was verified", () => {
     const c = setup(ASKING);
@@ -146,15 +275,15 @@ describe("the record of the mode in force (modes-A7)", () => {
     c.record.as({ via: "home", verified: false }, () => c.settings.update({ approvals: INTERACTIVE }));
     expect(c.inForce()).toBe("interactive");
     c.record.as({ via: "voice", verified: true }, () => c.settings.update({ approvals: ASSISTED }));
-    c.record.as({ via: "typed", verified: false }, () => c.settings.update({ approvals: ASKING }));
-    // By hand, while Ember runs: the file's.
+    // By hand, while Ember runs, to a mode that asks more: the file's.
     fs.writeFileSync(c.file, JSON.stringify({ ...base, approvals: INTERACTIVE }));
     expect(c.settings.reloadIfChanged()).toBe(true);
+    c.record.as({ via: "typed", verified: false }, () => c.settings.update({ approvals: ASKING }));
     expect(c.entries()).toEqual([
       { mode: "interactive", before: "asking", via: "home", verified: false },
       { mode: "assisted", before: "interactive", via: "voice", verified: true },
-      { mode: "asking", before: "assisted", via: "typed", verified: false },
-      { mode: "interactive", before: "asking", via: "file", verified: false },
+      { mode: "interactive", before: "assisted", via: "file", verified: false },
+      { mode: "asking", before: "interactive", via: "typed", verified: false },
     ]);
   });
 
@@ -197,7 +326,8 @@ describe("the record of the mode in force (modes-A7)", () => {
   });
 
   it("is what main wires: one record, opened with the audit log, and every policy engine's inputs read through the mode in force", () => {
-    expect(main).toContain("const modes = new ModeRecord({ settings, admin: () => policy, log });");
+    expect(main).toContain("const modes = new ModeRecord({ settings, admin: () => policy, log,");
+    expect(main).toContain(`seal: new ModeSeal(path.join(userData, "approvals-seal.bin"), safeStorage, { asyncKeyring: platform.os === "darwin" }) });`);
     expect(main).toContain("    modes.opened(audit);");
     expect(main).toContain("const approvalsNow = () => approvalInputs(modeInForce(settings.get().approvals, policy));");
     expect(main).toContain("trustAskedApps: () => approvalsNow().askedApps,");
@@ -353,10 +483,10 @@ describe("SettingsStore.reloadIfChanged", () => {
     const T = 1_700_000_000; // seconds: the same on both sides, set explicitly so the test never depends on the clock
     fs.utimesSync(c.file, T, T);
     c.settings.reloadIfChanged(); // Ember has seen the file at T
-    fs.writeFileSync(c.file, JSON.stringify({ ...base, approvals: INTERACTIVE }));
+    fs.writeFileSync(c.file, JSON.stringify({ ...base, approvals: ASKING, size: 100 }));
     fs.utimesSync(c.file, T, T); // the edit lands in the same tick
     expect(fs.statSync(c.file).mtimeMs).toBe(T * 1000);
     expect(c.settings.reloadIfChanged()).toBe(true);
-    expect(c.settings.get().approvals.consent.interactive.version).toBe(modeCardVersion("interactive"));
+    expect(c.settings.get().size).toBe(100);
   });
 });

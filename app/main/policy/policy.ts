@@ -715,6 +715,17 @@ export function isEmberWindow(w: { app?: string; name?: string; pid?: number | n
   if (EMBER_WINDOW.test(normalizeLabel(w.app ?? "").trim())) return true;
   return w.pid == null && EMBER_WINDOW.test(normalizeLabel(w.name ?? "").trim());
 }
+/**
+ * A window title that shows a file or folder in Ember's data folder (~/.config/ember, %LOCALAPPDATA%\ember,
+ * ~/Library/Application Support/ember) or the organisation's policy folder (/etc/ember, /Library/Application
+ * Support/Ember), as editors and file managers put it: "settings.json (~/.config/ember) - gedit". A task never acts there
+ * (modes-x9s-2): settings.json, the audit log and the policy are Ember's own, as its windows are. A title that names no
+ * folder (Notepad's "settings.json - Notepad") isn't caught here; the mode itself is never taken from the file
+ * (policy/mode-record.ts).
+ */
+const EMBER_DATA_TITLE = /(?:^|[/\\]|%)(?:\.config|appdata[/\\]local|localappdata%|application support|etc)[/\\]ember(?=$|[/\\)\]\s"'”»])/i;
+/** Does this window's title show something in Ember's data folder or the organisation's policy folder? */
+export const showsEmberData = (title: string | undefined): boolean => !!title && EMBER_DATA_TITLE.test(title);
 /** One list with the screen reader's (which also withholds these fields' contents), plus look-alike folding. */
 export const isSecretField = (s: string) => SECRET_FIELD.test(normalizeLabel(s)) || isSecretLabel(normalizeLabel(s));
 
@@ -3117,6 +3128,8 @@ export class PolicyEngine {
     if (securityWindow({ app: r.app, title: r.window })) return never("authentication and security windows are for the user only");
     // Ember's own windows: a task could answer its own (or another task's) question, or change consent or the never-look list.
     if (r.kind !== "read" && isEmberWindow({ app: r.app, name: r.window, pid: r.windowId?.pid }, this.o.ownPid)) return never("Ember's own windows are for the user only");
+    // Ember's settings, audit log and policy, open in another app: a task could forge the mode's agreement or weaken a setting there.
+    if (r.kind !== "read" && showsEmberData(r.window)) return never("Ember's settings, audit log and policy are for the user only");
     if (r.element?.role === "password text") return never("password fields are for the user only");
     if (r.element?.role === "terminal") return never("Ember doesn't type into terminal windows; it runs commands in its own command window when Commands is on");
     if (r.kind === "open_app" && this.o.isTerminalApp?.(r.app || r.value || "")) return never("Ember doesn't open terminal windows; it runs commands in its own command window when Commands is on");
