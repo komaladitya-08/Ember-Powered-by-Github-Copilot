@@ -1335,7 +1335,7 @@ function conversationRow(e: Entry): HTMLLIElement {
     const id = e.fact;
     if (e.again) return li;
     if (e.forgot) mountForgotUndo(li, e.text, e.forgot, window.ember.restoreMemory);
-    else if (id) mountLearnedUndo(li, e.text, id, async fact => { await window.ember.forgetMemory(fact); });
+    else if (id) mountLearnedUndo(li, e.text, id, async fact => { await window.ember.forgetMemory(fact); }, e.t);
     return li;
   }
   const who = Object.assign(document.createElement("span"), { className: "who", textContent: WHO[e.who] ?? e.who });

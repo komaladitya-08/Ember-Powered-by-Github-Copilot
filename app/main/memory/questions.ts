@@ -9,6 +9,7 @@
  */
 
 import { APP_NAMES } from "../../shared/apps";
+import { LEARNED_UNDO_MS } from "../../shared/ipc";
 import type { NewFact } from "./graph";
 import { soundsLikeInstruction } from "./learn";
 import type { MemoryOwnerReason } from "./owner";
@@ -20,8 +21,8 @@ export const GAP_MISSES = 2;
 export const QUESTION_EVERY_MS = 24 * 3_600_000;
 /** How long a question waits for its answer (ms). */
 export const ANSWER_WAIT_MS = 10 * 60_000;
-/** "Forget that" reaches back this far (ms). */
-export const FORGET_THAT_MS = 10 * 60_000;
+/** "Forget that" reaches back this far (ms): as long as Home's "Ember learned" line says Undo (memory-r9-10). */
+export const FORGET_THAT_MS = LEARNED_UNDO_MS;
 
 /** Capitalised words that are seldom names. */
 const COMMON = new Set([

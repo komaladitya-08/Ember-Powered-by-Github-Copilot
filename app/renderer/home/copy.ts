@@ -800,6 +800,8 @@ export const undoLearnedLabel = (text: string) => `Undo: forget “${text}”`;
 /** The line's button once main confirms the deletion. */
 export const LEARNED_UNDONE = "Forgotten";
 export const UNDO_LEARNED = "Undo";
+/** The "Ember learned" line's button once forgetting the fact no longer undoes what it replaced (memory-r9-10). */
+export const FORGET_LEARNED = "Forget";
 export const MEMORY_FORGETTING = "Forgetting…";
 export const MEMORY_SEARCH_LABEL = "Search memory";
 export const MEMORY_SOURCE_LABEL = "Source";

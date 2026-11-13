@@ -378,10 +378,14 @@ download, so English-only MiniLM is the trade-off for now.
      `forget_memory` forgets a fact only when the user's own words this turn ask to forget it, with a word of the
      fact after the request (`asksToForget`: "forget that I work at Globex", "remove Priya from your memory"; never
      "don't forget", a routine's steps or unchecked speech), as `delete_routine` does. What it forgot shows in the
-     conversation as "Ember forgot: …" in the fact's stored words, with what holds again, and Undo.
+     conversation as "Ember forgot: …" in the fact's stored words, with what holds again, and Undo. A forget request
+     that names no word of the fact ("Forget my address" for "Lives at 12 Elm Road") is still refused, but the tool
+     tells the model that the user asked and that Ember can't be sure which fact they mean, so Ember says what it
+     found and points to Forget in Settings › Memory instead of saying they didn't ask (memory-r9-12).
    - Undo after any Forget (Home's list, "Ember forgot", "forget that") puts the fact back exactly: its notes, what
      it had replaced closed again, its vector rebuilt (`MemoryService.restore`, once per Forget, within 60 seconds,
-     held in main's memory only and dropped at Forget everything).
+     held in main's memory only and dropped at Forget everything). A fact said again between the Forget and its
+     Undo is there already: Undo makes that one surer and puts back no second copy (`putBack`, memory-r9-9).
    - Before each turn, the host recalls against the request and adds a `<memory>` block.
    - The recall tool gives the same few facts that match its query's words best (`CONTEXT_FACTS`, six), never more,
      and ends with Ember's own line of how many there are in all and where the full list is (`recallNote`,
@@ -441,7 +445,9 @@ download, so English-only MiniLM is the trade-off for now.
      kept in words that share none with what the user said ("Is vegetarian" for "I don't eat meat") can still be
      learned a second time in the user's words.
    - What is learned shows in the conversation as "Ember learned: …" with **Undo**, and "forget that" within ten
-     minutes forgets the newest without a model turn. Forgetting an open fact Ember kept in those ten minutes (the
+     minutes forgets the newest without a model turn. The line's button says Undo for those ten minutes
+     (`LEARNED_UNDO_MS`) and **Forget** after them, where it is, since from then on forgetting the fact no longer
+     brings back what it replaced (memory-r9-10). Forgetting an open fact Ember kept in those ten minutes (the
      line's **Undo**, "forget that", a Forget soon after) undoes it: the one it had replaced is open again
      (`reopenSuperseded`), and Home's line and the reply say so ("Ember remembers “Works at Globex” again").
      Forgetting an older fact forgets it alone, so forgetting "Works at Initech" after leaving never makes "Works at

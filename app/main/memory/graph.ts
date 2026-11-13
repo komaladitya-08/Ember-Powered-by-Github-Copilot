@@ -342,7 +342,9 @@ export class MemoryGraph {
 
   /**
    * Puts back what a Forget removed (Undo: MemoryService.restore): the entities first, then the facts, each only if
-   * nothing has its id now. An entity whose name another one has taken since gives its facts to that one.
+   * nothing has its id now. An entity whose name another one has taken since gives its facts to that one. A fact
+   * said again since the Forget is there already: the one put back is that one, surer for it, never a second copy,
+   * and the notes made from it rest on that one (memory-r9-9).
    */
   putBack(entities: Entity[], facts: Fact[]): void {
     const moved = new Map<string, string>();
@@ -352,10 +354,19 @@ export class MemoryGraph {
       if (taken) moved.set(e.id, taken);
       else this.putEntity(e);
     }
+    const again = new Map<string, string>();
     for (const f of facts) {
       if (this.facts.has(f.id)) continue;
       const ids = [...new Set(f.entities.map(id => moved.get(id) ?? id))];
-      if (ids.every(id => this.entities.has(id))) this.facts.set(f.id, { ...f, entities: ids });
+      if (!ids.every(id => this.entities.has(id))) continue;
+      const same = f.invalidAt ? undefined : this.allFacts(true).find(o => sameEntities(o.entities, ids) && similarity(o.text, f.text) >= DUPLICATE && negated(o.text) === negated(f.text));
+      if (same) {
+        again.set(f.id, same.id);
+        this.facts.set(same.id, { ...same, confidence: Math.max(same.confidence, f.confidence), uses: same.uses + 1, source: stronger(same.source, f.source) });
+        continue;
+      }
+      const from = f.derivedFrom?.map(id => again.get(id) ?? id);
+      this.facts.set(f.id, { ...f, entities: ids, ...(from ? { derivedFrom: from } : {}) });
     }
   }
 

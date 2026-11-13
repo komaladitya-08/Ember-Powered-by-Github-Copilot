@@ -58,7 +58,8 @@ it.skipIf(process.env.EMBER_MEMORY_TEST !== "1")("keeps Undo truthful, preserves
         if (name === "memory") return async () => ({ rows: seed.facts, ownership: "ready" });
         if (name === "voiceWords") return async () => seed.words;
         if (name === "reminders") return async () => [];
-        if (name === "conversation") return async () => [{ t: "2026-11-04T12:00:00Z", who: "learned", text: "Prefers tea", fact: "fact-0" }];
+        // (Learned just now: its button says Undo for ten minutes, then Forget: memory-r9-10.)
+        if (name === "conversation") return async () => [{ t: new Date().toISOString(), who: "learned", text: "Prefers tea", fact: "fact-0" }];
         if (name === "forgetMemory") return () => { test.forgetCalls++; return new Promise<void>((resolve, reject) => { test.resolve = resolve; test.reject = message => reject(new Error(message)); }); };
         if (name === "forgetVoiceWord") return async (word: VoiceWord) => { test.words = test.words.filter(row => JSON.stringify(row) !== JSON.stringify(word)); return test.words; };
         if (name === "forgetVoiceWords") return async () => { throw new Error("Private filesystem detail"); };
@@ -373,8 +374,8 @@ it.skipIf(process.env.EMBER_MEMORY_TEST !== "1")("forgets one memory for two Ent
       const push = () => listeners.onMemory?.({ rows: shown, ownership: "ready", reason: null });
       // The conversation's memory lines, changed in place as main changes them (memory-c1-3).
       let convo: { t: string; who: "learned"; text: string; fact?: string; forgot?: string; derived?: number; again?: true }[] = [
-        { t: "2026-11-04T12:00:00Z", who: "learned", text: "Prefers tea", forgot: "token-forgot-1" },
-        { t: "2026-11-04T12:01:00Z", who: "learned", text: "Uses Firefox", fact: "c" },
+        { t: new Date(Date.now() - 60_000).toISOString(), who: "learned", text: "Prefers tea", forgot: "token-forgot-1" },
+        { t: new Date().toISOString(), who: "learned", text: "Uses Firefox", fact: "c" },
       ];
       const pushConvo = () => listeners.onConversation?.(convo);
       window.ember = new Proxy({}, { get: (_target, name: string) => {

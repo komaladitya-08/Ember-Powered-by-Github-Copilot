@@ -38,6 +38,11 @@ export interface ProjectWorkspaceReply {
 /** How long Undo can put a forgotten memory back (ms): main keeps what it removed that long, and Home offers Undo. */
 export const MEMORY_UNDO_MS = 60_000;
 /**
+ * How long forgetting what Ember kept just now undoes it, so what it replaced holds again ("forget that", the "Ember
+ * learned" line's Undo: memory-12). After that the line's button says Forget, which is what it does (memory-r9-10).
+ */
+export const LEARNED_UNDO_MS = 10 * 60_000;
+/**
  * What one Forget removed: the fact's words, how many of Ember's notes went with it, and Undo's token (memory-7); and
  * what it had replaced, current again, when it undid what Ember kept just now (`back`: memory-12).
  */
