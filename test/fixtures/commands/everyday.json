@@ -1,5 +1,5 @@
 {
- "about": "Everyday commands a worker runs for ordinary tasks (listing, searching, reading, git, package scripts, builds and tests, archives, media, system information): each runs with no question (commands-closed's guard against over-asking). Only commands that ran at main 01493d0 are here.",
+ "about": "Everyday commands a worker runs for ordinary tasks (listing, searching, reading, git, package scripts, builds and tests, archives, media, system information): each runs with no question (commands-closed's guard against over-asking). They ran at main 01493d0, but for the last few, which ran only once the closed default knew them (lbzip2, prove, mkdocs build, pbcopy, swift build, bazel test).",
  "cases": [
   {
    "cmd": "ls",
@@ -2270,6 +2270,36 @@
    "cmd": "sips -g pixelHeight photo.jpg",
    "shell": "zsh",
    "context": "darwin"
+  },
+  {
+   "cmd": "lbzip2 -d big.bz2",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "prove -j 4 t",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "mkdocs build",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "echo done | pbcopy",
+   "shell": "zsh",
+   "context": "darwin"
+  },
+  {
+   "cmd": "swift build",
+   "shell": "zsh",
+   "context": "darwin"
+  },
+  {
+   "cmd": "bazel test //...",
+   "shell": "bash",
+   "context": "linux"
   }
  ]
 }

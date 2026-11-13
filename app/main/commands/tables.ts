@@ -555,7 +555,7 @@ export const ORDINARY_PROGRAMS: ReadonlySet<string> = new Set([
   "msgfmt", "msgmerge", "msgunfmt", "msginit", "xgettext", "units", "bc", "mktemp", "which", "whereis", "whatis", "apropos",
   "locate", "mlocate", "plocate", "lsattr", "getfacl", "namei", "tree", "dos2unix", "unix2dos",
   "mac2unix", "unix2mac", "wdiff", "colordiff", "cloc", "tokei", "scc", "sloccount", "cmark", "markdown", "asciidoctor", "rst2html",
-  "history", "wl-copy", "desktop-file-validate", "mode", "spell", "codespell", "typos", "vale", "write-good", "proselint",
+  "history", "wl-copy", "pbcopy", "clip", "desktop-file-validate", "mode", "spell", "codespell", "typos", "vale", "write-good", "proselint",
   // Modern equivalents and structured-data tools.
   "rg", "ripgrep", "ag", "ack", "ack-grep", "pt", "sift", "fd", "fdfind", "bat", "batcat", "eza", "exa", "lsd", "dust",
   "duf", "gdu", "erd", "erdtree", "choose", "hck",
@@ -589,7 +589,7 @@ export const ORDINARY_PROGRAMS: ReadonlySet<string> = new Set([
   "sqlfluff", "sqlformat", "pgformatter", "pg_format", "tflint", "tfsec", "checkov", "kubeval", "kubeconform",
   "kube-linter", "editorconfig-checker", "ec", "commitlint", "cspell", "lychee", "markdown-link-check",
   // Test runners and coverage.
-  "nox", "pytest", "py.test", "nose2", "jest", "vitest", "mocha", "ava", "tap", "jasmine", "karma", "rspec", "minitest",
+  "nox", "prove", "pytest", "py.test", "nose2", "jest", "vitest", "mocha", "ava", "tap", "jasmine", "karma", "rspec", "minitest",
   "phpunit", "pest", "ctest", "bats", "shunit2", "busted", "gcov", "gcovr", "lcov", "genhtml", "llvm-cov",
   "coverage", 
   // Build tools that build what the folder holds.
@@ -609,7 +609,7 @@ export const ORDINARY_PROGRAMS: ReadonlySet<string> = new Set([
   "graph-easy", "qrencode", "zbarimg", 
   "textutil", "sips", "afconvert", "afinfo", "mdls",
   // Archives and compression (their own rows judge where they write).
-  "gzip", "gunzip", "zcmp", "bzip2", "bunzip2", "xz", "unxz", "lzma", "unlzma", "lz4", "unlz4", "zstd", "unzstd", "brotli", "pigz",
+  "gzip", "gunzip", "lbzip2", "lbunzip2", "zcmp", "bzip2", "bunzip2", "xz", "unxz", "lzma", "unlzma", "lz4", "unlz4", "zstd", "unzstd", "brotli", "pigz",
   "pbzip2", "pixz", "lzop", "7z", "7za", "7zr", "unzip", "zipinfo", "unar", "lsar", "cabextract", "cpio", "gzcat",
   // System information: what the computer has and does, read only.
   "lsb_release", "lscpu", "lsblk", "lspci", "lsusb", "lsmod", "lshw", "lsipc", "lslocks", "lslogins", "lsns", "lsscsi", "lsinitrd",
@@ -647,6 +647,12 @@ export interface OrdinaryVerbs {
   bare?: "asks";
 }
 
+const CONDA_VERBS: OrdinaryVerbs = { verbs: ["list", "info", "search", "create", "install", "update", "upgrade", "env", "run", "activate", "deactivate", "clean", "doctor", "compare", "--version", "-V", "help", "init", "notices"], sub: { env: ["list", "create", "export", "update", "config"] } };
+const BUNDLE_VERBS: OrdinaryVerbs = {
+    verbs: ["install", "update", "exec", "check", "list", "show", "info", "outdated", "init", "add", "remove", "lock", "binstubs", "package", "cache", "platform", "doctor",
+      "gem", "version", "help", "--version", "-v"],
+  };
+
 /**
  * The verbs Ember knows of the verb-keyed tools (commands-closed, the closed default): the verbs that read, build,
  * test or run the project's own code. A tool Ember has no row for runs only with one of these (and asks with no verb);
@@ -681,6 +687,7 @@ export const ORDINARY_VERBS: Readonly<Record<string, OrdinaryVerbs>> = {
       "clang++", "swift", "swiftc", "cc", "c++", "ld", "lipo", "otool", "nm", "strip", "size", "dsymutil", "--version", "-h", "--help"],
     values: ["--sdk", "-sdk", "--toolchain"],
   },
+  mkdocs: { verbs: ["build", "serve", "new", "--version", "-V", "--help", "-h", "get-deps"] },
   buf: { verbs: ["build", "lint", "format", "breaking", "ls-files", "convert", "--version", "--help"] },
   // Tools with a row: the verbs their rows judge ordinary that are.
   stack: { verbs: ["build", "test", "bench", "haddock", "run", "ls", "path", "query", "ide", "clean", "purge", "init", "new", "templates", "dot", "list", "setup", "--version", "--help"], values: ["--stack-yaml", "--resolver", "--work-dir"] },
@@ -721,7 +728,9 @@ export const ORDINARY_VERBS: Readonly<Record<string, OrdinaryVerbs>> = {
     values: ["-C", "--directory", "-P", "--project"],
   },
   pdm: { verbs: ["install", "add", "remove", "update", "lock", "list", "show", "build", "run", "sync", "init", "info", "venv", "export", "import", "cache", "fix", "outdated", "use", "search", "--version", "-V", "help"] },
-  conda: { verbs: ["list", "info", "search", "create", "install", "update", "upgrade", "env", "run", "activate", "deactivate", "clean", "doctor", "compare", "--version", "-V", "help", "init", "notices"], sub: { env: ["list", "create", "export", "update", "config"] } },
+  conda: CONDA_VERBS,
+  mamba: CONDA_VERBS,
+  micromamba: CONDA_VERBS,
   hatch: { verbs: ["build", "test", "run", "env", "fmt", "version", "shell", "project", "status", "new", "clean", "dep", "python", "--version", "help"] },
   rye: { verbs: ["sync", "add", "remove", "lock", "run", "build", "fetch", "list", "show", "init", "pin", "fmt", "lint", "test", "toolchain", "version", "help", "--version"] },
   dotnet: {
@@ -734,10 +743,8 @@ export const ORDINARY_VERBS: Readonly<Record<string, OrdinaryVerbs>> = {
     verbs: ["list", "search", "info", "specification", "spec", "contents", "which", "environment", "env", "help", "--version", "-v", "build", "query", "dependency",
       "outdated", "check", "stale", "lock", "install", "update", "fetch", "unpack", "rdoc"],
   },
-  bundle: {
-    verbs: ["install", "update", "exec", "check", "list", "show", "info", "outdated", "init", "add", "remove", "lock", "binstubs", "package", "cache", "platform", "doctor",
-      "gem", "version", "help", "--version", "-v"],
-  },
+  bundle: BUNDLE_VERBS,
+  bundler: BUNDLE_VERBS,
   systemctl: {
     verbs: ["status", "show", "cat", "list-units", "list-unit-files", "list-sockets", "list-timers", "list-jobs", "list-dependencies", "list-machines",
       "list-automounts", "list-paths", "is-active", "is-enabled", "is-failed", "is-system-running", "get-default", "show-environment", "help", "--version"],

