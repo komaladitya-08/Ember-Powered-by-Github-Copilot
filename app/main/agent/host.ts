@@ -63,6 +63,7 @@ import { AUTONOMY_NOT_SAVED, modeIntent, planModeIntent, type ModeIntentState } 
 import type { ApprovalMode } from "../../shared/approvals";
 import type { TaskVoiceTrust } from "./voice-answer";
 import { BELOW_INTERACTIVE_HINT, approvalInputs, belowInteractiveForCard, modeInForce } from "../policy/autonomy";
+import { WATCHES_NEEDED } from "../doctor";
 import { CATCH_UP_MS, catchUpQuestion, catchUpReply, healthQuestion, healthReply, type Health, READ_OUT_REPLY, readOutRequest, resultsReply, resultsRequest, retryRequest, statusQuestion, statusReply, stopRequest } from "./status";
 import { CONVERSATION_LIMIT, retainedConversationText, type ConversationTurn, type ConversationTurnEnd } from "../../shared/conversation";
 import type { HistoryStore } from "./conversation-store";
@@ -253,9 +254,10 @@ export interface HostOptions {
   health?: () => Pick<Health, "mic" | "speaks">;
   /**
    * Says `text` (Ember's last answer) aloud now, for "read it out" (voice-speaking-r6-1). False where Ember isn't
-   * speaking replies (speaking off, the organisation, no voice at all): nothing is said. Absent: never said.
+   * speaking replies (speaking off, the organisation): nothing is said. "no-voice" where no voice here can say it
+   * (voice-speaking-r9-3): nothing is said either, and the conversation says so. Absent: never said.
    */
-  readOut?: (text: string) => boolean;
+  readOut?: (text: string) => boolean | "no-voice";
   /**
    * Which tasks the owner asked for in a verified voice (voice-answer.ts TaskVoiceTrust): a task started in a turn whose
    * request Voice Match verified is granted it, and a task changed by a request it didn't verify loses it. Absent: none.
@@ -389,8 +391,8 @@ export interface HostOptions {
   turnSlowMs?: number;
   /** How long a turn under way may hear nothing before it is given up on (ms; TURN_SILENT_MS). */
   turnSilentMs?: number;
-  /** Whether this user's inotify instances are all in use (inotifyUsedUp; tests pass their own). */
-  inotifyUsedUp?: () => boolean;
+  /** Whether this user's inotify instances, or its watches ("watches"), are used up (inotifyUsedUp; tests pass their own). */
+  inotifyUsedUp?: () => boolean | "watches";
   /** Where tasks act (§2): the targets runtime's view for the host (absent: this computer only, as before). */
   targets?: TargetsForAgent;
   /** The audit log and Confirmer tasks use when there are no `hands` (no window system: commands-only targets, §2.6). */
@@ -502,6 +504,11 @@ const BUSY_HEALTH_MS = 2500;
 const NOT_ANSWERING = "Copilot isn't answering. I'm reconnecting; ask me again in a moment.";
 /** The same while tasks are at work: Copilot is reconnected once they're done. */
 const NOT_ANSWERING_AFTER_TASKS = "Copilot isn't answering. I'll reconnect when the tasks that are running finish; ask me again then.";
+/**
+ * Signed out, and it couldn't be saved (the saved sign-in is still on disk, or the signed-out note couldn't be
+ * written): what Models & connections says in place of "sign in below" (reliability-r9-2).
+ */
+export const SIGN_OUT_NOT_KEPT = "You're signed out for now, but Ember couldn't save that: its data folder can't be written. Until it can, Ember may sign in again by itself the next time it starts.";
 /** The same, with this user's inotify instances used up (the runtime can't begin a turn then). */
 const NO_WATCHERS = "Copilot can't work right now: this computer has run out of file watchers. Close a few apps, then ask me again.";
 const NO_WATCHERS_WHY = "Copilot isn't answering: the system's limit on file watchers (fs.inotify.max_user_instances) is used up. Close some apps, or ask IT to raise the limit.";
@@ -551,37 +558,59 @@ export function runtimeWords(service: ServiceKind) {
   };
 }
 
+/** The inotify use of one user: instances, and the files and folders they watch where those can be counted. */
+export interface InotifyUse { used: number; max: number; watches?: { used: number; max: number } }
+
 /**
  * This user's inotify instances in use and the limit (fs.inotify.max_user_instances: 128 on RHEL 8, and every app
  * takes some; Ember's Copilot runtime takes one per conversation or task), or null when they can't be counted.
- * Counted in `proc`: the instances held by processes of `uid`.
+ * Counted in `proc`: the instances held by processes of `uid`. `watches`: the files and folders those instances watch
+ * (each "inotify wd:" line of an instance's fdinfo) against fs.inotify.max_user_watches (8,192 on RHEL 8, which an
+ * editor, a sync client or the desktop's file indexer can use up) or the user namespace's own lower limit
+ * (user.max_inotify_watches); left out where there is no limit to read. With the watches used up the runtime took a
+ * request and never began it, as with the instances, while the count of instances said all was well (reliability-r9-1).
  */
-export function inotifyUse(proc = "/proc", uid = process.getuid?.()): { used: number; max: number } | null {
+export function inotifyUse(proc = "/proc", uid = process.getuid?.()): InotifyUse | null {
   try {
     const max = Number(fs.readFileSync(path.join(proc, "sys/fs/inotify/max_user_instances"), "utf8"));
     if (!(max > 0)) return null;
-    let n = 0;
+    let n = 0, watched = 0;
     for (const pid of fs.readdirSync(proc)) {
       if (!/^\d+$/.test(pid)) continue;
       const dir = path.join(proc, pid, "fd");
       try {
         if (uid !== undefined && fs.statSync(path.join(proc, pid)).uid !== uid) continue;
         for (const fd of fs.readdirSync(dir)) {
-          try { if (fs.readlinkSync(path.join(dir, fd)) === "anon_inode:inotify") n++; } catch { /* closed meanwhile */ }
+          try {
+            if (fs.readlinkSync(path.join(dir, fd)) !== "anon_inode:inotify") continue;
+            n++;
+            watched += (fs.readFileSync(path.join(proc, pid, "fdinfo", fd), "utf8").match(/^inotify wd:/gm) ?? []).length;
+          } catch { /* closed meanwhile */ }
         }
       } catch { /* gone, or another user's */ }
     }
-    return { used: n, max };
+    const limits = ["sys/fs/inotify/max_user_watches", "sys/user/max_inotify_watches"].flatMap(file => {
+      try { const v = Number(fs.readFileSync(path.join(proc, file), "utf8")); return Number.isFinite(v) && v >= 0 ? [v] : []; } catch { return []; /* no such limit here */ }
+    });
+    return { used: n, max, ...(limits.length ? { watches: { used: watched, max: Math.min(...limits) } } : {}) };
   } catch {
     return null;
   }
 }
 
-/** Whether they are all in use: the Copilot runtime then takes requests but never begins them. */
-export function inotifyUsedUp(proc = "/proc", uid = process.getuid?.()): boolean {
+/**
+ * Whether they are all in use: the Copilot runtime then takes requests but never begins them. "watches" when it is the
+ * watched files and folders that are used up (fewer than WATCHES_NEEDED free), not the instances.
+ */
+export function inotifyUsedUp(proc = "/proc", uid = process.getuid?.()): boolean | "watches" {
   const u = inotifyUse(proc, uid);
-  return !!u && u.used >= u.max;
+  if (!u) return false;
+  if (u.used >= u.max) return true;
+  return u.watches && u.watches.max - u.watches.used < WATCHES_NEEDED ? "watches" : false;
 }
+
+/** runtimeWords' noWatchersWhy, for the watched files and folders: the limit an administrator raises is another one. */
+const watchesWhy = (why: string) => why.replace("file watchers (fs.inotify.max_user_instances)", "watched files and folders (fs.inotify.max_user_watches)");
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 /** A promise and the call that settles it: a Stop's word to a request that waits (AgentHost.stopSignal). */
@@ -1864,8 +1893,12 @@ export class AgentHost {
     this.quitting = false;
     this.sourceName = source === "environment" ? name : undefined;
     const automatic = source === "environment" || source === "github-cli";
+    // A start after Ember gave up on a runtime that kept stopping is someone's own try (Check again, a sign-in): the
+    // count starts afresh, or one more stop within ten minutes gave up again without a single try (reliability-r9-5).
+    if (this.gaveUp) { this.gaveUp = false; this.crashes = []; }
     if (token && how === "user") this.setSignedOut(false);
-    else if (token && automatic && readAgentState(this.stateFile).signedOut) token = null;
+    // (Signed out in this run counts whatever the disk kept of it: reliability-r9-2.)
+    else if (token && automatic && (this.signedOutNow || readAgentState(this.stateFile).signedOut)) token = null;
     return this.launch(token, source);
   }
 
@@ -1890,9 +1923,26 @@ export class AgentHost {
     }
   }
 
+  /**
+   * The user signed out, or signed in again. Kept for this run whatever the disk says: a sign-out whose flag couldn't
+   * be written (a read-only or broken disk) still holds a GitHub CLI or environment sign-in back until Ember closes,
+   * and the status says it wasn't saved (signOutUnsaved), as the next start can't know of it (reliability-r9-2).
+   */
   private setSignedOut(on: boolean): void {
-    try { writeAgentState(this.stateFile, { signedOut: on }); } catch (err) { this.o.log.warn("agent.state_not_saved", { err }); }
+    this.signedOutNow = on;
+    try {
+      writeAgentState(this.stateFile, { signedOut: on });
+      this.signOutUnsaved = false;
+    } catch (err) {
+      this.signOutUnsaved = on;
+      this.o.log.warn("agent.state_not_saved", { err });
+    }
   }
+  private signedOutNow = false;
+  /** Ember stopped reconnecting after the runtime kept stopping (lost): the next start() begins the count again. */
+  private gaveUp = false;
+  /** The last sign-out couldn't be saved: the next start may use a sign-in it finds, and the status says so. */
+  signOutUnsaved = false;
 
   /**
    * Disconnects for good (quit): the conversation is deleted first, within about two seconds and while
@@ -1932,7 +1982,7 @@ export class AgentHost {
       return;
     }
     if (!token && !provider) {
-      this.setStatus({ phase: "signed-out", detail: this.o.signedOutWhy?.() ?? this.signedOut, login: undefined, source: undefined, service: undefined });
+      this.setStatus({ phase: "signed-out", detail: this.o.signedOutWhy?.() ?? (this.signOutUnsaved ? SIGN_OUT_NOT_KEPT : this.signedOut), login: undefined, source: undefined, service: undefined });
       this.o.memory?.pauseAccount?.("signed-out");
       this.dropHanded();
       return;
@@ -2279,18 +2329,19 @@ export class AgentHost {
           this.queued = [];
           this.turnChanged();
           const full = why === "not-started" && (this.o.inotifyUsedUp ?? inotifyUsedUp)();
-          const reason = why === "silent" ? "turn went silent and didn't end" : full ? "turn didn't start: inotify instances used up" : "turn didn't start";
+          const reason = why === "silent" ? "turn went silent and didn't end" : full === "watches" ? "turn didn't start: inotify watches used up" : full ? "turn didn't start: inotify instances used up" : "turn didn't start";
           // Named for the service in use, never Copilot when it isn't (integrations-v1).
           const words = reconnectWords(this.serviceKind());
           const runtime = runtimeWords(this.serviceKind());
-          const noWatchersDetail = `${runtime.noWatchersWhy} Reconnecting…`;
+          const noWatchersWhy = full === "watches" ? watchesWhy(runtime.noWatchersWhy) : runtime.noWatchersWhy;
+          const noWatchersDetail = `${noWatchersWhy} Reconnecting…`;
           if (this.tasksAtWork()) {
             this.o.log.warn("agent.reconnect_after_tasks", { why: reason });
             // (A silent turn: the conductor said Copilot didn't answer.)
             if (why === "not-started") this.presenter.fail(full ? runtime.noWatchers : words.notAnsweringAfterTasks);
             // (Set first: the status says the reconnect waits for the tasks, so settings doesn't offer one that stops them.)
             this.reconnectAfterTasks = () => { this.reconnectAfterTasks = null; this.lost(gen, reason, undefined, why === "silent" ? words.noAnswerDetail : full ? noWatchersDetail : words.notAnsweringDetail, asked, runtime.cutOffStalled); };
-            this.setStatus({ phase: "error", reason: "not-answering", detail: full ? `${runtime.noWatchersWhy} ${AFTER_TASKS}` : `${words.notAnsweringNow} ${AFTER_TASKS}` });
+            this.setStatus({ phase: "error", reason: "not-answering", detail: full ? `${noWatchersWhy} ${AFTER_TASKS}` : `${words.notAnsweringNow} ${AFTER_TASKS}` });
             return;
           }
           if (why === "silent") this.lost(gen, reason, noAnswer(this.serviceKind()), words.noAnswerDetail, asked, runtime.cutOffStalled);
@@ -2632,6 +2683,7 @@ export class AgentHost {
           this.gaveUpShown = said.gaveUpBubble;
           this.problemNow(w => w.gaveUp);
         }
+        this.gaveUp = true;
         void this.halt(false);
         return;
       }
@@ -3157,10 +3209,10 @@ export class AgentHost {
     // over Ember's voice doesn't count, so the request is the conversation's as any other is then (voice-speaking-x7-4).
     if (readOutRequest(text) && this.betweenTurns() && !this.confirmer?.waiting) {
       const last = this.lastAnswer({ readable: true });
-      let said = false;
+      let said: boolean | "no-voice" = false;
       try { said = !!last && (this.o.readOut?.(last) ?? false); } catch (err) { this.o.log.warn("agent.read_out_failed", { err }); }
       this.o.log.info("agent.read_out", { said, answer: !!last });
-      if (!said) this.answerLocally(text, last ? READ_OUT_REPLY.silent : READ_OUT_REPLY.none, how);
+      if (said !== true) this.answerLocally(text, !last ? READ_OUT_REPLY.none : said === "no-voice" ? READ_OUT_REPLY.noVoice : READ_OUT_REPLY.silent, how);
       // No line and no turn of the model's come for it: Home is told it was answered, or its composer says
       // "Thinking…" for good (voice-speaking-x7-2). With a turn told and not yet over, that turn's end says it.
       else if (this.turnTold === "idle" && !this.turnEnding) {

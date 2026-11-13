@@ -180,6 +180,8 @@ export function readOutRequest(text: string): boolean {
 export const READ_OUT_REPLY = {
   /** Ember isn't speaking replies now (speaking set to Never or to a screen reader that isn't on, the organisation). */
   silent: "I can't read it out: I'm not speaking replies right now. Speaking is under Voice in settings.",
+  /** No voice here can say it: the system's voice doesn't speak, and Ember's own isn't there or reads none of it. */
+  noVoice: "I can't read it out: no voice on this computer can say it right now. Voice in settings says why.",
   /** No answer yet. */
   none: "There's nothing to read out yet.",
 } as const;

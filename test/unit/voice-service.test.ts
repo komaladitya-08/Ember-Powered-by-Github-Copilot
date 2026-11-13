@@ -1930,6 +1930,42 @@ describe("speech models", () => {
       expect(speech.webContents.send).not.toHaveBeenCalledWith(VOICE.speak, expect.objectContaining({ text: "Hasta luego, y gracias por todo." }));
     });
 
+    it("sends Ember's closing English words to its own voice only after the passage the system voice was given, never ahead of it (voice-speaking-r9-1)", async () => {
+      const { v } = service(true, { neuralVoice: true });
+      v.speak("The message reads:", { lang: null });
+      v.speak("Bonjour Alex, comment vas-tu ?", { append: true, lang: "fr" });
+      v.speak("Shall I reply to it?", { append: true, lang: null });
+      await flush();
+      const tts = electron.procs[0], speech = electron.windows.find(w => w.title === "Ember speech")!;
+      // The whole answer streamed before Ember's voice had made the lead-in: only the lead-in is with the speech process.
+      expect(posted(tts, "say").map(m => (m as { text?: string }).text)).toEqual(["The message reads:"]);
+      expect(v.speaking).toBe(true);
+      tts.emit("message", { type: "ready", loadMs: 900, rate: 22_050 });
+      tts.emit("message", { type: "audio", id: 1, samples: new Float32Array(4), rate: 22_050, remaining: "" });
+      tts.emit("message", { type: "done", id: 1 });
+      await flush();
+      expect(posted(tts, "say").map(m => (m as { text?: string }).text)).toEqual(["The message reads:", "Shall I reply to it?"]);
+      tts.emit("message", { type: "audio", id: 2, samples: new Float32Array(4), rate: 22_050, remaining: "" });
+      tts.emit("message", { type: "done", id: 2 });
+      await flush();
+      const order = speech.webContents.send.mock.calls.filter(c => c[0] === VOICE.audio || c[0] === VOICE.speak).map(c => c[0] === VOICE.audio ? `own ${(c[1] as { id: number }).id}` : `system ${(c[1] as { text: string }).text}`);
+      expect(order).toEqual(["own 1", "system Bonjour Alex, comment vas-tu ?", "own 2"]);
+    });
+
+    it("says in the system voice what waited behind a passage for Ember's own voice, once that voice has stopped working (voice-speaking-r9-1)", async () => {
+      const { v } = service(true, { neuralVoice: true });
+      v.speak("The message reads:", { lang: null });
+      v.speak("Bonjour Alex, comment vas-tu ?", { append: true, lang: "fr" });
+      v.speak("Shall I reply to it?", { append: true, lang: null });
+      await flush();
+      const tts = electron.procs[0], speech = electron.windows.find(w => w.title === "Ember speech")!;
+      tts.emit("message", { type: "error", message: "no model", reason: "load" });
+      await flush();
+      expect(speech.webContents.send.mock.calls.filter(c => c[0] === VOICE.speak).map(c => (c[1] as { text: string }).text)).toEqual(["The message reads:", "Bonjour Alex, comment vas-tu ?", "Shall I reply to it?"]);
+      // A hush drops what waits.
+      v.hush();
+    });
+
     it("loads the voice and its speak-only page when a request is likely, once, and lets them go when idle (voice-speaking-1)", async () => {
       vi.useFakeTimers();
       const { v } = service(true, { neuralVoice: true });

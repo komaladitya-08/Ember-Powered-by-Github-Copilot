@@ -693,12 +693,23 @@ export function readAgentState(file: string): AgentState {
   }
 }
 
-/** Merges `patch` into agent.json (undefined removes a field; nothing left removes the file). */
+/**
+ * Merges `patch` into agent.json (undefined removes a field; nothing left removes the file). Written whole or not at
+ * all, through a temporary file renamed over it (it was the one kept file written in place: reliability-r9-2); throws
+ * when it can't be written, so the caller knows what wasn't saved.
+ */
 export function writeAgentState(file: string, patch: Partial<Record<keyof AgentState, AgentState[keyof AgentState] | undefined>>): void {
   const next: Record<string, unknown> = { ...readAgentState(file), ...patch };
   for (const k of Object.keys(next)) if (next[k] === undefined || next[k] === false) delete next[k];
   if (!Object.keys(next).length) { try { fs.rmSync(file); } catch { /* none */ } return; }
-  fs.writeFileSync(file, JSON.stringify(next, null, 2) + "\n", { mode: 0o600 });
+  const tmp = `${file}.${process.pid}.tmp`;
+  try {
+    fs.writeFileSync(tmp, JSON.stringify(next, null, 2) + "\n", { mode: 0o600 });
+    fs.renameSync(tmp, file);
+  } catch (err) {
+    try { fs.rmSync(tmp, { force: true }); } catch { /* nothing was written */ }
+    throw err;
+  }
 }
 
 /**

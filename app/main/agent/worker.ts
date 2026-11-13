@@ -188,8 +188,8 @@ export interface WorkerDeps {
    * so on the card after TURN_SLOW_MS and is given up on after TURN_SILENT_MS).
    */
   limits?: { maxSteps?: number; maxMs?: number; pasteWaitMs?: number; turnStartMs?: number; turnSlowMs?: number; turnSilentMs?: number };
-  /** Whether this user's inotify instances are all in use (a task's turn can't begin then; see host's inotifyUsedUp). */
-  inotifyUsedUp?: () => boolean;
+  /** Whether this user's inotify instances or watches are used up (a task's turn can't begin then; see host's inotifyUsedUp). */
+  inotifyUsedUp?: () => boolean | "watches";
   /** The OS's keys, words, apps, settings and security vocabulary (default LINUX_WORKER_SYSTEM). */
   system?: WorkerSystem;
   /** Where the task acts (default: this computer, as before targets existed). */
@@ -2251,7 +2251,7 @@ export class Worker {
         const watch = new TurnWatch(d.limits?.turnStartMs ?? TURN_START_MS, why => {
           d.log.warn(why === "silent" ? "worker.turn_silent" : "worker.turn_not_started");
           let full = false;
-          try { full = why === "not-started" && d.inotifyUsedUp?.() === true; } catch { /* can't be counted */ }
+          try { full = why === "not-started" && !!d.inotifyUsedUp?.(); } catch { /* can't be counted */ }
           // Named for the model service in use, never Copilot when it isn't (integrations-v1).
           this.stopNow(d.presenter.taskStopped(full ? "watchers" : why === "silent" ? "silent" : "not-started"));
         }, {

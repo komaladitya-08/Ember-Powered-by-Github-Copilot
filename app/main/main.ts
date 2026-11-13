@@ -68,7 +68,7 @@ import { ALWAYS_HELD, FALLBACK_SHORTCUTS, heldShortcuts, shownShortcuts, type Sh
 import type { DeskPlace } from "./desk/place";
 import { DeskView } from "./desk/view";
 import { createTaskWindowControl, taskControl } from "./agent/task-controls";
-import { AgentHost, explainSignInError, gitHubReachable, idleWord, POLICY_CHANGED_STOP, SCREEN_LOCKED_STOP, STOPPED_EVERYTHING, unansweredWord, type Hands, type TranscriptEntry } from "./agent/host";
+import { AgentHost, explainSignInError, gitHubReachable, idleWord, POLICY_CHANGED_STOP, SCREEN_LOCKED_STOP, SIGN_OUT_NOT_KEPT, STOPPED_EVERYTHING, unansweredWord, type Hands, type TranscriptEntry } from "./agent/host";
 import { composerSendRefusal } from "./agent/composer-refusal";
 import { CONVERSATION_TEXT_LIMIT, conversationRequest } from "../shared/conversation";
 import { projectAfterStatus, projectChoice, projectJobStops, projectMay, projectCommandFolder, projectCommandProblem, projectCommandText, projectNames, projectRefusedText, projectSelection, projectStopped, removeProjectFile, projectPrompt, projectTurnRequest, ProjectInputError, ProjectModelError, PROJECT_MODEL_FAILED, PROJECT_PREVIOUS_ELSEWHERE, type ProjectSource } from "./agent/project";
@@ -1252,12 +1252,16 @@ function start(): void {
    * "Read it out": Ember's last answer said once, as it would have been said (code and addresses left to the bubble, its
    * language's voice), in place of whatever Ember is saying. False, and nothing said, where Ember may not speak now
    * (voice-speaking-r6-1), or while a question is up, as no answer is said then: its own voice isn't cut
-   * (voice-speaking-x7-4).
+   * (voice-speaking-x7-4). "no-voice", and nothing said, where no voice can say any of it: the system's voice was last
+   * found not to speak, and Ember's own, which reads only English, isn't there or has none of it to read. Home said
+   * "Reading the last answer out." over silence (voice-speaking-r9-3).
    */
-  const readOut = (answer: string): boolean => {
+  const readOut = (answer: string): boolean | "no-voice" => {
     if (!voice || !maySpeak() || confirmer?.waiting) return false;
     const pieces = answerPieces(answer);
     if (!pieces.length) return false;
+    const own = voice.nextVoice !== "system";
+    if (speechHeard === false && !pieces.some(p => own && !p.lang)) return "no-voice";
     resetAnswerSpeech();
     pieces.forEach((p, i) => voice?.speak(p.text, { append: i > 0, lang: p.lang }));
     return true;
@@ -3682,7 +3686,8 @@ function start(): void {
       // Not while this screen is locked: a turn still running then would read it for the model (cross-review X9).
       describeScreen: () => seeing.describe(), screenLocked: () => screenLock?.locked ?? false, hands,
       // The keyring refused Ember's saved sign-in (macOS's keychain prompt after an update answered Deny): said so.
-      signedOutWhy: () => (tokens?.unreadable ? sys.words.savedSignInRefused ?? null : null),
+      // (A Sign out whose saved sign-in couldn't be removed is said, never passed over: reliability-r9-2.)
+      signedOutWhy: () => (tokens?.unreadable ? sys.words.savedSignInRefused ?? null : tokens?.uncleared ? SIGN_OUT_NOT_KEPT : null),
       // Signed out while the user's own provider waits for its card: agreeing is the way on (integrations-r3-1).
       providerWaiting: () => (fixedProvider ? null : providerWaitingHost(settings.get(), admin)),
       // Spoken without code or full addresses ("code shown in the bubble"), which nobody wants read out, sentence by

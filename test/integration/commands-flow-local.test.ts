@@ -194,6 +194,27 @@ async function run(command: string, words: string, more: Partial<RunCommandArgs>
   return { result, ms: Date.now() - t0, abort };
 }
 
+/** The shell this computer's commands run in: bash on Linux, zsh on a Mac (run/facts.ts), read off an ordinary run. */
+async function shellHere(): Promise<string> {
+  const { result } = await run("echo zq0", "");
+  return /^<command_output [^>]*\bshell="(\w+)"/.exec(result.textResultForLlm ?? "")?.[1] ?? "";
+}
+
+/**
+ * What a plain `if` just run must have shown: no card in bash or sh, whose `if` Ember reads; one card in zsh, whose
+ * every `if` asks by design (its short forms run a command after the condition: scripts.ts FLOW_SHELLS,
+ * docs/COMMANDS-WSL-SSH.md), which the page then allowed. The suite expected no card on a Mac too, and remote.yml's
+ * macOS job failed on every push to main for it (install-docs-r9-1). Clears the cards.
+ */
+function expectFlowCard(zsh: boolean): void {
+  if (zsh) {
+    expect(w.cards).toHaveLength(1);
+    expect(w.cards[0]).toMatchObject({ shell: "zsh" });
+    expect(w.cards[0].says).toContain("Ember can't tell exactly what this does.");
+  } else expect(w.cards).toEqual([]);
+  w.cards.length = 0;
+}
+
 /** Every live process whose environment carries the run marker (Linux: /proc; elsewhere none can be listed cheaply). */
 function carriers(runId: string): number[] {
   if (platform !== "linux") return [];
@@ -247,8 +268,9 @@ describe.skipIf(!required || !usable)("the local command path, end to end (OWNER
   }, 20_000);
 
   it("runs an ordinary if and a read of written-out text without asking, asks before any loop as main does, and before reading a file (commands-remote-2, commands-a7-2, commands-c7-1)", async () => {
+    const zsh = (await shellHere()) === "zsh";
     const { result } = await run("if [ -d build ]; then echo built; fi; read -r a b <<'EOF'\nzq3 got-b\nEOF\necho \"$a $b\"", "");
-    expect(w.cards).toEqual([]);
+    expectFlowCard(zsh);
     expect(result.resultType).toBe("success");
     for (const want of ["zq3", "built", "got-b"]) expect(result.textResultForLlm).toContain(want);
     w.verdicts = () => "deny";
@@ -276,8 +298,10 @@ describe.skipIf(!required || !usable)("the local command path, end to end (OWNER
     expect(w.cards[0].says).toContain("It sets a variable where a command could stand.");
     expect(set.result.resultType).toBe("denied");
     w.cards.length = 0;
+    w.verdicts = null;
+    const zsh = (await shellHere()) === "zsh";
     const { result } = await run("if read -r l <<< ' a '; then echo \"got-[$l]\"; fi", "");
-    expect(w.cards).toEqual([]);
+    expectFlowCard(zsh);
     expect(result.resultType).toBe("success");
     expect(result.textResultForLlm).toContain("got-[a]");
   }, 20_000);

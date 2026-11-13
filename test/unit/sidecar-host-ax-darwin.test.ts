@@ -226,6 +226,45 @@ describe("the macOS AX provider's keys", () => {
     expect((await p.element(save.handle))!.key).toBe("4300:p9001/10:AXButton");
   });
 
+  it("keeps every key distinct and the list's 200 rows readable when two unrelated elements share a CFHash, as CI saw once, and logs it (product-platform-flaky-3)", async () => {
+    // macos-15 once gave the bench's second scroll area and a group inside it one hash (2 of 47 elements): the system
+    // promises no two hashes differ, so a collision is handled and logged, never a failure.
+    const app = benchApp();
+    const kids = app.windows[0]!.children!;
+    const scroll = kids.find(k => k.id === "listScroll")!, notes = kids.find(k => k.id === "notesScroll")!;
+    scroll.hash = "c0ffee";
+    notes.children![0]!.hash = "c0ffee";
+    const s = await started([app]);
+    const HASH = /^4300:h[0-9a-f]+$/, PATH = /^4300:p9001\/[\d.]+:AX\w+$/;
+    const read = async () => {
+      const snap = await s.p.snapshot(bench(s.windows).handle, { maxDepth: 64, maxNodes: 1600, deadlineMs: 3000 });
+      const rows = (await s.p.children(snap.nodes.find(n => n.platformRole === "AXTable")!.handle, 1000)).filter(n => n.platformRole === "AXRow");
+      return { snap, rows, pathKeyed: snap.nodes.filter(n => PATH.test(n.key)).map(n => n.platformRole) };
+    };
+    const first = await read();
+    expect(new Set(first.snap.nodes.map(n => n.key)).size).toBe(first.snap.nodes.length);
+    for (const n of [...first.snap.nodes, ...first.rows]) expect(HASH.test(n.key) || PATH.test(n.key), n.key).toBe(true);
+    // Only the two that collided are keyed by where they sit; the log names them by role and place, never their text.
+    expect(first.pathKeyed).toEqual(["AXTextArea", "AXScrollArea"]);
+    const logged = s.notes.filter(([e]) => e === "ax.key_collision");
+    expect(logged).toEqual([["ax.key_collision", { count: 2, of: first.snap.nodes.length, collided: [expect.stringMatching(/^AXTextArea@[\d.]+$/), expect.stringMatching(/^AXScrollArea@[\d.]+$/)] }]]);
+    expect(JSON.stringify(logged)).not.toContain("First line");
+    expect(first.rows).toHaveLength(200);
+    expect(new Set(first.rows.map(r => r.key)).size).toBe(200);
+    // The same window read again, the collision still there: the same keys, so what was found once is found again.
+    const again = await read();
+    expect(again.snap.nodes.map(n => n.key)).toEqual(first.snap.nodes.map(n => n.key));
+    expect(again.rows.map(r => r.key)).toEqual(first.rows.map(r => r.key));
+    // The collision gone (one of the two elements was made anew): those two are keyed by their hashes again, so their
+    // keys are not the ones the earlier read gave; every other key is unchanged.
+    delete scroll.hash;
+    delete notes.children![0]!.hash;
+    const later = await read();
+    expect(later.pathKeyed).toEqual([]);
+    const changed = later.snap.nodes.filter((n, i) => n.key !== first.snap.nodes[i]!.key).map(n => n.platformRole);
+    expect(changed).toEqual(["AXTextArea", "AXScrollArea"]);
+  });
+
   it("keys every element by its index path in the \"path\" mode, the hash only where the path isn't known (R4's fallback)", () => {
     const items = [
       { ref: 1n, pid: 4300, path: [], windowId: 9001, role: "AXWindow" },
@@ -471,6 +510,23 @@ describe("the sidecar host on the macOS AX provider (the bench as AX describes i
     expect(fake.el("row5").spec.selected).toBe(true);
 
     expect(fake.pidsAsked.has(EMBER)).toBe(false);
+  });
+
+  it("never reads a password field whose CFHash another element shares: it is secret by what it is, under its index-path key (product-platform-flaky-3)", async () => {
+    const app = benchApp();
+    const kids = app.windows[0]!.children!;
+    kids.find(k => k.id === "password")!.hash = "c0ffee";
+    kids.find(k => k.id === "save")!.hash = "c0ffee";
+    const { call, notes } = hostOn([app, emberApp()]);
+    const read = await call<ReadWindowResult>("read_window", { pid: BENCH, path: "9001", ownPid: EMBER });
+    const pw = read.nodes.find(n => n.role === "password text")!;
+    expect(pw).toMatchObject({ name: "Password", secret: true });
+    expect(pw.text).toBeUndefined();
+    expect(JSON.stringify(read)).not.toContain("hunter2");
+    expect(read.secretKeys).toEqual([["ax", expect.stringMatching(/^4300:p9001\/[\d.]+:AXTextField$/)]]);
+    expect(notes.some(([e]) => e === "ax.key_collision")).toBe(true);
+    // Typing into it is still refused.
+    await expect(call("set_text", { id: pw.id, text: "x" })).rejects.toThrow(/password field/);
   });
 
   it("finds the same secret key from a second host process (the password field stays secret across restarts)", async () => {

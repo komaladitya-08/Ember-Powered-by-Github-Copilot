@@ -132,11 +132,15 @@ export function createLogger(opts: LoggerOptions): Logger {
     let size: number;
     try { size = fs.statSync(file).size; } catch { return; }
     if (size < maxBytes) return;
+    // A step that can't be done gives up the older file, never the lines to come: a rename that threw (something
+    // that can't be replaced where a kept file goes) skipped the append with it, and every line was dropped for as
+    // long as it lasted (reliability-r9-4).
     for (let i = keep - 1; i >= 1; i--) {
       const from = `${file}.${i}`;
-      if (fs.existsSync(from)) fs.renameSync(from, `${file}.${i + 1}`);
+      if (!fs.existsSync(from)) continue;
+      try { fs.renameSync(from, `${file}.${i + 1}`); } catch { try { fs.rmSync(from, { force: true }); } catch { /* it stays, and is replaced below if it can be */ } }
     }
-    fs.renameSync(file, `${file}.1`);
+    try { fs.renameSync(file, `${file}.1`); } catch { fs.truncateSync(file); }
   };
 
   const write = (lvl: LogLevel, scope: string | undefined, msg: string, fields?: Fields) => {
@@ -149,10 +153,19 @@ export function createLogger(opts: LoggerOptions): Logger {
       const line = safeLine(entry) + "\n";
       if (toStderr) print("stderr", line);
       else {
+        try { rotateIfNeeded(); } catch { /* it can't be rotated now: the line is still written */ }
         try {
-          rotateIfNeeded();
           fs.appendFileSync(file, line, { mode: 0o600 });
-        } catch { /* disk full, read-only… */ }
+        } catch (err) {
+          // The folder went under a running Ember (cleared to free space): made again, once, as the audit log's is.
+          if ((err as NodeJS.ErrnoException)?.code === "ENOENT") {
+            try {
+              fs.mkdirSync(opts.dir, { recursive: true, mode: 0o700 });
+              fs.appendFileSync(file, line, { mode: 0o600 });
+            } catch { /* it can't be made: this line is lost */ }
+          }
+          /* otherwise: disk full, read-only… */
+        }
       }
       if (opts.stdout) print("stdout", line);
     } catch { /* an unprintable value */ }

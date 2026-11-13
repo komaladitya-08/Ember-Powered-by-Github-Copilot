@@ -27,6 +27,19 @@ if (process.argv.slice(2).some(a => a === "--help" || a === "-h")) {
   process.exit(0);
 }
 
+// An option it doesn't know stops here: it used to be ignored, so a mistyped --no-gates or --only ran the whole suite
+// with the gates, minutes later (install-docs-r9-9). Keep in step with eval/src/main.ts's flag() and opt().
+const FLAGS = ["--live", "--no-gates", "--no-tasks", "--keep", "--verbose"];
+const VALUES = ["--repeat", "--only", "--tag", "--out"];
+for (let i = 2; i < process.argv.length; i++) {
+  const a = process.argv[i];
+  if (FLAGS.includes(a)) continue;
+  // (Its value, or the lack of one, is main.ts's to judge.)
+  if (VALUES.includes(a)) { if (process.argv[i + 1] !== undefined && !process.argv[i + 1].startsWith("--")) i++; continue; }
+  console.error(`eval/run.mjs doesn't know "${a}". Run node eval/run.mjs --help for its options.`);
+  process.exit(2);
+}
+
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const outfile = path.join(root, "dist/eval/eval.cjs");
 await build({

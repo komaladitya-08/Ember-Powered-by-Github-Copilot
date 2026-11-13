@@ -292,9 +292,14 @@ describe.skipIf(!available && !required)("the accessibility sidecar host on a re
     }
   });
 
-  it("reads the 200-row list by range with no two keys alike, and logs no key collision", async () => {
+  // What the keys promise (the provider's header, KEY_MODE, design R4): every element of an answer has its own key,
+  // the exact CFHash where no other element of the answer has the same one, and otherwise its index path, which is
+  // logged. Not that the system's hashes never collide: macos-15 once gave the bench's scroll area and a group in it
+  // the same one (2 of 47), and this test, which then asserted no collision is ever logged, failed for it
+  // (product-platform-flaky-3). test/unit/sidecar-host-ax-darwin.test.ts forces that collision through a fake API.
+  it("reads the 200-row list by range with no two keys alike, a hash collision or none: one is logged, and only its elements are keyed by index path", async () => {
     const notes: string[] = [];
-    const details: unknown[] = [];
+    const details: { e: string; count?: number; of?: number; collided?: string[] }[] = [];
     const p = new AxDarwinProvider({ open: openAxApi, openError: () => axApiError, owner: process.pid, note: (e, f) => { notes.push(e); details.push({ e, ...f }); } });
     try {
       await p.start();
@@ -308,7 +313,21 @@ describe.skipIf(!available && !required)("the accessibility sidecar host on a re
       console.log(`ax-sidecar-darwin: ${rows.length} rows, ${new Set(rows.map(r => r.key)).size} keys, notes ${JSON.stringify(details)}`);
       expect(rows).toHaveLength(200);
       expect(new Set(rows.map(r => r.key)).size).toBe(200);
-      expect(notes).not.toContain("ax.key_collision");
+      // (The hash and the element's place in the answer where a colliding element's path isn't known.)
+      const HASH = /^\d+:h[0-9a-f]+$/, PATH = /^\d+:(?:p\d+\/[\d.]*:AX\w+|h[0-9a-f]+:\d+)$/;
+      const all = [...snap.nodes, ...rows];
+      for (const n of all) expect(HASH.test(n.key) || PATH.test(n.key), `${n.platformRole} ${n.key}`).toBe(true);
+      // An index-path key only ever comes with a logged collision, which counts at least as many elements and names
+      // them by role and place, never by their text.
+      const collisions = details.filter(d => d.e === "ax.key_collision");
+      expect(notes.filter(e => e === "ax.key_collision")).toHaveLength(collisions.length);
+      const pathKeyed = all.filter(n => PATH.test(n.key)).length;
+      expect(pathKeyed).toBeLessThanOrEqual(collisions.reduce((sum, c) => sum + (c.count ?? 0), 0));
+      for (const c of collisions) {
+        expect(c.count).toBeGreaterThanOrEqual(2);
+        expect(c.count).toBeLessThanOrEqual(c.of ?? 0);
+        for (const where of c.collided ?? []) expect(where).toMatch(/^AX\w+@(?:\?|[\d.]*)$/);
+      }
       // Evidence for shell_overlays: what the window list holds of the system's prompts at rest (nothing, normally).
       const overlays = (await p.topWindows()).filter(x => axOverlayRole(x));
       console.log(`ax-sidecar-darwin: system overlays at rest ${JSON.stringify(overlays.map(o => [o.app, o.key, axOverlayRole(o)]))}`);

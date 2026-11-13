@@ -105,7 +105,7 @@ vi.mock("@github/copilot-sdk", async importOriginal => {
   return { ...real, CopilotClient: FakeClient, RuntimeConnection: { forStdio: () => ({}) } };
 });
 
-import { ACCOUNT_CHANGED_FORGOT, AgentHost, CUT_OFF, START_TIMEOUT_DETAIL, PROVIDER_MOVED_TASK, PROVIDER_SWITCH_TITLE, idleWord, proxyFromChromium, unansweredWord, startErrorReason, type AgentStatus, type HostOptions } from "../../app/main/agent/host";
+import { ACCOUNT_CHANGED_FORGOT, AgentHost, CUT_OFF, SIGN_OUT_NOT_KEPT, START_TIMEOUT_DETAIL, PROVIDER_MOVED_TASK, PROVIDER_SWITCH_TITLE, idleWord, proxyFromChromium, unansweredWord, startErrorReason, type AgentStatus, type HostOptions } from "../../app/main/agent/host";
 import type { ActiveProvider } from "../../app/main/provider";
 import { unavailableLine } from "../../app/renderer/ask/chips";
 import { AdminPolicySchema } from "../../app/main/admin";
@@ -1537,6 +1537,27 @@ describe("a runtime that dies or hangs", () => {
     expect(problems).not.toContain(LOST_RECONNECTING);
     expect(LOST_GAVE_UP).toBe("Copilot stopped unexpectedly and keeps stopping, so I've stopped reconnecting. Press Check again in Models & connections to try once more, or restart me.");
     expect(screen().bubble).toMatchObject({ visible: true, mood: "error", thought: "Copilot keeps stopping, so I've stopped reconnecting. Open settings to try again, or restart me.", actions: [{ id: "ui:settings", label: "Open settings" }] });
+    await host.stop();
+  });
+
+  it("starts the count of stops afresh at Check again after giving up: one more stop reconnects, as the first did (reliability-r9-5)", async () => {
+    vi.useFakeTimers();
+    let crashes = 0;
+    const { host } = makeHost({ healthMs: 1000 });
+    await host.start(TOKEN, "stored");
+    sim.ping = async () => { if (crashes < 6) { crashes++; throw new Error("Connection is disposed."); } return {}; };
+    await vi.advanceTimersByTimeAsync(12_000);
+    expect(crashes).toBe(6);
+    expect(host.getStatus().detail).toBe("Copilot keeps stopping. Press Check again to retry, or restart Ember.");
+    // Check again: connected.
+    expect(await host.start(TOKEN, "stored")).toBe("ready");
+    const clients = sim.clients.length;
+    // One more stop within the ten minutes: reconnected, not given up on without a try.
+    crashes = 5;
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(crashes).toBe(6);
+    expect(sim.clients.length).toBe(clients + 1);
+    expect(host.getStatus().phase).toBe("ready");
     await host.stop();
   });
 
@@ -3353,6 +3374,57 @@ describe("review round 7: a request the runtime takes but never begins", () => {
     fs.rmSync(proc, { recursive: true, force: true });
   });
 
+  it("out of inotify watches (the runtime can't begin a turn then either): Ember says so, and names that limit, not the instances' (reliability-r9-1)", async () => {
+    vi.useFakeTimers();
+    const { host, screen, statuses } = makeHost({ inotifyUsedUp: () => "watches" });
+    await host.start(TOKEN, "stored");
+    sim.stall = () => true;
+    await host.ask("what time is it?");
+    await vi.advanceTimersByTimeAsync(20_500);
+    expect(screen().bubble).toMatchObject({ mood: "error", thought: "Copilot can't work right now: this computer has run out of file watchers. Close a few apps, then ask me again." });
+    expect(statuses.map(x => x.detail)).toContainEqual("Copilot isn't answering: the system's limit on watched files and folders (fs.inotify.max_user_watches) is used up. Close some apps, or ask IT to raise the limit. Reconnecting…");
+    expect(statuses.map(x => x.detail).join(" ")).not.toMatch(/max_user_instances/);
+    await host.stop();
+  });
+
+  // Linux only, as above.
+  it.skipIf(process.platform !== "linux")("this user's inotify watches are counted in /proc against the system's and the user namespace's limit (reliability-r9-1)", async () => {
+    const { inotifyUse, inotifyUsedUp } = await import("../../app/main/agent/host");
+    const proc = fs.mkdtempSync(path.join(os.tmpdir(), "ember-proc-"));
+    fs.mkdirSync(path.join(proc, "sys/fs/inotify"), { recursive: true });
+    fs.mkdirSync(path.join(proc, "sys/user"), { recursive: true });
+    fs.writeFileSync(path.join(proc, "sys/fs/inotify/max_user_instances"), "128\n");
+    fs.writeFileSync(path.join(proc, "sys/fs/inotify/max_user_watches"), "8192\n");
+    const watching = (pid: string, watches: number) => {
+      fs.mkdirSync(path.join(proc, pid, "fd"), { recursive: true });
+      fs.mkdirSync(path.join(proc, pid, "fdinfo"), { recursive: true });
+      fs.symlinkSync("anon_inode:inotify", path.join(proc, pid, "fd", "5"));
+      fs.symlinkSync("/dev/null", path.join(proc, pid, "fd", "6"));
+      fs.writeFileSync(path.join(proc, pid, "fdinfo", "5"), `pos:\t0\nflags:\t02004000\nmnt_id:\t17\nino:\t26\n${Array.from({ length: watches }, (_x, i) => `inotify wd:${i + 1} ino:${i + 14} sdev:fe00000 mask:fc6 ignored_mask:0 fhandle-bytes:8 fhandle-type:1 f_handle:1400000000000000\n`).join("")}`);
+      fs.writeFileSync(path.join(proc, pid, "fdinfo", "6"), "pos:\t0\ninotify wd:1 in a file that is no inotify instance\n");
+    };
+    const uid = process.getuid!();
+    watching("10", 3);
+    watching("11", 4);
+    expect(inotifyUse(proc, uid)).toEqual({ used: 2, max: 128, watches: { used: 7, max: 8192 } });
+    expect(inotifyUsedUp(proc, uid)).toBe(false);
+    // Another app holds nearly all of them: the runtime's few can't be added.
+    watching("12", 8183);
+    expect(inotifyUse(proc, uid)?.watches).toEqual({ used: 8190, max: 8192 });
+    expect(inotifyUsedUp(proc, uid)).toBe("watches");
+    expect(inotifyUsedUp(proc, uid + 1)).toBe(false);
+    fs.rmSync(path.join(proc, "12"), { recursive: true });
+    // A user namespace's own, lower limit counts (a container, a sandboxed session).
+    fs.writeFileSync(path.join(proc, "sys/user/max_inotify_watches"), "0\n");
+    expect(inotifyUse(proc, uid)?.watches).toEqual({ used: 7, max: 0 });
+    expect(inotifyUsedUp(proc, uid)).toBe("watches");
+    // No watch limit to read: only the instances are judged, as before.
+    fs.rmSync(path.join(proc, "sys/user"), { recursive: true });
+    fs.rmSync(path.join(proc, "sys/fs/inotify/max_user_watches"));
+    expect(inotifyUse(proc, uid)).toEqual({ used: 2, max: 128 });
+    fs.rmSync(proc, { recursive: true, force: true });
+  });
+
   it("Stop drops the request waiting for its turn: nothing is owed, nothing reconnects", async () => {
     vi.useFakeTimers();
     const { host, statuses } = makeHost();
@@ -5091,6 +5163,60 @@ describe("memory erasure at account boundaries", () => {
     const count = sim.sessions.length;
     expect(await host.start(TOKEN, "stored", "user")).toBe("error");
     expect(sim.sessions.length).toBe(count);
+    await host.stop();
+  });
+});
+
+describe("a sign-out while Ember's data folder can't be written (reliability-r9-2)", () => {
+  /** agent.json can't be written or replaced: a folder with something in it is where the file goes. */
+  const blockState = (dir: string) => {
+    const file = path.join(dir, "agent.json");
+    fs.rmSync(file, { force: true });
+    fs.mkdirSync(file);
+    fs.writeFileSync(path.join(file, "in-the-way"), "");
+  };
+
+  it("holds for this run: a GitHub CLI or environment sign-in isn't used on its own, and the status says the sign-out wasn't saved", async () => {
+    const { host, dir, statuses } = makeHost();
+    expect(await host.start(TOKEN, "github-cli", "auto")).toBe("ready");
+    blockState(dir);
+    await host.forgetConversation();
+    expect(host.signOutUnsaved).toBe(true);
+    expect(await host.start(null)).toBe("signed-out");
+    expect(statuses.at(-1)).toMatchObject({ phase: "signed-out", detail: SIGN_OUT_NOT_KEPT });
+    expect(SIGN_OUT_NOT_KEPT).toBe("You're signed out for now, but Ember couldn't save that: its data folder can't be written. Until it can, Ember may sign in again by itself the next time it starts.");
+    const clients = sim.clients.length;
+    // Check again, a retry, anything of Ember's own: the old sign-in stays unused.
+    expect(await host.start(TOKEN, "github-cli", "auto")).toBe("signed-out");
+    expect(await host.start(TOKEN, "environment", "auto", "GH_TOKEN")).toBe("signed-out");
+    expect(sim.clients).toHaveLength(clients);
+    expect(host.getStatus().detail).toBe(SIGN_OUT_NOT_KEPT);
+    // The user's own sign-in is theirs to make, and ends it (the disk can be written again).
+    fs.rmSync(path.join(dir, "agent.json"), { recursive: true });
+    expect(await host.start(TOKEN, "stored", "user")).toBe("ready");
+    expect(host.signOutUnsaved).toBe(false);
+    await host.stop();
+  });
+
+  it("says nothing of it, and keeps the flag, where the sign-out was saved", async () => {
+    const { host, statuses, agentJson } = makeHost();
+    expect(await host.start(TOKEN, "github-cli", "auto")).toBe("ready");
+    await host.forgetConversation();
+    expect(host.signOutUnsaved).toBe(false);
+    expect(await host.start(null)).toBe("signed-out");
+    expect(statuses.at(-1)!.detail).not.toBe(SIGN_OUT_NOT_KEPT);
+    expect(agentJson().signedOut).toBe(true);
+    await host.stop();
+  });
+
+  it("lets main's own reason stand first, then says a saved sign-in couldn't be removed", async () => {
+    let why: string | null = null;
+    const { host } = makeHost({ signedOutWhy: () => why });
+    await host.start(TOKEN, "stored");
+    await host.forgetConversation();
+    why = SIGN_OUT_NOT_KEPT;
+    expect(await host.start(null)).toBe("signed-out");
+    expect(host.getStatus().detail).toBe(SIGN_OUT_NOT_KEPT);
     await host.stop();
   });
 });

@@ -221,6 +221,13 @@ describe("spokenText leaves markup that is only for the eye unsaid, and says a p
     // A ticked item that says it is done isn't told twice.
     ["* [x] Done: paid rent", "Done: paid rent."],
     ["1. [x] Done already\n2. [ ] Not yet", "1. Done already.\n2. Not yet."],
+    // Nor one that says so in bold or italics (voice-speaking-r9-6).
+    ["- [x] **Done**: paid rent", "Done: paid rent."],
+    ["- [x] __Done__: paid rent\n- [x] *done* already", "Done: paid rent.\ndone already."],
+    ["- [x] **Paid** rent", "Done: Paid rent."],
+    // The common named entities are said as the marks they stand for, never letter by letter (voice-speaking-r9-6).
+    ["Fish &amp; chips &mdash; today&hellip;", "Fish and chips — today…"],
+    ["Pages 3&ndash;5, &copy; 2026 Ember &rarr; next.", "Pages 3 to 5, © 2026 Ember to next."],
     // Markup around words is still unsaid.
     ["<b>Important.</b> Press <kbd>Ctrl</kbd>, then <span style=\"color:red\">red</span>.", "Important. Press Ctrl, then red."],
   ])("says %j as %j, dropping no words that only look like markup (voice-speaking-x7-5)", (text, said) => expect(spokenText(text)).toBe(said));
@@ -501,6 +508,114 @@ describe("speechLanguage tells Spanish from French, which share their commonest 
     "La réunion est à quinze heures.", "J'ai fermé la fenêtre et enregistré le fichier.", "Il y a trois fichiers dans le dossier.",
     "On y va : la fenêtre de la calculatrice se ferme.", "J'ai ouvert la fenêtre de la calculatrice.",
   ])("still says %j with a French voice (voice-speaking-c7-1)", text => expect(speechLanguage(text)).toBe("fr"));
+});
+
+describe("AnswerLanguage judges a passage read out after an English lead-in by the passage, through the real stream (voice-speaking-r9-2)", () => {
+  const LEADS = ["José wrote:", "Here is the email from José:", "Sure. The email from José says:", "Here's what the note says:", "The message reads:", "Sure, here is the email that José sent you this morning:", "I found it. It says:"];
+  const PASSAGES: Record<string, string> = {
+    es: "Hola Alex, ¿cómo estás? Espero que todo vaya bien con el proyecto. Nos vemos el lunes en la oficina para hablar de los detalles. Un abrazo, José.",
+    fr: "Bonjour Alex, j'espère que tu vas bien. Je voulais te dire que la réunion de lundi est reportée à mardi. Peux-tu apporter les documents du projet ? Merci, Marie.",
+    de: "Hallo Alex, ich hoffe, es geht dir gut. Das Treffen am Montag wurde auf Dienstag verschoben. Kannst du bitte die Unterlagen für das Projekt mitbringen? Viele Grüße, Hans.",
+    it: "Ciao Alex, spero che tu stia bene. La riunione di lunedì è stata spostata a martedì. Puoi portare i documenti del progetto? Grazie mille, Marco.",
+    pt: "Olá Alex, espero que esteja tudo bem. A reunião de segunda-feira foi adiada para terça. Pode trazer os documentos do projeto? Obrigado, João.",
+    nl: "Hallo Alex, ik hoop dat alles goed met je gaat. De vergadering van maandag is verplaatst naar dinsdag. Kun je de documenten van het project meenemen? Groetjes, Jan.",
+    ru: "Привет, Алекс! Надеюсь, у тебя всё хорошо. Встреча в понедельник перенесена на вторник. Пожалуйста, принеси документы по проекту. Спасибо, Иван.",
+    zh: "你好，亚历克斯。希望你一切都好。周一的会议改到周二了。请带上项目的文件。谢谢，小王。",
+  };
+  /** The answer word by word through the stream, as main says it: each piece with the voice it is given. */
+  const streamed = (answer: string, request = "read me the latest email") => {
+    const stream = new SpeechStream(100_000), language = new AnswerLanguage();
+    language.reset(request);
+    const said: { text: string; lang: string | null }[] = [];
+    for (const word of answer.split(/(?<=\s)/)) said.push(...language.take(stream.push(word)));
+    said.push(...language.take(stream.finish(answer), true));
+    return said;
+  };
+  const flat = (text: string) => text.replace(/\s+/g, " ").trim();
+
+  it.each(Object.keys(PASSAGES).flatMap(lang => LEADS.map(lead => [lang, lead] as const)))("reads a %s passage in that language's voice after “%s”, with the lead-in and the closing question in Ember's own", (lang, lead) => {
+    const said = streamed(`${lead}\n\n${PASSAGES[lang]}\n\nShall I reply to it?`);
+    const letters = (text: string) => text.replace(/[^\p{L}]+/gu, "");
+    expect(letters(said.map(p => p.text).join(""))).toBe(letters(`${lead}${PASSAGES[lang]}Shall I reply to it?`));
+    for (const p of said) {
+      const where = flat(lead).includes(flat(p.text)) ? "lead-in" : flat(p.text) === "Shall I reply to it?" ? "question" : "passage";
+      // A lead-in that is a name with an accent and one word can't be told from the passage's language, and waits for
+      // it, as before: "José escribió:" would be Kitten's otherwise.
+      if (where === "lead-in" && lead === "José wrote:") continue;
+      expect([where, flat(p.text), p.lang]).toEqual([where, flat(p.text), where === "passage" ? lang : null]);
+    }
+    expect(said.some(p => p.lang === lang)).toBe(true);
+  });
+
+  // A chat message is seldom 60 letters: counted with the closing question, whose English short words outnumber its
+  // own, a short one was Kitten's for 15 of 15 (product-platform-x9-1).
+  const SHORT: Record<string, string> = {
+    es: "Hola Alex, ¿cómo estás? Nos vemos mañana.",
+    fr: "Salut Alex, ça va ? On se voit demain à midi.",
+    de: "Hallo Alex, wie geht's? Bis morgen im Büro.",
+  };
+  const SHORT_LEADS = ["The message reads:", "Here is the latest message from José:", "I found it. It says:"];
+  it.each(Object.keys(SHORT).flatMap(lang => SHORT_LEADS.flatMap(lead => ["\n\nShall I reply to it?", ""].map(close => [lang, lead, close] as const))))("reads a short %s message in that language's voice after “%s”, judged without the closing question (%j) (product-platform-x9-1)", (lang, lead, close) => {
+    const said = streamed(`${lead}\n\n${SHORT[lang]}${close}`, "read me the latest message");
+    const passage = said.filter(p => !flat(lead).includes(flat(p.text)) && flat(p.text) !== "Shall I reply to it?");
+    expect(passage.map(p => [flat(p.text), p.lang])).toEqual(passage.map(p => [flat(p.text), lang]));
+    expect(flat(passage.map(p => p.text).join(" "))).toBe(flat(SHORT[lang]));
+    expect(said.filter(p => !passage.includes(p)).map(p => p.lang).filter(Boolean)).toEqual([]);
+  });
+
+  it("reads a message that reaches 60 letters only with the closing question in its own voice, and asks the question in Ember's (product-platform-x9-1)", () => {
+    const said = streamed("The message reads:\nHola Alex, ¿cómo estás? Nos vemos mañana en la oficina.\nShall I reply to it?", "read me the latest message");
+    expect(said.map(p => p.lang)).toEqual([null, "es", "es", null]);
+  });
+
+  it.each([
+    ["Your note says:\n\nBuy jalapeños.\n\nShall I add it to your list?"],
+    ["The message reads:\n\nSee you at Café Nero.\n\nShall I reply to it?"],
+    ["It says:\n\nRunning late!\n\nDo you want to answer it?"],
+  ])("still says a short English message and its closing question wholly in Ember's own voice (%j) (product-platform-x9-1)", answer => {
+    expect(streamed(answer, "read me the latest message").map(p => p.lang).filter(Boolean)).toEqual([]);
+  });
+
+  it("reads the passage in its own voice from its second sentence at the latest where the lead-in ends without a colon", () => {
+    const said = streamed(`Okay, reading it now.\n\n${PASSAGES.es}\n\nShall I reply to it?`);
+    expect(said.map(p => p.lang)).toEqual([null, "es", "es", "es", "es", null]);
+  });
+
+  it.each(["es", "fr", "ru", "zh"])("reads a %s passage in its own voice where the lead-in and its first sentence came as one piece", lang => {
+    const said = streamed(`I found it. It says: ${PASSAGES[lang]}\n\nShall I reply to it?`);
+    expect(said.map(p => [flat(p.text), p.lang]).slice(0, 2)).toEqual([["I found it.", null], ["It says:", null]]);
+    expect(said.slice(2, -1).map(p => p.lang).every(l => l === lang)).toBe(true);
+    expect(said.at(-1)).toEqual({ text: "Shall I reply to it?", lang: null });
+  });
+
+  it("reads a second passage in its own language after an English lead-in, not in the first passage's voice", () => {
+    const said = streamed(`The email from José reads:\n\n${PASSAGES.es}\n\nAnd the note from Marie says:\n\n${PASSAGES.fr}`);
+    expect([...new Set(said.map(p => p.lang))]).toEqual([null, "es", "fr"]);
+    expect(said.filter(p => p.lang === "fr").map(p => flat(p.text)).join(" ")).toBe(flat(PASSAGES.fr));
+  });
+
+  it.each([
+    ["Here are three films you might like:\n\n1. La La Land.\n2. The Thing.\n3. Amélie.\n\nWant me to open one?"],
+    ["Here is what I found:\n\nThe file is in your Downloads folder, and it was changed this morning."],
+    ["The steps are:\n\n1. Open Settings.\n2. Click Displays.\n3. Turn Night Light on."],
+    ["Your note says:\n\nBuy milk, call the dentist and pay the rent before Friday."],
+    ["Note: the café on the corner is closed today, and the one by the station is open."],
+    ["Done. Tip: you can also press Ctrl+S to save the résumé you are working on."],
+  ])("still says an English answer with a colon wholly in Ember's own voice (%j)", answer => {
+    expect(streamed(answer, "what do you suggest?").map(p => p.lang).filter(Boolean)).toEqual([]);
+  });
+
+  it("says the clearly English first words after a colon at once, without waiting for more of the answer", () => {
+    const stream = new SpeechStream(100_000), language = new AnswerLanguage();
+    language.reset("where is my file?");
+    expect(language.take(stream.push("Here is what I found:\n\n"))).toEqual([{ text: "Here is what I found:", lang: null }]);
+    expect(language.take(stream.push("The file is in your Downloads folder. "))).toEqual([{ text: "The file is in your Downloads folder.", lang: null }]);
+  });
+
+  it("keeps a Spanish answer's own list after its colon in the Spanish voice", () => {
+    const said = streamed("Aquí tienes los archivos que pediste esta mañana, con todo lo que hay en la carpeta:\n\nInforme.pdf y notas.txt.", "¿qué archivos hay en la carpeta de descargas?");
+    expect(said.map(p => p.lang)).toEqual(["es", "es", "es"]);
+  });
 });
 
 describe("AnswerLanguage says an English answer's own closing words in Ember's voice after a passage it read out in another language", () => {

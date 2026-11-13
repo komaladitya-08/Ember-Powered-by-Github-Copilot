@@ -105,8 +105,8 @@ menu, so run the file again to start Ember again or to open its settings while i
 entry, which also has **Ask Ember** when you right-click it.
 
 The AppImage carries the speech models too, as the RPM does, so nothing is downloaded when voice is turned on. Should
-Kitten (63.8 MB) or Voice Match (26.5 MB) be missing or damaged, Ember still listens, replies in the system's voice or
-takes no spoken yes meanwhile, and settings offers just that one to download. The AppImage needs `fusermount` to start
+Kitten (63.8 MB) or Voice Match (26.5 MB) be missing or damaged, Ember still listens, replies in the system's voice or, while “Only my voice can
+say yes” is on, takes no spoken yes meanwhile, and settings offers just that one to download. The AppImage needs `fusermount` to start
 (`sudo dnf install fuse`; without it, it stops with "No suitable fusermount binary found"). Where you can't install
 that, run it unpacked: `APPIMAGE_EXTRACT_AND_RUN=1 ./Ember-0.1.1-x86_64.AppImage`. Where user namespaces are off
 (STIG-hardened computers), it runs without Chromium's sandbox: install the RPM there instead.

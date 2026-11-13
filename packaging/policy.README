@@ -37,7 +37,9 @@ Every key is optional:
   "maxActionsPerMinute" 1 to 40, lower than Ember's own limit
   "models"              "allowed" (only these model ids), "conductor" and "worker" (pin the models used)
   "provider"            the organisation's own model endpoint instead of GitHub sign-in: "type" ("openai", "azure"
-                        or "anthropic"), "baseUrl", and "apiKeyFile" (a file only Ember's users can read)
+                        or "anthropic"), "baseUrl", "apiKeyFile" (a file only Ember's users can read), "wireApi"
+                        ("completions" or "responses": the API an "openai" endpoint speaks) and, for Azure,
+                        "azure": { "apiVersion": "…" } (the API version; nowhere else)
   "auditRetentionDays"  how long the audit log is kept (default 30)
   "approvals"           "maxMode": the highest approval mode users may choose ("interactive", "assisted" or
                         "autopilot"); a higher choice works as this one at most, and it turns nothing on

@@ -21,7 +21,7 @@ export interface LinuxDoctorDeps {
   readFile?: (file: string) => string;
   stat?: (file: string) => { uid: number; mode: number };
   exists?: (file: string) => boolean;
-  fileWatchers?: () => { used: number; max: number } | null;
+  fileWatchers?: () => { used: number; max: number; watches?: { used: number; max: number } } | null;
   desk?: () => { ok: boolean; missing: string[] };
   /** The environment (APPIMAGE: running as an AppImage). */
   env?: NodeJS.ProcessEnv;

@@ -92,13 +92,27 @@ export function friendlyError(raw: string, errorType?: string, ctx: { statusCode
   // that couldn't start) is said as the disk, with no conversation "not saved"; one in the model service's own answer
   // (an HTTP status with it: the user's model server out of room) is that service's problem, as before.
   const theirs = ctx.statusCode !== undefined || /\bHTTP\b[^a-z\d]{0,6}\d{3}\b|\bstatus(?: code)?:? ?\d{3}\b/i.test(raw);
-  const full = /\b(ENOSPC|EDQUOT)\b|no space left on device|disk quota exceeded/i.test(raw);
+  // (ENOSPC is also what the kernel answers when the user's file watchers are used up: that is not the disk.)
+  const watchers = /system limit for number of file watchers/i.test(raw);
+  const full = !watchers && /\b(ENOSPC|EDQUOT)\b|no space left on device|disk quota exceeded/i.test(raw);
   if (errorType === "persistence" || (!theirs && /failed to persist session events/i.test(raw))) {
     if (full) return "I couldn't save this conversation: the disk (or your storage quota) is full. Free some space, then ask again.";
-    if (/\b(EACCES|EPERM|EROFS)\b|permission denied|read-only file system/i.test(raw)) return "I couldn't save this conversation: I'm not allowed to write in my data folder on this computer. Check the folder's permissions, then ask again.";
+    if (/\b(EACCES|EPERM|EROFS)\b|permission denied|read-only file system|operation not permitted/i.test(raw)) return "I couldn't save this conversation: I'm not allowed to write in my data folder on this computer. Check the folder's permissions, then ask again.";
     return "I couldn't save this conversation on this computer. Check that its disk has free space, then ask again.";
   }
   if (full && !theirs) return "This computer's disk (or your storage quota) is full, so I couldn't go on. Free some space, then ask again.";
+  // Other failures of this computer's own files (the runtime's session couldn't be made in a data folder that went
+  // read-only or isn't the user's; too many files or watchers open) were said as Copilot's problem, or as a full disk
+  // (reliability-r9-3). Told by the system's own error codes only, never by words a model service might answer with.
+  if (!theirs) {
+    if (watchers) return "This computer has run out of file watchers, so I couldn't go on. Close a few apps, then ask again.";
+    if (/\b(EMFILE|ENFILE)\b|\(os error (?:23|24)\)/.test(raw)) return "This computer has too many files open, so I couldn't go on. Close a few apps, then ask again.";
+    // A socket or a program the system refused (a firewall, an egress filter, SELinux: "connect EPERM", the native
+    // client's "tcp connect error: Permission denied (os error 13)") is no file: it stays the network rule's below, or
+    // the general sentence, as before (product-platform-y9-1).
+    const socket = /\b(connect|listen|bind|accept|getaddrinfo|spawn) E(ACCES|PERM)\b|tcp connect error|error sending request|fetch failed|client error \(connect\)/i.test(raw);
+    if (!socket && /\b(EACCES|EPERM|EROFS)\b|\(os error (?:1|13|30)\)/.test(raw)) return "I couldn't go on: this computer didn't let me read or write a file I need. Check that my data folder can be written, then ask again.";
+  }
   // Before the policy rule: a filtered prompt mentions a "content management policy", not the user's seat.
   if (/content.?(management|filter)|content_filter|filtered due to|responsible ?ai/i.test(m)) return `${ctx.provider ? "The model service's" : "Copilot's"} content filter blocked that request. Try asking in other words.`;
   // A model that takes no images was sent a screenshot (the user's own provider's models are taken to read them unless

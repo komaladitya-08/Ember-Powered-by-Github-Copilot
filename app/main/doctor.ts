@@ -65,7 +65,7 @@ export interface DoctorProbes {
   /** Chromium's sandbox (Linux); null where the OS provides it (the row is left out). appImage: running as an AppImage. */
   sandbox: { userNamespaces: boolean; suidHelper: boolean; appImage?: boolean } | null;
   /** This user's file watchers (inotify instances) in use and the limit; null when they can't be counted. */
-  fileWatchers?: { used: number; max: number } | null;
+  fileWatchers?: { used: number; max: number; watches?: { used: number; max: number } } | null;
   /** Windows and macOS: the shared accessibility helper's status answer (null: it didn't answer); its own row. */
   helper?: HelperStatus | null;
   /** Rows the platform adds in doctor wording (permissions, PowerShell, elevation…), before the Copilot row. */
@@ -235,7 +235,7 @@ export function doctorChecks(p: DoctorProbes): DoctorCheck[] {
   const missing = VOICE_MODELS.filter(m => (p.voiceModelsMissing ?? (p.voiceModels === "missing" ? VOICE_MODELS.map(x => x.id) : [])).includes(m.id));
   const mb = (n: number) => `${Math.max(1, Math.round(n / 1e6))} MB`;
   const optional = missing.filter(m => !LISTENING_MODELS.includes(m.id));
-  const without = optional.map(m => m.id === "tts" ? "Ember's own voice (replies use the system's voice)" : "Voice Match (your voice can't answer questions)").join(" and ");
+  const without = optional.map(m => m.id === "tts" ? "Ember's own voice (replies use the system's voice)" : "Voice Match (while “Only my voice can say yes” is on, Ember takes no spoken yes)").join(" and ");
   out.push(p.voiceModels === "missing"
     ? { id: "voice-models", status: "warn", label: "Speech models", detail: "Not downloaded yet. Only needed for “Hey Ember”.", fix: `Turn on “Hey Ember” in Ember's settings and download them (${mb(modelsBytes(missing.length ? missing : VOICE_MODELS))}, once)${linux ? ", or unzip the release's Ember-voice-models zip into /usr/share/ember" : ""}.` }
     : { id: "voice-models", status: "ok", label: "Speech models", detail: `${p.voiceModels === "bundled" ? "Installed with Ember." : "Downloaded."}${optional.length ? ` Without ${without} until ${optional.length > 1 ? "they're" : "it's"} downloaded in Ember's settings (${mb(modelsBytes(optional))}).` : ""}` });
@@ -285,8 +285,29 @@ export function doctorChecks(p: DoctorProbes): DoctorCheck[] {
     : w.used >= w.max
       ? { id: "file-watchers", status: "fail", label: watchers.label, detail: `All ${w.max} are in use, ${watchers.none} a free one for each conversation and task.`, fix: watchersFix }
       : { id: "file-watchers", status: "warn", label: watchers.label, detail: `${w.used} of ${w.max} in use: ${watchers.low} a free one for each conversation and task, and stops answering without.`, fix: watchersFix });
+  // The files and folders those watchers watch have a limit of their own (8,192 on RHEL 8), which an editor, a sync
+  // client or the desktop's file indexer can use up: the runtime then never begins a request, and the row above said
+  // all was well (reliability-r9-1).
+  const f = w?.watches;
+  if (f) {
+    const n = (v: number) => v.toLocaleString("en-GB");
+    const free = f.max - f.used;
+    const watchesFix = "sudo sysctl -w fs.inotify.max_user_watches=524288, and put fs.inotify.max_user_watches=524288 in /etc/sysctl.d/90-ember.conf to keep it";
+    const needs = `${other ? "so Ember can't answer: its model connection needs" : "so Copilot can't answer: it needs"} to watch a few for each conversation and task.`;
+    out.push(free >= 64
+      ? { id: "file-watches", status: "ok", label: "Watched files and folders", detail: `${n(f.used)} of ${n(f.max)} in use.` }
+      : free < WATCHES_NEEDED
+        ? { id: "file-watches", status: "fail", label: "Watched files and folders", detail: `${f.max <= 0 ? "This session may watch none" : free <= 0 ? `All ${n(f.max)} are in use` : `${n(f.used)} of ${n(f.max)} in use`}, ${needs}`, fix: watchesFix }
+        : { id: "file-watches", status: "warn", label: "Watched files and folders", detail: `${n(f.used)} of ${n(f.max)} in use: ${watchers.low} to watch a few for each conversation and task, and stops answering without.`, fix: watchesFix });
+  }
   return out;
 }
+
+/**
+ * The Copilot runtime adds a few inotify watches for each conversation and task (three, measured): with fewer than
+ * this many free it can't begin a request (host.ts inotifyUsedUp), and the setup check fails its row.
+ */
+export const WATCHES_NEEDED = 8;
 
 const MARK: Record<DoctorStatus, string> = { ok: "ok  ", warn: "warn", fail: "FAIL" };
 

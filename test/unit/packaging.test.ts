@@ -47,6 +47,18 @@ describe("ember doctor", () => {
     expect(doctorChecks({ ...probes(), fileWatchers: null }).some(c => c.id === "file-watchers")).toBe(false);
   });
 
+  it("has a row for the files and folders being watched, and fails it when Copilot can't watch its own (reliability-r9-1)", () => {
+    const row = (used: number, max = 8192) => byId(doctorChecks({ ...probes(), fileWatchers: { used: 3, max: 128, watches: { used, max } } }), "file-watches");
+    expect(row(7)).toEqual({ id: "file-watches", status: "ok", label: "Watched files and folders", detail: "7 of 8,192 in use." });
+    expect(row(8150)).toMatchObject({ status: "warn", detail: "8,150 of 8,192 in use: Copilot needs to watch a few for each conversation and task, and stops answering without." });
+    expect(row(8150).fix).toBe("sudo sysctl -w fs.inotify.max_user_watches=524288, and put fs.inotify.max_user_watches=524288 in /etc/sysctl.d/90-ember.conf to keep it");
+    expect(row(8192)).toMatchObject({ status: "fail", detail: "All 8,192 are in use, so Copilot can't answer: it needs to watch a few for each conversation and task." });
+    expect(row(7, 0)).toMatchObject({ status: "fail", detail: "This session may watch none, so Copilot can't answer: it needs to watch a few for each conversation and task." });
+    // The instances' row is still its own, and without a count there is no row.
+    expect(byId(doctorChecks({ ...probes(), fileWatchers: { used: 3, max: 128, watches: { used: 8192, max: 8192 } } }), "file-watchers").status).toBe("ok");
+    expect(doctorChecks({ ...probes(), fileWatchers: { used: 3, max: 128 } }).some(c => c.id === "file-watches")).toBe(false);
+  });
+
   it("is all green on a well set-up RHEL 8.4 GNOME on Xorg desktop", () => {
     const checks = doctorChecks(probes());
     expect(checks.filter(c => c.status !== "ok")).toEqual([]);
@@ -166,6 +178,11 @@ describe("the RPM", () => {
     // The README beside it names every key the policy takes, and the rule about `commands`.
     const readme = fs.readFileSync(path.resolve("packaging/policy.README"), "utf8");
     for (const key of Object.keys(AdminPolicySchema.shape)) expect(readme, key).toContain(`"${key}"`);
+    // And every key of the provider, down to Azure's API version: a guess at one locks every Ember down (install-docs-r9-7).
+    const provider = AdminPolicySchema.shape.provider.unwrap().shape;
+    for (const key of [...Object.keys(provider), ...Object.keys(provider.azure.unwrap().shape)]) expect(readme, `provider's ${key}`).toContain(`"${key}"`);
+    const admins = fs.readFileSync(path.resolve("docs/DEVELOPING.md"), "utf8").split("\n").find(l => l.startsWith("| `provider` |"))!;
+    for (const key of ["wireApi", "azure", "apiVersion"]) expect(admins, key).toContain(`\`${key}\``);
     expect(readme).toMatch(/without "commands" turns commands off/);
     expect(readme).toMatch(/"ssh": \{ "allowedHosts": \[/);
     for (const f of ["policy.example.json", "policy.README"]) {

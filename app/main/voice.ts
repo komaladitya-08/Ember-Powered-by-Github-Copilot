@@ -336,7 +336,7 @@ export class VoiceService {
    * Words for the system's voice (another language's) that follow pieces Ember's own voice is still making: sent once
    * those are done, so they are never said ahead of them (voice-speaking-r1). A hush drops them.
    */
-  private afterVoice: { send: PageSend; request: SpeakRequest }[] = [];
+  private afterVoice: ({ send: PageSend; request: SpeakRequest } | { send: PageSend; own: string })[] = [];
   /** Hear Ember's sample waiting to be heard, in the speech generation it was said in (voice-speaking-r3). */
   private sampleWait: { generation: number; done: (heard: NaturalVoiceModel | "system" | "stopped" | null) => void } | null = null;
   /** Enrolment (Voice Match) is under way in the voice process, and how far it got (said if it is cut short). */
@@ -495,7 +495,7 @@ export class VoiceService {
 
   /** Ember is speaking, or about to (a reply on its way to the page, or speech asked for that hasn't started yet). */
   private get talking(): boolean {
-    return this.saidSpeaking || this.ttsPending.size > 0 || this.speakingUntil > Date.now();
+    return this.saidSpeaking || this.ttsPending.size > 0 || this.afterVoice.length > 0 || this.speakingUntil > Date.now();
   }
 
   /** Ember is speaking, or about to: main stops it when speaking is turned off, and offers Stop speaking meanwhile. */
@@ -823,7 +823,7 @@ export class VoiceService {
   private openFollowUp(): void {
     if (this.followUpTimer) clearTimeout(this.followUpTimer);
     this.followUpTimer = null;
-    if ((!this.followUpMs && !this.answerMs) || this.ttsPending.size) return;
+    if ((!this.followUpMs && !this.answerMs) || this.ttsPending.size || this.afterVoice.length) return;
     const wait = this.speakingUntil - Date.now();
     if (wait > 0) { this.followUpTimer = setTimeout(() => this.openFollowUp(), wait); return; }
     if (this.followUpMs) {
@@ -973,6 +973,14 @@ export class VoiceService {
       else send(VOICE.speak, request);
       return;
     }
+    // Behind words the system voice is still to be given, Ember's own wait their turn: made at once, they reached the
+    // page first and were said before the passage they follow (voice-speaking-r9-1).
+    if (o.append && this.afterVoice.length) { this.afterVoice.push({ send, own: text }); return; }
+    this.sayOwn(text, send);
+  }
+
+  /** Gives `text` to Ember's own voice to make. */
+  private sayOwn(text: string, send: PageSend): void {
     const id = ++this.ttsId;
     this.ttsPending.set(id, { text, remaining: speechChunks(text).join(" "), send });
     this.cancelVoiceIdle();
@@ -1428,12 +1436,18 @@ export class VoiceService {
     this.openFollowUp();
   }
 
-  /** The system voice's words that waited for Ember's own (afterVoice), once it has nothing left to make. */
+  /**
+   * The words that waited for Ember's own voice (afterVoice), in the order they came, once it has nothing left to make:
+   * the system voice's go to the page, and the next of Ember's own to its voice, which what follows then waits for
+   * (to the system voice instead, once Ember's own has stopped working).
+   */
   private sendAfterVoice(): void {
-    if (this.ttsPending.size) return;
-    const waiting = this.afterVoice;
-    this.afterVoice = [];
-    for (const w of waiting) w.send(VOICE.speak, w.request);
+    while (!this.ttsPending.size && this.afterVoice.length) {
+      const w = this.afterVoice.shift()!;
+      if ("request" in w) w.send(VOICE.speak, w.request);
+      else if (this.neuralVoice) this.sayOwn(w.own, w.send);
+      else w.send(VOICE.speak, { text: w.own, append: true, ...this.rateField } satisfies SpeakRequest);
+    }
   }
 
   /** Retire optional Kokoro and append only its ungenerated suffix through baseline Kitten. */
@@ -1453,6 +1467,7 @@ export class VoiceService {
       this.ttsPending.set(next, { text, remaining: text, send: p.send });
       this.voiceProcess().postMessage({ type: "say", id: next, text, ...this.speedField });
     }
+    this.sendAfterVoice();
   }
 
   /** The mic page's address and its development audio options. */

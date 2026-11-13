@@ -15,6 +15,7 @@ import { Player, playerAudio, type PlayerContext } from "./player";
 import { OutputBusy, watchOutput } from "./output-watch";
 import { speechWatch, type WatchedUtterance } from "./speech-watch";
 import { LocalSpeech } from "./local-speech";
+import { SpeechOrder } from "./speech-order";
 import { LEVEL_MS, VOICE_KEEP_ALIVE_MS, VOICE_LEVEL_MS, LevelMeter, envelope, rms, voiceAt, type VoiceSpan } from "../../shared/level";
 
 declare global { interface Window { emberMic: MicApi } }
@@ -134,14 +135,11 @@ function voicePlaying(on: boolean): void {
 const player = new Player(() => playerAudio(new AudioContext({ latencyHint: "interactive" }) as unknown as PlayerContext, new URLSearchParams(location.search).get("playback") === "element"), on => {
   if (on) reportSpeech(true);
   voicePlaying(on);
+  if (!on) { localSpeech.drain(); order.settle(); }
   update();
-  if (!on) localSpeech.drain();
 }, (at, samples, rate) => { spans.push({ at, env: envelope(samples, rate), stepS: LEVEL_MS / 1000 }); });
-api.onAudio(a => {
-  const seconds = player.chunk(a.id, a.samples, a.rate);
-  if (seconds) api.played({ id: a.id, seconds: Math.round(seconds * 100) / 100 });
-});
-api.onAudioDone(id => player.done(id));
+api.onAudio(a => order.chunk(a.id, a.samples, a.rate));
+api.onAudioDone(id => order.done(id));
 
 /**
  * Whether replies are heard at all: with no voice on the computer an utterance never starts, and main shows that in
@@ -152,7 +150,8 @@ const watch = speechWatch({
   setTimer: (fn, ms) => setTimeout(fn, ms),
   clearTimer: t => clearTimeout(t as ReturnType<typeof setTimeout>),
   report: ok => {
-    if (!ok) { synthStarted = false; update(); }
+    // Words that never started are not waited for by Ember's own voice behind them.
+    if (!ok) { synthStarted = false; synthStalled = true; order.settle(); update(); }
     reportSpeech(ok);
   },
 });
@@ -173,10 +172,29 @@ const localSpeech = new LocalSpeech({
   busy: () => player.active,
   speak: speakLocal,
   unavailable: () => reportSpeech(false),
+  dropped: () => { order.settle(); update(); },
   setTimer: (fn, ms) => setTimeout(fn, ms),
   clearTimer: timer => clearTimeout(timer as ReturnType<typeof setTimeout>),
 }, navigator.language || "en-US");
-speechSynthesis.addEventListener("voiceschanged", () => localSpeech.drain());
+speechSynthesis.addEventListener("voiceschanged", () => { localSpeech.drain(); order.settle(); });
+
+/** The system's voice was given words that never started (the 8 s watch): nothing waits for them any longer. */
+let synthStalled = false;
+
+/**
+ * Both voices in one order (speech-order.ts): Ember's own voice waits for a passage the system's voice is saying, as the
+ * system's voice waits for Ember's own (voice-speaking-r9-1).
+ */
+const order = new SpeechOrder({
+  play: (id, samples, rate) => {
+    const seconds = player.chunk(id, samples, rate);
+    if (seconds) api.played({ id, seconds: Math.round(seconds * 100) / 100 });
+  },
+  played: id => player.done(id),
+  ownActive: () => player.active,
+  say: (text, lang) => localSpeech.enqueue(text, lang),
+  systemActive: () => localSpeech.waiting || (synthQueued.size > 0 && !synthStalled),
+});
 
 /** The speaking speed setting, as main last sent it (0.8 to 1.4): the system voice speaks at 1.05 times it. */
 let speechRate = 1;
@@ -194,14 +212,16 @@ function speakLocal(text: string, voice: SpeechSynthesisVoice, lang?: string): v
     if (watching?.utterance === u) watching.watch.started();
     reportSpeech(true);
     synthStarted = true;
+    synthStalled = false;
     update();
   };
   // A reply replaced by the next one ends after the next has started: only the current queue counts.
-  u.onend = () => { if (queued !== synthQueued || !queued.delete(u)) return; watchHead(); update(); };
+  u.onend = () => { if (queued !== synthQueued || !queued.delete(u)) return; watchHead(); order.settle(); update(); };
   u.onerror = e => {
     if (queued !== synthQueued || !queued.delete(u)) return;
     if (watching?.utterance === u) watching.watch.failed(e.error);
     watchHead();
+    order.settle();
     update();
   };
   speechSynthesis.speak(u);
@@ -210,10 +230,14 @@ function speakLocal(text: string, voice: SpeechSynthesisVoice, lang?: string): v
 api.onSpeak(({ text, append, lang, rate }) => {
   speechRate = typeof rate === "number" && rate >= 0.8 && rate <= 1.4 ? rate : 1;
   if (!append) hush();
-  localSpeech.enqueue(text, typeof lang === "string" ? lang : undefined);
+  order.say(text, typeof lang === "string" ? lang : undefined);
+  // Words no voice here can say are dropped at once: what waits behind them goes on.
+  order.settle();
 });
 function hush(): void {
   localSpeech.cancel();
+  order.reset();
+  synthStalled = false;
   watching?.watch.cancelled();
   watching = null;
   synthQueued = new Set();

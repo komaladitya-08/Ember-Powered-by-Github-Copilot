@@ -1047,7 +1047,7 @@ record of its tasks (the step each one is on, one waiting for your answer or sto
 went), with no Copilot request, so it works offline too. A spoken request's short acknowledgement (“On it.”) comes only
 once the request has gone to Copilot, after anything Ember is already saying. “Ember, just show me” (or “stop telling me”) keeps finished tasks' results on screen without
 reading them out, and “read them out again” undoes it (the same switch as **Read finished tasks out loud** under
-**Voice**); while Ember isn't speaking replies at all, it says results stay on screen instead of promising to read them. “Read it out” (the suggestion under an answer that wasn't said, typed or spoken; also “tell me again” and “say that again”) says the last thing Ember said (its last answer, or a finished task's result after it) once and changes no setting; Home's composer then says “Reading the last answer out.” (nothing new is written); where Ember isn't speaking replies it says so on screen instead. While a question is up nothing is read over it, and “read this out” (what is on the screen) is the conversation's as before. “What did I miss?” or “catch me up” names the tasks that finished in the last two hours and
+**Voice**); while Ember isn't speaking replies at all, it says results stay on screen instead of promising to read them. “Read it out” (the suggestion under an answer that wasn't said, typed or spoken; also “tell me again” and “say that again”) says the last thing Ember said (its last answer, or a finished task's result after it) once and changes no setting; Home's composer then says “Reading the last answer out.” (nothing new is written); where Ember isn't speaking replies it says so on screen instead, and where no voice can say it (the system's voice was last found not to speak, and Ember's own isn't there or the answer has no English for it) it says “I can't read it out: no voice on this computer can say it right now. Voice in settings says why.” and sends nothing to be said (the first time speech is tried in a run Ember doesn't know yet that no voice speaks, so that one press still says “Reading the last answer out.”). An answer is read out in the pieces and voices it was said in as it streamed (an email in another language keeps its English lead-in and closing question in Ember's own voice). While a question is up nothing is read over it, and “read this out” (what is on the screen) is the conversation's as before. “What did I miss?” or “catch me up” names the tasks that finished in the last two hours and
 how each went, from the same record. “Ember, systems check” (or “are you working?”) says whether Copilot is connected,
 whether Ember is listening and speaking, and what is under way, also when Copilot can't be reached. “Remind me in 20 minutes to call Priya” or “at 3 pm, remind me to stand up” sets a
 reminder: when it is due, Ember shows it in its bubble, says it when replies are spoken (after what it is saying), and
@@ -1256,7 +1256,7 @@ its labelled steps too, is said as each item's line ends, not after the whole an
 answer's would (a colon line's run goes on past a label line among its lines: "Note: this can take a while."). What is written for the eye is said for the ear: money ("$12.50" as "12 dollars 50"), clock
 times ("14:00" as "14 hundred", "9:05" as "9 oh 5"), a path by its file and folder ("report.pdf in Documents") or its
 last part (through a dot folder too: "~/.config/ember" is "ember"), a ticked task-list box as "Done:" and an open one
-not at all, common inline HTML tags around the words they mark (never "x<p or y>q" or "use <p> for a paragraph"), a footnote's mark after its word (never a regex's "[^abc]") and "&amp;" unsaid or as the character they stand for, an address without "https://" by its host, "~75%" as "about 75%", "#45" as "number 45", "Tue." as
+not at all, common inline HTML tags around the words they mark (never "x<p or y>q" or "use <p> for a paragraph"), a footnote's mark after its word (never a regex's "[^abc]") and "&amp;" and the other common named entities ("&mdash;", "&hellip;", "&copy;", "&rarr;") unsaid or as the character they stand for, an address without "https://" by its host, "~75%" as "about 75%", "#45" as "number 45", "Tue." as
 "Tuesday", "2h 15m" as "2 hours 15 minutes", a heart between words as "love", an arrow key by its name ("Press the →
 key" as "the right arrow key", "Press ← or →" as "left arrow or right arrow") or, before the word "arrow", by its
 direction ("the ← and → arrow keys" as "the left and right arrow keys"), in a chord as the other keys are ("Win+←" as
@@ -1277,7 +1277,17 @@ list's "1. La La Land." is Kitten's too. (One way only: in an answer said in ano
 English outside what it quotes, with none of that language's short words and no letter of another script, is
 Kitten's, so "Shall I reply to it?" after a Spanish email read out is asked in English, however the answer opened
 ("Sure.", "José wrote:"); "Il s'appelle Gone with the Wind." and "Ошибка: The file was not found." keep their answer's
-voice, but a piece with none of its language's short words ("Er heißt Gone with the Wind.") is still Kitten's.) Until then a piece that may be another language's ("Bien sûr !", with letters
+voice, but a piece with none of its language's short words ("Er heißt Gone with the Wind.") is still Kitten's.) The
+answer is judged in passages: after a lead-in said in Kitten's voice (a piece that ends with a colon: "Here is the email
+from José:", also one that came in the same piece as the passage's first sentence), and from the first sentence that may
+be another language's in an answer that looked English so far ("Okay, reading it now."), what follows is judged by
+itself, from its own first 60 letters, and waits until then unless it is clearly English: counted with the lead-in, whose
+English short words outnumber a first sentence's, a Spanish, Italian or Portuguese email was read by Kitten for 14 of
+16 ordinary lead-ins and layouts (now none; an Italian or Portuguese passage's first sentence with no accent still is,
+after a lead-in without a colon or on the same line). A passage is judged without the clearly English pieces it ends
+with: counted with Ember's own "Shall I reply to it?", a chat message of two sentences was Kitten's for 15 of 15 (now
+6: a passage under 60 letters still needs two different short words of its language, or Spanish's "¿" or "¡", so
+"Ciao Alex, come stai? Ci vediamo domani." and "Olá Alex, tudo bem? Até amanhã no escritório." are Kitten's). Until then a piece that may be another language's ("Bien sûr !", with letters
 English seldom writes outside a name, and not clearly English: "your résumé" is) or any piece after a request clearly
 typed in another language (three different short words of it outside quotes, and none only English writes:
 `requestLanguage`; "play la vie en rose" and "what does c'est la vie mean?" aren't) waits for more of the answer, unless its words outside quotes are clearly English. A reply too short to tell follows that
@@ -1286,7 +1296,10 @@ veut dire « I don't know »."); one that quotes something follows it only where
 language's short words than English's, or as many and a letter or mark of that language ("Abrí "Ventas.xlsx".",
 "Voilà « Ventes.xlsx »."; "Literally, "I don't know"." and "In English: "thank you"." are Kitten's), and a message that ends before
 a tool call ("Sure, one moment.") decides nothing for the messages after it. Words for the system voice wait until the
-pieces Kitten is still making are done.
+pieces Kitten is still making are done, Kitten's words after them wait their turn behind those (never made ahead and
+said first), and on the speaking page each voice starts only once the other has fallen quiet (`SpeechOrder`,
+app/renderer/mic/speech-order.ts), so "Shall I reply to it?" is never said over the message it follows; a system voice
+that never starts (the 8 s watch) is not waited for.
 
 **When a request ends.** The VAD ends a request after 0.6 s of silence (about 0.72 s after the voice, with Silero's own
 lag). At a quiet pause of 0.35 s in it, what was said so far is transcribed ahead (`SPECULATE_FRAMES`,
@@ -1366,7 +1379,8 @@ Ember needs a GitHub account with Copilot. **Sign in with GitHub** uses Ember's 
 enter the code Ember shows on GitHub's page). The app's public client id is checked in at
 `app/main/agent/github-app.ts` and built into `main.cjs`; `EMBER_GITHUB_CLIENT_ID` overrides it at run time. ci.yml's
 `checks` job asks GitHub for a device code with the built-in id, so a client id GitHub doesn't accept (or the app's
-device flow turned off) fails CI. Ember renews its own sign-in before the app's 8-hour token runs out. A build
+device flow turned off) fails CI at once; GitHub's own passing trouble (a 5xx, no answer, `request_failed`,
+`slow_down`, a body that isn't JSON) is asked again, four times at most over 50 s (`scripts/check-client-id.mjs`). Ember renews its own sign-in before the app's 8-hour token runs out. A build
 without a client id (a fork) shows **Connect with GitHub CLI** instead, and signs in through the GitHub CLI:
 
 ```bash
@@ -1377,7 +1391,12 @@ gh auth login
 
 Ember checks, in order: a token it stored itself, `COPILOT_GITHUB_TOKEN` / `GH_TOKEN` / `GITHUB_TOKEN`,
 then `gh auth token --hostname github.com`; a sign-in Copilot refuses gives way to the next (the message names it), and
-**Sign out** forgets the refusals. Classic `ghp_` tokens are not accepted by Copilot. For Copilot Business or
+**Sign out** forgets the refusals. A Sign out holds for the rest of the run whatever the disk says: where the saved
+sign-in can't be removed or the signed-out note (agent.json, written through a temporary file) can't be written (a
+read-only home, a file that isn't yours), Ember never reads that sign-in again, uses no GitHub CLI or environment
+sign-in on its own, and Models & connections says “You're signed out for now, but Ember couldn't save that: its data
+folder can't be written. Until it can, Ember may sign in again by itself the next time it starts.”
+(reliability-r9-2). Classic `ghp_` tokens are not accepted by Copilot. For Copilot Business or
 Enterprise, your organisation must enable the **Copilot CLI** policy. No restart is needed: run `gh auth login` in a
 terminal (Ember notices within a few seconds), or press **Check again**. If sign-in fails, the Copilot section says
 which sign-in Ember tried and why; while offline, Ember retries by itself.
@@ -1710,7 +1729,7 @@ first run's agreement gives it nothing; under a lockdown every row is so. Every 
 | `features.autonomy` | `false`: no approval mode is in force (How Ember asks shows managed); Ember asks before a first step in an app, a borrow and moving text between apps, as it did before the modes. `allowGrants: false`, `confirmEveryAction: true`, `features.actions: false` and LOCKDOWN do the same. `true` turns nothing on. An Ember from before this key reads a policy that has it as broken and locks down, so update Ember first |
 | `approvals.maxMode` | The highest approval mode users may choose: `"interactive"`, `"assisted"` or `"autopilot"`. It can only lower the mode: a user's higher choice works as this one at most (How Ember asks says "Your organisation allows Interactive at most…"), a mode above it can't be chosen, and it puts no mode in force by itself. `"interactive"` or `"assisted"` forbids Autopilot, in which Ember sends, deletes, pays, installs and runs dangerous commands without asking; on a computer reached over SSH, that computer's own policy is asked too, so a cap there keeps the PC's Autopilot from standing in for a yes on it. To keep Ember below Interactive, use `features.autonomy: false`. An Ember from before this key reads a policy that has it as broken and locks down, so update Ember first |
 | `models` | Only these models; or pin the conversation and task models |
-| `provider` | Use the organisation's own endpoint (`openai`, `azure` or `anthropic`) instead of GitHub sign-in; the key is read from `apiKeyFile` (or, without one, from the environment variable `EMBER_PROVIDER_API_KEY`). It always wins over a user's own provider, which Home then shows as managed |
+| `provider` | Use the organisation's own endpoint (`openai`, `azure` or `anthropic`) instead of GitHub sign-in; the key is read from `apiKeyFile` (or, without one, from the environment variable `EMBER_PROVIDER_API_KEY`). `wireApi` (`completions` or `responses`) says which API an `openai` endpoint speaks, and `azure`: `{ "apiVersion": "…" }` gives Azure's API version (only there: `apiVersion` directly under `provider` is an unknown key, which locks Ember down). It always wins over a user's own provider, which Home then shows as managed |
 | `features.userProvider` | `false`: users can't point Ember at a model service of their own ("Use my own model provider" in Home › Models & connections is off and managed; a key already saved stays unused until signing out or Remove deletes it). Allowed when absent; the organisation's own `provider` and LOCKDOWN turn it off too, and `models.allowed` and pinned models still hold for the user's model ids. An Ember from before this key reads a policy that has it as broken and locks down, so update Ember first |
 | `auditRetentionDays` | How long the audit log is kept (default 30; nothing is deleted while Ember is locked down) |
 | `features.wsl` / `features.ssh` | No WSL / no connecting to other computers over SSH |
@@ -1805,8 +1824,9 @@ Ember that **Ask Ember** started doesn't open the ask box again when it restarts
 session, **Transparent windows** (the compositor), **Screen reading**, **Mouse and keyboard** (XTest), Copilot sign-in
 or the organisation's endpoint, the admin policy, the microphone, speech models, **Speaking** (Ember's own Kitten
 voice where it runs natively, with speech-dispatcher as its fallback; it warns only when neither can speak), Ember's
-desk, **Window sandbox** and **Copilot's file watchers** (inotify; **Ember's file watchers** while another model
-service is in use: integrations-r3-3), and says what to do about each problem. On a
+desk, **Window sandbox**, **Copilot's file watchers** (inotify instances; **Ember's file watchers** while another model
+service is in use: integrations-r3-3) and **Watched files and folders** (the inotify watches of all this user's apps
+against `fs.inotify.max_user_watches`, or a user namespace's own lower limit: reliability-r9-1), and says what to do about each problem. On a
 Linux other than the RHEL 8 family, the operating system row says Ember is tested on RHEL 8 and may work but isn't
 supported. It exits 1 if Ember can't work. A warning that keeps Ember from reading or using apps (Screen reading
 missing, say) is counted as one to fix and named in its last line ("1 thing to fix so Ember can read and use your apps
@@ -1918,7 +1938,7 @@ On Linux (Windows: §10.9, macOS: §11.8):
 | `npm ci` fails with `edgesOut` | Upgrade npm: `sudo env PATH=/opt/node22/bin:$PATH npm install -g npm@11.6.2` for the Node in /opt/node22 (§3); a Node of your own (nvm, a user prefix) upgrades without sudo. `EACCES` there means /opt/node22 isn't root's: `sudo chown -R root:root /opt/node22` |
 | Electron download fails | `npx install-electron` |
 | Ember doesn't react to “Hey Ember” | Check the **Voice** section: the speech models must be there (the packages carry them; a development build downloads them) and the state must say “Listening for “Ember””. Check the right microphone is selected in GNOME Settings → Sound. `EMBER_LOG_LEVEL=debug` logs every wake, rejection and transcript length |
-| "Copilot isn't answering. Reconnecting…", or "this computer has run out of file watchers" | Each Copilot conversation holds a file watcher (an inotify instance) and the per-user limit is often 128. Run `ember doctor`; raise the limit with `sudo sysctl -w fs.inotify.max_user_instances=512` and keep it with `fs.inotify.max_user_instances = 512` in `/etc/sysctl.d/90-ember.conf` |
+| "Copilot isn't answering. Reconnecting…", or "this computer has run out of file watchers" | Each Copilot conversation holds a file watcher (an inotify instance) and the per-user limit is often 128. Run `ember doctor`; raise the limit with `sudo sysctl -w fs.inotify.max_user_instances=512` and keep it with `fs.inotify.max_user_instances = 512` in `/etc/sysctl.d/90-ember.conf`. The files and folders all your apps watch have their own limit (8,192 on RHEL 8; an editor, a sync client or the desktop's file indexer can use it up), with the same symptom: `ember doctor`'s **Watched files and folders** row and Models & connections then name `fs.inotify.max_user_watches`; raise it with `sudo sysctl -w fs.inotify.max_user_watches=524288` and keep it the same way |
 | "Copilot isn't answering. Ember will try again in a moment." | The Copilot runtime started but didn't answer a step of connecting in time (30 s to start or open the conversation, 20 s for the sign-in check or the model list). Ember stops it and tries again after 15 s, 30 s, then every minute; `ember.log` has `agent.start_failed` with `why: "timeout"` and the step. A proxy or VPN that drops GitHub's traffic without refusing it does this: check `HTTPS_PROXY` and the system proxy |
 | Home says "Ember closed unexpectedly last time" | Ember's main process ended without quitting (a crash, `kill -9`, the computer losing power): the log says `app.previous_run_ended` with when that run started, and its last lines are what it was doing. Logging out isn't this: on Linux the X server ending under Ember is the session ending, logged as `app.session_end` with `"source":"display-gone"`, and the next login says nothing. That run's conversation is deleted at this start, as after any crash. If it keeps happening, report it with `ember.log` (see "Sharing a log") |
 | Ember is slow, or uses a lot of the processor | Awake with nothing happening, Ember's processes together use about 7–10 % of one core on a computer with no GPU (Xvfb with a compositor, listening off), most of it drawing the character in the overlay and the handle (Home open in front adds about 3 %; behind other windows it draws nothing); listening for “Hey Ember” adds about 5 % more. After 3 minutes with the pointer still Ember dozes and draws nothing: about 2 %, or 6 % while listening. `node scripts/perf/footprint.mjs` (a development build, Linux) measures each process and page (docs/ASSISTANT.md phase 0). In `ember.log` (`EMBER_LOG_LEVEL=debug` for more), a line that repeats many times a minute points to the part at fault: `sidecar.revive_backoff` the accessibility helper, `agent.runtime_lost` the Copilot runtime, `window.renderer_gone` or `app.child_process_gone` one of Ember's windows or its GPU process |
