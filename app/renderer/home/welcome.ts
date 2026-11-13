@@ -89,7 +89,12 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
   let voice: VoiceStatus | null = null;
   let signingIn = false;
   /** `github`: what a GitHub sign-in said, which says nothing about the user's own provider once that is in use (first-run-c7-3). */
-  let signInMessage: { text: string; tone: string; github?: boolean } | null = null;
+  /**
+   * What the sign-in step's line says in place of the status. `github`: a GitHub sign-in's outcome, never said under
+   * "Your own model provider". `untilStatus`: true only until the connection has an outcome (Try again's "Found …;
+   * connecting…"): it goes once main's status is ready or an error (first-run-r9-2).
+   */
+  let signInMessage: { text: string; tone: string; github?: boolean; untilStatus?: boolean } | null = null;
   let saving = false;
   let navigation = 0;
   /** The page main offers while it waits for a sign-in made elsewhere ("Open cli.github.com"), or null. */
@@ -319,6 +324,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     if (signingIn || v.primary !== "sign-in") switchedSaid = false;
     // A device code on screen is the line while it waits; otherwise the status (or what went wrong) is.
     // A GitHub sign-in's outcome isn't the line under "Your own model provider": it is kept for Copilot's step (first-run-c7-3).
+    if (signInMessage?.untilStatus && (agent?.phase === "ready" || agent?.phase === "error")) signInMessage = null;
     const said = signInMessage?.github && ownInUse() && !signingIn ? null : signInMessage;
     const detail = said?.text ?? (agent?.phase === "error" && !signingIn ? agent.detail : switchedSaid ? switchedLine(agent?.signInWith) : v.line);
     line.className = `w-status ${said?.tone ?? (agent?.phase === "error" ? "error" : v.tone)}`;
@@ -908,16 +914,18 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     const checking = { text: "Checking…", tone: "" };
     signInMessage = checking;
     render();
-    const show = (text: string, tone: string) => {
+    const show = (text: string, tone: string, github = false, untilStatus = false) => {
       if (signInMessage !== checking) return;
-      signInMessage = { text: inMyVoice(text), tone };
+      signInMessage = { text: inMyVoice(text), tone, ...(github ? { github } : {}), ...(untilStatus ? { untilStatus } : {}) };
       render();
     };
     window.ember.retrySignIn().then(r => {
       // The user's own provider reconnects too, but a GitHub sign-in found or not says nothing about it: its own
       // status line follows (first-run-1).
       if (r.provider || ownInUse()) { if (signInMessage === checking) { signInMessage = null; render(); } return; }
-      show(retryMessage(r, r.found && agent?.phase === "ready"), r.found ? "" : "error");
+      // A sign-in found is GitHub's, and "connecting…" holds only until the connection has an outcome (first-run-r9-2).
+      const connected = r.found && agent?.phase === "ready";
+      show(retryMessage(r, connected), r.found ? "" : "error", true, r.found && !connected);
     }, err => show(ipcErrorText(err), "error"));
   }
   $("w-stop").addEventListener("click", () => { void window.ember.stopEverything(); });
