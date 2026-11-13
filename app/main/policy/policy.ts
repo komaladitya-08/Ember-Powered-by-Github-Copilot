@@ -1858,7 +1858,7 @@ const STEP_KIND: Record<ActionKind, string> = {
   keys: "press keys, on the user's keyboard", scroll: "scroll, with the user's mouse",
 };
 /** The most of each part Assisted's check is shown (characters): a part longer than its limit isn't cut, the step asks. */
-export const CHECK_LIMITS = { name: 200, title: 300, dialog: 600, typed: 1500, replaced: 200, step: 3500 } as const;
+export const CHECK_LIMITS = { name: 200, title: 300, dialog: 600, typed: 1500, replaced: 200, step: 3500, words: 6000 } as const;
 /** A part read from the screen, an app or the task's model, as Assisted's check is shown it: quoted, with nothing unseen in it. */
 const checkQuote = (s: string, max: number): string => quoteUntrusted(s, max).replace(INVISIBLE, c => `\\u${c.codePointAt(0)!.toString(16).padStart(4, "0")}`);
 
@@ -2734,7 +2734,8 @@ export class PolicyEngine {
     const asIs = () => steps.map(s => s.d);
     const may = () => (this.o.assisted?.() ?? false) && !this.o.confirmEveryAction?.() && (this.o.actionsAllowed?.() ?? true);
     if (!steps.some(s => s.d.verdict === "confirm") || steps.some(s => s.d.verdict === "deny" || s.r.kind === "read")) return asIs();
-    if (!may() || !o.words.trim() || o.signal.aborted) return asIs();
+    // (Nor the user's words: a request too long to show whole could lose the "but don't…" at its end.)
+    if (!may() || !o.words.trim() || o.words.trim().length > CHECK_LIMITS.words || o.signal.aborted) return asIs();
     const parts = steps.map(s => stepForCheck(s.r, s.d, this.keys));
     if (parts.some(p => p === null)) return asIs();
     const step = [...(steps.length > 1 ? parts.map((p, i) => `Step ${i + 1} of ${steps.length}, taken together:\n${p}`) : parts), ...taskNotes(o.task)].join("\n");

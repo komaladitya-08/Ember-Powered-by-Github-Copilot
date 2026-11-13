@@ -35,7 +35,7 @@ import type { AxNode, AxWindow, Bounds, ActionResult, ElementInfo, PointElement 
 import { helperCantRun } from "../perception/sidecar";
 import type { PolicyEngine, ActionKind, ActionRequest, Agreement, Decision, DialogControl, ReadSource, TextMode, WindowId } from "../policy/policy";
 import { CHECKED_WORDS, riskyOnPage } from "../policy/policy";
-import type { StepChecker } from "../commands/review";
+import type { CommandReviewer, StepChecker } from "../commands/review";
 import { afterTheStep, type AuditEntry, type AuditLog } from "../policy/audit";
 import type { AutonomyScopes } from "../policy/autonomy";
 import { inferLabels, quoteUntrusted as q, screenWord } from "../perception/elements";
@@ -98,6 +98,8 @@ export interface WorkerDeps {
   check?: () => boolean;
   /** Assisted's check for app steps (default: a session of its own on Copilot, copilotStepChecker); tests script one. */
   checkStep?: StepChecker;
+  /** Assisted's check for commands (default: a session of its own on Copilot, copilotReviewer); tests script one. */
+  reviewCommand?: CommandReviewer;
   /** The lighter model Assisted's check and the command reviewer run on (the conversation's); absent: this worker's. */
   checkModel?: string | null;
   /**
@@ -2072,7 +2074,7 @@ export class Worker {
     return {
       task: {
         id: this.spec.id, title: goal.length > 200 ? `${goal.slice(0, 199)}…` : goal,
-        commandWords: () => this.commandWords, agreed: () => this.agreed, tainted: () => this.tainted,
+        commandWords: () => this.commandWords, checkWords: () => this.checkWords, agreed: () => this.agreed, tainted: () => this.tainted,
         spokenWords: () => (this.spokenOnly ? this.userWords : ""),
         ownWords: () => this.ownWordsLine(),
         // Output that reads like instructions: every later step (command or not) is checked with the user (§3.11).
@@ -2087,7 +2089,12 @@ export class Worker {
       refusals: this.refusals,
       // "Work without asking" holds for commands only while this task hasn't been steered or told no (as for app steps).
       autonomy: () => (this.tainted || this.saidNoThisTask ? null : this.d.autonomy?.() ?? null),
-      ...(this.d.check?.() ? { review: copilotReviewer({ client: this.d.client, model: this.d.checkModel ?? this.d.model, provider: this.d.provider, workDir: this.d.workDir, log: this.d.log }) } : {}),
+      // Assisted's check for commands, on the lighter model: an answer that comes once Assisted is no longer in force
+      // (the mode or the organisation's policy changed while it was asked) counts for nothing.
+      ...(this.d.check?.() ? { review: async (i, signal) => {
+        const v = await (this.d.reviewCommand ?? copilotReviewer({ client: this.d.client, model: this.d.checkModel ?? this.d.model, provider: this.d.provider, workDir: this.d.workDir, log: this.d.log }))(i, signal);
+        return this.d.check?.() ? v : null;
+      } } : {}),
     };
   }
 

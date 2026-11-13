@@ -60,6 +60,12 @@ export interface CommandFlowContext {
      */
     spokenWords?: () => string;
     /**
+     * The user's own words for Assisted's check (Worker.checkWords): what the reviewer reads a command against, spoken
+     * requests heard unchecked included, never a suggestion's, a routine's saved steps or words heard over Ember's
+     * voice. Absent: commandWords.
+     */
+    checkWords?: () => string;
+    /**
      * The user's own words for this task, quoted on one line (Worker.ownWordsLine), or "" for none: the "Your task:" line
      * of a question about a command they didn't ask for, or of any in a task that was steered (Question.taskLine;
      * tasks-approvals-c1-1). Absent, such a question has no task line, never the goal.
@@ -103,8 +109,9 @@ export interface CommandFlowContext {
    */
   onDeclined?: (expired?: boolean) => void;
   /**
-   * AI review (review.ts), while the approval mode in force reviews commands (Assisted): a command that would ask, and
-   * that no hard rule makes ask, is reviewed first, and runs with its announcement when the reviewer finds it routine.
+   * Assisted's check for commands (review.ts), while Assisted is the approval mode in force: a command that would ask,
+   * and that may be reviewed at all (notReviewable), is shown to the reviewer first, and runs with its announcement
+   * when the reviewer finds it in the user's own words.
    */
   review?: CommandReviewer;
   /** Home project commands always need the exact command card, with the chosen folder still present at launch. */
@@ -156,6 +163,9 @@ let judge: CommandJudge = CL_JUDGE;
 export function setCommandJudge(j: CommandJudge | null): void {
   judge = j ?? CL_JUDGE;
 }
+
+/** What a task's bubble says while Assisted's check reads a command against the user's words, before any card (flow). */
+export const CHECKING_COMMAND = "Checking this command against what you asked…";
 
 /** The card's line when the user asked for it by voice where Ember can't tell their voice from the speakers (OWNER V1). */
 export const SPOKEN_LINE = "You asked by voice. Ember can't tell your voice from what your speakers play, so it checks first.";
@@ -860,17 +870,23 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
   // countdown and the card still show where the text came from).
   const autonomous = autonomousCommand(d, { scopes: ctx.autonomy?.() ?? null, words, tainted: tainted || !!ctx.state.outputTainted, carried, elsewhere: others.length > 0 || places.length > 0, kind: binding.kind });
   if (autonomous) d = autonomous;
-  // AI review: a command that asks only by the danger rules is shown to the reviewer with the user's words; one it finds
-  // routine runs with its announcement (Stop countdown) instead. The hard asks are never reviewed (review.ts).
+  // Assisted's check: a command that asks is shown to the reviewer with the user's own words and what the rules found
+  // (the card's lines: an administrator's command, a steered task, carried text and another computer named say so
+  // there); one it finds in those words runs with its announcement (Stop countdown) instead. A command that would read
+  // or print secrets or keep running after Stop, and what the organisation's or the user's own "ask every command"
+  // requires, are never reviewed (review.ts). The task's bubble says it is checking; a Stop doesn't wait for the answer.
   if (ctx.review && d.verdict === "ask") {
-    const blocked = notReviewable(d, {
-      words, privileged: facts.privileged, mode, askEvery: cap.askEvery, userAskEvery, tainted, carried, elsewhere: others.length > 0 || places.length > 0,
-    });
+    const checkWords = ctx.task.checkWords?.() ?? words;
+    const blocked = notReviewable(d, { words: checkWords, mode, askEvery: cap.askEvery, userAskEvery, command: a.command });
     if (blocked === null) {
       const t0 = performance.now();
-      const v = await ctx.review({
-        userWords: words, command: a.command, shell, cwd, where: binding.label || place, os: facts.os, why: a.why, findings: d.says,
-      }, ctx.signal).catch(() => null);
+      try { ctx.presenter.progress(CHECKING_COMMAND); } catch (err) { ctx.log.warn("commands.checking_not_said", { err }); }
+      const asked = Promise.resolve().then(() => ctx.review!({
+        userWords: checkWords, command: a.command, shell, cwd, where: binding.label || place, os: facts.os, why: a.why, findings: d.says,
+      }, ctx.signal)).catch(() => null);
+      let stop!: () => void;
+      const stopped = new Promise<null>(resolve => { stop = () => resolve(null); ctx.signal.addEventListener("abort", stop, { once: true }); });
+      const v = await Promise.race([asked, stopped]).finally(() => ctx.signal.removeEventListener("abort", stop));
       if (ctx.isOver()) return STOPPED();
       ctx.log.info("commands.reviewed", { task, target, verdict: v ? (v.run ? "run" : "ask") : "none", ms: Math.round(performance.now() - t0) });
       if (v?.run) d = reviewedDecision(d, v);
