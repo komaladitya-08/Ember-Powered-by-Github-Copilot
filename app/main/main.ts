@@ -3452,6 +3452,7 @@ function start(): void {
       screenBounds: () => (ws ? ws.screenBounds() : primaryScaledUnion(screen)),
       // What Ember filled from its vault is dropped from every read and blacked out of every picture (redact.ts).
       holdsVaultValue: text => vaultRedactor.holds(text), vaultShown: () => vaultRedactor.shown,
+      vaultFilled: () => vaultRedactor.active,
       words: sys.words,
       isSecurityWindow: privacy.isSecurityWindow,
       // Linux: a pinentry, ssh-askpass or polkit agent's window, focused or not, stops all reading (safety-privacy-3).

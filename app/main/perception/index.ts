@@ -68,6 +68,12 @@ export interface PerceptionOptions {
    * of a window read whole: in a read cut short, a line that repeats the value may be among what wasn't read.
    */
   vaultShown?: () => boolean;
+  /**
+   * Has Ember filled anything from its vault in this run (VaultRedactor.active)? Then an element whose name the helper
+   * or Perception withheld because it says what a secret field holds is blacked out of pictures as a secret field is:
+   * a filled field is secret, so a line repeating its value is withheld before holdsVaultValue can see its words.
+   */
+  vaultFilled?: () => boolean;
   /** How a screenshot is taken (default captureRect; the remote agent passes its own, which needs no sharp). */
   capture?: typeof captureRect;
   /**
@@ -291,6 +297,12 @@ export class Perception {
         if (says(n.name)) vaultNamed.add(n.id);
         if (vaultNamed.has(n.id) || says(n.text) || says(n.selection) || says(n.selected) || (n.value !== undefined && says(String(n.value)))) vaultHeld.add(n.id);
       }
+    }
+    // After a fill, what was withheld for saying what a secret field holds (a filled field is one) may show the value
+    // in pixels though its words are gone: the helper withholds a GTK label repeating a filled user name before its
+    // words get here (vault-leak.test.ts's real window). It is blacked out as a secret field is.
+    if (this.vaultFilled()) {
+      for (const n of nodes) if ((n.withheld === true || withheld.has(n.id)) && !WINDOW_ROLES.has(n.role)) vaultHeld.add(n.id);
     }
     // A field is kept secret by the helper too (nothing is typed into it); a line of text is found again at each read.
     const fresh = nodes.filter(n => !n.secret && (secret.has(n.id) || (vaultHeld.has(n.id) && FIELD_ROLES.has(n.role)))).map(n => n.id);
@@ -712,6 +724,12 @@ export class Perception {
     } catch {
       return true; // a check that fails: no picture
     }
+  }
+
+  /** Has Ember filled anything from its vault in this run? A check that fails says yes. */
+  private vaultFilled(): boolean {
+    if (!this.o.vaultFilled) return false;
+    try { return !!this.o.vaultFilled(); } catch { return true; }
   }
 
   /** Could a value Ember filled from its vault show in a window as it is? A check that fails says yes. */

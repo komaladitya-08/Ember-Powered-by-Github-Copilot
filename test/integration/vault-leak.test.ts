@@ -240,14 +240,16 @@ describe.skipIf(!available && !required)("the canary test against a real window,
     }
     return 0;
   };
+  // A one-line field: Chromium's is an "entry", GTK 3's an ATK "text".
+  const FIELD = new Set(["entry", "text", "password text"]);
   // The window may still be handing itself over: read until both fields are there.
   const fieldsOf = async (target: number) => {
     let seen = await perception.read({ pid: target });
-    for (let i = 0; i < 40 && seen.nodes.filter(n => n.role === "entry" || n.role === "password text").length < 2; i++) {
+    for (let i = 0; i < 40 && seen.nodes.filter(n => FIELD.has(n.role)).length < 2; i++) {
       await new Promise(r => setTimeout(r, 250));
       seen = await perception.read({ pid: target });
     }
-    const user = seen.nodes.find(n => n.role === "entry")!;
+    const user = seen.nodes.find(n => n.role === "entry" || n.role === "text")!;
     const password = seen.nodes.find(n => n.role === "password text")!;
     expect(user, JSON.stringify(seen.nodes.map(n => [n.role, n.name]))).toBeDefined();
     expect(password).toBeDefined();
@@ -267,7 +269,7 @@ describe.skipIf(!available && !required)("the canary test against a real window,
     x11 = openX11()!;
     sidecar = new AtspiSidecar(path.resolve("sidecar/atspi/ember_atspi.py"), log.child("sidecar"), python);
     perception = new Perception({ sidecar, x11, log: log.child("perception"), neverLook: () => [], screenBounds: () => ({ x: 0, y: 0, width: 4000, height: 4000 }),
-      holdsVaultValue: text => redactor.holds(text), vaultShown: () => redactor.shown });
+      holdsVaultValue: text => redactor.holds(text), vaultShown: () => redactor.shown, vaultFilled: () => redactor.active });
     const store = new VaultStore(path.join(dir, VAULT_FILE), box);
     service = new VaultService({ store, allowed: () => true, consented: () => true, autopilot: () => true, appName: k => k, log: log.child("vault"),
       form: { ask: async () => "cancelled", stop: () => {} }, filling: (part, value) => redactor.note(part, value) });
@@ -337,7 +339,9 @@ describe.skipIf(!available && !required)("the canary test against a real window,
     expect(p.text).toContain(took);
     expect(canariesIn(p.text), p.text).toEqual([]);
     expect(canariesIn(JSON.stringify(p.nodes))).toEqual([]);
-    expect(p.nodes.filter(n => n.role === "entry" || n.role === "password text").every(n => n.secret)).toBe(true);
+    const fields = p.nodes.filter(n => FIELD.has(n.role));
+    expect(fields.length, JSON.stringify(p.nodes.map(n => [n.role, n.name]))).toBe(2);
+    expect(fields.every(n => n.secret)).toBe(true);
     expect(p.capture, p.text).not.toBeNull();
     const { data, info } = await sharp(p.capture!.data).raw().toBuffer({ resolveWithObject: true });
     let green = 0;

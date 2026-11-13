@@ -1791,7 +1791,9 @@ details the user gives Ember in its own **Secure Form**, each bound to one desti
   `Perception` asks the redactor about every element first
   (`holdsVaultValue`): whatever says a filled value (the field itself, a line that repeats it, a tab named after it)
   loses its words and is blacked out of every picture as a secret field is, and a field is kept secret by the helper
-  too. There is no picture of a window whose own title says a value, nor, once a part an app shows as it is (a user
+  too. Once anything has been filled in this run, so is whatever the helper or Perception withheld for saying what a
+  secret field holds (a filled field is one, so a line repeating its value may reach Perception with no words left to
+  recognise: `vaultFilled`). There is no picture of a window whose own title says a value, nor, once a part an app shows as it is (a user
   name, an email, an address) has been filled in this run, of a window whose read was cut short. The helper's own
   fill makes the field secret before it writes; the typed fallback tells the helper so before the first key and types
   nothing if it can't; and a picture in which a field the task filled is listed as an ordinary field isn't sent.
