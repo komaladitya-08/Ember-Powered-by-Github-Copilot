@@ -3927,10 +3927,10 @@ function start(): void {
     const startBrain = async () => {
       if (brainStarted || !consented()) return;
       brainStarted = true;
-      // The user's own provider's yes is checked against its seal first (provider-record.ts): no provider of theirs
-      // before that.
-      await providerRecord.sealed;
       const since = signOuts;
+      // The user's own provider's yes is checked against its seal first (provider-record.ts): no provider of theirs
+      // before that. (A sign-out meanwhile is still seen: `since` is taken before.)
+      await providerRecord.sealed;
       // macOS asks for the login keychain password before Ember may read its saved sign-in (after every update of an
       // ad-hoc-signed Ember). The read is asynchronous there, and Ember's windows still come up first, with a status that
       // says what the prompt is for (review #241). Only on the first start of a new version: other starts read at once,
