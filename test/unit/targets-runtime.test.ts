@@ -1202,7 +1202,7 @@ describe("WSL targets", () => {
     expect(r.t.agent.handsFor("wsl:Ubuntu")).toEqual({ ok: false, why: "Set up Ubuntu first: open it from the Start menu once." });
   });
 
-  it("asks before every command in Podman's distro and in a distro whose user is root", async () => {
+  it("asks before every command in Podman's distro and in a distro whose user is root, and tells the settings window of Podman's (r10-modes-copy-x10-4)", async () => {
     const r = rig({ os: "win32", wslFacts: wslFacts([ubuntu({ defaultUid: 0 }), ubuntu({ name: "podman-machine-default", isDefault: false, tool: "podman" })]), settings: { ...wslOnSettings, commands: { "wsl:Ubuntu": { on: true, askEvery: false, consent: { version: 1, at: SINCE } }, "wsl:podman-machine-default": { on: true, askEvery: false, consent: { version: 1, at: SINCE } } } } });
     await flush();
     const root = r.t.agent.handsFor("wsl:Ubuntu");
@@ -1212,6 +1212,11 @@ describe("WSL targets", () => {
     expect(pod.hands.commands!.capability().askEvery).toBe("tool");
     expect(pod.hands.commands!.userAskEvery()).toBe(true);
     expect(pod.hands.binding.desktop).toBe("none");
+    // The settings window is told, so its switch shows every command asks there in every mode (r10-modes-copy-x10-4).
+    const summary = (id: string) => r.t.summaries().find(t => t.id === id);
+    expect(summary("wsl:podman-machine-default")).toMatchObject({ toolOwned: true });
+    expect(summary("wsl:Ubuntu")).not.toHaveProperty("toolOwned");
+    expect(summary("local")).not.toHaveProperty("toolOwned");
   });
 });
 

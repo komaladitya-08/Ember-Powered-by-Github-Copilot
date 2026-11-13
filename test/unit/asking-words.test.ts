@@ -78,6 +78,25 @@ describe("Apps & privacy says what Ember asks before in the mode in force (home-
   });
 });
 
+describe("“Ask me before every command” in a distro Podman uses (r10-modes-copy-x10-4)", () => {
+  // Every command there asks in every mode (wsl-service's userAskEvery), Autopilot included; the row showed the switch
+  // off and free, and as root in Autopilot said each one runs without asking unless it is turned on.
+  const on = { on: true, askEvery: false, consent: { version: 1, at: null } };
+  const pod = (privileged: boolean): TargetSummary => ({ id: "wsl:podman-machine-default", kind: "wsl", label: "podman-machine-default (WSL)", state: "ready", can: "commands only", active: false, toolOwned: true, ...(privileged ? { privileged: true as const } : {}) });
+  const settings = { targets: { active: "local", offerSsh: true, dismissedOffers: [], hosts: [], wsl: { on: true }, pcId: "" }, commands: { "wsl:podman-machine-default": on } } as unknown as Settings;
+  const row = (mode: ApprovalMode | null, privileged: boolean) => cc.commandsView({ summaries: [pod(privileged)], settings, admin: { source: null, features: {} }, mode }).rows.find(r => r.kind === "wsl")!;
+
+  it("shows on and locked, saying Podman uses it, in every mode, as root or not", () => {
+    for (const mode of MODES) for (const privileged of [false, true]) {
+      const r = row(mode, privileged);
+      expect(r.askEvery).toMatchObject({ checked: true, disabled: true, shown: true });
+      expect(r.managed).toContain(cc.ASK_EVERY_TOOL);
+      expect(r.managed).not.toMatch(/without asking/);
+    }
+    expect(cc.ASK_EVERY_TOOL).toBe("Podman uses this distro, so Ember asks before every command here.");
+  });
+});
+
 describe("the Commands intro, the Routines hint and the Connectors hint are true in every mode (home-c10-2)", () => {
   it("says what commands ask before, per mode", () => {
     expect(text(page)).toContain(cc.commandsIntro(null));

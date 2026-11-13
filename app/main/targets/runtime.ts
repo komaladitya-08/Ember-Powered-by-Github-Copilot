@@ -664,14 +664,15 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
   /**
    * Each target's summary, with why a host's last connection failed while it isn't connected (the settings row keeps it),
    * and whether its commands run as root or an administrator, so every one asks (the settings window's switch shows it:
-   * accessibility-c8-3).
+   * accessibility-c8-3), or in a distro Podman uses, where every one asks in every mode (r10-modes-copy-x10-4).
    */
   const summaries = (): TargetSummary[] => {
     const a = activeId();
     return entries.map(e => {
       const problem = e.kind === "ssh" && e.host && (e.state === "off" || e.state === "lost") ? conns.get(e.host.id)?.problem : undefined;
       const privileged = safeCap(commandsOf(e.id))?.askEvery === "root";
-      return { ...summaryOf(e, a), ...(problem ? { problem } : {}), ...(privileged ? { privileged: true as const } : {}) };
+      const toolOwned = e.kind === "wsl" && !!e.distro && isToolDistro(e.distro);
+      return { ...summaryOf(e, a), ...(problem ? { problem } : {}), ...(privileged ? { privileged: true as const } : {}), ...(toolOwned ? { toolOwned: true as const } : {}) };
     });
   };
   const ipc = registerTargetsIpc({
