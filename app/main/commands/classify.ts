@@ -4397,7 +4397,18 @@ function terminalDriver(h: H): void {
       const v = vals[k];
       if (v === null) continue;
       if (verb) {
-        if (v.startsWith("-") && v !== "-") { if (/^-[LSfcT]$/.test(v)) k++; continue; }
+        if (v.startsWith("-") && v !== "-") {
+          // getopt's way (commands-classes-y9-4): the first letter that takes a value ends the cluster (`-uL sock`,
+          // `-2S path`), and its value is the rest of the word or the next one. `-c` is a shell command tmux runs.
+          const at = v.slice(1).search(/[LSfcT]/);
+          if (at < 0) continue;
+          const value = v.length > at + 2 ? v.slice(at + 2) : vals[++k];
+          if (v[at + 1] === "c" && value !== undefined) {
+            if (value === null) h.e.unclear("unclear.hidden-command", `Ember can't tell what ${h.prog} runs.`);
+            else h.e.nested(value, "sh", h.sc, "tmux -c");
+          }
+          continue;
+        }
         const names = tmuxVerbs(v.replace(/;$/, ""));
         if (names.some(n => TMUX_DRIVES.has(n))) drives();
         else if (names.some(n => TMUX_READS.has(n))) reads();
@@ -4429,8 +4440,22 @@ function terminalDriver(h: H): void {
         if (v.startsWith("-")) { if (REMOTE_VALUES.has(v)) k++; continue; }
         if (REMOTE_DRIVES[tool].has(v)) { drives(); return; }
         if (REMOTE_READS[tool].has(v)) { reads(); return; }
-        if (tool !== "zellij" || v !== "action") return;
+        // zellij's verbs stand after options whose values Ember may not know (`--max-panes 5 action write-chars`):
+        // every word is read (commands-classes-y9-4).
+        if (tool !== "zellij") return;
       }
+      return;
+    }
+    case "wt": case "windowsterminal": {
+      // A tab or a pane in a Windows Terminal window the user has open runs its command there (commands-classes-y9-4);
+      // `-w new` and `-w -1` open a window of their own, and the focus verbs only move between tabs and panes.
+      const at = vals.findIndex(v => v !== null && /^(-w|--window)$/i.test(v));
+      const win = at < 0 ? undefined : vals[at + 1];
+      if (win === undefined || (win !== null && /^(new|-1)$/i.test(win))) return;
+      const rest = vals.filter((_v, k) => k !== at && k !== at + 1);
+      const opens = rest.some(v => v !== null && /^(nt|new-tab|sp|split-pane)$/i.test(v));
+      const focuses = rest.some(v => v !== null && /^(ft|focus-tab|mf|move-focus|fp|focus-pane|swap-pane|mp|move-pane)$/i.test(v));
+      if (opens || !focuses) drives();
       return;
     }
     case "nvr":
@@ -4450,7 +4475,7 @@ function terminalDriver(h: H): void {
       return;
     case "osascript": {
       const code = vals.filter((v, k) => vals[k - 1] === "-e" && v !== null).join("\n");
-      if (/\b(terminal|iterm2?|ghostty|warp|kitty|alacritty|wezterm|hyper)\b/i.test(code) && /\b(do script|write text|write contents|create (window|tab))\b/i.test(code)) drives();
+      if (/\b(terminal|iterm2?|ghostty|warp|kitty|alacritty|wezterm|hyper)\b/i.test(code) && /\b(do script|doScript|write text|write contents|create (window|tab))\b/i.test(code)) drives();
       return;
     }
   }

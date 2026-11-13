@@ -782,7 +782,10 @@ names and any shortened spelling tmux takes for them, such as `send-k`, in each 
 (`action write-chars`, `run`, `edit`, new panes and tabs), kitty's and wezterm's remote control (`kitty @ send-text`,
 `kitten @ launch`, `wezterm cli send-text`, `spawn`, `split-pane`), iTerm's `it2api`, an editor's `--remote-send` and
 `--remote-expr` (vim, nvim, `nvr`, and `nvr -c`), `emacsclient --eval`, Guake's `-e`, the desktop-bus calls that type
-into Konsole or Yakuake, and an AppleScript that tells Terminal or iTerm to `do script` or `write text`. A command
+into Konsole or Yakuake, an AppleScript or a JavaScript for Automation that tells Terminal or iTerm to `do script`
+(`doScript`) or `write text`, and a new tab or pane in a Windows Terminal window you have open (`wt -w 0 new-tab …`).
+tmux's and zellij's own options before the verb don't hide it (`tmux -uL work send-keys …`, `zellij --max-panes 5
+action write-chars …`), and the shell command `tmux -c` runs is judged as that command. A command
 that prints what a terminal of yours shows, or a paste buffer (`tmux capture-pane`, `show-buffer`, `save-buffer`,
 `list-buffers`, `show-environment`, `screen -X hardcopy`, `zellij action dump-screen`, `kitty @ get-text`, `wezterm
 cli get-text`), asks first in every mode: "Reads what your own terminal shows, which may hold passwords." The

@@ -985,3 +985,29 @@ describe("a secret-named variable on a program's input (commands-classes-y9-3)",
     }
   });
 });
+
+describe("ways into the user's own terminal behind a tool's own options (commands-classes-y9-4)", () => {
+  it("refuses tmux's typing verbs behind options written together, zellij's behind any option, JXA's doScript and a tab in a Windows Terminal window", () => {
+    for (const o of POSIX) for (const cmd of ["tmux -uL sock send-keys -t 0 'rm -rf ~' Enter", "tmux -2S /tmp/s send-keys x", "tmux -vS /tmp/s run-shell x", "tmux -2uL sock run 'ls'",
+      "tmux -Lsock send-keys x", "tmux -uf a.conf -L s send-keys x", "zellij --max-panes 5 action write-chars x", "zellij --layout-dir d action write-chars x",
+      "zellij --debug --max-panes 5 run -- sh x.sh", "tmux -c 'tmux send-keys ls Enter'", "tmux -c 'xdotool type hi'", "tmux -uc 'xdotool type hi'"]) {
+      expect(decide(cmd, o).verdict, label(cmd, o)).toBe("refuse");
+    }
+    for (const cmd of ["osascript -l JavaScript -e 'Application(\"Terminal\").doScript(\"ls\")'", "osascript -l JavaScript -e 'const t = Application(\"iTerm\"); t.doScript(\"ls\")'"]) {
+      expect(refusal(cmd, { shell: "zsh", context: "darwin" })?.rule, cmd).toBe("ember.terminal");
+    }
+    for (const o of WINDOWS) for (const cmd of ["wt -w 0 new-tab cmd /c dir", "wt -w 0 nt", "wt --window 0 split-pane powershell", "wt.exe -w last sp cmd /k dir", "wt -w 0", "wt -w 0 cmd /c dir"]) {
+      expect(refusal(cmd, o)?.rule, label(cmd, o)).toBe("ember.terminal");
+    }
+  });
+
+  it("judges the shell command `tmux -c` runs as that command, and never refuses the list verbs", () => {
+    for (const o of POSIX) {
+      expect(decide("tmux -c 'npm publish'", o).classes, label("tmux -c", o)).toContain("publish");
+      for (const cmd of ["tmux -L sock ls", "tmux -Lsock ls", "tmux -u ls", "zellij -s work list-sessions"]) expect(decide(cmd, o).verdict, label(cmd, o)).toBe("run");
+      // A list verb behind options written together, or behind an option Ember doesn't know, asks: never refused.
+      for (const cmd of ["tmux -uL sock ls", "zellij --max-panes 5 list-sessions"]) expect(decide(cmd, o).verdict, label(cmd, o)).toBe("ask");
+    }
+    for (const o of WINDOWS) for (const cmd of ["wt -w 0 focus-tab -t 1", "wt -w new nt", "wt new-tab"]) expect(refusal(cmd, o)?.rule, label(cmd, o)).toBeUndefined();
+  });
+});

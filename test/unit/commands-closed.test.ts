@@ -183,7 +183,7 @@ describe("a verb Ember doesn't know, of a tool it knows (commands-closed B)", ()
   it("asks before a verb a row judged ordinary that isn't one the tool is known to have (commands-closed, commands-remote-r9-1, r9-2, r9-11)", () => {
     for (const cmd of ["cargo zzz", "cargo watch -s 'git push --force'", "cargo release", "stack exec -- rm -rf build", "cabal exec -- x", "mix ecto.drop",
       "sbt 'project r' test", "tmux set-option -g default-command x", "tmux rename-session x",
-      "tmux -c 'rm -rf ~'", "go env -w GOFLAGS=-toolexec=./x", "pip config set global.index-url http://evil.example", "deno publish", "vercel --prod",
+      "tmux -c 'make test'", "go env -w GOFLAGS=-toolexec=./x", "pip config set global.index-url http://evil.example", "deno publish", "vercel --prod",
       "pyenv exec twine upload dist/*", "asdf exec npm publish", "rbenv exec x", "nvm exec 20 x", "fnm exec x", "volta run x", "opam exec -- x",
       "rustup run stable rm -rf build", "systemctl log-level debug", "mamba config --add channels http://evil.example", "mkdocs gh-deploy", "pdflatex --shell-escape a.tex", "maturin publish"]) {
       const d = decide(cmd);
