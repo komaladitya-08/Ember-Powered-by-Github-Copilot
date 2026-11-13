@@ -577,7 +577,7 @@ describe("Enter in a dialog that asks, while no button of it has the keyboard", 
   const del = { name: "", text: "Are you sure you want to permanently delete “Taxes 2025”? If you delete an item, it will be permanently lost.", alert: true };
   const winDel = { name: "Delete File", text: "Are you sure you want to permanently delete this file?", messageBox: true };
   const engineOn = (os: "linux" | "win32" | "darwin", grant: boolean, autonomy: boolean) => new PolicyEngine({ neverLook: () => [],
-    grants: () => (grant ? { "org.gnome.nautilus": "act", explorer: "act", finder: "act" } : {}), autonomy: () => (autonomy ? { ...ALL_SCOPES } : null),
+    grants: (): Record<string, "act"> => (grant ? { "org.gnome.nautilus": "act", explorer: "act", finder: "act" } : {}), autonomy: () => (autonomy ? { ...ALL_SCOPES } : null),
     isTerminalApp: () => false, os, keys: KEYS[os] });
   const APP = { linux: "org.gnome.Nautilus", win32: "explorer", darwin: "Finder" } as const;
   const key = (os: "linux" | "win32" | "darwin", role: string, name: string, value = "Return", dialog: ActionRequest["dialog"] = os === "linux" ? del : winDel): ActionRequest =>
