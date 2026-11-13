@@ -1843,6 +1843,35 @@ function namesProgram(name: string, value: string | null, raw?: string): boolean
 }
 
 /**
+ * Whether a `NAME=value` word sets a variable that changes how commands are found or run, or names a command the
+ * program runs: the lists the shell's own assignments and `env`'s are judged by (RISKY_ASSIGNMENTS, its prefixes,
+ * PROGRAM_CMD_VARS and the options variables), for a word handed to a launcher or to a program Ember doesn't know
+ * (integ2-z-2, integ2-z-3; intent.ts calls it for the user's words).
+ */
+export function riskyAssignment(name: string, value: string | null): boolean {
+  return RISKY_ASSIGNMENTS.has(name) || RISKY_ASSIGNMENTS.has(name.toUpperCase()) || RISKY_ASSIGNMENT_PREFIX.test(name) || namesProgram(name, value);
+}
+/** A word that sets a variable for the command a launcher runs (`cross-env NAME=value`, `dotenv -v NAME=value`). */
+const SETS_VARIABLE = /^([A-Za-z_][A-Za-z0-9_]*)=([\s\S]*)$/;
+/**
+ * The launchers that set variables for the command they run. None has a row (integ-y-1): each asks as a program Ember
+ * doesn't know, by its bare name, from the project's own node_modules and behind a package manager alike
+ * (integ2-z-1, integ2-z-3).
+ */
+const ENV_LAUNCHERS = new Set(["dotenv", "dotenvx", "dotenv-cli", "env-cmd", "cross-env", "cross-env-shell", "with-contenv"]);
+/**
+ * A launcher's words that set a variable (integ2-z-3, integ2-z-5): one that changes how commands are found or run asks
+ * as `env NAME=value` does, so the user's words naming the launcher never announce it, and neither does a runner
+ * that downloads it.
+ */
+function launcherSets(h: H): void {
+  for (const a of h.args) {
+    const m = SETS_VARIABLE.exec(a.v ?? a.raw);
+    if (m && riskyAssignment(m[1], a.v === null ? null : m[2])) { h.e.unclear("unclear.assignment", "It changes how commands are found or run."); return; }
+  }
+}
+
+/**
  * A build tool's own sources, on top of the shared PROJECT_FILE list: `go run .` and `cargo run` build a folder, so a
  * downloaded `.go`/`go.mod` or `.rs` there runs (commands-remote-r8-2). Kept per tool, never widened into PROJECT_FILE.
  */
@@ -3185,6 +3214,10 @@ class Engine extends Classifier {
       if (!this.onRecord(nameArg, sc)) this.scriptByPath(nameArg, pn, sc);
       scriptName(h, nameArg.v ?? "");
       if (!NATIVE[key] && nameArg.v !== null) scriptVerbs(h, nameArg.v, args);
+      // npm's Windows shims of a bin (`node_modules\.bin\cross-env.ps1`, `shx.cmd`) are that bin: judged by its name,
+      // with its words read as `yarn <name> …` reads them (commands-runners-x9-4).
+      const shim = nameArg.v !== null && IN_NODE_MODULES.test(nameArg.v) ? /^(.+)\.(cmd|bat|ps1)$/i.exec(pn.base) : null;
+      if (shim) runnerLine(h, lit(shim[1]), args, h.prog);
     } else if (sc.wrappers.length > 0 && nameArg.v !== null && this.holdsAnyDownload() && this.isDownloaded(nameArg, sc, false)) {
       // A command handed to a program by a bare word that is a download of this task (`mytool r`, where generic()
       // took `r` for a program's name): it may be what runs (commands-remote-r9-5).
@@ -3212,6 +3245,8 @@ class Engine extends Classifier {
       if (sc.wsl && sc.family === "posix" && !(sc.cwd && sc.mountRoot && isUnder(sc.cwd, sc.mountRoot, sc.path))) {
         this.unclear("unclear.cmd-linux-folder", SAYS.cmdLinuxFolder);
       }
+      // The project's own copy of a launcher, by its Windows shim (`node_modules\.bin\cross-env.cmd`: integ2-z-3).
+      if (ENV_LAUNCHERS.has(key) && !this.asMain) { unknownProgram(h); launcherSets(h); }
       // A command handed to the batch file is read as one, as for any script (commands-classes-x9-4).
       if (nameArg.v !== null) handedCommand(h, -1, { name: nameArg.v, args });
       this.readArgs(args, sc);
@@ -4216,6 +4251,8 @@ function runners(): ReadonlySet<string> {
 function generic(h: H, noRow = false): void {
   const k = h.key;
   if (INPUT_SYNTH.has(k)) { h.e.refuseWith("ember.input", "input"); return; }
+  // Whatever its case: a case-insensitive disk finds `Cross-Env` (commands-runners-x9-5).
+  if (ENV_LAUNCHERS.has(k.toLowerCase()) && !h.e.readsAsMain) launcherSets(h);
   if (GUI_PROGRAMS.has(k)) h.e.unclear("unclear.gui", SAYS.openApp);
   if (INTERACTIVE.has(k)) interactive(h);
   if (LAUNCHERS.has(k)) { launcher(h); return; }
@@ -4315,6 +4352,101 @@ function handedToScript(h: H, script: Arg): void {
   const at = h.args.indexOf(script);
   if (script.v === null || at < 0) return;
   handedCommand(h, -1, { name: script.v, args: h.args.slice(at + 1) });
+  moduleProgram(h, script.v, h.args.slice(at + 1));
+}
+
+/** A path into the project's installed packages. */
+const IN_NODE_MODULES = /(^|[\\/])node_modules[\\/]/;
+/**
+ * A file of an installed package handed to an interpreter (`node node_modules/.bin/cross-env …`, `node
+ * node_modules/cross-env/src/bin/cross-env.js …`: integ2-z-3): where its name in `.bin`, its own name or its package's
+ * is a launcher or a program Ember has a row for, the words after it are judged as that program's line, so it decides
+ * no less safely than the program by its name; any other bin's words are read as a script's (runnerLine).
+ */
+function moduleProgram(h: H, path: string, rest: Arg[]): void {
+  if (h.e.readsAsMain || !IN_NODE_MODULES.test(path)) return;
+  const parts = path.split(/[\\/]/);
+  const from = parts.lastIndexOf("node_modules");
+  const strip = (w: string | undefined): string => (w ?? "").toLowerCase().replace(/\.(cmd|ps1|exe|bat|[cm]?js)$/, "");
+  const pkg = parts[from + 1]?.startsWith("@") ? parts[from + 2] : parts[from + 1];
+  const names = [...new Set([strip(parts[parts.length - 1]), pkg === ".bin" ? "" : strip(pkg)])].filter(n => n !== "");
+  const name = names.find(n => ENV_LAUNCHERS.has(n)) ?? names.find(n => NATIVE[n] !== undefined || ORDINARY_VERBS[n] !== undefined);
+  if (name !== undefined && name !== h.key) { h.e.payload([lit(name), ...rest], h.sc, h.prog); return; }
+  // Any other bin is the project's own, and its words are read as `./node_modules/.bin/<name> …` and `yarn <name> …`
+  // read them (commands-runners-x9-3): a command, a secret's path or a variable that names code among them.
+  if (name === undefined && names[0] !== undefined) runnerLine(h, lit(names[0]), rest, h.prog);
+}
+
+/**
+ * Names a project gives its own scripts that a program also has (`yarn format`, `yarn watch`, `npm start`): behind a
+ * package manager they are the project's script, whose words are read as a script's (runnerLine).
+ */
+const SCRIPT_WORDS = new Set([
+  "test", "start", "stop", "restart", "build", "dev", "lint", "format", "fmt", "watch", "serve", "bundle", "clean", "check", "docs", "preview", "export", "typecheck",
+  "coverage", "verify",
+]);
+
+/** Everyday verbs of the project's own tools that a program is also named (`yarn expo start`, `yarn husky install`). */
+const TOOL_VERBS = new Set(["install", "open", "link", "exec"]);
+
+/**
+ * What a package manager hands to the script or program it runs by name (`yarn cross-env …`, `pnpm run x …`, `npm run
+ * build -- …`, `npm test -- …`: integ2-z-1). A name that is a launcher or a program Ember has a row for (a shell, an
+ * interpreter, `npm`, `git`, `rm`) is judged as that program's own line, so nothing decides less safely with the
+ * package manager in front; pnpm and bun run any program on the PATH this way, and Yarn has `yarn node`. Any other
+ * name is the project's own script or binary, as `./node_modules/.bin/<name>` is: it never asks as a program Ember
+ * doesn't know, and its words are read as that program's are (a secret's path, Ember's own, a word Ember can't see,
+ * a program among them, a command handed in quotes or after an exec-like option, a variable that names code, a first
+ * word that says it publishes); a word
+ * that is a script's everyday name or a tool's everyday verb (`start`, `watch`, `install`) is no program there. The
+ * manager drops one `--` after the name.
+ */
+function runnerLine(h: H, name: Arg, given: readonly Arg[], wrapper: string): void {
+  if (h.e.readsAsMain || name.v === null) return;
+  const rest = given[0]?.v === "--" ? given.slice(1) : [...given];
+  const key = programName(name.v, { os: h.sc.os, family: h.sc.family === "cmd" ? "posix" : h.sc.family, wsl: h.sc.wsl, mountRoot: h.sc.mountRoot }).key;
+  // A launcher whatever its case: a case-insensitive disk finds `Cross-Env` (commands-runners-x9-5).
+  // A tool with only a verbs row (`tsx`, `ts-node`, `lerna`, `nx`) is a program too, judged by its verbs as by its
+  // name (commands-runners-y9-1).
+  const row = NATIVE[key] ?? NATIVE[unversioned(key)] ?? ORDINARY_VERBS[key] ?? ORDINARY_VERBS[unversioned(key)];
+  const program = ENV_LAUNCHERS.has(key.toLowerCase()) || (!SCRIPT_WORDS.has(key) && row !== undefined);
+  // A deleter with nothing after its name is the project's script of that name (commands-remote-x8-13); a `--`
+  // after it was always read as something handed to it (commands-runners-3).
+  if (program && !(NEW_DELETERS.has(key) && given.length === 0)) { h.e.payload([name, ...rest], h.sc, wrapper); return; }
+  // A script's everyday name that is also a program: pnpm and bun run the program from the PATH when the project has
+  // no such script, so the words that program's row finds dangerous are read as its line too, beside the script's
+  // reading (commands-runners-x9-6): a drive or a device for `format`, a command for `watch`. Plain options, files
+  // and folders stay a script's (`yarn format --check`, `pnpm watch src`).
+  const isDrive = (v: string): boolean => /^([A-Za-z]:[\\/]?|\/dev\/\S+|\\\\[.?]\\\S+)$/.test(v);
+  if ((key === "format" && rest.some(a => a.v !== null && isDrive(a.v))) || (key === "watch" && rest.some(a => a.v !== null && /\s/.test(a.v)))) {
+    h.e.payload([name, ...rest], h.sc, wrapper);
+  }
+  h.e.readArgs(rest, h.sc, { unresolvedUnclear: true });
+  // The tool's own verb, where its name says it publishes (`yarn lerna publish`, `pnpm vercel deploy`), as a script's
+  // name is read. Only the first word, and never a script's everyday name's: `--mode production` and `yarn build
+  // production` are a build's everyday target (commands-runners-4).
+  const verb = SCRIPT_WORDS.has(key) ? "" : rest[0]?.v ?? "";
+  if (/^[A-Za-z][A-Za-z0-9]*([:_-][A-Za-z0-9]+)*$/.test(verb) && nameWords(verb).some(w => NAME_PUBLISH.has(w))) {
+    h.e.add("publish", "script.publish", `Runs ${wrapper} ${verb}, whose name says it publishes.`, { objects: [{ kind: "other", text: `${wrapper} ${verb}`, abs: null }] });
+  }
+  for (const a of rest) {
+    const m = SETS_VARIABLE.exec(a.v ?? a.raw);
+    if (m && riskyAssignment(m[1], a.v === null ? null : m[2])) { h.e.unclear("unclear.assignment", "It changes how commands are found or run."); break; }
+  }
+  const at = rest.findIndex(a => {
+    const base = (a.v ?? "").split(/[\\/]/).pop() ?? "";
+    const word = base.toLowerCase().replace(/\.(exe|com)$/, "");
+    // An env launcher among them too (`pnpm recursive cross-env …`, `bun --bun cross-env …`, `yarn lerna exec --
+    // cross-env …`): it is what runs, and asks as by its name (commands-runners-x9-5).
+    return a.v !== null && /^[A-Za-z]/.test(base) && (runners().has(word) || ENV_LAUNCHERS.has(word)) && !SCRIPT_WORDS.has(word) && !TOOL_VERBS.has(word);
+  });
+  if (at >= 0) {
+    h.e.unclear("unclear.hidden-command", `Ember can't tell how ${wrapper} runs ${rest[at].v}.`);
+    h.e.payload(rest.slice(at), h.sc, wrapper);
+  }
+  handedCommand(h, at, { name: name.v, args: rest });
+  // Its `-o` and a path attached to a one-letter option, as an unknown program's (the long options are the line's own).
+  optionPaths({ ...h, key, args: rest }, true);
 }
 
 /**
@@ -4328,8 +4460,10 @@ function handedToScript(h: H, script: Arg): void {
 function unknownProgram(h: H): void {
   // Main's reading of a held row (runRow) ran what it took for the program, as every program with no row ran there.
   if (h.e.readsAsMain || h.nameArg.v === null) return;
-  if (h.pn.isPath && ownFolder(h.nameArg.v, h.sc, h.e.ctx.cwd || null)) return;
+  // The project's own copy of a launcher is the launcher (integ2-z-3).
+  // A tool with a verbs row is judged by them by its path in node_modules too (commands-runners-y9-1).
   const tool = ORDINARY_VERBS[h.key] ?? ORDINARY_VERBS[unversioned(h.key)];
+  if (h.pn.isPath && ownFolder(h.nameArg.v, h.sc, h.e.ctx.cwd || null) && !((ENV_LAUNCHERS.has(h.key) || tool) && IN_NODE_MODULES.test(h.nameArg.v))) return;
   if (tool) { toolVerbs(h, tool, true); return; }
   // On Windows `convert` is the system's own FAT-to-NTFS converter; ImageMagick is `magick` there (commands-closed-y9-4).
   if (knownProgram(h.key) && !(h.key === "convert" && h.sc.os === "win32")) {
@@ -8204,7 +8338,7 @@ function yarnWorkspaces(h: H, rest: Arg[]): boolean {
   if (sub === "run") {
     const name = command[0].v;
     if (name === null) h.e.unclear("unclear.script", "It runs a script Ember can't name.");
-    else nameCheck(h, name);
+    else { nameCheck(h, name); runnerLine(h, command[0], command.slice(1), `yarn workspaces run ${name}`); }
     return true;
   }
   NATIVE.yarn({ ...h, args: command });
@@ -8212,7 +8346,7 @@ function yarnWorkspaces(h: H, rest: Arg[]): boolean {
 }
 
 reg(NATIVE, ["npm", "pnpm", "yarn", "bun", "corepack"], h => {
-  const g = globals(h, h.key === "bun" || h.key === "corepack" ? "npm" : h.key);
+  const g = globals(h, h.key === "corepack" ? "npm" : h.key);
   if (h.key !== "bun" && h.key !== "corepack") checkGlobals(h, h.key, g);
   const verbArg = h.args[g.verbAt];
   const verb = verbArg?.v ?? null;
@@ -8229,7 +8363,18 @@ reg(NATIVE, ["npm", "pnpm", "yarn", "bun", "corepack"], h => {
   const widening = global ? ["--global"] : [];
   if (verbArg && verb === null) { h.e.unclear("unclear.npm-verb", "Ember can't tell which command this runs."); return; }
   if (verb === null) { if (h.key === "yarn") languageInstall(h, []); return; }
+  // `corepack yarn …`, `corepack pnpm …`: the package manager's own line (commands-runners-1), and with the version
+  // corepack's own spelling pins (`corepack yarn@4 …`), handed on by its name alone (commands-runners-x9-2).
+  const pinned = h.key === "corepack" ? /^(npm|npx|pnpm|pnpx|yarn|yarnpkg)(@\S*)?$/.exec(verb) : null;
+  if (pinned && verbArg && !h.e.readsAsMain) {
+    const named = pinned[2] === undefined ? verbArg : { ...verbArg, v: pinned[1], raw: pinned[1], glob: false, pattern: undefined };
+    h.e.payload([named, ...rest], h.sc, "corepack");
+    return;
+  }
   const specs = rest.filter(a => !isOption(a));
+  // `pnpm recursive x`, `pnpm m x` and `pnpm multi x` are `pnpm -r x`: the line after the word is pnpm's own
+  // (commands-runners-x9-5).
+  if (h.key === "pnpm" && /^(recursive|m|multi)$/.test(verb) && specs.length > 0 && !h.e.readsAsMain) { NATIVE.pnpm({ ...h, args: rest }); return; }
   if ((LANGUAGE_INSTALL_VERBS[h.key] ?? []).includes(verb) || (verb === "audit" && specs[0]?.v === "fix")) {
     if (verb === "pm" && !/^(trust|untrusted|migrate)$/.test(specs[0]?.v ?? "")) return;
     languageInstall(h, verb === "audit" ? [] : specs.filter((_a, k) => !(h.key === "npm" && verb === "link" && k > 0)), widening);
@@ -8257,7 +8402,10 @@ reg(NATIVE, ["npm", "pnpm", "yarn", "bun", "corepack"], h => {
       // given nothing to delete (`yarn scrub`: commands-remote-x8-13).
       const given = rest.slice(rest.indexOf(specs[0]));
       scriptGiven(h, `${h.key} run ${name}`, given.slice(1));
-      if (h.key !== "npm" && h.key !== "corepack" && NEW_DELETERS.has(name.toLowerCase()) && given.length > 1) h.e.payload(given, h.sc, `${h.key} run ${name}`);
+      // npm's own `env` script prints the environment when the project has none of that name (commands-runners-2).
+      if (name === "env" && !h.e.readsAsMain) h.e.add("secret", "secret.env", SAYS.env);
+      if (h.e.readsAsMain) { if (h.key !== "npm" && h.key !== "corepack" && NEW_DELETERS.has(name.toLowerCase()) && given.length > 1) h.e.payload(given, h.sc, `${h.key} run ${name}`); }
+      else runnerLine(h, given[0], given.slice(1), `${h.key} run ${name}`);
       return;
     }
     case "exec": case "x": case "dlx": case "create":
@@ -8290,7 +8438,9 @@ reg(NATIVE, ["npm", "pnpm", "yarn", "bun", "corepack"], h => {
       return;
     }
     case "cache": if (/^(clean|clear|rm|delete|prune)$/.test(specs[0]?.v ?? "")) h.e.add("destroy", "npm.cache", "Deletes the package manager's cache."); return;
-    case "workspace": if (h.key === "yarn" && specs.length >= 2) { const inner: H = { ...h, args: specs.slice(1) }; NATIVE.yarn(inner); } return;
+    // The command's own options and words go with it (`yarn workspace web node -e …`: integ2-z-1); main's reading
+    // took the plain words only.
+    case "workspace": if (h.key === "yarn" && specs.length >= 2) { const inner: H = { ...h, args: h.e.readsAsMain ? specs.slice(1) : rest.slice(rest.indexOf(specs[1])) }; NATIVE.yarn(inner); } return;
     case "workspaces": if (h.key === "yarn" && yarnWorkspaces(h, rest)) return; break;
     case "exec-file": return;
     default: break;
@@ -8305,8 +8455,14 @@ reg(NATIVE, ["npm", "pnpm", "yarn", "bun", "corepack"], h => {
     // `yarn rimraf src` runs the project's rimraf when no script has that name: judged as that program would be
     // (commands-remote-c8-2). Only a deleter's name, so `yarn build` or `yarn format` stay a script's, and only with
     // something after it (`yarn scrub` alone: commands-remote-x8-13).
-    if (NEW_DELETERS.has(verb.toLowerCase()) && h.key !== "corepack" && h.args.length > g.verbAt + 1) h.e.payload(h.args.slice(g.verbAt), h.sc, `${h.key} ${verb}`);
+    if (h.e.readsAsMain) { if (NEW_DELETERS.has(verb.toLowerCase()) && h.key !== "corepack" && h.args.length > g.verbAt + 1) h.e.payload(h.args.slice(g.verbAt), h.sc, `${h.key} ${verb}`); }
+    // corepack runs nothing by name but a package manager (above): its own verbs are no script (commands-runners-4).
+    else if (h.key !== "corepack") runnerLine(h, verbArg, h.args.slice(g.verbAt + 1), `${h.key} ${verb}`);
   } else if (/^(test|start|stop|restart)$/.test(verb)) nameCheck(h, verb);
+  // The project's scripts the managers run by a word of their own (`npm test -- x`, `pnpm build x`: integ2-z-1).
+  if (h.key !== "corepack" && (/^(test|t|tst|start|stop|restart)$/.test(verb) || (h.key !== "npm" && verb === "build"))) runnerLine(h, verbArg, h.args.slice(g.verbAt + 1), `${h.key} ${verb}`);
+  // Yarn's `env` prints the variables scripts run with (commands-runners-2).
+  if (h.key === "yarn" && verb === "env" && !h.e.readsAsMain) h.e.add("secret", "secret.env", SAYS.env);
 });
 reg(NATIVE, ["npx", "pnpx", "bunx", "uvx", "yarnpkg-dlx"], h => { h.e.add("escape", "escape.npx", SAYS.downloadsProgram); packageLine(h, h.args, h.key); });
 

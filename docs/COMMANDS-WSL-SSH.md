@@ -340,7 +340,8 @@ Ember stops and asks before a command that:
   nothing. Whatever else the command gives the program must be yours too: an option only when your words write it
   out (`--verbose`, `-p 5433`) or, for a long option with no value, say its name ("to list the topics" for
   `--list`); a number, a host, an address or a folder outside the task's only when your words write it out; a plain
-  file in the task's folder needs no naming. An option whose name says the program leaves the command and runs on
+  file in the task's folder needs no naming, but a word that joins it to something else with `=`, `:` or `,`
+  (`./out=/home/ana/Documents`, `src/x,https://…`) is no plain file and is named only written out. An option whose name says the program leaves the command and runs on
   (`--fork`, `--detach`, `--daemon`, `--background`) or shows a secret (`--print-token`) always asks, whatever you
   said: "in the background" never makes a detached run announceable. What else the command does is judged as before, and so is the command such a tool runs for you: what
   follows `stack exec --`, `pyenv exec`, `rustup run stable` or `entr`, and the shell text in `cargo watch -s`,
@@ -367,7 +368,24 @@ Ember stops and asks before a command that:
   develop -c …`, `pixi run …`, `devbox run …` and `direnv exec . …` are read the same way and still ask as programs
   Ember doesn't know. `dotenv`, `dotenvx`, `env-cmd`, `cross-env`, `cross-env-shell` and `with-contenv` ask as programs
   Ember doesn't know whatever they are handed (`cross-env NODE_ENV=test jest` asks): the variables and the files
-  they load can name code the command then runs. What a runner downloads and runs (`npx`, `pnpx`, `bunx`, `uvx`,
+  they load can name code the command then runs. So does the project's own copy, by its path, by npm's Windows
+  shim or through `node` (`./node_modules/.bin/cross-env …`, `.\node_modules\.bin\cross-env.ps1 …`, `cross-env.cmd
+  …`, `node node_modules/.bin/cross-env …`), and so does one a package manager runs
+  (`yarn cross-env …`, `pnpm run cross-env …`, `bun --bun cross-env …`, `pnpm recursive cross-env …`, `yarn lerna exec --
+  cross-env …`, whatever its case). A variable one of them sets that changes how commands are found or run
+  (`LD_PRELOAD`, `NODE_OPTIONS`, `CC`, `BASH_ENV`) asks as it does set directly, behind `npx` too, and your words
+  naming the launcher never announce it. What a package manager runs by name is read as well (`yarn x …`, `pnpm run
+  x …`, `bun run x …`, `npm run x -- …`, `npm test -- …`, `corepack yarn …`, `corepack yarn@4 …`), and so is what
+  `node` hands the project's own tool (`node node_modules/.bin/x …`): a program Ember has a row for (a shell,
+  an interpreter, `npm`, `git`, `rm`, or a tool whose everyday verbs Ember knows, such as `tsx`, `lerna` or `nx`, by
+  its path in `node_modules/.bin` too) is judged as that program's own line (`yarn sh -c '…'` as `sh -c '…'`, `yarn
+  tsx -e '…'` as `tsx -e '…'`), and the
+  words handed to the project's own script or tool are read for a secret's path, Ember's own files, a command handed
+  on, a variable that names code and a first word that says it publishes; its plain options, test names, globs and
+  files in the folder run as before (`yarn test --watch`, `npm run build -- --mode production`). A script's everyday
+  name that is also a program, which pnpm and bun run when the project has no such script, asks as that program where
+  its words are what makes the program dangerous (`pnpm format D: /q`, `pnpm watch 'rm -rf …'`). `yarn env` and `npm
+  run env` print the environment and ask. What a runner downloads and runs (`npx`, `pnpx`, `bunx`, `uvx`,
   `pipx run`, `npm exec`, `pnpm dlx`, `yarn dlx`, `deno run` with an address or `npm:`, `nix run`) asks as before, and its command line is judged as well, so
   `npx -y sometool ~/.ssh/id_rsa` also says it reads a key and `npx pm2 start app.js` that it keeps running
   (`npm exec pm2 -- start app.js` and `pm2 --silent start app.js` too: pm2 and forever ask this way for every verb
