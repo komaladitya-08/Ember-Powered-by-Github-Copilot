@@ -20,9 +20,9 @@ import { watchCrashes } from "./crash-log";
 import { endRun, previousRun, startRun } from "./run-marker";
 import { readTextFile } from "./text-file";
 import { SettingsStore, checkHomePatch, hasConsent, plainSaveError, withOwnExtensions, withOwnProvider, withOwnWhereForced, type Settings, type SettingsPatch } from "./settings";
+import { auditRetentionDays, commandMode, heldUntilRestart, homeAdmin, modelServiceRefusal } from "./admin";
+import { approvalInputs, approvalsState, autonomyPermitted, chooseMode, modeAgreed, modeInForce } from "./policy/autonomy";
 import { ANSWER_CLOSED_STATUS, TaskVoiceTrust, VoiceRefusals, answerStatusOnQuestion, answerWindowStatus, heardAnswer, heardUnchecked, refusalEndsTrust, rejectionEndsTrust, voiceAnswer, type VoiceAnswerNote, type VoiceAnswerOutcome } from "./agent/voice-answer";
-import { auditRetentionDays, heldUntilRestart, homeAdmin, modelServiceRefusal } from "./admin";
-import { approvalInputs, approvalsState, chooseMode, modeInForce } from "./policy/autonomy";
 import { ModeRecord, modeIntents } from "./policy/mode-record";
 import { inspectEnvironment, keyboardRoute, sessionGreeting, type EnvReport } from "./environment";
 import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSender, keepClearOf, quitQuestion, setTextScale, settingsFromHome, setUpAppChrome } from "./windows";
@@ -117,15 +117,17 @@ import { MemoryLearning, linesAfterAskedForget, linesAfterForget, linesAfterRest
 import type { OneShot } from "./memory/learn";
 import { memoryActionOpens } from "./memory/questions";
 import { BetterRecall } from "./memory/better-recall";
-import { FEATURE_CONSENT_VERSION } from "../shared/consent";
+import { CONSENT_VERSION, FEATURE_CONSENT_VERSION } from "../shared/consent";
 import { installKind, releasePage, UpdateChecker, updateNotice } from "./updates";
 import { ExtensionsService } from "./extensions/service";
 import { registerExtensionsIpc } from "./extensions-ipc";
 import { registerProviderIpc } from "./provider-ipc";
 import { registerApprovalsIpc } from "./approvals-ipc";
+import { registerFirstRunIpc } from "./first-run";
+import { firstRunAllowsVoice } from "../shared/first-run";
 import { PROVIDER_KEY_FILE, ProviderKeyStore, activeProvider, checkAgain, createProviderService, ownProviderAuth, providerSummary, providerWaitingHost, redactingLogger, type ActiveProvider, type FetchLike } from "./provider";
 import { PROVIDER_IPC } from "../shared/ipc";
-import { APPROVALS_IPC } from "../shared/approvals";
+import { APPROVALS_IPC, modeCardVersion, modeRank } from "../shared/approvals";
 import { recentLimit } from "../shared/ipc";
 import { endpointHost } from "../shared/provider";
 import { demoExtensionsApi, demoVariant } from "./extensions-demo";
@@ -2885,6 +2887,43 @@ function start(): void {
       return state.inForce === mode ? { ok: true, state } : { ok: false, why: "not-recorded", state };
     },
   }, { log: log.child("approvals") });
+  // First run's one agreement (owner decision of 2026-11-12): the settings window's own page only, as guard. It records
+  // the consent first, then each row left on through its own card's record (app/main/first-run.ts).
+  registerFirstRunIpc(ipcMain, event => {
+    const url = event.senderFrame?.url ?? "";
+    return isTrustedSender(url) && !!home && !home.isDestroyed() && event.sender === home.webContents;
+  }, {
+    consented: () => consented(),
+    facts: () => {
+      const own = settings.own();
+      const agreed = own.consent.version;
+      const card = (() => { try { return targets?.firstRunCommandsCard() ?? null; } catch { return null; } })();
+      return {
+        returning: agreed > 0 && agreed < CONSENT_VERSION,
+        locked: !!admin.error || !!admin.held,
+        allowed: {
+          commands: commandMode(admin, "local") !== "off", memory: memoryAllowed(), voice: firstRunAllowsVoice(policy.features),
+          screenshots: policy.features.screenImages !== false, interactive: autonomyPermitted(policy),
+        },
+        modelsReady: voice?.modelsReady ?? false,
+        interactiveAgreed: modeAgreed(own.approvals, "interactive"),
+        commandsCard: card !== null,
+      };
+    },
+    commandsCard: () => { const c = targets?.firstRunCommandsCard() ?? null; return c ? { title: c.title, body: c.body, sha256: c.sha256 } : null; },
+    agreeCommands: sha256 => targets?.agreeFirstRunCommands(sha256) ?? false,
+    chooseInteractive: () => {
+      const own = settings.own().approvals;
+      const next = chooseMode(own, "interactive", modeCardVersion("interactive"), policy, new Date().toISOString());
+      if (!next.ok) return false;
+      // A mode the user chose above Interactive stays their choice: only Interactive's card is added to it.
+      const approvals = modeRank(own.mode) > modeRank("interactive") ? { ...next.approvals, mode: own.mode } : next.approvals;
+      modes.as({ via: "home", verified: false }, () => settings.update({ approvals }));
+      // In force only once its audit entry was written (the record undoes it otherwise).
+      return modeRank(approvalsState(settings.own().approvals, policy).inForce) >= modeRank("interactive");
+    },
+    settings, now: () => new Date(), log: log.child("first-run"),
+  });
   // Any settings change may move the endpoint in force (the switch, its address, its models, its card): the host
   // reconnects when nothing would be cut off, else as soon as the turn and the tasks under way are done.
   settings.onChange(() => { providers.settingsChanged(); void agent?.providerChanged(); });

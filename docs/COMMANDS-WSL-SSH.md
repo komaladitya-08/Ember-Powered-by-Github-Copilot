@@ -4,10 +4,14 @@ Ember can run commands for you, work in WSL on a Windows PC, and work on other c
 page says what each does, what Ember asks you first, what it never does, how to turn each off, and what it can't do
 yet. §6 is for administrators. The examples call the other computer "build-01" and the WSL distro "Ubuntu".
 
-All three are **off until you turn them on**, and each has its own first-use card that says what it means before
-anything happens: one for WSL, one for each computer you connect to, and one for commands on each computer. New users
-see this in the "Before Ember starts" list; people who already use Ember aren't asked to agree again, because nothing
-new happens until they accept a card.
+Commands on this computer are **on from first run**: first run shows their card whole, with a switch that is on
+unless you turn it off before you agree, and its one agreement is your yes to that card (owner decision of
+2026-11-12). Everything else here is **off until you turn it on**, and each has its own first-use card that says what
+it means before anything happens: one for WSL, one for each computer you connect to, and one for commands on each
+other computer. People who already use Ember keep their settings: first run's agreement doesn't turn commands on for
+them, and nothing new happens until they accept a card. An organisation that turned commands off on this computer
+(`commands.local`) sees the row off and managed, and an Ember running as root or an administrator says in that card
+that it asks before every command.
 
 Wherever Ember works, **your voice and your GitHub sign-in stay on this computer**. Listening, speech recognition,
 the Copilot conversation and Ember's questions all stay here; another computer only receives the steps Ember takes

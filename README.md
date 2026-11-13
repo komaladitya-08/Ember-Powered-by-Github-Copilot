@@ -216,7 +216,9 @@ open -n -W --stdout ~/ember-doctor.txt -a /Applications/Ember.app --args --docto
 
 1. Start Ember from your apps (Linux), the Start menu (Windows) or Applications (macOS); the AppImage by running the
    file, and the npm launcher with `ember`. Its first window takes you
-   through 6 steps: a hello, **What I do, and what I don't** (nothing is read, heard or sent until you agree), **Sign
+   through 6 steps: a hello, **What I do, and what I don't** (nothing is read, heard or sent until you agree; the one
+   agreement turns on commands on this computer, memory, “Hey Ember” with spoken replies, screenshots for tasks and
+   Interactive, each with its own switch and its own card's words, so you can switch any off there or later), **Sign
    in to GitHub** (or **Use my own provider**), **Checking this computer** (what to fix, with a button where Ember can
    do it), **Try me out** (stop Ember, ask it something, and say “Hey Ember” if you like) and **Ready to start**, a
    summary of what you chose.
@@ -421,8 +423,10 @@ other side** in the handle's menu. The task cards go with it, and on Linux Ember
 
 ## Commands, WSL and other computers
 
-Ember can also run commands, work in WSL on Windows, and work on other computers you reach over SSH. Each is off until
-you turn it on in settings (**Commands**, **Computers**) and accept the card that says what it means.
+Ember can also run commands, work in WSL on Windows, and work on other computers you reach over SSH. Commands on this
+computer are on from first run, whose agreement shows their card (switch them off there, or later in **Commands**);
+the others are off until you turn them on in settings (**Commands**, **Computers**) and accept the card that says what
+it means.
 
 - **Commands** run in Ember's own **Ember commands** window, never in your terminal, where you can watch and stop
   them. Most run straight away. Ember stops and asks before anything that deletes or overwrites data, pushes or

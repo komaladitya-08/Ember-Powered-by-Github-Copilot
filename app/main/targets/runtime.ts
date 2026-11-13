@@ -427,6 +427,16 @@ export interface TargetsRuntimeExtra {
    * or not allowed, or for a distro that isn't running (nothing is booted for it).
    */
   applyFix(id: string): Promise<{ ok: boolean; message: string }>;
+  /**
+   * First run's commands row (app/main/first-run.ts): this computer's commands card as it reads now, shown whole in the
+   * row, or null while the organisation turned commands off here.
+   */
+  firstRunCommandsCard(): ConsentPanel | null;
+  /**
+   * First run's agreement for that row: records the card's yes for this computer, as its own card's yes does, when
+   * `sha256` is the card's as it reads now; false (nothing recorded) otherwise.
+   */
+  agreeFirstRunCommands(sha256: string): boolean;
 }
 
 /** The targets runtime main builds once. */
@@ -1192,6 +1202,20 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
     refresh();
     return { ok: true };
   }
+  const firstRunCommandsCard = (): ConsentPanel | null => {
+    rebuild();
+    const e = entryOf(LOCAL_TARGET);
+    if (!e || commandMode(admin(), "local") === "off") return null;
+    return commandsConsent({ os: deps.os, stopKey: stopKeyNow(), target: LOCAL_TARGET, targetLabel: e.label, facts: cardFacts(e) });
+  };
+  const agreeFirstRunCommands = (sha256: string): boolean => {
+    const card = firstRunCommandsCard();
+    if (!card || card.sha256 !== sha256) return false;
+    const own = settings.own().commands;
+    settings.update({ commands: { ...own, [LOCAL_TARGET]: { on: true, askEvery: own[LOCAL_TARGET]?.askEvery ?? false, consent: consentGiven("commands", parts.now()) } } });
+    refresh();
+    return true;
+  };
   /** What the commands card says about a target besides its common text (§8.4.3 line 4). */
   const cardFacts = (e: TargetEntry) => {
     const privileged = e.kind === "local" ? elevated()
@@ -1872,6 +1896,8 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
     agent,
     wsl,
     localProjectCommands: () => liveCommands(localService, LOCAL_TARGET),
+    firstRunCommandsCard,
+    agreeFirstRunCommands,
     stopAll: async () => {
       // Every part told at once (step 1 of each ladder is synchronous), then waited for together; nothing throws.
       const waits: Promise<unknown>[] = [];

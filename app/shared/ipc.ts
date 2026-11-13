@@ -9,6 +9,7 @@ import type { MemoryModelStatus } from "../main/memory/better-recall";
 import type { MemoryOwnerReason, MemoryOwnership } from "../main/memory/owner";
 import type { MemoryCorrection } from "./memory-correction";
 import type { ApprovalMode, ApprovalsDone, ApprovalsState } from "./approvals";
+import type { FirstRunChoice, FirstRunDone, FirstRunView } from "./first-run";
 
 /** A routine as Home lists it. */
 export interface RoutineRow { id: string; name: string; steps: string[] }
@@ -554,6 +555,13 @@ export interface EmberHomeApi {
    * change, or says why not (APPROVALS_IPC.choose). The only way the window changes the mode.
    */
   chooseMode(mode: ApprovalMode, version: number): Promise<ApprovalsDone>;
+  /** First run's rows as main decides them, with this computer's commands card (FIRST_RUN_IPC.view). */
+  firstRunView(): Promise<FirstRunView>;
+  /**
+   * First run's one agreement (FIRST_RUN_IPC.agree): the switches as left and the hash of the commands card the row
+   * showed. Main records the consent, then each row left on through its own card's record, and says what it couldn't.
+   */
+  agreeFirstRun(choice: FirstRunChoice, commandsSha256: string | null): Promise<FirstRunDone>;
   /** Quit Ember (asks first while tasks are running). */
   quit(): Promise<void>;
   /** Restart Ember to read the organisation's changed policy; main does nothing unless that lockdown is held. */

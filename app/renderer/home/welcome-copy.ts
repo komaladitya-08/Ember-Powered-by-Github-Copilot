@@ -9,6 +9,8 @@
 import { CONSENT_VERSION } from "../../shared/consent";
 import { needsUser, holdsBack, type SetupRow } from "../../shared/setup-attention";
 import { ownConnected } from "../../shared/provider";
+import type { FirstRunCard, FirstRunRow, FirstRunWhy } from "../../shared/first-run";
+import { AUTONOMY_CONSENT_TEXT, MEMORY_CONSENT_TEXT, SCREEN_IMAGES_TEXT } from "./copy";
 
 /** The essential first-run route; character and memory personalisation remain optional detours. */
 export const WELCOME_STEPS = ["hello", "consent", "sign-in", "checks", "try", "done"] as const;
@@ -125,11 +127,61 @@ export function consentPoints(o: { service: string; kept: string; locked: boolea
     o.locked
       ? { icon: "send", text: "While your organisation's policy locks me down, nothing is sent to a model service, so I can't answer or act." }
       : { icon: "send", text: `When you ask something, your request and what I read go to ${o.service}. Nothing is sent before you ask.` },
-    { icon: "hand", text: "I ask before acting in an app, and always before anything hard to undo. I never type passwords." },
+    { icon: "hand", text: "I ask before acting in an app unless you turn on Interactive, and always before anything hard to undo. I never type passwords." },
     { icon: "lock", text: `On this computer I keep your settings, logs and a record of what you asked and what I did (${o.kept}). If you save a workspace, I encrypt its paths and last request and answer. I send no usage statistics.` },
-    { icon: "plug", text: "The microphone, other computers and commands stay off until you turn them on. While one of my questions is up, anyone near the computer can answer it by voice, without my name right after I ask. If you teach me your voice, I keep a voiceprint I refine from your requests, and the words you correct (never audio)." },
+    { icon: "plug", text: "Agreeing turns on what you leave on here, and you can turn any of it off later in Settings. Other computers stay off until you turn them on. While one of my questions is up, anyone near the computer can answer it by voice, without my name right after I ask. If you teach me your voice, I keep a voiceprint I refine from your requests, and the words you correct (never audio)." },
   ];
 }
+
+/**
+ * The consent step's rows (owner decision of 2026-11-12, app/shared/first-run.ts): what the one agreement turns on, each
+ * with its own switch. `heading` over them, each row's switch label, and the line under them all.
+ */
+export const FIRST_RUN_ROWS_TEXT = {
+  heading: "What I'll turn on when you agree",
+  lead: "Each is on unless you switch it off here, and you can turn any of them off later in Settings.",
+  /** For someone who agreed to an earlier version: only Interactive's row, and their other settings stay as they are. */
+  leadAgain: "Your other settings stay as they are. Switch this off to keep me asking before ordinary steps; you can change it later in Settings.",
+  label: {
+    commands: "Run commands on this computer",
+    memory: "Remember what you tell me (memory)",
+    voice: "Listen for “Hey Ember” and speak my replies",
+    screenshots: SCREEN_IMAGES_TEXT.label,
+    interactive: "Interactive: do ordinary steps without asking first",
+  } satisfies Record<FirstRunRow, string>,
+} as const;
+
+/**
+ * Each row's own card's text, from the one place its card or switch in Settings takes it (the "same text" rule:
+ * home-first-run.test.ts): commands, this computer's card as main builds it (`commands`, its title and body); listening,
+ * the “Hey Ember” card as the page shows it (`voice`, read from its element); the others, their constants.
+ */
+export function firstRunRowText(row: FirstRunRow, o: { commands: FirstRunCard | null; voice: string }): string[] {
+  if (row === "commands") return o.commands ? [o.commands.title, ...o.commands.body] : [];
+  if (row === "memory") return [MEMORY_CONSENT_TEXT];
+  if (row === "voice") return o.voice ? [o.voice] : [];
+  if (row === "screenshots") return [SCREEN_IMAGES_TEXT.hint];
+  return [AUTONOMY_CONSENT_TEXT];
+}
+
+/** Why a row can't be turned on here, in one sentence (app/shared/first-run.ts FirstRunWhy). */
+export function firstRunWhy(why: FirstRunWhy): string {
+  if (why === "locked") return "Your organisation's policy for me has a problem, so this stays off for now.";
+  if (why === "organisation") return "Managed by your organisation, which has turned this off.";
+  if (why === "models") return "The speech models aren't on this computer yet, so this stays off for now. You can download them later in Settings › Voice, which asks you first.";
+  return "I can't turn this on here right now. You can turn it on later in Settings.";
+}
+
+/** After an agreement that was saved, the rows that couldn't be turned on (each is off, without its consent). */
+export function firstRunFailed(rows: readonly FirstRunRow[]): string {
+  if (!rows.length) return "";
+  const names = rows.map(r => FIRST_RUN_SHORT[r]);
+  const list = names.length < 2 ? names[0] : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+  return `I couldn't turn on ${list}, so ${rows.length > 1 ? "they stay" : "it stays"} off. You can turn ${rows.length > 1 ? "them" : "it"} on later in Settings.`;
+}
+const FIRST_RUN_SHORT: Readonly<Record<FirstRunRow, string>> = {
+  commands: "commands on this computer", memory: "memory", voice: "listening for “Hey Ember”", screenshots: "screenshots for tasks", interactive: "Interactive",
+};
 
 /** The consent step for someone who agreed to an earlier version: its title, lead and the heading over what changed (first-run-4). */
 export const CONSENT_AGAIN = {
@@ -146,6 +198,7 @@ export const CONSENT_TEXT = {
   agreed: "You've agreed to how I work.",
   declined: "Then I'll stay off: nothing is read, heard or sent. Agree here whenever you're ready. If you quit me now, I'll ask again the next time you open me.",
   quit: "Quit Ember",
+  notSaved: "I couldn't save your agreement, so nothing is on yet. Try again.",
 } as const;
 
 /**
@@ -155,9 +208,9 @@ export const CONSENT_TEXT = {
 export const CONSENT_SOURCES: Readonly<Record<ConsentPoint["icon"], readonly string[]>> = {
   eye: ["reads the window you're working in", "for tasks it may take a screenshot of it", "App windows on your never-look list and password prompts are never read"],
   send: ["When you ask something</b>, your request and what Ember read from the screen go to", "Nothing is sent before you ask."],
-  hand: ["It asks before acting</b> in an app, and always before anything hard to undo.", "It never types passwords."],
+  hand: ["It asks before acting</b> in an app unless you turn on Interactive", "always before anything hard to undo.", "It never types passwords."],
   lock: ["On this computer</b> it keeps your settings, logs and a record of every task and action it took, including what you asked for", "Ember encrypts its selected paths and last completed request and answer", "It sends no usage statistics."],
-  plug: ["The microphone stays off</b> unless you turn on", "anyone near the computer can answer it by voice", "for a few seconds after it asks, it listens for that answer without its name", "it keeps your voiceprint and keeps refining it from requests it is sure are yours (numbers, never audio), and it keeps the words you correct", "Other computers and commands</b><span id=\"targets-note\"> are off until you turn them on"],
+  plug: ["<b>Agreeing turns on</b> what you leave switched on here", "you can turn any of them off later in Settings", "anyone near the computer can answer it by voice", "for a few seconds after it asks, it listens for that answer without its name", "it keeps your voiceprint and keeps refining it from requests it is sure are yours (numbers, never audio), and it keeps the words you correct", "Other computers and commands</b><span id=\"targets-note\"> are off until you turn them on"],
 };
 
 /** Each CONSENT_CHANGES line beside the full text's words it shortens (home-welcome.test.ts checks every pair against the page). */
@@ -169,6 +222,7 @@ export const CONSENT_CHANGE_SOURCES: Readonly<Record<number, readonly string[]>>
   6: ["Once you call Ember it keeps listening through the conversation, and what it hears there goes to", "as text, without its name"],
   7: ["unless you turn on “Keep my recent conversation” under Conversation: then its latest messages stay on this computer"],
   8: ["While one of Ember's questions is up, anyone near the computer can answer it by voice", "for a few seconds after it asks, it listens for that answer without its name", "with Voice Match on, only your voice can say yes"],
+  9: ["<b>Agreeing turns on</b> what you leave switched on here", "It asks before acting</b> in an app unless you turn on Interactive", "Settings you chose before stay as they are."],
 };
 
 /**
