@@ -578,10 +578,14 @@ download, so English-only MiniLM is the trade-off for now.
    model writes, nor words Ember couldn't tell were the user's, nor a name that reads like an order) that recall finds
    nothing for are counted (`Gaps`), but only names that may be someone or something of the user's (`askableNames`,
    memory-r9-8): never an app, a site, a device or a day everyone knows (`NOT_SOMEONE`, `EVERYDAY`, with a setting's
-   words and well-known places), an app installed on this computer (`LearningDeps.apps`), or a name standing where
-   an app, a site, a setting or a place does (the object of "open", "close", "play", "search"…, after "in", "on" or
-   "using", after "to" behind a word of travel), so "Open Firefox", "Is Dark Mode on" and "the weather in London"
-   never make Ember ask who or what that is. A name Ember asked about is never counted or asked about again in that
+   words and well-known places), an app installed on this computer (`LearningDeps.apps`, by its whole name or its
+   first word), or a name standing where an app, a site, a setting or a place does (the object of "open", "close",
+   "play", "search"…, after "in", "on" or "using", after "to" behind a word of travel), so "Open Firefox", "Is Dark
+   Mode on" and "the weather in London" never make Ember ask who or what that is. Someone stays someone there
+   (memory-x9-9): a name that is someone's ("Start Priya's review"), after "check in on", "working on" or "an update
+   on", told about something ("Update Priya on the launch"), after a verb whose object is a person ("Ask Alma",
+   "Ping Dallas") or after a title ("Mr Lock"), and a later word of an installed app's name ("Grace Hopper
+   Simulator" leaves Hopper; its first word, Grace, still goes). A name Ember asked about is never counted or asked about again in that
    run, whether it was answered, skipped or left unanswered (held in RAM only; a restart may ask once more). Once one
    was missed twice, at most once a day (`memory.askedAt`, kept across restarts), only while idle with the screen
    unlocked and nothing under way, Ember says "You've mentioned “Priya” a few times. Who or what is that?" in the

@@ -40,20 +40,29 @@ export function namesIn(request: string): string[] {
   return [...new Set(namedIn(request).map(n => n.name))].slice(0, 5);
 }
 
-/** `namesIn`, each name with the words of its sentence before it (folded), nearest last. */
-function namedIn(request: string): { name: string; before: string[] }[] {
-  const out: { name: string; before: string[] }[] = [];
+/**
+ * `namesIn`, each name with the words of its sentence before it (folded), nearest last, the word after it, and whether
+ * it is someone's ("Priya's review").
+ */
+function namedIn(request: string): { name: string; before: string[]; after: string; owns: boolean }[] {
+  const out: { name: string; before: string[]; after: string; owns: boolean }[] = [];
   for (const sentence of request.split(/[.!?\n]+/)) {
-    const words = sentence.trim().split(/\s+/).map(raw => raw.replace(/^[^\p{L}]+|[^\p{L}\p{N}]+$/gu, "").replace(/'s$/, ""));
+    const raws = sentence.trim().split(/\s+/);
+    const words = raws.map(raw => raw.replace(/^[^\p{L}]+|[^\p{L}\p{N}]+$/gu, "").replace(/['’]s$/, ""));
     let run: string[] = [];
     let from = 0;
     // At most three words: a longer capitalised run is a title or a heading, not a name (review of PR #142).
-    const end = () => { if (run.length && run.length <= MAX_NAME_WORDS) out.push({ name: run.join(" "), before: words.slice(0, from).map(fold) }); run = []; };
+    const end = (at: number) => {
+      if (run.length && run.length <= MAX_NAME_WORDS) {
+        out.push({ name: run.join(" "), before: words.slice(0, from).map(fold), after: fold(words[at] ?? ""), owns: /['’]s\W*$/.test(raws[at - 1] ?? "") });
+      }
+      run = [];
+    };
     words.forEach((w, i) => {
       if (i > 0 && /^\p{Lu}[\p{L}\p{N}-]{1,30}$/u.test(w) && !COMMON.has(fold(w))) { if (!run.length) from = i; run.push(w); }
-      else end();
+      else end(i);
     });
-    end();
+    end(words.length);
   }
   return out;
 }
@@ -88,23 +97,38 @@ const WHERE = /^(?:in|on|using|via|inside|within|onto|into)$/;
 /** Words before "to" that make what follows a place ("flights to Lisbon", "the train to Leeds"). */
 const TRAVEL = /^(?:flights?|trains?|bus|buses|coach|trips?|travel|travelling|traveling|go|goes|going|went|drive|driving|fly|flying|directions|route|way|navigate|tickets?|journey|move|moving|commute|get|getting)$/;
 const DETERMINER_BEFORE = /^(?:the|my|our|a|an|this|that|your)$/;
+/** Verbs whose object is someone ("Ask Alma", "Ping Dallas"), and titles ("Mr Lock"): an everyday word there is a name (memory-x9-9). */
+const PEOPLE_VERB = /^(?:ask|message|email|e-mail|ping|text|call|phone|ring|tell|thank|remind|invite|meet|cc|dm|congratulate|introduce)$/;
+const TITLE = /^(?:mr|mrs|ms|miss|mx|dr|prof|sir|dame|lady|lord)$/;
+/** Words before "on" that make what follows someone or a project ("check in on Priya", "working on Atlas", "an update on Atlas"). */
+const ABOUT_ON = /^(?:check|checking|checked|work|works|working|worked|update|updates|news|progress|status|report|notes|feedback|thoughts|follow|following|focus|focusing|wait|waiting|count|counting|depend|depending|rely|relying)$/;
 
 /**
  * The names in a request that Ember may ask about (memory-r9-8): `namesIn`, without what everyone knows (NOT_SOMEONE,
- * EVERYDAY), an app installed on this computer (`apps`: its name or a word of it), and what stands where an app, a site,
- * a setting or a place does: the object of "open", "close", "play", "search"…, after "in", "on" or "using", and after
- * "to" behind a word of travel. People and projects are named otherwise ("Email Priya", "a note to Priya about
- * Atlas"). Where it can't tell, it doesn't ask.
+ * EVERYDAY, but after a verb whose object is someone or a title: "Ask Alma", "Mr Lock"), an app installed on this
+ * computer (`apps`: its whole name or its first word), and what stands where an app, a site, a setting or a place does:
+ * the object of "open", "close", "play", "search"…, after "in", "on" or "using", and after "to" behind a word of travel.
+ * People and projects are named otherwise ("Email Priya", "a note to Priya about Atlas", "Priya's review", "working on
+ * Atlas", "Update Priya on the launch"): memory-x9-9. Where it can't tell, it doesn't ask.
  */
 export function askableNames(request: string, apps: readonly string[] = []): string[] {
-  const installed = new Set(apps.flatMap(a => [fold(a), ...fold(a).split(/[^\p{L}\p{N}]+/u).filter(w => w.length >= 3)]));
+  // An app by its whole name or its first word ("Visual Studio Code", "Visual"), never a later word or someone's
+  // ("Grace Hopper Simulator" leaves Hopper, "Sam's Club" leaves Sam: memory-x9-9).
+  const installed = new Set(apps.flatMap(a => {
+    const first = a.trim().split(/\s+/)[0] ?? "";
+    return [fold(a), ...(/['’]s$/.test(first) || fold(first).length < 3 ? [] : [fold(first)])];
+  }));
   const out: string[] = [];
-  for (const { name, before } of namedIn(request)) {
+  for (const { name, before, after, owns } of namedIn(request)) {
     const words = fold(name).split(/\s+/);
-    if (installed.has(fold(name)) || words.some(w => NOT_SOMEONE.has(w) || EVERYDAY.has(w) || installed.has(w))) continue;
     const near = before.filter(w => w && !DETERMINER_BEFORE.test(w));
     const last = near.at(-1) ?? "";
-    if (APP_VERB.test(last) || WHERE.test(last) || (last === "to" && TRAVEL.test(near.at(-2) ?? ""))) continue;
+    const someone = PEOPLE_VERB.test(last) || TITLE.test(words[0] ?? "");
+    if (installed.has(fold(name)) || words.some(w => NOT_SOMEONE.has(w) || (!someone && EVERYDAY.has(w)) || installed.has(w))) continue;
+    // Someone's ("Start Priya's review"), and someone told about something ("Update Priya on the launch").
+    if (!owns && !someone && APP_VERB.test(last) && !(last === "update" && /^(?:on|about)$/.test(after))) continue;
+    if (!owns && WHERE.test(last) && !(last === "on" && ABOUT_ON.test(near.at(-2) ?? "") || (near.at(-2) === "in" && ABOUT_ON.test(near.at(-3) ?? "")))) continue;
+    if (!owns && last === "to" && TRAVEL.test(near.at(-2) ?? "")) continue;
     out.push(name);
   }
   return [...new Set(out)].slice(0, 5);

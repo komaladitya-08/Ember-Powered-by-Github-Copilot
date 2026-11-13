@@ -56,7 +56,7 @@ describe("which names Ember asks about (memory-r9-8)", () => {
     expect(asksAfter(requests)).toBeNull();
   });
 
-  it("never asks about an app installed on this computer, by its name or a word of it (memory-r9-8)", () => {
+  it("never asks about an app installed on this computer, by its name or its first word (memory-r9-8)", () => {
     const apps = ["Krita", "Obsidian", "LibreOffice Writer", "Visual Studio Code"];
     expect(asksAfter(["Is Krita any good for sketches", "Does Krita do layers"])).toBe("Krita");
     expect(asksAfter(["Is Krita any good for sketches", "Does Krita do layers"], apps)).toBeNull();
@@ -74,6 +74,27 @@ describe("which names Ember asks about (memory-r9-8)", () => {
     expect(namesIn("Open Firefox and search for flights to Lisbon")).toEqual(["Firefox", "Lisbon"]);
     expect(askableNames("Open Firefox and search for flights to Lisbon")).toEqual([]);
     expect(askableNames("Open the report from Priya in Firefox")).toEqual(["Priya"]);
+  });
+
+  it.each([
+    ["Remind me to check in on Priya tomorrow", ["Priya"]], ["I'm working on Atlas this week", ["Atlas"]], ["Any update on Atlas", ["Atlas"]],
+    ["Update Priya on the launch", ["Priya"]], ["Start Priya's review", ["Priya"]], ["Book a train to Priya's place", ["Priya"]],
+    ["Ask Alma about the budget", ["Alma"]], ["Message Rocky about the walk", ["Rocky"]], ["Ping Dallas about the server", ["Dallas"]],
+    ["Email Mr Lock about the lease", ["Mr Lock"]], ["Draft a note to Dr Light about the scan", ["Dr Light"]],
+  ])("still asks about the someone or the project in %j, after “on”, an app's verb or an everyday word (memory-x9-9)", (request, names) => {
+    expect(askableNames(request)).toEqual(names);
+  });
+
+  it("never lets a later word of an installed app's name, or someone's app, silence a person (memory-x9-9)", () => {
+    const apps = ["Grace Hopper Simulator", "Sam's Club", "Priya Notes"];
+    expect(askableNames("Message Sam about lunch", apps)).toEqual(["Sam"]);
+    expect(askableNames("Ask Hopper about payroll", apps)).toEqual(["Hopper"]);
+    expect(askableNames("Ask Priya about payroll", apps)).toEqual([]);
+    // Where an app, a site or a place stands, it still asks nothing.
+    for (const r of ["Open Atlas", "Put a note in Atlas about the delay", "Turn on Dark Mode", "Check the weather in London", "Visit Priya on Friday", "Search YouTube for Priya"]) {
+      expect(askableNames(r).filter(n => n !== "Priya")).toEqual([]);
+    }
+    expect(askableNames("Visit Priya on Friday")).toEqual([]);
   });
 });
 
