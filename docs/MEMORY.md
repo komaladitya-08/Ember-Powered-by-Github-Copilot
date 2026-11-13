@@ -556,7 +556,13 @@ not, and their timezone or hours. Every answer is optional; while memory is off 
 explicit yes). Main checks the answers with `IntroSchema` (strict, bounded) and keeps them as `user` facts with a
 label Ember wrote ("Likes to be called Ram"), each replacing the one before. "Ember, get to know me" asks the same
 aloud, answered by the host before the conversation (`intent`): "skip" skips, "that's all" stops, and an answer heard
-where Ember can't tell the user from its speakers (`voiceUnchecked`) isn't kept. Spoken answers are kept as said,
+where Ember can't tell the user from its speakers (`voiceUnchecked`) isn't kept. Asked for in such a voice (every
+spoken request on Windows and macOS, every Listen once, Linux with the speakers' check off), it asks nothing, since
+no answer could be kept: Ember says "I can't tell your voice from other sound here…" (`INTRO_UNCHECKED`) and opens
+Tell Ember about you at its first question (`openMemory("about")`), and the card offers the spoken version only
+where a spoken request is checked (`aboutYouHint`, `platform.speakerRejection` with the setting on). It ends "I'll
+remember that" only when memory kept something; with every answer skipped, unchecked or refused it says "I didn't
+keep anything this time…" (`INTRO_NOTHING`): memory-r9-6. Spoken answers are kept as said,
 except that the name question keeps only the name: "Call me Ram", "My name is Ram", "It's Ram" and "Ram, please"
 all keep "Likes to be called Ram" (`nameFrom`), and "call me <a short name>" answers it rather than ending the
 interview as a request would (memory-6). Asked while memory is off, it opens

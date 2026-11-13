@@ -16,7 +16,7 @@
 import { memoryPausedReply } from "../../shared/memory-owner";
 import { DUPLICATE, type AddResult, type Fact, type NewFact, type Source } from "./graph";
 import { ConversationHold, HELD_ALL, HELD_FORGOTTEN } from "./hold";
-import { IntroSchema, Interview, INTRO_MANAGED, INTRO_OFF, SPOKEN_FACT, introFacts, isGetToKnowMe, type Intro } from "./intro";
+import { IntroSchema, Interview, INTRO_DONE, INTRO_MANAGED, INTRO_NOTHING, INTRO_OFF, INTRO_UNCHECKED, SPOKEN_FACT, introFacts, isGetToKnowMe, type Intro } from "./intro";
 import { CallBudget, Learner, soundsLikeInstruction, type KeptFact, type LearnBudget, type OneShot } from "./learn";
 import type { MemoryOwnerReason } from "./owner";
 import {
@@ -70,9 +70,10 @@ export interface LearningDeps {
   say: (text: string) => boolean;
   /**
    * Opens Settings › Memory: at its list for a forget request (`list`), at its note's words for the interview asked for
-   * while memory is off (`note`). Never at the note's agree button (memory-r7).
+   * while memory is off (`note`), at Tell Ember about you's first question for the interview asked for in a voice
+   * Ember couldn't check (`about`: memory-r9-6). Never at the note's agree button (memory-r7).
    */
-  openMemory?: (at: "list" | "note") => void;
+  openMemory?: (at: "list" | "note" | "about") => void;
   /**
    * Memory is on and agreed to, but its saved memory can't be opened now: why (memory-2); or memory is on under an
    * earlier note the user hasn't reviewed (`note`, memory-r4). Ember says so rather than asking for memory to be turned
@@ -131,6 +132,8 @@ export class MemoryLearning {
   private refining: AbortController | null = null;
   private interview: Interview | null = null;
   private interviewAt = 0;
+  /** How many of the interview's answers memory kept: with none, it never ends "I'll remember that" (memory-r9-6). */
+  private interviewKept = 0;
   private question: { name: string; at: number } | null = null;
   /** The facts kept lately, newest last, for "forget that". */
   private recent: { id: string; text: string; at: number }[] = [];
@@ -478,8 +481,16 @@ export class MemoryLearning {
       this.question = null;
       // Nothing it heard could be kept while memory.json can't be read: said, never asked (memory-r7-1).
       if (this.d.memory.unreadable) { this.interview = null; return MEMORY_UNREADABLE; }
+      // Heard where Ember can't tell the user from its speakers: no answer said there could be kept as theirs, so
+      // none is asked for. Ember says why and opens the typed way (memory-r9-6).
+      if (!how.own) {
+        this.interview = null;
+        this.d.openMemory?.("about");
+        return INTRO_UNCHECKED;
+      }
       this.interview = new Interview(now);
       this.interviewAt = now;
+      this.interviewKept = 0;
       return this.interview.start();
     }
     // "Forget that" first: never an answer to a question (the interview's or Ember's own).
@@ -503,14 +514,15 @@ export class MemoryLearning {
       if (!this.d.inForce() || (request && !this.interview.answers(text))) { this.interview = null; return null; }
       const step = this.interview.answer(text, how.own);
       this.interviewAt = now;
-      this.keepAll(step.keep);
+      this.interviewKept += this.keepAll(step.keep);
       // "Spoken or not" is Ember's real choice, not only a fact (only what the user was heard to say reaches `keep`).
       const spoken = step.keep.find(f => f.predicate === "spoken_answers");
       if (spoken && how.own) {
         try { this.d.setSpoken?.(spoken.text === SPOKEN_FACT); } catch { this.d.log.warn("memory.spoken_not_saved"); }
       }
       if (step.done) this.interview = null;
-      return step.say;
+      // What it handed over memory may have refused (a secret): "I'll remember that" only for what was kept (memory-r9-6).
+      return step.done && !this.interviewKept && step.say.endsWith(INTRO_DONE) ? `${step.say.slice(0, -INTRO_DONE.length)}${INTRO_NOTHING}` : step.say;
     }
     if (this.question) {
       const q = this.question;

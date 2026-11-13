@@ -888,6 +888,12 @@ export const ABOUT_YOU = {
   managed: "Your organisation has turned memory off.",
   voice: "You can also say “Ember, get to know me” for a short spoken version.",
 } as const;
+/**
+ * The line under Tell Ember about you: what the card is for (`lead`: Settings; first run says it in its step's lead),
+ * and the spoken version only where Ember can tell the user's voice from its speakers (`spoken`). Elsewhere every
+ * spoken request is unchecked, never the user's own words, so the interview could keep nothing (memory-r9-6).
+ */
+export const aboutYouHint = (lead: boolean, spoken: boolean) => [lead ? ABOUT_YOU.lead : "", spoken ? ABOUT_YOU.voice : ""].filter(Boolean).join(" ");
 
 /** The form's fields as main takes them: trimmed, each one left out when it is empty or "No preference". */
 /** Said after Save when Spoken replies was chosen: it changes whether Ember speaks (memory-5). */

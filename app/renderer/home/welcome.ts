@@ -152,7 +152,10 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
   /** What changed since an earlier agreement, while it isn't agreed again (first-run-4); none for a first agreement. */
   const changes = () => (consented() ? [] : consentChangesSince(settings?.consent.version ?? 0));
   // "Tell me about you" (optional): memory's note inline, its answers saved by this step's main button.
-  const about = mountAboutYou($("w-about"), { id: "w-ay", save: deps.save, ownSave: false, changed: () => { if (active && step === "about") render(); } });
+  const about = mountAboutYou($("w-about"), {
+    id: "w-ay", save: deps.save, ownSave: false, changed: () => { if (active && step === "about") render(); },
+    spokenVersion: () => status?.platform?.speakerRejection === true && settings?.voice.speakerRejection !== false,
+  });
   const memoryManaged = () => status?.admin.features.memory === false;
   const live = (text: string) => { $("w-try-live").textContent = text; };
 

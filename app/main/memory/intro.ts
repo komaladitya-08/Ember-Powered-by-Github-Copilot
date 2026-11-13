@@ -72,6 +72,14 @@ export const INTRO_START = "Let's get to know each other. Say “skip” for any
 export const INTRO_DONE = "Thanks. I'll remember that. You can see and forget it in Settings, under Memory.";
 export const INTRO_STOPPED = "All right, that's enough for now.";
 export const INTRO_UNSURE = "I couldn't be sure that was you, so I didn't keep it.";
+/** The interview's end when none of it was kept (every answer skipped, unchecked or refused): never "I'll remember that" (memory-r9-6). */
+export const INTRO_NOTHING = "I didn't keep anything this time. You can type your answers in Settings, under Memory.";
+/**
+ * "Get to know me" heard where Ember can't tell the user from its speakers (every spoken request on Windows and
+ * macOS, every Listen once): nothing said there is the user's own, so no question is asked whose answer couldn't be
+ * kept. Ember says why and opens the typed way (memory-r9-6).
+ */
+export const INTRO_UNCHECKED = "I can't tell your voice from other sound here, so I don't keep what I hear as yours. I've opened Tell Ember about you in Settings: type your answers there and I'll remember them.";
 export const INTRO_OFF = "I'll need memory turned on first. I've opened Memory in Settings for you.";
 export const INTRO_MANAGED = "Your organisation has turned memory off, so I can't keep what you tell me.";
 
@@ -119,6 +127,8 @@ export type InterviewStep = { say: string; keep: NewFact[]; done: boolean };
  */
 export class Interview {
   private at = 0;
+  /** How many answers it handed over to be kept: with none, it never ends "I'll remember that" (memory-r9-6). */
+  private gave = 0;
   constructor(readonly startedAt: number) {}
 
   /** The first thing Ember says. */
@@ -136,9 +146,10 @@ export class Interview {
     const key = INTRO_QUESTIONS[this.at].key;
     const skip = SKIP.test(text) || !text;
     const keep = !skip && own ? answerFacts(key, text) : [];
+    this.gave += keep.length;
     this.at++;
     const next = INTRO_QUESTIONS[this.at];
     const lead = !skip && !own ? `${INTRO_UNSURE} ` : "";
-    return next ? { say: `${lead}${next.ask}`, keep, done: false } : { say: `${lead}${INTRO_DONE}`, keep, done: true };
+    return next ? { say: `${lead}${next.ask}`, keep, done: false } : { say: `${lead}${this.gave ? INTRO_DONE : INTRO_NOTHING}`, keep, done: true };
   }
 }

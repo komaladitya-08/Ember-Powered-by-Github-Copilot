@@ -1994,6 +1994,8 @@ const memoryNow = () => settings?.memory ?? { on: false, consent: { version: 0, 
 const aboutYou = mountAboutYou($("about-you"), {
   id: "ay", save, ownSave: true,
   askConsent: () => { showConsentCard("memory-consent", "memory-yes"); $("memory-yes").focus(); },
+  // Linux with the speakers' check on is where a spoken request is checked; elsewhere the interview keeps nothing (memory-r9-6).
+  spokenVersion: () => platform?.speakerRejection === true && settings?.voice.speakerRejection !== false,
 });
 $("memory-questions-hint").textContent = MEMORY_QUESTIONS_HINT;
 /** The paused note was shown (once a session: Not now hides it). */

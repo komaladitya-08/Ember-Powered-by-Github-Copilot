@@ -293,7 +293,8 @@ environment, only through `scripts/runtime-env-live.sh`, which gives it a networ
   - **Tell Ember about you** (Settings › Memory, and first run's optional personalisation detour): what to call you, your role
     and work, the apps you use most, short or detailed and spoken or not, your timezone or hours, each optional, kept
     as things you told it. "Ember, get to know me" asks the same aloud; an answer heard where Ember can't tell you
-    from its speakers isn't kept. Spoken or not changes Ember's speaking choice in Voice too. While memory is paused
+    from its speakers isn't kept, and asked for in such a voice (on Windows and macOS, or with Listen once) Ember
+    says so and opens the form instead, which offers the spoken version only on Linux with the speakers' check on. Spoken or not changes Ember's speaking choice in Voice too. While memory is paused
     (your own model provider or your organisation's model service in force), both places say why instead of asking,
     and first run's step offers only Continue.
   - **Better recall** (under the list, while memory is on): **Download (23 MB)** fetches a small language model

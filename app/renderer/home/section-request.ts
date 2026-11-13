@@ -24,6 +24,8 @@ const CONTROLS: Readonly<Record<string, string>> = {
   // Memory: its search for a forget request, its note's words for "get to know me" or Open Memory, never the note's
   // "I agree, remember", where a stray Enter or Space would agree; asked for by that name, the words (memory-r7).
   "memory:memory-query": "memory-query", "memory:memory-consent-text": "memory-consent-text", "memory:memory-yes": "memory-consent-text",
+  // Tell Ember about you's first question: "get to know me" in a voice Ember couldn't check opens the typed way (memory-r9-6).
+  "memory:about-you": "ay-name",
 };
 
 /** A request as the page acts on it: the section's id (its heading is `${section}-h`) and the control's id, if any. */

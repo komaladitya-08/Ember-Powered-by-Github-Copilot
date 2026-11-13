@@ -8,6 +8,7 @@ import { DEFAULT_SETTINGS } from "../../app/main/settings";
 import { FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
 import type { MemoryCorrection } from "../../app/shared/memory-correction";
 import type { EmberHomeApi, MemoryView, VoiceWord } from "../../app/shared/ipc";
+import { FALLBACK_SHORTCUTS, SHORTCUTS, heldShortcuts, shownShortcuts } from "../../app/shared/shortcuts";
 
 declare global {
   interface Window {
@@ -785,13 +786,16 @@ it.skipIf(process.env.EMBER_MEMORY_TEST !== "1")("never lands a forget or rememb
 }, 60_000);
 
 /** Built Home at Settings › Memory with `view` as main's first answer: `run` gets the page and a way to push another view. */
-async function atMemory(view: MemoryView, run: (page: Page, push: (next: MemoryView) => Promise<void>) => Promise<void>, managed: string[] = []): Promise<void> {
+async function atMemory(view: MemoryView, run: (page: Page, push: (next: MemoryView) => Promise<void>) => Promise<void>, managed: string[] = [], os?: "linux" | "win32"): Promise<void> {
   const settings = structuredClone(DEFAULT_SETTINGS);
   settings.onboarded = true; settings.consent = { version: 99, at: "2026-11-04T12:00:00Z" };
   // (`managed` with "memory": the settings as main gives them under the organisation's policy, memory off.)
   settings.memory = { ...settings.memory, on: !managed.includes("memory"), consent: { version: 99, at: "2026-11-04T12:00:00Z" } };
   const status = { appVersion: "0.1.1", settings, environment: { checks: [], versions: { node: "24", electron: "44", chrome: "152" } }, logFile: "/test/ember.log", settingsNotice: null,
-    admin: { source: managed.length ? "/etc/ember/policy.json" : null, error: null, managed, features: managed.includes("memory") ? { memory: false } : {}, provider: null, confirmEveryAction: false, allowGrants: true, retentionDays: 30, neverLook: [] } };
+    admin: { source: managed.length ? "/etc/ember/policy.json" : null, error: null, managed, features: managed.includes("memory") ? { memory: false } : {}, provider: null, confirmEveryAction: false, allowGrants: true, retentionDays: 30, neverLook: [] },
+    // (`os`: the platform as main reports it; only Linux can tell the user's voice from its speakers.)
+    ...(os ? { platform: { os, shortcuts: shownShortcuts(SHORTCUTS[os], heldShortcuts(SHORTCUTS[os], FALLBACK_SHORTCUTS[os], [])), dataDir: "~/.config/ember", settingsFile: "~/.config/ember/settings.json",
+      auditCopy: null, micIndicator: "", permissionsNote: "", speakerRejection: os === "linux", outputLevel: false, fixLabels: {}, desk: os === "linux", autostartNote: null } } : {}) };
   const browser = await chromium.launch({ executablePath: process.env.EMBER_CHROMIUM_PATH ?? "/usr/bin/chromium", headless: true, args: ["--no-sandbox"] });
   const dist = path.resolve("dist");
   const server = http.createServer((req, res) => {
@@ -954,3 +958,19 @@ it.skipIf(process.env.EMBER_MEMORY_TEST !== "1")("lists what was saved while the
     if (process.env.EMBER_UI_EVIDENCE) await page.screenshot({ path: path.join(process.env.EMBER_UI_EVIDENCE, "memory-lockdown.png") });
   }, ["memory"]);
 }, 60_000);
+
+it.skipIf(process.env.EMBER_MEMORY_TEST !== "1")("offers the spoken “get to know me” under Tell Ember about you only where Ember can tell the user's voice from its speakers (memory-r9-6)", async () => {
+  const LEAD = "A few short questions, each one optional. Ember keeps your answers as things you told it, and you can forget any of them here.";
+  const hint = (page: Page) => page.locator("#about-you > p.hint").last().innerText();
+  // Linux, where a spoken request is checked against the speakers: the spoken version is offered.
+  await atMemory({ rows: [], ownership: "ready", reason: null }, async page => {
+    await expect.poll(() => hint(page)).toBe(`${LEAD} You can also say “Ember, get to know me” for a short spoken version.`);
+  }, [], "linux");
+  // Windows: every spoken request is unchecked, so the interview could keep nothing, and only the form is offered.
+  await atMemory({ rows: [], ownership: "ready", reason: null }, async page => {
+    await expect.poll(() => page.locator("#ay-name").isVisible()).toBe(true);
+    expect(await hint(page)).toBe(LEAD);
+    expect(await page.locator("#about-you").innerText()).not.toContain("get to know me");
+    if (process.env.EMBER_UI_EVIDENCE) await page.locator("#about-you").screenshot({ path: path.join(process.env.EMBER_UI_EVIDENCE, "about-you-no-spoken-version.png") });
+  }, [], "win32");
+}, 90_000);
