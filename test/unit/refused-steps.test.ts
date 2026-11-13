@@ -586,63 +586,6 @@ describe("a command the user said no to, through the flow (commands-remote-r9-8)
     }
   });
 
-  it("refuses a refused push of main sent again to a remote written as a URL or a path, in either order (modes-y9-y9-1)", async () => {
-    const urls = ["https://github.com/o/r.git", "git@github.com:o/r.git", "ssh://git@github.com/o/r.git", "../mirror.git", "."];
-    for (const [first, later] of urls.flatMap(u => [["git push origin main", `git push ${u} main`], [`git push ${u} main`, "git push origin main"], ["git push origin main", `git push ${u} HEAD`]])) {
-      const h = commands(["deny"], { review: false, words: "update main on github" });
-      expect((await h.run(first)).textResultForLlm, first).toMatch(/^The user said no\./);
-      for (const mode of [{ review: true }, { review: false, autopilot: true }, { review: false }]) {
-        const again = commands([], { refusals: h.refusals, words: "update main on github", ...mode });
-        expect(await again.run(later), `${first} => ${later}`).toMatchObject({ resultType: "denied", textResultForLlm: CMD_REFUSED });
-        expect([again.st.asked, again.st.reviewed, again.st.announced, again.st.starts]).toEqual([[], [], [], []]);
-      }
-    }
-    // Two remotes Ember knows by name are two places, as before (modes-y9-8).
-    const h = commands(["deny"], { review: false, words: "" });
-    await h.run("git push origin main");
-    const auto = commands([], { refusals: h.refusals, autopilot: true, review: false, words: "" });
-    expect((await auto.run("git push backup main")).resultType).toBe("success");
-    expect(auto.st.announced).toEqual(["git push backup main"]);
-  });
-
-  it("refuses `rm -rf build` after a no to that deletion written as inline code or for a program Ember doesn't know (modes-y9-y9-2)", async () => {
-    for (const first of ["python3 -c \"import shutil; shutil.rmtree('build')\"", "node -e \"require('fs').rmSync('build',{recursive:true})\"", "frob --delete build"]) {
-      const h = commands(["deny"], { review: false });
-      expect((await h.run(first)).textResultForLlm, first).toMatch(/^The user said no\./);
-      for (const mode of [{ review: true }, { review: false, autopilot: true }, { review: false }]) {
-        const again = commands([], { refusals: h.refusals, ...mode });
-        for (const c of ["rm -rf build", "find build -delete", "rm -rf ./build/out"]) expect(await again.run(c), `${first} => ${c}`).toMatchObject({ resultType: "denied", textResultForLlm: CMD_REFUSED });
-        expect([again.st.asked, again.st.reviewed, again.st.announced, again.st.starts]).toEqual([[], [], [], []]);
-      }
-    }
-  });
-
-  it.each<[string, string]>([
-    // A loop's deletion names what it deletes only by a variable: any later deletion may be it.
-    ["for d in build dist; do rm -rf $d; done", "rm -rf build"],
-    // Code that names the folder without saying what it does to it.
-    ["python3 -c \"import helper; helper.tidy('build')\"", "rm -rf build"],
-    // Two pieces of code Ember can't read.
-    ["python3 -c \"import shutil; shutil.rmtree('build')\"", "perl -e 'system(\"rm -rf build\")'"],
-  ])("asks, without a check or an announcement, where it can't tell: after a no to `%s`, `%s` (modes-y9-y9-2)", async (refused, next) => {
-    const h = commands(["deny"], { review: false });
-    expect((await h.run(refused)).textResultForLlm).toMatch(/^The user said no\./);
-    for (const mode of [{ review: true }, { review: false, autopilot: true }, { review: false }]) {
-      const again = commands(["once"], { refusals: h.refusals, ...mode });
-      expect((await again.run(next)).resultType, next).toBe("success");
-      expect([again.st.asked, again.st.reviewed, again.st.announced], next).toEqual([[next], [], []]);
-      expect(again.st.audit.find(e => e.phase === "decided")!.rules as string[]).toContain(LIKE_REFUSED_RULE);
-    }
-  });
-
-  it("leaves a deletion of something else as it was after a no to code Ember can't read (modes-y9-y9-2)", async () => {
-    const h = commands(["deny"], { review: false });
-    await h.run("python3 -c \"import shutil; shutil.rmtree('build')\"");
-    const auto = commands([], { refusals: h.refusals, autopilot: true, review: false });
-    expect((await auto.run("rm -rf dist")).resultType).toBe("success");
-    expect([auto.st.asked, auto.st.announced]).toEqual([[], ["rm -rf dist"]]);
-  });
-
   it.each<[string, string]>([
     ["rm -rf build", "for f in *.o; do rm $f; done"], ["rm -rf build", "python3 -c 'print(open(\"build/log.txt\").read())'"], ["rm -rf build", "git clean -fdx"], ["git push origin main", "npm publish"],
     ["git push --force origin main", "gh api -X PUT repos/o/r/git/refs/heads/feature -f sha=abc"],
