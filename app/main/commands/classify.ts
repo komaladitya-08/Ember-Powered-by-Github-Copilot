@@ -494,6 +494,13 @@ class Classifier {
   compoundOnward = false;
   /** Words a wrapper hands to the command it runs (payload, unwrap): the rest of its words are its own. */
   protected payloadWords = new WordMarks();
+  /** The program word of each payload: a program with one among its words is a wrapper (afterRun's own-words checks). */
+  protected payloadHeads = new Set<Arg>();
+  /** A program's own words: all of them, or for a wrapper those that aren't its command's. */
+  protected ownWords(args: readonly Arg[]): { own: Arg[]; wraps: boolean } {
+    const wraps = args.some(a => this.payloadHeads.has(a));
+    return { own: wraps ? args.filter(a => !this.payloadWords.has(a)) : [...args], wraps };
+  }
   /** A loop's or `if`'s closer given text that uses variables (`done <<< "$d"`), for the reads in it (feedReads). */
   protected hereVarsAt = new Map<number, HereVars>();
   /** POSIX variables set from a substitution that fetched (`x=$(curl …)`): written to a file, the file is a download (commands-remote-c7-3). */
@@ -1655,6 +1662,48 @@ const COMPILERS = new Set([
  * download-and-run. Kept apart from FETCHERS, whose substitutions and options are judged as a fetch tool's.
  */
 const TEXT_FETCHERS = new Set(["gh", "glab", "hub", "s3cmd", "b2", "gdown", "ipfs", "yt-dlp", "youtube-dl", "ncftpget", "lftp", "huggingface-cli", "hf", "az", "aws", "gcloud", "kubectl", "doctl", "mc", "rclone", "adb"]);
+/** The text of each command substitution in a word as written: `$( … )` (never `$(( … ))`) and backticks. */
+function substituted(raw: string): string[] {
+  const text = raw.replace(/'[^']*'/g, "");
+  const out: string[] = [];
+  for (let k = 0; k < text.length; k++) {
+    if (text[k] === "`") {
+      const end = text.indexOf("`", k + 1);
+      out.push(text.slice(k + 1, end < 0 ? text.length : end));
+      k = end < 0 ? text.length : end;
+    } else if (text.startsWith("$(", k) && text[k + 2] !== "(") {
+      let depth = 1;
+      let j = k + 2;
+      for (; j < text.length && depth > 0; j++) depth += text[j] === "(" ? 1 : text[j] === ")" ? -1 : 0;
+      out.push(text.slice(k + 2, depth === 0 ? j - 1 : text.length));
+      k = j - 1;
+    }
+  }
+  return out;
+}
+/** Programs whose output only says the machine's kind, the time, a version, or what another fetch returned. */
+const SAYS_LITTLE = new Set(["uname", "date", "arch", "nproc", "getconf", "lsb_release", "dpkg", "rpm", "hostname", "whoami", "id", "curl", "wget", "echo", "printf", "mktemp", "sw_vers", "go", "rustc", "node", "python3", "python"]);
+/** Filters such output may pass through. */
+const PASSES_ON = new Set(["tr", "cut", "sed", "awk", "grep", "head", "tail", "jq", "sort", "uniq", "wc", "xargs", "tolower"]);
+/**
+ * Whether a substitution's text holds nothing of the user's files (sendsContents): each pipeline in it starts with a
+ * program that says little (git only with rev-parse, describe or symbolic-ref; an interpreter only for its version)
+ * and goes on through filters given no file, with no redirection from a file and no substitution inside.
+ */
+function saysLittle(inner: string): boolean {
+  if (/[<`]|\$\(|\$\{?[A-Za-z_]/.test(inner)) return false;
+  for (const pipeline of inner.split(/;|&&|\|\||\n/)) {
+    const stages = pipeline.split("|").map(st => st.trim().split(/\s+/));
+    if (stages.length === 0 || stages[0][0] === "") return false;
+    const [head, ...words] = stages[0];
+    const prog = head.split("/").pop() ?? head;
+    const versionOnly = /^(go|rustc|node|python3?)$/.test(prog) && !(words.length === 1 && /^(-v|-V|--version|version)$/.test(words[0]));
+    const ok = prog === "git" ? /^(rev-parse|describe|symbolic-ref)$/.test(words[0] ?? "") : SAYS_LITTLE.has(prog) && !versionOnly;
+    if (!ok) return false;
+    for (const st of stages.slice(1)) if (!PASSES_ON.has(st[0]) || st.slice(1).some(w => !/^(-|'|"|[A-Za-z0-9_]*$)/.test(w) && /[/.]/.test(w))) return false;
+  }
+  return true;
+}
 /** Programs whose words are, or hold, a command line they hand to a shell: judged there (nested()), never as their own files. */
 const NESTS_TEXT = new Set(["sh", "bash", "zsh", "dash", "ksh", "ash", "fish", "cmd", "powershell", "pwsh", "wsl", "watch", "flock", "script", "su", "runuser", "ssh", "slogin", "parallel", "eval", "source", "."]);
 const fetches = (key: string): boolean => FETCHERS.has(key) || TEXT_FETCHERS.has(key);
@@ -3209,6 +3258,7 @@ class Engine extends Classifier {
   payload(words: Arg[], sc: Scope, wrapper: string, o: Partial<Simple> = {}): void {
     if (words.length === 0) return;
     for (const w of words) this.payloadWords.add(w);
+    this.payloadHeads.add(words[0]);
     const savedAt = this.at;
     const savedProg = this.program;
     const savedPipe = this.pipe;
@@ -3229,6 +3279,7 @@ class Engine extends Classifier {
     // at the start of a command, never as the program (commands-remote-c1-1).
     let lead = 0;
     if (h.sc.family === "posix" && ASSIGNS_AFTER.has(wrapper)) while (lead < all.length && ASSIGNMENT_WORD.test(all[lead].raw)) lead++;
+    this.payloadHeads.add(all[Math.min(lead, all.length - 1)]);
     // Before these were read as assignments the first one stood as a program Ember didn't know, and with a word after
     // it that names a program that runs others (`time x=1 sh -c '…'`, `if IFS= read -r l <<< 'a'`) it asked how the one
     // runs the other (generic()). Such a command still asks, after a flow word as after `time` (commands-remote-x7-5).
@@ -3387,6 +3438,7 @@ class Engine extends Classifier {
    * this task downloaded runs that folder's code (a cloned repository's Makefile or package scripts).
    */
   afterRun(key: string, args: Arg[], s: Simple, sc: Scope, shellSc: Scope = sc, dlBefore = this.downloads.length): void {
+    this.sendsContents(key, args, s);
     // What reads a download writes it out again (`cat x.py > y.py`, `sed … x.py > y.py`, `cat x.py | tee y.py`): the
     // new file is the download too (commands-remote-c2-2). Its redirections are the shell's, opened in its folder
     // whatever folder a wrapper moves the program into (`env -C src curl … > x.py`: commands-z6-3).
@@ -3591,16 +3643,41 @@ class Engine extends Classifier {
     if (this.downloads.length > cut) this.downloads = this.downloads.slice(0, cut);
     try {
       if (this.ctx.downloaded.size === 0 && this.downloads.length === 0) return;
-      let own = args.filter(a => !this.payloadWords.has(a));
       // A wrapper's command is judged as its own program, in the folder the wrapper gives it: of a wrapper with a row
       // only the variables it sets for the command count (`env CC=./cc.sh make`; never `env -C src patch …`).
-      const wraps = own.length < args.length;
+      const { own: all, wraps } = this.ownWords(args);
+      let own = all;
       if (wraps && NATIVE[key]) own = own.filter(a => a.v !== null && /^[A-Za-z_][A-Za-z0-9_]*=/.test(a.v));
       const hit = own.some(a => a.v !== null && this.namesDownload(a.v, sc)) || (!wraps && (sc.cwd === null || this.isDownloaded(lit("."), sc, false)));
       if (hit) this.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
     } finally {
       this.downloads = saved;
     }
+  }
+
+  /**
+   * A program that sends (a fetch tool: curl, wget, httpie, Invoke-WebRequest, nc and their like) given what a file
+   * or a command holds inside its address, a header, a cookie, a sign-in or a field (commands-remote-r9-7): a command
+   * or process substitution, backticks, `$(<file)`, a variable this line filled from a command or a read, curl's
+   * `-H @file`, or a file on httpie's input. The contents leave the computer, so it asks as publishing. Never a
+   * substitution that only says the machine's kind, the time, a version or what another fetch returned
+   * (`$(uname -m)`, `$(date +%s)`, `$(curl …/latest)`), nor a variable the line didn't fill.
+   */
+  private sendsContents(key: string, args: readonly Arg[], s: Simple): void {
+    if (this.asMain || !FETCHERS.has(key)) return;
+    const says = "May send what a file or a command holds to another computer.";
+    const filled = (name: string): boolean => (this.varValues.get(name) ?? []).some(f => f.includes(UNSEEN)) || this.loopVars.get(name) === "read";
+    let hit = /^(http|https|xh|xhs)$/.test(key) && s.stdin === "file";
+    const { own } = this.ownWords(args);
+    for (let k = 0; k < args.length && !hit; k++) {
+      const a = args[k];
+      if (!own.includes(a)) continue;
+      // curl reads a header's lines from a file (`-H @file`).
+      if (a.v !== null) { hit = /^curl/.test(key) && /^(-H|--header|--proxy-header)$/.test(args[k - 1]?.v ?? "") && /^@./.test(a.v); continue; }
+      if (a.parts?.some(p => typeof p !== "string" && p.name !== null && filled(p.name))) { hit = true; continue; }
+      hit = substituted(a.raw).some(inner => !saysLittle(inner));
+    }
+    if (hit) this.add("publish", "send.contents", says);
   }
 
   /** Whether this task holds any download, named or not: an earlier command's, or one earlier on this line. */

