@@ -2453,7 +2453,7 @@ const BARE_PAST_WARNING = /^\s*(keep|open|download|run)( (the |this )?file)?( an
 // Chrome's and Edge's own words too: "isn't commonly downloaded", "can't be downloaded securely" (product-safety-x9-1).
 const DANGER_CONTEXT = /\b(dangerous|harm(s|ful)?|malicious|malware|virus(es)?|suspicious|unverified|blocked|(not|isn't) commonly downloaded|may not be safe|can('|no)?t be downloaded securely|insecure|not secure)\b/;
 const SHOWS_PICTURES = /^\s*(download|show|display|load) (the |all )?(pictures|images)\s*$/;
-const MAIL_CONTEXT = /\b(outlook|gmail|thunderbird|evolution|mail|inbox)\b|\bprotect (your )?privacy\b|\bprevented\b/;
+const MAIL_CONTEXT = /\b(outlook|gmail|thunderbird|evolution|mail|inbox)\b|\bprotect (your )?privacy\b|\bprevented\b|\bremote (images|pictures|content)\b/;
 const MAIL_TITLE = /(^| - | \| )(gmail|outlook|(mozilla )?thunderbird|evolution)( - | \| |$)/;
 /** Checks of a text's spelling or grammar ("Disable spell check", "Turn off spelling and grammar checking"): no protection. */
 const WRITING_CHECKS = /\b(spell(ing)?|grammar)( and (spelling|grammar))?[ -]?check(s|ing|er)?\b/giu;

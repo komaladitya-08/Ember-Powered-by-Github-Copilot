@@ -329,6 +329,12 @@ describe("a button or link that goes past a warning, or answers a dialog's quest
     asksEveryTime(click("Keep", { app, window: "Downloads", inPage: undefined, element: { role, name: "Keep" }, goal: "download the driver", dialog: { name: "", text } }));
   });
 
+  // A mail app by what its bar says, not its name: Geary's "This message contains remote images." (product-safety-y9-3).
+  it.each(["Show Images", "Load images"])("a bare “%s” under a mail's remote images bar asks every time (product-safety-y9-3)", name => {
+    asksEveryTime(click(name, { app: "geary", window: "Inbox - Geary", inPage: undefined, element: { role: "push button", name }, goal: "read the newsletter",
+      dialog: { name: "", text: "This message contains remote images." } }));
+  });
+
   const notPast = (role: string, name: string, r: Partial<ActionRequest>) => {
     for (const on of [false, true]) {
       const d = engine(on).decide(click(name, { goal: "tidy up", element: { role, name }, ...r }));
