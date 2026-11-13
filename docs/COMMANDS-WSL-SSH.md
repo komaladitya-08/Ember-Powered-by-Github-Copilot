@@ -259,7 +259,20 @@ Ember stops and asks before a command that:
   after an option of a program that runs another one, quoted or not (`nice -n"$X" cmd`, `xargs -n$X cmd`, `env
   -C"$d" cmd`), which may hold the command it runs; only `xargs -P` and `parallel -j` take a count there (`xargs
   -P$(nproc) cmd`); and `rclone copy`, `sync` or `move` with more words than it takes, after an option Ember
-  doesn't know took a value (`rclone copy ./src remote:dst --max-transfer 10G`), so it can't tell where the files go.
+  doesn't know took a value (`rclone copy ./src remote:dst --max-transfer 10G`), so it can't tell where the files go;
+  and a command behind an option that an earlier version of Ember read another way, where that reading asked:
+  `git commit -S -m wip` (and `-u`, `--gpg-sign` or `--untracked-files` apart in front of `-m`), `redis-cli --tls GET
+  x` (and `-c`, `--sni x`, `--cacertdir x`, `--show-pushes yes`), `ls | parallel --timeout 5 echo` (and parallel's other
+  value options, and `-X`), `env --block-signal ls`, `numactl -H x cmd`, `ltrace -L x cmd`, `faketime -m x y cmd`,
+  `nsenter -t 1 -m x cmd` ("Ember can't tell whether one of its options takes the word after it."). Ember judges such
+  a line both ways and keeps the stricter answer, with what the older reading named still on the card, so `sudo -h
+  host rm -rf ~` is refused and `sudo -h host printenv` still says what printenv prints. Write the value attached
+  (`git commit -SKEY -m wip`, `redis-cli --tls=1 PING`) or after the message (`git commit -m wip -S`) and it runs.
+  The same holds for every tool whose options Ember has learned to read better since (tar, rsync, cp, grep, ls, curl,
+  gh, make and Maven, pip, `docker run`, `uv run` and its like, pkill): a word the older reading took for a file, a
+  target or a command is still judged as one, so `tar -xf a.tar --exclude-tag ~/.ssh/id_rsa` and `uv run --cache-dir
+  printenv` ask, and `ls --cached ~/.config/ember/settings.json` is refused. Everyday lines are untouched: `tar -xf
+  a.tar --strip-components 1`, `uv run --cache-dir .cache pytest`, `mvn -T 4 package` and `docker run -P nginx` run.
 
 **Loops on a command line** in bash or sh always ask, whatever their body: a line with `for`, `while`, `until` or
 `select` anywhere in it asks with the loop's own words ("Ember can't tell exactly what this does."), so `for i in 1 2
@@ -276,7 +289,9 @@ script's loops are read; below.)
 **An `if` on a command line** in bash or sh runs without a question only when the whole line is plain: then `if`,
 `then`, `elif`, `else` and `fi` don't ask by themselves, and Ember judges every command in it as if it were written
 out, in the folder the line starts in. So `if [ -f package.json ]; then npm test; fi` and `if git diff --quiet; then
-echo clean; else echo dirty; fi` run. Anything else asks with the `if`'s own words ("Ember can't tell exactly what
+echo clean; else echo dirty; fi` run. A program that is only named like one of these words (`./if`, `bin/else arg`,
+`'fi'`, `\if`) is not the shell's own word and asks, on a command line and in a script ("It runs a program named like
+one of the shell's own words."). Anything else asks with the `if`'s own words ("Ember can't tell exactly what
 this does."), whatever it does:
 - **a command in the line that Ember says anything about**, one that would ask or not. `if [ -f x ]; then rm x; fi`
   asks, and so does `if true; then echo hi > out.txt; fi` even when out.txt isn't there (written out, `echo hi >

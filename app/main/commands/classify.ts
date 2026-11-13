@@ -206,6 +206,8 @@ export const SAYS = {
   mayRunDownloaded: "May run a file downloaded in this task: Ember can't tell which files an earlier command downloaded or changed.",
   downloadsUnnamed: "Downloads to a file Ember can't name.",
   guardedWord: "It uses a ${…:?} word, which Ember reads as the folder it names but can't be sure of.",
+  optionValue: "Ember can't tell whether one of its options takes the word after it.",
+  namedKeyword: "It runs a program named like one of the shell's own words.",
   scriptStream: "It runs a script from a stream, which Ember can't read first.",
   downloadsProgram: "Downloads a program and runs it.",
   unclear: "Ember can't tell exactly what this does.",
@@ -362,6 +364,9 @@ const accessOf = (use: PathUse): "read" | "safety" => (READ_USES.has(use) ? "rea
  * earlier element read a file this task downloaded (`cat x.py | tee y.py` writes the download out again).
  */
 interface PipeState { fetch: boolean; program: string; carried?: boolean }
+
+/** The POSIX shells' reserved words among the names the keyword row is registered for: a word is one only written bare. */
+const RESERVED_WORDS: ReadonlySet<string> = new Set(["if", "then", "elif", "else", "fi", "for", "while", "until", "do", "done", "case", "esac", "select", "function", "coproc", "in", "[[", "]]", "{", "}"]);
 
 /**
  * The findings of sh's and bash's flow words alone (`if`, `then`, `do`…): a command line or script reads through them
@@ -528,19 +533,58 @@ class Classifier {
   }
 
   /**
+   * The refusal as it stands, and putting one back: for a row judged a second way whose own refusal, when it has one,
+   * is the one to say (runRow: `ltrace -F <Ember's file> ls` reads the file, though main's table ran it).
+   */
+  refusal(): { refuse: Classifier["refuse"]; read: boolean } {
+    return { refuse: this.refuse, read: this.refusedRead };
+  }
+  putRefusal(r: { refuse: Classifier["refuse"]; read: boolean }): void {
+    this.refuse = r.refuse;
+    this.refusedRead = r.read;
+  }
+
+  /**
    * Whether `judge` finds anything to ask about, judged apart: what it finds is not kept (a refusal, and what it notes
    * of files and variables, is). For a form Ember judges a second way, which must never decide less safely than the
    * first (commands-remote-r7-2). `apartFrom`: rules that don't count as asking (a flow word's own, which the command
    * proper finds too).
    */
   asksApart(judge: () => void, apartFrom?: RegExp): boolean {
+    return this.foundApart(judge, apartFrom).length > 0;
+  }
+
+  /**
+   * What `judge` finds, judged apart, without the rules of `apartFrom`: asksApart's findings themselves, for heldTo,
+   * which keeps the dangers among them.
+   */
+  foundApart(judge: () => void, apartFrom?: RegExp): Finding[] {
     const kept = this.findings;
     this.findings = [];
     try {
       judge();
-      return apartFrom ? this.findings.some(f => !apartFrom.test(f.rule)) : this.findings.length > 0;
+      return apartFrom ? this.findings.filter(f => !apartFrom.test(f.rule)) : this.findings;
     } finally {
       this.findings = kept;
+    }
+  }
+
+  /**
+   * Holds what was found since `from` to what the same command asked read the way it was before (`was`: foundApart's
+   * findings for that reading), so no way of reading a command decides less safely than the one before it
+   * (commands-held). Where that reading asked, this asks (asksAtLeast). A danger it named that this one doesn't (any
+   * class but unclear, by its rule; one that depends on a file being there doesn't stand for one that doesn't) stays, in
+   * its own words and for no intent row to cover: the card, the audit and an approval mode that asks by class (a secret
+   * read, a command that outlives Stop) are told no less than they were.
+   */
+  heldTo(was: readonly Finding[], from: number, rule: string, says: string): void {
+    if (was.length === 0) return;
+    const found = this.findings.slice(from);
+    this.asksAtLeast(from, rule, says);
+    for (const f of was) {
+      if (f.cls === "unclear" || found.some(g => g.rule === f.rule && (g.ifExists === undefined || g.ifExists === f.ifExists))) continue;
+      if (this.findings.some(g => g.at === this.at && g.rule === f.rule && g.says === f.says && g.ifExists === f.ifExists)) continue;
+      this.findings.push({ ...f, widening: f.widening.includes("fed") ? [...f.widening] : [...f.widening, "fed"], at: this.at });
     }
   }
 
@@ -554,6 +598,17 @@ class Classifier {
     const found = this.findings.slice(from);
     for (const f of found) if (!f.widening.includes("fed")) f.widening.push("fed");
     if (!found.some(f => f.ifExists === undefined && !READ_FLOW_RULE.test(f.rule))) this.unclear(rule, says);
+  }
+
+  /**
+   * Forgets what is kept by a command's index for the commands from `n` on, which were judged apart and are taken back
+   * (foundApartWhole): the commands registered next take those indexes, and a read's seen text or a listing kept for
+   * another command must never count for them.
+   */
+  protected forgetFrom(n: number): void {
+    for (const kept of [this.listed, this.globalOpts, this.stdinGiven, this.readText, this.closerInput, this.hereVarsAt, this.hereAt, this.readSets]) {
+      for (const k of [...kept.keys()]) if (k >= n) kept.delete(k);
+    }
   }
 
   noteUnclear(list: readonly Unclear[]): void {
@@ -1960,11 +2015,24 @@ class Engine extends Classifier {
    * current command and the folder, are taken back too, so the command proper is judged as if this never ran.
    */
   asksApartWhole(judge: () => void, apartFrom?: RegExp): boolean {
+    return this.foundApartWhole(judge, apartFrom).length > 0;
+  }
+
+  /**
+   * asksApartWhole's findings themselves, for heldTo. `row`: the judging is a row's, of the command that is current, read
+   * another way (runRow): what a wrapper's unwrap made of that command (its program, arguments and wrappers) is
+   * taken back as well, and so is what the commands it registered left behind by their index.
+   */
+  foundApartWhole(judge: () => void, apartFrom?: RegExp, row = false): Finding[] {
     const n = this.commands.length;
     const kept = { count: this.simpleCount, at: this.at, program: this.program, pipe: this.pipe, state: { ...this.pipe }, cd: this.cdTarget, top: this.topCd };
+    const pc = row ? this.commands[this.at] : undefined;
+    const own = pc ? { program: pc.program, args: pc.args, wrappers: pc.wrappers } : undefined;
     try {
-      return this.asksApart(judge, apartFrom);
+      return this.foundApart(judge, apartFrom);
     } finally {
+      if (pc && own) Object.assign(pc, own);
+      if (row) this.forgetFrom(n);
       this.commands.length = n;
       this.simpleCount = kept.count;
       this.at = kept.at;
@@ -1979,6 +2047,64 @@ class Engine extends Classifier {
   }
   /** The single top-level cd, for cdOnly. */
   topCd: { at: number; abs: string | null } | null = null;
+
+  /** A row is being judged by main's option tables (runRow): every table it and the commands it runs read is main's. */
+  private asMain = false;
+  /** A table the row being judged read differs from main's on this line (parseHeld). */
+  private tablesDiffer = false;
+
+  /**
+   * Whether the row is being judged main's way (runRow). A check the row has learned since, which main's row at 4d64d3a
+   * didn't make, is left out of that reading, so it holds a command only to what main asked (`docker run -P nginx` ran
+   * there: commands-held-8).
+   */
+  get readsAsMain(): boolean {
+    return this.asMain;
+  }
+
+  /**
+   * A line's options by a row's table (`now`), or by main's (`was`) while the row is judged main's way; where the two
+   * read the line differently (another option takes a value, so other words are the operands), runRow is told.
+   * `wasArgs`: the words as main's row parsed them, where the row rewrites some first (Maven's `-gs`).
+   */
+  parseHeld(args: readonly Arg[], now: OptSpec, was: OptSpec, wasArgs: readonly Arg[] = args): Parsed {
+    const p = parseOpts(args, now);
+    const m = parseOpts(wasArgs, was);
+    if (this.asMain) return m;
+    if (!sameParse(p, m)) this.tablesDiffer = true;
+    return p;
+  }
+
+  /** The table parseHeld reads by now, for a row that parses more words by it (a variable's value split into options). */
+  tableInUse(now: OptSpec, was: OptSpec): OptSpec {
+    return this.asMain ? was : now;
+  }
+
+  /**
+   * Judges a program's row, held to main's option tables (commands-held): when a table the row read (heldOpts) reads this
+   * line differently from the table main had at 4d64d3a, the row is judged again main's way, apart. Main's refusal
+   * stands (the row's own, in its own words, when it has one), and unless everything main's reading found the row's
+   * own found too, the command asks and the dangers main named stay on the card (heldTo). Where the tables agree, which
+   * is nearly always, the row is judged once, as before.
+   */
+  runRow(row: Handler, h: H): void {
+    if (this.asMain) { row(h); return; }
+    const outer = this.tablesDiffer;
+    const stood = this.refusal();
+    const from = this.findings.length;
+    this.tablesDiffer = false;
+    let differ: boolean;
+    try { row(h); } finally { differ = this.tablesDiffer; this.tablesDiffer = outer; }
+    if (!differ) return;
+    const own = this.refusal();
+    let before: Finding[];
+    this.asMain = true;
+    try { before = this.foundApartWhole(() => row(h), undefined, true); } finally { this.asMain = false; }
+    if (own.refuse !== stood.refuse) this.putRefusal(own);
+    const found = this.findings.slice(from);
+    if (before.every(f => found.some(g => sameFinding(f, g)))) return;
+    this.heldTo(before, from, "unclear.option-value", SAYS.optionValue);
+  }
 
   run(text: string): ClassificationExtra {
     const sc = this.topScope();
@@ -2242,7 +2368,8 @@ class Engine extends Classifier {
     // judged that way too, apart, and where that asks this one asks (commands-remote-r7-2).
     const guards = (w: PWord): boolean => w.segs.some(seg => seg.t === "unres" && seg.of !== undefined && seg.exact === true && (seg.of === "HOME" ? sc.home : seg.of === "PWD" ? sc.cwd : null) != null);
     const guarded = [...c.words, ...c.redirs.flatMap(r => (r.target ? [r.target] : []))].some(guards);
-    const asked = guarded && this.asksApartWhole(() => {
+    // The danger that reading named (a write to a file Ember couldn't name) stays on the card (heldTo, commands-held-7).
+    const unseenAsked = !guarded ? [] : this.foundApartWhole(() => {
       this.asWritten = true;
       let unseen: ReturnType<typeof read>;
       try { unseen = read(); } finally { this.asWritten = false; }
@@ -2254,13 +2381,13 @@ class Engine extends Classifier {
       this.newCommand("", [], sc, redirs, o.background, o.pipedFrom);
       this.assignments(c.assigns.map(a => ({ name: a.name, value: this.posixWord(a.value, sc, false) })), sc, null, false);
       this.redirects(redirs, sc);
-      if (asked) this.asksAtLeast(before, "unclear.guarded-word", SAYS.guardedWord);
+      this.heldTo(unseenAsked, before, "unclear.guarded-word", SAYS.guardedWord);
       return null;
     }
     this.simple(s, sc, () => {
       this.assignments(c.assigns.map(a => ({ name: a.name, value: this.posixWord(a.value, sc, false) })), sc, words[0].v, true);
     });
-    if (asked) this.asksAtLeast(before, "unclear.guarded-word", SAYS.guardedWord);
+    this.heldTo(unseenAsked, before, "unclear.guarded-word", SAYS.guardedWord);
     return carried ? printedBy(words) : null;
   }
 
@@ -2802,7 +2929,7 @@ class Engine extends Classifier {
     const windowsSide = sc.os === "win32" || sc.family !== "posix" || pn.interop;
     if (windowsSide && (key === "bash" || (!NATIVE[key] && DISTRO_LAUNCHER.test(key)))) { distroLauncher(h); return; }
     const n = NATIVE[key];
-    if (n) n(h);
+    if (n) this.runRow(n, h);
     else generic(h, true);
     // A deleter that had no row before commands-remote-c8-2 keeps an unknown program's `-o` (commands-remote-x8-5).
     optionPaths(h, !n || NEW_DELETERS.has(key));
@@ -2898,6 +3025,9 @@ class Engine extends Classifier {
     // One whose value Ember can't see (`time x=$(…)`) stood as a program it couldn't name before these were read as
     // assignments, and asked: it still asks (commands-remote-r7-2).
     if (all.slice(0, lead).some(a => a.v === null)) this.unclear("unclear.assignment-unseen", "It sets a variable to text Ember can't see, where a command could stand.");
+    // And one whose text a fetch gave (`time x=$(curl …)`) was a program downloaded and run there: that danger stays on
+    // the card, for a mode that asks by class (commands-held-7).
+    if (all.slice(0, lead).some(a => a.v === null && a.fetch)) this.add("escape", "escape.download-run", SAYS.downloadsAndRuns);
     const sc = child(h.sc, { ...o, wrappers: [...h.sc.wrappers, wrapper] }, more(h.sc));
     pc.wrappers = [...sc.wrappers];
     if (words.length === 0) {
@@ -2958,7 +3088,7 @@ class Engine extends Classifier {
     }
     const n = NATIVE[key];
     const dlBefore = this.downloads.length;
-    if (n) n(inner);
+    if (n) this.runRow(n, inner);
     else generic(inner, true);
     optionPaths(inner, !n || NEW_DELETERS.has(key));
     this.unnamedWrites(key, inner.args, sc);
@@ -3193,6 +3323,30 @@ class Engine extends Classifier {
 // Handler helpers.
 
 const opts = (h: H, spec: OptSpec = {}): Parsed => parseOpts(h.args, spec);
+
+/** Whether two option tables read a line alike: the same options with the same values at the same words, the same operands. */
+function sameParse(a: Parsed, b: Parsed): boolean {
+  return a.restAt === b.restAt && a.missingValue === b.missingValue && a.opts.length === b.opts.length && a.operands.length === b.operands.length
+    && a.opts.every((o, k) => o.name === b.opts[k].name && o.value === b.opts[k].value && o.at === b.opts[k].at)
+    && a.operands.every((w, k) => w === b.operands[k]);
+}
+
+/** Whether two findings say the same thing of the same objects, with nothing more for an intent row to refuse in one. */
+function sameFinding(a: Finding, b: Finding): boolean {
+  return a.cls === b.cls && a.rule === b.rule && a.says === b.says && a.ifExists === b.ifExists && a.program === b.program
+    && a.widening.length === b.widening.length && a.widening.every(w => b.widening.includes(w))
+    && a.objects.length === b.objects.length && a.objects.every((o, k) => o.kind === b.objects[k].kind && o.text === b.objects[k].text && o.resolved === b.objects[k].resolved);
+}
+
+/**
+ * A row's options, read by its own table and held to main's (`was`: the table as it stood at 4d64d3a, read by today's
+ * parser, so a job count is still a count): where the two read the line differently, Engine.runRow judges the row
+ * main's way too, so no way of writing an option decides less safely than it did there (commands-held, as xargs since
+ * commands-remote-x7-5). Give every table that changes one: the options as they were, copied, never corrected.
+ */
+function heldOpts(h: H, now: OptSpec, was: OptSpec, args: readonly Arg[] = h.args, wasArgs: readonly Arg[] = args): Parsed {
+  return h.e.parseHeld(args, now, was, wasArgs);
+}
 const objsOf = (h: H, list: Arg[], use: PathUse): Obj[] => list.map(a => h.e.usePath(a, use, h.sc));
 /** Objects for the card: as written; an unresolved one by its text. */
 /**
@@ -3413,7 +3567,8 @@ function interactive(h: H): void {
       add();
       // watch hands its words, joined, to sh -c.
       // -d (--differences) takes a value only attached or after = (commands-remote-i5a).
-      const w = parseOpts(a, { shortValue: "nq", shortOptional: "d", longValue: ["interval", "equexit"], longOptional: ["differences"], stopAtOperand: true });
+      // Main's table gave -d and --differences the next word and knew no --equexit: judged that way too (commands-held-8).
+      const w = heldOpts(h, { shortValue: "nq", shortOptional: "d", longValue: ["interval", "equexit"], longOptional: ["differences"], stopAtOperand: true }, { shortValue: "nqd", longValue: ["interval", "differences"], stopAtOperand: true }, a);
       if (w.operands.some(x => x.v === null)) h.e.unclear("unclear.shell-text", "It runs shell text Ember can't see.");
       else if (w.operands.length) h.e.nested(w.operands.map(x => x.v).join(" "), "sh", h.sc, "watch");
       return;
@@ -3792,7 +3947,9 @@ reg(NATIVE, ["ls", "ll", "dir", "vdir", "tree", "du", "stat", "file", "lsd", "ex
   // stat's -f (file system), file's -w and exa's -T (tree) take no value, and --color (and du's --time) one only after =
   // (commands-remote-i5a); lsd's -L (follow links) and -t (sort by time) are switches (commands-remote-v5-5).
   const short: Readonly<Record<string, string>> = { tree: "LPIoHT", du: "BdXt", stat: "c", file: "eFfmP", lsd: "I", exa: "LIstw", eza: "LIstw" };
-  const p = opts(h, { shortValue: short[h.key] ?? "IwT", longValue: ["ignore", "hide", "format", "time-style", "width", "tabsize", "block-size", "exclude", "max-depth", "threshold", "printf", "output", "sort", "indicator-style", "quoting-style", "files0-from", "exclude-from", "cached", "filelimit", "timefmt", "charset"], longOptional: ["color", "time"] });
+  // Main's table was one for all of them but tree, du and stat, gave --color and --time the next word and knew no --cached,
+  // --charset, --filelimit or --timefmt, so the word after one was a file to list: judged that way too (commands-held-8).
+  const p = heldOpts(h, { shortValue: short[h.key] ?? "IwT", longValue: ["ignore", "hide", "format", "time-style", "width", "tabsize", "block-size", "exclude", "max-depth", "threshold", "printf", "output", "sort", "indicator-style", "quoting-style", "files0-from", "exclude-from", "cached", "filelimit", "timefmt", "charset"], longOptional: ["color", "time"] }, { shortValue: h.key === "tree" ? "LPIoH" : h.key === "du" ? "BdXt" : h.key === "stat" ? "cf" : "IwT", longValue: ["ignore", "hide", "format", "time-style", "width", "tabsize", "block-size", "exclude", "max-depth", "threshold", "time", "printf", "output", "sort", "color", "indicator-style", "quoting-style", "files0-from", "exclude-from"] });
   if (h.key === "tree") for (const o of values(p, "o", "output")) if (o) h.e.usePath(lit(o), "write", h.sc);
   // file's -f reads the names to look at from a file and prints each, and -m loads magic files (commands-remote-v5-3).
   if (h.key === "file") optionFiles(h, h.args, p, { read: ["f", "m"] });
@@ -3823,7 +3980,9 @@ reg(NATIVE, ["grep", "egrep", "fgrep", "rg", "ag", "ack", "ugrep", "git-grep"], 
   // ag's and ack's own long options that take a value: to GNU grep `--ignore` is --ignore-case, and to rg a switch
   // (commands-remote-v5-5).
   const long: Readonly<Record<string, readonly string[]>> = { ag: ["file-search-regex", "depth", "path-to-ignore", "ignore", "ignore-dir"], ack: ["ignore-dir", "match", "output", "files-from"] };
-  const p = opts(h, { shortValue: short[h.key] ?? "efmABCdD", longValue: ["regexp", "file", "max-count", "after-context", "before-context", "context", "include", "exclude", "exclude-dir", "include-dir", "directories", "devices", "label", "binary-files", ...(h.key === "rg" ? ["color", "colors"] : []), "group-separator", "glob", "iglob", "type", "type-not", "type-add", "max-depth", "threads", "encoding", "max-filesize", "sort", "sortr", "path-separator", "pre", "pre-glob", "engine", "ignore-file", "replace", ...pagerApart, "filter", "hostname-bin", ...(long[h.key] ?? []), "context-separator", "field-context-separator", "field-match-separator", "max-columns", "dfa-size-limit", "regex-size-limit"], longOptional: ["color", "colour"] });
+  // Main's table was GNU grep's for all but rg, with --color taking the next word and none of ag's or ack's own, so other
+  // words were the files searched: judged that way too (commands-held-8).
+  const p = heldOpts(h, { shortValue: short[h.key] ?? "efmABCdD", longValue: ["regexp", "file", "max-count", "after-context", "before-context", "context", "include", "exclude", "exclude-dir", "include-dir", "directories", "devices", "label", "binary-files", ...(h.key === "rg" ? ["color", "colors"] : []), "group-separator", "glob", "iglob", "type", "type-not", "type-add", "max-depth", "threads", "encoding", "max-filesize", "sort", "sortr", "path-separator", "pre", "pre-glob", "engine", "ignore-file", "replace", ...pagerApart, "filter", "hostname-bin", ...(long[h.key] ?? []), "context-separator", "field-context-separator", "field-match-separator", "max-columns", "dfa-size-limit", "regex-size-limit"], longOptional: ["color", "colour"] }, { shortValue: h.key === "rg" ? "eftgjmABCEMT" : "efmABCdD", longValue: ["regexp", "file", "max-count", "after-context", "before-context", "context", "include", "exclude", "exclude-dir", "include-dir", "directories", "devices", "label", "binary-files", "color", "colour", "glob", "iglob", "type", "type-not", "type-add", "max-depth", "threads", "encoding", "max-filesize", "sort", "sortr", "path-separator", "pre", "pre-glob", "engine", "ignore-file", "replace", ...pagerApart, "filter", "hostname-bin"] });
   // Options whose value is a program run on the matches or the matched files (review #165): git grep's pager,
   // ag/ack/ugrep's pager, ugrep's per-file filter, rg's --pre and --hostname-bin. Seen text is the command it runs.
   if (values(p, "pre", "hostname-bin").length) h.e.unclear("unclear.rg-pre", "It runs a program on every file Ember can't see.");
@@ -4115,8 +4274,12 @@ reg(NATIVE, ["psql", "sqlite3", "sqlite", "duckdb", "sqlcmd", "cqlsh", "clickhou
     for (const a of h.args) if (a.v !== null && !isOption(a) && /\.(c|m)?js$/i.test(a.v)) runScript(h, a);
   } else if (k === "redis-cli") {
     // -c (cluster mode), -x, -e and --tls take no value (commands-remote-c4-3).
-    const spec: OptSpec = { shortValue: "hpsanuirdD", longValue: ["user", "pass", "sni", "cacert", "cacertdir", "cert", "key", "tls-ciphers", "tls-ciphersuites", "show-pushes", "lru-test", "rdb", "functions-rdb", "pipe-timeout", "memkeys-samples", "pattern", "quoted-pattern", "intrinsic-latency", "eval"] };
-    const p = opts(h, spec);
+    const now: OptSpec = { shortValue: "hpsanuirdD", longValue: ["user", "pass", "sni", "cacert", "cacertdir", "cert", "key", "tls-ciphers", "tls-ciphersuites", "show-pushes", "lru-test", "rdb", "functions-rdb", "pipe-timeout", "memkeys-samples", "pattern", "quoted-pattern", "intrinsic-latency", "eval"] };
+    // Main's table gave -c and --tls the next word and knew no --sni, --cacertdir or --show-pushes, so the command behind
+    // one of them was another word, which changed the data for all it knew: judged that way too (commands-held-3).
+    const was: OptSpec = { shortValue: "hpsanuirdc", longValue: ["user", "pass", "tls", "cacert", "cert", "key", "rdb", "functions-rdb", "eval"] };
+    const spec = h.e.tableInUse(now, was);
+    const p = heldOpts(h, now, was);
     // The files its options name: --rdb and --functions-rdb write a dump there; the TLS files and --eval's script are
     // read (commands-z6-2).
     const files = { write: ["rdb", "functions-rdb"], read: ["cacert", "cacertdir", "cert", "key", "eval"] };
@@ -4410,7 +4573,7 @@ reg(NATIVE, ["xargs"], h => {
   // The command as main read it (its options, and input it never saw), judged apart: where that asks, this asks, so no
   // way of writing an option decides less safely than it did (`xargs -l chmod +x`, `xargs -i npm`: commands-remote-x7-5);
   // a job count is the one thing read as now.
-  const askedOnMain = h.e.asksApart(() => {
+  const onMain = h.e.foundApart(() => {
     const m = parseOpts(h.args, {
       shortValue: "adEILlnPs", longValue: ["arg-file", "delimiter", "eof", "replace", "max-lines", "max-args", "max-procs", "max-chars", "process-slot-var"], stopAtOperand: true,
       jobCounts: ["P", "max-procs"],
@@ -4430,19 +4593,21 @@ reg(NATIVE, ["xargs"], h => {
     if (built === null) { h.e.payload(unseen, h.sc, "xargs", { stdin: null }); return; }
     // Never decided less safely than with input Ember can't see, which is how these forms were judged before Ember read
     // what is printed: where that asks, what Ember read asks too, in its own words (commands-remote-r7-2).
-    const asked = h.e.asksApart(() => h.e.payload(unseen, h.sc, "xargs", { stdin: null }));
+    // The danger that reading named (a secret printed, a system change) stays on the card (heldTo, commands-held-7).
+    const unread = h.e.foundApart(() => h.e.payload(unseen, h.sc, "xargs", { stdin: null }));
     const before = h.e.findings.length;
     for (const b of built) h.e.payload(b, h.sc, "xargs", { stdin: null });
     // More lines for a placeholder than Ember judges one by one: the rest are unread, so it asks (commands-remote-y7-3).
     const cut = repl !== undefined && seen !== null && seen.split("\n").filter(l => l.trim() !== "").length > MAX_FORMS;
-    if (asked || cut) h.e.asksAtLeast(before, "unclear.xargs-input", "xargs builds this command from its input.");
+    if (unread.length) h.e.heldTo(unread, before, "unclear.xargs-input", "xargs builds this command from its input.");
+    else if (cut) h.e.asksAtLeast(before, "unclear.xargs-input", "xargs builds this command from its input.");
   };
   judge(repl);
   // GNU's xargs takes the last of -I (or -i) and -L, -l or -n and ignores the others, so with both written the input
   // may be added in batches after all (`xargs -I{} -L1 git` runs git with each line's words): judged that way too
   // (commands-remote-x7-3).
   if (repl !== undefined && has(p, "n", "max-args", "L", "l", "max-lines")) judge(undefined);
-  if (askedOnMain) h.e.asksAtLeast(from, "unclear.xargs-input", "xargs builds this command from its input.");
+  h.e.heldTo(onMain, from, "unclear.xargs-input", "xargs builds this command from its input.");
 });
 
 /**
@@ -4512,14 +4677,18 @@ function xargsBuilds(p: Parsed, seen: string, repl: string | undefined, ops: rea
 reg(NATIVE, ["parallel"], h => {
   if (h.args.some(a => a.v !== null && /^:::+\+?$/.test(a.v))) { h.e.unclear("unclear.parallel", "Ember can't tell what parallel runs."); return; }
   // -X (context replace) is a switch, and -l, -i and -e take a value only attached (commands-remote-c4-1).
-  const p = parseOpts(h.args, {
+  const spec: OptSpec = {
     shortValue: "jSaEdINnLCs", shortOptional: "lie", stopAtOperand: true, jobCounts: ["j", "jobs"],
     longValue: [
       "jobs", "sshlogin", "sshloginfile", "slf", "arg-file", "delimiter", "joblog", "results", "tmpdir", "max-args", "colsep", "timeout", "delay", "workdir", "wd",
       "basefile", "bf", "return", "transferfile", "tf", "tagstring", "tag-string", "header", "halt", "nice", "retries", "memfree", "load", "env", "termseq",
       "limit", "arg-sep", "arg-file-sep", "block", "blocksize", "recstart", "recend", "semaphorename", "id", "ssh", "sshdelay", "rpl", "process-slot-var", "max-chars",
     ],
-  });
+  };
+  // Main's table knew eight value options and took -X for one, so the word after any other (`--timeout 5`, `--wd dir`,
+  // `-n 1`) was the program it ran: judged that way too; a job count is the one thing read as now (commands-held-4).
+  const was: OptSpec = { shortValue: "jSaEdIX", longValue: ["jobs", "sshlogin", "arg-file", "eof", "delimiter", "joblog", "results", "tmpdir"], stopAtOperand: true, jobCounts: ["j", "jobs"] };
+  const p = heldOpts(h, spec, was);
   if (p.operands.length === 1 && (p.operands[0].v ?? " ").includes(" ")) { h.e.unclear("unclear.parallel", "Ember can't tell what parallel runs."); return; }
   if (has(p, "S", "sshlogin")) h.e.add("publish", "send.ssh", "Sends data to another computer.");
   // --wd: the folder each command runs in, judged as a cd to it is (commands-remote-v5-3); `...` is a new one.
@@ -4564,13 +4733,14 @@ reg(NATIVE, ["diskutil"], h => {
 
 // cp, mv, install, ln, rsync (local): the destination may exist (§3.5.1).
 function copyLike(h: H, kind: "cp" | "mv" | "install" | "ln"): void {
-  const p = opts(h, {
+  // Main's table gave them all the next word, so other words were the files copied: judged that way too (commands-held-8).
+  const p = heldOpts(h, {
     // install's -b (backup) takes no value; --backup, --context, --reflink, --preserve and --update take one only after =
     // (commands-remote-c4-3).
     shortValue: kind === "install" ? "mgotS" : "tS",
     longValue: ["target-directory", "suffix", "mode", "group", "owner", "strip-program", "sparse", "no-preserve"],
     longOptional: ["backup", "context", "reflink", "preserve", "update"],
-  });
+  }, { shortValue: kind === "install" ? "mgotSb" : "tS", longValue: ["target-directory", "suffix", "mode", "group", "owner", "strip-program", "context", "backup", "reflink", "sparse", "preserve", "no-preserve", "update"] });
   if (kind === "install" && has(p, "d", "directory")) { objsOf(h, p.operands, "write"); return; }
   const noClobber = has(p, "n", "no-clobber") || values(p, "update").includes("none");
   const rec = has(p, "r", "R", "recursive", "a", "archive");
@@ -4584,7 +4754,7 @@ function copyLike(h: H, kind: "cp" | "mv" | "install" | "ln"): void {
   objsOf(h, sources, srcUse);
   if (!dest) {
     // With no destination it can't run as it is; it is asked about rather than judged as nothing (commands-remote-i5a).
-    if (!has(p, "help", "version")) h.e.add("destroy", `posix.${kind}`, "Writes to a file Ember can't name.");
+    if (!has(p, "help", "version") && !h.e.readsAsMain) h.e.add("destroy", `posix.${kind}`, "Writes to a file Ember can't name.");
     return;
   }
   const destObj = h.e.usePath(dest, "write", h.sc);
@@ -4668,7 +4838,9 @@ reg(NATIVE, ["tee"], h => {
 
 reg(NATIVE, ["touch", "mkdir", "mkfifo", "mknod", "mktemp"], h => {
   // --context (and mktemp's --tmpdir) take a value only after = (commands-remote-i5a).
-  const p = opts(h, { shortValue: h.key === "touch" ? "dtr" : h.key === "mktemp" ? "pt" : "m", longValue: ["date", "reference", "time", "mode", "suffix"], longOptional: ["context", "tmpdir"] });
+  // Main's table gave --context and --tmpdir the next word, gave mkfifo and mknod's -p and -t one where -m takes it, and
+  // knew no --time: judged that way too (commands-held-8).
+  const p = heldOpts(h, { shortValue: h.key === "touch" ? "dtr" : h.key === "mktemp" ? "pt" : "m", longValue: ["date", "reference", "time", "mode", "suffix"], longOptional: ["context", "tmpdir"] }, { shortValue: h.key === "touch" ? "dtr" : h.key === "mkdir" ? "m" : "pt", longValue: ["date", "reference", "mode", "tmpdir", "suffix", "context"] });
   if (h.key === "mktemp") return;
   const mark = h.e.written.length;
   objsOf(h, h.key === "mknod" ? p.operands.slice(0, 1) : p.operands, "write");
@@ -4698,6 +4870,11 @@ reg(NATIVE, ["chmod", "chown", "chgrp", "setfacl", "chattr", "chflags"], h => {
 const TAR_VALUE = "fCbKNTXgLVFHI";
 /** A Mac's own tar (bsdtar): -H and -L follow links, -I names a file list as -T does, and -s takes a pattern. */
 const BSDTAR_VALUE = "fCbTXIs";
+/** tar's table as main had it at 4d64d3a, for every tar: the row is judged by it too (heldOpts, commands-held-8). */
+const TAR_MAIN: OptSpec = {
+  shortValue: "fCbKNTXgLVFHIj",
+  longValue: ["file", "directory", "files-from", "exclude-from", "exclude", "use-compress-program", "transform", "xform", "to-command", "info-script", "new-volume-script", "newer", "after-date", "owner", "group", "mode", "mtime", "format", "label", "volno-file", "checkpoint-action", "index-file", "warning", "record-size", "blocking-factor", "tape-length", "sort"],
+};
 /** tar's option table, for its row and for TAR_OPTIONS, which GNU tar reads as options too (commands-remote-x8-4). */
 function tarSpec(bsd: boolean): OptSpec {
   return {
@@ -4718,7 +4895,10 @@ reg(NATIVE, ["tar", "bsdtar", "gtar"], h => {
   // Old-style bundled first argument (`tar xzf x.tgz`).
   if (a[0]?.v && !a[0].v.startsWith("-")) a[0] = { ...a[0], v: `-${a[0].v}` };
   const bsd = h.key === "bsdtar" || (h.key === "tar" && h.sc.os === "darwin");
-  const p = parseOpts(a, tarSpec(bsd));
+  // Main's table gave GNU tar's -j the next word, a Mac's tar GNU's letters, and knew none of --exclude-tag, --level,
+  // --options, --strip-components and the like, so the word after one was a member or a file to pack: judged that way too
+  // (commands-held-8).
+  const p = heldOpts(h, tarSpec(bsd), TAR_MAIN, a);
   const extract = has(p, "x", "extract", "get");
   const create = has(p, "c", "create", "r", "append", "u", "update", "A", "catenate", "concatenate");
   const archive = values(p, "f", "file")[0];
@@ -4852,7 +5032,10 @@ reg(NATIVE, ["cpio"], h => {
 reg(NATIVE, ["gzip", "gunzip", "bzip2", "bunzip2", "xz", "unxz", "lzma", "unlzma", "lzip", "compress", "uncompress", "zstd", "unzstd", "lz4", "pigz", "unpigz", "brotli"], h => {
   // --rsyncable takes no value (commands-remote-i5a); xz's -T, -M, -F and -C, pigz's -p and -b, zstd's and brotli's -o do.
   const valueShort: Readonly<Record<string, string>> = { xz: "STMFC", unxz: "STMFC", lzma: "STMFC", unlzma: "STMFC", pigz: "Spb", unpigz: "Spb", zstd: "oD", unzstd: "oD", brotli: "oqwS" };
-  const p = opts(h, { shortValue: valueShort[h.key] ?? "S", longValue: ["suffix", "format", "threads", "memlimit", "output", "quality", "window", "processes", "blocksize", "patch-from"] });
+  // Main's table gave --rsyncable the next word and knew no --output, --quality, --window, --blocksize or --patch-from, nor
+  // the letters for them, so the word after one was a file to pack: judged that way too; a count of threads or processes
+  // is the one thing read as now (commands-held-8).
+  const p = heldOpts(h, { shortValue: valueShort[h.key] ?? "S", longValue: ["suffix", "format", "threads", "memlimit", "output", "quality", "window", "processes", "blocksize", "patch-from"] }, { shortValue: `S${(valueShort[h.key] ?? "").replace(/[^Tp]/g, "")}`, longValue: ["suffix", "rsyncable", "format", "threads", "memlimit", "processes"] });
   const keeps = has(p, "k", "keep", "c", "stdout", "to-stdout", "t", "test", "l", "list", "h", "help", "V", "version");
   const removes = ["zstd", "unzstd", "lz4", "brotli"].includes(h.key) ? has(p, "rm") : !keeps;
   // The word after a count or format option (`xz -T big.tar`, `xz -M 1G`, `pigz -p "$N"`, `xz -T
@@ -5005,7 +5188,9 @@ export function awkProgramOk(prog: string): boolean {
 }
 reg(NATIVE, ["awk", "gawk", "mawk", "nawk"], h => {
   // gawk's -i (include), -l (load) and -E (exec) take a value; -d, -D, -o, -p and -L only attached (commands-remote-i5a).
-  const p = opts(h, { shortValue: "fFvWeilE", longValue: ["file", "field-separator", "assign", "source", "include", "load", "exec"], longOptional: ["dump-variables", "debug", "pretty-print", "profile", "lint"] });
+  // Main's table knew no -i, -l, -E or --exec, so the word after one was the program text: judged that way too
+  // (commands-held-8).
+  const p = heldOpts(h, { shortValue: "fFvWeilE", longValue: ["file", "field-separator", "assign", "source", "include", "load", "exec"], longOptional: ["dump-variables", "debug", "pretty-print", "profile", "lint"] }, { shortValue: "fFvWe", longValue: ["file", "field-separator", "assign", "source", "include", "load"] });
   const progFiles = values(p, "f", "file", "include", "load", "i", "l", "E", "exec");
   // `-i inplace` writes what it prints back into each file it reads, as sed -i.
   const inPlace = values(p, "i", "include").some(v => v !== null && /^inplace(\.awk)?$/.test(v));
@@ -5140,13 +5325,15 @@ reg(NATIVE, Object.keys(INTERPRETERS).filter(k => !["awk", "gawk", "mawk", "nawk
   const spec = INTERPRETERS[h.key];
   const inline = new Set(spec.inline);
   const isNode = h.key === "node" || h.key === "nodejs";
-  const p = parseOpts(h.args, {
+  // Main's table knew no -C for node and none of node's own long options after --run, so the word after one was the
+  // script: judged that way too (commands-held-8).
+  const p = heldOpts(h, {
     shortValue: spec.valueOpts ?? "", stopAtOperand: true,
     longValue: [
       "eval", "print", "require", "import", "loader", "input-type", "experimental-loader",
       ...(isNode ? ["run", "conditions", "env-file", "env-file-if-exists", "title", "watch-path", "test-reporter", "test-reporter-destination", "redirect-warnings", "openssl-config", "icu-data-dir", "disable-warning", "test-name-pattern", "test-skip-pattern", "diagnostic-dir", "report-dir", "unhandled-rejections", "dns-result-order", "localstorage-file", "experimental-sea-config"] : []),
     ],
-  });
+  }, { shortValue: isNode ? "r" : spec.valueOpts ?? "", stopAtOperand: true, longValue: ["eval", "print", "require", "import", "loader", "input-type", "experimental-loader", ...(isNode ? ["run"] : [])] });
   // node's own files: where it writes warnings, test reports, local storage and diagnostic reports, and the settings it
   // reads (commands-remote-v5-3).
   if (isNode) optionFiles(h, h.args, p, { write: ["redirect-warnings", "test-reporter-destination", "localstorage-file"], into: ["report-dir", "diagnostic-dir"], read: ["openssl-config", "experimental-sea-config", "icu-data-dir", "watch-path"] });
@@ -5272,7 +5459,11 @@ reg(NATIVE, ["eval"], h => {
 });
 reg(NATIVE, ["trap", "alias", "unalias", "enable", "builtin", "shopt", "fc", "bind", "coproc", "select", "function", "if", "then", "elif", "else", "fi", "for", "while", "until", "do", "done", "case", "esac", "[[", "]]", "{", "}", "in", "complete"], h => {
   const words: Record<string, string> = { alias: "It defines an alias Ember can't follow.", unalias: "It changes aliases Ember can't see.", shopt: "It changes how the shell reads commands.", fc: SAYS.interactive };
-  h.e.unclear(`unclear.${h.key.replace(/[^a-z]/g, "") || "keyword"}`, words[h.key] ?? SAYS.unclear);
+  // A POSIX shell's own word only when it is written bare: by a path, quoted or escaped (`./if`, `'then'`, `\fi`), or in
+  // other letters on a Mac (`IF`), it names a program. That asks under a rule of its own, which a command line or a
+  // script never reads through as it does an `if` (scripts.ts's SCRIPT_FLOW; commands-held-6).
+  if (h.sc.family === "posix" && RESERVED_WORDS.has(h.key) && h.nameArg.raw !== h.key) h.e.unclear("unclear.named-keyword", SAYS.namedKeyword);
+  else h.e.unclear(`unclear.${h.key.replace(/[^a-z]/g, "") || "keyword"}`, words[h.key] ?? SAYS.unclear);
   // A loop's variable is set as an assignment is (`for PATH in /tmp/x; do ls; done` changes where ls is found).
   if (h.key === "for" || h.key === "select") {
     h.e.envChanged = true;
@@ -5365,7 +5556,11 @@ reg(NATIVE, ["exec"], h => {
 reg(NATIVE, ["env"], h => {
   // --default-signal, --ignore-signal and --block-signal take a value only after = (commands-remote-i5a); -a (argv0) and
   // a Mac's -P (a search path) take one.
-  const p = parseOpts(h.args, { shortValue: "uCSaP", longValue: ["unset", "chdir", "split-string", "argv0"], longOptional: ["default-signal", "ignore-signal", "block-signal"], stopAtOperand: true });
+  const spec: OptSpec = { shortValue: "uCSaP", longValue: ["unset", "chdir", "split-string", "argv0"], longOptional: ["default-signal", "ignore-signal", "block-signal"], stopAtOperand: true };
+  // Main's table gave the three signal options the next word, so `env --block-signal ls` ran nothing and printed the
+  // environment, and knew no -a or -P: judged that way too (commands-held-5).
+  const was: OptSpec = { shortValue: "uCS", longValue: ["unset", "chdir", "split-string", "default-signal", "ignore-signal", "block-signal"], stopAtOperand: true };
+  const p = heldOpts(h, spec, was);
   if (has(p, "S", "split-string")) { h.e.unclear("unclear.env-split", "Ember can't tell what env -S runs."); return; }
   let k = 0;
   const assigns: { name: string; value: Arg }[] = [];
@@ -5496,14 +5691,22 @@ reg(NATIVE, [...SUDO_LIKE], h => {
     else h.e.unclear("unclear.shell-text", "It runs a command Ember can't see.");
     return;
   }
-  const p = parseOpts(h.args, {
+  const spec: OptSpec = {
     // sudo's -h takes a host only attached (alone it is help), and --preserve-env a list only after = (commands-remote-i5a).
     shortValue: k === "sudo" || k === "sudoedit" ? "ugpCUTrtDRca" : k === "doas" ? "uC" : k === "pkexec" ? "u" : "u",
     shortOptional: k === "sudo" || k === "sudoedit" ? "h" : "",
     longValue: ["user", "group", "host", "prompt", "close-from", "other-user", "command-timeout", "role", "type", "chdir", "chroot", "login-class", "auth-type"],
     longOptional: ["preserve-env"],
     stopAtOperand: true,
-  });
+  };
+  // Main's table gave -h and --preserve-env the next word (sudo itself takes a word after a lone -h for the host when a
+  // command follows), so `sudo -h host rm -rf ~` was the rm, refused: judged that way too (commands-held-1).
+  const was: OptSpec = {
+    shortValue: k === "sudo" || k === "sudoedit" ? "ugpCUTrthD" : k === "doas" ? "uC" : "u",
+    longValue: ["user", "group", "host", "prompt", "close-from", "other-user", "command-timeout", "role", "type", "chdir", "preserve-env"],
+    stopAtOperand: true,
+  };
+  const p = heldOpts(h, spec, was);
   const other = values(p, "u", "user")[0];
   h.e.add("system", "system.sudo", other && !/^(root|0|#0)$/.test(other) ? `Runs as another user (${other}).` : say, { program: k });
   if (k === "sudoedit" || has(p, "e", "edit")) { objsOf(h, p.operands, "write"); h.e.unclear("unclear.interactive", SAYS.interactive); return; }
@@ -5524,7 +5727,11 @@ reg(NATIVE, Object.keys(WRAPPERS), h => {
   if (rule.finding) h.e.add(rule.finding.cls, rule.finding.rule, rule.finding.says);
   if (h.key === "disown") return;
   if (rule.noCommand && h.args.some(a => a.v !== null && rule.noCommand!.test(a.v))) { h.e.readArgs([], h.sc); return; }
-  const p = parseOpts(h.args, { shortValue: rule.shortValue ?? "", shortOptional: rule.shortOptional ?? "", longValue: rule.longValue ?? [], stopAtOperand: true });
+  const spec: OptSpec = { shortValue: rule.shortValue ?? "", shortOptional: rule.shortOptional ?? "", longValue: rule.longValue ?? [], stopAtOperand: true };
+  // A wrapper whose table was corrected since main's is judged by main's too: the word after an option that took a
+  // value there was not the command, and what stood after it was (`numactl -H x printenv`: commands-held-5).
+  const was: OptSpec = rule.main ? { shortValue: rule.main.shortValue ?? "", longValue: rule.main.longValue ?? [], stopAtOperand: true } : spec;
+  const p = heldOpts(h, spec, was);
   let rest = p.operands;
   if (h.key === "nice" && h.args[0]?.v && /^-\d+$/.test(h.args[0].v)) rest = parseOpts(h.args.slice(1), { stopAtOperand: true }).operands;
   if (h.key === "time" || h.key === "strace" || h.key === "ltrace") for (const o of values(p, "o", "output")) if (o) { const obj = h.e.usePath(lit(o), "write", h.sc); if (obj.abs) h.e.add("destroy", "redirect.overwrite", `Overwrites ${obj.text} if it exists.`, { objects: [obj], ifExists: obj.abs }); }
@@ -5557,7 +5764,8 @@ reg(NATIVE, ["firejail", "bwrap", "run-parts", "envdir", "expect"], h => {
   h.e.readArgs(h.args, h.sc);
 });
 reg(NATIVE, ["script"], h => {
-  const p = parseOpts(h.args, { shortValue: "cEIOBTmo", longValue: ["command", "echo", "log-in", "log-out", "log-io", "log-timing", "logging-format", "output-limit"] });
+  // Main's table knew no -m or -o, so the word after one was the file script writes: judged that way too (commands-held-8).
+  const p = heldOpts(h, { shortValue: "cEIOBTmo", longValue: ["command", "echo", "log-in", "log-out", "log-io", "log-timing", "logging-format", "output-limit"] }, { shortValue: "cEIOBT", longValue: ["command", "echo", "log-in", "log-out", "log-io", "log-timing", "logging-format", "output-limit"] });
   const c = values(p, "c", "command")[0];
   for (const f of p.operands) { const obj = h.e.usePath(f, "write", h.sc); if (obj.abs && f.v !== "/dev/null") h.e.add("destroy", "redirect.overwrite", `Overwrites ${obj.text} if it exists.`, { objects: [obj], ifExists: obj.abs }); }
   if (c === undefined) { if (h.sc.os === "darwin" && p.operands.length > 1) { h.e.unwrap(h, p.operands.slice(1), "script"); return; } h.e.unclear("unclear.interactive", SAYS.interactive); return; }
@@ -5922,7 +6130,8 @@ git(["credential", "credential-store", "credential-cache", "credential-manager",
 });
 git(["config"], h => {
   // --fixed-value takes no value (commands-remote-i5a).
-  const p = opts(h, { shortValue: "f", longValue: ["file", "blob", "type", "default", "comment", "value"] });
+  // Main's table gave --fixed-value the next word: judged that way too (commands-held-8).
+  const p = heldOpts(h, { shortValue: "f", longValue: ["file", "blob", "type", "default", "comment", "value"] }, { shortValue: "f", longValue: ["file", "blob", "type", "default", "comment", "value", "fixed-value"] });
   const ops = p.operands;
   let sub = ops[0]?.v ?? null;
   const subs = ["get", "set", "unset", "list", "rename-section", "remove-section", "edit", "get-color", "get-colorbool"];
@@ -5972,7 +6181,11 @@ git(["rebase"], h => {
 });
 git(["commit"], h => {
   // -u and -S take a value only attached, --untracked-files and --gpg-sign only after = (commands-remote-i5a).
-  const p = opts(h, { shortValue: "mFCct", shortOptional: "uS", longValue: ["message", "file", "reuse-message", "reedit-message", "fixup", "squash", "author", "date", "template", "cleanup", "trailer", "pathspec-from-file"], longOptional: ["untracked-files", "gpg-sign"] });
+  const spec: OptSpec = { shortValue: "mFCct", shortOptional: "uS", longValue: ["message", "file", "reuse-message", "reedit-message", "fixup", "squash", "author", "date", "template", "cleanup", "trailer", "pathspec-from-file"], longOptional: ["untracked-files", "gpg-sign"] };
+  // Main's table gave all four the next word, so `git commit -S -m wip` had no message and asked: judged that way too
+  // (commands-held-2).
+  const was: OptSpec = { shortValue: "mFCcutS", longValue: ["message", "file", "reuse-message", "reedit-message", "fixup", "squash", "author", "date", "template", "cleanup", "trailer", "untracked-files", "pathspec-from-file", "gpg-sign"] };
+  const p = heldOpts(h, spec, was);
   if (has(p, "p", "patch", "interactive", "e", "edit") || values(p, "c", "reedit-message").length) h.e.unclear("unclear.interactive", SAYS.interactive);
   else if (!values(p, "m", "message", "F", "file", "C", "reuse-message", "fixup").length && !has(p, "no-edit")) h.e.unclear("unclear.interactive", SAYS.interactive);
   for (const f of values(p, "F", "file", "t", "template")) if (f && f !== "-") h.e.usePath(lit(f), "read", h.sc);
@@ -6119,7 +6332,9 @@ reg(NATIVE, ["gh"], h => {
   if ((GH_WRITE[group] ?? []).includes(sub)) {
     // A merge's -m, -r and -s and a review's -a, -c and -r are switches; a release's -n is its notes (commands-remote-i5a).
     const short = sub === "merge" ? "RtbFA" : sub === "review" ? "RbF" : group === "release" ? "RtnF" : group === "gist" ? "Rdf" : "BHRtbFTlamrp";
-    const p = parseOpts(rest, { shortValue: short, longValue: ["base", "head", "repo", "title", "body", "body-file", "label", "assignee", "milestone", "reviewer", "project", "template", "match-head-commit", "subject", "author-email", "add-label", "remove-label", "add-assignee", "remove-assignee", "add-reviewer", "remove-reviewer", "add-project", "remove-project", "notes", "notes-file", "target", "discussion-category", "notes-start-tag", "desc", "filename"] });
+    // Main's table was one for every verb and knew no --add-label, --notes, --desc, --filename and the like, so the word
+    // after one was an option or a file of its own: judged that way too (commands-held-8).
+    const p = heldOpts(h, { shortValue: short, longValue: ["base", "head", "repo", "title", "body", "body-file", "label", "assignee", "milestone", "reviewer", "project", "template", "match-head-commit", "subject", "author-email", "add-label", "remove-label", "add-assignee", "remove-assignee", "add-reviewer", "remove-reviewer", "add-project", "remove-project", "notes", "notes-file", "target", "discussion-category", "notes-start-tag", "desc", "filename"] }, { shortValue: "BHRtbFTlamr", longValue: ["base", "head", "repo", "title", "body", "body-file", "label", "assignee", "milestone", "reviewer", "project", "template", "match-head-commit", "subject", "author-email"] }, rest);
     const w = [...widening];
     for (const o of p.opts) if (/^(-B|--base|-H|--head|-R|--repo|--admin|--web|-w|-d|--delete-branch)$/.test(o.name)) w.push(o.name);
     const n = p.operands.slice(1).map(a => ({ kind: "other" as const, text: a.v ?? a.raw, abs: null }));
@@ -6320,9 +6535,11 @@ const CONTAINER_RUN_VALUE: readonly string[] = [
 ];
 function containerRun(h: H, prog: string, rest: Arg[]): void {
   // -P (--publish-all), -d, -i, -t and -q take no value (commands-remote-c4-2).
-  const p = parseOpts(rest, { shortValue: "eupvwlchma", stopAtOperand: true, longValue: CONTAINER_RUN_VALUE });
+  // Main's table gave -P the next word and knew fewer value options, so the image was another word: judged that way too
+  // (commands-held-8).
+  const p = heldOpts(h, { shortValue: "eupvwlchma", stopAtOperand: true, longValue: CONTAINER_RUN_VALUE }, { shortValue: "eupvwlchmaP", stopAtOperand: true, longValue: ["env", "user", "publish", "volume", "workdir", "label", "cpu-shares", "hostname", "memory", "attach", "name", "network", "net", "mount", "entrypoint", "env-file", "device", "cap-add", "cap-drop", "pid", "ipc", "userns", "security-opt", "platform", "restart", "runtime", "add-host", "dns", "log-driver", "log-opt", "ulimit", "tmpfs", "gpus", "pull", "cidfile", "cgroupns", "uts", "volumes-from", "group-add", "health-cmd", "stop-signal", "storage-opt", "sysctl", "isolation", "init-path", "shm-size"] }, rest);
   // Without an image it can't run as it is: asked about rather than judged as nothing (commands-remote-i5a).
-  if (p.operands.length === 0 && !has(p, "help")) h.e.unclear("unclear.docker-verb", "Ember can't tell which container command this runs.");
+  if (p.operands.length === 0 && !has(p, "help") && !h.e.readsAsMain) h.e.unclear("unclear.docker-verb", "Ember can't tell which container command this runs.");
   if (has(p, "d", "detach")) h.e.add("escape", "escape.background", SAYS.keepsRunning);
   if (has(p, "i", "interactive") && has(p, "t", "tty")) h.e.unclear("unclear.interactive", SAYS.interactive);
   const priv = has(p, "privileged")
@@ -6396,7 +6613,9 @@ function compose(h: H, prog: string, rest: Arg[]): void {
     if (sub === "run" && !flags.includes("-T") && !flags.some(f => f === "-d" || f === "--detach")) h.e.unclear("unclear.interactive", SAYS.interactive);
     // `compose run -v host:container` mounts as `docker run -v` does.
     const at = rest.indexOf(p.operands[0]);
-    if (sub === "run") containerMounts(h, parseOpts(rest.slice(at + 1), { shortValue: "eluvwp", longValue: ["env", "env-from-file", "label", "user", "volume", "workdir", "publish", "name", "entrypoint", "cap-add", "cap-drop", "pull"], stopAtOperand: true }));
+    // Main's table knew no --pull, so the word after it was the service and the mounts behind it were unread: judged that
+    // way too (commands-held-8).
+    if (sub === "run") containerMounts(h, heldOpts(h, { shortValue: "eluvwp", longValue: ["env", "env-from-file", "label", "user", "volume", "workdir", "publish", "name", "entrypoint", "cap-add", "cap-drop", "pull"], stopAtOperand: true }, { shortValue: "eluvwp", longValue: ["env", "env-from-file", "label", "user", "volume", "workdir", "publish", "name", "entrypoint", "cap-add", "cap-drop"], stopAtOperand: true }, rest.slice(at + 1)));
     return;
   }
   if (sub === "down" || sub === "rm" || sub === "kill") { h.e.add("destroy", `${prog}.rm`, "Deletes containers, images or volumes."); return; }
@@ -6742,7 +6961,9 @@ function pip(h: H): void {
   const verb = h.args[g.verbAt]?.v ?? null;
   const rest = h.args.slice(g.verbAt + 1);
   if (verb === "install" || verb === "uninstall") {
-    const p = parseOpts(rest, { shortValue: "rcetbifC", longValue: ["requirement", "constraint", "editable", "target", "build", "index-url", "extra-index-url", "find-links", "platform", "python-version", "implementation", "abi", "root", "prefix", "src", "upgrade-strategy", "config-settings", "global-option", "install-option", "progress-bar", "report", "only-binary", "no-binary", "trusted-host", "proxy", "retries", "timeout", "exists-action", "cert", "client-cert", "cache-dir", "log", "python", "keyring-provider", "use-feature", "use-deprecated", "group"] });
+    // Main's table knew no --cache-dir, --cert, --proxy, --log and the like, so the word after one was a package to
+    // install: judged that way too (commands-held-8).
+    const p = heldOpts(h, { shortValue: "rcetbifC", longValue: ["requirement", "constraint", "editable", "target", "build", "index-url", "extra-index-url", "find-links", "platform", "python-version", "implementation", "abi", "root", "prefix", "src", "upgrade-strategy", "config-settings", "global-option", "install-option", "progress-bar", "report", "only-binary", "no-binary", "trusted-host", "proxy", "retries", "timeout", "exists-action", "cert", "client-cert", "cache-dir", "log", "python", "keyring-provider", "use-feature", "use-deprecated", "group"] }, { shortValue: "rcetbi", longValue: ["requirement", "constraint", "editable", "target", "build", "index-url", "extra-index-url", "find-links", "platform", "python-version", "implementation", "abi", "root", "prefix", "src", "upgrade-strategy", "config-settings", "global-option", "install-option", "progress-bar", "report", "only-binary", "no-binary"] }, rest);
     for (const r of values(p, "r", "requirement", "c", "constraint")) if (r) h.e.usePath(lit(r), "read", h.sc);
     // Its log, its cache and the certificates it reads (commands-remote-v5-3).
     optionFiles(h, rest, p, { write: ["log"], into: ["cache-dir"], read: ["cert", "client-cert"] });
@@ -6782,10 +7003,14 @@ reg(NATIVE, ["pipx", "poetry", "pipenv", "uv", "rye", "pdm", "hatch", "conda", "
   }
   // Running something in the project's environment: the command after it is classified.
   if ((verb === "run" && /^(poetry|pipenv|uv|rye|pdm|hatch|conda|mamba|micromamba)$/.test(h.key)) || (verb === "exec" && /^(bundle|bundler|composer|pdm)$/.test(h.key))) {
-    const p = parseOpts(rest, {
+    const spec: OptSpec = {
       shortValue: "npfC", stopAtOperand: true,
       longValue: ["name", "prefix", "with", "python", "directory", "project", "env", "group", "extra", "package", "with-editable", "with-requirements", "env-file", "index", "default-index", "index-url", "extra-index-url", "find-links", "config-setting", "cwd", "python-preference", "exclude-newer", "resolution", "prerelease", "link-mode", "refresh-package", "upgrade-package", "reinstall-package", "no-group", "only-group", "cache-dir", "config-file", "color"],
-    });
+    };
+    // Main's table knew ten value options and no -f or -C, so the word after any other (`uv run --cache-dir x cmd`) was
+    // the program it ran: judged that way too (commands-held-8).
+    const was: OptSpec = { shortValue: "np", longValue: ["name", "prefix", "with", "python", "directory", "project", "env", "group", "extra", "package"], stopAtOperand: true };
+    const p = heldOpts(h, spec, was, rest);
     if (h.key === "uv" && values(p, "with").length) h.e.add("escape", "escape.npx", SAYS.downloadsProgram);
     // The folder it runs the command in, its cache and the files it reads (commands-remote-v5-3).
     optionFiles(h, rest, p, { cd: ["directory", "cwd", "C"], into: ["cache-dir"], read: ["with-requirements", "config-file", "env-file"] });
@@ -6927,10 +7152,14 @@ reg(NATIVE, ["make", "gmake", "mingw32-make", "nmake", "just", "rake", "invoke",
   const valueShort: Record<string, string> = { make: "CfIoWE", gmake: "CfIoWE", "mingw32-make": "CfIoWE", nmake: "fX", just: "fd", rake: "fIrRCeEp", gradle: "pbcgIxDP", gradlew: "pbcgIxDP", mvn: "bDflPsTt", mvnw: "bDflPsTt", nox: "sfeptk", tox: "ecxfm", task: "dt", ant: "fDl", ninja: "Cfjkldtw" };
   const mvn = h.key === "mvn" || h.key === "mvnw";
   const args = mvn ? h.args.map(a => (a.v !== null && MVN_WORDS[a.v] ? { ...a, v: MVN_WORDS[a.v] } : a)) : h.args;
-  const p = parseOpts(args, {
+  // Main's table gave Maven's -X, -p, -g and -r, nox's -r and tox's -v, -r and -n the next word and knew no --define,
+  // --activate-profiles, --builder, --log-file and the like, so the word after one was a target, read Maven's words of
+  // two letters as written (`-gs` as -g with s) and gave --jobs and --load-average any next word: judged that way too; a
+  // job count is the one thing read as now, --threads' too (commands-held-8).
+  const p = heldOpts(h, {
     shortValue: valueShort[h.key] ?? "", shortNumeric: /make$/.test(h.key) ? "jl" : "", longNumeric: ["jobs", "load-average", ...(/^gradlew?$/.test(h.key) ? ["max-workers"] : [])],
     longValue: ["file", "makefile", "directory", "include-dir", "old-file", "what-if", "justfile", "working-directory", "set", "project-dir", "build-file", "settings-file", "gradle-user-home", "init-script", "exclude-task", "projects", "resume-from", "settings", "global-settings", "session", "sessions", "keywords", "environment", "envlist", "taskfile", "dir", "global-toolchains", "toolchains", "encrypt-master-password", "encrypt-password", "builder", "log-file", "activate-profiles", "threads", "define"],
-  });
+  }, { shortValue: mvn ? "fsplDPTtbgrX" : h.key === "nox" ? "sfeptkr" : h.key === "tox" ? "ecvrnx" : valueShort[h.key] ?? "", shortNumeric: /make$/.test(h.key) ? "jl" : "", longNumeric: ["jobs", "load-average", "threads", ...(/^gradlew?$/.test(h.key) ? ["max-workers"] : [])], longValue: ["file", "makefile", "directory", "include-dir", "old-file", "what-if", "justfile", "working-directory", "set", "project-dir", "build-file", "settings-file", "gradle-user-home", "init-script", "exclude-task", "projects", "resume-from", "settings", "global-settings", "session", "sessions", "keywords", "environment", "envlist", "taskfile", "dir", "jobs", "load-average"] }, args, h.args);
   // A makefile read from stdin, /dev/stdin or a process substitution is a build program Ember can't vouch for: its
   // recipes run shell (review #166). Ember asks unless it can see the whole text and it is plainly ordinary.
   if ((/make$/.test(h.key) || h.key === "ninja") && values(p, "f", "file", "makefile").some(f => f === null || STDIN_NAME.test(f))) {
@@ -7209,7 +7438,9 @@ function hostOf(s: string): string {
 }
 
 reg(NATIVE, ["curl", "curl.exe"], h => {
-  const p = opts(h, {
+  // Main's table knew no -Q and none of the options after --mail-auth, so the word after one was an address or an
+  // option of its own: judged that way too (commands-held-8).
+  const p = heldOpts(h, {
     shortValue: "AbcCdeEFHKmoPrtTuUwXxyYzDQ",
     longValue: ["data", "data-raw", "data-binary", "data-urlencode", "data-ascii", "json", "form", "form-string", "upload-file", "request", "header", "user", "output", "cookie", "cookie-jar", "config", "url", "proxy", "user-agent", "referer", "max-time", "connect-timeout", "retry", "cacert", "cert", "key", "pass", "oauth2-bearer", "aws-sigv4", "output-dir", "write-out", "dump-header", "trace", "trace-ascii", "stderr", "resolve", "interface", "limit-rate", "range", "max-filesize", "proto", "proxy-user", "netrc-file", "unix-socket", "abstract-unix-socket", "ciphers", "variable", "expand-data", "time-cond", "continue-at", "retry-delay", "retry-max-time", "speed-limit", "speed-time", "local-port", "dns-servers", "doh-url", "preproxy", "hsts", "alt-svc", "etag-save", "etag-compare", "krb", "login-options", "sasl-authzid", "service-name", "mail-from", "mail-rcpt", "mail-auth",
       // The rest of curl 8's options that take a value (`curl --help all`), so none of their values reads as an address.
@@ -7221,7 +7452,7 @@ reg(NATIVE, ["curl", "curl.exe"], h => {
       "proxy-tlsauthtype", "proxy-tlspassword", "proxy-tlsuser", "pubkey", "quote", "random-file", "rate", "request-target", "socks4", "socks4a", "socks5",
       "socks5-gssapi-service", "socks5-hostname", "telnet-option", "tftp-blksize", "tls-max", "tls13-ciphers", "tlsauthtype", "tlspassword", "tlsuser",
       "trace-config", "url-query"],
-  });
+  }, { shortValue: "AbcCdeEFHKmoPrtTuUwXxyYzD", longValue: ["data", "data-raw", "data-binary", "data-urlencode", "data-ascii", "json", "form", "form-string", "upload-file", "request", "header", "user", "output", "cookie", "cookie-jar", "config", "url", "proxy", "user-agent", "referer", "max-time", "connect-timeout", "retry", "cacert", "cert", "key", "pass", "oauth2-bearer", "aws-sigv4", "output-dir", "write-out", "dump-header", "trace", "trace-ascii", "stderr", "resolve", "interface", "limit-rate", "range", "max-filesize", "proto", "proxy-user", "netrc-file", "unix-socket", "abstract-unix-socket", "ciphers", "variable", "expand-data", "time-cond", "continue-at", "retry-delay", "retry-max-time", "speed-limit", "speed-time", "local-port", "dns-servers", "doh-url", "preproxy", "hsts", "alt-svc", "etag-save", "etag-compare", "krb", "login-options", "sasl-authzid", "service-name", "mail-from", "mail-rcpt", "mail-auth"] });
   const urls = [...p.operands.map(a => a.v ?? ""), ...values(p, "url").map(v => v ?? "")].filter(u => u !== "");
   const host = hostOf(urls[0] ?? "") || "another computer";
   for (const u of urls) if (/^file:/i.test(u)) h.e.usePath(lit(decodeURIComponent(u.replace(/^file:\/\/(localhost)?/i, ""))), "read", h.sc);
@@ -7459,7 +7690,8 @@ function sshOptions(h: H, p: Parsed): void {
 }
 reg(NATIVE, ["ssh", "slogin", "autossh", "mosh"], h => {
   // -M (master mode) takes no value (commands-remote-i5a).
-  const p = parseOpts(h.args, { shortValue: "BbcDEeFIiJLlmOoPpQRSWw", stopAtOperand: true });
+  // Main's table gave -M the next word, so the host was the word after it: judged that way too (commands-held-8).
+  const p = heldOpts(h, { shortValue: "BbcDEeFIiJLlmOoPpQRSWw", stopAtOperand: true }, { shortValue: "BbcDEeFIiJLlmOoPpQRSWwM", stopAtOperand: true });
   sshOptions(h, p);
   const host = p.operands[0]?.v ?? null;
   const cmd = p.operands.slice(1);
@@ -7500,11 +7732,15 @@ function clientMayFetch(h: H): boolean {
   return text.split(/[;\n]|&&|\|\|/).some(c => { const w = c.trim().split(/\s+/)[0] ?? ""; return w !== "" && !SENDS_ONLY.test(w); });
 }
 reg(NATIVE, ["rsync"], h => {
-  const p = opts(h, {
+  const spec: OptSpec = {
     // --mkpath and every other switch take no value (commands-remote-r4-1).
     shortValue: "eBfTM@",
     longValue: ["rsh", "rsync-path", "exclude", "include", "filter", "files-from", "exclude-from", "include-from", "password-file", "log-file", "log-file-format", "backup-dir", "compare-dest", "copy-dest", "link-dest", "temp-dir", "partial-dir", "chmod", "chown", "usermap", "groupmap", "timeout", "contimeout", "port", "address", "sockopts", "bwlimit", "max-size", "min-size", "max-delete", "modify-window", "suffix", "out-format", "info", "debug", "checksum-choice", "compress-choice", "skip-compress", "outbuf", "stop-after", "stop-at", "write-batch", "read-batch", "only-write-batch", "iconv", "remote-option", "block-size", "protocol", "early-input", "max-alloc", "compress-level", "zl", "copy-as", "checksum-seed", "cc", "zc", "log-format", "config", "dparam"],
-  });
+  };
+  // Main's table gave --mkpath the next word and knew no -@, --cc, --zl, --config and the like, so the word after one of
+  // them was a file to copy: judged that way too (commands-held-8).
+  const was: OptSpec = { shortValue: "eBfTM", longValue: ["rsh", "rsync-path", "exclude", "include", "filter", "files-from", "exclude-from", "include-from", "password-file", "log-file", "log-file-format", "backup-dir", "compare-dest", "copy-dest", "link-dest", "temp-dir", "partial-dir", "chmod", "chown", "usermap", "groupmap", "timeout", "contimeout", "port", "address", "sockopts", "bwlimit", "max-size", "min-size", "max-delete", "modify-window", "suffix", "out-format", "info", "debug", "checksum-choice", "compress-choice", "skip-compress", "outbuf", "stop-after", "stop-at", "write-batch", "read-batch", "only-write-batch", "iconv", "remote-option", "block-size", "protocol", "early-input", "mkpath"] };
+  const p = heldOpts(h, spec, was);
   for (const e of values(p, "e", "rsh")) if (e === null || !/^ssh(\s+-[A-Za-z]+(\s+[A-Za-z0-9._/~-]+)?)*$/.test(e)) h.e.unclear("unclear.rsync-rsh", "It runs a remote shell command Ember can't see.");
   if (values(p, "rsync-path", "remote-option", "M").length) h.e.unclear("unclear.rsync-rsh", "It runs a command on the other computer Ember can't see.");
   for (const f of values(p, "password-file", "files-from", "exclude-from", "include-from", "read-batch")) if (f) h.e.usePath(lit(f), "read", h.sc);
@@ -7512,7 +7748,7 @@ reg(NATIVE, ["rsync"], h => {
   const ops = p.operands;
   const remote = (a: Arg): boolean => a.v !== null && (/^rsync:\/\//i.test(a.v) || (SCP_LIKE.test(a.v) && !/^[A-Za-z]:[\\/]/.test(a.v)) || /::/.test(a.v));
   // One operand lists what is there, as ls does (commands-remote-i5a).
-  if (ops.length === 1 && !remote(ops[0])) h.e.usePath(ops[0], "list", h.sc);
+  if (ops.length === 1 && !remote(ops[0]) && !h.e.readsAsMain) h.e.usePath(ops[0], "list", h.sc);
   if (ops.length < 2) return;
   const dest = ops[ops.length - 1];
   const sources = ops.slice(0, -1);
@@ -7689,11 +7925,13 @@ reg(NATIVE, ["caddy"], h => {
 });
 reg(NATIVE, ["miniserve"], h => {
   // miniserve [PATH]: every address unless -i/--interfaces says otherwise; -u lets whoever connects add files.
-  const q = parseOpts(h.args, {
+  // Main's table gave -q and --qrcode the next word, so the folder served was the word after it: judged that way too
+  // (commands-held-8).
+  const q = heldOpts(h, {
     // -q (--qrcode) takes no value (commands-remote-i5a).
     shortValue: "ipacdt",
     longValue: ["interfaces", "port", "auth", "auth-file", "color-scheme", "color-scheme-dark", "title", "header", "index", "route-prefix", "tls-cert", "tls-key"],
-  });
+  }, { shortValue: "ipacdtq", longValue: ["interfaces", "port", "auth", "auth-file", "color-scheme", "color-scheme-dark", "title", "header", "index", "route-prefix", "tls-cert", "tls-key", "qrcode"] });
   const ifs = values(q, "i", "interfaces");
   const root = q.operands[0] ?? lit(".");
   listens(h, ifs.length === 0 ? "" : ifs.find(i => i === null || !LOOPBACK.test(i.replace(/^\[|\]$/g, ""))) ?? "localhost", root);
@@ -7855,7 +8093,8 @@ reg(NATIVE, ["dos2unix", "unix2dos", "mac2unix", "unix2mac"], h => {
 });
 reg(NATIVE, ["uniq", "guniq"], h => {
   // --group and --all-repeated take a method only after = (commands-remote-i5a).
-  const p = opts(h, { shortValue: "fsw", longValue: ["skip-fields", "skip-chars", "check-chars"], longOptional: ["group", "all-repeated"] });
+  // Main's table gave both the next word: judged that way too (commands-held-8).
+  const p = heldOpts(h, { shortValue: "fsw", longValue: ["skip-fields", "skip-chars", "check-chars"], longOptional: ["group", "all-repeated"] }, { shortValue: "fsw", longValue: ["skip-fields", "skip-chars", "check-chars", "group", "all-repeated"] });
   const [input, output] = p.operands;
   if (input) h.e.readArgs([input], h.sc, { unresolvedUnclear: true });
   if (output) overwrites(h, output);
@@ -7873,7 +8112,8 @@ reg(NATIVE, ["iconv"], h => {
 });
 reg(NATIVE, ["patch", "gpatch"], h => {
   // --merge takes a style only after = (commands-remote-i5a).
-  const p = opts(h, { shortValue: "pioDdBFrVYzg", longValue: ["strip", "input", "output", "directory", "ifdef", "prefix", "fuzz", "reject-file", "version-control", "basename-prefix", "suffix", "get", "quoting-style", "reject-format"], longOptional: ["merge"] });
+  // Main's table gave --merge the next word and knew no --reject-format: judged that way too (commands-held-8).
+  const p = heldOpts(h, { shortValue: "pioDdBFrVYzg", longValue: ["strip", "input", "output", "directory", "ifdef", "prefix", "fuzz", "reject-file", "version-control", "basename-prefix", "suffix", "get", "quoting-style", "reject-format"], longOptional: ["merge"] }, { shortValue: "pioDdBFrVYzg", longValue: ["strip", "input", "output", "directory", "ifdef", "prefix", "fuzz", "reject-file", "version-control", "basename-prefix", "suffix", "get", "quoting-style", "merge"] });
   let sc = h.sc;
   // GNU patch takes `--di`, the shortest unambiguous --directory, as it; optIs matches three letters or more
   // (commands-b7-5).
@@ -8110,7 +8350,11 @@ reg(NATIVE, ["pkill", "killall", "pgrep-kill", "xkill", "fuser", "tskill", "skil
   if (h.key === "killall5") { h.e.refuseWith("ember.process", "safety"); return; }
   // -e takes no value; pkill's -n and -o are switches where killall's are values, and killall's -g a switch (commands-remote-i5a).
   const short = h.key === "killall" ? "suoynZ" : h.key === "skill" || h.key === "snice" ? "tupc" : "sgGPtuUFO";
-  const p = opts(h, { shortValue: short, longValue: ["signal", "pgroup", "group", "parent", "terminal", "euid", "uid", "session", "ns", "nslist", "pidfile", "older-than", "younger-than", "context", "older", "runstates"] });
+  const spec: OptSpec = { shortValue: short, longValue: ["signal", "pgroup", "group", "parent", "terminal", "euid", "uid", "session", "ns", "nslist", "pidfile", "older-than", "younger-than", "context", "older", "runstates"] };
+  // Main's table was one for all of them, with -n, -o, -e, -y and -g taking the next word and no --older or --runstates,
+  // so other words were the names it kills: judged that way too (commands-held-8).
+  const was: OptSpec = { shortValue: "sgGPtuUnoFeOy", longValue: ["signal", "pgroup", "group", "parent", "terminal", "euid", "uid", "session", "ns", "nslist", "pidfile", "older-than", "younger-than", "context"] };
+  const p = heldOpts(h, spec, was);
   const names = p.operands.map(a => a.v);
   const full = has(p, "f", "full");
   const regex = h.key === "pkill" || has(p, "r", "regexp");
@@ -8163,7 +8407,9 @@ reg(NATIVE, ["gdb", "lldb", "renice", "gcore", "dtrace", "dtruss", "perf"], h =>
   if (pids.length) h.e.add("system", "system.debug", "Watches or changes another program that is running.");
   if (h.key === "perf" && /^(record|stat|trace|top)$/.test(h.args[0]?.v ?? "") && !pids.length) {
     // -a (every CPU) takes no value (commands-remote-i5a).
-    const p = parseOpts(h.args.slice(1), { shortValue: "eopFcCtGmu", stopAtOperand: true });
+    // Main's table gave -a the next word and knew no -m or -u, so the command was another word: judged that way too
+    // (commands-held-8).
+    const p = heldOpts(h, { shortValue: "eopFcCtGmu", stopAtOperand: true }, { shortValue: "eopFcCtGa", stopAtOperand: true }, h.args.slice(1));
     h.e.payload(p.operands, h.sc, `perf ${h.args[0].v}`);
     return;
   }
