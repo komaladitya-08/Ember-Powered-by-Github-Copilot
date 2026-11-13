@@ -59,9 +59,16 @@ const packaged = process.env.EMBER_PACKAGED_APP ? path.resolve(root, process.env
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 /**
  * How long the Ask field may be under another window before the right-click is given up (cifix-2): Ember's hello can
- * come up to 6 s after start and stays 15 s at most, and nothing else of Ember's is over the box by itself.
+ * come up to 6 s after start and stays 15 s at most, and nothing else of Ember's is over the box by itself. That is
+ * the limit for another program's window or none (timing); one of Ember's own over the field is given OWN_OVER_MS.
  */
 const ASK_FIELD_WAIT_MS = 22_000;
+/**
+ * How long one of Ember's own windows (its overlay, handle, a menu) may stay over a point this suite is about to press
+ * (cifix-x9-1): one period of the overlay taking the top back. Longer, and a real press there would go to Ember's
+ * bubble instead of the field, so the test fails saying so rather than waiting it out.
+ */
+const OWN_OVER_MS = 2_000;
 const notTestable = (what: string, reason: string) => console.log(`not testable on this runner: ${what}: ${reason}`);
 
 interface BenchReady { hwnd: number; pid: number; window: Rect; controls: Record<string, Rect> }
@@ -484,11 +491,18 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
         };
       });
       const own = new Map((await emberFacts()).windows.map(w => [w.id, w.title]));
+      // Ember's own: its windows as Electron lists them, and anything else of its main process (a native menu).
+      const emberPid = ember.process().pid;
       const named = (w: WindowAt) => (w.id === ready.hwnd ? "the bench" : own.has(w.id) ? `Ember's window ${JSON.stringify(own.get(w.id))}`
+        : emberPid !== undefined && w.pid === emberPid ? "a window of Ember's that it doesn't list"
         : `a window of ${api.processImage(w.pid) ?? "a program that can't be named"}`);
-      /** Waits for `want` to be the window under the point (window-at.ts), prints what it saw, and fails saying what was there instead. */
+      const emberOwn = (w: WindowAt) => own.has(w.id) || (emberPid !== undefined && w.pid === emberPid);
+      /**
+       * Waits for `want` to be the window under the point (window-at.ts), prints what it saw, and fails saying what was
+       * there instead: at the limit, or as soon as one of Ember's own windows has stayed there OWN_OVER_MS.
+       */
       const reaches = async (what: string, want: number, px: number, py: number, limitMs: number) => {
-        const seen = await waitForWindowAt({ what, want, limitMs, read: () => windowAt(px, py), name: named, now: Date.now, sleep });
+        const seen = await waitForWindowAt({ what, want, limitMs, own: emberOwn, ownLimitMs: OWN_OVER_MS, read: () => windowAt(px, py), name: named, now: Date.now, sleep });
         console.log(seen.line);
         if (!seen.reached) throw new Error(`${seen.line}; Ember's side: ${JSON.stringify(await emberFacts().catch((e: unknown) => String(e)))}`);
       };
@@ -496,7 +510,8 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
       await sleep(150);
       // The box is topmost, and so are Ember's overlay and handle, which raise themselves and take the pointer where
       // they have something to click (the hello's buttons, for as long as it stays up: 15 s at most, from up to 6 s
-      // after start). The right-click needs the field itself under the pointer: waited for, never assumed.
+      // after start). The right-click needs the field itself under the pointer: waited for, never assumed. Ember's
+      // own window staying over the field is not waited out (cifix-x9-1): it would take the user's click.
       await reaches("the Ask field under the pointer before the right-click (review #77)", askId, at.x, at.y, ASK_FIELD_WAIT_MS);
       expect(hit(at.x, at.y), "the right-click reaches the Ask field").toBe(askId);
       x.button(3, true);
