@@ -1326,8 +1326,13 @@ list's "1. La La Land." is Kitten's too. (One way only: in an answer said in ano
 English outside what it quotes, with none of that language's short words and no letter of another script, is
 Kitten's, so "Shall I reply to it?" after a Spanish email read out is asked in English, however the answer opened
 ("Sure.", "José wrote:"); "Il s'appelle Gone with the Wind." and "Ошибка: The file was not found." keep their answer's
-voice, but a piece with none of its language's short words ("Er heißt Gone with the Wind.") is still Kitten's.) The
-answer is judged in passages: after a lead-in said in Kitten's voice (a piece that ends with a colon: "Here is the email
+voice, but a piece with none of its language's short words ("Er heißt Gone with the Wind.") is still Kitten's. After
+a passage read out, a short piece with none of that language's short words, no letter with an accent outside a name
+and one of Ember's own closing words ("want", "shall", "reply", "anything", "else", "translate", "or", "to", "you": app/voice/spoken.ts
+`ownClosing`), or the pronoun "I" after its first word, is Kitten's too: "Want me to reply?", "Shall I reply?" and
+"Anything else?" took the passage's voice, or went unsaid without one, in 28 of 44 cases while the follow-up window
+opened for them (voice-speaking-r10-1; now none, and the passage's own sign-offs, "Grazie mille, Marco.", keep its
+voice).) The answer is judged in passages: after a lead-in said in Kitten's voice (a piece that ends with a colon: "Here is the email
 from José:", also one that came in the same piece as the passage's first sentence), and from the first sentence that may
 be another language's in an answer that looked English so far ("Okay, reading it now."), what follows is judged by
 itself, from its own first 60 letters, and waits until then unless it is clearly English: counted with the lead-in, whose

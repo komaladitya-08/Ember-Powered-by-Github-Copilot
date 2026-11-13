@@ -550,6 +550,33 @@ function englishOnly(text: string, lang: string): boolean {
   return englishClearly(text) && !stopwords(wordsBesidesNames(text), lang).length && !/[^\p{Script=Latin}\P{L}]/u.test(text);
 }
 
+/**
+ * Words of Ember's own closing offers and questions that the other languages here seldom write ("Want me to reply?",
+ * "Anything else?", "Should I translate it?": ownClosing). Not "a", "me", "no" or "do", which Italian, Spanish and
+ * Portuguese write too.
+ */
+const CLOSING_WORDS = new Set("want would should shall like reply anything else answer translate translation draft leave forward send something more help or to you it your the".split(" "));
+
+/**
+ * Whether `text`, a piece of an answer in `lang` because of a passage it read out, is Ember's own English closing words:
+ * a short piece with one of CLOSING_WORDS, or English's pronoun "I" after its first word (Italian's "i" is lower case),
+ * and nothing of `lang`'s: none of its short words, no letter with an accent outside a name (a capitalised word after
+ * the first), no mark English seldom writes and no letter of another script. englishOnly wants two different English
+ * short words, so "Want me to reply?", "Shall I reply?" and "Anything else?" took the passage's voice, or went unsaid
+ * without one, while the follow-up window opened for them (voice-speaking-r10-1). A passage's own sign-off ("Grazie
+ * mille, Marco.", "Merci, Marie.") has none of these words.
+ */
+function ownClosing(text: string, lang: string): boolean {
+  if (/[^\p{Script=Latin}\P{L}]/u.test(text) || FOREIGN_MARKS.test(text)) return false;
+  const tokens = text.split(/\s+/u).map(t => t.replace(/^[^\p{L}]+|[^\p{L}']+$/gu, "")).filter(t => /\p{L}/u.test(t));
+  if (!tokens.length || tokens.length > 10) return false;
+  const own = tokens.filter((t, i) => i === 0 || !/^\p{Lu}/u.test(t));
+  if (ACCENTED.test(own.join(" "))) return false;
+  const lower = own.map(t => t.toLowerCase());
+  if (stopwords(lower, lang).length) return false;
+  return lower.some(w => CLOSING_WORDS.has(w)) || tokens.some((t, i) => i > 0 && t === "I");
+}
+
 /** An answer's language is decided from this many of its letters, or from all of a shorter one (voice-speaking-r1). */
 export const DECIDE_LETTERS = 60;
 /** Letters English seldom writes, outside names ("Café Nero", "São Paulo": voice-speaking-r2-2): "Bien sûr", "Natürlich". */
@@ -650,7 +677,10 @@ export class AnswerLanguage {
     // language's short words or a letter of another script ("Il s'appelle Gone with the Wind.", "Ошибка: The file was
     // not found.": voice-speaking-x7-1). Not by how the answer opened: most open too short to tell ("Sure.", "José
     // wrote:"), and their closing question went back to the passage's voice (voice-speaking-y7-1).
-    const out = this.held.map(text => ({ text, lang: lang && englishOnly(text.replace(QUOTED, " "), lang) ? null : lang ?? null }));
+    const out = this.held.map(text => {
+      const unquoted = text.replace(QUOTED, " ");
+      return { text, lang: lang && (englishOnly(unquoted, lang) || (this.passage && ownClosing(unquoted, lang))) ? null : lang ?? null };
+    });
     this.held = [];
     // A lead-in said in Ember's own voice ("Here is the email from José:") ends what was judged: the passage after it
     // is judged by itself. Counted with the lead-in, whose English short words outnumber a first sentence's, a Spanish

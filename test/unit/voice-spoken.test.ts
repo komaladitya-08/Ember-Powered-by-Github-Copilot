@@ -616,6 +616,17 @@ describe("AnswerLanguage judges a passage read out after an English lead-in by t
     const said = streamed("Aquí tienes los archivos que pediste esta mañana, con todo lo que hay en la carpeta:\n\nInforme.pdf y notas.txt.", "¿qué archivos hay en la carpeta de descargas?");
     expect(said.map(p => p.lang)).toEqual(["es", "es", "es"]);
   });
+
+  // The closing questions a model ends a read-out with. Only "Shall I reply to it?" was tested; the rest have one
+  // English short word or none, or one another language shares ("I" is Italian's "i"), and took the passage's voice, or
+  // went unsaid without one, while the follow-up window opened for them (voice-speaking-r10-1).
+  const CLOSING = ["Shall I reply to it?", "Shall I reply?", "Want me to reply?", "Should I reply?", "Do you want me to answer?", "Want me to draft a reply?", "Anything else?", "Would you like me to reply to José?", "Should I translate it?", "Want a translation?", "Reply, or leave it?"];
+  const LATIN = ["es", "fr", "de", "it", "pt", "nl"];
+  it.each(LATIN.flatMap(lang => CLOSING.map(close => [lang, close] as const)))("asks the closing question in Ember's own voice after a %s passage: %j (voice-speaking-r10-1)", (lang, close) => {
+    const said = streamed(`Here is the email from José:\n\n${PASSAGES[lang]}\n\n${close}`);
+    expect(said.at(-1)).toEqual({ text: close, lang: null });
+    expect(said.slice(1, -1).map(p => p.lang)).toEqual(said.slice(1, -1).map(() => lang));
+  });
 });
 
 describe("AnswerLanguage says an English answer's own closing words in Ember's voice after a passage it read out in another language", () => {
