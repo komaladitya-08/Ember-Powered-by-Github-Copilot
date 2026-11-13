@@ -632,15 +632,20 @@ reads risky words in; a risky step of none of these kinds, "Add comment" say, is
 something else it still asks, is checked or is announced as the mode says), or the same command or one that does the
 same to the same thing however it names it (`find build -delete`, `mv build /tmp/x` or inline code that removes
 `build` after `rm -rf build`), is refused without another question, never checked by Assisted and never announced, and
-"What Ember did" says "You said no to this step earlier in this task." The rule is the same danger to the same thing,
-not the same kind of thing anywhere: a no to Delete in Files says nothing of Delete in Mail, a no to pushing `main`
-nothing of pushing `feature`, and a no to a step a page came up with nothing of the step you asked for yourself. A no
-also crosses between commands and apps: after a no to `rm -rf build`, deleting "build" in Files is refused, and after
-a no to deleting report.pdf in Files, `rm ~/report.pdf` is. Where Ember can't tell whether something is what you
-refused (a command that doesn't say what it acts on or that Ember can't read, a deletion in an app after a no to a
-command that deletes, a step with no kind of its own after a no to another), it is never checked or announced: it
-asks, the command's card saying "You said no to something like this earlier in this task."; in Autopilot, which asks
-nothing about steps in apps, such a step is refused. A question nobody answered isn't asked a second time until you
+"What Ember did" says "You said no to this step earlier in this task." Only what is recognisably the same is refused
+so: a no to Delete in Files doesn't refuse Delete in Mail, nor a no to pushing `main` a push of `feature`. Everything
+else that may be what you refused asks, for the rest of the task and in every mode, never checked by Assisted and
+never announced (`likeCommand()`, the worker's `like`; rule `refused-like`): after a no to a command, a later command
+with a danger of a kind the refused one had, whatever either names (a push by the remote's URL after a no to a push
+by its name, a push of `feature` after a no to a push of `main`, `rm -rf dist` after a no to `rm -rf build`), any
+dangerous command after a no to one Ember couldn't read (inline code, a loop, a program it doesn't know), and any
+command Ember can't read after a no to a dangerous one; between commands and apps, by the kind alone and never by a
+word of a name or a window's title: after a no to `rm -rf build` every deletion in an app asks, and after a no to
+deleting report.pdf in Files every deletion by command does, `rm ~/report.pdf` too; a step with no kind of its own
+after a no to another; and your own step of a kind you said no to when a page came up with it (that no doesn't
+refuse the step you asked for yourself, but it isn't checked or announced either). The command's card says "You said
+no to something like this earlier in this task."; in Autopilot, which asks nothing about steps in apps, such a step
+is refused. A question nobody answered isn't asked a second time until you
 next say something to that task. To have Ember do it after all, ask again: a new request is a new task.
 **The mode by voice** (app/main/agent/autonomy-intent.ts, answered by Ember itself, never by a tool of the model's).
 Say a mode's name, “Ember, switch to Autopilot”, “Assisted mode”, “go back to Interactive” or “turn Autopilot off”, to

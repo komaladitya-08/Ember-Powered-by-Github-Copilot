@@ -3276,10 +3276,14 @@ describe("a command that would ask, in Autopilot (autopilot.ts; modes-D2, modes-
       expect(h.audit.find(e => e.phase === "decided"), reworded).toMatchObject({ verdict: "refuse" });
       expect(h.audit.find(e => e.phase === "decided")!.rules as string[], reworded).toContain("refused-before");
     }
-    // Another command of that task still goes ahead, announced.
-    const other = auto({ refusals, state });
+    // Another deletion may be the refused one done another way: it asks, never announced (modes-y9-y9-1). Another
+    // kind of danger in that task still goes ahead, announced.
+    const other = auto({ refusals, state, answers: ["once"] });
     expect((await run(other, "rm -rf dist")).resultType).toBe("success");
-    expect(other.windowAnnounce).toHaveLength(1);
+    expect([other.asked.length, other.windowAnnounce]).toEqual([1, []]);
+    const push = auto({ refusals, state });
+    expect((await run(push, "git push origin main")).resultType).toBe("success");
+    expect([push.asked, push.windowAnnounce.length]).toEqual([[], 1]);
   });
 
   it("keeps a no to a command it still asks about: read another way, the secret is refused, never asked about again", async () => {

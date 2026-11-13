@@ -251,27 +251,23 @@ export const noKindName = (app: string | undefined): string => inApp("risk-none\
 /** A command's class of danger as the kinds of risky step that do the same in an app, and the other way round (modes-y9-2). */
 const CLASS_KINDS: Readonly<Partial<Record<DangerClass, readonly string[]>>> = { destroy: ["delete", "overwrite"], "remote-delete": ["delete"], publish: ["send"] };
 const ACROSS_TO_STEP = "command-did\n", ACROSS_TO_COMMAND = "step-did\n";
-/** The words of a step, or the last part of a path, as they are compared across: lower case, whole. */
-const tokens = (words: string): string[] => [...new Set(words.toLowerCase().split(/[^\p{L}\p{N}._-]+/u).map(t => t.replace(/^[._-]+|[._-]+$/g, "")).filter(t => t.length >= 3))].slice(0, 60);
-/** What a command's act is called in a few words: the last part of its path, or its branch, package or host. */
-const thingOf = (a: CommandAct): string | null => (a.path ? a.path[a.path.length - 1]?.toLowerCase() ?? null : a.kind === "rule" || a.kind === "program" ? null : a.text.toLowerCase());
-
 /**
- * The names a refused risky step leaves for commands: its kinds, and each with every word of the step (its control,
- * what policy read of it, its window's title), so `rm ~/report.pdf` after a no to "Delete report.pdf?" is the same
- * thing, and any other deletion by command is one Ember can't tell from it.
+ * The names a refused risky step leaves for commands: its kinds, nothing more. A later command of the matching class
+ * of danger (a deletion by command after a no to a deletion in an app), or one Ember can't read, may be the refused
+ * thing done another way: it asks, in every mode (Refusals.commandLike). No word of the step is kept to refuse a
+ * command by: three reviews each found a word that matched something else (a window's title, an email's subject:
+ * modes-y9-y9-3, modes-y9-y9-4), so nothing across the two is taken for "the same" any more.
  */
-export function stepMarksForCommands(kinds: readonly string[], words: string): string[] {
-  return kinds.flatMap(k => [`${ACROSS_TO_COMMAND}${k}`, ...tokens(words).map(t => `${ACROSS_TO_COMMAND}${k}\n${t}`)]);
+export function stepMarksForCommands(kinds: readonly string[]): string[] {
+  return kinds.map(k => `${ACROSS_TO_COMMAND}${k}`);
 }
 /**
- * How a risky app step of `kinds`, with `words`, stands with the commands refused in the task, by the names
- * Refusals.noteCommand left: "same" where a refused command did that kind of thing to something the step's words
- * name (the Delete key on "build" in Files after a no to `rm -rf build`), "like" where one did that kind of thing and
- * the step doesn't say to what.
+ * The names a risky app step of `kinds` is looked up under against the commands refused in the task
+ * (Refusals.noteCommand left them): a refused command did that kind of thing, to whatever it was. Such a step may be
+ * it: it is never checked or announced (the worker's `like`).
  */
-export function stepAcrossNames(kinds: readonly string[], words: string): { same: string[]; like: string[] } {
-  return { same: kinds.flatMap(k => tokens(words).map(t => `${ACROSS_TO_STEP}${k}\n${t}`)), like: kinds.map(k => `${ACROSS_TO_STEP}${k}`) };
+export function stepAcrossNames(kinds: readonly string[]): string[] {
+  return kinds.map(k => `${ACROSS_TO_STEP}${k}`);
 }
 
 /** One thing a dangerous command does, and to what: the class, and the path, branch, package… or else the rule. */
@@ -445,16 +441,26 @@ export function sameCommand(before: CommandAsked, now: CommandAsked): boolean {
     (n.opaque ? evident(n, a.cls) : n.cls === a.cls && (n.bare || MOVES_ITS_SOURCE.test(n.rule))) && namesAct(n, a, now)));
 }
 
+/** A class of danger the classifier names, as against what Ember can't read ("unclear") or doesn't know ("unknown"). */
+const reads = (c: DangerClass): boolean => c !== "unclear" && c !== "unknown";
+const dangersOf = (c: CommandAsked): Set<DangerClass> => new Set([...c.acts.map(a => a.cls), ...(c.named ?? []).map(n => n.cls)].filter(reads));
+const unreadIn = (c: CommandAsked): boolean => c.acts.some(a => !reads(a.cls)) || (c.named ?? []).some(n => n.opaque);
+
 /**
- * May `now` be the command the user turned down, though Ember can't tell? Where it has a finding that names nothing
- * it acts on, of a class the refused command had (`npm publish` after a refused push; `gh api -X PUT …` that names
- * no refused branch), or one Ember can't read at all (a loop, inline code, a program it doesn't know: it may be any
- * class). Such a command is never announced or shown to Assisted's check: it asks, in every mode, which is the
- * user's to answer (modes-y9-9). It refuses nothing.
+ * May `now` be the command the user turned down, though it isn't recognisably the same (sameCommand)? A plain rule,
+ * on the classifier's own classes and no words (the integrator's steer on modes-y9-y9-1 and -2: every matcher of
+ * "the same thing" missed another way to write it): after a refused command, a later one with a danger of a class the
+ * refused one had, whatever either names (a push by the remote's URL after a refused push by its name, another
+ * deletion); any later danger, or anything Ember can't read, where part of the refused command was something Ember
+ * couldn't read (inline code, a loop, a program it doesn't know: it may have been any danger); and anything Ember
+ * can't read where the refused one had a danger. Such a command is never announced or shown to Assisted's check: it
+ * asks, in every mode, which is the user's to answer (modes-y9-9). It refuses nothing.
  */
 export function likeCommand(before: CommandAsked, now: CommandAsked): boolean {
-  if (before.acts.length === 0) return false;
-  return (now.named ?? []).some(n => n.opaque || (n.bare && before.acts.some(a => a.cls === n.cls)));
+  const had = dangersOf(before), has = dangersOf(now);
+  if ([...has].some(c => had.has(c))) return true;
+  if (unreadIn(before)) return has.size > 0 || unreadIn(now);
+  return had.size > 0 && unreadIn(now);
 }
 
 /** One task's refusals. */
@@ -476,28 +482,20 @@ export class Refusals {
   }
 
   /**
-   * A command's card ended without a yes, or the user stopped its countdown. A no also leaves, for app steps, what the
-   * command would have done and to what (stepAcrossNames reads them): deleting `build` in Files is that deletion done
-   * another way (modes-y9-2).
+   * A command's card ended without a yes, or the user stopped its countdown. A no also leaves, for app steps, the kinds
+   * of thing the command would have done (stepAcrossNames reads them): a deletion in an app after it may be that
+   * deletion done another way, whatever it deletes (modes-y9-2, modes-y9-y9-4).
    */
   noteCommand(asked: CommandAsked, standing: Standing): void {
     this.commands.push({ asked, standing });
     if (standing !== "refused") return;
-    for (const a of asked.acts) {
-      const thing = thingOf(a);
-      for (const k of CLASS_KINDS[a.cls] ?? []) this.noteStep([`${ACROSS_TO_STEP}${k}`, ...(thing && thing.length >= 2 ? [`${ACROSS_TO_STEP}${k}\n${thing}`] : [])], "refused");
-    }
+    for (const a of asked.acts) this.noteStep((CLASS_KINDS[a.cls] ?? []).map(k => `${ACROSS_TO_STEP}${k}`), "refused");
   }
 
-  /**
-   * How a command stands: refused if it is one the user said no to (sameCommand), or does to something what a risky
-   * app step they said no to did, where that step's words named it (stepMarksForCommands); else waiting, else null.
-   */
+  /** How a command stands: refused if it is one the user said no to (sameCommand), else waiting, else null. */
   command(now: CommandAsked): Standing | null {
     const found = this.commands.filter(c => sameCommand(c.asked, now)).map(c => c.standing);
-    if (found.includes("refused")) return "refused";
-    const across = now.acts.some(a => { const thing = thingOf(a); return !!thing && (CLASS_KINDS[a.cls] ?? []).some(k => this.steps.get(`${ACROSS_TO_COMMAND}${k}\n${thing}`) === "refused"); });
-    return across ? "refused" : found.includes("waiting") ? "waiting" : null;
+    return found.includes("refused") ? "refused" : found.includes("waiting") ? "waiting" : null;
   }
 
   /**

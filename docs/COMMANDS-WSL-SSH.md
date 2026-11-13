@@ -679,8 +679,10 @@ It still asks, with the card of §2.4, before:
   build", "push it, but without force"): that is your no, said in advance, and the card says "You didn't ask for
   this."; and one your words hold back ("leave the build folder alone", "keep notes.txt", "hold off on publishing",
   "push tomorrow"), where the card also says "Your words say to leave this or to wait, so Ember asks first.";
-- a command that may be one you said no to earlier in the task, where Ember can't tell (one that doesn't say what it
-  acts on, a loop, inline code): the card says "You said no to something like this earlier in this task.";
+- a command of the same kind of danger as one you said no to earlier in the task, whatever either names (another
+  push after a no to a push, another deletion after a no to a deletion or to deleting something in an app), any
+  dangerous command after a no to one Ember couldn't read, and one Ember can't read (a loop, inline code) after a no
+  to a dangerous one: the card says "You said no to something like this earlier in this task.";
 - every command where your organisation asks for that, where you turned on **Ask before every command** for that
   computer, in a Podman distro, and in a project's chosen command folder;
 - turning commands on for a computer the first time (§2.1).

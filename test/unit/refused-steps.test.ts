@@ -172,14 +172,21 @@ describe("a command the user said no to, sent again or reworded (commands-remote
   it.each<[string, string]>([
     ["rm -rf build", "python3 -c 'print(open(\"build/log.txt\").read())'"], ["rm -rf build", "for f in *.o; do rm $f; done"], ["rm -rf build", "git clean -fdx"],
     ["git push origin main", "npm publish"], ["git push --force origin main", "gh api -X PUT repos/o/r/git/refs/heads/feature -f sha=abc"], ["rm -rf build", "frobnicate --all"],
+    // A danger of a class the refused command had, whatever either names (modes-y9-y9-1): the classifier's classes, no words.
+    ["git push origin main", "git push https://github.com/o/r.git main"], ["git push https://github.com/o/r.git main", "git push origin main"], ["git push origin main", "git push git@github.com:o/r.git main"],
+    ["git push origin main", "git push origin feature"], ["git push origin main", "git push backup main"], ["rm -rf build", "rm -rf dist"],
+    // The refused command was one Ember couldn't read: any later danger may be it, and so may more that it can't read (modes-y9-y9-2).
+    ["python3 -c \"import shutil; shutil.rmtree('build')\"", "rm -rf build"], ["for d in build dist; do rm -rf $d; done", "rm -rf build"], ["frob --delete build", "rm -rf build"],
+    ["python3 -c \"import helper; helper.tidy('build')\"", "git push origin main"], ["python3 -c \"import shutil; shutil.rmtree('build')\"", "perl -e 'system(\"rm -rf build\")'"],
   ])("takes `%s` then `%s` for one that may be the refused command, which Ember can't tell: it asks (modes-y9-9)", (refused, next) => {
     expect(sameCommand(asked(refused), asked(next))).toBe(false);
     expect(likeCommand(asked(refused), asked(next))).toBe(true);
   });
 
   it.each<[string, string]>([
-    ["rm -rf build", "rm -rf dist"], ["rm -rf build", "git push origin main"], ["git push origin main", "git push origin feature"], ["rm -rf build", "ls -la"], ["ls", "for f in *.o; do rm $f; done"],
-  ])("doesn't take `%s` then `%s` for one: it names what it acts on, and that is something else (modes-y9-8)", (refused, next) => {
+    ["rm -rf build", "git push origin main"], ["git push origin main", "rm -rf build"], ["rm -rf build", "ls -la"], ["ls", "for f in *.o; do rm $f; done"], ["ls", "rm -rf build"],
+    ["python3 -c \"import shutil; shutil.rmtree('build')\"", "ls -la"],
+  ])("doesn't take `%s` then `%s` for one: another class of danger, or none, or nothing refused that had one (modes-y9-8)", (refused, next) => {
     expect(likeCommand(asked(refused), asked(next))).toBe(false);
   });
 
@@ -613,12 +620,51 @@ describe("a command the user said no to, through the flow (commands-remote-r9-8)
     expect(cards[0][0]).toBe(LIKE_REFUSED_LINE);
   });
 
-  it("leaves the same kind of thing done to something else as it was: another branch is announced in Autopilot, another unknown program asks (modes-y9-8)", async () => {
+  it("asks, in every mode, about a refused push of main sent again by the repository's URL, in either order; never checked or announced (modes-y9-y9-1)", async () => {
+    const urls = ["https://github.com/o/r.git", "git@github.com:o/r.git"];
+    for (const [first, later] of urls.flatMap(u => [["git push origin main", `git push ${u} main`], [`git push ${u} main`, "git push origin main"]])) {
+      const h = commands(["deny"], { review: false, words: "update main on github" });
+      expect((await h.run(first)).textResultForLlm, first).toMatch(/^The user said no\./);
+      for (const mode of [{ review: true }, { review: false, autopilot: true }, { review: false }]) {
+        const again = commands(["once"], { refusals: h.refusals, words: "update main on github", ...mode });
+        expect((await again.run(later)).resultType, `${first} => ${later}`).toBe("success");
+        expect([again.st.asked, again.st.reviewed, again.st.announced], `${first} => ${later}`).toEqual([[later], [], []]);
+        expect(again.st.audit.find(e => e.phase === "decided")!.rules as string[]).toContain(LIKE_REFUSED_RULE);
+      }
+    }
+  });
+
+  it.each<[string, string]>([
+    ["python3 -c \"import shutil; shutil.rmtree('build')\"", "rm -rf build"], ["for d in build dist; do rm -rf $d; done", "rm -rf build"], ["frob --delete build", "rm -rf build"],
+    ["python3 -c \"import shutil; shutil.rmtree('build')\"", "git push origin main"],
+  ])("asks, in every mode, after a no to a command Ember couldn't read: `%s`, then `%s`; never checked or announced (modes-y9-y9-2)", async (refused, next) => {
+    const h = commands(["deny"], { review: false });
+    expect((await h.run(refused)).textResultForLlm).toMatch(/^The user said no\./);
+    for (const mode of [{ review: true }, { review: false, autopilot: true }, { review: false }]) {
+      const again = commands(["once"], { refusals: h.refusals, ...mode });
+      expect((await again.run(next)).resultType, next).toBe("success");
+      expect([again.st.asked, again.st.reviewed, again.st.announced], next).toEqual([[next], [], []]);
+      expect(again.st.audit.find(e => e.phase === "decided")!.rules as string[]).toContain(LIKE_REFUSED_RULE);
+    }
+  });
+
+  it("still refuses the other order without a question: `rm -rf build`, then that deletion in inline code (modes-y9-y9-2)", async () => {
+    const h = commands(["deny"], { review: false });
+    await h.run("rm -rf build");
+    for (const mode of [{ review: true }, { review: false, autopilot: true }, { review: false }]) {
+      const again = commands([], { refusals: h.refusals, ...mode });
+      expect(await again.run("node -e \"require('fs').rmSync('build',{recursive:true})\"")).toMatchObject({ resultType: "denied", textResultForLlm: CMD_REFUSED });
+      expect([again.st.asked, again.st.reviewed, again.st.announced, again.st.starts]).toEqual([[], [], [], []]);
+    }
+  });
+
+  it("asks about the same kind of danger to something else, and leaves another kind as it was: another branch asks in Autopilot, a deletion after a refused push is announced (modes-y9-y9-1)", async () => {
     const push = commands(["deny"], { review: false, words: "" });
     expect((await push.run("git push origin main")).textResultForLlm).toMatch(/^The user said no\./);
-    const auto = commands([], { refusals: push.refusals, autopilot: true, review: false, words: "" });
+    const auto = commands(["once"], { refusals: push.refusals, autopilot: true, review: false, words: "" });
     expect((await auto.run("git push origin feature")).resultType).toBe("success");
-    expect([auto.st.asked, auto.st.announced]).toEqual([[], ["git push origin feature"]]);
+    expect((await auto.run("rm -rf build")).resultType).toBe("success");
+    expect([auto.st.asked, auto.st.announced]).toEqual([["git push origin feature"], ["rm -rf build"]]);
     for (const [refused, next] of [["frobnicate build", "othertool --version"], ["cargo frob", "cargo zork"]]) {
       const h = commands(["deny"], { review: false });
       expect((await h.run(refused)).textResultForLlm).toMatch(/^The user said no\./);
@@ -628,14 +674,14 @@ describe("a command the user said no to, through the flow (commands-remote-r9-8)
     }
   });
 
-  it("asks about a deletion by command after a no to a deletion in an app, and refuses the one that names what was refused there (modes-y9-2)", async () => {
+  it("asks about a deletion by command after a no to a deletion in an app, whatever it names: no word of the step refuses a command (modes-y9-2, modes-y9-y9-3)", async () => {
     const refusals = new Refusals();
-    refusals.noteStep(stepMarksForCommands(["delete"], "Delete permanently Delete “report.pdf” permanently? Home - Files"), "refused");
-    for (const mode of [{ review: true }, { review: false, autopilot: true }]) {
-      const h = commands(["once"], { refusals, ...mode });
-      expect(await h.run("rm ~/report.pdf")).toMatchObject({ resultType: "denied", textResultForLlm: CMD_REFUSED });
+    refusals.noteStep(stepMarksForCommands(["delete"]), "refused");
+    for (const mode of [{ review: true }, { review: false, autopilot: true }, { review: false }]) {
+      const h = commands(["once", "once"], { refusals, ...mode });
+      expect((await h.run("rm ~/report.pdf")).resultType).toBe("success");
       expect((await h.run("rm -rf build")).resultType).toBe("success");
-      expect([h.st.asked, h.st.reviewed, h.st.announced]).toEqual([["rm -rf build"], [], []]);
+      expect([h.st.asked, h.st.reviewed, h.st.announced]).toEqual([["rm ~/report.pdf", "rm -rf build"], [], []]);
     }
   });
 

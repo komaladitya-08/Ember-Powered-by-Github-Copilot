@@ -983,10 +983,12 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
     ctx.log.info("commands.decided", { task, target, verdict: "refuse", classes: d.classes, chars: a.command.length, stood });
     return denied(stood === "refused" ? REFUSED_BEFORE : STILL_UNANSWERED);
   }
-  // A command that may be something the user said no to in this task, though Ember can't tell: one that names nothing
-  // it acts on, of the refused command's class, or one Ember can't read at all; and a deletion or a push by command
-  // after a no to that kind of step in an app. It asks, in every mode: never announced (by the user's earlier words,
-  // Interactive or Autopilot) and never shown to Assisted's check. The user's yes is theirs to give (modes-y9-9, y9-2).
+  // A command that may be something the user said no to in this task, though it isn't recognisably the same: one with
+  // a danger of a class the refused command had, whatever either names (a push by the remote's URL after a refused
+  // push by its name: modes-y9-y9-1), any danger after a refused command Ember couldn't read (modes-y9-y9-2), one
+  // Ember can't read at all; and a deletion or a push by command after a no to that kind of step in an app. It asks,
+  // in every mode: never announced (by the user's earlier words, Interactive or Autopilot) and never shown to
+  // Assisted's check. The user's yes is theirs to give (modes-y9-9, y9-2).
   const like = d.verdict !== "refuse" && d.verdict !== "run" && (ctx.refusals?.commandLike(about) ?? false);
   if (like) {
     d = {
