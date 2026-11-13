@@ -40,6 +40,8 @@ export const TYPED_BY_USER = "[typed by the user]";
 /** Private-use markers for a cut secret span while terminal codes are stripped (output's own copies are neutralised). */
 const MARK_ANSWERED = "\ue000";
 const MARK_UNANSWERED = "\ue001";
+/** A private-use marker after a CSI's parameters while the printed text is redacted (wholeAsPrinted); neutralised too. */
+const MARK_CSI = "\ue002";
 
 /** Step 1's escape sequences: CSI, OSC (BEL or ST), DCS/APC/PM/SOS strings, charset selections, other ESC sequences. */
 /* eslint-disable no-control-regex -- terminal control sequences are exactly what these remove */
@@ -50,6 +52,10 @@ const CHARSET = /\x1b[()*+\-./][\s\S]/g;
 const OTHER_ESC = /\x1b[ -/]*[0-~]/g;
 const LONE_ESC = /\x1b/g;
 const CONTROLS = /[\x00-\x08\x0b-\x1f\x7f-\x9f]/g;
+/** Anything step 1 takes out or acts on: text with none of these is the same before step 1 and after. */
+const ANY_CONTROL = /[\x00-\x08\x0b-\x1f\x7f-\x9f]/;
+/** A CSI's start with its parameters, before its final byte: digits that are no part of the word that follows. */
+const CSI_OPEN = /(?:\x1b\[|\x9b)[0-?]*[ -/]*/g;
 /* eslint-enable no-control-regex */
 
 /** Applies backspaces: each one removes the character before it on its line. */
@@ -150,12 +156,27 @@ function whole(s: string): string {
 }
 
 /**
+ * `s` as it was printed, redacted before its terminal codes are taken out (integ-z-1). An escape with no final byte
+ * of its own takes the next character as that byte (ESC, `ESC [ 1`, `ESC (` and a C1 CSI before "Hunter2…"), and a
+ * backspace takes the one before it: where that character is a filled value's first or last, what is left once the
+ * codes are out is no value the redactor knows, and all but one character of it would go on. So a value that stands
+ * whole in the printed text is replaced first. A CSI's parameters are digits, which would stand against a user name
+ * or an address as a longer word's would: a marker after them, taken out again, keeps them apart. Text with nothing
+ * step 1 acts on is the same before and after it, and is left for the pass that follows the cleaning.
+ */
+function wholeAsPrinted(s: string): string {
+  if (!beforeCut || !ANY_CONTROL.test(s)) return s;
+  return whole(s.replace(/\ue002/g, "\ufffd").replace(CSI_OPEN, `$&${MARK_CSI}`)).replace(/\ue002/g, "");
+}
+
+/**
  * `s` redacted whole, for text that is cut before it is cleaned (a start failure's reason): "" where it couldn't be
  * checked. Its terminal codes go first, as cleanOutput takes them: the redactor knows a value only without them, and
  * one a colour code stands in (`grep --color`) would go on whole, or as a part once the reason is cut (integ-y-1).
+ * And it is redacted as printed before that, as cleanOutput's text is (integ-z-1).
  */
 export function redactedWhole(s: string): string {
-  return whole(stripTerminal(s));
+  return whole(stripTerminal(wholeAsPrinted(s)));
 }
 
 /**
@@ -193,7 +214,8 @@ const AFTER_HEAD = "\n[…]\n";
  * match) is no value in the printed text, and the cut would fall in it unseen. A place is clear only where the two
  * sides clean to the same text as the whole does (so never inside an escape sequence, nor in a line a carriage return
  * or a backspace later writes over), where the redactor finds the same in them, cleaned and as printed, and, for the
- * head, where nothing at its end would take in the note that follows it (an unfinished escape sequence).
+ * head, where nothing at its end would take in the note that follows it (an unfinished escape sequence). And the
+ * two sides must read, as cleanOutput reads them, as the whole does (integ-z-1).
  *
  * Only the nearest CUT_TRIES places are tried: past them the answer is null (integ-z-4). `work` counts the places
  * tried, for the tests.
@@ -205,8 +227,12 @@ export function clearCut(before: string, after: string, side: "before" | "after"
     const text = before + after, at = before.length;
     const cleaned = stripTerminal(text);
     const all = R(text), allCleaned = R(cleaned);
-    // Nothing the vault filled is near the cut: not as printed, not with its escape sequences out, not as cleaned.
-    if (all === text && allCleaned === cleaned) {
+    // (What cleanOutput makes of it: redacted as printed, its terminal codes out, redacted again: integ-z-1.)
+    const read = (s: string): string => R(stripTerminal(wholeAsPrinted(s)));
+    const allRead = read(text);
+    // Nothing the vault filled is near the cut: not as printed, not with its escape sequences out, not as cleaned,
+    // not as cleanOutput reads it.
+    if (all === text && allCleaned === cleaned && allRead === cleaned) {
       const bare = stripEscapes(text);
       if (R(bare) === bare) return 0;
     }
@@ -216,6 +242,9 @@ export function clearCut(before: string, after: string, side: "before" | "after"
       const l = stripTerminal(left), r = stripTerminal(right);
       if (l + r !== cleaned) return false;
       if (R(left) + R(right) !== all || R(l) + R(r) !== allCleaned) return false;
+      // The two sides read as the whole does: a value the whole hides only because it stands whole as printed (its
+      // first character an escape's final byte once cut) is in neither side as a part.
+      if (read(left) + read(right) !== allRead) return false;
       return side === "after" || stripTerminal(left + AFTER_HEAD) === l + AFTER_HEAD;
     };
     let tried = 0;
@@ -243,8 +272,11 @@ export function clearCut(before: string, after: string, side: "before" | "after"
  */
 export function cleanOutput(raw: Uint8Array, o: Pick<ShapeOptions, "typed" | "secretSpans">): string {
   // The output's own private-use markers can't pose as a cut span: replaced one for one, so offsets hold.
-  const decoded = decode(raw).replace(/[\ue000\ue001]/g, "\ufffd");
-  const plain = stripTerminal(cutSpans(decoded, o.secretSpans));
+  const decoded = decode(raw).replace(/[\ue000-\ue002]/g, "\ufffd");
+  // What the vault filled goes before the terminal codes do, where it stands whole as printed (integ-z-1): between
+  // the markers, as below, so a marker is never taken for the redactor's own.
+  const printed = cutSpans(decoded, o.secretSpans).split(/([\ue000\ue001])/).map((part, i) => (i % 2 ? part : wholeAsPrinted(part))).join("");
+  const plain = stripTerminal(printed);
   // What the vault filled goes first, from the whole text (vault-3-y9-1). Typed lines and secrets are handled between the markers, so a marker's own words ("secret: the …") are never taken
   // for a key and its value.
   return plain

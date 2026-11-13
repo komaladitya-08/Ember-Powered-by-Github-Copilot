@@ -7,7 +7,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { RunExit } from "../../app/main/commands/types";
 import {
-  boundOutput, capLines, CLEAN_MAX_LINE, cleanOutput, clearCut, CUT_SLACK, CUT_TRIES, OUTPUT_HEAD_LINES, OUTPUT_MAX_BYTES, OUTPUT_MAX_LINE, OUTPUT_TAIL_LINES, SECRET_ANSWERED, SECRET_UNANSWERED,
+  boundOutput, capLines, CLEAN_MAX_LINE, cleanOutput, clearCut, CUT_SLACK, CUT_TRIES, OUTPUT_HEAD_LINES, OUTPUT_MAX_BYTES, OUTPUT_MAX_LINE, OUTPUT_TAIL_LINES, redactedWhole, SECRET_ANSWERED, SECRET_UNANSWERED,
   setOutputRedactor, shapeOutput, stripTerminal, TYPED_BY_USER, type ShapeOptions,
 } from "../../app/main/commands/output";
 import { VAULT_REDACTED, VaultRedactor } from "../../app/main/vault/redact";
@@ -340,6 +340,44 @@ describe("output after a fill from the vault (vault-3)", () => {
       const before = keep(other);
       filled();
       expect(keep(other).text, `${inside}`).toBe(before.text);
+    }
+  }, 60_000);
+
+  it("never hands on the rest of a filled value whose first character an unfinished escape takes, cut or not (integ-z-1)", () => {
+    const r = filled();
+    // The checker's six: an escape with no final byte of its own takes the value's first character as that byte.
+    const six = [" \x1bHunter2Canary!x \n", " \x1b[1Hunter2Canary!x \n", " \x1b(Hunter2Canary!x \n", "  \x1b]0;t\x1b\\ada.canary@example.org \n",
+      " \x1bada.canary@example.org \n", " \x1b[31Hunter2Canary!x\x1b[m\n"];
+    // The same after a CSI's parameters, which stand against an address as a digit of a longer word would; with a
+    // C1 CSI; and a value whose last character a backspace takes.
+    const more = [" \x1b[1ada.canary@example.org \n", " \x1b[01;31ada.canary@example.org\x1b[m\n", " \x9b1ada.canary@example.org \n", " \x9bHunter2Canary!x \n",
+      " Hunter2Canary!x\b \n", " ada.canary@example.org\b\b \n"];
+    for (const text of [...six, ...more]) {
+      const model = sent(r, `before\n${text}after\n`);
+      for (const value of [EMAIL, PASSWORD]) for (const run of runs(value)) expect(model, `${JSON.stringify(text)} ${run}`).not.toContain(run);
+      expect(model, JSON.stringify(text)).toMatch(/before\n[^]*after/);
+      // A start failure's reason, which is redacted whole and then cut, is read the same way.
+      const reason = r.text(redactedWhole(text));
+      for (const value of [EMAIL, PASSWORD]) for (const run of runs(value)) expect(reason, `${JSON.stringify(text)} ${run}`).not.toContain(run);
+    }
+    // A secret prompt's marker beside it stands as before, and output with no terminal code in it reads as it did.
+    expect(clean(`Password: \x1b[1${EMAIL} \n`, { secretSpans: [{ from: 0, to: 10 }] })).toBe(`${SECRET_ANSWERED}${VAULT_REDACTED.slice(1)} \n`);
+    expect(clean(`mail: ${EMAIL}\nnext\n`)).toBe(`mail: ${VAULT_REDACTED}\nnext\n`);
+    // At the cut of a long run (the checker's P-5): the tail starting at the escape, the head ending just after the value.
+    const shape = ` \x1b${PASSWORD} \n`;
+    for (const [where, inside] of [["tail", 1], ["head", 17], ["head", 18]] as const) {
+      const text = where === "tail" ? filler(HEAD + 5000 - inside) + shape + filler(ROOM - (shape.length - inside)) : filler(HEAD - inside) + shape + filler(ROOM + 5000);
+      const model = r.text(clean(keep(text).text.slice(HEAD - 3000, HEAD + 3000)));
+      for (const run of runs(PASSWORD)) expect(model, `${where} ${inside} ${run}`).not.toContain(run);
+    }
+    // And the cut is judged as the output is now read: a tail that starts after the character the escape took
+    // (or inside the escape) would hold the rest of the address, which is no value on its own.
+    const taken = ` \x1b[1${EMAIL} \n`;
+    for (const inside of [2, 3, 4, 5, 6]) {
+      for (const text of [filler(HEAD + 5000 - inside) + taken + filler(ROOM - (taken.length - inside)), filler(HEAD - inside) + taken + filler(ROOM + 5000)]) {
+        const model = r.text(clean(keep(text).text.slice(HEAD - 3000, HEAD + 3000)));
+        for (const run of runs(EMAIL)) expect(model, `${inside} ${run}`).not.toContain(run);
+      }
     }
   }, 60_000);
 
