@@ -120,8 +120,18 @@ export interface BubbleView {
   stalled?: boolean;
 }
 
-/** A step row as heard: its parts as a list ("Ctrl+Alt+Y allow; Ctrl+Alt+N not now"). */
-const stepWords = (step: string | null | undefined): string => step?.replace(/\s+·\s+/g, "; ").replace(/\s+/g, " ").trim() ?? "";
+/**
+ * A step row as heard: its parts as a list, a question's keys as Ember says them ("To allow, press Ctrl+Alt+Y; for not
+ * now, press Ctrl+Alt+N"), so that what a screen reader is given ends on a key and never on an answer it could read into
+ * the microphone ("…Ctrl+Alt+N not now." ended on a no: V2-F10). Other parts stay as they are.
+ */
+const stepWords = (step: string | null | undefined): string => (step ?? "").split("\n").map(line => {
+  const said = line.split(/\s+·\s+/).map(part => {
+    const m = /^(\S+\+\S+)\s+(allow|not now)$/.exec(part.trim());
+    return m ? `${m[2] === "allow" ? "to allow" : "for not now"}, press ${m[1]}` : part;
+  }).join("; ").replace(/\s+/g, " ").trim();
+  return said.replace(/^(to allow|for not now), press/, w => `${w.charAt(0).toUpperCase()}${w.slice(1)}`);
+}).filter(Boolean).join(" ");
 /** A sentence ended with a stop, unless it has one. */
 const sentence = (s: string): string => (/[.!?…:]$/.test(s) ? s : `${s}.`);
 
@@ -164,7 +174,7 @@ export function announcement(v: BubbleView, speaker = "Ember"): string {
 
 /**
  * What the live region says when only one thing changed since it said `prev`: the same question, whose whole text has now
- * all been shown. Just that and the keys that answer ("You can allow it now. Ctrl+Alt+Y allow; Ctrl+Alt+N not now."), not
+ * all been shown. Just that and the keys that answer ("You can allow it now. To allow, press Ctrl+Alt+Y; for not now, press Ctrl+Alt+N."), not
  * the question and all of its text again. Null for anything else (the caller says the announcement).
  */
 export function wholeReadNews(prev: BubbleView | null, next: BubbleView): string | null {

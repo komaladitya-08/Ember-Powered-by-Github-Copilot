@@ -1614,6 +1614,19 @@ export function auditCopySegments(auditCopy: string): Segment[] {
 }
 
 /**
+ * Voice's line on answering a question by voice, as this platform can take it: a yes without the name only where Ember
+ * can tell another sound playing (Linux's speakers' stream, Windows' output level), and only in the few seconds after it
+ * asks (the answer window). On macOS, and on Linux without parec, a nameless yes is dropped as "sound-unknown", where
+ * the same words for every platform promised it worked (V2-F3).
+ */
+export function voiceAnswerHint(p: Pick<StatusPlatform, "speakerRejection" | "outputLevel">): string {
+  const bare = "To answer one of Ember's questions, say “allow” or “not now” in the few seconds after it asks, no name needed, and later “Ember, allow” or “Ember, not now”.";
+  if (p.speakerRejection) return `${bare} Where Ember can't hear what your speakers play (without PulseAudio's parec), a yes always needs its name.`;
+  if (p.outputLevel) return bare;
+  return "To answer one of Ember's questions, say “Ember, allow”, or “not now” in the few seconds after it asks: Ember can't tell here whether something else is playing, so a yes needs its name.";
+}
+
+/**
  * Everything the settings window fills in from `Status.platform`: the chord chips, the data and audit folders, the
  * journal hint, the consent's OS sentences, the login note and the empty conversation's hint. Linux's status gives
  * back the page's own markup, so applying it changes nothing a person or a screen reader can tell.
@@ -1644,6 +1657,7 @@ export function homePatches(p: StatusPlatform): HomePatch[] {
     // PulseAudio: elsewhere the consent doesn't say it does.
     { selector: "#speaker-note", hidden: !p.speakerRejection },
     { selector: "#output-note", hidden: !p.outputLevel },
+    { selector: "#voice-answer-hint", content: [voiceAnswerHint(p)] },
     { selector: "#conversation", attrs: { "data-empty": emptyConversationText(p.shortcuts.ask.label) } },
     { selector: "#conversation-send-hint", content: [composerSendHint(p.os)] },
     { selector: "#mic-indicator", content: [p.micIndicator], hidden: !p.micIndicator },

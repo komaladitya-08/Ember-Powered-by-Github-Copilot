@@ -116,6 +116,12 @@ describe("Voice Match's focus (as after Download speech models and the consent b
 });
 
 describe("what screen readers hear while Ember learns a voice (#voice-live)", () => {
+  it("tells the owner, with Voice Match on, to answer in a few words, as one word is too short to tell whose voice it is (V2-F1; voice-listening-r9-6)", () => {
+    expect(MATCH_TEXT.on).toContain("answer them in a few words: one word is too short for Ember to tell it's you");
+    expect(MATCH_SAID.on).toContain("Answer in a few words: one word is too short to tell it's you.");
+    expect(MATCH_SAID.on).not.toMatch(/\b(?:yes|allow|okay|fine|approve|accept|go ahead|not now|no)\b/i);
+  });
+
   it("says each phrase as it is asked for, with how many were heard", () => {
     expect(matchAnnouncement(none, enrolling(0))).toBe("Say: “Ember, what's the weather like”");
     expect(matchAnnouncement(enrolling(0), enrolling(1, undefined, "Ember, open my calendar"))).toBe("Heard 1 of 4. Say: “Ember, open my calendar”");
@@ -125,7 +131,7 @@ describe("what screen readers hear while Ember learns a voice (#voice-live)", ()
   });
 
   it("says how learning ended, and a forgotten voice, without Ember's name or a phrase it answers (voice-listening-r5-1)", () => {
-    expect(matchAnnouncement(enrolling(3), onNow)).toBe("Your voice is learnt. On: only your voice can agree to questions out loud. Everyone is still heard. Your voiceprint stays on this computer.");
+    expect(matchAnnouncement(enrolling(3), onNow)).toBe("Your voice is learnt. On: only your voice can agree to questions out loud. Answer in a few words: one word is too short to tell it's you. Everyone is still heard. Your voiceprint stays on this computer.");
     expect(matchAnnouncement(enrolling(1), none, true)).toBe("Stopped teaching your voice. Requests from any voice are heard, and any voice can answer questions out loud. Teach your voice again, and only yours can agree to them.");
     expect(matchAnnouncement(enrolling(1), none)).toBe(MATCH_SAID.none);
     expect(matchAnnouncement(onNow, none)).toBe(`Your voiceprint and the words learnt from what you said are forgotten. ${MATCH_SAID.none}`);
@@ -157,7 +163,7 @@ describe("what screen readers hear while Ember learns a voice (#voice-live)", ()
   it("says that with Voice Match off anyone near the computer can answer by voice, and with it on only the owner can say yes (owner's report of 2026-11-12)", () => {
     expect(MATCH_TEXT.label).toBe("Only my voice can say yes (Voice Match)");
     expect(MATCH_TEXT.none).toBe("Ember hears anyone who talks to it, and anyone near the computer can answer its questions out loud. Teach it your voice, and only yours can agree to them. “Ember, stop” works for anyone.");
-    expect(MATCH_TEXT.on).toBe("On: only your voice can agree to Ember's questions out loud; anyone can still say “not now”. Ember still hears everyone. Your voiceprint stays on this computer.");
+    expect(MATCH_TEXT.on).toBe("On: only your voice can agree to Ember's questions out loud, so answer them in a few words: one word is too short for Ember to tell it's you. Anyone can still say “not now”. Ember still hears everyone. Your voiceprint stays on this computer.");
     expect(MATCH_TEXT.off).toBe("Off: anyone near the computer can answer Ember's questions out loud. Ember keeps your voiceprint until you forget it.");
     // Nothing said to a screen reader here reads as an answer, or as a word of one, should Ember be listening for one.
     for (const line of [MATCH_SAID.none, MATCH_SAID.teach, MATCH_SAID.on, MATCH_SAID.off]) expect(line, line).not.toMatch(/\b(?:yes|allow|okay|fine|approve|accept|go ahead|not now|no)\b/i);

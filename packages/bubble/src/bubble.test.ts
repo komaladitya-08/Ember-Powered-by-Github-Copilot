@@ -77,9 +77,18 @@ describe("announcement: where it is, when not this computer (review #13)", () =>
 describe("announcement: how to answer a question (review #52)", () => {
   const view = (v: Partial<BubbleView>): BubbleView => ({ visible: true, mood: "attention", title: "May I?", thought: "Click “Save” in gedit?", streaming: false, ...v });
 
+  it("reads the keys as Ember says them, so what a screen reader is given ends on a key, never on “not now” (V2-F10)", () => {
+    const said = announcement(view({ step: "Ctrl+Alt+Y allow · Ctrl+Alt+N not now" }));
+    expect(said).toBe("Ember needs you: May I? Click “Save” in gedit? To allow, press Ctrl+Alt+Y; for not now, press Ctrl+Alt+N.");
+    expect(said).not.toMatch(/(?:not now|allow)\.$/);
+    expect(announcement(view({ step: "Ctrl+Alt+N not now" }))).toBe("Ember needs you: May I? Click “Save” in gedit? For not now, press Ctrl+Alt+N.");
+    // Another step's words stay as they are.
+    expect(announcement(view({ step: "Ctrl+Alt+Y shows the next part · Ctrl+Alt+N not now" }))).toBe("Ember needs you: May I? Click “Save” in gedit? Ctrl+Alt+Y shows the next part; for not now, press Ctrl+Alt+N.");
+  });
+
   it("reads a question's key hint after it, as its step row shows it", () => {
     expect(announcement(view({ step: "Ctrl+Alt+Y allow · Ctrl+Alt+N not now" })))
-      .toBe("Ember needs you: May I? Click “Save” in gedit? Ctrl+Alt+Y allow; Ctrl+Alt+N not now.");
+      .toBe("Ember needs you: May I? Click “Save” in gedit? To allow, press Ctrl+Alt+Y; for not now, press Ctrl+Alt+N.");
     expect(announcement(view({ title: "May I run a command?", thought: "On build-01: Deletes build", step: "The command is in Ember's command window: press Alt+Tab to go there." })))
       .toBe("Ember needs you: May I run a command? On build-01: Deletes build. The command is in Ember's command window: press Alt+Tab to go there.");
     // A guide's step (what it points at) is never read out: it says what it shows.
@@ -519,13 +528,13 @@ describe("the bubble's hierarchy (UI audit #9)", () => {
     expect(stepParts(`${note}\nOr press Ctrl+Alt+E.`)).toEqual({ lead: null, keys: null });
     // Heard as one: the note, then the keys.
     expect(announcement({ visible: true, mood: "attention", title: "May I?", thought: "Click “Send”?", streaming: false, step: `${note}\nCtrl+Alt+Y allow · Ctrl+Alt+N not now` }))
-      .toBe(`Ember needs you: May I? Click “Send”? ${note} Ctrl+Alt+Y allow; Ctrl+Alt+N not now.`);
+      .toBe(`Ember needs you: May I? Click “Send”? ${note} To allow, press Ctrl+Alt+Y; for not now, press Ctrl+Alt+N.`);
   });
 
   it("says a risky question is one before anything else, as its tag shows it", () => {
     const v: BubbleView = { visible: true, mood: "attention", title: "May I?", thought: "Click “Send”?", streaming: false, step: "Ctrl+Alt+Y allow · Ctrl+Alt+N not now", risky: true };
-    expect(announcement(v)).toBe(`Ember needs you: ${RISKY_TAG}. May I? Click “Send”? Ctrl+Alt+Y allow; Ctrl+Alt+N not now.`);
-    expect(announcement({ ...v, risky: false })).toBe("Ember needs you: May I? Click “Send”? Ctrl+Alt+Y allow; Ctrl+Alt+N not now.");
+    expect(announcement(v)).toBe(`Ember needs you: ${RISKY_TAG}. May I? Click “Send”? To allow, press Ctrl+Alt+Y; for not now, press Ctrl+Alt+N.`);
+    expect(announcement({ ...v, risky: false })).toBe("Ember needs you: May I? Click “Send”? To allow, press Ctrl+Alt+Y; for not now, press Ctrl+Alt+N.");
   });
 
   it("makes the state a tag (a tint behind its word), never a pulse on a question, and a risky Allow that doesn't stand out", () => {

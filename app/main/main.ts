@@ -20,10 +20,10 @@ import { watchCrashes } from "./crash-log";
 import { endRun, previousRun, startRun } from "./run-marker";
 import { readTextFile } from "./text-file";
 import { SettingsStore, checkHomePatch, hasConsent, plainSaveError, withOwnExtensions, withOwnProvider, type Settings, type SettingsPatch } from "./settings";
+import { ANSWER_CLOSED_STATUS, TaskVoiceTrust, VoiceRefusals, answerStatusOnQuestion, answerWindowStatus, heardAnswer, heardUnchecked, refusalEndsTrust, rejectionEndsTrust, voiceAnswer, type VoiceAnswerNote, type VoiceAnswerOutcome } from "./agent/voice-answer";
 import { auditRetentionDays, heldUntilRestart, homeAdmin, modelServiceRefusal } from "./admin";
 import { approvalInputs, approvalsState, chooseMode, modeInForce } from "./policy/autonomy";
 import { ModeRecord, modeIntents } from "./policy/mode-record";
-import { TaskVoiceTrust, heardAnswer, heardUnchecked, refusalEndsTrust, refusalLine, refusalNote, rejectionEndsTrust, voiceAnswer, voiceAnswerSaid, type VoiceAnswerNote, type VoiceAnswerOutcome } from "./agent/voice-answer";
 import { inspectEnvironment, keyboardRoute, sessionGreeting, type EnvReport } from "./environment";
 import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSender, keepClearOf, quitQuestion, setTextScale, settingsFromHome, setUpAppChrome } from "./windows";
 import { UPDATED_QUESTION, createUpdateCheck, restartAfterUpdate, updatedDetail } from "./install-watch";
@@ -1082,6 +1082,9 @@ function start(): void {
     voice?.questionUp(q !== null);
     questionIsUp = q !== null;
     syncOutputWatch();
+    // The answer window's line goes with its question (voice-product-x9-4).
+    const after = answerStatusOnQuestion(statusBy.listen);
+    if (after !== undefined) setStatus("listen", after);
     // "Answer Ember's question first." comes and goes with it (Listen once takes no press while it holds: companion-3).
     syncListenOnce();
     // So do the Ask box's suggestions: "Yes, please" there would only seem to answer it (companion-r2-1).
@@ -1905,17 +1908,14 @@ function start(): void {
    * A spoken answer (`answer`) wasn't taken (`why`): the question stays up, its bubble says why and what to do instead,
    * and so does Ember, aloud, where it speaks (a fixed sentence: never Ember's own voice taken as an answer after it, as
    * the echo guard dates each request from its wake, and the voice process hears nothing while Ember speaks). A yes to a
-   * question locked to clicks and keys is told so, never to say it again (refusalNote).
+   * question locked to clicks and keys is told so, never to say it again (refusalNote). Each line is said aloud once a
+   * question (VoiceRefusals: V2-F2).
    */
-  const refuseVoiceAnswer = (why: VoiceAnswerNote, answer: "allow" | "deny") => {
-    if (!confirmer) return;
-    const note = refusalNote(why, { answer, locked: confirmer.voiceLocked, unready: settings.get().voice.match && !matchNow() });
-    if (!confirmer.note(refusalLine(note, heldKeys().length > 0))) return;
-    // (The keys stay under the note in the bubble; said aloud, they are named after it: tasks-approvals-6.)
-    if (maySpeak()) voice?.speak(voiceAnswerSaid(note, heldKeys().map(k => k.say)));
-    // "Say it again now": heard without the name once Ember has said why (the answer window, as after the question).
-    voice?.answerWindow();
-  };
+  const refusals = new VoiceRefusals({
+    confirmer: () => confirmer, unready: () => settings.get().voice.match && !matchNow(), keys: heldKeys, maySpeak,
+    speak: t => voice?.speak(t), answerWindow: () => voice?.answerWindow(),
+  });
+  const refuseVoiceAnswer = (why: VoiceAnswerNote, answer: "allow" | "deny") => refusals.refuse(why, answer);
   let enrolling: VoiceMatchStatus["enrolling"] = null;
   /** How the last teaching ended (settings says so; forgotten when it closes or teaching starts again). */
   let enrolEnded: VoiceMatchStatus["ended"];
@@ -1984,11 +1984,17 @@ function start(): void {
         setState({ emotion: "listening", talking: false, bubble: { visible: true, mood: "listening", title: "Listening…", thought: "", step: null, streaming: true, actions: [] } });
         break;
       case "listening":
-        // A question's answer window (engine.ts answerWindow): nothing shows for it, as the question is up meanwhile, and
+        // A question's answer window (engine.ts answerWindow): the bubble shows nothing of it, as the question is up, and
         // nothing of the bubble is taken or let go; each answer is dated from its own start (the "speech" case).
         answerListening = e.window === "answer" && e.on;
         followUpListening = e.window === "follow-up" && e.on;
-        if (e.window === "answer") break;
+        if (e.window === "answer") {
+          // Only the status line says so (V2-F4): while it listens, and for a few seconds after it closed unanswered.
+          const next = answerWindowStatus(e, { status: statusBy.listen, questionUp: !!confirmer?.waiting, conversing, yesByVoice: !!confirmer?.yesByVoice && !(settings.get().voice.match && !matchNow()) });
+          if (next !== undefined) setStatus("listen", next);
+          if (next === ANSWER_CLOSED_STATUS) setTimeout(() => { if (statusBy.listen === ANSWER_CLOSED_STATUS) setStatus("listen", null); }, 8000).unref?.();
+          break;
+        }
         if (e.window === "conversation") {
           // The microphone stays open through replies and tasks: nothing here may take the bubble from them.
           conversationOpen(e.on);
@@ -2035,7 +2041,8 @@ function start(): void {
         // It read as an answer, in a question's answer window, a follow-up or a conversation over a playing video (the
         // default): the question says so, once, and how to be heard, rather than nothing at all (owner's report of
         // 2026-11-12). ("sound-unknown": nothing could tell whether other sound played, macOS say, so a yes needed the name.)
-        if (e.answer && confirmer?.waiting && overSoundFor !== confirmer.currentNumber) { overSoundFor = confirmer.currentNumber; refuseVoiceAnswer(e.reason, e.answer); }
+        // (`nameDoubted`: the user said the name first, and it couldn't be told from the speakers: voice-safety-x9-4.)
+        if (e.answer && confirmer?.waiting && overSoundFor !== confirmer.currentNumber) { overSoundFor = confirmer.currentNumber; refuseVoiceAnswer(e.nameDoubted && e.reason === "over-sound" ? "name-doubted" : e.reason, e.answer); }
         if (e.reason !== "over-sound" || !conversing || overSoundSaid || statusBy.listen !== CONVERSATION_STATUS) break;
         overSoundSaid = true;
         setStatus("listen", OVER_SOUND_STATUS);
@@ -2088,7 +2095,7 @@ function start(): void {
           const taskTrust = voiceTrust.holds(confirmer?.currentTask);
           // (voiceAnswer reads the raw words, e.text, never personal.heard()'s corrected ones.)
           const spokenReply = voiceAnswer({
-            text: e.text, questionUp: confirmer?.waiting ?? false, matchOn, matchOff, verified: e.verified === true, short: e.short === true,
+            text: e.text, questionUp: confirmer?.waiting ?? false, matchOn, matchOff, verified: e.verified === true, unchecked: e.unchecked === true, short: e.short === true,
             ...(e.restScore !== undefined ? { restScore: e.restScore } : {}), taskTrust, selfSpoke: e.overEmber === true || (voice?.selfSpokeSince(heardFrom) ?? true),
           });
           // A spoken answer to a question is never learnt from (Voice Match learns from requests only).
@@ -2144,7 +2151,7 @@ function start(): void {
         if (rejectionEndsTrust(e.reason)) voiceTrust.endAll("other-voice");
         if (e.reason === "voice" && confirmer?.lockVoice()) {
           log.info("voice.answer_locked");
-          confirmer.note(refusalLine("locked", heldKeys().length > 0));
+          confirmer.note(refusals.line("locked"));
         }
         // "Ember, allow" said while Ember read the question out, where it can't tell its voice from the user's (Windows,
         // macOS): the wake was turned away, silently until now. It is never taken (it may be Ember's own words): Ember

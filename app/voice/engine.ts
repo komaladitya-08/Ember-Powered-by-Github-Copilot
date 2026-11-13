@@ -24,7 +24,8 @@
  * Right after a wake, only a voice about as loud as the wake phrase is a request.
  */
 
-import { spokenAnswer } from "../shared/spoken-answer";
+import { askedYes, nearAnswer, spokenAnswer } from "../shared/spoken-answer";
+import { BandFilter, LEVEL_BAND } from "./room-band";
 
 export const SAMPLE_RATE = 16_000;
 /**
@@ -111,18 +112,21 @@ export type VoiceEvent =
    * for Voice Match to vouch for it (APPROVAL_MIN_SECONDS, match.ts); `restScore`: that part's own score against the
    * enrolled voiceprint, unrounded, when it had one (absent: too little voice to score, which is never trusted).
    * `soundUnknown` (with `overSound`): a yes to a question said without the name where nothing could tell whether other
-   * sound played (soundKnown), so it is taken as said over it.
+   * sound played (soundKnown), so it is taken as said over it. `nameDoubted` (with `overSound`): the recognizer wrote the
+   * name first, but it couldn't be told from what the speakers played (namedByUser), so the note says so rather than ask
+   * for the name the user just said (voice-safety-x9-4).
    */
-  | { type: "utterance"; text: string; ms: number; window: ListeningWindow; cut?: boolean; overEmber?: true; overSound?: true; soundUnknown?: true; verified?: true; short?: true; restScore?: number }
+  | { type: "utterance"; text: string; ms: number; window: ListeningWindow; cut?: boolean; overEmber?: true; overSound?: true; soundUnknown?: true; nameDoubted?: true; verified?: true; short?: true; restScore?: number; unchecked?: true }
   /** `voice`: Voice Match found the request wasn't the owner's (`score`: how close it came); it is heard all the same (match.ts). */
   | { type: "rejected"; keyword: string; reason: "self" | "speakers" | "check" | "voice"; heard?: string; score?: number }
   /**
    * What was said in a conversation over other sound, without the name, wasn't heard: it can't be told from the song's
    * words (match.ts, owner decision of 2026-11-05). Main says so, once a conversation (voice-listening-10). `answer`:
    * which answer it read as, in any window, never the words, so a question up says so once (owner's report of
-   * 2026-11-12); `window` "answer": from a question's answer window; `reason` "sound-unknown": see soundKnown.
+   * 2026-11-12); `window` "answer": from a question's answer window; `reason` "sound-unknown": see soundKnown;
+   * `nameDoubted`: as the utterance's.
    */
-  | { type: "dropped"; reason: "over-sound" | "sound-unknown"; window?: "answer"; answer?: "allow" | "deny" }
+  | { type: "dropped"; reason: "over-sound" | "sound-unknown"; window?: "answer"; answer?: "allow" | "deny"; nameDoubted?: true }
   /**
    * In a conversation, while one of Ember's questions is up, an answer ("Allow.", "Not now.") was said over Ember's voice
    * in words Ember was saying itself (its read-out names them): never taken, as it may be Ember's own, but no longer
@@ -706,6 +710,19 @@ const UNCLEAR_WORDS = 2;
 /** The microphone's lag behind the speakers' stream is measured up to 0.4 s; a match this good says it hears them at all. */
 const MAX_LAG_FRAMES = 12;
 const LAG_MIN_CORRELATION = 0.5;
+/**
+ * The microphone heard the speakers say a speech when its loudness through it follows their own stream's this well
+ * (followsSpeakers): over at least FOLLOW_MIN_FRAMES frames (0.5 s) in which that stream sounded, with their sound
+ * under at least FOLLOW_COVER of the microphone's loud frames (within 15 dB of its loudest: FOLLOW_LOUD, in energy).
+ * Measured on the real models, eight voices, the answer window and a conversation: a page's own "Ember, allow it." and
+ * its like under a hum of 50, 120, 200 or 300 Hz that only its stream carried was a yes by name 0 times in 48 at each
+ * (6 at 50 Hz before), and none without a hum; the user's own by name was heard as before, over music 29 times in 40
+ * and in a video's pause 11 in 40 (voice-safety-x9-2).
+ */
+const FOLLOW_MIN_CORRELATION = 0.62;
+const FOLLOW_MIN_FRAMES = 16;
+const FOLLOW_COVER = 0.8;
+const FOLLOW_LOUD = 31.6;
 
 /**
  * `ms`: the window's length (it starts again after Ember speaks); `first`: nothing heard yet since the wake;
@@ -789,7 +806,9 @@ export class VoiceEngine {
   private pendingWake: { keyword: string; at: number; paused: boolean; overFollowUp?: boolean } | null = null;
   private pendingStop: PendingStop | null = null;
   /** The speakers' recent frames, when they last made a sound and last sent a frame, and whether their spotter runs. */
-  private speakers: { frame: Float32Array; at: number; sound: boolean; energy: number }[] = [];
+  private speakers: { frame: Float32Array; at: number; sound: boolean; energy: number; level: number }[] = [];
+  /** Their stream's energy as every speaker plays it (LEVEL_BAND), for followsSpeakers: one filter, as it keeps its state. */
+  private speakersLevel = new BandFilter(LEVEL_BAND);
   private monitorSoundAt = Number.NEGATIVE_INFINITY;
   private monitorFrameAt = Number.NEGATIVE_INFINITY;
   private monitorSpotting = false;
@@ -866,6 +885,8 @@ export class VoiceEngine {
   private overEmber = false;
   /** Said with other sound playing and not by name: it counts only if it sounds like the owner (match.ts). */
   private overSound = false;
+  /** …though the recognizer wrote the name first (`nameDoubted` on the utterance). */
+  private nameDoubted = false;
   private cutIn = false;
   private cutInCheckedAt = 0;
   /** Ember's voice is ducked for the speech under way. */
@@ -1218,7 +1239,7 @@ export class VoiceEngine {
     // Ember said it stopped, and the stream has been quiet for a turn's gap since its last sound: its voice has left it.
     if (!sound && !this.pageSpeaking && at < this.ownSoundUntil && at - this.monitorSoundAt >= OWN_GAP_MS) this.ownSoundUntil = this.monitorSoundAt;
     if (sound) this.monitorSoundAt = at;
-    this.speakers.push({ frame, at, sound, energy: rms * rms });
+    this.speakers.push({ frame, at, sound, energy: rms * rms, level: this.speakersLevel.energy(frame) });
     if (this.speakers.length > SPEAKERS_RING_FRAMES) this.speakers.shift();
     if (this.monitorSpotting) this.spotSpeakers(frame, at);
   }
@@ -1553,6 +1574,8 @@ export class VoiceEngine {
   private speakersSaid(from: number, heard: string): boolean {
     // (Asked twice of one speech, in a conversation: read once.)
     if (this.speakersRead?.from === from && this.speakersRead.heard === heard) return this.speakersRead.said;
+    // Whatever the recognizer makes of their stream, the microphone's own loudness through that speech says so too.
+    if (this.heardSpeakers(from)) { this.speakersRead = { from, heard, said: true }; return true; }
     const all = this.speakers;
     let start = all.findIndex(s => s.at >= from);
     if (start < 0) start = all.length;
@@ -1580,6 +1603,19 @@ export class VoiceEngine {
     const said = reads(frames) || (paused > 0 && reads(frames.slice(paused)));
     this.speakersRead = { from, heard, said };
     return said;
+  }
+
+  /**
+   * Did the microphone hear the speakers through the speech that began at `from`: does its loudness, frame by frame,
+   * follow their own stream's wherever that stream sounded (followsSpeakers)? A proof that needs no recognizer: both
+   * others are a recognizer's reading of the stream, and where both made nothing of it the speech was the user's. A
+   * page's own "Ember, allow it." over a hum that only the stream held was a yes by name in 6 of 48 runs on the real
+   * models (voice-safety-x9-2). What follows so is theirs (fail closed); the user's own words over music or a video's
+   * talk don't, so their answer by name stays.
+   */
+  private heardSpeakers(from: number): boolean {
+    const frames = Math.round((this.fedAt - from) / 32) + 1, ahead = Math.round((this.fedAt - this.monitorFrameAt) / 32);
+    return followsSpeakers(this.micLevels, this.speakers, frames, ahead);
   }
 
   /** Did the speakers' own spotter hear the name in the speech that began at `from`? What was said with it is theirs. */
@@ -1963,6 +1999,7 @@ export class VoiceEngine {
     this.afterHush = 0;
     this.overEmber = false;
     this.overSound = false;
+    this.nameDoubted = false;
     this.soundUnknown = false;
     this.clipped = false;
     this.cutIn = false;
@@ -2205,6 +2242,11 @@ export class VoiceEngine {
       // said their request yet.
       text = "";
     }
+    // "Okay, Ember." while a question waits: the wake phrase is itself the answer, by name. It closed the answer window,
+    // started a wake that heard nothing more, and answered nothing (V2-F7). Only where nobody else talked in the same
+    // breath: with the room's talk split off (ownWords), all that was heard holds theirs, and a colleague's "okay" after
+    // the user's bare "Hey Ember" was sent as a yes by name (voice-product-x9-1). There, it is said again on its own.
+    if (!saysSomething(text) && wakePhrase && this.questionWaiting && ownWords === null && spokenAnswer(heard) !== null) text = heard.trim();
     if (!saysSomething(text)) {
       // Only the wake phrase (or a cough, or "um"): keep listening for the request.
       if (this.mode.reason !== "manual") this.mode.until = Math.max(this.mode.until, this.now() + 4000);
@@ -2245,7 +2287,7 @@ export class VoiceEngine {
       // against "(nothing else it hears then is sent)" (V2-S3).
       if (!this.namedByUser(heard, spokenFrom, t0, true)) {
         this.peak = 0;
-        if (wordsOf(text).length <= UNCLEAR_WORDS) this.emit({ type: "unclear" });
+        if (wordsOf(text).length <= UNCLEAR_WORDS || nearAnswer(text) || askedYes(text)) this.emit({ type: "unclear" });
         return;
       }
       this.mode.reason = "wake";
@@ -2273,6 +2315,18 @@ export class VoiceEngine {
       // "That's all.": the conversation is over. "Thanks.": there is nothing to answer, and the user may have more to say.
       if (endsConversation(text)) { this.endListening("timeout"); return; }
       if (!this.cutIn && isCloser(text, this.mode.afterQuestion)) { this.peak = 0; this.mode.until = Math.max(this.mode.until, this.now() + this.mode.ms); return; }
+    }
+    // While a question waits, a yes asked as a question ("Ember, okay?") is no yes and no request, at a wake too; and in
+    // a follow-up, a conversation or the answer window, a few words that start like an answer ("Yes, but wait.", "Sure,
+    // okay then.") are most likely one misheard or hedged. Neither is sent: the question says once how to answer. They
+    // went to Copilot as a request, or vanished (V2-F5, V2-F7). "Why?" and "Which file?" are requests as ever. After the
+    // closers: "Okay, that's all." still ends a conversation, sending nothing (voice-product-x9-3).
+    const answerLike = this.mode.reason === "follow-up" || this.mode.reason === "answer" || conversation;
+    if (this.questionWaiting && this.mode.reason !== "manual" && !this.answering(text) && (askedYes(text) || (answerLike && nearAnswer(text)))) {
+      this.peak = 0;
+      this.mode.until = Math.max(this.mode.until, this.now() + this.mode.ms);
+      this.emit({ type: "unclear" });
+      return;
     }
     if (bargeIn && this.afterHush < AFTER_HUSH_FRAMES && (!this.mode.held || !this.hearsSpeakers(this.now()))) {
       // Said over Ember's voice, and not a stop: maybe not what was said (see AFTER_HUSH_FRAMES). Ember has been hushed,
@@ -2315,6 +2369,7 @@ export class VoiceEngine {
     if (this.mode.reason === "wake" && !this.overSound && this.questionWaiting && spokenAnswer(text) === "allow" && this.soundPlaying(t0)) {
       if (!withWake || (later && !joined && !named) || (this.speakersSounded(spokenFrom, t0) && this.speakersSaid(spokenFrom, heard))) this.overSound = true;
     }
+    this.nameDoubted = this.overSound && !this.soundUnknown && !named && (this.nameless || later) && calledByName(heard);
     this.sendRequest(text, audio, withWake, cut, t0);
   }
 
@@ -2337,7 +2392,7 @@ export class VoiceEngine {
     this.followUps = window === "follow-up" ? this.followUps + 1 : window === "answer" ? this.followUps : 0;
     this.requestAudio = audio;
     this.requestWithWake = withWake;
-    this.emit({ type: "utterance", text, ms: this.now() - t0, window, ...(cut ? { cut } : {}), ...(this.overEmber ? { overEmber: true as const } : {}), ...(this.overSound ? { overSound: true as const } : {}), ...(this.soundUnknown ? { soundUnknown: true as const } : {}) });
+    this.emit({ type: "utterance", text, ms: this.now() - t0, window, ...(cut ? { cut } : {}), ...(this.overEmber ? { overEmber: true as const } : {}), ...(this.overSound ? { overSound: true as const } : {}), ...(this.soundUnknown ? { soundUnknown: true as const } : {}), ...(this.overSound && this.nameDoubted ? { nameDoubted: true as const } : {}) });
     this.echo *= ECHO_DECAY;
     if (conversation && this.mode.kind === "listening") {
       // The microphone stays with the user: the next thing they say is heard as this one was, whatever Ember does meanwhile.
@@ -2585,6 +2640,38 @@ function rmsOf(frame: Float32Array): number {
   let sum = 0;
   for (let i = 0; i < frame.length; i++) sum += frame[i] * frame[i];
   return Math.sqrt(sum / Math.max(1, frame.length));
+}
+
+/**
+ * Does the microphone's loudness over its last `frames` frames (`mic`: each frame's energy, the latest last) follow the
+ * speakers' own stream's (`speakers`, the latest last; the microphone's latest frame came `ahead` frames after theirs)?
+ * At some lag up to MAX_LAG_FRAMES (the microphone hears the speakers late), over the frames in which their stream
+ * sounded: the two loudnesses (dB) rise and fall together (FOLLOW_MIN_CORRELATION), and their sound lies under the
+ * microphone's loud frames (FOLLOW_COVER), so a speech that only began as theirs ended isn't theirs. A stream that plays
+ * on at one level says nothing (music's held chord, a fan): nothing rises and falls in it.
+ */
+export function followsSpeakers(mic: readonly number[], speakers: readonly { level: number; sound: boolean }[], frames: number, ahead: number): boolean {
+  const db = (e: number) => 10 * Math.log10(e + 1e-10);
+  const n = Math.min(frames, mic.length);
+  let top = 0;
+  for (let i = 0; i < n; i++) top = Math.max(top, mic[mic.length - 1 - i]);
+  for (let lag = 0; lag <= MAX_LAG_FRAMES; lag++) {
+    const x: number[] = [], y: number[] = [];
+    let loud = 0, under = 0;
+    for (let i = 0; i < n; i++) {
+      const m = mic[mic.length - 1 - i], isLoud = m * FOLLOW_LOUD >= top;
+      if (isLoud) loud++;
+      const k = i + lag - ahead; // frames back from the speakers' latest
+      if (k < 0 || k >= speakers.length) continue;
+      const s = speakers[speakers.length - 1 - k];
+      if (!s.sound) continue;
+      if (isLoud) under++;
+      x.push(db(s.level));
+      y.push(db(m));
+    }
+    if (x.length >= FOLLOW_MIN_FRAMES && under >= loud * FOLLOW_COVER && correlation(x, y) >= FOLLOW_MIN_CORRELATION) return true;
+  }
+  return false;
 }
 
 /** Pearson's correlation of two series of the same length (0 when either is flat). */

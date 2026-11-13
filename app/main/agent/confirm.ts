@@ -51,7 +51,7 @@ export interface AnswerChannel { via: AnswerVia; verified?: boolean; trust?: "ta
  * for the question to be armed, its whole text read, or its panel shown whole ("not-yet"). A short yes on a task's
  * trust only for that task's own question, never a panel's ("untrusted").
  */
-export type VoiceAnswerResult = "answered" | "no-question" | "unverified" | "untrusted" | "click-only" | "not-yet" | "stale" | "locked";
+export type VoiceAnswerResult = "answered" | "no-question" | "unverified" | "untrusted" | "click-only" | "not-yet" | "busy" | "stale" | "locked";
 
 /** A question whose full content shows in a window of Ember's own (the command card, a consent card). */
 export type QuestionPanel =
@@ -370,7 +370,9 @@ export class Confirmer {
     if (trusted && (c.q.panel || !c.q.task || c.q.task !== o.trust!.task)) return "untrusted";
     const opt = c.q.options.find(x => x.primary) ?? c.q.options[0];
     if (!opt || opt.id === "always" || opt.id === "deny") return "not-yet";
-    if (this.now() - c.shownAt < this.armOf(c.q) || this.blocked()) return "not-yet";
+    if (this.now() - c.shownAt < this.armOf(c.q)) return "not-yet";
+    // Ember borrows the mouse: as the approve key is refused then ("busy"), never "read it through first" (V2-F8).
+    if (this.blocked()) return "busy";
     // As the approve key: its whole text read and armed again since, and a panel only while its window shows all of it.
     if (!this.allowedFrom(c, opt.id, "key", undefined)) return "not-yet";
     this.channels.set(c.q, trusted ? { via: "voice", verified: false, trust: "task-voice" } : { via: "voice", verified: o.verified === true });
@@ -395,6 +397,16 @@ export class Confirmer {
   /** The question up now is locked to clicks and keys: Voice Match turned another voice away during it (lockVoice). */
   get voiceLocked(): boolean {
     return !!this.current?.voiceLocked;
+  }
+
+  /**
+   * A spoken yes could be taken for the question up now, as far as the question itself goes: it isn't locked to clicks
+   * and keys, and it isn't a click-only card (answerVoice's "locked" and "click-only"). False when none is up. Main's
+   * status line says how to answer by voice only then (voice-product-x9-4).
+   */
+  get yesByVoice(): boolean {
+    const c = this.current;
+    return !!c && !c.voiceLocked && !c.q.clickOnly && c.q.panel?.kind !== "consent";
   }
 
   lockVoice(): boolean {

@@ -994,10 +994,11 @@ const others = () => level(++said % 5 ? 0.02 : 0.006);
 const room = () => level(0.001);
 
 describe("VoiceEngine with other people talking", () => {
-  function listen(b: VoiceBackend, frames: Float32Array[], o: { followUp?: boolean } = {}) {
+  function listen(b: VoiceBackend, frames: Float32Array[], o: { followUp?: boolean; question?: boolean } = {}) {
     const events: (VoiceEvent & { at: number })[] = [];
     const c = { t: 0 };
     const e = new VoiceEngine(b, ev => events.push({ ...ev, at: c.t }), { now: () => c.t, verifyWake: false });
+    if (o.question) e.questionUp(true);
     if (o.followUp) e.followUp(8000);
     for (const f of frames) { e.feed(f); c.t += 32; }
     return { events, e, c };
@@ -1062,6 +1063,18 @@ describe("VoiceEngine with other people talking", () => {
       const { events } = listen(b, [...n(100, near), level(0.03, 9), ...wake(), ...n(400, near)]);
       expect(utterances(events)).toEqual([]);
       expect(events.at(-1)).toMatchObject({ type: "listening", on: false, reason: "timeout" });
+    });
+
+    it("takes no answer from the others' everyday word in the same breath, with a question up (voice-product-x9-1)", () => {
+      // The recognizer writes "Hey Ember, okay." for the whole and "Hey Ember." for the user's own stretch: the "okay"
+      // is a colleague's or a TV's, and riding on the user's name it was sent as a yes by name.
+      for (const word of ["okay", "yes", "sure"]) {
+        const b = lenient(talking({ wake: 9 }));
+        const own = b.transcribe;
+        b.transcribe = s => (own(s) === "Hey Ember." ? "Hey Ember." : `Hey Ember, ${word}.`);
+        const { events } = listen(b, [...n(100, near), level(0.03, 9), ...wake(), ...n(60, near), ...n(200, room)], { question: true });
+        expect(utterances(events), word).toEqual([]);
+      }
     });
 
     it("doesn't send the others' talk heard after it ended (not as loud as the wake phrase), in a room where they talk", () => {
@@ -2842,6 +2855,52 @@ describe("whose a spoken answer is (second review of the voice lane, 2026-11-12)
       }
     });
 
+    describe("by the microphone's loudness too, where both readers of the stream made nothing of it (voice-safety-x9-2)", () => {
+      // Tones on whole periods of a frame (31.25 Hz), so each frame's first two samples, which carry the words' and the
+      // names' tags, hardly break a wave.
+      /** Frame `i` of a voice at `level`: a `hz` tone whose loudness rises and falls as syllables do (`rate`). */
+      const voice = (i: number, level: number, rate: number, hz = 1000) => (k: number) => level * (0.15 + 0.85 * Math.abs(Math.sin(i * rate))) * Math.sin((2 * Math.PI * hz * k) / 16_000);
+      const hum = (hz: number) => (k: number) => 0.9 * Math.sin((2 * Math.PI * hz * k) / 16_000);
+      /** A microphone frame of the words `tag` with the name `name` for its spotter, and `sound` in the rest of it. */
+      const heardAs = (tag: number, name: number, sound: (k: number) => number) => { const f = new Float32Array(512); for (let k = 2; k < 512; k++) f[k] = sound(k); f[0] = tag / 1000; f[1] = name / 1000; return f; };
+      /**
+       * A frame of the speakers' stream holding `sound`, its spotter hearing nothing and the recognizer reading nothing in it
+       * (`whole`: in its first two samples too, which a hum's own values keep from reading as either tag).
+       */
+      const played = (sound: (k: number) => number, whole = false) => { const f = new Float32Array(512); for (let k = whole ? 0 : 2; k < 512; k++) f[k] = sound(k); return f; };
+
+      it("takes a page's own “Ember, allow.” for theirs when a loud hum in its stream, which no speaker plays, blinds their spotter and the recognizer: no one's yes", () => {
+        // Measured on the real models: a 50 to 300 Hz hum at 0.9 of full scale, the words 32 dB under it, made the stream's
+        // spotter and the recognizer's reading of it miss, and the yes by name was the user's in 5 to 7 of 48 runs. (A
+        // follow-up hears only a voice about as loud as the wake's: the words are as loud here.)
+        for (const where of WHERE) for (const hz of [62.5, 187.5, 312.5]) {
+          const s = waiting({ 5: "Ember, allow." }, where);
+          videoOn(s);
+          for (let i = 0; i < frames(900); i++) {
+            const words = voice(i, 0.12, 0.7), late = voice(i - 2, 0.06, 0.7);
+            // The room hears the words alone, half as loud and two frames late; the stream holds them under the hum.
+            s.run(1, () => heardAs(5, i === 8 ? 1 : 0, i >= 2 ? late : () => 0), () => played(k => hum(hz)(k) + words(k), true));
+          }
+          s.run(frames(1500), () => mic(0, 0), () => played(hum(hz), true));
+          expect(s.heard(), `${hz} Hz, ${where}`).toEqual([`Allow. | ${where} | over other sound`]);
+        }
+      });
+
+      it("still takes the user's own “Ember, allow.” over music whose loudness their words don't follow", () => {
+        for (const where of WHERE) {
+          const s = waiting({ 5: "Ember, allow." }, where);
+          videoOn(s);
+          const music = (i: number) => voice(i, 0.02, 0.2, 625);
+          for (let i = 0; i < frames(900); i++) {
+            const mine = voice(i, 0.05, 1.3), late = music(i - 2);
+            s.run(1, () => heardAs(5, i === 8 ? 1 : 0, k => mine(k) + late(k) / 2), () => played(music(i)));
+          }
+          for (let i = frames(900); i < frames(2400); i++) { const late = music(i - 2); s.run(1, () => heardAs(0, 0, k => late(k) / 2), () => played(music(i))); }
+          expect(s.heard(), where).toEqual([`Allow. | ${where}`]);
+        }
+      });
+    });
+
     it("takes the recognizer's “Ember, allow” for said by name without the spotter only where the speakers can't have said it, and a near word (“Member, yes.”) never without it", () => {
       for (const where of WHERE) {
         // The speakers' stream holds sound through the words (the video goes on): only the two spotters can tell whose
@@ -2869,6 +2928,24 @@ describe("whose a spoken answer is (second review of the voice lane, 2026-11-12)
         const spotted = waiting({ 5: "Member, yes." }, where, { otherSound: null });
         says(spotted, 5, 1, "user");
         expect(spotted.heard(), where).toEqual([`Yes. | ${where}`]);
+      }
+    });
+
+    it("says when what it marked began with the name the recognizer wrote, which couldn't be told from the speakers, so the question doesn't ask for the name just said (voice-safety-x9-4)", () => {
+      const doubted = (s: Scene) => s.events.flatMap(v => (v.type === "utterance" ? [v.nameDoubted === true] : []));
+      for (const where of WHERE) {
+        // Over a video that goes on, with no hit of the microphone's spotter: marked, its name doubted.
+        const named = waiting({ 5: "Ember, allow." }, where);
+        videoOn(named);
+        says(named, 5, 0, "user");
+        expect(named.heard(), where).toEqual([`Allow. | ${where} | over other sound`]);
+        expect(doubted(named), where).toEqual([true]);
+        // A nameless yes over it is marked as before, and no name is doubted.
+        const nameless = waiting({ 5: "Okay." }, where);
+        videoOn(nameless);
+        says(nameless, 5, 0, "video", 0, 0);
+        expect(nameless.heard(), where).toEqual([`Okay. | ${where} | over other sound`]);
+        expect(doubted(nameless), where).toEqual([false]);
       }
     });
 
@@ -3105,6 +3182,51 @@ describe("whose a spoken answer is (second review of the voice lane, 2026-11-12)
       const followUp = waiting({ 5: "Never mind." }, "follow-up", { otherSound: false });
       says(followUp, 5, 0, "user");
       expect(followUp.heard()).toEqual(["stop"]);
+    });
+  });
+
+  describe("a near-miss answer while a question waits (V2-F5, V2-F7; voice-listening-r9-9, voice-listening-r9-11)", () => {
+    it("says once it didn't catch a few words that start like an answer, and sends nothing, in every window: they went to Copilot or vanished", () => {
+      for (const words of ["Yes, but wait.", "No, hang on.", "Okay, hold on.", "Sure, why?", "Don't, wait.", "Not that one.", "Absolutely, sure, why not?"]) for (const where of WHERE) {
+        const s = waiting({ 5: words }, where, { otherSound: false });
+        says(s, 5, 0, "user");
+        expect(s.heard(), `${words} in ${where}`).toEqual(["unclear"]);
+      }
+    });
+
+    it("still sends a real short request said while a question waits, and longer talk, as before", () => {
+      for (const words of ["Why?", "Which file?", "What email?"]) for (const where of ["follow-up", "conversation"] as const) {
+        const s = waiting({ 5: words }, where, { otherSound: false });
+        says(s, 5, 0, "user");
+        expect(s.heard(), `${words} in ${where}`).toEqual([`${words} | ${where}`]);
+      }
+      const long = waiting({ 5: "No, open the other file instead please." }, "conversation", { otherSound: false });
+      says(long, 5, 0, "user");
+      expect(long.heard()).toEqual(["No, open the other file instead please. | conversation"]);
+    });
+
+    it("still ends a conversation or a follow-up on “Okay, that's all.” said while a question waits, sending nothing (voice-product-x9-3)", () => {
+      // The near-miss check ran before the closers: the window stayed open and the question got "I didn't catch that…".
+      for (const words of ["Okay, that's all.", "No, that's all."]) for (const where of ["follow-up", "conversation"] as const) {
+        const s = waiting({ 5: words }, where, { otherSound: false });
+        says(s, 5, 0, "user");
+        expect(s.heard(), `${words} in ${where}`).toEqual([]);
+      }
+    });
+
+    it("never sends a yes asked as a question said by name as a request, nor at a wake (V2-F7)", () => {
+      for (const where of WHERE) {
+        const s = waiting({ 5: "Ember, okay?" }, where, { otherSound: false });
+        says(s, 5, 1, "user");
+        expect(s.heard().filter(h => h !== "wake"), where).toEqual(["unclear"]);
+      }
+    });
+
+    it("takes “Okay, Ember.” said in the answer window as the yes it is, by name, rather than a wake that answers nothing (V2-F7)", () => {
+      // The spotter hears "Okay, Ember" as its "Hey Ember" (2): a wake, which heard nothing after the name.
+      const s = waiting({ 5: "Okay, Ember." }, "answer", { otherSound: false });
+      says(s, 5, 2, "user");
+      expect(s.heard().filter(h => h !== "wake")).toEqual(["Okay, Ember. | wake"]);
     });
   });
 });

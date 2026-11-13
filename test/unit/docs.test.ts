@@ -968,8 +968,8 @@ describe("README.md's Accessibility section, against the release it describes", 
 
   it.runIf(released)("quotes what the bubble tells a screen reader about answering, as the bubble says it", () => {
     const view = { visible: true, mood: "attention", title: "May I?", thought: "Click “Save”?", streaming: false, step: "Ctrl+Alt+Y allow · Ctrl+Alt+N not now" };
-    expect(announcement(view as BubbleView)).toContain("Ctrl+Alt+Y allow; Ctrl+Alt+N not now");
-    expect(a11y).toContain("(\"Ctrl+Alt+Y allow; Ctrl+Alt+N not now\")");
+    expect(announcement(view as BubbleView)).toContain("To allow, press Ctrl+Alt+Y; for not now, press Ctrl+Alt+N");
+    expect(a11y).toContain("(\"To allow, press Ctrl+Alt+Y; for not now, press Ctrl+Alt+N\")");
     const where = (targetCopy as { panelHint?: (kind: "command" | "consent", os: "linux" | "win32" | "darwin") => string }).panelHint;
     expect(where?.("command", "linux")).toMatch(/: press Alt\+Tab to go there\.$/);
     expect(a11y).toContain("(\"press Alt+Tab to go there\")");
