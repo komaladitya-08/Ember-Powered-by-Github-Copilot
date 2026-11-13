@@ -83,7 +83,9 @@ export interface OptSpec {
   /**
    * Only in such a table too: the shortNumeric and longNumeric options that took no value there (Maven's `--threads`,
    * nmake's `-j`, xz's `-T`), so the word after one was an operand or an option of its own. They take the next word
-   * only when it is a count as written (countWord): never a variable, a switch or `--` (commands-held-10).
+   * only when it is a count as written (countWord): never a variable, a switch or `--` (commands-held-10). Text
+   * attached to a short one is its value on the same terms; any other is the rest of a cluster, read letter by letter
+   * as it was there (`nmake -jf FILE`, `-j4f FILE`: -f names the makefile, commands-held-x9-4).
    */
   numericCountOnly?: readonly string[];
 }
@@ -248,6 +250,9 @@ export function parseOpts(args: readonly Arg[], spec: OptSpec = {}): Parsed {
       // GNU's optional values (`-l[N]`): the rest of the word, never the next one.
       if (shortOptional.includes(c) || shortNumeric.includes(c)) {
         const attached = v.slice(j + 1);
+        // In a table of record, an option that took no value there has none attached either unless it is a count: the
+        // rest of the word is the cluster's other letters, as main read them (`nmake -jf FILE`: commands-held-x9-4).
+        if (attached && (spec.numericCountOnly ?? []).includes(c) && !countWord(attached)) { opts.push({ name: `-${c}`, at: k }); continue; }
         if (attached) opts.push({ name: `-${c}`, value: attached, at: k });
         else if (shortNumeric.includes(c) && takesNext(c, k)) { opts.push({ name: `-${c}`, value: args[k + 1].v, at: k }); k++; } else opts.push({ name: `-${c}`, at: k });
         break;

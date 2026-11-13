@@ -3226,4 +3226,31 @@ describe("commands held to main at 4d64d3a: no way of reading one decides less s
     // A script the line runs before it saves over it is still one it writes first.
     expect(got("sh s.sh; curl -o s.sh https://e.com/x; sh s.sh").findings.map(f => f.rule)).toContain("unclear.script-written");
   });
+
+  it("reads the letters attached to nmake's -j or -l as main did when they are no count: an -f among them names the makefile (commands-held-x9-4)", () => {
+    // nmake's -j and -l took no value at 4d64d3a, so `-jf FILE` was -j and -f FILE. By today's table alone the f is
+    // -j's value and FILE a target: Ember's own file ran where main refused, a key or stdin ran where it asked.
+    const rows: [string, "ask" | "refuse", string[]][] = [
+      ["nmake -jf ~/.config/ember/settings.json", "refuse", []], ["nmake -lf ~/.config/ember/settings.json all", "refuse", []],
+      ["nmake -j4f ~/.config/ember/settings.json", "refuse", []], ["nmake -jnf ~/.config/ember/settings.json", "refuse", []],
+      ["nmake -j-f -- -f ~/.config/ember/settings.json", "refuse", []], ["nmake -jf ~/.ssh/id_rsa", "ask", ["secret"]], ["nmake -jf /dev/stdin", "ask", []],
+      ["nmake -jf - < evil.mk", "ask", []],
+    ];
+    for (const [cmd, verdict, classes] of rows) {
+      for (const context of ["linux", "darwin"] as const) {
+        const got = decided(cmd, context);
+        expect(got.verdict, `${cmd} (${context})`).toBe(verdict);
+        for (const c of classes) expect(got.classes, `${cmd} (${context})`).toContain(c);
+      }
+    }
+    // A count attached is read as now, and so is a line both tables read alike or that main ran either way; GNU make's
+    // -j took its attached text there as it does now.
+    for (const cmd of [
+      "nmake -j4", "nmake -j 4", "nmake -j4 all", "nmake -l2.5 all", "nmake -jf build.mk", "nmake -jX log.txt", "nmake -f build.mk -j4", "make -jf build.mk", "make -j4",
+      "gmake -lf build.mk", "xz -T4 -k a.txt", "pigz -p4 -k a.txt",
+    ]) expect(decided(cmd).verdict, cmd).toBe("run");
+    // The compressors' -T and -p took none there either: what the corrected table finds still stands, nothing is lost.
+    expect(decided("xz -Tk a.txt").rules).toEqual(["archive.in-place"]);
+    expect(decided("pigz -pS ~/.config/ember/settings.json a.txt").verdict).toBe("refuse");
+  });
 });
