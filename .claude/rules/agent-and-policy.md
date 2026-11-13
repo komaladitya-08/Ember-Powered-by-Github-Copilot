@@ -312,7 +312,8 @@ docs/MEMORY.md is the design. The core (app/main/memory/) is pure and has no Ele
     words word for word and holds half of the fact, never Ember's reply: memory-x9-3); a correction holds what the
     fact said before, whole (`saysBefore`: the old way round, nearer the old wording, or in the old order), and a
     question's words never make a fact the user's there (`onlyAsked`, `statedByUser`: memory-x9-2); the conversation is told by id
-    only, and only of facts it was given (`memoryChanged`), never in a forgotten fact's words (memory-r9-1). It may
+    only, and only of facts it was given (`memoryChanged`), never in a forgotten fact's words (memory-r9-1); of a
+    fact it only heard (learned by reading it), in one general line with neither id nor words (memory-x9-7). It may
     only hold back more than main did;
   - what the remember tool kept in a turn goes with that turn (`Learner.heard`'s `kept`) and no other (the conductor's
     `began` at every turn's start lets go of what an unread turn kept: memory-x8-2), and its reading keeps no

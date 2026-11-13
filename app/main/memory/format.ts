@@ -39,8 +39,11 @@ const FACT_ID = /^[A-Za-z0-9_-]{1,40}$/;
 /** The most ids one note names. */
 const CHANGED_IDS = 20;
 
-/** What the user had Ember change since the conversation was last told: facts by id, or everything. */
-export interface MemoryChanges { forgot: readonly string[]; corrected: readonly string[]; back: readonly string[]; all: boolean }
+/**
+ * What the user had Ember change since the conversation was last told: facts by id, or everything. `heard`: a fact
+ * Ember learned by reading this conversation, which was never given it by id, was forgotten (`heardBack`: and put back).
+ */
+export interface MemoryChanges { forgot: readonly string[]; corrected: readonly string[]; back: readonly string[]; all: boolean; heard?: boolean; heardBack?: boolean }
 
 /** The `[id]`s in a `<memory>` block: the facts a conversation was given (memory-r9-1). */
 export function memoryIds(block: string): string[] {
@@ -51,7 +54,9 @@ export function memoryIds(block: string): string[] {
  * Ember's own note to the conversation after a Forget, a correction or Forget everything made outside it (Settings,
  * "forget that"): the conversation still holds what those facts said, so it is told they are gone (memory-r9-1). By id
  * only, and only ids the conversation was given: a forgotten fact's words are never sent again, and nothing a fact
- * said (which may have come from the screen) rides in a line that isn't marked untrusted. "" with nothing to say.
+ * said (which may have come from the screen) rides in a line that isn't marked untrusted. A fact Ember learned by
+ * reading the conversation has no id there, though the conversation holds what the user said: one general line, with
+ * neither id nor words, says something of that kind went (memory-x9-7). "" with nothing to say.
  */
 export function memoryChanged(c: MemoryChanges): string {
   const ids = (list: readonly string[]) => list.filter(id => FACT_ID.test(id)).slice(0, CHANGED_IDS).map(id => `[${id}]`);
@@ -59,10 +64,12 @@ export function memoryChanged(c: MemoryChanges): string {
   if (c.all) lines.push("The user had Ember forget everything it remembered about them. Nothing from an earlier <memory>, or that you saved with remember, holds any more: don't use it or repeat it, and remember again only what the user says themselves from now on.");
   const forgot = ids(c.forgot);
   if (forgot.length) lines.push(`The user had Ember forget ${forgot.join(", ")}. What ${forgot.length > 1 ? "those facts" : "that fact"} said is gone: don't use it or repeat it, and don't remember it again unless the user says it again themselves.`);
+  if (c.heard) lines.push("The user had Ember forget something it learned earlier in this conversation. Ember doesn't say what: if what they told you about themselves earlier matters to an answer, ask rather than rely on it, and don't remember it again unless they say it again themselves.");
   const corrected = ids(c.corrected);
   if (corrected.length) lines.push(`The user corrected ${corrected.join(", ")} in Settings. What ${corrected.length > 1 ? "they" : "it"} said before is wrong: don't use it or repeat it; recall gives ${corrected.length > 1 ? "them as they read" : "it as it reads"} now.`);
   const back = ids(c.back);
   if (back.length) lines.push(`The user had Ember remember ${back.join(", ")} again.`);
+  if (c.heardBack) lines.push("The user had Ember remember again something it had forgotten of what it learned in this conversation.");
   return lines.length ? `<memory_changed>\n${lines.join("\n")}\n</memory_changed>` : "";
 }
 

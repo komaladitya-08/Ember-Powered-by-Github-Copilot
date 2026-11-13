@@ -331,3 +331,43 @@ describe("a correction that keeps the old words still keeps the old statement ou
     expect(r.list()).toEqual([]);
   });
 });
+
+describe("the conversation is told of a Forget of something it only heard (memory-x9-7)", () => {
+  const HEARD = "<memory_changed>\nThe user had Ember forget something it learned earlier in this conversation. Ember doesn't say what: if what they told you about themselves earlier matters to an answer, ask rather than rely on it, and don't remember it again unless they say it again themselves.\n</memory_changed>";
+
+  it("adds one general line, with no id and none of the fact's words, for a fact Ember learned by reading a turn (memory-x9-7)", async () => {
+    const r = rig();
+    await r.turn("I'm vegetarian, what can I cook tonight?", "A mushroom risotto.", { offers: [{ fact: "Is vegetarian", evidence: "I'm vegetarian" }] });
+    expect(r.list()).toEqual(["conversation: Is vegetarian"]);
+    r.advance(15 * 60_000);
+    r.l.forgetCounted(r.s.list()[0]!.id);
+    const next = await r.turn("Suggest a lunch for tomorrow", "A falafel wrap.");
+    expect(next.before).toBe(HEARD);
+    expect(next.before).not.toMatch(/vegetarian|\[f/i);
+    // Once.
+    expect((await r.turn("And for the day after?", "A salad.")).before).toBe("");
+  });
+
+  it("says it once for several, takes it back on Undo, and says nothing to a new conversation (memory-x9-7)", async () => {
+    const r = rig();
+    await r.turn("I'm vegetarian and I live in Leeds", "Noted.", { offers: [{ fact: "Is vegetarian", evidence: "I'm vegetarian" }, { fact: "Lives in Leeds", evidence: "I live in Leeds" }] });
+    for (const i of r.s.list()) r.l.forgetCounted(i.id);
+    expect((await r.turn("What's the time?", "Ten.")).before).toBe(HEARD);
+    await r.turn("I work at Globex", "Noted.", { offers: [{ fact: "Works at Globex", evidence: "I work at Globex" }] });
+    const gone = r.l.forgetCounted(r.s.list()[0]!.id)!;
+    // (Requests as the conductor asks them, within Undo's minute.)
+    expect(await r.tools.forRequest("And the date?", true)).toBe(HEARD);
+    r.tools.began();
+    expect(r.l.restore(gone.undo)).toBe(true);
+    expect(await r.tools.forRequest("And the day?", true)).toBe("<memory_changed>\nThe user had Ember remember again something it had forgotten of what it learned in this conversation.\n</memory_changed>");
+    r.tools.began();
+    // Undone before the conversation was told: nothing to say.
+    const again = r.l.forgetCounted(r.s.list()[0]!.id)!;
+    expect(r.l.restore(again.undo)).toBe(true);
+    expect((await r.turn("Thanks", "You're welcome.")).before).toBe("");
+    // A new conversation never heard it.
+    r.l.forgetCounted(r.s.list()[0]!.id);
+    r.l.conversationEnded();
+    expect((await r.turn("Hello", "Hi.")).before).toBe("");
+  });
+});

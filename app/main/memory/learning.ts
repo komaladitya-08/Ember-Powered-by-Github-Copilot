@@ -169,7 +169,8 @@ export class MemoryLearning {
     this.lastActive = this.now();
     this.learner = new Learner({
       model: () => this.model, keep: (f, since, said, evidence) => this.keepLearned(f, since, said, evidence), inForce: d.inForce, log: d.log, now: d.now, budget: d.budget,
-      onLearned: facts => this.learned(facts),
+      // Learned by reading this conversation: a Forget of one is told to it, without an id (memory-x9-7).
+      onLearned: facts => { for (const f of facts) this.hold.learnedHere(f.id); this.learned(facts); },
     });
   }
 

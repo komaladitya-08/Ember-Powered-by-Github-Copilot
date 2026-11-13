@@ -492,8 +492,12 @@ download, so English-only MiniLM is the trade-off for now.
      the next request, in Ember's own `<memory_changed>` note (format.ts `memoryChanged`; the rules name it only
      while memory is on): the ids of the facts the user had it forget or correct, only those it was given (in
      `<memory>`, by recall or by remember), never their words, so a forgotten fact is not sent again and nothing a
-     fact said rides in a line that isn't marked untrusted. A fact that was never in the conversation is not
-     mentioned to it at all. What still gets through is a fact reworded with no word in common that a task's result
+     fact said rides in a line that isn't marked untrusted. A fact Ember learned by reading that conversation (its
+     "Ember learned" line) has no id there, though the conversation holds what the user said: when it is forgotten
+     the note has one general line with neither id nor words, saying the user had Ember forget something it learned
+     earlier in this conversation and to ask rather than rely on what they said about themselves; once for several,
+     and an Undo is told the same way (memory-x9-7). A fact that was never in the conversation is not mentioned to
+     it at all. What still gets through is a fact reworded with no word in common that a task's result
      says, or that the model saves with remember against that note.
      With nothing kept in those ten minutes, "forget that" says so in code (`NOTHING_TO_FORGET`).
    - While memory isn't in force (off, paused until its updated note is reviewed, paused, managed), a request that is

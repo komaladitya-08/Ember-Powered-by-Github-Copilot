@@ -5,7 +5,8 @@
  *   reply, a task it started or its remember tool, however long after the Forget; and a turn teaches only what rests
  *   on what the user said in it, so what they state themselves is still learned (memory-x9-3);
  * - the conversation is told what went, by id and only for facts it was given (`changes`, ./format.ts `memoryChanged`):
- *   a forgotten fact's words are never sent again.
+ *   a forgotten fact's words are never sent again. For a fact Ember learned by reading it, which has no id there, it is
+ *   told only that something of that kind went (memory-x9-7).
  *
  * It only ever makes memory keep less. In RAM only: the words that went are never written, and go when the
  * conversation does (`ended`). Pure: MemoryLearning (./learning.ts) says when.
@@ -87,7 +88,8 @@ function saysBefore(text: string, before: string, after: string): boolean {
 }
 
 const share = (a: ReadonlySet<string>, b: ReadonlySet<string>) => (a.size ? [...a].filter(t => b.has(t)).length / a.size : 0);
-const nothing = () => ({ forgot: [] as string[], corrected: [] as string[], back: [] as string[], all: false });
+/** What the conversation is still to be told. `heard`, `heardBack`: ids too, but only whether there are any is ever said. */
+const nothing = () => ({ forgot: [] as string[], corrected: [] as string[], back: [] as string[], all: false, heard: [] as string[], heardBack: [] as string[] });
 
 export class ConversationHold {
   /**
@@ -107,6 +109,12 @@ export class ConversationHold {
   private telling = false;
   /** The ids the conversation was told were forgotten: an Undo is told too. */
   private toldForgot = new Set<string>();
+  /**
+   * The facts Ember learned by reading this conversation (its "Ember learned" lines): the conversation holds what the
+   * user said, but was never given them by id (memory-x9-7). And those it was told, without one, that Ember forgot.
+   */
+  private learned = new Set<string>();
+  private toldHeard = new Set<string>();
 
   /** A request was asked in this conversation. */
   asked(): void { this.talked = true; }
@@ -120,9 +128,12 @@ export class ConversationHold {
   /** The remember tool told the conversation it kept (or had) the fact `id`. */
   gaveId(id: string): void { this.given.add(id); }
 
+  /** Ember learned the fact `id` by reading a turn or a task's result of this conversation. */
+  learnedHere(id: string): void { this.learned.add(id); }
+
   /** Ember's note of what the conversation hasn't been told yet, to go with a request; "" with nothing to say. */
   changes(): string {
-    const note = memoryChanged(this.tell);
+    const note = memoryChanged({ ...this.tell, heard: this.tell.heard.length > 0, heardBack: this.tell.heardBack.length > 0 });
     if (note) this.telling = true;
     return note;
   }
@@ -132,6 +143,8 @@ export class ConversationHold {
     if (!this.telling) return;
     for (const id of this.tell.forgot) this.toldForgot.add(id);
     for (const id of this.tell.back) this.toldForgot.delete(id);
+    for (const id of this.tell.heard) this.toldHeard.add(id);
+    for (const id of this.tell.heardBack) this.toldHeard.delete(id);
     this.tell = nothing();
     this.telling = false;
   }
@@ -143,6 +156,8 @@ export class ConversationHold {
     this.talked = false;
     this.given.clear();
     this.toldForgot.clear();
+    this.learned.clear();
+    this.toldHeard.clear();
     this.tell = nothing();
     this.telling = false;
   }
@@ -155,6 +170,7 @@ export class ConversationHold {
   /** The conversation forgot fact `id` itself (forget_memory), and knows: it is told nothing more. */
   forgotByTool(id: string): void {
     this.tell.forgot = this.tell.forgot.filter(x => x !== id);
+    this.tell.heard = this.tell.heard.filter(x => x !== id);
   }
 
   /** Fact `id` was corrected from `before` to `after`: what it said before is held, whole, and the words the new wording dropped. */
@@ -171,6 +187,8 @@ export class ConversationHold {
     this.held = [];
     this.given.clear();
     this.toldForgot.clear();
+    this.learned.clear();
+    this.toldHeard.clear();
     this.heldAll = this.talked;
     this.tell = { ...nothing(), all: this.talked };
     this.telling = false;
@@ -179,11 +197,15 @@ export class ConversationHold {
   /** The Undo `token` put its fact back: nothing is held for it, and a conversation told it went is told it is back. */
   restored(token: string): void {
     for (const h of this.held.filter(x => x.undo === token)) {
-      const pending = this.tell.forgot.includes(h.id);
+      // Told, or to be told, without an id (a fact it only heard: memory-x9-7), or by id.
+      const heard = this.tell.heard.includes(h.id) || this.toldHeard.has(h.id);
+      const pending = this.tell.forgot.includes(h.id) || this.tell.heard.includes(h.id);
       this.tell.forgot = this.tell.forgot.filter(x => x !== h.id);
+      this.tell.heard = this.tell.heard.filter(x => x !== h.id);
       // Never said (or maybe on its way): only a conversation that was or may have been told hears of the Undo.
-      if ((pending && this.telling) || this.toldForgot.has(h.id)) {
-        this.tell.back = [...this.tell.back.filter(x => x !== h.id), h.id];
+      if ((pending && this.telling) || this.toldForgot.has(h.id) || this.toldHeard.has(h.id)) {
+        if (heard) this.tell.heardBack = [...this.tell.heardBack.filter(x => x !== h.id), h.id];
+        else this.tell.back = [...this.tell.back.filter(x => x !== h.id), h.id];
         this.telling = false;
       }
     }
@@ -194,7 +216,16 @@ export class ConversationHold {
     const words = new Set(gone);
     if (this.held.length >= HELD_MAX) this.heldAll = true;
     else this.held = [...this.held, { words, id, ...(undo ? { undo } : {}), ...(was ? { was } : {}) }];
-    if (!this.given.has(id)) return;
+    if (!this.given.has(id)) {
+      // Learned by reading this conversation, which holds what the user said but no id for it: told without one, and
+      // without the fact's words (memory-x9-7).
+      if (how === "forgot" && this.learned.has(id)) {
+        this.tell.heardBack = this.tell.heardBack.filter(x => x !== id);
+        if (!this.tell.heard.includes(id)) this.tell.heard = [...this.tell.heard, id];
+        this.telling = false;
+      }
+      return;
+    }
     this.tell.back = this.tell.back.filter(x => x !== id);
     if (!this.tell[how].includes(id)) this.tell[how] = [...this.tell[how], id];
     // Told again with the next request, whole: one that carried only part of it may be on its way.
