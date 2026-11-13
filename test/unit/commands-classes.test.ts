@@ -612,6 +612,14 @@ describe("commands that print a stored secret or record the room (commands-remot
     }
   });
 
+  it("keeps what such a verb was already asked for beside the secret (the commands comparison's weaker asks)", () => {
+    for (const cmd of ["az keyvault secret download --file x --name db --vault-name prod", "terraform state pull", "sudo terraform state pull"]) {
+      const d = decide(cmd);
+      expect(d.rules, cmd).toEqual(expect.arrayContaining(["secret.cloud", "cloud.change"]));
+      expect(d.classes, cmd).toEqual(expect.arrayContaining(["secret", "publish"]));
+    }
+  });
+
   it("asks as a secret before a command records from the microphone or the camera", () => {
     for (const o of POSIX) for (const cmd of ["arecord a.wav", "arecord -d 10 -f cd a.wav", "parecord a.wav", "pw-record a.wav", "rec a.wav", "sox -d a.wav", "fswebcam a.jpg",
       "ffmpeg -f pulse -i default a.wav", "ffmpeg -f alsa -i hw:0 a.wav", "ffmpeg -f v4l2 -i /dev/video0 a.mp4", "ffmpeg -y -f avfoundation -i ':0' a.wav",

@@ -7770,13 +7770,17 @@ reg(NATIVE, Object.keys(CLOUD_CLIS), h => {
     || (h.key === "az" && (/^(get-access-token|login)$/.test(verb) || all.startsWith("account get-access-token")))
     || (h.key === "gcloud" && /^auth\b/.test(all) && /(print-access-token|print-identity-token|login|activate-service-account)/.test(all))
     || ((h.key === "kubectl" || h.key === "oc") && ((verbs[0] === "config" && verbs[1] === "view" && h.args.some(a => a.v === "--raw" || a.v === "--flatten")) || (verbs[0] === "get" && /^secrets?$/.test(verbs[1] ?? "") && h.args.some(a => /^-o(yaml|json|=|$)|^--output/.test(a.v ?? "")))))
-    || (h.key === "vault" && (/^(read|login|token|unwrap)$/.test(verb) || all.startsWith("kv get")))
-    // Azure's vault values and the keys and sign-ins its services hand out (commands-remote-r9-9).
-    || (h.key === "az" && (/^keyvault (secret|key|certificate) (show|download|backup)\b/.test(all) || /\b(keys list|list-keys|credential show|show-connection-string|get-credentials|list-credentials|keys renew)\b/.test(all)))
-    // Terraform's outputs and state written out in full: `-raw` and `-json` don't mask what is marked sensitive.
-    || ((h.key === "terraform" || h.key === "tofu") && ((verbs[0] === "output" && h.args.some(a => /^-(raw|json)$/.test(a.v ?? ""))) || (verbs[0] === "show" && h.args.some(a => a.v === "-json")) || all.startsWith("state pull")))) {
+    || (h.key === "vault" && (/^(read|login|token|unwrap)$/.test(verb) || all.startsWith("kv get")))) {
     h.e.add("secret", "secret.cloud", SAYS.secrets, { program: `${h.key} ${verb}` });
     return;
+  }
+  // Azure's vault values and the keys and sign-ins its services hand out, and Terraform's outputs and state written
+  // out in full (`-raw` and `-json` don't mask what is marked sensitive): secrets too (commands-remote-r9-9). What the
+  // verb is judged to do besides stays, so none of them loses a danger it had (`az keyvault secret download`,
+  // `terraform state pull` asked as changes).
+  if ((h.key === "az" && (/^keyvault (secret|key|certificate) (show|download|backup)\b/.test(all) || /\b(keys list|list-keys|credential show|show-connection-string|get-credentials|list-credentials|keys renew)\b/.test(all)))
+    || ((h.key === "terraform" || h.key === "tofu") && ((verbs[0] === "output" && h.args.some(a => /^-(raw|json)$/.test(a.v ?? ""))) || (verbs[0] === "show" && h.args.some(a => a.v === "-json")) || all.startsWith("state pull")))) {
+    h.e.add("secret", "secret.cloud", SAYS.secrets, { program: `${h.key} ${verb}` });
   }
   if (h.key === "aws" && verbs[0] === "s3") {
     const ops = rest.filter(a => !isOption(a)).slice(2).map(a => a.v ?? "");
