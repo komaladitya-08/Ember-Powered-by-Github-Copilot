@@ -451,8 +451,9 @@ does not replace that retry request. Conversation requests are dispatched in ord
 of order; each turn keeps its own words, screen context and voice provenance. An unmatched runtime message cannot start
 or steer a task. If an app can't be operated through accessibility, Ember asks to **borrow
 your mouse**: it waits until you're still, moves the pointer visibly, and puts it back afterwards. Move the mouse, turn
-the wheel or press any key to take over instantly. Ember never types into password, payment or terminal fields and never
-acts in authentication windows. While a password prompt (polkit, keyring, sudo) is open, Ember doesn't read the screen,
+the wheel or press any key to take over instantly. Ember never types into terminal fields, the AI model never types into
+or sees password or payment fields (only in Autopilot does Ember fill one itself from its vault), and Ember never acts in
+authentication windows. While a password prompt (polkit, keyring, sudo) is open, Ember doesn't read the screen,
 take screenshots or press keys (nor asks to borrow your mouse or keyboard, or says it's borrowing them without asking,
 while one such as pinentry or ssh-askpass has the keyboard); while GNOME Shell's own prompt is up, or the window of a
 prompt program (pinentry, ssh-askpass, a polkit agent or gcr's prompter) is open, focused or not (or Ember can't tell,

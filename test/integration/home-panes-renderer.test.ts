@@ -744,7 +744,7 @@ describe.skipIf(gate)("Home's Apps & privacy, as the person's own settings and t
     const plug = () => page.locator("#privacy-terms li[data-icon='plug']").innerText();
     expect(await page.locator("#mode-interactive").getAttribute("aria-checked")).toBe("true");
     expect(await plug()).toBe("Other computers and commands: you let Ember run commands on this computer. It runs commands only in its own window, where you can watch and stop them. Other computers are off until you turn them on.");
-    expect(await hand()).toMatch(/^It asks before acting on anything risky or hard to undo\. For ordinary steps it tells you what it's doing instead \(How Ember asks, below\)\. It never types passwords\./);
+    expect(await hand()).toMatch(/^It asks before acting on anything risky or hard to undo\. For ordinary steps it tells you what it's doing instead \(How Ember asks, below\)\. It never lets the AI model type or see passwords\./);
     // First run's own words are untouched.
     expect(await page.locator("#w-full li[data-icon='plug']").evaluate(e => e.textContent)).toContain("are off until you turn them on");
     expect(await page.locator("#w-full li[data-icon='hand']").evaluate(e => e.textContent)).toContain("It asks before acting in an app unless you turn on Interactive, when you agree or later in settings, and always before anything hard to undo.");
@@ -814,7 +814,7 @@ describe.skipIf(gate)("Home's Apps & privacy, as the person's own settings and t
     const hand = await page.locator("#privacy-terms li[data-icon='hand']").innerText();
     expect(hand).not.toContain("it tells you what it's doing instead");
     expect(hand).not.toContain("without asking (below)");
-    expect(hand).toMatch(/^It asks before acting in an app, and always before anything hard to undo\. It never types passwords\./);
+    expect(hand).toMatch(/^It asks before acting in an app, and always before anything hard to undo\. It never lets the AI model type or see passwords\./);
     expect(await page.locator("#privacy-terms li[data-icon='plug']").innerText()).toBe("Other computers and commands are turned off by your organisation.");
     // Screenshots too, as a lockdown read at start says, and the switches under the fold as it says they are
     // (safety-privacy-w5-2): the settings still hold Send screenshots for tasks on and Interactive chosen and agreed to.
@@ -860,7 +860,7 @@ describe.skipIf(gate)("Home's Apps & privacy, as the person's own settings and t
     expect(await notice()).toMatch(/^Some settings are managed by your organisation \(\/etc\/ember\/policy\.json\)\./);
     // The policy file changes while Ember runs: main sends the held lockdown, as a status read would carry it.
     await page.evaluate(a => window.__pane.emit("onAdminChanged", a), homeAdmin(heldUntilRestart(ordinary)));
-    await expect.poll(() => line("hand")).toMatch(/^It asks before acting in an app, and always before anything hard to undo\. It never types passwords\./);
+    await expect.poll(() => line("hand")).toMatch(/^It asks before acting in an app, and always before anything hard to undo\. It never lets the AI model type or see passwords\./);
     expect(await line("send")).toContain("nothing is sent to a model service until you restart Ember, so Ember can't answer or act.");
     expect(await line("send")).not.toContain("GitHub Copilot");
     expect(await line("eye")).toContain("Send screenshots for tasks is off (below), so it takes no screenshots for tasks.");

@@ -25,7 +25,7 @@ describe("the consent and the vault", () => {
   it("says in Before Ember starts what the vault keeps, where, until when, and that only Autopilot fills it in (vault-4)", () => {
     const full = flat(PAGE.slice(PAGE.indexOf('id="welcome-h"'), PAGE.indexOf('id="w-rows"')));
     expect(full).toContain("If you give Ember a login, a card or contact details in its Secure Form, it keeps them in its vault on this computer, locked with your computer's keyring, until you forget them, sign out or choose Forget everything.");
-    expect(full).toContain("It never types passwords. Only in Autopilot, it can fill in a login, a card or contact details from its vault, which the AI model never sees.");
+    expect(full).toContain("It never lets the AI model type or see passwords. Only in Autopilot, it can fill in a login, a card or contact details from its vault, which the AI model never sees.");
     for (const source of CONSENT_CHANGE_SOURCES[10]) expect(full, source).toContain(source);
     expect(CONSENT_CHANGE_SOURCES[10]).toHaveLength(2);
   });

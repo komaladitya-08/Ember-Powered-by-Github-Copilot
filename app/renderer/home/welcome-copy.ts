@@ -127,7 +127,7 @@ export function consentPoints(o: { service: string; kept: string; locked: boolea
     o.locked
       ? { icon: "send", text: "While your organisation's policy locks me down, nothing is sent to a model service, so I can't answer or act." }
       : { icon: "send", text: `When you ask something, your request and what I read go to ${o.service}. Nothing is sent before you ask.` },
-    { icon: "hand", text: "I ask before acting in an app unless you turn on Interactive, and always before anything hard to undo. I never type passwords." },
+    { icon: "hand", text: "I ask before acting in an app unless you turn on Interactive, and always before anything hard to undo. I never let the AI model type or see passwords. Only in Autopilot, I can fill in a login, a card or contact details from my vault." },
     { icon: "lock", text: `On this computer I keep your settings, logs and a record of what you asked and what I did (${o.kept}). If you save a workspace, I encrypt its paths and last request and answer. I send no usage statistics.` },
     { icon: "plug", text: "Agreeing turns on what you leave on here, and you can turn any of it off later in Settings. Other computers stay off until you turn them on. While one of my questions is up, anyone near the computer can answer it by voice, without my name right after I ask. If you teach me your voice, I keep a voiceprint I refine from your requests, and the words you correct (never audio)." },
   ];
@@ -208,7 +208,7 @@ export const CONSENT_TEXT = {
 export const CONSENT_SOURCES: Readonly<Record<ConsentPoint["icon"], readonly string[]>> = {
   eye: ["reads the window you're working in", "for tasks it may take a screenshot of it", "App windows on your never-look list and password prompts are never read"],
   send: ["When you ask something</b>, your request and what Ember read from the screen go to", "Nothing is sent before you ask."],
-  hand: ["It asks before acting</b> in an app unless you turn on Interactive", "always before anything hard to undo.", "It never types passwords."],
+  hand: ["It asks before acting</b> in an app unless you turn on Interactive", "always before anything hard to undo.", "It never lets the AI model type or see passwords.", "Only in Autopilot, it can fill in a login, a card or contact details from its vault, which the AI model never sees."],
   lock: ["On this computer</b> it keeps your settings, logs and a record of every task and action it took, including what you asked for", "Ember encrypts its selected paths and last completed request and answer", "It sends no usage statistics."],
   plug: ["<b>Agreeing turns on</b> what you leave switched on here", "you can turn any of them off later in Settings", "anyone near the computer can answer it by voice", "for a few seconds after it asks, it listens for that answer without its name", "it keeps your voiceprint and keeps refining it from requests it is sure are yours (numbers, never audio), and it keeps the words you correct", "Other computers and commands</b><span id=\"targets-note\"> are off until you turn them on"],
 };

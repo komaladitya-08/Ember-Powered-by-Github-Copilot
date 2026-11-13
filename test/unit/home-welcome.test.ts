@@ -97,7 +97,9 @@ describe("the consent in short", () => {
       ["eye", /I read the window you're working in, and for tasks I may take a screenshot of it\./, "reads the window you're working in"],
       ["eye", /Never password prompts, or apps on your never-look list\./, "App windows on your never-look list and password prompts are never read"],
       ["send", /your request and what I read go to GitHub Copilot\. Nothing is sent before you ask\./, "Nothing is sent before you ask."],
-      ["hand", /I ask before acting in an app unless you turn on Interactive, and always before anything hard to undo\. I never type passwords\./, "It never types passwords."],
+      ["hand", /I ask before acting in an app unless you turn on Interactive, and always before anything hard to undo\. I never let the AI model type or see passwords\./, "It never lets the AI model type or see passwords."],
+      // The vault fills a login itself in Autopilot, so the line says so beside the password promise (merge review integ-x-2).
+      ["hand", /Only in Autopilot, I can fill in a login, a card or contact details from my vault\.$/, "Only in Autopilot, it can fill in a login, a card or contact details from its vault, which the AI model never sees."],
       ["hand", /unless you turn on Interactive/, "It asks before acting</b> in an app unless you turn on Interactive"],
       ["lock", /On this computer I keep your settings, logs and a record of what you asked and what I did \(kept 30 days\)\. If you save a workspace, I encrypt its paths and last request and answer\. I send no usage statistics\./, "It sends no usage statistics."],
       ["plug", /^Agreeing turns on what you leave on here, and you can turn any of it off later in Settings\. Other computers stay off until you turn them on\. While one of my questions is up, anyone near the computer can answer it by voice, without my name right after I ask\. If you teach me your voice, I keep a voiceprint I refine from your requests, and the words you correct \(never audio\)\.$/, "<b>Agreeing turns on</b> what you leave switched on here"],
