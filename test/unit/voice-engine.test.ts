@@ -1935,6 +1935,18 @@ describe("the bare name before it shows", () => {
     expect(e.listening).toBe(false);
   });
 
+  it("shows nothing for “A number of people…” or “Hey, number five…” that the spotter took for the name: “number” is the name only where the words go on as to Ember (voice-roomtalk-1)", () => {
+    for (const said of ["A number of people called today.", "Hey, number five is ready.", "A number, of course, called."]) {
+      const { events, e } = byName([said]);
+      expect(events, said).toEqual([{ type: "rejected", keyword: "ember", reason: "check", heard: said }]);
+      expect(e.listening).toBe(false);
+    }
+    // As a real laptop's microphone had the wake phrase written (2026-11-05): still the name.
+    expect(byName(["A number. What time is it?"]).events.find(ev => ev.type === "utterance")).toMatchObject({ text: "What time is it?" });
+    expect(byName(["Number open the calculator"]).events.find(ev => ev.type === "utterance")).toMatchObject({ text: "Open the calculator" });
+    expect(byName(["Hey, number."]).events.map(ev => ev.type)).toEqual(["wake", "listening", "listening"]);
+  });
+
   it("shows nothing for a bare name that nobody followed with words, and goes back to idle (stuck listening)", () => {
     const { events, e } = byName([], 0);
     expect(events).toEqual([]);
@@ -1985,6 +1997,44 @@ describe("the bare name before it shows", () => {
 });
 
 describe("the wake check", () => {
+  it("takes “Hey Ember” back when the whole of what was said is “Hey Amber, what time is it?” or “A number of people…”, though the check, a moment after the word, heard nothing clear (voice-roomtalk-1)", () => {
+    // On the real models the check heard nothing in the suite's own "Hey Amber, what time is it?" said half a second into
+    // a quiet room's noise, and "A number." (the wake phrase as a laptop's microphone had it written) in the other: it let
+    // both by, and the whole of what was said left as the request, with the room's next sentence after it.
+    for (const [early, whole] of [["", "Hey, Amber, what time is it?"], ["A number.", "A number of people called today."], ["What?", "Hey Amber, dinner's ready."], ["", "I remember the milk."]]) {
+      const events: VoiceEvent[] = [];
+      const c = { t: 0 };
+      const e = new VoiceEngine(fake([early, whole, "And then we can book the flights to Lisbon."]), ev => events.push(ev), { now: () => c.t, conversation: true });
+      e.feed(frame(0));
+      c.t += 32; e.feed(frame(1));
+      for (let i = 0; i < 3; i++) { c.t += 32; e.feed(frame(0, true)); }
+      for (let i = 0; i < 60; i++) { c.t += 32; e.feed(frame(0)); }
+      for (let i = 0; i < 3; i++) { c.t += 32; e.feed(frame(0, true)); }
+      for (let i = 0; i < 60; i++) { c.t += 32; e.feed(frame(0)); }
+      expect(events.filter(ev => ev.type !== "speech"), whole).toEqual([
+        { type: "wake", keyword: "hey_ember" },
+        { type: "listening", on: true, reason: "wake", window: "wake" },
+        { type: "rejected", keyword: "hey_ember", reason: "check", heard: whole },
+        { type: "listening", on: false, reason: "rejected", window: "wake" },
+      ]);
+      expect(e.listening).toBe(false);
+    }
+  });
+
+  it("still takes the wake where the whole holds the name, the wake said alone, or the name written as a word before a request (voice-roomtalk-1)", () => {
+    for (const [early, whole, request] of [["", "Hey Ember, remember the milk.", "Remember the milk."], ["", "Hey Amber, turn on night light.", "Turn on night light."], ["", "A number. What time is it?", "What time is it?"], ["Hey Amber.", "Hey Amber.", null], ["", "Hey, I'm return on night light.", "Return on night light."]] as const) {
+      const events: VoiceEvent[] = [];
+      const c = { t: 0 };
+      const e = new VoiceEngine(fake([early, whole]), ev => events.push(ev), { now: () => c.t });
+      e.feed(frame(0));
+      c.t += 32; e.feed(frame(1));
+      for (let i = 0; i < 3; i++) { c.t += 32; e.feed(frame(0, true)); }
+      for (let i = 0; i < 20; i++) { c.t += 32; e.feed(frame(0)); }
+      expect(events.filter(ev => ev.type === "rejected"), whole).toEqual([]);
+      expect(events.flatMap(ev => (ev.type === "utterance" ? [ev.text] : [])), whole).toEqual(request ? [request] : []);
+    }
+  });
+
   it("stops (rather than taking the wake back) when what it heard is 'Hey Amber, stop'", () => {
     const events: VoiceEvent[] = [];
     const c = { t: 0 };
@@ -3000,6 +3050,45 @@ describe("whose a spoken answer is (second review of the voice lane, 2026-11-12)
       expect(s.heard()).toEqual(["wake", "Open my mail. | wake"]);
       // (A conversation opens after a wake's request, as ever.)
       expect(s.events.at(-1)).toEqual({ type: "listening", on: true, reason: "conversation", window: "conversation" });
+    });
+
+    it("sends nothing of talk that starts like the name where the spotter fired on it too: the recognizer must have written the name itself (voice-roomtalk-1)", () => {
+      // CI's voice step on RHEL 8: one rendition of "A number of people called today." in the suite's voice 7 drew the
+      // bare name from the spotter at its first pause; the recognizer's "A number" read as the name written as a word
+      // (CALLED_AS_WORD), so both stages passed, "Of people called today." went to Copilot and a conversation opened that
+      // sent the next sentence. Here the spotter hears the name in each (1), or the whole phrase (2).
+      for (const words of ["A number of people called today.", "Number, can you pass the salt?", "Hey, number five is ready.", "Member, I told you.", "Amber, open the window please.", "Umber is a nice colour."]) {
+        for (const name of [1, 2]) {
+          const s = waiting({ 5: words, 6: NEXT }, "answer", { otherSound: null, conversations: true });
+          says(s, 5, name, "user");
+          says(s, 6, 0, "user");
+          expect(s.events.filter(v => v.type === "utterance"), `${words} (${NAMES[name]})`).toEqual([]);
+          expect(s.events.filter(v => v.type === "listening" && v.window === "conversation"), `${words} (${NAMES[name]})`).toEqual([]);
+          // The bare name shows no wake there at all; the whole phrase's is taken back by its check, as from idle.
+          if (name === 1) expect(s.events.filter(v => v.type === "listening"), words).toEqual([]);
+          expect(s.heard(), `${words} (${NAMES[name]})`).toEqual(name === 1 ? [] : ["wake", "rejected (check)"]);
+        }
+      }
+    });
+
+    it("still takes the user's own “Hey Ember, open my mail.” there as a wake from idle (voice-roomtalk-1)", () => {
+      const s = waiting({ 5: "Hey Ember, open my mail." }, "answer", { otherSound: null, conversations: true });
+      says(s, 5, 2, "user");
+      expect(s.heard()).toEqual(["wake", "Open my mail. | wake"]);
+    });
+
+    it("checks “Hey Ember” spotted there on the phrase itself: the window keeps the pre-roll as idle does (voice-roomtalk-1)", () => {
+      // Nothing of the window's own time was in the pre-roll, so the wake's check heard only what came after the phrase
+      // (on the real models "What?" for "Hey Amber, what time is it?") and the request lost its start ("Is it?").
+      const s = waiting({ 5: "Hey Ember, open my mail." }, "answer", { otherSound: null, conversations: true });
+      const b = (s.e as unknown as { backend: VoiceBackend }).backend, transcribe = b.transcribe;
+      const checked: number[] = [];
+      b.transcribe = (audio, purpose) => { if (purpose === "keyword") checked.push(audio.length / 512); return transcribe(audio, purpose); };
+      says(s, 5, 2, "user");
+      // The phrase was spotted 9 frames into the speech: the check hears those and the window's 0.6 s before them, back to
+      // the end of Ember's own voice (without the window's frames, the one frame it was spotted in).
+      expect(checked).toEqual([26]);
+      expect(s.heard()).toEqual(["wake", "Open my mail. | wake"]);
     });
 
     it("never takes a request the speakers' own stream said by name in it (Linux with parec)", () => {

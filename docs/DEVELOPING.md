@@ -664,11 +664,22 @@ shows: bare answers are heard there throughout. Neither shows on a question whos
 Voice Match, Voice Match not ready, a click-only card: `Confirmer.yesByVoice`), and either goes with its question
 (`answerStatusOnQuestion`, voice-product-x9-4). Only what the list
 reads as an answer leaves that window; a request said with the name in it (“Ember, open my mail”) is heard as at a
-wake, and by a wake's two stages: the spotter heard you say the name in it, and the recognizer wrote it. On the
-recognizer's words alone, which take “Number, …”, “Member, …” and “Amber, open…” for the name after the spotter, talk
-that never named Ember left the window as a request and opened a conversation that sent what was said next (second
-review of the voice lane, V2-S3; on the real models “A number of people called today.” and “Number, can you pass the
-salt?” did 8 times in 8, and never now). “Hey Ember” starts a wake as from idle, and anything else heard there goes nowhere.
+wake, and by a wake's two stages: the spotter heard you say the name in it, and the recognizer wrote the name itself
+(“Ember, …”). On the recognizer's words alone, which take “Number, …”, “Member, …” and “Amber, open…” for the name
+after the spotter, talk that never named Ember left the window as a request and opened a conversation that sent what
+was said next (second review of the voice lane, V2-S3; on the real models “A number of people called today.” and
+“Number, can you pass the salt?” did 8 times in 8). And so it did, after that, whenever the spotter fired on such talk
+too: 1 rendition in 80 of those two sentences on the real models, and once in CI's voice step on RHEL 8, where “Of
+people called today.” and the room's next sentence went out (voice-roomtalk-1); those near words no longer count
+there, with the spotter or without it. “Hey Ember” starts a wake as from idle: the window keeps the pre-roll as idle does, so the wake's
+check hears the phrase (it heard only what came after it, took nothing back, and the request lost its start: “Is it?”
+for “Hey Ember, what time is it?”), and there the whole of what was said must also hold the wake phrase as the
+recognizer writes it (“Hey Ember”, or “Ember” at its start), since the window was hearing the room; anything else heard
+there goes nowhere. A wake by the whole phrase is checked twice everywhere: a moment after the word, and again on the
+whole of what was said with it, since the first check hears nothing now and then (“Hey Amber, what time is it?” said
+in a quiet room's noise went to Copilot as “What time is it?”). (From idle too, “number” after a greeting is the name
+only where the phrase ends there or a request's first word follows, as a laptop's microphone had “Hey Ember” written:
+“A number. What time is it?”; “A number of people called today.” is never a wake.)
 “Stop” said there without the name still stops everything (“Stop.”, “Stop it.”, and “Step.” or “Stuff.” as the
 recognizer writes it: `saidStop`); the other ways to ask for quiet (“Never mind”, “Cancel”, “That's enough”, “Quiet”)
 stop Ember there only with its name, as it is silent then and hears the room, whose every such word pulled the kill

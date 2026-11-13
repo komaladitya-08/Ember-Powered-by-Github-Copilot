@@ -253,12 +253,12 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1" && process.env.EM
   /**
    * One engine fed in turns (`hear`), with the speakers' stream when given, and what it said (`at`: when, in ms).
    * `speakers`: the session feeds the speakers' stream (it runs on forSpeakers()); `conversation`: conversations are on,
-   * as by default in Ember (a wake's request opens one).
+   * as by default in Ember (a wake's request opens one); `backend`: the recognizers to run on instead.
    */
-  const session = (o: { speakers?: boolean; conversation?: boolean } = {}) => {
+  const session = (o: { speakers?: boolean; conversation?: boolean; backend?: typeof backend } = {}) => {
     const events: (VoiceEvent & { at: number })[] = [];
     let t = 0;
-    const b = o.speakers ? forSpeakers() : backend;
+    const b = o.backend ?? (o.speakers ? forSpeakers() : backend);
     const engine = new VoiceEngine(b, e => { if (e.type !== "speech") events.push({ ...e, at: t }); }, { now: () => t, ...(o.conversation ? { conversation: true } : {}) });
     const hear = (mic: Float32Array, o: { speakers?: Float32Array; onFrame?: (frame: number) => void } = {}) => {
       for (let i = 0, k = 0; i + 512 <= mic.length; i += 512, k++) {
@@ -997,27 +997,77 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1" && process.env.EM
     expect(own).toBe(1);
   }, 300_000);
 
-  it("sends nothing of the room's talk that starts like the name from a question's answer window, and opens no conversation on it (V2-S3, voice-listening-r9-3)", () => {
-    // Conversations are on, as by default; a question is up and its answer window open; the microphone only. Someone
-    // says a sentence that never names Ember, and another after it.
+  it("sends nothing of the room's talk that starts like the name from a question's answer window or from idle, and opens no conversation on it, though the spotter takes it for the name (V2-S3, voice-listening-r9-3, voice-roomtalk-1)", () => {
+    // Conversations are on, as by default; the microphone only. Someone says a sentence that never names Ember, and
+    // another after it: while a question is up and its answer window open, or with Ember idle.
     const next = speak("And then we can book the flights to Lisbon.", 3, 0.1);
-    const room = (talk: Float32Array) => {
-      const s = session({ conversation: true });
-      s.engine.questionUp(true);
-      s.engine.answerWindow(8000);
-      s.hear(inRoom(cat(silence(0.5), talk, silence(1.2), next, silence(2))));
+    /**
+     * `alarm`: the spotter's false alarm, as CI's el8 run drew it for one rendition in voice 7 (the bare name at the first
+     * pause after "A number"; it depends on all the spotter's stream heard before, and came once in 80 renditions here):
+     * the spotter says this keyword once, 0.6 s into the talk, whatever it made of the rendition itself.
+     */
+    const room = (talk: Float32Array, where: "answer" | "idle", alarm?: "ember" | "hey_ember") => {
+      let due = false, rang = false;
+      const ring = (heard: string[]) => (alarm && due && !rang ? (rang = true, [...heard, alarm]) : heard);
+      const s = session({ conversation: true, backend: { ...backend, spot: f => ring(backend.spot(f)) } });
+      if (where === "answer") { s.engine.questionUp(true); s.engine.answerWindow(8000); }
+      s.hear(inRoom(cat(silence(0.5), talk, silence(1.2), next, silence(2))), { onFrame: k => { due = k >= Math.round(1.1 / 0.032); } });
       s.end();
+      expect(!alarm || rang, "the false alarm was rung").toBe(true);
       return s.events;
     };
-    // (Before, the recognizer's words alone made these a request by name, "Number, …" as it writes them: 8 of 8 here
-    // left as a wake's request, and the next sentence went to Copilot in the conversation that opened. At idle none wakes.)
-    const left: string[] = [];
-    for (const text of ["A number of people called today.", "Number, can you pass the salt?"]) for (const sid of [1, 4, 5, 7]) {
-      const events = room(speak(text, sid, 0.1));
-      for (const e of events) if (e.type === "utterance" || e.type === "wake" || (e.type === "listening" && e.window !== "answer")) left.push(`${text} (voice ${sid}): ${e.type}${e.type === "utterance" ? ` “${e.text}”` : ""}`);
+    /**
+     * What matters: nothing of it is sent, no conversation opens, and no wake stands. (The cue of a wake by the whole
+     * phrase shows before its check and is taken back at once, as from idle: the eval counts those. By the bare name in
+     * the answer window nothing shows at all.)
+     */
+    const left = (events: VoiceEvent[], label: string) => {
+      const out: string[] = [];
+      events.forEach((e, i) => {
+        if (e.type === "utterance") out.push(`${label}: sent “${e.text}”`);
+        if (e.type === "listening" && e.on && e.window === "conversation") out.push(`${label}: a conversation opened`);
+        if (e.type === "wake" && (e.keyword === "ember" || !events.slice(i + 1, i + 3).some(x => x.type === "rejected" && x.reason === "check"))) out.push(`${label}: a wake by ${e.keyword} stood`);
+      });
+      return out;
+    };
+    // (Before V2-S3, the recognizer's words alone made these a request by name, "Number, …" as it writes them: 8 of 8
+    // left the answer window as a wake's request, and the next sentence went to Copilot in the conversation that opened.
+    // After it, so whenever the spotter fired on one too: by itself for 1 rendition of 80, and with the alarm in 16
+    // runs of 16 in the answer window and, for "A number of…", 8 of 8 from idle.)
+    const leaked: string[] = [];
+    for (const sid of [1, 4, 5, 7]) {
+      for (const text of ["A number of people called today.", "Number, can you pass the salt?"]) {
+        const talk = speak(text, sid, 0.1);
+        leaked.push(...left(room(talk, "answer"), `${text} (voice ${sid})`));
+        for (const alarm of ["ember", "hey_ember"] as const) leaked.push(...left(room(talk, "answer", alarm), `${text} (voice ${sid}), spotted as ${alarm}`));
+      }
+      // From idle the name written as a word is still the name where the words go on as to Ember ("Number, can you…":
+      // CALLED_AS_WORD), never where they go on as a sentence.
+      const talk = speak("A number of people called today.", sid, 0.1);
+      leaked.push(...left(room(talk, "idle"), `A number of people called today. (voice ${sid}) from idle`));
+      for (const alarm of ["ember", "hey_ember"] as const) leaked.push(...left(room(talk, "idle", alarm), `A number of people called today. (voice ${sid}) from idle, spotted as ${alarm}`));
     }
-    expect(left).toEqual([]);
-  }, 300_000);
+    // "Hey Amber, what time is it?" (the suite's near-miss clip) in the room's noise: the spotter takes it for the phrase,
+    // and the wake's check, a moment after the word, hears nothing in it. (Before, "What time is it?" went to Copilot
+    // from idle and from the answer window, where the check heard none of the phrase, and the next sentence after it.)
+    for (const where of ["answer", "idle"] as const) leaked.push(...left(room(read("amber"), where), `Hey Amber, what time is it? (${where})`));
+    expect(leaked).toEqual([]);
+    // The user's own "Hey Ember, …" and "Ember, …" still leave the answer window as a wake's request, whole. (The spotter
+    // misses a name now and then in a window that is already listening, by all its stream heard before: up to four
+    // tries, each a little later.)
+    for (const clip of ["wake", "name_wake"]) {
+      let requests: string[] = [];
+      for (let take = 0; take < 4 && !requests.length; take++) {
+        const s = session({ conversation: true });
+        s.engine.questionUp(true);
+        s.engine.answerWindow(8000);
+        s.hear(inRoom(cat(silence(0.5 + take * 0.21), read(clip), silence(2))));
+        s.end();
+        if (s.events.some(e => e.type === "wake")) requests = sent(s.events).map(e => `${e.text} (${e.window})`);
+      }
+      expect(requests, clip).toEqual([expect.stringMatching(/^Turn on night ?light\.? \(wake\)$/i)]);
+    }
+  }, 600_000);
 
   it.skipIf(noReader)("learns the owner's voice, not a screen reader's reading each prompt aloud 14 dB down just before each phrase (voice-listening-r4-1)", async () => {
     // Over speakers, the teaching microphone heard Home's prompts as a screen reader read them, and took them for
