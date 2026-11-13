@@ -286,9 +286,10 @@ export const SCREEN_IMAGES_TEXT = {
  * `autonomy`: an approval mode is in force (How Ember asks, below), so ordinary steps aren't asked about
  * (safety-privacy-c4-1); `grants`: the person let Ember act in some apps without asking (the list below). `targets`:
  * the onboarding line's words after its lead, as the settings and the policy leave them (targetsFoldRest,
- * safety-privacy-r4-2).
+ * safety-privacy-r4-2). `vaultFill: false`: the organisation turned the vault off (`features.vault`, a lockdown) or
+ * keeps Ember below Autopilot, so nothing is filled in from the vault and the line doesn't say it can be (integ-y-4).
  */
-export function privacyFoldWords(text: string, o: { screenImages: boolean; autonomy?: boolean; grants?: boolean; targets?: string }): string {
+export function privacyFoldWords(text: string, o: { screenImages: boolean; autonomy?: boolean; grants?: boolean; targets?: string; vaultFill?: boolean }): string {
   if (o.targets !== undefined && (text === onboardingRest("linux") || text === onboardingRest("win32"))) return o.targets;
   const out = text.replace("The list is in settings", "The list is below, under Never look at")
     // First run's agreement is behind the person here: “Hey Ember” is in its own section (slice4-x9-5).
@@ -296,7 +297,10 @@ export function privacyFoldWords(text: string, o: { screenImages: boolean; auton
     .replace(" in an app unless you turn on Interactive, when you agree or later in settings, and always before anything hard to undo.", o.autonomy
       ? " on anything risky or hard to undo. For ordinary steps it tells you what it's doing instead (How Ember asks, below)."
       : o.grants ? " in an app, except those you let it act in without asking (below), and always before anything hard to undo."
-        : " in an app, and always before anything hard to undo.");
+        : " in an app, and always before anything hard to undo.")
+    .replace(" Only in Autopilot, it can fill in a login, a card or contact details from its vault, which the AI model never sees.", o.vaultFill === false
+      ? " Your organisation has turned off filling in logins, cards and contact details from its vault."
+      : " Only in Autopilot, it can fill in a login, a card or contact details from its vault, which the AI model never sees.");
   return o.screenImages ? out
     : out.replace(", and for tasks it may take a screenshot of it.", `. ${SCREEN_IMAGES_TEXT.label} is off (below), so it takes no screenshots for tasks.`);
 }

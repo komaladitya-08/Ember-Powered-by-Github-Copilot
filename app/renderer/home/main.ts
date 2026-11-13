@@ -2376,6 +2376,8 @@ function syncPrivacyTerms(): void {
     screenImages: s?.screenImages !== false && !managed.has("screenImages"),
     autonomy: approvalsView(approvalsNow, managed.has("autonomy")).inForce !== null,
     grants: !!s && !confirmEvery && !managed.has("grants") && Object.values(s.grants).includes("act"),
+    // The vault fills only in Autopilot, and only where the organisation lets it: not said where it can't (integ-y-4).
+    ...(a && (a.error !== null || a.held || a.features?.vault === false || (approvalsNow && !approvalsView(approvalsNow, managed.has("autonomy")).rows.some(r => r.mode === "autopilot" && !r.locked))) ? { vaultFill: false } : {}),
     ...(s && a ? { targets: targetsFoldRest(s, { source: a.error ? "error" : a.source, features: { wsl: a.features?.wsl, ssh: a.features?.ssh }, ...(a.commands ? { commands: a.commands } : {}) }, platform?.os) } : {}),
   };
   const walk = document.createTreeWalker(copy, NodeFilter.SHOW_TEXT);

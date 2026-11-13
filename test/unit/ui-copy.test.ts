@@ -1595,6 +1595,17 @@ describe("Apps & privacy's screenshot switch (safety-privacy-7)", () => {
     expect(privacyFoldWords(onboardingRest("darwin"), { screenImages: true })).toBe(onboardingRest("darwin"));
   });
 
+  it("doesn't say Ember can fill in from its vault where the organisation turned that off (merge review integ-y-4)", async () => {
+    const { privacyFoldWords } = await import("../../app/renderer/home/copy");
+    const hand = " in an app unless you turn on Interactive, when you agree or later in settings, and always before anything hard to undo. It never lets the AI model type or see passwords. Only in Autopilot, it can fill in a login, a card or contact details from its vault, which the AI model never sees. ";
+    expect(`It asks before acting${privacyFoldWords(hand, { screenImages: true, vaultFill: false })}`).toBe(
+      "It asks before acting in an app, and always before anything hard to undo. It never lets the AI model type or see passwords. Your organisation has turned off filling in logins, cards and contact details from its vault. ");
+    expect(privacyFoldWords(hand, { screenImages: true, vaultFill: true })).toBe(privacyFoldWords(hand, { screenImages: true }));
+    // Home passes it from the policy in force: the vault's switch, a lockdown, or a mode cap that keeps Autopilot out.
+    const main = readFileSync(new URL("../../app/renderer/home/main.ts", import.meta.url), "utf8");
+    expect(main).toContain(`...(a && (a.error !== null || a.held || a.features?.vault === false || (approvalsNow && !approvalsView(approvalsNow, managed.has("autonomy")).rows.some(r => r.mode === "autopilot" && !r.locked))) ? { vaultFill: false } : {}),`);
+  });
+
   it("doesn't tell Apps & privacy that “Hey Ember” is turned on when you agree (slice4-x9-5)", async () => {
     const { privacyFoldWords } = await import("../../app/renderer/home/copy");
     const mic = " unless you turn on “Hey Ember”, when you agree or later in settings, or choose Listen once for one request.";
