@@ -132,7 +132,7 @@ describe("the consent in short", () => {
     expect(locked[3].text).toContain("(none deleted until your organisation fixes its policy)");
   });
 
-  it("tells someone who agreed to an earlier version what changed since, each line from the full text (first-run-4, safety-privacy-8)", () => {
+  it("tells someone who agreed to an earlier version what changed since, each line from the full text and true for them (first-run-4, safety-privacy-8, slice4-x9-3)", () => {
     const full = PAGE.slice(PAGE.indexOf("<details class=\"w-more\" id=\"w-full\">"), PAGE.indexOf("</details>", PAGE.indexOf("id=\"w-full\"")));
     // Every bump has its line, so a bump can't ship without one, and every line is paired with the full text's words.
     for (let v = 2; v <= CONSENT_VERSION; v++) {
@@ -146,8 +146,9 @@ describe("the consent in short", () => {
     expect(consentChangesSince(4)).toEqual([CONSENT_CHANGES[5], CONSENT_CHANGES[6], CONSENT_CHANGES[7], CONSENT_CHANGES[8], CONSENT_CHANGES[9]]);
     // Setup says plainly that anyone near the computer can answer Ember by voice (owner decision B of 2026-11-12).
     expect(consentChangesSince(7)[0]).toBe("While one of my questions is up, anyone near the computer can answer it by voice, and for a few seconds after I ask, I listen for that answer without my name. With Voice Match on, only your voice can say yes.");
-    // Version 9, said truthfully to someone who agreed before: their settings stay, and they are asked about Interactive (slice4-25).
-    expect(consentChangesSince(8)).toEqual(["Agreeing now also turns on Interactive unless you switch it off here, so I don't ask before ordinary steps in an app. Your other settings stay as they are."]);
+    // Version 9, said truthfully to someone who agreed before: their settings stay, and they are asked about Interactive
+    // only while its card isn't agreed and their organisation allows it, when its row shows (slice4-25, slice4-x9-3).
+    expect(consentChangesSince(8)).toEqual(["If you haven't agreed to Interactive yet, agreeing now turns it on unless you switch it off here or your organisation keeps it off, so I don't ask before ordinary steps in an app. Your other settings stay as they are."]);
     expect(consentChangesSince(0)).toEqual([]);
     expect(consentChangesSince(CONSENT_VERSION)).toEqual([]);
     for (const line of Object.values(CONSENT_CHANGES)) expect(line, line).not.toMatch(/\bwe\b|\bus\b|\bour\b|"/i);

@@ -33,7 +33,7 @@ export const CONSENT_CHANGES: Readonly<Record<number, string>> = {
   6: "Once you call me, I keep listening through the conversation, and what I hear there is sent as text, without my name.",
   7: "If you turn on “Keep my recent conversation”, its latest messages stay on this computer after I restart.",
   8: "While one of my questions is up, anyone near the computer can answer it by voice, and for a few seconds after I ask, I listen for that answer without my name. With Voice Match on, only your voice can say yes.",
-  9: "Agreeing now also turns on Interactive unless you switch it off here, so I don't ask before ordinary steps in an app. Your other settings stay as they are.",
+  9: "If you haven't agreed to Interactive yet, agreeing now turns it on unless you switch it off here or your organisation keeps it off, so I don't ask before ordinary steps in an app. Your other settings stay as they are.",
 };
 
 /** The changes since the version the user agreed to (`agreed`), oldest first: none for a first agreement (0) or a current one. */
