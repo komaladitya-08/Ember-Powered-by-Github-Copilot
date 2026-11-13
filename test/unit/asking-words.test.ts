@@ -30,10 +30,10 @@ describe("“Ask me before every command” on a computer where commands run as 
     }
   });
 
-  it("in Autopilot, is the user's own switch, free to turn on, and says root commands run without asking unless it is on", () => {
+  it("in Autopilot, is the user's own switch, free to turn on, and says root commands run without asking unless it is on, but those Autopilot still asks about (r10-modes-copy-y10-2)", () => {
     expect(row("autopilot").askEvery).toMatchObject({ checked: false, disabled: false, shown: true });
     expect(row("autopilot", true).askEvery).toMatchObject({ checked: true, disabled: false });
-    expect(row("autopilot").managed).toBe("Commands here run as the administrator. In Autopilot each one runs without asking, after a few seconds to stop it, unless you turn this on.");
+    expect(row("autopilot").managed).toBe("Commands here run as the administrator. In Autopilot each one runs without asking, after a few seconds to stop it, except those Autopilot still asks about, unless you turn this on.");
     expect(row("autopilot").managed).not.toMatch(/asks before every one/);
   });
 
@@ -98,12 +98,12 @@ describe("“Ask me before every command” in a distro Podman uses (r10-modes-c
 });
 
 describe("the Commands intro, the Routines hint and the Connectors hint are true in every mode (home-c10-2)", () => {
-  it("says what commands ask before, per mode", () => {
+  it("says what commands ask before, per mode, Autopilot's naming a command that keeps running after Stop and one you ruled out (r10-modes-copy-y10-2)", () => {
     expect(text(page)).toContain(cc.commandsIntro(null));
     expect(page).toContain(`<p class="intro" id="commands-intro">${cc.commandsIntro(null)}</p>`);
     expect(cc.commandsIntro("interactive")).toBe(cc.COMMANDS_INTRO);
     expect(cc.commandsIntro("assisted")).toBe("Ember runs commands in its own command window, where you can watch and stop them. It asks first before anything that touches secrets, and before anything that deletes, publishes or changes the system unless Assisted's check finds it in what you asked.");
-    expect(cc.commandsIntro("autopilot")).toBe("Ember runs commands in its own command window, where you can watch and stop them. In Autopilot it runs one that deletes, publishes or changes the system without asking, after a few seconds to stop it. It still asks before anything that touches secrets or whose effect it can't tell.");
+    expect(cc.commandsIntro("autopilot")).toBe("Ember runs commands in its own command window, where you can watch and stop them. In Autopilot it runs one that deletes, publishes or changes the system without asking, after a few seconds to stop it. It still asks before anything that touches secrets, would keep running after you stop it or has an effect it can't tell, and before one you ruled out.");
   });
 
   it("says what a routine's steps ask before, per mode, and that Assisted's check reads what you said, not the saved steps (r10-modes-copy-x10-1)", () => {

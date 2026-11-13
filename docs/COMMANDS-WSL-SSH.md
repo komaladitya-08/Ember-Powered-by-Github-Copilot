@@ -81,7 +81,7 @@ command on that computer ask. **Open the command window** shows it. Where comman
 (Ember itself, a distro or a login that is, or one where Ember can't tell), every command asks anyway, so **Ask me
 before every command** shows on there, can't be turned off, and says why under it, as it does where your organisation
 asks. In Autopilot root is no reason to ask (§2.5b), so there the switch is your own again: it says those commands run
-without asking, after a few seconds to stop them, unless you turn it on, and turning it on makes every one ask. In a
+without asking, after a few seconds to stop them, except those Autopilot still asks about (§2.5b), unless you turn it on, and turning it on makes every one ask. In a
 distro Podman uses, every command asks in every mode, Autopilot included, so the switch shows on there and can't be
 turned off, and says why under it.
 

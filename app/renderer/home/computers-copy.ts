@@ -25,12 +25,12 @@ export const COMMANDS_INTRO = "Ember runs commands in its own command window, wh
 /**
  * The section's intro in the approval mode in force (null: below Interactive), true in each (home-c10-2): Assisted's
  * check may clear a deletion, a push or a system change it finds in the user's words but never one that touches secrets
- * (commands/review.ts notReviewable); Autopilot announces those with their Stop countdown and still asks for secrets and
- * what Ember can't tell (commands/autopilot.ts autopilotAsks).
+ * (commands/review.ts notReviewable); Autopilot announces those with their Stop countdown and still asks for secrets,
+ * what would outlive Stop, what Ember can't tell and what the user's words rule out (commands/autopilot.ts autopilotAsks).
  */
 export function commandsIntro(mode: ApprovalMode | null): string {
   if (mode === "assisted") return "Ember runs commands in its own command window, where you can watch and stop them. It asks first before anything that touches secrets, and before anything that deletes, publishes or changes the system unless Assisted's check finds it in what you asked.";
-  if (mode === "autopilot") return "Ember runs commands in its own command window, where you can watch and stop them. In Autopilot it runs one that deletes, publishes or changes the system without asking, after a few seconds to stop it. It still asks before anything that touches secrets or whose effect it can't tell.";
+  if (mode === "autopilot") return "Ember runs commands in its own command window, where you can watch and stop them. In Autopilot it runs one that deletes, publishes or changes the system without asking, after a few seconds to stop it. It still asks before anything that touches secrets, would keep running after you stop it or has an effect it can't tell, and before one you ruled out.";
   return COMMANDS_INTRO;
 }
 export const WSL_SWITCH = "Let Ember work in WSL";
@@ -164,7 +164,7 @@ export const ASK_EVERY_PRIVILEGED = "Commands here run as the administrator, so 
  * The same place in Autopilot, where root is no reason to ask (commands/autopilot.ts autopilotAsks) and only the user's
  * own switch, or the organisation's, keeps every command asking there (home-c10-1).
  */
-export const ASK_EVERY_PRIVILEGED_AUTOPILOT = "Commands here run as the administrator. In Autopilot each one runs without asking, after a few seconds to stop it, unless you turn this on.";
+export const ASK_EVERY_PRIVILEGED_AUTOPILOT = "Commands here run as the administrator. In Autopilot each one runs without asking, after a few seconds to stop it, except those Autopilot still asks about, unless you turn this on.";
 /** The same place in a distro Podman uses, where every command asks in every mode (decide.ts LINES.toolDistro's fact). */
 export const ASK_EVERY_TOOL = "Podman uses this distro, so Ember asks before every command here.";
 export const WSL_MANAGED = "Your organisation doesn't allow Ember to work in WSL.";
