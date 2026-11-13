@@ -760,7 +760,9 @@ call, tell, invite…), keeps every name as heard, and a person's name from Memo
 something up (find, who, what, where…). **Suggest what I might say next** shows two or three likely next requests under
 Ember's answers and in Ask Ember, made on this computer; choosing one asks Ember as typing it would, but never counts
 as your own words for a command (a dangerous one always asks), and nothing risky is suggested unless built from what
-you just asked. Both are in “Before Ember starts” (added in `CONSENT_VERSION` 2). After a “Hey Ember” request the microphone stays open as a conversation
+you just asked. They are made from what was asked since Ember started, kept in memory only; signing out, another
+account signing in and Memory's Forget everything let go of it (`PersonalVoice.forgetSession`), so the next person is
+never offered the last one's requests. Both are in “Before Ember starts” (added in `CONSENT_VERSION` 2). After a “Hey Ember” request the microphone stays open as a conversation
 (**Keep listening after I call Ember**, on by default): what you say next needs no name, also while Ember speaks and works,
 until “That's all” or 30 seconds after everything has gone quiet (`CONVERSATION_IDLE_MS`, app/voice/engine.ts). Speech over
 Ember drops its voice at once (`duck`, 0.15 of its level: without it the echo canceller left almost nothing of the user's

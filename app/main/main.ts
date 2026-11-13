@@ -1362,6 +1362,15 @@ function start(): void {
    */
   let personalRef: PersonalVoice | null = null;
   /**
+   * Sign-out, another account or Forget everything: what the person asked this session goes, so the next one is never
+   * offered it as a suggestion, and the chips showing go with it (memory-r9-2).
+   */
+  const forgetSessionWords = () => {
+    recentAsks = [];
+    personalRef?.forgetSession();
+    if (lastState.suggest) showState({ suggest: null });
+  };
+  /**
    * What the Ask box suggests now (askSuggestions): none while a question is up, those that follow the answer only
    * while it shows, and those that answer its last words only while those show: opened in full, once the overlay says
    * its end has, or without a compositor the corner card (companion-r2-1, companion-c2-2, companion-v6-2,
@@ -2281,6 +2290,7 @@ function start(): void {
           finally {
             refusedTokens.clear();
             askHistory = [];
+            forgetSessionWords();
             await agent?.start(null);
           }
         }
@@ -2758,6 +2768,8 @@ function start(): void {
   // Through learning: what waits to be learned, the "Ember learned" lines and Better recall's vectors go too.
   ipcMain.handle(IPC.memoryForgetAll, guard(() => {
     learning.forgetAll();
+    // What was asked this session is about the person too: no suggestion comes from it afterwards (memory-r9-2).
+    forgetSessionWords();
     // The saved copy of the conversation is part of what Ember keeps about the person: it goes too.
     const savedGone = agent?.forgetHistory() ?? true;
     memoryOwner.clear();
@@ -3667,7 +3679,7 @@ function start(): void {
         broadcast(IPC.conversationChanged, conversationNow(entries));
       },
       // Another account signed in: its conversation went, and with it what the ask box remembers (as at sign-out).
-      onAccountChanged: () => { askHistory = []; forgetProject("all"); },
+      onAccountChanged: () => { askHistory = []; forgetSessionWords(); forgetProject("all"); },
       // A reminder the user set is due (reminders.ts): said too when replies are spoken, and a notification while away.
       onReminder: r => {
         // After what Ember is saying (an answer under way), not cutting it off.

@@ -5510,9 +5510,11 @@ describe("keeping the recent conversation across restarts (opt-in)", () => {
     };
     /** What Sign out told Projects to forget (integrations-c2-1: from the handler, never from the status after it). */
     let projectForgot: string[] = [];
+    /** How often what was asked this session was let go of (memory-r9-2). */
+    let sessionWordsForgotten = 0;
     const signOutHandler = (agent: AgentHost) => handlerOf(slice("ipcMain.handle(IPC.signOut,", "ipcMain.handle(IPC.cancelSignIn,"), {
       agent, tokens: { clear() {} }, keeper: { use() {} }, providers: { forget() {} }, refusedTokens: { clear() {} }, resetAnswerSpeech() {},
-      forgetProject: (what: string) => { projectForgot.push(what); },
+      forgetProject: (what: string) => { projectForgot.push(what); }, forgetSessionWords: () => { sessionWordsForgotten++; },
     });
 
     it("Sign out deletes conversation.json although the switch is off by then", async () => {
@@ -5525,8 +5527,11 @@ describe("keeping the recent conversation across restarts (opt-in)", () => {
       expect(fs.existsSync(k.file)).toBe(true);
       k.flag.on = false; // the setting turned off, the listener not yet run
       projectForgot = [];
+      sessionWordsForgotten = 0;
       await signOutHandler(k.host)();
       expect(projectForgot).toEqual(["all"]);
+      // What the person asked this session goes too: none of it is suggested to the next one (memory-r9-2).
+      expect(sessionWordsForgotten).toBe(1);
       expect(fs.existsSync(k.file)).toBe(false);
       await k.store.flush();
       expect(fs.existsSync(k.file)).toBe(false);
@@ -5553,11 +5558,11 @@ describe("keeping the recent conversation across restarts (opt-in)", () => {
       await k.store.flush();
       const calls: string[] = [];
       const run = handlerOf(slice("ipcMain.handle(IPC.memoryForgetAll,", '// "Tell Ember about you"'), {
-        learning: { forgetAll: () => calls.push("learning") }, agent: k.host,
+        learning: { forgetAll: () => calls.push("learning") }, agent: k.host, forgetSessionWords: () => calls.push("session words"),
         memoryOwner: { clear: () => calls.push("owner.clear"), refresh: () => undefined }, memoryConfigured: () => true, publishMemoryOwner: () => undefined,
       });
       await run();
-      expect(calls).toEqual(["learning", "owner.clear"]);
+      expect(calls).toEqual(["learning", "session words", "owner.clear"]);
       expect(fs.existsSync(k.file)).toBe(false);
       expect(k.host.getTranscript().map(e => e.text)).toEqual(["old question", "old answer"]);
       await k.host.ask("after forgetting");
