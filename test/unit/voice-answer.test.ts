@@ -436,6 +436,20 @@ describe("spoken answers as people say them (owner report of 2026-11-03: “Embe
     for (const no of ["Nah.", "No, not yet.", "Not right now.", "Don't allow it.", "No, no.", "Deny it.", "Ember, not now, thanks.", "Okay, no."]) expect(spokenAnswer(no), no).toBe("deny");
   });
 
+  it("hears an everyday refusal that doesn't start with a no word, and a no said in two short parts, but no yes more widely (voice-listening-r10-1)", () => {
+    // They read as no answer: vanishing in the answer window, or sent to Copilot as a request while the question waited.
+    for (const no of [
+      "Of course not.", "I said no.", "Hell no.", "No thank you, leave it.", "Certainly not.", "Definitely not.", "Never.",
+      "Leave it.", "No, leave it.", "Not at all.", "I'd rather not.", "Better not.", "I don't think so.", "No, not now.",
+      "No thanks, don't.", "Nope, not today.", "I said not now.", "Please, leave it.",
+    ]) expect(spokenAnswer(no), no).toBe("deny");
+    // A no and a yes together, a no with a request after it, and a yes in two parts read as no answer, as before.
+    for (const other of ["No, do it.", "Leave it, go ahead.", "No, leave it open and send it.", "Yes, go on, do it.", "Okay, then.", "Of course, leave it."]) {
+      expect(spokenAnswer(other), other).toBeNull();
+    }
+    for (const w of SPOKEN_YES) expect(SPOKEN_NO.has(w), w).toBe(false);
+  });
+
   it("still never hears Always, a yes inside a longer request, or an answer it can't be sure of", () => {
     for (const other of [
       "Always.", "Always allow.", "Yes, always.", "Allow always.", "Go ahead and always allow it.", "Yes and also delete the files.",

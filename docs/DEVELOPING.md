@@ -728,14 +728,20 @@ switch (V2-S8); in a follow-up window and after “Hey Ember” they stop as bef
 no answer (most likely one misheard: one test voice's lone “Allow.” comes out “Hello”) make the question say once how
 to answer (`unclear`). So do, there and in a follow-up or a conversation while a question waits, up to four words
 that start like an answer and aren't one (“Yes, but wait.”, “No, hang on.”: `nearAnswer` in app/shared/spoken-answer.ts),
-and, in any window, a yes asked as a question said by name (“Ember, okay?”: `askedYes`): nothing of them is sent, where
+up to six with a no word anywhere, not asked as a question (“No, I don't want that.”, “That's not what I meant.”), a
+hold (“Wait.”, “Hold on.”) and an assent that isn't a yes (“Okay then.”, “Perfect.”, “Sounds great.”, which vanished as
+closers), and, in any window, a yes asked as a question said by name (“Ember, okay?”: `askedYes`): nothing of them is sent, where
 they went to Copilot or vanished (V2-F5, V2-F7). “Why?” and “Which file?” are requests as ever. So are words that hold
 a stop (“No, stop the task.”, “Okay, stop typing.”): never a near-miss, they reach main, which stops everything on
 them while a task is at work (voice-product-y9-1). “Okay, Ember.”, which
 the spotter hears as “Hey Ember”, is only a wake and answers nothing: nothing tells whose the “Okay” before the name
 is, and a video's or a colleague's rode on the user's name as their yes (voice-product-y9-2); what others say right
 after the user's bare “Hey Ember” goes nowhere either (voice-product-x9-1). “Okay, that's all.”
-still ends a conversation or a follow-up, the closers judged before the near-miss check (voice-product-x9-3). The answer window opens no conversation, is
+still ends a conversation or a follow-up: what ends one is never a near-miss (voice-product-x9-3). Everyday refusals
+that start with no no word are noes (“Of course not.”, “I said no.”, “Hell no.”, “Never.”, “Leave it.”), and so is a no
+said in short parts that are each one (“No thank you, leave it.”, “Nope, not today.”): they vanished in the answer
+window or went to Copilot as a request while the question waited (voice-listening-r10-1). Noes are heard more widely
+than yeses, since a no is anyone's and declining is the safe side; no yes was added. The answer window opens no conversation, is
 no follow-up, ends with the question, and takes no yes said over other sound unless it is said with the name (the
 question then says so, once); a no is anyone's there too, as it is in a conversation and a follow-up: “No.”, “Not
 now.” and “Don't do it.” over a playing video were dropped in the answer window and a conversation, and the question

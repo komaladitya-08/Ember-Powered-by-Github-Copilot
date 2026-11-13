@@ -3430,6 +3430,31 @@ describe("whose a spoken answer is (second review of the voice lane, 2026-11-12)
       }
     });
 
+    it("takes an everyday refusal as the answer, and says once it didn't catch a hold, a closer or a few words with a no in them, sending nothing, in every window (voice-listening-r10-1)", () => {
+      // They vanished in the answer window, were swallowed as closers, or went to Copilot as a request in a follow-up or
+      // a conversation, while the question stayed up for anyone's yes.
+      for (const words of ["Of course not.", "I said no.", "Hell no.", "No thank you, leave it.", "Never."]) for (const where of WHERE) {
+        const s = waiting({ 5: words }, where, { otherSound: false });
+        says(s, 5, 0, "user");
+        expect(s.heard(), `${words} in ${where}`).toEqual([`${words} | ${where}`]);
+      }
+      for (const words of [
+        "Wait.", "Hold on.", "Okay then.", "Perfect.", "Great.", "Alright then.", "Okay, cool.", "Fine then.", "Sounds great.",
+        "No, I don't want that.", "That's not what I meant.", "I never said that.", "Nope, wrong one, wait.",
+      ]) for (const where of WHERE) {
+        const s = waiting({ 5: words }, where, { otherSound: false });
+        says(s, 5, 0, "user");
+        expect(s.heard(), `${words} in ${where}`).toEqual(["unclear"]);
+        expect(s.e.listening, `${words} in ${where}`).toBe(true);
+      }
+      // A real request is still sent: asked as a question, or longer than a short answer.
+      for (const words of ["Why not?", "Is it not working?", "No, open the other file instead please."]) for (const where of ["follow-up", "conversation"] as const) {
+        const s = waiting({ 5: words }, where, { otherSound: false });
+        says(s, 5, 0, "user");
+        expect(s.heard(), `${words} in ${where}`).toEqual([`${words} | ${where}`]);
+      }
+    });
+
     it("still ends a conversation or a follow-up on “Okay, that's all.” said while a question waits, sending nothing (voice-product-x9-3)", () => {
       // The near-miss check ran before the closers: the window stayed open and the question got "I didn't catch that…".
       for (const words of ["Okay, that's all.", "No, that's all."]) for (const where of ["follow-up", "conversation"] as const) {
