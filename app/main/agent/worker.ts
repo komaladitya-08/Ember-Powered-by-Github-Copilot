@@ -309,6 +309,8 @@ const NO_PICTURE_VAULT = "\n(No screenshot: a field Ember filled from its vault 
 const NOTHING_FILLED = "Nothing was filled from the vault here. Don't type it yourself or try another way; tell the user in finish_task what is left for them to fill in.";
 const NOT_SAVED = "The user closed Ember's Secure Form without saving, so nothing was filled. Don't ask again or try another way; tell the user in finish_task what is left for them to fill in.";
 const NOT_SAVED_BEFORE = "The user already closed Ember's Secure Form for this in this task, so it isn't asked again and nothing was filled. Tell the user in finish_task what is left for them to fill in.";
+/** A Secure Form couldn't keep anything on this computer (integ-z-2): why, in Ember's own fixed words, so the model says so and doesn't ask for the next field. */
+const CANT_KEEP = "This computer can't keep this in Ember's vault, so nothing was filled and Ember won't ask for it again in this task. Don't type it yourself or try another way; tell the user in finish_task that this computer can't keep it and what is left for them to fill in, and carry on with the rest of the task without it.";
 const NO_SUCH_PART = "The user's vault entry for this has no such detail saved, so nothing was filled. Don't type it yourself; tell the user in finish_task what is left for them to fill in.";
 const CHANGED_BEFORE_FILL = "The field or its page changed before Ember could fill it, so nothing was filled. Call perceive_window; if the same field is still there, you may ask once more.";
 const CANT_TYPE_IT = "This field only takes typed keys, and what the vault holds can't be typed with the keyboard here, so nothing was filled. Tell the user in finish_task.";
@@ -3246,7 +3248,8 @@ export class Worker {
    * what it needs; everything else is Ember's: the policy decides the step as its own kind, refusing before any
    * question or form wherever it may not be done (PolicyEngine.vaultRefusal); what the field belongs to is read from
    * the app (vaultTarget); with no entry bound there the person is asked once in the Secure Form, and a form closed
-   * without an answer is kept as a refusal for the rest of the task; right before the fill the field, its page and
+   * without an answer is kept as a refusal for the rest of the task (one that could keep nothing on this computer is
+   * nobody's no, and isn't shown again in the task); right before the fill the field, its page and
    * the decision are all looked at again, and anything that changed since means no fill; then the value goes from the
    * vault straight to the helper's own fill, or, where the field takes none by accessibility, is typed as keys under
    * the borrow's rules, never pasted. The model hears only whether it was filled.
@@ -3283,6 +3286,12 @@ export class Worker {
         this.refusals.noteStep(closed, "refused");
         return this.vaultRefused(element, "the user closed Ember's Secure Form for this earlier in the task", NOT_SAVED_BEFORE);
       }
+      // A form that could keep nothing earlier in this task isn't shown again in it (integ-z-2): a login's next field
+      // would only put the same "can't keep" form up and take the keyboard once more. Nobody's no, as the first was.
+      if (this.vaultCantKeep) {
+        this.d.log.info("worker.vault_form_not_shown", { task: this.spec.id, kind });
+        return this.vaultRefused(element, "Ember's vault couldn't keep anything on this computer earlier in this task, so its Secure Form wasn't shown again", CANT_KEEP);
+      }
       this.d.onProgress("Waiting for you in the Secure Form…");
       // (The wait for the person doesn't count against the task's time, as a question's doesn't.)
       const form = () => vault.ask(kind, dest, this.window.app || null).catch(() => "off" as const);
@@ -3300,7 +3309,9 @@ export class Worker {
       if (asked !== "saved" && asked !== "kept") {
         // A form that could keep nothing (no keyring, a Save the keyring or the disk refused, no window) is nobody's
         // no: the task isn't held as one the user said no in and nothing is kept as refused (integ-y-2).
-        return this.vaultRefused(element, asked === "unavailable" ? "Ember's Secure Form couldn't keep anything on this computer: it has no keyring, couldn't save or couldn't be shown" : "the vault can't be used now");
+        if (asked !== "unavailable") return this.vaultRefused(element, "the vault can't be used now");
+        this.vaultCantKeep = true;
+        return this.vaultRefused(element, "Ember's Secure Form couldn't keep anything on this computer: it has no keyring, couldn't save or couldn't be shown", CANT_KEEP);
       }
     }
     // Never while the shell's own password prompt is open, also by accessibility (safety-privacy-3).
@@ -3381,6 +3392,13 @@ export class Worker {
    * typed or chosen there afterwards by the task, as in any secret field (elementOf).
    */
   private vaultFilled = new Map<string, VaultPart>();
+
+  /**
+   * A Secure Form in this task answered that it could keep nothing on this computer (no keyring; a Save the keyring,
+   * the disk or a full vault refused, then closed). Apart from the user's no, and for this task only: while it is
+   * set no form is opened for a fill with nothing saved, and what is already saved is filled as ever (integ-z-2).
+   */
+  private vaultCantKeep = false;
 
   /** A field was (or may have been) filled from the vault: it is secret for the rest of the task. */
   private noteVaultFill(id: number, node: AxNode, element: Focus, part: VaultPart): void {

@@ -42,6 +42,7 @@ const PASSWORD: AxNode = { id: 2, parent: 10, depth: 2, role: "password text", n
 const SIGN_IN: AxNode = { id: 3, parent: 10, depth: 2, role: "push button", name: "Sign in", states: ["enabled", "sensitive"], bounds: at(300) };
 const SEARCH: AxNode = { id: 4, parent: 10, depth: 2, role: "entry", name: "Search", states: EDIT, bounds: at(100) };
 const BAR: AxNode = { id: 5, parent: null, depth: 1, role: "entry", name: "Search with Google or enter address", states: EDIT, bounds: { x: 100, y: 40, width: 500, height: 30 } };
+const EMAIL_FIELD: AxNode = { id: 6, parent: 10, depth: 2, role: "entry", name: "Email address", states: EDIT, bounds: at(350) };
 const GITHUB: VaultDestination = { site: "https://github.com" };
 
 interface Opts {
@@ -452,9 +453,65 @@ describe("fill_from_vault and a Secure Form that could keep nothing (integ-y-2)"
     // Nothing is kept as refused: the form may be asked again in this task, and typing into the field is judged as any typing.
     const book = (h.w as unknown as { refusals: Refusals; namesFor(r: unknown): string[] });
     expect(book.refusals.step(book.namesFor({ kind: "text", element: { role: USERNAME.role, name: USERNAME.name }, value: USER }))).toBeNull();
-    expect((await h.call("fill_from_vault", { id: 1, what: "user name" })).resultType).toBe("success");
-    expect(h.forms).toHaveLength(2);
+    expect(h.forms).toHaveLength(1);
     expect(h.everything([r])).not.toContain(CANARY);
+  });
+
+  it("shows one Secure Form for a login's fields on a computer that can't keep them, however many fills are asked, and tells the model why in fixed words (integ-z-2)", async () => {
+    // The checker's sequence: the user name, the password, the user name again, each answered by a form that could keep nothing.
+    const h = await worker({ form: ["unavailable", { user: USER, password: CANARY }, { user: USER, password: CANARY }] });
+    await h.call("perceive_window", {});
+    const results = [
+      await h.call("fill_from_vault", { id: 1, what: "user name" }),
+      await h.call("fill_from_vault", { id: 2, what: "password" }),
+      await h.call("fill_from_vault", { id: 1, what: "user name" }),
+    ];
+    // One form, and nothing takes the keyboard after it.
+    expect(h.forms).toHaveLength(1);
+    expect(h.put).toEqual([]);
+    expect(results.map(r => r.resultType)).toEqual(["denied", "denied", "denied"]);
+    const CANT_KEEP = "This computer can't keep this in Ember's vault, so nothing was filled and Ember won't ask for it again in this task. Don't type it yourself or try another way; tell the user in finish_task that this computer can't keep it and what is left for them to fill in, and carry on with the rest of the task without it.";
+    expect(results.map(r => r.textResultForLlm)).toEqual([CANT_KEEP, CANT_KEEP, CANT_KEEP]);
+    // Nobody's no, each time: no flag, nothing kept as refused, and typing into either field is judged as any typing.
+    const flags = h.w as unknown as { declined: boolean; saidNoThisTask: boolean };
+    expect([flags.declined, flags.saidNoThisTask]).toEqual([false, false]);
+    const book = (h.w as unknown as { refusals: Refusals; namesFor(r: unknown): string[] });
+    for (const f of [USERNAME, PASSWORD]) expect(book.refusals.step(book.namesFor({ kind: "text", element: { role: f.role, name: f.name }, value: USER }))).toBeNull();
+    // The audit says what happened once for each fill, and the log says a form was left out, with no value anywhere.
+    expect(h.decisions().map(d => [d.kind, d.verdict, d.reason])).toEqual([
+      ["vault_fill", "deny", "Ember's Secure Form couldn't keep anything on this computer: it has no keyring, couldn't save or couldn't be shown"],
+      ["vault_fill", "deny", "Ember's vault couldn't keep anything on this computer earlier in this task, so its Secure Form wasn't shown again"],
+      ["vault_fill", "deny", "Ember's vault couldn't keep anything on this computer earlier in this task, so its Secure Form wasn't shown again"]]);
+    expect(h.logged.filter(l => (l as [string])[0] === "worker.vault_form_not_shown")).toHaveLength(2);
+    expect(h.everything(results)).not.toContain(CANARY);
+    expect(h.everything(results)).not.toContain(USER);
+  });
+
+  it("still fills what is already saved after a form that could keep nothing, and forgets that with the task (integ-z-2)", async () => {
+    // A contact's form couldn't be kept (a full vault, say); the login saved before is filled as ever.
+    const h = await worker({ saved: [LOGIN], nodes: [BAR, PAGE, SEARCH, USERNAME, PASSWORD, SIGN_IN, EMAIL_FIELD], form: ["unavailable", "unavailable"] });
+    await h.call("perceive_window", {});
+    expect((await h.call("fill_from_vault", { id: 6, what: "email" })).resultType).toBe("denied");
+    expect((await h.call("fill_from_vault", { id: 6, what: "email" })).resultType).toBe("denied");
+    expect(h.forms).toHaveLength(1);
+    expect((await h.call("fill_from_vault", { id: 1, what: "user name" })).resultType).toBe("success");
+    // The next task starts without it: its first fill asks in the form again.
+    const next = await worker({ form: ["unavailable"] });
+    await next.call("perceive_window", {});
+    await next.call("fill_from_vault", { id: 1, what: "user name" });
+    expect(next.forms).toHaveLength(1);
+  });
+
+  it("asks nothing again after the user's own no, a form that could keep values closed without a Save, and calls it their no each time (integ-z-2, integ-x-3)", async () => {
+    const h = await worker({ form: [null, "unavailable"] });
+    await h.call("perceive_window", {});
+    await h.call("fill_from_vault", { id: 1, what: "user name" });
+    const again = await h.call("fill_from_vault", { id: 2, what: "password" });
+    expect(h.forms).toHaveLength(1);
+    expect(again.textResultForLlm).toMatch(/already closed Ember's Secure Form/);
+    const flags = h.w as unknown as { declined: boolean; saidNoThisTask: boolean };
+    expect([flags.declined, flags.saidNoThisTask]).toEqual([true, true]);
+    expect(h.decisions().map(d => d.reason)).toEqual(["the user closed Ember's Secure Form without saving", "the user closed Ember's Secure Form for this earlier in the task"]);
   });
 
   it("stays the user's no where the form could keep values and was closed without a Save (integ-y-2, integ-x-3)", async () => {
