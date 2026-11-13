@@ -300,6 +300,11 @@ describe("gate 2 and the PC's Autopilot (modes-D3; PLAN.md §10 \"Settled\" (3))
       const yes = { verdict: "ask" as const, classes: ["secret" as const, "escape" as const], rules: ["escape.npx", HANDED_RULE], approval: { ageMs: 100 } };
       expect((await gateCommand(input({ spec: spec(yes, { command }), classify: real, autopilotOk: true }))).status, command).toBe("ok");
     }
+    // Through the environment too (modes-y9-y9-6), and one pointed at Ember's own files there is refused (modes-y9-y9-9).
+    const stamp = { verdict: "announce" as const, classes: ["escape" as const], rules: ["escape.npx", "autopilot"], announced: { ageMs: 40 } };
+    expect(await gateCommand(input({ spec: spec(stamp, { command: "SSH_KEY_PATH=~/.ssh/id_rsa npx -y frobnicate" }), classify: real, autopilotOk: true }))).toMatchObject({ status: "needs_confirm", rules: [HANDED_RULE] });
+    const own = facts({ ember: { paths: ["/home/deploy/.local/state/ember-remote"], pids: [], names: emberNamesRegExp([]) } });
+    expect((await gateCommand(input({ spec: spec(stamp, { command: "npx -y frobnicate /home/deploy/.local/state/ember-remote/policy.json" }), classify: real, autopilotOk: true, facts: own }))).status).toBe("deny");
     // One handed nothing secret is announced as before.
     const plain = { verdict: "announce" as const, classes: ["escape" as const], rules: ["escape.npx", "autopilot"], announced: { ageMs: 40 } };
     expect((await gateCommand(input({ spec: spec(plain, { command: "npx -y cowsay hi" }), classify: real, autopilotOk: true }))).status).toBe("ok");

@@ -640,7 +640,7 @@ model); a command that would keep running after Stop (a background job, `nohup`,
 stopped or loaded, a login or startup entry, a change to the Windows registry, a git hook or a git setting that
 names a program, a shell's start-up file, a program put on the command path, a tunnel, a message to a desktop
 service over D-Bus, a WMI or CIM call, an alias or a `trap`), so that Stop stops everything; a downloaded program
-that is handed a key, credentials or a token (`npx tool ~/.ssh/id_rsa`), or a word Ember can't resolve
+that is handed a key, credentials or a token (`npx tool ~/.ssh/id_rsa`, `KEY=~/.ssh/id_rsa npx tool`), or a word Ember can't resolve
 (`npx tool $(…)`); a program, or a tool's command, Ember doesn't know, one that runs code nobody is shown
 (`rundll32`, `mshta`, `wscript`, `run-parts`) and a sandbox or a wrapper whose command Ember doesn't judge (`bwrap`,
 `firejail`, `envdir`, `expect`), since nobody can tell what it does; every command when your organisation, or
@@ -685,7 +685,8 @@ It still asks, with the card of §2.4, before:
   computer, in a Podman distro, and in a project's chosen command folder;
 - turning commands on for a computer the first time (§2.1).
 
-A command that touches Ember's own settings, records, policy or processes is refused as in every mode (§2.6). **Stop**
+A command that touches Ember's own settings, records, policy or processes is refused as in every mode (§2.6), a
+downloaded program pointed at one of those files included (`npx tool ~/.config/ember/settings.json`). **Stop**
 during the countdown counts as your no: that command, sent again or reworded to do the same to the same thing, is
 refused for the rest of the task. A countdown that ends after you left Autopilot, or once every command asks on that
 computer, doesn't run its command.

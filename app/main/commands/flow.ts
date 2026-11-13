@@ -950,9 +950,15 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
   }
   // A download-and-run handed a key, credentials or a token (`npx -y tool ~/.ssh/id_rsa`): the classifier says only that
   // it downloads and runs code, so the question says the rest, and no mode announces or clears it (modes-y9-5).
-  if (d.verdict === "ask") {
-    const handed = handedSecrets(cls, a.command, shell, text => j.classifyCommand(text, shell, cctx).findings);
-    if (handed.length) {
+  // One pointed at Ember's own settings, record or programs is refused, as any command that touches them is: the
+  // classifier's own refusal of that word, read as a file (modes-y9-y9-9: Autopilot announced `npx -y json -I -f
+  // ~/.config/ember/settings.json …`).
+  if (d.verdict === "ask" || d.verdict === "announce") {
+    let tampers: Classification["refuse"] | null = null;
+    const handed = handedSecrets(cls, a.command, shell, text => { const c = j.classifyCommand(text, shell, cctx); tampers ??= c.refuse ?? null; return c.findings; });
+    const refuse = tampers as Classification["refuse"] | null;
+    if (refuse) d = { ...d, verdict: "refuse", reason: refuse.says, rules: [...new Set([...d.rules, refuse.rule])], requested: undefined };
+    else if (handed.length && d.verdict === "ask") {
       d = {
         ...d, classes: [...new Set(["secret" as const, ...d.classes])], rules: [...new Set([...d.rules, ...handed.map(f => f.rule)])],
         says: [...handed.map(f => f.says).filter(l => !d.says.includes(l)), ...d.says],
