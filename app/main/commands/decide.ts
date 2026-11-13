@@ -39,7 +39,7 @@ const CLASS_REASON: Readonly<Record<DangerClass, string>> = {
   system: "it changes the system or runs with privileges",
   escape: "it downloads and runs code or keeps running after Ember stops",
   unclear: "Ember can't tell exactly what it does",
-  unknown: "it runs a program or a verb Ember doesn't know",
+  unknown: "it runs a program, or a tool's command, that Ember doesn't know",
 };
 
 /** How long Allow stays disarmed for a dangerous or policy-wide ask, and for an ordinary command asked by policy only. */

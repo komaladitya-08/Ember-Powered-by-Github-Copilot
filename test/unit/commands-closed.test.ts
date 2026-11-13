@@ -205,6 +205,17 @@ describe("busybox's applets, Maven's exec plugin and Gradle's init scripts (comm
   });
 });
 
+describe("the card's words for a tool's command Ember doesn't know (commands-closed-x9-8)", () => {
+  it("names the tool and its command on the card, and says a program or a tool's command in the reason (commands-closed-x9-8)", () => {
+    const d = decide("cargo watch -x test");
+    expect(d.says).toContain("It runs cargo watch, a command of cargo that Ember doesn't know.");
+    expect(d.reason).toBe("It asks first: it runs a program, or a tool's command, that Ember doesn't know.");
+    const chain = decide("rails db:drop && cargo zzz");
+    expect(chain.says).toContain("It runs cargo zzz, a command of cargo that Ember doesn't know.");
+    expect(decide("vercel").says).toContain("It runs vercel with no command, and Ember doesn't know what that does.");
+  });
+});
+
 describe("everyday commands with the closed default (commands-closed, the guard against over-asking)", () => {
   const fixture = JSON.parse(fs.readFileSync(path.join(__dirname, "../fixtures/commands/everyday.json"), "utf8")) as { cases: { cmd: string; shell: ShellId; context: ContextName }[] };
 

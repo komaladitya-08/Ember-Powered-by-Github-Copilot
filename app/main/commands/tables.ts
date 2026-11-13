@@ -659,7 +659,7 @@ const BUNDLE_VERBS: OrdinaryVerbs = {
  * The verbs Ember knows of the verb-keyed tools (commands-closed, the closed default): the verbs that read, build,
  * test or run the project's own code. A tool Ember has no row for runs only with one of these (and asks with no verb);
  * a tool with a row asks for a verb off the list that its row judged ordinary (`cargo zzz` runs `cargo-zzz`, `mix
- * ecto.drop`, `tmux send-keys`, `stack exec`), "It runs a command of this tool that Ember doesn't know." What a row
+ * ecto.drop`, `tmux send-keys`, `stack exec`), "It runs cargo zzz, a command of cargo that Ember doesn't know." What a row
  * judges dangerous it still says in its own words. Never a verb that writes shell start-up files (`conda init`), a
  * home-wide default (`sdk default`, `asdf set -u`), or empties a cache or an environment (`pip cache purge`, `poetry env
  * remove`): those ask as a prune does (commands-closed-x9-5).

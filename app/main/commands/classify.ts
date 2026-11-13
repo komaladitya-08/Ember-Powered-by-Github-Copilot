@@ -216,7 +216,6 @@ export const SAYS = {
   scriptStream: "It runs a script from a stream, which Ember can't read first.",
   downloadsProgram: "Downloads a program and runs it.",
   unknownProgram: "It runs a program Ember doesn't know.",
-  unknownVerb: "It runs a command of this tool that Ember doesn't know.",
   unclear: "Ember can't tell exactly what this does.",
   interactive: "This opens an interactive program; you'd have to use it yourself in the command window.",
   openApp: "This opens an app window, which Ember can do itself without a command. Say no and ask Ember to open it.",
@@ -3886,7 +3885,8 @@ function unknownProgram(h: H): void {
   if (knownProgram(h.key)) {
     // A TeX engine's shell escape runs the commands the document names (`\write18`).
     if (TEX_ENGINES.has(h.key) && h.args.some(a => a.v === null || /^--?(shell-escape|enable-write18)$/.test(a.v))) {
-      h.e.add("unknown", "unknown.verb", SAYS.unknownVerb, { program: `${h.prog} ${h.args.find(a => a.v === null || /escape|write18/.test(a.v))?.v ?? ""}`.trim() });
+      const escape = h.args.find(a => a.v === null || /escape|write18/.test(a.v))?.v ?? "";
+      h.e.add("unknown", "unknown.verb", unknownVerbSays(h.prog, escape), { program: `${h.prog} ${escape}`.trim() });
     }
     return;
   }
@@ -4029,7 +4029,7 @@ function toolPayload(h: H): void {
         const m = v === null ? null : /^(-o|--output)(?:=(.*))?$/.exec(v);
         if (!m) continue;
         const out = m[2] !== undefined ? m[2] : args[k + 1]?.v ?? null;
-        if (out === null || !ownFolder(out, h.sc, h.e.ctx.cwd || null)) h.e.add("unknown", "unknown.verb", SAYS.unknownVerb, { program: "deno compile -o" });
+        if (out === null || !ownFolder(out, h.sc, h.e.ctx.cwd || null)) h.e.add("unknown", "unknown.verb", unknownVerbSays(h.prog, "compile -o"), { program: "deno compile -o" });
         return;
       }
       return;
@@ -4040,6 +4040,15 @@ function toolPayload(h: H): void {
       return;
     }
   }
+}
+
+/**
+ * The card's line for a tool's command Ember doesn't know, naming it (commands-closed-x9-8): "It runs cargo watch, a
+ * command of cargo that Ember doesn't know.", or for a tool that acts with no command, "It runs vercel with no
+ * command, and Ember doesn't know what that does."
+ */
+function unknownVerbSays(tool: string, verb: string): string {
+  return verb === "" ? `It runs ${tool} with no command, and Ember doesn't know what that does.` : `It runs ${tool} ${verb}, a command of ${tool} that Ember doesn't know.`;
 }
 
 /** TeX engines, whose shell escape (off by default) runs the commands a document names. */
@@ -4053,7 +4062,7 @@ const TEX_ENGINES = new Set(["latex", "pdflatex", "xelatex", "lualatex", "tex", 
  */
 function toolVerbs(h: H, tool: OrdinaryVerbs, noRow: boolean): void {
   const args = h.args;
-  const say = (verb: string): void => { h.e.add("unknown", "unknown.verb", SAYS.unknownVerb, { program: `${h.prog} ${verb}`.trim() }); };
+  const say = (verb: string): void => { h.e.add("unknown", "unknown.verb", unknownVerbSays(h.prog, verb), { program: `${h.prog} ${verb}`.trim() }); };
   const vals = new Set(tool.values ?? []);
   const operand = (start: number): number => {
     for (let k = start; k < args.length; k++) {

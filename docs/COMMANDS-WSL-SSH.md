@@ -264,8 +264,8 @@ Ember stops and asks before a command that:
 - **runs a program Ember doesn't know** ("It runs a program Ember doesn't know."): `dropdb prod`, `rails db:drop`,
   `hyperfine 'rm -rf build'`, `kafka-topics --delete …`, also behind `sudo`, `env`, `nice`, `time`, in a pipe or in
   `$( … )`, or given by a path outside the command's folder (`/usr/local/bin/x`, `~/bin/x`), and an unknown cmdlet
-  whose verb isn't one of those in §2.3 (`Show-Thing`); or **a command of a tool Ember doesn't know** ("It runs a
-  command of this tool that Ember doesn't know."): `cargo watch -s …`, `stack exec -- …`, `mix ecto.drop`, `tmux
+  whose verb isn't one of those in §2.3 (`Show-Thing`); or **a command of a tool Ember doesn't know** ("It runs
+  cargo watch, a command of cargo that Ember doesn't know."): `cargo watch -s …`, `stack exec -- …`, `mix ecto.drop`, `tmux
   send-keys …`, `go env -w …`, `pip config set …`, `deno publish`, `vercel` with no command (it deploys). When your own
   words for the task ask to run the program by name (or the tool and its command), with the words after it that say
   what it is to do ("run dropdb on the scratch database" for `dropdb scratch`, "run rails db:migrate"), it is announced
