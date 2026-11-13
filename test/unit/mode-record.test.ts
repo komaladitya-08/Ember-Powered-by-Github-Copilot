@@ -47,13 +47,23 @@ function setup(approvals: ApprovalsSetting, o: { open?: boolean } = {}) {
 }
 /** Makes the audit file unwritable, and settings.json too unless `auditOnly`. */
 function breakStorage(fault: "ENOSPC" | "permissions", ctx: { dir: string; file: string; audit: AuditLog }, auditOnly = false) {
-  if (fault === "permissions") { if (!auditOnly) fs.chmodSync(ctx.dir, 0o500); fs.chmodSync(path.join(ctx.dir, "audit"), 0o500); return; }
+  if (fault === "permissions") {
+    if (!auditOnly) fs.chmodSync(ctx.dir, 0o500);
+    fs.chmodSync(path.join(ctx.dir, "audit"), 0o500);
+    // A read-only folder stops a new audit file, not an append to one an earlier entry made: that file must refuse it too
+    // (CI's non-root run of #212: the second change was recorded, so it stood).
+    if (fs.existsSync(ctx.audit.file)) fs.chmodSync(ctx.audit.file, 0o400);
+    return;
+  }
   const append = fs.appendFileSync, open = fs.openSync;
   const full = () => Object.assign(new Error("disk full"), { code: "ENOSPC" });
   vi.spyOn(fs, "appendFileSync").mockImplementation(((f: any, ...a: any[]) => { if (String(f) === ctx.audit.file) throw full(); return (append as any)(f, ...a); }) as any);
   if (!auditOnly) vi.spyOn(fs, "openSync").mockImplementation(((f: any, ...a: any[]) => { if (String(f).startsWith(`${ctx.file}.tmp-`)) throw full(); return (open as any)(f, ...a); }) as any);
 }
-const mend = (ctx: { dir: string }) => { vi.restoreAllMocks(); try { fs.chmodSync(ctx.dir, 0o700); fs.chmodSync(path.join(ctx.dir, "audit"), 0o700); } catch { /* as it was */ } };
+const mend = (ctx: { dir: string; audit: AuditLog }) => {
+  vi.restoreAllMocks();
+  try { fs.chmodSync(ctx.dir, 0o700); fs.chmodSync(path.join(ctx.dir, "audit"), 0o700); if (fs.existsSync(ctx.audit.file)) fs.chmodSync(ctx.audit.file, 0o600); } catch { /* as it was */ }
+};
 const engineFor = (c: { settings: SettingsStore; policy: () => any }) => new PolicyEngine({ neverLook: () => [], grants: () => ({}), autonomy: () => autonomyInForce(c.settings.get().approvals, c.policy()) });
 const click = { taskId: "t", kind: "click" as const, app: "mousepad", window: "notes", element: { role: "push button", name: "Bold" } };
 
