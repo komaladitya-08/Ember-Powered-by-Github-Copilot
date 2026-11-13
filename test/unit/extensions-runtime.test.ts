@@ -24,6 +24,7 @@ import { PassThrough } from "node:stream";
 import { consentCard, installedRow, reagreeCard } from "../../app/renderer/home/extensions-copy";
 import { registerExtensionsIpc } from "../../app/main/extensions-ipc";
 import { taskLineOf } from "../../app/main/agent/confirm";
+import { describeEntry } from "../../app/renderer/home/copy";
 import { EXTENSIONS_IPC } from "../../app/shared/ipc";
 import { SAVED_OUTPUT, clearRuntimeTemp, runtimeTempDir, runtimeTempEnv } from "../../app/main/agent/runtime-temp";
 
@@ -984,6 +985,43 @@ describe("ExtensionsService", () => {
     expect(JSON.stringify(entry)).not.toContain("secret");
   });
 
+  it("puts every use of an extension's tools in What Ember did, as its cards promise (integrations-c9-2)", async () => {
+    let autopilot = false;
+    const s = await installed({ autopilot: () => autopilot, announce: () => true });
+    let ext = s.forSession()!;
+    shown(ext);
+    const result = (toolName: string) => ext.postToolUse({ toolName, toolArgs: {}, toolResult: { textResultForLlm: "ok", resultType: "success" }, sessionId: "s", timestamp: new Date(), workingDirectory: "/" });
+    expect(await call(ext, "fake-lookup", { q: "x" })).toEqual({ permissionDecision: "allow" });
+    await result("fake-lookup");
+    answers = ["once"];
+    expect(await call(ext, "fake-post_message", { text: "SENT-hi" })).toEqual({ permissionDecision: "allow" });
+    await result("fake-post_message");
+    answers = ["deny"];
+    expect(await call(ext, "fake-post_message", { text: "SENT-again" })).toMatchObject({ permissionDecision: "deny" });
+    expect(await call(ext, "fake-post_message", { text: "SENT-again" })).toMatchObject({ permissionDecision: "deny" });
+    ext.newTurn?.();
+    autopilot = true;
+    expect(await call(ext, "fake-post_message", { text: "SENT-third" })).toEqual({ permissionDecision: "allow" });
+    await ext.postToolUseFailure!({ toolName: "fake-post_message", toolArgs: {}, error: "FAILED-boom", sessionId: "s", timestamp: new Date(), workingDirectory: "/" });
+    ext = s.forSession()!;
+    const lines = audit.filter(e => e.event === "extension").map(e => describeEntry({ t: "2026-11-13T00:00:00Z", ...e } as never)).filter(Boolean).map(v => [v!.tag, v!.what, v!.why ?? null]);
+    expect(lines).toEqual([
+      ["Added", "Extension “fake”", null],
+      ["You agreed", "To the tools of “fake”", null],
+      ["Done", "Use “lookup” from fake", null],
+      ["Asked you", "Use “post_message” from fake", "It can change things or send what it is given."],
+      ["You allowed", "Use “post_message” from fake", null],
+      ["Done", "Use “post_message” from fake", null],
+      ["Asked you", "Use “post_message” from fake", "It can change things or send what it is given."],
+      ["You said no", "Use “post_message” from fake", null],
+      ["Refused", "Use “post_message” from fake", "You said no to this tool."],
+      ["Without asking", "Use “post_message” from fake", "Autopilot was on, so Ember didn't ask."],
+      ["Didn't work", "Use “post_message” from fake", null],
+    ]);
+    // Sizes and names only: never what was sent or what came back.
+    expect(JSON.stringify(audit)).not.toMatch(/SENT-|FAILED-/);
+  });
+
   it("calls no extension after a fill from the vault: not asked, not announced, audited as denied (vault-3-x9-4)", async () => {
     const said: string[] = [];
     let filled: boolean | "unknown" = false;
@@ -1365,7 +1403,7 @@ describe("ExtensionsService", () => {
     expect(told).toBe(1);
     // Home: no longer "Ready" with only Remove, but what changed and the way to agree again.
     expect(installedRow(item)).toMatchObject({ status: { text: "Changed since you agreed", tone: "fail" }, actions: [{ act: "reagree", label: "Review tools" }, { act: "uninstall" }] });
-    expect(audit).toContainEqual({ event: "extension", phase: "changed", ext: item.id, tool: "fake-lookup" });
+    expect(audit).toContainEqual({ event: "extension", phase: "changed", ext: item.id, tool: "fake-lookup", name: "fake", toolName: "lookup" });
     expect(JSON.stringify(audit)).not.toContain("SLY");
     // The conversation reloads between turns, and the next session leaves the tool out.
     expect(s.generation).not.toBe(gen);

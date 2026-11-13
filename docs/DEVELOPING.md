@@ -859,7 +859,10 @@ it builds on:
   tool list hasn't changed this session: every call to a remote (HTTP) server's tools asks, since it sends its
   arguments there. Anything else: the Confirmer asks every time ("Use “post_message” from Slack? With "{…}"."), with
   Allow and Not now, never Always. A yes counts only if the gate still allows the call when it comes. Every decision,
-  answer and result is an `extension` audit entry, with sizes only.
+  answer and result is an `extension` audit entry, with sizes and names only (the item's and the tool's, through
+  `plainName`), and What Ember did draws a line for each (integrations-c9-2: the cards promised every use was there,
+  and it drew none): asked, answered, refused, without asking, done and didn't work, and an item added, agreed to,
+  removed or a tool turned off.
 - **Hints changed mid-session.** The runtime's tool list has no hints, so what the model is shown can't tell a
   change of hints alone (`readOnlyHint` to `destructiveHint`); the server's own list, asked after each of its calls,
   can, and such a tool is turned off as above. Ember decides by the hints it pinned, never by what a server says

@@ -32,7 +32,7 @@ import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import type { ConnectResult, ExtensionsApi, Installed, Marketplace, MarketplaceEntry, ToolInfo } from "../../shared/extensions";
 import { EXTENSION_ON_UNSAVED, MARKETPLACE_BUILT_IN_KEPT, MARKETPLACE_MANAGED_KEPT, addMarketplaceFailed, browseFailed, extensionUnsaved } from "../../renderer/home/extensions-copy";
 import type { OS } from "../../shared/shortcuts";
-import { REFUSED, classify, failureNote, gateAnnouncement, gateQuestion, wrapResult } from "./gate";
+import { REFUSED, classify, failureNote, gateAnnouncement, gateQuestion, plainName, wrapResult } from "./gate";
 import { pluginPath, readMarketplace, readPlugin, reachOf, firstFile, MARKETPLACE_PLACES, type ServerSpec } from "./manifest";
 import { canonical, checkPins, isReadOnly, pinAll, schemaWords, shownHash, toolHash, type PinnedTool } from "./pin";
 import { probeHttp, probeStdio, servedTools, type ProbeResult } from "./probe";
@@ -103,6 +103,14 @@ export function withoutUserinfo(v: string): string {
 
 /** Letters and digits only, for ids and server keys. */
 const slug = (s: string, max: number) => s.toLowerCase().replace(/[^a-z0-9]+/g, "").slice(0, max) || "x";
+
+/**
+ * The names What Ember did shows for an entry (integrations-c9-2): the item's, as the user added it, and the tool's own,
+ * each through plainName (no markup, no hidden characters, capped).
+ */
+function named(item?: { name: string }, tool?: { name: string }): { name?: string; toolName?: string } {
+  return { ...(item ? { name: plainName(item.name) } : {}), ...(tool ? { toolName: plainName(tool.name, 40) } : {}) };
+}
 
 function toolInfo(server: StoredServer, tools: PinnedTool[], review = false): ToolInfo[] {
   const clashes = clashingToolNames(server.key, tools.map(t => t.name));
@@ -543,7 +551,7 @@ export class ExtensionsService implements ExtensionsApi {
       };
       this.items.push(item);
       this.save();
-      this.audit({ phase: "installed", ext: id, servers: servers.length, tools: servers.reduce((n, s) => n + s.tools.length, 0) });
+      this.audit({ phase: "installed", ext: id, ...named(item), servers: servers.length, tools: servers.reduce((n, s) => n + s.tools.length, 0) });
       this.o.log.info("extensions.installed", { id, servers: servers.length });
       return { ok: true, id };
     } catch (err) {
@@ -597,7 +605,7 @@ export class ExtensionsService implements ExtensionsApi {
       this.heldOff(item, "removed", err);
     }
     try { fs.rmSync(this.store.pluginDir(id), { recursive: true, force: true }); } catch (err) { this.o.log.warn("extensions.remove_files_failed", { err }); }
-    try { this.audit({ phase: "removed", ext: id }); } catch { /* removing makes Ember stricter: it goes ahead */ }
+    try { this.audit({ phase: "removed", ext: id, ...named(item) }); } catch { /* removing makes Ember stricter: it goes ahead */ }
     this.changed();
   }
 
@@ -639,7 +647,7 @@ export class ExtensionsService implements ExtensionsApi {
       if (!this.items.includes(item) || !this.allowed() || !this.consented() || epoch !== this.epoch) throw new Error("It was stopped. Review its tools before trying again.");
       if (reviewToken !== this.reviewToken(item)) throw new Error("Its tools changed. Check the new list and agree again.");
       if (item.servers.some(s => s.status !== "ready")) throw new Error("Its tools couldn't be checked. Try again when the server is ready.");
-      this.audit({ phase: "reagreed", ext: id });
+      this.audit({ phase: "reagreed", ext: id, ...named(item) });
       for (const server of item.servers) {
         server.tools = pinAll(server.reviewTools ?? server.tools);
         delete server.reviewTools;
@@ -958,7 +966,7 @@ export class ExtensionsService implements ExtensionsApi {
       stored.changed = true;
       marked = true;
       this.o.log.warn("extensions.tool_changed_live", { ext: e.item.id, tool: e.tool.name });
-      try { this.audit({ phase: "changed", ext: e.item.id, tool: name }); } catch { /* it is turned off either way */ }
+      try { this.audit({ phase: "changed", ext: e.item.id, tool: name, ...named(e.item, e.tool) }); } catch { /* it is turned off either way */ }
     }
     if (marked) { try { this.save(); } catch (err) { this.o.log.warn("extensions.save_failed", { err }); } }
     const out = await stopping;
@@ -1037,7 +1045,7 @@ export class ExtensionsService implements ExtensionsApi {
     const shownAsPinned = await this.shownNow(gate, input.toolName, generation);
     const { verdict, reason } = this.gateInput(gate, input.toolName, shownAsPinned, generation);
     const argChars = (() => { try { return JSON.stringify(input.toolArgs ?? {}).length; } catch { return 0; } })();
-    const base = { ext: e?.item.id ?? null, tool: input.toolName, argChars };
+    const base = { ext: e?.item.id ?? null, tool: input.toolName, ...named(e?.item, e?.tool), argChars };
     const deny = (r: string): PreToolUseHookOutput => ({ permissionDecision: "deny", permissionDecisionReason: r });
     try {
       this.audit({ phase: "decision", ...base, verdict, reason, ...(verdict === "announce" ? { autonomy: true, mode: "autopilot" } : {}) });
@@ -1102,7 +1110,7 @@ export class ExtensionsService implements ExtensionsApi {
     const text = typeof input.error === "string" ? input.error : "";
     const signals = injectionSignals(text);
     this.tainted = true;
-    try { this.audit({ phase: "failed", ext: e?.item.id ?? null, tool: input.toolName, chars: text.length, signals, ...(SAVED_OUTPUT.test(text) ? { truncated: true } : {}) }); } catch (err) { this.o.log.warn("extensions.audit_failed", { err }); }
+    try { this.audit({ phase: "failed", ext: e?.item.id ?? null, tool: input.toolName, ...named(e?.item, e?.tool), chars: text.length, signals, ...(SAVED_OUTPUT.test(text) ? { truncated: true } : {}) }); } catch (err) { this.o.log.warn("extensions.audit_failed", { err }); }
     return { additionalContext: failureNote(e?.item.name ?? "an extension", e?.tool.name ?? input.toolName) };
   }
 
@@ -1118,7 +1126,7 @@ export class ExtensionsService implements ExtensionsApi {
     // never scanned. Treated as flagged.
     const truncated = SAVED_OUTPUT.test(text);
     if (signals.length || truncated) this.tainted = true;
-    try { this.audit({ phase: "result", ext: e?.item.id ?? null, tool: input.toolName, chars: text.length, signals, ...(truncated ? { truncated: true } : {}) }); } catch (err) { this.o.log.warn("extensions.audit_failed", { err }); }
+    try { this.audit({ phase: "result", ext: e?.item.id ?? null, tool: input.toolName, ...named(e?.item, e?.tool), chars: text.length, signals, ...(truncated ? { truncated: true } : {}) }); } catch (err) { this.o.log.warn("extensions.audit_failed", { err }); }
     // Text only (the conductor is never sent images), wrapped as untrusted.
     // Only Ember's own fields: the server's raw text (contents, its log) never rides along.
     return { modifiedResult: { textResultForLlm: wrapResult(e?.item.name ?? "an extension", e?.tool.name ?? input.toolName, text, signals.length > 0 || truncated), resultType: input.toolResult?.resultType ?? "success", binaryResultsForLlm: [] } };
