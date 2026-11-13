@@ -212,6 +212,36 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
   together first, so a password under another label is refused on one line too ("credentials: admin: Wint3r!Sh0p",
   never a setting's label or a size: "Wi-Fi: SSID: Home5G"). Secrets are refused
   whole, never stored redacted.
+- `fact-guard.ts`: what only a fact is read for, after `guard.ts` found nothing (`factRefusal`, which
+  `MemoryGraph.add()` and a correction run on the fact and on each name it is about; memory-r9-4). A fact is one
+  short sentence, so its verb can be read, which Projects' files and task views, full of code, never are: they keep
+  `memoryRefusal` alone, unchanged. Refused:
+  - a password or a code after a verb of getting in ("Signs in to Netflix with ram@example.com and Winter#2024", "Logs
+    in to the router as admin with Summer2024!", "Unlocks their phone with 482913", "Disarms the alarm with 4821",
+    "Opens the garage with 4821", only with something that locks), the value first ("Enters 4821 at the gate",
+    "Types Summer2024! to unlock the laptop") and after "uses" ("Uses Winter#2024 to sign in to Jira", "Uses hunter2
+    for Netflix", "Netflix uses hunter2", "Uses admin / Summer2024! on the router");
+  - a user and a value after what they are for, or alone with a symbol ("Jira: ram / Winter#2024", "Jira login ram /
+    Winter#2024", "admin / Summer2024!");
+  - a lock or a thing with a password said as it ("The front door is 4821", "Front door 4821", "The alarm is 4821",
+    "The gym's code is 4821", "The code is 4821", "The combination is 32-18-04", "My phone unlock pattern is
+    1-4-7-8-9", "The work VPN is Summer2024!", "FileVault: Summer2024!", "BitLocker is 482913-482913", "The Wi-Fi is
+    BlueSky99", "My Wi-Fi is HomeNet and the key is BlueSky99");
+  - the names `guard.ts` lacked: an authenticator's secret, seed or setup key, a private, encryption, signing or
+    secret key and a client, shared or app secret with a value that can be one, "my secret is hunter2", a memorable,
+    secret or security word and a secret answer, pass, pswd, p/w and passkey, a card's three digits said in words,
+    and a US account with its routing number.
+
+  A value is read as `guard.ts` reads a login's (`LOGIN_VALUE`: a digit or a symbol, never an address, a scheme such
+  as OAuth2 or 2FA, a version, a date or a hyphenated word), four to eight digits where a code goes, and where a tool
+  could stand only one shaped like a password or with a symbol, so "Signs in with SSO", "Logs in with OAuth2", "Uses
+  1Password for the work account", "Uses Python3 on the laptop", "Stack: React / Node20", "The phone is iPhone15",
+  "The Wi-Fi is 5GHz", "My locker is 4821", "The private key is ~/.ssh/id_ed25519", "The encryption key is AES-256"
+  and "The pass is valid until June" are kept. Where a word can't be told from a password it is refused ("Signs in
+  with jsmith42", "The Wi-Fi is HomeNet5G"): fail closed. Still kept, because nothing in them can be told from an
+  ordinary fact or they are no password, code or card number: a network named with its key's owner ("HomeNet's key
+  is BlueSky99"), a password's hint or ending, a licence or product key, a webhook's address, and ID numbers other
+  than those `guard.ts` knows (a passport's, a driving licence's, a tax or health number).
 - `format.ts`: the `<memory untrusted="true">` block a model sees, one line per fact with its id, source and date.
 - `store.ts`: `memory.json`, mode 0600, written atomically. A broken file is moved aside, never overwritten. A file
   set aside, one that can't be read (left as it was) or a save that fails is said in Settings › Memory
@@ -381,7 +411,7 @@ download, so English-only MiniLM is the trade-off for now.
      sync, export, attach, paste…, after
      folding look-alike letters with `viewNorm`) is ever kept, whoever said it: a
      one-off order is not a preference. The conductor's `remember` keeps one only in the user's own words. Every fact
-     goes through `MemoryGraph.add()` and the guard.
+     goes through `MemoryGraph.add()` and the guard (`factRefusal`).
    - What the remember tool kept (or found already kept) in a turn goes with that turn to its reading (`kept`: one
      turn runs at a time), and with no other: as each turn begins (`began`), what a turn that ended unread kept
      (stopped, cut short by a wake or a cut-in, silent) is let go of (memory-x8-2). No candidate from that turn that

@@ -11,7 +11,7 @@
 
 import crypto from "node:crypto";
 import { z } from "zod";
-import { memoryRefusal } from "./guard";
+import { factRefusal } from "./fact-guard";
 import { fold, nameKey, negated, similarity, terms } from "./text";
 
 export const ENTITY_KINDS = ["person", "organisation", "project", "app", "place", "topic", "thing"] as const;
@@ -199,7 +199,7 @@ export class MemoryGraph {
     if (!text) return { kind: "refused", reason: "it is empty" };
     if (text.length > MAX_FACT_CHARS) return { kind: "refused", reason: `it is longer than ${MAX_FACT_CHARS} characters` };
     if (!input.about.length || input.about.some(r => !nameKey(r.name))) return { kind: "refused", reason: "it isn't about anything named" };
-    const secret = memoryRefusal(text) ?? input.about.map(r => memoryRefusal(r.name)).find(Boolean) ?? null;
+    const secret = factRefusal(text) ?? input.about.map(r => factRefusal(r.name)).find(Boolean) ?? null;
     if (secret) return { kind: "refused", reason: secret };
     const now = this.clock.now().toISOString();
     const entities = [...new Set(input.about.slice(0, 8).map(r => this.resolve(r).id))];

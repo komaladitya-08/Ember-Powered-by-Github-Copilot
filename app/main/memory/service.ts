@@ -15,7 +15,7 @@ import { consolidateInSlices } from "./consolidate";
 import type { SemanticMemory } from "./embed";
 import { memoryBlock } from "./format";
 import { ENTITY_KINDS, MAX_FACT_CHARS, type AddResult, type Entity, type EntityKind, type Fact, type GraphClock, MemoryGraph, type NewFact, type Source } from "./graph";
-import { memoryRefusal } from "./guard";
+import { factRefusal } from "./fact-guard";
 import { recall, type Recalled } from "./recall";
 import { memoryFile, type MemoryFile } from "./store";
 import { samePolarity, terms } from "./text";
@@ -264,7 +264,7 @@ export class MemoryService {
     }
     const clean = text.replace(/\s+/g, " ").trim();
     if (!clean || clean.length > MAX_FACT_CHARS) throw new Error(`Keep the correction between 1 and ${MAX_FACT_CHARS} characters.`);
-    if (memoryRefusal(clean)) throw new Error("This correction holds a secret, so Ember hasn't saved it.");
+    if (factRefusal(clean)) throw new Error("This correction holds a secret, so Ember hasn't saved it.");
     const revision = (current.revision ?? 0) + 1;
     if (!Number.isSafeInteger(revision)) throw new Error("This memory changed. Close this edit and open it again before saving.");
     const next = new MemoryGraph(structuredClone(this.g.toJSON()), this.o.clock);

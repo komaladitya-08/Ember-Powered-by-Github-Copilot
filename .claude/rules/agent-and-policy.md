@@ -248,8 +248,12 @@ docs/DEVELOPING.md "Extensions: the runtime and the gate" is the design; app/mai
 ## Long-term memory
 
 docs/MEMORY.md is the design. The core (app/main/memory/) is pure and has no Electron. Keep it that way.
-- **Every fact goes through `MemoryGraph.add()`**, which runs `memoryRefusal()` (guard.ts). A fact holding a secret is
-  refused whole, never stored redacted.
+- **Every fact goes through `MemoryGraph.add()`**, which runs `factRefusal()` (fact-guard.ts) on the fact and on each
+  name it is about: `memoryRefusal()` (guard.ts), then what only a fact is read for (`saidSecret`: a password or code
+  after a verb of getting in, a user and a value, a lock or a passworded thing said as its code, and the names the
+  guard lacked: memory-r9-4). A fact holding a secret is refused whole, never stored redacted. `saidSecret` is for
+  facts alone, never Projects' files or a task's view (code reads like it), and may only refuse more than
+  `memoryRefusal`; add a shape there with its look-alike fact pinned as kept in memory-said-secrets.test.ts.
 - **Recalled facts reach a model only through `memoryBlock()`** (`<memory untrusted="true">`). Only `user`-sourced
   facts may shape what Ember does. Policy never checks a risky step against memory.
 - **`memory.json` is 0600** and written whole through `memoryFile()`. A broken file is moved aside, never overwritten.
