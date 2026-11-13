@@ -169,8 +169,15 @@ describe("first run's agreement", () => {
     expect(agreeFirstRun(r.d, ALL, SHA)).toEqual({ ok: true, failed: [row] });
     const on = onWithConsent(r.store.own());
     for (const other of FIRST_RUN_ROWS) if (other !== row) expect([other, on[other]]).toEqual([other, true]);
-    // Screenshots are on in a fresh file already (under the consent's own text): the failure leaves the file's value.
-    if (row !== "screenshots") expect(on[row]).toBe(false);
+    expect(on[row]).toBe(false);
+  });
+
+  it.each(["voice", "screenshots"] as const)("leaves every part of %s off when its own save fails after the consent, as its note says (slice4-y9-1)", row => {
+    const r = rig({ fail: { [row]: true } });
+    expect(agreeFirstRun(r.d, ALL, SHA)).toEqual({ ok: true, failed: [row] });
+    const s = r.store.own();
+    if (row === "voice") expect({ wakeWord: s.wakeWord, speak: s.speak, consent: s.voice.consent }).toEqual({ wakeWord: false, speak: false, consent: false });
+    else expect(s.screenImages).toBe(false);
   });
 
   it("never leaves a row the user switched off on when writing it off fails: the agreement isn't saved and says so (slice4-x9-1)", () => {

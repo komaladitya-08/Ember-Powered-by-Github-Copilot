@@ -2,7 +2,7 @@
  * First run's one agreement in main (owner decision of 2026-11-12, CLAUDE.md "Consent"; the rows are decided in
  * app/shared/first-run.ts). Agreeing records CONSENT_VERSION first, so nothing is read, heard or sent before it, and
  * then, one feature at a time and each in its own saved change, what that feature's own card records (a new user's
- * rows switched off are written off with the consent itself): commands on this computer through the targets runtime
+ * listening and screenshots rows are written off with the consent itself, and a row left on turns them back on): commands on this computer through the targets runtime
  * (the card's hash checked against the text the row showed), memory's note,
  * listening with spoken replies, screenshots, and Interactive through the mode's own path (its audit entry, or it
  * isn't in force). A failure part-way leaves each feature either on with its consent or off, and the answer names
@@ -57,11 +57,14 @@ const patchOff = (row: FirstRunRow): SettingsPatch => (row === "voice" ? { wakeW
  */
 export function agreeFirstRun(d: FirstRunDeps, choice: FirstRunChoice, commandsSha256: string | null): FirstRunDone {
   if (d.consented()) return { ok: true, failed: [] };
-  const plan = firstRunPlan(d.facts(), choice);
+  const facts = d.facts();
+  const plan = firstRunPlan(facts, choice);
   const now = d.now();
-  // First: without it nothing else is recorded or turned on. A new user's rows switched off are written off in the same
-  // change, so a saved agreement never leaves one on that a fresh file starts on (slice4-x9-1).
-  const offs = plan.off.reduce<SettingsPatch>((p, row) => ({ ...p, ...patchOff(row) }), {});
+  // First: without it nothing else is recorded or turned on. A new user's listening and screenshots rows, which a fresh
+  // file starts on, are written off in the same change whatever the switches say, so a saved agreement never leaves one
+  // on that the user switched off (slice4-x9-1), and a row left on whose own save then fails really is off (slice4-y9-1).
+  const zeroed = facts.returning ? plan.off : [...plan.off, ...plan.on.filter(r => r === "voice" || r === "screenshots")];
+  const offs = zeroed.reduce<SettingsPatch>((p, row) => ({ ...p, ...patchOff(row) }), {});
   try { d.settings.update({ ...offs, consent: { version: CONSENT_VERSION, at: now.toISOString() } }); } catch (err) {
     d.log?.warn("first_run.consent_not_saved", { err: err instanceof Error ? err.name : "unknown" });
     return { ok: false, failed: [] };

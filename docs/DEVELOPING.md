@@ -151,7 +151,8 @@ environment, only through `scripts/runtime-env-live.sh`, which gives it a networ
   matches the text shown, `memory` with its note's version, `voice.consent` with `wakeWord` and `speak`, `screenImages`,
   and Interactive through `chooseMode` with its `autonomy` audit entry, via `home`), each in its own saved change: a row
   that can't be saved is left off without consent and the step says so before going on. A row switched off records
-  nothing (listening and screenshots are written off, in the same saved change as the consent). Someone who agreed to an earlier version sees what changed and
+  nothing (a new user's listening and screenshots are written off in the same saved change as the consent, and only a
+  row left on turns them back on, in its own). Someone who agreed to an earlier version sees what changed and
   only Interactive's row: the rest of their settings stay as they are. Nothing in a settings file is in force before the
   agreement, and the features with a card of their own (commands, memory, `voice.consent`, Interactive) stay off in
   `settings.ts` until agreed, so a settings file without the agreement never gains one. A new user's listening and
