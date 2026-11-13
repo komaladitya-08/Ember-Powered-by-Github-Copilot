@@ -191,7 +191,10 @@ Ember stops and asks before a command that:
   shortening: `.sh` is `.shell`, `.o` is `.output`), and package scripts, make targets and SQL or command files named clean, wipe, purge,
   reset, drop and the like (`psql -f drop_users.sql`, `psql app < drop_users.sql`), and any SQL file a client runs
   (`psql -f`, `psql <`, `mysql <`, `sqlite3 <`, `duckdb <`, `sqlcmd -i`, `clickhouse-client --queries-file`): Ember
-  reads it first and judges it as the client's own text, and one this task wrote that it can't read asks;
+  reads it first and judges it as the client's own text (for `sqlcmd`, its `!!` and `:` commands and T-SQL's
+  `xp_cmdshell`, `OPENROWSET`, `BULK INSERT` and dynamic `EXEC(…)` ask; for `clickhouse-client`, table functions that
+  reach files, addresses, other servers or programs such as `url(…)`, `file(…)` and `executable(…)`), and one this
+  task wrote that it can't read asks;
 - **submits or publishes anywhere**: `git push`, pull requests, releases and repository changes on GitHub (`gh pr
   create`, `gh release create`, `gh api` with a write), `p4 submit`, `p4 shelve`, publishing packages (`npm publish`,
   `twine upload`, `docker push`), copying files or sending data to another computer or service (`scp`, `rsync host:`,

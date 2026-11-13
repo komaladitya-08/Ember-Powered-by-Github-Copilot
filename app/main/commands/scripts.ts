@@ -31,8 +31,8 @@ export type ScriptLanguage =
    * language's interpreter (`./.venv/bin/python`), so this script is that language's too (r10-commands-x10-1).
    */
   | { kind: "follow"; path: string; code?: true }
-  /** A database client's SQL: judged as that client's own text (commands-remote-r10-4). */
-  | { kind: "sql"; client: "psql" | "mysql" | "sqlite" }
+  /** A database client's SQL: judged as that client's own text (commands-remote-r10-4, r10-commands-x10-2). */
+  | { kind: "sql"; client: SqlFileClient }
   /**
    * A script in a language Ember doesn't read (Python, Node, Ruby…, or a `#!` naming one): L8 unchanged, unless the
    * task wrote it, when it asks (commands-remote-r10-9).
@@ -42,6 +42,9 @@ export type ScriptLanguage =
   | { kind: "none" };
 
 const BOTH_SH: ShellId[] = ["sh", "bash"];
+
+/** The database clients whose SQL files are read (ScriptRef.as). */
+export type SqlFileClient = "psql" | "mysql" | "sqlite" | "sqlcmd" | "clickhouse";
 
 /**
  * How to read a script's text, given how the command runs it (ScriptRef.as). Run directly ("shebang"), the kernel
@@ -54,7 +57,7 @@ export function scriptLanguage(as: ScriptRef["as"], text: string): ScriptLanguag
     case "sh": return { kind: "shells", shells: BOTH_SH };
     case "powershell": return { kind: "shells", shells: ["powershell"] };
     case "cmd": return { kind: "shells", shells: ["cmd"] };
-    case "psql": case "mysql": case "sqlite": return { kind: "sql", client: as };
+    case "psql": case "mysql": case "sqlite": case "sqlcmd": case "clickhouse": return { kind: "sql", client: as };
     case "code": return { kind: "code" };
     case "shebang": break;
   }
@@ -91,16 +94,20 @@ export function scriptLanguage(as: ScriptRef["as"], text: string): ScriptLanguag
 }
 
 /** The program each client's SQL is judged under, and the here-document's end, which the text must not hold. */
-const SQL_PROGRAM = { psql: "psql", mysql: "mysql", sqlite: "sqlite3" } as const;
+const SQL_PROGRAM = { psql: "psql", mysql: "mysql", sqlite: "sqlite3", sqlcmd: "sqlcmd", clickhouse: "clickhouse-client" } as const;
 const SQL_END = "EMBER_SQL_FILE_END";
 
 /**
  * A SQL file's text as the command line the classifier judges it by (commands-remote-r10-4): the client given the text
  * in a quoted here-document, which reads it whole, as `-c` or `-e` would; null when the text holds the here-document's
- * end or a NUL (then it asks: Ember can't tell what it holds).
+ * end or a NUL (then it asks: Ember can't tell what it holds). sqlcmd and clickhouse-client are given it as their
+ * query in single quotes, each judged in its own dialect (r10-commands-x10-2).
  */
-export function sqlAsCommand(client: "psql" | "mysql" | "sqlite", text: string): string | null {
+export function sqlAsCommand(client: SqlFileClient, text: string): string | null {
   if (text.includes("\0") || text.split(/\r?\n/).some(l => l.trim() === SQL_END)) return null;
+  const quoted = `'${text.replace(/'/g, "'\\''")}'`;
+  if (client === "sqlcmd") return `sqlcmd -Q ${quoted}\n`;
+  if (client === "clickhouse") return `clickhouse-client --query ${quoted}\n`;
   return `${SQL_PROGRAM[client]} <<'${SQL_END}'\n${text}\n${SQL_END}\n`;
 }
 

@@ -42,7 +42,7 @@ type OS = ClassifyContext["os"];
 /** A `..` segment in a POSIX path. */
 const DOT_DOT = /(^|\/)\.\.(\/|$)/;
 /** How a script is read that the kernel or a POSIX shell opens by the name as written (`..` walked through links). */
-const POSIX_OPENERS: ReadonlySet<string> = new Set(["sh", "bash", "zsh", "shebang", "psql", "mysql", "sqlite", "code"]);
+const POSIX_OPENERS: ReadonlySet<string> = new Set(["sh", "bash", "zsh", "shebang", "psql", "mysql", "sqlite", "sqlcmd", "clickhouse", "code"]);
 /** The card's words for a script whose path has a `..` the target couldn't resolve (L25). */
 export const SCRIPT_UNSURE = "Ember can't tell which script this runs.";
 
@@ -166,10 +166,10 @@ export interface ScriptRef {
   /**
    * How to read its text: a POSIX shell, PowerShell, cmd, or "shebang" (run directly: the `#!` line names the
    * interpreter, and a text file without one is run by the calling shell); a database client's SQL ("psql", "mysql",
-   * "sqlite": judged as that client's own text, commands-remote-r10-4); or "code", a program in a language Ember
+   * "sqlite", "sqlcmd", "clickhouse": judged as that client's own text, commands-remote-r10-4, r10-commands-x10-2); or "code", a program in a language Ember
    * doesn't read (Python, Node, Ruby…), which asks only when the task wrote it (commands-remote-r10-9).
    */
-  as: "sh" | "bash" | "zsh" | "powershell" | "cmd" | "shebang" | "psql" | "mysql" | "sqlite" | "code";
+  as: "sh" | "bash" | "zsh" | "powershell" | "cmd" | "shebang" | "psql" | "mysql" | "sqlite" | "sqlcmd" | "clickhouse" | "code";
   /** The folder it runs in (its relative paths resolve there, not beside the script); "" when unknown. */
   cwd: string;
   /**
@@ -5537,8 +5537,11 @@ function redisCommand(h: H, words: readonly (string | null)[]): void {
   if (cmd === "config" && /^(set|rewrite|resetstat)$/i.test(words[1] ?? "")) h.e.add("system", "system.kernel", "Changes how the system works.");
 }
 
-/** The clients whose own commands Ember reads (clientCommands): psql's `\x`, sqlite3's and duckdb's `.x`, mysql's words. */
-type SqlClient = "psql" | "sqlite" | "mysql";
+/**
+ * The clients whose own commands Ember reads (clientCommands): psql's `\x`, sqlite3's and duckdb's `.x`, mysql's words,
+ * sqlcmd's `!!` and `:` commands with T-SQL's ways out, and ClickHouse's table functions (r10-commands-x10-2).
+ */
+type SqlClient = "psql" | "sqlite" | "mysql" | "sqlcmd" | "clickhouse";
 
 const SAYS_CLIENT = "It runs database client commands that can run programs or write files.";
 /**
@@ -5552,6 +5555,13 @@ const SQLITE_SHOWS = new Set([
 ]);
 /** SQL functions of sqlite3's shell that read or write files, load code or open an editor. */
 const SQLITE_FUNCTIONS = /\b(load_extension|writefile|readfile|edit|fts3_tokenizer)\s*\(/i;
+/**
+ * T-SQL that runs a program, reaches files or other servers, or runs text Ember can't see (`EXEC xp_cmdshell`,
+ * `OPENROWSET`, `BULK INSERT`, dynamic `EXEC('…')`, `sp_executesql`): r10-commands-x10-2.
+ */
+const TSQL_ESCAPE = /\b(xp_\w+|sp_oa\w+|sp_configure|sp_execute_external_script|sp_executesql|sp_addextendedproc|openrowset|opendatasource|openquery|bulk\s+insert)\b|\bexec(ute)?\s*\(/i;
+/** ClickHouse's table functions that read or write files, URLs, other servers or a program's output (`url(…)`, `executable(…)`). */
+const CLICKHOUSE_ESCAPE = /\b(url|file|executable|executablepool|remote|remotesecure|s3|s3cluster|gcs|azureblobstorage|azureblobstoragecluster|hdfs|hdfscluster|mysql|postgresql|mongodb|redis|jdbc|odbc|sqlite|cluster|clusterallreplicas|deltalake|hudi|iceberg|input)\s*\(|\b(from\s+infile|into\s+outfile)\b/i;
 /** psql's backslash commands that only describe, show or set how results look (`\dt+`, `\l`, `\x`, `\timing`). */
 const PSQL_SHOWS = /^(d[A-Za-z]*\+?|l\+?|x|a|t|H|q|z|h|\?|timing|pset|echo|qecho|warn|conninfo|encoding|set|unset|C|f|T|sf\+?|sv\+?|errverbose|crosstabview|p|r|reset|print|if|elif|else|endif)$/;
 
@@ -5621,6 +5631,19 @@ function clientCommands(h: H, client: SqlClient, t: string): void {
       if (m.name === "!") clientShell(h, m.rest);
       else clientWords(h, m.rest);
     }
+  } else if (client === "sqlcmd") {
+    // sqlcmd's own commands start a line: `!!` runs the rest through the shell, `:r` reads a file in, `:out` writes
+    // one, and any other (`:connect`, `:setvar`, `:ed`) asks (r10-commands-x10-2).
+    for (const line of t.split("\n")) {
+      const m = /^\s*(!!|:!!|:([A-Za-z]+))[ \t]*(.*)$/.exec(line);
+      if (!m) continue;
+      const name = (m[2] ?? "").toLowerCase();
+      if (m[1] === "!!" || m[1] === ":!!") clientShell(h, m[3]);
+      else clientWords(h, m[3], name === "r" ? "read" : "write");
+    }
+    if (TSQL_ESCAPE.test(t)) h.e.unclear("unclear.sql", SAYS_CLIENT);
+  } else if (client === "clickhouse") {
+    if (CLICKHOUSE_ESCAPE.test(t)) h.e.unclear("unclear.sql", SAYS_CLIENT);
   } else {
     // A client word starts a statement: after `;`, or on a line of its own (`use app` ends at its line: x7-7).
     for (const m of t.matchAll(/(?:^|;)\s*(source|tee|pager|edit|system)\b[ \t]*([^;\n]*)|\\([.!TPe])[ \t]*([^;\n\\]*)/gim)) {
@@ -5673,13 +5696,20 @@ reg(NATIVE, ["psql", "sqlite3", "sqlite", "duckdb", "sqlcmd", "cqlsh", "clickhou
     }
   }
   else if (k === "sqlcmd" || k === "clickhouse-client") {
-    databaseText(h, k === "sqlcmd" ? inlineSql(h, ["Q", "q"], []) : inlineSql(h, ["q"], ["query"]));
+    // Each judged in its own dialect: sqlcmd's `!!` and `:r`, T-SQL's xp_cmdshell, ClickHouse's url() and file()
+    // (r10-commands-x10-2).
+    const client: SqlClient = k === "sqlcmd" ? "sqlcmd" : "clickhouse";
+    const inline = k === "sqlcmd" ? inlineSql(h, ["Q", "q"], []) : inlineSql(h, ["q"], ["query"]);
+    databaseText(h, inline, client);
     // The SQL files they run (sqlcmd's -i, clickhouse-client's --queries-file) are read first and judged as SQL, as
     // psql's -f is (commands-remote-r10-4); one Ember can't name asks.
-    for (const f of k === "sqlcmd" ? inlineSql(h, ["i"], ["input-file"]) : inlineSql(h, [], ["queries-file"])) {
+    const files = k === "sqlcmd" ? inlineSql(h, ["i"], ["input-file"]) : inlineSql(h, [], ["queries-file"]);
+    for (const f of files) {
       if (f === null) h.e.unclear("unclear.sql", "It runs database commands from a file Ember can't name.");
-      else if (!STDIN_NAME.test(f) && !STREAM_NAME.test(f)) h.e.recordScript(lit(f), "psql", h.sc);
+      else if (!STDIN_NAME.test(f) && !STREAM_NAME.test(f)) h.e.recordScript(lit(f), client, h.sc);
     }
+    // What they read from their input (`clickhouse-client < a.sql`, `sqlcmd <<< …`) is judged the same way.
+    if (!inline.length && !files.length) sqlFromStdin(h, client);
   }
   else if (k === "cqlsh") databaseText(h, inlineSql(h, ["e"], ["execute"]));
   else if (k === "sqlite3" || k === "sqlite" || k === "duckdb") {

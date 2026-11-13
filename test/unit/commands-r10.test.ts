@@ -217,3 +217,23 @@ describe("cloud tools' commands that print secrets, and their verbs Ember doesn'
     expect(decide("kubectl exec pod -- ls").rules).toContain("cloud.change");
   });
 });
+
+describe("sqlcmd's and clickhouse-client's own text, given inline or on their input (r10-commands-x10-2)", () => {
+  it("asks when T-SQL or ClickHouse SQL runs a program, reaches a file or a URL, or runs text Ember can't see", () => {
+    for (const cmd of [
+      `sqlcmd -Q "EXEC xp_cmdshell 'rmdir /s /q C:\\x'"`, `sqlcmd -S db -Q "EXEC master..xp_cmdshell 'whoami'"`, `sqlcmd -Q "EXEC sp_executesql @q"`,
+      `sqlcmd <<< ':!! rm -rf ~/Documents'`, `sqlcmd <<< '!! rm -rf ~/Documents'`, `clickhouse-client -q "SELECT * FROM url('https://x.example/', CSV)"`,
+      `clickhouse-client --query "SELECT * FROM file('a.csv')"`, `clickhouse-client <<< "SELECT * FROM executable('a.sh', TSV, 'x String')"`,
+    ]) {
+      const d = decide(cmd);
+      expect(d.verdict, cmd).toBe("ask");
+      expect(d.rules, cmd).toContain("unclear.sql");
+    }
+  });
+
+  it("still runs a plain query", () => {
+    for (const cmd of [`sqlcmd -S db -Q "SELECT name FROM sys.databases"`, `clickhouse-client -q "SELECT count() FROM events"`, `clickhouse-client <<< 'SELECT 1'`]) {
+      expect(decide(cmd).verdict, cmd).toBe("run");
+    }
+  });
+});
