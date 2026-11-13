@@ -234,7 +234,8 @@ export class VoiceGate {
    * The owner's request (it matched as a whole) as main gets it: `verified` when what follows the wake phrase holds at
    * least APPROVAL_MIN_SECONDS of voice and matches the owner on its own; otherwise `short`, with that part's own score
    * (`restScore`) when it held SCORE_MIN_SECONDS of voice or more (`print`: the whole request's voiceprint, which is that
-   * part's when there was no wake phrase). A check that fails says neither (heard, but it can't approve anything).
+   * part's when there was no wake phrase). A check that fails says neither, and `unchecked` (heard, but it can't approve
+   * anything).
    *
    * `verified` needs `matches(…, strict)` (adapt.ts): the learnt print at its raised threshold AND the enrolment at its own
    * threshold, so what Voice Match learnt never lowers the bar for a spoken yes. `restScore` goes out unrounded and is
@@ -257,7 +258,8 @@ export class VoiceGate {
       restPrint = await this.printer().print(rest);
     } catch (err) {
       if (generation === this.revision) this.onError(err);
-      return e;
+      // Marked as the whole's failure is (V2-F8): unmarked, a yes in it was refused as another voice (voice-product-x9-2).
+      return { ...e, unchecked: true };
     }
     return voiced >= APPROVAL_MIN_SECONDS && matches(restPrint, true) ? { ...e, verified: true } : { ...e, short: true, restScore: scored(restPrint) };
   }

@@ -274,6 +274,20 @@ describe("VoiceGate", () => {
     expect(sent).toEqual([{ ...utterance("Open the terminal."), unchecked: true }]);
     expect(errors).toHaveLength(1);
   });
+
+  it("marks a request unchecked when the model fails on what follows the wake phrase, not only on the whole (voice-product-x9-2)", async () => {
+    // The whole matched the owner; the second print, of what follows "Hey Ember", failed: it went out unmarked, and its
+    // yes was refused as another voice ("That didn't sound like you…").
+    const sent: VoiceEvent[] = [], errors: unknown[] = [];
+    let prints = 0;
+    const printer: Printer = { print: async s => { if (prints++) throw new Error("no model"); return fakePrinter().print(s); } };
+    const g = new VoiceGate(() => printer, e => sent.push(e), err => errors.push(err));
+    g.setOwner(owner);
+    g.event(utterance("Allow it."), ownerAudio(2.6), true);
+    await flush();
+    expect(sent).toEqual([{ ...utterance("Allow it."), unchecked: true }]);
+    expect(errors).toHaveLength(1);
+  });
 });
 
 describe("Enrolment", () => {
