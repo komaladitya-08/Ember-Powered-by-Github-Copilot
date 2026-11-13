@@ -601,7 +601,7 @@ describe("choosing project files", () => {
       "credentials.py", "passwd.txt", "private-key-rotation.md", "privatekey.go", "token_tokenizer.ts", "secret_tokenizer.ts", "mytokenfile.txt"];
     for (const name of named) expect(projectChoice.bind(null, at(name)), name).toThrow(`${name} is named like a file that holds passwords, tokens or keys, so Ember won't send it.`);
     for (const name of [".env", ".env.txt", ".npmrc", ".eslintrc.json"]) expect(projectChoice.bind(null, at(name)), name).toThrow(`${name} is a hidden file (its name starts with a dot), and Ember sends none of those.`);
-    for (const name of ["yarn.lock", "Gemfile.lock", "photo.png", "report.pdf", "archive.zip", "notebook.ipynb", "id_rsa", "app.env", "prod.tfvars", "server.log", "app.exe"]) {
+    for (const name of ["yarn.lock", "Gemfile.lock", "Dockerfile.env", "Makefile.key", "README.log", "photo.png", "report.pdf", "archive.zip", "notebook.ipynb", "id_rsa", "app.env", "prod.tfvars", "server.log", "app.exe"]) {
       expect(projectChoice.bind(null, at(name)), name).toThrow(`${name} isn't a kind of file Projects takes. Choose source, documentation or diff files.`);
     }
   });

@@ -28,6 +28,8 @@ const textFile = new RegExp(String.raw`\.(?:${[
 ].join("|")})$`, "i");
 /** Well-known source and documentation files that have no type ("Makefile", "Dockerfile.dev", "README"). */
 const namedFile = /^(?:(?:GNU)?[Mm]akefile|Dockerfile|Containerfile|Jenkinsfile|Vagrantfile|Gemfile|Rakefile|Procfile|Brewfile|[Jj]ustfile|Caddyfile|CODEOWNERS|README|LICEN[CS]E|COPYING|NOTICE|CHANGELOG|CHANGES|AUTHORS|CONTRIBUTING|TODO)(?:\.[\w-]{1,20})?$/;
+/** Types Projects never takes, even after a well-known name. */
+const NEVER_KIND = /\.(?:lock|env|tfvars|tfstate|pem|key|p12|pfx|crt|cer|der|jks|keystore|log)$/i;
 const privateName = /(?:secret|credential|passwd|password|private.?key|token)/i;
 /**
  * "tokenizer" and its forms hold "token" but never name a secret: memory's secret guard reads them so too (guard.ts
@@ -52,8 +54,9 @@ export function projectFileProblem(name: string): ProjectFileProblem | null {
   if (/[\p{Cc}\p{Cf}:]/u.test(name) || memoryRefusal(name)) return "unsafe";
   if (name.startsWith(".")) return "hidden";
   if (privateName.test(name.replace(TOKENISER, "_"))) return "named";
-  // A lock file is a list of versions and hashes, whatever it is the lock of ("Gemfile.lock").
-  if (/\.lock$/i.test(name) || (!textFile.test(name) && !namedFile.test(name))) return "kind";
+  // Never by its last type, whatever stands in front ("Gemfile.lock", "Dockerfile.env", "Makefile.key"): a lock file is
+  // a list of versions and hashes, and the others hold credentials or logs by convention.
+  if (NEVER_KIND.test(name) || (!textFile.test(name) && !namedFile.test(name))) return "kind";
   return null;
 }
 
