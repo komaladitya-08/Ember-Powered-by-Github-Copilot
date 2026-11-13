@@ -363,12 +363,12 @@ Ember stops and asks before a command that:
   publishes, `python3 -m keyring get …` prints a password, `python3 -m venv --clear DIR` deletes what is in DIR, and
   a module Ember doesn't know asks as a program it doesn't know (`python3 -m flask run`; Python's own everyday
   modules and the project's test and build tools run: `-m pytest`, `-m venv .venv`, `-m json.tool`, `-m build`). A
-  versioned name is the same program (`python3.12 -c …`, `pip3.12 install`). `dotenv -- …`, `dotenvx run -- …`,
-  `env-cmd …`, `cross-env A=1 …` and `with-contenv …` only set variables, so the command after them decides (`cross-env
-  NODE_ENV=test jest` runs, `dotenv -- npm publish` asks); `mise exec -- …`, `nix shell … -c …`, `nix develop -c …`,
-  `pixi run …`, `devbox run …` and `direnv exec . …` are read the same way and still ask as programs Ember doesn't
-  know. What a runner downloads and runs (`npx`, `pnpx`, `bunx`, `uvx`, `pipx run`, `npm exec`, `pnpm dlx`, `yarn
-  dlx`, `deno run` with an address or `npm:`, `nix run`) asks as before, and its command line is judged as well, so
+  versioned name is the same program (`python3.12 -c …`, `pip3.12 install`). `mise exec -- …`, `nix shell … -c …`, `nix
+  develop -c …`, `pixi run …`, `devbox run …` and `direnv exec . …` are read the same way and still ask as programs
+  Ember doesn't know. `dotenv`, `dotenvx`, `env-cmd`, `cross-env`, `cross-env-shell` and `with-contenv` ask as programs
+  Ember doesn't know whatever they are handed (`cross-env NODE_ENV=test jest` asks): the variables and the files
+  they load can name code the command then runs. What a runner downloads and runs (`npx`, `pnpx`, `bunx`, `uvx`,
+  `pipx run`, `npm exec`, `pnpm dlx`, `yarn dlx`, `deno run` with an address or `npm:`, `nix run`) asks as before, and its command line is judged as well, so
   `npx -y sometool ~/.ssh/id_rsa` also says it reads a key and `npx pm2 start app.js` that it keeps running
   (`npm exec pm2 -- start app.js` and `pm2 --silent start app.js` too: pm2 and forever ask this way for every verb
   but those that list, show or stop);

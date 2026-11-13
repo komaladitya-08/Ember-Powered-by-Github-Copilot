@@ -8307,59 +8307,6 @@ reg(NATIVE, ["npm", "pnpm", "yarn", "bun", "corepack"], h => {
 });
 reg(NATIVE, ["npx", "pnpx", "bunx", "uvx", "yarnpkg-dlx"], h => { h.e.add("escape", "escape.npx", SAYS.downloadsProgram); packageLine(h, h.args, h.key); });
 
-/** The value options of the launchers that only set variables for the command they run. */
-const ENV_LAUNCH_VALUES = new Set(["-e", "-f", "--file", "--env-file", "--env", "--environments", "-v", "-r", "--rc-file", "-fk", "--env-keys-file", "--convention"]);
-/**
- * Launchers that only load variables and run the command after them (commands-remote-r9-3): `dotenv [-e file] --
- * cmd`, `dotenv run -- cmd`, `dotenvx run -- cmd`, `env-cmd -f file cmd`, `cross-env A=1 cmd`, `cross-env-shell A=1
- * 'cmd'`, `with-contenv cmd`. The command is judged as if it were run directly (its row decides; a tool Ember doesn't
- * know asks) beside what a program with no row is always asked (generic(): its words read as paths, and a word naming a
- * program that runs others, as on main), and their own verbs that show or change the stored variables stay a program
- * Ember doesn't know.
- */
-reg(NATIVE, ["dotenv", "dotenvx", "env-cmd", "cross-env", "cross-env-shell", "with-contenv"], h => {
-  const args = h.args;
-  const asUnknown = (): void => { unknownProgram(h); generic(h, true); };
-  // A PowerShell word shaped like a cmdlet's name (`cross-env`, `env-cmd`, `with-contenv`) was an unknown cmdlet's,
-  // which asked, and still does.
-  if (h.sc.family === "powershell" && /^[a-z]+-[a-z0-9]+$/.test(h.key)) unknownCmdlet(h);
-  const dd = args.findIndex(a => a.v === "--");
-  let k = 0;
-  for (; k < (dd >= 0 ? dd : args.length); k++) {
-    const v = args[k].v;
-    if (v === null) { asUnknown(); return; }
-    if (v.startsWith("-")) {
-      // dotenv's -p prints a stored value: no launch.
-      if (v === "-p" || v === "--print") { asUnknown(); return; }
-      if (ENV_LAUNCH_VALUES.has(v)) k++;
-      continue;
-    }
-    if ((h.key === "cross-env" || h.key === "cross-env-shell") && /^[A-Za-z_][A-Za-z0-9_]*=/.test(v)) continue;
-    if ((h.key === "dotenv" || h.key === "dotenvx") && v === "run" && !args.slice(0, k).some(a => a.v === "run")) continue;
-    break;
-  }
-  if (dd >= 0) {
-    // With `--`, only the launcher's options and its `run` may stand before it.
-    if (k < dd) { asUnknown(); return; }
-    k = dd + 1;
-  } else if (h.key === "dotenvx" || (h.key === "dotenv" && !args.slice(0, k).some(a => a.v === "run") && /^(list|get|set|unset|decrypt|encrypt|keypair|ls|rotate|help|--help|--version)$/.test(args[k]?.v ?? ""))) {
-    // dotenvx always takes `--`; dotenv's verbs that print or change the stored variables are no launch.
-    asUnknown();
-    return;
-  }
-  // As a program with no row was always judged: its words read as paths, and a word that names a program that runs
-  // others asks how the one runs the other (`dotenv -- npm test` asked on main, and still does).
-  generic(h);
-  const words = args.slice(k);
-  if (words.length === 0) { if (h.key !== "with-contenv") unknownProgram(h); return; }
-  if (h.key === "cross-env-shell") {
-    if (words.some(a => a.v === null)) h.e.unclear("unclear.shell-text", "It runs shell text Ember can't see.");
-    else h.e.nested(words.map(a => a.v).join(" "), "sh", h.sc, h.key);
-    return;
-  }
-  h.e.payload(words, h.sc, h.key);
-});
-
 /** Options of the download-and-run runners that take the next word (`npx -p pkg`, `uvx --from pkg`, `pipx run --spec x`). */
 const PACKAGE_RUN_VALUES = new Set([
   "-p", "--package", "--node-arg", "-n", "--shell", "--userconfig", "-w", "--workspace", "--cache", "--registry", "--filter", "-C", "--dir", "--from", "--with",

@@ -300,8 +300,7 @@ describe("launchers that run a tool by its name (commands-remote-r9-3, modes-y9-
   });
 
   it("reads the command behind a launcher that only sets up an environment, and asks before a tool Ember doesn't know there", () => {
-    const launch = ["dotenv --", "dotenv -e .env.test --", "dotenv run --", "dotenvx run --", "dotenvx run -f .env.test --", "env-cmd", "env-cmd -f .env.test", "env-cmd -e test --",
-      "cross-env NODE_ENV=test", "cross-env NODE_ENV=test CI=1", "with-contenv", "mise exec --", "mise x node@20 --", "mise exec node@20 python@3.12 --", "bundle exec", "poetry run",
+    const launch = ["mise exec --", "mise x node@20 --", "mise exec node@20 python@3.12 --", "bundle exec", "poetry run",
       "pdm run", "hatch run", "conda run -n x", "uv run", "pyenv exec", "rbenv exec", "asdf exec", "nix shell nixpkgs#x -c", "nix develop -c", "nix develop --command",
       "pixi run", "devbox run", "direnv exec ."];
     for (const l of launch) for (const [line, rule] of [["npm publish", "npm.publish"], ["rm -rf ~/Documents", "posix.rm"], ["dropdb prod", "unknown.program"],
@@ -311,18 +310,27 @@ describe("launchers that run a tool by its name (commands-remote-r9-3, modes-y9-
       expect(d.verdict, cmd).toBe("ask");
       expect(d.rules, cmd).toContain(rule);
     }
-    for (const cmd of ["cross-env-shell NODE_ENV=test 'npm publish'", "cross-env-shell NODE_ENV=test npm publish", "nix-shell --run 'npm publish'", "nix-shell -p x --command 'npm publish'",
+    for (const cmd of ["cross-env-shell NODE_ENV=test 'npm publish'", "cross-env-shell NODE_ENV=test npm publish"]) expect(decide(cmd).verdict, cmd).toBe("ask");
+    for (const cmd of ["nix-shell --run 'npm publish'", "nix-shell -p x --command 'npm publish'",
       "mise exec -c 'npm publish'", "mise x --command 'npm publish'"]) {
       expect(decide(cmd).rules, cmd).toContain("npm.publish");
     }
-    // The ones that only set variables run a tool Ember knows as it runs alone.
+    // The ones that set variables for a command have no row (integ-y-1, integ-y-2): each asks as a program Ember doesn't
+    // know, whatever it is handed, as before the commands lane's row for them.
     for (const cmd of ["cross-env NODE_ENV=test jest", "dotenv -- vitest run", "dotenv -e .env.test -- pytest -q", "env-cmd -f .env.test jest --ci", "dotenvx run -- tsc --noEmit",
-      "with-contenv ls", "cross-env-shell NODE_ENV=test 'jest --ci'"]) {
+      "with-contenv ls", "cross-env-shell NODE_ENV=test 'jest --ci'", "env-cmd jest", "with-contenv"]) {
       const d = decide(cmd);
-      expect(d.rules.filter(r => r !== "path.secret"), cmd).toEqual([]);
+      expect(d.verdict, cmd).toBe("ask");
+      expect(d.rules, cmd).toContain("unknown.program");
+    }
+    for (const l of ["dotenv --", "dotenv -e .env.test --", "dotenv run --", "dotenvx run --", "dotenvx run -f .env.test --", "env-cmd", "env-cmd -f .env.test", "env-cmd -e test --",
+      "cross-env NODE_ENV=test", "cross-env NODE_ENV=test CI=1", "with-contenv"]) for (const line of ["npm publish", "rm -rf ~/Documents", "dropdb prod", "twine upload dist/*", "frobnicate ~/.ssh/id_rsa"]) {
+      const d = decide(`${l} ${line}`);
+      expect(d.verdict, `${l} ${line}`).toBe("ask");
+      expect(d.rules, `${l} ${line}`).toContain("unknown.program");
     }
     // (A word naming a program that runs others still asks how the launcher runs it, as on main: `dotenv -- npm test`.)
-    expect(decide("dotenv -- npm test").rules).toEqual(["unclear.hidden-command"]);
+    expect(decide("dotenv -- npm test").rules).toContain("unclear.hidden-command");
     // In PowerShell a hyphenated name is shaped like a cmdlet Ember doesn't know, which asked on main and still does.
     for (const cmd of ["cross-env NODE_ENV=test jest", "with-contenv ls", "env-cmd jest"]) expect(decide(cmd, { shell: "powershell", context: "win32" }).verdict, cmd).toBe("ask");
     // The ones that fetch or build an environment first still ask as before, and what downloads a program says so.
