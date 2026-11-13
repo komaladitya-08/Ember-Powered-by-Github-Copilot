@@ -1411,6 +1411,8 @@ function start(): void {
    */
   const forgetSessionWords = () => {
     recentAsks = [];
+    // And the Ask box's history (↑ brings back the last 20 requests): the person's own words too (companion-r10-4).
+    askHistory = [];
     personalRef?.forgetSession();
     if (lastState.suggest) showState({ suggest: null });
   };

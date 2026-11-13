@@ -754,7 +754,7 @@ describe("main's wiring of voice personalisation (main.ts source)", () => {
     expect(MAIN).toContain("void askEmber(again, { voiceUnchecked: how ? how.voiceUnchecked : true, ...(how?.suggested ? { suggested: true } : {}) });");
   });
   it("forgets what was asked this session at sign-out, an account change and Forget everything, with the chips showing (memory-r9-2)", () => {
-    expect(MAIN).toContain("const forgetSessionWords = () => {\n    recentAsks = [];\n    personalRef?.forgetSession();\n    if (lastState.suggest) showState({ suggest: null });\n  };");
+    expect(MAIN).toContain("const forgetSessionWords = () => {\n    recentAsks = [];\n    // And the Ask box's history (↑ brings back the last 20 requests): the person's own words too (companion-r10-4).\n    askHistory = [];\n    personalRef?.forgetSession();\n    if (lastState.suggest) showState({ suggest: null });\n  };");
     expect(MAIN).toContain('onAccountChanged: () => { askHistory = []; forgetSessionWords(); forgetProject("all"); },');
     const signOut = MAIN.slice(MAIN.indexOf("ipcMain.handle(IPC.signOut,"), MAIN.indexOf("ipcMain.handle(IPC.cancelSignIn,"));
     expect(signOut).toContain("askHistory = [];\n            forgetSessionWords();");
