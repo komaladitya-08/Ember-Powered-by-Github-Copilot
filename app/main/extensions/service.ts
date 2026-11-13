@@ -180,9 +180,14 @@ export class ExtensionsService implements ExtensionsApi {
   private tainted = false;
   /**
    * Server keys that said their tool list changed in this conversation (integrations-x9-1). Kept here as the taint
-   * is, across the reload such a word causes: a server that says it again has the tools that differ turned off.
+   * is, across the reload such a word causes: a server that says it again stays out until the conversation ends.
    */
   private announcers = new Set<string>();
+  /**
+   * Server keys that said it twice in this conversation: left out of its sessions until it ends, whatever their list
+   * showed (integrations-y9-1). Only the tools that list shows to differ are marked changed for good.
+   */
+  private heldOut = new Set<string>();
   /** Installs and agreements run one at a time (two at once could take the same server key or copy into one folder). */
   private queue: Promise<unknown> = Promise.resolve();
 
@@ -212,6 +217,7 @@ export class ExtensionsService implements ExtensionsApi {
     this.session = null;
     this.tainted = false;
     this.announcers.clear();
+    this.heldOut.clear();
   }
 
   private serial<T>(run: () => Promise<T>): Promise<T> {
@@ -727,7 +733,7 @@ export class ExtensionsService implements ExtensionsApi {
     for (const item of this.items) {
       if (!item.enabled || item.consentedAt === null) continue;
       for (const s of item.servers) {
-        if (s.status !== "ready" || !s.spec || (s.spec.type === "stdio" && !this.o.launcher)) continue;
+        if (s.status !== "ready" || !s.spec || (s.spec.type === "stdio" && !this.o.launcher) || this.heldOut.has(s.key)) continue;
         const clashes = clashingToolNames(s.key, s.tools.map(t => t.name));
         const tools = s.tools.filter(t => !t.changed && MCP_TOOL_NAME.test(t.name) && !clashes.has(modelToolName(s.key, t.name)));
         if (!tools.length) continue;
@@ -803,8 +809,8 @@ export class ExtensionsService implements ExtensionsApi {
    * "Ready"). The word itself is the change. The server leaves this session at once, unasked; the conversation is
    * tainted (the notice may have reached the runtime a moment before a request was built) and reloads between
    * turns, where the runtime's own first list is checked against the pins as at every load. A server that says it
-   * again in the same conversation leaves the session the same way, and each tool whose entry in its own list then
-   * differs from the pin is turned off until the user agrees again
+   * again in the same conversation leaves it for the rest of the conversation, and each tool whose entry in its own
+   * list then differs from the pin is turned off until the user agrees again
    * (PLAN.md §2 "Connectors"). A stdio server's notice doesn't get this far: Ember's launcher never passes it to
    * the runtime (launch.ts), so this is for a remote server, and for anything that got past.
    */
@@ -818,12 +824,13 @@ export class ExtensionsService implements ExtensionsApi {
     if (!names.length) return;
     const again = this.announcers.has(server);
     this.announcers.add(server);
+    if (again) this.heldOut.add(server);
     this.tainted = true;
     void this.stopIn(gate, [server]);
     this.changed();
-    // Said again: only a tool whose entry in the server's own list differs from its pin is marked changed
-    // (integrations-y9-1: every tool was, with nothing in Review tools to review). Asked once a session at most (the
-    // server is withdrawn now); a list that can't be read leaves its tools denied for this conversation, unmarked.
+    // Said again: the server stays out of this conversation, and only a tool whose entry in the server's own list
+    // differs from its pin is marked changed for good (integrations-y9-1: every tool was, with nothing in Review tools
+    // to review). Asked once at most (the server is withdrawn now, and no later session of the conversation has it).
     if (again) void this.differs(gate, server).then(differ => differ?.length ? this.withdraw(gate, differ, true) : undefined).catch(err => this.o.log.warn("extensions.withdraw_failed", { err }));
   }
 

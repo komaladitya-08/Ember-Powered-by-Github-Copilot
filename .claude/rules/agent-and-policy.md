@@ -242,10 +242,11 @@ docs/DEVELOPING.md "Extensions: the runtime and the gate" is the design; app/mai
   drops it; the runtime asks a server again only after that notice), so keep every line a server writes going
   through `passedOn`. Where the runtime does hear it (`listChanged`, from `onEvent` in the session's config: a
   remote server), take the server out of the session at once, unasked, and taint (`announced`); said twice in a
-  conversation, it leaves again and only the tools its own list shows to differ are marked changed (integrations-y9-1).
-  A tool that differs is marked changed, audited without its text, and its server disabled in that session
-  (`withdraw`); a withdrawn server's tools are denied there. The session's hooks wait only for servers on their way
-  out (`settled`: one bounded `mcp.disable` each), never for a queue a server can lengthen. A session without a live list denies every call.
+  conversation, it stays out until the conversation ends (`heldOut`), and only the tools its own list shows to
+  differ are marked changed (integrations-y9-1). A tool that differs is marked changed, audited without its text,
+  and its server disabled in that session (`withdraw`); a withdrawn server's tools are denied there. The session's
+  hooks wait only for servers on their way out (`settled`: one bounded `mcp.disable` each), never for a queue a
+  server can lengthen. A session without a live list denies every call.
 - **Read-only** is `isReadOnly()` (readOnlyHint, and neither destructiveHint nor openWorldHint) on a stdio server only;
   a remote server's tools always ask, and so do a server's tools once it changes its tool list mid-session.
 - **The runtime's TMPDIR** is `copilot-tmp/` in the data folder (runtime-temp.ts, 0700, emptied at connect and

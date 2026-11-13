@@ -1311,7 +1311,8 @@ describe("ExtensionsService", () => {
     const [item] = await s.list();
     expect(item.tools.map(t => !!t.changed)).toEqual([false, true, false]);
     expect(installedRow(item)).toMatchObject({ status: { text: "Changed since you agreed", tone: "fail" }, actions: [{ act: "reagree", label: "Review tools" }, { act: "uninstall" }] });
-    expect(s.forSession()!.tools).toEqual(["fake-lookup", "fake-peek"]);
+    // The server stays out for the rest of this conversation: a second word is not answered with another reload.
+    expect(s.forSession()).toBeUndefined();
     // A new conversation starts the count again.
     await s.reagree(item.id, item.reviewToken!);
     s.conversationEnded();
@@ -1345,6 +1346,10 @@ describe("ExtensionsService", () => {
     expect(await call(fresh, "fake-lookup")).toMatchObject({ permissionDecision: "deny", permissionDecisionReason: expect.stringMatching(/stopped this extension's server/) });
     expect((await s.list())[0].tools.every(t => !t.changed)).toBe(true);
     expect(audit.filter(e => e.phase === "changed")).toEqual([]);
+    // Off for the rest of the conversation all the same, and back, as agreed, in the next.
+    expect(s.forSession()).toBeUndefined();
+    s.conversationEnded();
+    expect(s.forSession()!.tools).toEqual(["fake-lookup", "fake-post_message"]);
   });
 
   it("takes a server that said its tools changed before the session was bound out as soon as it is (integrations-x9-1)", async () => {
