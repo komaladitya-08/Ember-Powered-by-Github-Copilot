@@ -1061,10 +1061,11 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1" && process.env.EM
     expect(leaked).toEqual([]);
     // The user's own "Hey Ember, …" and "Ember, …" still leave the answer window as a wake's request, whole. (The spotter
     // misses a name now and then in a window that is already listening, by all its stream heard before: up to four
-    // tries, each a little later.)
+    // tries, each a little later, and the first that shows a wake is the one judged: a wake shown and then taken back
+    // fails here: voice-roomtalk-y9-2.)
     for (const clip of ["wake", "name_wake"]) {
-      let requests: string[] = [];
-      for (let take = 0; take < 4 && !requests.length; take++) {
+      let requests: string[] | undefined;
+      for (let take = 0; take < 4 && !requests; take++) {
         const s = session({ conversation: true });
         s.engine.questionUp(true);
         s.engine.answerWindow(8000);
@@ -1072,7 +1073,7 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1" && process.env.EM
         s.end();
         if (s.events.some(e => e.type === "wake")) requests = sent(s.events).map(e => `${e.text} (${e.window})`);
       }
-      expect(requests, clip).toEqual([expect.stringMatching(/^Turn on night ?light\.? \(wake\)$/i)]);
+      expect(requests ?? [], clip).toEqual([expect.stringMatching(/^Turn on night ?light\.? \(wake\)$/i)]);
     }
   }, 900_000);
 
