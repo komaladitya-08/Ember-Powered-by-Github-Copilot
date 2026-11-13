@@ -92,7 +92,8 @@ export function toolCounts(tools: readonly ToolInfo[]): string {
  */
 export function installedStatus(i: Installed, on = true, connected = true, heldByVault = false): { text: string; tone: "ok" | "wait" | "fail" | "off" } {
   if (i.needsReview || i.tools.some(t => t.changed)) return { text: "Changed since you agreed", tone: "fail" };
-  if (!i.consented) return { text: "Waiting for you to agree", tone: "wait" };
+  // One that stopped starting says so, not that it waits for an agreement it can't be given (integrations-c9-5).
+  if (!i.consented && i.status !== "failed" && i.status !== "needs-auth") return { text: "Waiting for you to agree", tone: "wait" };
   if (!i.enabled || i.status === "disabled") return { text: "Off", tone: "off" };
   if (!on) return { text: "Off: extensions are off", tone: "off" };
   // The gate refuses every call after a fill from the vault, until Ember starts again (integrations-r10-2).
@@ -140,10 +141,10 @@ export function installedRow(i: Installed, on = true, connected = true, heldByVa
   const changed = i.needsReview || i.tools.some(t => t.changed);
   const meta = [kindLabel(i.kind), ...(i.publisher ? [`by ${i.publisher}`] : []), i.source, ...(i.version ? [i.version] : [])].join(" · ");
   const note = changed ? "Its tools changed since you agreed, so Ember stopped using the ones that changed. Check what they do now, then agree again."
-    : !i.consented ? "Ember uses none of its tools until you agree."
     : i.status === "needs-auth" ? i.kind === "connector" ? `Connect “${i.name}” again to sign in on GitHub's page.`
       : "Check this plugin's authentication setup with its provider, then remove it and add it again."
     : i.status === "failed" && i.enabled ? detailLine(i.detail) ?? "Turn it off and on again, or remove it and add it again."
+    : !i.consented ? "Ember uses none of its tools until you agree."
     : i.enabled && on && heldByVault ? HELD_BY_VAULT
     : i.enabled && i.tools.some(t => t.nameConflict) ? "Some tool names clash in Copilot. Ember leaves those tools off."
     : null;

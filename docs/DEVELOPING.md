@@ -914,7 +914,13 @@ it builds on:
   server it can't reach, so no request waits). Answers, JSON or an event stream, go through `passedOn` like a stdio
   server's lines, one message a line, so a remote server's notice that its list changed never reaches the runtime.
   The launcher reaches a proxy from the environment (`NODE_USE_ENV_PROXY`, the proxy without its user name and
-  password). macOS has no plain-Node mode, so neither stdio nor remote servers run there yet.
+  password). macOS has no plain-Node mode, so neither stdio nor remote servers run there yet, and **Add** says so.
+- **Only what can be agreed to is added** (integrations-c9-5). Adding probes each server; one that didn't start (its
+  program isn't installed), didn't answer or needs a sign-in Ember can't do would keep the item from ever being agreed
+  to, so the item isn't added and Home says why in one sentence ("Ember didn't add “weather”: its server didn't start.
+  Check that the program it runs is installed, then add it again."). An item added earlier whose server stops
+  starting says **Didn't start** with its reason, never **Waiting for you to agree**; **Review and agree** probes it
+  again.
 - **Hot reload.** Installing, removing, turning an item on or off, agreeing again and the kill switch move
   `generation`; the host reconnects between turns (the conversation resumed), as memory does. The kill switch moves
   it only when the conversation had extension tools loaded or a server launched, so a stop with none installed or

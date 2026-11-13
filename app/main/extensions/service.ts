@@ -112,6 +112,22 @@ function named(item?: { name: string }, tool?: { name: string }): { name?: strin
   return { ...(item ? { name: plainName(item.name) } : {}), ...(tool ? { toolName: plainName(tool.name, 40) } : {}) };
 }
 
+/** Why a remote server can't be used where Ember has no launcher (macOS): it would reach the runtime directly. */
+const NO_REMOTE = "Ember can't reach extensions' servers on this computer yet.";
+/** Where Ember has no launcher, a stdio server's reason (probe). */
+const NO_PROGRAMS = "Ember can't run programs for extensions on this computer yet.";
+
+/** Why an item wasn't added, from its first server that isn't ready: a plain sentence Home shows as it is. */
+function notAdded(name: string, s: StoredServer): string {
+  const it = `“${plainName(name)}”`;
+  if (s.status === "needs-auth") return `Ember didn't add ${it}: it needs you to sign in to it, which Ember can't do yet.`;
+  // A reason that is the whole story (no launcher here, a server Ember can't run at all): said as it is.
+  if (!s.spec || s.detail === NO_PROGRAMS || s.detail === NO_REMOTE) return `Ember didn't add ${it}. ${s.detail ?? "Ember can't run its tools."}`;
+  return s.spec.type === "stdio"
+    ? `Ember didn't add ${it}: its server didn't start. Check that the program it runs is installed, then add it again.`
+    : `Ember didn't add ${it}: its server didn't answer. Check that it is up, then add it again.`;
+}
+
 function toolInfo(server: StoredServer, tools: PinnedTool[], review = false): ToolInfo[] {
   const clashes = clashingToolNames(server.key, tools.map(t => t.name));
   return tools.map(t => ({
@@ -543,6 +559,13 @@ export class ExtensionsService implements ExtensionsApi {
         servers.push(r.ok ? { key, name: s.name, spec: s.spec, status: "ready", tools: pinAll(r.tools) } : { key, name: s.name, spec: s.spec, status: r.needsAuth ? "needs-auth" : "failed", detail: r.why, tools: [] });
       }
       if (epoch !== this.epoch || !this.active()) throw new Error("extensions stopped");
+      // A server that isn't ready keeps the whole item from ever being agreed to (reagree), so it isn't added: the
+      // person is told why and can add it again once it can start (integrations-c9-5: "Added", then waiting for good).
+      const stuck = servers.find(s => s.status !== "ready");
+      if (stuck) {
+        fs.rmSync(dst, { recursive: true, force: true });
+        return { ok: false, why: notAdded(manifest.name || name, stuck) };
+      }
       const item: StoredItem = {
         id, kind: "plugin", name: manifest.name || name, marketplace, source, enabled: true, consentedAt: null, servers,
         ...(manifest.publisher ?? listed.publisher ? { publisher: manifest.publisher ?? listed.publisher } : {}),
@@ -573,12 +596,14 @@ export class ExtensionsService implements ExtensionsApi {
     // The kill switch ends a probe under way (its signal is replaced at each stop).
     const signal = this.stopAsks.signal;
     if (spec.type === "stdio") {
-      if (!this.o.launcher) return Promise.resolve({ ok: false, why: "Ember can't run programs for extensions on this computer yet." });
+      if (!this.o.launcher) return Promise.resolve({ ok: false, why: NO_PROGRAMS });
       const launch = this.launch(path.basename(cwd), spec, cwd);
       return probeStdio({ command: this.o.launcher.execPath, args: [this.o.launcher.script], env: { ELECTRON_RUN_AS_NODE: "1", EMBER_MCP_SPEC: JSON.stringify(launch) }, cwd, signal })
         .finally(() => { try { fs.rmSync(launch.leaseFile, { force: true }); } catch { /* already revoked */ } this.leases.get(path.basename(cwd))?.delete(launch.leaseFile); });
     }
     if (spec.type === "sse") return Promise.resolve({ ok: false, why: "Ember can't reach this kind of server yet." });
+    // A remote server runs through the launcher too (integrations-c9-4): with none, it can't be used here.
+    if (!this.o.launcher) return Promise.resolve({ ok: false, why: NO_REMOTE });
     return probeHttp({ url: spec.url, headers: spec.headers, fetch: this.o.fetch ?? fetch, signal });
   }
 

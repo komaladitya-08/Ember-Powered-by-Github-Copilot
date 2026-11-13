@@ -21,7 +21,7 @@ import type { CopilotSession } from "@github/copilot-sdk";
 import crypto from "node:crypto";
 import { EventEmitter, getEventListeners } from "node:events";
 import { PassThrough } from "node:stream";
-import { consentCard, installedRow, reagreeCard } from "../../app/renderer/home/extensions-copy";
+import { consentCard, extensionsError, installedRow, reagreeCard } from "../../app/renderer/home/extensions-copy";
 import { registerExtensionsIpc } from "../../app/main/extensions-ipc";
 import { taskLineOf } from "../../app/main/agent/confirm";
 import { describeEntry } from "../../app/renderer/home/copy";
@@ -2011,11 +2011,36 @@ describe("ExtensionsService", () => {
     expect(await s.connect("Slack")).toEqual({ ok: false, why: "Connectors aren't available in Ember yet." });
   });
 
-  it("never runs stdio servers where Ember has no launcher (macOS)", async () => {
+  it("adds no server where Ember has no launcher (macOS), a remote one included, and says why (integrations-c9-5)", async () => {
     const s = new ExtensionsService(deps({ launcher: null, probe: undefined }));
-    expect(await s.install("local-market", "fake")).toMatchObject({ ok: true });
-    expect((await s.list())[0]).toMatchObject({ status: "failed", detail: "Ember can't run programs for extensions on this computer yet." });
+    expect(await s.install("local-market", "fake")).toEqual({ ok: false, why: "Ember didn't add “fake”. Ember can't run programs for extensions on this computer yet." });
+    writeJson("market/.claude-plugin/marketplace.json", { name: "local-market", plugins: [{ name: "remote", source: "./plugins/remote" }] });
+    writeJson("market/plugins/remote/.claude-plugin/plugin.json", { name: "remote", mcpServers: { web: { type: "http", url: "https://mcp.example.com/mcp" } } });
+    expect(await s.install("local-market", "remote")).toEqual({ ok: false, why: "Ember didn't add “remote”. Ember can't reach extensions' servers on this computer yet." });
+    expect(await s.list()).toEqual([]);
     expect(s.forSession()).toBeUndefined();
+  });
+
+  it("adds no plugin whose server didn't start or needs a sign-in, which could never be agreed to, and says why (integrations-c9-5)", async () => {
+    // Before: "Added", then "Waiting for you to agree" for good, and Agree answered "Its tools couldn't be checked".
+    for (const [probe, why] of [
+      [{ ok: false, why: "It stopped before saying what it offers." }, "Ember didn't add “fake”: its server didn't start. Check that the program it runs is installed, then add it again."],
+      [{ ok: false, needsAuth: true, why: "It needs you to sign in to it, which Ember can't do yet." }, "Ember didn't add “fake”: it needs you to sign in to it, which Ember can't do yet."],
+    ] as const) {
+      const s = new ExtensionsService(deps({ probe: async () => probe }));
+      expect(await s.install("local-market", "fake")).toEqual({ ok: false, why });
+      expect(await s.list()).toEqual([]);
+      expect(fs.readdirSync(path.join(dir, "userData", "extensions", "plugins")).length).toBe(0);
+      // Its sentence reaches Home as it is.
+      expect(extensionsError(why)).toBe(why);
+    }
+  });
+
+  it("says an added plugin that stopped starting didn't start, not that it waits for an agreement (integrations-c9-5)", () => {
+    const failed = { id: "p", kind: "plugin", name: "weather", source: "weather@m", enabled: true, consented: false, status: "failed", detail: "It stopped before saying what it offers.", tools: [] } as const;
+    const row = installedRow({ ...failed, tools: [] });
+    expect(row.status).toEqual({ text: "Didn't start", tone: "fail" });
+    expect(row.note).toBe("It stopped before saying what it offers.");
   });
 });
 
