@@ -1561,7 +1561,10 @@ On Windows the same JSON goes in the registry (§10.7), on a Mac in `/Library/Ap
 (§11.7).
 
 An optional file that makes Ember stricter for everyone on the machine. Its values override users' settings, and
-users can't loosen them. If the file exists but can't be read or has a mistake, Ember locks down until it is fixed,
+users can't loosen them. They are applied on top of each user's settings.json, never written into it: a change made in
+Home under the policy (Speaking speed while listening is off) keeps the user's own values for what the policy forces
+(their voice, Hear me more clearly, memory on), so they come back as they were once the policy is lifted
+(`withOwnWhereForced`, home-r9-1). If the file exists but can't be read or has a mistake, Ember locks down until it is fixed,
 and says so in its settings window (Home's status panel reads "Locked by your organisation", with no Connect button,
 and the notice asks the user to have the computer's manager fix it; `ember doctor` and the log name the problem):
 no actions, commands or listening, nothing sent to any model service (neither
