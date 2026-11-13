@@ -460,6 +460,24 @@ describe("the policy's seams for other targets (critique integration-17)", () =>
     }
   });
 
+  it("knows Ember's prompt window, titled “Ember needs you”, as one of Ember's own by its title alone (product-ui-x9-1)", () => {
+    // Its title is the layer that holds when the window's process isn't known: it shows passwords, host keys and consent cards.
+    expect(isEmberWindow({ name: "Ember needs you", pid: null }, 999)).toBe(true);
+    expect(isEmberWindow({ app: "electron", name: "Ember needs you" }, 999)).toBe(true);
+    expect(isEmberWindow({ app: "", name: " Ember Needs You ", pid: null }, 999)).toBe(true);
+    // Another program's window that is only titled so isn't one.
+    expect(isEmberWindow({ app: "gedit", name: "Ember needs you", pid: 1234 }, 999)).toBe(false);
+    for (const os of ["linux", "win32", "darwin"] as const) {
+      for (const app of ["electron", ""]) {
+        expect(engine(os).decide(req("click", app, "Ember needs you", { element: { role: "push button", name: "Allow" } })))
+          .toMatchObject({ tier: "never", verdict: "deny", reason: "Ember's own windows are for the user only" });
+      }
+    }
+    // The title the window is made with and the one its page sets are the one the policy knows.
+    expect(fs.readFileSync("app/main/windows.ts", "utf8")).toContain('title: "Ember needs you"');
+    expect(fs.readFileSync("app/renderer/prompt/index.html", "utf8")).toContain("<title>Ember needs you</title>");
+  });
+
   it("has a targetRules (WB's) that decides nothing but tier 3 in WSLg apps on Windows, which it refuses", () => {
     const tier3 = new Set(["cursor_click", "cursor_text", "keys", "scroll"]);
     for (const os of ["linux", "win32", "darwin"] as const) {

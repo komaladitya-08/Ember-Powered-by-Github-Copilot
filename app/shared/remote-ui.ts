@@ -1,5 +1,5 @@
 /**
- * Messages between main and Ember's prompt window ("Ember", §8.6): host keys, passwords and codes for SSH, a security
+ * Messages between main and Ember's prompt window ("Ember needs you", §8.6): host keys, passwords and codes for SSH, a security
  * key touch, and the first-use consent cards. Renderer-safe: names and types only. What the user types there goes
  * only to ssh (through Ember's askpass), never to a log or the model.
  */
