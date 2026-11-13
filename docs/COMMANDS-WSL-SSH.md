@@ -360,7 +360,9 @@ Ember stops and asks before a command that:
   `pixi run …`, `devbox run …` and `direnv exec . …` are read the same way and still ask as programs Ember doesn't
   know. What a runner downloads and runs (`npx`, `pnpx`, `bunx`, `uvx`, `pipx run`, `npm exec`, `pnpm dlx`, `yarn
   dlx`, `deno run` with an address or `npm:`, `nix run`) asks as before, and its command line is judged as well, so
-  `npx -y sometool ~/.ssh/id_rsa` also says it reads a key and `npx pm2 start app.js` that it keeps running;
+  `npx -y sometool ~/.ssh/id_rsa` also says it reads a key and `npx pm2 start app.js` that it keeps running
+  (`npm exec pm2 -- start app.js` and `pm2 --silent start app.js` too: pm2 and forever ask this way for every verb
+  but those that list, show or stop);
 - **Ember can't read with certainty**: `eval`, encoded commands (`powershell -EncodedCommand`, `base64 -d | sh`),
   aliases it can't see, unusual syntax, interactive programs such as `vim`, `less`, `top` or `python` with no
   script ("This opens an interactive program; you'd have to use it yourself in the command window."), a job count

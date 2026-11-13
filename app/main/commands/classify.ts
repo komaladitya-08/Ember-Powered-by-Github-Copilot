@@ -6962,11 +6962,17 @@ reg(NATIVE, ["systemd-run"], h => {
   if (values(p, "H", "host", "M", "machine").length) h.e.add("publish", "send.ssh", "Sends data to another computer.");
   h.e.payload(p.operands, h.sc, "systemd-run");
 });
+/** pm2's and forever's verbs that only list or show what is running. */
+const PM_LISTS = new Set(["list", "ls", "l", "ps", "status", "jlist", "prettylist", "logs", "log", "describe", "desc", "show", "info", "id", "pid", "monit", "columns"]);
 reg(NATIVE, ["start-stop-daemon", "daemon", "tsp", "pm2", "forever", "supervisord"], h => {
-  const sub = lower(h.args[0]);
-  if ((h.key === "pm2" || h.key === "forever") && sub && !["start", "restart", "reload", "resurrect", "startup"].includes(sub)) {
-    if (["stop", "delete", "kill", "del"].includes(sub)) h.e.add("system", "kill.process", "Stops programs that are running.");
-    return;
+  if (h.key === "pm2" || h.key === "forever") {
+    // The verb is the first word that is no option (`pm2 --silent start`, `forever -a start`, and the `--` a package
+    // runner passes on), and only a verb known to list, show or stop is no start: `serve`, `deploy`, `install`, a
+    // script's name and an option's value read as the verb all ask (commands-classes-y9-1, y9-2).
+    const sub = lower(h.args.find(a => a.v === null || !a.v.startsWith("-")));
+    if (!sub && h.args.length && h.args.every(a => a.v !== null && /^(-v|-V|-h|--version|--help)$/.test(a.v))) return;
+    if (sub && ["stop", "stopall", "delete", "kill", "del"].includes(sub)) { h.e.add("system", "kill.process", "Stops programs that are running."); return; }
+    if (sub && PM_LISTS.has(sub)) return;
   }
   h.e.add("escape", `escape.${h.key}`, SAYS.keepsRunning);
 });
@@ -8269,7 +8275,9 @@ function packageLine(h: H, words: readonly Arg[], wrapper: string): void {
     if (URL_LIKE.test(v) || /^[a-z][a-z0-9+.-]*:/i.test(v)) { h.e.readArgs(words.slice(k + 1), h.sc, { unresolvedUnclear: true }); h.e.afterArgs(words.slice(k + 1), wrapper); return; }
     const bin = (v.replace(/^@[^/]+\//, "").replace(/@[^@/]*$/, "").split(/[\\/]/).pop() ?? v) || v;
     const from = h.e.findings.length;
-    h.e.payload([{ ...words[k], v: bin, raw: bin }, ...words.slice(k + 1)], h.sc, wrapper);
+    // The runner drops one `--` after the package (`npm exec pm2 -- start app.js` runs `pm2 start app.js`).
+    const rest = words.slice(words[k + 1]?.v === "--" ? k + 2 : k + 1);
+    h.e.payload([{ ...words[k], v: bin, raw: bin }, ...rest], h.sc, wrapper);
     // That the package is a program Ember doesn't know is what the runner's own finding already says ("Downloads a
     // program and runs it."): only what its line is handed, and what Ember knows of the package, is added, so `npx
     // cowsay hi` decides as it did (the approval modes read `unknown` as "can't tell").

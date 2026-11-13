@@ -940,3 +940,29 @@ describe("smaller forms of a secret handed to a program (commands-classes-x9-9)"
     for (const cmd of ["gem list", "deno run a.ts", "dotnet build"]) expect(decide(cmd).verdict, cmd).toBe("run");
   });
 });
+
+describe("pm2 and forever given their own options before the verb, or a verb Ember doesn't know (commands-classes-y9-1, y9-2)", () => {
+  it("asks, as something that outlives Stop, before a start behind an option, behind `--` and behind a package runner", () => {
+    for (const o of POSIX) for (const cmd of ["pm2 --silent start app.js", "pm2 -s start app.js", "pm2 -- start app.js", "pm2 serve dist 8080", "forever -a start app.js",
+      "pm2 --no-color restart all", "pm2 deploy production", "pm2 install pm2-logrotate", "pm2 link a b", "forever app.js",
+      "npm exec pm2 -- start app.js", "npm x pm2 -- start app.js", "pnpm dlx pm2 -- start app.js", "yarn dlx pm2 -- start app.js", "npx pm2 --silent start app.js",
+      "npx pm2 -s start app.js", "npx forever -a start app.js", "npx pm2 serve dist 8080", "npm exec -- pm2 start app.js", "npx pm2 start app.js"]) {
+      const d = decide(cmd, o);
+      expect(d.verdict, label(cmd, o)).toBe("ask");
+      expect(d.rules.some(r => r === "escape.pm2" || r === "escape.forever"), label(cmd, o)).toBe(true);
+    }
+  });
+
+  it("still runs the verbs that only list or show, says a stop as a stop, and reads the version", () => {
+    for (const o of POSIX) {
+      for (const cmd of ["pm2 list", "pm2 ls", "pm2 status", "pm2 jlist", "pm2 --no-color list", "pm2 -s ls", "pm2 logs --lines 20 --nostream", "pm2 describe 0", "pm2 --version", "pm2 -v",
+        "forever list", "forever --help"]) {
+        expect(decide(cmd, o).verdict, label(cmd, o)).toBe("run");
+      }
+      for (const cmd of ["pm2 stop all", "pm2 -s delete app", "forever stopall"]) {
+        expect(decide(cmd, o).rules, label(cmd, o)).toContain("kill.process");
+        expect(decide(cmd, o).rules, label(cmd, o)).not.toContain("escape.pm2");
+      }
+    }
+  });
+});
