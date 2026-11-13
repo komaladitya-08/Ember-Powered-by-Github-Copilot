@@ -747,7 +747,10 @@ said without the name, in the answer window, a follow-up or a conversation, is t
 Voice Match off it isn't taken, and the question says once to say the name first (`sound-unknown`); a no and anything
 said by name are taken as ever (owner's report of 2026-11-12: a video's “Okay.” outside a conversation allowed a
 question; settled by the integrator on the owner's direction, and the owner can overrule it). So is one said without the
-name in a follow-up window while other sound is known to play, as in the answer window (Codex review of #211). The first
+name in a follow-up window while other sound is known to play, as in the answer window (Codex review of #211), and in
+a conversation, whatever the spotter heard just before it: a name spotted in the last 3 s lets the next thing said
+through as said by name (`NAME_HEARD_MS`), and after a video's “…September…” its own “Okay.” went out as anyone's yes
+(V2-S4). A yes is judged on its own speech. The first
 time something said then without the name isn't heard, the status line says “Music or a video is playing: say “Ember”
 first.” for 5 s (engine.ts `dropped`), once a conversation; while a question is up, an answer dropped so, in the answer
 window, a follow-up or a conversation, makes the question say once why and to say the name first (`dropped` says which

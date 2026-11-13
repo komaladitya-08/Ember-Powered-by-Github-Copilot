@@ -2911,4 +2911,30 @@ describe("whose a spoken answer is (second review of the voice lane, 2026-11-12)
       expect(s.events.filter(v => v.type === "listening")).toEqual([]);
     });
   });
+
+  describe("a nameless yes after a name was spotted (V2-S4)", () => {
+    /**
+     * A conversation over a video, a question up. The video says a sentence in which the spotter hears the name late
+     * ("…September…", 1.44 s in), and `gap` ms after it a lone "Okay.".
+     */
+    const videoSays = (gap: number, o: { speakers?: boolean; otherSound?: boolean | null }) => {
+      const s = waiting({ 5: "I remember the September weather was nice.", 6: "Okay." }, "conversation", o);
+      videoOn(s);
+      for (let i = 0; i < frames(1800); i++) s.run(1, () => mic(5, 0.03, i === 45 ? 1 : 0), () => out(0.05, i === 45 ? 1 : 0, 5));
+      s.run(frames(gap));
+      s.run(frames(400), () => mic(6, 0.03), () => out(0.05, 0, 6));
+      s.run(frames(2000));
+      return s.heard();
+    };
+
+    it("takes a video's “Okay.” for no one's yes in a conversation, whatever the spotter heard in the video's sentence before it (Windows: the output's level says other sound plays)", () => {
+      // A name the spotter heard in the last 3 s lets what is said next through as said by name, and the "Okay." after the
+      // video's "…September…" went out unmarked: anyone's yes. A yes is judged on its own speech now.
+      for (const gap of [700, 900, 1200]) expect(videoSays(gap, { otherSound: true }).at(-1), `${gap} ms`).toBe("Okay. | conversation | over other sound");
+    });
+
+    it("so where the speakers' own stream says the video said that name: it never counts as the user's (Linux with parec)", () => {
+      for (const gap of [700, 1200]) expect(videoSays(gap, { speakers: true }), `${gap} ms`).toEqual(["I remember the September weather was nice. | conversation | over other sound", "Okay. | conversation | over other sound"]);
+    });
+  });
 });
