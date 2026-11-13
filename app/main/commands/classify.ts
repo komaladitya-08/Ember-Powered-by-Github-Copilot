@@ -3741,6 +3741,10 @@ class Engine extends Classifier {
     // A short option with its value attached, a long one after `=`, and cmd's `/x:value`.
     const short = /^-[A-Za-z](.+)$/.exec(word);
     if (short) texts.push(short[1]);
+    // In a cluster, any of its letters may be the option whose value the rest is (`make -kCr` is `-k -C r`, GNU-style):
+    // each tail after a letter, so a flag before the value hides nothing (commands-remote-r10-2).
+    const cluster = /^-[A-Za-z0-9]+/.exec(word);
+    if (cluster) for (let k = 3; k < word.length && k <= cluster[0].length; k++) texts.push(word.slice(k));
     const slash = /^\/[A-Za-z?]+:(.+)$/.exec(word);
     if (slash) texts.push(slash[1]);
     return texts.some(t => parts(t).some(hit));

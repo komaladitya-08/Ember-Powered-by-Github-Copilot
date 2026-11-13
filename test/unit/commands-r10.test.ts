@@ -38,3 +38,21 @@ describe("python's own options bundled before -m (commands-remote-r10-1)", () =>
     }
   });
 });
+
+describe("a short option bundled before an attached value that names a download (commands-remote-r10-2)", () => {
+  const CLONE = { downloaded: ["/home/ana/proj/r"] };
+
+  it("asks when flags share the word with an option whose attached value is a downloaded folder or file", () => {
+    for (const cmd of ["make -kCr", "make -sCr all", "make -iCr", "gmake -kCr", "ninja -vCr", "make -ksCr", "make -kfr/Makefile", "mvn -qfr/pom.xml test",
+      "gradle -qpr test", "just -qfr/justfile", "frobnicate -qcr/x.toml"]) {
+      const d = decide(cmd, CLONE);
+      expect(d.verdict, cmd).toBe("ask");
+      expect(d.rules, cmd).toContain("escape.run-downloaded");
+    }
+  });
+
+  it("still runs the same clusters with nothing downloaded, or with an unrelated folder", () => {
+    for (const cmd of ["make -kCsrc", "make -sC src all", "ninja -vC build"]) expect(decide(cmd, CLONE).verdict, cmd).toBe("run");
+    for (const cmd of ["make -kCr", "ninja -vCr"]) expect(decide(cmd).verdict, cmd).toBe("run");
+  });
+});
