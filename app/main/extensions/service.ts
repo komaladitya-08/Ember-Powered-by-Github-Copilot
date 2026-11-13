@@ -30,7 +30,7 @@ import type { AuditLog } from "../policy/audit";
 import type { Settings, SettingsPatch } from "../settings";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import type { ConnectResult, ExtensionsApi, Installed, Marketplace, MarketplaceEntry, ToolInfo } from "../../shared/extensions";
-import { MARKETPLACE_BUILT_IN_KEPT, MARKETPLACE_MANAGED_KEPT, addMarketplaceFailed, browseFailed } from "../../renderer/home/extensions-copy";
+import { EXTENSION_ON_UNSAVED, MARKETPLACE_BUILT_IN_KEPT, MARKETPLACE_MANAGED_KEPT, addMarketplaceFailed, browseFailed, extensionUnsaved } from "../../renderer/home/extensions-copy";
 import type { OS } from "../../shared/shortcuts";
 import { REFUSED, classify, failureNote, gateQuestion, wrapResult } from "./gate";
 import { pluginPath, readMarketplace, readPlugin, reachOf, firstFile, MARKETPLACE_PLACES, type ServerSpec } from "./manifest";
@@ -178,6 +178,13 @@ export class ExtensionsService implements ExtensionsApi {
   constructor(private o: ExtensionsDeps) {
     this.store = new ExtensionStore(o.dir);
     this.items = this.store.read();
+    // Turned off or removed while the list couldn't be written (integrations-r9-4): off before anything loads, and
+    // the marks go once the list says so itself.
+    const off = new Set(this.store.markedOff());
+    if (off.size) {
+      for (const item of this.items) if (off.has(item.id)) item.enabled = false;
+      try { this.save(); } catch (err) { o.log.warn("extensions.save_failed", { err }); }
+    }
     let active = this.active();
     o.settings.onChange?.(() => {
       const next = this.active();
@@ -253,6 +260,22 @@ export class ExtensionsService implements ExtensionsApi {
 
   private save(): void {
     this.store.write(this.items);
+    // The list on disk is the whole truth again: no mark beside it is needed.
+    this.store.clearOff();
+  }
+
+  /**
+   * An item the user turned off or removed while the list couldn't be written (integrations-r9-4: Remove answered ok
+   * at the second press and the item came back, on and agreed, at the next start). It is off for the rest of this run
+   * whatever can be saved, a mark beside the list keeps it off at the next start where even that can be written, Home
+   * is told, and the request fails in words that say the change wasn't saved.
+   */
+  private heldOff(item: StoredItem, what: "removed" | "off", err: unknown): never {
+    this.o.log.warn("extensions.save_failed", { err, ext: item.id });
+    item.enabled = false;
+    const kept = this.store.markOff(item.id);
+    this.changed();
+    throw new Error(extensionUnsaved(what, kept), { cause: err });
   }
 
   private audit(e: Record<string, unknown>): void {
@@ -528,9 +551,16 @@ export class ExtensionsService implements ExtensionsApi {
   async uninstall(id: string): Promise<void> {
     const item = this.items.find(i => i.id === id);
     if (!item) return;
-    this.items = this.items.filter(i => i.id !== id);
+    // Stopped at once; gone from the list only once the list on disk no longer holds it.
     this.stopServers(id);
-    this.save();
+    const all = this.items;
+    this.items = all.filter(i => i.id !== id);
+    try {
+      this.save();
+    } catch (err) {
+      this.items = all;
+      this.heldOff(item, "removed", err);
+    }
     try { fs.rmSync(this.store.pluginDir(id), { recursive: true, force: true }); } catch (err) { this.o.log.warn("extensions.remove_files_failed", { err }); }
     try { this.audit({ phase: "removed", ext: id }); } catch { /* removing makes Ember stricter: it goes ahead */ }
     this.changed();
@@ -543,7 +573,17 @@ export class ExtensionsService implements ExtensionsApi {
     item.enabled = on;
     if (!on) this.stopServers(id);
     if (on) await this.serial(() => this.check(item));
-    this.save();
+    try {
+      this.save();
+    } catch (err) {
+      if (!on) this.heldOff(item, "off", err);
+      // On only once that is saved: what can't be recorded isn't started.
+      this.o.log.warn("extensions.save_failed", { err, ext: id });
+      item.enabled = false;
+      this.stopServers(id);
+      this.changed();
+      throw new Error(EXTENSION_ON_UNSAVED, { cause: err });
+    }
     this.changed();
   }
 

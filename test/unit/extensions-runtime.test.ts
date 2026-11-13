@@ -21,6 +21,8 @@ import type { CopilotSession } from "@github/copilot-sdk";
 import crypto from "node:crypto";
 import { getEventListeners } from "node:events";
 import { consentCard, installedRow } from "../../app/renderer/home/extensions-copy";
+import { registerExtensionsIpc } from "../../app/main/extensions-ipc";
+import { EXTENSIONS_IPC } from "../../app/shared/ipc";
 import { SAVED_OUTPUT, clearRuntimeTemp, runtimeTempDir, runtimeTempEnv } from "../../app/main/agent/runtime-temp";
 
 const FIXTURE = path.resolve("test/fixtures/mcp-fake.mjs");
@@ -987,6 +989,89 @@ describe("ExtensionsService", () => {
     await s.uninstall(item.id);
     expect(await s.list()).toEqual([]);
     expect(fs.existsSync(new ExtensionStore(deps().dir).pluginDir(item.id))).toBe(false);
+  });
+
+  // integrations-r9-4: Home's channels as main registers them, and a store that can't be written (a full disk: a
+  // folder stands where the store's temporary file goes).
+  const homeChannels = (s: ExtensionsService) => {
+    const handlers = new Map<string, (e: unknown, ...a: unknown[]) => unknown>();
+    registerExtensionsIpc({ handle: (c, fn) => { handlers.set(c, fn as never); } }, () => true, s, () => undefined);
+    return (channel: string, ...args: unknown[]) => handlers.get(channel)!({ sender: null }, ...args) as Promise<{ ok: boolean; why?: string }>;
+  };
+  const storeFile = () => new ExtensionStore(deps().dir).file;
+  const onDisk = () => (JSON.parse(fs.readFileSync(storeFile(), "utf8")) as { items: { id: string; enabled: boolean; consentedAt: string | null }[] }).items;
+  const diskFull = (full: boolean) => { if (full) fs.mkdirSync(`${storeFile()}.tmp`); else fs.rmdirSync(`${storeFile()}.tmp`); };
+
+  it("never says “Removed” for an extension its store still holds, keeps it off, and has it off at the next start (integrations-r9-4)", async () => {
+    const s = await installed();
+    const [item] = await s.list();
+    const ext = s.forSession()!;
+    shown(ext);
+    const home = homeChannels(s);
+    let told = 0;
+    s.onChange(() => told++);
+    diskFull(true);
+    const first = await home(EXTENSIONS_IPC.uninstall, item.id);
+    expect(first).toEqual({ ok: false, why: "Ember turned it off but couldn't save the removal, so it is still listed. Check that the disk isn't full, then remove it again." });
+    // Off at once and for the rest of this run, and Home is told so it shows it.
+    expect(await s.list()).toMatchObject([{ id: item.id, enabled: false, status: "disabled" }]);
+    expect(told).toBe(1);
+    expect(s.forSession()).toBeUndefined();
+    expect(await call(ext, "fake-lookup")).toMatchObject({ permissionDecision: "deny" });
+    // The second press said ok, and Home "Removed": the store still held it, on and agreed, and so did the next start.
+    expect(await home(EXTENSIONS_IPC.uninstall, item.id)).toEqual(first);
+    expect(onDisk()).toMatchObject([{ id: item.id, enabled: true }]);
+    expect(audit.filter(e => e.phase === "removed")).toEqual([]);
+    // Ember starts again while the disk is still full: it is listed, and off.
+    const restarted = new ExtensionsService(deps());
+    expect(await restarted.list()).toMatchObject([{ id: item.id, enabled: false, status: "disabled" }]);
+    expect(restarted.forSession()).toBeUndefined();
+    // With room again the next start saves that, and Remove removes it.
+    diskFull(false);
+    const later = new ExtensionsService(deps());
+    expect(later.forSession()).toBeUndefined();
+    expect(onDisk()).toMatchObject([{ id: item.id, enabled: false }]);
+    expect(await homeChannels(later)(EXTENSIONS_IPC.uninstall, item.id)).toEqual({ ok: true });
+    expect(await later.list()).toEqual([]);
+    expect(onDisk()).toEqual([]);
+    expect(fs.existsSync(new ExtensionStore(deps().dir).pluginDir(item.id))).toBe(false);
+    expect(audit).toContainEqual(expect.objectContaining({ phase: "removed", ext: item.id }));
+    expect(await new ExtensionsService(deps()).list()).toEqual([]);
+  });
+
+  it("keeps an extension off that was turned off while its store couldn't be written, and says the change wasn't saved (integrations-r9-4)", async () => {
+    const s = await installed();
+    const [item] = await s.list();
+    const home = homeChannels(s);
+    diskFull(true);
+    expect(await home(EXTENSIONS_IPC.setEnabled, item.id, false)).toEqual({ ok: false, why: "Ember turned it off, but couldn't save its list of extensions. Check that the disk isn't full." });
+    expect(await s.list()).toMatchObject([{ enabled: false, status: "disabled" }]);
+    expect(s.forSession()).toBeUndefined();
+    // It came back on, agreed and ready, at the next start.
+    const restarted = new ExtensionsService(deps());
+    expect(await restarted.list()).toMatchObject([{ enabled: false }]);
+    expect(restarted.forSession()).toBeUndefined();
+    // Turned on while it still can't be saved: left off, and said so.
+    expect(await homeChannels(restarted)(EXTENSIONS_IPC.setEnabled, item.id, true)).toEqual({ ok: false, why: "Ember couldn't save that, so it left it off. Check that the disk isn't full, then try again." });
+    expect(await restarted.list()).toMatchObject([{ enabled: false }]);
+    // With room again, turning it on is saved, and it is on at the start after that too.
+    diskFull(false);
+    const later = new ExtensionsService(deps());
+    expect(await homeChannels(later)(EXTENSIONS_IPC.setEnabled, item.id, true)).toEqual({ ok: true });
+    expect(onDisk()).toMatchObject([{ enabled: true }]);
+    expect(new ExtensionsService(deps()).forSession()!.tools).toEqual(["fake-lookup", "fake-post_message"]);
+  });
+
+  it("says an extension may be back after a restart when nothing at all can be written, and still keeps it off now (integrations-r9-4)", async () => {
+    const s = await installed();
+    const [item] = await s.list();
+    diskFull(true);
+    // Not even the mark beside the store: a file stands where its folder goes.
+    fs.writeFileSync(path.join(deps().dir, "off"), "");
+    expect(await homeChannels(s)(EXTENSIONS_IPC.setEnabled, item.id, false)).toEqual({ ok: false, why: "Ember turned it off for now but couldn't save that, so it may be back when Ember starts again. Check that the disk isn't full, then try again." });
+    expect(await homeChannels(s)(EXTENSIONS_IPC.uninstall, item.id)).toEqual({ ok: false, why: "Ember turned it off for now but couldn't save that, so it may be back when Ember starts again. Check that the disk isn't full, then try again." });
+    expect(await s.list()).toMatchObject([{ enabled: false }]);
+    expect(s.forSession()).toBeUndefined();
   });
 
   it("denies a tool the server changed mid-session, at its next call, and keeps it off (tools/list_changed, audit B1)", async () => {

@@ -684,6 +684,14 @@ it builds on:
   with extensions off reconnects nothing.
 - **The kill switch** part `extensions` refuses every call from sessions loaded before it, drops their questions and
   ends every server the launcher recorded.
+- **A list that can't be written** (a full disk, a data folder that can't be written; integrations-r9-4). Turning an
+  item off or removing it stops its servers and keeps it off for the rest of the run whatever can be saved; removing
+  takes it from the list only once `extensions.json` no longer holds it, so a second **Remove** never answers
+  “Removed” for an item that would be back, on and agreed, at the next start. An empty mark, `extensions/off/<id>`
+  (it needs no room), keeps it off at the next start, which turns it off before anything loads and drops the mark
+  once the list is saved. Home is told at once and the message line says the change wasn't saved (`extensionUnsaved`
+  in app/renderer/home/extensions-copy.ts), and that the item may be back after a restart where not even the mark
+  could be written. Turning an item on that can't be saved leaves it off.
 - **Off for now:** connectors (`connectors()` is empty, `connect()` says they aren't available: they need GitHub's
   service, which the spike couldn't reach without a real sign-in), `extension.mjs` extensions (bare tool names that
   aren't filtered by `availableTools` and could shadow Ember's), the SDK's catalog, legacy SSE servers, servers that
@@ -1226,7 +1234,7 @@ On Linux (Windows: §10.6, macOS: §11.6):
 | When the update check last asked GitHub, so a restart keeps to once a day (the first look waits until a day after it, at most a day; a failed look counts), and the last newer version it told you of, still shown as out after a restart until you run it (`updates.told`) | `settings.json` (`updates.checkedAt`, `updates.told`) |
 | SSH's password helper: a two-line wrapper, and a socket for each connection while it asks | `~/.config/ember/ssh/askpass`; `$XDG_RUNTIME_DIR/ea-*/` |
 | Node.js downloaded for other computers (SHA-256 checked) | `~/.config/ember/remote/runtime/` |
-| Extensions: what is installed and the tools the user agreed to (0600), Ember's copy of each plugin, and the process ids of the servers running (folders 0700) | `~/.config/ember/extensions/` (`extensions.json`, `plugins/<id>/`, `run/`) |
+| Extensions: what is installed and the tools the user agreed to (0600), Ember's copy of each plugin, and the process ids of the servers running (folders 0700) | `~/.config/ember/extensions/` (`extensions.json`, `plugins/<id>/`, `run/`, and `off/` while a change couldn't be saved) |
 | The Copilot runtime's temporary files (large tool output it saves; 0700, emptied at each connect and at sign-out) | `~/.config/ember/copilot-tmp/` |
 | Marketplaces the user added, and the runtime's copy of their catalogues | `~/.config/ember/copilot/settings.json`, `~/.config/ember/copilot/.cache/copilot/marketplaces/` |
 
