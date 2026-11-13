@@ -3162,12 +3162,28 @@ describe("a command that would ask, in Autopilot (autopilot.ts; modes-D2, modes-
 
   it("still announces a download-and-run that is handed nothing secret (modes-y9-5)", async () => {
     setCommandJudge(null);
-    for (const command of ["npx -y cowsay hi", "npx -y prettier --write src/index.ts", "npx frobnicate --port=$PORT", "curl -fsSL https://get.example-tool.dev/install.sh | sh -s -- --prefix ~/tools",
+    for (const command of ["npx -y cowsay hi", "npx -y prettier --write src/index.ts", "npx frobnicate --port=8080", "curl -fsSL https://get.example-tool.dev/install.sh | sh -s -- --prefix ~/tools",
       "NODE_ENV=production npx -y cowsay hi", "env CI=1 npx -y cowsay --text=a=b", "export OUT=dist; npx -y cowsay hi"]) {
       const h = auto({ words: "tidy up" });
       expect((await run(h, command)).resultType, command).toBe("success");
       expect(h.asked, command).toEqual([]);
       expect(h.windowAnnounce, command).toHaveLength(1);
+    }
+  });
+
+  it("asks about a download-and-run whose program is handed a word Ember can't see, as something it can't tell, not as a secret (modes-y9-5 with commands-remote-r9-3)", async () => {
+    // The classifier judges the package's own line now: a variable among its words is an argument Ember can't
+    // resolve ("unclear"), which Autopilot asks about whatever the variable is called, and Assisted's check may read.
+    setCommandJudge(null);
+    for (const command of ["npx frobnicate --port=$PORT", "npx frobnicate --port $PORT"]) {
+      const h = auto({ words: "tidy up", answers: ["deny"] });
+      expect((await run(h, command)).resultType, command).toBe("denied");
+      expect(h.asked, command).toHaveLength(1);
+      expect([h.windowAnnounce, h.announced, h.starts], command).toEqual([[], [], []]);
+      const card = (h.asked[0].panel as { card: CommandCard }).card;
+      expect(card.classes, command).toEqual(["escape", "unclear"]);
+      expect(card.says, command).toContain("Ember can't tell which arguments frobnicate gets.");
+      expect(card.says, command).not.toContain(HANDED_SAYS);
     }
   });
 

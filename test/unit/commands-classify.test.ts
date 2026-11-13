@@ -286,12 +286,15 @@ describe("deleting with a tool Ember had no row for (commands-remote-c8-2)", () 
       "yarn build", "yarn format", "yarn eslint .", "pnpm build", "eslint .", "npm test", "make", "rimraf --help"]) {
       expect(run(cmd).decision.verdict, cmd).toBe("run");
     }
-    // A program Ember doesn't know asks for itself now (commands-closed); named in the user's words, these folders
-    // still let it be announced.
+    // A program Ember doesn't know asks for itself now (commands-closed); named in the user's words, the task's own
+    // folder and what is in it still let it be announced, and a folder elsewhere only when the words give it too
+    // (modes-y9-7).
     for (const cmd of ["mytool .", "mytool src", "mytool ~/Documents", "mytool ../other"]) {
       expect(run(cmd).decision.rules, cmd).toEqual(["unknown.program"]);
       // A plain word after it says what it is to do, so the words name that too (commands-closed-x9-1).
-      expect(runCase({ cmd, verdict: "run", words: cmd === "mytool src" ? "run mytool on src" : "run mytool" }, { shell: "bash", context: "linux" }).decision.verdict, cmd).toBe("announce");
+      const elsewhere = cmd === "mytool ~/Documents" || cmd === "mytool ../other";
+      const said = (words: string) => runCase({ cmd, verdict: "run", words }, { shell: "bash", context: "linux" }).decision.verdict;
+      expect(said(cmd === "mytool src" ? "run mytool on src" : "run mytool"), cmd).toBe(elsewhere ? "ask" : "announce");
     }
   });
 

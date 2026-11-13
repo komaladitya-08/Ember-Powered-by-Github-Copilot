@@ -318,6 +318,36 @@ describe("redactSecrets", () => {
   });
 });
 
+describe("redactSecrets: shapes that came through unhidden (commands-remote-r9-9)", () => {
+  it.each([
+    ["-----BEGIN PGP PRIVATE KEY BLOCK-----\n\nlQOYBF\n-----END PGP PRIVATE KEY BLOCK-----\nafter", `${SECRET_HIDDEN}\nafter`],
+    [`AGE-SECRET-KEY-1${"Q".repeat(58)}`, SECRET_HIDDEN],
+    [`token pypi-${"A".repeat(60)} set`, `token ${SECRET_HIDDEN} set`],
+    [`hvs.${"a".repeat(24)}`, SECRET_HIDDEN],
+    [`ya29.a0AfH6SMBx-EXAMPLE_token_value_abcdefghijklmnop`, SECRET_HIDDEN],
+    [`ops_${"e".repeat(60)}`, SECRET_HIDDEN],
+    [`dp.st.dev.${"a".repeat(40)}`, SECRET_HIDDEN],
+    [`bot 123456789:${"A".repeat(35)} up`, `bot ${SECRET_HIDDEN} up`],
+    [`${"M".repeat(24)}.${"a".repeat(6)}.${"b".repeat(27)}`, SECRET_HIDDEN],
+    ["root:$6$rounds=5000$saltsalt$" + "h".repeat(40) + ":19000:0:99999:7:::", `root:${SECRET_HIDDEN}:19000:0:99999:7:::`],
+    ["ana:$apr1$" + "s".repeat(8) + "$" + "h".repeat(22), `ana:${SECRET_HIDDEN}`],
+    ["https://a.blob.core.windows.net/c/b?sv=2022&sig=" + "s".repeat(43) + "%3D&se=2026", `https://a.blob.core.windows.net/c/b?sv=2022&sig=${SECRET_HIDDEN}&se=2026`],
+    ["< set-cookie: sessionid=abc123def456; Path=/; HttpOnly", `< set-cookie: sessionid=${SECRET_HIDDEN}; Path=/; HttpOnly`],
+    ["802-11-wireless-security.psk:           hunter2hunter2", `802-11-wireless-security.psk:           ${SECRET_HIDDEN}`],
+    ["    Key Content            : hunter2hunter2", `    Key Content            : ${SECRET_HIDDEN}`],
+    ['{\n  "id": "https://v.vault.azure.net/secrets/db/1",\n  "name": "db",\n  "value": "S3cr3t!Passw0rd"\n}', `{\n  "id": "https://v.vault.azure.net/secrets/db/1",\n  "name": "db",\n  "value": "${SECRET_HIDDEN}"\n}`],
+  ])("hides %j", (input, expected) => {
+    expect(redactSecrets(input)).toBe(expected);
+  });
+
+  it("leaves ordinary text that only looks a little like them", () => {
+    for (const text of ["awk '{print $1$2$3}' a.txt", "12:34:56 build ok", "version 1234567890:abc", "Key Content of the page", "the psk is set in Settings",
+      "https://x.example/?signature=short", "{\n  \"value\": \"plain\"\n}", "-----BEGIN PGP PUBLIC KEY BLOCK-----\nabc\n-----END PGP PUBLIC KEY BLOCK-----"]) {
+      expect(redactSecrets(text), text).toBe(text);
+    }
+  });
+});
+
 describe("commandLineSecret", () => {
   it.each([GH, PAT, JWT, "AKIAABCDEFGHIJKLMNOP", "https://ana:pw@example.com", "API_TOKEN=abc", "--password=x", "DB_PASSWORD=x", "Authorization: Bearer x"])("finds %j", word => {
     expect(commandLineSecret(word)).toBe(true);
@@ -399,5 +429,63 @@ describe("redactSecrets on long output (review #26)", () => {
     redactSecrets(text);
     // Linear work here is tens of milliseconds; the quadratic patterns took minutes to hours at this size.
     expect(performance.now() - t0).toBeLessThan(1500);
+  });
+});
+
+describe("an Azure Key Vault secret printed with its tags (commands-classes-x9-7)", () => {
+  /** `az keyvault secret show`'s own output: the fields in az's order, the tags between the id and the value. */
+  const shown = (tags: string, value = "Hunter2-Production-Pass"): string => `{
+  "attributes": {
+    "created": "2026-01-01T00:00:00+00:00",
+    "enabled": true,
+    "expires": null,
+    "recoveryLevel": "Recoverable+Purgeable"
+  },
+  "contentType": null,
+  "id": "https://myvault.vault.azure.net/secrets/db-password/0123456789abcdef0123456789abcdef",
+  "kid": null,
+  "managed": null,
+  "name": "db-password",
+  "tags": ${tags},
+  "value": "${value}"
+}`;
+
+  it.each([
+    ["no tags", "null"], ["empty tags", "{}"], ["one tag", '{\n    "env": "prod"\n  }'], ["several tags", '{\n    "env": "prod",\n    "owner": "ana",\n    "file-encoding": "utf-8"\n  }'],
+    ["tags on one line", '{"env": "prod"}'],
+  ])("hides the value with %s", (_name, tags) => {
+    const out = redactSecrets(shown(tags));
+    expect(out).not.toContain("Hunter2");
+    expect(out).toBe(shown(tags, SECRET_HIDDEN));
+  });
+
+  it("hides the secret's value, not a tag's, when a tag is named \"value\"", () => {
+    const out = redactSecrets(shown('{\n    "value": "a-tag"\n  }'));
+    expect(out).not.toContain("Hunter2");
+    expect(out).toContain('"value": "a-tag"');
+  });
+
+  it("hides the whole value when it holds a quote written with a backslash", () => {
+    const out = redactSecrets(shown("{}", 'Hun\\"ter2-Tail'));
+    expect(out).not.toContain("ter2-Tail");
+    expect(out).toBe(shown("{}", SECRET_HIDDEN));
+  });
+
+  it("hides each value of several secrets printed one after another, and leaves a list that shows no value", () => {
+    const two = `[${shown("{}", "First-Secret-Value")},\n${shown('{"env": "prod"}', "Second-Secret-Value")}]`;
+    const out = redactSecrets(two);
+    expect(out).not.toContain("First-Secret-Value");
+    expect(out).not.toContain("Second-Secret-Value");
+    const list = '[\n  {\n    "id": "https://v.vault.azure.net/secrets/a",\n    "tags": {}\n  },\n  {\n    "id": "https://v.vault.azure.net/secrets/b",\n    "tags": null\n  }\n]';
+    expect(redactSecrets(list)).toBe(list);
+  });
+
+  it("stays quick on a long output that never closes", () => {
+    const id = '"id": "https://v.vault.azure.net/secrets/a/1", ';
+    for (const text of [id.repeat(4000), id + "{".repeat(200_000), id + '{"a":1}'.repeat(30_000), `${id}"value": "${"\\".repeat(200_001)}`]) {
+      const t = Date.now();
+      redactSecrets(text);
+      expect(Date.now() - t).toBeLessThan(2000);
+    }
   });
 });

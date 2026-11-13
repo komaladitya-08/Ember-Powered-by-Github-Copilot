@@ -48,7 +48,7 @@ describe("notReviewable (modes-C2, modes-C7; PLAN.md §10 \"Settled\" (7))", () 
     for (const id of ids) expect(outlivesStop(id), id).toBe(true);
   });
   it("counts as outliving Stop what plants code that runs later on its own, or may leave something running, filed outside escape and service (modes-y9-1)", () => {
-    for (const rule of ["path.hook", "git.config.code", "path.program-config", "path.wsl-config", "path.bin", "net.tunnel", "net.tailscale", "git.daemon", "docker.cluster", "unclear.gui", "in-script:path.hook"]) {
+    for (const rule of ["path.hook", "git.config.code", "path.program-config", "path.wsl-config", "path.bin", "net.tunnel", "net.tailscale", "git.daemon", "docker.cluster", "unclear.gui", "pkg.config", "in-script:path.hook"]) {
       expect(outlivesStop(rule.replace(/^in-script:/, "")), rule).toBe(true);
       expect(notReviewable(ask({ classes: ["system"], rules: ["posix.cp", rule] }), ok), rule).toBe("it would keep running after Stop");
     }
@@ -61,12 +61,12 @@ describe("notReviewable (modes-C2, modes-C7; PLAN.md §10 \"Settled\" (7))", () 
     // Looked at and left (2026-11-13): each acts now, on something named, or changes a setting that runs nothing by itself.
     const left = new Set(("archive.delete archive.in-place archive.remove-files archive.unpack bzr.push cargo.publish cloud.change cloud.delete cmd.del cmd.rd cmd.robocopy conan.upload dart.publish db.change "
       + "disk.erase disk.wipe docker.cluster.delete docker.context docker.mount docker.privileged download.output download.unnamed gem.push gh.api.delete gh.api.write gh.pr.merge.delete-branch "
-      + "gh.repo.deploy-key git.branch.D git.branch.M git.checkout.B git.checkout.force git.checkout.paths git.clean git.config.system git.cvsexportcommit git.history git.push git.push.delete git.push.force "
+      + "gh.repo.deploy-key git.branch.D git.branch.M git.checkout.B git.checkout.force git.checkout.paths git.clean git.config.remote git.config.system git.cvsexportcommit git.history git.push git.push.delete git.push.force "
       + "git.push.mirror git.push.prune git.reset.hard git.reset.keep git.reset.merge git.restore git.rm git.send-email git.stash.clear git.stash.drop git.svn.dcommit git.switch git.tag.delete git.tag.force "
       + "git.worktree.remove hg.discard hg.push kill.process mix.publish mvn.deploy net.listen net.mount net.send net.serve net.share net.unc npm.cache npm.config.global npm.registry npm.unpublish nuget.push "
       + "p4.admin p4.clean p4.delete p4.obliterate p4.resolve p4.revert p4.shelve p4.shelve.delete p4.spec p4.spec.delete p4.submit p4.sync.force p4.unshelve path.disk path.system pip.config.global "
       + "pkg.language pkg.off-registry pkg.publish-ps pkg.system posix.cp posix.dd posix.find.delete posix.find.write posix.mv posix.rm posix.rsync posix.tee posix.truncate ps.New-Item ps.Remove-Item "
-      + "redirect.overwrite rsync.delete-remote script.destroy script.publish script.system send.http send.mail send.nc send.remote-session send.ssh send.ssh-key send.tar svn.cleanup svn.commit svn.delete "
+      + "redirect.overwrite rsync.delete-remote script.destroy script.publish script.system send.contents send.http send.mail send.nc send.remote-session send.ssh send.ssh-key send.tar svn.cleanup svn.commit svn.delete "
       + "svn.delete-local svn.resolve svn.revert system.backups system.capsh system.chpst system.chroot system.debug system.kernel system.network system.newgrp system.nsenter system.permissions system.power "
       + "system.security system.setpriv system.settings system.sg system.sudo system.unschedule system.unshare system.users trash.empty upload.cloud upload.curl upload.rclone upload.rsync upload.scp "
       + "upload.session upload.unc wsl.manage wsl.system wsl.tool-distro wsl.unregister wsl.user escape.download-run escape.run-downloaded escape.npx escape.run-remote internal").split(" "));
