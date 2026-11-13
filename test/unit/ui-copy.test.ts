@@ -1585,7 +1585,7 @@ describe("Apps & privacy's screenshot switch (safety-privacy-7)", () => {
     // Apps & privacy says it asks (slice4-22).
     expect(page).toContain(`<b>It asks before acting</b>${hand}<span`);
     expect(`It asks before acting${privacyFoldWords(hand, { screenImages: true })}`).toBe("It asks before acting in an app, and always before anything hard to undo. It never lets the AI model type or see passwords. Only in Autopilot, it can fill in a login, a card or contact details from its vault, which the AI model never sees. ");
-    expect(`It asks before acting${privacyFoldWords(hand, { screenImages: true, autonomy: true, grants: true })}`).toBe(
+    expect(`It asks before acting${privacyFoldWords(hand, { screenImages: true, autonomy: "interactive", grants: true })}`).toBe(
       "It asks before acting on anything risky or hard to undo. For ordinary steps it tells you what it's doing instead (How Ember asks, below). It never lets the AI model type or see passwords. Only in Autopilot, it can fill in a login, a card or contact details from its vault, which the AI model never sees. ");
     expect(`It asks before acting${privacyFoldWords(hand, { screenImages: true, grants: true })}`).toBe(
       "It asks before acting in an app, except those you let it act in without asking (below), and always before anything hard to undo. It never lets the AI model type or see passwords. Only in Autopilot, it can fill in a login, a card or contact details from its vault, which the AI model never sees. ");

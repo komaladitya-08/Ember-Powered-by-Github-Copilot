@@ -14,7 +14,7 @@ import { GLASS_CHOICES, GLASS_HINT, GLASS_LABEL, HEAR_WAITING, LISTEN_ONCE_READY
 import { mountListenOnce } from "../shared/listen-once";
 import { heldLive } from "../shared/held-live";
 import {
-  approvalsView, grantsEmptyText, modeCard, modeRefusal, elevationOf, betterRecallDownloadLabel, betterRecallProgress, betterRecallText, type BetterRecallState, MEMORY_CONSENT_TEXT,
+  approvalsView, grantsEmptyText, grantsHint, routinesHint, modeCard, modeRefusal, elevationOf, betterRecallDownloadLabel, betterRecallProgress, betterRecallText, type BetterRecallState, MEMORY_CONSENT_TEXT,
   memoryOwnerOffersErase, memoryOwnerText, memoryManagedText, memoryForgottenText, memoryPutBackText, memoryRestoreFailedText, memoryTroubleText, MEMORY_UNDO_EXPIRED, undoForgotLabel, MEMORY_PAUSED_TEXT, MEMORY_QUESTIONS_HINT, memoryPaused, ROUTINES_CONSENT_TEXT, UPDATES_CONSENT_TEXT, updateHowTo, updateOut, updateStatusText, deleteRoutineLabel, forgetMemoryLabel, handleCornerText, forgotLine, learnedLine, rememberedAgainLine, memoryEmptyText,
   memorySourceLabel, routinesEmptyText, MEMORY_SEARCH_LABEL, MEMORY_SOURCE_LABEL, MEMORY_ALL_SOURCES, MEMORY_SHOW_MORE, MEMORY_NO_MATCHES, memoryCountText, settingsResultText, SETTINGS_MORE_RESULTS, SETTINGS_RESULTS_LABEL, correctMemoryLabel, memoryProvenanceLabel, MEMORY_CORRECTION,
 } from "./copy";
@@ -37,7 +37,8 @@ import {
   conversationContextLine, rereadsStatusOnFocus, modelLabel, presenceLine, retryMessage, saveFailedText, signInLabel, STARTED_TEXT, tagline, usageLine, voiceFix, voiceFixFailed,
   type HomePatch, type Segment,
 } from "./copy";
-import { startTargets, targetsSettings, targetsStatus } from "./computers";
+import { connectorsHint } from "./extensions-copy";
+import { startTargets, targetsMode, targetsSettings, targetsStatus } from "./computers";
 import { extensionsStatus, startExtensions } from "./extensions";
 import { onProviderDestination, ownProvider, providerCard, providerSettings, providerSignedOut, startProvider } from "./provider";
 import { modelDestination, privacyFoldWords, recipientWords, type ModelDestination } from "./copy";
@@ -2239,6 +2240,12 @@ function renderApprovals(): void {
   // another way) goes; and while no mode is in force and only Interactive's agreement is missing, its card shows ready
   // to agree, without taking the keyboard.
   if (cardMode && (view.inForce === cardMode || !view.rows.some(r => r.mode === cardMode && !r.locked))) closeModeCard(false);
+  // What other panes say about asking is true in the mode in force (home-r10-1, home-c10-1, home-c10-2).
+  const modeNow = view.inForce;
+  if ($("grants-hint").textContent !== grantsHint(modeNow)) $("grants-hint").textContent = grantsHint(modeNow);
+  if ($("routines-hint").textContent !== routinesHint(modeNow)) $("routines-hint").textContent = routinesHint(modeNow);
+  if ($("connectors-hint").textContent !== connectorsHint(modeNow)) $("connectors-hint").textContent = connectorsHint(modeNow);
+  targetsMode(view.inForce);
   if (!cardMode && view.card && !cardDismissed) openModeCard(view.card);
   if (!view.card) cardDismissed = false;
   // The copy of the consent and the empty list of apps say whether ordinary steps are asked about (safety-privacy-c4-1);
@@ -2374,7 +2381,7 @@ function syncPrivacyTerms(): void {
   const a = lastAdmin;
   const fold = {
     screenImages: s?.screenImages !== false && !managed.has("screenImages"),
-    autonomy: approvalsView(approvalsNow, managed.has("autonomy")).inForce !== null,
+    autonomy: approvalsView(approvalsNow, managed.has("autonomy")).inForce,
     grants: !!s && !confirmEvery && !managed.has("grants") && Object.values(s.grants).includes("act"),
     // The vault fills only in Autopilot, and only where the organisation lets it: not said where it can't (integ-y-4).
     ...(a && (a.error !== null || a.held || a.features?.vault === false || (approvalsNow && !approvalsView(approvalsNow, managed.has("autonomy")).rows.some(r => r.mode === "autopilot" && !r.locked))) ? { vaultFill: false } : {}),

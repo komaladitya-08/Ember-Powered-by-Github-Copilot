@@ -283,18 +283,25 @@ export const SCREEN_IMAGES_TEXT = {
  * A piece of the text in Apps & privacy's copy of "Before Ember starts" (safety-privacy-9), said as it is there
  * (safety-privacy-r4): the never-look list is below in that pane, not somewhere "in settings", and with Send
  * screenshots for tasks off the screenshot clause says so. First run's own words stay as they are.
- * `autonomy`: an approval mode is in force (How Ember asks, below), so ordinary steps aren't asked about
- * (safety-privacy-c4-1); `grants`: the person let Ember act in some apps without asking (the list below). `targets`:
+ * `autonomy`: the approval mode in force (How Ember asks, below; null or absent below Interactive), so ordinary steps
+ * aren't asked about (safety-privacy-c4-1), and risky ones are said as that mode treats them: asked in Interactive,
+ * checked against the user's words in Assisted, announced in Autopilot (home-r10-1); `grants`: the person let Ember act in some apps without asking (the list below). `targets`:
  * the onboarding line's words after its lead, as the settings and the policy leave them (targetsFoldRest,
  * safety-privacy-r4-2). `vaultFill: false`: the organisation turned the vault off (`features.vault`, a lockdown) or
  * keeps Ember below Autopilot, so nothing is filled in from the vault and the line doesn't say it can be (integ-y-4).
  */
-export function privacyFoldWords(text: string, o: { screenImages: boolean; autonomy?: boolean; grants?: boolean; targets?: string; vaultFill?: boolean }): string {
+export function privacyFoldWords(text: string, o: { screenImages: boolean; autonomy?: ApprovalMode | null; grants?: boolean; targets?: string; vaultFill?: boolean }): string {
   if (o.targets !== undefined && (text === onboardingRest("linux") || text === onboardingRest("win32"))) return o.targets;
+  // The line's bold lead, a text of its own on the page: in Autopilot it doesn't ask.
+  if (text === "It asks before acting" && o.autonomy === "autopilot") return "It doesn't ask before acting";
   const out = text.replace("The list is in settings", "The list is below, under Never look at")
     // First run's agreement is behind the person here: “Hey Ember” is in its own section (slice4-x9-5).
     .replace(" unless you turn on “Hey Ember”, when you agree or later in settings, or", " unless you turn on “Hey Ember” in Settings › Voice, or")
-    .replace(" in an app unless you turn on Interactive, when you agree or later in settings, and always before anything hard to undo.", o.autonomy
+    .replace(" in an app unless you turn on Interactive, when you agree or later in settings, and always before anything hard to undo.", o.autonomy === "autopilot"
+      ? ", even on anything risky or hard to undo: Autopilot is on, so it tells you what it's doing as it goes and asks only where How Ember asks, below, says."
+      : o.autonomy === "assisted"
+        ? " on anything risky or hard to undo, unless Assisted's check finds the step in what you asked: then it goes ahead and tells you. For ordinary steps it tells you what it's doing instead (How Ember asks, below)."
+      : o.autonomy
       ? " on anything risky or hard to undo. For ordinary steps it tells you what it's doing instead (How Ember asks, below)."
       : o.grants ? " in an app, except those you let it act in without asking (below), and always before anything hard to undo."
         : " in an app, and always before anything hard to undo.")
@@ -1060,6 +1067,29 @@ export function approvalsView(state: ApprovalsState | null, managed: boolean, el
   });
   const card = state && !below && state.inForce === "asking" && state.why !== "not-recorded" && rows.some(r => r.mode === "interactive" && !r.locked) ? "interactive" : null;
   return { rows, note: approvalsNote(state, managed, elevated, org), card, inForce };
+}
+
+/**
+ * The hint under the apps Ember may act in without asking first, in the approval mode in force (null: below
+ * Interactive), true in each (home-r10-1): Assisted's check may clear a risky step it finds in the user's words, and
+ * Autopilot asks nothing, so offers no “Always in …” and the list changes nothing while it is on.
+ */
+export function grantsHint(mode: ApprovalMode | null): string {
+  const lead = "You add an app here by choosing “Always in …” when Ember asks.";
+  if (mode === "assisted") return `${lead} Before anything hard to undo, Ember asks every time unless Assisted's check finds the step in what you asked.`;
+  if (mode === "autopilot") return `${lead} Autopilot doesn't ask, even before anything hard to undo, so this list changes nothing while it is on.`;
+  return `${lead} Ember still asks every time before anything hard to undo.`;
+}
+
+/**
+ * Voice › Routines' hint in the approval mode in force (null: below Interactive), true in each (home-c10-2): a routine's
+ * saved steps are the user's own words for Assisted's check (agent/host.ts userWordsOf), and Autopilot doesn't ask.
+ */
+export function routinesHint(mode: ApprovalMode | null): string {
+  const lead = "Off, reminders last until Ember closes, and no routine is saved or run. On, saying a routine's name runs its steps,";
+  if (mode === "assisted") return `${lead} and Ember still asks before anything risky unless Assisted's check finds it in the routine's steps.`;
+  if (mode === "autopilot") return `${lead} and in Autopilot Ember doesn't ask first, even before anything risky: it tells you as it goes.`;
+  return `${lead} and Ember still asks before anything risky.`;
 }
 
 /**

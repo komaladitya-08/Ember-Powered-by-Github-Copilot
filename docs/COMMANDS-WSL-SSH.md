@@ -80,7 +80,8 @@ next command a task runs there shows the new card first. Under each switch, **As
 command on that computer ask. **Open the command window** shows it. Where commands run as root or as an administrator
 (Ember itself, a distro or a login that is, or one where Ember can't tell), every command asks anyway, so **Ask me
 before every command** shows on there, can't be turned off, and says why under it, as it does where your organisation
-asks.
+asks. In Autopilot root is no reason to ask (§2.5b), so there the switch is your own again: it says those commands run
+without asking, after a few seconds to stop them, unless you turn it on, and turning it on makes every one ask.
 
 To turn commands off again, turn the switch off. This cancels commands still waiting for approval, a countdown or a
 free slot. Turning the switch back on does not revive them. Commands already running keep running. The stop chord (Ctrl+Alt+X on Linux, Win+Alt+X on Windows,

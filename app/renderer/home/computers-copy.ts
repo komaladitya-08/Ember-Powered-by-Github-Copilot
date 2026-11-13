@@ -10,6 +10,7 @@ import { parseTargetId, type TargetId, type TargetKind, type TargetSummary, type
 import type { Settings } from "../../main/settings";
 import type { CommandMode } from "../../main/commands/types";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
+import type { ApprovalMode } from "../../shared/approvals";
 
 export const COMPUTERS_HEADING = "Computers";
 /** The section's intro: the page's own (Linux's, and macOS's), and Windows', the only OS with WSL (review #198). */
@@ -21,6 +22,17 @@ export function computersIntro(os: OS | undefined): string {
 }
 export const COMMANDS_HEADING = "Commands";
 export const COMMANDS_INTRO = "Ember runs commands in its own command window, where you can watch and stop them. It asks first before anything that deletes, publishes, touches secrets or changes the system.";
+/**
+ * The section's intro in the approval mode in force (null: below Interactive), true in each (home-c10-2): Assisted's
+ * check may clear a deletion, a push or a system change it finds in the user's words but never one that touches secrets
+ * (commands/review.ts notReviewable); Autopilot announces those with their Stop countdown and still asks for secrets and
+ * what Ember can't tell (commands/autopilot.ts autopilotAsks).
+ */
+export function commandsIntro(mode: ApprovalMode | null): string {
+  if (mode === "assisted") return "Ember runs commands in its own command window, where you can watch and stop them. It asks first before anything that touches secrets, and before anything that deletes, publishes or changes the system unless Assisted's check finds it in what you asked.";
+  if (mode === "autopilot") return "Ember runs commands in its own command window, where you can watch and stop them. In Autopilot it runs one that deletes, publishes or changes the system without asking, after a few seconds to stop it. It still asks before anything that touches secrets or whose effect it can't tell.";
+  return COMMANDS_INTRO;
+}
 export const WSL_SWITCH = "Let Ember work in WSL";
 export const OFFER_SWITCH = "Offer to bring Ember along when I connect with SSH";
 /** Short enough to show whole in a narrow window (the field is labelled "SSH host" for screen readers). */
@@ -148,6 +160,11 @@ const OFF_LINES: Readonly<Record<TargetKind, string>> = {
 export const ASK_EVERY_MANAGED = "Your organisation asks you to approve every command here.";
 /** Under “Ask me before every command” where commands run as root or an administrator (the commands card's own words). */
 export const ASK_EVERY_PRIVILEGED = "Commands here run as the administrator, so Ember asks before every one.";
+/**
+ * The same place in Autopilot, where root is no reason to ask (commands/autopilot.ts autopilotAsks) and only the user's
+ * own switch, or the organisation's, keeps every command asking there (home-c10-1).
+ */
+export const ASK_EVERY_PRIVILEGED_AUTOPILOT = "Commands here run as the administrator. In Autopilot each one runs without asking, after a few seconds to stop it, unless you turn this on.";
 export const WSL_MANAGED = "Your organisation doesn't allow Ember to work in WSL.";
 export const SSH_MANAGED = "Your organisation doesn't allow Ember on other computers.";
 export const SSH_LIMITED = "Your organisation lets Ember connect only to some computers.";
@@ -277,9 +294,11 @@ export function computersView(i: {
  * The Commands section: a switch per target (this computer, each distro, each host), and what the organisation set.
  * Where commands run as root or an administrator (TargetSummary.privileged) every one asks, so “Ask me before every
  * command” shows on and can't be turned off, with why under it (accessibility-c8-3: it showed off and could be flipped,
- * to no effect). Only how it shows: the user's own setting is left as it was.
+ * to no effect). Only how it shows: the user's own setting is left as it was. In Autopilot (`mode`, the approval mode
+ * in force; null below Interactive) root is no reason to ask, so there the switch is the user's own again, free to turn
+ * on, and says so (home-c10-1: it showed on and locked, and the one setting that would make them ask couldn't be set).
  */
-export function commandsView(i: { summaries: readonly TargetSummary[]; settings: Settings; admin: TargetsAdmin }): CommandsView {
+export function commandsView(i: { summaries: readonly TargetSummary[]; settings: Settings; admin: TargetsAdmin; mode?: ApprovalMode | null }): CommandsView {
   const ids: { id: TargetId; kind: TargetKind; label: string }[] = [{ id: "local", kind: "local", label: "This computer" }];
   for (const t of i.summaries) {
     const parsed = parseTargetId(t.id);
@@ -300,8 +319,9 @@ export function commandsView(i: { summaries: readonly TargetSummary[]; settings:
     const on = own?.on === true && mode !== "off";
     // (Not where the organisation turned commands off: none can run there, and its line above says so: accessibility-x8-4.)
     const privileged = mode !== "off" && i.summaries.some(t => t.id === id && t.privileged === true);
-    const asks = mode === "ask" || privileged;
-    const why = [privileged ? ASK_EVERY_PRIVILEGED : null, mode === "ask" ? ASK_EVERY_MANAGED : null].filter((s): s is string => s !== null);
+    const autopilot = i.mode === "autopilot";
+    const asks = mode === "ask" || (privileged && !autopilot);
+    const why = [privileged ? (!autopilot ? ASK_EVERY_PRIVILEGED : mode !== "ask" ? ASK_EVERY_PRIVILEGED_AUTOPILOT : null) : null, mode === "ask" ? ASK_EVERY_MANAGED : null].filter((s): s is string => s !== null);
     return {
       id, kind,
       run: { label: runLabel(kind, label), checked: on, disabled: mode === "off" },
