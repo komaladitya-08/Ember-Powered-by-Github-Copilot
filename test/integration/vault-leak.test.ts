@@ -8,10 +8,13 @@
  *    results), the task's result, the audit log, the logs at debug level, settings.json, the runtime's own session
  *    files, every other file in the data folder, Home's answers, the announcements and the clipboard, and every
  *    filled field must be black in every picture. Runs anywhere (no desktop needed).
- * 2. Against a real window (an Electron page with a sign-in form, served over http so it has a site), through the
- *    real accessibility helper and X11: the helper's own fill, then a real read and a real screenshot, the helper's
- *    command line and environment, its log lines and the clipboard. Needs an X11 display with an accessibility bus
- *    and a Python with pyatspi; skipped otherwise (EMBER_ATSPI_TEST=1, CI's `el8` job, requires them).
+ * 2. Against real windows, through the real accessibility helper and X11. An Electron page with a sign-in form,
+ *    served over http so it has a site: its site is read from the document itself, and the helper's own fill is
+ *    refused in fixed words, since Chromium's fields take no text by accessibility on Linux (the worker types keys
+ *    under the borrow there), and nothing reaches the page. A GTK sign-in window (test/fixtures/gtk3_signin.py),
+ *    whose fields do: the helper's own fill, then a real read and a real screenshot, the helper's command line and
+ *    environment, its log lines and the clipboard. Needs an X11 display with an accessibility bus and a Python with
+ *    pyatspi and GTK 3; skipped otherwise (EMBER_ATSPI_TEST=1, CI's `el8` job, requires them).
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -27,7 +30,7 @@ import { CopilotClient, RuntimeConnection } from "@github/copilot-sdk";
 // @ts-expect-error -- plain JS test helper
 import { startMockLlm } from "../mock-llm/server.mjs";
 import { locateRuntime, runtimeFor } from "../../app/main/agent/runtime";
-import { AtspiSidecar, pickPython } from "../../app/main/perception/sidecar";
+import { AtspiSidecar, VAULT_FILL_UNAVAILABLE, pickPython } from "../../app/main/perception/sidecar";
 import { Perception } from "../../app/main/perception";
 import { openX11, type X11 } from "../../app/main/x11";
 import { createLogger } from "../../app/main/logger";
@@ -220,10 +223,36 @@ describe.skipIf(!available && !required)("the canary test against a real window,
   let server: http.Server;
   let origin = "";
   let app: ChildProcess;
+  let gtk: ChildProcess;
   let sidecar: AtspiSidecar;
   let x11: X11;
   let perception: Perception;
+  let service: VaultService;
   let pid = 0;
+  let gtkPid = 0;
+
+  const windowPid = async (name: string): Promise<number> => {
+    for (let i = 0; i < 100; i++) {
+      const { windows } = await sidecar.listWindows().catch(() => ({ windows: [] }));
+      const found = windows.find(w => w.name === name && w.pid != null)?.pid;
+      if (found) return found;
+      await new Promise(r => setTimeout(r, 200));
+    }
+    return 0;
+  };
+  // The window may still be handing itself over: read until both fields are there.
+  const fieldsOf = async (target: number) => {
+    let seen = await perception.read({ pid: target });
+    for (let i = 0; i < 40 && seen.nodes.filter(n => n.role === "entry" || n.role === "password text").length < 2; i++) {
+      await new Promise(r => setTimeout(r, 250));
+      seen = await perception.read({ pid: target });
+    }
+    const user = seen.nodes.find(n => n.role === "entry")!;
+    const password = seen.nodes.find(n => n.role === "password text")!;
+    expect(user, JSON.stringify(seen.nodes.map(n => [n.role, n.name]))).toBeDefined();
+    expect(password).toBeDefined();
+    return { user, password };
+  };
 
   beforeAll(async () => {
     server = http.createServer((_req, res) => { res.writeHead(200, { "content-type": "text/html; charset=utf-8" }); res.end(SIGN_IN_PAGE); });
@@ -234,45 +263,59 @@ describe.skipIf(!available && !required)("the canary test against a real window,
     fs.writeFileSync(path.join(dir, "app", "main.js"), MAIN);
     // Chromium joins the accessibility bus only when asked (as perception-electron.test.ts).
     app = spawn(electron, ["--no-sandbox", path.join(dir, "app")], { stdio: "ignore", env: { ...process.env, ACCESSIBILITY_ENABLED: "1", EMBER_TEST_URL: `${origin}/signin`, NO_PROXY: "127.0.0.1", no_proxy: "127.0.0.1" } });
+    gtk = spawn(python, [path.resolve("test/fixtures/gtk3_signin.py")], { stdio: "ignore" });
     x11 = openX11()!;
     sidecar = new AtspiSidecar(path.resolve("sidecar/atspi/ember_atspi.py"), log.child("sidecar"), python);
     perception = new Perception({ sidecar, x11, log: log.child("perception"), neverLook: () => [], screenBounds: () => ({ x: 0, y: 0, width: 4000, height: 4000 }),
       holdsVaultValue: text => redactor.holds(text), vaultShown: () => redactor.shown });
-    for (let i = 0; i < 100 && !pid; i++) {
-      const { windows } = await sidecar.listWindows().catch(() => ({ windows: [] }));
-      pid = windows.find(w => w.name === "Ember test: Vault" && w.pid != null)?.pid ?? 0;
-      if (!pid) await new Promise(r => setTimeout(r, 200));
-    }
+    const store = new VaultStore(path.join(dir, VAULT_FILE), box);
+    service = new VaultService({ store, allowed: () => true, consented: () => true, autopilot: () => true, appName: k => k, log: log.child("vault"),
+      form: { ask: async () => "cancelled", stop: () => {} }, filling: (part, value) => redactor.note(part, value) });
+    pid = await windowPid("Ember test: Vault");
     if (!pid) throw new Error("the Electron sign-in window never appeared on the accessibility bus");
-  }, 40_000);
+    gtkPid = await windowPid("Ember test: Vault sign-in");
+    if (!gtkPid) throw new Error("the GTK sign-in window never appeared on the accessibility bus");
+  }, 60_000);
 
   afterAll(() => {
     sidecar?.stop();
     x11?.close();
     app?.kill();
+    gtk?.kill();
     server?.close();
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
-  it("fills a real sign-in form by the helper's own fill, and no canary is in what Ember reads, captures, logs or hands the helper", async () => {
-    const quiet = log.child("vault");
-    const store = new VaultStore(path.join(dir, VAULT_FILE), box);
-    const service = new VaultService({ store, allowed: () => true, consented: () => true, autopilot: () => true, appName: k => k, log: quiet,
-      form: { ask: async () => "cancelled", stop: () => {} }, filling: (part, value) => redactor.note(part, value) });
-    // The page may still be handing itself over: read until both fields are there.
-    let seen = await perception.read({ pid });
-    for (let i = 0; i < 40 && seen.nodes.filter(n => n.role === "entry" || n.role === "password text").length < 2; i++) {
-      await new Promise(r => setTimeout(r, 250));
-      seen = await perception.read({ pid });
-    }
-    const user = seen.nodes.find(n => n.role === "entry")!;
-    const password = seen.nodes.find(n => n.role === "password text")!;
-    expect(user, JSON.stringify(seen.nodes.map(n => [n.role, n.name]))).toBeDefined();
-    expect(password).toBeDefined();
+  it("reads a real Chromium page's site from the document itself, and its fields refuse the helper's fill, so nothing is written", async () => {
+    const { user, password } = await fieldsOf(pid);
     // The site is read from the document itself, and the entry is bound to it.
     const pages = await sidecar.pageAddress(user.id);
     expect(pages[0], pages[0] === `${origin}/signin` ? "" : `${JSON.stringify(pages)}; ${documentsOf(pid)}`).toBe(`${origin}/signin`);
     const dest = { site: origin };
+    expect((await service.keep("login", dest, CANARY.login)).ok).toBe(true);
+    // Chromium's fields take no text by accessibility on Linux (no EditableText: ax_platform_node_auralinux.cc), so
+    // the helper refuses in its fixed words, quoting nothing, and the worker would type keys under the borrow instead.
+    for (const [part, node] of [["user", user], ["password", password]] as const) {
+      const err = await service.use("login", part, dest, value => sidecar.vaultFill(node.id, value)).then(() => null, (e: unknown) => e);
+      expect(err, part).toBeInstanceOf(Error);
+      expect((err as Error).message, part).toBe(VAULT_FILL_UNAVAILABLE);
+      expect(canariesIn(String((err as Error).stack))).toEqual([]);
+    }
+    // Nothing reached the page, and nothing Ember reads of it holds a canary.
+    let p = await perception.perceive({ image: false, scope: "window", target: { pid } });
+    for (let i = 0; i < 20 && !p.text.includes("got 0 and 0 characters"); i++) {
+      await new Promise(r => setTimeout(r, 250));
+      p = await perception.perceive({ image: false, scope: "window", target: { pid } });
+    }
+    expect(p.text).toContain("got 0 and 0 characters");
+    expect(canariesIn(p.text), p.text).toEqual([]);
+    expect(canariesIn(JSON.stringify(p.nodes))).toEqual([]);
+    for (const f of filesUnder(dir)) expect(canariesIn(f.text), f.file).toEqual([]);
+  }, 60_000);
+
+  it("fills a real sign-in form by the helper's own fill, and no canary is in what Ember reads, captures, logs or hands the helper", async () => {
+    const { user, password } = await fieldsOf(gtkPid);
+    const dest = { app: "ember-vault-signin" };
     expect((await service.keep("login", dest, CANARY.login)).ok).toBe(true);
     const clip = (args: string[], input?: string) => spawnSync("xclip", ["-selection", "clipboard", ...args], { input, encoding: "utf8", timeout: 5000 });
     const hasClip = clip(["-i"], "ember-clipboard-sentinel").status === 0;
@@ -283,13 +326,13 @@ describe.skipIf(!available && !required)("the canary test against a real window,
       expect(canariesIn(JSON.stringify(used))).toEqual([]);
     }
 
-    // A real read and a real picture afterwards: the page says both fields took every character, and shows the user
+    // A real read and a real picture afterwards: the window says both fields took every character, and shows the user
     // name again in a line of its own.
-    let p = await perception.perceive({ image: true, scope: "window", target: { pid } });
+    let p = await perception.perceive({ image: true, scope: "window", target: { pid: gtkPid } });
     const took = `got ${CANARY.login.user.length} and ${CANARY.login.password.length} characters`;
     for (let i = 0; i < 20 && !p.text.includes(took); i++) {
       await new Promise(r => setTimeout(r, 250));
-      p = await perception.perceive({ image: true, scope: "window", target: { pid } });
+      p = await perception.perceive({ image: true, scope: "window", target: { pid: gtkPid } });
     }
     expect(p.text).toContain(took);
     expect(canariesIn(p.text), p.text).toEqual([]);
