@@ -29,7 +29,7 @@ import type { TargetId } from "../../shared/targets";
 import { pendingCommand } from "./pending";
 import { carriedText } from "./carried";
 import { notReviewable, reviewedDecision, type CommandReviewer } from "./review";
-import { AUTOPILOT_LINE, AUTOPILOT_RULE, askedOfFinding, autopilotCommand } from "./autopilot";
+import { AUTOPILOT_LINE, AUTOPILOT_RULE, askedOfFinding, autopilotCommand, handedSecrets } from "./autopilot";
 import { AUTOPILOT_WORDS } from "../policy/policy";
 import { classifyCommand } from "./classify";
 import { LINES, decideCommand } from "./decide";
@@ -908,6 +908,17 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
   if (d.verdict === "ask" && (others.length || places.length)) {
     const lines = [...(places.length ? [unknownPlaceLine(places, here)] : []), ...(others.length ? [wrongTargetLine(others, here)] : [])];
     d = { ...d, says: [...lines, ...d.says.filter(l => !lines.includes(l))] };
+  }
+  // A download-and-run handed a key, credentials or a token (`npx -y tool ~/.ssh/id_rsa`): the classifier says only that
+  // it downloads and runs code, so the question says the rest, and no mode announces or clears it (modes-y9-5).
+  if (d.verdict === "ask") {
+    const handed = handedSecrets(cls, a.command, shell, text => j.classifyCommand(text, shell, cctx).findings);
+    if (handed.length) {
+      d = {
+        ...d, classes: [...new Set(["secret" as const, ...d.classes])], rules: [...new Set([...d.rules, ...handed.map(f => f.rule)])],
+        says: [...handed.map(f => f.says).filter(l => !d.says.includes(l)), ...d.says],
+      };
+    }
   }
   // A command the user already said no to in this task, sent again or reworded (the same danger to the same thing), or
   // one whose card nobody answered and they haven't spoken since: never asked about again, reviewed or announced,

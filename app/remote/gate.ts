@@ -26,7 +26,7 @@ import { normalizeLabel } from "../main/policy/policy";
 import { ALWAYS_ASK, standingFindings } from "../main/commands/types";
 import type { Classification, ClassifyContext, CommandMode, Finding, PathFact, RunnerFacts, RunSpec } from "../main/commands/types";
 import { judgeScripts, withoutReadFlow, type TaskWrites } from "../main/commands/scripts";
-import { AUTOPILOT_RULE, NO_AUTOPILOT_RULE, askedOfFinding } from "../main/commands/autopilot";
+import { AUTOPILOT_RULE, NO_AUTOPILOT_RULE, askedOfFinding, handedSecrets } from "../main/commands/autopilot";
 import type { ClassifyCommand } from "./contracts";
 
 /** An approval older than this no longer counts (a question expires at 120 s anyway). */
@@ -187,7 +187,9 @@ export async function gateCommand(i: CommandGateInput): Promise<CommandGate> {
   if (i.facts.privileged && !approval && !told) asks.push(GATE_WORDS.root);
 
   // An overwrite counts only when its target exists here (§3.8.2 rule 3).
-  const findings = standingFindings(cls.findings, byPath);
+  // And a download-and-run handed a key or a token is a secret's finding here as on the PC (modes-y9-5): the PC's
+  // Autopilot announcement never covers it, only the user's yes to a question that carried its rule.
+  const findings = [...standingFindings(cls.findings, byPath), ...handedSecrets(cls, spec.command, spec.shell, text => i.classify(text, spec.shell, ctx).findings)];
   // Secrets, escapes and what can't be classified always ask (D4.4): a stamp naming one without the user's yes (a
   // "run" or "announce" no PC should send) covers nothing of it.
   // A script's finding (read only here: the PC never saw it) is covered only by the user's yes to a question that

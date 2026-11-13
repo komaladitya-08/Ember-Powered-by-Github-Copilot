@@ -56,7 +56,7 @@ export const NEVER_REVIEWED: ReadonlySet<DangerClass> = new Set(["secret"]);
  * job, nohup, setsid, a detached screen or container, a service manager, a program it opens): never cleared, so that
  * Stop stops everything. Read this way round so a rule the classifier gains later is held until it is listed here.
  */
-const DOWNLOADS_ONLY: ReadonlySet<string> = new Set(["escape.download-run", "escape.run-downloaded", "escape.npx", "escape.run-remote"]);
+export const DOWNLOADS_ONLY: ReadonlySet<string> = new Set(["escape.download-run", "escape.run-downloaded", "escape.npx", "escape.run-remote"]);
 /**
  * The classifier's rules outside "escape" that set something running, or to run later on its own, that Stop can't end:
  * a service started, enabled or loaded (`service.*`: the classifier files start and stop alike, so both count), a

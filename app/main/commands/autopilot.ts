@@ -19,8 +19,8 @@
  */
 
 import { AUTOPILOT_WORDS } from "../policy/policy";
-import { outlivesStop } from "./review";
-import type { CommandCapability, CommandDecision, CommandMode, DangerClass, Finding } from "./types";
+import { DOWNLOADS_ONLY, outlivesStop } from "./review";
+import { SHELL_FAMILY, type Classification, type CommandCapability, type CommandDecision, type CommandMode, type DangerClass, type Finding, type ShellId } from "./types";
 
 /**
  * A rule of the classifier's that says a command would read or print secrets, whatever class its finding carries:
@@ -54,6 +54,55 @@ export function askedOfFinding(f: { cls?: DangerClass; rule: string }): Extract<
   // (then the rules announced it before Autopilot was asked).
   if (f.cls === "unclear" || f.cls === "unknown" || rule.startsWith("unclear.") || rule.startsWith("unknown.")) return "unclear";
   return null;
+}
+
+/** The rule, and the card's line, of a download-and-run that is handed a secret (handedSecrets). */
+export const HANDED_RULE = "secret.handed-to-download";
+export const HANDED_SAYS = "Gives a password, key or other secret to code it downloads.";
+
+/** The most words of one command, and variables of one line, that handedSecrets judges: past it, it counts as handed. */
+const HANDED_MAX = 32;
+/** A variable a shell would expand, wherever it stands in the line: `$NAME`, `${NAME…}`, `$env:NAME`, `%NAME%`. */
+const EXPANDS = /\$\{?(?:env:)?([A-Za-z_][A-Za-z0-9_]*)|%([A-Za-z_][A-Za-z0-9_]*)%/gi;
+/** A word as a POSIX shell, and as PowerShell, would take it back whole. */
+const posixWord = (a: string) => `'${a.replace(/'/g, "'\\''")}'`;
+const psWord = (a: string) => `'${a.replace(/'/g, "''")}'`;
+
+/**
+ * A command that downloads code and runs it (`npx`, `pnpm dlx`, `pipx run`, `curl … | sh`: the classifier's four
+ * rules, DOWNLOADS_ONLY) and hands that code a secret: a word of its own, or an option's value, that names a path
+ * holding passwords or keys, or a variable named for one, expanded anywhere in the line. The classifier says only
+ * "downloads and runs" of such a line (it doesn't judge the downloaded program's arguments), which Autopilot
+ * announces and Assisted's check may clear; the code can print the key into the output the model reads, or send it
+ * anywhere (modes-y9-5). Whether a word is a secret is the classifier's own answer, never a list kept here: each is
+ * shown to it (`judge`) as the file a plain reader would open, each variable as one printed, and a finding there that
+ * says secrets (readsSecrets) makes this one. It only ever adds a question, in every mode and on every target (the
+ * flow and a remote's gate 2 both call it); once the classifier judges such a line itself, this finds the same thing
+ * a second time. A word that can't be judged, or more words than it judges, counts as handed.
+ */
+export function handedSecrets(cls: Pick<Classification, "commands" | "findings">, command: string, shell: ShellId, judge: (text: string) => readonly Pick<Finding, "cls" | "rule">[]): Finding[] {
+  const downloads = cls.findings.filter(f => DOWNLOADS_ONLY.has(f.rule.replace(/^in-script:/, "")));
+  if (downloads.length === 0) return [];
+  const family = SHELL_FAMILY[shell];
+  const reads = (path: string) => (family === "powershell" ? `Get-Content -LiteralPath ${psWord(path)}` : family === "cmd" ? `type "${path.replace(/"/g, "")}"` : `cat -- ${posixWord(path)}`);
+  const prints = (name: string) => (family === "powershell" ? `Write-Output $env:${name}` : family === "cmd" ? `echo %${name}%` : `echo "$${name}"`);
+  const secret = (text: string): boolean => {
+    try { return judge(text).some(f => f.cls === "secret" || readsSecrets(f.rule)); } catch { return true; } // not judged: it asks
+  };
+  const first = downloads[0];
+  const found = (): Finding[] => [{ cls: "secret", rule: HANDED_RULE, says: HANDED_SAYS, program: first.program, objects: [], widening: [], at: first.at }];
+  const names = [...new Set([...command.matchAll(EXPANDS)].map(m => m[1] ?? m[2]))];
+  if (names.length > HANDED_MAX || names.some(n => secret(prints(n)))) return found();
+  for (const at of new Set(downloads.map(f => f.at))) {
+    const words = (cls.commands[at]?.args ?? []).filter((a): a is string => a !== null);
+    if (words.length > HANDED_MAX) return found();
+    for (const w of words) {
+      // The word itself, and what an option carries: `--key=PATH`, `-kPATH`.
+      const values = !w.startsWith("-") ? [w] : [w.includes("=") ? w.slice(w.indexOf("=") + 1) : "", /^-[A-Za-z]./.test(w) ? w.slice(2) : ""];
+      if (values.some(v => v !== "" && !v.startsWith("-") && secret(reads(v)))) return found();
+    }
+  }
+  return [];
 }
 
 /** What autopilotAsks reads beside the decision. */
