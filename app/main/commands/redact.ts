@@ -69,6 +69,23 @@ export const TOKEN_PATTERNS: readonly RegExp[] = [
  */
 export const TOKEN_SHAPES: readonly RegExp[] = TOKEN_PATTERNS.filter(re => re !== PRIVATE_KEY);
 
+/**
+ * An Azure Key Vault secret's value in `az keyvault secret show`'s JSON (VALUE_PATTERNS says how), and in the REST
+ * API's shape, value first. Each looks up to 4,000 steps on from every secret id, so 4 MiB of ids took one pass about
+ * 1.6 s; neither can match without both `vault.azure.net/secrets/` and `"value"` in the text, which VALUE_NEEDS checks
+ * first (stop-yield-x9-left-1).
+ */
+const VAULT_VALUE = /(vault\.azure\.net\/secrets\/[^"]{0,200}"(?:[^{}]|\{[^{}]{0,4000}\}){0,4000}?"value"\s{0,8}:\s{0,8}")(?:[^"\\]|\\.)*(?=")/g;
+const VAULT_VALUE_FIRST = /("value"\s{0,8}:\s{0,8}")(?:[^"\\]|\\.)*(?="(?:\s{0,8},\s{0,8}"\w{1,40}"\s{0,8}:\s{0,8}(?:"(?:[^"\\]|\\.){0,200}"|[\w.+-]{1,40})){0,3}\s{0,8},\s{0,8}"id"\s{0,8}:\s{0,8}"[^"]{0,200}vault\.azure\.net\/secrets\/)/g;
+/**
+ * Text a value pattern can't match without, whole: a pass whose text lacks any of it is the text as it was, the same
+ * bytes, without the pattern's search (UNGUARDED_PASSES is the proof's other side).
+ */
+const VALUE_NEEDS: ReadonlyMap<RegExp, readonly string[]> = new Map([
+  [VAULT_VALUE, ["vault.azure.net/secrets/", '"value"']],
+  [VAULT_VALUE_FIRST, ["vault.azure.net/secrets/", '"value"']],
+]);
+
 /** Patterns whose first group is kept and whose value is hidden. */
 const VALUE_PATTERNS: readonly RegExp[] = [
   /(aws_secret_access_key\s*[=:]\s*)\S+/gi,
@@ -84,11 +101,11 @@ const VALUE_PATTERNS: readonly RegExp[] = [
   // Between the id and the value stand the secret's other fields, its tags among them, which are an object of their
   // own (`"tags": {}`, `{"env": "prod"}`): each is stepped over whole, so a tag named "value" is never taken for the
   // secret's, and the value ends at its closing quote, not at one written `\"` inside it (commands-classes-x9-7).
-  /(vault\.azure\.net\/secrets\/[^"]{0,200}"(?:[^{}]|\{[^{}]{0,4000}\}){0,4000}?"value"\s{0,8}:\s{0,8}")(?:[^"\\]|\\.)*(?=")/g,
+  VAULT_VALUE,
   // The REST API's shape (`az rest`, curl against the vault) prints the value first, then the secret's id, with at most
   // a few plain fields between (`"contentType": "text/plain"`): each look is bounded, so a run of values stays linear
   // (merge review integ-y-3).
-  /("value"\s{0,8}:\s{0,8}")(?:[^"\\]|\\.)*(?="(?:\s{0,8},\s{0,8}"\w{1,40}"\s{0,8}:\s{0,8}(?:"(?:[^"\\]|\\.){0,200}"|[\w.+-]{1,40})){0,3}\s{0,8},\s{0,8}"id"\s{0,8}:\s{0,8}"[^"]{0,200}vault\.azure\.net\/secrets\/)/g,
+  VAULT_VALUE_FIRST,
   // A Docker config's `"auth": "<base64 of user:password>"`, and a .netrc entry written on one line
   // (`machine host login bob password …`); a password on a line of its own is not told from prose (safety-privacy-r7-3).
   // An entry is told by its login, or with none by a dotted host: "the default password is admin" and "machine learning
@@ -306,9 +323,9 @@ export function redactSecrets(text: string): string {
  * slices; a caller that must keep Ember's main thread free between passes runs them one at a time
  * (redactSecretsYielding) and gets the same bytes, since it is the same list (merge review integ-y-2).
  */
-export const REDACT_PASSES: readonly ((text: string) => string)[] = [
+const passes = (guarded: boolean): readonly ((text: string) => string)[] => [
   ...TOKEN_PATTERNS.map(re => (re === PRIVATE_KEY ? hidePrivateKeys : (t: string) => t.replace(re, SECRET_HIDDEN))),
-  ...VALUE_PATTERNS.map(re => (t: string) => t.replace(re, (_m, keep: string) => keep + SECRET_HIDDEN)),
+  ...VALUE_PATTERNS.map(re => (t: string) => (guarded && !(VALUE_NEEDS.get(re) ?? []).every(n => t.includes(n)) ? t : t.replace(re, (_m, keep: string) => keep + SECRET_HIDDEN))),
   ...OPTION_PASSWORDS.map(re => (t: string) => t.replace(re, (_m, keep: string, quote: string, _value: string, after?: string) => `${keep}${quote}${SECRET_HIDDEN}${quote}${typeof after === "string" ? after : ""}`)),
   ...LIST_PASSWORDS.map(re => (t: string) => t.replace(re, (...m) => {
     const g = m[m.length - 1] as { keep: string; value: string; q?: string; option?: string };
@@ -319,6 +336,10 @@ export const REDACT_PASSES: readonly ((text: string) => string)[] = [
   t => t.replace(URL_CREDENTIALS, `://${SECRET_HIDDEN}@`),
   t => t.replace(KEY_VALUE, (m, keep: string, _suffix: string, value: string) => (value.startsWith("[secret") ? m : keep + SECRET_HIDDEN)),
 ];
+/** redactSecrets's passes (above), each value pattern checked first for the text it can't match without (VALUE_NEEDS). */
+export const REDACT_PASSES: readonly ((text: string) => string)[] = passes(true);
+/** The same passes without VALUE_NEEDS's check: what REDACT_PASSES must equal byte for byte (commands-redact.test.ts). */
+export const UNGUARDED_PASSES: readonly ((text: string) => string)[] = passes(false);
 
 /**
  * redactSecrets as steps: a step before each of REDACT_PASSES, so a caller can let other work run between them

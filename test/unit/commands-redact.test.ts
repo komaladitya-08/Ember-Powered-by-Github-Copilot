@@ -4,7 +4,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { commandLineSecret, redactSecrets, SECRET_HIDDEN } from "../../app/main/commands/redact";
+import { commandLineSecret, REDACT_PASSES, redactSecrets, SECRET_HIDDEN, UNGUARDED_PASSES } from "../../app/main/commands/redact";
 import { memoryRefusal } from "../../app/main/memory/guard";
 
 const GH = `ghp_${"a1B2".repeat(9)}`;
@@ -559,4 +559,32 @@ describe("redactSecrets: environments, tables and webhook addresses (commands-re
       redactSecrets(text);
       expect(performance.now() - t0).toBeLessThan(1500);
     });
+});
+
+describe("the Azure Key Vault passes on output with no value in it (stop-yield-x9-left-1)", () => {
+  const ids = '"https://kv.vault.azure.net/secrets/name-1/abc"\n';
+  const big = ids.repeat(Math.ceil((4 * 1024 * 1024) / ids.length));
+  const fold = (passes: readonly ((t: string) => string)[], text: string) => passes.reduce((t, pass) => pass(t), text);
+
+  it("takes one pass well under Stop's 300 ms over 4 MiB of secret ids with no value", () => {
+    let worst = 0;
+    for (const pass of REDACT_PASSES) {
+      const t0 = performance.now();
+      pass(big);
+      worst = Math.max(worst, performance.now() - t0);
+    }
+    expect(worst).toBeLessThan(300);
+  });
+
+  it("gives the same bytes as the passes without the check, with a value or without one", () => {
+    expect(fold(REDACT_PASSES, big)).toBe(fold(UNGUARDED_PASSES, big));
+    const pieces = ['"id": "https://kv.vault.azure.net/secrets/a/1"', '"value": "s3cr3t"', '"value":"x\\"y"', ", ", '"tags": {"value": "t"}', "{", "}", "\n", "vault.azure.net/secrets/",
+      '"value"', ' "contentType": "text/plain"', '"id"', ": ", '"', "value", "vault.azure.net"];
+    let seed = 7;
+    const rnd = (n: number) => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed % n; };
+    for (let k = 0; k < 2000; k++) {
+      const text = Array.from({ length: 1 + rnd(14) }, () => pieces[rnd(pieces.length)]).join("");
+      expect(fold(REDACT_PASSES, text), text).toBe(fold(UNGUARDED_PASSES, text));
+    }
+  });
 });
