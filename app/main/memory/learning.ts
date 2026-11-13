@@ -16,9 +16,9 @@
 import { memoryPausedReply } from "../../shared/memory-owner";
 import { memoryIds, recallNote } from "./format";
 import { DUPLICATE, type AddResult, type Fact, type NewFact, type Source } from "./graph";
-import { ConversationHold, HELD_ALL, HELD_FORGOTTEN } from "./hold";
+import { ConversationHold, HELD_ALL, HELD_CORRECTED, HELD_FORGOTTEN } from "./hold";
 import { IntroSchema, Interview, INTRO_DONE, INTRO_MANAGED, INTRO_NOTHING, INTRO_OFF, INTRO_UNCHECKED, SPOKEN_FACT, introFacts, isGetToKnowMe, type Intro } from "./intro";
-import { CallBudget, Learner, soundsLikeInstruction, type KeptFact, type LearnBudget, type OneShot } from "./learn";
+import { CallBudget, Learner, onlyAsked, soundsLikeInstruction, type KeptFact, type LearnBudget, type OneShot } from "./learn";
 import type { MemoryOwnerReason } from "./owner";
 import {
   ANSWER_WAIT_MS, FORGET_THAT_MS, Gaps, INTRO_NOTE, MEMORY_UNREADABLE, NOTHING_TO_FORGET, QUESTION_EVERY_MS, answersQuestion, declinesQuestion, describes,
@@ -241,11 +241,15 @@ export class MemoryLearning {
           this.d.log.info("memory.instruction_refused", { chars: fact.length });
           return "Not remembered: it reads like an instruction, and only what the user says themselves may tell me what to do.";
         }
-        // What the user had Ember forget in this conversation comes back only in their own words (memory-r9-1).
-        const held = this.hold.heldBack(fact, rememberedSource(fact, said, about.length ? about : undefined), "tool");
+        // What the user had Ember forget in this conversation comes back only in their own words (memory-r9-1), said
+        // or asked to be kept: a question that names it ("Am I vegetarian?") is not them saying it (memory-x9-2).
+        const refs = about.length ? about : undefined;
+        const theirs = rememberedSource(fact, said, refs) === "user"
+          && (!onlyAsked(fact, said) || memoryAsk(said) === "remember" || remembersWithMore(said) || !!profileSaid(fact, refs ?? [{ name: "User" }], said));
+        const held = this.hold.heldBack(fact, theirs ? "user" : "conversation", "tool");
         if (held) {
           this.d.log.info("memory.learn_skipped", { why: "forgotten_here" });
-          return held === "all" ? HELD_ALL : HELD_FORGOTTEN;
+          return held === "all" ? HELD_ALL : held === "corrected" ? HELD_CORRECTED : HELD_FORGOTTEN;
         }
         const before = new Set(m.list().map(i => i.id));
         const answer = m.remember(fact, about, said, replaces);
@@ -430,7 +434,8 @@ export class MemoryLearning {
     // An extraction of the earlier conversation must not put the old sentence back after this explicit correction,
     // nor one of the turn still under way (memory-r8-1).
     this.dropSaid();
-    // Nor a later reply, a task or the remember tool what the new wording dropped, until the conversation ends (memory-r9-1).
+    // Nor a later reply, a task or the remember tool what it said before, until the conversation ends (memory-r9-1,
+    // memory-x9-2).
     this.hold.corrected(expected.id, expected.text, corrected.text);
     this.recent = this.recent.filter(row => row.id !== expected.id);
     try { this.d.onForgot?.(expected.id); } catch { this.d.log.warn("memory.correction_notice_failed"); }

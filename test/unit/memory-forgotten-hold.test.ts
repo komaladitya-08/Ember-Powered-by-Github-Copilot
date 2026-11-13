@@ -263,3 +263,71 @@ describe("after a Forget, Ember still learns what the user states themselves (me
     expect(r.list()).toEqual([]);
   });
 });
+
+describe("a correction that keeps the old words still keeps the old statement out (memory-x9-2)", () => {
+  // [as remembered, as corrected, Ember's later reply, the fact read from that reply]
+  const CORRECTIONS: [string, string, string, string][] = [
+    ["Is vegetarian", "Is not vegetarian", "Since you're vegetarian, how about a risotto?", "Is vegetarian"],
+    ["Is vegetarian", "Is no longer vegetarian", "Since you're vegetarian, how about a risotto?", "Follows a vegetarian diet"],
+    ["Prefers tea to coffee", "Prefers coffee to tea", "As you prefer tea to coffee, here's a tea shop.", "Prefers tea over coffee"],
+    ["Has two children", "Has three children", "For your two children, try the zoo.", "Has two kids"],
+    ["Likes working late", "Dislikes working late", "Since you like working late, I'll schedule it at 9pm.", "Likes to work late"],
+    ["Works at Globex", "Works at Initech", "for your work at Globex", "Is employed by Globex"],
+  ];
+  it.each(CORRECTIONS)("“%s” corrected to “%s” never comes back from a later reply, a task or the remember tool (memory-x9-2)", async (before, after, reply, read) => {
+    const r = rig();
+    await r.turn(`Remember that: ${before}`, "Noted.", { remember: before });
+    r.advance(60 * 60_000);
+    r.l.correct(r.s.list()[0]!, after);
+    r.advance(3 * 60_000);
+    await r.turn("What should I do tonight?", reply, { offers: [{ fact: read, evidence: reply }] });
+    expect(await r.task("Plan the evening", `Planned it. ${reply}`, [{ fact: read, evidence: reply }])).toBe(0);
+    // The remember tool, in the old words and in the reply's, twenty minutes on.
+    r.advance(20 * 60_000);
+    for (const fact of [before, read]) {
+      expect((await r.turn("And tomorrow?", "The same.", { remember: fact })).told)
+        .toBe("Not remembered: the user corrected this in Settings earlier in this conversation, and this says what it said before. Keep it again only when they say it themselves, in their own words.");
+    }
+    expect(r.list()).toEqual([`user: ${after}`]);
+    // What it says now is still Ember's to say again.
+    expect((await r.turn("And the day after?", "The same.", { remember: after })).told).toMatch(/^Already remembered \[/);
+    expect(r.list()).toEqual([`user: ${after}`]);
+  });
+
+  it("lets the corrected fact be said the new way round in other words, and the old way round by the user themselves (memory-x9-2)", async () => {
+    const r = rig();
+    await r.turn("Remember that I'm vegetarian", "Noted.", { remember: "Is vegetarian" });
+    r.l.correct(r.s.list()[0]!, "Is not vegetarian");
+    expect((await r.turn("What's for dinner?", "Steak?", { remember: "Stopped being vegetarian" })).told).toMatch(/^Remembered \[/);
+    // The user changes their mind, in their own words: theirs.
+    expect((await r.turn("Actually I'm vegetarian again, remember that", "Noted.", { remember: "Is vegetarian again" })).told).toMatch(/^Remembered \[/);
+    expect(r.list()).toContain("user: Is vegetarian again");
+  });
+
+  it("after Forget everything takes the user's own only from what they state, never from a question that names it (memory-x9-2)", async () => {
+    const r = rig();
+    await r.turn("Remember that I'm vegetarian", "OK.", { remember: "Is vegetarian" });
+    r.advance(60_000);
+    r.l.forgetAll();
+    r.advance(5 * 60_000);
+    await r.turn("Did I tell you I was vegetarian?", "Yes, you told me you're vegetarian.",
+      { offers: [{ fact: "Is vegetarian", evidence: "Yes, you told me you're vegetarian" }, { fact: "Was vegetarian", evidence: "I was vegetarian" }] });
+    expect(r.list()).toEqual([]);
+    // Nor through the remember tool, whose fact a question's words would make the user's.
+    expect((await r.turn("Am I vegetarian?", "You told me so.", { remember: "Is vegetarian" })).told).toMatch(/^Not remembered: the user had Ember forget everything/);
+    expect(r.list()).toEqual([]);
+    // Stated, or asked to be kept, it is theirs again.
+    await r.turn("I'm vegetarian, by the way", "Noted.", { offers: [{ fact: "Is vegetarian", evidence: "I'm vegetarian" }] });
+    expect(r.list()).toEqual(["user: Is vegetarian"]);
+    expect((await r.turn("Can you remember that I live in Leeds?", "Noted.", { remember: "Lives in Leeds" })).told).toMatch(/^Remembered \[/);
+  });
+
+  it("never brings a forgotten fact back through the remember tool from the user's own question about it (memory-x9-2)", async () => {
+    const r = rig();
+    await r.turn("Remember that I'm vegetarian", "OK.", { remember: "Is vegetarian" });
+    r.l.forgetCounted(r.s.list()[0]!.id);
+    r.advance(5 * 60_000);
+    expect((await r.turn("Am I vegetarian?", "You told me so earlier.", { remember: "Is vegetarian" })).told).toMatch(/^Not remembered: the user had Ember forget this/);
+    expect(r.list()).toEqual([]);
+  });
+});

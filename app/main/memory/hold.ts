@@ -15,7 +15,7 @@ import { memoryChanged, memoryIds } from "./format";
 import type { Source } from "./graph";
 import { ownEvidence } from "./learn";
 import { ownWords } from "./service";
-import { terms } from "./text";
+import { negated, termSimilarity, terms } from "./text";
 
 /**
  * At least this much of the smaller one's words in common makes a fact much like one the user had Ember forget:
@@ -26,6 +26,8 @@ export const LIKE_FORGOTTEN = 0.5;
 export const HELD_MAX = 50;
 /** What the remember tool is told for a fact much like one forgotten in this conversation that isn't in the user's own words. */
 export const HELD_FORGOTTEN = "Not remembered: the user had Ember forget this earlier in this conversation. Keep it again only when they say it again themselves, in their own words.";
+/** And for one that says what a fact said before the user corrected it. */
+export const HELD_CORRECTED = "Not remembered: the user corrected this in Settings earlier in this conversation, and this says what it said before. Keep it again only when they say it themselves, in their own words.";
 /** And, after Forget everything, for any fact that isn't. */
 export const HELD_ALL = "Not remembered: the user had Ember forget everything earlier in this conversation, so until a new conversation only what they say themselves is kept. If they said this in this request, save it in their own words.";
 
@@ -53,12 +55,46 @@ function restsOnUser(text: string, from: { said: string; evidence?: string }): b
   return share(new Set(terms(text)), new Set(terms(from.evidence))) >= RESTS_ON;
 }
 
+/**
+ * The same, of what the user states as true now (memory-x9-2): after Forget everything a question that names a fact
+ * ("Did I tell you I was vegetarian?") is not the user saying it, so only evidence that is their own statement counts.
+ */
+function statedByUser(text: string, from: { said: string; evidence?: string }): boolean {
+  if (!from.evidence || ownEvidence(from.evidence, from.said) !== "stated") return false;
+  return share(new Set(terms(text)), new Set(terms(from.evidence))) >= RESTS_ON;
+}
+
+/** Whether two wordings are much alike (LIKE_FORGOTTEN of the smaller one's terms). */
+const like = (a: ReadonlySet<string>, b: ReadonlySet<string>) => Math.max(share(a, b), share(b, a)) >= LIKE_FORGOTTEN;
+/** The terms of `a` that `b` has too, each once, in the order `a` says them. */
+const sharedInOrder = (a: readonly string[], b: ReadonlySet<string>) => [...new Set(a)].filter(t => b.has(t)).join(" ");
+
+/**
+ * Whether `text` says what a corrected fact said before rather than what it says now (memory-x9-2). Much like the old
+ * wording, and:
+ * - where the correction turned it round ("Is vegetarian" → "Is not vegetarian"), said the old way round;
+ * - else nearer the old wording than the new ("Has two kids" once "two children" became "three children");
+ * - or, with the same words in both ("Prefers tea to coffee" → "Prefers coffee to tea"), in the old order.
+ */
+function saysBefore(text: string, before: string, after: string): boolean {
+  const [c, b, a] = [terms(text), terms(before), terms(after)];
+  const [C, B, A] = [new Set(c), new Set(b), new Set(a)];
+  if (!like(B, C)) return false;
+  if (negated(before) !== negated(after)) return negated(text) === negated(before);
+  const [nearBefore, nearAfter] = [termSimilarity(C, B), termSimilarity(C, A)];
+  if (nearBefore !== nearAfter) return nearBefore > nearAfter;
+  return sharedInOrder(c, B) === sharedInOrder(b, C) && sharedInOrder(c, A) !== sharedInOrder(a, C);
+}
+
 const share = (a: ReadonlySet<string>, b: ReadonlySet<string>) => (a.size ? [...a].filter(t => b.has(t)).length / a.size : 0);
 const nothing = () => ({ forgot: [] as string[], corrected: [] as string[], back: [] as string[], all: false });
 
 export class ConversationHold {
-  /** The words that went (a correction's: those its new wording dropped), as terms, with the fact's id and its Undo. */
-  private held: { words: ReadonlySet<string>; id: string; undo?: string }[] = [];
+  /**
+   * The words that went, as terms, with the fact's id and its Undo. A correction's: the words its new wording dropped,
+   * and both wordings whole (`was`), since one that negates or swaps drops none (memory-x9-2).
+   */
+  private held: { words: ReadonlySet<string>; id: string; undo?: string; was?: { before: string; after: string } }[] = [];
   /** Forget everything in this conversation, or more Forgets than `held` keeps. */
   private heldAll = false;
   /** Something was asked in this conversation: it may hold what a Forget everything forgets. */
@@ -121,10 +157,10 @@ export class ConversationHold {
     this.tell.forgot = this.tell.forgot.filter(x => x !== id);
   }
 
-  /** Fact `id` was corrected from `before` to `after`: the words the new wording dropped are held. */
+  /** Fact `id` was corrected from `before` to `after`: what it said before is held, whole, and the words the new wording dropped. */
   corrected(id: string, before: string, after: string): void {
     const kept = new Set(terms(after));
-    this.hold(terms(before).filter(t => !kept.has(t)), id, "corrected");
+    this.hold(terms(before).filter(t => !kept.has(t)), id, "corrected", undefined, { before, after });
   }
 
   /**
@@ -154,12 +190,10 @@ export class ConversationHold {
     this.held = this.held.filter(h => h.undo !== token);
   }
 
-  private hold(gone: Iterable<string>, id: string, how: "forgot" | "corrected", undo?: string): void {
+  private hold(gone: Iterable<string>, id: string, how: "forgot" | "corrected", undo?: string, was?: { before: string; after: string }): void {
     const words = new Set(gone);
-    if (words.size || how === "forgot") {
-      if (this.held.length >= HELD_MAX) this.heldAll = true;
-      else this.held = [...this.held, { words, id, ...(undo ? { undo } : {}) }];
-    }
+    if (this.held.length >= HELD_MAX) this.heldAll = true;
+    else this.held = [...this.held, { words, id, ...(undo ? { undo } : {}), ...(was ? { was } : {}) }];
     if (!this.given.has(id)) return;
     this.tell.back = this.tell.back.filter(x => x !== id);
     if (!this.tell[how].includes(id)) this.tell[how] = [...this.tell[how], id];
@@ -168,21 +202,27 @@ export class ConversationHold {
   }
 
   /**
-   * Whether a fact is held back, and why: `all` after Forget everything, `like` for what the user had Ember forget or
-   * correct in this conversation. Never the user's own (`user`: their words, stated as true now). Otherwise:
-   * - anything much like what went (LIKE_FORGOTTEN), from a turn, a task or the remember tool;
+   * Whether a fact is held back, and why: `all` after Forget everything, `like` for what the user had Ember forget,
+   * `corrected` for what a fact said before they corrected it. Never the user's own (`user`: their words, stated as
+   * true now; the caller never calls a question's words that). Otherwise:
+   * - anything much like what went (LIKE_FORGOTTEN), or that says what a corrected fact said before (`saysBefore`),
+   *   from a turn, a task or the remember tool;
    * - from a turn, anything that doesn't rest on what the user said in it (`restsOnUser`): Ember's reply may say what
    *   went in words that share none with it ("You don't eat meat" for "Is vegetarian"). What the user states is still
    *   learned, however the model words it (memory-x9-3);
-   * - after Forget everything, anything from a task or the remember tool, and from a turn as above.
+   * - after Forget everything, anything from a task or the remember tool, and from a turn anything but what the user
+   *   states in it (`statedByUser`: never a question that names the fact, memory-x9-2).
    * The remember tool is otherwise refused only what is like it, so "remember…" still keeps what the model words freely.
    */
-  heldBack(text: string, source: Source, from: HeldFrom): "all" | "like" | null {
+  heldBack(text: string, source: Source, from: HeldFrom): "all" | "like" | "corrected" | null {
     if (source === "user" || (!this.heldAll && !this.held.length)) return null;
-    const theirs = typeof from === "object" && restsOnUser(text, from);
-    if (this.heldAll && !theirs) return "all";
+    const turn = typeof from === "object" ? from : null;
+    if (this.heldAll && !(turn && statedByUser(text, turn))) return "all";
     const words = new Set(terms(text));
-    if (this.held.some(h => Math.max(share(h.words, words), share(words, h.words)) >= LIKE_FORGOTTEN)) return "like";
-    return typeof from === "object" && !theirs ? "like" : null;
+    for (const h of this.held) {
+      if (h.was && saysBefore(text, h.was.before, h.was.after)) return "corrected";
+      if (like(h.words, words)) return h.was ? "corrected" : "like";
+    }
+    return turn && !restsOnUser(text, turn) ? "like" : null;
   }
 }

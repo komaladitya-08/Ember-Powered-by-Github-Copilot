@@ -472,13 +472,21 @@ download, so English-only MiniLM is the trade-off for now.
      until it ends (New conversation, sign-out, another account or model service: the host's `conversationEnded`)
      nothing much like a forgotten fact, or like the words a correction dropped, is kept again unless it is the
      user's own (`user`): half or more of the smaller one's words in common (`LIKE_FORGOTTEN`), whether it comes
-     from a turn, a task's result or the remember tool, which is told why (`HELD_FORGOTTEN`). A turn in such a
+     from a turn, a task's result or the remember tool, which is told why (`HELD_FORGOTTEN`). A correction holds
+     what the fact said before, whole (`saysBefore`, memory-x9-2), since one that negates or swaps drops no word:
+     after "Is vegetarian" became "Is not vegetarian", nothing much like the old wording and said the old way round
+     is kept ("Follows a vegetarian diet"); where the correction changed a word, nothing nearer the old wording than
+     the new ("Has two kids" once two became three); and where it only changed the order ("Prefers tea to coffee" →
+     "Prefers coffee to tea"), nothing in the old order. The tool is told so (`HELD_CORRECTED`), and what the fact
+     says now can still be said again. The user's own is what they state or ask Ember to keep: the words of a
+     question ("Am I vegetarian?") never make the remember tool's fact theirs here (`onlyAsked`). A turn in such a
      conversation teaches memory only what rests on what the user said in it (`restsOnUser`): a fact mostly in
      their own words (`ownWords`), or one whose evidence is their words word for word and holds half of the fact or
      more (`RESTS_ON`), however the model worded it, so "I've just moved to Leeds for the new job" still teaches
      "Lives in Leeds" (memory-x9-3). Ember's reply may say what went in words that share none with it, so what rests
      on the reply, or on words of the user's that don't say it, waits; after Forget everything, a task's result and
-     the remember tool are held to the same (`HELD_ALL`). The words are held in RAM, never on disk, and Undo lifts
+     the remember tool are held to the same (`HELD_ALL`), and a turn teaches only what the user states in it
+     (`statedByUser`), never what a question of theirs names ("Did I tell you I was vegetarian?"). The words are held in RAM, never on disk, and Undo lifts
      it. It learns less: a fact Ember inferred from its own reply in that conversation waits for the next. The
      conversation is told as well, with
      the next request, in Ember's own `<memory_changed>` note (format.ts `memoryChanged`; the rules name it only

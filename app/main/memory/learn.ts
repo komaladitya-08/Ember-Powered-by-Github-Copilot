@@ -254,6 +254,21 @@ export function ownEvidence(evidence: string, said: string): "stated" | "said" |
 }
 
 /**
+ * Whether the user's words only ask what `fact` says ("Did I tell you I was vegetarian?", "Am I vegetarian?"): the
+ * sentence of theirs that holds the most of its words is a question. For a fact with no evidence of its own (the
+ * remember tool's), whose words a question would otherwise make the user's (memory-x9-2).
+ */
+export function onlyAsked(fact: string, said: string): boolean {
+  const want = new Set(terms(fact));
+  let best = "", most = 0;
+  for (const sentence of said.match(/[^.!?\n]+[.!?]*/g) ?? [said]) {
+    const n = terms(sentence).filter(t => want.has(t)).length;
+    if (n > most) { most = n; best = sentence; }
+  }
+  return most > 0 && (/\?\s*$/.test(best) || AUXILIARY.test(squash(best)));
+}
+
+/**
  * Whose a fact from a conversation turn is: the user's only when the user was heard to say it (`heard`: typed, or a
  * voice Ember could tell from its own speakers), its evidence is their own words word for word, said as true now
  * (`ownEvidence`), the fact's content words are in that evidence, and it says it the same way round ("I hate Teams"
