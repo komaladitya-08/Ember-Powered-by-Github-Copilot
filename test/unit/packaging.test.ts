@@ -758,6 +758,14 @@ describe("staging in CI", () => {
     expect(el8).toContain("EMBER_VOICE_BACKEND=wasm npm run test:integration -- test/integration/voice.test.ts");
     expect(el8).toContain('EMBER_SHERPA_CAPI="$(node scripts/voice/fetch-capi.mjs)" npm run test:integration -- test/integration/voice.test.ts');
   });
+  it("gives the checks job the time its slowest measured run needs, so a passing gate isn't cancelled (install-docs-r10-1)", () => {
+    // Its integration step took up to 15 min 4 s and the renderer journeys up to 7 min 40 s with more to run, so
+    // 25 minutes cancelled it with nothing failing; the limit says what it was measured from.
+    const checks = ci.slice(ci.indexOf("\n  checks:\n"), ci.indexOf("\n  el8:\n"));
+    const minutes = Number(/\n {4}timeout-minutes: (\d+)\n/.exec(checks)?.[1]);
+    expect(minutes).toBeGreaterThanOrEqual(40);
+    expect(checks).toMatch(/\n {4}# 40, not 25: [^\n]*\d+ min \d+ s/);
+  });
   it("lets rpm.sh build another release of the same version (an upgrade to test)", () => {
     const spec = fs.readFileSync(path.resolve("packaging/rpm/ember.spec"), "utf8");
     expect(spec).toMatch(/^Release:\s+%\{\?ember_release\}%\{!\?ember_release:1\}%\{\?dist\}$/m);
