@@ -767,7 +767,11 @@ folder alone", "push it later"), as Autopilot asks about it; and a command, a re
 characters). A command you said no to is refused without being reviewed, and one that may be it, where Ember can't
 tell, asks without being reviewed (§2.5). A loop or inline code whose programs Ember knows is still reviewed: that is
 the one place Assisted asks less than Autopilot. On a computer reached over SSH, that
-computer's own check still asks about what it finds, as before. Choose Interactive to have every such command ask;
+computer's own check still asks about what it finds, as before, and what the check cleared runs there only where that
+computer's own administrator allows the modes, leaves the check on (`features.aiReview`) and caps the mode at
+Assisted or above; elsewhere it wants your approval ("This computer's administrator doesn't allow Ember's check of
+commands, so it wants your approval."), as a command Interactive only told you about does where that administrator
+turned the modes off. Choose Interactive to have every such command ask;
 your organisation can turn the check off (`features.aiReview: false`).
 
 ### 2.5b When you chose Autopilot

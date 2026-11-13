@@ -57,6 +57,14 @@ export const autonomyPermitted = (admin: AutonomyAdmin | null | undefined): bool
 export const autopilotPermitted = (admin: AutonomyAdmin | null | undefined): boolean =>
   autonomyPermitted(admin) && (admin?.approvals?.maxMode ?? "autopilot") === "autopilot";
 
+/**
+ * May Assisted's check stand in for the user's yes under this administrator's policy: the modes allowed, the check not
+ * turned off (`features.aiReview`), and the cap at Assisted or above? What a computer reached over SSH asks of its own
+ * policy before it runs what the PC's check cleared (app/remote/gate.ts; commands-remote-c10-2).
+ */
+export const assistedPermitted = (admin: AutonomyAdmin | null | undefined): boolean =>
+  autonomyPermitted(admin) && admin?.features.aiReview !== false && modeRank(admin?.approvals?.maxMode ?? "autopilot") >= modeRank("assisted");
+
 /** The modes Home offers a row and a card for, and the only ones its choice may name (chooseMode). */
 export const OFFERED_MODES: readonly ApprovalMode[] = ["interactive", "assisted", "autopilot"];
 

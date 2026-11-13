@@ -29,6 +29,13 @@ import { judgeScripts, withoutReadFlow, type TaskWrites } from "../main/commands
 import { AUTOPILOT_RULE, NO_AUTOPILOT_RULE, askedOfFinding, handedSecrets } from "../main/commands/autopilot";
 import type { ClassifyCommand } from "./contracts";
 
+/** The rules the PC's stamp carries for a command Assisted's check cleared, and one Interactive announced. */
+const REVIEW_RULE = "ai-review";
+const AUTONOMY_RULE = "autonomy";
+/** What gate 2 answers with, among its rules, where this machine's administrator doesn't allow that. */
+export const NO_CHECK_RULE = "admin.no-check";
+export const NO_AUTONOMY_RULE = "admin.no-autonomy";
+
 /** An approval older than this no longer counts (a question expires at 120 s anyway). */
 export const APPROVAL_MAX_MS = 120_000;
 /** A desktop step's stamp older than this is stale. */
@@ -59,6 +66,8 @@ export const GATE_WORDS = {
   stepMismatch: "The step that arrived doesn't match the one Ember decided on.",
   noStepAudit: "This computer couldn't record the step, so Ember won't do it.",
   noAutopilot: "This computer's administrator doesn't allow Autopilot, so it wants your approval.",
+  noCheck: "This computer's administrator doesn't allow Ember's check of commands, so it wants your approval.",
+  noAutonomy: "This computer's administrator wants your approval of every command Ember would only tell you about.",
 } as const;
 
 export const sha256Hex = (s: string) => createHash("sha256").update(s, "utf8").digest("hex");
@@ -96,6 +105,16 @@ export interface CommandGateInput {
    * Absent or false: an announcement on the stamp counts for nothing, and everything asks as before.
    */
   autopilotOk?: boolean;
+  /**
+   * This machine's administrator lets Assisted's check clear a command (policy/autonomy.ts assistedPermitted on its own
+   * policy). Absent or false: a stamp the PC's check cleared (rule `ai-review`) wants the user's yes (commands-remote-c10-2).
+   */
+  assistedOk?: boolean;
+  /**
+   * This machine's administrator lets the modes be in force at all (autonomyPermitted). Absent or false: a stamp of a
+   * command Interactive announced (rule `autonomy`) wants the user's yes.
+   */
+  interactiveOk?: boolean;
   now?: () => number;
 }
 
@@ -130,7 +149,9 @@ async function inspectSoon(inspect: CommandGateInput["inspect"], paths: string[]
  * only with `autopilotOk`) covers root and what a yes would cover of a finding, but never this administrator's "ask",
  * a stamp of "ask" without its yes, a line judged as its written-out form, nor a finding that would read or print
  * secrets, outlive the kill switch or that can't be told (askedOfFinding). Without `autopilotOk` a stamp that says
- * Autopilot announced it wants the user's yes whatever it names (`noAutopilot`, rule `admin.no-autopilot`).
+ * Autopilot announced it wants the user's yes whatever it names (`noAutopilot`, rule `admin.no-autopilot`), and so
+ * does one the PC's Assisted check cleared without `assistedOk` (`noCheck`, `admin.no-check`) or its Interactive mode
+ * announced without `interactiveOk` (`noAutonomy`, `admin.no-autonomy`): commands-remote-c10-2.
  */
 export async function gateCommand(i: CommandGateInput): Promise<CommandGate> {
   const { spec } = i;
@@ -154,6 +175,12 @@ export async function gateCommand(i: CommandGateInput): Promise<CommandGate> {
   // user's own yes and says why (its rule tells the PC to ask at once).
   const refusedAutopilot = (stamp.announced !== undefined || stamp.rules.includes(AUTOPILOT_RULE)) && i.autopilotOk !== true && !approval;
   if (refusedAutopilot) asks.push(GATE_WORDS.noAutopilot);
+  // The PC's Assisted check cleared it, or its Interactive mode announced it: only where this machine's own policy
+  // lets that mode be (its own check and cap included) does the stamp stand in for a yes (commands-remote-c10-2).
+  const refusedCheck = stamp.rules.includes(REVIEW_RULE) && i.assistedOk !== true && !approval;
+  if (refusedCheck) asks.push(GATE_WORDS.noCheck);
+  const refusedAutonomy = stamp.rules.includes(AUTONOMY_RULE) && i.interactiveOk !== true && !approval;
+  if (refusedAutonomy) asks.push(GATE_WORDS.noAutonomy);
 
   const downloaded = i.task?.downloaded ?? new Set<string>();
   const ctx: ClassifyContext = {
@@ -210,7 +237,7 @@ export async function gateCommand(i: CommandGateInput): Promise<CommandGate> {
     : stamp.rules.includes(f.rule) && (agreed(f) || (!writtenOut && stamp.classes.includes(f.cls) && !ALWAYS_ASK.has(f.cls))));
   const extra = findings.filter(f => !covered(f));
   if (extra.length || asks.length) {
-    const rules = [...new Set([...extra.map(ruleOf), ...(refusedAutopilot ? [NO_AUTOPILOT_RULE] : [])])].slice(0, 64);
+    const rules = [...new Set([...extra.map(ruleOf), ...(refusedAutopilot ? [NO_AUTOPILOT_RULE] : []), ...(refusedCheck ? [NO_CHECK_RULE] : []), ...(refusedAutonomy ? [NO_AUTONOMY_RULE] : [])])].slice(0, 64);
     return {
       status: "needs_confirm",
       reason: extra.length ? GATE_WORDS.disagree : asks[0],
