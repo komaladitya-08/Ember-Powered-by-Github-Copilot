@@ -1,8 +1,8 @@
 # Ember status
 
-Updated 12 November 2026. This is the short pickup list; [the review backlog](docs/review-2026-11-03.md) records evidence and acceptance checks. PLAN.md §10 retains implementation history.
+Updated 13 November 2026. This is the short pickup list; [the review backlog](docs/review-2026-11-03.md) records evidence and acceptance checks. PLAN.md §10 retains implementation history.
 
-Since 4 November a product audit has rated 13 areas and fixed them in six rounds from 7 to 9 November, a seventh on 11 November and an eighth from 11 to 12 November. PLAN.md §10's **Product audit fixes** entries record each round, and each ends with what it left (partly fixed, skipped, owner decisions and native validation); CHANGELOG.md's 0.1.1 notes say what ships. Read those before picking up anything below: the sections below are as of 4 November.
+Since 4 November a product audit has rated 13 areas and fixed them in six rounds from 7 to 9 November, a seventh on 11 November, an eighth from 11 to 12 November and a ninth from 12 to 13 November, which also built the owner's decisions of 12 November (three approval modes, first run's defaults under one agreement; the vault is still being integrated). PLAN.md §10's **Product audit fixes** entries record each round, and each ends with what it left (partly fixed, skipped, owner decisions and native validation); CHANGELOG.md's 0.1.1 notes say what ships. Read those before picking up anything below: the sections below are as of 4 November.
 
 ## Completed review and merged repairs
 
@@ -32,7 +32,7 @@ The review is complete, not the backlog. Remaining follow-ups include text corre
   - Still open: the runtime process itself holds the token (observed: its environment has `COPILOT_SDK_AUTH_TOKEN`), and a stdio server is the runtime's child, so it can read that file as the same user; blanking stops inheritance, not that. The pinned SDK (1.0.21) has no `gitHubTokenProvider`/short-lived token support to use instead (a session-level one exists, but model listing and sign-in checks are client-level; not tried without credentials). The SDK's own stderr may echo environment text before Ember redacts it. HTTP/SSE MCP servers' headers are not scrubbed. The credential names are those the pinned SDK and runtime read; an alias of another name is not covered (alias completeness). Redaction by shape and by the provider key's exact text: a secret of neither form is not found.
 - Durable account-owned memory needs a persistent ownership format and migration/failure policy. Current-run deletion protection is not restart isolation; graph and vector files are still two writes, but memory.json is the authority and the vectors are reconciled against it on load (docs/MEMORY.md), so a crash between them cannot surface a forgotten fact.
 - Super agent: recover the missing original D1–D15 design notes and obtain the owner's answers before implementing project sessions. Support non-Git folders explicitly; do not repurpose hardened desktop workers by enabling coding tools.
-- Owner decision: spoken trust on Windows/macOS where the user's voice cannot be distinguished from Ember's speakers; the associated CLAUDE.md “Policy decides” wording still needs approval.
+- Spoken answers and the approval modes: decided by the owner on 12 November (anyone heard can answer a question that is up; Interactive, Assisted and Autopilot in place of Home's three switches). The points those decisions left open were settled by the integrator for the owner to overrule; PLAN.md §10's ninth round lists each with both sides (“Settled by the integrator, for the owner to overrule”), CLAUDE.md carries them in place, and the owner's review of that list is the open item.
 
 ## Native validation still required
 

@@ -2584,7 +2584,8 @@ fixes for an Allow that did nothing first, then the modes, then first run's defa
 lands, the code still does what the earlier rules said (§2 Approvals' history: Work without asking and Home's two
 narrower switches, and a spoken yes only from a Voice Match-verified voice or the task's voice trust), and
 docs/DEVELOPING.md ("Work without asking", "Answering by voice", the voice settings and the administrators' table)
-describes what ships; each step brings it up to date as it lands.
+describes what ships; each step brings it up to date as it lands. Spoken answers, the modes and first run's
+defaults have landed (the ninth round, below); the vault is still being integrated.
 
 **Settled** (2026-11-12, by the integrator on the owner's direction; the owner can overrule). The owner asked for a
 simple product a layman can use: in Autopilot "it should do everything without asking me", a spoken "allow", "deny" or
@@ -2658,3 +2659,451 @@ wait.Buy now"). With Enter, 26 of the 86 names now ask where they went unasked b
 R2-1), and none asks less; a command before a file's name still goes unasked with Enter, as it did before the
 loosening. A file's link with a risky word in its name ("report.pdf", "Install guide.pdf") asks again when clicked, as
 it did before the loosening.
+
+### Product audit fixes, ninth round (2026-11-12 to 2026-11-13)
+
+After round eight each area was rated again at 01493d0 (main). The re-rate was cut short by the usage limit: twelve
+areas have a re-rater's score, one of them (models, providers, extensions and projects) a challenger's too, and the
+companion and Ask has neither. The other eleven challengers and the companion's re-rater are deferred to round ten, so
+no second score is recorded for those areas here. Scores (re-rater): commands, WSL and SSH 6.8; listening 7.2; models,
+providers, extensions and projects 7.3 (challenger 6.6); memory 7.8; tasks and approvals 8.3; first run and setup 8.4;
+safety and privacy 8.5; speaking 8.5; reliability and platform 8.6; accessibility and copy 8.6; Home 8.6; install, docs
+and developer experience 8.8. The re-raters listed 10 P1s, 48 P2s and 104 P3s, each area's known gaps for the three
+slices the owner decided on 12 November and main didn't have yet among them (-r9-K1 to -K3: the approval modes, first
+run's defaults, the vault); the one challenger added five P2s and two P3s (integrations-c9-1 to -c9-7) and rated
+integrations-r9-6 higher. The P1s: commands' seven (tmux and its like typing into the user's terminal; a command handed
+to a program as one quoted word or after an exec verb; `python3 -m <tool>` skipping the tool's row; database wipers and
+deployers with no row; downloaded code run through option values, runners, compilers and fetch tools with no row; a
+file's contents leaving in a URL or a header: commands-remote-r9-1 to -r9-7), listening's two (the computer's own sound
+saying yes in the moment after Ember's read-out, and “Ember, allow it.” out of the speakers taken in the answer window
+and a conversation: voice-listening-r9-1, -r9-2) and integrations' one (a plugin's server showing the model a tool
+description nobody agreed to: integrations-r9-1).
+
+The round did two things together: it built the owner's decisions of 2026-11-12 (the section above) and it fixed the
+re-rate's P1s and P2s. Of the decisions, slice 3 (the approval modes) and slice 4 (first run's defaults under one
+agreement) are on this tree, with a second, independent review of slice 2's voice lane (spoken answers, merged before
+the round in 338c5cf and 02b7089) and of its review's V-8, whose findings (V2-S1 to V2-S10, V2-F1 to V2-F13) became two
+of the voice lane's packages. Slice 5, the vault, is still being integrated and is not on this tree; nor is the commands
+lane's third package, commands-classes (the re-rate's commands P1s and P2s as classes, with the classifier's side of
+modes-y9-1, -5 and -6). Neither is described below as done; both are recorded when they merge. Nine lanes, each in its
+own worktree off 01493d0 with its packages one after another: modes (slice 3: builders A to E, then package modes-y9),
+slices (slice 4), voice (voice-safety, voice-product, voice-roomtalk), product (product-safety, product-ui,
+product-platform), commands (commands-held, commands-closed), memory, integrations, and two for what CI found (cifix,
+evalfix). Each package: a fix with a test seen failing first, an adversarial reviewer (-x9-N), a repair, a second
+reviewer (-y9-N) and, where that review had a P1 or P2, a resolve step told to correct or revert and design nothing new.
+An integrator merged at checkpoints, ran the gate on each merged tree and the two safety harnesses (the policy proof and
+the commands comparison, both rebuilt this round; the comparison's corpus is more than twice round eight's), and pushed.
+The merges, in order: commands-held's fix (97dce08), voice-safety's fix (ddab162), the modes' builders A and B
+(930fade), commands-held's repair and resolve (ca2daf4), integrations (bec8fde), memory (446846b), the modes' builders C
+and D (4a602a1), voice-safety's repair (a91c646), integrations' and memory's last repairs (53a44ae, f2dbe1d),
+commands-closed's fix (133bcbf), voice-product (dc4dbe8), product-safety (a56027a), slice 4 (64cddeb), the modes'
+builder E and slice 3's repair (9b52239, the third checkpoint), voice-product's resolve (1de2485), commands-closed's
+repair and resolve (a2d10ab), cifix and its repair (03ebf5c, 1446548), product-ui (815a53e), modes-y9's fix and repair
+(3d9b4f2), product-platform (0fa8bf0), modes-y9's resolve (681c36a, the fifth checkpoint) and voice-roomtalk (a3cf645).
+At a3cf645 the round is 266 commits, 27 of them merges, every one signed.
+
+**Slice 3, the approval modes** (the modes lane). Builder A: Home › Apps & privacy has one choice of how Ember asks in
+place of its three switches, starting with Interactive (`settings.approvals`), the mode in force is worked out in one
+place, an organisation can cap it with `approvals.maxMode`, and choosing a mode is an `autonomy` audit entry with the
+mode, `via` and `verified` (2b8a489, 0b018b7). Builder B, the causes of the owner's report of an Allow that did nothing:
+a question nobody answered is no longer taken as the user's no (ac6bad2); once the user takes the mouse back, Ember asks
+before any borrow for the rest of that task (157930d); a step or command the user said no to is refused when sent again,
+without a question (e1687ea; tasks-approvals-r9-1, commands-remote-r9-8); and an Allow about a web page's control holds
+when only the rest of the page changed (a865a5f). Builder C, Assisted: a step that would ask is first checked against
+the user's own words by the hardened one-shot reviewer, inside the policy's own gate (`PolicyEngine.assist`); a match
+goes ahead, announced, and no match, no answer, an error or a timeout asks; a task without the user's own words asks
+without the check; a command that would read or print secrets or outlive the kill switch is never cleared, nor one over
+4,000 characters reviewed in part; `features.aiReview: false` keeps the check off for app steps too; its card says a
+lighter model decides and can be wrong (f66f35f, 3350b21, 6f6d411, 2a97ddc, c98ac1f, cacbde6). Builder D, Autopilot:
+every step in an app, a dangerous command with its Stop, the extensions gate's questions and a remote's own gate 2
+questions are announced instead of asked; a command the user's own words rule out, a secret a wrapper hides from the
+classifier and a remote's ban on Autopilot keep the question; prompts, pictures, Stop, the limits and first-use cards
+are pinned as kept; after a takeover Autopilot borrows nothing more in that task; its card puts the risk first (f3ddb36,
+413b028, b37227e, e2af103, 209309b, f31a450, 4f2aa52, 533a644). Builder E: “Ember, switch to Autopilot” and the other
+modes' names by voice, under the settled rule, while typed words and a pressed suggestion never choose a mode that asks
+less (Home opens at its row instead); the eval's safety gate is measured in Interactive, with three of its 40 tasks kept
+below it (`"mode": "asking"`) because a question is their point; Home and the docs say so (67d473c, beb16d9, 0707e7c).
+At the slice's end (0707e7c) the policy proof against main passed with every mode live: 287,678 steps, none weaker or
+stronger below Interactive; Interactive decides as main's Work without asking with every scope and the app switch on;
+Assisted with a check that never matches, throws or answers nonsense decides exactly as Interactive; against the state
+that asks, Interactive no longer asks 97,938 questions, Assisted with a check that matches 253,400 and Autopilot 255,704
+(of its app steps it asks none), and none loses its “You didn't ask for this” flag; every refusal (secret and password
+fields, the user's terminals, security windows, Ember's own windows, never-look windows) stays one in every mode; 24
+hard checks pass.
+
+Slice 3's first reviews (x9s for safety: three P1s and a P2; x9p for product: one P1, four P2s, two P3s) were repaired
+in eleven commits. Services, scheduled jobs, startup entries and registry writes count as outliving Stop, so neither
+Assisted nor Autopilot lets them through (fb4fc47; modes-x9s-1; in the comparison 3,908 Autopilot cases outside the
+mode's limits became 0). A settings.json written by a program can no longer raise the mode or agree to a card: while
+Ember runs a change read from the file never does, and at start a mode above Interactive and Assisted's and Autopilot's
+agreements count only where they match a seal kept with `safeStorage` (`approvals-seal.bin`, 0600, written after each
+change made in Home, by voice or by typed words; until it is read Ember is at most in Interactive), and policy refuses
+steps other than reads in a window titled with Ember's data or policy folder (9f0fd3c; -x9s-2, -x9p-5). The refused step
+done another way (Ctrl+Enter, “Send Now”, Send in a second compose window after a refused Send) is refused too (445b38b;
+-x9s-3; its “every kind” fallback is what CI then caught, below). A risky control's Allow is bound to the page's
+headings and paragraphs as well (4daa1db; -x9s-4). Home's note says that as root or an administrator Autopilot runs
+commands without asking (d6bcd3c; -x9p-1); choosing Assisted or Autopilot keeps its card's risk paragraph in view
+(e3297c2, 4b0c031; -x9p-2); an existing user who hasn't agreed to Interactive's card is told once a run why Ember still
+asks before an ordinary step (a3cb5a7; -x9p-3); Assisted's card names what the check is sent, at
+`FEATURE_CONSENT_VERSION.assisted` 2 (f431ce2; -x9p-4); and the note under the modes and the docs on the system's
+Settings say what the engine does (c81a366, 9739aba; -x9p-6, -x9p-7).
+
+**Package modes-y9.** The second review, at the third checkpoint (9b52239), found four P1s and five P2s; its fix (five
+commits to 02ad227), a review of that (two P1s, four P2s, a P3), a repair (seven commits), a second review on the merged
+tree (two P1s, seven P2s, a P3) and a resolve (3d9b4f2..2671810) followed. What happens now. A downloaded program handed
+a key, a token or a word Ember can't resolve is a secret's command, `secret.handed-to-download`, and asks in every mode
+and at a remote's gate 2 (5c64418, 5ac0b04, 771b1a6; modes-y9-5, modes-y9-x9-2, modes-y9-y9-6); one pointed at Ember's
+own settings is refused (771b1a6; modes-y9-y9-9, treated as a P1). Code planted to run later counts as outliving Stop:
+ten more rule ids, then a list of the `unclear.*` ids (a D-Bus message, a WMI or CIM call, an alias, a trap, a
+coprocess), with a unit test that reads the classifier and fails on a rule id nobody has judged (a54bacc, f7f4058;
+modes-y9-1, modes-y9-x9-3). Assisted never clears a program Ember doesn't know, nor a command behind `bwrap`,
+`firejail`, `envdir` or `expect` (a54bacc, 67c0b28; modes-y9-6, modes-y9-y9-5); one predicate, `keptQuestion`, replaces
+`NEVER_REVIEWED`. For a risky control the Allow is bound to all the page's text outside its feeds and to the names of
+its other controls, a clock, a control's own counter and an English list of counts a page gathers by itself let through
+(ca2717c, bf31ea6; modes-y9-3, modes-y9-x9-5, -x9-7), and to text in a list or a table that names money (2671810;
+modes-y9-y9-8, partly). Words that hold a command back (“leave”, “keep”, “not yet”, “later”, “until”, “tomorrow” and
+their like, read part by part of the request) keep Autopilot's question, and the card says “Your words say to leave this
+or to wait, so Ember asks first.” (6ef215b, f2eb60a, 0edd6de, d706d4d; modes-y9-4, modes-y9-x9-4, -x9-6, modes-y9-y9-7).
+And the rule for what a no means was rebuilt three times, ending at the integrator's steer (Settled 3 to 7 below):
+02ad227 and 667893a widened the matcher of “the same thing” (a deletion reworded as code, a move or an API call; a push
+of HEAD or `@`; a refused command done in an app and the reverse; modes-y9-9, -y9-2, -y9-8, modes-y9-x9-1 and the
+eval-fix lane's findings); the second review still found a refused push sent again by the remote's URL and `rm -rf
+build` announced after a no to a deletion Ember couldn't read (modes-y9-y9-1, -y9-2), and found the wider matcher
+refusing the user's own commands by a word of a window's title (modes-y9-y9-3, -y9-4); the resolve reverted two commits
+of an earlier resolver that widened the matcher again (d92ce71 reverts 3b77516 and bf97ce0, which stay in the history)
+and built the steer instead (1772ee0): refused without a question is only the same step or command and what is
+recognisably the same thing done another way, and everything else that may be it asks, in every mode (rule
+`refused-like`, the card's “You said no to something like this earlier in this task.”). On the review's fourteen probes,
+the seven where a refused push or deletion came back another way, which Assisted checked and ran and Autopilot announced
+and ran, ask in all three modes with nothing checked or announced; a no to a page's “Delete repository” no longer
+refuses `rm -rf firefox` by its window's title, which asks.
+
+**Slice 4, first run's defaults** (the slices lane; c863e4e, 9bfda93, then a2f6c2c to 04d1c88 and 3e1916a). First run
+shows, between “Before Ember starts” and the agreement, a row with a switch for each of commands on this computer,
+memory, “Hey Ember” with spoken replies, screenshots for tasks and Interactive, each with its own card's full text, read
+from the one source its own card uses; the one agreement records the consent first and then turns on each row left on,
+as that row's own card would (a row that fails to save says so and stays off; if the consent itself can't be saved
+nothing is on). Voice Match isn't among them; without the speech models the listening row is off with a reason, and
+nothing downloads; a row the organisation's policy turned off shows managed, and under a lockdown every row is locked. A
+returning user sees only Interactive's row, while its card isn't agreed, and keeps every other setting.
+`CONSENT_VERSION` 9, with its line in `CONSENT_CHANGES`. The first review (three P2s, three P3s) and the second (one P2,
+one P3): a row switched off, or one that can't be turned on, is written off with the consent itself, so no row is on
+that its note says is off (a2f6c2c, 89d1993, 3e1916a; slice4-x9-1, -x9-2, -y9-1); the returning user's line is true
+where Interactive is already agreed or managed (1fefbca; -x9-3); first run's listening row and Home's card record the
+same thing (c12477a; -x9-4).
+
+**Voice.** voice-safety (the second review's V2-S findings; 01493d0..3a43a81): every fix but one takes fewer spoken
+yeses; a no is anyone's in every window. On Linux with parec, what sounds in the speakers' stream after Ember's own
+voice left it is other sound at once, and on Windows the output watch counts sound from 0.4 s after its last look at
+Ember speaking (f7eb99c; V2-S1, voice-listening-r9-1: 7 of 72 such yeses taken on main, 0 of 72 after). “By name” in the
+answer window, a follow-up and a conversation means the user said it: a name the speakers' stream said answers nothing
+(3b854ee, 66186dd; V2-S2, -r9-2: a video's “Ember, okay.” and its like 25 of 80 taken on main, 0 of 80 now; after the
+user's “Hey Ember” and a pause, a video's “Ember, allow it.” 28 of 40, now 0 of 40; the user's own by name 75 of 80
+before and after). A request leaves the answer window only by a wake's two stages, so room talk is no longer sent to
+Copilot from it (4912ca9; V2-S3, -r9-3: 8 of 8 left the window on main, none after). A nameless yes is judged on its own
+speech in every nameless window, and one in a wake's own window is dropped where other sound is known to play (6500aa1,
+ff1dd2c; V2-S4, V2-S6, -r9-4). A no is never dropped as over other sound (48dac19; V2-S7, -r9-5). In the answer window,
+without the name, only “stop” itself stops (74d8f50; V2-S8). A follow-up window dates each thing said from its own start
+(f5194f5; V2-S9). “Okay, thanks.” is a yes (1e43271; V2-S10: the one fix that takes a yes not taken before). V2-S5
+changed only the docs and §2: a yes asked only by the voice's rise (“Okay?”) is written “Okay.” and taken (21 of 28
+synthesised clips). Its review's four findings (two P2s, two P3s) were repaired: the Windows watch's first look alone
+may hold Ember's last sounds (74fa1fe: a call's “Okay.” begun 160 to 480 ms after the read-out 0 of 25, where the review
+took up to 12 of 25); what played before Ember's voice is carried 1.3 s, not a fresh 2.5 s (af044ea); a speech whose
+loudness at the microphone follows the stream's from 1 kHz up is the speakers', so a loud hum in the stream no longer
+hides a page's own “Ember, allow.” (daa45be: 0 of 48 at 50, 120, 200 and 300 Hz, where the lane had taken 6 of 48 and
+main 22 of 48 at 200 Hz); and an answer dropped over other sound that began with the name gets a line of its own
+(3a43a81).
+
+voice-product (the second review's V2-F findings; ten commits to 6744269, a repair to fca9cd6, a resolve to 5d1ae43):
+with Voice Match on, the locked line no longer calls the owner's own one-word yes another voice's, and Home says to
+answer in a few words (557ec8a; V2-F1, -r9-6); each refusal line is said aloud once a question (3bfdc5e; V2-F2, review
+V-8: the locked line once instead of five times in 58 s); Home says per platform where a bare answer needs no name
+(545ae34; V2-F3, -r9-7); the status line says “Listening for your answer…” while the answer window is open and, when it
+closes with the question still up, “To answer by voice now, start with my name.” (32a54e6; V2-F4, -r9-8); a near-miss
+answer while a question waits gets the unclear note instead of going to Copilot (eb5a2db; V2-F5, -r9-9); every CI job
+fetches the second test voice, so four real-model tests no longer skip (ae95c5d, df251fb; V2-F6, -r9-15); eleven more
+everyday yeses and ten noes are taken (“you may go ahead”, “I approve”, “don't do that”, “absolutely not”), and a yes
+asked as a question in its words is never an answer or a request (3133cba, eb5a2db; V2-F7, -r9-11); a refused spoken yes
+says what really happened (0178117, 3bfdc5e, 6744269; V2-F8 to V2-F10). The review (a P1, four P3s) and the second
+review (two P1s) found three ways the package itself took or lost too much, all corrected: others' “okay” after the
+user's bare “Hey Ember” in a busy room went out as a yes by name (85617ab; voice-product-x9-1); “No, stop the task.” and
+its like were taken for a near-miss answer and no longer stopped anything (2a21adc; -y9-1); and “Okay, Ember.” sent as a
+yes by name could not be told from a video's on Windows and macOS, so that line of eb5a2db was removed, not patched
+(5d1ae43; -y9-2).
+
+voice-roomtalk came from CI (below): on a spotter stream never reset between sessions, “A number of people called
+today.” left the answer window as a wake's request in 1 of 80 kept renditions on WebAssembly and 2 of 80 on the C API.
+The spotter had reported the bare name and `CALLED_AS_WORD` took “a number” for it. Now a name counts in the answer
+window only where the spotter fired and the recogniser wrote “Ember” itself, a “Hey Ember” spotted there is checked
+against a pre-roll as from idle, and every wake by the whole phrase is checked again on the whole of its first speech
+(bdc31ad: 0 of 80 on both builds; of 160 real wakes per build none lost, and “Hey Ember, what time is it?” in the answer
+window whole 16 of 16 where it was 9 of 16). The second review's leak from idle (talk with a greeting, “they”, “embers”
+or “Emma” in it that the spotter takes for the phrase: 20 of 24 sent) is 0 of 24, with the 256 kept real wakes decided
+as before on both builds (5be5ba9); 280a32e is the test's. Its first review's two P2s and two P3s were repaired in three
+commits (78ba3c7, 85e0553, 6a31e2c), -x9-2 left to the owner (below).
+
+**Product.** product-safety (a56027a): Enter in a dialog that asks or warns, while none of its buttons has the keyboard,
+and on Windows a bare letter there, asks every time, since Ember can't tell which button it presses (976ef24, 8b4f713;
+safety-privacy-r9-1, product-safety-y9-1: 18 of the probe's 19 focused controls went unasked, 15 now ask and the other
+three back off or only show more); warning controls under the names browsers and mail apps give them (“Keep dangerous
+file”, “Continue to HTTP Site”, a bare “Keep” or “Open” under a dialog's words of danger, “Show images” in a mail app)
+ask every time, read from the dialog's words and never a window's title (fef6c98, 78a7f1a, 7eb5fd1, dabf84f, dcaf251;
+-r9-2: 11 of 13 product names went unasked, now none); Linux's default never-look list gains six password managers, for
+new installs and Restore defaults (c306ed6; -r9-3); the log redactor hides the value after any Authorization scheme and
+`…PASSWORD=` (eee34b9, a611d44; -r9-4); and a key that types a character is audited as a count (a180a59; -r9-5).
+product-ui (815a53e): a task's question no longer throws away the conversation's answer still streaming (afe38fd,
+60c8a88; tasks-approvals-r9-2); Task activity marks the task whose question is up (704626d; -r9-3); a Voice change made
+under a policy or a lockdown no longer writes the forced values into the user's own settings (26db479; home-r9-1); first
+run's model check works against a service that lists more than 50 models (520fb69; first-run-r9-1) and its Try again
+line clears (94dd0a6; -r9-2); a background task's end is said on a composited desktop too (494e708; accessibility-r9-1);
+no consent card in Home takes a doubled or held key as agreement (e381875, e52d1f5; accessibility-r9-2, home-r9-6); and,
+of the P3s, tasks-approvals-r9-4 to -r9-6 and -r9-9, home-r9-3 and -r9-7, first-run-r9-8 and -r9-11, accessibility-r9-5
+and -r9-6. Its review's P1 was the package's own: the prompt window retitled “Ember needs you” was no longer known as
+Ember's own, so a click on its Allow by the model would not have been refused; the title is in the policy's list again,
+pinned to the window's own title (093f59e; product-ui-x9-1). product-platform (0fa8bf0): Ember's English words after a
+passage in the system voice wait their turn (2755a75; voice-speaking-r9-1); a passage in another language after an
+English lead-in is read in that language's voice (9377ed3, 58ffe3e; -r9-2: the passage was wholly Ember's English voice
+in up to 14 of 16 runs a language, now 0 of 16 for eight languages; short Italian and Portuguese messages left); “Read
+it out” says why when no voice can say the answer (c585b9f; -r9-3); with the user's inotify watches used up Ember names
+`fs.inotify.max_user_watches` and the setup check has a row for it (82453ab; reliability-r9-1); a Sign out on a disk
+that can't be written holds for the run and says it wasn't saved (5c3807c; -r9-2); a connection the firewall refused is
+still called the network's (d24d92a; product-platform-y9-1); and reliability-r9-3 to -r9-5, install-docs-r9-3, -r9-5,
+-r9-7 and -r9-9, part of voice-speaking-r9-6, and four flaky tests.
+
+**Commands.** commands-held (97dce08, ca2daf4): the rebuilt comparison found 247 cases (131 commands, six families) at
+main that decided less safely than 4d64d3a outside the allowed kinds, all since round seven, each an option table
+corrected to the tool's manual: `sudo -h host rm -rf ~` asked where it was refused, and `git commit` behind `-S`,
+`redis-cli` behind `--tls`, `parallel` behind value options, `env --block-signal ls` and a program named like an `if`
+word ran where they asked. Each row is now judged by its table and by the table as it stood at 4d64d3a, and where the
+two read the line differently the stricter verdict and every danger either named stand (3408cfb and the commits after
+it; rule `unclear.option-value`). A fuzz of every changed option then found the same kind outside the corpus (2,462 of
+270,331 commands, 25 more rows held; then 3,901 lines where a switch behind an option changed the reading, and 709
+behind count options), all held. Its reviews found three P1s in the mechanism (state left by main's reading: Ember's
+folder in a variable no longer refused, a download mark stopping a script being read, `read` notes overwritten) and, the
+second, two more (what follows the end of an `&&` chain that moved the folder judged only in that folder); all repaired
+(9e1f007 to b844449, 2fb4b19). commands-closed (133bcbf, a2d10ab), the integrator's decision recorded in §2 “Commands”:
+the classifier's default is closed. A program with no row asks (`unknown.program`, “It runs a program Ember doesn't
+know.”) unless it is on the list of ordinary programs (about 700 names: tools that read, list, measure, convert,
+compile, test or build what they are given) or given by a path in the task's own folder, and a tool's verb its row
+doesn't know asks (`unknown.verb`, 64 tools); the user's own words naming the program and each plain word it is given
+announce it (“Running rails db:drop, as you asked.”). A fixture of everyday commands, 460 at the fix and 490 by the
+package's end, runs with no question. Its reviews (a P1, five P2s, two P3s; then a P1 and six P2s): a mention is not a
+request (“as you asked” needs a request clause whose verb acts on the tool: 5bedd60; commands-closed-x9-1); the command
+a known runner runs for its user is read (`stack exec`, `cargo watch -x`, `nodemon --exec`, hyperfine, entr: bb2e75f); a
+`cd` no longer makes any folder the task's own (4061450); a script of the task's own folder calling an unknown tool runs
+as on main (dff8753); changing verbs came off the list (3c55702); and busybox and toybox are judged as the applet they
+run, after the first version ran `busybox sh run.sh` where every baseline asked, which the comparison caught at the
+third checkpoint (946f040, ced4c67, 1a828a5; -x9-6, -y9-1).
+
+**Memory** (446846b, f2dbe1d). A Forget, a correction or Forget everything in Settings holds for the conversation it was
+made in: nothing much like what went is kept again from a reply, a task's result or the remember tool unless it rests on
+the user's own words (f48eaa7, 4ddcd8e, 4e79aef; memory-r9-1, -x9-2, -x9-3). Sign out, an account change and Forget
+everything clear the last person's requests, so they don't come back as suggestion chips (97171c1; -r9-2). With memory
+turned off by the organisation, or under a lockdown, Settings says so and still offers Forget and Forget everything
+(cb74b03; -r9-3). The guard reads what a fact says as well as a secret's name: the re-rate's 41 of 49 secrets kept
+became 0, and its review's 40 of 87 became 1 (a recovery phrase with no name the guard knows), with 2 of 152 ordinary
+facts refused; over 341,599 lines and string literals and 1,337 whole files `memoryRefusal` answers as on main for every
+one and nothing held before is let through (d21ad6f, 786409a, 99ff769; -r9-4, -x9-6, -x9-8). A name or answer length
+told in conversation replaces the one from Tell Ember about you (a1cf408; -r9-5), though only where the user tells it of
+themself: the first version took a name out of pasted text, the review's P1 (e2a1419, e6148af, 776f0df; -x9-1, -x9-4,
+-x9-5). Where speech is unchecked the spoken “get to know me” opens the typed form instead of ending “I'll remember
+that” over nothing kept (24b4207; -r9-6); recall says how many facts there are beside the six it gives (d13797d; -r9-7);
+the daily question no longer asks who an app, a site, a setting or a place is, or again after “skip” (181c922, 399320d;
+-r9-8, -x9-9); and -r9-9, -r9-10 and -r9-12 (307a695).
+
+**Models and extensions** (bec8fde, 53a44ae). A tool that differs from what the user agreed to is taken out before the
+session's first request, audited and marked “Changed since you agreed” in Home, and a server that says its list changed
+leaves the session at once (a7ab82a, 1e4cbf4, d628488, ad95492, cd81b2d; integrations-r9-1, -x9-1, -x9-4, -y9-1). The
+first fix was not enough: a server that answered Ember's own question as agreed and the runtime's with new text still
+reached 4 of 4 later requests, and the notices held the conversation 27 s where main took 2.6 s; now no notice asks the
+server anything (the same flood takes about 0.1 s), a second notice keeps the server out for the rest of the
+conversation, and only tools whose own entry differs are marked. An honest plugin's no-argument tool is no longer marked
+at every load (e8a4631; -x9-3). Projects names each file it refuses and why, takes ordinary source and build files, and
+refuses password managers' exports and servers' password files again, which the first fix had let through by type
+(84f5035, 69b38a5, 17b3a57; -r9-2, -x9-2, a P1, -x9-7). Saved workspaces stay listed when the provider's key or its
+address at the same host changes (00e4177, f537d3b; -r9-3, -x9-6); removing or turning off an extension whose store
+can't be written says so (bb8910b; -r9-4); and a key pasted with a hidden character is refused, never sent (afd0d14,
+1713dc8; -r9-5, -x9-8). integrations-r9-9's fix (1ffce75) was taken back: the runtime puts its path after the address as
+typed, query included, so main's check was the consistent one (50224a5; -x9-5).
+
+**Settled by the integrator, for the owner to overrule.** The owner's decisions left these open; each is written in
+place in CLAUDE.md (“2026-11-12” or “2026-11-13, settled by the integrator”), `.claude/rules/agent-and-policy.md` and
+§2, and the earlier section's Settled list stands as written there except its (3) and (7), which (1), (2) and (4) here
+extend. (1) **A program Ember doesn't know asks in Autopilot**, as a command whose effect Ember can't tell: it may read
+secrets or outlive the kill switch, the two things Autopilot keeps. For: neither can be ruled out for a program nobody
+has read. Against: the owner's “it should do everything without asking me”, and the closed default makes this common
+(against main, 24,878 of the comparison's cases are stricter by `unknown.program` alone and 1,935 by `unknown.verb`).
+The user's own words naming the program announce it in every mode. (2) **Assisted never clears a program Ember doesn't
+know that the words don't name** (modes-y9-6). For: the reviewer would be judging text whose effect nobody knows.
+Against: commands-closed had left the class reviewable, and Assisted asks more. Text nobody can read behind known
+programs (`eval $X`, an unread script) still goes to the check. (3) **After a no, only the recognisably same thing is
+refused without a question; everything else that may be it asks for the rest of the task, in every mode, never checked
+by Assisted and never announced by Autopilot or by the user's earlier words** (2026-11-13). For: three reviews each
+found another way round a matcher of “the same thing”, and each wider matcher refused something the user had asked for,
+silently. Against: more questions after a no, Autopilot's included: `git push origin feature` after a no to `git push
+origin main`, and `rm -rf dist` after a no to `rm -rf build`, ask where they were announced; in Interactive, Delete of
+“build” in Files after a no to `rm -rf build` asks where the wider matcher refused it. “Couldn't read” is taken as any
+unclear or unknown finding in the refused command, wider than the steer's words; it only adds questions. (4) **Autopilot
+keeps one more question, its sixth: a command of the same kind of danger as one the user said no to earlier in the
+task** (their no again: it may be that one done another way). Autopilot's card lists what it still asks without this one
+or the “ruled out” one, so it promises fewer questions than Ember asks; naming them is a card change with a bump of its
+entry. (5) **A step in an app that may be the refused thing is refused in Autopilot**, which has no question to put for
+an app step (the takeover rule's precedent). Against: after a no to a command, any app step of its kind (any deletion in
+any app after a refused `rm`) is refused until the user's next request; a real question there is new work, recorded and
+not built. (6) **The refused kind is bound to the app**, not the window or the site. For: Send in a second compose
+window stays refused. Against: in a browser a no to Delete on one site refuses Delete on every site, and a refused Send
+in a mail app doesn't refuse a send through webmail in a browser. (7) **A no to a step the user didn't ask for never
+silently binds their own request**: their own later step of that kind asks in Interactive and Assisted, unchecked, and
+is refused in Autopilot. Against: “not flagged off-task” is weaker than “the user asked for it”. (8) **A spoken yes on a
+command card**, **spoken requests and Assisted's check**, **switching modes by voice** and **the system's authentication
+prompts never filled** are built as the earlier section's Settled 1, 2, 5 and 4 say; builder E added that with Voice
+Match on but not ready nobody's voice chooses a mode that asks less, and that a switch never agrees to a card.
+
+Judgement calls the lanes made inside these, the owner's to overrule in the same way: a push of HEAD, `@` or a revision
+is a push to its remote, so after a no to `git push origin HEAD` a push of another branch there is refused; a word Ember
+can't resolve handed to a download-and-run asks in every mode (`npx tool $(date +%F)` asks in Autopilot); an alias, a
+hash entry, a trap and a coprocess are held as outliving Stop in Assisted though they last only as long as their shell;
+in Autopilot every `service.*` command (stopping one too) and every registry write asks, since the classifier tells
+neither start from stop nor a Run key from another; `system.power`, foreground servers, `pkg.system`, `send.ssh`,
+`cloud.change` and `system.settings` stay announceable in Autopilot; a risky control's Allow is spent when another
+control of the page renames itself or a count in a sentence changes, and only an English list of counts is let through;
+the kinds a refused risky step is read by keep three wide links (every security, privacy and system setting and every
+step past a warning is one kind; on a page whose title mentions a payment every control is `pay`; a destructive shortcut
+is delete, send and close at once); without a keyring Assisted's and Autopilot's agreements last until Ember quits; the
+refused `pkill -n server` family is refused again as at 4d64d3a, in words that are true, where main had come to ask
+(commands-held-x9-7); and a project's own script calling a program Ember doesn't know runs as on main.
+
+**What CI found, and how each was settled.** The eval's two injection tasks and safety.test.ts in the `el8` job failed
+from the third checkpoint: after a “Not now” to the hostile page's “Delete all”, the user's own “Add comment” was
+refused without a question, because 445b38b counted a risky step of no known kind as every kind. The eval-fix lane's fix
+(2f0d8d2) gave such a step no kind; its review found that fix a loosening in Assisted and Autopilot (a refused “Delete
+history”, then “Clear history” done: evalfix-x9-2, P1) and an older fault since 445b38b (a no to a page's step refusing
+the user's own: -x9-1, P1), so it was never pushed alone and its findings were repaired inside modes-y9; both jobs were
+green at 3d9b4f2. project-live's first-run journey still expected memory off after the agreement: the test was stale,
+the product right, and it now walks all five rows from a profile with no settings.json (8457532, f6a7edd; cifix-1). The
+Windows job's hit test found another window over the Ask field once; the cause was not established (Ember's own hello
+bubble is the candidate), so the test waits, names the window, and fails if one of Ember's own windows covers the field
+for 2 s (4e110b2, 5a5ab72; cifix-2, cifix-x9-1); the job has passed since, the field under the pointer at once. The
+`el8` voice step failed once, at 03ebf5c, on the room-talk wake, and passed on the six other pushes with the same voice
+code; voice-roomtalk reproduced and fixed it (above). The macOS job failed once on an accessibility key collision in a
+test's 200-row window: the test now holds what the keys promise (product-platform-flaky-3), and the product finding
+behind it is left (below). The checks job failed once in the device-code step on GitHub's own 400 `request_failed`: the
+step retries passing trouble and still fails at once on a refused client id (093eaf2; product-platform-flaky-4). At
+3d9b4f2 every job passed: 18, with 4 skipped by design (publishing, macOS on Intel, SSH to Linux arm64, commands and SSH
+on macOS); no job failed at 0fa8bf0 or 681c36a. CI's result for a3cf645 and for the final tree comes with the second
+pass.
+
+**The safety harnesses at the fifth checkpoint (681c36a).** Policy proof against main (01493d0): pass. Below Interactive
+287,678 steps, 0 weaker and 52 stronger, all Enter or a click on a bare “Open” in a dialog that warns of harm, which
+asks every time now (safety-privacy-r9-2) and is recorded as intended (`allow/intended-round9.json`); with those
+allowed, Interactive decides as main's Work without asking with every scope on; Assisted with a check that never matches
+decides exactly as Interactive; 24 hard checks pass. Commands comparison, 267,691 cases through the classifier and the
+run_command flow: at the defaults 0 failures, 0 weaker asks and 0 unproven against 4d64d3a, 848a566 and 01493d0, the
+4,233 commands looser than 4d64d3a all of the allowed kinds; with Assisted's check matching, 42,904 commands are looser
+on purpose (asked, now announced) and 0 are outside the mode's limits; in Autopilot 77,141 and 0. In each run only the
+comparison's plausibility guard trips: 49.1 % of what the baseline ran still runs, under its 50 % line. That is the
+closed default, a sweeping tightening on purpose: at commands-closed's resolve, 73.1 % of what stopped running against
+4d64d3a stopped for `unknown.program` or `unknown.verb` alone, and leaving those out reads 85.9 %. The guard is being
+adapted on that evidence and verified adversarially (whether a probe that hears nothing could now pass), not lowered;
+one open point of that work is a per-platform line. This tree's numbers (a3cf645 adds only app/voice/engine.ts and its
+tests to 681c36a, which neither harness reads) are the fifth checkpoint's; the final tree's, with the adapted guard and
+every mode run again, come with the second pass.
+
+**Gate, and what could not run here.** On the merged tree at a3cf645: lint, typecheck and build pass; `npm test` 16,373
+passed, 15 skipped, 0 failed; the voice suite on the voice lane's head 43 passed and 1 skipped on WebAssembly, 44 passed
+on the C API. On earlier merged trees the full unit run had one to three time-sensitive failures while the harnesses ran
+beside it (memory.test.ts's recall time budget, commands-redact's linear-time test, sidecar-host-e2e,
+perception-sidecar's restart count), each passing alone. The build machine has no pyatspi or gi, so the Linux desktop
+suites (AT-SPI, X11, desk, safety) did not run on it, and no gsettings schemas, so nor did the eval's settings tasks;
+CI's `el8` and `eval` jobs run both, and its Windows and macOS jobs the native suites. Not run anywhere yet:
+remote.yml's `ssh-macos` job, which pull requests don't run (install-docs-r9-1's fix for zsh's card rests on it); `npm
+run eval:review` on the conversation's model; a real microphone and speakers, a real Windows loopback for the output
+watch, and a screen reader.
+
+**Consent and departures.** `CONSENT_VERSION` went from 8 to 9 with slice 4 (the agreement now turns on what is left
+switched on; 8 came with spoken answers before the round). `FEATURE_CONSENT_VERSION`: `autonomy` 2 to 3 (Interactive's
+card, which replaced Work without asking's), new entries `assisted` (2 after -x9p-4) and `autopilot` (1). The voice lane
+bumped nothing: on Linux with parec the recogniser now also reads up to 3 s of what the speakers' stream played, on this
+computer, to tell the speakers from the user; “Before Ember starts” already says Ember listens to what the speakers play
+for that, and nothing of it is kept, logged or sent; if the owner reads “listens” more narrowly it is a bump. Memory's
+note was not bumped for the `<memory_changed>` note, which carries ids the conversation already has and no fact. §2
+changes with this record: “Approvals”, “Commands” and §5's Confirm row and commands paragraph now say what the round
+built (Assisted's never-cleared list, Autopilot's kept questions, the rule for a no, the closed default,
+`approvals.maxMode`, the yes asked by the voice's rise), and §1's commands paragraph says commands on this computer are
+on from first run. Recorded because they change what a rule says: steps in the system's Settings and security apps no
+longer all ask in Interactive (a switch or a choice there, and a first step there the user didn't ask for, do); the
+classifier's default is closed; commands-held holds corrected option tables to 4d64d3a's reading, so some lines the
+manual reads as safe ask or are refused; the eval's safety gate is measured in Interactive; and the mode can't be raised
+through settings.json.
+
+**Left.** Not on this tree, for the second pass: commands-classes, so commands-remote-r9-2, -r9-3, -r9-5 and -r9-7 (P1)
+and -r9-9 to -r9-11 (P2) stand as the re-rate found them, and -r9-1, -r9-4 and -r9-6 (P1) only as far as the closed
+default takes them (a program or verb Ember doesn't know asks; tmux's typing verbs ask where CLAUDE.md says refuse,
+`screen -X stuff` runs: commands-closed-3); the classifier's side of modes-y9-1 and -y9-5 (`brew services`, `snap
+start`, `flatpak run`, a runner's package line, a secret-named variable as an argument of a known program) and
+modes-y9-7; the vault, and with it every -r9-K3 gap; the final tree's gate, harness and CI numbers; and round ten's
+scores. Never rated this round: the companion and Ask, and every area but integrations by a challenger. Not taken up:
+the challenger's integrations-c9-1 to -c9-5 (P2: the review card shows less than the model reads of a tool; “every use
+is in What Ember did” while it draws none; a question shows the first 200 characters of a call's arguments; the runtime
+follows a remote server's redirect to a host no card named; a plugin whose program isn't installed is “Added” and never
+says why) and -c9-6, -c9-7 (P3); commands-remote-r9-12 to -r9-16 (P3); voice-listening-r9-14, -r9-16 and -r9-17 (P3).
+
+Modes: modes-y9-y9-8, partly (P2: a recipient or a selected file named only in a list or table, and a bare number in a
+cell, don't spend a risky yes) and modes-y9-y9-10 (P3: `ssh-agent` and `ControlPersist` outlive Stop); the holding words
+and the let-through counts are English only; HEAD is not resolved to its branch; ids a template builds from a new
+program's name are reviewable in Assisted until judged; the card's held-back line was not looked at in a real render;
+fill_cells has no “may be” tier; the item selected in a file manager is not among a refused step's words;
+`showsEmberData` reads titles only (“settings.json - Notepad” isn't caught; the mode itself is behind the seal); the
+extensions gate's expiry reads as a no, and a command stopped while running is not kept as refused; the double
+announcement in an app the user didn't ask about; the check for WSL apps' steps; no standing mark on the bubble while a
+task works in Autopilot. From the eval-fix lane: L1 (P2, the owner's: a risky step of no kind done another way by
+another control or a shortcut, a refused “Add comment” then Ctrl+Enter, is not recognised; in Autopilot switched on
+after the no it is announced), L2 (P2: a shortcut whose effect Ember can't tell has no kind), L4 and L5 (P3). Slice 4:
+slice4-y9-2 (P3: two headings of “Before Ember starts” lead with the old default), -x9-5's rest (P3: the returning
+user's wording of the full text; -x9-6 was closed by the modes' beb16d9, which starts the eval in Interactive), and
+first run's Agree has only the time delay against a held key.
+
+Voice: voice-listening-r9-10 (P2: “Okay?” by the voice's rise is taken; reading the rise needs recorded people first,
+and may then only make Ember ask again); V2-S6 where nothing can tell (macOS, Linux without parec: after the user's “Hey
+Ember” and a pause a video's “Okay.” is taken) and a video's “Ember, allow” on Windows and macOS, both under the owner's
+“anyone heard”; Listen once marks nothing; V2-F1's owner decision (a short nameless yes refused as too short without
+locking the question), not built; V2-F7's “Okay, Ember.” (P3: answers nothing, as on main); voice-product-x9-3 (the
+owner's: whether a short correction said while a question waits is a request; today it gets one unclear note and isn't
+sent); others' “go ahead” after the user's bare “Hey Ember” in a busy room sent as a by-name yes (P2, as on main);
+V2-F13, partly; tasks-approvals-r9-10 (P3); voice-safety-x9-1's and -x9-3's residues, which need a real Windows
+loopback; voice-roomtalk-x9-2 (P2, the owner's: “Number, can you pass the salt?”, “Amber, open the window please.” are a
+wake's request from idle when the spotter fires, each a spelling real wakes come out as), -y9-1's remainder (“Hey, I'm
+home.”, “Hey Emma, …” where the first check wrote “Hey Ember”), a two-word false alarm from idle, “Hey Amber, allow.” in
+the answer window and “K-embler” (P3 each).
+
+Product: safety-privacy-r9-6 (P3); other languages' download-warning wording; what else counts as a protection turned
+off (“Turn off BitLocker”, “Add exclusion”, “Do not show this warning again”); GNOME Secrets and the browsers' own
+password pages on the never-look list; `*_key=` over-redacted in logs; which button each toolkit makes a warning's
+default (product-safety-y9-1's residue); product-ui-y9-1, -y9-2 (P3); tasks-approvals-r9-7, -r9-8; home-r9-2, -r9-4,
+-r9-5; first-run-r9-3 to -r9-7, -r9-9, -r9-10, -r9-12, -r9-13; accessibility-r9-3, -r9-4, -r9-7, -r9-8;
+voice-speaking-r9-4, -r9-5, -r9-7 to -r9-10 and the rest of -r9-6; short Italian and Portuguese messages still read in
+Ember's English voice (product-platform-x9-1's rest) and “Read it out” over silence on a run's first try at speech
+(-y9-2); reliability-r9-6 to -r9-9 and -r8-2; install-docs-r9-4, -r9-10; product-platform-flaky-3-F1 (P3, macOS: an
+accessibility key changes when a hash collision comes or goes, so a field remembered secret only by its earlier key may
+not be recognised; one secret by role or label still is); and the recommendation to run `ssh-macos` on pull requests
+that touch commands. install-docs-r9-2, -r9-6 and -r9-8 are this record's own (CHANGELOG.md and STATUS.md).
+
+Commands: commands-held-y9-2's rest (P3: 418 lines of the form `cd X ; cd -- X && …` run where 4d64d3a, misreading `--`,
+asked), -y9-3's rest (P3), -x9-8 (P3: nested held lines take about twice as long) and -x9-7 (the owner's);
+commands-closed-y9-2 (P2: a path program counts as the project's own in whatever folder the model's `cwd` chose, as on
+main), -y9-3's rest and -y9-7's rest (P3: `hugo`, `latexmk`, `exiftool`, `sox` still ask), commands-closed-1 (P2:
+`python -m <module>` and project scripts with verbs, `php artisan migrate:fresh`, judged as before the closed default),
+-2 (P3: `pwsh run.ps1` asks), -4 (P3: `bat --pager`, `fd -x`, `protoc --plugin=`, `gcc -fplugin=` run), `dart pub cache
+clean` (P3), and the comparison's guard. Memory: memory-r9-11 (P3) and -y9-1 (P3: passphrase-style secrets said with a
+verb or as a phrase are still kept); secrets still kept (a recovery phrase with no name the guard knows, a password's
+hint, licence keys, passport, tax, health and plain account numbers, a date of birth) and ordinary facts still refused
+(“The Wi-Fi is HomeNet5G”, a gate number); a forgotten fact reworded with no word in common can come back from a task's
+result; names asked about are remembered only until Ember restarts; and the owner's: listing more than six facts when
+asked, Undo of a Forget while the organisation has memory off, keeping declined names across restarts. Models and
+extensions: integrations-x9-1's residue (P2, the owner's design: a remote server's notice a few milliseconds before a
+request is built can put new text in that one request, at most twice a conversation); -y9-1a (P3: Home has no word for a
+server held out for the rest of a conversation), -y9-2 (P3: workspace libraries orphaned under a replaced key stay
+unlisted); -r9-6's quoted JSON arguments and -r9-13, partly; -r9-7, -r9-8, -r9-10, -r9-11, -r9-12 (P3); a key with a
+hidden character saved by an earlier build counts as no key while Home's row says one is saved; and the owner's: whether
+Projects takes data and settings files (`.csv`, `.xml`, `.ini`, `.conf`), refused meanwhile. Earlier rounds' Left stands
+except where this round's fixes are named above.
