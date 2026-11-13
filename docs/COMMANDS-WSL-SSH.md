@@ -628,9 +628,15 @@ command's output tried to steer. The card's lines say each of those, and the mod
 Never reviewed, always asked: a command that would read or print passwords, keys or other secrets (so none reaches a
 model); a command that would keep running after Stop (a background job, `nohup`, `setsid`, a detached `screen` or
 `tmux` session, `docker run -d`, a process manager, a scheduled job, a program it opens, a service started, enabled,
-stopped or loaded, a login or startup entry, a change to the Windows registry), so that Stop stops everything; every command when your organisation, or you (**Ask before every command**), asked for that; a task
+stopped or loaded, a login or startup entry, a change to the Windows registry, a git hook or a git setting that
+names a program, a shell's start-up file, a program put on the command path, a tunnel), so that Stop stops
+everything; a downloaded program that is handed a key, credentials or a token (`npx tool ~/.ssh/id_rsa`); a program,
+or a tool's command, Ember doesn't know, since nobody can tell what it does; every command when your organisation, or
+you (**Ask before every command**), asked for that; a task
 without your own words; and a command, a request or a list of findings too long to show whole (a command over 4,000
-characters). A command you said no to is refused without being reviewed (§2.5). On a computer reached over SSH, that
+characters). A command you said no to is refused without being reviewed, and one that may be it, where Ember can't
+tell, asks without being reviewed (§2.5). A loop or inline code whose programs Ember knows is still reviewed: that is
+the one place Assisted asks less than Autopilot. On a computer reached over SSH, that
 computer's own check still asks about what it finds, as before. Choose Interactive to have every such command ask;
 your organisation can turn the check off (`features.aiReview: false`).
 
@@ -647,14 +653,21 @@ countdown with **Stop**, as in §2.5. Nothing is sent to a model to decide this.
 
 It still asks, with the card of §2.4, before:
 
-- a command that would read or print passwords, keys or other secrets, so that none reaches the model;
+- a command that would read or print passwords, keys or other secrets, so that none reaches the model; a downloaded
+  program that is handed one counts (`npx tool ~/.ssh/id_rsa`, `npx tool --token=$GITHUB_TOKEN`: the card says "Gives
+  a password, key or other secret to code it downloads.");
 - a command that would keep running after Stop (a background job, `nohup`, `setsid`, a detached `screen` or `tmux`
   session, `docker run -d`, a process manager, a scheduled job, a program it opens, a service started, enabled,
-  stopped or loaded, a login or startup entry, a change to the Windows registry), so that Stop stops everything;
+  stopped or loaded, a login or startup entry, a change to the Windows registry), or that plants code to run later (a
+  git hook, a git setting that names a program, a shell's start-up file, a program put on the command path, a
+  tunnel), so that Stop stops everything;
 - a command Ember can't tell the effect of (a loop, a line behind a `[[ … ]]` test, code written inline, `eval`,
   text handed to `xargs` that Ember can't see, a program that waits for typing), since it may be either of those;
 - a command your own words for the task rule out ("commit my work but don't push", "delete everything except
-  build", "push it, but without force"): that is your no, said in advance, and the card says "You didn't ask for this.";
+  build", "push it, but without force", "leave the build folder alone", "hold off on publishing"): that is your no,
+  said in advance, and the card says "You didn't ask for this.";
+- a command that may be one you said no to earlier in the task, where Ember can't tell (one that doesn't say what it
+  acts on, a loop, inline code): the card says "You said no to something like this earlier in this task.";
 - every command where your organisation asks for that, where you turned on **Ask before every command** for that
   computer, in a Podman distro, and in a project's chosen command folder;
 - turning commands on for a computer the first time (§2.1).

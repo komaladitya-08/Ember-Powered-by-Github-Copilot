@@ -20,7 +20,7 @@ import type { Confirmer, Question } from "../agent/confirm";
 import type { Presenter } from "../agent/presenter";
 import type { AuditEntry } from "../policy/audit";
 import type { Agreement, ReadSource } from "../policy/policy";
-import { commandActs, type CommandAsked, type Refusals } from "../policy/refusals";
+import { commandActs, commandNamed, type CommandAsked, type Refusals } from "../policy/refusals";
 import { placeMentions, placesNamed } from "../targets/resolve";
 import type { TargetBinding } from "../targets/types";
 import type { ConsentPanel } from "../../shared/consent";
@@ -636,6 +636,10 @@ export function heldDecision(d: CommandDecision, r: AskReasons, kind: TargetBind
   };
 }
 
+/** The card's line, and the rule, of a command that may be one the user said no to earlier in the task (Refusals.commandLike). */
+export const LIKE_REFUSED_LINE = "You said no to something like this earlier in this task.";
+export const LIKE_REFUSED_RULE = "refused-like";
+
 /** Words that turn a part of a request round: "do not push", "don't delete src", "never force", "everything except build". */
 const SAYS_NOT = /(^|[^\p{L}\p{N}])(do\s+not|don['’]?t|does\s+not|doesn['’]?t|never|not|without|except|no|nothing|avoid)(?=$|[^\p{L}\p{N}])/giu;
 
@@ -944,7 +948,8 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
   // whatever the mode would do with it now (CLAUDE.md "After a deny or “Not now”…"; commands-remote-r9-8). Ember's own
   // refusal (tampering, the organisation's "off") is said as itself.
   const sha256 = commandSha256(target, shell, cwd, a.command);
-  const about: CommandAsked = { sha256, cwd, command: a.command, acts: commandActs(standingFindings(cls.findings, paths), facts.os) };
+  const stand = standingFindings(cls.findings, paths);
+  const about: CommandAsked = { sha256, cwd, command: a.command, acts: commandActs(stand, facts.os), named: commandNamed(stand, cls.commands), os: facts.os, home };
   const stood = d.verdict === "refuse" ? null : ctx.refusals?.command(about) ?? null;
   if (stood) {
     endPending();
@@ -956,9 +961,20 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
     ctx.log.info("commands.decided", { task, target, verdict: "refuse", classes: d.classes, chars: a.command.length, stood });
     return denied(stood === "refused" ? REFUSED_BEFORE : STILL_UNANSWERED);
   }
+  // A command that may be something the user said no to in this task, though Ember can't tell: one that names nothing
+  // it acts on, of the refused command's class, or one Ember can't read at all; and a deletion or a push by command
+  // after a no to that kind of step in an app. It asks, in every mode: never announced (by the user's earlier words,
+  // Interactive or Autopilot) and never shown to Assisted's check. The user's yes is theirs to give (modes-y9-9, y9-2).
+  const like = d.verdict !== "refuse" && d.verdict !== "run" && (ctx.refusals?.commandLike(about) ?? false);
+  if (like) {
+    d = {
+      ...d, verdict: "ask", requested: undefined, rules: [...new Set([...d.rules, LIKE_REFUSED_RULE])], says: [LIKE_REFUSED_LINE, ...d.says.filter(l => l !== LIKE_REFUSED_LINE)],
+      reason: d.verdict === "ask" ? d.reason : "It asks first: the user said no to something like this earlier in this task.", armMs: Math.max(d.armMs, 1500),
+    };
+  }
   // "Work without asking": an ordinary command that asks only for the text it carries announces instead (its Stop
   // countdown and the card still show where the text came from).
-  const autonomous = autonomousCommand(d, { scopes: ctx.autonomy?.() ?? null, words, tainted: tainted || !!ctx.state.outputTainted, carried, elsewhere: others.length > 0 || places.length > 0, kind: binding.kind });
+  const autonomous = like ? null : autonomousCommand(d, { scopes: ctx.autonomy?.() ?? null, words, tainted: tainted || !!ctx.state.outputTainted, carried, elsewhere: others.length > 0 || places.length > 0, kind: binding.kind });
   if (autonomous) d = autonomous;
   // Autopilot: a command that still asks is announced with its Stop countdown instead, whatever the task was held to
   // asking for (steered, off-task, the user said no: the refused command itself was refused above), as an
@@ -968,7 +984,7 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
   // What a wrapper may hide where the classifier read its options wrongly: judged apart, to keep a question only, for
   // Autopilot and for Assisted's check alike (one predicate reads both: autopilot.ts keptQuestion).
   const hidden = d.verdict === "ask" && (ctx.autopilot?.() || ctx.review) ? behindWrappers(cls, text => j.classifyCommand(text, shell, cctx).findings) : [];
-  if (ctx.autopilot?.() && d.verdict === "ask") {
+  if (ctx.autopilot?.() && d.verdict === "ask" && !like) {
     // (Their own words against it count wherever they were heard: where Ember can't tell the user from its speakers too.)
     const standing = standingFindings(cls.findings, paths);
     // A line judged as its written-out form (a `[[ … ]]` test read as `[ … ]`: unroll.ts) never announces, here either:
@@ -982,7 +998,7 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
   // there); one it finds in those words runs with its announcement (Stop countdown) instead. A command that would read
   // or print secrets or keep running after Stop, and what the organisation's or the user's own "ask every command"
   // requires, are never reviewed (review.ts). The task's bubble says it is checking; a Stop doesn't wait for the answer.
-  if (ctx.review && d.verdict === "ask") {
+  if (ctx.review && d.verdict === "ask" && !like) {
     const checkWords = ctx.task.checkWords?.() ?? words;
     const blocked = notReviewable(d, { words: checkWords, mode, askEvery: cap.askEvery, userAskEvery, command: a.command, findings: [...cls.findings, ...hidden] });
     if (blocked === null) {

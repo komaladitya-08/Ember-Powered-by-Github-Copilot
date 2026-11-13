@@ -624,15 +624,24 @@ told the question went unanswered, so it stops there and says so instead of tryi
 back to asking for it, and what a **Not now** ends stays as it was.
 What you said no to stays refused for the rest of that task, whatever the mode: the same step sent again (the same
 control pressed another way, the same field typed into, a cell of a batch you turned down), a risky step that does the
-same kind of thing in any window (after a no to Send, its shortcut, "Send Now" in the menu or Send in another compose
-window; after a no to "Move to Trash", the Delete key or "Remove"; the kinds are sending, deleting or discarding,
-paying, installing, signing out, overwriting, resetting, closing, leaving, blocking and security, read in English and in
-the other languages Ember reads risky words in; a risky step of none of these kinds, "Add comment" say, is only
-itself, so after a no to something else it still asks, is checked or is announced as the mode says), or the same command or one
-that does the same to the same thing (`find build -delete` after `rm -rf build`), is refused without another question,
-never checked by Assisted and never announced, and "What Ember did" says "You said no to this step earlier in this
-task." A question nobody answered isn't asked a second time until you next say something to that task. To have Ember
-do it after all, ask again: a new request is a new task.
+same kind of thing in any window of that app (after a no to Send, its shortcut, "Send Now" in the menu or Send in
+another compose window; after a no to "Move to Trash", the Delete key or "Remove"; after a no to "Delete history",
+"Clear history"; the kinds are sending, deleting, discarding, emptying or clearing, paying, installing, signing out,
+overwriting, resetting, closing, leaving, blocking and security, read in English and in the other languages Ember
+reads risky words in; a risky step of none of these kinds, "Add comment" say, is only itself, so after a no to
+something else it still asks, is checked or is announced as the mode says), or the same command or one that does the
+same to the same thing however it names it (`find build -delete`, `mv build /tmp/x` or inline code that removes
+`build` after `rm -rf build`), is refused without another question, never checked by Assisted and never announced, and
+"What Ember did" says "You said no to this step earlier in this task." The rule is the same danger to the same thing,
+not the same kind of thing anywhere: a no to Delete in Files says nothing of Delete in Mail, a no to pushing `main`
+nothing of pushing `feature`, and a no to a step a page came up with nothing of the step you asked for yourself. A no
+also crosses between commands and apps: after a no to `rm -rf build`, deleting "build" in Files is refused, and after
+a no to deleting report.pdf in Files, `rm ~/report.pdf` is. Where Ember can't tell whether something is what you
+refused (a command that doesn't say what it acts on or that Ember can't read, a deletion in an app after a no to a
+command that deletes, a step with no kind of its own after a no to another), it is never checked or announced: it
+asks, the command's card saying "You said no to something like this earlier in this task."; in Autopilot, which asks
+nothing about steps in apps, such a step is refused. A question nobody answered isn't asked a second time until you
+next say something to that task. To have Ember do it after all, ask again: a new request is a new task.
 **The mode by voice** (app/main/agent/autonomy-intent.ts, answered by Ember itself, never by a tool of the model's).
 Say a mode's name, “Ember, switch to Autopilot”, “Assisted mode”, “go back to Interactive” or “turn Autopilot off”, to
 change it. A mode that asks less is chosen only by voice, by the rule for a spoken yes: from anyone heard while
