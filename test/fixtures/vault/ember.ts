@@ -59,7 +59,7 @@ export async function leakyEmber(o: { dir: string; client: unknown; os?: OS; spe
   const app = leakyApp({ stderr: line => log.child("sidecar").debug("sidecar.stderr", { line }) });
   const real = new Perception({
     sidecar: app.sidecar as never, x11: app.x11 as never, neverLook: () => [], screenBounds: () => ({ x: 0, y: 0, width: 1000, height: 1000 }), log: log.child("perception"), ownPid: 999,
-    holdsVaultValue: text => redactor.holds(text), vaultShown: () => redactor.shown,
+    holdsVaultValue: text => redactor.holds(text), vaultShown: () => redactor.shown, vaultFilled: () => redactor.active,
   });
   /** Every picture Perception handed out, with the elements it read for it. */
   const pictures: { capture: Capture | null; text: string }[] = [];

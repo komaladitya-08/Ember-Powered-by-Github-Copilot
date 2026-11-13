@@ -40,7 +40,7 @@ function desktop(o: { title?: string; nodes: AxNode[]; answer?: Partial<ReadWind
   } as unknown as X11;
   const r = o.redactor === undefined ? new VaultRedactor() : o.redactor;
   const perception = new Perception({ sidecar, x11, neverLook: () => [], screenBounds: () => ({ x: 0, y: 0, width: 1000, height: 1000 }), log: quiet, ownPid: 999,
-    ...(r ? { holdsVaultValue: (t: string) => r.holds(t), vaultShown: () => r.shown } : {}) });
+    ...(r ? { holdsVaultValue: (t: string) => r.holds(t), vaultShown: () => r.shown, vaultFilled: () => r.active } : {}) });
   return { perception, marked, redactor: r };
 }
 
@@ -136,6 +136,23 @@ describe("a picture after a fill from the vault (vault-3)", () => {
     for (const [x, y] of [[250, 115], [250, 215], [100, 15]]) expect(await pixel(p.capture!.data, x, y), `${x},${y}`).toBeLessThan(40);
     // What says nothing of it shows as before.
     expect(await pixel(p.capture!.data, 600, 500)).toBeGreaterThan(150);
+  });
+
+  it("blacks out a line the helper withheld for repeating a filled field's value, whose words never reach Ember (vault-3, GTK's echo in CI's el8 job)", async () => {
+    // The helper finds the user name in the filled field (secret from the fill on) and withholds the GTK label that
+    // repeats it, so Perception gets no words to recognise: the label's place must still be black.
+    const ECHOED: AxNode = { id: 5, parent: null, depth: 1, role: "label", name: "", withheld: true, states: ["showing"], bounds: at(400) };
+    const d = desktop({ nodes: [OTHER, ECHOED] });
+    const before = await d.perception.perceive({ image: true, scope: "window", target: { pid: 42 } });
+    expect(await pixel(before.capture!.data, 250, 415)).toBeGreaterThan(150);
+    expect(before.nodes.find(n => n.id === 5)?.secret).toBeUndefined();
+    d.redactor!.note("password", "Tr0ub4dor-CANARY-3");
+    const p = await d.perception.perceive({ image: true, scope: "window", target: { pid: 42 } });
+    expect(p.nodes.find(n => n.id === 5)).toMatchObject({ name: "", withheld: true, secret: true });
+    expect(await pixel(p.capture!.data, 250, 415)).toBeLessThan(40);
+    // What wasn't withheld shows as before, and a label isn't told to the helper as a secret field.
+    expect(await pixel(p.capture!.data, 250, 315)).toBeGreaterThan(150);
+    expect(d.marked).toEqual([]);
   });
 
   it("takes none of a window whose own title says the value", async () => {
