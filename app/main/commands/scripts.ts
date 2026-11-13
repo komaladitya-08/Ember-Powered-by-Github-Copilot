@@ -406,8 +406,12 @@ export async function judgeScripts(cls: Classification, io: ScriptIo | null, cla
       for (const p of wanted) { const r = env.paths.get(p)?.real ?? null; if (r !== null && r !== p) real.set(p, r); }
       if (real.size) got = classify(text, shell, { ...sctx, real });
       refuse ??= got.refuse;
+      // A program Ember doesn't know, in a script of the task's own folder that the task didn't write: the project's
+      // tooling (`hugo`, `sphinx-build` in build.sh), judged as before the closed default (commands-closed-x9-4).
+      const projectScript = ref.project === true && !taskWrote(ref.path, env.written, env.downloaded, cmp) && !(ref.real !== undefined && taskWrote(ref.real, env.written, env.downloaded, cmp));
       for (const f of got.findings) {
         if (readThrough(f, got, shell)) continue;
+        if (projectScript && f.cls === "unknown") continue;
         const says = unreadFinding(f) ? unreadPart(name, f.says) : `In ${name}: ${f.says}`;
         const inFolder = f.inFolder ? { inFolder: { ...f.inFolder, says: `In ${name}: ${f.inFolder.says}` } } : {};
         if (!extra.some(g => g.rule === f.rule && g.says === says)) extra.push({ ...f, says, widening: [...f.widening, "in-script", scriptTag(name)], ...inFolder });
@@ -418,7 +422,11 @@ export async function judgeScripts(cls: Classification, io: ScriptIo | null, cla
       inner.push(its);
       for (const p of its.writes) writes.add(p);
       if (its.anywhere) anywhere = true;
-      for (const next of x.scripts ?? []) queue.push({ ref: next, depth: depth + 1 });
+      // A script inside a script is the project's only when both are.
+      for (const next of x.scripts ?? []) {
+        const { project: _project, ...rest } = next;
+        queue.push({ ref: next.project && ref.project ? next : rest, depth: depth + 1 });
+      }
     }
   }
   // A script another script of this command writes (`sh a.sh && sh b.sh` with a.sh writing b.sh), or one inside a script

@@ -191,7 +191,7 @@ interface Announcement {
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 /** The danger classes a card may carry (anything else: not a card Ember made). */
-const DANGER_CLASSES: readonly DangerClass[] = ["destroy", "publish", "remote-delete", "secret", "system", "escape", "unclear"];
+const DANGER_CLASSES: readonly DangerClass[] = ["destroy", "publish", "remote-delete", "secret", "system", "escape", "unclear", "unknown"];
 const isRunId = (v: unknown): v is string => typeof v === "string" && /^[0-9a-f]{16}$/.test(v);
 const isSha = (v: unknown): v is string => typeof v === "string" && /^[0-9a-f]{64}$/.test(v);
 const isN = (v: unknown): v is number => typeof v === "number" && Number.isSafeInteger(v) && v >= 0;

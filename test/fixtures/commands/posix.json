@@ -1103,7 +1103,8 @@
   },
   {
    "cmd": "nohup-free-name --flag",
-   "verdict": "run"
+   "verdict": "announce",
+   "words": "run nohup-free-name"
   },
   {
    "cmd": "rm notes.txt",
@@ -11999,45 +12000,55 @@
   },
   {
    "cmd": "mise trust",
-   "verdict": "run"
+   "verdict": "announce",
+   "words": "run mise trust"
   },
   {
    "cmd": "mise trust .mise.toml",
-   "verdict": "run"
+   "verdict": "announce",
+   "words": "run mise trust"
   },
   {
    "cmd": "somecli trust list",
-   "verdict": "run"
+   "verdict": "announce",
+   "words": "run somecli trust list"
   },
   {
    "cmd": "foo bazelisk",
-   "verdict": "run"
+   "verdict": "announce",
+   "words": "run foo bazelisk"
   },
   {
    "cmd": "foo systemsetup",
-   "verdict": "run"
+   "verdict": "announce",
+   "words": "run foo systemsetup"
   },
   {
    "cmd": "foo plutil",
-   "verdict": "run"
+   "verdict": "announce",
+   "words": "run foo plutil"
   },
   {
    "cmd": "foo update-ca-trust",
-   "verdict": "run"
+   "verdict": "announce",
+   "words": "run foo update-ca-trust"
   },
   {
    "cmd": "foo update-ca-certificates",
-   "verdict": "run"
+   "verdict": "announce",
+   "words": "run foo update-ca-certificates"
   },
   {
    "cmd": "mytool plistbuddy",
-   "verdict": "run"
+   "verdict": "announce",
+   "words": "run mytool plistbuddy"
   },
   {
    "cmd": "foo PlistBuddy",
-   "verdict": "run",
+   "verdict": "announce",
    "context": "darwin",
-   "shell": "zsh"
+   "shell": "zsh",
+   "words": "run foo PlistBuddy"
   },
   {
    "cmd": "mise exec -- rm -rf build",
@@ -13295,15 +13306,18 @@
   },
   {
    "cmd": "foo sponge",
-   "verdict": "run"
+   "verdict": "announce",
+   "words": "run foo sponge"
   },
   {
    "cmd": "foo unrar",
-   "verdict": "run"
+   "verdict": "announce",
+   "words": "run foo unrar"
   },
   {
    "cmd": "foo dpkg-deb",
-   "verdict": "run"
+   "verdict": "announce",
+   "words": "run foo dpkg-deb"
   },
   {
    "cmd": "nm -o /usr/lib/libc.so.6",
@@ -14996,11 +15010,13 @@
   },
   {
    "cmd": "foo caddy",
-   "verdict": "run"
+   "verdict": "announce",
+   "words": "run foo caddy"
   },
   {
    "cmd": "mise use ngrok",
-   "verdict": "run"
+   "verdict": "announce",
+   "words": "run mise use ngrok"
   },
   {
    "cmd": "gdb -batch --ex 'shell id' a.out",
@@ -18454,11 +18470,13 @@
   },
   {
    "cmd": "mytool ../other",
-   "verdict": "run"
+   "verdict": "announce",
+   "words": "run mytool"
   },
   {
    "cmd": "mytool --dir=~",
-   "verdict": "run"
+   "verdict": "announce",
+   "words": "run mytool"
   },
   {
    "cmd": "mytool --dir ~",
@@ -18469,7 +18487,8 @@
   },
   {
    "cmd": "cd src && mytool ..",
-   "verdict": "run"
+   "verdict": "announce",
+   "words": "run mytool"
   },
   {
    "cmd": "wipefs -a /dev/sda",
@@ -18745,7 +18764,8 @@
   },
   {
    "cmd": "cd build && mytool ..",
-   "verdict": "run"
+   "verdict": "announce",
+   "words": "run mytool"
   },
   {
    "cmd": "./configure --prefix=$HOME/.local",
@@ -18803,23 +18823,28 @@
   },
   {
    "cmd": "mytool ~/Documents",
-   "verdict": "run"
+   "verdict": "announce",
+   "words": "run mytool"
   },
   {
    "cmd": "mytool .",
-   "verdict": "run"
+   "verdict": "announce",
+   "words": "run mytool"
   },
   {
    "cmd": "mytool src",
-   "verdict": "run"
+   "verdict": "announce",
+   "words": "run mytool on src"
   },
   {
    "cmd": "mytool ~/proj",
-   "verdict": "run"
+   "verdict": "announce",
+   "words": "run mytool"
   },
   {
    "cmd": "mytool /home/ana/proj",
-   "verdict": "run"
+   "verdict": "announce",
+   "words": "run mytool"
   },
   {
    "cmd": "mytool /home/ana",
@@ -18830,7 +18855,8 @@
   },
   {
    "cmd": "mytool /tmp",
-   "verdict": "run"
+   "verdict": "announce",
+   "words": "run mytool"
   },
   {
    "cmd": "eza -la ~",

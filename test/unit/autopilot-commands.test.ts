@@ -64,6 +64,15 @@ describe("what still asks in Autopilot (modes-D2, modes-D7)", () => {
     expect(autopilotAsks({ classes: [], rules: ["unclear.a-rule-of-tomorrow"] }, ON)).toBe("unclear");
   });
 
+  it("a program, or a tool's command, Ember doesn't know: it can't tell what that does either (commands-closed with modes-D2)", () => {
+    expect(autopilotAsks({ classes: ["unknown"], rules: ["unknown.program"] }, ON)).toBe("unclear");
+    expect(autopilotAsks({ classes: ["destroy", "unknown"], rules: ["posix.rm", "unknown.verb"] }, ON)).toBe("unclear");
+    expect(autopilotAsks({ classes: [], rules: ["unknown.verb"] }, ON)).toBe("unclear");
+    expect(autopilotAsks({ classes: ["destroy"], rules: ["posix.rm"] }, { ...ON, findings: [{ cls: "unknown", rule: "unknown.program" }] })).toBe("unclear");
+    expect(askedOfFinding({ rule: "in-script:unknown.program" })).toBe("unclear");
+    expect(autopilotCommand(ask({ classes: ["unknown"], rules: ["unknown.program"] }), ON)).toBeNull();
+  });
+
   it("what the organisation's policy or the user's own switch asks for every command, before anything else", () => {
     expect(autopilotAsks(ask(), { ...ON, mode: "ask" })).toBe("organisation");
     expect(autopilotAsks(ask(), { ...ON, askEvery: "admin" })).toBe("organisation");
@@ -150,6 +159,8 @@ describe("real commands, as the classifier judges them at this commit (modes-D2,
     // What xargs is given can't be seen, and the classifier names the secret reader it runs all the same (commands-held-7).
     ["echo a | xargs printenv", "secret"],
     ["for f in *.log; do rm $f; done", "unclear"], ["python3 -c 'import os; os.remove(\"x\")'", "unclear"], ["bash -c \"$CMD\"", "unclear"], ["eval $X", "unclear"],
+    // The closed default (commands-closed): a program with no row and a tool's command off its list.
+    ["frobnicate --all", "unclear"], ["sudo frobnicate", "unclear"], ["/opt/acme/bin/sync-all", "unclear"],
   ])("still asks about %s (%s)", (command, reason) => {
     const { d, why } = judged(command);
     expect(d.verdict).toBe("ask");

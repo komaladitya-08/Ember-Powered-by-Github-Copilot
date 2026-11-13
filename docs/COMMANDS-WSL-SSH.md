@@ -121,6 +121,20 @@ Most commands: reading files, listing folders, searching, building, running test
 `npm test`, `make`, `df -h`. They still run in the command window where you can watch and stop them, they are
 recorded in the audit log, and their output goes back to Copilot as described in §2.7.
 
+Ember runs a program straight away only when it knows it: one it has a rule for, or one on its list of everyday tools
+that only read, list, search, measure, convert, compile, test or build what they are given (`cat`, `rg`, `fd`, `jq`,
+`tree`, `gcc`, `tsc`, `pytest`, `eslint`, `ffprobe`, `pdftotext`, `lscpu` and some hundreds more), and in PowerShell a
+cmdlet it has no rule for only when its verb only reads (`Get-`, `Test-`, `Measure-`, `Select-`, `Where-`, `Sort-`,
+`Group-`, `Format-`, `ConvertTo-`, `ConvertFrom-`, `Compare-`, `Resolve-`, `Split-`, `Join-`). A program given by a path
+in the task's folder (your project's `./build.sh`, `bin/tool`, `node_modules/.bin/x`, `.venv/bin/x`) is judged as before: the folder
+the task started in, not one a `cd` on the same line moved to, and never a folder programs are usually found in
+(`/usr/bin`, `/usr/local/bin`, `~/bin`, `~/.local/bin`, `C:\Windows\System32`). So is a program Ember doesn't know
+inside a script there that the task didn't write or download (`hugo` in your `build.sh`); what else the script does is
+still judged. Of a tool
+with several commands (`cargo`, `go`, `pip`, `uv`, `poetry`, `stack`, `cabal`, `mix`, `sbt`, `bazel`, `deno`, `dotnet`,
+`systemctl`, `tmux`, `pyenv`, `nvm` and others), only the commands Ember knows run straight away: `cargo build`, `go
+mod tidy`, `pip config list`, `tmux ls`. Anything else asks (§2.4).
+
 ### 2.4 What asks first
 
 Ember stops and asks before a command that:
@@ -247,6 +261,20 @@ Ember stops and asks before a command that:
   test` and `cd src && npm test` run as before; in a task that downloaded nothing, `cd src; npm test` runs too),
   running a program or script from another computer's share (`\\server\share\x.exe`),
   `npx <package>`, `nohup`, `setsid`, `&`, `docker run -d`, `Start-Process` without `-Wait`;
+- **runs a program Ember doesn't know** ("It runs a program Ember doesn't know."): `dropdb prod`, `rails db:drop`,
+  `hyperfine 'rm -rf build'`, `kafka-topics --delete …`, also behind `sudo`, `env`, `nice`, `time`, in a pipe or in
+  `$( … )`, or given by a path outside the command's folder (`/usr/local/bin/x`, `~/bin/x`), and an unknown cmdlet
+  whose verb isn't one of those in §2.3 (`Show-Thing`); or **a command of a tool Ember doesn't know** ("It runs
+  cargo watch, a command of cargo that Ember doesn't know."): `cargo watch -s …`, `stack exec -- …`, `mix ecto.drop`, `tmux
+  send-keys …`, `go env -w …`, `pip config set …`, `deno publish`, `vercel` with no command (it deploys). When your own
+  words for the task ask to run the program by name (or the tool and its command), with the words after it that say
+  what it is to do ("run dropdb on the scratch database" for `dropdb scratch`, "run rails db:migrate"), it is announced
+  instead, as in §2.5, and the announcement names them; a question about the program or a mention of it asks for
+  nothing. What else the command does is judged as before, and so is the command such a tool runs for you: what
+  follows `stack exec --`, `pyenv exec`, `rustup run stable` or `entr`, and the shell text in `cargo watch -s`,
+  `nodemon --exec` and `hyperfine '…'` are judged as commands of their own, and one Ember can't read (a tmux shell
+  command, `watchexec` without `--`, Maven's `-Dexec.executable`, Gradle's `--init-script`) asks, whatever your words
+  say, and a `busybox` or `toybox` applet is judged as that program;
 - **Ember can't read with certainty**: `eval`, encoded commands (`powershell -EncodedCommand`, `base64 -d | sh`),
   aliases it can't see, unusual syntax, interactive programs such as `vim`, `less`, `top` or `python` with no
   script ("This opens an interactive program; you'd have to use it yourself in the command window."), a job count
@@ -275,8 +303,9 @@ Ember stops and asks before a command that:
   its like, pkill): a word the older reading took for a file, a target, a command or an option of its own is still
   judged as one, so `tar -xf a.tar --exclude-tag ~/.ssh/id_rsa` and `uv run --cache-dir printenv` ask, `ls --cached
   ~/.config/ember/settings.json` is refused, and so is `zip -T -n ~/.config/ember/settings.json`. The word after
-  `dos2unix -c` or `-D` is still judged as a file too, and `-I` asks for every tar ("It runs a command Ember can't
-  see."): on a Mac it names a list of files, but the `tar` there may be GNU's, which runs the program `-I` names;
+  `dos2unix -c` or `-D` is still judged as a file too, and `-I` asks for any tar wherever the older reading saw one
+  ("It runs a command Ember can't see."; `bsdtar -HI list.txt`, where it was part of `-H`, runs as it did): on a Mac
+  it names a list of files, but the `tar` there may be GNU's, which runs the program `-I` names;
   write `tar -T list.txt` for a list and it runs. `git checkout
   --track -b feature origin/feature` asks for the same reason (the older reading took `-b` for `--track`'s word and
   the rest for files to throw changes away in); write `git checkout -b feature --track origin/feature` or `git switch
@@ -728,7 +757,10 @@ an earlier command printed text that looked like instructions.").
   it (by the name as written, links included, `cd -P` too); a `cd` inside a longer command affects only that command.
   Each command's shell (on this computer, in WSL and on SSH computers) is told the task's folder as Ember named it,
   so its `cd ..` goes where Ember judged (a shell not told starts from the folder's real path, and `cd ..` would land
-  beside a link's target). Inside a longer command, what follows `cd -P`, and what `env -C <folder>` runs, has no
+  beside a link's target). After `cd <folder> && …`, what follows a `;`, `||` or new line may run where the line
+  started (the `cd` may have failed), so a name relative to it asks too, unless the folder the chain moved to refuses
+  it: `cd /srv/x && true ; cat ../.config/ember/settings.json` asks, `cd ~/.config && ls ; rm -rf ember` is refused,
+  and `cd build && make ; make test` runs. Inside a longer command, what follows `cd -P`, and what `env -C <folder>` runs, has no
   folder Ember knows (only the computer knows where a link leads), so a name relative to it asks ("Ember can't tell
   which folder this command runs in."); `set -P`, `set -o physical` (also as `set -euo physical`), zsh's `-w`,
   `chase_links`, `chase_dots` or `cdable_vars`, a command that sets or removes `PWD` itself, and a shell started without it (`env -i`,

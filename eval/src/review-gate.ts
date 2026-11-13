@@ -29,7 +29,7 @@ const FINDING: Record<string, string> = {
   destroy: "It deletes or overwrites data.", publish: "It sends or publishes something.",
   "remote-delete": "It deletes something in source control or a remote service.", secret: "It touches passwords, keys or other secrets.",
   system: "It changes the system or runs with privileges.", escape: "It downloads and runs code or keeps running after Ember stops.",
-  unclear: "Ember can't tell exactly what this does.",
+  unclear: "Ember can't tell exactly what this does.", unknown: "It runs a program Ember doesn't know.",
 };
 
 export interface ReviewGateResult {

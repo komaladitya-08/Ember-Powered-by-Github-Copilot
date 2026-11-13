@@ -2,8 +2,9 @@
  * The classifier's tables as data (design §3.5, §3.4.5, §3.4.8): the global-option grammars that find a tool's verb,
  * the wrappers that run another command, the programs that run code, fetch, launch, open full-screen or GUI windows,
  * synthesise input, read secrets, and the per-verb rows of the package, service, cloud and source-control tools.
- * classify.ts holds the logic that reads them. A program that is in no row is ordinary (D4.2) unless one of §3.4's or
- * §3.6's rules applies. Pure data.
+ * classify.ts holds the logic that reads them. A program that is in no row asks (commands-closed, the closed default),
+ * unless it is on ORDINARY_PROGRAMS or given by a path in the command's own folder; a verb of a verb-keyed tool that
+ * its row doesn't know asks too. Pure data.
  */
 
 import type { DangerClass } from "./types";
@@ -531,4 +532,271 @@ export const PS_CMDLETS: Readonly<Record<string, PsCmdletSpec>> = {
   "start-bitstransfer": { params: { Source: "v", Destination: "v", TransferType: "v", Asynchronous: "s", Credential: "v", DisplayName: "v", Description: "v", Priority: "v", ProxyUsage: "v", ProxyList: "v", Authentication: "v", Suspended: "s", RetryInterval: "v", RetryTimeout: "v", Dynamic: "s" }, pos: ["Source", "Destination"] },
   "write-output": { params: { InputObject: "v", NoEnumerate: "s" }, pos: ["InputObject"] },
   "write-host": { params: { Object: "v", NoNewline: "s", Separator: "v", ForegroundColor: "v", BackgroundColor: "v" }, pos: ["Object"] },
+};
+
+/**
+ * The programs Ember has no row for that run with no question (commands-closed): single-purpose tools that read, list,
+ * measure, convert, compile, test or build within the folders they are given, and have no way to run a command given
+ * as an argument, delete, publish, change the system or read secrets. Their operands are still judged (paths, secrets,
+ * Ember's files, broad folders). Any other program with no row asks ("It runs a program Ember doesn't know."). Keys
+ * as classify.ts looks them up (lower case where the target's names are; a version suffix is dropped first).
+ */
+export const ORDINARY_PROGRAMS: ReadonlySet<string> = new Set([
+  // POSIX and GNU coreutils, findutils, diffutils and the text tools.
+  "cat", "tac", "nl", "od", "base32", "base64", "basenc", "fmt", "pr", "fold", "head", "tail", "split", "csplit", "cut", "paste",
+  "join", "sort", "uniq", "comm", "tsort", "ptx", "wc", "sum", "cksum", "b2sum", "md5sum", "sha1sum", "sha224sum", "sha256sum",
+  "sha384sum", "sha512sum", "shasum", "md5", "expand", "unexpand", "tr", "ls", "dir", "vdir", "dircolors", "du", "df", "stat", "file",
+  "readlink", "realpath", "pathchk", "basename", "dirname", "printf", "echo", "seq", "factor", "numfmt", "date", "cal", "ncal", "uname",
+  "hostname", "hostid", "nproc", "arch", "id", "groups", "whoami", "logname", "users", "who", "w", "uptime", "tty",
+  "printenv", "pwd", "true", "false", "test", "expr", "yes", "sleep", "diff", "diff3", "sdiff", "cmp", "grep", "egrep", "fgrep",
+  "zgrep", "zegrep", "zfgrep", "zcat", "zless", "zmore", "zdiff", "zcmp", "bzcat", "bzgrep", "bzless", "xzcat", "xzgrep", "xzless",
+  "lzcat", "lz4cat", "zstdcat", "look", "strings", "hexdump", "hd", "xxd", "column", "colrm", "rev", "iconv", "uconv", 
+  "fc-match", "getconf", "locale", "tput", "infocmp", "toe", "tabs", "envsubst", "gettext", "ngettext",
+  "msgfmt", "msgmerge", "msgunfmt", "msginit", "xgettext", "units", "bc", "mktemp", "which", "whereis", "whatis", "apropos",
+  "locate", "mlocate", "plocate", "lsattr", "getfacl", "namei", "tree", "dos2unix", "unix2dos",
+  "mac2unix", "unix2mac", "wdiff", "colordiff", "cloc", "tokei", "scc", "sloccount", "cmark", "markdown", "asciidoctor", "rst2html",
+  "history", "wl-copy", "pbcopy", "clip", "desktop-file-validate", "mode", "spell", "codespell", "typos", "vale", "write-good", "proselint",
+  // Modern equivalents and structured-data tools.
+  "rg", "ripgrep", "ag", "ack", "ack-grep", "pt", "sift", "fd", "fdfind", "bat", "batcat", "eza", "exa", "lsd", "dust",
+  "duf", "gdu", "erd", "erdtree", "choose", "hck",
+  "jq", "gojq", "jaq", "jo", "gron", "yq", "tomlq", "xq", "dasel", "jless", "jp", "xsv", "csvlook",
+  "csvstat", "csvcut", "csvgrep", "csvsort", "csvjson", "in2csv", "csvformat", "csvjoin", "csvstack", "q",
+  "xmllint", "xml", "pup", "htmlq", "hq", "delta", "difft", "difftastic", "icdiff", "hexyl", 
+  "tldr", "tealdeer", "glow", "mdcat", "lowdown", "frogmouth", "pv", "numbat", "qalc", "datamash", "rs",
+  // Compilers, assemblers, linkers and the binary tools.
+  "gcc", "g++", "cc", "c++", "c89", "c99", "cpp", "clang", "clang++", "clang-cl", "clang-format", "clang-tidy", "clangd", "cl", "link",
+  "lib", "ml", "ml64", "nasm", "yasm", "as", "ld", "ld.bfd", "ld.gold", "ld.lld", "lld", "gold", "ar", "ranlib", "nm", "objdump",
+  "objcopy", "readelf", "size", "strip", "addr2line", "c++filt", "elfedit", "ldd", "otool", "lipo", "dumpbin", "file2c", "gfortran",
+  "f77", "f95", "gnat", "gnatmake", "gccgo", "gdc", "dmd", "ldc2", "rustc", "rustfmt", "rust-analyzer", "javac", "jar", "javap",
+  "jdeps", "jlink", "kotlinc", "kotlin-native", "scalac", "groovyc", 
+  "ocamlc", "ocamlopt", "fpc", "odin", "swiftc", "swift-format", "csc", "vbc",
+  "fsc", "mcs", "tsc", "esbuild", "swc", "babel", "rollup", "webpack", "vite", "parcel", "tsup", "terser", "uglifyjs", "postcss",
+  "sass", "lessc", "stylus", "elm-format", "protoc", "flatc", "thrift", "bison", "yacc", "flex", "lex",
+  "re2c", "ragel", "autoconf", "autoheader", "automake", "autoreconf", "aclocal", "autoscan", "libtoolize", "pkg-config",
+  "pkgconf", "glslc", "glslangvalidator", "spirv-val", "dxc", "fxc", "nvcc", "hipcc", "llc", "opt", "llvm-ar", "llvm-nm",
+  "llvm-objdump", "llvm-readelf", "llvm-strip", "llvm-config", "llvm-cov", "llvm-profdata", "llvm-symbolizer", "wasm-opt",
+  "wasm-ld", "wasm2wat", "wat2wasm", "wasm-objdump", "emcc", "em++", "tinygo", "solc", "vyper", "verilator", "iverilog", "yosys",
+  "ghdl", "sdcc", "avr-gcc", "arm-none-eabi-gcc", "xelatex", "pdflatex", "lualatex", "latex", "bibtex", "biber", "makeindex",
+  "dvipdf", "typst", "pandoc", "asciidoc", "doxygen", "sphinx-apidoc", "javadoc", "rustdoc", "godoc",
+  "mandoc", "groff", "nroff", "troff", "texi2any", "makeinfo",
+  // Linters, formatters and type checkers.
+  "eslint", "prettier", "biome", "oxlint", "dprint", "stylelint", "markdownlint", "markdownlint-cli2", "htmlhint", "jshint", "standard",
+  "black", "isort", "ruff", "flake8", "pyflakes", "pycodestyle", "pydocstyle", "pylint", "mypy", "pyright", "pyre", "pytype",
+  "bandit", "vulture", "radon", "yapf", "autopep8", "shellcheck", "shfmt", "hadolint", "yamllint", "jsonlint", "taplo", "actionlint",
+  "gofmt", "goimports", "golint", "staticcheck", "golangci-lint", "revive", "errcheck", "govulncheck", "rubocop", "standardrb",
+  "phpcs", "phpstan", "psalm", "php-cs-fixer", "ktlint", "detekt", "checkstyle", "pmd", "spotbugs", "swiftlint", "clippy-driver",
+  "cppcheck", "cpplint", "include-what-you-use", "iwyu", "luacheck", "stylua", "selene", "hlint", "ormolu", "fourmolu",
+  "sqlfluff", "sqlformat", "pgformatter", "pg_format", "tflint", "tfsec", "checkov", "kubeval", "kubeconform",
+  "kube-linter", "editorconfig-checker", "ec", "commitlint", "cspell", "lychee", "markdown-link-check",
+  // Test runners and coverage.
+  "nox", "prove", "pytest", "py.test", "nose2", "jest", "vitest", "mocha", "ava", "tap", "jasmine", "karma", "rspec", "minitest",
+  "phpunit", "pest", "ctest", "bats", "shunit2", "busted", "gcov", "gcovr", "lcov", "genhtml", "llvm-cov",
+  "coverage", 
+  // Build tools that build what the folder holds.
+  "ninja", "samu", "meson", "cmake", "qmake", "qmake6", "premake5", 
+  "scons", "nmake",
+  "jom", 
+  "cython", "cythonize", "f2py", "pybind11-config", "python-config", "python3-config",
+  // Images, audio, video, documents and fonts: converted or measured where they are given.
+  "convert", "magick", "identify", "montage", "composite", "compare", "vips", "vipsthumbnail", "ffprobe", 
+  "mediainfo", "optipng", "pngquant", "pngcrush", "oxipng", "advpng", "jpegoptim", "jpegtran", "cjpeg",
+  "djpeg", "mozjpeg", "cwebp", "dwebp", "gif2webp", "img2webp", "avifenc", "avifdec", "heif-convert", "heif-enc", "gifsicle", "svgo",
+  "rsvg-convert", "potrace", "pdftotext", "pdfinfo", "pdffonts", "pdfimages", "pdftoppm", "pdftocairo", "pdfseparate",
+  "pdfunite", "qpdf", "pdftk", "ps2pdf", "pdf2ps", "img2pdf", "ocrmypdf", "tesseract", "soxi",
+  "flac", "metaflac", "oggenc", "oggdec", "opusenc", "opusdec", "mpg123", "mp3info", "id3v2", "x264", "x265",
+  "handbrakecli", "mkvmerge", "mkvinfo", "mkvextract", "mp4box", "atomicparsley", "fc-scan", "fc-query", "otfinfo",
+  "ttx", "pyftsubset", "fonttools", "woff2_compress", "woff2_decompress", "dot", "neato", "circo", "fdp", "sfdp", "twopi", 
+  "graph-easy", "qrencode", "zbarimg", 
+  "textutil", "sips", "afconvert", "afinfo", "mdls", "mdfind", "fc-list", "fc-match",
+  // Documentation builders: they build the project's docs into the folder they are given.
+  "sphinx-build",
+  // Archives and compression (their own rows judge where they write).
+  "gzip", "gunzip", "lbzip2", "lbunzip2", "zcmp", "bzip2", "bunzip2", "xz", "unxz", "lzma", "unlzma", "lz4", "unlz4", "zstd", "unzstd", "brotli", "pigz",
+  "pbzip2", "pixz", "lzop", "7z", "7za", "7zr", "unzip", "zipinfo", "unar", "lsar", "cabextract", "cpio", "gzcat",
+  // System information: what the computer has and does, read only.
+  "lsb_release", "lscpu", "lsblk", "lspci", "lsusb", "lsmod", "lshw", "lsipc", "lslocks", "lslogins", "lsns", "lsscsi", "lsinitrd",
+  "lsof", "free", "vmstat", "iostat", "mpstat", "pidstat", "sar", "nstat", "ifstat", "dstat", "uptime", "tload", "slabtop", "ps",
+  "pstree", "pgrep", "pidof", "pmap", "pwdx", "prtstat", "nvidia-smi", "nvtop",
+  "radeontop", "intel_gpu_top", "rocm-smi", "sensors", "inxi", "neofetch", "fastfetch", "screenfetch", "hwinfo", "dmidecode", "lsdev",
+  "procinfo", "upower", "journalctl", "dmesg", "last", "lastb", "lastlog", "faillog", "finger", "getent", 
+  "systemd-analyze", "systemd-detect-virt", "systemd-cgls", "systemd-cgtop", "systemd-path",
+  "ss", "netstat", "ping", "ping6", "traceroute",
+  "traceroute6", "tracepath", "mtr", "dig", "nslookup", "host", "drill", "whois", "getmac", "ipconfig", "systeminfo", "tasklist",
+  "tracert", "pathping", "driverquery", "quser", "qwinsta", "query", "gpresult", "ver", "vol", "sw_vers",
+  "system_profiler", "vm_stat", "ioreg", "machinfo", "getprop", "dpkg-query",
+  "apt-cache", "apt-file", "repoquery", "vulkaninfo", "glxinfo", "eglinfo", "clinfo", "xdpyinfo",
+  
+  // Windows' own read-only programs.
+  "findstr", "where", "fc", "comp", "sort", "whoami", "hostname", "chcp", "tree", 
+  
+]);
+
+/** A verb-keyed tool's known verbs (ORDINARY_VERBS). */
+export interface OrdinaryVerbs {
+  /** The verbs known to only read, build, test or run the project's own code. */
+  verbs: readonly string[];
+  /** Options before the verb that take the next word. */
+  values?: readonly string[];
+  /** A verb whose next word is a verb of its own: only these of them (`pip config list`, `go mod tidy`). */
+  sub?: Readonly<Record<string, readonly string[]>>;
+  /** Options that make a known verb change a setting later commands obey (`go env -w`). */
+  asks?: Readonly<Record<string, readonly string[]>>;
+  /** Every operand is a command of the tool (`sbt clean test`, `ant clean dist`), each `;`-separated part too. */
+  all?: boolean;
+  /** A verb that is a file of these extensions is the project's own, run as the tool runs a file (`deno main.ts`). */
+  files?: RegExp;
+  /** The tool with no verb acts (`vercel` deploys): it asks. */
+  bare?: "asks";
+}
+
+const CONDA_VERBS: OrdinaryVerbs = { verbs: ["list", "info", "search", "create", "install", "update", "upgrade", "env", "run", "activate", "deactivate", "doctor", "compare", "--version", "-V", "help", "notices"], sub: { env: ["list", "create", "export", "update", "config"] } };
+const BUNDLE_VERBS: OrdinaryVerbs = {
+    verbs: ["install", "update", "exec", "check", "list", "show", "info", "outdated", "init", "add", "remove", "lock", "binstubs", "package", "cache", "platform", "doctor",
+      "gem", "version", "help", "--version", "-v"],
+  };
+
+/**
+ * The verbs Ember knows of the verb-keyed tools (commands-closed, the closed default): the verbs that read, build,
+ * test or run the project's own code. A tool Ember has no row for runs only with one of these (and asks with no verb);
+ * a tool with a row asks for a verb off the list that its row judged ordinary (`cargo zzz` runs `cargo-zzz`, `mix
+ * ecto.drop`, `tmux send-keys`, `stack exec`), "It runs cargo zzz, a command of cargo that Ember doesn't know." What a row
+ * judges dangerous it still says in its own words. Never a verb that writes shell start-up files (`conda init`), a
+ * home-wide default (`sdk default`, `asdf set -u`), or empties a cache or an environment (`pip cache purge`, `poetry env
+ * remove`): those ask as a prune does (commands-closed-x9-5).
+ */
+export const ORDINARY_VERBS: Readonly<Record<string, OrdinaryVerbs>> = {
+  // Tools with no row.
+  swift: { verbs: ["build", "test", "run", "--version", "-version", "--help"] },
+  jekyll: { verbs: ["build", "b", "doctor", "--version", "-v", "help", "--help"] },
+  rebar3: { verbs: ["compile", "eunit", "ct", "xref", "dialyzer", "edoc", "tree", "deps", "clean", "cover", "proper", "version", "help", "--version"] },
+  zig: { verbs: ["build", "test", "run", "fmt", "version", "env", "targets", "cc", "c++", "build-exe", "build-lib", "build-obj", "ast-check", "translate-c", "help", "zen", "init", "init-exe", "init-lib"] },
+  dune: { verbs: ["build", "test", "runtest", "fmt", "clean", "describe", "rules", "init", "promote", "--version", "--help"], values: ["--root", "--profile"] },
+  xmake: { verbs: ["build", "b", "run", "r", "config", "f", "clean", "c", "test", "project", "show", "--version", "--help"] },
+  meson: { verbs: ["setup", "configure", "compile", "test", "introspect", "dist", "init", "format", "fmt", "wrap", "subprojects", "env2mfile", "build", "builddir", "_build", "--version", "-v", "--help", "-h"] },
+  waf: { verbs: ["configure", "build", "clean", "distclean", "dist", "distcheck", "list", "step", "--help", "--version"], all: true,
+    values: ["--prefix", "--out", "-o", "--top", "-t", "--destdir", "--targets", "-j", "--jobs"] },
+  buck2: { verbs: ["build", "test", "run", "query", "cquery", "uquery", "aquery", "targets", "audit", "clean", "log", "docs", "init", "--version", "--help"] },
+  pants: { verbs: ["test", "lint", "fmt", "fix", "check", "package", "run", "peek", "list", "dependencies", "dependents", "filedeps", "roots", "help", "version", "tailor", "generate-lockfiles", "count-loc", "export-codegen", "paths", "update-build-files"], all: true },
+  maturin: { verbs: ["build", "develop", "sdist", "list-python", "generate-ci", "--version", "-V", "--help", "-h"] },
+  elm: { verbs: ["make", "init", "reactor", "install", "bump", "diff", "repl", "--version", "--help"] },
+  purs: { verbs: ["compile", "bundle", "docs", "graph", "ide", "repl", "--version", "--help"] },
+  xcodebuild: {
+    verbs: ["-version", "-list", "-showsdks", "-showBuildSettings", "-showdestinations", "-help", "-usage", "build", "test", "clean", "analyze", "archive",
+      "build-for-testing", "test-without-building", "docbuild"],
+    values: ["-project", "-workspace", "-scheme", "-target", "-configuration", "-sdk", "-destination", "-derivedDataPath", "-arch", "-resultBundlePath",
+      "-xcconfig", "-testPlan", "-only-testing", "-skip-testing", "-archivePath", "-jobs"],
+    asks: { "": ["-exportArchive", "-exportNotarizedApp", "-allowProvisioningUpdates", "-allowProvisioningDeviceRegistration"] },
+  },
+  "xcode-select": { verbs: ["-p", "--print-path", "-v", "--version", "-h", "--help"] },
+  xcrun: {
+    verbs: ["--show-sdk-path", "--show-sdk-version", "--show-sdk-build-version", "--show-sdk-platform-path", "--show-sdk-platform-version", "--find", "-f", "clang",
+      "clang++", "swift", "swiftc", "cc", "c++", "ld", "lipo", "otool", "nm", "strip", "size", "dsymutil", "--version", "-h", "--help"],
+    values: ["--sdk", "-sdk", "--toolchain"],
+  },
+  mkdocs: { verbs: ["build", "serve", "new", "--version", "-V", "--help", "-h", "get-deps"] },
+  buf: { verbs: ["build", "lint", "format", "breaking", "ls-files", "convert", "--version", "--help"] },
+  // Tools with a row: the verbs their rows judge ordinary that are.
+  stack: { verbs: ["build", "test", "bench", "haddock", "run", "ls", "path", "query", "ide", "clean", "purge", "init", "new", "templates", "dot", "list", "setup", "--version", "--help"], values: ["--stack-yaml", "--resolver", "--work-dir"] },
+  cabal: { verbs: ["build", "test", "bench", "run", "haddock", "check", "list", "info", "sdist", "clean", "freeze", "outdated", "configure", "update", "gen-bounds", "init", "repl", "v2-build", "v2-test", "v2-run", "new-build", "new-test", "new-run", "--version", "--help"], values: ["--project-file", "--builddir", "--config-file"] },
+  mix: { verbs: ["compile", "test", "format", "deps.get", "deps.compile", "deps.tree", "deps.clean", "deps.unlock", "deps.update", "run", "phx.server", "phx.routes", "help", "docs", "dialyzer", "credo", "xref", "release", "escript.build", "archive.build", "clean", "new", "hex.info", "hex.outdated", "hex.search", "--version"] },
+  sbt: { verbs: ["compile", "test", "run", "package", "clean", "assembly", "update", "doc", "scalafmt", "scalafmtCheck", "scalafmtAll", "test:compile", "Test/compile", "testOnly", "testQuick", "dependencyTree", "about", "reload", "--version", "-version", "--help"], all: true },
+  lein: { verbs: ["compile", "test", "run", "uberjar", "jar", "check", "deps", "clean", "javac", "pom", "version", "help", "new", "classpath", "repl"] },
+  bazel: { verbs: ["build", "test", "run", "query", "cquery", "aquery", "info", "version", "help", "clean", "fetch", "coverage", "sync", "mod", "dump", "canonicalize-flags", "print_action", "license", "shutdown"] },
+  tox: { verbs: ["run", "r", "run-parallel", "p", "depends", "de", "list", "l", "config", "c", "quickstart", "q", "legacy", "le", "devenv", "--version", "--help", "-h"], values: ["-e", "-c", "--conf", "--workdir", "--root", "-m", "-f", "-x", "--override", "--installpkg"] },
+  ant: { verbs: ["build", "compile", "test", "jar", "war", "dist", "clean", "javadoc", "all", "init", "-p", "-projecthelp", "-version", "-help", "-diagnostics"], values: ["-f", "-buildfile", "-file", "-logfile", "-l", "-lib", "-propertyfile"], all: true },
+  cargo: {
+    verbs: ["build", "b", "check", "c", "test", "t", "bench", "run", "r", "doc", "d", "clean", "fmt", "clippy", "fix", "tree", "metadata", "locate-project", "pkgid",
+      "verify-project", "read-manifest", "version", "--version", "-V", "help", "search", "info", "update", "fetch", "generate-lockfile", "new", "init", "add", "remove", "rm",
+      "vendor", "package", "report", "nextest", "llvm-cov", "tarpaulin", "audit", "deny", "outdated", "expand", "insta", "machete", "udeps", "bloat", "asm", "hack",
+      "msrv", "sort", "about", "criterion", "fuzz", "miri", "rustc", "rustdoc", "semver-checks", "zigbuild", "xtask", "--list"],
+  },
+  go: {
+    verbs: ["build", "test", "run", "vet", "fmt", "mod", "get", "install", "env", "generate", "clean", "list", "doc", "version", "fix", "tool", "work", "help"],
+    sub: { mod: ["tidy", "download", "graph", "why", "verify", "init", "edit", "vendor", "help"], work: ["init", "use", "sync", "edit", "vendor"] },
+    asks: { env: ["-w", "-u"] },
+  },
+  rustup: {
+    verbs: ["show", "which", "check", "doc", "help", "--version", "-V", "target", "component", "toolchain", "update", "completions"],
+    sub: { target: ["list", "add"], component: ["list", "add"], toolchain: ["list", "install"] },
+  },
+  pip: {
+    verbs: ["install", "download", "freeze", "list", "show", "check", "search", "config", "cache", "index", "wheel", "hash", "completion", "debug", "inspect", "help", "--version", "-V", "lock"],
+    sub: { config: ["list", "get", "debug"], cache: ["dir", "info", "list"], index: ["versions"] },
+  },
+  pipx: { verbs: ["list", "environment", "completions", "--version", "help"] },
+  uv: {
+    verbs: ["run", "sync", "lock", "add", "remove", "tree", "pip", "venv", "build", "init", "export", "cache", "version", "help", "--version", "-V", "python", "format"],
+    sub: { python: ["list", "find", "install", "pin", "dir"], cache: ["dir"] },
+  },
+  poetry: {
+    verbs: ["install", "update", "add", "remove", "lock", "show", "build", "check", "run", "shell", "env", "version", "about", "help", "init", "new", "search", "export", "debug", "list", "cache", "sync", "--version", "-V"],
+    sub: { env: ["info", "list", "use", "activate"], cache: ["list"] },
+    values: ["-C", "--directory", "-P", "--project"],
+  },
+  pdm: { verbs: ["install", "add", "remove", "update", "lock", "list", "show", "build", "run", "sync", "init", "info", "venv", "export", "import", "cache", "fix", "outdated", "use", "search", "--version", "-V", "help"], sub: { cache: ["info", "list"] } },
+  conda: CONDA_VERBS,
+  mamba: CONDA_VERBS,
+  micromamba: CONDA_VERBS,
+  hatch: { verbs: ["build", "test", "run", "env", "fmt", "version", "shell", "project", "status", "new", "clean", "dep", "python", "--version", "help"] },
+  rye: { verbs: ["sync", "add", "remove", "lock", "run", "build", "fetch", "list", "show", "init", "pin", "fmt", "lint", "test", "toolchain", "version", "help", "--version"] },
+  dotnet: {
+    files: /\.dll$/i,
+    verbs: ["build", "test", "run", "restore", "clean", "publish", "pack", "new", "add", "remove", "list", "sln", "format", "watch", "--info", "--version", "--list-sdks",
+      "--list-runtimes", "help", "-h", "--help", "msbuild", "vstest", "sdk", "build-server", "workload"],
+    sub: { workload: ["list", "search", "restore"], sdk: ["check"] },
+  },
+  gem: {
+    verbs: ["list", "search", "info", "specification", "spec", "contents", "which", "environment", "env", "help", "--version", "-v", "build", "query", "dependency",
+      "outdated", "check", "stale", "lock", "install", "update", "fetch", "unpack", "rdoc"],
+  },
+  bundle: BUNDLE_VERBS,
+  bundler: BUNDLE_VERBS,
+  systemctl: {
+    verbs: ["status", "show", "cat", "list-units", "list-unit-files", "list-sockets", "list-timers", "list-jobs", "list-dependencies", "list-machines",
+      "list-automounts", "list-paths", "is-active", "is-enabled", "is-failed", "is-system-running", "get-default", "show-environment", "help", "--version"],
+  },
+  launchctl: {
+    verbs: ["list", "print", "print-cache", "print-disabled", "blame", "procinfo", "hostinfo", "help", "version", "managerpid", "manageruid", "managername", "error", "dumpstate"],
+  },
+  svn: {
+    verbs: ["status", "st", "stat", "diff", "di", "log", "info", "list", "ls", "cat", "blame", "praise", "annotate", "ann", "update", "up", "checkout", "co", "help",
+      "--version", "proplist", "pl", "plist", "propget", "pg", "pget", "mergeinfo", "add", "resolve", "resolved", "cleanup", "changelist", "cl", "export", "upgrade"],
+  },
+  hg: {
+    verbs: ["status", "st", "diff", "log", "summary", "sum", "heads", "branches", "tags", "bookmarks", "annotate", "blame", "cat", "files", "grep", "help", "version",
+      "identify", "id", "incoming", "in", "outgoing", "out", "paths", "root", "tip", "parents", "manifest", "add", "addremove", "commit", "ci", "update", "up",
+      "checkout", "co", "pull", "clone", "merge", "resolve", "shelve", "unshelve", "export", "archive", "locate", "--version"],
+  },
+  p4: {
+    verbs: ["info", "opened", "changes", "describe", "files", "fstat", "have", "where", "filelog", "annotate", "diff", "diff2", "print", "sync", "clients", "users",
+      "labels", "branches", "streams", "workspaces", "status", "help", "edit", "add", "changelists", "counters", "dirs", "grep", "sizes", "reconcile", "-V", "--version"],
+  },
+  pyenv: { verbs: ["versions", "version", "which", "whence", "root", "prefix", "global", "local", "shell", "install", "rehash", "init", "commands", "help", "--version", "latest", "version-name", "version-file", "virtualenvs", "activate", "deactivate", "virtualenv", "doctor"] },
+  rbenv: { verbs: ["versions", "version", "which", "whence", "root", "prefix", "global", "local", "shell", "install", "rehash", "init", "commands", "help", "--version", "version-name", "version-file"] },
+  nodenv: { verbs: ["versions", "version", "which", "whence", "root", "prefix", "global", "local", "shell", "install", "rehash", "init", "commands", "help", "--version", "version-name"] },
+  asdf: { verbs: ["list", "current", "which", "where", "plugin", "install", "latest", "help", "version", "--version", "info", "reshim", "set", "local", "global", "shim-versions"], sub: { plugin: ["list", "add", "update"] }, asks: { set: ["-u", "--home", "-p", "--parent"] } },
+  nvm: { verbs: ["ls", "list", "ls-remote", "current", "which", "version", "version-remote", "use", "install", "alias", "cache", "--version", "help", "run"], sub: { cache: ["dir"] } },
+  fnm: { verbs: ["list", "ls", "list-remote", "ls-remote", "current", "use", "install", "env", "alias", "completions", "--version", "help"] },
+  volta: { verbs: ["list", "which", "install", "pin", "fetch", "help", "--version", "-v"] },
+  opam: { verbs: ["list", "show", "info", "search", "install", "switch", "env", "init", "update", "upgrade", "pin", "var", "--version", "help", "lint", "source"], sub: { switch: ["list", "show", "create", "set"] } },
+  pipenv: { verbs: ["install", "lock", "sync", "update", "graph", "check", "requirements", "run", "shell", "--venv", "--where", "--py", "--version", "clean", "verify", "scripts", "--help"] },
+  sdk: { verbs: ["list", "ls", "current", "c", "use", "u", "install", "i", "home", "h", "env", "version", "v", "help", "update", "offline"] },
+  dart: { verbs: ["analyze", "compile", "create", "doc", "fix", "format", "info", "pub", "run", "test", "--version", "help"], sub: { pub: ["get", "upgrade", "add", "remove", "deps", "outdated", "downgrade", "global", "run", "cache"] }, files: /\.dart$/i },
+  flutter: { verbs: ["analyze", "build", "clean", "create", "devices", "doctor", "drive", "emulators", "gen-l10n", "install", "logs", "pub", "run", "test", "--version", "help", "precache", "attach", "assemble"], sub: { pub: ["get", "upgrade", "add", "remove", "deps", "outdated", "downgrade", "run", "cache"] } },
+  vcpkg: { verbs: ["install", "search", "list", "depend-info", "help", "version", "integrate", "x-update-baseline", "new", "add", "format-manifest", "owns", "update"], sub: { integrate: ["project", "install"] } },
+  conan: { verbs: ["install", "create", "build", "export", "search", "list", "inspect", "graph", "profile", "new", "version", "help", "lock", "source", "test", "editable", "cache"], sub: { cache: ["path", "check-integrity"] } },
+  nuget: { verbs: ["restore", "install", "pack", "list", "search", "locals", "help", "spec", "sources", "update", "config"], sub: { sources: ["list"], locals: ["list", "-list"], config: ["-asPath"] } },
+  luarocks: { verbs: ["install", "build", "make", "list", "search", "show", "doc", "path", "pack", "lint", "test", "init", "help", "--version", "config", "which", "download", "write_rockspec", "new_version", "unpack"], sub: { config: ["--list"] } },
+  vercel: { verbs: ["dev", "build", "ls", "list", "inspect", "logs", "whoami", "help", "--version", "-v", "--help", "-h"], bare: "asks" },
+  deno: {
+    verbs: ["run", "task", "test", "bench", "fmt", "lint", "check", "compile", "doc", "info", "repl", "add", "remove", "outdated", "init", "serve", "coverage",
+      "types", "completions", "cache", "clean", "vendor", "help", "--version", "-V", "-v"],
+    files: /\.(m|c)?(j|t)sx?$/i,
+  },
+  tmux: {
+    asks: { "": ["-f", "-c"] },
+    values: ["-L", "-S", "-f", "-c", "-T"],
+    verbs: ["ls", "list-sessions", "list-windows", "lsw", "list-panes", "lsp", "list-clients", "lsc", "list-buffers", "lsb", "list-commands", "lscm", "list-keys", "lsk",
+      "has-session", "has", "info", "server-info", "display-message", "display", "show-options", "show", "show-window-options", "showw", "-V"],
+  },
 };

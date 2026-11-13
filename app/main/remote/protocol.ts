@@ -190,7 +190,7 @@ const members = <T extends string>(all: Record<T, true>) => z.enum(Object.keys(a
 
 const OS_ENUM = members<OS>({ linux: true, win32: true, darwin: true });
 const SHELL = members<ShellId>({ bash: true, zsh: true, sh: true, powershell: true, cmd: true });
-const DANGER = members<DangerClass>({ destroy: true, publish: true, "remote-delete": true, secret: true, system: true, escape: true, unclear: true });
+const DANGER = members<DangerClass>({ destroy: true, publish: true, "remote-delete": true, secret: true, system: true, escape: true, unclear: true, unknown: true });
 const ACTION_KIND = members<ActionKind>({
   read: true, click: true, toggle: true, text: true, select: true, value: true, setting: true, open_app: true,
   cursor_click: true, cursor_text: true, keys: true, scroll: true,

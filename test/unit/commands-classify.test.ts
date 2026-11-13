@@ -281,10 +281,17 @@ describe("deleting with a tool Ember had no row for (commands-remote-c8-2)", () 
   });
 
   it("keeps running a known tool given those folders, and an unknown one given the project or a folder in it (commands-remote-c8-2)", () => {
-    for (const cmd of ["ls ~", "du -sh ~", "tree ~", "fd foo ~", "eza -la ~", "mytool .", "mytool src", "mytool ~/Documents", "mytool ../other",
+    for (const cmd of ["ls ~", "du -sh ~", "tree ~", "fd foo ~", "eza -la ~",
       "cd build && qmake ..", "cd build && cmake ..", "./configure --prefix=$HOME/.local", "fdupes -r ~/Pictures", "jdupes -r .", "git-filter-repo --analyze",
       "yarn build", "yarn format", "yarn eslint .", "pnpm build", "eslint .", "npm test", "make", "rimraf --help"]) {
       expect(run(cmd).decision.verdict, cmd).toBe("run");
+    }
+    // A program Ember doesn't know asks for itself now (commands-closed); named in the user's words, these folders
+    // still let it be announced.
+    for (const cmd of ["mytool .", "mytool src", "mytool ~/Documents", "mytool ../other"]) {
+      expect(run(cmd).decision.rules, cmd).toEqual(["unknown.program"]);
+      // A plain word after it says what it is to do, so the words name that too (commands-closed-x9-1).
+      expect(runCase({ cmd, verdict: "run", words: cmd === "mytool src" ? "run mytool on src" : "run mytool" }, { shell: "bash", context: "linux" }).decision.verdict, cmd).toBe("announce");
     }
   });
 
@@ -1115,8 +1122,9 @@ describe("variable names Ember can't see (name-taking built-ins, D4.3 g)", () =>
 });
 
 describe("shell scripts to read (L8, the lead's ruling)", () => {
+  // Whether a script is the task folder's own (`project`) is commands-closed.test.ts's (commands-closed-x9-4).
   const scripts = (cmd: string, shell: "bash" | "zsh" | "sh" | "powershell" | "cmd", ctx: "linux" | "win32") =>
-    (classifyCommand(cmd, shell, contextOf(ctx)) as ClassificationExtra).scripts;
+    (classifyCommand(cmd, shell, contextOf(ctx)) as ClassificationExtra).scripts?.map(({ project: _project, ...r }) => r);
 
   it("records the shell scripts a command runs by path, with how to read each and the folder each runs in", () => {
     const P = "/home/ana/proj";
@@ -1133,7 +1141,7 @@ describe("shell scripts to read (L8, the lead's ruling)", () => {
     // It runs in the command's folder, not beside the script (its relative paths resolve there). A `..` in its name is
     // walked by the kernel through links, so it is read by the name as written once the target says where that leads.
     const back = classifyCommand("cd sub && sh ../tools/t.sh", "bash", { ...contextOf("linux"), real: new Map([[`${P}/sub/../tools/t.sh`, `${P}/tools/t.sh`]]) });
-    expect((back as ClassificationExtra).scripts).toEqual([{ path: `${P}/tools/t.sh`, as: "sh", cwd: `${P}/sub`, open: `${P}/sub/../tools/t.sh` }]);
+    expect((back as ClassificationExtra).scripts).toEqual([{ path: `${P}/tools/t.sh`, as: "sh", cwd: `${P}/sub`, open: `${P}/sub/../tools/t.sh`, project: true }]);
     // Through a wrapper, and from stdin.
     for (const cmd of ["env FOO=1 ./x.sh", "exec ./x.sh", "nice ./x.sh", "timeout 5 ./x.sh", "command ./x.sh"]) {
       expect(scripts(cmd, "bash", "linux"), cmd).toEqual([{ path: `${P}/x.sh`, as: "shebang", cwd: P }]);
@@ -1221,13 +1229,13 @@ describe("`..` in a path, walked by the kernel through links (§3.6, L25)", () =
   });
 
   it("keeps the shell's own `cd ..` lexical, and PowerShell's and cmd's `..` (they remove it themselves)", () => {
-    expect(extra("cd sub/.. && sh t.sh").scripts).toEqual([{ path: `${P}/t.sh`, as: "sh", cwd: P }]);
+    expect(extra("cd sub/.. && sh t.sh").scripts).toEqual([{ path: `${P}/t.sh`, as: "sh", cwd: P, project: true }]);
     const W = "C:\\Users\\ana\\proj";
     const ps = classifyCommand("& .\\sub\\..\\t.ps1", "powershell", contextOf("win32")) as ClassificationExtra;
-    expect(ps.scripts).toEqual([{ path: `${W}\\t.ps1`, as: "powershell", cwd: W }]);
+    expect(ps.scripts).toEqual([{ path: `${W}\\t.ps1`, as: "powershell", cwd: W, project: true }]);
     expect(ps.findings.map(f => f.rule)).not.toContain("unclear.script-path");
     const cmd = classifyCommand("sub\\..\\build.bat", "cmd", contextOf("win32")) as ClassificationExtra;
-    expect(cmd.scripts).toEqual([{ path: `${W}\\build.bat`, as: "cmd", cwd: W }]);
+    expect(cmd.scripts).toEqual([{ path: `${W}\\build.bat`, as: "cmd", cwd: W, project: true }]);
   });
 
   it("judges every path with `..` by where it really leads: a secret, Ember's own, a download", () => {
@@ -3187,7 +3195,8 @@ describe("commands held to main at 4d64d3a: no way of reading one decides less s
     }
     // Where the row's own reading runs `set +a`, it is off, as on main; and without Ember's folder nothing is refused.
     expect(decided("set -a; env --block-signal set +a; d=~/.config/ember; make").verdict).toBe("run");
-    expect(decided("set -a; env -a set +a; d=build; make").verdict).toBe("run");
+    // There env's -a takes `set` and runs `+a`, a program Ember doesn't know (commands-closed).
+    expect(decided("set -a; env -a set +a; d=build; make").rules).toEqual(["unknown.program"]);
   });
 
   it("judges what follows in the folder main's reading leaves the shell in too, when a wrapper's two tables disagree about a cd (commands-held-y9-1)", () => {
@@ -3368,5 +3377,33 @@ describe("commands held to main at 4d64d3a: no way of reading one decides less s
     expect(decided("pkill -n ember").reason).toBe(CHANGE);
     expect(decided("sudo -h rm -rf ~").reason).toBe(CHANGE);
     expect(decided("rm -rf ~/.config/ember; pkill -n server").reason).toBe(CHANGE);
+  });
+
+  it("judges what follows the end of an && chain that moved the folder as run where the chain started too (commands-held-y9-1, y9-2: second review)", () => {
+    // When `cd /srv/x` fails, `&& true` is skipped and what follows `;`, `||` or a new line runs in the task's folder,
+    // where ../.config/ember is Ember's own folder. Every tree judged it in /srv/x only and ran it.
+    for (const tail of ["sed -i s/on/off/ ../.config/ember/settings.json", "cat ../.config/ember/settings.json"]) {
+      for (const cmd of [`cd /srv/x && true ; ${tail}`, `cd /srv/x && ls || ${tail}`, `cd /srv/x && make\n${tail}`, `cd /srv/x && cd -- /srv/x ; ${tail}`,
+        `cd /srv/x && pushd /srv/x ; ${tail}`, `cd /srv/x && cd -L /srv/x ; ${tail}`]) {
+        for (const missing of [[], ["/srv/x"]]) expect(decided(cmd, "linux", { missing }).verdict, `${cmd} ${missing.join()}`).toBe("ask");
+        expect(decided(cmd).rules, cmd).toContain("unclear.folder");
+      }
+      // A backgrounded chain moves no folder for what follows: judged where the line started, Ember's own file.
+      expect(decided(`cd /srv/x && true & ${tail}`).verdict).toBe("refuse");
+    }
+    expect(decided("cd /srv/x && cd -- /srv/x ; cat ../Library/Application\\ Support/ember/settings.json", "darwin").verdict).toBe("refuse");
+    expect(decided("cd /srv/x && true ; sed -i '' s/on/off/ ../Library/Application\\ Support/ember/settings.json", "darwin").verdict).toBe("refuse");
+    const other = (cmd: string, shell: "cmd" | "bash" | "sh", context: ContextName) => runCase({ cmd, verdict: "run", context }, { shell, context }).decision.verdict;
+    expect(other("cd /d D:\\x && ver & type ..\\AppData\\Local\\ember\\settings.json", "cmd", "win32")).toBe("ask");
+    expect(other("cd /d D:\\x && ver || type ..\\AppData\\Local\\ember\\settings.json", "cmd", "win32")).toBe("ask");
+    expect(other("cd /srv/x && true ; cat ../.local/state/ember-remote/x", "bash", "wsl")).toBe("ask");
+    expect(other("cd /srv/x && true || cat ../.config/ember/settings.json", "sh", "linux")).toBe("ask");
+    // What the chain's own folder refuses is still refused, in its own words.
+    expect(decided("cd ~/.config && ls ; rm -rf ember").rules).toEqual(["ember.path"]);
+    expect(decided("cd ~/.config && ls ; rm -rf ember").verdict).toBe("refuse");
+    // Everyday lines decide as before: nothing in them depends on the folder.
+    for (const cmd of ["cd /srv/x && make ; make test", "cd build && cmake .. ; make", "cd /srv/x || exit; make", "cd /srv/x && ls ; ls /tmp"]) {
+      expect(decided(cmd).verdict, cmd).toBe("run");
+    }
   });
 });

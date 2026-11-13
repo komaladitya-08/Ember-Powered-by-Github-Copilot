@@ -6,7 +6,8 @@
  * these, each because it protects something Autopilot keeps:
  * - a command that would read or print secrets, so that no secret reaches the model;
  * - a command that would outlive the kill switch, so that Stop stops everything;
- * - a command Ember can't tell the effect of (the classifier's "unclear"), which may be either of those;
+ * - a command Ember can't tell the effect of (the classifier's "unclear", and a program or a tool's command it doesn't
+ *   know, "unknown": the closed default), which may be either of those;
  * - a command the user's own words for the task rule out ("push, but don't force", "don't delete src/"): their no,
  *   said in advance, which Autopilot keeps as it keeps a no to a question;
  * - what the organisation's policy or the user's own "ask every command" for that computer requires.
@@ -48,7 +49,10 @@ export function askedOfFinding(f: { cls?: DangerClass; rule: string }): Extract<
   if (rule.startsWith("admin.")) return "organisation";
   if (f.cls === "secret" || readsSecrets(rule)) return "secret";
   if (outlivesStop(rule)) return "outlives-stop";
-  if (f.cls === "unclear" || rule.startsWith("unclear.")) return "unclear";
+  // A program, or a tool's command, the classifier doesn't know (the closed default) is one Ember can't tell the effect
+  // of either: it may read secrets or outlive Stop, so it asks as "unclear" does, unless the user's own words named it
+  // (then the rules announced it before Autopilot was asked).
+  if (f.cls === "unclear" || f.cls === "unknown" || rule.startsWith("unclear.") || rule.startsWith("unknown.")) return "unclear";
   return null;
 }
 
@@ -90,9 +94,10 @@ const DOES: Readonly<Record<DangerClass, string>> = {
   "remote-delete": "deletes something in source control or a remote service",
   system: "changes the system or runs as an administrator",
   escape: "downloads and runs code",
-  // (These two always ask: they are never announced.)
+  // (These three always ask: they are never announced.)
   secret: "touches passwords or keys",
   unclear: "does something Ember can't tell",
+  unknown: "runs a program Ember doesn't know",
 };
 
 /** The card's line under an announcement Autopilot made, and what its decision's rules end with. */

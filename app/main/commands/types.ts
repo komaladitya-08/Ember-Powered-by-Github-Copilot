@@ -19,9 +19,11 @@ export const SHELL_FAMILY: Readonly<Record<ShellId, ShellFamily>> = { bash: "pos
  * c "remote-delete" (deleting from source control or a remote service), d "secret" (credentials, secrets, the
  * clipboard, screen pictures, shell history), e "system" (privilege and system changes, package installs, other users'
  * processes, anything that runs later: shell start-up files, git hooks and code-running git settings), f "escape"
- * (download-and-run, or outliving the kill switch), g "unclear" (Ember can't classify it confidently).
+ * (download-and-run, or outliving the kill switch), g "unclear" (Ember can't classify it confidently), h "unknown" (a
+ * program, or a verb of a tool Ember knows, that Ember has no row for: commands-closed, the closed default; the user's
+ * own words naming it announce it).
  */
-export type DangerClass = "destroy" | "publish" | "remote-delete" | "secret" | "system" | "escape" | "unclear";
+export type DangerClass = "destroy" | "publish" | "remote-delete" | "secret" | "system" | "escape" | "unclear" | "unknown";
 
 /** Classes that always ask, even when the user's own words asked for it (D4.4). */
 export const ALWAYS_ASK: ReadonlySet<DangerClass> = new Set(["secret", "escape", "unclear"]);

@@ -14,7 +14,7 @@ import { matchIntent, mentioned, namedKind, ruledOut } from "./intent";
 import { joinList } from "./words";
 
 /** The classes in the card's order (§3.8.4), which is also "most serious first". */
-export const CLASS_ORDER: readonly DangerClass[] = ["destroy", "publish", "remote-delete", "secret", "system", "escape", "unclear"];
+export const CLASS_ORDER: readonly DangerClass[] = ["destroy", "publish", "remote-delete", "secret", "system", "escape", "unclear", "unknown"];
 
 /** The card's fixed lines (§3.8.4). */
 export const LINES = {
@@ -39,6 +39,7 @@ const CLASS_REASON: Readonly<Record<DangerClass, string>> = {
   system: "it changes the system or runs with privileges",
   escape: "it downloads and runs code or keeps running after Ember stops",
   unclear: "Ember can't tell exactly what it does",
+  unknown: "it runs a program, or a tool's command, that Ember doesn't know",
 };
 
 /** How long Allow stays disarmed for a dangerous or policy-wide ask, and for an ordinary command asked by policy only. */
