@@ -1087,3 +1087,20 @@ describe("other spellings of a cloud computer's sign-in address, and two printer
     }
   });
 });
+
+describe("a deletion the user's words send to the trash or a stash (commands-classes-y9-8)", () => {
+  it("asks before a permanent deletion when the words ask for the trash, the bin or a stash", () => {
+    for (const words of ["delete the build folder, but move it to the trash", "delete the build folder by moving it to trash", "delete the build folder, though stash it somewhere",
+      "delete the build folder but stash a copy", "delete the build folder but put it in the bin", "delete the build folder and send it to the recycle bin",
+      "delete the build folder, into the trash", "delete the build folder but trash it instead", "delete the build folder to the trash"]) {
+      expect(decide("rm -rf build", { words }).verdict, words).toBe("ask");
+      expect(decide("rm -r build", { words, shell: "zsh", context: "darwin" }).verdict, words).toBe("ask");
+    }
+  });
+
+  it("still announces a deletion beside a folder named bin, and a step after it", () => {
+    for (const words of ["delete the build folder", "delete the build folder and the bin folder too", "delete the build folder and run the tests"]) {
+      expect(decide("rm -rf build", { words }).verdict, words).toBe("announce");
+    }
+  });
+});

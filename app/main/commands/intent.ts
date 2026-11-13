@@ -1183,12 +1183,16 @@ function keepsCopyFirst(text: string, verbs: readonly string[]): boolean {
  */
 const SAYS_WHICH = /(^|[^\p{L}\p{N}])((that|which)\s+[^.;!?]{0,60}?(made|created|generated|built|produced|left|wrote|downloaded|cloned|unpacked|extracted)|from\s+(yesterday|last|the\s+last|this\s+morning|earlier|the\s+previous|the\s+other))(?=$|[^\p{L}\p{N}])/iu;
 
+/** The trash or the bin as where the thing should go ("to the trash", "in the bin", "into the recycle bin"): not a permanent deletion. */
+const TO_TRASH = /(^|[^\p{L}\p{N}])(to|in|into)\s+(the\s+|my\s+)?(trash|wastebasket|(recycle\s+|recycling\s+|rubbish\s+)?bin)(?=$|[^\p{L}\p{N}])(?!\s+(folder|directory|dir)(?=$|[^\p{L}\p{N}]))/iu;
+
 /**
  * Whether the words hold a deletion back, or narrow it, in a way keepsCopyFirst doesn't read (commands-remote-r9-10):
  * a clause after the deletion's own asks for something first ("but copy it first", "(back it up first)", "; back it
  * up first", "but list it first", "and before that …"), asks to keep a copy ("but keep a copy", "but make a backup"),
  * or narrows it ("but only the logs", "but just …"); or the deletion's own clause says where the thing came from
- * ("that the CI made", "from yesterday"). Ember deletes what the command names, now, so each of these asks. A step
+ * ("that the CI made", "from yesterday"), or the words send the thing to the trash, the bin or a stash, which a
+ * permanent deletion is not (commands-classes-y9-8). Ember deletes what the command names, now, so each of these asks. A step
  * asked for after the deletion ("and back up src/", "then run the tests"), a "first" that is the deletion's own
  * ("delete build first, then rebuild") and "only the one in frontend", which the place rules read, hold nothing back;
  * a word that describes the thing ("the old build folder", "that is huge") and "on my laptop" are read as before
@@ -1205,6 +1209,9 @@ function heldOrNarrowed(text: string, verbs: readonly string[]): boolean {
       if (words.length === 0) continue;
       const starts = clauseStarts(words, n++, question, polite);
       const own = verbs.some(v => { const parts = v.split(" "); return starts.some(c => parts.every((p, j) => c[j] === p)); });
+      // "by moving it to trash", "but move it to the trash", "but trash it instead", "though stash it somewhere"
+      // (commands-classes-y9-8).
+      if (TO_TRASH.test(part) || (after && (words[0] === "trash" || words.includes("stash")))) return true;
       if (own) {
         after = true;
         if (SAYS_WHICH.test(part)) return true;

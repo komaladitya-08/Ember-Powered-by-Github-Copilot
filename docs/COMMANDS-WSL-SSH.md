@@ -616,7 +616,8 @@ away asked for first ("back up then delete the build folder", "commit my changes
 and then delete …"; Ember can't tell it was done), the same asked for after the deletion ("delete the build folder
 but copy it first", "(back it up first)", "; back it up first", "but keep a copy", "but make a backup"), any step
 asked for first there ("but list it first"), a later clause that narrows it ("but only the logs", "but just the
-object files") or words that say where the thing came from ("that the CI made", "from yesterday"), asking to be asked first ("ask me first", "check
+object files"), words that say where the thing came from ("that the CI made", "from yesterday") or that send it to
+the trash, the bin or a stash ("but move it to the trash", "by moving it to trash", "but stash a copy"), asking to be asked first ("ask me first", "check
 with me", "wait for my ok", "show me the command first", "let me see the command", "run it by me", "on my go", "hold
 off", "I'll say when") or asking how ("explain how to delete build/ and delete src/"); "tell me if it worked", "say if it
 worked", "let me know when it's done", "let me see the output", "if you can", "as soon as possible", "if it exists" and a time or
