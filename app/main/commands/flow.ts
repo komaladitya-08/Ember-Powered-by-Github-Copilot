@@ -34,7 +34,7 @@ import { AUTOPILOT_WORDS } from "../policy/policy";
 import { classifyCommand } from "./classify";
 import { LINES, decideCommand } from "./decide";
 import { covers, type AutonomyScopes } from "../policy/autonomy";
-import { mentioned, namedKind, ruledOut } from "./intent";
+import { heldByWords, mentioned, namedKind, ruledOut } from "./intent";
 import { capLines, cleanOutput, shapeOutput, type ShapeOptions } from "./output";
 import { resolveTargetPath } from "./paths";
 import { trackSecretPrompts, type SecretTracker } from "./prompts";
@@ -684,14 +684,17 @@ function wordsHoldBack(findings: readonly Finding[], words: string): boolean {
  * this." already reads (intent.ts ruledOut: a part that says not to names the kind of step and nothing else), and also
  * a step the words name only where they say not to ("do not push feature-x to GitHub yet": read without its "not" the
  * words name the push, read as said they don't), and a part that holds back what the command acts on or the kind of
- * step it is ("leave the build folder alone", "hold off on publishing": HOLDS_BACK). Autopilot keeps the question for
- * such a command: the user's no, said in advance. It only ever keeps a question, so a doubt counts as ruled out.
+ * step it is ("leave the build folder alone", "hold off on publishing": HOLDS_BACK), and words that name the step and
+ * ask to be asked first, or that narrow a deletion or send it to the trash instead (intent.ts heldByWords). Autopilot
+ * keeps the question for such a command: the user's no, said in advance. It only ever keeps a question, so a doubt
+ * counts as ruled out.
  */
 export function wordsRuleOut(findings: readonly Finding[], words: string): boolean {
   if (!words.trim() || findings.length === 0) return false;
   if (ruledOut(findings, words)) return true;
   if (!mentioned(findings, words) && mentioned(findings, words.replace(SAYS_NOT, "$1 "))) return true;
-  return wordsHoldBack(findings, words);
+  // Their asking to be asked first, and a deletion they narrow or send to the trash or a stash instead (integ-x-3).
+  return wordsHoldBack(findings, words) || heldByWords(findings, words);
 }
 
 /** A bare program name: no path, option, assignment or quoting. */

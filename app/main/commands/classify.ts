@@ -26,9 +26,9 @@ import {
 } from "./paths";
 import {
   CLIPBOARD_READERS, CLOUD_CLIS, CLOUD_DELETE, CLOUD_READ, CLOUD_READ_PHRASES, DECODERS, DISK_TOOLS, FETCHERS, GIT_CODE_KEYS, GLOBAL_OPTIONS,
-  GUI_PROGRAMS, INPUT_SYNTH, INTERACTIVE, INTERPRETERS, LANGUAGE_INSTALL_VERBS, LAUNCHERS, NAME_DESTROY, NAME_PUBLISH, NAME_SYSTEM,
+  DOWNLOAD_READERS, READER_RUNS, GUI_PROGRAMS, INPUT_SYNTH, INTERACTIVE, INTERPRETERS, LANGUAGE_INSTALL_VERBS, LAUNCHERS, NAME_DESTROY, NAME_PUBLISH, NAME_SYSTEM,
   ORDINARY_PROGRAMS, ORDINARY_VERBS, OTHER_SHELLS, POSIX_SHELLS, PS_ALIASES, PS_CMDLETS, PS_COMMON, PS_COMMON_ALIASES, RISKY_ASSIGNMENTS, RISKY_ASSIGNMENT_PREFIX,
-  SCREENSHOTTERS, SECRET_PROGRAMS, SECRET_VAR, SUDO_LIKE, SYSTEM_PACKAGERS, WRAPPERS, type GlobalGrammar, type OrdinaryVerbs, type PsCmdletSpec,
+  RECORDERS, SCREENSHOTTERS, SECRET_PROGRAMS, SECRET_VAR, SUDO_LIKE, SYSTEM_PACKAGERS, WRAPPERS, type GlobalGrammar, type OrdinaryVerbs, type PsCmdletSpec,
   type PsParamKind,
 } from "./tables";
 import { commandLineSecret } from "./redact";
@@ -227,13 +227,17 @@ export const SAYS = {
   clipboard: "Reads your clipboard, which may hold a password.",
   screen: "Takes a picture of your screen without Ember's privacy filters.",
   tokenArg: "Puts a password or token on the command line.",
+  records: "Records from the microphone or the camera.",
   refuseSafety: "Ember won't run this: it would change Ember's own safety settings, records or programs.",
   refuseRead: "Ember won't run this: it would read Ember's own safety settings, records or programs.",
   refuseInput: "Ember won't run this: it could press keys or click in Ember's own windows.",
+  refuseTerminal: "Ember won't run this: it would type or run commands in your own terminal or editor.",
+  terminalText: "Reads what your own terminal shows, which may hold passwords.",
   // The same refusals when only an earlier reading of one of the command's options makes them (Classifier.heldRefusal).
   heldRefuseSafety: "Ember won't run this: it can't tell whether one of its options takes the word after it, so it may change Ember's own safety settings, records or programs.",
   heldRefuseRead: "Ember won't run this: it can't tell whether one of its options takes the word after it, so it may read Ember's own safety settings, records or programs.",
   heldRefuseInput: "Ember won't run this: it can't tell whether one of its options takes the word after it, so it may press keys or click in Ember's own windows.",
+  heldRefuseTerminal: "Ember won't run this: it can't tell whether one of its options takes the word after it, so it may type or run commands in your own terminal or editor.",
 } as const;
 
 /** Where a part of the command is judged. */
@@ -455,7 +459,7 @@ class Classifier {
    * Every value the text may give a POSIX variable (a loop's list, an assignment), UNSEEN standing for a part Ember
    * can't see: only for Ember's own refusal, never to resolve a word for anything else (commands-remote-c3-2).
    */
-  private varValues = new Map<string, string[]>();
+  protected varValues = new Map<string, string[]>();
   /** Variables the text sets to words Ember can't see (mayHoldWords): a command's output, a read, a loop over such words. */
   private wordVars = new Set<string>();
   /**
@@ -491,6 +495,13 @@ class Classifier {
   compoundOnward = false;
   /** Words a wrapper hands to the command it runs (payload, unwrap): the rest of its words are its own. */
   protected payloadWords = new WordMarks();
+  /** The program word of each payload: a program with one among its words is a wrapper (afterRun's own-words checks). */
+  protected payloadHeads = new Set<Arg>();
+  /** A program's own words: all of them, or for a wrapper those that aren't its command's. */
+  protected ownWords(args: readonly Arg[]): { own: Arg[]; wraps: boolean } {
+    const wraps = args.some(a => this.payloadHeads.has(a));
+    return { own: wraps ? args.filter(a => !this.payloadWords.has(a)) : [...args], wraps };
+  }
   /** A loop's or `if`'s closer given text that uses variables (`done <<< "$d"`), for the reads in it (feedReads). */
   protected hereVarsAt = new Map<number, HereVars>();
   /** POSIX variables set from a substitution that fetched (`x=$(curl …)`): written to a file, the file is a download (commands-remote-c7-3). */
@@ -500,7 +511,7 @@ class Classifier {
   /** `set -a`: every variable set after it is exported to the programs that run (commands-remote-v5-2). */
   allExport = false;
   /** The same for a PowerShell variable (lower case, `env:` kept): only for Ember's own refusal (commands-remote-c3-2). */
-  private psVarValues = new Map<string, string[]>();
+  protected psVarValues = new Map<string, string[]>();
   /** Words of a variable Ember couldn't resolve, with how they were used: judged again once a loop's input gives it a value. */
   private unseenUses: { parts: readonly Part[]; use: PathUse; sc: Scope }[] = [];
   /** The text a command was given on stdin by a here-document or here-string (null: Ember can't see all of it), by index. */
@@ -542,6 +553,11 @@ class Classifier {
     this.findings.push(f);
   }
 
+  /** Takes back findings added since `from` that `drop` picks: a nested reading's, which the caller's own finding covers. */
+  dropFindings(from: number, drop: (f: Finding) => boolean): void {
+    this.findings = [...this.findings.slice(0, from), ...this.findings.slice(from).filter(f => !drop(f))];
+  }
+
   unclear(rule: string, says: string = SAYS.unclear): void {
     this.add("unclear", rule, says);
   }
@@ -553,12 +569,13 @@ class Classifier {
 
   /**
    * Ember's own flat refusal (D4.5), in words for what the command would do: change ("safety"), only read ("read") or
-   * press keys in Ember's windows ("input"). The first one stands, except that a refusal for reading gives way to one
-   * for anything more.
+   * press keys in Ember's windows ("input"), or type or run commands in a terminal or an editor of the user's
+   * ("terminal", commands-remote-r9-1). The first one stands, except that a refusal for reading gives way to one for
+   * anything more.
    */
-  refuseWith(rule: string, kind: "safety" | "read" | "input"): void {
+  refuseWith(rule: string, kind: "safety" | "read" | "input" | "terminal"): void {
     if (this.refuse && !(this.refusedRead && kind !== "read")) return;
-    this.refuse = { rule, says: kind === "safety" ? SAYS.refuseSafety : kind === "read" ? SAYS.refuseRead : SAYS.refuseInput };
+    this.refuse = { rule, says: kind === "safety" ? SAYS.refuseSafety : kind === "read" ? SAYS.refuseRead : kind === "terminal" ? SAYS.refuseTerminal : SAYS.refuseInput };
     this.refusedRead = kind === "read";
   }
 
@@ -582,7 +599,8 @@ class Classifier {
    */
   heldRefusal(): void {
     if (!this.refuse) return;
-    const says = this.refuse.says === SAYS.refuseRead ? SAYS.heldRefuseRead : this.refuse.says === SAYS.refuseInput ? SAYS.heldRefuseInput : SAYS.heldRefuseSafety;
+    const says = this.refuse.says === SAYS.refuseRead ? SAYS.heldRefuseRead : this.refuse.says === SAYS.refuseInput ? SAYS.heldRefuseInput
+      : this.refuse.says === SAYS.refuseTerminal ? SAYS.heldRefuseTerminal : SAYS.heldRefuseSafety;
     this.refuse = { rule: this.refuse.rule, says };
   }
 
@@ -809,6 +827,11 @@ class Classifier {
    * is kept, earlier ones too, so a value set again inside a loop still counts. A name set again no longer says the
    * loop's files on the card.
    */
+  /** The values this line gave a variable, as far as Ember can read them. */
+  valuesOf(name: string): readonly string[] {
+    return (this.varValues.get(name) ?? []).filter(f => !f.includes(UNSEEN) && !f.startsWith(PATTERN));
+  }
+
   setVar(name: string, values: readonly Arg[] | null, sc: Scope, loop = false, exported = false): void {
     if (!loop) this.setsVars = true;
     if (!/^([A-Za-z_]\w*|[1-9@*])$/.test(name)) return;
@@ -1638,7 +1661,110 @@ const PROJECT_FILE = new RegExp([
 ].join("|"), "i");
 
 /** Compilers whose output, built from a downloaded source, is a download too (carryCompiled; commands-remote-r8-2). */
-const COMPILERS = new Set(["gcc", "g++", "cc", "c++", "clang", "clang++", "rustc"]);
+const COMPILERS = new Set([
+  "gcc", "g++", "cc", "c++", "clang", "clang++", "rustc",
+  // Every compiler's output carries the mark (commands-remote-r9-6): by `-o`, `-d`, `-out:` and their like.
+  "gfortran", "gdc", "gccgo", "javac", "kotlinc", "scalac", "ghc", "swiftc", "dmd", "ldc2", "nim", "crystal", "mcs", "csc", "fpc", "ocamlc", "ocamlopt", "valac", "tcc",
+  "nasm", "yasm", "as", "ld", "gold", "lld", "zig",
+]);
+/**
+ * Programs whose output is text from the network without being fetch tools in their own right (commands-remote-r9-6):
+ * what they print into a file is a download (`gh api … > a.sh`, `gh gist view --raw > a.sh`), and into a shell it is
+ * download-and-run. Kept apart from FETCHERS, whose substitutions and options are judged as a fetch tool's.
+ */
+const TEXT_FETCHERS = new Set(["gh", "glab", "hub", "s3cmd", "b2", "gdown", "ipfs", "yt-dlp", "youtube-dl", "ncftpget", "lftp", "huggingface-cli", "hf", "az", "aws", "gcloud", "kubectl", "doctl", "mc", "rclone", "adb"]);
+/** The instance metadata services of the clouds, by address and by name. */
+const CLOUD_METADATA = /(^|[/@[:])(169\.254\.169\.254|169\.254\.170\.2|100\.100\.100\.200|fd00:ec2::254|a9fe:a9fe|metadata\.google\.internal|metadata\.azure\.com|instance-data)\.?([\]/:?#]|$)/i;
+/**
+ * A word that names one of them, also with its address written another way a resolver takes (commands-classes-y9-7):
+ * one number, hex or octal parts, fewer than four parts (`0xa9fea9fe`, `2852039166`, `0251.0376.0251.0376`,
+ * `169.254.43518`), a dot after it, inside an IPv6 address, or after the colons of curl's `--resolve`.
+ */
+function cloudMetadata(word: string): boolean {
+  if (CLOUD_METADATA.test(word)) return true;
+  for (const m of word.matchAll(/(?:^|\/\/|@)([0-9a-fx.]+)(?=[:/?#]|$)/gi)) {
+    const parts = m[1].replace(/\.$/, "").split(".");
+    if (parts.length > 4 || parts.some(p => !/^(0x[0-9a-f]+|\d+)$/i.test(p))) continue;
+    const nums = parts.map(p => (/^0x/i.test(p) ? parseInt(p, 16) : /^0\d/.test(p) ? parseInt(p, 8) : parseInt(p, 10)));
+    if (nums.some(n => Number.isNaN(n))) continue;
+    // inet_aton's reading: the last part fills the bytes the earlier parts leave.
+    const n = nums.slice(0, -1).reduce((sum, v, k) => sum + v * 256 ** (3 - k), 0) + nums[nums.length - 1];
+    if (n === 0xa9fea9fe || n === 0xa9feaa02 || n === 0x646464c8) return true;
+  }
+  return false;
+}
+/** The text of each command substitution in a word as written: `$( … )` (never `$(( … ))`) and backticks. */
+function substituted(raw: string): string[] {
+  const text = raw.replace(/'[^']*'/g, "");
+  const out: string[] = [];
+  for (let k = 0; k < text.length; k++) {
+    if (text[k] === "`") {
+      const end = text.indexOf("`", k + 1);
+      out.push(text.slice(k + 1, end < 0 ? text.length : end));
+      k = end < 0 ? text.length : end;
+    } else if (text.startsWith("$(", k) && text[k + 2] !== "(") {
+      let depth = 1;
+      let j = k + 2;
+      for (; j < text.length && depth > 0; j++) depth += text[j] === "(" ? 1 : text[j] === ")" ? -1 : 0;
+      out.push(text.slice(k + 2, depth === 0 ? j - 1 : text.length));
+      k = j - 1;
+    }
+  }
+  return out;
+}
+/** Programs whose output only says the machine's kind, the time, a version, or what another fetch returned. */
+const SAYS_LITTLE = new Set(["uname", "date", "arch", "nproc", "getconf", "lsb_release", "dpkg", "rpm", "hostname", "whoami", "id", "curl", "wget", "echo", "printf", "mktemp", "sw_vers", "go", "rustc", "node", "python3", "python"]);
+/** The words of a fetch that only gets a web address: the address, and the options that take no value and name no file. */
+const FETCH_ONLY = /^(https?:\/\/[^\s"'@]+|-[sSfLkqI46]+|-q?O-|-|--(silent|show-error|fail|location|quiet|insecure|compressed|head|no-progress-meter|no-verbose))$/i;
+/**
+ * Filters such output may pass through, each with how many plain words it takes that aren't files (tr's two sets; a
+ * sed, awk, grep or jq program): a word past those may be a file it reads instead of the pipe (`sed p notes`, `head
+ * -c 500 notes`), and so may an option that names one (`grep -f notes`, `jq --rawfile`). Never xargs, which runs a
+ * command (commands-classes-x9-5).
+ */
+const PASSES_ON: Readonly<Record<string, number>> = { tr: 2, sed: 1, awk: 1, grep: 1, jq: 1, cut: 0, head: 0, tail: 0, sort: 0, uniq: 0, wc: 0, tolower: 0 };
+/** Whether a filter stage is given a file to read: more plain words than its own, or an option that names a file. */
+function filterReadsFile(st: readonly string[]): boolean {
+  const own = PASSES_ON[st[0]];
+  let plain = 0;
+  for (let k = 1; k < st.length; k++) {
+    const w = st[k];
+    if (w.startsWith("-")) { if (own === 1 && (/^-[A-Za-z]*f/.test(w) || /^--(file|from-file|rawfile|slurpfile|args|jsonargs)/.test(w))) return true; continue; }
+    // An option's value that is a count, a field list or one separator character (`head -n 5`, `cut -d , -f 1,3`).
+    if (st[k - 1].startsWith("-") && /^([+-]?[\d,-]+|[^A-Za-z0-9])$/.test(w)) continue;
+    plain++;
+  }
+  return plain > own;
+}
+/**
+ * Whether a substitution's text holds nothing of the user's files (sendsContents): each pipeline in it starts with a
+ * program that says little (git only with rev-parse, describe or symbolic-ref; an interpreter only for its version;
+ * a fetch only of web addresses, with no option that reads a file)
+ * and goes on through filters given no file, with no redirection from a file and no substitution inside.
+ */
+function saysLittle(inner: string): boolean {
+  if (/[<`]|\$\(|\$\{?[A-Za-z_]/.test(inner)) return false;
+  for (const pipeline of inner.split(/;|&&|\|\||\n/)) {
+    const stages = pipeline.split("|").map(st => st.trim().split(/\s+/));
+    if (stages.length === 0 || stages[0][0] === "") return false;
+    const [head, ...words] = stages[0];
+    const prog = head.split("/").pop() ?? head;
+    const versionOnly = /^(go|rustc|node|python3?)$/.test(prog) && !(words.length === 1 && /^(-v|-V|--version|version)$/.test(words[0]));
+    const ok = prog === "git" ? /^(rev-parse|describe|symbolic-ref)$/.test(words[0] ?? "") : SAYS_LITTLE.has(prog) && !versionOnly;
+    if (!ok) return false;
+    // A fetch says what another computer returned only when every address is a web one: `curl file:///…`, `-K file`,
+    // `--data @file` and their like read this computer's files (commands-classes-x9-5).
+    if (/^(curl|wget)$/.test(prog) && !words.every(w => FETCH_ONLY.test(w.replace(/^(["'])(.*)\1$/, "$2")))) return false;
+    if (prog === "date" && words.some(w => /^(-[A-Za-z]*f|--file)/.test(w))) return false;
+    for (const st of stages.slice(1)) if (!Object.hasOwn(PASSES_ON, st[0]) || filterReadsFile(st) || st.slice(1).some(w => !/^(-|'|"|[A-Za-z0-9_]*$)/.test(w) && /[/.]/.test(w))) return false;
+  }
+  return true;
+}
+/** Programs whose words are, or hold, a command line they hand to a shell: judged there (nested()), never as their own files. */
+const NESTS_TEXT = new Set(["sh", "bash", "zsh", "dash", "ksh", "ash", "fish", "cmd", "powershell", "pwsh", "wsl", "watch", "flock", "script", "su", "runuser", "ssh", "slogin", "parallel", "eval", "source", "."]);
+const fetches = (key: string): boolean => FETCHERS.has(key) || TEXT_FETCHERS.has(key);
+/** The input a pipe gives a program, by the names it can be opened under (`install /dev/stdin a.sh`, `cp /dev/fd/0 a.sh`). */
+const PIPE_INPUT = /^(\/dev\/stdin|\/dev\/fd\/0|\/proc\/self\/fd\/0)$/;
 
 /**
  * Variables whose value is a command a build tool runs (`CC='sh -c …' make`, `PSQL_PAGER=…`): the value is judged as a
@@ -2341,6 +2467,11 @@ class Engine extends Classifier {
       && /download(string|data|file)|net\.webclient|invoke-webrequest|invoke-restmethod|(^|[^\w-])(iwr|irm|curl|wget|start-bitstransfer)([^\w-]|$)/i.test(text)) {
       this.add("escape", "escape.download-run", SAYS.downloadsAndRuns);
     }
+    // .NET's own way to a variable named for a secret, wherever it stands (`[Environment]::GetEnvironmentVariable(
+    // "GITHUB_TOKEN")`): the text hands it on or prints it (commands-classes-x9-9).
+    for (const m of text.matchAll(/GetEnvironmentVariable\(\s*["']([A-Za-z_][A-Za-z0-9_]*)["']/gi)) {
+      if (SECRET_VAR.test(m[1])) { this.add("secret", "secret.env", SAYS.env); break; }
+    }
   }
 
   /** Classifies a whole command text in a family (nested `sh -c`, `cmd /c`, `powershell -Command` too). */
@@ -2692,6 +2823,10 @@ class Engine extends Classifier {
       // (PROGRAM_OPT_VARS) when a sub-option names a program (`-toolexec=`, `--to-command=`). An ordinary value
       // (`CC=clang`, `GOFLAGS=-mod=vendor`) runs. Ember's own refusal from the value comes through its row.
       else if (beforeCommand && namesProgram(a.name, a.value.v, a.value.raw)) this.unclear("unclear.assignment", "It changes how commands are found or run.");
+      // One set in front of a command to a file this task downloaded, or a folder that holds one, may be a program the
+      // command runs (`CC=./cc.sh make`, `EDITOR=./x git commit`): whatever its name (commands-remote-r9-5).
+      // After `set -a` a variable set alone is handed to every later program too (commands-classes-y9-5).
+      if ((beforeCommand || this.allExport) && a.value.v !== null && this.namesDownload(a.value.v, sc)) this.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
       if (a.value.v !== null && commandLineSecret(`${a.name}=${a.value.v}`)) this.add("secret", "secret.token-arg", SAYS.tokenArg);
       this.setVar(a.name, [a.value], sc, false, beforeCommand);
     }
@@ -2729,6 +2864,9 @@ class Engine extends Classifier {
           if (st.assign && k === 0) {
             const value = el.segs.map(seg => (seg.t === "lit" ? seg.s : "")).join("");
             if (commandLineSecret(el.raw) || (value !== "" && commandLineSecret(`${st.assign.replace(/^env:/i, "")}=${value}`))) this.add("secret", "secret.token-arg", SAYS.tokenArg);
+            // An environment variable set to a file this task downloaded may name a program a later command runs
+            // (`$env:CC = '.\cc.sh'; make`: commands-remote-r9-5).
+            if (/^env:/i.test(st.assign) && value !== "" && this.namesDownload(value, sc)) this.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
           }
           // A value that is a secret environment variable prints it.
           for (const seg of el.segs) if (seg.t === "var" && /^env:/i.test(seg.name) && SECRET_VAR.test(seg.name.slice(4))) this.add("secret", "secret.env", SAYS.env);
@@ -3001,6 +3139,9 @@ class Engine extends Classifier {
     if (s.stdinVars && (key === "done" || key === "fi")) this.hereVarsAt.set(this.at, s.stdinVars);
     if (key === "done" || key === "fi") this.closerInput.set(this.at, s.ownInput);
     else if (s.stdinVars && !(takes ? s.stdinVars.word !== null : VAR_SHOWN_ONLY.has(key) || (readsText(key, args) && !s.pipedOn))) this.useUnjudged(s.stdinVars.names, key !== "xargs" && key !== "parallel");
+    // A secret-named variable in that text is handed to the program as one on its line is (commands-classes-y9-3):
+    // `base64 <<< $GITHUB_TOKEN` prints it in a form no redaction knows.
+    if (s.stdinVars && !takes && s.stdinVars.names.some(n => SECRET_VAR.test(n) && !this.loopVars.has(n) && !this.varValues.has(n))) this.add("secret", "secret.env", SAYS.env);
     this.noteProgram(prog);
     before?.();
     if (nonAsciiLetters(nameArg.v)) this.unclear("unclear.program-letters", "Its program name has letters from another alphabet.");
@@ -3027,11 +3168,11 @@ class Engine extends Classifier {
     this.noteVarUses(key, this.commands.length === inner ? args : args.filter(a => !this.payloadWords.has(a)), out);
     if ((key === "done" || key === "fi" || key === "esac") && out !== "shown") this.compoundOnward = true;
     this.unnamedWrites(key, args, sc);
-    this.afterArgs(args);
+    this.afterArgs(args, key);
     this.afterRun(key, args, s, sc, sc, dlBefore);
     this.hiddenNames(key, args, sc);
     this.pipe.program = key;
-    if (FETCHERS.has(key) || DECODERS.has(key)) this.pipe.fetch = true;
+    if (fetches(key) || DECODERS.has(key)) this.pipe.fetch = true;
   }
 
   /** The program's row, after the checks every program gets. */
@@ -3039,9 +3180,15 @@ class Engine extends Classifier {
     const { sc, key, nameArg, args, pn } = h;
     if (pn.isPath) {
       this.usePath(nameArg, "exec", sc);
-      if (this.isDownloaded(nameArg, sc)) this.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
+      // A download run by its path, and told to detach by its own words (`./i.sh --daemon`: integ-y-5).
+      if (this.isDownloaded(nameArg, sc)) { this.add("escape", "escape.run-downloaded", SAYS.runsDownloaded); detachWords(h, args); }
       if (!this.onRecord(nameArg, sc)) this.scriptByPath(nameArg, pn, sc);
       scriptName(h, nameArg.v ?? "");
+      if (!NATIVE[key] && nameArg.v !== null) scriptVerbs(h, nameArg.v, args);
+    } else if (sc.wrappers.length > 0 && nameArg.v !== null && this.holdsAnyDownload() && this.isDownloaded(nameArg, sc, false)) {
+      // A command handed to a program by a bare word that is a download of this task (`mytool r`, where generic()
+      // took `r` for a program's name): it may be what runs (commands-remote-r9-5).
+      this.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
     } else if (sc.family === "cmd" && nameArg.v !== null && !CMD_BUILTINS[key]) {
       // cmd looks in the current folder first, with each runnable extension when none is written.
       const names = pn.ext ? [nameArg.v] : [nameArg.v, ...[".exe", ".com", ".bat", ".cmd"].map(e => nameArg.v + e)];
@@ -3065,6 +3212,8 @@ class Engine extends Classifier {
       if (sc.wsl && sc.family === "posix" && !(sc.cwd && sc.mountRoot && isUnder(sc.cwd, sc.mountRoot, sc.path))) {
         this.unclear("unclear.cmd-linux-folder", SAYS.cmdLinuxFolder);
       }
+      // A command handed to the batch file is read as one, as for any script (commands-classes-x9-4).
+      if (nameArg.v !== null) handedCommand(h, -1, { name: nameArg.v, args });
       this.readArgs(args, sc);
       return;
     }
@@ -3085,11 +3234,22 @@ class Engine extends Classifier {
     }
     const windowsSide = sc.os === "win32" || sc.family !== "posix" || pn.interop;
     if (windowsSide && (key === "bash" || (!NATIVE[key] && DISTRO_LAUNCHER.test(key)))) { distroLauncher(h); return; }
+    // A versioned name of a program with a row is that program (`python3.12 -c …`, `pip3.12`, `node20`): its row
+    // decides, never the allow-list's "a program Ember knows" (commands-remote-r9-3).
+    // What a program with no row was always asked stays beside it (generic(): `pip3.12 install x` read as a program
+    // handed `install`, as on main), so no versioned name decides less safely than it did.
+    if (!NATIVE[key] && NATIVE[unversioned(key)]) { this.dispatch({ ...h, key: unversioned(key) }); generic(h, true); return; }
+    terminalDriver(h);
     const n = NATIVE[key];
     const from = this.findings.length;
     if (n) { this.runRow(n, h); this.verbGuard(h, from); }
     else { unknownProgram(h); generic(h, true); }
     toolPayload(h);
+    // A script a tool runs by its file's name (`tsx tool.ts 'npm publish'`, `bun tool.ts …`): the words after it are
+    // the script's own, read as runScript reads an interpreter's (commands-classes-x9-4).
+    const files = !n ? (ORDINARY_VERBS[key] ?? ORDINARY_VERBS[unversioned(key)])?.files : key === "bun" ? /\.(m|c)?(j|t)sx?$/i : undefined;
+    const script = files ? args.find(a => a.v !== null && !a.v.startsWith("-") && files.test(a.v)) : undefined;
+    if (script) handedToScript(h, script);
     // A deleter that had no row before commands-remote-c8-2 keeps an unknown program's `-o` (commands-remote-x8-5),
     // and so does toybox (commands-closed-y9-1).
     optionPaths(h, !n || UNKNOWN_OPTIONS.has(key));
@@ -3134,8 +3294,30 @@ class Engine extends Classifier {
     }
   }
 
+  /**
+   * A variable named for a secret, expanded as a program's argument (modes-y9-6): the program is handed the secret and
+   * may print it, whatever program it is, so it is a `secret.env` finding as `echo $TOKEN` is, by the same name test
+   * (SECRET_VAR). Never a variable the line itself set or loops over (its value is the line's own text), a
+   * single-quoted word, or the shell's own words that only set names.
+   */
+  private secretVars(args: readonly Arg[], key: string): void {
+    if (/^(export|declare|typeset|local|readonly|unset|set|let|read|mapfile|readarray|for|select|case|:)$/.test(key)) return;
+    const secret = (n: string): boolean => SECRET_VAR.test(n) && !this.loopVars.has(n) && !this.varValues.has(n);
+    for (const a of args) {
+      if (a.v !== null) continue;
+      // The names the parser found, and those written in the word in a form it keeps whole: `${NAME@Q}`, `${NAME^^}`,
+      // `${!NAME}` (commands-classes-x9-9).
+      const names = [
+        ...(a.parts ?? []).flatMap(p => (typeof p === "string" || p.name === null ? [] : [p.name])),
+        ...[...a.raw.replace(/'[^']*'/g, "").matchAll(/\$\{?!?(?:env:)?([A-Za-z_][A-Za-z0-9_]*)|%([A-Za-z_][A-Za-z0-9_]*)%/gi)].map(m => m[1] ?? m[2]),
+      ];
+      if (names.some(secret)) { this.add("secret", "secret.env", SAYS.env); return; }
+    }
+  }
+
   /** Checks every program's arguments get: a password or token typed on the command line (§3.5.4). */
-  afterArgs(args: Arg[]): void {
+  afterArgs(args: Arg[], key = ""): void {
+    this.secretVars(args, key);
     for (let k = 0; k < args.length; k++) {
       const a = args[k];
       if (a.v === null) continue;
@@ -3152,6 +3334,7 @@ class Engine extends Classifier {
   payload(words: Arg[], sc: Scope, wrapper: string, o: Partial<Simple> = {}): void {
     if (words.length === 0) return;
     for (const w of words) this.payloadWords.add(w);
+    this.payloadHeads.add(words[0]);
     const savedAt = this.at;
     const savedProg = this.program;
     const savedPipe = this.pipe;
@@ -3172,6 +3355,7 @@ class Engine extends Classifier {
     // at the start of a command, never as the program (commands-remote-c1-1).
     let lead = 0;
     if (h.sc.family === "posix" && ASSIGNS_AFTER.has(wrapper)) while (lead < all.length && ASSIGNMENT_WORD.test(all[lead].raw)) lead++;
+    this.payloadHeads.add(all[Math.min(lead, all.length - 1)]);
     // Before these were read as assignments the first one stood as a program Ember didn't know, and with a word after
     // it that names a program that runs others (`time x=1 sh -c '…'`, `if IFS= read -r l <<< 'a'`) it asked how the one
     // runs the other (generic()). Such a command still asks, after a flow word as after `time` (commands-remote-x7-5).
@@ -3245,6 +3429,8 @@ class Engine extends Classifier {
     }
     // The shell's scope stays the one the command's redirections are opened in, whatever folder the wrapper moves
     // into (`env -C src patch -p1 < x.patch`, `sudo -D src …`: commands-y6-4).
+    const versioned = !NATIVE[key] && NATIVE[unversioned(key)] ? key : null;
+    if (versioned !== null) key = unversioned(key);
     const inner: H = { e: this, sc, s: { ...h.s, ps: undefined }, key, prog, nameArg, args: words.slice(1), pn, shellSc: h.shellSc ?? h.sc };
     // Native rows only: a wrapper runs a program, never a cmdlet or a cmd built-in.
     if (pn.isPath) {
@@ -3256,21 +3442,27 @@ class Engine extends Classifier {
         if (pn.ext === ".bat" || pn.ext === ".cmd") this.recordScript(nameArg, "cmd", sc);
       }
       scriptName(inner, nameArg.v);
+      if (!NATIVE[key]) scriptVerbs(inner, nameArg.v, inner.args);
+    } else if (this.holdsAnyDownload() && this.isDownloaded(nameArg, sc, false)) {
+      // As in dispatch(): a handed bare word that is a download of this task.
+      this.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
     }
+    terminalDriver(inner);
     const n = NATIVE[key];
     const dlBefore = this.downloads.length;
     const from = this.findings.length;
     if (n) { this.runRow(n, inner); this.verbGuard(inner, from); }
     else { unknownProgram(inner); generic(inner, true); }
+    if (versioned !== null) generic({ ...inner, key: versioned }, true);
     toolPayload(inner);
     optionPaths(inner, !n || UNKNOWN_OPTIONS.has(key));
     this.unnamedWrites(key, inner.args, sc);
-    this.afterArgs(inner.args);
+    this.afterArgs(inner.args, key);
     // The command's own redirections are this program's (`then curl … > x.py`, `time curl … > x.py`): what it fetches
     // there is a download, and a pipe after it carries what it fetched (commands-remote-c1-1).
     this.afterRun(key, inner.args, h.s, sc, h.shellSc ?? h.sc, dlBefore);
     this.innerMarks = this.downloads.length;
-    if (FETCHERS.has(key) || DECODERS.has(key)) this.pipe.fetch = true;
+    if (fetches(key) || DECODERS.has(key)) this.pipe.fetch = true;
     // `command printf -v …` and `time unset …` run the same built-ins.
     this.hiddenNames(key, inner.args, sc);
   }
@@ -3322,6 +3514,7 @@ class Engine extends Classifier {
    * this task downloaded runs that folder's code (a cloned repository's Makefile or package scripts).
    */
   afterRun(key: string, args: Arg[], s: Simple, sc: Scope, shellSc: Scope = sc, dlBefore = this.downloads.length): void {
+    this.sendsContents(key, args, s);
     // What reads a download writes it out again (`cat x.py > y.py`, `sed … x.py > y.py`, `cat x.py | tee y.py`): the
     // new file is the download too (commands-remote-c2-2). Its redirections are the shell's, opened in its folder
     // whatever folder a wrapper moves the program into (`env -C src curl … > x.py`: commands-z6-3).
@@ -3333,9 +3526,14 @@ class Engine extends Classifier {
     // too (`sed … <<< "$x" > a.py`, `tee a.py <<< "$x"`, `dd of=a.py <<< "$x"`: commands-remote-x7-8).
     const prints = s.fetched === true && PRINTS_TEXT.has(key);
     if (prints) this.pipe.fetch = true;
-    if (prints || carried || FETCHERS.has(key)) this.gaveFetched = true;
+    if (prints || carried || fetches(key)) this.gaveFetched = true;
     const ownStart = this.downloads.length;
-    if (s.fetchBefore || FETCHERS.has(key) || carried || s.fetched === true) {
+    // Fetched text handed to a copier as its input file, by the pipe's own name or a process substitution (`curl … |
+    // install -m755 /dev/stdin a.sh`, `cp <(curl …) a.sh`): what it writes is the download (commands-remote-r9-6).
+    if (/^(cp|install|ginstall|gcp|rsync|mv|ln|copy-item)$/.test(key) && ((s.fetchBefore && args.some(a => a.v !== null && PIPE_INPUT.test(a.v))) || args.some(a => a.fetch === true))) {
+      for (const a of args) if (a.v !== null && a.fetch !== true && !isOption(a) && !PIPE_INPUT.test(a.v) && !NULL_SINKS.has(a.v.toLowerCase())) this.download(a.v, sc);
+    }
+    if (s.fetchBefore || fetches(key) || carried || s.fetched === true) {
       for (const r of s.redirs) if ((r.kind === "write" || r.kind === "append") && r.target?.v) this.download(r.target.v, shellSc);
       if (/^(tee|tee-object|out-file|set-content|add-content|sponge)$/.test(key)) {
         for (const a of args) if (a.v !== null && a.param === undefined && !isOption(a) && !NULL_SINKS.has(a.v.toLowerCase())) this.download(a.v, sc);
@@ -3352,6 +3550,8 @@ class Engine extends Classifier {
     // (commands-remote-r8-2).
     if (known && this.runsDownloadedExec(key, args, sc)) this.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
     const runner = PROJECT_RUNNERS.has(key) || ((key === "docker" || key === "podman") && /^(compose|build|buildx)$/.test(args[0]?.v ?? ""));
+    // Any other program named with a download; a build tool's own check below reads its words the same way.
+    if (!runner) this.runsNamedDownload(key, args, sc, dlBefore);
     // Whether anything is downloaded is read after the row's own redirections are marked, as on 4d64d3a, so a runner
     // given fetched text whose output file is its own argument asks with nothing downloaded before it too
     // (`curl … | make x > x`: commands-remote-y8-2).
@@ -3373,6 +3573,8 @@ class Engine extends Classifier {
     // the card then says as a fact (`namedHit`: commands-remote-x7-4).
     const hits = [this.isDownloaded(lit("."), sc), ...args.map(a => {
       if (a.v === null || URL_LIKE.test(a.v)) return false;
+      // A download named inside the word: an attached value, a variable's value (commands-remote-r9-5).
+      if (this.namesDownload(a.v, sc)) return true;
       const v = a.v.replace(/^--?[A-Za-z][A-Za-z-]*=/, "");
       if (v === "" || v.startsWith("-")) return false;
       // A file it is given, or a folder it works in (`make -C sub`) holding a project file this task downloaded.
@@ -3401,8 +3603,8 @@ class Engine extends Classifier {
       const a = args[k];
       if (a.v === null) continue;
       if (a.v === "-c" || a.v === "--compile") { compileOnly = true; continue; }
-      if (a.v === "-o" || a.v === "--output") { if (args[k + 1]?.v) out.push(args[k + 1].v as string); k++; continue; }
-      const attached = /^-o(.+)$/.exec(a.v) ?? /^--output=(.+)$/.exec(a.v);
+      if (/^(-o|--output|--out|-d|--out-dir|-outdir|-odir)$/.test(a.v)) { if (args[k + 1]?.v) out.push(args[k + 1].v as string); k++; continue; }
+      const attached = /^--(?:output|out|out-dir)[=:](.+)$/.exec(a.v) ?? /^[-/](?:out|o|Fe|of)[:=](.+)$/.exec(a.v) ?? /^-o(.+)$/.exec(a.v);
       if (attached) { out.push(attached[1]); continue; }
       if (!a.v.startsWith("-") && this.isDownloaded(a, sc)) sources.push(a.v);
     }
@@ -3411,7 +3613,9 @@ class Engine extends Classifier {
     if (out.length > 0) return;
     if (isRust) { for (const s of sources) { const stem = baseName(s, sc.path.flavour).replace(/\.[^.]+$/, ""); if (stem) this.carryDownload(stem, sc); } return; }
     if (compileOnly) { for (const s of sources) this.carryDownload(s.replace(/\.[^./\\]+$/, ".o"), sc); return; }
-    this.carryDownload("a.out", sc);
+    // A cc-family link writes a.out; the others name their output after the source, beside it or here.
+    if (/^(gcc|g\+\+|cc|c\+\+|clang|clang\+\+|gfortran|tcc|ld|gold|lld)$/.test(key)) { this.carryDownload("a.out", sc); return; }
+    for (const s of sources) { const stem = s.replace(/\.[^./\\]+$/, ""); if (stem) { this.carryDownload(stem, sc); this.carryDownload(baseName(stem, sc.path.flavour), sc); } }
   }
 
   /**
@@ -3468,6 +3672,116 @@ class Engine extends Classifier {
       return false;
     }
     return false;
+  }
+
+  /**
+   * Whether a word names a file this task downloaded, or a folder that holds one of its project files, anywhere in
+   * it (commands-remote-r9-5): the word itself; the value attached to an option (`-Cr`, `-fr/pom.xml`,
+   * `--file=r/x`, `/c:x`); the value of a `NAME=value` or a `-DNAME=value`; each part of a list or of quoted words
+   * (`'project r'`, `a,b`, `'key="./x.sh"'`); a response file after `@`; a build label's folder (`//r/...`).
+   */
+  namesDownload(word: string, sc: Scope): boolean {
+    if (!sc.cwd || URL_LIKE.test(word)) return false;
+    const win = sc.path.flavour === "win32";
+    const at = { os: sc.os, home: sc.home ?? "", cwd: sc.cwd };
+    const seen = new Set<string>();
+    const hit = (c0: string): boolean => {
+      // A response file (`gcc @opts`, `javac @args`, `java @fix`): its lines are the program's own options, a wrapper
+      // or a plugin among them, whatever the file is called (commands-classes-x9-2).
+      const response = /^@[^@({]/.test(c0);
+      const c = response ? c0.slice(1) : c0;
+      const t = c.replace(/^\/\/(?=[^/])/, "").replace(/\/\.\.\.$|(?<=.):[A-Za-z0-9_.-]*$/, m => (win && m.length > 1 ? m : ""));
+      if (t === "" || t.startsWith("-") || seen.has(t) || URL_LIKE.test(t)) return false;
+      seen.add(t);
+      // A file whose name says plain data (a table, text, a picture, a document) isn't code a program runs: it leaves
+      // the command as it was (commands-remote-c2-2), unless a build tool follows it by name (PROJECT_FILE).
+      const base = baseName(t.replace(/[\\/]+$/, ""), sc.path.flavour);
+      if (!response && DATA_FILE.test(base) && !PROJECT_FILE.test(base)) return false;
+      return this.isDownloaded(lit(t), sc, false) || this.downloadedProjectFile(resolveTargetPath(t, at), sc);
+    };
+    // Also what stands in quotes or brackets inside the word, as a tool's own settings are written
+    // (`--config 'build.rustc-wrapper="./cc.sh"'`, `'runner = ["./run.sh"]'`).
+    const parts = (text: string): string[] => [text, ...text.split(win ? /[\s=,;"'`()[\]{}]+/ : /[\s=,;:"'`()[\]{}]+/)];
+    const texts = [word];
+    // A short option with its value attached, a long one after `=`, and cmd's `/x:value`.
+    const short = /^-[A-Za-z](.+)$/.exec(word);
+    if (short) texts.push(short[1]);
+    const slash = /^\/[A-Za-z?]+:(.+)$/.exec(word);
+    if (slash) texts.push(slash[1]);
+    return texts.some(t => parts(t).some(hit));
+  }
+
+  /**
+   * A program that isn't one that only reads or moves files (DOWNLOAD_READERS), named with a download of this task
+   * anywhere on its line, or working in a downloaded folder or one Ember can't name (commands-remote-r9-5, r9-6): it
+   * may run the download, whatever program it is, so it asks. Only what stood downloaded before this command counts,
+   * as for the build tools' own check below, and a wrapper's command is judged as its own program.
+   */
+  private runsNamedDownload(key: string, args: readonly Arg[], sc: Scope, dlBefore: number): void {
+    // A shell or a program given its command as text judges that text as commands of their own (nested()).
+    if (this.asMain || NESTS_TEXT.has(key) || key === "") return;
+    // A reader or a fetch tool stays one unless a word of its line makes it run or load a file (READER_RUNS).
+    const runs = READER_RUNS[key];
+    const reader = DOWNLOAD_READERS.has(key) || fetches(key);
+    if (reader && !(runs !== undefined && args.some(a => a.v !== null && runs.test(a.v)))) return;
+    const saved = this.downloads;
+    const cut = Math.max(dlBefore, this.innerMarks);
+    if (this.downloads.length > cut) this.downloads = this.downloads.slice(0, cut);
+    try {
+      if (this.ctx.downloaded.size === 0 && this.downloads.length === 0) return;
+      // A wrapper's command is judged as its own program, in the folder the wrapper gives it: of a wrapper with a row
+      // only the variables it sets for the command count (`env CC=./cc.sh make`; never `env -C src patch …`).
+      const { own: all, wraps } = this.ownWords(args);
+      let own = all;
+      if (wraps && NATIVE[key]) own = own.filter(a => a.v !== null && /^[A-Za-z_][A-Za-z0-9_]*=/.test(a.v));
+      // Such a reader given a word Ember can't read (`-pre SO_PATH:$PWD/fix.so`) may be given the download too.
+      const hit = own.some(a => (a.v !== null ? this.namesDownload(a.v, sc) : reader))
+        || (!wraps && !reader && (sc.cwd === null || this.isDownloaded(lit("."), sc, false)));
+      if (hit) this.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
+    } finally {
+      this.downloads = saved;
+    }
+  }
+
+  /**
+   * A program that sends (a fetch tool: curl, wget, httpie, Invoke-WebRequest, nc and their like) given what a file
+   * or a command holds inside its address, a header, a cookie, a sign-in or a field (commands-remote-r9-7): a command
+   * or process substitution, backticks, `$(<file)`, a variable this line filled from a command or a read, curl's
+   * `-H @file`, or a file on httpie's input. The contents leave the computer, so it asks as publishing. Never a
+   * substitution that only says the machine's kind, the time, a version or what another fetch returned
+   * (`$(uname -m)`, `$(date +%s)`, `$(curl …/latest)`), nor a variable the line didn't fill.
+   */
+  private sendsContents(key: string, args: readonly Arg[], s: Simple): void {
+    if (this.asMain) return;
+    const says = "May send what a file or a command holds to another computer.";
+    if (!FETCHERS.has(key)) {
+      // Any other program given a web address that holds what a command or a read gave sends it as well (`git
+      // ls-remote "https://x.io/$(cat notes.txt)"`, `pip download …`: commands-classes-y9-6).
+      const { own: words } = this.ownWords(args);
+      if (words.some(a => a.v === null && /^["']?(https?|ftps?|ssh|git):\/\//i.test(a.raw) && substituted(a.raw).some(inner => !saysLittle(inner)))) this.add("publish", "send.contents", says);
+      return;
+    }
+    // The address a cloud computer hands out its own sign-in at (the instance metadata service): what a fetch of it
+    // prints is a credential (commands-remote-r9-9).
+    if (args.some(a => a.v !== null && cloudMetadata(a.v))) this.add("secret", "secret.cloud", SAYS.secrets);
+    // A PowerShell variable the line filled from a command counts as a POSIX one does (commands-classes-y9-6).
+    const filled = (name: string): boolean => (this.varValues.get(name) ?? []).some(f => f.includes(UNSEEN)) || this.loopVars.get(name) === "read"
+      || (this.psVarValues.get(name.toLowerCase().replace(/^(script|global|local|private|using):/, "")) ?? []).some(f => f.includes(UNSEEN));
+    let hit = /^(http|https|xh|xhs)$/.test(key) && s.stdin === "file";
+    const { own } = this.ownWords(args);
+    for (let k = 0; k < args.length && !hit; k++) {
+      const a = args[k];
+      if (!own.includes(a)) continue;
+      // curl reads a header's lines from a file (`-H @file`), and a variable's value (`--variable name@file`:
+      // commands-classes-y9-6).
+      if (a.v !== null) {
+        hit = /^curl/.test(key) && ((/^(-H|--header|--proxy-header)$/.test(args[k - 1]?.v ?? "") && /^@./.test(a.v)) || (args[k - 1]?.v === "--variable" && /^[^=@]+@./.test(a.v)) || /^--variable=[^=@]+@./.test(a.v));
+        continue;
+      }
+      if (a.parts?.some(p => typeof p !== "string" && p.name !== null && filled(p.name))) { hit = true; continue; }
+      hit = substituted(a.raw).some(inner => !saysLittle(inner));
+    }
+    if (hit) this.add("publish", "send.contents", says);
   }
 
   /** Whether this task holds any download, named or not: an earlier command's, or one earlier on this line. */
@@ -3609,12 +3923,62 @@ export function nameWords(name: string): string[] {
     .filter(w => w !== "");
 }
 
+/** What a destroying word is written together with in one name (`dropdb`, `resetdb`, `dbreset`, `cleanall`). */
+const JOINED_NAME = /^(db|database)(?=.)|(?<=.)(db|database|all|data|tables|schema)$/;
+/**
+ * A framework's verbs that empty or replace a database without a destroying word in them (commands-classes-x9-8):
+ * `migrate:refresh` and `migrate:redo` roll every table back first, `schema:load` and `structure:load` replace the
+ * tables with the schema's.
+ */
+const DB_REPLACES = /(^|[^A-Za-z])migrate[:_-](refresh|redo)($|[^A-Za-z])|(^|[^A-Za-z])(schema|structure)[:_-]load($|[^A-Za-z])/i;
+/** Words that empty or replace a database only beside a word for one (`db:empty`, `db:clear`, `cleardb`, `database:recreate`: commands-classes-y9-9). */
+const DB_EMPTIES = new Set(["empty", "clear", "remove", "rm", "recreate", "refresh", "zap"]);
+/** Whether a name's words say it deletes things. */
+function namesDestroy(name: string): boolean {
+  const words = nameWords(name);
+  if (words.some(w => NAME_DESTROY.has(w) || NAME_DESTROY.has(w.replace(JOINED_NAME, ""))) || DB_REPLACES.test(name)) return true;
+  return (words.some(w => /^(db|database)$/.test(w)) && words.some(w => DB_EMPTIES.has(w))) || words.some(w => /^(db|database)/.test(w) !== /(db|database)$/.test(w) && DB_EMPTIES.has(w.replace(JOINED_NAME, "")));
+}
+/**
+ * The words handed to a package script after its name or after `--` (`npm run db -- drop`, `npm run migrate --
+ * --reset`, `yarn db drop`: commands-classes-y9-9): a plain word or an option's name that says destroy asks as the
+ * script's own name would. Only destroying words: `--prod` and `--watch` are everyday options of a build.
+ */
+function scriptGiven(h: H, script: string, words: readonly Arg[]): void {
+  if (h.e.readsAsMain) return;
+  for (const a of words) {
+    const m = a.v === null ? null : /^(?:--?)?([A-Za-z][A-Za-z0-9]*(?:[:_-][A-Za-z0-9]+)*)(?:=.*)?$/.exec(a.v);
+    if (!m || !namesDestroy(m[1])) continue;
+    const display = `${script} ${m[1]}`;
+    h.e.add("destroy", "script.destroy", `Runs ${display}, whose name says it deletes things.`, { objects: [{ kind: "other", text: display, abs: null }] });
+    return;
+  }
+}
 /** §3.5.9: a script, target or package-script name that says it publishes (b), deletes (a) or installs (e). */
 function nameCheck(h: H, name: string, display = name): void {
   const words = nameWords(name);
   if (words.some(w => NAME_PUBLISH.has(w))) h.e.add("publish", "script.publish", `Runs ${display}, whose name says it publishes.`, { objects: [{ kind: "other", text: display, abs: null }] });
-  if (words.some(w => NAME_DESTROY.has(w))) h.e.add("destroy", "script.destroy", `Runs ${display}, whose name says it deletes things.`, { objects: [{ kind: "other", text: display, abs: null }] });
+  if (namesDestroy(name)) h.e.add("destroy", "script.destroy", `Runs ${display}, whose name says it deletes things.`, { objects: [{ kind: "other", text: display, abs: null }] });
   if (words.some(w => NAME_SYSTEM.has(w))) h.e.add("system", "script.system", `Runs ${display}, whose name says it installs or sets up software.`, { objects: [{ kind: "other", text: display, abs: null }] });
+}
+
+/**
+ * The verbs and targets handed to the project's own script wrapper (commands-remote-r9-4): `bin/rails db:drop`,
+ * `./manage.py flush`, `python manage.py flush`, `php artisan migrate:fresh`, `./run.sh deploy`. Each plain word after
+ * the script is judged by its name as a task runner's target is (nameCheck, the same word lists), said with the
+ * script: "Runs ./manage.py flush, whose name says it deletes things." Never an option, a path or a file's name.
+ */
+function scriptVerbs(h: H, script: string, words: readonly Arg[]): void {
+  if (h.e.readsAsMain) return;
+  let migrates = false;
+  for (const a of words) {
+    const v = a.v;
+    if (v === null || !/^[A-Za-z][A-Za-z0-9]*([:_-][A-Za-z0-9]+)*$/.test(v)) continue;
+    nameCheck(h, v, `${script} ${v}`);
+    // A migration taken back to nothing (`manage.py migrate app zero`) drops the app's tables (commands-classes-x9-8).
+    if (migrates && v.toLowerCase() === "zero") h.e.add("destroy", "script.destroy", `Runs ${script} ${v}, whose name says it deletes things.`, { objects: [{ kind: "other", text: `${script} ${v}`, abs: null }] });
+    migrates ||= nameWords(v).includes("migrate");
+  }
 }
 
 /** A program run by its path (`./deploy.sh`, `scripts/release.ps1`): judged by its name's words. */
@@ -3702,10 +4066,11 @@ function interactive(h: H): void {
     case "top": if (!has(p, "b", "batch") && !(h.sc.os === "darwin" && has(p, "l"))) add(); return;
     case "tmux": {
       const sub = ops[0];
-      if (sub === undefined || sub === null || ["attach", "a", "at", "attach-session", "new", "new-session"].includes(sub)) {
+      const subs = sub === undefined || sub === null ? [] : tmuxVerbs(sub);
+      if (sub === undefined || sub === null || subs.some(n => ["attach", "a", "at", "attach-session", "new", "new-session"].includes(n))) {
         if (a.some(x => x.v === "-d" || (x.v !== null && /^-[A-Za-z]*d/.test(x.v) && !x.v.startsWith("--")))) h.e.add("escape", "escape.tmux", SAYS.keepsRunning);
         else add();
-      } else if (["kill-server", "kill-session", "kill-pane", "kill-window"].includes(sub)) h.e.add("system", "kill.process", "Stops programs that are running (tmux sessions).");
+      } else if (subs.some(n => ["kill-server", "kill-session", "kill-pane", "kill-window", "killp", "killw"].includes(n))) h.e.add("system", "kill.process", "Stops programs that are running (tmux sessions).");
       return;
     }
     case "screen":
@@ -3800,6 +4165,8 @@ function launcher(h: H): void {
   h.e.add("escape", "escape.launcher", SAYS.opensProgram);
 }
 
+/** File names that say plain data, which no program runs: tables, text, pictures, sound, documents (namesDownload). */
+const DATA_FILE = /\.(csv|tsv|txt|text|log|md|markdown|rst|json|jsonl|ndjson|geojson|png|jpe?g|gif|bmp|webp|tiff?|ico|heic|pdf|mp3|mp4|m4a|wav|flac|ogg|mov|mkv|avi|webm|ttf|otf|woff2?|parquet|npy|npz|xlsx?|docx?|pptx?|odt|ods|epub)$/i;
 /** Programs that run their arguments as a command: they are wrappers Ember doesn't know (an unknown program's operand). */
 const KNOWN_ORDINARY = new Set([
   "wslpath", "wslinfo",
@@ -3855,6 +4222,11 @@ function generic(h: H, noRow = false): void {
   if (SECRET_PROGRAMS.has(k)) h.e.add("secret", "secret.program", SAYS.secrets);
   if (CLIPBOARD_READERS.has(k)) h.e.add("secret", "secret.clipboard", SAYS.clipboard);
   if (SCREENSHOTTERS.has(k)) h.e.add("secret", "secret.screen", SAYS.screen);
+  if (RECORDERS.has(k)) h.e.add("secret", "secret.record", SAYS.records);
+  // sox's `-d` as its input is the microphone; GStreamer's capture sources are the microphone and the camera.
+  if ((k === "sox" && h.args.some((a, i) => a.v === "-d" && i < h.args.length - 1)) || (/^gst-launch/.test(k) && h.args.some(a => /^(pulsesrc|alsasrc|pipewiresrc|autoaudiosrc|osxaudiosrc|wasapisrc|v4l2src|autovideosrc|avfvideosrc|ksvideosrc|libcamerasrc)$/.test(a.v ?? "")))) {
+    h.e.add("secret", "secret.record", SAYS.records);
+  }
   if (DISK_TOOLS.has(k) || /^mkfs(\.|$)/.test(k)) h.e.add("destroy", "disk.erase", "Erases or repartitions a disk.");
   h.e.readArgs(h.args, h.sc, { unresolvedUnclear: !TEXT.has(k) });
   if (KNOWN_ORDINARY.has(k) || GUI_PROGRAMS.has(k) || INTERACTIVE.has(k) || SECRET_PROGRAMS.has(k)) return;
@@ -3867,6 +4239,82 @@ function generic(h: H, noRow = false): void {
     h.e.unclear("unclear.hidden-command", `Ember can't tell how ${h.prog} runs ${h.args[at].v}.`);
     h.e.payload(h.args.slice(at), h.sc, h.prog);
   }
+  // Never a program Ember knows by name, whose -c, -e, -s and -x are its own options (`shellcheck -x`, `fd -X`).
+  if (noRow && !knownProgram(k) && !ORDINARY_VERBS[k] && !ORDINARY_VERBS[unversioned(k)]) handedCommand(h, at);
+}
+
+/** Options whose value is a command the tool runs, by the names tools give them (`--exec`, `--command`, `-x`, `-c`). */
+const EXEC_OPTION = /^(--exec|--exec-batch|--command|--cmd|--run|--shell-cmd|--shell-command|-x|-X|-c|-s|-e)$/;
+/** A first word after which the rest is a command to run (`mytool exec x`, `mytool run -- x`). */
+const EXEC_WORDS = new Set(["exec", "run", "x", "do", "sh", "shell", "spawn", "watch", "with", "wrap"]);
+
+/**
+ * A command handed to a program with no row (commands-remote-r9-2): as one quoted word (`mytool 'rm -rf build'`), as
+ * the value of an exec-like option (`--exec 'npm publish'`, `-x make`), or as the words after `--` or an exec-like
+ * first word (`mytool -- ./a.sh`, `mytool exec dropdb prod`). It is read as a command of its own, so the whole
+ * decides at least as strictly as that command would alone. A quoted word counts when its first word names a program
+ * Ember has a row for; an exec-like option's value with a space in it always does. Behind a program Ember doesn't
+ * know it also asks how the one runs the other (`unclear.hidden-command`), which the user's words naming the program
+ * never announce; the project's own script (a path in the task's folder) is judged by the handed command alone.
+ * `runnerAt`: where generic() already found a runner's name among the words, and read on from there.
+ */
+function handedCommand(h: H, runnerAt: number, script?: { name: string; args: Arg[] }): void {
+  if (script && h.e.readsAsMain) return;
+  const args = script ? script.args : h.args;
+  const prog = script ? script.name : h.prog;
+  const unknown = script
+    ? !ownFolder(script.name, h.sc, h.e.ctx.cwd || null)
+    : !(h.pn.isPath && h.nameArg.v !== null && ownFolder(h.nameArg.v, h.sc, h.e.ctx.cwd || null));
+  const shell: ShellId = h.sc.family === "powershell" ? "powershell" : h.sc.family === "cmd" ? "cmd" : "sh";
+  const names = (word: string): boolean => {
+    const base = (word.split(/[\\/]/).pop() ?? "").toLowerCase().replace(/\.(exe|com)$/, "");
+    if (!/^[a-z]/.test(base)) return false;
+    if (runners().has(base) || NATIVE[base] !== undefined) return true;
+    if (h.sc.family === "powershell") return CMDLETS[base] !== undefined || PS_ALIASES[base] !== undefined;
+    return h.sc.family === "cmd" && CMD_BUILTINS[base] !== undefined;
+  };
+  const hidden = (what: string): void => { if (unknown) h.e.unclear("unclear.hidden-command", `Ember can't tell how ${prog} runs ${what}.`); };
+  const text = (t: string, option: boolean): void => {
+    const first = t.trim().split(/\s+/)[0] ?? "";
+    if (first === "" || !(names(first) || (option && /\s/.test(t.trim())))) return;
+    hidden(first);
+    h.e.nested(t, shell, h.sc, prog);
+  };
+  for (let k = 0; k < args.length; k++) {
+    const v = args[k].v;
+    if (v === null || k === runnerAt) continue;
+    const eq = v.startsWith("-") ? v.indexOf("=") : -1;
+    if (EXEC_OPTION.test(eq < 0 ? v : v.slice(0, eq))) {
+      const value = eq < 0 ? args[k + 1]?.v : v.slice(eq + 1);
+      if (eq < 0) k++;
+      if (value !== null && value !== undefined) text(value, true);
+      continue;
+    }
+    if (!v.startsWith("-") && /\s/.test(v.trim())) text(v, false);
+  }
+  // The words after `--`, or after an exec-like first word and its own `--`.
+  const first = firstOperand(args);
+  let at = args.findIndex(a => a.v === "--");
+  if (at < 0 && first.v !== null && EXEC_WORDS.has(first.v)) at = first.at;
+  if (at < 0 || at + 1 >= args.length || (runnerAt >= 0 && runnerAt <= at + 1 + (args[at + 1].v === "--" ? 1 : 0))) return;
+  const rest = args.slice(args[at + 1].v === "--" ? at + 2 : at + 1);
+  const next = rest[0];
+  if (!next || next.v === null || next.v.startsWith("-")) return;
+  if (unknown ? args[at].v === "--" || /[\\/]/.test(next.v) : names(next.v) || h.e.isDownloaded(next, h.sc)) {
+    hidden(next.v);
+    h.e.payload(rest, h.sc, prog);
+  }
+}
+
+/**
+ * The same reading for a script a shell or an interpreter runs (`bash ./run.sh 'rm -rf ~'`, `python3 tool.py --exec
+ * 'npm publish'`, `node tool.js -- git push --force`: commands-classes-x9-4), from runScript: the words after the
+ * script are the script's own, so a command among them decides as it does when the script is started by its path.
+ */
+function handedToScript(h: H, script: Arg): void {
+  const at = h.args.indexOf(script);
+  if (script.v === null || at < 0) return;
+  handedCommand(h, -1, { name: script.v, args: h.args.slice(at + 1) });
 }
 
 /**
@@ -3923,6 +4371,179 @@ const EXEC_VALUES = new Set(["--using", "--node", "--npm", "--pnpm", "--yarn", "
 const TMUX_RUNS = new Set(["run-shell", "run", "if-shell", "if", "new-window", "neww", "new-session", "new", "split-window", "splitw", "respawn-pane", "respawnp", "respawn-window", "respawnw", "pipe-pane", "pipep", "display-popup", "popup"]);
 
 /**
+ * tmux's commands that type into a pane or run a command in the user's own tmux (commands-remote-r9-1), by the names
+ * and the short names tmux gives them. A pane, a window, a hook, a key binding and a sourced file are all the user's
+ * terminal, outside Ember's command window and outside Stop.
+ */
+const TMUX_DRIVES = new Set([
+  "send-keys", "send", "send-prefix", "paste-buffer", "pasteb", "run-shell", "run", "if-shell", "if", "new-window", "neww", "split-window", "splitw",
+  "respawn-pane", "respawnp", "respawn-window", "respawnw", "pipe-pane", "pipep", "display-popup", "popup", "display-menu", "menu", "set-hook",
+  "source-file", "source", "bind-key", "bind", "command-prompt", "confirm-before", "confirm",
+]);
+/**
+ * tmux's whole command table, each name with its short name: tmux takes any prefix of a name that fits one command
+ * only (`send-k`, `run-sh`, `capture-p`), so a verb is read as tmux reads it (commands-classes-x9-1).
+ */
+const TMUX_COMMANDS: readonly (readonly [string, string?])[] = [
+  ["attach-session", "attach"], ["bind-key", "bind"], ["break-pane", "breakp"], ["capture-pane", "capturep"], ["choose-buffer"], ["choose-client"],
+  ["choose-tree"], ["choose-window"], ["choose-session"], ["clear-history", "clearhist"], ["clear-prompt-history", "clearphist"], ["clock-mode"],
+  ["command-prompt"], ["confirm-before", "confirm"], ["copy-mode"], ["customize-mode"], ["delete-buffer", "deleteb"], ["detach-client", "detach"],
+  ["display-menu", "menu"], ["display-message", "display"], ["display-popup", "popup"], ["display-panes", "displayp"], ["find-window", "findw"],
+  ["has-session", "has"], ["if-shell", "if"], ["join-pane", "joinp"], ["kill-pane", "killp"], ["kill-server"], ["kill-session"], ["kill-window", "killw"],
+  ["last-pane", "lastp"], ["last-window", "last"], ["link-window", "linkw"], ["list-buffers", "lsb"], ["list-clients", "lsc"], ["list-commands", "lscm"],
+  ["list-keys", "lsk"], ["list-panes", "lsp"], ["list-sessions", "ls"], ["list-windows", "lsw"], ["load-buffer", "loadb"], ["lock-client", "lockc"],
+  ["lock-server", "lock"], ["lock-session", "locks"], ["move-pane", "movep"], ["move-window", "movew"], ["new-session", "new"], ["new-window", "neww"],
+  ["next-layout", "nextl"], ["next-window", "next"], ["paste-buffer", "pasteb"], ["pipe-pane", "pipep"], ["previous-layout", "prevl"],
+  ["previous-window", "prev"], ["refresh-client", "refresh"], ["rename-session", "rename"], ["rename-window", "renamew"], ["resize-pane", "resizep"],
+  ["resize-window", "resizew"], ["respawn-pane", "respawnp"], ["respawn-window", "respawnw"], ["rotate-window", "rotatew"], ["run-shell", "run"],
+  ["save-buffer", "saveb"], ["select-layout", "selectl"], ["select-pane", "selectp"], ["select-window", "selectw"], ["send-keys", "send"],
+  ["send-prefix"], ["server-access"], ["server-info", "info"], ["set-buffer", "setb"], ["set-environment", "setenv"], ["set-hook"], ["set-option", "set"],
+  ["set-window-option", "setw"], ["show-buffer", "showb"], ["show-environment", "showenv"], ["show-hooks"], ["show-messages", "showmsgs"],
+  ["show-options", "show"], ["show-prompt-history", "showphist"], ["show-window-options", "showw"], ["source-file", "source"], ["split-window", "splitw"],
+  ["start-server", "start"], ["suspend-client", "suspendc"], ["swap-pane", "swapp"], ["swap-window", "swapw"], ["switch-client", "switchc"],
+  ["unbind-key", "unbind"], ["unlink-window", "unlinkw"], ["wait-for", "wait"],
+];
+/**
+ * The tmux commands a verb may stand for: itself when it is a command's name or short name, else every command it is
+ * a prefix of. tmux refuses a prefix that fits more than one; its table differs between versions, so Ember reads such
+ * a word as each command it could be, and the strictest decides.
+ */
+function tmuxVerbs(word: string): readonly string[] {
+  if (word === "") return [];
+  if (TMUX_COMMANDS.some(([name, short]) => name === word || short === word)) return [word];
+  const fits = TMUX_COMMANDS.filter(([name]) => name.startsWith(word)).map(([name]) => name);
+  return fits.length > 0 ? fits : [word];
+}
+/** tmux's commands that print what a pane shows, a paste buffer or the session's environment. */
+const TMUX_READS = new Set(["capture-pane", "capturep", "show-buffer", "showb", "save-buffer", "saveb", "list-buffers", "lsb", "show-environment", "showenv", "choose-buffer"]);
+/** screen's `-X` commands that type, paste or run in a session, and those that write out what it shows. */
+const SCREEN_DRIVES = new Set(["stuff", "paste", "exec", "screen", "eval", "source", "process", "at", "colon", "bind", "bindkey", "register", "readreg", "readbuf"]);
+const SCREEN_READS = new Set(["hardcopy", "writebuf", "copy", "log", "logfile"]);
+/** The remote-control verbs of kitty (`kitty @`, `kitten @`), wezterm (`wezterm cli`), zellij and iTerm's `it2api`. */
+const REMOTE_DRIVES: Readonly<Record<string, ReadonlySet<string>>> = {
+  kitty: new Set(["send-text", "send-key", "launch", "run", "new-window", "kitten", "action", "env", "load-config", "remote-control"]),
+  wezterm: new Set(["send-text", "spawn", "split-pane"]),
+  zellij: new Set(["write", "write-chars", "new-pane", "new-tab", "edit", "run", "plugin", "pipe", "launch-or-focus-plugin", "launch-plugin", "start-or-reload-plugin"]),
+  it2api: new Set(["send-text", "create-tab", "split-pane", "inject", "activate-app", "invoke-function", "sendtext"]),
+};
+const REMOTE_READS: Readonly<Record<string, ReadonlySet<string>>> = {
+  // `ls` prints each window's environment variables and its processes' command lines (commands-classes-y9-10).
+  kitty: new Set(["get-text", "ls"]),
+  wezterm: new Set(["get-text"]),
+  zellij: new Set(["dump-screen", "edit-scrollback"]),
+  it2api: new Set(["get-buffer", "get-prompt"]),
+};
+/** Their options that take the next word, before the verb (`zellij -s work action …`, `kitten @ --to unix:/x …`). */
+const REMOTE_VALUES = new Set(["-s", "--session", "-l", "--layout", "-c", "--config", "--config-dir", "--data-dir", "--to", "--password", "--password-file", "--password-env", "--use-password", "--class", "--pane-id", "--window-id"]);
+/** An editor's options that send keys or code to one the user has open (`--remote-send`, `--remote-expr`). */
+const EDITOR_SENDS = /^--remote-(send|expr)(=|$)/;
+/** Desktop-bus methods of the terminal emulators that type or run in a session (Konsole, Yakuake, Guake, Tilix). */
+const BUS_TYPES = /\b(sendText|runCommand|sendInput|feed_child|execute_command|runCommandInTerminal|RunCommand)\b/;
+
+/**
+ * Programs that drive a terminal or an editor of the user's own (commands-remote-r9-1): Ember never types into or
+ * acts in the user's terminals, so a verb that types there or runs a command there is refused as `xdotool` is,
+ * whatever the user's words say, and one that prints what a terminal shows asks as a secret. The verbs that only list
+ * run and every other verb asks, by the tools' own rows (ORDINARY_VERBS, the closed default). Read by the verb's
+ * place in the tool's grammar, wherever its options stand, for each command of a `\;` list.
+ */
+function terminalDriver(h: H): void {
+  const key = h.key.replace(/^byobu-(tmux|screen)$/, "$1");
+  const vals = h.args.map(a => a.v);
+  const drives = (): void => h.e.refuseWith("ember.terminal", "terminal");
+  const reads = (): void => h.e.add("secret", "secret.terminal", SAYS.terminalText);
+  const tmux = (): void => {
+    // Each command of the line: tmux ends one at a word that is `;` or ends in one.
+    let verb = true;
+    for (let k = 0; k < vals.length; k++) {
+      const v = vals[k];
+      if (v === null) continue;
+      if (verb) {
+        if (v.startsWith("-") && v !== "-") {
+          // getopt's way (commands-classes-y9-4): the first letter that takes a value ends the cluster (`-uL sock`,
+          // `-2S path`), and its value is the rest of the word or the next one. `-c` is a shell command tmux runs.
+          const at = v.slice(1).search(/[LSfcT]/);
+          if (at < 0) continue;
+          const value = v.length > at + 2 ? v.slice(at + 2) : vals[++k];
+          if (v[at + 1] === "c" && value !== undefined) {
+            if (value === null) h.e.unclear("unclear.hidden-command", `Ember can't tell what ${h.prog} runs.`);
+            else h.e.nested(value, "sh", h.sc, "tmux -c");
+          }
+          continue;
+        }
+        const names = tmuxVerbs(v.replace(/;$/, ""));
+        if (names.some(n => TMUX_DRIVES.has(n))) drives();
+        else if (names.some(n => TMUX_READS.has(n))) reads();
+        verb = false;
+      }
+      if (v === ";" || (v.endsWith(";") && !v.endsWith("\\;"))) verb = true;
+    }
+  };
+  const screen = (): void => {
+    const at = vals.findIndex(v => v === "-X");
+    const verb = at < 0 ? undefined : vals[at + 1];
+    if (verb === undefined || verb === null) return;
+    if (SCREEN_DRIVES.has(verb)) drives();
+    else if (SCREEN_READS.has(verb)) reads();
+  };
+  switch (key) {
+    case "tmux": tmux(); return;
+    case "screen": screen(); return;
+    case "byobu": tmux(); screen(); return;
+    case "kitty": case "kitten": case "wezterm": case "zellij": case "it2api": {
+      const tool = key === "kitten" ? "kitty" : key;
+      // kitty's remote control follows `@`, wezterm's follows `cli`; zellij's and it2api's verbs stand anywhere.
+      const gate = tool === "kitty" ? "@" : tool === "wezterm" ? "cli" : null;
+      const from = gate === null ? 0 : vals.indexOf(gate) + 1;
+      if (gate !== null && from === 0) return;
+      for (let k = from; k < vals.length; k++) {
+        const v = vals[k];
+        if (v === null) continue;
+        if (v.startsWith("-")) { if (REMOTE_VALUES.has(v)) k++; continue; }
+        if (REMOTE_DRIVES[tool].has(v)) { drives(); return; }
+        if (REMOTE_READS[tool].has(v)) { reads(); return; }
+        // zellij's verbs stand after options whose values Ember may not know (`--max-panes 5 action write-chars`):
+        // every word is read (commands-classes-y9-4).
+        if (tool !== "zellij") return;
+      }
+      return;
+    }
+    case "wt": case "windowsterminal": {
+      // A tab or a pane in a Windows Terminal window the user has open runs its command there (commands-classes-y9-4);
+      // `-w new` and `-w -1` open a window of their own, and the focus verbs only move between tabs and panes.
+      const at = vals.findIndex(v => v !== null && /^(-w|--window)$/i.test(v));
+      const win = at < 0 ? undefined : vals[at + 1];
+      if (win === undefined || (win !== null && /^(new|-1)$/i.test(win))) return;
+      const rest = vals.filter((_v, k) => k !== at && k !== at + 1);
+      const opens = rest.some(v => v !== null && /^(nt|new-tab|sp|split-pane)$/i.test(v));
+      const focuses = rest.some(v => v !== null && /^(ft|focus-tab|mf|move-focus|fp|focus-pane|swap-pane|mp|move-pane)$/i.test(v));
+      if (opens || !focuses) drives();
+      return;
+    }
+    case "nvr":
+      if (vals.some(v => v !== null && (EDITOR_SENDS.test(v) || /^(-c|-cc|--cmd|\+.+)$/.test(v)))) drives();
+      return;
+    case "vim": case "nvim": case "gvim": case "mvim": case "vi": case "view": case "gview": case "vimx":
+      if (vals.some(v => v !== null && EDITOR_SENDS.test(v))) drives();
+      return;
+    case "emacsclient":
+      if (vals.some(v => v !== null && /^(-e|--eval)(=|$)/.test(v))) drives();
+      return;
+    case "guake":
+      if (vals.some(v => v !== null && /^(-e|--execute-command|-n|--new-tab|--split-vertical|--split-horizontal)(=|$)/.test(v))) drives();
+      return;
+    case "gdbus": case "dbus-send": case "busctl": case "qdbus": case "qdbus6": case "qdbus-qt5": case "qdbus-qt6":
+      if (vals.some(v => v !== null && BUS_TYPES.test(v))) drives();
+      return;
+    case "osascript": {
+      const code = vals.filter((v, k) => vals[k - 1] === "-e" && v !== null).join("\n");
+      if (/\b(terminal|iterm2?|ghostty|warp|kitty|alacritty|wezterm|hyper)\b/i.test(code) && /\b(do script|doScript|write text|write contents|create (window|tab))\b/i.test(code)) drives();
+      return;
+    }
+  }
+}
+
+/**
  * The command a tool runs for its user, read as a command of its own (commands-closed-x9-2): an exec-shaped verb's
  * payload (`stack exec -- x`, `pyenv exec x`, `rustup run stable x`), the shell text in `cargo watch -s`/`-x`,
  * `nodemon --exec`, `hyperfine`'s commands and its `--prepare`/`--setup`/`--cleanup`/`--conclude`, and `entr`'s
@@ -3939,6 +4560,11 @@ function toolPayload(h: H): void {
     if (a.v === null) hidden();
     else h.e.nested(a.v, "sh", h.sc, wrapper);
   };
+  // More runners of a package by its name, whose verb asks already (`deno x`, `gem exec`, `dotnet tool exec`, `dnx`):
+  // the package's own line is read as npx's is, for what it is handed (commands-classes-x9-9).
+  const runs = h.key === "dnx" ? 0 : h.key === "deno" && args[0]?.v === "x" ? 1 : h.key === "gem" && args[0]?.v === "exec" ? 1
+    : h.key === "dotnet" && args[0]?.v === "tool" && /^(exec|run)$/.test(args[1]?.v ?? "") ? 2 : -1;
+  if (runs >= 0) packageLine(h, args.slice(runs), `${h.key} ${args.slice(0, runs).map(a => a.v).join(" ")}`.trim());
   const ex = EXEC_VERBS[h.key];
   if (ex) {
     const first = firstOperand(args);
@@ -4018,6 +4644,66 @@ function toolPayload(h: H): void {
       else if (args.some(a => a.v === null || !a.v.startsWith("-"))) hidden();
       return;
     }
+    case "virtualenv": venvClear(h, args, "virtualenv"); return;
+    // Launchers that fetch or build an environment and then run a command in it (commands-remote-r9-3): the command
+    // is judged as its own; the launcher still asks as a program Ember doesn't know.
+    case "mise": case "rtx": {
+      const first = firstOperand(args);
+      if (first.v !== "exec" && first.v !== "x") return;
+      const c = args.findIndex((a, k) => k > first.at && a.v !== null && /^(-c|--command)(=|$)/.test(a.v));
+      const dd = args.findIndex((a, k) => k > first.at && a.v === "--");
+      if (c >= 0 && (dd < 0 || c < dd)) { const v = args[c].v ?? ""; shellText(v.includes("=") ? { ...args[c], v: v.slice(v.indexOf("=") + 1) } : args[c + 1], "mise exec"); return; }
+      if (dd >= 0) h.e.payload(args.slice(dd + 1), h.sc, "mise exec");
+      return;
+    }
+    case "nix": {
+      const first = firstOperand(args);
+      const rest = args.slice(first.at + 1);
+      // An installable from a registry or an address is a program nix downloads; `nix run` runs it.
+      if (first.v === "run" || ((first.v === "shell" || first.v === "develop") && rest.some(a => a.v === null || /^[^-].*[#:]/.test(a.v)))) h.e.add("escape", "escape.npx", SAYS.downloadsProgram);
+      if (first.v !== "shell" && first.v !== "develop" && first.v !== "run") return;
+      const c = rest.findIndex(a => a.v === "-c" || a.v === "--command" || (first.v === "run" && a.v === "--"));
+      if (c >= 0 && first.v !== "run") h.e.payload(rest.slice(c + 1), h.sc, `nix ${first.v}`);
+      else if (c >= 0) h.e.readArgs(rest.slice(c + 1), h.sc, { unresolvedUnclear: true });
+      return;
+    }
+    case "nix-shell": {
+      if (args.some(a => a.v !== null && /^(-p|--packages)$/.test(a.v))) h.e.add("escape", "escape.npx", SAYS.downloadsProgram);
+      for (let k = 0; k < args.length; k++) if (args[k].v === "--run" || args[k].v === "--command") shellText(args[++k], "nix-shell");
+      return;
+    }
+    case "pixi": case "devbox": {
+      const first = firstOperand(args);
+      if (first.v !== "run") return;
+      let k = first.at + 1;
+      while (k < args.length && args[k].v !== null && (args[k].v as string).startsWith("-") && args[k].v !== "--") k += /^(-e|--environment|--manifest-path|-c|--config|--env|--env-file)$/.test(args[k].v as string) ? 2 : 1;
+      if (args[k]?.v === "--") k++;
+      if (k < args.length) h.e.payload(args.slice(k), h.sc, `${h.key} run`);
+      return;
+    }
+    case "direnv": {
+      const first = firstOperand(args);
+      if (first.v === "exec" && args.length > first.at + 2) h.e.payload(args.slice(first.at + 2), h.sc, "direnv exec");
+      return;
+    }
+    case "fd": case "fdfind": {
+      // The command fd runs for each file it finds (`-x`), or once for all of them (`-X`), up to a lone `;`.
+      const at = args.findIndex(a => a.v !== null && /^(-x|--exec|-X|--exec-batch)$/.test(a.v));
+      if (at < 0) return;
+      const end = args.findIndex((a, k) => k > at && a.v === ";");
+      const words = args.slice(at + 1, end < 0 ? args.length : end);
+      if (words.some(a => a.v === null)) hidden();
+      else h.e.payload(words, h.sc, `${h.key} -x`);
+      return;
+    }
+    case "bat": case "batcat": {
+      // The pager is a command line bat hands to the shell.
+      for (let k = 0; k < args.length; k++) {
+        const m = /^--pager(?:=(.*))?$/.exec(args[k].v ?? "");
+        if (m) shellText(m[1] !== undefined ? { ...args[k], v: m[1] } : args[++k], h.key);
+      }
+      return;
+    }
     case "deno": {
       // Not a payload: `deno compile -o` writes an executable, which outside the task's folder (`-o ~/bin/x`) is a
       // program later commands find by name (commands-closed-x9-5).
@@ -4035,7 +4721,7 @@ function toolPayload(h: H): void {
     }
     case "tmux": {
       const first = firstOperand(args);
-      if (first.v !== null && TMUX_RUNS.has(first.v) && args.slice(first.at + 1).some(a => a.v === null || !a.v.startsWith("-"))) hidden();
+      if (first.v !== null && tmuxVerbs(first.v).some(n => TMUX_RUNS.has(n)) && args.slice(first.at + 1).some(a => a.v === null || !a.v.startsWith("-"))) hidden();
       // A format's `#(…)` is a shell command tmux runs (`tmux display-message -p '#(…)'`: commands-closed-y9-4).
       else if (args.some(a => a.v !== null && a.v.includes("#("))) hidden();
       return;
@@ -4058,7 +4744,12 @@ function toolPayload(h: H): void {
 const RUNS_BY_OPTION: readonly (readonly [RegExp, RegExp])[] = [
   [/^(.+-)?(gcc|g\+\+|cc|c\+\+|cpp|gfortran|gccgo|gdc|gnat)$/, /^-wrapper$/],
   [/^ctest$/, /^(--build-and-test|--test-command|-S|-SP|--script|--script-new-process)(=|$)/],
-  [/^prove$/, /^(-e|--exec)(=|$)/],
+  // prove's -e in a bundle too (`-ve`); a compiler's plug-in is code it loads (commands-remote-r9-2, commands-closed-4).
+  [/^prove$/, /^(-[A-Za-z]*e|--exec)(=|$)/],
+  [/^(.+-)?(gcc|g\+\+|cc|c\+\+|cpp|gfortran|clang|clang\+\+|clang-cl)$/, /^(-fplugin=|-fpass-plugin=|-load$)/],
+  [/^pandoc$/, /^(-F|--filter|-L|--lua-filter)(=|.|$)/],
+  [/^protoc$/, /^--plugin(=|$)/],
+  [/^just$/, /^(--shell|--shell-arg|--command|-c)(=|$)/],
 ];
 
 /**
@@ -4136,7 +4827,7 @@ function knownProgram(key: string): boolean {
   for (const k of [key, unversioned(key)]) {
     if (ORDINARY_PROGRAMS.has(k) || KNOWN_ORDINARY.has(k) || TEXT.has(k) || LISTS_ONLY.has(k)) return true;
     if (INPUT_SYNTH.has(k) || GUI_PROGRAMS.has(k) || INTERACTIVE.has(k) || LAUNCHERS.has(k) || SECRET_PROGRAMS.has(k)) return true;
-    if (CLIPBOARD_READERS.has(k) || SCREENSHOTTERS.has(k) || DISK_TOOLS.has(k) || /^mkfs(\.|$)/.test(k)) return true;
+    if (CLIPBOARD_READERS.has(k) || SCREENSHOTTERS.has(k) || RECORDERS.has(k) || DISK_TOOLS.has(k) || /^mkfs(\.|$)/.test(k)) return true;
   }
   return false;
 }
@@ -4243,6 +4934,10 @@ function optionPaths(h: H, unknown: boolean): void {
     if (a.param !== undefined && !short) continue;
     // A word Ember can't see is still an option by its written name (`--file="$F"`): its value is unknown.
     const m = /^--([A-Za-z][A-Za-z0-9-]*)(=([\s\S]*))?$/.exec(a.v ?? a.raw);
+    // An unknown program's one-letter option with a whole path attached (`-f/home/ana/.ssh/id_rsa`) reads it
+    // (commands-classes-x9-9).
+    const attached = unknown && a.v !== null ? /^-[A-Za-z]((?:\/|~\/)[\s\S]+)$/.exec(a.v) : null;
+    if (attached) { h.e.usePath({ ...a, v: attached[1], param: undefined }, "read", h.sc); continue; }
     const name = m ? m[1].toLowerCase() : short ? "o" : null;
     if (name === null) continue;
     const output = name === "o" || OUTPUT_OPTION.test(name);
@@ -5063,6 +5758,11 @@ reg(NATIVE, ["xargs"], h => {
   // A bare -i or --replace replaces {}.
   const repl = values(p, "I", "replace", "i", "J")[0] ?? (has(p, "i", "replace") ? "{}" : undefined);
   const ops = p.operands.length ? p.operands : [lit("echo")];
+  // Input Ember can't see put inside a longer word of a program that sends leaves the computer in its address or a
+  // header (`cat notes.txt | xargs -I{} curl https://x.io/{}`: commands-classes-y9-6); a list of addresses fetched
+  // one by one (`xargs -I{} curl -O {}`) is as before.
+  if (repl && typeof h.s.stdinText !== "string" && ops[0].v !== null && FETCHERS.has(programName(ops[0].v, { os: h.sc.os, family: h.sc.family, wsl: h.sc.wsl, mountRoot: h.sc.mountRoot }).key)
+    && ops.slice(1).some(a => a.v !== null && a.v !== repl && a.v.includes(repl))) h.e.add("publish", "send.contents", "May send what a file or a command holds to another computer.");
   // A here-string whose variables Ember follows (`xargs rm -rf <<< "$d"`): its pieces stand where the input goes, so the
   // command judges the variable's values as it uses them (commands-remote-w5-5).
   const fed = values(p, "a", "arg-file").length ? undefined : h.s.stdinVars?.word?.parts;
@@ -5474,6 +6174,8 @@ reg(NATIVE, ["7z", "7za", "7zz", "7zr"], h => {
     if (sw.some(s => s === "-aoa" || s === "-y") || into.abs === null || !inWorkTree(into.abs, h.sc.path)) {
       h.e.add("destroy", "archive.unpack", `Unpacks ${ops[0]?.v ?? "an archive"} over files in ${outDir || thisFolder(h, into)}.`, { objects: [into] });
     }
+    // What a downloaded archive unpacks is downloaded too, as unzip's is (commands-classes-y9-5).
+    if (ops[0] && h.e.isDownloaded(ops[0], h.sc) && into.abs) h.e.downloads.push(into.abs);
     return;
   }
   if (verb === "a" || verb === "u") {
@@ -5500,6 +6202,7 @@ reg(NATIVE, ["rar", "unrar"], h => {
   if (verb === "x" || verb === "e") {
     const into = h.e.usePath(ops[1] ?? lit("."), "write", h.sc);
     if (sw.some(s => s === "-o+" || s === "-y") || into.abs === null || !inWorkTree(into.abs, h.sc.path)) h.e.add("destroy", "archive.unpack", `Unpacks ${ops[0]?.v ?? "an archive"} over files in ${into.text}.`, { objects: [into] });
+    if (ops[0] && h.e.isDownloaded(ops[0], h.sc) && into.abs) h.e.downloads.push(into.abs);
     return;
   }
   h.e.readArgs(ops, h.sc);
@@ -5747,10 +6450,15 @@ reg(NATIVE, [...Object.keys(POSIX_SHELLS), ...OTHER_SHELLS], h => {
   const readAs: ScriptRef["as"] | undefined = posixShell;
   if (script && !has(p, "s")) {
     runScript(h, script, readAs);
+    if (script.v !== null) scriptVerbs(h, script.v, p.operands.slice(1));
+    // `sh i.sh --daemon`, where i.sh is this task's download: the words after it are the download's own (integ-y-5).
+    if (script.v !== null && h.e.isDownloaded(script, h.sc)) detachWords(h, p.operands.slice(1));
     if (!posixShell) h.e.unclear("unclear.other-shell", `Ember can't read ${h.key}'s language.`);
     return;
   }
   intoInterpreter(h, readAs);
+  // `curl … | sh -s -- --daemon`: the words after -s are the downloaded script's own (integ-x-2).
+  if (has(p, "s") && h.s.fetchBefore) detachWords(h, p.operands);
 });
 
 /**
@@ -5819,6 +6527,7 @@ function runScript(h: H, script: Arg, readAs?: ScriptRef["as"]): void {
   // interpreter completes or a pattern that is a download is not this file.
   if (readAs !== undefined && !hit) h.e.recordScript(script, readAs, h.sc);
   nameCheck(h, script.v, script.v);
+  handedToScript(h, script);
 }
 /** The files node or python runs when given a folder (package.json names node's). */
 const ENTRY_FILES = ["index.js", "index.mjs", "index.cjs", "index.json", "index.node", "package.json", "__main__.py"];
@@ -5833,6 +6542,55 @@ function emberText(h: H, code: string): void {
   for (const e of h.sc.path.ember) if (code.includes(e) || (h.sc.home && code.includes(e.replace(h.sc.home, "~")))) h.e.refuseWith("ember.path", "safety");
   if (/\bember:/i.test(code)) h.e.refuseWith("ember.url", "input");
   if (/keystroke|key code|\bclick\b|system events|sendkeys/i.test(code)) h.e.refuseWith("ember.input", "input");
+}
+
+/**
+ * Python's own modules that, run with -m, only read, report on, check or build the project's files: they run as
+ * before. Any other module is a tool run by its name (pythonModule).
+ */
+const PY_OWN_MODULES = new Set([
+  "json.tool", "venv", "unittest", "doctest", "compileall", "py_compile", "site", "this", "sysconfig", "platform", "calendar", "tokenize", "ast", "dis",
+  "pickletools", "tabnanny", "zipapp", "base64", "gzip", "filecmp", "zipfile", "tarfile", "uuid", "random", "locale", "mimetypes", "inspect", "symtable",
+  "token", "keyword", "quopri", "os", "shutil", "sys", "pprint", "textwrap", "difflib", "lib2to3", "cProfile", "profile", "trace", "encodings.rot_13",
+]);
+/** Everyday modules of the project's own tools with no row and no command of their name on the lists. */
+const PY_TOOL_MODULES = new Set(["build", "nose", "nose2", "autopep8", "yapf", "pyupgrade", "pipdeptree", "pytest_cov", "xdist"]);
+
+/**
+ * `venv --clear DIR` (and virtualenv's) deletes everything in DIR before it makes the environment: judged as the
+ * recursive delete of DIR it is (commands-remote-r9-3).
+ */
+function venvClear(h: H, args: readonly Arg[], wrapper: string): void {
+  if (!args.some(a => a.v === "--clear")) return;
+  const values = new Set(["--prompt", "--python", "-p", "--upgrade-deps-with", "--app-data", "--seeder", "--creator", "--activators", "--extra-search-dir", "--pip", "--setuptools", "--wheel", "--discovery", "--try-first-with"]);
+  const dirs: Arg[] = [];
+  for (let k = 0; k < args.length; k++) {
+    const v = args[k].v;
+    if (v !== null && v.startsWith("-")) { if (values.has(v)) k++; continue; }
+    dirs.push(args[k]);
+  }
+  if (dirs.length === 0) { h.e.add("destroy", "posix.rm", "Deletes everything in a folder Ember can't name."); return; }
+  h.e.payload([lit("rm"), lit("-rf"), lit("--"), ...dirs], h.sc, wrapper);
+}
+
+/**
+ * `python -m <module> …` runs a tool by its name (commands-remote-r9-3): the tool's own row decides, as if the line
+ * were `<module> …` (`python3 -m twine upload dist/*` publishes, `python3 -m keyring get …` prints a password,
+ * `python3 -m sqlite3 a.db 'drop table x'` changes a database), and a tool Ember doesn't know asks as that program
+ * would (`unknown.program`, named by the module for the user's words to match). Python's own everyday modules and the
+ * project's test and build tools run as before; what the interpreter's row asks for is kept beside it.
+ */
+function pythonModule(h: H, mod: string): void {
+  if (h.e.readsAsMain) return;
+  const at = h.args.findIndex(a => a.v === "-m" || a.v === `-m${mod}`);
+  if (at < 0) return;
+  const rest = h.args.slice(at + (h.args[at].v === "-m" ? 2 : 1));
+  if (mod === "venv") { venvClear(h, rest, "python -m venv"); return; }
+  if (PY_OWN_MODULES.has(mod) || PY_TOOL_MODULES.has(mod)) return;
+  // The command a module's tool goes by: its own name, or with dashes for underscores (`pre_commit`, `pip_audit`).
+  const names = [mod, mod.replace(/_/g, "-")].map(n => n.toLowerCase());
+  const tool = names.find(n => NATIVE[n] !== undefined || knownProgram(n) || ORDINARY_VERBS[n] !== undefined) ?? mod;
+  h.e.payload([lit(tool), ...rest], h.sc, "python -m");
 }
 
 reg(NATIVE, Object.keys(INTERPRETERS).filter(k => !["awk", "gawk", "mawk", "nawk"].includes(k)), h => {
@@ -5906,6 +6664,7 @@ reg(NATIVE, Object.keys(INTERPRETERS).filter(k => !["awk", "gawk", "mawk", "nawk
       else writeInto(h, to.v);
     }
     if (mod) nameCheck(h, mod);
+    if (mod) pythonModule(h, mod);
     // A module of this task's download (`curl … > x.py; python3 -m x`), or tests it downloaded that pytest or unittest
     // finds (conftest.py, test_x.py): it runs the download (commands-remote-c2-2).
     if (mod && /^[A-Za-z_][\w.]*$/.test(mod)) {
@@ -5933,8 +6692,9 @@ reg(NATIVE, Object.keys(INTERPRETERS).filter(k => !["awk", "gawk", "mawk", "nawk
   }
   const script = p.operands[0];
   if (script) {
-    if (/^(deno|bun)$/.test(h.key) && script.v && URL_LIKE.test(script.v)) { h.e.add("escape", "escape.npx", SAYS.downloadsProgram); return; }
+    if (/^(deno|bun)$/.test(h.key) && script.v && URL_LIKE.test(script.v)) { h.e.add("escape", "escape.npx", SAYS.downloadsProgram); packageLine(h, p.operands, h.key); return; }
     runScript(h, script);
+    if (script.v !== null) scriptVerbs(h, script.v, p.operands.slice(1));
     h.e.readArgs(p.operands.slice(1), h.sc);
     return;
   }
@@ -6163,7 +6923,12 @@ reg(NATIVE, ["export", "declare", "typeset", "local", "readonly"], h => {
     // `export d=~/.config/ember` gives d a value as an assignment does (commands-remote-c3-2); `export d` hands the value
     // it has to the programs that run, so it is judged as when it is exported as it is set (commands-remote-v5-2).
     if ((n.v ?? n.raw).includes("=")) h.e.setVar(name, n.v !== null ? [lit(n.v.slice(n.v.indexOf("=") + 1))] : null, h.sc, false, h.key === "export" || has(p, "x"));
-    else if (h.key === "export" || has(p, "x")) h.e.useUnjudged([name], true);
+    else if (h.key === "export" || has(p, "x")) {
+      h.e.useUnjudged([name], true);
+      // `CC=./cc.sh; export CC; make`: the value the line gave it is handed to the programs that run, as when it is
+      // exported as it is set (commands-classes-y9-5).
+      if (h.e.valuesOf(name).some(f => h.e.namesDownload(f, h.sc))) h.e.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
+    }
   }
 });
 reg(NATIVE, ["compgen"], h => { if (h.args.some(a => /^-[a-zA-Z]*[ev]/.test(a.v ?? ""))) h.e.add("secret", "secret.env", SAYS.env); });
@@ -6174,6 +6939,10 @@ reg(NATIVE, ["xsel"], h => { if (!h.args.some(a => /^(-[a-zA-Z]*[icd]|--input|--
 reg(NATIVE, ["ffmpeg", "avconv"], h => {
   const fIdx = h.args.findIndex((a, k) => a.v === "-f" && /^(x11grab|gdigrab|avfoundation|kmsgrab|fbdev|dshow|ddagrab|lavfi)$/i.test(h.args[k + 1]?.v ?? ""));
   if (fIdx >= 0 && /grab|avfoundation|fbdev|dshow/i.test(h.args[fIdx + 1].v ?? "")) h.e.add("secret", "secret.screen", SAYS.screen);
+  // A capture device as the input is the microphone or the camera (commands-remote-r9-9): by its format, or by the
+  // device's own name.
+  if (h.args.some((a, k) => (a.v === "-f" && /^(pulse|alsa|oss|sndio|jack|openal|v4l2|video4linux2?|avfoundation|dshow|vfwcap|decklink|iec61883|libdc1394)$/i.test(h.args[k + 1]?.v ?? ""))
+    || (h.args[k - 1]?.v === "-i" && /^\/dev\/(video|dsp|audio|snd)/.test(a.v ?? "")))) h.e.add("secret", "secret.record", SAYS.records);
   const outputs = h.args.filter((a, k) => k === h.args.length - 1 && !isOption(a));
   const inputs = h.args.filter((_a, k) => h.args[k - 1]?.v === "-i").map(a => a);
   h.e.readArgs(inputs, h.sc);
@@ -6240,8 +7009,11 @@ reg(NATIVE, Object.keys(WRAPPERS), h => {
   if (h.key === "timeout" && (h.sc.os === "win32" || h.sc.family !== "posix")) return;
   if (rule.finding) h.e.add(rule.finding.cls, rule.finding.rule, rule.finding.says);
   if (h.key === "disown") return;
-  if (rule.noCommand && h.args.some(a => a.v !== null && rule.noCommand!.test(a.v))) { h.e.readArgs([], h.sc); return; }
   const spec: OptSpec = { shortValue: rule.shortValue ?? "", shortOptional: rule.shortOptional ?? "", longValue: rule.longValue ?? [], stopAtOperand: true };
+  // An option after which there is no command is the wrapper's own, before the command: never one of the command's
+  // (`ionice -c3 shred -u notes.txt`: commands-remote-r9-14).
+  const own = h.args.slice(0, h.args.length - parseOpts(h.args, spec).operands.slice(rule.positional ?? 0).length);
+  if (rule.noCommand && own.some(a => a.v !== null && rule.noCommand!.test(a.v))) { h.e.readArgs([], h.sc); return; }
   // A wrapper whose table was corrected since main's is judged by main's too: the word after an option that took a
   // value there was not the command, and what stood after it was (`numactl -H x printenv`: commands-held-5).
   const was: OptSpec = rule.main ? { shortValue: rule.main.shortValue ?? "", longValue: rule.main.longValue ?? [], stopAtOperand: true } : spec;
@@ -6297,11 +7069,17 @@ reg(NATIVE, ["systemd-run"], h => {
   if (values(p, "H", "host", "M", "machine").length) h.e.add("publish", "send.ssh", "Sends data to another computer.");
   h.e.payload(p.operands, h.sc, "systemd-run");
 });
+/** pm2's and forever's verbs that only list or show what is running. */
+const PM_LISTS = new Set(["list", "ls", "l", "ps", "status", "jlist", "prettylist", "logs", "log", "describe", "desc", "show", "info", "id", "pid", "monit", "columns"]);
 reg(NATIVE, ["start-stop-daemon", "daemon", "tsp", "pm2", "forever", "supervisord"], h => {
-  const sub = lower(h.args[0]);
-  if ((h.key === "pm2" || h.key === "forever") && sub && !["start", "restart", "reload", "resurrect", "startup"].includes(sub)) {
-    if (["stop", "delete", "kill", "del"].includes(sub)) h.e.add("system", "kill.process", "Stops programs that are running.");
-    return;
+  if (h.key === "pm2" || h.key === "forever") {
+    // The verb is the first word that is no option (`pm2 --silent start`, `forever -a start`, and the `--` a package
+    // runner passes on), and only a verb known to list, show or stop is no start: `serve`, `deploy`, `install`, a
+    // script's name and an option's value read as the verb all ask (commands-classes-y9-1, y9-2).
+    const sub = lower(h.args.find(a => a.v === null || !a.v.startsWith("-")));
+    if (!sub && h.args.length && h.args.every(a => a.v !== null && /^(-v|-V|-h|--version|--help)$/.test(a.v))) return;
+    if (sub && ["stop", "stopall", "delete", "kill", "del"].includes(sub)) { h.e.add("system", "kill.process", "Stops programs that are running."); return; }
+    if (sub && PM_LISTS.has(sub)) return;
   }
   h.e.add("escape", `escape.${h.key}`, SAYS.keepsRunning);
 });
@@ -6349,6 +7127,20 @@ const GIT_READ = new Set([
   "replay", "last-modified", "refs", "multi-pack-index", "commit-graph", "prune-packed", "pack-objects", "pack-redundant",
 ]);
 
+/**
+ * A `<helper>::<address>` remote: git runs `git-remote-<helper>` from the command path for it, at once (clone, fetch,
+ * ls-remote) or at the next fetch or push once it is set as a remote's address (integ-x-4). `ext::` runs the command
+ * the address itself names; any other helper is a program Ember doesn't know. Read only where git takes an address,
+ * so a commit message that starts "std::move" is not one.
+ */
+const GIT_HELPER_ADDRESS = /^[A-Za-z0-9][A-Za-z0-9+.-]*::/;
+const GIT_ADDRESS_VERBS = new Set(["remote", "clone", "fetch", "pull", "push", "ls-remote", "submodule", "archive"]);
+const GIT_EXT_SAYS = "It runs a program named in a git address.";
+
+/** git settings that say where it fetches from and pushes to, or whether it checks the server (commands-remote-r9-11). */
+const GIT_REMOTE_KEYS = /^remote\..+\.(url|pushurl)$|^http\.(.+\.)?(sslverify|sslcainfo|sslcapath|sslcert|sslkey)$|^branch\..+\.(remote|pushremote)$|^remote\.pushdefault$/i;
+const GIT_REMOTE_SAYS = "Changes where git fetches from or pushes to, or how it checks the server.";
+
 reg(NATIVE, ["git"], h => {
   const g = globals(h, "git");
   checkGlobals(h, "git", g);
@@ -6376,8 +7168,8 @@ reg(NATIVE, ["git"], h => {
   const verb = verbArg.v;
   if (verb === null) { h.e.unclear("unclear.git-verb", "Ember can't tell which git command this runs."); return; }
   // An `ext::` remote runs the command it names.
-  if (h.args.some(a => /^ext::/i.test(a.v ?? ""))) h.e.unclear("unclear.git-ext", "It runs a program named in a git address.");
   const rest = h.args.slice(g.verbAt + 1);
+  if (h.args.some(a => /^ext::/i.test(a.v ?? "")) || (GIT_ADDRESS_VERBS.has(verb) && rest.some(a => GIT_HELPER_ADDRESS.test(a.v ?? "")))) h.e.unclear("unclear.git-ext", GIT_EXT_SAYS);
   const gh: H = { ...h, sc, args: rest, shellSc: h.shellSc ?? h.sc };
   const fn = GIT[verb];
   if (fn) { fn(gh, widen); return; }
@@ -6451,6 +7243,8 @@ git(["remote"], h => {
   h.e.readArgs(h.args.filter(a => !isOption(a)), h.sc);
   const p = opts(h, { shortValue: "tm" });
   const [verb, name, url] = p.operands;
+  // Where a later fetch or push goes (commands-remote-r9-11): changing an existing remote's address asks.
+  if (verb?.v === "set-url") h.e.add("system", "git.config.remote", GIT_REMOTE_SAYS, { program: "git remote set-url" });
   if (!(verb?.v === "add" || verb?.v === "set-url") || !name || !url) return;
   if (url.v !== null && !URL_LIKE.test(url.v) && !SCP_LIKE.test(url.v)) return;
   h.e.addedRemotes.add(name.v ?? UNSEEN);
@@ -6671,6 +7465,9 @@ git(["config"], h => {
   const key = keyArg?.v ?? null;
   if (write) {
     if (key === null || GIT_CODE_KEYS.some(re => re.test(key))) h.e.add("system", "git.config.code", "Changes what git runs later.", { program: "git config" });
+    // A remote's address, and whether git checks the server it talks to (commands-remote-r9-11).
+    if (key !== null && GIT_REMOTE_KEYS.test(key)) h.e.add("system", "git.config.remote", GIT_REMOTE_SAYS, { program: "git config" });
+    if (key !== null && /^remote\..+\.(url|pushurl)$/i.test(key) && ops.some(o => GIT_HELPER_ADDRESS.test(o.v ?? ""))) h.e.unclear("unclear.git-ext", GIT_EXT_SAYS);
     if (has(p, "system")) h.e.add("system", "git.config.system", "Changes settings for every user.", { program: "git config" });
     for (const f of values(p, "f", "file")) if (f) h.e.usePath(lit(f), "write", h.sc);
   } else if (key !== null && /^credential\./i.test(key)) h.e.add("secret", "secret.git-credential", SAYS.secrets, { program: "git config" });
@@ -6799,6 +7596,7 @@ reg(NATIVE, ["gh"], h => {
   const objects: Obj[] = repoOpt ? [{ kind: "repo", text: repoOpt, abs: null }] : [];
   if (group === null) { if (h.args[g.verbAt]) h.e.unclear("unclear.gh-verb", "Ember can't tell which gh command this runs."); return; }
   const sub = rest.find(a => !isOption(a))?.v ?? null;
+  if (group === "config" && (sub === "set" || sub === "clear-cache")) { h.e.add("system", "pkg.config", "Changes a setting later commands obey, such as where packages come from.", { program: "gh config" }); return; }
   if (group === "auth") {
     if (sub === "status" && !rest.some(a => /^(-t|--show-token)$/.test(a.v ?? ""))) return;
     if (sub === "switch") return;
@@ -7224,6 +8022,14 @@ reg(NATIVE, Object.keys(CLOUD_CLIS), h => {
     h.e.add("secret", "secret.cloud", SAYS.secrets, { program: `${h.key} ${verb}` });
     return;
   }
+  // Azure's vault values and the keys and sign-ins its services hand out, and Terraform's outputs and state written
+  // out in full (`-raw` and `-json` don't mask what is marked sensitive): secrets too (commands-remote-r9-9). What the
+  // verb is judged to do besides stays, so none of them loses a danger it had (`az keyvault secret download`,
+  // `terraform state pull` asked as changes).
+  if ((h.key === "az" && (/^keyvault (secret|key|certificate) (show|download|backup)\b/.test(all) || /\b(keys list|list-keys|credential show|show-connection-string|get-credentials|list-credentials|keys renew)\b/.test(all)))
+    || ((h.key === "terraform" || h.key === "tofu") && ((verbs[0] === "output" && h.args.some(a => /^-(raw|json)$/.test(a.v ?? ""))) || (verbs[0] === "show" && h.args.some(a => a.v === "-json")) || all.startsWith("state pull")))) {
+    h.e.add("secret", "secret.cloud", SAYS.secrets, { program: `${h.key} ${verb}` });
+  }
   if (h.key === "aws" && verbs[0] === "s3") {
     const ops = rest.filter(a => !isOption(a)).slice(2).map(a => a.v ?? "");
     const toS3 = ops.length > 0 && ops[ops.length - 1].startsWith("s3://");
@@ -7416,6 +8222,9 @@ reg(NATIVE, ["npm", "pnpm", "yarn", "bun", "corepack"], h => {
   if (h.args.some(a => /^--script-shell(=|$)/.test(a.v ?? ""))) h.e.unclear("unclear.assignment", "It changes how package scripts are run.");
   const configVerb = verb === "config" || verb === "c" ? h.args[g.verbAt + 1]?.v ?? null : verb;
   if (configVerb === "set" && h.args.some(a => /^script-shell(=|$)/.test(a.v ?? ""))) h.e.unclear("unclear.assignment", "It changes how package scripts are run.");
+  // `npm config get //registry.npmjs.org/:_authToken`, `npm get _auth`, `yarn config get npmAuthToken`: a stored token
+  // printed (commands-classes-y9-7).
+  if (/^(config|c|get)$/.test(verb ?? "") && rest.some(a => /_auth|_password|token|password|secret/i.test(a.v ?? ""))) h.e.add("secret", "secret.program", SAYS.secrets);
   const global = g.opts.some(o => o.name === "-g" || o.name === "--global") || rest.some(a => a.v === "-g" || a.v === "--global" || a.v === "--location=global");
   const widening = global ? ["--global"] : [];
   if (verbArg && verb === null) { h.e.unclear("unclear.npm-verb", "Ember can't tell which command this runs."); return; }
@@ -7447,20 +8256,39 @@ reg(NATIVE, ["npm", "pnpm", "yarn", "bun", "corepack"], h => {
       // (commands-remote-c8-2). With nothing after the name it is the project's script of that name, or a deleter
       // given nothing to delete (`yarn scrub`: commands-remote-x8-13).
       const given = rest.slice(rest.indexOf(specs[0]));
+      scriptGiven(h, `${h.key} run ${name}`, given.slice(1));
       if (h.key !== "npm" && h.key !== "corepack" && NEW_DELETERS.has(name.toLowerCase()) && given.length > 1) h.e.payload(given, h.sc, `${h.key} run ${name}`);
       return;
     }
-    case "exec": case "x": case "dlx": case "create": h.e.add("escape", "escape.npx", SAYS.downloadsProgram); return;
+    case "exec": case "x": case "dlx": case "create":
+      h.e.add("escape", "escape.npx", SAYS.downloadsProgram);
+      // The package's own command line is judged too (modes-y9-5); `create x` runs create-x's initialiser.
+      if (verb !== "create") packageLine(h, rest, `${h.key} ${verb}`);
+      return;
     case "init": case "innit":
       if (specs.length) h.e.add("escape", "escape.npx", SAYS.downloadsProgram);
       else if (!rest.some(a => /^(-y|--yes|-f|--force)$/.test(a.v ?? ""))) h.e.unclear("unclear.interactive", SAYS.interactive);
       return;
     case "config": case "c": case "set":
-      if (/^(set|delete|edit|fix)$/.test(specs[0]?.v ?? "") || verb === "set") {
+      if (/^(set|delete|rm|unset|edit|fix)$/.test(specs[0]?.v ?? "") || verb === "set") {
+        // A setting every later command of the tool obeys: the registry packages come from, an auth line, a proxy
+        // (commands-remote-r9-11).
+        h.e.add("system", "pkg.config", "Changes a setting later commands obey, such as where packages come from.", { program: `${h.key} config` });
         if (global || rest.some(a => a.v === "--location=global" || a.v === "--global")) h.e.add("system", "npm.config.global", "Changes settings for every user.");
         if (specs[0]?.v === "edit") h.e.unclear("unclear.interactive", SAYS.interactive);
       }
       return;
+    case "plugin": case "policies": {
+      // yarn's plugins are code every later yarn command loads, and `policies set-version` fetches the yarn that
+      // later commands run: a setting they obey, and for an import or a release a program fetched to run
+      // (commands-classes-x9-6). Only what lists runs; pnpm and bun have no such command, so there it is a script.
+      if (h.key !== "yarn") break;
+      const sub = specs[0]?.v ?? null;
+      if (verb === "plugin" && sub !== null && /^(list|runtime|check)$/.test(sub)) return;
+      h.e.add("system", "pkg.config", "Changes a setting later commands obey, such as where packages come from.", { program: `yarn ${verb}` });
+      if (sub === null || /^(import|set-version)$/.test(sub)) h.e.add("escape", "escape.npx", SAYS.downloadsProgram);
+      return;
+    }
     case "cache": if (/^(clean|clear|rm|delete|prune)$/.test(specs[0]?.v ?? "")) h.e.add("destroy", "npm.cache", "Deletes the package manager's cache."); return;
     case "workspace": if (h.key === "yarn" && specs.length >= 2) { const inner: H = { ...h, args: specs.slice(1) }; NATIVE.yarn(inner); } return;
     case "workspaces": if (h.key === "yarn" && yarnWorkspaces(h, rest)) return; break;
@@ -7473,13 +8301,77 @@ reg(NATIVE, ["npm", "pnpm", "yarn", "bun", "corepack"], h => {
   if (verb === "star" || verb === "unstar" || verb === "hook" || verb === "profile") { h.e.add("publish", "npm.registry", "Changes something on the registry."); return; }
   if (h.key !== "npm" && !builtins.has(verb)) {
     nameCheck(h, verb);
+    scriptGiven(h, `${h.key} ${verb}`, h.args.slice(g.verbAt + 1));
     // `yarn rimraf src` runs the project's rimraf when no script has that name: judged as that program would be
     // (commands-remote-c8-2). Only a deleter's name, so `yarn build` or `yarn format` stay a script's, and only with
     // something after it (`yarn scrub` alone: commands-remote-x8-13).
     if (NEW_DELETERS.has(verb.toLowerCase()) && h.key !== "corepack" && h.args.length > g.verbAt + 1) h.e.payload(h.args.slice(g.verbAt), h.sc, `${h.key} ${verb}`);
   } else if (/^(test|start|stop|restart)$/.test(verb)) nameCheck(h, verb);
 });
-reg(NATIVE, ["npx", "pnpx", "bunx", "uvx", "yarnpkg-dlx"], h => { h.e.add("escape", "escape.npx", SAYS.downloadsProgram); });
+reg(NATIVE, ["npx", "pnpx", "bunx", "uvx", "yarnpkg-dlx"], h => { h.e.add("escape", "escape.npx", SAYS.downloadsProgram); packageLine(h, h.args, h.key); });
+
+/** Options of the download-and-run runners that take the next word (`npx -p pkg`, `uvx --from pkg`, `pipx run --spec x`). */
+const PACKAGE_RUN_VALUES = new Set([
+  "-p", "--package", "--node-arg", "-n", "--shell", "--userconfig", "-w", "--workspace", "--cache", "--registry", "--filter", "-C", "--dir", "--from", "--with",
+  "--with-editable", "--with-requirements", "--python", "--index", "--index-url", "--extra-index-url", "--default-index", "--find-links", "--cache-dir", "--spec",
+  "--pip-args", "-i", "--config-file", "--cwd", "--prefix",
+]);
+
+/**
+ * An option that asks a program to leave the command and keep running (`--daemon`, `--detach`, `--fork`,
+ * `--background`: the detach words of intent.ts's NEVER_BY_WORDS), never one that turns it off (`--daemon=false`).
+ */
+const DETACH_OPTION = /^--?(fork|detach|detached|daemon|daemonize|daemonise|background|bg|nohup)(?:[=:](?!(?:false|no|off|0)$).*)?$/i;
+
+/**
+ * A downloaded program's own words that ask it to detach (integ-x-2): Ember knows nothing else of the program, and
+ * the option says it would outlive Stop, so it is filed where the modes hold it (`escape.background`), as a known
+ * process manager in the same place is.
+ */
+function detachWords(h: H, words: readonly Arg[]): void {
+  if (words.some(a => a.v !== null && DETACH_OPTION.test(a.v))) h.e.add("escape", "escape.background", SAYS.keepsRunning);
+}
+
+/**
+ * The command line of a package a runner downloads and runs (modes-y9-5; `npx`, `pnpx`, `bunx`, `uvx`, `pipx run`,
+ * `npm exec`, `pnpm dlx`, `yarn dlx`, `bun x`): judged as a command of its own beside the runner's `escape.npx`, so
+ * a secret path or a secret-named variable it is handed, and what the package is known to do (`pm2 start` outlives
+ * Stop, `rimraf` deletes), are named for the modes that read findings. The program is the package's name without its
+ * scope and version; `-c`/`--call` text is shell text.
+ */
+function packageLine(h: H, words: readonly Arg[], wrapper: string): void {
+  if (h.e.readsAsMain) return;
+  for (let k = 0; k < words.length; k++) {
+    const v = words[k].v;
+    if (v === null) { h.e.readArgs(words.slice(k), h.sc, { unresolvedUnclear: true }); return; }
+    if (v === "--") continue;
+    if (v.startsWith("-")) {
+      const m = /^(-c|--call)(?:=(.*))?$/.exec(v);
+      if (m) {
+        const text = m[2] !== undefined ? m[2] : words[++k]?.v;
+        if (text === null || text === undefined) h.e.unclear("unclear.hidden-command", `Ember can't tell what ${wrapper} runs.`);
+        else h.e.nested(text, h.sc.family === "powershell" ? "powershell" : h.sc.family === "cmd" ? "cmd" : "sh", h.sc, wrapper);
+        continue;
+      }
+      if (PACKAGE_RUN_VALUES.has(v)) k++;
+      continue;
+    }
+    // An address or a registry spec (`https://…/a.ts`, `npm:pkg`): a program Ember can't name, its words read as paths.
+    if (URL_LIKE.test(v) || /^[a-z][a-z0-9+.-]*:/i.test(v)) { h.e.readArgs(words.slice(k + 1), h.sc, { unresolvedUnclear: true }); h.e.afterArgs(words.slice(k + 1), wrapper); detachWords(h, words.slice(k + 1)); return; }
+    const bin = (v.replace(/^@[^/]+\//, "").replace(/@[^@/]*$/, "").split(/[\\/]/).pop() ?? v) || v;
+    const from = h.e.findings.length;
+    // The runner drops one `--` after the package (`npm exec pm2 -- start app.js` runs `pm2 start app.js`).
+    const rest = words.slice(words[k + 1]?.v === "--" ? k + 2 : k + 1);
+    h.e.payload([{ ...words[k], v: bin, raw: bin }, ...rest], h.sc, wrapper);
+    // That the package is a program Ember doesn't know is what the runner's own finding already says ("Downloads a
+    // program and runs it."): only what its line is handed, and what Ember knows of the package, is added, so `npx
+    // cowsay hi` decides as it did (the approval modes read `unknown` as "can't tell").
+    h.e.dropFindings(from, f => f.rule === "unknown.program");
+    detachWords(h, rest);
+    return;
+  }
+}
+
 
 function pip(h: H): void {
   const g = globals(h, "pip");
@@ -7543,8 +8435,10 @@ reg(NATIVE, ["pipx", "poetry", "pipenv", "uv", "rye", "pdm", "hatch", "conda", "
     h.e.payload(p.operands, h.sc, `${h.key} ${verb}`);
     return;
   }
-  if ((h.key === "pipx" && verb === "run") || (h.key === "uv" && verb === "tool" && specs[0]?.v === "run") || (h.key === "deno" && verb === "run" && specs.some(a => URL_LIKE.test(a.v ?? ""))) || (h.key === "rye" && verb === "tools" && specs[0]?.v === "run")) {
+  if ((h.key === "pipx" && verb === "run") || (h.key === "uv" && verb === "tool" && specs[0]?.v === "run") || (h.key === "deno" && verb === "run" && specs.some(a => URL_LIKE.test(a.v ?? "") || /^(npm|jsr):/i.test(a.v ?? ""))) || (h.key === "rye" && verb === "tools" && specs[0]?.v === "run")) {
     h.e.add("escape", "escape.npx", SAYS.downloadsProgram);
+    // The package's own command line is judged too (modes-y9-5): after `pipx run`, `uv tool run`, `deno run`.
+    packageLine(h, h.key === "pipx" || h.key === "deno" ? rest : rest.slice(rest.indexOf(specs[0]) + 1), `${h.key} ${verb}`);
     return;
   }
   if ((h.key === "deno") && verb === "eval") { h.e.unclear("unclear.inline-code", "It runs code given on the command line."); return; }
@@ -7558,6 +8452,14 @@ reg(NATIVE, ["pipx", "poetry", "pipenv", "uv", "rye", "pdm", "hatch", "conda", "
   if (h.key === "conan" && verb === "upload") { h.e.add("publish", "conan.upload", "Publishes a package to the registry."); return; }
   if (h.key === "mix" && /^hex\.(publish|owner|retire)/.test(verb)) { h.e.add("publish", "mix.publish", "Publishes a package to the registry."); return; }
   if (h.key === "composer" && verb === "run-script") { nameCheck(h, specs[0]?.v ?? ""); return; }
+  // `composer config <key> <value>` writes a setting later commands obey (commands-remote-r9-11); `--list` and one
+  // key alone only read.
+  // Its stored sign-ins, printed or set (commands-classes-y9-7).
+  if (h.key === "composer" && verb === "config" && specs.some(a => /^(github-oauth|gitlab-oauth|gitlab-token|bitbucket-oauth|http-basic|bearer)(\.|$)/i.test(a.v ?? ""))) h.e.add("secret", "secret.program", SAYS.secrets);
+  if (h.key === "composer" && verb === "config" && (specs.length >= 2 || rest.some(a => a.v === "--unset")) && !rest.some(a => a.v === "-l" || a.v === "--list")) {
+    h.e.add("system", "pkg.config", "Changes a setting later commands obey, such as where packages come from.", { program: "composer config" });
+    return;
+  }
   if (h.key === "dart" && verb === "pub" && specs[0]?.v === "publish") { h.e.add("publish", "dart.publish", "Publishes a package to the registry."); return; }
   if (h.key === "conda" && verb === "env" && /^(create|remove|update)$/.test(specs[0]?.v ?? "")) { languageInstall(h, []); return; }
   const verbs = LANGUAGE_INSTALL_VERBS[h.key] ?? [];
@@ -7919,6 +8821,14 @@ reg(NATIVE, Object.keys(SYSTEM_PACKAGERS), h => {
   verb = verb.toLowerCase();
   if (read.includes(verb)) return;
   if (h.key === "winget" && (verb === "source" || verb === "settings") ) return;
+  // A package manager's own service verbs start, stop or set up a daemon that runs on after the command and after
+  // Stop: filed as a service, where the approval modes read what outlives the kill switch (modes-y9-1).
+  if ((h.key === "brew" && verb === "services") || (h.key === "snap" && /^(start|restart|stop|enable|disable|set|unset)$/.test(verb))) {
+    const sub = h.key === "brew" ? h.args.slice(start + 1).find(a => !isOption(a))?.v ?? null : verb;
+    if (sub === null || !/^(list|ls|info)$/.test(sub)) h.e.add("system", "service.change", "Starts, stops or changes a system service.", { program: `${h.prog} ${verb}` });
+  }
+  // `flatpak run` opens the app, as a launcher does.
+  if (h.key === "flatpak" && verb === "run") h.e.unclear("unclear.gui", SAYS.openApp);
   languageOrSystem(h, h.args.slice(start + 1).filter(a => !isOption(a)));
 });
 function languageOrSystem(h: H, specs: Arg[]): void {
@@ -8814,7 +9724,7 @@ reg(NATIVE, ["ip"], h => {
 reg(NATIVE, ["nmcli", "route", "networksetup", "ifconfig", "ifup", "ifdown", "resolvectl", "scutil", "hostnamectl", "timedatectl", "localectl", "arp", "ipconfig", "wpa_cli", "iwconfig", "iw", "ethtool", "tc", "brctl", "wg", "wg-quick", "openvpn", "nmtui"], h => {
   const a = h.args.map(x => (x.v ?? "").toLowerCase());
   const ops = h.args.filter(x => !isOption(x)).map(x => (x.v ?? "").toLowerCase());
-  if (h.key === "nmcli" && a.some(x => x === "-s" || x === "--show-secrets")) h.e.add("secret", "secret.program", SAYS.secrets);
+  if (h.key === "nmcli" && (a.some(x => x === "-s" || x === "--show-secrets" || x === "show-password") || /\bwifi show\b/.test(a.join(" ")))) h.e.add("secret", "secret.program", SAYS.secrets);
   const write =
     h.key === "nmcli" ? ops.some(x => /^(modify|mod|up|down|delete|del|add|connect|disconnect|reload|on|off|edit|import|export|clone|hostname|rescan)$/.test(x))
     : h.key === "route" ? ops.some(x => /^(add|del|delete|change|flush)$/.test(x))

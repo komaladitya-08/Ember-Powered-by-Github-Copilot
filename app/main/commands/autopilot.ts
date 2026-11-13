@@ -79,14 +79,15 @@ const psWord = (a: string) => `'${a.replace(/'/g, "''")}'`;
 /**
  * A command that downloads code and runs it (`npx`, `pnpm dlx`, `pipx run`, `curl … | sh`: the classifier's four
  * rules, DOWNLOADS_ONLY) and hands that code a secret: a word of its own, or an option's value, that names a path
- * holding passwords or keys, or a variable named for one, expanded anywhere in the line. The classifier says only
- * "downloads and runs" of such a line (it doesn't judge the downloaded program's arguments), which Autopilot
- * announces and Assisted's check may clear; the code can print the key into the output the model reads, or send it
- * anywhere (modes-y9-5). Whether a word is a secret is the classifier's own answer, never a list kept here: each is
+ * holding passwords or keys, or a variable named for one, expanded anywhere in the line. The code can print the key
+ * into the output the model reads, or send it anywhere, and "downloads and runs" alone is what Autopilot announces and
+ * Assisted's check may clear (modes-y9-5). The classifier judges the package's own line as a command of its own now
+ * (commands-remote-r9-3: `npx -y tool ~/.ssh/id_rsa` carries `path.secret`, a token's variable `secret.env`), so most
+ * such lines are found twice, and both findings stand; this still finds alone what the line puts in the environment
+ * or pipes to a shell. Whether a word is a secret is the classifier's own answer, never a list kept here: each is
  * shown to it (`judge`) as the file a plain reader would open, each variable as one printed, and a finding there that
  * says secrets (readsSecrets) makes this one. It only ever adds a question, in every mode and on every target (the
- * flow and a remote's gate 2 both call it); once the classifier judges such a line itself, this finds the same thing
- * a second time. A word that can't be judged, or more words than it judges, counts as handed; so does a word the
+ * flow and a remote's gate 2 both call it). A word that can't be judged, or more words than it judges, counts as handed; so does a word the
  * classifier couldn't resolve (`$(echo ~/.ssh/id_rsa)`, `~ana/.ssh/id_rsa`, `$D/id_rsa` after `D=~/.ssh`), unless all
  * the line expands is plain variables it sets nowhere itself, whose names were judged above (`--port $PORT`)
  * (modes-y9-x9-2). What the line puts in the environment is handed over as well (`KEY=~/.ssh/id_rsa npx tool`,

@@ -276,6 +276,66 @@ export const FETCHERS = new Set(["curl", "wget", "fetch", "aria2c", "invoke-webr
 /** Decoders of hidden text (base64 -d and friends): piping one into an interpreter hides what runs. */
 export const DECODERS = new Set(["base64", "base32", "xxd", "openssl", "gzip", "gunzip", "zcat", "xz", "unxz", "bzip2", "bunzip2", "uudecode", "rev", "tr"]);
 
+/**
+ * Programs that only read, list, check, copy, move, pack, unpack or delete the files they are given, and the shell's
+ * own words (commands-remote-r9-5, r9-6): given a file this task downloaded they don't run it, and what they write
+ * from it carries the mark on (afterRun). Every other program that names a download, or a folder that holds one,
+ * anywhere on its line may run it, and asks. A program belongs here only when no option of it runs a file it names,
+ * or its own row asks for the options that do (sed's `e`, find's `-exec`, tar's `--to-command`, git's hooks and
+ * aliases). Lower case, as the classifier keys programs and cmdlets.
+ */
+export const DOWNLOAD_READERS: ReadonlySet<string> = new Set([
+  // The shell's own words and built-ins that run no file.
+  "if", "then", "else", "elif", "fi", "while", "until", "for", "do", "done", "case", "esac", "select", "function", "{", "}", "!", "[[", "]]", "time", "coproc",
+  "cd", "pushd", "popd", "pwd", "echo", "printf", "test", "[", "true", "false", ":", "read", "mapfile", "readarray", "wait", "exit", "return", "break", "continue", "shift",
+  "unset", "local", "readonly", "let", "type", "which", "whereis", "command", "hash", "dirs", "umask", "ulimit", "trap", "set-location", "push-location", "pop-location",
+  // Reading, listing and comparing.
+  "cat", "tac", "nl", "head", "tail", "less", "more", "most", "bat", "batcat", "wc", "sort", "uniq", "cut", "tr", "paste", "join", "column", "fold", "fmt", "rev", "expand",
+  "unexpand", "od", "hexdump", "xxd", "strings", "base64", "base32", "iconv", "dos2unix", "unix2dos", "grep", "egrep", "fgrep", "rg", "ag", "ack", "sed", "awk", "gawk",
+  "mawk", "jq", "yq", "xmllint", "diff", "cmp", "comm", "sdiff", "colordiff", "delta", "file", "stat", "ls", "ll", "dir", "vdir", "tree", "du", "df", "find", "fd", "fdfind",
+  "locate", "eza", "exa", "lsd", "realpath", "readlink", "basename", "dirname", "namei", "zcat", "zless", "zgrep", "bzcat", "xzcat", "lzcat", "zstdcat", "md5sum", "sha1sum",
+  "sha224sum", "sha256sum", "sha384sum", "sha512sum", "shasum", "b2sum", "cksum", "sum", "md5", "gpg", "gpgv", "minisign", "cosign", "signify", "openssl", "ffprobe",
+  "identify", "exiftool", "pdfinfo", "pdftotext", "mediainfo", "readelf", "objdump", "nm", "size", "otool", "lipo", "codesign", "spctl", "cloc", "tokei", "scc",
+  // Copying, moving, packing and deleting.
+  "cp", "mv", "ln", "install", "rsync", "scp", "sftp", "rclone", "tar", "gtar", "bsdtar", "zip", "unzip", "gzip", "gunzip", "bzip2", "bunzip2", "xz", "unxz", "zstd", "unzstd",
+  "lz4", "7z", "7za", "7zr", "unrar", "cpio", "ar", "tee", "dd", "sponge", "split", "csplit", "touch", "mkdir", "rm", "rmdir", "unlink", "shred", "trash", "trash-put", "gio",
+  "chmod", "chown", "chgrp", "chattr", "xattr", "setfacl", "getfacl", "truncate", "mktemp", "patch", "git", "hg", "svn", "curl", "wget", "aria2c", "gh", "glab",
+  // PowerShell's cmdlets and cmd's built-ins of the same kinds.
+  "get-content", "get-item", "get-itemproperty", "get-childitem", "get-filehash", "get-acl", "select-string", "test-path", "resolve-path", "split-path", "join-path",
+  "convert-path", "measure-object", "format-hex", "copy-item", "move-item", "rename-item", "remove-item", "new-item", "expand-archive", "compress-archive", "out-file",
+  "set-content", "add-content", "tee-object", "write-output", "write-host", "invoke-webrequest", "invoke-restmethod", "compare-object", "get-authenticodesignature",
+  "copy", "xcopy", "robocopy", "move", "ren", "rename", "del", "erase", "rd", "md", "attrib", "findstr", "fc", "comp", "where", "certutil", "expand", "icacls",
+]);
+
+/**
+ * The words of those readers and of the fetch tools that make them run or load a file they are given, where the
+ * program's own row doesn't ask about the word (commands-classes-x9-3): a comparison's or a pager's program
+ * (`sdiff --diff-program=`, `ack --pager=`, `svn --diff-cmd`), a desktop entry started (`gio launch`), an engine, a
+ * provider or a config that names one (`openssl engine`, `-config`), gpg's helper programs and settings folder, a
+ * linker plugin (`ar --plugin`), a hook on a finished download. With such a word on its line the program is no reader:
+ * a download named anywhere on the line asks. GNU and gpg take a long option cut short, so these match from its start.
+ */
+export const READER_RUNS: Readonly<Record<string, RegExp>> = {
+  sdiff: /^--d[a-z-]*(=|$)/,
+  gio: /^launch$/,
+  openssl: /^(engine$|-(engine|config|provider|provider-path|provider_path|propquery|keyform)(=|$))/,
+  gpg: /^--(photo|exec|home|opt|agent|dirmngr|keyboxd|pinentry|load)/,
+  gpgv: /^--(photo|exec|home|opt|agent|dirmngr|keyboxd|pinentry|load)/,
+  svn: /^--(diff-cmd|diff3-cmd|merge-cmd|editor-cmd|config-dir|config-option)(=|$)/,
+  ack: /^--(pager|ackrc)(=|$)/,
+  ag: /^--pager(=|$)/,
+  delta: /^--(pager|config)(=|$)/,
+  rg: /^--hostname-bin(=|$)/,
+  ar: /^--plugin(=|$)/,
+  nm: /^--plugin(=|$)/,
+  cpio: /^--rsh-command(=|$)/,
+  hash: /^-[a-z]*p/,
+  aria2c: /^--(on-|conf-path)/,
+  wget: /^(-e|--execute|--config|--use-askpass)(=|$)/,
+  scp: /^-S/,
+  sftp: /^-S/,
+};
+
 /** Interactive full-screen programs (§3.5.7): unclear unless arguments make them finish. */
 export const INTERACTIVE = new Set([
   "vim", "vi", "nvim", "view", "vimdiff", "nano", "pico", "emacs", "joe", "micro", "ne", "mcedit", "ed", "ex", "less", "more", "most", "pg",
@@ -330,12 +390,23 @@ export const CLIPBOARD_READERS = new Set(["wl-paste", "pbpaste", "get-clipboard"
 /** Taking pictures of the screen (§3.5.4). */
 export const SCREENSHOTTERS = new Set(["import", "scrot", "gnome-screenshot", "grim", "spectacle", "xwd", "screencapture", "maim", "flameshot", "shutter", "ksnip", "deepin-screenshot", "xfce4-screenshooter", "screenshot", "wf-recorder", "wl-screenrec", "recordmydesktop", "simplescreenrecorder", "peek", "kazam", "vokoscreen"]);
 
+/** Programs that record from the microphone or the camera whatever their arguments (commands-remote-r9-9). */
+export const RECORDERS = new Set([
+  "arecord", "parecord", "pacat-record", "parec", "pw-record", "rec", "fswebcam", "streamer", "imagesnap", "cheese", "guvcview", "termux-microphone-record",
+  "termux-camera-photo", "audiorecorder", "raspistill", "raspivid", "libcamera-still", "libcamera-vid", "rpicam-still", "rpicam-vid",
+]);
+
 /** Disk erasing and partitioning (§3.5.1): always class a. */
 export const DISK_TOOLS = new Set(["mke2fs", "mkswap", "wipefs", "fdisk", "sfdisk", "gdisk", "sgdisk", "parted", "cfdisk", "blkdiscard", "diskpart", "format-volume", "clear-disk", "initialize-disk", "remove-partition", "badblocks", "hdparm", "nvme", "zpool", "cryptsetup", "lvremove", "vgremove", "pvremove", "mdadm", "partprobe", "gparted"]);
 
 /** Script, target and package-script names (§3.5.9, L8). */
 export const NAME_PUBLISH = new Set(["deploy", "publish", "release", "push", "upload", "ship", "prod", "production", "promote"]);
-export const NAME_DESTROY = new Set(["clean", "clobber", "distclean", "reset", "wipe", "purge", "nuke", "destroy", "drop", "rollback"]);
+export const NAME_DESTROY = new Set([
+  "clean", "clobber", "distclean", "reset", "wipe", "purge", "nuke", "destroy", "drop", "rollback",
+  // The frameworks' own words for emptying a database or taking it back (commands-remote-r9-4): `manage.py flush`,
+  // `artisan migrate:fresh`, `alembic downgrade`, `db:truncate`, `teardown`.
+  "flush", "fresh", "truncate", "downgrade", "erase", "delete", "teardown",
+]);
 export const NAME_SYSTEM = new Set(["install", "setup", "bootstrap", "provision"]);
 
 /**
@@ -813,4 +884,12 @@ export const ORDINARY_VERBS: Readonly<Record<string, OrdinaryVerbs>> = {
     verbs: ["ls", "list-sessions", "list-windows", "lsw", "list-panes", "lsp", "list-clients", "lsc", "list-buffers", "lsb", "list-commands", "lscm", "list-keys", "lsk",
       "has-session", "has", "info", "server-info", "display-message", "display", "show-options", "show", "show-window-options", "showw", "-V"],
   },
+  // The other ways into a terminal or an editor of the user's (commands-remote-r9-1): only what lists runs. What
+  // names the user's tabs and sessions or what runs in them is no such list (integ-x-1): a terminal names a tab from
+  // the command and the folder in it, so zellij's `action query-tab-names`, `list-clients` and `dump-layout` and
+  // it2api's `list-sessions`, `show-hierarchy` and `show-focus` have no row and ask, as they did before these rows.
+  zellij: { verbs: ["list-sessions", "ls", "--version", "-V", "--help", "-h"], values: ["-s", "--session", "-l", "--layout", "-c", "--config", "--config-dir", "--data-dir"], bare: "asks" },
+  kitten: { verbs: ["@", "--version", "--help"], sub: { "@": ["ls", "get-colors"] }, bare: "asks" },
+  nvr: { verbs: ["--serverlist", "--version", "--help", "-h"], bare: "asks" },
+  it2api: { verbs: ["--help", "-h"], bare: "asks" },
 };
