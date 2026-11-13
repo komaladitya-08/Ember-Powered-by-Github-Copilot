@@ -3314,12 +3314,19 @@ purpose 79,461 in Autopilot, 44,363 in Assisted with a match (the check was cons
 with none and 527 in Interactive; 4,121 looser than 4d64d3a, all of the allowed kinds, and none than 848a566 or main.
 Only the guard trips, as at ea276ea, aa60c19 and eaab87f (the checks that measured it) (46.3% of what 4d64d3a ran on the classifier probe, 44.3% on the flow
 probe; 49.3% and 47.9% against 848a566). Commands-runners was measured on its own tree (596db8e, above). The merged head
-fa19f89 was measured by the integrator with lint, typecheck and `npm test` (16,860 passed, 20 skipped, 0 failed), and
-the gate lane's own worktree at that head, one command at a time, had passed lint, typecheck, `npm test` (521 files
-passed, 2 skipped; the same 16,860, 20 and 0), the kill-switch deadline test, the launcher's pack dry run and the
-sidecar's tests (148, on this machine's python3) when this was written. Its later steps (the whole integration suite, which then passed with 17 files and 218 tests, 567 skipped; the voice suite on WebAssembly, the journeys, smoke, the leak and desktop suites) and the harnesses on that head had not
-finished: the policy and commands numbers above are those of eaab87f and 596db8e, as marked, and the gate lane's report
-supersedes this sentence.
+fa19f89 then had the whole gate and both harnesses on a frozen copy, one command at a time: lint and typecheck clean;
+`npm test` 521 files passed and 2 skipped, 16,860 tests passed, 20 skipped, 0 failed; the kill-switch deadline test 2 of
+2; the launcher's pack dry run; the sidecar's tests (148, on this machine's python3, not 3.6); the integration suite
+with the speech models, 17 files and 218 tests passed, 567 skipped; the voice suite on WebAssembly 43 passed and 1
+skipped, and on the C API 44 passed; the build; the renderer journeys, 15 files and 241 tests; the character lab; smoke,
+3; the vault's leak and the worker's safety suites, 103 passed and 1 skipped. The policy proof passed there too with
+the same figures (287,678 steps, 0 weaker, 52 stronger and allowed, flags lost 0, 24 hard checks), on a corpus gathered
+before this round's tests and PLAN names (its `--check` says so). The commands comparison there ran 288,957 cases in
+the default and the four modes: 0 new failures (100 against 681c36a, all recorded), 0 weaker asks, 0 unproven, 0
+outside the mode's stated limits, 0 tighter than the defaults; looser on purpose 79,948 in Autopilot, 44,570 in
+Assisted with a match, 527 in Assisted with none and 527 in Interactive; 4,121 looser than 4d64d3a, all allowed, none
+than 848a566 or main; every run ends on the guard alone (45.7% against 4d64d3a). The commits after fa19f89 change only
+ci.yml's time limit and these documents.
 
 **Consent and departures.** `CONSENT_VERSION` went from 8 to 9 with slice 4 (the agreement now turns on what is left
 switched on; 8 came with spoken answers before the round). `FEATURE_CONSENT_VERSION`: `autonomy` 2 to 3 (Interactive's
