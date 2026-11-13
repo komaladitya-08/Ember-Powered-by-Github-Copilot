@@ -26,7 +26,7 @@ import { TURN_START_MS, TurnWatch, within } from "./conductor";
 import { asPasteClipboard, ClipboardTimeout, holdsPassword, type ClipboardSnapshot, type PasteClipboard, type TextClipboard } from "./clipboard";
 import { handStep, plainText, stepOf, type HandStep, type Presenter } from "./presenter";
 import { askedWords, type ActivityEvent } from "./activity";
-import { Refusals, noKindName, offTaskLookup, offTaskNames, riskKinds, riskNames, stepAcrossNames, stepMarksForCommands, stepNames, type RiskAsked, type Standing } from "../policy/refusals";
+import { Refusals, formFieldName, noKindName, offTaskLookup, offTaskNames, riskKinds, riskNames, stepAcrossNames, stepMarksForCommands, stepNames, type RiskAsked, type Standing } from "../policy/refusals";
 import { pageBinding, pageBindingOf } from "./page-binding";
 import { cardApp } from "../../shared/activity";
 import type { Confirmer, Question } from "./confirm";
@@ -3276,7 +3276,13 @@ export class Worker {
     // this task is never asked again in it.
     const formStep = [`vault\n${kind}\n${"site" in dest ? `site:${dest.site}` : `app:${dest.app}`}`];
     if (!vault.has(kind, dest)) {
-      if (this.refusals.step(formStep)) return this.vaultRefused(element, "the user closed Ember's Secure Form for this earlier in the task", NOT_SAVED_BEFORE);
+      // The field asked for goes with the form: the same detail typed or keyed into it by the model is the fill done
+      // another way, refused for the rest of the task as any step the user said no to is (integ-x-2).
+      const closed = [...formStep, ...this.namesOf({ kind: "text", element }), formFieldName(this.stepKey(element))];
+      if (this.refusals.step(formStep)) {
+        this.refusals.noteStep(closed, "refused");
+        return this.vaultRefused(element, "the user closed Ember's Secure Form for this earlier in the task", NOT_SAVED_BEFORE);
+      }
       this.d.onProgress("Waiting for you in the Secure Form…");
       // (The wait for the person doesn't count against the task's time, as a question's doesn't.)
       const form = () => vault.ask(kind, dest, this.window.app || null).catch(() => "off" as const);
@@ -3284,7 +3290,7 @@ export class Worker {
       // (A page that moved on meanwhile, or a field that changed, is found by the look right before the fill.)
       if (this.isOver) return STOPPED();
       if (asked === "cancelled") {
-        this.refusals.noteStep(formStep, "refused");
+        this.refusals.noteStep(closed, "refused");
         return this.vaultRefused(element, "the user closed Ember's Secure Form without saving", NOT_SAVED);
       }
       if (asked !== "saved" && asked !== "kept") {
@@ -5125,7 +5131,7 @@ export class Worker {
     // A step the user already said no to in this task, or whose question nobody answered and they haven't spoken since:
     // never asked about again, checked or announced, whatever the mode would do with it now (Refusals).
     const risk = decision.risky ? this.riskOf(req, decision) : null;
-    const stood = decision.verdict === "deny" ? null : this.refusals.step([...this.namesOf(req), ...(risk?.lookup ?? [])]);
+    const stood = decision.verdict === "deny" ? null : this.refusals.step([...this.namesFor(req), ...(risk?.lookup ?? [])]);
     if (stood) return this.refusedBefore(req, decision, stood);
     // What the step is kept under if the user says no to it (read now, from policy's own decision, before this task's
     // holds reword it).
@@ -5282,6 +5288,16 @@ export class Worker {
     const says = req.kind === "keys" || req.kind === "open_app" || req.kind === "setting";
     return stepNames({ kind: req.kind, key: this.stepKey(req.element), named: !!req.element?.role, ...(says ? { value: req.value ?? "" } : {}),
       ...(req.kind === "keys" ? { activates: isActivatingKey(req.value ?? "", this.kc) } : {}) });
+  }
+
+  /**
+   * The names `req`'s step is looked up by in this task's refusals: its own, and for a key that types a character into
+   * a field, the field's once the user closed Ember's Secure Form for a fill of it (integ-x-2). Never what a no to the
+   * step is kept under (namesOf): a no to one key is no word on the others.
+   */
+  private namesFor(req: Pick<ActionRequest, "kind" | "element" | "value">): string[] {
+    const keyed = req.kind === "keys" && !!req.element?.role && typesCharacter(req.value ?? "", this.kc);
+    return [...this.namesOf(req), ...(keyed ? [formFieldName(this.stepKey(req.element))] : [])];
   }
 
   /** A risky step as its refusals read it: the control, policy's words for it and why, its app, and the keys of a shortcut. */

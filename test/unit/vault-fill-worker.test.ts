@@ -391,6 +391,31 @@ describe("fill_from_vault and what the user turned down earlier in the task (the
       expect(h.everything([r])).not.toContain(CANARY);
     }
   });
+
+  it("refuses the same detail typed into the field after the user closed the Secure Form for it, with no question or announcement (integ-x-2)", async () => {
+    const h = await worker({ form: [null] });
+    await h.call("perceive_window", {});
+    expect((await h.call("fill_from_vault", { id: 1, what: "user name" })).resultType).toBe("denied");
+    // The model types what the form was for itself: the same thing done another way.
+    const typed = await h.call("type_text", { id: 1, text: USER, mode: "replace" });
+    expect(typed.resultType).toBe("denied");
+    expect(typed.textResultForLlm).toMatch(/already said no to this step/);
+    expect(h.decisions().map(d => [d.kind, d.verdict, d.reason])).toEqual([
+      ["vault_fill", "deny", "the user closed Ember's Secure Form without saving"],
+      ["text", "deny", "the user said no to this step earlier in this task"]]);
+    expect(h.said).toEqual([]);
+    expect(h.actions()).toEqual([]);
+    // Key by key into that field is the same step too; a key that types nothing there, and typing elsewhere, are not.
+    const field = { role: USERNAME.role, name: USERNAME.name };
+    const names = (kind: string, element: unknown, value?: string) =>
+      (h.w as unknown as { namesFor(r: unknown): string[]; refusals: Refusals }).namesFor({ kind, element, value });
+    const book = (h.w as unknown as { refusals: Refusals }).refusals;
+    expect(book.step(names("keys", field, "a"))).toBe("refused");
+    expect(book.step(names("cursor_text", field, USER))).toBe("refused");
+    expect(book.step(names("keys", field, "Tab"))).toBeNull();
+    expect(book.step(names("text", { role: SEARCH.role, name: SEARCH.name }, "github"))).toBeNull();
+    expect(book.step(names("keys", { role: SEARCH.role, name: SEARCH.name }, "a"))).toBeNull();
+  });
 });
 
 describe("fill_from_vault and every \"never\" (vault-2)", () => {

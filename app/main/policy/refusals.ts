@@ -56,6 +56,13 @@ export function stepNames(s: StepAsked): string[] {
 }
 
 /**
+ * The name a field goes by once the user closed Ember's Secure Form for a fill of it (worker.ts fillFromVault): a key
+ * that types into that field is the fill done another way, as text typed or set there is (stepNames' "type": integ-x-2).
+ * Apart from stepNames, so that a no to one key in a field is never a no to every other key there.
+ */
+export const formFieldName = (key: string): string => `vault-field\n${key}`;
+
+/**
  * What a risky step does, read from the words policy found it risky for: sending, deleting, paying… After a no, a later
  * risky step of a kind the user turned down is that step done another way (Ctrl+Enter or "Send Now" for a refused Send,
  * the Delete key or "Remove" for a refused "Move to Trash", Send in a second compose window), refused for the rest of
