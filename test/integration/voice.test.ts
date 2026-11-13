@@ -861,11 +861,24 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1" && process.env.EM
     // Begun after a moment's quiet (a turn's gap): heard whole, though it starts in the tail. (On 64a6405 nothing
     // begun within 0.4 s of "stopped" was heard whole.) Phrases this voice is written right in nearly every time: its
     // "Allow it." often comes out "Lollet", and a lone "Okay." now and then "Oh, today.".
+    // This voice comes out a little different each time, and the recognizer writes a rendition in forty or so as other
+    // words ("Yes, we.", "Guess please.", "Well, thanks."), which leave nothing and are asked for again: up to four
+    // renditions are tried, as in the test above, and none may leave as anything else or be taken for cut. With one
+    // each this failed in CI's C API run at a3cf645 (voice-answer-take-1). Measured on 40 kept renditions of each, on
+    // the C API and on WebAssembly alike, and the same on 681c36a: "Yes, please." 2 written wrong, "No, thanks." 1,
+    // "Okay, go with it." none. The three takes were whole (from 40 to 65 ms before the answer to 0.35 s after it,
+    // none of Ember's voice in them), and the recognizer wrote those renditions wrong on their own too.
     for (const [text, answer] of [["Yes, please.", "allow"], ["Okay, go with it.", "allow"], ["No, thanks.", "deny"]] as const) {
-      const events = heard(voiced(text, 0.1), 0.3);
-      const u = sent(events);
-      expect(u.map(e => e.window), `${text}: ${JSON.stringify(events)}`).toEqual(["answer"]);
-      expect(spokenAnswer(u[0].text), `${text} heard as “${u[0].text}”`).toBe(answer);
+      const whole: string[] = [];
+      for (let take = 0; take < 4 && !whole.length; take++) {
+        const events = heard(voiced(text, 0.1), 0.3);
+        const u = sent(events);
+        expect(u.map(e => e.window), `${text}: ${JSON.stringify(events)}`).toEqual(u.length ? ["answer"] : []);
+        for (const e of u) { expect(spokenAnswer(e.text), `${text} heard as “${e.text}”`).toBe(answer); whole.push(e.text); }
+        // Never taken for begun under Ember's voice (that is the first part's, and says "say it again" for nothing here).
+        expect(events.filter(e => e.type === "answer-over"), `${text}: ${JSON.stringify(events)}`).toEqual([]);
+      }
+      expect(whole, `${text}: never heard as an answer in four renditions`).toHaveLength(1);
     }
     // Ember's own read-out, and nothing after it: nothing, and nothing to say it again for.
     expect(heard(null, 0).filter(e => e.type === "utterance" || e.type === "answer-over")).toEqual([]);
