@@ -458,7 +458,7 @@ class Classifier {
    * Every value the text may give a POSIX variable (a loop's list, an assignment), UNSEEN standing for a part Ember
    * can't see: only for Ember's own refusal, never to resolve a word for anything else (commands-remote-c3-2).
    */
-  private varValues = new Map<string, string[]>();
+  protected varValues = new Map<string, string[]>();
   /** Variables the text sets to words Ember can't see (mayHoldWords): a command's output, a read, a loop over such words. */
   private wordVars = new Set<string>();
   /**
@@ -3032,7 +3032,7 @@ class Engine extends Classifier {
     this.noteVarUses(key, this.commands.length === inner ? args : args.filter(a => !this.payloadWords.has(a)), out);
     if ((key === "done" || key === "fi" || key === "esac") && out !== "shown") this.compoundOnward = true;
     this.unnamedWrites(key, args, sc);
-    this.afterArgs(args);
+    this.afterArgs(args, key);
     this.afterRun(key, args, s, sc, sc, dlBefore);
     this.hiddenNames(key, args, sc);
     this.pipe.program = key;
@@ -3140,8 +3140,27 @@ class Engine extends Classifier {
     }
   }
 
+  /**
+   * A variable named for a secret, expanded as a program's argument (modes-y9-6): the program is handed the secret and
+   * may print it, whatever program it is, so it is a `secret.env` finding as `echo $TOKEN` is, by the same name test
+   * (SECRET_VAR). Never a variable the line itself set or loops over (its value is the line's own text), a
+   * single-quoted word, or the shell's own words that only set names.
+   */
+  private secretVars(args: readonly Arg[], key: string): void {
+    if (/^(export|declare|typeset|local|readonly|unset|set|let|read|mapfile|readarray|for|select|case|:)$/.test(key)) return;
+    const secret = (n: string): boolean => SECRET_VAR.test(n) && !this.loopVars.has(n) && !this.varValues.has(n);
+    for (const a of args) {
+      if (a.v !== null) continue;
+      const names = a.parts
+        ? a.parts.flatMap(p => (typeof p === "string" || p.name === null ? [] : [p.name]))
+        : [...a.raw.replace(/'[^']*'/g, "").matchAll(/\$\{?(?:env:)?([A-Za-z_][A-Za-z0-9_]*)|%([A-Za-z_][A-Za-z0-9_]*)%/gi)].map(m => m[1] ?? m[2]);
+      if (names.some(secret)) { this.add("secret", "secret.env", SAYS.env); return; }
+    }
+  }
+
   /** Checks every program's arguments get: a password or token typed on the command line (§3.5.4). */
-  afterArgs(args: Arg[]): void {
+  afterArgs(args: Arg[], key = ""): void {
+    this.secretVars(args, key);
     for (let k = 0; k < args.length; k++) {
       const a = args[k];
       if (a.v === null) continue;
@@ -3272,7 +3291,7 @@ class Engine extends Classifier {
     toolPayload(inner);
     optionPaths(inner, !n || UNKNOWN_OPTIONS.has(key));
     this.unnamedWrites(key, inner.args, sc);
-    this.afterArgs(inner.args);
+    this.afterArgs(inner.args, key);
     // The command's own redirections are this program's (`then curl … > x.py`, `time curl … > x.py`): what it fetches
     // there is a download, and a pipe after it carries what it fetched (commands-remote-c1-1).
     this.afterRun(key, inner.args, h.s, sc, h.shellSc ?? h.sc, dlBefore);

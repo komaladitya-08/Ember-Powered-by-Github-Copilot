@@ -172,3 +172,30 @@ describe("a command handed to a program (commands-remote-r9-2)", () => {
     }
   });
 });
+
+describe("a secret-named variable handed to a program (modes-y9-6)", () => {
+  it("is a secret wherever it is expanded as an argument, for a program Ember knows and one it doesn't", () => {
+    for (const o of POSIX) for (const cmd of ["frobnicate $GITHUB_TOKEN", "frobnicate --token \"$AWS_SECRET_ACCESS_KEY\"", "frobnicate --token=$GITHUB_TOKEN", "git frob $GITHUB_TOKEN",
+      "frobnicate ${NPM_TOKEN}", "frobnicate \"${DB_PASSWORD:-x}\"", "frobnicate -p\"$DB_PASSWORD\"", "mytool upload --key $API_KEY", "grep x $GITHUB_TOKEN",
+      "curl -H \"Authorization: Bearer $GITHUB_TOKEN\" https://api.example.com/user", "npm test -- --token=$NPM_TOKEN", "node x.js $STRIPE_SECRET", "python3 x.py \"$OPENAI_API_KEY\"",
+      "env frobnicate $GITHUB_TOKEN", "sh -c 'frobnicate $GITHUB_TOKEN'", "sudo frobnicate $GITHUB_TOKEN", "ls | xargs frobnicate $GITHUB_TOKEN", "./run.sh $GITHUB_TOKEN"]) {
+      const d = decide(cmd, { ...o, words: "run frobnicate" });
+      expect(d.verdict, label(cmd, o)).toBe("ask");
+      expect(d.rules, label(cmd, o)).toContain("secret.env");
+      expect(d.classes, label(cmd, o)).toContain("secret");
+    }
+    for (const cmd of ["frobnicate $env:GITHUB_TOKEN", "frobnicate --token $env:AWS_SECRET_ACCESS_KEY", "frobnicate \"--token=$env:GITHUB_TOKEN\"", "git frob $env:GITHUB_TOKEN",
+      "frobnicate ${env:NPM_TOKEN}", "node x.js $env:STRIPE_SECRET"]) {
+      const d = decide(cmd, { shell: "powershell", context: "win32" });
+      expect(d.rules, `${cmd} (powershell)`).toContain("secret.env");
+    }
+    for (const cmd of ["frobnicate %GITHUB_TOKEN%", "frobnicate --token=%NPM_TOKEN%", "node x.js %STRIPE_SECRET%"]) {
+      expect(decide(cmd, { shell: "cmd", context: "win32" }).rules, `${cmd} (cmd)`).toContain("secret.env");
+    }
+  });
+
+  it("leaves a variable that isn't named for a secret, one the line itself set to plain text and one in single quotes as they were", () => {
+    for (const cmd of ["ls $FOO", "frobnicate $BUILD_DIR", "frobnicate '$GITHUB_TOKEN'"]) expect(decide(cmd).rules, cmd).not.toContain("secret.env");
+    for (const cmd of ["KEY=build; ls $KEY", "export NODE_AUTH_TOKEN=$NPM_TOKEN", "for key in a b; do ls $key; done"]) expect(decide(cmd).rules, cmd).not.toContain("secret.env");
+  });
+});

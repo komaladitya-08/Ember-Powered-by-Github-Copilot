@@ -204,7 +204,9 @@ Ember stops and asks before a command that:
   `env`, `printenv`), also with a PowerShell cmdlet Ember has no rule for whose name says a secret, credential,
   token, password, key, vault or certificate, or that is given `-AsPlainText` (`Get-Secret`, `Get-AzKeyVaultSecret`);
   reading the clipboard; taking a screenshot without Ember's privacy filters; a password or token
-  written on the command line;
+  written on the command line; and a variable named for one handed to any program as an argument, known to Ember or
+  not (`mytool --token "$GITHUB_TOKEN"`, `curl -H "Authorization: Bearer $API_KEY" …`, `$env:NPM_TOKEN`, `%NPM_TOKEN%`):
+  the program is given the secret and may print it;
 - **changes the system or needs privileges**: `sudo`, `su`, `runas`, installing or removing packages (`apt`, `dnf`,
   `brew`, `winget`, `npm install`, `pip install`), services, the registry and desktop settings (`gsettings set`,
   `dconf write`, and `defaults write` to the screen saver, firewall and remote-access settings), the firewall, the
