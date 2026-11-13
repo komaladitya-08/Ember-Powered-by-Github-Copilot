@@ -270,7 +270,7 @@ docs/MEMORY.md is the design. The core (app/main/memory/) is pure and has no Ele
   name it is about: `memoryRefusal()` (guard.ts), then what only a fact is read for (`saidSecret`: a password or code
   after a verb of getting in, a user and a value, a lock or a passworded thing said as its code, and the names the
   guard lacked: memory-r9-4; and by shape, wherever it stands, a word with letters, digits and a password's symbol, or
-  digits within six words of what a code opens: memory-x9-6). A fact holding a secret is refused whole, never stored redacted. `saidSecret` is for
+  digits within six words of what a code opens: memory-x9-6; and in any everyday word order, the value before its name, between commas, after "has the password", or digits anywhere beside a PIN's name: memory-r10-1). A fact holding a secret is refused whole, never stored redacted. `saidSecret` is for
   facts alone, never Projects' files or a task's view (code reads like it), and may only refuse more than
   `memoryRefusal`; add a shape there with its look-alike fact pinned as kept in memory-said-secrets.test.ts.
 - **Recalled facts reach a model only through `memoryBlock()`** (`<memory untrusted="true">`). Only `user`-sourced

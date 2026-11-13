@@ -240,7 +240,15 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
     beside them makes them a time, a year, a size, a count, a price or an address ("at 0630", "in 2021", "1200 mm
     wide", "5000 points", "costs 1000", "4821 Elm Street", "Card ending 4242"); a value after an administrator's name,
     or a login's with a symbol or a user before it ("Router admin is admin123", "Default login admin/admin123"); a network's key said with no "is"; a
-    security question's answer said beside it; and a passport's or a driving licence's number.
+    security question's answer said beside it; and a passport's or a driving licence's number;
+  - a password or a PIN in any everyday word order (memory-r10-1): the value before its name ("sunshine is my Netflix
+    password", "Rex is their bank PIN"), after who uses it ("The password I use is sunshine"), set off by commas ("I
+    use the same password, sunshine, everywhere", "Password is the dog's name, Rex"), after "has the password" or "set
+    the passcode as", a word or a phrase used as one ("Uses purple monkey dishwasher as a password"), four to eight
+    digits anywhere in a sentence that names a password, a PIN or a passcode ("My bank PIN is my birthday, 0412"; never
+    a year as a time, "Changed their password in 2024"), what is used for a service ("For Netflix I use sunshine"), a
+    login as a user and a value, and a value shaped like a password before what it is for ("hunter2 for the VPN").
+    Never a password manager, a PIN reset or password rules, nor a postal PIN code.
 
   A value is read as `guard.ts` reads a login's (`LOGIN_VALUE`: a digit or a symbol, never an address, a scheme such
   as OAuth2 or 2FA, a version, a date or a hyphenated word), four to eight digits where a code goes, and where a tool

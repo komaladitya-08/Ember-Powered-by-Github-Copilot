@@ -169,7 +169,7 @@ export function saidSecret(text: string): string | null {
   if (VERB_WITH.test(text) || OPENS_WITH.test(text) || ENTERS.test(text) || uses(text) || pair(text) || LOCK_IS.test(text) || LOCK_BARE.test(text)
     || PLACE_S_CODE.test(text) || THE_CODE.test(text) || thingIs(text) || WIFI_THEN_KEY.test(text) || A_SECRET.test(text) || SECRET_WORD.test(text)
     || SHORT_PASS.test(text) || THE_PASS.test(text) || symbolValue(text) || codeBeside(text) || adminValue(text) || NETWORK_KEY.test(text)
-    || SECURITY_QUESTION.test(text)) return "it holds a password, PIN or code";
+    || SECURITY_QUESTION.test(text) || inWordOrder(text)) return "it holds a password, PIN or code";
   if (keySaid(text)) return "it holds a password, token or key";
   if (CARD_DIGITS.test(text) && CARD_WORD.test(text)) return "it holds a card's security code";
   if (US_BANK.test(text) || ID_DOCUMENT.test(text)) return "it holds an account or ID number";
@@ -259,6 +259,73 @@ const NETWORK_KEY = /\b(?:wi-?fi|hotspot|network|router)\b[^.;!?\n]{0,60}?\bkey\
 const SECURITY_QUESTION = /\(\s*(?:for\s+(?:the|a|my)\s+)?(?:security|secret)\s+questions?\s*\)|\b(?:security|secret)\s+questions?\s*[:=]\s*\S|\b(?:for|as)\s+(?:the|a|my|their)\s+(?:bank['’]s\s+)?(?:security|secret)\s+questions?\b/i;
 /** "Passport number 123456789", "Driving licence: MORGA753116SM9IJ". */
 const ID_DOCUMENT = /\b(?:passport|driving\s+licen[cs]e|driver['’]?s\s+licen[cs]e)(?:\s+(?:number|no\.?|#))?\s*(?:(?:is|was)\s+|[:=]\s*)?["'“]?(?=[A-Z0-9]*\d)[A-Z0-9]{6,18}\b/i;
+
+/**
+ * A password's or a PIN's own name (never a postal "PIN code", which `BESIDE_SHAPES` keeps), and what it heads when it
+ * names no value ("password manager", "PIN reset", "password rules").
+ */
+const SECRET_NAME = String.raw`(?:password|passcode|passphrase|passwd|pin(?![\s-]*code))s?\b(?!['’]s\b)(?![\s-]+(?:managers?|apps?|vault|keeper|generator|hints?|resets?|rules?|polic(?:y|ies)|requirements?|strength|fields?|box|prompts?|screens?|pages?|changes?|expiry|history|length|entr(?:y|ies)|lists?|files?|protect\w*|less|free)\b)`;
+/** Words that say no value where one would stand ("It is my password that expired", "Forgot their password, again"). */
+const NOT_SAID = /^(?:i|you|he|she|we|they|me|him|them|us|mine|yours|hers|ours|theirs|what|which|who|whatever|something|nothing|everything|anything|one|again|though|however|sadly|apparently|twice|recently|yesterday|today|written|noted|somewhere|ready|then)$/i;
+const sayless = (v: string) => NO_VALUE.test(v) || NOT_SAID.test(v);
+/** A value as a word or a quoted phrase, never a word that says none (so "is the same: sunshine" reads on to "sunshine"). */
+const SAID_VALUE = String.raw`(?!(?:${NOT_A_VALUE})(?:[\s"'”.,;:!?]|$))(?<value>["“][^"”\n]{1,40}["”]|[^\s"'”.,;:!?]{2,40})`;
+/** "sunshine is my Netflix password", "Rex is their bank PIN": the value before its name (memory-r10-1). */
+const VALUE_FIRST = new RegExp(String.raw`(?:^|[.;!?:,]\s*|\b(?:and|but|so)\s+)${SAID_VALUE}["'”]?\s+(?:is|was|=)\s+${NOW}${WHOSE}\s+(?:[\w'’.+-]+\s+){0,3}?${SECRET_NAME}`, "gi");
+/** "The password I use is sunshine", "The PIN they use is the same everywhere: sunshine": the name, who uses it, then the value. */
+const NAME_THEN_USER = new RegExp(String.raw`\b${SECRET_NAME}\s+(?:that\s+)?(?:i|you|we|they|he|she)\s+(?:\w+\s+)?(?:use[sd]?|chose|choose|picked|pick|set|have|has|had|made|gave|went\s+with)\b[^.;!?\n]{0,40}?(?:\s+(?:is|was|=)\s+|\s*:\s*)${NOW}["'“]?${SAID_VALUE}`, "gi");
+/** "Uses purple monkey dishwasher as a password", "I use sunshine as my password everywhere": a word or a phrase used as one. */
+const AS_SECRET = new RegExp(String.raw`\buse[sd]?\s+(?!as\b)(?:[^\s.;!?]+\s+){1,6}?as\s+(?:${WHOSE}\s+)?(?:[\w'’-]+\s+){0,2}?${SECRET_NAME}`, "i");
+/** "I use the same password, sunshine, everywhere", "Password is the dog's name, Rex": the value set off by a comma. */
+const APPOSED = new RegExp(String.raw`\b${SECRET_NAME}[^.;!?\n]{0,60}?,\s*["'“]?(?<value>[^\s,.;!?"'”]{2,40})["'”]?\s*(?:,|[.!?;]?\s*$)`, "gi");
+/** "Has the password sunshine for Netflix", "Set the passcode as Fido": a verb of having or choosing, the name, then the value. */
+const HAS_THE = new RegExp(String.raw`\b(?:has|have|had|got|gets|chose|chooses|picked|picks|set|sets|made|makes|gave|gives)\s+(?:${WHOSE}|one)\s+(?:[\w'’-]+\s+){0,2}?${SECRET_NAME}\s+(?:(?:of|as|to)\s+)?["'“]?${SAID_VALUE}`, "gi");
+/** "For Netflix I use sunshine": a service's name, then what is used for it, alone at the clause's end. */
+const FOR_SERVICE = new RegExp(String.raw`\bfor\s+(?:${SERVICES})\s*,?\s+(?:(?:i|we|they|he|she)\s+)?use[sd]?\s+["'“]?(?<value>[^\s"'”.,;!?]{2,40})["'”]?\s*(?:[.!?]?\s*$|[,;])`, "gi");
+/** "The Netflix login is ram and sunshine": a login said as a user and a value. */
+const LOGIN_AND = new RegExp(String.raw`\blogin\s+(?:is|was|:)\s+["'“]?[A-Za-z][\w.@-]{1,40}["'”]?\s+(?:and|with|plus|&)\s+["'“]?(?<value>[^\s"'”.,;!?]{2,40})`, "gi");
+/** "Remember: hunter2 for the VPN", "Winter2024 on Netflix": a value shaped like a password where a clause starts, then what it is for. */
+const VALUE_FOR = new RegExp(String.raw`(?:^|[:.;!?]\s*)["'“]?(?<value>[^\s"'”]{4,40})["'”]?\s+(?:for|on)\s+(?:${WHOSE}\s+)?(?:[\w'’-]+\s+){0,2}?(?:${SERVICES}|${PASSWORDED}|router|login|account|${DEVICES})\b`, "gi");
+function valueFor(text: string): boolean {
+  for (const m of text.matchAll(VALUE_FOR)) { const v = bare(m.groups!.value!); if (strict(v) && !PRODUCT.test(v)) return true; }
+  return false;
+}
+/** A password's or a PIN's name anywhere in a sentence, for its digits (never a postal "PIN code"). */
+const NAMES_SECRET = /\b(?:password|passcode|passphrase|passwd|pin(?![\s-]*code))s?\b/i;
+const TIME_WORD = /^(?:in|since|from|until|till|by|of|before|after|around|during|year|circa)$/i;
+
+/** Whether any match of `re` has a value that says something ("sunshine", never "it" or "the"). */
+const valued = (re: RegExp, text: string) => [...text.matchAll(re)].some(m => !sayless(bare(m.groups!.value!)));
+
+/**
+ * Four to eight digits anywhere in a sentence that names a password, a PIN or a passcode ("My bank PIN is my birthday,
+ * 0412", "Their passcode matches the year we met, 1998"), never a year said as a time ("Changed their password in 2024")
+ * nor a count or a size by its word after it.
+ */
+function digitsBesideName(text: string): boolean {
+  for (const clause of text.split(/[.;!?\n]+/)) {
+    if (!NAMES_SECRET.test(clause)) continue;
+    const words = clause.split(/\s+/).filter(Boolean).map(w => w.replace(/^[("'“#]+|[)"'”,:#*]+$/g, ""));
+    for (let i = 0; i < words.length; i++) {
+      if (!/^\d(?:-?\d){3,7}$/.test(words[i]!)) continue;
+      if (/^(?:19|20)\d\d$/.test(words[i]!) && TIME_WORD.test(words[i - 1] ?? "")) continue;
+      if (NOT_CODE_AFTER.test(words[i + 1] ?? "") || /^(?:characters?|chars?|letters?|digits?)$/i.test(words[i + 1] ?? "")) continue;
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * A password or a PIN said in an everyday word order (memory-r10-1): the value before its name, after who uses it, set off
+ * by commas, after "has the password", as a phrase "used as" one, beside its digits, what is used for a service, or a
+ * value shaped like one before what it is for.
+ * Memory's note promises it keeps none however it is said, so the guard reads each order, not only "password is X".
+ */
+function inWordOrder(text: string): boolean {
+  return valued(VALUE_FIRST, text) || valued(NAME_THEN_USER, text) || AS_SECRET.test(text) || valued(APPOSED, text) || valued(HAS_THE, text)
+    || digitsBesideName(text) || valued(FOR_SERVICE, text) || valued(LOGIN_AND, text) || valueFor(text);
+}
 
 /** Why `text` may not be remembered as a fact, or null when it may: `memoryRefusal`, then what only a fact is read for. */
 export function factRefusal(text: string): string | null {
