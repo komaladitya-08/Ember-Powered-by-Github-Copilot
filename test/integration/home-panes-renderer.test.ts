@@ -925,6 +925,24 @@ describe.skipIf(gate)("Apps & privacy › How Ember asks, with a keyboard and a 
     await page.close();
   });
 
+  it("shows a mode's card from its title when its row is pressed, so the risk is read before “I agree”, at Home's own size and its narrowest (modes-x9p-2)", async () => {
+    for (const viewport of [{ width: 760, height: 640 }, { width: 420, height: 700 }]) {
+      for (const [mode, how] of [["autopilot", "click"], ["assisted", "Enter"], ["autopilot", "Space"]] as const) {
+        const page = await open("privacy", { approvals: approvalsState(INTERACTIVE, null), viewport });
+        const row = page.locator(`#mode-${mode}`);
+        await row.scrollIntoViewIfNeeded();
+        if (how === "click") await row.click(); else { await row.focus(); await page.keyboard.press(how); }
+        await page.waitForTimeout(200);
+        const at = await page.evaluate(() => Math.round(document.getElementById("approvals-card-title")!.getBoundingClientRect().top));
+        expect(at, `${mode} by ${how} at ${viewport.width}×${viewport.height}`).toBeGreaterThanOrEqual(0);
+        expect(at).toBeLessThan(viewport.height / 3);
+        expect(await focused(page)).toBe("approvals-yes");
+        expect(page.errors).toEqual([]);
+        await page.close();
+      }
+    }
+  }, 60_000);
+
   it("offers Assisted beside Interactive: its own card before it is chosen, “Not now” leaves the mode as it was, and “I agree” chooses it (modes-C5)", async () => {
     const page = await open("privacy", { approvals: approvalsState(INTERACTIVE, null) });
     const rows = page.locator("#approvals button.mode");

@@ -2236,7 +2236,10 @@ $("approvals").addEventListener("click", e => {
   const mode = row?.dataset.mode as ApprovalMode | undefined;
   if (!row || !mode || row.disabled || row.getAttribute("aria-checked") === "true") return;
   openModeCard(mode);
-  $("approvals-yes").focus();
+  // The card from its title, so its words (Autopilot's risk comes first) are in view before "I agree"; the keyboard goes
+  // to "I agree" without scrolling them away (modes-x9p-2). The arm delay stays as it is.
+  $("approvals-card").scrollIntoView({ block: "start", behavior: "auto" });
+  $("approvals-yes").focus({ preventScroll: true });
 });
 // The arrow keys move between the modes without choosing one (choosing needs its card): Space or Enter presses the row.
 $("approvals").addEventListener("keydown", e => {
