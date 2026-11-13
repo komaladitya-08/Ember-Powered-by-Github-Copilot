@@ -341,8 +341,21 @@ describe("a spoken yes from anyone heard while Voice Match is off, its default (
     expect(VOICE_ANSWER_REFUSED["own-voice"]).toBe("I was still speaking, so I didn't take that as an answer. Say it again now.");
   });
 
+  it("dates what is said in a follow-up window from its own start, as in a conversation and the answer window: a question read out after the window opened doesn't make the first answer one said over Ember (V2-S9; source pins)", () => {
+    // The follow-up window opened after "On it."; the question came 1.5 s later and was read out; "Not now." 2 s after
+    // that was refused as "I was still speaking…", and took a second try: the echo guard dated it from the window's opening.
+    const main = fs.readFileSync(path.join(__dirname, "../../app/main/main.ts"), "utf8");
+    expect(main).toMatch(/case "wake":\s*answerListening = false;\s*followUpListening = false;/);
+    expect(main).toMatch(/answerListening = e\.window === "answer" && e\.on;\s*followUpListening = e\.window === "follow-up" && e\.on;/);
+    expect(main).toMatch(/if \(e\.on && followUpListening\) \{ heardFrom = Date\.now\(\); speechStarts\(\); \}\s*else if \(e\.on && saidFrom < heardFrom \+ 1\) speechStarts\(\);/);
+    // The guard itself is as it was: Ember speaking now, or since that start, is its own voice.
+    expect(main).toMatch(/selfSpoke: e\.overEmber === true \|\| \(voice\?\.selfSpokeSince\(heardFrom\) \?\? true\),\s*\}\);/);
+  });
+
   it("says once a question when an answer said over other sound wasn't taken, and how to be heard, rather than nothing (owner's report of 2026-11-12)", () => {
-    expect(VOICE_ANSWER_REFUSED["over-sound"]).toBe("Something else was playing, so I couldn't tell that was for me: say my name first, then your answer.");
+    // (It asks for the name and the answer in one go: a yes said a pause after "Hey Ember" is dropped so too, V2-S6.)
+    expect(VOICE_ANSWER_REFUSED["over-sound"]).toBe("Something else was playing, so I couldn't tell that was for me: say your answer right after my name, in one go.");
+    expect(voiceAnswerSaid("over-sound", ["Control Alt Y to allow"])).toBe("Something else was playing, so I couldn't tell that was for me: say your answer right after my name, in one go.");
     const main = fs.readFileSync(path.join(__dirname, "../../app/main/main.ts"), "utf8");
     // Whichever window it was said in: a conversation over a playing video (the default) or a follow-up too.
     expect(main).toMatch(/if \(e\.answer && confirmer\?\.waiting && overSoundFor !== confirmer\.currentNumber\) \{ overSoundFor = confirmer\.currentNumber; refuseVoiceAnswer\(e\.reason, e\.answer\); \}/);
@@ -456,6 +469,15 @@ describe("spoken answers can't be padded or asked (review of #143)", () => {
   it("takes a bare “okay” or “go on” as a yes, with one filler at most (owner's report of 2026-11-12)", () => {
     // Settled point (9) of 2026-11-12: these were bare acknowledgements (review of #143), and are yeses now.
     for (const yes of ["Okay.", "OK.", "Alright.", "All right.", "Go on.", "So okay.", "Um okay.", "Ember, okay."]) expect(spokenAnswer(yes), yes).toBe("allow");
+  });
+
+  it("takes “Okay, thanks.” for the yes that “Okay.” is: what trails an answer goes before what leads it (V2-S10)", () => {
+    // "Sounds good, thanks." was a yes and "Okay, thanks." wasn't: the lone "okay" was taken off as a filler before the
+    // "thanks" after it was, and nothing was left.
+    for (const yes of ["Okay, thanks.", "Alright, thank you.", "Okay, please.", "OK, thanks, Ember.", "Sounds good, thanks."]) expect(spokenAnswer(yes), yes).toBe("allow");
+    // A filler that is no answer stays none, and a run of fillers still pads nothing.
+    for (const other of ["So, thanks.", "Um, thank you.", "Well, please.", "Oh, Ember.", "Okay, okay, okay, okay.", "Um, um, um, yes.", "Thanks.", "Please.", "Okay, thanks?"]) expect(spokenAnswer(other), other).toBeNull();
+    expect(spokenAnswer("No, thanks.")).toBe("deny");
   });
 
   it("counts “please” once in all, wherever it stands (review of #143)", () => {

@@ -212,6 +212,36 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
   together first, so a password under another label is refused on one line too ("credentials: admin: Wint3r!Sh0p",
   never a setting's label or a size: "Wi-Fi: SSID: Home5G"). Secrets are refused
   whole, never stored redacted.
+- `fact-guard.ts`: what only a fact is read for, after `guard.ts` found nothing (`factRefusal`, which
+  `MemoryGraph.add()` and a correction run on the fact and on each name it is about; memory-r9-4). A fact is one
+  short sentence, so its verb can be read, which Projects' files and task views, full of code, never are: they keep
+  `memoryRefusal` alone, unchanged. Refused:
+  - a password or a code after a verb of getting in ("Signs in to Netflix with ram@example.com and Winter#2024", "Logs
+    in to the router as admin with Summer2024!", "Unlocks their phone with 482913", "Disarms the alarm with 4821",
+    "Opens the garage with 4821", only with something that locks), the value first ("Enters 4821 at the gate",
+    "Types Summer2024! to unlock the laptop") and after "uses" ("Uses Winter#2024 to sign in to Jira", "Uses hunter2
+    for Netflix", "Netflix uses hunter2", "Uses admin / Summer2024! on the router");
+  - a user and a value after what they are for, or alone with a symbol ("Jira: ram / Winter#2024", "Jira login ram /
+    Winter#2024", "admin / Summer2024!");
+  - a lock or a thing with a password said as it ("The front door is 4821", "Front door 4821", "The alarm is 4821",
+    "The gym's code is 4821", "The code is 4821", "The combination is 32-18-04", "My phone unlock pattern is
+    1-4-7-8-9", "The work VPN is Summer2024!", "FileVault: Summer2024!", "BitLocker is 482913-482913", "The Wi-Fi is
+    BlueSky99", "My Wi-Fi is HomeNet and the key is BlueSky99");
+  - the names `guard.ts` lacked: an authenticator's secret, seed or setup key, a private, encryption, signing or
+    secret key and a client, shared or app secret with a value that can be one, "my secret is hunter2", a memorable,
+    secret or security word and a secret answer, pass, pswd, p/w and passkey, a card's three digits said in words,
+    and a US account with its routing number.
+
+  A value is read as `guard.ts` reads a login's (`LOGIN_VALUE`: a digit or a symbol, never an address, a scheme such
+  as OAuth2 or 2FA, a version, a date or a hyphenated word), four to eight digits where a code goes, and where a tool
+  could stand only one shaped like a password or with a symbol, so "Signs in with SSO", "Logs in with OAuth2", "Uses
+  1Password for the work account", "Uses Python3 on the laptop", "Stack: React / Node20", "The phone is iPhone15",
+  "The Wi-Fi is 5GHz", "My locker is 4821", "The private key is ~/.ssh/id_ed25519", "The encryption key is AES-256"
+  and "The pass is valid until June" are kept. Where a word can't be told from a password it is refused ("Signs in
+  with jsmith42", "The Wi-Fi is HomeNet5G"): fail closed. Still kept, because nothing in them can be told from an
+  ordinary fact or they are no password, code or card number: a network named with its key's owner ("HomeNet's key
+  is BlueSky99"), a password's hint or ending, a licence or product key, a webhook's address, and ID numbers other
+  than those `guard.ts` knows (a passport's, a driving licence's, a tax or health number).
 - `format.ts`: the `<memory untrusted="true">` block a model sees, one line per fact with its id, source and date.
 - `store.ts`: `memory.json`, mode 0600, written atomically. A broken file is moved aside, never overwritten. A file
   set aside, one that can't be read (left as it was) or a save that fails is said in Settings › Memory
@@ -307,14 +337,23 @@ download, so English-only MiniLM is the trade-off for now.
   Memory pauses while the model connection lacks a verified GitHub account, and Settings › Memory says why
   (`MemoryOwner.reason`, app/shared/memory-owner.ts): Ember is still checking the account, nobody is signed in, the
   user's own model provider or the organisation's model service is in force (memory works only with GitHub Copilot),
-  or GitHub didn't answer. Only another account's memory, memory with no owner Ember can read, or memory left after
-  signing out is offered Forget everything; Home's status line says "Memory paused", Tell Ember about you says why
+  GitHub didn't answer, or the organisation's policy has stopped Ember connecting (`lockdown`). Only another
+  account's memory, memory with no owner Ember can read, memory left after signing out or memory out of reach under
+  a lockdown is offered Forget everything; Home's status line says "Memory paused", Tell Ember about you says why
   instead of its questions, and "get to know me" answers with the same reason. A reconnect (a network retry, the
   runtime restarting) checks the account again: the list is hidden meanwhile, but if the same account comes back
   Home keeps its correction draft, the search, a "Forgotten" line with its Undo and where focus was, and a Better recall download goes on (only the
   model's use waits). Main's epoch moves on, and Home lets go of them, only for another account or none
   (`MemoryEpochAccount`, memory-8).
-- **Admin.** A new `features.memory` key lets an administrator turn memory off. LOCKDOWN turns it off.
+- **Admin.** A new `features.memory` key lets an administrator turn memory off. LOCKDOWN turns it off. Off means
+  Ember keeps nothing new and uses nothing saved; it never hides what was saved before from the person it is about
+  (memory-r9-3). Settings › Memory says the organisation turned memory off and still lists the verified account's
+  facts (`memoryViewOf`, view.ts: consent and a verified owner, never the policy), with **Forget** and **Forget
+  everything**; there is no Correct…, and a Forget has no Undo there, since nothing is put back into memory the
+  organisation turned off (main refuses `restore`, and the line says so). Under a lockdown nothing connects, so the
+  owner can't be verified and the facts stay hidden as for any unverified memory: the host says why
+  (`pauseAccount("lockdown")`), Memory says "Your organisation's policy has stopped Ember for now…", never that a
+  GitHub check will come back, and offers Forget everything.
 
 ## 4. Plan
 
@@ -339,11 +378,23 @@ download, so English-only MiniLM is the trade-off for now.
      `forget_memory` forgets a fact only when the user's own words this turn ask to forget it, with a word of the
      fact after the request (`asksToForget`: "forget that I work at Globex", "remove Priya from your memory"; never
      "don't forget", a routine's steps or unchecked speech), as `delete_routine` does. What it forgot shows in the
-     conversation as "Ember forgot: …" in the fact's stored words, with what holds again, and Undo.
+     conversation as "Ember forgot: …" in the fact's stored words, with what holds again, and Undo. A forget request
+     that names no word of the fact ("Forget my address" for "Lives at 12 Elm Road") is still refused, but the tool
+     tells the model that the user asked and that Ember can't be sure which fact they mean, so Ember says what it
+     found and points to Forget in Settings › Memory instead of saying they didn't ask (memory-r9-12).
    - Undo after any Forget (Home's list, "Ember forgot", "forget that") puts the fact back exactly: its notes, what
      it had replaced closed again, its vector rebuilt (`MemoryService.restore`, once per Forget, within 60 seconds,
-     held in main's memory only and dropped at Forget everything).
+     held in main's memory only and dropped at Forget everything). A fact said again between the Forget and its
+     Undo is there already: Undo makes that one surer and puts back no second copy (`putBack`, memory-r9-9).
    - Before each turn, the host recalls against the request and adds a `<memory>` block.
+   - The recall tool gives the same few facts that match its query's words best (`CONTEXT_FACTS`, six), never more,
+     and ends with Ember's own line of how many there are in all and where the full list is (`recallNote`,
+     format.ts: "(6 of the 14 facts Ember remembers: the ones that match best. The user can see them all in Settings
+     › Memory.)"); when the words match none it says "Nothing matched that, of the 14 facts Ember remembers…",
+     never that nothing is remembered. The rules tell the conversation to say that number and point to Settings ›
+     Memory when asked what it remembers (memory-r9-7). The line is two counts: no more facts reach the model for
+     it, and the `<memory>` block that goes with a request is unchanged. Listing more than the six for "what do you
+     remember about me?" would send more to the model than memory's note says, so it is not built.
    - The persona rule appears only while memory is on, so today's prompts stay byte-identical (persona tests).
    - A `MemoryService` in main owns the graph, saves it after changes, and registers as a `StopPart`.
 3. **Learning from conversation and from work** (done; `learn.ts`, `learning.ts`, `agent/one-shot.ts`;
@@ -372,7 +423,7 @@ download, so English-only MiniLM is the trade-off for now.
      sync, export, attach, paste…, after
      folding look-alike letters with `viewNorm`) is ever kept, whoever said it: a
      one-off order is not a preference. The conductor's `remember` keeps one only in the user's own words. Every fact
-     goes through `MemoryGraph.add()` and the guard.
+     goes through `MemoryGraph.add()` and the guard (`factRefusal`).
    - What the remember tool kept (or found already kept) in a turn goes with that turn to its reading (`kept`: one
      turn runs at a time), and with no other: as each turn begins (`began`), what a turn that ended unread kept
      (stopped, cut short by a wake or a cut-in, silent) is let go of (memory-x8-2). No candidate from that turn that
@@ -394,7 +445,9 @@ download, so English-only MiniLM is the trade-off for now.
      kept in words that share none with what the user said ("Is vegetarian" for "I don't eat meat") can still be
      learned a second time in the user's words.
    - What is learned shows in the conversation as "Ember learned: …" with **Undo**, and "forget that" within ten
-     minutes forgets the newest without a model turn. Forgetting an open fact Ember kept in those ten minutes (the
+     minutes forgets the newest without a model turn. The line's button says Undo for those ten minutes
+     (`LEARNED_UNDO_MS`) and **Forget** after them, where it is, since from then on forgetting the fact no longer
+     brings back what it replaced (memory-r9-10). Forgetting an open fact Ember kept in those ten minutes (the
      line's **Undo**, "forget that", a Forget soon after) undoes it: the one it had replaced is open again
      (`reopenSuperseded`), and Home's line and the reply say so ("Ember remembers “Works at Globex” again").
      Forgetting an older fact forgets it alone, so forgetting "Works at Initech" after leaving never makes "Works at
@@ -414,6 +467,38 @@ download, so English-only MiniLM is the trade-off for now.
      for two minutes the forgotten words are held in RAM, never on disk, and a fact at least
      `DUPLICATE` like them with the same polarity is not learned from what comes in (memory-c7-1);
      Undo of the Forget lifts that, and a later turn that says it again is learned from.
+     And a Forget holds for the rest of the conversation it was made in (`ConversationHold`, hold.ts; memory-r9-1):
+     that conversation still has what went (the user's statement, earlier `<memory>` blocks, Ember's own answers), so
+     until it ends (New conversation, sign-out, another account or model service: the host's `conversationEnded`)
+     nothing much like a forgotten fact, or like the words a correction dropped, is kept again unless it is the
+     user's own (`user`): half or more of the smaller one's words in common (`LIKE_FORGOTTEN`), whether it comes
+     from a turn, a task's result or the remember tool, which is told why (`HELD_FORGOTTEN`). A correction holds
+     what the fact said before, whole (`saysBefore`, memory-x9-2), since one that negates or swaps drops no word:
+     after "Is vegetarian" became "Is not vegetarian", nothing much like the old wording and said the old way round
+     is kept ("Follows a vegetarian diet"); where the correction changed a word, nothing nearer the old wording than
+     the new ("Has two kids" once two became three); and where it only changed the order ("Prefers tea to coffee" →
+     "Prefers coffee to tea"), nothing in the old order. The tool is told so (`HELD_CORRECTED`), and what the fact
+     says now can still be said again. The user's own is what they state or ask Ember to keep: the words of a
+     question ("Am I vegetarian?") never make the remember tool's fact theirs here (`onlyAsked`). A turn in such a
+     conversation teaches memory only what rests on what the user said in it (`restsOnUser`): a fact mostly in
+     their own words (`ownWords`), or one whose evidence is their words word for word and holds half of the fact or
+     more (`RESTS_ON`), however the model worded it, so "I've just moved to Leeds for the new job" still teaches
+     "Lives in Leeds" (memory-x9-3). Ember's reply may say what went in words that share none with it, so what rests
+     on the reply, or on words of the user's that don't say it, waits; after Forget everything, a task's result and
+     the remember tool are held to the same (`HELD_ALL`), and a turn teaches only what the user states in it
+     (`statedByUser`), never what a question of theirs names ("Did I tell you I was vegetarian?"). The words are held in RAM, never on disk, and Undo lifts
+     it. It learns less: a fact Ember inferred from its own reply in that conversation waits for the next. The
+     conversation is told as well, with
+     the next request, in Ember's own `<memory_changed>` note (format.ts `memoryChanged`; the rules name it only
+     while memory is on): the ids of the facts the user had it forget or correct, only those it was given (in
+     `<memory>`, by recall or by remember), never their words, so a forgotten fact is not sent again and nothing a
+     fact said rides in a line that isn't marked untrusted. A fact Ember learned by reading that conversation (its
+     "Ember learned" line) has no id there, though the conversation holds what the user said: when it is forgotten
+     the note has one general line with neither id nor words, saying the user had Ember forget something it learned
+     earlier in this conversation and to ask rather than rely on what they said about themselves; once for several,
+     and an Undo is told the same way (memory-x9-7). A fact that was never in the conversation is not mentioned to
+     it at all. What still gets through is a fact reworded with no word in common that a task's result
+     says, or that the model saves with remember against that note.
      With nothing kept in those ten minutes, "forget that" says so in code (`NOTHING_TO_FORGET`).
    - While memory isn't in force (off, paused until its updated note is reviewed, paused, managed), a request that is
      only for Ember to forget something about the user ("forget that I…", "forget my address", "forget my wife's
@@ -487,7 +572,13 @@ download, so English-only MiniLM is the trade-off for now.
    most one pass an idle stretch and 6 a day; the kill switch (`memory` StopPart) abandons it.
 5. **Asking** (done; `questions.ts`). Names in the user's own requests (never the recall tool's queries, which the
    model writes, nor words Ember couldn't tell were the user's, nor a name that reads like an order) that recall finds
-   nothing for are counted (`Gaps`); once one
+   nothing for are counted (`Gaps`), but only names that may be someone or something of the user's (`askableNames`,
+   memory-r9-8): never an app, a site, a device or a day everyone knows (`NOT_SOMEONE`, `EVERYDAY`, with a setting's
+   words and well-known places), an app installed on this computer (`LearningDeps.apps`), or a name standing where
+   an app, a site, a setting or a place does (the object of "open", "close", "play", "search"…, after "in", "on" or
+   "using", after "to" behind a word of travel), so "Open Firefox", "Is Dark Mode on" and "the weather in London"
+   never make Ember ask who or what that is. A name Ember asked about is never counted or asked about again in that
+   run, whether it was answered, skipped or left unanswered (held in RAM only; a restart may ask once more). Once one
    was missed twice, at most once a day (`memory.askedAt`, kept across restarts), only while idle with the screen
    unlocked and nothing under way, Ember says "You've mentioned “Priya” a few times. Who or what is that?" in the
    conversation (and aloud when replies are spoken). The question is built from the name alone; no model writes it.
@@ -501,7 +592,13 @@ not, and their timezone or hours. Every answer is optional; while memory is off 
 explicit yes). Main checks the answers with `IntroSchema` (strict, bounded) and keeps them as `user` facts with a
 label Ember wrote ("Likes to be called Ram"), each replacing the one before. "Ember, get to know me" asks the same
 aloud, answered by the host before the conversation (`intent`): "skip" skips, "that's all" stops, and an answer heard
-where Ember can't tell the user from its speakers (`voiceUnchecked`) isn't kept. Spoken answers are kept as said,
+where Ember can't tell the user from its speakers (`voiceUnchecked`) isn't kept. Asked for in such a voice (every
+spoken request on Windows and macOS, every Listen once, Linux with the speakers' check off), it asks nothing, since
+no answer could be kept: Ember says "I can't tell your voice from other sound here…" (`INTRO_UNCHECKED`) and opens
+Tell Ember about you at its first question (`openMemory("about")`), and the card offers the spoken version only
+where a spoken request is checked (`aboutYouHint`, `platform.speakerRejection` with the setting on). It ends "I'll
+remember that" only when memory kept something; with every answer skipped, unchecked or refused it says "I didn't
+keep anything this time…" (`INTRO_NOTHING`): memory-r9-6. Spoken answers are kept as said,
 except that the name question keeps only the name: "Call me Ram", "My name is Ram", "It's Ram" and "Ram, please"
 all keep "Likes to be called Ram" (`nameFrom`), and "call me <a short name>" answers it rather than ending the
 interview as a request would (memory-6). Asked while memory is off, it opens
@@ -522,6 +619,46 @@ idle tidy sends up to 40 saved facts up to 6 times a day (memory-9).
 nothing. With memory on, the conductor's rules say a stated answer length wins over keeping replies short. "Spoken
 replies" in Tell Ember about you, and "spoken aloud or not" in the spoken interview (the user's own words only), set
 Ember's real speaking choice (Settings › Voice), not only a fact.
+
+A new name or answer length told in conversation takes the profile's place too (profile.ts, memory-r9-5). When the
+user's own words in a turn tell Ember what to call them ("Call me Sam from now on", "my name is Sam", "I go by Sam
+now", "I'd like to be called Sam", and the other ways people say it: "Can you call me Sam?", "Call me Sam, not
+Ram", "I'm Sam, not Ram", "Don't call me Ram, call me Sam", "I'd rather be called Sam", "My name is Sam and I work
+at Globex": `nameSaid`, memory-x9-4) or how long its answers should be ("Stop being so brief, I want the
+full detail", "your answers are too long": `lengthSaid`, read the right way round), and the fact the model saves
+for it, by the remember tool or when the turn is read, says the same name or length, the fact kept is the profile's
+own: "Likes to be called Sam" under `called`, or the answer length under `answer_length` (in the user's words when
+the fact is mostly theirs already, else "Prefers short answers" or "Prefers detailed answers"), `user`, replacing
+the one before, whatever relation the model named. The user's words decide, never the model's: speech Ember couldn't
+check reaches here as no words.
+
+This is the one place a fact that isn't mostly the user's own words becomes theirs, and it goes to the model with
+every request, so both sides must say it plainly (memory-x9-1). The user's words: a name only from a clause that
+begins with the telling (after "Ember,", "Actually,", "Please"…) and after the name holds only words that end it
+("from now on", "please"), a name it is set against, or how the user goes on to something else, in a turn of one
+line and at most `TOLD_MAX_CHARS` (200) characters. Never a report ("My boss said call me Dave", "Call me Sam, said
+my boss"), an errand ("Tell Priya to call me Sam", "Play Call Me Al"), a question other than the polite request, a
+bare "don't call me…" or "I'm Sam", a condition, "call me back", "call me Thursday", what follows
+a colon or stands in quotes ("Write to Priya: my name is Bob"), or a turn that hands Ember words to work on
+("Summarise this email. Hi, my name is Daniel…", `HANDS_OVER`). A length only from a clause about Ember's answers
+to the user (`aboutAnswers`: "be brief", "your answers", "give me long answers", "I prefer detailed answers"),
+never the user's own writing or someone else's ("Keep my replies to customers short", "a short reply to Priya",
+"Priya wants short answers"). The fact: about the user alone (`aboutUser`: the user first, and beside them at most
+Ember or the name itself), and wholly about that (`profileKind`: "Likes to be called Sam", "Name is Sam", "Prefers
+short answers"; never "Boss likes to be called Dave", "Has a brother called Sam" or "Prefers short, polite replies
+to customers"), with the very name the user said. Anything else is kept as the model gave it, whose it is by the
+usual rule, and the profile stays as it was. A fact said again as a relation's one value takes that relation and closes what held it (`MemoryGraph.add`'s
+reinforce path) only when it had none, or a stronger source says it now: so "Call me Sam", typed after the
+conversation kept that name from unchecked speech, makes it theirs and lets go of the old one, while a relation is
+never re-labelled by its own source or a weaker one (a turn that restates the name, read under `preferred_name`,
+leaves it under `called`, where the profile finds it: memory-x9-5). And when a fact that
+isn't the user's own is kept beside what they told Ember about the same thing (the same single relation, or the
+profile's name or answer length), the remember tool's answer says which of theirs still holds, and for the profile
+that it goes with every request, so Ember tells the user and points to saying it themselves or Correct… instead of
+"I'll remember that". The weaker source still never overrules. The same is said when a fact of the user's own that
+says only their name or answer length stands beside the profile's, in words Ember didn't take as telling it ("Name
+is Sam Lee, that is all"; "It's Sam actually" and "Just Sam is fine" are not taken either): the profile's still
+goes with every request, so the answer says so and how to change it (memory-x9-4).
 
 **Cost.** In model requests on the conversation's model: extraction at most 12 an hour and 60 a day (typically one
 per three turns, plus one per finished task), refinement at most 6 a day, questions none. At the extremes, 12 + 6 = 18

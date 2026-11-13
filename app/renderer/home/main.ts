@@ -15,7 +15,7 @@ import { mountListenOnce } from "../shared/listen-once";
 import { heldLive } from "../shared/held-live";
 import {
   approvalsView, grantsEmptyText, modeCard, modeRefusal, elevationOf, betterRecallDownloadLabel, betterRecallProgress, betterRecallText, type BetterRecallState, MEMORY_CONSENT_TEXT,
-  memoryOwnerOffersErase, memoryOwnerText, memoryForgottenText, memoryPutBackText, memoryRestoreFailedText, memoryTroubleText, MEMORY_UNDO_EXPIRED, undoForgotLabel, MEMORY_PAUSED_TEXT, MEMORY_QUESTIONS_HINT, memoryPaused, ROUTINES_CONSENT_TEXT, UPDATES_CONSENT_TEXT, updateHowTo, updateOut, updateStatusText, deleteRoutineLabel, forgetMemoryLabel, handleCornerText, forgotLine, learnedLine, rememberedAgainLine, memoryEmptyText,
+  memoryOwnerOffersErase, memoryOwnerText, memoryManagedText, memoryForgottenText, memoryPutBackText, memoryRestoreFailedText, memoryTroubleText, MEMORY_UNDO_EXPIRED, undoForgotLabel, MEMORY_PAUSED_TEXT, MEMORY_QUESTIONS_HINT, memoryPaused, ROUTINES_CONSENT_TEXT, UPDATES_CONSENT_TEXT, updateHowTo, updateOut, updateStatusText, deleteRoutineLabel, forgetMemoryLabel, handleCornerText, forgotLine, learnedLine, rememberedAgainLine, memoryEmptyText,
   memorySourceLabel, routinesEmptyText, MEMORY_SEARCH_LABEL, MEMORY_SOURCE_LABEL, MEMORY_ALL_SOURCES, MEMORY_SHOW_MORE, MEMORY_NO_MATCHES, memoryCountText, settingsResultText, SETTINGS_MORE_RESULTS, SETTINGS_RESULTS_LABEL, correctMemoryLabel, memoryProvenanceLabel, MEMORY_CORRECTION,
 } from "./copy";
 import { mountAboutYou } from "./about-you";
@@ -1335,7 +1335,7 @@ function conversationRow(e: Entry): HTMLLIElement {
     const id = e.fact;
     if (e.again) return li;
     if (e.forgot) mountForgotUndo(li, e.text, e.forgot, window.ember.restoreMemory);
-    else if (id) mountLearnedUndo(li, e.text, id, async fact => { await window.ember.forgetMemory(fact); });
+    else if (id) mountLearnedUndo(li, e.text, id, async fact => { await window.ember.forgetMemory(fact); }, e.t);
     return li;
   }
   const who = Object.assign(document.createElement("span"), { className: "who", textContent: WHO[e.who] ?? e.who });
@@ -1830,10 +1830,11 @@ const memoryList = new KeyedRows<MemoryRow>($("memory-list"), {
     });
     const correct = Object.assign(document.createElement("button"), { type: "button", className: "btn quiet small", textContent: MEMORY_CORRECTION.correct });
     correct.dataset.memoryCorrect = row.id;
-    // What is no longer true can be forgotten, never corrected: a correction is for what holds now (memory-c7-2).
-    correct.hidden = !!row.until;
+    // What is no longer true can be forgotten, never corrected: a correction is for what holds now (memory-c7-2). Nor
+    // while the organisation has memory off, when nothing is saved to it (memory-r9-3).
+    correct.hidden = !!row.until || managed.has("memory");
     correct.addEventListener("click", () => {
-      if (read().until) return;
+      if (read().until || managed.has("memory")) return;
       // An earlier Forget's failure is about that Forget, not this (memory-r7-4).
       $("memory-error").textContent = "";
       memoryCorrection.open(read());
@@ -1848,9 +1849,11 @@ const memoryList = new KeyedRows<MemoryRow>($("memory-list"), {
     li.querySelector<HTMLElement>("[data-memory-forget]")!.setAttribute("aria-label", forgetMemoryLabel(row.text));
     const correct = li.querySelector<HTMLElement>("[data-memory-correct]")!;
     correct.setAttribute("aria-label", correctMemoryLabel(row.text));
-    // Replaced while its Correct… had focus: focus goes to the row's Forget, never to the page.
-    if (row.until && !correct.hidden && document.activeElement === correct) li.querySelector<HTMLElement>("[data-memory-forget]")!.focus();
-    correct.hidden = !!row.until;
+    // Replaced while its Correct… had focus (or memory turned off by the organisation): focus goes to the row's
+    // Forget, never to the page.
+    const gone = !!row.until || managed.has("memory");
+    if (gone && !correct.hidden && document.activeElement === correct) li.querySelector<HTMLElement>("[data-memory-forget]")!.focus();
+    correct.hidden = gone;
   },
 });
 function renderMemory(rows: MemoryRow[]): void {
@@ -1893,6 +1896,11 @@ function renderMemory(rows: MemoryRow[]): void {
   const moreWasFocused = document.activeElement === more;
   more.hidden = page.rows.length >= page.total;
   if (moreWasFocused && more.hidden) ($("memory-list").querySelector<HTMLElement>("li:last-child button") ?? (unavailable ? memoryRest() : memoryQuery)).focus();
+  // The organisation has memory off: said in words, with what is saved still listed for its owner to see and forget,
+  // never "Nothing remembered." over facts Ember keeps (memory-r9-3). A lockdown says its own reason below.
+  const managedOff = managed.has("memory") && memoryReason !== "lockdown";
+  $("memory-managed").textContent = managedOff ? memoryManagedText(!unavailable && rows.length > 0) : "";
+  $("memory-managed").hidden = !managedOff;
   // Why memory isn't open, never advice to erase memory that only waits (a model provider, a reconnect: memory-2).
   const ownerText = memoryOwnerText(memoryReason, memoryOwner === "locked");
   $("memory-owner").textContent = memoryOwner === "ready" || (memoryOwner === "waiting" && !memoryOn()) ? "" : ownerText;
@@ -1933,8 +1941,9 @@ let forgottenEpoch = -1;
 function showForgotten(text: string, gone: MemoryForgotten | null): void {
   clearTimeout(memoryUndoTimer);
   const said = $("memory-forgotten-text"), undo = $("memory-undo") as HTMLButtonElement;
-  said.textContent = memoryForgottenText(gone?.text ?? text, gone?.derived ?? 0, gone?.back);
-  memoryUndo = gone ? { token: gone.undo, text: gone.text } : null;
+  // While the organisation has memory off nothing is put back into it: no Undo, and the line says so (memory-r9-3).
+  said.textContent = memoryForgottenText(gone?.text ?? text, gone?.derived ?? 0, gone?.back, managed.has("memory"));
+  memoryUndo = gone && !managed.has("memory") ? { token: gone.undo, text: gone.text } : null;
   undo.hidden = !memoryUndo;
   undo.removeAttribute("aria-disabled");
   undo.setAttribute("aria-label", undoForgotLabel(gone?.text ?? text));
@@ -1985,6 +1994,8 @@ const memoryNow = () => settings?.memory ?? { on: false, consent: { version: 0, 
 const aboutYou = mountAboutYou($("about-you"), {
   id: "ay", save, ownSave: true,
   askConsent: () => { showConsentCard("memory-consent", "memory-yes"); $("memory-yes").focus(); },
+  // Linux with the speakers' check on is where a spoken request is checked; elsewhere the interview keeps nothing (memory-r9-6).
+  spokenVersion: () => platform?.speakerRejection === true && settings?.voice.speakerRejection !== false,
 });
 $("memory-questions-hint").textContent = MEMORY_QUESTIONS_HINT;
 /** The paused note was shown (once a session: Not now hides it). */

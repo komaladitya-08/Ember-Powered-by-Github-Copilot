@@ -293,7 +293,8 @@ environment, only through `scripts/runtime-env-live.sh`, which gives it a networ
   - **Tell Ember about you** (Settings › Memory, and first run's optional personalisation detour): what to call you, your role
     and work, the apps you use most, short or detailed and spoken or not, your timezone or hours, each optional, kept
     as things you told it. "Ember, get to know me" asks the same aloud; an answer heard where Ember can't tell you
-    from its speakers isn't kept. Spoken or not changes Ember's speaking choice in Voice too. While memory is paused
+    from its speakers isn't kept, and asked for in such a voice (on Windows and macOS, or with Listen once) Ember
+    says so and opens the form instead, which offers the spoken version only on Linux with the speakers' check on. Spoken or not changes Ember's speaking choice in Voice too. While memory is paused
     (your own model provider or your organisation's model service in force), both places say why instead of asking,
     and first run's step offers only Continue.
   - **Better recall** (under the list, while memory is on): **Download (23 MB)** fetches a small language model
@@ -608,11 +609,21 @@ Once Ember has said the question (or at once, where it doesn't speak), and again
 answer it didn't take, it listens for 8 s (`ANSWER_WINDOW_MS`, app/main/voice.ts) for the answer without its name: a
 bare “allow” or “not now” is heard then (the answer window, `answerWindow` in app/voice/engine.ts). Only what the list
 reads as an answer leaves that window; a request said with the name in it (“Ember, open my mail”) is heard as at a
-wake, “Hey Ember” starts a wake as from idle, and anything else heard there goes nowhere; a word or two that read as
+wake, and by a wake's two stages: the spotter heard you say the name in it, and the recognizer wrote it. On the
+recognizer's words alone, which take “Number, …”, “Member, …” and “Amber, open…” for the name after the spotter, talk
+that never named Ember left the window as a request and opened a conversation that sent what was said next (second
+review of the voice lane, V2-S3; on the real models “A number of people called today.” and “Number, can you pass the
+salt?” did 8 times in 8, and never now). “Hey Ember” starts a wake as from idle, and anything else heard there goes nowhere.
+“Stop” said there without the name still stops everything (“Stop.”, “Stop it.”, and “Step.” or “Stuff.” as the
+recognizer writes it: `saidStop`); the other ways to ask for quiet (“Never mind”, “Cancel”, “That's enough”, “Quiet”)
+stop Ember there only with its name, as it is silent then and hears the room, whose every such word pulled the kill
+switch (V2-S8); in a follow-up window and after “Hey Ember” they stop as before. A word or two that read as
 no answer (most likely one misheard: one test voice's lone “Allow.” comes out “Hello”) make the question say once how
 to answer (`unclear`). It opens no conversation, is
-no follow-up, ends with the question, and takes nothing said over other sound unless it is said with the name (the
-question then says so, once). An answer begun a moment (160 ms of quiet, `TURN_GAP_FRAMES` in engine.ts) after Ember's
+no follow-up, ends with the question, and takes no yes said over other sound unless it is said with the name (the
+question then says so, once); a no is anyone's there too, as it is in a conversation and a follow-up: “No.”, “Not
+now.” and “Don't do it.” over a playing video were dropped in the answer window and a conversation, and the question
+stayed up, open to the next yes (V2-S7). A video's own “No.” declines, the safe side. An answer begun a moment (160 ms of quiet, `TURN_GAP_FRAMES` in engine.ts) after Ember's
 voice ended is heard whole from its start, also when it starts in the 400 ms after Ember says it stopped; one that
 runs on from Ember's voice with no such gap began under it, so only its end was heard (“Don't do it.” came out as “Do
 it.” and allowed: owner's report of 2026-11-12). That one is never taken, in the answer window or a follow-up: Ember
@@ -633,14 +644,24 @@ yes (“Ember, allow”) counts too for a question asked by a task you asked for
 you, Voice Match has turned another voice away since, you forgot or taught your voice again,
 or the task was changed by a request it didn't recognise (typed, say); never for a command card, a consent card or
 another task's question (owner decision of 2026-11-03; the audit says `trust: "task-voice"`). A yes asked as a
-question (“Proceed?”), or padded with more than one filler word, isn't one. Otherwise the bubble says how, and the question stays (naming the keys only while Ember holds them: `refusalLine`). Measured on
+question (“Proceed?”), or padded with more than one filler word, isn't one; “thanks”, “please” or the name after an
+answer are taken off first, so “Okay, thanks.” is the yes that “Okay.” is (V2-S10). The asked-yes rule reads the
+recognizer's text, so it holds where the recognizer writes the question: it does for a question in its words (“Is that
+okay?” was never an answer), but not for a one- or two-word yes asked only by the voice's rise. The recognizer writes “?” from the words, not the voice: the second review's verifier synthesized “Okay?”,
+“Allow it?”, “Go ahead?”, “Proceed?”, “Sure?”, “Yes?” and “Fine?” in four voices, and 21 of the 28 came out with a
+full stop or none and were read as a yes (most of those clips had no rise in pitch; the few that rose were written
+with a full stop all the same). So a lone “Okay?” said as a question is taken as a yes today (V2-S5). Nothing in the
+audio is read for it yet: that needs measuring on recorded people first, and would at most turn such a yes into one
+Ember asks for again, never one it takes. Otherwise the bubble says how, and the question stays (naming the keys only while Ember holds them: `refusalLine`). Measured on
 LibriSpeech dev-clean (33 speakers): half a second of another voice passes 0.5 % of the time. With the task trust,
 someone else saying “Hey Ember, allow” is taken about 2.5 % of the time, and someone who plays your recorded “Hey
 Ember” then says “allow” 35–40 %, once: any voice turned away ends the trust; a yes too
 quiet or clipped to score is refused (PLAN.md §2 “Approvals”). It counts only for the question that was up, and armed, when you started speaking, and
 once Voice Match turned another voice away during a question, that question takes a click or the keys only, and every
 later spoken yes to it is told so, never to say it again. “Not now” works for anyone, also in a follow-up window (“Cancel” and “never mind” aren't answers). Ember never takes its
-own voice as an answer (nothing it hears while it speaks, or that started before it last spoke, counts): an answer said
+own voice as an answer (nothing it hears while it speaks, or that started before it last spoke, counts; each thing
+said is dated from its own start, in a follow-up window too, where a question read out after the window opened made
+the first answer one “said over Ember” and a no took two tries: V2-S9): an answer said
 over Ember (as it reads the question out, or says a note), in a conversation or with its name, stops Ember speaking,
 and the question says, once, that Ember was still speaking and to say it again, which the answer window then hears
 (`answerOverEmber` in app/main/main.ts; the engine's `answer-over` event for one in Ember's own words, such as “allow”,
@@ -668,10 +689,44 @@ it builds on:
   an MCP tool silently replaces an Ember tool of the same name. `verifySessionTools` accepts an extension tool only as
   that MCP tool and checks its description and schema against the pin. With no extension tool the session is today's
   exactly.
-- **Checked at every call, not only at load.** A server can change a tool mid-session (`notifications/tools/list_changed`),
-  so `verifySessionTools` binds the gate to the session's live tool list, and every call compares what the model is
-  shown now with the pin; a tool that differs is denied and marked changed for good (off until the user agrees again).
-  A session never bound, or whose list can't be read, denies every extension call.
+- **Checked as the session loads, after each call and at every call; a server's word that its list changed takes
+  it out.** The pin decides what the model is shown, not only which calls run (integrations-r9-1: compared only at
+  calls, a description nobody agreed to stayed in every request of the conversation while Home said “Ready”).
+  `verifySessionTools` binds the gate to the session (its live tool list, the switch that disables one server in it,
+  and a server's own `tools/list` through `session.rpc.mcp.listTools`), then waits for the pins' check. A tool that
+  differs from its pin is marked changed for good (off until the user agrees again; Home says “Changed since you
+  agreed” and offers **Review tools**), audited (`phase: "changed"`, never its text), and its server is disabled in
+  that session (`session.rpc.mcp.disable`); `generation` moves, so the conversation reloads between turns with the
+  server's other tools. In the session it left, every tool of that server is denied.
+  - *As it loads:* the runtime's own metadata, which is what the model is sent, is compared with the pins (with the
+    two empty schema fields the runtime adds, `shownSchema`, integrations-x9-3). A server that lists one description
+    to Ember's own checks and another to the conversation is out before the session's first request.
+  - *The runtime's list never changes mid-session for a stdio server.* Measured on the bundled runtime: it asks a
+    server for its tools again only after the server's `notifications/tools/list_changed` (never without one, over
+    seven requests and two calls), as it builds its next request, and shows the model what it gets with no word to
+    Ember first. Ember's launcher stands between the runtime and a stdio server and never passes that notice on
+    (`passedOn`, launch.ts; every other line is passed on as the launcher read it), so the list the runtime holds is
+    the one checked as the session loaded. Nothing Ember asks a server can stand in for that: a server can answer
+    Ember's question as agreed and the runtime's with new text (integrations-x9-1: it did, in every request of the
+    conversation, 5 of 5).
+  - *When the runtime does hear that a server's list changed* (`mcp.tools.list_changed`: a remote server, which has
+    no launcher between, or anything that got past it), that word is the change. The server is disabled in the
+    session at once, unasked, the conversation is tainted and reloads between turns, where the runtime's first list
+    is checked against the pins as at every load. A server that says it again in the same conversation has every
+    tool it had in the session marked changed (off until the user agrees again). The event is heard from the
+    session's first moment (`onEvent` in the session's config). Not closed for a remote server: a notice that
+    reaches the runtime a few milliseconds before it builds a request can put the new text in that one request,
+    before Ember hears of it; after that the server is out and every extension call asks. Closing it needs the
+    runtime not to refresh a tool list mid-session, or Ember between the runtime and a remote server too.
+  - *After each of a server's calls*, before the result goes back, Ember asks that server for its list
+    (`session.rpc.mcp.listTools`, at most 1.5 s, and not again in that session once unanswered) and compares each
+    admitted tool with its pin whole, hints too: a head start on a server that changes a tool as it answers and says
+    so. It only ever turns something off; a list that matches proves nothing.
+  - The session's hooks (before and after every tool, and before a new request) wait until a server on its way out
+    is out: one `mcp.disable` per server, each at most 3 s, so a server's notices can't hold a turn however many it
+    sends (integrations-x9-4: each queued a question to the server, 27 s for one ordinary request).
+  - *At every call:* what the model is shown now is compared with the pin again; a tool that differs is denied and
+    turned off the same way. A session never bound, or whose list can't be read, denies every extension call.
 - **Ember's gate decides every call** (`gate.ts`, from `onPreToolUse`): off (the admin's `features.extensions`,
   LOCKDOWN, the user's switch or consent `FEATURE_CONSENT_VERSION.extensions`), stopped, disabled, changed, shown
   differently, or refused this turn: deny. A read-only tool in an agreed item, with no injected text seen: allow.
@@ -680,10 +735,10 @@ it builds on:
   arguments there. Anything else: the Confirmer asks every time ("Use “post_message” from Slack? With "{…}"."), with
   Allow and Not now, never Always. A yes counts only if the gate still allows the call when it comes. Every decision,
   answer and result is an `extension` audit entry, with sizes only.
-- **Hints changed mid-session.** The runtime's tool list has no hints, so a change of hints alone (`readOnlyHint` to
-  `destructiveHint`) can't be compared with the pin during a session. When a server sends `tools/list_changed`
-  (`mcp.tools.list_changed`), every tool of that server asks for the rest of the session; the next start's check
-  (`refresh()`) re-pins nothing and turns the changed tool off.
+- **Hints changed mid-session.** The runtime's tool list has no hints, so what the model is shown can't tell a
+  change of hints alone (`readOnlyHint` to `destructiveHint`); the server's own list, asked after each of its calls,
+  can, and such a tool is turned off as above. Ember decides by the hints it pinned, never by what a server says
+  later. The next start's check (`refresh()`) re-pins nothing and turns a changed tool off.
 - **Failures are untrusted too.** The SDK can't rewrite a failed call's text, so `onPostToolUseFailure` adds Ember's
   note that it is untrusted data, audits its size, and taints the conversation (any extension failure).
 - **Taint lasts the conversation**, across reconnects; it ends when the conversation is forgotten.
@@ -703,7 +758,9 @@ it builds on:
   `GH_TOKEN` and cloud keys reach it), so it starts Ember's launcher (`dist/app/mcp-launch.cjs`, plain Node), which
   starts the server with `appEnv()`'s allowlist and the plugin's own values only, no shell, and records its process id
   in `extensions/run/` (Linux and macOS: as the leader of its own process group, so the kill switch ends everything
-  it started; Windows: `taskkill /T`). A server that needs a `${VAR}` from the user's environment is refused, and
+  it started; Windows: `taskkill /T`). The server's input and output go through the launcher (`relay`): the runtime's
+  requests as they are, the server's lines one by one through `passedOn`, which drops its notice that its tool list
+  changed and anything that is no JSON-RPC message, and ends the server at a line of more than 64 MiB. A server that needs a `${VAR}` from the user's environment is refused, and
   proxy addresses reach it without their user name and password. This (and the blanked credential variables: see "Where the sign-in goes") keeps Ember's sign-in out of the server's
   own environment; it is not a sandbox. A stdio server runs as the user and can read what the user can, including the
   environment of the Copilot runtime that started it (`/proc/<pid>/environ` on Linux), which holds the GitHub token
@@ -715,6 +772,14 @@ it builds on:
   with extensions off reconnects nothing.
 - **The kill switch** part `extensions` refuses every call from sessions loaded before it, drops their questions and
   ends every server the launcher recorded.
+- **A list that can't be written** (a full disk, a data folder that can't be written; integrations-r9-4). Turning an
+  item off or removing it stops its servers and keeps it off for the rest of the run whatever can be saved; removing
+  takes it from the list only once `extensions.json` no longer holds it, so a second **Remove** never answers
+  “Removed” for an item that would be back, on and agreed, at the next start. An empty mark, `extensions/off/<id>`
+  (it needs no room), keeps it off at the next start, which turns it off before anything loads and drops the mark
+  once the list is saved. Home is told at once and the message line says the change wasn't saved (`extensionUnsaved`
+  in app/renderer/home/extensions-copy.ts), and that the item may be back after a restart where not even the mark
+  could be written. Turning an item on that can't be saved leaves it off.
 - **Off for now:** connectors (`connectors()` is empty, `connect()` says they aren't available: they need GitHub's
   service, which the spike couldn't reach without a real sign-in), `extension.mjs` extensions (bare tool names that
   aren't filtered by `availableTools` and could shadow Ember's), the SDK's catalog, legacy SSE servers, servers that
@@ -812,7 +877,9 @@ call, tell, invite…), keeps every name as heard, and a person's name from Memo
 something up (find, who, what, where…). **Suggest what I might say next** shows two or three likely next requests under
 Ember's answers and in Ask Ember, made on this computer; choosing one asks Ember as typing it would, but never counts
 as your own words for a command (a dangerous one always asks), and nothing risky is suggested unless built from what
-you just asked. Both are in “Before Ember starts” (added in `CONSENT_VERSION` 2). After a “Hey Ember” request the microphone stays open as a conversation
+you just asked. They are made from what was asked since Ember started, kept in memory only; signing out, another
+account signing in and Memory's Forget everything let go of it (`PersonalVoice.forgetSession`), so the next person is
+never offered the last one's requests. Both are in “Before Ember starts” (added in `CONSENT_VERSION` 2). After a “Hey Ember” request the microphone stays open as a conversation
 (**Keep listening after I call Ember**, on by default): what you say next needs no name, also while Ember speaks and works,
 until “That's all” or 30 seconds after everything has gone quiet (`CONVERSATION_IDLE_MS`, app/voice/engine.ts). Speech over
 Ember drops its voice at once (`duck`, 0.15 of its level: without it the echo canceller left almost nothing of the user's
@@ -821,16 +888,64 @@ words), and stops it when what the recognizer made of it isn't Ember's own words
 approves anything (`overEmber`). With other sound playing, only what is said by name counts: Windows reads the output's
 level while a conversation is open, a question is up or a task is at work (app/renderer/mic/output-watch.ts: Chromium
 gives system audio only with a screen's video, which is stopped at once; main's `syncOutputWatch`), Linux uses the
-speakers' stream, macOS can't tell yet. Where nothing can tell (macOS, Linux without `parec`, Windows before its watch
+speakers' stream, macOS can't tell yet. Ember's own voice isn't other sound, and what follows it is, at once: on Linux
+whatever sounds in the speakers' stream after Ember's voice left it (`ownSoundUntil` in engine.ts: its last sound
+before the stream was quiet for 160 ms, or 400 ms after it says it stopped); on Windows whatever the watch sees from
+its second look after Ember's voice on (0.4 s after its last look at Ember speaking, `EMBER_LINGER_MS`; only the first
+look after it may hold Ember's own last sounds), and what played up to Ember's voice counts as playing
+through it and for 1.3 s after the watch's last look at Ember speaking (`EMBER_CARRY_MS`: until a word that was over
+before that second look has been judged; later words are seen by their own sound, which holds for 2.5 s). Before,
+neither counted anything for the first second or so after Ember's voice, and
+a video's or a call's lone “Okay.” right after Ember read a question out was taken (second review of the voice lane,
+V2-S1). The watch counts its looks, it doesn't time them: a timer's callbacks each run a few ms late, and timed against
+exactly two looks' time the second look was thrown away whenever it had run less late than the last one that found
+Ember speaking, so a call's short “Okay.” 0.16 to 0.32 s after the read-out was still taken about every other time
+(voice-safety-x9-1: 12, 10, 4, 4, 5 and 3 of 25 scripted runs with looks up to 4 ms late; none of 25 now, at any gap
+from 0.16 to 0.48 s, with looks up to 16 ms late). A word that is over before that second look on Windows is still not
+seen when nothing played before Ember's voice. And what played before it was first carried as a fresh 2.5 s hold: a
+video you had paused before the read-out kept “other sound” on for 2.5 s after it, and your own prompt “Okay.” was
+dropped with the over-sound note (voice-safety-x9-3: none of 6 scripted runs taken when begun 0.19 to 1.34 s after the
+read-out; now 1 of 6 at 0.19 s and 6 of 6 from 0.38 s, with a call's far side's “Okay.” of 0.2 to 0.45 s still never
+taken at any gap from 0.16 to 1 s when it had talked up to the read-out). “By name”, in a question's answer
+window, a follow-up and a conversation, means by the user (`namedByUser` in engine.ts): the recognizer wrote the name
+first, and the speakers didn't say it. Where their own stream arrives (Linux with `parec`) it is asked, as it is for a
+wake: a name the microphone's spotter heard counts only if the stream's spotter didn't hear it too, and if the
+recognizer, reading what the stream played through that speech, finds neither the name (inside “remember” too) nor
+most of the words heard with it (`speakersSaid`: read from where the stream's sound began, as the VAD dates a speech
+from a moment into it and of a name cut at its start the recognizer writes nothing, and again from the stream's first
+pause on where the first reading finds nothing of it, as with the end of what a video said before in front it wrote
+nothing at all for 9 of 192 cuts of “Ember, allow.” and its like, and for none from the pause on); while the stream
+holds sound, the recognizer's “Ember, …” alone is no name. Before, nothing asked the stream in these windows, and a video's, a call's or a web page's own “Ember, allow”
+answered the question it was heard in, where the same words at idle are ignored (second review of the voice lane,
+V2-S2). Measured on the real models, a video saying “Ember, okay.” and its like to a question, 80 runs: 25 were taken
+as a yes by name before, 3 with the two spotters alone (the stream's spotter misses a name now and then), none with the
+recognizer's reading too. Where no such stream arrives, or it was silent through the speech, the name as the
+recognizer writes it (“Ember, allow.”) counts without the spotter, which misses the name in a window that is already
+listening (with its hit asked for there too, 48 of the user's own 80 answers by name were taken, 32 of the answer
+window's 37 and 16 of a conversation's 36; as it is, 73 are, as before); what the transcript check takes for the name only after the spotter
+(“Number, …”, “Member, …”, “Amber, open…”, “Umber…”) never counts without it. Where nothing can tell (macOS, Linux without `parec`, Windows before its watch
 has looked past Ember's own voice, or after it stopped or was refused: `soundKnown` in engine.ts), a yes to a question
 said without the name, in the answer window, a follow-up or a conversation, is taken as said over other sound: with
 Voice Match off it isn't taken, and the question says once to say the name first (`sound-unknown`); a no and anything
 said by name are taken as ever (owner's report of 2026-11-12: a video's “Okay.” outside a conversation allowed a
 question; settled by the integrator on the owner's direction, and the owner can overrule it). So is one said without the
-name in a follow-up window while other sound is known to play, as in the answer window (Codex review of #211). The first
+name in a follow-up window while other sound is known to play, as in the answer window (Codex review of #211), and in
+a conversation, whatever the spotter heard just before it: a name spotted in the last 3 s lets the next thing said
+through as said by name (`NAME_HEARD_MS`), and after a video's “…September…” its own “Okay.” went out as anyone's yes
+(V2-S4). A yes is judged on its own speech. So in a wake's own window: a yes that doesn't hold the wake phrase in its
+own speech (“Hey Ember”, a pause, then “Okay.”) is dropped where other sound is known to play, as the name was yours
+and the yes may be the video's (V2-S6); “Hey Ember, allow” in one breath is taken, and where nothing can tell (macOS,
+Linux without `parec`) the two-breath answer is taken as before, being how one answers there. A name said after that
+pause is judged as in the windows that need none (`namedByUser`): once a wake's own window was open nothing asked the
+speakers' stream, so after your “Hey Ember” and a pause a video's own “Ember, okay.” was a yes said by name (V2-S2 in
+this window; on the real models taken 28 times in 40, never now, and your own “Ember, allow it.” then, with nothing in
+the stream, is taken as before, 40 of 40). And a wake itself is checked against that stream by the two spotters alone,
+whose miss now and then left a video's own “Ember, go ahead.” a wake from idle and a yes by name (2 of 96 runs): a yes
+a wake carries is the speakers' where the recognizer reads it in what their stream played (`speakersSaid`; none of 96
+now, and your own “Hey Ember, allow it.” over a video's talk is taken as before, 7 of 8). The first
 time something said then without the name isn't heard, the status line says “Music or a video is playing: say “Ember”
 first.” for 5 s (engine.ts `dropped`), once a conversation; while a question is up, an answer dropped so, in the answer
-window, a follow-up or a conversation, makes the question say once why and to say the name first (`dropped` says which
+window, a follow-up, a conversation or after a wake, makes the question say once why and to say the answer right after the name, in one go (`dropped` says which
 answer it read as, never the words: in a conversation over a playing video a nameless “allow” vanished, owner's report
 of 2026-11-12). With the switch off, after Ember answers you have 8 seconds (12 when it asked you something) for
 a follow-up without the wake word (up to three in a row; “Hey Ember” works then too); “Thanks”, “OK” or “that's all” ends that window (when Ember asked something,
@@ -1231,7 +1346,7 @@ On Linux (Windows: §10.6, macOS: §11.6):
 | When the update check last asked GitHub, so a restart keeps to once a day (the first look waits until a day after it, at most a day; a failed look counts), and the last newer version it told you of, still shown as out after a restart until you run it (`updates.told`) | `settings.json` (`updates.checkedAt`, `updates.told`) |
 | SSH's password helper: a two-line wrapper, and a socket for each connection while it asks | `~/.config/ember/ssh/askpass`; `$XDG_RUNTIME_DIR/ea-*/` |
 | Node.js downloaded for other computers (SHA-256 checked) | `~/.config/ember/remote/runtime/` |
-| Extensions: what is installed and the tools the user agreed to (0600), Ember's copy of each plugin, and the process ids of the servers running (folders 0700) | `~/.config/ember/extensions/` (`extensions.json`, `plugins/<id>/`, `run/`) |
+| Extensions: what is installed and the tools the user agreed to (0600), Ember's copy of each plugin, and the process ids of the servers running (folders 0700) | `~/.config/ember/extensions/` (`extensions.json`, `plugins/<id>/`, `run/`, and `off/` while a change couldn't be saved) |
 | The Copilot runtime's temporary files (large tool output it saves; 0700, emptied at each connect and at sign-out) | `~/.config/ember/copilot-tmp/` |
 | Marketplaces the user added, and the runtime's copy of their catalogues | `~/.config/ember/copilot/settings.json`, `~/.config/ember/copilot/.cache/copilot/marketplaces/` |
 
@@ -1386,7 +1501,17 @@ the address in force and its saved key are kept and come back with the switch (i
   "Key saved", with **Replace** and **Remove**) or put in any process's environment: it reaches only the Copilot
   runtime's provider config. **Remove** and **Sign out** delete it. Another GitHub account signing in leaves it in
   place: the key belongs to the user's model service, not to a GitHub account, so an account change has nothing to do
-  with it (Sign out deletes it only because signing out forgets everything the user set up).
+  with it (Sign out deletes it only because signing out forgets everything the user set up). A key is printable ASCII
+  with no spaces (`apiKeyProblem`): one pasted with a hidden character, curly quotes or a look-alike letter is refused
+  before it is saved or sent, in words about the key and never with it ("That key has a character an API key can't
+  hold, such as a hidden character or curly quotes picked up in copying. Copy it again from your provider.";
+  integrations-r9-5: it was saved, Electron's fetch refused the header before sending, and every check then blamed
+  the address and the network). One saved by an earlier build is still said to be saved (Home's row has **Replace**
+  beside it) and is never sent or given to the runtime (`StoredKey.unsendable`, `keyFor`): Test connection sends
+  nothing and says "The saved API key has a character that can't be sent to <host>. Replace the key."
+  (integrations-x9-8: counted as no key, the check went out without one and said the service needs a key). A request
+  a header's value stops says the key is at fault, with no cause for the status to turn into "Start it" or "check
+  the network".
 - **When it fails** (no model named, a refused key, a host that doesn't answer), the status names the provider from the
   moment Ember starts connecting to it, so Home's Models & connections leads with **Check my provider's details**
   (it goes to the provider's fields) or **Check again**, never a GitHub account or a Copilot sign-in, and the bubble's
@@ -1481,7 +1606,7 @@ reads the new policy whole. Every key is optional:
 | `confirmEveryAction` | A click before every action and every command, every time |
 | `maxActionsPerMinute` | At most this many actions a minute across all tasks together (1 to 40; Ember's own limit is 40). A step past it pauses until the minute frees a slot, its card saying "Pausing to keep to 20 steps a minute…", rather than ending the task |
 | `allowGrants` | `false` removes "Always in this app", and Ember asks before working in an app even when the user asked for help in it |
-| `features.memory` | `false`: Ember remembers nothing between runs ("Remember what I tell you" off, managed), learns nothing on its own (no extraction, refinement or questions, so none of memory's own model requests), and "Tell Ember about you" says memory is managed; a memory file already there is left unused (signing out still deletes it). Better recall's model isn't downloaded or run either |
+| `features.memory` | `false`: Ember remembers nothing between runs ("Remember what I tell you" off, managed), learns nothing on its own (no extraction, refinement or questions, so none of memory's own model requests), and "Tell Ember about you" says memory is managed; a memory file already there is left unused (signing out still deletes it), and Settings › Memory says "Your organisation has turned memory off" and still lists what was saved for its verified owner, with Forget and Forget everything (no Correct…, and a Forget has no Undo: nothing is put back). Better recall's model isn't downloaded or run either. Under a lockdown (a policy Ember can't use, or one that changed while it ran) nothing connects, so the saved memory's owner can't be checked: it stays hidden, Memory says the policy has stopped Ember, and Forget everything clears it |
 | `features.updates` | `false`: Ember never asks GitHub about new versions ("Tell me when a new version is out" off, managed) |
 | `features.routines` | `false`: no routines, and reminders end when Ember quits ("Keep my routines and reminders" off, managed); a routines file already there is left unused (signing out still deletes it). An Ember from before this key reads a policy that has it as broken and locks down, so update Ember first |
 | `features.extensions` | `false`: no extension loads or runs, and none can be added (the Extensions section says so and lists what was added, read only); what was installed is left untouched and unused. LOCKDOWN turns it off too. An Ember from before this key reads a policy that has it as broken and locks down, so update Ember first |
@@ -2447,7 +2572,10 @@ renderer logic through exported pure modules (state reducers, option objects), n
 add one with every fix. An option table lists only the options that take the next word (a switch listed there hides the
 command or file after it), and a value that names a file is judged as that file (`optionFiles()` in classify.ts);
 commands-classify.test.ts's option-table test runs each switch in front of a dangerous operand and each such value as a
-dangerous path, so add a row when you change a table.
+dangerous path, so add a row when you change a table. A corrected table keeps the one it replaces beside it
+(`heldOpts(h, now, was)`, a wrapper's in `WrapperRule.main`): where the two read a line differently the row is judged
+both ways and the stricter answer stands, so no correction decides more loosely than main did at 4d64d3a
+(`Engine.runRow`; "commands held to main" in commands-classify.test.ts).
 
 **Integration suites** that need a real `script`, sshd, WSL or desktop are in `test/integration/`, skip without their
 variable, and fail when it is 1 and what they need is missing. `.github/workflows/remote.yml` runs them; `ci.yml` is
@@ -2533,8 +2661,22 @@ added later has the same effect on the Embers before it: say so in the release n
 
 ### 14.7 Copilot project work
 
-In Home under Projects, choose up to six source files, then send a review, plan or patch request. The
-connected model sees only the files you send. For an exact patch to one existing UTF-8 file with a final
+In Home under Projects, choose up to six source, build, documentation or diff files, then send a review, plan or
+patch request. The connected model sees only the files you send. Projects takes source, build and markup files, documentation, text and
+diffs by their type, and well-known files that have none (`Makefile`, `Dockerfile`, `README`, `pom.xml`), alone or
+with which build, stage or platform they are for (`Dockerfile.dev`, `Makefile.am`), never with a type of their own
+(`README.ppk`): the list is `textFile` and `namedFile` in app/main/agent/project.ts. Data and settings files stay off
+it (`.csv`, `.tsv`, `.xml`, `.ini`, `.cfg`, `.conf`, `.properties`, `.plist`), as does every type that holds
+credentials or other people's data by convention: memory's secret guard reads prose and code, not every format that
+keeps passwords, so for those the list is what keeps them from being sent (integrations-x9-2: with them on it, a
+browser's `logins.csv`, password managers' exports, FileZilla's `sitemanager.xml`, `pgpass.conf` and `redis.conf`
+were sent whole). Adding such a type sends more, so it is the owner's decision, never a fix. A file it
+doesn't take is named with its own reason and the rest of the choice is kept (`projectChoice`, `projectRefusedText`;
+integrations-r9-2): not a kind Projects takes (a picture, an archive, a lock file, a key file, `.env`-like types), a
+hidden file (its name starts with a dot), a name that says password, token, secret, credential or private key
+(`tokenizer` and its forms don't, as memory's guard reads them) or that is a password manager's export or a program's
+own password file (`storeName`: `logins.csv`, `bitwarden_export.json`, `wp-config.php`), or a name Ember won't repeat
+(hidden characters, a colon, or one that itself looks like a secret). For an exact patch to one existing UTF-8 file with a final
 newline, Ember shows the diff in **Review changes before applying**. Check it, choose **Apply patch** and
 confirm the destination. If the source has changed since you sent it, draft the patch again. Ember keeps
 LF or CRLF line endings and any UTF-8 byte-order mark. Drafts with file additions, renames, deletions or
@@ -2585,12 +2727,26 @@ that can't be taken says which of four reasons holds (`projectCommandProblem`: n
 more than one line or hidden characters, or what looks like a password, token or key), and a request of several lines
 that looks like it holds a secret names the line (`projectRequestSecret`; integrations-i6).
 
-**Saved workspaces** keeps up to eight named checkpoints for the verified GitHub account or connected
-provider configuration. Saving requires the system keyring and stores encrypted paths and the last
+**Saved workspaces** keeps up to eight named checkpoints for the verified GitHub account or the connected
+model service. Saving requires the system keyring and stores encrypted paths and the last
 completed request and answer. Opening a workspace restores its file selection and command folder. On
 the next explicit Send, Ember reads the selected files again and includes the previous exchange if its
 checkbox is selected. Patch approvals, command text, running processes and command output are never
 restored. **Forget workspace** removes the checkpoint and leaves the project files in place.
+
+The library belongs to the GitHub account, or to the model service by whose it is (yours, the organisation's), its
+type and its host with its port, never its key or the rest of its address (`workspaceOwners`' `library`,
+app/main/agent/project-workspaces.ts; integrations-r9-3, integrations-x9-6: owned by a hash of the provider's whole
+config, a replaced or removed key, another wire API, a slash at the address's end or a query left every saved
+workspace in a file nothing listed or removed). A saved answer is still only its holder's (the account, or that
+whole config with its key and its address as written): opened after the key or the provider's settings changed, a
+workspace restores its
+files and folder and says “Its last answer was saved before this provider's key or settings changed, so Ember left it
+out.”, and the next save or forget drops such answers for good; with the earlier key back before that, they are
+there again. A provider's file holds its `holder` beside its `scope`; a GitHub account's file is as it was. A library
+from an earlier build is named for the whole config: while the key it was saved with is in force it is found and
+becomes the service's. One whose key was already replaced on an earlier build can't be told from any other
+service's, and stays where it is (`project-workspaces-<hash>.bin` in the data folder).
 
 With a build ready, run `EMBER_PROJECT_TEST=1 npm run test:integration -- test/integration/project-live.test.ts`
 to exercise the Home workflow through Electron and the Copilot runtime against an offline mock model.

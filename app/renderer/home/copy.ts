@@ -775,8 +775,18 @@ export const undoForgotLabel = (text: string) => `Undo: remember “${text}” a
  * What Memory's list says after Forget, where focus goes (never the next row's Forget, so a second Enter forgets
  * nothing more: memory-7), with Undo after it; and after Undo.
  */
-export const memoryForgottenText = (text: string, derived = 0, back: readonly string[] = []) =>
-  `Forgotten: “${text.replace(/[“”]/g, "")}”${derived ? `, and ${derived === 1 ? "a note" : `${derived} notes`} Ember made from it` : ""}.${back.length ? ` Ember remembers ${quotedAnd(back)} again.` : ""}`;
+export const memoryForgottenText = (text: string, derived = 0, back: readonly string[] = [], managed = false) =>
+  `Forgotten: “${text.replace(/[“”]/g, "")}”${derived ? `, and ${derived === 1 ? "a note" : `${derived} notes`} Ember made from it` : ""}.${back.length ? ` Ember remembers ${quotedAnd(back)} again.` : ""}${managed ? " It can't be put back while your organisation has memory off." : ""}`;
+/**
+ * Settings › Memory while the organisation has memory off (memory-r9-3): what Ember saved before is still on this
+ * computer, and its owner can see it and forget it. `saved`: something is listed. A Forget has no Undo then: nothing
+ * is put back into memory the organisation turned off.
+ */
+export function memoryManagedText(saved: boolean): string {
+  return saved
+    ? "Your organisation has turned memory off, so Ember keeps nothing new and uses none of this. What it saved before is still on this computer: you can see it and forget it here. A Forget can't be undone while memory is off."
+    : "Your organisation has turned memory off.";
+}
 /** “A”, “A” and “B”, “A”, “B” and “C”: what is current again after a Forget undid what Ember kept just now (memory-12). */
 const quotedAnd = (texts: readonly string[]) => {
   const q = texts.map(t => `“${t.replace(/[“”]/g, "")}”`);
@@ -790,6 +800,8 @@ export const undoLearnedLabel = (text: string) => `Undo: forget “${text}”`;
 /** The line's button once main confirms the deletion. */
 export const LEARNED_UNDONE = "Forgotten";
 export const UNDO_LEARNED = "Undo";
+/** The "Ember learned" line's button once forgetting the fact no longer undoes what it replaced (memory-r9-10). */
+export const FORGET_LEARNED = "Forget";
 export const MEMORY_FORGETTING = "Forgetting…";
 export const MEMORY_SEARCH_LABEL = "Search memory";
 export const MEMORY_SOURCE_LABEL = "Source";
@@ -878,6 +890,12 @@ export const ABOUT_YOU = {
   managed: "Your organisation has turned memory off.",
   voice: "You can also say “Ember, get to know me” for a short spoken version.",
 } as const;
+/**
+ * The line under Tell Ember about you: what the card is for (`lead`: Settings; first run says it in its step's lead),
+ * and the spoken version only where Ember can tell the user's voice from its speakers (`spoken`). Elsewhere every
+ * spoken request is unchecked, never the user's own words, so the interview could keep nothing (memory-r9-6).
+ */
+export const aboutYouHint = (lead: boolean, spoken: boolean) => [lead ? ABOUT_YOU.lead : "", spoken ? ABOUT_YOU.voice : ""].filter(Boolean).join(" ");
 
 /** The form's fields as main takes them: trimmed, each one left out when it is empty or "No preference". */
 /** Said after Save when Spoken replies was chosen: it changes whether Ember speaks (memory-5). */

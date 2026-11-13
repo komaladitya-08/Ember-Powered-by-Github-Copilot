@@ -1167,6 +1167,24 @@ describe("new conversation", () => {
     expect(host.getTranscript()).toEqual([]);
     await host.stop();
   });
+
+  it("tells memory when a conversation ends, before a sign-out erases memory, so what was forgotten in it is held back from no other (memory-r9-1)", async () => {
+    const memory = { remember: vi.fn(() => ""), context: vi.fn(() => ""), forget: vi.fn(() => false), forgetAll: vi.fn((): void => undefined), conversationEnded: vi.fn() };
+    const { host } = makeHost({ memory });
+    await host.start(TOKEN, "stored");
+    await host.ask("Explain this");
+    conductorSession().emit("assistant.message", { content: "Here you go." });
+    conductorSession().emit("session.idle");
+    expect(memory.conversationEnded).not.toHaveBeenCalled();
+    await host.newConversation();
+    expect(memory.conversationEnded).toHaveBeenCalledTimes(1);
+    await host.ask("Hello");
+    await host.forgetConversation();
+    expect(memory.conversationEnded).toHaveBeenCalledTimes(2);
+    // The conversation goes first: a Forget everything that follows it holds nothing back from the next account's.
+    expect(memory.conversationEnded.mock.invocationCallOrder[1]).toBeLessThan(memory.forgetAll.mock.invocationCallOrder[0]!);
+    await host.stop();
+  });
 });
 
 describe("sign-out", () => {
@@ -4931,6 +4949,18 @@ describe("memory erasure at account boundaries", () => {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
+  it("tells memory the organisation's policy stopped the connection, never that GitHub couldn't be checked (memory-r9-3)", async () => {
+    const why: string[] = [];
+    const memory = { ...failingMemory(), pauseAccount: (reason?: string) => { why.push(`pause:${reason ?? "checking"}`); } };
+    const { host } = makeHost({ memory, refuseConnect: () => "Your organisation's Ember policy has a problem, so Ember won't send anything to a model service until it's fixed." });
+    try {
+      expect(await host.start(TOKEN, "stored")).toBe("error");
+      expect(why.at(-1)).toBe("pause:lockdown");
+    } finally {
+      await host.stop();
+    }
+  });
+
   it("tells memory why it can't check the owner: signed out, a model provider in force, or GitHub not answering (memory-2, integrations-2)", async () => {
     const why: string[] = [];
     const memory = {
@@ -5493,9 +5523,11 @@ describe("keeping the recent conversation across restarts (opt-in)", () => {
     };
     /** What Sign out told Projects to forget (integrations-c2-1: from the handler, never from the status after it). */
     let projectForgot: string[] = [];
+    /** How often what was asked this session was let go of (memory-r9-2). */
+    let sessionWordsForgotten = 0;
     const signOutHandler = (agent: AgentHost) => handlerOf(slice("ipcMain.handle(IPC.signOut,", "ipcMain.handle(IPC.cancelSignIn,"), {
       agent, tokens: { clear() {} }, keeper: { use() {} }, providers: { forget() {} }, refusedTokens: { clear() {} }, resetAnswerSpeech() {},
-      forgetProject: (what: string) => { projectForgot.push(what); },
+      forgetProject: (what: string) => { projectForgot.push(what); }, forgetSessionWords: () => { sessionWordsForgotten++; },
     });
 
     it("Sign out deletes conversation.json although the switch is off by then", async () => {
@@ -5508,8 +5540,11 @@ describe("keeping the recent conversation across restarts (opt-in)", () => {
       expect(fs.existsSync(k.file)).toBe(true);
       k.flag.on = false; // the setting turned off, the listener not yet run
       projectForgot = [];
+      sessionWordsForgotten = 0;
       await signOutHandler(k.host)();
       expect(projectForgot).toEqual(["all"]);
+      // What the person asked this session goes too: none of it is suggested to the next one (memory-r9-2).
+      expect(sessionWordsForgotten).toBe(1);
       expect(fs.existsSync(k.file)).toBe(false);
       await k.store.flush();
       expect(fs.existsSync(k.file)).toBe(false);
@@ -5536,11 +5571,11 @@ describe("keeping the recent conversation across restarts (opt-in)", () => {
       await k.store.flush();
       const calls: string[] = [];
       const run = handlerOf(slice("ipcMain.handle(IPC.memoryForgetAll,", '// "Tell Ember about you"'), {
-        learning: { forgetAll: () => calls.push("learning") }, agent: k.host,
+        learning: { forgetAll: () => calls.push("learning") }, agent: k.host, forgetSessionWords: () => calls.push("session words"),
         memoryOwner: { clear: () => calls.push("owner.clear"), refresh: () => undefined }, memoryConfigured: () => true, publishMemoryOwner: () => undefined,
       });
       await run();
-      expect(calls).toEqual(["learning", "owner.clear"]);
+      expect(calls).toEqual(["learning", "session words", "owner.clear"]);
       expect(fs.existsSync(k.file)).toBe(false);
       expect(k.host.getTranscript().map(e => e.text)).toEqual(["old question", "old answer"]);
       await k.host.ask("after forgetting");

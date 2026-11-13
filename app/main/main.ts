@@ -69,8 +69,8 @@ import { createTaskWindowControl, taskControl } from "./agent/task-controls";
 import { AgentHost, explainSignInError, gitHubReachable, idleWord, STOPPED_EVERYTHING, unansweredWord, type Hands, type TranscriptEntry } from "./agent/host";
 import { composerSendRefusal } from "./agent/composer-refusal";
 import { CONVERSATION_TEXT_LIMIT, conversationRequest } from "../shared/conversation";
-import { projectAfterStatus, projectJobStops, projectMay, projectCommandFolder, projectCommandProblem, projectCommandText, projectNames, projectSelection, projectStopped, removeProjectFile, projectPrompt, projectTurnRequest, ProjectInputError, ProjectModelError, PROJECT_MODEL_FAILED, PROJECT_PREVIOUS_ELSEWHERE, type ProjectSource } from "./agent/project";
-import { projectUnavailable } from "../renderer/home/project-copy";
+import { projectAfterStatus, projectChoice, projectJobStops, projectMay, projectCommandFolder, projectCommandProblem, projectCommandText, projectNames, projectRefusedText, projectSelection, projectStopped, removeProjectFile, projectPrompt, projectTurnRequest, ProjectInputError, ProjectModelError, PROJECT_MODEL_FAILED, PROJECT_PREVIOUS_ELSEWHERE, type ProjectSource } from "./agent/project";
+import { projectUnavailable, workspaceOpened } from "../renderer/home/project-copy";
 import { exportProjectText } from "./agent/project-export";
 import { applyNaturalVoicePreference, naturalVoiceChoices, naturalVoiceWanted } from "./voice-choice";
 import { applyProjectPatch, readProjectPatch, type ProjectPatch } from "./agent/project-patch";
@@ -110,6 +110,7 @@ import { hello, keysLine } from "./hello";
 import { TurnLatency } from "./turn-latency";
 import { ACK_MS, acknowledgement, afterAck } from "./acknowledge";
 import { MemoryService } from "./memory/service";
+import { memoryViewOf } from "./memory/view";
 import { githubMemoryAccount, MemoryEpochAccount, MemoryOwner, type MemoryWait } from "./memory/owner";
 import { MemoryLearning, linesAfterAskedForget, linesAfterForget, linesAfterRestore, withLearned, type MemoryLine } from "./memory/learning";
 import type { OneShot } from "./memory/learn";
@@ -1033,7 +1034,7 @@ function start(): void {
    * Settings › Memory: at its list for a forget request, else at its note's words (shown while memory is off or waits
    * for it). Never at the note's "I agree, remember", where an Enter or a space typed on would agree (memory-r7).
    */
-  const openMemory = (at: "list" | "note" = "note") => { showHome(); sendToHome(IPC.focusSection, at === "list" ? "memory:memory-query" : "memory:memory-consent-text"); };
+  const openMemory = (at: "list" | "note" | "about" = "note") => { showHome(); sendToHome(IPC.focusSection, at === "list" ? "memory:memory-query" : at === "about" ? "memory:about-you" : "memory:memory-consent-text"); };
 
   const sendToHome = (channel: string, value: unknown) => {
     const send = () => { if (home && !home.isDestroyed()) home.webContents.send(channel, value); };
@@ -1362,6 +1363,15 @@ function start(): void {
    */
   let personalRef: PersonalVoice | null = null;
   /**
+   * Sign-out, another account or Forget everything: what the person asked this session goes, so the next one is never
+   * offered it as a suggestion, and the chips showing go with it (memory-r9-2).
+   */
+  const forgetSessionWords = () => {
+    recentAsks = [];
+    personalRef?.forgetSession();
+    if (lastState.suggest) showState({ suggest: null });
+  };
+  /**
    * What the Ask box suggests now (askSuggestions): none while a question is up, those that follow the answer only
    * while it shows, and those that answer its last words only while those show: opened in full, once the overlay says
    * its end has, or without a compositor the corner card (companion-r2-1, companion-c2-2, companion-v6-2,
@@ -1666,13 +1676,8 @@ function start(): void {
     if (!memoryOn()) learningRef?.stopNow();
     betterRecall.settingsChanged();
   });
-  const memoryView = () => ({
-    // What holds now, then what is no longer true: it is kept and can reach the model, so it is shown too (memory-c7-2).
-    rows: memoryAllowed() && consented() && memoryOwner.ready ? memory.review() : [],
-    ownership: memoryOwner.state, epoch: memoryEpoch, reason: memoryOwner.reason, erasesOnSignOut: memoryOwner.mayEraseOnSignOut,
-    // After the rows, which read memory.json first: what was wrong with it, only for the account's open memory (memory-r2).
-    trouble: memoryOwner.ready ? memory.trouble : null,
-  });
+  // The verified account's saved facts, also while the organisation has memory off: theirs to see and forget (memory-r9-3).
+  const memoryView = () => memoryViewOf({ consented: consented(), owner: memoryOwner, epoch: memoryEpoch, memory });
   const memory: MemoryService = new MemoryService({ dir: userData, log: log.child("memory"), semantic: betterRecall.semantic, inForce: memoryOn, onChange: () => broadcast(IPC.memoryChanged, memoryView()) });
   const publishMemoryOwner = () => {
     if (!memoryOn()) learningRef?.stopNow();
@@ -1710,6 +1715,8 @@ function start(): void {
     paused: () => (memoryConfigured() ? (memoryOwner.ready ? null : memoryOwner.reason ?? "checking")
       : consented() && memoryAllowed() && memoryNoteOutdated(settings.get().memory) ? "note" : null),
     questionsOn: () => settings.get().memory.questions,
+    // Ember never asks who or what an installed app is (memory-r9-8).
+    apps: () => sys.apps.list().map(a => a.name),
     askedAt: () => settings.get().memory.askedAt,
     setAskedAt: at => { try { settings.update({ memory: { ...settings.get().memory, askedAt: at } }); } catch (err) { log.warn("memory.asked_not_saved", { err }); } },
     idle: () => agent?.idle ?? false,
@@ -1769,6 +1776,7 @@ function start(): void {
     taskDone: (title: string, result: string, asked?: number) => learning.taskDone(title, result, asked),
     intent: (text: string, how: { own: boolean }) => learning.intent(text, how),
     rememberNote: (text: string) => learning.rememberNote(text),
+    conversationEnded: () => learning.conversationEnded(),
   };
   // Extensions (app/main/extensions/, docs/DEVELOPING.md "Extensions"): plugins' MCP tools, used only while the user has
   // them on and agreed, and the organisation allows them. Home's Extensions section calls this (ExtensionsApi).
@@ -1850,6 +1858,8 @@ function start(): void {
   let heardOverFor: number | null = null;
   /** A question's answer window is open (engine.ts answerWindow): its speech dates each answer, and shows nothing. */
   let answerListening = false;
+  /** A follow-up window is open: each thing said in it dates from its own start too (the "speech" case). */
+  let followUpListening = false;
   /** The question Ember last said an answer over other sound wasn't taken for (said once a question). */
   let overSoundFor: number | null = null;
   /** The question Ember last said it didn't catch an answer to (engine.ts "unclear", said once a question). */
@@ -1961,6 +1971,7 @@ function start(): void {
     switch (e.type) {
       case "wake":
         answerListening = false;
+        followUpListening = false;
         heardFrom = Date.now();
         speechStarts();
         beforeWake = { emotion: lastState.emotion, bubble: lastState.bubble };
@@ -1976,6 +1987,7 @@ function start(): void {
         // A question's answer window (engine.ts answerWindow): nothing shows for it, as the question is up meanwhile, and
         // nothing of the bubble is taken or let go; each answer is dated from its own start (the "speech" case).
         answerListening = e.window === "answer" && e.on;
+        followUpListening = e.window === "follow-up" && e.on;
         if (e.window === "answer") break;
         if (e.window === "conversation") {
           // The microphone stays open through replies and tasks: nothing here may take the bubble from them.
@@ -2037,8 +2049,12 @@ function start(): void {
         if (conversing) { if (e.on) { heardFrom = Date.now(); speechStarts(); } break; }
         // So in a question's answer window, which shows nothing of its own while the question is up.
         if (answerListening) { if (e.on) { heardFrom = Date.now(); speechStarts(); } break; }
-        // In a follow-up window the speech itself starts later than the window: the answer is tied to then.
-        if (e.on && saidFrom < heardFrom + 1) speechStarts();
+        // In a follow-up window the speech itself starts later than the window: the answer is tied to then, and so is the
+        // echo guard, as in a conversation and the answer window. Dated from the window's opening, a question that came up
+        // and was read out after it made the first answer one "said over Ember", long after Ember had stopped, and a no
+        // took two tries (V2-S9). What began under Ember's voice is the voice process's to refuse (engine.ts `clipped`).
+        if (e.on && followUpListening) { heardFrom = Date.now(); speechStarts(); }
+        else if (e.on && saidFrom < heardFrom + 1) speechStarts();
         if (e.on) agent?.claimBubble();
         if (e.on) setState({ bubble: { visible: true, mood: "listening", title: "Listening…", thought: "…", step: null, streaming: true, actions: [] } });
         break;
@@ -2278,6 +2294,7 @@ function start(): void {
           finally {
             refusedTokens.clear();
             askHistory = [];
+            forgetSessionWords();
             await agent?.start(null);
           }
         }
@@ -2457,14 +2474,17 @@ function start(): void {
       // Not connected now (integrations-r1): the selection Home shows stays.
       if (!projectAvailable()) return { ...await projectSelection(previous), error: projectRefusal(false) };
       if (selected.canceled) return await projectSelection(previous);
-      const next = await projectSelection(selected.filePaths);
+      // The files Projects takes are chosen, and the others named with their reasons (integrations-r9-2): one file
+      // of the wrong kind dropped the whole choice. A choice with none it takes leaves the last one as it was.
+      const choice = projectChoice(selected.filePaths);
+      const next = await projectSelection(choice.files);
       if (home !== owner || projectFiles !== previous) return { names: [] };
       if (!projectAvailable()) return { ...await projectSelection(previous), error: projectRefusal(false) };
-      projectFiles = selected.filePaths;
+      projectFiles = choice.files;
       projectPatch = null;
       projectExchange = null;
       projectOutput = null;
-      return { ...next, changed: true };
+      return { ...next, changed: true, ...(choice.refused.length ? { error: projectRefusedText(choice.refused, choice.files.length) } : {}) };
     } catch (err) {
       return { names: home === owner && projectFiles === previous ? names : [], error: err instanceof ProjectInputError ? err.message : "Couldn't choose project files." };
     } finally {
@@ -2622,12 +2642,15 @@ function start(): void {
     const host = agent;
     const owner = home;
     if (!host || !owner || !projectAvailable() || projectPicking || projectJob) return { message: projectRefusal() };
+    // Whose the library is (the account or the model service, never its key: integrations-r9-3), and whose a saved
+    // answer is (`scope`: the account, or the provider's whole config with its key), which goes to no other.
     const scope = host.projectWorkspaceScope();
-    if (!scope) return { message: "Connect with a verified GitHub account or model provider to use saved workspaces." };
+    const library = host.projectLibraryScope();
+    if (!scope || !library) return { message: "Connect with a verified GitHub account or model provider to use saved workspaces." };
     const run = projectJob = new AbortController();
-    const current = () => !run.signal.aborted && home === owner && agent === host && projectAvailable() === true && host.projectWorkspaceScope() === scope;
+    const current = () => !run.signal.aborted && home === owner && agent === host && projectAvailable() === true && host.projectWorkspaceScope() === scope && host.projectLibraryScope() === library;
     try {
-      const entries = await projectWorkspaces.list(scope);
+      const { entries, left } = await projectWorkspaces.read(library, scope);
       if (!current()) return { message: "Workspace request cancelled." };
       const names = entries.map(entry => entry.name);
       const request = input.data;
@@ -2636,8 +2659,8 @@ function start(): void {
       const other = entries.filter(entry => entry.name !== name);
       if (request.action === "save") {
         if (!projectFiles.length && !projectFolder?.current()) return { names, message: "Choose project files or a command folder first." };
-        const entry = { name, files: projectFiles, folder: projectFolder?.current() ? projectFolder.path : null, exchange: projectExchange };
-        await projectWorkspaces.write(scope, [entry, ...other], current);
+        const entry = { name, files: projectFiles, folder: projectFolder?.current() ? projectFolder.path : null, exchange: projectExchangeScope === scope ? projectExchange : null };
+        await projectWorkspaces.write(library, [entry, ...other], current, scope);
         return { names: [name, ...other.map(saved => saved.name)], message: `Saved workspace “${name}”.` };
       }
       const entry = entries.find(saved => saved.name === name);
@@ -2648,7 +2671,7 @@ function start(): void {
           buttons: ["Cancel", "Forget workspace"], defaultId: 0, cancelId: 0, signal: run.signal,
         });
         if (response !== 1 || !current()) return { names, message: "Workspace kept." };
-        await projectWorkspaces.write(scope, other, current);
+        await projectWorkspaces.write(library, other, current, scope);
         return { names: other.map(saved => saved.name), message: `Forgot workspace “${name}”.` };
       }
       const selection = await projectSelection(entry.files);
@@ -2666,7 +2689,7 @@ function start(): void {
       projectPatch = null;
       return {
         names, opened: { files: selection.names, sizes: selection.sizes, folder: folder?.path ?? null, previous: projectExchange },
-        message: entry.folder && !folder ? `Opened workspace “${name}”. Choose the command folder again.` : `Opened workspace “${name}”.`,
+        message: workspaceOpened(name, { folderGone: !!entry.folder && !folder, answerLeft: left.includes(name) }),
       };
     } catch (err) {
       return { message: run.signal.aborted ? "Workspace request cancelled." : err instanceof ProjectInputError ? err.message : "Couldn't read or save the workspace library." };
@@ -2755,6 +2778,8 @@ function start(): void {
   // Through learning: what waits to be learned, the "Ember learned" lines and Better recall's vectors go too.
   ipcMain.handle(IPC.memoryForgetAll, guard(() => {
     learning.forgetAll();
+    // What was asked this session is about the person too: no suggestion comes from it afterwards (memory-r9-2).
+    forgetSessionWords();
     // The saved copy of the conversation is part of what Ember keeps about the person: it goes too.
     const savedGone = agent?.forgetHistory() ?? true;
     memoryOwner.clear();
@@ -3666,7 +3691,7 @@ function start(): void {
         broadcast(IPC.conversationChanged, conversationNow(entries));
       },
       // Another account signed in: its conversation went, and with it what the ask box remembers (as at sign-out).
-      onAccountChanged: () => { askHistory = []; forgetProject("all"); },
+      onAccountChanged: () => { askHistory = []; forgetSessionWords(); forgetProject("all"); },
       // A reminder the user set is due (reminders.ts): said too when replies are spoken, and a notification while away.
       onReminder: r => {
         // After what Ember is saying (an answer under way), not cutting it off.

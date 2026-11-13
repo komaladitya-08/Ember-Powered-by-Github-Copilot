@@ -147,8 +147,8 @@ describe("real commands, as the classifier judges them at this commit (modes-D2,
     ["kubectl get secret db -o yaml", "secret"], ["security find-generic-password -w", "secret"], ["cat ~/.bash_history", "secret"],
     ["nohup ./server &", "outlives-stop"], ["./server &", "outlives-stop"], ["setsid ./server", "outlives-stop"], ["docker run -d nginx", "outlives-stop"], ["pm2 start server.js", "outlives-stop"],
     ["xdg-open notes.txt", "outlives-stop"], ["at now + 1 minute -f job.sh", "outlives-stop"], ["./server & disown", "outlives-stop"],
-    // The class the classifier lost here (it says only that it can't see what xargs is given): asked by the rule.
-    ["echo a | xargs printenv", "unclear"],
+    // What xargs is given can't be seen, and the classifier names the secret reader it runs all the same (commands-held-7).
+    ["echo a | xargs printenv", "secret"],
     ["for f in *.log; do rm $f; done", "unclear"], ["python3 -c 'import os; os.remove(\"x\")'", "unclear"], ["bash -c \"$CMD\"", "unclear"], ["eval $X", "unclear"],
   ])("still asks about %s (%s)", (command, reason) => {
     const { d, why } = judged(command);

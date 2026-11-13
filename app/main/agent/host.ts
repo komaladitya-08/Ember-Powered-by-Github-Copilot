@@ -44,6 +44,7 @@ import type { SignInWith } from "./github-app";
 import { SessionToolsTimeoutError, type SessionExtensions } from "./session-config";
 import { copilotOneShot } from "./one-shot";
 import { PROJECT_SYSTEM, ProjectModelError, projectFailureText, type ProjectModelFailure } from "./project";
+import { workspaceOwners } from "./project-workspaces";
 import { runCommandTool } from "../commands/flow";
 import { DEFAULT_TERM_SIZE } from "../commands/window";
 import { afterTheStep } from "../policy/audit";
@@ -230,6 +231,11 @@ export interface HostOptions {
      * change what's saved. Null for anything else.
      */
     rememberNote?(text: string): MemoryNote | null;
+    /**
+     * The conversation ended (New conversation, sign-out, another account, another model service): what the user had
+     * Ember forget in it is no longer held back from the next, which holds none of it (memory-r9-1).
+     */
+    conversationEnded?(): void;
   };
   /** A reminder the user set is due: main says it aloud (when replies are spoken) and notifies if the user is away. */
   onReminder?: (r: Reminder) => void;
@@ -1904,7 +1910,8 @@ export class AgentHost {
     const refused = this.o.refuseConnect?.() ?? null;
     if (refused) {
       this.setStatus({ phase: "error", reason: "policy", detail: refused, login: undefined, source: undefined, service: undefined });
-      this.o.memory?.pauseAccount?.("unverified");
+      // Said as what it is: memory waits for the policy, not for a GitHub check that comes back on its own (memory-r9-3).
+      this.o.memory?.pauseAccount?.("lockdown");
       this.dropHanded();
       return;
     }
@@ -3305,13 +3312,22 @@ export class AgentHost {
     return true;
   }
 
-  /** The signed-in identity or provider credential that owns the current workspace library. */
+  /**
+   * Whose a Projects answer is: the signed-in account, or the provider's whole config with its key (workspaceOwners'
+   * holder). An answer goes to no other.
+   */
   projectWorkspaceScope(): string | null {
+    return this.projectOwners()?.holder ?? null;
+  }
+
+  /** Whose the saved workspaces are: the signed-in account or the model service, never its key (integrations-r9-3). */
+  projectLibraryScope(): string | null {
+    return this.projectOwners()?.library ?? null;
+  }
+
+  private projectOwners(): { library: string; holder: string } | null {
     if (this.status.phase !== "ready" || this.providerMoved()) return null;
-    const provider = this.providerNow();
-    const owner = provider ? JSON.stringify([provider.kind, provider.config])
-      : this.githubAccountId === null ? null : `github:${this.githubAccountId}`;
-    return owner === null ? null : createHash("sha256").update(owner).digest("hex");
+    return workspaceOwners(this.providerNow(), this.githubAccountId);
   }
 
   /** Project commands use the same classifier, review card, runner and audit as desktop tasks. */
@@ -3702,6 +3718,8 @@ export class AgentHost {
     this.setConversationContext(undefined);
     // An extension's result that read as instructions tainted that conversation (across its reconnects); it ends here.
     this.o.extensions?.conversationEnded?.();
+    // What the user had Ember forget was held back from this conversation, which still knew it; the next doesn't (memory-r9-1).
+    try { this.o.memory?.conversationEnded?.(); } catch (err) { this.o.log.warn("agent.memory_not_told", { err: err instanceof Error ? err.message : String(err) }); }
     this.convoCaps = null;
     try {
       if (this.conductor) await this.conductor.forget(ms);
