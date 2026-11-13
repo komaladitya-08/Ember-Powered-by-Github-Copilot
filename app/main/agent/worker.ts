@@ -40,7 +40,7 @@ import { afterTheStep, type AuditEntry, type AuditLog } from "../policy/audit";
 import type { AutonomyScopes } from "../policy/autonomy";
 import { inferLabels, quoteUntrusted as q, screenWord } from "../perception/elements";
 import { injectionSignals, INJECTION_NOTE } from "../perception/injection";
-import { canonicalKeys, DIALOG_TEXT_MAX, foldLabel, normalizeLabel, isActivatingKey, isEmberWindow, isSecurityWindow, keyFamily, keyLabel, MOVES_CARET, plainQuestion, reachesOut, replacesSelection, takesFormula, typedChar, typedShown } from "../policy/policy";
+import { canonicalKeys, DIALOG_TEXT_MAX, foldLabel, normalizeLabel, isActivatingKey, isEmberWindow, isSecurityWindow, keyFamily, keyLabel, MOVES_CARET, plainQuestion, reachesOut, replacesSelection, takesFormula, typedChar, typedShown, typesCharacter } from "../policy/policy";
 import { FILE_PATH_WORDS } from "../policy/vocabulary";
 import { SETTINGS, changeSetting, findApp, isTerminalApp, launchApp, listApps, programsOf, type DesktopApp, type SettingName } from "../hands/system";
 import { BorrowStopped, CursorBorrow, UserTookOver, typeableText, type Hand, type HandChecks } from "../hands/borrow";
@@ -5056,9 +5056,14 @@ export class Worker {
   }
 }
 
-/** What the audit log keeps about an action's value: keys and choices in full, typed text only as a length. */
-function auditValue(r: ActionRequest): Record<string, unknown> {
+/**
+ * What the audit log keeps about an action's value: keys and choices in full, typed text only as a length, and a key
+ * that types a character as one, so a word typed key by key isn't in the file letter by letter (as the journal's copy
+ * already counted it; safety-privacy-r9-5).
+ */
+export function auditValue(r: ActionRequest): Record<string, unknown> {
   if (r.value === undefined) return {};
   if (r.kind === "text" || r.kind === "cursor_text") return { chars: r.value.length, ...(r.mode ? { mode: r.mode } : {}) };
+  if (r.kind === "keys" && typesCharacter(r.value)) return { chars: 1 };
   return { value: r.value.slice(0, 120) };
 }
