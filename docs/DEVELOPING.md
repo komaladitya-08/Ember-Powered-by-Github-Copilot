@@ -880,16 +880,31 @@ gives system audio only with a screen's video, which is stopped at once; main's 
 speakers' stream, macOS can't tell yet. Ember's own voice isn't other sound, and what follows it is, at once: on Linux
 whatever sounds in the speakers' stream after Ember's voice left it (`ownSoundUntil` in engine.ts: its last sound
 before the stream was quiet for 160 ms, or 400 ms after it says it stopped); on Windows whatever the watch sees from
-0.4 s after its last look at Ember speaking (`EMBER_LINGER_MS`), and what played up to Ember's voice counts as playing
-through it and for 2.5 s after. Before, neither counted anything for the first second or so after Ember's voice, and
+its second look after Ember's voice on (0.4 s after its last look at Ember speaking, `EMBER_LINGER_MS`; only the first
+look after it may hold Ember's own last sounds), and what played up to Ember's voice counts as playing
+through it and for 1.3 s after the watch's last look at Ember speaking (`EMBER_CARRY_MS`: until a word that was over
+before that second look has been judged; later words are seen by their own sound, which holds for 2.5 s). Before,
+neither counted anything for the first second or so after Ember's voice, and
 a video's or a call's lone “Okay.” right after Ember read a question out was taken (second review of the voice lane,
-V2-S1); a word that starts and ends within those 0.4 s on Windows is still not seen. “By name”, in a question's answer
+V2-S1). The watch counts its looks, it doesn't time them: a timer's callbacks each run a few ms late, and timed against
+exactly two looks' time the second look was thrown away whenever it had run less late than the last one that found
+Ember speaking, so a call's short “Okay.” 0.16 to 0.32 s after the read-out was still taken about every other time
+(voice-safety-x9-1: 12, 10, 4, 4, 5 and 3 of 25 scripted runs with looks up to 4 ms late; none of 25 now, at any gap
+from 0.16 to 0.48 s, with looks up to 16 ms late). A word that is over before that second look on Windows is still not
+seen when nothing played before Ember's voice. And what played before it was first carried as a fresh 2.5 s hold: a
+video you had paused before the read-out kept “other sound” on for 2.5 s after it, and your own prompt “Okay.” was
+dropped with the over-sound note (voice-safety-x9-3: none of 6 scripted runs taken when begun 0.19 to 1.34 s after the
+read-out; now 1 of 6 at 0.19 s and 6 of 6 from 0.38 s, with a call's far side's “Okay.” of 0.2 to 0.45 s still never
+taken at any gap from 0.16 to 1 s when it had talked up to the read-out). “By name”, in a question's answer
 window, a follow-up and a conversation, means by the user (`namedByUser` in engine.ts): the recognizer wrote the name
 first, and the speakers didn't say it. Where their own stream arrives (Linux with `parec`) it is asked, as it is for a
 wake: a name the microphone's spotter heard counts only if the stream's spotter didn't hear it too, and if the
 recognizer, reading what the stream played through that speech, finds neither the name (inside “remember” too) nor
-most of the words heard with it (`speakersSaid`); while the stream holds sound, the recognizer's “Ember, …” alone is
-no name. Before, nothing asked the stream in these windows, and a video's, a call's or a web page's own “Ember, allow”
+most of the words heard with it (`speakersSaid`: read from where the stream's sound began, as the VAD dates a speech
+from a moment into it and of a name cut at its start the recognizer writes nothing, and again from the stream's first
+pause on where the first reading finds nothing of it, as with the end of what a video said before in front it wrote
+nothing at all for 9 of 192 cuts of “Ember, allow.” and its like, and for none from the pause on); while the stream
+holds sound, the recognizer's “Ember, …” alone is no name. Before, nothing asked the stream in these windows, and a video's, a call's or a web page's own “Ember, allow”
 answered the question it was heard in, where the same words at idle are ignored (second review of the voice lane,
 V2-S2). Measured on the real models, a video saying “Ember, okay.” and its like to a question, 80 runs: 25 were taken
 as a yes by name before, 3 with the two spotters alone (the stream's spotter misses a name now and then), none with the
@@ -909,7 +924,14 @@ through as said by name (`NAME_HEARD_MS`), and after a video's “…September�
 (V2-S4). A yes is judged on its own speech. So in a wake's own window: a yes that doesn't hold the wake phrase in its
 own speech (“Hey Ember”, a pause, then “Okay.”) is dropped where other sound is known to play, as the name was yours
 and the yes may be the video's (V2-S6); “Hey Ember, allow” in one breath is taken, and where nothing can tell (macOS,
-Linux without `parec`) the two-breath answer is taken as before, being how one answers there. The first
+Linux without `parec`) the two-breath answer is taken as before, being how one answers there. A name said after that
+pause is judged as in the windows that need none (`namedByUser`): once a wake's own window was open nothing asked the
+speakers' stream, so after your “Hey Ember” and a pause a video's own “Ember, okay.” was a yes said by name (V2-S2 in
+this window; on the real models taken 28 times in 40, never now, and your own “Ember, allow it.” then, with nothing in
+the stream, is taken as before, 40 of 40). And a wake itself is checked against that stream by the two spotters alone,
+whose miss now and then left a video's own “Ember, go ahead.” a wake from idle and a yes by name (2 of 96 runs): a yes
+a wake carries is the speakers' where the recognizer reads it in what their stream played (`speakersSaid`; none of 96
+now, and your own “Hey Ember, allow it.” over a video's talk is taken as before, 7 of 8). The first
 time something said then without the name isn't heard, the status line says “Music or a video is playing: say “Ember”
 first.” for 5 s (engine.ts `dropped`), once a conversation; while a question is up, an answer dropped so, in the answer
 window, a follow-up, a conversation or after a wake, makes the question say once why and to say the answer right after the name, in one go (`dropped` says which

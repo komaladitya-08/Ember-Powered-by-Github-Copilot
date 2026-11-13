@@ -20,13 +20,24 @@ const LOOK_MS = 200;
  */
 const EMBER_TAIL_MS = 1000;
 /**
- * …and for this long after that look, sound says nothing either: it may be Ember's own (the 400 ms the voice engine
- * gives it too, engine.ts selfSpeaking; the page said it stopped up to one look after that one). Sound later than that
- * in the second after Ember is someone else's, and is said at once: a call's "Okay." right after Ember read a question
- * out, over before that second was, was never seen, and the first look after it found the output quiet (V2-S1). What
- * is left is a word wholly inside these 400 ms.
+ * …and the first look after that one, when it comes within this long of it, says nothing of sound either: it may be
+ * Ember's own (the 400 ms the voice engine gives it too, engine.ts selfSpeaking; the page said it stopped up to one look
+ * after that one). Sound at any later look in the second after Ember is someone else's, and is said at once: a call's
+ * "Okay." right after Ember read a question out, over before that second was, was never seen, and the first look after
+ * it found the output quiet (V2-S1). Looks are counted, not timed: this is two looks' time, a timer's callbacks each run
+ * a few ms late, and the second look after Ember's voice was thrown away whenever it had run less late than the last one
+ * that found Ember speaking, so about every other time (voice-safety-x9-1). What is left is a word over before that
+ * second look.
  */
 const EMBER_LINGER_MS = 400;
+/**
+ * What played up to Ember's voice counts as playing for this long after the last look that found Ember speaking, with
+ * nothing more heard of it: until a word that was over before the second look after Ember's voice has been judged (the
+ * linger, the 0.6 s of quiet the voice engine ends a speech on, and 0.3 s for its frames to arrive). Later words are
+ * seen by their own sound. It was a fresh hold: a video paused before the read-out kept "other sound" on for 2.5 s
+ * after it, and the user's own prompt "Okay." was dropped (voice-safety-x9-3).
+ */
+const EMBER_CARRY_MS = 1300;
 
 /**
  * Follows the output's level; says when the answer to "is other sound playing?" changes. Null: not known (not looked
@@ -36,20 +47,24 @@ const EMBER_LINGER_MS = 400;
 export class OutputBusy {
   private soundAt = Number.NEGATIVE_INFINITY;
   private emberAt = Number.NEGATIVE_INFINITY;
+  /** No look has found Ember silent since the last one that found it speaking: the next may hold its last sounds. */
+  private lingering = false;
   private busy: boolean | null = null;
 
   constructor(private tell: (on: boolean | null) => void) {}
 
   /**
    * A look at the output: its RMS, and whether Ember's own voice is playing. Ember's voice isn't other sound, and over it
-   * nothing can be told, so the answer stands until it ends: what was playing up to it counts as playing through it, its
-   * hold starting as Ember stops (forgotten, the first look after Ember's voice said "quiet" unless something sounded at
+   * nothing can be told, so the answer stands until it ends: what was playing up to it counts as playing through it and
+   * for EMBER_CARRY_MS after (forgotten, the first look after Ember's voice said "quiet" unless something sounded at
    * that very instant, though a call's far side had talked right up to the read-out: V2-S1).
    */
   look(rms: number, emberSpeaking: boolean, now: number): void {
-    if (emberSpeaking) { this.soundAt = this.busy ? now : Number.NEGATIVE_INFINITY; this.emberAt = now; return; }
+    if (emberSpeaking) { this.soundAt = this.busy ? now - (HOLD_MS - EMBER_CARRY_MS) : Number.NEGATIVE_INFINITY; this.emberAt = now; this.lingering = true; return; }
     const since = now - this.emberAt;
-    if (since < EMBER_LINGER_MS) return;
+    const first = this.lingering;
+    this.lingering = false;
+    if (first && since < EMBER_LINGER_MS) return;
     if (rms >= SOUND_RMS) this.soundAt = now;
     const playing = now - this.soundAt < HOLD_MS;
     if (since < EMBER_TAIL_MS && !playing) return;
