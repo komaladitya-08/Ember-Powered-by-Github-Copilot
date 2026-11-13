@@ -624,3 +624,38 @@ describe("commands that print a stored secret or record the room (commands-remot
     for (const cmd of ["ffmpeg -i a.mp4 b.mp3", "ffmpeg -i clip.mov -vf scale=640:-1 small.mp4", "ffprobe a.mp4"]) expect(decide(cmd).verdict, cmd).toBe("run");
   });
 });
+
+describe("a deletion the user's words hold back or narrow in a later clause (commands-remote-r9-10)", () => {
+  const HELD = ["delete the build folder but copy it first", "delete the build folder, but first back it up", "delete the build folder (back it up first)",
+    "delete the build folder; back it up first", "delete the build folder - make a copy first", "delete the build folder but zip it first",
+    "delete the build folder but commit first", "delete the build folder but keep a copy", "delete the build folder but save a copy somewhere",
+    "delete the build folder but list it first", "delete the build folder but check it first", "delete the build folder, tar it up beforehand",
+    "delete the build folder — archive it first", "delete the build folder and before that copy it to /tmp", "delete the build folder but make a backup",
+    "delete the build folder, though stash my changes first", "Delete the build folder. Back it up first.", "delete the build folder but push first"];
+  const NARROWED = ["delete the build folder but only the logs", "delete the build folder but just the object files", "delete the build folder, only the cache in it",
+    "delete the build folder that the CI made", "delete the build folder which the tests created", "delete the build folder that the last run left",
+    "delete the build folder from yesterday", "delete the build folder from the last run"];
+
+  it("asks when a copy, or any step, is asked for first in a clause after the deletion's", () => {
+    for (const o of [{}, { shell: "zsh" as const, context: "darwin" as const }]) for (const words of HELD) {
+      expect(decide("rm -rf build", { ...o, words }).verdict, words).toBe("ask");
+    }
+    for (const words of HELD.slice(0, 6)) {
+      expect(decide("Remove-Item -Recurse -Force build", { shell: "powershell", context: "win32", words }).verdict, words).toBe("ask");
+      expect(decide("git clean -fdx", { words: words.replace("delete the build folder", "clean the repository") }).verdict, words).toBe("ask");
+    }
+  });
+
+  it("asks when the words narrow the deletion to a part of it, or say where the thing came from", () => {
+    for (const words of NARROWED) expect(decide("rm -rf build", { words }).verdict, words).toBe("ask");
+  });
+
+  it("still announces the plain request, a step asked for after it, and a first that is the deletion's own", () => {
+    for (const words of ["delete the build folder", "delete the build folder and back up src/", "delete the build folder, then run the tests", "delete the build folder first, then rebuild",
+      "delete the build folder and commit", "please delete the build folder now", "delete the build folder in this project", "first delete the build folder, then rebuild",
+      // As earlier rounds decided and pinned (commands-remote-y7-6, x8-10): a word that only describes the thing, and the user's own computer.
+      "delete the old build folder", "delete the build folder that is huge", "delete the build folder on my laptop"]) {
+      expect(decide("rm -rf build", { words }).verdict, words).toBe("announce");
+    }
+  });
+});

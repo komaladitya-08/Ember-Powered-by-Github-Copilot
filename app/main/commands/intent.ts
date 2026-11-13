@@ -1178,6 +1178,51 @@ function keepsCopyFirst(text: string, verbs: readonly string[]): boolean {
 }
 
 /**
+ * What follows the thing in the deletion's own clause and says where it came from, which Ember can't check ("that the
+ * CI made", "which the tests created", "from yesterday", "from the last run").
+ */
+const SAYS_WHICH = /(^|[^\p{L}\p{N}])((that|which)\s+[^.;!?]{0,60}?(made|created|generated|built|produced|left|wrote|downloaded|cloned|unpacked|extracted)|from\s+(yesterday|last|the\s+last|this\s+morning|earlier|the\s+previous|the\s+other))(?=$|[^\p{L}\p{N}])/iu;
+
+/**
+ * Whether the words hold a deletion back, or narrow it, in a way keepsCopyFirst doesn't read (commands-remote-r9-10):
+ * a clause after the deletion's own asks for something first ("but copy it first", "(back it up first)", "; back it
+ * up first", "but list it first", "and before that …"), asks to keep a copy ("but keep a copy", "but make a backup"),
+ * or narrows it ("but only the logs", "but just …"); or the deletion's own clause says where the thing came from
+ * ("that the CI made", "from yesterday"). Ember deletes what the command names, now, so each of these asks. A step
+ * asked for after the deletion ("and back up src/", "then run the tests"), a "first" that is the deletion's own
+ * ("delete build first, then rebuild") and "only the one in frontend", which the place rules read, hold nothing back;
+ * a word that describes the thing ("the old build folder", "that is huge") and "on my laptop" are read as before
+ * (commands-remote-y7-6, x8-10).
+ */
+function heldOrNarrowed(text: string, verbs: readonly string[]): boolean {
+  let after = false;
+  for (const s of sentencesOf(text)) {
+    const question = /\?["'”’)\]]*\s*$/.test(s);
+    const polite: SentenceState = { first: false };
+    let n = 0;
+    for (const part of s.split(/[,:;()]\s*|\s+[-–—]\s+|(?<![\p{L}\p{N}])(?:and|then|but|or|so|plus|though|although)(?![\p{L}\p{N}])/iu)) {
+      const words = userWordList(part);
+      if (words.length === 0) continue;
+      const starts = clauseStarts(words, n++, question, polite);
+      const own = verbs.some(v => { const parts = v.split(" "); return starts.some(c => parts.every((p, j) => c[j] === p)); });
+      if (own) {
+        after = true;
+        if (SAYS_WHICH.test(part)) return true;
+        continue;
+      }
+      if (!after) continue;
+      if (words.includes("first") || words.includes("beforehand") || words[0] === "before") return true;
+      // "only the logs", "just the object files"; never "only the one in frontend", which says a place.
+      if ((words[0] === "only" || words[0] === "just") && !((words.includes("one") || words.includes("1") || words.includes("ones")) && words.some(w => IN_FOLDER.has(w)))) return true;
+      // "keep a copy", "make a backup", "save a copy somewhere".
+      const k = words.findIndex(w => ["make", "take", "create", "keep", "save"].includes(w));
+      if (k >= 0 && words.slice(k + 1, k + 4).some(x => COPY_THING.has(x))) return true;
+    }
+  }
+  return false;
+}
+
+/**
  * More ways of holding the step back until the user says so (commands-remote-v5-3): "but first show me what's in it",
  * "show me the command first", "run it by me", "on my go", "upon confirmation", "hold off", "hang on", "I'll say when",
  * "I'll confirm"; "let me see" only with what holds it back ("let me see it", "… the command", "… what you'll run", "…
@@ -1204,6 +1249,8 @@ function holdsBack(userWords: string, verbs: readonly string[], destroys = false
   if (ASK_FIRST.test(said) || HELD_FIRST.test(said)) return true;
   // A step that throws something away waits on one that keeps a copy of it asked for first (commands-remote-y7-6).
   if (destroys && keepsCopyFirst(said, verbs)) return true;
+  // And on what a later clause asks for first, or narrows it to (commands-remote-r9-10).
+  if (destroys && heldOrNarrowed(said, verbs)) return true;
   const text = ownSteps(said, verbs);
   if (LATER.test(text) || LATER_TOO.test(text) || LATER_DAY.test(text) || deadline(text)) return true;
   for (const m of text.matchAll(CONDITION)) {
