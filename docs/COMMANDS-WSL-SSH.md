@@ -271,7 +271,18 @@ Ember stops and asks before a command that:
   folder's entry file (`index.js`, `package.json`, `__main__.py`) is a download. Once the task has downloaded
   anything, a build tool or test runner (or `python3 -m`) in a folder Ember can't name asks as it would in the
   download's folder: after `cd b;`, `cd b || exit`, `pushd b` or a `cd` on its own line, any of which may have
-  failed, so `git clone https://…; cd b; npm test` asks. A download Ember can name never
+  failed, so `git clone https://…; cd b; npm test` asks. The same goes for any program that doesn't only read,
+  list, copy, move, pack or delete files: named with a download of the task, or a folder that holds one of its
+  project files, anywhere on its line, it may run it and asks. Anywhere is an operand (`eslint r`, `tsx r/run.ts`),
+  an option's value attached or apart (`make -Cr`, `mvn -fr/pom.xml test`, `gradle -pr test`, `--config=r/x.js`), a
+  variable set for the command or exported (`CC=./cc.sh make`, `make CC=./cc.sh`, `export CC=./cc.sh`, `cmake
+  -DCMAKE_C_COMPILER=$PWD/cc.sh`, `$env:CC = '.\cc.sh'`), a module's or a test's path (`python3 -m pytest r`), and
+  the folder it runs in (`cd r && vite build`). `cat`, `grep`, `ls`, `cp`, `mv`, `tar`, `rm`, `git` and their like
+  run, and a copy carries the mark on. A download whose name says plain data (a `.csv`, `.txt`, `.json`, a picture,
+  a document) isn't code a program runs, so `python3 analyze.py data.csv` runs. What `gh api`, `gh gist view` and
+  `glab api` print into a file is a download too, and so is fetched text copied from the pipe (`curl … | install
+  -m755 /dev/stdin a.sh`, `cp <(curl …) a.sh`) and what any compiler builds from a downloaded source (`javac
+  r/Main.java -d out`, then `java -cp out Main` asks). A download Ember can name never
   makes the project's own tools ask in a folder Ember knows: after `curl -LO https://example.com/data.csv`, `python3 analyze.py`, `npm
   test` and `cd src && npm test` run as before; in a task that downloaded nothing, `cd src; npm test` runs too),
   running a program or script from another computer's share (`\\server\share\x.exe`),

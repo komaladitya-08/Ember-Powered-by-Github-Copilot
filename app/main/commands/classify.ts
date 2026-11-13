@@ -26,7 +26,7 @@ import {
 } from "./paths";
 import {
   CLIPBOARD_READERS, CLOUD_CLIS, CLOUD_DELETE, CLOUD_READ, CLOUD_READ_PHRASES, DECODERS, DISK_TOOLS, FETCHERS, GIT_CODE_KEYS, GLOBAL_OPTIONS,
-  GUI_PROGRAMS, INPUT_SYNTH, INTERACTIVE, INTERPRETERS, LANGUAGE_INSTALL_VERBS, LAUNCHERS, NAME_DESTROY, NAME_PUBLISH, NAME_SYSTEM,
+  DOWNLOAD_READERS, GUI_PROGRAMS, INPUT_SYNTH, INTERACTIVE, INTERPRETERS, LANGUAGE_INSTALL_VERBS, LAUNCHERS, NAME_DESTROY, NAME_PUBLISH, NAME_SYSTEM,
   ORDINARY_PROGRAMS, ORDINARY_VERBS, OTHER_SHELLS, POSIX_SHELLS, PS_ALIASES, PS_CMDLETS, PS_COMMON, PS_COMMON_ALIASES, RISKY_ASSIGNMENTS, RISKY_ASSIGNMENT_PREFIX,
   SCREENSHOTTERS, SECRET_PROGRAMS, SECRET_VAR, SUDO_LIKE, SYSTEM_PACKAGERS, WRAPPERS, type GlobalGrammar, type OrdinaryVerbs, type PsCmdletSpec,
   type PsParamKind,
@@ -1643,7 +1643,23 @@ const PROJECT_FILE = new RegExp([
 ].join("|"), "i");
 
 /** Compilers whose output, built from a downloaded source, is a download too (carryCompiled; commands-remote-r8-2). */
-const COMPILERS = new Set(["gcc", "g++", "cc", "c++", "clang", "clang++", "rustc"]);
+const COMPILERS = new Set([
+  "gcc", "g++", "cc", "c++", "clang", "clang++", "rustc",
+  // Every compiler's output carries the mark (commands-remote-r9-6): by `-o`, `-d`, `-out:` and their like.
+  "gfortran", "gdc", "gccgo", "javac", "kotlinc", "scalac", "ghc", "swiftc", "dmd", "ldc2", "nim", "crystal", "mcs", "csc", "fpc", "ocamlc", "ocamlopt", "valac", "tcc",
+  "nasm", "yasm", "as", "ld", "gold", "lld", "zig",
+]);
+/**
+ * Programs whose output is text from the network without being fetch tools in their own right (commands-remote-r9-6):
+ * what they print into a file is a download (`gh api … > a.sh`, `gh gist view --raw > a.sh`), and into a shell it is
+ * download-and-run. Kept apart from FETCHERS, whose substitutions and options are judged as a fetch tool's.
+ */
+const TEXT_FETCHERS = new Set(["gh", "glab", "hub", "s3cmd", "b2", "gdown", "ipfs", "yt-dlp", "youtube-dl", "ncftpget", "lftp", "huggingface-cli", "hf", "az", "aws", "gcloud", "kubectl", "doctl", "mc", "rclone", "adb"]);
+/** Programs whose words are, or hold, a command line they hand to a shell: judged there (nested()), never as their own files. */
+const NESTS_TEXT = new Set(["sh", "bash", "zsh", "dash", "ksh", "ash", "fish", "cmd", "powershell", "pwsh", "wsl", "watch", "flock", "script", "su", "runuser", "ssh", "slogin", "parallel", "eval", "source", "."]);
+const fetches = (key: string): boolean => FETCHERS.has(key) || TEXT_FETCHERS.has(key);
+/** The input a pipe gives a program, by the names it can be opened under (`install /dev/stdin a.sh`, `cp /dev/fd/0 a.sh`). */
+const PIPE_INPUT = /^(\/dev\/stdin|\/dev\/fd\/0|\/proc\/self\/fd\/0)$/;
 
 /**
  * Variables whose value is a command a build tool runs (`CC='sh -c …' make`, `PSQL_PAGER=…`): the value is judged as a
@@ -2697,6 +2713,9 @@ class Engine extends Classifier {
       // (PROGRAM_OPT_VARS) when a sub-option names a program (`-toolexec=`, `--to-command=`). An ordinary value
       // (`CC=clang`, `GOFLAGS=-mod=vendor`) runs. Ember's own refusal from the value comes through its row.
       else if (beforeCommand && namesProgram(a.name, a.value.v, a.value.raw)) this.unclear("unclear.assignment", "It changes how commands are found or run.");
+      // One set in front of a command to a file this task downloaded, or a folder that holds one, may be a program the
+      // command runs (`CC=./cc.sh make`, `EDITOR=./x git commit`): whatever its name (commands-remote-r9-5).
+      if (beforeCommand && a.value.v !== null && this.namesDownload(a.value.v, sc)) this.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
       if (a.value.v !== null && commandLineSecret(`${a.name}=${a.value.v}`)) this.add("secret", "secret.token-arg", SAYS.tokenArg);
       this.setVar(a.name, [a.value], sc, false, beforeCommand);
     }
@@ -2734,6 +2753,9 @@ class Engine extends Classifier {
           if (st.assign && k === 0) {
             const value = el.segs.map(seg => (seg.t === "lit" ? seg.s : "")).join("");
             if (commandLineSecret(el.raw) || (value !== "" && commandLineSecret(`${st.assign.replace(/^env:/i, "")}=${value}`))) this.add("secret", "secret.token-arg", SAYS.tokenArg);
+            // An environment variable set to a file this task downloaded may name a program a later command runs
+            // (`$env:CC = '.\cc.sh'; make`: commands-remote-r9-5).
+            if (/^env:/i.test(st.assign) && value !== "" && this.namesDownload(value, sc)) this.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
           }
           // A value that is a secret environment variable prints it.
           for (const seg of el.segs) if (seg.t === "var" && /^env:/i.test(seg.name) && SECRET_VAR.test(seg.name.slice(4))) this.add("secret", "secret.env", SAYS.env);
@@ -3036,7 +3058,7 @@ class Engine extends Classifier {
     this.afterRun(key, args, s, sc, sc, dlBefore);
     this.hiddenNames(key, args, sc);
     this.pipe.program = key;
-    if (FETCHERS.has(key) || DECODERS.has(key)) this.pipe.fetch = true;
+    if (fetches(key) || DECODERS.has(key)) this.pipe.fetch = true;
   }
 
   /** The program's row, after the checks every program gets. */
@@ -3048,6 +3070,10 @@ class Engine extends Classifier {
       if (!this.onRecord(nameArg, sc)) this.scriptByPath(nameArg, pn, sc);
       scriptName(h, nameArg.v ?? "");
       if (!NATIVE[key] && nameArg.v !== null) scriptVerbs(h, nameArg.v, args);
+    } else if (sc.wrappers.length > 0 && nameArg.v !== null && this.holdsAnyDownload() && this.isDownloaded(nameArg, sc, false)) {
+      // A command handed to a program by a bare word that is a download of this task (`mytool r`, where generic()
+      // took `r` for a program's name): it may be what runs (commands-remote-r9-5).
+      this.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
     } else if (sc.family === "cmd" && nameArg.v !== null && !CMD_BUILTINS[key]) {
       // cmd looks in the current folder first, with each runnable extension when none is written.
       const names = pn.ext ? [nameArg.v] : [nameArg.v, ...[".exe", ".com", ".bat", ".cmd"].map(e => nameArg.v + e)];
@@ -3290,6 +3316,9 @@ class Engine extends Classifier {
       }
       scriptName(inner, nameArg.v);
       if (!NATIVE[key]) scriptVerbs(inner, nameArg.v, inner.args);
+    } else if (this.holdsAnyDownload() && this.isDownloaded(nameArg, sc, false)) {
+      // As in dispatch(): a handed bare word that is a download of this task.
+      this.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
     }
     terminalDriver(inner);
     const n = NATIVE[key];
@@ -3306,7 +3335,7 @@ class Engine extends Classifier {
     // there is a download, and a pipe after it carries what it fetched (commands-remote-c1-1).
     this.afterRun(key, inner.args, h.s, sc, h.shellSc ?? h.sc, dlBefore);
     this.innerMarks = this.downloads.length;
-    if (FETCHERS.has(key) || DECODERS.has(key)) this.pipe.fetch = true;
+    if (fetches(key) || DECODERS.has(key)) this.pipe.fetch = true;
     // `command printf -v …` and `time unset …` run the same built-ins.
     this.hiddenNames(key, inner.args, sc);
   }
@@ -3369,9 +3398,14 @@ class Engine extends Classifier {
     // too (`sed … <<< "$x" > a.py`, `tee a.py <<< "$x"`, `dd of=a.py <<< "$x"`: commands-remote-x7-8).
     const prints = s.fetched === true && PRINTS_TEXT.has(key);
     if (prints) this.pipe.fetch = true;
-    if (prints || carried || FETCHERS.has(key)) this.gaveFetched = true;
+    if (prints || carried || fetches(key)) this.gaveFetched = true;
     const ownStart = this.downloads.length;
-    if (s.fetchBefore || FETCHERS.has(key) || carried || s.fetched === true) {
+    // Fetched text handed to a copier as its input file, by the pipe's own name or a process substitution (`curl … |
+    // install -m755 /dev/stdin a.sh`, `cp <(curl …) a.sh`): what it writes is the download (commands-remote-r9-6).
+    if (/^(cp|install|ginstall|gcp|rsync|mv|ln|copy-item)$/.test(key) && ((s.fetchBefore && args.some(a => a.v !== null && PIPE_INPUT.test(a.v))) || args.some(a => a.fetch === true))) {
+      for (const a of args) if (a.v !== null && a.fetch !== true && !isOption(a) && !PIPE_INPUT.test(a.v) && !NULL_SINKS.has(a.v.toLowerCase())) this.download(a.v, sc);
+    }
+    if (s.fetchBefore || fetches(key) || carried || s.fetched === true) {
       for (const r of s.redirs) if ((r.kind === "write" || r.kind === "append") && r.target?.v) this.download(r.target.v, shellSc);
       if (/^(tee|tee-object|out-file|set-content|add-content|sponge)$/.test(key)) {
         for (const a of args) if (a.v !== null && a.param === undefined && !isOption(a) && !NULL_SINKS.has(a.v.toLowerCase())) this.download(a.v, sc);
@@ -3388,6 +3422,8 @@ class Engine extends Classifier {
     // (commands-remote-r8-2).
     if (known && this.runsDownloadedExec(key, args, sc)) this.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
     const runner = PROJECT_RUNNERS.has(key) || ((key === "docker" || key === "podman") && /^(compose|build|buildx)$/.test(args[0]?.v ?? ""));
+    // Any other program named with a download; a build tool's own check below reads its words the same way.
+    if (!runner) this.runsNamedDownload(key, args, sc, dlBefore);
     // Whether anything is downloaded is read after the row's own redirections are marked, as on 4d64d3a, so a runner
     // given fetched text whose output file is its own argument asks with nothing downloaded before it too
     // (`curl … | make x > x`: commands-remote-y8-2).
@@ -3409,6 +3445,8 @@ class Engine extends Classifier {
     // the card then says as a fact (`namedHit`: commands-remote-x7-4).
     const hits = [this.isDownloaded(lit("."), sc), ...args.map(a => {
       if (a.v === null || URL_LIKE.test(a.v)) return false;
+      // A download named inside the word: an attached value, a variable's value (commands-remote-r9-5).
+      if (this.namesDownload(a.v, sc)) return true;
       const v = a.v.replace(/^--?[A-Za-z][A-Za-z-]*=/, "");
       if (v === "" || v.startsWith("-")) return false;
       // A file it is given, or a folder it works in (`make -C sub`) holding a project file this task downloaded.
@@ -3437,8 +3475,8 @@ class Engine extends Classifier {
       const a = args[k];
       if (a.v === null) continue;
       if (a.v === "-c" || a.v === "--compile") { compileOnly = true; continue; }
-      if (a.v === "-o" || a.v === "--output") { if (args[k + 1]?.v) out.push(args[k + 1].v as string); k++; continue; }
-      const attached = /^-o(.+)$/.exec(a.v) ?? /^--output=(.+)$/.exec(a.v);
+      if (/^(-o|--output|--out|-d|--out-dir|-outdir|-odir)$/.test(a.v)) { if (args[k + 1]?.v) out.push(args[k + 1].v as string); k++; continue; }
+      const attached = /^--(?:output|out|out-dir)[=:](.+)$/.exec(a.v) ?? /^[-/](?:out|o|Fe|of)[:=](.+)$/.exec(a.v) ?? /^-o(.+)$/.exec(a.v);
       if (attached) { out.push(attached[1]); continue; }
       if (!a.v.startsWith("-") && this.isDownloaded(a, sc)) sources.push(a.v);
     }
@@ -3447,7 +3485,9 @@ class Engine extends Classifier {
     if (out.length > 0) return;
     if (isRust) { for (const s of sources) { const stem = baseName(s, sc.path.flavour).replace(/\.[^.]+$/, ""); if (stem) this.carryDownload(stem, sc); } return; }
     if (compileOnly) { for (const s of sources) this.carryDownload(s.replace(/\.[^./\\]+$/, ".o"), sc); return; }
-    this.carryDownload("a.out", sc);
+    // A cc-family link writes a.out; the others name their output after the source, beside it or here.
+    if (/^(gcc|g\+\+|cc|c\+\+|clang|clang\+\+|gfortran|tcc|ld|gold|lld)$/.test(key)) { this.carryDownload("a.out", sc); return; }
+    for (const s of sources) { const stem = s.replace(/\.[^./\\]+$/, ""); if (stem) { this.carryDownload(stem, sc); this.carryDownload(baseName(stem, sc.path.flavour), sc); } }
   }
 
   /**
@@ -3504,6 +3544,63 @@ class Engine extends Classifier {
       return false;
     }
     return false;
+  }
+
+  /**
+   * Whether a word names a file this task downloaded, or a folder that holds one of its project files, anywhere in
+   * it (commands-remote-r9-5): the word itself; the value attached to an option (`-Cr`, `-fr/pom.xml`,
+   * `--file=r/x`, `/c:x`); the value of a `NAME=value` or a `-DNAME=value`; each part of a list or of quoted words
+   * (`'project r'`, `a,b`); a build label's folder (`//r/...`).
+   */
+  namesDownload(word: string, sc: Scope): boolean {
+    if (!sc.cwd || URL_LIKE.test(word)) return false;
+    const win = sc.path.flavour === "win32";
+    const at = { os: sc.os, home: sc.home ?? "", cwd: sc.cwd };
+    const seen = new Set<string>();
+    const hit = (c: string): boolean => {
+      const t = c.replace(/^\/\/(?=[^/])/, "").replace(/\/\.\.\.$|(?<=.):[A-Za-z0-9_.-]*$/, m => (win && m.length > 1 ? m : ""));
+      if (t === "" || t.startsWith("-") || seen.has(t) || URL_LIKE.test(t)) return false;
+      seen.add(t);
+      // A file whose name says plain data (a table, text, a picture, a document) isn't code a program runs: it leaves
+      // the command as it was (commands-remote-c2-2), unless a build tool follows it by name (PROJECT_FILE).
+      const base = baseName(t.replace(/[\\/]+$/, ""), sc.path.flavour);
+      if (DATA_FILE.test(base) && !PROJECT_FILE.test(base)) return false;
+      return this.isDownloaded(lit(t), sc, false) || this.downloadedProjectFile(resolveTargetPath(t, at), sc);
+    };
+    const parts = (text: string): string[] => [text, ...text.split(win ? /[\s=,;]+/ : /[\s=,;:]+/)];
+    const texts = [word];
+    // A short option with its value attached, a long one after `=`, and cmd's `/x:value`.
+    const short = /^-[A-Za-z](.+)$/.exec(word);
+    if (short) texts.push(short[1]);
+    const slash = /^\/[A-Za-z?]+:(.+)$/.exec(word);
+    if (slash) texts.push(slash[1]);
+    return texts.some(t => parts(t).some(hit));
+  }
+
+  /**
+   * A program that isn't one that only reads or moves files (DOWNLOAD_READERS), named with a download of this task
+   * anywhere on its line, or working in a downloaded folder or one Ember can't name (commands-remote-r9-5, r9-6): it
+   * may run the download, whatever program it is, so it asks. Only what stood downloaded before this command counts,
+   * as for the build tools' own check below, and a wrapper's command is judged as its own program.
+   */
+  private runsNamedDownload(key: string, args: readonly Arg[], sc: Scope, dlBefore: number): void {
+    // A shell or a program given its command as text judges that text as commands of their own (nested()).
+    if (this.asMain || DOWNLOAD_READERS.has(key) || fetches(key) || NESTS_TEXT.has(key) || key === "") return;
+    const saved = this.downloads;
+    const cut = Math.max(dlBefore, this.innerMarks);
+    if (this.downloads.length > cut) this.downloads = this.downloads.slice(0, cut);
+    try {
+      if (this.ctx.downloaded.size === 0 && this.downloads.length === 0) return;
+      let own = args.filter(a => !this.payloadWords.has(a));
+      // A wrapper's command is judged as its own program, in the folder the wrapper gives it: of a wrapper with a row
+      // only the variables it sets for the command count (`env CC=./cc.sh make`; never `env -C src patch …`).
+      const wraps = own.length < args.length;
+      if (wraps && NATIVE[key]) own = own.filter(a => a.v !== null && /^[A-Za-z_][A-Za-z0-9_]*=/.test(a.v));
+      const hit = own.some(a => a.v !== null && this.namesDownload(a.v, sc)) || (!wraps && (sc.cwd === null || this.isDownloaded(lit("."), sc, false)));
+      if (hit) this.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
+    } finally {
+      this.downloads = saved;
+    }
   }
 
   /** Whether this task holds any download, named or not: an earlier command's, or one earlier on this line. */
@@ -3851,6 +3948,8 @@ function launcher(h: H): void {
   h.e.add("escape", "escape.launcher", SAYS.opensProgram);
 }
 
+/** File names that say plain data, which no program runs: tables, text, pictures, sound, documents (namesDownload). */
+const DATA_FILE = /\.(csv|tsv|txt|text|log|md|markdown|rst|json|jsonl|ndjson|geojson|png|jpe?g|gif|bmp|webp|tiff?|ico|heic|pdf|mp3|mp4|m4a|wav|flac|ogg|mov|mkv|avi|webm|ttf|otf|woff2?|parquet|npy|npz|xlsx?|docx?|pptx?|odt|ods|epub)$/i;
 /** Programs that run their arguments as a command: they are wrappers Ember doesn't know (an unknown program's operand). */
 const KNOWN_ORDINARY = new Set([
   "wslpath", "wslinfo",
