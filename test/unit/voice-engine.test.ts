@@ -2035,10 +2035,13 @@ describe("the wake check", () => {
     }
   });
 
-  it("takes “Hey Ember” back from idle when what was said starts as no wake phrase at all, sends nothing of it and opens no conversation (voice-roomtalk-x9-2)", () => {
+  it("takes “Hey Ember” back from idle when what was said starts as no wake phrase at all, sends nothing of it and opens no conversation (voice-roomtalk-x9-2, voice-roomtalk-y9-1)", () => {
     // The spotter's own false alarm on the room's talk: no near word in it, so no check took it back, the sentence went
     // to Copilot as a wake's request and the next one in the conversation that opened.
-    for (const whole of ["And then we can book the flights to Lisbon.", "So we went to the market.", "What time is the meeting tomorrow?", "Okay, let's go then."]) {
+    // …and talk with a greeting, "they", "embers" or "Emma" in its first words, as the real models wrote it: each was
+    // sent from idle, its start cut off as a wake phrase ("We can book the flights.", "You pass the salt?": voice-roomtalk-y9-1).
+    for (const whole of ["And then we can book the flights to Lisbon.", "So we went to the market.", "What time is the meeting tomorrow?", "Okay, let's go then.",
+      "And they said we can book the flights.", "Hey, can you pass the salt?", "Hi, how are you doing today?", "The embers are still glowing.", "Emma said she would call later."]) {
       const events: VoiceEvent[] = [];
       const c = { t: 0 };
       const e = new VoiceEngine(fake(["", whole, "And then we can book the flights to Lisbon."]), ev => events.push(ev), { now: () => c.t, conversation: true });

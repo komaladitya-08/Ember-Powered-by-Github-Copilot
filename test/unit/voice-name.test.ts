@@ -107,6 +107,16 @@ describe("startsAsWake (what the first speech of a wake by “Hey Ember” from 
   it.each(["And then we can book the flights to Lisbon.", "So we went to the market.", "What time is the meeting tomorrow?", "Okay, let's go then.", "I think we should leave at five.", "Turn on night light.", "I remember the first time we met.", "In September we went to the market."])("doesn't take %j: the room's talk", t => {
     expect(startsAsWake(t, LONG)).toBe(false);
   });
+  // What the real models wrote of room talk the spotter took for the phrase, 4 voices of 4 each: all were a wake's request.
+  it.each(["And they said we can book the flights.", "Hey, can you pass the salt?", "Hi, how are you doing today?", "The embers are still glowing.", "Emma said she would call later.", "I think they went home.",
+    "So they called today.", "Pay the bill tomorrow please.", "Hey, did you see that?", "Embers were all that was left.", "Tell Ember's team we are late."])("doesn't take %j: a greeting before any word, “they”, “embers” or “Emma” (voice-roomtalk-y9-1)", t => {
+    expect(startsAsWake(t, LONG)).toBe(false);
+  });
+  // …and what a noisy microphone had real wakes written as stays: the name's ending after a greeting, the name after "they".
+  it.each(["Ok embers turn on nightlife", "Okay embers turn on night light", "He embers what time is it?", "3 embers, what time is it?", "Ok ember's turn on nightlocks", "They ember what time is it?", "The ember, what time is it?",
+    "Hey Emma, what time is it?", "Lunch. Hey, ever, turn on night light.", "Hey, I'm return on night light."])("still takes %j (voice-roomtalk-y9-1)", t => {
+    expect(startsAsWake(t, LONG)).toBe(true);
+  });
   it("takes a word or two of a short sound, or nothing made out, as the phrase said alone", () => {
     expect(startsAsWake("I'm there.", 16_000)).toBe(true);
     expect(startsAsWake("", LONG)).toBe(true);

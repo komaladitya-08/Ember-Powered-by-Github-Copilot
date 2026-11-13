@@ -1048,8 +1048,11 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1" && process.env.EM
       for (const alarm of ["ember", "hey_ember"] as const) leaked.push(...left(room(talk, "idle", alarm), `A number of people called today. (voice ${sid}) from idle, spotted as ${alarm}`));
       // And talk that starts as no wake phrase at all, where the spotter takes it for the whole phrase from idle: there
       // was no near word in it to take back, so it went to Copilot, and the next sentence in the conversation that opened
-      // (4 runs of 4 before; voice-roomtalk-x9-2).
-      leaked.push(...left(room(speak("So we went to the market on Sunday.", sid, 0.1), "idle", "hey_ember"), `So we went to the market on Sunday. (voice ${sid}) from idle, spotted as hey_ember`));
+      // (4 runs of 4 before; voice-roomtalk-x9-2). So with a greeting, "they", "embers" or "Emma" in its first words: each
+      // of these went as a wake's request with its start cut off, 4 voices of 4 ("You pass the salt?": voice-roomtalk-y9-1).
+      for (const text of ["So we went to the market on Sunday.", "And they said we can book the flights.", "Hey, can you pass the salt?", "Hi, how are you doing today?", "The embers are still glowing.", "Emma said she would call later."]) {
+        leaked.push(...left(room(speak(text, sid, 0.1), "idle", "hey_ember"), `${text} (voice ${sid}) from idle, spotted as hey_ember`));
+      }
     }
     // "Hey Amber, what time is it?" (the suite's near-miss clip) in the room's noise: the spotter takes it for the phrase,
     // and the wake's check, a moment after the word, hears nothing in it. (Before, "What time is it?" went to Copilot
@@ -1071,7 +1074,7 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1" && process.env.EM
       }
       expect(requests, clip).toEqual([expect.stringMatching(/^Turn on night ?light\.? \(wake\)$/i)]);
     }
-  }, 600_000);
+  }, 900_000);
 
   it.skipIf(noReader)("learns the owner's voice, not a screen reader's reading each prompt aloud 14 dB down just before each phrase (voice-listening-r4-1)", async () => {
     // Over speakers, the teaching microphone heard Home's prompts as a screen reader read them, and took them for

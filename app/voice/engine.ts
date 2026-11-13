@@ -284,17 +284,38 @@ const WAKE_ALONE = /^\W*(?:hey|hi|he|ok|okay|k|hay|pay|pey)[\s,.!-]*emb?[a-z]{0,
  * as the recognizer writes them, also with a near word for the name or as an everyday word ("Hey ember…", "K ember turn
  * on…", "Tay ember", "Hey Amber, turn on…", "Hey, number.", "A number. What time…": WAKE_IN_FIRST_WORDS, calledByName,
  * NAME_ALONE, WAKE_ALONE), a greeting with the name as some other word ("Hey, ever, turn on…", "Hey, I'm return on…":
- * GREETING_IN_FIRST_WORDS), or a word or two of a short sound, where the recognizer makes anything of the phrase said
+ * GREETED_OTHER_WORD), or a word or two of a short sound, where the recognizer makes anything of the phrase said
  * alone (nameOnItsOwn), or no word at all (nothing to send)? The pre-roll holds the phrase, so the recognizer has it at
  * the start of what it writes: on the real models every one of 205 wakes by the phrase from idle did, on WebAssembly
  * and on the C API alike (8 voices: 48 clean, 64 with a pause of 0.3 to 2 s before the request, 93 in noise at 10 and 5
  * dB or far and muffled; without NAME_IN_FIRST_WORDS, 3 of those in noise didn't). Speech that starts as none of these ("And then we can book the flights to Lisbon.", "So we went to the market.") is the
- * room's, whatever the spotter made of it (voice-roomtalk-x9-2).
+ * room's, whatever the spotter made of it (voice-roomtalk-x9-2), and so is speech with a greeting before any other word, "they"
+ * without the name or the room's "embers" and "Emma" (ROOMS_WORD, GREETED_OTHER_WORD: voice-roomtalk-y9-1; the same 256
+ * clips came out the same on both builds with them, 235 sent of 256 before and after).
  */
 export function startsAsWake(transcript: string, samples: number): boolean {
-  return WAKE_IN_FIRST_WORDS.test(transcript) || GREETING_IN_FIRST_WORDS.test(transcript) || NAME_IN_FIRST_WORDS.test(transcript) || calledByName(transcript) || NAME_ALONE.test(transcript)
+  const said = transcript.replace(ROOMS_WORD, "–");
+  return WAKE_IN_FIRST_WORDS.test(said) || GREETED_OTHER_WORD.test(said) || NAME_IN_FIRST_WORDS.test(said) || calledByName(transcript) || NAME_ALONE.test(transcript)
     || WAKE_ALONE.test(transcript) || nameOnItsOwn(transcript, samples) || !/[\p{L}\p{N}]/u.test(transcript);
 }
+
+/**
+ * "Embers", "Ember's" and "Emma" where no greeting comes right before them: the room's words ("The embers are still
+ * glowing.", "Emma said she would call later."), which the spotter takes for the phrase and which were a wake's request
+ * from idle, 4 voices of 4 each on the real models. After a greeting as the recognizer writes one they stay the name:
+ * a noisy microphone's "Okay Ember, turn on night light." came out "Ok embers turn on nightlife", "He embers what time
+ * is it?" and "3 embers, what time is it?" (voice-roomtalk-y9-1).
+ */
+const ROOMS_WORD = /(?<!\b(?:hey|hi|he|ok|okay|k|hay|pay|pey|tay|key|\d+)[\s,.!-]*)\b(?:embers|ember['’]s|emma)\b/gi;
+/**
+ * A greeting with the name as some other word, as startsAsWake takes it: "hey" at the start of what was said, or right
+ * after the end of a sentence said before it, and then a word the name is written as ("Hey, ever, turn on…", "Hey, I'm
+ * return on…", or one that starts as the name does). Not "they", which needs the name after it (WAKE_IN_FIRST_WORDS),
+ * nor a greeting later in a sentence or before any other word: "Hey, can you pass the salt?", "Hi, how are you doing
+ * today?" and "And they said we can book the flights." were each a wake's request from idle, 4 voices of 4, where the
+ * spotter took them for the phrase (voice-roomtalk-y9-1).
+ */
+const GREETED_OTHER_WORD = /^\W*(?:(?:\S+\s+){0,2}?\S*[.!?;:]\s+)?(?:hey|hi|hay|pay)[\s,.!]+(?:ever|i['’]m|[aeu]m[a-z]*)\b/i;
 
 /** The name itself in the first four words, joined to a letter or with an ending too: "K-Ember turn on…", "The K-Ember turn…", "Ok ember's turn a…" (a poor microphone's "Okay Ember, turn on…"). */
 const NAME_IN_FIRST_WORDS = /^\W*(?:\S+\s+){0,3}?(?:\S*[^a-z\s])?(?:ember|emmer)(?![a-rt-z])/i;

@@ -684,7 +684,11 @@ after the word, and again on the whole of what was said with it, since the first
 second check also wants the speech to start as the wake phrase does, however the recognizer wrote it (“Hey ember…”,
 “K ember turn on…”, “Hey Amber, turn on…”, “Hey, number.”, “Hey, ever, turn on…”, or a word or two of a short sound
 for the phrase said alone: `startsAsWake`): talk that starts as none of these (“And then we can book the flights to
-Lisbon.”) was a wake's request whenever the spotter fired on it, and opened a conversation (voice-roomtalk-x9-2). A wake
+Lisbon.”) was a wake's request whenever the spotter fired on it, and opened a conversation (voice-roomtalk-x9-2). A
+greeting counts there only at the start of what was said (or of a sentence in it) and before a word the name is written
+as, “they” only before the name, and “embers”, “Ember's” and “Emma” only right after a greeting: “Hey, can you pass the
+salt?”, “And they said we can book the flights.”, “The embers are still glowing.” and “Emma said she would call later.”
+were each a wake's request from idle, 4 voices of 4 (voice-roomtalk-y9-1). A wake
 whose first check wrote the phrase itself (“Hey ember what time”) is not taken back for a near word in the whole (a
 far, muffled real wake came out “Hey, Amber, what time is it?” there), except out of the answer window. The
 second check doesn't run for a cut-in on Ember's own speech or a wake said over a follow-up window, which have rules
