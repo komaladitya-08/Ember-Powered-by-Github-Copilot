@@ -3115,6 +3115,9 @@ class Engine extends Classifier {
     if (s.stdinVars && (key === "done" || key === "fi")) this.hereVarsAt.set(this.at, s.stdinVars);
     if (key === "done" || key === "fi") this.closerInput.set(this.at, s.ownInput);
     else if (s.stdinVars && !(takes ? s.stdinVars.word !== null : VAR_SHOWN_ONLY.has(key) || (readsText(key, args) && !s.pipedOn))) this.useUnjudged(s.stdinVars.names, key !== "xargs" && key !== "parallel");
+    // A secret-named variable in that text is handed to the program as one on its line is (commands-classes-y9-3):
+    // `base64 <<< $GITHUB_TOKEN` prints it in a form no redaction knows.
+    if (s.stdinVars && !takes && s.stdinVars.names.some(n => SECRET_VAR.test(n) && !this.loopVars.has(n) && !this.varValues.has(n))) this.add("secret", "secret.env", SAYS.env);
     this.noteProgram(prog);
     before?.();
     if (nonAsciiLetters(nameArg.v)) this.unclear("unclear.program-letters", "Its program name has letters from another alphabet.");

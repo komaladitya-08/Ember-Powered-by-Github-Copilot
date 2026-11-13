@@ -966,3 +966,22 @@ describe("pm2 and forever given their own options before the verb, or a verb Emb
     }
   });
 });
+
+describe("a secret-named variable on a program's input (commands-classes-y9-3)", () => {
+  it("asks as a secret before a here-string or an unquoted here-document hands a token's variable to any program", () => {
+    for (const o of POSIX) for (const cmd of ["base64 <<< $GITHUB_TOKEN", "rev <<< \"$GITHUB_TOKEN\"", "xxd <<< $AWS_SECRET_ACCESS_KEY", "cat <<EOF\n$GITHUB_TOKEN\nEOF",
+      "frobnicate <<EOF\ntoken=${NPM_TOKEN}\nEOF", "tr a-z A-Z <<< \"x${GITHUB_TOKEN}y\"", "cat <<-EOF\n\t$GITHUB_TOKEN\n\tEOF"]) {
+      if (o.shell === "sh" && cmd.includes("<<<")) continue;
+      const d = decide(cmd, o);
+      expect(d.verdict, label(cmd, o)).toBe("ask");
+      expect(d.rules, label(cmd, o)).toContain("secret.env");
+      expect(d.classes, label(cmd, o)).toContain("secret");
+    }
+  });
+
+  it("never for a quoted here-document, a variable the line set, or a variable not named for a secret", () => {
+    for (const cmd of ["cat <<'EOF'\n$GITHUB_TOKEN\nEOF", "T=1; base64 <<< $T", "GITHUB_TOKEN=abc; rev <<< $GITHUB_TOKEN", "wc -c <<< $PATH", "cat <<EOF\n$USER\nEOF"]) {
+      expect(decide(cmd).rules, cmd).not.toContain("secret.env");
+    }
+  });
+});

@@ -218,8 +218,9 @@ Ember stops and asks before a command that:
   `secrets.txt`, `credentials.txt`, `.vault_pass`, `.htpasswd`, `~/.boto`, `~/.s3cfg`, Composer's `auth.json`,
   FileZilla's and Pidgin's saved sign-ins); a fetch of a cloud computer's own sign-in address (`curl
   http://169.254.169.254/…`); a password or token
-  written on the command line; and a variable named for one handed to any program as an argument, known to Ember or
-  not (`mytool --token "$GITHUB_TOKEN"`, `curl -H "Authorization: Bearer $API_KEY" …`, `$env:NPM_TOKEN`, `%NPM_TOKEN%`):
+  written on the command line; and a variable named for one handed to any program as an argument or on its input,
+  known to Ember or not (`mytool --token "$GITHUB_TOKEN"`, `curl -H "Authorization: Bearer $API_KEY" …`,
+  `$env:NPM_TOKEN`, `%NPM_TOKEN%`, `base64 <<< $GITHUB_TOKEN`):
   the program is given the secret and may print it;
 - **may send a file's contents somewhere** ("May send what a file or a command holds to another computer."): a
   program that fetches or sends (`curl`, `wget`, httpie, `Invoke-WebRequest`, `nc` and their like) whose address,
