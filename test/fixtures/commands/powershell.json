@@ -6233,6 +6233,24 @@
   {
    "cmd": ".\\node_modules\\.bin\\jest.cmd --ci",
    "verdict": "run"
+  },
+  {
+   "cmd": "pnpm format D: /q /y",
+   "verdict": "ask",
+   "rules": [
+    "disk.erase"
+   ]
+  },
+  {
+   "cmd": "bun format c:",
+   "verdict": "ask",
+   "rules": [
+    "disk.erase"
+   ]
+  },
+  {
+   "cmd": "pnpm format src",
+   "verdict": "run"
   }
  ]
 }

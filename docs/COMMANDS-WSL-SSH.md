@@ -379,7 +379,9 @@ Ember stops and asks before a command that:
   an interpreter, `npm`, `git`, `rm`) is judged as that program's own line (`yarn sh -c '…'` as `sh -c '…'`), and the
   words handed to the project's own script or tool are read for a secret's path, Ember's own files, a command handed
   on, a variable that names code and a first word that says it publishes; its plain options, test names, globs and
-  files in the folder run as before (`yarn test --watch`, `npm run build -- --mode production`). `yarn env` and `npm
+  files in the folder run as before (`yarn test --watch`, `npm run build -- --mode production`). A script's everyday
+  name that is also a program, which pnpm and bun run when the project has no such script, asks as that program where
+  its words are what makes the program dangerous (`pnpm format D: /q`, `pnpm watch 'rm -rf …'`). `yarn env` and `npm
   run env` print the environment and ask. What a runner downloads and runs (`npx`, `pnpx`, `bunx`, `uvx`,
   `pipx run`, `npm exec`, `pnpm dlx`, `yarn dlx`, `deno run` with an address or `npm:`, `nix run`) asks as before, and its command line is judged as well, so
   `npx -y sometool ~/.ssh/id_rsa` also says it reads a key and `npx pm2 start app.js` that it keeps running

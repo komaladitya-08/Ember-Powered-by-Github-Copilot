@@ -3959,6 +3959,11 @@ describe("what a package manager or the project's own launcher hands on (integ2-
     await asks(command);
   });
 
+  it.each([["pnpm watch -n1 'rm -rf ~/Documents'", "watch -n1 'rm -rf ~/Documents'"], ["yarn watch 'rm -rf ~/Documents'", "watch 'rm -rf ~/Documents'"]])(
+    "decides a script's everyday name handed a command as the program of that name, in every mode: %s (commands-runners-x9-6)", async (command, bare) => {
+      for (const [mode, o] of MODES) expect(await outcome(command, "run the tests", o()), `${command} ${mode}`).toEqual(await outcome(bare, "run the tests", o()));
+    });
+
   it.each([
     "bun --bun cross-env LD_PRELOAD=/tmp/x.so jest", "bun -b cross-env LD_PRELOAD=/tmp/x.so jest", "bun --cwd web cross-env LD_PRELOAD=/tmp/x.so jest",
     "pnpm recursive cross-env LD_PRELOAD=/tmp/x.so jest", "pnpm m run cross-env LD_PRELOAD=/tmp/x.so jest", "yarn lerna exec -- cross-env LD_PRELOAD=/tmp/x.so jest",

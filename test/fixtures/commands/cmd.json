@@ -2936,6 +2936,31 @@
   {
    "cmd": "node_modules\\.bin\\eslint.cmd .",
    "verdict": "run"
+  },
+  {
+   "cmd": "pnpm format c: /fs:ntfs",
+   "verdict": "ask",
+   "rules": [
+    "disk.erase"
+   ]
+  },
+  {
+   "cmd": "pnpm format D: /q /y",
+   "verdict": "ask",
+   "rules": [
+    "disk.erase"
+   ]
+  },
+  {
+   "cmd": "bun format D: /q /y",
+   "verdict": "ask",
+   "rules": [
+    "disk.erase"
+   ]
+  },
+  {
+   "cmd": "pnpm format --check",
+   "verdict": "run"
   }
  ]
 }

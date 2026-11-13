@@ -23341,6 +23341,29 @@
    "rules": [
     "posix.rm"
    ]
+  },
+  {
+   "cmd": "pnpm watch -n1 'rm -rf ~/Documents'",
+   "verdict": "ask",
+   "rules": [
+    "unclear.interactive",
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "yarn watch 'rm -rf ~/Documents'",
+   "verdict": "ask",
+   "rules": [
+    "unclear.interactive",
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "pnpm format /dev/sda",
+   "verdict": "ask",
+   "rules": [
+    "disk.erase"
+   ]
   }
  ]
 }

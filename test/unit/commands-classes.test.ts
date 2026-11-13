@@ -1341,6 +1341,21 @@ describe("what a package manager hands to the script or program it runs by name 
     }
   });
 
+  it("reads a script's everyday name as the program too where its words are what that program's row finds dangerous (commands-runners-x9-6)", () => {
+    const cases: [string, Opts][] = [["format c: /fs:ntfs", { shell: "cmd", context: "win32" }], ["format D: /q /y", { shell: "cmd", context: "win32" }],
+      ["format D: /q /y", { shell: "powershell", context: "win32" }], ["format /dev/sda", {}], ["watch -n1 'rm -rf ~/Documents'", {}], ["watch 'rm -rf ~/Documents'", {}]];
+    for (const [line, o] of cases) for (const front of ["pnpm", "bun", "yarn", "pnpm run"]) {
+      if (o.shell === "cmd" && line.includes("'")) continue;
+      const bare = decide(line, o);
+      const d = decide(`${front} ${line}`, o);
+      expect(d.verdict, label(`${front} ${line}`, o)).toBe("ask");
+      expect(d.rules, label(`${front} ${line}`, o)).toEqual(expect.arrayContaining(bare.rules));
+    }
+    for (const o of [...POSIX, ...WINDOWS]) for (const cmd of ["pnpm format --check", "pnpm format src", "yarn format --write .", "pnpm watch src", "yarn watch", "yarn watch --mode development"]) {
+      expect(decide(cmd, o).verdict, label(cmd, o)).toBe("run");
+    }
+  });
+
   it("reads the line behind corepack's pinned version as the bare manager's (commands-runners-x9-2)", () => {
     for (const o of [...POSIX, ...WINDOWS]) {
       for (const cmd of ["corepack npm@10 publish", "corepack yarn@4 cat ~/.ssh/id_rsa", "corepack pnpm@9 exec rm -rf ~/Documents", "corepack yarn@1.22.22 cross-env LD_PRELOAD=/tmp/x.so jest",

@@ -4410,6 +4410,14 @@ function runnerLine(h: H, name: Arg, given: readonly Arg[], wrapper: string): vo
   // A deleter with nothing after its name is the project's script of that name (commands-remote-x8-13); a `--`
   // after it was always read as something handed to it (commands-runners-3).
   if (program && !(NEW_DELETERS.has(key) && given.length === 0)) { h.e.payload([name, ...rest], h.sc, wrapper); return; }
+  // A script's everyday name that is also a program: pnpm and bun run the program from the PATH when the project has
+  // no such script, so the words that program's row finds dangerous are read as its line too, beside the script's
+  // reading (commands-runners-x9-6): a drive or a device for `format`, a command for `watch`. Plain options, files
+  // and folders stay a script's (`yarn format --check`, `pnpm watch src`).
+  const isDrive = (v: string): boolean => /^([A-Za-z]:[\\/]?|\/dev\/\S+|\\\\[.?]\\\S+)$/.test(v);
+  if ((key === "format" && rest.some(a => a.v !== null && isDrive(a.v))) || (key === "watch" && rest.some(a => a.v !== null && /\s/.test(a.v)))) {
+    h.e.payload([name, ...rest], h.sc, wrapper);
+  }
   h.e.readArgs(rest, h.sc, { unresolvedUnclear: true });
   // The tool's own verb, where its name says it publishes (`yarn lerna publish`, `pnpm vercel deploy`), as a script's
   // name is read. Only the first word, and never a script's everyday name's: `--mode production` and `yarn build

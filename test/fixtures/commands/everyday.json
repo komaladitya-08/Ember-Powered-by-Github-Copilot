@@ -3185,6 +3185,21 @@
    "cmd": "bun -b x.ts",
    "shell": "bash",
    "context": "linux"
+  },
+  {
+   "cmd": "pnpm watch src",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn format --write .",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "yarn watch --mode development",
+   "shell": "bash",
+   "context": "linux"
   }
  ]
 }
