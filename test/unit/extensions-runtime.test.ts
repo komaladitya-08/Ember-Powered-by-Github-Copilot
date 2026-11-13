@@ -2065,6 +2065,27 @@ describe("ExtensionsService", () => {
     expect(row.status).toEqual({ text: "Didn't start", tone: "fail" });
     expect(row.note).toBe("It stopped before saying what it offers.");
   });
+
+  it("offers no review it can never pass where this computer can't run a server added before, only Remove with why (r10-integrations-x10-4)", async () => {
+    // Added and agreed where Ember has a launcher; then the same store on a computer with none (macOS) after the
+    // extensions card's version moved: "Review and agree" always answered "Its tools couldn't be checked".
+    writeJson("market/.claude-plugin/marketplace.json", { name: "local-market", plugins: [{ name: "remote", source: "./plugins/remote" }] });
+    writeJson("market/plugins/remote/.claude-plugin/plugin.json", { name: "remote", mcpServers: { web: { type: "http", url: "https://mcp.example.com/mcp" } } });
+    const a = new ExtensionsService(deps());
+    expect((await a.install("local-market", "remote")).ok).toBe(true);
+    const [added] = await a.list();
+    await a.reagree(added.id, added.reviewToken!);
+    const b = new ExtensionsService(deps({ launcher: null, probe: undefined }));
+    await b.refresh();
+    const [now] = await b.list();
+    const row = installedRow({ ...now, consented: false });
+    expect(row.status).toEqual({ text: "Didn't start", tone: "fail" });
+    expect(row.note).toBe("Ember can't reach extensions' servers on this computer yet.");
+    expect(row.actions.map(x => x.act)).toEqual(["uninstall"]);
+    // One that may start again later is still offered its review.
+    const failed = { id: "p", kind: "plugin", name: "weather", source: "weather@m", enabled: true, consented: false, status: "failed", detail: "It stopped before saying what it offers.", tools: [] } as const;
+    expect(installedRow({ ...failed, tools: [] }).actions.map(x => x.act)).toEqual(["reagree", "uninstall"]);
+  });
 });
 
 describe("extensions' first-use card", () => {

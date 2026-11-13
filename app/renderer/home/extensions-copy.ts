@@ -149,7 +149,8 @@ export function installedRow(i: Installed, on = true, connected = true, heldByVa
     : i.enabled && i.tools.some(t => t.nameConflict) ? "Some tool names clash in Copilot. Ember leaves those tools off."
     : null;
   const actions: ItemAction[] = [];
-  if (changed || !i.consented) actions.push({ act: "reagree", label: i.consented ? "Review tools" : "Review and agree", ariaLabel: `Review tools: ${i.name}` });
+  // Not where it can never pass: no launcher here, a server Ember can't run (r10-integrations-x10-4).
+  if ((changed || !i.consented) && !i.stuck) actions.push({ act: "reagree", label: i.consented ? "Review tools" : "Review and agree", ariaLabel: `Review tools: ${i.name}` });
   if (i.kind === "connector" && i.status === "needs-auth") actions.push({ act: "connect", label: "Connect again", ariaLabel: `Connect again: ${i.name}` });
   actions.push(i.kind === "connector"
     ? { act: "disconnect", label: "Disconnect", ariaLabel: `Disconnect ${i.name}`, confirm: disconnectQuestion(i.name), danger: true }

@@ -355,12 +355,14 @@ export class ExtensionsService implements ExtensionsApi {
     const failed = i.servers.find(s => s.status === "failed");
     const auth = i.servers.find(s => s.status === "needs-auth");
     const status: Installed["status"] = this.busy.has(i.id) ? "starting" : !i.enabled ? "disabled" : failed ? "failed" : auth ? "needs-auth" : "ready";
+    // A failure that no new try can change here: its review would only ever answer that it couldn't be checked.
+    const stuck = i.servers.some(s => s.status === "failed" && (!s.spec || s.detail === NO_PROGRAMS || s.detail === NO_REMOTE));
     const detail = status === "failed" ? failed?.detail : status === "needs-auth" ? auth?.detail : tools.some(t => t.changed) ? "A tool changed since you agreed to it. It stays off until you agree again." : undefined;
     return {
       id: i.id, kind: i.kind, name: i.name, source: i.source, enabled: i.enabled, consented: i.consentedAt !== null && this.consented(), status, tools, needsReview,
       reviewToken: this.reviewToken(i),
       reviewTools: i.servers.flatMap(s => toolInfo(s, s.reviewTools ?? s.tools, true)),
-      ...(i.publisher ? { publisher: i.publisher } : {}), ...(i.version ? { version: i.version } : {}), ...(detail ? { detail } : {}),
+      ...(i.publisher ? { publisher: i.publisher } : {}), ...(i.version ? { version: i.version } : {}), ...(detail ? { detail } : {}), ...(stuck ? { stuck } : {}),
       reaches: i.servers.filter(s => s.spec).map(s => reachOf(s.spec!, this.store.pluginDir(i.id))),
     };
   }

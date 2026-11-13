@@ -11,6 +11,8 @@ export interface ToolInfo { server?: string; name: string; description: string; 
 export interface Installed { id: string; kind: Kind; name: string; publisher?: string; source: string; version?: string;
   enabled: boolean; consented: boolean; status: "ready" | "starting" | "needs-auth" | "failed" | "disabled";
   detail?: string; tools: ToolInfo[];
+  /** It can't start on this computer however often it is tried (no launcher here, a server Ember can't run): no review. */
+  stuck?: boolean;
   /** The exact discovered tools awaiting review, grouped by server; the token binds Home's click to this list. */
   reviewTools?: ToolInfo[]; reviewToken?: string; needsReview?: boolean;
   /** Where it reaches: the commands it runs on this computer and the hosts it calls (runtime addition). */
