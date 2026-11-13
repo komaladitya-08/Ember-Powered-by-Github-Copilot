@@ -1888,6 +1888,42 @@ export function mentioned(findings: readonly Finding[], userWords: string): bool
   });
 }
 
+/** A "wait" on its own: it holds a step back only with what it waits for, which the flow's own HOLDS_BACK reads. */
+const WAIT_WORD = /(^|[^\p{L}\p{N}])(wait|waits|waiting)(?=$|[^\p{L}\p{N}])/giu;
+/** Words before "ask me" that turn it round ("don't ask me", "no need to check with me", "without asking first"). */
+const NOT_ASKED = /(^|[^\p{L}\p{N}])(don['’]?t|do\s+not|never|needn['’]?t|no\s+need\s+to|without)(\s+(ever|even|bother\s+to|have\s+to|need\s+to))?\s+$/iu;
+
+/**
+ * Whether the user's own words, where they name one of these findings' steps, hold that step back in a way only they
+ * can lift (integ-x-3): they ask to be asked first ("delete the build folder, but ask me first", "check with me",
+ * "on my ok", "a dry run": ASK_FIRST), or, for a step that throws something away, they make it wait on a copy
+ * (keepsCopyFirst), narrow it ("but only the logs"), say which thing by where it came from, or send it to the trash, the
+ * bin or a stash, which a permanent deletion is not (heldOrNarrowed). Autopilot reads it as their no, said in advance
+ * (flow.ts wordsRuleOut). A time or a condition is not read here: the flow reads those where they name the step, and
+ * one on another step holds nothing back ("run the tests tonight, then delete build": modes-y9-y9-7).
+ */
+export function heldByWords(findings: readonly Finding[], userWords: string): boolean {
+  if (!userWords || userWords.trim() === "") return false;
+  const said = userWords.normalize("NFKC").replace(WAIT_ONLY, "");
+  const plain = said.replace(WAIT_WORD, "$1");
+  let asksFirst = false;
+  for (const m of plain.matchAll(new RegExp(ASK_FIRST.source, "giu"))) {
+    if (!NOT_ASKED.test(plain.slice(0, m.index + m[1].length))) { asksFirst = true; break; }
+  }
+  const groups = new Map<string, Finding[]>();
+  for (const f of findings) {
+    const row = rowOf(f, findings);
+    if (row) groups.set(row, [...(groups.get(row) ?? []), f]);
+  }
+  for (const [row, fs] of groups) {
+    if (!mentioned(fs, userWords)) continue;
+    if (asksFirst) return true;
+    const verbs = row.startsWith("git.push") ? ["push", "force push"] : ROW_VERBS[row] ?? [];
+    if (THROWS_AWAY.has(row) && (keepsCopyFirst(said, verbs) || heldOrNarrowed(said, verbs))) return true;
+  }
+  return false;
+}
+
 /**
  * Where a request's clauses part: list punctuation, a full stop or colon before a space (never inside a file's name,
  * "config.json"), dashes between words, brackets, and "but".

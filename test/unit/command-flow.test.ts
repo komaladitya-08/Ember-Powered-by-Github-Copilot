@@ -3049,6 +3049,31 @@ describe("a command that would ask, in Autopilot (autopilot.ts; modes-D2, modes-
   });
 
   it.each<[string, string]>([
+    ["delete the build folder, but move it to the trash", "rm -rf build"], ["delete the build folder, though stash it somewhere", "rm -rf build"],
+    ["delete the build folder but only the logs", "rm -rf build"], ["delete the build folder, but ask me first", "rm -rf build"],
+    ["delete the build folder, but back it up first", "rm -rf build"], ["delete the build folder but put it in the bin", "rm -rf build"],
+    ["push main, but check with me first", "git push origin main"], ["restart nginx on my ok", "sudo systemctl restart nginx"],
+  ])("asks in Autopilot before a step their words ask to be asked about, or a deletion they narrow or send to the trash: %s (integ-x-3)", async (words, command) => {
+    setCommandJudge(null);
+    const ctx = { os: "linux" as const, home: "/home/ana", cwd: "/home/ana/proj", ember: FACTS.ember, downloaded: new Set<string>() };
+    expect(wordsRuleOut(classifyCommand(command, "bash", ctx).findings, words)).toBe(true);
+    const h = auto({ words, answers: ["deny"] });
+    expect((await run(h, command)).resultType).toBe("denied");
+    expect(h.asked).toHaveLength(1);
+    expect([h.windowAnnounce, h.announced, h.starts]).toEqual([[], [], []]);
+  });
+
+  it("reads such words only where they name the step, and never a step after it or a turned-down question (integ-x-3)", () => {
+    const ctx = { os: "linux" as const, home: "/home/ana", cwd: "/home/ana/proj", ember: FACTS.ember, downloaded: new Set<string>() };
+    const ruled = (words: string, command: string) => wordsRuleOut(classifyCommand(command, "bash", ctx).findings, words);
+    for (const [words, command] of [
+      ["delete the build folder and the bin folder too", "rm -rf build"], ["delete the build folder and run the tests", "rm -rf build"],
+      ["delete the build folder, no need to check with me", "rm -rf build"], ["delete the build folder. Don't ask me again", "rm -rf build"],
+      ["tidy up, but ask me first", "rm -rf build"], ["ask me first", "ls -la"], ["push main and move the notes to the trash", "git push origin main"],
+    ]) expect(ruled(words, command), `${words} / ${command}`).toBe(false);
+  });
+
+  it.each<[string, string]>([
     ["tidy up the project folder, but keep notes.txt", "rm -f notes.txt"], ["clear out my home folder but leave Downloads alone", "rm -rf ~/Downloads/*"],
     ["bump the version but hold off on publishing", "npm publish"], ["delete the logs, keep build", "rm -rf build"],
   ])("asks before a command their words hold back, and the card says that their words did: %s / %s (modes-y9-x9-4, modes-y9-x9-6)", async (words, command) => {
