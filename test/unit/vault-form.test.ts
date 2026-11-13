@@ -9,6 +9,8 @@ import fs from "node:fs";
 import { createVaultForm, formView, VAULT_FORM_SIZE, type VaultFormRequest, type VaultWindowLike } from "../../app/main/vault/form";
 import type { VaultKept } from "../../app/main/vault/store";
 import type { IpcLike, WebContentsLike } from "../../app/main/targets/types";
+import { saveHeldBack } from "../../app/renderer/vault/copy";
+import { PROMPT_ARM_MS } from "../../app/renderer/prompt/copy";
 import { VAULT_IPC, VAULT_KINDS, type VaultFormView, type VaultSubmitResult } from "../../app/shared/vault";
 
 const CANARY = "hunter2-CANARY-9f3a";
@@ -303,6 +305,32 @@ describe("the Secure Form", () => {
     expect(JSON.stringify([said, h.logged])).not.toContain(CANARY);
     expect(JSON.stringify(h.logged)).not.toContain("ada");
     expect(JSON.stringify(h.logged)).not.toContain("github");
+  });
+
+  it("leaves an Enter alone that is a held key's repeat or comes before the form has had the keyboard for the prompt window's arm time (integ-y-3)", () => {
+    const enter = { key: "Enter", repeat: false }, held = { key: "Enter", repeat: true };
+    const at = 50_000;
+    // Keys the person was typing into their own app land in the form as it takes the keyboard: their Enter saves nothing.
+    expect(saveHeldBack(enter, "other", at, at)).toBe(true);
+    expect(saveHeldBack(enter, "other", at + PROMPT_ARM_MS - 1, at)).toBe(true);
+    expect(saveHeldBack(enter, "other", at + PROMPT_ARM_MS, at)).toBe(false);
+    // A held Enter never saves, however long the form has been up.
+    expect(saveHeldBack(held, "other", at + 60_000, at)).toBe(true);
+    // A no is always safe: Enter on Cancel or Close, and Esc anywhere, are taken at once, held or not.
+    for (const e of [enter, held]) expect(saveHeldBack(e, "cancel", at, at)).toBe(false);
+    for (const target of ["other", "cancel", "lines"] as const) expect(saveHeldBack({ key: "Escape", repeat: false }, target, at, at)).toBe(false);
+    // Enter in the address's box is a new line, and other keys are typing.
+    for (const e of [enter, held]) expect(saveHeldBack(e, "lines", at, at)).toBe(false);
+    for (const key of [" ", "a", "Tab"]) for (const repeat of [false, true]) expect(saveHeldBack({ key, repeat }, "other", at, at)).toBe(false);
+    // The page asks it of every key-down before anything else sees the key, counting from when its window took the keyboard.
+    const page = read("app/renderer/vault/main.ts");
+    expect(page).toContain("if (saveHeldBack(e, target, Date.now(), keyboardAt)) e.preventDefault();\n}, true);");
+    expect(page).toContain('window.addEventListener("focus", () => { keyboardAt = Date.now(); judgeFocus(); });');
+    // One timing and one held-key rule: the prompt window's and the agree buttons' own.
+    const copy = read("app/renderer/vault/copy.ts");
+    expect(copy).toContain('import { PROMPT_ARM_MS } from "../prompt/copy";');
+    expect(copy).toContain('import { heldPress } from "../../shared/provider";');
+    expect(copy).not.toMatch(/\b\d{3,}\b/);
   });
 
   it("is bridged by a preload with only the form's three channels (vault-2)", () => {

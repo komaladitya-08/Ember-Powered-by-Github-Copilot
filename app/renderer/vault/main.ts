@@ -12,6 +12,7 @@ import {
   type VaultFormView, type VaultPart, type VaultValues,
 } from "../../shared/vault";
 import type { VaultFormApi } from "./api";
+import { saveHeldBack } from "./copy";
 
 declare global { interface Window { emberVaultForm: VaultFormApi } }
 
@@ -24,6 +25,8 @@ const problem = $("problem");
 const hint = $("hint");
 let view: VaultFormView | null = null;
 let shownAt = 0;
+/** When the form took the keyboard: shown, or its window got the keyboard again. Save's Enter waits from here (integ-y-3). */
+let keyboardAt = 0;
 /** A Save is with main: a second one waits, and so does Cancel (main refuses both until it is done). */
 let busy = false;
 /** Kept, or closed: nothing more is sent. */
@@ -51,7 +54,7 @@ function judgeFocus(): void {
   const text = elsewhere ? VAULT_KEYBOARD_ELSEWHERE : "";
   if (hint.textContent !== text) hint.textContent = text;
 }
-window.addEventListener("focus", judgeFocus);
+window.addEventListener("focus", () => { keyboardAt = Date.now(); judgeFocus(); });
 window.addEventListener("blur", judgeFocus);
 
 function setBusy(on: boolean): void {
@@ -65,6 +68,7 @@ function setBusy(on: boolean): void {
 function show(v: VaultFormView): void {
   view = v;
   shownAt = Date.now();
+  keyboardAt = shownAt;
   $("title").textContent = v.title;
   $("where").textContent = v.where;
   boxes.clear();
@@ -173,6 +177,13 @@ card.addEventListener("submit", e => {
   if (e.isTrusted) void submit();
 });
 cancel.addEventListener("click", e => { if (e.isTrusted) close(); });
+// The form takes the keyboard as it opens, so keys meant for another app land here: an Enter that is a held key's
+// repeat, or that comes before the form has had the keyboard for the prompt window's arm time, saves nothing
+// (integ-y-3). Esc, Cancel and Close are taken at once.
+window.addEventListener("keydown", e => {
+  const target = e.target instanceof HTMLTextAreaElement ? "lines" : e.target === cancel ? "cancel" : "other";
+  if (saveHeldBack(e, target, Date.now(), keyboardAt)) e.preventDefault();
+}, true);
 window.addEventListener("keydown", e => {
   if (e.key !== "Escape" || !view) return;
   e.preventDefault();

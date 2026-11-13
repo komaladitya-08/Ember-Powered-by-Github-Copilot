@@ -9,6 +9,7 @@ import path from "node:path";
 import { chromium, type Browser, type Page } from "playwright-core";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { formView, VAULT_FORM_SIZE } from "../../app/main/vault/form";
+import { PROMPT_ARM_MS } from "../../app/renderer/prompt/copy";
 import { VAULT_KEYBOARD_ELSEWHERE, VAULT_NO_KEYRING, VAULT_NOTHING_TYPED, vaultSaveProblem, type VaultFormView, type VaultKind, type VaultSubmitResult } from "../../app/shared/vault";
 
 declare global { interface Window { __vaultCalls: unknown[]; __vaultNext: VaultSubmitResult | "hang"; __vaultRelease: (r: VaultSubmitResult) => void } }
@@ -42,7 +43,7 @@ const view = (kind: VaultKind, o: Partial<{ keyring: boolean; app: boolean }> = 
   ? { kind, dest: { app: "thunderbird" }, where: "Thunderbird", via: null, keyring: o.keyring ?? true }
   : { kind, dest: { site: "https://github.com" }, where: "github.com", via: "Firefox", keyring: o.keyring ?? true });
 
-async function open(v: VaultFormView | null, o: { scheme?: "light" | "dark"; textSize?: string } = {}): Promise<{ page: Page; errors: string[] }> {
+async function open(v: VaultFormView | null, o: { scheme?: "light" | "dark"; textSize?: string; early?: boolean } = {}): Promise<{ page: Page; errors: string[] }> {
   const size = VAULT_FORM_SIZE[v?.kind ?? "login"];
   const page = await browser.newPage({ viewport: size });
   const errors: string[] = [];
@@ -67,6 +68,8 @@ async function open(v: VaultFormView | null, o: { scheme?: "light" | "dark"; tex
   if (o.textSize) await page.evaluate(s => document.documentElement.setAttribute("data-text-size", s), o.textSize);
   if (v) await page.locator("#card").waitFor({ state: "visible" });
   await page.evaluate(() => document.fonts.ready);
+  // Save takes no Enter until the form has had the keyboard for the prompt window's arm time (integ-y-3).
+  if (v && !o.early) await page.waitForTimeout(PROMPT_ARM_MS + 50);
   return { page, errors };
 }
 const calls = (page: Page) => page.evaluate(() => window.__vaultCalls);
@@ -147,6 +150,41 @@ it.skipIf(!on)("Enter in a box saves, and a missing password is said at its box 
   await page.keyboard.press("Enter");
   await expect.poll(() => calls(page)).toEqual([["submit", "form-1", { user: "ada", password: "x" }]]);
   await page.close();
+});
+
+it.skipIf(!on)("saves nothing at an Enter that comes as the form takes the keyboard or that is a held key, and still takes Esc at once (integ-y-3)", async () => {
+  // Keys meant for another app land in the form as it opens: a name, then Enter.
+  const { page, errors } = await open(view("contact"), { early: true });
+  await page.keyboard.type("see you at five");
+  await page.keyboard.press("Enter");
+  await page.waitForTimeout(100);
+  expect(await calls(page)).toEqual([]);
+  // Enter held down since before the form opened: its repeats save nothing, however long it is held.
+  const held = await open(view("contact"), { early: true });
+  await held.page.keyboard.type("Ada");
+  await held.page.keyboard.down("Enter");
+  await held.page.waitForTimeout(PROMPT_ARM_MS + 50);
+  await held.page.keyboard.down("Enter");
+  await held.page.keyboard.down("Enter");
+  await held.page.waitForTimeout(100);
+  expect(await calls(held.page)).toEqual([]);
+  await held.page.keyboard.up("Enter");
+  // A fresh press, once the form has had the keyboard for the arm time, saves what is in the boxes.
+  await held.page.keyboard.press("Enter");
+  await expect.poll(() => calls(held.page)).toEqual([["submit", "form-1", { name: "Ada" }]]);
+  await page.keyboard.press("Enter");
+  await expect.poll(() => calls(page)).toEqual([["submit", "form-1", { name: "see you at five" }]]);
+  // Esc is a no, and a no is always safe: taken at once, on a form that has only just opened.
+  const early = await open(view("login"), { early: true });
+  await early.page.keyboard.press("Escape");
+  await expect.poll(() => calls(early.page)).toEqual([["cancel", "form-1"]]);
+  // And so is Enter on Cancel.
+  const cancel = await open(view("login"), { early: true });
+  await cancel.page.locator("#cancel").focus();
+  await cancel.page.keyboard.press("Enter");
+  await expect.poll(() => calls(cancel.page)).toEqual([["cancel", "form-1"]]);
+  expect(errors).toEqual([]);
+  for (const p of [page, held.page, early.page, cancel.page]) await p.close();
 });
 
 it.skipIf(!on)("keeps nothing at Cancel or Esc, and empties the boxes (vault-2)", async () => {
