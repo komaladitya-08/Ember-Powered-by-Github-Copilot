@@ -1328,3 +1328,15 @@ describe.skipIf(gate)("Home's consent cards, by keyboard (accessibility-r9-2, ho
     });
   }
 });
+
+describe.skipIf(gate)("Voice under an organisation that turned listening off", () => {
+  it("shows Hear me more clearly as managed, as the policy holds it off, not as a switch that flips back (home-r9-3)", async () => {
+    const page = await open("voice", { admin: { managed: ["wakeWord", "naturalVoice"], features: { voice: false } } });
+    const clear = page.locator("#clear-on");
+    await expect.poll(() => clear.isDisabled()).toBe(true);
+    expect(await clear.getAttribute("title")).toBe("Managed by your organisation");
+    expect(await page.locator("#wake").isDisabled()).toBe(true);
+    expect(page.errors).toEqual([]);
+    await page.close();
+  });
+});

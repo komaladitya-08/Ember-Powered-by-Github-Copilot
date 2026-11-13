@@ -652,7 +652,8 @@ function renderAdmin(a: Status["admin"]): void {
   if (agent) renderAgent(agent);
   renderRecipient();
   renderTagline();
-  for (const [id, key] of [["wake", "wakeWord"], ["speak", "speak"], ["speak-results", "speak"], ["speak-rate", "speak"], ["natural-model", "naturalVoice"], ["m-conductor", "models"], ["m-worker", "models"], ["memory-on", "memory"], ["updates-on", "updates"], ["routines-on", "routines"], ["screen-images", "screenImages"]] as const) {
+  // Hear me more clearly is held off wherever listening is (applyAdminPolicy): managed with it (home-r9-3).
+  for (const [id, key] of [["wake", "wakeWord"], ["clear-on", "wakeWord"], ["speak", "speak"], ["speak-results", "speak"], ["speak-rate", "speak"], ["natural-model", "naturalVoice"], ["m-conductor", "models"], ["m-worker", "models"], ["memory-on", "memory"], ["updates-on", "updates"], ["routines-on", "routines"], ["screen-images", "screenImages"]] as const) {
     const input = $(id) as HTMLInputElement | HTMLSelectElement;
     input.disabled = managed.has(key);
     (input.closest(MANAGED_ROW) ?? input).classList.toggle("locked", managed.has(key));
