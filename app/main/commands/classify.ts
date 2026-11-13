@@ -4114,7 +4114,8 @@ function knownProgram(key: string): boolean {
 
 /**
  * Whether a program's path is in the task's own folder (`start`): relative and staying in it, or absolute (or from ~)
- * and under it, never through a hidden folder of its own (`.git/hooks/x`, `.cache/x`) but a package manager's `.bin`.
+ * and under it, never through a hidden folder of its own (`.git/hooks/x`, `.cache/x`) but a package manager's `.bin`
+ * and a virtual environment's `.venv/bin`.
  * With no folder known, a relative path that doesn't climb out (`..`) is.
  */
 function ownFolder(word: string, sc: Scope, start: string | null): boolean {
@@ -4132,7 +4133,8 @@ function ownFolder(word: string, sc: Scope, start: string | null): boolean {
   const dir = abs.slice(0, Math.max(abs.search(env.flavour === "posix" ? /\/[^/]*$/ : /[\\/][^\\/]*$/), 0));
   if (pathFolders(sc).some(f => isUnder(dir, f, env) && isUnder(f, dir, env))) return false;
   const rest = abs.slice(start.length).split(sep).filter(Boolean);
-  return !rest.slice(0, -1).some(seg => seg.startsWith(".") && seg !== ".bin");
+  // The project's virtual environment's programs (`.venv/bin/pytest`) are its tooling too (commands-closed-x9-7).
+  return !rest.slice(0, -1).some((seg, k) => seg.startsWith(".") && seg !== ".bin" && !(seg === ".venv" && /^(bin|Scripts)$/.test(rest[k + 1] ?? "") && k + 2 === rest.length - 1));
 }
 
 /** The folders a target's PATH usually holds (commands-closed-x9-3): a program there is the system's or the user's, not the project's. */

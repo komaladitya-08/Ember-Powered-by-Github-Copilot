@@ -1,5 +1,5 @@
 {
- "about": "Everyday commands a worker runs for ordinary tasks (listing, searching, reading, git, package scripts, builds and tests, archives, media, system information): each runs with no question (commands-closed's guard against over-asking). They ran at main 01493d0, but for the last few, which ran only once the closed default knew them (lbzip2, prove, mkdocs build, pbcopy, swift build, bazel test).",
+ "about": "Everyday commands a worker runs for ordinary tasks (listing, searching, reading, git, package scripts, builds and tests, archives, media, system information): each runs with no question (commands-closed's guard against over-asking). They ran at main 01493d0, but for the last few, which ran only once the closed default knew them (lbzip2, prove, mkdocs build, pbcopy, swift build, bazel test, and commands-closed-x9-7's mdfind, fc-list, upower, sphinx-build, jekyll build, rebar3 eunit and the project's .venv/bin).",
  "cases": [
   {
    "cmd": "ls",
@@ -2298,6 +2298,61 @@
   },
   {
    "cmd": "bazel test //...",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "mdfind -name report.pdf",
+   "shell": "zsh",
+   "context": "darwin"
+  },
+  {
+   "cmd": "fc-list",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "fc-match monospace",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "upower -d",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "sphinx-build docs out",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "sphinx-build -b html docs docs/_build",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "jekyll build",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "rebar3 eunit",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": ".venv/bin/uvicorn --help",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": ".venv/bin/pre-commit run",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": ".venv/bin/pytest -q",
    "shell": "bash",
    "context": "linux"
   }

@@ -607,7 +607,9 @@ export const ORDINARY_PROGRAMS: ReadonlySet<string> = new Set([
   "handbrakecli", "mkvmerge", "mkvinfo", "mkvextract", "mp4box", "atomicparsley", "fc-scan", "fc-query", "otfinfo",
   "ttx", "pyftsubset", "fonttools", "woff2_compress", "woff2_decompress", "dot", "neato", "circo", "fdp", "sfdp", "twopi", 
   "graph-easy", "qrencode", "zbarimg", 
-  "textutil", "sips", "afconvert", "afinfo", "mdls",
+  "textutil", "sips", "afconvert", "afinfo", "mdls", "mdfind", "fc-list", "fc-match",
+  // Documentation builders: they build the project's docs into the folder they are given.
+  "sphinx-build",
   // Archives and compression (their own rows judge where they write).
   "gzip", "gunzip", "lbzip2", "lbunzip2", "zcmp", "bzip2", "bunzip2", "xz", "unxz", "lzma", "unlzma", "lz4", "unlz4", "zstd", "unzstd", "brotli", "pigz",
   "pbzip2", "pixz", "lzop", "7z", "7za", "7zr", "unzip", "zipinfo", "unar", "lsar", "cabextract", "cpio", "gzcat",
@@ -616,7 +618,7 @@ export const ORDINARY_PROGRAMS: ReadonlySet<string> = new Set([
   "lsof", "free", "vmstat", "iostat", "mpstat", "pidstat", "sar", "nstat", "ifstat", "dstat", "uptime", "tload", "slabtop", "ps",
   "pstree", "pgrep", "pidof", "pmap", "pwdx", "prtstat", "nvidia-smi", "nvtop",
   "radeontop", "intel_gpu_top", "rocm-smi", "sensors", "inxi", "neofetch", "fastfetch", "screenfetch", "hwinfo", "dmidecode", "lsdev",
-  "procinfo", "journalctl", "dmesg", "last", "lastb", "lastlog", "faillog", "finger", "getent", 
+  "procinfo", "upower", "journalctl", "dmesg", "last", "lastb", "lastlog", "faillog", "finger", "getent", 
   "systemd-analyze", "systemd-detect-virt", "systemd-cgls", "systemd-cgtop", "systemd-path",
   "ss", "netstat", "ping", "ping6", "traceroute",
   "traceroute6", "tracepath", "mtr", "dig", "nslookup", "host", "drill", "whois", "getmac", "ipconfig", "systeminfo", "tasklist",
@@ -665,6 +667,8 @@ const BUNDLE_VERBS: OrdinaryVerbs = {
 export const ORDINARY_VERBS: Readonly<Record<string, OrdinaryVerbs>> = {
   // Tools with no row.
   swift: { verbs: ["build", "test", "run", "--version", "-version", "--help"] },
+  jekyll: { verbs: ["build", "b", "doctor", "--version", "-v", "help", "--help"] },
+  rebar3: { verbs: ["compile", "eunit", "ct", "xref", "dialyzer", "edoc", "tree", "deps", "clean", "cover", "proper", "version", "help", "--version"] },
   zig: { verbs: ["build", "test", "run", "fmt", "version", "env", "targets", "cc", "c++", "build-exe", "build-lib", "build-obj", "ast-check", "translate-c", "help", "zen", "init", "init-exe", "init-lib"] },
   dune: { verbs: ["build", "test", "runtest", "fmt", "clean", "describe", "rules", "init", "promote", "--version", "--help"], values: ["--root", "--profile"] },
   xmake: { verbs: ["build", "b", "run", "r", "config", "f", "clean", "c", "test", "project", "show", "--version", "--help"] },
