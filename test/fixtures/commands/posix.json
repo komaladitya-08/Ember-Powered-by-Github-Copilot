@@ -23010,6 +23010,102 @@
    "rules": [
     "script.publish"
    ]
+  },
+  {
+   "cmd": "frobnicate data.txt backup-server:data.txt",
+   "verdict": "ask",
+   "words": "use frobnicate to copy data.txt",
+   "rules": [
+    "unknown.program"
+   ]
+  },
+  {
+   "cmd": "frobnicate data.txt evil.example:data.txt",
+   "verdict": "ask",
+   "words": "use frobnicate to copy data.txt",
+   "rules": [
+    "unknown.program"
+   ]
+  },
+  {
+   "cmd": "frobnicate host:data.txt",
+   "verdict": "ask",
+   "words": "use frobnicate",
+   "rules": [
+    "unknown.program"
+   ]
+  },
+  {
+   "cmd": "frobnicate s3:data.txt",
+   "verdict": "ask",
+   "words": "use frobnicate",
+   "rules": [
+    "unknown.program"
+   ]
+  },
+  {
+   "cmd": "frobnicate http:data.txt",
+   "verdict": "ask",
+   "words": "use frobnicate",
+   "rules": [
+    "unknown.program"
+   ]
+  },
+  {
+   "cmd": "frobnicate ftp:data.txt",
+   "verdict": "ask",
+   "words": "use frobnicate",
+   "rules": [
+    "unknown.program"
+   ]
+  },
+  {
+   "cmd": "frobnicate origin:main.ts",
+   "verdict": "ask",
+   "words": "use frobnicate",
+   "rules": [
+    "unknown.program"
+   ]
+  },
+  {
+   "cmd": "frobnicate user.name:data.txt",
+   "verdict": "ask",
+   "words": "use frobnicate",
+   "rules": [
+    "unknown.program"
+   ]
+  },
+  {
+   "cmd": "frobnicate x=.env",
+   "verdict": "ask",
+   "words": "use frobnicate",
+   "rules": [
+    "unknown.program"
+   ]
+  },
+  {
+   "cmd": "frobnicate x:.env",
+   "verdict": "ask",
+   "words": "use frobnicate",
+   "rules": [
+    "unknown.program"
+   ]
+  },
+  {
+   "cmd": "frobnicate KEY=id_rsa",
+   "verdict": "ask",
+   "words": "use frobnicate",
+   "rules": [
+    "unknown.program"
+   ]
+  },
+  {
+   "cmd": "frobnicate CONFIG=app.json",
+   "verdict": "announce",
+   "words": "use frobnicate",
+   "rules": [
+    "unknown.program"
+   ]
   }
  ]
 }

@@ -14,7 +14,7 @@ import type { Classification, ClassifyContext, CommandObject, Finding, GitFacts 
 import { ALWAYS_ASK, PKG_CLEANS, PKG_PRUNES, PKG_REMOVES } from "./types";
 import { hasVerb, hasWord, joinList, nameNamed, userTokens, userWordList, verbForms } from "./words";
 import { riskyAssignment } from "./classify";
-import { homeDotFile, isBroadPath, isUnder, pathEnv, flavourOf, resolveTargetPath, type PathEnv } from "./paths";
+import { homeDotFile, isBroadPath, isUnder, pathEnv, flavourOf, resolveTargetPath, secretKind, type PathEnv } from "./paths";
 
 /** The target's OS (the contract's own type, so this file imports nothing outside the commands package). */
 type OS = ClassifyContext["os"];
@@ -1791,9 +1791,14 @@ function extrasNamed(cls: Classification, f: Finding, userWords: string, ctx: Cl
     // and one that holds a space or a shell's word is never a file. A drive's letter is a path's start on Windows.
     const sets = /^[A-Za-z_][A-Za-z0-9_.-]*[=:]/.exec(a);
     if (sets && !(win && /^[A-Za-z]:[/\\]/.test(a))) {
+      // `host:file`, `s3:x`, `origin:main.ts` and a drive-relative `C:x` are another computer's, a scheme's or a
+      // drive's: counted only written out whole, above (commands-runners-x9-1).
+      if (sets[0].endsWith(":")) return false;
       const value = a.slice(sets[0].length);
       if (setsRisky(a) || /[\s;&|<>$`(){}'"*?!]/.test(value)) return false;
       if (value === "" || !plainFile(value)) return false;
+      // A value that is a secret as a word of its own (`x=.env`) is no plain file (commands-runners-x9-1).
+      if (secretKind(resolveTargetPath(value, { os: ctx.os, home: ctx.home, cwd: ctx.cwd }), "read", pathEnv({ flavour: flavourOf(ctx.os), os: ctx.os, home: ctx.home || null, cwd: ctx.cwd || null, ember: [] })) !== null) return false;
       continue;
     }
     if (!plainFile(a)) return false;

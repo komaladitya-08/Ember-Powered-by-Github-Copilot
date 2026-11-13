@@ -1387,6 +1387,18 @@ describe("a word that sets a variable, handed to a program the user's words name
     for (const o of WINDOWS) expect(decide("frobnicate X=C:\\Windows\\x.dll", { ...o, words: "run frobnicate" }).verdict, label("X=C:\\Windows\\x.dll", o)).toBe("ask");
   });
 
+  it("never takes a `name:value` word for a file, nor a value that is a secret as a word of its own (commands-runners-x9-1)", () => {
+    for (const [cmd, words] of [["frobnicate data.txt backup-server:data.txt", "use frobnicate to copy data.txt"], ["frobnicate data.txt evil.example:data.txt", "use frobnicate to copy data.txt"],
+      ["frobnicate host:data.txt", "use frobnicate"], ["frobnicate s3:data.txt", "use frobnicate"], ["frobnicate http:data.txt", "use frobnicate"], ["frobnicate ftp:data.txt", "use frobnicate"],
+      ["frobnicate origin:main.ts", "use frobnicate"], ["frobnicate user.name:data.txt", "use frobnicate"], ["frobnicate x=.env", "use frobnicate"], ["frobnicate x:.env", "use frobnicate"],
+      ["frobnicate KEY=id_rsa", "use frobnicate"]] as const) {
+      expect(decide(cmd, { words }).verdict, `${cmd} (${words})`).toBe("ask");
+    }
+    for (const o of WINDOWS) {
+      for (const cmd of ["frobnicate C:data.txt", "frobnicate host:data.txt", "frobnicate x=.env"]) expect(decide(cmd, { ...o, words: "use frobnicate" }).verdict, label(cmd, o)).toBe("ask");
+    }
+  });
+
   it("never announces a variable that changes how commands are found or run, even written out in the words", () => {
     for (const set of ["LD_PRELOAD=/tmp/x.so", "LD_PRELOAD=x.so", "NODE_OPTIONS=--inspect", "PATH=/tmp/x", "BASH_ENV=x.sh", "RUSTC_WRAPPER=x", "DOTNET_STARTUP_HOOKS=x.dll", "CC=sh -c x",
       "GIT_SSH_COMMAND=x", "DYLD_INSERT_LIBRARIES=x.dylib", "npm_config_script_shell=x"]) {

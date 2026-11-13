@@ -6109,6 +6109,30 @@
     "unknown.program"
    ],
    "words": "run frobnicate"
+  },
+  {
+   "cmd": "frobnicate C:data.txt",
+   "verdict": "ask",
+   "words": "use frobnicate",
+   "rules": [
+    "unknown.program"
+   ]
+  },
+  {
+   "cmd": "frobnicate host:data.txt",
+   "verdict": "ask",
+   "words": "use frobnicate",
+   "rules": [
+    "unknown.program"
+   ]
+  },
+  {
+   "cmd": "frobnicate x=.env",
+   "verdict": "ask",
+   "words": "use frobnicate",
+   "rules": [
+    "unknown.program"
+   ]
   }
  ]
 }
