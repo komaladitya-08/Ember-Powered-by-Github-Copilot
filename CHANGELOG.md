@@ -158,8 +158,7 @@ the automated tests don't stand in for them.
   payment or an order form needs one, Ember asks you once in its own **Secure Form** window, keeps what
   you give it locked with your computer's keyring, and fills the field itself. The AI model only names the field and the
   part it needs (“the password”): it never types, sees or reads the value, and nothing Ember reads, sends, logs or
-  photographs afterwards holds it, since the value is hidden from the model wherever a page, a command or the screen
-  shows it, and a field Ember filled is blacked out in screenshots. Each entry is for one app or one site and is filled
+  photographs afterwards is meant to hold it, since the value is hidden from the model in the forms Ember knows, and a field Ember filled is blacked out in screenshots. Each entry is for one app or one site and is filled
   only there (the site is checked as Ember fills, and a frame from another site refuses). Only Autopilot fills, and
   never in your computer's own password prompts (the keyring's, `sudo`, polkit), in Ember's windows, in your terminals
   or in a window on the never-look list.
@@ -167,10 +166,10 @@ the automated tests don't stand in for them.
   contact details by app or site and date, never a value, with **Forget** and **Forget all**; **Sign out** and **Forget
   everything** forget them too. Nothing is kept on a computer without a working keyring: the form says so, once for a
   task rather than for each field, and Ember tells you what is left for you to fill in. Closing the form without saving
-  is your no for that field in that task. Your organisation can turn the vault off (`features.vault: false`).
+  is your no, as **Not now** is: Ember won't ask for it again in that task. Your organisation can turn the vault off (`features.vault: false`).
 - **Limits to know of.** A card's security code, and any secret under six characters, is kept by its field alone, so a
   page that repeats it elsewhere isn't hidden; once Ember has filled something it calls no extension until you start it
-  again; and a saved detail stays hidden in a command's output even through colour codes or where a long output is cut.
+  again; and a few rare forms of a saved detail (reversed, base64, a very long output's cut) aren't yet found (PLAN.md §10).
 
 ### Voice
 
@@ -732,7 +731,7 @@ the automated tests don't stand in for them.
 #### Commands and other computers
 
 - **Commands that would type or run commands in your own terminal or editor are refused:** tmux's `send-keys`, `screen
-  -X`, zellij, kitty's and wezterm's remote control, `it2api`, an editor's `--remote-send`, `emacsclient -e` and
+  -X`, zellij's `write-chars`, `it2api`'s, kitty's and wezterm's `send-text`, an editor's `--remote-send`, `emacsclient -e` and
   Terminal's `do script`, however the verb is shortened or wrapped; what only prints what a terminal shows asks as a
   secret.
 - **More commands ask, and what a helper runs is read as the command it runs.** A command handed on to a program (as a
