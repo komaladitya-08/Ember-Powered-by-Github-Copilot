@@ -1082,12 +1082,13 @@ export function grantsHint(mode: ApprovalMode | null): string {
 }
 
 /**
- * Voice › Routines' hint in the approval mode in force (null: below Interactive), true in each (home-c10-2): a routine's
- * saved steps are the user's own words for Assisted's check (agent/host.ts userWordsOf), and Autopilot doesn't ask.
+ * Voice › Routines' hint in the approval mode in force (null: below Interactive), true in each (home-c10-2): Assisted's
+ * check reads what the user said to run a routine, never its saved steps (agent/host.ts gives the check no steps:
+ * r10-modes-copy-x10-1), and Autopilot doesn't ask.
  */
 export function routinesHint(mode: ApprovalMode | null): string {
   const lead = "Off, reminders last until Ember closes, and no routine is saved or run. On, saying a routine's name runs its steps,";
-  if (mode === "assisted") return `${lead} and Ember still asks before anything risky unless Assisted's check finds it in the routine's steps.`;
+  if (mode === "assisted") return `${lead} and Ember still asks before anything risky unless Assisted's check finds it in what you said to run the routine, never in its saved steps.`;
   if (mode === "autopilot") return `${lead} and in Autopilot Ember doesn't ask first, even before anything risky: it tells you as it goes.`;
   return `${lead} and Ember still asks before anything risky.`;
 }

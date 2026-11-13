@@ -87,10 +87,13 @@ describe("the Commands intro, the Routines hint and the Connectors hint are true
     expect(cc.commandsIntro("autopilot")).toBe("Ember runs commands in its own command window, where you can watch and stop them. In Autopilot it runs one that deletes, publishes or changes the system without asking, after a few seconds to stop it. It still asks before anything that touches secrets or whose effect it can't tell.");
   });
 
-  it("says what a routine's steps ask before, per mode", () => {
+  it("says what a routine's steps ask before, per mode, and that Assisted's check reads what you said, not the saved steps (r10-modes-copy-x10-1)", () => {
     expect(page).toContain(`<p class="hint" id="routines-hint">${routinesHint(null)}</p>`);
     expect(routinesHint("interactive")).toBe(routinesHint(null));
-    expect(routinesHint("assisted")).toBe("Off, reminders last until Ember closes, and no routine is saved or run. On, saying a routine's name runs its steps, and Ember still asks before anything risky unless Assisted's check finds it in the routine's steps.");
+    // The check reads what the user said to run the routine, never its saved steps (assisted-check.test.ts pins that
+    // side), so the hint doesn't say the steps clear a risky one (r10-modes-copy-x10-1).
+    expect(routinesHint("assisted")).toBe("Off, reminders last until Ember closes, and no routine is saved or run. On, saying a routine's name runs its steps, and Ember still asks before anything risky unless Assisted's check finds it in what you said to run the routine, never in its saved steps.");
+    expect(routinesHint("assisted")).not.toContain("finds it in the routine's steps");
     expect(routinesHint("autopilot")).toBe("Off, reminders last until Ember closes, and no routine is saved or run. On, saying a routine's name runs its steps, and in Autopilot Ember doesn't ask first, even before anything risky: it tells you as it goes.");
   });
 
