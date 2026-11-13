@@ -278,9 +278,17 @@ Ember stops and asks before a command that:
   write `tar -T list.txt` for a list and it runs. `git checkout
   --track -b feature origin/feature` asks for the same reason (the older reading took `-b` for `--track`'s word and
   the rest for files to throw changes away in); write `git checkout -b feature --track origin/feature` or `git switch
-  -c feature --track origin/feature` and it runs. Everyday lines are untouched: `tar -xf a.tar --strip-components 1`,
-  `uv run --cache-dir .cache pytest`, `mvn -T 4 package`, `docker run -P nginx`, `git branch --color`, `git rebase -S
-  main` and `wget --progress bar https://example.com/a.txt` run.
+  -c feature --track origin/feature` and it runs. A few lines are refused for it: `pkill -n server`, `pkill -o
+  server`, `pkill -e server`, `pkill -f -n server`, `killall -e server` and `killall -g server`, where the older
+  reading took the name for the option's word, which leaves a `pkill` that names no program and so could stop Ember's
+  own. Ember says so ("Ember won't run this: it can't tell whether one of its options takes the word after it, so it
+  may change Ember's own safety settings, records or programs."). Write the option's long name or put the name first
+  (`pkill --newest server`, `pkill server -n`, `killall --exact server`) and it asks as any `pkill` does. Most other
+  everyday lines are untouched: `tar -xf a.tar --strip-components 1`, `uv run --cache-dir .cache pytest`, `mvn -T 4
+  package`, `docker run -P nginx`, `git branch --color`, `git rebase -S main` and `wget --progress bar
+  https://example.com/a.txt` run. Among those that ask again where a newer Ember had stopped asking: `mvn
+  --activate-profiles prod package` (write `-P prod`), `redis-cli --scan --pattern 'user:*'`, `git commit -S -m wip`
+  and `env --block-signal ls`.
 
 **Loops on a command line** in bash or sh always ask, whatever their body: a line with `for`, `while`, `until` or
 `select` anywhere in it asks with the loop's own words ("Ember can't tell exactly what this does."), so `for i in 1 2
@@ -583,6 +591,10 @@ log, sign-in, settings or install folder, here or on the other computer), stop o
 keys and click in Ember's windows (`xdotool`, `SendKeys`, `osascript` keystrokes). Ember says: "Ember won't run this:
 it would change Ember's own safety settings, records or programs." ("it would read …" for a command that only reads
 them, such as `cat` or `Get-Content`) or "Ember won't run this: it could press keys or click in Ember's own windows."
+When the command would do that only by the way an earlier Ember read one of its options (§2.4), it says what it can't
+tell instead: "Ember won't run this: it can't tell whether one of its options takes the word after it, so it may
+change Ember's own safety settings, records or programs." ("may read …", "may press keys or click in Ember's own
+windows.").
 The same goes for the folder a command works in, named after `cd --` or `pushd --` (`cd -- ~/.config/ember && sed -i …
 settings.json`) or given to `patch -d` or `--directory` (also shortened, down to `--di`), which changes the files the
 patch names there (`patch -d ~/.config/ember -p0 < x.patch`; a folder Ember can't see there asks), and when a shell

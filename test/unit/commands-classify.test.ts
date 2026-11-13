@@ -3287,4 +3287,32 @@ describe("commands held to main at 4d64d3a: no way of reading one decides less s
       for (const context of ["linux", "darwin"] as const) expect(decided(cmd, context).verdict, `${cmd} (${context})`).toBe("run");
     }
   });
+
+  it("says what Ember can't tell when only main's reading of an option refuses a command, and keeps the row's own words where it refuses too (commands-held-x9-7)", () => {
+    const MAY_CHANGE = "Ember won't run this: it can't tell whether one of its options takes the word after it, so it may change Ember's own safety settings, records or programs.";
+    const MAY_READ = "Ember won't run this: it can't tell whether one of its options takes the word after it, so it may read Ember's own safety settings, records or programs.";
+    const CHANGE = "Ember won't run this: it would change Ember's own safety settings, records or programs.";
+    // Main's table gave pkill's -n, -o and -e and killall's -e and -g the next word, which left no name: every process,
+    // Ember's too. Refused as there, but not in words that say this line would change Ember's own programs.
+    for (const cmd of ["pkill -n server", "pkill -f -n server", "pkill -fn server", "pkill -o server", "pkill -e server", "killall -e server", "killall -g server"]) {
+      for (const context of ["linux", "darwin"] as const) {
+        const got = decided(cmd, context);
+        expect(got.verdict, `${cmd} (${context})`).toBe("refuse");
+        expect(got.rules, `${cmd} (${context})`).toEqual(["ember.process"]);
+        expect(got.reason, `${cmd} (${context})`).toBe(MAY_CHANGE);
+      }
+    }
+    expect(decided("sudo -h host rm -rf ~").reason).toBe(MAY_CHANGE);
+    expect(decided("zip -T -n ~/.config/ember/settings.json").reason).toBe(MAY_CHANGE);
+    expect(decided("ls --cached ~/.config/ember/settings.json").reason).toBe(MAY_READ);
+    // Written so that both tables read the line alike, the same pkill asks as any other does.
+    for (const cmd of ["pkill --newest server", "pkill -nf server", "pkill server -n", "pkill --oldest server", "pkill --echo server", "killall --exact server", "killall --process-group server", "pkill server"]) {
+      expect(decided(cmd).verdict, cmd).toBe("ask");
+      expect(decided(cmd).rules, cmd).toContain("kill.process");
+    }
+    // What the row's own reading refuses, or a command before this one, is said as before.
+    expect(decided("pkill -n ember").reason).toBe(CHANGE);
+    expect(decided("sudo -h rm -rf ~").reason).toBe(CHANGE);
+    expect(decided("rm -rf ~/.config/ember; pkill -n server").reason).toBe(CHANGE);
+  });
 });

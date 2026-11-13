@@ -224,6 +224,10 @@ export const SAYS = {
   refuseSafety: "Ember won't run this: it would change Ember's own safety settings, records or programs.",
   refuseRead: "Ember won't run this: it would read Ember's own safety settings, records or programs.",
   refuseInput: "Ember won't run this: it could press keys or click in Ember's own windows.",
+  // The same refusals when only an earlier reading of one of the command's options makes them (Classifier.heldRefusal).
+  heldRefuseSafety: "Ember won't run this: it can't tell whether one of its options takes the word after it, so it may change Ember's own safety settings, records or programs.",
+  heldRefuseRead: "Ember won't run this: it can't tell whether one of its options takes the word after it, so it may read Ember's own safety settings, records or programs.",
+  heldRefuseInput: "Ember won't run this: it can't tell whether one of its options takes the word after it, so it may press keys or click in Ember's own windows.",
 } as const;
 
 /** Where a part of the command is judged. */
@@ -562,6 +566,18 @@ class Classifier {
   putRefusal(r: { refuse: Classifier["refuse"]; read: boolean }): void {
     this.refuse = r.refuse;
     this.refusedRead = r.read;
+  }
+
+  /**
+   * Says the refusal that stands as one only a row's second reading made (runRow), in words that are true of it: by
+   * the row's own reading the command does no such thing, so Ember says what it can't tell and what the command may
+   * do. `pkill -n server` is refused because main's table gave -n the name and left none, which stops every process,
+   * Ember's too; it would not "change Ember's own programs" as written (commands-held-x9-7).
+   */
+  heldRefusal(): void {
+    if (!this.refuse) return;
+    const says = this.refuse.says === SAYS.refuseRead ? SAYS.heldRefuseRead : this.refuse.says === SAYS.refuseInput ? SAYS.heldRefuseInput : SAYS.heldRefuseSafety;
+    this.refuse = { rule: this.refuse.rule, says };
   }
 
   /**
@@ -2136,9 +2152,9 @@ class Engine extends Classifier {
   /**
    * Judges a program's row, held to main's option tables (commands-held): when a table the row read (heldOpts) reads this
    * line differently from the table main had at 4d64d3a, the row is judged again main's way, apart. Main's refusal
-   * stands (the row's own, in its own words, when it has one), and unless everything main's reading found the row's
-   * own found too, the command asks and the dangers main named stay on the card (heldTo). Where the tables agree, which
-   * is nearly always, the row is judged once, as before.
+   * stands (the row's own, in its own words, when it has one; otherwise said as what Ember can't tell: heldRefusal),
+   * and unless everything main's reading found the row's own found too, the command asks and the dangers main named
+   * stay on the card (heldTo). Where the tables agree, which is nearly always, the row is judged once, as before.
    */
   runRow(row: Handler, h: H): void {
     if (this.asMain) { row(h); return; }
@@ -2153,7 +2169,10 @@ class Engine extends Classifier {
     let before: Finding[];
     this.asMain = true;
     try { before = this.foundApartWhole(() => row(h), undefined, true); } finally { this.asMain = false; }
+    // The row's own refusal is said in its own words, and one that stood before the row keeps its own; one only main's
+    // reading made says what Ember can't tell (commands-held-x9-7).
     if (own.refuse !== stood.refuse) this.putRefusal(own);
+    else if (this.refusal().refuse !== stood.refuse) { if (stood.refuse) this.putRefusal(stood); else this.heldRefusal(); }
     const found = this.findings.slice(from);
     if (before.every(f => found.some(g => sameFinding(f, g)))) return;
     this.heldTo(before, from, "unclear.option-value", SAYS.optionValue);
