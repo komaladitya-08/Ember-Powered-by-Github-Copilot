@@ -582,6 +582,8 @@ It still asks, with the card of §2.4, before:
   session, `docker run -d`, a process manager, a scheduled job, a program it opens), so that Stop stops everything;
 - a command Ember can't tell the effect of (a loop, code written inline, `eval`, text handed to `xargs` that Ember
   can't see, a program that waits for typing), since it may be either of those;
+- a command your own words for the task rule out ("commit my work but don't push", "delete everything except
+  build", "push it, but without force"): that is your no, said in advance, and the card says "You didn't ask for this.";
 - every command where your organisation asks for that, where you turned on **Ask before every command** for that
   computer, in a Podman distro, and in a project's chosen command folder;
 - turning commands on for a computer the first time (§2.1).

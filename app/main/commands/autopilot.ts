@@ -7,6 +7,8 @@
  * - a command that would read or print secrets, so that no secret reaches the model;
  * - a command that would outlive the kill switch, so that Stop stops everything;
  * - a command Ember can't tell the effect of (the classifier's "unclear"), which may be either of those;
+ * - a command the user's own words for the task rule out ("push, but don't force", "don't delete src/"): their no,
+ *   said in advance, which Autopilot keeps as it keeps a no to a question;
  * - what the organisation's policy or the user's own "ask every command" for that computer requires.
  *
  * It asks by what the classifier found, which this module only reads: every signal the decision carries counts, its
@@ -29,7 +31,7 @@ const SECRET_RULE = /^secret\.|^path\.secret(-|$)|^path\.history$|^wsl\.export$/
 export const readsSecrets = (rule: string): boolean => SECRET_RULE.test(rule.replace(/^in-script:/, ""));
 
 /** Why a command still asks in Autopilot. */
-export type AutopilotAsk = "organisation" | "user" | "secret" | "outlives-stop" | "unclear";
+export type AutopilotAsk = "organisation" | "user" | "ruled-out" | "secret" | "outlives-stop" | "unclear";
 
 /** What a finding, or a rule on its own, says that Autopilot must still ask about; null: it may be announced. */
 export function askedOfFinding(f: { cls?: DangerClass; rule: string }): Extract<AutopilotAsk, "secret" | "outlives-stop" | "unclear"> | null {
@@ -50,15 +52,22 @@ export interface AutopilotInput {
   askEvery: CommandCapability["askEvery"];
   /** The user's own "ask every command" for this computer (a distro another program owns and a project folder count). */
   userAskEvery: boolean;
+  /**
+   * The user's own words for the task rule this command out (intent.ts ruledOut, which the card's "You didn't ask for
+   * this." already reads): never announced over their words, it asks.
+   */
+  ruledOut?: boolean;
 }
 
 /**
  * Why `d`, a command that asks, still asks in Autopilot; null when it may be announced instead. The organisation's
- * policy first, then the user's own switch, then what the command is: secrets before outliving Stop before unclear.
+ * policy first, then the user's own switch and their own words against it, then what the command is: secrets before
+ * outliving Stop before unclear.
  */
 export function autopilotAsks(d: Pick<CommandDecision, "classes" | "rules">, o: AutopilotInput): AutopilotAsk | null {
   if (o.mode === "ask" || o.askEvery === "admin" || d.rules.includes("admin.ask")) return "organisation";
   if (o.userAskEvery || o.askEvery === "user" || o.askEvery === "tool" || d.rules.includes("user.ask-every")) return "user";
+  if (o.ruledOut) return "ruled-out";
   const signals = [...d.classes.map(cls => ({ cls, rule: "" })), ...d.rules.map(rule => ({ rule })), ...o.findings].map(askedOfFinding);
   for (const why of ["secret", "outlives-stop", "unclear"] as const) if (signals.includes(why)) return why;
   return null;

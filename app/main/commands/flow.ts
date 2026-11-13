@@ -44,7 +44,7 @@ import { outputTaint } from "./taint";
 import {
   ALWAYS_ASK,
   type Classification, type ClassifyContext, type CommandCapability, type CommandCard, type CommandDecision, type CommandMode, type CommandRunner,
-  type CommandService, type DecideInput, type GitFacts, type PathFact, type RunCommandArgs, type RunExit, type RunnerFacts, type RunningCommand,
+  type CommandService, type DecideInput, type Finding, type GitFacts, type PathFact, type RunCommandArgs, type RunExit, type RunnerFacts, type RunningCommand,
   type RunSpec, SHELL_FAMILY, type ShellId, standingFindings,
 } from "./types";
 import { judgedText } from "./unroll";
@@ -636,6 +636,22 @@ export function heldDecision(d: CommandDecision, r: AskReasons, kind: TargetBind
   };
 }
 
+/** Words that turn a part of a request round: "do not push", "don't delete src", "never force", "everything except build". */
+const SAYS_NOT = /(^|[^\p{L}\p{N}])(do\s+not|don['’]?t|does\s+not|doesn['’]?t|never|not|without|except|no|nothing|avoid)(?=$|[^\p{L}\p{N}])/giu;
+
+/**
+ * Do the user's own words rule out what these findings say the command does? What the card's "You didn't ask for
+ * this." already reads (intent.ts ruledOut: a part that says not to names the kind of step and nothing else), and also
+ * a step the words name only where they say not to ("do not push feature-x to GitHub yet": read without its "not" the
+ * words name the push, read as said they don't). Autopilot keeps the question for such a command: the user's no, said
+ * in advance. It only ever keeps a question, so a doubt counts as ruled out.
+ */
+export function wordsRuleOut(findings: readonly Finding[], words: string): boolean {
+  if (!words.trim() || findings.length === 0) return false;
+  if (ruledOut(findings, words)) return true;
+  return !mentioned(findings, words) && mentioned(findings, words.replace(SAYS_NOT, "$1 "));
+}
+
 /**
  * "Work without asking" for a command (owner decision of 2026-11-02, PLAN.md §2 "Commands"): an ordinary command whose
  * only reason to ask is that it carries text read elsewhere in the task (rule "carried", no finding), in a task with the
@@ -881,9 +897,12 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
   // Autopilot: a command that still asks is announced with its Stop countdown instead, whatever the task was held to
   // asking for (steered, off-task, the user said no: the refused command itself was refused above), as an
   // administrator too. Only a command that would read or print secrets, keep running after Stop or do something Ember
-  // can't tell, and what the organisation's or the user's own "ask every command" requires, still ask (autopilot.ts).
+  // can't tell, one the user's own words rule out, and what the organisation's or the user's own "ask every command"
+  // requires, still ask (autopilot.ts).
   if (ctx.autopilot?.() && d.verdict === "ask") {
-    const auto = autopilotCommand(d, { findings: cls.findings, mode, askEvery: cap.askEvery, userAskEvery });
+    // (Their own words against it count wherever they were heard: where Ember can't tell the user from its speakers too.)
+    const standing = standingFindings(cls.findings, paths);
+    const auto = autopilotCommand(d, { findings: cls.findings, mode, askEvery: cap.askEvery, userAskEvery, ruledOut: wordsRuleOut(standing, words) || wordsRuleOut(standing, spoken) });
     if (auto) d = auto;
   }
   // Assisted's check: a command that asks is shown to the reviewer with the user's own words and what the rules found

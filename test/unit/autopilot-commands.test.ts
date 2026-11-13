@@ -72,6 +72,16 @@ describe("what still asks in Autopilot (modes-D2, modes-D7)", () => {
     expect(autopilotAsks(ask({ classes: ["secret"] }), { ...ON, mode: "ask" })).toBe("organisation");
   });
 
+  it("a command the user's own words rule out: their no, said in advance (modes-D2)", () => {
+    expect(autopilotAsks(ask(), { ...ON, ruledOut: true })).toBe("ruled-out");
+    expect(autopilotCommand(ask(), { ...ON, ruledOut: true })).toBeNull();
+    expect(autopilotAsks(ask(), { ...ON, ruledOut: false })).toBeNull();
+    // The organisation's and the user's own switch are said first; what the command is, after.
+    expect(autopilotAsks(ask(), { ...ON, ruledOut: true, mode: "ask" })).toBe("organisation");
+    expect(autopilotAsks(ask(), { ...ON, ruledOut: true, userAskEvery: true })).toBe("user");
+    expect(autopilotAsks(ask({ classes: ["secret"], rules: ["secret.env"] }), { ...ON, ruledOut: true })).toBe("ruled-out");
+  });
+
   it("knows every rule the classifier files under secrets (read from its source, which this never changes)", () => {
     const dir = path.join(__dirname, "../../app/main/commands");
     const source = readdirSync(dir).filter(f => f.endsWith(".ts")).map(f => readFileSync(path.join(dir, f), "utf8")).join("\n");

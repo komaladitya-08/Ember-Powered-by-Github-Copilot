@@ -7,7 +7,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  ANNOUNCE_MS, CARD_LINES, CHECKING_COMMAND, CL_JUDGE, MAX_RUNS_PER_TARGET, OUTPUT_TAINT_LINE, SPOKEN_LINE, commandSha256, heldDecision, namesTarget, normalName, runCommandTool,
+  ANNOUNCE_MS, CARD_LINES, CHECKING_COMMAND, CL_JUDGE, MAX_RUNS_PER_TARGET, OUTPUT_TAINT_LINE, SPOKEN_LINE, commandSha256, heldDecision, namesTarget, normalName, runCommandTool, wordsRuleOut,
   setCommandJudge, shownQuote, type CommandFlowContext, type CommandJudge, type ShapeOptions,
   scriptLanguage,
 } from "../../app/main/commands/flow";
@@ -2820,6 +2820,43 @@ describe("a command that would ask, in Autopilot (autopilot.ts; modes-D2, modes-
     const off = auto({ mode: "off" });
     expect((await run(off, "rm -rf build")).textResultForLlm).toMatch(/^Not allowed: Your organisation has turned off commands/);
     expect([off.asked, off.windowAnnounce, off.starts]).toEqual([[], [], []]);
+  });
+
+  it.each<[string, string, string | undefined]>([
+    ["do not push feature-x to github yet", "git push origin feature-x", undefined],
+    ["push feature-x to origin, but without force", "git push --force origin feature-x", undefined],
+    ["delete the build folder but don't delete src", "rm -rf src", undefined],
+    // Heard where Ember can't tell the user from its speakers: no words for an announcement, but still their no.
+    ["", "git push origin feature-x", "do not push feature-x to github yet"],
+  ])("still asks about a command the user's own words rule out: %s", async (words, command, spoken) => {
+    setCommandJudge(null);
+    const h = auto({ words, answers: ["deny"], ...(spoken !== undefined ? { spoken } : {}) });
+    expect((await run(h, command)).resultType).toBe("denied");
+    expect(h.asked).toHaveLength(1);
+    expect([h.windowAnnounce, h.announced, h.starts]).toEqual([[], [], []]);
+    expect((h.asked[0].panel as { card: CommandCard }).card.says.some(l => l === LINES.unasked || l === SPOKEN_LINE)).toBe(true);
+  });
+
+  it("reads a command as ruled out only where the words name it and say not to (wordsRuleOut)", () => {
+    const ctx = { os: "linux" as const, home: "/home/ana", cwd: "/home/ana/proj", ember: FACTS.ember, downloaded: new Set<string>() };
+    const ruled = (words: string, command: string) => wordsRuleOut(classifyCommand(command, "bash", ctx).findings, words);
+    for (const [words, command] of [
+      ["do not push feature-x to github yet", "git push origin feature-x"], ["don't push yet", "git push origin feature-x"], ["commit my work but do not push", "git push origin feature-x"],
+      ["never push to main", "git push origin main"], ["push feature-x, but without force", "git push --force origin feature-x"], ["delete everything except build", "rm -rf build"],
+      ["tidy up, but don't delete the build folder", "rm -rf build"], ["do not restart nginx", "sudo systemctl restart nginx"],
+    ]) expect(ruled(words, command), `${words} / ${command}`).toBe(true);
+    for (const [words, command] of [
+      ["push feature-x to origin", "git push origin feature-x"], ["delete the build folder", "rm -rf build"], ["tidy up", "rm -rf build"], ["", "rm -rf build"],
+      ["delete build, and don't forget dist", "rm -rf build"], ["it's not building: delete the build folder", "rm -rf build"], ["do not push yet", "ls -la"],
+    ]) expect(ruled(words, command), `${words} / ${command}`).toBe(false);
+  });
+
+  it("announces the part of such a request the user did ask for", async () => {
+    setCommandJudge(null);
+    const h = auto({ words: "delete the build folder but don't delete src" });
+    expect((await run(h, "rm -rf build")).resultType).toBe("success");
+    expect(h.asked).toEqual([]);
+    expect(h.windowAnnounce).toHaveLength(1);
   });
 
   it("refuses a command on Ember's own Stop, audit log, policy, settings or mode, as in every mode", async () => {
