@@ -483,6 +483,21 @@ describe("README.md", () => {
   const readme = read("README.md");
   const version = (JSON.parse(read("package.json")) as { version: string }).version;
 
+  it("explains the approval modes in a section of their own, and never says Ember asks before every app step or dangerous command (install-docs-r10-3)", () => {
+    const modes = flat(section(readme, "How Ember asks"));
+    for (const m of ["**Interactive**", "**Assisted**", "**Autopilot**"]) expect(modes).toContain(m);
+    // What each mode still asks for, and what the organisation can do, as CLAUDE.md "Approval modes" says.
+    expect(modes).toMatch(/default/);
+    expect(modes).toMatch(/passwords or keys/);
+    expect(modes).toMatch(/keep running after you stop it/);
+    expect(modes).toMatch(/organisation/);
+    expect(modes).toMatch(/“Ember, stop”/);
+    // The two sentences that said Ember always asks first now point at the modes.
+    expect(flat(readme)).not.toContain("asks \"May I?\" before it does something in an app.");
+    expect(flat(section(readme, "First steps"))).toContain("How Ember asks");
+    expect(flat(section(readme, "Commands, WSL and other computers"))).toMatch(/In Interactive, the default, Ember stops and asks before anything that deletes/);
+  });
+
   it("says where to download every file a release has, and how to check it", () => {
     const download = flat(section(readme, "Download"));
     expect(download).toMatch(/\[Releases page\]\(https:\/\/github\.com\/[^/]+\/[^/]+\/releases\)/);
