@@ -940,6 +940,9 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
     const standing = standingFindings(cls.findings, paths);
     // (And what a wrapper may hide where the classifier read its options wrongly: judged apart, to keep a question only.)
     const hidden = behindWrappers(cls, text => j.classifyCommand(text, shell, cctx).findings);
+    // A line judged as its written-out form (a `[[ … ]]` test read as `[ … ]`: unroll.ts) never announces, here either:
+    // what it does behind the test is Ember's reading of it, so it counts as a command it can't tell (commands-b7-2).
+    if ((cls as { writtenOut?: boolean }).writtenOut === true) hidden.push({ cls: "unclear", rule: "unclear.written-out" });
     const auto = autopilotCommand(d, { findings: [...cls.findings, ...hidden], mode, askEvery: cap.askEvery, userAskEvery, ruledOut: wordsRuleOut(standing, words) || wordsRuleOut(standing, spoken) });
     if (auto) d = auto;
   }

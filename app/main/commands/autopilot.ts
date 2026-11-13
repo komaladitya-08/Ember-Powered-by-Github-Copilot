@@ -33,9 +33,19 @@ export const readsSecrets = (rule: string): boolean => SECRET_RULE.test(rule.rep
 /** Why a command still asks in Autopilot. */
 export type AutopilotAsk = "organisation" | "user" | "ruled-out" | "secret" | "outlives-stop" | "unclear";
 
-/** What a finding, or a rule on its own, says that Autopilot must still ask about; null: it may be announced. */
-export function askedOfFinding(f: { cls?: DangerClass; rule: string }): Extract<AutopilotAsk, "secret" | "outlives-stop" | "unclear"> | null {
+/**
+ * What a remote's gate 2 answers with, among its rules, where its own administrator doesn't allow Autopilot: the PC
+ * then asks with the card at once, instead of announcing what that computer will not take for a yes.
+ */
+export const NO_AUTOPILOT_RULE = "admin.no-autopilot";
+
+/**
+ * What a finding, or a rule on its own, says that Autopilot must still ask about; null: it may be announced. A rule
+ * that is an administrator's (`admin.*`: a remote's own policy, sent back by its gate 2) is the organisation's.
+ */
+export function askedOfFinding(f: { cls?: DangerClass; rule: string }): Extract<AutopilotAsk, "organisation" | "secret" | "outlives-stop" | "unclear"> | null {
   const rule = f.rule.replace(/^in-script:/, "");
+  if (rule.startsWith("admin.")) return "organisation";
   if (f.cls === "secret" || readsSecrets(rule)) return "secret";
   if (outlivesStop(rule)) return "outlives-stop";
   if (f.cls === "unclear" || rule.startsWith("unclear.")) return "unclear";
@@ -69,7 +79,7 @@ export function autopilotAsks(d: Pick<CommandDecision, "classes" | "rules">, o: 
   if (o.userAskEvery || o.askEvery === "user" || o.askEvery === "tool" || d.rules.includes("user.ask-every")) return "user";
   if (o.ruledOut) return "ruled-out";
   const signals = [...d.classes.map(cls => ({ cls, rule: "" })), ...d.rules.map(rule => ({ rule })), ...o.findings].map(askedOfFinding);
-  for (const why of ["secret", "outlives-stop", "unclear"] as const) if (signals.includes(why)) return why;
+  for (const why of ["organisation", "secret", "outlives-stop", "unclear"] as const) if (signals.includes(why)) return why;
   return null;
 }
 

@@ -244,11 +244,28 @@ describe("gate 2 and the PC's Autopilot (modes-D3; PLAN.md §10 \"Settled\" (3))
     expect((await gate([inScript], announced([], { rules: ["in-script:posix.rm", "autopilot"] }))).status).toBe("ok");
   });
 
-  it("counts it for nothing where this computer's administrator doesn't allow Autopilot: everything asks as before", async () => {
+  it("counts it for nothing where this computer's administrator doesn't allow Autopilot: it wants the user's yes, and says why", async () => {
     for (const autopilotOk of [false, undefined]) {
-      expect(await gate([DOWNLOAD], announced([DOWNLOAD]), { autopilotOk })).toMatchObject({ status: "needs_confirm", rules: [DOWNLOAD.rule] });
-      expect(await gate([], announced([]), { autopilotOk, facts: facts({ privileged: true }) })).toMatchObject({ status: "needs_confirm", reason: GATE_WORDS.root });
+      expect(await gate([DOWNLOAD], announced([DOWNLOAD]), { autopilotOk })).toMatchObject({ status: "needs_confirm", rules: [DOWNLOAD.rule, "admin.no-autopilot"] });
+      const root = await gate([], announced([]), { autopilotOk, facts: facts({ privileged: true }) });
+      expect(root).toMatchObject({ status: "needs_confirm", says: [GATE_WORDS.noAutopilot, GATE_WORDS.root], rules: ["admin.no-autopilot"] });
+      // Not even for what a stamp's class would cover in an announcement the user's own words asked for: a deletion
+      // Autopilot announced, and a command with no finding at all that it announced in a task that was steered.
+      expect(await gate([RM], announced([RM]), { autopilotOk })).toEqual({ status: "needs_confirm", reason: GATE_WORDS.noAutopilot, says: [GATE_WORDS.noAutopilot], rules: ["admin.no-autopilot"] });
+      expect(await gate([], announced([], { rules: ["tainted", "autopilot"] }), { autopilotOk })).toMatchObject({ status: "needs_confirm", rules: ["admin.no-autopilot"] });
+      // A stamp that names Autopilot among its rules without the announcement's age is no way round it.
+      expect((await gate([RM], spec({ verdict: "announce", classes: ["destroy"], rules: ["posix.rm", "autopilot"] }), { autopilotOk })).status).toBe("needs_confirm");
+      // The user's own yes runs it, as ever; and an announcement their own words asked for is covered by its class, as before.
+      expect((await gate([RM], announced([RM], { verdict: "ask", approval: { ageMs: 100 }, rules: ["posix.rm", "autopilot", "admin.no-autopilot"] }), { autopilotOk })).status).toBe("ok");
+      expect((await gate([RM], spec({ verdict: "announce", classes: ["destroy"], rules: ["posix.rm"] }), { autopilotOk })).status).toBe("ok");
     }
+  });
+
+  it("never lets it cover a line judged as its written-out form: only the user's yes does (commands-remote-r6-2)", async () => {
+    const written = (f: Finding[]) => ((_t: string, shell: RunSpec["shell"]): Classification =>
+      ({ shell, family: "posix", findings: f, refuse: null, probe: [], needsGit: false, downloads: [], programs: [], commands: [], writtenOut: true } as Classification));
+    expect(await gateCommand(input({ spec: announced([RM]), classify: written([RM]), autopilotOk: true }))).toMatchObject({ status: "needs_confirm", rules: ["posix.rm"] });
+    expect((await gateCommand(input({ spec: spec({ verdict: "ask", classes: ["destroy"], rules: ["posix.rm"], approval: { ageMs: 100 } }), classify: written([RM]), autopilotOk: true }))).status).toBe("ok");
   });
 
   it("still wants the user's own yes where this computer's administrator asks for every command", async () => {

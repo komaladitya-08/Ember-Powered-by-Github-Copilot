@@ -2900,6 +2900,20 @@ describe("a command that would ask, in Autopilot (autopilot.ts; modes-D2, modes-
     }
   });
 
+  it("still asks about a line Ember judged as its written-out form, which never announces (commands-b7-2)", async () => {
+    setCommandJudge(null);
+    for (const command of ["[[ -d build ]] && rm -rf build", "[[ -f out.log ]] && git push origin main"]) {
+      const h = auto({ answers: ["deny"] });
+      expect((await run(h, command)).resultType, command).toBe("denied");
+      expect(h.asked, command).toHaveLength(1);
+      expect([h.windowAnnounce, h.starts], command).toEqual([[], []]);
+    }
+    // The same commands behind `[ … ]`, which Ember reads as written, are announced.
+    const plain = auto();
+    expect((await run(plain, "[ -d build ] && rm -rf build")).resultType).toBe("success");
+    expect(plain.windowAnnounce).toHaveLength(1);
+  });
+
   it("refuses a command on Ember's own Stop, audit log, policy, settings or mode, as in every mode", async () => {
     setCommandJudge(null);
     const cases = [
@@ -3014,7 +3028,7 @@ describe("a command that would ask, in Autopilot (autopilot.ts; modes-D2, modes-
       expect(own.starts[0].stamp.announced).toBeUndefined();
     });
 
-    it.each([["secret.env"], ["path.secret"], ["escape.nohup"], ["escape.launcher"], ["unclear.for"], ["in-script:secret.env"], ["service.unit", "secret.token-arg"]])("asks with the card, as before, where the remote's rules say %s", async (...rules) => {
+    it.each([["secret.env"], ["path.secret"], ["escape.nohup"], ["escape.launcher"], ["unclear.for"], ["in-script:secret.env"], ["service.unit", "secret.token-arg"], ["admin.no-autopilot"], ["posix.rm", "admin.no-autopilot"]])("asks with the card, as before, where the remote's rules say %s", async (...rules) => {
       makeJudge();
       const h = remote({ run: (_s, n) => (n === 1 ? sentBack(rules) : {}) });
       expect((await call(h)).resultType).toBe("success");

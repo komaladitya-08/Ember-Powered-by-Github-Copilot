@@ -26,7 +26,7 @@ import { normalizeLabel } from "../main/policy/policy";
 import { ALWAYS_ASK, standingFindings } from "../main/commands/types";
 import type { Classification, ClassifyContext, CommandMode, Finding, PathFact, RunnerFacts, RunSpec } from "../main/commands/types";
 import { judgeScripts, withoutReadFlow, type TaskWrites } from "../main/commands/scripts";
-import { askedOfFinding } from "../main/commands/autopilot";
+import { AUTOPILOT_RULE, NO_AUTOPILOT_RULE, askedOfFinding } from "../main/commands/autopilot";
 import type { ClassifyCommand } from "./contracts";
 
 /** An approval older than this no longer counts (a question expires at 120 s anyway). */
@@ -58,6 +58,7 @@ export const GATE_WORDS = {
   actionsOff: "This computer's administrator doesn't let Ember act in apps.",
   stepMismatch: "The step that arrived doesn't match the one Ember decided on.",
   noStepAudit: "This computer couldn't record the step, so Ember won't do it.",
+  noAutopilot: "This computer's administrator doesn't allow Autopilot, so it wants your approval.",
 } as const;
 
 export const sha256Hex = (s: string) => createHash("sha256").update(s, "utf8").digest("hex");
@@ -127,8 +128,9 @@ async function inspectSoon(inspect: CommandGateInput["inspect"], paths: string[]
  * finding inside a script the command runs (read only here) is covered only after a yes, by its own `in-script:` rule
  * id. An approval older than 120 s counts as none. Autopilot's announcement on the stamp (`announced`, as fresh, and
  * only with `autopilotOk`) covers root and what a yes would cover of a finding, but never this administrator's "ask",
- * a stamp of "ask" without its yes, nor a finding that would read or print secrets, outlive the kill switch or that
- * can't be told (askedOfFinding).
+ * a stamp of "ask" without its yes, a line judged as its written-out form, nor a finding that would read or print
+ * secrets, outlive the kill switch or that can't be told (askedOfFinding). Without `autopilotOk` a stamp that says
+ * Autopilot announced it wants the user's yes whatever it names (`noAutopilot`, rule `admin.no-autopilot`).
  */
 export async function gateCommand(i: CommandGateInput): Promise<CommandGate> {
   const { spec } = i;
@@ -142,13 +144,16 @@ export async function gateCommand(i: CommandGateInput): Promise<CommandGate> {
   if (i.mode === "off") return { status: "deny", reason: GATE_WORDS.commandsOff };
   const approval = stamp.approval && stamp.approval.ageMs < APPROVAL_MAX_MS ? stamp.approval : null;
   const told = i.autopilotOk === true && !!stamp.announced && stamp.announced.ageMs < APPROVAL_MAX_MS;
-  /** Does the user's yes, or Autopilot's announcement where it may stand in for one, cover this finding? */
-  const agreed = (f: Finding) => approval !== null || (told && askedOfFinding(f) === null);
   // Every reason to ask is gathered into one question, so a single yes (with these rules added) covers them all: the
   // PC asks once and sends again once (§3.8.3 step 13).
   const asks: string[] = [];
   if (stamp.verdict === "ask" && !approval) asks.push(GATE_WORDS.approvalMissing);
   if (i.mode === "ask" && !approval) asks.push(GATE_WORDS.adminAsks);
+  // The PC's Autopilot announced it (its stamp says so), and this machine's administrator doesn't allow Autopilot:
+  // nothing of that announcement counts here, not even for a finding whose class the stamp names, so it wants the
+  // user's own yes and says why (its rule tells the PC to ask at once).
+  const refusedAutopilot = (stamp.announced !== undefined || stamp.rules.includes(AUTOPILOT_RULE)) && i.autopilotOk !== true && !approval;
+  if (refusedAutopilot) asks.push(GATE_WORDS.noAutopilot);
 
   const downloaded = i.task?.downloaded ?? new Set<string>();
   const ctx: ClassifyContext = {
@@ -191,12 +196,14 @@ export async function gateCommand(i: CommandGateInput): Promise<CommandGate> {
   // A line judged as its written-out form (a `[[ … ]]` as `[ … ]`: unroll.ts) is never announced on
   // the PC, so here too only the user's yes covers what it does (commands-remote-r6-2).
   const writtenOut = (cls as { writtenOut?: boolean }).writtenOut === true;
+  /** Does the user's yes, or Autopilot's announcement where it may stand in for one, cover this finding? */
+  const agreed = (f: Finding) => approval !== null || (told && !writtenOut && askedOfFinding(f) === null);
   const covered = (f: Finding) => (f.widening.includes(IN_SCRIPT)
     ? agreed(f) && stamp.rules.includes(ruleOf(f))
     : stamp.rules.includes(f.rule) && (agreed(f) || (!writtenOut && stamp.classes.includes(f.cls) && !ALWAYS_ASK.has(f.cls))));
   const extra = findings.filter(f => !covered(f));
   if (extra.length || asks.length) {
-    const rules = [...new Set(extra.map(ruleOf))].slice(0, 64);
+    const rules = [...new Set([...extra.map(ruleOf), ...(refusedAutopilot ? [NO_AUTOPILOT_RULE] : [])])].slice(0, 64);
     return {
       status: "needs_confirm",
       reason: extra.length ? GATE_WORDS.disagree : asks[0],

@@ -580,8 +580,8 @@ It still asks, with the card of §2.4, before:
 - a command that would read or print passwords, keys or other secrets, so that none reaches the model;
 - a command that would keep running after Stop (a background job, `nohup`, `setsid`, a detached `screen` or `tmux`
   session, `docker run -d`, a process manager, a scheduled job, a program it opens), so that Stop stops everything;
-- a command Ember can't tell the effect of (a loop, code written inline, `eval`, text handed to `xargs` that Ember
-  can't see, a program that waits for typing), since it may be either of those;
+- a command Ember can't tell the effect of (a loop, a line behind a `[[ … ]]` test, code written inline, `eval`,
+  text handed to `xargs` that Ember can't see, a program that waits for typing), since it may be either of those;
 - a command your own words for the task rule out ("commit my work but don't push", "delete everything except
   build", "push it, but without force"): that is your no, said in advance, and the card says "You didn't ask for this.";
 - every command where your organisation asks for that, where you turned on **Ask before every command** for that
@@ -595,8 +595,9 @@ computer, doesn't run its command.
 
 On a computer reached over SSH the command is checked there again, as always. Ember tells that computer that
 Autopilot announced the command rather than that you said yes. It runs the command only where its own administrator
-allows Autopilot, and still wants your yes for a command it finds would read secrets, keep running after Stop or that
-it can't tell, and wherever its administrator asks for every command. When it finds more than this computer did, the
+allows Autopilot (where not, it answers "This computer's administrator doesn't allow Autopilot, so it wants your
+approval." and you get the card), and still wants your yes for a command it finds would read secrets, keep running
+after Stop or that it can't tell, and wherever its administrator asks for every command. When it finds more than this computer did, the
 bubble says "Running a command that <computer>'s own check asked about, without asking: Autopilot is on.", its lines
 show with a countdown of their own, and anything it still wants a yes for after that gets the card. What Ember did
 records each of these as "Announced" with "Autopilot was on, so Ember didn't ask (…)." Your organisation can forbid

@@ -9,7 +9,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { AUTOPILOT_LINE, askedOfFinding, autopilotAsks, autopilotCommand, readsSecrets, type AutopilotInput } from "../../app/main/commands/autopilot";
+import { AUTOPILOT_LINE, NO_AUTOPILOT_RULE, askedOfFinding, autopilotAsks, autopilotCommand, readsSecrets, type AutopilotInput } from "../../app/main/commands/autopilot";
 import { classifyCommand } from "../../app/main/commands/classify";
 import { decideCommand } from "../../app/main/commands/decide";
 import { outlivesStop } from "../../app/main/commands/review";
@@ -50,6 +50,10 @@ describe("what still asks in Autopilot (modes-D2, modes-D7)", () => {
     for (const rule of ["escape.download-run", "escape.run-downloaded", "escape.npx", "escape.run-remote"]) expect(outlivesStop(rule)).toBe(false);
     // A remote's finding inside a script carries its own prefix.
     expect(askedOfFinding({ rule: "in-script:escape.nohup" })).toBe("outlives-stop");
+    // A remote whose own administrator doesn't allow Autopilot says so with a rule of its own: the organisation's.
+    expect(askedOfFinding({ rule: NO_AUTOPILOT_RULE })).toBe("organisation");
+    expect(NO_AUTOPILOT_RULE).toBe("admin.no-autopilot");
+    expect(autopilotAsks({ classes: ["destroy"], rules: ["posix.rm", NO_AUTOPILOT_RULE] }, ON)).toBe("organisation");
     expect(askedOfFinding({ rule: "in-script:secret.env" })).toBe("secret");
   });
 
