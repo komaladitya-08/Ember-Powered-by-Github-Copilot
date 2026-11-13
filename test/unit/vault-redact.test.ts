@@ -94,6 +94,46 @@ describe("VaultRedactor (vault-3)", () => {
     expect(new VaultRedactor().shown).toBe(false);
   });
 
+  it("finds a phone number, a card number, an expiry and an email as a site writes them again (vault-3-x9-5)", () => {
+    const hidden = (part: Parameters<VaultRedactor["note"]>[0], value: string, texts: string[], digits: RegExp) => {
+      const r = new VaultRedactor();
+      r.note(part, value);
+      for (const text of texts) {
+        expect(r.holds(text), text).toBe(true);
+        expect(r.text(`a ${text} b`), text).not.toMatch(digits);
+      }
+      return r;
+    };
+    // Any separators, the country code written or left out, a trunk 0 in its place.
+    const us = hidden("phone", "+1 555 123 4567", ["(555) 123-4567", "+15551234567", "+1-555-123-4567", "+1 (555) 123.4567", "1 555 123 4567"], /4567/);
+    hidden("phone", "+44 20 7946 0958", ["020 7946 0958", "(020) 7946-0958", "+442079460958", "+44 (0)20 7946 0958"], /0958/);
+    hidden("phone", "020 7946 0958", ["+44 20 7946 0958", "02079460958"], /0958/);
+    for (const other of ["555 123 4568", "order 155512345670", "4567", "55512345678"]) expect(us.text(other), other).toBe(other);
+    hidden("cardNumber", CARD, ["4111/1111/1111/1111", "4111_1111_1111_1111", "4111 · 1111 · 1111 · 1111", "4111\u200b1111\u200b1111\u200b1111"], /1111/);
+    // MM/YY as MM/YYYY, without the leading 0, with other marks between, year first; never a part of a longer date.
+    const exp = hidden("expiry", "08/29", ["08/29", "08/2029", "08 / 29", "8/29", "08-29", "08.2029", "2029-08"], /29/);
+    for (const other of ["08/29/2026", "13/08/29", "0829", "08/30", "108/29"]) expect(exp.text(other), other).toBe(other);
+    // A character written as a numeric entity, and characters that don't show (a zero-width space, a soft hyphen) inside.
+    hidden("email", "ada@example.com", ["ada&#64;example.com", "ada&#x40;example.com", "&#97;da&#X0040;example&#46;com", "ada\u200b@example.com", "a\u00adda@exa\u2060mple.com"], /example/);
+    hidden("password", PASSWORD, [`Tr0ub4dor&#38;&#34;CANARY&#34;&#60;3`, `Tr0ub\u200b4dor&"CANARY"<3`], /CANARY/);
+    hidden("address", "1 Canary Row\nLondon E14 9ZZ", ["1 Canary Row,\u200b London E14 9ZZ"], /Canary/);
+  });
+
+  it("refuses a value once it holds as many as it can watch, and forgets none it took (vault-3-x9-6)", () => {
+    const r = new VaultRedactor();
+    r.note("password", "Zq9!long-password-first");
+    let refused = 0;
+    for (let i = 0; i < 450; i++) { try { r.note("password", `pw-${String(i).padStart(4, "0")}-xxxxxxxxxxxxxxxxxxxxxxxxxxxx`); } catch { refused++; } }
+    expect(refused).toBe(51);
+    // What it can't watch is not noted: the caller fills nothing (VaultService.use), never a value unwatched.
+    expect(() => r.note("email", "late.canary@example.org")).toThrow();
+    expect(r.holds("late.canary@example.org")).toBe(false);
+    expect(r.holds("Zq9!long-password-first")).toBe(true);
+    expect(r.holds("pw-0398-xxxxxxxxxxxxxxxxxxxxxxxxxxxx")).toBe(true);
+    // One it already watches is no new value.
+    expect(() => r.note("password", "Zq9!long-password-first")).not.toThrow();
+  });
+
   it("finds a value with any punctuation in it, in every form (found by the canary test: a hyphen made every pattern of a value invalid, and it was let through)", () => {
     const r = new VaultRedactor();
     const odd = "a-b.c*d+e?f^g$h{i}j(k)l|m[n]o\\p/q-";

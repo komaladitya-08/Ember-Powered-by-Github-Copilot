@@ -1619,8 +1619,8 @@ details the user gives Ember in its own **Secure Form**, each bound to one desti
   Firefox, from the vault: Autopilot is on.") and audited with the kind, the part and the destination. The task's
   model hears only whether it was filled.
 - **After a fill.** Nothing Ember reads or captures afterwards holds the value. `VaultService.use` gives every value to
-  the redactor (app/main/vault/redact.ts, `VaultRedactor`) before it is put anywhere; a value it can't take is not
-  filled. The list lives in main's memory for the run and is never written. From then on the value is replaced by
+  the redactor (app/main/vault/redact.ts, `VaultRedactor`) before it is put anywhere; a value it can't take (a pattern that can't be built, or more than the 400 values it
+  watches in a run) is not filled. The list lives in main's memory for the run and is never written. From then on the value is replaced by
   "[hidden: filled from Ember's vault]":
   - in everything a model is sent: `AgentHost` wraps the runtime client in `redactingClient`
     (app/main/agent/redacting-client.ts), so every session's system message, prompts, tool results (a tree read, a
@@ -1628,8 +1628,11 @@ details the user gives Ember in its own **Secure Form**, each bound to one desti
     it; a picture's bytes don't;
   - in the audit log (`AuditLog`'s `redact`) and in every log line (`createLogger`'s `redact`).
 
-  It finds the value as filled, as an address, a JSON line or markup escapes it, a card number with spaces or
-  dashes between its digits, white space of any length (an address's lines joined by commas too) and, for the parts
+  It finds the value as filled, as an address, a JSON line or markup escapes it, with any character as a numeric
+  entity and with characters that don't show inside it, a card number or a phone number by its digits whatever
+  stands between them (a phone number with its country code or without, with a trunk 0 or without), an expiry as
+  its month and year however written ("08/2029", "8/29", "2029-08"; never a part of a longer date), white space of
+  any length (an address's lines joined by commas too) and, for the parts
   that aren't secret, any letter case; such a part is replaced only where it stands alone ("ada", never inside
   "adamant"), a password or card number wherever it stands. A secret shorter than six characters (a card's security
   code, a very short password) is not looked for in other text at all: a mark in place of three digits tells anyone
@@ -1643,7 +1646,8 @@ details the user gives Ember in its own **Secure Form**, each bound to one desti
   name, an email, an address) has been filled in this run, of a window whose read was cut short. The helper's own
   fill makes the field secret before it writes; the typed fallback tells the helper so before the first key and types
   nothing if it can't; and a picture in which a field the task filled is listed as an ordinary field isn't sent.
-  What this doesn't cover: a value an app draws without telling accessibility (a canvas), and what Ember's bubble
+  What this doesn't cover: a value written some other way again (base64, a reordered address, a name's parts
+  apart), a value an app draws without telling accessibility (a canvas), and what Ember's bubble
   and task card show the person of their own screen (an element's name).
 - **The leak test.** test/unit/vault-leak.test.ts fills every kind of entry through the worker's real path, by
   accessibility and as keys, on each OS's keys and words, into a pretend app that repeats everything it is given
