@@ -6937,11 +6937,21 @@ reg(NATIVE, Object.keys(INTERPRETERS).filter(k => !["awk", "gawk", "mawk", "nawk
       listens(h, bind === undefined ? "" : bind, servedRoot(values(q, "d", "directory").pop()));
       return;
     }
-    // zipfile and tarfile -e unpack into the folder given last (review #169).
+    // zipfile and tarfile -e unpack into the folder given last (review #169), over what is there: outside the work tree
+    // (the home folder's dotfiles), or into a folder Ember can't name, that asks as `unzip -d` and `tar -C` do, and a
+    // downloaded archive's files are downloads where they land (commands-remote-r10-7).
     if ((mod === "zipfile" || mod === "tarfile") && h.args.some(a => a.v === "-e" || a.v === "--extract") && p.operands.length >= 2) {
       const to = p.operands[p.operands.length - 1];
       if (to.v === null) h.e.add("destroy", "redirect.overwrite", "Writes to files Ember can't name.");
       else writeInto(h, to.v);
+      const margs = afterModule(h, p) ?? [];
+      const at = margs.findIndex(a => a.v === "-e" || a.v === "--extract");
+      const [arc, dir] = at >= 0 ? [margs[at + 1], margs[at + 2]] : [undefined, undefined];
+      const into = dir === undefined || dir.v === null ? null : h.e.usePath(dir, "write", h.sc);
+      if (into === null || into.abs === null || !inWorkTree(into.abs, h.sc.path)) {
+        h.e.add("destroy", "archive.unpack", `Unpacks ${arc?.v ?? "an archive"} over files in ${into === null ? "a folder Ember can't name" : into.text === "." ? thisFolder(h, into) : into.text}.`, into === null ? {} : { objects: [into] });
+      }
+      if (arc && h.e.isDownloaded(arc, h.sc) && into?.abs) h.e.downloads.push(into.abs);
     }
     if (mod) nameCheck(h, mod);
     if (mod) pythonModule(h, p, mod);

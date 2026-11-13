@@ -161,3 +161,23 @@ describe("commands that print other programs' environments or a committed secret
     }
   });
 });
+
+describe("python's zipfile and tarfile unpacking outside the project (commands-remote-r10-7)", () => {
+  it("asks before unpacking over the home folder or any folder outside the work tree, as unzip -d and tar -C do", () => {
+    for (const cmd of ["python3 -m zipfile -e a.zip ~", "python3 -Im zipfile -e a.zip ~", "python3 -m tarfile -e a.tar ~", "python3 -m zipfile --extract a.zip /home/ana",
+      "python3 -m tarfile -e a.tar.gz ~/.config", 'python3 -m zipfile -e a.zip "$D"', "python3 -m tarfile -v -e a.tar ~"]) {
+      const d = decide(cmd);
+      expect(d.verdict, cmd).toBe("ask");
+      expect(d.rules, cmd).toContain("archive.unpack");
+    }
+    // Neighbours that already asked.
+    for (const cmd of ["unzip -o a.zip -d ~", "tar xf a.tar -C ~"]) expect(decide(cmd).rules, cmd).toContain("archive.unpack");
+  });
+
+  it("still unpacks into the project's own folders and /tmp, as tar xf does, and marks what a download unpacks", () => {
+    for (const cmd of ["python3 -m zipfile -e a.zip .", "python3 -m zipfile -e a.zip out", "python3 -m tarfile -e a.tar build/x", "python3 -m zipfile -l a.zip", "python3 -m zipfile -e a.zip /tmp/x"]) {
+      expect(decide(cmd).verdict, cmd).toBe("run");
+    }
+    expect(result("python3 -m zipfile -e a.zip out", { downloaded: ["/home/ana/proj/a.zip"] }).cls.downloads).toContain("/home/ana/proj/out");
+  });
+});
