@@ -372,6 +372,18 @@ describe("the macOS AX provider's hit tests, looks and actions", () => {
     expect(fake.calls.length).toBe(calls);
   });
 
+  it("sets a secure field's text only for the vault's fill, and refuses ordinary text there as before (vault-2)", async () => {
+    const { fake, p, windows } = await started();
+    const snap = await p.snapshot(bench(windows).handle, { maxDepth: 64, maxNodes: 1000, deadlineMs: 1500 });
+    const pw = snap.nodes.find(n => n.platformSubrole === "AXSecureTextField")!;
+    await expect(p.perform(pw.handle, "setValue", "x")).rejects.toMatchObject({ code: "denied" });
+    expect(fake.done.filter(d => d.startsWith("set AXValue"))).toEqual([]);
+    await p.perform(pw.handle, "fillValue", "from-the-vault");
+    expect(fake.done.filter(d => d.startsWith("set AXValue"))).toHaveLength(1);
+    // No element ever lists it among what can be done to it.
+    expect(snap.nodes.some(n => n.actions?.includes("fillValue"))).toBe(false);
+  });
+
   it("turns Chromium's accessibility on once per app, at its first read, and waits a moment for its tree", async () => {
     const app = benchApp();
     const s = setup([app, emberApp()]);

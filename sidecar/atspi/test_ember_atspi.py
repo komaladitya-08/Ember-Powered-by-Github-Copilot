@@ -1155,6 +1155,130 @@ class Acting(unittest.TestCase):
         with self.assertRaises(PermissionError):
             self.act_on(Acc("text", "Card number", text=""), "set_text", text="4111")
 
+    def field(self, role="password text", name="Password", text=""):
+        """A field that takes text by accessibility (EditableText), and what was set in it."""
+        acc = Acc(role, name, text=text)
+        acc.parent = None
+
+        def set_contents(value):
+            acc.text = value
+            return True
+        acc.queryEditableText = lambda: types.SimpleNamespace(setTextContents=set_contents)
+        return acc
+
+    def fill(self, acc, text="s3cret-CANARY"):
+        settle, e.settle = e.settle, lambda: None
+        try:
+            return self.act_on(acc, "vault_fill", text=text)
+        finally:
+            e.settle = settle
+
+    def test_the_vaults_fill_writes_into_a_password_field_and_says_nothing_of_it(self):
+        # (vault-2) The one method that writes into a secret field; ordinary typing is refused as before.
+        acc = self.field()
+        res = self.fill(acc)
+        self.assertEqual(acc.text, "s3cret-CANARY")
+        self.assertEqual(res["ok"], True)
+        self.assertEqual(res["took"], True)
+        self.assertEqual(res["keys"], [list(e.object_key(acc))])
+        self.assertNotIn("CANARY", json.dumps(res))
+        self.assertNotIn("after", res)
+        with self.assertRaises(PermissionError):
+            self.act_on(acc, "set_text", text="x")
+
+    def test_a_field_the_vault_filled_is_secret_from_then_on(self):
+        # (vault-2) A contact field is no secret before; once filled, nothing reads what it holds.
+        acc = self.field("entry", "Email")
+        self.assertFalse(e.is_secret(acc, "entry", "Email"))
+        self.fill(acc, "ada@example.org")
+        self.assertTrue(e.is_secret(acc, "entry", "Email"))
+        with self.assertRaises(PermissionError):
+            self.act_on(acc, "set_text", text="x")
+
+    def test_the_vaults_fill_only_goes_into_a_usable_text_field(self):
+        # (vault-2)
+        for role in ("terminal", "document text", "paragraph", "combo box", "spin button", "push button"):
+            with self.assertRaises(RuntimeError) as ctx:
+                self.fill(self.field(role, "x"))
+            self.assertIn("background_unavailable", str(ctx.exception), role)
+        plain = Acc("password text", "Password", text="")  # no EditableText: the keyboard is the only way
+        with self.assertRaises(RuntimeError) as ctx:
+            self.fill(plain)
+        self.assertIn("background_unavailable", str(ctx.exception))
+        disabled = self.field()
+        disabled.states = ["showing", "visible"]
+        with self.assertRaises(RuntimeError):
+            self.fill(disabled)
+        self.assertEqual(disabled.text, "")
+        for nothing in ("", None, 7):
+            with self.assertRaises(ValueError):
+                self.fill(self.field(), nothing)
+
+    def test_the_vaults_fill_never_passes_on_the_apps_own_words(self):
+        # (vault-2) An app's error could quote what was sent to it: only whether it answered is said.
+        acc = self.field()
+
+        def refuse(value):
+            raise RuntimeError("could not set '%s'" % value)
+        acc.queryEditableText = lambda: types.SimpleNamespace(setTextContents=refuse)
+        with self.assertRaises(RuntimeError) as ctx:
+            self.fill(acc)
+        self.assertNotIn("CANARY", str(ctx.exception))
+        res = e.handle(json.dumps({"id": 1, "method": "vault_fill", "params": {"id": e.SNAPSHOTS.add(acc), "text": "s3cret-CANARY"}}))
+        self.assertNotIn("CANARY", json.dumps(res))
+
+    def test_the_vaults_fill_says_when_the_field_did_not_take_it(self):
+        # (vault-2) A field that says yes and keeps fewer characters.
+        acc = self.field()
+
+        def cut(value):
+            acc.text = value[:4]
+            return True
+        acc.queryEditableText = lambda: types.SimpleNamespace(setTextContents=cut)
+        self.assertEqual(self.fill(acc)["took"], False)
+
+    def page(self, url, parent=None, role="document web"):
+        doc = Acc(role, "A page")
+        doc.parent = parent
+        if url is not None:
+            doc.queryDocument = lambda: types.SimpleNamespace(getAttributeValue=lambda k: url if k == "DocURL" else "")
+        return doc
+
+    def test_a_fields_page_is_read_from_the_document_itself(self):
+        # (vault-2) Nearest first, up to the application; never from a name or text on the page.
+        app = Acc("application", "firefox")
+        app.parent = None
+        frame = Acc("frame", "https://evil.example - Mozilla Firefox")
+        frame.parent = app
+        top = self.page("https://shop.example/checkout", frame)
+        inner = Acc("internal frame", "https://bank.example")
+        inner.parent = top
+        doc = self.page("https://pay.example/frame", inner)
+        field = self.field()
+        field.parent = doc
+        self.assertEqual(self.act_on(field, "page_address"), {"urls": ["https://pay.example/frame", "https://shop.example/checkout"]})
+        # Outside any page: none.
+        native = self.field()
+        native.parent = frame
+        self.assertEqual(self.act_on(native, "page_address"), {"urls": []})
+
+    def test_a_page_that_reports_no_address_says_so(self):
+        # (vault-2) "" is an answer Ember refuses on; a tree that can't be walked is an error.
+        app = Acc("application", "chrome")
+        app.parent = None
+        silent = self.page(None, app)
+        field = self.field()
+        field.parent = silent
+        self.assertEqual(self.act_on(field, "page_address"), {"urls": [""]})
+        orphan = self.field()
+        orphan.parent = None
+        with self.assertRaises(RuntimeError):
+            self.act_on(orphan, "page_address")
+        loop = self.field()
+        loop.parent = loop
+        with self.assertRaises(RuntimeError):
+            self.act_on(loop, "page_address")
+
     def combo(self, chosen):
         items = [Acc("menu item", "Keep"), Acc("menu item", "Delete permanently")]
         combo = Acc("combo box", "When done", kids=[Acc("menu", kids=items)])

@@ -322,7 +322,10 @@ describe("the bridge's protocol (PROTOCOL.md)", () => {
   it("documents every perform op the bridge handles", () => {
     const perform = cs.slice(cs.indexOf("private static object Perform(Call c)"), cs.indexOf("// ---- textInfo"));
     const ops = [...perform.matchAll(/case "(\w+)":/g)].map(m => m[1]).sort();
-    expect(ops.length).toBe(12);
+    expect(ops.length).toBe(13);
+    // The vault's fill is the one op that sets a password field's text; setValue still refuses one (vault-2).
+    expect(perform.slice(perform.indexOf('case "setValue":'), perform.indexOf('case "fillValue":'))).toContain("if (Props.IsSecret(el)) throw new BridgeError(\"denied\"");
+    expect(perform.slice(perform.indexOf('case "fillValue":'), perform.indexOf('case "setRange":'))).not.toContain("IsSecret");
     const section = protocol.slice(protocol.indexOf("### `perform`"), protocol.indexOf("### `textInfo`"));
     const listed = [...section.matchAll(/^\| `(\w+)` \|/gm)].map(m => m[1]).sort();
     expect(listed).toEqual(ops);

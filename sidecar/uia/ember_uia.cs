@@ -3131,6 +3131,13 @@ namespace Ember.Uia
             ((ValuePattern)Pattern(el, ValuePattern.Pattern, op)).SetValue(value);
             break;
           }
+        case "fillValue":
+          {
+            // The vault's fill (the host's vault_fill, for Ember's main process alone): a password field's text is set too.
+            string value = Args.Text(c.Params, "value");
+            ((ValuePattern)Pattern(el, ValuePattern.Pattern, op)).SetValue(value);
+            break;
+          }
         case "setRange":
           {
             double value = Args.Number(c.Params, "value");
