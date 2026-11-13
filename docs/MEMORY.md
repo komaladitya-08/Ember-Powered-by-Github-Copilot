@@ -230,18 +230,35 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
   - the names `guard.ts` lacked: an authenticator's secret, seed or setup key, a private, encryption, signing or
     secret key and a client, shared or app secret with a value that can be one, "my secret is hunter2", a memorable,
     secret or security word and a secret answer, pass, pswd, p/w and passkey, a card's three digits said in words,
-    and a US account with its routing number.
+    and a US account with its routing number;
+  - a value by its shape, whatever verb or name is round it (memory-x9-6): a word of six or more characters with
+    letters, digits and a password's symbol, never an address, a handle, a hashtag, a path or a price ("Netflix is
+    Winter#2024", "VPN = Summer2024!", "Uses the same Winter#2024 everywhere"); four to eight digits, or three after a
+    lock or a combination, within six words of what a code opens or is for (a keypad, a lock, a door, a gate, an
+    alarm, a safe, voicemail, a cash machine, a card, a SIM, a phone, a tablet or a laptop, unlocking or disarming:
+    "The door keypad takes 4821", "Phone: 482913", "Withdraws cash with 4821", "Luggage lock 482"), unless the word
+    beside them makes them a time, a year, a size, a count, a price or an address ("at 0630", "in 2021", "1200 mm
+    wide", "5000 points", "costs 1000", "4821 Elm Street", "Card ending 4242"); a value after an administrator's name,
+    or a login's with a symbol or a user before it ("Router admin is admin123", "Default login admin/admin123"); a network's key said with no "is"; a
+    security question's answer said beside it; and a passport's or a driving licence's number.
 
   A value is read as `guard.ts` reads a login's (`LOGIN_VALUE`: a digit or a symbol, never an address, a scheme such
   as OAuth2 or 2FA, a version, a date or a hyphenated word), four to eight digits where a code goes, and where a tool
   could stand only one shaped like a password or with a symbol, so "Signs in with SSO", "Logs in with OAuth2", "Uses
   1Password for the work account", "Uses Python3 on the laptop", "Stack: React / Node20", "The phone is iPhone15",
   "The Wi-Fi is 5GHz", "My locker is 4821", "The private key is ~/.ssh/id_ed25519", "The encryption key is AES-256"
-  and "The pass is valid until June" are kept. Where a word can't be told from a password it is refused ("Signs in
-  with jsmith42", "The Wi-Fi is HomeNet5G"): fail closed. Still kept, because nothing in them can be told from an
+  and "The pass is valid until June" are kept, and so are a product's name with its version after a service ("Uses
+  iPhone15 for Instagram", "Slack uses Electron28", "The VPN is NordVPN2"), a time or a year where a lock's code
+  would go ("The alarm is 0630 on weekdays", "The garage is 2019 and newer"), a name with a hyphened number ("The
+  secret is Vitamin-D3", "My pass is Zone1-3"), a memorable place, name or date said with no bank or security word,
+  and three digits on the back of something that is no card (memory-x9-8). Where a word can't be told from a
+  password it is refused ("Signs in with jsmith42", "The Wi-Fi is HomeNet5G"): fail closed. Still kept, because nothing in them can be told from an
   ordinary fact or they are no password, code or card number: a network named with its key's owner ("HomeNet's key
   is BlueSky99"), a password's hint or ending, a licence or product key, a webhook's address, and ID numbers other
-  than those `guard.ts` knows (a passport's, a driving licence's, a tax or health number).
+  than those `guard.ts` knows but a passport's and a driving licence's (a tax or health number), and a recovery phrase
+  said with no name `guard.ts` knows. Refused although ordinary, because a code can't be told from them: a gate's
+  number at an airport ("Flight leaves from gate 4821"), an extension typed on a keypad, a product with a four-digit
+  year in its name after a service ("Uses Photoshop2024 for Instagram posts").
 - `format.ts`: the `<memory untrusted="true">` block a model sees, one line per fact with its id, source and date.
 - `store.ts`: `memory.json`, mode 0600, written atomically. A broken file is moved aside, never overwritten. A file
   set aside, one that can't be read (left as it was) or a save that fails is said in Settings › Memory
@@ -574,10 +591,14 @@ download, so English-only MiniLM is the trade-off for now.
    model writes, nor words Ember couldn't tell were the user's, nor a name that reads like an order) that recall finds
    nothing for are counted (`Gaps`), but only names that may be someone or something of the user's (`askableNames`,
    memory-r9-8): never an app, a site, a device or a day everyone knows (`NOT_SOMEONE`, `EVERYDAY`, with a setting's
-   words and well-known places), an app installed on this computer (`LearningDeps.apps`), or a name standing where
-   an app, a site, a setting or a place does (the object of "open", "close", "play", "search"…, after "in", "on" or
-   "using", after "to" behind a word of travel), so "Open Firefox", "Is Dark Mode on" and "the weather in London"
-   never make Ember ask who or what that is. A name Ember asked about is never counted or asked about again in that
+   words and well-known places), an app installed on this computer (`LearningDeps.apps`, by its whole name or its
+   first word), or a name standing where an app, a site, a setting or a place does (the object of "open", "close",
+   "play", "search"…, after "in", "on" or "using", after "to" behind a word of travel), so "Open Firefox", "Is Dark
+   Mode on" and "the weather in London" never make Ember ask who or what that is. Someone stays someone there
+   (memory-x9-9): a name that is someone's ("Start Priya's review"), after "check in on", "working on" or "an update
+   on", told about something ("Update Priya on the launch"), after a verb whose object is a person ("Ask Alma",
+   "Ping Dallas") or after a title ("Mr Lock"), and a later word of an installed app's name ("Grace Hopper
+   Simulator" leaves Hopper; its first word, Grace, still goes). A name Ember asked about is never counted or asked about again in that
    run, whether it was answered, skipped or left unanswered (held in RAM only; a restart may ask once more). Once one
    was missed twice, at most once a day (`memory.askedAt`, kept across restarts), only while idle with the screen
    unlocked and nothing under way, Ember says "You've mentioned “Priya” a few times. Who or what is that?" in the
