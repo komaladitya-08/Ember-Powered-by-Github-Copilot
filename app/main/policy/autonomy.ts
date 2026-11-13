@@ -1,67 +1,166 @@
 /**
- * "Work without asking" (owner decision of 2026-11-02, PLAN.md §2 "Approvals" and §10): while the user has it on, an
- * ordinary step that would have asked only because it is the first in an app, uses the borrowed mouse and keyboard, or
- * carries text from another window is announced instead (a line in the bubble and the task's card, and an audit entry
- * marked `autonomy`), within the scopes the user left on. It never touches what policy finds risky (sending, deleting,
- * paying, security settings, destructive keys, secrets…), which asks every time with no "Always", nor any hard "never".
+ * The approval modes (owner decision of 2026-11-12, PLAN.md §2 "Approvals" and §10): one choice of Interactive, Assisted
+ * and Autopilot replaces "Work without asking" and Home's two narrower switches. In Interactive an ordinary step that
+ * would have asked only because it is the first in an app, uses the borrowed mouse and keyboard, or carries text from
+ * another window is announced instead (a line in the bubble and the task's card, and an audit entry marked `autonomy`):
+ * what Work without asking did with every scope on, plus the app switch. It never touches what policy finds risky
+ * (sending, deleting, paying, security settings, destructive keys, secrets…), which asks every time with no "Always",
+ * nor any hard "never".
  *
- * Fail closed: it is in force only with its own consent (FEATURE_CONSENT_VERSION.autonomy) and only where the
- * administrator allows it (admin.ts autonomyAllowed); a task that something on screen tried to steer, or whose step came
- * up unasked, or where the user already said no, asks as before (worker.ts). Pure, so it is unit-tested without Electron.
+ * Fail closed: a mode is in force only with its own card agreed to as it reads now (FEATURE_CONSENT_VERSION) and only
+ * where the administrator allows it; otherwise Ember is below Interactive ("asking") and asks as it did before the
+ * modes. Every consumer reads the mode through modeInForce and its inputs through approvalInputs, so none can miss a
+ * rule. A task that something on screen tried to steer, or whose step came up unasked, or where the user already said
+ * no, asks as before (worker.ts). Pure but for the hold, so it is unit-tested without Electron.
  */
 
-import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
+import { APPROVAL_MODES, modeCardVersion, modeRank, type ApprovalMode, type ApprovalsState, type ModeInForce, type ModeWhy } from "../../shared/approvals";
 
-/** What "Work without asking" may cover: using apps, ordinary commands, the borrowed mouse and keyboard, moving text between apps. */
+export { APPROVAL_MODES, type ApprovalMode, type ModeInForce };
+
+/** What an ordinary step may need waived: using apps, ordinary commands, the borrowed mouse and keyboard, moving text between apps. */
 export type AutonomyScope = "apps" | "commands" | "cursor" | "crossWindow";
 export type AutonomyScopes = Record<AutonomyScope, boolean>;
 
-/** All four on: what turning it on gives (Home's one switch). */
+/** All four on: what Interactive and the modes above it give. */
 export const ALL_SCOPES: Readonly<AutonomyScopes> = Object.freeze({ apps: true, commands: true, cursor: true, crossWindow: true });
 
-/** The setting as settings.ts keeps it. */
-export interface AutonomySetting {
-  on: boolean;
-  scopes: AutonomyScopes;
-  consent: { version: number; at: string | null };
+/** The setting as settings.ts keeps it: the mode chosen, and each mode's card as agreed to. */
+export interface ApprovalsSetting {
+  mode: ApprovalMode;
+  consent: Record<ApprovalMode, { version: number; at: string | null }>;
 }
 
 /** The administrator's switches that bear on it (AdminPolicy's, structurally: this module loads without admin.ts). */
 export interface AutonomyAdmin {
-  features: { autonomy?: boolean; actions?: boolean };
+  features: { autonomy?: boolean; actions?: boolean; aiReview?: boolean };
   allowGrants: boolean;
   confirmEveryAction: boolean;
+  /** The highest mode users may choose (`approvals.maxMode`): it can only lower the mode. */
+  approvals?: { maxMode?: ApprovalMode };
 }
 
-/** Has the user agreed to the current card? */
-export const autonomyConsented = (s: Pick<AutonomySetting, "consent"> | undefined): boolean =>
-  (s?.consent.version ?? 0) >= FEATURE_CONSENT_VERSION.autonomy;
+/** Has the user agreed to `mode`'s own card as it reads now? */
+export const modeAgreed = (s: Pick<ApprovalsSetting, "consent"> | undefined, mode: ApprovalMode): boolean =>
+  (s?.consent?.[mode]?.version ?? 0) >= modeCardVersion(mode);
 
-/** May the organisation's users have it at all (the same rule as admin.ts autonomyAllowed)? */
+/** May the organisation's users have a mode at all (the same rule as admin.ts autonomyAllowed)? Not: Ember is below Interactive. */
 export const autonomyPermitted = (admin: AutonomyAdmin | null | undefined): boolean =>
   !admin || (admin.features.autonomy !== false && admin.allowGrants !== false && !admin.confirmEveryAction && admin.features.actions !== false);
 
 /**
- * Held off in memory (PR #193 review): "on" that couldn't be audited and couldn't be turned off on disk either (disk full,
- * folder unwritable) must not be in force, whatever settings.json says. Every consumer goes through autonomyInForce, so
- * none can miss it. SettingsStore stays as it is (it never invents a value it didn't save).
+ * The modes Home offers a row and a card for, and the only ones its choice may name (chooseMode). Assisted and
+ * Autopilot join as each is built.
  */
-let held = false;
-/** Keep "Work without asking" out of force in this process until {@link releaseAutonomyHold}. */
-export const holdAutonomyOff = (): void => { held = true; };
-/** Called once the setting is seen off (the next turn on is audited afresh). */
-export const releaseAutonomyHold = (): void => { held = false; };
-/** Is it held off now? */
-export const autonomyHeld = (): boolean => held;
+export const OFFERED_MODES: readonly ApprovalMode[] = ["interactive"];
 
 /**
- * The scopes in force now, or null: it is off, its card hasn't been agreed to (or was agreed to in an older wording),
- * or the administrator doesn't allow it. A setting that can't be read is off.
+ * The modes that can be in force. Until Assisted's check is built, Assisted is Interactive plus the command reviewer,
+ * as the old "Ask only about dangerous commands" switch was; Autopilot isn't built, so a settings.json that names it
+ * (by hand: Home doesn't offer it) is Interactive at most.
  */
-export function autonomyInForce(s: AutonomySetting | undefined, admin?: AutonomyAdmin | null): AutonomyScopes | null {
-  if (held || !s || s.on !== true || !autonomyConsented(s) || !autonomyPermitted(admin)) return null;
-  const scopes: AutonomyScopes = { apps: s.scopes?.apps === true, commands: s.scopes?.commands === true, cursor: s.scopes?.cursor === true, crossWindow: s.scopes?.crossWindow === true };
-  return Object.values(scopes).some(Boolean) ? scopes : null;
+const BUILT: readonly ApprovalMode[] = ["interactive", "assisted"];
+
+/**
+ * Held below Interactive in memory (PR #193 review): a mode that asks less that couldn't be audited and couldn't be
+ * undone on disk either (disk full, folder unwritable) must not be in force, whatever settings.json says. Every
+ * consumer goes through modeInForce, so none can miss it. SettingsStore stays as it is (it never invents a value it
+ * didn't save).
+ */
+let held = false;
+/** Keep Ember below Interactive in this process until {@link releaseAutonomyHold}. */
+export const holdAutonomyOff = (): void => { held = true; };
+/** Called once the mode the settings give is recorded, or is no higher than the one that was (policy/mode-record.ts). */
+export const releaseAutonomyHold = (): void => { held = false; };
+/** Is it held below Interactive now? */
+export const autonomyHeld = (): boolean => held;
+
+/** The mode the setting and the administrator give, the hold apart, and why it is below the one chosen. */
+function standing(s: ApprovalsSetting | undefined, admin: AutonomyAdmin | null | undefined): { mode: ModeInForce; why: ModeWhy | null } {
+  if (!autonomyPermitted(admin)) return { mode: "asking", why: "organisation" };
+  const chosen = modeRank(s?.mode);
+  if (!s || !chosen) return { mode: "asking", why: "card" };
+  const built = BUILT.includes(s.mode);
+  const cap = admin?.approvals?.maxMode ? modeRank(admin.approvals.maxMode) : APPROVAL_MODES.length;
+  const checkOff = admin?.features.aiReview === false;
+  let mode: ModeInForce = "asking";
+  // The highest mode at or below the choice and the cap whose own card is agreed to: a card never covers another mode.
+  for (let rank = Math.min(built ? chosen : 1, cap); rank >= 1 && mode === "asking"; rank--) {
+    const m = APPROVAL_MODES[rank - 1];
+    if (m === "assisted" && checkOff) continue;
+    if (modeAgreed(s, m)) mode = m;
+  }
+  if (mode === s.mode) return { mode, why: null };
+  return { mode, why: chosen > cap ? "cap" : !built ? "unavailable" : s.mode === "assisted" && checkOff ? "check-off" : "card" };
+}
+
+/** The mode the setting and the administrator give, whatever the hold says: what the hold is released by (mode-record.ts). */
+export const modeWithoutHold = (s: ApprovalsSetting | undefined, admin?: AutonomyAdmin | null): ModeInForce => standing(s, admin).mode;
+
+/**
+ * The mode in force now: the highest mode at or below the one chosen and the administrator's cap whose own card is
+ * agreed to as it reads now; "asking" (below Interactive) when there is none, where the administrator doesn't allow a
+ * mode, while the hold is on, and for a setting that can't be read. With the administrator's `features.aiReview` false,
+ * Assisted's check is off, so a chosen Assisted is in force as Interactive.
+ */
+export function modeInForce(s: ApprovalsSetting | undefined, admin?: AutonomyAdmin | null): ModeInForce {
+  return held ? "asking" : standing(s, admin).mode;
+}
+
+/** What a state gives the machinery that decides: the policy engine's inputs keep their shape. */
+export interface ApprovalInputs {
+  /** PolicyInputs.autonomy and the command flow's: every scope, or null below Interactive. */
+  scopes: AutonomyScopes | null;
+  /** PolicyInputs.trustAskedApps: no "Let me work in …?" in an app the user asked for help in. */
+  askedApps: boolean;
+  /** A command that would ask goes to the reviewer first (commands/review.ts). */
+  reviewCommands: boolean;
+}
+
+const ASKING: Readonly<ApprovalInputs> = Object.freeze({ scopes: null, askedApps: false, reviewCommands: false });
+const INTERACTIVE: Readonly<ApprovalInputs> = Object.freeze({ scopes: ALL_SCOPES, askedApps: true, reviewCommands: false });
+const ASSISTED: Readonly<ApprovalInputs> = Object.freeze({ scopes: ALL_SCOPES, askedApps: true, reviewCommands: true });
+
+/**
+ * The inputs `mode` gives: below Interactive, what all three of the old switches off gave; in Interactive, what Work
+ * without asking with every scope and the app switch gave, so the policy engine decides exactly as it did; in
+ * Assisted, the command reviewer too, as the old switch ran it.
+ */
+export function approvalInputs(mode: ModeInForce): Readonly<ApprovalInputs> {
+  return mode === "asking" ? ASKING : mode === "assisted" ? ASSISTED : INTERACTIVE;
+}
+
+/** The scopes in force now (approvalInputs' view of modeInForce): every one, or null below Interactive. */
+export function autonomyInForce(s: ApprovalsSetting | undefined, admin?: AutonomyAdmin | null): AutonomyScopes | null {
+  return approvalInputs(modeInForce(s, admin)).scopes;
+}
+
+/** The modes as Home is told of them: `own` is the user's own setting, never the one with the policy applied. */
+export function approvalsState(own: ApprovalsSetting, admin: AutonomyAdmin | null | undefined): ApprovalsState {
+  const at = standing(own, admin);
+  // The organisation's reason holds whatever else does; then the hold.
+  const lowered = held && at.why !== "organisation";
+  return {
+    chosen: own.mode,
+    inForce: lowered ? "asking" : at.mode,
+    why: lowered ? "not-recorded" : at.why,
+    offered: [...OFFERED_MODES],
+    agreed: APPROVAL_MODES.filter(m => modeAgreed(own, m)),
+    cap: admin?.approvals?.maxMode ?? null,
+  };
+}
+
+/**
+ * Home's choice of a mode (APPROVALS_IPC.choose): the mode changes only together with the agreement to its card, so the
+ * setting that comes back holds both, built on the user's own (`own`). Refused, with why: a mode Home doesn't offer
+ * (`unavailable`), a card that isn't the one in force now (`card`), or the organisation's limit.
+ */
+export function chooseMode(own: ApprovalsSetting, mode: ApprovalMode, version: number, admin: AutonomyAdmin | null | undefined, now: string): { ok: true; approvals: ApprovalsSetting } | { ok: false; why: ModeWhy } {
+  if (!OFFERED_MODES.includes(mode)) return { ok: false, why: "unavailable" };
+  if (version !== modeCardVersion(mode)) return { ok: false, why: "card" };
+  const approvals: ApprovalsSetting = { mode, consent: { ...own.consent, [mode]: { version, at: now } } };
+  const at = standing(approvals, admin);
+  return at.mode === mode ? { ok: true, approvals } : { ok: false, why: at.why ?? "unavailable" };
 }
 
 /** Does `scopes` take in every one of `needs` (none needed: no, so nothing is waived by accident)? */

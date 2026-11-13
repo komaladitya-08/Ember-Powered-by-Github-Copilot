@@ -6,8 +6,8 @@
  * Match verified it while it is on; "Not now" from anyone; owner decisions of
  * 2026-11-02 and 2026-11-12, PLAN.md §2 "Approvals"). Never the model, never
  * typed text, and never "Always" by voice. One question shows at a time; the
- * rest wait their turn. Unanswered questions expire as "no", counted from when
- * they appear on screen.
+ * rest wait their turn. Unanswered questions expire with no answer (null: nothing
+ * is approved, and nobody said no), counted from when they appear on screen.
  *
  * A question can't be answered by accident: clicks in its first moments are
  * ignored (a double-click or a click already on its way lands on nothing),
@@ -183,7 +183,7 @@ interface WholeRead { seen: boolean; page: number; seenAt: number; keyAt: number
 interface Pending { n: number; q: Question; resolve: (answer: string | null) => void; timer: ReturnType<typeof setTimeout> | null; shownAt: number; deadline: number; off?: () => void; whole?: WholeRead; note?: string; voiceLocked?: boolean }
 
 export interface ConfirmerTiming {
-  /** How long a question stays up before it expires as "no" (read as each one shows: the user's setting may change). */
+  /** How long a question stays up before it expires unanswered (read as each one shows: the user's setting may change). */
   timeoutMs?: number | (() => number);
   /** Clicks this soon after a question appears are ignored. */
   armMs?: number;

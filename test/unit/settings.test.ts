@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { SettingsSchema, SettingsStore, DEFAULT_SETTINGS, MAX_HOME_PATCH, checkHomePatch, withOwnTrust, type SettingsPatch } from "../../app/main/settings";
+import { SettingsSchema, SettingsStore, DEFAULT_SETTINGS, MAX_HOME_PATCH, checkHomePatch } from "../../app/main/settings";
 
 let dir: string;
 let file: string;
@@ -253,14 +253,15 @@ describe("a change sent from the settings window", () => {
     expect(() => checkHomePatch({ privacy: { neverLook } })).toThrow("That change is too large to save.");
   });
 
-  it("changes only the trust switch flipped, never writing the administrator's forced value of the other (UI audit)", () => {
-    const own = { askedApps: true, reviewCommands: false };
-    expect(withOwnTrust({ trust: { reviewCommands: true } } as SettingsPatch, own)).toEqual({ trust: { askedApps: true, reviewCommands: true } });
-    expect(withOwnTrust({ trust: { askedApps: false } } as SettingsPatch, own)).toEqual({ trust: { askedApps: false, reviewCommands: false } });
-    expect(withOwnTrust({ size: 70 }, own)).toEqual({ size: 70 });
+  it("never carries the approval mode: Home changes it only by agreeing to a mode's card, built on the user's own setting (UI audit, modes-A6)", () => {
     const home = fs.readFileSync(new URL("../../app/renderer/home/main.ts", import.meta.url), "utf8");
-    expect(home).toContain("void save({ trust: { askedApps: (e.target as HTMLInputElement).checked } } as SettingsPatch);");
-    expect(fs.readFileSync(new URL("../../app/main/main.ts", import.meta.url), "utf8")).toContain("settings.update(ownNeverLook(withOwnExtensions(withOwnProvider(withOwnTrust(patch, settings.own().trust), settings.own().provider), settings.own().extensions))");
+    // No general save names the mode, the old switches or a card's record: the choice goes through its own call.
+    expect(home).not.toMatch(/save\(\{\s*(approvals|trust|autonomy)\b/);
+    expect(home).toContain("window.ember.chooseMode(mode, modeCardVersion(mode))");
+    const main = fs.readFileSync(new URL("../../app/main/main.ts", import.meta.url), "utf8");
+    expect(main).toContain("settings.update(ownNeverLook(withOwnExtensions(withOwnProvider(patch, settings.own().provider), settings.own().extensions))");
+    // What main builds the choice on is the user's own setting, never the one shown with the administrator's values.
+    expect(main).toContain("chooseMode(settings.own().approvals, mode, version, policy, new Date().toISOString())");
   });
 });
 

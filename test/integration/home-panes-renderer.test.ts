@@ -10,6 +10,8 @@ import { chromium, type Browser, type Page } from "playwright-core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { AdminPolicySchema, auditRetentionDays, commandMode, heldUntilRestart, homeAdmin, managedKeys } from "../../app/main/admin";
 import { DEFAULT_SETTINGS } from "../../app/main/settings";
+import { approvalsState, type ApprovalsSetting } from "../../app/main/policy/autonomy";
+import type { ApprovalsState } from "../../app/shared/approvals";
 import { FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
 import { unbrokenRuns } from "../../app/renderer/home/computers-copy";
 import type { TaskEntry, ActivityItem } from "../../app/shared/activity";
@@ -33,7 +35,10 @@ declare global {
 
 const gate = process.env.EMBER_UIUX_TEST !== "1";
 
-interface Seed { settings?: Record<string, unknown>; admin?: Record<string, unknown>; activity?: ActivityEntry[] | "fail"; viewport?: { width: number; height: number }; checks?: { id: string; status: string; label: string; detail: string; fix?: string }[]; platform?: StatusPlatform; updates?: UpdateStatus; provider?: boolean; /** The targets runtime, answering after this many ms as in the app (Computers and Commands show then). */ targets?: number }
+interface Seed { /** How the approval modes stand, as main sends it with the status (absent: main sent none). */ approvals?: ApprovalsState; settings?: Record<string, unknown>; admin?: Record<string, unknown>; activity?: ActivityEntry[] | "fail"; viewport?: { width: number; height: number }; checks?: { id: string; status: string; label: string; detail: string; fix?: string }[]; platform?: StatusPlatform; updates?: UpdateStatus; provider?: boolean; /** The targets runtime, answering after this many ms as in the app (Computers and Commands show then). */ targets?: number }
+
+/** Interactive chosen, its card agreed to as it reads now: the user's own setting. */
+const INTERACTIVE: ApprovalsSetting = { mode: "interactive", consent: { interactive: { version: FEATURE_CONSENT_VERSION.autonomy, at: "2026-11-04T12:00:00Z" }, assisted: { version: 0, at: null }, autopilot: { version: 0, at: null } } };
 
 let browser: Browser;
 let server: http.Server;
@@ -64,7 +69,7 @@ async function open(pane: string, seed: Seed = {}): Promise<Page & { errors: str
   const page = await browser.newPage({ viewport: seed.viewport ?? { width: 1000, height: 900 } }) as Page & { errors: string[] };
   page.errors = [];
   page.on("pageerror", e => page.errors.push(e.message));
-  await page.addInitScript(({ settings, admin, activity, checks, platform, updates, provider, targets }) => {
+  await page.addInitScript(({ settings, admin, activity, checks, platform, updates, provider, targets, approvals }) => {
     const subs: Record<string, ((v: unknown) => void)[]> = {};
     // Main's list as last pushed: what a read after a task control gets.
     let tasks: unknown = [];
@@ -83,12 +88,14 @@ async function open(pane: string, seed: Seed = {}): Promise<Page & { errors: str
       if (name === "list") return () => new Promise(resolve => setTimeout(() => resolve([{ id: "local", kind: "local", label: "This computer", state: "ready" }]), targets));
       return () => new Promise(() => undefined);
     } });
-    const status = () => ({ appVersion: "0.1.1", settings, environment: { checks, versions: { node: "24", electron: "44", chrome: "152" } }, logFile: "/test/ember.log", settingsNotice: null, admin, ...(platform ? { platform } : {}) });
+    const status = () => ({ appVersion: "0.1.1", settings, environment: { checks, versions: { node: "24", electron: "44", chrome: "152" } }, logFile: "/test/ember.log", settingsNotice: null, admin, ...(platform ? { platform } : {}), ...(approvals ? { approvals } : {}) });
     window.ember = new Proxy({}, { get: (_t, name: string) => {
       if (name.startsWith("on")) return (fn: (v: unknown) => void) => { (subs[name] ??= []).push(fn); return () => undefined; };
       if (name === "getStatus") return async () => status();
       if (name === "updates" && updates) return async () => updates;
       if (name === "updateSettings") return async (patch: Record<string, unknown>) => { h.calls.push(`save:${JSON.stringify(patch)}`); return {}; };
+      // Main's answer to a choice of mode: recorded and in force, as it says with the state.
+      if (name === "chooseMode") return async (mode: string, version: number) => { h.calls.push(`choose:${mode}:${version}`); return { ok: true, state: { chosen: mode, inForce: mode, why: null, offered: ["interactive"], agreed: [mode], cap: null } }; };
       if (name === "conversation") return async () => [];
       if (name === "tasks") return async () => tasks;
       if (name === "taskControl") return async (id: string, kind: string) => { h.calls.push(`taskControl:${id}:${kind}`); return true; };
@@ -96,7 +103,7 @@ async function open(pane: string, seed: Seed = {}): Promise<Page & { errors: str
       if (name === "activity") return async (limit?: number) => { h.reads++; h.limits.push(limit ?? 500); if (h.activity === "fail") throw new Error("EACCES: permission denied"); return h.activity.slice(0, limit ?? 500); };
       return () => new Promise(() => undefined);
     } }) as never;
-  }, { settings, admin, activity: seed.activity ?? [], checks: seed.checks ?? [], platform: seed.platform ?? null, updates: seed.updates ?? null, provider: seed.provider ?? false, targets: seed.targets ?? null });
+  }, { settings, admin, activity: seed.activity ?? [], checks: seed.checks ?? [], platform: seed.platform ?? null, updates: seed.updates ?? null, provider: seed.provider ?? false, targets: seed.targets ?? null, approvals: seed.approvals ?? null });
   await page.goto(`http://127.0.0.1:${port}/app/renderer/home/index.html`);
   await page.waitForSelector(`a[href='#${pane}-h']`);
   await page.evaluate(() => document.body.classList.remove("loading", "first-run"));
@@ -690,16 +697,16 @@ describe.skipIf(gate)("Home's Apps & privacy, as the person's own settings and t
 
   it("says what the person turned on: commands on this computer, and ordinary steps without asking (safety-privacy-r4-2, safety-privacy-c4-1)", async () => {
     const agreed = { version: 1, at: "2026-11-04T12:00:00Z" };
-    const on = { commands: { local: { on: true, askEvery: false, consent: agreed } }, autonomy: { on: true, scopes: { apps: true, commands: true, cursor: true, crossWindow: true }, consent: { version: 2, at: agreed.at } } };
-    const page = await open("privacy", { settings: on });
+    const on = { commands: { local: { on: true, askEvery: false, consent: agreed } }, approvals: INTERACTIVE };
+    const page = await open("privacy", { settings: on, approvals: approvalsState(INTERACTIVE, null) });
     const fold = page.locator("#privacy-terms-fold");
     await fold.locator("summary").click();
     const shown = () => page.locator("#privacy-terms").innerText();
     const hand = () => page.locator("#privacy-terms li[data-icon='hand']").innerText();
     const plug = () => page.locator("#privacy-terms li[data-icon='plug']").innerText();
-    expect(await page.locator("#autonomy-on").isChecked()).toBe(true);
+    expect(await page.locator("#mode-interactive").getAttribute("aria-checked")).toBe("true");
     expect(await plug()).toBe("Other computers and commands: you let Ember run commands on this computer. It runs commands only in its own window, where you can watch and stop them. Other computers are off until you turn them on.");
-    expect(await hand()).toMatch(/^It asks before acting on anything risky or hard to undo\. Work without asking is on \(below\), so for ordinary steps it tells you what it's doing instead\. It never types passwords\./);
+    expect(await hand()).toMatch(/^It asks before acting on anything risky or hard to undo\. For ordinary steps it tells you what it's doing instead \(How Ember asks, below\)\. It never types passwords\./);
     // First run's own words are untouched.
     expect(await page.locator("#w-full li[data-icon='plug']").evaluate(e => e.textContent)).toContain("are off until you turn them on");
     expect(await page.locator("#w-full li[data-icon='hand']").evaluate(e => e.textContent)).toContain("It asks before acting in an app, and always before anything hard to undo.");
@@ -707,6 +714,7 @@ describe.skipIf(gate)("Home's Apps & privacy, as the person's own settings and t
     // Both turned off again (main tells Home the settings changed): word for word as before it started, still open.
     const base = { ...structuredClone(DEFAULT_SETTINGS), onboarded: true, consent: { version: 99, at: "2026-11-04T12:00:00Z" } };
     await page.evaluate(s => window.__pane.emit("onSettingsChanged", s), base);
+    await page.evaluate(a => window.__pane.emit("onApprovals", a), approvalsState(DEFAULT_SETTINGS.approvals, null));
     await expect.poll(shown).toContain("It asks before acting in an app, and always before anything hard to undo.");
     expect(await plug()).toBe("Other computers and commands are off until you turn them on: Ember can work on computers you reach over SSH, and run commands in its own window. Each asks you first.");
     expect(await fold.evaluate(d => (d as HTMLDetailsElement).open)).toBe(true);
@@ -728,8 +736,15 @@ describe.skipIf(gate)("Home's Apps & privacy, as the person's own settings and t
     await page.close();
   });
 
-  /** Switches the person left on that a held lockdown turns off: listening for the name, memory, routines, updates, asked apps. */
-  const HELD_OFF = ["#wake", "#memory-on", "#routines-on", "#updates-on", "#trust-apps"];
+  /** Switches the person left on that a held lockdown turns off: listening for the name, memory, routines, updates. */
+  const HELD_OFF = ["#wake", "#memory-on", "#routines-on", "#updates-on"];
+  /** How Ember asks, as a lockdown leaves it: no mode marked as in force, its row locked. */
+  const modeOff = async (page: Page) => {
+    expect(await page.locator("#mode-interactive").getAttribute("aria-checked")).toBe("false");
+    expect(await page.locator("#mode-interactive").isDisabled()).toBe(true);
+    expect(await page.locator("#approvals-card").isHidden()).toBe(true);
+    expect(await page.locator("#approvals-note").innerText()).toMatch(/^Managed by your organisation: Ember asks before its first step in an app/);
+  };
   const leftOn = (at: string) => ({
     wakeWord: true, voice: { ...DEFAULT_SETTINGS.voice, consent: true },
     memory: { ...DEFAULT_SETTINGS.memory, on: true, consent: { version: FEATURE_CONSENT_VERSION.memory, at } },
@@ -744,9 +759,11 @@ describe.skipIf(gate)("Home's Apps & privacy, as the person's own settings and t
     const p = held.policy;
     const agreed = { version: 1, at: "2026-11-04T12:00:00Z" };
     const page = await open("privacy", {
+      // (Main says how the modes stand under the policy in force: below Interactive.)
+      approvals: approvalsState(INTERACTIVE, p),
       settings: {
         commands: { local: { on: true, askEvery: false, consent: agreed } },
-        autonomy: { on: true, scopes: { apps: true, commands: true, cursor: true, crossWindow: true }, consent: { version: 2, at: agreed.at } },
+        approvals: INTERACTIVE,
         grants: { gedit: "act" },
         ...leftOn(agreed.at),
       },
@@ -756,19 +773,20 @@ describe.skipIf(gate)("Home's Apps & privacy, as the person's own settings and t
     const fold = page.locator("#privacy-terms-fold");
     await fold.locator("summary").click();
     const hand = await page.locator("#privacy-terms li[data-icon='hand']").innerText();
-    expect(hand).not.toContain("Work without asking is on");
+    expect(hand).not.toContain("it tells you what it's doing instead");
     expect(hand).not.toContain("without asking (below)");
     expect(hand).toMatch(/^It asks before acting in an app, and always before anything hard to undo\. It never types passwords\./);
     expect(await page.locator("#privacy-terms li[data-icon='plug']").innerText()).toBe("Other computers and commands are turned off by your organisation.");
     // Screenshots too, as a lockdown read at start says, and the switches under the fold as it says they are
-    // (safety-privacy-w5-2): the settings still hold Send screenshots for tasks and Work without asking on.
+    // (safety-privacy-w5-2): the settings still hold Send screenshots for tasks on and Interactive chosen and agreed to.
     const eye = await page.locator("#privacy-terms li[data-icon='eye']").innerText();
     expect(eye).toContain("through the desktop's accessibility service. Send screenshots for tasks is off (below), so it takes no screenshots for tasks.");
     expect(eye).not.toContain("it may take a screenshot");
-    for (const id of ["#screen-images", "#autonomy-on"]) {
+    for (const id of ["#screen-images"]) {
       expect(await page.locator(id).isChecked()).toBe(false);
       expect(await page.locator(id).isDisabled()).toBe(true);
     }
+    await modeOff(page);
     // Every other switch the lockdown turned off shows off as well, as a lockdown read at start draws it, though the
     // settings still hold it on (safety-privacy-w5-2).
     for (const id of HELD_OFF) {
@@ -783,9 +801,10 @@ describe.skipIf(gate)("Home's Apps & privacy, as the person's own settings and t
     const agreed = { version: 1, at: "2026-11-04T12:00:00Z" };
     const ordinary = { policy: AdminPolicySchema.parse({ commands: { local: "on" } }), source: "/etc/ember/policy.json" };
     const page = await open("privacy", {
+      approvals: approvalsState(INTERACTIVE, ordinary.policy),
       settings: {
         commands: { local: { on: true, askEvery: false, consent: agreed } },
-        autonomy: { on: true, scopes: { apps: true, commands: true, cursor: true, crossWindow: true }, consent: { version: 2, at: agreed.at } },
+        approvals: INTERACTIVE,
         grants: { gedit: "act" },
         ...leftOn(agreed.at),
       },
@@ -796,7 +815,8 @@ describe.skipIf(gate)("Home's Apps & privacy, as the person's own settings and t
     await fold.locator("summary").click();
     const line = (icon: string) => page.locator(`#privacy-terms li[data-icon='${icon}']`).innerText();
     const notice = () => page.locator("#managed").evaluate(e => e.textContent);
-    expect(await line("hand")).toContain("Work without asking is on (below)");
+    expect(await line("hand")).toContain("For ordinary steps it tells you what it's doing instead (How Ember asks, below).");
+    expect(await page.locator("#mode-interactive").getAttribute("aria-checked")).toBe("true");
     expect(await line("send")).toContain("go to GitHub Copilot to work out the answer.");
     expect(await notice()).toMatch(/^Some settings are managed by your organisation \(\/etc\/ember\/policy\.json\)\./);
     // The policy file changes while Ember runs: main sends the held lockdown, as a status read would carry it.
@@ -807,13 +827,114 @@ describe.skipIf(gate)("Home's Apps & privacy, as the person's own settings and t
     expect(await line("eye")).toContain("Send screenshots for tasks is off (below), so it takes no screenshots for tasks.");
     expect(await line("plug")).toBe("Other computers and commands are turned off by your organisation.");
     expect(await notice()).toBe("Your organisation changed Ember's policy. Restart Ember to use it.");
-    for (const id of ["#screen-images", "#autonomy-on", ...HELD_OFF]) {
+    for (const id of ["#screen-images", ...HELD_OFF]) {
       expect(await page.locator(id).isChecked(), id).toBe(false);
       expect(await page.locator(id).isDisabled(), id).toBe(true);
     }
+    // The mode shows out of force at once, from the policy alone, before main's word of how the modes stand comes; and
+    // that word says the same.
+    await modeOff(page);
+    await page.evaluate(a => window.__pane.emit("onApprovals", a), approvalsState(INTERACTIVE, heldUntilRestart(ordinary).policy));
+    await modeOff(page);
     await evidence(page, "privacy-held");
     // Still open where the person was reading.
     expect(await fold.evaluate(d => (d as HTMLDetailsElement).open)).toBe(true);
+    expect(page.errors).toEqual([]);
+    await page.close();
+  });
+});
+
+describe.skipIf(gate)("Apps & privacy › How Ember asks, with a keyboard and a screen reader (modes-A10)", () => {
+  const NOT_AGREED = approvalsState(DEFAULT_SETTINGS.approvals, null);
+  const focused = (p: Page) => p.evaluate(() => document.activeElement?.id ?? "");
+  const calls = (p: Page) => p.evaluate(() => window.__pane.calls.filter(c => c.startsWith("choose:") || c.startsWith("save:")));
+
+  it("shows Interactive's card ready to agree without taking the keyboard, and says that until then Ember asks", async () => {
+    const page = await open("privacy", { approvals: NOT_AGREED });
+    const group = page.locator("#approvals");
+    expect(await group.getAttribute("role")).toBe("radiogroup");
+    expect(await page.locator("#approvals-h").innerText()).toBe("How Ember asks");
+    expect(await group.getAttribute("aria-labelledby")).toBe("approvals-h");
+    const row = page.locator("#mode-interactive");
+    expect(await row.getAttribute("role")).toBe("radio");
+    expect(await row.getAttribute("aria-checked")).toBe("false");
+    expect(await row.innerText()).toMatch(/^Interactive\s+Ember tells you about ordinary steps as it does them, and asks before anything risky, such as sending, deleting or paying\.$/);
+    expect(await page.locator("#approvals-note").innerText()).toBe("Until you agree to Interactive, Ember asks before its first step in an app, before using your mouse and keyboard, before pressing OK on an app's message box and before moving text between apps.");
+    // The card is there to read and agree to, but the keyboard stays where it was.
+    expect(await page.locator("#approvals-card").isVisible()).toBe(true);
+    expect(await page.locator("#approvals-card-title").innerText()).toBe("Before you choose Interactive");
+    expect(await page.locator("#approvals-card-text").innerText()).toMatch(/^In Interactive, Ember does ordinary steps without asking first/);
+    expect(await page.evaluate(() => document.getElementById("approvals-card")!.contains(document.activeElement))).toBe(false);
+    // The three switches it replaces are gone.
+    for (const id of ["#trust-apps", "#trust-commands", "#autonomy-on"]) expect(await page.locator(id).count(), id).toBe(0);
+    await evidence(page, "approvals-not-agreed");
+    expect(page.errors).toEqual([]);
+    await page.close();
+  });
+
+  it("chooses a mode only with “I agree”: the card is announced as it opens, an early key agrees to nothing, and the keyboard goes back to the row", async () => {
+    const page = await open("privacy", { approvals: NOT_AGREED });
+    // Not now leaves the mode as it was, sends nothing, and gives the keyboard to the row.
+    await page.locator("#approvals-no").click();
+    expect(await page.locator("#approvals-card").isHidden()).toBe(true);
+    expect(await focused(page)).toBe("mode-interactive");
+    expect(await calls(page)).toEqual([]);
+    // One Tab stop: Tab leaves the group, Shift+Tab comes back to the row.
+    await page.keyboard.press("Tab");
+    expect(await page.evaluate(() => document.getElementById("approvals")!.contains(document.activeElement))).toBe(false);
+    await page.keyboard.press("Shift+Tab");
+    expect(await focused(page)).toBe("mode-interactive");
+    // The arrow keys choose nothing and open nothing.
+    for (const key of ["ArrowDown", "ArrowUp", "ArrowRight", "ArrowLeft", "Home", "End"]) await page.keyboard.press(key);
+    expect(await page.locator("#approvals-card").isHidden()).toBe(true);
+    expect(await focused(page)).toBe("mode-interactive");
+    // Space presses the row: its card opens with the keyboard on the agree button, which the card's title and text
+    // name and describe, so a screen reader says the card as it opens.
+    await page.keyboard.press("Space");
+    expect(await page.locator("#approvals-card").isVisible()).toBe(true);
+    expect(await focused(page)).toBe("approvals-yes");
+    const yes = page.locator("#approvals-yes");
+    expect(await yes.innerText()).toBe("I agree, use Interactive");
+    expect(await page.evaluate(() => document.getElementById(document.getElementById("approvals-yes")!.getAttribute("aria-describedby")!)!.textContent)).toMatch(/^In Interactive, Ember does ordinary steps without asking first.*by voice\.$/);
+    expect(await page.evaluate(() => { const card = document.getElementById("approvals-card")!; return [card.getAttribute("role"), document.getElementById(card.getAttribute("aria-labelledby")!)!.textContent]; })).toEqual(["group", "Before you choose Interactive"]);
+    // The Space that opened it, still held or typed again at once, agrees to nothing.
+    await page.keyboard.press("Space");
+    await page.keyboard.press("Enter");
+    expect(await calls(page)).toEqual([]);
+    expect(await page.locator("#approvals-card").isVisible()).toBe(true);
+    // Half a second on, it does: one call to main with the mode and the version of the card that was shown.
+    await page.waitForTimeout(600);
+    await page.keyboard.press("Enter");
+    await expect.poll(() => calls(page)).toEqual([`choose:interactive:${FEATURE_CONSENT_VERSION.autonomy}`]);
+    await expect.poll(() => page.locator("#mode-interactive").getAttribute("aria-checked")).toBe("true");
+    expect(await page.locator("#approvals-card").isHidden()).toBe(true);
+    expect(await focused(page)).toBe("mode-interactive");
+    expect(await page.locator("#approvals-note").innerText()).toBe("You can answer a question by voice too: say “allow” or “not now” once Ember has asked, or “Ember, allow” later.");
+    expect(await page.locator("#approvals-msg").innerText()).toBe("");
+    // The mode in force has nothing more to agree to: pressing it opens no card and sends nothing.
+    await page.keyboard.press("Space");
+    expect(await page.locator("#approvals-card").isHidden()).toBe(true);
+    expect(await calls(page)).toHaveLength(1);
+    // And the list under it no longer says Ember asks before its first action in each app.
+    expect(await page.locator("#grants").innerText()).toBe("None.");
+    await evidence(page, "approvals-chosen");
+    expect(page.errors).toEqual([]);
+    await page.close();
+  });
+
+  it("follows main's word of how the modes stand, and says why a choice that couldn't be recorded isn't in use", async () => {
+    const page = await open("privacy", { approvals: approvalsState(INTERACTIVE, null) });
+    expect(await page.locator("#mode-interactive").getAttribute("aria-checked")).toBe("true");
+    expect(await page.locator("#approvals-card").isHidden()).toBe(true);
+    // Main says the mode couldn't be recorded and is held below Interactive.
+    await page.evaluate(a => window.__pane.emit("onApprovals", a), { ...approvalsState(INTERACTIVE, null), inForce: "asking", why: "not-recorded" });
+    await expect.poll(() => page.locator("#mode-interactive").getAttribute("aria-checked")).toBe("false");
+    expect(await page.locator("#approvals-note").innerText()).toMatch(/^Ember couldn't save or record your choice, so it isn't in use: Ember asks before its first step in an app.*Choose it again to try once more\.$/);
+    expect(await page.locator("#approvals-card").isHidden()).toBe(true);
+    expect(await page.locator("#mode-interactive").isDisabled()).toBe(false);
+    // "Ask me first again": the agreement withdrawn, so the card is ready to agree again.
+    await page.evaluate(a => window.__pane.emit("onApprovals", a), NOT_AGREED);
+    await expect.poll(() => page.locator("#approvals-card").isVisible()).toBe(true);
     expect(page.errors).toEqual([]);
     await page.close();
   });

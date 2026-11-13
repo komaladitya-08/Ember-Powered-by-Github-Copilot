@@ -8,6 +8,7 @@ import type { Intro } from "../main/memory/intro";
 import type { MemoryModelStatus } from "../main/memory/better-recall";
 import type { MemoryOwnerReason, MemoryOwnership } from "../main/memory/owner";
 import type { MemoryCorrection } from "./memory-correction";
+import type { ApprovalMode, ApprovalsDone, ApprovalsState } from "./approvals";
 
 /** A routine as Home lists it. */
 export interface RoutineRow { id: string; name: string; steps: string[] }
@@ -415,6 +416,11 @@ export interface Status {
   };
   /** Absent from a main that doesn't send it yet: the window then keeps its Linux markup and strings. */
   platform?: StatusPlatform;
+  /**
+   * The approval modes as they stand (app/main/policy/autonomy.ts approvalsState): what is chosen, what is in force and
+   * why they differ. Main decides it; the window only draws it. Absent before main sends it: no mode shows as in force.
+   */
+  approvals?: ApprovalsState;
 }
 
 /** One line of the activity timeline (an audit entry). */
@@ -536,6 +542,13 @@ export interface EmberHomeApi {
   onSettingsNotice(fn: (notice: string | null) => void): () => void;
   /** Main's word that the administrator's policy changed while Ember ran (the held lockdown): drawn as a new status's. */
   onAdminChanged(fn: (admin: Status["admin"]) => void): () => void;
+  /** Main's word that the approval modes stand differently (APPROVALS_IPC.changed). */
+  onApprovals(fn: (state: ApprovalsState) => void): () => void;
+  /**
+   * The user agreed to `mode`'s card (`version`: the one shown): main records the agreement and chooses the mode in one
+   * change, or says why not (APPROVALS_IPC.choose). The only way the window changes the mode.
+   */
+  chooseMode(mode: ApprovalMode, version: number): Promise<ApprovalsDone>;
   /** Quit Ember (asks first while tasks are running). */
   quit(): Promise<void>;
   /** Restart Ember to read the organisation's changed policy; main does nothing unless that lockdown is held. */

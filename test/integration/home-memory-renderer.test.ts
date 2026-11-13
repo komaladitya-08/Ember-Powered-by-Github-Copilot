@@ -5,6 +5,7 @@ import path from "node:path";
 import { chromium, type Page } from "playwright-core";
 import { expect, it } from "vitest";
 import { DEFAULT_SETTINGS } from "../../app/main/settings";
+import { FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
 import type { MemoryCorrection } from "../../app/shared/memory-correction";
 import type { EmberHomeApi, MemoryView, VoiceWord } from "../../app/shared/ipc";
 
@@ -714,6 +715,8 @@ it.skipIf(process.env.EMBER_MEMORY_TEST !== "1")("never lands a forget or rememb
         if (name === "memory") return async () => ({ rows: [], ownership: "ready", reason: null, epoch: 1 });
         if (name === "voiceWords" || name === "reminders" || name === "conversation") return async () => [];
         if (name === "updateSettings") return async (patch: unknown) => { w.__saves.push(patch); return {}; };
+        // A mode chosen (How Ember asks): counted with the saves, so a press that agreed to its card would show.
+        if (name === "chooseMode") return async (...args: unknown[]) => { w.__saves.push({ chooseMode: args }); return { ok: false, why: "unavailable", state: { chosen: "interactive", inForce: "asking", why: "card", offered: ["interactive"], agreed: [], cap: null } }; };
         return () => new Promise(() => undefined);
       } }) as EmberHomeApi;
     }, { status });
@@ -766,11 +769,17 @@ it.skipIf(process.env.EMBER_MEMORY_TEST !== "1")("never lands a forget or rememb
     await emit("onFocusSection", "memory:memory-consent-text");
     await expect.poll(focused).toBe("memory-h");
     expect(await consent.isHidden()).toBe(true);
-    // Work without asking's card, asked for by voice, is armed the same way.
+    // Interactive's card (How Ember asks), asked for by voice, is armed the same way: an Enter typed as it opens chooses nothing.
     await emit("onFocusSection", "privacy:autonomy-yes");
-    await expect.poll(focused).toBe("autonomy-yes");
+    await expect.poll(focused).toBe("approvals-yes");
+    expect(await page.locator("#approvals-card").isVisible()).toBe(true);
     await page.keyboard.press("Enter");
     expect(await saves()).toHaveLength(1);
+    // Once it has been up half a second, the press agrees: one call to main, with the mode and its card's version.
+    await page.waitForTimeout(600);
+    await page.keyboard.press("Enter");
+    await expect.poll(async () => (await saves()).length).toBe(2);
+    expect((await saves())[1]).toEqual({ chooseMode: ["interactive", FEATURE_CONSENT_VERSION.autonomy] });
     expect(errors).toEqual([]);
   } finally { await browser.close(); await new Promise<void>(resolve => server.close(() => resolve())); }
 }, 60_000);

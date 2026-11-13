@@ -8,6 +8,8 @@ import { applyAdminPolicy, loadAdminPolicy, managedKeys, providerApiKey, AdminPo
 import { SettingsStore, DEFAULT_SETTINGS, CONSENT_VERSION } from "../../app/main/settings";
 import { PolicyEngine, alignedWithGoal, isSecurityWindow, type ActionRequest } from "../../app/main/policy/policy";
 import { AuditLog } from "../../app/main/policy/audit";
+import { approvalInputs, modeInForce } from "../../app/main/policy/autonomy";
+import { modeCardVersion } from "../../app/shared/approvals";
 import { KillSwitch } from "../../app/main/agent/killswitch";
 import type { Logger } from "../../app/main/logger";
 
@@ -46,18 +48,25 @@ describe("admin policy file", () => {
     expect(s).toMatchObject({ wakeWord: false, speak: false, grants: {}, models: { conductor: "gpt-a", worker: null } });
     expect(s.privacy.neverLook).toContain("Thunderbird");
     expect(s.privacy.neverLook.filter(x => x.toLowerCase() === "keepassxc")).toHaveLength(1);
-    // Without grants nobody may let Ember work without asking either (policy/autonomy.ts).
-    expect(managedKeys(admin)).toEqual(["wakeWord", "speak", "naturalVoice", "models", "grants", "askedApps", "autonomy"]);
-    expect(s.trust).toEqual({ askedApps: false, reviewCommands: false });
+    // Without grants nobody may let Ember work without asking either: it is below Interactive (policy/autonomy.ts).
+    expect(managedKeys(admin)).toEqual(["wakeWord", "speak", "naturalVoice", "models", "grants", "autonomy"]);
+    expect(approvalInputs(modeInForce(s.approvals, admin))).toEqual({ scopes: null, askedApps: false, reviewCommands: false });
     // An admin can't turn on what the user turned off.
     expect(applyAdminPolicy({ ...DEFAULT_SETTINGS, wakeWord: false }, AdminPolicySchema.parse({ features: { voice: true } })).wakeWord).toBe(false);
   });
 
-  it("turns off AI review of commands, managed, where the organisation says so (features.aiReview)", () => {
+  it("keeps AI review of commands off where the organisation says so (features.aiReview): a chosen Assisted is in force as Interactive", () => {
     const admin = AdminPolicySchema.parse({ features: { aiReview: false } });
-    expect(applyAdminPolicy(DEFAULT_SETTINGS, admin).trust.reviewCommands).toBe(false);
-    expect(managedKeys(admin)).toEqual(["reviewCommands"]);
-    expect(applyAdminPolicy(DEFAULT_SETTINGS, AdminPolicySchema.parse({ features: { aiReview: true } })).trust).toEqual(DEFAULT_SETTINGS.trust);
+    const at = "2026-11-12T10:00:00.000Z";
+    const assisted = { mode: "assisted" as const, consent: { interactive: { version: modeCardVersion("interactive"), at }, assisted: { version: modeCardVersion("assisted"), at }, autopilot: { version: 0, at: null } } };
+    const s = applyAdminPolicy({ ...DEFAULT_SETTINGS, approvals: assisted }, admin);
+    expect(modeInForce(s.approvals, admin)).toBe("interactive");
+    expect(approvalInputs(modeInForce(s.approvals, admin)).reviewCommands).toBe(false);
+    // Its true turns nothing on: only the user's own Assisted, with its card agreed to, reviews commands.
+    const on = AdminPolicySchema.parse({ features: { aiReview: true } });
+    expect(approvalInputs(modeInForce(applyAdminPolicy(DEFAULT_SETTINGS, on).approvals, on)).reviewCommands).toBe(false);
+    expect(approvalInputs(modeInForce(applyAdminPolicy({ ...DEFAULT_SETTINGS, approvals: assisted }, on).approvals, on)).reviewCommands).toBe(true);
+    expect(applyAdminPolicy(DEFAULT_SETTINGS, on).approvals).toEqual(DEFAULT_SETTINGS.approvals);
   });
 
   it("overrides what the user saves, while their own file keeps their choice", () => {

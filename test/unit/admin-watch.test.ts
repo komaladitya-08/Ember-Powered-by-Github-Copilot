@@ -55,8 +55,9 @@ describe("homeAdmin", () => {
   it("is what main answers a status read with, and what it sends the settings window once the policy changes", () => {
     const main = fs.readFileSync(path.resolve("app/main/main.ts"), "utf8");
     expect(main).toContain("    admin: homeAdmin(admin),\n");
-    // Sent as soon as Ember holds itself locked down, before the stop it then pulls.
-    expect(main).toMatch(/admin = heldUntilRestart\(next\);\n\s+policy = admin\.policy;\n(\s+\/\/.*\n)*\s+sendToHome\(IPC\.adminChanged, homeAdmin\(admin\)\);/);
+    // Sent as soon as Ember holds itself locked down, before the stop it then pulls; the approval mode's record and how
+    // the modes stand go first, so the window never draws the new policy over a mode still shown in force (modes-A7).
+    expect(main).toMatch(/admin = heldUntilRestart\(next\);\n\s+policy = admin\.policy;\n(\s+\/\/.*\n)*\s+modes\.changed\(\{ via: "policy", verified: false \}\);\n\s+tellApprovals\(\);\n(\s+\/\/.*\n)*\s+sendToHome\(IPC\.adminChanged, homeAdmin\(admin\)\);/);
   });
 });
 

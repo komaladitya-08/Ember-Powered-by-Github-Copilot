@@ -19,9 +19,10 @@ import { loginItemFollower } from "./autostart";
 import { watchCrashes } from "./crash-log";
 import { endRun, previousRun, startRun } from "./run-marker";
 import { readTextFile } from "./text-file";
-import { SettingsStore, checkHomePatch, hasConsent, plainSaveError, withOwnExtensions, withOwnProvider, withOwnTrust, type Settings, type SettingsPatch } from "./settings";
-import { auditRetentionDays, autonomyAllowed, heldUntilRestart, homeAdmin, modelServiceRefusal } from "./admin";
-import { autonomyConsented, autonomyHeld, autonomyInForce, holdAutonomyOff, releaseAutonomyHold, ALL_SCOPES } from "./policy/autonomy";
+import { SettingsStore, checkHomePatch, hasConsent, plainSaveError, withOwnExtensions, withOwnProvider, type Settings, type SettingsPatch } from "./settings";
+import { auditRetentionDays, heldUntilRestart, homeAdmin, modelServiceRefusal } from "./admin";
+import { approvalInputs, approvalsState, chooseMode, modeInForce } from "./policy/autonomy";
+import { ModeRecord, modeIntents } from "./policy/mode-record";
 import { TaskVoiceTrust, heardAnswer, heardUnchecked, refusalEndsTrust, refusalLine, refusalNote, rejectionEndsTrust, voiceAnswer, voiceAnswerSaid, type VoiceAnswerNote, type VoiceAnswerOutcome } from "./agent/voice-answer";
 import { inspectEnvironment, keyboardRoute, sessionGreeting, type EnvReport } from "./environment";
 import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSender, keepClearOf, quitQuestion, setTextScale, settingsFromHome, setUpAppChrome } from "./windows";
@@ -119,8 +120,10 @@ import { installKind, releasePage, UpdateChecker, updateNotice } from "./updates
 import { ExtensionsService } from "./extensions/service";
 import { registerExtensionsIpc } from "./extensions-ipc";
 import { registerProviderIpc } from "./provider-ipc";
+import { registerApprovalsIpc } from "./approvals-ipc";
 import { PROVIDER_KEY_FILE, ProviderKeyStore, activeProvider, checkAgain, createProviderService, ownProviderAuth, providerSummary, providerWaitingHost, redactingLogger, type ActiveProvider, type FetchLike } from "./provider";
 import { PROVIDER_IPC } from "../shared/ipc";
+import { APPROVALS_IPC } from "../shared/approvals";
 import { recentLimit } from "../shared/ipc";
 import { endpointHost } from "../shared/provider";
 import { demoExtensionsApi, demoVariant } from "./extensions-demo";
@@ -633,6 +636,7 @@ function start(): void {
     unexpectedExit: lastRun ? { startedAt: lastRun.startedAt, version: lastRun.version } : null,
     admin: homeAdmin(admin),
     platform: platformStatus(),
+    approvals: approvalsState(settings.own().approvals, policy),
     };
   }));
   // Every entry the log keeps: the window shows the newest 80 it has lines for (a command writes several entries).
@@ -651,10 +655,9 @@ function start(): void {
     const { patch, dropped } = settingsFromHome(checkHomePatch(sent));
     if (dropped.length) log.warn("settings.update_refused", { keys: dropped });
     const sizeOnly = !!patch && typeof patch === "object" && Object.keys(patch).length === 1 && "size" in patch;
-    // A save that failed reaches the window as one plain sentence (review #84). A change to Work without asking is Home's
-    // (its audit entry says so; one found in the file otherwise is "file").
-    if (patch && typeof patch === "object" && "autonomy" in patch) autonomyChangedBy = { via: "home", verified: false };
-    try { return settings.update(ownNeverLook(withOwnExtensions(withOwnProvider(withOwnTrust(patch, settings.own().trust), settings.own().provider), settings.own().extensions)), { soon: sizeOnly }); } catch (err) { throw plainSaveError(err); } finally { autonomyChangedBy = null; }
+    // A save that failed reaches the window as one plain sentence (review #84). The approval mode never comes this way
+    // (settingsFromHome drops it): it changes only with the agreement to its card (APPROVALS_IPC.choose).
+    try { return settings.update(ownNeverLook(withOwnExtensions(withOwnProvider(patch, settings.own().provider), settings.own().extensions)), { soon: sizeOnly }); } catch (err) { throw plainSaveError(err); }
   }));
   // Only the fixes this OS offers (Linux: turning on GNOME's accessibility switch), and the targets runtime's
   // wsl-a11y:<distro> (§8.8); any other id is refused before anything runs.
@@ -1812,34 +1815,26 @@ function start(): void {
   };
   const ownerPrint = () => (settings.get().voice.match ? voiceprints.read() : null);
   /**
-   * "Work without asking" turned on or off is an audit entry (security review of #127): by voice or typed words (the host's
-   * intent says which, just before it saves), else from Home's switch or card.
+   * The approval mode in force (policy/autonomy.ts): every change of it is an audit entry (security review of #127),
+   * by Home's choice, voice or typed words (the host's intent says which, as it saves), the file or the policy; one to
+   * a mode that asks less that can't be recorded is undone (policy/mode-record.ts).
    */
-  let autonomyChangedBy: { via: "voice" | "typed" | "home"; verified: boolean } | null = null;
-  let autonomyWasOn = autonomyInForce(settings.get().autonomy, policy) !== null;
-  /** Turned off before the audit log was opened (before the app was ready): written once it is. */
-  const autonomyBeforeAudit: { on: boolean; via: string; verified: boolean }[] = [];
-  settings.onChange(s => {
-    // Seen off: the hold (autonomy.ts holdAutonomyOff) has done its work; a new turn on is audited afresh.
-    if (s.autonomy.on !== true) releaseAutonomyHold();
-    const on = autonomyInForce(s.autonomy, policy) !== null;
-    // Whoever marked a change takes it with them, whether or not it changed anything (review of #127).
-    const how = autonomyChangedBy ?? { via: "file" as const, verified: false };
-    autonomyChangedBy = null;
-    if (on === autonomyWasOn) return;
-    autonomyWasOn = on;
-    const entry = { on, via: how.via, verified: how.verified };
-    try {
-      // No audit log yet: a turn on is refused (it can't be recorded), a turn off is kept for the log.
-      if (!audit) { if (on) throw new Error("the audit log isn't open yet"); autonomyBeforeAudit.push(entry); } else audit.write({ event: "autonomy", ...entry });
-    } catch (err) {
-      // Not recorded: it isn't turned on (fail closed); a turn off stands.
-      log.warn("autonomy.audit_failed", { err });
-      if (on) { try { settings.update({ autonomy: { ...s.autonomy, on: false } }); } catch (e) { holdAutonomyOff(); log.warn("autonomy.off_not_saved", { err: e }); } }
-      return;
-    }
-    log.info("autonomy.changed", { on, via: how.via });
-  });
+  const modes = new ModeRecord({ settings, admin: () => policy, log });
+  /** What the mode in force gives the policy engines and the workers: read at each decision, never kept. */
+  const approvalsNow = () => approvalInputs(modeInForce(settings.get().approvals, policy));
+  /**
+   * An open settings window is told when the modes stand differently (a choice, a hand edit, the policy, a change that
+   * couldn't be recorded): after the record has had its say, so what it undid is never shown as chosen.
+   */
+  let approvalsTold = "";
+  const tellApprovals = () => {
+    const state = approvalsState(settings.own().approvals, policy);
+    const now = JSON.stringify(state);
+    if (now === approvalsTold) return;
+    approvalsTold = now;
+    sendToHome(APPROVALS_IPC.changed, state);
+  };
+  settings.onChange(tellApprovals);
   /** When the request being heard began (its wake, or a follow-up window opening): Ember's own voice since then is an echo. */
   let heardFrom = 0;
   /**
@@ -2829,6 +2824,22 @@ function start(): void {
     const url = event.senderFrame?.url ?? "";
     return isTrustedSender(url) && !!home && !home.isDestroyed() && event.sender === home.webContents;
   }, providers.api, { log: log.child("provider") });
+  // The approval mode (Home › Apps & privacy): the settings window's own page only, as guard. It changes only here,
+  // together with the agreement to the mode's card, or by the host's own intents; never by a model or a settings patch.
+  registerApprovalsIpc(ipcMain, event => {
+    const url = event.senderFrame?.url ?? "";
+    return isTrustedSender(url) && !!home && !home.isDestroyed() && event.sender === home.webContents;
+  }, {
+    state: () => approvalsState(settings.own().approvals, policy),
+    choose: (mode, version) => {
+      const next = chooseMode(settings.own().approvals, mode, version, policy, new Date().toISOString());
+      if (!next.ok) return { ok: false, why: next.why, state: approvalsState(settings.own().approvals, policy) };
+      modes.as({ via: "home", verified: false }, () => settings.update({ approvals: next.approvals }));
+      // Chosen only once it is in force: a mode whose audit entry couldn't be written was undone.
+      const state = approvalsState(settings.own().approvals, policy);
+      return state.inForce === mode ? { ok: true, state } : { ok: false, why: "not-recorded", state };
+    },
+  }, { log: log.child("approvals") });
   // Any settings change may move the endpoint in force (the switch, its address, its models, its card): the host
   // reconnects when nothing would be cut off, else as soon as the turn and the tasks under way are done.
   settings.onChange(() => { providers.settingsChanged(); void agent?.providerChanged(); });
@@ -3325,15 +3336,10 @@ function start(): void {
     // Hands: the policy engine decides every action; the confirmer asks the user with bubble buttons.
     audit = new AuditLog(path.join(userData, "audit"), undefined, sys.auditSink(err => log.warn("audit.journal_failed", { err })),
       err => log.warn("audit.write_failed", { err }));
-    // Work without asking as the log opens: turned off before now, and on as found in settings.json at start (by hand, or
-    // from the last run): recorded, or else turned off (fail closed).
-    for (const e of autonomyBeforeAudit.splice(0)) { try { audit.write({ event: "autonomy", ...e }); } catch (err) { log.warn("autonomy.audit_failed", { err }); } }
-    if (autonomyWasOn) {
-      try { audit.write({ event: "autonomy", on: true, via: "file", verified: false, atStart: true }); } catch (err) {
-        log.warn("autonomy.audit_failed", { err });
-        try { settings.update({ autonomy: { ...settings.get().autonomy, on: false } }); } catch (e) { holdAutonomyOff(); log.warn("autonomy.off_not_saved", { err: e }); }
-      }
-    }
+    // The approval mode as the log opens: changes made before now, and the mode found in force in settings.json at start
+    // (by hand, or from the last run): recorded, or else not in force (fail closed).
+    modes.opened(audit);
+    tellApprovals();
     // Nothing is pruned while the policy can't be used: its retention can't be read then.
     const keepDays = auditRetentionDays(admin);
     try { if (keepDays !== null) audit.prune(keepDays); } catch (err) { log.warn("audit.prune_failed", { err }); }
@@ -3426,9 +3432,10 @@ function start(): void {
         actionsAllowed: () => policy.features.actions !== false,
         confirmEveryAction: () => policy.confirmEveryAction,
         allowGrants: () => policy.allowGrants,
-        trustAskedApps: () => settings.get().trust.askedApps,
-        // "Work without asking" (policy/autonomy.ts): only with its card agreed to and where the organisation allows it.
-        autonomy: () => autonomyInForce(settings.get().autonomy, policy),
+        // The approval mode in force (policy/autonomy.ts): only with its card agreed to and where the organisation
+        // allows it; below Interactive, every ordinary step asks.
+        trustAskedApps: () => approvalsNow().askedApps,
+        autonomy: () => approvalsNow().scopes,
         // On macOS also by the installed app with that name's bundle id (Terminal renamed is still Terminal); a WSLg
         // app's also as a Linux app (§4.5).
         isTerminalApp: name => privacy.isTerminalApp({ id: name, name }),
@@ -3671,17 +3678,12 @@ function start(): void {
       // The voice's side of "Ember, systems check": listening off counts as off, whatever the microphone was doing.
       health: () => ({ mic: settings.get().wakeWord && voice ? voice.micState : "off", speaks: maySpeak() }),
       readOut,
-      // "Work without asking" by voice (autonomy-intent.ts): turned on with all four scopes, its card opened in Settings.
       voiceTrust,
+      // "Work without asking" and "ask me first again" by voice or typed words (autonomy-intent.ts), against the approval
+      // mode: the first only once Interactive's card is agreed to in Settings (opened at it otherwise); the second
+      // takes Ember below Interactive by withdrawing every card's agreement, so the cards are read again before a mode.
       autonomy: {
-        state: () => ({ on: !autonomyHeld() && settings.get().autonomy.on && autonomyConsented(settings.get().autonomy), consented: autonomyConsented(settings.get().autonomy), managed: !autonomyAllowed(policy) }),
-        // True once it is as asked and recorded (a turn on whose audit entry can't be written is undone: say so, not "Okay").
-        set: (on, how) => {
-          autonomyChangedBy = how;
-          const a = settings.get().autonomy;
-          try { settings.update({ autonomy: { ...a, on, ...(on ? { scopes: { ...ALL_SCOPES } } : {}) } }); } finally { autonomyChangedBy = null; }
-          return (autonomyInForce(settings.get().autonomy, policy) !== null) === on;
-        },
+        ...modeIntents({ settings, modes, admin: () => policy }),
         open: consent => { showHome(); sendToHome(IPC.focusSection, consent ? "privacy:autonomy-yes" : "privacy:autonomy-on"); },
       },
       // A typed "stop" while a task is at work: the kill switch, as "Ember, stop" is (tasks-approvals-v2).
@@ -3924,6 +3926,9 @@ function start(): void {
         log.warn("admin_policy.changed", { file: next.source, error: next.error ?? null, note: "held locked down until Ember restarts" });
         admin = heldUntilRestart(next);
         policy = admin.policy;
+        // Held locked down, Ember is below Interactive: the record says the mode changed, and by what.
+        modes.changed({ via: "policy", verified: false });
+        tellApprovals();
         // An open settings window says so at once, as a fresh one would (safety-privacy-w5-1).
         sendToHome(IPC.adminChanged, homeAdmin(admin));
         wanted = false;

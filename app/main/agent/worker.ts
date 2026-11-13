@@ -26,12 +26,14 @@ import { TURN_START_MS, TurnWatch, within } from "./conductor";
 import { asPasteClipboard, ClipboardTimeout, holdsPassword, type ClipboardSnapshot, type PasteClipboard, type TextClipboard } from "./clipboard";
 import { handStep, plainText, stepOf, type HandStep, type Presenter } from "./presenter";
 import { askedWords, type ActivityEvent } from "./activity";
+import { Refusals, stepNames, type Standing } from "../policy/refusals";
+import { pageBinding, pageBindingOf } from "./page-binding";
 import { cardApp } from "../../shared/activity";
 import type { Confirmer, Question } from "./confirm";
 import type { WindowTarget } from "../perception";
 import type { AxNode, AxWindow, Bounds, ActionResult, ElementInfo, PointElement } from "../perception/sidecar";
 import { helperCantRun } from "../perception/sidecar";
-import type { PolicyEngine, ActionKind, ActionRequest, Agreement, DialogControl, ReadSource, TextMode, WindowId } from "../policy/policy";
+import type { PolicyEngine, ActionKind, ActionRequest, Agreement, Decision, DialogControl, ReadSource, TextMode, WindowId } from "../policy/policy";
 import { riskyOnPage } from "../policy/policy";
 import { afterTheStep, type AuditEntry, type AuditLog } from "../policy/audit";
 import type { AutonomyScopes } from "../policy/autonomy";
@@ -88,10 +90,10 @@ export const LINUX_WORKER_SYSTEM: WorkerSystem = {
 
 export interface WorkerDeps {
   client: CopilotClient;
-  /** The user's "Ask only about dangerous commands" (Settings › Commands): commands that would ask are reviewed first. */
+  /** The approval mode in force reviews commands (policy/autonomy.ts approvalInputs: Assisted): commands that would ask are reviewed first. */
   reviewCommands?: () => boolean;
   /**
-   * "Work without asking" (policy/autonomy.ts autonomyInForce): its scopes in force, or null while it is off. App steps
+   * The approval mode in force (policy/autonomy.ts approvalInputs): its scopes, or null below Interactive. App steps
    * hear of it through the policy engine; this is for run_command's flow (an ordinary command carrying text from elsewhere).
    */
   autonomy?: () => AutonomyScopes | null;
@@ -229,7 +231,7 @@ export interface WorkerResult {
   summary: string;
   /** The user stopped it (took the mouse back, or said "Not now"): not a failure. */
   stopped?: boolean;
-  /** Stopped because the user said no to a question (or let it go unanswered), and nothing was done after that. */
+  /** Stopped because the user said no to a question, and nothing was done after that. */
   declined?: boolean;
   /** Stopped because a question ran out of time unanswered and nothing was done after that: not a "Not now". */
   expired?: boolean;
@@ -245,6 +247,20 @@ const done = (text: string): ToolResultObject => ({ textResultForLlm: text, resu
 const fail = (text: string): ToolResultObject => ({ textResultForLlm: text, resultType: "failure", error: text });
 const denied = (text: string): ToolResultObject => ({ textResultForLlm: text, resultType: "denied" });
 const STOPPED = (): ToolResultObject => denied("Stopped. Do nothing more.");
+/** To a step whose question ran out of time: nobody said yes and nobody said no, so it wasn't taken and isn't tried another way. */
+const UNANSWERED = "Your question went unanswered: time ran out before the user answered, which is neither a yes nor a no. Nothing was approved, so the step wasn't taken. Don't retry it or work around it; finish the task now, saying that the question went unanswered and what wasn't done.";
+/**
+ * To a step the user already said no to in this task, sent again: refused without a question, a check or an
+ * announcement, in every mode (Refusals; tasks-approvals-r9-1).
+ */
+const REFUSED_BEFORE = "The user already said no to this step in this task, so Ember refused it without asking them again. Don't retry it or work around it; finish the task and say what wasn't done.";
+/** To a step whose question went unanswered, sent again before the user said anything more to the task: not asked twice. */
+const STILL_UNANSWERED = "Ember already asked the user about this step and the question went unanswered; they haven't said anything to this task since, so Ember didn't ask again and the step wasn't taken. Don't retry it or work around it; finish the task now, saying that the question went unanswered and what wasn't done.";
+/** The audit's reasons for those two refusals (Ember's own words: "What Ember did" shows them). */
+const STANDING_REASON: Readonly<Record<Standing, string>> = {
+  refused: "the user said no to this step earlier in this task",
+  waiting: "the question about this step went unanswered, and the user hasn't said anything to this task since",
+};
 /**
  * To a call the model sent in the same reply as one that then wasn't done: it was planned on that step going ahead, so
  * it does nothing (tasks-approvals-c7-1). `no`: behind a "Not now", an unanswered question or a refusal; `failed`:
@@ -1225,6 +1241,10 @@ export class Worker {
   private place: DeskPlace | null = null;
   /** True while this worker holds the user's mouse and keyboard. */
   private guideStep = 0;
+  /**
+   * The user took the mouse or keyboard back from a borrow of this task: its outcome says so, and for the rest of the
+   * task no borrow goes ahead unasked (takenBack). Never cleared.
+   */
   private userTookOver = false;
   /** Aborted when the task must stop: the user's Stop, or a limit. Every tool checks it before acting. */
   private halt = new AbortController();
@@ -1258,16 +1278,24 @@ export class Worker {
   private ahead: { entries: AuditEntry[]; words: string | null } | null = null;
   /** Ember's questions the user answered with a yes or a choice, with those added since (TaskSpec.agreed). */
   private agreed: Agreement[];
-  /** The user said no to a question (or let it go unanswered), and nothing was done after that. */
+  /** The user said no to a question, and nothing was done after that. */
   private declined = false;
   /** A question ran out of time unanswered, and nothing was done after that (a timeout is not a refusal). */
   private expired = false;
   /**
-   * The user said no to a question in this task (or let one expire), at any time: never cleared, unlike `declined`
-   * (which a later step resets for the task's outcome). "Work without asking" stays suspended for the rest of the task
-   * once this is set (security review of #127: a failed step after a "Not now" must not bring it back).
+   * The user said no to a question in this task, at any time ("Not now", a deny, a Stop during a command's countdown):
+   * never cleared, unlike `declined` (which a later step resets for the task's outcome). "Work without asking" stays
+   * suspended for the rest of the task once this is set (security review of #127: a failed step after a "Not now" must
+   * not bring it back). A question that ran out of time unanswered never sets it: it approved nothing and its step
+   * wasn't taken, but nobody said no (cause 10 of the investigation of the owner's report of 2026-11-12: one question
+   * missed put every later step of the task back to asking).
    */
   private saidNoThisTask = false;
+  /**
+   * The steps and commands the user said no to in this task, or left unanswered: a repeat is refused without a question
+   * (policy/refusals.ts). The command flow reads and writes the same one (commandContext).
+   */
+  private refusals = new Refusals();
   /** The last authorize() asked the user (the screen may have changed while the question was up). */
   private asked = false;
   /** The step the user last said yes to (stepKey), and whether by a click on Allow (bubble or prompt window), until the next decision. */
@@ -1317,6 +1345,12 @@ export class Worker {
   private focusShell: string | null = null;
   /** The element refreshActionContext found to be a control of a living web page (livingPage), for this step. */
   private pageTarget: number | null = null;
+  /**
+   * The step's target is a web page's control, in no dialog, whose own surroundings could be read (page-binding.ts): its
+   * role and name as the object itself gave them. What the step is bound to before and after its question is then the
+   * page binding, not the whole tree (boundContext; cause 3b of the investigation of the owner's report of 2026-11-12).
+   */
+  private pageBound: { role: string; name: string } | null = null;
   /** What that element had selected when it was found (a field typed into must still have it: checkPageTarget). */
   private pageSelection: string | undefined;
   /** The latest look for the cell with the keyboard found none because the read was cut short (a busy app): see cellWithKeyboard. */
@@ -1438,8 +1472,9 @@ export class Worker {
       answer = await (this.clock ? this.clock.waiting(ask) : ask());
       return answer;
     } finally {
-      // Any question of this task answered no (or let go unanswered) holds it to asking for good (saidNoThisTask).
-      if (answer === null || answer === "deny") this.saidNoThisTask = true;
+      // Any question of this task answered no holds it to asking for good (saidNoThisTask). One nobody answered (null:
+      // it ran out of time, or the task was stopped) is not the user's no, so it holds nothing (cause 10).
+      if (answer === "deny") this.saidNoThisTask = true;
       this.activity({ type: "answer", answer: this.isOver ? "stopped" : answer === null ? "expired" : answer === "deny" ? "declined"
         : answer === "once" || answer === "always" ? "allowed" : "answered" });
     }
@@ -2017,7 +2052,9 @@ export class Worker {
       service: this.d.commands!, confirmer: { ask: (q, signal) => this.ask(q, signal), howAnswered: q => this.d.confirmer.howAnswered?.(q) }, presenter: this.d.presenter,
       audit: e => this.audit(e), log: this.d.log, signal: this.overSignal, isOver: () => this.isOver,
       state: this.commandState, size: () => this.d.commandSize?.() ?? COMMAND_SIZE, emberPids: () => this.d.emberPids?.() ?? [],
-      onDeclined: (expired?: boolean) => { if (expired) this.expired = true; else this.declined = true; this.saidNoThisTask = true; },
+      // A card nobody answered is not the user's no (cause 10); "Not now" and a Stop during the countdown are.
+      onDeclined: (expired?: boolean) => { if (expired) this.expired = true; else { this.declined = true; this.saidNoThisTask = true; } },
+      refusals: this.refusals,
       // "Work without asking" holds for commands only while this task hasn't been steered or told no (as for app steps).
       autonomy: () => (this.tainted || this.saidNoThisTask ? null : this.d.autonomy?.() ?? null),
       ...(this.d.reviewCommands?.() ? { review: copilotReviewer({ client: this.d.client, model: this.d.model, provider: this.d.provider, workDir: this.d.workDir, log: this.d.log }) } : {}),
@@ -2197,6 +2234,8 @@ export class Worker {
    */
   async steer(text: string, userWords?: string, screen?: string, agreed?: Agreement[], commandWords?: string): Promise<boolean> {
     if (!this.session || this.halted || this.result) return false;
+    // The user is there again: a question nobody answered may be asked once more (what they said no to stays refused).
+    this.refusals.userSpoke();
     if (agreed?.length) this.agreed = [...this.agreed, ...agreed];
     if (screen) {
       const had = this.read.get("described")?.text;
@@ -2745,6 +2784,7 @@ export class Worker {
    */
   private async refreshActionContext(id: number): Promise<ToolResultObject | null> {
     this.pageTarget = null;
+    this.pageBound = null;
     // A question belongs to the step it was asked for: a look before this step's own is never "while the user decided".
     this.asked = false;
     const held = this.known.get(id);
@@ -2764,16 +2804,21 @@ export class Worker {
     const shifted = old.length !== seen.nodes.length || old.some((n, i) => n.role !== seen.nodes[i].role
       || parentAt(n, oldAt) !== parentAt(seen.nodes[i], newAt));
     const page = this.livingPage(held);
-    if (shifted && !page) return fail("The window's controls changed, so nothing was done. Call perceive_window and use its new ids.");
+    // A page's control whose name says something risky lives on a page that changes on its own too: it may be found
+    // again in a read by its own ids, but only where its own surroundings can then be bound (bindPage), never by a twin.
+    const onPage = page || this.pageControl(held);
+    if (shifted && !onPage) return fail("The window's controls changed, so nothing was done. Call perceive_window and use its new ids.");
     // The original accessible object must still be the target at this position, not a neighbouring replacement.
     const at = oldAt.get(id)!;
     const live = await this.sidecar.readElement(id).catch(() => null);
     if (this.isOver) return STOPPED();
-    if (page && live && !isDisabled(live.states) && live.role === held.role && live.name === held.name) {
+    if (onPage && live && !isDisabled(live.states) && live.role === held.role && live.name === held.name) {
       const twins = seen.nodes.filter(n => n.role === live.role && n.name === live.name).length > 1;
-      if (!twins || PAGE_TWIN.test(live.role)) {
-        this.pageTarget = id;
-        this.pageSelection = seen.nodes.find(n => n.role === live.role && n.name === live.name)?.selection;
+      if (!twins || (page && PAGE_TWIN.test(live.role))) {
+        if (page) {
+          this.pageTarget = id;
+          this.pageSelection = seen.nodes.find(n => n.role === live.role && n.name === live.name)?.selection;
+        }
         if (shifted || twins) {
           // The page moved on, so its ids can't be mapped again: the ids it was read with stay, and what it says now is
           // still looked through. This read, by its own ids, is what a question's answer binds to (an empty or stale
@@ -2784,6 +2829,10 @@ export class Worker {
           this.actionWhole = !seen.truncated;
           this.actionOthers = JSON.stringify((seen.others ?? []).map(({ name, role, modal }) => ({ name, role, modal })));
           this.actionAt = mine >= 0 ? mine : undefined;
+          this.bindPage(held, live, w.name, !!seen.truncated);
+          // A risky-named control is never taken on less than a binding: its page moved on and its surroundings can't
+          // be bound (cut short, a window titled for money), so it is refused as before.
+          if (!page && !this.pageBound) return fail("The window's controls changed, so nothing was done. Call perceive_window and use its new ids.");
           const words = [w.name, ...seen.nodes.flatMap(n => n.secret ? [n.name] : [n.name, n.text ?? ""])];
           this.remember(w, words);
           this.flagInjection(words, "window", w.app);
@@ -2806,6 +2855,7 @@ export class Worker {
     this.knownWhole = this.actionWhole = !seen.truncated;
     this.actionOthers = JSON.stringify((seen.others ?? []).map(({ name, role, modal }) => ({ name, role, modal })));
     this.actionAt = at;
+    this.bindPage(held, live, w.name, !!seen.truncated);
     this.labels = inferLabels(this.actionTree);
     const words = [w.name, ...seen.nodes.flatMap(n => n.secret ? [n.name] : [n.name, n.text ?? ""])];
     this.remember(w, words);
@@ -2831,6 +2881,35 @@ export class Worker {
     })));
   }
 
+  /**
+   * A web page's control, in no dialog and not secret: what livingPage asks but for the name, which may say something
+   * risky. Its question's answer may bind to its own surroundings (bindPage).
+   */
+  private pageControl(node: AxNode): boolean {
+    return inWebPage(node, i => this.known.get(i)) && !this.dialogOf(node.id) && !node.secret && !node.withheld;
+  }
+
+  /**
+   * Whether this step binds as a page's control (pageBound): its target is one (`held`, as the latest perceive_window
+   * gave it; `live`, the object itself), it was found in the read the step binds to (actionTree, actionAt: never beside
+   * a twin), that read is whole, and its binding can be made there (pageBinding). Otherwise the whole tree binds.
+   */
+  private bindPage(held: AxNode, live: ElementInfo | null, title: string, truncated: boolean): void {
+    this.pageBound = null;
+    if (!live || truncated || this.actionAt === undefined || !this.pageControl(held)) return;
+    if (pageBinding(this.actionTree, this.actionAt, title) === null) return;
+    this.pageBound = { role: live.role, name: live.name };
+  }
+
+  /**
+   * What a step is bound to, before its question and after: the whole tree (actionContext), or for a page's control its
+   * own surroundings (pageBound, page-binding.ts), read in `nodes` by the control's role and name. `clickedTextAt`: as
+   * for actionContext (for a page's control: its own selection may have collapsed under Ember's click).
+   */
+  private boundContext(nodes: readonly AxNode[] = this.actionTree, title: string = this.window.name, clickedTextAt?: number): string {
+    return this.pageBound ? pageBindingOf(nodes, this.pageBound, title, clickedTextAt !== undefined) : this.actionContext(nodes, clickedTextAt);
+  }
+
   /** Fail closed after approval, a lease or pointer movement if the approved context cannot still be established. */
   private async checkActionContext(id: number, node: AxNode, context: string, clickedTextAt?: number): Promise<ToolResultObject | null> {
     const seen = await this.perception.read(this.target, null, undefined, { keep: false }).catch(() => null);
@@ -2841,7 +2920,7 @@ export class Worker {
       || w.app !== this.window.app || w.name !== this.window.name || w.role !== this.window.role
       || (this.target.pid !== undefined && w.pid !== this.target.pid)
       || (this.target.path !== undefined && w.path !== this.target.path)
-      || (!seen.truncated !== this.actionWhole) || this.actionContext(seen.nodes, clickedTextAt) !== context
+      || (!seen.truncated !== this.actionWhole) || this.boundContext(seen.nodes, w.name, clickedTextAt) !== context
       || JSON.stringify((seen.others ?? []).map(({ name, role, modal }) => ({ name, role, modal }))) !== this.actionOthers;
     if (changed && !unread && this.spend(this.pageOf(node))) return fail(spentYes(this.pageOf(node) ? "the page" : "the window"));
     if (changed) return fail("The window or its contents changed while preparing this action, so nothing was done. Call perceive_window and ask again if it is still needed.");
@@ -2860,7 +2939,8 @@ export class Worker {
    * preview, a counter), so its tree is rarely the same twice: binding such a step to all of it refused every click on
    * YouTube, as did the check on repeated names, a video's thumbnail and title being one link twice over. The click goes to
    * the object the model named, by id. So a step that asks nothing needs only that object and the window to hold
-   * (checkPageTarget); a question still binds its answer to the whole tree, and a risky word still asks.
+   * (checkPageTarget); a question binds its answer to the control's own surroundings (pageBound, page-binding.ts), or to
+   * the whole tree where those can't be bound, and a risky word still asks.
    */
   private livingPage(node: AxNode): boolean {
     return inWebPage(node, i => this.known.get(i)) && !this.dialogOf(node.id) && !node.secret && !node.withheld && !riskyOnPage(node.role, node.name, this.kc.os);
@@ -3017,7 +3097,7 @@ export class Worker {
     };
     // A click on text inside a link (or a row) works the link: the user is asked about what the click works.
     const req: ActionRequest = kind === "click" || kind === "toggle" ? { ...base, element: this.clickJudged(base, element, handler) } : base;
-    const context = this.actionContext();
+    const context = this.boundContext();
     const before = this.pageTarget === id ? null : await this.checkActionContext(id, node, context);
     if (before) return before;
     const verdict = await this.authorize(req);
@@ -3232,12 +3312,12 @@ export class Worker {
       ...(kind === "cursor_click" && selects ? { clickSelects: true } : {}),
       ...(kind === "cursor_click" && inWebPage(node, i => this.known.get(i)) ? { onPage: true } : {}),
       ...(dialog ? { dialog } : {}), ...this.placeOf(id, element) };
-    const context = this.actionContext();
+    const context = this.boundContext();
     // Append/replace explicitly choose where text goes after this click. Only the target's selection may collapse
     // under our own focus click; insert-at-caret never clicks and keeps its full selection binding.
     // Where the field is in the read the answer binds to (refreshActionContext): unknown, nothing is excused.
     const clickedTextAt = kind === "cursor_text" && clicks ? this.actionAt : undefined;
-    const afterClickContext = clickedTextAt !== undefined ? this.actionContext(undefined, clickedTextAt) : context;
+    const afterClickContext = clickedTextAt !== undefined ? this.boundContext(undefined, undefined, clickedTextAt) : context;
     const before = this.pageTarget === id ? null : await this.checkActionContext(id, node, context);
     if (before) return before;
     const verdict = await this.authorize(kind === "cursor_click" ? { ...base, element: this.clickJudged(base, element, handler) } : base);
@@ -3672,7 +3752,9 @@ export class Worker {
         ...(job.expected !== undefined ? { currentText: job.expected, ...this.ownText(field, job.expected) } : {}) };
       if (job.text) typed = { field, text: (typedHere ?? job.text).slice(-TYPED_MAX) };
       const d = i === 0 ? this.d.policy.decide(req) : this.d.policy.recheck(req);
-      // "Work without asking" is suspended for the rest of a task the user already said no in, as for one step (authorize).
+      // "Work without asking" is suspended for the rest of a task the user already said no in, as for one step (authorize),
+      // and for its borrows once the user took the mouse back.
+      if (d.autonomy && !this.saidNoThisTask && this.takenBack(req.kind)) return { job, req, d: this.askedAfterTakeover(d) };
       if (!d.autonomy || !this.saidNoThisTask) return { job, req, d };
       const { autonomy: _a, announce: _n, ...asked } = d;
       return { job, req, d: { ...asked, verdict: "confirm" as const, tier: "confirm" as const, reason: `${d.reason.replace(/; the user lets Ember work without asking$/, "")}; working without asking is suspended after the user said no` } };
@@ -3680,6 +3762,11 @@ export class Worker {
     // "What Ember did" shows the batch's decisions as one line (on the last cell's): refused (a cell isn't allowed),
     // asked (the one question), or none where no question is asked of the batch (all allowed, or each cell on its own).
     const no = judged.find(j => j.d.verdict === "deny");
+    // A batch with a cell the user already said no to filling in this task (or left unanswered): refused whole, with
+    // no question, as one step is (authorize).
+    const names = judged.flatMap(j => this.namesOf(j.req));
+    const stood = no ? null : this.refusals.step(names);
+    if (stood) return this.refusedBefore({ ...base, element: { role: "table cell", name: jobs.map(j => j.cell).join(", ") } }, { tier: "confirm" }, stood);
     const asks = judged.find(j => j.d.verdict !== "allow");
     const alone = judged.some(j => j.d.aligned === false) || jobs.some(j => reachesOut(j.text));
     const batchVerdict = no ? "deny" : alone || !asks ? "none" : "ask";
@@ -3743,7 +3830,7 @@ export class Worker {
     this.audit({ event: "confirm", task: this.spec.id, kind: "cursor_text", app: this.window.app, element: { role: "table cell", name: jobs.map(j => j.cell).join(", ") }, chars: jobs.reduce((n, j) => n + j.text.length, 0), mode: "replace", ...(this.place ? { onDesk: true } : {}), answer: this.isOver ? "stopped" : answer ?? "expired", ...this.channelOf(question) });
     if (this.isOver) return STOPPED();
     if (answer === "once") return null;
-    return this.refused(answer);
+    return this.refused(answer, names);
   }
 
   /** A cell's address as given ("b5", "$B$5"), as "B5" and its place; or why there is no such cell. */
@@ -4629,12 +4716,22 @@ export class Worker {
       decision = this.d.policy.decide(req);
     }
     if (decision.aligned === false) this.tainted = true;
+    // A step the user already said no to in this task, or whose question nobody answered and they haven't spoken since:
+    // never asked about again, checked or announced, whatever the mode would do with it now (Refusals).
+    const names = this.namesOf(req);
+    const stood = decision.verdict === "deny" ? null : this.refusals.step(names);
+    if (stood) return this.refusedBefore(req, decision, stood);
     // "Work without asking" is suspended for the rest of a task the user already said no in (fail closed): the step asks
     // as it would have. A task that was steered or went off-task is held to asking just below, as before.
     if (decision.autonomy && this.saidNoThisTask && !this.tainted) {
       const { autonomy: _a, announce: _n, ...asked } = decision;
       decision = { ...asked, verdict: "confirm", tier: "confirm", reason: `${decision.reason.replace(/; the user lets Ember work without asking$/, "")}; working without asking is suspended after the user said no` };
     }
+    // The user took the mouse or keyboard back from this task: no later borrow of it goes ahead unasked (CLAUDE.md "Least
+    // intrusive tier first": Ember never moves the pointer again after the user takes over). Without a question nothing
+    // else would stand between a model that tries again and Ember taking the pointer a second and a half after the
+    // user lets go of it (cause 4 of the investigation of the owner's report of 2026-11-12).
+    if (decision.autonomy && this.takenBack(req.kind)) decision = this.askedAfterTakeover(decision);
     // After a step the user didn't ask for came up (a page may have steered Ember, or the model went its own way),
     // nothing more happens without the user's click, and every question says why (one that would have been asked
     // anyway too; the step that was flagged says so itself).
@@ -4724,7 +4821,26 @@ export class Worker {
       }
       return null;
     }
-    return this.refused(answer);
+    return this.refused(answer, names);
+  }
+
+  /** The names `req`'s step goes by in this task's refusals (stepNames): its window and element, and how it is taken. */
+  private namesOf(req: Pick<ActionRequest, "kind" | "element" | "value">): string[] {
+    const says = req.kind === "keys" || req.kind === "open_app" || req.kind === "setting";
+    return stepNames({ kind: req.kind, key: this.stepKey(req.element), named: !!req.element?.role, ...(says ? { value: req.value ?? "" } : {}),
+      ...(req.kind === "keys" ? { activates: isActivatingKey(req.value ?? "", this.kc) } : {}) });
+  }
+
+  /**
+   * A repeat of a step the user said no to, or left unanswered: refused without a question, recorded as refused with
+   * why, and told to the model as such. A yes spent on that step earlier has nothing left to say (reask).
+   */
+  private refusedBefore(req: Pick<ActionRequest, "kind" | "app" | "window" | "element" | "onDesk">, decision: Pick<Decision, "tier">, stood: Standing): ToolResultObject {
+    const reason = STANDING_REASON[stood];
+    this.audit({ event: "decision", task: this.spec.id, kind: req.kind, app: req.app, window: req.window, element: req.element, tier: decision.tier, verdict: "deny", reason, ...(req.onDesk ? { onDesk: true } : {}) });
+    this.activity({ type: "refused", reason });
+    if (this.reask?.key === this.stepKey(req.element)) this.reask = null;
+    return denied(stood === "refused" ? REFUSED_BEFORE : STILL_UNANSWERED);
   }
 
   /**
@@ -4800,13 +4916,32 @@ export class Worker {
     return !this.isOver;
   }
 
-  /** A question without a yes: "Not now" is the user's no; no answer (null) is a timeout, which approved nothing either. */
-  private refused(answer: string | null) {
-    this.saidNoThisTask = true;
+  /** Did the user take the mouse or keyboard back from this task, and is `kind` a step that would borrow them again? */
+  private takenBack(kind: ActionKind): boolean {
+    return this.userTookOver && !this.place && BORROWED.has(kind);
+  }
+
+  /** A borrow a mode would announce, turned back into the question it would be below Interactive, saying why it is asked. */
+  private askedAfterTakeover(d: Decision): Decision {
+    const { autonomy: _a, announce: _n, ...asked } = d;
+    return { ...asked, verdict: "confirm", tier: "confirm", reason: `${d.reason.replace(/; the user lets Ember work without asking$/, "")}; the user took the mouse back earlier in this task`,
+      prompt: `${d.prompt} (You took the mouse back earlier, so I'm asking before I use it again.)` };
+  }
+
+  /**
+   * A question without a yes: "Not now" is the user's no, which holds the task to asking from here on; no answer (null)
+   * is a question that ran out of time, which approved nothing either (the step isn't taken) but is nobody's no: the
+   * model is told so, to stop and say it rather than work around it, and nothing a refusal locks is locked (cause 10).
+   */
+  private refused(answer: string | null, names: readonly string[]) {
+    // The step is kept: sent again, it is refused without a question (a no for the rest of the task; no answer until the
+    // user next says something to it).
+    this.refusals.noteStep(names, answer === null ? "waiting" : "refused");
     if (answer === null) {
       this.expired = true;
-      return denied("The question timed out with no answer, so nothing was approved. Don't retry or work around it; finish the task and say what wasn't done.");
+      return denied(UNANSWERED);
     }
+    this.saidNoThisTask = true;
     this.declined = true;
     return denied("The user said no. Don't retry or work around it; finish the task and say what wasn't done.");
   }

@@ -14,7 +14,7 @@ import { GLASS_CHOICES, GLASS_HINT, GLASS_LABEL, HEAR_WAITING, LISTEN_ONCE_READY
 import { mountListenOnce } from "../shared/listen-once";
 import { heldLive } from "../shared/held-live";
 import {
-  AUTONOMY_CONSENT_TEXT, autonomyHint, elevationOf, betterRecallDownloadLabel, betterRecallProgress, betterRecallText, type BetterRecallState, MEMORY_CONSENT_TEXT,
+  approvalsView, grantsEmptyText, modeCard, modeRefusal, elevationOf, betterRecallDownloadLabel, betterRecallProgress, betterRecallText, type BetterRecallState, MEMORY_CONSENT_TEXT,
   memoryOwnerOffersErase, memoryOwnerText, memoryForgottenText, memoryPutBackText, memoryRestoreFailedText, memoryTroubleText, MEMORY_UNDO_EXPIRED, undoForgotLabel, MEMORY_PAUSED_TEXT, MEMORY_QUESTIONS_HINT, memoryPaused, ROUTINES_CONSENT_TEXT, UPDATES_CONSENT_TEXT, updateHowTo, updateOut, updateStatusText, deleteRoutineLabel, forgetMemoryLabel, handleCornerText, forgotLine, learnedLine, rememberedAgainLine, memoryEmptyText,
   memorySourceLabel, routinesEmptyText, MEMORY_SEARCH_LABEL, MEMORY_SOURCE_LABEL, MEMORY_ALL_SOURCES, MEMORY_SHOW_MORE, MEMORY_NO_MATCHES, memoryCountText, settingsResultText, SETTINGS_MORE_RESULTS, SETTINGS_RESULTS_LABEL, correctMemoryLabel, memoryProvenanceLabel, MEMORY_CORRECTION,
 } from "./copy";
@@ -22,7 +22,8 @@ import { mountAboutYou } from "./about-you";
 import { mountReminders } from "./reminders";
 import { dismissForgetConfirms, mountForgetConfirms } from "./forget-confirm";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
-import { MATCH_TEXT, matchAnnouncement, matchRefusalHolds, matchView, trustView } from "./match-copy";
+import { modeCardVersion, type ApprovalMode, type ApprovalsState } from "../../shared/approvals";
+import { MATCH_TEXT, matchAnnouncement, matchRefusalHolds, matchView } from "./match-copy";
 import { ISSUES_URL } from "../../shared/support";
 import { CONSENT_VERSION } from "../../shared/consent";
 import { AGREE_ARM_MS } from "../../shared/provider";
@@ -158,7 +159,6 @@ let settings: Settings | null = null;
 type MemoryRow = MemoryView["rows"][number];
 const MEMORY_VERSION = FEATURE_CONSENT_VERSION.memory;
 const ROUTINES_VERSION = FEATURE_CONSENT_VERSION.routines;
-const AUTONOMY_VERSION = FEATURE_CONSENT_VERSION.autonomy;
 let memoryRows: MemoryRow[] = [];
 let routineRows: RoutineRow[] = [];
 /** The routine whose Delete was pressed: focus goes to the one now in its place. */
@@ -179,7 +179,6 @@ function applySettings(s: Settings): void {
   applyMemorySettings(s);
   applyRoutineSettings(s);
   applyUpdateSettings(s);
-  applyAutonomySettings(s);
   providerSettings(s);
   ($("login") as HTMLInputElement).checked = s.startAtLogin;
   ($("keep-conversation") as HTMLInputElement).checked = s.keepConversation;
@@ -328,8 +327,6 @@ let checksBeforeStart = false;
 let shownChecks = "";
 /** The setup check's rows as last shown: the voice line's fix button comes from its microphone row. */
 let checksNow: Status["environment"]["checks"] = [];
-/** Whether the organisation manages "Work without asking" (applyAutonomySettings): its hint is redrawn with the checks. */
-let autonomyManaged = false;
 /** The status as read, with the setup check main has sent since: what a policy change is drawn again from. */
 let statusNow: Status | null = null;
 /**
@@ -346,8 +343,8 @@ function renderChecks(environment: Status["environment"]): void {
   if (statusNow) statusNow = { ...statusNow, environment };
   if ($("checks-msg").className !== "sr") checksMsg("");
   checksNow = environment.checks;
-  // The switch's hint says when Ember runs elevated (every command asks then).
-  $("autonomy-hint").textContent = autonomyHint(autonomyManaged, elevationOf(checksNow));
+  // How Ember asks says when Ember runs elevated (every command asks then).
+  renderApprovals();
   renderVoiceFix();
   const hadFocus = $("checks").contains(document.activeElement);
   // A fix button that had focus keeps it when its row is drawn again (the row's check id says which).
@@ -463,6 +460,8 @@ function render(status: Status): void {
   // A policy main sent since this status was read is the newer: the held lockdown lasts until a restart.
   if (pushedAdmin) status = { ...status, admin: pushedAdmin };
   statusNow = status;
+  // So is what main pushed of the approval modes: it pushes every change of them.
+  approvalsNow = pushedApprovals ?? status.approvals ?? null;
   if (statusFailed) { statusFailed = false; $("p-retry").hidden = true; }
   renderPlatform(status.platform);
   renderChecks(status.environment);
@@ -653,7 +652,7 @@ function renderAdmin(a: Status["admin"]): void {
   if (agent) renderAgent(agent);
   renderRecipient();
   renderTagline();
-  for (const [id, key] of [["wake", "wakeWord"], ["speak", "speak"], ["speak-results", "speak"], ["speak-rate", "speak"], ["natural-model", "naturalVoice"], ["m-conductor", "models"], ["m-worker", "models"], ["memory-on", "memory"], ["updates-on", "updates"], ["routines-on", "routines"], ["autonomy-on", "autonomy"], ["screen-images", "screenImages"]] as const) {
+  for (const [id, key] of [["wake", "wakeWord"], ["speak", "speak"], ["speak-results", "speak"], ["speak-rate", "speak"], ["natural-model", "naturalVoice"], ["m-conductor", "models"], ["m-worker", "models"], ["memory-on", "memory"], ["updates-on", "updates"], ["routines-on", "routines"], ["screen-images", "screenImages"]] as const) {
     const input = $(id) as HTMLInputElement | HTMLSelectElement;
     input.disabled = managed.has(key);
     (input.closest(MANAGED_ROW) ?? input).classList.toggle("locked", managed.has(key));
@@ -666,7 +665,7 @@ function renderAdmin(a: Status["admin"]): void {
   if (voice) renderVoice(voice);
   if (settings) applyMemorySettings(settings);
   if (settings) applyRoutineSettings(settings);
-  if (settings) applyAutonomySettings(settings);
+  renderApprovals();
   // The rest of the switches it manages, as in force (safety-privacy-w5-2).
   if (settings) { applyUpdateSettings(settings); drawVoiceSwitches(settings); }
 }
@@ -2151,28 +2150,111 @@ $("updates-open").addEventListener("click", () => { void window.ember.openUpdate
 window.ember.onUpdates(renderUpdates);
 void window.ember.updates().then(renderUpdates);
 
-// ───── Work without asking (app/main/policy/autonomy.ts): on only once the user agrees to its card ─────
-$("autonomy-consent-text").textContent = AUTONOMY_CONSENT_TEXT;
-function applyAutonomySettings(s: Settings): void {
-  // As in force: held locked down after a policy change, the settings still hold it on (safety-privacy-w5-2).
-  ($("autonomy-on") as HTMLInputElement).checked = s.autonomy.on && s.autonomy.consent.version >= AUTONOMY_VERSION && !managed.has("autonomy");
-  autonomyManaged = managed.has("autonomy");
-  $("autonomy-hint").textContent = autonomyHint(autonomyManaged, elevationOf(checksNow));
+// ───── How Ember asks (app/main/policy/autonomy.ts): one choice of modes, each chosen only by agreeing to its card ─────
+/** The modes as main last said they stand (with a status, or pushed): main decides what is in force, this page draws it. */
+let approvalsNow: ApprovalsState | null = null;
+/** What main pushed since the page loaded: newer than any status read (main pushes every change). */
+let pushedApprovals: ApprovalsState | null = null;
+/** The mode whose card is open, or null. */
+let cardMode: ApprovalMode | null = null;
+/** Not now was pressed on the card that opens by itself: it stays closed until its row is pressed. */
+let cardDismissed = false;
+/** A choice is on its way to main: a second press waits for its answer. */
+let choosing = false;
+const modeRow = (mode: ApprovalMode) => document.getElementById(`mode-${mode}`) as HTMLButtonElement | null;
+/** Shows `mode`'s card (its agree button takes no press for AGREE_ARM_MS: showConsentCard). */
+function openModeCard(mode: ApprovalMode): void {
+  const card = modeCard(mode);
+  cardMode = mode;
+  $("approvals-card-title").textContent = card.title;
+  $("approvals-card-text").textContent = card.text;
+  $("approvals-yes").textContent = card.yes;
+  $("approvals-no").textContent = card.no;
+  $("approvals-msg").textContent = "";
+  showConsentCard("approvals-card", "approvals-yes");
 }
-$("autonomy-on").addEventListener("change", e => {
-  const on = (e.target as HTMLInputElement).checked;
-  const a = settings?.autonomy ?? { on: false, scopes: { apps: true, commands: true, cursor: true, crossWindow: true }, consent: { version: 0, at: null } };
-  if (on && a.consent.version < AUTONOMY_VERSION) { showConsentCard("autonomy-consent", "autonomy-yes"); (e.target as HTMLInputElement).checked = false; $("autonomy-yes").focus(); return; }
-  // Turned on: all four of what it covers (using apps, commands, the mouse and keyboard, moving text between apps).
-  void save({ autonomy: { ...a, on, ...(on ? { scopes: { apps: true, commands: true, cursor: true, crossWindow: true } } : {}) } });
+/** Hides the card; `focus`: back to the row it was opened from (the keyboard's place, and a screen reader's). */
+function closeModeCard(focus: boolean): void {
+  const row = cardMode ? modeRow(cardMode) : null;
+  const held = $("approvals-card").contains(document.activeElement);
+  cardMode = null;
+  $("approvals-card").hidden = true;
+  if (focus || held) (row && !row.disabled ? row : $("approvals-h")).focus();
+}
+function renderApprovals(): void {
+  const view = approvalsView(approvalsNow, managed.has("autonomy"), elevationOf(checksNow));
+  const group = $("approvals");
+  // Drawn anew only when the modes offered change: a row under the pointer or the keyboard stays the one it was.
+  if ([...group.children].map(c => (c as HTMLElement).dataset.mode).join() !== view.rows.map(r => r.mode).join()) {
+    group.replaceChildren(...view.rows.map(r => {
+      const el = document.createElement("button");
+      el.type = "button";
+      el.className = "mode";
+      el.id = `mode-${r.mode}`;
+      el.dataset.mode = r.mode;
+      el.setAttribute("role", "radio");
+      el.append(Object.assign(document.createElement("b"), { textContent: r.name }), Object.assign(document.createElement("span"), { textContent: r.line }));
+      return el;
+    }));
+  }
+  // A radio group is one Tab stop: the mode in force, or the first row while none is.
+  const stop = view.rows.find(r => r.checked && !r.locked) ?? view.rows.find(r => !r.locked);
+  for (const r of view.rows) {
+    const el = modeRow(r.mode);
+    if (!el) continue;
+    el.setAttribute("aria-checked", String(r.checked));
+    el.tabIndex = r === stop ? 0 : -1;
+    el.disabled = r.locked;
+    el.classList.toggle("locked", r.locked);
+    el.title = r.title;
+  }
+  if ($("approvals-note").textContent !== view.note) $("approvals-note").textContent = view.note;
+  // A card whose mode can't be chosen any more (the organisation's policy changed) or is in force already (agreed to
+  // another way) goes; and while no mode is in force and only Interactive's agreement is missing, its card shows ready
+  // to agree, without taking the keyboard.
+  if (cardMode && (view.inForce === cardMode || !view.rows.some(r => r.mode === cardMode && !r.locked))) closeModeCard(false);
+  if (!cardMode && view.card && !cardDismissed) openModeCard(view.card);
+  if (!view.card) cardDismissed = false;
+  // The copy of the consent and the empty list of apps say whether ordinary steps are asked about (safety-privacy-c4-1);
+  // each is drawn again only if its words change.
+  if (settings) renderPrivacy(settings);
+}
+// Pressing a mode shows its card first: the mode changes only with "I agree". The mode in force has nothing to agree to.
+$("approvals").addEventListener("click", e => {
+  const row = (e.target as HTMLElement).closest<HTMLButtonElement>("button.mode");
+  const mode = row?.dataset.mode as ApprovalMode | undefined;
+  if (!row || !mode || row.disabled || row.getAttribute("aria-checked") === "true") return;
+  openModeCard(mode);
+  $("approvals-yes").focus();
 });
-$("autonomy-yes").addEventListener("click", () => {
-  if (!agreeArmed("autonomy-yes")) return;
-  $("autonomy-consent").hidden = true;
-  void save({ autonomy: { on: true, scopes: { apps: true, commands: true, cursor: true, crossWindow: true }, consent: { version: AUTONOMY_VERSION, at: new Date().toISOString() } } });
-  $("autonomy-on").focus();
+// The arrow keys move between the modes without choosing one (choosing needs its card): Space or Enter presses the row.
+$("approvals").addEventListener("keydown", e => {
+  const keys: Record<string, number> = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 };
+  if (!(e.key in keys) && e.key !== "Home" && e.key !== "End") return;
+  const rows = [...$("approvals").querySelectorAll<HTMLButtonElement>("button.mode:not(:disabled)")];
+  if (!rows.length) return;
+  e.preventDefault();
+  const at = rows.findIndex(r => r === document.activeElement);
+  const next = e.key === "Home" ? 0 : e.key === "End" ? rows.length - 1 : (Math.max(0, at) + keys[e.key] + rows.length) % rows.length;
+  for (const r of rows) r.tabIndex = r === rows[next] ? 0 : -1;
+  rows[next].focus();
 });
-$("autonomy-no").addEventListener("click", () => { $("autonomy-consent").hidden = true; $("autonomy-on").focus(); });
+$("approvals-yes").addEventListener("click", () => {
+  const mode = cardMode;
+  if (!mode || choosing || !agreeArmed("approvals-yes")) return;
+  choosing = true;
+  // Main records the agreement and chooses the mode in one change, or says why not; nothing is chosen here.
+  window.ember.chooseMode(mode, modeCardVersion(mode)).then(done => {
+    pushedApprovals = approvalsNow = done.state;
+    cardDismissed = !done.ok;
+    closeModeCard(true);
+    renderApprovals();
+    modeRow(mode)?.focus();
+    $("approvals-msg").textContent = done.ok ? "" : modeRefusal(done.why);
+  }, () => { closeModeCard(true); $("approvals-msg").textContent = modeRefusal("not-recorded"); }).finally(() => { choosing = false; });
+});
+$("approvals-no").addEventListener("click", () => { cardDismissed = true; closeModeCard(true); });
+window.ember.onApprovals(state => { pushedApprovals = approvalsNow = state; renderApprovals(); });
 window.ember.onSettingsChanged(applyRoutineSettings);
 void window.ember.routines().then(renderRoutines);
 window.ember.onRoutines(renderRoutines);
@@ -2196,9 +2278,9 @@ function showSection(value: string, asked = false): void {
   const inPane = paneOf(h);
   const opened = !document.body.classList.contains("first-run") && !!inPane && inPane !== pane;
   if (opened && inPane) { restoring = null; showPane(inPane, true); }
-  // Asked for by voice ("work without asking" before its card was agreed to): the card shows, focused on its agree
-  // button, which takes no press for AGREE_ARM_MS.
-  if (control === "autonomy-yes" && !managed.has("autonomy")) showConsentCard("autonomy-consent", "autonomy-yes");
+  // Asked for by voice ("work without asking" before Interactive's card was agreed to): the card shows, focused on its
+  // agree button, which takes no press for AGREE_ARM_MS.
+  if (control === "approvals-yes" && !managed.has("autonomy") && modeRow("interactive") && !modeRow("interactive")?.disabled) openModeCard("interactive");
   // "Get to know me" or Open Memory while memory is off or waits for its note: the note shows, focused on its words,
   // never its agree button (memory-r7). Memory already agreed to (saved under another account) gets the section alone.
   if (control === "memory-consent-text" && !managed.has("memory") && !memoryOn()) showConsentCard("memory-consent", "memory-yes");
@@ -2251,16 +2333,16 @@ function syncPrivacyTerms(): void {
   const copy = source.cloneNode(true) as HTMLElement;
   copy.querySelector("#model-service")?.classList.add("model-service-copy");
   for (const el of [copy, ...copy.querySelectorAll("[id]")]) el.removeAttribute("id");
-  // Said as it is here: the never-look list is below, and screenshots may be off (safety-privacy-r4); Work without
-  // asking and the apps let in without asking are below too (safety-privacy-c4-1); other computers and commands are on
-  // or off as the settings and the policy leave them (safety-privacy-r4-2). Each of screenshots, Work without asking and
+  // Said as it is here: the never-look list is below, and screenshots may be off (safety-privacy-r4); How Ember asks
+  // and the apps let in without asking are below too (safety-privacy-c4-1); other computers and commands are on
+  // or off as the settings and the policy leave them (safety-privacy-r4-2). Each of screenshots, the approval mode and
   // the apps is in force only where the policy in force allows it: held locked down after a policy change, the settings
   // still say what the person left on (safety-privacy-v5-1, safety-privacy-w5-2).
   const s = settings;
   const a = lastAdmin;
   const fold = {
     screenImages: s?.screenImages !== false && !managed.has("screenImages"),
-    autonomy: !!s && s.autonomy.on && s.autonomy.consent.version >= AUTONOMY_VERSION && !managed.has("autonomy"),
+    autonomy: approvalsView(approvalsNow, managed.has("autonomy")).inForce !== null,
     grants: !!s && !confirmEvery && !managed.has("grants") && Object.values(s.grants).includes("act"),
     ...(s && a ? { targets: targetsFoldRest(s, { source: a.error ? "error" : a.source, features: { wsl: a.features?.wsl, ssh: a.features?.ssh }, ...(a.commands ? { commands: a.commands } : {}) }, platform?.os) } : {}),
   };
@@ -2495,31 +2577,15 @@ let privacyKey = "";
 /** After a Remove: which list, and where in it, focus goes once the list is redrawn. */
 let focusAfter: { list: "grants" | "never-look"; index: number } | null = null;
 const listMsg = (text: string) => { $("never-look-msg").textContent = text; };
-// ───── When Ember asks first ─────
-// Only the switch flipped: main fills in the other from the user's own settings (withOwnTrust), never the shown value,
-// which may be the administrator's.
-$("trust-apps").addEventListener("change", e => { void save({ trust: { askedApps: (e.target as HTMLInputElement).checked } } as SettingsPatch); });
-$("trust-commands").addEventListener("change", e => { void save({ trust: { reviewCommands: (e.target as HTMLInputElement).checked } } as SettingsPatch); });
-function renderTrust(s: Settings): void {
-  for (const row of trustView(s.trust, managed)) {
-    const input = $(row.id) as HTMLInputElement;
-    input.checked = row.checked;
-    input.disabled = row.disabled;
-    (input.closest(MANAGED_ROW) ?? input).classList.toggle("locked", row.locked);
-    input.title = row.title;
-    input.setAttribute("aria-describedby", row.describedBy);
-  }
-}
-
 // Send screenshots for tasks: the user's own switch, shown as applied (the organisation's off wins: safety-privacy-7).
 $("screen-images").addEventListener("change", e => { void save({ screenImages: (e.target as HTMLInputElement).checked }); });
 function renderPrivacy(s: Settings): void {
-  renderTrust(s);
   ($("screen-images") as HTMLInputElement).checked = s.screenImages && !managed.has("screenImages");
   // The copy of the consent says whether screenshots are off (safety-privacy-r4); drawn again only if its words change.
   if (($("privacy-terms-fold") as HTMLDetailsElement).open) syncPrivacyTerms();
   // Redrawn only when the lists change (never under a pointer or a screen reader for an unrelated setting).
-  const key = JSON.stringify([s.grants, s.privacy.neverLook, managed.has("grants"), confirmEvery, [...adminNeverLook]]);
+  const modeInForce = approvalsView(approvalsNow, managed.has("autonomy")).inForce !== null;
+  const key = JSON.stringify([s.grants, s.privacy.neverLook, managed.has("grants"), confirmEvery, [...adminNeverLook], modeInForce]);
   if (key === privacyKey) return;
   privacyKey = key;
   /** `locked`: true = Remove disabled (managed); null = the organisation's entry (no Remove at all). */
@@ -2552,7 +2618,7 @@ function renderPrivacy(s: Settings): void {
       // Said once it is saved, as Add is (safety-privacy-11): focus has moved on to the next Remove by then.
       void save({ grants: next }).then(ok => { if (ok) $("grants-msg").textContent = grantRemovedText(friendlyApp(app)); });
     }, managed.has("grants")))
-    : [Object.assign(document.createElement("li"), { className: "empty", textContent: confirmEvery ? "None." : "None: Ember asks before its first action in each app." })]));
+    : [Object.assign(document.createElement("li"), { className: "empty", textContent: grantsEmptyText({ confirmEvery, modeInForce }) })]));
   // The user's own entries (with Remove), then the organisation's (locked).
   const own = ownNeverLook(s);
   const theirs = s.privacy.neverLook.filter(isAdminEntry);

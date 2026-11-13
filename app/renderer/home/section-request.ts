@@ -18,8 +18,9 @@ export const LATEST_ANSWER = "latest-answer";
 const CONTROLS: Readonly<Record<string, string>> = {
   "conversation:latest": LATEST_ANSWER, "conversation:message": "conversation-message", "conversation:stop": "conversation-stop",
   "computers:host": "host-add", "computers:wsl": "wsl-on", "access:ask": "p-ask", "access:stop": "p-stop",
-  // "Work without asking" by voice (autonomy-intent.ts): its switch, or its card's agree button (the card shown first).
-  "privacy:autonomy-on": "autonomy-on", "privacy:autonomy-yes": "autonomy-yes",
+  // "Work without asking" by voice (autonomy-intent.ts): Interactive's row in How Ember asks, or its card's agree button
+  // (the card shown first).
+  "privacy:autonomy-on": "mode-interactive", "privacy:autonomy-yes": "approvals-yes",
   // Memory: its search for a forget request, its note's words for "get to know me" or Open Memory, never the note's
   // "I agree, remember", where a stray Enter or Space would agree; asked for by that name, the words (memory-r7).
   "memory:memory-query": "memory-query", "memory:memory-consent-text": "memory-consent-text", "memory:memory-yes": "memory-consent-text",

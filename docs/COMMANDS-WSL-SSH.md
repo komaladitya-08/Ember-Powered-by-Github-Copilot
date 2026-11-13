@@ -415,15 +415,20 @@ Ember and its bubble keep clear of the command window (as they do of settings), 
 and consent cards. There is never an "Always" for commands. A spoken “Ember, allow” approves one from anyone heard while
 **Only my voice can say yes (Voice Match)** is off, its default, and only when Voice Match recognises your voice while
 it is on; either way only while the card shows the whole command, as the approve chord does. “Ember, not now” works for
-anyone. With **Work without asking** on (Settings › Apps & privacy), an ordinary command on this computer that would ask
-only because it carries text Ember read in another window runs after its Stop countdown instead; in WSL and over SSH it
-asks as before, and dangerous ones always ask.
+anyone. In **Interactive** (Settings › Apps & privacy › **How Ember asks**), an ordinary command on this computer that
+would ask only because it carries text Ember read in another window runs after its Stop countdown instead; in WSL and
+over SSH it asks as before, and dangerous ones always ask. Until Interactive's card is agreed to, such a command asks.
 A notification (and
 Ember's speech) only says "Ember wants to run a command on build-01." with how to get to the command window from the
 keyboard ("press Alt+Tab to go there" on Linux and Windows); screen readers hear that too, and a question's key hint
-("Ctrl+Alt+Y allow; Ctrl+Alt+N not now"). A question nobody answers counts as "no" after 2 minutes (20 with **More
-time to read and answer** in Settings › Comfort & access). Your yes covers exactly that command, on that computer, in
-that folder, for that task: any change asks again. After a "no", Ember doesn't try again or work around it.
+("Ctrl+Alt+Y allow; Ctrl+Alt+N not now"). A question nobody answers ends after 2 minutes (20 with **More
+time to read and answer** in Settings › Comfort & access): nothing is approved and the command doesn't run, but it
+isn't a no. Your yes covers exactly that command, on that computer, in
+that folder, for that task: any change asks again. After a "no" (**Not now**, or **Stop** during a countdown), Ember
+doesn't try again or work around it: for the rest of that task the same command sent again, or one that does the same
+to the same thing (`find build -delete` after `rm -rf build`), is refused without another card, a review or an
+announcement. A card nobody answered isn't put up again until you next say something to that task. Ask again, in a new
+request, to have it run after all.
 
 ### 2.5 When you asked for exactly that
 
@@ -548,8 +553,9 @@ when the command may carry text Ember read in another app.
 
 ### 2.5a When Copilot reviewed it
 
-With **Ask only about dangerous commands** on (Settings › **Apps & privacy**; off by default while the reviewer is
-evaluated), a command that would ask
+In the **Assisted** approval mode (Settings › **Apps & privacy** › **How Ember asks** doesn't offer it yet, so until
+it does no command is sent for review; it takes the place of the **Ask only about dangerous commands** switch), a
+command that would ask
 only because of what it does (it deletes, publishes, downloads and runs something, or Ember can't tell exactly what it
 does) is first shown to Copilot, in a conversation of its own with no tools: your own words for the task, the command,
 where and in which folder it runs, the model's reason and what Ember's checks found. Never a command's output or your
