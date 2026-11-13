@@ -508,8 +508,10 @@ review of the voice lane, V2-S3; on the real models “A number of people called
 salt?” did 8 times in 8, and never now). “Hey Ember” starts a wake as from idle, and anything else heard there goes nowhere; a word or two that read as
 no answer (most likely one misheard: one test voice's lone “Allow.” comes out “Hello”) make the question say once how
 to answer (`unclear`). It opens no conversation, is
-no follow-up, ends with the question, and takes nothing said over other sound unless it is said with the name (the
-question then says so, once). An answer begun a moment (160 ms of quiet, `TURN_GAP_FRAMES` in engine.ts) after Ember's
+no follow-up, ends with the question, and takes no yes said over other sound unless it is said with the name (the
+question then says so, once); a no is anyone's there too, as it is in a conversation and a follow-up: “No.”, “Not
+now.” and “Don't do it.” over a playing video were dropped in the answer window and a conversation, and the question
+stayed up, open to the next yes (V2-S7). A video's own “No.” declines, the safe side. An answer begun a moment (160 ms of quiet, `TURN_GAP_FRAMES` in engine.ts) after Ember's
 voice ended is heard whole from its start, also when it starts in the 400 ms after Ember says it stopped; one that
 runs on from Ember's voice with no such gap began under it, so only its end was heard (“Don't do it.” came out as “Do
 it.” and allowed: owner's report of 2026-11-12). That one is never taken, in the answer window or a follow-up: Ember

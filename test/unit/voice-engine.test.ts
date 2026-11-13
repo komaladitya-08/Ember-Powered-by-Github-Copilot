@@ -2982,4 +2982,36 @@ describe("whose a spoken answer is (second review of the voice lane, 2026-11-12)
       expect(called({ otherSound: false }, s => s.run(frames(400), () => mic(7, 0.05))), "quiet").toEqual(["wake", "Allow. | wake"]);
     });
   });
+
+  describe("a no said over other sound (V2-S7, voice-listening-r9-5)", () => {
+    it("takes “No.”, “Not now.” and “Don't do it.” from anyone while other sound is known to play, in each window: a no is anyone's", () => {
+      // The answer window and a conversation marked everything nameless over other sound, a no included, and the voice
+      // gate dropped it; a follow-up took it. The question stayed up, open to the next yes.
+      for (const where of WHERE) for (const words of ["No.", "Not now.", "Don't do it."]) {
+        // Windows: the output's level says other sound plays.
+        const windows = waiting({ 5: words }, where, { otherSound: true });
+        says(windows, 5, 0, "user");
+        expect(windows.heard(), `${words} in ${where}, Windows`).toEqual([`${words} | ${where}`]);
+        // Linux with parec, a video known to play: the user's own no, and the video's (declining is the safe side).
+        for (const by of ["user", "video"] as const) {
+          const s = waiting({ 5: words }, where);
+          videoOn(s);
+          says(s, 5, 0, by);
+          expect(s.heard(), `${words} in ${where}, the ${by}'s`).toEqual([`${words} | ${where}`]);
+        }
+      }
+    });
+
+    it("so for a no the speakers said by name, and a yes over other sound is still no one's", () => {
+      for (const where of WHERE) {
+        const named = waiting({ 5: "Ember, not now." }, where);
+        videoOn(named);
+        says(named, 5, 1, "video");
+        expect(named.heard(), where).toEqual([`Not now. | ${where}`]);
+        const yes = waiting({ 5: "Okay." }, where, { otherSound: true });
+        says(yes, 5, 0, "user");
+        expect(yes.heard(), where).toEqual([`Okay. | ${where} | over other sound`]);
+      }
+    });
+  });
 });

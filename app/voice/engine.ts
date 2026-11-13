@@ -2071,16 +2071,20 @@ export class VoiceEngine {
     // (By name: as above, or the spotter heard the user say the name a moment ago, however the recognizer wrote it,
     // unless the speakers' own stream reads as having said what was heard.)
     const spotted = () => t0 - this.spottedAt < NAME_HEARD_MS && !(this.speakersSounded(spokenFrom, t0) && this.speakersSaid(spokenFrom, heard));
+    // A no to the question up is anyone's, over other sound too (main's voiceAnswer takes it from anyone): never marked.
+    // The answer window and a conversation marked it like everything else nameless, the voice gate dropped it, and the
+    // question stayed up, open to the next yes (V2-S7). A video's "No." declines: the safe side.
+    const no = this.questionWaiting && isAnswerWord(stripWake(heard, true));
     if (conversation && this.soundPlaying(t0) && !named && !spotted()) {
       if (this.overEmber) { this.peak = 0; return; }
-      this.overSound = true;
+      if (!no) this.overSound = true;
     }
     // So in a question's answer window: a video's "yes" is no one's answer (owner's report of 2026-11-12).
-    if (this.mode.reason === "answer" && this.soundPlaying(t0) && !named) this.overSound = true;
+    if (this.mode.reason === "answer" && this.soundPlaying(t0) && !named && !no) this.overSound = true;
     // And what the speakers' own stream said by name is theirs: a follow-up window takes whatever is said ("Hey Ember, …"
     // out of a video was rejected as a wake, and its words then sent as the follow-up: V2-S2). (A conversation is marked
     // above, by the other sound that said it: it hears on through Ember's own voice, whose "remember" is no one's name.)
-    if ((this.mode.reason === "follow-up" || this.mode.reason === "answer") && this.namedBySpeakers(spokenFrom)) this.overSound = true;
+    if ((this.mode.reason === "follow-up" || this.mode.reason === "answer") && this.namedBySpeakers(spokenFrom) && !no) this.overSound = true;
     if (conversation && this.overEmber && !this.cutIn) {
       // All of what was said over Ember, its end heard: Ember's own voice, a "yeah", or the user cutting in.
       if (this.peak < this.echo * ECHO_MARGIN || (BACKCHANNEL.test(heard) && !this.answering(heard))) { this.peak = 0; return; }
