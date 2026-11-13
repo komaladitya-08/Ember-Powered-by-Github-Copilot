@@ -12,24 +12,41 @@ export const PROJECT_FILES = 6;
 const FILE_BYTES = 24 * 1024;
 const TOTAL_BYTES = 64 * 1024;
 /**
- * The kinds of file Projects takes, by type: source, build and markup files, documentation, text and diffs. Not a
- * guard (integrations-r9-2: App.vue, main.cc and pom.xml were refused in words about credentials): whatever its type,
- * a file is sent only as UTF-8 text under the size limits, and only once the secret guard has read its name and all of
- * its text. Types that hold credentials or other people's data by convention stay out (.env, .tfvars, .pem, .log).
+ * The kinds of file Projects takes, by type: source, build and markup files, documentation, text and diffs
+ * (integrations-r9-2: App.vue, main.cc and Makefile were refused in words about credentials). Whatever its type, a file
+ * is sent only as UTF-8 text under the size limits, and only once the secret guard has read its name and all of its
+ * text. The guard reads prose and code, not every format that keeps passwords, so the list is what keeps those out
+ * (integrations-x9-2: with .csv, .tsv, .xml, .ini, .cfg, .conf and .properties on it, Firefox's logins.csv, LastPass,
+ * Bitwarden and KeePass exports, FileZilla's sitemanager.xml, pgpass.conf and redis.conf were sent whole). Data and
+ * settings files, and any type that holds credentials or other people's data by convention, stay off it; adding one
+ * sends more, which is the owner's to decide.
  */
 const textFile = new RegExp(String.raw`\.(?:${[
-  "[cm]?[jt]sx?", "vue", "svelte", "astro", "html?", "css", "scss", "sass", "less", "xml", "xsl", "svg",
-  "py", "rb", "php", "pl", "pm", "lua", "r", "jl", "sh", "bash", "zsh", "fish", "ps1", "psm1", "bat", "cmd",
-  "go", "rs", "java", "kts?", "scala", "groovy", "gradle", "clj", "swift", "dart", "cs", "fs", "vb", "zig",
-  "[ch](?:pp|xx)?", "cc", "hh", "mm?", "ex", "exs", "erl", "hs", "ml",
-  "sql", "graphql", "gql", "proto", "tf", "hcl", "cmake", "mk",
-  "json", "toml", "ya?ml", "ini", "cfg", "conf", "properties",
-  "md", "markdown", "rst", "adoc", "tex", "txt", "csv", "tsv", "diff", "patch",
+  "[cm]?[jt]sx?", "vue", "svelte", "astro", "html?", "css", "scss", "sass", "less", "xsl", "svg", "xaml",
+  "ejs", "erb", "hbs", "mustache", "j2", "jinja2?", "njk", "liquid", "pug", "haml", "twig", "razor", "cshtml",
+  "py", "rb", "php", "pl", "pm", "lua", "r", "rmd", "jl", "sh", "bash", "zsh", "fish", "ps1", "psm1", "bat", "cmd",
+  "go", "mod", "rs", "java", "kts?", "scala", "groovy", "gradle", "clj", "swift", "dart", "cs", "fs", "vb", "zig", "nim", "elm", "sol",
+  "[ch](?:pp|xx)?", "cc", "hh", "mm?", "ino", "asm", "s", "sv", "vhdl?", "v", "ex", "exs", "erl", "hs", "ml", "el", "vim",
+  "sql", "graphql", "gql", "proto", "tf", "hcl", "nix", "cmake", "mk", "bazel", "bzl", "spec", "csproj", "fsproj", "vbproj", "sln",
+  "json", "toml", "ya?ml",
+  "md", "markdown", "rst", "adoc", "org", "tex", "txt", "diff", "patch",
 ].join("|")})$`, "i");
-/** Well-known source and documentation files that have no type ("Makefile", "Dockerfile.dev", "README"). */
-const namedFile = /^(?:(?:GNU)?[Mm]akefile|Dockerfile|Containerfile|Jenkinsfile|Vagrantfile|Gemfile|Rakefile|Procfile|Brewfile|[Jj]ustfile|Caddyfile|CODEOWNERS|README|LICEN[CS]E|COPYING|NOTICE|CHANGELOG|CHANGES|AUTHORS|CONTRIBUTING|TODO)(?:\.[\w-]{1,20})?$/;
-/** Types Projects never takes, even after a well-known name. */
-const NEVER_KIND = /\.(?:lock|env|tfvars|tfstate|pem|key|p12|pfx|crt|cer|der|jks|keystore|log)$/i;
+/** Well-known source and documentation files that have no type ("Makefile", "Dockerfile", "README"). */
+const NAMED = "(?:GNU)?[Mm]akefile|Dockerfile|Containerfile|Jenkinsfile|Vagrantfile|Gemfile|Rakefile|Procfile|Brewfile|Pipfile|[Jj]ustfile|Caddyfile|BUILD|WORKSPACE|CODEOWNERS|README|LICEN[CS]E|COPYING|NOTICE|CHANGELOG|CHANGES|AUTHORS|CONTRIBUTING|TODO";
+/**
+ * What may follow one of them after a dot: which build, stage or platform it is for ("Dockerfile.dev", "Makefile.am").
+ * Never a type of its own (integrations-x9-2: "README.ppk" was a PuTTY private key, sent).
+ */
+const NAMED_FOR = "dev|development|prod|production|stage|staging|test|testing|local|ci|build|debug|release|base|common|alpine|slim|debian|ubuntu|linux|windows|win|mac|macos|osx|unix|bsd|arm|arm64|aarch64|amd64|x86|x64|x86_64|am|in|inc|template|example|sample|dist|old|orig|bak";
+/** And the build files known by a whole name, whose type alone Projects doesn't take. */
+const namedFile = new RegExp(`^(?:(?:${NAMED})(?:\\.(?:${NAMED_FOR}))?|pom\\.xml|build\\.xml|AndroidManifest\\.xml|meson\\.build)$`);
+/** Types Projects never takes, whatever stands in front: lock files, logs, and where keys and passwords are kept. */
+const NEVER_KIND = /\.(?:lock|env|tfvars|tfstate|pem|key|ppk|p8|p12|pfx|crt|cer|der|jks|keystore|asc|gpg|pgp|kdbx?|ovpn|npmrc|netrc|pgpass|htpasswd|log)$/i;
+/**
+ * Password managers' exports and programs' own password files, known by name: refused for the name, whatever the type
+ * (integrations-x9-2), as a file named for a password is.
+ */
+const storeName = /lastpass|bitwarden|1password|keepass|dashlane|enpass|nordpass|roboform|^logins\.(?:csv|tsv|json|txt)$|^(?:sitemanager|recentservers|filezilla)\.xml$|^pgpass\b|^rclone\.conf$|^wp-config\b/i;
 const privateName = /(?:secret|credential|passwd|password|private.?key|token)/i;
 /**
  * "tokenizer" and its forms hold "token" but never name a secret: memory's secret guard reads them so too (guard.ts
@@ -53,7 +70,7 @@ export interface ProjectRefusedFile { name: string; why: ProjectFileProblem }
 export function projectFileProblem(name: string): ProjectFileProblem | null {
   if (/[\p{Cc}\p{Cf}:]/u.test(name) || memoryRefusal(name)) return "unsafe";
   if (name.startsWith(".")) return "hidden";
-  if (privateName.test(name.replace(TOKENISER, "_"))) return "named";
+  if (privateName.test(name.replace(TOKENISER, "_")) || storeName.test(name)) return "named";
   // Never by its last type, whatever stands in front ("Gemfile.lock", "Dockerfile.env", "Makefile.key"): a lock file is
   // a list of versions and hashes, and the others hold credentials or logs by convention.
   if (NEVER_KIND.test(name) || (!textFile.test(name) && !namedFile.test(name))) return "kind";

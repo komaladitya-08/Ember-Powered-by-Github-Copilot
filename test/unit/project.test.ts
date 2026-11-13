@@ -577,8 +577,8 @@ describe("choosing project files", () => {
   it("takes ordinary source, build and text files by their type, and the well-known ones that have none (integrations-r9-2)", () => {
     // Each was refused with "Choose source, documentation or diff files without credentials."
     const ordinary = ["App.vue", "Page.svelte", "index.php", "main.cc", "widget.cxx", "widget.hh", "styles.scss", "pom.xml", "build.gradle", "main.dart", "init.lua", "Main.scala",
-      "api.proto", "schema.graphql", "setup.ini", "main.tf", "run.bat", "view.m", "plot.R", "data.csv", "index.htm", "test.zsh", "main.jl", "module.ex", "setup.cfg",
-      "Makefile", "Dockerfile", "Dockerfile.dev", "README", "LICENSE", "CHANGELOG", "Gemfile", "Jenkinsfile",
+      "api.proto", "schema.graphql", "main.tf", "run.bat", "view.m", "plot.R", "index.htm", "test.zsh", "main.jl", "module.ex",
+      "Makefile", "Dockerfile", "Dockerfile.dev", "Makefile.am", "README", "LICENSE", "CHANGELOG", "Gemfile", "Jenkinsfile",
       // And what it took before.
       "main.ts", "app.mjs", "util.py", "lib.rs", "notes.TXT", "fix.diff", "tsconfig.json", "deploy.yaml"];
     for (const name of ordinary) expect(projectChoice(at(name)), name).toEqual({ files: at(name), refused: [] });
@@ -603,6 +603,56 @@ describe("choosing project files", () => {
     for (const name of [".env", ".env.txt", ".npmrc", ".eslintrc.json"]) expect(projectChoice.bind(null, at(name)), name).toThrow(`${name} is a hidden file (its name starts with a dot), and Ember sends none of those.`);
     for (const name of ["yarn.lock", "Gemfile.lock", "Dockerfile.env", "Makefile.key", "README.log", "photo.png", "report.pdf", "archive.zip", "notebook.ipynb", "id_rsa", "app.env", "prod.tfvars", "server.log", "app.exe"]) {
       expect(projectChoice.bind(null, at(name)), name).toThrow(`${name} isn't a kind of file Projects takes. Choose source, documentation or diff files.`);
+    }
+  });
+
+  it("never takes a password manager's export, a server's password file or a key file, which only their type kept out before (integrations-x9-2)", async () => {
+    // Each was chosen and sent whole, its password in the prompt, once Projects took data and settings files by type.
+    const stores: Record<string, string> = {
+      "logins.csv": '"url","username","password","httpRealm","formActionOrigin","guid"\n"https://bank.example.com","alice","Tr0ub4dor&3",,"https://bank.example.com","{d5a0c5c4}"\n',
+      "lastpass_export.csv": "url,username,password,totp,extra,name,grouping,fav\nhttps://bank.example.com,alice,Tr0ub4dor&3,,,Bank,,0\n",
+      "bitwarden_export.csv": "folder,favorite,type,name,notes,fields,reprompt,login_uri,login_username,login_password,login_totp\n,,login,Bank,,,0,https://bank.example.com,alice,Tr0ub4dor&3,\n",
+      "keepass.csv": '"Group","Title","Username","Password","URL","Notes"\n"Root","Bank","alice","Tr0ub4dor&3","https://bank.example.com",""\n',
+      "export.tsv": "site\tlogin\tpass\nbank.example.com\talice\tSummer2026!\n",
+      "customers.csv": "name,email,phone,card_last4\nAda Lovelace,ada@example.com,+44 20 7946 0000,4242\n",
+      "Database.xml": '<KeePassFile>\n <Root><Group><Entry>\n  <String><Key>Password</Key><Value ProtectInMemory="True">Tr0ub4dor&amp;3</Value></String>\n </Entry></Group></Root>\n</KeePassFile>\n',
+      "sitemanager.xml": '<FileZilla3>\n <Servers><Server>\n  <Host>ftp.example.com</Host><User>alice</User>\n  <Pass encoding="base64">VHIwdWI0ZG9yJjM=</Pass>\n </Server></Servers>\n</FileZilla3>\n',
+      "recentservers.xml": '<FileZilla3>\n <RecentServers><Server>\n  <Host>ftp.example.com</Host>\n  <Pass encoding="base64">U3VtbWVyMjAyNiE=</Pass>\n </Server></RecentServers>\n</FileZilla3>\n',
+      "pgpass.conf": "localhost:5432:shop:alice:Tr0ub4dor&3\n",
+      "redis.conf": "bind 127.0.0.1\nport 6379\nrequirepass Xk9mQ2vLpR7tYw\n",
+      "rclone.conf": "[remote]\ntype = sftp\nhost = files.example.com\nuser = alice\npass = Xk9mQ2vLpR7tYwZ3\n",
+      "mosquitto.conf": "listener 1883\nallow_anonymous false\npassword_file /etc/mosquitto/passwd\n",
+      "smb.ini": "[share]\nusername=alice\npass=Summer2026!\n",
+      "setup.cfg": "[pypi]\nusername = alice\n",
+      "application.properties": "spring.datasource.username=app\n",
+      "README.ppk": "PuTTY-User-Key-File-3: ssh-ed25519\nEncryption: none\nPrivate-Lines: 1\nAAAAIEx7Q9m2Lp8Zr4TyWkX9mQ2vLp8Zr4TyWkX9mQ2vLp8Z\n",
+    };
+    const refused = /isn't a kind of file Projects takes\. Choose source, documentation or diff files\.$|is named like a file that holds passwords, tokens or keys, so Ember won't send it\.$/;
+    for (const [name, text] of Object.entries(stores)) {
+      expect(() => projectChoice(at(name)), name).toThrow(refused);
+      // And nothing of it is read or sent, whatever asks.
+      await expect(prompt([await file(name, text)]), name).rejects.toThrow(refused);
+    }
+    // A store known by its name is refused for that, whatever its type.
+    for (const name of ["logins.json", "logins.txt", "bitwarden_export_20261112.json", "LastPass-vault.txt", "KeePass-export.md", "1password-export.txt", "wp-config.php", "wp-config-sample.php"]) {
+      expect(() => projectChoice(at(name)), name).toThrow(`${name} is named like a file that holds passwords, tokens or keys, so Ember won't send it.`);
+    }
+    // A well-known name takes only what says which build, stage or platform it is for, never a type of its own.
+    for (const name of ["README.ppk", "Dockerfile.npmrc", "Dockerfile.netrc", "README.gpg", "LICENSE.asc", "Makefile.kdbx", "Gemfile.ovpn", "README.p8", "Dockerfile.sqlite", "README.csv", "Makefile.conf"]) {
+      expect(() => projectChoice(at(name)), name).toThrow(`${name} isn't a kind of file Projects takes. Choose source, documentation or diff files.`);
+    }
+    for (const name of ["Dockerfile.dev", "Dockerfile.prod", "Dockerfile.alpine", "Makefile.am", "Makefile.in", "Makefile.inc", "README.md", "LICENSE.txt", "Jenkinsfile.ci"]) expect(projectChoice(at(name)).refused, name).toEqual([]);
+    // The source types it took for integrations-r9-2 stay taken.
+    for (const name of ["App.vue", "main.cc", "styles.scss", "Makefile", "tokenizer.ts", "pom.xml"]) expect(projectChoice(at(name)).refused, name).toEqual([]);
+  });
+
+  it("takes more of the ordinary source and build files, and still no data or settings file (integrations-x9-7)", () => {
+    const ordinary = ["go.mod", "App.razor", "Index.cshtml", "index.ejs", "layout.erb", "page.hbs", "base.j2", "base.jinja", "view.twig", "Program.csproj", "Solution.sln", "MainWindow.xaml",
+      "main.nim", "flake.nix", "BUILD.bazel", "rules.bzl", "BUILD", "WORKSPACE", "meson.build", "Main.elm", "contract.sol", "top.v", "kernel.asm", "start.s", "sketch.ino",
+      "notes.org", "analysis.Rmd", "init.el", "init.vim", "ember.spec", "Pipfile", "build.xml", "AndroidManifest.xml"];
+    for (const name of ordinary) expect(projectChoice(at(name)), name).toEqual({ files: at(name), refused: [] });
+    for (const name of ["go.sum", "Info.plist", "Main.storyboard", "app.desktop", "ember.service", "layout.xml", "data.csv", "setup.ini", "nginx.conf"]) {
+      expect(() => projectChoice(at(name)), name).toThrow(`${name} isn't a kind of file Projects takes. Choose source, documentation or diff files.`);
     }
   });
 

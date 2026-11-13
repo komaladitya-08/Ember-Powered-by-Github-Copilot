@@ -2531,13 +2531,20 @@ added later has the same effect on the Embers before it: say so in the release n
 
 In Home under Projects, choose up to six source or text files, then send a review, plan or patch request. The
 connected model sees only the files you send. Projects takes source, build and markup files, documentation, text and
-diffs by their type, and well-known files that have none (`Makefile`, `Dockerfile`, `README`): the list
-(`textFile`, `namedFile` in app/main/agent/project.ts) says what kind of file it is, and is no guard. A file it
+diffs by their type, and well-known files that have none (`Makefile`, `Dockerfile`, `README`, `pom.xml`), alone or
+with which build, stage or platform they are for (`Dockerfile.dev`, `Makefile.am`), never with a type of their own
+(`README.ppk`): the list is `textFile` and `namedFile` in app/main/agent/project.ts. Data and settings files stay off
+it (`.csv`, `.tsv`, `.xml`, `.ini`, `.cfg`, `.conf`, `.properties`, `.plist`), as does every type that holds
+credentials or other people's data by convention: memory's secret guard reads prose and code, not every format that
+keeps passwords, so for those the list is what keeps them from being sent (integrations-x9-2: with them on it, a
+browser's `logins.csv`, password managers' exports, FileZilla's `sitemanager.xml`, `pgpass.conf` and `redis.conf`
+were sent whole). Adding such a type sends more, so it is the owner's decision, never a fix. A file it
 doesn't take is named with its own reason and the rest of the choice is kept (`projectChoice`, `projectRefusedText`;
-integrations-r9-2): not a kind Projects takes (a picture, an archive, a lock file, `.env`-like types), a hidden file
-(its name starts with a dot), a name that says password, token, secret, credential or private key (`tokenizer` and
-its forms don't, as memory's guard reads them), or a name Ember won't repeat (hidden characters, a colon, or one that
-itself looks like a secret). For an exact patch to one existing UTF-8 file with a final
+integrations-r9-2): not a kind Projects takes (a picture, an archive, a lock file, a key file, `.env`-like types), a
+hidden file (its name starts with a dot), a name that says password, token, secret, credential or private key
+(`tokenizer` and its forms don't, as memory's guard reads them) or that is a password manager's export or a program's
+own password file (`storeName`: `logins.csv`, `bitwarden_export.json`, `wp-config.php`), or a name Ember won't repeat
+(hidden characters, a colon, or one that itself looks like a secret). For an exact patch to one existing UTF-8 file with a final
 newline, Ember shows the diff in **Review changes before applying**. Check it, choose **Apply patch** and
 confirm the destination. If the source has changed since you sent it, draft the patch again. Ember keeps
 LF or CRLF line endings and any UTF-8 byte-order mark. Drafts with file additions, renames, deletions or
