@@ -1879,6 +1879,9 @@ export class AgentHost {
     this.quitting = false;
     this.sourceName = source === "environment" ? name : undefined;
     const automatic = source === "environment" || source === "github-cli";
+    // A start after Ember gave up on a runtime that kept stopping is someone's own try (Check again, a sign-in): the
+    // count starts afresh, or one more stop within ten minutes gave up again without a single try (reliability-r9-5).
+    if (this.gaveUp) { this.gaveUp = false; this.crashes = []; }
     if (token && how === "user") this.setSignedOut(false);
     // (Signed out in this run counts whatever the disk kept of it: reliability-r9-2.)
     else if (token && automatic && (this.signedOutNow || readAgentState(this.stateFile).signedOut)) token = null;
@@ -1922,6 +1925,8 @@ export class AgentHost {
     }
   }
   private signedOutNow = false;
+  /** Ember stopped reconnecting after the runtime kept stopping (lost): the next start() begins the count again. */
+  private gaveUp = false;
   /** The last sign-out couldn't be saved: the next start may use a sign-in it finds, and the status says so. */
   signOutUnsaved = false;
 
@@ -2663,6 +2668,7 @@ export class AgentHost {
           this.gaveUpShown = said.gaveUpBubble;
           this.problemNow(w => w.gaveUp);
         }
+        this.gaveUp = true;
         void this.halt(false);
         return;
       }

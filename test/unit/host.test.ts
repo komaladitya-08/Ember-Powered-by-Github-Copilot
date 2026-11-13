@@ -1540,6 +1540,27 @@ describe("a runtime that dies or hangs", () => {
     await host.stop();
   });
 
+  it("starts the count of stops afresh at Check again after giving up: one more stop reconnects, as the first did (reliability-r9-5)", async () => {
+    vi.useFakeTimers();
+    let crashes = 0;
+    const { host } = makeHost({ healthMs: 1000 });
+    await host.start(TOKEN, "stored");
+    sim.ping = async () => { if (crashes < 6) { crashes++; throw new Error("Connection is disposed."); } return {}; };
+    await vi.advanceTimersByTimeAsync(12_000);
+    expect(crashes).toBe(6);
+    expect(host.getStatus().detail).toBe("Copilot keeps stopping. Press Check again to retry, or restart Ember.");
+    // Check again: connected.
+    expect(await host.start(TOKEN, "stored")).toBe("ready");
+    const clients = sim.clients.length;
+    // One more stop within the ten minutes: reconnected, not given up on without a try.
+    crashes = 5;
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(crashes).toBe(6);
+    expect(sim.clients.length).toBe(clients + 1);
+    expect(host.getStatus().phase).toBe("ready");
+    await host.stop();
+  });
+
   it("says it stopped reconnecting to my model connection, never Copilot, once it gives up under my own provider (reliability-performance-c2-3, integrations-v1)", async () => {
     vi.useFakeTimers();
     let crashes = 0;
