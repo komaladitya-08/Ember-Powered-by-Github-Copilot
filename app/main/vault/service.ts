@@ -124,6 +124,15 @@ export class VaultService {
     try { return this.allowed() && this.o.consented() && this.o.autopilot(); } catch { return false; }
   }
 
+  /**
+   * The mode, the consent or the policy may have changed: a form still open closes (answered `stopped`) once the vault
+   * can't be used, so nobody types into a form whose Save would keep nothing.
+   */
+  recheck(): void {
+    if (this.usable()) return;
+    try { this.o.form.stop(); } catch (err) { this.o.log.warn("vault.form_stop_failed", { err }); }
+  }
+
   /** The kill switch's part: an open form closes, and nothing more is asked in it. */
   stopPart(): StopPart {
     return { name: "vault", stop: () => this.o.form.stop() };

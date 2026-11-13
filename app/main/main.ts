@@ -1855,6 +1855,8 @@ function start(): void {
     sendToHome(APPROVALS_IPC.changed, state);
   };
   settings.onChange(tellApprovals);
+  // The vault's Secure Form closes once Autopilot isn't the mode in force or the consent went (a Save would keep nothing).
+  settings.onChange(() => vaultRef?.recheck());
   /** When the request being heard began (its wake, or a follow-up window opening): Ember's own voice since then is an echo. */
   let heardFrom = 0;
   /**
@@ -4045,6 +4047,8 @@ function start(): void {
         tellApprovals();
         // An open settings window says so at once, as a fresh one would (safety-privacy-w5-1).
         sendToHome(IPC.adminChanged, homeAdmin(admin));
+        // And its list of the vault says the vault is off (the pull below closes an open Secure Form).
+        sendToHome(VAULT_IPC.changed, null);
         wanted = false;
         void voice?.setWanted(false);
         // The connection goes too: the host's refuseConnect now says why, so nothing reconnects until the restart.

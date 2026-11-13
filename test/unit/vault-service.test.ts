@@ -105,6 +105,17 @@ describe("the vault's Secure Form, as main asks for it", () => {
     }
   });
 
+  it("closes an open form once Autopilot isn't the mode in force, the consent went or the organisation turned the vault off (vault-7)", () => {
+    for (const key of ["autopilot", "consented", "allowed"] as const) {
+      const h = make();
+      h.service.recheck();
+      expect(h.stops()).toBe(0); // still usable: a form stays up
+      h.state[key] = false;
+      h.service.recheck();
+      expect(h.stops()).toBe(1);
+    }
+  });
+
   it("closes an open form at Stop (vault-3)", () => {
     const h = make();
     const part = h.service.stopPart();
@@ -291,6 +302,12 @@ describe("main's wiring of the vault", () => {
     await handlerOf(src, deps(true))();
     expect(calls).toEqual(["learning", "session words", "vault", "owner.clear"]);
     expect(() => handlerOf(src, deps(false))()).toThrow("Ember couldn't finish deleting the vault's file on this computer. Try Forget again.");
+  });
+
+  it("closes the Secure Form when the mode or the settings change so that the vault can't be used, and redraws Home's list when the policy changes (vault-7)", () => {
+    expect(main).toContain("settings.onChange(() => vaultRef?.recheck());");
+    const changed = main.slice(main.indexOf("const unwatchPolicy = watchAdminPolicy({"), main.indexOf('void killSwitch.pull("policy")'));
+    expect(changed).toContain("sendToHome(VAULT_IPC.changed, null);");
   });
 
   it("takes Home's vault channels only from the settings window's own page, and the form's only through the pages' adapter (vault-3)", () => {
