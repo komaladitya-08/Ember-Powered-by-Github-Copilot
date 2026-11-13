@@ -666,8 +666,9 @@ It still asks, with the card of §2.4, before:
 - a command Ember can't tell the effect of (a loop, a line behind a `[[ … ]]` test, code written inline, `eval`,
   text handed to `xargs` that Ember can't see, a program that waits for typing), since it may be either of those;
 - a command your own words for the task rule out ("commit my work but don't push", "delete everything except
-  build", "push it, but without force", "leave the build folder alone", "hold off on publishing"): that is your no,
-  said in advance, and the card says "You didn't ask for this.";
+  build", "push it, but without force"): that is your no, said in advance, and the card says "You didn't ask for
+  this."; and one your words hold back ("leave the build folder alone", "keep notes.txt", "hold off on publishing",
+  "push tomorrow"), where the card also says "Your words say to leave this or to wait, so Ember asks first.";
 - a command that may be one you said no to earlier in the task, where Ember can't tell (one that doesn't say what it
   acts on, a loop, inline code): the card says "You said no to something like this earlier in this task.";
 - every command where your organisation asks for that, where you turned on **Ask before every command** for that

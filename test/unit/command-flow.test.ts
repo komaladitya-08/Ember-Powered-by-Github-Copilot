@@ -7,7 +7,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  ANNOUNCE_MS, CARD_LINES, CHECKING_COMMAND, CL_JUDGE, MAX_RUNS_PER_TARGET, OUTPUT_TAINT_LINE, SPOKEN_LINE, behindWrappers, commandSha256, heldDecision, namesTarget, normalName, runCommandTool, wordsRuleOut,
+  ANNOUNCE_MS, CARD_LINES, CHECKING_COMMAND, CL_JUDGE, HELD_BACK_LINE, MAX_RUNS_PER_TARGET, OUTPUT_TAINT_LINE, SPOKEN_LINE, behindWrappers, commandSha256, heldDecision, namesTarget, normalName, runCommandTool, wordsRuleOut,
   setCommandJudge, shownQuote, type CommandFlowContext, type CommandJudge, type ShapeOptions,
   scriptLanguage,
 } from "../../app/main/commands/flow";
@@ -2990,6 +2990,14 @@ describe("a command that would ask, in Autopilot (autopilot.ts; modes-D2, modes-
       ["fix the config, leave nginx alone for now", "sudo systemctl restart nginx"], ["tag the release. Keep main untouched", "git push --force origin main"], ["delete the logs; skip build", "find build -delete"],
       ["Tidy up, but KEEP the build folder", "rm -rf build"], ["hold off on deleting anything", "rm -rf build"],
     ]) expect(ruled(words, command), `${words} / ${command}`).toBe(true);
+    // A name with a dot in it is one word, a folder named by "./" or with a dot first is that folder, and a deletion
+    // inside the folder they said to leave is a deletion of what they said to leave (modes-y9-x9-4).
+    for (const [words, command] of [
+      ["tidy up the project folder, but keep notes.txt", "rm -f notes.txt"], ["tidy up, keep ./build", "rm -rf ./build"], ["tidy the home folder, leave .ssh alone", "rm -rf ~/.ssh"],
+      ["clear out my home folder but leave Downloads alone", "rm -rf ~/Downloads/*"], ["tidy up. Keep build.", "rm -rf build/tmp"], ["tidy up, but the build folder stays", "rm -rf build"],
+      ["commit, and hold the push until I say", "git push origin main"], ["commit everything; push tomorrow", "git push origin main"], ["commit everything; I'll push myself", "git push origin main"],
+    ]) expect(ruled(words, command), `${words} / ${command}`).toBe(true);
+    expect(ruled("delete notes.txt and keep going. Thanks", "rm -f notes.txt")).toBe(false);
     // A part that holds something else back, or holds nothing back, rules nothing out.
     for (const [words, command] of [
       ["delete the build folder and keep going", "rm -rf build"], ["wait for the tests, then push to origin", "git push origin main"], ["keep src, delete build", "rm -rf build"],
@@ -3005,6 +3013,29 @@ describe("a command that would ask, in Autopilot (autopilot.ts; modes-D2, modes-
     expect((await run(h, command)).resultType).toBe("denied");
     expect(h.asked).toHaveLength(1);
     expect([h.windowAnnounce, h.announced, h.starts]).toEqual([[], [], []]);
+  });
+
+  it.each<[string, string]>([
+    ["tidy up the project folder, but keep notes.txt", "rm -f notes.txt"], ["clear out my home folder but leave Downloads alone", "rm -rf ~/Downloads/*"],
+    ["bump the version but hold off on publishing", "npm publish"], ["delete the logs, keep build", "rm -rf build"],
+  ])("asks before a command their words hold back, and the card says that their words did: %s / %s (modes-y9-x9-4, modes-y9-x9-6)", async (words, command) => {
+    setCommandJudge(null);
+    const h = auto({ words, answers: ["deny"] });
+    expect((await run(h, command)).resultType).toBe("denied");
+    expect(h.asked).toHaveLength(1);
+    expect([h.windowAnnounce, h.announced, h.starts]).toEqual([[], [], []]);
+    const says = (h.asked[0].panel as { card: CommandCard }).card.says;
+    expect(says).toContain(HELD_BACK_LINE);
+    expect(says).not.toContain(LINES.inexact);
+  });
+
+  it("says “You didn't ask for this.” as before, and nothing more, where the words say not to (modes-y9-x9-6)", async () => {
+    setCommandJudge(null);
+    const h = auto({ words: "commit my work but don't push", answers: ["deny"] });
+    await run(h, "git push origin main");
+    const says = (h.asked[0].panel as { card: CommandCard }).card.says;
+    expect(says).toContain(LINES.unasked);
+    expect(says).not.toContain(HELD_BACK_LINE);
   });
 
   it("announces the part of such a request the user did ask for", async () => {

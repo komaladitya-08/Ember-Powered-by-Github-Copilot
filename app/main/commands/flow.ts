@@ -647,17 +647,32 @@ const SAYS_NOT = /(^|[^\p{L}\p{N}])(do\s+not|don['’]?t|does\s+not|doesn['’]?
  * Words that hold a part of a request back without a "not": "leave the build folder alone", "keep build", "hold off on
  * publishing", "wait before pushing", "push later", "skip build", "leave it as it is for now" (modes-y9-4).
  */
-const HOLDS_BACK = /(^|[^\p{L}\p{N}])(leave|leaving|keep|keeping|preserve|spare|hold(ing)?\s+off|wait|waiting|not\s+yet|later|skip|skipping|untouched|as\s+(it|they)\s+(is|are)|hands\s+off|stay\s+away|for\s+now)(?=$|[^\p{L}\p{N}])/iu;
-/** Where one part of a request ends and the next begins. */
-const PARTS = /[,;:.!?()\n]+|\s+(?:but|and|then|though|however)\s+/iu;
+const HOLDS_BACK = /(^|[^\p{L}\p{N}])(leave|leaving|keep|keeping|preserve|spare|hold|holding|wait|waiting|not\s+yet|later|tomorrow|until|skip|skipping|untouched|stays?|staying|remains?|as\s+(it|they)\s+(is|are)|hands\s+off|stay\s+away|for\s+now|myself|by\s+hand)(?=$|[^\p{L}\p{N}])/iu;
+/**
+ * Where one part of a request ends and the next begins. A full stop or a colon ends a part only before a space or at
+ * the end: "notes.txt", "./build" and ".ssh" are one word each (modes-y9-x9-4).
+ */
+const PARTS = /[,;!?()\n]+|[.:]+(?=\s|$)|\s+(?:but|and|then|though|however)\s+/iu;
+/** The card's line where the user's own words hold the command back (wordsRuleOut's HOLDS_BACK), in Autopilot. */
+export const HELD_BACK_LINE = "Your words say to leave this or to wait, so Ember asks first.";
 
-/** Does this part of the user's words name what a finding acts on (its last path segment, a branch, a package, a service)? */
+/**
+ * Does this part of the user's words name what a finding acts on: a branch, a package, a service, or any part of a
+ * path as the command writes it, up to its first wildcard (`~/Downloads/*` is in Downloads, `build/tmp` in build:
+ * what lies in the folder they said to leave is theirs to leave too)?
+ */
 function namesObject(findings: readonly Finding[], part: string): boolean {
-  const said = new Set(part.toLowerCase().split(/[^\p{L}\p{N}._-]+/u).filter(Boolean));
+  const said = new Set(part.toLowerCase().split(/[^\p{L}\p{N}._-]+/u).map(w => w.replace(/\.+$/, "")).filter(Boolean));
   return findings.some(f => f.objects.some(o => {
-    const name = o.text.replace(/[\\/]+$/, "").split(/[\\/]/).pop()?.toLowerCase() ?? "";
-    return name.length >= 2 && said.has(name);
+    const names = o.text.toLowerCase().split(/[\\/]+/).filter(Boolean);
+    const cut = names.findIndex(n => /[*?[\]{}]/.test(n));
+    return (cut < 0 ? names : names.slice(0, cut)).some(n => n.length >= 2 && n !== ".." && said.has(n));
   }));
+}
+
+/** Does a part of the user's words hold back what these findings act on, or the kind of step they are (HOLDS_BACK)? */
+function wordsHoldBack(findings: readonly Finding[], words: string): boolean {
+  return words.split(PARTS).some(part => HOLDS_BACK.test(part) && (namesObject(findings, part) || namedKind(findings, part) || mentioned(findings, part)));
 }
 
 /**
@@ -672,7 +687,7 @@ export function wordsRuleOut(findings: readonly Finding[], words: string): boole
   if (!words.trim() || findings.length === 0) return false;
   if (ruledOut(findings, words)) return true;
   if (!mentioned(findings, words) && mentioned(findings, words.replace(SAYS_NOT, "$1 "))) return true;
-  return words.split(PARTS).some(part => HOLDS_BACK.test(part) && (namesObject(findings, part) || namedKind(findings, part) || mentioned(findings, part)));
+  return wordsHoldBack(findings, words);
 }
 
 /** A bare program name: no path, option, assignment or quoting. */
@@ -992,6 +1007,13 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
     if ((cls as { writtenOut?: boolean }).writtenOut === true) hidden.push({ cls: "unclear", rule: "unclear.written-out" });
     const auto = autopilotCommand(d, { findings: [...cls.findings, ...hidden], mode, askEvery: cap.askEvery, userAskEvery, ruledOut: wordsRuleOut(standing, words) || wordsRuleOut(standing, spoken) });
     if (auto) d = auto;
+    // The card says why it still asks where their words held it back: after "You didn't ask for this." (which the
+    // card keeps), and in place of "your words don't name exactly this", a doubt of Ember's (modes-y9-x9-6).
+    else if (wordsHoldBack(standing, words) || wordsHoldBack(standing, spoken)) {
+      const at = d.says.findIndex(l => l === LINES.unasked || l === LINES.inexact || l === LINES.windows);
+      const [keep, drop] = at < 0 ? [d.says.length, 0] : d.says[at] === LINES.unasked ? [at + 1, 0] : d.says[at] === LINES.inexact ? [at, 1] : [at, 0];
+      d = { ...d, says: [...d.says.slice(0, keep), HELD_BACK_LINE, ...d.says.slice(keep + drop)] };
+    }
   }
   // Assisted's check: a command that asks is shown to the reviewer with the user's own words and what the rules found
   // (the card's lines: an administrator's command, a steered task, carried text and another computer named say so
