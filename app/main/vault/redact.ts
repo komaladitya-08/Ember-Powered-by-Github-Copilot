@@ -25,7 +25,8 @@
  * first (Perception does, for every element), and screen text is redacted whole before it is cut (perception/elements.ts
  * `setQuoteRedactor`, which main sets: review vault-3-x9-2), as is a command's output (commands/output.ts
  * `setOutputRedactor`: review vault-3-y9-1), and the one cut that comes before that, between a long run's first and
- * last output, is moved off any value it would fall in (commands/output.ts `clearCut`: review integ-x-1).
+ * last output, is moved off any value it would fall in (commands/output.ts `clearCut`: review integ-x-1), judged on
+ * the text as it will be cleaned, since a value with a terminal's colour code in it is no value here (integ-y-1).
  *
  * Plain Node, no Electron: the list lives in main's memory and is never written, sent or logged.
  */

@@ -272,6 +272,77 @@ describe("output after a fill from the vault (vault-3)", () => {
     expect(kept.text).not.toMatch(LEAK);
   }, 30_000);
 
+  /** Every run of four characters of `value`: none may stand in what a model is sent. */
+  const runs = (value: string): string[] => [...value].slice(0, -3).map((_, i) => value.slice(i, i + 4));
+  /** What the model is sent of `text`: shaped, then through the boundary's own pass (the redactor over all of it). */
+  const sent = (r: VaultRedactor, text: string): string => r.text(shapeOutput(bytes(text), opts({ target: "local", label: "this computer" })));
+  /** Lines too long to be shown whole, so the lines around the cut are among those the model gets. */
+  const longs = (n: number): string => ("x".repeat(21_999) + "\n").repeat(Math.ceil(n / 22_000)).slice(0, n);
+  // As `grep --color=always` prints a line: only the match is coloured, so terminal codes stand inside the value.
+  const COLOURED_EMAIL = " ada.\x1b[01;31m\x1b[Kcanary\x1b[m\x1b[K@example.org \n";
+  const COLOURED_PASSWORD = " Hunter2\x1b[01;31m\x1b[KCanary\x1b[m\x1b[K!x \n";
+
+  it("never hands on a part of a filled value that a colour code splits where a long run's output is cut, the reviewer's probe (integ-y-1)", () => {
+    const r = filled();
+    // Not cut, the cleaned output hides it: the redactor reads it once its terminal codes are out.
+    expect(clean(`x${COLOURED_EMAIL}y`)).toBe(`x ${VAULT_REDACTED} \ny`);
+    // The tail starts six characters into the coloured value, inside its first escape sequence.
+    const inside = 6;
+    const text = longs(HEAD + 5000 - inside) + COLOURED_EMAIL + filler(ROOM - (COLOURED_EMAIL.length - inside));
+    const kept = keep(text);
+    expect(kept.text).toMatch(/characters of output left out/);
+    const model = sent(r, kept.text);
+    for (const run of runs("ada.canary@example.org")) expect(model, run).not.toContain(run);
+  }, 60_000);
+
+  it("never hands on a part of a coloured value the cut falls in, at the end of the first output and at the start of the last (integ-y-1)", () => {
+    const r = filled();
+    for (const [value, plain] of [[COLOURED_EMAIL, EMAIL], [COLOURED_PASSWORD, PASSWORD]] as const) {
+      // In the text before the colour, inside an escape sequence, between two of them, in the coloured word, after it.
+      for (const inside of [3, 6, 13, 18, value.length - 5]) {
+        const atTail = filler(HEAD + 5000 - inside) + value + filler(ROOM - (value.length - inside));
+        const atHead = filler(HEAD - inside) + value + filler(ROOM + 5000);
+        for (const [where, text] of [["tail", atTail], ["head", atHead]] as const) {
+          const kept = keep(text);
+          const around = clean(kept.text.slice(HEAD - 3000, HEAD + 3000));
+          const model = r.text(around);
+          for (const run of runs(plain)) expect(model, `${where} ${plain} ${inside} ${run}`).not.toContain(run);
+          expect(kept.text, `${where} ${plain} ${inside}`).toMatch(/characters of output left out/);
+          // Only the value's own line went with it (and what the cut left out anyway).
+          expect(kept.text.length).toBeGreaterThan(HEAD + ROOM - value.length - 16);
+        }
+      }
+    }
+    // A line a carriage return writes over is one text to the model: the cut never leaves the value's start standing.
+    const over = filler(HEAD - 12) + ` ${PASSWORD}\rdone, 100%   \n` + filler(ROOM + 5000);
+    const cleanedHead = clean(keep(over).text.slice(HEAD - 3000, HEAD + 3000));
+    for (const run of runs(PASSWORD)) expect(cleanedHead, run).not.toContain(run);
+  }, 60_000);
+
+  it("never cuts a long run's output inside an escape sequence beside a filled value, and keeps it as before where none is near (integ-y-1)", () => {
+    // A value coloured whole, and the head would end inside the colour code that closes it: the rest of the code
+    // would stand at the tail's start as text.
+    const whole = ` \x1b[01;31m\x1b[K${EMAIL}\x1b[m\x1b[K \n`;
+    const text = filler(HEAD - whole.length + 6) + whole + filler(ROOM + 5000);
+    const plain = keep(text);
+    expect(plain.text.slice(HEAD - 2, HEAD)).toBe("\x1b[");
+    filled();
+    const kept = keep(text);
+    expect(clean(kept.text.slice(HEAD - 3000, HEAD + 3000))).not.toMatch(LEAK);
+    expect(kept.text).not.toBe(plain.text);
+    // (The head ends before the value's line, or holds the value whole with its codes: never a part of a code.)
+    expect(kept.text.split("\n[… ")[0]).not.toMatch(/\x1b\[?$/); // eslint-disable-line no-control-regex -- an escape cut short is what is looked for
+    // Coloured output with nothing filled in it is kept to the character, wherever the cut falls.
+    const colours = "\x1b[01;31m\x1b[Kmatch\x1b[m\x1b[K rest of the line\n";
+    for (const inside of [1, 4, 9, 20]) {
+      const other = filler(HEAD - inside) + colours + filler(ROOM + 5000);
+      setOutputRedactor(null);
+      const before = keep(other);
+      filled();
+      expect(keep(other).text, `${inside}`).toBe(before.text);
+    }
+  }, 60_000);
+
   it("keeps a long run's output as before where no filled value is near the cut, a whole value still redacted, and its secret spans in place (integ-x-1)", () => {
     const text = filler(HEAD + 5000) + filler(ROOM - 100) + `mail: ${EMAIL}\n` + filler(100 - 7 - EMAIL.length);
     const span = { from: text.length - 50, to: text.length - 40 };

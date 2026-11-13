@@ -500,6 +500,24 @@ describe("a local run", () => {
     }
   });
 
+  it("takes a filled value that a colour code splits out of the Windows job host's reason (integ-y-1)", async () => {
+    const r = new VaultRedactor();
+    r.note("email", "ada.canary@example.org");
+    setOutputRedactor(text => r.text(text));
+    try {
+      const h = harness(windows);
+      const { run, child } = await started(h, spec({ shell: "powershell", cwd: "C:\\x" }));
+      child.err(`job: couldn't start ${"x".repeat(270)} ada.\x1b[01;31m\x1b[Kcanary\x1b[m\x1b[K@example.org here\n`);
+      child.end(125);
+      const exit = await run.done;
+      expect(exit.ended).toBe("failed-to-start");
+      // eslint-disable-next-line no-control-regex -- no terminal code goes on either
+      expect(exit.error).not.toMatch(/ada|canary|example|\x1b/);
+    } finally {
+      setOutputRedactor(null);
+    }
+  });
+
   it("knows a Windows run that the job host couldn't contain failed to start", async () => {
     const h = harness(windows);
     const { run, child } = await started(h, spec({ shell: "powershell", cwd: "C:\\x" }));

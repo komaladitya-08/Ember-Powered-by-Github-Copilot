@@ -71,16 +71,20 @@ function applyCarriageReturns(line: string): string {
   return "";
 }
 
-/** Step 1 on decoded text: terminal codes out, line endings and progress bars collapsed, other controls removed. */
-export function stripTerminal(text: string): string {
-  const noEsc = text
+/** Step 1's first half: every escape sequence out, the text between them as it was printed. */
+function stripEscapes(text: string): string {
+  return text
     .replace(STRINGS, "")
     .replace(OSC, "")
     .replace(CSI, "")
     .replace(CHARSET, "")
     .replace(OTHER_ESC, "")
-    .replace(LONE_ESC, "")
-    .replace(/\r\n/g, "\n");
+    .replace(LONE_ESC, "");
+}
+
+/** Step 1 on decoded text: terminal codes out, line endings and progress bars collapsed, other controls removed. */
+export function stripTerminal(text: string): string {
+  const noEsc = stripEscapes(text).replace(/\r\n/g, "\n");
   return noEsc
     .split("\n")
     .map(l => applyBackspaces(applyCarriageReturns(l)).replace(CONTROLS, ""))
@@ -145,9 +149,13 @@ function whole(s: string): string {
   try { return beforeCut(s); } catch { return ""; }
 }
 
-/** `s` redacted whole, for text that is cut before it is cleaned (a start failure's reason): "" where it couldn't be checked. */
+/**
+ * `s` redacted whole, for text that is cut before it is cleaned (a start failure's reason): "" where it couldn't be
+ * checked. Its terminal codes go first, as cleanOutput takes them: the redactor knows a value only without them, and
+ * one a colour code stands in (`grep --color`) would go on whole, or as a part once the reason is cut (integ-y-1).
+ */
 export function redactedWhole(s: string): string {
-  return whole(s);
+  return whole(stripTerminal(s));
 }
 
 /**
@@ -155,6 +163,9 @@ export function redactedWhole(s: string): string {
  * keeps (a password's 1,024 characters), so one a page wrote again with every character as an entity still fits.
  */
 export const CUT_SLACK = 8192;
+
+/** What stands for the note that follows the kept head, to see that nothing at the head's end would take it in. */
+const AFTER_HEAD = "\n[…]\n";
 
 /**
  * Where output may be cut so that no value falls in two (integ-x-1): the flow keeps a run's first characters and its
@@ -164,15 +175,33 @@ export const CUT_SLACK = 8192;
  * redactor finds the same on both sides as in the whole: from the end of `before` ("before"), or from the start of
  * `after` ("after"). null: no such place (the caller keeps nothing of that side), or the text couldn't be checked.
  * 0 while no redactor is set.
+ *
+ * The cut is judged on the text as cleanOutput will read it, and as it was printed (integ-y-1): the redactor knows a
+ * value only once its terminal codes are out, so one a colour code stands in (`grep --color=always` colours only the
+ * match) is no value in the printed text, and the cut would fall in it unseen. A place is clear only where the two
+ * sides clean to the same text as the whole does (so never inside an escape sequence, nor in a line a carriage return
+ * or a backspace later writes over), where the redactor finds the same in them, cleaned and as printed, and, for the
+ * head, where nothing at its end would take in the note that follows it (an unfinished escape sequence).
  */
 export function clearCut(before: string, after: string, side: "before" | "after"): number | null {
   if (!beforeCut) return 0;
   try {
+    const R = beforeCut;
     const text = before + after, at = before.length;
-    const all = beforeCut(text);
-    // Nothing the vault filled is near the cut.
-    if (all === text) return 0;
-    const clear = (c: number) => beforeCut!(text.slice(0, c)) + beforeCut!(text.slice(c)) === all;
+    const cleaned = stripTerminal(text);
+    const all = R(text), allCleaned = R(cleaned);
+    // Nothing the vault filled is near the cut: not as printed, not with its escape sequences out, not as cleaned.
+    if (all === text && allCleaned === cleaned) {
+      const bare = stripEscapes(text);
+      if (R(bare) === bare) return 0;
+    }
+    const clear = (c: number): boolean => {
+      const left = text.slice(0, c), right = text.slice(c);
+      if (R(left) + R(right) !== all) return false;
+      const l = stripTerminal(left), r = stripTerminal(right);
+      if (l + r !== cleaned || R(l) + R(r) !== allCleaned) return false;
+      return side === "after" || stripTerminal(left + AFTER_HEAD) === l + AFTER_HEAD;
+    };
     if (side === "before") {
       for (let c = at; c > 0; c--) if (clear(c)) return at - c;
       return null;
