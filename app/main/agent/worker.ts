@@ -265,6 +265,20 @@ export interface WorkerResult {
   view?: ViewDoc;
 }
 
+/**
+ * How a task ends where the user said no to a question, or one ran out of time unanswered, and nothing was done after
+ * it: stopped, as the user's choice, in the model's words where it says it didn't succeed. A success it claims stands
+ * only where a step of the task worked (`worked`): with none, "Deleted all the old notes." after a Not now is not what
+ * happened, so Ember's own words say it (tasks-approvals-r9-4). Null where neither applies.
+ */
+export function afterNo(f: { declined: boolean; expired: boolean; worked: boolean }, result: Pick<WorkerResult, "success" | "summary"> | null): WorkerResult | null {
+  if (!f.declined && !f.expired) return null;
+  if (result?.success && f.worked) return null;
+  const said = result && !result.success ? result.summary : "";
+  if (f.expired && !f.declined) return { success: false, stopped: true, expired: true, summary: said || "My question ran out of time with no answer, so I didn't do it." };
+  return { success: false, stopped: true, declined: true, summary: said || "You said not now, so I left it." };
+}
+
 const done = (text: string): ToolResultObject => ({ textResultForLlm: text, resultType: "success" });
 const fail = (text: string): ToolResultObject => ({ textResultForLlm: text, resultType: "failure", error: text });
 const denied = (text: string): ToolResultObject => ({ textResultForLlm: text, resultType: "denied" });
@@ -1314,6 +1328,8 @@ export class Worker {
   private declined = false;
   /** A question ran out of time unanswered, and nothing was done after that (a timeout is not a refusal). */
   private expired = false;
+  /** A step of this task happened (an action that worked, a command that started): afterNo. */
+  private worked = false;
   /**
    * The user said no to a question in this task, at any time ("Not now", a deny, a Stop during a command's countdown):
    * never cleared, unlike `declined` (which a later step resets for the task's outcome). "Work without asking" stays
@@ -2268,8 +2284,8 @@ export class Worker {
     if (this.halted && this.haltReason === null) return { success: false, summary: this.stoppedSummary(), stopped: true };
     if (this.haltReason) return { success: false, summary: this.result?.summary ? `${this.haltReason} ${this.result.summary}` : this.haltReason, ...(this.limitHit ? { limit: true } : {}) };
     // The user said "Not now" and nothing was done after it: that's the user's choice, not a failure.
-    if (this.expired && !this.declined && !this.result?.success) return { success: false, stopped: true, expired: true, summary: this.result?.summary || "My question ran out of time with no answer, so I didn't do it." };
-    if (this.declined && !this.result?.success) return { success: false, stopped: true, declined: true, summary: this.result?.summary || "You said not now, so I left it." };
+    const no = afterNo({ declined: this.declined, expired: this.expired, worked: this.worked }, this.result);
+    if (no) return no;
     const result = this.result ?? { success: false, summary: lastWordsSummary(lastAnswer) };
     return this.userTookOver && !result.success ? { ...result, stopped: true, tookOver: true } : result;
   }
@@ -4737,7 +4753,7 @@ export class Worker {
     // be saved) is still recorded as decided before what it did, though it isn't said (goAhead).
     if (e.event === "action" && this.ahead) { const held = this.ahead.entries; this.ahead = null; for (const d of held) this.audit(d); }
     // (Only a step that happened: one that failed after the "Not now" leaves the task declined.)
-    if ((e.event === "action" && e.ok === true) || (e.event === "command" && e.phase === "started")) { this.declined = false; this.expired = false; }
+    if ((e.event === "action" && e.ok === true) || (e.event === "command" && e.phase === "started")) { this.declined = false; this.expired = false; this.worked = true; }
     try {
       this.d.audit.write(e);
     } catch (err) {
