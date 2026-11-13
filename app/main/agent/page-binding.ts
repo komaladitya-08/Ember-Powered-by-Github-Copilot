@@ -14,10 +14,12 @@
  *   amount or a recipient beside a "Send", and the browser's own address bar, which says where the page is), and the
  *   page's own tabs with the one chosen.
  *
- * For a control whose name is risky (Delete, Send, Pay…) also every heading and paragraph of the page outside its lists
- * and feeds, digits aside: where the thing it acts on is named ("Delete ana/scratch" beside "Delete this repository"),
- * so a page that renames it while the user decides spends the yes (modes-x9s-4), while a count going up or comments
- * arriving don't.
+ * For a control whose name is risky (Delete, Send, Pay…) also all of the page's text outside its lists and feeds,
+ * whatever element holds it (a heading, a paragraph, a plain block, a label), numbers kept: where the thing it acts on
+ * is named ("Delete ana/scratch" beside "Delete this repository"; "ana/build-1"; "You are sending $50 to Bob"), so a
+ * page that renames it or changes an amount while the user decides spends the yes (modes-x9s-4, modes-y9-3). Only what
+ * a living page counts on its own is let through: a clock ("0:42 / 3:00"), a text that is nothing but a count ("12
+ * comments", never one that names money), comments arriving in a feed, and other buttons with their counters.
  *
  * The rest of the page may change: text, pictures, lists and buttons outside the control's own group. Anything that
  * can't be read fails closed: no binding is made (the caller binds the whole tree, as before) where the control is in a
@@ -38,14 +40,29 @@ const FIELD = /^(entry|password text|combo box|check box|radio button|switch|spi
  * A window titled for money (wider than policy's PAYMENT_PAGE on purpose): there a total or a recipient shown outside
  * the control's own group matters too, so the whole tree binds, as before.
  */
-const MONEY_PAGE = /\b(checkout|check out|pay|pays|paying|payment|payments|billing|purchase|order|cart|basket|bank|banking|transfer|wallet|invoice|donate|donation)\b/i;
+const MONEY_PAGE = new RegExp("\\b(checkout|check out|pay|pays|paying|payment|payments|billing|purchase|order|cart|basket|bank|banking|transfer|wallet|invoice|donate|donation"
+  // (modes-y9-3) The word itself, the sites people send money with, and a checkout in the languages policy reads.
+  + "|money|paypal|venmo|revolut|wise|coinbase|metamask|stripe|klarna|kasse|zahlung|zahlungen|bezahlen|paiement|paiements|payer|pago|pagos|pagar|pagamento|pagamentos|betaling|betalen|betalning)\\b", "i");
 /** The states that say what a control is or holds (the same the whole-tree binding keeps: worker.ts actionContext). */
 const STATES = /^(editable|multi line|protected|read only|disabled|sensitive|enabled|selected|checked|pressed|expanded)$/;
 
-/** What names the thing a risky control acts on, beside it: bound for such a control. */
-const PROSE = /^(heading|paragraph)$/;
-/** What a page fills on its own as it lives (comments, a feed, a table of results): its headings aren't bound. */
+/** What a page fills on its own as it lives (comments, a feed, a table of results): its text isn't bound. */
 const FEED = /^(list|list item|feed|article|table|tree|tree table|log|marquee|timer)$/;
+/** What moves on its own and names nothing: never bound as text. */
+const MOVES = /^(progress bar|scroll bar|status bar|animation|video|audio)$/;
+/** A clock: "0:42", "1:02:09". */
+const CLOCK = /\b\d{1,3}(:\d{2}){1,2}\b/g;
+/** A text that is nothing but a count: "12 comments", "1.2K views", "3 stars". */
+const COUNT = /^[\d.,\s]+[KkMm]?\+?\s*\p{L}[\p{L}\s]{0,30}$/u;
+/** …unless it names money: a currency's sign, code or word. Then the number is an amount, and binds. */
+const MONEY = /\p{Sc}|\b(dollars?|euros?|pounds?|cents?|pence|yen|yuan|rupees?|francs?|pesos?|kronor|kroner|bitcoins?|btc|eth|usd|eur|gbp|chf|jpy)\b/iu;
+const CURRENCY_CODE = /\b[A-Z]{3}\b/;
+
+/** A node's text as a risky control's binding keeps it: whole, numbers kept, but for a clock and a bare count. */
+function prose(n: AxNode): string {
+  const text = `${n.name} ${n.text ?? ""}`.trim().replace(CLOCK, "#:#");
+  return COUNT.test(text) && !MONEY.test(text) && !CURRENCY_CODE.test(text) ? text.replace(/\d+/g, "#") : text;
+}
 
 /** Does `n` hold something entered or chosen? */
 const isField = (n: AxNode) => FIELD.test(n.role) || !!n.editable || !!n.secret || n.states.includes("editable");
@@ -63,7 +80,7 @@ function said(n: AxNode, parent: number | "missing" | null | undefined, clicked 
  * The binding for the control at `at` in `nodes` (one whole read of its window, in document order), or null where none
  * can be made (see the module's note): the caller then binds the whole tree. `title`: the window's. `clicked`: text
  * goes into the control after Ember's own click into it, which may collapse its selection (only that is excused).
- * `risky`: the control's name is risky, so the page's headings and paragraphs bind too.
+ * `risky`: the control's name is risky, so the page's text outside its feeds binds too.
  */
 export function pageBinding(nodes: readonly AxNode[], at: number, title: string, clicked = false, risky = false): string | null {
   const target = nodes[at];
@@ -128,7 +145,11 @@ export function pageBinding(nodes: readonly AxNode[], at: number, title: string,
     fields: nodes.flatMap((n, j) => (isField(n) ? [said(n, undefined, clicked && j === at)] : [])),
     // The page's own tabs (never the browser's, which are named after other pages and change with them).
     tabs: nodes.flatMap((n, j) => (n.role === "page tab" && within(j, doc) ? [{ name: n.name, states: n.states.filter(x => STATES.test(x)).sort() }] : [])),
-    ...(risky ? { prose: nodes.flatMap((n, j) => (PROSE.test(n.role) && within(j, doc) && !inFeed(j) ? [`${n.role}: ${n.name} ${n.text ?? ""}`.replace(/\d+/g, "#")] : [])) } : {}),
+    // (Controls and fields aside: a field binds above, exactly, and another button may count on its own.)
+    ...(risky ? {
+      prose: nodes.flatMap((n, j) => (j !== doc && !CONTROL.test(n.role) && !isField(n) && !FEED.test(n.role) && !MOVES.test(n.role) && (n.name.trim() || n.text?.trim()) && within(j, doc) && !inFeed(j)
+        ? [`${n.role}: ${prose(n)}`] : [])),
+    } : {}),
   });
 }
 
