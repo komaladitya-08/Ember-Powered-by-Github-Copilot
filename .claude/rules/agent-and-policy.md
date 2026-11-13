@@ -272,9 +272,14 @@ docs/MEMORY.md is the design. The core (app/main/memory/) is pure and has no Ele
 - **A saved fact is the user's only in their own words, said the same way round** (`ownFact`, service.ts: `ownWords`
   and `samePolarity`, so "Priya is not my manager" never makes "Priya is the manager" theirs). Anything else is
   `conversation`. The one other way (`profileSaid`, profile.ts; memory-r9-5): what to call the user and how long
-  answers should be, when their own words that turn say it (`nameSaid`, `lengthSaid`) and the fact says the same name
-  or length; it is kept as the profile's own fact (`called`, `answer_length`) under Ember's label, by the remember
-  tool and when a turn is read, never from a question, a negation or unchecked speech. A fact kept beside a `user`
+  answers should be, when their own words that turn tell Ember so (`nameSaid`, `lengthSaid`) and the fact says the
+  same name or length; it is kept as the profile's own fact (`called`, `answer_length`) under Ember's label, by the
+  remember tool and when a turn is read, never from a question, a negation or unchecked speech. Both sides must say
+  it plainly, since it goes with every request (memory-x9-1): the user's words in a clause that begins with the
+  telling, never a name or a length the request only contains (a report, an errand, what follows a colon or stands in
+  quotes, a turn that hands Ember words to work on, the user's own writing or someone else's answers); the fact about
+  the user alone (`aboutUser`) and wholly about that (`profileKind`). Anything else is kept as the model gave it; a
+  new wording `nameSaid` or `lengthSaid` takes comes with its look-alikes pinned as not taken. A fact kept beside a `user`
   fact it would have replaced is said so in the tool's answer (`besideUsers`); the weaker source still never
   overrules.
 - **Learning on its own** (`MemoryLearning`, learning.ts; docs/MEMORY.md steps 3–5) runs only while memory is in force,

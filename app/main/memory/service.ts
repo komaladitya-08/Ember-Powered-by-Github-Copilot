@@ -106,11 +106,11 @@ export function ownFact(fact: string, said: string): boolean {
 
 /**
  * Whose a fact the model saves is: the user's when it is mostly their own words said the same way round (`ownFact`),
- * or their own words this turn say the name or the answer length it holds (`profileSaid`: memory-r9-5); otherwise the
- * conversation's.
+ * or it is about them alone (`about`) and their own words this turn tell Ember the name or the answer length it holds
+ * (`profileSaid`: memory-r9-5, memory-x9-1); otherwise the conversation's.
  */
-export function rememberedSource(fact: string, said: string): Extract<Source, "user" | "conversation"> {
-  return ownFact(fact, said) || profileSaid(fact, said) ? "user" : "conversation";
+export function rememberedSource(fact: string, said: string, about: readonly AboutRef[] = [{ name: "User" }]): Extract<Source, "user" | "conversation"> {
+  return ownFact(fact, said) || profileSaid(fact, about, said) ? "user" : "conversation";
 }
 
 /** The predicates of what the user said about themselves that bear on every request (the introduction's: ./intro.ts). */
@@ -211,9 +211,10 @@ export class MemoryService {
     const refs = (about.length ? about : [{ name: "User", kind: "person" }]).map(a => ({ name: a.name, kind: kindOf(a.kind) }));
     const source: Source = ownFact(fact, said) ? "user" : "conversation";
     if (this.unreadable) return "Not remembered: Ember couldn't read its saved memory, so nothing new is kept until it starts again. Tell the user plainly.";
-    // What to call the user, or how long answers should be, in their own words this turn: the profile's own fact,
-    // theirs, which replaces the one before whatever the model called the relation (memory-r9-5).
-    const own = profileSaid(fact, said, source === "user");
+    // What to call the user, or how long answers should be, told in their own words this turn and saved as a fact
+    // about them alone: the profile's own fact, theirs, which replaces the one before whatever the model called the
+    // relation (memory-r9-5). A fact about anyone or anything else is kept as the model gave it (memory-x9-1).
+    const own = profileSaid(fact, refs, said, source === "user");
     const r = this.g.add(own ?? { text: fact, about: refs, source, ...(replaces ? { predicate: replaces, single: true } : {}) });
     if (r.kind === "refused") return `Not remembered: ${r.reason}. Tell the user plainly if they asked you to remember it.`;
     this.dirty();

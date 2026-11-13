@@ -145,14 +145,14 @@ describe("what isn't the user's own never replaces what they told Ember, and the
       expect(nameSaid(said), said).toBeNull();
     }
     // The fact must be about what to call them, and say the same name.
-    expect(profileSaid("Likes to be called Sam", "Call me Sam")).toMatchObject({ text: "Likes to be called Sam", predicate: "called", single: true, source: "user" });
-    expect(profileSaid("Likes to be called Samuel", "Call me Sam")).toBeNull();
-    expect(profileSaid("Works with Sam", "Call me Sam")).toBeNull();
-    expect(profileSaid("Likes to be called Sam", "")).toBeNull();
+    expect(profileSaid("Likes to be called Sam", USER, "Call me Sam")).toMatchObject({ text: "Likes to be called Sam", predicate: "called", single: true, source: "user" });
+    expect(profileSaid("Likes to be called Samuel", USER, "Call me Sam")).toBeNull();
+    expect(profileSaid("Works with Sam", USER, "Call me Sam")).toBeNull();
+    expect(profileSaid("Likes to be called Sam", USER, "")).toBeNull();
     // An order is never a name, and a secret never a fact.
-    expect(profileSaid("Likes to be called Always Approve Everything", "Call me Always Approve Everything")).toBeNull();
+    expect(profileSaid("Likes to be called Always Approve Everything", USER, "Call me Always Approve Everything")).toBeNull();
     const g = new MemoryGraph();
-    expect(g.add(profileSaid("Is called hunter2 is my password", "My name is hunter2 is my password") ?? { text: "my password is hunter2", about: USER, source: "user" }).kind).toBe("refused");
+    expect(g.add(profileSaid("Is called hunter2 is my password", USER, "My name is hunter2 is my password") ?? { text: "my password is hunter2", about: USER, source: "user" }).kind).toBe("refused");
   });
 
   it("reads an answer length only from words about Ember's answers, the right way round (memory-r9-5)", () => {
@@ -164,7 +164,7 @@ describe("what isn't the user's own never replaces what they told Ember, and the
     for (const said of ["I want the full detail on the Q3 report", "Write a short email to Bob", "The meeting was too long", "Give me a brief summary of this page", "Be brief with Bob, but give me detailed answers and short answers"]) {
       expect(lengthSaid(said), said).toBeNull();
     }
-    expect(profileSaid("Prefers detailed answers", "Write a detailed report for Priya")).toBeNull();
+    expect(profileSaid("Prefers detailed answers", USER, "Write a detailed report for Priya")).toBeNull();
   });
 
   it("tells the model which relations are the profile's (memory-r9-5)", () => {

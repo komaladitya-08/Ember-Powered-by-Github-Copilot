@@ -1,14 +1,21 @@
 /**
  * The user's profile told in conversation (memory-r9-5): what to call them and how long answers should be go first
  * with every request (`profileFacts`, ./service.ts), as the open `user` facts under Tell Ember about you's own
- * relations (`called`, `answer_length`). When the user's own words in a turn say a new one ("Call me Sam from now
- * on", "Stop being so brief, I want the full detail") and the fact a model saves for it says the same, the fact kept
- * is that relation's, under Ember's own label with the user's own word, as the spoken interview keeps an answer
+ * relations (`called`, `answer_length`). When the user's own words in a turn tell Ember a new one ("Call me Sam from
+ * now on", "Stop being so brief, I want the full detail") and the fact a model saves for it says the same, the fact
+ * kept is that relation's, under Ember's own label with the user's own word, as the spoken interview keeps an answer
  * (./intro.ts): theirs, so it replaces the one before, however the model worded it or named the relation.
  *
- * The user's words decide, never the model's: no name statement in what they said (a question, "don't call me…",
- * "call me back", unchecked speech, which reaches here as no words at all), or a fact that says another name, and
- * nothing here applies. Pure.
+ * It is the one place a fact that isn't mostly the user's own words becomes theirs, and it goes with every request, so
+ * both sides must say it plainly or nothing here applies (memory-x9-1):
+ * - the user's words tell Ember, in a clause that begins with the telling: never words the request only contains (a
+ *   report, "My boss said call me Dave"; an errand, "Tell Priya to call me Sam", "Play Call Me Al"; what follows a
+ *   colon or stands in quotes, "Write to Priya: my name is Bob"; a page or a letter handed over to work on), never a
+ *   question, "don't call me…", "call me back", nor unchecked speech, which reaches here as no words at all; a length
+ *   only from words about Ember's answers to them, never "my replies to customers" or "a short reply to Priya";
+ * - the fact is about the user alone (`aboutUser`) and says only that (`profileKind`): the name they said, or the
+ *   length they said, of nobody and nothing else.
+ * Anything else is kept as the model gave it, whose it is by the usual rule (`ownFact`, ./service.ts). Pure.
  */
 
 import type { NewFact } from "./graph";
@@ -16,48 +23,86 @@ import { introFacts } from "./intro";
 import { soundsLikeInstruction } from "./learn";
 import { fold, negated } from "./text";
 
-/** What comes before a name the user asks to be called by. */
-const NAME_LEADS = [
-  /\b(?:(?:you\s+can|please|just|do)\s+)?call\s+me\s+(.+)$/iu,
-  /\bmy\s+name(?:\s+is(?:\s+now)?|['’]s)\s+(.+)$/iu,
-  /\bi\s+go\s+by\s+(.+)$/iu,
-  /\bi(?:['’]d|\s+would)\s+(?:like|prefer|love)\s+to\s+be\s+called\s+(.+)$/iu,
-  /\bi\s+(?:like|prefer|want)\s+to\s+be\s+called\s+(.+)$/iu,
-];
-/** What may follow the name ("Sam from now on", "Sam instead, please"). */
-const NAME_TAIL = /(?:[,\s]+(?:from\s+now\s+on|from\s+here\s+on|going\s+forward|in\s+future|now|instead|please|thanks|thank\s+you|actually|is\s+fine|will\s+do|ok(?:ay)?))+$/iu;
-/** Words after "call me" that name no one ("call me a taxi", "call me back", "call me when it's done"). */
-const NOT_A_NAME = /^(?:a|an|the|back|later|when|if|at|on|in|after|before|tomorrow|tonight|today|now|soon|about|to|up|out|again|once|whenever|maybe|sometime|and|or|not|what|whatever|anything|something|it|that|this|you|me|him|her|them|us|by|with|for|from|is|are|was)$/iu;
-/** A clause that asks, supposes or reports rather than tells Ember what to call the user. */
-const NOT_TOLD = /^(?:if|when|unless|why|what|who|where|how|do|does|did|can|could|would|will|should|is|are|people|everyone|they|he|she)\b/iu;
+/** A turn longer than this, or of more than one line, is a page or a letter, never the user telling Ember about themselves. */
+export const TOLD_MAX_CHARS = 200;
+
+/** What a telling may open with: Ember's name, a greeting, a word that turns to it. */
+const OPENERS = /^\s*(?:(?:hey|hi|hello|ok(?:ay)?|so|oh|well|right|look|listen|actually|also|and|but|no(?=\s*,)|sorry|please|thanks|thank\s+you|by\s+the\s+way|btw|from\s+now\s+on|in\s+future|going\s+forward|one\s+more\s+thing|ember)\b[,.!\s]*)+/iu;
+/** Words in quotes: someone else's, a title or what to write, never the user's own telling. */
+const QUOTED = /"[^"]*"|“[^”]*”|‘[^’]*’|«[^»]*»|(?<![\p{L}\p{N}])'[^']*'(?![\p{L}\p{N}])/gu;
+/**
+ * Verbs that hand Ember words to work on or to pass on ("Summarise this email…", "Translate…", "Play…", "Remind
+ * me…"): a name in such a turn is the page's, the song's or the message's, so none is taken from it.
+ */
+const HANDS_OVER = /\b(?:summari[sz]e|translate|proofread|rewrite|rephrase|reword|paraphrase|draft|reply|respond|write|compose|dictate|transcribe|type|read|forward|send|e-?mail|text|message|post|search|google|look\s+up|play|sing|remind|sign|fill|paste|copy|explain|check|fix|correct|edit|review|quote|lyrics?|song)\b/iu;
+/** Words that report what someone said. */
+const REPORTS = /\b(?:said|says|say|told|tells|tell|asked|asks|ask|wrote|writes|replied|answered)\b/iu;
 
 /**
- * The name the user asks to be called by in `said`, or null: "Call me Sam from now on", "my name is Sam", "I go by
- * Sam now", "I'd like to be called Sam". One to three words, the further ones capitalised as names are. Never a
- * question, a negation ("don't call me Sam"), a condition, or "call me back", "call me a taxi".
+ * The part of a turn that can be the user telling Ember about themselves, or null: one line of at most TOLD_MAX_CHARS,
+ * without what follows a colon ("Write to Priya: …", "Summarise this: …") or stands in quotes.
  */
-export function nameSaid(said: string): string | null {
-  for (const sentence of said.match(/[^.;!?\n]+[.;!?]*/gu) ?? []) {
-    const clause = sentence.replace(/[.;!]+$/u, "").replace(/^\s*(?:(?:hey\s+)?ember[,.!]?\s+)?(?:(?:ok(?:ay)?|so|oh|well|actually|also|and|please)[,\s]+)*/iu, "").trim();
-    if (!clause || /\?$/u.test(sentence.trim()) || negated(clause) || NOT_TOLD.test(clause)) continue;
-    for (const lead of NAME_LEADS) {
-      const m = lead.exec(clause);
-      if (!m) continue;
-      const words = m[1]!.replace(NAME_TAIL, "").replace(/[\s,;:]+$/u, "").split(/\s+/u).filter(Boolean);
-      const named = words.length >= 1 && words.length <= 3 && words.every(w => /^\p{L}[\p{L}'’-]{0,29}$/u.test(w) && !NOT_A_NAME.test(w))
-        && words.slice(1).every(w => /^\p{Lu}/u.test(w));
-      if (named) return words.join(" ");
-    }
+function ownTelling(said: string): string | null {
+  const text = said.trim();
+  if (!text || text.length > TOLD_MAX_CHARS || /[\r\n]/u.test(text)) return null;
+  const plain = text.replace(/:(?!\d)[\s\S]*$/u, "").replace(QUOTED, " ~ ");
+  // A quote left open can't be told from the user's own words.
+  return /["“”«»]/u.test(plain) ? null : plain;
+}
+
+/** What begins a clause that tells Ember what to call the user; the rest of the clause is the name and what may follow it. */
+const NAME_LEADS: readonly RegExp[] = [
+  /^(?:you\s+(?:can|could|may|should)\s+)?(?:just\s+)?call\s+me\s+(.+)$/iu,
+  /^my\s+name(?:\s+is|['’]s)(?:\s+(?:now|actually))?\s+(.+)$/iu,
+  /^i\s+(?:now\s+)?go\s+by\s+(.+)$/iu,
+  /^i(?:['’]d|\s+would)\s+(?:like|prefer|love)\s+to\s+be\s+called\s+(.+)$/iu,
+  /^i\s+(?:like|prefer|want)\s+to\s+be\s+called\s+(.+)$/iu,
+  /^i(?:(?:['’]d|\s+would)\s+(?:like|prefer|love)|\s+want|\s+need)\s+you\s+to\s+call\s+me\s+(.+)$/iu,
+];
+/** A name's word. */
+const WORD = String.raw`\p{L}[\p{L}'’-]{0,29}`;
+/** A name of one to three words, the further ones capitalised as names are. */
+const NAME = new RegExp(String.raw`^(${WORD}(?:\s+\p{Lu}[\p{L}'’-]{0,29}){0,2})(?![\p{L}\p{N}'’-])`, "u");
+/** What may follow the name ("Sam from now on", "Sam instead, please"). */
+const NAME_TAIL = /^[,\s]+(?:from\s+now\s+on|from\s+here\s+on|going\s+forward|in\s+future|now|instead|please|thanks|thank\s+you|actually|by\s+the\s+way|btw|is\s+fine|will\s+do|ok(?:ay)?)(?![\p{L}\p{N}'’-])/iu;
+/** Words after "call me" that name no one ("call me a taxi", "call me back", "call me when it's done"). */
+const NOT_A_NAME = /^(?:a|an|the|back|later|when|if|at|on|in|after|before|tomorrow|tonight|today|now|soon|about|to|up|out|again|once|whenever|maybe|sometime|and|or|not|what|whatever|anything|something|it|that|this|you|me|him|her|them|us|by|with|for|from|is|are|was)$/iu;
+
+/** The name a clause tells Ember to call the user by, or null: the clause begins with the telling and holds nothing else. */
+function nameIn(clause: string): string | null {
+  for (const lead of NAME_LEADS) {
+    const m = lead.exec(clause);
+    const name = m ? NAME.exec(m[1]!)?.[1] : undefined;
+    if (!m || !name || name.split(/\s+/u).some(w => NOT_A_NAME.test(w))) continue;
+    let rest = m[1]!.slice(name.length);
+    for (let tail = NAME_TAIL.exec(rest); tail; tail = NAME_TAIL.exec(rest)) rest = rest.slice(tail[0].length);
+    if (!rest.replace(/[\s,;:]+$/u, "")) return name;
   }
   return null;
 }
 
-/** A clause about Ember's answers: it names them, or tells Ember how to be ("be brief", "stop being so wordy"). */
-const ABOUT_ANSWERS = /\b(?:answers?|repl(?:y|ies)|responses?|explanations?)\b|\b(?:be|being)\s+(?:(?:so|too|more|less|a\s+bit|very|that)\s+)*(?:short|brief|concise|detailed|thorough|wordy|verbose|terse|long-winded)\b(?!\s+(?:with|to|about|on)\s+(?!me\b))/iu;
+/**
+ * The name the user tells Ember to call them by in `said`, or null: "Call me Sam from now on", "my name is Sam", "I go
+ * by Sam now", "I'd like to be called Sam". Only from a clause that begins with it (after "Ember,", "Actually,",
+ * "Please"…) and holds nothing but the name: never a report ("My boss said call me Dave"), an errand ("Tell Priya to
+ * call me Sam", "Play Call Me Al"), a question, a negation ("don't call me Sam"), a condition, "call me back", "call me
+ * a taxi", what follows a colon or stands in quotes, nor a turn that hands Ember words to work on (memory-x9-1).
+ */
+export function nameSaid(said: string): string | null {
+  const own = ownTelling(said);
+  if (own === null || HANDS_OVER.test(own)) return null;
+  for (const sentence of own.match(/[^.;!?]+[.;!?]*/gu) ?? []) {
+    if (/\?\s*$/u.test(sentence)) continue;
+    const name = nameIn(sentence.replace(/[.;!\s]+$/u, "").replace(OPENERS, "").trim());
+    if (name) return name;
+  }
+  return null;
+}
+
 const SHORT = /\b(?:short(?:er)?|brief(?:er)?|concise|terse|to\s+the\s+point)\b/iu;
 const LONG = /\b(?:detailed|long(?:er)?|thorough|in\s+depth|full(?:er)?\s+detail|more\s+detail|wordy|verbose|long-winded)\b/iu;
-/** Words that turn a length round ("stop being so brief", "too long", "not so short"). */
-const FLIP = /\b(?:stop|quit|not|no|never|less|too|enough)\b|n['’]t\b/iu;
+/** Words that turn a length round ("stop being so brief", "too long", "not so short", "I hate long answers"). */
+const FLIP = /\b(?:stop|quit|not|no|never|less|too|enough|hate[sd]?|dislike[sd]?|bor(?:e|es|ed|ing)|annoy\w*|sick\s+of|tired\s+of|fed\s+up)\b|n['’]t\b/iu;
 
 type Length = "short" | "detailed";
 const lengthOf = (clause: string): Length | null => {
@@ -66,49 +111,133 @@ const lengthOf = (clause: string): Length | null => {
   return short !== FLIP.test(clause) ? "short" : "detailed";
 };
 
+/** How Ember is ("so", "too", "a bit"…) before a word of length. */
+const DEGREE = String.raw`(?:(?:so|too|far\s+too|way\s+too|more|less|a\s+bit|a\s+little|very|that|quite)\s+)*`;
+const LENGTH_WORD = String.raw`(?:short|brief|concise|detailed|thorough|wordy|verbose|terse|long-winded)\b(?!\s+(?:with|to|about|on|in|for)\s+(?!me\b))`;
+/** Ember told how to be: "Be brief", "Stop being so wordy", "You're too long-winded". Never "The talk should be brief", "Be brief with Bob". */
+const BE_SO = new RegExp(String.raw`^(?:(?:(?:please|just|try\s+to|(?:can|could|would|will)\s+you|you\s+(?:can|could|should|need\s+to))\s+)*(?:stop\s+being|quit\s+being|don['’]?t\s+be|do\s+not\s+be|be)|you(?:['’]re|\s+are)(?:\s+being)?)\s+${DEGREE}${LENGTH_WORD}`, "iu");
+/** How a clause about Ember's answers begins: the user speaking of themselves or to Ember, or the length itself ("Shorter answers, please"). */
+const TO_EMBER = new RegExp(String.raw`^(?:i\b|you\b|your\b|(?:(?:please|just)\s+)*(?:give|keep|make|stop|quit|don['’]?t|do\s+not|no\s+more|start|try|use|(?:can|could|would|will)\s+you)\b|(?:(?:much|far|a\s+bit|slightly|more|less)\s+)*(?:short(?:er)?|brief(?:er)?|concise|long(?:er)?|detailed|thorough)\b)`, "iu");
+/** Ember's answers, as a kind: never one answer or a reply to write ("a short reply to Priya"). */
+const ANSWERS = /^(.*?)\b(?:answers|replies|responses|explanations)\b(.*)$/iu;
+/** Whose they are, when not Ember's ("my replies", "Priya's answers"). */
+const SOMEONE_S = /^(?:my|our|his|her|their|its|whose)$|(?<!\bember)['’]s$/iu;
+/** Writing of the user's own, or for someone, which a length in the same clause describes. */
+const WRITING = /\b(?:writ(?:e|es|ing)|wrote|draft\w*|compos\w+|send(?:s|ing)?|sent|translat\w+|rewrit\w+|proofread\w*|e-?mail(?:s|ed|ing)?|post(?:s|ed|ing)?|summar\w+)\b/iu;
+/** Someone they are given or sent to ("Give Priya short answers"). */
+const TO_SOMEONE = /\b(?:[Gg]ive|[Ss]end|[Tt]ell|[Ww]rite)\s+(?:\p{Lu}\p{L}+|him|her|them|the\s+\p{L}+)\s/u;
+
 /**
- * How long the user says Ember's answers should be in `said`, or null: only from words about its answers ("your
- * answers are too long", "be brief", "I prefer detailed answers"), read the right way round, and only when every
- * clause that says a length says the same one. "Write a short email" and "the meeting was too long" say none.
+ * A clause about Ember's answers to the user (memory-x9-1): it tells Ember how to be ("be brief", "stop being so
+ * wordy"), or speaks of its answers as the user's to get ("your answers", "give me long answers", "I prefer detailed
+ * answers"). Never someone else's or the user's own writing ("my replies to customers", "Priya's answers", "replies
+ * to my manager", "I write detailed replies"), someone else's wish ("Priya wants short answers") or a report.
+ */
+function aboutAnswers(clause: string): boolean {
+  if (WRITING.test(clause) || REPORTS.test(clause) || TO_SOMEONE.test(clause)) return false;
+  if (BE_SO.test(clause)) return true;
+  const m = ANSWERS.exec(clause);
+  if (!m || !(TO_EMBER.test(clause) || /\byou(?:r|['’]re|['’]ve)?\b/iu.test(clause))) return false;
+  if (m[1]!.trim().split(/\s+/u).slice(-3).some(w => SOMEONE_S.test(w))) return false;
+  return !/^\s+(?:to|for|in|on|about|with|from|of|at)\s+(?!me\b|my\s+questions?\b|now\s+on\b)/iu.test(m[2]!);
+}
+
+/**
+ * How long the user says Ember's answers should be in `said`, or null: only from clauses about its answers to them
+ * (`aboutAnswers`: "your answers are too long", "be brief", "I prefer detailed answers"), read the right way round,
+ * and only when each of them that says a length says the same one. "Write a short email", "Keep my replies to
+ * customers short", "the meeting was too long", a question that isn't a request, and what follows a colon or stands
+ * in quotes say none (memory-x9-1).
  */
 export function lengthSaid(said: string): Length | null {
+  const own = ownTelling(said);
+  if (own === null) return null;
   const found = new Set<Length>();
-  let about = false;
-  for (const clause of said.split(/[.;!?\n,]+|\s+(?:but|and)\s+/u)) {
-    if (ABOUT_ANSWERS.test(clause)) about = true;
-    const length = lengthOf(clause);
-    if (length) found.add(length);
+  for (const sentence of own.match(/[^.;!?]+[.;!?]*/gu) ?? []) {
+    const asks = /\?\s*$/u.test(sentence);
+    for (const part of sentence.replace(/[.;!?\s]+$/u, "").split(/,+|\s+(?:but|and)\s+/u)) {
+      const clause = part.replace(OPENERS, "").trim();
+      // A question tells nothing ("Why are your answers so short?") unless it asks Ember for it ("Can you give me shorter answers?").
+      if (!clause || (asks && !/^(?:can|could|would|will)\s+you\b/iu.test(clause)) || !aboutAnswers(clause)) continue;
+      const length = lengthOf(clause);
+      if (length) found.add(length);
+    }
   }
-  return about && found.size === 1 ? [...found][0]! : null;
+  return found.size === 1 ? [...found][0]! : null;
 }
 
-/** A fact about what to call someone, and one about how long answers should be. */
-const NAME_FACT = /\b(?:called|calls?\s+(?:them|him|her)|names?|named|goes\s+by|known\s+as|nickname)\b/iu;
-const LENGTH_FACT = /\b(?:answers?|repl(?:y|ies)|responses?|explanations?|detail)\b/iu;
+/** Who a fact about the user is said of, when it says: "The user's…", "User…", "Their…". */
+const OF_USER = String.raw`(?:(?:the\s+)?user(?:['’]s)?\s+|their\s+|they\s+)?`;
+const WISHES = String.raw`(?:now\s+)?(?:likes?|prefers?|wants?|wishes|asks?|asked|has\s+asked|would\s+(?:like|prefer|rather)|should)\s+`;
+/** A fact that says what to call the user and nothing else, with the name last ("Likes to be called Sam", "Name is Sam", "The user's preferred name is Sam", "Goes by Sam"). */
+const NAME_FACT = new RegExp(String.raw`^${OF_USER}(?:`
+  + String.raw`(?:(?:preferred|first|given|chosen|new|nick)\s*)?name(?:\s+is(?:\s+now)?|\s*:)|nickname(?:\s+is|\s*:)`
+  + String.raw`|(?:is\s+)?(?:now\s+)?(?:called|named|known\s+as)|(?:now\s+)?goes\s+by(?:\s+the\s+name)?`
+  + String.raw`|${WISHES}(?:to\s+be|being)\s+(?:called|known\s+as|addressed\s+as)`
+  + String.raw`|(?:${WISHES})?(?:ember|you|people|everyone|others)\s+to\s+call\s+them|calls?\s+(?:themselves|themself|himself|herself)`
+  + String.raw`)\s+["“‘']?(.+?)["”’']?(?:\s+(?:from\s+now\s+on|now|instead))?[.!]?$`, "iu");
+/** Every word a fact about how long Ember's answers should be may hold: no one else, and nothing they are about. */
+const LENGTH_FACT_WORDS = new Set(("user the their they prefers prefer preferred wants want wanted likes like would to be get finds find short shorter brief briefer "
+  + "concise terse detailed long longer thorough full fuller more less detail in depth answers answer replies reply responses response explanations explanation "
+  + "from ember keep kept them and not so too much very a bit of with it now point that are is as than s").split(" "));
+const ANSWER_WORD = /\b(?:answers?|repl(?:y|ies)|responses?|explanations?|detail)\b/iu;
 
-/** Which of the profile's relations a fact's words are about, or null. */
-export function profileKind(fact: string): "called" | "answer_length" | null {
-  if (NAME_FACT.test(fact)) return "called";
-  return LENGTH_FACT.test(fact) && lengthOf(fact) ? "answer_length" : null;
+/** The name a fact says to call the user by, when it says that and nothing else; or null. */
+function nameInFact(fact: string): string | null {
+  const name = NAME_FACT.exec(fact.trim())?.[1];
+  return name && new RegExp(String.raw`^${WORD}(?:\s+${WORD}){0,2}$`, "u").test(name) && !name.split(/\s+/u).some(w => NOT_A_NAME.test(w)) ? name : null;
+}
+
+/** The length a fact says Ember's answers should be, when it says that and nothing else; or null. */
+function lengthInFact(fact: string): Length | null {
+  if (!ANSWER_WORD.test(fact) || !(fold(fact).match(/[\p{L}\p{N}]+/gu) ?? []).every(w => LENGTH_FACT_WORDS.has(w))) return null;
+  return lengthOf(fact);
 }
 
 /**
- * The profile's own fact for `fact` when the user's own words `said` in that turn say it (see the module comment), or
- * null: the fact is about what to call them and holds the name they said, or about answer length and says the length
- * they said. Never a name that reads like an order. `theirs`: the fact is already mostly the user's own words
- * (`ownFact`), so an answer length keeps them ("Prefers long answers") under the profile's relation.
+ * Which of the profile's relations a fact is wholly about, or null: what to call the user ("Likes to be called Sam"),
+ * or how long Ember's answers should be ("Prefers short answers"). A fact that says it of someone or something else,
+ * or says more ("Boss likes to be called Dave", "Has a brother called Sam", "Prefers short, polite replies to
+ * customers"), is neither (memory-x9-1).
  */
-export function profileSaid(fact: string, said: string, theirs = false): NewFact | null {
+export function profileKind(fact: string): "called" | "answer_length" | null {
+  if (nameInFact(fact)) return "called";
+  return lengthInFact(fact) ? "answer_length" : null;
+}
+
+/** What a fact is said to be about: a name, with its kind when the model gave one. */
+type Ref = { name: string; kind?: string };
+/** The names a fact about the user goes under. */
+const USER_NAMES = new Set(["user", "the user", "me", "myself"]);
+const refName = (a: Ref) => fold(a.name).replace(/\s+/gu, " ").trim();
+
+/**
+ * Whether a fact is about the user alone (memory-x9-1): the user first, and beside them at most Ember or `name`, the
+ * name the fact gives them. A fact about anyone or anything else is never the user's profile.
+ */
+export function aboutUser(about: readonly Ref[], name?: string): boolean {
+  if (!about.length || !USER_NAMES.has(refName(about[0]!))) return false;
+  return about.slice(1).every(a => USER_NAMES.has(refName(a)) || refName(a) === "ember" || (!!name && refName(a) === fold(name)));
+}
+
+/**
+ * The profile's own fact for `fact` when the user's own words `said` in that turn tell it (see the module comment), or
+ * null: the fact is about the user alone (`about`), says only what to call them and gives the name they said, or says
+ * only how long answers should be and gives the length they said. Never a name that reads like an order. `theirs`: the
+ * fact is already mostly the user's own words (`ownFact`), so an answer length keeps them ("Prefers long answers")
+ * under the profile's relation.
+ */
+export function profileSaid(fact: string, about: readonly Ref[], said: string, theirs = false): NewFact | null {
   if (!said.trim()) return null;
-  const kind = profileKind(fact);
-  if (kind === "called" && !negated(fact)) {
+  const called = nameInFact(fact);
+  if (called && !negated(fact)) {
     const name = nameSaid(said);
-    const escaped = name ? fold(name).replace(/[.*+?^${}()|[\]\\]/g, "\\$&") : "";
-    if (name && !soundsLikeInstruction(name) && new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, "u").test(fold(fact))) return introFacts({ name })[0] ?? null;
+    if (name && fold(name) === fold(called) && !soundsLikeInstruction(name) && aboutUser(about, name)) return introFacts({ name })[0] ?? null;
+    return null;
   }
-  if (kind === "answer_length") {
-    const length = lengthSaid(said);
-    const kept = length && lengthOf(fact) === length ? introFacts({ length })[0] : undefined;
+  const length = lengthInFact(fact);
+  if (length && aboutUser(about) && lengthSaid(said) === length) {
+    const kept = introFacts({ length })[0];
     if (kept) return theirs ? { ...kept, text: fact } : kept;
   }
   return null;

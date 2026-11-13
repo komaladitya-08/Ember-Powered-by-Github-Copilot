@@ -605,15 +605,29 @@ replies" in Tell Ember about you, and "spoken aloud or not" in the spoken interv
 Ember's real speaking choice (Settings › Voice), not only a fact.
 
 A new name or answer length told in conversation takes the profile's place too (profile.ts, memory-r9-5). When the
-user's own words in a turn say what to call them ("Call me Sam from now on", "my name is Sam", "I go by Sam now",
-"I'd like to be called Sam": `nameSaid`, never a question, "don't call me…", a condition or "call me back") or how
-long Ember's answers should be ("Stop being so brief, I want the full detail", "your answers are too long":
-`lengthSaid`, only from words about its answers, read the right way round), and the fact the model saves for it, by
-the remember tool or when the turn is read, says the same name or length, the fact kept is the profile's own: "Likes
-to be called Sam" under `called`, or the answer length under `answer_length` (in the user's words when the fact is
-mostly theirs already, else "Prefers short answers" or "Prefers detailed answers"), `user`, replacing the one
-before, whatever relation the model named. The user's words decide, never the model's: speech Ember couldn't check
-reaches here as no words. A fact said again as a relation's one value by a source at least as strong takes that
+user's own words in a turn tell Ember what to call them ("Call me Sam from now on", "my name is Sam", "I go by Sam
+now", "I'd like to be called Sam": `nameSaid`) or how long its answers should be ("Stop being so brief, I want the
+full detail", "your answers are too long": `lengthSaid`, read the right way round), and the fact the model saves
+for it, by the remember tool or when the turn is read, says the same name or length, the fact kept is the profile's
+own: "Likes to be called Sam" under `called`, or the answer length under `answer_length` (in the user's words when
+the fact is mostly theirs already, else "Prefers short answers" or "Prefers detailed answers"), `user`, replacing
+the one before, whatever relation the model named. The user's words decide, never the model's: speech Ember couldn't
+check reaches here as no words.
+
+This is the one place a fact that isn't mostly the user's own words becomes theirs, and it goes to the model with
+every request, so both sides must say it plainly (memory-x9-1). The user's words: a name only from a clause that
+begins with the telling (after "Ember,", "Actually,", "Please"…) and holds nothing but the name, in a turn of one
+line and at most `TOLD_MAX_CHARS` (200) characters. Never a report ("My boss said call me Dave"), an errand ("Tell
+Priya to call me Sam", "Play Call Me Al"), a question, "don't call me…", a condition, "call me back", what follows
+a colon or stands in quotes ("Write to Priya: my name is Bob"), or a turn that hands Ember words to work on
+("Summarise this email. Hi, my name is Daniel…", `HANDS_OVER`). A length only from a clause about Ember's answers
+to the user (`aboutAnswers`: "be brief", "your answers", "give me long answers", "I prefer detailed answers"),
+never the user's own writing or someone else's ("Keep my replies to customers short", "a short reply to Priya",
+"Priya wants short answers"). The fact: about the user alone (`aboutUser`: the user first, and beside them at most
+Ember or the name itself), and wholly about that (`profileKind`: "Likes to be called Sam", "Name is Sam", "Prefers
+short answers"; never "Boss likes to be called Dave", "Has a brother called Sam" or "Prefers short, polite replies
+to customers"), with the very name the user said. Anything else is kept as the model gave it, whose it is by the
+usual rule, and the profile stays as it was. A fact said again as a relation's one value by a source at least as strong takes that
 relation and closes what held it (`MemoryGraph.add`'s reinforce path), so "Call me Sam", typed after the
 conversation kept that name from unchecked speech, makes it theirs and lets go of the old one. And when a fact that
 isn't the user's own is kept beside what they told Ember about the same thing (the same single relation, or the

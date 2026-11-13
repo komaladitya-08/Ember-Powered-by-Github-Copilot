@@ -242,7 +242,7 @@ export class MemoryLearning {
           return "Not remembered: it reads like an instruction, and only what the user says themselves may tell me what to do.";
         }
         // What the user had Ember forget in this conversation comes back only in their own words (memory-r9-1).
-        const held = this.hold.heldBack(fact, rememberedSource(fact, said), "tool");
+        const held = this.hold.heldBack(fact, rememberedSource(fact, said, about.length ? about : undefined), "tool");
         if (held) {
           this.d.log.info("memory.learn_skipped", { why: "forgotten_here" });
           return held === "all" ? HELD_ALL : HELD_FORGOTTEN;
@@ -403,9 +403,9 @@ export class MemoryLearning {
    * says it again is learned from as usual after that.
    */
   private keepLearned(found: NewFact, since: number, said: string | null): AddResult {
-    // What to call the user or how long answers should be, in their own words in that turn: the profile's own fact,
-    // as the remember tool keeps it (memory-r9-5).
-    const f = (said ? profileSaid(found.text, said, found.source === "user") : null) ?? found;
+    // What to call the user or how long answers should be, told in their own words in that turn and read as a fact
+    // about them alone: the profile's own fact, as the remember tool keeps it (memory-r9-5, memory-x9-1).
+    const f = (said ? profileSaid(found.text, found.about, said, found.source === "user") : null) ?? found;
     // Forgotten or corrected in this conversation: only the user's own words bring it back (memory-r9-1).
     if (this.hold.heldBack(f.text, f.source, said === null ? "task" : { said })) {
       this.d.log.info("memory.learn_skipped", { why: "forgotten_here" });
