@@ -3150,4 +3150,39 @@ describe("commands held to main at 4d64d3a: no way of reading one decides less s
       "xz -T$(nproc) -k a.txt",
     ]) expect(decided(cmd).verdict, cmd).toBe("run");
   });
+
+  it("still refuses Ember's own folder in a variable when main's table reads the word that carries it as a file or a command (commands-held-x9-1)", () => {
+    // By today's table the word is an option's value, which is no path: the variable's values are judged at the end, and
+    // one is Ember's folder. Main's table reads the same word as a file or as the command to run, and judging it that
+    // way must not pass for having judged it: today's main refuses each of these.
+    for (const cmd of [
+      "d=~/.config/ember; touch --time \"x$d\" x", "d=~/.config/ember; patch --reject-format \"x$d\" a.txt", "d=~/.config/ember; tar -xf a.tar --strip-components \"x$d\"",
+      "d=~/.config/ember; ls | parallel --tagstring \"{= system('rm -rf $d') =}\" echo", "d=~/.config/ember; tar -cf a.tar --rsh-command \"rm -rf $d\" src",
+      "d=~/.config/ember; ls --cached \"x$d\"", "d=~/.config/ember; sudo --auth-type a.txt \"x$d\"", "d=~/.config/ember; env -a a.txt \"x$d\"",
+      "d=~/.config/ember; rsync --cc \"x$d\" a.txt b.txt",
+    ]) {
+      for (const context of ["linux", "darwin", "wsl-mnt"] as const) {
+        expect(decided(cmd, context).verdict, `${cmd} (${context})`).toBe("refuse");
+        expect(decided(cmd, context).rules, `${cmd} (${context})`).toEqual(["ember.path"]);
+      }
+    }
+    // A variable that holds no folder of Ember's decides as the line without it does.
+    expect(decided("d=build; touch --time \"x$d\" x").verdict).toBe("run");
+    expect(decided("d=build; tar -xf a.tar --strip-components \"x$d\"").verdict).toBe("run");
+    expect(decided("d=build; ls | parallel --tagstring \"{= system('rm -rf $d') =}\" echo").rules).toEqual(["unclear.option-value"]);
+  });
+
+  it("keeps what a read behind a wrapper noted of its own text when main's table reads the line another way (commands-held-x9-3)", () => {
+    // By today's table env and numactl run `read -u 3 …` and `read -N "$x" …`, whose text Ember can't see; main's table
+    // took the first word for the option's value and saw a plain `read v` with its here-string.
+    for (const cmd of ["env --block-signal read -u 3 read v <<< x; echo $v", "numactl -H read -N \"$x\" read v <<< 'text'", "ltrace -L read -u 3 read v <<< x"]) {
+      for (const context of ["linux", "darwin"] as const) {
+        expect(decided(cmd, context).verdict, `${cmd} (${context})`).toBe("ask");
+        expect(decided(cmd, context).rules, `${cmd} (${context})`).toContain("unclear.read-text");
+      }
+    }
+    // And the other way round: a read whose text Ember sees by today's table is not asked about for main's reading of it,
+    // which both trees ran.
+    expect(decided("env -a read -u 3 read v <<< x; echo $v").verdict).toBe("run");
+  });
 });

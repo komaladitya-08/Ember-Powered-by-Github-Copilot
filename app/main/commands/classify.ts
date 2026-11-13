@@ -374,6 +374,24 @@ const RESERVED_WORDS: ReadonlySet<string> = new Set(["if", "then", "elif", "else
  */
 const READ_FLOW_RULE = /^unclear\.(if|then|elif|else|fi|for|while|until|do|done|in)$/;
 
+/**
+ * Words marked while a command is judged: judged as a path where they were used, or handed to the command a wrapper
+ * runs. A row judged a second way (Engine.runRow) marks in a layer of its own, which goes with that reading: a word
+ * main's table read as a file or as a command is not passed over for it when the row's own reading's uses of a
+ * variable are noted, so the variable's values are still judged (commands-held-x9-1).
+ */
+class WordMarks {
+  private layers: WeakSet<Arg>[] = [new WeakSet()];
+  add(a: Arg): void { this.layers[this.layers.length - 1].add(a); }
+  has(a: Arg): boolean { return this.layers.some(l => l.has(a)); }
+  /** Starts a layer for a reading judged apart; the function returned takes it back, with every mark made in it. */
+  apart(): () => void {
+    const layer = new WeakSet<Arg>();
+    this.layers.push(layer);
+    return () => { const k = this.layers.lastIndexOf(layer); if (k > 0) this.layers.length = k; };
+  }
+}
+
 /** The classifier's state for one command text. */
 class Classifier {
   findings: Finding[] = [];
@@ -447,7 +465,7 @@ class Classifier {
    */
   private pendingSets: { name: string; forms: string[]; sc: Scope }[] = [];
   /** Words of a variable judged as a path where they were used (judgeUnseen). */
-  private judgedWords = new WeakSet<Arg>();
+  private judgedWords = new WordMarks();
   /** Variables a command used in a word Ember didn't judge as a path, apart from testing or printing it. */
   private usedUnjudged = new Set<string>();
   /** Those handed to a program that may change what they name: on its input or in its environment (commands-remote-w5-5). */
@@ -460,7 +478,7 @@ class Classifier {
   private printedVars = new Set<string>();
   compoundOnward = false;
   /** Words a wrapper hands to the command it runs (payload, unwrap): the rest of its words are its own. */
-  protected payloadWords = new WeakSet<Arg>();
+  protected payloadWords = new WordMarks();
   /** A loop's or `if`'s closer given text that uses variables (`done <<< "$d"`), for the reads in it (feedReads). */
   protected hereVarsAt = new Map<number, HereVars>();
   /** POSIX variables set from a substitution that fetched (`x=$(curl …)`): written to a file, the file is a download (commands-remote-c7-3). */
@@ -601,14 +619,26 @@ class Classifier {
   }
 
   /**
-   * Forgets what is kept by a command's index for the commands from `n` on, which were judged apart and are taken back
-   * (foundApartWhole): the commands registered next take those indexes, and a read's seen text or a listing kept for
-   * another command must never count for them.
+   * Starts a row's second reading (Engine.runRow), whose marks and notes must never stand for the row's own: the words
+   * it judges or hands on are marked in a layer of their own (WordMarks), and what is kept by a command's index is
+   * copied. The function returned puts both back as the row's own reading left them. That covers the commands the
+   * reading registered, whose indexes the commands registered next take (a read's seen text or a listing kept for
+   * another command must never count for them), and the current command too: a wrapper's unwrap judges at the wrapper's
+   * own index, so main's `read v`, text seen, would stand for the row's `read -u 3 …`, which asks (commands-held-x9-1,
+   * x9-3).
    */
-  protected forgetFrom(n: number): void {
-    for (const kept of [this.listed, this.globalOpts, this.stdinGiven, this.readText, this.closerInput, this.hereVarsAt, this.hereAt, this.readSets]) {
-      for (const k of [...kept.keys()]) if (k >= n) kept.delete(k);
-    }
+  protected readApart(): () => void {
+    const marks = [this.judgedWords.apart(), this.payloadWords.apart()];
+    const maps: Map<number, unknown>[] = [this.listed, this.readText, this.closerInput, this.hereVarsAt, this.hereAt, this.readSets];
+    const sets = [this.globalOpts, this.stdinGiven];
+    const was = { maps: maps.map(m => [...m]), sets: sets.map(x => [...x]), probeFull: this.probeFull };
+    return () => {
+      for (const back of marks) back();
+      maps.forEach((m, k) => { m.clear(); for (const [i, v] of was.maps[k]) m.set(i, v); });
+      sets.forEach((x, k) => { x.clear(); for (const i of was.sets[k]) x.add(i); });
+      // Its finding for more paths than Ember checks went with its other findings: a later command that names one more says so.
+      this.probeFull = was.probeFull;
+    };
   }
 
   noteUnclear(list: readonly Unclear[]): void {
@@ -2021,18 +2051,20 @@ class Engine extends Classifier {
   /**
    * asksApartWhole's findings themselves, for heldTo. `row`: the judging is a row's, of the command that is current, read
    * another way (runRow): what a wrapper's unwrap made of that command (its program, arguments and wrappers) is
-   * taken back as well, and so is what the commands it registered left behind by their index.
+   * taken back as well, and so are the words it marked as judged or handed on and everything it left behind by a
+   * command's index, the current command's included (readApart).
    */
   foundApartWhole(judge: () => void, apartFrom?: RegExp, row = false): Finding[] {
     const n = this.commands.length;
     const kept = { count: this.simpleCount, at: this.at, program: this.program, pipe: this.pipe, state: { ...this.pipe }, cd: this.cdTarget, top: this.topCd };
     const pc = row ? this.commands[this.at] : undefined;
     const own = pc ? { program: pc.program, args: pc.args, wrappers: pc.wrappers } : undefined;
+    const back = row ? this.readApart() : undefined;
     try {
       return this.foundApart(judge, apartFrom);
     } finally {
       if (pc && own) Object.assign(pc, own);
-      if (row) this.forgetFrom(n);
+      back?.();
       this.commands.length = n;
       this.simpleCount = kept.count;
       this.at = kept.at;
