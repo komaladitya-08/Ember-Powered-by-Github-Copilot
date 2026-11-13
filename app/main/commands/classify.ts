@@ -8121,6 +8121,17 @@ reg(NATIVE, ["npm", "pnpm", "yarn", "bun", "corepack"], h => {
         if (specs[0]?.v === "edit") h.e.unclear("unclear.interactive", SAYS.interactive);
       }
       return;
+    case "plugin": case "policies": {
+      // yarn's plugins are code every later yarn command loads, and `policies set-version` fetches the yarn that
+      // later commands run: a setting they obey, and for an import or a release a program fetched to run
+      // (commands-classes-x9-6). Only what lists runs; pnpm and bun have no such command, so there it is a script.
+      if (h.key !== "yarn") break;
+      const sub = specs[0]?.v ?? null;
+      if (verb === "plugin" && sub !== null && /^(list|runtime|check)$/.test(sub)) return;
+      h.e.add("system", "pkg.config", "Changes a setting later commands obey, such as where packages come from.", { program: `yarn ${verb}` });
+      if (sub === null || /^(import|set-version)$/.test(sub)) h.e.add("escape", "escape.npx", SAYS.downloadsProgram);
+      return;
+    }
     case "cache": if (/^(clean|clear|rm|delete|prune)$/.test(specs[0]?.v ?? "")) h.e.add("destroy", "npm.cache", "Deletes the package manager's cache."); return;
     case "workspace": if (h.key === "yarn" && specs.length >= 2) { const inner: H = { ...h, args: specs.slice(1) }; NATIVE.yarn(inner); } return;
     case "workspaces": if (h.key === "yarn" && yarnWorkspaces(h, rest)) return; break;

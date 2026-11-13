@@ -233,7 +233,8 @@ Ember stops and asks before a command that:
   manager's own: `brew services start`, `snap start`, `snap set`; these keep running after Stop, so Assisted's check
   never clears them and Autopilot asks), a setting later commands obey ("Changes a setting later commands obey,
   such as where packages come from.": `npm config set registry …`, `npm set …`, `yarn config set`, `pnpm config
-  set`, `composer config <key> <value>`, `gh config set`; `go env -w`, `pip config set` and their like ask as
+  set`, `composer config <key> <value>`, `gh config set`, `yarn plugin import` or `remove` (a plugin is code every
+  later yarn command loads; `yarn plugin list` runs) and `yarn policies set-version`; `go env -w`, `pip config set` and their like ask as
   commands Ember doesn't know), where git fetches from and pushes to and whether it checks the server (`git remote
   set-url`, `git config remote.origin.url …`, `git config http.sslVerify false`), the registry and desktop settings (`gsettings set`,
   `dconf write`, and `defaults write` to the screen saver, firewall and remote-access settings), the firewall, the
