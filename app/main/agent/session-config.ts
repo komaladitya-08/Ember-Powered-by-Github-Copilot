@@ -69,13 +69,15 @@ export interface SessionExtensions {
    */
   bind?(shown: () => Promise<ShownTool[]>, stop?: (servers: string[]) => Promise<void>, served?: (server: string) => Promise<unknown>): void;
   /**
-   * A server said its tool list changed (`mcp.tools.list_changed`): the gate asks it for its list (`served`, bound
-   * above) and compares it with the pins at once, and that server's tools ask from then on in this session.
+   * A server said its tool list changed (`mcp.tools.list_changed`). The runtime will ask it again as it builds its
+   * next request and show the model the answer, so that word is the change: the gate takes the server out of the
+   * session at once, without asking it anything (integrations-x9-1). Heard from the session's first moment
+   * (`onEvent` in the session's config), also before the gate is bound.
    */
   listChanged?(serverName: string): void;
   /**
-   * Settles once no such comparison is under way (at once when there is none). The session's hooks wait for it, so
-   * the runtime builds no request while a server that changed a tool is still in the session.
+   * Settles once every server the gate is taking out of the session is out, or its wait for the runtime has run out
+   * (at once when there is none). The session's hooks wait for it, so the runtime builds no request meanwhile.
    */
   settled?(): Promise<void>;
   /** A new request from the user: the tools they refused in the last turn may be asked about again. */
@@ -141,6 +143,10 @@ export function hardenedSessionConfig(o: HardenedOptions): SessionConfig {
     }
   }
   const withExt = admitted.size > 0;
+  // Registered before the session exists, so a server's first word that its tools changed is never missed.
+  const onEvent: NonNullable<SessionConfig["onEvent"]> = e => {
+    if (e.type === "mcp.tools.list_changed") ext?.listChanged?.(String((e.data as { serverName?: unknown }).serverName ?? ""));
+  };
   return {
     ...(o.sessionId ? { sessionId: o.sessionId } : {}),
     ...(o.model ? { model: o.model } : {}),
@@ -158,6 +164,7 @@ export function hardenedSessionConfig(o: HardenedOptions): SessionConfig {
     workingDirectory: o.workingDirectory,
     onPermissionRequest: o.onPermissionRequest,
     hooks: { ...(o.hooks ?? {}), onPreToolUse, ...(withExt ? { onPostToolUse, onPostToolUseFailure, onUserPromptSubmitted } : {}) },
+    ...(withExt && ext?.listChanged ? { onEvent } : {}),
     infiniteSessions: { enabled: true },
   } as SessionConfig;
 }
@@ -214,12 +221,10 @@ export async function verifySessionTools(session: CopilotSession, granted: strin
         if (!Array.isArray(now.tools)) throw new Error("the runtime did not report its tools");
         return now.tools.filter(isAdmitted);
       }, async servers => { await Promise.all(servers.map(serverName => session.rpc.mcp.disable({ serverName }))); },
-      // The server's own tools/list now, as its running process answers it (name, description, schema and hints).
+      // The server's own tools/list now, as its running process answers Ember (name, description, schema and hints):
+      // never proof of what the runtime shows the model, which is the runtime's own list.
       serverName => session.rpc.mcp.listTools({ serverName }));
       await ext.verify(meta.tools.filter(isAdmitted));
-      if (ext.listChanged && typeof session.on === "function") {
-        session.on(e => { if (e.type === "mcp.tools.list_changed") ext.listChanged?.(String((e.data as { serverName?: unknown }).serverName ?? "")); });
-      }
     }
     return names;
   })(), timeoutMs);

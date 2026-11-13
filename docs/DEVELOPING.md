@@ -616,28 +616,42 @@ it builds on:
   an MCP tool silently replaces an Ember tool of the same name. `verifySessionTools` accepts an extension tool only as
   that MCP tool and checks its description and schema against the pin. With no extension tool the session is today's
   exactly.
-- **Checked as the session loads, when a server changes its list, after each call and at every call.** The pin
-  decides what the model is shown, not only which calls run (integrations-r9-1: compared only at calls, a
-  description nobody agreed to stayed in every request of the conversation while Home said “Ready”).
+- **Checked as the session loads, after each call and at every call; a server's word that its list changed takes
+  it out.** The pin decides what the model is shown, not only which calls run (integrations-r9-1: compared only at
+  calls, a description nobody agreed to stayed in every request of the conversation while Home said “Ready”).
   `verifySessionTools` binds the gate to the session (its live tool list, the switch that disables one server in it,
   and a server's own `tools/list` through `session.rpc.mcp.listTools`), then waits for the pins' check. A tool that
   differs from its pin is marked changed for good (off until the user agrees again; Home says “Changed since you
   agreed” and offers **Review tools**), audited (`phase: "changed"`, never its text), and its server is disabled in
   that session (`session.rpc.mcp.disable`); `generation` moves, so the conversation reloads between turns with the
-  server's other tools.
-  - *As it loads:* a server that lists one description to Ember's own checks and another to the conversation is out
-    before the session's first request.
-  - *When a server says its list changed* (`mcp.tools.list_changed`), and *after each of its calls* before the result
-    goes back: Ember asks that server, through the session, for its list and compares each admitted tool with its
-    pin whole, hints too. The runtime's own metadata can't be used for this: measured on the bundled runtime it still
-    held the old text 300 ms after the notification while idle, and the new text only in the request that followed,
-    which is when the model reads it. After a call because the notification and the result's hook reach Ember in
-    either order (the hook first in 1 run of 14, and the same turn's next request carried the new text). An announced
-    change whose list can't be had takes the server out of the session too (fail closed).
-  - The session's hooks (before and after every tool, and before a new request) wait for a comparison under way, so
-    the runtime builds no request meanwhile. What a server changed mid-session may have been read all the same (a
-    change announced a few milliseconds before a request is built can't be held back), so the conversation is
-    tainted: every later extension call asks.
+  server's other tools. In the session it left, every tool of that server is denied.
+  - *As it loads:* the runtime's own metadata, which is what the model is sent, is compared with the pins (with the
+    two empty schema fields the runtime adds, `shownSchema`, integrations-x9-3). A server that lists one description
+    to Ember's own checks and another to the conversation is out before the session's first request.
+  - *The runtime's list never changes mid-session for a stdio server.* Measured on the bundled runtime: it asks a
+    server for its tools again only after the server's `notifications/tools/list_changed` (never without one, over
+    seven requests and two calls), as it builds its next request, and shows the model what it gets with no word to
+    Ember first. Ember's launcher stands between the runtime and a stdio server and never passes that notice on
+    (`passedOn`, launch.ts; every other line is passed on as the launcher read it), so the list the runtime holds is
+    the one checked as the session loaded. Nothing Ember asks a server can stand in for that: a server can answer
+    Ember's question as agreed and the runtime's with new text (integrations-x9-1: it did, in every request of the
+    conversation, 5 of 5).
+  - *When the runtime does hear that a server's list changed* (`mcp.tools.list_changed`: a remote server, which has
+    no launcher between, or anything that got past it), that word is the change. The server is disabled in the
+    session at once, unasked, the conversation is tainted and reloads between turns, where the runtime's first list
+    is checked against the pins as at every load. A server that says it again in the same conversation has every
+    tool it had in the session marked changed (off until the user agrees again). The event is heard from the
+    session's first moment (`onEvent` in the session's config). Not closed for a remote server: a notice that
+    reaches the runtime a few milliseconds before it builds a request can put the new text in that one request,
+    before Ember hears of it; after that the server is out and every extension call asks. Closing it needs the
+    runtime not to refresh a tool list mid-session, or Ember between the runtime and a remote server too.
+  - *After each of a server's calls*, before the result goes back, Ember asks that server for its list
+    (`session.rpc.mcp.listTools`, at most 1.5 s, and not again in that session once unanswered) and compares each
+    admitted tool with its pin whole, hints too: a head start on a server that changes a tool as it answers and says
+    so. It only ever turns something off; a list that matches proves nothing.
+  - The session's hooks (before and after every tool, and before a new request) wait until a server on its way out
+    is out: one `mcp.disable` per server, each at most 3 s, so a server's notices can't hold a turn however many it
+    sends (integrations-x9-4: each queued a question to the server, 27 s for one ordinary request).
   - *At every call:* what the model is shown now is compared with the pin again; a tool that differs is denied and
     turned off the same way. A session never bound, or whose list can't be read, denies every extension call.
 - **Ember's gate decides every call** (`gate.ts`, from `onPreToolUse`): off (the admin's `features.extensions`,
@@ -649,10 +663,9 @@ it builds on:
   Allow and Not now, never Always. A yes counts only if the gate still allows the call when it comes. Every decision,
   answer and result is an `extension` audit entry, with sizes only.
 - **Hints changed mid-session.** The runtime's tool list has no hints, so what the model is shown can't tell a
-  change of hints alone (`readOnlyHint` to `destructiveHint`); the server's own list, asked when it sends
-  `tools/list_changed` (`mcp.tools.list_changed`) and after each call, can, and such a tool is turned off as above.
-  Every tool of a server that sent `tools/list_changed` also asks for the rest of the session; the next start's
-  check (`refresh()`) re-pins nothing and turns a changed tool off.
+  change of hints alone (`readOnlyHint` to `destructiveHint`); the server's own list, asked after each of its calls,
+  can, and such a tool is turned off as above. Ember decides by the hints it pinned, never by what a server says
+  later. The next start's check (`refresh()`) re-pins nothing and turns a changed tool off.
 - **Failures are untrusted too.** The SDK can't rewrite a failed call's text, so `onPostToolUseFailure` adds Ember's
   note that it is untrusted data, audits its size, and taints the conversation (any extension failure).
 - **Taint lasts the conversation**, across reconnects; it ends when the conversation is forgotten.
@@ -672,7 +685,9 @@ it builds on:
   `GH_TOKEN` and cloud keys reach it), so it starts Ember's launcher (`dist/app/mcp-launch.cjs`, plain Node), which
   starts the server with `appEnv()`'s allowlist and the plugin's own values only, no shell, and records its process id
   in `extensions/run/` (Linux and macOS: as the leader of its own process group, so the kill switch ends everything
-  it started; Windows: `taskkill /T`). A server that needs a `${VAR}` from the user's environment is refused, and
+  it started; Windows: `taskkill /T`). The server's input and output go through the launcher (`relay`): the runtime's
+  requests as they are, the server's lines one by one through `passedOn`, which drops its notice that its tool list
+  changed and anything that is no JSON-RPC message, and ends the server at a line of more than 64 MiB. A server that needs a `${VAR}` from the user's environment is refused, and
   proxy addresses reach it without their user name and password. This (and the blanked credential variables: see "Where the sign-in goes") keeps Ember's sign-in out of the server's
   own environment; it is not a sandbox. A stdio server runs as the user and can read what the user can, including the
   environment of the Copilot runtime that started it (`/proc/<pid>/environ` on Linux), which holds the GitHub token

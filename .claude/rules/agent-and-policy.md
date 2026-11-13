@@ -234,11 +234,18 @@ docs/DEVELOPING.md "Extensions: the runtime and the gate" is the design; app/mai
   Failures can't be rewritten: `onPostToolUseFailure` adds `failureNote()` and taints the conversation. Taint lives on
   the service for the whole conversation (reconnects included), never on one session.
 - **A pin decides what the model is shown, not only which calls run.** Check pins as the session loads
-  (`verify`, awaited by `verifySessionTools`), when a server says its list changed and after each of its calls
-  (its own `tools/list` through the session, `served`: the runtime's metadata follows only at its next request), and
-  at every call against the session's live tool list (`bind`). A tool that differs is marked changed, audited without
-  its text, and its server disabled in that session (`withdraw`); the session's hooks wait for a comparison under
-  way (`settled`). A session without a live list denies every call.
+  (`verify`, awaited by `verifySessionTools`, against the runtime's own metadata, which is what the model is sent)
+  and at every call against the session's live tool list (`bind`). Never decide that a server may stay from an
+  answer it gives to a question of Ember's own (`served`, `session.rpc.mcp.listTools`): it can answer Ember as
+  agreed and the runtime otherwise (integrations-x9-1). Ember's list after each call only ever turns a tool off
+  (`afterCall`). A stdio server's notice that its list changed never reaches the runtime (`passedOn` in launch.ts
+  drops it; the runtime asks a server again only after that notice), so keep every line a server writes going
+  through `passedOn`. Where the runtime does hear it (`listChanged`, from `onEvent` in the session's config: a
+  remote server), take the server out of the session at once, unasked, and taint (`announced`); said twice in a
+  conversation, its tools are marked changed. A tool that differs is marked changed, audited without its text, and
+  its server disabled in that session (`withdraw`); a withdrawn server's tools are denied there. The session's hooks
+  wait only for servers on their way out (`settled`: one bounded `mcp.disable` each), never for a queue a server
+  can lengthen. A session without a live list denies every call.
 - **Read-only** is `isReadOnly()` (readOnlyHint, and neither destructiveHint nor openWorldHint) on a stdio server only;
   a remote server's tools always ask, and so do a server's tools once it changes its tool list mid-session.
 - **The runtime's TMPDIR** is `copilot-tmp/` in the data folder (runtime-temp.ts, 0700, emptied at connect and

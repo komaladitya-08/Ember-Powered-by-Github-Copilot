@@ -129,12 +129,18 @@ interface SessionGate {
   stop?: (servers: string[]) => Promise<void>;
   /** A server's own tool list now, asked through the session (its running process, not a fresh one). */
   served?: (server: string) => Promise<unknown>;
-  /** Server keys Ember took out of this session: one of their tools showed differently from its pin (integrations-r9-1). */
+  /**
+   * Server keys Ember took out of this session: one of their tools showed differently from its pin
+   * (integrations-r9-1), or the server said its list changed (integrations-x9-1). Their tools are denied here.
+   */
   withdrawn: Set<string>;
   /** Servers that didn't give their list when asked after a call: not asked after later calls in this session. */
   mute: Set<string>;
-  /** The comparisons of servers' lists with the pins, one after another: the session's hooks wait for the last. */
-  checking: Promise<void>;
+  /**
+   * Each withdrawn server's leaving, once asked of the runtime: whether it is out. One per server, each over within
+   * STOP_WAIT_MS, so what the session's hooks wait for is bounded by Ember, never by a server (integrations-x9-4).
+   */
+  stops: Map<string, Promise<boolean>>;
   tools: Map<string, { item: StoredItem; server: StoredServer; tool: PinnedTool }>;
 }
 
@@ -172,6 +178,11 @@ export class ExtensionsService implements ExtensionsApi {
    * asks. Kept here, not per session, so a reconnect (which builds a new session) keeps it; conversationEnded() clears it.
    */
   private tainted = false;
+  /**
+   * Server keys that said their tool list changed in this conversation (integrations-x9-1). Kept here as the taint
+   * is, across the reload such a word causes: a server that says it again has all its tools turned off.
+   */
+  private announcers = new Set<string>();
   /** Installs and agreements run one at a time (two at once could take the same server key or copy into one folder). */
   private queue: Promise<unknown> = Promise.resolve();
 
@@ -200,6 +211,7 @@ export class ExtensionsService implements ExtensionsApi {
     this.stopPart().stop();
     this.session = null;
     this.tainted = false;
+    this.announcers.clear();
   }
 
   private serial<T>(run: () => Promise<T>): Promise<T> {
@@ -709,7 +721,7 @@ export class ExtensionsService implements ExtensionsApi {
   /** The extension tools for a new session (the conductor's), or undefined while extensions aren't active or none is ready. */
   forSession(): SessionExtensions | undefined {
     if (!this.active()) return undefined;
-    const gate: SessionGate = { refused: new Set(), shown: new Map(), live: null, listChanged: new Set(), epoch: this.epoch, withdrawn: new Set(), mute: new Set(), checking: Promise.resolve(), tools: new Map() };
+    const gate: SessionGate = { refused: new Set(), shown: new Map(), live: null, listChanged: new Set(), epoch: this.epoch, withdrawn: new Set(), mute: new Set(), stops: new Map(), tools: new Map() };
     this.session = gate;
     const mcpServers: Record<string, MCPServerConfig> = {};
     for (const item of this.items) {
@@ -735,17 +747,14 @@ export class ExtensionsService implements ExtensionsApi {
         gate.live = live;
         gate.stop = stop;
         gate.served = served;
-        // Removal/Stop can win the race with session startup; the late binding must not restart anything. A server
-        // taken out before the session was bound (a tool that showed differently) leaves it now.
-        const stale = [...new Set([...[...gate.tools.values()].filter(e => !this.active() || gate.epoch !== this.epoch || !this.items.some(i => i.id === e.item.id && i.enabled)).map(e => e.server.key), ...gate.withdrawn])];
+        // Removal/Stop can win the race with session startup; the late binding must not restart anything.
+        const stale = [...new Set([...gate.tools.values()].filter(e => !this.active() || gate.epoch !== this.epoch || !this.items.some(i => i.id === e.item.id && i.enabled)).map(e => e.server.key))];
         if (stale.length && stop) void stop(stale).catch(err => this.stopFailed(err));
+        // A server taken out before the session was bound (it said its list changed as the session loaded) leaves
+        // it now, and the session's hooks wait for that.
+        if (gate.withdrawn.size) void this.stopIn(gate, [...gate.withdrawn]);
       },
-      listChanged: server => {
-        gate.listChanged.add(server);
-        this.o.log.info("extensions.list_changed", { server });
-        // At once, not at the changed tool's next call: the new text is in front of the model from its next request.
-        void this.compare(gate, server, true);
-      },
+      listChanged: server => this.announced(gate, server),
       settled: () => this.settle(gate),
       newTurn: () => gate.refused.clear(),
     };
@@ -787,72 +796,99 @@ export class ExtensionsService implements ExtensionsApi {
   }
 
   /**
-   * A server's list now against the pins (integrations-r9-1), at once when the server says its list changed
-   * (`announced`) and after each of its calls, before the result goes back: Ember asks that server, through the
-   * session, for its list and compares each tool the session admits with its pin, whole (hints too). The runtime's own
-   * metadata can't be used here: it follows the server only when the runtime builds its next request (measured on the
-   * bundled runtime: still the old text 300 ms after the notification while idle, the new text in the next request),
-   * which is when the model would read it. After a call, because the notification and the result's hook reach Ember
-   * in either order (the hook first in 1 of 14 runs, and the request that followed carried the new text).
-   *
-   * An announced change whose list can't be had can't be compared, so that server leaves the session and the
-   * conversation reloads, which checks it again (fail closed). After a call nothing was announced: a server that
-   * doesn't give its list stays, and isn't asked again in this session. A tool the server no longer lists isn't shown
-   * any more: nothing to take away, and the next start's check turns it off.
+   * A server said its tool list changed (`mcp.tools.list_changed`). The runtime asks the server again as it builds
+   * its next request and shows the model what it gets, with no word to Ember first, so nothing Ember could ask the
+   * server now says what the model will be shown (integrations-x9-1: a server that answered Ember's own question as
+   * agreed and the runtime's with new text kept that text in every request of the conversation, Home saying
+   * "Ready"). The word itself is the change. The server leaves this session at once, unasked; the conversation is
+   * tainted (the notice may have reached the runtime a moment before a request was built) and reloads between
+   * turns, where the runtime's own first list is checked against the pins as at every load. A server that says it
+   * again in the same conversation has every tool it had in the session turned off until the user agrees again
+   * (PLAN.md §2 "Connectors"). A stdio server's notice doesn't get this far: Ember's launcher never passes it to
+   * the runtime (launch.ts), so this is for a remote server, and for anything that got past.
    */
-  private async recheck(gate: SessionGate, server: string, announced: boolean): Promise<void> {
+  private announced(gate: SessionGate, server: string): void {
+    gate.listChanged.add(server);
+    this.o.log.info("extensions.list_changed", { server });
+    // An old session is nobody's, and a server already on its way out has nothing more to lose.
     if (gate !== this.session || gate.epoch !== this.epoch || gate.withdrawn.has(server)) return;
-    if (!announced && (!gate.served || gate.mute.has(server))) return;
-    let now: Map<string, string>;
-    try {
-      if (!gate.served) throw new Error("the session's servers aren't bound");
-      const listed = await inTime(gate.served(server), announced ? STOP_WAIT_MS : LIST_WAIT_MS);
-      if (!Array.isArray((listed as { tools?: unknown })?.tools)) throw new Error("the runtime did not report the server's tools");
-      now = new Map(servedTools([listed]).map(t => [t.name, toolHash(t)]));
-    } catch (err) {
-      if (!announced) { gate.mute.add(server); this.o.log.info("extensions.served_tools_unread", { server }); return; }
-      this.o.log.warn("extensions.served_tools_failed", { err });
-      if (gate !== this.session || gate.epoch !== this.epoch) return;
-      await this.stopIn(gate, [server]);
-      this.tainted = true;
-      this.changed();
+    const names = [...gate.tools].filter(([, e]) => e.server.key === server).map(([name]) => name);
+    if (!names.length) return;
+    if (this.announcers.has(server)) {
+      void this.withdraw(gate, names, true).catch(err => this.o.log.warn("extensions.withdraw_failed", { err }));
       return;
     }
-    // An old session's list must not change the pins of a newer conversation.
+    this.announcers.add(server);
+    this.tainted = true;
+    void this.stopIn(gate, [server]);
+    this.changed();
+  }
+
+  /**
+   * A server's own list after one of its calls, against the pins, before the result goes back
+   * (integrations-r9-1): a head start on a server that changes a tool as it answers and says so, since its notice
+   * and the result's hook reach Ember in either order (the hook first in 1 run of 14). Only ever a reason to turn
+   * something off: a list that matches proves nothing about what the runtime will be given (integrations-x9-1).
+   * Bounded by LIST_WAIT_MS, and a server that doesn't give its list isn't asked again in this session. A tool the
+   * server no longer lists isn't shown any more: nothing to take away, and the next start's check turns it off.
+   */
+  private async afterCall(gate: SessionGate, server: string): Promise<void> {
+    if (gate !== this.session || gate.epoch !== this.epoch || gate.withdrawn.has(server) || !gate.served || gate.mute.has(server)) return;
+    let now: Map<string, string>;
+    try {
+      const listed = await inTime(gate.served(server), LIST_WAIT_MS);
+      if (!Array.isArray((listed as { tools?: unknown })?.tools)) throw new Error("the runtime did not report the server's tools");
+      now = new Map(servedTools([listed]).map(t => [t.name, toolHash(t)]));
+    } catch {
+      gate.mute.add(server);
+      this.o.log.info("extensions.served_tools_unread", { server });
+      return;
+    }
+    // An old session's list must not change the pins of a newer conversation. A server that said meanwhile that its
+    // list changed is on its way out already: what its list shows to differ is still marked.
     if (gate !== this.session || gate.epoch !== this.epoch) return;
     const differ = [...gate.tools].filter(([, e]) => e.server.key === server && now.has(e.tool.name) && now.get(e.tool.name) !== e.tool.hash).map(([name]) => name);
     if (differ.length) await this.withdraw(gate, differ, true);
   }
 
-  /** One comparison at a time in a session, so a server already taken out isn't asked or stopped a second time. */
-  private compare(gate: SessionGate, server: string, announced: boolean): Promise<void> {
-    const run = gate.checking.then(() => this.recheck(gate, server, announced)).catch(err => this.o.log.warn("extensions.recheck_failed", { err }));
-    gate.checking = run;
-    return run;
-  }
-
-  /** Settles once no comparison is under way or waiting in this session (at once when there is none). */
+  /**
+   * Settles once every server Ember is taking out of this session is out, or the runtime's time to do it has run out
+   * (at once when there is none). Each leaving is asked for once and bounded by STOP_WAIT_MS on its own, so one wait
+   * here is at most that long whatever a server sends and however often (integrations-x9-4: each notice queued a
+   * question to the server, 27 s for one ordinary request).
+   */
   private async settle(gate: SessionGate): Promise<void> {
-    let last: Promise<void>;
-    do { last = gate.checking; await last; } while (last !== gate.checking);
+    if (gate.stops.size) await Promise.all(gate.stops.values());
   }
 
   /**
-   * Disables `servers` in the gate's own session (never another), saying whether the runtime did it. A runtime that
-   * doesn't answer counts as not done after STOP_WAIT_MS: the call or the start waiting on this goes on (denied, tainted).
+   * Disables `servers` in the gate's own session (never another), each once, saying whether the runtime did it. From
+   * here on their tools are denied in this session whatever the runtime answers. A runtime that doesn't answer
+   * counts as not done after STOP_WAIT_MS: the call or the start waiting on this goes on (denied, tainted).
    */
   private async stopIn(gate: SessionGate, servers: string[]): Promise<boolean> {
-    for (const s of servers) gate.withdrawn.add(s);
-    if (!gate.stop || !servers.length) return false;
-    try { await inTime(gate.stop(servers), STOP_WAIT_MS); return true; } catch (err) { this.o.log.warn("extensions.stop_failed", { err }); return false; }
+    const stops = servers.map(server => {
+      gate.withdrawn.add(server);
+      let stop = gate.stops.get(server);
+      if (!stop && gate.stop) {
+        // Asked of the runtime now, in this very step: nothing may be built in between.
+        let asked: Promise<void>;
+        try { asked = gate.stop([server]); } catch (err) { asked = Promise.reject(err); }
+        stop = inTime(asked, STOP_WAIT_MS).then(() => true, err => { this.stopFailed(err); return false; });
+        gate.stops.set(server, stop);
+      }
+      return stop ?? Promise.resolve(false);
+    });
+    return stops.length > 0 && (await Promise.all(stops)).every(Boolean);
   }
 
   /**
    * Tools the session shows differently from their pins: each is marked changed for good (off until the user agrees
    * again; Home says "Changed since you agreed"), audited without its text, and its server is disabled in that session
    * so the model is no longer shown it; the conversation then reloads between turns without the tool. `seen`: the
-   * model may have been sent the text already (a change mid-session), so every later extension call in this
-   * conversation asks; the same when the server couldn't be taken out. This only ever turns something off.
+   * model may have been sent the text already (a change mid-session, or a server that said twice that its list
+   * changed), so every later extension call in this conversation asks; the same when the server couldn't be taken
+   * out. This only ever turns something off.
    */
   private async withdraw(gate: SessionGate, names: string[], seen: boolean): Promise<void> {
     let marked = false;
@@ -885,15 +921,15 @@ export class ExtensionsService implements ExtensionsApi {
    */
   private async shownNow(gate: SessionGate, name: string, generation: number): Promise<boolean> {
     const e = gate.tools.get(name);
-    if (!e || !gate.live || gate.shown.get(name) !== true) return false;
+    // A server Ember took out of this session: its tools are denied here whatever the runtime still shows of them.
+    if (!e || !gate.live || gate.shown.get(name) !== true || gate.withdrawn.has(e.server.key)) return false;
     let now: ShownTool | undefined;
     try { now = (await gate.live()).find(t => t.name === name); } catch (err) { this.o.log.warn("extensions.live_tools_failed", { err }); return false; }
     // An old lookup must not change the pins of a replacement item or a newer conversation.
     if (gate !== this.session || gate.epoch !== this.epoch || generation !== this.generation || !this.items.includes(e.item)) return false;
     if (now && asPinned(e.tool, now)) return true;
-    // Not shown because Ember took its server out of this session with another of its tools: denied until the
-    // conversation reloads, but this tool didn't change.
-    if (!now && gate.withdrawn.has(e.server.key)) return false;
+    // Its server left this session while the list was read: denied until the conversation reloads.
+    if (gate.withdrawn.has(e.server.key)) return false;
     // Shown differently, or no longer shown: off for good, and its server leaves this session (integrations-r9-1).
     await this.withdraw(gate, [name], true);
     return false;
@@ -911,7 +947,7 @@ export class ExtensionsService implements ExtensionsApi {
       ...(tool ? { tool } : {}),
       shownAsPinned: shownAsPinned && gate.shown.get(name) === true,
       tainted: this.tainted, refused: gate.refused.has(name), remote: e?.server.spec?.type !== "stdio",
-      hintsStale: !!e && gate.listChanged.has(e.server.key),
+      hintsStale: !!e && gate.listChanged.has(e.server.key), serverStopped: !!e && gate.withdrawn.has(e.server.key),
     });
     if (decision.verdict === "deny") return decision;
     if (gate !== this.session || generation !== this.generation) return { verdict: "deny" as const, reason: "Extensions changed. Wait for the conversation to reload before trying again." };
@@ -920,7 +956,7 @@ export class ExtensionsService implements ExtensionsApi {
 
   private async decide(gate: SessionGate, input: PreToolUseHookInput): Promise<PreToolUseHookOutput> {
     const e = gate.tools.get(input.toolName);
-    // A server's changed list is being compared with the pins: the decision waits for it (a changed tool is denied).
+    // A server is leaving the session: the decision waits until it is out (its tools are denied).
     await this.settle(gate);
     const generation = this.generation;
     const shownAsPinned = await this.shownNow(gate, input.toolName, generation);
@@ -960,6 +996,12 @@ export class ExtensionsService implements ExtensionsApi {
     return deny(REFUSED);
   }
 
+  /** After a call of `server`'s (or of none): its list against the pins, then every server on its way out is out. */
+  private async checked(gate: SessionGate, server: string | undefined): Promise<void> {
+    if (server) await this.afterCall(gate, server).catch(err => this.o.log.warn("extensions.recheck_failed", { err }));
+    await this.settle(gate);
+  }
+
   /**
    * A failed call: the SDK passes its text to the model as it is (a failure can't be rewritten), so Ember says it is
    * untrusted, and the conversation is tainted (a failure is an easy way to smuggle text): every later call asks.
@@ -967,7 +1009,7 @@ export class ExtensionsService implements ExtensionsApi {
   private async failure(gate: SessionGate, input: PostToolUseFailureHookInput): Promise<PostToolUseFailureHookOutput> {
     const e = gate.tools.get(input.toolName);
     // As for a result: its server's list is compared with the pins before the runtime builds its next request.
-    await (e ? this.compare(gate, e.server.key, false) : this.settle(gate));
+    await this.checked(gate, e?.server.key);
     const text = typeof input.error === "string" ? input.error : "";
     const signals = injectionSignals(text);
     this.tainted = true;
@@ -977,10 +1019,10 @@ export class ExtensionsService implements ExtensionsApi {
 
   private async result(gate: SessionGate, input: PostToolUseHookInput): Promise<PostToolUseHookOutput | void> {
     const e = gate.tools.get(input.toolName);
-    // A server that changes its list as it answers (a rug pull after a call): the runtime builds its next request,
-    // which would carry the new text, only once this hook returns. So Ember asks the server for its list now, and
-    // this returns once a changed tool's server is out of the session.
-    await (e ? this.compare(gate, e.server.key, false) : this.settle(gate));
+    // A server that changes its list as it answers (a rug pull after a call): the runtime builds its next request
+    // only once this hook returns. So Ember asks the server for its list now, and this returns once a server that
+    // changed a tool, or said meanwhile that its list changed, is out of the session.
+    await this.checked(gate, e?.server.key);
     const text = typeof input.toolResult?.textResultForLlm === "string" ? input.toolResult.textResultForLlm : "";
     const signals = injectionSignals(text);
     // Output too big to pass on: the runtime saved it to a file and passes a pointer and a preview, so most of it was
