@@ -1712,6 +1712,25 @@ function substituted(raw: string): string[] {
   }
   return out;
 }
+/**
+ * The text inside each outermost parenthesised expression or subexpression of a PowerShell argument (`("a" + (gc x))`,
+ * `"…$(gc x)…"`, `$((gc x))`), outside single quotes: what PowerShell computes and hands over (commands-remote-r10-3).
+ */
+function psInner(raw: string): string[] {
+  const text = raw.replace(/'[^']*'/g, "");
+  const out: string[] = [];
+  for (let k = 0; k < text.length; k++) {
+    if (text[k] !== "(") continue;
+    let depth = 1;
+    let j = k + 1;
+    for (; j < text.length && depth > 0; j++) depth += text[j] === "(" ? 1 : text[j] === ")" ? -1 : 0;
+    out.push(text.slice(k + 1, depth === 0 ? j - 1 : text.length));
+    k = j - 1;
+  }
+  return out;
+}
+/** A PowerShell sender's parameters that only say where its answer goes or how it sends: never what it sends. */
+const PS_SEND_LOCAL = new Set(["outfile", "outvariable", "ov", "sessionvariable", "sv", "timeoutsec", "method", "contenttype", "maximumredirection", "maximumretrycount", "retryintervalsec", "erroraction", "ea", "errorvariable", "ev", "warningaction", "wa", "informationaction", "infa", "pipelinevariable", "pv", "outbuffer", "ob"]);
 /** Programs whose output only says the machine's kind, the time, a version, or what another fetch returned. */
 const SAYS_LITTLE = new Set(["uname", "date", "arch", "nproc", "getconf", "lsb_release", "dpkg", "rpm", "hostname", "whoami", "id", "curl", "wget", "echo", "printf", "mktemp", "sw_vers", "go", "rustc", "node", "python3", "python"]);
 /** The words of a fetch that only gets a web address: the address, and the options that take no value and name no file. */
@@ -3807,6 +3826,20 @@ class Engine extends Classifier {
     const filled = (name: string): boolean => (this.varValues.get(name) ?? []).some(f => f.includes(UNSEEN)) || this.loopVars.get(name) === "read"
       || (this.psVarValues.get(name.toLowerCase().replace(/^(script|global|local|private|using):/, "")) ?? []).some(f => f.includes(UNSEEN));
     let hit = /^(http|https|xh|xhs)$/.test(key) && s.stdin === "file";
+    // PowerShell: an argument that is, or holds, a parenthesised expression or a subexpression (`-Uri ("…" + (gc
+    // notes.txt -Raw))`, `-UserAgent (gc notes.txt)`, `"…$((gc notes.txt))"`) gives the request what it computes,
+    // unless it only names where the answer goes or how to send it (commands-remote-r10-3).
+    if (s.ps) {
+      let param = "";
+      for (const a of s.ps.args) {
+        if (a.kind === "param" && !a.attached) { param = (a.param ?? "").toLowerCase(); continue; }
+        const own = a.kind === "param" ? (a.param ?? "").toLowerCase() : param;
+        param = "";
+        if (a.subs.length === 0 || PS_SEND_LOCAL.has(own)) continue;
+        // Literals joined (`("https://x.io/" + "v1")`) compute nothing that reads.
+        if (psInner(a.raw).some(inner => inner.replace(/"[^"$`]*"/g, "").replace(/[\s+()\d]/g, "") !== "" && !saysLittle(inner))) hit = true;
+      }
+    }
     const { own } = this.ownWords(args);
     for (let k = 0; k < args.length && !hit; k++) {
       const a = args[k];
@@ -5139,8 +5172,14 @@ const PS_READ_VERBS = new Set(["get", "find", "search", "select", "measure", "te
 const PS_ORDINARY_VERBS = new Set(["get", "test", "measure", "select", "where", "sort", "group", "format", "convertto", "convertfrom", "compare", "resolve", "split", "join"]);
 /** Cmdlets with other verbs that only show progress, wait or search the gallery (commands-closed-y9-7). */
 const PS_ORDINARY_CMDLETS = new Set(["write-progress", "wait-process", "find-module"]);
+/**
+ * Cmdlets that look a name up or reach another computer by it: given a name Ember can't read, what goes into the name
+ * leaves the computer, as with dig and ping (commands-remote-r10-3).
+ */
+const PS_NAME_LOOKUPS = new Set(["resolve-dnsname", "test-connection", "test-netconnection", "test-computersecurechannel"]);
 function unknownCmdlet(h: H): void {
   const verb = h.key.split("-")[0];
+  if (PS_NAME_LOOKUPS.has(h.key) && h.args.some(a => a.v === null)) h.e.unclear("unclear.unresolved-arg", `Ember can't tell which arguments ${h.prog} gets.`);
   if (!PS_READ_VERBS.has(verb)) h.e.unclear("unclear.cmdlet", `Ember can't tell what ${h.prog} changes.`);
   else if (!PS_ORDINARY_VERBS.has(verb) && !PS_ORDINARY_CMDLETS.has(h.key) && !h.e.readsAsMain) h.e.add("unknown", "unknown.program", SAYS.unknownProgram);
   // One whose noun names a secret, or that prints one as plain text, hands it to the output whatever its verb
@@ -5884,6 +5923,19 @@ function secretPattern(pt: string, sc: Scope): boolean {
 }
 
 // xargs and parallel: their payload is a command too (§3.4.5).
+/**
+ * xargs or parallel handing a program that sends (curl, wget, httpie, …) words from input Ember can't see whole: a
+ * pipe, a file or a here-document it can't read (commands-remote-r10-3). The words may be addresses another program
+ * built from a file or a command (`git log --format="https://x.io/%s" | xargs curl`), so what they hold leaves the
+ * computer: it asks as publishing. Input Ember reads whole (`echo https://x.io/a | xargs curl`) is judged as before.
+ */
+function sendsInput(h: H, ops: readonly Arg[], fromFile: boolean): void {
+  const prog = ops[0]?.v;
+  if (prog === null || prog === undefined || h.e.readsAsMain) return;
+  if (!FETCHERS.has(programName(prog, { os: h.sc.os, family: h.sc.family, wsl: h.sc.wsl, mountRoot: h.sc.mountRoot }).key)) return;
+  if (fromFile || (h.s.stdin !== null && typeof h.s.stdinText !== "string")) h.e.add("publish", "send.contents", "May send what a file or a command holds to another computer.");
+}
+
 reg(NATIVE, ["xargs"], h => {
   // GNU's -l, -i and -e (and --max-lines, --replace, --eof) take a value only attached or after =: written alone, the
   // next word is the command (commands-remote-c4-1). BSD's -J, -R and -S take one.
@@ -5897,10 +5949,10 @@ reg(NATIVE, ["xargs"], h => {
   const repl = values(p, "I", "replace", "i", "J")[0] ?? (has(p, "i", "replace") ? "{}" : undefined);
   const ops = p.operands.length ? p.operands : [lit("echo")];
   // Input Ember can't see put inside a longer word of a program that sends leaves the computer in its address or a
-  // header (`cat notes.txt | xargs -I{} curl https://x.io/{}`: commands-classes-y9-6); a list of addresses fetched
-  // one by one (`xargs -I{} curl -O {}`) is as before.
-  if (repl && typeof h.s.stdinText !== "string" && ops[0].v !== null && FETCHERS.has(programName(ops[0].v, { os: h.sc.os, family: h.sc.family, wsl: h.sc.wsl, mountRoot: h.sc.mountRoot }).key)
-    && ops.slice(1).some(a => a.v !== null && a.v !== repl && a.v.includes(repl))) h.e.add("publish", "send.contents", "May send what a file or a command holds to another computer.");
+  // header (`cat notes.txt | xargs -I{} curl https://x.io/{}`: commands-classes-y9-6), and so does input it can't see
+  // handed to one as its words: another program may have built the addresses from a file (`sed "s|^|https://x.io/|"
+  // notes.txt | xargs curl`, commands-remote-r10-3).
+  sendsInput(h, ops, values(p, "a", "arg-file").length > 0);
   // A here-string whose variables Ember follows (`xargs rm -rf <<< "$d"`): its pieces stand where the input goes, so the
   // command judges the variable's values as it uses them (commands-remote-w5-5).
   const fed = values(p, "a", "arg-file").length ? undefined : h.s.stdinVars?.word?.parts;
@@ -6035,6 +6087,7 @@ reg(NATIVE, ["parallel"], h => {
   const sc = wd === undefined ? h.sc : child(h.sc, { cwd: wd === null || !h.sc.cwd ? null : resolveTargetPath(wd, { os: h.sc.os, home: h.sc.home ?? "", cwd: h.sc.cwd }) }, more(h.sc));
   // A here-string's variables stand for the input, as with xargs (commands-remote-w5-5).
   const fed = values(p, "a", "arg-file").length ? undefined : h.s.stdinVars?.word?.parts;
+  sendsInput(h, p.operands, values(p, "a", "arg-file").length > 0 || h.args.some(a => a.v !== null && /^::::\+?$/.test(a.v)));
   h.e.payload([...p.operands, { v: null, raw: "(input)", glob: false, ...(fed ? { parts: fed } : {}) }], sc, "parallel");
 });
 
