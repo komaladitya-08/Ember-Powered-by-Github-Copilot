@@ -226,7 +226,8 @@ export function bridge(remote: RemoteSpec, ends: { input: NodeJS.ReadableStream;
       if (res.status === 401 || res.status === 403) { fail([...waiting], BRIDGE_WORDS.auth); return; }
       if (!res.ok) { fail([...waiting], BRIDGE_WORDS.failed); return; }
       session = res.headers.get("mcp-session-id") ?? session;
-      if (!res.body) return;
+      // No body (a 204): nothing answers a call, so it is answered here (r10-integrations-y10-2).
+      if (!res.body) { fail([...waiting], BRIDGE_WORDS.failed); return; }
       const sse = /text\/event-stream/i.test(res.headers.get("content-type") ?? "");
       const reader = res.body.getReader();
       const decoder = new TextDecoder();

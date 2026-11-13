@@ -206,6 +206,22 @@ describe("the bridge's event stream from a remote server (r10-integrations-x10-2
   });
 });
 
+describe("the bridge's answer from a remote server with no body (r10-integrations-y10-2)", () => {
+  it("tells the runtime a call failed when the server answers it 204, instead of leaving it to wait", async () => {
+    const fakeFetch = (async () => new Response(null, { status: 204 })) as unknown as typeof fetch;
+    const input = new PassThrough(), output = new PassThrough();
+    let out = "";
+    output.on("data", d => { out += String(d); });
+    const done = bridge({ url: "https://a.example/mcp", headers: {} }, { input, output }, { fetch: fakeFetch, signal: new AbortController().signal, max: 1000 });
+    input.write(`${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`);
+    input.write(`${JSON.stringify({ jsonrpc: "2.0", id: 7, method: "tools/call", params: {} })}\n`);
+    input.end();
+    await done;
+    // The notification wants no answer; the call gets one.
+    expect(out.split("\n").filter(Boolean).map(l => JSON.parse(l) as unknown)).toEqual([{ jsonrpc: "2.0", id: 7, error: { code: -32000, message: BRIDGE_WORDS.failed } }]);
+  });
+});
+
 describe("extension launch environment (BE audit #1)", () => {
   it("starts the server with only the spec's environment, even when the runtime gives the launcher its whole one, token included", async () => {
     const marks = { COPILOT_SDK_AUTH_TOKEN: "ghu_TESTMARKER_LAUNCH_SDK_0123456789", GITHUB_TOKEN: "ghp_TESTMARKER_LAUNCH_GH_0123456789", GH_ENTERPRISE_TOKEN: "ghe_TESTMARKER_LAUNCH_ENT_0123456789", MY_SERVICE_KEY: "ghu_TESTMARKER_LAUNCH_ODD_0123456789" };
