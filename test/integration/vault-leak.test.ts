@@ -135,6 +135,62 @@ describe("the canary test on the real runtime (vault-3)", () => {
 });
 
 const python = pickPython();
+
+// What a failed page_address needs next time (CI's el8 job alone has the real thing): the chain from the first entry
+// up to its application by role, and each web document's states, its Document interface's attributes (by both
+// calls) and its object attributes. Values only for the names an address, a type or a title go by; a length for any
+// other value, which could hold something secret.
+const DOCUMENTS = String.raw`
+import sys, pyatspi
+SAFE = ("DocURL", "URI", "MimeType", "DocType", "W3C-doctype", "Title", "tag", "xml-roles", "display")
+def pairs(items):
+    out = []
+    for item in items or []:
+        k, _, v = str(item).partition(":")
+        out.append(k + "=" + (repr(v) if k in SAFE else "<%d chars>" % len(v)))
+    return out
+def walk(acc, depth, found):
+    if acc is None or depth > 60 or len(found["docs"]) > 5:
+        return
+    role = acc.getRoleName()
+    if role == "entry" and found["entry"] is None:
+        found["entry"] = acc
+    if role in ("document web", "document frame"):
+        found["docs"].append(acc)
+    for i in range(min(acc.childCount, 200)):
+        try:
+            walk(acc.getChildAtIndex(i), depth + 1, found)
+        except Exception as err:
+            found["errors"].append(type(err).__name__)
+desk = pyatspi.Registry.getDesktop(0)
+apps = [a for a in desk if a is not None and a.get_process_id() == int(sys.argv[1])]
+print("apps with the pid: %d" % len(apps))
+found = {"entry": None, "docs": [], "errors": []}
+for a in apps:
+    walk(a, 0, found)
+chain, cur = [], found["entry"]
+while cur is not None and len(chain) < 80:
+    chain.append(cur.getRoleName())
+    cur = cur.parent
+print("entry up: " + " > ".join(chain))
+for d in found["docs"]:
+    print("document: role=%s states=%s" % (d.getRoleName(), sorted(pyatspi.stateToString(s) for s in d.getState().getStates())))
+    try:
+        doc = d.queryDocument()
+        print("  getAttributeValue: " + ", ".join("%s=%r" % (k, doc.getAttributeValue(k)) for k in ("DocURL", "URI", "MimeType", "DocType")))
+        print("  getAttributes: " + ", ".join(pairs(doc.getAttributes())))
+    except Exception as err:
+        print("  no Document interface: " + type(err).__name__)
+    try:
+        print("  object attributes: " + ", ".join(pairs(d.getAttributes())))
+    except Exception as err:
+        print("  object attributes: " + type(err).__name__)
+print("walk errors: %s" % found["errors"][:5])
+`;
+function documentsOf(pid: number): string {
+  const r = spawnSync(python, ["-c", DOCUMENTS, String(pid)], { encoding: "utf8", timeout: 15_000 });
+  return `the documents around the entry, as pyatspi reads them:\n${r.stdout}${r.stderr ? `\n${r.stderr.slice(-2000)}` : ""}`;
+}
 const available = !!process.env.DISPLAY && spawnSync(python, ["-c", "import pyatspi, gi"], { stdio: "ignore" }).status === 0;
 const required = process.env.EMBER_ATSPI_TEST === "1";
 
@@ -215,7 +271,7 @@ describe.skipIf(!available && !required)("the canary test against a real window,
     expect(password).toBeDefined();
     // The site is read from the document itself, and the entry is bound to it.
     const pages = await sidecar.pageAddress(user.id);
-    expect(pages[0]).toBe(`${origin}/signin`);
+    expect(pages[0], pages[0] === `${origin}/signin` ? "" : `${JSON.stringify(pages)}; ${documentsOf(pid)}`).toBe(`${origin}/signin`);
     const dest = { site: origin };
     expect((await service.keep("login", dest, CANARY.login)).ok).toBe(true);
     const clip = (args: string[], input?: string) => spawnSync("xclip", ["-selection", "clipboard", ...args], { input, encoding: "utf8", timeout: 5000 });

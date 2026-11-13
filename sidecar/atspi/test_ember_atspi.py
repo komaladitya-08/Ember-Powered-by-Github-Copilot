@@ -1237,12 +1237,53 @@ class Acting(unittest.TestCase):
         acc.queryEditableText = lambda: types.SimpleNamespace(setTextContents=cut)
         self.assertEqual(self.fill(acc)["took"], False)
 
-    def page(self, url, parent=None, role="document web"):
+    def page(self, url, parent=None, role="document web", key="DocURL", attrs=None):
         doc = Acc(role, "A page")
         doc.parent = parent
         if url is not None:
-            doc.queryDocument = lambda: types.SimpleNamespace(getAttributeValue=lambda k: url if k == "DocURL" else "")
+            # As at-spi2-atk answers: "" for a name the app doesn't know.
+            told = dict(attrs or {})
+            told[key] = url
+            doc.queryDocument = lambda: types.SimpleNamespace(getAttributeValue=lambda k: told.get(k, ""))
         return doc
+
+    def test_a_chromium_page_is_read_by_the_name_chromium_gives_its_address(self):
+        # (vault-3) Chromium (Chrome, Electron) reports a document's address as "URI", never "DocURL": CI's el8 job
+        # found a real Electron sign-in page reporting none when only "DocURL" was read.
+        app = Acc("application", "electron")
+        app.parent = None
+        frame = Acc("frame", "https://evil.example/signin")
+        frame.parent = app
+        doc = self.page("http://127.0.0.1:8080/signin", frame, key="URI",
+                        attrs={"Title": "https://evil.example/signin", "MimeType": "text/html", "DocType": "html"})
+        field = self.field()
+        field.parent = doc
+        self.assertEqual(self.act_on(field, "page_address"), {"urls": ["http://127.0.0.1:8080/signin"]})
+
+    def test_a_page_that_reports_two_addresses_or_fails_to_answer_reports_none(self):
+        # (vault-3) Fail closed: two different addresses for one document, or a name it can't answer, are no address;
+        # its title, which the page writes, is never one.
+        app = Acc("application", "browser")
+        app.parent = None
+        two = self.page("https://shop.example/", app, attrs={"URI": "https://evil.example/"})
+        field = self.field()
+        field.parent = two
+        self.assertEqual(self.act_on(field, "page_address"), {"urls": [""]})
+        same = self.page("https://shop.example/", app, attrs={"URI": "https://shop.example/"})
+        field.parent = same
+        self.assertEqual(self.act_on(field, "page_address"), {"urls": ["https://shop.example/"]})
+        titled = self.page("", app, key="URI", attrs={"Title": "https://shop.example/"})
+        field.parent = titled
+        self.assertEqual(self.act_on(field, "page_address"), {"urls": [""]})
+        broken = self.page("https://shop.example/", app)
+
+        def answer(k):
+            if k == "URI":
+                raise RuntimeError("no reply")
+            return "https://shop.example/"
+        broken.queryDocument = lambda: types.SimpleNamespace(getAttributeValue=answer)
+        field.parent = broken
+        self.assertEqual(self.act_on(field, "page_address"), {"urls": [""]})
 
     def test_a_fields_page_is_read_from_the_document_itself(self):
         # (vault-2) Nearest first, up to the application; never from a name or text on the page.

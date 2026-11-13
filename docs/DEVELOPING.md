@@ -1747,10 +1747,11 @@ details the user gives Ember in its own **Secure Form**, each bound to one desti
   windows, never-look windows and terminals (each refused first, as in every mode), a password anywhere but a
   password field, a card's number or security code anywhere but a secret field, a user name outside a sign-in window,
   and contact details in a field not named for them. Ember reads what the field belongs to itself (`vaultTarget`):
-  the origin of the web documents around it, from the documents (the helper's `page_address`: AT-SPI's `DocURL`, UI
-  Automation's document value), or else the app by its program name, never a browser. A look-alike host, another
-  port or scheme, a frame from another site than its page and an address that can't be read are no destination, so
-  nothing is filled. macOS reports no page address, so there Ember fills only an app's own fields. With no entry for
+  the origin of the web documents around it, from the documents (the helper's `page_address`: the AT-SPI Document
+  interface's `DocURL` in Firefox or `URI` in Chromium and Electron, and none where a document gives two different
+  ones; UI Automation's document value), or else the app by its program name, never a browser. A look-alike host,
+  another port or scheme, a frame from another site than its page and an address that can't be read are no
+  destination, so nothing is filled. macOS reports no page address, so there Ember fills only an app's own fields. With no entry for
   the destination Ember opens the Secure Form once; a form closed without saving is a refusal for the rest of the
   task. Right before the fill the field, its page and the decision are looked at again, and anything changed means
   no fill. The value goes from the vault to the helper's `vault_fill` (the one method that writes into a secret

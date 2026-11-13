@@ -3593,15 +3593,27 @@ def set_text(params):
 VAULT_FILL_ROLES = frozenset(["password text", "text", "entry"])
 # How far up the web documents around a field are looked for (see page_address).
 PAGE_LEVELS = 200
+# The names a web document's own address goes by in its Document interface: Firefox reports "DocURL" (Gecko's
+# nsMaiInterfaceDocument.cpp), Chromium, so Chrome and Electron, "URI" (ax_platform_node_auralinux.cc's
+# GetDocumentAttributeValue, its AXTreeData url), and at-spi2-atk answers "" for a name the app doesn't know. Reading
+# only "DocURL" left every Chromium page reporting none (CI's el8 job, vault-leak.test.ts, at 16f5ee2).
+DOC_URL_KEYS = ("DocURL", "URI")
 
 
 def doc_url(acc):
-    """A web document's own address as its app reports it (the Document interface's DocURL), or "" where it doesn't."""
+    """A web document's own address as its app reports it (the Document interface's DocURL or URI), or "" where it
+    doesn't. Never its title or anything else the page writes freely; a document that answers both names with
+    different addresses, or fails to answer one, reports none."""
+    found = set()
     try:
-        url = acc.queryDocument().getAttributeValue("DocURL")
+        doc = acc.queryDocument()
+        for key in DOC_URL_KEYS:
+            url = doc.getAttributeValue(key)
+            if isinstance(url, str) and url:
+                found.add(url)
     except Exception:
         return ""
-    return url if isinstance(url, str) else ""
+    return found.pop() if len(found) == 1 else ""
 
 
 def page_address(params):
