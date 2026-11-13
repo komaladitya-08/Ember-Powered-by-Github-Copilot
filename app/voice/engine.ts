@@ -2246,6 +2246,11 @@ export class VoiceEngine {
       if (!this.soundKnown(t0)) { this.overSound = true; this.soundUnknown = true; }
       else if (this.soundPlaying(t0)) this.overSound = true;
     }
+    // So in a wake's own window, for a yes that doesn't hold the wake phrase in its own speech: after the user's "Hey
+    // Ember" and a pause, a video's "Okay." allowed the question, though the name was the user's and the yes wasn't said
+    // with it (V2-S6). Only where other sound is known to play: where nothing can tell (macOS), "Hey Ember" … "allow" in
+    // two breaths is how one answers, and stays.
+    if (this.mode.reason === "wake" && !withWake && !this.overSound && this.questionWaiting && spokenAnswer(text) === "allow" && this.soundPlaying(t0)) this.overSound = true;
     this.sendRequest(text, audio, withWake, cut, t0);
   }
 

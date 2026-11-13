@@ -2937,4 +2937,49 @@ describe("whose a spoken answer is (second review of the voice lane, 2026-11-12)
       for (const gap of [700, 1200]) expect(videoSays(gap, { speakers: true }), `${gap} ms`).toEqual(["I remember the September weather was nice. | conversation | over other sound", "Okay. | conversation | over other sound"]);
     });
   });
+
+  describe("a yes after “Hey Ember” and a pause (V2-S6, voice-listening-r9-4)", () => {
+    /** A question is up and has been read out. The user says "Hey Ember." (the microphone only), and after a second `then` goes on. */
+    const called = (o: { speakers?: boolean; otherSound?: boolean | null }, then: (s: Scene) => void) => {
+      const s = scene({ 9: "Hey Ember.", 5: "Okay.", 7: "Allow." }, o);
+      s.run(100);
+      asks(s);
+      s.run(frames(600));
+      s.events.length = 0;
+      for (let i = 0; i < frames(600); i++) s.run(1, () => mic(9, 0.05, i === 8 ? 2 : 0));
+      s.run(frames(1000));
+      then(s);
+      s.run(frames(2000));
+      return s.heard();
+    };
+    /** A video's lone "Okay." (0.4 s): out of the speakers, in their stream where it arrives and in the microphone. */
+    const videoOkay = (s: Scene) => s.run(frames(400), () => mic(5, 0.03), () => out(0.05, 0, 5));
+
+    it("takes a video's “Okay.” then for no one's yes where other sound is known to play: the name was the user's, the yes wasn't said with it", () => {
+      // The wake's own window marked nothing: with the video quiet before the wake, its "Okay." a second later allowed.
+      expect(called({ speakers: true }, videoOkay), "Linux with parec").toEqual(["wake", "Okay. | wake | over other sound"]);
+      expect(called({ otherSound: true }, videoOkay), "Windows").toEqual(["wake", "Okay. | wake | over other sound"]);
+    });
+
+    it("still takes “Hey Ember, allow” said in one breath over a playing video, and the two-breath answer where nothing can tell (macOS: it is how one answers there)", () => {
+      // (Two words after the name: in a room with other talk before the wake, one alone is taken for the wake phrase misheard.)
+      const oneBreath = (o: { speakers?: boolean; otherSound?: boolean | null }) => {
+        const s = scene({ 6: "Hey Ember, allow it." }, o);
+        s.run(100);
+        asks(s);
+        s.run(frames(600));
+        videoOn(s);
+        s.events.length = 0;
+        for (let i = 0; i < frames(900); i++) s.run(1, () => mic(6, 0.05, i === 8 ? 2 : 0), () => out(0.05));
+        s.run(frames(2000));
+        return s.heard();
+      };
+      expect(oneBreath({ speakers: true }), "Linux with parec").toEqual(["wake", "Allow it. | wake"]);
+      expect(oneBreath({ otherSound: true }), "Windows").toEqual(["wake", "Allow it. | wake"]);
+      // "Hey Ember" … "allow", the user's own, where nothing can tell whether other sound plays: as before.
+      expect(called({ otherSound: null }, s => s.run(frames(400), () => mic(7, 0.05))), "macOS").toEqual(["wake", "Allow. | wake"]);
+      // And where sound is known not to play, from anyone.
+      expect(called({ otherSound: false }, s => s.run(frames(400), () => mic(7, 0.05))), "quiet").toEqual(["wake", "Allow. | wake"]);
+    });
+  });
 });

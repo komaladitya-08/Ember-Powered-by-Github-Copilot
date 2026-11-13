@@ -359,7 +359,9 @@ describe("a spoken yes from anyone heard while Voice Match is off, its default (
   });
 
   it("says once a question when an answer said over other sound wasn't taken, and how to be heard, rather than nothing (owner's report of 2026-11-12)", () => {
-    expect(VOICE_ANSWER_REFUSED["over-sound"]).toBe("Something else was playing, so I couldn't tell that was for me: say my name first, then your answer.");
+    // (It asks for the name and the answer in one go: a yes said a pause after "Hey Ember" is dropped so too, V2-S6.)
+    expect(VOICE_ANSWER_REFUSED["over-sound"]).toBe("Something else was playing, so I couldn't tell that was for me: say your answer right after my name, in one go.");
+    expect(voiceAnswerSaid("over-sound", ["Control Alt Y to allow"])).toBe("Something else was playing, so I couldn't tell that was for me: say your answer right after my name, in one go.");
     const main = fs.readFileSync(path.join(__dirname, "../../app/main/main.ts"), "utf8");
     // Whichever window it was said in: a conversation over a playing video (the default) or a follow-up too.
     expect(main).toMatch(/if \(e\.answer && confirmer\?\.waiting && overSoundFor !== confirmer\.currentNumber\) \{ overSoundFor = confirmer\.currentNumber; refuseVoiceAnswer\(e\.reason, e\.answer\); \}/);

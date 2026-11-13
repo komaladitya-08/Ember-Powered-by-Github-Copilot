@@ -214,8 +214,9 @@ export const VOICE_ANSWER_REFUSED: Readonly<Record<VoiceAnswerNote, string>> = {
   stale: "That was said before this question came up, so I didn't take it. Say it again.",
   locked: "I heard a voice that isn't yours, so for this question I'll take a click or the keys only.",
   "heard-over": "I heard you over my own voice, so I didn't take it. Say it again now that I've stopped.",
-  // A nameless answer over a song or a video, which the voice gate drops without a voiceprint (match.ts "dropped").
-  "over-sound": "Something else was playing, so I couldn't tell that was for me: say my name first, then your answer.",
+  // A nameless answer over a song or a video, which the voice gate drops without a voiceprint (match.ts "dropped"). So
+  // for a yes said a pause after "Hey Ember" (V2-S6): the name was said, so the line asks for both in one go.
+  "over-sound": "Something else was playing, so I couldn't tell that was for me: say your answer right after my name, in one go.",
   // A nameless yes where nothing can tell whether other sound plays (macOS, Linux without parec, Windows before its
   // output watch has looked: engine.ts soundKnown), which the gate drops without a voiceprint as over other sound.
   "sound-unknown": "I can't tell here whether something else is playing, so I didn't take that as a yes: say my name first, then your answer.",

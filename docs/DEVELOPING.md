@@ -750,10 +750,13 @@ question; settled by the integrator on the owner's direction, and the owner can 
 name in a follow-up window while other sound is known to play, as in the answer window (Codex review of #211), and in
 a conversation, whatever the spotter heard just before it: a name spotted in the last 3 s lets the next thing said
 through as said by name (`NAME_HEARD_MS`), and after a video's “…September…” its own “Okay.” went out as anyone's yes
-(V2-S4). A yes is judged on its own speech. The first
+(V2-S4). A yes is judged on its own speech. So in a wake's own window: a yes that doesn't hold the wake phrase in its
+own speech (“Hey Ember”, a pause, then “Okay.”) is dropped where other sound is known to play, as the name was yours
+and the yes may be the video's (V2-S6); “Hey Ember, allow” in one breath is taken, and where nothing can tell (macOS,
+Linux without `parec`) the two-breath answer is taken as before, being how one answers there. The first
 time something said then without the name isn't heard, the status line says “Music or a video is playing: say “Ember”
 first.” for 5 s (engine.ts `dropped`), once a conversation; while a question is up, an answer dropped so, in the answer
-window, a follow-up or a conversation, makes the question say once why and to say the name first (`dropped` says which
+window, a follow-up, a conversation or after a wake, makes the question say once why and to say the answer right after the name, in one go (`dropped` says which
 answer it read as, never the words: in a conversation over a playing video a nameless “allow” vanished, owner's report
 of 2026-11-12). With the switch off, after Ember answers you have 8 seconds (12 when it asked you something) for
 a follow-up without the wake word (up to three in a row; “Hey Ember” works then too); “Thanks”, “OK” or “that's all” ends that window (when Ember asked something,
