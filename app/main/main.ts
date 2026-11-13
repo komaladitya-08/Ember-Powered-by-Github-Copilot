@@ -39,6 +39,7 @@ import { memoryReport } from "./memory-report";
 import { friendlyApp, useAppNames } from "../shared/apps";
 import { AtspiSidecar, type FocusBefore } from "./perception/sidecar";
 import { isNeverLook, setQuoteRedactor } from "./perception/elements";
+import { setOutputRedactor } from "./commands/output";
 import { Perception, type QuickContext } from "./perception";
 import { warmText } from "./perception/capture";
 import { TEXT_WARM_DELAY_MS, scheduleTextWarm } from "./perception/text-warm";
@@ -214,6 +215,8 @@ const wantedLevel = logLevel(process.env.EMBER_LOG_LEVEL);
 const vaultRedactor = new VaultRedactor();
 // Screen text is redacted whole before it is cut short for a model: a value the cut fell in would pass the boundary (vault-3-x9-2).
 setQuoteRedactor(text => vaultRedactor.text(text));
+// And so is a command's output, before its lines are cut (vault-3-y9-1).
+setOutputRedactor(text => vaultRedactor.text(text));
 const log = createLogger({
   dir: path.join(userData, "logs"),
   level: wantedLevel.level,

@@ -128,6 +128,24 @@ export function capLines(text: string, max = CLEAN_MAX_LINE): string {
 }
 
 /**
+ * What a command's output passes before any of its lines is cut (main: the vault's redactor, app/main/vault/redact.ts).
+ * Where text leaves for a model a value the vault filled is replaced, but a value a cut fell in is no longer the value
+ * there, and its first part would go on (an API's one long line cut at column 1000 in the middle of the address that
+ * was filled: review vault-3-y9-1). So the output is redacted whole here, and then cut. Unset (the tests, Ember's agent
+ * on another computer, where nothing is filled): output is cleaned as it is.
+ */
+let beforeCut: ((text: string) => string) | null = null;
+/** Sets (or, with null, clears) what a command's output passes before its lines are cut. Main calls it once, before any run. */
+export function setOutputRedactor(redact: ((text: string) => string) | null): void {
+  beforeCut = redact;
+}
+/** `s` as it may be cut: nothing of output that couldn't be checked. */
+function whole(s: string): string {
+  if (!beforeCut) return s;
+  try { return beforeCut(s); } catch { return ""; }
+}
+
+/**
  * Steps 1-4 (§3.11): the text before it is bounded and wrapped, each line cut to CLEAN_MAX_LINE after the user's typed
  * lines are taken out. outputTaint (step 7) reads this, so nothing can hide in the lines step 5 leaves out.
  */
@@ -135,11 +153,11 @@ export function cleanOutput(raw: Uint8Array, o: Pick<ShapeOptions, "typed" | "se
   // The output's own private-use markers can't pose as a cut span: replaced one for one, so offsets hold.
   const decoded = decode(raw).replace(/[\ue000\ue001]/g, "\ufffd");
   const plain = stripTerminal(cutSpans(decoded, o.secretSpans));
-  // Typed lines and secrets are handled between the markers, so a marker's own words ("secret: the …") are never taken
+  // What the vault filled goes first, from the whole text (vault-3-y9-1). Typed lines and secrets are handled between the markers, so a marker's own words ("secret: the …") are never taken
   // for a key and its value.
   return plain
     .split(/([\ue000\ue001])/)
-    .map(part => (part === MARK_ANSWERED ? SECRET_ANSWERED : part === MARK_UNANSWERED ? SECRET_UNANSWERED : redactSecrets(capLines(cutTyped(part, o.typed)))))
+    .map(part => (part === MARK_ANSWERED ? SECRET_ANSWERED : part === MARK_UNANSWERED ? SECRET_UNANSWERED : redactSecrets(capLines(cutTyped(whole(part), o.typed)))))
     .join("");
 }
 

@@ -1645,7 +1645,9 @@ details the user gives Ember in its own **Secure Form**, each bound to one desti
   before it gets there isn't recognised, so screen text is redacted whole before it is cut: every title, name and
   text quoted for a model goes through perception/elements.ts's quoting (`quoteUntrusted`, `serializeElements`,
   the worker's `list_windows` and a click's landing place, Assisted's description of a step), which main hands the
-  redactor (`setQuoteRedactor`); code that cuts screen text for a model some other way must do the same. And
+  redactor (`setQuoteRedactor`); code that cuts screen text for a model some other way must do the same. A
+  command's output is redacted whole the same way before its lines are cut at 4,096 and 1,000 characters
+  (commands/output.ts `cleanOutput`, `setOutputRedactor`), and output that can't be checked is not handed on. And
   `Perception` asks the redactor about every element first
   (`holdsVaultValue`): whatever says a filled value (the field itself, a line that repeats it, a tab named after it)
   loses its words and is blacked out of every picture as a secret field is, and a field is kept secret by the helper
