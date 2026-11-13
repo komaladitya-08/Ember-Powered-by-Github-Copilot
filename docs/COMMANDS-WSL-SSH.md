@@ -787,10 +787,10 @@ into Konsole or Yakuake, an AppleScript or a JavaScript for Automation that tell
 tmux's and zellij's own options before the verb don't hide it (`tmux -uL work send-keys …`, `zellij --max-panes 5
 action write-chars …`), and the shell command `tmux -c` runs is judged as that command. A command
 that prints what a terminal of yours shows, or a paste buffer (`tmux capture-pane`, `show-buffer`, `save-buffer`,
-`list-buffers`, `show-environment`, `screen -X hardcopy`, `zellij action dump-screen`, `kitty @ get-text`, `wezterm
-cli get-text`), asks first in every mode: "Reads what your own terminal shows, which may hold passwords." The
-commands that only list sessions, windows and panes run (`tmux ls`, `zellij list-sessions`, `kitten @ ls`), and any
-other command of these tools asks.
+`list-buffers`, `show-environment`, `screen -X hardcopy`, `zellij action dump-screen`, `kitty @ get-text`, `kitty @
+ls`, which prints each window's environment and command lines, `wezterm cli get-text`), asks first in every mode:
+"Reads what your own terminal shows, which may hold passwords." The commands that only list sessions, windows and
+panes run (`tmux ls`, `zellij list-sessions`), and any other command of these tools asks.
 
 The same goes for the folder a command works in, named after `cd --` or `pushd --` (`cd -- ~/.config/ember && sed -i …
 settings.json`) or given to `patch -d` or `--directory` (also shortened, down to `--di`), which changes the files the

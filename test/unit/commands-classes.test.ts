@@ -86,7 +86,7 @@ describe("programs that drive the user's own terminals and editors (commands-rem
 
   it("runs the verbs that only list, and asks before any other verb", () => {
     for (const cmd of ["tmux ls", "tmux list-sessions", "tmux list-windows -a", "tmux list-panes -a -F '#{pane_id}'", "tmux has-session -t work", "tmux display-message -p '#S'",
-      "screen -ls", "screen -list", "zellij list-sessions", "zellij ls", "zellij --version", "zellij action query-tab-names", "kitten @ ls",
+      "screen -ls", "screen -list", "zellij list-sessions", "zellij ls", "zellij --version", "zellij action query-tab-names", "kitten @ get-colors",
       "nvr --serverlist", "it2api list-sessions", "it2api show-hierarchy"]) {
       expect(decide(cmd).verdict, cmd).toBe("run");
     }
@@ -1009,5 +1009,16 @@ describe("ways into the user's own terminal behind a tool's own options (command
       for (const cmd of ["tmux -uL sock ls", "zellij --max-panes 5 list-sessions"]) expect(decide(cmd, o).verdict, label(cmd, o)).toBe("ask");
     }
     for (const o of WINDOWS) for (const cmd of ["wt -w 0 focus-tab -t 1", "wt -w new nt", "wt new-tab"]) expect(refusal(cmd, o)?.rule, label(cmd, o)).toBeUndefined();
+  });
+});
+
+describe("kitty's list of windows, which prints their environment and command lines (commands-classes-y9-10)", () => {
+  it("asks as a secret before `kitty @ ls` and `kitten @ ls`, as before tmux show-environment", () => {
+    for (const o of [...POSIX, ...WINDOWS]) for (const cmd of ["kitten @ ls", "kitten @ ls --all-env-vars", "kitty @ ls", "kitten @ --to unix:/tmp/k ls"]) {
+      const d = decide(cmd, o);
+      expect(d.verdict, label(cmd, o)).toBe("ask");
+      expect(d.rules, label(cmd, o)).toContain("secret.terminal");
+    }
+    expect(decide("kitten @ get-colors").verdict).toBe("run");
   });
 });

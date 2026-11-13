@@ -4366,7 +4366,8 @@ const REMOTE_DRIVES: Readonly<Record<string, ReadonlySet<string>>> = {
   it2api: new Set(["send-text", "create-tab", "split-pane", "inject", "activate-app", "invoke-function", "sendtext"]),
 };
 const REMOTE_READS: Readonly<Record<string, ReadonlySet<string>>> = {
-  kitty: new Set(["get-text"]),
+  // `ls` prints each window's environment variables and its processes' command lines (commands-classes-y9-10).
+  kitty: new Set(["get-text", "ls"]),
   wezterm: new Set(["get-text"]),
   zellij: new Set(["dump-screen", "edit-scrollback"]),
   it2api: new Set(["get-buffer", "get-prompt"]),
