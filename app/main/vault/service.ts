@@ -42,6 +42,11 @@ export interface VaultServiceOptions {
   log: Logger;
   /** The list changed: Home is told (VAULT_IPC.changed). */
   changed?: () => void;
+  /**
+   * A value is about to be handed to a field (use): the redactor notes it first (redact.ts), so nothing read back
+   * after the fill reaches a model, the audit log or the logs. If it can't be noted, nothing is filled.
+   */
+  filling?: (part: VaultPart, value: string) => void;
 }
 
 /**
@@ -141,6 +146,8 @@ export class VaultService {
     if (!opened || opened.meta.kind !== kind || !sameDestination(opened.meta.dest, dest)) return { ok: false, why: "none" };
     const value = opened.values[part];
     if (typeof value !== "string" || !value) return { ok: false, why: "part" };
+    // Noted before it is on any screen. A redactor that can't take it means no fill (fail closed).
+    try { this.o.filling?.(part, value); } catch { return { ok: false, why: "off" }; }
     const result = await put(value);
     this.o.log.info("vault.used", { kind, part, site: "site" in dest });
     return { ok: true, result };

@@ -58,6 +58,10 @@ interface Opts {
   spec?: Partial<TaskSpec>; target?: unknown; desk?: boolean; neverLook?: string[];
   /** What the borrowed keyboard's own check says of text. */
   checkTyping?: (text: string) => void;
+  /** How telling the helper a field is secret goes (before keys are typed into it). */
+  mark?: (id: number) => Promise<void>;
+  /** What a read with a picture says of the window's elements (default: as the harness's nodes), with a picture. */
+  pictured?: () => AxNode[];
 }
 
 async function worker(o: Opts = {}) {
@@ -101,6 +105,7 @@ async function worker(o: Opts = {}) {
     usable: () => service.usable(), has: (k, d) => service.has(k, d), ask: (k, d, via) => service.ask(k, d, via), use: (k, p, d, fn) => service.use(k, p, d, fn),
     pages: async id => { pagesAsked.push(id); const p = pages(id); if (p === null) throw new Error("the helper can't tell"); return p; },
     put: async (id, text) => { put.push({ id, text, how: "accessibility" }); return o.put ? o.put(id, text) : { ok: true, took: true }; },
+    mark: async id => { hand.push(`mark ${id}`); await o.mark?.(id); },
   };
   const presenter = new Presenter(() => undefined);
   vi.spyOn(presenter, "workedWithoutAsking").mockImplementation(text => { said.push(text); });
@@ -114,9 +119,10 @@ async function worker(o: Opts = {}) {
     scroll: async () => {},
   };
   const w = new Worker({
-    client: {} as never, log, model: "m", vision: false, workDir: "/tmp",
+    client: {} as never, log, model: "m", vision: !!o.pictured, workDir: "/tmp",
     perception: {
-      perceive: async () => ({ ...seen, text: "<screen>", capture: null }), read: async () => seen, windows: async () => [window], systemDialogOpen: async () => false,
+      perceive: async (q: { image: boolean }) => ({ ...seen, ...(o.pictured ? { nodes: o.pictured() } : {}), text: "<screen>",
+        capture: o.pictured && q.image ? { rect: window.bounds, data: Buffer.from("pixels"), mimeType: "image/jpeg", width: 800, height: 600, scale: 1 } : null }), read: async () => seen, windows: async () => [window], systemDialogOpen: async () => false,
       ...(o.promptOpen ? { promptOpen: async () => o.promptOpen!() } : {}),
     } as never,
     sidecar: {
@@ -428,7 +434,8 @@ describe("fill_from_vault where the field takes no text by accessibility (vault-
     const r = await h.call("fill_from_vault", { id: 2, what: "password" });
     expect(r.resultType).toBe("success");
     expect(h.put).toEqual([{ id: 2, text: CANARY, how: "accessibility" }, ...(CANARY.match(/[\s\S]{1,8}/g) ?? []).map(text => ({ id: 2, text, how: "keys" as const }))]);
-    expect(h.hand.filter(x => !x.startsWith("glide"))).toEqual(["click", "keys ctrl+a", "keys Delete", ...Array(Math.ceil(CANARY.length / 8)).fill("type")]);
+    // The helper is told the field is secret before the first key (vault-3).
+    expect(h.hand.filter(x => !x.startsWith("glide"))).toEqual(["click", "mark 2", "keys ctrl+a", "keys Delete", ...Array(Math.ceil(CANARY.length / 8)).fill("type")]);
     expect(h.state.clipboard).toBe(0);
     expect(h.state.borrows).toBe(1);
     expect(h.actions()).toEqual([expect.objectContaining({ kind: "vault_fill", ok: true, tier: 3, via: "keys", vault: { kind: "login", part: "password", site: "https://github.com" } })]);
@@ -486,5 +493,32 @@ describe("fill_from_vault where the field takes no text by accessibility (vault-
     const short = await worker({ saved: [LOGIN], put: async () => ({ ok: true, took: false }) });
     await short.call("perceive_window", {});
     expect((await short.call("fill_from_vault", { id: 2, what: "password" })).textResultForLlm).toMatch(/didn't take all of what the vault holds/);
+  });
+});
+
+describe("after a fill from the vault (vault-3)", () => {
+  it("types nothing into a field the helper couldn't be told is secret: no read or picture could be kept clear of it", async () => {
+    const h = await worker({ saved: [LOGIN], put: async () => { throw new Error(VAULT_FILL_UNAVAILABLE); }, mark: async () => { throw new Error("the helper is down"); } });
+    await h.call("perceive_window", {});
+    const r = await h.call("fill_from_vault", { id: 2, what: "password" });
+    expect(r.resultType).toBe("failure");
+    expect(r.textResultForLlm).toMatch(/so nothing was typed/);
+    expect(h.put.filter(p => p.how === "keys")).toEqual([]);
+    expect(h.hand).not.toContain("keys ctrl+a");
+    expect(h.everything([r])).not.toContain(CANARY);
+  });
+
+  it("sends no picture in which a field it filled shows as an ordinary field, and sends one where the read found it secret", async () => {
+    let secret = false;
+    const h = await worker({ saved: [LOGIN], pictured: () => [BAR, PAGE, SEARCH, { ...USERNAME, ...(secret ? { secret: true } : {}) }, PASSWORD, SIGN_IN] });
+    const look = () => h.call("perceive_window", { image: true }) as Promise<{ textResultForLlm: string; resultType: string; binaryResultsForLlm?: unknown[] }>;
+    expect((await look()).binaryResultsForLlm).toHaveLength(1); // before any fill, pictures go as ever
+    expect((await h.call("fill_from_vault", { id: 1, what: "user name" })).resultType).toBe("success");
+    const shown = await look();
+    expect(shown.binaryResultsForLlm).toBeUndefined();
+    expect(shown.textResultForLlm).toContain("(No screenshot: a field Ember filled from its vault couldn't be hidden in it. Work from the text.)");
+    expect(h.audit.filter(e => e.kind === "screenshot")).toHaveLength(1);
+    secret = true;
+    expect((await look()).binaryResultsForLlm).toHaveLength(1);
   });
 });

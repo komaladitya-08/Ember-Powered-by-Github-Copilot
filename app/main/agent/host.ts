@@ -25,6 +25,7 @@ import { hasConsent, type SettingsStore } from "../settings";
 import type { BubbleState, EmberState } from "../../shared/overlay";
 import type { ConversationContext } from "../../shared/ipc";
 import { TaskManager, handedElsewhere, taskOutcome, titleOf, type KeptCard, type RetriedWords, type StopCause, type Task, type WorkerLike } from "./tasks";
+import { redactingClient, type ModelRedactor } from "./redacting-client";
 import { LINUX_WORKER_SYSTEM, Worker, type TaskSpec, type WorkerDeps, type WorkerSystem, type WorkerVault } from "./worker";
 import type { Confirmer } from "./confirm";
 import type { WindowTarget } from "../perception";
@@ -423,6 +424,11 @@ export interface HostOptions {
    * a task in WSL or on a computer reached over SSH. Absent: no task has the tool.
    */
   vault?: WorkerVault;
+  /**
+   * The vault's redactor (app/main/vault/redact.ts): the runtime client is wrapped in it (redactingClient), so no
+   * prompt, system message or tool result of any session holds a value the vault filled. Absent: nothing is filled.
+   */
+  redact?: ModelRedactor;
   /**
    * How much the bubble's type is scaled now (the user's text size: page-prefs' textScale): an answer that needs more
    * than the bubble's six lines at that size offers Read all (cross-review X2). Default 1.
@@ -1948,7 +1954,9 @@ export class AgentHost {
       let login: string | undefined;
       for (let attempt = 1; ; attempt++) {
         // The sign-in goes to the runtime in one place only, and no inherited GitHub credential goes with it (runtime-env.ts).
-        client = new CopilotClient(runtimeClientOptions({ userData: this.o.userData, runtimePath: this.o.runtimePath, token, provider: !!provider, env }));
+        const runtime = new CopilotClient(runtimeClientOptions({ userData: this.o.userData, runtimePath: this.o.runtimePath, token, provider: !!provider, env }));
+        // Every session of this client sends its text through the vault's redactor (PLAN.md §2 "Approvals", "The vault").
+        client = this.o.redact ? redactingClient(runtime, this.o.redact) : runtime;
         // Known before it starts, so a stop() that comes meanwhile stops it too.
         this.client = client;
         await startStep(client.start(), "start");

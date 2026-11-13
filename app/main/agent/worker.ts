@@ -227,6 +227,11 @@ export interface WorkerVault {
   use<R>(kind: VaultKind, part: VaultPart, dest: VaultDestination, put: (value: string) => Promise<R>): Promise<{ ok: true; result: R } | { ok: false; why: "off" | "none" | "part" }>;
   /** The addresses of the web documents around element `id`, nearest first (AtspiSidecar.pageAddress); rejects where they can't be read. */
   pages(id: number): Promise<string[]>;
+  /**
+   * The helper is told field `id` is secret from now on (AtspiSidecar.markSecret), before a value is typed into it as
+   * keys: no read reports what it holds, and every picture blacks it out. Rejects when it couldn't be: nothing is typed.
+   */
+  mark(id: number): Promise<void>;
   /** The helper's vault_fill (AtspiSidecar.vaultFill): rejects with one of its three fixed sentences. */
   put(id: number, text: string): Promise<{ ok: boolean; took?: boolean }>;
 }
@@ -294,6 +299,8 @@ export interface WorkerResult {
 const VAULT_FIELD_ROLES: ReadonlySet<string> = new Set(["password text", "text", "entry"]);
 /** What the model hears of a vault fill: whether it happened, never what was filled. */
 const FILLED = "Filled from the vault. You can't see or read what was filled, and you don't need to: go on with the task.";
+/** A picture that would show a field filled from the vault: not sent. */
+const NO_PICTURE_VAULT = "\n(No screenshot: a field Ember filled from its vault couldn't be hidden in it. Work from the text.)";
 const NOTHING_FILLED = "Nothing was filled from the vault here. Don't type it yourself or try another way; tell the user in finish_task what is left for them to fill in.";
 const NOT_SAVED = "The user closed Ember's Secure Form without saving, so nothing was filled. Don't ask again or try another way; tell the user in finish_task what is left for them to fill in.";
 const NOT_SAVED_BEFORE = "The user already closed Ember's Secure Form for this in this task, so it isn't asked again and nothing was filled. Tell the user in finish_task what is left for them to fill in.";
@@ -2699,8 +2706,14 @@ export class Worker {
     // The raw names and text, not the formatted read: that is wrapped in Ember's own <screen> tag, with "<" escaped. Each
     // control on its own: a phrase never runs from one control's name into the next ("Ignore", "All", "Rules").
     const flagged = this.flagInjection(readText, "window", p.window.app);
-    const result: ToolResultObject = { textResultForLlm: `${p.text}${dialogNote(p.window, p.nodes, this.userWords, this.sys.os)}${flagged ? INJECTION_NOTE : ""}`, resultType: "success" };
-    if (p.capture) {
+    // A field this task filled from the vault must be blacked out of every picture for the rest of the task, as a
+    // secret field is (Perception masks what the read found secret): one the read lists as an ordinary field would
+    // show, so that picture isn't sent (fail closed).
+    const shows = !!p.capture && this.vaultFilled.size > 0
+      && p.nodes.some(n => !n.secret && !!n.bounds && this.vaultFilled.has(this.fieldOf({ role: n.role, name: this.nameOf(n.id, n) })));
+    if (shows) this.d.log.warn("worker.vault_field_unmasked", { task: this.spec.id });
+    const result: ToolResultObject = { textResultForLlm: `${p.text}${shows ? NO_PICTURE_VAULT : ""}${dialogNote(p.window, p.nodes, this.userWords, this.sys.os)}${flagged ? INJECTION_NOTE : ""}`, resultType: "success" };
+    if (p.capture && !shows) {
       // Every picture of a window sent to the model is recorded first, by its app and size (never its title), so What
       // Ember did can say it went (safety-privacy-6); one that can't be recorded isn't sent (audit() throws).
       this.audit({ event: "read", task: this.spec.id, kind: "screenshot", app: p.window.app, ok: true, bytes: p.capture.data.length, ...(this.place ? { onDesk: true } : {}) });
@@ -3393,6 +3406,12 @@ export class Worker {
         }
         const changed = await still();
         if (changed) throw new Error("The field or its page changed before Ember could fill it, so nothing was typed.");
+        // Secret before the first key, as the helper's own fill makes it: no read from now on reports what it holds,
+        // and every picture blacks it out. A field that can't be marked is typed nothing (fail closed).
+        const marked = await (this.d.vault ? this.d.vault.mark(id) : Promise.reject(new Error("no vault"))).then(() => true, () => false);
+        if (this.isOver) throw new BorrowStopped();
+        if (!marked) throw new Error("Ember couldn't make sure the field stays out of what it reads and its screenshots, so nothing was typed.");
+        this.noteVaultFill(id, node, element, part);
         await hand.keys(kc.edit.selectAll);
         await hand.keys("Delete");
         const cant: unknown = await hand.type(value).then(() => null, (err: unknown) => err ?? new Error("typing failed"));

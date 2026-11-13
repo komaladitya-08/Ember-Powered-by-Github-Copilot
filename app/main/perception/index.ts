@@ -14,7 +14,7 @@ import { PLATFORM_WORDS, type PlatformWords } from "../../shared/words";
 import { isSecurityWindow as linuxSecurityWindow } from "../policy/policy";
 import { captureRect, type Capture } from "./capture";
 import { marksSvg } from "./marks";
-import { focusedElement, insideSecrets, isNeverLook, isSecretNode, secretIds, serializeElements, inferLabels, quoteUntrusted, screenWord, withheldIds } from "./elements";
+import { FIELD_ROLES, WINDOW_ROLES, focusedElement, insideSecrets, isNeverLook, isSecretNode, secretIds, serializeElements, inferLabels, quoteUntrusted, screenWord, withheldIds } from "./elements";
 import { helperCantRun, scaleBounds, type AxNode, type AxWindow, type Bounds, type FocusBefore, type OtherWindow, type PointElement, type ReadWindowResult } from "./sidecar";
 import { coveringRects, elementScales, isPopupOf, matchFrame, OVERLAY_TITLE, samePopups, scaleNodes, shellCovers, uncoveredArea, type FrameMatch } from "./windows";
 import type { OS, PerceptionWindows, PrivacyVocabulary, StackedWindow, X11Window } from "../platform/types";
@@ -56,6 +56,18 @@ export interface PerceptionOptions {
    * are blacked out of every screenshot. Absent on Linux and macOS, which capture as before.
    */
   isRemoteSurface?: (app: string) => boolean;
+  /**
+   * Does this text hold a value Ember filled from its vault in this run (VaultRedactor.holds; PLAN.md §2 "Approvals",
+   * "The vault")? An element that says one is treated as a secret field from then on: what it says is dropped from
+   * every read and its place is blacked out of every picture, and a window whose own title says one gets no picture.
+   * Absent (Ember's desk, another computer's screen, where nothing is filled): no such check.
+   */
+  holdsVaultValue?: (text: string) => boolean;
+  /**
+   * Has Ember filled a value in this run that an app shows as it is (VaultRedactor.shown)? Then a picture is taken only
+   * of a window read whole: in a read cut short, a line that repeats the value may be among what wasn't read.
+   */
+  vaultShown?: () => boolean;
   /** How a screenshot is taken (default captureRect; the remote agent passes its own, which needs no sharp). */
   capture?: typeof captureRect;
   /**
@@ -268,11 +280,31 @@ export class Perception {
     const inside = insideSecrets(nodes, secret);
     const saysSelected = new Set<number>();
     const withheld = withheldIds(nodes, secret, saysSelected);
-    const fresh = nodes.filter(n => secret.has(n.id) && !n.secret).map(n => n.id);
-    if (!fresh.length && !inside.size && !withheld.size && !saysSelected.size) return nodes;
+    // Whatever says a value Ember filled from its vault (the field itself where an app lets it be read, a line that
+    // repeats it, a tab or a title named after it): its words go, and it is blacked out of pictures as a secret field is.
+    const holds = this.o.holdsVaultValue;
+    const says = (t: string | undefined) => { try { return !!t && !!holds && holds(t); } catch { return true; } }; // a check that fails hides it
+    const vaultNamed = new Set<number>();
+    const vaultHeld = new Set<number>();
+    if (holds) {
+      for (const n of nodes) {
+        if (says(n.name)) vaultNamed.add(n.id);
+        if (vaultNamed.has(n.id) || says(n.text) || says(n.selection) || says(n.selected) || (n.value !== undefined && says(String(n.value)))) vaultHeld.add(n.id);
+      }
+    }
+    // A field is kept secret by the helper too (nothing is typed into it); a line of text is found again at each read.
+    const fresh = nodes.filter(n => !n.secret && (secret.has(n.id) || (vaultHeld.has(n.id) && FIELD_ROLES.has(n.role)))).map(n => n.id);
+    if (!fresh.length && !inside.size && !withheld.size && !saysSelected.size && !vaultHeld.size) return nodes;
     if (fresh.length) await Promise.resolve().then(() => this.o.sidecar.markSecret(fresh)).catch(err => this.o.log.warn("perception.mark_secret_failed", { err }));
     return nodes.flatMap(n => {
       if (inside.has(n.id)) return [];
+      if (vaultHeld.has(n.id)) {
+        const { text: _text, selection: _selection, selected: _selected, value: _value, ...rest } = n;
+        const named = vaultNamed.has(n.id);
+        // A window's own node covers the whole picture: it is only marked (perceive takes no picture of such a window).
+        if (WINDOW_ROLES.has(n.role)) return [named ? { ...rest, name: "", withheld: true } : rest];
+        return [{ ...rest, ...(named ? { name: "", withheld: true } : {}), secret: true }];
+      }
       if (withheld.has(n.id)) {
         // Marked, so what it is called counts as unknown (the policy asks before a click on it).
         const { text: _text, selection: _selection, selected: _selected, ...rest } = n;
@@ -550,6 +582,10 @@ export class Perception {
       this.o.log.warn("perception.capture_declined", { reason: "Ember's own windows could not be listed" });
       return noShot("Ember couldn't check where its own windows are");
     }
+    // A title that says something Ember filled from its vault is in the window's own pixels (its title bar, its tab):
+    // no rectangle Ember knows covers it, so there is no picture.
+    if (this.vaultTitled(seen)) return noShot("the window's title shows something Ember filled from its vault");
+    if (seen.truncated && this.vaultMayShow()) return noShot("Ember couldn't read the whole window, so it can't tell where what it filled from its vault shows");
     const secrets = seen.nodes.filter(n => n.secret && n.bounds);
     const k = seen.axScale;
     // Before every picture the window's secret fields are looked for on their own too (in the app's own pixels): a
@@ -665,6 +701,22 @@ export class Perception {
     if (this.unmatchedPopups.has(key) || this.unmatchedPopups.size >= UNMATCHED_POPUPS_LOGGED) return;
     this.unmatchedPopups.add(key);
     this.o.log.info("perception.popup_unmatched", { app: p.wmClass, width: p.width, height: p.height, ...(this.o.os ? { os: this.o.os } : {}) });
+  }
+
+  /** Does the window's own title say a value Ember filled from its vault (as the app tells it, or as the window system does)? */
+  private vaultTitled(seen: Seen): boolean {
+    const holds = this.o.holdsVaultValue;
+    if (!holds) return false;
+    try {
+      return [seen.window?.name, seen.x11Window?.title].some(t => !!t && holds(t)) || seen.nodes.some(n => WINDOW_ROLES.has(n.role) && n.withheld === true);
+    } catch {
+      return true; // a check that fails: no picture
+    }
+  }
+
+  /** Could a value Ember filled from its vault show in a window as it is? A check that fails says yes. */
+  private vaultMayShow(): boolean {
+    try { return !!this.o.vaultShown?.(); } catch { return true; }
   }
 
   /**

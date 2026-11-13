@@ -15,7 +15,7 @@ const INTERACTIVE = new Set(["push button", "toggle button", "check box", "radio
 /** Text that labels a control: GTK's and Qt's labels, Chromium's plain text. Keep in step with LABEL_ROLES in ember_atspi.py. */
 const LABEL_ROLES = new Set(["label", "static", "caption"]);
 /** Input fields, whose label can make their contents secret (documents and terminals are not judged by name). */
-const FIELD_ROLES = new Set(["text", "entry", "password text", "spin button", "combo box"]);
+export const FIELD_ROLES = new Set(["text", "entry", "password text", "spin button", "combo box"]);
 /**
  * Controls a label on their row names (a label beside a link or a button is usually a heading).
  * Keep in step with LABELLED_ROLES in ember_atspi.py.
@@ -217,7 +217,7 @@ export function secretIds(nodes: AxNode[], labels = inferLabels(nodes, { anyAbov
 }
 
 /** The window itself (its title is reported as the window's): where looking up from a field stops. */
-const WINDOW_ROLES = new Set(["frame", "window", "dialog", "alert", "file chooser", "desktop frame", "application"]);
+export const WINDOW_ROLES = new Set(["frame", "window", "dialog", "alert", "file chooser", "desktop frame", "application"]);
 /** How far up from a secret field its containers are looked at. Keep in step with WITHHELD_LEVELS in ember_atspi.py. */
 const WITHHELD_LEVELS = 12;
 /** Text as a secret's value is looked for in a name: normalised, without whitespace or U+FFFC (see squash in ember_atspi.py). */

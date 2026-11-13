@@ -124,6 +124,7 @@ import { registerProviderIpc } from "./provider-ipc";
 import { VAULT_FILE, VaultStore } from "./vault/store";
 import { createVaultForm, type VaultFormController } from "./vault/form";
 import { VaultService, registerVaultHomeIpc } from "./vault/service";
+import { VaultRedactor } from "./vault/redact";
 import { VAULT_IPC } from "../shared/vault";
 import { registerApprovalsIpc } from "./approvals-ipc";
 import { registerFirstRunIpc } from "./first-run";
@@ -208,9 +209,13 @@ try { fs.mkdirSync(userData, { recursive: true, mode: 0o700 }); fs.chmodSync(use
 
 // Any case; a name that isn't a level means info, said in the log (review #90).
 const wantedLevel = logLevel(process.env.EMBER_LOG_LEVEL);
+// The vault's redactor (app/main/vault/redact.ts): every value the vault fills is noted here, in memory only, and
+// replaced wherever text leaves for a model, the audit log or the logs. Made before the logger, which passes every line through it.
+const vaultRedactor = new VaultRedactor();
 const log = createLogger({
   dir: path.join(userData, "logs"),
   level: wantedLevel.level,
+  redact: text => vaultRedactor.text(text),
   // `ember doctor` prints a report; log lines would get in its way.
   stdout: !process.argv.includes("--doctor") && (process.env.EMBER_LOG_STDOUT === "1" || !app.isPackaged),
 });
@@ -2195,6 +2200,8 @@ function start(): void {
     allowed: () => vaultAllowed(admin), consented: () => consented(), autopilot: () => approvalsNow().autopilot,
     appName: friendlyApp, log: log.child("vault"),
     changed: () => sendToHome(VAULT_IPC.changed, null),
+    // Every value is noted by the redactor before it is put anywhere (nothing read back holds it).
+    filling: (part, value) => vaultRedactor.note(part, value),
   });
   vaultRef = vault;
   /** The endpoint in force now: the administrator's (or a development test server) once main has set it, else the user's own. */
@@ -3401,6 +3408,8 @@ function start(): void {
       // Every display in the window system's units; Electron's displays (X11's arithmetic) when none opened.
       screenBounds: () => (ws ? ws.screenBounds() : primaryScaledUnion(screen)),
       words: sys.words,
+      // What Ember filled from its vault is dropped from every read and blacked out of every picture (redact.ts).
+      holdsVaultValue: text => vaultRedactor.holds(text), vaultShown: () => vaultRedactor.shown,
       isSecurityWindow: privacy.isSecurityWindow,
       // Linux: a pinentry, ssh-askpass or polkit agent's window, focused or not, stops all reading (safety-privacy-3).
       isPromptWindow: sys.privacy.isPromptWindow,
@@ -3434,7 +3443,7 @@ function start(): void {
     const seeing = perception;
     // Hands: the policy engine decides every action; the confirmer asks the user with bubble buttons.
     audit = new AuditLog(path.join(userData, "audit"), undefined, sys.auditSink(err => log.warn("audit.journal_failed", { err })),
-      err => log.warn("audit.write_failed", { err }));
+      err => log.warn("audit.write_failed", { err }), entry => vaultRedactor.deep(entry));
     // The approval mode as the log opens: changes made before now, and the mode found in force in settings.json at start
     // (by hand, or from the last run): recorded, or else not in force (fail closed).
     modes.opened(audit);
@@ -3837,12 +3846,14 @@ function start(): void {
       // The vault's fill, for tasks on this screen: the service hands a value only to the helper's own vault_fill (or
       // to the borrow's typing), and only this computer's own helper is ever asked (never a WSL distro's: its ids
       // aren't this one's).
+      redact: vaultRedactor,
       vault: {
         usable: () => vault.usable(), has: (kind, dest) => vault.has(kind, dest),
         ask: (kind, dest, via) => vault.ask(kind, dest, via ? friendlyApp(via) : null),
         use: (kind, part, dest, put) => vault.use(kind, part, dest, put),
         pages: id => (sidecar.ownsId(id) ? sidecar.pageAddress(id) : Promise.reject(new Error("not this computer's element"))),
         put: (id, text) => (sidecar.ownsId(id) ? sidecar.vaultFill(id, text) : Promise.reject(new Error("not this computer's element"))),
+        mark: id => (sidecar.ownsId(id) ? sidecar.markSecret([id]) : Promise.reject(new Error("not this computer's element"))),
       },
     });
     // The network came back (or the computer woke): a connection waiting to retry tries now. (Electron's
