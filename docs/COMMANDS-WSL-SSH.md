@@ -126,7 +126,9 @@ that only read, list, search, measure, convert, compile, test or build what they
 `tree`, `gcc`, `tsc`, `pytest`, `eslint`, `ffprobe`, `pdftotext`, `lscpu` and some hundreds more), and in PowerShell a
 cmdlet it has no rule for only when its verb only reads (`Get-`, `Test-`, `Measure-`, `Select-`, `Where-`, `Sort-`,
 `Group-`, `Format-`, `ConvertTo-`, `ConvertFrom-`, `Compare-`, `Resolve-`, `Split-`, `Join-`). A program given by a path
-in the command's folder (your project's `./build.sh`, `bin/tool`, `node_modules/.bin/x`) is judged as before. Of a tool
+in the task's folder (your project's `./build.sh`, `bin/tool`, `node_modules/.bin/x`) is judged as before: the folder
+the task started in, not one a `cd` on the same line moved to, and never a folder programs are usually found in
+(`/usr/bin`, `/usr/local/bin`, `~/bin`, `~/.local/bin`, `C:\Windows\System32`). Of a tool
 with several commands (`cargo`, `go`, `pip`, `uv`, `poetry`, `stack`, `cabal`, `mix`, `sbt`, `bazel`, `deno`, `dotnet`,
 `systemctl`, `tmux`, `pyenv`, `nvm` and others), only the commands Ember knows run straight away: `cargo build`, `go
 mod tidy`, `pip config list`, `tmux ls`. Anything else asks (§2.4).

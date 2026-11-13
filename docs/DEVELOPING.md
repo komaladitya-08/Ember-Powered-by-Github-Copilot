@@ -2320,8 +2320,8 @@ renderer logic through exported pure modules (state reducers, option objects), n
 `test/unit/{sshwsl,commands,wsl,ssh,remote,targets,command,prompt,askpass,visible-text}*`: those are what the
 `unit-matrix` job runs on every OS. The classifier's cases live in `test/fixtures/commands/{posix,powershell,cmd,wsl}.json`;
 add one with every fix. The default is closed (commands-closed): a program with no row asks (class `unknown`, rule
-`unknown.program`) unless it is on `ORDINARY_PROGRAMS` (tables.ts) or given by a path in the command's folder, and a
-verb-keyed tool on `ORDINARY_VERBS` asks (`unknown.verb`) for a verb off its list that its row found nothing in; the
+`unknown.program`) unless it is on `ORDINARY_PROGRAMS` (tables.ts) or given by a path in the task's folder (where it
+started, not after a `cd`), and a verb-keyed tool on `ORDINARY_VERBS` asks (`unknown.verb`) for a verb off its list that its row found nothing in; the
 user's own words naming the program announce it (`matchIntent`). `test/fixtures/commands/everyday.json` holds over 400
 everyday commands that must keep running with no question (commands-closed.test.ts): add a program to either list only
 when it fits their rule (it reads, lists, measures, converts, compiles, tests or builds what it is given, and can't run a

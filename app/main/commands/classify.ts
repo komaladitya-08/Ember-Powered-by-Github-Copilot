@@ -3873,7 +3873,7 @@ function generic(h: H, noRow = false): void {
 function unknownProgram(h: H): void {
   // Main's reading of a held row (runRow) ran what it took for the program, as every program with no row ran there.
   if (h.e.readsAsMain || h.nameArg.v === null) return;
-  if (h.pn.isPath && ownFolder(h.nameArg.v, h.sc)) return;
+  if (h.pn.isPath && ownFolder(h.nameArg.v, h.sc, h.e.ctx.cwd || null)) return;
   const tool = ORDINARY_VERBS[h.key] ?? ORDINARY_VERBS[unversioned(h.key)];
   if (tool) { toolVerbs(h, tool, true); return; }
   if (knownProgram(h.key)) {
@@ -4091,20 +4091,36 @@ function knownProgram(key: string): boolean {
 }
 
 /**
- * Whether a program's path is in the command's own folder: relative and staying in it, or absolute (or from ~) and
- * under it, never through a hidden folder of its own (`.git/hooks/x`, `.cache/x`) but a package manager's `.bin`.
+ * Whether a program's path is in the task's own folder (`start`): relative and staying in it, or absolute (or from ~)
+ * and under it, never through a hidden folder of its own (`.git/hooks/x`, `.cache/x`) but a package manager's `.bin`.
  * With no folder known, a relative path that doesn't climb out (`..`) is.
  */
-function ownFolder(word: string, sc: Scope): boolean {
+function ownFolder(word: string, sc: Scope, start: string | null): boolean {
   const env = sc.path;
   const sep = env.flavour === "posix" ? /\// : /[\\/]/;
   const relative = !word.startsWith("~") && !isAbsolute(word, env.flavour);
   if (!sc.cwd) return relative && !word.split(sep).includes("..");
+  // The task's folder, not the one a `cd` on the line moved to (`cd /usr/bin && ./dropdb`: commands-closed-x9-3). A
+  // line that moved from a folder Ember doesn't know has none.
+  if (!start || (sc.cwd !== start && !isUnder(sc.cwd, start, env))) return false;
   if (word.startsWith("~") && !sc.home) return false;
   const abs = resolveTargetPath(word, { os: sc.os, home: sc.home ?? "", cwd: sc.cwd });
-  if (!isUnder(abs, sc.cwd, env) || abs === sc.cwd) return false;
-  const rest = abs.slice(sc.cwd.length).split(sep).filter(Boolean);
+  if (!isUnder(abs, start, env) || abs === start) return false;
+  // A program found in a folder on the usual PATH is known by its name, even when the task's folder holds that folder.
+  const dir = abs.slice(0, Math.max(abs.search(env.flavour === "posix" ? /\/[^/]*$/ : /[\\/][^\\/]*$/), 0));
+  if (pathFolders(sc).some(f => isUnder(dir, f, env) && isUnder(f, dir, env))) return false;
+  const rest = abs.slice(start.length).split(sep).filter(Boolean);
   return !rest.slice(0, -1).some(seg => seg.startsWith(".") && seg !== ".bin");
+}
+
+/** The folders a target's PATH usually holds (commands-closed-x9-3): a program there is the system's or the user's, not the project's. */
+function pathFolders(sc: Scope): string[] {
+  const home = sc.home;
+  if (sc.path.flavour === "win32") {
+    return ["C:\\Windows", "C:\\Windows\\System32", "C:\\Windows\\SysWOW64", ...(home ? [`${home}\\bin`, `${home}\\.local\\bin`, `${home}\\scoop\\shims`, `${home}\\.cargo\\bin`, `${home}\\go\\bin`] : [])];
+  }
+  return ["/bin", "/sbin", "/usr/bin", "/usr/sbin", "/usr/local/bin", "/usr/local/sbin", "/opt/homebrew/bin", "/opt/homebrew/sbin", "/snap/bin",
+    ...(home ? [`${home}/bin`, `${home}/.local/bin`, `${home}/.cargo/bin`, `${home}/go/bin`, `${home}/.npm-global/bin`, `${home}/.deno/bin`, `${home}/.bun/bin`] : [])];
 }
 
 /** Programs Ember has no row for that only list or measure what a folder holds (`eza -la ~`, `fd foo ~`, `dust ~`). */

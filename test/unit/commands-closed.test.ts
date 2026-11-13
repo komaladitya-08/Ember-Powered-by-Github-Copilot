@@ -92,6 +92,17 @@ describe("the user's own words for a program Ember doesn't know (commands-closed
   });
 });
 
+describe("the task's own folder for a program given by a path (commands-closed-x9-3)", () => {
+  it("asks before a program a cd on the line reached outside the task's folder, or one in a folder on the usual PATH (commands-closed-x9-3)", () => {
+    for (const cmd of ["cd /usr/bin && ./dropdb prod", "cd / && usr/bin/dropdb prod", "pushd /usr/local/bin && ./dropdb prod", "cd /tmp && ./dropdb",
+      "cd /usr/local/bin && ./hyperfine 'rm -rf ~/Documents'"]) {
+      expect(decide(cmd).rules, cmd).toContain("unknown.program");
+    }
+    // The project's own scripts, also after a cd inside it, run as before.
+    for (const cmd of ["./build.sh", "cd src && ./gen.sh", "bin/tool", "cd packages/app && node_modules/.bin/tsc"]) expect(decide(cmd).verdict, cmd).toBe("run");
+  });
+});
+
 describe("the command a tool runs for its user (commands-closed-x9-2)", () => {
   it("judges an exec verb's command and a watcher's or timer's shell text, so naming the tool never announces a download-and-run or a deletion (commands-closed-x9-2)", () => {
     const cases: [string, string][] = [
