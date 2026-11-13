@@ -137,11 +137,13 @@ export class ProviderRecord {
     let out: T;
     try { out = change(); } finally { this.mine = false; }
     const now = this.d.settings.own().provider.consent;
+    const was = this.good;
     this.good = now;
     // The user agreed in Home now: what the file held before the seal was read is theirs now.
     this.sealing = false;
     this.record("home");
     if (this.d.seal && agrees(now)) void this.d.seal.write(now).then(kept => { if (!kept) this.d.log.warn("provider.seal_not_kept", {}); });
+    else if (agrees(was)) this.forgetSeal();
     return out;
   }
 
@@ -183,8 +185,14 @@ export class ProviderRecord {
       return;
     }
     // A withdrawal (or nothing about the card) stands.
+    if (agrees(this.good) && !agrees(own)) this.forgetSeal();
     this.good = own;
     this.record("settings");
+  }
+
+  /** No agreement stands: the seal says so, so an old yes left in the file isn't taken at the next start (r10-safety-y10-4). */
+  private forgetSeal(): void {
+    if (this.d.seal) void this.d.seal.write(NO_PROVIDER_CONSENT).then(kept => { if (!kept) this.d.log.warn("provider.seal_not_kept", {}); });
   }
 
   /** Writes the user's agreement back to `c`; where that can't be saved, no provider of the user's is in force until Ember restarts. */

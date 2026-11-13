@@ -114,6 +114,21 @@ describe("the card's yes for the user's own model provider (safety-privacy-c10-1
     expect(next.used()).toBe("models.example.com");
   });
 
+  it("forgets the seal when the user takes their yes back, so the old yes in the file isn't taken at the next start (r10-safety-y10-4)", async () => {
+    const seal = memorySeal(null);
+    const c = setup(provider(GOOD, NO_PROVIDER_CONSENT), { seal: seal.store });
+    c.service.api.agree("models.example.com");
+    await new Promise(r => setTimeout(r, 0));
+    const agreed = c.settings.own().provider.consent;
+    c.settings.update({ provider: { ...c.settings.own().provider, consent: NO_PROVIDER_CONSENT } as never });
+    await new Promise(r => setTimeout(r, 0));
+    expect(seal.value()).toEqual(NO_PROVIDER_CONSENT);
+    const next = setup(provider(GOOD, agreed), { seal: seal.store });
+    await next.record.sealed;
+    expect(next.used()).toBeNull();
+    expect(next.settings.own().provider.consent).toEqual(NO_PROVIDER_CONSENT);
+  });
+
   it("doesn't put a provider in force that the audit log can't record (safety-privacy-c10-1)", async () => {
     const c = setup(provider(GOOD, yes("models.example.com")), { seal: memorySeal(yes("models.example.com")).store, open: false });
     await c.record.sealed;

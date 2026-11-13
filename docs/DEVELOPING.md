@@ -1632,7 +1632,8 @@ the address in force and its saved key are kept and come back with the switch (i
   settings changes can't carry it (`settingsFromHome` drops `provider.consent`, as it does `extensions.consent`), and
   nor can `settings.json` (safety-privacy-c10-1; app/main/provider-record.ts): a yes the file gains while Ember runs
   (typed there by hand, or by an editor a task drives) is put back, and at start a yes is taken only where it matches
-  the seal Ember wrote with the keyring when the user agreed (`provider-seal.bin`, 0600); until that seal is read no
+  the seal Ember wrote with the keyring when the user agreed (`provider-seal.bin`, 0600; taking the yes back seals
+  "no agreement" in its place); until that seal is read no
   provider of the user's is in force, and one that doesn't match is withdrawn, so Home shows the card again. Without
   a keyring (`basic_text`) nothing is sealed: the yes lasts until Ember quits, and the card asks again at the next
   start. Every change of the user's provider in force is a `provider` audit entry (its host, the one before, and
