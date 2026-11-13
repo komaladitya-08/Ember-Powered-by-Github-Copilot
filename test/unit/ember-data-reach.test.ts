@@ -118,6 +118,17 @@ describe("Ember's own settings, audit log and policy reached through another app
     expect(mayReachEmberData(req("org.gnome.Nautilus", "Documents", { kind: "keys", value: "Delete", afterSelectAll: true, element: view("linux") }))).toBe(false);
   });
 
+  it("takes a VS Code title that names another workspace as showing whose settings.json it is, and still asks for one named ember (r10-safety-x10-3)", () => {
+    expect(mayReachEmberData(req("code", "settings.json - myapp - Visual Studio Code", { kind: "keys", value: "ctrl+s" }))).toBe(false);
+    expect(mayReachEmberData(req("code", "● settings.json - myapp - Visual Studio Code", { kind: "text", value: "x" }))).toBe(false);
+    expect(engine("autopilot", "linux", { code: "act" }).decide(req("code", "settings.json - myapp - Visual Studio Code", { kind: "text", value: "x" })).verdict).not.toBe("deny");
+    expect(mayReachEmberData(req("code", "settings.json - ember - Visual Studio Code", { kind: "text", value: "x" }))).toBe(true);
+    expect(mayReachEmberData(req("code", "settings.json - Visual Studio Code", { kind: "text", value: "x" }))).toBe(true);
+    // Notepad's and Kate's own titles have no workspace part: still asked.
+    expect(mayReachEmberData(req("notepad", "*settings.json - Notepad", { kind: "text", value: "x" }))).toBe(true);
+    expect(mayReachEmberData(req("kate", "settings.json — Kate", { kind: "text", value: "x" }))).toBe(true);
+  });
+
   it("never sends such a step to Assisted's check, and Autopilot refuses the worker's held question about it (safety-privacy-r10-1)", async () => {
     const e = engine("assisted", "linux", { kate: "act" });
     const r = req("kate", "settings.json — Kate", { kind: "text", value: "x" });
