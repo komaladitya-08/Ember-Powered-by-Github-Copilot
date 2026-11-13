@@ -329,6 +329,16 @@ export function isStop(text: string): boolean {
 }
 
 /**
+ * "Stop.", "Stop it.", "No, stop that.", and a lone "stop" as the recognizer writes it short ("Stuff.", "Step.", "St"):
+ * the word itself, not the other ways to ask for quiet that isStop takes ("Never mind.", "Cancel.", "That's enough.",
+ * "Quiet."). What the room says without the name in a question's answer window stops Ember only so (V2-S8).
+ */
+export function saidStop(text: string): boolean {
+  if (/^(the\s+)?(st|stop|stopped|stuff|step|stap|stob|stup)[\s.!]*$/i.test(text)) return true;
+  return /^((please|ok|okay|no|oh|ember)[\s,.!]+)*stop([\s,.!]+(stop|it|that|now|please|talking|everything|ember|already))*[\s.!,]*$/i.test(text);
+}
+
+/**
  * "Hey Ember, stop" anywhere in what the microphone heard while Ember spoke (its own words can come before and after it).
  * The recognizer writes a lone "stop" as "stopped", "Stuff." or "Step." too ("A. Ember stopped.", "'pay ember' stopped
  * talking."): those count where the phrase ends with them, not in a sentence of Ember's ("The ember stopped glowing.");
@@ -2170,7 +2180,12 @@ export class VoiceEngine {
       if (wakePhrase && paused && !this.busyRoom) { this.wakePeak = Math.max(this.wakePeak, this.peak); this.peak = 0; }
       return;
     }
-    if (stopped(text) || (this.mode.reason === "manual" && isStop(stripWake(text, false)))) {
+    // In a question's answer window, without the name, only "stop" itself stops (saidStop). Ember is silent there and
+    // listens to the room, whose "Never mind.", "Cancel.", "That's enough." or "Quiet." pulled the kill switch for every
+    // task (V2-S8): they go nowhere, like the rest of the room's talk. Said by name, as the recognizer wrote it, each
+    // stops as ever (stopping is the safe side).
+    const roomTalk = this.mode.reason === "answer" && !calledByName(heard);
+    if ((roomTalk ? saidStop(text) : stopped(text)) || (this.mode.reason === "manual" && isStop(stripWake(text, false)))) {
       // "Hey Ember, stop": the kill phrase in other words, handled here and never sent anywhere (once: the spotter may have heard it too).
       this.pendingStop = null;
       this.emit({ type: "stop" });

@@ -505,7 +505,11 @@ wake, and by a wake's two stages: the spotter heard you say the name in it, and 
 recognizer's words alone, which take “Number, …”, “Member, …” and “Amber, open…” for the name after the spotter, talk
 that never named Ember left the window as a request and opened a conversation that sent what was said next (second
 review of the voice lane, V2-S3; on the real models “A number of people called today.” and “Number, can you pass the
-salt?” did 8 times in 8, and never now). “Hey Ember” starts a wake as from idle, and anything else heard there goes nowhere; a word or two that read as
+salt?” did 8 times in 8, and never now). “Hey Ember” starts a wake as from idle, and anything else heard there goes nowhere.
+“Stop” said there without the name still stops everything (“Stop.”, “Stop it.”, and “Step.” or “Stuff.” as the
+recognizer writes it: `saidStop`); the other ways to ask for quiet (“Never mind”, “Cancel”, “That's enough”, “Quiet”)
+stop Ember there only with its name, as it is silent then and hears the room, whose every such word pulled the kill
+switch (V2-S8); in a follow-up window and after “Hey Ember” they stop as before. A word or two that read as
 no answer (most likely one misheard: one test voice's lone “Allow.” comes out “Hello”) make the question say once how
 to answer (`unclear`). It opens no conversation, is
 no follow-up, ends with the question, and takes no yes said over other sound unless it is said with the name (the

@@ -3014,4 +3014,33 @@ describe("whose a spoken answer is (second review of the voice lane, 2026-11-12)
       }
     });
   });
+
+  describe("stop words in a question's answer window (V2-S8)", () => {
+    it("stops on “Stop.” said there without the name, as the recognizer writes it too, and on nothing else the room says: “Never mind.” and “That's enough.” pulled the kill switch", () => {
+      for (const words of ["Stop.", "Stop it.", "Stop everything.", "No, stop.", "Please stop.", "Step.", "Stuff."]) {
+        const s = waiting({ 5: words }, "answer", { otherSound: false });
+        says(s, 5, 0, "user");
+        expect(s.heard(), words).toEqual(["stop"]);
+      }
+      // Other ways to say it are for Ember while it speaks or was just asked something; in this window Ember is silent
+      // and listens to the room. A word or two that read as no answer make the question say how to answer, as ever.
+      for (const words of ["Never mind.", "Cancel.", "Enough.", "That's enough.", "Quiet.", "Forget it.", "Shut up.", "Quite.", "Hush."]) {
+        const s = waiting({ 5: words }, "answer", { otherSound: false });
+        says(s, 5, 0, "user");
+        expect(s.heard(), words).toEqual(["unclear"]);
+        expect(s.e.listening, words).toBe(true);
+      }
+    });
+
+    it("still stops on any of them said by name there, and without it in a follow-up window, as before", () => {
+      for (const words of ["Ember, never mind.", "Ember, that's enough.", "Ember, cancel."]) {
+        const s = waiting({ 5: words }, "answer", { otherSound: false });
+        says(s, 5, 1, "user");
+        expect(s.heard(), words).toEqual(["stop"]);
+      }
+      const followUp = waiting({ 5: "Never mind." }, "follow-up", { otherSound: false });
+      says(followUp, 5, 0, "user");
+      expect(followUp.heard()).toEqual(["stop"]);
+    });
+  });
 });
