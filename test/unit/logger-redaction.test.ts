@@ -156,4 +156,14 @@ describe("redactSecretText after a word it doesn't know as a scheme", () => {
   it("hides that word and the long value after it (safety-privacy-r9-4)", () => {
     expect(redactSecretText("Authorization: Custom abcd1234efgh5678")).not.toContain("abcd1234efgh5678");
   });
+
+  it.each([["Authorization: JWT abcdefghijklmnop", "abcdefghijklmnop"], ["Authorization: MAC id=abcdefghijk", "abcdefghijk"],
+    ["PGPASSWORD=hunter22 psql -h db", "hunter22"], ["export MYSQLPASSWD=hunter22", "hunter22"]])(
+    "hides the secret of “%s”, a short scheme's word or a password variable with no underscore (product-safety-x9-4)", (text, secret) => {
+      expect(redactSecretText(text)).not.toContain(secret);
+    });
+
+  it("keeps ordinary words beside them (product-safety-x9-4)", () => {
+    expect(redactSecretText("passport photos, passwordless sign-in")).toBe("passport photos, passwordless sign-in");
+  });
 });

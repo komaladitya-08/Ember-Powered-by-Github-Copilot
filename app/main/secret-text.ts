@@ -15,16 +15,17 @@ const AUTH_HEADER = /\b(Bearer|Basic)(\s+)[A-Za-z0-9._~+/=-]{8,}/gi;
 /**
  * `Authorization: x`, and with a scheme's word before its value (`Token x`, `Bot x`, `Digest username=…`): the word
  * stays and the value is hidden; after any other word, the word and a long value after it are both hidden. Before, the word was taken for the value and the secret after it stayed
- * (safety-privacy-r9-4).
+ * (safety-privacy-r9-4); a short word too (`JWT x`, `MAC id=x`: product-safety-x9-4).
  */
-const AUTHORIZATION = /\b(authorization)(\\?["']?\s*[:=]\s*\\?["']?)(?:(Bearer|Basic|Token|Digest|Bot|ApiKey|Api-Key|Key|SSWS|Splunk|GenieKey|Negotiate|NTLM|DPoP|AWS4-HMAC-SHA256)(\s+))?[^\s"'\\&,;}]{4,}(?:\s+[A-Za-z0-9._~+/=-]{8,})?/gi;
+const AUTHORIZATION = /\b(authorization)(\\?["']?\s*[:=]\s*\\?["']?)(?:(Bearer|Basic|Token|Digest|Bot|ApiKey|Api-Key|Key|SSWS|Splunk|GenieKey|Negotiate|NTLM|DPoP|AWS4-HMAC-SHA256)(\s+))?(?:[A-Za-z][\w-]*\s+[A-Za-z0-9._~+/=-]{8,}|[^\s"'\\&,;}]{4,}(?:\s+[A-Za-z0-9._~+/=-]{8,})?)/gi;
 /** Digest's `response=`, `nonce=` and `cnonce=`. */
 const DIGEST_PARTS = /\b(response|nonce|cnonce)(\s*=\s*"?)[A-Za-z0-9+/=]{8,}/gi;
 /**
- * `token=x`, `access_token: x`, `"password":"x"`, `client_secret=x`, `aws_secret_access_key = x`, `pwd=x`, also as it
- * reads inside an escaped JSON string (`\"token\":\"x\"`).
+ * `token=x`, `access_token: x`, `"password":"x"`, `client_secret=x`, `aws_secret_access_key = x`, `pwd=x`, a password
+ * variable with no underscore (`PGPASSWORD=x`: product-safety-x9-4), also as it reads inside an escaped JSON string
+ * (`\"token\":\"x\"`).
  */
-const KEY_VALUE = /\b((?:[a-z]+_)*(?:token|password|passwd|pwd|secret|api[_-]?key)|(?:[a-z]+_)+key)(\\?["']?\s*[:=]\s*\\?["']?)[^\s"'\\&,;}]{4,}/gi;
+const KEY_VALUE = /\b((?:[a-z]+_)*(?:token|[a-z]*password|[a-z]*passwd|pwd|secret|api[_-]?key)|(?:[a-z]+_)+key)(\\?["']?\s*[:=]\s*\\?["']?)[^\s"'\\&,;}]{4,}/gi;
 /** `https://user:pass@host`: the password (and user) of a URL's userinfo. */
 const URL_USERINFO = /\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@"'\\]*:[^\s/@"'\\]+@/gi;
 
