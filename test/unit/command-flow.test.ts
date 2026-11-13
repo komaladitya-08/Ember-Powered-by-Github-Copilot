@@ -3017,6 +3017,34 @@ describe("a command that would ask, in Autopilot (autopilot.ts; modes-D2, modes-
     });
   });
 
+  it("still shows a computer's first-use card for commands: nothing runs before the user turns them on (modes-D4)", async () => {
+    setCommandJudge(null);
+    const consent: ConsentPanel = { feature: "commands", target: "local", targetLabel: "this computer", title: "Let Ember run commands on this computer?", body: ["…"], yes: "Turn on", no: "Not now", sha256: "a".repeat(64) };
+    const no = auto({ consent, cap: () => ({ state: "needs-consent", askEvery: null }), answers: ["deny"] });
+    expect((await run(no, "rm -rf build")).resultType).toBe("denied");
+    expect(no.asked).toHaveLength(1);
+    expect(no.asked[0]).toMatchObject({ clickOnly: true, panel: { kind: "consent", consent } });
+    expect([no.windowAnnounce, no.starts]).toEqual([[], []]);
+    // Turned on with a click, the command is then Autopilot's to announce.
+    let state: CommandCapability["state"] = "needs-consent";
+    const yes = auto({ consent, cap: () => ({ state, askEvery: null }) });
+    (yes.ctx.service as { consented: () => void }).consented = () => { state = "on"; };
+    expect((await run(yes, "rm -rf build")).resultType).toBe("success");
+    expect(yes.asked).toHaveLength(1);
+    expect(yes.windowAnnounce).toHaveLength(1);
+  });
+
+  it("stops with the task: a Stop during the countdown runs nothing, and one before it announces nothing (modes-D4)", async () => {
+    setCommandJudge(null);
+    const during = auto({ announceMs: base => { during.abort.abort(); return base; } });
+    expect((await run(during, "rm -rf build")).textResultForLlm).toMatch(/stopped/i);
+    expect(during.starts).toEqual([]);
+    const before = auto();
+    before.abort.abort();
+    expect((await run(before, "rm -rf build")).textResultForLlm).toMatch(/stopped/i);
+    expect([before.windowAnnounce, before.announced, before.starts]).toEqual([[], [], []]);
+  });
+
   it("is asked as before outside Autopilot", async () => {
     setCommandJudge(null);
     for (const autopilot of [undefined, () => false]) {

@@ -145,7 +145,16 @@ const REFUSED_BEFORE = /^The user already said no to this step in this task/;
  * A worker on a window with Bold and Delete, in Autopilot unless `autopilot` says otherwise. Each question is answered
  * by `answers` in turn; `failAudit`: writing the audit log fails from then on.
  */
-function worker(o: { answers?: (string | null)[]; spec?: Partial<TaskSpec>; autopilot?: () => boolean } = {}) {
+function worker(o: {
+  answers?: (string | null)[]; spec?: Partial<TaskSpec>; autopilot?: () => boolean;
+  /** The shell's own password prompt is open, or Ember can't tell (Perception.promptOpen). */
+  promptOpen?: () => boolean | "unchecked";
+  /** The model reads pictures, and a look with image=true comes with this one (null: masking failed, so none). */
+  capture?: () => { mimeType: string; data: Buffer } | null;
+  /** Home's "Send screenshots for tasks" (default on). */
+  screenImages?: () => boolean;
+  maxSteps?: number;
+} = {}) {
   const audit: Record<string, unknown>[] = [];
   const asked: string[] = [];
   const activity: Record<string, unknown>[] = [];
@@ -159,8 +168,13 @@ function worker(o: { answers?: (string | null)[]; spec?: Partial<TaskSpec>; auto
   vi.spyOn(presenter, "workedWithoutAsking").mockImplementation(text => { order.push(`announce: ${text}`); });
   const on = o.autopilot ?? (() => true);
   const w = new Worker({
-    client: {} as never, log: quiet, model: "m", vision: false, workDir: "/tmp",
-    perception: { perceive: async () => ({ ...seen, text: "<screen>", capture: null }), read: async () => seen, windows: async () => [window], systemDialogOpen: async () => false } as never,
+    client: {} as never, log: quiet, model: "m", vision: !!o.capture, workDir: "/tmp",
+    ...(o.maxSteps ? { limits: { maxSteps: o.maxSteps } } : {}),
+    perception: {
+      // (A picture only when the worker asks for one, as the real perception takes it.)
+      perceive: async (r: { image?: boolean }) => ({ ...seen, text: "<screen>", capture: r?.image ? o.capture?.() ?? null : null }), read: async () => seen, windows: async () => [window], systemDialogOpen: async () => false,
+      ...(o.promptOpen ? { promptOpen: async () => o.promptOpen!() } : {}),
+    } as never,
     sidecar: {
       readElement: async (id: number) => { const n = seen.nodes.find(x => x.id === id); return n ? { role: n.role, name: n.name, states: n.states, bounds: n.bounds } : null; },
       doAction: async () => { order.push("action"); return { ok: true, after: { role: "push button", name: "Bold", states: [], bounds: BOLD.bounds } }; },
@@ -169,7 +183,7 @@ function worker(o: { answers?: (string | null)[]; spec?: Partial<TaskSpec>; auto
     autonomy: () => ({ ...ALL_SCOPES }), autopilot: on,
     confirmer: { ask: async (q: { prompt: string }) => { order.push("question"); asked.push(q.prompt); return answers.length ? answers.shift() : "once"; } } as never,
     audit: { write: (e: Record<string, unknown>) => { if (state.failAudit) throw new Error("disk full"); audit.push(e); } } as never,
-    settings: { get: () => ({ grants: {} }), update: () => undefined } as never,
+    settings: { get: () => ({ grants: {}, screenImages: o.screenImages?.() ?? true }), update: () => undefined } as never,
     presenter,
     lease: async () => () => undefined, flyTo: () => undefined, onProgress: () => undefined,
     onActivity: (e: Record<string, unknown>) => { activity.push(e); },
@@ -181,7 +195,7 @@ function worker(o: { answers?: (string | null)[]; spec?: Partial<TaskSpec>; auto
     authorize(req: Record<string, unknown>): Promise<{ textResultForLlm: string; resultType: string } | null>;
     authorizeCells(jobs: unknown[]): Promise<{ textResultForLlm: string; resultType: string } | null | "each">;
     ahead: { entries: Record<string, unknown>[]; words: string | null } | null;
-    tainted: boolean; steered: boolean; saidNoThisTask: boolean; userTookOver: boolean; isOver: boolean;
+    tainted: boolean; steered: boolean; saidNoThisTask: boolean; userTookOver: boolean; isOver: boolean; stopNow(why?: string): void;
   };
   const cells = (...at: string[]) => inner.authorizeCells(at.map((cell, n) => ({ cell, text: "4", place: { col: 1, row: 5 + n }, seenKey: cell, expected: "x".repeat(200), listed: undefined })));
   return { w, state, audit, asked, activity, order, stamps, call, inner, cells, decisions: () => audit.filter(e => e.event === "decision"), actions: () => audit.filter(e => e.event === "action") };
@@ -360,5 +374,92 @@ describe("a task's steps in Autopilot (modes-D1)", () => {
     expect(h.asked).toEqual(["Click the “Delete” button in gedit?"]);
     expect(h.decisions().at(-1)).toMatchObject({ verdict: "confirm" });
     expect(h.decisions().at(-1)!.mode).toBeUndefined();
+  });
+});
+
+describe("what Autopilot keeps (modes-D4)", () => {
+  it("takes no step while the system's own password prompt is open, or while Ember can't tell: refused, never announced", async () => {
+    for (const open of [true, "unchecked"] as const) {
+      const h = worker({ promptOpen: () => open });
+      await h.call("perceive_window", {}).catch(() => undefined);
+      const out = await h.call("click", { id: 3 });
+      expect(out.resultType, String(open)).toBe("denied");
+      expect(h.order).toEqual([]);
+      expect(h.asked).toEqual([]);
+      // Recorded only as refused: nothing says Ember went ahead.
+      expect(h.audit.some(e => e.autonomy === true)).toBe(false);
+      expect(h.decisions().at(-1)).toMatchObject({ verdict: "deny", tier: "never" });
+      expect(h.activity.some(e => e.type === "announce")).toBe(false);
+    }
+  });
+
+  it("sends a picture only as before: recorded by app and size, none when masking failed, none once screenshots are turned off", async () => {
+    const jpeg = { mimeType: "image/jpeg", data: Buffer.alloc(2048, 1) };
+    let on = true;
+    const h = worker({ capture: () => jpeg, screenImages: () => on });
+    type Look = { binaryResultsForLlm?: unknown[]; textResultForLlm: string };
+    const look = async () => (await h.call("perceive_window", { image: true })) as Look;
+    expect((await look()).binaryResultsForLlm).toHaveLength(1);
+    expect(h.audit.filter(e => e.event === "read")).toEqual([{ event: "read", task: "t1", kind: "screenshot", app: "gedit", ok: true, bytes: 2048 }]);
+    // Masking failed (the capture comes back empty): no picture, and none recorded.
+    const unmasked = worker({ capture: () => null });
+    expect(((await unmasked.call("perceive_window", { image: true })) as Look).binaryResultsForLlm).toBeUndefined();
+    expect(unmasked.audit.filter(e => e.event === "read")).toEqual([]);
+    on = false;
+    const off = await look();
+    expect(off.binaryResultsForLlm).toBeUndefined();
+    expect(off.textResultForLlm).toContain("(No screenshot: the user turned off sending screenshots for tasks; work from the elements.)");
+    expect(h.audit.filter(e => e.event === "read")).toHaveLength(1);
+  });
+
+  it("stops at once: after a Stop no step is announced or taken", async () => {
+    const h = worker();
+    await h.call("perceive_window", {});
+    h.inner.stopNow();
+    const out = await h.call("click", { id: 3 });
+    expect(out.resultType).not.toBe("success");
+    expect(out.textResultForLlm).toMatch(/stopped/i);
+    expect(h.order).toEqual([]);
+    expect(h.decisions()).toEqual([]);
+  });
+
+  it("keeps the limit on a task's steps: the call past it does nothing", async () => {
+    const h = worker({ maxSteps: 3 });
+    await h.call("perceive_window", {});
+    for (let i = 0; i < 2; i++) expect((await h.call("click", { id: 3 })).resultType).toBe("success");
+    expect((await h.call("click", { id: 3 })).textResultForLlm).toMatch(/Stopped/);
+    expect(h.order.filter(x => x === "action")).toHaveLength(2);
+    expect(h.inner.isOver).toBe(true);
+  });
+
+  it("keeps the limit on actions a minute: a step past it waits its turn, and is never let through as Autopilot's", () => {
+    let now = 1000;
+    const e = engine({ rateLimit: 2, now: () => now });
+    const r = ASKS["a risky control nobody asked for"];
+    expect([e.decide(r).verdict, e.decide(r).verdict]).toEqual(["allow", "allow"]);
+    const third = e.decide(r);
+    expect(third).toMatchObject({ verdict: "deny", paced: true });
+    expect(third.mode).toBeUndefined();
+    expect(e.autopilotStep(r, third)).toBe(third);
+    expect(e.paceMs()).toBeGreaterThan(0);
+    now += 60_001;
+    expect(e.decide(r).verdict).toBe("allow");
+    // Ember's own 40, which the organisation can only lower, is what every engine counts with.
+    expect(engine().perMinute).toBe(40);
+  });
+
+  it("leaves the limits on tasks, steps and time where no mode reaches them", () => {
+    const read = (f: string) => readFileSync(path.join(__dirname, "../../app/main", f), "utf8");
+    const tasks = read("agent/tasks.ts"), wk = read("agent/worker.ts");
+    // At most two tasks at work (and two guides beside them): TaskManager's, which knows nothing of the mode.
+    expect(tasks).toContain("const max = this.d.maxRunning ?? 2;");
+    expect(tasks).not.toMatch(/autopilot|approvalInputs|modeInForce/i);
+    // 150 tool calls and 20 minutes a task: the worker's own, read from nothing the mode sets.
+    expect(wk).toContain("const maxSteps = this.d.limits?.maxSteps ?? 150;");
+    expect(wk).toContain("const maxMs = d.limits?.maxMs ?? 20 * 60_000;");
+    expect(read("agent/host.ts")).not.toMatch(/limits: \{[^}]*autopilot/);
+    // 40 actions a minute across all tasks, which the organisation's policy can only lower.
+    expect(read("policy/policy.ts")).toContain("return this.o.rateLimit ?? 40;");
+    expect(read("main.ts")).toContain("rateLimit: policy.maxActionsPerMinute,");
   });
 });
