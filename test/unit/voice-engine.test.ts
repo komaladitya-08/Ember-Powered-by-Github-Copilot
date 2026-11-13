@@ -2035,6 +2035,27 @@ describe("the wake check", () => {
     }
   });
 
+  it("still takes “Hey Ember” as a laptop's microphone has it written, “Hey, number, …” before any request, from idle (voice-roomtalk-x9-1)", () => {
+    // The check a moment after the word hears the start of the request cut anywhere ("Hey, number, re"): it takes back
+    // only what the whole would be taken back for, and the whole decides by how the words went on.
+    for (const [early, whole, request] of [
+      ["Hey, number.", "Hey, number, remind me to call mum.", "Remind me to call mum."], ["Hey, number.", "Hey, number, add milk to my list.", "Add milk to my list."],
+      ["Hey, number.", "Hey, number, is it going to rain?", "Is it going to rain?"], ["Hey, number.", "Hey, number, read my last email.", "Read my last email."],
+      ["A number.", "A number, I need the calculator.", "I need the calculator."], ["Hey, number, re", "Hey, number, remind me to call mum.", "Remind me to call mum."],
+      ["A number, wh", "A number, what time is it?", "What time is it?"], ["A number wh", "A number. What time is it?", "What time is it?"], ["Hey number re", "Hey number remind me at five.", "Remind me at five."],
+    ]) {
+      const events: VoiceEvent[] = [];
+      const c = { t: 0 };
+      const e = new VoiceEngine(fake([early, whole]), ev => events.push(ev), { now: () => c.t });
+      e.feed(frame(0));
+      c.t += 32; e.feed(frame(1));
+      for (let i = 0; i < 3; i++) { c.t += 32; e.feed(frame(0, true)); }
+      for (let i = 0; i < 20; i++) { c.t += 32; e.feed(frame(0)); }
+      expect(events.filter(ev => ev.type === "rejected"), whole).toEqual([]);
+      expect(events.flatMap(ev => (ev.type === "utterance" ? [ev.text] : [])), whole).toEqual([request]);
+    }
+  });
+
   it("stops (rather than taking the wake back) when what it heard is 'Hey Amber, stop'", () => {
     const events: VoiceEvent[] = [];
     const c = { t: 0 };

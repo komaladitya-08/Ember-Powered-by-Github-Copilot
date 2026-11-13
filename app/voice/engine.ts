@@ -215,19 +215,30 @@ export function calledByName(transcript: string): boolean {
  * greeting it counted however the words went on, and "A number of people called today.", said in the room while a
  * question's answer window was open, was a request by name once the spotter took its "number" for the name ("Of people
  * called today." went to Copilot, and the next sentence in the conversation that opened: CI's voice step on RHEL 8,
- * voice-roomtalk-1). "Amber" only before a plain command: it is someone's name otherwise.
+ * voice-roomtalk-1). After a greeting a request may start with any word once the recognizer wrote a pause after "number"
+ * ("Hey, number, remind me to call mum.", "A number, I need the calculator.": with the short list of first words only,
+ * each of those real wakes was taken back, voice-roomtalk-x9-1), but for a word that goes on with the noun ("A number,
+ * of course, …"), and with no pause written the list of first words is longer there than after the bare word. "Amber"
+ * only before a plain command: it is someone's name otherwise.
  */
 const REQUEST_WORD = "open|close|turn|play|search|what|who|how|when|where|why|tell|show|go|set|start|send|find|call|can|could|please";
-const CALLED_AS_WORD = new RegExp(String.raw`^\W*(?:(?:hey|hi|hay|day|a)\W+(?:a\W+)?number\b(?=\s*(?:[.?!…]|$)|\W+(?:${REQUEST_WORD})\b)|number\b(?=\W+(?:${REQUEST_WORD})\b)|amber\b(?=\W+(?:open|close|turn|play|search|show|set|start)\b)|(?:hey|hi|hay|pay|pey|ok|okay)\W+amber\b(?=\W+(?:open|close|turn|play|search|show|set|start|send|find|call)\b))\W*`, "i");
+const GREETED_NUMBER = String.raw`(?:hey|hi|hay|day|a)\W+(?:a\W+)?number\b`;
+const CALLED_AS_WORD = new RegExp(String.raw`^\W*(?:${GREETED_NUMBER}(?=\s*(?:[.?!…]|$)|\s*[,;:](?!\s*(?:of|or|and|but|which|that|not|though|like)\b)|\W+(?:${REQUEST_WORD}|remind|add|read|make|give|help|check|write|put|take)\b)|number\b(?=\W+(?:${REQUEST_WORD})\b)|amber\b(?=\W+(?:open|close|turn|play|search|show|set|start)\b)|(?:hey|hi|hay|pay|pey|ok|okay)\W+amber\b(?=\W+(?:open|close|turn|play|search|show|set|start|send|find|call)\b))\W*`, "i");
 
 /**
  * A clear near miss, as the wake's check takes one back: the recognizer heard another word and not the name ("Hey Amber,
  * what time is it?", "A number of people called today."), and neither the wake said alone as it may write it ("Hey
  * Amber.") nor the name written as a word by how the words go on (CALLED_AS_WORD).
  */
-function nearMiss(transcript: string): boolean {
-  return heardOtherWord(transcript) && !NAME_ALONE.test(transcript) && !CALLED_AS_WORD.test(transcript);
+function nearMiss(transcript: string, partial = false): boolean {
+  return heardOtherWord(transcript) && !NAME_ALONE.test(transcript) && !CALLED_AS_WORD.test(transcript) && !(partial && NUMBER_SO_FAR.test(transcript));
 }
+/**
+ * "Hey, number…" in what the wake's check heard a moment after the word: the request's first word is cut anywhere there
+ * ("Hey, number, re", "A number wh"), so how the words go on is for the whole of what was said to tell (handleSegment),
+ * which takes "A number of people called today." back (voice-roomtalk-x9-1).
+ */
+const NUMBER_SO_FAR = new RegExp(String.raw`^\W*${GREETED_NUMBER}`, "i");
 
 /**
  * "Hey Amber…" when the spotter heard "Hey Ember": Moonshine base writes the name so (the early check heard "Pay amber to"
@@ -1441,7 +1452,7 @@ export class VoiceEngine {
       } else if (heard && GREETED_AMBER.test(heard) && !NAME_ALONE.test(heard) && !CALLED_AS_WORD.test(heard)) {
         this.mode.maybeAmber = true;
         this.replayPreRoll();
-      } else if (heard && nearMiss(heard)) {
+      } else if (heard && nearMiss(heard, true)) {
         this.emit({ type: "rejected", keyword: this.mode.keyword, reason: "check", heard });
         this.ring.clear();
         this.endListening("rejected");

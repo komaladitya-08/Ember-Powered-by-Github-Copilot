@@ -60,7 +60,16 @@ describe("calledByName", () => {
   it.each(["Hey, number.", "A number.", "A number. What time is it?", "Hey number, what time is it?", "Hey a number, open the calculator.", "Number open the calculator"])("takes %j, the name written as a word, by how the words go on", t => {
     expect(calledByName(t)).toBe(true);
   });
-  it.each(["A number of people called today.", "Hey, number five is ready.", "A number, of course, called.", "A number of us can open the door.", "Hi, number crunching is my job."])("doesn't take %j: “number” goes on as a word (voice-roomtalk-1)", t => {
+  // …and so before any request once the recognizer wrote a pause after it, or a request's first word from a longer list:
+  // the wake a laptop writes "Hey, number." is as often followed by "remind me…" as by "what…" (voice-roomtalk-x9-1).
+  it.each(["Hey, number, remind me to call mum.", "Hey, number, add milk to my list.", "Hey, number, is it going to rain?", "Hey, number, read my last email.", "A number, I need the calculator.", "Hey number remind me at five.", "A number, wh", "Hey, number, re"])("takes %j: a pause after “number”, or a request's first word (voice-roomtalk-x9-1)", t => {
+    expect(calledByName(t)).toBe(true);
+  });
+  it("leaves the request of such a wake whole (voice-roomtalk-x9-1)", () => {
+    expect(stripWake("Hey, number, remind me to call mum.", true)).toBe("Remind me to call mum.");
+    expect(stripWake("A number, I need the calculator.", true)).toBe("I need the calculator.");
+  });
+  it.each(["A number of people called today.", "Hey, number five is ready.", "A number, of course, called.", "A number of us can open the door.", "A number, or two, came up.", "A number, and a name.", "Hey, a number of us read it.", "Hi, number crunching is my job."])("doesn't take %j: “number” goes on as a word (voice-roomtalk-1)", t => {
     expect(calledByName(t)).toBe(false);
     // …and nothing is taken out of it where a wake's first words are stripped (a conversation sent "Of people called
     // today."). ("Hey" and the word after it still go, as the wake phrase misheard: "Hey, ever, turn on…".)

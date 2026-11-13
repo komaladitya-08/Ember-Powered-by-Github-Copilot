@@ -678,8 +678,9 @@ recognizer writes it (“Hey Ember”, or “Ember” at its start), since the w
 there goes nowhere. A wake by the whole phrase is checked twice everywhere: a moment after the word, and again on the
 whole of what was said with it, since the first check hears nothing now and then (“Hey Amber, what time is it?” said
 in a quiet room's noise went to Copilot as “What time is it?”). (From idle too, “number” after a greeting is the name
-only where the phrase ends there or a request's first word follows, as a laptop's microphone had “Hey Ember” written:
-“A number. What time is it?”; “A number of people called today.” is never a wake.)
+only where the phrase ends there, a pause is written after it or a request's first word follows, as a laptop's
+microphone had “Hey Ember” written: “A number. What time is it?”, “Hey, number, remind me to call mum.”; “A number of
+people called today.” and “A number, of course, …” are never a wake.)
 “Stop” said there without the name still stops everything (“Stop.”, “Stop it.”, and “Step.” or “Stuff.” as the
 recognizer writes it: `saidStop`); the other ways to ask for quiet (“Never mind”, “Cancel”, “That's enough”, “Quiet”)
 stop Ember there only with its name, as it is silent then and hears the room, whose every such word pulled the kill
