@@ -737,10 +737,16 @@ gives system audio only with a screen's video, which is stopped at once; main's 
 speakers' stream, macOS can't tell yet. Ember's own voice isn't other sound, and what follows it is, at once: on Linux
 whatever sounds in the speakers' stream after Ember's voice left it (`ownSoundUntil` in engine.ts: its last sound
 before the stream was quiet for 160 ms, or 400 ms after it says it stopped); on Windows whatever the watch sees from
-0.4 s after its last look at Ember speaking (`EMBER_LINGER_MS`), and what played up to Ember's voice counts as playing
+its second look after Ember's voice on (0.4 s after its last look at Ember speaking, `EMBER_LINGER_MS`; only the first
+look after it may hold Ember's own last sounds), and what played up to Ember's voice counts as playing
 through it and for 2.5 s after. Before, neither counted anything for the first second or so after Ember's voice, and
 a video's or a call's lone “Okay.” right after Ember read a question out was taken (second review of the voice lane,
-V2-S1); a word that starts and ends within those 0.4 s on Windows is still not seen. “By name”, in a question's answer
+V2-S1). The watch counts its looks, it doesn't time them: a timer's callbacks each run a few ms late, and timed against
+exactly two looks' time the second look was thrown away whenever it had run less late than the last one that found
+Ember speaking, so a call's short “Okay.” 0.16 to 0.32 s after the read-out was still taken about every other time
+(voice-safety-x9-1: 12, 10, 4, 4, 5 and 3 of 25 scripted runs with looks up to 4 ms late; none of 25 now, at any gap
+from 0.16 to 0.48 s, with looks up to 16 ms late). A word that is over before that second look on Windows is still not
+seen. “By name”, in a question's answer
 window, a follow-up and a conversation, means by the user (`namedByUser` in engine.ts): the recognizer wrote the name
 first, and the speakers didn't say it. Where their own stream arrives (Linux with `parec`) it is asked, as it is for a
 wake: a name the microphone's spotter heard counts only if the stream's spotter didn't hear it too, and if the

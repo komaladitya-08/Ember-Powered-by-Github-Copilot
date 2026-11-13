@@ -71,6 +71,29 @@ describe("whether other sound is playing (Windows' output level, while Ember may
     expect(told).toEqual([false, true, false]);
   });
 
+  it("says so at the second look after Ember's voice however late either look ran: a timer's callbacks run a few ms late, and that look was thrown away when it came 398 ms after the last one that found Ember speaking (voice-safety-x9-1; V2-S1)", () => {
+    // A call's "Okay." 0.2 to 0.4 s after the read-out, over before the look after that: whether it was seen hung on
+    // which of two timer callbacks had run later (about every other read-out: taken 12 of 25 with looks up to 4 ms late).
+    for (const [lastOfEmber, first, second] of [[3, 0, 1], [1, 0, 3], [15, 0, 1], [1, 15, 0], [15, 15, 0], [0, 0, 15], [4, 1, 0], [60, 0, 0]]) {
+      const { told, busy } = watch();
+      for (let t = 0; t < 2000; t += 200) busy.look(0, false, t);
+      for (let t = 2000; t < 3800; t += 200) busy.look(0.2, true, t);
+      busy.look(0.2, true, 3800 + lastOfEmber);
+      busy.look(0, false, 4000 + first);
+      busy.look(0.1, false, 4200 + second); // the far side's "Okay."
+      expect(told, `looks ${lastOfEmber}, ${first} and ${second} ms late`).toEqual([false, true]);
+    }
+  });
+
+  it("still leaves the first look after Ember's voice out when a later one comes late: only that look may hold its last sounds", () => {
+    const { told, busy } = watch();
+    for (let t = 0; t < 2000; t += 200) busy.look(0, false, t);
+    for (let t = 2000; t < 4000; t += 200) busy.look(0.2, true, t);
+    busy.look(0.2, false, 4015); // Ember's own last sounds, the look 15 ms late
+    for (let t = 4200; t < 6000; t += 200) busy.look(0, false, t + 3);
+    expect(told).toEqual([false]);
+  });
+
   it("doesn't take Ember's own voice, still in the output a moment after the page says it stopped, for that sound", () => {
     const { told, busy } = watch();
     for (let t = 0; t < 2000; t += 200) busy.look(0, false, t);

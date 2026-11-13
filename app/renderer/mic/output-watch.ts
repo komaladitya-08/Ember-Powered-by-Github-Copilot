@@ -20,11 +20,14 @@ const LOOK_MS = 200;
  */
 const EMBER_TAIL_MS = 1000;
 /**
- * …and for this long after that look, sound says nothing either: it may be Ember's own (the 400 ms the voice engine
- * gives it too, engine.ts selfSpeaking; the page said it stopped up to one look after that one). Sound later than that
- * in the second after Ember is someone else's, and is said at once: a call's "Okay." right after Ember read a question
- * out, over before that second was, was never seen, and the first look after it found the output quiet (V2-S1). What
- * is left is a word wholly inside these 400 ms.
+ * …and the first look after that one, when it comes within this long of it, says nothing of sound either: it may be
+ * Ember's own (the 400 ms the voice engine gives it too, engine.ts selfSpeaking; the page said it stopped up to one look
+ * after that one). Sound at any later look in the second after Ember is someone else's, and is said at once: a call's
+ * "Okay." right after Ember read a question out, over before that second was, was never seen, and the first look after
+ * it found the output quiet (V2-S1). Looks are counted, not timed: this is two looks' time, a timer's callbacks each run
+ * a few ms late, and the second look after Ember's voice was thrown away whenever it had run less late than the last one
+ * that found Ember speaking, so about every other time (voice-safety-x9-1). What is left is a word over before that
+ * second look.
  */
 const EMBER_LINGER_MS = 400;
 
@@ -36,6 +39,8 @@ const EMBER_LINGER_MS = 400;
 export class OutputBusy {
   private soundAt = Number.NEGATIVE_INFINITY;
   private emberAt = Number.NEGATIVE_INFINITY;
+  /** No look has found Ember silent since the last one that found it speaking: the next may hold its last sounds. */
+  private lingering = false;
   private busy: boolean | null = null;
 
   constructor(private tell: (on: boolean | null) => void) {}
@@ -47,9 +52,11 @@ export class OutputBusy {
    * that very instant, though a call's far side had talked right up to the read-out: V2-S1).
    */
   look(rms: number, emberSpeaking: boolean, now: number): void {
-    if (emberSpeaking) { this.soundAt = this.busy ? now : Number.NEGATIVE_INFINITY; this.emberAt = now; return; }
+    if (emberSpeaking) { this.soundAt = this.busy ? now : Number.NEGATIVE_INFINITY; this.emberAt = now; this.lingering = true; return; }
     const since = now - this.emberAt;
-    if (since < EMBER_LINGER_MS) return;
+    const first = this.lingering;
+    this.lingering = false;
+    if (first && since < EMBER_LINGER_MS) return;
     if (rms >= SOUND_RMS) this.soundAt = now;
     const playing = now - this.soundAt < HOLD_MS;
     if (since < EMBER_TAIL_MS && !playing) return;
