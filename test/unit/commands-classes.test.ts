@@ -883,3 +883,24 @@ describe("yarn's plugins and pinned release (commands-classes-x9-6)", () => {
     }
   });
 });
+
+describe("framework verbs that empty or replace a database without saying so (commands-classes-x9-8)", () => {
+  it("asks before a refresh, a redo, a schema load, a migration back to zero and a destroying word written together with another", () => {
+    for (const o of POSIX) for (const cmd of ["php artisan migrate:refresh", "php artisan migrate:refresh --seed", "bin/rails db:schema:load", "bin/rails db:structure:load",
+      "bin/rails db:migrate:redo", "bundle exec rake db:schema:load", "python manage.py migrate app zero", "python3 manage.py migrate --noinput app zero", "./manage.py migrate app zero",
+      "make dropdb", "make resetdb", "make wipedb", "npm run dbreset", "npm run db:dropall", "just cleanall", "make dbdrop", "./resetdb.sh", "yarn droptables"]) {
+      const d = decide(cmd, o);
+      expect(d.verdict, label(cmd, o)).toBe("ask");
+      expect(d.rules, label(cmd, o)).toContain("script.destroy");
+      expect(d.classes, label(cmd, o)).toContain("destroy");
+    }
+    expect(decide("python manage.py migrate app zero").says).toContain("Runs manage.py zero, whose name says it deletes things.");
+  });
+
+  it("still runs the everyday verbs beside them", () => {
+    for (const o of POSIX) for (const cmd of ["python manage.py migrate", "python manage.py migrate app 0003", "bin/rails db:migrate", "bin/rails db:schema:dump", "php artisan migrate:status",
+      "make all", "make db", "make data", "make refresh", "make load", "make zero", "npm run build", "npm run test:all", "python manage.py sqlflush"]) {
+      expect(decide(cmd, o).verdict, label(cmd, o)).toBe("run");
+    }
+  });
+});

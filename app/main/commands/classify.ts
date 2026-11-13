@@ -3874,11 +3874,19 @@ export function nameWords(name: string): string[] {
     .filter(w => w !== "");
 }
 
+/** What a destroying word is written together with in one name (`dropdb`, `resetdb`, `dbreset`, `cleanall`). */
+const JOINED_NAME = /^(db|database)(?=.)|(?<=.)(db|database|all|data|tables|schema)$/;
+/**
+ * A framework's verbs that empty or replace a database without a destroying word in them (commands-classes-x9-8):
+ * `migrate:refresh` and `migrate:redo` roll every table back first, `schema:load` and `structure:load` replace the
+ * tables with the schema's.
+ */
+const DB_REPLACES = /(^|[^A-Za-z])migrate[:_-](refresh|redo)($|[^A-Za-z])|(^|[^A-Za-z])(schema|structure)[:_-]load($|[^A-Za-z])/i;
 /** §3.5.9: a script, target or package-script name that says it publishes (b), deletes (a) or installs (e). */
 function nameCheck(h: H, name: string, display = name): void {
   const words = nameWords(name);
   if (words.some(w => NAME_PUBLISH.has(w))) h.e.add("publish", "script.publish", `Runs ${display}, whose name says it publishes.`, { objects: [{ kind: "other", text: display, abs: null }] });
-  if (words.some(w => NAME_DESTROY.has(w))) h.e.add("destroy", "script.destroy", `Runs ${display}, whose name says it deletes things.`, { objects: [{ kind: "other", text: display, abs: null }] });
+  if (words.some(w => NAME_DESTROY.has(w) || NAME_DESTROY.has(w.replace(JOINED_NAME, ""))) || DB_REPLACES.test(name)) h.e.add("destroy", "script.destroy", `Runs ${display}, whose name says it deletes things.`, { objects: [{ kind: "other", text: display, abs: null }] });
   if (words.some(w => NAME_SYSTEM.has(w))) h.e.add("system", "script.system", `Runs ${display}, whose name says it installs or sets up software.`, { objects: [{ kind: "other", text: display, abs: null }] });
 }
 
@@ -3890,10 +3898,14 @@ function nameCheck(h: H, name: string, display = name): void {
  */
 function scriptVerbs(h: H, script: string, words: readonly Arg[]): void {
   if (h.e.readsAsMain) return;
+  let migrates = false;
   for (const a of words) {
     const v = a.v;
     if (v === null || !/^[A-Za-z][A-Za-z0-9]*([:_-][A-Za-z0-9]+)*$/.test(v)) continue;
     nameCheck(h, v, `${script} ${v}`);
+    // A migration taken back to nothing (`manage.py migrate app zero`) drops the app's tables (commands-classes-x9-8).
+    if (migrates && v.toLowerCase() === "zero") h.e.add("destroy", "script.destroy", `Runs ${script} ${v}, whose name says it deletes things.`, { objects: [{ kind: "other", text: `${script} ${v}`, abs: null }] });
+    migrates ||= nameWords(v).includes("migrate");
   }
 }
 
