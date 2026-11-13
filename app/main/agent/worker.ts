@@ -34,7 +34,7 @@ import type { WindowTarget } from "../perception";
 import type { AxNode, AxWindow, Bounds, ActionResult, ElementInfo, PointElement } from "../perception/sidecar";
 import { helperCantRun } from "../perception/sidecar";
 import type { PolicyEngine, ActionKind, ActionRequest, Agreement, Decision, DialogControl, ReadSource, TextMode, WindowId } from "../policy/policy";
-import { AUTOPILOT_WORDS, CHECKED_WORDS, riskyOnPage } from "../policy/policy";
+import { AUTOPILOT_WORDS, CHECKED_WORDS, isRiskyControl, riskyOnPage } from "../policy/policy";
 import type { CommandReviewer, StepChecker } from "../commands/review";
 import { afterTheStep, type AuditEntry, type AuditLog } from "../policy/audit";
 import type { AutonomyScopes } from "../policy/autonomy";
@@ -1389,7 +1389,7 @@ export class Worker {
    * role and name as the object itself gave them. What the step is bound to before and after its question is then the
    * page binding, not the whole tree (boundContext; cause 3b of the investigation of the owner's report of 2026-11-12).
    */
-  private pageBound: { role: string; name: string } | null = null;
+  private pageBound: { role: string; name: string; risky: boolean } | null = null;
   /** What that element had selected when it was found (a field typed into must still have it: checkPageTarget). */
   private pageSelection: string | undefined;
   /** The latest look for the cell with the keyboard found none because the read was cut short (a busy app): see cellWithKeyboard. */
@@ -2949,7 +2949,7 @@ export class Worker {
     this.pageBound = null;
     if (!live || truncated || this.actionAt === undefined || !this.pageControl(held)) return;
     if (pageBinding(this.actionTree, this.actionAt, title) === null) return;
-    this.pageBound = { role: live.role, name: live.name };
+    this.pageBound = { role: live.role, name: live.name, risky: isRiskyControl(live.role, live.name, this.kc.os) };
   }
 
   /**
@@ -2958,7 +2958,7 @@ export class Worker {
    * for actionContext (for a page's control: its own selection may have collapsed under Ember's click).
    */
   private boundContext(nodes: readonly AxNode[] = this.actionTree, title: string = this.window.name, clickedTextAt?: number): string {
-    return this.pageBound ? pageBindingOf(nodes, this.pageBound, title, clickedTextAt !== undefined) : this.actionContext(nodes, clickedTextAt);
+    return this.pageBound ? pageBindingOf(nodes, this.pageBound, title, clickedTextAt !== undefined, this.pageBound.risky) : this.actionContext(nodes, clickedTextAt);
   }
 
   /** Fail closed after approval, a lease or pointer movement if the approved context cannot still be established. */

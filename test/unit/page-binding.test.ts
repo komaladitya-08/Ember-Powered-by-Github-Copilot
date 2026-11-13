@@ -8,6 +8,7 @@
  * still spends it.
  */
 
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { pageBinding, pageBindingOf } from "../../app/main/agent/page-binding";
 import { PolicyEngine } from "../../app/main/policy/policy";
@@ -164,6 +165,47 @@ describe("what an answer about a page's control binds to (cause 3b)", () => {
     // A later read where it can't be made any more never equals what was bound.
     expect(pageBindingOf(tree({ ...PAGE, inDialog: true }), SEND, TITLE)).toMatch(/^unbound/);
     expect(pageBindingOf(tree({ ...PAGE, twin: true }), SEND, TITLE)).toMatch(/^unbound: 2/);
+  });
+});
+
+describe("what an answer about a risky page control binds to (modes-x9s-4)", () => {
+  const n = (id: number, parent: number | null, role: string, name: string, text?: string): AxNode => ({ id, parent, depth: 0, role, name, states: ON, bounds: B, ...(text ? { text } : {}) });
+  /** GitHub's danger zone: the repository is named in a heading and a paragraph beside the button's own group. */
+  const zone = (what: string, o: { stars?: number; comment?: string } = {}) => [
+    n(1, null, "document web", "Settings · GitHub"),
+    n(2, 1, "section", ""),
+    n(3, 2, "heading", `Delete ${what}`, `Delete ${what}`),
+    n(4, 2, "paragraph", "", `This will permanently delete the ${what} repository, with its ${o.stars ?? 3} stars.`),
+    n(5, 1, "section", ""),
+    n(6, 5, "push button", "Delete this repository"),
+    n(7, 5, "push button", "Cancel"),
+    n(8, 1, "list", ""),
+    n(9, 8, "list item", ""),
+    n(10, 9, "heading", o.comment ?? "ana commented"),
+  ];
+  const T = "Danger zone · ana/scratch - Mozilla Firefox";
+  const DELETE = { role: "push button", name: "Delete this repository" };
+
+  it("is spent where the page renames what the risky control acts on, outside the control's own group", () => {
+    const asked = pageBindingOf(zone("ana/scratch"), DELETE, T, false, true);
+    expect(asked).not.toMatch(/^unbound/);
+    expect(pageBindingOf(zone("ana/production"), DELETE, T, false, true)).not.toBe(asked);
+  });
+
+  it("holds where only a count changes or a feed moves on, so a living page doesn't ask for ever", () => {
+    const asked = pageBindingOf(zone("ana/scratch"), DELETE, T, false, true);
+    expect(pageBindingOf(zone("ana/scratch", { stars: 4 }), DELETE, T, false, true)).toBe(asked);
+    expect(pageBindingOf(zone("ana/scratch", { comment: "bo commented" }), DELETE, T, false, true)).toBe(asked);
+  });
+
+  it("binds an ordinary control as narrowly as before: only its own group", () => {
+    expect(pageBindingOf(zone("ana/production"), { role: "push button", name: "Cancel" }, T)).toBe(pageBindingOf(zone("ana/scratch"), { role: "push button", name: "Cancel" }, T));
+  });
+
+  it("is what the worker binds for a page's control with a risky name, in its own system's words", () => {
+    const src = readFileSync("app/main/agent/worker.ts", "utf8");
+    expect(src).toContain(`this.pageBound = { role: live.role, name: live.name, risky: isRiskyControl(live.role, live.name, this.kc.os) };`);
+    expect(src).toContain("pageBindingOf(nodes, this.pageBound, title, clickedTextAt !== undefined, this.pageBound.risky)");
   });
 });
 
