@@ -31,6 +31,7 @@ import { AtspiSidecar, pickPython } from "../../app/main/perception/sidecar";
 import { Perception } from "../../app/main/perception";
 import { openX11, type X11 } from "../../app/main/x11";
 import { createLogger } from "../../app/main/logger";
+import { redactingClient } from "../../app/main/agent/redacting-client";
 import { VAULT_REDACTED, VaultRedactor } from "../../app/main/vault/redact";
 import { VaultService } from "../../app/main/vault/service";
 import { VAULT_FILE, VaultStore } from "../../app/main/vault/store";
@@ -77,6 +78,12 @@ describe("the canary test on the real runtime (vault-3)", () => {
     await client?.stop();
     await mock?.close();
     if (dir) fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("leaves the runtime client's own calls as they are behind the redactor (as AgentHost uses it)", async () => {
+    const wrapped = redactingClient(client, new VaultRedactor());
+    expect((await wrapped.ping("ember")).message).toContain("ember");
+    expect(Array.isArray(await wrapped.listSessions())).toBe(true);
   });
 
   it("fills every kind of entry in a whole task, and no canary is in anything the model was sent or Ember wrote", async () => {
