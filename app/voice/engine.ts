@@ -768,12 +768,13 @@ const FOLLOW_LOUD = 31.6;
  * wasn't sent (see AFTER_HUSH_FRAMES); `announced` false: a wake by the bare name that isn't shown (no "wake" or
  * "listening" event) until the whole of what was said, once the speaker paused, starts with the name (handleSegment);
  * `overFollowUp`: a wake said in a follow-up window (wakeOverFollowUp); `fromAnswer`: a wake by "Hey Ember" spotted in
- * a question's answer window, where the room is heard (its first speech must hold the wake phrase itself). A window of `reason` "conversation" never closes
+ * a question's answer window, where the room is heard (its first speech must hold the wake phrase itself), and when
+ * that window would have ended (taken back, it opens again till then: backToAnswer). A window of `reason` "conversation" never closes
  * on a request: `until` moves on with everything said, spoken or at work (see CONVERSATION_IDLE_MS).
  */
 type Mode =
   | { kind: "idle" }
-  | { kind: "listening"; until: number; ms: number; heardSpeech: boolean; first: boolean; reason: ListeningWindow; checkAt: number | null; keyword: string; afterQuestion?: boolean; bargeIn?: boolean; held?: boolean; announced?: boolean; overFollowUp?: boolean; fromAnswer?: boolean; maybeAmber?: boolean };
+  | { kind: "listening"; until: number; ms: number; heardSpeech: boolean; first: boolean; reason: ListeningWindow; checkAt: number | null; keyword: string; afterQuestion?: boolean; bargeIn?: boolean; held?: boolean; announced?: boolean; overFollowUp?: boolean; fromAnswer?: number; maybeAmber?: boolean };
 
 /**
  * A spotted stop (or "Hey Ember" while Ember speaks) being checked: see VoiceEngine.pendingStop. `teaching`: the name
@@ -840,7 +841,7 @@ export class VoiceEngine {
    * (`keyword` "hey_ember": said while Ember spoke; `checked`: the speakers didn't say it, and what was said with it was
    * heard; `bargeIn`: it was "Hey Ember", so Ember was hushed to listen).
    */
-  private pendingWake: { keyword: string; at: number; paused: boolean; overFollowUp?: boolean; fromAnswer?: boolean } | null = null;
+  private pendingWake: { keyword: string; at: number; paused: boolean; overFollowUp?: boolean; fromAnswer?: number } | null = null;
   private pendingStop: PendingStop | null = null;
   /** The speakers' recent frames, when they last made a sound and last sent a frame, and whether their spotter runs. */
   private speakers: { frame: Float32Array; at: number; sound: boolean; energy: number; level: number }[] = [];
@@ -1106,6 +1107,19 @@ export class VoiceEngine {
     else { this.tail = []; this.tailFrom = 0; }
     this.mode = { kind: "listening", until: this.now() + ms, ms, heardSpeech: false, first: false, reason: "answer", checkAt: null, keyword: "" };
     this.emit({ type: "listening", on: true, reason: "answer", window: "answer" });
+  }
+
+  /**
+   * A wake by "Hey Ember" that left a question's answer window was taken back by its check (never one the speakers'
+   * own stream said: the yes a video says with it stays unheard): the
+   * window opens again for the time it had left (`until`), while its question is still up. It went at the spot, before
+   * anything was checked, so the room's "Hey Amber, dinner's ready." or the user's own "Hey Ember." written "Hey, Amber."
+   * closed it, and the "Allow." said next went nowhere, with nothing said (voice-roomtalk-x9-3). Only an answer leaves
+   * the window, so nothing more is heard or sent for it.
+   */
+  private backToAnswer(until: number | undefined): void {
+    if (until === undefined || this.mode.kind !== "idle" || until <= this.now()) return;
+    this.answerWindow(until - this.now());
   }
 
   /** `text` answers the question up now, yes or no (answersQuestion): false while none is. */
@@ -1384,9 +1398,9 @@ export class VoiceEngine {
       // from idle, so "Hey Amber, dinner's ready" is taken back as ever, never sent as a follow-up would be. (The bare name
       // isn't a wake there: what is said with it is heard in the window.) The window listened to the room, so the whole of
       // what was said must hold the wake phrase itself, as the recognizer writes it (fromAnswer: handleSegment).
-      const fromAnswer = this.mode.kind === "listening" && this.mode.reason === "answer" && keyword !== BARE_NAME && !this.pendingWake;
-      if (fromAnswer) this.endListening("timeout");
-      if (this.mode.kind === "idle" && !this.pendingWake) { this.pendingWake = { keyword, at: now, paused, ...(fromAnswer ? { fromAnswer } : {}) }; this.watchSpeakers(); }
+      const fromAnswer = this.mode.kind === "listening" && this.mode.reason === "answer" && keyword !== BARE_NAME && !this.pendingWake ? this.mode.until : undefined;
+      if (fromAnswer !== undefined) this.endListening("timeout");
+      if (this.mode.kind === "idle" && !this.pendingWake) { this.pendingWake = { keyword, at: now, paused, ...(fromAnswer !== undefined ? { fromAnswer } : {}) }; this.watchSpeakers(); }
       // "Hey Ember" in a follow-up window is a wake (wakeOverFollowUp). The bare name isn't: a follow-up needs no name,
       // and the name is spotted inside "remember".
       else if (this.mode.kind === "listening" && this.mode.reason === "follow-up" && keyword !== BARE_NAME && !this.pendingWake) { this.pendingWake = { keyword, at: now, paused, overFollowUp: true }; this.watchSpeakers(); }
@@ -1416,7 +1430,7 @@ export class VoiceEngine {
           // said out of silence is too little for the recognizer ("Emperor Tunnel Nine"), and "Hey, rem|ember to…" heard
           // as it is spotted sounds like "Hey, Ember".
           this.announceWake(w.keyword, this.o.verifyWake === false || w.keyword === BARE_NAME ? null : w.at + (this.o.checkAfterMs ?? (w.paused ? PAUSED_CHECK_MS : 0)));
-          if (w.fromAnswer && this.o.verifyWake !== false && this.mode.kind === "listening") this.mode.fromAnswer = true;
+          if (w.fromAnswer !== undefined && this.o.verifyWake !== false && this.mode.kind === "listening") this.mode.fromAnswer = w.fromAnswer;
           if (this.mode.kind === "listening" && this.mode.checkAt === null) this.replayPreRoll();
         }
       }
@@ -1453,9 +1467,11 @@ export class VoiceEngine {
         this.mode.maybeAmber = true;
         this.replayPreRoll();
       } else if (heard && nearMiss(heard, true)) {
+        const answerUntil = this.mode.fromAnswer;
         this.emit({ type: "rejected", keyword: this.mode.keyword, reason: "check", heard });
         this.ring.clear();
         this.endListening("rejected");
+        this.backToAnswer(answerUntil);
       } else {
         this.replayPreRoll();
       }
@@ -2162,8 +2178,10 @@ export class VoiceEngine {
     if (this.mode.maybeAmber) {
       this.mode.maybeAmber = false;
       if (heardOtherWord(heard) && !NAME_ALONE.test(heard) && !CALLED_AS_WORD.test(heard) && !isStop(stripWake(heard, true))) {
+        const answerUntil = this.mode.fromAnswer;
         this.emit({ type: "rejected", keyword: this.mode.keyword, reason: "check", heard });
         this.endListening("rejected");
+        this.backToAnswer(answerUntil);
         return;
       }
     }
@@ -2178,8 +2196,10 @@ export class VoiceEngine {
       // And where the phrase was spotted in a question's answer window, which hears the room: only speech that holds
       // "Hey Ember", or starts with "Ember", as the recognizer writes the name itself, is a wake's (saidWakeItself:
       // "Number, can you pass the salt?" passes the check as the name written as a word).
+      const answerUntil = this.mode.fromAnswer;
       this.emit({ type: "rejected", keyword: this.mode.keyword, reason: "check", heard });
       this.endListening("rejected");
+      this.backToAnswer(answerUntil);
       return;
     }
     if (this.mode.announced === false) {

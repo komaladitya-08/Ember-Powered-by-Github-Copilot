@@ -3112,6 +3112,36 @@ describe("whose a spoken answer is (second review of the voice lane, 2026-11-12)
       expect(s.heard()).toEqual(["wake", "Open my mail. | wake"]);
     });
 
+    it("hears the answer said after a “Hey Ember” there that was taken back: the window opens again for the time it had left (voice-roomtalk-x9-3)", () => {
+      // The window went at the spot, before any check: with the wake taken back ("Hey Ember." written "Hey, Amber.", or
+      // the room's "Hey Amber, dinner's ready."), the "Allow." said next went nowhere, and nothing said so.
+      for (const first of ["Hey, Amber.", "Hey Amber, dinner's ready.", "And then we went to the market."]) {
+        const s = waiting({ 5: first, 6: "Allow.", 7: NEXT }, "answer", { otherSound: false, conversations: true });
+        const until = (s.e as unknown as { mode: { until: number } }).mode.until;
+        says(s, 5, 2, "user");
+        expect(s.events.filter(v => v.type === "listening").at(-1), first).toMatchObject({ on: true, window: "answer" });
+        // For the time it had left, no longer.
+        expect((s.e as unknown as { mode: { until: number } }).mode.until, first).toBe(until);
+        says(s, 7, 0, "user");
+        says(s, 6, 0, "user");
+        // (The rest of a short sentence taken back is the window's like any talk in it: it may say once how to answer.)
+        expect(s.heard().filter(h => h !== "unclear"), first).toEqual(["wake", "rejected (check)", "Allow. | answer"]);
+      }
+    });
+
+    it("opens no window again once the question has gone, or the window's time has (voice-roomtalk-x9-3)", () => {
+      const gone = waiting({ 5: "Hey Amber, dinner's ready.", 6: "Allow." }, "answer", { otherSound: null, conversations: true });
+      for (let i = 0; i < 28; i++) gone.run(1, () => { if (i === 12) gone.e.questionUp(false); return mic(5, 0.05, i === 8 ? 2 : 0); });
+      gone.run(60);
+      says(gone, 6, 0, "user");
+      expect(gone.heard()).toEqual(["wake", "rejected (check)"]);
+      expect(gone.e.listening).toBe(false);
+      const late = waiting({ 5: "Hey Amber, dinner's ready.", 6: "Allow." }, "answer", { otherSound: null, conversations: true });
+      late.run(Math.round(7000 / 32));
+      says(late, 5, 2, "user");
+      expect(late.e.listening).toBe(false);
+    });
+
     it("never takes a request the speakers' own stream said by name in it (Linux with parec)", () => {
       const s = waiting({ 5: "Ember, open my mail." }, "answer", { speakers: true, conversations: true });
       videoOn(s);

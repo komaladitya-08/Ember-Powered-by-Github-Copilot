@@ -675,7 +675,9 @@ there, with the spotter or without it. “Hey Ember” starts a wake as from idl
 check hears the phrase (it heard only what came after it, took nothing back, and the request lost its start: “Is it?”
 for “Hey Ember, what time is it?”), and there the whole of what was said must also hold the wake phrase as the
 recognizer writes it (“Hey Ember”, or “Ember” at its start), since the window was hearing the room; anything else heard
-there goes nowhere. A wake by the whole phrase is checked twice everywhere: a moment after the word, and again on the
+there goes nowhere. A wake the check takes back there opens the answer window again for the time it had left, while
+the question is still up: the window went when the phrase was spotted, and the “Allow.” said after a “Hey Ember.”
+written “Hey, Amber.” went nowhere. A wake by the whole phrase is checked twice everywhere: a moment after the word, and again on the
 whole of what was said with it, since the first check hears nothing now and then (“Hey Amber, what time is it?” said
 in a quiet room's noise went to Copilot as “What time is it?”). (From idle too, “number” after a greeting is the name
 only where the phrase ends there, a pause is written after it or a request's first word follows, as a laptop's
