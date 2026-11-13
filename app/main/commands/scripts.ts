@@ -26,8 +26,11 @@ export type ScriptLanguage =
   | { kind: "shells"; shells: ShellId[] }
   /** A shell whose language Ember can't read (fish, csh…): the command asks. */
   | { kind: "unclear"; says: string }
-  /** The `#!` line names an interpreter by path that may itself be a script: read that next. */
-  | { kind: "follow"; path: string }
+  /**
+   * The `#!` line names an interpreter by path that may itself be a script: read that next. `code`: its name is another
+   * language's interpreter (`./.venv/bin/python`), so this script is that language's too (r10-commands-x10-1).
+   */
+  | { kind: "follow"; path: string; code?: true }
   /** A database client's SQL: judged as that client's own text (commands-remote-r10-4). */
   | { kind: "sql"; client: "psql" | "mysql" | "sqlite" }
   /**
@@ -78,11 +81,12 @@ export function scriptLanguage(as: ScriptRef["as"], text: string): ScriptLanguag
   if (posixShell) return { kind: "shells", shells: posixShell === "sh" ? BOTH_SH : [posixShell] };
   if (name === "pwsh" || name === "powershell") return { kind: "shells", shells: ["powershell"] };
   if (OTHER_SHELLS.has(name)) return { kind: "unclear", says: `It runs a ${name} script, which Ember can't read.` };
-  // An interpreter of another language, by path or by name (`#!/usr/bin/python3`, `#!/usr/bin/env node`).
-  if (INTERPRETERS[name] !== undefined || INTERPRETERS[name.replace(/[\d.]+$/, "")] !== undefined) return { kind: "code" };
-  // An interpreter by path (`#!/home/ana/i.sh`, `#!/usr/bin/env ./i.sh`) is followed: a script there runs this one; a
-  // program there isn't a script and stops. A bare name env looks up (python3) is an interpreter: L8 unchanged.
-  if (prog.includes("/")) return { kind: "follow", path: prog };
+  const code = INTERPRETERS[name] !== undefined || INTERPRETERS[name.replace(/[\d.]+$/, "")] !== undefined;
+  // An interpreter by path (`#!/home/ana/i.sh`, `#!/usr/bin/env ./i.sh`) is followed, whatever its name: a script there
+  // runs this one (a task-written `bin/python3` that is a shell script: r10-commands-x10-1); a program there isn't a
+  // script and stops. One named like another language's interpreter also makes this script that language's code.
+  if (prog.includes("/")) return code ? { kind: "follow", path: prog, code: true } : { kind: "follow", path: prog };
+  // A bare name env looks up (`#!/usr/bin/env python3`, node) is an interpreter: code Ember doesn't read.
   return prog === "" ? { kind: "none" } : { kind: "code" };
 }
 
@@ -421,6 +425,8 @@ export async function judgeScripts(cls: Classification, io: ScriptIo | null, cla
     if (lang.kind === "code") { await ownCode(); continue; }
     if (lang.kind === "unclear") { unclear("unclear.other-shell", lang.says, name); continue; }
     if (lang.kind === "follow") {
+      // Named like another language's interpreter: this script is code Ember doesn't read, and the file there is read too.
+      if (lang.code) await ownCode();
       // A relative interpreter is found from the folder the command runs in.
       if (!flavour.isAbsolute(lang.path) && !ref.cwd) { unclear("unclear.script", "It runs a script Ember can't name."); continue; }
       const path = flavour.isAbsolute(lang.path) ? lang.path : flavour.join(ref.cwd, lang.path);

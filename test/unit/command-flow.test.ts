@@ -618,7 +618,9 @@ describe("reading a shell script before it runs (L8, the lead's ruling)", () => 
     expect(scriptLanguage("shebang", "#!/usr/bin/env ./i.sh\n")).toEqual({ kind: "follow", path: "./i.sh" });
     // Another language's interpreter: code Ember doesn't read, which asks only when the task wrote it (commands-remote-r10-9).
     expect(scriptLanguage("shebang", "#!/usr/bin/env python3\n")).toEqual({ kind: "code" });
-    expect(scriptLanguage("shebang", "#!/usr/bin/python3.12\n")).toEqual({ kind: "code" });
+    // One given by path is followed too, as it may itself be a script (r10-commands-x10-1).
+    expect(scriptLanguage("shebang", "#!/usr/bin/python3.12\n")).toEqual({ kind: "follow", path: "/usr/bin/python3.12", code: true });
+    expect(scriptLanguage("shebang", "#!/usr/bin/env ./bin/python3\n")).toEqual({ kind: "follow", path: "./bin/python3", code: true });
     expect(scriptLanguage("code", "")).toEqual({ kind: "code" });
     expect(scriptLanguage("psql", "")).toEqual({ kind: "sql", client: "psql" });
     // No #! line: the calling shell runs a text file; a NUL in its first line makes it a program.
@@ -1034,9 +1036,9 @@ describe("a script of the task's own that can't be read in full (L8's padding by
     expect((await local(h, "git pull")).resultType).toBe("success");
     expect(h.ctx.state.written!.anywhere).toBe(true);
     expect((await local(h, "./x.py")).resultType).toBe("success");
-    // A Python interpreter isn't followed as a script: x.py is code Ember doesn't read, and a pull wrote it only where
-    // Ember couldn't tell (commands-remote-r10-9).
-    expect(h.reads).not.toContain("/usr/bin/python3");
+    // The interpreter by path is followed (it may itself be a script: r10-commands-x10-1), and isn't the task's own; x.py
+    // is code Ember doesn't read, and a pull wrote it only where Ember couldn't tell (commands-remote-r10-9).
+    expect(h.reads).toContain("/usr/bin/python3");
     expect(h.asked).toEqual([]);
     // /usr/local is the user's on many Macs: still the task's own once it wrote where Ember couldn't tell.
     expect((await local(h, "./y")).resultType).toBe("denied");
@@ -4330,6 +4332,30 @@ describe("SQL files and scripts in other languages a command runs (commands-remo
     t.existing.add("/home/ana/proj/a");
     expect((await local(t, "./a")).resultType).toBe("denied");
     expect(h0rules(t)).toContain("unclear.script-code");
+  });
+
+  it("follows a #! interpreter given by path, so a shell script the task wrote there is read and asks (r10-commands-x10-1)", async () => {
+    for (const [shebang, interp] of [
+      ["#!/home/ana/proj/bin/python3\nprint(1)\n", "/home/ana/proj/bin/python3"], ["#!/usr/bin/env ./bin/python3\nprint(1)\n", "/home/ana/proj/bin/python3"],
+      ["#!/home/ana/proj/bin/node\nconsole.log(1)\n", "/home/ana/proj/bin/node"], ["#!/home/ana/proj/.venv/bin/python\nprint(1)\n", "/home/ana/proj/.venv/bin/python"],
+      ["#!/usr/bin/env -S ./.venv/bin/python -u\nprint(1)\n", "/home/ana/proj/.venv/bin/python"],
+    ] as const) {
+      const h = flow({ "/home/ana/proj/tool": shebang, [interp]: "#!/bin/sh\nrm -rf /home/ana/Documents\n" });
+      await local(h, `printf '#!/bin/sh\\nrm -rf /home/ana/Documents\\n' > ${interp.replace("/home/ana/proj/", "")}`);
+      h.existing.add(interp); h.existing.add("/home/ana/proj/tool");
+      expect((await local(h, "./tool")).resultType, shebang).toBe("denied");
+      expect(h.reads, shebang).toContain(interp);
+      expect(h0rules(h), shebang).toContain("posix.rm");
+    }
+    // A program there (not a script) stops the reading; the project's own tool still runs, and a task-written one asks.
+    const prog = flow({ "/home/ana/proj/tool": "#!/home/ana/proj/.venv/bin/python\nprint(1)\n", "/home/ana/proj/.venv/bin/python": "\x7fELF\x02\x01\x01\x00" });
+    expect((await local(prog, "./tool")).resultType).toBe("success");
+    expect(prog.asked).toEqual([]);
+    const mine = flow({ "/home/ana/proj/tool": "#!/home/ana/proj/.venv/bin/python\nimport os\n", "/home/ana/proj/.venv/bin/python": "\x7fELF\x02\x01\x01\x00" });
+    await local(mine, "printf '#!/home/ana/proj/.venv/bin/python\\nimport os\\n' > tool");
+    mine.existing.add("/home/ana/proj/tool"); mine.existing.add("/home/ana/proj/.venv/bin/python");
+    expect((await local(mine, "./tool")).resultType).toBe("denied");
+    expect(h0rules(mine)).toContain("unclear.script-code");
   });
 
   it("keeps L8 for a script in another language the task didn't write: the project's own runs (commands-remote-r10-9)", async () => {
