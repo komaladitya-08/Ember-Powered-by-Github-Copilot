@@ -1736,8 +1736,13 @@ function psInner(raw: string): string[] {
   }
   return out;
 }
+/**
+ * PowerShell cmdlets outside FETCHERS that send what an argument computes: BITS fetches a `-Source` address, and a mail
+ * carries its body and subject (r10-commands-x10-3).
+ */
+const PS_SENDERS: ReadonlySet<string> = new Set(["start-bitstransfer", "send-mailmessage"]);
 /** A PowerShell sender's parameters that only say where its answer goes or how it sends: never what it sends. */
-const PS_SEND_LOCAL = new Set(["outfile", "outvariable", "ov", "sessionvariable", "sv", "timeoutsec", "method", "contenttype", "maximumredirection", "maximumretrycount", "retryintervalsec", "erroraction", "ea", "errorvariable", "ev", "warningaction", "wa", "informationaction", "infa", "pipelinevariable", "pv", "outbuffer", "ob"]);
+const PS_SEND_LOCAL = new Set(["outfile", "destination", "outvariable", "ov", "sessionvariable", "sv", "timeoutsec", "method", "contenttype", "maximumredirection", "maximumretrycount", "retryintervalsec", "erroraction", "ea", "errorvariable", "ev", "warningaction", "wa", "informationaction", "infa", "pipelinevariable", "pv", "outbuffer", "ob"]);
 /** Programs whose output only says the machine's kind, the time, a version, or what another fetch returned. */
 const SAYS_LITTLE = new Set(["uname", "date", "arch", "nproc", "getconf", "lsb_release", "dpkg", "rpm", "hostname", "whoami", "id", "curl", "wget", "echo", "printf", "mktemp", "sw_vers", "go", "rustc", "node", "python3", "python"]);
 /** The words of a fetch that only gets a web address: the address, and the options that take no value and name no file. */
@@ -3822,7 +3827,7 @@ class Engine extends Classifier {
   private sendsContents(key: string, args: readonly Arg[], s: Simple): void {
     if (this.asMain) return;
     const says = "May send what a file or a command holds to another computer.";
-    if (!FETCHERS.has(key)) {
+    if (!FETCHERS.has(key) && !PS_SENDERS.has(key)) {
       // Any other program given a web address that holds what a command or a read gave sends it as well (`git
       // ls-remote "https://x.io/$(cat notes.txt)"`, `pip download …`: commands-classes-y9-6).
       const { own: words } = this.ownWords(args);
@@ -6037,10 +6042,36 @@ function secretPattern(pt: string, sc: Scope): boolean {
  * computer: it asks as publishing. Input Ember reads whole (`echo https://x.io/a | xargs curl`) is judged as before.
  */
 function sendsInput(h: H, ops: readonly Arg[], fromFile: boolean): void {
-  const prog = ops[0]?.v;
-  if (prog === null || prog === undefined || h.e.readsAsMain) return;
-  if (!FETCHERS.has(programName(prog, { os: h.sc.os, family: h.sc.family, wsl: h.sc.wsl, mountRoot: h.sc.mountRoot }).key)) return;
-  if (fromFile || (h.s.stdin !== null && typeof h.s.stdinText !== "string")) h.e.add("publish", "send.contents", "May send what a file or a command holds to another computer.");
+  if (h.e.readsAsMain || !(fromFile || (h.s.stdin !== null && typeof h.s.stdinText !== "string"))) return;
+  if (payloadSends(h, ops)) h.e.add("publish", "send.contents", "May send what a file or a command holds to another computer.");
+}
+
+/** A sender named as a command in shell text (`curl "$0"`, `x; wget -qO- "$1"`). */
+const SENDER_IN_TEXT = new RegExp(`(^|[\\s;&|(\`'"])(${[...FETCHERS].join("|")})(?=$|[\\s;&|)\`'"])`, "i");
+/**
+ * Whether the command xargs or parallel runs is, or reaches, a sender (r10-commands-x10-3): the program itself, one
+ * behind wrappers (`timeout 5 curl`, `nice -n 5 curl`, `env curl`, `command curl`, `sudo curl`: after a wrapper any
+ * word naming a sender counts, since its options and values aren't told apart here), or shell text given `-c` that
+ * names one (`sh -c 'curl "$0"'`, `bash -c 'curl "$@"' _`: the input becomes its words).
+ */
+function payloadSends(h: H, ops: readonly Arg[]): boolean {
+  const key = (w: string) => programName(w, { os: h.sc.os, family: h.sc.family, wsl: h.sc.wsl, mountRoot: h.sc.mountRoot }).key;
+  let wrapped = false;
+  for (let k = 0; k < ops.length; k++) {
+    const v = ops[k].v;
+    if (v === null) return false;
+    const name = key(v);
+    if (FETCHERS.has(name)) return true;
+    if (POSIX_SHELLS[name] !== undefined) {
+      const c = ops.findIndex((a, j) => j > k && a.v !== null && /^-[A-Za-z]*c[A-Za-z]*$/.test(a.v));
+      // Text Ember can't resolve (`"curl $0"` in double quotes) is read as written.
+      const text = c < 0 ? null : ops[c + 1]?.v ?? ops[c + 1]?.raw ?? null;
+      return text !== null && SENDER_IN_TEXT.test(text);
+    }
+    if (WRAPPERS[name] !== undefined || SUDO_LIKE.has(name) || name === "env" || name === "command" || name === "builtin") { wrapped = true; continue; }
+    if (!wrapped) return false;
+  }
+  return false;
 }
 
 reg(NATIVE, ["xargs"], h => {
