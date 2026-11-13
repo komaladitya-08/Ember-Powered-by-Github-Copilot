@@ -760,8 +760,12 @@ recognizer, reading what the stream played through that speech, finds neither th
 most of the words heard with it (`speakersSaid`: read from where the stream's sound began, as the VAD dates a speech
 from a moment into it and of a name cut at its start the recognizer writes nothing, and again from the stream's first
 pause on where the first reading finds nothing of it, as with the end of what a video said before in front it wrote
-nothing at all for 9 of 192 cuts of “Ember, allow.” and its like, and for none from the pause on); while the stream
-holds sound, the recognizer's “Ember, …” alone is no name. Before, nothing asked the stream in these windows, and a video's, a call's or a web page's own “Ember, allow”
+nothing at all for 9 of 192 cuts of “Ember, allow.” and its like, and for none from the pause on), and if the
+microphone's loudness through that speech doesn't follow the stream's, 1 kHz and up, the band every speaker plays
+(`followsSpeakers`, `LEVEL_BAND` in app/voice/room-band.ts): a page's stream can carry what no speaker plays, and a loud
+low hum in it, under its own “Ember, allow it.”, made both its spotter and the recognizer miss the words there while
+the room heard them alone, so it was the user's yes by name in 6 of 48 runs on the real models with a 50 Hz hum
+(voice-safety-x9-2; none of 48 now, with a hum of 50, 120, 200 or 300 Hz). While the stream holds sound, the recognizer's “Ember, …” alone is no name. Before, nothing asked the stream in these windows, and a video's, a call's or a web page's own “Ember, allow”
 answered the question it was heard in, where the same words at idle are ignored (second review of the voice lane,
 V2-S2). Measured on the real models, a video saying “Ember, okay.” and its like to a question, 80 runs: 25 were taken
 as a yes by name before, 3 with the two spotters alone (the stream's spotter misses a name now and then), none with the

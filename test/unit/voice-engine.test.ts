@@ -2842,6 +2842,52 @@ describe("whose a spoken answer is (second review of the voice lane, 2026-11-12)
       }
     });
 
+    describe("by the microphone's loudness too, where both readers of the stream made nothing of it (voice-safety-x9-2)", () => {
+      // Tones on whole periods of a frame (31.25 Hz), so each frame's first two samples, which carry the words' and the
+      // names' tags, hardly break a wave.
+      /** Frame `i` of a voice at `level`: a `hz` tone whose loudness rises and falls as syllables do (`rate`). */
+      const voice = (i: number, level: number, rate: number, hz = 1000) => (k: number) => level * (0.15 + 0.85 * Math.abs(Math.sin(i * rate))) * Math.sin((2 * Math.PI * hz * k) / 16_000);
+      const hum = (hz: number) => (k: number) => 0.9 * Math.sin((2 * Math.PI * hz * k) / 16_000);
+      /** A microphone frame of the words `tag` with the name `name` for its spotter, and `sound` in the rest of it. */
+      const heardAs = (tag: number, name: number, sound: (k: number) => number) => { const f = new Float32Array(512); for (let k = 2; k < 512; k++) f[k] = sound(k); f[0] = tag / 1000; f[1] = name / 1000; return f; };
+      /**
+       * A frame of the speakers' stream holding `sound`, its spotter hearing nothing and the recognizer reading nothing in it
+       * (`whole`: in its first two samples too, which a hum's own values keep from reading as either tag).
+       */
+      const played = (sound: (k: number) => number, whole = false) => { const f = new Float32Array(512); for (let k = whole ? 0 : 2; k < 512; k++) f[k] = sound(k); return f; };
+
+      it("takes a page's own “Ember, allow.” for theirs when a loud hum in its stream, which no speaker plays, blinds their spotter and the recognizer: no one's yes", () => {
+        // Measured on the real models: a 50 to 300 Hz hum at 0.9 of full scale, the words 32 dB under it, made the stream's
+        // spotter and the recognizer's reading of it miss, and the yes by name was the user's in 5 to 7 of 48 runs. (A
+        // follow-up hears only a voice about as loud as the wake's: the words are as loud here.)
+        for (const where of WHERE) for (const hz of [62.5, 187.5, 312.5]) {
+          const s = waiting({ 5: "Ember, allow." }, where);
+          videoOn(s);
+          for (let i = 0; i < frames(900); i++) {
+            const words = voice(i, 0.12, 0.7), late = voice(i - 2, 0.06, 0.7);
+            // The room hears the words alone, half as loud and two frames late; the stream holds them under the hum.
+            s.run(1, () => heardAs(5, i === 8 ? 1 : 0, i >= 2 ? late : () => 0), () => played(k => hum(hz)(k) + words(k), true));
+          }
+          s.run(frames(1500), () => mic(0, 0), () => played(hum(hz), true));
+          expect(s.heard(), `${hz} Hz, ${where}`).toEqual([`Allow. | ${where} | over other sound`]);
+        }
+      });
+
+      it("still takes the user's own “Ember, allow.” over music whose loudness their words don't follow", () => {
+        for (const where of WHERE) {
+          const s = waiting({ 5: "Ember, allow." }, where);
+          videoOn(s);
+          const music = (i: number) => voice(i, 0.02, 0.2, 625);
+          for (let i = 0; i < frames(900); i++) {
+            const mine = voice(i, 0.05, 1.3), late = music(i - 2);
+            s.run(1, () => heardAs(5, i === 8 ? 1 : 0, k => mine(k) + late(k) / 2), () => played(music(i)));
+          }
+          for (let i = frames(900); i < frames(2400); i++) { const late = music(i - 2); s.run(1, () => heardAs(0, 0, k => late(k) / 2), () => played(music(i))); }
+          expect(s.heard(), where).toEqual([`Allow. | ${where}`]);
+        }
+      });
+    });
+
     it("takes the recognizer's “Ember, allow” for said by name without the spotter only where the speakers can't have said it, and a near word (“Member, yes.”) never without it", () => {
       for (const where of WHERE) {
         // The speakers' stream holds sound through the words (the video goes on): only the two spotters can tell whose

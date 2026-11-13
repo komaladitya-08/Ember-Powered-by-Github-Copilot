@@ -25,6 +25,7 @@
  */
 
 import { spokenAnswer } from "../shared/spoken-answer";
+import { BandFilter, LEVEL_BAND } from "./room-band";
 
 export const SAMPLE_RATE = 16_000;
 /**
@@ -706,6 +707,19 @@ const UNCLEAR_WORDS = 2;
 /** The microphone's lag behind the speakers' stream is measured up to 0.4 s; a match this good says it hears them at all. */
 const MAX_LAG_FRAMES = 12;
 const LAG_MIN_CORRELATION = 0.5;
+/**
+ * The microphone heard the speakers say a speech when its loudness through it follows their own stream's this well
+ * (followsSpeakers): over at least FOLLOW_MIN_FRAMES frames (0.5 s) in which that stream sounded, with their sound
+ * under at least FOLLOW_COVER of the microphone's loud frames (within 15 dB of its loudest: FOLLOW_LOUD, in energy).
+ * Measured on the real models, eight voices, the answer window and a conversation: a page's own "Ember, allow it." and
+ * its like under a hum of 50, 120, 200 or 300 Hz that only its stream carried was a yes by name 0 times in 48 at each
+ * (6 at 50 Hz before), and none without a hum; the user's own by name was heard as before, over music 29 times in 40
+ * and in a video's pause 11 in 40 (voice-safety-x9-2).
+ */
+const FOLLOW_MIN_CORRELATION = 0.62;
+const FOLLOW_MIN_FRAMES = 16;
+const FOLLOW_COVER = 0.8;
+const FOLLOW_LOUD = 31.6;
 
 /**
  * `ms`: the window's length (it starts again after Ember speaks); `first`: nothing heard yet since the wake;
@@ -789,7 +803,9 @@ export class VoiceEngine {
   private pendingWake: { keyword: string; at: number; paused: boolean; overFollowUp?: boolean } | null = null;
   private pendingStop: PendingStop | null = null;
   /** The speakers' recent frames, when they last made a sound and last sent a frame, and whether their spotter runs. */
-  private speakers: { frame: Float32Array; at: number; sound: boolean; energy: number }[] = [];
+  private speakers: { frame: Float32Array; at: number; sound: boolean; energy: number; level: number }[] = [];
+  /** Their stream's energy as every speaker plays it (LEVEL_BAND), for followsSpeakers: one filter, as it keeps its state. */
+  private speakersLevel = new BandFilter(LEVEL_BAND);
   private monitorSoundAt = Number.NEGATIVE_INFINITY;
   private monitorFrameAt = Number.NEGATIVE_INFINITY;
   private monitorSpotting = false;
@@ -1218,7 +1234,7 @@ export class VoiceEngine {
     // Ember said it stopped, and the stream has been quiet for a turn's gap since its last sound: its voice has left it.
     if (!sound && !this.pageSpeaking && at < this.ownSoundUntil && at - this.monitorSoundAt >= OWN_GAP_MS) this.ownSoundUntil = this.monitorSoundAt;
     if (sound) this.monitorSoundAt = at;
-    this.speakers.push({ frame, at, sound, energy: rms * rms });
+    this.speakers.push({ frame, at, sound, energy: rms * rms, level: this.speakersLevel.energy(frame) });
     if (this.speakers.length > SPEAKERS_RING_FRAMES) this.speakers.shift();
     if (this.monitorSpotting) this.spotSpeakers(frame, at);
   }
@@ -1553,6 +1569,8 @@ export class VoiceEngine {
   private speakersSaid(from: number, heard: string): boolean {
     // (Asked twice of one speech, in a conversation: read once.)
     if (this.speakersRead?.from === from && this.speakersRead.heard === heard) return this.speakersRead.said;
+    // Whatever the recognizer makes of their stream, the microphone's own loudness through that speech says so too.
+    if (this.heardSpeakers(from)) { this.speakersRead = { from, heard, said: true }; return true; }
     const all = this.speakers;
     let start = all.findIndex(s => s.at >= from);
     if (start < 0) start = all.length;
@@ -1580,6 +1598,19 @@ export class VoiceEngine {
     const said = reads(frames) || (paused > 0 && reads(frames.slice(paused)));
     this.speakersRead = { from, heard, said };
     return said;
+  }
+
+  /**
+   * Did the microphone hear the speakers through the speech that began at `from`: does its loudness, frame by frame,
+   * follow their own stream's wherever that stream sounded (followsSpeakers)? A proof that needs no recognizer: both
+   * others are a recognizer's reading of the stream, and where both made nothing of it the speech was the user's. A
+   * page's own "Ember, allow it." over a hum that only the stream held was a yes by name in 6 of 48 runs on the real
+   * models (voice-safety-x9-2). What follows so is theirs (fail closed); the user's own words over music or a video's
+   * talk don't, so their answer by name stays.
+   */
+  private heardSpeakers(from: number): boolean {
+    const frames = Math.round((this.fedAt - from) / 32) + 1, ahead = Math.round((this.fedAt - this.monitorFrameAt) / 32);
+    return followsSpeakers(this.micLevels, this.speakers, frames, ahead);
   }
 
   /** Did the speakers' own spotter hear the name in the speech that began at `from`? What was said with it is theirs. */
@@ -2585,6 +2616,38 @@ function rmsOf(frame: Float32Array): number {
   let sum = 0;
   for (let i = 0; i < frame.length; i++) sum += frame[i] * frame[i];
   return Math.sqrt(sum / Math.max(1, frame.length));
+}
+
+/**
+ * Does the microphone's loudness over its last `frames` frames (`mic`: each frame's energy, the latest last) follow the
+ * speakers' own stream's (`speakers`, the latest last; the microphone's latest frame came `ahead` frames after theirs)?
+ * At some lag up to MAX_LAG_FRAMES (the microphone hears the speakers late), over the frames in which their stream
+ * sounded: the two loudnesses (dB) rise and fall together (FOLLOW_MIN_CORRELATION), and their sound lies under the
+ * microphone's loud frames (FOLLOW_COVER), so a speech that only began as theirs ended isn't theirs. A stream that plays
+ * on at one level says nothing (music's held chord, a fan): nothing rises and falls in it.
+ */
+export function followsSpeakers(mic: readonly number[], speakers: readonly { level: number; sound: boolean }[], frames: number, ahead: number): boolean {
+  const db = (e: number) => 10 * Math.log10(e + 1e-10);
+  const n = Math.min(frames, mic.length);
+  let top = 0;
+  for (let i = 0; i < n; i++) top = Math.max(top, mic[mic.length - 1 - i]);
+  for (let lag = 0; lag <= MAX_LAG_FRAMES; lag++) {
+    const x: number[] = [], y: number[] = [];
+    let loud = 0, under = 0;
+    for (let i = 0; i < n; i++) {
+      const m = mic[mic.length - 1 - i], isLoud = m * FOLLOW_LOUD >= top;
+      if (isLoud) loud++;
+      const k = i + lag - ahead; // frames back from the speakers' latest
+      if (k < 0 || k >= speakers.length) continue;
+      const s = speakers[speakers.length - 1 - k];
+      if (!s.sound) continue;
+      if (isLoud) under++;
+      x.push(db(s.level));
+      y.push(db(m));
+    }
+    if (x.length >= FOLLOW_MIN_FRAMES && under >= loud * FOLLOW_COVER && correlation(x, y) >= FOLLOW_MIN_CORRELATION) return true;
+  }
+  return false;
 }
 
 /** Pearson's correlation of two series of the same length (0 when either is flat). */
