@@ -50,13 +50,14 @@ let connectorsError: string | null = null;
 /** Connectors waiting for the user in GitHub's page. */
 const pending = new Set<string>();
 /** The consent card up now: before adding or connecting an entry, or agreeing again to an installed item. */
-let asking: { kind: "entry"; entry: MarketplaceEntry } | { kind: "reagree"; item: Installed } | null = null;
+type Asking = { kind: "entry"; entry: MarketplaceEntry } | { kind: "reagree"; item: Installed };
+let asking: Asking | null = null;
 /**
  * The card drawn last, and when it came up (performance.now()): its agree button takes no press for AGREE_ARM_MS, as
  * Home's other consent cards don't, so a doubled or held Enter from the button that opened it agrees to nothing
  * (accessibility-r9-2).
  */
-let cardShown: { for: typeof asking; at: number } = { for: null, at: 0 };
+let cardShown: { for: Asking | null; at: number } = { for: null, at: 0 };
 /** Requests under way, by the key of the control that started them (its button waits for the answer). */
 const busy = new Set<string>();
 /** Tool lists the user opened or closed (kept across redraws). */
