@@ -4887,7 +4887,8 @@ export class Worker {
   private async checkFirst(steps: readonly { r: ActionRequest; d: Decision }[]): Promise<Decision[]> {
     if (steps.some(s => this.takenBack(s.r.kind))) return steps.map(s => s.d);
     const check = this.d.checkStep ?? copilotStepChecker({ client: this.d.client, model: this.d.checkModel ?? this.d.model, provider: this.d.provider, workDir: this.d.workDir, log: this.d.log });
-    return this.d.policy.assistAll(steps, {
+    const t0 = performance.now();
+    const out = await this.d.policy.assistAll(steps, {
       words: this.checkWords, check, signal: this.overSignal,
       task: { steered: this.steered, offTask: this.tainted && !this.steered, saidNo: this.saidNoThisTask },
       onCheck: () => {
@@ -4895,6 +4896,9 @@ export class Worker {
         try { this.d.presenter.progress(CHECKING_STEP); } catch (err) { this.d.log.warn("worker.checking_not_said", { err }); }
       },
     });
+    // (What it said and how long it took: never the step, its names or the user's words.)
+    if (this.checked) this.d.log.info("worker.step_checked", { task: this.spec.id, kind: steps[0].r.kind, steps: steps.length, review: out.find(d => d.review)?.review ?? "stopped", ms: Math.round(performance.now() - t0) });
+    return out;
   }
 
   /** The names `req`'s step goes by in this task's refusals (stepNames): its window and element, and how it is taken. */
