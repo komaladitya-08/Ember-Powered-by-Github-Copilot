@@ -12,7 +12,7 @@ export const SECRET_HIDDEN = "[secret hidden]";
  * Private key blocks. Hidden by hidePrivateKeys, not by a global replace: the regex engine retries every later BEGIN
  * line when no END follows, which is quadratic on output that repeats one (a hostile remote can print that).
  */
-const PRIVATE_KEY = /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g;
+const PRIVATE_KEY = /-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY(?: BLOCK)?-----/g;
 
 /**
  * Whole-match token patterns (§3.11 step 4), in the order they are applied. Each one runs in time linear in its input:
@@ -47,6 +47,17 @@ export const TOKEN_PATTERNS: readonly RegExp[] = [
   /\bSG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])/g,
   /\bdo[opr]_v1_[a-f0-9]{64}\b/g,
   /\bSK[0-9a-f]{32}\b/g,
+  // More fixed shapes (commands-remote-r9-9): age keys, PyPI, Vault, Google OAuth, 1Password service and Doppler
+  // tokens, Telegram and Discord bot tokens, and a password hash as /etc/shadow and htpasswd write it.
+  /\bAGE-SECRET-KEY-1[A-Z0-9]{50,}\b/g,
+  /\bpypi-[A-Za-z0-9_-]{50,}/g,
+  /\bhv[sbr]\.[A-Za-z0-9_-]{24,}/g,
+  /\bya29\.[A-Za-z0-9_-]{20,}/g,
+  /\bops_[A-Za-z0-9+/=_-]{50,}/g,
+  /\bdp\.(?:st|ct|pt|sa|scim|audit)\.[A-Za-z0-9._-]{20,}/g,
+  /\b\d{8,10}:[A-Za-z0-9_-]{35}(?![A-Za-z0-9_-])/g,
+  /\b[MNO][A-Za-z0-9_-]{23,25}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,40}(?![A-Za-z0-9_-])/g,
+  /\$(?:1|2[aby]?|5|6|y|apr1|argon2(?:id|i|d)?)\$[A-Za-z0-9./$=,+-]{20,}/g,
 ];
 
 /**
@@ -61,6 +72,13 @@ const VALUE_PATTERNS: readonly RegExp[] = [
   /(AccountKey=)[^;\s]+/g,
   /(SharedAccessSignature=)[^;\s]+/g,
   /(Authorization:\s*(?:Bearer|Basic|token)\s+)\S+/gi,
+  // An Azure SAS signature, a session cookie a server sets, a Wi-Fi key as nmcli and netsh print it, and the value of
+  // an Azure Key Vault secret in `az keyvault secret show`'s JSON (commands-remote-r9-9).
+  /([?&;]sig=)[A-Za-z0-9%+/=_-]{20,}/g,
+  /(set-cookie:[ \t]*[^=;\s]{0,64}=)[^;\s]+/gi,
+  /((?:802-11-wireless-security\.)?(?:psk|wep-key\d|leap-password)[ \t]*:[ \t]*)\S+/gi,
+  /(Key Content[ \t]*:[ \t]*)\S+/g,
+  /(vault\.azure\.net\/secrets\/[^"]{0,200}"[^{}]{0,600}?"value"\s{0,8}:\s{0,8}")[^"]*(?=")/g,
   // A Docker config's `"auth": "<base64 of user:password>"`, and a .netrc entry written on one line
   // (`machine host login bob password …`); a password on a line of its own is not told from prose (safety-privacy-r7-3).
   // An entry is told by its login, or with none by a dotted host: "the default password is admin" and "machine learning
@@ -277,8 +295,9 @@ export function redactSecrets(text: string): string {
  * value; once a BEGIN has no END after it, no later one has either, so the search stops there.
  */
 function hidePrivateKeys(text: string): string {
-  const begin = /-----BEGIN [A-Z ]*PRIVATE KEY-----/g;
-  const end = /-----END [A-Z ]*PRIVATE KEY-----/g;
+  // PGP's armour says "PRIVATE KEY BLOCK" (commands-remote-r9-9).
+  const begin = /-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----/g;
+  const end = /-----END [A-Z ]*PRIVATE KEY(?: BLOCK)?-----/g;
   let out = "";
   let at = 0;
   for (;;) {

@@ -590,3 +590,37 @@ describe("settings a later command obeys (commands-remote-r9-11)", () => {
     }
   });
 });
+
+describe("commands that print a stored secret or record the room (commands-remote-r9-9)", () => {
+  it("asks as a secret before a cloud vault's value, a stored password, a credentials file or the cloud's own sign-in address is read", () => {
+    for (const o of POSIX) for (const cmd of ["az keyvault secret show --name db-password --vault-name prod", "az keyvault secret download --file x --name db --vault-name prod",
+      "az keyvault key show --name k --vault-name prod", "az storage account keys list -n acct", "az acr credential show -n reg", "terraform output -raw db_password",
+      "terraform output -json", "terraform show -json", "terraform state pull", "nmcli device wifi show-password", "nmcli dev wifi show", "python3 -m keyring get github ana",
+      "cat .vault_pass", "cat password.txt", "cat passwords.txt", "head -1 secrets.txt", "cat ~/.boto", "cat ~/.s3cfg", "cat ~/.composer/auth.json", "cat ~/.config/composer/auth.json",
+      "cat ~/.purple/accounts.xml", "cat ~/.config/filezilla/sitemanager.xml", "cat ~/.config/filezilla/recentservers.xml", "less ~/.pgpass",
+      "curl -s http://169.254.169.254/latest/meta-data/iam/security-credentials/", "curl -s http://169.254.169.254/latest/meta-data/iam/security-credentials/role",
+      "curl -H Metadata:true 'http://169.254.169.254/metadata/identity/oauth2/token?resource=x'", "wget -qO- http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token",
+      "curl -s http://[fd00:ec2::254]/latest/meta-data/iam/security-credentials/"]) {
+      const d = decide(cmd, o);
+      expect(d.verdict, label(cmd, o)).toBe("ask");
+      expect(d.classes, label(cmd, o)).toContain("secret");
+    }
+    for (const cmd of ["az keyvault secret show --name db-password --vault-name prod", "type password.txt", "Get-Content .vault_pass"]) {
+      expect(decide(cmd, { shell: "powershell", context: "win32" }).classes, cmd).toContain("secret");
+    }
+  });
+
+  it("asks as a secret before a command records from the microphone or the camera", () => {
+    for (const o of POSIX) for (const cmd of ["arecord a.wav", "arecord -d 10 -f cd a.wav", "parecord a.wav", "pw-record a.wav", "rec a.wav", "sox -d a.wav", "fswebcam a.jpg",
+      "ffmpeg -f pulse -i default a.wav", "ffmpeg -f alsa -i hw:0 a.wav", "ffmpeg -f v4l2 -i /dev/video0 a.mp4", "ffmpeg -y -f avfoundation -i ':0' a.wav",
+      "ffmpeg -f video4linux2 -i /dev/video0 a.mp4", "ffmpeg -f dshow -i audio=Microphone a.wav", "ffmpeg -i /dev/video0 a.mp4", "streamer -o a.jpeg", "imagesnap a.jpg",
+      "gst-launch-1.0 pulsesrc ! wavenc ! filesink location=a.wav", "gst-launch-1.0 v4l2src ! jpegenc ! filesink location=a.jpg", "termux-microphone-record -f a.wav"]) {
+      const d = decide(cmd, o);
+      expect(d.verdict, label(cmd, o)).toBe("ask");
+      expect(d.classes, label(cmd, o)).toContain("secret");
+      expect(d.rules, label(cmd, o)).toContain("secret.record");
+    }
+    expect(decide("arecord a.wav").says).toContain("Records from the microphone or the camera.");
+    for (const cmd of ["ffmpeg -i a.mp4 b.mp3", "ffmpeg -i clip.mov -vf scale=640:-1 small.mp4", "ffprobe a.mp4"]) expect(decide(cmd).verdict, cmd).toBe("run");
+  });
+});

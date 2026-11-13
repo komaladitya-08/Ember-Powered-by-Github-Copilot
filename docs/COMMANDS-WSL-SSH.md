@@ -208,7 +208,14 @@ Ember stops and asks before a command that:
   password managers, `/etc/shadow`, your shell history; printing tokens or environment variables that may hold them (`gh auth token`,
   `env`, `printenv`), also with a PowerShell cmdlet Ember has no rule for whose name says a secret, credential,
   token, password, key, vault or certificate, or that is given `-AsPlainText` (`Get-Secret`, `Get-AzKeyVaultSecret`);
-  reading the clipboard; taking a screenshot without Ember's privacy filters; a password or token
+  reading the clipboard; taking a screenshot without Ember's privacy filters; recording from the microphone or the
+  camera ("Records from the microphone or the camera.": `arecord`, `parecord`, `rec`, `sox -d`, `fswebcam`, `ffmpeg`
+  with a capture device as its input, GStreamer's capture sources); a cloud vault's value or a service's keys (`az
+  keyvault secret show`, `az storage account keys list`, `terraform output -raw` or `-json`, `terraform show -json`);
+  a Wi-Fi password (`nmcli device wifi show-password`); a file named for what it holds (`password.txt`,
+  `secrets.txt`, `credentials.txt`, `.vault_pass`, `.htpasswd`, `~/.boto`, `~/.s3cfg`, Composer's `auth.json`,
+  FileZilla's and Pidgin's saved sign-ins); a fetch of a cloud computer's own sign-in address (`curl
+  http://169.254.169.254/…`); a password or token
   written on the command line; and a variable named for one handed to any program as an argument, known to Ember or
   not (`mytool --token "$GITHUB_TOKEN"`, `curl -H "Authorization: Bearer $API_KEY" …`, `$env:NPM_TOKEN`, `%NPM_TOKEN%`):
   the program is given the secret and may print it;

@@ -28,7 +28,7 @@ import {
   CLIPBOARD_READERS, CLOUD_CLIS, CLOUD_DELETE, CLOUD_READ, CLOUD_READ_PHRASES, DECODERS, DISK_TOOLS, FETCHERS, GIT_CODE_KEYS, GLOBAL_OPTIONS,
   DOWNLOAD_READERS, GUI_PROGRAMS, INPUT_SYNTH, INTERACTIVE, INTERPRETERS, LANGUAGE_INSTALL_VERBS, LAUNCHERS, NAME_DESTROY, NAME_PUBLISH, NAME_SYSTEM,
   ORDINARY_PROGRAMS, ORDINARY_VERBS, OTHER_SHELLS, POSIX_SHELLS, PS_ALIASES, PS_CMDLETS, PS_COMMON, PS_COMMON_ALIASES, RISKY_ASSIGNMENTS, RISKY_ASSIGNMENT_PREFIX,
-  SCREENSHOTTERS, SECRET_PROGRAMS, SECRET_VAR, SUDO_LIKE, SYSTEM_PACKAGERS, WRAPPERS, type GlobalGrammar, type OrdinaryVerbs, type PsCmdletSpec,
+  RECORDERS, SCREENSHOTTERS, SECRET_PROGRAMS, SECRET_VAR, SUDO_LIKE, SYSTEM_PACKAGERS, WRAPPERS, type GlobalGrammar, type OrdinaryVerbs, type PsCmdletSpec,
   type PsParamKind,
 } from "./tables";
 import { commandLineSecret } from "./redact";
@@ -227,6 +227,7 @@ export const SAYS = {
   clipboard: "Reads your clipboard, which may hold a password.",
   screen: "Takes a picture of your screen without Ember's privacy filters.",
   tokenArg: "Puts a password or token on the command line.",
+  records: "Records from the microphone or the camera.",
   refuseSafety: "Ember won't run this: it would change Ember's own safety settings, records or programs.",
   refuseRead: "Ember won't run this: it would read Ember's own safety settings, records or programs.",
   refuseInput: "Ember won't run this: it could press keys or click in Ember's own windows.",
@@ -1662,6 +1663,8 @@ const COMPILERS = new Set([
  * download-and-run. Kept apart from FETCHERS, whose substitutions and options are judged as a fetch tool's.
  */
 const TEXT_FETCHERS = new Set(["gh", "glab", "hub", "s3cmd", "b2", "gdown", "ipfs", "yt-dlp", "youtube-dl", "ncftpget", "lftp", "huggingface-cli", "hf", "az", "aws", "gcloud", "kubectl", "doctl", "mc", "rclone", "adb"]);
+/** The instance metadata services of the clouds, by address and by name. */
+const CLOUD_METADATA = /(^|[/@[])(169\.254\.169\.254|169\.254\.170\.2|100\.100\.100\.200|fd00:ec2::254|metadata\.google\.internal|metadata\.azure\.com|instance-data)([\]/:?#]|$)/i;
 /** The text of each command substitution in a word as written: `$( … )` (never `$(( … ))`) and backticks. */
 function substituted(raw: string): string[] {
   const text = raw.replace(/'[^']*'/g, "");
@@ -3665,6 +3668,9 @@ class Engine extends Classifier {
    */
   private sendsContents(key: string, args: readonly Arg[], s: Simple): void {
     if (this.asMain || !FETCHERS.has(key)) return;
+    // The address a cloud computer hands out its own sign-in at (the instance metadata service): what a fetch of it
+    // prints is a credential (commands-remote-r9-9).
+    if (args.some(a => a.v !== null && CLOUD_METADATA.test(a.v))) this.add("secret", "secret.cloud", SAYS.secrets);
     const says = "May send what a file or a command holds to another computer.";
     const filled = (name: string): boolean => (this.varValues.get(name) ?? []).some(f => f.includes(UNSEEN)) || this.loopVars.get(name) === "read";
     let hit = /^(http|https|xh|xhs)$/.test(key) && s.stdin === "file";
@@ -4082,6 +4088,11 @@ function generic(h: H, noRow = false): void {
   if (SECRET_PROGRAMS.has(k)) h.e.add("secret", "secret.program", SAYS.secrets);
   if (CLIPBOARD_READERS.has(k)) h.e.add("secret", "secret.clipboard", SAYS.clipboard);
   if (SCREENSHOTTERS.has(k)) h.e.add("secret", "secret.screen", SAYS.screen);
+  if (RECORDERS.has(k)) h.e.add("secret", "secret.record", SAYS.records);
+  // sox's `-d` as its input is the microphone; GStreamer's capture sources are the microphone and the camera.
+  if ((k === "sox" && h.args.some((a, i) => a.v === "-d" && i < h.args.length - 1)) || (/^gst-launch/.test(k) && h.args.some(a => /^(pulsesrc|alsasrc|pipewiresrc|autoaudiosrc|osxaudiosrc|wasapisrc|v4l2src|autovideosrc|avfvideosrc|ksvideosrc|libcamerasrc)$/.test(a.v ?? "")))) {
+    h.e.add("secret", "secret.record", SAYS.records);
+  }
   if (DISK_TOOLS.has(k) || /^mkfs(\.|$)/.test(k)) h.e.add("destroy", "disk.erase", "Erases or repartitions a disk.");
   h.e.readArgs(h.args, h.sc, { unresolvedUnclear: !TEXT.has(k) });
   if (KNOWN_ORDINARY.has(k) || GUI_PROGRAMS.has(k) || INTERACTIVE.has(k) || SECRET_PROGRAMS.has(k)) return;
@@ -4602,7 +4613,7 @@ function knownProgram(key: string): boolean {
   for (const k of [key, unversioned(key)]) {
     if (ORDINARY_PROGRAMS.has(k) || KNOWN_ORDINARY.has(k) || TEXT.has(k) || LISTS_ONLY.has(k)) return true;
     if (INPUT_SYNTH.has(k) || GUI_PROGRAMS.has(k) || INTERACTIVE.has(k) || LAUNCHERS.has(k) || SECRET_PROGRAMS.has(k)) return true;
-    if (CLIPBOARD_READERS.has(k) || SCREENSHOTTERS.has(k) || DISK_TOOLS.has(k) || /^mkfs(\.|$)/.test(k)) return true;
+    if (CLIPBOARD_READERS.has(k) || SCREENSHOTTERS.has(k) || RECORDERS.has(k) || DISK_TOOLS.has(k) || /^mkfs(\.|$)/.test(k)) return true;
   }
   return false;
 }
@@ -6692,6 +6703,10 @@ reg(NATIVE, ["xsel"], h => { if (!h.args.some(a => /^(-[a-zA-Z]*[icd]|--input|--
 reg(NATIVE, ["ffmpeg", "avconv"], h => {
   const fIdx = h.args.findIndex((a, k) => a.v === "-f" && /^(x11grab|gdigrab|avfoundation|kmsgrab|fbdev|dshow|ddagrab|lavfi)$/i.test(h.args[k + 1]?.v ?? ""));
   if (fIdx >= 0 && /grab|avfoundation|fbdev|dshow/i.test(h.args[fIdx + 1].v ?? "")) h.e.add("secret", "secret.screen", SAYS.screen);
+  // A capture device as the input is the microphone or the camera (commands-remote-r9-9): by its format, or by the
+  // device's own name.
+  if (h.args.some((a, k) => (a.v === "-f" && /^(pulse|alsa|oss|sndio|jack|openal|v4l2|video4linux2?|avfoundation|dshow|vfwcap|decklink|iec61883|libdc1394)$/i.test(h.args[k + 1]?.v ?? ""))
+    || (h.args[k - 1]?.v === "-i" && /^\/dev\/(video|dsp|audio|snd)/.test(a.v ?? "")))) h.e.add("secret", "secret.record", SAYS.records);
   const outputs = h.args.filter((a, k) => k === h.args.length - 1 && !isOption(a));
   const inputs = h.args.filter((_a, k) => h.args[k - 1]?.v === "-i").map(a => a);
   h.e.readArgs(inputs, h.sc);
@@ -7750,7 +7765,11 @@ reg(NATIVE, Object.keys(CLOUD_CLIS), h => {
     || (h.key === "az" && (/^(get-access-token|login)$/.test(verb) || all.startsWith("account get-access-token")))
     || (h.key === "gcloud" && /^auth\b/.test(all) && /(print-access-token|print-identity-token|login|activate-service-account)/.test(all))
     || ((h.key === "kubectl" || h.key === "oc") && ((verbs[0] === "config" && verbs[1] === "view" && h.args.some(a => a.v === "--raw" || a.v === "--flatten")) || (verbs[0] === "get" && /^secrets?$/.test(verbs[1] ?? "") && h.args.some(a => /^-o(yaml|json|=|$)|^--output/.test(a.v ?? "")))))
-    || (h.key === "vault" && (/^(read|login|token|unwrap)$/.test(verb) || all.startsWith("kv get")))) {
+    || (h.key === "vault" && (/^(read|login|token|unwrap)$/.test(verb) || all.startsWith("kv get")))
+    // Azure's vault values and the keys and sign-ins its services hand out (commands-remote-r9-9).
+    || (h.key === "az" && (/^keyvault (secret|key|certificate) (show|download|backup)\b/.test(all) || /\b(keys list|list-keys|credential show|show-connection-string|get-credentials|list-credentials|keys renew)\b/.test(all)))
+    // Terraform's outputs and state written out in full: `-raw` and `-json` don't mask what is marked sensitive.
+    || ((h.key === "terraform" || h.key === "tofu") && ((verbs[0] === "output" && h.args.some(a => /^-(raw|json)$/.test(a.v ?? ""))) || (verbs[0] === "show" && h.args.some(a => a.v === "-json")) || all.startsWith("state pull")))) {
     h.e.add("secret", "secret.cloud", SAYS.secrets, { program: `${h.key} ${verb}` });
     return;
   }
@@ -9460,7 +9479,7 @@ reg(NATIVE, ["ip"], h => {
 reg(NATIVE, ["nmcli", "route", "networksetup", "ifconfig", "ifup", "ifdown", "resolvectl", "scutil", "hostnamectl", "timedatectl", "localectl", "arp", "ipconfig", "wpa_cli", "iwconfig", "iw", "ethtool", "tc", "brctl", "wg", "wg-quick", "openvpn", "nmtui"], h => {
   const a = h.args.map(x => (x.v ?? "").toLowerCase());
   const ops = h.args.filter(x => !isOption(x)).map(x => (x.v ?? "").toLowerCase());
-  if (h.key === "nmcli" && a.some(x => x === "-s" || x === "--show-secrets")) h.e.add("secret", "secret.program", SAYS.secrets);
+  if (h.key === "nmcli" && (a.some(x => x === "-s" || x === "--show-secrets" || x === "show-password") || /\bwifi show\b/.test(a.join(" ")))) h.e.add("secret", "secret.program", SAYS.secrets);
   const write =
     h.key === "nmcli" ? ops.some(x => /^(modify|mod|up|down|delete|del|add|connect|disconnect|reload|on|off|edit|import|export|clone|hostname|rescan)$/.test(x))
     : h.key === "route" ? ops.some(x => /^(add|del|delete|change|flush)$/.test(x))

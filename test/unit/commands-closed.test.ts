@@ -22,8 +22,8 @@ describe("a program Ember doesn't know (commands-closed A)", () => {
     for (const cmd of ["dropdb prod", "dropdb --if-exists prod", "pg_restore --clean -d prod a.dump", "mongorestore --drop", "rails db:drop",
       "prisma migrate reset --force", "supabase db reset", "alembic downgrade base", "railway up", "terragrunt destroy", "etcdctl del --prefix /",
       "kafka-topics --delete --topic x", "hyperfine 'rm -rf ~/Documents'", "nodemon --exec 'npm publish'", "watchexec 'rm -rf build'",
-      "ls *.c | entr -s 'git push --force'", "pastebinit notes.txt", "croc send notes.txt", "bore local 8000 --to bore.pub", "arecord a.wav",
-      "fswebcam a.jpg", "rbw get github"]) {
+      "ls *.c | entr -s 'git push --force'", "pastebinit notes.txt", "croc send notes.txt", "bore local 8000 --to bore.pub",
+      "rbw get github"]) {
       const d = decide(cmd);
       expect(d.verdict, cmd).toBe("ask");
       expect(d.rules, cmd).toContain("unknown.program");

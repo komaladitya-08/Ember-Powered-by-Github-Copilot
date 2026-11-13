@@ -318,6 +318,36 @@ describe("redactSecrets", () => {
   });
 });
 
+describe("redactSecrets: shapes that came through unhidden (commands-remote-r9-9)", () => {
+  it.each([
+    ["-----BEGIN PGP PRIVATE KEY BLOCK-----\n\nlQOYBF\n-----END PGP PRIVATE KEY BLOCK-----\nafter", `${SECRET_HIDDEN}\nafter`],
+    [`AGE-SECRET-KEY-1${"Q".repeat(58)}`, SECRET_HIDDEN],
+    [`token pypi-${"A".repeat(60)} set`, `token ${SECRET_HIDDEN} set`],
+    [`hvs.${"a".repeat(24)}`, SECRET_HIDDEN],
+    [`ya29.a0AfH6SMBx-EXAMPLE_token_value_abcdefghijklmnop`, SECRET_HIDDEN],
+    [`ops_${"e".repeat(60)}`, SECRET_HIDDEN],
+    [`dp.st.dev.${"a".repeat(40)}`, SECRET_HIDDEN],
+    [`bot 123456789:${"A".repeat(35)} up`, `bot ${SECRET_HIDDEN} up`],
+    [`${"M".repeat(24)}.${"a".repeat(6)}.${"b".repeat(27)}`, SECRET_HIDDEN],
+    ["root:$6$rounds=5000$saltsalt$" + "h".repeat(40) + ":19000:0:99999:7:::", `root:${SECRET_HIDDEN}:19000:0:99999:7:::`],
+    ["ana:$apr1$" + "s".repeat(8) + "$" + "h".repeat(22), `ana:${SECRET_HIDDEN}`],
+    ["https://a.blob.core.windows.net/c/b?sv=2022&sig=" + "s".repeat(43) + "%3D&se=2026", `https://a.blob.core.windows.net/c/b?sv=2022&sig=${SECRET_HIDDEN}&se=2026`],
+    ["< set-cookie: sessionid=abc123def456; Path=/; HttpOnly", `< set-cookie: sessionid=${SECRET_HIDDEN}; Path=/; HttpOnly`],
+    ["802-11-wireless-security.psk:           hunter2hunter2", `802-11-wireless-security.psk:           ${SECRET_HIDDEN}`],
+    ["    Key Content            : hunter2hunter2", `    Key Content            : ${SECRET_HIDDEN}`],
+    ['{\n  "id": "https://v.vault.azure.net/secrets/db/1",\n  "name": "db",\n  "value": "S3cr3t!Passw0rd"\n}', `{\n  "id": "https://v.vault.azure.net/secrets/db/1",\n  "name": "db",\n  "value": "${SECRET_HIDDEN}"\n}`],
+  ])("hides %j", (input, expected) => {
+    expect(redactSecrets(input)).toBe(expected);
+  });
+
+  it("leaves ordinary text that only looks a little like them", () => {
+    for (const text of ["awk '{print $1$2$3}' a.txt", "12:34:56 build ok", "version 1234567890:abc", "Key Content of the page", "the psk is set in Settings",
+      "https://x.example/?signature=short", "{\n  \"value\": \"plain\"\n}", "-----BEGIN PGP PUBLIC KEY BLOCK-----\nabc\n-----END PGP PUBLIC KEY BLOCK-----"]) {
+      expect(redactSecrets(text), text).toBe(text);
+    }
+  });
+});
+
 describe("commandLineSecret", () => {
   it.each([GH, PAT, JWT, "AKIAABCDEFGHIJKLMNOP", "https://ana:pw@example.com", "API_TOKEN=abc", "--password=x", "DB_PASSWORD=x", "Authorization: Bearer x"])("finds %j", word => {
     expect(commandLineSecret(word)).toBe(true);

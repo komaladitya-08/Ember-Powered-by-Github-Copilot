@@ -361,6 +361,12 @@ export const CLIPBOARD_READERS = new Set(["wl-paste", "pbpaste", "get-clipboard"
 /** Taking pictures of the screen (§3.5.4). */
 export const SCREENSHOTTERS = new Set(["import", "scrot", "gnome-screenshot", "grim", "spectacle", "xwd", "screencapture", "maim", "flameshot", "shutter", "ksnip", "deepin-screenshot", "xfce4-screenshooter", "screenshot", "wf-recorder", "wl-screenrec", "recordmydesktop", "simplescreenrecorder", "peek", "kazam", "vokoscreen"]);
 
+/** Programs that record from the microphone or the camera whatever their arguments (commands-remote-r9-9). */
+export const RECORDERS = new Set([
+  "arecord", "parecord", "pacat-record", "parec", "pw-record", "rec", "fswebcam", "streamer", "imagesnap", "cheese", "guvcview", "termux-microphone-record",
+  "termux-camera-photo", "audiorecorder", "raspistill", "raspivid", "libcamera-still", "libcamera-vid", "rpicam-still", "rpicam-vid",
+]);
+
 /** Disk erasing and partitioning (§3.5.1): always class a. */
 export const DISK_TOOLS = new Set(["mke2fs", "mkswap", "wipefs", "fdisk", "sfdisk", "gdisk", "sgdisk", "parted", "cfdisk", "blkdiscard", "diskpart", "format-volume", "clear-disk", "initialize-disk", "remove-partition", "badblocks", "hdparm", "nvme", "zpool", "cryptsetup", "lvremove", "vgremove", "pvremove", "mdadm", "partprobe", "gparted"]);
 
