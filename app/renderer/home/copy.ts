@@ -1300,7 +1300,7 @@ export function entryWords(p?: StatusPlatform): EntryWords {
 }
 
 /** The tools Ember's model is told to call: a sentence that names one is advice to the model, not news for the user. */
-const TOOL_NAME = /\b(perceive_window|finish_task|press_keys|type_text|fill_cells|list_windows|switch_window|open_app|open_on_desk|wait_for_click|choose_option|read_element)\b/;
+const TOOL_NAME = /\b(perceive_window|finish_task|press_keys|type_text|fill_cells|list_windows|switch_window|open_app|open_on_desk|wait_for_click|choose_option|fill_from_vault|read_element)\b/;
 /**
  * Why a step didn't work, as the user reads it: without what the model was told to do next ("Tell the user in
  * finish_task.", "call perceive_window and try again") or the helper's code before it ("background_unavailable: ").

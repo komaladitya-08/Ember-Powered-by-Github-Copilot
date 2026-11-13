@@ -3537,6 +3537,9 @@ function start(): void {
         autonomy: () => approvalsNow().scopes,
         assisted: () => approvalsNow().check,
         autopilot: () => approvalsNow().autopilot,
+        // The vault's fill (PLAN.md §2 "Approvals", "The vault"): only on this screen's engine, where the organisation
+        // lets the vault be used; every other engine (a remote's, WSL's) is told nothing, so it never fills.
+        vaultAllowed: () => vaultAllowed(admin),
         // On macOS also by the installed app with that name's bundle id (Terminal renamed is still Terminal); a WSLg
         // app's also as a Linux app (§4.5).
         isTerminalApp: name => privacy.isTerminalApp({ id: name, name }),
@@ -3831,6 +3834,16 @@ function start(): void {
       // the chord it holds: the fallback while another app holds the default (D-45b).
       settingsKey: () => keyName("settings"),
       stopKey: () => keyName("stop"),
+      // The vault's fill, for tasks on this screen: the service hands a value only to the helper's own vault_fill (or
+      // to the borrow's typing), and only this computer's own helper is ever asked (never a WSL distro's: its ids
+      // aren't this one's).
+      vault: {
+        usable: () => vault.usable(), has: (kind, dest) => vault.has(kind, dest),
+        ask: (kind, dest, via) => vault.ask(kind, dest, via ? friendlyApp(via) : null),
+        use: (kind, part, dest, put) => vault.use(kind, part, dest, put),
+        pages: id => (sidecar.ownsId(id) ? sidecar.pageAddress(id) : Promise.reject(new Error("not this computer's element"))),
+        put: (id, text) => (sidecar.ownsId(id) ? sidecar.vaultFill(id, text) : Promise.reject(new Error("not this computer's element"))),
+      },
     });
     // The network came back (or the computer woke): a connection waiting to retry tries now. (Electron's
     // main process has no online/offline event; a VPN coming up is covered by asking, which retries too.)

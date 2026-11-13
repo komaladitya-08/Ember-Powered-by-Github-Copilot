@@ -12,14 +12,21 @@
 import type { Logger } from "../logger";
 import type { StopPart } from "../agent/killswitch";
 import {
-  VAULT_IPC, VAULT_KINDS, siteLabel, validDestination,
-  type VaultDestination, type VaultEntryRow, type VaultHomeState, type VaultKind,
+  VAULT_IPC, VAULT_KINDS, VAULT_PARTS, sameDestination, siteLabel, validDestination,
+  type VaultDestination, type VaultEntryRow, type VaultHomeState, type VaultKind, type VaultPart,
 } from "../../shared/vault";
 import type { VaultAnswer, VaultFormController } from "./form";
 import type { VaultKept, VaultMeta, VaultStore } from "./store";
 
 /** The part of the store the service uses. */
-export type VaultStoreLike = Pick<VaultStore, "list" | "find" | "forget" | "forgetAll" | "canPersist" | "add">;
+export type VaultStoreLike = Pick<VaultStore, "list" | "find" | "forget" | "forgetAll" | "canPersist" | "add" | "open">;
+
+/**
+ * What using an entry came to: what `put` answered, or why nothing was handed to it. `off`: the vault can't be used now
+ * (the organisation, the consent, the mode); `none`: no entry of that kind is bound there, or it couldn't be opened
+ * (the keyring refused, the file was edited); `part`: the entry holds no such part (a login saved without a user name).
+ */
+export type VaultUse<R> = { ok: true; result: R } | { ok: false; why: "off" | "none" | "part" };
 
 export interface VaultServiceOptions {
   store: VaultStoreLike;
@@ -109,6 +116,37 @@ export class VaultService {
   }
 
   /**
+   * Is an entry of `kind` bound to `dest` (a worker's fill asks before it opens the Secure Form)? Never while the vault
+   * can't be used. Reads the list only: no keyring is asked and no value opened.
+   */
+  has(kind: VaultKind, dest: VaultDestination): boolean {
+    return VAULT_KINDS.includes(kind) && validDestination(dest) && this.usable() && !!this.o.store.find(kind, dest);
+  }
+
+  /**
+   * The fill itself: opens the entry of `kind` bound to exactly `dest` and hands `part` of it to `put`, which puts it
+   * into the field (the helper's vault_fill, or keys typed under the borrow) and answers with what that came to. The
+   * value exists only in that call: it is never returned, logged or kept here, and `put`'s answer must not hold it.
+   * Checked at this moment, so nothing is handed over once the organisation turned the vault off, the consent went or
+   * Autopilot is no longer the mode in force. The entry's own destination, as sealed with it, must be `dest`.
+   */
+  async use<R>(kind: VaultKind, part: VaultPart, dest: VaultDestination, put: (value: string) => Promise<R>): Promise<VaultUse<R>> {
+    if (!VAULT_KINDS.includes(kind) || !validDestination(dest) || !(VAULT_PARTS[kind] as readonly string[]).includes(part)) return { ok: false, why: "none" };
+    if (!this.usable()) return { ok: false, why: "off" };
+    const meta = this.o.store.find(kind, dest);
+    if (!meta) return { ok: false, why: "none" };
+    const opened = await this.o.store.open(meta.id);
+    // Checked again once the keyring answered (it may have asked the person), and what was opened is that entry.
+    if (!this.usable()) return { ok: false, why: "off" };
+    if (!opened || opened.meta.kind !== kind || !sameDestination(opened.meta.dest, dest)) return { ok: false, why: "none" };
+    const value = opened.values[part];
+    if (typeof value !== "string" || !value) return { ok: false, why: "part" };
+    const result = await put(value);
+    this.o.log.info("vault.used", { kind, part, site: "site" in dest });
+    return { ok: true, result };
+  }
+
+  /**
    * Seals and keeps what the Secure Form's Save sent (the form's `keep`): checked again at that moment, so nothing is
    * kept once the organisation turned the vault off, the consent went or Autopilot is no longer in force (`gone`).
    */
@@ -119,8 +157,8 @@ export class VaultService {
     return kept;
   }
 
-  /** May the vault take or ask for anything now: allowed, consented, and Autopilot in force. A check that fails says no. */
-  private usable(): boolean {
+  /** May the vault take, ask for or fill anything now: allowed, consented, and Autopilot in force. A check that fails says no. */
+  usable(): boolean {
     try { return this.allowed() && this.o.consented() && this.o.autopilot(); } catch { return false; }
   }
 

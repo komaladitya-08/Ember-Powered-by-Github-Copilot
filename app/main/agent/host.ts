@@ -25,7 +25,7 @@ import { hasConsent, type SettingsStore } from "../settings";
 import type { BubbleState, EmberState } from "../../shared/overlay";
 import type { ConversationContext } from "../../shared/ipc";
 import { TaskManager, handedElsewhere, taskOutcome, titleOf, type KeptCard, type RetriedWords, type StopCause, type Task, type WorkerLike } from "./tasks";
-import { LINUX_WORKER_SYSTEM, Worker, type TaskSpec, type WorkerDeps, type WorkerSystem } from "./worker";
+import { LINUX_WORKER_SYSTEM, Worker, type TaskSpec, type WorkerDeps, type WorkerSystem, type WorkerVault } from "./worker";
 import type { Confirmer } from "./confirm";
 import type { WindowTarget } from "../perception";
 import type { Bounds } from "../perception/sidecar";
@@ -418,6 +418,11 @@ export interface HostOptions {
   settingsKey?: () => string | null;
   /** The stop chord as Ember holds it now, or null: an announcement names it only then (cross-review X0). As settingsKey. */
   stopKey?: () => string | null;
+  /**
+   * The vault, for tasks on this computer's own screen (fill_from_vault; owner decision of 2026-11-12). Never handed to
+   * a task in WSL or on a computer reached over SSH. Absent: no task has the tool.
+   */
+  vault?: WorkerVault;
   /**
    * How much the bubble's type is scaled now (the user's text size: page-prefs' textScale): an answer that needs more
    * than the bubble's six lines at that size offers Read all (cross-review X2). Default 1.
@@ -2172,6 +2177,8 @@ export class AgentHost {
             system: h.system, target: h.binding, commands: h.commands, grantKey: h.grantKey, onAuthorized: h.onAuthorized,
             ...(this.o.emberPids ? { emberPids: this.o.emberPids } : {}),
             ...(this.o.settingsKey ? { settingsKey: this.o.settingsKey } : {}),
+            // The vault fills only on this computer's own screen.
+            ...(this.o.vault && id === "local" ? { vault: this.o.vault } : {}),
           }, spec);
         },
       }) : null;

@@ -33,6 +33,9 @@ import type { Confirmer, Question } from "./confirm";
 import type { WindowTarget } from "../perception";
 import type { AxNode, AxWindow, Bounds, ActionResult, ElementInfo, PointElement } from "../perception/sidecar";
 import { helperCantRun } from "../perception/sidecar";
+import { SECRET_PARTS, VAULT_FILL, VAULT_WHATS, sameDestination, savedPart, type VaultDestination, type VaultKind, type VaultPart, type VaultWhat } from "../../shared/vault";
+import { vaultTarget } from "../policy/policy";
+import { VAULT_FILL_NO_ANSWER, VAULT_FILL_UNAVAILABLE } from "../perception/sidecar";
 import type { PolicyEngine, ActionKind, ActionRequest, Agreement, Decision, DialogControl, ReadSource, TextMode, WindowId } from "../policy/policy";
 import { AUTOPILOT_WORDS, CHECKED_WORDS, riskyOnPage } from "../policy/policy";
 import type { CommandReviewer, StepChecker } from "../commands/review";
@@ -204,6 +207,28 @@ export interface WorkerDeps {
    * then (cross-review X5). Absent: the OS's table's (tests, the eval).
    */
   settingsKey?: () => string | null;
+  /** The vault (owner decision of 2026-11-12), for fill_from_vault on this computer's own screen. Absent: no such tool. */
+  vault?: WorkerVault;
+}
+
+/**
+ * What a worker uses of the vault (app/main/vault/service.ts) and of this computer's accessibility helper for a fill.
+ * A value never passes through the worker's tools: `use` hands it to the one call that puts it into the field (the
+ * helper's `put`, or the borrowed keyboard's typing) and answers only how that went.
+ */
+export interface WorkerVault {
+  /** The vault may be used now (the organisation, the consent and Autopilot): the tool is offered only then. */
+  usable(): boolean;
+  /** Is an entry of `kind` bound to `dest`? */
+  has(kind: VaultKind, dest: VaultDestination): boolean;
+  /** Asks the person once, in Ember's Secure Form (VaultService.ask). `via`: the app the field is in, as the window system names it. */
+  ask(kind: VaultKind, dest: VaultDestination, via: string | null): Promise<"off" | "kept" | "saved" | "cancelled" | "unavailable" | "stopped">;
+  /** Hands `part` of the entry bound to `dest` to `put` (VaultService.use). */
+  use<R>(kind: VaultKind, part: VaultPart, dest: VaultDestination, put: (value: string) => Promise<R>): Promise<{ ok: true; result: R } | { ok: false; why: "off" | "none" | "part" }>;
+  /** The addresses of the web documents around element `id`, nearest first (AtspiSidecar.pageAddress); rejects where they can't be read. */
+  pages(id: number): Promise<string[]>;
+  /** The helper's vault_fill (AtspiSidecar.vaultFill): rejects with one of its three fixed sentences. */
+  put(id: number, text: string): Promise<{ ok: boolean; took?: boolean }>;
 }
 
 export interface TaskSpec {
@@ -264,6 +289,18 @@ export interface WorkerResult {
   /** What it found or made, for its card (finish_task's view: app/shared/view.ts's catalog, checked). */
   view?: ViewDoc;
 }
+
+/** What a field the vault may fill is: a password field or a plain text field (as VAULT_FILL_ROLES in the helpers). */
+const VAULT_FIELD_ROLES: ReadonlySet<string> = new Set(["password text", "text", "entry"]);
+/** What the model hears of a vault fill: whether it happened, never what was filled. */
+const FILLED = "Filled from the vault. You can't see or read what was filled, and you don't need to: go on with the task.";
+const NOTHING_FILLED = "Nothing was filled from the vault here. Don't type it yourself or try another way; tell the user in finish_task what is left for them to fill in.";
+const NOT_SAVED = "The user closed Ember's Secure Form without saving, so nothing was filled. Don't ask again or try another way; tell the user in finish_task what is left for them to fill in.";
+const NOT_SAVED_BEFORE = "The user already closed Ember's Secure Form for this in this task, so it isn't asked again and nothing was filled. Tell the user in finish_task what is left for them to fill in.";
+const NO_SUCH_PART = "The user's vault entry for this has no such detail saved, so nothing was filled. Don't type it yourself; tell the user in finish_task what is left for them to fill in.";
+const CHANGED_BEFORE_FILL = "The field or its page changed before Ember could fill it, so nothing was filled. Call perceive_window; if the same field is still there, you may ask once more.";
+const CANT_TYPE_IT = "This field only takes typed keys, and what the vault holds can't be typed with the keyboard here, so nothing was filled. Tell the user in finish_task.";
+const TOOK_BACK_NO_FILL = "The user took the mouse back in this task, and this field can only be filled with the keyboard, so nothing was filled. Tell the user in finish_task.";
 
 const done = (text: string): ToolResultObject => ({ textResultForLlm: text, resultType: "success" });
 const fail = (text: string): ToolResultObject => ({ textResultForLlm: text, resultType: "failure", error: text });
@@ -1855,6 +1892,13 @@ export class Worker {
         async a => this.chooseOption(a.id, a.option)),
       this.tool("set_value", "Set a slider or spin button to a number.", z.object({ id, value: z.number().finite() }),
         async a => this.act("value", a.id, String(a.value), () => this.sidecar.setValue(a.id, a.value))),
+      // The vault's fill: offered only where the vault may be used when the task starts (each call is decided again),
+      // on this computer's own screen. Its arguments name a field and what it needs, and nothing else: no value, no
+      // label and no destination (PLAN.md §2 "Approvals", "The vault").
+      ...(this.offersVault() ? [this.tool("fill_from_vault",
+        "Fill a sign-in, card or contact field with what the user saved in Ember's vault for this app or site. Give the field's id and what it needs; Ember finds the saved details itself (asking the user once in its own Secure Form if none are saved yet) and fills the field. You never see, give or read the value: never type it, ask for it or look for it afterwards.",
+        z.object({ id, what: z.enum(VAULT_WHATS).describe("What the field needs") }),
+        async a => this.fillFromVault(a.id, a.what))] : []),
       // Only the settings this OS really changes and reads back; none, no tool (z.enum can't be empty).
       ...(settingNames.length ? [this.tool("change_setting", `Change a desktop setting directly: ${settingNames.map(k => `${k} (${settings[k]})`).join("; ")}.`,
         z.object({
@@ -2154,7 +2198,7 @@ export class Worker {
         provider: d.provider,
         tools,
         systemMessage: this.spec.mode === "guide" ? guideSystemMessage({ words: this.sys.words })
-          : workerSystemMessage({ words: this.sys.words, settings: this.sys.settings.available, desk: !!d.desk, ...(d.target ? { target: d.target } : {}), ...(this.offersCommands(tools) ? { commands: { shells: this.commandShells() ?? [] } } : {}) }),
+          : workerSystemMessage({ words: this.sys.words, settings: this.sys.settings.available, desk: !!d.desk, ...(d.target ? { target: d.target } : {}), ...(tools.some(t => t.name === "fill_from_vault") ? { vault: true } : {}), ...(this.offersCommands(tools) ? { commands: { shells: this.commandShells() ?? [] } } : {}) }),
         workingDirectory: d.workDir,
         onPermissionRequest: () => ({ kind: "reject", feedback: "Workers use only Ember's own tools." }),
       });
@@ -2761,7 +2805,9 @@ export class Worker {
   private elementOf(id: number, n: AxNode): Focus {
     const name = this.nameOf(id, n);
     const byId = (p: number) => this.known.get(p);
-    return { role: n.role, name, ...(n.secret ? { secret: true } : {}), ...(nameWithheld(n, name, this.known.values(), byId) ? { withheld: true } : {}), ...cellOf(n, byId) };
+    // A field this task filled from the vault is secret for the rest of the task, whatever a later read says of it.
+    const secret = !!n.secret || this.vaultFilled.has(this.fieldOf({ role: n.role, name }));
+    return { role: n.role, name, ...(secret ? { secret: true } : {}), ...(nameWithheld(n, name, this.known.values(), byId) ? { withheld: true } : {}), ...cellOf(n, byId) };
   }
 
   /**
@@ -3105,6 +3151,258 @@ export class Worker {
     return unchecked > 0 && r.resultType === "success"
       ? { ...r, textResultForLlm: `${r.textResultForLlm} (The list is long: its last ${unchecked} rows weren't checked for another of that name in time.)` }
       : r;
+  }
+
+  /** Is fill_from_vault among this task's tools: a vault that may be used now, a task that acts, on this computer's own screen. */
+  private offersVault(): boolean {
+    try {
+      return !!this.d.vault && this.spec.mode !== "guide" && this.vaultLocal && this.d.vault.usable();
+    } catch {
+      return false; // a vault that can't say: no tool
+    }
+  }
+
+  /** The task acts on this computer's own screen: not in WSL or on a computer reached over SSH (the desk is asked apart). */
+  private get vaultLocal(): boolean {
+    return !this.d.target || this.d.target.kind === "local";
+  }
+
+  /**
+   * The fill as the policy is asked about it: what is asked for, and everything about the field read now, by Ember
+   * (never from the model): whether it takes text, whether it is in a page and which pages those are (the helper's read
+   * of the documents themselves, null where it can't be made), and whether the window holds a password or secret field.
+   */
+  private async vaultRequest(id: number, node: AxNode, element: Focus, kind: VaultKind, part: VaultPart): Promise<ActionRequest> {
+    const byId = (i: number) => this.known.get(i);
+    const local = this.vaultLocal && !this.place;
+    let pages: string[] | null = null;
+    if (local && this.d.vault) pages = await this.d.vault.pages(id).then(p => (Array.isArray(p) ? p : null), () => null);
+    let signIn = false, payment = false;
+    for (const n of this.known.values()) {
+      if (n.role === "password text") signIn = true;
+      if (n.role === "password text" || n.secret) payment = true;
+    }
+    // A field that is secret only because this task filled an ordinary detail into it (a user name, an email) may
+    // be filled with such a detail again (a form that came back after a failed sign-in): judged as it was before.
+    const before = this.vaultFilled.get(this.fieldOf(element));
+    const judged: Focus = before !== undefined && !SECRET_PARTS.has(before) && node.role !== "password text" ? { ...element, secret: undefined } : element;
+    return {
+      taskId: this.spec.id, kind: "vault_fill", app: this.window.app, window: this.window.name, element: judged,
+      vault: {
+        kind, part, local, pages, signIn, payment,
+        takesText: VAULT_FIELD_ROLES.has(node.role) && node.states.includes("editable") && !isDisabled(node.states),
+        inPage: inWebPage(node, byId),
+      },
+      ...this.placeOf(id, element),
+    };
+  }
+
+  /** A vault fill that isn't done: recorded as refused, with why in Ember's own words, and the model told only that nothing was filled. */
+  private vaultRefused(element: Focus | undefined, reason: string, text = NOTHING_FILLED): ToolResultObject {
+    this.ahead = null;
+    return this.refuse("vault_fill", reason, text, { ...(element ? { element } : {}), never: false });
+  }
+
+  /**
+   * fill_from_vault (owner decision of 2026-11-12; PLAN.md §2 "Approvals", "The vault"). The model names a field and
+   * what it needs; everything else is Ember's: the policy decides the step as its own kind, refusing before any
+   * question or form wherever it may not be done (PolicyEngine.vaultRefusal); what the field belongs to is read from
+   * the app (vaultTarget); with no entry bound there the person is asked once in the Secure Form, and a form closed
+   * without an answer is kept as a refusal for the rest of the task; right before the fill the field, its page and
+   * the decision are all looked at again, and anything that changed since means no fill; then the value goes from the
+   * vault straight to the helper's own fill, or, where the field takes none by accessibility, is typed as keys under
+   * the borrow's rules, never pasted. The model hears only whether it was filled.
+   */
+  private async fillFromVault(id: number, what: VaultWhat): Promise<ToolResultObject> {
+    const vault = this.d.vault;
+    const [kind, part] = VAULT_FILL[what];
+    if (!vault) return this.vaultRefused(undefined, "the vault isn't available here");
+    if (this.place?.userInControl()) return this.deskTaken("vault_fill");
+    const refreshed = await this.refreshActionContext(id);
+    if (refreshed) return refreshed;
+    const f = await this.fresh(id);
+    if (!("node" in f)) return f;
+    const { node, element } = f;
+    const req = await this.vaultRequest(id, node, element, kind, part);
+    if (this.isOver) return STOPPED();
+    const context = this.boundContext();
+    const before = this.pageTarget === id ? null : await this.checkActionContext(id, node, context);
+    if (before) return before;
+    // The policy first: every refusal comes before any form is opened (and is recorded there).
+    const verdict = await this.authorize(req);
+    if (verdict) return verdict;
+    const target = vaultTarget(req);
+    if (!("dest" in target)) return this.vaultRefused(element, target.why);
+    const dest = target.dest;
+    // No entry bound here yet: the person is asked once, in Ember's own form. One they closed without saving earlier in
+    // this task is never asked again in it.
+    const formStep = [`vault\n${kind}\n${"site" in dest ? `site:${dest.site}` : `app:${dest.app}`}`];
+    if (!vault.has(kind, dest)) {
+      if (this.refusals.step(formStep)) return this.vaultRefused(element, "the user closed Ember's Secure Form for this earlier in the task", NOT_SAVED_BEFORE);
+      this.d.onProgress("Waiting for you in the Secure Form…");
+      // (The wait for the person doesn't count against the task's time, as a question's doesn't.)
+      const form = () => vault.ask(kind, dest, this.window.app || null).catch(() => "off" as const);
+      const asked = await (this.clock ? this.clock.waiting(form) : form());
+      // (A page that moved on meanwhile, or a field that changed, is found by the look right before the fill.)
+      if (this.isOver) return STOPPED();
+      if (asked === "cancelled") {
+        this.refusals.noteStep(formStep, "refused");
+        return this.vaultRefused(element, "the user closed Ember's Secure Form without saving", NOT_SAVED);
+      }
+      if (asked !== "saved" && asked !== "kept") {
+        return this.vaultRefused(element, asked === "unavailable" ? "this computer has no keyring to keep the vault with" : "the vault can't be used now");
+      }
+    }
+    // Never while the shell's own password prompt is open, also by accessibility (safety-privacy-3).
+    const prompt = await this.promptRefusal("vault_fill", element);
+    if (prompt) return prompt;
+    const release = await this.d.lease(this.window.name || this.window.app, this.spec.id, this.overSignal);
+    let released = false;
+    const letGo = () => { if (!released) { released = true; release(); } };
+    try {
+      if (this.isOver) return STOPPED();
+      // Right before the fill, everything again as it is now (the form may have been up for minutes; a page can
+      // navigate in a moment): the field, what it belongs to and the decision. Anything else than before: no fill.
+      const changed = await this.vaultChanged(id, element, kind, part, dest);
+      if (changed) return this.vaultRefused(element, changed, CHANGED_BEFORE_FILL);
+      const changedContext = await this.stillApproved(id, node, context, true);
+      if (changedContext) { this.ahead = null; return changedContext; }
+      if (node.bounds) this.fly(node.bounds);
+      // What the audit keeps of a fill: the kind, the part and the destination. Never a value, nor its length.
+      const record = { vault: { kind, part, ...("site" in dest ? { site: dest.site } : { app: dest.app }) } };
+      let said = false;
+      const sayOnce = () => { if (!said) { said = true; this.goAhead(); } };
+      const filled = await vault.use(kind, part, dest, async value => {
+        // Only now is the fill recorded and said: the entry opened, and this part of it is there.
+        sayOnce();
+        try {
+          return { how: "accessibility" as const, ...await vault.put(id, value) };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : "";
+          if (msg !== VAULT_FILL_UNAVAILABLE) return { how: "accessibility" as const, ok: false, error: msg === VAULT_FILL_NO_ANSWER ? "no answer" as const : "refused" as const };
+        }
+        // The field takes no text by accessibility: typed as keys, under the borrow's own rules. Never pasted.
+        letGo();
+        return { how: "keys" as const, typed: await this.typeFromVault(id, node, element, part, value, context, record, () => this.vaultChanged(id, element, kind, part, dest)) };
+      });
+      if (this.isOver) return STOPPED();
+      if (!filled.ok) {
+        const reason = filled.why === "part" ? `the vault's entry for this ${"site" in dest ? "site" : "app"} holds no ${savedPart(part).replace(/^a saved /, "")}`
+          : filled.why === "none" ? "the vault's entry for this couldn't be opened" : "the vault can't be used now";
+        return this.vaultRefused(element, reason, filled.why === "part" ? NO_SUCH_PART : NOTHING_FILLED);
+      }
+      const r = filled.result;
+      if (r.how === "keys") {
+        // (withCursor recorded the step, with the borrow's own outcome.)
+        return r.typed;
+      }
+      const ok = r.ok && !("error" in r) && r.took !== false;
+      this.audit({ event: "action", task: this.spec.id, kind: "vault_fill", app: req.app, window: req.window, element, ok, ...record, via: "accessibility",
+        ...("error" in r ? { error: r.error === "no answer" ? "the app didn't answer in time" : "the app refused it" } : r.took === false ? { error: "the field didn't take all of it" } : {}) });
+      this.noteVaultFill(id, node, element, part);
+      if ("error" in r && r.error === "no answer") return fail("The app didn't answer in time, so it's unknown whether the field was filled. You can't read what it holds: tell the user in finish_task to check it.");
+      if (!r.ok || "error" in r) return fail("The app didn't take it, so the field wasn't filled from the vault. Don't type it yourself; tell the user in finish_task.");
+      if (r.took === false) return fail("The field didn't take all of what the vault holds (it may allow fewer characters). You can't read what it holds: tell the user in finish_task to check it.");
+      return done(FILLED);
+    } finally {
+      this.fly(null);
+      letGo();
+    }
+  }
+
+  /**
+   * Is the field of a vault fill still what was decided on, and where: read again now, with its pages, and decided
+   * again (not counted twice). Null when nothing changed; else why not, in Ember's own words.
+   */
+  private async vaultChanged(id: number, element: Focus, kind: VaultKind, part: VaultPart, dest: VaultDestination): Promise<string | null> {
+    const again = await this.fresh(id);
+    if (!("node" in again)) return "the field changed or went away before Ember could fill it";
+    if (again.element.role !== element.role || again.element.name !== element.name) return "the field changed before Ember could fill it";
+    const req = await this.vaultRequest(id, again.node, again.element, kind, part);
+    const now = this.d.policy.recheck({ ...req, onDesk: !!this.place, goal: this.userWords, askedIn: this.spec.target.app, windowId: this.windowId });
+    if (now.verdict !== "allow") return now.reason;
+    const target = vaultTarget(req);
+    if (!("dest" in target)) return target.why;
+    return sameDestination(target.dest, dest) ? null : "the field's page or app changed before Ember could fill it";
+  }
+
+  /**
+   * Fields this task filled from the vault (fieldOf: their window, role and name), and with which part: nothing is
+   * typed or chosen there afterwards by the task, as in any secret field (elementOf).
+   */
+  private vaultFilled = new Map<string, VaultPart>();
+
+  /** A field was (or may have been) filled from the vault: it is secret for the rest of the task. */
+  private noteVaultFill(id: number, node: AxNode, element: Focus, part: VaultPart): void {
+    this.vaultFilled.set(this.fieldOf(element), part);
+    this.known.set(id, { ...node, secret: true, text: undefined });
+  }
+
+  /**
+   * The typed fallback of a vault fill (decision 6): the value typed as key events into the field, under the borrow's
+   * own rules (the user still, let go on any input, never after they took the mouse back in this task, never while an
+   * authentication prompt has the keyboard), and never through the clipboard. `still`: the last look at the field and
+   * its page, made once it has the keyboard and right before the first key. Nothing an error says quotes the value.
+   */
+  private async typeFromVault(id: number, node: AxNode, element: Focus, part: VaultPart, value: string, context: string, record: Record<string, unknown>, still: () => Promise<string | null>): Promise<ToolResultObject> {
+    if (this.userTookOver) return this.vaultRefused(element, "the user took the mouse back from this task, so Ember borrows nothing more in it", TOOK_BACK_NO_FILL);
+    if (this.place || !this.d.cursor || !node.bounds) return this.vaultRefused(element, "the field takes no text by accessibility, and the keyboard isn't available here");
+    if (!typeableText(value) || /[\n\t]/.test(value)) return this.vaultRefused(element, "the field takes no text by accessibility, and what the vault holds can't be typed with the keyboard", CANT_TYPE_IT);
+    const kc = this.kc;
+    // What the keyboard says of text it can't type quotes a character of it: only that it couldn't is passed on, and
+    // the keyboard's own error is attached to nothing.
+    const passes = (err: unknown) => err instanceof BorrowStopped || err instanceof UserTookOver;
+    const checkFirst = (hand: Pick<Hand, "checkKeys" | "checkTyping">) => {
+      let cant: unknown = null;
+      if (typeof hand.checkTyping === "function") { try { hand.checkTyping(value); } catch (err) { cant = err; } }
+      if (cant !== null) throw passes(cant) ? cant : new Error(CANT_TYPE_IT);
+      if (typeof hand.checkKeys === "function") for (const k of [kc.edit.selectAll, "Delete"]) hand.checkKeys(k);
+    };
+    const pre = await this.sidecar.readElement(id, { shown: true }).catch(() => null);
+    if (this.isOver) return STOPPED();
+    try {
+      const spot = this.landingSpot(id, node, element, pre);
+      await this.mustAimAt(id, pre!, spot, spot.shown);
+    } catch (err) {
+      if (err instanceof BorrowStopped) return STOPPED();
+      return this.vaultRefused(element, "the field can't be reached with the mouse");
+    }
+    this.inputValue = { ...record, via: "keys" };
+    try {
+      const result = await this.withCursor("vault_fill", element, async hand => {
+        checkFirst(hand);
+        const now = await this.sidecar.readElement(id, { shown: true }).catch(() => null);
+        const spot = this.landingSpot(id, node, element, now);
+        await hand.glideTo(spot.x, spot.y);
+        await sleep(POINTER_SETTLE_MS);
+        const there = await this.sidecar.readElement(id, { shown: true }).catch(() => null);
+        const again = this.landingSpot(id, node, element, there);
+        const aim = await this.mustAimAt(id, there!, again, again.shown);
+        if (Math.abs(aim.x - spot.x) >= 1 || Math.abs(aim.y - spot.y) >= 1) await hand.glideTo(aim.x, aim.y);
+        const changedContext = await this.stillApproved(id, node, context, true);
+        if (changedContext) throw new Error(changedContext.textResultForLlm);
+        await hand.click();
+        // Keys go wherever the keyboard is: this field must have it, and still be the one decided on, in the same page.
+        for (let i = 0; ; i++) {
+          const live = await this.sidecar.readElement(id).catch(() => null);
+          if (this.isOver) throw new BorrowStopped();
+          const same = !!live && live.role === node.role && this.nameOf(id, live) === element.name;
+          if (live && same && live.states.includes("focused") && live.states.includes("editable")) break;
+          if (!same || i >= 6) throw new Error("The field didn't get the keyboard, so Ember typed nothing (the keys would have gone somewhere else).");
+          await sleep(80);
+        }
+        const changed = await still();
+        if (changed) throw new Error("The field or its page changed before Ember could fill it, so nothing was typed.");
+        await hand.keys(kc.edit.selectAll);
+        await hand.keys("Delete");
+        const cant: unknown = await hand.type(value).then(() => null, (err: unknown) => err ?? new Error("typing failed"));
+        if (cant !== null) throw passes(cant) ? cant : new Error(CANT_TYPE_IT);
+      }, undefined, undefined, false, checkFirst);
+      this.noteVaultFill(id, node, element, part);
+      return result.resultType === "success" ? done(`${FILLED} It was typed with the user's keyboard, which is back with them.`) : result;
+    } finally {
+      this.inputValue = {};
+    }
   }
 
   /** Policy check, confirmation, lease, motion, action, audit: the one path every window action takes. */

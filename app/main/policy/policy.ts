@@ -2774,8 +2774,8 @@ export class PolicyEngine {
   /**
    * Why the vault's fill `r` isn't done, or null where it may be (PLAN.md §2 "Approvals", "The vault"; owner decision
    * of 2026-11-12). Only while Autopilot is the mode in force and the organisation lets the vault be used; only on
-   * this computer's own screen; only into a field that takes text; a secret part (a password, a card's number or
-   * security code) only into a field that is secret itself, and no other part into a password field; a user name only
+   * this computer's own screen; only into a field that takes text; a password only into a password field, a card's
+   * number or security code only into a field that is secret itself, and no other part into a password field; a user name only
    * in a window that holds a password field, a card's other parts only beside a secret field, and contact details only
    * into a field named for that detail; and only where Ember can tell what the field belongs to (vaultTarget). Each
    * reason is Ember's own words: nothing from the screen is in it.
@@ -2790,7 +2790,9 @@ export class PolicyEngine {
     const role = r.element.role;
     const secretField = role === "password text" || !!r.element.secret || isSecretField(r.element.name);
     if (SECRET_PARTS.has(v.part)) {
-      if (!secretField) return `Ember fills ${savedPart(v.part)} only into a password or payment field`;
+      // A password only where the app itself hides what is typed: never a field that is secret only by its label or
+      // because Ember filled something else there before (it would show the password in the clear).
+      if (v.part === "password" ? role !== "password text" : !secretField) return `Ember fills ${savedPart(v.part)} only into a password or payment field`;
     } else if (role === "password text") {
       return `a password field takes only a saved password, not ${savedPart(v.part)}`;
     } else if (v.kind === "login") {

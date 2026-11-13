@@ -110,6 +110,11 @@ describe("the vault's fill, as the policy decides it (vault-2)", () => {
       expect(p.decide({ ...SITE, element }).verdict).toBe("deny");
       expect(p.decide({ ...SITE, element, vault: fill({ kind: "card", part: "cardNumber" }) }).verdict).toBe("deny");
     }
+    // A password into a field that is secret only by its label or by what Ember knows of it (it shows what is typed): never.
+    expect(p.decide({ ...SITE, element: { role: "entry", name: "Password" } }).verdict).toBe("deny");
+    expect(p.decide({ ...SITE, element: { role: "entry", name: "Email", secret: true } }).verdict).toBe("deny");
+    // A card's number into one that is: yes.
+    expect(p.decide({ ...SITE, element: { role: "entry", name: "Card number" }, vault: fill({ kind: "card", part: "cardNumber" }) }).verdict).toBe("allow");
     // A user name, a card's name or an email into a password field: never.
     for (const [kind, part] of [["login", "user"], ["card", "cardName"], ["card", "expiry"], ["contact", "email"]] as const) {
       expect(p.decide({ ...SITE, vault: fill({ kind, part }) }).verdict).toBe("deny");

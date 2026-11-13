@@ -571,7 +571,8 @@ consent and each first-use card, masked screenshots, the audit log (a step that 
 the limits on tasks, steps, time and actions a minute, and your organisation's policy: `confirmEveryAction`,
 `features.autonomy: false`, `allowGrants: false`, `features.actions: false` and a lockdown keep it out of force, and
 `approvals.maxMode` caps it. `features.aiReview: false` doesn't touch it: no model decides anything in Autopilot.
-The vault isn't built, so nothing is filled into a password, card or secret field or a sign-in window in any mode.
+Only in Autopilot, Ember fills a password, card or sign-in field from its vault itself ("The vault", below); in every
+other mode nothing is filled there, and no mode types into such a field.
 
 In Interactive, Ember doesn't ask before its first step in an app (in an app you asked for help in, the one you were
 in or one your request names, that step isn't announced either),
@@ -1598,6 +1599,24 @@ details the user gives Ember in its own **Secure Form**, each bound to one desti
 - **In Home.** Apps & privacy › Vault lists the entries by kind, destination and date, with Forget for each and Forget
   all (which asks first). Sign out and Memory's Forget everything forget the vault whole, and say so; when its file
   can't be removed they say that too.
+- **Filling.** A task asks with `fill_from_vault`, whose arguments are a field's id and what it needs ("password",
+  "user name", "card number", …) and nothing else. The policy decides it as its own kind of step (`vault_fill`,
+  `PolicyEngine.vaultRefusal`) and refuses before any question or form: outside Autopilot, where the organisation
+  turned the vault off, on Ember's desk, in WSL or over SSH, in the system's own authentication prompts, Ember's
+  windows, never-look windows and terminals (each refused first, as in every mode), a password anywhere but a
+  password field, a card's number or security code anywhere but a secret field, a user name outside a sign-in window,
+  and contact details in a field not named for them. Ember reads what the field belongs to itself (`vaultTarget`):
+  the origin of the web documents around it, from the documents (the helper's `page_address`: AT-SPI's `DocURL`, UI
+  Automation's document value), or else the app by its program name, never a browser. A look-alike host, another
+  port or scheme, a frame from another site than its page and an address that can't be read are no destination, so
+  nothing is filled. macOS reports no page address, so there Ember fills only an app's own fields. With no entry for
+  the destination Ember opens the Secure Form once; a form closed without saving is a refusal for the rest of the
+  task. Right before the fill the field, its page and the decision are looked at again, and anything changed means
+  no fill. The value goes from the vault to the helper's `vault_fill` (the one method that writes into a secret
+  field; `set_text` refuses one as before), or, where the field takes no text by accessibility, is typed as keys
+  under the borrow's rules; it is never pasted. The fill is announced by kind and app ("Filling a saved password in
+  Firefox, from the vault: Autopilot is on.") and audited with the kind, the part and the destination. The task's
+  model hears only whether it was filled.
 - **Never.** A value is never logged, audited, shown again, put in an IPC answer, a command's environment, memory or a
   conversation. `features.vault: false` in the organisation's policy, or a lockdown, turns the vault off.
 
