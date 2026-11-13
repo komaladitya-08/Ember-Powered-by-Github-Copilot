@@ -1834,7 +1834,7 @@ function start(): void {
     // After a fill from the vault no extension is called: a failed call's text reaches the model unredacted (vault-3-x9-4).
     vaultFilled: () => vaultRedactor.active,
     log: log.child("extensions"), os: platform.os,
-    // macOS never runs Ember as plain Node (PLAN.md §2 "Node mode"): no launcher, so no stdio servers there.
+    // macOS never runs Ember as plain Node (PLAN.md §2 "Node mode"): no launcher, so no extension's server, stdio or remote, runs there.
     launcher: platform.os === "darwin" ? null : { execPath: process.execPath, script: path.join(__dirname, "mcp-launch.cjs") },
     fetch: (u, i) => net.fetch(String(u), i as RequestInit),
     allowLocal: devEnv("EMBER_EXTENSIONS_LOCAL") === "1",
