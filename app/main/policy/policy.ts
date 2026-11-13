@@ -2448,7 +2448,8 @@ const PAST_WARNING_REASON = "this goes past a warning or turns a protection off"
  * with `context`, the app, the window's title and the dialog's words (safety-privacy-r9-2).
  */
 const BARE_PAST_WARNING = /^\s*(keep|open|download|run)( (the |this )?file)?( anyway)?\s*$/;
-const DANGER_CONTEXT = /\b(dangerous|harm(s|ful)?|malicious|malware|virus(es)?|suspicious|unverified|blocked|not commonly downloaded|may not be safe)\b/;
+// Chrome's and Edge's own words too: "isn't commonly downloaded", "can't be downloaded securely" (product-safety-x9-1).
+const DANGER_CONTEXT = /\b(dangerous|harm(s|ful)?|malicious|malware|virus(es)?|suspicious|unverified|blocked|(not|isn't) commonly downloaded|may not be safe|can('|no)?t be downloaded securely|insecure|not secure)\b/;
 const SHOWS_PICTURES = /^\s*(download|show|display|load) (the |all )?(pictures|images)\s*$/;
 const MAIL_CONTEXT = /\b(outlook|gmail|thunderbird|evolution|mail|inbox)\b|\bprotect (your )?privacy\b|\bprevented\b/;
 /** Checks of a text's spelling or grammar ("Disable spell check", "Turn off spelling and grammar checking"): no protection. */

@@ -321,6 +321,14 @@ describe("a button or link that goes past a warning, or answers a dialog's quest
     expect(engine().decide(click(name, { goal: "tidy up", element: { role, name }, ...r })).verdict).toBe("allow");
   });
 
+  // Chrome's and Edge's own words under a bare "Keep": the contraction, and the insecure download (product-safety-x9-1).
+  const uncommon = "setup.exe isn't commonly downloaded. Make sure you trust setup.exe before you open it.";
+  it.each([["push button", uncommon, "google-chrome"], ["push button", uncommon.replace("'", "’"), "google-chrome"],
+    ["push button", "setup.exe can't be downloaded securely", "google-chrome"], ["push button", "setup.exe cannot be downloaded securely", "google-chrome"],
+    ["menu item", uncommon, "msedge"]])("a bare “Keep” %s under “%s” asks every time (product-safety-x9-1)", (role, text, app) => {
+    asksEveryTime(click("Keep", { app, window: "Downloads", inPage: undefined, element: { role, name: "Keep" }, goal: "download the driver", dialog: { name: "", text } }));
+  });
+
   it("says why in the question (safety-privacy-r8-1)", () => {
     expect(engine().decide(click("Keep anyway", { app: "google-chrome", window: "Downloads", inPage: undefined, goal: "download the report" })).prompt)
       .toBe("Click the “Keep anyway” button in Google Chrome? It goes past a warning or turns off a protection.");
