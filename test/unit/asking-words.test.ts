@@ -113,3 +113,14 @@ describe("the Commands intro, the Routines hint and the Connectors hint are true
     expect(pane).toContain("commandsIntro(mode)");
   });
 });
+
+describe("How Ember asks, for an elevated Ember in Assisted (home-c10-3: not reproduced)", () => {
+  it("says every command asks, which is what Assisted does there: root keeps every command from the check", async () => {
+    const { approvalsNote } = await import("../../app/renderer/home/copy");
+    const { notReviewable } = await import("../../app/main/commands/review");
+    const state = { chosen: "assisted", inForce: "assisted", why: null, offered: ["interactive", "assisted", "autopilot"], agreed: ["interactive", "assisted"], cap: null } as const;
+    expect(approvalsNote({ ...state, offered: [...state.offered], agreed: [...state.agreed] }, false, "root")).toMatch(/Ember is running as root, so it asks before every command\./);
+    const d = { verdict: "ask", classes: [], rules: ["privileged"], says: [], reason: "", armMs: 0, unasked: false } as unknown as Parameters<typeof notReviewable>[0];
+    expect(notReviewable(d, { words: "update the packages", mode: "on", askEvery: "root", userAskEvery: false, command: "dnf upgrade -y" })).toBe("every command asks here");
+  });
+});
