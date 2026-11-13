@@ -678,7 +678,8 @@ It still asks, with the card of §2.4, before:
 - a command your own words for the task rule out ("commit my work but don't push", "delete everything except
   build", "push it, but without force"): that is your no, said in advance, and the card says "You didn't ask for
   this."; and one your words hold back ("leave the build folder alone", "keep notes.txt", "hold off on publishing",
-  "push tomorrow"), where the card also says "Your words say to leave this or to wait, so Ember asks first.";
+  "push tomorrow", "push main after the review", "once CI is green", "build is off limits", "I'll do the push"),
+  where the card also says "Your words say to leave this or to wait, so Ember asks first.";
 - a command of the same kind of danger as one you said no to earlier in the task, whatever either names (another
   push after a no to a push, another deletion after a no to a deletion or to deleting something in an app), any
   dangerous command after a no to one Ember couldn't read, and one Ember can't read (a loop, inline code) after a no

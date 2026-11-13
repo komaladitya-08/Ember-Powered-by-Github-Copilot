@@ -645,9 +645,12 @@ const SAYS_NOT = /(^|[^\p{L}\p{N}])(do\s+not|don['’]?t|does\s+not|doesn['’]?
 
 /**
  * Words that hold a part of a request back without a "not": "leave the build folder alone", "keep build", "hold off on
- * publishing", "wait before pushing", "push later", "skip build", "leave it as it is for now" (modes-y9-4).
+ * publishing", "wait before pushing", "push later", "skip build", "leave it as it is for now" (modes-y9-4); by a time
+ * or a condition ("push main next week", "on Monday", "in an hour", "after the review", "once CI is green", "when I
+ * say so"); and by a keeping phrase ("build is off limits", "build must survive", "I still need build", "the push is
+ * mine to do", "I'll do the push") (modes-y9-y9-7). It only ever keeps a question, so it errs wide.
  */
-const HOLDS_BACK = /(^|[^\p{L}\p{N}])(leave|leaving|keep|keeping|preserve|spare|hold|holding|wait|waiting|not\s+yet|later|tomorrow|until|skip|skipping|untouched|stays?|staying|remains?|as\s+(it|they)\s+(is|are)|hands\s+off|stay\s+away|for\s+now|myself|by\s+hand)(?=$|[^\p{L}\p{N}])/iu;
+const HOLDS_BACK = /(^|[^\p{L}\p{N}])(leave|leaving|keep|keeping|preserve|spare|hold|holding|wait|waiting|not\s+yet|later|tomorrow|until|skip|skipping|untouched|stays?|staying|remains?|as\s+(it|they)\s+(is|are)|hands\s+off|stay\s+away|for\s+now|myself|by\s+hand|after|once|when|tonight|next\s+(week|month|year|time)|(on\s+)?(mon|tues|wednes|thurs|fri|satur|sun)day|in\s+(an?|\d+|a\s+few)\s+(minutes?|hours?|days?|weeks?)|off[\s-]+limits|surviv(e|es|ing)|still\s+need|mine|(i\s+will|i['’]ll)\s+do)(?=$|[^\p{L}\p{N}])/iu;
 /**
  * Where one part of a request ends and the next begins. A full stop or a colon ends a part only before a space or at
  * the end: "notes.txt", "./build" and ".ssh" are one word each (modes-y9-x9-4).

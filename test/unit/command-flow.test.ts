@@ -3017,6 +3017,8 @@ describe("a command that would ask, in Autopilot (autopilot.ts; modes-D2, modes-
     for (const [words, command] of [
       ["delete the build folder and keep going", "rm -rf build"], ["wait for the tests, then push to origin", "git push origin main"], ["keep src, delete build", "rm -rf build"],
       ["leave the logs alone and delete the build folder", "rm -rf build"], ["delete the build folder", "rm -rf build"], ["keep build", "ls -la"],
+      // A time or a condition on something else holds nothing back (modes-y9-y9-7).
+      ["once the tests pass, push main", "git push origin main"], ["run the tests tonight, then delete build", "rm -rf build"], ["I still need the logs, delete build", "rm -rf build"],
     ]) expect(ruled(words, command), `${words} / ${command}`).toBe(false);
   });
 
@@ -3028,6 +3030,22 @@ describe("a command that would ask, in Autopilot (autopilot.ts; modes-D2, modes-
     expect((await run(h, command)).resultType).toBe("denied");
     expect(h.asked).toHaveLength(1);
     expect([h.windowAnnounce, h.announced, h.starts]).toEqual([[], [], []]);
+  });
+
+  it.each<[string, string]>([
+    ["commit my work and push main next week", "git push origin main"], ["push main after the review", "git push origin main"], ["push main once CI is green", "git push origin main"],
+    ["push main on Monday", "git push origin main"], ["push main in an hour", "git push origin main"], ["push main when I say so", "git push origin main"], ["push main tonight", "git push origin main"],
+    ["fix the tests. I will do the push", "git push origin main"], ["fix the tests, but the push is mine to do", "git push origin main"], ["fix the tests; I'll do the push", "git push origin main"],
+    ["clean the project but build is off limits", "rm -rf build"], ["clean the project, build must survive", "rm -rf build"], ["clean the project, I still need build", "rm -rf build"],
+  ])("asks in Autopilot before a command their words hold back by a time, a condition or a keeping phrase: %s (modes-y9-y9-7)", async (words, command) => {
+    setCommandJudge(null);
+    const ctx = { os: "linux" as const, home: "/home/ana", cwd: "/home/ana/proj", ember: FACTS.ember, downloaded: new Set<string>() };
+    expect(wordsRuleOut(classifyCommand(command, "bash", ctx).findings, words)).toBe(true);
+    const h = auto({ words, answers: ["deny"] });
+    expect((await run(h, command)).resultType).toBe("denied");
+    expect(h.asked).toHaveLength(1);
+    expect([h.windowAnnounce, h.announced, h.starts]).toEqual([[], [], []]);
+    expect((h.asked[0].panel as { card: CommandCard }).card.says).toContain(HELD_BACK_LINE);
   });
 
   it.each<[string, string]>([
