@@ -7124,6 +7124,16 @@ const GIT_READ = new Set([
   "replay", "last-modified", "refs", "multi-pack-index", "commit-graph", "prune-packed", "pack-objects", "pack-redundant",
 ]);
 
+/**
+ * A `<helper>::<address>` remote: git runs `git-remote-<helper>` from the command path for it, at once (clone, fetch,
+ * ls-remote) or at the next fetch or push once it is set as a remote's address (integ-x-4). `ext::` runs the command
+ * the address itself names; any other helper is a program Ember doesn't know. Read only where git takes an address,
+ * so a commit message that starts "std::move" is not one.
+ */
+const GIT_HELPER_ADDRESS = /^[A-Za-z0-9][A-Za-z0-9+.-]*::/;
+const GIT_ADDRESS_VERBS = new Set(["remote", "clone", "fetch", "pull", "push", "ls-remote", "submodule", "archive"]);
+const GIT_EXT_SAYS = "It runs a program named in a git address.";
+
 /** git settings that say where it fetches from and pushes to, or whether it checks the server (commands-remote-r9-11). */
 const GIT_REMOTE_KEYS = /^remote\..+\.(url|pushurl)$|^http\.(.+\.)?(sslverify|sslcainfo|sslcapath|sslcert|sslkey)$|^branch\..+\.(remote|pushremote)$|^remote\.pushdefault$/i;
 const GIT_REMOTE_SAYS = "Changes where git fetches from or pushes to, or how it checks the server.";
@@ -7155,8 +7165,8 @@ reg(NATIVE, ["git"], h => {
   const verb = verbArg.v;
   if (verb === null) { h.e.unclear("unclear.git-verb", "Ember can't tell which git command this runs."); return; }
   // An `ext::` remote runs the command it names.
-  if (h.args.some(a => /^ext::/i.test(a.v ?? ""))) h.e.unclear("unclear.git-ext", "It runs a program named in a git address.");
   const rest = h.args.slice(g.verbAt + 1);
+  if (h.args.some(a => /^ext::/i.test(a.v ?? "")) || (GIT_ADDRESS_VERBS.has(verb) && rest.some(a => GIT_HELPER_ADDRESS.test(a.v ?? "")))) h.e.unclear("unclear.git-ext", GIT_EXT_SAYS);
   const gh: H = { ...h, sc, args: rest, shellSc: h.shellSc ?? h.sc };
   const fn = GIT[verb];
   if (fn) { fn(gh, widen); return; }
@@ -7454,6 +7464,7 @@ git(["config"], h => {
     if (key === null || GIT_CODE_KEYS.some(re => re.test(key))) h.e.add("system", "git.config.code", "Changes what git runs later.", { program: "git config" });
     // A remote's address, and whether git checks the server it talks to (commands-remote-r9-11).
     if (key !== null && GIT_REMOTE_KEYS.test(key)) h.e.add("system", "git.config.remote", GIT_REMOTE_SAYS, { program: "git config" });
+    if (key !== null && /^remote\..+\.(url|pushurl)$/i.test(key) && ops.some(o => GIT_HELPER_ADDRESS.test(o.v ?? ""))) h.e.unclear("unclear.git-ext", GIT_EXT_SAYS);
     if (has(p, "system")) h.e.add("system", "git.config.system", "Changes settings for every user.", { program: "git config" });
     for (const f of values(p, "f", "file")) if (f) h.e.usePath(lit(f), "write", h.sc);
   } else if (key !== null && /^credential\./i.test(key)) h.e.add("secret", "secret.git-credential", SAYS.secrets, { program: "git config" });

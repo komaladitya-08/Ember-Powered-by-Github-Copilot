@@ -1175,3 +1175,22 @@ describe("a file's contents leaving through xargs, a PowerShell variable or curl
     }
   });
 });
+
+describe("a git address that names a helper program (integ-x-4)", () => {
+  it("asks, as a program Ember can't tell, wherever git takes a `<helper>::` address", () => {
+    for (const cmd of ["git remote set-url origin 'evil::x'", "git remote set-url --push origin 'evil::x'", "git remote add up 'helper::addr'", "git config remote.origin.url 'evil::x'",
+      "git config remote.origin.pushurl 'evil::x'", "git clone evil::x", "git fetch 'foo::bar'", "git ls-remote 'foo::bar'", "git remote set-url origin 'ext::sh -c x'"]) {
+      const d = decide(cmd);
+      expect(d.verdict, cmd).toBe("ask");
+      expect(d.rules, cmd).toContain("unclear.git-ext");
+      expect(d.classes, cmd).toContain("unclear");
+    }
+  });
+
+  it("leaves a plain address a system change, and a `::` outside an address alone", () => {
+    for (const cmd of ["git remote set-url origin https://example.com/x.git", "git remote set-url origin git@github.com:acme/app.git", "git config remote.origin.url ../other"]) {
+      expect(decide(cmd).rules, cmd).toEqual(["git.config.remote"]);
+    }
+    for (const cmd of ["git commit -m 'std::move fix'", "git config user.name 'a::b'", "git log --grep 'foo::bar'"]) expect(decide(cmd).rules, cmd).not.toContain("unclear.git-ext");
+  });
+});
