@@ -105,7 +105,7 @@ vi.mock("@github/copilot-sdk", async importOriginal => {
   return { ...real, CopilotClient: FakeClient, RuntimeConnection: { forStdio: () => ({}) } };
 });
 
-import { ACCOUNT_CHANGED_FORGOT, AgentHost, CUT_OFF, START_TIMEOUT_DETAIL, PROVIDER_MOVED_TASK, PROVIDER_SWITCH_TITLE, idleWord, proxyFromChromium, unansweredWord, startErrorReason, type AgentStatus, type HostOptions } from "../../app/main/agent/host";
+import { ACCOUNT_CHANGED_FORGOT, AgentHost, CUT_OFF, SIGN_OUT_NOT_KEPT, START_TIMEOUT_DETAIL, PROVIDER_MOVED_TASK, PROVIDER_SWITCH_TITLE, idleWord, proxyFromChromium, unansweredWord, startErrorReason, type AgentStatus, type HostOptions } from "../../app/main/agent/host";
 import type { ActiveProvider } from "../../app/main/provider";
 import { unavailableLine } from "../../app/renderer/ask/chips";
 import { AdminPolicySchema } from "../../app/main/admin";
@@ -5142,6 +5142,60 @@ describe("memory erasure at account boundaries", () => {
     const count = sim.sessions.length;
     expect(await host.start(TOKEN, "stored", "user")).toBe("error");
     expect(sim.sessions.length).toBe(count);
+    await host.stop();
+  });
+});
+
+describe("a sign-out while Ember's data folder can't be written (reliability-r9-2)", () => {
+  /** agent.json can't be written or replaced: a folder with something in it is where the file goes. */
+  const blockState = (dir: string) => {
+    const file = path.join(dir, "agent.json");
+    fs.rmSync(file, { force: true });
+    fs.mkdirSync(file);
+    fs.writeFileSync(path.join(file, "in-the-way"), "");
+  };
+
+  it("holds for this run: a GitHub CLI or environment sign-in isn't used on its own, and the status says the sign-out wasn't saved", async () => {
+    const { host, dir, statuses } = makeHost();
+    expect(await host.start(TOKEN, "github-cli", "auto")).toBe("ready");
+    blockState(dir);
+    await host.forgetConversation();
+    expect(host.signOutUnsaved).toBe(true);
+    expect(await host.start(null)).toBe("signed-out");
+    expect(statuses.at(-1)).toMatchObject({ phase: "signed-out", detail: SIGN_OUT_NOT_KEPT });
+    expect(SIGN_OUT_NOT_KEPT).toBe("You're signed out for now, but Ember couldn't save that: its data folder can't be written. Until it can, Ember may sign in again by itself the next time it starts.");
+    const clients = sim.clients.length;
+    // Check again, a retry, anything of Ember's own: the old sign-in stays unused.
+    expect(await host.start(TOKEN, "github-cli", "auto")).toBe("signed-out");
+    expect(await host.start(TOKEN, "environment", "auto", "GH_TOKEN")).toBe("signed-out");
+    expect(sim.clients).toHaveLength(clients);
+    expect(host.getStatus().detail).toBe(SIGN_OUT_NOT_KEPT);
+    // The user's own sign-in is theirs to make, and ends it (the disk can be written again).
+    fs.rmSync(path.join(dir, "agent.json"), { recursive: true });
+    expect(await host.start(TOKEN, "stored", "user")).toBe("ready");
+    expect(host.signOutUnsaved).toBe(false);
+    await host.stop();
+  });
+
+  it("says nothing of it, and keeps the flag, where the sign-out was saved", async () => {
+    const { host, statuses, agentJson } = makeHost();
+    expect(await host.start(TOKEN, "github-cli", "auto")).toBe("ready");
+    await host.forgetConversation();
+    expect(host.signOutUnsaved).toBe(false);
+    expect(await host.start(null)).toBe("signed-out");
+    expect(statuses.at(-1)!.detail).not.toBe(SIGN_OUT_NOT_KEPT);
+    expect(agentJson().signedOut).toBe(true);
+    await host.stop();
+  });
+
+  it("lets main's own reason stand first, then says a saved sign-in couldn't be removed", async () => {
+    let why: string | null = null;
+    const { host } = makeHost({ signedOutWhy: () => why });
+    await host.start(TOKEN, "stored");
+    await host.forgetConversation();
+    why = SIGN_OUT_NOT_KEPT;
+    expect(await host.start(null)).toBe("signed-out");
+    expect(host.getStatus().detail).toBe(SIGN_OUT_NOT_KEPT);
     await host.stop();
   });
 });

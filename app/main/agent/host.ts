@@ -502,6 +502,11 @@ const BUSY_HEALTH_MS = 2500;
 const NOT_ANSWERING = "Copilot isn't answering. I'm reconnecting; ask me again in a moment.";
 /** The same while tasks are at work: Copilot is reconnected once they're done. */
 const NOT_ANSWERING_AFTER_TASKS = "Copilot isn't answering. I'll reconnect when the tasks that are running finish; ask me again then.";
+/**
+ * Signed out, and it couldn't be saved (the saved sign-in is still on disk, or the signed-out note couldn't be
+ * written): what Models & connections says in place of "sign in below" (reliability-r9-2).
+ */
+export const SIGN_OUT_NOT_KEPT = "You're signed out for now, but Ember couldn't save that: its data folder can't be written. Until it can, Ember may sign in again by itself the next time it starts.";
 /** The same, with this user's inotify instances used up (the runtime can't begin a turn then). */
 const NO_WATCHERS = "Copilot can't work right now: this computer has run out of file watchers. Close a few apps, then ask me again.";
 const NO_WATCHERS_WHY = "Copilot isn't answering: the system's limit on file watchers (fs.inotify.max_user_instances) is used up. Close some apps, or ask IT to raise the limit.";
@@ -1875,7 +1880,8 @@ export class AgentHost {
     this.sourceName = source === "environment" ? name : undefined;
     const automatic = source === "environment" || source === "github-cli";
     if (token && how === "user") this.setSignedOut(false);
-    else if (token && automatic && readAgentState(this.stateFile).signedOut) token = null;
+    // (Signed out in this run counts whatever the disk kept of it: reliability-r9-2.)
+    else if (token && automatic && (this.signedOutNow || readAgentState(this.stateFile).signedOut)) token = null;
     return this.launch(token, source);
   }
 
@@ -1900,9 +1906,24 @@ export class AgentHost {
     }
   }
 
+  /**
+   * The user signed out, or signed in again. Kept for this run whatever the disk says: a sign-out whose flag couldn't
+   * be written (a read-only or broken disk) still holds a GitHub CLI or environment sign-in back until Ember closes,
+   * and the status says it wasn't saved (signOutUnsaved), as the next start can't know of it (reliability-r9-2).
+   */
   private setSignedOut(on: boolean): void {
-    try { writeAgentState(this.stateFile, { signedOut: on }); } catch (err) { this.o.log.warn("agent.state_not_saved", { err }); }
+    this.signedOutNow = on;
+    try {
+      writeAgentState(this.stateFile, { signedOut: on });
+      this.signOutUnsaved = false;
+    } catch (err) {
+      this.signOutUnsaved = on;
+      this.o.log.warn("agent.state_not_saved", { err });
+    }
   }
+  private signedOutNow = false;
+  /** The last sign-out couldn't be saved: the next start may use a sign-in it finds, and the status says so. */
+  signOutUnsaved = false;
 
   /**
    * Disconnects for good (quit): the conversation is deleted first, within about two seconds and while
@@ -1942,7 +1963,7 @@ export class AgentHost {
       return;
     }
     if (!token && !provider) {
-      this.setStatus({ phase: "signed-out", detail: this.o.signedOutWhy?.() ?? this.signedOut, login: undefined, source: undefined, service: undefined });
+      this.setStatus({ phase: "signed-out", detail: this.o.signedOutWhy?.() ?? (this.signOutUnsaved ? SIGN_OUT_NOT_KEPT : this.signedOut), login: undefined, source: undefined, service: undefined });
       this.o.memory?.pauseAccount?.("signed-out");
       this.dropHanded();
       return;

@@ -1288,7 +1288,12 @@ gh auth login
 
 Ember checks, in order: a token it stored itself, `COPILOT_GITHUB_TOKEN` / `GH_TOKEN` / `GITHUB_TOKEN`,
 then `gh auth token --hostname github.com`; a sign-in Copilot refuses gives way to the next (the message names it), and
-**Sign out** forgets the refusals. Classic `ghp_` tokens are not accepted by Copilot. For Copilot Business or
+**Sign out** forgets the refusals. A Sign out holds for the rest of the run whatever the disk says: where the saved
+sign-in can't be removed or the signed-out note (agent.json, written through a temporary file) can't be written (a
+read-only home, a file that isn't yours), Ember never reads that sign-in again, uses no GitHub CLI or environment
+sign-in on its own, and Models & connections says “You're signed out for now, but Ember couldn't save that: its data
+folder can't be written. Until it can, Ember may sign in again by itself the next time it starts.”
+(reliability-r9-2). Classic `ghp_` tokens are not accepted by Copilot. For Copilot Business or
 Enterprise, your organisation must enable the **Copilot CLI** policy. No restart is needed: run `gh auth login` in a
 terminal (Ember notices within a few seconds), or press **Check again**. If sign-in fails, the Copilot section says
 which sign-in Ember tried and why; while offline, Ember retries by itself.
