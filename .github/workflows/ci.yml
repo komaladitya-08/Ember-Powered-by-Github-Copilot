@@ -96,7 +96,9 @@ jobs:
     name: RHEL 8 compatibility (rockylinux:8)
     if: github.event_name != 'workflow_dispatch' || inputs.only == 'all' || inputs.only == 'linux'
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    # 40, not 25: the speech step alone took 17 min 4 s at 237fd04 (10 min 15 s at 0fa8bf0, before the room-talk
+    # and answer-window tests), and the job ran out of time in its last footprint step with nothing failing.
+    timeout-minutes: 40
     container:
       image: rockylinux:8
       # Lets Chromium use its user-namespace sandbox inside the container.
