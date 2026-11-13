@@ -224,6 +224,10 @@ export const SAYS = {
   refuseSafety: "Ember won't run this: it would change Ember's own safety settings, records or programs.",
   refuseRead: "Ember won't run this: it would read Ember's own safety settings, records or programs.",
   refuseInput: "Ember won't run this: it could press keys or click in Ember's own windows.",
+  // The same refusals when only an earlier reading of one of the command's options makes them (Classifier.heldRefusal).
+  heldRefuseSafety: "Ember won't run this: it can't tell whether one of its options takes the word after it, so it may change Ember's own safety settings, records or programs.",
+  heldRefuseRead: "Ember won't run this: it can't tell whether one of its options takes the word after it, so it may read Ember's own safety settings, records or programs.",
+  heldRefuseInput: "Ember won't run this: it can't tell whether one of its options takes the word after it, so it may press keys or click in Ember's own windows.",
 } as const;
 
 /** Where a part of the command is judged. */
@@ -374,6 +378,24 @@ const RESERVED_WORDS: ReadonlySet<string> = new Set(["if", "then", "elif", "else
  */
 const READ_FLOW_RULE = /^unclear\.(if|then|elif|else|fi|for|while|until|do|done|in)$/;
 
+/**
+ * Words marked while a command is judged: judged as a path where they were used, or handed to the command a wrapper
+ * runs. A row judged a second way (Engine.runRow) marks in a layer of its own, which goes with that reading: a word
+ * main's table read as a file or as a command is not passed over for it when the row's own reading's uses of a
+ * variable are noted, so the variable's values are still judged (commands-held-x9-1).
+ */
+class WordMarks {
+  private layers: WeakSet<Arg>[] = [new WeakSet()];
+  add(a: Arg): void { this.layers[this.layers.length - 1].add(a); }
+  has(a: Arg): boolean { return this.layers.some(l => l.has(a)); }
+  /** Starts a layer for a reading judged apart; the function returned takes it back, with every mark made in it. */
+  apart(): () => void {
+    const layer = new WeakSet<Arg>();
+    this.layers.push(layer);
+    return () => { const k = this.layers.lastIndexOf(layer); if (k > 0) this.layers.length = k; };
+  }
+}
+
 /** The classifier's state for one command text. */
 class Classifier {
   findings: Finding[] = [];
@@ -398,6 +420,8 @@ class Classifier {
   unnamedAnywhere = false;
   /** Scripts recorded only because a name may resolve to them (`.\x` → x.ps1), with what had been written by then. */
   private candidates = new Map<ScriptRef, { written: number; unnamed: boolean }>();
+  /** Scripts recorded though this same line marks them as a download (recordScript): the download's question is theirs. */
+  private savedHere = new Set<ScriptRef>();
   simpleCount = 0;
   /** The command being classified (index into commands), -1 before the first. */
   at = -1;
@@ -447,7 +471,7 @@ class Classifier {
    */
   private pendingSets: { name: string; forms: string[]; sc: Scope }[] = [];
   /** Words of a variable judged as a path where they were used (judgeUnseen). */
-  private judgedWords = new WeakSet<Arg>();
+  private judgedWords = new WordMarks();
   /** Variables a command used in a word Ember didn't judge as a path, apart from testing or printing it. */
   private usedUnjudged = new Set<string>();
   /** Those handed to a program that may change what they name: on its input or in its environment (commands-remote-w5-5). */
@@ -460,7 +484,7 @@ class Classifier {
   private printedVars = new Set<string>();
   compoundOnward = false;
   /** Words a wrapper hands to the command it runs (payload, unwrap): the rest of its words are its own. */
-  protected payloadWords = new WeakSet<Arg>();
+  protected payloadWords = new WordMarks();
   /** A loop's or `if`'s closer given text that uses variables (`done <<< "$d"`), for the reads in it (feedReads). */
   protected hereVarsAt = new Map<number, HereVars>();
   /** POSIX variables set from a substitution that fetched (`x=$(curl …)`): written to a file, the file is a download (commands-remote-c7-3). */
@@ -545,6 +569,18 @@ class Classifier {
   }
 
   /**
+   * Says the refusal that stands as one only a row's second reading made (runRow), in words that are true of it: by
+   * the row's own reading the command does no such thing, so Ember says what it can't tell and what the command may
+   * do. `pkill -n server` is refused because main's table gave -n the name and left none, which stops every process,
+   * Ember's too; it would not "change Ember's own programs" as written (commands-held-x9-7).
+   */
+  heldRefusal(): void {
+    if (!this.refuse) return;
+    const says = this.refuse.says === SAYS.refuseRead ? SAYS.heldRefuseRead : this.refuse.says === SAYS.refuseInput ? SAYS.heldRefuseInput : SAYS.heldRefuseSafety;
+    this.refuse = { rule: this.refuse.rule, says };
+  }
+
+  /**
    * Whether `judge` finds anything to ask about, judged apart: what it finds is not kept (a refusal, and what it notes
    * of files and variables, is). For a form Ember judges a second way, which must never decide less safely than the
    * first (commands-remote-r7-2). `apartFrom`: rules that don't count as asking (a flow word's own, which the command
@@ -601,14 +637,34 @@ class Classifier {
   }
 
   /**
-   * Forgets what is kept by a command's index for the commands from `n` on, which were judged apart and are taken back
-   * (foundApartWhole): the commands registered next take those indexes, and a read's seen text or a listing kept for
-   * another command must never count for them.
+   * Starts a row's second reading (Engine.runRow), which must leave nothing behind that could pass for the row's own
+   * or make a later command decide more loosely. The function returned puts back, as the row's own reading left them:
+   * - the words judged as paths or handed to a command, which that reading marks in a layer of its own (WordMarks:
+   *   commands-held-x9-1);
+   * - everything kept by a command's index: the commands the reading registered, whose indexes the commands registered
+   *   next take (a read's seen text or a listing kept for another command must never count for them), and the current
+   *   command's too, since a wrapper's unwrap judges at the wrapper's own index and main's `read v`, text seen, would
+   *   stand for the row's `read -u 3 …`, which asks (commands-held-x9-3);
+   * - what a command can switch off or replace: `set -a` (main's `env -a set +a` ran `set +a`, the row's own ran nothing,
+   *   so a variable set to Ember's folder afterwards is still exported and refused: commands-held-x9-1), a loop's
+   *   variables for the card's words, and the downloads that stop counting once the target says they are folders.
+   * What that reading only adds to stays, because more of it only ever asks or refuses: paths to probe, download marks
+   * (which never stop a script being read: recordScript), scripts to read, files written, variables' values and uses.
    */
-  protected forgetFrom(n: number): void {
-    for (const kept of [this.listed, this.globalOpts, this.stdinGiven, this.readText, this.closerInput, this.hereVarsAt, this.hereAt, this.readSets]) {
-      for (const k of [...kept.keys()]) if (k >= n) kept.delete(k);
-    }
+  protected readApart(): () => void {
+    const marks = [this.judgedWords.apart(), this.payloadWords.apart()];
+    const maps: Map<unknown, unknown>[] = [this.listed, this.readText, this.closerInput, this.hereVarsAt, this.hereAt, this.readSets, this.loopVars];
+    const sets = [this.globalOpts, this.stdinGiven];
+    const was = { maps: maps.map(m => [...m]), sets: sets.map(x => [...x]), probeFull: this.probeFull, allExport: this.allExport, ifFile: this.downloadsIfFile.length };
+    return () => {
+      for (const back of marks) back();
+      maps.forEach((m, k) => { m.clear(); for (const [i, v] of was.maps[k]) m.set(i, v); });
+      sets.forEach((x, k) => { x.clear(); for (const i of was.sets[k]) x.add(i); });
+      // Its finding for more paths than Ember checks went with its other findings: a later command that names one more says so.
+      this.probeFull = was.probeFull;
+      this.allExport = was.allExport;
+      this.downloadsIfFile.length = was.ifFile;
+    };
   }
 
   noteUnclear(list: readonly Unclear[]): void {
@@ -1124,15 +1180,20 @@ class Classifier {
 
   /**
    * Records a shell script this command runs by path, so the flow reads its text and classifies it (L8, the lead's
-   * ruling). Only a resolvable path on the target's own filesystem, not one this task downloaded (already escape),
-   * not a foreign scope's (another system Ember can't read). A pattern, a stream (`/dev/fd/3`, `/proc/self/fd/0`) or
-   * more scripts than Ember reads (MAX_SCRIPTS) asks: what would run can't be read first.
+   * ruling). Only a resolvable path on the target's own filesystem, not one an earlier command of this task downloaded
+   * (already escape, and the file there is the download: onRecord), not a foreign scope's (another system Ember can't
+   * read). One this same line marks as a download is recorded all the same (commands-held-x9-2, x9-6): nothing is saved
+   * yet, so the file there now is what runs if the fetch fails, saves elsewhere or, by another reading of the line's
+   * options (runRow), isn't one at all. Running it asks as running a download does, and what its text says stands
+   * beside that. A pattern, a stream (`/dev/fd/3`, `/proc/self/fd/0`) or more scripts than Ember reads (MAX_SCRIPTS)
+   * asks: what would run can't be read first.
    */
   recordScript(a: Arg, as: ScriptRef["as"], sc: Scope, candidate = false): void {
     if (a.v === null || a.v === "-" || a.v === "/dev/stdin" || sc.foreign) return;
     if (a.glob) { this.unclear("unclear.script-pattern", "It runs a script named by a pattern, which Ember can't read first."); return; }
     if (!isAbsolute(a.v, sc.path.flavour) && !a.v.startsWith("~") && !sc.cwd) return;
-    if (this.isDownloaded(a, sc)) return;
+    if (this.onRecord(a, sc)) return;
+    const savedHere = this.isDownloaded(a, sc);
     const abs = resolveTargetPath(a.v, { os: sc.os, home: sc.home ?? "", cwd: sc.cwd ?? "" });
     const stream = (p: string) => sc.path.flavour === "posix" && /^\/(dev|proc)\//.test(p);
     if (stream(abs)) {
@@ -1163,6 +1224,7 @@ class Classifier {
     const ref: ScriptRef = { path: abs, as, cwd, ...(open !== null ? { open } : {}), ...(known !== undefined ? { real: known } : {}) };
     this.scripts.push(ref);
     if (candidate) this.candidates.set(ref, { written: this.written.length, unnamed: this.writesUnnamed });
+    if (savedHere) this.savedHere.add(ref);
   }
 
   /**
@@ -1172,6 +1234,8 @@ class Classifier {
    */
   protected scriptWritten(): boolean {
     return this.scripts.some(r => {
+      // A download this line saves under the script's name is what it writes: that already asks, as running a download.
+      if (this.savedHere.has(r)) return false;
       // By either name: `printf … > /x/t.sh; sh l/../t.sh` (l → /x/sub) writes the very file it runs.
       const names = r.real !== undefined ? [r.path, r.real] : [r.path];
       const hit = (w: { p: string; env: PathEnv }) => names.some(n => isUnder(n, w.p, w.env));
@@ -1420,12 +1484,14 @@ class Classifier {
 
   /**
    * Whether a path is a file this task downloaded, or inside a downloaded folder. `unnamed`: a copy Ember couldn't name
-   * counts for every file in its folder (a project tool's words aren't files it runs: commands-remote-r4-3).
+   * counts for every file in its folder (a project tool's words aren't files it runs: commands-remote-r4-3). `line`
+   * false: only what earlier commands of the task downloaded counts, not what this line marks (onRecord).
    */
-  isDownloaded(a: Arg, sc: Scope, unnamed = true): boolean {
-    if (a.v === null || !sc.cwd || (this.ctx.downloaded.size === 0 && this.downloads.length === 0)) return false;
+  isDownloaded(a: Arg, sc: Scope, unnamed = true, line = true): boolean {
+    const here = line ? this.downloads : [];
+    if (a.v === null || !sc.cwd || (this.ctx.downloaded.size === 0 && here.length === 0)) return false;
     const abs = resolveTargetPath(a.v, { os: sc.os, home: sc.home ?? "", cwd: sc.cwd });
-    const all = [...this.ctx.downloaded, ...this.downloads].filter(d => unnamed || baseName(d, sc.path.flavour) !== UNNAMED_COPY);
+    const all = [...this.ctx.downloaded, ...here].filter(d => unnamed || baseName(d, sc.path.flavour) !== UNNAMED_COPY);
     // Its real path too (§3.6): a link to a download, or `..` walked through a link (`sh sub/../x`), is the download.
     const phys = this.physical(a.v, "exec", sc);
     const names = [abs, this.ctx.real?.get(abs), phys === null ? undefined : this.ctx.real?.get(phys)].filter((n): n is string => typeof n === "string");
@@ -1445,6 +1511,15 @@ class Classifier {
       return under.length > 0;
     }
     return false;
+  }
+
+  /**
+   * Whether a path is a download an earlier command of this task saved (the task's record): the file on the target is
+   * then the download, so running it asks and it is not read as a script. A mark this same line makes is no such
+   * thing yet (recordScript).
+   */
+  onRecord(a: Arg, sc: Scope): boolean {
+    return this.isDownloaded(a, sc, true, false);
   }
 }
 
@@ -2021,18 +2096,20 @@ class Engine extends Classifier {
   /**
    * asksApartWhole's findings themselves, for heldTo. `row`: the judging is a row's, of the command that is current, read
    * another way (runRow): what a wrapper's unwrap made of that command (its program, arguments and wrappers) is
-   * taken back as well, and so is what the commands it registered left behind by their index.
+   * taken back as well, and so are the words it marked as judged or handed on and everything it left behind by a
+   * command's index, the current command's included (readApart).
    */
   foundApartWhole(judge: () => void, apartFrom?: RegExp, row = false): Finding[] {
     const n = this.commands.length;
     const kept = { count: this.simpleCount, at: this.at, program: this.program, pipe: this.pipe, state: { ...this.pipe }, cd: this.cdTarget, top: this.topCd };
     const pc = row ? this.commands[this.at] : undefined;
     const own = pc ? { program: pc.program, args: pc.args, wrappers: pc.wrappers } : undefined;
+    const back = row ? this.readApart() : undefined;
     try {
       return this.foundApart(judge, apartFrom);
     } finally {
       if (pc && own) Object.assign(pc, own);
-      if (row) this.forgetFrom(n);
+      back?.();
       this.commands.length = n;
       this.simpleCount = kept.count;
       this.at = kept.at;
@@ -2052,6 +2129,10 @@ class Engine extends Classifier {
   private asMain = false;
   /** A table the row being judged read differs from main's on this line (parseHeld). */
   private tablesDiffer = false;
+  /** A held row's two readings leave the shell in different folders somewhere on this line (runRow). */
+  private foldersDiffer = false;
+  /** The line is being judged again with the folder main's reading of each such row leaves (heldToMainFolders). */
+  private mainFolders = false;
 
   /**
    * Whether the row is being judged main's way (runRow). A check the row has learned since, which main's row at 4d64d3a
@@ -2083,24 +2164,34 @@ class Engine extends Classifier {
   /**
    * Judges a program's row, held to main's option tables (commands-held): when a table the row read (heldOpts) reads this
    * line differently from the table main had at 4d64d3a, the row is judged again main's way, apart. Main's refusal
-   * stands (the row's own, in its own words, when it has one), and unless everything main's reading found the row's
-   * own found too, the command asks and the dangers main named stay on the card (heldTo). Where the tables agree, which
-   * is nearly always, the row is judged once, as before.
+   * stands (the row's own, in its own words, when it has one; otherwise said as what Ember can't tell: heldRefusal),
+   * and unless everything main's reading found the row's own found too, the command asks and the dangers main named
+   * stay on the card (heldTo). Where the tables agree, which is nearly always, the row is judged once, as before.
    */
   runRow(row: Handler, h: H): void {
     if (this.asMain) { row(h); return; }
     const outer = this.tablesDiffer;
     const stood = this.refusal();
     const from = this.findings.length;
+    const cd0 = this.cdTarget;
     this.tablesDiffer = false;
     let differ: boolean;
     try { row(h); } finally { differ = this.tablesDiffer; this.tablesDiffer = outer; }
     if (!differ) return;
     const own = this.refusal();
+    const ownCd = this.cdTarget;
+    let mainCd = ownCd;
     let before: Finding[];
     this.asMain = true;
-    try { before = this.foundApartWhole(() => row(h), undefined, true); } finally { this.asMain = false; }
+    try { before = this.foundApartWhole(() => { this.cdTarget = cd0; row(h); mainCd = this.cdTarget; }, undefined, true); } finally { this.asMain = false; }
+    // The folder the command leaves the shell in is the one the row's own reading gives; where main's reading gives
+    // another (`env --block-signal cd /tmp`: main's table took the cd for the option's word), the whole line is judged
+    // again with main's (heldToMainFolders).
+    if (mainCd !== ownCd) { this.foldersDiffer = true; if (this.mainFolders) this.cdTarget = mainCd; }
+    // The row's own refusal is said in its own words, and one that stood before the row keeps its own; one only main's
+    // reading made says what Ember can't tell (commands-held-x9-7).
     if (own.refuse !== stood.refuse) this.putRefusal(own);
+    else if (this.refusal().refuse !== stood.refuse) { if (stood.refuse) this.putRefusal(stood); else this.heldRefusal(); }
     const found = this.findings.slice(from);
     if (before.every(f => found.some(g => sameFinding(f, g)))) return;
     this.heldTo(before, from, "unclear.option-value", SAYS.optionValue);
@@ -2115,7 +2206,26 @@ class Engine extends Classifier {
     }
     this.checkCharacters(text, sc.family);
     this.classifyText(text, this.topShell, sc);
+    if (this.foldersDiffer) this.heldToMainFolders(text);
     return this.result();
+  }
+
+  /**
+   * Holds a line to the folders main's reading of its held rows leaves the shell in (commands-held-y9-1). Where a
+   * wrapper's two tables disagree about a `cd` (`cd ~/.config && env --block-signal cd /tmp && rm -rf ember`: by
+   * today's table env runs the cd, by main's the cd was the option's word and the folder stayed), what follows was
+   * judged in the folder the row's own reading gives. The whole line is judged again with main's folder for each such
+   * row, apart: its refusal stands (Ember's own folder, named from where main stood), and unless everything it found
+   * the line's own judging found too, the line asks with the dangers it named kept on the card (heldTo).
+   */
+  private heldToMainFolders(text: string): void {
+    const own = this.refusal();
+    let was: Finding[];
+    this.mainFolders = true;
+    try { was = this.foundApartWhole(() => this.classifyText(text, this.topShell, this.topScope()), undefined, true); } finally { this.mainFolders = false; }
+    if (this.refusal().refuse !== own.refuse) { if (own.refuse) this.putRefusal(own); else this.heldRefusal(); }
+    if (was.every(f => this.findings.some(g => sameFinding(f, g)))) return;
+    this.heldTo(was, 0, "unclear.option-value", SAYS.optionValue);
   }
 
   private result(): ClassificationExtra {
@@ -2883,7 +2993,7 @@ class Engine extends Classifier {
     if (pn.isPath) {
       this.usePath(nameArg, "exec", sc);
       if (this.isDownloaded(nameArg, sc)) this.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
-      else this.scriptByPath(nameArg, pn, sc);
+      if (!this.onRecord(nameArg, sc)) this.scriptByPath(nameArg, pn, sc);
       scriptName(h, nameArg.v ?? "");
     } else if (sc.family === "cmd" && nameArg.v !== null && !CMD_BUILTINS[key]) {
       // cmd looks in the current folder first, with each runnable extension when none is written.
@@ -2891,7 +3001,7 @@ class Engine extends Classifier {
       if (names.some(n => this.isDownloaded(lit(n), sc))) this.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
     }
     // cmd runs `x` or `.\x` as x.bat or x.cmd from the current folder when one is there: read them first (L8).
-    if (sc.family === "cmd" && pn.ext === "" && nameArg.v !== null && !CMD_BUILTINS[key] && !nameArg.glob && !this.isDownloaded(nameArg, sc)) {
+    if (sc.family === "cmd" && pn.ext === "" && nameArg.v !== null && !CMD_BUILTINS[key] && !nameArg.glob && !this.onRecord(nameArg, sc)) {
       for (const e of [".bat", ".cmd"]) this.recordScript(lit(nameArg.v + e), "cmd", sc, true);
     }
     if (pn.interop) {
@@ -2903,7 +3013,7 @@ class Engine extends Classifier {
     if (pn.ext === ".bat" || pn.ext === ".cmd") {
       // A batch file runs under cmd, which re-reads its arguments (critique wsl-3).
       if (!pn.isPath) scriptName(h, nameArg.v ?? "");
-      if (!this.isDownloaded(nameArg, sc)) this.recordScript(nameArg, "cmd", sc);
+      if (!this.onRecord(nameArg, sc)) this.recordScript(nameArg, "cmd", sc);
       if (args.some(a => a.v === null || /[&|<>^%!]/.test(a.v))) this.unclear("unclear.batch-args", "cmd would read its arguments as commands.");
       if (sc.wsl && sc.family === "posix" && !(sc.cwd && sc.mountRoot && isUnder(sc.cwd, sc.mountRoot, sc.path))) {
         this.unclear("unclear.cmd-linux-folder", SAYS.cmdLinuxFolder);
@@ -3079,7 +3189,7 @@ class Engine extends Classifier {
     if (pn.isPath) {
       this.usePath(nameArg, "exec", sc);
       if (this.isDownloaded(nameArg, sc)) this.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
-      else {
+      if (!this.onRecord(nameArg, sc)) {
         // `env ./x.sh`, `exec ./x.sh`, `timeout 5 ./x.sh` run the script as `./x.sh` does (L8, the lead's ruling).
         this.scriptByPath(nameArg, pn, sc);
         if (pn.ext === ".bat" || pn.ext === ".cmd") this.recordScript(nameArg, "cmd", sc);
@@ -4330,7 +4440,11 @@ reg(NATIVE, ["rm", "unlink", "shred", "srm", "wipe", "rmdir", "grm", "grmdir", "
   const shred = key === "shred";
   // shred's -u (remove) takes no value, and --remove only one after = (commands-remote-r4-2); scrub's -p, -b, -s and -D
   // take one.
-  const p = opts(h, { shortValue: shred ? "ns" : key === "scrub" ? "pbsD" : "", longValue: shred ? ["iterations", "size", "random-source"] : key === "scrub" ? ["pattern", "blocksize", "device-size", "dirent"] : [], longOptional: ["remove"] });
+  const spec: OptSpec = { shortValue: shred ? "ns" : key === "scrub" ? "pbsD" : "", longValue: shred ? ["iterations", "size", "random-source"] : key === "scrub" ? ["pattern", "blocksize", "device-size", "dirent"] : [], longOptional: ["remove"] };
+  // Main's table gave shred's -u the next word, so the file after the option it swallowed (`shred -u -n <file>`) was
+  // shredded: judged that way too. The names main had no row for were judged as unknown programs (asBefore) and have
+  // no table to be held to (commands-held-9).
+  const p = heldOpts(h, spec, NEW_DELETERS.has(h.key) ? spec : { shortValue: h.key === "shred" ? "nsu" : "", longValue: h.key === "shred" ? ["iterations", "size", "random-source"] : [] });
   const rec = (key === "rm" || key === "srm" || key === "wipe") && has(p, "r", "R", "recursive");
   const objs = objsOf(h, p.operands, rec ? "deleteTree" : "delete");
   const widening: string[] = [];
@@ -4905,7 +5019,11 @@ reg(NATIVE, ["tar", "bsdtar", "gtar"], h => {
   const dir = values(p, "C", "directory")[0];
   // A word Ember can't see all of is read by its written text too, quotes dropped, so an option whose value is a variable
   // or a substitution (`--to-command="$T"`, `-I"$T"`) asks as the value written out does (commands-remote-y8-4).
-  if (tarRunsCommand(p, bsd) || a.some(w => w.v === null && tarRunsCommand(parseOpts([lit(w.raw.replace(/["']/g, ""))], tarSpec(bsd)), bsd))) h.e.unclear("unclear.tar-command", "It runs a command Ember can't see.");
+  // bsdtar's and a Mac's own -I names a list of files (read below), but it asked for every tar at 4d64d3a, and the `tar`
+  // on a Mac may be GNU's, which runs the program -I names: it still asks wherever main's table saw an -I
+  // (commands-held-x9-5).
+  const mainI = bsd && has(parseOpts(a, TAR_MAIN), "I");
+  if (tarRunsCommand(p, bsd) || mainI || a.some(w => w.v === null && tarRunsCommand(parseOpts([lit(w.raw.replace(/["']/g, ""))], tarSpec(bsd)), bsd))) h.e.unclear("unclear.tar-command", "It runs a command Ember can't see.");
   // The lists of names to pack or leave out are files tar reads, and its errors show their lines (review #174).
   for (const f of values(p, "T", "files-from", "X", "exclude-from", ...(bsd ? ["I"] : []))) if (f !== null && !STDIN_NAME.test(f)) h.e.usePath(lit(f), "read", h.sc);
   // An incremental backup's snapshot file, which tar rewrites, and the owner and group maps it reads (commands-remote-v5-3).
@@ -4941,7 +5059,9 @@ reg(NATIVE, ["tar", "bsdtar", "gtar"], h => {
 reg(NATIVE, ["zip"], h => {
   // -T tests the archive and takes no value; -TT and -tt are one option each, written with one dash (commands-remote-i5a).
   const two: Readonly<Record<string, string>> = { "-TT": "--unzip-command", "-tt": "--tt" };
-  const p = parseOpts(h.args.map(a => (a.v !== null && two[a.v] ? { ...a, v: two[a.v] } : a)), { shortValue: "bnPtZ", longValue: ["temp-path", "suffixes", "password", "unzip-command", "tt"] });
+  // Main's table gave -T the next word and read -TT and -tt as written, so the file or the option after -T's word was
+  // read (`zip -T -n <file>`): judged that way too (commands-held-9).
+  const p = heldOpts(h, { shortValue: "bnPtZ", longValue: ["temp-path", "suffixes", "password", "unzip-command", "tt"] }, { shortValue: "bnPtTZ", longValue: ["temp-path", "suffixes", "password", "unzip-command", "tt"] }, h.args.map(a => (a.v !== null && two[a.v] ? { ...a, v: two[a.v] } : a)), h.args);
   if (has(p, "unzip-command") || h.args.some(a => /^(-TT|--unzip-command|--tt)/.test(a.v ?? ""))) h.e.unclear("unclear.zip-command", "It runs a command Ember can't see.");
   const [arc, ...inputs] = p.operands;
   if (arc) {
@@ -5014,7 +5134,9 @@ reg(NATIVE, ["unzip"], h => {
 
 reg(NATIVE, ["cpio"], h => {
   // -s swaps bytes and takes no value; -C is the block size (commands-remote-i5a).
-  const p = opts(h, { shortValue: "EFHIMORCD", longValue: ["file", "format", "pattern-file", "rsh-command", "owner", "directory", "io-size", "message", "block-size"] });
+  // Main's table gave -s the next word and knew no -C, --io-size, --message or --block-size, so the option after one of
+  // those (`cpio -i -C -u`) was read: judged that way too (commands-held-9).
+  const p = heldOpts(h, { shortValue: "EFHIMORCD", longValue: ["file", "format", "pattern-file", "rsh-command", "owner", "directory", "io-size", "message", "block-size"] }, { shortValue: "EFHIMORsD", longValue: ["file", "format", "pattern-file", "rsh-command", "owner", "directory"] });
   if (has(p, "rsh-command")) h.e.unclear("unclear.cpio-command", "It runs a command Ember can't see.");
   if (has(p, "i", "extract")) {
     // -D/--directory: the folder it unpacks into (review #169).
@@ -5033,9 +5155,12 @@ reg(NATIVE, ["gzip", "gunzip", "bzip2", "bunzip2", "xz", "unxz", "lzma", "unlzma
   // --rsyncable takes no value (commands-remote-i5a); xz's -T, -M, -F and -C, pigz's -p and -b, zstd's and brotli's -o do.
   const valueShort: Readonly<Record<string, string>> = { xz: "STMFC", unxz: "STMFC", lzma: "STMFC", unlzma: "STMFC", pigz: "Spb", unpigz: "Spb", zstd: "oD", unzstd: "oD", brotli: "oqwS" };
   // Main's table gave --rsyncable the next word and knew no --output, --quality, --window, --blocksize or --patch-from, nor
-  // the letters for them, so the word after one was a file to pack: judged that way too; a count of threads or processes
-  // is the one thing read as now (commands-held-8).
-  const p = heldOpts(h, { shortValue: valueShort[h.key] ?? "S", longValue: ["suffix", "format", "threads", "memlimit", "output", "quality", "window", "processes", "blocksize", "patch-from"] }, { shortValue: `S${(valueShort[h.key] ?? "").replace(/[^Tp]/g, "")}`, longValue: ["suffix", "rsyncable", "format", "threads", "memlimit", "processes"] });
+  // the letters for them, so the word after one was a file to pack: judged that way too. A count of threads or processes
+  // is the one thing read as now (commands-held-8): -T, -p and --processes took no value there, so in main's reading
+  // they take the next word only when it is a count as written, and a switch or `--` after one is read as it was
+  // (`xz -T -- file`, `zstd --processes --rm file`: commands-held-10).
+  const counts = (valueShort[h.key] ?? "").replace(/[^Tp]/g, "");
+  const p = heldOpts(h, { shortValue: valueShort[h.key] ?? "S", longValue: ["suffix", "format", "threads", "memlimit", "output", "quality", "window", "processes", "blocksize", "patch-from"] }, { shortValue: "S", shortNumeric: counts, longValue: ["suffix", "rsyncable", "format", "threads", "memlimit"], longNumeric: ["processes"], numericCountOnly: [...counts, "processes"] });
   const keeps = has(p, "k", "keep", "c", "stdout", "to-stdout", "t", "test", "l", "list", "h", "help", "V", "version");
   const removes = ["zstd", "unzstd", "lz4", "brotli"].includes(h.key) ? has(p, "rm") : !keeps;
   // The word after a count or format option (`xz -T big.tar`, `xz -M 1G`, `pigz -p "$N"`, `xz -T
@@ -5278,7 +5403,7 @@ function intoInterpreter(h: H, readAs?: ScriptRef["as"]): void {
     for (const r of h.s.redirs) {
       if (r.kind !== "read" || !r.target) continue;
       if (h.e.isDownloaded(r.target, h.sc)) h.e.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
-      else if (readAs !== undefined) h.e.recordScript(r.target, readAs, h.sc);
+      if (readAs !== undefined) h.e.recordScript(r.target, readAs, h.sc);
     }
     return;
   }
@@ -5302,8 +5427,11 @@ function runScript(h: H, script: Arg, readAs?: ScriptRef["as"]): void {
   const exts = SCRIPT_EXTS[h.key] ?? [];
   const bareHit = exts.length > 0 && !/\.[^./\\]+$/.test(folder) && !script.glob && exts.some(e => h.e.isDownloaded(lit(script.v + e), h.sc));
   const globHit = script.glob && h.e.globMatchesDownload(script, h.sc);
-  if (h.e.isDownloaded(script, h.sc) || entry || bareHit || globHit) h.e.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
-  else if (readAs !== undefined) h.e.recordScript(script, readAs, h.sc);
+  const hit = entry || bareHit || globHit;
+  if (h.e.isDownloaded(script, h.sc) || hit) h.e.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
+  // Read first all the same, unless the task's record holds it (recordScript); a folder's entry file, a name an
+  // interpreter completes or a pattern that is a download is not this file.
+  if (readAs !== undefined && !hit) h.e.recordScript(script, readAs, h.sc);
   nameCheck(h, script.v, script.v);
 }
 /** The files node or python runs when given a folder (package.json names node's). */
@@ -5997,7 +6125,9 @@ git(["reset"], h => {
 
 git(["checkout"], h => {
   // --track takes a mode only after = (commands-remote-i5a).
-  const p = opts(h, { shortValue: "bB", longValue: ["orphan", "conflict", "pathspec-from-file"], longOptional: ["track"] });
+  // Main's table gave it the next word, so the -b or -B after it named no branch and the words behind were files to
+  // throw changes away in: judged that way too (commands-held-9).
+  const p = heldOpts(h, { shortValue: "bB", longValue: ["orphan", "conflict", "pathspec-from-file"], longOptional: ["track"] }, { shortValue: "bB", longValue: ["orphan", "conflict", "pathspec-from-file", "track"] });
   if (has(p, "p", "patch")) h.e.unclear("unclear.interactive", SAYS.interactive);
   if (has(p, "pathspec-from-file")) h.e.unclear("unclear.pathspec-file", "Ember can't see which files it names.");
   if (has(p, "f", "force")) h.e.add("destroy", "git.checkout.force", "Throws away uncommitted changes.", { program: "git checkout" });
@@ -6036,13 +6166,17 @@ git(["restore"], h => {
 });
 
 git(["switch"], h => {
-  const p = opts(h, { shortValue: "cC", longValue: ["create", "force-create", "orphan", "conflict"], longOptional: ["track"] });
+  // Main's table gave --track the next word, so the -C or -f behind a -c it swallowed was read: judged that way too
+  // (commands-held-9).
+  const p = heldOpts(h, { shortValue: "cC", longValue: ["create", "force-create", "orphan", "conflict"], longOptional: ["track"] }, { shortValue: "cC", longValue: ["create", "force-create", "orphan", "conflict", "track"] });
   if (has(p, "discard-changes", "f", "force") || values(p, "C", "force-create").length) h.e.add("destroy", "git.switch", "Throws away uncommitted changes.", { program: "git switch" });
 });
 
 git(["branch"], h => {
   // -t (--track) takes no value, and --track, --color and --column one only after = (commands-remote-i5a).
-  const p = opts(h, { shortValue: "u", longValue: ["set-upstream-to", "contains", "no-contains", "merged", "no-merged", "points-at", "sort", "format"], longOptional: ["track", "color", "column"] });
+  // Main's table gave all four the next word, so the -D or -M behind a `--` or an option one of them swallowed was
+  // read: judged that way too (commands-held-9).
+  const p = heldOpts(h, { shortValue: "u", longValue: ["set-upstream-to", "contains", "no-contains", "merged", "no-merged", "points-at", "sort", "format"], longOptional: ["track", "color", "column"] }, { shortValue: "tu", longValue: ["set-upstream-to", "contains", "no-contains", "merged", "no-merged", "points-at", "sort", "format", "color", "column", "track"] });
   const names = p.operands;
   if (has(p, "D") || (has(p, "d", "delete") && has(p, "f", "force"))) {
     h.e.add("destroy", "git.branch.D", `Deletes the branch ${joinList(names.map(n => n.v ?? n.raw)) || "?"} even if it isn't merged.`, { objects: names.map(GIT_BRANCH_OBJ), program: "git branch" });
@@ -6063,7 +6197,9 @@ git(["stash"], h => {
 
 git(["tag"], h => {
   // --create-reflog takes no value, and --color and --column one only after = (commands-remote-i5a).
-  const p = opts(h, { shortValue: "umF", longValue: ["local-user", "message", "file", "sort", "format", "contains", "no-contains", "points-at", "merged", "no-merged", "cleanup"], longOptional: ["color", "column"] });
+  // Main's table gave all three the next word, so the -d or -f behind a -m or -u one of them swallowed was read:
+  // judged that way too (commands-held-9).
+  const p = heldOpts(h, { shortValue: "umF", longValue: ["local-user", "message", "file", "sort", "format", "contains", "no-contains", "points-at", "merged", "no-merged", "cleanup"], longOptional: ["color", "column"] }, { shortValue: "umF", longValue: ["local-user", "message", "file", "sort", "format", "contains", "no-contains", "points-at", "merged", "no-merged", "color", "column", "cleanup", "create-reflog"] });
   if (has(p, "d", "delete")) h.e.add("destroy", "git.tag.delete", `Deletes the tag ${joinList(p.operands.map(a => a.v ?? a.raw)) || "?"}.`, { objects: p.operands.map(a => ({ kind: "tag", text: a.v ?? a.raw, abs: null })), program: "git tag" });
   if (has(p, "f", "force")) h.e.add("destroy", "git.tag.force", `Replaces the tag ${p.operands[0]?.v ?? "?"} if it exists.`, { program: "git tag" });
   if ((has(p, "a", "annotate", "s", "sign") || values(p, "u", "local-user").length) && !values(p, "m", "message", "F", "file").length) h.e.unclear("unclear.interactive", SAYS.interactive);
@@ -6172,7 +6308,9 @@ git(["grep"], h => { NATIVE["git-grep"]({ ...h, key: "git-grep", prog: "git grep
 git(["bisect"], h => { if (h.args[0]?.v === "run") h.e.payload(h.args.slice(1), h.sc, "git bisect run"); });
 git(["rebase"], h => {
   // -S and --gpg-sign take a key only attached or after = (commands-remote-i5a).
-  const p = opts(h, { shortValue: "xsX", shortOptional: "S", longValue: ["exec", "onto", "strategy", "strategy-option", "whitespace", "empty"], longOptional: ["gpg-sign"] });
+  // Main's table gave --gpg-sign the next word and read -S's letters one by one, so the -i or --exec behind an option
+  // it swallowed was read: judged that way too (commands-held-9).
+  const p = heldOpts(h, { shortValue: "xsX", shortOptional: "S", longValue: ["exec", "onto", "strategy", "strategy-option", "whitespace", "empty"], longOptional: ["gpg-sign"] }, { shortValue: "xsX", longValue: ["exec", "onto", "strategy", "strategy-option", "gpg-sign", "whitespace", "empty"] });
   if (has(p, "i", "interactive", "edit-todo")) h.e.unclear("unclear.interactive", SAYS.interactive);
   for (const x of values(p, "x", "exec")) {
     if (x === null) h.e.unclear("unclear.shell-text", "It runs shell text Ember can't see.");
@@ -6479,7 +6617,9 @@ reg(NATIVE, ["docker", "podman", "nerdctl", "docker-compose", "podman-compose"],
   if (v === "run" || v === "create") { containerRun(h, prog, rest); return; }
   if (v === "exec") {
     // -d (detach) takes no value (commands-remote-c4-2).
-    const p = parseOpts(rest, { shortValue: "euw", longValue: ["env", "user", "workdir", "detach-keys", "env-file"], stopAtOperand: true });
+    // Main's table gave -d the next word, so the container was the word after it and the command began one word later:
+    // judged that way too (commands-held-9).
+    const p = heldOpts(h, { shortValue: "euw", longValue: ["env", "user", "workdir", "detach-keys", "env-file"], stopAtOperand: true }, { shortValue: "euwd", longValue: ["env", "user", "workdir", "detach-keys", "env-file"], stopAtOperand: true }, rest);
     if (has(p, "i") && has(p, "t")) h.e.unclear("unclear.interactive", SAYS.interactive);
     if (has(p, "d", "detach")) h.e.add("escape", "escape.background", SAYS.keepsRunning);
     h.e.payload(p.operands.slice(1), h.sc, `${prog} exec`);
@@ -7151,15 +7291,19 @@ reg(NATIVE, ["make", "gmake", "mingw32-make", "nmake", "just", "rake", "invoke",
   // tox's -v, -r and -n take no value, and Maven's options of two or more letters are whole words (commands-remote-i5a).
   const valueShort: Record<string, string> = { make: "CfIoWE", gmake: "CfIoWE", "mingw32-make": "CfIoWE", nmake: "fX", just: "fd", rake: "fIrRCeEp", gradle: "pbcgIxDP", gradlew: "pbcgIxDP", mvn: "bDflPsTt", mvnw: "bDflPsTt", nox: "sfeptk", tox: "ecxfm", task: "dt", ant: "fDl", ninja: "Cfjkldtw" };
   const mvn = h.key === "mvn" || h.key === "mvnw";
+  const gnuMake = /^(g|mingw32-)?make$/.test(h.key);
   const args = mvn ? h.args.map(a => (a.v !== null && MVN_WORDS[a.v] ? { ...a, v: MVN_WORDS[a.v] } : a)) : h.args;
   // Main's table gave Maven's -X, -p, -g and -r, nox's -r and tox's -v, -r and -n the next word and knew no --define,
   // --activate-profiles, --builder, --log-file and the like, so the word after one was a target, read Maven's words of
   // two letters as written (`-gs` as -g with s) and gave --jobs and --load-average any next word: judged that way too; a
-  // job count is the one thing read as now, --threads' too (commands-held-8).
+  // job count is the one thing read as now, --threads' too (commands-held-8). What stands apart after a count option
+  // and is no count is read as main read it: GNU make's -j and -l took the word whatever it was (`make -j -- -f FILE`
+  // named the makefile), and --threads, --max-workers and nmake's -j and -l took none, so a variable or a switch after
+  // one was a target or an option of its own (commands-held-10).
   const p = heldOpts(h, {
     shortValue: valueShort[h.key] ?? "", shortNumeric: /make$/.test(h.key) ? "jl" : "", longNumeric: ["jobs", "load-average", ...(/^gradlew?$/.test(h.key) ? ["max-workers"] : [])],
     longValue: ["file", "makefile", "directory", "include-dir", "old-file", "what-if", "justfile", "working-directory", "set", "project-dir", "build-file", "settings-file", "gradle-user-home", "init-script", "exclude-task", "projects", "resume-from", "settings", "global-settings", "session", "sessions", "keywords", "environment", "envlist", "taskfile", "dir", "global-toolchains", "toolchains", "encrypt-master-password", "encrypt-password", "builder", "log-file", "activate-profiles", "threads", "define"],
-  }, { shortValue: mvn ? "fsplDPTtbgrX" : h.key === "nox" ? "sfeptkr" : h.key === "tox" ? "ecvrnx" : valueShort[h.key] ?? "", shortNumeric: /make$/.test(h.key) ? "jl" : "", longNumeric: ["jobs", "load-average", "threads", ...(/^gradlew?$/.test(h.key) ? ["max-workers"] : [])], longValue: ["file", "makefile", "directory", "include-dir", "old-file", "what-if", "justfile", "working-directory", "set", "project-dir", "build-file", "settings-file", "gradle-user-home", "init-script", "exclude-task", "projects", "resume-from", "settings", "global-settings", "session", "sessions", "keywords", "environment", "envlist", "taskfile", "dir", "jobs", "load-average"] }, args, h.args);
+  }, { shortValue: mvn ? "fsplDPTtbgrX" : h.key === "nox" ? "sfeptkr" : h.key === "tox" ? "ecvrnx" : valueShort[h.key] ?? "", shortNumeric: /make$/.test(h.key) ? "jl" : "", numericAny: gnuMake ? ["j", "l"] : [], numericCountOnly: ["threads", "max-workers", ...(gnuMake ? [] : ["j", "l"])], longNumeric: ["jobs", "load-average", "threads", ...(/^gradlew?$/.test(h.key) ? ["max-workers"] : [])], longValue: ["file", "makefile", "directory", "include-dir", "old-file", "what-if", "justfile", "working-directory", "set", "project-dir", "build-file", "settings-file", "gradle-user-home", "init-script", "exclude-task", "projects", "resume-from", "settings", "global-settings", "session", "sessions", "keywords", "environment", "envlist", "taskfile", "dir", "jobs", "load-average"] }, args, h.args);
   // A makefile read from stdin, /dev/stdin or a process substitution is a build program Ember can't vouch for: its
   // recipes run shell (review #166). Ember asks unless it can see the whole text and it is plainly ordinary.
   if ((/make$/.test(h.key) || h.key === "ninja") && values(p, "f", "file", "makefile").some(f => f === null || STDIN_NAME.test(f))) {
@@ -7510,14 +7654,17 @@ reg(NATIVE, ["curl", "curl.exe"], h => {
   for (const f of values(p, "c", "cookie-jar", "D", "dump-header", "trace", "trace-ascii", "stderr", "etag-save", "hsts", "alt-svc")) if (f && f !== "-") h.e.usePath(lit(f), "write", h.sc);
 });
 reg(NATIVE, ["wget", "wget2"], h => {
-  const p = opts(h, {
+  // The value options main's table had; it knew none of the others, so the option after one of them (`wget --backups -O
+  // run.sh URL`, `--ciphers -o FILE`) was read as an option of its own: judged that way too (commands-held-9).
+  const mainLong = ["output-document", "output-file", "append-output", "directory-prefix", "input-file", "base", "tries", "timeout", "wait", "quota", "execute", "user-agent", "level", "accept", "reject", "include-directories", "exclude-directories", "domains", "exclude-domains", "post-data", "post-file", "method", "body-data", "body-file", "header", "user", "password", "http-user", "http-password", "ftp-user", "ftp-password", "load-cookies", "save-cookies", "certificate", "private-key", "ca-certificate", "config", "referer", "limit-rate", "restrict-file-names", "default-page", "bind-address", "proxy-user", "proxy-password"];
+  const p = heldOpts(h, {
     shortValue: "OoaPiBtTwQeUlAIRDXlY",
-    longValue: ["output-document", "output-file", "append-output", "directory-prefix", "input-file", "base", "tries", "timeout", "wait", "quota", "execute", "user-agent", "level", "accept", "reject", "include-directories", "exclude-directories", "domains", "exclude-domains", "post-data", "post-file", "method", "body-data", "body-file", "header", "user", "password", "http-user", "http-password", "ftp-user", "ftp-password", "load-cookies", "save-cookies", "certificate", "private-key", "ca-certificate", "config", "referer", "limit-rate", "restrict-file-names", "default-page", "bind-address", "proxy-user", "proxy-password",
+    longValue: [...mainLong,
       "accept-regex", "backups", "ca-directory", "certificate-type", "ciphers", "compression", "connect-timeout", "crl-file", "cut-dirs", "dns-timeout",
       "follow-tags", "ignore-tags", "local-encoding", "pinnedpubkey", "prefer-family", "private-key-type", "progress", "random-file", "read-timeout",
       "regex-type", "reject-regex", "rejected-log", "remote-encoding", "report-speed", "retry-on-http-error", "secure-protocol", "start-pos", "use-askpass",
       "waitretry", "warc-dedup", "warc-file", "warc-header", "warc-max-size", "warc-tempdir"],
-  });
+  }, { shortValue: "OoaPiBtTwQeUlAIRDXlY", longValue: mainLong });
   const host = hostOf(p.operands.map(a => a.v ?? "").filter(u => u)[0] ?? "") || "another computer";
   const method = (values(p, "method")[0] ?? "").toUpperCase();
   for (const f of values(p, "post-file", "body-file", "i", "input-file", "load-cookies", "certificate", "private-key")) if (f && f !== "-") h.e.usePath(lit(f), "read", h.sc);
@@ -7846,6 +7993,10 @@ reg(NATIVE, ["rclone"], h => {
       h.e.add("publish", "upload.rclone", `Sends data to ${sentTo.split(":")[0]}.`);
       if (verb === "sync" || verb === "bisync") h.e.add("remote-delete", "rsync.delete-remote", "Deletes files on the other side that aren't here.");
     }
+    // Main took the last word that isn't an option for the destination, so with a value option behind a remote one
+    // (`rclone sync . remote:x --backup-dir x`) a sync deleted files here: that danger stays on the card, for no intent
+    // row to cover (commands-held-9).
+    if (remote(dest) && verb === "sync" && !remote(mainOps[mainOps.length - 1] ?? "")) h.e.add("destroy", "posix.rsync", "Deletes files here that aren't on the other side.", { widening: ["fed"] });
     if (!remote(dest)) {
       if (verb === "sync") h.e.add("destroy", "posix.rsync", "Deletes files here that aren't on the other side.");
       // Files copied here from a remote (`rclone copy remote:x .`, `copyurl URL file`) are downloads: running one later
@@ -8014,7 +8165,8 @@ reg(NATIVE, ["security"], h => {
 });
 reg(NATIVE, ["keyctl"], h => { if (/^(print|read|pipe|show|add|padd|request|update|newring|unlink|clear|purge|invalidate)$/.test(h.args[0]?.v ?? "")) h.e.add("secret", "secret.program", SAYS.secrets); });
 reg(NATIVE, ["ssh-keygen"], h => {
-  const p = opts(h, { shortValue: "aCEfFIJjKmMnNOPrstVwYzZbD", longValue: [] });
+  // Main's table knew no -P, so the -f after it still named the key file: judged that way too (commands-held-9).
+  const p = heldOpts(h, { shortValue: "aCEfFIJjKmMnNOPrstVwYzZbD", longValue: [] }, { shortValue: "aCEfFIJjKmMnNOrstVwYzZbD", longValue: [] });
   for (const f of values(p, "f")) if (f) h.e.usePath(lit(f), has(p, "l", "F", "B") ? "read" : "write", h.sc);
   if (has(p, "l", "F", "B", "H") || (has(p, "R") && false)) return;
   h.e.add("secret", "secret.program", SAYS.secrets);
@@ -8072,6 +8224,11 @@ reg(NATIVE, ["sort", "gsort"], h => {
 // dos2unix and its kin convert in place, or with -n into the new file after each input (`dos2unix -n x.sh y.sh`, the
 // usual fix for a downloaded script's line endings): that file is the download too (commands-remote-c2-2).
 reg(NATIVE, ["dos2unix", "unix2dos", "mac2unix", "unix2mac"], h => {
+  // This row is newer than 4d64d3a, where dos2unix and unix2dos were ordinary programs whose every word was read as a
+  // file, the one after -c or -D too, and mac2unix and unix2mac programs Ember didn't know, whose word that names a
+  // program may be a command they run: judged that way first, with this row's own findings on top, so none decides
+  // less safely than it did (`dos2unix -c <Ember's file>` is refused, `unix2mac -f rm -rf ~` too: commands-held-x9-5).
+  generic(h);
   let newFile = false;
   const pairs: Arg[] = [];
   const kept: Arg[] = [];

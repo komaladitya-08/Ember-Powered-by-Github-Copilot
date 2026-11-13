@@ -74,6 +74,20 @@ export interface OptSpec {
   jobCounts?: readonly string[];
   /** Single-dash long options (`-name`, `-exec`: find, Java-style tools) are not split into letters. */
   singleDashLong?: boolean;
+  /**
+   * Only in a table kept as it stood at 4d64d3a (classify.ts heldOpts), never in a row's own: the shortNumeric and
+   * longNumeric options, without dashes, that were plain value options there and so took the next word whatever it
+   * was (make's `-j --`, `-l -f`). A count attached is read as now (commands-held-10).
+   */
+  numericAny?: readonly string[];
+  /**
+   * Only in such a table too: the shortNumeric and longNumeric options that took no value there (Maven's `--threads`,
+   * nmake's `-j`, xz's `-T`), so the word after one was an operand or an option of its own. They take the next word
+   * only when it is a count as written (countWord): never a variable, a switch or `--` (commands-held-10). Text
+   * attached to a short one is its value on the same terms; any other is the rest of a cluster, read letter by letter
+   * as it was there (`nmake -jf FILE`, `-j4f FILE`: -f names the makefile, commands-held-x9-4).
+   */
+  numericCountOnly?: readonly string[];
 }
 
 /** An option parsed out of a command line. */
@@ -180,6 +194,9 @@ export function parseOpts(args: readonly Arg[], spec: OptSpec = {}): Parsed {
   // A word Ember can't see that is only a processor count's substitution or a variable (`$(nproc)`, `` `nproc` ``,
   // `"$JOBS"`) is the usual job count, as a number is; a literal word (`install`) is still a target (commands-remote-v5-4).
   const numberNext = (k: number): boolean => k + 1 < args.length && (/^\d+(\.\d+)?$/.test(args[k + 1].v ?? "") || (args[k + 1].v === null && COUNT_WORD.test(args[k + 1].raw)));
+  // A numeric option's next word in a table of record (numericAny, numericCountOnly), else as above.
+  const takesNext = (name: string, k: number): boolean => k + 1 < args.length
+    && ((spec.numericAny ?? []).includes(name) || ((spec.numericCountOnly ?? []).includes(name) ? countWord(args[k + 1].raw) : numberNext(k)));
   for (let k = 0; k < args.length; k++) {
     const a = args[k];
     const v = a.v;
@@ -224,7 +241,7 @@ export function parseOpts(args: readonly Arg[], spec: OptSpec = {}): Parsed {
       if (eq >= 0) opts.push({ name, value: body.slice(eq + 1), at: k });
       else if (longValue.has(name.slice(2))) {
         if (k + 1 < args.length) { opts.push({ name, value: args[k + 1].v, at: k }); k++; } else { opts.push({ name, value: null, at: k }); missingValue = true; }
-      } else if (longNumeric.has(name.slice(2)) && numberNext(k)) { opts.push({ name, value: args[k + 1].v, at: k }); k++; } else opts.push({ name, at: k });
+      } else if (longNumeric.has(name.slice(2)) && takesNext(name.slice(2), k)) { opts.push({ name, value: args[k + 1].v, at: k }); k++; } else opts.push({ name, at: k });
       continue;
     }
     // A short cluster: -rf, -fFILE, -C dir.
@@ -233,8 +250,11 @@ export function parseOpts(args: readonly Arg[], spec: OptSpec = {}): Parsed {
       // GNU's optional values (`-l[N]`): the rest of the word, never the next one.
       if (shortOptional.includes(c) || shortNumeric.includes(c)) {
         const attached = v.slice(j + 1);
+        // In a table of record, an option that took no value there has none attached either unless it is a count: the
+        // rest of the word is the cluster's other letters, as main read them (`nmake -jf FILE`: commands-held-x9-4).
+        if (attached && (spec.numericCountOnly ?? []).includes(c) && !countWord(attached)) { opts.push({ name: `-${c}`, at: k }); continue; }
         if (attached) opts.push({ name: `-${c}`, value: attached, at: k });
-        else if (shortNumeric.includes(c) && numberNext(k)) { opts.push({ name: `-${c}`, value: args[k + 1].v, at: k }); k++; } else opts.push({ name: `-${c}`, at: k });
+        else if (shortNumeric.includes(c) && takesNext(c, k)) { opts.push({ name: `-${c}`, value: args[k + 1].v, at: k }); k++; } else opts.push({ name: `-${c}`, at: k });
         break;
       }
       if (shortValue.includes(c)) {
