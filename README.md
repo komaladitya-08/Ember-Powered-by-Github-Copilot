@@ -368,8 +368,8 @@ and VoiceOver on a Mac. While one runs:
 - Ember speaks its questions and results itself, unless you choose otherwise in Settings › **Voice** › **Speak
   replies, questions and results out loud**: **When a screen reader runs**, **Always** (the default) or **Never**.
   When your organisation turns speaking off, Ember never speaks.
-- The bubble's words are read out as they change: a question with the keys that answer it ("Ctrl+Alt+Y allow;
-  Ctrl+Alt+N not now") and all of a long text it would type (then "You can allow it once all of it has been shown.
+- The bubble's words are read out as they change: a question with the keys that answer it ("To allow, press
+  Ctrl+Alt+Y; for not now, press Ctrl+Alt+N") and all of a long text it would type (then "You can allow it once all of it has been shown.
   Ctrl+Alt+Y shows the next part", and "You can allow it now" once it has), and for a question shown in another of
   Ember's windows, how to get there ("press Alt+Tab to go there").
 - The command window reads out what a command prints, and its lines can be read again one by one. A dangerous command

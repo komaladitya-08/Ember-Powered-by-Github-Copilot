@@ -88,15 +88,15 @@ describe("the whole text in the bubble", () => {
   const read: BubbleView = { ...v, whole: TEXT, wholeSeen: true };
 
   it("is heard whole after the question, then, in words that work without sight, that Allow waits for all of it to be shown", () => {
-    expect(announcement(unread)).toBe(`Ember needs you: May I? ${SENTENCE} The whole text: ${TEXT}. You can allow it once all of it has been shown. Ctrl+Alt+Y shows the next part; Ctrl+Alt+N not now.`);
+    expect(announcement(unread)).toBe(`Ember needs you: May I? ${SENTENCE} The whole text: ${TEXT}. You can allow it once all of it has been shown. Ctrl+Alt+Y shows the next part; for not now, press Ctrl+Alt+N.`);
     // Once it has been, the question heard afresh (shown again later) says the keys that answer it.
-    expect(announcement(read)).toBe(`Ember needs you: May I? ${SENTENCE} The whole text: ${TEXT}. Ctrl+Alt+Y allow; Ctrl+Alt+N not now.`);
+    expect(announcement(read)).toBe(`Ember needs you: May I? ${SENTENCE} The whole text: ${TEXT}. To allow, press Ctrl+Alt+Y; for not now, press Ctrl+Alt+N.`);
     // Without one, as before.
-    expect(announcement(v)).toBe(`Ember needs you: May I? ${SENTENCE} Ctrl+Alt+Y allow; Ctrl+Alt+N not now.`);
+    expect(announcement(v)).toBe(`Ember needs you: May I? ${SENTENCE} To allow, press Ctrl+Alt+Y; for not now, press Ctrl+Alt+N.`);
   });
 
   it("once all of it has been shown, says only that and the keys, not the question and its text again", () => {
-    expect(wholeReadNews(unread, read)).toBe("You can allow it now. Ctrl+Alt+Y allow; Ctrl+Alt+N not now.");
+    expect(wholeReadNews(unread, read)).toBe("You can allow it now. To allow, press Ctrl+Alt+Y; for not now, press Ctrl+Alt+N.");
     // Paged on, still unread: nothing new (the caller says nothing when the announcement is the same).
     expect(wholeReadNews(unread, { ...unread })).toBeNull();
     // Another question (other words, or another text), or nothing heard before: the whole announcement.

@@ -60,7 +60,7 @@ describe("the corner card's live region", () => {
     const text = "Dear team, the figures are attached. Bye";
     expect(live.bubble(ask({ whole: text, wholeSeen: false }), 2)).toContain(text);
     expect(live.bubble(listening, null)).toBe("");
-    expect(live.bubble(ask({ whole: text, wholeSeen: true }), 2)).toBe(`${WHOLE_READ_SAID} Ctrl+Alt+Y allow; Ctrl+Alt+N not now.`);
+    expect(live.bubble(ask({ whole: text, wholeSeen: true }), 2)).toBe(`${WHOLE_READ_SAID} To allow, press Ctrl+Alt+Y; for not now, press Ctrl+Alt+N.`);
     expect(live.bubble(carryingOn, null)).toBe("");
     expect(live.bubble(ask({ whole: text, wholeSeen: true }), 2)).toBeNull();
   });
@@ -101,7 +101,7 @@ describe("the corner card's live region", () => {
     const live = new HandleLive();
     const text = "Dear team, the figures are attached. Bye";
     expect(live.bubble(ask({ whole: text, wholeSeen: false }), 4)).toContain(text);
-    expect(live.bubble(ask({ whole: text, wholeSeen: true }), 4)).toBe(`${WHOLE_READ_SAID} Ctrl+Alt+Y allow; Ctrl+Alt+N not now.`);
+    expect(live.bubble(ask({ whole: text, wholeSeen: true }), 4)).toBe(`${WHOLE_READ_SAID} To allow, press Ctrl+Alt+Y; for not now, press Ctrl+Alt+N.`);
     // Another question about the same text, already read: the question, not "You can allow it now" alone.
     const again = live.bubble(ask({ whole: text, wholeSeen: true }), 5);
     expect(again).toMatch(/^Ember needs you: /);
