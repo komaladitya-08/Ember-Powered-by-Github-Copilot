@@ -3897,19 +3897,14 @@ function unknownProgram(h: H): void {
 }
 
 /**
- * An unknown program named with the words that say what it is to do (commands-closed-x9-1): its first operands, up to
- * two, while they are plain words (`rails db:drop`, `supabase db reset`, `dropdb prod`), never an option, a path or a
- * file name. The user's words must name them too for it to be announced, and the announcement says them.
+ * An unknown program named with the words that say what it is to do (commands-closed-x9-1): every operand that is a
+ * plain word (`rails db:drop`, `supabase db reset`, `dropdb prod`, and `production` in `dropdb -p 5433 production`:
+ * commands-closed-y9-3), never an option, a path, a number or a file name. The user's words must name them too for it
+ * to be announced, and the announcement says them.
  */
 function withOperandVerb(h: H): string {
   const words: string[] = [];
-  for (const a of h.args) {
-    if (a.v === null) break;
-    if (words.length === 0 && a.v.startsWith("-")) continue;
-    if (!/^[A-Za-z][A-Za-z0-9_:-]*$/.test(a.v)) break;
-    words.push(a.v);
-    if (words.length === 2) break;
-  }
+  for (const a of h.args) if (a.v !== null && /^[A-Za-z][A-Za-z0-9_:-]*$/.test(a.v)) words.push(a.v);
   return [h.prog, ...words].join(" ");
 }
 

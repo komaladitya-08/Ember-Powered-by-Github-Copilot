@@ -268,7 +268,9 @@ Ember stops and asks before a command that:
   cargo watch, a command of cargo that Ember doesn't know."): `cargo watch -s …`, `stack exec -- …`, `mix ecto.drop`, `tmux
   send-keys …`, `go env -w …`, `pip config set …`, `deno publish`, `vercel` with no command (it deploys). When your own
   words for the task ask to run the program by name (or the tool and its command), with the words after it that say
-  what it is to do ("run dropdb on the scratch database" for `dropdb scratch`, "run rails db:migrate"), it is announced
+  what it is to do ("run dropdb on the scratch database" for `dropdb scratch`, "run rails db:migrate"; every plain
+  word the command gives it, also after an option, so `dropdb -p 5433 production` needs "production", and never a
+  word that is only part of a longer name, "prod" in "prod-copy", or that comes after "while"), it is announced
   instead, as in §2.5, and the announcement names them; a question about the program or a mention of it asks for
   nothing. What else the command does is judged as before, and so is the command such a tool runs for you: what
   follows `stack exec --`, `pyenv exec`, `rustup run stable` or `entr`, and the shell text in `cargo watch -s`,

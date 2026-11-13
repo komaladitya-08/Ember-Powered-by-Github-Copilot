@@ -94,6 +94,26 @@ describe("the user's own words for a program Ember doesn't know (commands-closed
   });
 });
 
+describe("the operands the user's own words must name for a program Ember doesn't know (commands-closed-y9-3)", () => {
+  it("asks when a plain word after an option's value, or after a path, isn't in the words (commands-closed-y9-3)", () => {
+    for (const cmd of ["dropdb -p 5433 production", "dropdb -h db.prod.example.com production", "dropdb ./x production", "dropdb a b production"]) {
+      expect(decide(cmd, { words: "run dropdb on the test database" }).verdict, cmd).toBe("ask");
+    }
+    expect(decide("dropdb -p 5433 production", { words: "run dropdb on production" }).requested?.announce).toBe("Running dropdb production, as you asked.");
+  });
+
+  it("asks when the words name the operand only inside a longer name, or only after a while (commands-closed-y9-3)", () => {
+    for (const words of ["try dropdb on prod-copy", "run dropdb on prod_copy", "run dropdb on prod.example.com", "run dropdb on staging while prod keeps running",
+      "run dropdb on staging whereas prod stays", "run dropdb on staging although prod is bigger"]) {
+      expect(decide("dropdb prod", { words }).verdict, words).toBe("ask");
+    }
+    for (const words of ["run dropdb on prod", "run dropdb prod while I get a coffee", "run dropdb on prod, not on prod-copy"]) {
+      expect(decide("dropdb prod", { words }).verdict, words).toBe(words.includes("not") ? "ask" : "announce");
+    }
+    expect(decide("rails db:drop", { words: "run rails db drop" }).verdict).toBe("announce");
+  });
+});
+
 describe("the task's own folder for a program given by a path (commands-closed-x9-3)", () => {
   it("asks before a program a cd on the line reached outside the task's folder, or one in a folder on the usual PATH (commands-closed-x9-3)", () => {
     for (const cmd of ["cd /usr/bin && ./dropdb prod", "cd / && usr/bin/dropdb prod", "pushd /usr/local/bin && ./dropdb prod", "cd /tmp && ./dropdb",
