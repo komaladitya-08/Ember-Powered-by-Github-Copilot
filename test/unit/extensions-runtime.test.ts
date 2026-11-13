@@ -22,6 +22,7 @@ import crypto from "node:crypto";
 import { getEventListeners } from "node:events";
 import { consentCard, installedRow } from "../../app/renderer/home/extensions-copy";
 import { registerExtensionsIpc } from "../../app/main/extensions-ipc";
+import { taskLineOf } from "../../app/main/agent/confirm";
 import { EXTENSIONS_IPC } from "../../app/shared/ipc";
 import { SAVED_OUTPUT, clearRuntimeTemp, runtimeTempDir, runtimeTempEnv } from "../../app/main/agent/runtime-temp";
 
@@ -97,6 +98,14 @@ describe("the extensions gate", () => {
     expect(q.options.map(o => o.label)).toEqual(["Allow", "Not now"]);
     expect(q.prompt).toBe('Use “post_message” from Slack btools/b? With "{\\"channel\\":\\"general\\",\\"text\\":\\"\\u003cscript>hi\\u003c/script>\\"}".');
     expect(q.prompt).not.toMatch(/<script>/);
+  });
+
+  it("never shows the plugin's name as the person's task under its question (integrations-r9-6)", () => {
+    // The corner card read: Use “post_message” from fake? With "…". Your task: fake.
+    const q = gateQuestion("fake", "post_message", { text: "hello team" });
+    expect(taskLineOf(q)).toBe("");
+    // The bubble is still titled with the plugin once answered.
+    expect(q.context).toBe("fake");
   });
 
   it("caps the arguments it quotes, and leaves out empty ones", () => {
@@ -708,6 +717,26 @@ describe("ExtensionsService", () => {
       expect(kill).not.toHaveBeenCalled();
       expect(fs.existsSync(second)).toBe(false);
     } finally { kill.mockRestore(); }
+  });
+
+  it("logs no warning with a stack for stopping servers in a session whose connection is already gone (integrations-r9-13)", async () => {
+    const warned: string[] = [], noted: string[] = [];
+    const log = { info: () => undefined, warn: (e: string) => { warned.push(e); }, error: () => undefined, debug: (e: string) => { noted.push(e); }, child: () => undefined } as never;
+    const s = await installed({ log });
+    // At each change of model service the old session's connection is disposed before its servers are stopped.
+    const ext = s.forSession()!;
+    live = asShown([LOOKUP, POST]);
+    ext.bind!(async () => live, async () => { throw new Error("Connection is disposed."); });
+    s.stopPart().stop();
+    await new Promise(r => setTimeout(r, 0));
+    expect(warned).toEqual([]);
+    expect(noted).toEqual(["extensions.stop_moot"]);
+    // Any other failure to stop a server is still a warning.
+    const other = s.forSession()!;
+    other.bind!(async () => live, async () => { throw new Error("mcp.disable failed"); });
+    s.stopPart().stop();
+    await new Promise(r => setTimeout(r, 0));
+    expect(warned).toEqual(["extensions.stop_failed"]);
   });
 
   it("stops live servers when extensions are switched off in settings", async () => {

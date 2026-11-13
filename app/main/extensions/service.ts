@@ -677,6 +677,16 @@ export class ExtensionsService implements ExtensionsApi {
     };
   }
 
+  /**
+   * Stopping a session's servers failed. A session whose connection is already gone took its servers with it (each
+   * change of model service disposes the old one first, and so does quitting): a note, not a warning with a stack
+   * (integrations-r9-13: 3 of 3 changes logged one).
+   */
+  private stopFailed(err: unknown): void {
+    if (/connection is (?:disposed|closed)/i.test(errorText(err))) this.o.log.debug("extensions.stop_moot");
+    else this.o.log.warn("extensions.stop_failed", { err });
+  }
+
   /** Revoke each selected launch, even one the runtime has not started yet; never signal a pid read from disk. */
   private stopServers(id?: string): void {
     for (const [item, leases] of this.leases) {
@@ -688,7 +698,7 @@ export class ExtensionsService implements ExtensionsApi {
     }
     const gate = this.session;
     const keys = gate ? [...new Set([...gate.tools.values()].filter(e => id === undefined || e.item.id === id).map(e => e.server.key))] : [];
-    if (keys.length && gate?.stop) void gate.stop(keys).catch(err => this.o.log.warn("extensions.stop_failed", { err }));
+    if (keys.length && gate?.stop) void gate.stop(keys).catch(err => this.stopFailed(err));
     // Old versions left pid files. Dropping them is safe; their numbers never identify a process to kill.
     try { for (const f of fs.readdirSync(this.store.runDir)) if (/^\d+\.pid$/.test(f)) fs.rmSync(path.join(this.store.runDir, f), { force: true }); } catch { /* no run folder */ }
     this.o.log.info("extensions.stopped", { servers: keys.length });
@@ -728,7 +738,7 @@ export class ExtensionsService implements ExtensionsApi {
         // Removal/Stop can win the race with session startup; the late binding must not restart anything. A server
         // taken out before the session was bound (a tool that showed differently) leaves it now.
         const stale = [...new Set([...[...gate.tools.values()].filter(e => !this.active() || gate.epoch !== this.epoch || !this.items.some(i => i.id === e.item.id && i.enabled)).map(e => e.server.key), ...gate.withdrawn])];
-        if (stale.length && stop) void stop(stale).catch(err => this.o.log.warn("extensions.stop_failed", { err }));
+        if (stale.length && stop) void stop(stale).catch(err => this.stopFailed(err));
       },
       listChanged: server => {
         gate.listChanged.add(server);

@@ -83,6 +83,9 @@ export function gateQuestion(extName: string, toolName: string, args: unknown): 
   return {
     title: "May I?",
     context: plainName(extName),
+    // No "Your task:" line: `context` is the plugin, which the sentence already names, never what the person asked
+    // for (integrations-r9-6: the card read "Your task: fake.").
+    taskLine: "",
     prompt: `Use “${plainName(toolName, 40)}” from ${plainName(extName)}?${summary ? ` With ${summary}.` : ""}`,
     options: [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }],
   };
