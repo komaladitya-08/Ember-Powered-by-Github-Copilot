@@ -1553,6 +1553,12 @@ export function describeEntry(e: ActivityEntry, words: EntryWords = LINUX_ENTRY_
       const name = (MODE_NAME as Record<string, string | undefined>)[e.mode];
       return { tag: "Setting", cls: "", what: `${name ? `${APPROVALS_HEADING}: ${name}` : `${APPROVALS_HEADING}: before ordinary steps, as no mode is in use`}${by}` };
     }
+    case "provider": {
+      // The user's own model provider in force changed (provider-record.ts, safety-privacy-c10-1): its host only.
+      const host = typeof e.host === "string" && e.host ? e.host : null;
+      const by = e.via === "start" ? " (as Ember started)" : "";
+      return { tag: "Setting", cls: "", what: `${host ? `Model service: ${host}` : "Model service: your own provider is no longer in use"}${by}` };
+    }
     case "command":
       return commandLine(e);
     case "remote":

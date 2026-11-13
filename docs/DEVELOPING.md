@@ -1498,6 +1498,7 @@ On Linux (Windows: §10.6, macOS: §11.6):
 | App profiles used on the desk (kept separate from yours) | `~/.config/ember/desk-profiles/` |
 | Computers added over SSH, WSL's switch, and each computer's command switches | `settings.json` (`targets`, `commands`) |
 | The approval mode chosen, and each mode's card as agreed to (How Ember asks); the same as Ember last recorded it itself, sealed with the keyring (0600) | `settings.json` (`approvals`); `~/.config/ember/approvals-seal.bin` |
+| The yes to your own model provider's card, as Ember recorded it, sealed with the keyring (0600) | `~/.config/ember/provider-seal.bin` |
 | When the update check last asked GitHub, so a restart keeps to once a day (the first look waits until a day after it, at most a day; a failed look counts), and the last newer version it told you of, still shown as out after a restart until you run it (`updates.told`) | `settings.json` (`updates.checkedAt`, `updates.told`) |
 | SSH's password helper: a two-line wrapper, and a socket for each connection while it asks | `~/.config/ember/ssh/askpass`; `$XDG_RUNTIME_DIR/ea-*/` |
 | Node.js downloaded for other computers (SHA-256 checked) | `~/.config/ember/remote/runtime/` |
@@ -1626,7 +1627,15 @@ the address in force and its saved key are kept and come back with the switch (i
   instead of to Copilot, screenshots for tasks included. Nothing goes there until the user agrees, and the yes holds
   only for that host (`provider.consent.host`, `FEATURE_CONSENT_VERSION.provider`): another address asks again. The
   yes is recorded only by main (`PROVIDER_IPC.agree`, for the host the endpoint in settings names); Home's general
-  settings changes can't carry it (`settingsFromHome` drops `provider.consent`, as it does `extensions.consent`), and they merge into the user's own
+  settings changes can't carry it (`settingsFromHome` drops `provider.consent`, as it does `extensions.consent`), and
+  nor can `settings.json` (safety-privacy-c10-1; app/main/provider-record.ts): a yes the file gains while Ember runs
+  (typed there by hand, or by an editor a task drives) is put back, and at start a yes is taken only where it matches
+  the seal Ember wrote with the keyring when the user agreed (`provider-seal.bin`, 0600); until that seal is read no
+  provider of the user's is in force, and one that doesn't match is withdrawn, so Home shows the card again. Without
+  a keyring (`basic_text`) nothing is sealed: the yes lasts until Ember quits, and the card asks again at the next
+  start. Every change of the user's provider in force is a `provider` audit entry (its host, the one before, and
+  `via`: home, settings or start), shown in What Ember did as "Model service: <host>"; one coming into force that
+  can't be recorded isn't taken. Home's changes merge into the user's own
   settings (`withOwnProvider`), never writing back values the policy applied. "I agree" is armed as Ember's questions
   are: for 500 ms after the card is drawn for another host it ignores activation, and the host is taken when it is
   pressed, so a card redrawn at all between the press and the click (pressing blurs the address field, which saves it) agrees

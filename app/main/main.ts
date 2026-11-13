@@ -132,7 +132,8 @@ import { VAULT_IPC } from "../shared/vault";
 import { registerApprovalsIpc } from "./approvals-ipc";
 import { registerFirstRunIpc } from "./first-run";
 import { firstRunAllowsVoice } from "../shared/first-run";
-import { PROVIDER_KEY_FILE, ProviderKeyStore, activeProvider, checkAgain, createProviderService, ownProviderAuth, providerSummary, providerWaitingHost, redactingLogger, type ActiveProvider, type FetchLike } from "./provider";
+import { PROVIDER_SEAL_FILE, ProviderRecord, ProviderSeal, type ProviderRecordDeps } from "./provider-record";
+import { PROVIDER_KEY_FILE, ProviderKeyStore, activeProvider, userProviderInForce, checkAgain, createProviderService, ownProviderAuth, providerSummary, providerWaitingHost, redactingLogger, type ActiveProvider, type FetchLike } from "./provider";
 import { PROVIDER_IPC } from "../shared/ipc";
 import { APPROVALS_IPC, modeCardVersion, modeRank } from "../shared/approvals";
 import { recentLimit } from "../shared/ipc";
@@ -2221,8 +2222,15 @@ function start(): void {
   // Never logged (the agent's log is redacted), audited, shown or passed on. The keyring is asked only once the user's
   // provider is on with a key saved for its host: never otherwise, and on macOS only off the main thread (a Keychain
   // prompt there would hold Ember, and a second Ember waiting to hand over to it).
+  // The card's yes for the user's own provider is taken from settings.json only as Ember recorded it (sealed with the
+  // keyring; a yes the file gains while Ember runs is put back), and every change of the provider in force is audited
+  // (provider-record.ts, safety-privacy-c10-1). Until the seal is read at start, no provider of the user's is in force.
+  const providerRecord = new ProviderRecord({ settings: settings as unknown as ProviderRecordDeps["settings"], log: log.child("provider"),
+    inForce: () => { const p = userProviderInForce(settings.get(), admin); return p ? endpointHost(p.baseUrl) : null; },
+    seal: new ProviderSeal(path.join(userData, PROVIDER_SEAL_FILE), safeStorage, { asyncKeyring: platform.os === "darwin" }),
+    heldChanged: () => { void agent?.providerChanged(); sendToHome(PROVIDER_IPC.changed, null); } });
   const providers = createProviderService({
-    settings, admin: () => admin, consented: () => consented(),
+    settings, admin: () => admin, consented: () => consented(), record: providerRecord,
     keys: new ProviderKeyStore(path.join(userData, PROVIDER_KEY_FILE), safeStorage, { asyncKeyring: platform.os === "darwin" }),
     // Electron's fetch follows the system's proxy, as the runtime does.
     fetch: (url, init) => net.fetch(url, init) as unknown as ReturnType<FetchLike>,
@@ -2247,7 +2255,7 @@ function start(): void {
   vaultRef = vault;
   /** The endpoint in force now: the administrator's (or a development test server) once main has set it, else the user's own. */
   let fixedProvider: ActiveProvider | null = null;
-  const providerNow = (): ActiveProvider | null => activeProvider({ fixed: fixedProvider, settings: settings.get(), admin, key: providers.key() });
+  const providerNow = (): ActiveProvider | null => (!fixedProvider && providerRecord.held() ? null : activeProvider({ fixed: fixedProvider, settings: settings.get(), admin, key: providers.key() }));
   /** Sign-ins Copilot refused this run (a stale GH_TOKEN, an expired one): the next source is used instead, until Sign out (review #139). */
   const refusedTokens = new Set<string>();
   /**
@@ -3491,6 +3499,7 @@ function start(): void {
     // The approval mode as the log opens: changes made before now, and the mode found in force in settings.json at start
     // (by hand, or from the last run): recorded, or else not in force (fail closed).
     modes.opened(audit);
+    providerRecord.opened(audit);
     tellApprovals();
     // Nothing is pruned while the policy can't be used: its retention can't be read then.
     const keepDays = auditRetentionDays(admin);
@@ -3918,6 +3927,9 @@ function start(): void {
     const startBrain = async () => {
       if (brainStarted || !consented()) return;
       brainStarted = true;
+      // The user's own provider's yes is checked against its seal first (provider-record.ts): no provider of theirs
+      // before that.
+      await providerRecord.sealed;
       const since = signOuts;
       // macOS asks for the login keychain password before Ember may read its saved sign-in (after every update of an
       // ad-hoc-signed Ember). The read is asynchronous there, and Ember's windows still come up first, with a status that

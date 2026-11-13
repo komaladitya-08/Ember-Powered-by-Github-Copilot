@@ -18,8 +18,10 @@ export interface AuditEntry {
    * `autonomy`: the approval mode in force changed (`mode`, and `before`), and how (`via`: home, voice, typed, file
    * or policy; `verified`); `atStart`: as found in force at start. Entries from before the modes say `on` instead.
    * `read`: a picture of a window went to the model (`kind: "screenshot"`, its app and size, never its title).
+   * `provider`: the user's own model provider in force changed (`host`, null for none of theirs; `before`; `via`: home,
+   * settings or start: provider-record.ts).
    */
-  event: "decision" | "action" | "confirm" | "task" | "stop" | "command" | "remote" | "wsl" | "extension" | "autonomy" | "read";
+  event: "decision" | "action" | "confirm" | "task" | "stop" | "command" | "remote" | "wsl" | "extension" | "autonomy" | "read" | "provider";
   [key: string]: unknown;
 }
 
