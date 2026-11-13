@@ -16,12 +16,14 @@ function desk(at: (ms: number) => WindowAt | null) {
   let t = 0, reads = 0;
   return { now: () => t, sleep: async (ms: number) => { t += ms; }, read: () => { reads++; return at(t); }, reads: () => reads };
 }
+/** Ember's own windows: its process's. */
+const own = (w: WindowAt) => w.pid === ASK.pid;
 const name = (w: WindowAt) => (w.id === BENCH.id ? "the bench" : w.title === "Ember overlay" ? "Ember's overlay" : "another window");
 
 describe("waitForWindowAt (cifix-2)", () => {
   it("says the window was there at once when the first read finds it, without waiting", async () => {
     const d = desk(() => ASK);
-    const r = await waitForWindowAt({ what: "the Ask field", want: ASK.id, limitMs: 20_000, name, ...d });
+    const r = await waitForWindowAt({ what: "the Ask field", want: ASK.id, limitMs: 20_000, own, name, ...d });
     expect(r).toMatchObject({ reached: true, waitedMs: 0, others: [] });
     expect(r.line).toBe("the Ask field: the window under the pointer at once");
     expect(d.reads()).toBe(1);
@@ -29,7 +31,7 @@ describe("waitForWindowAt (cifix-2)", () => {
 
   it("waits for the window while another is over the point, and says which one and for how long", async () => {
     const d = desk(ms => (ms < 600 ? OTHER : ASK));
-    const r = await waitForWindowAt({ what: "the Ask field", want: ASK.id, limitMs: 20_000, name, ...d });
+    const r = await waitForWindowAt({ what: "the Ask field", want: ASK.id, limitMs: 20_000, own, name, ...d });
     expect(r.reached).toBe(true);
     expect(r.waitedMs).toBe(600);
     expect(r.others).toEqual([{ window: OTHER, name: "Ember's overlay", firstMs: 0, lastMs: 550 }]);
@@ -38,7 +40,7 @@ describe("waitForWindowAt (cifix-2)", () => {
 
   it("gives up at the limit, never passing, and names every window that was over the point", async () => {
     const d = desk(ms => (ms < 300 ? OTHER : BENCH));
-    const r = await waitForWindowAt({ what: "the Ask field", want: ASK.id, limitMs: 1_000, name, ...d });
+    const r = await waitForWindowAt({ what: "the Ask field", want: ASK.id, limitMs: 1_000, own, name, ...d });
     expect(r.reached).toBe(false);
     expect(r.waitedMs).toBeGreaterThanOrEqual(1_000);
     expect(r.others.map(o => o.name)).toEqual(["Ember's overlay", "the bench"]);
@@ -47,8 +49,38 @@ describe("waitForWindowAt (cifix-2)", () => {
 
   it("counts a point with no window under it as not reached, and says so", async () => {
     const d = desk(() => null);
-    const r = await waitForWindowAt({ what: "the bench's corner", want: BENCH.id, limitMs: 200, name, ...d });
+    const r = await waitForWindowAt({ what: "the bench's corner", want: BENCH.id, limitMs: 200, own, name, ...d });
     expect(r.reached).toBe(false);
     expect(r.line).toContain("no window at all");
+  });
+
+  it("gives up once one of Ember's own windows has been over the point for the bound, however long the limit is (cifix-x9-1)", async () => {
+    // The reviewer's probe: Ember's overlay over the Ask field for 20 s, then the box. A click there in that time
+    // goes to Ember's bubble, not to the field the user is typing in: that is a failure, not something to wait out.
+    const d = desk(ms => (ms < 20_000 ? OTHER : ASK));
+    const r = await waitForWindowAt({ what: "the Ask field", want: ASK.id, limitMs: 22_000, ownLimitMs: 2_000, own, name, ...d });
+    expect(r.reached).toBe(false);
+    expect(r.ownOver).toBe(true);
+    expect(r.waitedMs).toBe(2_000);
+    expect(r.line).toBe("the Ask field: under Ember's own window for 2000 ms, where a press would go to it instead; Ember's overlay (window 262636, class Chrome_WidgetWin_1, title \"Ember overlay\", pid 4000, seen from 0 to 2000 ms)");
+  });
+
+  it("still waits out one of Ember's own windows that leaves the point within the bound (cifix-x9-1)", async () => {
+    const d = desk(ms => (ms < 600 ? OTHER : ASK));
+    const r = await waitForWindowAt({ what: "the Ask field", want: ASK.id, limitMs: 22_000, ownLimitMs: 2_000, own, name, ...d });
+    expect(r).toMatchObject({ reached: true, ownOver: false, waitedMs: 600 });
+  });
+
+  it("counts Ember's own window only while it stays: another program's window or none in between starts the bound again (cifix-x9-1)", async () => {
+    // Ember's 1.5 s, the bench 1 s, Ember's 1.5 s, then the box: never 2 s of Ember's own in one stretch.
+    const d = desk(ms => (ms < 1_500 ? OTHER : ms < 2_500 ? BENCH : ms < 4_000 ? OTHER : ASK));
+    const r = await waitForWindowAt({ what: "the Ask field", want: ASK.id, limitMs: 22_000, ownLimitMs: 2_000, own, name, ...d });
+    expect(r).toMatchObject({ reached: true, ownOver: false, waitedMs: 4_000 });
+  });
+
+  it("waits the whole limit for another program's window, which is timing and not Ember's doing (cifix-x9-1)", async () => {
+    const d = desk(ms => (ms < 20_000 ? BENCH : ASK));
+    const r = await waitForWindowAt({ what: "the Ask field", want: ASK.id, limitMs: 22_000, ownLimitMs: 2_000, own, name, ...d });
+    expect(r).toMatchObject({ reached: true, ownOver: false, waitedMs: 20_000 });
   });
 });
