@@ -1539,7 +1539,8 @@ const nextTurn = (): Promise<void> => new Promise(resolve => setImmediate(resolv
  * Stop must answer within 300 ms (merge review integ-y-2): the cut, CL's own cleaning and the check copy's redaction
  * run a whole-text pass at a time with a macrotask at least every 8 ms of them (runStepsYielding), and a Stop seen
  * between them ends the call as stopped, with nothing of the output, cleaned or not, for the model, the audit or the
- * log. Measured on 4 MiB of coloured build output: the longest stretch went from 912-2,052 ms to 137-188 ms.
+ * log. Measured on 4 MiB of coloured build output with a login, a card and contact details filled, one to three of
+ * each: the longest stretch went from 1,163-1,901 ms to 134-175 ms (132-188 ms with nothing filled).
  */
 async function finishRun(ctx: CommandFlowContext, j: CommandJudge, run: RunOutcome, o: { cls: Classification; label: string; shell: ShellId; timeoutS: number; runId: string }): Promise<ToolResultObject> {
   const { exit, out, tracker, running } = run;
