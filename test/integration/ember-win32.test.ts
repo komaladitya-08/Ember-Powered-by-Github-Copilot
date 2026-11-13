@@ -71,6 +71,11 @@ const ASK_FIELD_WAIT_MS = 22_000;
  * bubble instead of the field, so the test fails saying so rather than waiting it out.
  */
 const OWN_OVER_MS = 2_000;
+/**
+ * The steps after the ask chord come this far apart (cifix-x9-4): the box's handover ends 1.5 s after it shows, and
+ * the suite reads the box at 3 s and moves the pointer onto it at 6 s, so what took the keyboard follows only one.
+ */
+const SETTLE_MS = 3_000;
 const notTestable = (what: string, reason: string) => console.log(`not testable on this runner: ${what}: ${reason}`);
 /**
  * Whether this runner activates the window under the pointer (window-at.ts hoverActivation), read from its registry.
@@ -448,6 +453,10 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
           w.on("hide", note("hide"));
           w.on("focus", note("focus"));
           w.on("blur", note("blur"));
+          // Where it is and what its page asks main for (channel names only): a context arriving resizes the box.
+          w.on("move", note("move"));
+          w.on("resize", note("resize"));
+          w.webContents.on("ipc-message", (_e, channel) => seen.push({ t: Date.now(), what: `Ember's ${JSON.stringify(w.isDestroyed() ? "?" : w.getTitle())} page sends ${channel}` }));
         };
         BrowserWindow.getAllWindows().forEach(watch);
         app.on("browser-window-created", (_e, w) => watch(w));
@@ -500,6 +509,11 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
       await waitFor("the ask box from the real chord", async () => (await askWindow())?.visible, 5_000)
         .catch(async (e: unknown) => { throw new Error(`${(e as Error).message} (the ask window: ${JSON.stringify(await askWindow())})`); });
       await sleep(800);
+      // cifix-x9-4: in every run so far the bench took the foreground back about 1.5 s after the chord, when this suite
+      // read the box, moved the pointer onto it and the box's handover (OPENING_MS, 1.5 s from showing) was ending, all
+      // within 50 ms. Each comes in its own moment here, 3 s apart (a user may well read for that long), so the
+      // timeline tells which one it follows; the box must hold the keyboard through all of it, as it must for a user.
+      await sleep(Math.max(0, pressedAt + SETTLE_MS - Date.now()));
       step("reading what the box holds");
       const { held, tip } = await ember.evaluate(async ({ BrowserWindow }) => {
         const w = BrowserWindow.getAllWindows().find(b => b.getTitle() === "Ask Ember");
@@ -574,6 +588,9 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
         console.log(seen.line);
         if (!seen.reached) throw new Error(`${seen.line}; Ember's side: ${JSON.stringify(await emberFacts().catch((e: unknown) => String(e)))}; ${await trailNow()}`);
       };
+      await sleep(Math.max(0, pressedAt + 2 * SETTLE_MS - Date.now()));
+      const still = await askWindow();
+      if (!still?.visible) throw new Error(`the Ask box before the pointer moved onto it (review #77): ${still ? "closed" : "gone"} by itself since it was shown; ${await trailNow()}`);
       step(`the pointer onto the Ask field, at ${at.x},${at.y}`);
       x.move(at.x, at.y);
       step("the pointer moved");
