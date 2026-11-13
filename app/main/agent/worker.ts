@@ -268,15 +268,20 @@ export interface WorkerResult {
 /**
  * How a task ends where the user said no to a question, or one ran out of time unanswered, and nothing was done after
  * it: stopped, as the user's choice, in the model's words where it says it didn't succeed. A success it claims stands
- * only where a step of the task worked (`worked`): with none, "Deleted all the old notes." after a Not now is not what
- * happened, so Ember's own words say it (tasks-approvals-r9-4). Null where neither applies.
+ * only where a step of the task worked (`worked`): with none the task still ends declined or unanswered, never Done
+ * ("Deleted all the old notes." after a Not now is not what happened: tasks-approvals-r9-4), with Ember's own words
+ * first and then the model's, and what it found (`view`), kept: a task that read and answered before its last step
+ * was refused has the answer the user asked for, and reading is no step that "worked" (product-ui-x9-2). Null where
+ * neither applies.
  */
-export function afterNo(f: { declined: boolean; expired: boolean; worked: boolean }, result: Pick<WorkerResult, "success" | "summary"> | null): WorkerResult | null {
+export function afterNo(f: { declined: boolean; expired: boolean; worked: boolean }, result: Pick<WorkerResult, "success" | "summary" | "view"> | null): WorkerResult | null {
   if (!f.declined && !f.expired) return null;
   if (result?.success && f.worked) return null;
-  const said = result && !result.success ? result.summary : "";
-  if (f.expired && !f.declined) return { success: false, stopped: true, expired: true, summary: said || "My question ran out of time with no answer, so I didn't do it." };
-  return { success: false, stopped: true, declined: true, summary: said || "You said not now, so I left it." };
+  const own = f.expired && !f.declined ? "My question ran out of time with no answer, so I didn't do it." : "You said not now, so I left it.";
+  const said = result?.summary.trim() ?? "";
+  const summary = !said ? own : result?.success ? `${own} ${said}` : said;
+  const view = result?.view ? { view: result.view } : {};
+  return f.expired && !f.declined ? { success: false, stopped: true, expired: true, summary, ...view } : { success: false, stopped: true, declined: true, summary, ...view };
 }
 
 const done = (text: string): ToolResultObject => ({ textResultForLlm: text, resultType: "success" });
