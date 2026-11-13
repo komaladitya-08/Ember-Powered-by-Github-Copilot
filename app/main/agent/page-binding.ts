@@ -18,10 +18,14 @@
  * whatever element holds it (a heading, a paragraph, a plain block, a label), numbers kept: where the thing it acts on
  * is named ("Delete ana/scratch" beside "Delete this repository"; "ana/build-1"; "You are sending $50 to Bob"), so a
  * page that renames it or changes an amount while the user decides spends the yes (modes-x9s-4, modes-y9-3). Only what
- * a living page counts on its own is let through: a clock ("0:42 / 3:00"), a text that is nothing but a count ("12
- * comments", never one that names money), comments arriving in a feed, and other buttons with their counters.
+ * a living page counts on its own is let through: a clock ("0:42 / 3:00"), a text that is nothing but a count of what
+ * a page gathers ("12 comments", "5 minutes ago"; never one that names money, and never a count of anything else: "12
+ * recipients"), comments arriving in a feed, and another control's own counter ("Like 10"). The names of the page's
+ * other links, buttons, tabs and menu items outside its feeds bind too: a breadcrumb may be what names the thing
+ * (modes-y9-x9-5).
  *
- * The rest of the page may change: text, pictures, lists and buttons outside the control's own group. Anything that
+ * The rest of the page may change: pictures, lists, and for an ordinary control the text and buttons outside its own
+ * group. Anything that
  * can't be read fails closed: no binding is made (the caller binds the whole tree, as before) where the control is in a
  * dialog, is secret, has no name (what it is called then comes from what stands around it), isn't in a page, has a
  * container that wasn't read, or the window's title speaks of money; and a later read in which the control can't be
@@ -52,16 +56,27 @@ const FEED = /^(list|list item|feed|article|table|tree|tree table|log|marquee|ti
 const MOVES = /^(progress bar|scroll bar|status bar|animation|video|audio)$/;
 /** A clock: "0:42", "1:02:09". */
 const CLOCK = /\b\d{1,3}(:\d{2}){1,2}\b/g;
-/** A text that is nothing but a count: "12 comments", "1.2K views", "3 stars". */
-const COUNT = /^[\d.,\s]+[KkMm]?\+?\s*\p{L}[\p{L}\s]{0,30}$/u;
+/**
+ * A text that is nothing but a count of what a page gathers on its own: "12 comments", "1.2K views", "3 stars", "5
+ * minutes ago". A count of anything else binds: it may be what the control acts on ("12 recipients" beside Send, "3
+ * shares" beside Sell; modes-y9-x9-7).
+ */
+const COUNT = /^[\d.,\s]+[KkMm]?\+?\s*(comments?|views?|viewers?|watching|likes?|stars?|repl(y|ies)|reactions?|followers?|subscribers?|upvotes?|reposts?|retweets?|claps?|forks?|notifications?|unread|new|online|((seconds?|secs?|minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s+ago))$/iu;
+/** Another control's own counter: "Like 10", "Comments (3)". */
+const COUNTER = /^\p{L}[\p{L}\s]{0,30}[\s(]+[\d.,]+[KkMm]?\+?\)?$/u;
 /** …unless it names money: a currency's sign, code or word. Then the number is an amount, and binds. */
 const MONEY = /\p{Sc}|\b(dollars?|euros?|pounds?|cents?|pence|yen|yuan|rupees?|francs?|pesos?|kronor|kroner|bitcoins?|btc|eth|usd|eur|gbp|chf|jpy)\b/iu;
 const CURRENCY_CODE = /\b[A-Z]{3}\b/;
 
-/** A node's text as a risky control's binding keeps it: whole, numbers kept, but for a clock and a bare count. */
+/**
+ * A node's text as a risky control's binding keeps it: whole, numbers kept, but for a clock and a bare count. Another
+ * control (a link, a button, a tab outside the control's own group) is kept by its name, which may be what names the
+ * thing (a breadcrumb's "report.pdf"), but for its own counter (modes-y9-x9-5).
+ */
 function prose(n: AxNode): string {
-  const text = `${n.name} ${n.text ?? ""}`.trim().replace(CLOCK, "#:#");
-  return COUNT.test(text) && !MONEY.test(text) && !CURRENCY_CODE.test(text) ? text.replace(/\d+/g, "#") : text;
+  const control = CONTROL.test(n.role);
+  const text = (control ? n.name : `${n.name} ${n.text ?? ""}`).trim().replace(CLOCK, "#:#");
+  return (COUNT.test(text) || (control && COUNTER.test(text))) && !MONEY.test(text) && !CURRENCY_CODE.test(text) ? text.replace(/\d+/g, "#") : text;
 }
 
 /** Does `n` hold something entered or chosen? */
@@ -145,9 +160,9 @@ export function pageBinding(nodes: readonly AxNode[], at: number, title: string,
     fields: nodes.flatMap((n, j) => (isField(n) ? [said(n, undefined, clicked && j === at)] : [])),
     // The page's own tabs (never the browser's, which are named after other pages and change with them).
     tabs: nodes.flatMap((n, j) => (n.role === "page tab" && within(j, doc) ? [{ name: n.name, states: n.states.filter(x => STATES.test(x)).sort() }] : [])),
-    // (Controls and fields aside: a field binds above, exactly, and another button may count on its own.)
+    // (Fields aside: a field binds above, exactly. Another control binds by its name, its own counter let through.)
     ...(risky ? {
-      prose: nodes.flatMap((n, j) => (j !== doc && !CONTROL.test(n.role) && !isField(n) && !FEED.test(n.role) && !MOVES.test(n.role) && (n.name.trim() || n.text?.trim()) && within(j, doc) && !inFeed(j)
+      prose: nodes.flatMap((n, j) => (j !== doc && j !== at && !isField(n) && !FEED.test(n.role) && !MOVES.test(n.role) && (n.name.trim() || n.text?.trim()) && within(j, doc) && !inFeed(j)
         ? [`${n.role}: ${prose(n)}`] : [])),
     } : {}),
   });

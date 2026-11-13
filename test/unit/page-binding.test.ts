@@ -235,6 +235,34 @@ describe("what an answer about a risky page control binds to (modes-x9s-4)", () 
       expect(same(live("0:01", 2, 10), live("1:02:09", 1200, 10), S, "Cats - Tube — Firefox")).toBe(true);
     });
 
+    it("is spent where a link or another control outside the group that names the thing is renamed, never by a counter on it (modes-y9-x9-5)", () => {
+      const crumb = (name: string, likes = 10) => [n(1, null, "document web", "Files"), n(2, 1, "section", ""), n(3, 2, "link", "Home"), n(4, 2, "link", name), n(8, 2, "push button", `Like ${likes}`),
+        n(9, 2, "link", `Comments (${likes})`), n(5, 1, "section", ""), n(6, 5, "push button", "Delete"), n(7, 5, "push button", "Cancel")];
+      const D = { role: "push button", name: "Delete" };
+      expect(pageBindingOf(crumb("report.pdf"), D, "Files - Mozilla Firefox", false, true)).not.toMatch(/^unbound/);
+      expect(same(crumb("report.pdf"), crumb("payroll.xlsx"), D, "Files - Mozilla Firefox")).toBe(false);
+      expect(same(crumb("report-2023.pdf"), crumb("report-2024.pdf"), D, "Files - Mozilla Firefox")).toBe(false);
+      expect(same(crumb("report.pdf", 10), crumb("report.pdf", 11), D, "Files - Mozilla Firefox")).toBe(true);
+      // A page tab or a menu item that names it binds the same way; a link in a feed doesn't.
+      const tab = (name: string) => [n(1, null, "document web", "Files"), n(2, 1, "section", ""), n(3, 2, "menu item", name), n(5, 1, "section", ""), n(6, 5, "push button", "Delete"), n(7, 5, "push button", "Cancel"),
+        n(8, 1, "list", ""), n(9, 8, "list item", ""), n(10, 9, "link", `${name} was shared`)];
+      expect(same(tab("report.pdf"), tab("payroll.xlsx"), D, "Files - Mozilla Firefox")).toBe(false);
+      const feed = (name: string) => [n(1, null, "document web", "Files"), n(5, 1, "section", ""), n(6, 5, "push button", "Delete"), n(7, 5, "push button", "Cancel"), n(8, 1, "list", ""), n(9, 8, "list item", ""), n(10, 9, "link", name)];
+      expect(same(feed("ana commented"), feed("bo commented"), D, "Files - Mozilla Firefox")).toBe(true);
+      // An ordinary control binds as narrowly as before.
+      const C = { role: "push button", name: "Cancel" };
+      expect(pageBindingOf(crumb("report.pdf"), C, "Files - Mozilla Firefox")).toBe(pageBindingOf(crumb("payroll.xlsx"), C, "Files - Mozilla Firefox"));
+    });
+
+    it("is spent where a count of what the control acts on changes; only what a page counts on its own goes by (modes-y9-x9-7)", () => {
+      const count = (k: string) => [n(1, null, "document web", "Newsletter"), n(2, 1, "section", ""), n(3, 2, "static", "", k), n(5, 1, "section", ""), n(6, 5, "push button", "Send"), n(7, 5, "push button", "Cancel")];
+      const S = { role: "push button", name: "Send" };
+      for (const [a, b] of [["12 recipients", "12000 recipients"], ["3 shares", "300 shares"], ["3 items", "30 items"], ["2 files", "200 files"], ["1 seat", "10 seats"]]) expect(same(count(a), count(b), S, "Campaign - Mozilla Firefox"), `${a} → ${b}`).toBe(false);
+      for (const [a, b] of [["12 comments", "13 comments"], ["1.2K views", "1.3K views"], ["3 likes", "4 likes"], ["7 stars", "8 stars"], ["2 replies", "3 replies"], ["5 minutes ago", "6 minutes ago"], ["2 unread", "3 unread"]]) {
+        expect(same(count(a), count(b), S, "Campaign - Mozilla Firefox"), `${a} → ${b}`).toBe(true);
+      }
+    });
+
     it.each(["Send money | PayPal - Mozilla Firefox", "Venmo - Google Chrome", "Revolut", "Wise - Mozilla Firefox", "Coinbase", "MetaMask", "Stripe Dashboard", "Kasse - Amazon.de", "Paiement - Fnac", "Zahlung - Otto",
       "Pago - Mercado Libre", "Pagamento", "Betaling - bol.com"])("binds the whole tree, as before, in a window titled for money: %s", title => {
       const pay = [n(1, null, "document web", "Send"), n(2, 1, "section", ""), n(3, 2, "push button", "Send"), n(4, 2, "push button", "Cancel")];
