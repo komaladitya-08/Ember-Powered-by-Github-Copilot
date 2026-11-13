@@ -87,20 +87,47 @@ describe("downloads and starting", () => {
 });
 
 /** A local server for a release's files (`files`: path under the download base → content); anything else is a 404. */
-async function serve(files: Record<string, string | Buffer> = {}) {
+async function serve(files: Record<string, string | Buffer> = {}, ports: readonly number[] = []) {
   const server = http.createServer((req, res) => {
     const body = files[decodeURIComponent(req.url ?? "")];
     if (body === undefined) { res.statusCode = 404; res.end("Not Found"); return; }
     res.end(body);
   });
-  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  // `ports`: tried in turn before any free one (a test that needs a port with certain digits in it).
+  for (const port of [...ports, 0]) {
+    const bound = await new Promise<boolean>(resolve => { server.once("error", () => resolve(false)); server.listen(port, "127.0.0.1", () => resolve(true)); });
+    if (bound) break;
+  }
   return { base: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, close: () => new Promise<void>(resolve => server.close(() => resolve())) };
 }
 const scratch: string[] = [];
 const tempDir = () => { const d = fs.mkdtempSync(path.join(os.tmpdir(), "ember-npm-test-")); scratch.push(d); return d; };
 afterEach(() => { vi.unstubAllEnvs(); for (const d of scratch.splice(0)) fs.rmSync(d, { recursive: true, force: true }); });
 
+/**
+ * A launcher message less the test mirror's own address: the message names the mirror, whose port is random, and one
+ * with "404" in it (40469, about one run in 180) failed a check that the message has no HTTP status (install-docs-r9-5).
+ */
+const withoutMirror = (message: string | undefined, base: string) => (message ?? "").split(base).join("the mirror");
+
 describe("a version whose release isn't published", () => {
+  it("judges the message, not the test mirror's port: one with “404” in it changes nothing (install-docs-r9-5)", async () => {
+    vi.stubEnv("EMBER_NPM_QUIET", "1");
+    const server = await serve({}, [40469, 14041, 24042, 34043, 40481, 44044]);
+    const cache = tempDir();
+    try {
+      const env = { EMBER_NPM_DOWNLOAD_BASE: server.base, EMBER_NPM_CACHE: cache };
+      const err = await ensureInstalled({ version: "9.9.9", platform: "linux", arch: "x64", env }).then(() => null, (e: Error) => e);
+      expect(err?.message).toBe(notReleased("9.9.9", env));
+      expect(err?.message).toContain(server.base);
+      expect(withoutMirror(err?.message, server.base)).not.toMatch(/HTTP|404|downloading/);
+      // The check still has teeth: a message with a status in it fails it.
+      expect(withoutMirror(`HTTP 404 from ${server.base}`, server.base)).toMatch(/HTTP|404|downloading/);
+    } finally {
+      await server.close();
+    }
+  });
+
   it("says the version isn't on GitHub Releases yet, instead of an HTTP error, and leaves nothing behind (install-docs-2)", async () => {
     vi.stubEnv("EMBER_NPM_QUIET", "1");
     const server = await serve();
@@ -109,7 +136,7 @@ describe("a version whose release isn't published", () => {
       const env = { EMBER_NPM_DOWNLOAD_BASE: server.base, EMBER_NPM_CACHE: cache };
       const err = await ensureInstalled({ version: "9.9.9", platform: "linux", arch: "x64", env }).then(() => null, (e: Error) => e);
       expect(err?.message).toBe(notReleased("9.9.9", env));
-      expect(err?.message).not.toMatch(/HTTP|404|downloading/);
+      expect(withoutMirror(err?.message, server.base)).not.toMatch(/HTTP|404|downloading/);
       // No lock or half-made folder stays in the cache.
       expect(fs.readdirSync(cache)).toEqual([]);
     } finally {
