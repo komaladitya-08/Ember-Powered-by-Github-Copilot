@@ -3298,7 +3298,9 @@ export class Worker {
         return this.vaultRefused(element, "the user closed Ember's Secure Form without saving", NOT_SAVED);
       }
       if (asked !== "saved" && asked !== "kept") {
-        return this.vaultRefused(element, asked === "unavailable" ? "this computer has no keyring to keep the vault with" : "the vault can't be used now");
+        // A form that could keep nothing (no keyring, a Save the keyring or the disk refused, no window) is nobody's
+        // no: the task isn't held as one the user said no in and nothing is kept as refused (integ-y-2).
+        return this.vaultRefused(element, asked === "unavailable" ? "Ember's Secure Form couldn't keep anything on this computer: it has no keyring, couldn't save or couldn't be shown" : "the vault can't be used now");
       }
     }
     // Never while the shell's own password prompt is open, also by accessibility (safety-privacy-3).

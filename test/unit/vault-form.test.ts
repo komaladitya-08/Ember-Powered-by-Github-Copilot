@@ -140,7 +140,59 @@ describe("the Secure Form", () => {
     expect(await h.submit(w, h.view(w)!.id, login)).toEqual({ ok: false, why: "keyring" });
     expect(h.kept).toEqual([]);
     h.cancel(w, h.view(w)!.id);
-    expect(await answer).toBe("cancelled");
+    // Closing a form that could keep nothing is nobody's no (integ-y-2).
+    expect(await answer).toBe("unavailable");
+  });
+
+  it("answers a form that could keep nothing as unavailable when it is closed, and one that could as the person's own close (integ-y-2)", async () => {
+    const done = (h: ReturnType<typeof harness>) => h.logged.filter(l => (l as [string])[0] === "vault.form_done").map(l => (l as [string, unknown])[1]);
+    // Shown without a keyring: its Close, and its window's own close.
+    for (const how of ["close", "window"] as const) {
+      const h = harness();
+      const answer = h.form.ask(req({ keyring: false }));
+      const w = h.wins[0];
+      if (how === "close") h.cancel(w, h.view(w)!.id); else w.emitClosed();
+      expect(await answer).toBe("unavailable");
+      expect(done(h)).toEqual([{ kind: "login", answer: "unavailable", unkept: "keyring" }]);
+    }
+    // A Save the keyring, the disk or a full vault refused, then closed: by Cancel, by the window, or closed while it was being kept.
+    for (const why of ["keyring", "write", "full"] as const) {
+      for (const how of ["cancel", "window", "during"] as const) {
+        let release: () => void = () => {};
+        const gate = new Promise<void>(r => { release = r; });
+        const h = harness({ keep: async () => { if (how === "during") await gate; return { ok: false, why }; } });
+        const answer = h.form.ask(req());
+        const w = h.wins[0];
+        const id = h.view(w)!.id;
+        const saving = h.submit(w, id, login);
+        if (how === "during") { w.emitClosed(); release(); }
+        expect(await saving).toEqual({ ok: false, why });
+        if (how === "cancel") h.cancel(w, id); else if (how === "window") w.emitClosed();
+        expect(await answer, `${why} ${how}`).toBe("unavailable");
+        expect(done(h), `${why} ${how}`).toEqual([{ kind: "login", answer: "unavailable", unkept: why }]);
+        expect(JSON.stringify(h.logged)).not.toContain(CANARY);
+      }
+    }
+    // A keep that threw is the disk's refusal.
+    const t = harness({ keep: async () => { throw new Error(`disk ${CANARY}`); } });
+    const thrown = t.form.ask(req());
+    await t.submit(t.wins[0], t.view(t.wins[0])!.id, login);
+    t.wins[0].emitClosed();
+    expect(await thrown).toBe("unavailable");
+    expect(JSON.stringify(t.logged)).not.toContain(CANARY);
+    // A form that could keep values: closed without a Save, or after a slip the person could have put right, is their own close.
+    const c = harness();
+    const closed = c.form.ask(req());
+    expect(await c.submit(c.wins[0], c.view(c.wins[0])!.id, { user: "ada" })).toEqual({ ok: false, why: "invalid", part: "password" });
+    c.cancel(c.wins[0], c.view(c.wins[0])!.id);
+    expect(await closed).toBe("cancelled");
+    expect(done(c)).toEqual([{ kind: "login", answer: "cancelled" }]);
+    // A crashed page is still nobody's answer, and a Save that kept is saved.
+    const s = harness();
+    const saved = s.form.ask(req());
+    expect(await s.submit(s.wins[0], s.view(s.wins[0])!.id, login)).toEqual({ ok: true });
+    expect(await saved).toBe("saved");
+    expect(done(s)).toEqual([{ kind: "login", answer: "saved" }]);
   });
 
   it("says why when keeping fails, and the form stays up to try again (vault-2)", async () => {
@@ -229,7 +281,8 @@ describe("the Secure Form", () => {
   });
 
   it("answers as the Save came out when its window is closed while it is being kept (vault-2)", async () => {
-    for (const [result, want] of [[{ ok: true, id: "11111111-1111-4111-8111-111111111111" }, "saved"], [{ ok: false, why: "write" }, "cancelled"]] as const) {
+    for (const [result, want] of [[{ ok: true, id: "11111111-1111-4111-8111-111111111111" }, "saved"], [{ ok: false, why: "write" }, "unavailable"], [{ ok: false, why: "invalid" }, "cancelled"]] as const) {
+      // (A Save the disk refused could keep nothing: closing its form is nobody's no, integ-y-2.)
       let release: (k: VaultKept) => void = () => {};
       const h = harness({ keep: () => new Promise<VaultKept>(r => { release = r; }) });
       const answer = h.form.ask(req());

@@ -50,8 +50,8 @@ interface Opts {
   pages?: (id: number) => string[] | null;
   /** What is saved before the task starts. */
   saved?: [VaultKind, VaultDestination, Record<string, string>][];
-  /** What the person does in the Secure Form, in turn: values they save, or null for a form they close. */
-  form?: (Record<string, string> | null)[];
+  /** What the person does in the Secure Form, in turn: values they save, null for a form they close, or "unavailable" for one that could keep nothing. */
+  form?: (Record<string, string> | null | "unavailable")[];
   autopilot?: () => boolean; vaultAllowed?: () => boolean; consented?: () => boolean;
   promptOpen?: () => boolean | "unchecked";
   /** How the helper's fill goes. */
@@ -92,6 +92,7 @@ async function worker(o: Opts = {}) {
       ask: async req => {
         forms.push({ kind: req.kind, dest: req.dest, where: req.where, via: req.via });
         const typed = answers.shift() ?? null;
+        if (typed === "unavailable") return "unavailable";
         if (!typed) return "cancelled";
         return (await service.keep(req.kind, req.dest, typed)).ok ? "saved" : "cancelled";
       },
@@ -431,6 +432,38 @@ describe("fill_from_vault and what the user turned down earlier in the task (the
     expect((await other.call("fill_from_vault", { id: 1, what: "user name" })).resultType).toBe("denied");
     const kept = other.w as unknown as { declined: boolean; saidNoThisTask: boolean };
     expect([kept.declined, kept.saidNoThisTask]).toEqual([false, false]);
+  });
+});
+
+describe("fill_from_vault and a Secure Form that could keep nothing (integ-y-2)", () => {
+  it("is nobody's no: the task isn't held as one the user said no in, the field isn't kept as refused, and the audit says the form couldn't keep anything (integ-y-2)", async () => {
+    // The form was shown without a keyring, or its Save was refused by the keyring or the disk, and then closed.
+    const h = await worker({ form: ["unavailable", { user: USER, password: CANARY }] });
+    await h.call("perceive_window", {});
+    const r = await h.call("fill_from_vault", { id: 1, what: "user name" });
+    expect(r.resultType).toBe("denied");
+    expect(r.textResultForLlm).not.toMatch(/user closed|said no/i);
+    const flags = h.w as unknown as { declined: boolean; expired: boolean; worked: boolean; saidNoThisTask: boolean };
+    expect([flags.declined, flags.saidNoThisTask]).toEqual([false, false]);
+    // The task ends in the worker's own words, never as "You said not now".
+    expect(afterNo({ declined: flags.declined, expired: flags.expired, worked: flags.worked }, { success: false, summary: "This computer can't keep your login." })).toBeNull();
+    expect(h.decisions().map(d => [d.kind, d.verdict, d.reason])).toEqual([
+      ["vault_fill", "deny", "Ember's Secure Form couldn't keep anything on this computer: it has no keyring, couldn't save or couldn't be shown"]]);
+    // Nothing is kept as refused: the form may be asked again in this task, and typing into the field is judged as any typing.
+    const book = (h.w as unknown as { refusals: Refusals; namesFor(r: unknown): string[] });
+    expect(book.refusals.step(book.namesFor({ kind: "text", element: { role: USERNAME.role, name: USERNAME.name }, value: USER }))).toBeNull();
+    expect((await h.call("fill_from_vault", { id: 1, what: "user name" })).resultType).toBe("success");
+    expect(h.forms).toHaveLength(2);
+    expect(h.everything([r])).not.toContain(CANARY);
+  });
+
+  it("stays the user's no where the form could keep values and was closed without a Save (integ-y-2, integ-x-3)", async () => {
+    const h = await worker({ form: [null] });
+    await h.call("perceive_window", {});
+    await h.call("fill_from_vault", { id: 1, what: "user name" });
+    const flags = h.w as unknown as { declined: boolean; saidNoThisTask: boolean };
+    expect([flags.declined, flags.saidNoThisTask]).toEqual([true, true]);
+    expect(h.decisions().map(d => d.reason)).toEqual(["the user closed Ember's Secure Form without saving"]);
   });
 });
 

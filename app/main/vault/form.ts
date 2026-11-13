@@ -22,8 +22,10 @@ import {
 import type { VaultKept } from "./store";
 
 /**
- * How a form ended: `saved` (kept, sealed), `cancelled` (the person closed it: nothing kept), `unavailable` (no window
- * could be shown, or its page crashed: nobody could answer) or `stopped` (Stop, or Ember quitting).
+ * How a form ended: `saved` (kept, sealed), `cancelled` (the person closed a form that could have kept what they
+ * typed: their no), `unavailable` (no window could be shown, its page crashed, or the form could keep nothing: shown
+ * without a keyring, or closed after a Save the keyring, the disk or a full vault refused. Nobody said no: integ-y-2)
+ * or `stopped` (Stop, or Ember quitting).
  */
 export type VaultAnswer = "saved" | "cancelled" | "unavailable" | "stopped";
 
@@ -73,7 +75,11 @@ export interface VaultFormController {
   dispose(): void;
 }
 
-interface Entry { view: VaultFormView; req: VaultFormRequest; resolve: (a: VaultAnswer) => void }
+interface Entry {
+  view: VaultFormView; req: VaultFormRequest; resolve: (a: VaultAnswer) => void;
+  /** Why this form could keep nothing (no keyring when it was shown, or what its last Save was refused for); null while it could. */
+  unkept: "keyring" | "write" | "full" | "gone" | null;
+}
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
@@ -122,7 +128,9 @@ export function createVaultForm(o: VaultFormOptions): VaultFormController {
     const at = queue.indexOf(e);
     if (at < 0) return;
     queue.splice(at, 1);
-    note("info", "vault.form_done", { kind: e.req.kind, answer: a });
+    // Closing a form that could keep nothing is not the person's no (integ-y-2): nobody could have said yes.
+    if (a === "cancelled" && e.unkept) a = "unavailable";
+    note("info", "vault.form_done", { kind: e.req.kind, answer: a, ...(a === "unavailable" && e.unkept ? { unkept: e.unkept } : {}) });
     e.resolve(a);
     if (at !== 0) return;
     const w = live();
@@ -186,6 +194,8 @@ export function createVaultForm(o: VaultFormOptions): VaultFormController {
       closedSaving = false;
       if (queue[0] !== head) return { ok: false, why: "gone" }; // stopped while it was being kept
       if (!kept.ok) {
+        // Refused by the keyring, the disk or a full vault (never the person's slip): this form kept nothing it was asked to.
+        if (kept.why !== "invalid") head.unkept = kept.why;
         // Its window went meanwhile: nobody is left to try again, and nothing was kept.
         if (closed) finish(head, "cancelled");
         return { ok: false, why: kept.why };
@@ -209,7 +219,7 @@ export function createVaultForm(o: VaultFormOptions): VaultFormController {
         return Promise.resolve("unavailable");
       }
       return new Promise<VaultAnswer>(resolve => {
-        queue.push({ view: formView(randomUUID(), req), req, resolve });
+        queue.push({ view: formView(randomUUID(), req), req, resolve, unkept: req.keyring ? null : "keyring" });
         if (queue.length === 1) reveal();
       });
     },
