@@ -1340,3 +1340,23 @@ describe.skipIf(gate)("Voice under an organisation that turned listening off", (
     await page.close();
   });
 });
+
+describe.skipIf(gate)("Search settings, typed", () => {
+  it("says how many settings match once typing pauses, not at every keystroke (accessibility-r9-5)", async () => {
+    const page = await open("home");
+    await page.evaluate(() => {
+      const out: string[] = (window as unknown as { __said: string[] }).__said = [];
+      const r = document.getElementById("search-msg")!;
+      new MutationObserver(() => { if (r.textContent) out.push(r.textContent); }).observe(r, { subtree: true, childList: true, characterData: true });
+    });
+    await page.locator("#search").focus();
+    await page.keyboard.type("text size", { delay: 60 });
+    await expect.poll(() => page.evaluate(() => (window as unknown as { __said: string[] }).__said.length), { timeout: 3000 }).toBeGreaterThan(0);
+    await page.waitForTimeout(1000);
+    const said = await page.evaluate(() => (window as unknown as { __said: string[] }).__said);
+    expect(said).toHaveLength(1);
+    expect(said[0]).toMatch(/^\d+ match(es)? in \d+ sections?\./);
+    expect(page.errors).toEqual([]);
+    await page.close();
+  });
+});

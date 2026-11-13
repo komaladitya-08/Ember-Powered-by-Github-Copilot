@@ -2536,6 +2536,13 @@ search.addEventListener("focus", renderSearchResults);
 for (const event of ["pointerdown", "focusin"]) document.addEventListener(event, e => {
   if (e.target instanceof Element && !e.target.closest(".search, #search-results")) $("search-results").hidden = true;
 });
+/**
+ * How long typing in Search settings must pause before its status line says how many settings match: written at every
+ * keystroke, a screen reader read six counts for "text size" (accessibility-r9-5; design-system.md asks for live regions
+ * to be throttled). The results themselves follow each keystroke.
+ */
+const SEARCH_SETTLE_MS = 600;
+let searchSoon: ReturnType<typeof setTimeout> | undefined;
 search.addEventListener("input", () => {
   const q = search.value;
   found = searchMatches(q, searchItems());
@@ -2546,7 +2553,9 @@ search.addEventListener("input", () => {
     const h = document.getElementById(`${sectionOf(a)}-h`);
     a.classList.toggle("unmatched", !!q.trim() && !(h && panes.has(paneOf(h) ?? "")));
   }
-  setText("search-msg", searchMessage(q, found.length, panes.size));
+  const said = searchMessage(q, found.length, panes.size);
+  clearTimeout(searchSoon);
+  searchSoon = setTimeout(() => setText("search-msg", said), q.trim() ? SEARCH_SETTLE_MS : 0);
   // Nothing found is said where the links were too (an empty sidebar read as broken).
   const none = !!q.trim() && !found.length;
   $("search-none").hidden = !none;
