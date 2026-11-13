@@ -1768,6 +1768,7 @@ function start(): void {
     taskDone: (title: string, result: string, asked?: number) => learning.taskDone(title, result, asked),
     intent: (text: string, how: { own: boolean }) => learning.intent(text, how),
     rememberNote: (text: string) => learning.rememberNote(text),
+    conversationEnded: () => learning.conversationEnded(),
   };
   // Extensions (app/main/extensions/, docs/DEVELOPING.md "Extensions"): plugins' MCP tools, used only while the user has
   // them on and agreed, and the organisation allows them. Home's Extensions section calls this (ExtensionsApi).

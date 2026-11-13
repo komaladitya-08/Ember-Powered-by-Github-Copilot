@@ -229,6 +229,11 @@ export interface HostOptions {
      * change what's saved. Null for anything else.
      */
     rememberNote?(text: string): MemoryNote | null;
+    /**
+     * The conversation ended (New conversation, sign-out, another account, another model service): what the user had
+     * Ember forget in it is no longer held back from the next, which holds none of it (memory-r9-1).
+     */
+    conversationEnded?(): void;
   };
   /** A reminder the user set is due: main says it aloud (when replies are spoken) and notifies if the user is away. */
   onReminder?: (r: Reminder) => void;
@@ -3654,6 +3659,8 @@ export class AgentHost {
     this.setConversationContext(undefined);
     // An extension's result that read as instructions tainted that conversation (across its reconnects); it ends here.
     this.o.extensions?.conversationEnded?.();
+    // What the user had Ember forget was held back from this conversation, which still knew it; the next doesn't (memory-r9-1).
+    try { this.o.memory?.conversationEnded?.(); } catch (err) { this.o.log.warn("agent.memory_not_told", { err: err instanceof Error ? err.message : String(err) }); }
     this.convoCaps = null;
     try {
       if (this.conductor) await this.conductor.forget(ms);

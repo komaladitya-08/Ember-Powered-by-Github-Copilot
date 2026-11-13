@@ -300,7 +300,12 @@ const CAP: Record<Source, number> = { user: 0.95, conversation: 0.7, task: 0.6, 
 
 /** The facts to keep from a checked extraction of `items`, each with the source decided here. */
 export function learnedFacts(x: Extraction, items: LearnItem[]): NewFact[] {
-  const out: NewFact[] = [];
+  return learnedFrom(x, items).map(l => l.fact);
+}
+
+/** `learnedFacts`, each with the turn or result it was read from. */
+function learnedFrom(x: Extraction, items: LearnItem[]): { fact: NewFact; item: LearnItem }[] {
+  const out: { fact: NewFact; item: LearnItem }[] = [];
   for (const c of x.facts.slice(0, 5)) {
     const item = items[c.from - 1];
     if (!item) continue;
@@ -318,10 +323,10 @@ export function learnedFacts(x: Extraction, items: LearnItem[]): NewFact[] {
       const kind = about.find(same)?.kind;
       about = [{ name: subject, ...(kind ? { kind } : {}) }, ...about.filter(a => fold(a.name) !== "user" && !same(a))];
     }
-    out.push({
+    out.push({ item, fact: {
       text: c.fact, about, source, confidence: Math.min(CAP[source], c.confidence),
       ...(c.predicate ? { predicate: c.predicate, single: c.single === true } : {}),
-    });
+    } });
   }
   return out;
 }
@@ -376,9 +381,11 @@ export interface LearnerDeps {
   model: () => OneShot | null;
   /**
    * Keeps one fact (MemoryService.learn). `since`: when the first turn or result of the batch it was read from came
-   * (ms), so a fact forgotten after that isn't learned back from it (memory-c7-1).
+   * (ms), so a fact forgotten after that isn't learned back from it (memory-c7-1). `said`: the user's own words in the
+   * turn it was read from ("" when Ember couldn't tell they were the user's), or null for a task's result: after a
+   * Forget, only they bring a fact back (memory-r9-1).
    */
-  keep: (f: NewFact, since: number) => AddResult;
+  keep: (f: NewFact, since: number, said: string | null) => AddResult;
   /** Memory is on, agreed to and allowed now: checked again before every call and every fact kept. */
   inForce: () => boolean;
   log: MemoryLog;
@@ -473,8 +480,8 @@ export class Learner {
       if (!x) { this.d.log.info("memory.extract_dropped", { items: items.length, answered: raw !== null }); return 0; }
       // Turned off, or forgotten, while the model thought: nothing is kept.
       if (!this.d.inForce()) return 0;
-      for (const f of learnedFacts(x, items)) {
-        const r = this.d.keep(f, since);
+      for (const { fact: f, item } of learnedFrom(x, items)) {
+        const r = this.d.keep(f, since, item.kind === "task" ? null : item.own ? item.said : "");
         if (r.kind === "added") kept.push(r.fact);
       }
       this.d.log.info("memory.extracted", { items: items.length, offered: x.facts.length, kept: kept.length });

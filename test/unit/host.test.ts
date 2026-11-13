@@ -1167,6 +1167,24 @@ describe("new conversation", () => {
     expect(host.getTranscript()).toEqual([]);
     await host.stop();
   });
+
+  it("tells memory when a conversation ends, before a sign-out erases memory, so what was forgotten in it is held back from no other (memory-r9-1)", async () => {
+    const memory = { remember: vi.fn(() => ""), context: vi.fn(() => ""), forget: vi.fn(() => false), forgetAll: vi.fn((): void => undefined), conversationEnded: vi.fn() };
+    const { host } = makeHost({ memory });
+    await host.start(TOKEN, "stored");
+    await host.ask("Explain this");
+    conductorSession().emit("assistant.message", { content: "Here you go." });
+    conductorSession().emit("session.idle");
+    expect(memory.conversationEnded).not.toHaveBeenCalled();
+    await host.newConversation();
+    expect(memory.conversationEnded).toHaveBeenCalledTimes(1);
+    await host.ask("Hello");
+    await host.forgetConversation();
+    expect(memory.conversationEnded).toHaveBeenCalledTimes(2);
+    // The conversation goes first: a Forget everything that follows it holds nothing back from the next account's.
+    expect(memory.conversationEnded.mock.invocationCallOrder[1]).toBeLessThan(memory.forgetAll.mock.invocationCallOrder[0]!);
+    await host.stop();
+  });
 });
 
 describe("sign-out", () => {

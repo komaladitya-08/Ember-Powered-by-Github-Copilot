@@ -414,6 +414,22 @@ download, so English-only MiniLM is the trade-off for now.
      for two minutes the forgotten words are held in RAM, never on disk, and a fact at least
      `DUPLICATE` like them with the same polarity is not learned from what comes in (memory-c7-1);
      Undo of the Forget lifts that, and a later turn that says it again is learned from.
+     And a Forget holds for the rest of the conversation it was made in (`ConversationHold`, hold.ts; memory-r9-1):
+     that conversation still has what went (the user's statement, earlier `<memory>` blocks, Ember's own answers), so
+     until it ends (New conversation, sign-out, another account or model service: the host's `conversationEnded`)
+     nothing much like a forgotten fact, or like the words a correction dropped, is kept again unless it is the
+     user's own (`user`): half or more of the smaller one's words in common (`LIKE_FORGOTTEN`), whether it comes
+     from a turn, a task's result or the remember tool, which is told why (`HELD_FORGOTTEN`). A turn in such a
+     conversation teaches memory only what is mostly in the user's own words in it (`ownWords`), since Ember's reply
+     may say what went in words that share none with it; after Forget everything, a task's result and the remember
+     tool are held to the same (`HELD_ALL`). The words are held in RAM, never on disk, and Undo lifts it. It learns
+     less: a fact Ember inferred in that conversation waits for the next. The conversation is told as well, with
+     the next request, in Ember's own `<memory_changed>` note (format.ts `memoryChanged`; the rules name it only
+     while memory is on): the ids of the facts the user had it forget or correct, only those it was given (in
+     `<memory>`, by recall or by remember), never their words, so a forgotten fact is not sent again and nothing a
+     fact said rides in a line that isn't marked untrusted. A fact that was never in the conversation is not
+     mentioned to it at all. What still gets through is a fact reworded with no word in common that a task's result
+     says, or that the model saves with remember against that note.
      With nothing kept in those ten minutes, "forget that" says so in code (`NOTHING_TO_FORGET`).
    - While memory isn't in force (off, paused until its updated note is reviewed, paused, managed), a request that is
      only for Ember to forget something about the user ("forget that I…", "forget my address", "forget my wife's
