@@ -4406,7 +4406,10 @@ function runnerLine(h: H, name: Arg, given: readonly Arg[], wrapper: string): vo
   const rest = given[0]?.v === "--" ? given.slice(1) : [...given];
   const key = programName(name.v, { os: h.sc.os, family: h.sc.family === "cmd" ? "posix" : h.sc.family, wsl: h.sc.wsl, mountRoot: h.sc.mountRoot }).key;
   // A launcher whatever its case: a case-insensitive disk finds `Cross-Env` (commands-runners-x9-5).
-  const program = ENV_LAUNCHERS.has(key.toLowerCase()) || (!SCRIPT_WORDS.has(key) && (NATIVE[key] !== undefined || NATIVE[unversioned(key)] !== undefined));
+  // A tool with only a verbs row (`tsx`, `ts-node`, `lerna`, `nx`) is a program too, judged by its verbs as by its
+  // name (commands-runners-y9-1).
+  const row = NATIVE[key] ?? NATIVE[unversioned(key)] ?? ORDINARY_VERBS[key] ?? ORDINARY_VERBS[unversioned(key)];
+  const program = ENV_LAUNCHERS.has(key.toLowerCase()) || (!SCRIPT_WORDS.has(key) && row !== undefined);
   // A deleter with nothing after its name is the project's script of that name (commands-remote-x8-13); a `--`
   // after it was always read as something handed to it (commands-runners-3).
   if (program && !(NEW_DELETERS.has(key) && given.length === 0)) { h.e.payload([name, ...rest], h.sc, wrapper); return; }
@@ -4458,8 +4461,9 @@ function unknownProgram(h: H): void {
   // Main's reading of a held row (runRow) ran what it took for the program, as every program with no row ran there.
   if (h.e.readsAsMain || h.nameArg.v === null) return;
   // The project's own copy of a launcher is the launcher (integ2-z-3).
-  if (h.pn.isPath && ownFolder(h.nameArg.v, h.sc, h.e.ctx.cwd || null) && !(ENV_LAUNCHERS.has(h.key) && IN_NODE_MODULES.test(h.nameArg.v))) return;
+  // A tool with a verbs row is judged by them by its path in node_modules too (commands-runners-y9-1).
   const tool = ORDINARY_VERBS[h.key] ?? ORDINARY_VERBS[unversioned(h.key)];
+  if (h.pn.isPath && ownFolder(h.nameArg.v, h.sc, h.e.ctx.cwd || null) && !((ENV_LAUNCHERS.has(h.key) || tool) && IN_NODE_MODULES.test(h.nameArg.v))) return;
   if (tool) { toolVerbs(h, tool, true); return; }
   // On Windows `convert` is the system's own FAT-to-NTFS converter; ImageMagick is `magick` there (commands-closed-y9-4).
   if (knownProgram(h.key) && !(h.key === "convert" && h.sc.os === "win32")) {

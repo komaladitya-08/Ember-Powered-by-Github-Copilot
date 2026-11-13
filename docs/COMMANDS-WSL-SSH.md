@@ -376,7 +376,9 @@ Ember stops and asks before a command that:
   naming the launcher never announce it. What a package manager runs by name is read as well (`yarn x …`, `pnpm run
   x …`, `bun run x …`, `npm run x -- …`, `npm test -- …`, `corepack yarn …`, `corepack yarn@4 …`), and so is what
   `node` hands the project's own tool (`node node_modules/.bin/x …`): a program Ember has a row for (a shell,
-  an interpreter, `npm`, `git`, `rm`) is judged as that program's own line (`yarn sh -c '…'` as `sh -c '…'`), and the
+  an interpreter, `npm`, `git`, `rm`, or a tool whose everyday verbs Ember knows, such as `tsx`, `lerna` or `nx`, by
+  its path in `node_modules/.bin` too) is judged as that program's own line (`yarn sh -c '…'` as `sh -c '…'`, `yarn
+  tsx -e '…'` as `tsx -e '…'`), and the
   words handed to the project's own script or tool are read for a secret's path, Ember's own files, a command handed
   on, a variable that names code and a first word that says it publishes; its plain options, test names, globs and
   files in the folder run as before (`yarn test --watch`, `npm run build -- --mode production`). A script's everyday

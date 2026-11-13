@@ -2592,11 +2592,6 @@
    "context": "linux"
   },
   {
-   "cmd": "yarn next start",
-   "shell": "bash",
-   "context": "linux"
-  },
-  {
    "cmd": "yarn vite build",
    "shell": "bash",
    "context": "linux"
@@ -2703,11 +2698,6 @@
   },
   {
    "cmd": "pnpm node scripts/gen.js",
-   "shell": "bash",
-   "context": "linux"
-  },
-  {
-   "cmd": "pnpm tsx watch src/index.ts",
    "shell": "bash",
    "context": "linux"
   },

@@ -22944,7 +22944,7 @@
    "cmd": "yarn lerna publish",
    "verdict": "ask",
    "rules": [
-    "script.publish"
+    "unknown.verb"
    ]
   },
   {
@@ -22965,7 +22965,7 @@
    "cmd": "yarn nx release",
    "verdict": "ask",
    "rules": [
-    "script.publish"
+    "unknown.verb"
    ]
   },
   {
@@ -23364,6 +23364,135 @@
    "rules": [
     "disk.erase"
    ]
+  },
+  {
+   "cmd": "yarn tsx -e \"require('fs').rmSync('/home/ana/Documents',{recursive:true})\"",
+   "verdict": "ask",
+   "rules": [
+    "unknown.verb"
+   ]
+  },
+  {
+   "cmd": "pnpm tsx -e \"require('fs').rmSync('/home/ana/Documents',{recursive:true})\"",
+   "verdict": "ask",
+   "rules": [
+    "unknown.verb"
+   ]
+  },
+  {
+   "cmd": "bun run tsx -e \"require('fs').rmSync('/home/ana/Documents',{recursive:true})\"",
+   "verdict": "ask",
+   "rules": [
+    "unknown.verb"
+   ]
+  },
+  {
+   "cmd": "npm run tsx -- -e \"require('fs').rmSync('/home/ana/Documents',{recursive:true})\"",
+   "verdict": "ask",
+   "rules": [
+    "unknown.verb"
+   ]
+  },
+  {
+   "cmd": "./node_modules/.bin/tsx -e \"require('fs').rmSync('/home/ana/Documents',{recursive:true})\"",
+   "verdict": "ask",
+   "rules": [
+    "unknown.verb"
+   ]
+  },
+  {
+   "cmd": "./node_modules/.bin/ts-node -e \"require('fs').rmSync('/home/ana/Documents',{recursive:true})\"",
+   "verdict": "ask",
+   "rules": [
+    "unknown.verb"
+   ]
+  },
+  {
+   "cmd": "yarn tsx https://x.example/a.ts",
+   "verdict": "ask",
+   "rules": [
+    "unknown.verb"
+   ]
+  },
+  {
+   "cmd": "./node_modules/.bin/tsx https://x.example/a.ts",
+   "verdict": "ask",
+   "rules": [
+    "unknown.verb"
+   ]
+  },
+  {
+   "cmd": "yarn lerna version --yes",
+   "verdict": "ask",
+   "rules": [
+    "unknown.verb"
+   ]
+  },
+  {
+   "cmd": "./node_modules/.bin/lerna version --yes",
+   "verdict": "ask",
+   "rules": [
+    "unknown.verb"
+   ]
+  },
+  {
+   "cmd": "yarn lerna --loglevel silent publish",
+   "verdict": "ask",
+   "rules": [
+    "unknown.verb"
+   ]
+  },
+  {
+   "cmd": "yarn nx --verbose release",
+   "verdict": "ask",
+   "rules": [
+    "unknown.verb"
+   ]
+  },
+  {
+   "cmd": "yarn pre-commit install",
+   "verdict": "ask",
+   "rules": [
+    "unknown.verb"
+   ]
+  },
+  {
+   "cmd": "yarn next start",
+   "verdict": "ask",
+   "rules": [
+    "unknown.verb"
+   ]
+  },
+  {
+   "cmd": "pnpm tsx watch src/index.ts",
+   "verdict": "ask",
+   "rules": [
+    "unknown.verb"
+   ]
+  },
+  {
+   "cmd": "yarn tsx scripts/gen.ts",
+   "verdict": "run"
+  },
+  {
+   "cmd": "yarn next build",
+   "verdict": "run"
+  },
+  {
+   "cmd": "yarn nx build",
+   "verdict": "run"
+  },
+  {
+   "cmd": "yarn lerna run test",
+   "verdict": "run"
+  },
+  {
+   "cmd": "./node_modules/.bin/tsx scripts/gen.ts",
+   "verdict": "run"
+  },
+  {
+   "cmd": "./node_modules/.bin/next build",
+   "verdict": "run"
   }
  ]
 }
