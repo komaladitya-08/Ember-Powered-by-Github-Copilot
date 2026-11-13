@@ -289,6 +289,14 @@ describe("a spoken yes from anyone heard while Voice Match is off, its default (
     expect(VOICE_ANSWER_REFUSED.locked).not.toMatch(/again/i);
   });
 
+  it("never calls the owner's own short answer another voice's when Voice Match locks a question: it couldn't match the voice (V2-F1; voice-listening-r9-6)", () => {
+    // The owner's own "Yes." scored 0.54-0.66 with real models and locked their question: the line said it was another
+    // voice's. The lock stays (the rule); its words are true whoever spoke.
+    expect(refusalLine("locked", true)).toBe("I couldn't match that voice to yours, so for this question I'll take a click or the keys only.");
+    expect(refusalLine("locked", false)).toBe("I couldn't match that voice to yours, so for this question I'll take a click only.");
+    for (const keys of [true, false]) expect(refusalLine("locked", keys)).not.toMatch(/isn't yours|another voice/);
+  });
+
   it("says once a question, when a word or two after it was no answer, how to answer, rather than nothing (owner's report of 2026-11-12)", () => {
     expect(VOICE_ANSWER_REFUSED.unclear).toBe("I didn't catch that as an answer. Say “allow” or “not now” once more, or click on the question.");
     expect(voiceAnswerSaid("unclear")).toBe("I didn't catch that as an answer. Say allow or not now once more, or click on the question.");
@@ -300,7 +308,7 @@ describe("a spoken yes from anyone heard while Voice Match is off, its default (
     // Another app may have taken the question keys: the note then points to the click alone (CLAUDE.md "Shortcuts").
     expect(refusalLine("unverified", false)).toBe("That didn't sound like you, so I didn't take it as a yes. Say it again, or click Allow on the question.");
     expect(refusalLine("voice-match-unready", false)).toBe("Voice Match is on but isn't ready yet, so I can't take a yes by voice: finish setting it up in Settings › Voice, or turn it off. Until then, click Allow on the question.");
-    expect(refusalLine("locked", false)).toBe("I heard a voice that isn't yours, so for this question I'll take a click only.");
+    expect(refusalLine("locked", false)).toBe("I couldn't match that voice to yours, so for this question I'll take a click only.");
     for (const why of Object.keys(VOICE_ANSWER_REFUSED) as (keyof typeof VOICE_ANSWER_REFUSED)[]) {
       expect(refusalLine(why, true)).toBe(VOICE_ANSWER_REFUSED[why]);
       expect(refusalLine(why, false), why).not.toMatch(/\bkeys?\b/);
@@ -791,7 +799,7 @@ describe("a refused spoken yes keeps the keys that answer the question (tasks-ap
   it("says the keys Ember holds aloud where the line points to a click or the keys, and none it doesn't hold", () => {
     const keys = ["Control Alt Y to allow", "Control Alt N for not now"];
     expect(voiceAnswerSaid("voice-match-unready", keys)).toBe("Voice Match is on but isn't ready yet, so I can't take a yes by voice: finish setting it up in Settings, then Voice, or turn it off. Until then, click Allow or use the keys. Or, to allow, press Control Alt Y; for not now, press Control Alt N.");
-    expect(voiceAnswerSaid("locked", keys)).toBe("I heard a voice that isn't yours, so for this question I'll take a click or the keys only. To allow, press Control Alt Y; for not now, press Control Alt N.");
+    expect(voiceAnswerSaid("locked", keys)).toBe("I couldn't match that voice to yours, so for this question I'll take a click or the keys only. To allow, press Control Alt Y; for not now, press Control Alt N.");
     // The keys can't allow a click-only card, and other lines say what to say instead.
     expect(voiceAnswerSaid("click-only", keys)).toBe(voiceAnswerSaid("click-only"));
     expect(voiceAnswerSaid("too-short", keys)).toBe(voiceAnswerSaid("too-short"));

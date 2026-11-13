@@ -10,7 +10,9 @@ export const MATCH_TEXT = {
   // Off, its default, anyone heard can answer a question by voice; on, only the owner's voice can say yes, and anyone
   // can still say no (owner decision of 2026-11-12, PLAN.md §2 "Approvals").
   none: "Ember hears anyone who talks to it, and anyone near the computer can answer its questions out loud. Teach it your voice, and only yours can agree to them. “Ember, stop” works for anyone.",
-  on: "On: only your voice can agree to Ember's questions out loud; anyone can still say “not now”. Ember still hears everyone. Your voiceprint stays on this computer.",
+  // A one-word yes holds too little voice to verify, and turned away it locks the question to clicks and keys: the
+  // owner's own "Yes." did so 4 of 4 with real models, "Yes, please go ahead" never (V2-F1).
+  on: "On: only your voice can agree to Ember's questions out loud, so answer them in a few words: one word is too short for Ember to tell it's you. Anyone can still say “not now”. Ember still hears everyone. Your voiceprint stays on this computer.",
   off: "Off: anyone near the computer can answer Ember's questions out loud. Ember keeps your voiceprint until you forget it.",
   /**
    * enrolVoice() said no: Ember isn't listening just now (muted, starting, or the microphone not working, which the voice
@@ -60,7 +62,7 @@ export const MATCH_TEXT = {
 export const MATCH_SAID = {
   none: "Requests from any voice are heard, and any voice can answer questions out loud. Teach your voice again, and only yours can agree to them.",
   teach: "Requests from any voice are heard, and any voice can answer questions out loud. Teach your voice, and only yours can agree to them.",
-  on: "On: only your voice can agree to questions out loud. Everyone is still heard. Your voiceprint stays on this computer.",
+  on: "On: only your voice can agree to questions out loud. Answer in a few words: one word is too short to tell it's you. Everyone is still heard. Your voiceprint stays on this computer.",
   off: "Off: any voice can answer questions out loud. Your voiceprint is kept until you forget it.",
   noModel: "Voice Match's model is missing or was damaged. Download it above to put that right.",
   learnt: "Your voice is learnt.",

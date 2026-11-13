@@ -529,7 +529,10 @@ decision of 2026-11-12: “it doesn't really need my voice to be matched for it�
 “Hey Ember” card say so: anyone near the computer can answer Ember by voice. The audit records `via: "voice"`,
 `verified: false`, and the log's `voice.answer` line `anyone: true`. With it on, a yes counts only when Voice Match
 recognises you in what you say after “Hey Ember”, from at least half a second of your voice (“Ember, go ahead” is
-enough); switched on but not ready (never taught, or its model not in), no spoken yes is taken, and the bubble says to
+enough). A voice it turns away while a question is up locks that question to a click or the keys, and that is
+often your own one-word answer, too short to match (with the real models your own “Yes.” locked it 4 times in 4, “Yes,
+please go ahead” never): the question then says it couldn't match the voice to yours, and Voice Match's line in Home
+says to answer in a few words (V2-F1); switched on but not ready (never taught, or its model not in), no spoken yes is taken, and the bubble says to
 finish setting it up in Settings › Voice or turn it off. A shorter
 yes (“Ember, allow”) counts too for a question asked by a task you asked for in a voice Voice Match recognised, within
 10 minutes of asking, unless that short yes is too quiet or clipped to tell (it is then too short, never trusted) or sounds clearly unlike

@@ -212,7 +212,9 @@ export const VOICE_ANSWER_REFUSED: Readonly<Record<VoiceAnswerNote, string>> = {
   "not-yet": "Read it through first, then say yes again.",
   "too-short": "I couldn't hear enough of your voice to be sure it's you. Say it a little longer, like “Yes, please go ahead”, so I can tell.",
   stale: "That was said before this question came up, so I didn't take it. Say it again.",
-  locked: "I heard a voice that isn't yours, so for this question I'll take a click or the keys only.",
+  // Said when Voice Match turned a voice away during the question: often the owner's own one word, too short to score
+  // high (real models: "Yes." 0.54-0.66), so it says only that the voice couldn't be matched (V2-F1).
+  locked: "I couldn't match that voice to yours, so for this question I'll take a click or the keys only.",
   "heard-over": "I heard you over my own voice, so I didn't take it. Say it again now that I've stopped.",
   // A nameless answer over a song or a video, which the voice gate drops without a voiceprint (match.ts "dropped"). So
   // for a yes said a pause after "Hey Ember" (V2-S6): the name was said, so the line asks for both in one go.
@@ -235,7 +237,7 @@ export const VOICE_ANSWER_REFUSED: Readonly<Record<VoiceAnswerNote, string>> = {
 const WITHOUT_KEYS: Readonly<Partial<Record<VoiceAnswerNote, string>>> = {
   "voice-match-unready": "Voice Match is on but isn't ready yet, so I can't take a yes by voice: finish setting it up in Settings › Voice, or turn it off. Until then, click Allow on the question.",
   unverified: "That didn't sound like you, so I didn't take it as a yes. Say it again, or click Allow on the question.",
-  locked: "I heard a voice that isn't yours, so for this question I'll take a click only.",
+  locked: "I couldn't match that voice to yours, so for this question I'll take a click only.",
 };
 
 /** The note for `why` as the question shows it: the keys are named only while Ember holds them (`keysHeld`). */
