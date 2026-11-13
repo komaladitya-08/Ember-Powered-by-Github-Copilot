@@ -67,7 +67,7 @@ import { ALWAYS_HELD, FALLBACK_SHORTCUTS, heldShortcuts, shownShortcuts, type Sh
 import type { DeskPlace } from "./desk/place";
 import { DeskView } from "./desk/view";
 import { createTaskWindowControl, taskControl } from "./agent/task-controls";
-import { AgentHost, explainSignInError, gitHubReachable, idleWord, STOPPED_EVERYTHING, unansweredWord, type Hands, type TranscriptEntry } from "./agent/host";
+import { AgentHost, explainSignInError, gitHubReachable, idleWord, POLICY_CHANGED_STOP, SCREEN_LOCKED_STOP, STOPPED_EVERYTHING, unansweredWord, type Hands, type TranscriptEntry } from "./agent/host";
 import { composerSendRefusal } from "./agent/composer-refusal";
 import { CONVERSATION_TEXT_LIMIT, conversationRequest } from "../shared/conversation";
 import { projectAfterStatus, projectChoice, projectJobStops, projectMay, projectCommandFolder, projectCommandProblem, projectCommandText, projectNames, projectRefusedText, projectSelection, projectStopped, removeProjectFile, projectPrompt, projectTurnRequest, ProjectInputError, ProjectModelError, PROJECT_MODEL_FAILED, PROJECT_PREVIOUS_ELSEWHERE, type ProjectSource } from "./agent/project";
@@ -3975,6 +3975,8 @@ function start(): void {
         void voice?.setWanted(false);
         // The connection goes too: the host's refuseConnect now says why, so nothing reconnects until the restart.
         void agent?.start(null);
+        // Each task stopped says the policy stopped it, not the user (tasks-approvals-r9-5).
+        agent?.stoppingBecause(POLICY_CHANGED_STOP);
         void killSwitch.pull("policy").then(() => {
           const bubble = { ...IDLE_BUBBLE, visible: true, mood: "attention" as const, title: "Your organisation changed my policy",
             thought: "I've stopped everything, and I won't act, listen or answer until you restart me.", actions: [{ id: "ui:restart", label: "Restart Ember" }] };
@@ -3989,7 +3991,7 @@ function start(): void {
     // Ember stops listening and speaking, takes no requests, its hands refuse this screen, and the tasks working on its
     // desktop stop, as on a remote computer whose screen locks. What stopped is said once the user is back.
     const lockControl = new LockController({
-      stopDesktopTasks: () => agent?.cancelTasksOn("local", "desktop") ?? 0,
+      stopDesktopTasks: () => agent?.cancelTasksOn("local", "desktop", SCREEN_LOCKED_STOP) ?? 0,
       setLocked: locked => { if (locked) projectJob?.abort(); voice?.setLocked(locked); },
       showNotice: n => showNotice(n, 8000),
     });
