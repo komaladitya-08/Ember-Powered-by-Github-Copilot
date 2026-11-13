@@ -1587,6 +1587,14 @@ describe("Apps & privacy's screenshot switch (safety-privacy-7)", () => {
     expect(privacyFoldWords(onboardingRest("darwin"), { screenImages: true })).toBe(onboardingRest("darwin"));
   });
 
+  it("doesn't tell Apps & privacy that “Hey Ember” is turned on when you agree (slice4-x9-5)", async () => {
+    const { privacyFoldWords } = await import("../../app/renderer/home/copy");
+    const mic = " unless you turn on “Hey Ember”, when you agree or later in settings, or choose Listen once for one request.";
+    // First run's own words, after the line's bold lead, as the page has them.
+    expect(page).toContain(`<b>The microphone stays off</b>${mic}`);
+    expect(privacyFoldWords(mic, { screenImages: true })).toBe(" unless you turn on “Hey Ember” in Settings › Voice, or choose Listen once for one request.");
+  });
+
   it("is found by searching for screenshots, by its own words, and by \"pictures\"", async () => {
     const { SCREEN_IMAGES_TEXT } = await import("../../app/renderer/home/copy");
     const { SEARCH_ALIASES } = await import("../../app/renderer/home/search-copy");
