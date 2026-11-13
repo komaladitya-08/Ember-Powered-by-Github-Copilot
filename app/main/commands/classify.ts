@@ -3154,6 +3154,8 @@ class Engine extends Classifier {
       if (sc.wsl && sc.family === "posix" && !(sc.cwd && sc.mountRoot && isUnder(sc.cwd, sc.mountRoot, sc.path))) {
         this.unclear("unclear.cmd-linux-folder", SAYS.cmdLinuxFolder);
       }
+      // A command handed to the batch file is read as one, as for any script (commands-classes-x9-4).
+      if (nameArg.v !== null) handedCommand(h, -1, { name: nameArg.v, args });
       this.readArgs(args, sc);
       return;
     }
@@ -3185,6 +3187,11 @@ class Engine extends Classifier {
     if (n) { this.runRow(n, h); this.verbGuard(h, from); }
     else { unknownProgram(h); generic(h, true); }
     toolPayload(h);
+    // A script a tool runs by its file's name (`tsx tool.ts 'npm publish'`, `bun tool.ts …`): the words after it are
+    // the script's own, read as runScript reads an interpreter's (commands-classes-x9-4).
+    const files = !n ? (ORDINARY_VERBS[key] ?? ORDINARY_VERBS[unversioned(key)])?.files : key === "bun" ? /\.(m|c)?(j|t)sx?$/i : undefined;
+    const script = files ? args.find(a => a.v !== null && !a.v.startsWith("-") && files.test(a.v)) : undefined;
+    if (script) handedToScript(h, script);
     // A deleter that had no row before commands-remote-c8-2 keeps an unknown program's `-o` (commands-remote-x8-5),
     // and so does toybox (commands-closed-y9-1).
     optionPaths(h, !n || UNKNOWN_OPTIONS.has(key));
@@ -4142,9 +4149,13 @@ const EXEC_WORDS = new Set(["exec", "run", "x", "do", "sh", "shell", "spawn", "w
  * never announce; the project's own script (a path in the task's folder) is judged by the handed command alone.
  * `runnerAt`: where generic() already found a runner's name among the words, and read on from there.
  */
-function handedCommand(h: H, runnerAt: number): void {
-  const args = h.args;
-  const unknown = !(h.pn.isPath && h.nameArg.v !== null && ownFolder(h.nameArg.v, h.sc, h.e.ctx.cwd || null));
+function handedCommand(h: H, runnerAt: number, script?: { name: string; args: Arg[] }): void {
+  if (script && h.e.readsAsMain) return;
+  const args = script ? script.args : h.args;
+  const prog = script ? script.name : h.prog;
+  const unknown = script
+    ? !ownFolder(script.name, h.sc, h.e.ctx.cwd || null)
+    : !(h.pn.isPath && h.nameArg.v !== null && ownFolder(h.nameArg.v, h.sc, h.e.ctx.cwd || null));
   const shell: ShellId = h.sc.family === "powershell" ? "powershell" : h.sc.family === "cmd" ? "cmd" : "sh";
   const names = (word: string): boolean => {
     const base = (word.split(/[\\/]/).pop() ?? "").toLowerCase().replace(/\.(exe|com)$/, "");
@@ -4153,12 +4164,12 @@ function handedCommand(h: H, runnerAt: number): void {
     if (h.sc.family === "powershell") return CMDLETS[base] !== undefined || PS_ALIASES[base] !== undefined;
     return h.sc.family === "cmd" && CMD_BUILTINS[base] !== undefined;
   };
-  const hidden = (what: string): void => { if (unknown) h.e.unclear("unclear.hidden-command", `Ember can't tell how ${h.prog} runs ${what}.`); };
+  const hidden = (what: string): void => { if (unknown) h.e.unclear("unclear.hidden-command", `Ember can't tell how ${prog} runs ${what}.`); };
   const text = (t: string, option: boolean): void => {
     const first = t.trim().split(/\s+/)[0] ?? "";
     if (first === "" || !(names(first) || (option && /\s/.test(t.trim())))) return;
     hidden(first);
-    h.e.nested(t, shell, h.sc, h.prog);
+    h.e.nested(t, shell, h.sc, prog);
   };
   for (let k = 0; k < args.length; k++) {
     const v = args[k].v;
@@ -4182,8 +4193,19 @@ function handedCommand(h: H, runnerAt: number): void {
   if (!next || next.v === null || next.v.startsWith("-")) return;
   if (unknown ? args[at].v === "--" || /[\\/]/.test(next.v) : names(next.v) || h.e.isDownloaded(next, h.sc)) {
     hidden(next.v);
-    h.e.payload(rest, h.sc, h.prog);
+    h.e.payload(rest, h.sc, prog);
   }
+}
+
+/**
+ * The same reading for a script a shell or an interpreter runs (`bash ./run.sh 'rm -rf ~'`, `python3 tool.py --exec
+ * 'npm publish'`, `node tool.js -- git push --force`: commands-classes-x9-4), from runScript: the words after the
+ * script are the script's own, so a command among them decides as it does when the script is started by its path.
+ */
+function handedToScript(h: H, script: Arg): void {
+  const at = h.args.indexOf(script);
+  if (script.v === null || at < 0) return;
+  handedCommand(h, -1, { name: script.v, args: h.args.slice(at + 1) });
 }
 
 /**
@@ -6349,6 +6371,7 @@ function runScript(h: H, script: Arg, readAs?: ScriptRef["as"]): void {
   // interpreter completes or a pattern that is a download is not this file.
   if (readAs !== undefined && !hit) h.e.recordScript(script, readAs, h.sc);
   nameCheck(h, script.v, script.v);
+  handedToScript(h, script);
 }
 /** The files node or python runs when given a folder (package.json names node's). */
 const ENTRY_FILES = ["index.js", "index.mjs", "index.cjs", "index.json", "index.node", "package.json", "__main__.py"];

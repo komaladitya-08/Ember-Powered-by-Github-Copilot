@@ -341,7 +341,9 @@ Ember stops and asks before a command that:
   things (`--exec`, `--command`, `--cmd`, `--run`, `-x`, `-c`, `-s`, `-e`), and the words after `--` or after a first
   word such as `exec` or `run`; naming the program in your words never announces it then. The project's own script
   given one (`./run.sh --exec 'npm publish'`) asks about that command, and runs as before when Ember finds nothing
-  in it. `fd -x` and `-X`, `bat --pager`, `pandoc --filter`, `protoc --plugin`, a compiler's `-fplugin=` and
+  in it, however the script is started: by its path, by a shell or an interpreter (`bash run.sh 'npm publish'`,
+  `python3 tool.py --exec 'npm publish'`, `node tool.js -- git push --force`, `tsx`, `bun`, `deno run`, `pwsh
+  -File`), or as a batch file. `fd -x` and `-X`, `bat --pager`, `pandoc --filter`, `protoc --plugin`, a compiler's `-fplugin=` and
   `just --shell` are read or ask the same way.
   A launcher that runs a tool by its name is judged as that tool run directly: `python3 -m twine upload dist/*`
   publishes, `python3 -m keyring get …` prints a password, `python3 -m venv --clear DIR` deletes what is in DIR, and
