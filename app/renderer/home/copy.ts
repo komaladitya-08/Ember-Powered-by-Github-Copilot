@@ -1484,11 +1484,6 @@ export function auditCopySegments(auditCopy: string): Segment[] {
 }
 
 /**
- * Everything the settings window fills in from `Status.platform`: the chord chips, the data and audit folders, the
- * journal hint, the consent's OS sentences, the login note and the empty conversation's hint. Linux's status gives
- * back the page's own markup, so applying it changes nothing a person or a screen reader can tell.
- */
-/**
  * Voice's line on answering a question by voice, as this platform can take it: a yes without the name only where Ember
  * can tell another sound playing (Linux's speakers' stream, Windows' output level), and only in the few seconds after it
  * asks (the answer window). On macOS, and on Linux without parec, a nameless yes is dropped as "sound-unknown", where
@@ -1501,6 +1496,11 @@ export function voiceAnswerHint(p: Pick<StatusPlatform, "speakerRejection" | "ou
   return "To answer one of Ember's questions, say “Ember, allow”, or “not now” in the few seconds after it asks: Ember can't tell here whether something else is playing, so a yes needs its name.";
 }
 
+/**
+ * Everything the settings window fills in from `Status.platform`: the chord chips, the data and audit folders, the
+ * journal hint, the consent's OS sentences, the login note and the empty conversation's hint. Linux's status gives
+ * back the page's own markup, so applying it changes nothing a person or a screen reader can tell.
+ */
 export function homePatches(p: StatusPlatform): HomePatch[] {
   const chords = (Object.keys(SHORTCUTS.linux) as ShortcutId[])
     .map((id): HomePatch => ({ selector: `[data-shortcut="${id}"]`, content: chordSegments(p.shortcuts[id].keys) }));
