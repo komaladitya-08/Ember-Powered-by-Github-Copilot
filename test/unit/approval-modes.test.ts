@@ -209,7 +209,8 @@ describe("the mode in force (modes-A3)", () => {
     expect(modeInForce(setting("assisted", "assisted"))).toBe("assisted");
     expect(modeInForce(setting("autopilot", "interactive", "assisted", "autopilot"))).toBe("interactive");
     expect(modeInForce(setting("autopilot", "assisted", "autopilot"))).toBe("asking");
-    expect(OFFERED_MODES).toEqual(["interactive"]);
+    // Home offers the modes that are built: Interactive and, since its check exists, Assisted (modes-C5).
+    expect(OFFERED_MODES).toEqual(["interactive", "assisted"]);
   });
 
   it("is what the settings in force say on their own too: below Interactive no card counts, and the user's own file is left alone", () => {
@@ -330,8 +331,11 @@ describe("what each state gives the policy engine (modes-A4)", () => {
 
 describe("what Home is told of the modes (modes-A5)", () => {
   it("says the choice, what is in force and why they differ", () => {
-    expect(approvalsState(DEFAULT_SETTINGS.approvals, null)).toEqual({ chosen: "interactive", inForce: "asking", why: "card", offered: ["interactive"], agreed: [], cap: null });
-    expect(approvalsState(setting("interactive", "interactive"), admin())).toEqual({ chosen: "interactive", inForce: "interactive", why: null, offered: ["interactive"], agreed: ["interactive"], cap: null });
+    expect(approvalsState(DEFAULT_SETTINGS.approvals, null)).toEqual({ chosen: "interactive", inForce: "asking", why: "card", offered: ["interactive", "assisted"], agreed: [], cap: null });
+    expect(approvalsState(setting("interactive", "interactive"), admin())).toEqual({ chosen: "interactive", inForce: "interactive", why: null, offered: ["interactive", "assisted"], agreed: ["interactive"], cap: null });
+    // The organisation turned Assisted's check off: said whatever is chosen, so its row can say why it is locked (modes-C5).
+    expect(approvalsState(setting("interactive", "interactive"), admin({ features: { aiReview: false } }))).toEqual({ chosen: "interactive", inForce: "interactive", why: null, offered: ["interactive", "assisted"], agreed: ["interactive"], cap: null, checkOff: true });
+    expect(approvalsState(setting("assisted", "interactive", "assisted"), admin())).toMatchObject({ chosen: "assisted", inForce: "assisted", why: null });
     expect(approvalsState(setting("interactive", "interactive"), admin({ features: { autonomy: false } }))).toMatchObject({ inForce: "asking", why: "organisation", agreed: ["interactive"] });
     expect(approvalsState(setting("assisted", "interactive", "assisted"), capped({}, "interactive"))).toMatchObject({ chosen: "assisted", inForce: "interactive", why: "cap", cap: "interactive" });
     expect(approvalsState(setting("assisted", "interactive", "assisted"), admin({ features: { aiReview: false } }))).toMatchObject({ inForce: "interactive", why: "check-off" });
@@ -361,8 +365,23 @@ describe("choosing a mode from Home (modes-A6)", () => {
   });
 
   it("refuses a mode Home doesn't offer yet, whatever card comes with it", () => {
-    for (const m of ["assisted", "autopilot"] as const) expect(chooseMode(own, m, modeCardVersion(m), null, AT)).toEqual({ ok: false, why: "unavailable" });
+    expect(chooseMode(own, "autopilot", modeCardVersion("autopilot"), null, AT)).toEqual({ ok: false, why: "unavailable" });
     expect(chooseMode(own, "asking" as unknown as ApprovalMode, 1, null, AT)).toEqual({ ok: false, why: "unavailable" });
+  });
+
+  it("chooses Assisted only with the agreement to Assisted's own card, and never where the organisation turned its check off or caps the mode below it (modes-C5)", () => {
+    const v = modeCardVersion("assisted");
+    const was = setting("interactive", "interactive");
+    const next = chooseMode(was, "assisted", v, admin(), AT);
+    expect(next).toEqual({ ok: true, approvals: { mode: "assisted", consent: { ...was.consent, assisted: { version: v, at: AT } } } });
+    if (next.ok) expect(modeInForce(next.approvals, admin())).toBe("assisted");
+    // Interactive's card is no agreement to Assisted's, nor an older or newer version of it.
+    expect(chooseMode(was, "assisted", modeCardVersion("interactive"), admin(), AT).ok).toBe(modeCardVersion("interactive") === v);
+    for (const bad of [v - 1, v + 1]) expect(chooseMode(was, "assisted", bad, admin(), AT)).toEqual({ ok: false, why: "card" });
+    expect(chooseMode(was, "assisted", v, admin({ features: { aiReview: false } }), AT)).toEqual({ ok: false, why: "check-off" });
+    expect(chooseMode(was, "assisted", v, capped({}, "interactive"), AT)).toEqual({ ok: false, why: "cap" });
+    expect(chooseMode(was, "assisted", v, admin({ confirmEveryAction: true }), AT)).toEqual({ ok: false, why: "organisation" });
+    expect(chooseMode(was, "assisted", v, capped({}, "assisted"), AT).ok).toBe(true);
   });
 
   it("refuses where the organisation keeps Ember below Interactive", () => {

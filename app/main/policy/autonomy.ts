@@ -49,10 +49,10 @@ export const autonomyPermitted = (admin: AutonomyAdmin | null | undefined): bool
   !admin || (admin.features.autonomy !== false && admin.allowGrants !== false && !admin.confirmEveryAction && admin.features.actions !== false);
 
 /**
- * The modes Home offers a row and a card for, and the only ones its choice may name (chooseMode). Assisted and
- * Autopilot join as each is built.
+ * The modes Home offers a row and a card for, and the only ones its choice may name (chooseMode). Autopilot joins
+ * once it is built.
  */
-export const OFFERED_MODES: readonly ApprovalMode[] = ["interactive"];
+export const OFFERED_MODES: readonly ApprovalMode[] = ["interactive", "assisted"];
 
 /**
  * The modes that can be in force. Autopilot isn't built, so a settings.json that names it (by hand: Home doesn't
@@ -149,6 +149,7 @@ export function approvalsState(own: ApprovalsSetting, admin: AutonomyAdmin | nul
     offered: [...OFFERED_MODES],
     agreed: APPROVAL_MODES.filter(m => modeAgreed(own, m)),
     cap: admin?.approvals?.maxMode ?? null,
+    ...(admin?.features.aiReview === false ? { checkOff: true as const } : {}),
   };
 }
 

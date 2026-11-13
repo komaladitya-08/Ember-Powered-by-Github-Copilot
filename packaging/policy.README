@@ -23,8 +23,9 @@ Every key is optional:
                         "actions" (acting in apps at all; false also turns commands off), "cursor" (borrowing the
                         mouse and keyboard), "desk" (Ember's private desk), "screenImages" (screenshots sent to the
                         model), "wsl" (WSL apps and the WSL computer), "ssh" (connecting to other computers),
-                        "aiReview" (false: no command is sent to the model for review, so every command Ember's rules
-                        flag asks), "memory" (false: Ember remembers nothing between runs and learns nothing on its
+                        "aiReview" (false: Assisted's check is off: no step or command is sent to a model to be
+                        checked against the user's words, what it would have checked asks, and Assisted can't be
+                        chosen), "memory" (false: Ember remembers nothing between runs and learns nothing on its
                         own), "routines" (false: no routines, and reminders end when Ember quits), "updates" (false:
                         Ember never asks GitHub whether a new version is out), "extensions" (false: no extension
                         loads, runs or can be added), "autonomy" (false: no approval mode is in force, so Ember

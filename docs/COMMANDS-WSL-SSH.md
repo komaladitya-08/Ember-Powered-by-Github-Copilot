@@ -536,24 +536,33 @@ command also asks when it runs as root or as an administrator, when **Ask me bef
 organisation's policy says so, in a Podman distro, after a step in this task came up that you didn't ask for, and
 when the command may carry text Ember read in another app.
 
-### 2.5a When Copilot reviewed it
+### 2.5a When Ember checked it against what you asked (Assisted)
 
-In the **Assisted** approval mode (Settings › **Apps & privacy** › **How Ember asks** doesn't offer it yet, so until
-it does no command is sent for review; it takes the place of the **Ask only about dangerous commands** switch), a
-command that would ask
-only because of what it does (it deletes, publishes, downloads and runs something, or Ember can't tell exactly what it
-does) is first shown to Copilot, in a conversation of its own with no tools: your own words for the task, the command,
-where and in which folder it runs, the model's reason and what Ember's checks found. Never a command's output or your
-screen, where text aimed at the reviewer would come from. When Copilot answers that it is routine for what you asked,
-the command runs after the announcement above (the bubble says what it does; the command window adds "Ember's review:"
-and the reason, with **Stop** and the countdown). When it answers that it is dangerous, can't tell, or doesn't answer
-within 20 seconds, it asks as before, the card adding Copilot's reason when it gave one.
+In the **Assisted** approval mode (Settings › **Apps & privacy** › **How Ember asks**; it takes the place of the
+**Ask only about dangerous commands** switch), a command that would ask is first shown to a lighter AI model on
+Copilot, in a conversation of its own with no tools: your own words for the task (typed or spoken, also where Ember
+can't tell your voice from its speakers; never a suggestion you clicked, words heard over Ember's own voice or a
+routine's saved steps), the command, where and in which folder it runs, the task's reason and what Ember's checks
+found. Never a command's output or your screen, where text aimed at the reviewer would come from. While it is asked,
+the task's bubble says "Checking this command against what you asked…". When it answers that your words ask for what
+the command does, the command runs after the announcement above (the bubble says what it does; the command window adds
+"Ember's review:" and the reason, with **Stop** and the countdown). When it finds no match, can't tell, or doesn't
+answer within 20 seconds, the command asks as before, the card adding the model's reason when it gave one. The model
+can be wrong, which is why the countdown and its Stop are always there.
 
-Never reviewed, always asked: commands that touch passwords, keys or other secrets, or change the system; commands
-where Ember runs as root or an administrator; every command when your organisation, or you (**Ask before every
-command**), asked for that; a task something on screen or in a command's output tried to steer; a command that may
-carry text read in another window; a command your words place on another computer; and a task without your own words.
-Turn the switch off to have every such command ask.
+It may clear what the old switch never sent it, when your words ask for it outright: a command that changes the
+system, one that downloads and runs a program, one that runs as root or an administrator, one that may carry text
+read in another window, one your words place on another computer, and one in a task that something on screen or in a
+command's output tried to steer. The card's lines say each of those, and the model is shown them.
+
+Never reviewed, always asked: a command that would read or print passwords, keys or other secrets (so none reaches a
+model); a command that would keep running after Stop (a background job, `nohup`, `setsid`, a detached `screen` or
+`tmux` session, `docker run -d`, a process manager, a scheduled job, a program it opens), so that Stop stops
+everything; every command when your organisation, or you (**Ask before every command**), asked for that; a task
+without your own words; and a command, a request or a list of findings too long to show whole (a command over 4,000
+characters). A command you said no to is refused without being reviewed (§2.5). On a computer reached over SSH, that
+computer's own check still asks about what it finds, as before. Choose Interactive to have every such command ask;
+your organisation can turn the check off (`features.aiReview: false`).
 
 ### 2.6 What Ember never runs
 

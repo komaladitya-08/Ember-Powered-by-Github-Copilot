@@ -95,7 +95,7 @@ async function open(pane: string, seed: Seed = {}): Promise<Page & { errors: str
       if (name === "updates" && updates) return async () => updates;
       if (name === "updateSettings") return async (patch: Record<string, unknown>) => { h.calls.push(`save:${JSON.stringify(patch)}`); return {}; };
       // Main's answer to a choice of mode: recorded and in force, as it says with the state.
-      if (name === "chooseMode") return async (mode: string, version: number) => { h.calls.push(`choose:${mode}:${version}`); return { ok: true, state: { chosen: mode, inForce: mode, why: null, offered: ["interactive"], agreed: [mode], cap: null } }; };
+      if (name === "chooseMode") return async (mode: string, version: number) => { h.calls.push(`choose:${mode}:${version}`); return { ok: true, state: { chosen: mode, inForce: mode, why: null, offered: ["interactive", "assisted"], agreed: [mode], cap: null } }; };
       if (name === "conversation") return async () => [];
       if (name === "tasks") return async () => tasks;
       if (name === "taskControl") return async (id: string, kind: string) => { h.calls.push(`taskControl:${id}:${kind}`); return true; };
@@ -884,10 +884,13 @@ describe.skipIf(gate)("Apps & privacy › How Ember asks, with a keyboard and a 
     expect(await page.evaluate(() => document.getElementById("approvals")!.contains(document.activeElement))).toBe(false);
     await page.keyboard.press("Shift+Tab");
     expect(await focused(page)).toBe("mode-interactive");
-    // The arrow keys choose nothing and open nothing.
+    // The arrow keys move between the modes, choosing nothing and opening nothing.
     for (const key of ["ArrowDown", "ArrowUp", "ArrowRight", "ArrowLeft", "Home", "End"]) await page.keyboard.press(key);
     expect(await page.locator("#approvals-card").isHidden()).toBe(true);
+    expect(await focused(page)).toBe("mode-assisted");
+    await page.keyboard.press("Home");
     expect(await focused(page)).toBe("mode-interactive");
+    expect(await calls(page)).toEqual([]);
     // Space presses the row: its card opens with the keyboard on the agree button, which the card's title and text
     // name and describe, so a screen reader says the card as it opens.
     await page.keyboard.press("Space");
@@ -918,6 +921,63 @@ describe.skipIf(gate)("Apps & privacy › How Ember asks, with a keyboard and a 
     // And the list under it no longer says Ember asks before its first action in each app.
     expect(await page.locator("#grants").innerText()).toBe("None.");
     await evidence(page, "approvals-chosen");
+    expect(page.errors).toEqual([]);
+    await page.close();
+  });
+
+  it("offers Assisted beside Interactive: its own card before it is chosen, “Not now” leaves the mode as it was, and “I agree” chooses it (modes-C5)", async () => {
+    const page = await open("privacy", { approvals: approvalsState(INTERACTIVE, null) });
+    const rows = page.locator("#approvals button.mode");
+    expect(await rows.evaluateAll(els => els.map(e => [e.id, e.getAttribute("role"), e.getAttribute("aria-checked"), e.querySelector("b")!.textContent, e.querySelector("span")!.textContent]))).toEqual([
+      ["mode-interactive", "radio", "true", "Interactive", "Ember tells you about ordinary steps as it does them, and asks before anything risky, such as sending, deleting or paying."],
+      ["mode-assisted", "radio", "false", "Assisted", "As Interactive, but before Ember asks, a lighter AI model checks the step against what you asked. If it matches, Ember goes ahead and tells you."],
+    ]);
+    // One Tab stop, on the mode in force; the arrow key moves to Assisted without choosing it.
+    await page.locator("#mode-interactive").focus();
+    await page.keyboard.press("ArrowDown");
+    expect(await focused(page)).toBe("mode-assisted");
+    expect(await page.locator("#approvals-card").isHidden()).toBe(true);
+    // Enter presses the row: Assisted's own card, with the keyboard on its agree button.
+    await page.keyboard.press("Enter");
+    expect(await page.locator("#approvals-card-title").innerText()).toBe("Before you choose Assisted");
+    expect(await page.locator("#approvals-card-text").innerText()).toMatch(/^In Assisted, Ember works as in Interactive.*A lighter AI model makes that check\..*The model can be wrong.*It never clears.*stops everything at once\.$/);
+    expect(await page.locator("#approvals-yes").innerText()).toBe("I agree, use Assisted");
+    expect(await focused(page)).toBe("approvals-yes");
+    await evidence(page, "approvals-assisted-card");
+    // Not now: nothing is sent, Interactive stays in force, and the keyboard is back on Assisted's row.
+    await page.locator("#approvals-no").click();
+    expect(await calls(page)).toEqual([]);
+    expect(await page.locator("#mode-interactive").getAttribute("aria-checked")).toBe("true");
+    expect(await focused(page)).toBe("mode-assisted");
+    // Again, and I agree once it is armed: one call with Assisted and its own card's version.
+    await page.keyboard.press("Space");
+    await page.waitForTimeout(600);
+    await page.keyboard.press("Enter");
+    await expect.poll(() => calls(page)).toEqual([`choose:assisted:${FEATURE_CONSENT_VERSION.assisted}`]);
+    await expect.poll(() => page.locator("#mode-assisted").getAttribute("aria-checked")).toBe("true");
+    expect(await page.locator("#mode-interactive").getAttribute("aria-checked")).toBe("false");
+    expect(await page.locator("#approvals-card").isHidden()).toBe(true);
+    expect(await focused(page)).toBe("mode-assisted");
+    await evidence(page, "approvals-assisted-chosen");
+    expect(page.errors).toEqual([]);
+    await page.close();
+  });
+
+  it("locks Assisted's row where the organisation turned its check off, says why, and keeps the keyboard off it (modes-C5)", async () => {
+    const policy = AdminPolicySchema.parse({ features: { aiReview: false } });
+    const page = await open("privacy", { approvals: approvalsState(INTERACTIVE, policy) });
+    const row = page.locator("#mode-assisted");
+    expect(await row.isDisabled()).toBe(true);
+    expect(await row.getAttribute("title")).toBe("Your organisation turned off the check Assisted needs");
+    expect(await page.locator("#approvals-note").innerText()).toBe("You can answer a question by voice too: say “allow” or “not now” once Ember has asked, or “Ember, allow” later. Your organisation turned off the check Assisted needs, so Assisted can't be chosen.");
+    // The arrow keys stay on the row that can be chosen; a click on the locked one opens no card.
+    await page.locator("#mode-interactive").focus();
+    for (const key of ["ArrowDown", "End"]) await page.keyboard.press(key);
+    expect(await focused(page)).toBe("mode-interactive");
+    await row.click({ force: true });
+    expect(await page.locator("#approvals-card").isHidden()).toBe(true);
+    expect(await calls(page)).toEqual([]);
+    await evidence(page, "approvals-assisted-locked");
     expect(page.errors).toEqual([]);
     await page.close();
   });

@@ -919,21 +919,32 @@ export const MEMORY_QUESTIONS_HINT = "At most one question a day, only while you
  */
 export const AUTONOMY_CONSENT_TEXT = "In Interactive, Ember does ordinary steps without asking first: it works in your apps, borrows your mouse and keyboard, runs ordinary commands, moves text between apps and presses OK on a message box that has nothing else to choose. It tells you what it is doing as it goes, and keeps a record under What Ember did. It still asks every time before anything risky: sending, posting, submitting, sharing, deleting, overwriting, paying, installing, signing out, security settings, dangerous commands and any dialog that asks a question. It asks more often in your system's settings and security apps, and a task goes back to asking once you say no or a page or file tries to give it instructions. It never types passwords and never acts in sign-in prompts. “Ember, stop” or Ember's stop shortcut stops everything at once, and moving your mouse takes it back. While Voice Match is off, anyone near the computer can answer Ember's questions by voice.";
 
+/**
+ * Assisted's card (Apps & privacy › How Ember asks, FEATURE_CONSENT_VERSION.assisted; PolicyEngine.assist and
+ * commands/review.ts): that a lighter model decides whether a step matches what the user asked, what it is sent, that
+ * a match goes ahead whatever the step is, that it is announced and recorded, that the model can be wrong, what it
+ * never clears, and that a stop always works. Change it only with a bump of that version.
+ */
+export const ASSISTED_CONSENT_TEXT = "In Assisted, Ember works as in Interactive, and where it would ask you it first checks the step against what you asked. A lighter AI model makes that check. It is sent your own words for the task, typed or spoken, and Ember's short description of the step: the app, the window's title, the control's name and any text to type, or the command. If it finds you asked for exactly that, Ember goes ahead without asking, also where the step sends, deletes, pays or installs, or the command changes your system. Ember tells you each time, a command waits a few seconds with a Stop first, and What Ember did keeps a record. The model can be wrong: it may let through a step you didn't mean. It never clears a command that would show passwords or keys or keep running after you stop Ember, a step you said no to, anything Ember refuses, such as typing a password, or what you or your organisation set to ask every time. If it finds no match or can't tell, Ember asks you. “Ember, stop” or Ember's stop shortcut stops everything at once.";
+
 /** Apps & privacy › How Ember asks: the choice's heading, and each mode's name as the window says it. */
 export const APPROVALS_HEADING = "How Ember asks";
 export const MODE_NAME: Readonly<Record<ApprovalMode, string>> = { interactive: "Interactive", assisted: "Assisted", autopilot: "Autopilot" };
 /** Each offered mode's one sentence under its name (a mode joins as it is built). */
 export const MODE_LINE: Readonly<Partial<Record<ApprovalMode, string>>> = {
   interactive: "Ember tells you about ordinary steps as it does them, and asks before anything risky, such as sending, deleting or paying.",
+  assisted: "As Interactive, but before Ember asks, a lighter AI model checks the step against what you asked. If it matches, Ember goes ahead and tells you.",
 };
 /** Each offered mode's card: its text, shown before the mode is chosen, and the version an agreement to it carries. */
-export const MODE_CARD_TEXT: Readonly<Partial<Record<ApprovalMode, string>>> = { interactive: AUTONOMY_CONSENT_TEXT };
+export const MODE_CARD_TEXT: Readonly<Partial<Record<ApprovalMode, string>>> = { interactive: AUTONOMY_CONSENT_TEXT, assisted: ASSISTED_CONSENT_TEXT };
 
 /** A mode's card as the window shows it: its title, its text, and its two buttons ("Not now" leaves the mode as it was). */
 export function modeCard(mode: ApprovalMode): { title: string; text: string; yes: string; no: string } {
   return { title: `Before you choose ${MODE_NAME[mode]}`, text: MODE_CARD_TEXT[mode] ?? "", yes: `I agree, use ${MODE_NAME[mode]}`, no: "Not now" };
 }
 
+/** Why Assisted's row is locked while the organisation's `features.aiReview` is false (its tooltip, and the note's sentence). */
+const CHECK_OFF_TEXT = `Your organisation turned off the check ${MODE_NAME.assisted} needs`;
 /** What Ember asks before while no mode is in force: said wherever the window says it is below Interactive. */
 const ASKS_BEFORE = "Ember asks before its first step in an app, before using your mouse and keyboard, before pressing OK on an app's message box and before moving text between apps";
 /** That a question can be answered by voice (by anyone heard while Voice Match is off, its default: 2026-11-12). */
@@ -951,14 +962,19 @@ export function approvalsNote(state: ApprovalsState | null, managed: boolean, el
     : state.why === "not-recorded" ? `Ember couldn't save or record your choice, so it isn't in use: ${ASKS_BEFORE}. Choose it again to try once more.`
     : state.inForce === "asking" ? `Until you agree to ${MODE_NAME.interactive}, ${ASKS_BEFORE}.`
     : state.why === "cap" ? `Your organisation allows ${MODE_NAME[state.cap ?? state.inForce]} at most, so ${MODE_NAME[state.inForce]} is in use. ${ANSWER_BY_VOICE}`
-    : state.why === "check-off" ? `Your organisation turned off the check ${MODE_NAME.assisted} needs, so ${MODE_NAME[state.inForce]} is in use. ${ANSWER_BY_VOICE}`
+    : state.why === "check-off" ? `${CHECK_OFF_TEXT}, so ${MODE_NAME[state.inForce]} is in use. ${ANSWER_BY_VOICE}`
     : state.why ? `${MODE_NAME[state.inForce]} is in use. ${ANSWER_BY_VOICE}`
     : ANSWER_BY_VOICE;
   if (!base) return base;
-  if (elevated === "administrator") return `${base} Ember is running as an administrator, so it asks before every command. Start it normally to change that.`;
-  if (elevated === "maybe-administrator") return `${base} Ember may be running as an administrator (it couldn't tell), and then it asks before every command. Start it normally to be sure.`;
-  if (elevated === "root") return `${base} Ember is running as root, so it asks before every command. Start it as yourself to change that.`;
-  return base;
+  // A row the organisation locks without it being the mode chosen says why here too (the note describes the rows).
+  const below = managed || state?.why === "organisation";
+  const lockedRow = below || !state ? "" : state.checkOff && state.why !== "check-off" && state.offered.includes("assisted") ? ` ${CHECK_OFF_TEXT}, so ${MODE_NAME.assisted} can't be chosen.`
+    : state.cap && state.why !== "cap" && state.offered.some(m => modeRank(m) > modeRank(state.cap)) ? ` Your organisation allows ${MODE_NAME[state.cap]} at most.` : "";
+  const said = `${base}${lockedRow}`;
+  if (elevated === "administrator") return `${said} Ember is running as an administrator, so it asks before every command. Start it normally to change that.`;
+  if (elevated === "maybe-administrator") return `${said} Ember may be running as an administrator (it couldn't tell), and then it asks before every command. Start it normally to be sure.`;
+  if (elevated === "root") return `${said} Ember is running as root, so it asks before every command. Start it as yourself to change that.`;
+  return said;
 }
 
 /** A mode's row: its name and sentence, whether it is the one in force, and whether the organisation locks it. */
@@ -974,8 +990,9 @@ export function approvalsView(state: ApprovalsState | null, managed: boolean, el
   const inForce = !state || below || state.inForce === "asking" ? null : state.inForce;
   const offered = APPROVAL_MODES.filter(m => (state?.offered ?? ["interactive"]).includes(m) && MODE_LINE[m] !== undefined);
   const rows = offered.map(mode => {
-    const locked = below || (!!state?.cap && modeRank(mode) > modeRank(state.cap));
-    return { mode, name: MODE_NAME[mode], line: MODE_LINE[mode] ?? "", checked: inForce === mode, locked, title: locked ? "Managed by your organisation" : "" };
+    const checkOff = mode === "assisted" && !!state?.checkOff;
+    const locked = below || checkOff || (!!state?.cap && modeRank(mode) > modeRank(state.cap));
+    return { mode, name: MODE_NAME[mode], line: MODE_LINE[mode] ?? "", checked: inForce === mode, locked, title: !locked ? "" : checkOff && !below ? CHECK_OFF_TEXT : "Managed by your organisation" };
   });
   const card = state && !below && state.inForce === "asking" && state.why !== "not-recorded" && rows.some(r => r.mode === "interactive" && !r.locked) ? "interactive" : null;
   return { rows, note: approvalsNote(state, managed, elevated), card, inForce };

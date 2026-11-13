@@ -48,6 +48,8 @@ export interface ApprovalsState {
   agreed: ApprovalMode[];
   /** The highest mode the organisation allows; null without a cap. */
   cap: ApprovalMode | null;
+  /** The organisation turned Assisted's check off (`features.aiReview: false`): Assisted can't be chosen, and its row says so. */
+  checkOff?: true;
 }
 
 /**

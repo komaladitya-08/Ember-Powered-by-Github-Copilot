@@ -248,14 +248,19 @@ describe("How Ember asks (Apps & privacy, modes-A10)", () => {
   /** As main tells Home: the pure state for a setting and a policy. */
   const state = (approvals = DEFAULT_SETTINGS.approvals, policy: Record<string, unknown> | null = null): ApprovalsState => approvalsState(approvals, policy ? AdminPolicySchema.parse(policy) : null);
   const ROW = { mode: "interactive", name: "Interactive", line: MODE_LINE.interactive };
+  const ASSISTED = { mode: "assisted", name: "Assisted", line: MODE_LINE.assisted };
 
   it("shows one row per mode that is built, each with one plain sentence, and marks the one in force", () => {
-    expect(approvalsView(state(agreed), false).rows).toEqual([{ ...ROW, checked: true, locked: false, title: "" }]);
+    expect(approvalsView(state(agreed), false).rows).toEqual([{ ...ROW, checked: true, locked: false, title: "" }, { ...ASSISTED, checked: false, locked: false, title: "" }]);
     expect(approvalsView(state(agreed), false).inForce).toBe("interactive");
-    expect(approvalsView(state(), false).rows).toEqual([{ ...ROW, checked: false, locked: false, title: "" }]);
+    expect(approvalsView(state(), false).rows).toEqual([{ ...ROW, checked: false, locked: false, title: "" }, { ...ASSISTED, checked: false, locked: false, title: "" }]);
     expect(MODE_LINE.interactive).toBe("Ember tells you about ordinary steps as it does them, and asks before anything risky, such as sending, deleting or paying.");
+    expect(MODE_LINE.assisted).toBe("As Interactive, but before Ember asks, a lighter AI model checks the step against what you asked. If it matches, Ember goes ahead and tells you.");
+    // Assisted in force is the row marked (modes-C5).
+    const assisted = { mode: "assisted" as const, consent: { ...agreed.consent, assisted: { version: modeCardVersion("assisted"), at: AT } } };
+    expect(approvalsView(state(assisted), false)).toMatchObject({ inForce: "assisted", card: null, rows: [{ mode: "interactive", checked: false }, { mode: "assisted", checked: true }] });
     // A mode with no row yet is never drawn, whatever main offers; before main's state has come, nothing is marked.
-    expect(approvalsView({ ...state(agreed), offered: ["interactive", "assisted", "autopilot"] }, false).rows.map(r => r.mode)).toEqual(["interactive"]);
+    expect(approvalsView({ ...state(agreed), offered: ["interactive", "assisted", "autopilot"] }, false).rows.map(r => r.mode)).toEqual(["interactive", "assisted"]);
     expect(approvalsView(null, false)).toEqual({ rows: [{ ...ROW, checked: false, locked: false, title: "" }], note: "", card: null, inForce: null });
   });
 
@@ -277,7 +282,7 @@ describe("How Ember asks (Apps & privacy, modes-A10)", () => {
       const keys = new Set(managedKeys(AdminPolicySchema.parse(policy)));
       expect(keys.has("autonomy")).toBe(true);
       for (const v of [approvalsView(state(agreed, policy), keys.has("autonomy")), approvalsView(state(agreed, policy), false), approvalsView(state(agreed), true)]) {
-        expect(v.rows).toEqual([{ ...ROW, checked: false, locked: true, title: MANAGED_TEXT }]);
+        expect(v.rows).toEqual([{ ...ROW, checked: false, locked: true, title: MANAGED_TEXT }, { ...ASSISTED, checked: false, locked: true, title: MANAGED_TEXT }]);
         expect(v.card).toBeNull();
         expect(v.inForce).toBeNull();
         expect(v.note).toBe("Managed by your organisation: Ember asks before its first step in an app, before using your mouse and keyboard, before pressing OK on an app's message box and before moving text between apps.");
@@ -287,6 +292,24 @@ describe("How Ember asks (Apps & privacy, modes-A10)", () => {
     expect(page).toContain(`<div class="modes" id="approvals" role="radiogroup" aria-labelledby="approvals-h" aria-describedby="approvals-note"></div>`);
     expect(main).toMatch(/el\.disabled = r\.locked;\s*el\.classList\.toggle\("locked", r\.locked\);\s*el\.title = r\.title;/);
     expect(css).toMatch(/\.locked \{ opacity: 0\.5; \}/);
+  });
+
+  it("locks Assisted's row alone where the organisation turned its check off or caps the mode, and says why in the note and the tooltip (modes-C5)", () => {
+    const off = approvalsView(state(agreed, { features: { aiReview: false } }), false);
+    expect(off.rows).toEqual([{ ...ROW, checked: true, locked: false, title: "" }, { ...ASSISTED, checked: false, locked: true, title: "Your organisation turned off the check Assisted needs" }]);
+    expect(off.note).toBe("You can answer a question by voice too: say “allow” or “not now” once Ember has asked, or “Ember, allow” later. Your organisation turned off the check Assisted needs, so Assisted can't be chosen.");
+    const capped = approvalsView(approvalsState(agreed, { ...AdminPolicySchema.parse({}), approvals: { maxMode: "interactive" } }), false);
+    expect(capped.rows).toEqual([{ ...ROW, checked: true, locked: false, title: "" }, { ...ASSISTED, checked: false, locked: true, title: MANAGED_TEXT }]);
+    expect(capped.note).toBe("You can answer a question by voice too: say “allow” or “not now” once Ember has asked, or “Ember, allow” later. Your organisation allows Interactive at most.");
+    // Said once: where Assisted is the mode chosen, the note's own sentence says it already.
+    const both = { mode: "assisted" as const, consent: { ...agreed.consent, assisted: { version: modeCardVersion("assisted"), at: AT } } };
+    expect(approvalsView(state(both, { features: { aiReview: false } }), false).note.match(/turned off the check/g)).toHaveLength(1);
+    // Before Interactive is agreed to, its card still shows ready, and the locked row still says why.
+    const fresh = approvalsView(state(DEFAULT_SETTINGS.approvals, { features: { aiReview: false } }), false);
+    expect(fresh.card).toBe("interactive");
+    expect(fresh.note).toMatch(/^Until you agree to Interactive, .* Your organisation turned off the check Assisted needs, so Assisted can't be chosen\.$/);
+    // A cap at Assisted, or none, locks nothing.
+    expect(approvalsView(approvalsState(agreed, { ...AdminPolicySchema.parse({}), approvals: { maxMode: "assisted" } }), false).rows.every(r => !r.locked)).toBe(true);
   });
 
   it("says why the mode in force isn't the one chosen: the organisation's cap, its check turned off, a choice that couldn't be recorded", () => {
