@@ -180,7 +180,7 @@ export class ExtensionsService implements ExtensionsApi {
   private tainted = false;
   /**
    * Server keys that said their tool list changed in this conversation (integrations-x9-1). Kept here as the taint
-   * is, across the reload such a word causes: a server that says it again has all its tools turned off.
+   * is, across the reload such a word causes: a server that says it again has the tools that differ turned off.
    */
   private announcers = new Set<string>();
   /** Installs and agreements run one at a time (two at once could take the same server key or copy into one folder). */
@@ -803,7 +803,8 @@ export class ExtensionsService implements ExtensionsApi {
    * "Ready"). The word itself is the change. The server leaves this session at once, unasked; the conversation is
    * tainted (the notice may have reached the runtime a moment before a request was built) and reloads between
    * turns, where the runtime's own first list is checked against the pins as at every load. A server that says it
-   * again in the same conversation has every tool it had in the session turned off until the user agrees again
+   * again in the same conversation leaves the session the same way, and each tool whose entry in its own list then
+   * differs from the pin is turned off until the user agrees again
    * (PLAN.md §2 "Connectors"). A stdio server's notice doesn't get this far: Ember's launcher never passes it to
    * the runtime (launch.ts), so this is for a remote server, and for anything that got past.
    */
@@ -815,14 +816,33 @@ export class ExtensionsService implements ExtensionsApi {
     if (gate !== this.session || gate.epoch !== this.epoch || gate.withdrawn.has(server)) return;
     const names = [...gate.tools].filter(([, e]) => e.server.key === server).map(([name]) => name);
     if (!names.length) return;
-    if (this.announcers.has(server)) {
-      void this.withdraw(gate, names, true).catch(err => this.o.log.warn("extensions.withdraw_failed", { err }));
-      return;
-    }
+    const again = this.announcers.has(server);
     this.announcers.add(server);
     this.tainted = true;
     void this.stopIn(gate, [server]);
     this.changed();
+    // Said again: only a tool whose entry in the server's own list differs from its pin is marked changed
+    // (integrations-y9-1: every tool was, with nothing in Review tools to review). Asked once a session at most (the
+    // server is withdrawn now); a list that can't be read leaves its tools denied for this conversation, unmarked.
+    if (again) void this.differs(gate, server).then(differ => differ?.length ? this.withdraw(gate, differ, true) : undefined).catch(err => this.o.log.warn("extensions.withdraw_failed", { err }));
+  }
+
+  /** The tools of `server` whose entry in its own list differs from the pin; undefined when the list can't be read. */
+  private async differs(gate: SessionGate, server: string): Promise<string[] | undefined> {
+    if (!gate.served) return undefined;
+    let now: Map<string, string>;
+    try {
+      const listed = await inTime(gate.served(server), LIST_WAIT_MS);
+      if (!Array.isArray((listed as { tools?: unknown })?.tools)) throw new Error("the runtime did not report the server's tools");
+      now = new Map(servedTools([listed]).map(t => [t.name, toolHash(t)]));
+    } catch {
+      this.o.log.info("extensions.served_tools_unread", { server });
+      return undefined;
+    }
+    // An old session's list must not change the pins of a newer conversation. A server that said meanwhile that its
+    // list changed is on its way out already: what its list shows to differ is still marked.
+    if (gate !== this.session || gate.epoch !== this.epoch) return undefined;
+    return [...gate.tools].filter(([, e]) => e.server.key === server && now.has(e.tool.name) && now.get(e.tool.name) !== e.tool.hash).map(([name]) => name);
   }
 
   /**
@@ -835,20 +855,9 @@ export class ExtensionsService implements ExtensionsApi {
    */
   private async afterCall(gate: SessionGate, server: string): Promise<void> {
     if (gate !== this.session || gate.epoch !== this.epoch || gate.withdrawn.has(server) || !gate.served || gate.mute.has(server)) return;
-    let now: Map<string, string>;
-    try {
-      const listed = await inTime(gate.served(server), LIST_WAIT_MS);
-      if (!Array.isArray((listed as { tools?: unknown })?.tools)) throw new Error("the runtime did not report the server's tools");
-      now = new Map(servedTools([listed]).map(t => [t.name, toolHash(t)]));
-    } catch {
-      gate.mute.add(server);
-      this.o.log.info("extensions.served_tools_unread", { server });
-      return;
-    }
-    // An old session's list must not change the pins of a newer conversation. A server that said meanwhile that its
-    // list changed is on its way out already: what its list shows to differ is still marked.
-    if (gate !== this.session || gate.epoch !== this.epoch) return;
-    const differ = [...gate.tools].filter(([, e]) => e.server.key === server && now.has(e.tool.name) && now.get(e.tool.name) !== e.tool.hash).map(([name]) => name);
+    const differ = await this.differs(gate, server);
+    // A server that doesn't give its list isn't asked again in this session.
+    if (!differ) { if (gate === this.session && gate.epoch === this.epoch) gate.mute.add(server); return; }
     if (differ.length) await this.withdraw(gate, differ, true);
   }
 
@@ -887,9 +896,9 @@ export class ExtensionsService implements ExtensionsApi {
    * Tools the session shows differently from their pins: each is marked changed for good (off until the user agrees
    * again; Home says "Changed since you agreed"), audited without its text, and its server is disabled in that session
    * so the model is no longer shown it; the conversation then reloads between turns without the tool. `seen`: the
-   * model may have been sent the text already (a change mid-session, or a server that said twice that its list
-   * changed), so every later extension call in this conversation asks; the same when the server couldn't be taken
-   * out. This only ever turns something off.
+   * model may have been sent the text already (a change mid-session, or one in the list of a server that said
+   * twice that its list changed), so every later extension call in this conversation asks; the same when the server
+   * couldn't be taken out. This only ever turns something off.
    */
   private async withdraw(gate: SessionGate, names: string[], seen: boolean): Promise<void> {
     let marked = false;
