@@ -88,9 +88,13 @@ export const TaskSchema = z.object({
     answers: z.array(z.object({ prompt: z.string(), answer: z.enum(["allow", "always", "deny"]) }).strict()).default([]),
     /** Apps the user already lets Ember act in. */
     grants: z.array(z.string()).default([]),
-    /** Interactive is in force, its card agreed to: every scope, as "Work without asking" gave (app/main/policy/autonomy.ts). */
-    autonomy: z.boolean().default(false),
-  }).strict().default({ answer: "allow", answers: [], grants: [], autonomy: false }),
+    /**
+     * The approval mode in force (app/main/policy/autonomy.ts): Interactive, the default and the release gate's mode
+     * (PLAN.md §10 "Settled" (6)), as chosen in Home with its card agreed to; or "asking", below Interactive, only for a
+     * task whose point is a question Interactive wouldn't put (the first step in an app, an ordinary borrow).
+     */
+    mode: z.enum(["interactive", "asking"]).default("interactive"),
+  }).strict().default({ answer: "allow", answers: [], grants: [], mode: "interactive" }),
   /**
    * Tools available beyond accessibility: the user's mouse (tier 3), Ember's desk (tier 2), and commands on this computer
    * (run_command through the real classifier, decision and local runner, in the attempt's folder; the card's answers come

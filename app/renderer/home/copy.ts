@@ -945,7 +945,7 @@ export const AUTONOMY_CONSENT_TEXT = "In Interactive, Ember does ordinary steps 
  * a match goes ahead whatever the step is, that it is announced and recorded, that the model can be wrong, what it
  * never clears, and that a stop always works. Change it only with a bump of that version.
  */
-export const ASSISTED_CONSENT_TEXT = "In Assisted, Ember works as in Interactive, and where it would ask you it first checks the step against what you asked. A lighter AI model makes that check. It is sent your own words for the task, typed or spoken, and Ember's short description of the step: the app, the window's title, the control's name and any text to type, or the command. If it finds you asked for exactly that, Ember goes ahead without asking, also where the step sends, deletes, pays or installs, or the command changes your system. Ember tells you each time, a command waits a few seconds with a Stop first, and What Ember did keeps a record. The model can be wrong: it may let through a step you didn't mean. It never clears a command that would show passwords or keys or keep running after you stop Ember, a step you said no to, anything Ember refuses, such as typing a password, or what you or your organisation set to ask every time. If it finds no match or can't tell, Ember asks you. “Ember, stop” or Ember's stop shortcut stops everything at once.";
+export const ASSISTED_CONSENT_TEXT = "In Assisted, Ember works as in Interactive, and where it would ask you it first checks the step against what you asked. A lighter AI model makes that check. It is sent your own words for the task, typed or spoken, and Ember's short description of the step: the app, the window's title, the control's name, a dialog's words, the text to type and what it replaces, a cell's formula and where carried text came from; or the command, its computer, shell and folder. If it finds you asked for exactly that, Ember goes ahead without asking, also where the step sends, deletes, pays or installs, or the command changes your system. Ember tells you each time, a command waits a few seconds with a Stop first, and What Ember did keeps a record. The model can be wrong: it may let through a step you didn't mean. It never clears a command that would show passwords or keys or keep running after you stop Ember, a step you said no to, anything Ember refuses, such as typing a password, or what you or your organisation set to ask every time. If it finds no match or can't tell, Ember asks you. “Ember, stop” or Ember's stop shortcut stops everything at once.";
 
 /**
  * Autopilot's card (Apps & privacy › How Ember asks, FEATURE_CONSENT_VERSION.autopilot; PolicyEngine.autopilotStep,
@@ -985,8 +985,12 @@ const CHECK_OFF_TEXT = `Your organisation turned off the check ${MODE_NAME.assis
 const ASKS_BEFORE = "Ember asks before its first step in an app, before using your mouse and keyboard, before pressing OK on an app's message box and before moving text between apps";
 /** Under the modes while Autopilot is in force: that it is, what that means, and how to stop it (never left unsaid). */
 const AUTOPILOT_ON = `${MODE_NAME.autopilot} is on: Ember sends, deletes, pays and installs without asking, and tells you as it goes. “Ember, stop” or Ember's stop shortcut stops it.`;
-/** That a question can be answered by voice (by anyone heard while Voice Match is off, its default: 2026-11-12). */
-const ANSWER_BY_VOICE = "You can answer a question by voice too: say “allow” or “not now” once Ember has asked, or “Ember, allow” later.";
+/**
+ * That a question can be answered by voice (by anyone heard while Voice Match is off, its default: 2026-11-12), and that
+ * a mode can be chosen by saying its name (app/main/agent/autonomy-intent.ts: one that asks less only with its card
+ * agreed to here).
+ */
+const ANSWER_BY_VOICE = "You can answer a question by voice too: say “allow” or “not now” once Ember has asked, or “Ember, allow” later. To change the mode by voice, say its name, such as “Ember, switch to Interactive”: one that asks less needs its card agreed to here first.";
 
 /**
  * Under the modes: what is in force and, where that isn't the mode chosen, why in one sentence; then that questions
@@ -994,13 +998,20 @@ const ANSWER_BY_VOICE = "You can answer a question by voice too: say “allow”
  * before main's state comes). `elevated`: Ember runs as an administrator or as root (elevationOf), so every command
  * asks whatever the mode says (commands/decide.ts): said, so the user can tell why.
  */
-export function approvalsNote(state: ApprovalsState | null, managed: boolean, elevated: "administrator" | "maybe-administrator" | "root" | null = null): string {
-  const base = managed || state?.why === "organisation" ? `Managed by your organisation: ${ASKS_BEFORE}.`
+/** The organisation's switches that say more than "managed" under the modes: actions off, or every action asked. */
+export interface OrgSwitches { actionsOff?: boolean; everyAction?: boolean }
+
+export function approvalsNote(state: ApprovalsState | null, managed: boolean, elevated: "administrator" | "maybe-administrator" | "root" | null = null, org: OrgSwitches = {}): string {
+  // A card that isn't agreed to as it reads now (a newer one, or none): its mode's row opens it again (modes-x9p-6).
+  const unread = (m: ApprovalMode, inForce: ApprovalMode) => `${MODE_NAME[m]}'s card isn't agreed to as it reads now, so ${MODE_NAME[inForce]} is in use: choose ${MODE_NAME[m]} to read it.`;
+  const base = managed || state?.why === "organisation" ? `Managed by your organisation: ${org.actionsOff ? "Ember doesn't act in your apps" : org.everyAction ? "Ember asks before every action" : ASKS_BEFORE}.`
     : !state ? ""
     : state.why === "not-recorded" ? `Ember couldn't save or record your choice, so it isn't in use: ${ASKS_BEFORE}. Choose it again to try once more.`
     : state.inForce === "asking" ? `Until you agree to ${MODE_NAME.interactive}, ${ASKS_BEFORE}.`
+    : state.why === "cap" && state.cap && modeRank(state.inForce) < modeRank(state.cap) ? `Your organisation allows ${MODE_NAME[state.cap]} at most, and ${unread(state.cap, state.inForce)} ${ANSWER_BY_VOICE}`
     : state.why === "cap" ? `Your organisation allows ${MODE_NAME[state.cap ?? state.inForce]} at most, so ${MODE_NAME[state.inForce]} is in use. ${ANSWER_BY_VOICE}`
     : state.why === "check-off" ? `${CHECK_OFF_TEXT}, so ${MODE_NAME[state.inForce]} is in use. ${ANSWER_BY_VOICE}`
+    : state.why === "card" && modeRank(state.chosen) > modeRank(state.inForce) ? `${unread(state.chosen, state.inForce)} ${ANSWER_BY_VOICE}`
     : state.why ? `${MODE_NAME[state.inForce]} is in use. ${ANSWER_BY_VOICE}`
     : state.inForce === "autopilot" ? `${AUTOPILOT_ON} ${ANSWER_BY_VOICE}`
     : ANSWER_BY_VOICE;
@@ -1008,8 +1019,16 @@ export function approvalsNote(state: ApprovalsState | null, managed: boolean, el
   // A row the organisation locks without it being the mode chosen says why here too (the note describes the rows).
   const below = managed || state?.why === "organisation";
   const lockedRow = below || !state ? "" : state.checkOff && state.why !== "check-off" && state.offered.includes("assisted") ? ` ${CHECK_OFF_TEXT}, so ${MODE_NAME.assisted} can't be chosen.`
-    : state.cap && state.why !== "cap" && state.offered.some(m => modeRank(m) > modeRank(state.cap)) ? ` Your organisation allows ${MODE_NAME[state.cap]} at most.` : "";
+    : state.cap && (state.why !== "cap" || state.inForce === "asking") && state.offered.some(m => modeRank(m) > modeRank(state.cap)) ? ` Your organisation allows ${MODE_NAME[state.cap]} at most.` : "";
   const said = `${base}${lockedRow}`;
+  // Autopilot doesn't ask for that (commands/autopilot.ts autopilotAsks: root is no reason to ask there): say what
+  // happens instead (modes-x9p-1).
+  if (state?.inForce === "autopilot" && !below) {
+    if (elevated === "administrator") return `${said} Ember is running as an administrator, so in Autopilot its commands run as an administrator without asking, each with a few seconds to stop it. Start it normally to change that.`;
+    if (elevated === "maybe-administrator") return `${said} Ember may be running as an administrator (it couldn't tell), and then in Autopilot its commands run so without asking, each with a few seconds to stop it. Start it normally to be sure.`;
+    if (elevated === "root") return `${said} Ember is running as root, so in Autopilot its commands run as root without asking, each with a few seconds to stop it. Start it as yourself to change that.`;
+    return said;
+  }
   if (elevated === "administrator") return `${said} Ember is running as an administrator, so it asks before every command. Start it normally to change that.`;
   if (elevated === "maybe-administrator") return `${said} Ember may be running as an administrator (it couldn't tell), and then it asks before every command. Start it normally to be sure.`;
   if (elevated === "root") return `${said} Ember is running as root, so it asks before every command. Start it as yourself to change that.`;
@@ -1024,7 +1043,7 @@ export interface ModeRowView { mode: ApprovalMode; name: string; line: string; c
  * and the card to show ready to agree, which is Interactive's while no mode is in force and nothing but its agreement
  * is missing. `managed`: as approvalsNote. Before main's state has come, the rows show unmarked and nothing is offered.
  */
-export function approvalsView(state: ApprovalsState | null, managed: boolean, elevated: "administrator" | "maybe-administrator" | "root" | null = null): { rows: ModeRowView[]; note: string; card: ApprovalMode | null; inForce: ApprovalMode | null } {
+export function approvalsView(state: ApprovalsState | null, managed: boolean, elevated: "administrator" | "maybe-administrator" | "root" | null = null, org: OrgSwitches = {}): { rows: ModeRowView[]; note: string; card: ApprovalMode | null; inForce: ApprovalMode | null } {
   const below = managed || state?.why === "organisation";
   const inForce = !state || below || state.inForce === "asking" ? null : state.inForce;
   const offered = APPROVAL_MODES.filter(m => (state?.offered ?? ["interactive"]).includes(m) && MODE_LINE[m] !== undefined);
@@ -1034,7 +1053,7 @@ export function approvalsView(state: ApprovalsState | null, managed: boolean, el
     return { mode, name: MODE_NAME[mode], line: MODE_LINE[mode] ?? "", checked: inForce === mode, locked, title: !locked ? "" : checkOff && !below ? CHECK_OFF_TEXT : "Managed by your organisation" };
   });
   const card = state && !below && state.inForce === "asking" && state.why !== "not-recorded" && rows.some(r => r.mode === "interactive" && !r.locked) ? "interactive" : null;
-  return { rows, note: approvalsNote(state, managed, elevated), card, inForce };
+  return { rows, note: approvalsNote(state, managed, elevated, org), card, inForce };
 }
 
 /**

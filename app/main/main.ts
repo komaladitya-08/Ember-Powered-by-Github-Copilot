@@ -24,6 +24,7 @@ import { auditRetentionDays, commandMode, heldUntilRestart, homeAdmin, modelServ
 import { approvalInputs, approvalsState, autonomyPermitted, chooseMode, modeAgreed, modeInForce } from "./policy/autonomy";
 import { ANSWER_CLOSED_STATUS, TaskVoiceTrust, VoiceRefusals, answerStatusOnQuestion, answerWindowStatus, heardAnswer, heardUnchecked, refusalEndsTrust, rejectionEndsTrust, voiceAnswer, type VoiceAnswerNote, type VoiceAnswerOutcome } from "./agent/voice-answer";
 import { ModeRecord, modeIntents } from "./policy/mode-record";
+import { ModeSeal } from "./policy/mode-seal";
 import { inspectEnvironment, keyboardRoute, sessionGreeting, type EnvReport } from "./environment";
 import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSender, keepClearOf, quitQuestion, setTextScale, settingsFromHome, setUpAppChrome } from "./windows";
 import { UPDATED_QUESTION, createUpdateCheck, restartAfterUpdate, updatedDetail } from "./install-watch";
@@ -1848,7 +1849,10 @@ function start(): void {
    * by Home's choice, voice or typed words (the host's intent says which, as it saves), the file or the policy; one to
    * a mode that asks less that can't be recorded is undone (policy/mode-record.ts).
    */
-  const modes = new ModeRecord({ settings, admin: () => policy, log });
+  const modes = new ModeRecord({ settings, admin: () => policy, log,
+    // What Ember recorded itself, sealed with the keyring: a mode above Interactive is taken from settings.json at start
+    // only where it matches (modes-x9s-2). On macOS the keychain is asked off the main thread, as the sign-in's is.
+    seal: new ModeSeal(path.join(userData, "approvals-seal.bin"), safeStorage, { asyncKeyring: platform.os === "darwin" }) });
   /** What the mode in force gives the policy engines and the workers: read at each decision, never kept. */
   const approvalsNow = () => approvalInputs(modeInForce(settings.get().approvals, policy));
   /**
@@ -2120,7 +2124,7 @@ function start(): void {
           if (spokenReply.kind === "none" && e.window === "answer") break;
           // A follow-up (no wake word) keeps the context from the last call. Without speaker rejection, a call, a video or
           // Ember's own voice can say it: it doesn't count as the user's own words for a dangerous command (OWNER V1).
-          // `verified`: Voice Match matched the owner's voice (what may turn "Work without asking" on).
+          // `verified`: Voice Match matched the owner's voice (what may choose a mode that asks less while it is on).
           turnLatency.heard(e.ms);
           // Near-misses corrected against the user's own words (personal/correct.ts): never into a risky request.
           const heard = personal.heard(e.text);
@@ -3765,12 +3769,13 @@ function start(): void {
       health: () => ({ mic: settings.get().wakeWord && voice ? voice.micState : "off", speaks: maySpeak() }),
       readOut,
       voiceTrust,
-      // "Work without asking" and "ask me first again" by voice or typed words (autonomy-intent.ts), against the approval
-      // mode: the first only once Interactive's card is agreed to in Settings (opened at it otherwise); the second
-      // takes Ember below Interactive by withdrawing every card's agreement, so the cards are read again before a mode.
+      // The approval mode by voice or typed words (autonomy-intent.ts: a mode named, "work without asking", "ask me first
+      // again"): a mode that asks less only by voice, by Voice Match's switch as a spoken yes is, and only once its card
+      // is agreed to in Settings (opened at it otherwise); "ask me first again" takes Ember below Interactive by
+      // withdrawing every card's agreement, so the cards are read again before a mode.
       autonomy: {
-        ...modeIntents({ settings, modes, admin: () => policy }),
-        open: consent => { showHome(); sendToHome(IPC.focusSection, consent ? "privacy:autonomy-yes" : "privacy:autonomy-on"); },
+        ...modeIntents({ settings, modes, admin: () => policy, voiceMatch: () => (!settings.get().voice.match ? "off" : matchNow() ? "on" : "unready") }),
+        open: (mode, card) => { showHome(); sendToHome(IPC.focusSection, `privacy:${mode === "interactive" ? "autonomy" : mode}-${card ? "yes" : "on"}`); },
       },
       // A typed "stop" while a task is at work: the kill switch, as "Ember, stop" is (tasks-approvals-v2).
       stopEverything: () => stopEverything("typed"),

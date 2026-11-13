@@ -1319,3 +1319,18 @@ describe("CHANGELOG.md", () => {
     expect(notes).toMatch(/On Windows, on macOS and on Linux without it, a dangerous command you asked for by voice asks/);
   });
 });
+
+describe("what the docs say Interactive does in the system's Settings (modes-x9p-7)", () => {
+  it("says what the engine decides there: a switch and an unasked first step ask, another page in a task asked for there doesn't", async () => {
+    const { PolicyEngine } = await import("../../app/main/policy/policy");
+    const { approvalInputs } = await import("../../app/main/policy/autonomy");
+    const i = approvalInputs("interactive");
+    const e = new PolicyEngine({ neverLook: () => [], grants: () => ({}), trustAskedApps: () => i.askedApps, autonomy: () => i.scopes });
+    const at = { taskId: "t", app: "gnome-control-center", window: "Settings", goal: "make the text bigger", askedIn: "gnome-control-center" };
+    expect(e.decide({ ...at, kind: "click", element: { role: "page tab", name: "Accessibility" } }).verdict).toBe("allow");
+    expect(e.decide({ ...at, kind: "toggle", element: { role: "toggle button", name: "Large Text" }, value: "on" }).verdict).toBe("confirm");
+    expect(e.decide({ ...at, askedIn: "gedit", kind: "click", element: { role: "page tab", name: "Accessibility" } }).verdict).toBe("confirm");
+    for (const f of ["docs/DEVELOPING.md", "CLAUDE.md"]) expect(fs.readFileSync(f, "utf8"), f).not.toMatch(/(Steps|steps) in the system's Settings and security apps (always )?ask/);
+    expect(fs.readFileSync("docs/DEVELOPING.md", "utf8")).toContain("In the system's Settings and security apps it asks more often: a switch or a choice there asks every time,");
+  });
+});

@@ -26,7 +26,7 @@ import { TURN_START_MS, TurnWatch, within } from "./conductor";
 import { asPasteClipboard, ClipboardTimeout, holdsPassword, type ClipboardSnapshot, type PasteClipboard, type TextClipboard } from "./clipboard";
 import { handStep, plainText, stepOf, type HandStep, type Presenter } from "./presenter";
 import { askedWords, type ActivityEvent } from "./activity";
-import { Refusals, stepNames, type Standing } from "../policy/refusals";
+import { Refusals, riskNames, stepNames, type Standing } from "../policy/refusals";
 import { pageBinding, pageBindingOf } from "./page-binding";
 import { cardApp } from "../../shared/activity";
 import type { Confirmer, Question } from "./confirm";
@@ -34,7 +34,7 @@ import type { WindowTarget } from "../perception";
 import type { AxNode, AxWindow, Bounds, ActionResult, ElementInfo, PointElement } from "../perception/sidecar";
 import { helperCantRun } from "../perception/sidecar";
 import type { PolicyEngine, ActionKind, ActionRequest, Agreement, Decision, DialogControl, ReadSource, TextMode, WindowId } from "../policy/policy";
-import { AUTOPILOT_WORDS, CHECKED_WORDS, riskyOnPage } from "../policy/policy";
+import { AUTOPILOT_WORDS, CHECKED_WORDS, isRiskyControl, riskyOnPage } from "../policy/policy";
 import type { CommandReviewer, StepChecker } from "../commands/review";
 import { afterTheStep, type AuditEntry, type AuditLog } from "../policy/audit";
 import type { AutonomyScopes } from "../policy/autonomy";
@@ -107,6 +107,11 @@ export interface WorkerDeps {
    * hear of it through the policy engine; this is for run_command's flow (an ordinary command carrying text from elsewhere).
    */
   autonomy?: () => AutonomyScopes | null;
+  /**
+   * Below Interactive for want of its card: the words for the first question Interactive would have announced instead,
+   * given once a run (null after, or where it doesn't apply). The host keeps the once (modes-x9p-3).
+   */
+  belowInteractiveHint?: () => string | null;
   /**
    * Autopilot is the approval mode in force (policy/autonomy.ts approvalInputs().autopilot): a command that would ask
    * is announced with its Stop instead, but for the few that still ask there (commands/flow.ts autopilotCommand). App
@@ -1389,7 +1394,7 @@ export class Worker {
    * role and name as the object itself gave them. What the step is bound to before and after its question is then the
    * page binding, not the whole tree (boundContext; cause 3b of the investigation of the owner's report of 2026-11-12).
    */
-  private pageBound: { role: string; name: string } | null = null;
+  private pageBound: { role: string; name: string; risky: boolean } | null = null;
   /** What that element had selected when it was found (a field typed into must still have it: checkPageTarget). */
   private pageSelection: string | undefined;
   /** The latest look for the cell with the keyboard found none because the read was cut short (a busy app): see cellWithKeyboard. */
@@ -2949,7 +2954,7 @@ export class Worker {
     this.pageBound = null;
     if (!live || truncated || this.actionAt === undefined || !this.pageControl(held)) return;
     if (pageBinding(this.actionTree, this.actionAt, title) === null) return;
-    this.pageBound = { role: live.role, name: live.name };
+    this.pageBound = { role: live.role, name: live.name, risky: isRiskyControl(live.role, live.name, this.kc.os) };
   }
 
   /**
@@ -2958,7 +2963,7 @@ export class Worker {
    * for actionContext (for a page's control: its own selection may have collapsed under Ember's click).
    */
   private boundContext(nodes: readonly AxNode[] = this.actionTree, title: string = this.window.name, clickedTextAt?: number): string {
-    return this.pageBound ? pageBindingOf(nodes, this.pageBound, title, clickedTextAt !== undefined) : this.actionContext(nodes, clickedTextAt);
+    return this.pageBound ? pageBindingOf(nodes, this.pageBound, title, clickedTextAt !== undefined, this.pageBound.risky) : this.actionContext(nodes, clickedTextAt);
   }
 
   /** Fail closed after approval, a lease or pointer movement if the approved context cannot still be established. */
@@ -3819,7 +3824,7 @@ export class Worker {
     const no = judged.find(j => j.d.verdict === "deny");
     // A batch with a cell the user already said no to filling in this task (or left unanswered): refused whole, with
     // no question, as one step is (authorize).
-    const names = judged.flatMap(j => this.namesOf(j.req));
+    const names = judged.flatMap(j => [...this.namesOf(j.req), ...this.risksOf(j.req, j.d)]);
     const stood = no ? null : this.refusals.step(names);
     if (stood) return this.refusedBefore({ ...base, element: { role: "table cell", name: jobs.map(j => j.cell).join(", ") } }, { tier: "confirm" }, stood);
     let asks = judged.find(j => j.d.verdict !== "allow");
@@ -4782,7 +4787,7 @@ export class Worker {
     if (decision.aligned === false) this.tainted = true;
     // A step the user already said no to in this task, or whose question nobody answered and they haven't spoken since:
     // never asked about again, checked or announced, whatever the mode would do with it now (Refusals).
-    const names = this.namesOf(req);
+    const names = [...this.namesOf(req), ...this.risksOf(req, decision)];
     const stood = decision.verdict === "deny" ? null : this.refusals.step(names);
     if (stood) return this.refusedBefore(req, decision, stood);
     // "Work without asking" is suspended for the rest of a task the user already said no in (fail closed): the step asks
@@ -4879,7 +4884,10 @@ export class Worker {
     const risky = !!decision.risky || this.steered;
     const again = this.reask?.key === step ? `${this.reask.words} ` : "";
     this.reask = null;
-    const question: WhereQuestion = { title: "May I?", context, ...(taskLine !== undefined ? { taskLine } : {}), prompt: `${again}${decision.prompt}`, options, task: this.spec.id, ...(where ? { where } : {}), ...(decision.detail ? { detail: decision.detail } : {}), ...(risky ? { risky: true } : {}) };
+    // A question Interactive would have announced instead (it has waivable scopes and nothing risky): once a run, how
+    // to make such steps announced (modes-x9p-3).
+    const hint = decision.waivable?.length && !decision.risky ? this.d.belowInteractiveHint?.() ?? null : null;
+    const question: WhereQuestion = { title: "May I?", context, ...(taskLine !== undefined ? { taskLine } : {}), prompt: `${again}${decision.prompt}${hint ? ` ${hint}` : ""}`, options, task: this.spec.id, ...(where ? { where } : {}), ...(decision.detail ? { detail: decision.detail } : {}), ...(risky ? { risky: true } : {}) };
     const answer = await this.ask(question, this.overSignal, askedWords({ kind: req.kind, ...(req.app ? { app: friendlyApp(req.app) } : {}), onDesk: !!req.onDesk }));
     this.audit({ event: "confirm", task: this.spec.id, kind: req.kind, app: req.app, element: req.element, ...auditValue(req), ...(req.onDesk ? { onDesk: true } : {}), answer: this.isOver ? "stopped" : answer ?? "expired", ...this.channelOf(question) });
     if (this.isOver) return STOPPED();
@@ -4929,6 +4937,15 @@ export class Worker {
     const says = req.kind === "keys" || req.kind === "open_app" || req.kind === "setting";
     return stepNames({ kind: req.kind, key: this.stepKey(req.element), named: !!req.element?.role, ...(says ? { value: req.value ?? "" } : {}),
       ...(req.kind === "keys" ? { activates: isActivatingKey(req.value ?? "", this.kc) } : {}) });
+  }
+
+  /**
+   * What a risky step does (refusals.ts riskNames: sending, deleting, paying…), by policy's own words for it, never the
+   * text it would type: after a no, the same thing done another way (a key, a menu item, another window) is refused for
+   * the rest of the task, in every mode (modes-x9s-3). An ordinary step goes by its own names alone.
+   */
+  private risksOf(req: Pick<ActionRequest, "element">, d: Pick<Decision, "risky" | "about" | "reason">): string[] {
+    return d.risky ? riskNames(`${d.about ?? ""} ${req.element?.name ?? ""} ${d.reason}`, !!d.about) : [];
   }
 
   /**

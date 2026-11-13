@@ -49,7 +49,7 @@ import { checkState, fixCommand, recheckMessage } from "./welcome-copy";
 import { holdsBack } from "../../shared/setup-attention";
 import { mountNaturalVoice } from "./natural-voice";
 import { keptWords, lockdownMicWords, lockdownNotice, lockdownSendLine, turnedOffWords } from "./admin-copy";
-import { LATEST_ANSWER, PendingSection, sectionRequest } from "./section-request";
+import { LATEST_ANSWER, modeCardRequested, PendingSection, sectionRequest } from "./section-request";
 import { startWelcome } from "./welcome";
 import { holdTaskNews, startTasks } from "./tasks";
 import { connectLabel, memoryWhatsOn, runtimeState, setupLinkText, statusWord, taskCounts, todayCounts, todaySummary, whatsOnLine } from "./status-copy";
@@ -562,6 +562,8 @@ window.ember.onSettingsNotice(n => { statusFence.pushedNotice(n); renderSettings
 let managed = new Set<string>();
 /** The organisation has Ember ask before every action: "Always in this app" grants don't apply. */
 let confirmEvery = false;
+/** The organisation turned acting in apps off: the note under the modes says so (modes-x9p-6). */
+let actionsOff = false;
 /** Never-look entries the administrator set (lower case): shown locked, never part of the user's own list. */
 let adminNeverLook = new Set<string>();
 /** The data list's "When you ask something" line as the page writes it, put back once Ember isn't locked down. */
@@ -610,6 +612,7 @@ renderRecipient();
 function renderAdmin(a: Status["admin"]): void {
   managed = new Set(a.managed);
   confirmEvery = a.confirmEveryAction;
+  actionsOff = a.features.actions === false;
   adminNeverLook = new Set((a.neverLook ?? []).map(x => x.trim().toLowerCase()));
   const el = $("managed");
   el.classList.toggle("error", !!a.error);
@@ -2194,7 +2197,7 @@ function closeModeCard(focus: boolean): void {
   if (focus || held) (row && !row.disabled ? row : $("approvals-h")).focus();
 }
 function renderApprovals(): void {
-  const view = approvalsView(approvalsNow, managed.has("autonomy"), elevationOf(checksNow));
+  const view = approvalsView(approvalsNow, managed.has("autonomy"), elevationOf(checksNow), { actionsOff, everyAction: confirmEvery });
   const group = $("approvals");
   // Drawn anew only when the modes offered change: a row under the pointer or the keyboard stays the one it was.
   if ([...group.children].map(c => (c as HTMLElement).dataset.mode).join() !== view.rows.map(r => r.mode).join()) {
@@ -2237,7 +2240,10 @@ $("approvals").addEventListener("click", e => {
   const mode = row?.dataset.mode as ApprovalMode | undefined;
   if (!row || !mode || row.disabled || row.getAttribute("aria-checked") === "true") return;
   openModeCard(mode);
-  $("approvals-yes").focus();
+  // The card from its title, so its words (Autopilot's risk comes first) are in view before "I agree"; the keyboard goes
+  // to "I agree" without scrolling them away (modes-x9p-2). The arm delay stays as it is.
+  $("approvals-card").scrollIntoView({ block: "start", behavior: "auto" });
+  $("approvals-yes").focus({ preventScroll: true });
 });
 // The arrow keys move between the modes without choosing one (choosing needs its card): Space or Enter presses the row.
 $("approvals").addEventListener("keydown", e => {
@@ -2290,9 +2296,10 @@ function showSection(value: string, asked = false): void {
   const inPane = paneOf(h);
   const opened = !document.body.classList.contains("first-run") && !!inPane && inPane !== pane;
   if (opened && inPane) { restoring = null; showPane(inPane, true); }
-  // Asked for by voice ("work without asking" before Interactive's card was agreed to): the card shows, focused on its
-  // agree button, which takes no press for AGREE_ARM_MS.
-  if (control === "approvals-yes" && !managed.has("autonomy") && modeRow("interactive") && !modeRow("interactive")?.disabled) openModeCard("interactive");
+  // Asked for by voice or typed words (a mode named before its card was agreed to): the card shows, focused on its
+  // agree button, which takes no press for AGREE_ARM_MS. Never for a mode whose row is locked (the organisation's).
+  const cardFor = modeCardRequested(value);
+  if (cardFor && !managed.has("autonomy") && modeRow(cardFor) && !modeRow(cardFor)?.disabled) openModeCard(cardFor);
   // "Get to know me" or Open Memory while memory is off or waits for its note: the note shows, focused on its words,
   // never its agree button (memory-r7). Memory already agreed to (saved under another account) gets the section alone.
   if (control === "memory-consent-text" && !managed.has("memory") && !memoryOn()) showConsentCard("memory-consent", "memory-yes");

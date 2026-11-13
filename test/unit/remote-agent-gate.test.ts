@@ -290,10 +290,10 @@ describe("gate 2 and the PC's Autopilot (modes-D3; PLAN.md §10 \"Settled\" (3))
   });
 
   it("asks for what the PC's announcement didn't name, and runs once the PC has announced that too", async () => {
-    const more = finding("system", "service.unit", "Restarts a service.");
+    const more = finding("system", "system.permissions", "Changes who can open files.");
     const first = await gate([RM, more], announced([RM]));
-    expect(first).toMatchObject({ status: "needs_confirm", reason: GATE_WORDS.disagree, rules: ["service.unit"] });
-    expect((await gate([RM, more], announced([RM], { rules: ["posix.rm", "autopilot", "service.unit"] }))).status).toBe("ok");
+    expect(first).toMatchObject({ status: "needs_confirm", reason: GATE_WORDS.disagree, rules: ["system.permissions"] });
+    expect((await gate([RM, more], announced([RM], { rules: ["posix.rm", "autopilot", "system.permissions"] }))).status).toBe("ok");
   });
 
   it("counts an announcement 120 s old or older as none", async () => {

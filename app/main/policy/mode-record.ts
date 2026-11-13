@@ -3,14 +3,40 @@
  * asking's switch): every change of it is an `autonomy` audit entry that says the mode, the one before and how it
  * changed (Home's choice, a voice or typed intent, the file, or the organisation's policy), and a change to a mode
  * that asks less that can't be recorded isn't made: the user's setting is put back as it was, and where that can't be
- * saved either, Ember is held below Interactive in memory (autonomy.ts holdAutonomyOff; review of PR #193). Nor is a
- * change to Autopilot that came from settings.json while Ember runs: only Ember's own windows choose it. Plain Node:
- * the settings store and the audit log are passed in.
+ * saved either, Ember is held below Interactive in memory (autonomy.ts holdAutonomyOff; review of PR #193).
+ *
+ * settings.json is a file any program can write, a text editor a worker drives included, so it never raises the mode
+ * on its own (modes-x9s-2, modes-x9p-5): while Ember runs, a change to it that raises the mode in force or agrees to a
+ * card is put back; at start, a mode above Interactive and the agreement to Assisted's or Autopilot's card are taken
+ * from it only where they match the keyring's seal of the setting as Ember last recorded it itself (mode-seal.ts),
+ * and Ember is at most Interactive until that seal is read. Only Home's choice and the host's intents, which Ember
+ * marks itself, change it upwards. Plain Node: the settings store, the seal and the audit log are passed in.
  */
 
-import { modeRank, type ModeInForce } from "../../shared/approvals";
-import { autonomyHeld, autonomyPermitted, holdAutonomyOff, modeAgreed, modeInForce, modeWithoutHold, releaseAutonomyHold, type ApprovalsSetting, type AutonomyAdmin } from "./autonomy";
+import { APPROVAL_MODES, modeRank, type ApprovalMode, type ModeInForce } from "../../shared/approvals";
+import { autonomyHeld, autonomyPermitted, holdAutonomyOff, holdUntilSealed, modeAgreed, modeInForce, modeWithoutHold, releaseAutonomyHold, type ApprovalsSetting, type AutonomyAdmin } from "./autonomy";
 import type { AuditEntry } from "./audit";
+import type { ModeSealStore } from "./mode-seal";
+
+type Card = ApprovalsSetting["consent"][ApprovalMode];
+const sameCard = (a: Card | undefined, b: Card | undefined): boolean => !!a && !!b && a.version === b.version && a.at === b.at;
+/** Does `now` hold an agreement to a card that `before` didn't hold just so? */
+const newAgreement = (before: ApprovalsSetting | null, now: ApprovalsSetting): boolean =>
+  APPROVAL_MODES.some(m => now.consent[m].version > 0 && !sameCard(now.consent[m], before?.consent[m]));
+/** Does the file claim a mode above Interactive, or the agreement to Assisted's or Autopilot's card? Then the seal is read. */
+const claimsAboveInteractive = (s: ApprovalsSetting): boolean => modeRank(s.mode) > modeRank("interactive") || s.consent.assisted.version > 0 || s.consent.autopilot.version > 0;
+
+/**
+ * What of settings.json's setting is taken at start, given the seal (null: none, or unreadable): Assisted's and
+ * Autopilot's agreements only as sealed, and the mode chosen no higher than the sealed one (Interactive without a
+ * seal). Interactive's own agreement is the file's, as every other card's is.
+ */
+export function trustedAtStart(own: ApprovalsSetting, sealed: ApprovalsSetting | null): ApprovalsSetting {
+  const consent = { ...own.consent };
+  for (const m of ["assisted", "autopilot"] as const) if (consent[m].version > 0 && !sameCard(consent[m], sealed?.consent[m])) consent[m] = { version: 0, at: null };
+  const top: ApprovalMode = sealed?.mode ?? "interactive";
+  return { mode: modeRank(own.mode) > modeRank(top) ? top : own.mode, consent };
+}
 
 /**
  * How the mode came to change: Home's choice, the host's voice or typed intent (`verified`: Voice Match verified the
@@ -29,6 +55,8 @@ export interface ModeRecordDeps {
     update(patch: { approvals: ApprovalsSetting }): unknown;
     onChange(fn: () => void): unknown;
   };
+  /** The keyring's seal of the setting as Ember last recorded it (mode-seal.ts). Without one, the file is taken as it is. */
+  seal?: ModeSealStore;
   /** The policy in force now (it may change while Ember runs: the held lockdown). */
   admin: () => AutonomyAdmin | null;
   log: { info(event: string, fields?: Record<string, unknown>): void; warn(event: string, fields?: Record<string, unknown>): void };
@@ -47,13 +75,22 @@ export class ModeRecord {
   private waiting: ModeEntry[] = [];
   /** The record is putting the setting back: that change needs no entry of its own. */
   private undoing = false;
+  /** The setting as Ember itself last changed it this run: newer than the seal read at start. */
+  private mine: ApprovalsSetting | null = null;
+  /** Settles once the seal has been read at start and the setting made to agree with it. */
+  readonly sealed: Promise<void>;
 
   constructor(private d: ModeRecordDeps) {
     const own = d.settings.own().approvals;
+    const seal = d.seal;
+    // At most Interactive until the seal says Ember recorded more itself.
+    const check = !!seal && claimsAboveInteractive(own);
+    if (check) holdUntilSealed(true);
     this.recorded = modeInForce(own, d.admin());
     this.good = own;
     this.seen = JSON.stringify(own);
     d.settings.onChange(() => this.changed());
+    this.sealed = check && seal ? seal.read().catch(() => null).then(s => this.unseal(s)) : Promise.resolve();
   }
 
   /**
@@ -62,7 +99,50 @@ export class ModeRecord {
    */
   as<T>(how: ModeChange, change: () => T): T {
     this.how = how;
-    try { return change(); } finally { this.how = null; }
+    try { return change(); } finally { this.how = null; this.sealMine(how); }
+  }
+
+  /** After a change Ember made itself, the setting as it now stands (recorded, or put back) is sealed for the next start. */
+  private sealMine(how: ModeChange): void {
+    if (!this.d.seal || how.via === "file" || how.via === "policy" || autonomyHeld()) return;
+    const own = this.d.settings.own().approvals;
+    this.mine = own;
+    void this.d.seal.write(own).then(kept => { if (!kept) this.d.log.warn("autonomy.seal_not_kept", {}); });
+  }
+
+  /**
+   * The seal is read (null: none, or unreadable): settings.json's setting is made to agree with it (trustedAtStart),
+   * and the mode it then gives is in force, recorded as found at start.
+   */
+  private unseal(sealed: ApprovalsSetting | null): void {
+    const own = this.d.settings.own().approvals;
+    const want = trustedAtStart(own, this.mine ?? sealed);
+    if (JSON.stringify(want) !== JSON.stringify(own)) {
+      this.d.log.warn("autonomy.unsealed", { chosen: own.mode, kept: want.mode });
+      try {
+        this.undoing = true;
+        try { this.d.settings.update({ approvals: want }); } finally { this.undoing = false; }
+        if (JSON.stringify(this.d.settings.own().approvals) !== JSON.stringify(want)) throw new Error("the setting couldn't be put right");
+      } catch (err) {
+        this.d.log.warn("autonomy.off_not_saved", { err });
+        holdAutonomyOff();
+      }
+    }
+    const now = this.d.settings.own().approvals;
+    this.seen = JSON.stringify(now);
+    this.good = now;
+    holdUntilSealed(false);
+    const mode = modeInForce(now, this.d.admin());
+    const before = this.recorded;
+    if (mode === before) return;
+    if (!this.audit) { this.recorded = mode; return; }
+    try {
+      this.audit.write({ event: "autonomy", mode, before, via: "file", verified: false, atStart: true });
+      this.recorded = mode;
+    } catch (err) {
+      this.d.log.warn("autonomy.audit_failed", { err });
+      if (modeRank(mode) > modeRank(before)) { this.good = null; holdAutonomyOff(); } else this.recorded = mode;
+    }
   }
 
   /** The audit log is open: what waited for it is written, and the mode found in force at start is recorded, or isn't in force. */
@@ -98,19 +178,20 @@ export class ModeRecord {
     const mode = modeWithoutHold(own, this.d.admin());
     const before = this.recorded;
     const up = modeRank(mode) > modeRank(before);
+    // settings.json changed outside Ember while it runs never raises the mode nor agrees to a card: a program that edited
+    // the file, a text editor a worker drives included, could forge the agreement too (modes-x9s-2, modes-x9p-5). Put
+    // back, as a change that can't be recorded is; Home's choice and the host's intents, which Ember marks itself, are how
+    // it is raised.
+    if (by.via === "file" && !same && (up || newAgreement(this.good, own))) {
+      this.d.log.warn("autonomy.raised_by_file", { before, mode });
+      this.undo();
+      return;
+    }
     // No higher than what is recorded: the hold has done its work, and a later move up is audited afresh.
     if (!up) releaseAutonomyHold();
     // Held, and the setting is still the one that couldn't be recorded: it stays held until the choice is made again.
     else if (autonomyHeld() && same) return;
     if (mode === before) { this.good = own; return; }
-    // Autopilot is never chosen without its card: a settings.json changed outside Ember while it runs can't put it in
-    // force (a model that edited the file through an app could forge the agreement too). Put back, as a change that
-    // can't be recorded is; Home's choice and the host's intents, which Ember marks itself, are how it is chosen.
-    if (up && mode === "autopilot" && by.via === "file") {
-      this.d.log.warn("autonomy.autopilot_by_file", { before });
-      this.undo();
-      return;
-    }
     const entry: ModeEntry = { mode, before, via: by.via, verified: by.verified };
     try {
       // No audit log yet: a mode that asks less is refused (it can't be recorded), one that asks more is kept for the log.
@@ -147,22 +228,36 @@ export class ModeRecord {
 const WITHDRAWN: ApprovalsSetting = { mode: "interactive", consent: { interactive: { version: 0, at: null }, assisted: { version: 0, at: null }, autopilot: { version: 0, at: null } } };
 
 /**
- * What the host's "work without asking" and "ask me first again" do to the mode (agent/autonomy-intent.ts plans them,
- * and says each reply): the first takes effect only with Interactive's card already agreed to in Settings, and then
- * only has to be recorded (a mode that couldn't be before); the second takes Ember below Interactive by withdrawing
- * every card's agreement, for anyone. Built on the user's own setting, never the one with the policy applied.
+ * What the host's mode intents do to the setting (agent/autonomy-intent.ts plans them, and says each reply): a mode
+ * named is chosen as it is in Home, but only ever with its card already agreed to there (a switch can't agree to a
+ * card); "asking" (ask me first again) takes Ember below Interactive by withdrawing every card's agreement. Built on
+ * the user's own setting, never the one with the policy applied. `voiceMatch`: main's Voice Match switch, for the plan.
  */
-export function modeIntents(o: { settings: ModeRecordDeps["settings"]; modes: ModeRecord; admin: () => AutonomyAdmin | null }): {
-  state(): { on: boolean; consented: boolean; managed: boolean };
-  /** True once it is as asked and recorded (a mode that asks less whose audit entry can't be written is undone: say so, not "Okay"). */
-  set(on: boolean, how: { via: "voice" | "typed"; verified: boolean }): boolean;
+export function modeIntents(o: { settings: ModeRecordDeps["settings"]; modes: ModeRecord; admin: () => AutonomyAdmin | null; voiceMatch: () => "off" | "on" | "unready" }): {
+  state(): { inForce: ModeInForce; agreed: ApprovalMode[]; managed: boolean; cap: ApprovalMode | null; checkOff: boolean; voiceMatch: "off" | "on" | "unready" };
+  /**
+   * True once it is as asked and recorded: the mode asked for is in force, or, for a mode that asks more, one that asks
+   * at least as much. A mode that asks less whose audit entry can't be written is undone: say so, not "Okay".
+   */
+  set(to: ApprovalMode | "asking", how: { via: "voice" | "typed"; verified: boolean }): boolean;
 } {
-  const inForce = () => modeInForce(o.settings.own().approvals, o.admin()) !== "asking";
+  const inForce = () => modeInForce(o.settings.own().approvals, o.admin());
   return {
-    state: () => ({ on: inForce(), consented: modeAgreed(o.settings.own().approvals, "interactive"), managed: !autonomyPermitted(o.admin()) }),
-    set: (on, how) => {
-      o.modes.as(how, () => o.settings.update({ approvals: on ? o.settings.own().approvals : WITHDRAWN }));
-      return inForce() === on;
+    state: () => {
+      const own = o.settings.own().approvals;
+      const admin = o.admin();
+      return {
+        inForce: inForce(), agreed: APPROVAL_MODES.filter(m => modeAgreed(own, m)), managed: !autonomyPermitted(admin),
+        cap: admin?.approvals?.maxMode ?? null, checkOff: admin?.features.aiReview === false, voiceMatch: o.voiceMatch(),
+      };
+    },
+    set: (to, how) => {
+      const before = inForce();
+      const own = o.settings.own().approvals;
+      // Never a card's agreement: only the mode, so a mode whose card isn't agreed to can't come into force this way.
+      o.modes.as(how, () => o.settings.update({ approvals: to === "asking" ? WITHDRAWN : { ...own, mode: to } }));
+      const after = inForce();
+      return to === "asking" ? after === "asking" : modeRank(to) > modeRank(before) ? after === to : modeRank(after) <= modeRank(to);
     },
   };
 }

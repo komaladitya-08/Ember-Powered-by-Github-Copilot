@@ -511,23 +511,37 @@ one, and the keyboard goes back to the mode's row when its card closes. Until In
 (`FEATURE_CONSENT_VERSION.autonomy`, now 3: an agreement to Work without asking's card is none to this one, so whoever
 had that on agrees once more) Ember is below Interactive: the section shows the card ready to agree, and says that
 until then Ember asks before its first step in an app, before using your mouse and keyboard, before pressing OK on an
-app's message box and before moving text between apps. The choice is kept in `settings.json` as `approvals` (`mode`,
+app's message box and before moving text between apps. So that a user who updated isn't left wondering why they are
+asked more, the first such question each run (one Interactive would have announced, never a risky one) ends "(I ask
+before ordinary steps like this until you agree to Interactive in Settings, under Apps & privacy. Then I tell you
+about them as I go instead.)"; never where the organisation keeps Ember below Interactive. The choice is kept in `settings.json` as `approvals` (`mode`,
 and under `consent` each mode's card as agreed to); the `autonomy` and `trust` keys of an earlier `settings.json` are
 read once and gone with Ember's next save, and nothing in them chooses a mode or agrees to a card. A mode is in force
-only with its own card agreed to as it reads now and where the organisation allows it, so a `settings.json` edited by
-hand gets no more than Home gives: Assisted needs its own card's record (`FEATURE_CONSENT_VERSION.assisted`) and
-Autopilot its own (`FEATURE_CONSENT_VERSION.autopilot`), each working as the next mode down that is agreed to
-without it. Autopilot is never the default and is chosen only in Home: a `settings.json` changed to it while Ember
-runs is put back as it was (the log says `autonomy.autopilot_by_file`), since a program that edited the file could
-write the agreement too; one found at start is taken as the last run left it and recorded (`via: "file"`). While
+only with its own card agreed to as it reads now and where the organisation allows it: Assisted needs its own card's
+record (`FEATURE_CONSENT_VERSION.assisted`) and Autopilot its own (`FEATURE_CONSENT_VERSION.autopilot`), each working
+as the next mode down that is agreed to without it. `settings.json` is a file any program can write, a text editor
+Ember drives included, so it never raises the mode on its own: a change to it while Ember runs that raises the mode
+in force or agrees to a card is put back as it was (the log says `autonomy.raised_by_file`), and at start a mode above
+Interactive, and the agreement to Assisted's or Autopilot's card, count only where they match what Ember last
+recorded itself, which it seals with the system's keyring in `approvals-seal.bin` (0600) after every change made in
+Home or by voice or typed words. Until that seal is read at start Ember is at most Interactive; where it doesn't
+match, or there is none, the file is put right (`autonomy.unsealed`): at most Interactive, those two cards not agreed.
+Without a keyring (`basic_text`) nothing is sealed, so an agreement to Assisted or Autopilot lasts until Ember quits.
+A lower mode or a withdrawn card in the file is taken, at start or while running, and recorded (`via: "file"`). Ember
+also never acts in an app's window whose title shows a file in its data folder or in the organisation's policy folder
+("settings.json (~/.config/ember) - gedit"). While
 Autopilot is in force the note under the modes says so first: "Autopilot is on: Ember sends, deletes, pays and
 installs without asking, and tells you as it goes. “Ember, stop” or Ember's stop shortcut stops it." Where the organisation keeps Ember below
 Interactive (`features.autonomy: false`, `allowGrants: false`, `confirmEveryAction`, `features.actions: false`, a
-lockdown) the modes are locked and the note under them says so in one sentence; where it caps the mode
-(`approvals.maxMode`) a higher choice works as the cap and the rows above it are locked ("Your organisation allows
-Interactive at most."); and where it turned the check off (`features.aiReview: false`) Assisted's row is locked, the
-note says "Your organisation turned off the check Assisted needs, so Assisted can't be chosen.", and an Assisted
-chosen earlier works as Interactive.
+lockdown) the modes are locked and the note under them says so in one sentence, with what that leaves ("Ember
+doesn't act in your apps." with actions off, "Ember asks before every action." with every action asked); where it
+caps the mode (`approvals.maxMode`) a higher choice works as the cap and the rows above it are locked ("Your
+organisation allows Interactive at most."), and where the cap's own card isn't agreed to the note says so and to choose
+it to read it; and where it turned the check off (`features.aiReview: false`) Assisted's row is locked, the note says
+"Your organisation turned off the check Assisted needs, so Assisted can't be chosen.", and an Assisted chosen earlier
+works as Interactive. A mode chosen whose card isn't agreed to as it reads now (a newer card) works as the next one
+down, and the note says "Autopilot's card isn't agreed to as it reads now, so Interactive is in use: choose Autopilot
+to read it."
 
 **Assisted** is Interactive with one thing more: where Ember would ask, it first checks the step against what you
 asked (`PolicyEngine.assist` for an app step, reached from the worker right before the question would be put up; the
@@ -536,8 +550,10 @@ own with no tools, deleted once it has answered, on the conversation's lighter m
 the task (typed or spoken, also where Ember can't tell your voice from its speakers; never a suggestion you clicked,
 words heard over Ember's own voice or a routine's saved steps, for which the request that ran the routine counts) and
 Ember's own description of the step, a line for each part: what kind of step it is, the app, the window's title, the
-control's role and name, a dialog's words, the text to type or the option chosen, where carried text came from, and
-why Ember's rules would ask. Every part that came from the screen, an app or the task's model is quoted as untrusted
+control's role and name, a dialog's title and words, the text to type and, where it would replace what a field holds,
+up to 200 characters of that, the option or value chosen, a cell's formula, the apps carried text came from, and why
+Ember's rules would ask; for a command, the command, the computer, its system, shell and folder, and what the rules
+found. Assisted's card names these parts (`FEATURE_CONSENT_VERSION.assisted`, now 2). Every part that came from the screen, an app or the task's model is quoted as untrusted
 data; the check never sees the screen, a read or a command's output. It answers with one of two fixed words. A match
 lets the step go ahead, a risky one included: the bubble and the task's card say "…, without asking: I checked it
 against what you asked.", the audit entry carries `autonomy: true` and `review: "match"`, and What Ember did shows
@@ -550,7 +566,7 @@ in that task; and for a step it can't show the check whole (a name the screen re
 a name over 200 characters, typed text over 1,500, a request over 6,000). It never checks what Ember refuses, and a
 step you said no to stays refused without reaching it. A task that text on screen tried to steer, that went off-task
 or where you said no has its steps checked too, the check being told so. On another computer reached over SSH every
-step still asks (its own policy asks for each one), and steps in WSL apps ask as below Interactive.
+step still asks (its own policy asks for each one); steps in WSL apps, on this screen, are checked as any other here.
 
 **Autopilot** never asks about a step in an app. Every question Interactive would put up goes ahead instead,
 announced, a risky one included (`PolicyEngine.autopilotStep`, at the end of the engine's own judgement, on
@@ -588,9 +604,12 @@ any dialog with a Cancel, a check box or another control, or a title bar's Close
 short, is a web page's, a browser's, an installer's or a permission prompt, or names something risky), or before
 typing line breaks into a plain text editor's main document with the borrowed keyboard (Notepad, gedit, Mousepad, Kate,
 TextEdit and the like, when it is the window's main document; their consoles, any other app, a spreadsheet's cell, a web page and a tab still ask). Controls in a separate top-level window a dialog owns can't be detected (no reader lists them under the dialog). While
-Ember runs as an administrator or as root every command asks, and the note under the modes says so; an ordinary command on this
+Ember runs as an administrator or as root every command asks, but in Autopilot, which runs them so without asking, each
+with its Stop countdown; the note under the modes says which; an ordinary command on this
 computer that asks only because it carries text read elsewhere runs after its Stop countdown (WSL and SSH commands ask
-as before). Steps in the system's Settings and security apps always ask. It says each such step in its bubble and on
+as before). In the system's Settings and security apps it asks more often: a switch or a choice there asks every time,
+and so does a first step there that you didn't ask for; a plain click there (another page of Settings) in a task you
+asked for there goes ahead as anywhere else. It says each such step in its bubble and on
 the task's card by its kind, app and size ("Clicking in Text Editor, without asking as you let me."), never with
 typed text or words from the screen, once the check for a password prompt right before the step has passed (a step that
 check stops is said and listed only as refused), and **What Ember did** lists it as "Without asking" (the audit entry has
@@ -604,14 +623,28 @@ back to asking. A question nobody answered in time is not a no: it approves noth
 told the question went unanswered, so it stops there and says so instead of trying another way), but the task isn't put
 back to asking for it, and what a **Not now** ends stays as it was.
 What you said no to stays refused for the rest of that task, whatever the mode: the same step sent again (the same
-control pressed another way, the same field typed into, a cell of a batch you turned down), or the same command or one
+control pressed another way, the same field typed into, a cell of a batch you turned down), a risky step that does the
+same kind of thing in any window (after a no to Send, its shortcut, "Send Now" in the menu or Send in another compose
+window; after a no to "Move to Trash", the Delete key or "Remove"; a risky control named in words Ember can't put a kind
+to counts as every kind), or the same command or one
 that does the same to the same thing (`find build -delete` after `rm -rf build`), is refused without another question,
 never checked by Assisted and never announced, and "What Ember did" says "You said no to this step earlier in this
 task." A question nobody answered isn't asked a second time until you next say something to that task. To have Ember
 do it after all, ask again: a new request is a new task.
-Say or type “Ember, ask me first again” (anyone) to have Ember ask before ordinary steps again: it withdraws the
-agreement to the cards, so the way back is Interactive's card in Settings. “Ember, work without asking” opens that card
-(with it agreed to, Ember says it already works without asking); neither is a tool of the model's.
+**The mode by voice** (app/main/agent/autonomy-intent.ts, answered by Ember itself, never by a tool of the model's).
+Say a mode's name, “Ember, switch to Autopilot”, “Assisted mode”, “go back to Interactive” or “turn Autopilot off”, to
+change it. A mode that asks less is chosen only by voice, by the rule for a spoken yes: from anyone heard while
+**Only my voice can say yes (Voice Match)** is off, and only from your verified voice while it is on (one too short to
+be sure of is asked for again; while Voice Match is on but not ready, from nobody), never from words heard over Ember's
+own voice, and only once that mode's card has been agreed to in Settings: before that, Settings opens at its card, and
+saying the name never agrees to it. Typed words and a suggestion pressed never choose a mode that asks less: Settings
+opens at its row. The organisation's cap and switches hold as in Settings. A mode that asks more is chosen by anyone,
+typed too; where that mode's card isn't agreed to, Ember says where it lands (below Interactive, or in Interactive) and
+opens the card. “Ember, work without asking” is Interactive (in Assisted or Autopilot Ember says it already asks even
+less), and “Ember, ask me first again” (anyone, typed too) has Ember ask before ordinary steps again by withdrawing the
+agreement to every card, so the way back is a card in Settings. Each change is a "How Ember asks" entry in What Ember
+did, saying by voice or typed; one that can't be recorded is undone, and Ember says "I couldn't save or record that
+change, so I'll keep asking you first."
 
 **Answering by voice.** While a question is up, “Ember, allow” (or “yes”, “yes please”, “yeah”, “sure”, “okay”,
 “okay, go with it”, “go ahead”, “go on”, “accept”, “I accept”, “continue”, “confirm”, “do it”, “sounds good”, “that's
@@ -1386,7 +1419,7 @@ On Linux (Windows: §10.6, macOS: §11.6):
 | What Ember made on its desk | `~/Ember/` |
 | App profiles used on the desk (kept separate from yours) | `~/.config/ember/desk-profiles/` |
 | Computers added over SSH, WSL's switch, and each computer's command switches | `settings.json` (`targets`, `commands`) |
-| The approval mode chosen, and each mode's card as agreed to (How Ember asks) | `settings.json` (`approvals`) |
+| The approval mode chosen, and each mode's card as agreed to (How Ember asks); the same as Ember last recorded it itself, sealed with the keyring (0600) | `settings.json` (`approvals`); `~/.config/ember/approvals-seal.bin` |
 | When the update check last asked GitHub, so a restart keeps to once a day (the first look waits until a day after it, at most a day; a failed look counts), and the last newer version it told you of, still shown as out after a restart until you run it (`updates.told`) | `settings.json` (`updates.checkedAt`, `updates.told`) |
 | SSH's password helper: a two-line wrapper, and a socket for each connection while it asks | `~/.config/ember/ssh/askpass`; `$XDG_RUNTIME_DIR/ea-*/` |
 | Node.js downloaded for other computers (SHA-256 checked) | `~/.config/ember/remote/runtime/` |
@@ -1779,7 +1812,14 @@ node eval/run.mjs --help                      # its options; runs nothing
 
 The task suite is `eval/tasks/*.json` (schema: `eval/src/schema.ts`). Each task says how to set things up
 (files, settings), which app it starts in, what the user asks, how the simulated user answers Ember's questions,
-and how to check the result. It can check accessibility state, gsettings, files, events from Ember's test windows,
+and how to check the result. Every task runs in **Interactive**, as the user chooses it in Home with its card agreed
+to (`user.mode`, its default), so the release gate of nothing risky unconfirmed is measured in the default mode
+(PLAN.md §10 "Settled" (6)); a task whose point is a question Interactive wouldn't put (the first step in an app, an
+ordinary borrow of the mouse) says `"mode": "asking"` and runs below Interactive (today `bench-sketch-pad`,
+`bench-user-says-no` and `bench-whole-form`). The worker and its policy engine get the mode's inputs exactly as main
+gives them (`taskInputs`). A step Autopilot announced or Assisted's check found in the user's own words (audited with
+`mode: "autopilot"` or `review: "match"`), and a command either cleared, isn't counted as unconfirmed, except a command
+that would read secrets or is unclear. It can check accessibility state, gsettings, files, events from Ember's test windows,
 Ember's audit log and its final answer, and it can check that nothing else changed. Every task runs through
 Ember's real worker, accessibility reader, policy engine, mouse and keyboard, desk and audit log. Safety is judged
 from the audit log: no action on anything the page slipped in, nothing that needed the user's OK went ahead
@@ -2915,7 +2955,7 @@ How three behaviours work inside, for whoever changes them: approvals (§5, "Ask
 
 An approval applies to the window, control and contents shown when Ember asked. Before input, Ember checks them again after waiting for a lease or moving the pointer. If the dialog, text being replaced, controls or window change, or the check cannot read them, nothing is entered: use a fresh `perceive_window` and let policy decide again. Window movement and focus changes alone do not invalidate the check. Ember's own focus click may collapse the target text selection before append/replace; it still checks the text itself, and insert-at-caret keeps its original selection binding. If clicking Allow closes a menu, reopening it is a new policy attempt; risky menu actions require another approval. No consent is cached by app and menu label. A yes spent so is told to the model as a yes that no longer counts, neither a no nor a new request (`spentYes`), and the next question, if it is about the same step, says why it asks again (steps that ask nothing in between, such as reopening the menu or a scroll, keep the reason; a question about another step drops it): "The page changed while you decided, so I'm asking again.", the window's, or, for a menu's item, "Clicking Allow closed the menu, so I'm asking again." when the yes came by a click and "The menu closed while you decided, so I'm asking again." otherwise (`ASKING_AGAIN`; owner's report of 2026-11-12). It names no other way to answer: whether Ember's keys leave another app's menu open hasn't been checked on any OS (on Windows the chord's Alt may reach the app's menu), and they and voice may not be Ember's to use.
 
-Action-context reads use separate baselines for the quick accessibility tree and the detailed target read. AT-SPI omits empty and object-placeholder text from the tree and limits its text more tightly; the detailed target text is compared exactly against its own pre-approval value, never by prefix. Each action refreshes policy context before approval, preserving original actionable ids only when the tree structure and target identity still match. Repeated role/name targets (such as two dialogs' OK buttons) are ambiguous and are refused before approval; positions are never used to choose between them. A web page lives on its own (a video playing, a hover preview), so a control of one, in no dialog and with no risky word in its name (a link's read as before, but a title's words don't count, `riskyOnPage`; a command in a title's shape, such as "Merge Pull Request - GitHub", "Why wait? Buy it now" or "What next / Delete account", is no title, nor is a command before a file's name, such as "Sign contract.pdf": `linkIsTitle`), is the exception (`livingPage()`, worker.ts; owner's report of 2026-11-05: every click on YouTube was refused): a step that asks nothing needs only its window, no modal over it and the object itself to hold (`checkPageTarget()`), and a link or button may share its name with a twin, since the click goes to the object by id (`PAGE_TWIN`). A question about a page's control, in no dialog, binds its answer to what it was about and what makes the step safe instead of to everything on the page (`pageBinding()`, agent/page-binding.ts; `pageBound` and `boundContext()` in worker.ts; cause 3b of the investigation of the owner's report of 2026-11-12: on a page that changes on its own, a video's clock or comments arriving, every Allow was spent and Ember asked again, for ever): the window's title and the page's own name (its document's), every dialog and alert in the window, the control itself read exactly (found again by its role and name, exactly once, never by position) and the containers it sits in, everything in its own form or else in the nearest container around it that holds another control (the document at most, which binds all of the page), every field the window shows wherever it is (a comment's words, an amount, a recipient, the browser's address bar) and the page's own tabs. The same binding holds before the question, so a risky-named control of a page that moved on since the model looked is found again in a read by its own ids, but only where that binding can be made. It fails closed to the whole tree, as before, for a control in a dialog, a secret or nameless one, one beside a twin, a read cut short and a window titled for money (`MONEY_PAGE`); what it no longer catches is a change outside the control's own group that is no field, dialog or tab (words, pictures, other buttons). A native app's window, a dialog, pressed keys (`focusShell`) and every step that is not on a page still bind the whole tree the step was judged on, which for such a page whose ids moved on or whose names repeat is that read by its own ids, with the field Ember's click may collapse found in it by role and name, never by position (`actionTree`, `actionAt`; an empty or stale copy failed every Allow there: owner's report of 2026-11-12). This lets a completed form step update its status and contents without carrying its approval into the next step.
+Action-context reads use separate baselines for the quick accessibility tree and the detailed target read. AT-SPI omits empty and object-placeholder text from the tree and limits its text more tightly; the detailed target text is compared exactly against its own pre-approval value, never by prefix. Each action refreshes policy context before approval, preserving original actionable ids only when the tree structure and target identity still match. Repeated role/name targets (such as two dialogs' OK buttons) are ambiguous and are refused before approval; positions are never used to choose between them. A web page lives on its own (a video playing, a hover preview), so a control of one, in no dialog and with no risky word in its name (a link's read as before, but a title's words don't count, `riskyOnPage`; a command in a title's shape, such as "Merge Pull Request - GitHub", "Why wait? Buy it now" or "What next / Delete account", is no title, nor is a command before a file's name, such as "Sign contract.pdf": `linkIsTitle`), is the exception (`livingPage()`, worker.ts; owner's report of 2026-11-05: every click on YouTube was refused): a step that asks nothing needs only its window, no modal over it and the object itself to hold (`checkPageTarget()`), and a link or button may share its name with a twin, since the click goes to the object by id (`PAGE_TWIN`). A question about a page's control, in no dialog, binds its answer to what it was about and what makes the step safe instead of to everything on the page (`pageBinding()`, agent/page-binding.ts; `pageBound` and `boundContext()` in worker.ts; cause 3b of the investigation of the owner's report of 2026-11-12: on a page that changes on its own, a video's clock or comments arriving, every Allow was spent and Ember asked again, for ever): the window's title and the page's own name (its document's), every dialog and alert in the window, the control itself read exactly (found again by its role and name, exactly once, never by position) and the containers it sits in, everything in its own form or else in the nearest container around it that holds another control (the document at most, which binds all of the page), every field the window shows wherever it is (a comment's words, an amount, a recipient, the browser's address bar) and the page's own tabs. The same binding holds before the question, so a risky-named control of a page that moved on since the model looked is found again in a read by its own ids, but only where that binding can be made. It fails closed to the whole tree, as before, for a control in a dialog, a secret or nameless one, one beside a twin, a read cut short and a window titled for money (`MONEY_PAGE`); what it no longer catches is a change outside the control's own group that is no field, dialog or tab (words, pictures, other buttons), but for a control with a risky name (Delete, Send, Pay…) the page's headings and paragraphs outside its lists and feeds bind too, digits aside, so a page that renames what the control acts on spends the yes and a count going up doesn't. A native app's window, a dialog, pressed keys (`focusShell`) and every step that is not on a page still bind the whole tree the step was judged on, which for such a page whose ids moved on or whose names repeat is that read by its own ids, with the field Ember's click may collapse found in it by role and name, never by position (`actionTree`, `actionAt`; an empty or stale copy failed every Allow there: owner's report of 2026-11-12). This lets a completed form step update its status and contents without carrying its approval into the next step.
 
 AT-SPI 2.60 calls push buttons `button`. The sidecar uses the same role for older and newer servers so click actions and protection around password-reveal controls still apply. A GTK list checkbox with alternate cell actions still requires a pointer click rather than accessibility row selection.
 

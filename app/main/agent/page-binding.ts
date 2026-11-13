@@ -14,6 +14,11 @@
  *   amount or a recipient beside a "Send", and the browser's own address bar, which says where the page is), and the
  *   page's own tabs with the one chosen.
  *
+ * For a control whose name is risky (Delete, Send, Pay…) also every heading and paragraph of the page outside its lists
+ * and feeds, digits aside: where the thing it acts on is named ("Delete ana/scratch" beside "Delete this repository"),
+ * so a page that renames it while the user decides spends the yes (modes-x9s-4), while a count going up or comments
+ * arriving don't.
+ *
  * The rest of the page may change: text, pictures, lists and buttons outside the control's own group. Anything that
  * can't be read fails closed: no binding is made (the caller binds the whole tree, as before) where the control is in a
  * dialog, is secret, has no name (what it is called then comes from what stands around it), isn't in a page, has a
@@ -37,6 +42,11 @@ const MONEY_PAGE = /\b(checkout|check out|pay|pays|paying|payment|payments|billi
 /** The states that say what a control is or holds (the same the whole-tree binding keeps: worker.ts actionContext). */
 const STATES = /^(editable|multi line|protected|read only|disabled|sensitive|enabled|selected|checked|pressed|expanded)$/;
 
+/** What names the thing a risky control acts on, beside it: bound for such a control. */
+const PROSE = /^(heading|paragraph)$/;
+/** What a page fills on its own as it lives (comments, a feed, a table of results): its headings aren't bound. */
+const FEED = /^(list|list item|feed|article|table|tree|tree table|log|marquee|timer)$/;
+
 /** Does `n` hold something entered or chosen? */
 const isField = (n: AxNode) => FIELD.test(n.role) || !!n.editable || !!n.secret || n.states.includes("editable");
 
@@ -53,8 +63,9 @@ function said(n: AxNode, parent: number | "missing" | null | undefined, clicked 
  * The binding for the control at `at` in `nodes` (one whole read of its window, in document order), or null where none
  * can be made (see the module's note): the caller then binds the whole tree. `title`: the window's. `clicked`: text
  * goes into the control after Ember's own click into it, which may collapse its selection (only that is excused).
+ * `risky`: the control's name is risky, so the page's headings and paragraphs bind too.
  */
-export function pageBinding(nodes: readonly AxNode[], at: number, title: string, clicked = false): string | null {
+export function pageBinding(nodes: readonly AxNode[], at: number, title: string, clicked = false, risky = false): string | null {
   const target = nodes[at];
   if (!target || !target.name.trim() || target.secret || target.withheld || DIALOG.test(target.role) || target.dialogBox || MONEY_PAGE.test(title)) return null;
   const index = new Map<number, number>();
@@ -84,6 +95,16 @@ export function pageBinding(nodes: readonly AxNode[], at: number, title: string,
     }
     return false;
   };
+  /** Is the node at `j` inside something the page fills on its own (FEED)? */
+  const inFeed = (j: number): boolean => {
+    for (let p = nodes[j].parent, hops = 0; p !== null && hops <= 200; hops++) {
+      const i = index.get(p);
+      if (i === undefined || i === doc) return false;
+      if (FEED.test(nodes[i].role)) return true;
+      p = nodes[i].parent;
+    }
+    return false;
+  };
   // Its own group: its form, or the nearest container around it that holds another control; the document at most.
   const form = chain.find(i => i !== doc && nodes[i].role === "form");
   const group = form ?? chain.find(i => i === doc || nodes.some((n, j) => j !== at && (CONTROL.test(n.role) || isField(n)) && within(j, i)))!;
@@ -107,6 +128,7 @@ export function pageBinding(nodes: readonly AxNode[], at: number, title: string,
     fields: nodes.flatMap((n, j) => (isField(n) ? [said(n, undefined, clicked && j === at)] : [])),
     // The page's own tabs (never the browser's, which are named after other pages and change with them).
     tabs: nodes.flatMap((n, j) => (n.role === "page tab" && within(j, doc) ? [{ name: n.name, states: n.states.filter(x => STATES.test(x)).sort() }] : [])),
+    ...(risky ? { prose: nodes.flatMap((n, j) => (PROSE.test(n.role) && within(j, doc) && !inFeed(j) ? [`${n.role}: ${n.name} ${n.text ?? ""}`.replace(/\d+/g, "#")] : [])) } : {}),
   });
 }
 
@@ -115,8 +137,8 @@ export function pageBinding(nodes: readonly AxNode[], at: number, title: string,
  * (never by position), or a string that equals no binding (the yes is spent: the control is gone, renamed or has a twin,
  * or its binding can no longer be made).
  */
-export function pageBindingOf(nodes: readonly AxNode[], who: { role: string; name: string }, title: string, clicked = false): string {
+export function pageBindingOf(nodes: readonly AxNode[], who: { role: string; name: string }, title: string, clicked = false, risky = false): string {
   const found = nodes.flatMap((n, i) => (n.role === who.role && n.name === who.name ? [i] : []));
   if (found.length !== 1) return `unbound: ${found.length} such controls`;
-  return pageBinding(nodes, found[0], title, clicked) ?? "unbound: the page's control can't be bound";
+  return pageBinding(nodes, found[0], title, clicked, risky) ?? "unbound: the page's control can't be bound";
 }

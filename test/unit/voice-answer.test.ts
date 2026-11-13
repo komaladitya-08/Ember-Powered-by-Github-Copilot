@@ -1,7 +1,8 @@
 /**
- * Spoken answers to Ember's questions and "Work without asking" by voice (owner decision of 2026-11-02): what counts as
- * an answer, when a yes may be taken (only the owner's verified voice, never Ember's own, only during the question,
- * never "Always"), that anyone may say "Not now", and the voice switch's plans.
+ * Spoken answers to Ember's questions (owner decisions of 2026-11-02 and 2026-11-12): what counts as an answer, when a
+ * yes may be taken (from anyone heard while Voice Match is off, only the owner's verified voice while it is on, never
+ * Ember's own, only during the question, never "Always"), and that anyone may say "Not now". The mode by voice is
+ * mode-intents.test.ts's.
  */
 
 import { describe, expect, it } from "vitest";
@@ -9,17 +10,8 @@ import { ANSWER_CLOSED_STATUS, ANSWER_LISTENING_STATUS, SHORT_YES_FLOOR, TASK_VO
 import { Confirmer, type Question } from "../../app/main/agent/confirm";
 import { SPOKEN_NO, SPOKEN_YES } from "../../app/shared/spoken-answer";
 import { questionAloud } from "../../app/main/agent/presenter";
-import { AUTONOMY_NOT_SAVED, autonomyIntent, planAutonomyIntent } from "../../app/main/agent/autonomy-intent";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
-import { AgentHost } from "../../app/main/agent/host";
-import { SettingsStore } from "../../app/main/settings";
-import { modeInForce } from "../../app/main/policy/autonomy";
-import { ModeRecord, modeIntents } from "../../app/main/policy/mode-record";
-import { AuditLog } from "../../app/main/policy/audit";
-import { modeCardVersion } from "../../app/shared/approvals";
-import type { Logger } from "../../app/main/logger";
 
 const options = [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }];
 const withAlways = [{ id: "always", label: "Always in gedit", primary: true }, { id: "once", label: "Allow" }, { id: "deny", label: "Not now" }];
@@ -405,102 +397,6 @@ describe("a spoken yes from anyone heard while Voice Match is off, its default (
     expect(main).toMatch(/confirmer\.answerVoice\(o\.answer, \{ verified: o\.verified, \.\.\.\(o\.kind === "answer" && o\.anyone \? \{ anyone: true \} : \{\}\),/);
     expect(main).toContain("confirmer: () => confirmer, unready: () => settings.get().voice.match && !matchNow(),");
     expect(fs.readFileSync(path.join(__dirname, "../../app/main/agent/voice-answer.ts"), "utf8")).toContain("const note = refusalNote(why, { answer, locked: c.voiceLocked, unready: this.d.unready() });");
-  });
-});
-
-describe("“Work without asking” by voice (autonomy-intent.ts)", () => {
-  it("hears turning it on and off, whole requests only", () => {
-    for (const on of ["Ember, work without asking", "Hey Ember, stop asking for permission", "Work without asking from now on.", "You don't need to ask me first", "Can you work without asking?"]) expect(autonomyIntent(on), on).toBe("on");
-    for (const off of ["Ask me first again", "Ember, ask me first", "Stop working without asking", "Start asking for permission again", "Check with me first"]) expect(autonomyIntent(off), off).toBe("off");
-    for (const other of ["Work on my report without asking Sam", "Ember, stop", "What does work without asking do?", "Open Files"]) expect(autonomyIntent(other), other).toBeNull();
-  });
-
-  it("turns it on only from the owner's verified voice with its card agreed to; otherwise opens it in Settings", () => {
-    const ready = { on: false, consented: true, managed: false, verified: true };
-    expect(planAutonomyIntent("on", ready)).toMatchObject({ set: true, reply: expect.stringMatching(/^Okay, I'll work without asking.*still ask before anything risky.*“Ask me first again”.*“Ember, stop”/) });
-    expect(planAutonomyIntent("on", { ...ready, verified: false })).toEqual({ open: { consent: false }, reply: expect.stringMatching(/Voice Match/) });
-    expect(planAutonomyIntent("on", { ...ready, consented: false })).toEqual({ open: { consent: true }, reply: expect.stringMatching(/I've opened it in Settings/) });
-    expect(planAutonomyIntent("on", { ...ready, consented: false, verified: false })).toMatchObject({ open: { consent: true } });
-    expect(planAutonomyIntent("on", { ...ready, managed: true })).toEqual({ reply: "Your organisation doesn't allow that, so I'll keep asking first." });
-    expect(planAutonomyIntent("on", { ...ready, on: true }).set).toBeUndefined();
-  });
-
-  it("asks for a little more, not for Voice Match's set-up, when the owner's voice was too short to vouch for (review of #127)", () => {
-    const plan = planAutonomyIntent("on", { on: false, consented: true, managed: false, verified: false, short: true });
-    expect(plan).toEqual({ reply: expect.stringMatching(/^Say a little more/) });
-    expect(plan.reply).not.toMatch(/Voice Match/);
-  });
-
-  it("turns it off for anyone, verified or not", () => {
-    expect(planAutonomyIntent("off", { on: true, consented: true, managed: false, verified: false })).toEqual({ set: false, reply: "Okay, I'll ask you first again. To change it back, choose Interactive in Settings." });
-    expect(planAutonomyIntent("off", { on: false, consented: false, managed: true, verified: false })).toEqual({ reply: "I already ask you first." });
-  });
-});
-
-describe("AgentHost's “work without asking” and “ask me first again” against the approval mode (no conductor tool, no Copilot turn; modes-A8)", () => {
-  const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as unknown as Logger;
-  const AT = "2026-11-12T10:00:00.000Z";
-  const host = () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-autonomy-voice-"));
-    const settings = new SettingsStore(path.join(dir, "settings.json"));
-    settings.load();
-    const audit = new AuditLog(path.join(dir, "audit"));
-    // As main wires it: the mode's record, and the intents built on it.
-    const modes = new ModeRecord({ settings, admin: () => null, log: quiet });
-    modes.opened(audit);
-    const answers: string[] = [];
-    const opened: boolean[] = [];
-    const h = new AgentHost({
-      userData: dir, runtimePath: "/nowhere/copilot-runtime", settings, log: quiet, setState: () => undefined, onStatus: () => undefined, onAnswer: t => answers.push(t),
-      autonomy: { ...modeIntents({ settings, modes, admin: () => null }), open: consent => { opened.push(consent); } },
-    });
-    /** Interactive's card agreed to in Home (APPROVALS_IPC.choose). */
-    const agree = () => modes.as({ via: "home", verified: false }, () => settings.update({ approvals: { ...settings.own().approvals, mode: "interactive", consent: { ...settings.own().approvals.consent, interactive: { version: modeCardVersion("interactive"), at: AT } } } }));
-    const entries = () => audit.recent(20).filter(e => e.event === "autonomy").reverse().map(e => [e.mode, e.before, e.via, e.verified]);
-    return { h, settings, answers, opened, agree, entries, inForce: () => modeInForce(settings.get().approvals) };
-  };
-
-  it("opens Interactive's card instead of putting a mode in force before the card is agreed to, even from a verified voice", async () => {
-    const { h, settings, opened, inForce, answers } = host();
-    expect(await h.ask("Ember, work without asking", null, h.stopEpoch, { verified: true })).toBe(true);
-    expect(inForce()).toBe("asking");
-    expect(settings.own().approvals.consent.interactive.version).toBe(0);
-    expect(opened).toEqual([true]);
-    expect(answers.at(-1)).toMatch(/I've opened it in Settings\. Agree there, and I'll work without asking\.$/);
-  });
-
-  it("never says it works without asking when the change couldn't be recorded (review of #127)", async () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-autonomy-voice-"));
-    const settings = new SettingsStore(path.join(dir, "settings.json"));
-    settings.load();
-    const answers: string[] = [];
-    const h = new AgentHost({
-      userData: dir, runtimePath: "/nowhere/copilot-runtime", settings, log: quiet, setState: () => undefined, onStatus: () => undefined, onAnswer: t => answers.push(t),
-      autonomy: { state: () => ({ on: false, consented: true, managed: false }), set: () => false, open: () => undefined },
-    });
-    await h.ask("Ember, work without asking", null, h.stopEpoch, { verified: true, spoken: true });
-    expect(answers).toEqual([AUTONOMY_NOT_SAVED]);
-  });
-
-  it("says what is true once Interactive is agreed to, and asks first again for anyone, typed or spoken", async () => {
-    const { h, answers, opened, agree, entries, inForce } = host();
-    agree();
-    expect(inForce()).toBe("interactive");
-    // Already in force: nothing to change, whoever asks.
-    await h.ask("work without asking");
-    expect(answers.at(-1)).toBe("I'm already working without asking. I still ask before anything risky, and “Ember, stop” stops me.");
-    expect(opened).toEqual([]);
-    // Anyone can have Ember ask first again: below Interactive, by withdrawing the agreement to its card.
-    await h.ask("Ask me first again");
-    expect(inForce()).toBe("asking");
-    expect(answers.at(-1)).toBe("Okay, I'll ask you first again. To change it back, choose Interactive in Settings.");
-    await h.ask("Ember, ask me first", null, h.stopEpoch, { spoken: true });
-    expect(answers.at(-1)).toBe("I already ask you first.");
-    // The way back is the card in Settings, even for the owner's verified voice.
-    await h.ask("work without asking", null, h.stopEpoch, { verified: true, spoken: true });
-    expect(inForce()).toBe("asking");
-    expect(opened).toEqual([true]);
-    expect(entries()).toEqual([["interactive", "asking", "home", false], ["asking", "interactive", "typed", false]]);
   });
 });
 

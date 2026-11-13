@@ -55,6 +55,35 @@ export function stepNames(s: StepAsked): string[] {
   return [`${WAY[s.kind]}\n${s.key}`];
 }
 
+/**
+ * What a risky step does, by the words policy found it risky for (Decision.about, the control's name, its reason):
+ * sending, deleting, paying… After a no, a later risky step of a kind the user turned down is that step done another way
+ * (Ctrl+Enter or "Send Now" for a refused Send, the Delete key or "Remove" for a refused "Move to Trash", Send in a
+ * second compose window), refused for the rest of the task without a question, a check or an announcement (modes-x9s-3).
+ */
+const DOES: readonly (readonly [string, RegExp])[] = [
+  ["send", /\b(send|sent|post|submit|publish|share|reply|forward|upload|tweet|invite)/i],
+  ["delete", /\b(delete|remove|trash|erase|discard|wipe|destroy|format|uninstall|purge|unsubscribe)/i],
+  ["pay", /\b(pay|buy|purchase|order|checkout|check out|donate|transfer|subscribe|billing)/i],
+  ["install", /\b(install|update|upgrade|download)/i],
+  ["sign-out", /\b(sign out|log out|logout|sign off|log off|disconnect)/i],
+  ["overwrite", /\b(overwrite|replace|save|revert|reset|restore)/i],
+  ["close", /\b(close|quit|exit|leave|block|ban)/i],
+  ["security", /\b(security|protection|firewall|password|permission|privacy|warning|unsafe)/i],
+];
+const RISK = "risk\n";
+/** A risky step whose kind Ember can't tell (another language, a bare "hard to undo"): it counts as every kind. */
+const ANY_RISK = `${RISK}*`;
+/**
+ * The names a risky step goes by besides its own (stepNames): one for each thing it does; where its words say none,
+ * ANY_RISK when policy named what makes it risky (`named`: Decision.about, a label in another language), else none (a
+ * borrow that is risky only because it takes the mouse and keyboard).
+ */
+export function riskNames(words: string, named = true): string[] {
+  const kinds = DOES.filter(([, re]) => re.test(words)).map(([k]) => `${RISK}${k}`);
+  return kinds.length ? kinds : named ? [ANY_RISK] : [];
+}
+
 /** One thing a dangerous command does, and to what: the class, and the path, branch, package… or else the rule. */
 export interface CommandAct {
   cls: DangerClass;
@@ -138,8 +167,15 @@ export class Refusals {
 
   /** How an app step stands: refused under any of its names, else waiting under any, else null (never asked, or allowed). */
   step(names: readonly string[]): Standing | null {
-    const found = names.map(n => this.steps.get(n));
+    const found = names.flatMap(n => this.standingOf(n));
     return found.includes("refused") ? "refused" : found.includes("waiting") ? "waiting" : null;
+  }
+
+  /** How one name stands; a kind of risky step also by a risky step of no known kind, and one of no known kind by any. */
+  private standingOf(n: string): (Standing | undefined)[] {
+    if (!n.startsWith(RISK)) return [this.steps.get(n)];
+    if (n === ANY_RISK) return [...this.steps].filter(([k]) => k.startsWith(RISK)).map(([, v]) => v);
+    return [this.steps.get(n), this.steps.get(ANY_RISK)];
   }
 
   /** A command's card ended without a yes, or the user stopped its countdown. */

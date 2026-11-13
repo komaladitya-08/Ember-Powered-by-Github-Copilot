@@ -28,7 +28,7 @@ import type { Logger } from "../../app/main/logger";
 import { friendlyApp } from "../../app/shared/apps";
 import { AUTONOMY_CONSENT_TEXT, approvalsNote, elevationOf } from "../../app/renderer/home/copy";
 import { FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
-import type { ApprovalsState } from "../../app/shared/approvals";
+import type { ApprovalMode, ApprovalsState } from "../../app/shared/approvals";
 
 const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as unknown as Logger;
 /** How Ember asks as main tells Home: Interactive in force, and nothing agreed to yet. */
@@ -1015,6 +1015,12 @@ describe("Home's line while Ember runs elevated (the owner's complaint)", () => 
       expect(approvalsNote(state, managed, "maybe-administrator")).toMatch(/ Ember may be running as an administrator \(it couldn't tell\), and then it asks before every command\. Start it normally to be sure\.$/);
       expect(approvalsNote(state, managed)).not.toMatch(/every command/);
     }
+    // Autopilot doesn't ask for that: it says what happens instead (modes-x9p-1).
+    const AUTOPILOT_ON_STATE = { ...IN_FORCE, chosen: "autopilot" as const, inForce: "autopilot" as const, agreed: ["interactive", "assisted", "autopilot"] as ApprovalMode[], offered: ["interactive", "assisted", "autopilot"] as ApprovalMode[] };
+    expect(approvalsNote(AUTOPILOT_ON_STATE, false, "root")).toMatch(/ Ember is running as root, so in Autopilot its commands run as root without asking, each with a few seconds to stop it\. Start it as yourself to change that\.$/);
+    expect(approvalsNote(AUTOPILOT_ON_STATE, false, "administrator")).toMatch(/ Ember is running as an administrator, so in Autopilot its commands run as an administrator without asking, each with a few seconds to stop it\. Start it normally to change that\.$/);
+    expect(approvalsNote(AUTOPILOT_ON_STATE, false, "maybe-administrator")).toMatch(/ Ember may be running as an administrator \(it couldn't tell\), and then in Autopilot its commands run so without asking, each with a few seconds to stop it\. Start it normally to be sure\.$/);
+    for (const e of ["root", "administrator", "maybe-administrator"] as const) expect(approvalsNote(AUTOPILOT_ON_STATE, false, e)).not.toMatch(/asks before every command/);
     // Before main has said how the modes stand, nothing is said.
     expect(approvalsNote(null, false, "administrator")).toBe("");
     expect(elevationOf([{ id: "elevated", label: "Administrator", status: "warn" }])).toBe("administrator");
