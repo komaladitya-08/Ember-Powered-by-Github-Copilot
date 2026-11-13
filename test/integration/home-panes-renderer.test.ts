@@ -1319,8 +1319,20 @@ describe.skipIf(gate)("Home's consent cards, by keyboard (accessibility-r9-2, ho
       await page.waitForTimeout(100);
       expect(await saves()).toEqual([]);
       expect(await page.locator(`#${card}`).isVisible()).toBe(true);
-      // A deliberate press once it has been up half a second agrees.
       await page.waitForTimeout(AGREE_ARM_MS);
+      // A key held since before it armed (the desktop's autorepeat, or the release of a held Space) is no press
+      // either, however long it has been up (product-ui-x9-3).
+      for (const key of ["Enter", "Space"]) {
+        await page.evaluate(() => (document.activeElement as HTMLElement).blur());
+        await page.keyboard.down(key);
+        await page.evaluate(id => document.getElementById(id)!.focus(), yes);
+        for (let i = 0; i < 5; i++) { await page.keyboard.down(key); await page.waitForTimeout(33); }
+        await page.keyboard.up(key);
+      }
+      await page.waitForTimeout(100);
+      expect(await saves()).toEqual([]);
+      expect(await page.locator(`#${card}`).isVisible()).toBe(true);
+      // A deliberate press once it has been up half a second agrees.
       await page.keyboard.press("Enter");
       await expect.poll(async () => (await saves()).length).toBe(1);
       expect(page.errors).toEqual([]);

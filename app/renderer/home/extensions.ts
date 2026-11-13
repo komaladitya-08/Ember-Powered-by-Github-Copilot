@@ -8,7 +8,7 @@
 
 import type { ExtensionsState, Status, EmberExtensionsApi } from "../../shared/ipc";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
-import { AGREE_ARM_MS } from "../../shared/provider";
+import { AGREE_ARM_MS, heldPress } from "../../shared/provider";
 import type { Installed, Marketplace, MarketplaceEntry } from "../../shared/extensions";
 import type { SettingsPatch } from "../../main/settings";
 import { marketplaceSource } from "../../shared/extensions-input";
@@ -219,6 +219,8 @@ function consentNode(c: ConsentCard): HTMLElement {
   const actions = el("div", "agent-actions");
   if (cardShown.for !== asking) cardShown = { for: asking, at: performance.now() };
   const yes = button(c.yes, "btn", "consent-yes", () => { if (performance.now() - cardShown.at >= AGREE_ARM_MS) void agree(); });
+  // Nor a key still held from the button that opened the card, whose repeat starts about as it arms (product-ui-x9-3).
+  yes.addEventListener("keydown", e => { if (heldPress(e)) e.preventDefault(); });
   yes.setAttribute("aria-describedby", lines.id);
   const no = button(c.no, "btn quiet", "consent-no", () => { const back = askedFrom(); asking = null; draw(); focusKey(back); });
   actions.append(yes, no);

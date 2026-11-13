@@ -397,6 +397,34 @@ describe.skipIf(gate)("Home's Extensions, as the person sets them up (2026-11-07
     await page.close();
   });
 
+  it("takes no Enter held on Add as agreeing, however long it repeats, and a fresh press after it agrees (product-ui-x9-3)", async () => {
+    const page = await open("extensions");
+    await page.getByRole("button", { name: "Browse awesome-copilot" }).click();
+    await page.getByRole("button", { name: "Add fake" }).focus();
+    // The desktop's autorepeat: a first repeat about as the card arms (500 ms on GNOME, Windows and macOS), then ~30 a second.
+    await page.keyboard.down("Enter");
+    await expect.poll(() => focused(page)).toBe("consent-yes");
+    await page.waitForTimeout(AGREE_ARM_MS);
+    for (let i = 0; i < 10; i++) { await page.keyboard.down("Enter"); await page.waitForTimeout(33); }
+    await page.keyboard.up("Enter");
+    await page.waitForTimeout(100);
+    expect(await calls(page)).toEqual([]);
+    expect(await page.locator(".ext-consent").innerText()).not.toContain("Review the tools");
+    // Space held the same way: its release on the armed button is no press either.
+    await page.evaluate(() => (document.activeElement as HTMLElement).blur());
+    await page.keyboard.down("Space");
+    await page.evaluate(() => document.querySelector<HTMLElement>('[data-key="consent-yes"]')!.focus());
+    for (let i = 0; i < 5; i++) { await page.keyboard.down("Space"); await page.waitForTimeout(33); }
+    await page.keyboard.up("Space");
+    await page.waitForTimeout(100);
+    expect(await calls(page)).toEqual([]);
+    // A press of its own agrees.
+    await page.keyboard.press("Enter");
+    await expect.poll(() => page.locator(".ext-consent").innerText()).toContain("Review the tools in “fake”");
+    expect((page as Page & { errors: string[] }).errors).toEqual([]);
+    await page.close();
+  });
+
   it("keeps keyboard focus on the item after Agree and use tools, and says Ember can use it now, not again (integrations-8)", async () => {
     const page = await open("extensions");
     await page.getByRole("button", { name: "Browse awesome-copilot" }).click();

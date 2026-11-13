@@ -76,6 +76,14 @@ export function ownConnected(s: { host: string; listed?: boolean }): boolean {
 export const AGREE_ARM_MS = 500;
 
 /**
+ * Is this key-down the repeat of a held Enter or Space? An agree button drops these (its default is prevented), at any
+ * time: the arm delay stops a doubled press, but a desktop's autorepeat starts about as the delay ends (500 ms on
+ * GNOME, Windows and macOS), so a key held on the control that opened a card would agree to it. With the key-down
+ * prevented, the held key's release presses nothing either. Agreeing takes a press that began on the button.
+ */
+export const heldPress = (e: { key: string; repeat: boolean }): boolean => e.repeat && (e.key === "Enter" || e.key === " ");
+
+/**
  * Runs asynchronous reads of one thing so only the newest one's outcome (value or failure) is applied: an older read that
  * settles after a newer one began is dropped, so a late failure can't overwrite a newer success, nor a late success a
  * newer failure.

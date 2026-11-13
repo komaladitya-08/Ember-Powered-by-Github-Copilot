@@ -26,7 +26,7 @@ import { modeCardVersion, type ApprovalMode, type ApprovalsState } from "../../s
 import { MATCH_TEXT, matchAnnouncement, matchRefusalHolds, matchView } from "./match-copy";
 import { ISSUES_URL } from "../../shared/support";
 import { CONSENT_VERSION } from "../../shared/consent";
-import { AGREE_ARM_MS } from "../../shared/provider";
+import { AGREE_ARM_MS, heldPress } from "../../shared/provider";
 import { useAppNames } from "../../shared/apps";
 import { speakChoice, speakSettings, type SpeakChoice } from "../../shared/speech";
 import type { Settings, SettingsPatch } from "../../main/settings";
@@ -1782,6 +1782,9 @@ const memoryOn = () => !!settings?.memory.on && (settings?.memory.consent.versio
 const agreeShownAt = new Map<string, number>();
 const showConsentCard = (card: string, agree: string) => { $(card).hidden = false; agreeShownAt.set(agree, performance.now()); };
 const agreeArmed = (agree: string) => performance.now() - (agreeShownAt.get(agree) ?? -Infinity) >= AGREE_ARM_MS;
+// A key held since before the press (the desktop's autorepeat, which starts about as the card arms) agrees to nothing
+// on any of these cards' agree buttons, however long the card has been up (product-ui-x9-3).
+document.addEventListener("keydown", e => { if (heldPress(e) && e.target instanceof HTMLElement && agreeShownAt.has(e.target.id)) e.preventDefault(); }, true);
 /**
  * Where focus waits while Memory's list is out of sight (a reconnect's account check) or a control in it goes: the
  * section's heading, which does nothing on a key. Never the switch, where a typed space turns memory off, or on again
