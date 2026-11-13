@@ -47,6 +47,58 @@ describe("notReviewable (modes-C2, modes-C7; PLAN.md §10 \"Settled\" (7))", () 
     expect(ids.length).toBeGreaterThanOrEqual(7);
     for (const id of ids) expect(outlivesStop(id), id).toBe(true);
   });
+  it("counts as outliving Stop what plants code that runs later on its own, or may leave something running, filed outside escape and service (modes-y9-1)", () => {
+    for (const rule of ["path.hook", "git.config.code", "path.program-config", "path.wsl-config", "path.bin", "net.tunnel", "net.tailscale", "git.daemon", "docker.cluster", "unclear.gui", "in-script:path.hook"]) {
+      expect(outlivesStop(rule.replace(/^in-script:/, "")), rule).toBe(true);
+      expect(notReviewable(ask({ classes: ["system"], rules: ["posix.cp", rule] }), ok), rule).toBe("it would keep running after Stop");
+    }
+  });
+  it("has looked at every rule id the classifier has: one it gains is held here until it is known to leave nothing running (modes-y9-1)", () => {
+    const dir = path.join(__dirname, "../../app/main/commands");
+    const src = ["classify.ts", "tables.ts", "scripts.ts", "decide.ts"].map(f => readFileSync(path.join(dir, f), "utf8")).join("\n");
+    const ids = [...new Set([...src.matchAll(/(?:add\(\s*"(?:destroy|publish|remote-delete|system|escape)",\s*|rule: ?)"([a-zA-Z0-9]+(?:\.[a-zA-Z0-9-]+)+)"/g)].map(m => m[1]))];
+    expect(ids.length).toBeGreaterThanOrEqual(150);
+    // Looked at and left (2026-11-13): each acts now, on something named, or changes a setting that runs nothing by itself.
+    const left = new Set(("archive.delete archive.in-place archive.remove-files archive.unpack bzr.push cargo.publish cloud.change cloud.delete cmd.del cmd.rd cmd.robocopy conan.upload dart.publish db.change "
+      + "disk.erase disk.wipe docker.cluster.delete docker.context docker.mount docker.privileged download.output download.unnamed gem.push gh.api.delete gh.api.write gh.pr.merge.delete-branch "
+      + "gh.repo.deploy-key git.branch.D git.branch.M git.checkout.B git.checkout.force git.checkout.paths git.clean git.config.system git.cvsexportcommit git.history git.push git.push.delete git.push.force "
+      + "git.push.mirror git.push.prune git.reset.hard git.reset.keep git.reset.merge git.restore git.rm git.send-email git.stash.clear git.stash.drop git.svn.dcommit git.switch git.tag.delete git.tag.force "
+      + "git.worktree.remove hg.discard hg.push kill.process mix.publish mvn.deploy net.listen net.mount net.send net.serve net.share net.unc npm.cache npm.config.global npm.registry npm.unpublish nuget.push "
+      + "p4.admin p4.clean p4.delete p4.obliterate p4.resolve p4.revert p4.shelve p4.shelve.delete p4.spec p4.spec.delete p4.submit p4.sync.force p4.unshelve path.disk path.system pip.config.global "
+      + "pkg.language pkg.off-registry pkg.publish-ps pkg.system posix.cp posix.dd posix.find.delete posix.find.write posix.mv posix.rm posix.rsync posix.tee posix.truncate ps.New-Item ps.Remove-Item "
+      + "redirect.overwrite rsync.delete-remote script.destroy script.publish script.system send.http send.mail send.nc send.remote-session send.ssh send.ssh-key send.tar svn.cleanup svn.commit svn.delete "
+      + "svn.delete-local svn.resolve svn.revert system.backups system.capsh system.chpst system.chroot system.debug system.kernel system.network system.newgrp system.nsenter system.permissions system.power "
+      + "system.security system.setpriv system.settings system.sg system.sudo system.unschedule system.unshare system.users trash.empty upload.cloud upload.curl upload.rclone upload.rsync upload.scp "
+      + "upload.session upload.unc wsl.manage wsl.system wsl.tool-distro wsl.unregister wsl.user escape.download-run escape.run-downloaded escape.npx escape.run-remote internal").split(" "));
+    const secret = /^secret\.|^path\.secret(-|$)|^path\.history$|^wsl\.export$/, cantTell = /^(unclear|unknown)\./;
+    const unjudged = ids.filter(id => !outlivesStop(id) && !secret.test(id) && !cantTell.test(id) && !left.has(id));
+    expect(unjudged).toEqual([]);
+    // And nothing on the list is held after all (the list says what was left, no more).
+    expect([...left].filter(id => outlivesStop(id))).toEqual([]);
+    // The ids the classifier builds from a program's name stay the ones looked at: deletions, pushes and gh's verbs act now; `escape.<program>` is held.
+    const built = [...new Set([...src.matchAll(/add\(\s*"[a-z-]+",\s*`([^`$]*\$\{[^`]*)`/g)].map(m => m[1].replace(/\$\{[^}]*\}/g, "*")))].sort();
+    expect(built).toEqual(["*.publish", "*.push", "*.remote-host", "*.rm", "escape.*", "gh.*.*", "gh.*.delete", "posix.*"]);
+  });
+  it("never reviews a program, or a tool's command, Ember doesn't know: nobody can tell what it does, so it asks as in Autopilot (modes-y9-6)", () => {
+    expect(notReviewable(ask({ classes: ["unknown"], rules: ["unknown.program"] }), ok)).toBe("it runs a program Ember doesn't know");
+    expect(notReviewable(ask({ classes: ["system", "unknown"], rules: ["system.sudo", "unknown.program"] }), ok)).toBe("it runs a program Ember doesn't know");
+    expect(notReviewable(ask({ classes: ["destroy"], rules: ["posix.rm", "unknown.verb"] }), ok)).toBe("it runs a program Ember doesn't know");
+    expect(notReviewable(ask({ classes: ["destroy"], rules: ["posix.rm", "in-script:unknown.program"] }), ok)).toBe("it runs a program Ember doesn't know");
+    // A finding the decision dropped still says what the command is.
+    expect(notReviewable(ask(), { ...ok, findings: [{ cls: "unknown", rule: "unknown.program" }] })).toBe("it runs a program Ember doesn't know");
+    // The classifier's older rules for the same: a tool's verb off its list, a cmdlet with no row, a program it can't name.
+    for (const rule of ["unclear.git-verb", "unclear.gh-verb", "unclear.npm-verb", "unclear.docker-verb", "unclear.cloud-verb", "unclear.package-verb", "unclear.cmdlet", "unclear.program", "unclear.hidden-command", "unclear.gh-extension"]) {
+      expect(notReviewable(ask({ classes: ["unclear"], rules: [rule] }), ok), rule).toBe("it runs a program Ember doesn't know");
+    }
+  });
+  it("reads every signal Autopilot reads, so a secret or something that outlives Stop is never reviewed whatever the decision kept of it (modes-y9-6)", () => {
+    expect(notReviewable(ask({ classes: ["unclear"], rules: ["unclear.inline-code"] }), { ...ok, findings: [{ cls: "secret", rule: "secret.env" }] })).toBe("it would read or print secrets");
+    expect(notReviewable(ask({ classes: ["system"], rules: ["system.sudo", "path.secret"] }), ok)).toBe("it would read or print secrets");
+    expect(notReviewable(ask({ classes: ["unclear"], rules: ["unclear.for"] }), { ...ok, findings: [{ cls: "escape", rule: "escape.nohup" }] })).toBe("it would keep running after Stop");
+    expect(notReviewable(ask({ classes: ["unclear"], rules: ["unclear.for"] }), { ...ok, findings: [{ cls: "system", rule: "in-script:service.unit" }] })).toBe("it would keep running after Stop");
+    // A loop or inline code whose programs Ember knows is still shown to the check, as CLAUDE.md records.
+    expect(notReviewable(ask({ classes: ["unclear"], rules: ["unclear.for"] }), { ...ok, findings: [{ cls: "unclear", rule: "unclear.for" }, { cls: "destroy", rule: "posix.rm" }] })).toBeNull();
+  });
   it("may now review what the old reviewer was never shown: a system change, download-and-run, an administrator's command, carried text, a steered task, another computer", () => {
     expect(notReviewable(ask({ classes: ["system"], rules: ["systemctl"] }), ok)).toBeNull();
     for (const rule of ["escape.download-run", "escape.run-downloaded", "escape.npx", "escape.run-remote"]) {

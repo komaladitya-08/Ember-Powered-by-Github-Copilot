@@ -19,7 +19,8 @@
  * with the reviewer's (StepChecker).
  */
 
-import type { CommandDecision, DangerClass } from "./types";
+import { keptQuestion } from "./autopilot";
+import type { CommandDecision, Finding } from "./types";
 
 /** What the reviewer is shown. */
 export interface ReviewInput {
@@ -47,9 +48,6 @@ export interface ReviewVerdict {
 /** Reviews one command; null when it couldn't (no answer in time, an answer that isn't one): the command then asks. */
 export type CommandReviewer = (i: ReviewInput, signal: AbortSignal) => Promise<ReviewVerdict | null>;
 
-/** Classes the reviewer never clears: a command that would read or print secrets always asks, so no secret reaches a model. */
-export const NEVER_REVIEWED: ReadonlySet<DangerClass> = new Set(["secret"]);
-
 /**
  * The classifier's rules of class "escape" that only download and run code, which the reviewer may clear when the
  * user's own words ask for it. Every other `escape.*` rule says the command keeps running after Stop (a background
@@ -63,8 +61,17 @@ export const DOWNLOADS_ONLY: ReadonlySet<string> = new Set(["escape.download-run
  * scheduled job (`*.schedule`, never `*.unschedule`), a login or startup entry (`*autostart`, `*startup`) and a
  * registry write (`system.registry`, which may be a Run key: the classifier doesn't say which key). Read by pattern,
  * so a rule of these kinds the classifier gains later is held too (modes-x9s-1).
+ *
+ * And what plants code that runs later on its own, or may leave something running, under a rule of another name
+ * (modes-y9-1): a git hook (`path.hook`) and a git setting that names a program git runs (`git.config.code`: hooksPath,
+ * a pager, an alias), a shell's or a program's start-up file (`path.program-config`), WSL's boot settings
+ * (`path.wsl-config`), a program put where a command name finds it (`path.bin`), a tunnel or Tailscale's connection
+ * (`net.tunnel`, `net.tailscale`: its daemon keeps it up), `git daemon` and a cluster's services (`git.daemon`,
+ * `docker.cluster`: the classifier doesn't say whether they detach), and a program that opens a window
+ * (`unclear.gui`). Every other rule id of the classifier's was looked at and left: command-review.test.ts lists them,
+ * and fails on an id it has not seen, so a rule the classifier gains is judged here before it ships.
  */
-const RUNS_LATER = /^service\.|\.([a-z-]*-)?schedule$|autostart$|startup$|^system\.registry$/;
+const RUNS_LATER = /^service\.|\.([a-z-]*-)?schedule$|autostart$|startup$|^system\.registry$|^path\.(hook|program-config|wsl-config|bin)$|^git\.(config\.code|daemon)$|^net\.(tunnel|tailscale)$|^docker\.cluster$|^unclear\.gui$/;
 /** Does this rule of the classifier's say the command would outlive the kill switch? */
 export const outlivesStop = (rule: string): boolean => (rule.startsWith("escape.") && !DOWNLOADS_ONLY.has(rule)) || RUNS_LATER.test(rule);
 
@@ -74,15 +81,24 @@ export const REVIEW_LIMITS = { words: 6000, command: 4000, why: 400, findings: 1
 /**
  * Why a command that asks may (null) or may not be reviewed. `words`: the user's own words for the check
  * (Worker.checkWords); `mode`/`askEvery`: the organisation's "ask every command" for this target; `userAskEvery`: the
- * user's own; `says`: the card's lines, which the reviewer is shown whole or not at all.
+ * user's own; `says`: the card's lines, which the reviewer is shown whole or not at all; `findings`: every finding of
+ * the classification, standing or not, and what a wrapper may hide (the flow's, as Autopilot is given them).
+ *
+ * What the command is, is read by the one predicate Autopilot reads (autopilot.ts keptQuestion: the decision's classes
+ * and rules and every finding). Secrets, outliving Stop and a program or a tool's command Ember doesn't know are never
+ * reviewed: nobody, the checking model included, can know what an unknown program does (modes-y9-6). Assisted is
+ * looser than Autopilot in one place only: a command that is "unclear" and nothing more (a loop, inline code, a
+ * pipeline into xargs: its programs are known and the reviewer can read it) goes to the check, where Autopilot asks.
  */
-export function notReviewable(d: CommandDecision, o: { words: string; mode: string; askEvery: unknown; userAskEvery: boolean; command: string }): string | null {
+export function notReviewable(d: CommandDecision, o: { words: string; mode: string; askEvery: unknown; userAskEvery: boolean; command: string; findings?: readonly Pick<Finding, "cls" | "rule">[] }): string | null {
   if (d.verdict !== "ask") return "it doesn't ask";
   if (!o.words.trim()) return "no words of the user's";
   if (o.mode === "ask" || o.askEvery) return "every command asks here";
   if (o.userAskEvery) return "the user asked to check every command";
-  if (d.classes.some(c => NEVER_REVIEWED.has(c))) return "it would read or print secrets";
-  if (d.rules.some(outlivesStop)) return "it would keep running after Stop";
+  const kept = keptQuestion(d, o.findings ?? []);
+  if (kept === "secret") return "it would read or print secrets";
+  if (kept === "outlives-stop") return "it would keep running after Stop";
+  if (kept === "unknown") return "it runs a program Ember doesn't know";
   if (o.words.trim().length > REVIEW_LIMITS.words || o.command.length > REVIEW_LIMITS.command || d.says.join(" ").length > REVIEW_LIMITS.findings) return "it is too long to show the reviewer whole";
   return null;
 }

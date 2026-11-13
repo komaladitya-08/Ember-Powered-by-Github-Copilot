@@ -123,17 +123,43 @@ export interface AutopilotInput {
 }
 
 /**
+ * The classifier's "unclear" rules that say it doesn't know the program or the tool's command that runs, rather than
+ * that it can't follow text whose programs it knows: a verb of git, gh, npm, docker, a cloud tool or a package manager
+ * off its list, a cmdlet it has no row for, a program it can't name or that hides behind another's words.
+ */
+const UNKNOWN_BY_ANOTHER_NAME = /^unclear\.(([a-z0-9]+-)?verb|program|program-letters|cmdlet|git-ext|gh-extension|hidden-command)$/;
+/** Is this a program, or a tool's command, the classifier doesn't know (the closed default, and its older rules for the same)? */
+const unknownTo = (f: { cls?: DangerClass; rule: string }): boolean => {
+  const rule = f.rule.replace(/^in-script:/, "");
+  return f.cls === "unknown" || rule.startsWith("unknown.") || UNKNOWN_BY_ANOTHER_NAME.test(rule);
+};
+
+/**
+ * What a command is that no mode above Interactive may wave through on its own, read from every signal it carries
+ * (the decision's classes and rules, and each finding of the classification, standing or not): the organisation's
+ * rule, secrets, outliving Stop, a program Ember doesn't know, something Ember can't tell; null for none. The one
+ * predicate for both modes (modes-y9-6): Autopilot asks for each of these, Assisted's check is never asked about any
+ * but the last (review.ts notReviewable).
+ */
+export function keptQuestion(d: Pick<CommandDecision, "classes" | "rules">, findings: readonly Pick<Finding, "cls" | "rule">[]): "organisation" | "secret" | "outlives-stop" | "unknown" | "unclear" | null {
+  const signals = [...d.classes.map(cls => ({ cls, rule: "" })), ...d.rules.map(rule => ({ rule })), ...findings];
+  const asked = signals.map(askedOfFinding);
+  for (const why of ["organisation", "secret", "outlives-stop"] as const) if (asked.includes(why)) return why;
+  if (signals.some(unknownTo)) return "unknown";
+  return asked.includes("unclear") ? "unclear" : null;
+}
+
+/**
  * Why `d`, a command that asks, still asks in Autopilot; null when it may be announced instead. The organisation's
- * policy first, then the user's own switch and their own words against it, then what the command is: secrets before
- * outliving Stop before unclear.
+ * policy first, then the user's own switch and their own words against it, then what the command is (keptQuestion):
+ * secrets before outliving Stop before what Ember doesn't know or can't tell.
  */
 export function autopilotAsks(d: Pick<CommandDecision, "classes" | "rules">, o: AutopilotInput): AutopilotAsk | null {
   if (o.mode === "ask" || o.askEvery === "admin" || d.rules.includes("admin.ask")) return "organisation";
   if (o.userAskEvery || o.askEvery === "user" || o.askEvery === "tool" || d.rules.includes("user.ask-every")) return "user";
   if (o.ruledOut) return "ruled-out";
-  const signals = [...d.classes.map(cls => ({ cls, rule: "" })), ...d.rules.map(rule => ({ rule })), ...o.findings].map(askedOfFinding);
-  for (const why of ["organisation", "secret", "outlives-stop", "unclear"] as const) if (signals.includes(why)) return why;
-  return null;
+  const kept = keptQuestion(d, o.findings);
+  return kept === "unknown" ? "unclear" : kept;
 }
 
 /** What each class of command does, in Ember's own words, for the announcement: never a word of the command. */

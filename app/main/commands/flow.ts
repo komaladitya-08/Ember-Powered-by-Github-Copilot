@@ -946,11 +946,12 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
   // administrator too. Only a command that would read or print secrets, keep running after Stop or do something Ember
   // can't tell, one the user's own words rule out, and what the organisation's or the user's own "ask every command"
   // requires, still ask (autopilot.ts).
+  // What a wrapper may hide where the classifier read its options wrongly: judged apart, to keep a question only, for
+  // Autopilot and for Assisted's check alike (one predicate reads both: autopilot.ts keptQuestion).
+  const hidden = d.verdict === "ask" && (ctx.autopilot?.() || ctx.review) ? behindWrappers(cls, text => j.classifyCommand(text, shell, cctx).findings) : [];
   if (ctx.autopilot?.() && d.verdict === "ask") {
     // (Their own words against it count wherever they were heard: where Ember can't tell the user from its speakers too.)
     const standing = standingFindings(cls.findings, paths);
-    // (And what a wrapper may hide where the classifier read its options wrongly: judged apart, to keep a question only.)
-    const hidden = behindWrappers(cls, text => j.classifyCommand(text, shell, cctx).findings);
     // A line judged as its written-out form (a `[[ … ]]` test read as `[ … ]`: unroll.ts) never announces, here either:
     // what it does behind the test is Ember's reading of it, so it counts as a command it can't tell (commands-b7-2).
     if ((cls as { writtenOut?: boolean }).writtenOut === true) hidden.push({ cls: "unclear", rule: "unclear.written-out" });
@@ -964,7 +965,7 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
   // requires, are never reviewed (review.ts). The task's bubble says it is checking; a Stop doesn't wait for the answer.
   if (ctx.review && d.verdict === "ask") {
     const checkWords = ctx.task.checkWords?.() ?? words;
-    const blocked = notReviewable(d, { words: checkWords, mode, askEvery: cap.askEvery, userAskEvery, command: a.command });
+    const blocked = notReviewable(d, { words: checkWords, mode, askEvery: cap.askEvery, userAskEvery, command: a.command, findings: [...cls.findings, ...hidden] });
     if (blocked === null) {
       const t0 = performance.now();
       try { ctx.presenter.progress(CHECKING_COMMAND); } catch (err) { ctx.log.warn("commands.checking_not_said", { err }); }

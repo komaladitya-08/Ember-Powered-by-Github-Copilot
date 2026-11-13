@@ -188,6 +188,15 @@ describe("real commands, as the classifier judges them at this commit (modes-D2,
     expect(autopilotAsks(d, { ...ON, findings: cls.findings })).toBe("outlives-stop");
   });
 
+  it.each([
+    "cp hook .git/hooks/pre-commit", "git config --global core.hooksPath ~/hooks", "git config alias.co '!sh -c ./x'", "cp tool ~/bin/tool", "tailscale up", "ngrok http 3000", "git daemon --detach",
+    "docker stack deploy -c stack.yml app",
+  ])("still asks about a command that plants code to run later, or may leave something running: %s (modes-y9-1)", command => {
+    const { d, why } = judged(command);
+    expect(d.verdict).toBe("ask");
+    expect(why).toBe("outlives-stop");
+  });
+
   it("runs an ordinary command as in every mode: there is nothing to announce", () => {
     for (const command of ["ls -la", "make test", "git status", "npm test"]) expect(judged(command).d.verdict, command).toBe("run");
   });
