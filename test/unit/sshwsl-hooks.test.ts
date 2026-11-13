@@ -58,7 +58,7 @@ const { PolicyEngine, isEmberWindow, runsIn, runsOf } = await import("../../app/
 const { targetRules } = await import("../../app/main/policy/target-rules");
 const { Perception, describeText, openWindowLines, openWindowsBlock, perceivedText, quickContextText } = await import("../../app/main/perception");
 const { journalLine } = await import("../../app/main/policy/audit");
-const { createCommandWindow, createPromptWindow, quitQuestion, settingsFromHome } = await import("../../app/main/windows");
+const { createCommandWindow, createPromptWindow, createVaultWindow, quitQuestion, settingsFromHome } = await import("../../app/main/windows");
 const { KEYS } = await import("../../app/shared/shortcuts");
 
 import type { EmberState } from "../../app/shared/overlay";
@@ -688,6 +688,22 @@ describe("the command and prompt windows' factories (§3.10, §8.6)", () => {
       expect(calls.find(c => c[0] === "loadURL")?.[1]).toMatch(/^file:\/\/.*\/renderer\/prompt\/index\.html$/);
       expect(calls).toContainEqual(["setAlwaysOnTop", true, "floating"]);
       expect(calls.some(c => c[0] === "setContentProtection" && c[1] === true), os).toBe(os !== "linux");
+    }
+  });
+
+  it("makes the vault's Secure Form a window of its own: fixed, always on top, sandboxed, titled Ember, with its own preload and page (vault-2)", () => {
+    for (const os of ["linux", "win32", "darwin"] as const) {
+      for (const [kind, height] of [["login", 400], ["card", 520], ["contact", 560]] as const) {
+        const win = createVaultWindow(os, kind);
+        const { options, calls } = made();
+        expect(options).toMatchObject({ width: 440, height, useContentSize: true, resizable: false, minimizable: false, maximizable: false, title: "Ember", show: false, alwaysOnTop: true, skipTaskbar: false, webPreferences: secure });
+        expect(String((options.webPreferences as { preload: string }).preload).split(path.sep).slice(-2)).toEqual(["preload", "vault.cjs"]);
+        expect(calls.find(c => c[0] === "loadURL")?.[1]).toMatch(/^file:\/\/.*\/renderer\/vault\/index\.html$/);
+        expect(calls).toContainEqual(["setAlwaysOnTop", true, "floating"]);
+        // Left out of screen captures where the OS can (Linux: Ember never captures its own windows).
+        expect(calls.some(c => c[0] === "setContentProtection" && c[1] === true), os).toBe(os !== "linux");
+        expect(typeof win.takeKeyboard).toBe("function");
+      }
     }
   });
 });

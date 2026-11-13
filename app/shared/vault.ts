@@ -273,3 +273,15 @@ export const VAULT_FOCUS_GRACE_MS = 600;
 export const partLabel = (label: string, required: boolean): string => (required ? label : `${label} (optional)`);
 /** Save pressed with every box empty. */
 export const VAULT_NOTHING_TYPED = "Nothing is typed yet. Fill in at least one box, or choose Cancel.";
+
+/** Home's bridge to the vault (app/preload/home.ts exposes exactly this as `window.emberVault`): the list and Forget, never a value. */
+export interface EmberVaultHomeApi {
+  /** Whether the vault may be used, and its entries by kind, destination and date. */
+  state(): Promise<VaultHomeState>;
+  /** The list changed (an entry kept or forgotten). */
+  onChanged(fn: () => void): () => void;
+  /** Forgets one entry; false when it couldn't be removed. */
+  forget(id: string): Promise<boolean>;
+  /** Forgets every entry; false when the vault's file couldn't be removed. */
+  forgetAll(): Promise<boolean>;
+}

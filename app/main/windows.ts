@@ -1,7 +1,7 @@
 /**
- * The settings window ("home"), the command window ("Ember commands") and the prompt window, the check that an IPC
- * message comes from one of Ember's own bundled pages, what the settings page may change, and the quit question's
- * words. Every BrowserWindow keeps contextIsolation, the sandbox and a preload of its own. The command and prompt
+ * The settings window ("home"), the command window ("Ember commands"), the prompt window and the vault's Secure Form,
+ * the check that an IPC message comes from one of Ember's own bundled pages, what the settings page may change, and
+ * the quit question's words. Every BrowserWindow keeps contextIsolation, the sandbox and a preload of its own. The command and prompt
  * windows are made here with their options per OS (L13: no other new module imports Electron); their controllers
  * (commands/window.ts, remote/prompt-window.ts) are plain Node and show, raise and hide them. Also the app-wide
  * chrome main sets once Electron is ready: the application menu, the About panel, the native theme, the windows' icon
@@ -13,6 +13,8 @@ import fs from "node:fs";
 import path from "node:path";
 import type { OS } from "../shared/shortcuts";
 import { PROMPT_SIZE, fitBounds } from "./remote/prompt-window";
+import { VAULT_FORM_SIZE } from "./vault/form";
+import type { VaultKind } from "../shared/vault";
 import type { SettingsPatch } from "./settings";
 import { placeOnDisplay, type CloseGuarded, type PageWatched, type Placeable } from "./commands/window";
 import { rescaledBounds, scaledSize } from "./page-prefs";
@@ -273,20 +275,63 @@ export function createPromptWindow(os: OS, hooks: { takeKeyboard?: (win: Browser
   return Object.assign(win, placeable(win), { fit, takeKeyboard });
 }
 
+/**
+ * The Secure Form's window (the vault, app/main/vault/form.ts): one form, in a window of its own that its controller
+ * closes once it is answered, so nothing typed outlives it in a page. Always on top, fixed in size for its kind (the
+ * page's own size; the frame comes on top, and it grows with the text), and it takes the keyboard as the prompt window
+ * does, since secrets are typed into it. Its title is "Ember", as the prompt window's: Ember's own windows are known by
+ * it where their process can't be told, and where the details are for never goes into a title other programs read. On
+ * Windows and macOS it is left out of screen captures; on every OS Ember itself never reads, captures or acts in its
+ * own windows. A page that crashed closes, and its controller answers the form as one nobody could answer.
+ */
+export function createVaultWindow(os: OS, kind: VaultKind, hooks: { takeKeyboard?: (win: BrowserWindow) => void } = {}): BrowserWindow & { takeKeyboard(): void } {
+  const win = new BrowserWindow({
+    ...forText({ ...VAULT_FORM_SIZE[kind] }),
+    useContentSize: true,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    title: "Ember",
+    show: false,
+    alwaysOnTop: true,
+    skipTaskbar: false,
+    backgroundColor: contentBackground(),
+    darkTheme: nativeTheme.shouldUseDarkColors,
+    autoHideMenuBar: true,
+    webPreferences: webPreferences("vault"),
+  });
+  sizeForText(win, null);
+  win.setAlwaysOnTop(true, "floating");
+  if (os === "win32" || os === "darwin") win.setContentProtection(true);
+  closeWhenGone(win);
+  try {
+    const to = placeOnDisplay(win.getBounds(), screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea);
+    if (to) win.setBounds(to);
+  } catch { /* a window that can't be placed opens where the window manager puts it */ }
+  void win.loadURL(pageUrl(path.join(appDir, "renderer", "vault", "index.html")));
+  const takeKeyboard = () => {
+    if (win.isDestroyed()) return;
+    if (hooks.takeKeyboard) hooks.takeKeyboard(win);
+    else { win.show(); win.focus(); }
+  };
+  return Object.assign(win, { takeKeyboard });
+}
+
 /** One of Ember's windows as main sees it for keeping clear of it: on screen or not, focused or not, and where. */
 export interface ShownWindow { visible: boolean; minimized: boolean; focused: boolean; bounds: { x: number; y: number; width: number; height: number } }
 
 /**
  * What Ember steps beside (`aside`) and what its bubble keeps off (`avoid`), in DIP. Settings counts while it is shown
  * and focused (the user works in it), as before. Ember's own approval windows count while they ask (review #125): the
- * prompt window whenever it is shown (it shows only with a card), the command window while a question's command card is
- * up in it. They come first: the overlay stays above every window, so otherwise Ember, its bubble and the task cards
+ * prompt window and the vault's Secure Form whenever they are shown (each shows only while it asks), the command window
+ * while a question's command card is up in it. They come first: the overlay stays above every window, so otherwise Ember, its bubble and the task cards
  * would sit on the card the user must read, and on its buttons.
  */
-export function keepClearOf(o: { home: ShownWindow | null; prompt: ShownWindow | null; command: ShownWindow | null; commandCard: boolean }):
+export function keepClearOf(o: { home: ShownWindow | null; prompt: ShownWindow | null; command: ShownWindow | null; commandCard: boolean; vault?: ShownWindow | null }):
   { aside: ShownWindow["bounds"] | null; avoid: ShownWindow["bounds"][] } {
-  const up = (w: ShownWindow | null): w is ShownWindow => !!w && w.visible && !w.minimized;
-  const approvals = [o.prompt, o.commandCard ? o.command : null].filter(up).map(w => w.bounds);
+  const up = (w: ShownWindow | null | undefined): w is ShownWindow => !!w && w.visible && !w.minimized;
+  const approvals = [o.prompt, o.vault, o.commandCard ? o.command : null].filter(up).map(w => w.bounds);
   const home = up(o.home) && o.home.focused ? o.home.bounds : null;
   return { aside: approvals[0] ?? home, avoid: [...approvals, ...(home ? [home] : [])] };
 }

@@ -20,12 +20,12 @@ import { watchCrashes } from "./crash-log";
 import { endRun, previousRun, startRun } from "./run-marker";
 import { readTextFile } from "./text-file";
 import { SettingsStore, checkHomePatch, hasConsent, plainSaveError, withOwnExtensions, withOwnProvider, type Settings, type SettingsPatch } from "./settings";
-import { auditRetentionDays, commandMode, heldUntilRestart, homeAdmin, modelServiceRefusal } from "./admin";
+import { auditRetentionDays, commandMode, heldUntilRestart, homeAdmin, modelServiceRefusal, vaultAllowed } from "./admin";
 import { approvalInputs, approvalsState, autonomyPermitted, chooseMode, modeAgreed, modeInForce } from "./policy/autonomy";
 import { ModeRecord, modeIntents } from "./policy/mode-record";
 import { TaskVoiceTrust, heardAnswer, heardUnchecked, refusalEndsTrust, refusalLine, refusalNote, rejectionEndsTrust, voiceAnswer, voiceAnswerSaid, type VoiceAnswerNote, type VoiceAnswerOutcome } from "./agent/voice-answer";
 import { inspectEnvironment, keyboardRoute, sessionGreeting, type EnvReport } from "./environment";
-import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSender, keepClearOf, quitQuestion, setTextScale, settingsFromHome, setUpAppChrome } from "./windows";
+import { createCommandWindow, createHomeWindow, createPromptWindow, createVaultWindow, isTrustedSender, keepClearOf, quitQuestion, setTextScale, settingsFromHome, setUpAppChrome } from "./windows";
 import { UPDATED_QUESTION, createUpdateCheck, restartAfterUpdate, updatedDetail } from "./install-watch";
 import { IPC, TASKS_PUSH_MS, type Status, type SignInProgress, type AskContext, type ListenOnceStatus, type VoiceMatchStatus, type ProjectSelection, type ProjectResult, type ProjectWorkspaceReply, type HearResult, type RetryResult } from "../shared/ipc";
 import { OVERLAY, IDLE_BUBBLE, answerEndShown, askSuggestions, askSuggestionsComing, bubbleBoxOf, suggestOf, suggestionsShown, wholeSeenOf, type EmberState, type Rect } from "../shared/overlay";
@@ -36,7 +36,7 @@ import { HandleWindow } from "./handle";
 import { otherSide } from "../shared/handle-place";
 import { revive } from "./revive";
 import { memoryReport } from "./memory-report";
-import { useAppNames } from "../shared/apps";
+import { friendlyApp, useAppNames } from "../shared/apps";
 import { AtspiSidecar, type FocusBefore } from "./perception/sidecar";
 import { isNeverLook } from "./perception/elements";
 import { Perception, type QuickContext } from "./perception";
@@ -121,6 +121,10 @@ import { installKind, releasePage, UpdateChecker, updateNotice } from "./updates
 import { ExtensionsService } from "./extensions/service";
 import { registerExtensionsIpc } from "./extensions-ipc";
 import { registerProviderIpc } from "./provider-ipc";
+import { VAULT_FILE, VaultStore } from "./vault/store";
+import { createVaultForm, type VaultFormController } from "./vault/form";
+import { VaultService, registerVaultHomeIpc } from "./vault/service";
+import { VAULT_IPC } from "../shared/vault";
 import { registerApprovalsIpc } from "./approvals-ipc";
 import { registerFirstRunIpc } from "./first-run";
 import { firstRunAllowsVoice } from "../shared/first-run";
@@ -551,19 +555,19 @@ function start(): void {
   /** Ember greets once settings closes (first run while Copilot isn't connected yet). */
   let greetOnClose = false;
   /** Ember's own approval windows (made through the targets runtime's factories below), and whether a command card is up. */
-  const approvals: { prompt: BrowserWindow | null; command: BrowserWindow | null } = { prompt: null, command: null };
+  const approvals: { prompt: BrowserWindow | null; command: BrowserWindow | null; vault: BrowserWindow | null } = { prompt: null, command: null, vault: null };
   let commandCardUp = false;
   const shownWindow = (w: BrowserWindow | null) => (w && !w.isDestroyed()
     ? { visible: w.isVisible(), minimized: w.isMinimized(), focused: w.isFocused(), bounds: w.getBounds() } : null);
   const stepAside = () => {
     // Settings while the user works in it; Ember's approval windows while they ask (review #125).
-    const { aside, avoid } = keepClearOf({ home: shownWindow(home), prompt: shownWindow(approvals.prompt), command: shownWindow(approvals.command), commandCard: commandCardUp });
+    const { aside, avoid } = keepClearOf({ home: shownWindow(home), prompt: shownWindow(approvals.prompt), command: shownWindow(approvals.command), commandCard: commandCardUp, vault: shownWindow(approvals.vault) });
     overlay?.stepAside(aside);
     // The bubble keeps off the windows too.
     if (JSON.stringify(lastState.avoid ?? []) !== JSON.stringify(avoid)) showState({ avoid });
   };
   /** An approval window the targets runtime had main make: Ember and its bubble keep clear of it while it asks. */
-  const keepClear = <W extends BrowserWindow>(which: "prompt" | "command", win: W): W => {
+  const keepClear = <W extends BrowserWindow>(which: "prompt" | "command" | "vault", win: W): W => {
     approvals[which] = win;
     for (const e of ["move", "resize", "minimize", "restore", "hide", "show"] as const) win.on(e as "show", stepAside);
     win.on("closed", () => { if (approvals[which] === win) approvals[which] = null; stepAside(); });
@@ -1480,6 +1484,7 @@ function start(): void {
   let extensionsRef: ExtensionsService | null = null;
   let learningRef: MemoryLearning | null = null;
   let betterRecallRef: BetterRecall | null = null;
+  let vaultRef: VaultService | null = null;
   const killSwitch = new KillSwitch(() => [
     { name: "borrow", stop: () => borrowRef?.stop() },
     { name: "speech", stop: () => voice?.hush() },
@@ -1491,6 +1496,8 @@ function start(): void {
     { name: "project", stop: () => projectJob?.abort() },
     // Every extension call is refused from now on, its questions dropped, and every extension server ended.
     { name: "extensions", stop: () => extensionsRef?.stopPart().stop() },
+    // The vault's Secure Form closes, and nothing more is asked in it.
+    { name: "vault", stop: () => vaultRef?.stopPart().stop() },
     // The user's take-over of the desk ends too (its keys are released).
     { name: "desk", stop: () => deskViewRef?.handBack() },
     { name: "motion", stop: () => { overlay?.setBorrowing(false); deskViewRef?.setDriving(false); showState({ focus: null, gesture: null }); } },
@@ -2174,6 +2181,20 @@ function start(): void {
     log: log.child("provider"),
     changed: () => { void agent?.providerChanged(); sendToHome(PROVIDER_IPC.changed, null); },
   });
+  // The vault (app/main/vault/, owner decision of 2026-11-12): logins, cards and contact details, each sealed in
+  // vault.json apart from the settings and bound to one app or site. Its values come in once, from the Secure Form's
+  // own page, and are never logged, audited, shown or sent to any page again. The keyring is asked only when a form is
+  // about to open or a Save arrives: never for Home's list, and on macOS only off the main thread.
+  let vaultForm: VaultFormController | null = null;
+  const vault = new VaultService({
+    store: new VaultStore(path.join(userData, VAULT_FILE), safeStorage, { asyncKeyring: platform.os === "darwin" }),
+    // The form is made once Electron is ready (whenReady); before that nothing can ask for one.
+    form: { ask: req => vaultForm?.ask(req) ?? Promise.resolve("unavailable" as const), stop: () => vaultForm?.stop() },
+    allowed: () => vaultAllowed(admin), consented: () => consented(), autopilot: () => approvalsNow().autopilot,
+    appName: friendlyApp, log: log.child("vault"),
+    changed: () => sendToHome(VAULT_IPC.changed, null),
+  });
+  vaultRef = vault;
   /** The endpoint in force now: the administrator's (or a development test server) once main has set it, else the user's own. */
   let fixedProvider: ActiveProvider | null = null;
   const providerNow = (): ActiveProvider | null => activeProvider({ fixed: fixedProvider, settings: settings.get(), admin, key: providers.key() });
@@ -2282,6 +2303,9 @@ function start(): void {
     // Projects' work goes here, at once: the "signed-out" status that follows also means a provider waiting for its
     // card, which keeps it (integrations-c2-1).
     forgetProject("all");
+    // The vault goes whole with the account, at once and whatever fails below: its open form closes, a Save still
+    // being sealed keeps nothing, and its file is removed.
+    const vaultGone = vault.forgetAll();
     // While still connected: delete this account's conversation so the next sign-in starts fresh.
     try {
       await agent?.forgetConversation();
@@ -2306,6 +2330,8 @@ function start(): void {
         accountErasures--;
       }
     }
+    // Told after the rest is done: the sign-out itself held.
+    if (!vaultGone) throw new Error("Ember couldn't finish deleting the vault's file on this computer. You are signed out; Forget all in Apps & privacy tries again.");
   }));
   ipcMain.handle(IPC.cancelSignIn, guard(() => { signInAbort?.abort(); progress({ state: "cancelled" }); }));
   /** The page of the sign-in under way, opened again on request (GitHub's own pages, or the GitHub CLI's download page). */
@@ -2784,12 +2810,15 @@ function start(): void {
     forgetSessionWords();
     // The saved copy of the conversation is part of what Ember keeps about the person: it goes too.
     const savedGone = agent?.forgetHistory() ?? true;
+    // And what the vault keeps: its open form closes and its file is removed.
+    const vaultGone = vault.forgetAll();
     memoryOwner.clear();
     memoryOwner.refresh(memoryConfigured());
     memoryEpoch++;
     publishMemoryOwner();
     // Told after the rest is done (Home shows a sentence that starts like this as it is).
     if (!savedGone) throw new Error("Ember couldn't finish deleting the saved conversation on this computer. Try Forget again.");
+    if (!vaultGone) throw new Error("Ember couldn't finish deleting the vault's file on this computer. Try Forget again.");
   }));
   // "Tell Ember about you": checked whole (IntroSchema, every string bounded) and kept only while memory is in force.
   ipcMain.handle(IPC.memoryIntroduce, guard((answers: unknown) => learning.introduce(answers)));
@@ -2849,6 +2878,12 @@ function start(): void {
     const url = event.senderFrame?.url ?? "";
     return isTrustedSender(url) && !!home && !home.isDestroyed() && event.sender === home.webContents;
   }, providers.api, { log: log.child("provider") });
+  // The vault's list (Home › Apps & privacy): the settings window's own page only, as guard. Kind, destination and date
+  // only, with Forget; no answer ever holds a value.
+  registerVaultHomeIpc(ipcMain, event => {
+    const url = event.senderFrame?.url ?? "";
+    return isTrustedSender(url) && !!home && !home.isDestroyed() && event.sender === home.webContents;
+  }, vault);
   // The approval mode (Home › Apps & privacy): the settings window's own page only, as guard. It changes only here,
   // together with the agreement to the mode's card, or by the host's own intents; never by a model or a settings patch.
   registerApprovalsIpc(ipcMain, event => {
@@ -3553,6 +3588,21 @@ function start(): void {
         });
       },
     };
+    // The vault's Secure Form: a window of its own for each form, which takes the keyboard as the prompt window does
+    // (secrets are typed into it), and which Ember and its bubble keep clear of while it asks. Its channels hear only
+    // that window's own page, for the form on screen.
+    vaultForm = createVaultForm({
+      ipc, log: log.child("vault"),
+      create: kind => keepClear("vault", createVaultWindow(platform.os, kind, {
+        takeKeyboard: win => {
+          bringToFront(win);
+          if (!sys.lifecycle.activateOwnWithInput) return;
+          const id = ownId(win);
+          try { if (id) inputRef?.focusInput?.(id); } catch { /* best effort, as bringToFront's activation */ }
+        },
+      })),
+      keep: (kind, dest, values) => vault.keep(kind, dest, values),
+    });
     let elevatedNow: boolean | undefined;
     targets = createTargets({
       log: log.child("targets"), os: platform.os, sys, userData, appDir: __dirname, resourcesPath: process.resourcesPath,

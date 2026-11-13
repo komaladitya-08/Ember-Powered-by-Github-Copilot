@@ -5525,9 +5525,12 @@ describe("keeping the recent conversation across restarts (opt-in)", () => {
     let projectForgot: string[] = [];
     /** How often what was asked this session was let go of (memory-r9-2). */
     let sessionWordsForgotten = 0;
+    /** How often the vault was forgotten whole (vault-6). */
+    let vaultForgotten = 0;
     const signOutHandler = (agent: AgentHost) => handlerOf(slice("ipcMain.handle(IPC.signOut,", "ipcMain.handle(IPC.cancelSignIn,"), {
       agent, tokens: { clear() {} }, keeper: { use() {} }, providers: { forget() {} }, refusedTokens: { clear() {} }, resetAnswerSpeech() {},
       forgetProject: (what: string) => { projectForgot.push(what); }, forgetSessionWords: () => { sessionWordsForgotten++; },
+      vault: { forgetAll: () => { vaultForgotten++; return true; } },
     });
 
     it("Sign out deletes conversation.json although the switch is off by then", async () => {
@@ -5541,8 +5544,11 @@ describe("keeping the recent conversation across restarts (opt-in)", () => {
       k.flag.on = false; // the setting turned off, the listener not yet run
       projectForgot = [];
       sessionWordsForgotten = 0;
+      vaultForgotten = 0;
       await signOutHandler(k.host)();
       expect(projectForgot).toEqual(["all"]);
+      // And what the vault keeps goes with the account (vault-6).
+      expect(vaultForgotten).toBe(1);
       // What the person asked this session goes too: none of it is suggested to the next one (memory-r9-2).
       expect(sessionWordsForgotten).toBe(1);
       expect(fs.existsSync(k.file)).toBe(false);
@@ -5573,9 +5579,11 @@ describe("keeping the recent conversation across restarts (opt-in)", () => {
       const run = handlerOf(slice("ipcMain.handle(IPC.memoryForgetAll,", '// "Tell Ember about you"'), {
         learning: { forgetAll: () => calls.push("learning") }, agent: k.host, forgetSessionWords: () => calls.push("session words"),
         memoryOwner: { clear: () => calls.push("owner.clear"), refresh: () => undefined }, memoryConfigured: () => true, publishMemoryOwner: () => undefined,
+        vault: { forgetAll: () => { calls.push("vault"); return true; } },
       });
       await run();
-      expect(calls).toEqual(["learning", "session words", "owner.clear"]);
+      // The vault goes too (vault-6).
+      expect(calls).toEqual(["learning", "session words", "vault", "owner.clear"]);
       expect(fs.existsSync(k.file)).toBe(false);
       expect(k.host.getTranscript().map(e => e.text)).toEqual(["old question", "old answer"]);
       await k.host.ask("after forgetting");

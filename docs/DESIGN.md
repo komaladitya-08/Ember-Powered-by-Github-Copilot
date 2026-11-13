@@ -503,6 +503,19 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
 - **Motion** (the `--spring-smooth-0`, `--spring-brisk` and `--t-*` tokens): a pane coming into view fades and rises 6 px; a fold's content fades in
   from 4 px above, its height never animating; the sidebar's fill glides. Calm makes all of it instant.
 
+- **The vault** (Apps & privacy, and the Secure Form: `app/renderer/vault`). Apps & privacy ends with **Vault**: one
+  line of what it is, then a plain list, a row for each entry as "Login for github.com, saved 12 November 2026" with a
+  Forget, and Forget all, which asks first with "Keep them" as the safe choice; a row never shows a value, and with
+  the organisation's switch off the line says so and the rows keep their Forget. The Secure Form is a small window of
+  its own, a content window like the prompt window (opaque, light or dark, always on top, titled "Ember"): a heading
+  that names the kind and where it is for ("Login for github.com"), a firmer line saying where Ember fills it in, a
+  quiet line saying how it is kept, then one labelled box for each part, with "(optional)" in the label of one that
+  may be left empty. Passwords, card numbers and security codes are typed into password boxes and are never shown.
+  A box that can't be kept gets a firmer red edge and its own line under it in words; what went wrong with a Save is
+  an alert above the buttons, which stay at the bottom: Cancel, then the one filled **Save in the vault**. Esc
+  cancels, and a form whose window hasn't the keyboard says "Click here before you type". Without a keyring it asks
+  for nothing: it says the vault can't be used on this computer and offers only Close.
+
 ## Design system (`app/renderer/shared/ember.css`)
 
 Every window loads one stylesheet of tokens and controls, following Apple's Human Interface
@@ -533,7 +546,7 @@ Pages use the tokens rather than literals, so Increase Contrast and Reduce Trans
   and a contrast-theme colour. Text on filled buttons
   is dark (white on orange fails contrast). Labels are a warm white at 100 / 66 / 52 %. Ember is
   by default the computer's light or dark setting (Settings › Comfort & access › Appearance) for Home, the command
-  window and the prompt window, and always dark for the floating layer: title bars follow on Windows, macOS and GNOME,
+  window, the prompt window and the vault's Secure Form, and always dark for the floating layer: title bars follow on Windows, macOS and GNOME,
   native menus and dialogs on macOS, and menus on Windows. On Linux, menus and dialogs follow the
   GTK theme, and Windows' message boxes (the quit question) stay light.
   `test/unit/design-system.test.ts` checks the token pairs: labels and system colours on every

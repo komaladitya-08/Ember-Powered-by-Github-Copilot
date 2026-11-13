@@ -580,6 +580,15 @@
             <p class="row-note" id="screen-images-hint">A task may send a picture of the window it works in, with password fields and never-look windows blacked out. With this off, Ember works only from what apps tell it through accessibility, so some tasks may be harder.</p>
           </div>
         </div>
+        <h3 class="sub" id="vault-h">Vault</h3>
+        <p class="hint" id="vault-hint"></p>
+        <ul class="plain-list" id="vault-list" aria-labelledby="vault-h" tabindex="-1"></ul>
+        <div class="agent-actions"><button type="button" id="vault-forget-all" class="btn quiet" hidden>Forget all</button></div>
+        <div id="vault-forget-confirm" class="consent" role="group" aria-labelledby="vault-forget-scope" hidden>
+          <p id="vault-forget-scope"></p>
+          <div class="agent-actions"><button type="button" id="vault-forget-yes" class="btn quiet danger">Forget all</button><button type="button" id="vault-forget-no" class="btn quiet">Keep them</button></div>
+        </div>
+        <p class="hint" id="vault-msg" role="status"></p>
       </div>
     </section>
 
