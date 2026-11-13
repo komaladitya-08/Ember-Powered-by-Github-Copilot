@@ -664,4 +664,22 @@ describe("Enter in a dialog that asks, while no button of it has the keyboard", 
     const find = { name: "Find & Replace", text: "Find: Replace:" };
     expect(engineOn("linux", true, true).decide({ ...key("linux", "entry", "Find", "Return", find), app: "soffice", window: "letter.odt - LibreOffice Writer" }).autonomy).toBe(true);
   });
+
+  // A dialog that warns but asks nothing, whose own button goes past the warning: a click on it asks, so Enter does too.
+  const warns: [string, "linux" | "win32" | "darwin", string, NonNullable<ActionRequest["dialog"]>][] = [
+    ["a Win32 message box", "win32", "msedge", { name: "Microsoft Edge", messageBox: true, text: "driver-setup.exe may harm your device.",
+      controls: [{ role: "label", name: "driver-setup.exe may harm your device." }, { role: "push button", name: "Open" }, { role: "push button", name: "Cancel" }] }],
+    ["Chrome's download bubble", "linux", "google-chrome", { name: "", text: "This file isn't commonly downloaded and may be dangerous.",
+      controls: [{ role: "label", name: "This file isn't commonly downloaded and may be dangerous." }, { role: "push button", name: "Keep" }, { role: "push button", name: "Discard" }] }],
+    ["a Mac's blocked file", "darwin", "Safari", { name: "", text: "This file was blocked because it may contain malware.",
+      controls: [{ role: "label", name: "This file was blocked because it may contain malware." }, { role: "push button", name: "Run" }, { role: "push button", name: "Cancel" }] }],
+  ];
+  it.each(warns)("in %s that warns, Enter on its words asks every time, as a click on its button does (product-safety-y9-1)", (_what, os, app, dialog) => {
+    const at = (value: string, d: NonNullable<ActionRequest["dialog"]>) => ({ ...key(os, "label", "x", value, d), app, window: "Downloads", goal: "download the printer driver" });
+    asksEvery(at("Return", dialog), os);
+    // Read in part, its words alone warn.
+    const { controls: _c, ...part } = dialog;
+    asksEvery(at("Return", part), os);
+    if (os === "win32") asksEvery(at("o", dialog), os);
+  });
 });

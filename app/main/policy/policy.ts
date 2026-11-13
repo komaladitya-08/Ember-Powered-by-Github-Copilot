@@ -2977,8 +2977,13 @@ export class PolicyEngine {
     // and in a Win32 dialog a letter presses the button it underlines: judged as an answer to the dialog, asked every
     // time, but where a whole read shows its buttons all back off, or only one that only acknowledges (audit of
     // 2026-11-13, safety-privacy-r9-1). Read by the dialog alone: which button is its default, nothing tells.
-    const asksDialog = !!r.dialog && ((!!r.dialog.alert && !r.dialog.page) || asksInFew);
+    // A dialog that warns but asks nothing counts too, where a click on one of its buttons would ask (a whole read: a
+    // button past the warning, or one named for a risk) or, read in part, where its words warn ("…may harm your device",
+    // Chrome's "isn't commonly downloaded and may be dangerous"; product-safety-y9-1).
     const buttons = r.dialog?.controls?.filter(c => c.caption !== true && ANSWER_ROLES.test(c.role));
+    const warns = !!r.dialog && (r.dialog.controls ? !!buttons?.some(c => !backsOffDialog(c.name, told) && (goesPastWarning(c.role, c.name, r.app, r.window, told) || isRiskyControl(c.role, c.name, os)))
+      : DANGER_CONTEXT.test(plainText(told)) || saysWord(PAST_WARNING, told));
+    const asksDialog = !!r.dialog && ((!!r.dialog.alert && !r.dialog.page) || asksInFew || warns);
     const harmless = !!buttons?.length && (buttons.every(c => backsOffDialog(c.name, told)) || (buttons.length === 1 && acknowledgesOnly(r, buttons[0].name, buttons[0].role, os)));
     const pressesDefault = asksDialog && !harmless;
     const answersDefault: Risk = { reason: "this answers a dialog's question or warning with one of its buttons, and Ember can't tell which", note: `I can't tell which of its buttons this presses.${note ? ` ${note}` : ""}` };
