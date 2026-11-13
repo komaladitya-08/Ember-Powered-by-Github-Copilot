@@ -3171,4 +3171,40 @@ describe("whose a spoken answer is (second review of the voice lane, 2026-11-12)
       expect(followUp.heard()).toEqual(["stop"]);
     });
   });
+
+  describe("a near-miss answer while a question waits (V2-F5, V2-F7; voice-listening-r9-9, voice-listening-r9-11)", () => {
+    it("says once it didn't catch a few words that start like an answer, and sends nothing, in every window: they went to Copilot or vanished", () => {
+      for (const words of ["Yes, but wait.", "No, hang on.", "Okay, hold on.", "Sure, why?", "Don't, wait.", "Not that one.", "Absolutely, sure, why not?"]) for (const where of WHERE) {
+        const s = waiting({ 5: words }, where, { otherSound: false });
+        says(s, 5, 0, "user");
+        expect(s.heard(), `${words} in ${where}`).toEqual(["unclear"]);
+      }
+    });
+
+    it("still sends a real short request said while a question waits, and longer talk, as before", () => {
+      for (const words of ["Why?", "Which file?", "What email?"]) for (const where of ["follow-up", "conversation"] as const) {
+        const s = waiting({ 5: words }, where, { otherSound: false });
+        says(s, 5, 0, "user");
+        expect(s.heard(), `${words} in ${where}`).toEqual([`${words} | ${where}`]);
+      }
+      const long = waiting({ 5: "No, open the other file instead please." }, "conversation", { otherSound: false });
+      says(long, 5, 0, "user");
+      expect(long.heard()).toEqual(["No, open the other file instead please. | conversation"]);
+    });
+
+    it("never sends a yes asked as a question said by name as a request, nor at a wake (V2-F7)", () => {
+      for (const where of WHERE) {
+        const s = waiting({ 5: "Ember, okay?" }, where, { otherSound: false });
+        says(s, 5, 1, "user");
+        expect(s.heard().filter(h => h !== "wake"), where).toEqual(["unclear"]);
+      }
+    });
+
+    it("takes “Okay, Ember.” said in the answer window as the yes it is, by name, rather than a wake that answers nothing (V2-F7)", () => {
+      // The spotter hears "Okay, Ember" as its "Hey Ember" (2): a wake, which heard nothing after the name.
+      const s = waiting({ 5: "Okay, Ember." }, "answer", { otherSound: false });
+      says(s, 5, 2, "user");
+      expect(s.heard().filter(h => h !== "wake")).toEqual(["Okay, Ember. | wake"]);
+    });
+  });
 });

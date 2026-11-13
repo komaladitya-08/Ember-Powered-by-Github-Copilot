@@ -24,7 +24,7 @@
  * Right after a wake, only a voice about as loud as the wake phrase is a request.
  */
 
-import { spokenAnswer } from "../shared/spoken-answer";
+import { askedYes, nearAnswer, spokenAnswer } from "../shared/spoken-answer";
 import { BandFilter, LEVEL_BAND } from "./room-band";
 
 export const SAMPLE_RATE = 16_000;
@@ -2242,6 +2242,9 @@ export class VoiceEngine {
       // said their request yet.
       text = "";
     }
+    // "Okay, Ember." while a question waits: the wake phrase is itself the answer, by name. It closed the answer window,
+    // started a wake that heard nothing more, and answered nothing (V2-F7).
+    if (!saysSomething(text) && wakePhrase && this.questionWaiting && spokenAnswer(heard) !== null) text = heard.trim();
     if (!saysSomething(text)) {
       // Only the wake phrase (or a cough, or "um"): keep listening for the request.
       if (this.mode.reason !== "manual") this.mode.until = Math.max(this.mode.until, this.now() + 4000);
@@ -2282,7 +2285,7 @@ export class VoiceEngine {
       // against "(nothing else it hears then is sent)" (V2-S3).
       if (!this.namedByUser(heard, spokenFrom, t0, true)) {
         this.peak = 0;
-        if (wordsOf(text).length <= UNCLEAR_WORDS) this.emit({ type: "unclear" });
+        if (wordsOf(text).length <= UNCLEAR_WORDS || nearAnswer(text) || askedYes(text)) this.emit({ type: "unclear" });
         return;
       }
       this.mode.reason = "wake";
@@ -2291,6 +2294,17 @@ export class VoiceEngine {
       text = stripWake(heard, true);
       withWake = holdsWake(heard, text, true);
       if (!saysSomething(text)) { this.mode.until = Math.max(this.mode.until, this.now() + 4000); return; }
+    }
+    // While a question waits, a yes asked as a question ("Ember, okay?") is no yes and no request, at a wake too; and in
+    // a follow-up, a conversation or the answer window, a few words that start like an answer ("Yes, but wait.", "Sure,
+    // okay then.") are most likely one misheard or hedged. Neither is sent: the question says once how to answer. They
+    // went to Copilot as a request, or vanished (V2-F5, V2-F7). "Why?" and "Which file?" are requests as ever.
+    const answerLike = this.mode.reason === "follow-up" || this.mode.reason === "answer" || conversation;
+    if (this.questionWaiting && this.mode.reason !== "manual" && !this.answering(text) && (askedYes(text) || (answerLike && nearAnswer(text)))) {
+      this.peak = 0;
+      this.mode.until = Math.max(this.mode.until, this.now() + this.mode.ms);
+      this.emit({ type: "unclear" });
+      return;
     }
     // "Ember?" said again in a conversation, however the recognizer wrote it ("Number.", "Andber."): Ember is listening already.
     // Judged on all that was heard, so "Ember, close it" keeps its "Close it", and only on what reads as the name.

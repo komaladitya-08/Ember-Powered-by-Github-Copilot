@@ -518,7 +518,11 @@ recognizer writes it: `saidStop`); the other ways to ask for quiet (“Never min
 stop Ember there only with its name, as it is silent then and hears the room, whose every such word pulled the kill
 switch (V2-S8); in a follow-up window and after “Hey Ember” they stop as before. A word or two that read as
 no answer (most likely one misheard: one test voice's lone “Allow.” comes out “Hello”) make the question say once how
-to answer (`unclear`). It opens no conversation, is
+to answer (`unclear`). So do, there and in a follow-up or a conversation while a question waits, up to four words
+that start like an answer and aren't one (“Yes, but wait.”, “No, hang on.”: `nearAnswer` in app/shared/spoken-answer.ts),
+and, in any window, a yes asked as a question said by name (“Ember, okay?”: `askedYes`): nothing of them is sent, where
+they went to Copilot or vanished (V2-F5, V2-F7). “Why?” and “Which file?” are requests as ever. “Okay, Ember.”, which
+the spotter hears as “Hey Ember”, is the yes it reads as, by name. The answer window opens no conversation, is
 no follow-up, ends with the question, and takes no yes said over other sound unless it is said with the name (the
 question then says so, once); a no is anyone's there too, as it is in a conversation and a follow-up: “No.”, “Not
 now.” and “Don't do it.” over a playing video were dropped in the answer window and a conversation, and the question

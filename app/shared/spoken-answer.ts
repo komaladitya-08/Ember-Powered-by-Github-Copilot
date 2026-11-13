@@ -110,3 +110,28 @@ export function spokenAnswer(text: string): "allow" | "deny" | null {
   // Asked as a question, whatever follows the "?" ("Allow it?!", "Allow?."): not a yes.
   return /[?？]$/.test(text.trim().replace(/[\s.!…"”’')\]]+$/u, "")) ? null : "allow";
 }
+
+/** The words a near-miss answer starts with (nearAnswer). */
+const ANSWER_LEADS = new Set(["yes", "yeah", "yep", "okay", "ok", "sure", "fine", "allow", "no", "nope", "don't", "not", "absolutely", "deny"]);
+
+/**
+ * A few words that start like an answer and aren't one ("Yes, but wait.", "No, hang on.", "Sure, why?"): up to four words,
+ * after "hey" and the name, the first a yes or no word ("do not" too). While a question waits they are most likely an
+ * answer misheard or hedged, so the voice process sends nothing and the question says once how to answer (V2-F5). "Why?"
+ * and "Which file?" don't start so, and are requests as ever.
+ */
+export function nearAnswer(text: string): boolean {
+  if (spokenAnswer(text) !== null) return false;
+  const words = norm(text).replace(/[,.!;:?？]/g, " ").split(/\s+/).filter(Boolean);
+  let i = 0;
+  if (words[i] === "hey") i++;
+  if (NAMES.has(words[i])) i++;
+  const rest = words.slice(i);
+  if (!rest.length || rest.length > 4) return false;
+  return ANSWER_LEADS.has(rest[0]) || (rest[0] === "do" && rest[1] === "not");
+}
+
+/** A yes asked as a question ("Okay?", "Ember, go ahead?"): never a yes (spokenAnswer), and never a request either (V2-F7). */
+export function askedYes(text: string): boolean {
+  return spokenAnswer(text) === null && /[?？]/.test(text) && spokenAnswer(text.replace(/[?？]/g, ".")) === "allow";
+}
