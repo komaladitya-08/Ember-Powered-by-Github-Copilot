@@ -2129,6 +2129,10 @@ class Engine extends Classifier {
   private asMain = false;
   /** A table the row being judged read differs from main's on this line (parseHeld). */
   private tablesDiffer = false;
+  /** A held row's two readings leave the shell in different folders somewhere on this line (runRow). */
+  private foldersDiffer = false;
+  /** The line is being judged again with the folder main's reading of each such row leaves (heldToMainFolders). */
+  private mainFolders = false;
 
   /**
    * Whether the row is being judged main's way (runRow). A check the row has learned since, which main's row at 4d64d3a
@@ -2169,14 +2173,21 @@ class Engine extends Classifier {
     const outer = this.tablesDiffer;
     const stood = this.refusal();
     const from = this.findings.length;
+    const cd0 = this.cdTarget;
     this.tablesDiffer = false;
     let differ: boolean;
     try { row(h); } finally { differ = this.tablesDiffer; this.tablesDiffer = outer; }
     if (!differ) return;
     const own = this.refusal();
+    const ownCd = this.cdTarget;
+    let mainCd = ownCd;
     let before: Finding[];
     this.asMain = true;
-    try { before = this.foundApartWhole(() => row(h), undefined, true); } finally { this.asMain = false; }
+    try { before = this.foundApartWhole(() => { this.cdTarget = cd0; row(h); mainCd = this.cdTarget; }, undefined, true); } finally { this.asMain = false; }
+    // The folder the command leaves the shell in is the one the row's own reading gives; where main's reading gives
+    // another (`env --block-signal cd /tmp`: main's table took the cd for the option's word), the whole line is judged
+    // again with main's (heldToMainFolders).
+    if (mainCd !== ownCd) { this.foldersDiffer = true; if (this.mainFolders) this.cdTarget = mainCd; }
     // The row's own refusal is said in its own words, and one that stood before the row keeps its own; one only main's
     // reading made says what Ember can't tell (commands-held-x9-7).
     if (own.refuse !== stood.refuse) this.putRefusal(own);
@@ -2195,7 +2206,26 @@ class Engine extends Classifier {
     }
     this.checkCharacters(text, sc.family);
     this.classifyText(text, this.topShell, sc);
+    if (this.foldersDiffer) this.heldToMainFolders(text);
     return this.result();
+  }
+
+  /**
+   * Holds a line to the folders main's reading of its held rows leaves the shell in (commands-held-y9-1). Where a
+   * wrapper's two tables disagree about a `cd` (`cd ~/.config && env --block-signal cd /tmp && rm -rf ember`: by
+   * today's table env runs the cd, by main's the cd was the option's word and the folder stayed), what follows was
+   * judged in the folder the row's own reading gives. The whole line is judged again with main's folder for each such
+   * row, apart: its refusal stands (Ember's own folder, named from where main stood), and unless everything it found
+   * the line's own judging found too, the line asks with the dangers it named kept on the card (heldTo).
+   */
+  private heldToMainFolders(text: string): void {
+    const own = this.refusal();
+    let was: Finding[];
+    this.mainFolders = true;
+    try { was = this.foundApartWhole(() => this.classifyText(text, this.topShell, this.topScope()), undefined, true); } finally { this.mainFolders = false; }
+    if (this.refusal().refuse !== own.refuse) { if (own.refuse) this.putRefusal(own); else this.heldRefusal(); }
+    if (was.every(f => this.findings.some(g => sameFinding(f, g)))) return;
+    this.heldTo(was, 0, "unclear.option-value", SAYS.optionValue);
   }
 
   private result(): ClassificationExtra {

@@ -266,7 +266,9 @@ Ember stops and asks before a command that:
   value options, and `-X`), `env --block-signal ls`, `numactl -H x cmd`, `ltrace -L x cmd`, `faketime -m x y cmd`,
   `nsenter -t 1 -m x cmd` ("Ember can't tell whether one of its options takes the word after it."). Ember judges such
   a line both ways and keeps the stricter answer, with what the older reading named still on the card, so `sudo -h
-  host rm -rf ~` is refused and `sudo -h host printenv` still says what printenv prints. Write the value attached
+  host rm -rf ~` is refused and `sudo -h host printenv` still says what printenv prints. The folder counts too: after
+  `cd ~/.config && env --block-signal cd /tmp`, what follows is judged in `/tmp` and in `~/.config`, where the older
+  reading stayed, so `… && rm -rf ember` is refused. Write the value attached
   (`git commit -SKEY -m wip`, `redis-cli --tls=1 PING`) or after the message (`git commit -m wip -S`) and it runs.
   The same holds for every tool whose options Ember has learned to read better since (tar, rsync, cp, grep, ls, curl,
   wget, gh, git's branch, tag, checkout, switch and rebase, make and Maven, pip, zip, cpio, `docker run`, `uv run` and
