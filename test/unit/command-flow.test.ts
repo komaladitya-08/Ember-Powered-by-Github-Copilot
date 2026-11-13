@@ -616,7 +616,11 @@ describe("reading a shell script before it runs (L8, the lead's ruling)", () => 
     expect(scriptLanguage("shebang", "#!/usr/bin/fish\n").kind).toBe("unclear");
     expect(scriptLanguage("shebang", "#!/home/ana/i.sh\n")).toEqual({ kind: "follow", path: "/home/ana/i.sh" });
     expect(scriptLanguage("shebang", "#!/usr/bin/env ./i.sh\n")).toEqual({ kind: "follow", path: "./i.sh" });
-    expect(scriptLanguage("shebang", "#!/usr/bin/env python3\n")).toEqual({ kind: "none" });
+    // Another language's interpreter: code Ember doesn't read, which asks only when the task wrote it (commands-remote-r10-9).
+    expect(scriptLanguage("shebang", "#!/usr/bin/env python3\n")).toEqual({ kind: "code" });
+    expect(scriptLanguage("shebang", "#!/usr/bin/python3.12\n")).toEqual({ kind: "code" });
+    expect(scriptLanguage("code", "")).toEqual({ kind: "code" });
+    expect(scriptLanguage("psql", "")).toEqual({ kind: "sql", client: "psql" });
     // No #! line: the calling shell runs a text file; a NUL in its first line makes it a program.
     expect(scriptLanguage("shebang", "rm -rf build\n")).toEqual({ kind: "shells", shells: ["sh", "bash"] });
     expect(scriptLanguage("shebang", "\uFEFF#!/usr/bin/python3\n")).toEqual({ kind: "shells", shells: ["sh", "bash"] });
@@ -1030,7 +1034,9 @@ describe("a script of the task's own that can't be read in full (L8's padding by
     expect((await local(h, "git pull")).resultType).toBe("success");
     expect(h.ctx.state.written!.anywhere).toBe(true);
     expect((await local(h, "./x.py")).resultType).toBe("success");
-    expect(h.reads).toContain("/usr/bin/python3");
+    // A Python interpreter isn't followed as a script: x.py is code Ember doesn't read, and a pull wrote it only where
+    // Ember couldn't tell (commands-remote-r10-9).
+    expect(h.reads).not.toContain("/usr/bin/python3");
     expect(h.asked).toEqual([]);
     // /usr/local is the user's on many Macs: still the task's own once it wrote where Ember couldn't tell.
     expect((await local(h, "./y")).resultType).toBe("denied");
@@ -4255,5 +4261,82 @@ describe("what a package manager or the project's own launcher hands on (integ2-
   ])("still runs an everyday line with no question, at the defaults: %s (integ2-z-1)", async command => {
     const got = await outcome(command, "run the tests", {});
     expect(got, command).toEqual({ result: "success", asked: 0, announced: 0, started: 1 });
+  });
+});
+
+describe("SQL files and scripts in other languages a command runs (commands-remote-r10-4, r10-9)", () => {
+  /** CL's own judge on this computer in ~/proj; `texts` serves readScript by path (missing: unreadable). */
+  const flow = (texts: Record<string, string> = {}) => {
+    setCommandJudge(null);
+    const reads: string[] = [];
+    const existing = new Set<string>();
+    const h = harness({
+      binding: LOCAL, answers: ["deny", "deny", "deny", "deny"], state: { cwd: "/home/ana/proj", downloaded: new Set(), running: false },
+      paths: p => ({ exists: existing.has(p), real: p }),
+      readScript: async path => { reads.push(path); return texts[path] ?? null; },
+      run: () => ({ output: ["done\n"] }),
+    });
+    return Object.assign(h, { reads, existing });
+  };
+  const local = (h: Harness, command: string) => call(h, { target: "this computer", command });
+  const says = (h: Harness): string[] => (h.asked.at(-1)!.panel as { card: CommandCard }).card.says;
+
+  it("reads a SQL file a client runs and asks when it changes or deletes data, however the file is given (commands-remote-r10-4)", async () => {
+    for (const [write, run, file] of [
+      ["echo 'DROP TABLE users;' > a.sql", "psql -d prod -f a.sql", "a.sql"], ["printf 'DROP DATABASE prod;' > b.sql", "mysql prod < b.sql", "b.sql"],
+      ["echo 'DROP TABLE users;' > a.sql", "sqlite3 app.db < a.sql", "a.sql"], ["echo 'DROP TABLE users;' > a.sql", "psql prod < a.sql", "a.sql"],
+      ["echo 'DELETE FROM users;' > a.sql", "psql --file=a.sql prod", "a.sql"], ["echo 'TRUNCATE users;' > a.sql", "mariadb prod < a.sql", "a.sql"],
+      ["echo 'DROP TABLE users;' > a.sql", "duckdb app.db < a.sql", "a.sql"], ["echo 'DROP TABLE users;' > a.sql", "sqlcmd -i a.sql", "a.sql"],
+      ["echo 'DROP TABLE users;' > a.sql", "clickhouse-client --queries-file a.sql", "a.sql"], ["echo 'DROP TABLE users;' > a.sql", "psql -f q.sql -f a.sql", "a.sql"],
+    ] as const) {
+      const h = flow({ [`/home/ana/proj/${file}`]: "DROP TABLE users;\n" });
+      expect((await local(h, write)).resultType, write).toBe("success");
+      h.existing.add(`/home/ana/proj/${file}`);
+      expect((await local(h, run)).resultType, run).toBe("denied");
+      expect(h.reads, run).toContain(`/home/ana/proj/${file}`);
+      expect(h0rules(h), run).toContain("db.change");
+      expect(says(h).join(" "), run).toContain(`In ${file}: Changes or deletes data in a database.`);
+    }
+  });
+
+  it("asks when a SQL file the task wrote can't be read, and runs one that only reads (commands-remote-r10-4)", async () => {
+    const h = flow();
+    await local(h, "echo 'DROP TABLE users;' > a.sql");
+    h.existing.add("/home/ana/proj/a.sql");
+    expect((await local(h, "psql -d prod -f a.sql")).resultType).toBe("denied");
+    expect(h0rules(h)).toContain("unclear.script-unread");
+    const ok = flow({ "/home/ana/proj/q.sql": "SELECT count(*) FROM users;\n" });
+    expect((await local(ok, "psql -d prod -f q.sql")).resultType).toBe("success");
+    expect(ok.asked).toEqual([]);
+  });
+
+  it("asks before running a Python, Node or other script the task itself wrote, which Ember can't read first (commands-remote-r10-9)", async () => {
+    for (const [write, run, file] of [
+      ["echo 'import shutil; shutil.rmtree(\"/home/ana/Documents\")' > a.py", "python3 a.py", "a.py"],
+      ["echo 'require(\"fs\").rmSync(\"/home/ana/Documents\",{recursive:true})' > a.js", "node a.js", "a.js"],
+      ["echo 'system(\"git push -f\")' > a.rb", "ruby a.rb", "a.rb"], ["echo 'x' > a.py", "python3 < a.py", "a.py"],
+      ["echo 'x' > a.py", "env python3 -u a.py --go", "a.py"],
+    ] as const) {
+      const h = flow();
+      expect((await local(h, write)).resultType, write).toBe("success");
+      h.existing.add(`/home/ana/proj/${file}`);
+      expect((await local(h, run)).resultType, run).toBe("denied");
+      expect(h0rules(h), run).toContain("unclear.script-code");
+      expect(says(h), run).toContain(`It runs ${file}, which this task wrote or downloaded, in a language Ember can't read first.`);
+    }
+    // Run directly with a `#!` naming another language: read, then the same.
+    const t = flow({ "/home/ana/proj/a": "#!/usr/bin/python3\nimport os\nos.system('git push -f')\n" });
+    await local(t, "printf '#!/usr/bin/python3' > a");
+    t.existing.add("/home/ana/proj/a");
+    expect((await local(t, "./a")).resultType).toBe("denied");
+    expect(h0rules(t)).toContain("unclear.script-code");
+  });
+
+  it("keeps L8 for a script in another language the task didn't write: the project's own runs (commands-remote-r10-9)", async () => {
+    const h = flow({ "/home/ana/proj/tool": "#!/usr/bin/env python3\nprint(1)\n" });
+    for (const cmd of ["python3 manage.py check", "node scripts/build.js", "./tool"]) expect((await local(h, cmd)).resultType, cmd).toBe("success");
+    expect((await local(h, "echo hi > notes.txt")).resultType).toBe("success");
+    expect((await local(h, "python3 manage.py check")).resultType).toBe("success");
+    expect(h.asked).toEqual([]);
   });
 });

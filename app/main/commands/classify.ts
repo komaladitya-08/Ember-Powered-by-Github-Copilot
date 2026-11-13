@@ -42,7 +42,7 @@ type OS = ClassifyContext["os"];
 /** A `..` segment in a POSIX path. */
 const DOT_DOT = /(^|\/)\.\.(\/|$)/;
 /** How a script is read that the kernel or a POSIX shell opens by the name as written (`..` walked through links). */
-const POSIX_OPENERS: ReadonlySet<string> = new Set(["sh", "bash", "zsh", "shebang"]);
+const POSIX_OPENERS: ReadonlySet<string> = new Set(["sh", "bash", "zsh", "shebang", "psql", "mysql", "sqlite", "code"]);
 /** The card's words for a script whose path has a `..` the target couldn't resolve (L25). */
 export const SCRIPT_UNSURE = "Ember can't tell which script this runs.";
 
@@ -165,9 +165,11 @@ export interface ScriptRef {
   path: string;
   /**
    * How to read its text: a POSIX shell, PowerShell, cmd, or "shebang" (run directly: the `#!` line names the
-   * interpreter, and a text file without one is run by the calling shell).
+   * interpreter, and a text file without one is run by the calling shell); a database client's SQL ("psql", "mysql",
+   * "sqlite": judged as that client's own text, commands-remote-r10-4); or "code", a program in a language Ember
+   * doesn't read (Python, Node, Ruby…), which asks only when the task wrote it (commands-remote-r10-9).
    */
-  as: "sh" | "bash" | "zsh" | "powershell" | "cmd" | "shebang";
+  as: "sh" | "bash" | "zsh" | "powershell" | "cmd" | "shebang" | "psql" | "mysql" | "sqlite" | "code";
   /** The folder it runs in (its relative paths resolve there, not beside the script); "" when unknown. */
   cwd: string;
   /**
@@ -5444,18 +5446,22 @@ function inlineSql(h: H, short: string[], long: string[]): (string | null)[] {
  */
 function sqlFromStdin(h: H, client?: SqlClient): void {
   if (h.s.stdin === "pipe" || h.s.stdin === "heredoc") fromStdin(h, t => databaseText(h, [t], client));
-  else if (h.s.stdin === "file") stdinFile(h);
+  else if (h.s.stdin === "file") stdinFile(h, client);
 }
 
 /**
  * A file a database client runs from its input (`psql app < drop_users.sql`, `redis-cli < cmds.txt`): judged by its
- * name, as `psql -f` is, and one this task downloaded asks (commands-remote-c5-3).
+ * name, as `psql -f` is, and one this task downloaded asks (commands-remote-c5-3). A client whose SQL Ember reads has
+ * the file read first and judged as its own text (commands-remote-r10-4).
  */
-function stdinFile(h: H): void {
+function stdinFile(h: H, client?: SqlClient): void {
   for (const r of h.s.redirs) {
     if (r.kind !== "read" || !r.target) continue;
     if (h.e.isDownloaded(r.target, h.sc)) h.e.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
     else if (r.target.v) nameCheck(h, r.target.v);
+    if (client === undefined) continue;
+    if (r.target.v === null) h.e.unclear("unclear.sql", "It runs database commands from a file Ember can't name.");
+    else if (!STREAM_NAME.test(r.target.v)) h.e.recordScript(r.target, client, h.sc);
   }
 }
 
@@ -5601,10 +5607,22 @@ reg(NATIVE, ["psql", "sqlite3", "sqlite", "duckdb", "sqlcmd", "cqlsh", "clickhou
     // A SQL script this task downloaded, run with -f, is download-and-run (its `\!`, `COPY … FROM PROGRAM` run code):
     // commands-remote-r8-2.
     if (files.some(f => f !== null && !STDIN_NAME.test(f) && !STREAM_NAME.test(f) && h.e.isDownloaded(lit(f), h.sc))) h.e.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
+    // Its SQL is read first and judged as `-c`'s text would be (commands-remote-r10-4); one Ember can't name asks.
+    for (const f of files) {
+      if (f === null) h.e.unclear("unclear.sql", "It runs database commands from a file Ember can't name.");
+      else if (!STDIN_NAME.test(f) && !STREAM_NAME.test(f)) h.e.recordScript(lit(f), "psql", h.sc);
+    }
   }
-  else if (k === "sqlcmd") databaseText(h, inlineSql(h, ["Q", "q"], []));
+  else if (k === "sqlcmd" || k === "clickhouse-client") {
+    databaseText(h, k === "sqlcmd" ? inlineSql(h, ["Q", "q"], []) : inlineSql(h, ["q"], ["query"]));
+    // The SQL files they run (sqlcmd's -i, clickhouse-client's --queries-file) are read first and judged as SQL, as
+    // psql's -f is (commands-remote-r10-4); one Ember can't name asks.
+    for (const f of k === "sqlcmd" ? inlineSql(h, ["i"], ["input-file"]) : inlineSql(h, [], ["queries-file"])) {
+      if (f === null) h.e.unclear("unclear.sql", "It runs database commands from a file Ember can't name.");
+      else if (!STDIN_NAME.test(f) && !STREAM_NAME.test(f)) h.e.recordScript(lit(f), "psql", h.sc);
+    }
+  }
   else if (k === "cqlsh") databaseText(h, inlineSql(h, ["e"], ["execute"]));
-  else if (k === "clickhouse-client") databaseText(h, inlineSql(h, ["q"], ["query"]));
   else if (k === "sqlite3" || k === "sqlite" || k === "duckdb") {
     // -cmd's and -init's values are not the database or its SQL.
     const ops = h.args.filter((a, j) => !isOption(a) && !/^--?(cmd|init)$/.test(h.args[j - 1]?.v ?? ""));
@@ -5637,7 +5655,7 @@ reg(NATIVE, ["psql", "sqlite3", "sqlite", "duckdb", "sqlcmd", "cqlsh", "clickhou
       });
     } else if (h.s.stdin === "file") stdinFile(h);
     // A script file it runs (`mongosh app drop_all.js`), as an interpreter's is.
-    for (const a of h.args) if (a.v !== null && !isOption(a) && /\.(c|m)?js$/i.test(a.v)) runScript(h, a);
+    for (const a of h.args) if (a.v !== null && !isOption(a) && /\.(c|m)?js$/i.test(a.v)) runScript(h, a, "code");
   } else if (k === "redis-cli") {
     // -c (cluster mode), -x, -e and --tls take no value (commands-remote-c4-3).
     const now: OptSpec = { shortValue: "hpsanuirdD", longValue: ["user", "pass", "sni", "cacert", "cacertdir", "cert", "key", "tls-ciphers", "tls-ciphersuites", "show-pushes", "lru-test", "rdb", "functions-rdb", "pipe-timeout", "memkeys-samples", "pattern", "quoted-pattern", "intrinsic-latency", "eval"] };
@@ -6832,6 +6850,8 @@ reg(NATIVE, Object.keys(INTERPRETERS).filter(k => !["awk", "gawk", "mawk", "nawk
     }
   }
   if (h.key === "osascript" && p.operands[0]) { h.e.unclear("unclear.script", "It runs a script Ember can't see."); return; }
+  // A script file it runs, or reads from its input, is code Ember doesn't read: one this task wrote asks (judgeScripts).
+  const readAs: ScriptRef["as"] = "code";
   // node's --env-file loads that file's settings, secrets included, into the program's environment.
   for (const f of values(p, "env-file", "env-file-if-exists")) if (f) h.e.usePath(lit(f), "read", h.sc);
   if (h.key === "php" && h.args.some(a => a.v !== null && a.v.startsWith("-S"))) {
@@ -6894,7 +6914,7 @@ reg(NATIVE, Object.keys(INTERPRETERS).filter(k => !["awk", "gawk", "mawk", "nawk
   const script = p.operands[0];
   if (script) {
     if (/^(deno|bun)$/.test(h.key) && script.v && URL_LIKE.test(script.v)) { h.e.add("escape", "escape.npx", SAYS.downloadsProgram); packageLine(h, p.operands, h.key); return; }
-    runScript(h, script);
+    runScript(h, script, readAs);
     if (script.v !== null) scriptVerbs(h, script.v, p.operands.slice(1));
     h.e.readArgs(p.operands.slice(1), h.sc);
     return;
@@ -6903,7 +6923,7 @@ reg(NATIVE, Object.keys(INTERPRETERS).filter(k => !["awk", "gawk", "mawk", "nawk
   // Options that make it finish without a program: a version or help, and `node --test` (the work tree's tests).
   if (isNode && has(p, "test")) return;
   if (h.s.stdin === null && h.args.some(a => a.v !== null && (FINISHING.has(a.v) || (FINISHING_SHORT[h.key] ?? []).includes(a.v)))) return;
-  intoInterpreter(h);
+  intoInterpreter(h, readAs);
 });
 
 /** Interpreter options that print and finish (with no program and nothing on stdin). */
