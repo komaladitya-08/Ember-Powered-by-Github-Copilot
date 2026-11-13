@@ -69,7 +69,7 @@ import { createTaskWindowControl, taskControl } from "./agent/task-controls";
 import { AgentHost, explainSignInError, gitHubReachable, idleWord, STOPPED_EVERYTHING, unansweredWord, type Hands, type TranscriptEntry } from "./agent/host";
 import { composerSendRefusal } from "./agent/composer-refusal";
 import { CONVERSATION_TEXT_LIMIT, conversationRequest } from "../shared/conversation";
-import { projectAfterStatus, projectJobStops, projectMay, projectCommandFolder, projectCommandProblem, projectCommandText, projectNames, projectSelection, projectStopped, removeProjectFile, projectPrompt, projectTurnRequest, ProjectInputError, ProjectModelError, PROJECT_MODEL_FAILED, PROJECT_PREVIOUS_ELSEWHERE, type ProjectSource } from "./agent/project";
+import { projectAfterStatus, projectChoice, projectJobStops, projectMay, projectCommandFolder, projectCommandProblem, projectCommandText, projectNames, projectRefusedText, projectSelection, projectStopped, removeProjectFile, projectPrompt, projectTurnRequest, ProjectInputError, ProjectModelError, PROJECT_MODEL_FAILED, PROJECT_PREVIOUS_ELSEWHERE, type ProjectSource } from "./agent/project";
 import { projectUnavailable } from "../renderer/home/project-copy";
 import { exportProjectText } from "./agent/project-export";
 import { applyNaturalVoicePreference, naturalVoiceChoices, naturalVoiceWanted } from "./voice-choice";
@@ -2459,14 +2459,17 @@ function start(): void {
       // Not connected now (integrations-r1): the selection Home shows stays.
       if (!projectAvailable()) return { ...await projectSelection(previous), error: projectRefusal(false) };
       if (selected.canceled) return await projectSelection(previous);
-      const next = await projectSelection(selected.filePaths);
+      // The files Projects takes are chosen, and the others named with their reasons (integrations-r9-2): one file
+      // of the wrong kind dropped the whole choice. A choice with none it takes leaves the last one as it was.
+      const choice = projectChoice(selected.filePaths);
+      const next = await projectSelection(choice.files);
       if (home !== owner || projectFiles !== previous) return { names: [] };
       if (!projectAvailable()) return { ...await projectSelection(previous), error: projectRefusal(false) };
-      projectFiles = selected.filePaths;
+      projectFiles = choice.files;
       projectPatch = null;
       projectExchange = null;
       projectOutput = null;
-      return { ...next, changed: true };
+      return { ...next, changed: true, ...(choice.refused.length ? { error: projectRefusedText(choice.refused, choice.files.length) } : {}) };
     } catch (err) {
       return { names: home === owner && projectFiles === previous ? names : [], error: err instanceof ProjectInputError ? err.message : "Couldn't choose project files." };
     } finally {

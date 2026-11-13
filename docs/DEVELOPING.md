@@ -2515,8 +2515,15 @@ added later has the same effect on the Embers before it: say so in the release n
 
 ### 14.7 Copilot project work
 
-In Home under Projects, choose up to six source files, then send a review, plan or patch request. The
-connected model sees only the files you send. For an exact patch to one existing UTF-8 file with a final
+In Home under Projects, choose up to six source or text files, then send a review, plan or patch request. The
+connected model sees only the files you send. Projects takes source, build and markup files, documentation, text and
+diffs by their type, and well-known files that have none (`Makefile`, `Dockerfile`, `README`): the list
+(`textFile`, `namedFile` in app/main/agent/project.ts) says what kind of file it is, and is no guard. A file it
+doesn't take is named with its own reason and the rest of the choice is kept (`projectChoice`, `projectRefusedText`;
+integrations-r9-2): not a kind Projects takes (a picture, an archive, a lock file, `.env`-like types), a hidden file
+(its name starts with a dot), a name that says password, token, secret, credential or private key (`tokenizer` and
+its forms don't, as memory's guard reads them), or a name Ember won't repeat (hidden characters, a colon, or one that
+itself looks like a secret). For an exact patch to one existing UTF-8 file with a final
 newline, Ember shows the diff in **Review changes before applying**. Check it, choose **Apply patch** and
 confirm the destination. If the source has changed since you sent it, draft the patch again. Ember keeps
 LF or CRLF line endings and any UTF-8 byte-order mark. Drafts with file additions, renames, deletions or

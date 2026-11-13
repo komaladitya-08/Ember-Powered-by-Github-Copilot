@@ -2,7 +2,8 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { projectAfterStatus, projectCommandFolder, projectCommandProblem, projectCommandText, projectRequestSecret, projectFailureText, projectJobStops, projectMay, projectNames, projectPrompt, projectRequest, projectStopped, PROJECT_MODEL_FAILED, PROJECT_PREVIOUS_ELSEWHERE, PROJECT_SYSTEM, secretLine } from "../../app/main/agent/project";
+import { projectAfterStatus, projectChoice, projectCommandFolder, projectCommandProblem, projectCommandText, projectRequestSecret, projectFailureText, projectJobStops, projectMay, projectNames, projectPrompt, projectRefusedText, projectRequest, projectStopped, PROJECT_MODEL_FAILED, PROJECT_PREVIOUS_ELSEWHERE, PROJECT_SYSTEM, secretLine } from "../../app/main/agent/project";
+import { memoryRefusal } from "../../app/main/memory/guard";
 import { readFileSync } from "node:fs";
 import { applyProjectPatch, draftProjectPatch, readProjectPatch } from "../../app/main/agent/project-patch";
 import type { ProjectSource } from "../../app/main/agent/project";
@@ -39,7 +40,7 @@ it("sends only selected files and keeps their text inside the untrusted block", 
 });
 
 it("rejects unsafe files, ambiguous names, excess data and invalid request modes", async () => {
-  expect(() => projectNames([path.join(dir, ".env.txt")])).toThrow("without credentials");
+  expect(() => projectNames([path.join(dir, ".env.txt")])).toThrow(".env.txt is a hidden file");
   expect(() => projectNames([path.join(dir, "first", "index.ts"), path.join(dir, "second", "index.ts")])).toThrow("different names");
   expect(projectRequest.safeParse({ mode: "apply", question: "Change it." }).success).toBe(false);
   const bad = await file("sample.ts", Buffer.from([0xff]));
@@ -567,6 +568,82 @@ describe("Projects' work as Ember's connection changes", () => {
   it("says a request stopped because the connection dropped, not that it was cancelled (integrations-r1)", () => {
     expect(projectStopped(false)).toBe("Project request cancelled.");
     expect(projectStopped(true)).toBe("Ember lost its connection, so the request stopped. Send it again once Ember is connected.");
+  });
+});
+
+describe("choosing project files", () => {
+  const at = (...names: string[]) => names.map(name => path.join(path.resolve("/proj"), name));
+
+  it("takes ordinary source, build and text files by their type, and the well-known ones that have none (integrations-r9-2)", () => {
+    // Each was refused with "Choose source, documentation or diff files without credentials."
+    const ordinary = ["App.vue", "Page.svelte", "index.php", "main.cc", "widget.cxx", "widget.hh", "styles.scss", "pom.xml", "build.gradle", "main.dart", "init.lua", "Main.scala",
+      "api.proto", "schema.graphql", "setup.ini", "main.tf", "run.bat", "view.m", "plot.R", "data.csv", "index.htm", "test.zsh", "main.jl", "module.ex", "setup.cfg",
+      "Makefile", "Dockerfile", "Dockerfile.dev", "README", "LICENSE", "CHANGELOG", "Gemfile", "Jenkinsfile",
+      // And what it took before.
+      "main.ts", "app.mjs", "util.py", "lib.rs", "notes.TXT", "fix.diff", "tsconfig.json", "deploy.yaml"];
+    for (const name of ordinary) expect(projectChoice(at(name)), name).toEqual({ files: at(name), refused: [] });
+  });
+
+  it("takes a file named for a tokenizer, a word the secret guard itself says never names a secret (integrations-r9-2)", async () => {
+    for (const word of ["tokenizer", "Tokenizer", "tokeniser", "tokenize", "tokenization", "detokenizer", "tokenizers"]) {
+      // The guard's own reading of the word (guard.ts NOT_SECRET_WORD): a setting, not a secret.
+      expect(memoryRefusal(`${word}: "cl100k_base"`), word).toBeNull();
+      expect(projectChoice(at(`${word}.ts`)).refused, word).toEqual([]);
+    }
+    expect(projectChoice(at("bpe_tokenizer_test.py")).refused).toEqual([]);
+    // Its text is still read by the secret guard, as every file's.
+    const held = await file("tokenizer.ts", "export const key = 'sk-abcdefghijklmnopqrstuvwxyz123456';\n");
+    await expect(prompt([held])).rejects.toThrow("tokenizer.ts appears to contain a password, token or key");
+  });
+
+  it("still refuses a file named for a password, token, secret, key or credential, a hidden file and a lock file (integrations-r9-2)", () => {
+    const named = ["token.txt", "tokens.json", "design-tokens.json", "TokenStream.java", "csrf_token.py", "PasswordInput.tsx", "reset_password.py", "secrets.md", "SecretSanta.java",
+      "credentials.py", "passwd.txt", "private-key-rotation.md", "privatekey.go", "token_tokenizer.ts", "secret_tokenizer.ts", "mytokenfile.txt"];
+    for (const name of named) expect(projectChoice.bind(null, at(name)), name).toThrow(`${name} is named like a file that holds passwords, tokens or keys, so Ember won't send it.`);
+    for (const name of [".env", ".env.txt", ".npmrc", ".eslintrc.json"]) expect(projectChoice.bind(null, at(name)), name).toThrow(`${name} is a hidden file (its name starts with a dot), and Ember sends none of those.`);
+    for (const name of ["yarn.lock", "Gemfile.lock", "photo.png", "report.pdf", "archive.zip", "notebook.ipynb", "id_rsa", "app.env", "prod.tfvars", "server.log", "app.exe"]) {
+      expect(projectChoice.bind(null, at(name)), name).toThrow(`${name} isn't a kind of file Projects takes. Choose source, documentation or diff files.`);
+    }
+  });
+
+  it("says which files it refuses and why, and keeps the rest of the choice (integrations-r9-2)", () => {
+    // One sentence that blamed credentials, named no file and dropped all four.
+    const choice = projectChoice(at("main.ts", "photo.png", "App.vue", "tokens.json"));
+    expect(choice.files).toEqual(at("main.ts", "App.vue"));
+    expect(choice.refused).toEqual([{ name: "photo.png", why: "kind" }, { name: "tokens.json", why: "named" }]);
+    expect(projectRefusedText(choice.refused, choice.files.length)).toBe(
+      "photo.png isn't a kind of file Projects takes. Choose source, documentation or diff files. tokens.json is named like a file that holds passwords, tokens or keys, so Ember won't send it. The other 2 files are chosen.");
+    expect(projectRefusedText([{ name: "a.png", why: "kind" }, { name: "b.zip", why: "kind" }], 1)).toBe(
+      "a.png and b.zip aren't kinds of file Projects takes. Choose source, documentation or diff files. The other file is chosen.");
+    expect(projectRefusedText([{ name: "a.png", why: "kind" }, { name: "b.zip", why: "kind" }, { name: "c.exe", why: "kind" }, { name: "d.bin", why: "kind" }, { name: "e.o", why: "kind" }], 0)).toBe(
+      "a.png, b.zip, c.exe and 2 more aren't kinds of file Projects takes. Choose source, documentation or diff files.");
+    expect(projectRefusedText([{ name: "token.txt", why: "named" }, { name: "secrets.md", why: "named" }], 0)).toBe(
+      "token.txt and secrets.md are named like files that hold passwords, tokens or keys, so Ember won't send them.");
+    expect(projectRefusedText([{ name: ".env", why: "hidden" }, { name: ".npmrc", why: "hidden" }], 0)).toBe(
+      ".env and .npmrc are hidden files (their names start with a dot), and Ember sends none of those.");
+    // The strict list (what is sent) says the same of a single file.
+    expect(() => projectNames(at("main.ts", "photo.png"))).toThrow("photo.png isn't a kind of file Projects takes. Choose source, documentation or diff files.");
+  });
+
+  it("never repeats a name that looks like a secret or that it can't show, and still refuses it (integrations-r9-2)", () => {
+    const key = "sk-abcdefghijklmnopqrstuvwxyz123456.txt";
+    const choice = projectChoice(at("main.ts", key, "a\u202Egnp.ts", "notes:stream.txt"));
+    expect(choice.files).toEqual(at("main.ts"));
+    const said = projectRefusedText(choice.refused, 1);
+    expect(said).toBe("3 files have names Ember won't repeat here (hidden characters, a colon, or what looks like a password, token or key), so it won't send them. The other file is chosen.");
+    expect(said).not.toContain("sk-");
+    expect(projectRefusedText([choice.refused[0]], 0)).toBe("One file has a name Ember won't repeat here (hidden characters, a colon, or what looks like a password, token or key), so it won't send it.");
+    // A very long name is cut, never the sentence.
+    expect(projectRefusedText([{ name: `${"x".repeat(80)}.png`, why: "kind" }], 0)).toBe(`${"x".repeat(59)}… isn't a kind of file Projects takes. Choose source, documentation or diff files.`);
+  });
+
+  it("counts the six files among those it takes, and still refuses a whole choice it can't sort out (integrations-r9-2)", () => {
+    const seven = at("a.ts", "b.ts", "c.ts", "d.ts", "e.ts", "f.ts", "photo.png");
+    expect(projectChoice(seven).files).toHaveLength(6);
+    expect(() => projectChoice(at("a.ts", "b.ts", "c.ts", "d.ts", "e.ts", "f.ts", "g.ts"))).toThrow("Choose up to 6 files.");
+    expect(() => projectChoice([path.join(path.resolve("/one"), "index.ts"), path.join(path.resolve("/two"), "index.ts")])).toThrow("different names");
+    expect(() => projectChoice(["relative.ts"])).toThrow("Choose local project files.");
+    expect(() => projectChoice([])).toThrow("Choose up to 6 files.");
   });
 });
 

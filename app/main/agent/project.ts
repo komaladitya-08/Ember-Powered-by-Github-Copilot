@@ -11,9 +11,94 @@ import { friendlyError, type ServiceKind } from "./presenter";
 export const PROJECT_FILES = 6;
 const FILE_BYTES = 24 * 1024;
 const TOTAL_BYTES = 64 * 1024;
-const textFile = /\.(?:[cm]?[jt]sx?|py|go|rs|rb|java|kt|swift|cs|[ch](?:pp)?|sh|ps1|css|html|sql|json|toml|ya?ml|md|rst|txt|diff|patch)$/i;
-const privateName = /(?:^\.|secret|credential|passwd|password|private.?key|token|\.lock$)/i;
+/**
+ * The kinds of file Projects takes, by type: source, build and markup files, documentation, text and diffs. Not a
+ * guard (integrations-r9-2: App.vue, main.cc and pom.xml were refused in words about credentials): whatever its type,
+ * a file is sent only as UTF-8 text under the size limits, and only once the secret guard has read its name and all of
+ * its text. Types that hold credentials or other people's data by convention stay out (.env, .tfvars, .pem, .log).
+ */
+const textFile = new RegExp(String.raw`\.(?:${[
+  "[cm]?[jt]sx?", "vue", "svelte", "astro", "html?", "css", "scss", "sass", "less", "xml", "xsl", "svg",
+  "py", "rb", "php", "pl", "pm", "lua", "r", "jl", "sh", "bash", "zsh", "fish", "ps1", "psm1", "bat", "cmd",
+  "go", "rs", "java", "kts?", "scala", "groovy", "gradle", "clj", "swift", "dart", "cs", "fs", "vb", "zig",
+  "[ch](?:pp|xx)?", "cc", "hh", "mm?", "ex", "exs", "erl", "hs", "ml",
+  "sql", "graphql", "gql", "proto", "tf", "hcl", "cmake", "mk",
+  "json", "toml", "ya?ml", "ini", "cfg", "conf", "properties",
+  "md", "markdown", "rst", "adoc", "tex", "txt", "csv", "tsv", "diff", "patch",
+].join("|")})$`, "i");
+/** Well-known source and documentation files that have no type ("Makefile", "Dockerfile.dev", "README"). */
+const namedFile = /^(?:(?:GNU)?[Mm]akefile|Dockerfile|Containerfile|Jenkinsfile|Vagrantfile|Gemfile|Rakefile|Procfile|Brewfile|[Jj]ustfile|Caddyfile|CODEOWNERS|README|LICEN[CS]E|COPYING|NOTICE|CHANGELOG|CHANGES|AUTHORS|CONTRIBUTING|TODO)(?:\.[\w-]{1,20})?$/;
+const privateName = /(?:secret|credential|passwd|password|private.?key|token)/i;
+/**
+ * "tokenizer" and its forms hold "token" but never name a secret: memory's secret guard reads them so too (guard.ts
+ * NOT_SECRET_WORD, integrations-r4-1), and project.test.ts holds the two together. Taken out of a name before
+ * privateName looks, so tokenizer.ts is source (integrations-r9-2) and token_tokenizer.ts is still named for a token.
+ */
+const TOKENISER = /(?:de)?tokeni[sz](?:ers?|ed|es|e|ing|ation)/gi;
 export class ProjectInputError extends Error {}
+
+/**
+ * Why Projects doesn't take a chosen file, from its name alone (integrations-r9-2): not a `kind` it takes; `hidden`
+ * (a dot file, where credentials are kept by convention); `named` for a password, token, secret, key or credential;
+ * or a name that is itself `unsafe` to repeat (control or direction characters, a colon, or what the secret guard
+ * reads as a secret).
+ */
+export type ProjectFileProblem = "kind" | "hidden" | "named" | "unsafe";
+/** A chosen file Projects doesn't take, by its own name, and why. */
+export interface ProjectRefusedFile { name: string; why: ProjectFileProblem }
+
+/** Why the file called `name` isn't taken, or null when it is. Its text is read by the secret guard only on Send. */
+export function projectFileProblem(name: string): ProjectFileProblem | null {
+  if (/[\p{Cc}\p{Cf}:]/u.test(name) || memoryRefusal(name)) return "unsafe";
+  if (name.startsWith(".")) return "hidden";
+  if (privateName.test(name.replace(TOKENISER, "_"))) return "named";
+  // A lock file is a list of versions and hashes, whatever it is the lock of ("Gemfile.lock").
+  if (/\.lock$/i.test(name) || (!textFile.test(name) && !namedFile.test(name))) return "kind";
+  return null;
+}
+
+/** Names as a sentence's subject: "a", "a and b", "a, b, c and 2 more". Each is cut at 60 characters. */
+function listed(names: readonly string[]): string {
+  const cut = names.map(n => n.length > 60 ? `${n.slice(0, 59)}…` : n);
+  if (cut.length <= 1) return cut.join("");
+  if (cut.length <= 3) return `${cut.slice(0, -1).join(", ")} and ${cut[cut.length - 1]}`;
+  return `${cut.slice(0, 3).join(", ")} and ${cut.length - 3} more`;
+}
+
+/**
+ * What Projects says of the files it didn't take, each by name with its own reason (integrations-r9-2: one sentence
+ * about credentials named no file and fitted few), and with `kept` files of the same choice taken, that they are.
+ * A name unsafe to repeat is counted, never shown.
+ */
+export function projectRefusedText(refused: readonly ProjectRefusedFile[], kept = 0): string {
+  const of = (why: ProjectFileProblem) => refused.filter(f => f.why === why).map(f => f.name);
+  const kind = of("kind"), hidden = of("hidden"), named = of("named"), unsafe = of("unsafe");
+  const said: string[] = [];
+  if (kind.length) said.push(`${listed(kind)} ${kind.length === 1 ? "isn't a kind" : "aren't kinds"} of file Projects takes. Choose source, documentation or diff files.`);
+  if (hidden.length) said.push(`${listed(hidden)} ${hidden.length === 1 ? "is a hidden file (its name starts" : "are hidden files (their names start"} with a dot), and Ember sends none of those.`);
+  if (named.length) said.push(`${listed(named)} ${named.length === 1 ? "is named like a file that holds" : "are named like files that hold"} passwords, tokens or keys, so Ember won't send ${named.length === 1 ? "it" : "them"}.`);
+  if (unsafe.length) said.push(`${unsafe.length === 1 ? "One file has a name" : `${unsafe.length} files have names`} Ember won't repeat here (hidden characters, a colon, or what looks like a password, token or key), so it won't send ${unsafe.length === 1 ? "it" : "them"}.`);
+  if (kept > 0 && said.length) said.push(kept === 1 ? "The other file is chosen." : `The other ${kept} files are chosen.`);
+  return said.join(" ");
+}
+
+/**
+ * A choice from the file dialog, sorted: the `files` Projects takes and the ones it `refused`, each with its reason, so
+ * one file of the wrong kind no longer drops the whole choice (integrations-r9-2). Still refused whole: a choice with
+ * nothing it takes, more than six that it does, a path that isn't local, and two files of one name.
+ */
+export function projectChoice(chosen: readonly string[]): { files: string[]; refused: ProjectRefusedFile[] } {
+  if (chosen.some(file => !path.isAbsolute(file) || file.startsWith("\\\\"))) throw new ProjectInputError("Choose local project files.");
+  const files: string[] = [], refused: ProjectRefusedFile[] = [];
+  for (const file of chosen) {
+    const name = path.basename(file);
+    const why = projectFileProblem(name);
+    if (why) refused.push({ name, why }); else files.push(file);
+  }
+  if (!files.length && refused.length) throw new ProjectInputError(projectRefusedText(refused));
+  projectNames(files);
+  return { files, refused };
+}
 
 /** Why a project request's model call failed, as the model service said it (never the prompt, which holds the files). */
 export interface ProjectModelFailure { message: string; errorType?: string; statusCode?: number; timedOut?: boolean }
@@ -141,9 +226,8 @@ export function projectNames(files: readonly string[]): string[] {
   if (!files.length || files.length > PROJECT_FILES) throw new ProjectInputError(`Choose up to ${PROJECT_FILES} files.`);
   if (files.some(file => !path.isAbsolute(file) || file.startsWith("\\\\"))) throw new ProjectInputError("Choose local project files.");
   const names = files.map(file => path.basename(file));
-  if (names.some(name => !textFile.test(name) || privateName.test(name) || /[\p{Cc}\p{Cf}:]/u.test(name) || memoryRefusal(name))) {
-    throw new ProjectInputError("Choose source, documentation or diff files without credentials.");
-  }
+  const refused = names.flatMap(name => { const why = projectFileProblem(name); return why ? [{ name, why }] : []; });
+  if (refused.length) throw new ProjectInputError(projectRefusedText(refused));
   if (new Set(names.map(name => name.toLowerCase())).size !== names.length) {
     throw new ProjectInputError("Choose files with different names so the answer can identify them.");
   }
