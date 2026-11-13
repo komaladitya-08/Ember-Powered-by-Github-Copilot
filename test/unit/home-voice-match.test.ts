@@ -396,7 +396,9 @@ describe("How Ember asks (Apps & privacy, modes-A10)", () => {
     // text describes: a screen reader says the card as it opens. The button takes no press for AGREE_ARM_MS.
     const press = main.slice(main.indexOf(`$("approvals").addEventListener("click"`), main.indexOf(`$("approvals").addEventListener("keydown"`));
     expect(press).toContain(`if (!row || !mode || row.disabled || row.getAttribute("aria-checked") === "true") return;`);
-    expect(press).toMatch(/openModeCard\(mode\);\s*\$\("approvals-yes"\)\.focus\(\);/);
+    // The card is shown from its title, so its words are in view, and the keyboard goes to agree without scrolling them
+    // away (modes-x9p-2).
+    expect(press).toMatch(/openModeCard\(mode\);[\s\S]*\$\("approvals-card"\)\.scrollIntoView\(\{ block: "start", behavior: "auto" \}\);\s*\$\("approvals-yes"\)\.focus\(\{ preventScroll: true \}\);/);
     expect(main).toContain(`showConsentCard("approvals-card", "approvals-yes");`);
     expect(main).toContain(`if (!mode || choosing || !agreeArmed("approvals-yes")) return;`);
   });
