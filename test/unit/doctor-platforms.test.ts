@@ -1,5 +1,6 @@
 /** `ember doctor` on Windows and macOS (doctor.ts, design §4.14, §9.9): the `os` field decides the advice, never a check's text. */
 
+import fs from "node:fs";
 import { describe, expect, it } from "vitest";
 import { doctorChecks, formatDoctor, type DoctorProbes } from "../../app/main/doctor";
 import { inspectEnvironment, type EnvInputs } from "../../app/main/environment";
@@ -47,7 +48,10 @@ describe("ember doctor's Speech models row", () => {
     expect(row({ voiceModels: "downloaded", voiceModelsMissing: [] })).toMatchObject({ status: "ok", detail: "Downloaded." });
     expect(row({ voiceModels: "bundled", voiceModelsMissing: ["tts"] })).toEqual({ id: "voice-models", status: "ok", label: "Speech models",
       detail: "Installed with Ember. Without Ember's own voice (replies use the system's voice) until it's downloaded in Ember's settings (64 MB)." });
-    expect(row({ voiceModels: "downloaded", voiceModelsMissing: ["speaker"] }).detail).toBe("Downloaded. Without Voice Match (your voice can't answer questions) until it's downloaded in Ember's settings (27 MB).");
+    expect(row({ voiceModels: "downloaded", voiceModelsMissing: ["speaker"] }).detail).toBe("Downloaded. Without Voice Match (while “Only my voice can say yes” is on, Ember takes no spoken yes) until it's downloaded in Ember's settings (27 MB).");
+    // Never that nobody can answer by voice: with that switch off, its default, anyone heard can (install-docs-r9-3).
+    expect(row({ voiceModels: "downloaded", voiceModelsMissing: ["speaker"] }).detail).not.toMatch(/can't answer questions/);
+    expect(fs.readFileSync("README.md", "utf8")).toMatch(/replies in the system's voice or, while “Only my voice can\nsay yes” is on, takes no spoken yes meanwhile/);
     expect(row({ voiceModels: "downloaded", voiceModelsMissing: ["tts", "speaker"] }).detail).toMatch(/Ember's own voice .* and Voice Match .* until they're downloaded in Ember's settings \(90 MB\)\.$/);
   });
 });
