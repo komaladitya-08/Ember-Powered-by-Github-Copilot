@@ -49,14 +49,30 @@ describe("VaultRedactor (vault-3)", () => {
     expect(r.text(`a ${PASSWORD} b ${PASSWORD}${PASSWORD} c`)).toBe(`a ${VAULT_REDACTED} b ${VAULT_REDACTED} c`);
   });
 
-  it("replaces a card number with spaces or dashes between its digits, and a security code wherever it stands", () => {
+  it("replaces a card number with spaces or dashes between its digits, wherever it stands", () => {
     const r = new VaultRedactor();
     r.note("cardNumber", CARD);
-    r.note("securityCode", "737");
-    for (const text of ["4111 1111 1111 1111", "4111-1111-1111-1111", "card 4111111111111111.", "4111 1111 1111 1111"]) expect(r.text(text), text).not.toMatch(/1111/);
-    expect(r.text("code 737 ok")).toBe(`code ${VAULT_REDACTED} ok`);
-    expect(r.text("ref 97371")).toBe(`ref 9${VAULT_REDACTED}1`);
+    for (const text of ["4111 1111 1111 1111", "4111-1111-1111-1111", "card 4111111111111111.", "4111 1111 1111 1111", "ref 941111111111111117"]) expect(r.text(text), text).not.toMatch(/1111/);
     expect(r.text("ending 1111")).toBe("ending 1111");
+  });
+
+  it("never marks a security code, or any secret too short to hide, inside other text: where the mark lands would give it away (vault-3-x9-1)", () => {
+    const r = new VaultRedactor();
+    r.note("securityCode", "437");
+    // Any text that lists the numbers (a page's on purpose, a date, a price the model typed itself) would say which one it is.
+    const list = Array.from({ length: 1000 }, (_, i) => String(i).padStart(3, "0")).join(" ");
+    expect(r.text(list)).toBe(list);
+    for (const text of ["Pay $1,437.00 — order 54371, call 555-437-1200", "code 437 ok", "437"]) {
+      expect(r.text(text), text).toBe(text);
+      expect(r.holds(text), text).toBe(false);
+    }
+    r.note("securityCode", "8642");
+    r.note("password", "Ab1!x");
+    expect(r.text("13 November 8642, xAb1!xy")).toBe("13 November 8642, xAb1!xy");
+    // Something was filled all the same (the extensions' gate and the client go by this), and a longer secret is still found.
+    expect(r.active).toBe(true);
+    r.note("password", "Ab1!xy");
+    expect(r.text("xAb1!xyz")).toBe(`x${VAULT_REDACTED}z`);
   });
 
   it("replaces a user name, an email or an address in any letter case and across white space, but only where it stands alone", () => {

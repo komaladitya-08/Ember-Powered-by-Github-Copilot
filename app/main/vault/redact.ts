@@ -7,12 +7,20 @@
  * card number a receipt repeats, a value an app puts in its address or its title.
  *
  * What counts as the value: the text as filled; a card number with spaces or dashes between its digits; the text as an
- * address, a JSON line or markup escapes it; with its accented letters composed or in parts; runs of white space of any length (an address's lines joined by commas too); and, for the parts that aren't
+ * address, a JSON line or markup escapes it; with its accented letters composed or in parts; runs of white space of
+ * any length (an address's lines joined by commas too); and, for the parts that aren't
  * secret (a user name, an email, an address), any letter case. A part that isn't secret is replaced only where
  * it stands alone (a user name "ada", an expiry's "12/27"), never inside a longer word or number ("adamant"), which
- * would say where it is without hiding anything; a password, a card number and a security code are replaced wherever
- * they stand. Text cut short in the middle of a value before
- * it gets here isn't recognised: readers that cut text ask `holds` first (Perception does, for every element).
+ * would say where it is without hiding anything; a password and a card number are replaced wherever they stand.
+ *
+ * A secret shorter than MIN_SECRET characters (a card's security code, a four-character password) is never looked for
+ * in other text (review vault-3-x9-1): a mark in place of three digits says which three they are to anyone who knows
+ * the text around it (a list of numbers, a date, a price), on any page for the rest of the run, and would turn every
+ * control and field that has those digits in it secret. Such a value is kept from a model by its field alone, which is
+ * secret from the fill on (the helper's fill and the worker's mark), never read and blacked out of every picture.
+ *
+ * Text cut short in the middle of a value before it gets here isn't recognised: readers that cut text ask `holds`
+ * first (Perception does, for every element).
  *
  * Plain Node, no Electron: the list lives in main's memory and is never written, sent or logged.
  */
@@ -21,6 +29,9 @@ import { SECRET_PARTS, type VaultPart } from "../../shared/vault";
 
 /** What stands where a value was. It names no kind and no length. */
 export const VAULT_REDACTED = "[hidden: filled from Ember's vault]";
+
+/** A secret part with fewer characters than this is not looked for in other text (see above). */
+const MIN_SECRET = 6;
 
 /** Values kept at most (the oldest go first): a run fills a handful. */
 const MAX_VALUES = 400;
@@ -61,12 +72,16 @@ interface Noted { value: string; patterns: RegExp[] }
 export class VaultRedactor {
   private noted: Noted[] = [];
   private plain = false;
+  private filled = false;
 
   /** A value is about to be put into a field: from now on it is replaced wherever text leaves for a model, the audit or the logs. */
   note(part: VaultPart, value: string): void {
     if (typeof value !== "string" || !value) return;
+    this.filled = true;
     if (this.noted.some(n => n.value === value)) return;
     const secret = SECRET_PARTS.has(part);
+    // Too short to hide in place: its field is secret, and that is all that keeps it (vault-3-x9-1).
+    if (secret && [...value.trim()].length < MIN_SECRET) return;
     const card = part === "cardNumber" && /^\d+$/.test(value);
     const alone = !secret;
     // An app may hand an accented letter back composed or in parts: both.
@@ -86,9 +101,9 @@ export class VaultRedactor {
     if (this.noted.length > MAX_VALUES) this.noted.length = MAX_VALUES;
   }
 
-  /** Has anything been filled in this run? While not, every call here returns what it was given. */
+  /** Has anything been filled in this run (a value too short to look for included)? While not, every call here returns what it was given. */
   get active(): boolean {
-    return this.noted.length > 0;
+    return this.filled;
   }
 
   /**

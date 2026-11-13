@@ -82,6 +82,21 @@ describe("a read after a fill from the vault (vault-3)", () => {
   });
 });
 
+describe("a checkout after a card's security code was filled (vault-3)", () => {
+  it("keeps the names, the fields and the picture of whatever only has the code's digits in it (vault-3-x9-3)", async () => {
+    const PAY: AxNode = { id: 11, parent: null, depth: 1, role: "push button", name: "Pay $1,437.00", states: ["enabled", "showing"], bounds: at(100) };
+    const NOTES: AxNode = { id: 12, parent: null, depth: 1, role: "entry", name: "Delivery notes", states: EDIT, bounds: at(200), text: "Flat 437, ring twice" };
+    const ORDER: AxNode = { id: 13, parent: null, depth: 1, role: "label", name: "Order 54371 confirmed", states: ["showing"], bounds: at(300) };
+    const d = desktop({ nodes: [PAY, NOTES, ORDER], title: "Order 1437 — Mozilla Firefox" });
+    d.redactor!.note("securityCode", "437");
+    const p = await d.perception.perceive({ image: true, scope: "window", target: { pid: 42 } });
+    expect(p.nodes.map(n => [n.id, n.name, !!n.secret, !!n.withheld])).toEqual([[11, "Pay $1,437.00", false, false], [12, "Delivery notes", false, false], [13, "Order 54371 confirmed", false, false]]);
+    expect(p.nodes[1].text).toBe("Flat 437, ring twice");
+    expect(d.marked).toEqual([]);
+    expect(p.capture).toBeTruthy();
+  });
+});
+
 describe("a picture after a fill from the vault (vault-3)", () => {
   it("blacks out every place that says the value, as a secret field's", async () => {
     const d = desktop({ nodes: NODES });

@@ -1631,7 +1631,11 @@ details the user gives Ember in its own **Secure Form**, each bound to one desti
   It finds the value as filled, as an address, a JSON line or markup escapes it, a card number with spaces or
   dashes between its digits, white space of any length (an address's lines joined by commas too) and, for the parts
   that aren't secret, any letter case; such a part is replaced only where it stands alone ("ada", never inside
-  "adamant"), a password, card number or security code wherever it stands. Text cut short in the middle of a value
+  "adamant"), a password or card number wherever it stands. A secret shorter than six characters (a card's security
+  code, a very short password) is not looked for in other text at all: a mark in place of three digits tells anyone
+  who knows the text around it which three they are, on any page for the rest of the run, so such a value is kept
+  by its field alone, which is secret from the fill on (never read, black in every picture); a page that repeats a
+  security code outside its field is not covered. Text cut short in the middle of a value
   before it gets there isn't recognised, so `Perception` asks the redactor about every element first
   (`holdsVaultValue`): whatever says a filled value (the field itself, a line that repeats it, a tab named after it)
   loses its words and is blacked out of every picture as a secret field is, and a field is kept secret by the helper
@@ -1643,7 +1647,7 @@ details the user gives Ember in its own **Secure Form**, each bound to one desti
   and task card show the person of their own screen (an element's name).
 - **The leak test.** test/unit/vault-leak.test.ts fills every kind of entry through the worker's real path, by
   accessibility and as keys, on each OS's keys and words, into a pretend app that repeats everything it is given
-  (test/fixtures/vault/), then looks for the canary values in everything a model is handed, the audit log, the
+  but the card's security code (test/fixtures/vault/), then looks for the canary values in everything a model is handed, the audit log, the
   logs at debug level, settings.json, every other file in the data folder, Home's answers, the announcements and
   the clipboard, and checks every filled field is black in every picture. test/integration/vault-leak.test.ts does
   the same on the real runtime with the scripted model (its own record of every request; it runs anywhere), and

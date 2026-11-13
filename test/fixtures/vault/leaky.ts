@@ -4,7 +4,9 @@
  * site, read through a pretend accessibility helper over a grey pretend screen. Whatever is filled into it, the app
  * repeats: in the field's own text, in a line under the form, in a link's name, in an error it raises and, after a
  * click, in its window's title. The tests fill every kind of entry into it with the canary values here and then look
- * for them everywhere Ember writes or sends anything.
+ * for them everywhere Ember writes or sends anything. The one thing it never repeats outside its own field is the
+ * card's security code, as no shop does: a secret that short is kept by its field alone (the redactor doesn't look
+ * for it in other text, where a mark's place would give it away: review vault-3-x9-1).
  */
 
 import fs from "node:fs";
@@ -111,7 +113,8 @@ export function leakyApp(o: { stderr?: (line: string) => void } = {}): LeakyApp 
   const held = new Map<number, string>();
   const how = new Map<number, "accessibility" | "keys">();
   const state = { clipboard: 0, title: "Checkout — Mozilla Firefox", marked: new Set<number>(), borrows: 0, focused: 0 };
-  const everything = () => [...held.values()].join(" | ");
+  const SECURITY_CODE = FIELDS.find(f => f.what === "card security code")!.id;
+  const everything = () => [...held].filter(([id]) => id !== SECURITY_CODE).map(([, v]) => v).join(" | ");
   const window = (): AxWindow => ({ app: "firefox", pid: 42, path: "/w/1", name: state.title, role: "frame", active: true, bounds: FRAME });
   const nodes = (): AxNode[] => {
     const secret = (id: number, role: string) => state.marked.has(id) || role === "password text";
