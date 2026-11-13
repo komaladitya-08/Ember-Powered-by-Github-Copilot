@@ -64,6 +64,10 @@ export const SPOKEN_YES: ReadonlySet<string> = new Set([
   "okay", "ok", "alright", "all right", "fine", "sounds good", "that sounds good", "go on", "yes go on",
   "go with it", "yes go with it", "let's go with it", "accept", "accept it", "i accept", "yes i accept", "continue", "yes continue",
   "confirm", "i confirm", "yes confirm", "confirmed",
+  // The symmetric forms of those already here (V2-F7: "You may." and "Approved." were answers, "You may go ahead." and
+  // "Accepted." weren't). None of them reads both ways; "You can" alone still isn't one.
+  "you may go ahead", "you can go ahead", "i approve", "accepted", "go right ahead", "yes okay", "yeah okay", "sure okay",
+  "yeah fine", "yes of course", "i agree",
   // Misheard (Moonshine): "allow" as "aloud", "a loud", "a low" or "allowed"; "go ahead" as "go a head".
   "aloud", "a loud", "a low", "allowed", "yes aloud", "go a head", "yes go a head",
   // Longer ways to say it, so Voice Match has enough of the voice to vouch for it (match.ts APPROVAL_MIN_SECONDS).
@@ -77,6 +81,9 @@ export const SPOKEN_NO: ReadonlySet<string> = new Set([
   "not now", "no", "no no", "no thanks", "no thank you", "nope", "nah", "no way", "don't", "do not", "don't do it", "no don't", "no don't do it",
   "deny", "deny it", "not now thanks", "no not now", "not yet", "no not yet", "not right now", "no not right now",
   "don't allow", "don't allow it", "don't allow that", "do not allow it", "no don't allow it",
+  // The symmetric forms (V2-F7: "Don't do it." and "Deny." were answers, "Don't do that." and "Denied." weren't).
+  "don't do that", "do not do it", "do not do that", "denied", "do not allow", "do not allow that", "don't allow this",
+  "absolutely not", "not today", "no no no",
 ]);
 
 /** Lower case, straight apostrophes, no closing punctuation, single spaces. */

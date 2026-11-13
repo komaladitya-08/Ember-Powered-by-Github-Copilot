@@ -7,6 +7,7 @@
 import { describe, expect, it } from "vitest";
 import { ANSWER_CLOSED_STATUS, ANSWER_LISTENING_STATUS, SHORT_YES_FLOOR, TASK_VOICE_MS, TaskVoiceTrust, VoiceRefusals, answerWindowStatus, heardAnswer, heardUnchecked, refusalEndsTrust, refusalLine, refusalNote, rejectionEndsTrust, spokenAnswer, voiceAnswer, voiceAnswerSaid, VOICE_ANSWER_REFUSED, type VoiceAnswerInput } from "../../app/main/agent/voice-answer";
 import { Confirmer, type Question } from "../../app/main/agent/confirm";
+import { SPOKEN_NO, SPOKEN_YES } from "../../app/shared/spoken-answer";
 import { questionAloud } from "../../app/main/agent/presenter";
 import { AUTONOMY_NOT_SAVED, autonomyIntent, planAutonomyIntent } from "../../app/main/agent/autonomy-intent";
 import fs from "node:fs";
@@ -507,6 +508,16 @@ describe("spoken answers as people say them (owner report of 2026-11-03: “Embe
     for (const no of ["No.", "Deny.", "Don't.", "No thanks.", "Not now."]) expect(spokenAnswer(no), no).toBe("deny");
     // Still not answers: requests of their own (review of #127), or more than an answer.
     for (const other of ["Cancel.", "Never mind.", "Continue with the next file.", "I accept the terms and delete the rest.", "Confirm my order and pay."]) expect(spokenAnswer(other), other).toBeNull();
+  });
+
+  it("hears the symmetric forms of the answers it already takes, none of them both ways, and still not “Always” or “You can” (V2-F7; voice-listening-r9-11)", () => {
+    const yes = ["You may go ahead.", "You can go ahead.", "I approve.", "Accepted.", "Go right ahead.", "Yes, okay.", "Yeah, okay.", "Sure, okay.", "Yeah, fine.", "Yes, of course.", "I agree."];
+    const no = ["Don't do that.", "Do not do it.", "Do not do that.", "Denied.", "Do not allow.", "Do not allow that.", "Don't allow this.", "Absolutely not.", "Not today.", "No, no, no."];
+    for (const t of yes) expect(spokenAnswer(t), t).toBe("allow");
+    for (const t of no) expect(spokenAnswer(t), t).toBe("deny");
+    // None of them is in both lists, and every word list still reads one way only.
+    for (const w of SPOKEN_YES) expect(SPOKEN_NO.has(w), w).toBe(false);
+    for (const t of ["Always.", "Always allow.", "You can.", "Okay?", "Proceed?", "Yes, and delete the rest.", "I agree to delete everything."]) expect(spokenAnswer(t), t).toBeNull();
   });
 
   it("hears the noes people naturally say", () => {
