@@ -7,7 +7,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  ANNOUNCE_MS, CARD_LINES, CHECKING_COMMAND, CL_JUDGE, MAX_RUNS_PER_TARGET, OUTPUT_TAINT_LINE, SPOKEN_LINE, commandSha256, heldDecision, namesTarget, normalName, runCommandTool, wordsRuleOut,
+  ANNOUNCE_MS, CARD_LINES, CHECKING_COMMAND, CL_JUDGE, MAX_RUNS_PER_TARGET, OUTPUT_TAINT_LINE, SPOKEN_LINE, behindWrappers, commandSha256, heldDecision, namesTarget, normalName, runCommandTool, wordsRuleOut,
   setCommandJudge, shownQuote, type CommandFlowContext, type CommandJudge, type ShapeOptions,
   scriptLanguage,
 } from "../../app/main/commands/flow";
@@ -2857,6 +2857,47 @@ describe("a command that would ask, in Autopilot (autopilot.ts; modes-D2, modes-
     expect((await run(h, "rm -rf build")).resultType).toBe("success");
     expect(h.asked).toEqual([]);
     expect(h.windowAnnounce).toHaveLength(1);
+  });
+
+  it.each([
+    // At this commit the classifier takes `host` for the program after sudo's `-h`, and says only that it runs as an
+    // administrator: what stands behind it is judged apart, and a secret there keeps the question (modes-D7).
+    "sudo -h host printenv", "sudo -h host gh auth token", "sudo -h host cat /etc/shadow", "sudo -h host nohup ./server",
+  ])("still asks about a command whose wrapper hides what would read secrets or outlive Stop: %s", async command => {
+    setCommandJudge(null);
+    const h = auto({ answers: ["deny"] });
+    expect((await run(h, command)).resultType).toBe("denied");
+    expect(h.asked).toHaveLength(1);
+    expect([h.windowAnnounce, h.announced, h.starts]).toEqual([[], [], []]);
+  });
+
+  it("finds what hides behind a wrapper only where the classifier said nothing of the program itself (behindWrappers)", () => {
+    const ctx = { os: "linux" as const, home: "/home/ana", cwd: "/home/ana/proj", ember: FACTS.ember, downloaded: new Set<string>() };
+    const hidden = (command: string) => {
+      const cls = classifyCommand(command, "bash", ctx);
+      return behindWrappers(cls, text => classifyCommand(text, "bash", ctx).findings).map(f => f.rule);
+    };
+    expect(hidden("sudo -h host printenv")).toEqual(["secret.env"]);
+    expect(hidden("sudo -h host gh auth token")).toEqual(["secret.gh-auth"]);
+    // A program the classifier judged itself, an ordinary one with nothing behind it, and no wrapper at all: nothing.
+    for (const command of ["sudo apt install pass", "sudo systemctl restart nginx", "sudo ls /root", "sudo -u deploy make install", "timeout 5 make test", "printenv", "rm -rf build", "sudo printenv"]) {
+      expect(hidden(command), command).toEqual([]);
+    }
+    // It only ever adds a question: a word that names such a program behind an ordinary one counts (`sudo ls env`).
+    expect(hidden("sudo ls env")).toEqual(["secret.env"]);
+    // A part that can't be judged counts as unclear, which asks.
+    const cls = classifyCommand("sudo -h host printenv", "bash", ctx);
+    expect(behindWrappers(cls, () => { throw new Error("no"); })).toEqual([{ cls: "unclear", rule: "unclear.behind-wrapper" }]);
+  });
+
+  it("announces an administrator's command the classifier judged whole, as before", async () => {
+    setCommandJudge(null);
+    for (const command of ["sudo apt install nginx", "sudo systemctl restart nginx", "sudo -u deploy rm -rf build", "sudo ls /root"]) {
+      const h = auto();
+      expect((await run(h, command)).resultType, command).toBe("success");
+      expect(h.asked, command).toEqual([]);
+      expect(h.windowAnnounce, command).toHaveLength(1);
+    }
   });
 
   it("refuses a command on Ember's own Stop, audit log, policy, settings or mode, as in every mode", async () => {

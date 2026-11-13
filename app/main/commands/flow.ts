@@ -652,6 +652,42 @@ export function wordsRuleOut(findings: readonly Finding[], words: string): boole
   return !mentioned(findings, words) && mentioned(findings, words.replace(SAYS_NOT, "$1 "));
 }
 
+/** A bare program name: no path, option, assignment or quoting. */
+const BARE_PROGRAM = /^[A-Za-z_][\w.+-]*$/;
+/** A word as a POSIX shell would take it back whole. */
+const shellWord = (a: string) => (/^[\w@%+=:,./-]+$/.test(a) ? a : `'${a.replace(/'/g, "'\\''")}'`);
+
+/**
+ * What a wrapper may hide where the classifier read its options wrongly (the brief's `sudo -h host printenv`: at this
+ * commit `host` is taken for the program and the command behind it goes unjudged, so the decision says only that it
+ * runs as an administrator, which Autopilot announces). For each POSIX command run behind a wrapper about whose own
+ * program the classifier found nothing, every trailing part of its words that starts with a bare program name is
+ * judged as a command of its own (`judge`: the classifier, which this only calls), and a finding there that would read
+ * or print secrets or outlive the kill switch is returned, for Autopilot to keep the question. It can only add a
+ * question (`sudo ls env` asks): never used to let anything through. A part that can't be judged counts as unclear.
+ */
+export function behindWrappers(cls: Pick<Classification, "commands" | "findings">, judge: (text: string) => readonly Pick<Finding, "cls" | "rule">[]): Pick<Finding, "cls" | "rule">[] {
+  const out: Pick<Finding, "cls" | "rule">[] = [];
+  cls.commands.forEach((c, k) => {
+    if (c.family !== "posix" || c.wrappers.length === 0 || c.args.some(a => a === null)) return;
+    // Judged already: a finding about the program itself, not only about the wrapper it runs behind.
+    if (cls.findings.some(f => f.at === k && !c.wrappers.includes(f.program.split(" ")[0]))) return;
+    const args = c.args as string[];
+    for (let i = 0; i < Math.min(args.length, 16); i++) {
+      if (!BARE_PROGRAM.test(args[i])) continue;
+      try {
+        for (const f of judge(args.slice(i).map(shellWord).join(" "))) {
+          const why = askedOfFinding(f);
+          if (why === "secret" || why === "outlives-stop") out.push({ cls: f.cls, rule: f.rule });
+        }
+      } catch {
+        out.push({ cls: "unclear", rule: "unclear.behind-wrapper" }); // not judged: it asks
+      }
+    }
+  });
+  return out;
+}
+
 /**
  * "Work without asking" for a command (owner decision of 2026-11-02, PLAN.md §2 "Commands"): an ordinary command whose
  * only reason to ask is that it carries text read elsewhere in the task (rule "carried", no finding), in a task with the
@@ -902,7 +938,9 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
   if (ctx.autopilot?.() && d.verdict === "ask") {
     // (Their own words against it count wherever they were heard: where Ember can't tell the user from its speakers too.)
     const standing = standingFindings(cls.findings, paths);
-    const auto = autopilotCommand(d, { findings: cls.findings, mode, askEvery: cap.askEvery, userAskEvery, ruledOut: wordsRuleOut(standing, words) || wordsRuleOut(standing, spoken) });
+    // (And what a wrapper may hide where the classifier read its options wrongly: judged apart, to keep a question only.)
+    const hidden = behindWrappers(cls, text => j.classifyCommand(text, shell, cctx).findings);
+    const auto = autopilotCommand(d, { findings: [...cls.findings, ...hidden], mode, askEvery: cap.askEvery, userAskEvery, ruledOut: wordsRuleOut(standing, words) || wordsRuleOut(standing, spoken) });
     if (auto) d = auto;
   }
   // Assisted's check: a command that asks is shown to the reviewer with the user's own words and what the rules found
