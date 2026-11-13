@@ -3097,7 +3097,25 @@ describe("a command that would ask, in Autopilot (autopilot.ts; modes-D2, modes-
     expect(phases(h)).toEqual(["decided", "started", "ended"]);
   });
 
+  it.each<[string, "linux" | "win32", string]>([
+    ["root", "linux", "Commands here run as root (the administrator)."],
+    ["an administrator", "win32", "Ember is running as an administrator here."],
+  ])("never says each command asks first as %s, and marks the card as Autopilot's, not one the user asked for (tasks-approvals-r10-1)", async (_who, os, line) => {
+    setCommandJudge(null);
+    const h = auto({ words: "tidy up my temporary files", facts: { privileged: true, os }, cap: () => ({ state: "on", askEvery: "root" }) });
+    expect((await run(h, "rm -rf build")).resultType).toBe("success");
+    const card = h.windowAnnounce[0].card;
+    expect(card).toMatchObject({ mode: "announce", autopilot: true });
+    expect(card.reviewed).toBeUndefined();
+    expect(card.says).not.toContain(CARD_LINES.root);
+    expect(card.says).not.toContain(CARD_LINES.admin);
+    expect(card.says.join(" ")).not.toMatch(/asks first/);
+    expect(card.says[0]).toBe(line);
+    expect(card.says).toContain(AUTOPILOT_LINE);
+  });
+
   it("says nothing of the command itself in the bubble: its kind only", async () => {
+
     setCommandJudge(null);
     const h = auto();
     await run(h, "rm -rf ~/taxes-2025 ~/letters-to-ana");
@@ -3562,6 +3580,8 @@ describe("a command that would ask, in Autopilot (autopilot.ts; modes-D2, modes-
       expect(h.announced.map(a => a.text)).toEqual(["Running a command that build-01's own check asked about, without asking: Autopilot is on."]);
       expect(h.windowAnnounce).toHaveLength(1);
       expect(h.windowAnnounce[0].card.says).toEqual(["build-01's own check also found:", "“Changes who can open files.”", AUTOPILOT_LINE, "Why: “to run the tests”"]);
+      // Its heading is Autopilot's, never "as you asked" (tasks-approvals-r10-1).
+      expect(h.windowAnnounce[0].card.autopilot).toBe(true);
       expect(h.audit.find(e => e.phase === "answered")).toMatchObject({ q: "remote", answer: "announced", mode: "autopilot" });
       expect(h.starts).toHaveLength(2);
       expect(h.starts[0].stamp).toMatchObject({ approval: null });
@@ -3583,6 +3603,7 @@ describe("a command that would ask, in Autopilot (autopilot.ts; modes-D2, modes-
       await call(own, { command: "rm -rf build" });
       expect(own.starts[0].stamp).toMatchObject({ verdict: "announce", approval: null });
       expect(own.starts[0].stamp.announced).toBeUndefined();
+      expect(own.windowAnnounce[0].card.autopilot).toBeUndefined();
     });
 
     it.each([["secret.env"], ["path.secret"], ["escape.nohup"], ["escape.launcher"], ["unclear.for"], ["in-script:secret.env"], ["service.unit"], ["system.schedule"], ["path.startup"], ["service.unit", "secret.token-arg"], ["admin.no-autopilot"], ["posix.rm", "admin.no-autopilot"]])("asks with the card, as before, where the remote's rules say %s", async (...rules) => {

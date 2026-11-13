@@ -768,8 +768,9 @@ publishes, changes the system, downloads and runs a program, runs as root or an 
 Ember itself runs as one), carries text read in another window, or belongs to a task that something on screen or in a
 command's output tried to steer or that has none of your own words. The bubble says the kind of command and nothing of
 its text ("Running a command that deletes or overwrites data, without asking: Autopilot is on."), and the command
-window shows the exact command, what Ember's checks found, "Autopilot is on, so Ember didn't ask first." and the
-countdown with **Stop**, as in §2.5. Nothing is sent to a model to decide this.
+window shows "About to run this: Autopilot is on" (never "as you asked"), the exact command, what Ember's checks
+found ("Commands here run as root (the administrator).", without "so each one asks first", where that is why it would
+have asked), "Autopilot is on, so Ember didn't ask first." and the countdown with **Stop**, as in §2.5. Nothing is sent to a model to decide this.
 
 It still asks, with the card of §2.4, before:
 

@@ -333,7 +333,12 @@ describe("the command window's words (§8.5)", () => {
     // A command the review cleared (the user didn't ask for exactly it) says so in the announcement's heading.
     expect(keep(commandCopy.REVIEWED_HEADING)).toBe("About to run this: Ember checked it against your request");
     const commandMain = readFileSync(new URL("../../app/renderer/command/main.ts", import.meta.url), "utf8");
-    expect(commandMain).toMatch(/function buildAnnounce\([^]*?el\("h1", "heading", card\.reviewed \? REVIEWED_HEADING : ANNOUNCE_HEADING\)/);
+    // Autopilot's announcement of a command the user didn't ask for says so, never "as you asked" (tasks-approvals-r10-1).
+    expect(keep(commandCopy.AUTOPILOT_HEADING)).toBe("About to run this: Autopilot is on");
+    expect(commandCopy.announceHeading({ reviewed: true })).toBe(commandCopy.REVIEWED_HEADING);
+    expect(commandCopy.announceHeading({ autopilot: true })).toBe(commandCopy.AUTOPILOT_HEADING);
+    expect(commandCopy.announceHeading({})).toBe(commandCopy.ANNOUNCE_HEADING);
+    expect(commandMain).toMatch(/function buildAnnounce\([^]*?el\("h1", "heading", announceHeading\(card\)\)/);
     expect(keep(commandCopy.announceKeyText("linux"))).toBe("Or press Ctrl+Alt+X to stop everything.");
     expect(keep(commandCopy.announceKeyText("win32"))).toBe("Or press Win+Alt+X to stop everything.");
     expect(keep(commandCopy.announceKeyText("darwin"))).toBe("Or press Control+Shift+Command+X to stop everything.");
