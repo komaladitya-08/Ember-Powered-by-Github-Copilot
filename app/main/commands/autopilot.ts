@@ -19,8 +19,8 @@
  */
 
 import { AUTOPILOT_WORDS } from "../policy/policy";
-import { outlivesStop } from "./review";
-import type { CommandCapability, CommandDecision, CommandMode, DangerClass, Finding } from "./types";
+import { DOWNLOADS_ONLY, outlivesStop } from "./review";
+import { SHELL_FAMILY, type Classification, type CommandCapability, type CommandDecision, type CommandMode, type DangerClass, type Finding, type ShellId } from "./types";
 
 /**
  * A rule of the classifier's that says a command would read or print secrets, whatever class its finding carries:
@@ -56,6 +56,77 @@ export function askedOfFinding(f: { cls?: DangerClass; rule: string }): Extract<
   return null;
 }
 
+/** The rule, and the card's line, of a download-and-run that is handed a secret (handedSecrets). */
+export const HANDED_RULE = "secret.handed-to-download";
+export const HANDED_SAYS = "Gives a password, key or other secret to code it downloads.";
+
+/** The most words of one command, and variables of one line, that handedSecrets judges: past it, it counts as handed. */
+const HANDED_MAX = 32;
+/** A variable a shell would expand, wherever it stands in the line: `$NAME`, `${NAME…}`, `$env:NAME`, `%NAME%`. */
+const EXPANDS = /\$\{?(?:env:)?([A-Za-z_][A-Za-z0-9_]*)|%([A-Za-z_][A-Za-z0-9_]*)%|!([A-Za-z_][A-Za-z0-9_]*)!/gi;
+/**
+ * What makes a word one Ember can't resolve, beside a plain variable: a command or process substitution, arithmetic,
+ * a positional or indirect expansion (any `$` a plain variable doesn't account for), another user's home (`~ana`),
+ * and in PowerShell a parenthesised expression.
+ */
+const OPAQUE = (family: string) => (family === "powershell" ? /[$`(]|~[A-Za-z0-9_+-]/ : /[$`]|[<>]\(|~[A-Za-z0-9_+-]/);
+/** A word as a POSIX shell, and as PowerShell, would take it back whole. */
+const posixWord = (a: string) => `'${a.replace(/'/g, "'\\''")}'`;
+const psWord = (a: string) => `'${a.replace(/'/g, "''")}'`;
+
+/**
+ * A command that downloads code and runs it (`npx`, `pnpm dlx`, `pipx run`, `curl … | sh`: the classifier's four
+ * rules, DOWNLOADS_ONLY) and hands that code a secret: a word of its own, or an option's value, that names a path
+ * holding passwords or keys, or a variable named for one, expanded anywhere in the line. The classifier says only
+ * "downloads and runs" of such a line (it doesn't judge the downloaded program's arguments), which Autopilot
+ * announces and Assisted's check may clear; the code can print the key into the output the model reads, or send it
+ * anywhere (modes-y9-5). Whether a word is a secret is the classifier's own answer, never a list kept here: each is
+ * shown to it (`judge`) as the file a plain reader would open, each variable as one printed, and a finding there that
+ * says secrets (readsSecrets) makes this one. It only ever adds a question, in every mode and on every target (the
+ * flow and a remote's gate 2 both call it); once the classifier judges such a line itself, this finds the same thing
+ * a second time. A word that can't be judged, or more words than it judges, counts as handed; so does a word the
+ * classifier couldn't resolve (`$(echo ~/.ssh/id_rsa)`, `~ana/.ssh/id_rsa`, `$D/id_rsa` after `D=~/.ssh`), unless all
+ * the line expands is plain variables it sets nowhere itself, whose names were judged above (`--port $PORT`)
+ * (modes-y9-x9-2).
+ */
+export function handedSecrets(cls: Pick<Classification, "commands" | "findings">, command: string, shell: ShellId, judge: (text: string) => readonly Pick<Finding, "cls" | "rule">[]): Finding[] {
+  const downloads = cls.findings.filter(f => DOWNLOADS_ONLY.has(f.rule.replace(/^in-script:/, "")));
+  if (downloads.length === 0) return [];
+  const family = SHELL_FAMILY[shell];
+  const reads = (path: string) => (family === "powershell" ? `Get-Content -LiteralPath ${psWord(path)}` : family === "cmd" ? `type "${path.replace(/"/g, "")}"` : `cat -- ${posixWord(path)}`);
+  const prints = (name: string) => (family === "powershell" ? `Write-Output $env:${name}` : family === "cmd" ? `echo %${name}%` : `echo "$${name}"`);
+  const secret = (text: string): boolean => {
+    try { return judge(text).some(f => f.cls === "secret" || readsSecrets(f.rule)); } catch { return true; } // not judged: it asks
+  };
+  const first = downloads[0];
+  const found = (): Finding[] => [{ cls: "secret", rule: HANDED_RULE, says: HANDED_SAYS, program: first.program, objects: [], widening: [], at: first.at }];
+  const names = [...new Set([...command.matchAll(EXPANDS)].map(m => m[1] ?? m[2] ?? m[3]))];
+  // Is every word of the line that can't be resolved a plain variable from outside it? Its names stand nowhere bare
+  // (an assignment, `read K`, `for f in`: the line sets it, to what Ember doesn't follow), and nothing else expands.
+  const plain = (): boolean => {
+    // (`$_` is the last command's word or the pipeline's item; PowerShell's own variables are set with the same `$x`
+    // that reads them, so only its `$env:` ones count as from outside.)
+    const outside = family === "powershell" ? /\$\{?env:[A-Za-z_][A-Za-z0-9_]*\}?(?!\s*[-+*/]?=(?!=))/gi : EXPANDS;
+    if (names.length === 0 || names.includes("_") || OPAQUE(family).test(command.replace(outside, ""))) return false;
+    if (family === "powershell") return true;
+    const fold = family === "posix" ? "" : "i";
+    return !names.some(n => new RegExp(`(^|[^$%!{:A-Za-z0-9_])${n}(?![A-Za-z0-9_])`, fold).test(command));
+  };
+  if (names.length > HANDED_MAX || names.some(n => secret(prints(n)))) return found();
+  for (const at of new Set(downloads.map(f => f.at))) {
+    const args = cls.commands[at]?.args ?? [];
+    const words = args.filter((a): a is string => a !== null);
+    if (words.length > HANDED_MAX || (words.length < args.length && !plain())) return found();
+    for (const w of words) {
+      // The word itself, and what an option carries: `--key=PATH`, `--key:PATH`, `-kPATH`.
+      const after = (sep: string) => (w.includes(sep) ? w.slice(w.indexOf(sep) + 1) : "");
+      const values = !w.startsWith("-") ? [w] : [after("="), after(":"), /^-[A-Za-z]./.test(w) ? w.slice(2) : ""];
+      if (values.some(v => v !== "" && !v.startsWith("-") && secret(reads(v)))) return found();
+    }
+  }
+  return [];
+}
+
 /** What autopilotAsks reads beside the decision. */
 export interface AutopilotInput {
   /** Every finding of the classification, standing or not: a finding the decision dropped still says what the command is. */
@@ -74,17 +145,49 @@ export interface AutopilotInput {
 }
 
 /**
+ * The classifier's "unclear" rules that say it doesn't know the program or the tool's command that runs, rather than
+ * that it can't follow text whose programs it knows: a verb of git, gh, npm, docker, a cloud tool or a package manager
+ * off its list, a cmdlet it has no row for, a program it can't name or that hides behind another's words.
+ */
+const UNKNOWN_BY_ANOTHER_NAME = /^unclear\.(([a-z0-9]+-)?verb|program|program-letters|cmdlet|git-ext|gh-extension|hidden-command)$/;
+/**
+ * And those that say the command runs code nobody is shown, the checking model included: a Windows script host and
+ * the programs that load code for another (`rundll32`, `mshta`, `wscript`…), every script of a folder (`run-parts`),
+ * a PowerShell module, a git hook run by name (modes-y9-x9-3).
+ */
+const CODE_NOBODY_SEES = /^unclear\.(rundll32|mshta|wscript|cscript|msdt|pcalua|scriptrunner|syncappvpublishingserver|odbcconf|msxsl|ieexec|control|presentationhost|run-parts|import-module|git-hook)$/;
+/** Is this a program, or a tool's command, the classifier doesn't know (the closed default, and its older rules for the same)? */
+const unknownTo = (f: { cls?: DangerClass; rule: string }): boolean => {
+  const rule = f.rule.replace(/^in-script:/, "");
+  return f.cls === "unknown" || rule.startsWith("unknown.") || UNKNOWN_BY_ANOTHER_NAME.test(rule) || CODE_NOBODY_SEES.test(rule);
+};
+
+/**
+ * What a command is that no mode above Interactive may wave through on its own, read from every signal it carries
+ * (the decision's classes and rules, and each finding of the classification, standing or not): the organisation's
+ * rule, secrets, outliving Stop, a program Ember doesn't know, something Ember can't tell; null for none. The one
+ * predicate for both modes (modes-y9-6): Autopilot asks for each of these, Assisted's check is never asked about any
+ * but the last (review.ts notReviewable).
+ */
+export function keptQuestion(d: Pick<CommandDecision, "classes" | "rules">, findings: readonly Pick<Finding, "cls" | "rule">[]): "organisation" | "secret" | "outlives-stop" | "unknown" | "unclear" | null {
+  const signals = [...d.classes.map(cls => ({ cls, rule: "" })), ...d.rules.map(rule => ({ rule })), ...findings];
+  const asked = signals.map(askedOfFinding);
+  for (const why of ["organisation", "secret", "outlives-stop"] as const) if (asked.includes(why)) return why;
+  if (signals.some(unknownTo)) return "unknown";
+  return asked.includes("unclear") ? "unclear" : null;
+}
+
+/**
  * Why `d`, a command that asks, still asks in Autopilot; null when it may be announced instead. The organisation's
- * policy first, then the user's own switch and their own words against it, then what the command is: secrets before
- * outliving Stop before unclear.
+ * policy first, then the user's own switch and their own words against it, then what the command is (keptQuestion):
+ * secrets before outliving Stop before what Ember doesn't know or can't tell.
  */
 export function autopilotAsks(d: Pick<CommandDecision, "classes" | "rules">, o: AutopilotInput): AutopilotAsk | null {
   if (o.mode === "ask" || o.askEvery === "admin" || d.rules.includes("admin.ask")) return "organisation";
   if (o.userAskEvery || o.askEvery === "user" || o.askEvery === "tool" || d.rules.includes("user.ask-every")) return "user";
   if (o.ruledOut) return "ruled-out";
-  const signals = [...d.classes.map(cls => ({ cls, rule: "" })), ...d.rules.map(rule => ({ rule })), ...o.findings].map(askedOfFinding);
-  for (const why of ["organisation", "secret", "outlives-stop", "unclear"] as const) if (signals.includes(why)) return why;
-  return null;
+  const kept = keptQuestion(d, o.findings);
+  return kept === "unknown" ? "unclear" : kept;
 }
 
 /** What each class of command does, in Ember's own words, for the announcement: never a word of the command. */

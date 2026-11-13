@@ -192,10 +192,82 @@ describe("what an answer about a risky page control binds to (modes-x9s-4)", () 
     expect(pageBindingOf(zone("ana/production"), DELETE, T, false, true)).not.toBe(asked);
   });
 
-  it("holds where only a count changes or a feed moves on, so a living page doesn't ask for ever", () => {
+  it("holds where a feed moves on, so a living page doesn't ask for ever; a number inside the words that name the thing spends it (modes-y9-3)", () => {
     const asked = pageBindingOf(zone("ana/scratch"), DELETE, T, false, true);
-    expect(pageBindingOf(zone("ana/scratch", { stars: 4 }), DELETE, T, false, true)).toBe(asked);
     expect(pageBindingOf(zone("ana/scratch", { comment: "bo commented" }), DELETE, T, false, true)).toBe(asked);
+    // (Until modes-y9-3 every digit was let through, an amount or a renamed "build-2" with it.)
+    expect(pageBindingOf(zone("ana/scratch", { stars: 4 }), DELETE, T, false, true)).not.toBe(asked);
+  });
+
+  describe("what else names the thing: a number, or text that is no heading or paragraph (modes-y9-3)", () => {
+    const danger = (what: string, prose = "paragraph") => [
+      n(1, null, "document web", "Settings · GitHub"), n(2, 1, "section", ""),
+      n(3, 2, "heading", "Danger zone", "Danger zone"),
+      n(4, 2, prose, "", `This will permanently delete the ${what} repository.`),
+      n(5, 1, "section", ""), n(6, 5, "push button", "Delete this repository"), n(7, 5, "push button", "Cancel"),
+    ];
+    const DZ = "Danger zone - Mozilla Firefox";
+    const same = (a: AxNode[], b: AxNode[], who = DELETE, title = DZ) => pageBindingOf(a, who, title, false, true) === pageBindingOf(b, who, title, false, true);
+
+    it("is spent where the thing is renamed by a number", () => {
+      expect(same(danger("ana/build-1"), danger("ana/build-2"))).toBe(false);
+      expect(same(danger("release 2024"), danger("release 2025"))).toBe(false);
+    });
+
+    it.each(["static", "section", "label", "text", "block quote", "definition"])("is spent where the thing is renamed in a %s", role => {
+      expect(pageBindingOf(danger("ana/scratch", role), DELETE, DZ, false, true)).not.toMatch(/^unbound/);
+      expect(same(danger("ana/scratch", role), danger("ana/production", role))).toBe(false);
+    });
+
+    it("is spent where an amount beside the control changes, on a page whose title says nothing of money", () => {
+      const pay = (amount: string) => [n(1, null, "document web", "Send"), n(2, 1, "paragraph", "", `You are sending ${amount} to Bob.`), n(3, 1, "section", ""), n(4, 3, "push button", "Send"), n(5, 3, "push button", "Cancel")];
+      const S = { role: "push button", name: "Send" };
+      for (const [a, b] of [["$50", "$5000"], ["50 EUR", "5000 EUR"], ["50 dollars", "5000 dollars"], ["50", "5000"]]) expect(same(pay(a), pay(b), S, "Acme - Mozilla Firefox"), `${a} → ${b}`).toBe(false);
+    });
+
+    it("still holds while a clock runs, a bare count goes up or a counter on another button changes, so a living page doesn't ask for ever", () => {
+      const live = (clock: string, comments: number, likes: number) => [
+        n(1, null, "document web", "Cats - Tube"), n(2, 1, "section", ""), n(3, 2, "label", `${clock} / 3:00`), n(4, 2, "heading", `${comments} comments`), n(5, 2, "static", "", `${comments} comments`),
+        n(6, 2, "push button", `Like ${likes}`), n(7, 1, "form", "Add a comment"), n(8, 7, "push button", "Send"), n(9, 7, "push button", "Cancel"),
+      ];
+      const S = { role: "push button", name: "Send" };
+      expect(same(live("0:01", 2, 10), live("0:09", 3, 11), S, "Cats - Tube — Firefox")).toBe(true);
+      expect(same(live("0:01", 2, 10), live("1:02:09", 1200, 10), S, "Cats - Tube — Firefox")).toBe(true);
+    });
+
+    it("is spent where a link or another control outside the group that names the thing is renamed, never by a counter on it (modes-y9-x9-5)", () => {
+      const crumb = (name: string, likes = 10) => [n(1, null, "document web", "Files"), n(2, 1, "section", ""), n(3, 2, "link", "Home"), n(4, 2, "link", name), n(8, 2, "push button", `Like ${likes}`),
+        n(9, 2, "link", `Comments (${likes})`), n(5, 1, "section", ""), n(6, 5, "push button", "Delete"), n(7, 5, "push button", "Cancel")];
+      const D = { role: "push button", name: "Delete" };
+      expect(pageBindingOf(crumb("report.pdf"), D, "Files - Mozilla Firefox", false, true)).not.toMatch(/^unbound/);
+      expect(same(crumb("report.pdf"), crumb("payroll.xlsx"), D, "Files - Mozilla Firefox")).toBe(false);
+      expect(same(crumb("report-2023.pdf"), crumb("report-2024.pdf"), D, "Files - Mozilla Firefox")).toBe(false);
+      expect(same(crumb("report.pdf", 10), crumb("report.pdf", 11), D, "Files - Mozilla Firefox")).toBe(true);
+      // A page tab or a menu item that names it binds the same way; a link in a feed doesn't.
+      const tab = (name: string) => [n(1, null, "document web", "Files"), n(2, 1, "section", ""), n(3, 2, "menu item", name), n(5, 1, "section", ""), n(6, 5, "push button", "Delete"), n(7, 5, "push button", "Cancel"),
+        n(8, 1, "list", ""), n(9, 8, "list item", ""), n(10, 9, "link", `${name} was shared`)];
+      expect(same(tab("report.pdf"), tab("payroll.xlsx"), D, "Files - Mozilla Firefox")).toBe(false);
+      const feed = (name: string) => [n(1, null, "document web", "Files"), n(5, 1, "section", ""), n(6, 5, "push button", "Delete"), n(7, 5, "push button", "Cancel"), n(8, 1, "list", ""), n(9, 8, "list item", ""), n(10, 9, "link", name)];
+      expect(same(feed("ana commented"), feed("bo commented"), D, "Files - Mozilla Firefox")).toBe(true);
+      // An ordinary control binds as narrowly as before.
+      const C = { role: "push button", name: "Cancel" };
+      expect(pageBindingOf(crumb("report.pdf"), C, "Files - Mozilla Firefox")).toBe(pageBindingOf(crumb("payroll.xlsx"), C, "Files - Mozilla Firefox"));
+    });
+
+    it("is spent where a count of what the control acts on changes; only what a page counts on its own goes by (modes-y9-x9-7)", () => {
+      const count = (k: string) => [n(1, null, "document web", "Newsletter"), n(2, 1, "section", ""), n(3, 2, "static", "", k), n(5, 1, "section", ""), n(6, 5, "push button", "Send"), n(7, 5, "push button", "Cancel")];
+      const S = { role: "push button", name: "Send" };
+      for (const [a, b] of [["12 recipients", "12000 recipients"], ["3 shares", "300 shares"], ["3 items", "30 items"], ["2 files", "200 files"], ["1 seat", "10 seats"]]) expect(same(count(a), count(b), S, "Campaign - Mozilla Firefox"), `${a} → ${b}`).toBe(false);
+      for (const [a, b] of [["12 comments", "13 comments"], ["1.2K views", "1.3K views"], ["3 likes", "4 likes"], ["7 stars", "8 stars"], ["2 replies", "3 replies"], ["5 minutes ago", "6 minutes ago"], ["2 unread", "3 unread"]]) {
+        expect(same(count(a), count(b), S, "Campaign - Mozilla Firefox"), `${a} → ${b}`).toBe(true);
+      }
+    });
+
+    it.each(["Send money | PayPal - Mozilla Firefox", "Venmo - Google Chrome", "Revolut", "Wise - Mozilla Firefox", "Coinbase", "MetaMask", "Stripe Dashboard", "Kasse - Amazon.de", "Paiement - Fnac", "Zahlung - Otto",
+      "Pago - Mercado Libre", "Pagamento", "Betaling - bol.com"])("binds the whole tree, as before, in a window titled for money: %s", title => {
+      const pay = [n(1, null, "document web", "Send"), n(2, 1, "section", ""), n(3, 2, "push button", "Send"), n(4, 2, "push button", "Cancel")];
+      expect(pageBinding(pay, 2, title, false, true)).toBeNull();
+    });
   });
 
   it("binds an ordinary control as narrowly as before: only its own group", () => {

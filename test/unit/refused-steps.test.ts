@@ -14,9 +14,9 @@ import { DEFAULT_SETTINGS } from "../../app/main/settings";
 import { AdminPolicySchema } from "../../app/main/admin";
 import { modeCardVersion } from "../../app/shared/approvals";
 import { readFileSync } from "node:fs";
-import { Refusals, commandActs, riskNames, sameCommand, stepNames, type CommandAsked } from "../../app/main/policy/refusals";
+import { Refusals, commandActs, commandNamed, likeCommand, riskNames, sameCommand, stepMarksForCommands, stepNames, type CommandAsked } from "../../app/main/policy/refusals";
 import { Worker, leftUndone, type WorkerDeps } from "../../app/main/agent/worker";
-import { commandSha256, runCommandTool, setCommandJudge, type CommandFlowContext } from "../../app/main/commands/flow";
+import { LIKE_REFUSED_LINE, LIKE_REFUSED_RULE, commandSha256, runCommandTool, setCommandJudge, type CommandFlowContext } from "../../app/main/commands/flow";
 import { classifyCommand } from "../../app/main/commands/classify";
 import { standingFindings, type ClassifyContext, type RunSpec } from "../../app/main/commands/types";
 import { describeEntry } from "../../app/renderer/home/copy";
@@ -94,7 +94,8 @@ function asked(command: string, o: { shell?: "bash" | "sh" | "powershell"; ctx?:
   const ctx = o.ctx ?? LINUX;
   const shell = o.shell ?? (ctx.os === "win32" ? "powershell" : "bash");
   const cls = classifyCommand(command, shell, ctx);
-  return { sha256: commandSha256("local", shell, ctx.cwd, command), cwd: ctx.cwd, command, acts: commandActs(standingFindings(cls.findings, undefined), ctx.os) };
+  const stand = standingFindings(cls.findings, undefined);
+  return { sha256: commandSha256("local", shell, ctx.cwd, command), cwd: ctx.cwd, command, acts: commandActs(stand, ctx.os), named: commandNamed(stand, cls.commands), os: ctx.os, home: ctx.home };
 }
 
 describe("a command the user said no to, sent again or reworded (commands-remote-r9-8)", () => {
@@ -113,7 +114,9 @@ describe("a command the user said no to, sent again or reworded (commands-remote
     ["rm -rf build", "rsync -a --delete src/ build/", true],
     ["rm -r build dist", "rm -rf dist", true],
     ["git push origin main", "git push --force origin main", true],
-    ["git push origin main", "git push origin feature", true],
+    ["git push origin main", "git push origin +main", true],
+    ["git push origin main", "git push origin HEAD:main", true],
+    ["git push origin", "git push origin main", true],
     ["sudo apt install nginx", "apt install nginx", true],
     ["shutdown -h now", "shutdown -r now", true],
     ["cat ~/.ssh/id_rsa", "base64 ~/.ssh/id_rsa", true],
@@ -128,12 +131,57 @@ describe("a command the user said no to, sent again or reworded (commands-remote
     ["sudo rm -rf /var/cache/old", "sudo apt install vim", false],
     ["cat ~/.ssh/id_rsa", "cat ~/.ssh/config", false],
     ["ls", "ls -la", false],
+    // The same kind of thing to something else is something else (modes-y9-8): another branch, another unknown
+    // program, another command of a tool, another loop.
+    ["git push origin main", "git push origin feature", false],
+    ["git push origin main", "git push upstream main", false],
+    ["frobnicate build", "othertool --version", false],
+    ["frobnicate build", "kafka-topics --list", false],
+    ["cargo frob", "cargo zork", false],
+    ["for f in *.log; do rm $f; done", "for d in a b; do echo $d; done", false],
+    // The refused thing, however the later command names it (modes-y9-9): a move's source, inline code's quoted path,
+    // the branch in an API path.
+    ["rm -rf build", "mv build /tmp/x", true],
+    ["rm -rf build", "mv ./build/ ~/.Trash/", true],
+    ["rm -rf build", "python3 -c 'import shutil; shutil.rmtree(\"build\")'", true],
+    ["rm -rf build", "node -e 'require(\"fs\").rmSync(\"build\",{recursive:true})'", true],
+    ["rm -rf build", "perl -e 'unlink glob \"/home/ana/proj/build/*\"'", true],
+    ["git push --force origin main", "gh api -X PUT repos/o/r/git/refs/heads/main -f sha=abc -F force=true", true],
+    ["rm -rf build", "mv dist /tmp/x", false],
+    ["rm -rf build", "python3 -c 'print(open(\"build/log.txt\").read())'", false],
+    ["rm -rf build", "python3 -c 'import shutil; shutil.rmtree(\"dist\")'", false],
+    ["git push --force origin main", "gh api -X PUT repos/o/r/git/refs/heads/feature -f sha=abc", false],
+    // A push of "whatever is checked out" names no branch Ember can compare: it is a push to that remote, as a bare
+    // `git push origin` is (modes-y9-x9-1).
+    ["git push origin main", "git push origin HEAD", true],
+    ["git push origin main", "git push -u origin HEAD", true],
+    ["git push origin main", "git push origin @", true],
+    ["git push origin main", "git push origin HEAD~0", true],
+    ["git push origin main", "git push origin 'main@{0}'", true],
+    ["git push --force origin main", "git push --force origin HEAD", true],
+    ["git push origin HEAD", "git push origin main", true],
+    ["git push origin main", "git push upstream HEAD", false],
+    ["git push origin main", "git push origin HEAD:feature", false],
   ];
   for (const [refused, next, is] of table) {
     it(`${is ? "takes" : "doesn't take"} \`${next}\` for a refused \`${refused}\``, () => {
       expect(sameCommand(asked(refused), asked(next))).toBe(is);
     });
   }
+
+  it.each<[string, string]>([
+    ["rm -rf build", "python3 -c 'print(open(\"build/log.txt\").read())'"], ["rm -rf build", "for f in *.o; do rm $f; done"], ["rm -rf build", "git clean -fdx"],
+    ["git push origin main", "npm publish"], ["git push --force origin main", "gh api -X PUT repos/o/r/git/refs/heads/feature -f sha=abc"], ["rm -rf build", "frobnicate --all"],
+  ])("takes `%s` then `%s` for one that may be the refused command, which Ember can't tell: it asks (modes-y9-9)", (refused, next) => {
+    expect(sameCommand(asked(refused), asked(next))).toBe(false);
+    expect(likeCommand(asked(refused), asked(next))).toBe(true);
+  });
+
+  it.each<[string, string]>([
+    ["rm -rf build", "rm -rf dist"], ["rm -rf build", "git push origin main"], ["git push origin main", "git push origin feature"], ["rm -rf build", "ls -la"], ["ls", "for f in *.o; do rm $f; done"],
+  ])("doesn't take `%s` then `%s` for one: it names what it acts on, and that is something else (modes-y9-8)", (refused, next) => {
+    expect(likeCommand(asked(refused), asked(next))).toBe(false);
+  });
 
   it("takes the same bytes in another shell for the same command, but not in another folder", () => {
     expect(asked("ls -la").acts).toEqual([]);
@@ -320,25 +368,30 @@ describe("the refused step done another way: what it does, not only the control 
     expect(h.asked).toHaveLength(2);
   });
 
-  it("names a risky step by what it does, and one it can't tell as every kind", () => {
+  it("names a risky step by what it does; one whose words name no kind is no other step (evalfix-1)", () => {
+    const named = (name: string) => riskNames({ name, about: name, reason: "this action may be hard to undo or visible to others" });
+    const shortcut = riskNames({ name: "Message body", about: "", reason: "this shortcut can delete, send or close things" });
     const r = new Refusals();
-    r.noteStep(riskNames("Send"), "refused");
-    expect(r.step(riskNames("this shortcut can delete, send or close things"))).toBe("refused");
-    expect(r.step(riskNames("Send Now"))).toBe("refused");
-    expect(r.step(riskNames("Delete"))).toBeNull();
-    // A label Ember can't put a kind to (another language, a bare risk) is every kind, both ways.
-    expect(r.step(riskNames("Absenden"))).toBe("refused");
-    const any = new Refusals();
-    any.noteStep(riskNames("Absenden"), "refused");
-    expect(any.step(riskNames("Delete"))).toBe("refused");
+    r.noteStep(named("Send"), "refused");
+    expect(r.step(shortcut)).toBe("refused");
+    expect(r.step(named("Send Now"))).toBe("refused");
+    expect(r.step(named("Delete"))).toBeNull();
+    // The same in another language policy reads: "Absenden" sends, and after a no to it so does Ctrl+Enter.
+    expect(r.step(named("Absenden"))).toBe("refused");
+    const de = new Refusals();
+    de.noteStep(named("Absenden"), "refused");
+    expect(de.step(shortcut)).toBe("refused");
+    expect(de.step(named("Delete"))).toBeNull();
+    // A label Ember can't put a kind to has none: it is refused again only as itself (stepNames), and refuses nothing else.
+    expect(named("Add comment")).toEqual([]);
     // A borrow that is risky only because it takes the mouse and keyboard does nothing of these kinds.
-    expect(riskNames("Ember needs your mouse or keyboard for this", false)).toEqual([]);
+    expect(riskNames({ name: "Bold", about: "", reason: "Ember needs your mouse or keyboard for this" })).toEqual([]);
     // Unanswered: until the user next says something, as for one step.
     const w = new Refusals();
-    w.noteStep(riskNames("Pay now"), "waiting");
-    expect(w.step(riskNames("Place order"))).toBe("waiting");
+    w.noteStep(named("Pay now"), "waiting");
+    expect(w.step(named("Place order"))).toBe("waiting");
     w.userSpoke();
-    expect(w.step(riskNames("Place order"))).toBeNull();
+    expect(w.step(named("Place order"))).toBeNull();
   });
 });
 
@@ -438,7 +491,7 @@ const CMD_UNANSWERED = "Ember already asked the user about this command, or one 
  * may) unless `review` is false. `answers`: each card's answer in turn; `go`: whether an announcement's countdown ends
  * without the user's Stop; `words`: the user's own words.
  */
-function commands(answers: (string | null)[], o: { words?: string; go?: boolean; review?: boolean; consent?: boolean; refusals?: Refusals | null; remoteAsks?: boolean } = {}) {
+function commands(answers: (string | null)[], o: { words?: string; go?: boolean; review?: boolean; consent?: boolean; refusals?: Refusals | null; remoteAsks?: boolean; autopilot?: boolean } = {}) {
   setCommandJudge(null);
   const facts = { os: "linux", shells: ["bash", "sh"], shellPaths: { bash: "/bin/bash" }, script: { path: "/usr/bin/script", kind: "util-linux" }, home: "/home/ana", user: "ana", privileged: false, pty: true, ember: { paths: ["/home/ana/.config/ember"], pids: [10], names: /^ember$/ }, extraPath: [] };
   const st = { starts: [] as string[], asked: [] as string[], consentAsked: 0, reviewed: [] as string[], announced: [] as string[], audit: [] as Record<string, unknown>[], declined: [] as (boolean | undefined)[] };
@@ -467,9 +520,10 @@ function commands(answers: (string | null)[], o: { words?: string; go?: boolean;
     onDeclined: (expired?: boolean) => { st.declined.push(expired); },
     ...(o.review === false ? {} : { review: async (i: { command: string }) => { st.reviewed.push(i.command); return { run: true, does: "deletes the build folder", why: "routine clean-up" }; } }),
     ...(refusals ? { refusals } : {}),
+    ...(o.autopilot ? { autopilot: () => true } : {}),
   } as unknown as CommandFlowContext;
   const run = (command: string, shell = "bash") => runCommandTool({ target: "this computer", command, shell, why: "clean" } as never, ctx) as Promise<{ textResultForLlm: string; resultType: string }>;
-  return { st, run, refusals };
+  return { st, run, refusals, ctx };
 }
 
 describe("a command the user said no to, through the flow (commands-remote-r9-8)", () => {
@@ -497,6 +551,92 @@ describe("a command the user said no to, through the flow (commands-remote-r9-8)
     const before = commands([], { refusals: null });
     expect((await before.run("rm -rf build")).resultType).toBe("success");
     expect([before.st.reviewed, before.st.announced, before.st.starts]).toEqual([["rm -rf build"], ["rm -rf build"], ["rm -rf build"]]);
+  });
+
+  it("refuses the refused deletion or push however the later command names it: a move, inline code, an API path (modes-y9-9)", async () => {
+    for (const mode of [{ review: true }, { review: false, autopilot: true }]) {
+      const h = commands(["deny"], { review: false });
+      expect((await h.run("rm -rf build")).textResultForLlm).toMatch(/^The user said no\./);
+      const again = commands([], { refusals: h.refusals, ...mode });
+      for (const c of ["mv build /tmp/x", "python3 -c 'import shutil; shutil.rmtree(\"build\")'", "node -e 'require(\"fs\").rmSync(\"build\",{recursive:true})'"]) {
+        expect(await again.run(c), c).toMatchObject({ resultType: "denied", textResultForLlm: CMD_REFUSED });
+      }
+      expect([again.st.asked, again.st.reviewed, again.st.announced, again.st.starts]).toEqual([[], [], [], []]);
+    }
+    const push = commands(["deny"], { review: false, words: "update main on github" });
+    expect((await push.run("git push --force origin main")).textResultForLlm).toMatch(/^The user said no\./);
+    for (const mode of [{ review: true }, { review: false, autopilot: true }]) {
+      const again = commands([], { refusals: push.refusals, words: "update main on github", ...mode });
+      expect(await again.run("gh api -X PUT repos/o/r/git/refs/heads/main -f sha=abc -F force=true")).toMatchObject({ resultType: "denied", textResultForLlm: CMD_REFUSED });
+      expect([again.st.asked, again.st.reviewed, again.st.announced, again.st.starts]).toEqual([[], [], [], []]);
+    }
+  });
+
+  it("refuses a refused push of main sent again as a push of HEAD or @, with no check and no announcement (modes-y9-x9-1)", async () => {
+    for (const first of ["git push origin main", "git push --force origin main"]) {
+      const h = commands(["deny"], { review: false, words: "update main on github" });
+      expect((await h.run(first)).textResultForLlm).toMatch(/^The user said no\./);
+      for (const mode of [{ review: true }, { review: false, autopilot: true }, { review: false }]) {
+        const again = commands([], { refusals: h.refusals, words: "update main on github", ...mode });
+        for (const c of [first.replace("main", "HEAD"), first.replace("main", "@"), first.replace("origin main", "-u origin HEAD")]) {
+          expect(await again.run(c), c).toMatchObject({ resultType: "denied", textResultForLlm: CMD_REFUSED });
+        }
+        expect([again.st.asked, again.st.reviewed, again.st.announced, again.st.starts]).toEqual([[], [], [], []]);
+      }
+    }
+  });
+
+  it.each<[string, string]>([
+    ["rm -rf build", "for f in *.o; do rm $f; done"], ["rm -rf build", "python3 -c 'print(open(\"build/log.txt\").read())'"], ["rm -rf build", "git clean -fdx"], ["git push origin main", "npm publish"],
+    ["git push --force origin main", "gh api -X PUT repos/o/r/git/refs/heads/feature -f sha=abc"],
+  ])("asks about a command that may be the refused one, which Ember can't tell: after a no to `%s`, `%s` is never reviewed or announced (modes-y9-9)", async (refused, next) => {
+    const h = commands(["deny"], { review: false });
+    expect((await h.run(refused)).textResultForLlm).toMatch(/^The user said no\./);
+    for (const mode of [{ review: true }, { review: false, autopilot: true }, { review: false }]) {
+      const again = commands(["once"], { refusals: h.refusals, words: "clean up and publish the package", ...mode });
+      expect((await again.run(next)).resultType, next).toBe("success");
+      expect([again.st.asked, again.st.reviewed, again.st.announced], next).toEqual([[next], [], []]);
+      const decided = again.st.audit.find(e => e.phase === "decided")!;
+      expect(decided).toMatchObject({ verdict: "ask" });
+      expect(decided.rules as string[]).toContain(LIKE_REFUSED_RULE);
+    }
+  });
+
+  it("says on such a card that the user said no to something like it", async () => {
+    setCommandJudge(null);
+    const h = commands(["deny"], { review: false });
+    await h.run("rm -rf build");
+    const cards: string[][] = [];
+    const again = commands([], { refusals: h.refusals, autopilot: true, review: false });
+    (again.ctx.confirmer as unknown as { ask: unknown }).ask = (async (q: { panel: { card: { says: string[] } } }) => { cards.push(q.panel.card.says); return "deny"; }) as never;
+    await again.run("git clean -fdx");
+    expect(cards[0][0]).toBe(LIKE_REFUSED_LINE);
+  });
+
+  it("leaves the same kind of thing done to something else as it was: another branch is announced in Autopilot, another unknown program asks (modes-y9-8)", async () => {
+    const push = commands(["deny"], { review: false, words: "" });
+    expect((await push.run("git push origin main")).textResultForLlm).toMatch(/^The user said no\./);
+    const auto = commands([], { refusals: push.refusals, autopilot: true, review: false, words: "" });
+    expect((await auto.run("git push origin feature")).resultType).toBe("success");
+    expect([auto.st.asked, auto.st.announced]).toEqual([[], ["git push origin feature"]]);
+    for (const [refused, next] of [["frobnicate build", "othertool --version"], ["cargo frob", "cargo zork"]]) {
+      const h = commands(["deny"], { review: false });
+      expect((await h.run(refused)).textResultForLlm).toMatch(/^The user said no\./);
+      const again = commands(["once"], { refusals: h.refusals, review: false });
+      expect((await again.run(next)).resultType, next).toBe("success");
+      expect(again.st.asked, next).toEqual([next]);
+    }
+  });
+
+  it("asks about a deletion by command after a no to a deletion in an app, and refuses the one that names what was refused there (modes-y9-2)", async () => {
+    const refusals = new Refusals();
+    refusals.noteStep(stepMarksForCommands(["delete"], "Delete permanently Delete “report.pdf” permanently? Home - Files"), "refused");
+    for (const mode of [{ review: true }, { review: false, autopilot: true }]) {
+      const h = commands(["once"], { refusals, ...mode });
+      expect(await h.run("rm ~/report.pdf")).toMatchObject({ resultType: "denied", textResultForLlm: CMD_REFUSED });
+      expect((await h.run("rm -rf build")).resultType).toBe("success");
+      expect([h.st.asked, h.st.reviewed, h.st.announced]).toEqual([["rm -rf build"], [], []]);
+    }
   });
 
   it("puts the card up once: a second and a third try are refused, and another deletion still asks", async () => {

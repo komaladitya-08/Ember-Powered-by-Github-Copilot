@@ -26,7 +26,7 @@ import { TURN_START_MS, TurnWatch, within } from "./conductor";
 import { asPasteClipboard, ClipboardTimeout, holdsPassword, type ClipboardSnapshot, type PasteClipboard, type TextClipboard } from "./clipboard";
 import { handStep, plainText, stepOf, type HandStep, type Presenter } from "./presenter";
 import { askedWords, type ActivityEvent } from "./activity";
-import { Refusals, riskNames, stepNames, type Standing } from "../policy/refusals";
+import { Refusals, noKindName, offTaskLookup, offTaskNames, riskKinds, riskNames, stepAcrossNames, stepMarksForCommands, stepNames, type RiskAsked, type Standing } from "../policy/refusals";
 import { pageBinding, pageBindingOf } from "./page-binding";
 import { cardApp } from "../../shared/activity";
 import type { Confirmer, Question } from "./confirm";
@@ -4808,9 +4808,17 @@ export class Worker {
     if (decision.aligned === false) this.tainted = true;
     // A step the user already said no to in this task, or whose question nobody answered and they haven't spoken since:
     // never asked about again, checked or announced, whatever the mode would do with it now (Refusals).
-    const names = [...this.namesOf(req), ...this.risksOf(req, decision)];
-    const stood = decision.verdict === "deny" ? null : this.refusals.step(names);
+    const risk = decision.risky ? this.riskOf(req, decision) : null;
+    const stood = decision.verdict === "deny" ? null : this.refusals.step([...this.namesOf(req), ...(risk?.lookup ?? [])]);
     if (stood) return this.refusedBefore(req, decision, stood);
+    // What the step is kept under if the user says no to it (read now, from policy's own decision, before this task's
+    // holds reword it).
+    const names = [...this.namesOf(req), ...(risk?.kept ?? [])];
+    // A risky step that may be something the user said no to in this task, though Ember can't tell (a deletion in an
+    // app after a no to a command that deletes, whose words name nothing of it; a step that names no kind after a no to
+    // one of no kind): never checked or announced. It asks; in Autopilot, which has no question to put, it is refused.
+    const like = !!risk && decision.verdict !== "deny" && this.refusals.step(risk.like) === "refused";
+    if (like && this.d.policy.autopilot) return this.refusedBefore(req, decision, "refused");
     // "Work without asking" is suspended for the rest of a task the user already said no in (fail closed): the step asks
     // as it would have. A task that was steered or went off-task is held to asking just below, as before.
     // (Autopilot's own decision, `mode`, is no waiver of Interactive's: it stands, and is said as Autopilot's below.)
@@ -4864,7 +4872,7 @@ export class Worker {
       if (prompt) return prompt;
       // Assisted: the question goes to its check first, and is put up only if the check doesn't find the step in the
       // user's own words (PolicyEngine.assist). The user never sees a question that is then withdrawn.
-      [decision] = await this.checkFirst([{ r: req, d: decision }]);
+      if (!like) [decision] = await this.checkFirst([{ r: req, d: decision }]);
       if (this.isOver) return STOPPED();
     }
     const entry: AuditEntry = { event: "decision", task: this.spec.id, kind: req.kind, app: req.app, window: req.window, element: req.element, ...auditValue(req), tier: decision.tier, verdict: sessionAllowed ? "allow" : decision.verdict, reason: decision.reason, ...(decision.aligned === false ? { aligned: false } : {}), ...(req.onDesk ? { onDesk: true } : {}), ...(decision.autonomy ? { autonomy: true } : {}), ...(decision.mode ? { mode: decision.mode } : {}), ...(decision.review ? { review: decision.review } : {}) };
@@ -4960,13 +4968,41 @@ export class Worker {
       ...(req.kind === "keys" ? { activates: isActivatingKey(req.value ?? "", this.kc) } : {}) });
   }
 
+  /** A risky step as its refusals read it: the control, policy's words for it and why, its app, and the keys of a shortcut. */
+  private riskAsked(req: Pick<ActionRequest, "element" | "app" | "kind" | "value">, d: Pick<Decision, "about" | "reason">): RiskAsked {
+    return { name: req.element?.name ?? "", about: d.about ?? "", reason: d.reason, app: req.app, ...(req.kind === "keys" ? { keys: req.value ?? "" } : {}) };
+  }
+
   /**
-   * What a risky step does (refusals.ts riskNames: sending, deleting, paying…), by policy's own words for it, never the
-   * text it would type: after a no, the same thing done another way (a key, a menu item, another window) is refused for
-   * the rest of the task, in every mode (modes-x9s-3). An ordinary step goes by its own names alone.
+   * What a risky step does (refusals.ts riskNames: sending, deleting, paying…, in its app), by policy's own words for
+   * it, never the text it would type: after a no, the same thing done another way (a key, a menu item, another window
+   * of the app) is refused for the rest of the task, in every mode (modes-x9s-3). An ordinary step goes by its own names
+   * alone, and so does a risky one whose words name no kind: it is judged as any other step in a task the user said no
+   * in (evalfix-1).
    */
-  private risksOf(req: Pick<ActionRequest, "element">, d: Pick<Decision, "risky" | "about" | "reason">): string[] {
-    return d.risky ? riskNames(`${d.about ?? ""} ${req.element?.name ?? ""} ${d.reason}`, !!d.about) : [];
+  private risksOf(req: Pick<ActionRequest, "element" | "app" | "kind" | "value">, d: Pick<Decision, "risky" | "about" | "reason">): string[] {
+    return d.risky ? riskNames(this.riskAsked(req, d)) : [];
+  }
+
+  /**
+   * The names of one risky step in this task's refusals. `lookup`: what makes it a refused thing done another way (its
+   * kinds in its app; the kinds refused off-task, for a step that isn't the user's own words either; what a refused
+   * command did to something this step's words name). `like`: what it may be, though Ember can't tell (authorize).
+   * `kept`: what a no to it leaves behind, for app steps and for commands; a step the user didn't ask for is kept
+   * apart, so that a no to it is no word on their own request (evalfix-x9-1).
+   */
+  private riskOf(req: Pick<ActionRequest, "element" | "app" | "kind" | "value" | "window">, d: Pick<Decision, "about" | "reason" | "aligned">) {
+    const asked = this.riskAsked(req, d);
+    const { said, why } = riskKinds(asked);
+    const kinds = [...new Set([...said, ...why])];
+    const words = `${asked.name} ${asked.about} ${req.window ?? ""}`;
+    const across = stepAcrossNames(kinds, words);
+    const offTask = d.aligned === false;
+    return {
+      lookup: [...riskNames(asked), ...offTaskLookup(asked, offTask), ...across.same],
+      like: [...(said.length === 0 ? [noKindName(req.app)] : []), ...across.like],
+      kept: [...(offTask ? offTaskNames(asked) : riskNames(asked)), ...(kinds.length === 0 ? [noKindName(req.app)] : []), ...stepMarksForCommands(kinds, words)],
+    };
   }
 
   /**
