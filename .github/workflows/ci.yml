@@ -34,7 +34,9 @@ jobs:
     name: Lint, typecheck, unit tests, build
     if: github.event_name != 'workflow_dispatch' || inputs.only == 'all' || inputs.only == 'linux'
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    # 40, not 25: at d41898c the integration step (the speech tests among them) took 16 min 24 s, and the job ran
+    # out of time 2 min 43 s into the renderer journeys with nothing failing (install-docs-r10-1).
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
