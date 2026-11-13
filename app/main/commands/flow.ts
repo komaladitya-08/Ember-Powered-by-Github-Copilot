@@ -1076,7 +1076,16 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
   // requires, are never reviewed (review.ts). The task's bubble says it is checking; a Stop doesn't wait for the answer.
   if (ctx.review && d.verdict === "ask" && !like) {
     const checkWords = ctx.task.checkWords?.() ?? words;
-    const blocked = notReviewable(d, { words: checkWords, mode, askEvery: cap.askEvery, userAskEvery, command: a.command, findings: [...cls.findings, ...hidden] });
+    // The user's own words against it (their no, said in advance, or a step they hold back) are held in code, as
+    // Autopilot holds them: never left to the check's reading of a negation (commands-remote-c10-3).
+    const standing = standingFindings(cls.findings, paths);
+    const ruledOut = [words, spoken, checkWords].some(w => wordsRuleOut(standing, w));
+    const blocked = notReviewable(d, { words: checkWords, mode, askEvery: cap.askEvery, userAskEvery, command: a.command, findings: [...cls.findings, ...hidden], ruledOut });
+    if (ruledOut && [words, spoken, checkWords].some(w => wordsHoldBack(standing, w)) && !d.says.includes(HELD_BACK_LINE)) {
+      const at = d.says.findIndex(l => l === LINES.unasked || l === LINES.inexact || l === LINES.windows);
+      const [keep, drop] = at < 0 ? [d.says.length, 0] : d.says[at] === LINES.unasked ? [at + 1, 0] : d.says[at] === LINES.inexact ? [at, 1] : [at, 0];
+      d = { ...d, says: [...d.says.slice(0, keep), HELD_BACK_LINE, ...d.says.slice(keep + drop)] };
+    }
     if (blocked === null) {
       const t0 = performance.now();
       try { ctx.presenter.progress(CHECKING_COMMAND); } catch (err) { ctx.log.warn("commands.checking_not_said", { err }); }

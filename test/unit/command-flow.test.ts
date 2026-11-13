@@ -4340,3 +4340,34 @@ describe("SQL files and scripts in other languages a command runs (commands-remo
     expect(h.asked).toEqual([]);
   });
 });
+
+describe("Assisted's check and the user's own words against a command (commands-remote-c10-3)", () => {
+  const always = () => {
+    const seen: string[] = [];
+    const review: NonNullable<CommandFlowContext["review"]> = i => { seen.push(i.command); return Promise.resolve({ run: true, does: "does it", why: "the request asks for it" }); };
+    return { seen, review };
+  };
+
+  it.each<[string, string, boolean]>([
+    ["fix the tests, don't push anything", "git push", false], ["never delete anything", "rm -rf build", false], ["delete build but don't touch src", "rm -rf src", false],
+    ["push it later after the tests pass", "git push", true], ["leave the build folder alone and tidy the rest", "rm -rf build", true],
+    ["delete the build folder, but ask me first", "rm -rf build", false],
+  ])("holds in code what their words rule out, as Autopilot does, never showing it to the check: “%s” / %s asks", async (words, command, heldBack) => {
+    setCommandJudge(null);
+    const r = always();
+    const h = harness({ binding: LOCAL, words, answers: ["deny"], review: r.review });
+    expect((await call(h, { target: "this computer", command })).resultType).toBe("denied");
+    expect(r.seen).toEqual([]);
+    expect(h.asked).toHaveLength(1);
+    expect([h.windowAnnounce, h.starts]).toEqual([[], []]);
+    if (heldBack) expect((h.asked[0].panel as { card: CommandCard }).card.says).toContain(HELD_BACK_LINE);
+  });
+
+  it("still shows the check a command their words ask for", async () => {
+    setCommandJudge(null);
+    const r = always();
+    const h = harness({ binding: LOCAL, words: "clean up my project", review: r.review });
+    expect((await call(h, { target: "this computer", command: "rm -r build" })).resultType).toBe("success");
+    expect(r.seen).toEqual(["rm -r build"]);
+  });
+});

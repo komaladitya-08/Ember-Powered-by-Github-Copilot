@@ -762,7 +762,8 @@ included), one that runs code nobody is shown (`rundll32`, `mshta`, `wscript`, `
 in a language Ember doesn't read) and a sandbox or a wrapper whose command Ember doesn't judge (`bwrap`,
 `firejail`, `envdir`, `expect`), since nobody can tell what it does; every command when your organisation, or
 you (**Ask me before every command**), asked for that; a task
-without your own words; and a command, a request or a list of findings too long to show whole (a command over 4,000
+without your own words; a command your own words rule out or hold back ("don't push anything", "leave the build
+folder alone", "push it later"), as Autopilot asks about it; and a command, a request or a list of findings too long to show whole (a command over 4,000
 characters). A command you said no to is refused without being reviewed, and one that may be it, where Ember can't
 tell, asks without being reviewed (§2.5). A loop or inline code whose programs Ember knows is still reviewed: that is
 the one place Assisted asks less than Autopilot. On a computer reached over SSH, that
