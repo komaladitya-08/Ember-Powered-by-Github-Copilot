@@ -73,6 +73,28 @@ describe("friendlyError: what used to show raw", () => {
     expect(friendlyError("request too long")).toBe("That was too much for me to handle at once. Try a shorter request.");
   });
 
+  it("a local file failure when the runtime's session starts is this computer's, never Copilot's problem or a full disk (reliability-r9-3)", () => {
+    const WRITE = "I couldn't go on: this computer didn't let me read or write a file I need. Check that my data folder can be written, then ask again.";
+    const OPEN = "This computer has too many files open, so I couldn't go on. Close a few apps, then ask again.";
+    const WATCH = "This computer has run out of file watchers, so I couldn't go on. Close a few apps, then ask again.";
+    expect(friendlyError("session construction failed: EROFS: read-only file system (os error 30)")).toBe(WRITE);
+    expect(friendlyError("session construction failed: Permission denied (os error 13)")).toBe(WRITE);
+    expect(friendlyError("Failed to create session: Operation not permitted (os error 1)")).toBe(WRITE);
+    expect(friendlyError("EACCES: permission denied, open '/home/u/.config/ember/copilot/x'")).toBe(WRITE);
+    expect(friendlyError("session construction failed: Too many open files (os error 24)")).toBe(OPEN);
+    expect(friendlyError("EMFILE: too many open files, watch")).toBe(OPEN);
+    expect(friendlyError("ENOSPC: System limit for number of file watchers reached, watch '/home/u/project'")).toBe(WATCH);
+    for (const said of [WRITE, OPEN, WATCH]) expect(said).not.toMatch(/\/home|os error|Copilot/);
+    // A saved conversation that the system wouldn't let be written is the data folder's permissions (reliability-y7-2).
+    expect(friendlyError("Failed to persist session events: Operation not permitted (os error 1)", "persistence")).toBe("I couldn't save this conversation: I'm not allowed to write in my data folder on this computer. Check the folder's permissions, then ask again.");
+    // The model service's own refusal is still the service's: a status, and no errno of this computer's.
+    expect(friendlyError("403 Permission denied for this model")).not.toBe(WRITE);
+    expect(friendlyError("HTTP 500: EACCES while writing the cache", undefined, { provider: "user" })).not.toBe(WRITE);
+    expect(friendlyError("permission denied")).not.toBe(WRITE);
+    // A real full disk is still the disk.
+    expect(friendlyError("ENOSPC: no space left on device, write")).toBe("This computer's disk (or your storage quota) is full, so I couldn't go on. Free some space, then ask again.");
+  });
+
   it("a bare status code is a refused request, with what to try", () => {
     expect(friendlyError("Error: 400 {\"error\":{\"message\":\"\"}}")).toBe("Copilot refused that request (400). Try asking in other words.");
     expect(friendlyError("422")).toBe("Copilot refused that request (422). Try asking in other words.");
