@@ -7,6 +7,7 @@
 import { describe, expect, it } from "vitest";
 import { runCase, type ContextName } from "../fixtures/commands/corpus";
 import type { ShellId } from "../../app/main/commands/types";
+import { autopilotAsks, keptQuestion } from "../../app/main/commands/autopilot";
 
 interface Opts { words?: string; shell?: ShellId; context?: ContextName; downloaded?: string[] }
 const result = (cmd: string, o: Opts = {}) =>
@@ -179,5 +180,35 @@ describe("python's zipfile and tarfile unpacking outside the project (commands-r
       expect(decide(cmd).verdict, cmd).toBe("run");
     }
     expect(result("python3 -m zipfile -e a.zip out", { downloaded: ["/home/ana/proj/a.zip"] }).cls.downloads).toContain("/home/ana/proj/out");
+  });
+});
+
+describe("cloud tools' commands that print secrets, and their verbs Ember doesn't know (commands-remote-c10-1)", () => {
+  const PRINTS = ["pulumi config --show-secrets", "pulumi stack output --show-secrets", "pulumi config get dbPassword", "heroku config", "heroku config:get DATABASE_URL",
+    "heroku config --json", "netlify env:list", "netlify env:get API_KEY", "vercel env ls", "vercel env pull", "firebase functions:config:get", "firebase functions:secrets:access KEY",
+    "kubectl exec pod -- env", "kubectl exec -it pod -- printenv", "oc exec pod -- env", "heroku run env", "heroku run printenv", "fly ssh console -C env", "flyctl ssh console --command printenv",
+    "gcloud secrets versions access latest --secret x"];
+
+  it("files them as secrets, so Autopilot asks and Assisted's check never sees them", () => {
+    for (const cmd of PRINTS) {
+      const d = decide(cmd);
+      expect(d.verdict, cmd).toBe("ask");
+      expect(d.classes, cmd).toContain("secret");
+    }
+  });
+
+  it("files a verb it can't tell as one it doesn't know, which Autopilot asks about and Assisted's check never sees", () => {
+    for (const cmd of ["heroku apps:frobnicate", "gcloud frobnicate x", "pulumi stack frob", "netlify frob"]) {
+      const d = decide(cmd);
+      expect(d.verdict, cmd).toBe("ask");
+      expect(d.rules, cmd).toContain("cloud.unknown-verb");
+      expect(d.rules, cmd).not.toContain("cloud.change");
+      expect(keptQuestion(d, []), cmd).toBe("unknown");
+      expect(autopilotAsks(d, { mode: "on", askEvery: null, userAskEvery: false, findings: [] }), cmd).toBe("unclear");
+    }
+    // A verb that changes the service is a change as before.
+    expect(decide("kubectl apply -f x.yaml").rules).toContain("cloud.change");
+    expect(decide("heroku run ls").rules).toContain("cloud.change");
+    expect(decide("kubectl exec pod -- ls").rules).toContain("cloud.change");
   });
 });

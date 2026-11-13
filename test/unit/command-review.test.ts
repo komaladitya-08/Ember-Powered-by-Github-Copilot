@@ -106,7 +106,9 @@ describe("notReviewable (modes-C2, modes-C7; PLAN.md §10 \"Settled\" (7))", () 
     for (const rule of ["unclear.rundll32", "unclear.mshta", "unclear.wscript", "unclear.cscript", "unclear.msdt", "unclear.pcalua", "unclear.scriptrunner", "unclear.odbcconf", "unclear.msxsl", "unclear.ieexec",
       "unclear.control", "unclear.presentationhost", "unclear.syncappvpublishingserver", "unclear.run-parts", "unclear.import-module", "unclear.git-hook",
       // And a sandbox or a wrapper whose command the classifier doesn't judge (`bwrap … systemd-run …`): modes-y9-y9-5.
-      "unclear.bwrap", "unclear.firejail", "unclear.envdir", "unclear.expect"]) {
+      "unclear.bwrap", "unclear.firejail", "unclear.envdir", "unclear.expect",
+      // And a script the task wrote in a language Ember doesn't read (commands-remote-r10-9).
+      "unclear.script-code"]) {
       expect(held(rule), rule).toBe("it runs a program Ember doesn't know");
     }
     // The ids the classifier builds stay the ones looked at: a shell's own word, a program's or a cmdlet's name, a form the lexer can't follow, cmd's flow words, git's plumbing.

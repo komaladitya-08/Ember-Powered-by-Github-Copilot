@@ -8290,6 +8290,37 @@ const CLOUD_CHANGE = /^(?:s3 \S+|(?:create|update|put|set|run|start|stop|reboot|
  * they read only as the last word or in CLOUD_READ_PHRASES.
  */
 const CLOUD_PATH_READ = new Set(["get", "list", "describe", "show", "logs", "top", "plan", "version", "status", "whoami", "explain", "diff", "help"]);
+/**
+ * A cloud tool's command that prints the secrets a service keeps for an app (commands-remote-c10-1): Pulumi's
+ * `--show-secrets` and `config get`, Heroku's `config`, Netlify's `env:list`/`env:get`, Vercel's `env ls`/`env pull`,
+ * Firebase's config and secrets, gcloud's `secrets versions access`, and an environment printed by a command run in a
+ * pod or an app (`kubectl exec pod -- env`, `heroku run env`, `fly ssh console -C env`).
+ */
+function cloudPrintsSecrets(key: string, verbs: readonly string[], rest: readonly Arg[]): boolean {
+  const words = rest.map(a => (a.v ?? "").toLowerCase());
+  if (words.some(w => w === "--show-secrets" || w.startsWith("--show-secrets="))) return true;
+  const [v0 = "", v1 = "", v2 = ""] = verbs;
+  if (key === "pulumi" && v0 === "config" && v1 === "get") return true;
+  if (key === "heroku" && (v0 === "config" || v0 === "config:get" || v0 === "config:pull")) return true;
+  if ((key === "netlify" || key === "ntl") && /^env:(list|get|pull|export)$/.test(v0)) return true;
+  if (key === "vercel" && v0 === "env" && /^(ls|list|pull|get)$/.test(v1)) return true;
+  if (key === "firebase" && /^(functions:config:get|functions:secrets:access|apphosting:secrets:access)$/.test(v0)) return true;
+  if (key === "gcloud" && v0 === "secrets" && v1 === "versions" && v2 === "access") return true;
+  // What runs there: after `--` (kubectl, oc), after `run` (heroku), or fly's -C/--command.
+  const env = (cmd: string): boolean => /^(\S*\/)?(env|printenv|set|export|declare)(\s|$)|environ/.test(cmd.trim());
+  const dash = rest.findIndex(a => a.v === "--");
+  if ((key === "kubectl" || key === "oc") && (v0 === "exec" || v0 === "debug") && dash >= 0 && env(rest.slice(dash + 1).map(a => a.v ?? "?").join(" "))) return true;
+  if (key === "heroku" && v0 === "run" && env(rest.filter(a => !isOption(a)).slice(1).map(a => a.v ?? "?").join(" "))) return true;
+  if ((key === "fly" || key === "flyctl") && v0 === "ssh") {
+    for (let k = 0; k < rest.length; k++) {
+      const w = rest[k].v ?? "";
+      const cmd = w === "-C" || w === "--command" ? rest[k + 1]?.v ?? "env" : w.startsWith("--command=") ? w.slice(10) : null;
+      if (cmd !== null && env(cmd)) return true;
+    }
+  }
+  return false;
+}
+
 const AWS_SECRET = /^(get-session-token|assume-role.*|get-login-password|get-authorization-token|get-secret-value|get-parameters?|get-parameters-by-path|decrypt|get-federation-token|create-access-key|get-credentials-for-identity|get-signin-token)$/;
 reg(NATIVE, Object.keys(CLOUD_CLIS), h => {
   const service = CLOUD_CLIS[h.key];
@@ -8306,6 +8337,7 @@ reg(NATIVE, Object.keys(CLOUD_CLIS), h => {
     positional.push(a.v);
   }
   const verbs = positional.map(p => p.toLowerCase());
+  if (cloudPrintsSecrets(h.key, verbs, rest)) h.e.add("secret", "secret.cloud", SAYS.secrets);
   // A syntax check or a listing reads (review #30). `--check` doesn't: a task with `check_mode: false` still changes the
   // managed computers, so it asks without saying that it changes them.
   if (h.key === "ansible-playbook" && h.args.some(a => /^(--syntax-check|--list-hosts|--list-tasks|--list-tags)$/.test(a.v ?? ""))) return;
@@ -8422,9 +8454,11 @@ reg(NATIVE, Object.keys(CLOUD_CLIS), h => {
     h.e.add("remote-delete", "cloud.delete", `Deletes something in ${service}.`, { objects: [{ kind: "other", text: verb, abs: null }], program: `${h.key} ${verb}` });
     return;
   }
-  // A verb Ember doesn't know may only read: the card says it can't tell rather than that it changes the service.
+  // A verb Ember doesn't know may only read: the card says it can't tell rather than that it changes the service. It is
+  // a tool's command Ember doesn't know, which may print secrets or change anything: Autopilot asks and Assisted's
+  // check isn't asked (commands-remote-c10-1).
   const changes = !checkRun && (CLOUD_VERBS.has(verb) || CLOUD_CHANGE.test(verb) || (h.key === "ansible" || h.key === "ansible-playbook"));
-  h.e.add("publish", "cloud.change", changes ? `Changes ${service}.` : `Ember can't tell whether this changes ${service}.`, { objects: [{ kind: "other", text: verb, abs: null }], program: `${h.key} ${verb}` });
+  h.e.add("publish", changes ? "cloud.change" : "cloud.unknown-verb", changes ? `Changes ${service}.` : `Ember can't tell whether this changes ${service}.`, { objects: [{ kind: "other", text: verb, abs: null }], program: `${h.key} ${verb}` });
 });
 
 // ------------------------------------------------------------------------------------------------------------------

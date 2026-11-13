@@ -220,7 +220,10 @@ Ember stops and asks before a command that:
   reading the clipboard; taking a screenshot without Ember's privacy filters; recording from the microphone or the
   camera ("Records from the microphone or the camera.": `arecord`, `parecord`, `rec`, `sox -d`, `fswebcam`, `ffmpeg`
   with a capture device as its input, GStreamer's capture sources); a cloud vault's value or a service's keys (`az
-  keyvault secret show`, `az storage account keys list`, `terraform output -raw` or `-json`, `terraform show -json`);
+  keyvault secret show`, `az storage account keys list`, `terraform output -raw` or `-json`, `terraform show -json`), or an app's (`pulumi … --show-secrets`, `pulumi config
+  get`, `heroku config`, `netlify env:list`, `vercel env ls` and `env pull`, `firebase functions:config:get`, `gcloud
+  secrets versions access`, and `env` run in a pod or an app: `kubectl exec pod -- env`, `heroku run env`, `fly ssh
+  console -C env`);
   a Wi-Fi password (`nmcli device wifi show-password`); a file named for what it holds (`password.txt`,
   `secrets.txt`, `credentials.txt`, `.vault_pass`, `.htpasswd`, `~/.boto`, `~/.s3cfg`, Composer's `auth.json`,
   FileZilla's and Pidgin's saved sign-ins); a fetch of a cloud computer's own sign-in address, however it
@@ -754,8 +757,9 @@ opens, a service started, enabled, stopped or loaded, a login or startup entry, 
 names a program, a shell's start-up file, a program put on the command path, a tunnel, a message to a desktop
 service over D-Bus, a WMI or CIM call, an alias or a `trap`), so that Stop stops everything; a downloaded program
 that is handed a key, credentials or a token (`npx tool ~/.ssh/id_rsa`, `KEY=~/.ssh/id_rsa npx tool`), or a word Ember can't resolve
-(`npx tool $(…)`); a program, or a tool's command, Ember doesn't know, one that runs code nobody is shown
-(`rundll32`, `mshta`, `wscript`, `run-parts`) and a sandbox or a wrapper whose command Ember doesn't judge (`bwrap`,
+(`npx tool $(…)`); a program, or a tool's command, Ember doesn't know (a cloud tool's verb whose effect it can't tell
+included), one that runs code nobody is shown (`rundll32`, `mshta`, `wscript`, `run-parts`, a script the task wrote
+in a language Ember doesn't read) and a sandbox or a wrapper whose command Ember doesn't judge (`bwrap`,
 `firejail`, `envdir`, `expect`), since nobody can tell what it does; every command when your organisation, or
 you (**Ask me before every command**), asked for that; a task
 without your own words; and a command, a request or a list of findings too long to show whole (a command over 4,000
@@ -789,7 +793,8 @@ It still asks, with the card of §2.4, before:
   tunnel), so that Stop stops everything;
 - a command Ember can't tell the effect of (a loop, a line behind a `[[ … ]]` test, code written inline, `eval`,
   text handed to `xargs` that Ember can't see, a program that waits for typing), since it may be either of those;
-- a program, or a tool's command, Ember doesn't know, since it too may be either of those;
+- a program, or a tool's command, Ember doesn't know, a cloud tool's verb whose effect Ember can't tell ("Ember can't
+  tell whether this changes Heroku.") among them, since it too may be either of those;
 - a command your own words for the task rule out ("commit my work but don't push", "delete everything except
   build", "push it, but without force"): that is your no, said in advance, and the card says "You didn't ask for
   this."; and one your words hold back ("leave the build folder alone", "keep notes.txt", "hold off on publishing",
