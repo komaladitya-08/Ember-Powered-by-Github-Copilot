@@ -994,10 +994,11 @@ const others = () => level(++said % 5 ? 0.02 : 0.006);
 const room = () => level(0.001);
 
 describe("VoiceEngine with other people talking", () => {
-  function listen(b: VoiceBackend, frames: Float32Array[], o: { followUp?: boolean } = {}) {
+  function listen(b: VoiceBackend, frames: Float32Array[], o: { followUp?: boolean; question?: boolean } = {}) {
     const events: (VoiceEvent & { at: number })[] = [];
     const c = { t: 0 };
     const e = new VoiceEngine(b, ev => events.push({ ...ev, at: c.t }), { now: () => c.t, verifyWake: false });
+    if (o.question) e.questionUp(true);
     if (o.followUp) e.followUp(8000);
     for (const f of frames) { e.feed(f); c.t += 32; }
     return { events, e, c };
@@ -1062,6 +1063,18 @@ describe("VoiceEngine with other people talking", () => {
       const { events } = listen(b, [...n(100, near), level(0.03, 9), ...wake(), ...n(400, near)]);
       expect(utterances(events)).toEqual([]);
       expect(events.at(-1)).toMatchObject({ type: "listening", on: false, reason: "timeout" });
+    });
+
+    it("takes no answer from the others' everyday word in the same breath, with a question up (voice-product-x9-1)", () => {
+      // The recognizer writes "Hey Ember, okay." for the whole and "Hey Ember." for the user's own stretch: the "okay"
+      // is a colleague's or a TV's, and riding on the user's name it was sent as a yes by name.
+      for (const word of ["okay", "yes", "sure"]) {
+        const b = lenient(talking({ wake: 9 }));
+        const own = b.transcribe;
+        b.transcribe = s => (own(s) === "Hey Ember." ? "Hey Ember." : `Hey Ember, ${word}.`);
+        const { events } = listen(b, [...n(100, near), level(0.03, 9), ...wake(), ...n(60, near), ...n(200, room)], { question: true });
+        expect(utterances(events), word).toEqual([]);
+      }
     });
 
     it("doesn't send the others' talk heard after it ended (not as loud as the wake phrase), in a room where they talk", () => {
