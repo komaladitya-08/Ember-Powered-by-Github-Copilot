@@ -508,7 +508,9 @@ PulseAudio's parec, Windows once its output watch has looked); on macOS and on L
 window. Home › Voice words its hint by platform (`voiceAnswerHint`, app/renderer/home/copy.ts: V2-F3, V2-F12). While the window
 is open, Ember's status line says “Listening for your answer…”; when it closes unanswered with the question still up,
 it says for 8 s “To answer by voice now, start with my name.” (`answerWindowStatus`, V2-F4). In a conversation neither
-shows: bare answers are heard there throughout. Only what the list
+shows: bare answers are heard there throughout. Neither shows on a question whose yes can't be taken by voice (locked by
+Voice Match, Voice Match not ready, a click-only card: `Confirmer.yesByVoice`), and either goes with its question
+(`answerStatusOnQuestion`, voice-product-x9-4). Only what the list
 reads as an answer leaves that window; a request said with the name in it (“Ember, open my mail”) is heard as at a
 wake, and by a wake's two stages: the spotter heard you say the name in it, and the recognizer wrote it. On the
 recognizer's words alone, which take “Number, …”, “Member, …” and “Amber, open…” for the name after the spotter, talk
@@ -524,7 +526,9 @@ to answer (`unclear`). So do, there and in a follow-up or a conversation while a
 that start like an answer and aren't one (“Yes, but wait.”, “No, hang on.”: `nearAnswer` in app/shared/spoken-answer.ts),
 and, in any window, a yes asked as a question said by name (“Ember, okay?”: `askedYes`): nothing of them is sent, where
 they went to Copilot or vanished (V2-F5, V2-F7). “Why?” and “Which file?” are requests as ever. “Okay, Ember.”, which
-the spotter hears as “Hey Ember”, is the yes it reads as, by name. The answer window opens no conversation, is
+the spotter hears as “Hey Ember”, is the yes it reads as, by name, but not where others talked in the same breath:
+there what followed the user's bare “Hey Ember” is theirs, and goes nowhere (voice-product-x9-1). “Okay, that's all.”
+still ends a conversation or a follow-up, the closers judged before the near-miss check (voice-product-x9-3). The answer window opens no conversation, is
 no follow-up, ends with the question, and takes no yes said over other sound unless it is said with the name (the
 question then says so, once); a no is anyone's there too, as it is in a conversation and a follow-up: “No.”, “Not
 now.” and “Don't do it.” over a playing video were dropped in the answer window and a conversation, and the question
