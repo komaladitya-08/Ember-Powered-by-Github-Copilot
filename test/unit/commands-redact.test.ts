@@ -487,6 +487,28 @@ describe("an Azure Key Vault secret printed with its tags (commands-classes-x9-7
     expect(redactSecrets(text)).not.toContain("Zq8vP2mXw4");
   });
 
+  it.each([
+    ["on one line", '{"value":"Zq8vP2mXw4","id":"https://v.vault.azure.net/secrets/a/4387e","attributes":{"enabled":true}}'],
+    ["pretty-printed", '{\n  "value": "Zq8vP2mXw4",\n  "id": "https://v.vault.azure.net/secrets/a/4387e"\n}'],
+    ["with its content type between", '{"value":"Zq8vP2mXw4","contentType":"text/plain","id":"https://v.vault.azure.net/secrets/a/4387e"}'],
+    ["holding a quote written with a backslash", '{"value":"Zq8v\\"P2mXw4","id":"https://v.vault.azure.net/secrets/a/4387e"}'],
+  ])("hides the value the REST API prints before the secret's id, %s (merge review integ-y-3)", (_name, text) => {
+    const out = redactSecrets(text);
+    expect(out).not.toContain("Zq8v");
+    expect(out).not.toContain("P2mXw4");
+    expect(out).toContain(SECRET_HIDDEN);
+    expect(out).toContain("vault.azure.net/secrets/a/4387e");
+  });
+
+  it("leaves a value whose id is no Key Vault secret's, and stays quick on a run of values (merge review integ-y-3)", () => {
+    const plain = '{"value":"keep-me","id":"https://example.com/items/1"}';
+    expect(redactSecrets(plain)).toBe(plain);
+    const run = '"value":"a", "x": 1, '.repeat(200_000);
+    const t = Date.now();
+    redactSecrets(run);
+    expect(Date.now() - t).toBeLessThan(2000);
+  });
+
   it("stays quick on a long output that never closes", () => {
     const id = '"id": "https://v.vault.azure.net/secrets/a/1", ';
     for (const text of [id.repeat(4000), id + "{".repeat(200_000), id + '{"a":1}'.repeat(30_000), `${id}"value": "${"\\".repeat(200_001)}`]) {
