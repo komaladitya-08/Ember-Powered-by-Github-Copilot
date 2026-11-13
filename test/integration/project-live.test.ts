@@ -8,6 +8,9 @@ import { CONSENT_VERSION, FEATURE_CONSENT_VERSION } from "../../app/shared/conse
 import { MemoryGraph } from "../../app/main/memory/graph";
 import { AGREE_ARM_MS } from "../../app/shared/provider";
 import { memoryFile } from "../../app/main/memory/store";
+import { FIRST_RUN_ROWS, type FirstRunRow } from "../../app/shared/first-run";
+import { firstRunWhy } from "../../app/renderer/home/welcome-copy";
+import { modelsReady } from "../../app/voice/models";
 // @ts-expect-error -- plain JS test helper
 import { startMockLlm } from "../mock-llm/server.mjs";
 
@@ -613,20 +616,33 @@ it.skipIf(process.env.EMBER_PROJECT_TEST !== "1")("resumes a saved workspace aft
   }
 }, 120_000);
 
-it.skipIf(process.env.EMBER_PROJECT_TEST !== "1")("keeps personalisation optional while consent and Stop guidance remain in the short first-run route", async () => {
+/**
+ * First run on a fresh profile in the real app, by the short route (the optional steps looked at and left), with every
+ * row of the one agreement left as it comes or `off` switched off by keyboard first. What it found before the
+ * agreement and what the profile holds after it.
+ */
+async function firstRunJourney(opts: { off?: readonly FirstRunRow[]; models?: string } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-welcome-short-"));
   const userData = path.join(dir, "profile");
   fs.mkdirSync(userData);
-  fs.writeFileSync(path.join(userData, "settings.json"), JSON.stringify({ version: 1, wakeWord: false, speak: false }));
+  const settingsFile = path.join(userData, "settings.json");
+  const readSettings = () => (fs.existsSync(settingsFile) ? JSON.parse(fs.readFileSync(settingsFile, "utf8")) as Record<string, any> : {}); // eslint-disable-line @typescript-eslint/no-explicit-any -- settings.json as it is on disk
+  const auditDir = path.join(userData, "audit");
+  const audit = () => (fs.existsSync(auditDir) ? fs.readdirSync(auditDir) : []).flatMap(f => fs.readFileSync(path.join(auditDir, f), "utf8").split("\n").filter(Boolean))
+    .map(line => JSON.parse(line) as Record<string, unknown>);
   const mock = await startMockLlm({ delayMs: 5, respond: () => ({ text: "Ready." }) });
   let app: Awaited<ReturnType<typeof _electron.launch>> | undefined;
   try {
+    const env: Record<string, string> = {};
+    for (const [k, v] of Object.entries(process.env)) if (v !== undefined && k !== "EMBER_VOICE_MODELS") env[k] = v;
     app = await _electron.launch({
       executablePath: createRequire(import.meta.url)("electron") as string,
       args: [process.cwd(), "--show-settings", ...(process.getuid?.() === 0 ? ["--no-sandbox"] : [])],
-      env: { ...process.env, EMBER_USER_DATA: userData, EMBER_TEST_PROVIDER_URL: mock.baseUrl },
+      env: { ...env, EMBER_USER_DATA: userData, EMBER_TEST_PROVIDER_URL: mock.baseUrl, ...(opts.models ? { EMBER_VOICE_MODELS: opts.models } : {}) },
     });
     const settingsPage = () => app?.windows().find(page => page.url().includes("/renderer/home/index.html"));
+    // The hidden page that hears and speaks for Ember: there only once Ember may listen or speak.
+    const micPages = () => app!.evaluate(({ webContents }) => webContents.getAllWebContents().filter(wc => wc.getURL().includes("/renderer/mic/")).length);
     await expect.poll(() => !!settingsPage(), { timeout: 20_000 }).toBe(true);
     const home = settingsPage()!;
     await home.locator("#welcome").waitFor({ state: "visible", timeout: 30_000 });
@@ -637,13 +653,30 @@ it.skipIf(process.env.EMBER_PROJECT_TEST !== "1")("keeps personalisation optiona
     await home.locator("#w-next").click();
     expect(await home.locator("#welcome").getAttribute("data-step")).toBe("consent");
     expect(await home.evaluate(() => window.ember.projectRun({ mode: "review", question: "Must stay blocked." }))).toEqual({ error: "Project work is unavailable right now." });
-    expect(mock.requests).toHaveLength(0);
     await home.locator("#w-alt").click();
     expect(await home.locator("#welcome").getAttribute("data-step")).toBe("consent");
     expect(await home.locator("#w-consent-note").innerText()).toContain("nothing is read, heard or sent");
-    expect(JSON.parse(fs.readFileSync(path.join(userData, "settings.json"), "utf8")).consent?.version ?? 0).toBeLessThan(CONSENT_VERSION);
+    // The five rows, each with its own switch, on where it can be turned on here.
+    await home.locator("#w-row-interactive").waitFor({ state: "visible", timeout: 15_000 });
+    const rows: Record<string, { on: boolean; offered: boolean; why: string; words: number }> = {};
+    for (const row of FIRST_RUN_ROWS) {
+      const input = home.locator(`#w-row-${row}`);
+      rows[row] = {
+        on: await input.isChecked(), offered: await input.isEnabled(), why: (await home.locator(`#w-row-${row}-why`).textContent()) ?? "",
+        words: ((await home.locator(`#w-row-${row}-text`).innerText()).match(/\S+/g) ?? []).length,
+      };
+    }
+    // Switched off by keyboard alone: focus, then Space.
+    for (const row of opts.off ?? []) {
+      await home.locator(`#w-row-${row}`).focus();
+      await home.keyboard.press("Space");
+      expect(await home.locator(`#w-row-${row}`).isChecked(), `${row}'s switch after Space`).toBe(false);
+    }
+    // Nothing read, heard, sent or recorded before the agreement.
+    const before = { requests: mock.requests.length, mic: await micPages(), audit: audit(), settings: readSettings() };
     // Agree takes a press once it has been on screen a moment, so a double click on Get started agrees to nothing.
     await home.waitForTimeout(AGREE_ARM_MS);
+    const agreedAfter = Date.now();
     await home.locator("#w-next").click();
     await expect.poll(() => home.locator("#welcome").getAttribute("data-step")).toBe("sign-in");
     await expect.poll(() => home.locator("#w-next").getAttribute("aria-disabled"), { timeout: 30_000 }).not.toBe("true");
@@ -664,6 +697,7 @@ it.skipIf(process.env.EMBER_PROJECT_TEST !== "1")("keeps personalisation optiona
     }
     await home.locator("#w-stop").click();
     await expect.poll(() => home.locator("#w-try-stop").getAttribute("class")).toContain("done");
+    // The optional "About you" step is looked at and left: nothing is asked for and nothing is kept.
     await home.locator("#w-alt").click();
     expect(await home.locator("#w-count").innerText()).toBe("Optional · About you");
     await home.locator("#w-back").click();
@@ -671,12 +705,71 @@ it.skipIf(process.env.EMBER_PROJECT_TEST !== "1")("keeps personalisation optiona
     expect(await home.locator("#w-count").innerText()).toBe("Step 6 of 6");
     await home.locator("#w-next").click();
     await home.locator("#welcome").waitFor({ state: "hidden" });
-    const settings = JSON.parse(fs.readFileSync(path.join(userData, "settings.json"), "utf8"));
-    expect(settings).toMatchObject({ onboarded: true, consent: { version: CONSENT_VERSION }, memory: { on: false } });
-    expect(mock.requests).toHaveLength(0);
+    await expect.poll(() => readSettings().onboarded).toBe(true);
+    return { rows, before, agreedAfter, settings: readSettings(), audit: audit(), requests: mock.requests.length, facts: memoryFile(userData).load().size.facts };
   } finally {
     await app?.close();
     await mock.close();
     fs.rmSync(dir, { recursive: true, force: true });
   }
+}
+
+/** A card's record as its own yes leaves it: the card's current version, at a time after the agreement was pressed. */
+const agreed = (version: number, after: number) => ({ version, at: expect.toSatisfy((at: unknown) => typeof at === "string" && Date.parse(at) >= after, "a time after the agreement") as unknown });
+
+it.skipIf(process.env.EMBER_PROJECT_TEST !== "1")("keeps personalisation optional while consent and Stop guidance remain in the short first-run route, and its one agreement turns on each default left on with what its own card records (cifix-1)", async () => {
+  const run = await firstRunJourney();
+  // Before the agreement: all five rows shown with their cards' words, on where they can be; listening is not offered
+  // without the speech models on this computer (a fresh profile in a development tree has none), and says why.
+  expect(Object.keys(run.rows)).toEqual([...FIRST_RUN_ROWS]);
+  for (const row of ["commands", "memory", "screenshots", "interactive"] as const) expect(run.rows[row], row).toMatchObject({ on: true, offered: true, why: "" });
+  expect(run.rows.voice).toMatchObject({ on: false, offered: false, why: firstRunWhy("models") });
+  for (const row of FIRST_RUN_ROWS) expect(run.rows[row]!.words, `${row}'s own card text on the page`).toBeGreaterThan(10);
+  expect(run.before.requests).toBe(0);
+  expect(run.before.mic).toBe(0);
+  expect(run.before.audit.filter(e => e.event === "autonomy" && e.mode === "interactive")).toEqual([]);
+  expect(run.before.settings.consent?.version ?? 0).toBe(0);
+  expect(run.before.settings.onboarded ?? false).toBe(false);
+  // After it: each default left on, with exactly what its own card's yes records.
+  const at = (v: number) => agreed(v, run.agreedAfter);
+  expect(run.settings).toMatchObject({
+    onboarded: true,
+    consent: at(CONSENT_VERSION),
+    commands: { local: { on: true, askEvery: false, consent: at(FEATURE_CONSENT_VERSION.commands) } },
+    memory: { on: true, consent: at(FEATURE_CONSENT_VERSION.memory) },
+    screenImages: true,
+    approvals: { mode: "interactive", consent: { interactive: at(FEATURE_CONSENT_VERSION.autonomy), assisted: { version: 0, at: null }, autopilot: { version: 0, at: null } } },
+    // Listening and spoken replies stay off, with no consent, until the models are there and their own card is agreed.
+    wakeWord: false, speak: false, voice: { consent: false, match: false },
+  });
+  // Interactive is in force only with its audit entry: the user's own choice, made in Home.
+  expect(run.audit.filter(e => e.event === "autonomy")).toEqual([expect.objectContaining({ mode: "interactive", via: "home", verified: false })]);
+  // Personalisation stayed optional: the "About you" step was left and no fact was kept. And nothing was sent.
+  expect(run.facts).toBe(0);
+  expect(run.requests).toBe(0);
+}, 120_000);
+
+it.skipIf(process.env.EMBER_PROJECT_TEST !== "1")("leaves memory off, with no memory consent recorded, when its row is switched off by keyboard before first run's agreement, and turns listening on only with the speech models on this computer (cifix-1)", async () => {
+  // The speech models CI's jobs fetch (node scripts/voice/prepare.mjs): with them the listening row is offered.
+  const cache = path.join(process.cwd(), ".cache", "voice", "models");
+  const models = modelsReady(cache) ? cache : undefined;
+  if (!models) console.log("first run with the speech models: not checked here (none in .cache/voice/models; run node scripts/voice/prepare.mjs)");
+  const run = await firstRunJourney({ off: ["memory"], ...(models ? { models } : {}) });
+  expect(run.rows.memory).toMatchObject({ on: true, offered: true });
+  expect(run.rows.voice).toMatchObject(models ? { on: true, offered: true, why: "" } : { on: false, offered: false, why: firstRunWhy("models") });
+  expect(run.before.requests).toBe(0);
+  expect(run.before.mic).toBe(0);
+  const at = (v: number) => agreed(v, run.agreedAfter);
+  expect(run.settings).toMatchObject({
+    onboarded: true,
+    consent: at(CONSENT_VERSION),
+    memory: { on: false, consent: { version: 0, at: null } },
+    // The other rows, left on, are as in the journey above.
+    commands: { local: { on: true, consent: at(FEATURE_CONSENT_VERSION.commands) } },
+    screenImages: true,
+    approvals: { mode: "interactive", consent: { interactive: at(FEATURE_CONSENT_VERSION.autonomy) } },
+    ...(models ? { wakeWord: true, speak: true, voice: { consent: true, speakerRejection: true, match: false, muted: false } } : { wakeWord: false, speak: false, voice: { consent: false } }),
+  });
+  expect(run.facts).toBe(0);
+  expect(run.requests).toBe(0);
 }, 120_000);
