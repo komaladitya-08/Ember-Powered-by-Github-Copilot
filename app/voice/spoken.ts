@@ -220,7 +220,7 @@ const ENTITY: Readonly<Record<string, string>> = {
   amp: "&", lt: "<", gt: ">", quot: "\"", apos: "'", "#39": "'", nbsp: " ",
   // The common named ones, as the marks they stand for (said letter by letter before: voice-speaking-r9-6).
   mdash: "—", ndash: "–", hellip: "…", copy: "©", reg: "®", trade: "™", rarr: "→", larr: "←", times: "×", deg: "°",
-  lsquo: "‘", rsquo: "’", ldquo: "“", rdquo: "”", bull: "•", middot: "·",
+  lsquo: "\u2018", rsquo: "\u2019", ldquo: "“", rdquo: "”", bull: "•", middot: "·",
 };
 const withoutEyeOnly = (text: string): string =>
   text.replace(EYE_ONLY, (m: string, code: string | undefined, br: string | undefined, entity: string | undefined) => (code ? m : br ? " " : entity ? ENTITY[entity.toLowerCase()] : ""));
