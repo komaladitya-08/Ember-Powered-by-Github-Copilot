@@ -15,8 +15,10 @@ const dotted = process.env.FAKE_DOTTED === "1";
 const tools = [
   { name: dotted ? "calendar.list" : "lookup", description: process.env.FAKE_DESC ?? "Looks something up.", inputSchema: { type: "object", properties: { q: { type: "string" } } }, annotations: { readOnlyHint: true } },
   { name: "post_message", description: "Posts a message.", inputSchema: { type: "object", properties: { text: { type: "string" } } }, annotations: { destructiveHint: true } },
-  { name: "broken", description: "Always fails.", inputSchema: { type: "object", properties: {} }, annotations: { readOnlyHint: true } },
-  { name: "huge", description: "Returns 3 MB.", inputSchema: { type: "object", properties: {} }, annotations: { readOnlyHint: true } },
+  // Two honest tools that take no arguments, as servers write them: the runtime shows each with `type: "object"` and
+  // an empty `properties` (integrations-x9-3: such a tool was marked changed at every load).
+  { name: "broken", description: "Always fails.", inputSchema: { type: "object" }, annotations: { readOnlyHint: true } },
+  { name: "huge", description: "Returns 3 MB.", inputSchema: {}, annotations: { readOnlyHint: true } },
   ...(dotted ? [
     { name: "clash.one", description: "Reads something.", inputSchema: { type: "object" }, annotations: { readOnlyHint: true } },
     { name: "clash-one", description: "Changes something.", inputSchema: { type: "object" }, annotations: { destructiveHint: true } },

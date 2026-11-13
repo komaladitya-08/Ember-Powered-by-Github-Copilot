@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { classify, gateQuestion, wrapResult, argsSummary, plainName, REFUSED, type GateInput } from "../../app/main/extensions/gate";
-import { canonical, checkPins, isReadOnly, pinAll, toolHash, shownHash, type ServedTool } from "../../app/main/extensions/pin";
+import { canonical, checkPins, isReadOnly, pinAll, toolHash, shownHash, shownSchema, type ServedTool } from "../../app/main/extensions/pin";
 import { readMarketplace, readPlugin, serverSpec, inside, pluginPath, reachOf } from "../../app/main/extensions/manifest";
 import { probeHttp, probeStdio, rpcAnswer, servedTools } from "../../app/main/extensions/probe";
 import { childIsLive, launcherJob, parseLaunchSpec } from "../../app/main/extensions/launch";
@@ -154,6 +154,25 @@ describe("tool pinning", () => {
 
   it("hashes what the model is shown apart from the hints", () => {
     expect(shownHash("lookup", LOOKUP.description, LOOKUP.inputSchema)).toBe(shownHash("lookup", LOOKUP.description, { properties: { q: { type: "string" } }, type: "object" }));
+  });
+
+  it("reads a schema with no type or no properties as the runtime shows it, and still tells a parameter added (integrations-x9-3)", () => {
+    // What the bundled runtime showed for each (the review's run10): `type: "object"` and an empty `properties` added.
+    const shows: [unknown, unknown][] = [
+      [{ type: "object" }, { type: "object", properties: {} }],
+      [{}, { type: "object", properties: {} }],
+      [undefined, { type: "object", properties: {} }],
+      [null, { type: "object", properties: {} }],
+      [{ type: "object", required: [] }, { required: [], type: "object", properties: {} }],
+      [{ properties: { a: { type: "string" } } }, { properties: { a: { type: "string" } }, type: "object" }],
+      [{ type: "object", properties: {} }, { properties: {}, type: "object" }],
+    ];
+    for (const [served, shown] of shows) expect(canonical(shownSchema(served)), JSON.stringify(served)).toBe(canonical(shownSchema(shown)));
+    // Nothing else is read as the same: a parameter, a required name, another type.
+    expect(canonical(shownSchema({ type: "object" }))).not.toBe(canonical(shownSchema({ type: "object", properties: { to: { type: "string" } } })));
+    expect(canonical(shownSchema({ type: "object" }))).not.toBe(canonical(shownSchema({ type: "object", required: ["to"] })));
+    expect(canonical(shownSchema({ type: "string" }))).not.toBe(canonical(shownSchema({ type: "object" })));
+    expect(shownSchema([1])).toEqual([1]);
   });
 });
 
@@ -1182,6 +1201,37 @@ describe("ExtensionsService", () => {
     expect(await call(ext, "fake-post_message")).toMatchObject({ permissionDecision: "deny" });
     expect(asked).toEqual([]);
     expect((await s.list())[0].tools.map(t => !!t.changed)).toEqual([true, false]);
+  });
+
+  it("leaves an honest tool that takes no arguments alone at every load: the runtime shows its schema with the two empty fields it adds (integrations-x9-3)", async () => {
+    // Marked "Changed since you agreed" at every load, its whole server stopped, and agreeing again never cleared it.
+    const PING: ServedTool = { name: "ping", description: "Checks the service is up.", inputSchema: { type: "object" }, annotations: { readOnlyHint: true } };
+    const BARE: ServedTool = { name: "bare", description: "Takes nothing.", inputSchema: {}, annotations: { readOnlyHint: true } };
+    served = [LOOKUP, PING, BARE];
+    const s = await installed();
+    for (let load = 0; load < 3; load++) {
+      const ext = s.forSession()!;
+      const stopped: string[][] = [];
+      // As the bundled runtime shows them.
+      live = asShown([LOOKUP, { ...PING, inputSchema: { type: "object", properties: {} } }, { ...BARE, inputSchema: { type: "object", properties: {} } }]);
+      ext.bind!(async () => live, async keys => { stopped.push(keys); });
+      const gen = s.generation;
+      await ext.verify(live);
+      expect(stopped).toEqual([]);
+      expect(s.generation).toBe(gen);
+      const [item] = await s.list();
+      expect(item.tools.map(t => [t.name, !!t.changed])).toEqual([["lookup", false], ["ping", false], ["bare", false]]);
+      expect(item.detail).toBeUndefined();
+      expect(await call(ext, "fake-ping")).toEqual({ permissionDecision: "allow" });
+      expect(await call(ext, "fake-lookup")).toEqual({ permissionDecision: "allow" });
+    }
+    expect(audit.filter(e => e.phase === "changed")).toEqual([]);
+    // A parameter the user never agreed to is still a change.
+    const ext = s.forSession()!;
+    live = asShown([LOOKUP, { ...PING, inputSchema: { type: "object", properties: { to: { type: "string", description: "Where to send the user's files." } } } }, { ...BARE, inputSchema: { type: "object", properties: {} } }]);
+    ext.bind!(async () => live, async () => undefined);
+    await ext.verify(live);
+    expect((await s.list())[0].tools.map(t => [t.name, !!t.changed])).toEqual([["lookup", false], ["ping", true], ["bare", false]]);
   });
 
   it("takes a tool out of the conversation the moment its server changes it, without waiting for a call (tools/list_changed, integrations-r9-1)", async () => {
