@@ -3263,9 +3263,13 @@ test now holds what the keys promise (product-platform-flaky-3), and the product
 checks job failed once in the device-code step on GitHub's own 400 `request_failed`: the step retries passing trouble
 and still fails at once on a refused client id (093eaf2; product-platform-flaky-4). At 3d9b4f2 every job passed: 18,
 with 4 skipped by design (publishing, macOS on Intel, SSH to Linux arm64, commands and SSH on macOS); no job failed at
-0fa8bf0 or 681c36a; at a3cf645 `el8` failed in the voice step, as above. CI's result for the final head isn't known when
-this is written: it runs when the branch is pushed, and the pull request records it. The `ssh-macos` job of remote.yml,
-which pull requests don't run, has not been dispatched for install-docs-r9-1's fix.
+0fa8bf0 or 681c36a; at a3cf645 `el8` failed in the voice step, as above. At 237fd04 (voice-answer-take merged) the `el8`
+job was cancelled at its own 25-minute limit, 17 seconds into the second footprint run, with every test before it
+passing: the speech step had grown from 10 min 15 s at 0fa8bf0 to 17 min 4 s (the room-talk test alone takes 190 s on
+WebAssembly and 90 s on the C API, the answer-window tests about 60 s each), so the job's limit is now 40 minutes, with
+no test skipped or shortened (c3eefc7). CI's result for the final head isn't known when this is written: it runs when
+the branch is pushed, and the pull request records it. The `ssh-macos` job of remote.yml, which pull requests don't run,
+has not been dispatched for install-docs-r9-1's fix.
 
 **The safety harnesses at the fifth checkpoint (681c36a).** Policy proof against main (01493d0): pass. Below Interactive
 287,678 steps, 0 weaker and 52 stronger, all Enter or a click on a bare “Open” in a dialog that warns of harm, which
