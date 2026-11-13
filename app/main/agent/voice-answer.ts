@@ -66,7 +66,7 @@ export function rejectionEndsTrust(reason: "self" | "speakers" | "check" | "voic
  * "no", a yes that was merely too short, another task's question or any other refusal doesn't. Pure, as above.
  */
 export function refusalEndsTrust(result: string, answer: "allow" | "deny"): boolean {
-  return answer === "allow" && result === "unverified";
+  return answer === "allow" && (result === "unverified" || result === "unchecked");
 }
 
 /**
@@ -144,6 +144,8 @@ export interface VoiceAnswerInput {
   matchOff: boolean;
   /** The voice process verified this utterance as the owner's (VoiceEvent utterance `verified`). */
   verified: boolean;
+  /** Voice Match couldn't check it: its model failed (VoiceEvent utterance `unchecked`, match.ts). */
+  unchecked?: boolean;
   /** It matched the owner's voice but was too short to vouch for (VoiceEvent utterance `short`). */
   short?: boolean;
   /** A short one's own score, after the wake phrase (VoiceEvent utterance `restScore`; absent: too little voice to score). */
@@ -155,7 +157,7 @@ export interface VoiceAnswerInput {
 }
 
 /** Why a spoken answer wasn't taken. */
-export type VoiceAnswerRefusal = "voice-match-unready" | "unverified" | "own-voice" | "too-short";
+export type VoiceAnswerRefusal = "voice-match-unready" | "unverified" | "unchecked" | "own-voice" | "too-short";
 
 export type VoiceAnswerOutcome =
   /** Not an answer: an ordinary request (no question up, or other words). */
@@ -184,6 +186,8 @@ export function voiceAnswer(i: VoiceAnswerInput): VoiceAnswerOutcome {
   // Voice Match off, its default: a yes from anyone heard (owner decision of 2026-11-12), as the approve key would be.
   if (anyone) return { kind: "answer", answer, verified: false, anyone: true };
   if (i.verified) return { kind: "answer", answer, verified: true };
+  // Its model failed: said so, rather than that the voice didn't sound like the owner's (V2-F8).
+  if (i.unchecked) return { kind: "refused", answer, why: "unchecked" };
   // Too short to vouch for: its own score, where it has one, says whether it is clearly another voice.
   const otherVoice = i.restScore !== undefined && i.restScore < SHORT_YES_FLOOR;
   if (!i.short || otherVoice) return { kind: "refused", answer, why: "unverified" };
@@ -196,7 +200,7 @@ export function voiceAnswer(i: VoiceAnswerInput): VoiceAnswerOutcome {
 }
 
 /** Every reason a spoken answer can be turned away: voiceAnswer's, the Confirmer's, and an answer said over Ember's voice. */
-export type VoiceAnswerNote = VoiceAnswerRefusal | "click-only" | "not-yet" | "stale" | "locked" | "heard-over" | "over-sound" | "name-doubted" | "sound-unknown" | "unclear" | "unclear-click";
+export type VoiceAnswerNote = VoiceAnswerRefusal | "click-only" | "not-yet" | "busy" | "stale" | "locked" | "heard-over" | "over-sound" | "name-doubted" | "sound-unknown" | "unclear" | "unclear-click";
 
 /**
  * What the bubble says under the question when a spoken answer wasn't taken (the question stays up): what happened,
@@ -207,9 +211,13 @@ export type VoiceAnswerNote = VoiceAnswerRefusal | "click-only" | "not-yet" | "s
 export const VOICE_ANSWER_REFUSED: Readonly<Record<VoiceAnswerNote, string>> = {
   "voice-match-unready": "Voice Match is on but isn't ready yet, so I can't take a yes by voice: finish setting it up in Settings › Voice, or turn it off. Until then, click Allow or use the keys.",
   unverified: "That didn't sound like you, so I didn't take it as a yes. Say it again, or click Allow or use the keys.",
+  // Voice Match's model failed on it (match.ts): it was never judged another voice (V2-F8).
+  unchecked: "Voice Match couldn't check that just now, so I didn't take it as a yes. Click Allow or use the keys.",
   "own-voice": "I was still speaking, so I didn't take that as an answer. Say it again now.",
   "click-only": "This one needs a click: I can't take a yes by voice here.",
   "not-yet": "Read it through first, then say yes again.",
+  // Ember borrows the mouse (the Confirmer's blocked()): "read it through first" was untrue then (V2-F8).
+  busy: "I'm using the mouse just now, so I couldn't take that. Say it again in a moment.",
   "too-short": "I couldn't hear enough of your voice to be sure it's you. Say it a little longer, like “Yes, please go ahead”, so I can tell.",
   stale: "That was said before this question came up, so I didn't take it. Say it again.",
   // Said when Voice Match turned a voice away during the question: often the owner's own one word, too short to score
@@ -241,6 +249,7 @@ const WITHOUT_KEYS: Readonly<Partial<Record<VoiceAnswerNote, string>>> = {
   "voice-match-unready": "Voice Match is on but isn't ready yet, so I can't take a yes by voice: finish setting it up in Settings › Voice, or turn it off. Until then, click Allow on the question.",
   unverified: "That didn't sound like you, so I didn't take it as a yes. Say it again, or click Allow on the question.",
   locked: "I couldn't match that voice to yours, so for this question I'll take a click only.",
+  unchecked: "Voice Match couldn't check that just now, so I didn't take it as a yes. Click Allow on the question.",
 };
 
 /** The note for `why` as the question shows it: the keys are named only while Ember holds them (`keysHeld`). */
@@ -249,7 +258,7 @@ export function refusalLine(why: VoiceAnswerNote, keysHeld: boolean): string {
 }
 
 /** The lines that point to a click or the keys: said aloud, they name the keys Ember holds too (tasks-approvals-6). */
-const POINTS_TO_KEYS: ReadonlySet<VoiceAnswerNote> = new Set(["voice-match-unready", "unverified", "locked"]);
+const POINTS_TO_KEYS: ReadonlySet<VoiceAnswerNote> = new Set(["voice-match-unready", "unverified", "unchecked", "locked"]);
 
 /**
  * The note for a spoken answer that wasn't taken (`why`), as the question stands: a yes to a question locked to clicks

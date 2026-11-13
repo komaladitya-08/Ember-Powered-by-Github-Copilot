@@ -207,7 +207,8 @@ export class VoiceGate {
         if (generation !== this.revision) return;
         // The model failed: the request is heard (Voice Match failing must not leave Ember deaf), and main is told.
         this.onError(err);
-        if (!e.overSound) this.send(e);
+        // Marked, so a spoken yes in it is refused as not checked, not as another voice (V2-F8).
+        if (!e.overSound) this.send(e.type === "utterance" ? { ...e, unchecked: true } : e);
         return;
       }
       if (e.overSound && score < OVER_SOUND_MATCH) { if (generation === this.revision) this.send(dropped); return; }

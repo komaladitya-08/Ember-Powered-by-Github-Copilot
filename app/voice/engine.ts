@@ -116,7 +116,7 @@ export type VoiceEvent =
    * name first, but it couldn't be told from what the speakers played (namedByUser), so the note says so rather than ask
    * for the name the user just said (voice-safety-x9-4).
    */
-  | { type: "utterance"; text: string; ms: number; window: ListeningWindow; cut?: boolean; overEmber?: true; overSound?: true; soundUnknown?: true; nameDoubted?: true; verified?: true; short?: true; restScore?: number }
+  | { type: "utterance"; text: string; ms: number; window: ListeningWindow; cut?: boolean; overEmber?: true; overSound?: true; soundUnknown?: true; nameDoubted?: true; verified?: true; short?: true; restScore?: number; unchecked?: true }
   /** `voice`: Voice Match found the request wasn't the owner's (`score`: how close it came); it is heard all the same (match.ts). */
   | { type: "rejected"; keyword: string; reason: "self" | "speakers" | "check" | "voice"; heard?: string; score?: number }
   /**

@@ -2086,7 +2086,7 @@ function start(): void {
           const taskTrust = voiceTrust.holds(confirmer?.currentTask);
           // (voiceAnswer reads the raw words, e.text, never personal.heard()'s corrected ones.)
           const spokenReply = voiceAnswer({
-            text: e.text, questionUp: confirmer?.waiting ?? false, matchOn, matchOff, verified: e.verified === true, short: e.short === true,
+            text: e.text, questionUp: confirmer?.waiting ?? false, matchOn, matchOff, verified: e.verified === true, unchecked: e.unchecked === true, short: e.short === true,
             ...(e.restScore !== undefined ? { restScore: e.restScore } : {}), taskTrust, selfSpoke: e.overEmber === true || (voice?.selfSpokeSince(heardFrom) ?? true),
           });
           // A spoken answer to a question is never learnt from (Voice Match learns from requests only).

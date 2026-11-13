@@ -265,13 +265,13 @@ describe("VoiceGate", () => {
     }
   });
 
-  it("hears the request when the model fails (Voice Match failing never leaves Ember deaf), unverified, and says so", async () => {
+  it("hears the request when the model fails (Voice Match failing never leaves Ember deaf), unverified and marked unchecked, and says so (V2-F8)", async () => {
     const sent: VoiceEvent[] = [], errors: unknown[] = [];
     const g = new VoiceGate(() => fakePrinter(true), e => sent.push(e), err => errors.push(err));
     g.setOwner(owner);
     g.event(utterance("Open the terminal."), Float32Array.from([0, 1]));
     await flush();
-    expect(sent).toEqual([utterance("Open the terminal.")]);
+    expect(sent).toEqual([{ ...utterance("Open the terminal."), unchecked: true }]);
     expect(errors).toHaveLength(1);
   });
 });

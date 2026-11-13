@@ -128,7 +128,7 @@ describe("Confirmer.answerVoice", () => {
     const borrowed = confirmer({ blocked: () => borrowing });
     const answer = borrowed.c.ask(q());
     borrowed.later(600);
-    expect(borrowed.c.answerVoice("allow", { verified: true })).toBe("not-yet");
+    expect(borrowed.c.answerVoice("allow", { verified: true })).toBe("busy");
     borrowing = false;
     expect(borrowed.c.answerVoice("allow", { verified: true })).toBe("answered");
     expect(await answer).toBe("once");
@@ -270,7 +270,7 @@ describe("a spoken yes from anyone heard while Voice Match is off, its default (
     const borrowed = confirmer({ blocked: () => borrowing });
     void borrowed.c.ask(q({ detail: "x".repeat(400) }));
     borrowed.later(600);
-    expect(borrowed.c.answerVoice("allow", { verified: false, anyone: true })).toBe("not-yet");
+    expect(borrowed.c.answerVoice("allow", { verified: false, anyone: true })).toBe("busy");
     // Its whole text not read yet: as the key, never.
     borrowing = false;
     expect(borrowed.c.answerVoice("allow", { verified: false, anyone: true })).toBe("not-yet");
@@ -909,5 +909,30 @@ describe("what shows while a question's answer window is open, and once it has c
     }
     const main = fs.readFileSync(path.join(__dirname, "../../app/main/main.ts"), "utf8");
     expect(main).toContain("const next = answerWindowStatus(e, { status: statusBy.listen, questionUp: !!confirmer?.waiting, conversing });");
+  });
+});
+
+describe("the refusals of a spoken yes say what really happened (V2-F8)", () => {
+  it("says Ember is using the mouse, not to read the question through, when it borrows the mouse", async () => {
+    let busy = true;
+    const { c, later } = confirmer({ blocked: () => busy });
+    void c.ask(q());
+    later(600);
+    expect(c.answerVoice("allow", { verified: false, anyone: true })).toBe("busy");
+    expect(VOICE_ANSWER_REFUSED.busy).toBe("I'm using the mouse just now, so I couldn't take that. Say it again in a moment.");
+    busy = false;
+    expect(c.answerVoice("allow", { verified: false, anyone: true })).toBe("answered");
+  });
+
+  it("says Voice Match couldn't check a yes, not that it didn't sound like the owner, when its model failed", () => {
+    const base: VoiceAnswerInput = { text: "Yes, please go ahead.", questionUp: true, matchOn: true, matchOff: false, verified: false, selfSpoke: false };
+    expect(voiceAnswer({ ...base, unchecked: true })).toEqual({ kind: "refused", answer: "allow", why: "unchecked" });
+    expect(voiceAnswer({ ...base, text: "No.", unchecked: true })).toMatchObject({ kind: "answer", answer: "deny" });
+    expect(refusalLine("unchecked", true)).toBe("Voice Match couldn't check that just now, so I didn't take it as a yes. Click Allow or use the keys.");
+    expect(refusalLine("unchecked", false)).toBe("Voice Match couldn't check that just now, so I didn't take it as a yes. Click Allow on the question.");
+    // Still ends every task's trust, as a yes it couldn't vouch for did before (fail closed).
+    expect(refusalEndsTrust("unchecked", "allow")).toBe(true);
+    const main = fs.readFileSync(path.join(__dirname, "../../app/main/main.ts"), "utf8");
+    expect(main).toContain("unchecked: e.unchecked === true,");
   });
 });

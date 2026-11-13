@@ -539,7 +539,10 @@ while a question is up ends on words that read as an answer: it says the keys as
 not now, press Control Alt N.” (`keysSaid`, app/main/agent/voice-answer.ts). When it doesn't take a spoken answer,
 the note under the question says why each time, but Ember says each such line aloud only once a question
 (`VoiceRefusals`): a television's “Okay.”, “Sure.” and “Fine.” had it say the same sentence five times in a minute
-(V2-F2). Said aloud, the keys are named once, and “use the keys” only while Ember holds the allow key (V2-F9).
+(V2-F2). Said aloud, the keys are named once, and “use the keys” only while Ember holds the allow key (V2-F9). While
+Ember borrows the mouse a spoken yes is refused as the approve key is, and the note says so (`busy`); where Voice
+Match's model failed on a yes, the note says it couldn't check it (`unchecked`, marked by the voice gate), not that it
+didn't sound like you (V2-F8).
 With **Only my voice can say yes (Voice Match)** off, its default, a yes or a no from anyone heard answers it (owner
 decision of 2026-11-12: “it doesn't really need my voice to be matched for it”), and “Before Ember starts” and the
 “Hey Ember” card say so: anyone near the computer can answer Ember by voice. The audit records `via: "voice"`,
