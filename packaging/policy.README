@@ -9,9 +9,9 @@ A policy can only make Ember stricter than having no policy at all. If the file 
 a key or value Ember doesn't know, Ember locks down (no actions, no listening) until it is fixed. JSON has no comments:
 a "comment" key is a mistake too, so keep notes outside the file. Ember 0.1.0 doesn't know the keys added in 0.1.1
 ("features.aiReview", "features.memory", "features.routines", "features.updates", "features.extensions",
-"features.autonomy", "features.userProvider" and "approvals"): it reads them as mistakes and locks down, so update
-Ember on every computer before deploying a policy that uses them. Builds from before 0.1.0 do the same with "commands", "ssh",
-"features.wsl" and "features.ssh".
+"features.autonomy", "features.userProvider", "features.vault" and "approvals"): it reads them as mistakes and locks
+down, so update Ember on every computer before deploying a policy that uses them. Builds from before 0.1.0 do the same
+with "commands", "ssh", "features.wsl" and "features.ssh".
 
 Important: a policy without "commands" turns commands off on this computer, in WSL and over SSH, because the
 administrator never agreed to them. The example turns them on for each kind of computer; set any of them to "ask"
@@ -29,8 +29,10 @@ Every key is optional:
                         own), "routines" (false: no routines, and reminders end when Ember quits), "updates" (false:
                         Ember never asks GitHub whether a new version is out), "extensions" (false: no extension
                         loads, runs or can be added), "autonomy" (false: no approval mode is in force, so Ember
-                        asks before ordinary steps) and "userProvider" (false: users can't send their requests and
+                        asks before ordinary steps), "userProvider" (false: users can't send their requests and
                         screenshots to a model service of their own; the organisation's "provider" turns it off too)
+                        and "vault" (false: Ember keeps no logins, cards or contact details, never asks for them
+                        and fills none in; what a user saved before stays listed in settings, with Forget)
   "neverLook"           apps and windows Ember never reads, captures or acts in (added to each user's list)
   "confirmEveryAction"  true: a click before every action, every time
   "allowGrants"         false: no "Always in this app"

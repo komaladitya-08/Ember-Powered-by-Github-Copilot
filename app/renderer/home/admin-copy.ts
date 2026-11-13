@@ -64,7 +64,7 @@ export const FEATURE_TEXT: Readonly<Record<string, string>> = {
   voice: "listening for “Hey Ember”", speak: "speaking out loud", actions: "acting in apps (Ember can still answer and show you how)",
   cursor: "borrowing your mouse", desk: "Ember's own desk", screenImages: "sending screenshots", memory: "remembering between runs",
   routines: "keeping routines and reminders", updates: "checking for new versions", aiReview: "Assisted's check of steps and commands", extensions: "adding extensions",
-  autonomy: "working without asking", userProvider: "using your own model provider", ...TARGET_FEATURE_TEXT,
+  autonomy: "working without asking", userProvider: "using your own model provider", vault: "keeping logins, cards and contact details in the vault", ...TARGET_FEATURE_TEXT,
 };
 
 /** The switches the administrator turned off that mean something on `os`, in the notice's words. */
