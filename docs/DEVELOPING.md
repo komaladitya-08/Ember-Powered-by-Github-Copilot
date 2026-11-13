@@ -720,7 +720,21 @@ before the stream was quiet for 160 ms, or 400 ms after it says it stopped); on 
 0.4 s after its last look at Ember speaking (`EMBER_LINGER_MS`), and what played up to Ember's voice counts as playing
 through it and for 2.5 s after. Before, neither counted anything for the first second or so after Ember's voice, and
 a video's or a call's lone “Okay.” right after Ember read a question out was taken (second review of the voice lane,
-V2-S1); a word that starts and ends within those 0.4 s on Windows is still not seen. Where nothing can tell (macOS, Linux without `parec`, Windows before its watch
+V2-S1); a word that starts and ends within those 0.4 s on Windows is still not seen. “By name”, in a question's answer
+window, a follow-up and a conversation, means by the user (`namedByUser` in engine.ts): the recognizer wrote the name
+first, and the speakers didn't say it. Where their own stream arrives (Linux with `parec`) it is asked, as it is for a
+wake: a name the microphone's spotter heard counts only if the stream's spotter didn't hear it too, and if the
+recognizer, reading what the stream played through that speech, finds neither the name (inside “remember” too) nor
+most of the words heard with it (`speakersSaid`); while the stream holds sound, the recognizer's “Ember, …” alone is
+no name. Before, nothing asked the stream in these windows, and a video's, a call's or a web page's own “Ember, allow”
+answered the question it was heard in, where the same words at idle are ignored (second review of the voice lane,
+V2-S2). Measured on the real models, a video saying “Ember, okay.” and its like to a question, 80 runs: 25 were taken
+as a yes by name before, 3 with the two spotters alone (the stream's spotter misses a name now and then), none with the
+recognizer's reading too. Where no such stream arrives, or it was silent through the speech, the name as the
+recognizer writes it (“Ember, allow.”) counts without the spotter, which misses the name in a window that is already
+listening (with its hit asked for there too, 48 of the user's own 80 answers by name were taken, 32 of the answer
+window's 37 and 16 of a conversation's 36; as it is, 73 are, as before); what the transcript check takes for the name only after the spotter
+(“Number, …”, “Member, …”, “Amber, open…”, “Umber…”) never counts without it. Where nothing can tell (macOS, Linux without `parec`, Windows before its watch
 has looked past Ember's own voice, or after it stopped or was refused: `soundKnown` in engine.ts), a yes to a question
 said without the name, in the answer window, a follow-up or a conversation, is taken as said over other sound: with
 Voice Match off it isn't taken, and the question says once to say the name first (`sound-unknown`); a no and anything

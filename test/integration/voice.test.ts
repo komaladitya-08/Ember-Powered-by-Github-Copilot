@@ -252,13 +252,14 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1" && process.env.EM
   const inRoom = (s: Float32Array) => { let seed = 5; return s.map(x => x + ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff - 0.5) * 0.001 / 0.2887); };
   /**
    * One engine fed in turns (`hear`), with the speakers' stream when given, and what it said (`at`: when, in ms).
-   * `speakers`: the session feeds the speakers' stream (it runs on forSpeakers()).
+   * `speakers`: the session feeds the speakers' stream (it runs on forSpeakers()); `conversation`: conversations are on,
+   * as by default in Ember (a wake's request opens one).
    */
-  const session = (o: { speakers?: boolean } = {}) => {
+  const session = (o: { speakers?: boolean; conversation?: boolean } = {}) => {
     const events: (VoiceEvent & { at: number })[] = [];
     let t = 0;
     const b = o.speakers ? forSpeakers() : backend;
-    const engine = new VoiceEngine(b, e => { if (e.type !== "speech") events.push({ ...e, at: t }); }, { now: () => t });
+    const engine = new VoiceEngine(b, e => { if (e.type !== "speech") events.push({ ...e, at: t }); }, { now: () => t, ...(o.conversation ? { conversation: true } : {}) });
     const hear = (mic: Float32Array, o: { speakers?: Float32Array; onFrame?: (frame: number) => void } = {}) => {
       for (let i = 0, k = 0; i + 512 <= mic.length; i += 512, k++) {
         o.onFrame?.(k);
@@ -931,6 +932,37 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1" && process.env.EM
     // other words leaves nothing: up to four are tried).
     let own = 0;
     for (let take = 0; take < 4 && !own; take++) own = yeses(after(speak("Yes, please.", 5, 0.1), 0.3, "user")).length;
+    expect(own).toBe(1);
+  }, 300_000);
+
+  it("never takes “Ember, allow it.” out of the speakers for a yes said by name, in a question's answer window (Linux with parec; V2-S2, voice-listening-r9-2)", () => {
+    // A video is on (in the speakers' stream and, 6 dB down and 64 ms late, in the microphone) while a question is up and
+    // its answer window open. Then the name and a yes: the video's own (the stream and the microphone), or the user's
+    // (the microphone only, the stream silent meanwhile).
+    const talk = speak("And then we can book the flights to Lisbon.", 3, 0.1);
+    const tSay = 0.7 + talk.length / 16000 + 0.9;
+    const after = (said: Float32Array, by: "video" | "user") => {
+      const total = at(tSay + said.length / 16000 + 3);
+      const speakers = new Float32Array(total), mic = new Float32Array(total);
+      mix(speakers, talk, at(0.7)); mix(mic, talk, at(0.7) + SPEAKERS_LAG, 0.5);
+      if (by === "user") mix(mic, said, at(tSay));
+      else { mix(speakers, said, at(tSay)); mix(mic, said, at(tSay) + SPEAKERS_LAG, 0.5); }
+      const s = session({ speakers: true });
+      s.hear(inRoom(mic), { speakers, onFrame: k => { if (k === 6) s.engine.questionUp(true); if (k === 8) s.engine.answerWindow(8000); } });
+      s.end();
+      return s.events;
+    };
+    // (Before, the recognizer's "Ember, …" alone exempted it from every other-sound mark: taken 16 of 16 here, where the
+    // same words at idle are rejected as the speakers'. With the two spotters and the name read in the stream, one was
+    // still taken in 2 of 5 such runs: the recognizer wrote the stream's "Ember, yes please." as "Yes, please.".)
+    const taken: string[] = [];
+    for (const text of ["Ember, allow it.", "Ember, yes please."]) for (const sid of [0, 1, 2, 4, 5, 6, 7, 3]) {
+      for (const e of yeses(after(speak(text, sid, 0.1), "video"))) taken.push(`${text} (voice ${sid}): “${e.text}”`);
+    }
+    expect(taken).toEqual([]);
+    // The user's own, with nothing in the stream then, is taken as before (up to four renditions, as above).
+    let own = 0;
+    for (let take = 0; take < 4 && !own; take++) own = yeses(after(speak("Ember, allow it.", 5, 0.1), "user")).length;
     expect(own).toBe(1);
   }, 300_000);
 
