@@ -72,6 +72,11 @@ export const AdminPolicySchema = z.object({
      * too, and always wins.
      */
     userProvider: z.boolean().optional(),
+    /**
+     * The vault (app/main/vault/): false, Ember keeps no logins, cards or contact details, never opens its Secure Form
+     * and fills nothing from it (Home's list shows managed; what is already kept stays listed, with Forget).
+     */
+    vault: z.boolean().optional(),
   }).strict().default({}),
   /** Apps and windows Ember never reads, captures or acts in (added to the user's never-look list). */
   neverLook: z.array(name).max(200).default([]),
@@ -141,7 +146,7 @@ export interface LoadedAdminPolicy {
 
 /** Everything off that could act or listen: used when the policy file is broken. */
 const LOCKDOWN: AdminPolicy = AdminPolicySchema.parse({
-  features: { voice: false, actions: false, cursor: false, desk: false, screenImages: false, wsl: false, ssh: false, memory: false, routines: false, updates: false, extensions: false, autonomy: false, userProvider: false },
+  features: { voice: false, actions: false, cursor: false, desk: false, screenImages: false, wsl: false, ssh: false, memory: false, routines: false, updates: false, extensions: false, autonomy: false, userProvider: false, vault: false },
   allowGrants: false,
   confirmEveryAction: true,
   commands: { local: "off", wsl: "off", ssh: "off" },
@@ -236,6 +241,11 @@ export function heldUntilRestart(next: LoadedAdminPolicy): LoadedAdminPolicy {
   return { ...lockedDown(next.source ?? "the administrator's policy", "it changed while Ember was running; restart Ember to use it"), held: true };
 }
 
+/** May the vault be used: not where the administrator turned it off (`features.vault`, false under LOCKDOWN too). */
+export function vaultAllowed(loaded: LoadedAdminPolicy): boolean {
+  return loaded.error === undefined && !loaded.held && loaded.policy.features.vault !== false;
+}
+
 /**
  * May users have an approval mode at all? Not where the administrator turned them off (`features.autonomy`), keeps users
  * from letting Ember act without asking (`allowGrants` false), wants a click before every action, or turned acting off:
@@ -308,6 +318,7 @@ export function managedKeys(admin: AdminPolicy): string[] {
   if (admin.approvals?.maxMode && admin.approvals.maxMode !== "autopilot") keys.push("approvals");
   if (admin.provider) keys.push("provider");
   if (!userProviderAllowed(admin)) keys.push("userProvider");
+  if (admin.features.vault === false) keys.push("vault");
   return keys;
 }
 

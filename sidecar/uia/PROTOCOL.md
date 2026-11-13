@@ -382,6 +382,7 @@ Params: `{handle, op, value?, deadlineMs?}`. Result: `{"ok": true}` once the cal
 | `expand` | `ExpandCollapsePattern.Expand()` | |
 | `collapse` | `ExpandCollapsePattern.Collapse()` | |
 | `setValue` | `ValuePattern.SetValue(value)` | `value` is a string. **`denied` when the element is a password field** (or that can't be checked) |
+| `fillValue` | `ValuePattern.SetValue(value)` | The vault's fill: `value` is a string, set into a password field too. Only the host's `vault_fill` sends it, for Ember's main process; the bridge never logs or echoes `value` |
 | `setRange` | `RangeValuePattern.SetValue(value)` | `value` is a finite number |
 | `focus` | `AutomationElement.SetFocus()` | brings the window to the front: the host decides when that is allowed |
 | `scrollIntoView` | `ScrollItemPattern.ScrollIntoView()` | |

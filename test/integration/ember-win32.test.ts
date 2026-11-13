@@ -384,7 +384,7 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
     if (!fs.existsSync(main)) throw new Error(`${main} is missing: run npm run build first`);
     const userData = path.join(dir, "ember-userData");
     fs.mkdirSync(userData, { recursive: true });
-    fs.writeFileSync(path.join(userData, "settings.json"), JSON.stringify({ version: 1, onboarded: true, wakeWord: false, consent: { version: 9, at: "2026-10-15T00:00:00.000Z" } }));
+    fs.writeFileSync(path.join(userData, "settings.json"), JSON.stringify({ version: 1, onboarded: true, wakeWord: false, consent: { version: 10, at: "2026-10-15T00:00:00.000Z" } }));
     const env: Record<string, string> = {};
     for (const [k, v] of Object.entries(process.env)) if (v !== undefined && k !== "ELECTRON_RUN_AS_NODE") env[k] = v;
     // As at login: Ember only greets, so no settings window takes the keyboard.
@@ -557,7 +557,7 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
     if (!fs.existsSync(main)) throw new Error(`${main} is missing: run npm run build first`);
     const userData = path.join(dir, "ember-userData-text");
     fs.mkdirSync(userData, { recursive: true });
-    fs.writeFileSync(path.join(userData, "settings.json"), JSON.stringify({ version: 1, onboarded: true, wakeWord: false, consent: { version: 9, at: "2026-10-15T00:00:00.000Z" } }));
+    fs.writeFileSync(path.join(userData, "settings.json"), JSON.stringify({ version: 1, onboarded: true, wakeWord: false, consent: { version: 10, at: "2026-10-15T00:00:00.000Z" } }));
     const env: Record<string, string> = {};
     for (const [k, v] of Object.entries(process.env)) if (v !== undefined && k !== "ELECTRON_RUN_AS_NODE") env[k] = v;
     const ember: ElectronApplication = await electron.launch({

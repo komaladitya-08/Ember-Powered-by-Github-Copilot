@@ -26,7 +26,7 @@ export type Standing = "refused" | "waiting";
  */
 const WAY: Readonly<Record<ActionKind, string>> = {
   read: "read", click: "press", cursor_click: "press", toggle: "press", text: "type", cursor_text: "type", select: "choose", value: "set",
-  keys: "keys", scroll: "scroll", setting: "setting", open_app: "open",
+  keys: "keys", scroll: "scroll", setting: "setting", open_app: "open", vault_fill: "fill",
 };
 
 /** An app step as its question was about it. */

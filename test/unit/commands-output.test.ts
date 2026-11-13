@@ -4,12 +4,13 @@
  * untrusted data with every `<` neutralised.
  */
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import type { RunExit } from "../../app/main/commands/types";
 import {
   boundOutput, capLines, CLEAN_MAX_LINE, cleanOutput, OUTPUT_HEAD_LINES, OUTPUT_MAX_BYTES, OUTPUT_MAX_LINE, OUTPUT_TAIL_LINES, SECRET_ANSWERED, SECRET_UNANSWERED,
-  shapeOutput, stripTerminal, TYPED_BY_USER, type ShapeOptions,
+  setOutputRedactor, shapeOutput, stripTerminal, TYPED_BY_USER, type ShapeOptions,
 } from "../../app/main/commands/output";
+import { VAULT_REDACTED, VaultRedactor } from "../../app/main/vault/redact";
 import { OPEN_SPAN_END, trackSecretPrompts } from "../../app/main/commands/prompts";
 import { SECRET_HIDDEN } from "../../app/main/commands/redact";
 
@@ -184,5 +185,47 @@ describe("long lines (review #26)", () => {
     cleanOutput(raw, { typed: [], secretSpans: [] });
     expect(performance.now() - t0).toBeLessThan(3000);
     expect(out).toContain(`${"a".repeat(OUTPUT_MAX_LINE)}…`);
+  });
+});
+
+describe("output after a fill from the vault (vault-3)", () => {
+  afterEach(() => setOutputRedactor(null));
+  const EMAIL = "ada.canary@example.org";
+  const PASSWORD = "Hunter2Canary!x";
+  const filled = (): VaultRedactor => {
+    const r = new VaultRedactor();
+    r.note("email", EMAIL);
+    r.note("password", PASSWORD);
+    setOutputRedactor(text => r.text(text));
+    return r;
+  };
+  /** One long line, as an API answers, with `value` starting `before` characters before column `cut`. */
+  const line = (value: string, cut: number, before: number): string => `${'"x",'.repeat(cut).slice(0, cut - before)}${value}","rest":"${"z".repeat(40)}"}\n`;
+
+  it.each([
+    ["the model's line is cut (column 1000)", OUTPUT_MAX_LINE],
+    ["a cleaned line is cut (column 4096)", CLEAN_MAX_LINE],
+  ])("never hands on the first part of a filled value that falls where %s (vault-3-y9-1)", (_where, cut) => {
+    const r = filled();
+    for (const value of [EMAIL, PASSWORD]) {
+      for (const before of [3, 8, 12]) {
+        const raw = bytes(line(value, cut, before));
+        // What the model is sent: the shaped text, then the boundary's own pass (redacting-client.ts).
+        const sent = r.text(shapeOutput(raw, opts()));
+        expect(sent, `${value} ${before}`).not.toMatch(/ada\.|canary|Hunter2/i);
+        expect(cleanOutput(raw, { typed: [], secretSpans: [] }), `${value} ${before}`).not.toMatch(/ada\.|canary|Hunter2/i);
+      }
+    }
+    expect(shapeOutput(bytes(`mail: ${EMAIL}\n`), opts())).toContain(`mail: ${VAULT_REDACTED}`);
+  });
+
+  it("hands on nothing of output it couldn't check, and everything as it is while no redactor is set (vault-3-y9-1)", () => {
+    const text = `mail: ${EMAIL}\nnext\n`;
+    expect(clean(text)).toBe(text);
+    setOutputRedactor(() => { throw new Error("down"); });
+    expect(clean(text)).toBe("");
+    expect(shapeOutput(bytes(text), opts())).not.toMatch(/mail|canary|next/);
+    // A secret prompt's marker stands as before.
+    expect(clean("Password: ", { secretSpans: [{ from: 10, to: OPEN_SPAN_END }] })).toBe(SECRET_UNANSWERED);
   });
 });

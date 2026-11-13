@@ -67,11 +67,13 @@ app/main/          Electron main: main.ts (wiring), windows.ts, overlay.ts, hand
   commands/        run_command's flow, the command classifier, output shaping, the command window; run/: runners
   memory/          long-term memory (docs/MEMORY.md): graph, recall, consolidation, secret guard, MemoryService
   targets/, wsl/, remote/   which computers exist and binding a task to one; WSL; the PC's side of SSH
+  vault/           the vault: its sealed file (store), the Secure Form's controller (form), VaultService and the
+                   redactor (redact: what was filled never reaches a model, the audit log, the logs or a picture)
 app/remote/        ember-remote, the agent Ember runs on a computer reached over SSH (plain Node 24)
 app/askpass/       SSH's password helper on Linux and macOS
 app/sidecar-host/  the Windows and macOS accessibility host (UI Automation and AX providers)
 app/preload/       one contextBridge preload per window
-app/renderer/      home, overlay, handle, ask, mic, desk, command, prompt; shared/ember.css is the design system
+app/renderer/      home, overlay, handle, ask, mic, desk, command, prompt, vault; shared/ember.css is the design system
 app/shared/        IPC names and types, consent.ts, apps.ts, per-OS tables (shortcuts.ts, words.ts, never-look.ts)
 app/voice/         the voice and speech processes (Voice Match too), runtime.ts (native or WASM); models.ts pins the downloads
 packages/          @ember/characters, @ember/bubble (BUBBLE_CSS), @ember/motion; npm/ (the ember-copilot launcher)

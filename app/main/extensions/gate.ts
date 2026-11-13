@@ -6,6 +6,9 @@
  *   kill switch, an item the user disabled, a tool that changed since the user agreed (pin.ts) or that the session
  *   shows differently from its pin, a tool whose server Ember took out of the session, or a tool the user already
  *   refused this turn: deny. A deny is final.
+ * - Once Ember has filled something from its vault in this run (PLAN.md §2 "Approvals", "The vault"): deny, every
+ *   tool. What an extension reads off a page or a window could hold what was filled, and a failed call's text goes
+ *   to the model as the extension wrote it (the SDK lets no hook rewrite it: review vault-3-x9-4).
  * - A tool that says it is read-only (annotations only ever make a call stricter), from an item the user agreed to,
  *   in a task no injected text has tainted: allow, and audit.
  * - Anything else (changing, destructive, open-world, unknown): ask every time, never "Always", with a question Ember
@@ -55,7 +58,15 @@ export interface GateInput {
    * announced instead (`announce`). Nothing else changes: off, stopped, changed and refused still deny.
    */
   autopilot?: boolean;
+  /**
+   * Ember has filled something from its vault since it started (VaultRedactor.active), or that can't be told: no
+   * extension is called from then on, in any mode.
+   */
+  vaultFilled?: boolean;
 }
+
+/** What the model is told of a call refused because the vault has filled something in this run. */
+export const VAULT_FILLED = "Ember filled something from its vault since it started, and what an extension reads could hold it, so extensions stay off until Ember is started again. Don't try an extension's tool again; say so to the user if they need one.";
 
 /** The decision for one call, and why (the reason goes to the model and the audit log, in Ember's own words). */
 export function classify(g: GateInput): { verdict: GateVerdict; reason: string } {
@@ -69,6 +80,7 @@ export function classify(g: GateInput): { verdict: GateVerdict; reason: string }
   if (g.serverStopped) return { verdict: "deny", reason: "Ember stopped this extension's server for now, because it changed its list of tools during the conversation. Don't try its tools again now; tell the user." };
   if (!g.shownAsPinned) return changed;
   if (g.refused) return { verdict: "deny", reason: "The user said no to this tool. Don't try it again or try another way." };
+  if (g.vaultFilled) return { verdict: "deny", reason: VAULT_FILLED };
   if (isReadOnly(g.tool) && !g.tainted && !g.remote && !g.hintsStale) return { verdict: "allow", reason: "read-only" };
   return { verdict: g.autopilot ? "announce" : "ask", reason: g.tainted ? "tainted" : !isReadOnly(g.tool) ? "changes" : g.remote ? "remote" : "hints-changed" };
 }

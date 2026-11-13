@@ -2,8 +2,8 @@
  * Autopilot for app steps (owner decision of 2026-11-12; PLAN.md §2 "Approvals", §10 "Settled" (3), (4)): it never asks
  * about a step in an app. Every question becomes an announced step, a risky one included, recorded with the mode; a
  * task that was steered, went off-task or where the user said no stays announced; the step the user refused is never
- * tried again; and every refusal stays a refusal. The vault isn't built: password, card and secret fields and sign-in
- * windows are refused here as in every mode.
+ * tried again; and every refusal stays a refusal. Ordinary typing into password, card and secret fields and sign-in
+ * windows is refused here as in every mode; the vault's fill has its own tests (vault-fill-policy, vault-fill-worker).
  */
 
 import { readFileSync } from "node:fs";
