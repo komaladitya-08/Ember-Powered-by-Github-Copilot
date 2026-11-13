@@ -75,7 +75,25 @@ const NO_SECRET = [
   "Flight BA2490 leaves on Friday", "Likes to be called Ram", "Role and work: Senior designer at Globex", "Timezone and working hours: UK, 9 to 5",
 ];
 
+/** Ordinary facts the verb guard refused: a product's name with its version, a time, a year, a name with a hyphen. */
+const LOOK_ALIKES = [
+  "Uses iPhone15 for Instagram", "Uses Excel365 for the bank reconciliation", "Uses Figma2 for Slack mockups", "Uses Canon5D for Instagram",
+  "Slack uses Electron28", "Spotify uses Ogg320", "Bank uses 3DSecure2", "The VPN is NordVPN2",
+  "The alarm is 0630 on weekdays", "The alarm is 0715 every day", "The garage is 2019 and newer",
+  "The secret is Vitamin-D3", "My pass is Zone1-3", "Favourite memorable place is Lisbon", "Their memorable date is the wedding",
+  "The three digits on the back of the shirt are 123",
+];
+
 describe("what a fact may not say with a verb, or under another name (memory-r9-4)", () => {
+  it.each(LOOK_ALIKES.map(s => [s]))("keeps the ordinary fact %j (memory-x9-8)", text => {
+    expect(saidSecret(text)).toBeNull();
+    expect(new MemoryGraph().add({ text, about: USER, source: "user" }).kind).toBe("added");
+  });
+
+  it.each(["Uses hunter2 for Netflix", "Uses Winter2024 for Netflix", "The alarm is 4821", "My bank's memorable place is Lisbon", "The card's three digits are 123", "The pass is hunter2", "The secret is Tr0ub4dor&3"].map(s => [s]))("still refuses %j beside those look-alikes (memory-x9-8)", text => {
+    expect(factRefusal(text)).not.toBeNull();
+  });
+
   it.each([...WITH_A_VERB, ...PAIRS_AND_PLACES, ...UNDER_OTHER_NAMES].map(s => [s]))("refuses %j as a fact, and keeps nothing of it (memory-r9-4)", text => {
     expect(factRefusal(text)).not.toBeNull();
     const g = new MemoryGraph();

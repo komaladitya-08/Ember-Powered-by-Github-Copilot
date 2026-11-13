@@ -237,7 +237,11 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
   could stand only one shaped like a password or with a symbol, so "Signs in with SSO", "Logs in with OAuth2", "Uses
   1Password for the work account", "Uses Python3 on the laptop", "Stack: React / Node20", "The phone is iPhone15",
   "The Wi-Fi is 5GHz", "My locker is 4821", "The private key is ~/.ssh/id_ed25519", "The encryption key is AES-256"
-  and "The pass is valid until June" are kept. Where a word can't be told from a password it is refused ("Signs in
+  and "The pass is valid until June" are kept, and so are a product's name with its version after a service ("Uses
+  iPhone15 for Instagram", "Slack uses Electron28", "The VPN is NordVPN2"), a time or a year where a lock's code
+  would go ("The alarm is 0630 on weekdays", "The garage is 2019 and newer"), a name with a hyphened number ("The
+  secret is Vitamin-D3", "My pass is Zone1-3"), a memorable place, name or date said with no bank or security word,
+  and three digits on the back of something that is no card (memory-x9-8). Where a word can't be told from a password it is refused ("Signs in
   with jsmith42", "The Wi-Fi is HomeNet5G"): fail closed. Still kept, because nothing in them can be told from an
   ordinary fact or they are no password, code or card number: a network named with its key's owner ("HomeNet's key
   is BlueSky99"), a password's hint or ending, a licence or product key, a webhook's address, and ID numbers other
