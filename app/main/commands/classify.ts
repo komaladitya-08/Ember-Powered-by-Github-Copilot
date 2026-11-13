@@ -7720,6 +7720,13 @@ reg(NATIVE, ["make", "gmake", "mingw32-make", "nmake", "just", "rake", "invoke",
     }
   }
   if (h.key === "rake" && (values(p, "e", "p", "E").length || has(p, "execute", "execute-print", "execute-continue"))) h.e.unclear("unclear.inline-code", "It runs code given on the command line.");
+  // Maven's exec plugin runs the program its exec.* properties name on the command line (`mvn exec:exec
+  // -Dexec.executable=sh`), and Gradle runs the init scripts `--init-script` gives it: code Ember can't read first
+  // (commands-closed-x9-6). The pom's own exec configuration is the project's, as its targets are.
+  if (mvn && h.args.some(a => a.v !== null && /^(-D)?exec\.(executable|args|mainClass|commandlineArgs|classpathScope)\b/.test(a.v))) {
+    h.e.unclear("unclear.hidden-command", `Ember can't tell what ${h.prog} runs.`);
+  }
+  if (/^gradlew?$/.test(h.key) && values(p, "init-script", "I").length) h.e.unclear("unclear.hidden-command", "It runs a Gradle init script Ember can't read first.");
   let targets = [...p.operands, ...counts].filter(a => a.v === null || !/^[A-Za-z_][A-Za-z0-9_.]*=/.test(a.v));
   if (h.key === "nox") targets = values(p, "s", "session", "sessions").map(v => lit(v ?? "?"));
   if (h.key === "tox") targets = values(p, "e", "environment", "envlist").map(v => lit(v ?? "?"));
@@ -8386,8 +8393,13 @@ function listens(h: H, bind: string | null, root: Arg | null): void {
 /** The folder a server is given (this one when none is; one Ember can't see stays unresolved). */
 const servedRoot = (v: string | null | undefined): Arg => (v === undefined ? lit(".") : v === null ? { v: null, raw: "?", glob: false } : lit(v));
 const TUNNEL_SAYS = "Makes a service on this computer reachable from the internet.";
-reg(NATIVE, ["busybox"], h => {
-  if (lower(h.args[0]) !== "httpd") { generic(h); return; }
+reg(NATIVE, ["busybox", "toybox"], h => {
+  // An applet is that program, judged by its own row or the closed default (`busybox rm -rf ~`, `busybox telnetd`:
+  // commands-closed-x9-6); with no applet (`busybox --list`) it only says what it holds.
+  const first = h.args[0];
+  if (first && first.v === null) { h.e.unclear("unclear.hidden-command", `Ember can't tell what ${h.prog} runs.`); return; }
+  if (!first || first.v === null || first.v.startsWith("-")) { generic(h); return; }
+  if (h.key === "toybox" || lower(first) !== "httpd") { h.e.payload(h.args, h.sc, h.key); return; }
   // busybox httpd [-f] [-p [IP:]PORT] [-h HOME] [-c CONF]: port 80 on every address, this folder; without -f it
   // carries on in the background.
   const q = parseOpts(h.args.slice(1), { shortValue: "pchurmedP" });
