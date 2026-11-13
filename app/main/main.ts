@@ -22,7 +22,7 @@ import { readTextFile } from "./text-file";
 import { SettingsStore, checkHomePatch, hasConsent, plainSaveError, withOwnExtensions, withOwnProvider, withOwnTrust, type Settings, type SettingsPatch } from "./settings";
 import { auditRetentionDays, autonomyAllowed, heldUntilRestart, homeAdmin, modelServiceRefusal } from "./admin";
 import { autonomyConsented, autonomyHeld, autonomyInForce, holdAutonomyOff, releaseAutonomyHold, ALL_SCOPES } from "./policy/autonomy";
-import { TaskVoiceTrust, heardAnswer, heardUnchecked, refusalEndsTrust, refusalLine, refusalNote, rejectionEndsTrust, voiceAnswer, voiceAnswerSaid, type VoiceAnswerNote, type VoiceAnswerOutcome } from "./agent/voice-answer";
+import { TaskVoiceTrust, VoiceRefusals, heardAnswer, heardUnchecked, refusalEndsTrust, rejectionEndsTrust, voiceAnswer, type VoiceAnswerNote, type VoiceAnswerOutcome } from "./agent/voice-answer";
 import { inspectEnvironment, keyboardRoute, sessionGreeting, type EnvReport } from "./environment";
 import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSender, keepClearOf, quitQuestion, setTextScale, settingsFromHome, setUpAppChrome } from "./windows";
 import { UPDATED_QUESTION, createUpdateCheck, restartAfterUpdate, updatedDetail } from "./install-watch";
@@ -1899,17 +1899,14 @@ function start(): void {
    * A spoken answer (`answer`) wasn't taken (`why`): the question stays up, its bubble says why and what to do instead,
    * and so does Ember, aloud, where it speaks (a fixed sentence: never Ember's own voice taken as an answer after it, as
    * the echo guard dates each request from its wake, and the voice process hears nothing while Ember speaks). A yes to a
-   * question locked to clicks and keys is told so, never to say it again (refusalNote).
+   * question locked to clicks and keys is told so, never to say it again (refusalNote). Each line is said aloud once a
+   * question (VoiceRefusals: V2-F2).
    */
-  const refuseVoiceAnswer = (why: VoiceAnswerNote, answer: "allow" | "deny") => {
-    if (!confirmer) return;
-    const note = refusalNote(why, { answer, locked: confirmer.voiceLocked, unready: settings.get().voice.match && !matchNow() });
-    if (!confirmer.note(refusalLine(note, heldKeys().length > 0))) return;
-    // (The keys stay under the note in the bubble; said aloud, they are named after it: tasks-approvals-6.)
-    if (maySpeak()) voice?.speak(voiceAnswerSaid(note, heldKeys().map(k => k.say)));
-    // "Say it again now": heard without the name once Ember has said why (the answer window, as after the question).
-    voice?.answerWindow();
-  };
+  const refusals = new VoiceRefusals({
+    confirmer: () => confirmer, unready: () => settings.get().voice.match && !matchNow(), keys: heldKeys, maySpeak,
+    speak: t => voice?.speak(t), answerWindow: () => voice?.answerWindow(),
+  });
+  const refuseVoiceAnswer = (why: VoiceAnswerNote, answer: "allow" | "deny") => refusals.refuse(why, answer);
   let enrolling: VoiceMatchStatus["enrolling"] = null;
   /** How the last teaching ended (settings says so; forgotten when it closes or teaching starts again). */
   let enrolEnded: VoiceMatchStatus["ended"];
@@ -2136,7 +2133,7 @@ function start(): void {
         if (rejectionEndsTrust(e.reason)) voiceTrust.endAll("other-voice");
         if (e.reason === "voice" && confirmer?.lockVoice()) {
           log.info("voice.answer_locked");
-          confirmer.note(refusalLine("locked", heldKeys().length > 0));
+          confirmer.note(refusals.line("locked"));
         }
         // "Ember, allow" said while Ember read the question out, where it can't tell its voice from the user's (Windows,
         // macOS): the wake was turned away, silently until now. It is never taken (it may be Ember's own words): Ember

@@ -196,7 +196,7 @@ export function voiceAnswer(i: VoiceAnswerInput): VoiceAnswerOutcome {
 }
 
 /** Every reason a spoken answer can be turned away: voiceAnswer's, the Confirmer's, and an answer said over Ember's voice. */
-export type VoiceAnswerNote = VoiceAnswerRefusal | "click-only" | "not-yet" | "stale" | "locked" | "heard-over" | "over-sound" | "name-doubted" | "sound-unknown" | "unclear";
+export type VoiceAnswerNote = VoiceAnswerRefusal | "click-only" | "not-yet" | "stale" | "locked" | "heard-over" | "over-sound" | "name-doubted" | "sound-unknown" | "unclear" | "unclear-click";
 
 /**
  * What the bubble says under the question when a spoken answer wasn't taken (the question stays up): what happened,
@@ -227,6 +227,9 @@ export const VOICE_ANSWER_REFUSED: Readonly<Record<VoiceAnswerNote, string>> = {
   "sound-unknown": "I can't tell here whether something else is playing, so I didn't take that as a yes: say my name first, then your answer.",
   // A word or two in the answer window that read as no answer (engine.ts "unclear"): most likely one misheard.
   unclear: "I didn't catch that as an answer. Say “allow” or “not now” once more, or click on the question.",
+  // The same, for a question that takes no spoken yes (locked to clicks and keys, or Voice Match on but not ready): it
+  // asked for an "allow" that could only fail (V2-F9).
+  "unclear-click": "I didn't catch that as an answer. For this question I can only take “not now” by voice: to allow it, click on the question.",
 };
 
 /**
@@ -255,6 +258,7 @@ const POINTS_TO_KEYS: ReadonlySet<VoiceAnswerNote> = new Set(["voice-match-unrea
  * it or turn it off. A consent card's own note stands.
  */
 export function refusalNote(why: VoiceAnswerNote, o: { answer: "allow" | "deny"; locked: boolean; unready: boolean }): VoiceAnswerNote {
+  if (why === "unclear" && (o.locked || o.unready)) return "unclear-click";
   if (o.answer !== "allow" || why === "click-only") return why;
   if (o.unready) return "voice-match-unready";
   return o.locked ? "locked" : why;
@@ -267,10 +271,60 @@ export function refusalNote(why: VoiceAnswerNote, o: { answer: "allow" | "deny";
  * a click or the keys, so someone answering without the mouse hears how (tasks-approvals-6).
  */
 export function voiceAnswerSaid(why: VoiceAnswerNote, keys: readonly string[] = []): string {
-  const line = refusalLine(why, keys.length > 0).replace(/\s*›\s*/g, ", then ").replace(/[“”]/g, "");
-  if (!keys.length || !POINTS_TO_KEYS.has(why)) return line;
+  const allowKey = keys.some(k => / to allow$/.test(k));
+  const follows = keys.length > 0 && POINTS_TO_KEYS.has(why);
+  // With the keys said after it, a line that points to "the keys" is said without them, so they are named once ("…or use
+  // the keys. Or, to allow, press…": V2-F9); the locked line says how the question is answered, and keeps them.
+  const line = refusalLine(why, why === "locked" ? allowKey : allowKey && !follows).replace(/\s*›\s*/g, ", then ").replace(/[“”]/g, "");
+  if (!follows) return line;
   const said = keysSaid(keys);
   return `${line} ${why === "locked" ? said : `Or, ${said.charAt(0).toLowerCase()}${said.slice(1)}`}`;
+}
+
+/** What main's refusals need of the rest of Ember (VoiceRefusals). */
+export interface VoiceRefusalDeps {
+  /** The Confirmer (its question up, the note under it, whether Voice Match locked it), or null before it exists. */
+  confirmer: () => { note(text: string): boolean; readonly currentNumber: number | null; readonly voiceLocked: boolean } | null;
+  /** Voice Match is switched on but not ready (never taught, or its model not in). */
+  unready: () => boolean;
+  /** The question keys Ember holds now (main's heldKeys), each with how it is said. */
+  keys: () => readonly { id: "allow" | "deny"; say: string }[];
+  /** Ember speaks its questions and notes (not muted, not "just show me"). */
+  maySpeak: () => boolean;
+  speak: (text: string) => void;
+  /** Listen for the answer without the name again (VoiceService.answerWindow). */
+  answerWindow: () => void;
+}
+
+/**
+ * A spoken answer that wasn't taken, across one question: the note under the question says why and what to do instead
+ * each time, and Ember says each line aloud once a question (V2-F2: a television's "Okay.", "Sure.", "Fine." locked a
+ * question and had Ember say the same 32 words again on every word, five times in 58 s). The window for a bare answer
+ * still opens each time, as a no is anyone's. Out of main.ts's glue, so the journey is unit-tested (V2-F13).
+ */
+export class VoiceRefusals {
+  private question: number | null = null;
+  private said = new Set<VoiceAnswerNote>();
+
+  constructor(private d: VoiceRefusalDeps) {}
+
+  /** The note `why` as the question shows it now: "the keys" only while Ember holds the allow key (V2-F9). */
+  line(why: VoiceAnswerNote): string {
+    return refusalLine(why, this.d.keys().some(k => k.id === "allow"));
+  }
+
+  /** A spoken `answer` wasn't taken (`why`): the question stays up, and says why. */
+  refuse(why: VoiceAnswerNote, answer: "allow" | "deny"): void {
+    const c = this.d.confirmer();
+    if (!c) return;
+    const note = refusalNote(why, { answer, locked: c.voiceLocked, unready: this.d.unready() });
+    if (!c.note(this.line(note))) return;
+    if (c.currentNumber !== this.question) { this.question = c.currentNumber; this.said.clear(); }
+    // (The keys stay under the note in the bubble; said aloud, they are named after it: tasks-approvals-6.)
+    if (this.d.maySpeak() && !this.said.has(note)) { this.said.add(note); this.d.speak(voiceAnswerSaid(note, this.d.keys().map(k => k.say))); }
+    // "Say it again now": heard without the name once Ember has said why (the answer window, as after the question).
+    this.d.answerWindow();
+  }
 }
 
 /**

@@ -523,7 +523,10 @@ says once a question that it was still speaking and to say it again (`answer-ove
 Ember's read-out in the microphone until 0.1 s after it stopped: refusals begun from 0.6 s before to 0.6 s after taken
 as a yes went from 28 of 180 to none, and answers begun 0.3 s after are heard (none were within 0.4 s). Nothing Ember says
 while a question is up ends on words that read as an answer: it says the keys as “To allow, press Control Alt Y; for
-not now, press Control Alt N.” (`keysSaid`, app/main/agent/voice-answer.ts).
+not now, press Control Alt N.” (`keysSaid`, app/main/agent/voice-answer.ts). When it doesn't take a spoken answer,
+the note under the question says why each time, but Ember says each such line aloud only once a question
+(`VoiceRefusals`): a television's “Okay.”, “Sure.” and “Fine.” had it say the same sentence five times in a minute
+(V2-F2). Said aloud, the keys are named once, and “use the keys” only while Ember holds the allow key (V2-F9).
 With **Only my voice can say yes (Voice Match)** off, its default, a yes or a no from anyone heard answers it (owner
 decision of 2026-11-12: “it doesn't really need my voice to be matched for it”), and “Before Ember starts” and the
 “Hey Ember” card say so: anyone near the computer can answer Ember by voice. The audit records `via: "voice"`,
