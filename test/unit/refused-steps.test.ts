@@ -320,25 +320,30 @@ describe("the refused step done another way: what it does, not only the control 
     expect(h.asked).toHaveLength(2);
   });
 
-  it("names a risky step by what it does, and one it can't tell as every kind", () => {
+  it("names a risky step by what it does; one whose words name no kind is no other step (evalfix-1)", () => {
+    const named = (name: string) => riskNames({ name, about: name, reason: "this action may be hard to undo or visible to others" });
+    const shortcut = riskNames({ name: "Message body", about: "", reason: "this shortcut can delete, send or close things" });
     const r = new Refusals();
-    r.noteStep(riskNames("Send"), "refused");
-    expect(r.step(riskNames("this shortcut can delete, send or close things"))).toBe("refused");
-    expect(r.step(riskNames("Send Now"))).toBe("refused");
-    expect(r.step(riskNames("Delete"))).toBeNull();
-    // A label Ember can't put a kind to (another language, a bare risk) is every kind, both ways.
-    expect(r.step(riskNames("Absenden"))).toBe("refused");
-    const any = new Refusals();
-    any.noteStep(riskNames("Absenden"), "refused");
-    expect(any.step(riskNames("Delete"))).toBe("refused");
+    r.noteStep(named("Send"), "refused");
+    expect(r.step(shortcut)).toBe("refused");
+    expect(r.step(named("Send Now"))).toBe("refused");
+    expect(r.step(named("Delete"))).toBeNull();
+    // The same in another language policy reads: "Absenden" sends, and after a no to it so does Ctrl+Enter.
+    expect(r.step(named("Absenden"))).toBe("refused");
+    const de = new Refusals();
+    de.noteStep(named("Absenden"), "refused");
+    expect(de.step(shortcut)).toBe("refused");
+    expect(de.step(named("Delete"))).toBeNull();
+    // A label Ember can't put a kind to has none: it is refused again only as itself (stepNames), and refuses nothing else.
+    expect(named("Add comment")).toEqual([]);
     // A borrow that is risky only because it takes the mouse and keyboard does nothing of these kinds.
-    expect(riskNames("Ember needs your mouse or keyboard for this", false)).toEqual([]);
+    expect(riskNames({ name: "Bold", about: "", reason: "Ember needs your mouse or keyboard for this" })).toEqual([]);
     // Unanswered: until the user next says something, as for one step.
     const w = new Refusals();
-    w.noteStep(riskNames("Pay now"), "waiting");
-    expect(w.step(riskNames("Place order"))).toBe("waiting");
+    w.noteStep(named("Pay now"), "waiting");
+    expect(w.step(named("Place order"))).toBe("waiting");
     w.userSpoke();
-    expect(w.step(riskNames("Place order"))).toBeNull();
+    expect(w.step(named("Place order"))).toBeNull();
   });
 });
 

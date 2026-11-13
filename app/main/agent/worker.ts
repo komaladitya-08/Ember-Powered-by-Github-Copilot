@@ -4942,10 +4942,11 @@ export class Worker {
   /**
    * What a risky step does (refusals.ts riskNames: sending, deleting, paying…), by policy's own words for it, never the
    * text it would type: after a no, the same thing done another way (a key, a menu item, another window) is refused for
-   * the rest of the task, in every mode (modes-x9s-3). An ordinary step goes by its own names alone.
+   * the rest of the task, in every mode (modes-x9s-3). An ordinary step goes by its own names alone, and so does a
+   * risky one whose words name no kind: it is judged as any other step in a task the user said no in (evalfix-1).
    */
   private risksOf(req: Pick<ActionRequest, "element">, d: Pick<Decision, "risky" | "about" | "reason">): string[] {
-    return d.risky ? riskNames(`${d.about ?? ""} ${req.element?.name ?? ""} ${d.reason}`, !!d.about) : [];
+    return d.risky ? riskNames({ name: req.element?.name ?? "", about: d.about ?? "", reason: d.reason }) : [];
   }
 
   /**

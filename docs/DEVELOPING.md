@@ -625,8 +625,10 @@ back to asking for it, and what a **Not now** ends stays as it was.
 What you said no to stays refused for the rest of that task, whatever the mode: the same step sent again (the same
 control pressed another way, the same field typed into, a cell of a batch you turned down), a risky step that does the
 same kind of thing in any window (after a no to Send, its shortcut, "Send Now" in the menu or Send in another compose
-window; after a no to "Move to Trash", the Delete key or "Remove"; a risky control named in words Ember can't put a kind
-to counts as every kind), or the same command or one
+window; after a no to "Move to Trash", the Delete key or "Remove"; the kinds are sending, deleting or discarding,
+paying, installing, signing out, overwriting, resetting, closing, leaving, blocking and security, read in English and in
+the other languages Ember reads risky words in; a risky step of none of these kinds, "Add comment" say, is only
+itself, so after a no to something else it still asks, is checked or is announced as the mode says), or the same command or one
 that does the same to the same thing (`find build -delete` after `rm -rf build`), is refused without another question,
 never checked by Assisted and never announced, and "What Ember did" says "You said no to this step earlier in this
 task." A question nobody answered isn't asked a second time until you next say something to that task. To have Ember
