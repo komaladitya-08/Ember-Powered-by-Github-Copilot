@@ -2831,8 +2831,10 @@ downloads it on first use per target and checks it before sending.
   over a colour code on every few characters (`stripTerminal`'s CSI pass, the marking and unmarking around the
   vault's pass) about 150-200 ms, MySQL's `-p` pattern about 140-200 ms, the instructions check (`outputTaint`, all
   its rules at once) over Ember.js build output, which says "ember" on every line, about 190-230 ms, and one known past
-  300 ms: the Azure Key
-  Vault value pattern over 4 MiB of secret ids with no value, about 1.6 s in one pass.
+  300 ms: the Azure Key Vault value pattern over 4 MiB of secret ids that also holds a `"value"`, about 1.5-2 s in one
+  pass. Without a `"value"` (or without a secret id) the pattern isn't searched at all (`VALUE_NEEDS`: a pass whose
+  text lacks what its pattern can't match without gives the same bytes back; the redaction tests fold the passes with
+  and without that check and compare them byte for byte), so ids alone take about 170 ms.
 - **Command output is not completion status**: remote runs use the child process's exit code and signal. Printed
   `ember-exit` sequences on stdout or stderr cannot override them, including on pipes and Linux/macOS PTYs.
 - **Nothing changes without them**: with commands off everywhere and only this computer, the prompts are today's
