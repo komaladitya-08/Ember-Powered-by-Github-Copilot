@@ -547,7 +547,7 @@ describe("redactSecrets: environments, tables and webhook addresses (commands-re
 
   it.each([
     "tests pass: 12, fail: 0", "PATH=/usr/bin HOME=/root", "secretstorage   3.3.1", "tokenizer.json   12K", "monkey    3", "Bypass the cache",
-    "https://example.com/a?b=c", "keyboard  us",
+    "https://example.com/a?b=c", "keyboard  us", "LOW_PASS=8000 HIGH_PASS=200 RENDER_PASS=shadow2",
   ])("leaves ordinary text alone: %j", text => {
     expect(redactSecrets(text)).toBe(text);
   });

@@ -119,10 +119,10 @@ const VALUE_PATTERNS: readonly RegExp[] = [
   /(\.webhook\.office\.com\/webhookb2\/)[^\s"'<>]+/g,
   // A variable as `env`, `ps e` and a .env file print it whose name ends in a short secret word after a `_` or is that
   // word (`DB_PASS=`, `REDIS_AUTH=`, `MYSQL_PW=`, `SIGNING_KEY=`, `AUTH=`, `PASSPHRASE=`), which KEY_VALUE's words
-  // miss; never a variable, a placeholder or what is already hidden, nor PWD and OLDPWD, which are folders
-  // (commands-remote-r10-6). The name is at most 64
+  // miss; never a variable, a placeholder or what is already hidden, nor PWD and OLDPWD, which are folders, nor a
+  // filter's or a renderer's LOW_PASS, HIGH_PASS, BAND_PASS or RENDER_PASS (memory-x6-5; commands-remote-r10-6). The name is at most 64
   // characters before its word, so each start is a bounded look.
-  /((?<![A-Za-z0-9_.-])(?!(?:OLD)?PWD=)(?:[A-Za-z0-9_]{0,64}_)?(?:PASS|PASSPHRASE|AUTH|PW|PWD|KEY|pass|passphrase|auth|pw|pwd|key)=["']?)(?![$%{<*[])[^\s"',;]+/g,
+  /((?<![A-Za-z0-9_.-])(?!(?:OLD)?PWD=|(?:LOW|HIGH|BAND|ALL|RENDER)_PASS=)(?:[A-Za-z0-9_]{0,64}_)?(?:PASS|PASSPHRASE|AUTH|PW|PWD|KEY|pass|passphrase|auth|pw|pwd|key)=["']?)(?![$%{<*[])[^\s"',;]+/g,
   // A table's row whose first column names a secret, as `pulumi config --show-secrets`, `pulumi stack output` and
   // `netlify env:list` print them (`dbPassword   Tr0ub4dor&3`, `│ DB_PASSWORD │ hunter2 │`): the next column is hidden
   // (commands-remote-c10-1). Only at a line's start, the name a bounded look.
