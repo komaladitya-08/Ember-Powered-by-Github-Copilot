@@ -4251,7 +4251,8 @@ function runners(): ReadonlySet<string> {
 function generic(h: H, noRow = false): void {
   const k = h.key;
   if (INPUT_SYNTH.has(k)) { h.e.refuseWith("ember.input", "input"); return; }
-  if (ENV_LAUNCHERS.has(k) && !h.e.readsAsMain) launcherSets(h);
+  // Whatever its case: a case-insensitive disk finds `Cross-Env` (commands-runners-x9-5).
+  if (ENV_LAUNCHERS.has(k.toLowerCase()) && !h.e.readsAsMain) launcherSets(h);
   if (GUI_PROGRAMS.has(k)) h.e.unclear("unclear.gui", SAYS.openApp);
   if (INTERACTIVE.has(k)) interactive(h);
   if (LAUNCHERS.has(k)) { launcher(h); return; }
@@ -4404,7 +4405,8 @@ function runnerLine(h: H, name: Arg, given: readonly Arg[], wrapper: string): vo
   if (h.e.readsAsMain || name.v === null) return;
   const rest = given[0]?.v === "--" ? given.slice(1) : [...given];
   const key = programName(name.v, { os: h.sc.os, family: h.sc.family === "cmd" ? "posix" : h.sc.family, wsl: h.sc.wsl, mountRoot: h.sc.mountRoot }).key;
-  const program = ENV_LAUNCHERS.has(key) || (!SCRIPT_WORDS.has(key) && (NATIVE[key] !== undefined || NATIVE[unversioned(key)] !== undefined));
+  // A launcher whatever its case: a case-insensitive disk finds `Cross-Env` (commands-runners-x9-5).
+  const program = ENV_LAUNCHERS.has(key.toLowerCase()) || (!SCRIPT_WORDS.has(key) && (NATIVE[key] !== undefined || NATIVE[unversioned(key)] !== undefined));
   // A deleter with nothing after its name is the project's script of that name (commands-remote-x8-13); a `--`
   // after it was always read as something handed to it (commands-runners-3).
   if (program && !(NEW_DELETERS.has(key) && given.length === 0)) { h.e.payload([name, ...rest], h.sc, wrapper); return; }
@@ -4423,7 +4425,9 @@ function runnerLine(h: H, name: Arg, given: readonly Arg[], wrapper: string): vo
   const at = rest.findIndex(a => {
     const base = (a.v ?? "").split(/[\\/]/).pop() ?? "";
     const word = base.toLowerCase().replace(/\.(exe|com)$/, "");
-    return a.v !== null && /^[A-Za-z]/.test(base) && runners().has(word) && !SCRIPT_WORDS.has(word) && !TOOL_VERBS.has(word);
+    // An env launcher among them too (`pnpm recursive cross-env …`, `bun --bun cross-env …`, `yarn lerna exec --
+    // cross-env …`): it is what runs, and asks as by its name (commands-runners-x9-5).
+    return a.v !== null && /^[A-Za-z]/.test(base) && (runners().has(word) || ENV_LAUNCHERS.has(word)) && !SCRIPT_WORDS.has(word) && !TOOL_VERBS.has(word);
   });
   if (at >= 0) {
     h.e.unclear("unclear.hidden-command", `Ember can't tell how ${wrapper} runs ${rest[at].v}.`);
@@ -8330,7 +8334,7 @@ function yarnWorkspaces(h: H, rest: Arg[]): boolean {
 }
 
 reg(NATIVE, ["npm", "pnpm", "yarn", "bun", "corepack"], h => {
-  const g = globals(h, h.key === "bun" || h.key === "corepack" ? "npm" : h.key);
+  const g = globals(h, h.key === "corepack" ? "npm" : h.key);
   if (h.key !== "bun" && h.key !== "corepack") checkGlobals(h, h.key, g);
   const verbArg = h.args[g.verbAt];
   const verb = verbArg?.v ?? null;
@@ -8356,6 +8360,9 @@ reg(NATIVE, ["npm", "pnpm", "yarn", "bun", "corepack"], h => {
     return;
   }
   const specs = rest.filter(a => !isOption(a));
+  // `pnpm recursive x`, `pnpm m x` and `pnpm multi x` are `pnpm -r x`: the line after the word is pnpm's own
+  // (commands-runners-x9-5).
+  if (h.key === "pnpm" && /^(recursive|m|multi)$/.test(verb) && specs.length > 0 && !h.e.readsAsMain) { NATIVE.pnpm({ ...h, args: rest }); return; }
   if ((LANGUAGE_INSTALL_VERBS[h.key] ?? []).includes(verb) || (verb === "audit" && specs[0]?.v === "fix")) {
     if (verb === "pm" && !/^(trust|untrusted|migrate)$/.test(specs[0]?.v ?? "")) return;
     languageInstall(h, verb === "audit" ? [] : specs.filter((_a, k) => !(h.key === "npm" && verb === "link" && k > 0)), widening);

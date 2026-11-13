@@ -3150,6 +3150,41 @@
    "cmd": "corepack pnpm@9.1.0 build",
    "shell": "bash",
    "context": "linux"
+  },
+  {
+   "cmd": "bun --bun test",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "bun --bun run build",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "bun --cwd web test",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "pnpm recursive test",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "pnpm m run build",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "pnpm multi run lint",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "bun -b x.ts",
+   "shell": "bash",
+   "context": "linux"
   }
  ]
 }

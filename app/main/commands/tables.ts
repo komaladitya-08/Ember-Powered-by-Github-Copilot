@@ -43,6 +43,12 @@ export const GLOBAL_OPTIONS: Readonly<Record<string, GlobalGrammar>> = {
       "--offline", "--prefer-offline", "-v", "--version", "-h", "--help", "--color", "--no-color", "--aggregate-output", "--shamefully-hoist"],
     withValue: ["-C", "--dir", "--filter", "-F", "--reporter", "--loglevel", "--workspace-concurrency", "--registry", "--store-dir"],
   },
+  // bun's own options before what it runs (`bun --bun x`, `bun --cwd web x`: commands-runners-x9-5). Never one that
+  // loads code or variables (`--preload`, `--env-file`, `-e`): those stay unknown, and what follows is read as handed on.
+  bun: {
+    flags: ["--bun", "-b", "--silent", "--smol", "--watch", "--hot", "--no-install", "--if-present", "--no-clear-screen", "-v", "--version", "-h", "--help"],
+    withValue: ["--cwd", "--filter", "-F", "--elide-lines"],
+  },
   yarn: {
     flags: ["-s", "--silent", "--verbose", "--offline", "--frozen-lockfile", "--immutable", "--non-interactive", "--no-progress", "-v",
       "--version", "-h", "--help", "-W", "--ignore-workspace-root-check"],

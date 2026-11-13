@@ -23215,6 +23215,132 @@
   {
    "cmd": "node node_modules/vite/bin/vite.js build",
    "verdict": "run"
+  },
+  {
+   "cmd": "bun --bun cross-env LD_PRELOAD=/tmp/x.so jest",
+   "verdict": "ask",
+   "rules": [
+    "unknown.program",
+    "unclear.assignment"
+   ]
+  },
+  {
+   "cmd": "bun -b cross-env LD_PRELOAD=/tmp/x.so jest",
+   "verdict": "ask",
+   "rules": [
+    "unknown.program",
+    "unclear.assignment"
+   ]
+  },
+  {
+   "cmd": "bun --cwd web cross-env LD_PRELOAD=/tmp/x.so jest",
+   "verdict": "ask",
+   "rules": [
+    "unknown.program",
+    "unclear.assignment"
+   ]
+  },
+  {
+   "cmd": "bun --filter web cross-env LD_PRELOAD=/tmp/x.so jest",
+   "verdict": "ask",
+   "rules": [
+    "unknown.program",
+    "unclear.assignment"
+   ]
+  },
+  {
+   "cmd": "bun --bun run cross-env LD_PRELOAD=/tmp/x.so jest",
+   "verdict": "ask",
+   "rules": [
+    "unknown.program",
+    "unclear.assignment"
+   ]
+  },
+  {
+   "cmd": "pnpm recursive cross-env LD_PRELOAD=/tmp/x.so jest",
+   "verdict": "ask",
+   "rules": [
+    "unknown.program",
+    "unclear.assignment"
+   ]
+  },
+  {
+   "cmd": "pnpm recursive run cross-env LD_PRELOAD=/tmp/x.so jest",
+   "verdict": "ask",
+   "rules": [
+    "unknown.program",
+    "unclear.assignment"
+   ]
+  },
+  {
+   "cmd": "pnpm m run cross-env LD_PRELOAD=/tmp/x.so jest",
+   "verdict": "ask",
+   "rules": [
+    "unknown.program",
+    "unclear.assignment"
+   ]
+  },
+  {
+   "cmd": "pnpm multi run cross-env LD_PRELOAD=/tmp/x.so jest",
+   "verdict": "ask",
+   "rules": [
+    "unknown.program",
+    "unclear.assignment"
+   ]
+  },
+  {
+   "cmd": "yarn lerna exec -- cross-env LD_PRELOAD=/tmp/x.so jest",
+   "verdict": "ask",
+   "rules": [
+    "unclear.assignment",
+    "unclear.hidden-command",
+    "unknown.program"
+   ]
+  },
+  {
+   "cmd": "yarn Cross-Env LD_PRELOAD=/tmp/x.so jest",
+   "verdict": "ask",
+   "rules": [
+    "unknown.program",
+    "unclear.assignment"
+   ]
+  },
+  {
+   "cmd": "npm run --workspace web cross-env LD_PRELOAD=/tmp/x.so jest",
+   "verdict": "ask",
+   "rules": [
+    "unclear.assignment",
+    "unclear.hidden-command",
+    "unknown.program"
+   ]
+  },
+  {
+   "cmd": "bun --bun printenv",
+   "verdict": "ask",
+   "rules": [
+    "secret.env"
+   ]
+  },
+  {
+   "cmd": "pnpm recursive printenv",
+   "verdict": "ask",
+   "rules": [
+    "secret.env"
+   ]
+  },
+  {
+   "cmd": "bun -b npm publish",
+   "verdict": "ask",
+   "rules": [
+    "npm.publish"
+   ]
+  },
+  {
+   "cmd": "pnpm m sh -c 'rm -rf ~/Documents'",
+   "verdict": "ask",
+   "rules": [
+    "posix.rm"
+   ]
   }
  ]
 }

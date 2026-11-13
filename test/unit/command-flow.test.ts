@@ -3960,6 +3960,14 @@ describe("what a package manager or the project's own launcher hands on (integ2-
   });
 
   it.each([
+    "bun --bun cross-env LD_PRELOAD=/tmp/x.so jest", "bun -b cross-env LD_PRELOAD=/tmp/x.so jest", "bun --cwd web cross-env LD_PRELOAD=/tmp/x.so jest",
+    "pnpm recursive cross-env LD_PRELOAD=/tmp/x.so jest", "pnpm m run cross-env LD_PRELOAD=/tmp/x.so jest", "yarn lerna exec -- cross-env LD_PRELOAD=/tmp/x.so jest",
+    "yarn Cross-Env LD_PRELOAD=/tmp/x.so jest", "npm run --workspace web cross-env LD_PRELOAD=/tmp/x.so jest",
+  ])("asks, in every mode and never cleared by Assisted's check, before a launcher behind any runner's spelling: %s (commands-runners-x9-5)", async command => {
+    await asks(command, "use cross-env to run jest");
+  });
+
+  it.each([
     "corepack npm@10 publish", "corepack yarn@4 cat ~/.ssh/id_rsa", "corepack pnpm@9 exec rm -rf ~/Documents", "corepack yarn@1.22.22 cross-env LD_PRELOAD=/tmp/x.so jest",
     "corepack yarn@1 node -e \"require('fs').rmSync('/home/ana/Documents',{recursive:true})\"",
   ])("decides corepack's pinned manager as the bare manager, in every mode: %s (commands-runners-x9-2)", async command => {

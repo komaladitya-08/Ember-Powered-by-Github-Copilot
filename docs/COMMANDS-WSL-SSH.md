@@ -370,7 +370,8 @@ Ember stops and asks before a command that:
   they load can name code the command then runs. So does the project's own copy, by its path, by npm's Windows
   shim or through `node` (`./node_modules/.bin/cross-env …`, `.\node_modules\.bin\cross-env.ps1 …`, `cross-env.cmd
   …`, `node node_modules/.bin/cross-env …`), and so does one a package manager runs
-  (`yarn cross-env …`, `pnpm run cross-env …`). A variable one of them sets that changes how commands are found or run
+  (`yarn cross-env …`, `pnpm run cross-env …`, `bun --bun cross-env …`, `pnpm recursive cross-env …`, `yarn lerna exec --
+  cross-env …`, whatever its case). A variable one of them sets that changes how commands are found or run
   (`LD_PRELOAD`, `NODE_OPTIONS`, `CC`, `BASH_ENV`) asks as it does set directly, behind `npx` too, and your words
   naming the launcher never announce it. What a package manager runs by name is read as well (`yarn x …`, `pnpm run
   x …`, `bun run x …`, `npm run x -- …`, `npm test -- …`, `corepack yarn …`, `corepack yarn@4 …`), and so is what

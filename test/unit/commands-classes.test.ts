@@ -1323,6 +1323,24 @@ describe("what a package manager hands to the script or program it runs by name 
     }
   });
 
+  it("asks before a launcher as a program Ember doesn't know behind bun's options, pnpm's recursive words, a tool's exec and any case (commands-runners-x9-5)", () => {
+    for (const front of ["bun --bun", "bun -b", "bun --cwd web", "bun --filter web", "bun --bun run", "pnpm recursive", "pnpm recursive run", "pnpm m run", "pnpm multi run",
+      "yarn lerna exec --", "npm run --workspace web", "yarn"]) {
+      // On a case-insensitive disk `Cross-Env` is the launcher too.
+      const cmd = `${front} ${front === "yarn" ? "Cross-Env" : "cross-env"} LD_PRELOAD=/tmp/x.so jest`;
+      expect(decide(cmd).rules, cmd).toEqual(expect.arrayContaining(["unknown.program", "unclear.assignment"]));
+    }
+    // bun's own options and pnpm's recursive words hand on the same line as without them (`pnpm recursive exec` is
+    // `pnpm -r exec`, read as what a runner fetches: integ2-z-5).
+    for (const line of ["exec cross-env LD_PRELOAD=/tmp/x.so jest", "printenv", "node -e 'x'", "sh -c 'rm -rf ~/Documents'", "npm publish", "cat ~/.ssh/id_rsa", "git push --force origin main", "test", "run build", "x.ts"]) {
+      for (const [front, bare] of [["bun --bun", "bun"], ["bun -b", "bun"], ["bun --cwd web", "bun"], ["pnpm recursive", "pnpm -r"], ["pnpm m", "pnpm -r"], ["pnpm multi", "pnpm -r"]]) {
+        const d = decide(`${front} ${line}`);
+        const b = decide(`${bare} ${line}`);
+        expect([d.verdict, d.rules], `${front} ${line}`).toEqual([b.verdict, b.rules]);
+      }
+    }
+  });
+
   it("reads the line behind corepack's pinned version as the bare manager's (commands-runners-x9-2)", () => {
     for (const o of [...POSIX, ...WINDOWS]) {
       for (const cmd of ["corepack npm@10 publish", "corepack yarn@4 cat ~/.ssh/id_rsa", "corepack pnpm@9 exec rm -rf ~/Documents", "corepack yarn@1.22.22 cross-env LD_PRELOAD=/tmp/x.so jest",
