@@ -74,6 +74,8 @@ async function journey(mode: Mode, j: { words: string; app: string; win: string;
 const MODES: Mode[] = ["interactive", "assisted", "autopilot"];
 /** What a step that isn't the refused one does in each mode, in a task the user said no in. */
 const OTHER: Record<Mode, string[]> = { interactive: ["asked"], assisted: ["checked", "asked after a check"], autopilot: ["announced", "allowed"] };
+/** What a step that may be the refused thing does: it asks, never checked or announced; Autopilot, with no question to put for an app step, refuses it. */
+const MAY_BE: Record<Mode, string> = { interactive: "asked", assisted: "asked", autopilot: "refused" };
 
 describe("a no to a step the user didn't ask for is no word on their own request (evalfix-x9-1)", () => {
   const pairs = [
@@ -82,7 +84,7 @@ describe("a no to a step the user didn't ask for is no word on their own request
     { label: "“Invite contacts”, then the user's own “Reply”", words: "Reply to Ana saying thanks", app: "thunderbird", win: "Inbox - Thunderbird", first: btn("Invite contacts"), next: btn("Reply") },
   ];
   for (const j of pairs) for (const mode of MODES) {
-    it(`${j.label}: not refused in ${mode}`, async () => expect(OTHER[mode]).toContain(await journey(mode, j)));
+    it(`${j.label}: in ${mode} it ${mode === "autopilot" ? "is refused, with no question to put" : "asks, and a yes does it"}; never checked or announced (modes-y9-y9-3)`, async () => expect(await journey(mode, j)).toBe(MAY_BE[mode]));
   }
 
   it("still refuses what isn't the user's words either: the page's next step of that kind, and the key that does it", async () => {
@@ -207,19 +209,17 @@ describe("a refused command done as a step in an app, and a refused step done as
     return h.asked.length ? (h.checked.length ? "asked after a check" : "asked") : h.checked.length ? "checked" : "allowed";
   }
 
-  it("refuses the deletion of `build` in Files after a no to `rm -rf build`, where the step says what it deletes", async () => {
+  it("never refuses a deletion in an app for a word it shares with a refused command, nor checks or announces it: it asks, and Autopilot, with no question to put, refuses it (modes-y9-y9-4)", async () => {
+    const mail = "Re: build failed - Inbox - Thunderbird";
     for (const mode of MODES) {
-      expect(await after(mode, "rm -rf build", keys("Delete", "build", "icon")), mode).toBe("refused");
-      expect(await after(mode, "rm -rf build", btn("Delete “build” permanently")), mode).toBe("refused");
-      expect(await after(mode, "rm -rf build", btn("Move to Trash", "menu item"), "nautilus", "build"), mode).toBe("refused");
+      // (Refused without a question in Interactive and Assisted before: the email's subject holds "build".)
+      expect(await after(mode, "rm -rf build", btn("Delete"), "thunderbird", mail), `${mode}: an email`).toBe(MAY_BE[mode]);
+      expect(await after(mode, "rm -rf build", btn("Delete"), "thunderbird", "Draft: weekly notes - Thunderbird"), `${mode}: a draft`).toBe(MAY_BE[mode]);
+      expect(await after(mode, "rm -rf build", keys("Delete", "build", "icon")), `${mode}: the folder in Files`).toBe(MAY_BE[mode]);
+      expect(await after(mode, "rm -rf build", btn("Delete “build” permanently")), mode).toBe(MAY_BE[mode]);
+      expect(await after(mode, "rm -rf build", btn("Move to Trash", "menu item"), "nautilus", "build"), mode).toBe(MAY_BE[mode]);
+      expect(await after(mode, "rm -rf build", btn("Move to Trash", "menu item")), mode).toBe(MAY_BE[mode]);
     }
-  });
-
-  it("never checks or announces a deletion that doesn't say what it deletes: it asks, and Autopilot, with no question to put, refuses it", async () => {
-    const trash = btn("Move to Trash", "menu item");
-    expect(await after("interactive", "rm -rf build", trash)).toBe("asked");
-    expect(await after("assisted", "rm -rf build", trash)).toBe("asked");
-    expect(await after("autopilot", "rm -rf build", trash)).toBe("refused");
   });
 
   it("leaves another kind of step, and a task with no such no, as they were", async () => {
@@ -231,41 +231,40 @@ describe("a refused command done as a step in an app, and a refused step done as
     }
   });
 
-  it("names a refused command's danger for app steps: deleting and overwriting, or sending, and what it acted on", () => {
+  it("names a refused command's danger for app steps by its kinds alone: deleting and overwriting, or sending", () => {
     const r = new Refusals();
     r.noteCommand(command("rm -rf build"), "refused");
     r.noteCommand(command("git push origin main"), "waiting");
-    const across = (kinds: string[], words: string) => { const n = stepAcrossNames(kinds, words); return { same: r.step(n.same), like: r.step(n.like) }; };
-    expect(across(["delete"], "Delete build Files")).toEqual({ same: "refused", like: "refused" });
-    expect(across(["delete"], "Move to Trash proj")).toEqual({ same: null, like: "refused" });
-    expect(across(["overwrite"], "Replace build")).toEqual({ same: "refused", like: "refused" });
-    expect(across(["send"], "Send build")).toEqual({ same: null, like: null });
+    expect(r.step(stepAcrossNames(["delete"]))).toBe("refused");
+    expect(r.step(stepAcrossNames(["overwrite"]))).toBe("refused");
+    expect(r.step(stepAcrossNames(["send"]))).toBeNull();
     // A card nobody answered is nobody's no: it leaves nothing for app steps.
-    expect(across(["send"], "Push main")).toEqual({ same: null, like: null });
+    expect(stepAcrossNames(["delete", "send"])).toEqual(["command-did\ndelete", "command-did\nsend"]);
   });
 
-  it("refuses `rm ~/report.pdf` after a no to deleting report.pdf in Files, and asks about any other deletion by command", () => {
+  it("asks about any deletion by command after a no to deleting report.pdf in Files, `rm ~/report.pdf` too: none is refused by a word (modes-y9-y9-3)", () => {
     const r = new Refusals();
-    r.noteStep(stepMarksForCommands(["delete"], "Delete permanently Delete “report.pdf” permanently? Home - Files"), "refused");
-    expect(r.command(command("rm ~/report.pdf"))).toBe("refused");
-    expect(r.command(command("shred -u /home/ana/report.pdf"))).toBe("refused");
-    expect(r.command(command("rm ~/notes.txt"))).toBeNull();
-    expect(r.commandLike(command("rm ~/notes.txt"))).toBe(true);
-    expect(r.commandLike(command("python3 -c 'import os; os.remove(\"x\")'"))).toBe(true);
+    r.noteStep(stepMarksForCommands(["delete"]), "refused");
+    for (const c of ["rm ~/report.pdf", "shred -u /home/ana/report.pdf", "rm ~/notes.txt", "python3 -c 'import os; os.remove(\"x\")'"]) expect([r.command(command(c)), r.commandLike(command(c))], c).toEqual([null, true]);
     // Another kind of danger, and an ordinary command, are as they were.
     expect(r.commandLike(command("git push origin main"))).toBe(false);
     expect(r.commandLike(command("ls -la"))).toBe(false);
     // A step whose question nobody answered leaves nothing for commands.
     const waiting = new Refusals();
-    waiting.noteStep(stepMarksForCommands(["delete"], "Delete report.pdf"), "waiting");
+    waiting.noteStep(stepMarksForCommands(["delete"]), "waiting");
     expect([waiting.command(command("rm ~/report.pdf")), waiting.commandLike(command("rm ~/report.pdf"))]).toEqual([null, false]);
   });
 
-  it("keeps a refused risky step for commands at the worker: its kinds with its own words and its window's", async () => {
-    const h = mk("interactive", "tidy up", "nautilus", "report.pdf - Files");
-    expect((await h.inner.authorize({ taskId: "t1", app: "nautilus", window: "report.pdf - Files", ...btn("Move to Trash", "menu item") }))?.resultType).toBe("denied");
-    expect(h.inner.refusals.command(command("rm ~/report.pdf"))).toBe("refused");
-    expect(h.inner.refusals.commandLike(command("rm -rf build"))).toBe(true);
-    expect(h.inner.refusals.commandLike(command("git push origin main"))).toBe(false);
+  it("keeps a refused risky step for commands at the worker by its kind alone, the user's own and one a page came up with alike (modes-y9-y9-3)", async () => {
+    const win = "build-tools · GitHub — Mozilla Firefox";
+    for (const words of ["delete the build-tools repository", "Post the comment Looks good on the quarterly report"]) {
+      const h = mk("interactive", words, "firefox", win);
+      expect((await h.inner.authorize({ taskId: "t1", app: "firefox", window: win, ...btn("Delete repository") }))?.resultType).toBe("denied");
+      // (Refused without a question in every mode before: each is a word of the window's title.)
+      for (const c of ["rm -rf build-tools", "rm -rf firefox", "rm -rf github", "rm -rf repository", "rm notes.txt"]) {
+        expect([h.inner.refusals.command(command(c)), h.inner.refusals.commandLike(command(c))], c).toEqual([null, true]);
+      }
+      expect(h.inner.refusals.commandLike(command("git push origin main"))).toBe(false);
+    }
   });
 });

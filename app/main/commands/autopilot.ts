@@ -70,6 +70,8 @@ const EXPANDS = /\$\{?(?:env:)?([A-Za-z_][A-Za-z0-9_]*)|%([A-Za-z_][A-Za-z0-9_]*
  * and in PowerShell a parenthesised expression.
  */
 const OPAQUE = (family: string) => (family === "powershell" ? /[$`(]|~[A-Za-z0-9_+-]/ : /[$`]|[<>]\(|~[A-Za-z0-9_+-]/);
+/** A variable the line sets where a word begins: `NAME=value`, the value bare or in one pair of quotes. */
+const ASSIGNS = /(?:^|[\s;&|(])([A-Za-z_][A-Za-z0-9_]*)=("[^"]*"|'[^']*'|[^\s;&|)]*)/g;
 /** A word as a POSIX shell, and as PowerShell, would take it back whole. */
 const posixWord = (a: string) => `'${a.replace(/'/g, "'\\''")}'`;
 const psWord = (a: string) => `'${a.replace(/'/g, "''")}'`;
@@ -87,7 +89,10 @@ const psWord = (a: string) => `'${a.replace(/'/g, "''")}'`;
  * a second time. A word that can't be judged, or more words than it judges, counts as handed; so does a word the
  * classifier couldn't resolve (`$(echo ~/.ssh/id_rsa)`, `~ana/.ssh/id_rsa`, `$D/id_rsa` after `D=~/.ssh`), unless all
  * the line expands is plain variables it sets nowhere itself, whose names were judged above (`--port $PORT`)
- * (modes-y9-x9-2).
+ * (modes-y9-x9-2). What the line puts in the environment is handed over as well (`KEY=~/.ssh/id_rsa npx tool`,
+ * `env KEY=…`, an `export` earlier in the line): each such value is judged as a word is, its name as a variable is,
+ * and a value Ember can't resolve counts as handed (modes-y9-y9-6). Every word is judged, also after one was found:
+ * the caller reads the classifier's refusal of a word that points at Ember's own files off `judge` (modes-y9-y9-9).
  */
 export function handedSecrets(cls: Pick<Classification, "commands" | "findings">, command: string, shell: ShellId, judge: (text: string) => readonly Pick<Finding, "cls" | "rule">[]): Finding[] {
   const downloads = cls.findings.filter(f => DOWNLOADS_ONLY.has(f.rule.replace(/^in-script:/, "")));
@@ -112,19 +117,25 @@ export function handedSecrets(cls: Pick<Classification, "commands" | "findings">
     const fold = family === "posix" ? "" : "i";
     return !names.some(n => new RegExp(`(^|[^$%!{:A-Za-z0-9_])${n}(?![A-Za-z0-9_])`, fold).test(command));
   };
-  if (names.length > HANDED_MAX || names.some(n => secret(prints(n)))) return found();
+  let handed = names.length > HANDED_MAX || names.some(n => secret(prints(n)));
+  // What the line puts in the environment: `NAME=value` at the start of a word (a prefix, `env`'s, `export`'s, `set`'s).
+  const sets = [...command.matchAll(ASSIGNS)].map(m => ({ name: m[1], value: m[2].replace(/^(["'])(.*)\1$/s, "$2") }));
+  if (sets.length > HANDED_MAX) handed = true;
+  for (const { name, value } of sets.slice(0, HANDED_MAX)) {
+    if (secret(prints(name)) || (value !== "" && (OPAQUE(family).test(value) || /%[A-Za-z_]/.test(value) || secret(reads(value))))) handed = true;
+  }
   for (const at of new Set(downloads.map(f => f.at))) {
     const args = cls.commands[at]?.args ?? [];
     const words = args.filter((a): a is string => a !== null);
-    if (words.length > HANDED_MAX || (words.length < args.length && !plain())) return found();
-    for (const w of words) {
+    if (words.length > HANDED_MAX || (words.length < args.length && !plain())) handed = true;
+    for (const w of words.slice(0, HANDED_MAX)) {
       // The word itself, and what an option carries: `--key=PATH`, `--key:PATH`, `-kPATH`.
       const after = (sep: string) => (w.includes(sep) ? w.slice(w.indexOf(sep) + 1) : "");
       const values = !w.startsWith("-") ? [w] : [after("="), after(":"), /^-[A-Za-z]./.test(w) ? w.slice(2) : ""];
-      if (values.some(v => v !== "" && !v.startsWith("-") && secret(reads(v)))) return found();
+      for (const v of values) if (v !== "" && !v.startsWith("-") && secret(reads(v))) handed = true;
     }
   }
-  return [];
+  return handed ? found() : [];
 }
 
 /** What autopilotAsks reads beside the decision. */
@@ -153,9 +164,11 @@ const UNKNOWN_BY_ANOTHER_NAME = /^unclear\.(([a-z0-9]+-)?verb|program|program-le
 /**
  * And those that say the command runs code nobody is shown, the checking model included: a Windows script host and
  * the programs that load code for another (`rundll32`, `mshta`, `wscript`…), every script of a folder (`run-parts`),
- * a PowerShell module, a git hook run by name (modes-y9-x9-3).
+ * a PowerShell module, a git hook run by name (modes-y9-x9-3); and a sandbox or a wrapper whose command the classifier
+ * doesn't judge (`bwrap`, `firejail`, `envdir`, `expect`: `bwrap … systemd-run …` starts what outlives Stop, and its
+ * only finding is the wrapper's name; modes-y9-y9-5).
  */
-const CODE_NOBODY_SEES = /^unclear\.(rundll32|mshta|wscript|cscript|msdt|pcalua|scriptrunner|syncappvpublishingserver|odbcconf|msxsl|ieexec|control|presentationhost|run-parts|import-module|git-hook)$/;
+const CODE_NOBODY_SEES = /^unclear\.(rundll32|mshta|wscript|cscript|msdt|pcalua|scriptrunner|syncappvpublishingserver|odbcconf|msxsl|ieexec|control|presentationhost|run-parts|import-module|git-hook|bwrap|firejail|envdir|expect)$/;
 /** Is this a program, or a tool's command, the classifier doesn't know (the closed default, and its older rules for the same)? */
 const unknownTo = (f: { cls?: DangerClass; rule: string }): boolean => {
   const rule = f.rule.replace(/^in-script:/, "");

@@ -189,7 +189,12 @@ export async function gateCommand(i: CommandGateInput): Promise<CommandGate> {
   // An overwrite counts only when its target exists here (§3.8.2 rule 3).
   // And a download-and-run handed a key or a token is a secret's finding here as on the PC (modes-y9-5): the PC's
   // Autopilot announcement never covers it, only the user's yes to a question that carried its rule.
-  const findings = [...standingFindings(cls.findings, byPath), ...handedSecrets(cls, spec.command, spec.shell, text => i.classify(text, spec.shell, ctx).findings)];
+  // One pointed at Ember's own files here is refused, as any command that touches them (modes-y9-y9-9).
+  let tampers: Classification["refuse"] | null = null;
+  const handed = handedSecrets(cls, spec.command, spec.shell, text => { const c = i.classify(text, spec.shell, ctx); tampers ??= c.refuse ?? null; return c.findings; });
+  const tamper = tampers as Classification["refuse"] | null;
+  if (tamper) return { status: "deny", reason: line(tamper.says) || GATE_WORDS.mismatch };
+  const findings = [...standingFindings(cls.findings, byPath), ...handed];
   // Secrets, escapes and what can't be classified always ask (D4.4): a stamp naming one without the user's yes (a
   // "run" or "announce" no PC should send) covers nothing of it.
   // A script's finding (read only here: the PC never saw it) is covered only by the user's yes to a question that

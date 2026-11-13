@@ -645,9 +645,12 @@ const SAYS_NOT = /(^|[^\p{L}\p{N}])(do\s+not|don['’]?t|does\s+not|doesn['’]?
 
 /**
  * Words that hold a part of a request back without a "not": "leave the build folder alone", "keep build", "hold off on
- * publishing", "wait before pushing", "push later", "skip build", "leave it as it is for now" (modes-y9-4).
+ * publishing", "wait before pushing", "push later", "skip build", "leave it as it is for now" (modes-y9-4); by a time
+ * or a condition ("push main next week", "on Monday", "in an hour", "after the review", "once CI is green", "when I
+ * say so"); and by a keeping phrase ("build is off limits", "build must survive", "I still need build", "the push is
+ * mine to do", "I'll do the push") (modes-y9-y9-7). It only ever keeps a question, so it errs wide.
  */
-const HOLDS_BACK = /(^|[^\p{L}\p{N}])(leave|leaving|keep|keeping|preserve|spare|hold|holding|wait|waiting|not\s+yet|later|tomorrow|until|skip|skipping|untouched|stays?|staying|remains?|as\s+(it|they)\s+(is|are)|hands\s+off|stay\s+away|for\s+now|myself|by\s+hand)(?=$|[^\p{L}\p{N}])/iu;
+const HOLDS_BACK = /(^|[^\p{L}\p{N}])(leave|leaving|keep|keeping|preserve|spare|hold|holding|wait|waiting|not\s+yet|later|tomorrow|until|skip|skipping|untouched|stays?|staying|remains?|as\s+(it|they)\s+(is|are)|hands\s+off|stay\s+away|for\s+now|myself|by\s+hand|after|once|when|tonight|next\s+(week|month|year|time)|(on\s+)?(mon|tues|wednes|thurs|fri|satur|sun)day|in\s+(an?|\d+|a\s+few)\s+(minutes?|hours?|days?|weeks?)|off[\s-]+limits|surviv(e|es|ing)|still\s+need|mine|(i\s+will|i['’]ll)\s+do)(?=$|[^\p{L}\p{N}])/iu;
 /**
  * Where one part of a request ends and the next begins. A full stop or a colon ends a part only before a space or at
  * the end: "notes.txt", "./build" and ".ssh" are one word each (modes-y9-x9-4).
@@ -950,9 +953,15 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
   }
   // A download-and-run handed a key, credentials or a token (`npx -y tool ~/.ssh/id_rsa`): the classifier says only that
   // it downloads and runs code, so the question says the rest, and no mode announces or clears it (modes-y9-5).
-  if (d.verdict === "ask") {
-    const handed = handedSecrets(cls, a.command, shell, text => j.classifyCommand(text, shell, cctx).findings);
-    if (handed.length) {
+  // One pointed at Ember's own settings, record or programs is refused, as any command that touches them is: the
+  // classifier's own refusal of that word, read as a file (modes-y9-y9-9: Autopilot announced `npx -y json -I -f
+  // ~/.config/ember/settings.json …`).
+  if (d.verdict === "ask" || d.verdict === "announce") {
+    let tampers: Classification["refuse"] | null = null;
+    const handed = handedSecrets(cls, a.command, shell, text => { const c = j.classifyCommand(text, shell, cctx); tampers ??= c.refuse ?? null; return c.findings; });
+    const refuse = tampers as Classification["refuse"] | null;
+    if (refuse) d = { ...d, verdict: "refuse", reason: refuse.says, rules: [...new Set([...d.rules, refuse.rule])], requested: undefined };
+    else if (handed.length && d.verdict === "ask") {
       d = {
         ...d, classes: [...new Set(["secret" as const, ...d.classes])], rules: [...new Set([...d.rules, ...handed.map(f => f.rule)])],
         says: [...handed.map(f => f.says).filter(l => !d.says.includes(l)), ...d.says],
@@ -977,10 +986,12 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
     ctx.log.info("commands.decided", { task, target, verdict: "refuse", classes: d.classes, chars: a.command.length, stood });
     return denied(stood === "refused" ? REFUSED_BEFORE : STILL_UNANSWERED);
   }
-  // A command that may be something the user said no to in this task, though Ember can't tell: one that names nothing
-  // it acts on, of the refused command's class, or one Ember can't read at all; and a deletion or a push by command
-  // after a no to that kind of step in an app. It asks, in every mode: never announced (by the user's earlier words,
-  // Interactive or Autopilot) and never shown to Assisted's check. The user's yes is theirs to give (modes-y9-9, y9-2).
+  // A command that may be something the user said no to in this task, though it isn't recognisably the same: one with
+  // a danger of a class the refused command had, whatever either names (a push by the remote's URL after a refused
+  // push by its name: modes-y9-y9-1), any danger after a refused command Ember couldn't read (modes-y9-y9-2), one
+  // Ember can't read at all; and a deletion or a push by command after a no to that kind of step in an app. It asks,
+  // in every mode: never announced (by the user's earlier words, Interactive or Autopilot) and never shown to
+  // Assisted's check. The user's yes is theirs to give (modes-y9-9, y9-2).
   const like = d.verdict !== "refuse" && d.verdict !== "run" && (ctx.refusals?.commandLike(about) ?? false);
   if (like) {
     d = {

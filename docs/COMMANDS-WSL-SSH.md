@@ -640,9 +640,10 @@ model); a command that would keep running after Stop (a background job, `nohup`,
 stopped or loaded, a login or startup entry, a change to the Windows registry, a git hook or a git setting that
 names a program, a shell's start-up file, a program put on the command path, a tunnel, a message to a desktop
 service over D-Bus, a WMI or CIM call, an alias or a `trap`), so that Stop stops everything; a downloaded program
-that is handed a key, credentials or a token (`npx tool ~/.ssh/id_rsa`), or a word Ember can't resolve
-(`npx tool $(…)`); a program, or a tool's command, Ember doesn't know, and one that runs code nobody is shown
-(`rundll32`, `mshta`, `wscript`, `run-parts`), since nobody can tell what it does; every command when your organisation, or
+that is handed a key, credentials or a token (`npx tool ~/.ssh/id_rsa`, `KEY=~/.ssh/id_rsa npx tool`), or a word Ember can't resolve
+(`npx tool $(…)`); a program, or a tool's command, Ember doesn't know, one that runs code nobody is shown
+(`rundll32`, `mshta`, `wscript`, `run-parts`) and a sandbox or a wrapper whose command Ember doesn't judge (`bwrap`,
+`firejail`, `envdir`, `expect`), since nobody can tell what it does; every command when your organisation, or
 you (**Ask before every command**), asked for that; a task
 without your own words; and a command, a request or a list of findings too long to show whole (a command over 4,000
 characters). A command you said no to is refused without being reviewed, and one that may be it, where Ember can't
@@ -677,14 +678,18 @@ It still asks, with the card of §2.4, before:
 - a command your own words for the task rule out ("commit my work but don't push", "delete everything except
   build", "push it, but without force"): that is your no, said in advance, and the card says "You didn't ask for
   this."; and one your words hold back ("leave the build folder alone", "keep notes.txt", "hold off on publishing",
-  "push tomorrow"), where the card also says "Your words say to leave this or to wait, so Ember asks first.";
-- a command that may be one you said no to earlier in the task, where Ember can't tell (one that doesn't say what it
-  acts on, a loop, inline code): the card says "You said no to something like this earlier in this task.";
+  "push tomorrow", "push main after the review", "once CI is green", "build is off limits", "I'll do the push"),
+  where the card also says "Your words say to leave this or to wait, so Ember asks first.";
+- a command of the same kind of danger as one you said no to earlier in the task, whatever either names (another
+  push after a no to a push, another deletion after a no to a deletion or to deleting something in an app), any
+  dangerous command after a no to one Ember couldn't read, and one Ember can't read (a loop, inline code) after a no
+  to a dangerous one: the card says "You said no to something like this earlier in this task.";
 - every command where your organisation asks for that, where you turned on **Ask before every command** for that
   computer, in a Podman distro, and in a project's chosen command folder;
 - turning commands on for a computer the first time (§2.1).
 
-A command that touches Ember's own settings, records, policy or processes is refused as in every mode (§2.6). **Stop**
+A command that touches Ember's own settings, records, policy or processes is refused as in every mode (§2.6), a
+downloaded program pointed at one of those files included (`npx tool ~/.config/ember/settings.json`). **Stop**
 during the countdown counts as your no: that command, sent again or reworded to do the same to the same thing, is
 refused for the rest of the task. A countdown that ends after you left Autopilot, or once every command asks on that
 computer, doesn't run its command.

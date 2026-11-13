@@ -225,6 +225,22 @@ describe("what an answer about a risky page control binds to (modes-x9s-4)", () 
       for (const [a, b] of [["$50", "$5000"], ["50 EUR", "5000 EUR"], ["50 dollars", "5000 dollars"], ["50", "5000"]]) expect(same(pay(a), pay(b), S, "Acme - Mozilla Firefox"), `${a} → ${b}`).toBe(false);
     });
 
+    it("is spent where an amount in a summary's list or table changes; a list's other text still moves on, so a living page doesn't ask for ever (modes-y9-y9-8)", () => {
+      const S = { role: "push button", name: "Send" };
+      const list = (amount: string, comment = "First!") => [n(1, null, "document web", "Send"), n(2, 1, "list", ""), n(3, 2, "list item", "", `Amount: ${amount}`), n(4, 2, "list item", "", "To: Bob"),
+        n(8, 1, "list", "Comments"), n(9, 8, "list item", "", comment), n(5, 1, "section", ""), n(6, 5, "push button", "Send"), n(7, 5, "push button", "Cancel")];
+      const table = (amount: string) => [n(1, null, "document web", "Review"), n(2, 1, "table", "Summary"), n(3, 2, "table row", ""), n(4, 3, "table cell", "", "Total"), n(5, 3, "table cell", "", amount),
+        n(8, 1, "section", ""), n(6, 8, "push button", "Send"), n(7, 8, "push button", "Cancel")];
+      for (const [a, b] of [["$50", "$5000"], ["50 EUR", "5000 EUR"], ["€50", "€5000"], ["50 dollars", "5000 dollars"]]) {
+        expect(same(list(a), list(b), S, "Acme - Mozilla Firefox"), `list: ${a} → ${b}`).toBe(false);
+        expect(same(table(a), table(b), S, "Review - Mozilla Firefox"), `table: ${a} → ${b}`).toBe(false);
+      }
+      expect(pageBindingOf(list("$50"), S, "Acme - Mozilla Firefox", false, true)).not.toMatch(/^unbound/);
+      // Comments arriving in a list beside it go by, as before; an ordinary control binds none of this.
+      expect(same(list("$50"), list("$50", "Second!"), S, "Acme - Mozilla Firefox")).toBe(true);
+      expect(pageBindingOf(list("$50"), S, "Acme - Mozilla Firefox")).toBe(pageBindingOf(list("$5000"), S, "Acme - Mozilla Firefox"));
+    });
+
     it("still holds while a clock runs, a bare count goes up or a counter on another button changes, so a living page doesn't ask for ever", () => {
       const live = (clock: string, comments: number, likes: number) => [
         n(1, null, "document web", "Cats - Tube"), n(2, 1, "section", ""), n(3, 2, "label", `${clock} / 3:00`), n(4, 2, "heading", `${comments} comments`), n(5, 2, "static", "", `${comments} comments`),

@@ -4815,8 +4815,9 @@ export class Worker {
     // holds reword it).
     const names = [...this.namesOf(req), ...(risk?.kept ?? [])];
     // A risky step that may be something the user said no to in this task, though Ember can't tell (a deletion in an
-    // app after a no to a command that deletes, whose words name nothing of it; a step that names no kind after a no to
-    // one of no kind): never checked or announced. It asks; in Autopilot, which has no question to put, it is refused.
+    // app after a no to a command that deletes, whatever either names; a step that names no kind after a no to one of
+    // no kind; the user's own step of a kind they said no to when a page came up with it): never checked or
+    // announced. It asks; in Autopilot, which has no question to put, it is refused.
     const like = !!risk && decision.verdict !== "deny" && this.refusals.step(risk.like) === "refused";
     if (like && this.d.policy.autopilot) return this.refusedBefore(req, decision, "refused");
     // "Work without asking" is suspended for the rest of a task the user already said no in (fail closed): the step asks
@@ -4986,22 +4987,22 @@ export class Worker {
 
   /**
    * The names of one risky step in this task's refusals. `lookup`: what makes it a refused thing done another way (its
-   * kinds in its app; the kinds refused off-task, for a step that isn't the user's own words either; what a refused
-   * command did to something this step's words name). `like`: what it may be, though Ember can't tell (authorize).
-   * `kept`: what a no to it leaves behind, for app steps and for commands; a step the user didn't ask for is kept
-   * apart, so that a no to it is no word on their own request (evalfix-x9-1).
+   * kinds in its app; the kinds refused off-task, for a step that isn't the user's own words either). `like`: what it
+   * may be, though Ember can't tell (authorize): a step of no kind after one of no kind; a step of a kind a refused
+   * command did, to whatever it was (never matched by a word of the step or its window: modes-y9-y9-4); and the
+   * user's own step of a kind they said no to when a page or the model came up with it, which that no doesn't refuse
+   * (evalfix-x9-1) but which is never checked or announced either. `kept`: what a no to it leaves behind, for app
+   * steps and, by its kinds alone, for commands (modes-y9-y9-3); a step the user didn't ask for is kept apart.
    */
-  private riskOf(req: Pick<ActionRequest, "element" | "app" | "kind" | "value" | "window">, d: Pick<Decision, "about" | "reason" | "aligned">) {
+  private riskOf(req: Pick<ActionRequest, "element" | "app" | "kind" | "value">, d: Pick<Decision, "about" | "reason" | "aligned">) {
     const asked = this.riskAsked(req, d);
     const { said, why } = riskKinds(asked);
     const kinds = [...new Set([...said, ...why])];
-    const words = `${asked.name} ${asked.about} ${req.window ?? ""}`;
-    const across = stepAcrossNames(kinds, words);
     const offTask = d.aligned === false;
     return {
-      lookup: [...riskNames(asked), ...offTaskLookup(asked, offTask), ...across.same],
-      like: [...(said.length === 0 ? [noKindName(req.app)] : []), ...across.like],
-      kept: [...(offTask ? offTaskNames(asked) : riskNames(asked)), ...(kinds.length === 0 ? [noKindName(req.app)] : []), ...stepMarksForCommands(kinds, words)],
+      lookup: [...riskNames(asked), ...offTaskLookup(asked, offTask)],
+      like: [...(said.length === 0 ? [noKindName(req.app)] : []), ...stepAcrossNames(kinds), ...offTaskNames(asked)],
+      kept: [...(offTask ? offTaskNames(asked) : riskNames(asked)), ...(kinds.length === 0 ? [noKindName(req.app)] : []), ...stepMarksForCommands(kinds)],
     };
   }
 
