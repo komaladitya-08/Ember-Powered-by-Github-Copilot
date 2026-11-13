@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { ANSWER_CLOSED_STATUS, ANSWER_LISTENING_STATUS, SHORT_YES_FLOOR, TASK_VOICE_MS, TaskVoiceTrust, VoiceRefusals, answerWindowStatus, heardAnswer, heardUnchecked, refusalEndsTrust, refusalLine, refusalNote, rejectionEndsTrust, spokenAnswer, voiceAnswer, voiceAnswerSaid, VOICE_ANSWER_REFUSED, type VoiceAnswerInput } from "../../app/main/agent/voice-answer";
+import { ANSWER_CLOSED_STATUS, ANSWER_LISTENING_STATUS, SHORT_YES_FLOOR, TASK_VOICE_MS, TaskVoiceTrust, VoiceRefusals, answerStatusOnQuestion, answerWindowStatus, heardAnswer, heardUnchecked, refusalEndsTrust, refusalLine, refusalNote, rejectionEndsTrust, spokenAnswer, voiceAnswer, voiceAnswerSaid, VOICE_ANSWER_REFUSED, type VoiceAnswerInput } from "../../app/main/agent/voice-answer";
 import { Confirmer, type Question } from "../../app/main/agent/confirm";
 import { SPOKEN_NO, SPOKEN_YES } from "../../app/shared/spoken-answer";
 import { questionAloud } from "../../app/main/agent/presenter";
@@ -888,7 +888,7 @@ describe("VoiceRefusals: what Ember shows and says when a spoken answer isn't ta
 });
 
 describe("what shows while a question's answer window is open, and once it has closed (V2-F4; voice-listening-r9-8)", () => {
-  const idle = { status: null, questionUp: true, conversing: false };
+  const idle = { status: null, questionUp: true, conversing: false, yesByVoice: true };
   it("shows the window while it listens, and how to answer by voice once it closed with the question still up", () => {
     expect(answerWindowStatus({ on: true }, idle)).toBe("Listening for your answer…");
     const open = { ...idle, status: ANSWER_LISTENING_STATUS };
@@ -901,6 +901,30 @@ describe("what shows while a question's answer window is open, and once it has c
     expect(answerWindowStatus({ on: true }, { ...idle, conversing: true })).toBeUndefined();
   });
 
+  it("says nothing of a bare answer on a question whose yes can't be taken by voice, and the line goes with its question (voice-product-x9-4)", () => {
+    // Locked by Voice Match, Voice Match not ready, or a click-only card: "To answer by voice now…" promised what isn't.
+    const barred = { ...idle, yesByVoice: false };
+    expect(answerWindowStatus({ on: true }, barred)).toBeUndefined();
+    expect(answerWindowStatus({ on: false, reason: "timeout" }, { ...barred, status: ANSWER_LISTENING_STATUS })).toBeNull();
+    // A click, a key or the question running out within the 8 s: the line stayed, about a question no longer there.
+    for (const line of [ANSWER_LISTENING_STATUS, ANSWER_CLOSED_STATUS]) expect(answerStatusOnQuestion(line)).toBeNull();
+    expect(answerStatusOnQuestion("Something else")).toBeUndefined();
+    expect(answerStatusOnQuestion(null)).toBeUndefined();
+    const main = fs.readFileSync(path.join(__dirname, "../../app/main/main.ts"), "utf8");
+    expect(main).toContain("const after = answerStatusOnQuestion(statusBy.listen);");
+    // What bars a spoken yes, read from the Confirmer's own gates.
+    const { c, later } = confirmer();
+    expect(c.yesByVoice).toBe(false);
+    void c.ask(q());
+    later(600);
+    expect(c.yesByVoice).toBe(true);
+    c.lockVoice();
+    expect(c.yesByVoice).toBe(false);
+    const k = confirmer();
+    void k.c.ask(q({ clickOnly: true }));
+    expect(k.c.yesByVoice).toBe(false);
+  });
+
   it("ends neither line on words that read as an answer, and is wired in main (source pins)", () => {
     for (const line of [ANSWER_LISTENING_STATUS, ANSWER_CLOSED_STATUS]) {
       const words = line.split(/\s+/);
@@ -908,7 +932,7 @@ describe("what shows while a question's answer window is open, and once it has c
       expect(line.toLowerCase()).not.toMatch(/\b(?:ember|amber|emma)\b/);
     }
     const main = fs.readFileSync(path.join(__dirname, "../../app/main/main.ts"), "utf8");
-    expect(main).toContain("const next = answerWindowStatus(e, { status: statusBy.listen, questionUp: !!confirmer?.waiting, conversing });");
+    expect(main).toContain("const next = answerWindowStatus(e, { status: statusBy.listen, questionUp: !!confirmer?.waiting, conversing, yesByVoice: !!confirmer?.yesByVoice && !(settings.get().voice.match && !matchNow()) });");
   });
 });
 

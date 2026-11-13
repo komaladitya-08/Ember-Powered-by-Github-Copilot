@@ -399,6 +399,16 @@ export class Confirmer {
     return !!this.current?.voiceLocked;
   }
 
+  /**
+   * A spoken yes could be taken for the question up now, as far as the question itself goes: it isn't locked to clicks
+   * and keys, and it isn't a click-only card (answerVoice's "locked" and "click-only"). False when none is up. Main's
+   * status line says how to answer by voice only then (voice-product-x9-4).
+   */
+  get yesByVoice(): boolean {
+    const c = this.current;
+    return !!c && !c.voiceLocked && !c.q.clickOnly && c.q.panel?.kind !== "consent";
+  }
+
   lockVoice(): boolean {
     if (!this.current) return false;
     this.current.voiceLocked = true;

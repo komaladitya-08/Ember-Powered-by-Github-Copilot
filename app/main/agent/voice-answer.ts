@@ -363,10 +363,22 @@ export const ANSWER_CLOSED_STATUS = "To answer by voice now, start with my name.
  * after the 8 s vanished without a sign, and nothing said the window was open (V2-F4, voice-listening-r9-8). Undefined:
  * leave the status as it is (a conversation hears bare answers and keeps its own line; another line owns it).
  * Neither line ends on an answer or names Ember, as the status can be read out while the microphone listens.
+ * `yesByVoice`: a spoken yes can be taken for the question up now (Confirmer.yesByVoice, and Voice Match ready if on).
  */
-export function answerWindowStatus(e: { on: boolean; reason?: string }, now: { status: string | null; questionUp: boolean; conversing: boolean }): string | null | undefined {
+export function answerWindowStatus(e: { on: boolean; reason?: string }, now: { status: string | null; questionUp: boolean; conversing: boolean; yesByVoice: boolean }): string | null | undefined {
   if (now.conversing) return undefined;
-  if (e.on) return now.questionUp ? ANSWER_LISTENING_STATUS : undefined;
+  // A question whose yes can't be taken by voice (locked by Voice Match, Voice Match not ready, a click-only card) gets
+  // neither line: both promised a spoken answer it won't take (voice-product-x9-4).
+  if (e.on) return now.questionUp && now.yesByVoice ? ANSWER_LISTENING_STATUS : undefined;
   if (now.status !== ANSWER_LISTENING_STATUS) return undefined;
-  return e.reason === "timeout" && now.questionUp ? ANSWER_CLOSED_STATUS : null;
+  return e.reason === "timeout" && now.questionUp && now.yesByVoice ? ANSWER_CLOSED_STATUS : null;
+}
+
+/**
+ * The status line when the question up changes (answered, gone, or another in its place): either line of its answer
+ * window goes with it (null), as no further "listening" event comes for that window; undefined leaves another line be.
+ * "To answer by voice now…" stayed its 8 s after a click, a key or the question running out (voice-product-x9-4).
+ */
+export function answerStatusOnQuestion(status: string | null): null | undefined {
+  return status === ANSWER_LISTENING_STATUS || status === ANSWER_CLOSED_STATUS ? null : undefined;
 }
