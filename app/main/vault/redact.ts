@@ -29,7 +29,8 @@ const MAX_VALUES = 400;
 const MARK = "\ue000";
 const MARKS = /\ue000+/g;
 
-const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\/-]/g, "\\$&");
+// Only what a pattern with the `u` flag lets be escaped: a "-" there is an error outside a character class.
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
 /** The text as markup escapes it (quoted element text, a page's source). */
 const asMarkup = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 /** The text inside a JSON string (a log line, a tool's JSON answer). */
@@ -74,7 +75,8 @@ export class VaultRedactor {
     const patterns: RegExp[] = [];
     for (const form of forms) {
       if (!form) continue;
-      try { patterns.push(pattern(form, { card: card && form === value, fold: !secret, alone })); } catch { /* a form no pattern can hold is covered by the others */ }
+      // A form no pattern can be made of throws: the caller then fills nothing (VaultService.use), never a value unwatched.
+      patterns.push(pattern(form, { card: card && form === value, fold: !secret, alone }));
     }
     if (!secret) this.plain = true;
     this.noted.push({ value, patterns });

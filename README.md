@@ -421,6 +421,20 @@ other side** in the handle's menu. The task cards go with it, and on Linux Ember
 - On Windows, a command can't take typing (§2.9 of [docs/COMMANDS-WSL-SSH.md](docs/COMMANDS-WSL-SSH.md)). On a Mac,
   Command+Tab doesn't list the command window: answer a command card with Ember's allow and not-now keys.
 
+## Passwords, cards and contact details: the vault
+
+The AI model never types or sees a password or a card number. In Autopilot, when a task comes to a
+sign-in, a card or a contact field, Ember asks you once in its own **Secure Form**, keeps what you give it in its
+vault on this computer (locked with your computer's keyring, and bound to that one app or site) and fills it in there
+itself from then on. It fills nothing in your computer's own password prompts, and nothing in any other mode.
+
+- What it filled is hidden from then on in everything Ember reads, sends to the model, logs and records, and blacked
+  out of its screenshots.
+- **Settings › Apps & privacy › Vault** lists what is kept (never the values) with **Forget**; Sign out and Forget
+  everything forget it all.
+- It needs a keyring: where your computer has none, the form says so and keeps nothing.
+- An organisation can turn it off (`features.vault` in its policy).
+
 ## Commands, WSL and other computers
 
 Ember can also run commands, work in WSL on Windows, and work on other computers you reach over SSH. Commands on this

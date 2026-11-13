@@ -78,6 +78,19 @@ describe("VaultRedactor (vault-3)", () => {
     expect(new VaultRedactor().shown).toBe(false);
   });
 
+  it("finds a value with any punctuation in it, in every form (found by the canary test: a hyphen made every pattern of a value invalid, and it was let through)", () => {
+    const r = new VaultRedactor();
+    const odd = "a-b.c*d+e?f^g$h{i}j(k)l|m[n]o\\p/q-";
+    r.note("password", odd);
+    r.note("email", "ada.contact-canary@example.org");
+    r.note("phone", "+44 20 7946 0958");
+    expect(r.text(`x${odd}y`)).toBe(`x${VAULT_REDACTED}y`);
+    expect(r.text(JSON.stringify({ p: odd }))).not.toContain("a-b.c");
+    expect(r.text(`?p=${encodeURIComponent(odd)}`)).toBe(`?p=${VAULT_REDACTED}`);
+    expect(r.text("to ada.contact-canary@example.org")).toBe(`to ${VAULT_REDACTED}`);
+    expect(r.text("call +44 20 7946 0958 now")).toBe(`call ${VAULT_REDACTED} now`);
+  });
+
   it("never looks for one value inside the words that stand for another", () => {
     const r = new VaultRedactor();
     r.note("email", EMAIL);

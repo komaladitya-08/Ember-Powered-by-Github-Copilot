@@ -42,6 +42,7 @@ readline.createInterface({ input: process.stdin }).on("line", line => {
     case "mark_secret": return ok({ keys: req.params.ids.map(id => [":1.7", "/x/" + id]), withheldKeys: req.params.ids.map(id => [":1.7", "/cell/" + id]) });
     case "at_point": return ok({ chain: [], ms: 1, withheldKeys: [[":1.9", "/p"]] });
     case "page_address": return ok(req.params.id === 7 ? { urls: ["https://pay.example/frame", "https://shop.example/"] } : req.params.id === 8 ? { urls: "https://x.example" } : { urls: [] });
+    case "self": return ok({ argv: process.argv, env: process.env });
     case "vault_fill":
       if (req.params.id === 1) return ok({ ok: true, took: true, keys: [[":1.5", "/field/1"]], withheldKeys: [[":1.5", "/row/1"]], echoed: req.params.text });
       if (req.params.id === 2) return send({ jsonrpc: "2.0", id: req.id, error: { message: "background_unavailable: no EditableText for '" + req.params.text + "'" } });
@@ -318,6 +319,14 @@ describe("the vault's two calls to the helper (vault-2)", () => {
     await failure(s.request("die"));
     expect(await s.request("remembered")).toEqual([[":1.5", "/field/1"]]);
     expect(await s.request("withheld")).toEqual([[":1.5", "/row/1"]]);
+  });
+
+  it("gives the helper the value on its stdin only: never on its command line or in its environment (vault-3)", async () => {
+    const { s } = sidecar();
+    await s.vaultFill(1, CANARY);
+    const self = await s.request<{ argv: string[]; env: Record<string, string> }>("self");
+    expect(self.argv.length).toBeGreaterThan(1);
+    expect(JSON.stringify(self)).not.toContain(CANARY);
   });
 
   it("says which of three things went wrong in fixed words, never the helper's or the app's own", async () => {

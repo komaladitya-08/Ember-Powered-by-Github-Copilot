@@ -103,6 +103,7 @@ row should be green on RHEL 8.4 with GNOME on Xorg. If `npm ci` reports that Ele
 | `DISPLAY=:55 scripts/demo/as-demo-user.sh env PATH="$PATH" node test/demo/m3-tour.mjs out/` | Screen-reading tour. Runs as the desktop's user so the accessibility bus is reachable (`EMBER_DEMO_USER`, default `demo`) |
 | `EMBER_ATSPI_TEST=1 npm run test:integration -- test/integration/perception.test.ts test/integration/worker.test.ts test/integration/desk.test.ts test/integration/safety.test.ts test/integration/action-link.test.ts` | Reads and operates GTK3 test windows through the sidecar: a worker on the test bench, on Ember's desk, and on hostile windows (prompt injection, a password prompt); and a click that runs a modal dialog, which the user can still type in (PR10-1). Needs a desktop session with pyatspi; on a bare X server, `dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24" …` as in CI |
 | `EMBER_ATSPI_TEST=1 npm run test:integration -- test/integration/perception-electron.test.ts` | Reads Electron windows (Chromium's accessibility) through the sidecar and X11: window frames, scale 2, secret fields withheld and blacked out. Same needs as the line above (the test starts its windows with `ACCESSIBILITY_ENABLED=1`, as Chromium joins the accessibility bus only when asked); CI runs it with them on `rockylinux:8` |
+| `npm run test:integration -- test/integration/vault-leak.test.ts` | The vault's leak test ("The vault", below): every kind of entry filled with canary values on the real runtime with the scripted model, then looked for in everything the model was sent and everything Ember wrote (runs anywhere); with `EMBER_ATSPI_TEST=1` on a desktop with pyatspi, also a real Electron sign-in window through the real helper and X11 |
 | `npm run test:integration -- test/integration/borrow-live.test.ts test/integration/desk-robust.test.ts` | Borrowing the mouse and keyboard on a private Xvfb (other keyboard layouts need `setxkbmap`; skipped without Xvfb), and Ember's desk when things go wrong (its display dying, Ember killed). Need only Xvfb (and `xauth`, `dbus-daemon` for the desk), no desktop session |
 | `DISPLAY=:55 scripts/demo/as-demo-user.sh env PATH="$PATH" node test/demo/m6-tour.mjs out/` | Guide tour: Ember points, the user clicks; then a question about the selected text |
 | `node scripts/voice/prepare.mjs` | Downloads the standard verified speech models into `.cache/voice`, including the default Kitten Nano voice (63.8 MB), for the voice tests and tour. `--tts-voice` also fetches a separate test-only Piper Amy/Ryan voice (pinned by SHA-256), which the evaluation's missed-wakes gate needs; `--clips` synthesises new test clips into `.cache/voice/clips`, leaving the committed ones alone (with `--voice ryan`, in another speaker's voice into `.cache/voice/clips-ryan`, for the voice end-to-end test's Voice Match); `--update-fixtures` writes them over `test/fixtures/voice` instead. The voice is random on every run, so check new clips with the voice tests before committing them (`git restore test/fixtures/voice` puts the old ones back) |
@@ -1617,6 +1618,37 @@ details the user gives Ember in its own **Secure Form**, each bound to one desti
   under the borrow's rules; it is never pasted. The fill is announced by kind and app ("Filling a saved password in
   Firefox, from the vault: Autopilot is on.") and audited with the kind, the part and the destination. The task's
   model hears only whether it was filled.
+- **After a fill.** Nothing Ember reads or captures afterwards holds the value. `VaultService.use` gives every value to
+  the redactor (app/main/vault/redact.ts, `VaultRedactor`) before it is put anywhere; a value it can't take is not
+  filled. The list lives in main's memory for the run and is never written. From then on the value is replaced by
+  "[hidden: filled from Ember's vault]":
+  - in everything a model is sent: `AgentHost` wraps the runtime client in `redactingClient`
+    (app/main/agent/redacting-client.ts), so every session's system message, prompts, tool results (a tree read, a
+    read result, a command's output, a task's result to the conductor), tool errors and hook answers pass through
+    it; a picture's bytes don't;
+  - in the audit log (`AuditLog`'s `redact`) and in every log line (`createLogger`'s `redact`).
+
+  It finds the value as filled, as an address, a JSON line or markup escapes it, a card number with spaces or
+  dashes between its digits, white space of any length (an address's lines joined by commas too) and, for the parts
+  that aren't secret, any letter case; such a part is replaced only where it stands alone ("ada", never inside
+  "adamant"), a password, card number or security code wherever it stands. Text cut short in the middle of a value
+  before it gets there isn't recognised, so `Perception` asks the redactor about every element first
+  (`holdsVaultValue`): whatever says a filled value (the field itself, a line that repeats it, a tab named after it)
+  loses its words and is blacked out of every picture as a secret field is, and a field is kept secret by the helper
+  too. There is no picture of a window whose own title says a value, nor, once a part an app shows as it is (a user
+  name, an email, an address) has been filled in this run, of a window whose read was cut short. The helper's own
+  fill makes the field secret before it writes; the typed fallback tells the helper so before the first key and types
+  nothing if it can't; and a picture in which a field the task filled is listed as an ordinary field isn't sent.
+  What this doesn't cover: a value an app draws without telling accessibility (a canvas), and what Ember's bubble
+  and task card show the person of their own screen (an element's name).
+- **The leak test.** test/unit/vault-leak.test.ts fills every kind of entry through the worker's real path, by
+  accessibility and as keys, on each OS's keys and words, into a pretend app that repeats everything it is given
+  (test/fixtures/vault/), then looks for the canary values in everything a model is handed, the audit log, the
+  logs at debug level, settings.json, every other file in the data folder, Home's answers, the announcements and
+  the clipboard, and checks every filled field is black in every picture. test/integration/vault-leak.test.ts does
+  the same on the real runtime with the scripted model (its own record of every request; it runs anywhere), and
+  against a real Electron window through the real helper and X11 (the helper's command line and environment too;
+  it needs pyatspi, so CI's `el8` job runs it with `EMBER_ATSPI_TEST=1`).
 - **Never.** A value is never logged, audited, shown again, put in an IPC answer, a command's environment, memory or a
   conversation. `features.vault: false` in the organisation's policy, or a lockdown, turns the vault off.
 
