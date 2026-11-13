@@ -1178,7 +1178,14 @@ list's "1. La La Land." is Kitten's too. (One way only: in an answer said in ano
 English outside what it quotes, with none of that language's short words and no letter of another script, is
 Kitten's, so "Shall I reply to it?" after a Spanish email read out is asked in English, however the answer opened
 ("Sure.", "José wrote:"); "Il s'appelle Gone with the Wind." and "Ошибка: The file was not found." keep their answer's
-voice, but a piece with none of its language's short words ("Er heißt Gone with the Wind.") is still Kitten's.) Until then a piece that may be another language's ("Bien sûr !", with letters
+voice, but a piece with none of its language's short words ("Er heißt Gone with the Wind.") is still Kitten's.) The
+answer is judged in passages: after a lead-in said in Kitten's voice (a piece that ends with a colon: "Here is the email
+from José:", also one that came in the same piece as the passage's first sentence), and from the first sentence that may
+be another language's in an answer that looked English so far ("Okay, reading it now."), what follows is judged by
+itself, from its own first 60 letters, and waits until then unless it is clearly English: counted with the lead-in, whose
+English short words outnumber a first sentence's, a Spanish, Italian or Portuguese email was read by Kitten for 14 of
+16 ordinary lead-ins and layouts (now none; an Italian or Portuguese passage's first sentence with no accent still is,
+after a lead-in without a colon or on the same line). Until then a piece that may be another language's ("Bien sûr !", with letters
 English seldom writes outside a name, and not clearly English: "your résumé" is) or any piece after a request clearly
 typed in another language (three different short words of it outside quotes, and none only English writes:
 `requestLanguage`; "play la vie en rose" and "what does c'est la vie mean?" aren't) waits for more of the answer, unless its words outside quotes are clearly English. A reply too short to tell follows that

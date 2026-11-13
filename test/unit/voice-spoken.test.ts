@@ -503,6 +503,85 @@ describe("speechLanguage tells Spanish from French, which share their commonest 
   ])("still says %j with a French voice (voice-speaking-c7-1)", text => expect(speechLanguage(text)).toBe("fr"));
 });
 
+describe("AnswerLanguage judges a passage read out after an English lead-in by the passage, through the real stream (voice-speaking-r9-2)", () => {
+  const LEADS = ["José wrote:", "Here is the email from José:", "Sure. The email from José says:", "Here's what the note says:", "The message reads:", "Sure, here is the email that José sent you this morning:", "I found it. It says:"];
+  const PASSAGES: Record<string, string> = {
+    es: "Hola Alex, ¿cómo estás? Espero que todo vaya bien con el proyecto. Nos vemos el lunes en la oficina para hablar de los detalles. Un abrazo, José.",
+    fr: "Bonjour Alex, j'espère que tu vas bien. Je voulais te dire que la réunion de lundi est reportée à mardi. Peux-tu apporter les documents du projet ? Merci, Marie.",
+    de: "Hallo Alex, ich hoffe, es geht dir gut. Das Treffen am Montag wurde auf Dienstag verschoben. Kannst du bitte die Unterlagen für das Projekt mitbringen? Viele Grüße, Hans.",
+    it: "Ciao Alex, spero che tu stia bene. La riunione di lunedì è stata spostata a martedì. Puoi portare i documenti del progetto? Grazie mille, Marco.",
+    pt: "Olá Alex, espero que esteja tudo bem. A reunião de segunda-feira foi adiada para terça. Pode trazer os documentos do projeto? Obrigado, João.",
+    nl: "Hallo Alex, ik hoop dat alles goed met je gaat. De vergadering van maandag is verplaatst naar dinsdag. Kun je de documenten van het project meenemen? Groetjes, Jan.",
+    ru: "Привет, Алекс! Надеюсь, у тебя всё хорошо. Встреча в понедельник перенесена на вторник. Пожалуйста, принеси документы по проекту. Спасибо, Иван.",
+    zh: "你好，亚历克斯。希望你一切都好。周一的会议改到周二了。请带上项目的文件。谢谢，小王。",
+  };
+  /** The answer word by word through the stream, as main says it: each piece with the voice it is given. */
+  const streamed = (answer: string, request = "read me the latest email") => {
+    const stream = new SpeechStream(100_000), language = new AnswerLanguage();
+    language.reset(request);
+    const said: { text: string; lang: string | null }[] = [];
+    for (const word of answer.split(/(?<=\s)/)) said.push(...language.take(stream.push(word)));
+    said.push(...language.take(stream.finish(answer), true));
+    return said;
+  };
+  const flat = (text: string) => text.replace(/\s+/g, " ").trim();
+
+  it.each(Object.keys(PASSAGES).flatMap(lang => LEADS.map(lead => [lang, lead] as const)))("reads a %s passage in that language's voice after “%s”, with the lead-in and the closing question in Ember's own", (lang, lead) => {
+    const said = streamed(`${lead}\n\n${PASSAGES[lang]}\n\nShall I reply to it?`);
+    const letters = (text: string) => text.replace(/[^\p{L}]+/gu, "");
+    expect(letters(said.map(p => p.text).join(""))).toBe(letters(`${lead}${PASSAGES[lang]}Shall I reply to it?`));
+    for (const p of said) {
+      const where = flat(lead).includes(flat(p.text)) ? "lead-in" : flat(p.text) === "Shall I reply to it?" ? "question" : "passage";
+      // A lead-in that is a name with an accent and one word can't be told from the passage's language, and waits for
+      // it, as before: "José escribió:" would be Kitten's otherwise.
+      if (where === "lead-in" && lead === "José wrote:") continue;
+      expect([where, flat(p.text), p.lang]).toEqual([where, flat(p.text), where === "passage" ? lang : null]);
+    }
+    expect(said.some(p => p.lang === lang)).toBe(true);
+  });
+
+  it("reads the passage in its own voice from its second sentence at the latest where the lead-in ends without a colon", () => {
+    const said = streamed(`Okay, reading it now.\n\n${PASSAGES.es}\n\nShall I reply to it?`);
+    expect(said.map(p => p.lang)).toEqual([null, "es", "es", "es", "es", null]);
+  });
+
+  it.each(["es", "fr", "ru", "zh"])("reads a %s passage in its own voice where the lead-in and its first sentence came as one piece", lang => {
+    const said = streamed(`I found it. It says: ${PASSAGES[lang]}\n\nShall I reply to it?`);
+    expect(said.map(p => [flat(p.text), p.lang]).slice(0, 2)).toEqual([["I found it.", null], ["It says:", null]]);
+    expect(said.slice(2, -1).map(p => p.lang).every(l => l === lang)).toBe(true);
+    expect(said.at(-1)).toEqual({ text: "Shall I reply to it?", lang: null });
+  });
+
+  it("reads a second passage in its own language after an English lead-in, not in the first passage's voice", () => {
+    const said = streamed(`The email from José reads:\n\n${PASSAGES.es}\n\nAnd the note from Marie says:\n\n${PASSAGES.fr}`);
+    expect([...new Set(said.map(p => p.lang))]).toEqual([null, "es", "fr"]);
+    expect(said.filter(p => p.lang === "fr").map(p => flat(p.text)).join(" ")).toBe(flat(PASSAGES.fr));
+  });
+
+  it.each([
+    ["Here are three films you might like:\n\n1. La La Land.\n2. The Thing.\n3. Amélie.\n\nWant me to open one?"],
+    ["Here is what I found:\n\nThe file is in your Downloads folder, and it was changed this morning."],
+    ["The steps are:\n\n1. Open Settings.\n2. Click Displays.\n3. Turn Night Light on."],
+    ["Your note says:\n\nBuy milk, call the dentist and pay the rent before Friday."],
+    ["Note: the café on the corner is closed today, and the one by the station is open."],
+    ["Done. Tip: you can also press Ctrl+S to save the résumé you are working on."],
+  ])("still says an English answer with a colon wholly in Ember's own voice (%j)", answer => {
+    expect(streamed(answer, "what do you suggest?").map(p => p.lang).filter(Boolean)).toEqual([]);
+  });
+
+  it("says the clearly English first words after a colon at once, without waiting for more of the answer", () => {
+    const stream = new SpeechStream(100_000), language = new AnswerLanguage();
+    language.reset("where is my file?");
+    expect(language.take(stream.push("Here is what I found:\n\n"))).toEqual([{ text: "Here is what I found:", lang: null }]);
+    expect(language.take(stream.push("The file is in your Downloads folder. "))).toEqual([{ text: "The file is in your Downloads folder.", lang: null }]);
+  });
+
+  it("keeps a Spanish answer's own list after its colon in the Spanish voice", () => {
+    const said = streamed("Aquí tienes los archivos que pediste esta mañana, con todo lo que hay en la carpeta:\n\nInforme.pdf y notas.txt.", "¿qué archivos hay en la carpeta de descargas?");
+    expect(said.map(p => p.lang)).toEqual(["es", "es", "es"]);
+  });
+});
+
 describe("AnswerLanguage says an English answer's own closing words in Ember's voice after a passage it read out in another language", () => {
   const said = (pieces: string[]) => { const a = new AnswerLanguage(); a.reset(""); return pieces.flatMap((p, i) => a.take([p], i === pieces.length - 1)).map(p => p.lang); };
   it("asks “Shall I reply to it?” in English after reading out a Spanish email, never in the Spanish voice (voice-speaking-c7-3)", () => {

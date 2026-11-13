@@ -553,6 +553,11 @@ const FOREIGN_MARKS = /[¡¿«»]|\s[!?:;»](?=\s|$)/u;
 /** A short piece that may be in another language, and isn't clearly English ("your résumé" is). */
 const mayBeAnother = (text: string) => (FOREIGN_MARKS.test(text) || ACCENTED.test(wordsBesidesNames(text).join(" "))) && !englishClearly(text);
 
+/** A piece that leads in to what follows it: it ends with a colon ("The message reads:"). */
+const LEAD_IN = /[:：]["”’'*_)\]]*\s*$/u;
+/** A short lead-in and what it leads in to, in one piece ("It says: Hola Alex, ¿cómo estás?"). */
+const INLINE_LEAD = /^([^:：\n]{1,80}[:：])\s+(\S[\s\S]*)$/u;
+
 /**
  * The language each piece of a streamed answer is said in (null: English, in Ember's own voice), decided once for the
  * whole answer: piece by piece, an English list's "1. La La Land." went to a Spanish or French voice, or was dropped
@@ -565,7 +570,9 @@ const mayBeAnother = (text: string) => (FOREIGN_MARKS.test(text) || ACCENTED.tes
  * ends shorter decides nothing for the messages after it (voice-speaking-r2-1: "Sure, one moment." had fixed a whole
  * turn to the request's language). Once an answer is in another language, a piece of it that is English and nothing
  * else outside what it quotes is still said in Ember's own voice (voice-speaking-c7-3, voice-speaking-x7-1), however
- * the answer opened ("Sure.", "José wrote:": voice-speaking-y7-1).
+ * the answer opened ("Sure.", "José wrote:": voice-speaking-y7-1). And the answer is judged in passages: after a lead-in
+ * said in Ember's own voice (a piece ending with a colon), and where an answer that looked English so far first may be
+ * another language's, what follows is judged by itself, from its first DECIDE_LETTERS letters (voice-speaking-r9-2).
  */
 export class AnswerLanguage {
   private text = "";
@@ -573,30 +580,61 @@ export class AnswerLanguage {
   private lang: string | null | undefined;
   /** The request's language, when it was clearly another (requestLanguage of what the user typed). */
   private asked: string | null = null;
+  /** Pieces of what is being judged were said in Ember's own voice already (they looked English). */
+  private spoken = false;
+  /** What is being judged follows a lead-in, or began where the answer first looked like another language. */
+  private passage = false;
 
   /** A new answer, to `request` (the user's words). */
   reset(request = ""): void {
     this.text = "";
     this.held = [];
     this.lang = undefined;
+    this.spoken = false;
+    this.passage = false;
     this.asked = requestLanguage(request);
   }
 
   /**
    * The pieces to say now, each with its language: `pieces` just made, `end` when the message is complete, `more` when
-   * more messages of this answer may follow it (it ended before a tool call).
+   * more messages of this answer may follow it (it ended before a tool call). Each piece is taken on its own, in order,
+   * so a whole answer given at once ("Read it out") is said as it was when it streamed (voice-speaking-r9-3).
    */
   take(pieces: readonly string[], end = false, more = false): { text: string; lang: string | null }[] {
-    for (const p of pieces) if (p.trim()) { this.held.push(p); this.text += ` ${p}`; }
+    const said = pieces.filter(p => p.trim());
+    const out = said.flatMap((p, i) => this.one(p, end && i === said.length - 1, more));
+    return said.length || !end ? out : this.one(null, true, more);
+  }
+
+  /** take, for one piece (null: none, the message only ended). */
+  private one(piece: string | null, end: boolean, more: boolean): { text: string; lang: string | null }[] {
+    const another = (text: string) => mayBeAnother(text) || speechLanguage(text, this.asked) !== null;
+    if (piece !== null && !this.lang && !this.asked) {
+      // A lead-in and the passage's first sentence in one piece ("It says: Hola Alex, ¿cómo estás?"): each on its own.
+      // Not after a request in another language, whose answer is judged whole ("Hecho: abrí «Ventas.xlsx».").
+      const cut = INLINE_LEAD.exec(piece);
+      if (cut && !another(cut[1]) && another(cut[2])) return [...this.one(cut[1], false, more), ...this.one(cut[2], end, more)];
+    }
+    if (piece !== null) { this.held.push(piece); this.text += ` ${piece}`; }
     let lang = this.lang;
     if (lang === undefined) {
       if (!this.text.trim()) return [];
+      // What Ember's voice has said of this answer already looked English, and isn't counted against what may be another
+      // language's: a passage after "Okay, reading it now." is judged from its first such sentence.
+      if (this.spoken && piece !== null && another(this.held.join(" "))) this.passageFromHeld();
       const found = speechLanguage(this.text, this.asked);
       if ((this.text.match(/\p{L}/gu) ?? []).length >= DECIDE_LETTERS) lang = this.lang = found;
       else if (end) {
         lang = found ?? this.followsRequest();
         if (!more) this.lang = lang;
-      } else if (found || (this.asked && !englishClearly(outsideQuotes(this.text))) || mayBeAnother(this.text)) return [];
+      } else if (this.passage) {
+        // After a lead-in, what follows waits to be judged, unless it is clearly English: said at once, as before.
+        if (found || !englishClearly(outsideQuotes(this.text))) return [];
+        lang = this.lang = null;
+      } else if (found || (this.asked && !englishClearly(outsideQuotes(this.text))) || mayBeAnother(this.text)) {
+        if (this.spoken) this.passageFromHeld();
+        return [];
+      } else this.spoken = true;
     }
     // An answer in another language's voice because of a passage it read out says its own clearly English pieces (its
     // closing "Shall I reply to it?") in Ember's voice: said by the passage's voice, or unsaid with none installed,
@@ -607,7 +645,25 @@ export class AnswerLanguage {
     // wrote:"), and their closing question went back to the passage's voice (voice-speaking-y7-1).
     const out = this.held.map(text => ({ text, lang: lang && englishOnly(text.replace(QUOTED, " "), lang) ? null : lang ?? null }));
     this.held = [];
+    // A lead-in said in Ember's own voice ("Here is the email from José:") ends what was judged: the passage after it
+    // is judged by itself. Counted with the lead-in, whose English short words outnumber a first sentence's, a Spanish
+    // email was read by Kitten with English sounds (voice-speaking-r9-2). Not in an answer that is in another language
+    // itself: its own list after a colon stays in its voice.
+    const last = out.at(-1);
+    if (last && last.lang === null && LEAD_IN.test(last.text) && !(end && !more)) {
+      this.lang = undefined;
+      this.text = "";
+      this.spoken = false;
+      this.passage = true;
+    }
     return out;
+  }
+
+  /** What waits to be said is judged by itself from here on, without what was said before it. */
+  private passageFromHeld(): void {
+    this.text = ` ${this.held.join(" ")}`;
+    this.spoken = false;
+    this.passage = true;
   }
 
   /**
