@@ -3180,7 +3180,8 @@ class Engine extends Classifier {
     const { sc, key, nameArg, args, pn } = h;
     if (pn.isPath) {
       this.usePath(nameArg, "exec", sc);
-      if (this.isDownloaded(nameArg, sc)) this.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
+      // A download run by its path, and told to detach by its own words (`./i.sh --daemon`: integ-y-5).
+      if (this.isDownloaded(nameArg, sc)) { this.add("escape", "escape.run-downloaded", SAYS.runsDownloaded); detachWords(h, args); }
       if (!this.onRecord(nameArg, sc)) this.scriptByPath(nameArg, pn, sc);
       scriptName(h, nameArg.v ?? "");
       if (!NATIVE[key] && nameArg.v !== null) scriptVerbs(h, nameArg.v, args);
@@ -6450,6 +6451,8 @@ reg(NATIVE, [...Object.keys(POSIX_SHELLS), ...OTHER_SHELLS], h => {
   if (script && !has(p, "s")) {
     runScript(h, script, readAs);
     if (script.v !== null) scriptVerbs(h, script.v, p.operands.slice(1));
+    // `sh i.sh --daemon`, where i.sh is this task's download: the words after it are the download's own (integ-y-5).
+    if (script.v !== null && h.e.isDownloaded(script, h.sc)) detachWords(h, p.operands.slice(1));
     if (!posixShell) h.e.unclear("unclear.other-shell", `Ember can't read ${h.key}'s language.`);
     return;
   }
