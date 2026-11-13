@@ -386,6 +386,13 @@ describe("Test connection", () => {
     expect(testRequest(settings({ baseUrl: "https://api.anthropic.com", type: "anthropic" }), KEY))
       .toEqual({ url: "https://api.anthropic.com/v1/models", headers: { "anthropic-version": "2023-06-01", "x-api-key": KEY } });
     expect(testRequest(settings({ baseUrl: "http://localhost:11434/v1" }), null)).toEqual({ url: "http://localhost:11434/v1/models", headers: {} });
+    // An address with a query or a fragment (a gateway's tenant): the model list is asked at its path, and the query
+    // stays a query (integrations-r9-9: it asked "…/v1?tenant=a/models").
+    expect(testRequest(settings({ baseUrl: "https://gw.example.com/v1?tenant=a" }), null).url).toBe("https://gw.example.com/v1/models?tenant=a");
+    expect(testRequest(settings({ baseUrl: "https://gw.example.com/v1/?tenant=a&x=1#top" }), null).url).toBe("https://gw.example.com/v1/models?tenant=a&x=1");
+    expect(testRequest(settings({ baseUrl: "https://gw.example.com/v1#top" }), null).url).toBe("https://gw.example.com/v1/models");
+    expect(testRequest(settings({ baseUrl: "https://corp.openai.azure.com/?tenant=a", type: "azure" }), null).url).toBe("https://corp.openai.azure.com/openai/models?api-version=2024-10-21&tenant=a");
+    expect(testRequest(settings({ baseUrl: "https://gw.example.com?tenant=a", type: "anthropic" }), null).url).toBe("https://gw.example.com/v1/models?tenant=a");
   });
 
   it("makes one GET that refuses redirects, so the key goes nowhere but the address entered", async () => {
