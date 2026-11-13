@@ -310,7 +310,13 @@ describe("launchers that run a tool by its name (commands-remote-r9-3, modes-y9-
       expect(d.verdict, cmd).toBe("ask");
       expect(d.rules, cmd).toContain(rule);
     }
-    for (const cmd of ["cross-env-shell NODE_ENV=test 'npm publish'", "cross-env-shell NODE_ENV=test npm publish"]) expect(decide(cmd).verdict, cmd).toBe("ask");
+    // The command a launcher's shell is handed is read too, and no words announce it (integ2-z-4).
+    for (const cmd of ["cross-env-shell NODE_ENV=test 'npm publish'", "cross-env-shell NODE_ENV=test npm publish"]) {
+      const d = decide(cmd);
+      expect(d.verdict, cmd).toBe("ask");
+      for (const rule of ["unknown.program", "unclear.hidden-command", "npm.publish"]) expect(d.rules, cmd).toContain(rule);
+      for (const words of ["run cross-env-shell NODE_ENV=test", "use cross-env-shell to publish to npm", "run cross-env-shell"]) expect(decide(cmd, { words }).verdict, `${cmd} (${words})`).toBe("ask");
+    }
     for (const cmd of ["nix-shell --run 'npm publish'", "nix-shell -p x --command 'npm publish'",
       "mise exec -c 'npm publish'", "mise x --command 'npm publish'"]) {
       expect(decide(cmd).rules, cmd).toContain("npm.publish");
