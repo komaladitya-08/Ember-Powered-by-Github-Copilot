@@ -3090,6 +3090,11 @@ class Engine extends Classifier {
     }
     const windowsSide = sc.os === "win32" || sc.family !== "posix" || pn.interop;
     if (windowsSide && (key === "bash" || (!NATIVE[key] && DISTRO_LAUNCHER.test(key)))) { distroLauncher(h); return; }
+    // A versioned name of a program with a row is that program (`python3.12 -c …`, `pip3.12`, `node20`): its row
+    // decides, never the allow-list's "a program Ember knows" (commands-remote-r9-3).
+    // What a program with no row was always asked stays beside it (generic(): `pip3.12 install x` read as a program
+    // handed `install`, as on main), so no versioned name decides less safely than it did.
+    if (!NATIVE[key] && NATIVE[unversioned(key)]) { this.dispatch({ ...h, key: unversioned(key) }); generic(h, true); return; }
     terminalDriver(h);
     const n = NATIVE[key];
     const from = this.findings.length;
@@ -3270,6 +3275,8 @@ class Engine extends Classifier {
     }
     // The shell's scope stays the one the command's redirections are opened in, whatever folder the wrapper moves
     // into (`env -C src patch -p1 < x.patch`, `sudo -D src …`: commands-y6-4).
+    const versioned = !NATIVE[key] && NATIVE[unversioned(key)] ? key : null;
+    if (versioned !== null) key = unversioned(key);
     const inner: H = { e: this, sc, s: { ...h.s, ps: undefined }, key, prog, nameArg, args: words.slice(1), pn, shellSc: h.shellSc ?? h.sc };
     // Native rows only: a wrapper runs a program, never a cmdlet or a cmd built-in.
     if (pn.isPath) {
@@ -3288,6 +3295,7 @@ class Engine extends Classifier {
     const from = this.findings.length;
     if (n) { this.runRow(n, inner); this.verbGuard(inner, from); }
     else { unknownProgram(inner); generic(inner, true); }
+    if (versioned !== null) generic({ ...inner, key: versioned }, true);
     toolPayload(inner);
     optionPaths(inner, !n || UNKNOWN_OPTIONS.has(key));
     this.unnamedWrites(key, inner.args, sc);
@@ -4216,6 +4224,48 @@ function toolPayload(h: H): void {
       const dd = args.findIndex(a => a.v === "--");
       if (dd >= 0 && !args.slice(dd + 1).some(a => a.v === null)) h.e.payload(args.slice(dd + 1), h.sc, "watchexec");
       else if (args.some(a => a.v === null || !a.v.startsWith("-"))) hidden();
+      return;
+    }
+    case "virtualenv": venvClear(h, args, "virtualenv"); return;
+    // Launchers that fetch or build an environment and then run a command in it (commands-remote-r9-3): the command
+    // is judged as its own; the launcher still asks as a program Ember doesn't know.
+    case "mise": case "rtx": {
+      const first = firstOperand(args);
+      if (first.v !== "exec" && first.v !== "x") return;
+      const c = args.findIndex((a, k) => k > first.at && a.v !== null && /^(-c|--command)(=|$)/.test(a.v));
+      const dd = args.findIndex((a, k) => k > first.at && a.v === "--");
+      if (c >= 0 && (dd < 0 || c < dd)) { const v = args[c].v ?? ""; shellText(v.includes("=") ? { ...args[c], v: v.slice(v.indexOf("=") + 1) } : args[c + 1], "mise exec"); return; }
+      if (dd >= 0) h.e.payload(args.slice(dd + 1), h.sc, "mise exec");
+      return;
+    }
+    case "nix": {
+      const first = firstOperand(args);
+      const rest = args.slice(first.at + 1);
+      // An installable from a registry or an address is a program nix downloads; `nix run` runs it.
+      if (first.v === "run" || ((first.v === "shell" || first.v === "develop") && rest.some(a => a.v === null || /^[^-].*[#:]/.test(a.v)))) h.e.add("escape", "escape.npx", SAYS.downloadsProgram);
+      if (first.v !== "shell" && first.v !== "develop" && first.v !== "run") return;
+      const c = rest.findIndex(a => a.v === "-c" || a.v === "--command" || (first.v === "run" && a.v === "--"));
+      if (c >= 0 && first.v !== "run") h.e.payload(rest.slice(c + 1), h.sc, `nix ${first.v}`);
+      else if (c >= 0) h.e.readArgs(rest.slice(c + 1), h.sc, { unresolvedUnclear: true });
+      return;
+    }
+    case "nix-shell": {
+      if (args.some(a => a.v !== null && /^(-p|--packages)$/.test(a.v))) h.e.add("escape", "escape.npx", SAYS.downloadsProgram);
+      for (let k = 0; k < args.length; k++) if (args[k].v === "--run" || args[k].v === "--command") shellText(args[++k], "nix-shell");
+      return;
+    }
+    case "pixi": case "devbox": {
+      const first = firstOperand(args);
+      if (first.v !== "run") return;
+      let k = first.at + 1;
+      while (k < args.length && args[k].v !== null && (args[k].v as string).startsWith("-") && args[k].v !== "--") k += /^(-e|--environment|--manifest-path|-c|--config|--env|--env-file)$/.test(args[k].v as string) ? 2 : 1;
+      if (args[k]?.v === "--") k++;
+      if (k < args.length) h.e.payload(args.slice(k), h.sc, `${h.key} run`);
+      return;
+    }
+    case "direnv": {
+      const first = firstOperand(args);
+      if (first.v === "exec" && args.length > first.at + 2) h.e.payload(args.slice(first.at + 2), h.sc, "direnv exec");
       return;
     }
     case "fd": case "fdfind": {
@@ -6058,6 +6108,55 @@ function emberText(h: H, code: string): void {
   if (/keystroke|key code|\bclick\b|system events|sendkeys/i.test(code)) h.e.refuseWith("ember.input", "input");
 }
 
+/**
+ * Python's own modules that, run with -m, only read, report on, check or build the project's files: they run as
+ * before. Any other module is a tool run by its name (pythonModule).
+ */
+const PY_OWN_MODULES = new Set([
+  "json.tool", "venv", "unittest", "doctest", "compileall", "py_compile", "site", "this", "sysconfig", "platform", "calendar", "tokenize", "ast", "dis",
+  "pickletools", "tabnanny", "zipapp", "base64", "gzip", "filecmp", "zipfile", "tarfile", "uuid", "random", "locale", "mimetypes", "inspect", "symtable",
+  "token", "keyword", "quopri", "os", "shutil", "sys", "pprint", "textwrap", "difflib", "lib2to3", "cProfile", "profile", "trace", "encodings.rot_13",
+]);
+/** Everyday modules of the project's own tools with no row and no command of their name on the lists. */
+const PY_TOOL_MODULES = new Set(["build", "nose", "nose2", "autopep8", "yapf", "pyupgrade", "pipdeptree", "pytest_cov", "xdist"]);
+
+/**
+ * `venv --clear DIR` (and virtualenv's) deletes everything in DIR before it makes the environment: judged as the
+ * recursive delete of DIR it is (commands-remote-r9-3).
+ */
+function venvClear(h: H, args: readonly Arg[], wrapper: string): void {
+  if (!args.some(a => a.v === "--clear")) return;
+  const values = new Set(["--prompt", "--python", "-p", "--upgrade-deps-with", "--app-data", "--seeder", "--creator", "--activators", "--extra-search-dir", "--pip", "--setuptools", "--wheel", "--discovery", "--try-first-with"]);
+  const dirs: Arg[] = [];
+  for (let k = 0; k < args.length; k++) {
+    const v = args[k].v;
+    if (v !== null && v.startsWith("-")) { if (values.has(v)) k++; continue; }
+    dirs.push(args[k]);
+  }
+  if (dirs.length === 0) { h.e.add("destroy", "posix.rm", "Deletes everything in a folder Ember can't name."); return; }
+  h.e.payload([lit("rm"), lit("-rf"), lit("--"), ...dirs], h.sc, wrapper);
+}
+
+/**
+ * `python -m <module> …` runs a tool by its name (commands-remote-r9-3): the tool's own row decides, as if the line
+ * were `<module> …` (`python3 -m twine upload dist/*` publishes, `python3 -m keyring get …` prints a password,
+ * `python3 -m sqlite3 a.db 'drop table x'` changes a database), and a tool Ember doesn't know asks as that program
+ * would (`unknown.program`, named by the module for the user's words to match). Python's own everyday modules and the
+ * project's test and build tools run as before; what the interpreter's row asks for is kept beside it.
+ */
+function pythonModule(h: H, mod: string): void {
+  if (h.e.readsAsMain) return;
+  const at = h.args.findIndex(a => a.v === "-m" || a.v === `-m${mod}`);
+  if (at < 0) return;
+  const rest = h.args.slice(at + (h.args[at].v === "-m" ? 2 : 1));
+  if (mod === "venv") { venvClear(h, rest, "python -m venv"); return; }
+  if (PY_OWN_MODULES.has(mod) || PY_TOOL_MODULES.has(mod)) return;
+  // The command a module's tool goes by: its own name, or with dashes for underscores (`pre_commit`, `pip_audit`).
+  const names = [mod, mod.replace(/_/g, "-")].map(n => n.toLowerCase());
+  const tool = names.find(n => NATIVE[n] !== undefined || knownProgram(n) || ORDINARY_VERBS[n] !== undefined) ?? mod;
+  h.e.payload([lit(tool), ...rest], h.sc, "python -m");
+}
+
 reg(NATIVE, Object.keys(INTERPRETERS).filter(k => !["awk", "gawk", "mawk", "nawk"].includes(k)), h => {
   const spec = INTERPRETERS[h.key];
   const inline = new Set(spec.inline);
@@ -6129,6 +6228,7 @@ reg(NATIVE, Object.keys(INTERPRETERS).filter(k => !["awk", "gawk", "mawk", "nawk
       else writeInto(h, to.v);
     }
     if (mod) nameCheck(h, mod);
+    if (mod) pythonModule(h, mod);
     // A module of this task's download (`curl … > x.py; python3 -m x`), or tests it downloaded that pytest or unittest
     // finds (conftest.py, test_x.py): it runs the download (commands-remote-c2-2).
     if (mod && /^[A-Za-z_][\w.]*$/.test(mod)) {
@@ -6156,7 +6256,7 @@ reg(NATIVE, Object.keys(INTERPRETERS).filter(k => !["awk", "gawk", "mawk", "nawk
   }
   const script = p.operands[0];
   if (script) {
-    if (/^(deno|bun)$/.test(h.key) && script.v && URL_LIKE.test(script.v)) { h.e.add("escape", "escape.npx", SAYS.downloadsProgram); return; }
+    if (/^(deno|bun)$/.test(h.key) && script.v && URL_LIKE.test(script.v)) { h.e.add("escape", "escape.npx", SAYS.downloadsProgram); packageLine(h, p.operands, h.key); return; }
     runScript(h, script);
     h.e.readArgs(p.operands.slice(1), h.sc);
     return;
@@ -7676,7 +7776,11 @@ reg(NATIVE, ["npm", "pnpm", "yarn", "bun", "corepack"], h => {
       if (h.key !== "npm" && h.key !== "corepack" && NEW_DELETERS.has(name.toLowerCase()) && given.length > 1) h.e.payload(given, h.sc, `${h.key} run ${name}`);
       return;
     }
-    case "exec": case "x": case "dlx": case "create": h.e.add("escape", "escape.npx", SAYS.downloadsProgram); return;
+    case "exec": case "x": case "dlx": case "create":
+      h.e.add("escape", "escape.npx", SAYS.downloadsProgram);
+      // The package's own command line is judged too (modes-y9-5); `create x` runs create-x's initialiser.
+      if (verb !== "create") packageLine(h, rest, `${h.key} ${verb}`);
+      return;
     case "init": case "innit":
       if (specs.length) h.e.add("escape", "escape.npx", SAYS.downloadsProgram);
       else if (!rest.some(a => /^(-y|--yes|-f|--force)$/.test(a.v ?? ""))) h.e.unclear("unclear.interactive", SAYS.interactive);
@@ -7705,7 +7809,97 @@ reg(NATIVE, ["npm", "pnpm", "yarn", "bun", "corepack"], h => {
     if (NEW_DELETERS.has(verb.toLowerCase()) && h.key !== "corepack" && h.args.length > g.verbAt + 1) h.e.payload(h.args.slice(g.verbAt), h.sc, `${h.key} ${verb}`);
   } else if (/^(test|start|stop|restart)$/.test(verb)) nameCheck(h, verb);
 });
-reg(NATIVE, ["npx", "pnpx", "bunx", "uvx", "yarnpkg-dlx"], h => { h.e.add("escape", "escape.npx", SAYS.downloadsProgram); });
+reg(NATIVE, ["npx", "pnpx", "bunx", "uvx", "yarnpkg-dlx"], h => { h.e.add("escape", "escape.npx", SAYS.downloadsProgram); packageLine(h, h.args, h.key); });
+
+/** The value options of the launchers that only set variables for the command they run. */
+const ENV_LAUNCH_VALUES = new Set(["-e", "-f", "--file", "--env-file", "--env", "--environments", "-v", "-r", "--rc-file", "-fk", "--env-keys-file", "--convention"]);
+/**
+ * Launchers that only load variables and run the command after them (commands-remote-r9-3): `dotenv [-e file] --
+ * cmd`, `dotenv run -- cmd`, `dotenvx run -- cmd`, `env-cmd -f file cmd`, `cross-env A=1 cmd`, `cross-env-shell A=1
+ * 'cmd'`, `with-contenv cmd`. The command is judged as if it were run directly (its row decides; a tool Ember doesn't
+ * know asks) beside what a program with no row is always asked (generic(): its words read as paths, and a word naming a
+ * program that runs others, as on main), and their own verbs that show or change the stored variables stay a program
+ * Ember doesn't know.
+ */
+reg(NATIVE, ["dotenv", "dotenvx", "env-cmd", "cross-env", "cross-env-shell", "with-contenv"], h => {
+  const args = h.args;
+  const asUnknown = (): void => { unknownProgram(h); generic(h, true); };
+  const dd = args.findIndex(a => a.v === "--");
+  let k = 0;
+  for (; k < (dd >= 0 ? dd : args.length); k++) {
+    const v = args[k].v;
+    if (v === null) { asUnknown(); return; }
+    if (v.startsWith("-")) {
+      // dotenv's -p prints a stored value: no launch.
+      if (v === "-p" || v === "--print") { asUnknown(); return; }
+      if (ENV_LAUNCH_VALUES.has(v)) k++;
+      continue;
+    }
+    if ((h.key === "cross-env" || h.key === "cross-env-shell") && /^[A-Za-z_][A-Za-z0-9_]*=/.test(v)) continue;
+    if ((h.key === "dotenv" || h.key === "dotenvx") && v === "run" && !args.slice(0, k).some(a => a.v === "run")) continue;
+    break;
+  }
+  if (dd >= 0) {
+    // With `--`, only the launcher's options and its `run` may stand before it.
+    if (k < dd) { asUnknown(); return; }
+    k = dd + 1;
+  } else if (h.key === "dotenvx" || (h.key === "dotenv" && !args.slice(0, k).some(a => a.v === "run") && /^(list|get|set|unset|decrypt|encrypt|keypair|ls|rotate|help|--help|--version)$/.test(args[k]?.v ?? ""))) {
+    // dotenvx always takes `--`; dotenv's verbs that print or change the stored variables are no launch.
+    asUnknown();
+    return;
+  }
+  // As a program with no row was always judged: its words read as paths, and a word that names a program that runs
+  // others asks how the one runs the other (`dotenv -- npm test` asked on main, and still does).
+  generic(h);
+  const words = args.slice(k);
+  if (words.length === 0) { if (h.key !== "with-contenv") unknownProgram(h); return; }
+  if (h.key === "cross-env-shell") {
+    if (words.some(a => a.v === null)) h.e.unclear("unclear.shell-text", "It runs shell text Ember can't see.");
+    else h.e.nested(words.map(a => a.v).join(" "), "sh", h.sc, h.key);
+    return;
+  }
+  h.e.payload(words, h.sc, h.key);
+});
+
+/** Options of the download-and-run runners that take the next word (`npx -p pkg`, `uvx --from pkg`, `pipx run --spec x`). */
+const PACKAGE_RUN_VALUES = new Set([
+  "-p", "--package", "--node-arg", "-n", "--shell", "--userconfig", "-w", "--workspace", "--cache", "--registry", "--filter", "-C", "--dir", "--from", "--with",
+  "--with-editable", "--with-requirements", "--python", "--index", "--index-url", "--extra-index-url", "--default-index", "--find-links", "--cache-dir", "--spec",
+  "--pip-args", "-i", "--config-file", "--cwd", "--prefix",
+]);
+
+/**
+ * The command line of a package a runner downloads and runs (modes-y9-5; `npx`, `pnpx`, `bunx`, `uvx`, `pipx run`,
+ * `npm exec`, `pnpm dlx`, `yarn dlx`, `bun x`): judged as a command of its own beside the runner's `escape.npx`, so
+ * a secret path or a secret-named variable it is handed, and what the package is known to do (`pm2 start` outlives
+ * Stop, `rimraf` deletes), are named for the modes that read findings. The program is the package's name without its
+ * scope and version; `-c`/`--call` text is shell text.
+ */
+function packageLine(h: H, words: readonly Arg[], wrapper: string): void {
+  if (h.e.readsAsMain) return;
+  for (let k = 0; k < words.length; k++) {
+    const v = words[k].v;
+    if (v === null) { h.e.readArgs(words.slice(k), h.sc, { unresolvedUnclear: true }); return; }
+    if (v === "--") continue;
+    if (v.startsWith("-")) {
+      const m = /^(-c|--call)(?:=(.*))?$/.exec(v);
+      if (m) {
+        const text = m[2] !== undefined ? m[2] : words[++k]?.v;
+        if (text === null || text === undefined) h.e.unclear("unclear.hidden-command", `Ember can't tell what ${wrapper} runs.`);
+        else h.e.nested(text, h.sc.family === "powershell" ? "powershell" : h.sc.family === "cmd" ? "cmd" : "sh", h.sc, wrapper);
+        continue;
+      }
+      if (PACKAGE_RUN_VALUES.has(v)) k++;
+      continue;
+    }
+    // An address or a registry spec (`https://…/a.ts`, `npm:pkg`): a program Ember can't name, its words read as paths.
+    if (URL_LIKE.test(v) || /^[a-z][a-z0-9+.-]*:/i.test(v)) { h.e.readArgs(words.slice(k + 1), h.sc, { unresolvedUnclear: true }); h.e.afterArgs(words.slice(k + 1), wrapper); return; }
+    const bin = (v.replace(/^@[^/]+\//, "").replace(/@[^@/]*$/, "").split(/[\\/]/).pop() ?? v) || v;
+    h.e.payload([{ ...words[k], v: bin, raw: bin }, ...words.slice(k + 1)], h.sc, wrapper);
+    return;
+  }
+}
+
 
 function pip(h: H): void {
   const g = globals(h, "pip");
@@ -7769,8 +7963,10 @@ reg(NATIVE, ["pipx", "poetry", "pipenv", "uv", "rye", "pdm", "hatch", "conda", "
     h.e.payload(p.operands, h.sc, `${h.key} ${verb}`);
     return;
   }
-  if ((h.key === "pipx" && verb === "run") || (h.key === "uv" && verb === "tool" && specs[0]?.v === "run") || (h.key === "deno" && verb === "run" && specs.some(a => URL_LIKE.test(a.v ?? ""))) || (h.key === "rye" && verb === "tools" && specs[0]?.v === "run")) {
+  if ((h.key === "pipx" && verb === "run") || (h.key === "uv" && verb === "tool" && specs[0]?.v === "run") || (h.key === "deno" && verb === "run" && specs.some(a => URL_LIKE.test(a.v ?? "") || /^(npm|jsr):/i.test(a.v ?? ""))) || (h.key === "rye" && verb === "tools" && specs[0]?.v === "run")) {
     h.e.add("escape", "escape.npx", SAYS.downloadsProgram);
+    // The package's own command line is judged too (modes-y9-5): after `pipx run`, `uv tool run`, `deno run`.
+    packageLine(h, h.key === "pipx" || h.key === "deno" ? rest : rest.slice(rest.indexOf(specs[0]) + 1), `${h.key} ${verb}`);
     return;
   }
   if ((h.key === "deno") && verb === "eval") { h.e.unclear("unclear.inline-code", "It runs code given on the command line."); return; }

@@ -20347,7 +20347,10 @@
   },
   {
    "cmd": "npx rimraf '{..,x}'",
-   "verdict": "ask"
+   "verdict": "refuse",
+   "rules": [
+    "ember.path"
+   ]
   },
   {
    "cmd": "yarn rimraf '{..,x}'",

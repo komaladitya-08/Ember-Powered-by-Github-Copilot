@@ -296,7 +296,18 @@ Ember stops and asks before a command that:
   word such as `exec` or `run`; naming the program in your words never announces it then. The project's own script
   given one (`./run.sh --exec 'npm publish'`) asks about that command, and runs as before when Ember finds nothing
   in it. `fd -x` and `-X`, `bat --pager`, `pandoc --filter`, `protoc --plugin`, a compiler's `-fplugin=` and
-  `just --shell` are read or ask the same way;
+  `just --shell` are read or ask the same way.
+  A launcher that runs a tool by its name is judged as that tool run directly: `python3 -m twine upload dist/*`
+  publishes, `python3 -m keyring get …` prints a password, `python3 -m venv --clear DIR` deletes what is in DIR, and
+  a module Ember doesn't know asks as a program it doesn't know (`python3 -m flask run`; Python's own everyday
+  modules and the project's test and build tools run: `-m pytest`, `-m venv .venv`, `-m json.tool`, `-m build`). A
+  versioned name is the same program (`python3.12 -c …`, `pip3.12 install`). `dotenv -- …`, `dotenvx run -- …`,
+  `env-cmd …`, `cross-env A=1 …` and `with-contenv …` only set variables, so the command after them decides (`cross-env
+  NODE_ENV=test jest` runs, `dotenv -- npm publish` asks); `mise exec -- …`, `nix shell … -c …`, `nix develop -c …`,
+  `pixi run …`, `devbox run …` and `direnv exec . …` are read the same way and still ask as programs Ember doesn't
+  know. What a runner downloads and runs (`npx`, `pnpx`, `bunx`, `uvx`, `pipx run`, `npm exec`, `pnpm dlx`, `yarn
+  dlx`, `deno run` with an address or `npm:`, `nix run`) asks as before, and its command line is judged as well, so
+  `npx -y sometool ~/.ssh/id_rsa` also says it reads a key and `npx pm2 start app.js` that it keeps running;
 - **Ember can't read with certainty**: `eval`, encoded commands (`powershell -EncodedCommand`, `base64 -d | sh`),
   aliases it can't see, unusual syntax, interactive programs such as `vim`, `less`, `top` or `python` with no
   script ("This opens an interactive program; you'd have to use it yourself in the command window."), a job count
