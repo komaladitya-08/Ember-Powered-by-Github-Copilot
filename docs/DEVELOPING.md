@@ -400,8 +400,9 @@ shortcuts (Delete, Ctrl+Enter, Alt+F4…) and Enter on such a button are always 
 for them. So are buttons, links and menu items that go past a security warning or turn a protection off (“Enable
 Macros”, “Keep anyway”, “Proceed to example.com (unsafe)”, “Load Remote Content”), and any answer to a message box or
 to a dialog's question but one that backs off (“Leave page”, “Resend” and “Close tabs” ask; Cancel, Close, “Stay on page”,
-“Remind me later” and No don't, but for No where the dialog asks to save, since it throws the changes away); the
-question quotes the dialog. A question in what was written in a working dialog, a mail's
+“Remind me later” and No don't, but for No where the dialog asks to save, since it throws the changes away), Enter in such a dialog
+included while no button of it has the keyboard (it presses the dialog's default button; on a Mac always), and on
+Windows a bare letter there (it presses the button it underlines); the question quotes the dialog. A question in what was written in a working dialog, a mail's
 body or a card's description, doesn't make its buttons ask once Ember has read the whole dialog and seen the field it was
 written in; where its read was cut short, the dialog's words still count, so a page's “Are you sure you want to leave?” asks at “Leave”. Any button, link or tab of a page (or of an app built on one) whose window's title
 mentions a checkout, a payment or billing asks every time too, saying so (“The window's title mentions billing, so this

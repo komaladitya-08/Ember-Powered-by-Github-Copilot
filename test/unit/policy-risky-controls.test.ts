@@ -528,3 +528,66 @@ describe("an unnamed button in a row, cell or item named by its content (regress
     expect(engine().decide(click("", { app: "soffice", window: "Letter.odt", place: { role: "document text", name: "Letter" } })).prompt).toContain("on the “Letter” document in ");
   });
 });
+
+/**
+ * Enter in a dialog that asks or warns presses its default button unless a button of its own has the keyboard (GTK's
+ * activate-default, Win32's IsDialogMessage), and on macOS always: where Ember can't tell which button that is, it asks
+ * as an answer to the dialog. A bare letter in a Win32 dialog presses the button it underlines (audit of 2026-11-13).
+ */
+describe("Enter in a dialog that asks, while no button of it has the keyboard", () => {
+  const del = { name: "", text: "Are you sure you want to permanently delete “Taxes 2025”? If you delete an item, it will be permanently lost.", alert: true };
+  const winDel = { name: "Delete File", text: "Are you sure you want to permanently delete this file?", messageBox: true };
+  const engineOn = (os: "linux" | "win32" | "darwin", grant: boolean, autonomy: boolean) => new PolicyEngine({ neverLook: () => [],
+    grants: () => (grant ? { "org.gnome.nautilus": "act", explorer: "act", finder: "act" } : {}), autonomy: () => (autonomy ? { ...ALL_SCOPES } : null),
+    isTerminalApp: () => false, os, keys: KEYS[os] });
+  const APP = { linux: "org.gnome.Nautilus", win32: "explorer", darwin: "Finder" } as const;
+  const key = (os: "linux" | "win32" | "darwin", role: string, name: string, value = "Return", dialog: ActionRequest["dialog"] = os === "linux" ? del : winDel): ActionRequest =>
+    ({ taskId: "t", kind: "keys", value, app: APP[os], window: "Documents", goal: "tidy up my documents folder", element: { role, name }, dialog });
+  const asksEvery = (r: ActionRequest, os: "linux" | "win32" | "darwin") => {
+    for (const [grant, autonomy] of [[true, false], [true, true], [false, true]]) {
+      const d = engineOn(os, grant, autonomy).decide(r);
+      expect(d, `grant=${grant} autonomy=${autonomy}`).toMatchObject({ verdict: "confirm", risky: true, remember: false });
+      expect(d.autonomy).toBeUndefined();
+    }
+  };
+  const focused: [string, string][] = [["check box", "Apply this action to all files"], ["radio button", "Skip"], ["label", "Are you sure?"], ["alert", ""], ["dialog", ""],
+    ["panel", ""], ["entry", "Type DELETE to confirm"], ["list item", "Taxes 2025.pdf"], ["image", "warning"]];
+
+  it.each((["linux", "win32", "darwin"] as const).flatMap(os => focused.map(([role, name]) => [os, role, name] as const)))(
+    "on %s, Enter with the %s “%s” focused asks every time, quoting the dialog (safety-privacy-r9-1)", (os, role, name) => {
+      for (const value of ["Return", "KP_Enter", "shift+Return"]) asksEvery(key(os, role, name, value), os);
+      const d = engineOn(os, true, false).decide(key(os, role, name));
+      expect(d.prompt).toContain("permanently delete");
+      expect(d.reason).toMatch(/answers a dialog's question/);
+    });
+
+  it("on macOS, Return with a button that backs off focused still asks: Return goes to the default button there (safety-privacy-r9-1)", () => {
+    asksEvery(key("darwin", "push button", "Cancel"), "darwin");
+  });
+
+  it("on Windows, a bare letter with no field focused asks: it presses the button it underlines (safety-privacy-r9-1)", () => {
+    for (const value of ["y", "d", "n"]) asksEvery(key("win32", "check box", "Apply this action to all files", value), "win32");
+  });
+
+  it("leaves the ordinary neighbours as they were: Space, Tab and Escape, a focused Cancel on Linux and Windows, a letter on Linux (safety-privacy-r9-1)", () => {
+    const announced = (r: ActionRequest, os: "linux" | "win32" | "darwin") => expect(engineOn(os, true, true).decide(r), `${os} ${r.value} ${r.element?.role}`).toMatchObject({ verdict: "allow", autonomy: true });
+    for (const os of ["linux", "win32", "darwin"] as const) {
+      for (const value of ["space", "Tab", "Escape"]) announced(key(os, "check box", "Apply this action to all files", value), os);
+    }
+    announced(key("linux", "push button", "Cancel"), "linux");
+    announced(key("win32", "push button", "Cancel"), "win32");
+    announced(key("linux", "check box", "Apply this action to all files", "y"), "linux");
+    // A letter typed into a field of the dialog is typing, not a button's letter.
+    announced(key("win32", "entry", "Type DELETE to confirm", "d"), "win32");
+  });
+
+  it("keeps a message box read whole whose one button only acknowledges as Ember's doubt, and one whose buttons all back off as before (safety-privacy-r9-1)", () => {
+    const ok = { name: "gedit", text: "Cannot find \"milk\"", alert: true, controls: [{ role: "push button", name: "OK" }] };
+    expect(engineOn("linux", true, true).decide({ ...key("linux", "label", "Cannot find \"milk\"", "Return", ok), app: "gedit", window: "notes.txt - gedit" })).toMatchObject({ verdict: "allow", autonomy: true });
+    const off = { ...del, controls: [{ role: "check box", name: "Apply this action to all files" }, { role: "push button", name: "Cancel" }, { role: "push button", name: "Close" }] };
+    expect(engineOn("linux", true, true).decide(key("linux", "check box", "Apply this action to all files", "Return", off))).toMatchObject({ verdict: "allow", autonomy: true });
+    // A dialog that asks nothing: Enter in Find & Replace's field is as before.
+    const find = { name: "Find & Replace", text: "Find: Replace:" };
+    expect(engineOn("linux", true, true).decide({ ...key("linux", "entry", "Find", "Return", find), app: "soffice", window: "letter.odt - LibreOffice Writer" }).autonomy).toBe(true);
+  });
+});

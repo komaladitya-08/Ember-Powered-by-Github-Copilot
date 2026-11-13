@@ -2953,6 +2953,16 @@ export class PolicyEngine {
     const asksInFew = asked.length <= 300 && (/[?？¿]/.test(asked) || ASKS_IF_SURE.test(plainText(asked)) || SENDS_AGAIN.test(plainText(asked)));
     const questioned = !!r.dialog && ((!!r.dialog.alert && !r.dialog.page) || asksInFew) && ANSWER_ROLES.test(role) && !backsOffDialog(name, told) && !plainDialog;
     const answersQuestion: Risk = { reason: "this answers a dialog's question or warning, and Ember can't be sure what that answer does", note };
+    // Enter in such a dialog presses its default button unless a button of its own has the keyboard (GTK's
+    // activate-default, Win32's IsDialogMessage; on macOS Return goes to the default button whatever has the keyboard),
+    // and in a Win32 dialog a letter presses the button it underlines: judged as an answer to the dialog, asked every
+    // time, but where a whole read shows its buttons all back off, or only one that only acknowledges (audit of
+    // 2026-11-13, safety-privacy-r9-1). Read by the dialog alone: which button is its default, nothing tells.
+    const asksDialog = !!r.dialog && ((!!r.dialog.alert && !r.dialog.page) || asksInFew);
+    const buttons = r.dialog?.controls?.filter(c => c.caption !== true && ANSWER_ROLES.test(c.role));
+    const harmless = !!buttons?.length && (buttons.every(c => backsOffDialog(c.name, told)) || (buttons.length === 1 && acknowledgesOnly(r, buttons[0].name, buttons[0].role, os)));
+    const pressesDefault = asksDialog && !harmless;
+    const answersDefault: Risk = { reason: "this answers a dialog's question or warning with one of its buttons, and Ember can't tell which", note: `I can't tell which of its buttons this presses.${note ? ` ${note}` : ""}` };
     // Any control of a page (or an Electron app's window) whose title mentions a payment: it may buy something whatever its
     // label says. The question says why, in words true of a title that only mentions one (a mail's subject, a file's name).
     const payment = ACTIVATING_ROLES.test(role) && (r.inPage || r.onPage) ? onPaymentPage(r.window) : null;
@@ -3039,6 +3049,7 @@ export class PolicyEngine {
           if (ACTIVATING_ROLES.test(role) && conflict) return goesAhead;
           if (pastWarning) return warned;
           if (questioned) return answersQuestion;
+          if (!/space$/.test(k) && pressesDefault && !(os !== "darwin" && ANSWER_ROLES.test(role))) return answersDefault;
           if (ACTIVATING_ROLES.test(role) && committing) return { reason: COMMITS_RISK, about: name };
           if (around) return BARE_IN(around);
           if (bare && (r.inPage || r.onPage)) return SENDS_GLYPH.test(name) ? BARE_GLYPH : BARE;
@@ -3048,6 +3059,7 @@ export class PolicyEngine {
           if (!/space$/.test(k) && enterMaySend(r, role, os)) return goesSomewhere(r, role, name, os) ? { ...ENTER_IN_FIELD, plain: true } : ENTER_IN_FIELD;
           return null;
         }
+        if (os === "win32" && /^(shift\+)?[a-z0-9]$/.test(k) && pressesDefault && !TEXT_FIELD.test(role) && !r.element?.secret) return answersDefault;
         if (MNEMONIC_KEY.test(k)) return { reason: "this shortcut presses whichever button has that letter, and Ember can't tell which" };
         // In an open menu a plain letter picks the item with that underlined letter.
         if (/menu/.test(role) && /^(shift\+)?[a-z0-9]$/.test(k)) return { reason: "in an open menu a letter picks whichever item has that letter, and Ember can't tell which" };
