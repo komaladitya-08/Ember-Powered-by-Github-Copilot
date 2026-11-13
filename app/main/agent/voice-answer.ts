@@ -196,7 +196,7 @@ export function voiceAnswer(i: VoiceAnswerInput): VoiceAnswerOutcome {
 }
 
 /** Every reason a spoken answer can be turned away: voiceAnswer's, the Confirmer's, and an answer said over Ember's voice. */
-export type VoiceAnswerNote = VoiceAnswerRefusal | "click-only" | "not-yet" | "stale" | "locked" | "heard-over" | "over-sound" | "sound-unknown" | "unclear";
+export type VoiceAnswerNote = VoiceAnswerRefusal | "click-only" | "not-yet" | "stale" | "locked" | "heard-over" | "over-sound" | "name-doubted" | "sound-unknown" | "unclear";
 
 /**
  * What the bubble says under the question when a spoken answer wasn't taken (the question stays up): what happened,
@@ -217,6 +217,9 @@ export const VOICE_ANSWER_REFUSED: Readonly<Record<VoiceAnswerNote, string>> = {
   // A nameless answer over a song or a video, which the voice gate drops without a voiceprint (match.ts "dropped"). So
   // for a yes said a pause after "Hey Ember" (V2-S6): the name was said, so the line asks for both in one go.
   "over-sound": "Something else was playing, so I couldn't tell that was for me: say your answer right after my name, in one go.",
+  // So for one said right after the name, whose "Ember" couldn't be told from what the speakers were playing (engine.ts
+  // namedByUser): asking for the name the user had just said told them to do what they did (voice-safety-x9-4).
+  "name-doubted": "Something else was playing, and I couldn't tell whether you or it said my name: click Allow, or say it once more.",
   // A nameless yes where nothing can tell whether other sound plays (macOS, Linux without parec, Windows before its
   // output watch has looked: engine.ts soundKnown), which the gate drops without a voiceprint as over other sound.
   "sound-unknown": "I can't tell here whether something else is playing, so I didn't take that as a yes: say my name first, then your answer.",

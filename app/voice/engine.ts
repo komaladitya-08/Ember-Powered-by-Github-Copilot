@@ -112,18 +112,21 @@ export type VoiceEvent =
    * for Voice Match to vouch for it (APPROVAL_MIN_SECONDS, match.ts); `restScore`: that part's own score against the
    * enrolled voiceprint, unrounded, when it had one (absent: too little voice to score, which is never trusted).
    * `soundUnknown` (with `overSound`): a yes to a question said without the name where nothing could tell whether other
-   * sound played (soundKnown), so it is taken as said over it.
+   * sound played (soundKnown), so it is taken as said over it. `nameDoubted` (with `overSound`): the recognizer wrote the
+   * name first, but it couldn't be told from what the speakers played (namedByUser), so the note says so rather than ask
+   * for the name the user just said (voice-safety-x9-4).
    */
-  | { type: "utterance"; text: string; ms: number; window: ListeningWindow; cut?: boolean; overEmber?: true; overSound?: true; soundUnknown?: true; verified?: true; short?: true; restScore?: number }
+  | { type: "utterance"; text: string; ms: number; window: ListeningWindow; cut?: boolean; overEmber?: true; overSound?: true; soundUnknown?: true; nameDoubted?: true; verified?: true; short?: true; restScore?: number }
   /** `voice`: Voice Match found the request wasn't the owner's (`score`: how close it came); it is heard all the same (match.ts). */
   | { type: "rejected"; keyword: string; reason: "self" | "speakers" | "check" | "voice"; heard?: string; score?: number }
   /**
    * What was said in a conversation over other sound, without the name, wasn't heard: it can't be told from the song's
    * words (match.ts, owner decision of 2026-11-05). Main says so, once a conversation (voice-listening-10). `answer`:
    * which answer it read as, in any window, never the words, so a question up says so once (owner's report of
-   * 2026-11-12); `window` "answer": from a question's answer window; `reason` "sound-unknown": see soundKnown.
+   * 2026-11-12); `window` "answer": from a question's answer window; `reason` "sound-unknown": see soundKnown;
+   * `nameDoubted`: as the utterance's.
    */
-  | { type: "dropped"; reason: "over-sound" | "sound-unknown"; window?: "answer"; answer?: "allow" | "deny" }
+  | { type: "dropped"; reason: "over-sound" | "sound-unknown"; window?: "answer"; answer?: "allow" | "deny"; nameDoubted?: true }
   /**
    * In a conversation, while one of Ember's questions is up, an answer ("Allow.", "Not now.") was said over Ember's voice
    * in words Ember was saying itself (its read-out names them): never taken, as it may be Ember's own, but no longer
@@ -882,6 +885,8 @@ export class VoiceEngine {
   private overEmber = false;
   /** Said with other sound playing and not by name: it counts only if it sounds like the owner (match.ts). */
   private overSound = false;
+  /** …though the recognizer wrote the name first (`nameDoubted` on the utterance). */
+  private nameDoubted = false;
   private cutIn = false;
   private cutInCheckedAt = 0;
   /** Ember's voice is ducked for the speech under way. */
@@ -1994,6 +1999,7 @@ export class VoiceEngine {
     this.afterHush = 0;
     this.overEmber = false;
     this.overSound = false;
+    this.nameDoubted = false;
     this.soundUnknown = false;
     this.clipped = false;
     this.cutIn = false;
@@ -2346,6 +2352,7 @@ export class VoiceEngine {
     if (this.mode.reason === "wake" && !this.overSound && this.questionWaiting && spokenAnswer(text) === "allow" && this.soundPlaying(t0)) {
       if (!withWake || (later && !joined && !named) || (this.speakersSounded(spokenFrom, t0) && this.speakersSaid(spokenFrom, heard))) this.overSound = true;
     }
+    this.nameDoubted = this.overSound && !this.soundUnknown && !named && (this.nameless || later) && calledByName(heard);
     this.sendRequest(text, audio, withWake, cut, t0);
   }
 
@@ -2368,7 +2375,7 @@ export class VoiceEngine {
     this.followUps = window === "follow-up" ? this.followUps + 1 : window === "answer" ? this.followUps : 0;
     this.requestAudio = audio;
     this.requestWithWake = withWake;
-    this.emit({ type: "utterance", text, ms: this.now() - t0, window, ...(cut ? { cut } : {}), ...(this.overEmber ? { overEmber: true as const } : {}), ...(this.overSound ? { overSound: true as const } : {}), ...(this.soundUnknown ? { soundUnknown: true as const } : {}) });
+    this.emit({ type: "utterance", text, ms: this.now() - t0, window, ...(cut ? { cut } : {}), ...(this.overEmber ? { overEmber: true as const } : {}), ...(this.overSound ? { overSound: true as const } : {}), ...(this.soundUnknown ? { soundUnknown: true as const } : {}), ...(this.overSound && this.nameDoubted ? { nameDoubted: true as const } : {}) });
     this.echo *= ECHO_DECAY;
     if (conversation && this.mode.kind === "listening") {
       // The microphone stays with the user: the next thing they say is heard as this one was, whatever Ember does meanwhile.

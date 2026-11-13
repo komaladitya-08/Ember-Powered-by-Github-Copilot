@@ -2029,7 +2029,8 @@ function start(): void {
         // It read as an answer, in a question's answer window, a follow-up or a conversation over a playing video (the
         // default): the question says so, once, and how to be heard, rather than nothing at all (owner's report of
         // 2026-11-12). ("sound-unknown": nothing could tell whether other sound played, macOS say, so a yes needed the name.)
-        if (e.answer && confirmer?.waiting && overSoundFor !== confirmer.currentNumber) { overSoundFor = confirmer.currentNumber; refuseVoiceAnswer(e.reason, e.answer); }
+        // (`nameDoubted`: the user said the name first, and it couldn't be told from the speakers: voice-safety-x9-4.)
+        if (e.answer && confirmer?.waiting && overSoundFor !== confirmer.currentNumber) { overSoundFor = confirmer.currentNumber; refuseVoiceAnswer(e.nameDoubted && e.reason === "over-sound" ? "name-doubted" : e.reason, e.answer); }
         if (e.reason !== "over-sound" || !conversing || overSoundSaid || statusBy.listen !== CONVERSATION_STATUS) break;
         overSoundSaid = true;
         setStatus("listen", OVER_SOUND_STATUS);

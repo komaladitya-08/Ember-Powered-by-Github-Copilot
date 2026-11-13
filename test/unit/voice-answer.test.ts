@@ -364,7 +364,13 @@ describe("a spoken yes from anyone heard while Voice Match is off, its default (
     expect(voiceAnswerSaid("over-sound", ["Control Alt Y to allow"])).toBe("Something else was playing, so I couldn't tell that was for me: say your answer right after my name, in one go.");
     const main = fs.readFileSync(path.join(__dirname, "../../app/main/main.ts"), "utf8");
     // Whichever window it was said in: a conversation over a playing video (the default) or a follow-up too.
-    expect(main).toMatch(/if \(e\.answer && confirmer\?\.waiting && overSoundFor !== confirmer\.currentNumber\) \{ overSoundFor = confirmer\.currentNumber; refuseVoiceAnswer\(e\.reason, e\.answer\); \}/);
+    expect(main).toMatch(/if \(e\.answer && confirmer\?\.waiting && overSoundFor !== confirmer\.currentNumber\) \{ overSoundFor = confirmer\.currentNumber; refuseVoiceAnswer\(e\.nameDoubted && e\.reason === "over-sound" \? "name-doubted" : e\.reason, e\.answer\); \}/);
+  });
+
+  it("says, when an answer said right after the name wasn't taken over other sound, that the name couldn't be told from the speakers, rather than ask for the name just said (voice-safety-x9-4)", () => {
+    expect(VOICE_ANSWER_REFUSED["name-doubted"]).toBe("Something else was playing, and I couldn't tell whether you or it said my name: click Allow, or say it once more.");
+    expect(VOICE_ANSWER_REFUSED["name-doubted"]).not.toContain("right after my name");
+    expect(spokenAnswer(VOICE_ANSWER_REFUSED["name-doubted"])).toBeNull();
   });
 
   it("says why a yes without the name wasn't taken where nothing can tell whether other sound plays, and how to be heard (owner's report of 2026-11-12)", () => {

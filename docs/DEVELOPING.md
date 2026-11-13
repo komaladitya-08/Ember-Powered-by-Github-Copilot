@@ -765,7 +765,9 @@ microphone's loudness through that speech doesn't follow the stream's, 1 kHz and
 (`followsSpeakers`, `LEVEL_BAND` in app/voice/room-band.ts): a page's stream can carry what no speaker plays, and a loud
 low hum in it, under its own “Ember, allow it.”, made both its spotter and the recognizer miss the words there while
 the room heard them alone, so it was the user's yes by name in 6 of 48 runs on the real models with a 50 Hz hum
-(voice-safety-x9-2; none of 48 now, with a hum of 50, 120, 200 or 300 Hz). While the stream holds sound, the recognizer's “Ember, …” alone is no name. Before, nothing asked the stream in these windows, and a video's, a call's or a web page's own “Ember, allow”
+(voice-safety-x9-2; none of 48 now, with a hum of 50, 120, 200 or 300 Hz). While the stream holds sound, the recognizer's “Ember, …” alone is no name, and where it
+was dropped so the question says it couldn't tell whether you or the speakers said the name (`name-doubted`), not to
+say the name you had just said (voice-safety-x9-4). Before, nothing asked the stream in these windows, and a video's, a call's or a web page's own “Ember, allow”
 answered the question it was heard in, where the same words at idle are ignored (second review of the voice lane,
 V2-S2). Measured on the real models, a video saying “Ember, okay.” and its like to a question, 80 runs: 25 were taken
 as a yes by name before, 3 with the two spotters alone (the stream's spotter misses a name now and then), none with the

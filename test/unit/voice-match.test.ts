@@ -93,6 +93,13 @@ describe("VoiceGate", () => {
     expect(sent).toEqual([{ type: "dropped", reason: "over-sound", answer: "allow" }, { type: "dropped", reason: "over-sound", answer: "allow" }, { type: "dropped", reason: "over-sound" }]);
   });
 
+  it("says when the answer it dropped over other sound began with a name that couldn't be told from the speakers, so the question doesn't ask for the name just said (voice-safety-x9-4)", () => {
+    const sent: VoiceEvent[] = [];
+    const g = new VoiceGate(() => fakePrinter(), e => sent.push(e), () => undefined);
+    g.event({ type: "utterance", text: "Allow it.", ms: 100, window: "answer", overSound: true, nameDoubted: true }, Float32Array.from([0, 1]));
+    expect(sent).toEqual([{ type: "dropped", reason: "over-sound", window: "answer", answer: "allow", nameDoubted: true }]);
+  });
+
   it("says when the yes it dropped was dropped because nothing could tell whether other sound played, so the question says that (owner's report of 2026-11-12)", () => {
     const sent: VoiceEvent[] = [];
     const g = new VoiceGate(() => fakePrinter(), e => sent.push(e), () => undefined);

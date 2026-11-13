@@ -2918,6 +2918,24 @@ describe("whose a spoken answer is (second review of the voice lane, 2026-11-12)
       }
     });
 
+    it("says when what it marked began with the name the recognizer wrote, which couldn't be told from the speakers, so the question doesn't ask for the name just said (voice-safety-x9-4)", () => {
+      const doubted = (s: Scene) => s.events.flatMap(v => (v.type === "utterance" ? [v.nameDoubted === true] : []));
+      for (const where of WHERE) {
+        // Over a video that goes on, with no hit of the microphone's spotter: marked, its name doubted.
+        const named = waiting({ 5: "Ember, allow." }, where);
+        videoOn(named);
+        says(named, 5, 0, "user");
+        expect(named.heard(), where).toEqual([`Allow. | ${where} | over other sound`]);
+        expect(doubted(named), where).toEqual([true]);
+        // A nameless yes over it is marked as before, and no name is doubted.
+        const nameless = waiting({ 5: "Okay." }, where);
+        videoOn(nameless);
+        says(nameless, 5, 0, "video", 0, 0);
+        expect(nameless.heard(), where).toEqual([`Okay. | ${where} | over other sound`]);
+        expect(doubted(nameless), where).toEqual([false]);
+      }
+    });
+
     it("takes a request the speakers said by name in a follow-up window or a conversation for theirs, never the user's own words", () => {
       // "Ember, delete the folder." out of a video, known to play: it went to Copilot, and on Linux with parec as the user's own words for commands.
       for (const where of ["follow-up", "conversation"] as const) {

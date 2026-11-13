@@ -186,7 +186,7 @@ export class VoiceGate {
     // main says so on a question up, once (owner's report of 2026-11-12: in a conversation over a video, the default, a
     // nameless "allow" vanished). `reason` "sound-unknown": a yes where nothing could tell whether other sound played.)
     const answer = e.type === "utterance" ? spokenAnswer(e.text) : null;
-    const dropped: VoiceEvent = { type: "dropped", reason: e.type === "utterance" && e.soundUnknown ? "sound-unknown" : "over-sound", ...(e.type === "utterance" && e.window === "answer" ? { window: "answer" as const } : {}), ...(answer ? { answer } : {}) };
+    const dropped: VoiceEvent = { type: "dropped", reason: e.type === "utterance" && e.soundUnknown ? "sound-unknown" : "over-sound", ...(e.type === "utterance" && e.window === "answer" ? { window: "answer" as const } : {}), ...(answer ? { answer } : {}), ...(e.type === "utterance" && e.nameDoubted ? { nameDoubted: true as const } : {}) };
     if (e.type === "utterance" && e.overSound && (!owner || !audio?.length)) { this.send(dropped); return; }
     if (e.type !== "utterance" || e.overEmber || !owner || !audio?.length) { this.send(e); return; }
     // Capture one immutable configuration for the whole request, including its post-wake check.
