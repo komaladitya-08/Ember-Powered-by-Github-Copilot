@@ -364,7 +364,8 @@ environment, only through `scripts/runtime-env-live.sh`, which gives it a networ
     only `https://github.com` and its subdomains), shows **Waiting for you to finish in your browser** with **Check
     again**, then **Connected**; one whose sign-in lapsed says **Needs you to sign in again**.
   - Every add and connect first shows a consent card in place: only you add, read-only tools run once you agree,
-    Ember asks before any tool that changes or sends anything, results are information and never instructions, and
+    Ember asks before any tool that changes or sends anything except in Autopilot, where it goes ahead and says so
+    (`ASKS_BEFORE_CHANGES`, `FEATURE_CONSENT_VERSION.extensions` 4; integrations-r10-1), results are information and never instructions, and
     where the item reaches (the marketplace's source, or GitHub's Copilot service for a connector).
     The first yes also records extensions' own consent (`settings.extensions`, `FEATURE_CONSENT_VERSION.extensions`;
     `consentCard`'s words are pinned to that version in extensions-runtime.test.ts) and turns extensions on; nothing

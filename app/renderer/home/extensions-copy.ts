@@ -257,7 +257,7 @@ export const INSTALLED_TAG = "Added";
 
 export const CONNECTORS_HEADING = "Connectors";
 export const CONNECTORS_EMPTY = "GitHub-hosted connectors aren't available in Ember yet.";
-export const CONNECTORS_HINT = "To use an MCP server, add its plugin's marketplace above. Ember loads the plugin's MCP tools and asks before tools that can change things.";
+export const CONNECTORS_HINT = "To use an MCP server, add its plugin's marketplace above. Ember loads the plugin's MCP tools and asks before tools that can change things, except in Autopilot.";
 
 /** A connector's row: its state and its one button. */
 export interface ConnectorRow {
@@ -300,6 +300,12 @@ export const agreedTo = (i: Pick<Installed, "name" | "consented">) => (i.consent
 // ───── The consent card, before anything is added or connected ─────
 
 /** Bump FEATURE_CONSENT_VERSION.extensions with any change to these words (CLAUDE.md "Consent"). */
+/**
+ * What a card promises about questions, true in every approval mode (gate.ts): in Autopilot a tool that changes or
+ * sends is announced and used, not asked about (integrations-r10-1: the card said it always asked).
+ */
+export const ASKS_BEFORE_CHANGES = "It asks you every time before a tool that changes or sends anything, except in Autopilot: there it goes ahead and tells you as it does.";
+
 export interface ConsentCard { title: string; lines: string[]; tools?: ToolInfo[]; yes: string; no: string }
 
 /**
@@ -317,7 +323,7 @@ export function consentCard(e: Pick<MarketplaceEntry, "name" | "kind" | "source"
     title: connector ? `Before you connect “${e.name}”` : `Before you add “${e.name}”`,
     lines: [
       "Only you add, turn off and remove extensions, here in settings. Ember never adds one by itself.",
-      connector ? "Once you agree, Ember may use its read-only tools when they help with what you ask. It asks you every time before a tool that changes or sends anything." : "Adding it runs its servers to find their tools. Ember shows you that list next, and uses none until you review it and agree.",
+      connector ? `Once you agree, Ember may use its read-only tools when they help with what you ask. ${ASKS_BEFORE_CHANGES}` : "Adding it runs its servers to find their tools. Ember shows you that list next, and uses none until you review it and agree.",
       "What its tools return is treated as information, never as instructions, and every use is in What Ember did.",
       "If its tools change later, Ember stops using them until you agree again.",
       reach,
@@ -330,6 +336,8 @@ export function consentCard(e: Pick<MarketplaceEntry, "name" | "kind" | "source"
 
 /** The re-agree card for an item whose tools changed: the same promises, and the tools as they are now. */
 export function reagreeCard(i: Installed): ConsentCard {
+  // "Read-only" only where some are (integrations-r10-3: a plugin with none was promised "these read-only tools").
+  const readOnly = (i.reviewTools ?? i.tools).some(t => t.readOnly);
   return {
     title: i.consented ? `Agree again to “${i.name}”` : `Review the tools in “${i.name}”`,
     tools: i.reviewTools ?? i.tools,
@@ -337,7 +345,7 @@ export function reagreeCard(i: Installed): ConsentCard {
       `Tools to review: ${toolCounts(i.reviewTools ?? i.tools)}.`,
       ...(i.reaches ?? []),
       "Only you add, turn off and remove extensions, here in settings. Ember never adds one by itself.",
-      "Once you agree, Ember may use these read-only tools when they help with what you ask. It asks you every time before a tool that changes or sends anything.",
+      `Once you agree, Ember may use these ${readOnly ? "read-only " : ""}tools when they help with what you ask. ${ASKS_BEFORE_CHANGES}`,
       "What its tools return is treated as information, never as instructions, and every use is in What Ember did.",
       "If its tools change later, Ember stops using them until you agree again.",
     ],

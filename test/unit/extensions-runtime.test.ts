@@ -398,7 +398,7 @@ describe("the administrator's switch for extensions", () => {
 
   it("starts with extensions off and unagreed", () => {
     expect(DEFAULT_SETTINGS.extensions).toEqual({ on: false, consent: { version: 0, at: null } });
-    expect(FEATURE_CONSENT_VERSION.extensions).toBe(3);
+    expect(FEATURE_CONSENT_VERSION.extensions).toBe(4);
   });
 
   it("is agreed to only through its card, never with Home's general settings changes (integrations-i1)", () => {
@@ -1931,8 +1931,9 @@ describe("extensions' first-use card", () => {
       return crypto.createHash("sha256").update([c.title, ...c.lines, c.yes, c.no].join("\n")).digest("hex");
     };
     // 3: a plugin from Copilot's built-in marketplace is no longer said to come from one "you added" (integrations-4).
-    expect(FEATURE_CONSENT_VERSION.extensions).toBe(3);
-    expect([hash("plugin"), hash("connector"), hash("plugin", true)]).toEqual(["430fb53f7b9eb2c7d866ba26817bea7c32572308a22099d01d3b203cb0beccc3", "8f9a73553bd891993a365437aaf5528dceabb10802ab41b2be1c431b48885a88", "ef19526fc00c2e459955dccede9c806f0787edd608d2b8a0ff8dedc2489d619a"]);
+    // 4: the cards say Autopilot uses a tool that changes or sends without asking, and tells you (integrations-r10-1).
+    expect(FEATURE_CONSENT_VERSION.extensions).toBe(4);
+    expect([hash("plugin"), hash("connector"), hash("plugin", true)]).toEqual(["430fb53f7b9eb2c7d866ba26817bea7c32572308a22099d01d3b203cb0beccc3", "442fc4c1aab8822f234460728a2ec8a0e2a35a5966c9a8a8bba9638025cfe494", "ef19526fc00c2e459955dccede9c806f0787edd608d2b8a0ff8dedc2489d619a"]);
   });
 
   it("is recorded only by agree(), from Home, and only while the organisation allows extensions", async () => {

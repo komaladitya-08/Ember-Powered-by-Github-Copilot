@@ -12,6 +12,8 @@ import { ENTRIES_MAX, registerExtensionsIpc, type ExtensionsIpcEvent } from "../
 import { demoExtensionsApi, demoVariant } from "../../app/main/extensions-demo";
 import { EXTENSIONS_IPC } from "../../app/shared/ipc";
 import type { ExtensionsApi, Installed, MarketplaceEntry } from "../../app/shared/extensions";
+import { classify } from "../../app/main/extensions/gate";
+import { FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
 
 const item = (over: Partial<Installed> = {}): Installed => ({
   id: "plugin:notes", kind: "plugin", name: "Release notes", publisher: "GitHub", source: "github/copilot-plugins", version: "1.4.0",
@@ -137,6 +139,28 @@ describe("the consent card says plainly what Ember will do before anything is ad
     expect(card.no).toBe("Not now");
   });
 
+  it("never promises a question Autopilot doesn't ask: each card says Autopilot uses a changing tool and tells you (integrations-r10-1)", () => {
+    // The gate in force: a tool that changes things asks, and in Autopilot is announced and used.
+    const g = { allowed: true, stopped: false, item: { enabled: true, consented: true }, tool: { name: "publish", hash: "h", annotations: {} } as never, shownAsPinned: true, tainted: false, refused: false };
+    expect(classify(g).verdict).toBe("ask");
+    expect(classify({ ...g, autopilot: true }).verdict).toBe("announce");
+    const AUTOPILOT = "It asks you every time before a tool that changes or sends anything, except in Autopilot: there it goes ahead and tells you as it does.";
+    expect(xc.reagreeCard(item()).lines).toContain(`Once you agree, Ember may use these read-only tools when they help with what you ask. ${AUTOPILOT}`);
+    expect(xc.consentCard(entry({ kind: "connector", name: "Slack" })).lines).toContain(`Once you agree, Ember may use its read-only tools when they help with what you ask. ${AUTOPILOT}`);
+    for (const c of [xc.reagreeCard(item()), xc.reagreeCard(item({ consented: false })), xc.consentCard(entry({ kind: "connector" }))]) {
+      expect(c.lines.join(" ")).not.toMatch(/asks you every time before a tool that changes or sends anything\.(?! )/);
+    }
+    // The card's words changed, so what was agreed to before them is asked again.
+    expect(FEATURE_CONSENT_VERSION.extensions).toBe(4);
+  });
+
+  it("calls tools read-only on the review card only when some are (integrations-r10-3)", () => {
+    const card = xc.reagreeCard(item({ consented: false, tools: [], reviewTools: [{ name: "publish", description: "Publishes.", readOnly: false }] }));
+    expect(card.lines[0]).toBe("Tools to review: 1 tool that can change things.");
+    expect(card.lines.join(" ")).not.toMatch(/read-only/);
+    expect(card.lines.join(" ")).toMatch(/^.*Once you agree, Ember may use these tools when they help with what you ask\. It asks you every time/);
+  });
+
   it("says a connector goes through GitHub, signed in on GitHub's page", () => {
     const c = xc.consentCard(entry({ kind: "connector", name: "Slack" }));
     expect(c.title).toBe("Before you connect “Slack”");
@@ -211,7 +235,7 @@ describe("the section says why extensions can't be used", () => {
   it("names unavailable hosted connectors honestly and points to the supported plugin path", () => {
     expect(xc.EXTENSIONS_INTRO).toBe("Extensions give Ember more tools through plugins from marketplaces you add. Only you can add them, here.");
     expect(xc.CONNECTORS_EMPTY).toBe("GitHub-hosted connectors aren't available in Ember yet.");
-    expect(xc.CONNECTORS_HINT).toBe("To use an MCP server, add its plugin's marketplace above. Ember loads the plugin's MCP tools and asks before tools that can change things.");
+    expect(xc.CONNECTORS_HINT).toBe("To use an MCP server, add its plugin's marketplace above. Ember loads the plugin's MCP tools and asks before tools that can change things, except in Autopilot.");
   });
 
   it("is unavailable without a runtime, off under the organisation's policy, and off while locked down", () => {
