@@ -4999,12 +4999,10 @@ function tarSpec(bsd: boolean): OptSpec {
 }
 /**
  * Whether tar's options name a command it runs: a filter, a compressor, a volume script, a checkpoint's action, a shell.
- * GNU's `-F` is `--info-script` (commands-remote-y8-4). `-I` counts for every tar, as it did at 4d64d3a: bsdtar and a
- * Mac's own tar read a list of names from its file (the row reads that file too), but the `tar` on a Mac may be GNU's,
- * which runs the program it names (commands-held-x9-5).
+ * GNU's `-F` is `--info-script` (commands-remote-y8-4).
  */
 function tarRunsCommand(p: Parsed, bsd: boolean): boolean {
-  return has(p, "to-command", "use-compress-program", "info-script", "new-volume-script", "checkpoint-action", "rsh-command", "I") || (!bsd && has(p, "F")) || values(p, "checkpoint-action").length > 0;
+  return has(p, "to-command", "use-compress-program", "info-script", "new-volume-script", "checkpoint-action", "rsh-command") || (!bsd && has(p, "I", "F")) || values(p, "checkpoint-action").length > 0;
 }
 reg(NATIVE, ["tar", "bsdtar", "gtar"], h => {
   const a = [...h.args];
@@ -5021,7 +5019,11 @@ reg(NATIVE, ["tar", "bsdtar", "gtar"], h => {
   const dir = values(p, "C", "directory")[0];
   // A word Ember can't see all of is read by its written text too, quotes dropped, so an option whose value is a variable
   // or a substitution (`--to-command="$T"`, `-I"$T"`) asks as the value written out does (commands-remote-y8-4).
-  if (tarRunsCommand(p, bsd) || a.some(w => w.v === null && tarRunsCommand(parseOpts([lit(w.raw.replace(/["']/g, ""))], tarSpec(bsd)), bsd))) h.e.unclear("unclear.tar-command", "It runs a command Ember can't see.");
+  // bsdtar's and a Mac's own -I names a list of files (read below), but it asked for every tar at 4d64d3a, and the `tar`
+  // on a Mac may be GNU's, which runs the program -I names: it still asks wherever main's table saw an -I
+  // (commands-held-x9-5).
+  const mainI = bsd && has(parseOpts(a, TAR_MAIN), "I");
+  if (tarRunsCommand(p, bsd) || mainI || a.some(w => w.v === null && tarRunsCommand(parseOpts([lit(w.raw.replace(/["']/g, ""))], tarSpec(bsd)), bsd))) h.e.unclear("unclear.tar-command", "It runs a command Ember can't see.");
   // The lists of names to pack or leave out are files tar reads, and its errors show their lines (review #174).
   for (const f of values(p, "T", "files-from", "X", "exclude-from", ...(bsd ? ["I"] : []))) if (f !== null && !STDIN_NAME.test(f)) h.e.usePath(lit(f), "read", h.sc);
   // An incremental backup's snapshot file, which tar rewrites, and the owner and group maps it reads (commands-remote-v5-3).

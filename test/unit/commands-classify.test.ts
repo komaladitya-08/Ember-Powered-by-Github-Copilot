@@ -3329,6 +3329,9 @@ describe("commands held to main at 4d64d3a: no way of reading one decides less s
     // What the rows have learned since still stands: the file -n writes, and a Mac's -I list read as a file.
     expect(decided("dos2unix -n in.txt out.txt").rules).toEqual(["redirect.overwrite"]);
     expect(decided("tar -cf out.tar -I ~/.ssh/id_rsa", "darwin").classes).toContain("secret");
+    // Only where main's table saw an -I: behind a letter it gave a value (`-HI` was -H with the value I), bsdtar's -I
+    // is the list it is, and the line runs as it did on both.
+    for (const cmd of ["bsdtar -HI a.txt b.txt", "bsdtar -VI a.txt b.txt", "bsdtar -LI a.txt b.txt", "bsdtar -gI a.txt b.txt"]) expect(decided(cmd).verdict, cmd).toBe("run");
     // Everyday lines run as before: a conversion mode or an encoding is no file Ember has anything to say about, and a
     // Mac's tar with -T, or GNU's -F on bsdtar (no such option there), is as it was.
     for (const cmd of [
