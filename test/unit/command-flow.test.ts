@@ -409,6 +409,41 @@ describe("Stop while a run's kept output is cleaned (merge review integ-y-2)", (
     expect(passesAfter).toBe(0);
     expect(JSON.stringify(h.audit)).not.toMatch(/canary|compiled/i);
   }, 60_000);
+
+  it("gives Stop its turn while a thousand typed lines are taken out of 4 MiB for the instructions check (stop-yield-y9-1)", async () => {
+    setCommandJudge(null);
+    // An interactive session in the command window: a thousand lines typed, 4 MiB printed. Taking each typed line out
+    // of the check copy is a whole-text pass, about 0.8 s for the thousand where it ran at once.
+    const typed = Array.from({ length: 1000 }, (_, i) => `>>> calc_${String(i).padStart(4, "0")}()`);
+    const line = ">>> result = 42\nsrc/module.ts compiled \x1b[32mok\x1b[0m\n";
+    const chunk = line.repeat(Math.ceil((64 * 1024) / line.length));
+    const output = Array.from({ length: 64 }, (_, i) => (i < typed.length ? `${typed[i]}\n${chunk}` : chunk));
+    const marks = new Set(typed);
+    const abort = new AbortController();
+    let seen = 0;
+    let after = -1;
+    const split = String.prototype.split;
+    const spy = vi.spyOn(String.prototype, "split").mockImplementation(function (this: string, ...args: unknown[]) {
+      if (typeof args[0] === "string" && marks.has(args[0])) {
+        if (after >= 0) after++;
+        // The stop shortcut, pressed while the tenth typed line is taken out.
+        else if (++seen === 10) { after = 0; setImmediate(() => abort.abort()); }
+      }
+      return (split as (...a: unknown[]) => string[]).apply(this, args);
+    });
+    try {
+      const h = harness({ binding: LOCAL, abort, run: () => ({ output, typed }) });
+      const r = await call(h, { target: "this computer", command: "python3" });
+      expect(seen).toBe(10);
+      expect(r.textResultForLlm).toBe("Stopped. Do nothing more.");
+      // Seen within a few passes, not after the other 990 (each about 0.8 ms; a turn once 8 ms of them have run).
+      expect(after).toBeLessThan(200);
+      expect(h.audit.some(e => e.phase === "tainted")).toBe(false);
+      expect(h.audit.filter(e => e.phase === "ended")[0]?.stopped).toBe(true);
+    } finally {
+      spy.mockRestore();
+    }
+  }, 60_000);
 });
 
 /** The rules of a harness's last decision. */

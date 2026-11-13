@@ -581,8 +581,12 @@ export class OutputKeeper {
   }
 }
 
-/** The text a run printed with its secret spans and the user's typed lines taken out, for the taint check. */
-function checkedText(text: string, spans: { from: number; to: number }[], typed: string[]): string {
+/**
+ * The text a run printed with its secret spans and the user's typed lines taken out, for the taint check, a whole-text
+ * operation a step: each typed line's removal is a pass over up to 4 MiB, and a run keeps up to 1,000 of them, about
+ * 0.8 s at once (stop-yield-y9-1).
+ */
+function* checkedTextSteps(text: string, spans: { from: number; to: number }[], typed: string[]): Generator<void, string, void> {
   let out = "";
   let at = 0;
   for (const s of [...spans].sort((a, b) => a.from - b.from)) {
@@ -590,9 +594,15 @@ function checkedText(text: string, spans: { from: number; to: number }[], typed:
     at = Math.max(at, s.to);
   }
   out += text.slice(at);
-  for (const t of typed.map(l => l.trim()).filter(l => l.length >= 3)) out = out.split(t).join(" ");
+  yield;
+  for (const t of typed.map(l => l.trim()).filter(l => l.length >= 3)) {
+    out = out.split(t).join(" ");
+    yield;
+  }
+  out = out.replace(TERMINAL_CODES, "");
+  yield;
   // Lines cut as cleanOutput cuts them: what is past that can't reach the model, and reading it costs main-thread time.
-  return capLines(out.replace(TERMINAL_CODES, ""));
+  return capLines(out);
 }
 
 /** A question with S0b's panel fields (confirm.ts §3.9.1): `where`, `armMs`, `panel`, `clickOnly`. */
@@ -1536,13 +1546,15 @@ const nextTurn = (): Promise<void> => new Promise(resolve => setImmediate(resolv
 /**
  * Steps 14: shape, check for instructions, note downloads, audit the end, and say how it went. A run keeps up to 4 MiB
  * of output, and cleaning it held Ember's main thread about 1 s (1.7 s with three of each vault entry filled) where
- * Stop must answer within 300 ms (merge review integ-y-2): the cut, CL's own cleaning and the check copy's redaction
- * run a whole-text operation a step (stop-yield-x9-1), with a macrotask between two steps once 8 ms of them have run
- * (runStepsYielding), and a Stop seen between them ends the call as stopped, with nothing of the output, cleaned or
- * not, for the model, the audit or the log. Measured on 4 MiB of coloured build output with a login, a card and
+ * Stop must answer within 300 ms (merge review integ-y-2): the cut, CL's own cleaning, and the check copy's making
+ * (each typed line taken out, stop-yield-y9-1) and redaction run a whole-text operation a step (stop-yield-x9-1),
+ * with a macrotask between two steps once 8 ms of them have run (runStepsYielding), and a Stop seen between them ends
+ * the call as stopped, with nothing of the output, cleaned or not, for the model, the audit or the log. Measured on 4 MiB of coloured build output with a login, a card and
  * contact details filled, one to three of each: the longest stretch went from 1,163-1,901 ms to 134-175 ms (132-188
- * ms with nothing filled); with a colour code on every character, 115-216 ms. One known pass is longer still: the
- * Key Vault value pattern over 4 MiB of secret ids with no value, about 1.6 s.
+ * ms with nothing filled); with a colour code on every character, 115-216 ms; with 1,000 typed lines, 135-190 ms
+ * (872 ms before their removal was stepped). The instructions check (outputTaint) is one step, about 190-230 ms on
+ * Ember.js build output that says "ember" on every line. One known pass is longer still: the Key Vault value pattern over 4 MiB of secret
+ * ids with no value, about 1.6 s.
  */
 async function finishRun(ctx: CommandFlowContext, j: CommandJudge, run: RunOutcome, o: { cls: Classification; label: string; shell: ShellId; timeoutS: number; runId: string }): Promise<ToolResultObject> {
   const { exit, out, tracker, running } = run;
@@ -1586,7 +1598,8 @@ async function finishRun(ctx: CommandFlowContext, j: CommandJudge, run: RunOutco
   if (taint === null) {
     await nextTurn();
     if (ctx.isOver()) return stopped();
-    const check = checkedText(kept.text, kept.spans, typed);
+    const check = await runStepsYielding(checkedTextSteps(kept.text, kept.spans, typed), () => ctx.isOver());
+    if (check === null || ctx.isOver()) return stopped();
     const checked = j.redactSecrets === redactSecrets ? await redactSecretsYielding(check, () => ctx.isOver()) : j.redactSecrets(check);
     if (checked === null || ctx.isOver()) return stopped();
     taint = j.outputTaint(checked) ?? j.outputTaint(shaped);
