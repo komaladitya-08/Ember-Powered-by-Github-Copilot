@@ -27,7 +27,7 @@ const NOW = new Date("2026-11-13T10:00:00.000Z");
 const SHA = "a".repeat(64);
 
 /** A real settings file, and the paths the agreement goes through, each of which a test can make fail. */
-function rig(o: { settings?: SettingsPatch; facts?: Partial<FirstRunFacts>; fail?: Partial<Record<FirstRunRow | "consent", boolean>>; sha?: string } = {}) {
+function rig(o: { settings?: SettingsPatch; facts?: Partial<FirstRunFacts>; fail?: Partial<Record<FirstRunRow | "consent" | "offWrite", boolean>>; sha?: string } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-first-run-"));
   dirs.push(dir);
   const store = new SettingsStore(path.join(dir, "settings.json"), null);
@@ -38,7 +38,8 @@ function rig(o: { settings?: SettingsPatch; facts?: Partial<FirstRunFacts>; fail
   const settings = {
     own: () => store.own(),
     update: (p: SettingsPatch) => {
-      const key = "consent" in p && Object.keys(p).length === 1 ? "consent" : "memory" in p ? "memory" : "voice" in p || "speak" in p ? "voice" : "screenImages" in p ? "screenshots" : "other";
+      if (o.fail?.offWrite && (p.screenImages === false || p.speak === false || p.wakeWord === false)) throw new Error("disk full");
+      const key = "consent" in p ? "consent" : "memory" in p ? "memory" : "voice" in p || "speak" in p ? "voice" : "screenImages" in p ? "screenshots" : "other";
       if (o.fail?.[key as FirstRunRow | "consent"]) throw new Error("disk full");
       order.push(key);
       return store.update(p);
@@ -169,6 +170,20 @@ describe("first run's agreement", () => {
     for (const other of FIRST_RUN_ROWS) if (other !== row) expect([other, on[other]]).toEqual([other, true]);
     // Screenshots are on in a fresh file already (under the consent's own text): the failure leaves the file's value.
     if (row !== "screenshots") expect(on[row]).toBe(false);
+  });
+
+  it("never leaves a row the user switched off on when writing it off fails: the agreement isn't saved and says so (slice4-x9-1)", () => {
+    const NONE = { commands: false, memory: false, voice: false, screenshots: false, interactive: false };
+    const r = rig({ fail: { offWrite: true } });
+    expect(agreeFirstRun(r.d, NONE, SHA)).toEqual({ ok: false, failed: [] });
+    const s = r.store.own();
+    // Nothing is in force without the consent, so the file's own defaults do nothing yet.
+    expect(hasConsent(s)).toBe(false);
+    // Written with the consent itself: a saved agreement holds them off.
+    const ok = rig();
+    expect(agreeFirstRun(ok.d, NONE, SHA)).toEqual({ ok: true, failed: [] });
+    expect([ok.store.own().screenImages, ok.store.own().speak, ok.store.own().wakeWord]).toEqual([false, false, false]);
+    expect(ok.order).toEqual(["consent"]);
   });
 
   it("doesn't turn commands on for a card other than the one the row showed (slice4-11)", () => {

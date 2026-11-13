@@ -151,7 +151,7 @@ environment, only through `scripts/runtime-env-live.sh`, which gives it a networ
   matches the text shown, `memory` with its note's version, `voice.consent` with `wakeWord` and `speak`, `screenImages`,
   and Interactive through `chooseMode` with its `autonomy` audit entry, via `home`), each in its own saved change: a row
   that can't be saved is left off without consent and the step says so before going on. A row switched off records
-  nothing (listening and screenshots are written off). Someone who agreed to an earlier version sees what changed and
+  nothing (listening and screenshots are written off, in the same saved change as the consent). Someone who agreed to an earlier version sees what changed and
   only Interactive's row: the rest of their settings stay as they are. The defaults in `settings.ts` stay off until
   agreed, so a settings file without the agreement never gains a feature. Or **Not now**, which keeps Ember off
   and offers **Quit Ember** (a press on either within half a second of its appearing is dropped, so a double click
