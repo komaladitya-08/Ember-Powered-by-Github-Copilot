@@ -86,9 +86,17 @@ describe("programs that drive the user's own terminals and editors (commands-rem
 
   it("runs the verbs that only list, and asks before any other verb", () => {
     for (const cmd of ["tmux ls", "tmux list-sessions", "tmux list-windows -a", "tmux list-panes -a -F '#{pane_id}'", "tmux has-session -t work", "tmux display-message -p '#S'",
-      "screen -ls", "screen -list", "zellij list-sessions", "zellij ls", "zellij --version", "zellij action query-tab-names", "kitten @ get-colors",
-      "nvr --serverlist", "it2api list-sessions", "it2api show-hierarchy"]) {
+      "screen -ls", "screen -list", "zellij list-sessions", "zellij ls", "zellij --version", "zellij -s work list-sessions", "kitten @ get-colors",
+      "nvr --serverlist", "it2api --help"]) {
       expect(decide(cmd).verdict, cmd).toBe("run");
+    }
+    // What names the user's tabs and sessions, or what runs in them, is no such list: it asks as a command Ember
+    // doesn't know, as before the tools had rows, and the modes hold it (integ-x-1).
+    for (const cmd of ["zellij action query-tab-names", "zellij action list-clients", "zellij action dump-layout", "zellij -s work action query-tab-names",
+      "it2api list-sessions", "it2api show-hierarchy", "it2api show-focus"]) {
+      const d = decide(cmd);
+      expect(d.verdict, cmd).toBe("ask");
+      expect(d.classes, cmd).toEqual(["unknown"]);
     }
     for (const cmd of ["tmux set-option -g default-command 'sh x.sh'", "tmux kill-server", "tmux rename-session x", "tmux load-buffer a.txt", "tmux wait-for x",
       "tmux clear-history", "tmux select-pane -t 1", "screen -X quit", "screen -X title x", "screen -r", "zellij kill-session x", "zellij action close-pane",
