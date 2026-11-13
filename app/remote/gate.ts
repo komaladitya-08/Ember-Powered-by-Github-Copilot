@@ -10,6 +10,12 @@
  * on the PC (L8, the lead's ruling; app/main/commands/scripts.ts): the PC can't see this machine's files, so its stamp
  * never covers what a script does, and any finding in one asks. A script this task wrote or downloaded here that
  * can't be read in full asks too (the padding bypass), from the agent's own memory of the task's commands.
+ *
+ * Autopilot on the PC (PLAN.md §2 "Approvals", §10 "Settled" (3); owner decision of 2026-11-12) announces instead of
+ * asking, and says so on the stamp (`announced`). That stands in for the user's yes here only while this machine's own
+ * administrator allows Autopilot (`autopilotOk`: its policy holds as the organisation's), never where that
+ * administrator asks for every command or every action, and never for a command whose findings here say it would read
+ * or print secrets, outlive the kill switch or do something Ember can't tell: those still want the user's own yes.
  */
 
 import { createHash } from "node:crypto";
@@ -20,6 +26,7 @@ import { normalizeLabel } from "../main/policy/policy";
 import { ALWAYS_ASK, standingFindings } from "../main/commands/types";
 import type { Classification, ClassifyContext, CommandMode, Finding, PathFact, RunnerFacts, RunSpec } from "../main/commands/types";
 import { judgeScripts, withoutReadFlow, type TaskWrites } from "../main/commands/scripts";
+import { AUTOPILOT_RULE, NO_AUTOPILOT_RULE, askedOfFinding } from "../main/commands/autopilot";
 import type { ClassifyCommand } from "./contracts";
 
 /** An approval older than this no longer counts (a question expires at 120 s anyway). */
@@ -51,6 +58,7 @@ export const GATE_WORDS = {
   actionsOff: "This computer's administrator doesn't let Ember act in apps.",
   stepMismatch: "The step that arrived doesn't match the one Ember decided on.",
   noStepAudit: "This computer couldn't record the step, so Ember won't do it.",
+  noAutopilot: "This computer's administrator doesn't allow Autopilot, so it wants your approval.",
 } as const;
 
 export const sha256Hex = (s: string) => createHash("sha256").update(s, "utf8").digest("hex");
@@ -83,6 +91,11 @@ export interface CommandGateInput {
   readScript?: (path: string, cwd: string) => Promise<string | null>;
   /** What this task's earlier commands downloaded and wrote here (the agent's own memory); absent: nothing yet. */
   task?: { downloaded: ReadonlySet<string>; written: TaskWrites };
+  /**
+   * This machine's administrator lets Autopilot be in force (policy/autonomy.ts autopilotPermitted on its own policy).
+   * Absent or false: an announcement on the stamp counts for nothing, and everything asks as before.
+   */
+  autopilotOk?: boolean;
   now?: () => number;
 }
 
@@ -113,7 +126,11 @@ async function inspectSoon(inspect: CommandGateInput["inspect"], paths: string[]
  * names its rule and its class (never for an always-ask class: secret, escape, unclear), or, after the user's yes, its
  * rule (the PC resends with the rules a needs_confirm carried once the user said yes to them, §3.8.3 step 13). A
  * finding inside a script the command runs (read only here) is covered only after a yes, by its own `in-script:` rule
- * id. An approval older than 120 s counts as none.
+ * id. An approval older than 120 s counts as none. Autopilot's announcement on the stamp (`announced`, as fresh, and
+ * only with `autopilotOk`) covers root and what a yes would cover of a finding, but never this administrator's "ask",
+ * a stamp of "ask" without its yes, a line judged as its written-out form, nor a finding that would read or print
+ * secrets, outlive the kill switch or that can't be told (askedOfFinding). Without `autopilotOk` a stamp that says
+ * Autopilot announced it wants the user's yes whatever it names (`noAutopilot`, rule `admin.no-autopilot`).
  */
 export async function gateCommand(i: CommandGateInput): Promise<CommandGate> {
   const { spec } = i;
@@ -126,11 +143,17 @@ export async function gateCommand(i: CommandGateInput): Promise<CommandGate> {
   }
   if (i.mode === "off") return { status: "deny", reason: GATE_WORDS.commandsOff };
   const approval = stamp.approval && stamp.approval.ageMs < APPROVAL_MAX_MS ? stamp.approval : null;
+  const told = i.autopilotOk === true && !!stamp.announced && stamp.announced.ageMs < APPROVAL_MAX_MS;
   // Every reason to ask is gathered into one question, so a single yes (with these rules added) covers them all: the
   // PC asks once and sends again once (§3.8.3 step 13).
   const asks: string[] = [];
   if (stamp.verdict === "ask" && !approval) asks.push(GATE_WORDS.approvalMissing);
   if (i.mode === "ask" && !approval) asks.push(GATE_WORDS.adminAsks);
+  // The PC's Autopilot announced it (its stamp says so), and this machine's administrator doesn't allow Autopilot:
+  // nothing of that announcement counts here, not even for a finding whose class the stamp names, so it wants the
+  // user's own yes and says why (its rule tells the PC to ask at once).
+  const refusedAutopilot = (stamp.announced !== undefined || stamp.rules.includes(AUTOPILOT_RULE)) && i.autopilotOk !== true && !approval;
+  if (refusedAutopilot) asks.push(GATE_WORDS.noAutopilot);
 
   const downloaded = i.task?.downloaded ?? new Set<string>();
   const ctx: ClassifyContext = {
@@ -161,7 +184,7 @@ export async function gateCommand(i: CommandGateInput): Promise<CommandGate> {
     isOver: () => false, probeMs: SCRIPT_MS, budgetMs: SCRIPTS_MS, ...(i.now ? { now: i.now } : {}),
   });
   if (cls.refuse) return { status: "deny", reason: line(cls.refuse.says) || GATE_WORDS.mismatch };
-  if (i.facts.privileged && !approval) asks.push(GATE_WORDS.root);
+  if (i.facts.privileged && !approval && !told) asks.push(GATE_WORDS.root);
 
   // An overwrite counts only when its target exists here (§3.8.2 rule 3).
   const findings = standingFindings(cls.findings, byPath);
@@ -173,12 +196,14 @@ export async function gateCommand(i: CommandGateInput): Promise<CommandGate> {
   // A line judged as its written-out form (a `[[ … ]]` as `[ … ]`: unroll.ts) is never announced on
   // the PC, so here too only the user's yes covers what it does (commands-remote-r6-2).
   const writtenOut = (cls as { writtenOut?: boolean }).writtenOut === true;
+  /** Does the user's yes, or Autopilot's announcement where it may stand in for one, cover this finding? */
+  const agreed = (f: Finding) => approval !== null || (told && !writtenOut && askedOfFinding(f) === null);
   const covered = (f: Finding) => (f.widening.includes(IN_SCRIPT)
-    ? approval !== null && stamp.rules.includes(ruleOf(f))
-    : stamp.rules.includes(f.rule) && (approval !== null || (!writtenOut && stamp.classes.includes(f.cls) && !ALWAYS_ASK.has(f.cls))));
+    ? agreed(f) && stamp.rules.includes(ruleOf(f))
+    : stamp.rules.includes(f.rule) && (agreed(f) || (!writtenOut && stamp.classes.includes(f.cls) && !ALWAYS_ASK.has(f.cls))));
   const extra = findings.filter(f => !covered(f));
   if (extra.length || asks.length) {
-    const rules = [...new Set(extra.map(ruleOf))].slice(0, 64);
+    const rules = [...new Set([...extra.map(ruleOf), ...(refusedAutopilot ? [NO_AUTOPILOT_RULE] : [])])].slice(0, 64);
     return {
       status: "needs_confirm",
       reason: extra.length ? GATE_WORDS.disagree : asks[0],
@@ -203,6 +228,11 @@ export interface StepGateInput {
   actionsAllowed: boolean;
   /** A PolicyEngine built with this machine's policy (§5.3.7 step 4). */
   decide: (r: ActionRequest) => Decision;
+  /**
+   * This machine's administrator lets Autopilot be in force, and asks for no click before every action: the PC's
+   * announcement of a step (`stamp.announced`) may then stand in for the yes this machine's own engine would want.
+   */
+  autopilotOk?: boolean;
 }
 
 /** The kinds of step each op may carry out. */
@@ -221,7 +251,8 @@ const same = (a: string, b: string) => normalizeLabel(a).trim() === normalizeLab
  * Gate 2 for a desktop step (§5.3.7 steps 2-5; freshness, epoch and the write-ahead audit are the caller's): the stamp
  * is under 10 s old and fits the op and its value; the element and its window are still what the PC saw (else
  * `changed`); this machine's administrator lets Ember act; and this machine's PolicyEngine, judging the step from the
- * stamp and the fresh facts, doesn't deny it or want a yes the stamp doesn't carry.
+ * stamp and the fresh facts, doesn't deny it or want a yes the stamp doesn't carry. In Autopilot the PC announces a
+ * step instead of asking (`stamp.announced`): that stands in for the yes only with `autopilotOk`; a denial stays one.
  */
 export function gateStep(i: StepGateInput): { status: "ok" } | { status: "deny" | "needs_confirm"; reason: string } | { status: "changed" | "stale" } {
   const { stamp } = i;
@@ -248,6 +279,6 @@ export function gateStep(i: StepGateInput): { status: "ok" } | { status: "deny" 
   }
   const d = i.decide(request);
   if (d.verdict === "deny") return { status: "deny", reason: line(d.reason) };
-  if (d.verdict === "confirm" && !stamp.approval) return { status: "needs_confirm", reason: line(d.prompt || d.reason) };
+  if (d.verdict === "confirm" && !stamp.approval && !(stamp.announced === true && i.autopilotOk === true)) return { status: "needs_confirm", reason: line(d.prompt || d.reason) };
   return { status: "ok" };
 }

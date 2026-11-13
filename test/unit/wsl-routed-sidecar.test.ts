@@ -140,7 +140,7 @@ describe("reading a WSLg window", () => {
     const { routed, helper, ids } = await scene();
     const res = await routed.readWindow({ pid: 4242, title: "notes.txt - gedit (Ubuntu)", ownPid: 9, neverLook: ["keepass"], skipPids: [300], maxNodes: 50 });
     const read = helper.calls.find(c => c.method === "read_window")!;
-    expect(read.params).toEqual({ pid: 700, path: "/org/a11y/atspi/accessible/1", neverLook: ["keepass", "keepassxc", "seahorse", "passwords and keys", "1password", "bitwarden", "polkit"], skipPids: [], maxNodes: 50 });
+    expect(read.params).toEqual({ pid: 700, path: "/org/a11y/atspi/accessible/1", neverLook: ["keepass", "keepassxc", "seahorse", "passwords and keys", "1password", "bitwarden", "polkit", "keepass", "lastpass", "dashlane", "enpass", "proton pass", "kwallet"], skipPids: [], maxNodes: 50 });
     expect(res.window).toEqual({ app: "wsl:Ubuntu:gedit", pid: 4242, path: "wsl:Ubuntu:700:/org/a11y/atspi/accessible/1", name: "notes.txt - gedit", role: "frame", active: true, bounds: { x: 100, y: 200, width: 800, height: 600 } });
     expect(res.nodes.find(n => n.id === ids.save)).toMatchObject({ bounds: { x: 110, y: 210, width: 60, height: 30 }, shown: { x: 110, y: 210, width: 60, height: 20 } });
     expect(routed.scaleOf(ids.save)).toBe(1);

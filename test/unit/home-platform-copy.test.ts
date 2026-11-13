@@ -128,7 +128,7 @@ const TODAY = {
   "audit-dir": "Every decision and action is also in ~/.config/ember/audit/ and in the system journal (journalctl -t ember-audit).",
 } as const;
 const CHORD_SENTENCES: Record<ShortcutId, string> = {
-  stop: "It asks before acting in an app, and always before anything hard to undo. It never types passwords. Ctrl+Alt+X stops everything at once.",
+  stop: "It asks before acting in an app unless you turn on Interactive, when you agree or later in settings, and always before anything hard to undo. It never types passwords. Ctrl+Alt+X stops everything at once.",
   settings: "Press Ctrl+Alt+E any time to come back here, or click Ember's handle in the bottom-right corner.",
   ask: "Ask Ember anything with Ctrl+Alt+Space.",
   mute: TODAY["mic-indicator"],
@@ -189,8 +189,9 @@ describe("the settings window before a status names an OS", () => {
     expect(describeEntry({ t, event: "stop", source: "hotkey" })?.what).toBe("Everything stopped (stop shortcut)");
     expect(describeEntry({ t, event: "stop", source: "voice" })?.what).toBe("Everything stopped (“Ember, stop”)");
     expect(entryWords(undefined)).toBe(LINUX_ENTRY_WORDS);
-    expect([...NEVER_LOOK_DEFAULTS]).toEqual(["keepassxc", "seahorse", "passwords and keys", "1password", "bitwarden", "polkit"]);
-    expect(missingDefaults(["Bitwarden"])).toEqual(["keepassxc", "seahorse", "passwords and keys", "1password", "polkit"]);
+    // The six it had, then the password managers the other OSes' lists have (safety-privacy-r9-3).
+    expect([...NEVER_LOOK_DEFAULTS]).toEqual(["keepassxc", "seahorse", "passwords and keys", "1password", "bitwarden", "polkit", "keepass", "lastpass", "dashlane", "enpass", "proton pass", "kwallet"]);
+    expect(missingDefaults(["Bitwarden"])).toEqual(["keepassxc", "seahorse", "passwords and keys", "1password", "polkit", "keepass", "lastpass", "dashlane", "enpass", "proton pass", "kwallet"]);
   });
 
   it("names where Stop everything was pressed: the handle's menu or settings", () => {
@@ -243,6 +244,16 @@ describe("the settings window with a Windows or macOS status", () => {
     expect(visible(around(root, "journal-hint"))).not.toMatch(/journal/);
     expect(byId(root, "speaker-note").attrs).toHaveProperty("hidden");
     expect(byId(root, "autostart-note").attrs).toHaveProperty("hidden");
+  });
+
+  it("says per platform where a bare answer needs no name, and for how long (V2-F3; voice-listening-r9-7)", () => {
+    const hint = (p: StatusPlatform) => visible(byId(apply(page(), homePatches(p)), "voice-answer-hint"));
+    // Linux keeps the page's own words (the speakers' stream tells another sound apart, where PulseAudio's parec is there).
+    expect(hint(LINUX)).toBe(visible(byId(page(), "voice-answer-hint")));
+    expect(hint(LINUX)).toBe("To answer one of Ember's questions, say “allow” or “not now” in the few seconds after it asks, no name needed, and later “Ember, allow” or “Ember, not now”. Where Ember can't hear what your speakers play (without PulseAudio's parec), a yes always needs its name.");
+    expect(hint(WINDOWS)).toBe("To answer one of Ember's questions, say “allow” or “not now” in the few seconds after it asks, no name needed, and later “Ember, allow” or “Ember, not now”.");
+    // macOS can't tell whether something else plays, so a nameless yes is never taken there.
+    expect(hint(MAC)).toBe("To answer one of Ember's questions, say “Ember, allow”, or “not now” in the few seconds after it asks: Ember can't tell here whether something else is playing, so a yes needs its name.");
   });
 
   it("shows the Mac's chords, folder, permissions and orange dot, and the login note when there is one", () => {
@@ -412,12 +423,12 @@ describe("Computers and Commands before the targets runtime answers", () => {
     // The onboarding line sits in "Before Ember starts" (new users only), with no chord for the OS patches to change.
     const plug = elements(byId(root, "welcome")).filter(e => e.attrs["data-icon"] === "plug");
     expect(plug).toHaveLength(1);
-    expect(visible(plug[0])).toBe("Other computers and commands are off until you turn them on: Ember can work on computers you reach over SSH, and run commands in its own window. Each asks you first.");
+    expect(visible(plug[0])).toBe("Other computers and commands are off until you turn them on: Ember can work on computers you reach over SSH, and run commands in its own window. Each asks you first. Commands on this computer have their own switch here.");
     expect(elements(plug[0]).some(e => e.attrs.class === "chord")).toBe(false);
     // WSL is named on Windows only (review #221).
     const win = apply(page(), homePatches(WINDOWS));
     const winPlug = elements(byId(win, "welcome")).filter(e => e.attrs["data-icon"] === "plug")[0];
-    expect(visible(winPlug)).toBe("Other computers and commands are off until you turn them on: Ember can work in WSL, on computers you reach over SSH, and run commands in its own window. Each asks you first.");
+    expect(visible(winPlug)).toBe("Other computers and commands are off until you turn them on: Ember can work in WSL, on computers you reach over SSH, and run commands in its own window. Each asks you first. Commands on this computer have their own switch here.");
     for (const os of [MAC, LINUX]) expect(visible(byId(apply(page(), homePatches(os)), "welcome")), os.os).not.toMatch(/WSL/);
   });
 });

@@ -43,6 +43,7 @@ function wiring() {
     const signInAbort = { abort() {} }, keeper = { use() {} }, tokens = { clear() {} }, providers = { forget() {} }, refusedTokens = new Set();
     const conversationNow = (entries = []) => entries;
     const forgetProject = () => {};
+    const forgetSessionWords = () => {};
     ${speech}
     ${signOut}
     return {
@@ -63,7 +64,7 @@ function wiring() {
     onForgotAll(): void;
     signOut(): Promise<void>;
     interrupt(): void;
-    pause(): void;
+    pause(own?: boolean): void;
     readOut(answer: string): boolean;
     silenceIfOff(): boolean;
     stopSpeaking(source: "menu"): void;
@@ -193,6 +194,31 @@ describe("main's answer speech ownership", () => {
     expect(w.agent.pauseAnswer).toHaveBeenCalledOnce();
     expect(w.voice.speak).toHaveBeenCalledExactlyOnceWith("The event is updated.", { append: false, lang: null });
     expect(w.voice.followUp).toHaveBeenCalledExactlyOnceWith(8000, { afterQuestion: false });
+  });
+
+  it("keeps the answer being written under a task's question, unsaid, and still its answer (tasks-approvals-r9-2)", () => {
+    vi.useFakeTimers();
+    const w = wiring();
+    w.onTurnStart({ text: "What is the capital of France?", spoken: true });
+    w.agent.answerOpen = true;
+    w.onAnswerDelta("The capital");
+    w.confirmer.waiting = true;
+    w.pause(false);
+    expect(w.agent.pauseAnswer).not.toHaveBeenCalled();
+    w.onAnswerDelta(" of France is Paris.");
+    w.confirmer.waiting = false;
+    w.onAnswerDelta(" It is on the Seine.");
+    w.onAnswer("The capital of France is Paris. It is on the Seine.");
+    w.onTurnEnd(false);
+    // Nothing of it is said from mid-sentence after the question, and the turn wasn't stopped: it is still the answer.
+    expect(w.voice.speak).not.toHaveBeenCalled();
+    expect(w.personal.answered).toHaveBeenCalledOnce();
+    expect((w.personal.answered.mock.calls[0] as unknown[])[0]).toBe("The capital of France is Paris. It is on the Seine.");
+  });
+
+  it("retires the answer only for a question of the conversation's own turn, never a task's (tasks-approvals-r9-2)", () => {
+    const source = fs.readFileSync("app/main/main.ts", "utf8");
+    expect(source).toContain("    pauseAnswerSpeech(questionPausesAnswer(q.question));\n");
   });
 
   it("does not let an old permission closing restore interrupted or newer turn ownership", () => {

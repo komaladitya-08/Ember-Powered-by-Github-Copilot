@@ -29,7 +29,10 @@ function withoutLead(words: string[]): string[] {
   return words.slice(i);
 }
 
-/** The answer without what trails it: "please", "thanks" or "thank you", and the name, each at most once. */
+/**
+ * The answer without what trails it: "please", "thanks" or "thank you", and the name, each at most once. Taken off
+ * before what leads it (withoutLead), so a filler left as the last word is the answer itself ("Okay, thanks.").
+ */
 function withoutTail(words: string[]): string[] {
   const w = [...words];
   const seen = new Set<string>();
@@ -61,6 +64,10 @@ export const SPOKEN_YES: ReadonlySet<string> = new Set([
   "okay", "ok", "alright", "all right", "fine", "sounds good", "that sounds good", "go on", "yes go on",
   "go with it", "yes go with it", "let's go with it", "accept", "accept it", "i accept", "yes i accept", "continue", "yes continue",
   "confirm", "i confirm", "yes confirm", "confirmed",
+  // The symmetric forms of those already here (V2-F7: "You may." and "Approved." were answers, "You may go ahead." and
+  // "Accepted." weren't). None of them reads both ways; "You can" alone still isn't one.
+  "you may go ahead", "you can go ahead", "i approve", "accepted", "go right ahead", "yes okay", "yeah okay", "sure okay",
+  "yeah fine", "yes of course", "i agree",
   // Misheard (Moonshine): "allow" as "aloud", "a loud", "a low" or "allowed"; "go ahead" as "go a head".
   "aloud", "a loud", "a low", "allowed", "yes aloud", "go a head", "yes go a head",
   // Longer ways to say it, so Voice Match has enough of the voice to vouch for it (match.ts APPROVAL_MIN_SECONDS).
@@ -74,6 +81,9 @@ export const SPOKEN_NO: ReadonlySet<string> = new Set([
   "not now", "no", "no no", "no thanks", "no thank you", "nope", "nah", "no way", "don't", "do not", "don't do it", "no don't", "no don't do it",
   "deny", "deny it", "not now thanks", "no not now", "not yet", "no not yet", "not right now", "no not right now",
   "don't allow", "don't allow it", "don't allow that", "do not allow it", "no don't allow it",
+  // The symmetric forms (V2-F7: "Don't do it." and "Deny." were answers, "Don't do that." and "Denied." weren't).
+  "don't do that", "do not do it", "do not do that", "denied", "do not allow", "do not allow that", "don't allow this",
+  "absolutely not", "not today", "no no no",
 ]);
 
 /** Lower case, straight apostrophes, no closing punctuation, single spaces. */
@@ -88,7 +98,9 @@ export function spokenAnswer(text: string): "allow" | "deny" | null {
   if (!t || t.length > 60) return null;
   // Punctuation first ("Hey, Ember. Allow."), then what leads and trails the answer.
   const spoken = t.replace(/[,.!;:]/g, " ").split(/\s+/).filter(Boolean);
-  const words = withoutTail(withoutLead(spoken));
+  // (The tail first: a lone "okay" before "thanks" is the answer, not a filler leading into one. "Okay, thanks." was no
+  // answer where "Sounds good, thanks." was one: V2-S10.)
+  const words = withoutLead(withoutTail(spoken));
   // "Please" leads many answers ("please go ahead"), and is part of one ("please do").
   const cores = [words.join(" "), ...(words[0] === "please" ? [words.slice(1).join(" ")] : [])];
   if (cores.some(c => SPOKEN_NO.has(c))) return "deny";
@@ -97,4 +109,35 @@ export function spokenAnswer(text: string): "allow" | "deny" | null {
   if (spoken.filter(w => w === "please").length > 1) return null;
   // Asked as a question, whatever follows the "?" ("Allow it?!", "Allow?."): not a yes.
   return /[?？]$/.test(text.trim().replace(/[\s.!…"”’')\]]+$/u, "")) ? null : "allow";
+}
+
+/** The words a near-miss answer starts with (nearAnswer). */
+const ANSWER_LEADS = new Set(["yes", "yeah", "yep", "okay", "ok", "sure", "fine", "allow", "no", "nope", "don't", "not", "absolutely", "deny"]);
+
+/** The words main's stop takes (stopRequest in app/main/agent/status.ts): what holds one is never a near-miss answer. */
+const STOP_WORDS = new Set(["stop", "cancel", "abort", "halt"]);
+
+/**
+ * A few words that start like an answer and aren't one ("Yes, but wait.", "No, hang on.", "Sure, why?"): up to four words,
+ * after "hey" and the name, the first a yes or no word ("do not" too). While a question waits they are most likely an
+ * answer misheard or hedged, so the voice process sends nothing and the question says once how to answer (V2-F5). "Why?"
+ * and "Which file?" don't start so, and are requests as ever. Never words that hold a stop ("No, stop the task.", "Okay, stop
+ * typing."): main stops everything on those while a task is at work, and as near-misses they stopped nothing
+ * (voice-product-y9-1).
+ */
+export function nearAnswer(text: string): boolean {
+  if (spokenAnswer(text) !== null) return false;
+  const words = norm(text).replace(/[,.!;:?？]/g, " ").split(/\s+/).filter(Boolean);
+  let i = 0;
+  if (words[i] === "hey") i++;
+  if (NAMES.has(words[i])) i++;
+  const rest = words.slice(i);
+  if (!rest.length || rest.length > 4) return false;
+  if (rest.some(w => STOP_WORDS.has(w))) return false;
+  return ANSWER_LEADS.has(rest[0]) || (rest[0] === "do" && rest[1] === "not");
+}
+
+/** A yes asked as a question ("Okay?", "Ember, go ahead?"): never a yes (spokenAnswer), and never a request either (V2-F7). */
+export function askedYes(text: string): boolean {
+  return spokenAnswer(text) === null && /[?？]/.test(text) && spokenAnswer(text.replace(/[?？]/g, ".")) === "allow";
 }

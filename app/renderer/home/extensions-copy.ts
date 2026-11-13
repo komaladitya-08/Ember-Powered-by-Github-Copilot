@@ -33,6 +33,20 @@ export const EXTENSIONS_NOT_FOUND = "Ember couldn't find anything there. Check t
 export const EXTENSIONS_TIMED_OUT = "That took too long. Try again in a moment.";
 export const EXTENSIONS_REFUSED_URL = "GitHub's page didn't come back as a GitHub address, so Ember didn't open it.";
 
+/**
+ * Said when an item was turned off or removed but Ember's list of extensions couldn't be written (a full disk, a data
+ * folder that can't be written): it is off either way, and Home never says “Removed” for one the list still holds
+ * (integrations-r9-4). `kept`: a mark beside the list did get written, so it is off at the next start too.
+ */
+export function extensionUnsaved(what: "removed" | "off", kept: boolean): string {
+  if (!kept) return "Ember turned it off for now but couldn't save that, so it may be back when Ember starts again. Check that the disk isn't full, then try again.";
+  return what === "removed"
+    ? "Ember turned it off but couldn't save the removal, so it is still listed. Check that the disk isn't full, then remove it again."
+    : "Ember turned it off, but couldn't save its list of extensions. Check that the disk isn't full.";
+}
+/** Said when turning an item on couldn't be saved: it is left off (integrations-r9-4). */
+export const EXTENSION_ON_UNSAVED = "Ember couldn't save that, so it left it off. Check that the disk isn't full, then try again.";
+
 /** Words that mark text as an error's own (a code, a stack, a type), not a sentence for a person. */
 const RAW = /\b(?:[A-Z][a-z]+Error|Exception|ECONN\w*|ENOTFOUND|ENOENT|EACCES|EAI_AGAIN|ETIMEDOUT|stack|undefined|null|at \S+ \(|HTTP\/\d|status code)\b|[{}<>[\]\\`]|\n/;
 

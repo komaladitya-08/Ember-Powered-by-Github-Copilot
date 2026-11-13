@@ -4,10 +4,14 @@ Ember can run commands for you, work in WSL on a Windows PC, and work on other c
 page says what each does, what Ember asks you first, what it never does, how to turn each off, and what it can't do
 yet. §6 is for administrators. The examples call the other computer "build-01" and the WSL distro "Ubuntu".
 
-All three are **off until you turn them on**, and each has its own first-use card that says what it means before
-anything happens: one for WSL, one for each computer you connect to, and one for commands on each computer. New users
-see this in the "Before Ember starts" list; people who already use Ember aren't asked to agree again, because nothing
-new happens until they accept a card.
+Commands on this computer are **on from first run**: first run shows their card whole, with a switch that is on
+unless you turn it off before you agree, and its one agreement is your yes to that card (owner decision of
+2026-11-12). Everything else here is **off until you turn it on**, and each has its own first-use card that says what
+it means before anything happens: one for WSL, one for each computer you connect to, and one for commands on each
+other computer. People who already use Ember keep their settings: first run's agreement doesn't turn commands on for
+them, and nothing new happens until they accept a card. An organisation that turned commands off on this computer
+(`commands.local`) sees the row off and managed, and an Ember running as root or an administrator says in that card
+that it asks before every command.
 
 Wherever Ember works, **your voice and your GitHub sign-in stay on this computer**. Listening, speech recognition,
 the Copilot conversation and Ember's questions all stay here; another computer only receives the steps Ember takes
@@ -475,15 +479,20 @@ Ember and its bubble keep clear of the command window (as they do of settings), 
 and consent cards. There is never an "Always" for commands. A spoken “Ember, allow” approves one from anyone heard while
 **Only my voice can say yes (Voice Match)** is off, its default, and only when Voice Match recognises your voice while
 it is on; either way only while the card shows the whole command, as the approve chord does. “Ember, not now” works for
-anyone. With **Work without asking** on (Settings › Apps & privacy), an ordinary command on this computer that would ask
-only because it carries text Ember read in another window runs after its Stop countdown instead; in WSL and over SSH it
-asks as before, and dangerous ones always ask.
+anyone. In **Interactive** (Settings › Apps & privacy › **How Ember asks**), an ordinary command on this computer that
+would ask only because it carries text Ember read in another window runs after its Stop countdown instead; in WSL and
+over SSH it asks as before, and dangerous ones always ask. Until Interactive's card is agreed to, such a command asks.
 A notification (and
 Ember's speech) only says "Ember wants to run a command on build-01." with how to get to the command window from the
 keyboard ("press Alt+Tab to go there" on Linux and Windows); screen readers hear that too, and a question's key hint
-("Ctrl+Alt+Y allow; Ctrl+Alt+N not now"). A question nobody answers counts as "no" after 2 minutes (20 with **More
-time to read and answer** in Settings › Comfort & access). Your yes covers exactly that command, on that computer, in
-that folder, for that task: any change asks again. After a "no", Ember doesn't try again or work around it.
+("To allow, press Ctrl+Alt+Y; for not now, press Ctrl+Alt+N"). A question nobody answers ends after 2 minutes (20 with **More
+time to read and answer** in Settings › Comfort & access): nothing is approved and the command doesn't run, but it
+isn't a no. Your yes covers exactly that command, on that computer, in
+that folder, for that task: any change asks again. After a "no" (**Not now**, or **Stop** during a countdown), Ember
+doesn't try again or work around it: for the rest of that task the same command sent again, or one that does the same
+to the same thing (`find build -delete` after `rm -rf build`), is refused without another card, a review or an
+announcement. A card nobody answered isn't put up again until you next say something to that task. Ask again, in a new
+request, to have it run after all.
 
 ### 2.5 When you asked for exactly that
 
@@ -606,23 +615,73 @@ command also asks when it runs as root or as an administrator, when **Ask me bef
 organisation's policy says so, in a Podman distro, after a step in this task came up that you didn't ask for, and
 when the command may carry text Ember read in another app.
 
-### 2.5a When Copilot reviewed it
+### 2.5a When Ember checked it against what you asked (Assisted)
 
-With **Ask only about dangerous commands** on (Settings › **Apps & privacy**; off by default while the reviewer is
-evaluated), a command that would ask
-only because of what it does (it deletes, publishes, downloads and runs something, or Ember can't tell exactly what it
-does) is first shown to Copilot, in a conversation of its own with no tools: your own words for the task, the command,
-where and in which folder it runs, the model's reason and what Ember's checks found. Never a command's output or your
-screen, where text aimed at the reviewer would come from. When Copilot answers that it is routine for what you asked,
-the command runs after the announcement above (the bubble says what it does; the command window adds "Ember's review:"
-and the reason, with **Stop** and the countdown). When it answers that it is dangerous, can't tell, or doesn't answer
-within 20 seconds, it asks as before, the card adding Copilot's reason when it gave one.
+In the **Assisted** approval mode (Settings › **Apps & privacy** › **How Ember asks**; it takes the place of the
+**Ask only about dangerous commands** switch), a command that would ask is first shown to a lighter AI model on
+Copilot, in a conversation of its own with no tools: your own words for the task (typed or spoken, also where Ember
+can't tell your voice from its speakers; never a suggestion you clicked, words heard over Ember's own voice or a
+routine's saved steps), the command, the computer, its system, the shell and the folder it runs in, the task's reason and what Ember's checks
+found. Never a command's output or your screen, where text aimed at the reviewer would come from. While it is asked,
+the task's bubble says "Checking this command against what you asked…". When it answers that your words ask for what
+the command does, the command runs after the announcement above (the bubble says what it does; the command window adds
+"Ember's review:" and the reason, with **Stop** and the countdown). When it finds no match, can't tell, or doesn't
+answer within 20 seconds, the command asks as before, the card adding the model's reason when it gave one. The model
+can be wrong, which is why the countdown and its Stop are always there.
 
-Never reviewed, always asked: commands that touch passwords, keys or other secrets, or change the system; commands
-where Ember runs as root or an administrator; every command when your organisation, or you (**Ask before every
-command**), asked for that; a task something on screen or in a command's output tried to steer; a command that may
-carry text read in another window; a command your words place on another computer; and a task without your own words.
-Turn the switch off to have every such command ask.
+It may clear what the old switch never sent it, when your words ask for it outright: a command that changes the
+system, one that downloads and runs a program, one that runs as root or an administrator, one that may carry text
+read in another window, one your words place on another computer, and one in a task that something on screen or in a
+command's output tried to steer. The card's lines say each of those, and the model is shown them.
+
+Never reviewed, always asked: a command that would read or print passwords, keys or other secrets (so none reaches a
+model); a command that would keep running after Stop (a background job, `nohup`, `setsid`, a detached `screen` or
+`tmux` session, `docker run -d`, a process manager, a scheduled job, a program it opens, a service started, enabled,
+stopped or loaded, a login or startup entry, a change to the Windows registry), so that Stop stops everything; every command when your organisation, or you (**Ask before every command**), asked for that; a task
+without your own words; and a command, a request or a list of findings too long to show whole (a command over 4,000
+characters). A command you said no to is refused without being reviewed (§2.5). On a computer reached over SSH, that
+computer's own check still asks about what it finds, as before. Choose Interactive to have every such command ask;
+your organisation can turn the check off (`features.aiReview: false`).
+
+### 2.5b When you chose Autopilot
+
+In the **Autopilot** approval mode (Settings › **Apps & privacy** › **How Ember asks**; its card says what you
+accept), a command that would ask runs after an announcement instead: one that deletes or overwrites, pushes or
+publishes, changes the system, downloads and runs a program, runs as root or an administrator (every command, where
+Ember itself runs as one), carries text read in another window, or belongs to a task that something on screen or in a
+command's output tried to steer or that has none of your own words. The bubble says the kind of command and nothing of
+its text ("Running a command that deletes or overwrites data, without asking: Autopilot is on."), and the command
+window shows the exact command, what Ember's checks found, "Autopilot is on, so Ember didn't ask first." and the
+countdown with **Stop**, as in §2.5. Nothing is sent to a model to decide this.
+
+It still asks, with the card of §2.4, before:
+
+- a command that would read or print passwords, keys or other secrets, so that none reaches the model;
+- a command that would keep running after Stop (a background job, `nohup`, `setsid`, a detached `screen` or `tmux`
+  session, `docker run -d`, a process manager, a scheduled job, a program it opens, a service started, enabled,
+  stopped or loaded, a login or startup entry, a change to the Windows registry), so that Stop stops everything;
+- a command Ember can't tell the effect of (a loop, a line behind a `[[ … ]]` test, code written inline, `eval`,
+  text handed to `xargs` that Ember can't see, a program that waits for typing), since it may be either of those;
+- a command your own words for the task rule out ("commit my work but don't push", "delete everything except
+  build", "push it, but without force"): that is your no, said in advance, and the card says "You didn't ask for this.";
+- every command where your organisation asks for that, where you turned on **Ask before every command** for that
+  computer, in a Podman distro, and in a project's chosen command folder;
+- turning commands on for a computer the first time (§2.1).
+
+A command that touches Ember's own settings, records, policy or processes is refused as in every mode (§2.6). **Stop**
+during the countdown counts as your no: that command, sent again or reworded to do the same to the same thing, is
+refused for the rest of the task. A countdown that ends after you left Autopilot, or once every command asks on that
+computer, doesn't run its command.
+
+On a computer reached over SSH the command is checked there again, as always. Ember tells that computer that
+Autopilot announced the command rather than that you said yes. It runs the command only where its own administrator
+allows Autopilot (where not, it answers "This computer's administrator doesn't allow Autopilot, so it wants your
+approval." and you get the card), and still wants your yes for a command it finds would read secrets, keep running
+after Stop or that it can't tell, and wherever its administrator asks for every command. When it finds more than this computer did, the
+bubble says "Running a command that <computer>'s own check asked about, without asking: Autopilot is on.", its lines
+show with a countdown of their own, and anything it still wants a yes for after that gets the card. What Ember did
+records each of these as "Announced" with "Autopilot was on, so Ember didn't ask (…)." Your organisation can forbid
+Autopilot with `approvals.maxMode` or `features.autonomy: false`.
 
 ### 2.6 What Ember never runs
 

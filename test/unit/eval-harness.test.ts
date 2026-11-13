@@ -64,7 +64,7 @@ describe("the simulated user", () => {
 
   it("answers each question the way the task says, quickly, one after another", async () => {
     const questions: string[] = [];
-    const confirmer = simulatedUser(task({ user: { answer: "allow", answers: [{ prompt: "Delete", answer: "deny" }], grants: [], autonomy: false } }), questions);
+    const confirmer = simulatedUser(task({ user: { answer: "allow", answers: [{ prompt: "Delete", answer: "deny" }], grants: [], mode: "interactive" } }), questions);
     const t0 = Date.now();
     const answers = await Promise.all([
       confirmer.ask({ title: "May I?", prompt: "Click “Save”?", options }),

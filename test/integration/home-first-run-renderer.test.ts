@@ -11,6 +11,9 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { USER_PROVIDER_NO_MODEL } from "../../app/main/agent/host";
 import { DEFAULT_SETTINGS } from "../../app/main/settings";
 import { AGREE_ARM_MS } from "../../app/shared/provider";
+import { CONSENT_VERSION } from "../../app/shared/consent";
+import { commandsConsent } from "../../app/main/targets/consent";
+import { AUTONOMY_CONSENT_TEXT, MEMORY_CONSENT_TEXT, SCREEN_IMAGES_TEXT } from "../../app/renderer/home/copy";
 
 declare global {
   interface Window {
@@ -34,7 +37,11 @@ const SIGNED_OUT = { phase: "signed-out", detail: "Not signed in.", models: [], 
  * does (in force while on and agreed for the address's host; a saved key kept only for its own host), and the card's
  * yes is saved and broadcast.
  */
-interface Seed { consent?: number; admin?: Record<string, unknown>; agent?: Record<string, unknown>; checks?: unknown[]; providerState?: Record<string, unknown>; noBridge?: boolean; slowAgree?: boolean; failOff?: boolean; home?: boolean; provider?: Record<string, unknown>; liveState?: boolean }
+/** This computer's commands card as main builds it on Linux, for the commands row. */
+const CARD = commandsConsent({ os: "linux", target: "local", targetLabel: "This computer", facts: { kind: "local", privileged: false, windows: false, podman: false, byok: false } });
+const ALL_ROWS = ["commands", "memory", "voice", "screenshots", "interactive"].map(row => ({ row, offered: true, why: null }));
+
+interface Seed { consent?: number; firstRun?: { rows: unknown[]; commands: unknown }; agreeDone?: { ok: boolean; failed: string[] }; admin?: Record<string, unknown>; agent?: Record<string, unknown>; checks?: unknown[]; providerState?: Record<string, unknown>; noBridge?: boolean; slowAgree?: boolean; failOff?: boolean; home?: boolean; provider?: Record<string, unknown>; liveState?: boolean }
 
 let browser: Browser;
 let server: http.Server;
@@ -67,7 +74,9 @@ async function open(seed: Seed = {}): Promise<Page> {
   const errors: string[] = [];
   page.on("pageerror", e => errors.push(e.message));
   (page as Page & { errors: string[] }).errors = errors;
-  await page.addInitScript(({ settings, admin, environment, agent, providerState, noBridge, slowAgree, failOff, liveState }) => {
+  const returning = (seed.consent ?? 99) > 0 && (seed.consent ?? 99) < CONSENT_VERSION;
+  const firstRun = seed.firstRun ?? (returning ? { rows: [{ row: "interactive", offered: true, why: null }], commands: null } : { rows: ALL_ROWS, commands: { title: CARD.title, body: CARD.body, sha256: CARD.sha256 } });
+  await page.addInitScript(({ settings, admin, environment, agent, providerState, noBridge, slowAgree, failOff, liveState, firstRun, agreeDone, version }) => {
     window.__frFailOff = failOff;
     window.__frCalls = []; window.__frPend = {};
     window.__frState = { settings, agent };
@@ -92,6 +101,15 @@ async function open(seed: Seed = {}): Promise<Page> {
         window.__frEmit("onSettingsChanged", copy(s));
         // The real IPC contract: main returns the Settings it kept, or throws.
         return copy(s);
+      };
+      if (name === "firstRunView") return async () => (window.__frState.settings.consent as { version: number }).version >= version ? { rows: [], commands: null } : firstRun;
+      // As main: the consent first, then the rows (here only the call is recorded), then the settings it kept.
+      if (name === "agreeFirstRun") return async (choice: unknown, sha: unknown) => {
+        window.__frCalls.push(`agreeFirstRun:${JSON.stringify(choice)}:${String(sha)}`);
+        if (!agreeDone.ok) return agreeDone;
+        window.__frState.settings.consent = { version, at: "2026-11-13T12:00:00Z" };
+        window.__frEmit("onSettingsChanged", copy(window.__frState.settings));
+        return agreeDone;
       };
       if (name === "signIn") return () => { window.__frCalls.push("signIn"); return defer("signIn"); };
       if (name === "retrySignIn") return () => { window.__frCalls.push("retry"); return defer("retry"); };
@@ -130,7 +148,7 @@ async function open(seed: Seed = {}): Promise<Page> {
         test: (draft?: { host: string; key?: string }) => { window.__frCalls.push(draft ? `test-draft:${draft.host}${draft.key ? "+key" : ""}` : "test"); return defer("test") as never; },
       };
     }
-  }, { settings, admin, environment, agent: seed.agent ?? SIGNED_OUT, providerState: seed.providerState ?? {}, noBridge: !!seed.noBridge, slowAgree: !!seed.slowAgree, failOff: !!seed.failOff, liveState: !!seed.liveState });
+  }, { settings, admin, environment, agent: seed.agent ?? SIGNED_OUT, providerState: seed.providerState ?? {}, noBridge: !!seed.noBridge, slowAgree: !!seed.slowAgree, failOff: !!seed.failOff, liveState: !!seed.liveState, firstRun, agreeDone: seed.agreeDone ?? { ok: true, failed: [] }, version: CONSENT_VERSION });
   await page.goto(`http://127.0.0.1:${port}/app/renderer/home/index.html`);
   if (seed.home) { await page.waitForSelector("a[href='#copilot-h']"); await page.locator("a[href='#copilot-h']").first().click(); } else await page.waitForSelector("#welcome:not([hidden])");
   return page;
@@ -1434,6 +1452,26 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect((q as Page & { errors: string[] }).errors).toEqual([]);
   });
 
+  it("(am) after Try again finds a sign-in, the line says how its connection went, never “connecting…” for good (first-run-r9-2)", async () => {
+    const offline = { ...SIGNED_OUT, phase: "error", reason: "network", detail: "Ember can't reach GitHub right now. It will try again when the network is back." };
+    const p = await open({ agent: offline });
+    const line = () => p.locator("#w-signin-line").innerText();
+    await expect.poll(line).toBe("I can't reach GitHub right now. I'll try again when the network is back.");
+    await p.getByRole("button", { name: "Try again" }).click();
+    await expect.poll(() => calls(p)).toContain("retry");
+    await p.evaluate(a => { window.__frState.agent = a; window.__frEmit("onAgentStatus", a); }, { ...SIGNED_OUT, phase: "starting", detail: "Connecting…" });
+    await settle(p, "retry", { found: true, source: "environment", hint: "" });
+    await expect.poll(line).toBe("Found a GitHub token in the environment; connecting…");
+    // Its connection fails again: the line says so, not that it is still connecting.
+    await p.evaluate(a => { window.__frState.agent = a; window.__frEmit("onAgentStatus", a); }, offline);
+    await expect.poll(line).toBe("I can't reach GitHub right now. I'll try again when the network is back.");
+    // A later start that connects: signed in, never the old "connecting…".
+    await p.evaluate(a => { window.__frState.agent = a; window.__frEmit("onAgentStatus", a); }, { ...SIGNED_OUT, phase: "starting", detail: "Connecting…" });
+    await p.evaluate(a => { window.__frState.agent = a; window.__frEmit("onAgentStatus", a); }, readyAgent());
+    await expect.poll(line).not.toContain("connecting…");
+    expect((p as Page & { errors: string[] }).errors).toEqual([]);
+  });
+
   it("(al) the sign-in step's line names only buttons the step shows: Try again for main's Check again, the GitHub CLI's Check again where it is shown (first-run-w5-2)", async () => {
     /** Every button the line tells me to press is on the step. */
     const pressable = async (p: Page) => {
@@ -1583,7 +1621,7 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     await d.locator("#w-alt").click();
     await expect.poll(() => calls(d)).toEqual(["quit"]);
     await next(d).click();
-    await expect.poll(async () => (await calls(d)).some(x => x.startsWith('save:{"consent":{"version":'))).toBe(true);
+    await expect.poll(async () => (await calls(d)).some(x => x.startsWith("agreeFirstRun:"))).toBe(true);
     expect((c as Page & { errors: string[] }).errors).toEqual([]);
   }, 20_000);
 
@@ -1624,17 +1662,21 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect(await p.locator("#w-count").innerText()).toBe("Step 2 of 6");
     expect(await p.locator("#w-changes").isVisible()).toBe(true);
     const changed = await p.locator("#w-changes-list li").allInnerTexts();
-    expect(changed).toHaveLength(2);
+    expect(changed).toHaveLength(3);
     expect(changed[0]).toContain("“Keep my recent conversation”");
     // Version 8 (owner decision of 2026-11-12): anyone near the computer can answer Ember's questions by voice.
     expect(changed[1]).toContain("anyone near the computer can answer it by voice");
+    // Version 9: their settings stay, and only Interactive's row is shown, on (slice4-26).
+    expect(changed[2]).toContain("Your other settings stay as they are.");
+    expect(await p.locator(".w-row").evaluateAll(rows => rows.map(r => (r as HTMLElement).dataset.row))).toEqual(["interactive"]);
+    expect(await p.locator("#w-row-interactive").isChecked()).toBe(true);
     // The usual points and the full text are still there; nothing goes on until Agree is saved.
     expect(await p.locator("#w-points li").count()).toBe(5);
     expect(await next(p).innerText()).toBe("Agree and continue");
     // Agree takes a press once it has been on screen a moment (first-run-c1-1).
     await p.waitForTimeout(AGREE_ARM_MS + 100);
     await next(p).click();
-    await expect.poll(async () => (await calls(p)).some(c => c.startsWith('save:{"consent":{"version":8'))).toBe(true);
+    await expect.poll(async () => (await calls(p)).some(c => c === 'agreeFirstRun:{"commands":false,"memory":false,"voice":false,"screenshots":false,"interactive":true}:null')).toBe(true);
     await expect.poll(() => p.locator("#w-title").innerText()).toBe("Sign in to GitHub");
     // Back: agreed now, so the step is the usual one and lists no changes.
     await p.locator("#w-back").click();
@@ -1791,4 +1833,110 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect(await p.evaluate(() => window.__frState.settings.provider.on)).toBe(true);
     expect(await calls(p)).not.toContain(`save:${JSON.stringify({ provider: { on: false } })}`);
   });
+});
+
+describe.skipIf(gate)("first run's one agreement (owner decision of 2026-11-12)", () => {
+  const SHOTS = process.env.EMBER_UI_EVIDENCE;
+  const toConsent = async (p: Page) => {
+    await next(p).click();
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("What I do, and what I don't");
+    await expect.poll(() => p.locator(".w-row").count()).toBeGreaterThan(0);
+    await p.waitForTimeout(AGREE_ARM_MS + 100);
+  };
+  const ON = (more: Record<string, boolean> = {}) => JSON.stringify({ commands: true, memory: true, voice: true, screenshots: true, interactive: true, ...more });
+
+  it("shows five rows, each on, named, with its own card's whole text, and agrees to what is left on (slice4-27)", async () => {
+    const p = await open({ consent: 0 });
+    await toConsent(p);
+    expect(await p.locator(".w-row").evaluateAll(rows => rows.map(r => (r as HTMLElement).dataset.row))).toEqual(["commands", "memory", "voice", "screenshots", "interactive"]);
+    expect(await p.locator("#w-rows-h").innerText()).toBe("What I'll turn on when you agree");
+    // Each switch is a switch a screen reader names, on, and described by its own card's text.
+    for (const name of ["Run commands on this computer", "Remember what you tell me (memory)", "Listen for “Hey Ember” and speak my replies", "Send screenshots for tasks", "Interactive: do ordinary steps without asking first"]) {
+      expect(await p.getByRole("switch", { name }).isChecked(), name).toBe(true);
+    }
+    // The same text as each card in Settings, from the same source (the "same text" rule).
+    const text = (row: string) => p.locator(`#w-row-${row}-text`).evaluate(e => [...e.querySelectorAll("p")].map(x => x.textContent));
+    expect(await text("commands")).toEqual([CARD.title, ...CARD.body]);
+    expect(await text("memory")).toEqual([MEMORY_CONSENT_TEXT]);
+    expect(await text("screenshots")).toEqual([SCREEN_IMAGES_TEXT.hint]);
+    expect(await text("interactive")).toEqual([AUTONOMY_CONSENT_TEXT]);
+    const voiceCard = await p.evaluate(() => {
+      const c = document.getElementById("consent-text")!.cloneNode(true) as HTMLElement;
+      for (const g of c.querySelectorAll("[hidden], #consent-models")) g.remove();
+      return (c.textContent ?? "").replace(/\s+/g, " ").trim();
+    });
+    expect(await text("voice")).toEqual([voiceCard]);
+    expect(voiceCard).toContain("anyone near the computer can answer it out loud");
+    // Voice Match isn't offered here: five switches, none of them its.
+    expect(await p.locator("#w-rows").getByRole("switch").count()).toBe(5);
+    // Keyboard only: every switch is a Tab stop, Space switches one, and its state is announced.
+    await p.locator("#w-row-commands").focus();
+    for (const row of ["memory", "voice", "screenshots", "interactive"]) { await p.keyboard.press("Tab"); expect(await focusedId(p)).toBe(`w-row-${row}`); }
+    await p.locator("#w-row-memory").focus();
+    await p.keyboard.press("Space");
+    expect(await p.getByRole("switch", { name: "Remember what you tell me (memory)" }).isChecked()).toBe(false);
+    const tree = await p.locator("#w-rows").ariaSnapshot();
+    expect(tree).toContain('switch "Remember what you tell me (memory)"');
+    expect(tree).toContain('switch "Run commands on this computer" [checked]');
+    if (SHOTS) {
+      fs.mkdirSync(SHOTS, { recursive: true });
+      for (const scheme of ["light", "dark"] as const) {
+        await p.emulateMedia({ colorScheme: scheme });
+        await p.screenshot({ path: path.join(SHOTS, `first-run-rows-${scheme}.png`), fullPage: true });
+      }
+      await p.emulateMedia({ colorScheme: "light" });
+      await p.setViewportSize({ width: 420, height: 900 });
+      await p.evaluate(() => document.documentElement.setAttribute("data-text-size", "larger"));
+      await p.screenshot({ path: path.join(SHOTS, "first-run-rows-narrow-larger.png"), fullPage: true });
+      expect(await p.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    }
+    // Agree, pressed twice at once: one agreement, with the switches as left and the card's hash.
+    await next(p).focus();
+    await p.keyboard.press("Enter");
+    await p.keyboard.press("Enter");
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Sign in to GitHub");
+    expect((await calls(p)).filter(c => c.startsWith("agreeFirstRun:"))).toEqual([`agreeFirstRun:${ON({ memory: false })}:${CARD.sha256}`]);
+    expect((p as Page & { errors: string[] }).errors).toEqual([]);
+  }, 30_000);
+
+  it("shows what the organisation turned off, and listening without the models, off with one sentence why, and gives them nothing (slice4-28)", async () => {
+    const rows = [
+      { row: "commands", offered: false, why: "organisation" }, { row: "memory", offered: true, why: null }, { row: "voice", offered: false, why: "models" },
+      { row: "screenshots", offered: false, why: "organisation" }, { row: "interactive", offered: true, why: null },
+    ];
+    const p = await open({ consent: 0, firstRun: { rows, commands: null } });
+    await toConsent(p);
+    for (const row of ["commands", "voice", "screenshots"]) {
+      expect(await p.locator(`#w-row-${row}`).isDisabled(), row).toBe(true);
+      expect(await p.locator(`#w-row-${row}`).isChecked(), row).toBe(false);
+    }
+    expect(await p.locator("#w-row-commands-why").innerText()).toBe("Managed by your organisation, which has turned this off.");
+    expect(await p.locator("#w-row-voice-why").innerText()).toContain("The speech models aren't on this computer yet");
+    expect(await p.locator("#w-row-memory-why").isHidden()).toBe(true);
+    if (SHOTS) await p.screenshot({ path: path.join(SHOTS, "first-run-rows-managed.png"), fullPage: true });
+    await next(p).click();
+    await expect.poll(() => calls(p)).toContain(`agreeFirstRun:${ON({ commands: false, voice: false, screenshots: false })}:null`);
+    // Under a lockdown, every row is so.
+    const locked = await open({ consent: 0, firstRun: { rows: ALL_ROWS.map(r => ({ ...r, offered: false, why: "locked" })), commands: null } });
+    await toConsent(locked);
+    expect(await locked.locator(".w-row input:checked").count()).toBe(0);
+    expect(await locked.locator("#w-row-interactive-why").innerText()).toBe("Your organisation's policy for me has a problem, so this stays off for now.");
+  }, 30_000);
+
+  it("says what couldn't be turned on before going on, and that nothing is on when the agreement wasn't saved (slice4-29)", async () => {
+    const p = await open({ consent: 0, agreeDone: { ok: true, failed: ["interactive"] } });
+    await toConsent(p);
+    await next(p).click();
+    await expect.poll(() => p.locator("#w-consent-note").innerText()).toBe("You've agreed to how I work. I couldn't turn on Interactive, so it stays off. You can turn it on later in Settings.");
+    expect(await focusedId(p)).toBe("w-consent-note");
+    expect(await p.locator("#welcome").getAttribute("data-step")).toBe("consent");
+    expect(await next(p).innerText()).toBe("Continue");
+    await next(p).click();
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Sign in to GitHub");
+    const n = await open({ consent: 0, agreeDone: { ok: false, failed: [] } });
+    await toConsent(n);
+    await next(n).click();
+    await expect.poll(() => n.locator("#w-consent-note").innerText()).toBe("I couldn't save your agreement, so nothing is on yet. Try again.");
+    expect(await next(n).innerText()).toBe("Agree and continue");
+  }, 30_000);
 });

@@ -6,6 +6,8 @@ import type { AgentStatus, AnswerStream, TranscriptEntry } from "../main/agent/h
 import type { MemoryModelStatus } from "../main/memory/better-recall";
 import type { TaskEntry } from "../shared/activity";
 import { TARGETS_IPC, type TargetSummary } from "../shared/targets";
+import { APPROVALS_IPC, type ApprovalsState } from "../shared/approvals";
+import { FIRST_RUN_IPC } from "../shared/first-run";
 import type { EmberTargetsApi } from "../renderer/home/computers-copy";
 
 const listen = <T>(channel: string, fn: (v: T) => void) => {
@@ -102,6 +104,10 @@ const api: EmberHomeApi = {
   onPresence: fn => listen<Presence>(IPC.presenceChanged, fn),
   onSettingsNotice: fn => listen<string | null>(IPC.settingsNotice, fn),
   onAdminChanged: fn => listen<Status["admin"]>(IPC.adminChanged, fn),
+  onApprovals: fn => listen<ApprovalsState>(APPROVALS_IPC.changed, fn),
+  chooseMode: (mode, version) => ipcRenderer.invoke(APPROVALS_IPC.choose, mode, version),
+  firstRunView: () => ipcRenderer.invoke(FIRST_RUN_IPC.view),
+  agreeFirstRun: (choice, sha256) => ipcRenderer.invoke(FIRST_RUN_IPC.agree, choice, sha256),
   onVisibility: fn => listen<boolean>(IPC.homeVisibility, v => fn(v !== false)),
   quit: () => ipcRenderer.invoke(IPC.quit),
   restart: () => ipcRenderer.invoke(IPC.restart),

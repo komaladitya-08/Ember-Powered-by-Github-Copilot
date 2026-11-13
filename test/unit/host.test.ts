@@ -111,7 +111,7 @@ import { unavailableLine } from "../../app/renderer/ask/chips";
 import { AdminPolicySchema } from "../../app/main/admin";
 import { Conductor } from "../../app/main/agent/conductor";
 import { LOST_GAVE_UP, LOST_RECONNECTED, LOST_RECONNECTING, Presenter, RECONNECTED_RETRY, TRY_AGAIN, expandedBubble } from "../../app/main/agent/presenter";
-import { Confirmer } from "../../app/main/agent/confirm";
+import { Confirmer, questionPausesAnswer } from "../../app/main/agent/confirm";
 import { PolicyEngine, type Agreement } from "../../app/main/policy/policy";
 import { SettingsStore } from "../../app/main/settings";
 import { FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
@@ -587,6 +587,29 @@ describe("connecting and signing in", () => {
     expect(answers).toEqual(["The event is updated."]);
     expect(ends).toEqual([false]);
     expect(session.sent).toHaveLength(1);
+    await host.stop();
+  });
+
+  it("keeps the conversation's answer, whole, when a task's question comes up while it is being written (tasks-approvals-r9-2)", async () => {
+    const deltas: string[] = [], answers: string[] = [], ends: boolean[] = [];
+    const { host, screen } = makeHost({ onAnswerDelta: text => deltas.push(text), onAnswer: text => answers.push(text), onTurnEnd: aborted => ends.push(aborted) });
+    const confirmer = new Confirmer(() => undefined, { armMs: 0, gapMs: 0, onChange: q => { if (q && questionPausesAnswer(q.question)) host.pauseAnswer(); } });
+    await host.start(TOKEN, "stored");
+    await host.ask("What is the capital of France?");
+    const session = conductorSession();
+    session.emit("assistant.message_delta", { messageId: "answer", deltaContent: "The capital of " });
+    // A background task's step asks meanwhile: its question is the task's, not this turn's tool's.
+    const permission = confirmer.ask({ title: "May I?", prompt: "Delete the old notes?", task: "1-abc", options: [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }] });
+    session.emit("assistant.message_delta", { messageId: "answer", deltaContent: "France is Paris." });
+    session.emit("assistant.message", { messageId: "answer", content: "The capital of France is Paris." });
+    session.emit("session.idle");
+    expect(confirmer.answerKey("primary")).toBe(true);
+    await permission;
+    expect(deltas).toEqual(["The capital of ", "France is Paris."]);
+    expect(answers).toEqual(["The capital of France is Paris."]);
+    expect(host.getTranscript().map(e => e.text)).toContain("The capital of France is Paris.");
+    expect(ends).toEqual([false]);
+    expect(screen().bubble?.thought).toBe("The capital of France is Paris.");
     await host.stop();
   });
 
@@ -1165,6 +1188,24 @@ describe("new conversation", () => {
     await host.forgetConversation();
     expect(memory.forgetAll).toHaveBeenCalled();
     expect(host.getTranscript()).toEqual([]);
+    await host.stop();
+  });
+
+  it("tells memory when a conversation ends, before a sign-out erases memory, so what was forgotten in it is held back from no other (memory-r9-1)", async () => {
+    const memory = { remember: vi.fn(() => ""), context: vi.fn(() => ""), forget: vi.fn(() => false), forgetAll: vi.fn((): void => undefined), conversationEnded: vi.fn() };
+    const { host } = makeHost({ memory });
+    await host.start(TOKEN, "stored");
+    await host.ask("Explain this");
+    conductorSession().emit("assistant.message", { content: "Here you go." });
+    conductorSession().emit("session.idle");
+    expect(memory.conversationEnded).not.toHaveBeenCalled();
+    await host.newConversation();
+    expect(memory.conversationEnded).toHaveBeenCalledTimes(1);
+    await host.ask("Hello");
+    await host.forgetConversation();
+    expect(memory.conversationEnded).toHaveBeenCalledTimes(2);
+    // The conversation goes first: a Forget everything that follows it holds nothing back from the next account's.
+    expect(memory.conversationEnded.mock.invocationCallOrder[1]).toBeLessThan(memory.forgetAll.mock.invocationCallOrder[0]!);
     await host.stop();
   });
 });
@@ -3163,7 +3204,8 @@ describe("review round 6: a task's bubbles say whose they are", () => {
   it("its work and its question name the task (the corner card pairs them with its row and Stop), titled as its card is", async () => {
     const bubbles: BubbleState[] = [];
     const confirmer = new Confirmer(p => { if (p.bubble) bubbles.push(p.bubble); }, { armMs: 0, gapMs: 0 });
-    const policy = { decide: () => ({ verdict: "confirm", tier: "confirm", reason: "test", prompt: "Turn on Night Light?", needsGrant: false, remember: false }) };
+    // (A stand-in engine: it asks about everything, and has no check to send a question to first.)
+    const policy = { decide: () => ({ verdict: "confirm", tier: "confirm", reason: "test", prompt: "Turn on Night Light?", needsGrant: false, remember: false }), assistAll: async (steps: { d: unknown }[]) => steps.map(s => s.d) };
     const { host } = makeHost({ hands: { ...hands(), confirmer, policy } as never });
     await host.start(TOKEN, "stored");
     await host.ask("turn on night light");
@@ -4930,6 +4972,18 @@ describe("memory erasure at account boundaries", () => {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
+  it("tells memory the organisation's policy stopped the connection, never that GitHub couldn't be checked (memory-r9-3)", async () => {
+    const why: string[] = [];
+    const memory = { ...failingMemory(), pauseAccount: (reason?: string) => { why.push(`pause:${reason ?? "checking"}`); } };
+    const { host } = makeHost({ memory, refuseConnect: () => "Your organisation's Ember policy has a problem, so Ember won't send anything to a model service until it's fixed." });
+    try {
+      expect(await host.start(TOKEN, "stored")).toBe("error");
+      expect(why.at(-1)).toBe("pause:lockdown");
+    } finally {
+      await host.stop();
+    }
+  });
+
   it("tells memory why it can't check the owner: signed out, a model provider in force, or GitHub not answering (memory-2, integrations-2)", async () => {
     const why: string[] = [];
     const memory = {
@@ -5492,9 +5546,11 @@ describe("keeping the recent conversation across restarts (opt-in)", () => {
     };
     /** What Sign out told Projects to forget (integrations-c2-1: from the handler, never from the status after it). */
     let projectForgot: string[] = [];
+    /** How often what was asked this session was let go of (memory-r9-2). */
+    let sessionWordsForgotten = 0;
     const signOutHandler = (agent: AgentHost) => handlerOf(slice("ipcMain.handle(IPC.signOut,", "ipcMain.handle(IPC.cancelSignIn,"), {
       agent, tokens: { clear() {} }, keeper: { use() {} }, providers: { forget() {} }, refusedTokens: { clear() {} }, resetAnswerSpeech() {},
-      forgetProject: (what: string) => { projectForgot.push(what); },
+      forgetProject: (what: string) => { projectForgot.push(what); }, forgetSessionWords: () => { sessionWordsForgotten++; },
     });
 
     it("Sign out deletes conversation.json although the switch is off by then", async () => {
@@ -5507,8 +5563,11 @@ describe("keeping the recent conversation across restarts (opt-in)", () => {
       expect(fs.existsSync(k.file)).toBe(true);
       k.flag.on = false; // the setting turned off, the listener not yet run
       projectForgot = [];
+      sessionWordsForgotten = 0;
       await signOutHandler(k.host)();
       expect(projectForgot).toEqual(["all"]);
+      // What the person asked this session goes too: none of it is suggested to the next one (memory-r9-2).
+      expect(sessionWordsForgotten).toBe(1);
       expect(fs.existsSync(k.file)).toBe(false);
       await k.store.flush();
       expect(fs.existsSync(k.file)).toBe(false);
@@ -5535,11 +5594,11 @@ describe("keeping the recent conversation across restarts (opt-in)", () => {
       await k.store.flush();
       const calls: string[] = [];
       const run = handlerOf(slice("ipcMain.handle(IPC.memoryForgetAll,", '// "Tell Ember about you"'), {
-        learning: { forgetAll: () => calls.push("learning") }, agent: k.host,
+        learning: { forgetAll: () => calls.push("learning") }, agent: k.host, forgetSessionWords: () => calls.push("session words"),
         memoryOwner: { clear: () => calls.push("owner.clear"), refresh: () => undefined }, memoryConfigured: () => true, publishMemoryOwner: () => undefined,
       });
       await run();
-      expect(calls).toEqual(["learning", "owner.clear"]);
+      expect(calls).toEqual(["learning", "session words", "owner.clear"]);
       expect(fs.existsSync(k.file)).toBe(false);
       expect(k.host.getTranscript().map(e => e.text)).toEqual(["old question", "old answer"]);
       await k.host.ask("after forgetting");

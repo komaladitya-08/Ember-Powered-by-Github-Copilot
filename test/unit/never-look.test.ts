@@ -4,11 +4,23 @@ import { describe, expect, it } from "vitest";
 import { NEVER_LOOK_DEFAULTS, NEVER_LOOK_NAMES, missingDefaults, neverLookLabel } from "../../app/shared/never-look";
 import { DEFAULT_SETTINGS } from "../../app/main/settings";
 import { HOST_OS } from "../../app/main/platform/os";
+import { isNeverLook } from "../../app/main/perception/elements";
 
 describe("never-look defaults", () => {
-  it("keep today's Linux list, in today's order", () => {
-    expect(NEVER_LOOK_DEFAULTS.linux).toEqual(["keepassxc", "seahorse", "passwords and keys", "1password", "bitwarden", "polkit"]);
+  it("keep today's Linux list, in today's order, followed by the password managers the other OSes' lists have (safety-privacy-r9-3)", () => {
+    expect(NEVER_LOOK_DEFAULTS.linux).toEqual(["keepassxc", "seahorse", "passwords and keys", "1password", "bitwarden", "polkit", "keepass", "lastpass", "dashlane",
+      "enpass", "proton pass", "kwallet"]);
   });
+
+  it.each([["firefox", "LastPass - My Vault"], ["firefox", "Dashlane"], ["firefox", "Proton Pass"], ["keepass2", "Database.kdbx - KeePass"], ["enpass", "Enpass"],
+    ["kwalletmanager5", "KDE Wallet Service"]])("never look at %s's “%s” on Linux by default (safety-privacy-r9-3)", (app, name) => {
+    expect(isNeverLook({ app, name }, [...NEVER_LOOK_DEFAULTS.linux])).toBe(true);
+  });
+
+  it.each([["firefox", "Passport renewal - GOV.UK — Mozilla Firefox"], ["gedit", "keep-a-changelog.md - gedit"], ["evince", "Wallet sizes.pdf"]])(
+    "still look at %s's “%s” on Linux (safety-privacy-r9-3)", (app, name) => {
+      expect(isNeverLook({ app, name }, [...NEVER_LOOK_DEFAULTS.linux])).toBe(false);
+    });
 
   it("start Windows and macOS with their own password managers and the system's password prompt (design §9.11)", () => {
     expect(NEVER_LOOK_DEFAULTS.win32).toEqual(["keepass", "1password", "bitwarden", "lastpass", "dashlane", "nordpass", "roboform", "enpass", "keeper", "credentialuibroker"]);
@@ -31,7 +43,8 @@ describe("never-look defaults", () => {
 
 describe("never-look names", () => {
   it("read each default as the settings window always has", () => {
-    expect(NEVER_LOOK_DEFAULTS.linux.map(neverLookLabel)).toEqual(["KeePassXC", "Seahorse", "Passwords and Keys", "1Password", "Bitwarden", "Password prompts (polkit)"]);
+    expect(NEVER_LOOK_DEFAULTS.linux.map(neverLookLabel)).toEqual(["KeePassXC", "Seahorse", "Passwords and Keys", "1Password", "Bitwarden", "Password prompts (polkit)",
+      "KeePass", "LastPass", "Dashlane", "Enpass", "Proton Pass", "KDE Wallet"]);
     expect(neverLookLabel(" KeePassXC ")).toBe("KeePassXC");
     expect(neverLookLabel("Thunderbird")).toBe("Thunderbird");
   });
@@ -43,7 +56,8 @@ describe("never-look names", () => {
 
 describe("missingDefaults", () => {
   it("offers back the OS's defaults the user removed (case-insensitive), as the settings window did", () => {
-    expect(missingDefaults(["KeePassXC", "Signal"], "linux")).toEqual(["seahorse", "passwords and keys", "1password", "bitwarden", "polkit"]);
+    expect(missingDefaults(["KeePassXC", "Signal"], "linux")).toEqual(["seahorse", "passwords and keys", "1password", "bitwarden", "polkit", "keepass", "lastpass", "dashlane",
+      "enpass", "proton pass", "kwallet"]);
     expect(missingDefaults(NEVER_LOOK_DEFAULTS.linux, "linux")).toEqual([]);
     expect(missingDefaults([" Polkit "], "linux")).not.toContain("polkit");
   });

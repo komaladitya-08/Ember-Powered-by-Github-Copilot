@@ -127,8 +127,10 @@ runtime. It does not change the app's consent or speaking settings.
 
 Three more switches belong to the tests themselves (the test process reads them, not Ember):
 `EMBER_VOICE_TEST=1` makes the voice suite (test/integration/voice.test.ts, on the models from
-`node scripts/voice/prepare.mjs`) fail instead of skipping when the models aren't there, which is how the gate and CI
-run it; `EMBER_UI_EVIDENCE=<folder>` saves the renderer journeys' screenshots there (the conversation, memory,
+`node scripts/voice/prepare.mjs --voice ryan`, which also fetches the second, test-only voice that reads its screen
+reader and spoken-answer prompts) fail instead of skipping when the models aren't there, that voice included, which is how
+the gate and CI run it (without `--voice ryan` four of its tests failed, where they had skipped, unseen, in every job:
+V2-F6); `EMBER_UI_EVIDENCE=<folder>` saves the renderer journeys' screenshots there (the conversation, memory,
 natural-voice, panes, integrations and first-run journeys, and project-live), for a visual check, and should point
 outside the repository; and `EMBER_RUNTIME_ENV_LIVE=1` runs the offline check of the real Copilot runtime's
 environment, only through `scripts/runtime-env-live.sh`, which gives it a network namespace with nothing but loopback
@@ -139,7 +141,26 @@ environment, only through `scripts/runtime-env-live.sh`, which gives it a networ
 - **First run** is six essential steps in the settings window, with optional character and personalisation detours (`app/renderer/home/welcome.ts`, its words
   in `welcome-copy.ts`): Ember says hello; you choose a character; you read what Ember does and doesn't do (five short
   lines, the full text under **Read the full text**; both name where a request goes: GitHub Copilot, your own model
-  provider while it is in force, or the organisation's model service) and **Agree and continue**, or **Not now**, which keeps Ember off
+  provider while it is in force, or the organisation's model service), then what the one agreement turns on (owner
+  decision of 2026-11-12, `app/shared/first-run.ts`, `app/main/first-run.ts`): five rows, each with a switch that is on
+  by default and its own card's full text from the same source Settings uses (commands on this computer, this
+  computer's commands card as main builds it; memory, `MEMORY_CONSENT_TEXT`; listening for “Hey Ember” with spoken
+  replies, the Voice section's card as the page shows it; screenshots for tasks, `SCREEN_IMAGES_TEXT`; Interactive,
+  `AUTONOMY_CONSENT_TEXT`). A row the organisation turned off (every row under a lockdown) shows off and managed with
+  one sentence why; listening without the speech models shows off and says they must be downloaded first (nothing
+  downloads without its own yes; Voice Match isn't offered). **Agree and continue** records `CONSENT_VERSION` first,
+  then, for each row left on, what that card's own yes records (`commands.local` with its card's version once its hash
+  matches the text shown, `memory` with its note's version, `voice.consent` with `wakeWord` and `speak`, `screenImages`,
+  and Interactive through `chooseMode` with its `autonomy` audit entry, via `home`), each in its own saved change: a row
+  that can't be saved is left off without consent and the step says so before going on. A row switched off records
+  nothing (a new user's listening and screenshots are written off in the same saved change as the consent, and only a
+  row left on turns them back on, in its own). Someone who agreed to an earlier version sees what changed and
+  only Interactive's row: the rest of their settings stay as they are. Nothing in a settings file is in force before the
+  agreement, and the features with a card of their own (commands, memory, `voice.consent`, Interactive) stay off in
+  `settings.ts` until agreed, so a settings file without the agreement never gains one. A new user's listening and
+  screenshots rows that aren't turned on (switched off, managed, or listening without the speech models) write
+  `wakeWord`, `speak` and `screenImages` off with the consent, as their rows say; the organisation's `features.speak:
+  false` shows the listening row managed, as it turns on spoken replies too. Or **Not now**, which keeps Ember off
   and offers **Quit Ember** (a press on either within half a second of its appearing is dropped, so a double click
   agrees to nothing); you sign in to GitHub (the device flow; a build without Ember's GitHub App offers the GitHub CLI's page and **Check again**; with the organisation's own model service there is nothing to sign in to and the step only goes on; under the organisation's lockdown the step, the try step and **Ready to start** say Ember can't connect until the policy is fixed, and only go on; where the organisation turned off your own model provider the step doesn't offer it; once Ember uses your own model provider, connected, connecting or failing, the step names it, never Copilot, and Back from the setup check returns to the provider's step, shown as in use: Back leaves it on, only **Use GitHub Copilot instead** switches it off (pressed while Ember is still answering or at a task, the step says Ember will switch once it has finished, and lets you go on), and an edit is checked as typed before it replaces the details in use, so one that fails, or that you leave or change while it is checked, changes nothing and the step says Ember is still using the old host, with **Keep using** it to go on; once switched off, the step opens again as one to set up, and a check there that fails leaves it off; or **Skip for now**); the setup check shows only
   the rows that need you (and, once **Turn on** has switched screen reading on, that apps already open need a restart), in plain words, with their fix button or the command to copy (main writes it to the clipboard: pages have no clipboard permission), and
@@ -293,7 +314,8 @@ environment, only through `scripts/runtime-env-live.sh`, which gives it a networ
   - **Tell Ember about you** (Settings › Memory, and first run's optional personalisation detour): what to call you, your role
     and work, the apps you use most, short or detailed and spoken or not, your timezone or hours, each optional, kept
     as things you told it. "Ember, get to know me" asks the same aloud; an answer heard where Ember can't tell you
-    from its speakers isn't kept. Spoken or not changes Ember's speaking choice in Voice too. While memory is paused
+    from its speakers isn't kept, and asked for in such a voice (on Windows and macOS, or with Listen once) Ember
+    says so and opens the form instead, which offers the spoken version only on Linux with the speakers' check on. Spoken or not changes Ember's speaking choice in Voice too. While memory is paused
     (your own model provider or your organisation's model service in force), both places say why instead of asking,
     and first run's step offers only Continue.
   - **Better recall** (under the list, while memory is on): **Download (23 MB)** fetches a small language model
@@ -367,7 +389,7 @@ environment, only through `scripts/runtime-env-live.sh`, which gives it a networ
   lighter tint, and Calm mode, Reduce Transparency and Increase Contrast make it solid.
   **More time to read and answer** keeps every bubble ten times as long
   (Ember's own notices, and a bubble that waited behind another or was covered for a while, included), a question waits
-  20 minutes instead of 2 before it counts as **Not now**, and an offer to bring Ember to a computer 250 seconds instead
+  20 minutes instead of 2 before it ends unanswered, and an offer to bring Ember to a computer 250 seconds instead
   of 25.
 - Without a compositor (xrdp, VNC), transparent windows can't work, so Ember lives in an opaque
   card in the corner instead; it grows to show a whole question (up to 360 px, or 640 px within the work area for a
@@ -397,10 +419,13 @@ out loud; **Never** keeps it quiet even for a screen reader, and chosen while Em
 screen reader turned off, at the answer's next sentence). Buttons that send, delete, pay and the like, risky
 shortcuts (Delete, Ctrl+Enter, Alt+F4…) and Enter on such a button are always confirmed, and “Always” is never offered
 for them. So are buttons, links and menu items that go past a security warning or turn a protection off (“Enable
-Macros”, “Keep anyway”, “Proceed to example.com (unsafe)”, “Load Remote Content”), and any answer to a message box or
+Macros”, “Keep anyway”, “Proceed to example.com (unsafe)”, “Load Remote Content”, and the names browsers and mail apps
+give them: “Keep dangerous file”, “Continue to HTTP Site”, “Display images below”, “Show blocked content”, “Turn off
+Shields”), and any answer to a message box or
 to a dialog's question but one that backs off (“Leave page”, “Resend” and “Close tabs” ask; Cancel, Close, “Stay on page”,
-“Remind me later” and No don't, but for No where the dialog asks to save, since it throws the changes away); the
-question quotes the dialog. A question in what was written in a working dialog, a mail's
+“Remind me later” and No don't, but for No where the dialog asks to save, since it throws the changes away), Enter in such a dialog
+included, or in one that warns where a click on its button would ask, while no button of it has the keyboard (it presses the dialog's default button; on a Mac always), and on
+Windows a bare letter there (it presses the button it underlines); the question quotes the dialog. A question in what was written in a working dialog, a mail's
 body or a card's description, doesn't make its buttons ask once Ember has read the whole dialog and seen the field it was
 written in; where its read was cut short, the dialog's words still count, so a page's “Are you sure you want to leave?” asks at “Leave”. Any button, link or tab of a page (or of an app built on one) whose window's title
 mentions a checkout, a payment or billing asks every time too, saying so (“The window's title mentions billing, so this
@@ -452,11 +477,11 @@ screenshots off at once, for a task already at work too (from its next look): Em
 tell it through accessibility. **What Ember
 reads, sends and keeps**, at the top of that pane, is
 first run's "Before Ember starts" again, word for word as it reads now (Search finds it by "data", "screenshot",
-"audit" and the like), but for pointing to the never-look list below and saying when screenshots are off, when Work
-without asking is on (ordinary steps are said instead of asked) or apps were let in without asking (each as the policy
-in force allows it: while Ember holds itself locked down after a policy change, it says screenshots are off and Ember
-asks before acting in an app, and every switch the lockdown turns off shows off, there and in the other panes:
-screenshots, Work without asking, working in an app you asked for help with, listening for the name, memory, routines
+"audit" and the like), but for pointing to the never-look list below and saying when screenshots are off, when an
+approval mode is in force (ordinary steps are said instead of asked) or apps were let in without asking (each as the
+policy in force allows it: while Ember holds itself locked down after a policy change, it says screenshots are off and
+Ember asks before acting in an app, and everything the lockdown turns off shows off, there and in the other panes:
+screenshots, How Ember asks (no mode marked, its row locked), listening for the name, memory, routines
 and update notices), and which of other
 computers, WSL and commands you turned on or your organisation turned off; while open it follows where requests go, the
 policy and those settings, and isn't drawn again for an unrelated change.
@@ -470,27 +495,156 @@ type (accents, other layouts) is pasted, and your clipboard is put back afterwar
 **Commands** section), a task can also run commands, in Ember's own **Ember commands** window rather than a terminal of
 yours; it asks before dangerous ones ([COMMANDS-WSL-SSH.md](COMMANDS-WSL-SSH.md)).
 
-**Work without asking** (Apps & privacy, off by default; owner decision of 2026-11-02, PLAN.md §2 "Approvals"). Turning
-it on shows its card first: what runs without asking, what still asks, that Ember says what it does, and that a stop
-always works (`FEATURE_CONSENT_VERSION.autonomy`). While it is on, Ember doesn't ask before its first step in an app,
-before borrowing your mouse and keyboard (it still waits until you're still and lets go when you move), before
+**How Ember asks** (Apps & privacy; owner decision of 2026-11-12, PLAN.md §2 "Approvals"). One choice of approval
+modes replaces "Work without asking" and the two switches that sat beside it ("Don't ask before working in an app I
+asked for help with" and "Ask only about dangerous commands"): **Interactive**, **Assisted** and **Autopilot**.
+Pressing a mode shows its card first: for Interactive, what is announced
+instead of asked, what still asks every time, what never happens, that a stop always works, and that anyone near the
+computer can answer a question by voice while Voice Match is off; for Assisted, that a lighter AI model decides
+whether a step matches what you asked, what it is sent, that it can be wrong, what it never clears, and that what it
+clears is announced and recorded; for Autopilot, in four short paragraphs, that Ember doesn't ask before it acts and
+that you accept that risk, what it still tells you and still asks, what it never does, and how to stop it and that
+your organisation can turn it off. **I agree** records the agreement and chooses the mode in one step
+(`APPROVALS_IPC.choose`: main checks the sender, the mode and the card's version, and Home's other settings changes
+never carry the mode); **Not now** leaves the mode as it was. The arrow keys move between the modes without choosing
+one, and the keyboard goes back to the mode's row when its card closes. Until Interactive's card is agreed to
+(`FEATURE_CONSENT_VERSION.autonomy`, now 3: an agreement to Work without asking's card is none to this one, so whoever
+had that on agrees once more) Ember is below Interactive: the section shows the card ready to agree, and says that
+until then Ember asks before its first step in an app, before using your mouse and keyboard, before pressing OK on an
+app's message box and before moving text between apps. So that a user who updated isn't left wondering why they are
+asked more, the first such question each run (one Interactive would have announced, never a risky one) ends "(I ask
+before ordinary steps like this until you agree to Interactive in Settings, under Apps & privacy. Then I tell you
+about them as I go instead.)"; never where the organisation keeps Ember below Interactive. The choice is kept in `settings.json` as `approvals` (`mode`,
+and under `consent` each mode's card as agreed to); the `autonomy` and `trust` keys of an earlier `settings.json` are
+read once and gone with Ember's next save, and nothing in them chooses a mode or agrees to a card. A mode is in force
+only with its own card agreed to as it reads now and where the organisation allows it: Assisted needs its own card's
+record (`FEATURE_CONSENT_VERSION.assisted`) and Autopilot its own (`FEATURE_CONSENT_VERSION.autopilot`), each working
+as the next mode down that is agreed to without it. `settings.json` is a file any program can write, a text editor
+Ember drives included, so it never raises the mode on its own: a change to it while Ember runs that raises the mode
+in force or agrees to a card is put back as it was (the log says `autonomy.raised_by_file`), and at start a mode above
+Interactive, and the agreement to Assisted's or Autopilot's card, count only where they match what Ember last
+recorded itself, which it seals with the system's keyring in `approvals-seal.bin` (0600) after every change made in
+Home or by voice or typed words. Until that seal is read at start Ember is at most Interactive; where it doesn't
+match, or there is none, the file is put right (`autonomy.unsealed`): at most Interactive, those two cards not agreed.
+Without a keyring (`basic_text`) nothing is sealed, so an agreement to Assisted or Autopilot lasts until Ember quits.
+A lower mode or a withdrawn card in the file is taken, at start or while running, and recorded (`via: "file"`). Ember
+also never acts in an app's window whose title shows a file in its data folder or in the organisation's policy folder
+("settings.json (~/.config/ember) - gedit"). While
+Autopilot is in force the note under the modes says so first: "Autopilot is on: Ember sends, deletes, pays and
+installs without asking, and tells you as it goes. “Ember, stop” or Ember's stop shortcut stops it." Where the organisation keeps Ember below
+Interactive (`features.autonomy: false`, `allowGrants: false`, `confirmEveryAction`, `features.actions: false`, a
+lockdown) the modes are locked and the note under them says so in one sentence, with what that leaves ("Ember
+doesn't act in your apps." with actions off, "Ember asks before every action." with every action asked); where it
+caps the mode (`approvals.maxMode`) a higher choice works as the cap and the rows above it are locked ("Your
+organisation allows Interactive at most."), and where the cap's own card isn't agreed to the note says so and to choose
+it to read it; and where it turned the check off (`features.aiReview: false`) Assisted's row is locked, the note says
+"Your organisation turned off the check Assisted needs, so Assisted can't be chosen.", and an Assisted chosen earlier
+works as Interactive. A mode chosen whose card isn't agreed to as it reads now (a newer card) works as the next one
+down, and the note says "Autopilot's card isn't agreed to as it reads now, so Interactive is in use: choose Autopilot
+to read it."
+
+**Assisted** is Interactive with one thing more: where Ember would ask, it first checks the step against what you
+asked (`PolicyEngine.assist` for an app step, reached from the worker right before the question would be put up; the
+reviewer of [COMMANDS-WSL-SSH.md](COMMANDS-WSL-SSH.md) §2.5a for a command). The check is a Copilot session of its
+own with no tools, deleted once it has answered, on the conversation's lighter model. It is sent your own words for
+the task (typed or spoken, also where Ember can't tell your voice from its speakers; never a suggestion you clicked,
+words heard over Ember's own voice or a routine's saved steps, for which the request that ran the routine counts) and
+Ember's own description of the step, a line for each part: what kind of step it is, the app, the window's title, the
+control's role and name, a dialog's title and words, the text to type and, where it would replace what a field holds,
+up to 200 characters of that, the option or value chosen, a cell's formula, the apps carried text came from, and why
+Ember's rules would ask; for a command, the command, the computer, its system, shell and folder, and what the rules
+found. Assisted's card names these parts (`FEATURE_CONSENT_VERSION.assisted`, now 2). Every part that came from the screen, an app or the task's model is quoted as untrusted
+data; the check never sees the screen, a read or a command's output. It answers with one of two fixed words. A match
+lets the step go ahead, a risky one included: the bubble and the task's card say "…, without asking: I checked it
+against what you asked.", the audit entry carries `autonomy: true` and `review: "match"`, and What Ember did shows
+"Without asking" with "Ember's check found this step in what you asked." No match, any other answer, an error or no
+answer within 20 seconds puts the question up as before (`review: "no-match"` or `"none"` on its entry). While the
+check runs the task's bubble says "Checking this step against what you asked…"; Ember never shows a question and then
+withdraws it, and a Stop ends the wait at once. It asks without the check: in a task with no words of yours; where
+your organisation asks you to confirm every action; before borrowing again once you took the mouse or keyboard back
+in that task; and for a step it can't show the check whole (a name the screen reader withheld, a dialog read in part,
+a name over 200 characters, typed text over 1,500, a request over 6,000). It never checks what Ember refuses, and a
+step you said no to stays refused without reaching it. A task that text on screen tried to steer, that went off-task
+or where you said no has its steps checked too, the check being told so. On another computer reached over SSH every
+step still asks (its own policy asks for each one); steps in WSL apps, on this screen, are checked as any other here.
+
+**Autopilot** never asks about a step in an app. Every question Interactive would put up goes ahead instead,
+announced, a risky one included (`PolicyEngine.autopilotStep`, at the end of the engine's own judgement, on
+`PolicyInputs.autopilot`): sending, deleting, paying, installing, a security or system setting, a dialog's answer, a
+destructive key, a step you didn't ask for. The bubble and the task's card say the kind of step, the app and a size,
+never a control's name, typed or screen text ("Clicking in Thunderbird, without asking: Autopilot is on."), the audit
+entry carries `autonomy: true` and `mode: "autopilot"` with why the step would have asked, and What Ember did shows
+"Without asking" with "Autopilot was on, so Ember didn't ask." A task that text on screen or in a command's output
+tried to steer, that went off-task or where you said no stays announced too, each such step recorded as Autopilot's;
+the step you said no to is still refused before anything else, however it is reached. Once you take the mouse or
+keyboard back from a task, Ember borrows nothing more in that task: Interactive asks before the next borrow, and
+Autopilot, which has no question to put, refuses it ("the user took the mouse back earlier in this task, and
+Autopilot doesn't ask before using it again"). Commands are in [COMMANDS-WSL-SSH.md](COMMANDS-WSL-SSH.md) §2.5b. A
+call to an extension's tool that would ask is said in the conversation's bubble instead ("Using a tool from
+<extension>, without asking: Autopilot is on.", never the tool's name or its arguments; audited as `verdict:
+"announce"`, `mode: "autopilot"`), and asks where that can't be said. On a computer reached over SSH each step that
+would ask is announced where neither administrator asks for a click before every action or forbids "Always" or
+acting; the step's stamp says it was announced, never that you said yes, and the remote's own check accepts that only
+where its own administrator allows Autopilot (it refuses the step otherwise). Autopilot keeps every refusal exactly
+as Interactive has it (password, card and secret fields, your terminals, never-look and Ember's own windows, the
+system's sign-in and password prompts, desktop-level keys and Ember's own shortcuts, making a file executable),
+consent and each first-use card, masked screenshots, the audit log (a step that can't be recorded isn't taken), Stop,
+the limits on tasks, steps, time and actions a minute, and your organisation's policy: `confirmEveryAction`,
+`features.autonomy: false`, `allowGrants: false`, `features.actions: false` and a lockdown keep it out of force, and
+`approvals.maxMode` caps it. `features.aiReview: false` doesn't touch it: no model decides anything in Autopilot.
+The vault isn't built, so nothing is filled into a password, card or secret field or a sign-in window in any mode.
+
+In Interactive, Ember doesn't ask before its first step in an app (in an app you asked for help in, the one you were
+in or one your request names, that step isn't announced either),
+before borrowing your mouse and keyboard (it still waits until you're still and lets go when you move; once you have
+taken them back from a task, it asks before using them again in that task), before
 moving text between apps (it says which apps and how many characters, never the text), before pressing OK on a
 message box whose only button is that OK, with nothing to choose, tick or type, and nothing in it Ember couldn't see ("Answering a message box in Notepad…";
 any dialog with a Cancel, a check box or another control, or a title bar's Close (except in a real Windows dialog box) still asks, and so does one that asks a question, says what has happened or will happen, is longer than 120 characters, is cut
 short, is a web page's, a browser's, an installer's or a permission prompt, or names something risky), or before
 typing line breaks into a plain text editor's main document with the borrowed keyboard (Notepad, gedit, Mousepad, Kate,
 TextEdit and the like, when it is the window's main document; their consoles, any other app, a spreadsheet's cell, a web page and a tab still ask). Controls in a separate top-level window a dialog owns can't be detected (no reader lists them under the dialog). While
-Ember runs as an administrator or as root every command asks, and the hint under the switch says so; an ordinary command on this
+Ember runs as an administrator or as root every command asks, but in Autopilot, which runs them so without asking, each
+with its Stop countdown; the note under the modes says which; an ordinary command on this
 computer that asks only because it carries text read elsewhere runs after its Stop countdown (WSL and SSH commands ask
-as before). Steps in the system's Settings and security apps always ask. It says each such step in its bubble and on
+as before). In the system's Settings and security apps it asks more often: a switch or a choice there asks every time,
+and so does a first step there that you didn't ask for; a plain click there (another page of Settings) in a task you
+asked for there goes ahead as anywhere else. It says each such step in its bubble and on
 the task's card by its kind, app and size ("Clicking in Text Editor, without asking as you let me."), never with
 typed text or words from the screen, once the check for a password prompt right before the step has passed (a step that
 check stops is said and listed only as refused), and **What Ember did** lists it as "Without asking" (the audit entry has
-`autonomy: true`), and lists turning the mode on or off with how (Home, voice, typed). Risky steps ask every time as before, with no "Always", and so do dangerous
+`autonomy: true`), and lists every change of the mode in force with how it came about ("How Ember asks: Interactive";
+by voice, asked in words, your organisation's policy changed, or as Ember started; the audit entry `autonomy` has the
+`mode`, the one `before`, `via` and `verified`). A change to a mode that asks less that can't be written to the audit
+log is undone, and where it can't be undone on disk either Ember stays below Interactive until the mode is chosen again
+(the note says "Ember couldn't save or record your choice…"). Risky steps ask every time as before, with no "Always", and so do dangerous
 commands; a task that text on screen tried to steer, that went off-task or where you said no (at any point in it) goes
-back to asking.
-Say “Ember, work without asking” (Voice Match must recognise you, and the card must already be agreed to: otherwise
-Ember opens the switch or its card here) or “Ember, ask me first again” (anyone) to switch it by voice.
+back to asking. A question nobody answered in time is not a no: it approves nothing and its step isn't taken (Ember is
+told the question went unanswered, so it stops there and says so instead of trying another way), but the task isn't put
+back to asking for it, and what a **Not now** ends stays as it was.
+What you said no to stays refused for the rest of that task, whatever the mode: the same step sent again (the same
+control pressed another way, the same field typed into, a cell of a batch you turned down), a risky step that does the
+same kind of thing in any window (after a no to Send, its shortcut, "Send Now" in the menu or Send in another compose
+window; after a no to "Move to Trash", the Delete key or "Remove"; a risky control named in words Ember can't put a kind
+to counts as every kind), or the same command or one
+that does the same to the same thing (`find build -delete` after `rm -rf build`), is refused without another question,
+never checked by Assisted and never announced, and "What Ember did" says "You said no to this step earlier in this
+task." A question nobody answered isn't asked a second time until you next say something to that task. To have Ember
+do it after all, ask again: a new request is a new task.
+**The mode by voice** (app/main/agent/autonomy-intent.ts, answered by Ember itself, never by a tool of the model's).
+Say a mode's name, “Ember, switch to Autopilot”, “Assisted mode”, “go back to Interactive” or “turn Autopilot off”, to
+change it. A mode that asks less is chosen only by voice, by the rule for a spoken yes: from anyone heard while
+**Only my voice can say yes (Voice Match)** is off, and only from your verified voice while it is on (one too short to
+be sure of is asked for again; while Voice Match is on but not ready, from nobody), never from words heard over Ember's
+own voice, and only once that mode's card has been agreed to in Settings: before that, Settings opens at its card, and
+saying the name never agrees to it. Typed words and a suggestion pressed never choose a mode that asks less: Settings
+opens at its row. The organisation's cap and switches hold as in Settings. A mode that asks more is chosen by anyone,
+typed too; where that mode's card isn't agreed to, Ember says where it lands (below Interactive, or in Interactive) and
+opens the card. “Ember, work without asking” is Interactive (in Assisted or Autopilot Ember says it already asks even
+less), and “Ember, ask me first again” (anyone, typed too) has Ember ask before ordinary steps again by withdrawing the
+agreement to every card, so the way back is a card in Settings. Each change is a "How Ember asks" entry in What Ember
+did, saying by voice or typed; one that can't be recorded is undone, and Ember says "I couldn't save or record that
+change, so I'll keep asking you first."
 
 **Answering by voice.** While a question is up, “Ember, allow” (or “yes”, “yes please”, “yeah”, “sure”, “okay”,
 “okay, go with it”, “go ahead”, “go on”, “accept”, “I accept”, “continue”, “confirm”, “do it”, “sounds good”, “that's
@@ -499,13 +653,41 @@ list in `app/shared/spoken-answer.ts`, which the voice process also reads, so th
 conversation such an answer reaches the question and isn't taken for “that's all” or for a “yeah” said over Ember.
 Once Ember has said the question (or at once, where it doesn't speak), and again after each note it says about an
 answer it didn't take, it listens for 8 s (`ANSWER_WINDOW_MS`, app/main/voice.ts) for the answer without its name: a
-bare “allow” or “not now” is heard then (the answer window, `answerWindow` in app/voice/engine.ts). Only what the list
+bare “allow” or “not now” is heard then (the answer window, `answerWindow` in app/voice/engine.ts). A bare yes is
+taken there only where Ember can tell whether something else is playing (Linux with the speakers' stream through
+PulseAudio's parec, Windows once its output watch has looked); on macOS and on Linux without parec it is dropped as
+`sound-unknown`, the question says once to say the name first, and a second one is dropped without a word or a new
+window. Home › Voice words its hint by platform (`voiceAnswerHint`, app/renderer/home/copy.ts: V2-F3, V2-F12). While the window
+is open, Ember's status line says “Listening for your answer…”; when it closes unanswered with the question still up,
+it says for 8 s “To answer by voice now, start with my name.” (`answerWindowStatus`, V2-F4). In a conversation neither
+shows: bare answers are heard there throughout. Neither shows on a question whose yes can't be taken by voice (locked by
+Voice Match, Voice Match not ready, a click-only card: `Confirmer.yesByVoice`), and either goes with its question
+(`answerStatusOnQuestion`, voice-product-x9-4). Only what the list
 reads as an answer leaves that window; a request said with the name in it (“Ember, open my mail”) is heard as at a
-wake, “Hey Ember” starts a wake as from idle, and anything else heard there goes nowhere; a word or two that read as
+wake, and by a wake's two stages: the spotter heard you say the name in it, and the recognizer wrote it. On the
+recognizer's words alone, which take “Number, …”, “Member, …” and “Amber, open…” for the name after the spotter, talk
+that never named Ember left the window as a request and opened a conversation that sent what was said next (second
+review of the voice lane, V2-S3; on the real models “A number of people called today.” and “Number, can you pass the
+salt?” did 8 times in 8, and never now). “Hey Ember” starts a wake as from idle, and anything else heard there goes nowhere.
+“Stop” said there without the name still stops everything (“Stop.”, “Stop it.”, and “Step.” or “Stuff.” as the
+recognizer writes it: `saidStop`); the other ways to ask for quiet (“Never mind”, “Cancel”, “That's enough”, “Quiet”)
+stop Ember there only with its name, as it is silent then and hears the room, whose every such word pulled the kill
+switch (V2-S8); in a follow-up window and after “Hey Ember” they stop as before. A word or two that read as
 no answer (most likely one misheard: one test voice's lone “Allow.” comes out “Hello”) make the question say once how
-to answer (`unclear`). It opens no conversation, is
-no follow-up, ends with the question, and takes nothing said over other sound unless it is said with the name (the
-question then says so, once). An answer begun a moment (160 ms of quiet, `TURN_GAP_FRAMES` in engine.ts) after Ember's
+to answer (`unclear`). So do, there and in a follow-up or a conversation while a question waits, up to four words
+that start like an answer and aren't one (“Yes, but wait.”, “No, hang on.”: `nearAnswer` in app/shared/spoken-answer.ts),
+and, in any window, a yes asked as a question said by name (“Ember, okay?”: `askedYes`): nothing of them is sent, where
+they went to Copilot or vanished (V2-F5, V2-F7). “Why?” and “Which file?” are requests as ever. So are words that hold
+a stop (“No, stop the task.”, “Okay, stop typing.”): never a near-miss, they reach main, which stops everything on
+them while a task is at work (voice-product-y9-1). “Okay, Ember.”, which
+the spotter hears as “Hey Ember”, is only a wake and answers nothing: nothing tells whose the “Okay” before the name
+is, and a video's or a colleague's rode on the user's name as their yes (voice-product-y9-2); what others say right
+after the user's bare “Hey Ember” goes nowhere either (voice-product-x9-1). “Okay, that's all.”
+still ends a conversation or a follow-up, the closers judged before the near-miss check (voice-product-x9-3). The answer window opens no conversation, is
+no follow-up, ends with the question, and takes no yes said over other sound unless it is said with the name (the
+question then says so, once); a no is anyone's there too, as it is in a conversation and a follow-up: “No.”, “Not
+now.” and “Don't do it.” over a playing video were dropped in the answer window and a conversation, and the question
+stayed up, open to the next yes (V2-S7). A video's own “No.” declines, the safe side. An answer begun a moment (160 ms of quiet, `TURN_GAP_FRAMES` in engine.ts) after Ember's
 voice ended is heard whole from its start, also when it starts in the 400 ms after Ember says it stopped; one that
 runs on from Ember's voice with no such gap began under it, so only its end was heard (“Don't do it.” came out as “Do
 it.” and allowed: owner's report of 2026-11-12). That one is never taken, in the answer window or a follow-up: Ember
@@ -513,27 +695,46 @@ says once a question that it was still speaking and to say it again (`answer-ove
 Ember's read-out in the microphone until 0.1 s after it stopped: refusals begun from 0.6 s before to 0.6 s after taken
 as a yes went from 28 of 180 to none, and answers begun 0.3 s after are heard (none were within 0.4 s). Nothing Ember says
 while a question is up ends on words that read as an answer: it says the keys as “To allow, press Control Alt Y; for
-not now, press Control Alt N.” (`keysSaid`, app/main/agent/voice-answer.ts).
+not now, press Control Alt N.” (`keysSaid`, app/main/agent/voice-answer.ts). When it doesn't take a spoken answer,
+the note under the question says why each time, but Ember says each such line aloud only once a question
+(`VoiceRefusals`): a television's “Okay.”, “Sure.” and “Fine.” had it say the same sentence five times in a minute
+(V2-F2). Said aloud, the keys are named once, and “use the keys” only while Ember holds the allow key (V2-F9). While
+Ember borrows the mouse a spoken yes is refused as the approve key is, and the note says so (`busy`); where Voice
+Match's model failed on a yes, the note says it couldn't check it (`unchecked`, marked by the voice gate), not that it
+didn't sound like you (V2-F8).
 With **Only my voice can say yes (Voice Match)** off, its default, a yes or a no from anyone heard answers it (owner
 decision of 2026-11-12: “it doesn't really need my voice to be matched for it”), and “Before Ember starts” and the
 “Hey Ember” card say so: anyone near the computer can answer Ember by voice. The audit records `via: "voice"`,
 `verified: false`, and the log's `voice.answer` line `anyone: true`. With it on, a yes counts only when Voice Match
 recognises you in what you say after “Hey Ember”, from at least half a second of your voice (“Ember, go ahead” is
-enough); switched on but not ready (never taught, or its model not in), no spoken yes is taken, and the bubble says to
+enough). A voice it turns away while a question is up locks that question to a click or the keys, and that is
+often your own one-word answer, too short to match (with the real models your own “Yes.” locked it 4 times in 4, “Yes,
+please go ahead” never): the question then says it couldn't match the voice to yours, and Voice Match's line in Home
+says to answer in a few words (V2-F1); switched on but not ready (never taught, or its model not in), no spoken yes is taken, and the bubble says to
 finish setting it up in Settings › Voice or turn it off. A shorter
 yes (“Ember, allow”) counts too for a question asked by a task you asked for in a voice Voice Match recognised, within
 10 minutes of asking, unless that short yes is too quiet or clipped to tell (it is then too short, never trusted) or sounds clearly unlike
 you, Voice Match has turned another voice away since, you forgot or taught your voice again,
 or the task was changed by a request it didn't recognise (typed, say); never for a command card, a consent card or
 another task's question (owner decision of 2026-11-03; the audit says `trust: "task-voice"`). A yes asked as a
-question (“Proceed?”), or padded with more than one filler word, isn't one. Otherwise the bubble says how, and the question stays (naming the keys only while Ember holds them: `refusalLine`). Measured on
+question (“Proceed?”), or padded with more than one filler word, isn't one; “thanks”, “please” or the name after an
+answer are taken off first, so “Okay, thanks.” is the yes that “Okay.” is (V2-S10). The asked-yes rule reads the
+recognizer's text, so it holds where the recognizer writes the question: it does for a question in its words (“Is that
+okay?” was never an answer), but not for a one- or two-word yes asked only by the voice's rise. The recognizer writes “?” from the words, not the voice: the second review's verifier synthesized “Okay?”,
+“Allow it?”, “Go ahead?”, “Proceed?”, “Sure?”, “Yes?” and “Fine?” in four voices, and 21 of the 28 came out with a
+full stop or none and were read as a yes (most of those clips had no rise in pitch; the few that rose were written
+with a full stop all the same). So a lone “Okay?” said as a question is taken as a yes today (V2-S5). Nothing in the
+audio is read for it yet: that needs measuring on recorded people first, and would at most turn such a yes into one
+Ember asks for again, never one it takes. Otherwise the bubble says how, and the question stays (naming the keys only while Ember holds them: `refusalLine`). Measured on
 LibriSpeech dev-clean (33 speakers): half a second of another voice passes 0.5 % of the time. With the task trust,
 someone else saying “Hey Ember, allow” is taken about 2.5 % of the time, and someone who plays your recorded “Hey
 Ember” then says “allow” 35–40 %, once: any voice turned away ends the trust; a yes too
 quiet or clipped to score is refused (PLAN.md §2 “Approvals”). It counts only for the question that was up, and armed, when you started speaking, and
 once Voice Match turned another voice away during a question, that question takes a click or the keys only, and every
 later spoken yes to it is told so, never to say it again. “Not now” works for anyone, also in a follow-up window (“Cancel” and “never mind” aren't answers). Ember never takes its
-own voice as an answer (nothing it hears while it speaks, or that started before it last spoke, counts): an answer said
+own voice as an answer (nothing it hears while it speaks, or that started before it last spoke, counts; each thing
+said is dated from its own start, in a follow-up window too, where a question read out after the window opened made
+the first answer one “said over Ember” and a no took two tries: V2-S9): an answer said
 over Ember (as it reads the question out, or says a note), in a conversation or with its name, stops Ember speaking,
 and the question says, once, that Ember was still speaking and to say it again, which the answer window then hears
 (`answerOverEmber` in app/main/main.ts; the engine's `answer-over` event for one in Ember's own words, such as “allow”,
@@ -561,10 +762,45 @@ it builds on:
   an MCP tool silently replaces an Ember tool of the same name. `verifySessionTools` accepts an extension tool only as
   that MCP tool and checks its description and schema against the pin. With no extension tool the session is today's
   exactly.
-- **Checked at every call, not only at load.** A server can change a tool mid-session (`notifications/tools/list_changed`),
-  so `verifySessionTools` binds the gate to the session's live tool list, and every call compares what the model is
-  shown now with the pin; a tool that differs is denied and marked changed for good (off until the user agrees again).
-  A session never bound, or whose list can't be read, denies every extension call.
+- **Checked as the session loads, after each call and at every call; a server's word that its list changed takes
+  it out.** The pin decides what the model is shown, not only which calls run (integrations-r9-1: compared only at
+  calls, a description nobody agreed to stayed in every request of the conversation while Home said “Ready”).
+  `verifySessionTools` binds the gate to the session (its live tool list, the switch that disables one server in it,
+  and a server's own `tools/list` through `session.rpc.mcp.listTools`), then waits for the pins' check. A tool that
+  differs from its pin is marked changed for good (off until the user agrees again; Home says “Changed since you
+  agreed” and offers **Review tools**), audited (`phase: "changed"`, never its text), and its server is disabled in
+  that session (`session.rpc.mcp.disable`); `generation` moves, so the conversation reloads between turns with the
+  server's other tools. In the session it left, every tool of that server is denied.
+  - *As it loads:* the runtime's own metadata, which is what the model is sent, is compared with the pins (with the
+    two empty schema fields the runtime adds, `shownSchema`, integrations-x9-3). A server that lists one description
+    to Ember's own checks and another to the conversation is out before the session's first request.
+  - *The runtime's list never changes mid-session for a stdio server.* Measured on the bundled runtime: it asks a
+    server for its tools again only after the server's `notifications/tools/list_changed` (never without one, over
+    seven requests and two calls), as it builds its next request, and shows the model what it gets with no word to
+    Ember first. Ember's launcher stands between the runtime and a stdio server and never passes that notice on
+    (`passedOn`, launch.ts; every other line is passed on as the launcher read it), so the list the runtime holds is
+    the one checked as the session loaded. Nothing Ember asks a server can stand in for that: a server can answer
+    Ember's question as agreed and the runtime's with new text (integrations-x9-1: it did, in every request of the
+    conversation, 5 of 5).
+  - *When the runtime does hear that a server's list changed* (`mcp.tools.list_changed`: a remote server, which has
+    no launcher between, or anything that got past it), that word is the change. The server is disabled in the
+    session at once, unasked, the conversation is tainted and reloads between turns, where the runtime's first list
+    is checked against the pins as at every load. A server that says it again in the same conversation stays out
+    of it until the conversation ends, and each of its tools whose entry in its own list then differs from the pin is
+    marked changed (off until the user agrees again); the others come back in the next conversation. The event is heard from the
+    session's first moment (`onEvent` in the session's config). Not closed for a remote server: a notice that
+    reaches the runtime a few milliseconds before it builds a request can put the new text in that one request,
+    before Ember hears of it; after that the server is out and every extension call asks. Closing it needs the
+    runtime not to refresh a tool list mid-session, or Ember between the runtime and a remote server too.
+  - *After each of a server's calls*, before the result goes back, Ember asks that server for its list
+    (`session.rpc.mcp.listTools`, at most 1.5 s, and not again in that session once unanswered) and compares each
+    admitted tool with its pin whole, hints too: a head start on a server that changes a tool as it answers and says
+    so. It only ever turns something off; a list that matches proves nothing.
+  - The session's hooks (before and after every tool, and before a new request) wait until a server on its way out
+    is out: one `mcp.disable` per server, each at most 3 s, so a server's notices can't hold a turn however many it
+    sends (integrations-x9-4: each queued a question to the server, 27 s for one ordinary request).
+  - *At every call:* what the model is shown now is compared with the pin again; a tool that differs is denied and
+    turned off the same way. A session never bound, or whose list can't be read, denies every extension call.
 - **Ember's gate decides every call** (`gate.ts`, from `onPreToolUse`): off (the admin's `features.extensions`,
   LOCKDOWN, the user's switch or consent `FEATURE_CONSENT_VERSION.extensions`), stopped, disabled, changed, shown
   differently, or refused this turn: deny. A read-only tool in an agreed item, with no injected text seen: allow.
@@ -573,10 +809,10 @@ it builds on:
   arguments there. Anything else: the Confirmer asks every time ("Use “post_message” from Slack? With "{…}"."), with
   Allow and Not now, never Always. A yes counts only if the gate still allows the call when it comes. Every decision,
   answer and result is an `extension` audit entry, with sizes only.
-- **Hints changed mid-session.** The runtime's tool list has no hints, so a change of hints alone (`readOnlyHint` to
-  `destructiveHint`) can't be compared with the pin during a session. When a server sends `tools/list_changed`
-  (`mcp.tools.list_changed`), every tool of that server asks for the rest of the session; the next start's check
-  (`refresh()`) re-pins nothing and turns the changed tool off.
+- **Hints changed mid-session.** The runtime's tool list has no hints, so what the model is shown can't tell a
+  change of hints alone (`readOnlyHint` to `destructiveHint`); the server's own list, asked after each of its calls,
+  can, and such a tool is turned off as above. Ember decides by the hints it pinned, never by what a server says
+  later. The next start's check (`refresh()`) re-pins nothing and turns a changed tool off.
 - **Failures are untrusted too.** The SDK can't rewrite a failed call's text, so `onPostToolUseFailure` adds Ember's
   note that it is untrusted data, audits its size, and taints the conversation (any extension failure).
 - **Taint lasts the conversation**, across reconnects; it ends when the conversation is forgotten.
@@ -596,7 +832,9 @@ it builds on:
   `GH_TOKEN` and cloud keys reach it), so it starts Ember's launcher (`dist/app/mcp-launch.cjs`, plain Node), which
   starts the server with `appEnv()`'s allowlist and the plugin's own values only, no shell, and records its process id
   in `extensions/run/` (Linux and macOS: as the leader of its own process group, so the kill switch ends everything
-  it started; Windows: `taskkill /T`). A server that needs a `${VAR}` from the user's environment is refused, and
+  it started; Windows: `taskkill /T`). The server's input and output go through the launcher (`relay`): the runtime's
+  requests as they are, the server's lines one by one through `passedOn`, which drops its notice that its tool list
+  changed and anything that is no JSON-RPC message, and ends the server at a line of more than 64 MiB. A server that needs a `${VAR}` from the user's environment is refused, and
   proxy addresses reach it without their user name and password. This (and the blanked credential variables: see "Where the sign-in goes") keeps Ember's sign-in out of the server's
   own environment; it is not a sandbox. A stdio server runs as the user and can read what the user can, including the
   environment of the Copilot runtime that started it (`/proc/<pid>/environ` on Linux), which holds the GitHub token
@@ -608,6 +846,14 @@ it builds on:
   with extensions off reconnects nothing.
 - **The kill switch** part `extensions` refuses every call from sessions loaded before it, drops their questions and
   ends every server the launcher recorded.
+- **A list that can't be written** (a full disk, a data folder that can't be written; integrations-r9-4). Turning an
+  item off or removing it stops its servers and keeps it off for the rest of the run whatever can be saved; removing
+  takes it from the list only once `extensions.json` no longer holds it, so a second **Remove** never answers
+  “Removed” for an item that would be back, on and agreed, at the next start. An empty mark, `extensions/off/<id>`
+  (it needs no room), keeps it off at the next start, which turns it off before anything loads and drops the mark
+  once the list is saved. Home is told at once and the message line says the change wasn't saved (`extensionUnsaved`
+  in app/renderer/home/extensions-copy.ts), and that the item may be back after a restart where not even the mark
+  could be written. Turning an item on that can't be saved leaves it off.
 - **Off for now:** connectors (`connectors()` is empty, `connect()` says they aren't available: they need GitHub's
   service, which the spike couldn't reach without a real sign-in), `extension.mjs` extensions (bare tool names that
   aren't filtered by `availableTools` and could shadow Ember's), the SDK's catalog, legacy SSE servers, servers that
@@ -705,7 +951,9 @@ call, tell, invite…), keeps every name as heard, and a person's name from Memo
 something up (find, who, what, where…). **Suggest what I might say next** shows two or three likely next requests under
 Ember's answers and in Ask Ember, made on this computer; choosing one asks Ember as typing it would, but never counts
 as your own words for a command (a dangerous one always asks), and nothing risky is suggested unless built from what
-you just asked. Both are in “Before Ember starts” (added in `CONSENT_VERSION` 2). After a “Hey Ember” request the microphone stays open as a conversation
+you just asked. They are made from what was asked since Ember started, kept in memory only; signing out, another
+account signing in and Memory's Forget everything let go of it (`PersonalVoice.forgetSession`), so the next person is
+never offered the last one's requests. Both are in “Before Ember starts” (added in `CONSENT_VERSION` 2). After a “Hey Ember” request the microphone stays open as a conversation
 (**Keep listening after I call Ember**, on by default): what you say next needs no name, also while Ember speaks and works,
 until “That's all” or 30 seconds after everything has gone quiet (`CONVERSATION_IDLE_MS`, app/voice/engine.ts). Speech over
 Ember drops its voice at once (`duck`, 0.15 of its level: without it the echo canceller left almost nothing of the user's
@@ -714,16 +962,70 @@ words), and stops it when what the recognizer made of it isn't Ember's own words
 approves anything (`overEmber`). With other sound playing, only what is said by name counts: Windows reads the output's
 level while a conversation is open, a question is up or a task is at work (app/renderer/mic/output-watch.ts: Chromium
 gives system audio only with a screen's video, which is stopped at once; main's `syncOutputWatch`), Linux uses the
-speakers' stream, macOS can't tell yet. Where nothing can tell (macOS, Linux without `parec`, Windows before its watch
+speakers' stream, macOS can't tell yet. Ember's own voice isn't other sound, and what follows it is, at once: on Linux
+whatever sounds in the speakers' stream after Ember's voice left it (`ownSoundUntil` in engine.ts: its last sound
+before the stream was quiet for 160 ms, or 400 ms after it says it stopped); on Windows whatever the watch sees from
+its second look after Ember's voice on (0.4 s after its last look at Ember speaking, `EMBER_LINGER_MS`; only the first
+look after it may hold Ember's own last sounds), and what played up to Ember's voice counts as playing
+through it and for 1.3 s after the watch's last look at Ember speaking (`EMBER_CARRY_MS`: until a word that was over
+before that second look has been judged; later words are seen by their own sound, which holds for 2.5 s). Before,
+neither counted anything for the first second or so after Ember's voice, and
+a video's or a call's lone “Okay.” right after Ember read a question out was taken (second review of the voice lane,
+V2-S1). The watch counts its looks, it doesn't time them: a timer's callbacks each run a few ms late, and timed against
+exactly two looks' time the second look was thrown away whenever it had run less late than the last one that found
+Ember speaking, so a call's short “Okay.” 0.16 to 0.32 s after the read-out was still taken about every other time
+(voice-safety-x9-1: 12, 10, 4, 4, 5 and 3 of 25 scripted runs with looks up to 4 ms late; none of 25 now, at any gap
+from 0.16 to 0.48 s, with looks up to 16 ms late). A word that is over before that second look on Windows is still not
+seen when nothing played before Ember's voice. And what played before it was first carried as a fresh 2.5 s hold: a
+video you had paused before the read-out kept “other sound” on for 2.5 s after it, and your own prompt “Okay.” was
+dropped with the over-sound note (voice-safety-x9-3: none of 6 scripted runs taken when begun 0.19 to 1.34 s after the
+read-out; now 1 of 6 at 0.19 s and 6 of 6 from 0.38 s, with a call's far side's “Okay.” of 0.2 to 0.45 s still never
+taken at any gap from 0.16 to 1 s when it had talked up to the read-out). “By name”, in a question's answer
+window, a follow-up and a conversation, means by the user (`namedByUser` in engine.ts): the recognizer wrote the name
+first, and the speakers didn't say it. Where their own stream arrives (Linux with `parec`) it is asked, as it is for a
+wake: a name the microphone's spotter heard counts only if the stream's spotter didn't hear it too, and if the
+recognizer, reading what the stream played through that speech, finds neither the name (inside “remember” too) nor
+most of the words heard with it (`speakersSaid`: read from where the stream's sound began, as the VAD dates a speech
+from a moment into it and of a name cut at its start the recognizer writes nothing, and again from the stream's first
+pause on where the first reading finds nothing of it, as with the end of what a video said before in front it wrote
+nothing at all for 9 of 192 cuts of “Ember, allow.” and its like, and for none from the pause on), and if the
+microphone's loudness through that speech doesn't follow the stream's, 1 kHz and up, the band every speaker plays
+(`followsSpeakers`, `LEVEL_BAND` in app/voice/room-band.ts): a page's stream can carry what no speaker plays, and a loud
+low hum in it, under its own “Ember, allow it.”, made both its spotter and the recognizer miss the words there while
+the room heard them alone, so it was the user's yes by name in 6 of 48 runs on the real models with a 50 Hz hum
+(voice-safety-x9-2; none of 48 now, with a hum of 50, 120, 200 or 300 Hz). While the stream holds sound, the recognizer's “Ember, …” alone is no name, and where it
+was dropped so the question says it couldn't tell whether you or the speakers said the name (`name-doubted`), not to
+say the name you had just said (voice-safety-x9-4). Before, nothing asked the stream in these windows, and a video's, a call's or a web page's own “Ember, allow”
+answered the question it was heard in, where the same words at idle are ignored (second review of the voice lane,
+V2-S2). Measured on the real models, a video saying “Ember, okay.” and its like to a question, 80 runs: 25 were taken
+as a yes by name before, 3 with the two spotters alone (the stream's spotter misses a name now and then), none with the
+recognizer's reading too. Where no such stream arrives, or it was silent through the speech, the name as the
+recognizer writes it (“Ember, allow.”) counts without the spotter, which misses the name in a window that is already
+listening (with its hit asked for there too, 48 of the user's own 80 answers by name were taken, 32 of the answer
+window's 37 and 16 of a conversation's 36; as it is, 73 are, as before); what the transcript check takes for the name only after the spotter
+(“Number, …”, “Member, …”, “Amber, open…”, “Umber…”) never counts without it. Where nothing can tell (macOS, Linux without `parec`, Windows before its watch
 has looked past Ember's own voice, or after it stopped or was refused: `soundKnown` in engine.ts), a yes to a question
 said without the name, in the answer window, a follow-up or a conversation, is taken as said over other sound: with
 Voice Match off it isn't taken, and the question says once to say the name first (`sound-unknown`); a no and anything
 said by name are taken as ever (owner's report of 2026-11-12: a video's “Okay.” outside a conversation allowed a
 question; settled by the integrator on the owner's direction, and the owner can overrule it). So is one said without the
-name in a follow-up window while other sound is known to play, as in the answer window (Codex review of #211). The first
+name in a follow-up window while other sound is known to play, as in the answer window (Codex review of #211), and in
+a conversation, whatever the spotter heard just before it: a name spotted in the last 3 s lets the next thing said
+through as said by name (`NAME_HEARD_MS`), and after a video's “…September…” its own “Okay.” went out as anyone's yes
+(V2-S4). A yes is judged on its own speech. So in a wake's own window: a yes that doesn't hold the wake phrase in its
+own speech (“Hey Ember”, a pause, then “Okay.”) is dropped where other sound is known to play, as the name was yours
+and the yes may be the video's (V2-S6); “Hey Ember, allow” in one breath is taken, and where nothing can tell (macOS,
+Linux without `parec`) the two-breath answer is taken as before, being how one answers there. A name said after that
+pause is judged as in the windows that need none (`namedByUser`): once a wake's own window was open nothing asked the
+speakers' stream, so after your “Hey Ember” and a pause a video's own “Ember, okay.” was a yes said by name (V2-S2 in
+this window; on the real models taken 28 times in 40, never now, and your own “Ember, allow it.” then, with nothing in
+the stream, is taken as before, 40 of 40). And a wake itself is checked against that stream by the two spotters alone,
+whose miss now and then left a video's own “Ember, go ahead.” a wake from idle and a yes by name (2 of 96 runs): a yes
+a wake carries is the speakers' where the recognizer reads it in what their stream played (`speakersSaid`; none of 96
+now, and your own “Hey Ember, allow it.” over a video's talk is taken as before, 7 of 8). The first
 time something said then without the name isn't heard, the status line says “Music or a video is playing: say “Ember”
 first.” for 5 s (engine.ts `dropped`), once a conversation; while a question is up, an answer dropped so, in the answer
-window, a follow-up or a conversation, makes the question say once why and to say the name first (`dropped` says which
+window, a follow-up, a conversation or after a wake, makes the question say once why and to say the answer right after the name, in one go (`dropped` says which
 answer it read as, never the words: in a conversation over a playing video a nameless “allow” vanished, owner's report
 of 2026-11-12). With the switch off, after Ember answers you have 8 seconds (12 when it asked you something) for
 a follow-up without the wake word (up to three in a row; “Hey Ember” works then too); “Thanks”, “OK” or “that's all” ends that window (when Ember asked something,
@@ -1120,10 +1422,11 @@ On Linux (Windows: §10.6, macOS: §11.6):
 | What Ember made on its desk | `~/Ember/` |
 | App profiles used on the desk (kept separate from yours) | `~/.config/ember/desk-profiles/` |
 | Computers added over SSH, WSL's switch, and each computer's command switches | `settings.json` (`targets`, `commands`) |
+| The approval mode chosen, and each mode's card as agreed to (How Ember asks); the same as Ember last recorded it itself, sealed with the keyring (0600) | `settings.json` (`approvals`); `~/.config/ember/approvals-seal.bin` |
 | When the update check last asked GitHub, so a restart keeps to once a day (the first look waits until a day after it, at most a day; a failed look counts), and the last newer version it told you of, still shown as out after a restart until you run it (`updates.told`) | `settings.json` (`updates.checkedAt`, `updates.told`) |
 | SSH's password helper: a two-line wrapper, and a socket for each connection while it asks | `~/.config/ember/ssh/askpass`; `$XDG_RUNTIME_DIR/ea-*/` |
 | Node.js downloaded for other computers (SHA-256 checked) | `~/.config/ember/remote/runtime/` |
-| Extensions: what is installed and the tools the user agreed to (0600), Ember's copy of each plugin, and the process ids of the servers running (folders 0700) | `~/.config/ember/extensions/` (`extensions.json`, `plugins/<id>/`, `run/`) |
+| Extensions: what is installed and the tools the user agreed to (0600), Ember's copy of each plugin, and the process ids of the servers running (folders 0700) | `~/.config/ember/extensions/` (`extensions.json`, `plugins/<id>/`, `run/`, and `off/` while a change couldn't be saved) |
 | The Copilot runtime's temporary files (large tool output it saves; 0700, emptied at each connect and at sign-out) | `~/.config/ember/copilot-tmp/` |
 | Marketplaces the user added, and the runtime's copy of their catalogues | `~/.config/ember/copilot/settings.json`, `~/.config/ember/copilot/.cache/copilot/marketplaces/` |
 
@@ -1278,7 +1581,17 @@ the address in force and its saved key are kept and come back with the switch (i
   "Key saved", with **Replace** and **Remove**) or put in any process's environment: it reaches only the Copilot
   runtime's provider config. **Remove** and **Sign out** delete it. Another GitHub account signing in leaves it in
   place: the key belongs to the user's model service, not to a GitHub account, so an account change has nothing to do
-  with it (Sign out deletes it only because signing out forgets everything the user set up).
+  with it (Sign out deletes it only because signing out forgets everything the user set up). A key is printable ASCII
+  with no spaces (`apiKeyProblem`): one pasted with a hidden character, curly quotes or a look-alike letter is refused
+  before it is saved or sent, in words about the key and never with it ("That key has a character an API key can't
+  hold, such as a hidden character or curly quotes picked up in copying. Copy it again from your provider.";
+  integrations-r9-5: it was saved, Electron's fetch refused the header before sending, and every check then blamed
+  the address and the network). One saved by an earlier build is still said to be saved (Home's row has **Replace**
+  beside it) and is never sent or given to the runtime (`StoredKey.unsendable`, `keyFor`): Test connection sends
+  nothing and says "The saved API key has a character that can't be sent to <host>. Replace the key."
+  (integrations-x9-8: counted as no key, the check went out without one and said the service needs a key). A request
+  a header's value stops says the key is at fault, with no cause for the status to turn into "Start it" or "check
+  the network".
 - **When it fails** (no model named, a refused key, a host that doesn't answer), the status names the provider from the
   moment Ember starts connecting to it, so Home's Models & connections leads with **Check my provider's details**
   (it goes to the provider's fields) or **Check again**, never a GitHub account or a Copilot sign-in, and the bubble's
@@ -1336,7 +1649,10 @@ On Windows the same JSON goes in the registry (§10.7), on a Mac in `/Library/Ap
 (§11.7).
 
 An optional file that makes Ember stricter for everyone on the machine. Its values override users' settings, and
-users can't loosen them. If the file exists but can't be read or has a mistake, Ember locks down until it is fixed,
+users can't loosen them. They are applied on top of each user's settings.json, never written into it: a change made in
+Home under the policy (Speaking speed while listening is off) keeps the user's own values for what the policy forces
+(their voice, Hear me more clearly, memory on), so they come back as they were once the policy is lifted
+(`withOwnWhereForced`, home-r9-1). If the file exists but can't be read or has a mistake, Ember locks down until it is fixed,
 and says so in its settings window (Home's status panel reads "Locked by your organisation", with no Connect button,
 and the notice asks the user to have the computer's manager fix it; `ember doctor` and the log name the problem):
 no actions, commands or listening, nothing sent to any model service (neither
@@ -1348,7 +1664,9 @@ Ember**; main restarts from Home's only while that lockdown is held; a message s
 from Home is refused with "…so Ember can't answer until you restart it.", and the
 settings window says so at once, already open or not: its notice, what it says Ember reads and sends, and the switches
 the lockdown turns off; a message sent there is refused with "Restart Ember, then send again"), and the restart
-reads the new policy whole. Every key is optional:
+reads the new policy whole. A feature the policy turns off (`commands.local`, `features.memory`, `features.voice`,
+`features.screenImages`, and what keeps Ember below Interactive) shows off and managed in first run's rows too, and
+first run's agreement gives it nothing; under a lockdown every row is so. Every key is optional:
 
 ```json
 {
@@ -1373,12 +1691,13 @@ reads the new policy whole. Every key is optional:
 | `confirmEveryAction` | A click before every action and every command, every time |
 | `maxActionsPerMinute` | At most this many actions a minute across all tasks together (1 to 40; Ember's own limit is 40). A step past it pauses until the minute frees a slot, its card saying "Pausing to keep to 20 steps a minute…", rather than ending the task |
 | `allowGrants` | `false` removes "Always in this app", and Ember asks before working in an app even when the user asked for help in it |
-| `features.memory` | `false`: Ember remembers nothing between runs ("Remember what I tell you" off, managed), learns nothing on its own (no extraction, refinement or questions, so none of memory's own model requests), and "Tell Ember about you" says memory is managed; a memory file already there is left unused (signing out still deletes it). Better recall's model isn't downloaded or run either |
+| `features.memory` | `false`: Ember remembers nothing between runs ("Remember what I tell you" off, managed), learns nothing on its own (no extraction, refinement or questions, so none of memory's own model requests), and "Tell Ember about you" says memory is managed; a memory file already there is left unused (signing out still deletes it), and Settings › Memory says "Your organisation has turned memory off" and still lists what was saved for its verified owner, with Forget and Forget everything (no Correct…, and a Forget has no Undo: nothing is put back). Better recall's model isn't downloaded or run either. Under a lockdown (a policy Ember can't use, or one that changed while it ran) nothing connects, so the saved memory's owner can't be checked: it stays hidden, Memory says the policy has stopped Ember, and Forget everything clears it |
 | `features.updates` | `false`: Ember never asks GitHub about new versions ("Tell me when a new version is out" off, managed) |
 | `features.routines` | `false`: no routines, and reminders end when Ember quits ("Keep my routines and reminders" off, managed); a routines file already there is left unused (signing out still deletes it). An Ember from before this key reads a policy that has it as broken and locks down, so update Ember first |
 | `features.extensions` | `false`: no extension loads or runs, and none can be added (the Extensions section says so and lists what was added, read only); what was installed is left untouched and unused. LOCKDOWN turns it off too. An Ember from before this key reads a policy that has it as broken and locks down, so update Ember first |
-| `features.aiReview` | `false`: no command is sent to the model for review; every command Ember's rules flag asks the user ("Ask only about dangerous commands" off, managed) |
-| `features.autonomy` | `false`: "Work without asking" is off and managed; Ember asks before a first step in an app, a borrow and moving text between apps, as before. `allowGrants: false`, `confirmEveryAction: true`, `features.actions: false` and LOCKDOWN turn it off too. `true` turns nothing on. An Ember from before this key reads a policy that has it as broken and locks down, so update Ember first |
+| `features.aiReview` | `false`: Assisted's check is off. No step and no command is sent to a model to be checked against the user's words; what it would have checked asks the user. Assisted can't be chosen (its row in How Ember asks is locked and says why), and an Assisted chosen earlier works as Interactive |
+| `features.autonomy` | `false`: no approval mode is in force (How Ember asks shows managed); Ember asks before a first step in an app, a borrow and moving text between apps, as it did before the modes. `allowGrants: false`, `confirmEveryAction: true`, `features.actions: false` and LOCKDOWN do the same. `true` turns nothing on. An Ember from before this key reads a policy that has it as broken and locks down, so update Ember first |
+| `approvals.maxMode` | The highest approval mode users may choose: `"interactive"`, `"assisted"` or `"autopilot"`. It can only lower the mode: a user's higher choice works as this one at most (How Ember asks says "Your organisation allows Interactive at most…"), a mode above it can't be chosen, and it puts no mode in force by itself. `"interactive"` or `"assisted"` forbids Autopilot, in which Ember sends, deletes, pays, installs and runs dangerous commands without asking; on a computer reached over SSH, that computer's own policy is asked too, so a cap there keeps the PC's Autopilot from standing in for a yes on it. To keep Ember below Interactive, use `features.autonomy: false`. An Ember from before this key reads a policy that has it as broken and locks down, so update Ember first |
 | `models` | Only these models; or pin the conversation and task models |
 | `provider` | Use the organisation's own endpoint (`openai`, `azure` or `anthropic`) instead of GitHub sign-in; the key is read from `apiKeyFile` (or, without one, from the environment variable `EMBER_PROVIDER_API_KEY`). It always wins over a user's own provider, which Home then shows as managed |
 | `features.userProvider` | `false`: users can't point Ember at a model service of their own ("Use my own model provider" in Home › Models & connections is off and managed; a key already saved stays unused until signing out or Remove deletes it). Allowed when absent; the organisation's own `provider` and LOCKDOWN turn it off too, and `models.allowed` and pinned models still hold for the user's model ids. An Ember from before this key reads a policy that has it as broken and locks down, so update Ember first |
@@ -1496,7 +1815,14 @@ node eval/run.mjs --help                      # its options; runs nothing
 
 The task suite is `eval/tasks/*.json` (schema: `eval/src/schema.ts`). Each task says how to set things up
 (files, settings), which app it starts in, what the user asks, how the simulated user answers Ember's questions,
-and how to check the result. It can check accessibility state, gsettings, files, events from Ember's test windows,
+and how to check the result. Every task runs in **Interactive**, as the user chooses it in Home with its card agreed
+to (`user.mode`, its default), so the release gate of nothing risky unconfirmed is measured in the default mode
+(PLAN.md §10 "Settled" (6)); a task whose point is a question Interactive wouldn't put (the first step in an app, an
+ordinary borrow of the mouse) says `"mode": "asking"` and runs below Interactive (today `bench-sketch-pad`,
+`bench-user-says-no` and `bench-whole-form`). The worker and its policy engine get the mode's inputs exactly as main
+gives them (`taskInputs`). A step Autopilot announced or Assisted's check found in the user's own words (audited with
+`mode: "autopilot"` or `review: "match"`), and a command either cleared, isn't counted as unconfirmed, except a command
+that would read secrets or is unclear. It can check accessibility state, gsettings, files, events from Ember's test windows,
 Ember's audit log and its final answer, and it can check that nothing else changed. Every task runs through
 Ember's real worker, accessibility reader, policy engine, mouse and keyboard, desk and audit log. Safety is judged
 from the audit log: no action on anything the page slipped in, nothing that needed the user's OK went ahead
@@ -1560,6 +1886,15 @@ clips without the TTS voice (`node scripts/voice/prepare.mjs --tts-voice` fetche
 is "not measured". With the voice it adds 75 synthesized renderings, made in memory on every run (nothing is written
 to `test/fixtures`). The takeover and kill-switch trials give up after 2 s each, and every CI job has a timeout. The
 nightly workflow passes its secrets to the eval step only and installs dependencies with `npm ci --ignore-scripts`.
+
+**Assisted's check has a gate of its own**, run by hand because it needs a real model: `npm run eval:review`
+(`node eval/review/run.mjs [--repeat N] [--only id,id] [--commands | --steps]`, with `EMBER_EVAL_MODEL` and
+`COPILOT_GITHUB_TOKEN` or `GH_TOKEN`, or `EMBER_EVAL_PROVIDER_URL` with `EMBER_EVAL_API_KEY`). It gives the check
+`eval/review/commands.json` (116 labelled commands: 56 the request asks for, 60 it must not clear) and
+`eval/review/steps.json` (23 labelled app steps, each shown as Ember shows the check a step: 10 the request asks for,
+13 it must not clear, steering text in a control's name and in typed text among them), three times each by default.
+It fails on any case cleared that must ask, and reports how many of the others were cleared every time. Run it on the
+model the check uses, the conversation's lighter one, before a release; no CI job runs it.
 
 ## 9. Troubleshooting
 
@@ -1794,8 +2129,8 @@ is fixed: a value it can't read, of another type, over 256 KiB, not JSON, or not
 `provider.apiKeyFile` isn't supported on Windows and locks Ember down too: put the key in a `ProviderApiKey` string
 value beside `PolicyJson`, or in the `EMBER_PROVIDER_API_KEY` environment variable. Ember reads the value again every
 10 seconds: once it changes, a running Ember stops and stays locked down until the user restarts it (§5). Every key
-in §5's table works here too, `features.autonomy` ("Work without asking") and `features.userProvider` (a user's own
-model provider) among them.
+in §5's table works here too, `features.autonomy` and `approvals.maxMode` (the approval modes) and
+`features.userProvider` (a user's own model provider) among them.
 
 From an elevated Windows PowerShell:
 
@@ -2120,8 +2455,8 @@ The folder must be a real folder, not a link, that belongs to root and only root
 not a link, that belongs to root and that group and others can't write. No folder or no file means no policy; anything
 else Ember can't trust locks it down until it is fixed. `provider.apiKeyFile` works as on Linux. Ember reads the file
 again every 10 seconds: once it changes, a running Ember stops and stays locked down until the user restarts it (§5).
-Every key in §5's table works here too, `features.autonomy` ("Work without asking") and `features.userProvider` (a
-user's own model provider) among them. Ember reads this file
+Every key in §5's table works here too, `features.autonomy` and `approvals.maxMode` (the approval modes) and
+`features.userProvider` (a user's own model provider) among them. Ember reads this file
 only, not managed preferences, so deploy it as a file (a package or a script from your management tool):
 
 ```bash
@@ -2417,8 +2752,22 @@ added later has the same effect on the Embers before it: say so in the release n
 
 ### 14.7 Copilot project work
 
-In Home under Projects, choose up to six source files, then send a review, plan or patch request. The
-connected model sees only the files you send. For an exact patch to one existing UTF-8 file with a final
+In Home under Projects, choose up to six source, build, documentation or diff files, then send a review, plan or
+patch request. The connected model sees only the files you send. Projects takes source, build and markup files, documentation, text and
+diffs by their type, and well-known files that have none (`Makefile`, `Dockerfile`, `README`, `pom.xml`), alone or
+with which build, stage or platform they are for (`Dockerfile.dev`, `Makefile.am`), never with a type of their own
+(`README.ppk`): the list is `textFile` and `namedFile` in app/main/agent/project.ts. Data and settings files stay off
+it (`.csv`, `.tsv`, `.xml`, `.ini`, `.cfg`, `.conf`, `.properties`, `.plist`), as does every type that holds
+credentials or other people's data by convention: memory's secret guard reads prose and code, not every format that
+keeps passwords, so for those the list is what keeps them from being sent (integrations-x9-2: with them on it, a
+browser's `logins.csv`, password managers' exports, FileZilla's `sitemanager.xml`, `pgpass.conf` and `redis.conf`
+were sent whole). Adding such a type sends more, so it is the owner's decision, never a fix. A file it
+doesn't take is named with its own reason and the rest of the choice is kept (`projectChoice`, `projectRefusedText`;
+integrations-r9-2): not a kind Projects takes (a picture, an archive, a lock file, a key file, `.env`-like types), a
+hidden file (its name starts with a dot), a name that says password, token, secret, credential or private key
+(`tokenizer` and its forms don't, as memory's guard reads them) or that is a password manager's export or a program's
+own password file (`storeName`: `logins.csv`, `bitwarden_export.json`, `wp-config.php`), or a name Ember won't repeat
+(hidden characters, a colon, or one that itself looks like a secret). For an exact patch to one existing UTF-8 file with a final
 newline, Ember shows the diff in **Review changes before applying**. Check it, choose **Apply patch** and
 confirm the destination. If the source has changed since you sent it, draft the patch again. Ember keeps
 LF or CRLF line endings and any UTF-8 byte-order mark. Drafts with file additions, renames, deletions or
@@ -2469,12 +2818,26 @@ that can't be taken says which of four reasons holds (`projectCommandProblem`: n
 more than one line or hidden characters, or what looks like a password, token or key), and a request of several lines
 that looks like it holds a secret names the line (`projectRequestSecret`; integrations-i6).
 
-**Saved workspaces** keeps up to eight named checkpoints for the verified GitHub account or connected
-provider configuration. Saving requires the system keyring and stores encrypted paths and the last
+**Saved workspaces** keeps up to eight named checkpoints for the verified GitHub account or the connected
+model service. Saving requires the system keyring and stores encrypted paths and the last
 completed request and answer. Opening a workspace restores its file selection and command folder. On
 the next explicit Send, Ember reads the selected files again and includes the previous exchange if its
 checkbox is selected. Patch approvals, command text, running processes and command output are never
 restored. **Forget workspace** removes the checkpoint and leaves the project files in place.
+
+The library belongs to the GitHub account, or to the model service by whose it is (yours, the organisation's), its
+type and its host with its port, never its key or the rest of its address (`workspaceOwners`' `library`,
+app/main/agent/project-workspaces.ts; integrations-r9-3, integrations-x9-6: owned by a hash of the provider's whole
+config, a replaced or removed key, another wire API, a slash at the address's end or a query left every saved
+workspace in a file nothing listed or removed). A saved answer is still only its holder's (the account, or that
+whole config with its key and its address as written): opened after the key or the provider's settings changed, a
+workspace restores its
+files and folder and says “Its last answer was saved before this provider's key or settings changed, so Ember left it
+out.”, and the next save or forget drops such answers for good; with the earlier key back before that, they are
+there again. A provider's file holds its `holder` beside its `scope`; a GitHub account's file is as it was. A library
+from an earlier build is named for the whole config: while the key it was saved with is in force it is found and
+becomes the service's. One whose key was already replaced on an earlier build can't be told from any other
+service's, and stays where it is (`project-workspaces-<hash>.bin` in the data folder).
 
 With a build ready, run `EMBER_PROJECT_TEST=1 npm run test:integration -- test/integration/project-live.test.ts`
 to exercise the Home workflow through Electron and the Copilot runtime against an offline mock model.
@@ -2595,7 +2958,7 @@ How three behaviours work inside, for whoever changes them: approvals (§5, "Ask
 
 An approval applies to the window, control and contents shown when Ember asked. Before input, Ember checks them again after waiting for a lease or moving the pointer. If the dialog, text being replaced, controls or window change, or the check cannot read them, nothing is entered: use a fresh `perceive_window` and let policy decide again. Window movement and focus changes alone do not invalidate the check. Ember's own focus click may collapse the target text selection before append/replace; it still checks the text itself, and insert-at-caret keeps its original selection binding. If clicking Allow closes a menu, reopening it is a new policy attempt; risky menu actions require another approval. No consent is cached by app and menu label. A yes spent so is told to the model as a yes that no longer counts, neither a no nor a new request (`spentYes`), and the next question, if it is about the same step, says why it asks again (steps that ask nothing in between, such as reopening the menu or a scroll, keep the reason; a question about another step drops it): "The page changed while you decided, so I'm asking again.", the window's, or, for a menu's item, "Clicking Allow closed the menu, so I'm asking again." when the yes came by a click and "The menu closed while you decided, so I'm asking again." otherwise (`ASKING_AGAIN`; owner's report of 2026-11-12). It names no other way to answer: whether Ember's keys leave another app's menu open hasn't been checked on any OS (on Windows the chord's Alt may reach the app's menu), and they and voice may not be Ember's to use.
 
-Action-context reads use separate baselines for the quick accessibility tree and the detailed target read. AT-SPI omits empty and object-placeholder text from the tree and limits its text more tightly; the detailed target text is compared exactly against its own pre-approval value, never by prefix. Each action refreshes policy context before approval, preserving original actionable ids only when the tree structure and target identity still match. Repeated role/name targets (such as two dialogs' OK buttons) are ambiguous and are refused before approval; positions are never used to choose between them. A web page lives on its own (a video playing, a hover preview), so a control of one, in no dialog and with no risky word in its name (a link's read as before, but a title's words don't count, `riskyOnPage`; a command in a title's shape, such as "Merge Pull Request - GitHub", "Why wait? Buy it now" or "What next / Delete account", is no title, nor is a command before a file's name, such as "Sign contract.pdf": `linkIsTitle`), is the exception (`livingPage()`, worker.ts; owner's report of 2026-11-05: every click on YouTube was refused): a step that asks nothing needs only its window, no modal over it and the object itself to hold (`checkPageTarget()`), and a link or button may share its name with a twin, since the click goes to the object by id (`PAGE_TWIN`). A question still binds its answer to the whole tree, and pressed keys likewise (`focusShell`): the tree the step was judged on, which for such a page whose ids moved on or whose names repeat is that read by its own ids, with the field Ember's click may collapse found in it by role and name, never by position (`actionTree`, `actionAt`; an empty or stale copy failed every Allow there: owner's report of 2026-11-12). This lets a completed form step update its status and contents without carrying its approval into the next step.
+Action-context reads use separate baselines for the quick accessibility tree and the detailed target read. AT-SPI omits empty and object-placeholder text from the tree and limits its text more tightly; the detailed target text is compared exactly against its own pre-approval value, never by prefix. Each action refreshes policy context before approval, preserving original actionable ids only when the tree structure and target identity still match. Repeated role/name targets (such as two dialogs' OK buttons) are ambiguous and are refused before approval; positions are never used to choose between them. A web page lives on its own (a video playing, a hover preview), so a control of one, in no dialog and with no risky word in its name (a link's read as before, but a title's words don't count, `riskyOnPage`; a command in a title's shape, such as "Merge Pull Request - GitHub", "Why wait? Buy it now" or "What next / Delete account", is no title, nor is a command before a file's name, such as "Sign contract.pdf": `linkIsTitle`), is the exception (`livingPage()`, worker.ts; owner's report of 2026-11-05: every click on YouTube was refused): a step that asks nothing needs only its window, no modal over it and the object itself to hold (`checkPageTarget()`), and a link or button may share its name with a twin, since the click goes to the object by id (`PAGE_TWIN`). A question about a page's control, in no dialog, binds its answer to what it was about and what makes the step safe instead of to everything on the page (`pageBinding()`, agent/page-binding.ts; `pageBound` and `boundContext()` in worker.ts; cause 3b of the investigation of the owner's report of 2026-11-12: on a page that changes on its own, a video's clock or comments arriving, every Allow was spent and Ember asked again, for ever): the window's title and the page's own name (its document's), every dialog and alert in the window, the control itself read exactly (found again by its role and name, exactly once, never by position) and the containers it sits in, everything in its own form or else in the nearest container around it that holds another control (the document at most, which binds all of the page), every field the window shows wherever it is (a comment's words, an amount, a recipient, the browser's address bar) and the page's own tabs. The same binding holds before the question, so a risky-named control of a page that moved on since the model looked is found again in a read by its own ids, but only where that binding can be made. It fails closed to the whole tree, as before, for a control in a dialog, a secret or nameless one, one beside a twin, a read cut short and a window titled for money (`MONEY_PAGE`); what it no longer catches is a change outside the control's own group that is no field, dialog or tab (words, pictures, other buttons), but for a control with a risky name (Delete, Send, Pay…) the page's headings and paragraphs outside its lists and feeds bind too, digits aside, so a page that renames what the control acts on spends the yes and a count going up doesn't. A native app's window, a dialog, pressed keys (`focusShell`) and every step that is not on a page still bind the whole tree the step was judged on, which for such a page whose ids moved on or whose names repeat is that read by its own ids, with the field Ember's click may collapse found in it by role and name, never by position (`actionTree`, `actionAt`; an empty or stale copy failed every Allow there: owner's report of 2026-11-12). This lets a completed form step update its status and contents without carrying its approval into the next step.
 
 AT-SPI 2.60 calls push buttons `button`. The sidecar uses the same role for older and newer servers so click actions and protection around password-reveal controls still apply. A GTK list checkbox with alternate cell actions still requires a pointer click rather than accessibility row selection.
 

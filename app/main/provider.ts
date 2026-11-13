@@ -49,7 +49,15 @@ export interface ActiveProvider {
  * The user's saved key and the endpoint host it was entered for. `keyId`: a random non-secret id made whenever a key
  * is saved (so a replaced key has another one); null for a key saved before ids existed.
  */
-export interface StoredKey { key: string; host: string; keyId?: string | null }
+export interface StoredKey {
+  key: string; host: string; keyId?: string | null;
+  /**
+   * A key an earlier build saved though it can't go in a request's header (a hidden character: integrations-x9-8). It
+   * is there, so Home says a key is saved and the check says what is wrong with it; it is never sent or given to the
+   * runtime (keyFor), and stays in `key` only so the log's redaction knows it.
+   */
+  unsendable?: true;
+}
 
 /** Where a connection's model requests go, for the setup check and Home: whose, and the host only (never the key). */
 export interface ProviderSummary { kind: ActiveProvider["kind"]; host: string }
@@ -110,7 +118,7 @@ export function ownProviderAuth(settingsText: string | null, loaded: LoadedAdmin
 /** The key, only when it was entered for the host `baseUrl` names (never one entered for another host). */
 export function keyFor(baseUrl: string, stored: StoredKey | null): string | null {
   const host = endpointHost(baseUrl);
-  return stored && host && stored.host === host ? stored.key : null;
+  return stored && host && stored.host === host && !stored.unsendable ? stored.key : null;
 }
 
 /**
@@ -161,12 +169,24 @@ export function providerSummary(p: ActiveProvider | null): ProviderSummary | nul
   return { kind: p.kind, host };
 }
 
+/**
+ * Said of a key that holds anything but printable ASCII (integrations-r9-5): a zero-width space, a word joiner, curly
+ * quotes or a look-alike letter picked up from a chat message, a document or a page that wraps long strings. Such a
+ * key was saved, and Electron's fetch then refused the header before sending ("Cannot convert argument to a
+ * ByteString"), which every check read as nothing answering: the address and the network were blamed. Never with the
+ * key or the character in it.
+ */
+export const KEY_HIDDEN_CHARACTER = "That key has a character an API key can't hold, such as a hidden character or curly quotes picked up in copying. Copy it again from your provider.";
+/** Said of a key in use that can't go in a request's header at all: nothing was sent, and the address isn't at fault. */
+export const keyUnsendable = (host: string): string => `The saved API key has a character that can't be sent to ${host}. Replace the key.`;
+
 /** Why `key` can't be saved as an API key, in one plain sentence, or null when it can. */
 export function apiKeyProblem(key: unknown): string | null {
   if (typeof key !== "string" || !key.trim()) return "Enter the API key first.";
   if (key.length > MAX_API_KEY) return "That key is too long to be an API key.";
   // eslint-disable-next-line no-control-regex -- control characters and spaces are exactly what's refused here
   if (/[\u0000- \u007f-\u009f]/.test(key.trim())) return "An API key has no spaces or line breaks in it. Copy it again from your provider.";
+  if (/[^\u0021-\u007e]/.test(key.trim())) return KEY_HIDDEN_CHARACTER;
   return null;
 }
 
@@ -259,7 +279,12 @@ export class ProviderKeyStore {
       const text = this.opts.asyncKeyring && this.box.decryptStringAsync ? (await this.box.decryptStringAsync(raw)).result : this.box.decryptString(raw);
       if (revision !== this.revision) return null;
       const v = JSON.parse(text) as { host?: unknown; key?: unknown; id?: unknown };
-      if (typeof v.host !== "string" || !v.host || typeof v.key !== "string" || apiKeyProblem(v.key) !== null) return null;
+      if (typeof v.host !== "string" || !v.host || typeof v.key !== "string") return null;
+      const problem = apiKeyProblem(v.key);
+      // Saved by an earlier build with a character no header can hold (integrations-x9-8: dropped here, the check
+      // then went out with no key and said the service needs one, while Home said a key was saved).
+      if (problem === KEY_HIDDEN_CHARACTER) return { key: v.key, host: v.host, keyId: null, unsendable: true };
+      if (problem !== null) return null;
       return { key: v.key, host: v.host, keyId: typeof v.id === "string" && /^[0-9a-f-]{36}$/.test(v.id) ? v.id : null };
     } catch {
       return null; // the keyring refused, or the file isn't one of these: as if none were saved
@@ -563,7 +588,10 @@ const AZURE_TEST_VERSION = "2024-10-21";
 /**
  * The one small request "Test connection" makes: the service's model list (GET, no request body, nothing of the user's).
  * OpenAI-compatible: {base}/models with a bearer key; Azure: {base}/openai/models with api-key; Anthropic: {base}/v1/models
- * with x-api-key.
+ * with x-api-key. `{base}` is the address as typed, a query included: the runtime puts its own path after the whole
+ * address too (measured: "POST /v1?tenant=a/chat/completions"), so the list is asked where chat will be, and an address
+ * whose requests can't answer never tests as connected (integrations-x9-5: with the query moved behind "/models" it
+ * did, and a forwarder that takes the service's address as its query was asked the wrong one).
  */
 export function testRequest(p: Pick<UserProviderSettings, "type" | "baseUrl" | "azureApiVersion">, key: string | null): { url: string; headers: Record<string, string> } {
   const base = p.baseUrl.replace(/\/+$/, "");
@@ -594,8 +622,11 @@ export function testRequest(p: Pick<UserProviderSettings, "type" | "baseUrl" | "
  */
 export type TestResult = { ok: true; host: string; models: number | null; ids?: string[]; more?: true } | { ok: false; why: string; cause?: "refused" | "timeout" | "unreachable" | "no-list" };
 
-/** The most model ids the test passes on for the model fields' suggestions. */
-export const TEST_IDS_MAX = 50;
+/**
+ * The most model ids the test passes on: first run checks the names typed against all of them, so a list of more than
+ * 50 (OpenAI's is one page of many) is checked whole (first-run-r9-1); the model fields suggest the first 50.
+ */
+export const TEST_IDS_MAX = 1000;
 
 /**
  * The model ids a model list names (`data[].id`, as OpenAI, Azure and Anthropic write them; `models[].name` or `.model`,
@@ -662,6 +693,9 @@ export async function testConnection(p: UserProviderSettings, stored: StoredKey 
   if (!host) return { ok: false, why: PROVIDER_NO_ADDRESS };
   if (!providerAgreed(p)) return { ok: false, why: providerNotAgreed(host) };
   const key = keyFor(p.baseUrl, stored);
+  // A key that can't go in a header: said as the key's trouble, with nothing sent (integrations-r9-5), for one an
+  // earlier build saved too (integrations-x9-8).
+  if ((key && apiKeyProblem(key)) || (stored?.unsendable && stored.host === host)) return { ok: false, why: keyUnsendable(host) };
   const { url, headers } = testRequest(p, key);
   try {
     const res = await fetch(url, { method: "GET", headers, redirect: "error", signal: AbortSignal.timeout(timeoutMs) });
@@ -680,6 +714,9 @@ export async function testConnection(p: UserProviderSettings, stored: StoredKey 
     const msg = err instanceof Error ? `${err.name} ${err.message} ${(err as { cause?: { code?: string } }).cause?.code ?? ""}` : String(err);
     if (/TimeoutError|AbortError/i.test(msg)) return { ok: false, why: `${host} didn't answer within ${Math.round(timeoutMs / 1000)} seconds.`, cause: "timeout" };
     if (/redirect/i.test(msg)) return { ok: false, why: `${host} sent Ember to another address. Enter the address it moved to.` };
+    // The request never left: fetch refused a header's value, and the key is the only one that isn't Ember's own text.
+    // No cause, so nothing downstream says the address or the network (or "Start it" for a server on this computer).
+    if (/ByteString|header (?:value|content)|Invalid character in header/i.test(msg)) return { ok: false, why: keyUnsendable(host) };
     if (/certificate|self.signed|ERR_CERT_/i.test(msg)) return { ok: false, why: `Ember can't verify ${host}'s certificate.` };
     // Electron's fetch says net::ERR_CONNECTION_REFUSED (ERR_ADDRESS_UNREACHABLE for an ::1 with no IPv6), Node's ECONNREFUSED.
     const refused = /ECONNREFUSED|ERR_CONNECTION_REFUSED|ERR_ADDRESS_UNREACHABLE/.test(msg);

@@ -8,6 +8,8 @@ import type { Intro } from "../main/memory/intro";
 import type { MemoryModelStatus } from "../main/memory/better-recall";
 import type { MemoryOwnerReason, MemoryOwnership } from "../main/memory/owner";
 import type { MemoryCorrection } from "./memory-correction";
+import type { ApprovalMode, ApprovalsDone, ApprovalsState } from "./approvals";
+import type { FirstRunChoice, FirstRunDone, FirstRunView } from "./first-run";
 
 /** A routine as Home lists it. */
 export interface RoutineRow { id: string; name: string; steps: string[] }
@@ -36,6 +38,11 @@ export interface ProjectWorkspaceReply {
 }
 /** How long Undo can put a forgotten memory back (ms): main keeps what it removed that long, and Home offers Undo. */
 export const MEMORY_UNDO_MS = 60_000;
+/**
+ * How long forgetting what Ember kept just now undoes it, so what it replaced holds again ("forget that", the "Ember
+ * learned" line's Undo: memory-12). After that the line's button says Forget, which is what it does (memory-r9-10).
+ */
+export const LEARNED_UNDO_MS = 10 * 60_000;
 /**
  * What one Forget removed: the fact's words, how many of Ember's notes went with it, and Undo's token (memory-7); and
  * what it had replaced, current again, when it undid what Ember kept just now (`back`: memory-12).
@@ -415,6 +422,11 @@ export interface Status {
   };
   /** Absent from a main that doesn't send it yet: the window then keeps its Linux markup and strings. */
   platform?: StatusPlatform;
+  /**
+   * The approval modes as they stand (app/main/policy/autonomy.ts approvalsState): what is chosen, what is in force and
+   * why they differ. Main decides it; the window only draws it. Absent before main sends it: no mode shows as in force.
+   */
+  approvals?: ApprovalsState;
 }
 
 /** One line of the activity timeline (an audit entry). */
@@ -536,6 +548,20 @@ export interface EmberHomeApi {
   onSettingsNotice(fn: (notice: string | null) => void): () => void;
   /** Main's word that the administrator's policy changed while Ember ran (the held lockdown): drawn as a new status's. */
   onAdminChanged(fn: (admin: Status["admin"]) => void): () => void;
+  /** Main's word that the approval modes stand differently (APPROVALS_IPC.changed). */
+  onApprovals(fn: (state: ApprovalsState) => void): () => void;
+  /**
+   * The user agreed to `mode`'s card (`version`: the one shown): main records the agreement and chooses the mode in one
+   * change, or says why not (APPROVALS_IPC.choose). The only way the window changes the mode.
+   */
+  chooseMode(mode: ApprovalMode, version: number): Promise<ApprovalsDone>;
+  /** First run's rows as main decides them, with this computer's commands card (FIRST_RUN_IPC.view). */
+  firstRunView(): Promise<FirstRunView>;
+  /**
+   * First run's one agreement (FIRST_RUN_IPC.agree): the switches as left and the hash of the commands card the row
+   * showed. Main records the consent, then each row left on through its own card's record, and says what it couldn't.
+   */
+  agreeFirstRun(choice: FirstRunChoice, commandsSha256: string | null): Promise<FirstRunDone>;
   /** Quit Ember (asks first while tasks are running). */
   quit(): Promise<void>;
   /** Restart Ember to read the organisation's changed policy; main does nothing unless that lockdown is held. */

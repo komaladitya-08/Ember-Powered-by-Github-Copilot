@@ -356,8 +356,8 @@ What Ember keeps for them is in "Before Ember starts" and the microphone's card 
 - **The gate asks more of a learnt print.** An average of more clips matches every voice a little more: learning
   without that let more strangers in (FAR 3.0 % → 4.1 %). So a print that learnt from `n` samples needs
   0.75 + 0.03 × min(1, n / 8), and a request must also match the enrolment itself: by 0.74 to be heard, and by 0.75,
-  the enrolment's own threshold, to be `verified` (what may answer a question by voice or turn Work without asking
-  on: `gateMatches`, `ADAPT.verifiedFloor`). What was learnt never lowers the bar for a spoken yes.
+  the enrolment's own threshold, to be `verified` (what may answer a question by voice while Voice Match is on, or
+  choose a mode that asks less by voice: `gateMatches`, `ADAPT.verifiedFloor`). What was learnt never lowers the bar for a spoken yes.
 - **Reset to my enrolment** keeps the anchor and drops the rest; **Forget my voice** deletes voiceprint.json and
   words.json. "Ember, stop" is never checked.
 

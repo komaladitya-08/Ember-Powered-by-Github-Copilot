@@ -14,9 +14,11 @@
  */
 
 import { memoryPausedReply } from "../../shared/memory-owner";
+import { memoryIds, recallNote } from "./format";
 import { DUPLICATE, type AddResult, type Fact, type NewFact, type Source } from "./graph";
-import { IntroSchema, Interview, INTRO_MANAGED, INTRO_OFF, SPOKEN_FACT, introFacts, isGetToKnowMe, type Intro } from "./intro";
-import { CallBudget, Learner, soundsLikeInstruction, type KeptFact, type LearnBudget, type OneShot } from "./learn";
+import { ConversationHold, HELD_ALL, HELD_CORRECTED, HELD_FORGOTTEN } from "./hold";
+import { IntroSchema, Interview, INTRO_DONE, INTRO_MANAGED, INTRO_NOTHING, INTRO_OFF, INTRO_UNCHECKED, SPOKEN_FACT, introFacts, isGetToKnowMe, type Intro } from "./intro";
+import { CallBudget, Learner, onlyAsked, soundsLikeInstruction, type KeptFact, type LearnBudget, type OneShot } from "./learn";
 import type { MemoryOwnerReason } from "./owner";
 import {
   ANSWER_WAIT_MS, FORGET_THAT_MS, Gaps, INTRO_NOTE, MEMORY_UNREADABLE, NOTHING_TO_FORGET, QUESTION_EVERY_MS, answersQuestion, declinesQuestion, describes,
@@ -24,7 +26,8 @@ import {
   remembersWithMore, type MemoryNote, type MemoryNotNow,
 } from "./questions";
 import { REFINE_SYSTEM, applyRefinement, parseRefinement, recentFacts, refinePrompt } from "./refine";
-import { ownFact, type AboutRef, type MemoryItem, type MemoryLog, type MemoryService } from "./service";
+import { profileSaid } from "./profile";
+import { ownFact, rememberedSource, type AboutRef, type MemoryItem, type MemoryLog, type MemoryService } from "./service";
 import { fold, negated, similarity } from "./text";
 
 /** Idle this long (no turn, no task, screen unlocked) before the sleep-time pass or a question (ms). */
@@ -57,6 +60,8 @@ export interface LearningDeps {
   managed?: () => boolean;
   /** The user lets Ember ask questions (settings memory.questions). */
   questionsOn: () => boolean;
+  /** The names of the apps installed on this computer: Ember never asks who or what one of them is (memory-r9-8). */
+  apps?: () => readonly string[];
   /** When Ember last asked one (ISO), kept across restarts, and setting it. */
   askedAt: () => string | null;
   setAskedAt: (iso: string) => void;
@@ -68,9 +73,10 @@ export interface LearningDeps {
   say: (text: string) => boolean;
   /**
    * Opens Settings › Memory: at its list for a forget request (`list`), at its note's words for the interview asked for
-   * while memory is off (`note`). Never at the note's agree button (memory-r7).
+   * while memory is off (`note`), at Tell Ember about you's first question for the interview asked for in a voice
+   * Ember couldn't check (`about`: memory-r9-6). Never at the note's agree button (memory-r7).
    */
-  openMemory?: (at: "list" | "note") => void;
+  openMemory?: (at: "list" | "note" | "about") => void;
   /**
    * Memory is on and agreed to, but its saved memory can't be opened now: why (memory-2); or memory is on under an
    * earlier note the user hasn't reviewed (`note`, memory-r4). Ember says so rather than asking for memory to be turned
@@ -102,6 +108,7 @@ export interface LearningDeps {
 export interface LearningConductorMemory {
   remember(fact: string, about: AboutRef[], said: string, replaces?: string): string;
   context(query: string, history?: boolean): Promise<string>;
+  /** The `<memory>` block for a request, then Ember's note of what the user had it forget or correct since (memory-r9-1). */
   forRequest(request: string, own: boolean): Promise<string>;
   forget(id: string): boolean;
   factText(id: string): string | null;
@@ -126,8 +133,11 @@ export class MemoryLearning {
   /** When the last refinement ran (ISO): the next reads what changed since. */
   private refinedAt: string | null = null;
   private refining: AbortController | null = null;
+  private appNames: { at: number; names: readonly string[] } | null = null;
   private interview: Interview | null = null;
   private interviewAt = 0;
+  /** How many of the interview's answers memory kept: with none, it never ends "I'll remember that" (memory-r9-6). */
+  private interviewKept = 0;
   private question: { name: string; at: number } | null = null;
   /** The facts kept lately, newest last, for "forget that". */
   private recent: { id: string; text: string; at: number }[] = [];
@@ -149,16 +159,33 @@ export class MemoryLearning {
    * (memory-c8-1), and is let go of as the next turn begins (`began`) when that turn was never read (memory-x8-2).
    */
   private turnKept: KeptFact[] = [];
+  /**
+   * What the user had Ember forget or correct in the conversation under way: held back from what Ember learns until
+   * the conversation ends, and told to it by id (./hold.ts, memory-r9-1).
+   */
+  private readonly hold = new ConversationHold();
 
   constructor(private d: LearningDeps) {
     this.lastActive = this.now();
     this.learner = new Learner({
-      model: () => this.model, keep: (f, since) => this.keepLearned(f, since), inForce: d.inForce, log: d.log, now: d.now, budget: d.budget,
-      onLearned: facts => this.learned(facts),
+      model: () => this.model, keep: (f, since, said, evidence) => this.keepLearned(f, since, said, evidence), inForce: d.inForce, log: d.log, now: d.now, budget: d.budget,
+      // Learned by reading this conversation: a Forget of one is told to it, without an id (memory-x9-7).
+      onLearned: facts => { for (const f of facts) this.hold.learnedHere(f.id); this.learned(facts); },
     });
   }
 
   private now(): number { return (this.d.now ?? Date.now)(); }
+
+  /** The installed apps' names, read at most every ten minutes (a list that can't be read is none). */
+  private installed(): readonly string[] {
+    const now = this.now();
+    if (!this.appNames || now - this.appNames.at > 600_000) {
+      let names: readonly string[] = [];
+      try { names = [...new Set(this.d.apps?.() ?? [])].slice(0, 500); } catch { this.d.log.warn("memory.apps_unreadable"); }
+      this.appNames = { at: now, names };
+    }
+    return this.appNames.names;
+  }
 
   /** The model to use (a connected Copilot's one-shot sessions), or null. */
   setModel(model: OneShot | null): void { this.model = model; }
@@ -203,7 +230,9 @@ export class MemoryLearning {
       if (!this.d.inForce()) return "";
       const revision = this.recallRevision;
       const text = await m.context(query, history, () => this.d.inForce() && revision === this.recallRevision);
-      return this.d.inForce() && revision === this.recallRevision ? text : "";
+      if (!this.d.inForce() || revision !== this.recallRevision) return "";
+      // The few that match best, as before, and how many there are in all: never passed off as everything (memory-r9-7).
+      return [this.hold.gave(text), recallNote(memoryIds(text).length, m.kept(history), history)].filter(Boolean).join("\n");
     };
     return {
       remember: (fact, about, said, replaces) => {
@@ -213,12 +242,25 @@ export class MemoryLearning {
           this.d.log.info("memory.instruction_refused", { chars: fact.length });
           return "Not remembered: it reads like an instruction, and only what the user says themselves may tell me what to do.";
         }
+        // What the user had Ember forget in this conversation comes back only in their own words (memory-r9-1), said
+        // or asked to be kept: a question that names it ("Am I vegetarian?") is not them saying it (memory-x9-2).
+        const refs = about.length ? about : undefined;
+        const theirs = rememberedSource(fact, said, refs) === "user"
+          && (!onlyAsked(fact, said) || memoryAsk(said) === "remember" || remembersWithMore(said) || !!profileSaid(fact, refs ?? [{ name: "User" }], said));
+        const held = this.hold.heldBack(fact, theirs ? "user" : "conversation", "tool");
+        if (held) {
+          this.d.log.info("memory.learn_skipped", { why: "forgotten_here" });
+          return held === "all" ? HELD_ALL : held === "corrected" ? HELD_CORRECTED : HELD_FORGOTTEN;
+        }
         const before = new Set(m.list().map(i => i.id));
         const answer = m.remember(fact, about, said, replaces);
         this.noteNew(m.list().filter(i => !before.has(i.id)));
         // Kept, or already kept: this turn's reading must not keep it again in its own words (memory-c8-1).
         const id = /^(?:Already remembered|Remembered) \[([^\]]+)\]/.exec(answer)?.[1];
-        if (id) this.turnKept = [...this.turnKept, { text: fact, about }, { text: m.factText(id) ?? fact, about }].slice(-TURN_KEPT_MAX);
+        if (id) {
+          this.turnKept = [...this.turnKept, { text: fact, about }, { text: m.factText(id) ?? fact, about }].slice(-TURN_KEPT_MAX);
+          this.hold.gaveId(id);
+        }
         return answer;
       },
       // The recall tool: its query is the model's, so it never counts gaps (the screen could choose the question).
@@ -226,29 +268,34 @@ export class MemoryLearning {
       context,
       forRequest: async (request, own) => {
         if (!this.d.inForce()) return "";
+        this.hold.asked();
         const revision = this.recallRevision;
         // With the user's profile (what to call them, how they like answers) whatever they ask (memory-5).
         const { text, matched } = await m.requestContext(request, () => this.d.inForce() && revision === this.recallRevision);
-        if (!this.d.inForce() || revision !== this.recallRevision) return "";
+        if (!this.d.inForce()) return "";
+        // Forgotten or corrected while memory was read: no facts go, only Ember's note of what changed (memory-r9-1).
+        if (revision !== this.recallRevision) return this.hold.changes();
         // Nothing bears on what the user asked themselves: the names in it are gaps (known names aren't, and checking
         // doesn't count as a use). Never from words Ember couldn't tell were the user's.
         if (!matched && own && this.d.inForce()) {
           const known = m.list().map(i => fold(i.text));
-          this.gaps.missed(request, name => known.some(t => t.includes(fold(name))));
+          this.gaps.missed(request, name => known.some(t => t.includes(fold(name))), this.installed());
         }
-        return text;
+        return [this.hold.gave(text), this.hold.changes()].filter(Boolean).join("\n\n");
       },
       forget: id => {
         if (!this.d.inForce()) return false;
         const gone = this.forgetCounted(id);
         if (gone) {
+          // The conversation forgot it itself (forget_memory), and knows.
+          this.hold.forgotByTool(id);
           try { this.d.onAskedForget?.({ id, ...gone }); } catch { this.d.log.warn("memory.delete_notice_failed"); }
         }
         return !!gone;
       },
       factText: id => (this.d.inForce() ? m.factText(id) : null),
       forgetAll: () => this.forgetAll(),
-      asked: () => this.drops,
+      asked: () => { this.hold.asked(); return this.drops; },
       heard: (said, reply, own, asked) => {
         this.active();
         const kept = this.turnKept;
@@ -259,9 +306,19 @@ export class MemoryLearning {
       },
       // A turn that ended unread (stopped, cut short, silent) never handed over what remember kept in it: no later turn
       // takes it, so none of that turn's facts is compared with it (memory-x8-2).
-      began: () => { this.turnKept = []; },
+      began: () => {
+        this.turnKept = [];
+        // A request that carried Ember's note of what changed has reached the conversation: it is told (memory-r9-1).
+        this.hold.began();
+      },
     };
   }
+
+  /**
+   * The conversation ended (New conversation, sign-out, another account, another model service): the next one holds
+   * nothing of what was forgotten in it, so nothing is held back for it and it is told nothing (memory-r9-1).
+   */
+  conversationEnded(): void { this.hold.ended(); }
 
   /**
    * Whether a turn's words were said before the last Forget, correction or Forget everything: its mark (`asked`) is
@@ -311,6 +368,8 @@ export class MemoryLearning {
       // (memory-r8-1); and within FORGOTTEN_TURN_MS nothing much like it is learned from what comes in (memory-c7-1).
       this.dropSaid();
       this.forgotten = [...this.forgottenStill(), { text: gone.text, at: this.now(), undo: gone.undo }].slice(-FORGOTTEN_MAX);
+      // Nor Ember's own later replies, its tasks or its remember tool, until the conversation ends (memory-r9-1).
+      this.hold.forgot(id, gone.text, gone.undo);
       try { this.d.onForgot?.(id, gone); } catch { this.d.log.warn("memory.delete_notice_failed"); }
     }
     return gone;
@@ -325,7 +384,10 @@ export class MemoryLearning {
     if (!open) return false;
     ++this.recallRevision;
     const back = this.d.memory.restore(token);
-    if (back) this.forgotten = this.forgotten.filter(f => f.undo !== token);
+    if (back) {
+      this.forgotten = this.forgotten.filter(f => f.undo !== token);
+      this.hold.restored(token);
+    }
     return back;
   }
 
@@ -345,7 +407,16 @@ export class MemoryLearning {
    * holds back much the same words from what came in since (a task's result) for FORGOTTEN_TURN_MS. A later turn that
    * says it again is learned from as usual after that.
    */
-  private keepLearned(f: NewFact, since: number): AddResult {
+  private keepLearned(found: NewFact, since: number, said: string | null, evidence: string): AddResult {
+    // What to call the user or how long answers should be, told in their own words in that turn and read as a fact
+    // about them alone: the profile's own fact, as the remember tool keeps it (memory-r9-5, memory-x9-1).
+    const f = (said ? profileSaid(found.text, found.about, said, found.source === "user") : null) ?? found;
+    // Forgotten or corrected in this conversation: only the user's own words bring it back (memory-r9-1), and until
+    // it ends a turn teaches only what rests on them (memory-x9-3).
+    if (this.hold.heldBack(f.text, f.source, said === null ? "task" : { said, evidence })) {
+      this.d.log.info("memory.learn_skipped", { why: "forgotten_here" });
+      return { kind: "refused", reason: "it was forgotten in this conversation" };
+    }
     this.forgotten = this.forgottenStill();
     const polarity = negated(f.text);
     if (this.forgotten.some(g => since <= g.at + FORGOTTEN_TURN_MS && negated(g.text) === polarity && similarity(g.text, f.text) >= DUPLICATE)) {
@@ -364,6 +435,9 @@ export class MemoryLearning {
     // An extraction of the earlier conversation must not put the old sentence back after this explicit correction,
     // nor one of the turn still under way (memory-r8-1).
     this.dropSaid();
+    // Nor a later reply, a task or the remember tool what it said before, until the conversation ends (memory-r9-1,
+    // memory-x9-2).
+    this.hold.corrected(expected.id, expected.text, corrected.text);
     this.recent = this.recent.filter(row => row.id !== expected.id);
     try { this.d.onForgot?.(expected.id); } catch { this.d.log.warn("memory.correction_notice_failed"); }
     return corrected;
@@ -378,6 +452,9 @@ export class MemoryLearning {
     this.gaps.clear();
     this.recent = [];
     this.forgotten = [];
+    // A conversation under way still holds what went: until it ends only the user's own words are kept, and it is
+    // told (memory-r9-1). At sign-out and an account change the conversation has gone first, and nothing is held.
+    this.hold.forgotAll();
     // The "Ember learned" lines and their Undo go too.
     try { this.d.onForgotAll?.(); } catch { this.d.log.warn("memory.delete_notice_failed"); }
   }
@@ -428,8 +505,16 @@ export class MemoryLearning {
       this.question = null;
       // Nothing it heard could be kept while memory.json can't be read: said, never asked (memory-r7-1).
       if (this.d.memory.unreadable) { this.interview = null; return MEMORY_UNREADABLE; }
+      // Heard where Ember can't tell the user from its speakers: no answer said there could be kept as theirs, so
+      // none is asked for. Ember says why and opens the typed way (memory-r9-6).
+      if (!how.own) {
+        this.interview = null;
+        this.d.openMemory?.("about");
+        return INTRO_UNCHECKED;
+      }
       this.interview = new Interview(now);
       this.interviewAt = now;
+      this.interviewKept = 0;
       return this.interview.start();
     }
     // "Forget that" first: never an answer to a question (the interview's or Ember's own).
@@ -453,14 +538,15 @@ export class MemoryLearning {
       if (!this.d.inForce() || (request && !this.interview.answers(text))) { this.interview = null; return null; }
       const step = this.interview.answer(text, how.own);
       this.interviewAt = now;
-      this.keepAll(step.keep);
+      this.interviewKept += this.keepAll(step.keep);
       // "Spoken or not" is Ember's real choice, not only a fact (only what the user was heard to say reaches `keep`).
       const spoken = step.keep.find(f => f.predicate === "spoken_answers");
       if (spoken && how.own) {
         try { this.d.setSpoken?.(spoken.text === SPOKEN_FACT); } catch { this.d.log.warn("memory.spoken_not_saved"); }
       }
       if (step.done) this.interview = null;
-      return step.say;
+      // What it handed over memory may have refused (a secret): "I'll remember that" only for what was kept (memory-r9-6).
+      return step.done && !this.interviewKept && step.say.endsWith(INTRO_DONE) ? `${step.say.slice(0, -INTRO_DONE.length)}${INTRO_NOTHING}` : step.say;
     }
     if (this.question) {
       const q = this.question;
@@ -563,9 +649,11 @@ export class MemoryLearning {
 
   /** At most one question a day, while idle, about the gap recall missed most. */
   private maybeAsk(): void {
+    const now = this.now();
+    // A question nobody answered is over once its wait is, also when nothing was said since.
+    if (this.question && now - this.question.at > ANSWER_WAIT_MS) this.question = null;
     if (this.question || this.interview || !this.d.questionsOn()) return;
     const last = Date.parse(this.d.askedAt() ?? "");
-    const now = this.now();
     if (Number.isFinite(last) && now - last < QUESTION_EVERY_MS) return;
     const name = this.gaps.top();
     if (!name) return;

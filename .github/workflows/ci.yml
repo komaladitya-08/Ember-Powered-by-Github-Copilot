@@ -65,8 +65,8 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .cache/voice
-          key: voice-${{ hashFiles('app/voice/models.ts', 'scripts/voice/prepare.mjs') }}
-      - run: node scripts/voice/prepare.mjs
+          key: voice-ryan-${{ hashFiles('app/voice/models.ts', 'scripts/voice/prepare.mjs') }}
+      - run: node scripts/voice/prepare.mjs --voice ryan
       - name: Integration tests (real Copilot runtime with an offline mock model; real speech models)
         run: npm run test:integration
         env:
@@ -147,9 +147,11 @@ jobs:
       - name: Speech models (cached; verified by SHA-256)
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: .cache/voice/models
-          key: voice-models-el8-${{ hashFiles('app/voice/models.ts', 'scripts/voice/prepare.mjs') }}
-      - run: node scripts/voice/prepare.mjs
+          path: |
+            .cache/voice/models
+            .cache/voice/vits-piper-en_US-ryan-low
+          key: voice-models-ryan-el8-${{ hashFiles('app/voice/models.ts', 'scripts/voice/prepare.mjs') }}
+      - run: node scripts/voice/prepare.mjs --voice ryan
       - name: Speech on RHEL 8's glibc, on both builds (WebAssembly, then sherpa-onnx's C API, which the packages use)
         env:
           EMBER_VOICE_TEST: "1"
@@ -579,10 +581,10 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .cache/voice
-          key: voice-${{ runner.os }}-${{ hashFiles('app/voice/models.ts', 'scripts/voice/prepare.mjs') }}
+          key: voice-ryan-${{ runner.os }}-${{ hashFiles('app/voice/models.ts', 'scripts/voice/prepare.mjs') }}
       - name: Fetch and verify the speech models
         if: ${{ !cancelled() }}
-        run: node scripts/voice/prepare.mjs
+        run: node scripts/voice/prepare.mjs --voice ryan
       - name: "Speech on sherpa-onnx's native addon: the real recognizers on the voice clips, then the voice and speech processes in Electron (native Kitten picked, WebAssembly ASR and neural-unavailable fallback compared; latency printed)"
         if: ${{ !cancelled() }}
         run: |
@@ -790,10 +792,10 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .cache/voice
-          key: voice-${{ runner.os }}-${{ hashFiles('app/voice/models.ts', 'scripts/voice/prepare.mjs') }}
+          key: voice-ryan-${{ runner.os }}-${{ hashFiles('app/voice/models.ts', 'scripts/voice/prepare.mjs') }}
       - name: Fetch and verify the speech models
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-        run: node scripts/voice/prepare.mjs
+        run: node scripts/voice/prepare.mjs --voice ryan
       - name: "Speech on sherpa-onnx's native addon: the real recognizers on the voice clips, then the voice and speech processes in Electron (native picked, CoreML timed against the CPU, WebAssembly compared; latency printed)"
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |

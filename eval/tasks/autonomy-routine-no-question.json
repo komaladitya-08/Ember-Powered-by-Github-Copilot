@@ -5,9 +5,6 @@
   "app": {
     "fixture": "bench"
   },
-  "user": {
-    "autonomy": true
-  },
   "script": [
     {
       "tool": "perceive_window"

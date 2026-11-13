@@ -510,8 +510,9 @@ describe("a no to a command is the task's no", () => {
       return { verdict, declined: f.declined, expired: f.expired, said: f.saidNoThisTask };
     };
     const timedOut = await asks(null);
-    expect(timedOut).toMatchObject({ declined: false, expired: true, said: true });
-    expect(timedOut.verdict).toMatchObject({ resultType: "denied", textResultForLlm: expect.stringMatching(/timed out with no answer, so nothing was approved/) });
+    // Nobody said no: the task isn't held to asking for it (cause 10 of the owner's report of 2026-11-12).
+    expect(timedOut).toMatchObject({ declined: false, expired: true, said: false });
+    expect(timedOut.verdict).toMatchObject({ resultType: "denied", textResultForLlm: expect.stringMatching(/went unanswered: .*neither a yes nor a no\. Nothing was approved/) });
     const no = await asks("deny");
     expect(no).toMatchObject({ declined: true, expired: false, said: true });
     expect(no.verdict.textResultForLlm).toMatch(/said no/);

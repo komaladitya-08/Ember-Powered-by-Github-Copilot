@@ -11,6 +11,7 @@ import { KEYS, OPEN_AGAIN, SHORTCUTS, type KeyConventions, type OS, type Shortcu
 import { parseTargetId } from "../../shared/targets";
 import { PLATFORM_WORDS } from "../../shared/words";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
+import { APPROVAL_MODES, modeRank, type ApprovalMode, type ApprovalsState, type ModeWhy } from "../../shared/approvals";
 import { NEVER_LOOK_DEFAULTS as NEVER_LOOK_BY_OS, NEVER_LOOK_NAMES, missingDefaults as missingFor } from "../../shared/never-look";
 import { onboardingRest } from "./computers-copy";
 import { holdsBack, needsUser, type SetupRow } from "../../shared/setup-attention";
@@ -281,7 +282,7 @@ export const SCREEN_IMAGES_TEXT = {
  * A piece of the text in Apps & privacy's copy of "Before Ember starts" (safety-privacy-9), said as it is there
  * (safety-privacy-r4): the never-look list is below in that pane, not somewhere "in settings", and with Send
  * screenshots for tasks off the screenshot clause says so. First run's own words stay as they are.
- * `autonomy`: Work without asking is in force (its switch below is on), so ordinary steps aren't asked about
+ * `autonomy`: an approval mode is in force (How Ember asks, below), so ordinary steps aren't asked about
  * (safety-privacy-c4-1); `grants`: the person let Ember act in some apps without asking (the list below). `targets`:
  * the onboarding line's words after its lead, as the settings and the policy leave them (targetsFoldRest,
  * safety-privacy-r4-2).
@@ -289,8 +290,10 @@ export const SCREEN_IMAGES_TEXT = {
 export function privacyFoldWords(text: string, o: { screenImages: boolean; autonomy?: boolean; grants?: boolean; targets?: string }): string {
   if (o.targets !== undefined && (text === onboardingRest("linux") || text === onboardingRest("win32"))) return o.targets;
   const out = text.replace("The list is in settings", "The list is below, under Never look at")
-    .replace(" in an app, and always before anything hard to undo.", o.autonomy
-      ? " on anything risky or hard to undo. Work without asking is on (below), so for ordinary steps it tells you what it's doing instead."
+    // First run's agreement is behind the person here: “Hey Ember” is in its own section (slice4-x9-5).
+    .replace(" unless you turn on “Hey Ember”, when you agree or later in settings, or", " unless you turn on “Hey Ember” in Settings › Voice, or")
+    .replace(" in an app unless you turn on Interactive, when you agree or later in settings, and always before anything hard to undo.", o.autonomy
+      ? " on anything risky or hard to undo. For ordinary steps it tells you what it's doing instead (How Ember asks, below)."
       : o.grants ? " in an app, except those you let it act in without asking (below), and always before anything hard to undo."
         : " in an app, and always before anything hard to undo.");
   return o.screenImages ? out
@@ -774,8 +777,18 @@ export const undoForgotLabel = (text: string) => `Undo: remember “${text}” a
  * What Memory's list says after Forget, where focus goes (never the next row's Forget, so a second Enter forgets
  * nothing more: memory-7), with Undo after it; and after Undo.
  */
-export const memoryForgottenText = (text: string, derived = 0, back: readonly string[] = []) =>
-  `Forgotten: “${text.replace(/[“”]/g, "")}”${derived ? `, and ${derived === 1 ? "a note" : `${derived} notes`} Ember made from it` : ""}.${back.length ? ` Ember remembers ${quotedAnd(back)} again.` : ""}`;
+export const memoryForgottenText = (text: string, derived = 0, back: readonly string[] = [], managed = false) =>
+  `Forgotten: “${text.replace(/[“”]/g, "")}”${derived ? `, and ${derived === 1 ? "a note" : `${derived} notes`} Ember made from it` : ""}.${back.length ? ` Ember remembers ${quotedAnd(back)} again.` : ""}${managed ? " It can't be put back while your organisation has memory off." : ""}`;
+/**
+ * Settings › Memory while the organisation has memory off (memory-r9-3): what Ember saved before is still on this
+ * computer, and its owner can see it and forget it. `saved`: something is listed. A Forget has no Undo then: nothing
+ * is put back into memory the organisation turned off.
+ */
+export function memoryManagedText(saved: boolean): string {
+  return saved
+    ? "Your organisation has turned memory off, so Ember keeps nothing new and uses none of this. What it saved before is still on this computer: you can see it and forget it here. A Forget can't be undone while memory is off."
+    : "Your organisation has turned memory off.";
+}
 /** “A”, “A” and “B”, “A”, “B” and “C”: what is current again after a Forget undid what Ember kept just now (memory-12). */
 const quotedAnd = (texts: readonly string[]) => {
   const q = texts.map(t => `“${t.replace(/[“”]/g, "")}”`);
@@ -789,6 +802,8 @@ export const undoLearnedLabel = (text: string) => `Undo: forget “${text}”`;
 /** The line's button once main confirms the deletion. */
 export const LEARNED_UNDONE = "Forgotten";
 export const UNDO_LEARNED = "Undo";
+/** The "Ember learned" line's button once forgetting the fact no longer undoes what it replaced (memory-r9-10). */
+export const FORGET_LEARNED = "Forget";
 export const MEMORY_FORGETTING = "Forgetting…";
 export const MEMORY_SEARCH_LABEL = "Search memory";
 export const MEMORY_SOURCE_LABEL = "Source";
@@ -877,6 +892,12 @@ export const ABOUT_YOU = {
   managed: "Your organisation has turned memory off.",
   voice: "You can also say “Ember, get to know me” for a short spoken version.",
 } as const;
+/**
+ * The line under Tell Ember about you: what the card is for (`lead`: Settings; first run says it in its step's lead),
+ * and the spoken version only where Ember can tell the user's voice from its speakers (`spoken`). Elsewhere every
+ * spoken request is unchecked, never the user's own words, so the interview could keep nothing (memory-r9-6).
+ */
+export const aboutYouHint = (lead: boolean, spoken: boolean) => [lead ? ABOUT_YOU.lead : "", spoken ? ABOUT_YOU.voice : ""].filter(Boolean).join(" ");
 
 /** The form's fields as main takes them: trimmed, each one left out when it is empty or "No preference". */
 /** Said after Save when Spoken replies was chosen: it changes whether Ember speaks (memory-5). */
@@ -911,26 +932,147 @@ export function aboutYouSaved(kept: number | null): string {
 export const MEMORY_QUESTIONS_HINT = "At most one question a day, only while you're not using Ember, about names it keeps finding nothing on. Your answer is kept as something you told it.";
 
 /**
- * "Work without asking"'s card (Apps & privacy, FEATURE_CONSENT_VERSION.autonomy; app/main/policy/autonomy.ts): what runs
- * without asking, what still asks, that Ember says what it does, and that a stop always works. Change it only with a bump
- * of that version.
+ * Interactive's card (Apps & privacy › How Ember asks, FEATURE_CONSENT_VERSION.autonomy; app/main/policy/autonomy.ts):
+ * what is announced instead of asked, what still asks every time, what never happens, that a stop always works, and
+ * that anyone near the computer can answer a question by voice while Voice Match is off. Change it only with a bump of
+ * that version.
  */
-export const AUTONOMY_CONSENT_TEXT = "Ember will use your apps, borrow your mouse and keyboard, run ordinary commands, move text between apps and press OK on a simple message box (one whose only button is OK, with nothing to choose or tick) for what you ask, without asking you first each time. It says what it is doing as it goes, in its bubble and on the task's card, and keeps a record under What Ember did. It still asks every time before anything risky: sending, posting, submitting, sharing, deleting, overwriting, paying, installing, signing out, security settings, dangerous commands and any dialog that asks a question. It never types passwords and never acts in sign-in prompts, and if a page or file tries to give it instructions, that task goes back to asking. Saying “Ember, stop”, or Ember's stop shortcut, stops everything at once, and moving your mouse takes it back.";
+export const AUTONOMY_CONSENT_TEXT = "In Interactive, Ember does ordinary steps without asking first: it works in your apps, borrows your mouse and keyboard, runs ordinary commands, moves text between apps and presses OK on a message box that has nothing else to choose. It tells you what it is doing as it goes, and keeps a record under What Ember did. It still asks every time before anything risky: sending, posting, submitting, sharing, deleting, overwriting, paying, installing, signing out, security settings, dangerous commands and any dialog that asks a question. It asks more often in your system's settings and security apps, and a task goes back to asking once you say no or a page or file tries to give it instructions. It never types passwords and never acts in sign-in prompts. “Ember, stop” or Ember's stop shortcut stops everything at once, and moving your mouse takes it back. While Voice Match is off, anyone near the computer can answer Ember's questions by voice.";
 
 /**
- * Under the "Work without asking" switch: what changes, and that questions can be answered by voice (by anyone heard
- * while Voice Match is off, its default; only the owner's voice can say yes while it is on: 2026-11-12).
- * `elevated`: Ember runs as an administrator or as root (elevationOf), so every command asks whatever the switch says
- * (commands/decide.ts): said, so the user can tell why.
+ * Assisted's card (Apps & privacy › How Ember asks, FEATURE_CONSENT_VERSION.assisted; PolicyEngine.assist and
+ * commands/review.ts): that a lighter model decides whether a step matches what the user asked, what it is sent, that
+ * a match goes ahead whatever the step is, that it is announced and recorded, that the model can be wrong, what it
+ * never clears, and that a stop always works. Change it only with a bump of that version.
  */
-export function autonomyHint(managed: boolean, elevated: "administrator" | "maybe-administrator" | "root" | null = null): string {
-  const base = managed
-    ? "Managed by your organisation: Ember asks before its first step in an app, before using your mouse and keyboard, before pressing OK on an app's message box and before moving text between apps."
-    : "Off, Ember asks before its first step in an app, before using your mouse and keyboard, before pressing OK on an app's message box and before moving text between apps. On, it tells you what it's doing instead, and still asks before anything risky. You can answer a question by voice too: say “allow” or “not now” once Ember has asked, or “Ember, allow” later.";
-  if (elevated === "administrator") return `${base} Ember is running as an administrator, so it asks before every command. Start it normally to change that.`;
-  if (elevated === "maybe-administrator") return `${base} Ember may be running as an administrator (it couldn't tell), and then it asks before every command. Start it normally to be sure.`;
-  if (elevated === "root") return `${base} Ember is running as root, so it asks before every command. Start it as yourself to change that.`;
-  return base;
+export const ASSISTED_CONSENT_TEXT = "In Assisted, Ember works as in Interactive, and where it would ask you it first checks the step against what you asked. A lighter AI model makes that check. It is sent your own words for the task, typed or spoken, and Ember's short description of the step: the app, the window's title, the control's name, a dialog's words, the text to type and what it replaces, a cell's formula and where carried text came from; or the command, its computer, shell and folder. If it finds you asked for exactly that, Ember goes ahead without asking, also where the step sends, deletes, pays or installs, or the command changes your system. Ember tells you each time, a command waits a few seconds with a Stop first, and What Ember did keeps a record. The model can be wrong: it may let through a step you didn't mean. It never clears a command that would show passwords or keys or keep running after you stop Ember, a step you said no to, anything Ember refuses, such as typing a password, or what you or your organisation set to ask every time. If it finds no match or can't tell, Ember asks you. “Ember, stop” or Ember's stop shortcut stops everything at once.";
+
+/**
+ * Autopilot's card (Apps & privacy › How Ember asks, FEATURE_CONSENT_VERSION.autopilot; PolicyEngine.autopilotStep,
+ * commands/autopilot.ts, extensions/gate.ts, app/remote/gate.ts): that Ember doesn't ask and what that takes in, said
+ * as the risk the user accepts; that every step is still announced and recorded; the few things it still asks; what it
+ * never does; how to stop it; and that the organisation can turn it off. It promises nothing of the vault, which isn't
+ * built: passwords and card numbers are never typed. Four short paragraphs, the risk first, so that it can't be read
+ * past (the card keeps a text's line breaks). Change it only with a bump of that version.
+ */
+export const AUTOPILOT_CONSENT_TEXT = [
+  "In Autopilot, Ember doesn't ask before it acts. It sends, posts, shares, deletes, overwrites, pays, installs, signs out, changes settings, answers dialogs and runs dangerous commands, also as an administrator, without asking you first. That includes steps you didn't ask for, a task that a web page, a file or a command's output tried to steer, tools from your extensions and computers you reach over SSH. By choosing Autopilot you accept that risk: what it does may be impossible to undo.",
+  "It tells you what it is doing as it goes, a dangerous command waits a few seconds with a Stop first, and What Ember did keeps a record. It still asks before a command that would show passwords or keys, one that would keep running after you stop Ember, one whose effect it can't tell, wherever you or your organisation set commands to ask every time, and before it turns on something you haven't agreed to yet.",
+  "It never repeats a step you said no to, never types passwords or card numbers, never acts in your system's sign-in and password prompts, never uses your terminals, never reads windows on your never-look list and never runs a command that touches its own settings, record or Stop.",
+  "“Ember, stop” or Ember's stop shortcut stops everything at once. Once you move your mouse or press a key while Ember is using them, it doesn't take them again in that task. Your organisation can turn Autopilot off.",
+].join("\n\n");
+
+/** Apps & privacy › How Ember asks: the choice's heading, and each mode's name as the window says it. */
+export const APPROVALS_HEADING = "How Ember asks";
+export const MODE_NAME: Readonly<Record<ApprovalMode, string>> = { interactive: "Interactive", assisted: "Assisted", autopilot: "Autopilot" };
+/** Each offered mode's one sentence under its name (a mode joins as it is built). */
+export const MODE_LINE: Readonly<Partial<Record<ApprovalMode, string>>> = {
+  interactive: "Ember tells you about ordinary steps as it does them, and asks before anything risky, such as sending, deleting or paying.",
+  assisted: "As Interactive, but before Ember asks, a lighter AI model checks the step against what you asked. If it matches, Ember goes ahead and tells you.",
+  autopilot: "Ember doesn't ask: it sends, deletes, pays and installs without asking, and tells you as it goes. You accept that risk when you choose it.",
+};
+/** Each offered mode's card: its text, shown before the mode is chosen, and the version an agreement to it carries. */
+export const MODE_CARD_TEXT: Readonly<Partial<Record<ApprovalMode, string>>> = { interactive: AUTONOMY_CONSENT_TEXT, assisted: ASSISTED_CONSENT_TEXT, autopilot: AUTOPILOT_CONSENT_TEXT };
+
+/** A mode's card as the window shows it: its title, its text, and its two buttons ("Not now" leaves the mode as it was). */
+export function modeCard(mode: ApprovalMode): { title: string; text: string; yes: string; no: string } {
+  return { title: `Before you choose ${MODE_NAME[mode]}`, text: MODE_CARD_TEXT[mode] ?? "", yes: `I agree, use ${MODE_NAME[mode]}`, no: "Not now" };
+}
+
+/** Why Assisted's row is locked while the organisation's `features.aiReview` is false (its tooltip, and the note's sentence). */
+const CHECK_OFF_TEXT = `Your organisation turned off the check ${MODE_NAME.assisted} needs`;
+/** What Ember asks before while no mode is in force: said wherever the window says it is below Interactive. */
+const ASKS_BEFORE = "Ember asks before its first step in an app, before using your mouse and keyboard, before pressing OK on an app's message box and before moving text between apps";
+/** Under the modes while Autopilot is in force: that it is, what that means, and how to stop it (never left unsaid). */
+const AUTOPILOT_ON = `${MODE_NAME.autopilot} is on: Ember sends, deletes, pays and installs without asking, and tells you as it goes. “Ember, stop” or Ember's stop shortcut stops it.`;
+/**
+ * That a question can be answered by voice (by anyone heard while Voice Match is off, its default: 2026-11-12), and that
+ * a mode can be chosen by saying its name (app/main/agent/autonomy-intent.ts: one that asks less only with its card
+ * agreed to here).
+ */
+const ANSWER_BY_VOICE = "You can answer a question by voice too: say “allow” or “not now” once Ember has asked, or “Ember, allow” later. To change the mode by voice, say its name, such as “Ember, switch to Interactive”: one that asks less needs its card agreed to here first.";
+
+/**
+ * Under the modes: what is in force and, where that isn't the mode chosen, why in one sentence; then that questions
+ * can be answered by voice. `managed`: the organisation keeps Ember below Interactive (Home knows it from the policy
+ * before main's state comes). `elevated`: Ember runs as an administrator or as root (elevationOf), so every command
+ * asks whatever the mode says (commands/decide.ts): said, so the user can tell why.
+ */
+/** The organisation's switches that say more than "managed" under the modes: actions off, or every action asked. */
+export interface OrgSwitches { actionsOff?: boolean; everyAction?: boolean }
+
+export function approvalsNote(state: ApprovalsState | null, managed: boolean, elevated: "administrator" | "maybe-administrator" | "root" | null = null, org: OrgSwitches = {}): string {
+  // A card that isn't agreed to as it reads now (a newer one, or none): its mode's row opens it again (modes-x9p-6).
+  const unread = (m: ApprovalMode, inForce: ApprovalMode) => `${MODE_NAME[m]}'s card isn't agreed to as it reads now, so ${MODE_NAME[inForce]} is in use: choose ${MODE_NAME[m]} to read it.`;
+  const base = managed || state?.why === "organisation" ? `Managed by your organisation: ${org.actionsOff ? "Ember doesn't act in your apps" : org.everyAction ? "Ember asks before every action" : ASKS_BEFORE}.`
+    : !state ? ""
+    : state.why === "not-recorded" ? `Ember couldn't save or record your choice, so it isn't in use: ${ASKS_BEFORE}. Choose it again to try once more.`
+    : state.inForce === "asking" ? `Until you agree to ${MODE_NAME.interactive}, ${ASKS_BEFORE}.`
+    : state.why === "cap" && state.cap && modeRank(state.inForce) < modeRank(state.cap) ? `Your organisation allows ${MODE_NAME[state.cap]} at most, and ${unread(state.cap, state.inForce)} ${ANSWER_BY_VOICE}`
+    : state.why === "cap" ? `Your organisation allows ${MODE_NAME[state.cap ?? state.inForce]} at most, so ${MODE_NAME[state.inForce]} is in use. ${ANSWER_BY_VOICE}`
+    : state.why === "check-off" ? `${CHECK_OFF_TEXT}, so ${MODE_NAME[state.inForce]} is in use. ${ANSWER_BY_VOICE}`
+    : state.why === "card" && modeRank(state.chosen) > modeRank(state.inForce) ? `${unread(state.chosen, state.inForce)} ${ANSWER_BY_VOICE}`
+    : state.why ? `${MODE_NAME[state.inForce]} is in use. ${ANSWER_BY_VOICE}`
+    : state.inForce === "autopilot" ? `${AUTOPILOT_ON} ${ANSWER_BY_VOICE}`
+    : ANSWER_BY_VOICE;
+  if (!base) return base;
+  // A row the organisation locks without it being the mode chosen says why here too (the note describes the rows).
+  const below = managed || state?.why === "organisation";
+  const lockedRow = below || !state ? "" : state.checkOff && state.why !== "check-off" && state.offered.includes("assisted") ? ` ${CHECK_OFF_TEXT}, so ${MODE_NAME.assisted} can't be chosen.`
+    : state.cap && (state.why !== "cap" || state.inForce === "asking") && state.offered.some(m => modeRank(m) > modeRank(state.cap)) ? ` Your organisation allows ${MODE_NAME[state.cap]} at most.` : "";
+  const said = `${base}${lockedRow}`;
+  // Autopilot doesn't ask for that (commands/autopilot.ts autopilotAsks: root is no reason to ask there): say what
+  // happens instead (modes-x9p-1).
+  if (state?.inForce === "autopilot" && !below) {
+    if (elevated === "administrator") return `${said} Ember is running as an administrator, so in Autopilot its commands run as an administrator without asking, each with a few seconds to stop it. Start it normally to change that.`;
+    if (elevated === "maybe-administrator") return `${said} Ember may be running as an administrator (it couldn't tell), and then in Autopilot its commands run so without asking, each with a few seconds to stop it. Start it normally to be sure.`;
+    if (elevated === "root") return `${said} Ember is running as root, so in Autopilot its commands run as root without asking, each with a few seconds to stop it. Start it as yourself to change that.`;
+    return said;
+  }
+  if (elevated === "administrator") return `${said} Ember is running as an administrator, so it asks before every command. Start it normally to change that.`;
+  if (elevated === "maybe-administrator") return `${said} Ember may be running as an administrator (it couldn't tell), and then it asks before every command. Start it normally to be sure.`;
+  if (elevated === "root") return `${said} Ember is running as root, so it asks before every command. Start it as yourself to change that.`;
+  return said;
+}
+
+/** A mode's row: its name and sentence, whether it is the one in force, and whether the organisation locks it. */
+export interface ModeRowView { mode: ApprovalMode; name: string; line: string; checked: boolean; locked: boolean; title: string }
+
+/**
+ * How Ember asks, as the window draws it: one row per mode main offers, the one in force marked; the note under them;
+ * and the card to show ready to agree, which is Interactive's while no mode is in force and nothing but its agreement
+ * is missing. `managed`: as approvalsNote. Before main's state has come, the rows show unmarked and nothing is offered.
+ */
+export function approvalsView(state: ApprovalsState | null, managed: boolean, elevated: "administrator" | "maybe-administrator" | "root" | null = null, org: OrgSwitches = {}): { rows: ModeRowView[]; note: string; card: ApprovalMode | null; inForce: ApprovalMode | null } {
+  const below = managed || state?.why === "organisation";
+  const inForce = !state || below || state.inForce === "asking" ? null : state.inForce;
+  const offered = APPROVAL_MODES.filter(m => (state?.offered ?? ["interactive"]).includes(m) && MODE_LINE[m] !== undefined);
+  const rows = offered.map(mode => {
+    const checkOff = mode === "assisted" && !!state?.checkOff;
+    const locked = below || checkOff || (!!state?.cap && modeRank(mode) > modeRank(state.cap));
+    return { mode, name: MODE_NAME[mode], line: MODE_LINE[mode] ?? "", checked: inForce === mode, locked, title: !locked ? "" : checkOff && !below ? CHECK_OFF_TEXT : "Managed by your organisation" };
+  });
+  const card = state && !below && state.inForce === "asking" && state.why !== "not-recorded" && rows.some(r => r.mode === "interactive" && !r.locked) ? "interactive" : null;
+  return { rows, note: approvalsNote(state, managed, elevated, org), card, inForce };
+}
+
+/**
+ * The empty list of apps Ember may act in without asking first: that Ember asks before its first action in each app is
+ * said only while that is so, which it isn't once a mode is in force (ordinary steps are announced) or where the
+ * organisation has it ask before every action (the list says it doesn't apply).
+ */
+export function grantsEmptyText(o: { confirmEvery: boolean; modeInForce: boolean }): string {
+  return o.confirmEvery || o.modeInForce ? "None." : "None: Ember asks before its first action in each app.";
+}
+
+/** Why a choice wasn't made, in one plain sentence (APPROVALS_IPC.choose's refusals). */
+export function modeRefusal(why: ModeWhy): string {
+  if (why === "organisation") return "Your organisation has Ember ask first, so this can't be chosen.";
+  if (why === "cap") return "Your organisation doesn't allow this mode.";
+  if (why === "check-off") return "Your organisation turned off the check this mode needs.";
+  if (why === "card") return "This card has changed since you opened it. Read it again, then choose.";
+  if (why === "not-recorded") return "Ember couldn't save or record your choice, so nothing changed.";
+  return "Ember can't use this mode yet.";
 }
 
 /**
@@ -1217,6 +1359,9 @@ export function userWords(why: string | undefined): string | undefined {
   return /[.!?…]$/.test(first) ? first : `${first}.`;
 }
 
+/** Why a step or a command Autopilot let through wasn't asked about, in "What Ember did". */
+const AUTOPILOT_WHY = "Autopilot was on, so Ember didn't ask.";
+
 /** Shell names as people write them (the command window's own). */
 const SHELL_NAME: Readonly<Record<string, string>> = { bash: "bash", zsh: "zsh", sh: "sh", powershell: "PowerShell", cmd: "cmd" };
 
@@ -1373,7 +1518,9 @@ export function describeEntry(e: ActivityEntry, words: EntryWords = LINUX_ENTRY_
         return { tag: e.batchVerdict === "deny" ? "Refused" : "Asked you", cls: e.batchVerdict === "deny" ? "no" : "ask", what: fill, why: typeof e.batchReason === "string" ? userWords(e.batchReason) : undefined };
       }
       // Gone ahead without asking (Work without asking): said, so the record shows which steps weren't asked about.
-      if (e.verdict === "allow") return e.autonomy === true ? { tag: "Without asking", cls: "", what } : null; // (otherwise the action line says it)
+      // One that Assisted's check cleared says so (the audit's `review`), and so does one Autopilot let through (its
+      // `mode`), so the record shows why it wasn't asked about.
+      if (e.verdict === "allow") return e.autonomy === true ? { tag: "Without asking", cls: "", what, ...(e.mode === "autopilot" ? { why: AUTOPILOT_WHY } : e.review === "match" ? { why: "Ember's check found this step in what you asked." } : {}) } : null; // (otherwise the action line says it)
       return { tag: e.verdict === "deny" ? "Refused" : "Asked you", cls: e.verdict === "deny" ? "no" : "ask", what, why: userWords(e.reason) };
     case "confirm":
       // A lasting grant says what it changes, as Apps & privacy's list of them does.
@@ -1392,8 +1539,12 @@ export function describeEntry(e: ActivityEntry, words: EntryWords = LINUX_ENTRY_
       // A picture of a window sent to the model (worker.ts perceive, safety-privacy-6): its app, never its title.
       return e.kind === "screenshot" ? { tag: "Screenshot", cls: "", what: `Sent a picture of the window${where ? ` ${where}` : ""} to the model${e.tier === 2 || e.onDesk === true ? " (on Ember's desk)" : ""}` } : null;
     case "autonomy": {
-      const by = e.via === "voice" ? (e.verified === true ? " (by your voice, Voice Match)" : " (by voice)") : e.via === "typed" ? " (asked in words)" : "";
-      return { tag: "Setting", cls: "", what: `${e.on === true ? "Work without asking turned on" : "Work without asking turned off"}${by}` };
+      const by = e.via === "voice" ? (e.verified === true ? " (by your voice, Voice Match)" : " (by voice)") : e.via === "typed" ? " (asked in words)"
+        : e.via === "policy" ? " (your organisation's policy changed)" : e.atStart === true ? " (as Ember started)" : "";
+      // The approval mode in force changed. An entry from before the modes says `on`: Work without asking's switch.
+      if (typeof e.mode !== "string") return { tag: "Setting", cls: "", what: `${e.on === true ? "Work without asking turned on" : "Work without asking turned off"}${by}` };
+      const name = (MODE_NAME as Record<string, string | undefined>)[e.mode];
+      return { tag: "Setting", cls: "", what: `${name ? `${APPROVALS_HEADING}: ${name}` : `${APPROVALS_HEADING}: before ordinary steps, as no mode is in use`}${by}` };
     }
     case "command":
       return commandLine(e);
@@ -1484,6 +1635,19 @@ export function auditCopySegments(auditCopy: string): Segment[] {
 }
 
 /**
+ * Voice's line on answering a question by voice, as this platform can take it: a yes without the name only where Ember
+ * can tell another sound playing (Linux's speakers' stream, Windows' output level), and only in the few seconds after it
+ * asks (the answer window). On macOS, and on Linux without parec, a nameless yes is dropped as "sound-unknown", where
+ * the same words for every platform promised it worked (V2-F3).
+ */
+export function voiceAnswerHint(p: Pick<StatusPlatform, "speakerRejection" | "outputLevel">): string {
+  const bare = "To answer one of Ember's questions, say “allow” or “not now” in the few seconds after it asks, no name needed, and later “Ember, allow” or “Ember, not now”.";
+  if (p.speakerRejection) return `${bare} Where Ember can't hear what your speakers play (without PulseAudio's parec), a yes always needs its name.`;
+  if (p.outputLevel) return bare;
+  return "To answer one of Ember's questions, say “Ember, allow”, or “not now” in the few seconds after it asks: Ember can't tell here whether something else is playing, so a yes needs its name.";
+}
+
+/**
  * Everything the settings window fills in from `Status.platform`: the chord chips, the data and audit folders, the
  * journal hint, the consent's OS sentences, the login note and the empty conversation's hint. Linux's status gives
  * back the page's own markup, so applying it changes nothing a person or a screen reader can tell.
@@ -1514,6 +1678,7 @@ export function homePatches(p: StatusPlatform): HomePatch[] {
     // PulseAudio: elsewhere the consent doesn't say it does.
     { selector: "#speaker-note", hidden: !p.speakerRejection },
     { selector: "#output-note", hidden: !p.outputLevel },
+    { selector: "#voice-answer-hint", content: [voiceAnswerHint(p)] },
     { selector: "#conversation", attrs: { "data-empty": emptyConversationText(p.shortcuts.ask.label) } },
     { selector: "#conversation-send-hint", content: [composerSendHint(p.os)] },
     { selector: "#mic-indicator", content: [p.micIndicator], hidden: !p.micIndicator },

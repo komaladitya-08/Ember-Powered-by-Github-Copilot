@@ -400,14 +400,16 @@ export function setUpAppChrome(o: { os: OS; appMenu: boolean; appearance: "syste
 /**
  * What the settings page may change through IPC.updateSettings: anything but where Ember works (`targets`) and what
  * commands may do (`commands`). Those change only through the targets runtime's own channel, behind their consent
- * cards (TARGETS_IPC): a page that sent them here would skip a card, so they are dropped (fail closed). So is the own
- * model provider's card record (`provider.consent`): it is recorded only through PROVIDER_IPC.agree. And so is the
- * extensions' (`extensions.consent`, integrations-i1): only their card's yes records it (EXTENSIONS_IPC.agree).
+ * cards (TARGETS_IPC): a page that sent them here would skip a card, so they are dropped (fail closed). So is the
+ * approval mode with its cards' records (`approvals`): it changes only together with the agreement to a mode's card
+ * (APPROVALS_IPC.choose). So is the own model provider's card record (`provider.consent`): it is recorded only through
+ * PROVIDER_IPC.agree. And so is the extensions' (`extensions.consent`, integrations-i1): only their card's yes records
+ * it (EXTENSIONS_IPC.agree).
  */
-export function settingsFromHome(patch: SettingsPatch): { patch: SettingsPatch; dropped: ("targets" | "commands" | "provider.consent" | "extensions.consent")[] } {
+export function settingsFromHome(patch: SettingsPatch): { patch: SettingsPatch; dropped: ("targets" | "commands" | "approvals" | "provider.consent" | "extensions.consent")[] } {
   if (!patch || typeof patch !== "object" || Array.isArray(patch)) return { patch, dropped: [] };
-  const dropped: ("targets" | "commands" | "provider.consent" | "extensions.consent")[] = (["targets", "commands"] as const).filter(k => Object.prototype.hasOwnProperty.call(patch, k));
-  const { targets: _targets, commands: _commands, ...rest } = patch;
+  const dropped: ("targets" | "commands" | "approvals" | "provider.consent" | "extensions.consent")[] = (["targets", "commands", "approvals"] as const).filter(k => Object.prototype.hasOwnProperty.call(patch, k));
+  const { targets: _targets, commands: _commands, approvals: _approvals, ...rest } = patch;
   let out: Record<string, unknown> = rest;
   for (const key of ["provider", "extensions"] as const) {
     const p = out[key];

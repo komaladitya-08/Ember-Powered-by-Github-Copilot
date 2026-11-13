@@ -6,8 +6,8 @@
  * Match verified it while it is on; "Not now" from anyone; owner decisions of
  * 2026-11-02 and 2026-11-12, PLAN.md §2 "Approvals"). Never the model, never
  * typed text, and never "Always" by voice. One question shows at a time; the
- * rest wait their turn. Unanswered questions expire as "no", counted from when
- * they appear on screen.
+ * rest wait their turn. Unanswered questions expire with no answer (null: nothing
+ * is approved, and nobody said no), counted from when they appear on screen.
  *
  * A question can't be answered by accident: clicks in its first moments are
  * ignored (a double-click or a click already on its way lands on nothing),
@@ -51,7 +51,7 @@ export interface AnswerChannel { via: AnswerVia; verified?: boolean; trust?: "ta
  * for the question to be armed, its whole text read, or its panel shown whole ("not-yet"). A short yes on a task's
  * trust only for that task's own question, never a panel's ("untrusted").
  */
-export type VoiceAnswerResult = "answered" | "no-question" | "unverified" | "untrusted" | "click-only" | "not-yet" | "stale" | "locked";
+export type VoiceAnswerResult = "answered" | "no-question" | "unverified" | "untrusted" | "click-only" | "not-yet" | "busy" | "stale" | "locked";
 
 /** A question whose full content shows in a window of Ember's own (the command card, a consent card). */
 export type QuestionPanel =
@@ -93,6 +93,16 @@ export interface Question {
 }
 
 /** What question `q`'s "Your task:" line says (its taskLine, else its context), or "" for no line: the bubble's and the prompt card's. */
+/**
+ * Whether a question coming up retires the conversation's answer so far (AgentHost.pauseAnswer): only one of the
+ * conversation's own turn (an extension's tool call it made), which answers again once the tool is allowed or refused.
+ * A task's question comes from outside the turn: the answer being written meanwhile is still the answer, kept whole for
+ * the bubble, Home and the transcript (tasks-approvals-r9-2).
+ */
+export function questionPausesAnswer(q: Pick<Question, "task">): boolean {
+  return q.task === undefined;
+}
+
 export function taskLineOf(q: Pick<Question, "context" | "taskLine" | "prompt">): string {
   const t = (q.taskLine ?? q.context ?? "").trim();
   return t && t !== q.prompt ? t : "";
@@ -183,7 +193,7 @@ interface WholeRead { seen: boolean; page: number; seenAt: number; keyAt: number
 interface Pending { n: number; q: Question; resolve: (answer: string | null) => void; timer: ReturnType<typeof setTimeout> | null; shownAt: number; deadline: number; off?: () => void; whole?: WholeRead; note?: string; voiceLocked?: boolean }
 
 export interface ConfirmerTiming {
-  /** How long a question stays up before it expires as "no" (read as each one shows: the user's setting may change). */
+  /** How long a question stays up before it expires unanswered (read as each one shows: the user's setting may change). */
   timeoutMs?: number | (() => number);
   /** Clicks this soon after a question appears are ignored. */
   armMs?: number;
@@ -370,7 +380,9 @@ export class Confirmer {
     if (trusted && (c.q.panel || !c.q.task || c.q.task !== o.trust!.task)) return "untrusted";
     const opt = c.q.options.find(x => x.primary) ?? c.q.options[0];
     if (!opt || opt.id === "always" || opt.id === "deny") return "not-yet";
-    if (this.now() - c.shownAt < this.armOf(c.q) || this.blocked()) return "not-yet";
+    if (this.now() - c.shownAt < this.armOf(c.q)) return "not-yet";
+    // Ember borrows the mouse: as the approve key is refused then ("busy"), never "read it through first" (V2-F8).
+    if (this.blocked()) return "busy";
     // As the approve key: its whole text read and armed again since, and a panel only while its window shows all of it.
     if (!this.allowedFrom(c, opt.id, "key", undefined)) return "not-yet";
     this.channels.set(c.q, trusted ? { via: "voice", verified: false, trust: "task-voice" } : { via: "voice", verified: o.verified === true });
@@ -395,6 +407,16 @@ export class Confirmer {
   /** The question up now is locked to clicks and keys: Voice Match turned another voice away during it (lockVoice). */
   get voiceLocked(): boolean {
     return !!this.current?.voiceLocked;
+  }
+
+  /**
+   * A spoken yes could be taken for the question up now, as far as the question itself goes: it isn't locked to clicks
+   * and keys, and it isn't a click-only card (answerVoice's "locked" and "click-only"). False when none is up. Main's
+   * status line says how to answer by voice only then (voice-product-x9-4).
+   */
+  get yesByVoice(): boolean {
+    const c = this.current;
+    return !!c && !c.voiceLocked && !c.q.clickOnly && c.q.panel?.kind !== "consent";
   }
 
   lockVoice(): boolean {

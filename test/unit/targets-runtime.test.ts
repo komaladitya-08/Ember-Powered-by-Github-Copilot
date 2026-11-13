@@ -2626,3 +2626,32 @@ describe("Commands-off revokes pending flows", () => {
     } finally { ubuntuPending.dispose(); other.dispose(); local.dispose(); r.t.dispose(); }
   });
 });
+
+describe("first run's commands row", () => {
+  it("shows this computer's card exactly as the command flow asks with it, and records its yes as that card's (slice4-19)", () => {
+    const r = rig();
+    const card = r.t.firstRunCommandsCard();
+    expect(card).toEqual(commandsConsent({ os: "linux", target: "local", targetLabel: "This computer", facts: { kind: "local", privileged: false, windows: false, podman: false, byok: false } }));
+    expect(r.t.agreeFirstRunCommands(card!.sha256)).toBe(true);
+    expect(r.settings.own().commands.local).toEqual({ on: true, askEvery: false, consent: { version: 1, at: "2026-10-22T12:00:00.000Z" } });
+    // The flow's own card reads the same once commands are on.
+    const got = r.t.agent.handsFor("local");
+    if (!got.ok) throw new Error(got.why);
+    expect(r.t.agent.caps().commands).toBe(true);
+  });
+
+  it("says an elevated Ember asks before every command, as the card does (slice4-20)", () => {
+    const r = rig({ elevated: () => true });
+    expect(r.t.firstRunCommandsCard()!.body).toContain("Commands here run as the administrator, so Ember asks before every one.");
+  });
+
+  it("records nothing for another card's hash, nor where the organisation turned commands off (slice4-21)", () => {
+    const r = rig();
+    expect(r.t.agreeFirstRunCommands("0".repeat(64))).toBe(false);
+    expect(r.settings.own().commands.local).toBeUndefined();
+    const managed = rig({ admin: { policy: AdminPolicySchema.parse({}), source: "/etc/ember/policy.json" } });
+    expect(managed.t.firstRunCommandsCard()).toBeNull();
+    expect(managed.t.agreeFirstRunCommands(r.t.firstRunCommandsCard()!.sha256)).toBe(false);
+    expect(managed.settings.own().commands.local).toBeUndefined();
+  });
+});

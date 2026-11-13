@@ -31,6 +31,11 @@ export interface ActStamp {
   /** The user's yes, when one was given (its age travels in ageMs). */
   approval: { given: true } | null;
   /**
+   * Autopilot on the PC announced the step instead of asking about it (Decision.mode). Never a yes: gate 2 lets it
+   * stand in for one only where its own administrator allows Autopilot.
+   */
+  announced?: true;
+  /**
    * Milliseconds since the decision (or since the user's yes, when asked), measured on the PC's monotonic clock when
    * the step is sent; gate 2 refuses ≥ 10 000. No absolute time crosses machines (critique integration-6).
    */

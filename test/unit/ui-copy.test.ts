@@ -23,6 +23,7 @@ import * as bubbleCopy from "../../app/renderer/overlay/target-copy";
 import type { TargetSummary } from "../../app/shared/targets";
 import type { Settings } from "../../app/main/settings";
 import type { PromptCard } from "../../app/shared/remote-ui";
+import type { ApprovalsState } from "../../app/shared/approvals";
 import * as conv from "../../app/renderer/home/copy";
 import { composerRefusal, composerSendRefusal } from "../../app/main/agent/composer-refusal";
 import { friendlyError, lostWords } from "../../app/main/agent/presenter";
@@ -103,7 +104,8 @@ describe("settings window words", () => {
     expect(neverLookLabel("keepassxc")).toBe("KeePassXC");
     expect(neverLookLabel("polkit")).toBe("Password prompts (polkit)");
     expect(neverLookLabel("Thunderbird")).toBe("Thunderbird");
-    expect(missingDefaults(["KeePassXC", "Signal"])).toEqual(["seahorse", "passwords and keys", "1password", "bitwarden", "polkit"]);
+    expect(missingDefaults(["KeePassXC", "Signal"])).toEqual(["seahorse", "passwords and keys", "1password", "bitwarden", "polkit", "keepass", "lastpass", "dashlane",
+      "enpass", "proton pass", "kwallet"]);
     expect(missingDefaults(NEVER_LOOK_DEFAULTS)).toEqual([]);
   });
 
@@ -675,9 +677,11 @@ describe("Computers and Commands in settings (§8.3) and the onboarding line (§
     const page = readFileSync(new URL("../../app/renderer/home/index.html", import.meta.url), "utf8");
     const l = computersCopy.ONBOARDING_LINE;
     expect(page).toContain(`<li data-icon="plug"><b>${l.lead}</b><span id="targets-note">${l.rest}</span></li>`);
-    expect(keep(`${l.lead}${l.rest}`)).toBe("Other computers and commands are off until you turn them on: Ember can work on computers you reach over SSH, and run commands in its own window. Each asks you first.");
+    expect(keep(`${l.lead}${l.rest}`)).toBe("Other computers and commands are off until you turn them on: Ember can work on computers you reach over SSH, and run commands in its own window. Each asks you first. Commands on this computer have their own switch here.");
     // WSL is Windows' alone (review #221).
-    expect(keep(`${l.lead}${computersCopy.onboardingRest("win32")}`)).toBe("Other computers and commands are off until you turn them on: Ember can work in WSL, on computers you reach over SSH, and run commands in its own window. Each asks you first.");
+    expect(keep(`${l.lead}${computersCopy.onboardingRest("win32")}`)).toBe("Other computers and commands are off until you turn them on: Ember can work in WSL, on computers you reach over SSH, and run commands in its own window. Each asks you first. Commands on this computer have their own switch here.");
+    // Apps & privacy, where first run's rows aren't, says it without their sentence (slice4-23).
+    expect(keep(`${l.lead}${l.settings}`)).toBe("Other computers and commands are off until you turn them on: Ember can work on computers you reach over SSH, and run commands in its own window. Each asks you first.");
     for (const s of [computersCopy.COMPUTERS_INTRO, computersCopy.COMMANDS_INTRO, computersCopy.WSL_SWITCH, computersCopy.OFFER_SWITCH, computersCopy.ADD_PLACEHOLDER, computersCopy.OPEN_COMMANDS]) {
       expect(page).toContain(s);
     }
@@ -693,8 +697,8 @@ describe("Computers and Commands in settings (§8.3) and the onboarding line (§
     const allOff = { source: "error", features: { ssh: false, wsl: false }, commands: { local: "off", wsl: "off", ssh: "off" } } as const;
     const noCommands = { source: "/etc/ember/policy.json", features: {}, commands: { local: "off", wsl: "off", ssh: "off" } } as const;
     // Nothing turned on, nothing turned off: first run's own words, on each OS.
-    expect(rest(base, none)).toBe(l.rest);
-    expect(rest(base, none, "win32")).toBe(l.restWindows);
+    expect(rest(base, none)).toBe(l.settings);
+    expect(rest(base, none, "win32")).toBe(l.settingsWindows);
     // Commands on this computer, turned on with their card (the re-rater's probe).
     const local = { ...base, commands: { local: { on: true, askEvery: false, consent: agreed } } } as Settings;
     expect(keep(`${l.lead}${rest(local, none)}`)).toBe("Other computers and commands: you let Ember run commands on this computer. It runs commands only in its own window, where you can watch and stop them. Other computers are off until you turn them on.");
@@ -708,7 +712,7 @@ describe("Computers and Commands in settings (§8.3) and the onboarding line (§
     const wsl = { ...base, targets: { ...base.targets, wsl: { on: true, consent: agreed } } } as Settings;
     // Never "other computers and commands on this computer", which reads as both on this computer (safety-privacy-r4-2).
     expect(keep(`${l.lead}${rest(wsl, none, "win32")}`)).toBe("Other computers and commands: you let Ember work in WSL. Other computers are off until you turn them on, and so are commands on this computer.");
-    expect(rest(wsl, none, "linux")).toBe(l.rest);
+    expect(rest(wsl, none, "linux")).toBe(l.settings);
     // Under the organisation's lockdown nothing is offered, and nothing the person turned on is said to be on.
     expect(keep(`${l.lead}${rest(both, allOff)}`)).toBe("Other computers and commands are turned off by your organisation.");
     expect(rest(both, allOff, "win32")).toBe(" are turned off by your organisation.");
@@ -723,8 +727,8 @@ describe("Computers and Commands in settings (§8.3) and the onboarding line (§
     expect(keep(`${l.lead}${rest(ssh, localOnly)}`)).toBe("Other computers and commands: you let Ember work on computers you reach over SSH. Commands on this computer are off until you turn them on. Your organisation has turned off commands on computers you reach over SSH.");
     expect(keep(`${l.lead}${rest(local, { source: "/etc/ember/policy.json", features: { ssh: false }, commands: { local: "on" } })}`)).toBe("Other computers and commands: you let Ember run commands on this computer. It runs commands only in its own window, where you can watch and stop them. Your organisation has turned off working on other computers.");
     // A switch whose card isn't agreed to at its version isn't on, as main counts it.
-    expect(rest({ ...base, commands: { local: { on: true, askEvery: false, consent: { version: 0, at: null } } } } as Settings, none)).toBe(l.rest);
-    expect(rest({ ...base, targets: { ...base.targets, hosts: [{ ...host, consent: { version: 0, at: null } }] } } as Settings, none)).toBe(l.rest);
+    expect(rest({ ...base, commands: { local: { on: true, askEvery: false, consent: { version: 0, at: null } } } } as Settings, none)).toBe(l.settings);
+    expect(rest({ ...base, targets: { ...base.targets, hosts: [{ ...host, consent: { version: 0, at: null } }] } } as Settings, none)).toBe(l.settings);
   });
 });
 
@@ -883,12 +887,25 @@ describe("the bubble's words for computers and commands (§8.2)", () => {
   });
 });
 
-describe("Voice Match and When Ember asks first in settings", () => {
+describe("Voice Match and How Ember asks in settings", () => {
   it("passes every fixed line and each state's words through the same copy rules", () => {
     const flat = (o: object): string[] => Object.values(o).flatMap(v => (typeof v === "string" ? [v] : flat(v as object)));
     flat(matchCopy.MATCH_TEXT).forEach(keep);
-    flat(matchCopy.TRUST_TEXT).forEach(keep);
     keep(matchCopy.MANAGED_TEXT);
+    // How Ember asks (modes-A10): its heading, each mode's name and sentence, Interactive's card, every note and refusal.
+    keep(conv.APPROVALS_HEADING);
+    flat(conv.MODE_NAME).forEach(keep);
+    flat(conv.MODE_LINE).forEach(keep);
+    flat(conv.MODE_CARD_TEXT).forEach(keep);
+    flat(conv.modeCard("interactive")).forEach(keep);
+    const stands = (o: Partial<ApprovalsState>): ApprovalsState => ({ chosen: "interactive", inForce: "interactive", why: null, offered: ["interactive"], agreed: ["interactive"], cap: null, ...o });
+    const states = [stands({}), stands({ inForce: "asking", why: "card", agreed: [] }), stands({ inForce: "asking", why: "organisation" }), stands({ inForce: "asking", why: "not-recorded" }),
+      stands({ chosen: "assisted", why: "cap", cap: "interactive" }), stands({ chosen: "assisted", why: "check-off" }), stands({ chosen: "autopilot", why: "unavailable" })];
+    for (const st of states) for (const elevated of [null, "administrator", "maybe-administrator", "root"] as const) keep(conv.approvalsNote(st, false, elevated));
+    for (const why of ["organisation", "cap", "check-off", "card", "not-recorded", "unavailable"] as const) keep(conv.modeRefusal(why));
+    // Each of them a whole sentence or more, ending in a full stop; a name or a button's words don't.
+    for (const st of states) expect(conv.approvalsNote(st, false)).toMatch(/^[A-Z].*\.$/);
+    expect(conv.MODE_LINE.interactive).toMatch(/^[A-Z].*\.$/);
     const e = (got: number, again?: "short" | "unlike" | "failed") => ({ enrolled: false, on: false, enrolling: { got, of: 4, phrase: "Ember, open my calendar", again } });
     for (const m of [e(0), e(2), e(1, "short"), { enrolled: true, on: true, enrolling: null }]) {
       const v = matchCopy.matchView(m, { listening: true, managed: false });
@@ -914,7 +931,8 @@ describe("every new SSH, WSL and commands string", () => {
         const word = w.replace(/^[(“"‘]+|[)”"’.,:;?!…]+$/g, "");
         if (/^[A-Z][a-z]/.test(word)) {
           const afterStop = new RegExp(`[.:?!] ${w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`).test(s);
-          expect(afterStop || PROPER.test(word) || /^(Ubuntu|Remove|Voice|Match)$/.test(word), `${word} in: ${s}`).toBe(true);
+          // (The approval modes' names, and the sections "What Ember did" and "How Ember asks", are names too.)
+          expect(afterStop || PROPER.test(word) || /^(Ubuntu|Remove|Voice|Match|Interactive|Assisted|Autopilot|What|How)$/.test(word), `${word} in: ${s}`).toBe(true);
         }
       }
     }
@@ -1160,8 +1178,8 @@ describe("Home's conversation words (2026-11-07 product audit)", () => {
 
   it("writes every apostrophe Ember shows straight, never U+2019 (accessibility-visual-6, home-11)", () => {
     const files = [...listFiles("app"), ...listFiles("packages")].filter(f => /\.(ts|html)$/.test(f) && !f.endsWith(".test.ts"));
-    // Matching data, not words Ember shows: a quote character set and an app's own localised name.
-    const MATCHING: Record<string, RegExp> = { "app/main/commands/lex-powershell.ts": /SINGLE_QUOTES = /, "app/main/policy/vocabulary.ts": /trousseaux d’accès/ };
+    // Matching data, not words Ember shows: quote character sets and an app's own localised name.
+    const MATCHING: Record<string, RegExp> = { "app/main/commands/lex-powershell.ts": /SINGLE_QUOTES = /, "app/main/policy/vocabulary.ts": /trousseaux d’accès/, "app/main/memory/profile.ts": /^const QUOTED = / };
     const curly: string[] = [];
     for (const f of files) {
       readFileSync(f, "utf8").split("\n").forEach((line, i) => {
@@ -1553,20 +1571,29 @@ describe("Apps & privacy's screenshot switch (safety-privacy-7)", () => {
     expect(privacyFoldWords("It sends no usage statistics.", { screenImages: false })).toBe("It sends no usage statistics.");
   });
 
-  it("says ordinary steps go ahead without asking while Work without asking is on, and which apps never ask (safety-privacy-c4-1)", async () => {
+  it("says ordinary steps go ahead without asking while a mode is in force, and which apps never ask (safety-privacy-c4-1)", async () => {
     const { privacyFoldWords } = await import("../../app/renderer/home/copy");
-    const hand = " in an app, and always before anything hard to undo. It never types passwords. ";
-    // The words are first run's own, after the line's bold lead, as the page has them.
+    const hand = " in an app unless you turn on Interactive, when you agree or later in settings, and always before anything hard to undo. It never types passwords. ";
+    // The words are first run's own, after the line's bold lead, as the page has them; with no mode in force here,
+    // Apps & privacy says it asks (slice4-22).
     expect(page).toContain(`<b>It asks before acting</b>${hand}<span`);
-    expect(privacyFoldWords(hand, { screenImages: true })).toBe(hand);
+    expect(`It asks before acting${privacyFoldWords(hand, { screenImages: true })}`).toBe("It asks before acting in an app, and always before anything hard to undo. It never types passwords. ");
     expect(`It asks before acting${privacyFoldWords(hand, { screenImages: true, autonomy: true, grants: true })}`).toBe(
-      "It asks before acting on anything risky or hard to undo. Work without asking is on (below), so for ordinary steps it tells you what it's doing instead. It never types passwords. ");
+      "It asks before acting on anything risky or hard to undo. For ordinary steps it tells you what it's doing instead (How Ember asks, below). It never types passwords. ");
     expect(`It asks before acting${privacyFoldWords(hand, { screenImages: true, grants: true })}`).toBe(
       "It asks before acting in an app, except those you let it act in without asking (below), and always before anything hard to undo. It never types passwords. ");
     // The onboarding line's words after its lead, on either OS, are the ones the settings and the policy leave.
     const { onboardingRest } = await import("../../app/renderer/home/computers-copy");
     for (const os of ["linux", "win32"] as const) expect(privacyFoldWords(onboardingRest(os), { screenImages: true, targets: ": now" })).toBe(": now");
     expect(privacyFoldWords(onboardingRest("darwin"), { screenImages: true })).toBe(onboardingRest("darwin"));
+  });
+
+  it("doesn't tell Apps & privacy that “Hey Ember” is turned on when you agree (slice4-x9-5)", async () => {
+    const { privacyFoldWords } = await import("../../app/renderer/home/copy");
+    const mic = " unless you turn on “Hey Ember”, when you agree or later in settings, or choose Listen once for one request.";
+    // First run's own words, after the line's bold lead, as the page has them.
+    expect(page).toContain(`<b>The microphone stays off</b>${mic}`);
+    expect(privacyFoldWords(mic, { screenImages: true })).toBe(" unless you turn on “Hey Ember” in Settings › Voice, or choose Listen once for one request.");
   });
 
   it("is found by searching for screenshots, by its own words, and by \"pictures\"", async () => {

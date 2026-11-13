@@ -247,6 +247,8 @@ section > p.hint:empty:is([role], [aria-live]) { position: absolute; }
 /* Callouts: the consent note, organisation notices, the welcome. Neutral: colour is kept for actions. */
 .consent { padding: 14px 16px; border-radius: var(--r-xs); background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--line); }
 .consent p { margin: 0 0 12px; }
+/* A mode's card may come in paragraphs (Autopilot's: the risk first): its line breaks show. */
+#approvals-card-text { white-space: pre-line; }
 .consent .btn.quiet.danger { color: var(--red-text); }
 .match { display: grid; gap: 8px; }
 .match .hint { margin: 0; }
@@ -278,6 +280,7 @@ progress[hidden] { display: none; }
 .terms li[data-icon="hand"] { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 3l7.5 3v5.5c0 4.6-3.2 8.4-7.5 9.5-4.3-1.1-7.5-4.9-7.5-9.5V6z'/%3E%3Cpath d='m8.8 12 2.2 2.2 4.2-4.4'/%3E%3C/svg%3E"); }
 .terms li[data-icon="lock"] { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='4.5' y='10.5' width='15' height='10.5' rx='2.5'/%3E%3Cpath d='M8 10.5V7.5a4 4 0 0 1 8 0v3'/%3E%3C/svg%3E"); }
 .terms li[data-icon="mic"] { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='9' y='3' width='6' height='11' rx='3'/%3E%3Cpath d='M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21'/%3E%3Cpath d='M3.5 3.5l17 17'/%3E%3C/svg%3E"); }
+.terms li[data-icon="toggle"] { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='2.5' y='7' width='19' height='10' rx='5'/%3E%3Ccircle cx='16.5' cy='12' r='3'/%3E%3C/svg%3E"); }
 .terms li[data-icon="plug"] { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='4.5' width='18' height='12' rx='2'/%3E%3Cpath d='M8.5 20h7M12 16.5V20'/%3E%3Cpath d='m7 9 2.5 2L7 13M11.5 13h4'/%3E%3C/svg%3E"); }
 
 /* ───── Lists: each one a group of rows, Remove as a plain text button at the row's end ───── */
@@ -327,6 +330,26 @@ progress[hidden] { display: none; }
 /* A switch with its note under it, as one row of its group (Apps & privacy, UI audit #11). */
 .group > .noted-row { display: grid; gap: 4px; }
 .row-note { margin: 0; padding-right: 64px; color: var(--muted); font: var(--type-footnote); text-wrap: pretty; }
+/* How Ember asks: one choice of modes, a radio group. Each mode is a row: its mark, its name and its one sentence.
+   The mark is a ring that fills with the accent round a dot, so the mode in force is told by shape as well as colour. */
+.group > .modes { display: grid; padding: 0; }
+/* (Each row reaches 8px past its words on either side, so its focus ring clears its mark.) */
+.mode {
+  display: grid; grid-template-columns: 18px minmax(0, 1fr); column-gap: 12px; align-items: start;
+  width: calc(100% + 16px); min-height: 48px; margin: 0 -8px; padding: 12px 8px; border: 0; border-radius: var(--r-xs);
+  background: none; color: var(--fg); font: inherit; text-align: left; cursor: pointer;
+}
+.mode + .mode { border-top: 1px solid var(--line); border-radius: 0; }
+.mode::before {
+  content: ""; grid-row: 1 / span 2; width: 18px; height: 18px; margin-top: 1px; border-radius: 50%;
+  background: var(--wash-6); box-shadow: inset 0 0 0 1.5px var(--control-edge);
+}
+.mode[aria-checked="true"]::before { background: var(--on-accent); box-shadow: inset 0 0 0 5px var(--accent); }
+.mode b { grid-column: 2; font: var(--type-headline); letter-spacing: -0.006em; }
+.mode span { grid-column: 2; margin-top: 2px; color: var(--muted); font: var(--type-footnote); text-wrap: pretty; }
+.mode:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.mode:disabled { cursor: default; }
+.consent .consent-title { margin: 0 0 8px; font-weight: 600; color: var(--fg); }
 
 /* ───── Conversation: a chat. You on the right, Ember on the left, tasks and problems as notes. Part of the page (no
    scroll box of its own, UI audit #1): its latest messages, with the earlier ones a button away. ───── */
@@ -621,6 +644,10 @@ html { scroll-padding-top: 16px; }
   body:not(.first-run) .status-panel, .task-group, .task-groups > .empty, .copilot, .group, .checks, .activity, .conversation, .plain-list, .facts, .consent, .managed, progress { outline: 1px solid CanvasText; outline-offset: -1px; }
   .card, .start, .models select, #w-models select, #w-p-type, .choice select, #text-size, #handle-position, #glass, #appearance, .add-row input, .field-row > input { border: 1px solid ButtonText; }
   .card[aria-checked="true"] { border: 3px solid Highlight; padding: 8px 8px 12px; }
+  /* A mode's mark is drawn as it is, in system colours: an empty ring, or one filled with the highlight round a dot. */
+  .mode::before { forced-color-adjust: none; background: Canvas; box-shadow: inset 0 0 0 1.5px ButtonText; }
+  .mode[aria-checked="true"]::before { background: HighlightText; box-shadow: inset 0 0 0 5px Highlight; }
+  .mode:disabled::before { box-shadow: inset 0 0 0 1.5px GrayText; }
   /* Start is filled with the highlight: drawn as it is, so its words get no backplate (as .btn in ember.css). */
   .start { forced-color-adjust: none; border-color: Highlight; box-shadow: none; }
   /* The pop-up's own chevron is drawn by the system, in its colours (the painted one is a light image). */
@@ -934,6 +961,17 @@ body.first-run .home > :not(#welcome, #managed, #settings-notice, #provider-off)
 .w-more > :not(summary) { margin-left: 0; }
 .w-more .terms, .w-detail { margin: 0; padding: 16px; border-radius: var(--r-md); background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--line); }
 .w-more h3 + .terms { margin-top: -4px; }
+/* First run's rows (owner decision of 2026-11-12): each switch with its own card's full text under it, in a card. */
+.w-rows { display: grid; gap: 10px; }
+.w-rows h3 { margin: 0; font: var(--type-headline); }
+.w-rows > .hint { margin: 0; }
+.w-rows-list { display: grid; gap: 10px; }
+.w-row { display: grid; gap: 8px; padding: 14px 16px; border-radius: var(--r-md); background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--line); }
+.w-row .switch-row > span { font: var(--type-headline); }
+.w-row .row-note { margin: 0; }
+.w-row .row-note[hidden] { display: none; }
+.w-row-text { display: grid; gap: 6px; color: var(--muted); font: var(--type-callout); text-wrap: pretty; overflow-wrap: anywhere; }
+.w-row-text p { margin: 0; }
 .w-note { margin: 0; color: var(--muted); font: var(--type-callout); text-wrap: pretty; }
 /* Focused after Not now (first-run-c1-1): the ring gets room round the words without moving them. */
 .w-note[tabindex="-1"]:not(:empty) { margin: -2px -6px; padding: 2px 6px; border-radius: var(--r-xs); }

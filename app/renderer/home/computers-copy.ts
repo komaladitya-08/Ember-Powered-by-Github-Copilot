@@ -28,11 +28,17 @@ export const ADD_PLACEHOLDER = "Host name or user@host";
 export const ADD_BUTTON = "Connect";
 export const ASK_EVERY_SWITCH = "Ask me before every command";
 export const OPEN_COMMANDS = "Open the command window";
-/** The onboarding list's line (§8.9; new users only, CONSENT_VERSION unchanged): `rest` as the page writes it, WSL on Windows only. */
+/**
+ * The onboarding list's line (§8.9): `rest` as the page writes it, WSL on Windows only. Commands on this computer have
+ * their own switch among first run's rows (owner decision of 2026-11-12, CONSENT_VERSION 9); Apps & privacy, where
+ * that row isn't, says `settings` (or `settingsWindows`) while nothing is on or turned off (targetsFoldRest).
+ */
 export const ONBOARDING_LINE = {
   lead: "Other computers and commands",
-  rest: " are off until you turn them on: Ember can work on computers you reach over SSH, and run commands in its own window. Each asks you first.",
-  restWindows: " are off until you turn them on: Ember can work in WSL, on computers you reach over SSH, and run commands in its own window. Each asks you first.",
+  rest: " are off until you turn them on: Ember can work on computers you reach over SSH, and run commands in its own window. Each asks you first. Commands on this computer have their own switch here.",
+  restWindows: " are off until you turn them on: Ember can work in WSL, on computers you reach over SSH, and run commands in its own window. Each asks you first. Commands on this computer have their own switch here.",
+  settings: " are off until you turn them on: Ember can work on computers you reach over SSH, and run commands in its own window. Each asks you first.",
+  settingsWindows: " are off until you turn them on: Ember can work in WSL, on computers you reach over SSH, and run commands in its own window. Each asks you first.",
 } as const;
 
 /** The onboarding line after its bold lead on `os` (the page's own words off Windows). */
@@ -51,7 +57,7 @@ const listed = (items: readonly string[]): string => {
  * Apps & privacy's copy of the onboarding line, after its bold lead (safety-privacy-r4-2): what is on as the person's
  * settings and the organisation's policy leave it, so it never says what they turned on is off, nor offers what the
  * organisation turned off. A switch counts only with its card agreed to at its version, as main counts it. Nothing on
- * and nothing turned off: first run's own words (onboardingRest), which stay as they are there.
+ * and nothing turned off: first run's own words without their sentence about first run's switch (ONBOARDING_LINE.settings).
  */
 export function targetsFoldRest(s: Pick<Settings, "commands" | "targets">, admin: TargetsAdmin, os: OS = "linux"): string {
   const win = os === "win32";
@@ -73,7 +79,7 @@ export function targetsFoldRest(s: Pick<Settings, "commands" | "targets">, admin
   const userOff = [!sshOff && !hosts.length ? "other computers" : "", win && !wslOff && !wslOn ? "WSL" : "", !cmdOff("local") && !localCmd ? "commands on this computer" : ""].filter(Boolean);
   const commandsOff = [cmdOff("local") ? "on this computer" : "", win && !wslOff && cmdOff("wsl") ? "in WSL" : "", !sshOff && cmdOff("ssh") ? "on computers you reach over SSH" : ""].filter(Boolean);
   const orgOff = [sshOff ? "working on other computers" : "", wslOff ? "working in WSL" : "", commandsOff.length ? `commands ${listed(commandsOff)}` : ""].filter(Boolean);
-  if (!can.length && !orgOff.length) return onboardingRest(os);
+  if (!can.length && !orgOff.length) return win ? ONBOARDING_LINE.settingsWindows : ONBOARDING_LINE.settings;
   if (!can.length && !userOff.length) return " are turned off by your organisation.";
   // Nothing on, and only commands elsewhere turned off (a policy that lets them run on this computer only): first run's
   // opening, then what the organisation turned off.

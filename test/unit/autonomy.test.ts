@@ -1,21 +1,17 @@
 /**
- * "Work without asking" (app/main/policy/autonomy.ts, PLAN.md §2 "Approvals", owner decision of 2026-11-02): which
- * questions it lets go unasked (each scope × risky or not × off-task × the administrator), that a steered or refused task
- * goes back to asking, that ordinary commands carrying text announce, and its switch, card and managed state.
+ * Working without asking in a mode (app/main/policy/autonomy.ts, PLAN.md §2 "Approvals", owner decisions of 2026-11-02
+ * and 2026-11-12): which questions the scopes let go unasked (each scope × risky or not × off-task × the
+ * administrator), that a steered or refused task goes back to asking, that ordinary commands carrying text announce,
+ * and Interactive's card. The mode setting, the mode in force and Home's choice are in approval-modes.test.ts.
  */
 
 import { describe, expect, it } from "vitest";
 import { PolicyEngine, type ActionRequest } from "../../app/main/policy/policy";
-import { ALL_SCOPES, autonomyInForce, covers, movingWords, type AutonomyScope, type AutonomyScopes, type AutonomySetting } from "../../app/main/policy/autonomy";
-import { AdminPolicySchema, applyAdminPolicy, autonomyAllowed, managedKeys, parseAdminPolicy } from "../../app/main/admin";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-import { DEFAULT_SETTINGS, SettingsSchema, SettingsStore } from "../../app/main/settings";
+import { ALL_SCOPES, covers, movingWords, type AutonomyScope, type AutonomyScopes } from "../../app/main/policy/autonomy";
 import { FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
 import { autonomousCommand } from "../../app/main/commands/flow";
 import type { CommandDecision } from "../../app/main/commands/types";
-import { AUTONOMY_CONSENT_TEXT, autonomyHint } from "../../app/renderer/home/copy";
+import { ASSISTED_CONSENT_TEXT, AUTONOMY_CONSENT_TEXT, MODE_CARD_TEXT, approvalsNote, modeCard } from "../../app/renderer/home/copy";
 import { Worker, type WorkerDeps } from "../../app/main/agent/worker";
 import type { AxNode } from "../../app/main/perception/sidecar";
 import { Presenter } from "../../app/main/agent/presenter";
@@ -26,8 +22,6 @@ import { describeEntry } from "../../app/renderer/home/copy";
 import type { Logger } from "../../app/main/logger";
 
 const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as unknown as Logger;
-const agreed = { version: FEATURE_CONSENT_VERSION.autonomy, at: "2026-11-02T10:00:00.000Z" };
-const setting = (o: Partial<AutonomySetting> = {}): AutonomySetting => ({ on: true, scopes: { ...ALL_SCOPES }, consent: agreed, ...o });
 const only = (...on: AutonomyScope[]): AutonomyScopes => ({ apps: on.includes("apps"), commands: on.includes("commands"), cursor: on.includes("cursor"), crossWindow: on.includes("crossWindow") });
 const engine = (scopes: AutonomyScopes | null, o: { grants?: Record<string, "act">; confirmEveryAction?: boolean } = {}) =>
   new PolicyEngine({ neverLook: () => [], grants: () => o.grants ?? {}, autonomy: () => scopes, confirmEveryAction: () => o.confirmEveryAction ?? false });
@@ -148,66 +142,68 @@ describe("What Ember did (Home's record) for working without asking", () => {
   });
 });
 
-describe("autonomyInForce (its switch, its card and the administrator)", () => {
-  const admin = (o: Record<string, unknown> = {}) => AdminPolicySchema.parse(o);
-
-  it("is off by default, and needs its own card agreed to in its current wording", () => {
-    expect(DEFAULT_SETTINGS.autonomy).toEqual({ on: false, scopes: { apps: true, commands: true, cursor: true, crossWindow: true }, consent: { version: 0, at: null } });
-    expect(autonomyInForce(DEFAULT_SETTINGS.autonomy)).toBeNull();
-    expect(autonomyInForce(setting({ consent: { version: 0, at: null } }))).toBeNull();
-    expect(autonomyInForce(setting({ on: false }))).toBeNull();
-    expect(autonomyInForce(setting())).toEqual(ALL_SCOPES);
-    expect(autonomyInForce(setting({ scopes: only() }))).toBeNull();
-    expect(autonomyInForce(setting({ scopes: only("apps") }))).toEqual(only("apps"));
+describe("Interactive's card (FEATURE_CONSENT_VERSION.autonomy, modes-A9)", () => {
+  it("gives Assisted a card of its own that says plainly who decides, what is sent, that it can be wrong and what it never clears (modes-C5, modes-x9p-4)", () => {
+    expect(MODE_CARD_TEXT.assisted).toBe(ASSISTED_CONSENT_TEXT);
+    expect(modeCard("assisted")).toEqual({ title: "Before you choose Assisted", text: ASSISTED_CONSENT_TEXT, yes: "I agree, use Assisted", no: "Not now" });
+    expect(FEATURE_CONSENT_VERSION.assisted).toBe(2);
+    expect(ASSISTED_CONSENT_TEXT).toMatch(/^In Assisted, Ember works as in Interactive, and where it would ask you it first checks the step against what you asked\. A lighter AI model makes that check\./);
+    // What the model is sent, and that a match goes ahead whatever the step is.
+    expect(ASSISTED_CONSENT_TEXT).toContain("It is sent your own words for the task, typed or spoken, and Ember's short description of the step: the app, the window's title, the control's name, a dialog's words, the text to type and what it replaces, a cell's formula and where carried text came from; or the command, its computer, shell and folder.");
+    expect(ASSISTED_CONSENT_TEXT).toMatch(/If it finds you asked for exactly that, Ember goes ahead without asking, also where the step sends, deletes, pays or installs, or the command changes your system\./);
+    // Announced and recorded; it can be wrong; what it never clears; what happens otherwise; a stop always works.
+    expect(ASSISTED_CONSENT_TEXT).toMatch(/Ember tells you each time, a command waits a few seconds with a Stop first, and What Ember did keeps a record\./);
+    expect(ASSISTED_CONSENT_TEXT).toMatch(/The model can be wrong: it may let through a step you didn't mean\./);
+    expect(ASSISTED_CONSENT_TEXT).toMatch(/It never clears a command that would show passwords or keys or keep running after you stop Ember, a step you said no to, anything Ember refuses, such as typing a password, or what you or your organisation set to ask every time\./);
+    expect(ASSISTED_CONSENT_TEXT).toMatch(/If it finds no match or can't tell, Ember asks you\. “Ember, stop” or Ember's stop shortcut stops everything at once\.$/);
+    // No shortcut is named (another app may hold it), no straight quotes, and it stays short enough to read.
+    expect(ASSISTED_CONSENT_TEXT).not.toMatch(/"|Ctrl\+/);
+    // (215: naming every part the check is sent took 12 words more; modes-x9p-4.)
+    expect(ASSISTED_CONSENT_TEXT.split(/\s+/).length).toBeLessThanOrEqual(215);
   });
 
-  it("is off where the organisation turned it off, keeps grants from users, confirms every action, or turned acting off, and in a lockdown", () => {
-    expect(autonomyInForce(setting(), admin())).toEqual(ALL_SCOPES);
-    for (const a of [admin({ features: { autonomy: false } }), admin({ allowGrants: false }), admin({ confirmEveryAction: true }), admin({ features: { actions: false } })]) {
-      expect(autonomyInForce(setting(), a)).toBeNull();
-      expect(autonomyAllowed(a)).toBe(false);
-      const s = applyAdminPolicy({ ...DEFAULT_SETTINGS, autonomy: setting() }, a);
-      expect(s.autonomy.on).toBe(false);
-      expect(managedKeys(a)).toContain("autonomy");
-    }
-    const lockdown = parseAdminPolicy("{ nope", "/etc/ember/policy.json").policy;
-    expect(lockdown.features.autonomy).toBe(false);
-    expect(autonomyInForce(setting(), lockdown)).toBeNull();
-    expect(applyAdminPolicy({ ...DEFAULT_SETTINGS, autonomy: setting() }, lockdown).autonomy.on).toBe(false);
-    // The administrator can only turn it off: "true" turns on nothing the user didn't.
-    expect(applyAdminPolicy(DEFAULT_SETTINGS, admin({ features: { autonomy: true } })).autonomy.on).toBe(false);
-    expect(managedKeys(admin({ features: { autonomy: true } }))).not.toContain("autonomy");
+  it("is versioned on its own, at 3 since it replaced Work without asking's card: an agreement to that one is none to this", () => {
+    expect(FEATURE_CONSENT_VERSION.autonomy).toBe(3);
+    expect(MODE_CARD_TEXT.interactive).toBe(AUTONOMY_CONSENT_TEXT);
+    expect(modeCard("interactive")).toEqual({ title: "Before you choose Interactive", text: AUTONOMY_CONSENT_TEXT, yes: "I agree, use Interactive", no: "Not now" });
   });
 
-  it("repairs a broken setting field by field, staying off", () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-autonomy-"));
-    fs.writeFileSync(path.join(dir, "settings.json"), JSON.stringify({ autonomy: { on: "yes", scopes: { apps: false }, consent: { version: "one" } } }));
-    const store = new SettingsStore(path.join(dir, "settings.json"));
-    store.load();
-    expect(store.get().autonomy.on).toBe(false);
-    expect(autonomyInForce(store.get().autonomy)).toBeNull();
-    expect(SettingsSchema.safeParse({ autonomy: { on: "yes" } }).success).toBe(false);
-    fs.rmSync(dir, { recursive: true, force: true });
-  });
-});
-
-describe("“Work without asking”'s card (FEATURE_CONSENT_VERSION.autonomy)", () => {
-  it("is versioned on its own, at 2 since it answers simple message boxes too (security review of #140)", () => {
-    expect(FEATURE_CONSENT_VERSION.autonomy).toBe(2);
-  });
-
-  it("says plainly what runs without asking, what still asks, that Ember says what it does, and that a stop always works", () => {
-    expect(AUTONOMY_CONSENT_TEXT).toMatch(/use your apps, borrow your mouse and keyboard, run ordinary commands, move text between apps and press OK on a simple message box \(one whose only button is OK, with nothing to choose or tick\)/);
-    expect(AUTONOMY_CONSENT_TEXT).toMatch(/It says what it is doing as it goes/);
-    expect(AUTONOMY_CONSENT_TEXT).toMatch(/still asks every time before anything risky: sending, posting, submitting, sharing, deleting, overwriting, paying, installing, signing out, security settings, dangerous commands and any dialog that asks a question/);
-    expect(AUTONOMY_CONSENT_TEXT).toMatch(/“Ember, stop”, or Ember's stop shortcut, stops everything at once/);
-    expect(AUTONOMY_CONSENT_TEXT).toMatch(/that task goes back to asking/);
+  it("says plainly what is announced instead of asked, what still asks every time, what never happens, and that a stop always works", () => {
+    expect(AUTONOMY_CONSENT_TEXT).toMatch(/^In Interactive, Ember does ordinary steps without asking first: it works in your apps, borrows your mouse and keyboard, runs ordinary commands, moves text between apps and presses OK on a message box that has nothing else to choose\./);
+    expect(AUTONOMY_CONSENT_TEXT).toMatch(/It tells you what it is doing as it goes, and keeps a record under What Ember did\./);
+    expect(AUTONOMY_CONSENT_TEXT).toMatch(/It still asks every time before anything risky: sending, posting, submitting, sharing, deleting, overwriting, paying, installing, signing out, security settings, dangerous commands and any dialog that asks a question\./);
+    expect(AUTONOMY_CONSENT_TEXT).toMatch(/It asks more often in your system's settings and security apps, and a task goes back to asking once you say no or a page or file tries to give it instructions\./);
+    expect(AUTONOMY_CONSENT_TEXT).toMatch(/It never types passwords and never acts in sign-in prompts\./);
+    expect(AUTONOMY_CONSENT_TEXT).toMatch(/“Ember, stop” or Ember's stop shortcut stops everything at once, and moving your mouse takes it back\./);
     // Sentence case, curly quotes, no raw keys (CLAUDE.md "Writing UI copy").
     expect(AUTONOMY_CONSENT_TEXT).not.toMatch(/"|Ctrl\+/);
-    // Anyone heard may answer while Voice Match is off, its default (owner's report of 2026-11-12): no "(with Voice Match on)".
-    expect(autonomyHint(false)).toMatch(/You can answer a question by voice too: say “allow” or “not now” once Ember has asked, or “Ember, allow” later\.$/);
-    expect(autonomyHint(false)).not.toMatch(/with Voice Match on/);
-    expect(autonomyHint(true)).toMatch(/^Managed by your organisation/);
+    // Read in about half a minute: no longer than the card it replaced (about 160 words).
+    expect(AUTONOMY_CONSENT_TEXT.split(/\s+/).length).toBeLessThanOrEqual(160);
+  });
+
+  it("says that anyone near the computer can answer a question by voice while Voice Match is off (owner decision of 2026-11-12)", () => {
+    expect(AUTONOMY_CONSENT_TEXT).toMatch(/While Voice Match is off, anyone near the computer can answer Ember's questions by voice\.$/);
+    // Under the choice too: anyone heard may answer while Voice Match is off, its default (owner's report of 2026-11-12): no "(with Voice Match on)".
+    const inForce = { chosen: "interactive" as const, inForce: "interactive" as const, why: null, offered: ["interactive" as const], agreed: ["interactive" as const], cap: null };
+    expect(approvalsNote(inForce, false)).toBe("You can answer a question by voice too: say “allow” or “not now” once Ember has asked, or “Ember, allow” later. To change the mode by voice, say its name, such as “Ember, switch to Interactive”: one that asks less needs its card agreed to here first.");
+    expect(approvalsNote(inForce, false)).not.toMatch(/with Voice Match on/);
+    expect(approvalsNote(inForce, true)).toMatch(/^Managed by your organisation/);
+  });
+
+  it("is true of what Interactive decides: the steps it names go ahead, the risky ones it lists ask (modes-A9)", () => {
+    const e = engine({ ...ALL_SCOPES });
+    const gedit = { gedit: "act" as const };
+    // Announced instead of asked.
+    expect(e.decide(req({ element: { role: "push button", name: "Bold" } }))).toMatchObject({ verdict: "allow", autonomy: true });
+    expect(engine({ ...ALL_SCOPES }, { grants: gedit }).decide(req({ kind: "cursor_click", element: { role: "push button", name: "Bold" } }))).toMatchObject({ verdict: "allow", autonomy: true });
+    expect(engine({ ...ALL_SCOPES }, { grants: gedit }).decide(req({ kind: "text", element: { role: "text", name: "Address" }, value: "42 Larkspur Avenue, Leeds LS6 2QT", mode: "insert", readFrom: [FIREFOX] }))).toMatchObject({ verdict: "allow", autonomy: true });
+    // Still asked, every time, with no "Always".
+    for (const name of ["Send", "Post", "Submit", "Share", "Delete", "Overwrite", "Pay now", "Install", "Sign out"]) {
+      const d = engine({ ...ALL_SCOPES }, { grants: gedit }).decide(req({ element: { role: "push button", name }, goal: `${name.toLowerCase()} it` }));
+      expect(d, name).toMatchObject({ verdict: "confirm", risky: true });
+      expect(d.autonomy, name).toBeUndefined();
+      expect(d.remember, name).not.toBe(true);
+    }
   });
 });
 

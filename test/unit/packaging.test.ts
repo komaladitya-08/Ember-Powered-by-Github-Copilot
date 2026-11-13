@@ -845,6 +845,19 @@ describe("the Windows and macOS CI jobs", () => {
     }
   });
 
+  it("fetches the second test voice in every job that runs the real-model voice suite, so its tests run rather than skip (V2-F6)", () => {
+    for (const name of ["checks", "el8", "windows", "macos"]) {
+      const j = job(name);
+      expect(j, name).toContain("node scripts/voice/prepare.mjs --voice ryan");
+      expect(j.indexOf("node scripts/voice/prepare.mjs --voice ryan"), name).toBeLessThan(j.lastIndexOf("EMBER_VOICE_TEST"));
+      // Its own cache key, so a cache saved without the voice by another job is never restored here.
+      expect(j, name).toMatch(/key: voice-(?:models-)?ryan-/);
+    }
+    const suite = fs.readFileSync(path.join(__dirname, "../../test/integration/voice.test.ts"), "utf8");
+    expect(suite).toContain('const noReader = !fs.existsSync(path.join(readerVoice, "en_US-ryan-low.onnx")) && process.env.EMBER_VOICE_TEST !== "1";');
+    expect(suite).not.toContain('it.skipIf(!fs.existsSync(path.join(readerVoice');
+  });
+
   it("compile the bridge by running it as Ember runs it, stdin closed, on every run (W21)", () => {
     const windows = job("windows");
     expect(windows).not.toMatch(/Add-Type -Path sidecar|-ReferencedAssemblies UIAutomationClient/);

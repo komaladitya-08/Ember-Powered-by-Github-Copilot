@@ -66,7 +66,7 @@ export function rejectionEndsTrust(reason: "self" | "speakers" | "check" | "voic
  * "no", a yes that was merely too short, another task's question or any other refusal doesn't. Pure, as above.
  */
 export function refusalEndsTrust(result: string, answer: "allow" | "deny"): boolean {
-  return answer === "allow" && result === "unverified";
+  return answer === "allow" && (result === "unverified" || result === "unchecked");
 }
 
 /**
@@ -144,6 +144,8 @@ export interface VoiceAnswerInput {
   matchOff: boolean;
   /** The voice process verified this utterance as the owner's (VoiceEvent utterance `verified`). */
   verified: boolean;
+  /** Voice Match couldn't check it: its model failed (VoiceEvent utterance `unchecked`, match.ts). */
+  unchecked?: boolean;
   /** It matched the owner's voice but was too short to vouch for (VoiceEvent utterance `short`). */
   short?: boolean;
   /** A short one's own score, after the wake phrase (VoiceEvent utterance `restScore`; absent: too little voice to score). */
@@ -155,7 +157,7 @@ export interface VoiceAnswerInput {
 }
 
 /** Why a spoken answer wasn't taken. */
-export type VoiceAnswerRefusal = "voice-match-unready" | "unverified" | "own-voice" | "too-short";
+export type VoiceAnswerRefusal = "voice-match-unready" | "unverified" | "unchecked" | "own-voice" | "too-short";
 
 export type VoiceAnswerOutcome =
   /** Not an answer: an ordinary request (no question up, or other words). */
@@ -184,6 +186,8 @@ export function voiceAnswer(i: VoiceAnswerInput): VoiceAnswerOutcome {
   // Voice Match off, its default: a yes from anyone heard (owner decision of 2026-11-12), as the approve key would be.
   if (anyone) return { kind: "answer", answer, verified: false, anyone: true };
   if (i.verified) return { kind: "answer", answer, verified: true };
+  // Its model failed: said so, rather than that the voice didn't sound like the owner's (V2-F8).
+  if (i.unchecked) return { kind: "refused", answer, why: "unchecked" };
   // Too short to vouch for: its own score, where it has one, says whether it is clearly another voice.
   const otherVoice = i.restScore !== undefined && i.restScore < SHORT_YES_FLOOR;
   if (!i.short || otherVoice) return { kind: "refused", answer, why: "unverified" };
@@ -196,7 +200,7 @@ export function voiceAnswer(i: VoiceAnswerInput): VoiceAnswerOutcome {
 }
 
 /** Every reason a spoken answer can be turned away: voiceAnswer's, the Confirmer's, and an answer said over Ember's voice. */
-export type VoiceAnswerNote = VoiceAnswerRefusal | "click-only" | "not-yet" | "stale" | "locked" | "heard-over" | "over-sound" | "sound-unknown" | "unclear";
+export type VoiceAnswerNote = VoiceAnswerRefusal | "click-only" | "not-yet" | "busy" | "stale" | "locked" | "heard-over" | "over-sound" | "name-doubted" | "sound-unknown" | "unclear" | "unclear-click";
 
 /**
  * What the bubble says under the question when a spoken answer wasn't taken (the question stays up): what happened,
@@ -207,20 +211,33 @@ export type VoiceAnswerNote = VoiceAnswerRefusal | "click-only" | "not-yet" | "s
 export const VOICE_ANSWER_REFUSED: Readonly<Record<VoiceAnswerNote, string>> = {
   "voice-match-unready": "Voice Match is on but isn't ready yet, so I can't take a yes by voice: finish setting it up in Settings › Voice, or turn it off. Until then, click Allow or use the keys.",
   unverified: "That didn't sound like you, so I didn't take it as a yes. Say it again, or click Allow or use the keys.",
+  // Voice Match's model failed on it (match.ts): it was never judged another voice (V2-F8).
+  unchecked: "Voice Match couldn't check that just now, so I didn't take it as a yes. Click Allow or use the keys.",
   "own-voice": "I was still speaking, so I didn't take that as an answer. Say it again now.",
   "click-only": "This one needs a click: I can't take a yes by voice here.",
   "not-yet": "Read it through first, then say yes again.",
+  // Ember borrows the mouse (the Confirmer's blocked()): "read it through first" was untrue then (V2-F8).
+  busy: "I'm using the mouse just now, so I couldn't take that. Say it again in a moment.",
   "too-short": "I couldn't hear enough of your voice to be sure it's you. Say it a little longer, like “Yes, please go ahead”, so I can tell.",
   stale: "That was said before this question came up, so I didn't take it. Say it again.",
-  locked: "I heard a voice that isn't yours, so for this question I'll take a click or the keys only.",
+  // Said when Voice Match turned a voice away during the question: often the owner's own one word, too short to score
+  // high (real models: "Yes." 0.54-0.66), so it says only that the voice couldn't be matched (V2-F1).
+  locked: "I couldn't match that voice to yours, so for this question I'll take a click or the keys only.",
   "heard-over": "I heard you over my own voice, so I didn't take it. Say it again now that I've stopped.",
-  // A nameless answer over a song or a video, which the voice gate drops without a voiceprint (match.ts "dropped").
-  "over-sound": "Something else was playing, so I couldn't tell that was for me: say my name first, then your answer.",
+  // A nameless answer over a song or a video, which the voice gate drops without a voiceprint (match.ts "dropped"). So
+  // for a yes said a pause after "Hey Ember" (V2-S6): the name was said, so the line asks for both in one go.
+  "over-sound": "Something else was playing, so I couldn't tell that was for me: say your answer right after my name, in one go.",
+  // So for one said right after the name, whose "Ember" couldn't be told from what the speakers were playing (engine.ts
+  // namedByUser): asking for the name the user had just said told them to do what they did (voice-safety-x9-4).
+  "name-doubted": "Something else was playing, and I couldn't tell whether you or it said my name: click Allow, or say it once more.",
   // A nameless yes where nothing can tell whether other sound plays (macOS, Linux without parec, Windows before its
   // output watch has looked: engine.ts soundKnown), which the gate drops without a voiceprint as over other sound.
   "sound-unknown": "I can't tell here whether something else is playing, so I didn't take that as a yes: say my name first, then your answer.",
   // A word or two in the answer window that read as no answer (engine.ts "unclear"): most likely one misheard.
   unclear: "I didn't catch that as an answer. Say “allow” or “not now” once more, or click on the question.",
+  // The same, for a question that takes no spoken yes (locked to clicks and keys, or Voice Match on but not ready): it
+  // asked for an "allow" that could only fail (V2-F9).
+  "unclear-click": "I didn't catch that as an answer. For this question I can only take “not now” by voice: to allow it, click on the question.",
 };
 
 /**
@@ -231,7 +248,8 @@ export const VOICE_ANSWER_REFUSED: Readonly<Record<VoiceAnswerNote, string>> = {
 const WITHOUT_KEYS: Readonly<Partial<Record<VoiceAnswerNote, string>>> = {
   "voice-match-unready": "Voice Match is on but isn't ready yet, so I can't take a yes by voice: finish setting it up in Settings › Voice, or turn it off. Until then, click Allow on the question.",
   unverified: "That didn't sound like you, so I didn't take it as a yes. Say it again, or click Allow on the question.",
-  locked: "I heard a voice that isn't yours, so for this question I'll take a click only.",
+  locked: "I couldn't match that voice to yours, so for this question I'll take a click only.",
+  unchecked: "Voice Match couldn't check that just now, so I didn't take it as a yes. Click Allow on the question.",
 };
 
 /** The note for `why` as the question shows it: the keys are named only while Ember holds them (`keysHeld`). */
@@ -240,7 +258,7 @@ export function refusalLine(why: VoiceAnswerNote, keysHeld: boolean): string {
 }
 
 /** The lines that point to a click or the keys: said aloud, they name the keys Ember holds too (tasks-approvals-6). */
-const POINTS_TO_KEYS: ReadonlySet<VoiceAnswerNote> = new Set(["voice-match-unready", "unverified", "locked"]);
+const POINTS_TO_KEYS: ReadonlySet<VoiceAnswerNote> = new Set(["voice-match-unready", "unverified", "unchecked", "locked"]);
 
 /**
  * The note for a spoken answer that wasn't taken (`why`), as the question stands: a yes to a question locked to clicks
@@ -249,6 +267,7 @@ const POINTS_TO_KEYS: ReadonlySet<VoiceAnswerNote> = new Set(["voice-match-unrea
  * it or turn it off. A consent card's own note stands.
  */
 export function refusalNote(why: VoiceAnswerNote, o: { answer: "allow" | "deny"; locked: boolean; unready: boolean }): VoiceAnswerNote {
+  if (why === "unclear" && (o.locked || o.unready)) return "unclear-click";
   if (o.answer !== "allow" || why === "click-only") return why;
   if (o.unready) return "voice-match-unready";
   return o.locked ? "locked" : why;
@@ -261,10 +280,60 @@ export function refusalNote(why: VoiceAnswerNote, o: { answer: "allow" | "deny";
  * a click or the keys, so someone answering without the mouse hears how (tasks-approvals-6).
  */
 export function voiceAnswerSaid(why: VoiceAnswerNote, keys: readonly string[] = []): string {
-  const line = refusalLine(why, keys.length > 0).replace(/\s*›\s*/g, ", then ").replace(/[“”]/g, "");
-  if (!keys.length || !POINTS_TO_KEYS.has(why)) return line;
+  const allowKey = keys.some(k => / to allow$/.test(k));
+  const follows = keys.length > 0 && POINTS_TO_KEYS.has(why);
+  // With the keys said after it, a line that points to "the keys" is said without them, so they are named once ("…or use
+  // the keys. Or, to allow, press…": V2-F9); the locked line says how the question is answered, and keeps them.
+  const line = refusalLine(why, why === "locked" ? allowKey : allowKey && !follows).replace(/\s*›\s*/g, ", then ").replace(/[“”]/g, "");
+  if (!follows) return line;
   const said = keysSaid(keys);
   return `${line} ${why === "locked" ? said : `Or, ${said.charAt(0).toLowerCase()}${said.slice(1)}`}`;
+}
+
+/** What main's refusals need of the rest of Ember (VoiceRefusals). */
+export interface VoiceRefusalDeps {
+  /** The Confirmer (its question up, the note under it, whether Voice Match locked it), or null before it exists. */
+  confirmer: () => { note(text: string): boolean; readonly currentNumber: number | null; readonly voiceLocked: boolean } | null;
+  /** Voice Match is switched on but not ready (never taught, or its model not in). */
+  unready: () => boolean;
+  /** The question keys Ember holds now (main's heldKeys), each with how it is said. */
+  keys: () => readonly { id: "allow" | "deny"; say: string }[];
+  /** Ember speaks its questions and notes (not muted, not "just show me"). */
+  maySpeak: () => boolean;
+  speak: (text: string) => void;
+  /** Listen for the answer without the name again (VoiceService.answerWindow). */
+  answerWindow: () => void;
+}
+
+/**
+ * A spoken answer that wasn't taken, across one question: the note under the question says why and what to do instead
+ * each time, and Ember says each line aloud once a question (V2-F2: a television's "Okay.", "Sure.", "Fine." locked a
+ * question and had Ember say the same 32 words again on every word, five times in 58 s). The window for a bare answer
+ * still opens each time, as a no is anyone's. Out of main.ts's glue, so the journey is unit-tested (V2-F13).
+ */
+export class VoiceRefusals {
+  private question: number | null = null;
+  private said = new Set<VoiceAnswerNote>();
+
+  constructor(private d: VoiceRefusalDeps) {}
+
+  /** The note `why` as the question shows it now: "the keys" only while Ember holds the allow key (V2-F9). */
+  line(why: VoiceAnswerNote): string {
+    return refusalLine(why, this.d.keys().some(k => k.id === "allow"));
+  }
+
+  /** A spoken `answer` wasn't taken (`why`): the question stays up, and says why. */
+  refuse(why: VoiceAnswerNote, answer: "allow" | "deny"): void {
+    const c = this.d.confirmer();
+    if (!c) return;
+    const note = refusalNote(why, { answer, locked: c.voiceLocked, unready: this.d.unready() });
+    if (!c.note(this.line(note))) return;
+    if (c.currentNumber !== this.question) { this.question = c.currentNumber; this.said.clear(); }
+    // (The keys stay under the note in the bubble; said aloud, they are named after it: tasks-approvals-6.)
+    if (this.d.maySpeak() && !this.said.has(note)) { this.said.add(note); this.d.speak(voiceAnswerSaid(note, this.d.keys().map(k => k.say))); }
+    // "Say it again now": heard without the name once Ember has said why (the answer window, as after the question).
+    this.d.answerWindow();
+  }
 }
 
 /**
@@ -281,4 +350,35 @@ export function keysSaid(keys: readonly string[]): string {
   if (!parts.length) return "";
   const s = parts.join("; ");
   return `${s.charAt(0).toUpperCase()}${s.slice(1)}.`;
+}
+
+/** The status line while a question's answer window listens for a bare answer (V2-F4). */
+export const ANSWER_LISTENING_STATUS = "Listening for your answer…";
+/** For a few seconds after that window closed with the question still up: how to answer by voice now (V2-F4). */
+export const ANSWER_CLOSED_STATUS = "To answer by voice now, start with my name.";
+
+/**
+ * The status line for a question's answer window opening or closing (VoiceEvent "listening", window "answer"): the
+ * window while it is open, and once it timed out with the question still up, how to answer now. A bare "Okay." said
+ * after the 8 s vanished without a sign, and nothing said the window was open (V2-F4, voice-listening-r9-8). Undefined:
+ * leave the status as it is (a conversation hears bare answers and keeps its own line; another line owns it).
+ * Neither line ends on an answer or names Ember, as the status can be read out while the microphone listens.
+ * `yesByVoice`: a spoken yes can be taken for the question up now (Confirmer.yesByVoice, and Voice Match ready if on).
+ */
+export function answerWindowStatus(e: { on: boolean; reason?: string }, now: { status: string | null; questionUp: boolean; conversing: boolean; yesByVoice: boolean }): string | null | undefined {
+  if (now.conversing) return undefined;
+  // A question whose yes can't be taken by voice (locked by Voice Match, Voice Match not ready, a click-only card) gets
+  // neither line: both promised a spoken answer it won't take (voice-product-x9-4).
+  if (e.on) return now.questionUp && now.yesByVoice ? ANSWER_LISTENING_STATUS : undefined;
+  if (now.status !== ANSWER_LISTENING_STATUS) return undefined;
+  return e.reason === "timeout" && now.questionUp && now.yesByVoice ? ANSWER_CLOSED_STATUS : null;
+}
+
+/**
+ * The status line when the question up changes (answered, gone, or another in its place): either line of its answer
+ * window goes with it (null), as no further "listening" event comes for that window; undefined leaves another line be.
+ * "To answer by voice now…" stayed its 8 s after a click, a key or the question running out (voice-product-x9-4).
+ */
+export function answerStatusOnQuestion(status: string | null): null | undefined {
+  return status === ANSWER_LISTENING_STATUS || status === ANSWER_CLOSED_STATUS ? null : undefined;
 }

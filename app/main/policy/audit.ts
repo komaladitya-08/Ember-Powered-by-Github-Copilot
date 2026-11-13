@@ -15,7 +15,8 @@ import { writeAllSync } from "../write-all";
 export interface AuditEntry {
   task?: string;
   /**
-   * `autonomy`: "Work without asking" turned on or off (`on`), and how (`via`: home, voice or typed; `verified`).
+   * `autonomy`: the approval mode in force changed (`mode`, and `before`), and how (`via`: home, voice, typed, file
+   * or policy; `verified`); `atStart`: as found in force at start. Entries from before the modes say `on` instead.
    * `read`: a picture of a window went to the model (`kind: "screenshot"`, its app and size, never its title).
    */
   event: "decision" | "action" | "confirm" | "task" | "stop" | "command" | "remote" | "wsl" | "extension" | "autonomy" | "read";
@@ -324,6 +325,8 @@ export function journalSink(onError: (err: unknown) => void = () => undefined): 
   };
 }
 
+/** What Assisted's check said of an app step (Decision.review): Ember's own fixed words, never the model's. */
+const STEP_REVIEWS: ReadonlySet<string> = new Set(["match", "no-match", "none"]);
 /** Values that say nothing private: key combinations, scroll directions, Ember's own settings, app names, on/off. */
 const PLAIN_VALUE_KINDS = new Set(["keys", "scroll", "setting", "open_app", "toggle"]);
 
@@ -334,6 +337,7 @@ const PLAIN_VALUE_KINDS = new Set(["keys", "scroll", "setting", "open_app", "tog
  * A key that types a character goes there as a count like typed text (letters typed one by one would spell it out);
  * shortcuts and keys that edit or move stay. Reasons stay: they are Ember's own words and app names. A command
  * review's words (`review`) are the model's, and can name the file and the request: a size only (safety-privacy-v1).
+ * What Assisted's check said of an app step is one of Ember's three fixed words (Decision.review): it stays.
  */
 export function journalLine(line: string): string {
   try {
@@ -341,7 +345,8 @@ export function journalLine(line: string): string {
     const size = (o: Record<string, unknown>, k: string) => {
       if (typeof o[k] === "string") { o[`${k}Chars`] = (o[k] as string).length; delete o[k]; }
     };
-    for (const k of ["goal", "summary", "window", "error", "cwd", "review"]) size(e, k);
+    for (const k of ["goal", "summary", "window", "error", "cwd"]) size(e, k);
+    if (!STEP_REVIEWS.has(String(e.review))) size(e, "review");
     // A command's text goes as its size only, as typed text does; the size its entry already gives (before redaction
     // and the 2000-character cut, §3.12) stays.
     if (typeof e.command === "string") { if (typeof e.commandChars !== "number") e.commandChars = e.command.length; delete e.command; }
