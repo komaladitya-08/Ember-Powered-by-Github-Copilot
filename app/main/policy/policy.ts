@@ -2442,30 +2442,33 @@ const LINK_PAST_WARNING = new RegExp(`^[^\\p{L}\\p{N}]*(${foldLabel([...PAST_WAR
 const PROTECTED_VIEW = /\bprotected (view|mode)\b/;
 const PAST_WARNING_REASON = "this goes past a warning or turns a protection off";
 /**
- * A bare "Keep", "Open", "Download" or "Run" goes past a warning where its window or dialog says the file is dangerous
- * or blocked (Chrome's download bubble: "This file isn't commonly downloaded and may be dangerous"), and "Download
- * pictures" or "Show images" in a mail app's window (Outlook's, which hides them to protect the reader's privacy): read
- * with `context`, the app, the window's title and the dialog's words (safety-privacy-r9-2).
+ * A bare "Keep", "Open", "Download" or "Run" goes past a warning where its dialog says the file is dangerous or blocked
+ * (Chrome's download bubble: "This file isn't commonly downloaded and may be dangerous"), and "Download pictures" or
+ * "Show images" in a mail app (Outlook's, which hides them to protect the reader's privacy) (safety-privacy-r9-2). Read
+ * from the dialog's words and the app's name, never the window's title, which is the page's or the file's: a page about
+ * malware, a folder named Blocked, "mail-merge.pdf" (product-safety-x9-2); a webmail only by its product's name as a
+ * whole part of the title ("Inbox - me@example.com - Gmail - Mozilla Firefox", MAIL_TITLE).
  */
 const BARE_PAST_WARNING = /^\s*(keep|open|download|run)( (the |this )?file)?( anyway)?\s*$/;
 // Chrome's and Edge's own words too: "isn't commonly downloaded", "can't be downloaded securely" (product-safety-x9-1).
 const DANGER_CONTEXT = /\b(dangerous|harm(s|ful)?|malicious|malware|virus(es)?|suspicious|unverified|blocked|(not|isn't) commonly downloaded|may not be safe|can('|no)?t be downloaded securely|insecure|not secure)\b/;
 const SHOWS_PICTURES = /^\s*(download|show|display|load) (the |all )?(pictures|images)\s*$/;
 const MAIL_CONTEXT = /\b(outlook|gmail|thunderbird|evolution|mail|inbox)\b|\bprotect (your )?privacy\b|\bprevented\b/;
+const MAIL_TITLE = /(^| - | \| )(gmail|outlook|(mozilla )?thunderbird|evolution)( - | \| |$)/;
 /** Checks of a text's spelling or grammar ("Disable spell check", "Turn off spelling and grammar checking"): no protection. */
 const WRITING_CHECKS = /\b(spell(ing)?|grammar)( and (spelling|grammar))?[ -]?check(s|ing|er)?\b/giu;
 /**
  * Does pressing this control (by its own name: a button, link or menu item, ACTING_CONTROL) go past a security warning
  * or turn a protection off? A link only by its first words (LINK_PAST_WARNING); "Enable Editing" only in protected view
- * (`context`: the app, the window's title and the dialog's words).
+ * (the window's title or the dialog's words, `told`); a bare word only by the dialog's words and the app (BARE_PAST_WARNING).
  */
-function goesPastWarning(role: string, name: string, context: string): boolean {
+function goesPastWarning(role: string, name: string, app: string, window: string, told: string): boolean {
   // An answer that backs off ("Thanks anyway", DECLINES) goes past nothing.
   if (!ACTING_CONTROL.test(role) || !/[\p{L}\p{N}]/u.test(name) || declines(name)) return false;
   if (role === "link") return saysWord(LINK_PAST_WARNING, name);
-  const said = plainText(name), around = plainText(context);
-  if ((BARE_PAST_WARNING.test(said) && DANGER_CONTEXT.test(around)) || (SHOWS_PICTURES.test(said) && (MAIL_CONTEXT.test(around) || DANGER_CONTEXT.test(around)))) return true;
-  if (/^\s*enable editing\s*$/.test(plainText(name)) && PROTECTED_VIEW.test(plainText(context))) return true;
+  const said = plainText(name), dialog = plainText(told), mail = MAIL_CONTEXT.test(plainText(`${app} ${told}`)) || MAIL_TITLE.test(plainText(window).trim());
+  if ((BARE_PAST_WARNING.test(said) && DANGER_CONTEXT.test(dialog)) || (SHOWS_PICTURES.test(said) && (mail || DANGER_CONTEXT.test(dialog)))) return true;
+  if (/^\s*enable editing\s*$/.test(said) && PROTECTED_VIEW.test(plainText(`${window} ${told}`))) return true;
   // (WEAKENS was written for settings: its checks are a protection's, never spelling's or grammar's.)
   return saysWord(PAST_WARNING, name) || saysWord(WEAKENS, name.replace(WRITING_CHECKS, " "));
 }
@@ -2950,7 +2953,7 @@ export class PolicyEngine {
     // request by its name (audit of 2026-11-11, safety-privacy-r8-1). In a dialog the question quotes it too. After the
     // rules that asked before it, whose reasons and checks against the request stand ("Accept the Risk and Continue",
     // "Save Anyway" in a file's conflict). (A menu item that opens a dialog, "Run Macro…", does nothing yet.)
-    const pastWarning = goesPastWarning(role, name, `${r.app} ${r.window} ${told}`) && !opensDialog(role, name);
+    const pastWarning = goesPastWarning(role, name, r.app, r.window, told) && !opensDialog(role, name);
     const warned: Risk = { reason: PAST_WARNING_REASON, about: name, note: `It goes past a warning or turns off a protection.${r.dialog && note ? ` ${note}` : ""}` };
     // Any other answer to a message box (a native one: a page's own dialog is one only by what it asks), or to a dialog
     // that asks a question in a few words (a question mark, or ASKS_IF_SURE: a browser's "Leave site?", "Reload site?",

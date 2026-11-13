@@ -329,6 +329,22 @@ describe("a button or link that goes past a warning, or answers a dialog's quest
     asksEveryTime(click("Keep", { app, window: "Downloads", inPage: undefined, element: { role, name: "Keep" }, goal: "download the driver", dialog: { name: "", text } }));
   });
 
+  const notPast = (role: string, name: string, r: Partial<ActionRequest>) => {
+    for (const on of [false, true]) {
+      const d = engine(on).decide(click(name, { goal: "tidy up", element: { role, name }, ...r }));
+      expect(d.risky).toBeFalsy();
+      expect(d.reason).not.toContain("past a warning");
+    }
+  };
+  // A window's title is no warning: a page about malware, a folder named Blocked, Outlook's list of blocked senders, a
+  // PDF named for a mail merge (product-safety-x9-2).
+  it.each([
+    ["push button", "Download", { app: "google-chrome", window: "Malware - Wikipedia - Google Chrome", inPage: undefined, onPage: true }],
+    ["push button", "Open", { app: "org.gnome.Nautilus", window: "Blocked", inPage: undefined }],
+    ["push button", "Open", { app: "outlook", window: "Blocked Senders - Outlook", inPage: undefined }],
+    ["push button", "Show images", { app: "evince", window: "mail-merge.pdf", inPage: undefined }],
+  ] as [string, string, Partial<ActionRequest>][])("a %s named “%s” under a window's title is not read as going past a warning (product-safety-x9-2)", notPast);
+
   it("says why in the question (safety-privacy-r8-1)", () => {
     expect(engine().decide(click("Keep anyway", { app: "google-chrome", window: "Downloads", inPage: undefined, goal: "download the report" })).prompt)
       .toBe("Click the “Keep anyway” button in Google Chrome? It goes past a warning or turns off a protection.");
