@@ -151,6 +151,17 @@ describe("a command the user said no to, sent again or reworded (commands-remote
     ["rm -rf build", "python3 -c 'print(open(\"build/log.txt\").read())'", false],
     ["rm -rf build", "python3 -c 'import shutil; shutil.rmtree(\"dist\")'", false],
     ["git push --force origin main", "gh api -X PUT repos/o/r/git/refs/heads/feature -f sha=abc", false],
+    // A push of "whatever is checked out" names no branch Ember can compare: it is a push to that remote, as a bare
+    // `git push origin` is (modes-y9-x9-1).
+    ["git push origin main", "git push origin HEAD", true],
+    ["git push origin main", "git push -u origin HEAD", true],
+    ["git push origin main", "git push origin @", true],
+    ["git push origin main", "git push origin HEAD~0", true],
+    ["git push origin main", "git push origin 'main@{0}'", true],
+    ["git push --force origin main", "git push --force origin HEAD", true],
+    ["git push origin HEAD", "git push origin main", true],
+    ["git push origin main", "git push upstream HEAD", false],
+    ["git push origin main", "git push origin HEAD:feature", false],
   ];
   for (const [refused, next, is] of table) {
     it(`${is ? "takes" : "doesn't take"} \`${next}\` for a refused \`${refused}\``, () => {
@@ -558,6 +569,20 @@ describe("a command the user said no to, through the flow (commands-remote-r9-8)
       const again = commands([], { refusals: push.refusals, words: "update main on github", ...mode });
       expect(await again.run("gh api -X PUT repos/o/r/git/refs/heads/main -f sha=abc -F force=true")).toMatchObject({ resultType: "denied", textResultForLlm: CMD_REFUSED });
       expect([again.st.asked, again.st.reviewed, again.st.announced, again.st.starts]).toEqual([[], [], [], []]);
+    }
+  });
+
+  it("refuses a refused push of main sent again as a push of HEAD or @, with no check and no announcement (modes-y9-x9-1)", async () => {
+    for (const first of ["git push origin main", "git push --force origin main"]) {
+      const h = commands(["deny"], { review: false, words: "update main on github" });
+      expect((await h.run(first)).textResultForLlm).toMatch(/^The user said no\./);
+      for (const mode of [{ review: true }, { review: false, autopilot: true }, { review: false }]) {
+        const again = commands([], { refusals: h.refusals, words: "update main on github", ...mode });
+        for (const c of [first.replace("main", "HEAD"), first.replace("main", "@"), first.replace("origin main", "-u origin HEAD")]) {
+          expect(await again.run(c), c).toMatchObject({ resultType: "denied", textResultForLlm: CMD_REFUSED });
+        }
+        expect([again.st.asked, again.st.reviewed, again.st.announced, again.st.starts]).toEqual([[], [], [], []]);
+      }
     }
   });
 

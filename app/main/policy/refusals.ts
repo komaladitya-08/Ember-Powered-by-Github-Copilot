@@ -315,6 +315,12 @@ export interface CommandAsked {
 const WILDCARD = /[*?[\]{}]/;
 /** A branch or a tag as a command may write it: `+main`, `HEAD:main`, `refs/heads/main`. */
 const ref = (text: string) => text.trim().replace(/^\+/, "").replace(/^.*:(?=[^:]+$)/, "").replace(/^refs\/(heads|tags)\//, "");
+/**
+ * A branch written as where the checkout stands or as a revision (`HEAD`, `@`, `HEAD~0`, `main@{0}`, `main^0`), not
+ * by a name Ember can compare: such a push names no branch, so it is a push to that remote, as a bare
+ * `git push origin` is, and a no to a push of main there covers it (modes-y9-x9-1).
+ */
+const unnamedRef = (text: string) => { const r = ref(text); return r === "" || r === "@" || /^(FETCH_|ORIG_|MERGE_)?HEAD$/i.test(r) || /[~^]|@\{/.test(r); };
 const pathParts = (resolved: string, os: OS) => resolved.split(os === "win32" ? /[\\/]+/ : /\/+/).filter(p => p && p !== ".");
 
 /**
@@ -322,7 +328,7 @@ const pathParts = (resolved: string, os: OS) => resolved.split(os === "win32" ? 
  * gives one act for each; where no finding names an object, each gives its rule (`shutdown`, `git clean`), so a
  * wrapper's bare finding (sudo's) beside one that names something doesn't make every such command the same. A push
  * acts on its branch (to its remote): the remote's name alone is an act only where no branch is named, so a no to
- * `git push origin main` is no word on `git push origin feature`. A program Ember doesn't know acts as that program
+ * `git push origin main` is no word on `git push origin feature`; a push of `HEAD` or `@` names none (unnamedRef). A program Ember doesn't know acts as that program
  * with those words, never as "an unknown program" (a no to one refused every other), and what Ember can't tell has no
  * act at all: likeCommand holds it instead (modes-y9-8).
  */
@@ -335,7 +341,9 @@ export function commandActs(findings: readonly Finding[], os: OS): CommandAct[] 
     if (f.cls === "unknown") { acts.push({ cls: f.cls, kind: "program", text: fold(f.program.trim()) }); continue; }
     if (!named) { acts.push({ cls: f.cls, kind: "rule", text: f.rule }); continue; }
     const to = f.objects.find(o => o.kind === "remote")?.text.trim();
-    const refs = f.objects.some(o => (o.kind === "branch" || o.kind === "tag") && o.text.trim() !== "");
+    const isRef = (o: Finding["objects"][number]) => (o.kind === "branch" || o.kind === "tag") && !unnamedRef(o.text);
+    const refs = f.objects.some(isRef);
+    const before = acts.length;
     for (const o of f.objects) {
       if (o.text.trim() === "") continue;
       if ((o.kind === "path" || o.kind === "glob") && o.resolved !== undefined) {
@@ -343,11 +351,13 @@ export function commandActs(findings: readonly Finding[], os: OS): CommandAct[] 
         const cut = parts.findIndex(p => WILDCARD.test(p));
         acts.push({ cls: f.cls, kind: "path", text: fold(o.resolved), path: o.kind === "glob" && cut >= 0 ? parts.slice(0, cut) : parts });
       } else if (o.kind === "branch" || o.kind === "tag") {
-        acts.push({ cls: f.cls, kind: o.kind, text: ref(o.text), ...(to ? { to } : {}) });
+        if (isRef(o)) acts.push({ cls: f.cls, kind: o.kind, text: ref(o.text), ...(to ? { to } : {}) });
       } else if (!(o.kind === "remote" && refs)) {
         acts.push({ cls: f.cls, kind: o.kind, text: o.text.trim() });
       }
     }
+    // Nothing but an unnamed branch, and no remote: the finding's rule, as where it names nothing.
+    if (acts.length === before && f.objects.some(o => (o.kind === "branch" || o.kind === "tag") && o.text.trim() !== "")) acts.push({ cls: f.cls, kind: "rule", text: f.rule });
   }
   return acts;
 }
