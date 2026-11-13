@@ -227,6 +227,19 @@ describe("the logs and the audit log after a fill (vault-3)", () => {
     expect(JSON.parse(audited.trim())).toMatchObject({ event: "action", window: `Inbox - ${VAULT_REDACTED} - Mail`, element: { role: "link", name: VAULT_REDACTED } });
     expect(JSON.stringify(audit.recent(5))).not.toMatch(/canary/i);
   });
+
+  it("leave a line's own time, level and event name as Ember wrote them, whatever was filled (vault-3-x9-3)", () => {
+    const r = new VaultRedactor();
+    const dir = tmp();
+    const log = createLogger({ dir: path.join(dir, "logs"), level: "debug", redact: t => r.text(t), now: () => new Date("2026-11-13T10:00:00.000Z") });
+    // A user name that is one of Ember's own words, and an expiry that is in the day's date.
+    r.note("user", "warn");
+    r.note("name", "worker");
+    r.note("expiry", "11-13");
+    log.warn("worker.failed", { why: "worker said warn on 11-13" });
+    const line = JSON.parse(fs.readFileSync(log.file, "utf8").trim()) as Record<string, string>;
+    expect(line).toEqual({ why: `${VAULT_REDACTED} said ${VAULT_REDACTED} on ${VAULT_REDACTED}`, t: "2026-11-13T10:00:00.000Z", level: "warn", msg: "worker.failed" });
+  });
 });
 
 describe("VaultService.use and the redactor (vault-3)", () => {

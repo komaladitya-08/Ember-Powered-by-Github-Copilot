@@ -31,8 +31,9 @@ export interface LoggerOptions {
   keep?: number;
   now?: () => Date;
   /**
-   * A last pass over every string and key of a line (the vault's redactor, app/main/vault/redact.ts: a value the vault
-   * filled never reaches the file or stdout, whatever read it back). A pass that throws loses the line, never the value.
+   * A last pass over every string and key of a line but its own time, level and event name (the vault's redactor,
+   * app/main/vault/redact.ts: a value the vault filled never reaches the file or stdout, whatever read it back). A pass
+   * that throws loses the line, never the value.
    */
   redact?: (text: string) => string;
   /** Where printed lines go: process.stdout and process.stderr unless a unit test passes its own. */
@@ -82,8 +83,15 @@ const MAX_DEPTH = 8;
  */
 function safeLine(entry: Fields, more?: (text: string) => string): string {
   // Redacted as a parsed value, never as finished text: a text pass can turn `"secret":true` into `"secret":[token]`.
-  return JSON.stringify(redactValue(JSON.parse(rawLine(entry)) as unknown, more));
+  const line = redactValue(JSON.parse(rawLine(entry)) as unknown, more) as Record<string, unknown>;
+  // The line's own time, level and event name are Ember's words, never anything read back: the last pass leaves them
+  // (a filled user name "warn" or an expiry in the day's date would otherwise be marked in every line: vault-3-x9-3).
+  if (more) for (const k of OWN_KEYS) if (typeof entry[k] === "string") line[k] = redactSecretText(entry[k]);
+  return JSON.stringify(line);
 }
+
+/** What write() itself puts in a line. */
+const OWN_KEYS = ["t", "level", "msg"] as const;
 
 /** Names whose value is a credential whatever its type (the same words secret-text.ts finds in `name=value` text). */
 const CREDENTIAL_KEY = /^(?:[a-z]+[_-])?token$|password|passwd|secret|api[_-]?key|authorization/i;
