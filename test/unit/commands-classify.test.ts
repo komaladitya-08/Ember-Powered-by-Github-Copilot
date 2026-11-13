@@ -3121,4 +3121,33 @@ describe("commands held to main at 4d64d3a: no way of reading one decides less s
     expect(decided("docker exec -d web ls").rules).toEqual(["escape.background"]);
     expect(decided("rclone sync . remote:x").classes).toEqual(["publish", "remote-delete"]);
   });
+
+  it("reads a count option in main's table as main did when no count follows it: make's -j takes any word, and one that took none there takes only a count (commands-held-10)", () => {
+    // Each line with main's verdict for it at 4d64d3a and the dangers it named there. make's -j and -l took the next word
+    // whatever it was, so the -f behind a `--` or an option they swallowed named the makefile; Maven's --threads, nmake's
+    // -j and the compressors' -T, -p and --processes took none, so a switch or a variable after one was read as written.
+    const rows: [string, "ask" | "refuse", string[]][] = [
+      ["make -j -- -f ~/.config/ember/settings.json", "refuse", []], ["make -l -C -f ~/.config/ember/settings.json", "refuse", []],
+      ["make -j -E -f ~/.config/ember/settings.json", "refuse", []], ["gmake -kj -f -f ~/.ssh/id_rsa", "ask", ["secret"]], ["make -j -- -f /dev/stdin", "ask", []],
+      ["make -j -f install", "ask", ["system"]], ["mingw32-make -l -o deploy", "ask", ["publish"]], ["make install -j -f", "ask", ["system"]],
+      ["nmake -j $N", "ask", []], ["gradle --threads $N -f ~/.config/ember/settings.json", "ask", []], ["ant --threads $N", "ask", []],
+      ["xz -T -- sh -c 'rm -rf build'", "ask", ["destroy"]], ["pigz -p -- -k a.txt", "ask", ["destroy"]], ["gzip --processes -- -c a.txt", "ask", ["destroy"]],
+      ["zstd --processes --rm a.txt", "ask", ["destroy"]], ["brotli --processes --rm ~/.ssh/id_rsa", "ask", ["destroy", "secret"]],
+      ["lz4 --processes --rm -o ~/.bashrc a.txt", "ask", ["destroy", "system"]],
+    ];
+    for (const [cmd, verdict, classes] of rows) {
+      for (const context of ["linux", "darwin"] as const) {
+        const got = decided(cmd, context);
+        expect(got.verdict, `${cmd} (${context})`).toBe(verdict);
+        for (const c of classes) expect(got.classes, `${cmd} (${context})`).toContain(c);
+      }
+    }
+    // A count is read as now, apart or attached, so the counts that may run still run; and a switch behind a count
+    // option that main read as a switch too is no reason to ask (`xz -M -T -k a.txt` kept its input on both).
+    for (const cmd of [
+      "make -j 4", "make -j4", "make -kj 4", "make -j$(nproc)", "make -j $((2*4)) all", "make -l 2.5", "make -j", "make -j -k", "mvn --threads 4 package", "mvn -T 4 package",
+      "gradle --max-workers 4 build", "./gradlew --max-workers=$(nproc) build", "xz -T 4 -k a.txt", "xz -T0 -k big.tar", "xz -M -T -k a.txt", "pigz -p 4 -k a.txt",
+      "xz -T$(nproc) -k a.txt",
+    ]) expect(decided(cmd).verdict, cmd).toBe("run");
+  });
 });
