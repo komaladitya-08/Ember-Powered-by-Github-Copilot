@@ -17,8 +17,11 @@ import type { TargetId } from "./targets";
  * 9 (2026-11-13): first run's one agreement turns on, each with its own switch and its own card's text, commands on
  * this computer, memory, “Hey Ember” with spoken replies, screenshots for tasks and Interactive (owner decision of
  * 2026-11-12, app/shared/first-run.ts); someone who agreed before keeps their settings and is asked about Interactive.
+ * 10 (2026-11-13): the vault keeps something new on this computer: logins, cards and contact details the user gives
+ * in Ember's Secure Form, sealed with the keyring, which only Autopilot fills in and no model sees (owner decision of
+ * 2026-11-12, app/main/vault/).
  */
-export const CONSENT_VERSION = 9;
+export const CONSENT_VERSION = 10;
 
 /**
  * What each bump of CONSENT_VERSION changed, in Ember's words, for someone who agreed to an earlier version: first run
@@ -34,6 +37,7 @@ export const CONSENT_CHANGES: Readonly<Record<number, string>> = {
   7: "If you turn on “Keep my recent conversation”, its latest messages stay on this computer after I restart.",
   8: "While one of my questions is up, anyone near the computer can answer it by voice, and for a few seconds after I ask, I listen for that answer without my name. With Voice Match on, only your voice can say yes.",
   9: "If you haven't agreed to Interactive yet, agreeing now turns it on unless you switch it off here or your organisation keeps it off, so I don't ask before ordinary steps in an app. Your other settings stay as they are.",
+  10: "If you give me a login, a card or contact details in my Secure Form, I keep them in a vault on this computer, locked with your computer's keyring, until you forget them. Only Autopilot fills them in, and the AI model never sees them.",
 };
 
 /** The changes since the version the user agreed to (`agreed`), oldest first: none for a first agreement (0) or a current one. */
@@ -50,9 +54,11 @@ export function consentChangesSince(agreed: number): string[] {
  * the user, how they like answers) goes with every request, and that the idle tidy sends up to 40 facts up to 6 times
  * a day (memory-5, memory-9). The approval modes' cards (app/shared/approvals.ts MODE_CARD; owner decision of
  * 2026-11-12): `autonomy` is Interactive's, 3 since it replaced Work without asking's card (2), so an agreement to
- * that one is no agreement to this; `assisted` and `autopilot` are those modes' own.
+ * that one is no agreement to this; `assisted` and `autopilot` are those modes' own. `autopilot` 2 (2026-11-13): its
+ * card says Ember fills what the user saved in the vault into password, card and sign-in fields, where 1 said it
+ * never types them, so an agreement to 1 is asked again before Autopilot is in force.
  */
-export const FEATURE_CONSENT_VERSION = { wsl: 1, ssh: 1, commands: 1, memory: 4, routines: 1, extensions: 3, autonomy: 3, provider: 1, updates: 1, assisted: 1, autopilot: 1 } as const;
+export const FEATURE_CONSENT_VERSION = { wsl: 1, ssh: 1, commands: 1, memory: 4, routines: 1, extensions: 3, autonomy: 3, provider: 1, updates: 1, assisted: 1, autopilot: 2 } as const;
 
 /**
  * A first-use consent card (§8.4): its exact text, and a hash of it that the yes must carry back. Shown in Ember's

@@ -952,14 +952,15 @@ export const ASSISTED_CONSENT_TEXT = "In Assisted, Ember works as in Interactive
  * Autopilot's card (Apps & privacy › How Ember asks, FEATURE_CONSENT_VERSION.autopilot; PolicyEngine.autopilotStep,
  * commands/autopilot.ts, extensions/gate.ts, app/remote/gate.ts): that Ember doesn't ask and what that takes in, said
  * as the risk the user accepts; that every step is still announced and recorded; the few things it still asks; what it
- * never does; how to stop it; and that the organisation can turn it off. It promises nothing of the vault, which isn't
- * built: passwords and card numbers are never typed. Four short paragraphs, the risk first, so that it can't be read
- * past (the card keeps a text's line breaks). Change it only with a bump of that version.
+ * never does; how to stop it; and that the organisation can turn it off. Since version 2 it says what the vault does
+ * (app/main/vault/): Ember asks once in its Secure Form, keeps what is given for that app or site and fills it in
+ * itself, and the model never types or sees it. Four short paragraphs, the risk first, so that it can't be read past
+ * (the card keeps a text's line breaks). Change it only with a bump of that version.
  */
 export const AUTOPILOT_CONSENT_TEXT = [
   "In Autopilot, Ember doesn't ask before it acts. It sends, posts, shares, deletes, overwrites, pays, installs, signs out, changes settings, answers dialogs and runs dangerous commands, also as an administrator, without asking you first. That includes steps you didn't ask for, a task that a web page, a file or a command's output tried to steer, tools from your extensions and computers you reach over SSH. By choosing Autopilot you accept that risk: what it does may be impossible to undo.",
   "It tells you what it is doing as it goes, a dangerous command waits a few seconds with a Stop first, and What Ember did keeps a record. It still asks before a command that would show passwords or keys, one that would keep running after you stop Ember, one whose effect it can't tell, wherever you or your organisation set commands to ask every time, and before it turns on something you haven't agreed to yet.",
-  "It never repeats a step you said no to, never types passwords or card numbers, never acts in your system's sign-in and password prompts, never uses your terminals, never reads windows on your never-look list and never runs a command that touches its own settings, record or Stop.",
+  "It never repeats a step you said no to, never acts in your system's sign-in and password prompts, never uses your terminals, never reads windows on your never-look list and never runs a command that touches its own settings, record or Stop. The AI model never types or sees passwords or card numbers: Ember asks you once in its Secure Form, keeps them locked in its vault for that app or site, and fills them in there itself.",
   "“Ember, stop” or Ember's stop shortcut stops everything at once. Once you move your mouse or press a key while Ember is using them, it doesn't take them again in that task. Your organisation can turn Autopilot off.",
 ].join("\n\n");
 

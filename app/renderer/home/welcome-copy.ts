@@ -223,6 +223,7 @@ export const CONSENT_CHANGE_SOURCES: Readonly<Record<number, readonly string[]>>
   7: ["unless you turn on “Keep my recent conversation” under Conversation: then its latest messages stay on this computer"],
   8: ["While one of Ember's questions is up, anyone near the computer can answer it by voice", "for a few seconds after it asks, it listens for that answer without its name", "with Voice Match on, only your voice can say yes"],
   9: ["<b>Agreeing turns on</b> what you leave switched on here", "It asks before acting</b> in an app unless you turn on Interactive", "Settings you chose before stay as they are."],
+  10: ["If you give Ember a login, a card or contact details in its Secure Form, it keeps them in its vault on this computer, locked with your computer's keyring, until you forget them", "Only in Autopilot, it can fill in a login, a card or contact details from its vault, which the AI model never sees."],
 };
 
 /**
