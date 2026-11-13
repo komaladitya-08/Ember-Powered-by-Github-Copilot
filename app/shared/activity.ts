@@ -98,7 +98,20 @@ export interface TaskEntry {
   unanswered?: true;
   /** It ended before it began to run (stopped, or cut off, while it waited its turn): it has no clock (tasks-approvals-r3-3). */
   unstarted?: true;
+  /**
+   * Its question is the one up now (Confirmer.currentTask): with two tasks waiting, Home says where to answer in this
+   * one's group (tasks-approvals-r9-3).
+   */
+  asking?: true;
   activity: TaskActivity;
+}
+
+/** The entries with the task whose question is up now (`up`, Confirmer.currentTask) marked `asking`, while it waits. */
+export function withQuestionUp(entries: readonly TaskEntry[], up: string | undefined): TaskEntry[] {
+  return entries.map(e => {
+    const { asking: _was, ...rest } = e;
+    return up !== undefined && e.id === up && e.status === "waiting" ? { ...rest, asking: true as const } : rest;
+  });
 }
 
 /** A task's whole activity, kept in main while Ember runs (the cards get a summary; Home will show it whole). */

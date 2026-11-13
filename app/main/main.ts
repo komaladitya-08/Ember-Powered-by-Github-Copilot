@@ -58,6 +58,7 @@ import { remoteSurfaceCheck } from "./policy/remote-surface";
 import { restartOptions, runningAppImage, watchAdminPolicy } from "./policy/admin-watch";
 import { ANSWER_MS, Confirmer, EXPIRED_MS, answerSettler, guardWhileAsking, hidesAgainAfter, questionPausesAnswer } from "./agent/confirm";
 import { taskNotice } from "./agent/tasks";
+import { withQuestionUp } from "../shared/activity";
 import { CursorBorrow } from "./hands/borrow";
 import { isTerminalWindowApp } from "./hands/system";
 import { freshAskPress, holdShortcuts } from "./hotkey";
@@ -1087,6 +1088,8 @@ function start(): void {
     // So do the Ask box's suggestions: "Yes, please" there would only seem to answer it (companion-r2-1).
     askOffersChanged();
     targets?.questionChanged(q);
+    // Home's Task activity: the question up now may be another task's (tasks-approvals-r9-3).
+    tasksShown();
     presenceChanged();
     stepAside();
     if (!q) {
@@ -2273,11 +2276,13 @@ function start(): void {
   }));
   // Home's Task activity (in memory only): asked for by the settings window alone, and pushed to it alone when the cards
   // change, at most every TASKS_PUSH_MS (a task's steps can come many a second; a closed window is sent nothing).
-  ipcMain.handle(IPC.tasks, guard(() => agent?.taskActivities() ?? []));
+  // Which task's question is up now goes with them: Home says where to answer in that task's group (tasks-approvals-r9-3).
+  const taskEntries = () => withQuestionUp(agent?.taskActivities() ?? [], confirmer?.currentTask);
+  ipcMain.handle(IPC.tasks, guard(taskEntries));
   ipcMain.handle(IPC.openApproval, guard(() => targets?.openApproval() ?? false));
   ipcMain.handle(IPC.historyProblem, guard(() => historyStore?.problem ?? null));
   ipcMain.handle(IPC.taskControl, guard((raw: unknown) => taskControl(agent, raw)));
-  const pushTasks = pushLater(TASKS_PUSH_MS, () => { if (home && !home.isDestroyed()) home.webContents.send(IPC.tasksChanged, agent?.taskActivities() ?? []); });
+  const pushTasks = pushLater(TASKS_PUSH_MS, () => { if (home && !home.isDestroyed()) home.webContents.send(IPC.tasksChanged, taskEntries()); });
   tasksShown = () => { if (home && !home.isDestroyed()) pushTasks(); };
   ipcMain.handle(IPC.signOut, guard(async () => {
     signOuts++;
