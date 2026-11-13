@@ -282,6 +282,45 @@ describe("a button or link that goes past a warning, or answers a dialog's quest
     asksEveryTime(click(name, { kind: "keys", value: "Return", goal: "open the file and read it", element: { role, name }, ...r, ...(r.onPage ? { inPage: true, onPage: undefined } : {}) }));
   });
 
+  // The names Chrome, Firefox, Gmail, Outlook, Edge and Brave give those controls (audit of 2026-11-13).
+  const chrome = { app: "google-chrome", window: "Downloads - Google Chrome", inPage: undefined };
+  const bubble = { name: "", text: "This file isn't commonly downloaded and may be dangerous." };
+  const gmail = { app: "firefox", window: "Acme weekly - me@example.com - Gmail - Mozilla Firefox", inPage: undefined, onPage: true };
+  const outlook = { app: "msedge", window: "Mail - Outlook - Microsoft Edge", inPage: undefined, onPage: true };
+  const products: [string, string, Partial<ActionRequest>][] = [
+    ["push button", "Keep dangerous file", chrome], ["push button", "Keep suspicious file", chrome], ["push button", "Keep unverified file", chrome],
+    ["push button", "Download dangerous file", chrome], ["push button", "Download suspicious file", chrome], ["push button", "Download unverified file", chrome],
+    ["menu item", "Keep dangerous file", chrome], ["link", "Download dangerous file", { ...chrome, onPage: true }],
+    ["push button", "Keep", { ...chrome, window: "Drivers - Google Chrome", dialog: bubble }], ["push button", "Open", { window: "Downloads", inPage: undefined, dialog: { name: "", text: "This file was blocked because it may harm your computer." } }],
+    ["push button", "Continue to HTTP Site", { app: "firefox", window: "HTTPS-Only Mode Alert - Mozilla Firefox", inPage: undefined, onPage: true }],
+    ["link", "Continue to HTTP Site", { app: "firefox", window: "HTTPS-Only Mode Alert - Mozilla Firefox", inPage: undefined, onPage: true }],
+    ["link", "Display images below", gmail], ["link", "Always display images from news@acme.example", gmail], ["push button", "Show blocked content", outlook],
+    ["push button", "Download pictures", outlook], ["push button", "Disable Tracking Prevention", { app: "msedge", window: "Shop - Microsoft Edge", inPage: undefined }],
+    ["push button", "Turn off Shields", { app: "brave", window: "Shop - Brave", inPage: undefined }], ["link", "Turn off Shields", { app: "brave", window: "Shop - Brave", inPage: undefined, onPage: true }],
+  ];
+
+  it.each(products)("a %s named “%s”, as a browser or mail app names it, asks every time, by a click and by Enter (safety-privacy-r9-2)", (role, name, r) => {
+    asksEveryTime(click(name, { goal: "download the driver and read the newsletter", element: { role, name }, ...r }));
+    asksEveryTime(click(name, { kind: "keys", value: "Return", goal: "download the driver and read the newsletter", element: { role, name }, ...r, ...(r.onPage ? { inPage: true, onPage: undefined } : {}) }));
+  });
+
+  // Their ordinary neighbours: a list's pages, spelling, an image viewer's and a photo site's pictures, a bar shown for good.
+  const neighbours: [string, string, Partial<ActionRequest>][] = [
+    ["push button", "Go to page 2", { window: "Orders - Shop — Mozilla Firefox", inPage: undefined, onPage: true }],
+    ["push button", "Disable spell check", { app: "thunderbird", window: "Write: hello", inPage: undefined }],
+    ["push button", "Keep", { app: "soffice", window: "letter.odt - LibreOffice Writer", inPage: undefined }],
+    ["push button", "Keep", { app: "google-chrome", window: "Drivers - Google Chrome", inPage: undefined }],
+    ["push button", "Download pictures", { app: "google-chrome", window: "Photos - Google Chrome", inPage: undefined, onPage: true }],
+    ["push button", "Show images", { app: "evince", window: "manual.pdf", inPage: undefined }],
+    ["menu item", "Always show bookmarks bar", { app: "google-chrome", window: "New Tab - Google Chrome", inPage: undefined }],
+    ["push button", "Keep file", { app: "org.gnome.Nautilus", window: "Downloads", inPage: undefined }],
+    ["push button", "Disable animations", { app: "google-chrome", window: "Settings - Google Chrome", inPage: undefined }],
+    ["link", "Continue to page 2", { window: "Orders - Shop — Mozilla Firefox", inPage: undefined, onPage: true }],
+  ];
+  it.each(neighbours)("a %s named “%s” still goes without a question under “Always” (safety-privacy-r9-2)", (role, name, r) => {
+    expect(engine().decide(click(name, { goal: "tidy up", element: { role, name }, ...r })).verdict).toBe("allow");
+  });
+
   it("says why in the question (safety-privacy-r8-1)", () => {
     expect(engine().decide(click("Keep anyway", { app: "google-chrome", window: "Downloads", inPage: undefined, goal: "download the report" })).prompt)
       .toBe("Click the “Keep anyway” button in Google Chrome? It goes past a warning or turns off a protection.");

@@ -671,7 +671,7 @@ const SECURITY_WORD = new RegExp(`(^|[^\\p{L}\\p{N}])(${foldLabel(SECURITY_STEMS
  */
 const WEAKENS = new RegExp(`(^|[^\\p{L}\\p{N}])(${foldLabel(["not recommended", "unsafe", "insecure", "unsecured?", "allow all", "trust all", "accept all",
   "without (asking|confirmation|confirming|warning|warnings|prompting|a warning)", "(don't|do not|never) (ask|warn|prompt|confirm)",
-  "(disable|turn off|switch off|deactivate|bypass|skip)\\b.{0,40}\\b(protection|security|warnings?|checks?|checking|verification|sandbox|blocking|safe browsing)",
+  "(disable|turn off|switch off|deactivate|bypass|skip)\\b.{0,40}\\b(protection|prevention|shields?|security|warnings?|checks?|checking|verification|sandbox|blocking|safe browsing)",
   "nicht empfohlen", "non recommandée?", "déconseillée?", "no recomendad[oa]", "sconsigliat[oa]", "non consigliat[oa]", "não recomendad[oa]",
   "niet aanbevolen", "niezalecane", "nie zalecane", "не рекомендуется", "rekommenderas inte", "anbefales ikke", "ei suositella", "nedoporučen[oéa]",
   "nedoporučuje se", "önerilmez", "tavsiye edilmez"].join("|"))})(?=$|[^\\p{L}\\p{N}])|${foldLabel(["推奨されません", "非推奨", "不推荐", "不推薦", "不建议",
@@ -2416,10 +2416,13 @@ const BACKS_OFF = /^\s*(cancel|close|no|help|notify|keep|open (a )?copy|open rea
  * "continue" or "go on" only: a list's "Go to page 2" (MUI's pagination), a business's "Go to website" and a form's
  * "Continue to page 2" go nowhere a warning stood (regression review of round eight, safety-privacy-x8-1).
  */
-const PAST_WARNING_PHRASES = ["(proceed|continue|go on) to (the |this )?(site|website|web ?page)",
+const PAST_WARNING_PHRASES = ["(proceed|continue|go on) to (the |this )?(http |insecure |unsecure |unsafe )?(site|website|web ?page)",
   "visit this (unsafe |dangerous |deceptive |insecure |unsecure |suspicious )?(site|website|web ?page|page)", "enable (all )?macros?",
   "enable (the |all )?(active |external |blocked )?content", "run (the |all )?macros?", "exit protected view",
-  "(load|show|display|allow|download|enable) (the |all )?(remote|external) (content|images?|pictures|resources)",
+  "(load|show|display|allow|download|enable) (the |all )?(remote|external|blocked) (content|images?|pictures|resources)",
+  // Chrome's download warnings, Gmail's hidden images (safety-privacy-r9-2).
+  "(keep|download|open|run|save|install) (the |this )?(dangerous|suspicious|unverified|malicious|harmful|unsafe|insecure|uncommon|blocked) (files?|downloads?|items?|apps?|programs?)",
+  "(display|show|load|download) (the )?(images?|pictures) below", "always (display|show|load|download) (the )?(external |remote )?(images?|pictures|content) from",
   "(ignore|dismiss|bypass|skip|override) (the |this |these |all )?(security )?(warnings?|risks?|alerts?)", "accept (the )?risks?", "i understand the risks?"];
 const PAST_WARNING_WORDS = ["anyways?", ...PAST_WARNING_PHRASES, "always (allow|trust|accept|open|run)", "(don't|do not|never) block", "unblock",
   "trust (this|the) (site|website|document|file|folder|publisher|authors?|app|application|certificate|source|device)", "(open|run) executable",
@@ -2433,22 +2436,34 @@ const PAST_WARNING = new RegExp(`(^|[^\\p{L}\\p{N}])(${foldLabel(PAST_WARNING_WO
  */
 const LINK_PAST_WARNING = new RegExp(`^[^\\p{L}\\p{N}]*(${foldLabel([...PAST_WARNING_PHRASES,
   "(download|keep|open|run|install|continue|proceed|launch|use|save|visit|go|load|show|allow|accept) anyway",
-  "(turn off|disable|switch off|bypass|skip)\\b.{0,40}\\b(protection|security|warnings?|verification|safe browsing)"].join("|"))})(?=$|[^\\p{L}\\p{N}])`
+  "(turn off|disable|switch off|bypass|skip)\\b.{0,40}\\b(protection|prevention|shields?|security|warnings?|verification|safe browsing)"].join("|"))})(?=$|[^\\p{L}\\p{N}])`
   + `|[(（]\\s*(${foldLabel(["unsafe", "not secure", "insecure", "dangerous", "not recommended"].join("|"))})\\s*[)）]`, "u");
 /** A window or dialog that says its document is in protected view (Word's "[Protected View]"), where "Enable Editing" leaves it. */
 const PROTECTED_VIEW = /\bprotected (view|mode)\b/;
 const PAST_WARNING_REASON = "this goes past a warning or turns a protection off";
+/**
+ * A bare "Keep", "Open", "Download" or "Run" goes past a warning where its window or dialog says the file is dangerous
+ * or blocked (Chrome's download bubble: "This file isn't commonly downloaded and may be dangerous"), and "Download
+ * pictures" or "Show images" in a mail app's window (Outlook's, which hides them to protect the reader's privacy): read
+ * with `context`, the app, the window's title and the dialog's words (safety-privacy-r9-2).
+ */
+const BARE_PAST_WARNING = /^\s*(keep|open|download|run)( (the |this )?file)?( anyway)?\s*$/;
+const DANGER_CONTEXT = /\b(dangerous|harm(s|ful)?|malicious|malware|virus(es)?|suspicious|unverified|blocked|not commonly downloaded|may not be safe)\b/;
+const SHOWS_PICTURES = /^\s*(download|show|display|load) (the |all )?(pictures|images)\s*$/;
+const MAIL_CONTEXT = /\b(outlook|gmail|thunderbird|evolution|mail|inbox)\b|\bprotect (your )?privacy\b|\bprevented\b/;
 /** Checks of a text's spelling or grammar ("Disable spell check", "Turn off spelling and grammar checking"): no protection. */
 const WRITING_CHECKS = /\b(spell(ing)?|grammar)( and (spelling|grammar))?[ -]?check(s|ing|er)?\b/giu;
 /**
  * Does pressing this control (by its own name: a button, link or menu item, ACTING_CONTROL) go past a security warning
  * or turn a protection off? A link only by its first words (LINK_PAST_WARNING); "Enable Editing" only in protected view
- * (`context`: the window's title and the dialog's words).
+ * (`context`: the app, the window's title and the dialog's words).
  */
 function goesPastWarning(role: string, name: string, context: string): boolean {
   // An answer that backs off ("Thanks anyway", DECLINES) goes past nothing.
   if (!ACTING_CONTROL.test(role) || !/[\p{L}\p{N}]/u.test(name) || declines(name)) return false;
   if (role === "link") return saysWord(LINK_PAST_WARNING, name);
+  const said = plainText(name), around = plainText(context);
+  if ((BARE_PAST_WARNING.test(said) && DANGER_CONTEXT.test(around)) || (SHOWS_PICTURES.test(said) && (MAIL_CONTEXT.test(around) || DANGER_CONTEXT.test(around)))) return true;
   if (/^\s*enable editing\s*$/.test(plainText(name)) && PROTECTED_VIEW.test(plainText(context))) return true;
   // (WEAKENS was written for settings: its checks are a protection's, never spelling's or grammar's.)
   return saysWord(PAST_WARNING, name) || saysWord(WEAKENS, name.replace(WRITING_CHECKS, " "));
@@ -2934,7 +2949,7 @@ export class PolicyEngine {
     // request by its name (audit of 2026-11-11, safety-privacy-r8-1). In a dialog the question quotes it too. After the
     // rules that asked before it, whose reasons and checks against the request stand ("Accept the Risk and Continue",
     // "Save Anyway" in a file's conflict). (A menu item that opens a dialog, "Run Macro…", does nothing yet.)
-    const pastWarning = goesPastWarning(role, name, `${r.window} ${told}`) && !opensDialog(role, name);
+    const pastWarning = goesPastWarning(role, name, `${r.app} ${r.window} ${told}`) && !opensDialog(role, name);
     const warned: Risk = { reason: PAST_WARNING_REASON, about: name, note: `It goes past a warning or turns off a protection.${r.dialog && note ? ` ${note}` : ""}` };
     // Any other answer to a message box (a native one: a page's own dialog is one only by what it asks), or to a dialog
     // that asks a question in a few words (a question mark, or ASKS_IF_SURE: a browser's "Leave site?", "Reload site?",

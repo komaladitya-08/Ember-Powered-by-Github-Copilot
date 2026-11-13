@@ -398,7 +398,9 @@ out loud; **Never** keeps it quiet even for a screen reader, and chosen while Em
 screen reader turned off, at the answer's next sentence). Buttons that send, delete, pay and the like, risky
 shortcuts (Delete, Ctrl+Enter, Alt+F4…) and Enter on such a button are always confirmed, and “Always” is never offered
 for them. So are buttons, links and menu items that go past a security warning or turn a protection off (“Enable
-Macros”, “Keep anyway”, “Proceed to example.com (unsafe)”, “Load Remote Content”), and any answer to a message box or
+Macros”, “Keep anyway”, “Proceed to example.com (unsafe)”, “Load Remote Content”, and the names browsers and mail apps
+give them: “Keep dangerous file”, “Continue to HTTP Site”, “Display images below”, “Show blocked content”, “Turn off
+Shields”), and any answer to a message box or
 to a dialog's question but one that backs off (“Leave page”, “Resend” and “Close tabs” ask; Cancel, Close, “Stay on page”,
 “Remind me later” and No don't, but for No where the dialog asks to save, since it throws the changes away), Enter in such a dialog
 included while no button of it has the keyboard (it presses the dialog's default button; on a Mac always), and on
