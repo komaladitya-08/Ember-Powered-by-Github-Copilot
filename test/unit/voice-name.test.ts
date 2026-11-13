@@ -4,7 +4,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { calledByName, saidWakeItself, stripWake } from "../../app/voice/engine";
+import { calledByName, saidWakeItself, startsAsWake, stripWake } from "../../app/voice/engine";
 import { recognizerPieces, withoutRepeats } from "../../app/voice/sherpa";
 
 describe("calledByName", () => {
@@ -92,6 +92,26 @@ describe("saidWakeItself (what “Hey Ember” spotted in a question's answer wi
   });
   it.each(["Number, can you pass the salt?", "A number. What time is it?", "Hey Amber, what time is it?", "Hey, number.", "Member, open Notepad.", "Hey, remember.", "Umber, open the terminal.", "What time is it?", "And then we can book the flights to Lisbon.", "He remembers.", "Okay, embers.", ""])("doesn't take %j: the room's talk, or a near word", t => {
     expect(saidWakeItself(t)).toBe(false);
+  });
+});
+
+describe("startsAsWake (what the first speech of a wake by “Hey Ember” from idle must start as; voice-roomtalk-x9-2)", () => {
+  const LONG = 3 * 16_000;
+  // As the real models wrote the phrase from idle, as a laptop's microphone did, and the name as some other word.
+  it.each(["Hey, Ember, what time is it?", "Hey ember", "K ember turn on night light", "Ok ember turn a Night light", "K-embler", "K-emer", "He ember", "Tay ember", "Hey Amber, turn on night light.", "Hey, number.",
+    "A number. What time is it?", "Hey, number, remind me to call mum.", "Hey, ever, turn on night light.", "Hey, I'm return on night light.", "Lunch. Hey Ember, open my mail.", "Member, what time is it?",
+    // …and as a noisy microphone had "Okay Ember, turn on night light." written.
+    "Ok ember's turn a nightlight", "K-Ember turn on nightlight", "The K-Ember turn on nightlight."])("takes %j", t => {
+    expect(startsAsWake(t, LONG)).toBe(true);
+  });
+  it.each(["And then we can book the flights to Lisbon.", "So we went to the market.", "What time is the meeting tomorrow?", "Okay, let's go then.", "I think we should leave at five.", "Turn on night light.", "I remember the first time we met.", "In September we went to the market."])("doesn't take %j: the room's talk", t => {
+    expect(startsAsWake(t, LONG)).toBe(false);
+  });
+  it("takes a word or two of a short sound, or nothing made out, as the phrase said alone", () => {
+    expect(startsAsWake("I'm there.", 16_000)).toBe(true);
+    expect(startsAsWake("", LONG)).toBe(true);
+    expect(startsAsWake("…", LONG)).toBe(true);
+    expect(startsAsWake("Thank you.", LONG)).toBe(false);
   });
 });
 

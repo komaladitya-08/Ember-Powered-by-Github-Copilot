@@ -674,12 +674,24 @@ people called today.” and the room's next sentence went out (voice-roomtalk-1)
 there, with the spotter or without it. “Hey Ember” starts a wake as from idle: the window keeps the pre-roll as idle does, so the wake's
 check hears the phrase (it heard only what came after it, took nothing back, and the request lost its start: “Is it?”
 for “Hey Ember, what time is it?”), and there the whole of what was said must also hold the wake phrase as the
-recognizer writes it (“Hey Ember”, or “Ember” at its start), since the window was hearing the room; anything else heard
+recognizer writes it (“Hey Ember”, “Ember” at its start, or the phrase alone as it writes that: “K-embler.”, “He
+ember”; `saidWakeItself`), since the window was hearing the room; anything else heard
 there goes nowhere. A wake the check takes back there opens the answer window again for the time it had left, while
 the question is still up: the window went when the phrase was spotted, and the “Allow.” said after a “Hey Ember.”
-written “Hey, Amber.” went nowhere. A wake by the whole phrase is checked twice everywhere: a moment after the word, and again on the
-whole of what was said with it, since the first check hears nothing now and then (“Hey Amber, what time is it?” said
-in a quiet room's noise went to Copilot as “What time is it?”). (From idle too, “number” after a greeting is the name
+written “Hey, Amber.” went nowhere. A wake by the whole phrase is checked twice, from idle and out of the answer window: a moment
+after the word, and again on the whole of what was said with it, since the first check hears nothing now and then
+(“Hey Amber, what time is it?” said in a quiet room's noise went to Copilot as “What time is it?”). From idle that
+second check also wants the speech to start as the wake phrase does, however the recognizer wrote it (“Hey ember…”,
+“K ember turn on…”, “Hey Amber, turn on…”, “Hey, number.”, “Hey, ever, turn on…”, or a word or two of a short sound
+for the phrase said alone: `startsAsWake`): talk that starts as none of these (“And then we can book the flights to
+Lisbon.”) was a wake's request whenever the spotter fired on it, and opened a conversation (voice-roomtalk-x9-2). A wake
+whose first check wrote the phrase itself (“Hey ember what time”) is not taken back for a near word in the whole (a
+far, muffled real wake came out “Hey, Amber, what time is it?” there), except out of the answer window. The
+second check doesn't run for a cut-in on Ember's own speech or a wake said over a follow-up window, which have rules
+of their own (`CUT_IN_WAKE`, `wakeOverFollowUp`), nor with `verifyWake: false`. A wake by the bare name is judged on
+the whole of what was said before it shows at all, and from idle it still takes the recognizer's near words where the
+words go on as to Ember (“Number, can you…”, “Member, what…”, “Amber, open…”), as real microphones had the name
+written. (From idle too, “number” after a greeting is the name
 only where the phrase ends there, a pause is written after it or a request's first word follows, as a laptop's
 microphone had “Hey Ember” written: “A number. What time is it?”, “Hey, number, remind me to call mum.”; “A number of
 people called today.” and “A number, of course, …” are never a wake.)

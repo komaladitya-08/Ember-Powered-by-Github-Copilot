@@ -2035,6 +2035,62 @@ describe("the wake check", () => {
     }
   });
 
+  it("takes “Hey Ember” back from idle when what was said starts as no wake phrase at all, sends nothing of it and opens no conversation (voice-roomtalk-x9-2)", () => {
+    // The spotter's own false alarm on the room's talk: no near word in it, so no check took it back, the sentence went
+    // to Copilot as a wake's request and the next one in the conversation that opened.
+    for (const whole of ["And then we can book the flights to Lisbon.", "So we went to the market.", "What time is the meeting tomorrow?", "Okay, let's go then."]) {
+      const events: VoiceEvent[] = [];
+      const c = { t: 0 };
+      const e = new VoiceEngine(fake(["", whole, "And then we can book the flights to Lisbon."]), ev => events.push(ev), { now: () => c.t, conversation: true });
+      e.feed(frame(0));
+      c.t += 32; e.feed(frame(1));
+      for (let i = 0; i < 60; i++) { c.t += 32; e.feed(frame(0, true)); }
+      for (let i = 0; i < 60; i++) { c.t += 32; e.feed(frame(0)); }
+      for (let i = 0; i < 3; i++) { c.t += 32; e.feed(frame(0, true)); }
+      for (let i = 0; i < 60; i++) { c.t += 32; e.feed(frame(0)); }
+      expect(events.filter(ev => ev.type !== "speech"), whole).toEqual([
+        { type: "wake", keyword: "hey_ember" },
+        { type: "listening", on: true, reason: "wake", window: "wake" },
+        { type: "rejected", keyword: "hey_ember", reason: "check", heard: whole },
+        { type: "listening", on: false, reason: "rejected", window: "wake" },
+      ]);
+      expect(e.listening).toBe(false);
+    }
+  });
+
+  it("still takes “Hey Ember” from idle however the recognizer wrote the phrase at the start, and the phrase said alone as anything short (voice-roomtalk-x9-2)", () => {
+    // As the real models wrote 460 wakes from idle, as a laptop's microphone did, and the phrase alone out of quiet.
+    for (const [whole, request, frames] of [
+      ["Hey, ember, what time is it?", "What time is it?", 60], ["K ember turn on night light", "Turn on night light", 60], ["Tay ember", null, 20], ["K-embler", "K-embler", 20],
+      ["He ember", null, 20], ["Hey, ever, turn on night light.", "Turn on night light.", 60], ["Hey, number.", null, 20], ["Lunch. Hey Ember, open my mail.", "Open my mail.", 60],
+      ["I'm there.", "I'm there.", 20], ["", null, 20],
+    ] as const) {
+      const events: VoiceEvent[] = [];
+      const c = { t: 0 };
+      const e = new VoiceEngine(fake(["", whole]), ev => events.push(ev), { now: () => c.t });
+      e.feed(frame(0));
+      c.t += 32; e.feed(frame(1));
+      for (let i = 0; i < frames; i++) { c.t += 32; e.feed(frame(0, true)); }
+      for (let i = 0; i < 20; i++) { c.t += 32; e.feed(frame(0)); }
+      expect(events.filter(ev => ev.type === "rejected"), whole).toEqual([]);
+      expect(events.flatMap(ev => (ev.type === "utterance" ? [ev.text] : [])), whole).toEqual(request ? [request] : []);
+    }
+  });
+
+  it("keeps a wake from idle whose check, a moment after the word, wrote “Hey Ember” itself, though the whole came out “Hey, Amber, …” (voice-roomtalk-x9-1)", () => {
+    // A far, muffled "Hey Ember, what time is it?" on the real models: the check wrote "Hey ember what time", the whole
+    // "Hey, Amber, what time is it?", and the second check took the real wake back (1 of 144 such clips, on each build).
+    const events: VoiceEvent[] = [];
+    const c = { t: 0 };
+    const e = new VoiceEngine(fake(["Hey ember what time", "Hey, Amber, what time is it?"]), ev => events.push(ev), { now: () => c.t });
+    e.feed(frame(0));
+    c.t += 32; e.feed(frame(1));
+    for (let i = 0; i < 3; i++) { c.t += 32; e.feed(frame(0, true)); }
+    for (let i = 0; i < 20; i++) { c.t += 32; e.feed(frame(0)); }
+    expect(events.filter(ev => ev.type === "rejected")).toEqual([]);
+    expect(events.flatMap(ev => (ev.type === "utterance" ? [ev.text] : []))).toEqual(["What time is it?"]);
+  });
+
   it("still takes “Hey Ember” as a laptop's microphone has it written, “Hey, number, …” before any request, from idle (voice-roomtalk-x9-1)", () => {
     // The check a moment after the word hears the start of the request cut anywhere ("Hey, number, re"): it takes back
     // only what the whole would be taken back for, and the whole decides by how the words went on.
@@ -2743,7 +2799,7 @@ describe("whose a spoken answer is (second review of the voice lane, 2026-11-12)
   describe("right after Ember reads a question out (V2-S1, voice-listening-r9-1)", () => {
     /** A video, quiet between its sentences, says "Okay." (0.4 s) `gap` ms after Ember's voice: in the speakers' stream and the microphone alike. */
     const videoSays = (gap: number, o: { bed?: boolean; mine?: boolean; conversation?: boolean } = {}) => {
-      const s = scene({ 5: "Okay.", 6: "What time is it?" }, { speakers: true, conversation: o.conversation });
+      const s = scene({ 5: "Okay.", 6: "Hey Ember, what time is it?" }, { speakers: true, conversation: o.conversation });
       const bedMic = () => mic(0, o.bed ? 0.002 : 0), bedOut = () => out(o.bed ? 0.004 : 0);
       s.run(100, bedMic, bedOut);
       if (o.conversation) {
@@ -2786,7 +2842,7 @@ describe("whose a spoken answer is (second review of the voice lane, 2026-11-12)
     it("doesn't take Ember's own voice, hushed when the user cuts in, for other sound: what they go on to say is heard", () => {
       // A conversation over nothing else: the user talks over Ember, main hushes it, and its last sound leaves the stream
       // a moment after the cut-in. Dated from the cut-in, that sound was "other sound" for the 1.5 s after it.
-      const s = scene({ 5: "Open my mail please.", 6: "What time is it?" }, { speakers: true, conversation: true });
+      const s = scene({ 5: "Open my mail please.", 6: "Hey Ember, what time is it?" }, { speakers: true, conversation: true });
       s.run(100);
       for (let i = 0; i < 30; i++) s.run(1, () => mic(6, 0.05, i === 10 ? 2 : 0));
       s.run(40);
@@ -2814,7 +2870,7 @@ describe("whose a spoken answer is (second review of the voice lane, 2026-11-12)
    * `conversations`: they are on (the default), so a wake's request would open one.
    */
   const waiting = (words: Record<number, string>, where: Where, o: { speakers?: boolean; otherSound?: boolean | null; conversations?: boolean } = { speakers: true }) => {
-    const s = scene({ 9: "What time is it?", ...words }, { ...o, conversation: where === "conversation" || !!o.conversations });
+    const s = scene({ 9: "Hey Ember, what time is it?", ...words }, { ...o, conversation: where === "conversation" || !!o.conversations });
     s.run(100);
     if (where !== "answer") {
       for (let i = 0; i < 30; i++) s.run(1, () => mic(9, 0.05, i === 10 ? 2 : 0));
@@ -3127,6 +3183,14 @@ describe("whose a spoken answer is (second review of the voice lane, 2026-11-12)
         // (The rest of a short sentence taken back is the window's like any talk in it: it may say once how to answer.)
         expect(s.heard().filter(h => h !== "unclear"), first).toEqual(["wake", "rejected (check)", "Allow. | answer"]);
       }
+    });
+
+    it("still wants the whole to hold the wake phrase itself there, whatever the check a moment after the word wrote (voice-roomtalk-x9-1)", () => {
+      const s = waiting({ 5: "Hey, Amber, what time is it?" }, "answer", { otherSound: false, conversations: true });
+      const b = (s.e as unknown as { backend: VoiceBackend }).backend, transcribe = b.transcribe;
+      b.transcribe = (audio, purpose) => (purpose === "keyword" ? "Hey ember what time" : transcribe(audio, purpose));
+      says(s, 5, 2, "user");
+      expect(s.heard().filter(h => h !== "unclear")).toEqual(["wake", "rejected (check)"]);
     });
 
     it("opens no window again once the question has gone, or the window's time has (voice-roomtalk-x9-3)", () => {

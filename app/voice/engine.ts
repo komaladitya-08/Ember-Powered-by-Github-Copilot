@@ -279,6 +279,26 @@ export function saidWakeItself(transcript: string): boolean {
 }
 const WAKE_ALONE = /^\W*(?:hey|hi|he|ok|okay|k|hay|pay|pey)[\s,.!-]*emb?[a-z]{0,2}er\W*$/i;
 
+/**
+ * Does the first speech of a wake by the whole phrase, from idle, start as the wake phrase does: the phrase or the name
+ * as the recognizer writes them, also with a near word for the name or as an everyday word ("Hey ember…", "K ember turn
+ * on…", "Tay ember", "Hey Amber, turn on…", "Hey, number.", "A number. What time…": WAKE_IN_FIRST_WORDS, calledByName,
+ * NAME_ALONE, WAKE_ALONE), a greeting with the name as some other word ("Hey, ever, turn on…", "Hey, I'm return on…":
+ * GREETING_IN_FIRST_WORDS), or a word or two of a short sound, where the recognizer makes anything of the phrase said
+ * alone (nameOnItsOwn), or no word at all (nothing to send)? The pre-roll holds the phrase, so the recognizer has it at
+ * the start of what it writes: on the real models every one of 205 wakes by the phrase from idle did, on WebAssembly
+ * and on the C API alike (8 voices: 48 clean, 64 with a pause of 0.3 to 2 s before the request, 93 in noise at 10 and 5
+ * dB or far and muffled; without NAME_IN_FIRST_WORDS, 3 of those in noise didn't). Speech that starts as none of these ("And then we can book the flights to Lisbon.", "So we went to the market.") is the
+ * room's, whatever the spotter made of it (voice-roomtalk-x9-2).
+ */
+export function startsAsWake(transcript: string, samples: number): boolean {
+  return WAKE_IN_FIRST_WORDS.test(transcript) || GREETING_IN_FIRST_WORDS.test(transcript) || NAME_IN_FIRST_WORDS.test(transcript) || calledByName(transcript) || NAME_ALONE.test(transcript)
+    || WAKE_ALONE.test(transcript) || nameOnItsOwn(transcript, samples) || !/[\p{L}\p{N}]/u.test(transcript);
+}
+
+/** The name itself in the first four words, joined to a letter or with an ending too: "K-Ember turn on…", "The K-Ember turn…", "Ok ember's turn a…" (a poor microphone's "Okay Ember, turn on…"). */
+const NAME_IN_FIRST_WORDS = /^\W*(?:\S+\s+){0,3}?(?:\S*[^a-z\s])?(?:ember|emmer)(?![a-rt-z])/i;
+
 /** The first word of what was heard that calledByName may take for the name. */
 const NAME_LIKE = /\b(?:hey|hay|pay|pey)?(?:[aeu]mber|emmer|anber|embre|number|member|emb(?:ra|ro|o|a))\b/i;
 /** The name, or what it may be written as, anywhere in what was heard: on its own or in a longer word ("Peyember", "remember", "number"). */
@@ -769,12 +789,13 @@ const FOLLOW_LOUD = 31.6;
  * "listening" event) until the whole of what was said, once the speaker paused, starts with the name (handleSegment);
  * `overFollowUp`: a wake said in a follow-up window (wakeOverFollowUp); `fromAnswer`: a wake by "Hey Ember" spotted in
  * a question's answer window, where the room is heard (its first speech must hold the wake phrase itself), and when
- * that window would have ended (taken back, it opens again till then: backToAnswer). A window of `reason` "conversation" never closes
+ * that window would have ended (taken back, it opens again till then: backToAnswer); `heardWake`: the wake's check, a
+ * moment after the word, wrote the wake phrase itself (saidWakeItself). A window of `reason` "conversation" never closes
  * on a request: `until` moves on with everything said, spoken or at work (see CONVERSATION_IDLE_MS).
  */
 type Mode =
   | { kind: "idle" }
-  | { kind: "listening"; until: number; ms: number; heardSpeech: boolean; first: boolean; reason: ListeningWindow; checkAt: number | null; keyword: string; afterQuestion?: boolean; bargeIn?: boolean; held?: boolean; announced?: boolean; overFollowUp?: boolean; fromAnswer?: number; maybeAmber?: boolean };
+  | { kind: "listening"; until: number; ms: number; heardSpeech: boolean; first: boolean; reason: ListeningWindow; checkAt: number | null; keyword: string; afterQuestion?: boolean; bargeIn?: boolean; held?: boolean; announced?: boolean; overFollowUp?: boolean; fromAnswer?: number; maybeAmber?: boolean; heardWake?: boolean };
 
 /**
  * A spotted stop (or "Hey Ember" while Ember speaks) being checked: see VoiceEngine.pendingStop. `teaching`: the name
@@ -1473,6 +1494,8 @@ export class VoiceEngine {
         this.endListening("rejected");
         this.backToAnswer(answerUntil);
       } else {
+        // (The phrase itself, written here: what the whole of it comes out as later can't make it a near miss, handleSegment.)
+        if (heard && saidWakeItself(heard)) this.mode.heardWake = true;
         this.replayPreRoll();
       }
       return;
@@ -2186,16 +2209,21 @@ export class VoiceEngine {
       }
     }
     if (this.mode.first && this.mode.reason === "wake" && this.mode.announced !== false && !this.mode.bargeIn && !this.mode.overFollowUp && this.o.verifyWake !== false
-      && (nearMiss(heard) || (this.mode.fromAnswer && !saidWakeItself(heard))) && !isStop(stripWake(heard, true))) {
+      && ((nearMiss(heard) && !(this.mode.heardWake && this.mode.fromAnswer === undefined)) || (this.mode.fromAnswer !== undefined ? !saidWakeItself(heard) : !startsAsWake(heard, clip.audio.length))) && !isStop(stripWake(heard, true))) {
       // The wake's check again, on the whole of what was said with the phrase. The check itself runs a moment after the
       // word, on the pre-roll, and takes back only what it heard clearly: it heard nothing in "Hey Amber, what time is
       // it?" said in a quiet room's noise (the suite's own near-miss clip, half a second into the microphone's audio) and
       // "A number." in "A number of people called today.", and let both by; the whole held no name, and went to Copilot
       // as a request, with the room's next sentence in the conversation that opened (voice-roomtalk-1). A wake by the
-      // bare name is judged whole below, a cut-in and a wake over a follow-up by their own rules.
+      // bare name is judged whole below, a cut-in and a wake over a follow-up by their own rules. (Not where the check
+      // itself wrote the wake phrase: the recognizer read the same words twice, and "Hey ember what time", then "Hey,
+      // Amber, what time is it?" for the whole, was a far, muffled real wake taken back: voice-roomtalk-x9-1.)
       // And where the phrase was spotted in a question's answer window, which hears the room: only speech that holds
       // "Hey Ember", or starts with "Ember", as the recognizer writes the name itself, is a wake's (saidWakeItself:
       // "Number, can you pass the salt?" passes the check as the name written as a word).
+      // From idle the first speech must at least start as the wake phrase does, however the recognizer wrote it
+      // (startsAsWake): with no near word in it there was nothing to take back, and "And then we can book the flights to
+      // Lisbon." was a wake's request whenever the spotter fired on it, and opened a conversation (voice-roomtalk-x9-2).
       const answerUntil = this.mode.fromAnswer;
       this.emit({ type: "rejected", keyword: this.mode.keyword, reason: "check", heard });
       this.endListening("rejected");

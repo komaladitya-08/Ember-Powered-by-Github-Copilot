@@ -997,7 +997,7 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1" && process.env.EM
     expect(own).toBe(1);
   }, 300_000);
 
-  it("sends nothing of the room's talk that starts like the name from a question's answer window or from idle, and opens no conversation on it, though the spotter takes it for the name (V2-S3, voice-listening-r9-3, voice-roomtalk-1)", () => {
+  it("sends nothing of the room's talk that starts like the name from a question's answer window or from idle, and opens no conversation on it, though the spotter takes it for the name (V2-S3, voice-listening-r9-3, voice-roomtalk-1, voice-roomtalk-x9-2)", () => {
     // Conversations are on, as by default; the microphone only. Someone says a sentence that never names Ember, and
     // another after it: while a question is up and its answer window open, or with Ember idle.
     const next = speak("And then we can book the flights to Lisbon.", 3, 0.1);
@@ -1046,6 +1046,10 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1" && process.env.EM
       const talk = speak("A number of people called today.", sid, 0.1);
       leaked.push(...left(room(talk, "idle"), `A number of people called today. (voice ${sid}) from idle`));
       for (const alarm of ["ember", "hey_ember"] as const) leaked.push(...left(room(talk, "idle", alarm), `A number of people called today. (voice ${sid}) from idle, spotted as ${alarm}`));
+      // And talk that starts as no wake phrase at all, where the spotter takes it for the whole phrase from idle: there
+      // was no near word in it to take back, so it went to Copilot, and the next sentence in the conversation that opened
+      // (4 runs of 4 before; voice-roomtalk-x9-2).
+      leaked.push(...left(room(speak("So we went to the market on Sunday.", sid, 0.1), "idle", "hey_ember"), `So we went to the market on Sunday. (voice ${sid}) from idle, spotted as hey_ember`));
     }
     // "Hey Amber, what time is it?" (the suite's near-miss clip) in the room's noise: the spotter takes it for the phrase,
     // and the wake's check, a moment after the word, hears nothing in it. (Before, "What time is it?" went to Copilot
