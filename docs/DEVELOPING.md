@@ -616,10 +616,30 @@ it builds on:
   an MCP tool silently replaces an Ember tool of the same name. `verifySessionTools` accepts an extension tool only as
   that MCP tool and checks its description and schema against the pin. With no extension tool the session is today's
   exactly.
-- **Checked at every call, not only at load.** A server can change a tool mid-session (`notifications/tools/list_changed`),
-  so `verifySessionTools` binds the gate to the session's live tool list, and every call compares what the model is
-  shown now with the pin; a tool that differs is denied and marked changed for good (off until the user agrees again).
-  A session never bound, or whose list can't be read, denies every extension call.
+- **Checked as the session loads, when a server changes its list, after each call and at every call.** The pin
+  decides what the model is shown, not only which calls run (integrations-r9-1: compared only at calls, a
+  description nobody agreed to stayed in every request of the conversation while Home said “Ready”).
+  `verifySessionTools` binds the gate to the session (its live tool list, the switch that disables one server in it,
+  and a server's own `tools/list` through `session.rpc.mcp.listTools`), then waits for the pins' check. A tool that
+  differs from its pin is marked changed for good (off until the user agrees again; Home says “Changed since you
+  agreed” and offers **Review tools**), audited (`phase: "changed"`, never its text), and its server is disabled in
+  that session (`session.rpc.mcp.disable`); `generation` moves, so the conversation reloads between turns with the
+  server's other tools.
+  - *As it loads:* a server that lists one description to Ember's own checks and another to the conversation is out
+    before the session's first request.
+  - *When a server says its list changed* (`mcp.tools.list_changed`), and *after each of its calls* before the result
+    goes back: Ember asks that server, through the session, for its list and compares each admitted tool with its
+    pin whole, hints too. The runtime's own metadata can't be used for this: measured on the bundled runtime it still
+    held the old text 300 ms after the notification while idle, and the new text only in the request that followed,
+    which is when the model reads it. After a call because the notification and the result's hook reach Ember in
+    either order (the hook first in 1 run of 14, and the same turn's next request carried the new text). An announced
+    change whose list can't be had takes the server out of the session too (fail closed).
+  - The session's hooks (before and after every tool, and before a new request) wait for a comparison under way, so
+    the runtime builds no request meanwhile. What a server changed mid-session may have been read all the same (a
+    change announced a few milliseconds before a request is built can't be held back), so the conversation is
+    tainted: every later extension call asks.
+  - *At every call:* what the model is shown now is compared with the pin again; a tool that differs is denied and
+    turned off the same way. A session never bound, or whose list can't be read, denies every extension call.
 - **Ember's gate decides every call** (`gate.ts`, from `onPreToolUse`): off (the admin's `features.extensions`,
   LOCKDOWN, the user's switch or consent `FEATURE_CONSENT_VERSION.extensions`), stopped, disabled, changed, shown
   differently, or refused this turn: deny. A read-only tool in an agreed item, with no injected text seen: allow.
@@ -628,10 +648,11 @@ it builds on:
   arguments there. Anything else: the Confirmer asks every time ("Use “post_message” from Slack? With "{…}"."), with
   Allow and Not now, never Always. A yes counts only if the gate still allows the call when it comes. Every decision,
   answer and result is an `extension` audit entry, with sizes only.
-- **Hints changed mid-session.** The runtime's tool list has no hints, so a change of hints alone (`readOnlyHint` to
-  `destructiveHint`) can't be compared with the pin during a session. When a server sends `tools/list_changed`
-  (`mcp.tools.list_changed`), every tool of that server asks for the rest of the session; the next start's check
-  (`refresh()`) re-pins nothing and turns the changed tool off.
+- **Hints changed mid-session.** The runtime's tool list has no hints, so what the model is shown can't tell a
+  change of hints alone (`readOnlyHint` to `destructiveHint`); the server's own list, asked when it sends
+  `tools/list_changed` (`mcp.tools.list_changed`) and after each call, can, and such a tool is turned off as above.
+  Every tool of a server that sent `tools/list_changed` also asks for the rest of the session; the next start's
+  check (`refresh()`) re-pins nothing and turns a changed tool off.
 - **Failures are untrusted too.** The SDK can't rewrite a failed call's text, so `onPostToolUseFailure` adds Ember's
   note that it is untrusted data, audits its size, and taints the conversation (any extension failure).
 - **Taint lasts the conversation**, across reconnects; it ends when the conversation is forgotten.

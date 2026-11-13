@@ -233,8 +233,12 @@ docs/DEVELOPING.md "Extensions: the runtime and the gate" is the design; app/mai
 - **Results** are rewritten by `wrapResult()` (untrusted, `<` escaped, capped, no images) and scanned by injection.ts.
   Failures can't be rewritten: `onPostToolUseFailure` adds `failureNote()` and taints the conversation. Taint lives on
   the service for the whole conversation (reconnects included), never on one session.
-- **Check pins at every call**, against the session's live tool list (`bind`), not only at load: a server can change
-  a tool mid-session. A session without a live list denies every call.
+- **A pin decides what the model is shown, not only which calls run.** Check pins as the session loads
+  (`verify`, awaited by `verifySessionTools`), when a server says its list changed and after each of its calls
+  (its own `tools/list` through the session, `served`: the runtime's metadata follows only at its next request), and
+  at every call against the session's live tool list (`bind`). A tool that differs is marked changed, audited without
+  its text, and its server disabled in that session (`withdraw`); the session's hooks wait for a comparison under
+  way (`settled`). A session without a live list denies every call.
 - **Read-only** is `isReadOnly()` (readOnlyHint, and neither destructiveHint nor openWorldHint) on a stdio server only;
   a remote server's tools always ask, and so do a server's tools once it changes its tool list mid-session.
 - **The runtime's TMPDIR** is `copilot-tmp/` in the data folder (runtime-temp.ts, 0700, emptied at connect and
