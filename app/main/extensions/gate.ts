@@ -9,6 +9,8 @@
  *   in a task no injected text has tainted: allow, and audit.
  * - Anything else (changing, destructive, open-world, unknown): ask every time, never "Always", with a question Ember
  *   builds from the item's name, the tool's name and a quoted, capped summary of the arguments, never model prose.
+ * - In Autopilot (PLAN.md §2 "Approvals", owner decision of 2026-11-12) such a call is announced instead of asked, by
+ *   its extension's name only; every deny above stays a deny.
  *
  * Results are untrusted data: wrapped in `<extension_result untrusted="true">`, `<` escaped, cut to a bounded size, and
  * scanned by injection.ts; a flagged result taints the conversation, after which every call asks.
@@ -17,9 +19,10 @@
 import type { Question } from "../agent/confirm";
 import { quoteUntrusted } from "../perception/elements";
 import { INJECTION_NOTE } from "../perception/injection";
+import { AUTOPILOT_WORDS } from "../policy/policy";
 import { canonical, isReadOnly, type PinnedTool } from "./pin";
 
-export type GateVerdict = "allow" | "ask" | "deny";
+export type GateVerdict = "allow" | "announce" | "ask" | "deny";
 
 /** Everything the gate looks at for one call. */
 export interface GateInput {
@@ -44,6 +47,11 @@ export interface GateInput {
   remote?: boolean;
   /** Its server changed its tool list this session: its hints can't be checked any more, so even read-only tools ask. */
   hintsStale?: boolean;
+  /**
+   * Autopilot is the approval mode in force (policy/autonomy.ts approvalInputs().autopilot): a call that would ask is
+   * announced instead (`announce`). Nothing else changes: off, stopped, changed and refused still deny.
+   */
+  autopilot?: boolean;
 }
 
 /** The decision for one call, and why (the reason goes to the model and the audit log, in Ember's own words). */
@@ -55,7 +63,15 @@ export function classify(g: GateInput): { verdict: GateVerdict; reason: string }
   if (g.tool.changed || !g.shownAsPinned) return { verdict: "deny", reason: "This tool changed since the user agreed to it. It stays off until they agree again in Ember's settings." };
   if (g.refused) return { verdict: "deny", reason: "The user said no to this tool. Don't try it again or try another way." };
   if (isReadOnly(g.tool) && !g.tainted && !g.remote && !g.hintsStale) return { verdict: "allow", reason: "read-only" };
-  return { verdict: "ask", reason: g.tainted ? "tainted" : !isReadOnly(g.tool) ? "changes" : g.remote ? "remote" : "hints-changed" };
+  return { verdict: g.autopilot ? "announce" : "ask", reason: g.tainted ? "tainted" : !isReadOnly(g.tool) ? "changes" : g.remote ? "remote" : "hints-changed" };
+}
+
+/**
+ * What Ember says as it uses an extension's tool without asking, in Autopilot: the extension by the name the user
+ * installed and agreed to it under, never the tool's own name or its arguments, which are the server's and the model's.
+ */
+export function gateAnnouncement(extName: string): string {
+  return `Using a tool from ${plainName(extName)}, ${AUTOPILOT_WORDS}`;
 }
 
 /** Characters that reorder or hide text: bidi controls, zero-width marks, the soft hyphen, the byte-order mark. */

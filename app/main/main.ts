@@ -1775,6 +1775,8 @@ function start(): void {
   const extensions = new ExtensionsService({
     dir: path.join(userData, "extensions"), copilotHome: path.join(userData, "copilot"),
     settings, admin: () => policy, client: () => agent?.copilotClient ?? null, confirmer: () => confirmer, audit: () => audit,
+    // Autopilot: a call the gate would ask about is said in the conversation's bubble instead (never unsaid: it asks).
+    autopilot: () => approvalsNow().autopilot, announce: words => agent?.announceUnasked(words) ?? false,
     log: log.child("extensions"), os: platform.os,
     // macOS never runs Ember as plain Node (PLAN.md §2 "Node mode"): no launcher, so no stdio servers there.
     launcher: platform.os === "darwin" ? null : { execPath: process.execPath, script: path.join(__dirname, "mcp-launch.cjs") },

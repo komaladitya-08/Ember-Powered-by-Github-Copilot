@@ -29,7 +29,8 @@ import type { TargetId } from "../../shared/targets";
 import { pendingCommand } from "./pending";
 import { carriedText } from "./carried";
 import { notReviewable, reviewedDecision, type CommandReviewer } from "./review";
-import { AUTOPILOT_RULE, autopilotCommand } from "./autopilot";
+import { AUTOPILOT_LINE, AUTOPILOT_RULE, askedOfFinding, autopilotCommand } from "./autopilot";
+import { AUTOPILOT_WORDS } from "../policy/policy";
 import { classifyCommand } from "./classify";
 import { LINES, decideCommand } from "./decide";
 import { covers, type AutonomyScopes } from "../policy/autonomy";
@@ -968,34 +969,46 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
   const timeoutS = Math.min(MAX_TIMEOUT_S, Math.max(1, Math.round(a.timeoutSeconds ?? DEFAULT_TIMEOUT_S)));
   const release = await slotOn(svc.runner, ctx.signal);
   if (!release) return STOPPED();
+  /**
+   * An announcement with its Stop window (D4.4): `words` in the task's bubble, `says` on the card that counts down in
+   * the command window. True once it ran out unstopped; otherwise the result that ends this call.
+   */
+  const countdown = async (words: string, says: string[]): Promise<true | ToolResultObject> => {
+    const stopId = `ui:cmdstop:${runId}`;
+    const ms = announceTime(svc.window);
+    ctx.presenter.announce(words, stopId, ms);
+    let go = false;
+    try {
+      go = await svc.window.announce(card("announce", [...says, why]), ms, ctx.signal);
+    } catch (err) {
+      ctx.log.warn("commands.announce_failed", { task, err });
+    } finally {
+      ctx.presenter.endAnnouncement(stopId);
+    }
+    if (ctx.isOver()) return STOPPED();
+    if (go) return true;
+    // Its page crashed or the window closed during the countdown: the user didn't stop it (cross-review S2).
+    const unshown = announceGone(svc.window, runId);
+    audit({ phase: "answered", answer: unshown ? "unseen" : "deny", q: "announce" });
+    // The user stopped it: a no, which holds the task to asking from now on (Work without asking too; review of #127).
+    if (!unshown) { ctx.onDeclined?.(); ctx.refusals?.noteCommand(about, "refused"); }
+    return denied(unshown ? UNSHOWN_BEFORE : STOPPED_BEFORE);
+  };
+  // When Autopilot's announcement of this command last ran out unstopped (a remote's gate 2 hears of it on the stamp,
+  // never as a yes); null: none.
+  let announcedAt: number | null = null;
   try {
-    // Step 11: an announcement with its Stop window (D4.4).
+    // Step 11.
     if (d.verdict === "announce" && d.requested) {
-      const stopId = `ui:cmdstop:${runId}`;
-      const ms = announceTime(svc.window);
-      ctx.presenter.announce(d.requested.announce, stopId, ms);
-      let go = false;
-      try {
-        go = await svc.window.announce(card("announce", [...d.says, why]), ms, ctx.signal);
-      } catch (err) {
-        ctx.log.warn("commands.announce_failed", { task, err });
-      } finally {
-        ctx.presenter.endAnnouncement(stopId);
-      }
-      if (ctx.isOver()) return STOPPED();
-      if (!go) {
-        // Its page crashed or the window closed during the countdown: the user didn't stop it (cross-review S2).
-        const unshown = announceGone(svc.window, runId);
-        audit({ phase: "answered", answer: unshown ? "unseen" : "deny", q: "announce" });
-        // The user stopped it: a no, which holds the task to asking from now on (Work without asking too; review of #127).
-        if (!unshown) { ctx.onDeclined?.(); ctx.refusals?.noteCommand(about, "refused"); }
-        return denied(unshown ? UNSHOWN_BEFORE : STOPPED_BEFORE);
-      }
+      const went = await countdown(d.requested.announce, d.says);
+      if (went !== true) return went;
+      if (d.requested.intent === AUTOPILOT_RULE) announcedAt = performance.now();
     }
 
     // Steps 12-14: run (a remote's own check may ask once more), then shape what it printed.
     let rules = d.rules;
     let asked = false;
+    let toldRemote = false;
     for (;;) {
       // Every await above can outlive consent or a switch change. Fail closed on tightening; a new request
       // gets a new decision/card rather than treating an old announcement as approval.
@@ -1005,7 +1018,7 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
       if (live.state !== "on") return denied(`${live.why ?? `Commands are off on ${place}.`} Don't try another way; tell the user in finish_task.`);
       if (svc.binding.id !== target || svc.runner.target !== target) return denied("The command's computer changed. Finish the task saying so.");
       // (Autopilot's announcement stands while Autopilot does: there root alone is no reason to ask, as when it was decided.)
-      const everyAsks = d.requested?.intent === AUTOPILOT_RULE
+      const everyAsks = announcedAt !== null
         ? !ctx.autopilot?.() || (live.askEvery !== null && live.askEvery !== "root")
         : live.askEvery !== null;
       if (svc.mode() === "off" || (approvedAt === null && (everyAsks || svc.userAskEvery() || svc.mode() === "ask"))) {
@@ -1014,7 +1027,7 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
       if (ctx.projectFolderCurrent && !ctx.projectFolderCurrent()) return denied("The chosen command folder changed. Choose it again.");
       const run = await runOnce(ctx, j, {
         runId, shell, cwd, command: a.command, timeoutS, card: card("run", d.verdict === "run" ? [] : [...d.says, why]),
-        stamp: { taskId: task, sha256, verdict: d.verdict === "announce" ? "announce" : d.verdict === "ask" ? "ask" : "run", classes: d.classes, rules, approvedAt },
+        stamp: { taskId: task, sha256, verdict: d.verdict === "announce" ? "announce" : d.verdict === "ask" ? "ask" : "run", classes: d.classes, rules, approvedAt, announcedAt },
       }, pending.started);
       if (run === "stopped") { noteDownloads(ctx, cls); return STOPPED(); }
       if (run === "unseen") { noteDownloads(ctx, cls); return fail(UNSEEN); }
@@ -1027,12 +1040,33 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
         // Gate 2 found more than the PC did: the user sees its own lines, quoted, and says yes once more or not.
         pending.waiting();
         if (ctx.isOver()) { reaskEnded(svc, runId, "stopped"); return STOPPED(); }
-        asked = true;
         const theirs = (exit.remoteSays ?? []).filter(l => typeof l === "string").slice(0, 10).map(l => shownQuote(l));
         // In the card's order (§3.8.4): the remote's own lines come before "You didn't ask for this." and the Windows line.
         const own = [`${binding.label}'s own check also found:`, ...theirs];
         const at = d.says.findIndex(l => l === LINES.unasked || l === LINES.inexact || l === LINES.windows);
         const lines = at < 0 ? [...d.says, ...own] : [...d.says.slice(0, at), ...own, ...d.says.slice(at)];
+        // Autopilot: the remote's own question is announced instead of asked, once, with its lines on a countdown of its
+        // own. Never where its rules say the command would read or print secrets, outlive Stop or can't be told, or
+        // where every command asks there: those go to the card below, as does whatever the remote still wants a yes for
+        // after the announcement (its own administrator's policy holds as the organisation's).
+        const extra = remoteRules(exit);
+        if (!toldRemote && ctx.autopilot?.() && svc.mode() !== "ask" && !svc.userAskEvery() && extra.every(r => askedOfFinding({ rule: r }) === null)) {
+          toldRemote = true;
+          let went: true | ToolResultObject | null = null;
+          try {
+            went = await countdown(`Running a command that ${binding.label}'s own check asked about, ${AUTOPILOT_WORDS}`, [...lines.filter(l => l !== AUTOPILOT_LINE), AUTOPILOT_LINE]);
+          } finally {
+            // No run is coming for this tab: it says so instead of waiting for one.
+            if (went !== true) reaskEnded(svc, runId, ctx.isOver() ? "stopped" : "no");
+          }
+          if (went !== true) return went;
+          audit({ phase: "answered", answer: "announced", q: "remote", mode: "autopilot" });
+          announcedAt = performance.now();
+          rules = [...new Set([...rules, ...extra])];
+          runId = newRunId();
+          continue;
+        }
+        asked = true;
         let answer: "once" | "no" | "expired" | "stopped" = "stopped";
         try {
           answer = await askCard(lines, "remote",
@@ -1088,7 +1122,7 @@ interface RunOutcome { exit: RunExit; out: OutputKeeper; tracker: SecretTracker;
  */
 async function runOnce(ctx: CommandFlowContext, j: CommandJudge, o: {
   runId: string; shell: ShellId; cwd: string; command: string; timeoutS: number; card: CommandCard;
-  stamp: { taskId: string; sha256: string; verdict: "run" | "announce" | "ask"; classes: CommandDecision["classes"]; rules: string[]; approvedAt: number | null };
+  stamp: { taskId: string; sha256: string; verdict: "run" | "announce" | "ask"; classes: CommandDecision["classes"]; rules: string[]; approvedAt: number | null; announcedAt?: number | null };
 }, started: () => void): Promise<RunOutcome | "stopped" | "unseen"> {
   if (ctx.isOver()) return "stopped";
   const svc = ctx.service;
@@ -1098,6 +1132,7 @@ async function runOnce(ctx: CommandFlowContext, j: CommandJudge, o: {
     stamp: {
       taskId: o.stamp.taskId, sha256: o.stamp.sha256, verdict: o.stamp.verdict, classes: o.stamp.classes, rules: o.stamp.rules,
       approval: o.stamp.approvedAt === null ? null : { ageMs: Math.max(0, Math.round(performance.now() - o.stamp.approvedAt)) },
+      ...(typeof o.stamp.announcedAt === "number" ? { announced: { ageMs: Math.max(0, Math.round(performance.now() - o.stamp.announcedAt)) } } : {}),
     },
   };
   started();

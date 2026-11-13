@@ -49,6 +49,14 @@ export const autonomyPermitted = (admin: AutonomyAdmin | null | undefined): bool
   !admin || (admin.features.autonomy !== false && admin.allowGrants !== false && !admin.confirmEveryAction && admin.features.actions !== false);
 
 /**
+ * May Autopilot be in force under this administrator's policy at all: its switches for a mode, and its cap? What a
+ * computer reached over SSH asks of its own policy before it lets the PC's Autopilot stand in for the user's yes
+ * (app/remote/gate.ts): that policy holds there as the organisation's.
+ */
+export const autopilotPermitted = (admin: AutonomyAdmin | null | undefined): boolean =>
+  autonomyPermitted(admin) && (admin?.approvals?.maxMode ?? "autopilot") === "autopilot";
+
+/**
  * The modes Home offers a row and a card for, and the only ones its choice may name (chooseMode). Autopilot joins
  * once it is built.
  */

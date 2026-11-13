@@ -26,6 +26,7 @@ import type { DesktopController } from "./desktop";
 import type { ChildPolicy } from "./desktop-ipc";
 import { IpcError } from "./desktop-ipc";
 import { gateCommand, GATE_WORDS } from "./gate";
+import { autopilotPermitted } from "../main/policy/autonomy";
 import { startLiveness, type Liveness } from "./liveness";
 import type { LockResult } from "./lock";
 import type { AgentOs } from "./places";
@@ -341,6 +342,9 @@ export class Server {
       neverLook,
       actionsAllowed: c.features.actions !== false,
       confirmEveryAction: c.confirmEveryAction,
+      // This computer's own policy (its switches for a mode and its cap), and neither administrator asking for a click
+      // before every action or forbidding "Always" or acting.
+      autopilotOk: autopilotPermitted(this.d.policy.current.policy) && !c.confirmEveryAction && c.allowGrants !== false && c.features.actions !== false,
       ...(c.maxActionsPerMinute !== undefined ? { maxActionsPerMinute: c.maxActionsPerMinute } : {}),
       screenImages: c.features.screenImages !== false,
     };
@@ -423,6 +427,7 @@ export class Server {
     const g = await gateCommand({
       spec: a.spec, epoch: a.epoch, agentEpoch: this.epoch, fresh: !!this.liveness?.fresh(), targetId: null,
       mode: commandMode(d.policy.current, "ssh"), facts, classify: d.classify, inspect: d.inspect,
+      autopilotOk: autopilotPermitted(d.policy.current.policy),
       ...(d.readScript ? { readScript: d.readScript } : {}), task: this.taskMemory(a.spec.taskId), now: d.now,
     });
     const { spec } = a;

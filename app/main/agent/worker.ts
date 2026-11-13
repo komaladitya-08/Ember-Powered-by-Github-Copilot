@@ -1299,7 +1299,7 @@ export class Worker {
   /** The task's folder and downloads on its target, and whether a command is running (commands/flow.ts). */
   private readonly commandState: CommandFlowContext["state"] = { cwd: null, downloaded: new Set<string>(), running: false };
   /** The latest decision authorize() let through (gate 1's stamp for a remote step, onAuthorized). */
-  private lastAuth: { at: number; verdict: "allow" | "confirm"; approvedAt: number | null } | null = null;
+  private lastAuth: { at: number; verdict: "allow" | "confirm"; approvedAt: number | null; announced?: true } | null = null;
   /**
    * A step Work without asking let through (authorize, authorizeCells): its decisions' audit entries and its
    * announcement, held until the look right before acting has passed (act, system, withCursor: goAhead). So a step a
@@ -4700,6 +4700,7 @@ export class Worker {
       element: element ? { role: element.role, name: element.name } : null,
       ...(req.value !== undefined ? { valueSha256: sha256Hex(req.value) } : {}),
       verdict: auth.verdict, approval: auth.approvedAt !== null ? { given: true } : null,
+      ...(auth.announced ? { announced: true as const } : {}),
       ageMs: Math.max(0, Math.round(now - (auth.approvedAt ?? auth.at))),
     });
   }
@@ -4856,7 +4857,8 @@ export class Worker {
     }
     const decidedAt = performance.now();
     if (decision.verdict === "allow" || sessionAllowed) {
-      this.lastAuth = { at: decidedAt, verdict: sessionAllowed ? "confirm" : "allow", approvedAt: null };
+      // (A step Autopilot announced instead of asking says so on a remote's stamp: gate 2 wanted a yes for it.)
+      this.lastAuth = { at: decidedAt, verdict: sessionAllowed ? "confirm" : "allow", approvedAt: null, ...(decision.mode === "autopilot" ? { announced: true as const } : {}) };
       // Going ahead without asking: Ember says what it is doing, in the bubble and on the task's card, once the look right
       // before acting has passed (goAhead).
       return null;

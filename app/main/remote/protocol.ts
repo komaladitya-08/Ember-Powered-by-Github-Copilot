@@ -311,6 +311,7 @@ const ActStampSchema = z.object({
   valueSha256: sha256Hex.optional(),
   verdict: z.enum(["allow", "confirm"]),
   approval: z.object({ given: z.literal(true) }).strict().nullable(),
+  announced: z.literal(true).optional(),
   ageMs: ms,
 }).strict();
 
@@ -414,6 +415,7 @@ const CommandStampSchema = z.object({
   classes: z.array(DANGER).max(7),
   rules: z.array(plain(CAPS.str.app)).max(CAPS.paths),
   approval: z.object({ ageMs: ms }).strict().nullable(),
+  announced: z.object({ ageMs: ms }).strict().optional(),
 }).strict();
 
 const RunSpecSchema = z.object({

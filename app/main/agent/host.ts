@@ -1369,6 +1369,21 @@ export class AgentHost {
    * notice gives the bubble back itself after this long (ten times its usual time with More time to read and answer):
    * held that long, and the 30 seconds count from then (cross-review X4).
    */
+  /**
+   * What Ember does without asking outside a task, said in the conversation's bubble with its "Without asking" tag: the
+   * extensions gate's announcement in Autopilot (extensions/gate.ts gateAnnouncement: Ember's own words, never a
+   * model's). Whether it was said: the gate asks instead when it wasn't.
+   */
+  announceUnasked(words: string): boolean {
+    try {
+      this.presenter.workedWithoutAsking(words);
+      return true;
+    } catch (err) {
+      this.o.log.warn("agent.announce_failed", { err });
+      return false;
+    }
+  }
+
   claimBubble(o: { pin?: boolean; ms?: number } = {}): void {
     this.owner.claim(this.mainBubble);
     this.presenter.letGo();

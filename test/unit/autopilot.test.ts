@@ -10,7 +10,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { AUTOPILOT_REASON, AUTOPILOT_WORDS, PolicyEngine, type ActionRequest, type Decision, type PolicyInputs } from "../../app/main/policy/policy";
-import { ALL_SCOPES, approvalInputs } from "../../app/main/policy/autonomy";
+import { ALL_SCOPES, approvalInputs, autopilotPermitted } from "../../app/main/policy/autonomy";
 import { Worker, type TaskSpec, type WorkerDeps } from "../../app/main/agent/worker";
 import type { CommandFlowContext } from "../../app/main/commands/flow";
 import { Presenter } from "../../app/main/agent/presenter";
@@ -121,6 +121,16 @@ describe("a question about a step, in Autopilot (modes-D1)", () => {
     expect(interactive().autopilotStep(r, held)).toBe(held);
   });
 
+  it("is allowed under an administrator's policy only with a mode allowed at all and no cap below it (D3)", () => {
+    const admin = (o: Record<string, unknown> = {}) => ({ features: {}, allowGrants: true, confirmEveryAction: false, ...o });
+    expect(autopilotPermitted(null)).toBe(true);
+    expect(autopilotPermitted(admin())).toBe(true);
+    expect(autopilotPermitted(admin({ approvals: { maxMode: "autopilot" } }))).toBe(true);
+    for (const o of [{ approvals: { maxMode: "assisted" } }, { approvals: { maxMode: "interactive" } }, { features: { autonomy: false } }, { features: { actions: false } }, { allowGrants: false }, { confirmEveryAction: true }]) {
+      expect(autopilotPermitted(admin(o)), JSON.stringify(o)).toBe(false);
+    }
+  });
+
   it("gets its own inputs from the mode: Interactive's, with every remaining question announced and no check (D2)", () => {
     expect(approvalInputs("autopilot")).toEqual({ scopes: ALL_SCOPES, askedApps: true, check: false, autopilot: true });
     for (const m of ["asking", "interactive", "assisted"] as const) expect(approvalInputs(m).autopilot).toBe(false);
@@ -140,6 +150,7 @@ function worker(o: { answers?: (string | null)[]; spec?: Partial<TaskSpec>; auto
   const asked: string[] = [];
   const activity: Record<string, unknown>[] = [];
   const order: string[] = [];
+  const stamps: Record<string, unknown>[] = [];
   const answers = o.answers ?? [];
   const state = { failAudit: false };
   const window = { app: "gedit", pid: 1, name: "notes.txt", role: "frame", active: true, bounds: { x: 0, y: 0, width: 800, height: 600 } };
@@ -162,6 +173,7 @@ function worker(o: { answers?: (string | null)[]; spec?: Partial<TaskSpec>; auto
     presenter,
     lease: async () => () => undefined, flyTo: () => undefined, onProgress: () => undefined,
     onActivity: (e: Record<string, unknown>) => { activity.push(e); },
+    onAuthorized: (s: Record<string, unknown>) => { stamps.push(s); },
     cursor: { borrow: { borrow: async () => undefined } as never, findWindow: () => 1, setBorrowing: () => undefined },
   } as unknown as WorkerDeps, { id: "t1", goal: "Delete the old line in notes.txt, then make the heading bold", userWords: "delete the old line, then make it bold", target: { title: "notes.txt" }, ...o.spec });
   const call = (name: string, args: Record<string, unknown>) => w.tools().find(t => t.name === name)!.handler!(args, {} as never) as Promise<{ textResultForLlm: string; resultType: string }>;
@@ -172,7 +184,7 @@ function worker(o: { answers?: (string | null)[]; spec?: Partial<TaskSpec>; auto
     tainted: boolean; steered: boolean; saidNoThisTask: boolean; userTookOver: boolean; isOver: boolean;
   };
   const cells = (...at: string[]) => inner.authorizeCells(at.map((cell, n) => ({ cell, text: "4", place: { col: 1, row: 5 + n }, seenKey: cell, expected: "x".repeat(200), listed: undefined })));
-  return { w, state, audit, asked, activity, order, call, inner, cells, decisions: () => audit.filter(e => e.event === "decision"), actions: () => audit.filter(e => e.event === "action") };
+  return { w, state, audit, asked, activity, order, stamps, call, inner, cells, decisions: () => audit.filter(e => e.event === "decision"), actions: () => audit.filter(e => e.event === "action") };
 }
 
 describe("a task's steps in Autopilot (modes-D1)", () => {
@@ -298,6 +310,23 @@ describe("a task's steps in Autopilot (modes-D1)", () => {
     expect(result.resultType).not.toBe("success");
     expect(h.order).toEqual([]);
     expect(h.inner.isOver).toBe(true);
+  });
+
+  it("says on a remote's stamp that the step was announced, never that the user said yes (modes-D3)", async () => {
+    let on = true;
+    const h = worker({ answers: ["once"], autopilot: () => on });
+    await h.call("perceive_window", {});
+    await h.call("click", { id: 3 });
+    expect(h.stamps.at(-1)).toMatchObject({ kind: "click", verdict: "allow", approval: null, announced: true, element: { role: "push button", name: "Delete" } });
+    // A step Interactive's own waiver let through was no question on a remote to begin with: nothing is claimed for it.
+    await h.call("click", { id: 1 });
+    expect(h.stamps.at(-1)).toMatchObject({ verdict: "allow", approval: null });
+    expect(h.stamps.at(-1)!.announced).toBeUndefined();
+    // Outside Autopilot the user's yes travels as before.
+    on = false;
+    await h.call("click", { id: 3 });
+    expect(h.stamps.at(-1)).toMatchObject({ verdict: "confirm", approval: { given: true } });
+    expect(h.stamps.at(-1)!.announced).toBeUndefined();
   });
 
   it("tells the command flow whether Autopilot is in force, read afresh at each command, also in a task held to asking (modes-D2)", () => {

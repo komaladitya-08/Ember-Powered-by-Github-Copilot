@@ -2901,6 +2901,85 @@ describe("a command that would ask, in Autopilot (autopilot.ts; modes-D2, modes-
     expect(tightened.starts).toEqual([]);
   });
 
+  describe("on a computer reached over SSH, whose own check asks (gate 2; modes-D3)", () => {
+    const sentBack = (rules: string[], says = ["Restarts a service."]) => ({ exit: { ...exitOk({ ended: "refused-remote", code: null, needsConfirm: true, error: "needs a yes", remoteSays: says }), rules } as RunExit });
+    const remote = (o: Parameters<typeof harness>[0] = {}) => harness({ autopilot: () => true, ...o });
+
+    it("announces the remote's question instead of asking, with its lines on a countdown of its own, and resends saying so, never as a yes", async () => {
+      makeJudge();
+      const h = remote({ run: (_s, n) => (n === 1 ? sentBack(["service.unit"]) : {}) });
+      expect((await call(h)).resultType).toBe("success");
+      expect(h.asked).toEqual([]);
+      expect(h.announced.map(a => a.text)).toEqual(["Running a command that build-01's own check asked about, without asking: Autopilot is on."]);
+      expect(h.windowAnnounce).toHaveLength(1);
+      expect(h.windowAnnounce[0].card.says).toEqual(["build-01's own check also found:", "“Restarts a service.”", AUTOPILOT_LINE, "Why: “to run the tests”"]);
+      expect(h.audit.find(e => e.phase === "answered")).toMatchObject({ q: "remote", answer: "announced", mode: "autopilot" });
+      expect(h.starts).toHaveLength(2);
+      expect(h.starts[0].stamp).toMatchObject({ approval: null });
+      expect(h.starts[0].stamp.announced).toBeUndefined();
+      expect(h.starts[1].stamp).toMatchObject({ approval: null, rules: ["service.unit"], verdict: "run" });
+      expect(h.starts[1].stamp.announced!.ageMs).toBeGreaterThanOrEqual(0);
+      expect(h.starts[1].runId).not.toBe(h.starts[0].runId);
+    });
+
+    it("sends the PC's own announcement on the stamp, with what it announced for", async () => {
+      setCommandJudge(null);
+      const h = remote();
+      expect((await call(h, { command: "rm -rf build" })).resultType).toBe("success");
+      expect(h.starts[0].stamp).toMatchObject({ verdict: "announce", classes: ["destroy"], approval: null });
+      expect(h.starts[0].stamp.rules).toEqual(expect.arrayContaining(["posix.rm", "autopilot"]));
+      expect(h.starts[0].stamp.announced!.ageMs).toBeGreaterThanOrEqual(0);
+      // An announcement the user's own words asked for, outside Autopilot, says nothing of the kind.
+      const own = harness({ words: "delete the build folder" });
+      await call(own, { command: "rm -rf build" });
+      expect(own.starts[0].stamp).toMatchObject({ verdict: "announce", approval: null });
+      expect(own.starts[0].stamp.announced).toBeUndefined();
+    });
+
+    it.each([["secret.env"], ["path.secret"], ["escape.nohup"], ["escape.launcher"], ["unclear.for"], ["in-script:secret.env"], ["service.unit", "secret.token-arg"]])("asks with the card, as before, where the remote's rules say %s", async (...rules) => {
+      makeJudge();
+      const h = remote({ run: (_s, n) => (n === 1 ? sentBack(rules) : {}) });
+      expect((await call(h)).resultType).toBe("success");
+      expect(h.asked).toHaveLength(1);
+      expect([h.windowAnnounce, h.announced]).toEqual([[], []]);
+      expect(h.starts[1].stamp.approval!.ageMs).toBeGreaterThanOrEqual(0);
+      expect(h.starts[1].stamp.announced).toBeUndefined();
+    });
+
+    it("asks with the card when the remote still wants a yes after the announcement: its own administrator's policy holds", async () => {
+      makeJudge();
+      const h = remote({ run: (_s, n) => (n <= 2 ? sentBack([], ["This computer's administrator asks for your approval of every command."]) : {}) });
+      expect((await call(h)).resultType).toBe("success");
+      expect(h.windowAnnounce).toHaveLength(1);
+      expect(h.asked).toHaveLength(1);
+      expect(h.starts).toHaveLength(3);
+      expect(h.starts[2].stamp.approval!.ageMs).toBeGreaterThanOrEqual(0);
+      // And a third refusal is the remote's last word, as before.
+      const never = remote({ run: () => sentBack([]) });
+      expect(await call(never)).toMatchObject({ resultType: "denied", textResultForLlm: expect.stringMatching(/^build-01 refused it/) });
+      expect([never.windowAnnounce.length, never.asked.length, never.starts.length]).toEqual([1, 1, 3]);
+    });
+
+    it("takes a Stop during that countdown as the user's no, and runs nothing more", async () => {
+      makeJudge();
+      const h = remote({ run: () => sentBack(["service.unit"]), announce: false });
+      const ends: [string, string][] = [];
+      (h.ctx.service.window as unknown as { reaskEnded: (runId: string, why: string) => void }).reaskEnded = (runId, why) => { ends.push([runId, why]); };
+      expect((await call(h)).textResultForLlm).toMatch(/^The user stopped it before it ran\./);
+      expect(h.declined()).toBe(1);
+      expect(h.starts).toHaveLength(1);
+      expect(ends).toEqual([[h.starts[0].runId, "no"]]);
+    });
+
+    it("asks with the card where every command asks on that computer", async () => {
+      makeJudge({ decide: () => decision({ verdict: "ask", says: ["Your organisation asks you to approve every command."], rules: ["admin.ask"], armMs: 500 }) });
+      const h = remote({ mode: "ask", run: (_s, n) => (n === 1 ? sentBack(["service.unit"]) : {}) });
+      expect((await call(h)).resultType).toBe("success");
+      expect(h.asked).toHaveLength(2);
+      expect(h.windowAnnounce).toEqual([]);
+    });
+  });
+
   it("is asked as before outside Autopilot", async () => {
     setCommandJudge(null);
     for (const autopilot of [undefined, () => false]) {
