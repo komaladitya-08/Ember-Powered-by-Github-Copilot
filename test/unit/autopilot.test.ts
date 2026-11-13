@@ -6,10 +6,13 @@
  * windows are refused here as in every mode.
  */
 
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { AUTOPILOT_REASON, AUTOPILOT_WORDS, PolicyEngine, type ActionRequest, type Decision, type PolicyInputs } from "../../app/main/policy/policy";
 import { ALL_SCOPES, approvalInputs } from "../../app/main/policy/autonomy";
 import { Worker, type TaskSpec, type WorkerDeps } from "../../app/main/agent/worker";
+import type { CommandFlowContext } from "../../app/main/commands/flow";
 import { Presenter } from "../../app/main/agent/presenter";
 import { describeEntry } from "../../app/renderer/home/copy";
 import type { AxNode } from "../../app/main/perception/sidecar";
@@ -295,6 +298,26 @@ describe("a task's steps in Autopilot (modes-D1)", () => {
     expect(result.resultType).not.toBe("success");
     expect(h.order).toEqual([]);
     expect(h.inner.isOver).toBe(true);
+  });
+
+  it("tells the command flow whether Autopilot is in force, read afresh at each command, also in a task held to asking (modes-D2)", () => {
+    let on = true;
+    const h = worker({ autopilot: () => on });
+    const context = () => (h.w as unknown as { commandContext(): CommandFlowContext }).commandContext();
+    expect(context().autopilot!()).toBe(true);
+    // A task that was steered or told no gets no scopes (Interactive's waiver is suspended), but Autopilot still holds.
+    h.inner.tainted = true;
+    h.inner.saidNoThisTask = true;
+    expect(context().autonomy!()).toBeNull();
+    expect(context().autopilot!()).toBe(true);
+    const held = context();
+    on = false;
+    expect(held.autopilot!()).toBe(false);
+    // And the host hands each worker the mode in force through the one mapping every consumer uses.
+    const host = readFileSync(path.join(__dirname, "../../app/main/agent/host.ts"), "utf8");
+    expect(host).toContain("autopilot: () => approvalInputs(modeInForce(this.o.settings.get().approvals, this.o.admin?.() ?? null)).autopilot,");
+    const main = readFileSync(path.join(__dirname, "../../app/main/main.ts"), "utf8");
+    expect(main).toContain("autopilot: () => approvalsNow().autopilot,");
   });
 
   it("asks as before once Autopilot is no longer in force, at the very next step", async () => {

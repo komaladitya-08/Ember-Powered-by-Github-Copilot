@@ -2135,11 +2135,13 @@ export class AgentHost {
             perception: h.perception, sidecar: h.sidecar, policy: h.policy, confirmer: h.confirmer, audit: h.audit,
             settings: this.o.settings, presenter,
             // The approval mode in force (policy/autonomy.ts), read at each step: in Assisted a step or a command that
-            // would ask goes to its check first, on the conversation's lighter model; Interactive and above give every
-            // scope; below Interactive, neither.
+            // would ask goes to its check first, on the conversation's lighter model; in Autopilot it is announced
+            // instead, but for the few commands that still ask there; Interactive and above give every scope; below
+            // Interactive, none of these.
             check: () => approvalInputs(modeInForce(this.o.settings.get().approvals, this.o.admin?.() ?? null)).check,
             checkModel: this.status.conductorModel,
             autonomy: () => approvalInputs(modeInForce(this.o.settings.get().approvals, this.o.admin?.() ?? null)).scopes,
+            autopilot: () => approvalInputs(modeInForce(this.o.settings.get().approvals, this.o.admin?.() ?? null)).autopilot,
             lease: (key, owner, signal) => this.tasks!.lease(h.leaseKey(key), owner, signal),
             flyTo: h.flyTo, cursor: h.cursor, clipboard: h.clipboard, pointer: h.pointer, activationKey: h.activationKey,
             desk: h.desk, onDesk: h.onDesk, onProgress: progress, onUpdate: update, onActivity: activity, onUsage: (i, o) => this.recordUsage(i, o),

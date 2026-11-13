@@ -29,6 +29,7 @@ import type { TargetId } from "../../shared/targets";
 import { pendingCommand } from "./pending";
 import { carriedText } from "./carried";
 import { notReviewable, reviewedDecision, type CommandReviewer } from "./review";
+import { AUTOPILOT_RULE, autopilotCommand } from "./autopilot";
 import { classifyCommand } from "./classify";
 import { LINES, decideCommand } from "./decide";
 import { covers, type AutonomyScopes } from "../policy/autonomy";
@@ -114,6 +115,12 @@ export interface CommandFlowContext {
    * when the reviewer finds it in the user's own words.
    */
   review?: CommandReviewer;
+  /**
+   * Autopilot is the approval mode in force (policy/autonomy.ts approvalInputs().autopilot), read at each command: one
+   * that would ask announces with its Stop instead, in a task that was steered or told no too, but for the few that
+   * still ask there (autopilot.ts autopilotAsks). Absent or false: nothing changes.
+   */
+  autopilot?: () => boolean;
   /** Home project commands always need the exact command card, with the chosen folder still present at launch. */
   projectFolderCurrent?: () => boolean;
   /**
@@ -870,6 +877,14 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
   // countdown and the card still show where the text came from).
   const autonomous = autonomousCommand(d, { scopes: ctx.autonomy?.() ?? null, words, tainted: tainted || !!ctx.state.outputTainted, carried, elsewhere: others.length > 0 || places.length > 0, kind: binding.kind });
   if (autonomous) d = autonomous;
+  // Autopilot: a command that still asks is announced with its Stop countdown instead, whatever the task was held to
+  // asking for (steered, off-task, the user said no: the refused command itself was refused above), as an
+  // administrator too. Only a command that would read or print secrets, keep running after Stop or do something Ember
+  // can't tell, and what the organisation's or the user's own "ask every command" requires, still ask (autopilot.ts).
+  if (ctx.autopilot?.() && d.verdict === "ask") {
+    const auto = autopilotCommand(d, { findings: cls.findings, mode, askEvery: cap.askEvery, userAskEvery });
+    if (auto) d = auto;
+  }
   // Assisted's check: a command that asks is shown to the reviewer with the user's own words and what the rules found
   // (the card's lines: an administrator's command, a steered task, carried text and another computer named say so
   // there); one it finds in those words runs with its announcement (Stop countdown) instead. A command that would read
@@ -899,6 +914,7 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
   audit({
     phase: "decided", shell, cwd, ...(refused ? {} : { command: j.redactSecrets(a.command).slice(0, AUDIT_COMMAND_CHARS) }), commandChars: a.command.length,
     verdict: d.verdict, classes: d.classes, rules: d.rules, ...(d.requested ? { requested: "user", intent: d.requested.intent } : {}), reason: d.reason,
+    ...(d.requested?.intent === AUTOPILOT_RULE ? { mode: "autopilot" } : {}),
     ...(d.review ? { review: d.review } : {}),
   });
   ctx.log.info("commands.decided", { task, target, verdict: d.verdict, classes: d.classes, chars: a.command.length });
@@ -988,7 +1004,11 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
       try { live = svc.capability(); } catch { return denied("Couldn't check whether commands are still allowed. Finish the task saying so."); }
       if (live.state !== "on") return denied(`${live.why ?? `Commands are off on ${place}.`} Don't try another way; tell the user in finish_task.`);
       if (svc.binding.id !== target || svc.runner.target !== target) return denied("The command's computer changed. Finish the task saying so.");
-      if (svc.mode() === "off" || (approvedAt === null && (live.askEvery !== null || svc.userAskEvery() || svc.mode() === "ask"))) {
+      // (Autopilot's announcement stands while Autopilot does: there root alone is no reason to ask, as when it was decided.)
+      const everyAsks = d.requested?.intent === AUTOPILOT_RULE
+        ? !ctx.autopilot?.() || (live.askEvery !== null && live.askEvery !== "root")
+        : live.askEvery !== null;
+      if (svc.mode() === "off" || (approvedAt === null && (everyAsks || svc.userAskEvery() || svc.mode() === "ask"))) {
         return denied("Command permissions changed while this command was waiting. It did not run. Ask the user for a new request.");
       }
       if (ctx.projectFolderCurrent && !ctx.projectFolderCurrent()) return denied("The chosen command folder changed. Choose it again.");

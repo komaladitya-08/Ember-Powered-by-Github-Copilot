@@ -2097,6 +2097,8 @@ export class Worker {
       refusals: this.refusals,
       // "Work without asking" holds for commands only while this task hasn't been steered or told no (as for app steps).
       autonomy: () => (this.tainted || this.saidNoThisTask ? null : this.d.autonomy?.() ?? null),
+      // Autopilot never asks: there such a task's commands are announced too, but for the few that still ask (flow.ts).
+      autopilot: () => this.d.autopilot?.() === true,
       // Assisted's check for commands, on the lighter model: an answer that comes once Assisted is no longer in force
       // (the mode or the organisation's policy changed while it was asked) counts for nothing.
       ...(this.d.check?.() ? { review: async (i, signal) => {
