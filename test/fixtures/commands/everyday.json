@@ -3135,6 +3135,21 @@
    "cmd": "corepack prepare pnpm@9.1.0 --activate",
    "shell": "bash",
    "context": "linux"
+  },
+  {
+   "cmd": "corepack yarn@4 lint",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "corepack pnpm@9 test",
+   "shell": "bash",
+   "context": "linux"
+  },
+  {
+   "cmd": "corepack pnpm@9.1.0 build",
+   "shell": "bash",
+   "context": "linux"
   }
  ]
 }

@@ -8340,8 +8340,14 @@ reg(NATIVE, ["npm", "pnpm", "yarn", "bun", "corepack"], h => {
   const widening = global ? ["--global"] : [];
   if (verbArg && verb === null) { h.e.unclear("unclear.npm-verb", "Ember can't tell which command this runs."); return; }
   if (verb === null) { if (h.key === "yarn") languageInstall(h, []); return; }
-  // `corepack yarn …`, `corepack pnpm …`: the package manager's own line (commands-runners-1).
-  if (h.key === "corepack" && /^(npm|npx|pnpm|pnpx|yarn|yarnpkg)$/.test(verb) && !h.e.readsAsMain) { h.e.payload(h.args.slice(g.verbAt), h.sc, "corepack"); return; }
+  // `corepack yarn …`, `corepack pnpm …`: the package manager's own line (commands-runners-1), and with the version
+  // corepack's own spelling pins (`corepack yarn@4 …`), handed on by its name alone (commands-runners-x9-2).
+  const pinned = h.key === "corepack" ? /^(npm|npx|pnpm|pnpx|yarn|yarnpkg)(@\S*)?$/.exec(verb) : null;
+  if (pinned && verbArg && !h.e.readsAsMain) {
+    const named = pinned[2] === undefined ? verbArg : { ...verbArg, v: pinned[1], raw: pinned[1], glob: false, pattern: undefined };
+    h.e.payload([named, ...rest], h.sc, "corepack");
+    return;
+  }
   const specs = rest.filter(a => !isOption(a));
   if ((LANGUAGE_INSTALL_VERBS[h.key] ?? []).includes(verb) || (verb === "audit" && specs[0]?.v === "fix")) {
     if (verb === "pm" && !/^(trust|untrusted|migrate)$/.test(specs[0]?.v ?? "")) return;

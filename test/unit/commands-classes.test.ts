@@ -1322,6 +1322,19 @@ describe("what a package manager hands to the script or program it runs by name 
       expect(decide(cmd).rules, cmd).toContain(rule);
     }
   });
+
+  it("reads the line behind corepack's pinned version as the bare manager's (commands-runners-x9-2)", () => {
+    for (const o of [...POSIX, ...WINDOWS]) {
+      for (const cmd of ["corepack npm@10 publish", "corepack yarn@4 cat ~/.ssh/id_rsa", "corepack pnpm@9 exec rm -rf ~/Documents", "corepack yarn@1.22.22 cross-env LD_PRELOAD=/tmp/x.so jest",
+        "corepack pnpm@9.1.0 cross-env NODE_ENV=prod npm publish", "corepack yarn@1 node -e \"require('fs').rmSync('/home/ana/Documents',{recursive:true})\"", "corepack yarn@4 lint",
+        "corepack pnpm@9 test"]) {
+        const bare = decide(cmd.replace(/@\S+/, ""), o);
+        const d = decide(cmd, o);
+        expect([d.verdict, d.rules], label(cmd, o)).toEqual([bare.verdict, bare.rules]);
+        expect(bare.verdict, label(cmd, o)).toBe(/lint|test$/.test(cmd) ? "run" : "ask");
+      }
+    }
+  });
 });
 
 describe("the project's own copy of a launcher or a program, run by its path or through an interpreter (integ2-z-3)", () => {

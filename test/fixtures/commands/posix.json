@@ -23106,6 +23106,52 @@
    "rules": [
     "unknown.program"
    ]
+  },
+  {
+   "cmd": "corepack npm@10 publish",
+   "verdict": "ask",
+   "rules": [
+    "npm.publish"
+   ]
+  },
+  {
+   "cmd": "corepack yarn@4 cat ~/.ssh/id_rsa",
+   "verdict": "ask",
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "corepack pnpm@9 exec rm -rf ~/Documents",
+   "verdict": "ask",
+   "rules": [
+    "escape.npx",
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "corepack yarn@1.22.22 cross-env LD_PRELOAD=/tmp/x.so jest",
+   "verdict": "ask",
+   "rules": [
+    "unknown.program",
+    "unclear.assignment"
+   ]
+  },
+  {
+   "cmd": "corepack pnpm@9.1.0 cross-env NODE_ENV=prod npm publish",
+   "verdict": "ask",
+   "rules": [
+    "unknown.program",
+    "unclear.hidden-command",
+    "npm.publish"
+   ]
+  },
+  {
+   "cmd": "corepack yarn@1 node -e \"require('fs').rmSync('/home/ana/Documents',{recursive:true})\"",
+   "verdict": "ask",
+   "rules": [
+    "unclear.inline-code"
+   ]
   }
  ]
 }
