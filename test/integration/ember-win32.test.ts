@@ -443,7 +443,26 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
       };
       /** One of the suite's own steps, on the same clock. */
       const step = (what: string) => trail.push({ t: Date.now(), what: `test: ${what}` });
-      fgTimer = setInterval(readForeground, 20);
+      // Every visible top-level window coming or going, of any program (cifix-x9-5): the control run at 32178e6 had the
+      // bench take the keyboard 1.4 s after the box showed with no step of this suite near it, and nothing in Ember's
+      // log, so a window that comes up for a moment (and hands the foreground on as it goes) is what is looked for.
+      const shownNow = () => {
+        const out = new Map<number, string>();
+        for (let w = api.topWindow(), n = 0; w && n < 2_000; w = api.nextWindow(w), n++) {
+          if (!api.isVisible(w)) continue;
+          const pid = api.threadProcess(w).pid;
+          out.set(w, `${api.processImage(pid) ?? `pid ${pid}`} (class ${api.className(w)}, title ${JSON.stringify(api.title(w, false))}, window ${w})`);
+        }
+        return out;
+      };
+      let shownLast = shownNow();
+      const readWindows = () => {
+        const now = shownNow();
+        for (const [w, what] of now) if (!shownLast.has(w)) trail.push({ t: Date.now(), what: `window shown: ${what}` });
+        for (const [w, what] of shownLast) if (!now.has(w)) trail.push({ t: Date.now(), what: `window gone: ${what}` });
+        shownLast = now;
+      };
+      fgTimer = setInterval(() => { readForeground(); readWindows(); }, 20);
       await ember.evaluate(({ app, BrowserWindow }) => {
         const seen: { t: number; what: string }[] = [];
         (globalThis as { __winTrail?: typeof seen }).__winTrail = seen;
