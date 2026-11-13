@@ -237,7 +237,8 @@ export function createPromptWindow(os: OS, hooks: { takeKeyboard?: (win: Browser
     minimizable: false,
     maximizable: false,
     fullscreenable: false,
-    title: "Ember",
+    // Told apart from Home and the handle in the window switcher and a screen reader's window name (accessibility-r9-6).
+    title: "Ember needs you",
     show: false,
     alwaysOnTop: true,
     skipTaskbar: false,
