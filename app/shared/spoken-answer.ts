@@ -103,6 +103,27 @@ function coresOf(spoken: string[]): string[] {
   return [words.join(" "), ...(words[0] === "please" ? [words.slice(1).join(" ")] : [])];
 }
 
+/** What may lead a no and no yes ("Just leave it.", "I said leave it.", "Thanks, leave it."): r10-voice-x10-1. */
+const NO_LEADS = [["just"], ["i", "said"], ["thanks"], ["thank", "you"]];
+/** What may trail a no and no yes ("Leave it for now.", "Leave it be."): r10-voice-x10-1. */
+const NO_TAILS = [["for", "now"], ["be"], ["alone"]];
+
+/**
+ * The ways `spoken` may read as a no: as an answer (coresOf), and without a word or two around it that only a no takes
+ * here, each at most once. Only for noes: "Thanks, go ahead." and "Just do it." are no more a yes than before, so a
+ * refusal is heard more widely than an assent, the safe side.
+ */
+function noCoresOf(spoken: string[]): string[] {
+  const cores = coresOf(spoken);
+  let words = withoutLead(withoutTail(spoken));
+  for (const lead of NO_LEADS) if (lead.every((w, i) => words[i] === w) && words.length > lead.length) words = words.slice(lead.length);
+  for (const tail of NO_TAILS) if (tail.every((w, i) => words[words.length - tail.length + i] === w) && words.length > tail.length) words = words.slice(0, -tail.length);
+  return [...cores, words.join(" ")];
+}
+
+/** The noes of more than one word ("leave it", "rather not"), found inside a near-miss (nearAnswer). */
+const NO_PHRASES = [...SPOKEN_NO].filter(n => n.includes(" ")).map(n => ` ${n} `);
+
 /** Lower case, straight apostrophes, no closing punctuation, single spaces. */
 const norm = (text: string) => text.trim().toLowerCase().replace(/[‘’]/g, "'").replace(/[\s?!.…]+$/u, "").replace(/\s+/g, " ").replace(/,(?=\S)/g, ", ");
 
@@ -116,7 +137,7 @@ export function spokenAnswer(text: string): "allow" | "deny" | null {
   // Punctuation first ("Hey, Ember. Allow."), then what leads and trails the answer.
   const spoken = t.replace(/[,.!;:]/g, " ").split(/\s+/).filter(Boolean);
   const cores = coresOf(spoken);
-  if (cores.some(c => SPOKEN_NO.has(c))) return "deny";
+  if (noCoresOf(spoken).some(c => SPOKEN_NO.has(c))) return "deny";
   // A no said in short parts, each a no ("No thank you, leave it.", "Nope, not today."): a refusal (voice-listening-r10-1).
   // Only noes: a yes said so ("Yes, go on, do it.") is no more one than before, and a no with a yes or a request in it
   // ("No, do it.", "No, leave it open and send it.") is no answer.
@@ -124,7 +145,7 @@ export function spokenAnswer(text: string): "allow" | "deny" | null {
   // of the answer.)
   const parts = t.split(/[,.!;:]/).map(p => p.trim().split(/\s+/).filter(Boolean)).filter(p => p.length && withoutTail(p).length);
   while (parts.length > 1 && withoutLead(parts[0]).length === 0) parts.shift();
-  if (parts.length > 1 && parts.every(p => coresOf(p).some(c => SPOKEN_NO.has(c)))) return "deny";
+  if (parts.length > 1 && parts.every(p => noCoresOf(p).some(c => SPOKEN_NO.has(c)))) return "deny";
   if (!cores.some(c => SPOKEN_YES.has(c))) return null;
   // "Please" once in all: "please please do" pads a short yes past the length check (security review of #143).
   if (spoken.filter(w => w === "please").length > 1) return null;
@@ -151,8 +172,9 @@ const ASSENT_CORE = new Set(["okay", "ok", "alright", "right", "great", "perfect
  * hedged: the voice process sends nothing and the question says once how to answer (V2-F5). They are:
  * - up to four words, after "hey" and the name, the first a yes or no word ("do not" too): "Yes, but wait.", "No, hang
  *   on.", "Sure, why?";
- * - up to six with a no word anywhere, not asked as a question: "No, I don't want that.", "That's not what I meant."
- *   (voice-listening-r10-1: they went to Copilot as a request while the question waited);
+ * - up to six with a no word anywhere, or a no of more than one word ("leave it"), not asked as a question: "No, I
+ *   don't want that.", "That's not what I meant.", "Leave it, I said." (voice-listening-r10-1, r10-voice-x10-1: they
+ *   went to Copilot as a request while the question waited);
  * - a hold ("Wait.", "Hold on.") or an assent that isn't a yes ("Okay then.", "Perfect.", "Sounds great."), which
  *   vanished as closers.
  * "Why?", "Why not?" and "Which file?" are requests as ever. Never words that hold a stop ("No, stop the task.", "Okay,
@@ -172,7 +194,8 @@ export function nearAnswer(text: string): boolean {
   if (rest.length <= 4 && (ANSWER_LEADS.has(rest[0]) || (rest[0] === "do" && rest[1] === "not"))) return true;
   if (HOLD.test(rest.join(" "))) return true;
   if (rest.length <= 4 && rest.every(w => ASSENT.has(w)) && rest.some(w => ASSENT_CORE.has(w))) return true;
-  return !/[?？]/.test(text) && rest.some(w => NO_WORDS.has(w));
+  // A no of more than one word inside, too ("Please just leave it there.", "Leave it, I said."): r10-voice-x10-1.
+  return !/[?？]/.test(text) && (rest.some(w => NO_WORDS.has(w)) || NO_PHRASES.some(n => ` ${rest.join(" ")} `.includes(n)));
 }
 
 /** A yes asked as a question ("Okay?", "Ember, go ahead?"): never a yes (spokenAnswer), and never a request either (V2-F7). */

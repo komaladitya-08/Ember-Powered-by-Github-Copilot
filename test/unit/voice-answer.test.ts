@@ -8,7 +8,7 @@
 import { describe, expect, it } from "vitest";
 import { ANSWER_CLOSED_STATUS, ANSWER_LISTENING_STATUS, SHORT_YES_FLOOR, TASK_VOICE_MS, TaskVoiceTrust, VoiceRefusals, answerStatusOnQuestion, answerWindowStatus, heardAnswer, heardUnchecked, refusalEndsTrust, refusalLine, refusalNote, rejectionEndsTrust, spokenAnswer, voiceAnswer, voiceAnswerSaid, VOICE_ANSWER_REFUSED, type VoiceAnswerInput } from "../../app/main/agent/voice-answer";
 import { Confirmer, type Question } from "../../app/main/agent/confirm";
-import { SPOKEN_NO, SPOKEN_YES } from "../../app/shared/spoken-answer";
+import { SPOKEN_NO, SPOKEN_YES, nearAnswer } from "../../app/shared/spoken-answer";
 import { questionAloud } from "../../app/main/agent/presenter";
 import fs from "node:fs";
 import path from "node:path";
@@ -448,6 +448,23 @@ describe("spoken answers as people say them (owner report of 2026-11-03: “Embe
       expect(spokenAnswer(other), other).toBeNull();
     }
     for (const w of SPOKEN_YES) expect(SPOKEN_NO.has(w), w).toBe(false);
+  });
+
+  it("hears an everyday no with a word or two around it as the answer, and a few words around one as a near-miss, never a yes (r10-voice-x10-1)", () => {
+    // Neither a no nor a near-miss: they vanished in the answer window, or went to Copilot as a request while the
+    // question waited.
+    for (const no of [
+      "Just leave it.", "Leave it for now.", "Leave it be.", "I said leave it.", "Thanks, leave it.", "Thank you, leave it.",
+      "Just not now.", "Not now, just leave it.", "No, just leave it for now.", "Ember, just leave it.", "I said leave it alone.",
+    ]) expect(spokenAnswer(no), no).toBe("deny");
+    for (const near of ["Please just leave it there.", "Okay, leave it for later.", "Leave it, I said."]) {
+      expect(spokenAnswer(near), near).toBeNull();
+      expect(nearAnswer(near), near).toBe(true);
+    }
+    // The same words around a yes are no more a yes than before.
+    for (const other of ["Thanks, go ahead.", "Just do it.", "I said yes.", "Thank you, allow it.", "Go ahead for now.", "Just go ahead.", "Allow it for now."]) {
+      expect(spokenAnswer(other), other).toBeNull();
+    }
   });
 
   it("still never hears Always, a yes inside a longer request, or an answer it can't be sure of", () => {
