@@ -556,10 +556,16 @@ function englishOnly(text: string, lang: string): boolean {
  * Portuguese write too.
  */
 const CLOSING_WORDS = new Set("want would should shall like reply anything else answer translate translation draft leave forward send something more help or to you it your the".split(" "));
+/**
+ * The closing words a piece of one word must hold (ownClosing): ones no other language here writes as a word of its
+ * own. "Help!" ends a Dutch or German email too, and went to Kitten (r10-voice-x10-3).
+ */
+const CLOSING_ALONE = new Set("reply translate anything forward draft".split(" "));
 
 /**
  * Whether `text`, a piece of an answer in `lang` because of a passage it read out, is Ember's own English closing words:
- * a short piece with one of CLOSING_WORDS, or English's pronoun "I" after its first word (Italian's "i" is lower case),
+ * a short piece with one of CLOSING_WORDS (of CLOSING_ALONE, if it is one word), or English's pronoun "I" after its
+ * first word (Italian's "i" is lower case),
  * and nothing of `lang`'s: none of its short words, no letter with an accent outside a name (a capitalised word after
  * the first), no mark English seldom writes and no letter of another script. englishOnly wants two different English
  * short words, so "Want me to reply?", "Shall I reply?" and "Anything else?" took the passage's voice, or went unsaid
@@ -574,6 +580,7 @@ function ownClosing(text: string, lang: string): boolean {
   if (ACCENTED.test(own.join(" "))) return false;
   const lower = own.map(t => t.toLowerCase());
   if (stopwords(lower, lang).length) return false;
+  if (tokens.length === 1) return CLOSING_ALONE.has(lower[0]);
   return lower.some(w => CLOSING_WORDS.has(w)) || tokens.some((t, i) => i > 0 && t === "I");
 }
 

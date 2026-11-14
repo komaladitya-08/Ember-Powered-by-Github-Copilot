@@ -1332,7 +1332,8 @@ Kitten's, so "Shall I reply to it?" after a Spanish email read out is asked in E
 voice, but a piece with none of its language's short words ("Er heißt Gone with the Wind.") is still Kitten's. After
 a passage read out, a short piece with none of that language's short words, no letter with an accent outside a name
 and one of Ember's own closing words ("want", "shall", "reply", "anything", "else", "translate", "or", "to", "you": app/voice/spoken.ts
-`ownClosing`), or the pronoun "I" after its first word, is Kitten's too: "Want me to reply?", "Shall I reply?" and
+`ownClosing`; a piece of one word only with "reply", "translate", "anything", "forward" or "draft", so a Dutch email's
+own "Help!" keeps its voice: r10-voice-x10-3), or the pronoun "I" after its first word, is Kitten's too: "Want me to reply?", "Shall I reply?" and
 "Anything else?" took the passage's voice, or went unsaid without one, in 28 of 44 cases while the follow-up window
 opened for them (voice-speaking-r10-1; now none, and the passage's own sign-offs, "Grazie mille, Marco.", keep its
 voice).) The answer is judged in passages: after a lead-in said in Kitten's voice (a piece that ends with a colon: "Here is the email

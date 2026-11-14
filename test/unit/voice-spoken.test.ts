@@ -628,6 +628,18 @@ describe("AnswerLanguage judges a passage read out after an English lead-in by t
     expect(said.slice(1, -1).map(p => p.lang)).toEqual(said.slice(1, -1).map(() => lang));
   });
 
+  // A passage's own one-word line that is also one of Ember's closing words ("Help!", which Dutch and German write too)
+  // went to Kitten (r10-voice-x10-3).
+  it.each([
+    ["nl", "Hallo Jan, kun je me helpen met het project? Help!"],
+    ["nl", "Hallo Jan, ik hoop dat alles goed met je gaat. Kun je de documenten meenemen? Help!"],
+    ["de", "Hallo Alex, ich hoffe, es geht dir gut. Kannst du bitte die Unterlagen mitbringen? Help!"],
+  ])("keeps a %s passage's own one-word line in its voice (%j) (r10-voice-x10-3)", (lang, passage) => {
+    const said = streamed(`Here is the email:\n\n${passage}\n\nWant me to reply?`);
+    expect(said.find(p => flat(p.text).endsWith("Help!"))?.lang).toBe(lang);
+    expect(said.at(-1)).toEqual({ text: "Want me to reply?", lang: null });
+  });
+
   // An email shown with its sender and subject lines: they were judged as the passage's first letters, which they
   // diluted, and the message was Kitten's with English sounds in 22 of 44 cases for "**From:** José / **Subject:**
   // Proyecto" (voice-speaking-r10-2). So for a lead-in whose only word with an accent is a name ("José's email says:"),
