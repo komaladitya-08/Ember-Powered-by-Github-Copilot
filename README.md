@@ -244,13 +244,16 @@ has its own card that says what it means, and a mode is in use only once you agr
   code (unless you asked for exactly that command: then it tells you and gives you 4 seconds to stop it).
 - **Assisted** is Interactive with a check: before Ember asks, a lighter AI model reads the step against what you
   asked, in your own words. When it matches, Ember goes ahead and tells you, a risky step included; otherwise it asks.
-  A command that would touch passwords or keys, keep running after you stop it, or run a program Ember doesn't know
-  always asks.
+  A command that would touch passwords or keys, keep running after you stop it, run a program Ember doesn't know or
+  do what your own words for the task rule out always asks, and so does every command wherever you or your
+  organisation set commands to ask every time, or on a computer reached over SSH whose own administrator doesn't allow
+  the check there.
 - **Autopilot** doesn't ask. Ember sends, deletes, pays, installs and runs dangerous commands, as an administrator
   too, and tells you as it goes, with a few seconds to stop each dangerous command: a risk you accept on its card. It
   still asks before a command that would show passwords or keys, keep running after you stop it, or whose effect it
   can't tell, one your own words for the task rule out, and wherever you or your organisation set commands to ask
-  every time. Only in Autopilot does Ember fill in logins and cards from its vault (below).
+  every time or the administrator of a computer reached over SSH doesn't allow Autopilot there. Only in Autopilot
+  does Ember fill in logins and cards from its vault (below).
 
 In every mode “Ember, stop” or the stop shortcut stops everything at once, Ember never retries a step you said no to,
 never acts in your system's password prompts or your terminals, never lets the AI model see a password, and **What
