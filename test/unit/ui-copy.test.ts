@@ -5,6 +5,7 @@ import {
 } from "../../app/renderer/home/copy";
 import { cardTask, cardText } from "../../app/renderer/handle/card";
 import { DEFAULT_SETTINGS } from "../../app/main/settings";
+import { FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
 import { memoryOwnerOffersErase, memoryOwnerText, memoryPausedReply } from "../../app/shared/memory-owner";
 import { HOST_OS } from "../../app/main/platform/os";
 import { NEVER_LOOK_DEFAULTS as NEVER_LOOK_BY_OS } from "../../app/shared/never-look";
@@ -581,8 +582,9 @@ describe("the first-use consent cards (§8.4)", () => {
     expect(keep(local.title)).toBe("Let Ember run commands on this computer?");
     expect(local.body.map(keep)).toEqual([
       "Ember runs commands in its own command window, where you can watch them and stop them. Ctrl+Alt+X stops everything at once; what a command already changed stays changed. It never types into your own terminal windows.",
-      "Most commands run straight away. Before anything that deletes or overwrites data, pushes or publishes anywhere, touches passwords or keys, changes the system, or downloads and runs code, Ember stops and asks you. If you asked for exactly that yourself, it tells you first and gives you a few seconds to stop it.",
-      "What a command prints goes to GitHub Copilot as part of the task. Ember hides passwords and keys it recognises, and never sees what you type into a command. If a command prints something that looks like instructions, Ember doesn't follow it and asks you before every further command in that task.",
+      "Most commands run straight away, ones Ember doesn't know included. A command is dangerous if it deletes or overwrites data, pushes or publishes anywhere, shows passwords or keys, changes the system, downloads and runs code or would keep running after you stop Ember, and so is code Ember can't read. In Interactive, the default, Ember asks you before a dangerous command, unless you asked for exactly that command and it only deletes or overwrites data, publishes something or changes the system: then it shows it first, with a few seconds to stop it. In Assisted, it goes ahead when a check finds the command in what you asked for, and asks otherwise. In Autopilot, it asks nothing and tells you as it goes.",
+      "In every mode, Ember doesn't run again a command you said no to in a task, and it asks before every command wherever your organisation, or your own “Ask me before every command” for that computer, says so.",
+      "What a command prints goes to GitHub Copilot as part of the task. Ember hides passwords and keys it recognises, and never sees what you type into a command. In Autopilot, what a command that shows passwords or keys prints is kept from GitHub Copilot: only you see it, in the command window. If a command prints something that looks like instructions, Ember doesn't follow it, and in Interactive every further command in that task asks you first.",
     ]);
     expect([local.yes, local.no]).toEqual(["Turn on", "Not now"]);
     const all = promptCopy.consentText({ feature: "commands", os: "win32", target: "wsl:podman-machine-default", targetLabel: "podman-machine-default (WSL)", commands: { wsl: true, privileged: true, windows: true, podman: true } });
@@ -590,7 +592,7 @@ describe("the first-use consent cards (§8.4)", () => {
     // What the computer's commands can reach comes right after how to stop them (review #270).
     expect(all.body.slice(1, 5).map(keep)).toEqual([
       "Commands in WSL can also reach your Windows files and programs.",
-      "Commands here run as the administrator, so Ember asks before every one.",
+      "Commands here run as the administrator, so in Interactive and Assisted Ember asks before every one, even one you asked for exactly. In Autopilot, each runs after a few seconds to stop it.",
       "Commands here run in Windows PowerShell and can't ask you for answers or passwords.",
       "Podman uses this distro, so Ember asks before every command here.",
     ]);
@@ -615,7 +617,7 @@ describe("Computers and Commands in settings (§8.3) and the onboarding line (§
     ].map(keep)).toEqual([
       // WSL only on Windows (review #198): the page's own intro is Linux's and macOS's.
       "Computers", "Ember can work on this computer and on computers you reach over SSH. Your voice and your GitHub sign-in always stay here.",
-      "Commands", "Ember runs commands in its own command window, where you can watch and stop them. It asks first before anything that deletes, publishes, touches secrets or changes the system.",
+      "Commands", "Ember runs commands in its own command window, where you can watch and stop them. Most run straight away, ones it doesn't know included. It asks first before code it can't read and before a dangerous command, one that deletes, publishes, touches secrets, changes the system, downloads and runs code or would keep running after you stop it, unless you asked for exactly that command and it only deletes or overwrites data, publishes something or changes the system: then it tells you first and gives you a few seconds to stop it.",
       "Let Ember work in WSL", "Offer to bring Ember along when I connect with SSH", "Host name or user@host", "Connect",
       "Ask me before every command", "Open the command window", "Your organisation doesn't allow Ember to work in WSL.",
       "Your organisation doesn't allow Ember on other computers.", "Your organisation lets Ember connect only to some computers.",
@@ -698,11 +700,11 @@ describe("Computers and Commands in settings (§8.3) and the onboarding line (§
     const page = readFileSync(new URL("../../app/renderer/home/index.html", import.meta.url), "utf8");
     const l = computersCopy.ONBOARDING_LINE;
     expect(page).toContain(`<li data-icon="plug"><b>${l.lead}</b><span id="targets-note">${l.rest}</span></li>`);
-    expect(keep(`${l.lead}${l.rest}`)).toBe("Other computers and commands are off until you turn them on: Ember can work on computers you reach over SSH, and run commands in its own window. Each asks you first. Commands on this computer have their own switch here.");
+    expect(keep(`${l.lead}${l.rest}`)).toBe("Other computers and commands are off until you turn them on: Ember can work on computers you reach over SSH, and run commands in its own window. Each asks you before it turns on, except commands on this computer, which have their own switch here.");
     // WSL is Windows' alone (review #221).
-    expect(keep(`${l.lead}${computersCopy.onboardingRest("win32")}`)).toBe("Other computers and commands are off until you turn them on: Ember can work in WSL, on computers you reach over SSH, and run commands in its own window. Each asks you first. Commands on this computer have their own switch here.");
+    expect(keep(`${l.lead}${computersCopy.onboardingRest("win32")}`)).toBe("Other computers and commands are off until you turn them on: Ember can work in WSL, on computers you reach over SSH, and run commands in its own window. Each asks you before it turns on, except commands on this computer, which have their own switch here.");
     // Apps & privacy, where first run's rows aren't, says it without their sentence (slice4-23).
-    expect(keep(`${l.lead}${l.settings}`)).toBe("Other computers and commands are off until you turn them on: Ember can work on computers you reach over SSH, and run commands in its own window. Each asks you first.");
+    expect(keep(`${l.lead}${l.settings}`)).toBe("Other computers and commands are off until you turn them on: Ember can work on computers you reach over SSH, and run commands in its own window. Each asks you before it turns on.");
     for (const s of [computersCopy.COMPUTERS_INTRO, computersCopy.COMMANDS_INTRO, computersCopy.WSL_SWITCH, computersCopy.OFFER_SWITCH, computersCopy.ADD_PLACEHOLDER, computersCopy.OPEN_COMMANDS]) {
       expect(page).toContain(s);
     }
@@ -721,13 +723,13 @@ describe("Computers and Commands in settings (§8.3) and the onboarding line (§
     expect(rest(base, none)).toBe(l.settings);
     expect(rest(base, none, "win32")).toBe(l.settingsWindows);
     // Commands on this computer, turned on with their card (the re-rater's probe).
-    const local = { ...base, commands: { local: { on: true, askEvery: false, consent: agreed } } } as Settings;
+    const local = { ...base, commands: { local: { on: true, askEvery: false, consent: { ...agreed, version: FEATURE_CONSENT_VERSION.commands } } } } as Settings;
     expect(keep(`${l.lead}${rest(local, none)}`)).toBe("Other computers and commands: you let Ember run commands on this computer. It runs commands only in its own window, where you can watch and stop them. Other computers are off until you turn them on.");
     expect(keep(`${l.lead}${rest(local, none, "win32")}`)).toBe("Other computers and commands: you let Ember run commands on this computer. It runs commands only in its own window, where you can watch and stop them. Other computers and WSL are off until you turn them on.");
     // A computer reached over SSH, with and without commands there.
     const ssh = { ...base, targets: { ...base.targets, hosts: [host] } } as Settings;
     expect(keep(`${l.lead}${rest(ssh, none)}`)).toBe("Other computers and commands: you let Ember work on computers you reach over SSH. Commands on this computer are off until you turn them on.");
-    const both = { ...ssh, commands: { local: local.commands.local, "ssh:build-01": { on: true, askEvery: false, consent: agreed } } } as Settings;
+    const both = { ...ssh, commands: { local: local.commands.local, "ssh:build-01": { on: true, askEvery: false, consent: { ...agreed, version: FEATURE_CONSENT_VERSION.commands } } } } as Settings;
     expect(keep(`${l.lead}${rest(both, none)}`)).toBe("Other computers and commands: you let Ember run commands on this computer, and work and run commands on computers you reach over SSH. It runs commands only in its own window, where you can watch and stop them.");
     // WSL on Windows (elsewhere it isn't Ember's to use).
     const wsl = { ...base, targets: { ...base.targets, wsl: { on: true, consent: agreed } } } as Settings;
@@ -952,8 +954,9 @@ describe("every new SSH, WSL and commands string", () => {
         const word = w.replace(/^[(“"‘]+|[)”"’.,:;?!…]+$/g, "");
         if (/^[A-Z][a-z]/.test(word)) {
           const afterStop = new RegExp(`[.:?!] ${w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`).test(s);
-          // (The approval modes' names, and the sections "What Ember did" and "How Ember asks", are names too.)
-          expect(afterStop || PROPER.test(word) || /^(Ubuntu|Remove|Voice|Match|Interactive|Assisted|Autopilot|What|How|Secure|Form)$/.test(word), `${word} in: ${s}`).toBe(true);
+          // (The approval modes' names, and the sections "What Ember did" and "How Ember asks", are names too, and so is
+          // a switch's name in curly quotes: “Ask me before every command”.)
+          expect(afterStop || w.startsWith("“") || PROPER.test(word) || /^(Ubuntu|Remove|Voice|Match|Interactive|Assisted|Autopilot|What|How|Secure|Form)$/.test(word), `${word} in: ${s}`).toBe(true);
         }
       }
     }
@@ -1594,15 +1597,15 @@ describe("Apps & privacy's screenshot switch (safety-privacy-7)", () => {
 
   it("says ordinary steps go ahead without asking while a mode is in force, and which apps never ask (safety-privacy-c4-1)", async () => {
     const { privacyFoldWords } = await import("../../app/renderer/home/copy");
-    const hand = " in an app unless you turn on Interactive, when you agree or later in settings, and always before anything hard to undo. It never lets the AI model type or see passwords. Only in Autopilot, it can fill in a login, a card or contact details from its vault, which the AI model never sees. ";
+    const hand = " in an app unless you turn on Interactive, when you agree or later in settings, and then still before anything risky there. It asks before a command it knows is dangerous and before code it can't read, unless you asked for exactly that command and it only deletes or overwrites data, publishes something or changes the system (it shows it first, with a few seconds to stop it). A command it doesn't know runs, and it tells you. Assisted and Autopilot, if you choose them later in settings, ask less. It never lets the AI model type or see passwords. Only in Autopilot, it can fill in a login, a card or contact details from its vault, which the AI model never sees. ";
     // The words are first run's own, after the line's bold lead, as the page has them; with no mode in force here,
     // Apps & privacy says it asks (slice4-22).
     expect(page).toContain(`<b>It asks before acting</b>${hand}<span`);
-    expect(`It asks before acting${privacyFoldWords(hand, { screenImages: true })}`).toBe("It asks before acting in an app, and always before anything hard to undo. It never lets the AI model type or see passwords. Only in Autopilot, it can fill in a login, a card or contact details from its vault, which the AI model never sees. ");
+    expect(`It asks before acting${privacyFoldWords(hand, { screenImages: true })}`).toBe("It asks before acting in an app. It asks before a command it knows is dangerous and before code it can't read, unless you asked for exactly that command and it only deletes or overwrites data, publishes something or changes the system (it shows it first, with a few seconds to stop it). A command it doesn't know runs, and it tells you. It never lets the AI model type or see passwords. Only in Autopilot, it can fill in a login, a card or contact details from its vault, which the AI model never sees. ");
     expect(`It asks before acting${privacyFoldWords(hand, { screenImages: true, autonomy: "interactive", grants: true })}`).toBe(
-      "It asks before acting on anything risky or hard to undo. For ordinary steps it tells you what it's doing instead (How Ember asks, below). It never lets the AI model type or see passwords. Only in Autopilot, it can fill in a login, a card or contact details from its vault, which the AI model never sees. ");
+      "It asks before acting on anything risky in an app, and before a command it knows is dangerous or code it can't read, except a command you asked for exactly that only deletes or overwrites data, publishes something or changes the system, which it shows you first with a few seconds to stop it. A command it doesn't know runs, and it tells you. For ordinary steps it tells you what it's doing instead (How Ember asks, below). It never lets the AI model type or see passwords. Only in Autopilot, it can fill in a login, a card or contact details from its vault, which the AI model never sees. ");
     expect(`It asks before acting${privacyFoldWords(hand, { screenImages: true, grants: true })}`).toBe(
-      "It asks before acting in an app, except those you let it act in without asking (below), and always before anything hard to undo. It never lets the AI model type or see passwords. Only in Autopilot, it can fill in a login, a card or contact details from its vault, which the AI model never sees. ");
+      "It asks before acting in an app, except those you let it act in without asking (below), and even there before anything risky. It asks before a command it knows is dangerous and before code it can't read, unless you asked for exactly that command and it only deletes or overwrites data, publishes something or changes the system (it shows it first, with a few seconds to stop it). A command it doesn't know runs, and it tells you. It never lets the AI model type or see passwords. Only in Autopilot, it can fill in a login, a card or contact details from its vault, which the AI model never sees. ");
     // The onboarding line's words after its lead, on either OS, are the ones the settings and the policy leave.
     const { onboardingRest } = await import("../../app/renderer/home/computers-copy");
     for (const os of ["linux", "win32"] as const) expect(privacyFoldWords(onboardingRest(os), { screenImages: true, targets: ": now" })).toBe(": now");
@@ -1611,9 +1614,9 @@ describe("Apps & privacy's screenshot switch (safety-privacy-7)", () => {
 
   it("doesn't say Ember can fill in from its vault where the organisation turned that off (merge review integ-y-4)", async () => {
     const { privacyFoldWords } = await import("../../app/renderer/home/copy");
-    const hand = " in an app unless you turn on Interactive, when you agree or later in settings, and always before anything hard to undo. It never lets the AI model type or see passwords. Only in Autopilot, it can fill in a login, a card or contact details from its vault, which the AI model never sees. ";
+    const hand = " in an app unless you turn on Interactive, when you agree or later in settings, and then still before anything risky there. It asks before a command it knows is dangerous and before code it can't read, unless you asked for exactly that command and it only deletes or overwrites data, publishes something or changes the system (it shows it first, with a few seconds to stop it). A command it doesn't know runs, and it tells you. Assisted and Autopilot, if you choose them later in settings, ask less. It never lets the AI model type or see passwords. Only in Autopilot, it can fill in a login, a card or contact details from its vault, which the AI model never sees. ";
     expect(`It asks before acting${privacyFoldWords(hand, { screenImages: true, vaultFill: false })}`).toBe(
-      "It asks before acting in an app, and always before anything hard to undo. It never lets the AI model type or see passwords. Your organisation has turned off filling in logins, cards and contact details from its vault. ");
+      "It asks before acting in an app. It asks before a command it knows is dangerous and before code it can't read, unless you asked for exactly that command and it only deletes or overwrites data, publishes something or changes the system (it shows it first, with a few seconds to stop it). A command it doesn't know runs, and it tells you. It never lets the AI model type or see passwords. Your organisation has turned off filling in logins, cards and contact details from its vault. ");
     expect(privacyFoldWords(hand, { screenImages: true, vaultFill: true })).toBe(privacyFoldWords(hand, { screenImages: true }));
     // Home passes it from the policy in force: the vault's switch, a lockdown, or a mode cap that keeps Autopilot out.
     const main = readFileSync(new URL("../../app/renderer/home/main.ts", import.meta.url), "utf8");

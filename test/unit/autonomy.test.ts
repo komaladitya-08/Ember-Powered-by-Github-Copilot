@@ -150,37 +150,41 @@ describe("Interactive's card (FEATURE_CONSENT_VERSION.autonomy, modes-A9)", () =
     expect(ASSISTED_CONSENT_TEXT).toMatch(/^In Assisted, Ember works as in Interactive, and where it would ask you it first checks the step against what you asked\. A lighter AI model makes that check\./);
     // What the model is sent, and that a match goes ahead whatever the step is.
     expect(ASSISTED_CONSENT_TEXT).toContain("It is sent your own words for the task, typed or spoken, and Ember's short description of the step: the app, the window's title, the control's name, a dialog's words, the text to type and what it replaces, a cell's formula and where carried text came from; or the command, its computer, shell and folder.");
-    expect(ASSISTED_CONSENT_TEXT).toMatch(/If it finds you asked for exactly that, Ember goes ahead without asking, also where the step sends, deletes, pays or installs, or the command changes your system\./);
+    expect(ASSISTED_CONSENT_TEXT).toMatch(/If it finds you asked for exactly that, Ember goes ahead without asking, also where the step sends, deletes, pays or installs, or the command changes your system, shows passwords or keys \(its output is then kept from the AI model\) or keeps running after you stop Ember\./);
     // Announced and recorded; it can be wrong; what it never clears; what happens otherwise; a stop always works.
     expect(ASSISTED_CONSENT_TEXT).toMatch(/Ember tells you each time, a command waits a few seconds with a Stop first, and What Ember did keeps a record\./);
     expect(ASSISTED_CONSENT_TEXT).toMatch(/The model can be wrong: it may let through a step you didn't mean\./);
     // A cleared command that shows secrets has its output kept from the model (the owner's decision of 2026-11-14).
-    expect(ASSISTED_CONSENT_TEXT).toContain("If it clears a command that shows passwords or keys, the AI model isn't shown its output.");
-    expect(ASSISTED_CONSENT_TEXT).toMatch(/It never clears a step you said no to, anything Ember refuses, such as typing a password, or what you or your organisation set to ask every time\./);
+    expect(ASSISTED_CONSENT_TEXT).toContain("shows passwords or keys (its output is then kept from the AI model) or keeps running after you stop Ember.");
+    expect(ASSISTED_CONSENT_TEXT).toMatch(/It never clears a step you said no to, a command your words for the task rule out, anything Ember refuses, such as typing a password, or what you or your organisation set to ask every time\./);
     expect(ASSISTED_CONSENT_TEXT).toMatch(/If it finds no match or can't tell, Ember asks you\. “Ember, stop” or Ember's stop shortcut stops everything at once\.$/);
     // No shortcut is named (another app may hold it), no straight quotes, and it stays short enough to read.
     expect(ASSISTED_CONSENT_TEXT).not.toMatch(/"|Ctrl\+/);
-    // (215: naming every part the check is sent took 12 words more; modes-x9p-4.)
-    expect(ASSISTED_CONSENT_TEXT.split(/\s+/).length).toBeLessThanOrEqual(215);
+    // (215: naming every part the check is sent took 12 words more; modes-x9p-4. 220: the commands it may now clear,
+    // owner decision of 2026-11-14. 230: that a cleared secret's output is kept from the model, the commands lane's
+    // promise kept on the one card at round eleven's merge.)
+    expect(ASSISTED_CONSENT_TEXT.split(/\s+/).length).toBeLessThanOrEqual(230);
   });
 
-  it("is versioned on its own, at 3 since it replaced Work without asking's card: an agreement to that one is none to this", () => {
-    expect(FEATURE_CONSENT_VERSION.autonomy).toBe(3);
+  it("is versioned on its own, at 3 since it replaced Work without asking's card (an agreement to that one is none to this), at 4 since it says a dangerous command asked for exactly doesn't ask (accessibility-c11-1), at 5 since it follows the owner's table of 2026-11-14", () => {
+    expect(FEATURE_CONSENT_VERSION.autonomy).toBe(5);
     expect(MODE_CARD_TEXT.interactive).toBe(AUTONOMY_CONSENT_TEXT);
     expect(modeCard("interactive")).toEqual({ title: "Before you choose Interactive", text: AUTONOMY_CONSENT_TEXT, yes: "I agree, use Interactive", no: "Not now" });
   });
 
   it("says plainly what is announced instead of asked, what still asks every time, what never happens, and that a stop always works", () => {
-    expect(AUTONOMY_CONSENT_TEXT).toMatch(/^In Interactive, Ember does ordinary steps without asking first: it works in your apps, borrows your mouse and keyboard, runs ordinary commands, moves text between apps and presses OK on a message box that has nothing else to choose\./);
+    expect(AUTONOMY_CONSENT_TEXT).toMatch(/^In Interactive, Ember does ordinary steps without asking first: it works in your apps, borrows your mouse and keyboard, runs ordinary commands and ones it doesn't know, moves text between apps and presses OK on a message box that has nothing else to choose\./);
     expect(AUTONOMY_CONSENT_TEXT).toMatch(/It tells you what it is doing as it goes, and keeps a record under What Ember did\./);
-    expect(AUTONOMY_CONSENT_TEXT).toMatch(/It still asks every time before anything risky: sending, posting, submitting, sharing, deleting, overwriting, paying, installing, signing out, security settings, dangerous commands and any dialog that asks a question\./);
+    expect(AUTONOMY_CONSENT_TEXT).toMatch(/It still asks every time before anything risky in an app: sending, posting, submitting, sharing, deleting, overwriting, paying, installing, signing out, security settings and any dialog that asks a question\. It asks before a dangerous command too, one that deletes, publishes, changes the system, touches passwords or keys, downloads and runs code or keeps running after you stop Ember, unless you asked for exactly that command and it only deletes or overwrites data, publishes something or changes the system: then it shows it first, with a few seconds to stop it\. It asks before code it can't read, too\./);
     expect(AUTONOMY_CONSENT_TEXT).toMatch(/It asks more often in your system's settings and security apps, and a task goes back to asking once you say no or a page or file tries to give it instructions\./);
     expect(AUTONOMY_CONSENT_TEXT).toMatch(/It never types passwords and never acts in sign-in prompts\./);
     expect(AUTONOMY_CONSENT_TEXT).toMatch(/“Ember, stop” or Ember's stop shortcut stops everything at once, and moving your mouse takes it back\./);
     // Sentence case, curly quotes, no raw keys (CLAUDE.md "Writing UI copy").
     expect(AUTONOMY_CONSENT_TEXT).not.toMatch(/"|Ctrl\+/);
-    // Read in about half a minute: no longer than the card it replaced (about 160 words).
-    expect(AUTONOMY_CONSENT_TEXT.split(/\s+/).length).toBeLessThanOrEqual(160);
+    // Read in about half a minute: the card it replaced was about 160 words, and the exception for a command asked for
+    // exactly, which it left out, takes about 35 more (accessibility-c11-1), and naming what is dangerous and what
+    // Ember can't read about 30 more (owner decision of 2026-11-14).
+    expect(AUTONOMY_CONSENT_TEXT.split(/\s+/).length).toBeLessThanOrEqual(235);
   });
 
   it("says that anyone near the computer can answer a question by voice while Voice Match is off (owner decision of 2026-11-12)", () => {

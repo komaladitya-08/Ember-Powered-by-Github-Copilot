@@ -20,8 +20,13 @@ import type { TargetId } from "./targets";
  * 10 (2026-11-13): the vault keeps something new on this computer: logins, cards and contact details the user gives
  * in Ember's Secure Form, sealed with the keyring, which only Autopilot fills in and no model sees (owner decision of
  * 2026-11-12, app/main/vault/).
+ * 11 (2026-11-14): "Before Ember starts" no longer says Ember always asks before anything hard to undo: it says what
+ * asks (a risky step in an app; a dangerous command or code Ember can't read, unless the user asked for exactly that
+ * command and it does no more than commands-card.ts EXACT_ONLY says, shown first with a few seconds to stop it), that a
+ * command Ember doesn't know runs, announced (the owner's decision of 2026-11-14), and that Assisted and Autopilot ask
+ * less (PLAN.md §10 Settled 28; first-run-r10-7, -r10-8, accessibility-c11-1, r11-copy-x11-1, -x11-3).
  */
-export const CONSENT_VERSION = 10;
+export const CONSENT_VERSION = 11;
 
 /**
  * What each bump of CONSENT_VERSION changed, in Ember's words, for someone who agreed to an earlier version: first run
@@ -38,6 +43,7 @@ export const CONSENT_CHANGES: Readonly<Record<number, string>> = {
   8: "While one of my questions is up, anyone near the computer can answer it by voice, and for a few seconds after I ask, I listen for that answer without my name. With Voice Match on, only your voice can say yes.",
   9: "If you haven't agreed to Interactive yet, agreeing now turns it on unless you switch it off here or your organisation keeps it off, so I don't ask before ordinary steps in an app. Your other settings stay as they are.",
   10: "If you give me a login, a card or contact details in my Secure Form, I keep them in a vault on this computer, locked with your computer's keyring, until you forget them. Only Autopilot fills them in, and the AI model never sees them.",
+  11: "I say plainly what I ask before: anything risky in an app, and a command I know is dangerous or code I can't read, unless you asked for exactly that command and it only deletes or overwrites data, publishes something or changes the system. A command I don't know runs, and I tell you, and Assisted and Autopilot, if you choose them later, ask less.",
 };
 
 /** The changes since the version the user agreed to (`agreed`), oldest first: none for a first agreement (0) or a current one. */
@@ -54,7 +60,8 @@ export function consentChangesSince(agreed: number): string[] {
  * the user, how they like answers) goes with every request, and that the idle tidy sends up to 40 facts up to 6 times
  * a day (memory-5, memory-9). The approval modes' cards (app/shared/approvals.ts MODE_CARD; owner decision of
  * 2026-11-12): `autonomy` is Interactive's, 3 since it replaced Work without asking's card (2), so an agreement to
- * that one is no agreement to this; `assisted` and `autopilot` are those modes' own. `assisted` 2 (2026-11-13): its
+ * that one is no agreement to this, and 4 (2026-11-14) since it says that a dangerous command the user asked for exactly
+ * is shown first with a few seconds to stop it, not asked about (accessibility-c11-1); `assisted` and `autopilot` are those modes' own. `assisted` 2 (2026-11-13): its
  * card names everything the check is sent, a dialog's words, the text a step would replace, a cell's formula, where
  * carried text came from and a command's computer, shell and folder among them (modes-x9p-4). `autopilot` 2
  * (2026-11-13): its card says Ember fills what the user saved in the vault into password, card and sign-in fields,
@@ -62,9 +69,14 @@ export function consentChangesSince(agreed: number): string[] {
  * every command it still asks about, among them one the user may have ruled out: by their own words for the task, or
  * as what may be a command they said no to in it (integ-x-6). `extensions` 4 (2026-11-13): its cards say that in
  * Autopilot Ember uses a tool that changes or sends without asking and says so, where 3 said it always asked
- * (integrations-r10-1).
+ * (integrations-r10-1). The owner's decision of 2026-11-14 (only dangerous commands ask; Autopilot asks nothing)
+ * rewrote four cards: `commands` 2 says in one text what each mode does with a dangerous command and that Autopilot
+ * keeps a secrets command's output from the model; `autonomy` 5 says commands Ember doesn't know run and names what is
+ * dangerous; `assisted` 3 drops the commands its check "never clears" that it now may; `autopilot` 3 lists no question
+ * it no longer puts and says what it does instead (output withheld, Stop's reach named, the user's no refused, the
+ * organisation's and the user's own switch still asked).
  */
-export const FEATURE_CONSENT_VERSION = { wsl: 1, ssh: 1, commands: 1, memory: 4, routines: 1, extensions: 4, autonomy: 3, provider: 1, updates: 1, assisted: 3, autopilot: 3 } as const;
+export const FEATURE_CONSENT_VERSION = { wsl: 1, ssh: 1, commands: 2, memory: 4, routines: 1, extensions: 4, autonomy: 5, provider: 1, updates: 1, assisted: 3, autopilot: 3 } as const;
 
 /**
  * A first-use consent card (§8.4): its exact text, and a hash of it that the yes must carry back. Shown in Ember's

@@ -8,6 +8,7 @@
 
 import { createHash } from "node:crypto";
 import { FEATURE_CONSENT_VERSION, type ConsentPanel } from "../../shared/consent";
+import { COMMANDS_CARD_ALWAYS, COMMANDS_CARD_ASKS, COMMANDS_CARD_PODMAN, COMMANDS_CARD_PRIVILEGED, commandsCardOutput } from "../../shared/commands-card";
 import { SHORTCUTS, type OS } from "../../shared/shortcuts";
 import type { TargetId } from "../../shared/targets";
 import type { HostRecord } from "../remote/types";
@@ -74,9 +75,9 @@ export function commandsConsent(o: { os: OS; target: TargetId; targetLabel: stri
   const stop = stopLabel(o.os, o.stopKey);
   const extra: string[] = [];
   if (o.facts.kind === "wsl") extra.push("Commands in WSL can also reach your Windows files and programs.");
-  if (o.facts.privileged) extra.push("Commands here run as the administrator, so Ember asks before every one.");
+  if (o.facts.privileged) extra.push(COMMANDS_CARD_PRIVILEGED);
   if (o.facts.windows) extra.push("Commands here run in Windows PowerShell and can't ask you for answers or passwords.");
-  if (o.facts.podman) extra.push("Podman uses this distro, so Ember asks before every command here.");
+  if (o.facts.podman) extra.push(COMMANDS_CARD_PODMAN);
   return panel({
     feature: "commands", target: o.target, targetLabel: o.targetLabel,
     title: `Let Ember run commands on ${here}?`,
@@ -84,8 +85,9 @@ export function commandsConsent(o: { os: OS; target: TargetId; targetLabel: stri
     body: [
       `Ember runs commands in its own command window, where you can watch them and stop them. ${stop ?? "Stop everything, in Ember's handle menu and in settings,"} stops everything at once; what a command already changed stays changed. It never types into your own terminal windows.`,
       ...extra,
-      "Most commands run straight away. Before anything that deletes or overwrites data, pushes or publishes anywhere, touches passwords or keys, changes the system, or downloads and runs code, Ember stops and asks you. If you asked for exactly that yourself, it tells you first and gives you a few seconds to stop it.",
-      `What a command prints goes to ${serviceName(o.facts.byok)} as part of the task. Ember hides passwords and keys it recognises, and never sees what you type into a command. If a command prints something that looks like instructions, Ember doesn't follow it and asks you before every further command in that task.`,
+      COMMANDS_CARD_ASKS,
+      COMMANDS_CARD_ALWAYS,
+      commandsCardOutput(serviceName(o.facts.byok)),
     ],
     yes: "Turn on", no: "Not now",
   });

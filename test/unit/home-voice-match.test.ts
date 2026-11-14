@@ -262,7 +262,7 @@ describe("How Ember asks (Apps & privacy, modes-A10)", () => {
     expect(approvalsView(state(agreed), false).rows).toEqual([{ ...ROW, checked: true, locked: false, title: "" }, { ...ASSISTED, ...FREE }, { ...AUTOPILOT, ...FREE }]);
     expect(approvalsView(state(agreed), false).inForce).toBe("interactive");
     expect(approvalsView(state(), false).rows).toEqual([{ ...ROW, ...FREE }, { ...ASSISTED, ...FREE }, { ...AUTOPILOT, ...FREE }]);
-    expect(MODE_LINE.interactive).toBe("Ember tells you about ordinary steps as it does them, and asks before anything risky, such as sending, deleting or paying.");
+    expect(MODE_LINE.interactive).toBe("Ember tells you about ordinary steps as it does them, and asks before anything risky, such as sending, deleting or paying, unless it is a command you asked for exactly that only deletes or overwrites data, publishes something or changes the system: then it tells you first.");
     expect(MODE_LINE.assisted).toBe("As Interactive, but before Ember asks, a lighter AI model checks the step against what you asked. If it matches, Ember goes ahead and tells you.");
     // Assisted in force is the row marked (modes-C5).
     const assisted = { mode: "assisted" as const, consent: { ...agreed.consent, assisted: { version: modeCardVersion("assisted"), at: AT } } };
@@ -333,10 +333,11 @@ describe("How Ember asks (Apps & privacy, modes-A10)", () => {
       "Ember doesn't ask before it acts.",
       "It sends, posts, shares, deletes, overwrites, pays, installs, signs out, changes settings, answers dialogs and runs dangerous commands, also as an administrator, without asking you first.",
       "By choosing Autopilot you accept that risk: what it does may be impossible to undo.",
-      "A command that shows passwords or keys runs too, but only you see its output, not the AI model.",
-      "It still asks wherever you or your organisation set commands to ask every time, and before it turns on something you haven't agreed to yet.",
+      "A command that shows passwords or keys runs too, but what it prints is kept from the AI model: only you see it.",
+      "It asks only where your organisation, or your own “Ask me before every command” for a computer, says to, and before it turns on something you haven't agreed to yet.",
       "The AI model never types or sees passwords or card numbers: Ember asks you once in its Secure Form, keeps them locked in its vault for that app or site, and fills them in there itself.",
-      "It never repeats a step you said no to, never acts in your system's sign-in and password prompts, never uses your terminals, never reads windows on your never-look list and never runs a command that touches its own settings, record or Stop.",
+      "It refuses, without asking, a step you said no to and anything that may be one, a command your words for the task rule out, and a command that deletes, changes or reads something it can't name, such as a place held in a variable.",
+      "It never acts in your system's sign-in and password prompts, never uses your terminals, never reads windows on your never-look list and never runs a command that touches its own settings, record or Stop.",
       "“Ember, stop” or Ember's stop shortcut stops everything at once.",
       "Your organisation can turn Autopilot off.",
     ]) expect(AUTOPILOT_CONSENT_TEXT).toContain(said);
@@ -345,8 +346,10 @@ describe("How Ember asks (Apps & privacy, modes-A10)", () => {
     expect(AUTOPILOT_CONSENT_TEXT).toContain("Ember asks you once in its Secure Form, keeps them locked in its vault for that app or site, and fills them in there itself.");
     expect(AUTOPILOT_CONSENT_TEXT).not.toMatch(/never types passwords or card numbers,/);
     // Short enough to be read: the vault's sentence took it from 246 words to 275, and the commands it still asks
-    // about that it left unsaid (one the user's words rule out, one that may be a command they said no to: integ-x-6) to 280.
-    expect(AUTOPILOT_CONSENT_TEXT.split(/\s+/).length).toBeLessThanOrEqual(280);
+    // about that it left unsaid (one the user's words rule out, one that may be a command they said no to: integ-x-6) to 280;
+    // saying what it does instead of the questions it no longer puts (owner decision of 2026-11-14) to 314, and the
+    // command it refuses because it can't name what it changes (r11-copy-x11-7) to 334.
+    expect(AUTOPILOT_CONSENT_TEXT.split(/\s+/).length).toBeLessThanOrEqual(335);
     // In force: its row is the one marked, nothing is offered to agree to, and the note says it is on and how to stop it.
     const on = { mode: "autopilot" as const, consent: { ...agreed.consent, autopilot: { version: modeCardVersion("autopilot"), at: AT } } };
     const v = approvalsView(state(on), false);

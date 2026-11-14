@@ -238,24 +238,28 @@ has its own card that says what it means, and a mode is in use only once you agr
 
 - **Interactive** is the default (first run turns it on with its card; switch it off there if you like). For ordinary
   steps, such as a first step in an app, using your mouse and keyboard or moving text from another window, Ember tells
-  you what it's doing instead of asking. It asks every time before anything risky: sending, posting, sharing,
-  deleting, overwriting, paying, installing, signing out, changing security settings or answering a dialog's question,
-  and before a command that deletes, publishes, touches passwords or keys, changes the system, downloads and runs
-  code, or would keep running after you stop it (unless you asked for exactly that command: then it tells you and gives you
-  4 seconds to stop it). Every other command runs, a program Ember doesn't know included: it tells you its name and
-  gives you the same 4 seconds (unless your own words for the task say not to run it: then it asks).
+  you what it's doing instead of asking, and ordinary commands run, as do commands Ember doesn't know (it tells you
+  the name and gives you 4 seconds to stop it, unless your own words for the task say not to run it: then it asks).
+  It asks every time before anything risky: sending, posting, sharing, deleting, overwriting, paying, installing,
+  signing out, changing security settings or answering a dialog's question. It asks before a dangerous command too:
+  one that deletes, publishes, touches passwords or keys, changes the system or runs as an administrator, downloads
+  and runs code or would keep running after you stop it, and before code it can't read. If you asked for exactly that
+  command and it only deletes or overwrites data, publishes something or changes the system, and Ember isn't running
+  as an administrator, it tells you instead and gives you 4 seconds to stop it.
 - **Assisted** is Interactive with a check: before Ember asks, a lighter AI model reads the step against what you
-  asked, in your own words. When it matches, Ember goes ahead and tells you, a risky step included; otherwise it asks.
-  A command it clears that shows passwords or keys runs with what it prints kept from the AI model. A command your own
-  words for the task rule out always asks, and so does every command wherever you or your organisation set commands to
-  ask every time, or on a computer reached over SSH whose own administrator doesn't allow the check there.
+  asked, in your own words. When it matches, Ember goes ahead and tells you, a risky step or a dangerous command
+  included; otherwise it asks. A command it clears that shows passwords or keys runs with what it prints kept from the
+  AI model. A step you said no to, or a command your own words for the task rule out, always asks or is refused, and
+  so does every command wherever you or your organisation set commands to ask every time, or on a computer reached
+  over SSH whose own administrator doesn't allow the check there.
 - **Autopilot** doesn't ask. Ember sends, deletes, pays, installs and runs dangerous commands, as an administrator
   too, and tells you as it goes, with a few seconds to stop each dangerous command: a risk you accept on its card. A
-  command that shows passwords or keys runs with what it prints kept from the AI model (only you see it), and one that
-  keeps running after you stop Ember says so first. It doesn't run a command your own words for the task rule out, and
-  it asks only wherever you or your organisation set commands to ask every time or the administrator of a computer
-  reached over SSH doesn't allow Autopilot there. Only in Autopilot
-  does Ember fill in logins and cards from its vault (below).
+  command that shows passwords or keys runs too, but what it prints is kept from the AI model (you see it in the
+  command window), and Ember says so when a command will keep running after Stop. What you said no to, and a command
+  you ruled out in your request, it refuses instead of asking, and so it does a command that deletes, changes or reads something it
+  can't name, such as a place held in a variable. It asks only where you or your organisation set commands to ask every
+  time; where the administrator of a computer reached over SSH doesn't allow Autopilot, Ember isn't in Autopilot
+  there. Only in Autopilot does Ember fill in logins and cards from its vault (below).
 
 In every mode “Ember, stop” or the stop shortcut stops everything at once, Ember never retries a step you said no to,
 never acts in your system's password prompts or your terminals, never lets the AI model see a password, and **What

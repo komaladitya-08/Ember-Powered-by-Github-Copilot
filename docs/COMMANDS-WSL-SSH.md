@@ -11,7 +11,11 @@ it means before anything happens: one for WSL, one for each computer you connect
 other computer. People who already use Ember keep their settings: first run's agreement doesn't turn commands on for
 them, and nothing new happens until they accept a card. An organisation that turned commands off on this computer
 (`commands.local`) sees the row off and managed, and an Ember running as root or an administrator says in that card
-that it asks before every command.
+that in Interactive and Assisted it asks before every command, and that in Autopilot each runs after a few seconds to
+stop it. The commands card says, in one text for every approval mode, what each mode
+does with a dangerous command (Interactive asks, Assisted's check may let it go ahead, Autopilot asks nothing), that
+in Autopilot a command that shows passwords or keys has its output kept from the model, and what holds in every mode:
+your no, and your organisation's or your own **Ask me before every command** (owner decision of 2026-11-14).
 
 Wherever Ember works, **your voice and your GitHub sign-in stay on this computer**. Listening, speech recognition,
 the Copilot conversation and Ember's questions all stay here; another computer only receives the steps Ember takes
@@ -807,10 +811,11 @@ window shows "About to run this: Autopilot is on" (never "as you asked"), the ex
 found ("Commands here run as root (the administrator).", without "so each one asks first", where that is why it would
 have asked), "Autopilot is on, so Ember didn't ask first." and the countdown with **Stop**, as in §2.5. Nothing is sent to a model to decide this.
 
-Since the owner's decision of 2026-11-14 Autopilot asks nothing of what a command is:
+Autopilot asks before no command for what the command does (the owner's decision of 2026-11-14). Where Interactive
+would have asked, this is what happens instead:
 
-- a command that would read or print passwords, keys or other secrets runs, announced, and **its output is kept from
-  the model**: the card says "Its output may hold passwords or keys, so Ember keeps it from the AI model: only you see
+- a command that would read or print passwords, keys or other secrets runs, announced, and what it prints is kept from
+  the model: the card says "Its output may hold passwords or keys, so Ember keeps it from the AI model: only you see
   it here.", the model is told only that it ran and how it ended, and What Ember did records it; a downloaded program
   handed one counts (`npx tool ~/.ssh/id_rsa`: the card also says "Gives a password, key or other secret to code it
   downloads."). One that saves them to a file a later command could show the model (`printenv > env.txt`, `cp
@@ -823,7 +828,8 @@ Since the owner's decision of 2026-11-14 Autopilot asks nothing of what a comman
   keeps running after Stop, without asking: Autopilot is on.", and the card and the audit say "Stop won't reach what
   this command leaves running.";
 - code Ember can't read (a loop, a line behind a `[[ … ]]` test, code written inline, `eval`, text handed to `xargs`
-  that Ember can't see, a script the task wrote) runs, announced.
+  that Ember can't see, a script the task wrote) runs, announced; a program, or a tool's command, Ember doesn't know
+  runs announced in every mode.
 
 It refuses, with no question to put:
 
@@ -844,9 +850,14 @@ It refuses, with no question to put:
 
 The last two are refused on a computer reached over SSH too, where that computer's own check (§4.5) is what finds them.
 
-It still asks, with the card of §2.4, only where your organisation asks for every command, where you turned on **Ask
-me before every command** for that computer, in a Podman distro and in a project's chosen command folder, and before
-turning commands on for a computer the first time (§2.1).
+It asks, with the card of §2.4, only:
+
+- every command where your organisation asks for that, where you turned on **Ask me before every command** for that
+  computer, in a Podman distro, and in a project's chosen command folder; where Ember runs as root or an
+  administrator, that card says "Commands here run as root (the administrator)." (or "Ember is running as an
+  administrator here.") without "so each one asks first", after the line that is its reason, which is the one the
+  bubble says; so does the countdown of a command Assisted's check cleared;
+- turning commands on for a computer the first time (§2.1).
 
 A command that touches Ember's own settings, records, policy or processes is refused as in every mode (§2.6), a
 downloaded program pointed at one of those files included (`npx tool ~/.config/ember/settings.json`). **Stop**
@@ -857,7 +868,7 @@ computer, doesn't run its command.
 On a computer reached over SSH the command is checked there again, as always. Ember tells that computer that
 Autopilot announced the command rather than that you said yes. It runs the command only where its own administrator
 allows Autopilot (where not, it answers "This computer's administrator doesn't allow Autopilot, so it wants your
-approval." and you get the card), and wherever its administrator asks for every command. When it finds more than this
+approval." and you get the card), and wherever its administrator asks for every command or its own policy asks. When it finds more than this
 computer did, the bubble says "Running a command that <computer>'s own check asked about, without asking: Autopilot is
 on.", its lines show with a countdown of their own (with the lines above where what it found reads secrets, whose
 output is then kept from the model, or keeps running after Stop), and anything it still wants a yes for after that

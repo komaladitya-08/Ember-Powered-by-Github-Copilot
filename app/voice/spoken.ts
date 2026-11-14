@@ -413,13 +413,27 @@ const SCRIPTS: readonly [RegExp, string][] = [
  */
 const STOPWORDS: Readonly<Record<string, ReadonlySet<string>>> = {
   en: new Set("the a an and is are was were to of in on at by or from as do no he she it i you we they my your that this with for not have has what can will if so but all just there here".split(" ")),
-  fr: new Set("le la les des du une est et je j vous nous pas que qui pour dans sur avec ce cette il elle sont ai mais ou au aux l c qu de un en ne se y moi lui leur sa ses ces ça cela à vos votre mon ma mes".split(" ")),
+  fr: new Set("le la les des du une est et je j vous nous pas que qui pour dans sur avec ce cette il elle sont ai mais ou au aux l c qu de un en ne se y moi lui leur sa ses ces ça cela à vos votre mon ma mes tu te si toi tes".split(" ")),
   de: new Set("der die das und ist nicht ich sie wir ein eine mit zu dem auf für von sich auch wie oder aber habe es sind des im nur noch dir mich mir kann wird du hast den bei aus".split(" ")),
-  es: new Set("el la los las del que y en un una es por para con se está como pero muy yo de lo al eso esto hay su sus mi te le".split(" ")),
-  it: new Set("il di che e è un una non sono con del della gli le mi ho anche nel ma lo si questo più alla alle nella sul dei delle la ho hai ti ci vuoi tua tuo al".split(" ")),
-  pt: new Set("os que e é uma para não da em na por se eu você de dos das ao às mas isso seu sua ele ela foi um já são tem está nas quer".split(" ")),
+  es: new Set("el la los las del que y en un una es por para con se está como pero muy yo de lo al eso esto hay su sus mi te le si tu ya".split(" ")),
+  it: new Set("il di che e è un una non sono con del della gli le mi ho anche nel ma lo si questo più alla alle nella sul dei delle la ho hai ti ci vuoi tua tuo al da io".split(" ")),
+  pt: new Set("os que e é uma para não da em na por se eu você de dos das ao às mas isso seu sua ele ela foi um já são tem está nas quer te à nos ou meu minha".split(" ")),
   nl: new Set("de het een en niet ik je van dat op te met zijn voor maar ook wat om naar uit bij nog aan heb kan".split(" ")),
 };
+
+/**
+ * Short words a language writes as often as English does ("a", "me", "no", "do", "in", the "o" of "o'clock"), counted
+ * only to find a passage's language, and on both sides: English's are counted with them. Without them, an everyday
+ * Portuguese, Spanish or Italian email had too few short words to tell in its first 60 letters ("Bom dia, envio o
+ * relatório que me pediste…": "que" alone) and Kitten read it with English sounds (voice-speaking-r11-1). Never a
+ * language's own words where an English closing question is told from them (ownClosing, englishOnly): "Want me to
+ * reply?" holds "me".
+ */
+const ALSO_ENGLISH: Readonly<Record<string, ReadonlySet<string>>> = {
+  en: new Set(["me", "per", "o"]), es: new Set(["a", "me", "no"]), it: new Set(["a", "in", "per"]), pt: new Set(["o", "a", "do", "no", "me"]), nl: new Set(["me"]),
+};
+/** The short words of `words` that count towards `lang` when finding a passage's language (STOPWORDS and ALSO_ENGLISH). */
+const counted = (words: readonly string[], lang: string): string[] => words.filter(w => STOPWORDS[lang]?.has(w) || ALSO_ENGLISH[lang]?.has(w));
 
 /**
  * Letters and marks one of these languages writes and the others seldom do. Only to tell two languages apart whose
@@ -429,6 +443,19 @@ const STOPWORDS: Readonly<Record<string, ReadonlySet<string>>> = {
 const OWN_LETTERS: Readonly<Record<string, RegExp>> = {
   es: /[ñáíóú¿¡]/giu, fr: /[àâçèêëîïôûùœ]/giu, de: /[äöß]/giu, it: /[ìò]/giu, pt: /[ãõ]/giu,
 };
+/**
+ * Letters that only languages outside STOPWORDS write (Polish, Czech, Slovak, Romanian, Turkish, Hungarian, the Nordic
+ * languages, Croatian, Bosnian, Serbian, Slovene and the Baltic languages): a passage that writes them isn't one of the
+ * listed languages, however many short words it shares with one (r11-voice-x11-4, r11-voice-y11-3).
+ */
+const UNLISTED_LETTERS = /[ąęłńśźżćěřůďťňľĺŕășțşţğıőűåøæðþđšžčėūųāēīķļņģ]/giu;
+/**
+ * Everyday words of Catalan, which STOPWORDS has no list for, that none of the listed languages writes: a passage with
+ * two of them isn't French, Italian or Spanish, however many short words it shares with them (r11-voice-y11-3).
+ */
+const CATALAN = new Set("amb els dels perquè tinc teniu vau ahir demà avui aquest aquesta això molt també doncs davant dilluns dimarts dimecres dijous divendres dissabte diumenge".split(" "));
+/** The letters of OWN_LETTERS no unlisted language writes as well (Hungarian and Czech write "á", "í", "ó" and "ú"). */
+const MARKS: Readonly<Record<string, RegExp>> = { ...OWN_LETTERS, es: /[ñ¿¡]/gu };
 /** A short word two languages write that is far commoner in one: Spanish's "and", French's "there" ("il y a"). */
 const LEANS: Readonly<Record<string, ReadonlySet<string>>> = { es: new Set(["y"]) };
 
@@ -477,7 +504,7 @@ export function speechLanguage(text: string, prefer: string | null = null): stri
  * counted, unless it is all quotes: an English answer saying how to say something in French ("It's « je ne sais
  * pas ».") is English (voice-speaking-r2-1).
  */
-function languageOf(quoting: string, minDifferent: number, prefer: string | null = null): string | null {
+function languageOf(quoting: string, minDifferent: number, prefer: string | null = null, share = 4): string | null {
   const text = outsideQuotes(quoting);
   const letters = text.match(/\p{L}/gu) ?? [];
   if (!letters.length) return null;
@@ -487,23 +514,36 @@ function languageOf(quoting: string, minDifferent: number, prefer: string | null
     if (lang === "ja" ? n && letters.filter(c => /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u.test(c)).length * 2 > letters.length : n * 2 > letters.length) return lang;
   }
   const words = wordsBesidesNames(text);
-  const english = stopwords(words, "en").length;
+  const english = counted(words, "en").length;
   let best: string | null = null, most = 0, different = 0, tie = [0, 0, 0, 0];
   const others = Object.keys(STOPWORDS).filter(lang => lang !== "en");
   for (const lang of others) {
-    const found = stopwords(words, lang);
+    const found = counted(words, lang);
     if (found.length < most || !found.length) continue;
     // As many as the best so far: the request's language, then its own letters, a word that leans its way, then the
     // words only it has.
     const rank = [
       lang === prefer ? 1 : 0, (text.match(OWN_LETTERS[lang] ?? /(?!)/gu) ?? []).length, found.filter(w => LEANS[lang]?.has(w)).length,
-      found.filter(w => others.every(o => o === lang || !STOPWORDS[o].has(w))).length,
+      found.filter(w => others.every(o => o === lang || !counted([w], o).length)).length,
     ];
     const differs = rank.findIndex((r, i) => r !== tie[i]);
     const better = found.length > most || (differs >= 0 && rank[differs] > tie[differs]);
     if (better) { best = lang; most = found.length; different = new Set(found).size; tie = rank; }
   }
-  return best && different >= minDifferent && most * 4 >= words.length && most > english ? best : null;
+  if (!best || different < minDifferent || most * share < words.length || most <= english) return null;
+  // Told from fewer short words than a quarter (a passage's own words: share 6), never where it writes letters none of
+  // these languages do: a Polish email's "o", "do" and "na" made it Portuguese, said by a Portuguese voice or not at all
+  // where there is none, where Kitten had read it, and a Romanian one went to a French voice (r11-voice-x11-4).
+  if (share > 4 && (text.match(UNLISTED_LETTERS) ?? []).length >= 2) return null;
+  // Nor on the short words it shares with English alone: two signs of its own are needed, different short words only it
+  // and not English writes, or one and a letter only it writes (a Hungarian email's "el" and "a" made it Spanish;
+  // "Hola, mañana no podré ir a la oficina…" has "la" and "ñ").
+  const own = new Set(counted(words, best).filter(w => !ALSO_ENGLISH[best]?.has(w))).size + (text.match(MARKS[best] ?? /(?!)/gu) ? 1 : 0);
+  if (share > 4 && own < 2) return null;
+  // Nor where it writes two of Catalan's everyday words: a Catalan email's "que", "si", "per", "les" and "de" made it
+  // French or Italian, said by such a voice or not at all where there is none (r11-voice-y11-3).
+  if (share > 4 && words.filter(w => CATALAN.has(w)).length >= 2) return null;
+  return best;
 }
 
 /** The words of `words` that are `lang`'s short words (none for a language written in its own script). */
@@ -597,6 +637,13 @@ const mayBeAnother = (text: string) => (FOREIGN_MARKS.test(text) || ACCENTED.tes
 const LEAD_IN = /[:：]["”’'*_)\]]*\s*$/u;
 /** A message's header line ("From: José.", "Subject: Proyecto.", as the stream writes "**From:** José"). */
 const HEADER = /^\s*(?:from|to|cc|bcc|subject|date|sent|re|reply-to)\s*[:：]/iu;
+/**
+ * Any other one-line label and its value ("Attachments: plan.pdf", "**Received:** today at 9:14", "Sender: José",
+ * "Priority: High"): a label of up to three words, a colon and a value on the same line. Judged as the passage's first
+ * letters, a label Ember didn't know made a Spanish or Italian email Kitten's again (voice-speaking-r11-2), and once the
+ * passage was told, its English label was said by the passage's voice (voice-speaking-c11-1).
+ */
+const HEADER_LABEL = /^\s*(?:[>*_-]\s*)*[*_]*(\p{L}[\p{L}'’-]*(?:[ -]\p{L}[\p{L}'’-]*){0,2})[*_]*\s*[:：][*_]*[ \t]+(\S[^\n]*)\s*$/u;
 
 /**
  * Whether `piece`, which starts what is being judged, is Ember's own and leads in to a passage: a message's header line
@@ -617,6 +664,15 @@ function leadsIn(piece: string): boolean {
     if (/^\s*(?:from|to|cc|bcc|reply-to)\s*[:：]/iu.test(header[0])) return true;
     const tokens = value.split(/\s+/u).filter(t => /\p{L}/u.test(t));
     return !ACCENTED.test(tokens.filter((t, i) => i === 0 || !/^\p{Lu}/u.test(t)).join(" "));
+  }
+  const label = HEADER_LABEL.exec(piece);
+  if (label && !LEAD_IN.test(piece)) {
+    // Ember's own only where neither the label nor its value is in another language, and the only letters with an
+    // accent are in a name: "Asunto: reunión del lunes." and "Remarque : le fichier…" are the passage's.
+    const [, name, value] = label;
+    if (FOREIGN_MARKS.test(piece) || /[^\p{Script=Latin}\P{L}]/u.test(piece) || ACCENTED.test(name)) return false;
+    if (languageOf(name, 1) !== null || languageOf(value.replace(/[*_]/g, " "), 1) !== null) return false;
+    return !ACCENTED.test(value.split(/\s+/u).filter(t => /\p{L}/u.test(t) && !/^\p{Lu}/u.test(t)).join(" "));
   }
   if (!LEAD_IN.test(piece) || FOREIGN_MARKS.test(piece) || languageOf(piece, 1) !== null) return false;
   const tokens = piece.split(/\s+/u).filter(t => /\p{L}/u.test(t));
@@ -702,7 +758,7 @@ export class AnswerLanguage {
       // What Ember's voice has said of this answer already looked English, and isn't counted against what may be another
       // language's: a passage after "Okay, reading it now." is judged from its first such sentence.
       if (this.spoken && piece !== null && another(this.held.join(" "))) this.passageFromHeld();
-      const found = speechLanguage(this.text, this.asked) ?? this.beforeClosing(end);
+      const found = this.languageNow(this.text) ?? this.beforeClosing(end);
       if ((this.text.match(/\p{L}/gu) ?? []).length >= DECIDE_LETTERS) lang = this.lang = found;
       else if (end) {
         lang = found ?? this.followsRequest();
@@ -756,8 +812,21 @@ export class AnswerLanguage {
     while (n > 1 && englishClearly(this.held[n - 1].replace(QUOTED, " "))) n--;
     const rest = this.held.slice(0, n).join(" ");
     if (!rest.trim()) return null;
-    const found = n < this.held.length ? speechLanguage(rest, this.asked) : null;
+    const found = n < this.held.length ? this.languageNow(rest) : null;
     return found ?? (end && /[¿¡]/u.test(outsideQuotes(rest)) && !englishClearly(rest) ? "es" : null);
+  }
+
+  /**
+   * The language of `text`, what is being judged: speechLanguage, but for a passage read out (after a lead-in, or where
+   * an answer that looked English first may be another language's) by its short words against English's, a sixth of its
+   * words being enough. A passage is known to be one already, and its own words decide: an everyday Spanish, Italian or
+   * Portuguese email of three or four sentences has fewer short words than a quarter in its first 60 letters ("Hola,
+   * mañana no podré ir a la oficina porque tengo médico.") and was read wholly by Kitten with English sounds in 12 of
+   * 40 (voice-speaking-r11-1). English writes far more of its own short words than any of these (a third of its words
+   * and more), so an English passage stays Kitten's.
+   */
+  private languageNow(text: string): string | null {
+    return this.passage ? languageOf(text, 2, this.asked, 6) : speechLanguage(text, this.asked);
   }
 
   /** What waits to be said is judged by itself from here on, without what was said before it. */

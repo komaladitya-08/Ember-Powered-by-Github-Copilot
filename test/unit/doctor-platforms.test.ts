@@ -211,3 +211,14 @@ describe("ember doctor on macOS", () => {
     expect(byId(checks, "secure-input")).not.toHaveProperty("fix");
   });
 });
+
+describe("ember doctor's Mouse and keyboard row, in every approval mode (install-docs-r10-4)", () => {
+  it.each<[string, DoctorProbes]>([["Linux", base()], ["Windows", windows()], ["macOS", macos()]])(
+    "never promises a question before every borrow on %s, which Interactive announces instead, and names Ember once (r11-copy-y11-6)", (_os, probes) => {
+      const detail = byId(doctorChecks(probes), "xtest")!.detail;
+      expect(detail).not.toMatch(/\bOK\b|only with|permission|asks? (you )?first|every time/i);
+      expect(detail).toMatch(/tells you when it does, and moving the mouse or pressing a key takes it back/);
+      // Ember is named once in the line (r11-copy-y11-6).
+      expect(detail.match(/\bEmber\b/g)).toHaveLength(1);
+    });
+});

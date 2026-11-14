@@ -467,6 +467,117 @@ describe("spoken answers as people say them (owner report of 2026-11-03: “Embe
     }
   });
 
+  it("takes an everyday yes that isn't on the list as a near-miss, never a yes and never a request, and turns no no or hold into a yes (voice-listening-r11-1)", () => {
+    // They vanished in the answer window, or went to Copilot as a request while the question stayed up.
+    const unlisted = [
+      "Of course, go ahead.", "Thanks, go ahead.", "Just do it.", "Hell yes.", "Definitely.", "Certainly.", "Keep going.",
+      // Neighbours the review didn't give: every word a yes, an emphasis or a courtesy.
+      "Absolutely, go ahead.", "Yes, definitely.", "Sure, go for it.", "Yeah, that's fine, thanks.", "Totally, do it.",
+      "Of course, go on, thanks.", "Yes, of course, go ahead.", "No problem, go ahead.", "No worries, go ahead.", "Go on then.", "Just go ahead.", "Carry on.", "Yes, please, do it.",
+      "Ember, of course, go ahead.", "Hey Ember, just do it.",
+    ];
+    for (const t of unlisted) {
+      expect(spokenAnswer(t), t).toBeNull();
+      expect(nearAnswer(t), t).toBe(true);
+      expect(nearAnswer(t, true), `${t} by name`).toBe(true);
+    }
+    // A request that holds a yes's words and more is still a request, and so is anything asked.
+    for (const t of ["Go ahead and send it.", "Do it again tomorrow.", "Of course, open the report.", "Can you do it?", "Thanks.", "Thank you so much.", "Keep the draft."]) {
+      expect(nearAnswer(t), t).toBe(false);
+    }
+    // Fuzz: no no, hold or near-miss becomes a yes, and every no stays a no, whatever courtesy or emphasis is around it.
+    const around = ["", "Just ", "Thanks, ", "Of course, ", "Definitely ", "Hey Ember, ", "Okay, "];
+    const after = ["", ", thanks", ", please", ", definitely", ", go on"];
+    for (const no of [...SPOKEN_NO].concat(["wait", "hold on", "not that one", "no, wait"])) for (const a of around) for (const b of after) {
+      const t = `${a}${no}${b}.`;
+      expect(spokenAnswer(t), t).not.toBe("allow");
+    }
+  });
+
+  it("takes what is said by name that holds more than an answer's words for a request, not a near-miss, while a no said by name is still a no (voice-listening-r11-2)", () => {
+    // In a conversation a short correction said by name while a question waited was held as a near-miss: never sent,
+    // and the user told it wasn't taken as an answer.
+    for (const t of [
+      "Don't email Bob, email Sam.", "No, I meant the other file.", "Not the draft, the report.", "Never use my work address.",
+      "Don't forget to email Sam too.", "It's not loading.", "Don't close the other window.", "No, the other one.",
+      "Not Bob, Sam.", "Never mind the subject.", "Yes, but use the new address.",
+    ]) {
+      expect(spokenAnswer(t), t).toBeNull();
+      expect(nearAnswer(t, true), `${t} by name`).toBe(false);
+    }
+    // What can't be told from an answer by name is still a near-miss: a hold, an assent, an answer's words only.
+    for (const t of ["Wait.", "Hold on.", "Okay then.", "Perfect.", "Not that one.", "Yes, no.", "No, wait."]) expect(nearAnswer(t, true), t).toBe(true);
+    // And without the name, as before (voice-listening-r10-1).
+    for (const t of ["No, I don't want that.", "That's not what I meant.", "Not the draft, the report."]) expect(nearAnswer(t), t).toBe(true);
+    for (const t of ["No.", "Not now.", "Leave it.", "I said no."]) expect(spokenAnswer(`Ember, ${t}`), t).toBe("deny");
+  });
+
+  it("holds a short yes with a word more as a near-miss, by name too where it asks nothing more, and a yes-led request said by name is a request (r11-voice-x11-1, r11-voice-y11-2)", () => {
+    // By name they went to Copilot as a request while the question stayed up.
+    for (const t of [
+      "Yes, send it.", "Yep, delete it.", "Yes sir.", "Yes, ma'am.", "Sure, buddy.", "Okay by me.", "Fine by me.", "Why not.",
+      "Sure, why not.", "Yeah, open it.", "Okay, now send it.", "Yes, the blue one.",
+    ]) {
+      expect(spokenAnswer(t), t).toBeNull();
+      expect(nearAnswer(t), t).toBe(true);
+    }
+    for (const t of ["Yes sir.", "Yes, ma'am.", "Sure, buddy.", "Okay by me.", "Fine by me.", "Why not.", "Sure, why not.", "Yes, the blue one."]) {
+      expect(nearAnswer(t, true), `${t} by name`).toBe(true);
+    }
+    // Said by name, what a yes leads and acts on is a request, as on main (r11-voice-y11-2).
+    for (const t of ["Yes, send it.", "Yep, delete it.", "Yeah, open it.", "Okay, now send it."]) expect(nearAnswer(t, true), `${t} by name`).toBe(false);
+  });
+
+  it("holds an assent of a few words that isn't on the list, in every window, and sends a short request with a verb or a question (r11-voice-x11-2, r11-voice-x11-3)", () => {
+    // They went to Copilot as a request while the question waited, or vanished in the answer window.
+    const assents = [
+      "Agreed.", "You bet.", "Uh-huh.", "Roger that.", "It's fine.", "Granted.", "I think so.", "Be my guest.", "By all means.",
+      "Make it so.", "Fire away.", "Okie dokie.", "Permission granted.", "Good to go.", "Ready.", "Whatever.", "Your call.",
+      "Up to you.", "Yah.", "Yea.", "Yeh.", "K.",
+      // Neighbours the review didn't give.
+      "Fair enough.", "As you wish.", "Very well.", "Suits me.", "No objection.", "Righto.", "Works for me.", "Will do.",
+    ];
+    // Without the name; said by name, what isn't an answer is a request (r11-voice-y11-2).
+    for (const t of assents) {
+      expect(spokenAnswer(t), t).toBeNull();
+      expect(nearAnswer(t), t).toBe(true);
+    }
+    // A request Ember can act on is still one: a verb, a question (with its mark or without it), or one of main's own.
+    for (const t of [
+      "Open the report.", "Send it to Sam.", "Translate it.", "Keep the draft.", "Go to settings.", "Show me.", "Read it out.",
+      "Do you agree", "Do you", "Can you do it", "Is it done", "What's new", "How's it going", "What did I miss",
+      "Status.", "Progress report.", "Status update.", "Again.", "Once more.", "One more time.", "Repeat that.", "Retry.",
+      "Catch me up.", "Fill me in.", "Anything new", "Anything happened", "Tell me again.", "Say that again.", "Just show me.", "Thanks.", "Thank you so much.",
+      "Um.", "Hmm.", "Uh.", "Make it bold.",
+    ]) {
+      expect(nearAnswer(t), t).toBe(false);
+      expect(nearAnswer(t, true), `${t} by name`).toBe(false);
+    }
+  });
+
+  it("never holds a mode change said while a question waits, by name or not, so it reaches main (r11-voice-y11-1)", () => {
+    // They were held as near-misses and never reached main's modeIntent, so Autopilot or Assisted stayed on.
+    for (const t of [
+      "Autopilot off.", "Leave autopilot.", "End autopilot.", "Disable autopilot.", "Interactive mode.", "Autopilot mode off.",
+      "Assisted mode.", "Assisted off.", "No more autopilot.", "Exit assisted.",
+    ]) {
+      expect(nearAnswer(t), t).toBe(false);
+      expect(nearAnswer(t, true), `${t} by name`).toBe(false);
+      expect(nearAnswer(`Hey Ember, ${t}`, true), `Hey Ember, ${t}`).toBe(false);
+    }
+  });
+
+  it("sends a short request or a yes-led correction said by name while a question waits, and holds a bare yes with an address (r11-voice-y11-2)", () => {
+    // By name they were held as near-misses, and the note is said once per question, so a second try got silence.
+    for (const t of [
+      "Kill the task.", "End the task.", "End it.", "Abandon it.", "Freeze.", "Hold it.", "Dark mode.", "Volume up.", "Gedit.",
+      "Weather tomorrow.", "Sure, open Firefox.", "Okay, email Sam instead.", "Okay, now send it.",
+    ]) expect(nearAnswer(`Hey Ember, ${t}`, true), `Hey Ember, ${t}`).toBe(false);
+    for (const t of ["Yes sir.", "Yes, ma'am.", "Sure, buddy.", "Okay by me.", "Fine by me.", "Why not.", "Sure, why not."]) {
+      expect(nearAnswer(`Ember, ${t}`, true), `Ember, ${t}`).toBe(true);
+    }
+  });
+
   it("still never hears Always, a yes inside a longer request, or an answer it can't be sure of", () => {
     for (const other of [
       "Always.", "Always allow.", "Yes, always.", "Allow always.", "Go ahead and always allow it.", "Yes and also delete the files.",

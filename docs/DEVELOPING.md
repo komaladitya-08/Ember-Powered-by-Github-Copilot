@@ -748,8 +748,21 @@ that start like an answer and aren't one (“Yes, but wait.”, “No, hang on.�
 up to six with a no word or a no of more than one word anywhere, not asked as a question (“No, I don't want that.”,
 “That's not what I meant.”, “Leave it, I said.”), a
 hold (“Wait.”, “Hold on.”) and an assent that isn't a yes (“Okay then.”, “Perfect.”, “Sounds great.”, which vanished as
-closers), and, in any window, a yes asked as a question said by name (“Ember, okay?”: `askedYes`): nothing of them is sent, where
-they went to Copilot or vanished (V2-F5, V2-F7). “Why?” and “Which file?” are requests as ever. So are words that hold
+closers), up to six words that are all an answer's words, one of them saying so: an everyday yes that isn't on the
+list (“Of course, go ahead.”, “Thanks, go ahead.”, “Just do it.”, “Definitely.”, which is never taken as a yes on a
+guess; voice-listening-r11-1), up to four words with nothing in them that asks Ember to do or tell something (no verb
+it acts on, no question, nothing that tells of something done: “Agreed.”, “By all means.”, “You bet.”, “Be my guest.”,
+“Mm-hmm.”, held by default without the name so a new way to say yes is never sent: r11-voice-x11-2; a short request
+with no verb Ember knows is held so too without the name, and the note says how to answer), and, in any window, a yes asked as a question said by name
+(“Ember, okay?”: `askedYes`): nothing of them is sent, where they went to Copilot or vanished (V2-F5, V2-F7). Said by
+name (at a wake, or the user's own name in a follow-up or a conversation), what starts like an answer is held only
+when a yes leads it and nothing more is asked or corrected (“Ember, yes sir.”: r11-voice-x11-1; “Ember, yes, send
+it.”, “Hey Ember, sure, open Firefox.”, “Hey Ember, okay, email Sam instead.” are requests), a short request with no
+verb Ember knows is a request (“Hey Ember, kill the task.”, “Hey Ember, dark mode.”: r11-voice-y11-2), and what holds
+a no and more is a request, as at a wake (“Hey Ember, don't email Bob, email Sam.”, “Ember, no, I meant the other file.”, “Ember, it's not
+loading.”, which a conversation held and never sent: voice-listening-r11-2). “Why?”, “Which file?” and a question
+without its mark (“Do you agree”: r11-voice-x11-3) are requests as ever, and so is a change of approval mode in any window, by name or not (“Autopilot off.”,
+“Interactive mode.”: main's `modeIntent`, r11-voice-y11-1). So are words that hold
 a stop (“No, stop the task.”, “Okay, stop typing.”): never a near-miss, they reach main, which stops everything on
 them while a task is at work (voice-product-y9-1). “Okay, Ember.”, which
 the spotter hears as “Hey Ember”, is only a wake and answers nothing: nothing tells whose the “Okay” before the name
@@ -1405,16 +1418,31 @@ from José:", also one that came in the same piece as the passage's first senten
 be another language's in an answer that looked English so far ("Okay, reading it now."), what follows is judged by
 itself, from its own first 60 letters, and waits until then unless it is clearly English: counted with the lead-in, whose
 English short words outnumber a first sentence's, a Spanish, Italian or Portuguese email was read by Kitten for 14 of
-16 ordinary lead-ins and layouts (now none; an Italian or Portuguese passage's first sentence with no accent still is,
-after a lead-in without a colon or on the same line). A message's header lines at the start of what is judged ("From:
-José", "To:", "Subject: Proyecto", "Date:": `HEADER`) are Kitten's, each said as it comes, when the value is in no
-other language and its only accented letters are in a name (a subject's first word counts as its own: "Subject: Reunión
+16 ordinary lead-ins and layouts (none for the tests' passages since; an Italian or Portuguese passage's first sentence with no accent still is,
+after a lead-in without a colon or on the same line). A passage is told by its own short words against English's, a
+sixth of its words being enough (`languageNow`), and the short words a language writes as often as English does ("a",
+"me", "no", "do", "in", "o": `ALSO_ENGLISH`) count for both: with a quarter of its words needed and those left out,
+ordinary three- or four-sentence emails were Kitten's in 12 of 40 after a plain lead-in, 7 of the 8 Portuguese ones
+(voice-speaking-r11-1; now none of those 40 nor of 25 more, with English emails and notes still Kitten's). Told so,
+from fewer than a quarter, a passage needs two signs of its own (two different short words that aren't `ALSO_ENGLISH`,
+or one and a letter only it writes: `MARKS`) and no letters only unlisted languages write (`UNLISTED_LETTERS`: Polish
+"ł", "ś", Romanian "ș", Czech "ř", the Nordic "å", "ø", the "š", "č" and "ž" of Croatian, Bosnian, Serbian and Slovene,
+the Baltic "ė", "ū", "ā", "ņ"), nor two of Catalan's everyday words (`CATALAN`: "amb", "perquè", "tinc", "ahir",
+"demà", the days of the week): Polish emails went to a Portuguese voice, which says nothing where none is installed,
+Romanian and Hungarian ones to a French or Spanish voice (r11-voice-x11-4), and Croatian, Slovene and Catalan ones to an
+Italian or French voice (r11-voice-y11-3); they are Kitten's again. A Galician email goes to a Portuguese voice. A
+message's
+header lines at the start of what is judged ("From: José", "To:", "Subject: Proyecto", "Date:": `HEADER`; and any other
+one-line label of up to three words with its value, "Attachments: plan.pdf", "Received: today at 9:14", "Sender: José",
+"Priority: High": `HEADER_LABEL`, whose label Ember didn't know made the email Kitten's again in 18 of 40, or was said by
+the passage's voice: voice-speaking-r11-2, voice-speaking-c11-1) are Kitten's, each said as it comes, when the label and
+the value are in no other language and the value's only accented letters are in a name (a subject's first word counts as its own: "Subject: Reunión
 del lunes", "From: Иван" and "Subject: 会议" are judged with the message, since Kitten reads only English:
 r10-voice-x10-2), and so is a lead-in in no
 other language whose only accented letters are in a name ("José's email says:": `leadsIn`); the message after them is
 judged by itself. Judged as its first letters, the sender and subject diluted its short words, and a Spanish or Italian
 email was Kitten's with English sounds in 22 of 44 cases for "**From:** José / **Subject:** Proyecto", and after
-"José's email says:" in 3 of 5 languages (voice-speaking-r10-2, voice-speaking-c10-1; now none). A passage is judged without the clearly English pieces it ends
+"José's email says:" in 3 of 5 languages (voice-speaking-r10-2, voice-speaking-c10-1; none for the tests' passages since). A passage is judged without the clearly English pieces it ends
 with: counted with Ember's own "Shall I reply to it?", a chat message of two sentences was Kitten's for 15 of 15 (now
 6: a passage under 60 letters still needs two different short words of its language, or Spanish's "¿" or "¡", so
 "Ciao Alex, come stai? Ci vediamo domani." and "Olá Alex, tudo bem? Até amanhã no escritório." are Kitten's). Until then a piece that may be another language's ("Bien sûr !", with letters

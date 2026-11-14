@@ -1586,3 +1586,32 @@ describe("Presenter: the answer stays while the Ask box beside it is open (compa
     expect(readFileSync("app/main/agent/host.ts", "utf8")).toMatch(/holdForAsk\(open: boolean\): void \{\n\s+this\.owner\.holdForAsk\(open\);/);
   });
 });
+
+describe("a background task's announcement and the foreground task's own (r11-copy-y11-3)", () => {
+  it("never loses the foreground task's line taken without asking behind a background task's (r11-copy-y11-3)", () => {
+    vi.useFakeTimers();
+    const owner = new BubbleOwner();
+    const shown: string[] = [];
+    const mk = (id: string) => new Presenter(s => { if (s.bubble?.visible) shown.push(`${id}: ${s.bubble.thought}`); }, undefined, () => id, owner, undefined, false, { task: id, corner: true, readTime: () => 1 });
+    const fore = mk("f");
+    const back = mk("b");
+    fore.foreground = true;
+    fore.taskStarted();
+    fore.progress("Clicking Send");
+    back.workedWithoutAsking("Deleting 3 messages in Thunderbird, without asking: Autopilot is on.");
+    fore.workedWithoutAsking("Borrowing your mouse in Firefox, without asking: Interactive is on.");
+    expect(shown).toContain("f: Borrowing your mouse in Firefox, without asking: Interactive is on.");
+  });
+
+  it("shows a guide step at once, not behind a background task's announcement (r11-copy-y11-3)", () => {
+    vi.useFakeTimers();
+    const owner = new BubbleOwner();
+    const shown: string[] = [];
+    const push = (id: string) => (s: Partial<EmberState>) => { if (s.bubble?.visible) shown.push(`${id}: ${s.bubble.thought || s.bubble.step}`); };
+    const back = new Presenter(push("b"), undefined, () => "Back", owner, undefined, false, { task: "b", corner: true });
+    const guide = new Presenter(push("g"), undefined, () => "Guide", owner, undefined, false, { task: "g" });
+    back.workedWithoutAsking("Deleting 3 messages in Thunderbird, without asking: Autopilot is on.");
+    guide.guide("Now open Settings", "Click the gear at the top right.");
+    expect(shown.some(l => l.startsWith("g: "))).toBe(true);
+  });
+});

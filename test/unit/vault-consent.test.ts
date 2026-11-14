@@ -16,9 +16,9 @@ const PAGE = fs.readFileSync("app/renderer/home/index.html", "utf8");
 const flat = (s: string) => s.replace(/\s+/g, " ");
 
 describe("the consent and the vault", () => {
-  it("is version 10, and tells someone who agreed before what the vault keeps and who uses it (vault-4)", () => {
-    expect(CONSENT_VERSION).toBe(10);
-    expect(consentChangesSince(9)).toEqual(["If you give me a login, a card or contact details in my Secure Form, I keep them in a vault on this computer, locked with your computer's keyring, until you forget them. Only Autopilot fills them in, and the AI model never sees them."]);
+  it("is version 10 or later, and tells someone who agreed before what the vault keeps and who uses it (vault-4)", () => {
+    expect(CONSENT_VERSION).toBeGreaterThanOrEqual(10);
+    expect(consentChangesSince(9).slice(0, 1)).toEqual(["If you give me a login, a card or contact details in my Secure Form, I keep them in a vault on this computer, locked with your computer's keyring, until you forget them. Only Autopilot fills them in, and the AI model never sees them."]);
     expect(CONSENT_CHANGES[10]).not.toMatch(/\bwe\b|\bus\b|\bour\b|"/i);
   });
 
@@ -31,7 +31,7 @@ describe("the consent and the vault", () => {
   });
 
   it("says on Autopilot's card that Ember fills what was saved in the vault and the model never types or sees it (vault-4)", () => {
-    expect(AUTOPILOT_CONSENT_TEXT.split("\n\n")[2]).toBe("It never repeats a step you said no to, never acts in your system's sign-in and password prompts, never uses your terminals, never reads windows on your never-look list and never runs a command that touches its own settings, record or Stop. The AI model never types or sees passwords or card numbers: Ember asks you once in its Secure Form, keeps them locked in its vault for that app or site, and fills them in there itself.");
+    expect(AUTOPILOT_CONSENT_TEXT.split("\n\n")[2]).toBe("It refuses, without asking, a step you said no to and anything that may be one, a command your words for the task rule out, and a command that deletes, changes or reads something it can't name, such as a place held in a variable. It never acts in your system's sign-in and password prompts, never uses your terminals, never reads windows on your never-look list and never runs a command that touches its own settings, record or Stop. The AI model never types or sees passwords or card numbers: Ember asks you once in its Secure Form, keeps them locked in its vault for that app or site, and fills them in there itself.");
     expect(AUTOPILOT_CONSENT_TEXT).not.toMatch(/never types passwords or card numbers,/);
     expect(AUTOPILOT_CONSENT_TEXT.split("\n\n")).toHaveLength(4);
   });
@@ -49,6 +49,7 @@ describe("the consent and the vault", () => {
     expect(state.why).toBe("card");
     // An agreement that carries the old card's version is refused; the new one puts Autopilot in force.
     expect(chooseMode(agreedOld, "autopilot", 1, policy, at).ok).toBe(false);
+    expect(chooseMode(agreedOld, "autopilot", 2, policy, at).ok).toBe(false);
     const again = chooseMode(agreedOld, "autopilot", FEATURE_CONSENT_VERSION.autopilot, policy, at);
     expect(again.ok && modeInForce(again.approvals, policy)).toBe("autopilot");
   });

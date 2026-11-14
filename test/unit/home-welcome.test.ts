@@ -97,7 +97,12 @@ describe("the consent in short", () => {
       ["eye", /I read the window you're working in, and for tasks I may take a screenshot of it\./, "reads the window you're working in"],
       ["eye", /Never password prompts, or apps on your never-look list\./, "App windows on your never-look list and password prompts are never read"],
       ["send", /your request and what I read go to GitHub Copilot\. Nothing is sent before you ask\./, "Nothing is sent before you ask."],
-      ["hand", /I ask before acting in an app unless you turn on Interactive, and always before anything hard to undo\. I never let the AI model type or see passwords\./, "It never lets the AI model type or see passwords."],
+      ["hand", /^I ask before acting in an app unless you turn on Interactive, and then still before anything risky there\./, "and then still before anything risky there"],
+      // What asks among commands, in the one phrase every card uses for the exception (r11-copy-x11-1, -x11-3).
+      ["hand", /I ask before a command I know is dangerous and before code I can't read, unless you asked for exactly that command and it only deletes or overwrites data, publishes something or changes the system \(I show it first, with a few seconds to stop it\)\./, "It asks before a command it knows is dangerous and before code it can't read, unless you asked for exactly that command and it only deletes or overwrites data, publishes something or changes the system (it shows it first, with a few seconds to stop it)"],
+      ["hand", /A command I don't know runs, and I tell you\./, "A command it doesn't know runs, and it tells you."],
+      ["hand", /Assisted and Autopilot, if you choose them later, ask less\. I never let the AI model type or see passwords\./, "Assisted and Autopilot, if you choose them later in settings, ask less."],
+      ["hand", /I never let the AI model type or see passwords\./, "It never lets the AI model type or see passwords."],
       // The vault fills a login itself in Autopilot, so the line says so beside the password promise (merge review integ-x-2).
       ["hand", /Only in Autopilot, I can fill in a login, a card or contact details from my vault\.$/, "Only in Autopilot, it can fill in a login, a card or contact details from its vault, which the AI model never sees."],
       ["hand", /unless you turn on Interactive/, "It asks before acting</b> in an app unless you turn on Interactive"],
@@ -145,17 +150,17 @@ describe("the consent in short", () => {
       for (const source of CONSENT_CHANGE_SOURCES[v]) expect(full, `${v}: ${source}`).toContain(source);
     }
     expect(Object.keys(CONSENT_CHANGES).map(Number).every(v => v >= 2 && v <= CONSENT_VERSION)).toBe(true);
-    expect(consentChangesSince(6)).toEqual([CONSENT_CHANGES[7], CONSENT_CHANGES[8], CONSENT_CHANGES[9], CONSENT_CHANGES[10]]);
+    expect(consentChangesSince(6)).toEqual([CONSENT_CHANGES[7], CONSENT_CHANGES[8], CONSENT_CHANGES[9], CONSENT_CHANGES[10], CONSENT_CHANGES[11]]);
     expect(consentChangesSince(6)[0]).toContain("“Keep my recent conversation”");
-    expect(consentChangesSince(4)).toEqual([CONSENT_CHANGES[5], CONSENT_CHANGES[6], CONSENT_CHANGES[7], CONSENT_CHANGES[8], CONSENT_CHANGES[9], CONSENT_CHANGES[10]]);
+    expect(consentChangesSince(4)).toEqual([CONSENT_CHANGES[5], CONSENT_CHANGES[6], CONSENT_CHANGES[7], CONSENT_CHANGES[8], CONSENT_CHANGES[9], CONSENT_CHANGES[10], CONSENT_CHANGES[11]]);
     // Setup says plainly that anyone near the computer can answer Ember by voice (owner decision B of 2026-11-12).
     expect(consentChangesSince(7)[0]).toBe("While one of my questions is up, anyone near the computer can answer it by voice, and for a few seconds after I ask, I listen for that answer without my name. With Voice Match on, only your voice can say yes.");
     // Version 9, said truthfully to someone who agreed before: their settings stay, and they are asked about Interactive
     // only while its card isn't agreed and their organisation allows it, when its row shows (slice4-25, slice4-x9-3).
     expect(consentChangesSince(8)[0]).toBe("If you haven't agreed to Interactive yet, agreeing now turns it on unless you switch it off here or your organisation keeps it off, so I don't ask before ordinary steps in an app. Your other settings stay as they are.");
     // Version 10: what the vault keeps, and that only Autopilot fills it in (vault-4).
-    expect(consentChangesSince(8)).toHaveLength(2);
-    expect(consentChangesSince(9)).toEqual([CONSENT_CHANGES[10]]);
+    expect(consentChangesSince(8)).toHaveLength(3);
+    expect(consentChangesSince(9)).toEqual([CONSENT_CHANGES[10], CONSENT_CHANGES[11]]);
     expect(consentChangesSince(0)).toEqual([]);
     expect(consentChangesSince(CONSENT_VERSION)).toEqual([]);
     for (const line of Object.values(CONSENT_CHANGES)) expect(line, line).not.toMatch(/\bwe\b|\bus\b|\bour\b|"/i);

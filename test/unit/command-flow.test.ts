@@ -2855,6 +2855,20 @@ describe("Assisted's check for commands that would ask (review.ts; modes-C2, mod
   };
   const YES = { run: true, does: "does what the request asks", why: "the request asks for it" };
 
+  it.each<["linux" | "win32", string]>([["linux", CARD_LINES.rootAutopilot], ["win32", CARD_LINES.adminAutopilot]])(
+    "never says each command asks first on the countdown of a privileged command the check cleared, on %s (tasks-approvals-c11-1)", async (os, line) => {
+      setCommandJudge(null);
+      // (Every privileged command here is "ask every": never reviewed. A privileged Ember whose capability says
+      // otherwise still gets a card that is true.)
+      const r = reviewer({ run: true, does: "installs htop", why: "you asked to install htop" });
+      const h = harness({ binding: LOCAL, words: "install htop with dnf", review: r.review, facts: { privileged: true, os } });
+      expect((await call(h, { target: "this computer", command: "rm -r build" })).resultType).toBe("success");
+      expect(h.asked).toEqual([]);
+      const says = h.windowAnnounce[0].card.says;
+      expect(says.join(" ")).not.toMatch(/asks first/);
+      expect(says).toContain(line);
+    });
+
   it("runs a command the reviewer finds in the user's words with its announcement (Stop countdown), not a question", async () => {
     setCommandJudge(null);
     const r = reviewer({ run: true, does: "removes the build folder in the project", why: "the user asked to clean the build" });
@@ -3120,6 +3134,32 @@ describe("a command that would ask, in Autopilot (autopilot.ts; modes-D2, modes-
     expect(card.says.join(" ")).not.toMatch(/asks first/);
     expect(card.says[0]).toBe(line);
     expect(card.says).toContain(AUTOPILOT_LINE);
+  });
+
+  // Under the owner's decision of 2026-11-14 Autopilot asks only where the organisation or the user's own switch says
+  // so (autopilot.ts autopilotAsks): those are the questions it still puts as root (r11-copy-x11-4).
+  it.each<[string, Parameters<typeof harness>[0], string]>([
+    ["the user's own “Ask me before every command”", { askEvery: true }, CARD_LINES.userAsk],
+    ["the organisation's policy", { mode: "ask" }, CARD_LINES.adminAsk],
+  ])("never gives root as the reason when Autopilot still asks, for %s, as root or an administrator (tasks-approvals-r11-1, r11-copy-x11-4)", async (_what, o, first) => {
+    setCommandJudge(null);
+    for (const os of ["linux", "win32"] as const) {
+      for (const command of ["rm -rf build", "make test"]) {
+        const h = auto({ ...o, words: "tidy up the build", answers: ["deny"], facts: { privileged: true, os }, cap: () => ({ state: "on", askEvery: "root" }) });
+        expect((await run(h, command)).resultType, `${os} ${command}`).toBe("denied");
+        expect(h.asked).toHaveLength(1);
+        const q = h.asked[0] as { prompt: string; panel: { card: CommandCard } };
+        const says = q.panel.card.says;
+        expect(says, os).not.toContain(CARD_LINES.root);
+        expect(says, os).not.toContain(CARD_LINES.admin);
+        expect(says.join(" "), os).not.toMatch(/so each (one|command) asks first/);
+        expect(says, os).toContain(os === "win32" ? CARD_LINES.adminAutopilot : CARD_LINES.rootAutopilot);
+        // The bubble's reason is the switch that asks, not the root fact.
+        expect(says[0], os).toBe(first);
+        expect(q.prompt, os).not.toMatch(/root|administrator/);
+        expect(q.prompt, os).toContain(first);
+      }
+    }
   });
 
   it("says nothing of the command itself in the bubble: its kind only", async () => {
