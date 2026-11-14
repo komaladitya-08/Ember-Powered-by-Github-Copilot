@@ -787,34 +787,47 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1" && process.env.EM
       const level = 0.1 / rms(raw.subarray(a, b));
       return inRoom(cat(silence(0.5), raw.slice(a, b).map(x => x * level), silence(2)));
     };
+    /** What the window did with `audio`, and what the recognizer wrote the request as there (`written`). */
     const asked = (audio: Float32Array) => {
       const s = session();
-      s.engine.questionUp(true);
-      s.engine.answerWindow(8000);
-      s.hear(audio);
-      s.end();
-      return s.events;
+      const written: string[] = [];
+      const transcribe = backend.transcribe;
+      backend.transcribe = (x, purpose) => { const w = transcribe.call(backend, x, purpose); if (purpose !== "keyword") written.push(w); return w; };
+      try {
+        s.engine.questionUp(true);
+        s.engine.answerWindow(8000);
+        s.hear(audio);
+        s.end();
+      } finally { backend.transcribe = transcribe; }
+      return { events: s.events, written };
     };
     // (In this test-only voice Moonshine writes a lone "Allow." as "Hello", which is no answer, and "Go ahead." and a lone
     // "Yes." as other words: the window's part is tested on what it writes as said. "Not now." comes out "No, no.".)
     const answers = [["Allow it.", "allow"], ["Allow, please.", "allow"], ["Okay, go with it.", "allow"], ["Yes, please.", "allow"], ["I accept.", "allow"], ["Sounds good.", "allow"], ["No, thanks.", "deny"], ["Not now.", "deny"], ["No.", "deny"]] as const;
-    // This voice comes out a little different each time, and now and then the recognizer writes one rendition as other
-    // words, which leave nothing (no answer): up to four renditions are tried, and none may leave as anything else. With
-    // one each, the test failed in 4 of 8 runs, on 64a6405 as on later commits ("Allow it.", "Not now.", "No.").
+    // This voice comes out a little different each time, and the recognizer writes some renditions as other words, which
+    // leave nothing (no answer): "Allow it." as "Lollet", "Lalet" or "Low it" in about one in four (51 of 200 saved
+    // renditions on WebAssembly, 52 on the C API, and the same, rendition for rendition, on 1550bdf), "Allow, please." 15
+    // of 60, "Not now." 12 of 60. Four renditions tried blind failed in CI's WebAssembly run at 13292a3 (all four of
+    // "Allow it." written so). So the window is checked against what the recognizer wrote in it: a rendition written as
+    // the answer leaves as that answer, once, and any other leaves nothing; renditions are made until one is written as
+    // the answer (the recognizer's part: in 800 runs of those 200, the window sent "allow" exactly when it was written so).
     for (const [text, answer] of answers) {
-      const heard: string[] = [];
-      for (let take = 0; take < 4 && !heard.length; take++) {
-        const events = asked(said(text));
+      const writtenAs: string[] = [];
+      let answered = false;
+      for (let take = 0; take < 16 && !answered; take++) {
+        const { events, written } = asked(said(text));
         const u = sent(events);
-        expect(u.map(e => e.window), text).toEqual(u.length ? ["answer"] : []);
-        for (const e of u) { expect(spokenAnswer(e.text), `${text} heard as “${e.text}”`).toBe(answer); heard.push(e.text); }
+        answered = written.some(w => spokenAnswer(w) !== null);
+        writtenAs.push(...written);
+        expect(u.map(e => e.window), `${text} written as ${JSON.stringify(written)}`).toEqual(answered ? ["answer"] : []);
+        for (const e of u) expect(spokenAnswer(e.text), `${text} heard as “${e.text}”`).toBe(answer);
         // No conversation opens after it: what is said next needs the name again.
         expect(events.some(e => e.type === "listening" && e.window === "conversation"), text).toBe(false);
       }
-      expect(heard, `${text}: never heard as an answer in four renditions`).toHaveLength(1);
+      expect(answered, `${text}: the recognizer wrote none of 16 renditions as an answer (${writtenAs.join(" / ")})`).toBe(true);
     }
     // The room's talk said then, in the clips' voice and in another: nothing leaves the window.
-    for (const room of [inRoom(cat(silence(0.5), trimmed("chat"), silence(2))), said("Let's meet at the station after lunch.")]) expect(sent(asked(room))).toEqual([]);
+    for (const room of [inRoom(cat(silence(0.5), trimmed("chat"), silence(2))), said("Let's meet at the station after lunch.")]) expect(sent(asked(room).events)).toEqual([]);
   }, 120_000);
 
   it.skipIf(noReader)("never takes a refusal said as Ember stops reading its question for a yes, and hears an answer said just after it whole (owner's report of 2026-11-12)", () => {
