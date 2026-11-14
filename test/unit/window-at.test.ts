@@ -141,6 +141,14 @@ describe("watchEvent (cifix-x9-6)", () => {
       .toBe("Windows says minimize-start: the bench (window 77); Win up, Alt down");
   });
 
+  it("names the watched app's own events, so what it did as it took the foreground back is in the timeline (cifix-x9-8)", () => {
+    expect(watchEvent('{"t":3,"event":"process","code":"0x8005","root":77,"object":-4,"child":0,"win":false,"alt":false}', name)?.what)
+      .toBe("its own event focus (object -4, child 0) in the bench (window 77); Win up, Alt up");
+    expect(watchEvent('{"t":3,"event":"process","code":"0x4e00","root":77,"object":0,"child":0}', name)?.what)
+      .toBe("its own event 0x4e00 (object 0, child 0) in the bench (window 77); Win up, Alt up");
+    expect(watchEvent('{"t":3,"event":"process","code":"bad","root":77}', name)?.what).toBe("its own event ? (object 0, child 0) in the bench (window 77); Win up, Alt up");
+  });
+
   it("skips the ready line, half a line and events it doesn't know", () => {
     expect(watchEvent('{"ready":true,"t":1}', name)).toBeNull();
     expect(watchEvent('{"t":1,"event":"fore', name)).toBeNull();

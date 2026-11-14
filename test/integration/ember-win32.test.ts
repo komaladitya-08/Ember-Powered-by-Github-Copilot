@@ -471,7 +471,7 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
       const watched = (w: WatchedWindow) => (w.root === ready.hwnd ? "the bench"
         : emberPid !== undefined && w.pid === emberPid ? `Ember's ${JSON.stringify(w.title)}`
         : `${w.image || `pid ${w.pid}`} (class ${w.className}, title ${JSON.stringify(w.title)})`);
-      watcher = spawn(powershell, [...POWERSHELL_ARGS, "-File", watchScript], { stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+      watcher = spawn(powershell, [...POWERSHELL_ARGS, "-File", watchScript, "-WatchPid", String(ready.pid)], { stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
       const watchErr: string[] = [];
       watcher.stderr?.on("data", (d: Buffer) => { if (watchErr.join("").length < 2_000) watchErr.push(d.toString()); });
       const watchReady = new Promise<boolean>(resolve => {

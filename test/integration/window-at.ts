@@ -99,10 +99,20 @@ export function hoverActivation(maskQuery: string, timeoutQuery: string): string
 /** A window as the foreground watcher names it (test/fixtures/win_foreground_watch.ps1). */
 export interface WatchedWindow { root: number; className: string; title: string; pid: number; image: string }
 
-const WATCH_EVENTS = new Set(["foreground", "focus", "minimize-start", "minimize-end"]);
+const WATCH_EVENTS = new Set(["foreground", "focus", "minimize-start", "minimize-end", "process"]);
+
+/** The names of the WinEvents an app's own windows raise that bear on the keyboard (winuser.h). */
+const WIN_EVENT_NAMES: Record<string, string> = {
+  "0x0003": "foreground", "0x0004": "menu start", "0x0005": "menu end", "0x0006": "popup menu start", "0x0007": "popup menu end",
+  "0x0008": "capture start", "0x0009": "capture end", "0x0016": "minimise start", "0x0017": "minimise end",
+  "0x8000": "object created", "0x8001": "object destroyed", "0x8002": "object shown", "0x8003": "object hidden",
+  "0x8004": "object reordered", "0x8005": "focus", "0x8006": "selection", "0x8007": "selection added",
+  "0x8008": "selection removed", "0x8009": "selection within",
+};
 
 /**
- * One line of the foreground watcher as a timeline event (cifix-x9-6): what Windows says changed, the window by
+ * One line of the foreground watcher as a timeline event (cifix-x9-6): what Windows says changed (or, for "process",
+ * what the watched app's own windows raised: cifix-x9-8), the window by
  * `name` (the suite's words for the bench and Ember's windows), and whether the Windows and Alt keys were down then.
  * Null for its ready line, a line still being written, or anything else that isn't one of its events.
  */
@@ -114,5 +124,9 @@ export function watchEvent(line: string, name: (w: WatchedWindow) => string): Tr
   const str = (v: unknown) => (typeof v === "string" ? v : "");
   const w: WatchedWindow = { root: num(e.root), className: str(e.class), title: str(e.title), pid: num(e.pid), image: str(e.image) };
   const keys = `Win ${e.win === true ? "down" : "up"}, Alt ${e.alt === true ? "down" : "up"}`;
+  if (e.event === "process") {
+    const code = typeof e.code === "string" && /^0x[0-9a-f]{4,8}$/.test(e.code) ? e.code : "?";
+    return { t: e.t, what: `its own event ${WIN_EVENT_NAMES[code] ?? code} (object ${num(e.object)}, child ${num(e.child)}) in ${name(w)} (window ${w.root}); ${keys}` };
+  }
   return { t: e.t, what: `Windows says ${e.event}: ${name(w)} (window ${w.root}); ${keys}` };
 }
