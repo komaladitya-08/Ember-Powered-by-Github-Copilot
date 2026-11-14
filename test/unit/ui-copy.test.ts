@@ -595,7 +595,7 @@ describe("the first-use consent cards (§8.4)", () => {
     // What the computer's commands can reach comes right after how to stop them (review #270).
     expect(all.body.slice(1, 5).map(keep)).toEqual([
       "Commands in WSL can also reach your Windows files and programs.",
-      "Commands here run as the administrator, so in Interactive and Assisted Ember asks before every one, even one you asked for exactly. In Autopilot, each runs after a few seconds to stop it.",
+      "Commands here run as the administrator, so in Interactive Ember asks before every one, even one you asked for exactly. In Assisted, each goes ahead when a check finds it in what you asked for, and asks otherwise. In Autopilot, each runs after a few seconds to stop it.",
       "Commands here run in Windows PowerShell and can't ask you for answers or passwords.",
       "Podman uses this distro, so Ember asks before every command here.",
     ]);

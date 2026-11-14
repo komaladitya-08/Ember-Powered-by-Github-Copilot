@@ -26,11 +26,17 @@ describe("“Ask me before every command” on a computer where commands run as 
   const row = (mode: ApprovalMode | null, askEvery = false, admin: cc.TargetsAdmin = { source: null, features: {} }) =>
     cc.commandsView({ summaries: [local], settings: settings(askEvery), admin, mode }).rows[0];
 
-  it("shows on and locked, saying every command asks, in every mode that asks about root", () => {
-    for (const mode of [null, "interactive", "assisted"] as const) {
+  it("shows on and locked, saying every command asks, in every mode that asks about every root command", () => {
+    for (const mode of [null, "interactive"] as const) {
       expect(row(mode).askEvery).toMatchObject({ checked: true, disabled: true });
       expect(row(mode).managed).toBe(cc.ASK_EVERY_PRIVILEGED);
     }
+  });
+
+  it("in Assisted, is the user's own switch, and says the check may clear a root command (tasks-approvals-r12-1)", () => {
+    expect(row("assisted").askEvery).toMatchObject({ checked: false, disabled: false, shown: true });
+    expect(row("assisted", true).askEvery).toMatchObject({ checked: true, disabled: false });
+    expect(row("assisted").managed).toBe("Commands here run as the administrator. In Assisted each one asks unless the check finds it in what you asked for, and every one asks if you turn this on.");
   });
 
   it("in Autopilot, is the user's own switch, free to turn on, and says root commands run without asking unless it is on (r10-modes-copy-y10-2; owner decision of 2026-11-14)", () => {
@@ -141,14 +147,16 @@ describe("the Commands intro, the Routines hint and the Connectors hint are true
   });
 });
 
-describe("How Ember asks, for an elevated Ember in Assisted (home-c10-3: not reproduced)", () => {
-  it("says every command asks, which is what Assisted does there: root keeps every command from the check", async () => {
+describe("How Ember asks, for an elevated Ember in Assisted (home-c10-3; tasks-approvals-r12-1)", () => {
+  it("says a command asks unless the check finds it in the user's words, which is what Assisted does there as root", async () => {
     const { approvalsNote } = await import("../../app/renderer/home/copy");
     const { notReviewable } = await import("../../app/main/commands/review");
     const state = { chosen: "assisted", inForce: "assisted", why: null, offered: ["interactive", "assisted", "autopilot"], agreed: ["interactive", "assisted"], cap: null } as const;
-    expect(approvalsNote({ ...state, offered: [...state.offered], agreed: [...state.agreed] }, false, "root")).toMatch(/Ember is running as root, so it asks before every command\./);
+    expect(approvalsNote({ ...state, offered: [...state.offered], agreed: [...state.agreed] }, false, "root")).toMatch(/Ember is running as root, so it asks before every command the check doesn't find in what you asked for\./);
     const d = { verdict: "ask", classes: [], rules: ["privileged"], says: [], reason: "", armMs: 0, unasked: false } as unknown as Parameters<typeof notReviewable>[0];
-    expect(notReviewable(d, { words: "update the packages", mode: "on", askEvery: "root", userAskEvery: false, command: "dnf upgrade -y" })).toBe("every command asks here");
+    expect(notReviewable(d, { words: "update the packages", mode: "on", askEvery: "root", userAskEvery: false, command: "dnf upgrade -y" })).toBeNull();
+    // Interactive still asks every one as root.
+    expect(approvalsNote({ ...state, chosen: "interactive", inForce: "interactive", offered: [...state.offered], agreed: [...state.agreed] }, false, "root")).toMatch(/Ember is running as root, so it asks before every command\./);
   });
 });
 
@@ -208,7 +216,7 @@ describe("Before Ember starts promises no question a mode doesn't put (Settled 2
 
 describe("the commands card is true in every approval mode, as root too (Settled 28: r10-modes-copy-y10-1; owner decision of 2026-11-14)", () => {
   const facts = { kind: "local" as const, privileged: true, windows: false, podman: false };
-  const PRIVILEGED = "Commands here run as the administrator, so in Interactive and Assisted Ember asks before every one, even one you asked for exactly. In Autopilot, each runs after a few seconds to stop it.";
+  const PRIVILEGED = "Commands here run as the administrator, so in Interactive Ember asks before every one, even one you asked for exactly. In Assisted, each goes ahead when a check finds it in what you asked for, and asks otherwise. In Autopilot, each runs after a few seconds to stop it.";
   const MAIN = "Most commands run straight away, ones Ember doesn't know included. A command is dangerous if it deletes or overwrites data, pushes or publishes anywhere, shows passwords or keys, changes the system, downloads and runs code or would keep running after you stop Ember, and so is code Ember can't read. In Interactive, the default, Ember asks you before a dangerous command, unless you asked for exactly that command and it only deletes or overwrites data, publishes something or changes the system: then it shows it first, with a few seconds to stop it. In Assisted, it goes ahead when a check finds the command in what you asked for, and asks otherwise. In Autopilot, it asks nothing and tells you as it goes.";
   const ALWAYS = "In every mode, Ember doesn't run again a command you said no to in a task, and it asks before every command wherever your organisation, or your own “Ask me before every command” for that computer, says so.";
   const OUTPUT = "What a command prints goes to GitHub Copilot as part of the task. Ember hides passwords and keys it recognises, and never sees what you type into a command. In Autopilot, what a command that shows passwords or keys prints is kept from GitHub Copilot: only you see it, in the command window. If a command prints something that looks like instructions, Ember doesn't follow it, and in Interactive every further command in that task asks you first.";
@@ -231,7 +239,7 @@ describe("the commands card is true in every approval mode, as root too (Settled
     const card = commandsConsent({ os: "linux", target: "local", targetLabel: "This computer", facts, stopKey: "Ctrl+Alt+X" });
     const shown = promptCopy.consentText({ feature: "commands", os: "linux", target: "local", targetLabel: "This computer", stopKey: "Ctrl+Alt+X", commands: { privileged: true } });
     expect(shown.body).toEqual(card.body);
-    expect(FEATURE_CONSENT_VERSION.commands).toBe(2);
+    expect(FEATURE_CONSENT_VERSION.commands).toBe(3);
   });
 });
 
@@ -329,14 +337,16 @@ describe("Before Ember starts says a command Ember doesn't know runs, and asks b
 });
 
 describe("the commands card's line for an Ember running as the administrator is true in every mode (r11-copy-x11-2)", () => {
-  it("says every command asks in Interactive and Assisted, where Assisted's check never reads one, and that Autopilot runs each after a countdown", async () => {
+  it("says every command asks in Interactive, that Assisted's check may clear one the request was about, and that Autopilot runs each after a countdown (tasks-approvals-r12-1)", async () => {
     const { COMMANDS_CARD_PRIVILEGED } = await import("../../app/shared/commands-card");
     const { notReviewable } = await import("../../app/main/commands/review");
     const d = { verdict: "ask", classes: ["system"], rules: ["privileged"], says: [], reason: "", armMs: 0, unasked: false } as unknown as Parameters<typeof notReviewable>[0];
     for (const command of ["sudo dnf install htop", "rm -rf build", "ls"]) {
-      expect(notReviewable(d, { words: `run ${command}`, mode: "on", askEvery: "root", userAskEvery: false, command })).toBe("every command asks here");
+      expect(notReviewable(d, { words: `run ${command}`, mode: "on", askEvery: "root", userAskEvery: false, command })).toBeNull();
     }
-    expect(COMMANDS_CARD_PRIVILEGED).toBe("Commands here run as the administrator, so in Interactive and Assisted Ember asks before every one, even one you asked for exactly. In Autopilot, each runs after a few seconds to stop it.");
+    // The organisation's, the user's own and a Podman distro's "ask every" still keep a command from the check.
+    for (const askEvery of ["admin", "user", "tool"]) expect(notReviewable(d, { words: "run ls", mode: "on", askEvery, userAskEvery: false, command: "ls" })).toBe("every command asks here");
+    expect(COMMANDS_CARD_PRIVILEGED).toBe("Commands here run as the administrator, so in Interactive Ember asks before every one, even one you asked for exactly. In Assisted, each goes ahead when a check finds it in what you asked for, and asks otherwise. In Autopilot, each runs after a few seconds to stop it.");
   });
 });
 

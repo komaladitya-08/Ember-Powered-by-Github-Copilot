@@ -2858,8 +2858,8 @@ describe("Assisted's check for commands that would ask (review.ts; modes-C2, mod
   it.each<["linux" | "win32", string]>([["linux", CARD_LINES.rootAutopilot], ["win32", CARD_LINES.adminAutopilot]])(
     "never says each command asks first on the countdown of a privileged command the check cleared, on %s (tasks-approvals-c11-1)", async (os, line) => {
       setCommandJudge(null);
-      // (Every privileged command here is "ask every": never reviewed. A privileged Ember whose capability says
-      // otherwise still gets a card that is true.)
+      // (A privileged Ember's "ask every" is root's, which no longer keeps a command from the check:
+      // tasks-approvals-r12-1. Its countdown says only the fact.)
       const r = reviewer({ run: true, does: "installs htop", why: "you asked to install htop" });
       const h = harness({ binding: LOCAL, words: "install htop with dnf", review: r.review, facts: { privileged: true, os } });
       expect((await call(h, { target: "this computer", command: "rm -r build" })).resultType).toBe("success");

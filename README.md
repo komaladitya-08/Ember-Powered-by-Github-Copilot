@@ -248,7 +248,8 @@ has its own card that says what it means, and a mode is in use only once you agr
   as an administrator, it tells you instead and gives you 4 seconds to stop it.
 - **Assisted** is Interactive with a check: before Ember asks, a lighter AI model reads the step against what you
   asked, in your own words. When it matches, Ember goes ahead and tells you, a risky step or a dangerous command
-  included; otherwise it asks. A command it clears that shows passwords or keys runs with what it prints kept from the
+  included, and a command as root or an administrator too; otherwise it asks. A command it clears that shows passwords
+  or keys runs with what it prints kept from the
   AI model. A step you said no to, or a command your own words for the task rule out, always asks or is refused, and
   so does every command wherever you or your organisation set commands to ask every time, or on a computer reached
   over SSH whose own administrator doesn't allow the check there.

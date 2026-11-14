@@ -104,13 +104,17 @@ export const REVIEW_LIMITS = { words: 6000, command: 4000, why: 400, findings: 1
  * announcement says Stop won't reach it) and code Ember can't read; a program Ember doesn't know never asks at all
  * (decide.ts). The organisation's rule is never reviewed, nor a deletion or a write of something Ember can't name
  * (commands-remote-c11-3), which Autopilot refuses.
- * `ruledOut`: the user's own words rule the command out or hold it back (flow.ts wordsRuleOut), which Autopilot
+ * Root's or an administrator's "ask every" (`askEvery: "root"`) is no reason to keep a command from the check
+ * (tasks-approvals-r12-1). `ruledOut`: the user's own words rule the command out or hold it back (flow.ts wordsRuleOut), which Autopilot
  * refuses in code: it is never left to the check either (commands-remote-c10-3).
  */
 export function notReviewable(d: CommandDecision, o: { words: string; mode: string; askEvery: unknown; userAskEvery: boolean; command: string; findings?: readonly Pick<Finding, "cls" | "rule">[]; ruledOut?: boolean; unnamed?: boolean }): string | null {
   if (d.verdict !== "ask") return "it doesn't ask";
   if (!o.words.trim()) return "no words of the user's";
-  if (o.mode === "ask" || o.askEvery) return "every command asks here";
+  // Root, or an elevated administrator, is a danger the check may clear where the request was about the command
+  // (docs/APPROVALS.md: commands as root are dangerous; Assisted lets one go ahead when the request was about it:
+  // tasks-approvals-r12-1). The organisation's rule, the user's own switch and a distro Podman uses still ask.
+  if (o.mode === "ask" || (o.askEvery && o.askEvery !== "root")) return "every command asks here";
   if (o.userAskEvery) return "the user asked to check every command";
   // Their no, said in advance (flow.ts wordsRuleOut), is held in code, as Autopilot holds it (commands-remote-c10-3).
   if (o.ruledOut) return "the user's own words rule it out";

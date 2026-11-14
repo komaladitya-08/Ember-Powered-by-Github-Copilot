@@ -11,7 +11,8 @@ it means before anything happens: one for WSL, one for each computer you connect
 other computer. People who already use Ember keep their settings: first run's agreement doesn't turn commands on for
 them, and nothing new happens until they accept a card. An organisation that turned commands off on this computer
 (`commands.local`) sees the row off and managed, and an Ember running as root or an administrator says in that card
-that in Interactive and Assisted it asks before every command, and that in Autopilot each runs after a few seconds to
+that in Interactive it asks before every command, that in Assisted each goes ahead when the check finds it in what
+you asked for and asks otherwise, and that in Autopilot each runs after a few seconds to
 stop it. The commands card says, in one text for every approval mode, what each mode
 does with a dangerous command (Interactive asks, Assisted's check may let it go ahead, Autopilot asks nothing), that
 in Autopilot a command that shows passwords or keys has its output kept from the model, and what holds in every mode:

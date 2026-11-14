@@ -287,7 +287,7 @@ function rig(o: RigOptions = {}) {
   };
 }
 
-const commandsOn = (id: TargetId, version = 2, askEvery = false) => ({ commands: { [id]: { on: true, askEvery, consent: { version, at: SINCE } } } });
+const commandsOn = (id: TargetId, version = 3, askEvery = false) => ({ commands: { [id]: { on: true, askEvery, consent: { version, at: SINCE } } } });
 const hostRecord = (id: string, more: Partial<HostRecord> = {}): HostRecord => ({
   id, dest: `deploy@${id}`, resolved: { user: "deploy", hostname: `${id}.example.com`, port: 22, jump: [] }, consent: { version: 1, at: SINCE }, ...more,
 });
@@ -425,7 +425,7 @@ describe("commands on this computer (§2.5, §3.8.1)", () => {
     expect(got.hands.commands!.capability().state).toBe("needs-consent");
     expect(r.t.agent.caps().commands).toBe(true);
     got.hands.commands!.consented();
-    expect(r.settings.get().commands.local).toEqual({ on: true, askEvery: false, consent: { version: 2, at: expect.any(String) } });
+    expect(r.settings.get().commands.local).toEqual({ on: true, askEvery: false, consent: { version: 3, at: expect.any(String) } });
     expect(got.hands.commands!.capability().state).toBe("on");
   });
 
@@ -521,7 +521,7 @@ describe("consent cards (§8.4) and their records (§7.4)", () => {
     expect(r.cards).toHaveLength(1);
     expect(r.cards[0].title).toBe("Let Ember run commands on this computer?");
     expect(r.cards[0].body[0]).toContain(" Ctrl+Alt+X stops everything at once; what a command already changed stays changed.");
-    expect(r.settings.get().commands.local).toMatchObject({ on: true, consent: { version: 2 } });
+    expect(r.settings.get().commands.local).toMatchObject({ on: true, consent: { version: 3 } });
     // Already accepted: switching off and on again asks nothing.
     await r.invoke(TARGETS_IPC.act, r.home, { kind: "commands", id: "local", on: false });
     expect(r.settings.get().commands.local!.on).toBe(false);
@@ -599,7 +599,7 @@ describe("consent cards (§8.4) and their records (§7.4)", () => {
       expect(c.body[0]).toContain(`${SHORTCUTS[osName].stop.label} stops everything at once`);
       expect(c.sha256).toBe(consentSha256(c));
     }
-    expect(win.body).toEqual(expect.arrayContaining(["Commands here run as the administrator, so in Interactive and Assisted Ember asks before every one, even one you asked for exactly. In Autopilot, each runs after a few seconds to stop it.", "Commands here run in Windows PowerShell and can't ask you for answers or passwords."]));
+    expect(win.body).toEqual(expect.arrayContaining(["Commands here run as the administrator, so in Interactive Ember asks before every one, even one you asked for exactly. In Assisted, each goes ahead when a check finds it in what you asked for, and asks otherwise. In Autopilot, each runs after a few seconds to stop it.", "Commands here run in Windows PowerShell and can't ask you for answers or passwords."]));
     const wsl = commandsConsent({ os: "win32", target: "wsl:podman-machine-default", targetLabel: "podman-machine-default (WSL)", facts: { kind: "wsl", privileged: false, windows: false, podman: true } });
     expect(wsl.title).toBe("Let Ember run commands on podman-machine-default (WSL)?");
     expect(wsl.body).toEqual(expect.arrayContaining(["Commands in WSL can also reach your Windows files and programs.", "Podman uses this distro, so Ember asks before every command here."]));
@@ -764,7 +764,7 @@ describe("SSH targets", () => {
     expect(r.t.bubbleAction("conn:build-01:commands")).toBe(true);
     await flush(); await flush();
     expect(r.cards.at(-1)?.feature).toBe("commands");
-    expect(r.settings.get().commands["ssh:build-01"]).toMatchObject({ on: true, consent: { version: 2 } });
+    expect(r.settings.get().commands["ssh:build-01"]).toMatchObject({ on: true, consent: { version: 3 } });
     expect(r.showState).toHaveBeenLastCalledWith({ bubble: expect.objectContaining({ title: "Commands are on for build-01", thought: "Ask away: I'll run commands there." }) });
     expect(r.t.agent.handsFor("ssh:build-01").ok).toBe(true);
     // With commands on, the old words are true.
@@ -1203,7 +1203,7 @@ describe("WSL targets", () => {
   });
 
   it("asks before every command in Podman's distro and in a distro whose user is root, and tells the settings window of Podman's (r10-modes-copy-x10-4)", async () => {
-    const r = rig({ os: "win32", wslFacts: wslFacts([ubuntu({ defaultUid: 0 }), ubuntu({ name: "podman-machine-default", isDefault: false, tool: "podman" })]), settings: { ...wslOnSettings, commands: { "wsl:Ubuntu": { on: true, askEvery: false, consent: { version: 2, at: SINCE } }, "wsl:podman-machine-default": { on: true, askEvery: false, consent: { version: 2, at: SINCE } } } } });
+    const r = rig({ os: "win32", wslFacts: wslFacts([ubuntu({ defaultUid: 0 }), ubuntu({ name: "podman-machine-default", isDefault: false, tool: "podman" })]), settings: { ...wslOnSettings, commands: { "wsl:Ubuntu": { on: true, askEvery: false, consent: { version: 3, at: SINCE } }, "wsl:podman-machine-default": { on: true, askEvery: false, consent: { version: 3, at: SINCE } } } } });
     await flush();
     const root = r.t.agent.handsFor("wsl:Ubuntu");
     const pod = r.t.agent.handsFor("wsl:podman-machine-default");
@@ -2638,7 +2638,7 @@ describe("first run's commands row", () => {
     const card = r.t.firstRunCommandsCard();
     expect(card).toEqual(commandsConsent({ os: "linux", target: "local", targetLabel: "This computer", facts: { kind: "local", privileged: false, windows: false, podman: false, byok: false } }));
     expect(r.t.agreeFirstRunCommands(card!.sha256)).toBe(true);
-    expect(r.settings.own().commands.local).toEqual({ on: true, askEvery: false, consent: { version: 2, at: "2026-10-22T12:00:00.000Z" } });
+    expect(r.settings.own().commands.local).toEqual({ on: true, askEvery: false, consent: { version: 3, at: "2026-10-22T12:00:00.000Z" } });
     // The flow's own card reads the same once commands are on.
     const got = r.t.agent.handsFor("local");
     if (!got.ok) throw new Error(got.why);
@@ -2647,7 +2647,7 @@ describe("first run's commands row", () => {
 
   it("says an elevated Ember asks before every command, as the card does (slice4-20)", () => {
     const r = rig({ elevated: () => true });
-    expect(r.t.firstRunCommandsCard()!.body).toContain("Commands here run as the administrator, so in Interactive and Assisted Ember asks before every one, even one you asked for exactly. In Autopilot, each runs after a few seconds to stop it.");
+    expect(r.t.firstRunCommandsCard()!.body).toContain("Commands here run as the administrator, so in Interactive Ember asks before every one, even one you asked for exactly. In Assisted, each goes ahead when a check finds it in what you asked for, and asks otherwise. In Autopilot, each runs after a few seconds to stop it.");
   });
 
   it("records nothing for another card's hash, nor where the organisation turned commands off (slice4-21)", () => {
