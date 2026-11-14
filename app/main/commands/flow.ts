@@ -780,10 +780,12 @@ function negatedKind(findings: readonly Finding[], words: string): boolean {
 
 /**
  * A no said as people say it, before what it turns round: "don't", "do not", "never", "no", "without", "avoid", "stop
- * before", "check with me before" (commands-remote-r12-2). Never a reminder or a go-ahead ("don't forget to", "don't
- * hesitate to", "I don't mind if"), nor a bare "not", which states a fact as often as it refuses ("it's not working").
+ * before", "check with me before" (commands-remote-r12-2), and the modal no: "mustn't", "shouldn't", "can't", "you're
+ * not allowed to", "I forbid" (r12-commands-y12-1). Never a reminder or a go-ahead ("don't forget to", "don't hesitate
+ * to", "I don't mind if", "never ask me before", "it won't hurt to"), nor a bare "not", which states a fact as often as
+ * it refuses ("it's not working").
  */
-const SAYS_NO = /(?:^|[^\p{L}])(?:don[’']?t|do\s+not|never|no|without|avoid|(?:stop|halt|pause)\s+(?:right\s+)?before|(?:check|confirm)\s+with\s+me(?:\s+first)?\s+before)(?![\p{L}])(?!\s+(?:ever\s+)?(?:forget|hesitate|fail|mind|care|worry|wait|stop\s+until)(?![\p{L}]))/iu;
+const SAYS_NO = /(?:^|[^\p{L}])(?:don[’']?t|do\s+not|never|no|without|avoid|forbid|prohibit|(?:must|should|shall|could)n[’']?t|(?:must|should|shall|may|can|could|will)\s+not|can[’']?t|cannot|won[’']?t|not\s+(?:allowed|permitted|supposed)\s+to|(?:stop|halt|pause)\s+(?:right\s+)?before|(?<!(?:never|don[’']?t|not)\s+)(?:check|confirm)\s+with\s+me(?:\s+first)?\s+before)(?![\p{L}])(?!\s+(?:ever\s+)?(?:forget|hesitate|fail|mind|care|worry|wait|stop\s+until|ask|bother|(?:check|confirm)\s+with|hurt|harm|matter|go\s+wrong|be\s+(?:a\s+|an\s+)?(?:problem|issue))(?![\p{L}]))/iu;
 /** A kind of step as a no names it, beyond KIND_VERBS: installing software, root or an administrator, and printing secrets. */
 const NO_KIND_VERBS: readonly { when: (f: Finding) => boolean; verb: RegExp }[] = [
   { when: f => /^pkg\./.test(f.rule), verb: /(?:^|[^\p{L}])(?:install|reinstall|uninstall|upgrad|downgrad|add\s+(?:any\s+)?(?:new\s+|more\s+)?(?:packag|dependenc|librar|modules?))/iu },
@@ -815,6 +817,12 @@ function saysNoTo(findings: readonly Finding[], words: string): boolean {
       // ("no problem", "no worries": an idiom that turns nothing down, r12-commands-x12-3.)
       if (NO_IDIOM.test(part.slice(no.index))) continue;
       const after = part.slice(no.index + no[0].length);
+      // A bare "No" said as an answer before the request ("No, push it", "No — delete build"), and the user's own
+      // habit or ability with the step's verb straight after ("I never push without tests", "I can't push from
+      // here"): r12-commands-y12-2.
+      if (BARE_NO.test(no[0]) && /^\s*[,.;:!?—–-]/u.test(after)) continue;
+      if (HABIT_NO.test(no[0]) && /(?:^|[^\p{L}])(?:i|we)\s*$/iu.test(part.slice(0, no.index + 1))
+        && verbs.some(v => new RegExp(v.source, "iu").exec(after)?.index === 0)) continue;
       if (!verbs.some(v => governs(after, v))) continue;
       // What else the no names: a thing of its own, unless the words only stand for the whole kind.
       const names = after.toLowerCase().split(/[^\p{L}\p{N}'’_./~-]+/u).filter(w => w !== "" && !WHOLE_KIND.has(w) && !verbs.some(v => v.test(w)) && !NEGATED.test(w) && !/^(use|using|touch|do|make|be|go|run|any|of)$/.test(w));
@@ -824,6 +832,10 @@ function saysNoTo(findings: readonly Finding[], words: string): boolean {
   }));
 }
 
+/** A no that is the bare word "no" (r12-commands-y12-2). */
+const BARE_NO = /^[^\p{L}]?no$/iu;
+/** A no that, after "I" or "we", may tell a habit or an ability ("I never push…", "I can't push…"): r12-commands-y12-2. */
+const HABIT_NO = /^[^\p{L}]?(?:never|can[’']?t|cannot|couldn[’']?t)$/iu;
 /** Every no in a part (SAYS_NO, found again and again). */
 const SAYS_NO_ALL = new RegExp(SAYS_NO.source, "giu");
 /** "no" in an idiom that turns nothing down ("no problem", "no worries", "no rush"): r12-commands-x12-3. */
@@ -853,7 +865,8 @@ function noParts(words: string): string[] {
   const parts: string[] = [];
   for (let i = 0; i < raw.length; i++) {
     let p = raw[i];
-    const endsInNo = (t: string) => [...t.matchAll(SAYS_NO_ALL)].some(n => NO_ASIDE.test(t.slice(n.index + n[0].length)));
+    // (Never a bare "No" said as an answer: "No, push it to main" is a request, r12-commands-y12-2.)
+    const endsInNo = (t: string) => [...t.matchAll(SAYS_NO_ALL)].some(n => !BARE_NO.test(n[0]) && NO_ASIDE.test(t.slice(n.index + n[0].length)));
     while (i + 1 < raw.length && endsInNo(p)) p = `${p} ${raw[++i]}`;
     parts.push(p);
   }

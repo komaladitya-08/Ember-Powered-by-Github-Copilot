@@ -179,6 +179,25 @@ describe("a no that governs the step, and only then (r12-commands-x12-3, r12-com
       ["leave origin alone", "git push origin feature"], ["don't you dare push", "git push origin feature"],
     ]) expect(ruled(words, command), `${words} / ${command}`).toBe(true);
   });
+
+  it("reads a no in modal words as a no to the step (r12-commands-y12-1)", () => {
+    for (const [words, command] of [
+      ["Fix the typo. You mustn't push.", "git push origin main"], ["you shouldn't push", "git push origin main"],
+      ["Tidy the project, but you shouldn't delete anything.", "rm -rf build"], ["Fix the lint; it must not be pushed.", "git push origin main"],
+      ["Bump the version, you're not allowed to publish.", "npm publish"], ["you can't push", "git push origin main"],
+      ["you cannot push to main", "git push origin main"], ["I forbid pushing", "git push origin main"], ["it shouldn't be published", "npm publish"],
+    ]) expect(ruled(words, command), `${words} / ${command}`).toBe(true);
+  });
+
+  it("never reads a plain request as a no: a bare No before it, a go-ahead not to ask, a habit or a modal idiom (r12-commands-y12-1, r12-commands-y12-2)", () => {
+    for (const [words, command] of [
+      ["No, push it to main", "git push origin main"], ["No, I want you to push it", "git push origin main"], ["no. delete build please", "rm -rf build"],
+      ["No — delete build", "rm -rf build"], ["never ask me before pushing", "git push origin main"], ["Push it, never ask me before pushing", "git push origin main"],
+      ["I never push without tests, so run them and push", "git push origin main"], ["don't check with me before pushing", "git push origin main"],
+      ["you can't go wrong, push it", "git push origin main"], ["you can't miss it, just push", "git push origin main"],
+      ["it won't hurt to push it", "git push origin main"], ["it shouldn't be a problem to push it", "git push origin main"], ["you can push it", "git push origin main"],
+    ]) expect(ruled(words, command), `${words} / ${command}`).toBe(false);
+  });
 });
 
 describe("a download or a conversion saved over a file that is there (y11-8)", () => {
