@@ -799,7 +799,10 @@ window shows "About to run this: Autopilot is on" (never "as you asked"), the ex
 found ("Commands here run as root (the administrator).", without "so each one asks first", where that is why it would
 have asked), "Autopilot is on, so Ember didn't ask first." and the countdown with **Stop**, as in §2.5. Nothing is sent to a model to decide this.
 
-It still asks, with the card of §2.4, before:
+It still asks, with the card of §2.4, before the commands below. Where Ember runs as root or an administrator, that
+card too says "Commands here run as root (the administrator)." (or "Ember is running as an administrator here.") without
+"so each one asks first", after the line that is its reason, which is the one the bubble says; so does the countdown of
+a command Assisted's check cleared:
 
 - a command that would read or print passwords, keys or other secrets, so that none reaches the model; a downloaded
   program that is handed one counts (`npx tool ~/.ssh/id_rsa`, `npx tool --token=$GITHUB_TOKEN`: the card says "Gives

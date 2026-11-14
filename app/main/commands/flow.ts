@@ -678,6 +678,29 @@ export function heldDecision(d: CommandDecision, r: AskReasons, kind: TargetBind
   };
 }
 
+/**
+ * A decision's root or administrator line made true for the mode that decided (tasks-approvals-r10-1, -r11-1, -c11-1).
+ * "…so each one asks first" is a reason to ask only where root asks: wherever the command is announced (Autopilot's,
+ * Assisted's check, any announcement) and on every card of Autopilot's, where root is no reason to ask, it states the
+ * fact alone. On Autopilot's question it also goes after the lines that are the reason it asks (a secret, the user's
+ * earlier no), so the bubble, which says the card's first line, gives that reason. Wording only: the verdict stands.
+ */
+export function rootFactOnly(d: CommandDecision, autopilot: boolean): CommandDecision {
+  if (d.verdict !== "announce" && !(autopilot && d.verdict === "ask")) return d;
+  const facts = new Map<string, string>([[CARD_LINES.root, CARD_LINES.rootAutopilot], [CARD_LINES.admin, CARD_LINES.adminAutopilot]]);
+  if (!d.says.some(l => facts.has(l))) return d;
+  const says = d.says.map(l => facts.get(l) ?? l);
+  if (d.verdict === "ask") {
+    const plain = new Set(facts.values());
+    const rest = says.filter(l => !plain.has(l));
+    // (Behind the reasons, before the card's closing lines: "You didn't ask for this." and its like.)
+    const at = rest.findIndex(l => l === LINES.unasked || l === LINES.inexact || l === LINES.windows);
+    const shown = says.filter(l => plain.has(l));
+    return { ...d, says: at < 0 ? [...rest, ...shown] : [...rest.slice(0, at), ...shown, ...rest.slice(at)] };
+  }
+  return { ...d, says };
+}
+
 /** The card's line, and the rule, of a command that may be one the user said no to earlier in the task (Refusals.commandLike). */
 export const LIKE_REFUSED_LINE = "You said no to something like this earlier in this task.";
 export const LIKE_REFUSED_RULE = "refused-like";
@@ -1110,7 +1133,7 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
     const auto = autopilotCommand(d, { findings: [...cls.findings, ...hidden], mode, askEvery: cap.askEvery, userAskEvery, ruledOut: wordsRuleOut(standing, words) || wordsRuleOut(standing, spoken) });
     // Root or an elevated Ember asks in every other mode, and its card line said "each one asks first": on Autopilot's
     // announcement that is untrue, so it states the fact alone (tasks-approvals-r10-1).
-    if (auto) d = { ...auto, says: auto.says.map(l => (l === CARD_LINES.root ? CARD_LINES.rootAutopilot : l === CARD_LINES.admin ? CARD_LINES.adminAutopilot : l)) };
+    if (auto) d = auto;
     // The card says why it still asks where their words held it back: after "You didn't ask for this." (which the
     // card keeps), and in place of "your words don't name exactly this", a doubt of Ember's (modes-y9-x9-6).
     else if (wordsHoldBack(standing, words) || wordsHoldBack(standing, spoken)) {
@@ -1151,6 +1174,8 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
       else if (v?.why) d = { ...d, says: [...d.says, `Ember's review: ${v.why.replace(/[.\s]+$/, "")}.`] };
     }
   }
+  // The card's and the bubble's reasons are true in the mode that decided (rootFactOnly).
+  d = rootFactOnly(d, !!ctx.autopilot?.());
   // The checks are done: a boot from here on happens in the run, whose tab shows it (followStatus).
   endPending();
   const refused = d.verdict === "refuse";
