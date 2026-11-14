@@ -12,6 +12,8 @@
 
 import { copilotReviewer, copilotStepChecker } from "./reviewer";
 import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import crypto from "node:crypto";
 import { defineTool, type CopilotClient, type CopilotSession, type ProviderConfig, type Tool, type ToolResultObject } from "@github/copilot-sdk";
 import { z } from "zod";
@@ -1008,6 +1010,8 @@ const DIALOG_ROLE = /^(dialog|alert|file chooser|color chooser|font chooser)$/;
 const FILE_LIST_ROLE = /^(?:list|tree|table|tree table)$/;
 /** A name that shows a folder's whole path (Windows' "Address: C:\Users\a", "~/Documents", "/home/a"). */
 const SHOWS_PATH = /(?:^|[\s:])(?:[a-z]:\\|\\\\|~?\/)[^\s/\\]/i;
+/** The crumb of a GTK path bar that is the file system's root (r11-safety-y11-1). */
+const ROOT_CRUMB = /^(?:\/|file ?system)$/i;
 /**
  * Roles that are something to press, choose, tick or type into (on every OS's screen reader): anything with one of
  * these in a dialog is a control of it. An element that is editable or has an action of its own counts too, whatever
@@ -1026,9 +1030,10 @@ const CONTROL_ROLE = /button|check|radio|toggle|switch|combo|entry|^text$|passwo
  * dialog holds (`controls`), which policy.ts's acknowledgesOnly needs before "Work without asking" presses its one OK.
  * A title bar's Minimise, Maximise, Restore, Help and system menu are left out; its Close is a control of its own
  * (`caption`: it may cancel), and anything else in a title bar (a custom one's buttons and check boxes) counts as the
- * control it is. Exported for its tests.
+ * control it is. `home`: the user's home folder's name, the crumb that shows a GTK path bar reaches home. Exported for
+ * its tests.
  */
-export function dialogAround(start: AxNode | undefined, get: (id: number) => AxNode | undefined, all: Iterable<AxNode>, whole = false): Dialog | undefined {
+export function dialogAround(start: AxNode | undefined, get: (id: number) => AxNode | undefined, all: Iterable<AxNode>, whole = false, home = path.basename(os.homedir())): Dialog | undefined {
   let cur = start;
   for (let i = 0; cur && i < 40; i++) {
     if (DIALOG_ROLE.test(cur.role)) {
@@ -1077,7 +1082,11 @@ export function dialogAround(start: AxNode | undefined, get: (id: number) => AxN
       // What it does say still counts; only "nothing of Ember's here" can't be told.
       const inList = (a: AxNode) => [a, ...(chain(a) ?? [])].some(x => DIALOG_ROW.test(x.role) || FILE_LIST_ROLE.test(x.role));
       const textField = (a: AxNode) => !/combo/.test(a.role) || a.editable === true;
-      const located = inside.some(a => (/toggle/.test(a.role) && a.states.includes("checked") && !!a.name.trim()) || SHOWS_PATH.test(a.name));
+      // A checked crumb shows the folder only while the crumbs beside it reach the user's home folder or the root: a path
+      // bar scrolled deep in a folder (its upper crumbs left out) shows none of what lies above (r11-safety-y11-1).
+      const reachesRoot = (a: AxNode) => inside.some(b => b.parent === a.parent && /toggle/.test(b.role)
+        && (b.name.trim() === home || ROOT_CRUMB.test(b.name.trim())));
+      const located = inside.some(a => (/toggle/.test(a.role) && a.states.includes("checked") && !!a.name.trim() && reachesRoot(a)) || SHOWS_PATH.test(a.name));
       const unread = !whole || ((!!cur.omitted || inside.some(a => a.omitted && !inList(a))) && !located)
         || fieldNodes.some(a => a.textCut || (textField(a) && !a.text && !a.empty && !a.secret && !a.withheld));
       // A file dialog by its shape, whatever its title's language (r11-safety-x11-3): a one-line field to type a name or

@@ -447,7 +447,7 @@ describe("Ember's own files reached by what a field or a file dialog holds, not 
 
 describe("Ember's own files behind a file dialog the screen reader can't read whole, or doesn't call a file dialog", () => {
   const n = (id: number, parent: number | null, role: string, name: string, x: Partial<AxNode> = {}): AxNode => ({ id, parent, depth: parent === null ? 0 : 1, role, name, states: [], bounds: null, ...x });
-  const read = (all: AxNode[], at: number, whole = true) => dialogAround(all.find(x => x.id === at), id => all.find(x => x.id === id), all, whole)!;
+  const read = (all: AxNode[], at: number, whole = true) => dialogAround(all.find(x => x.id === at), id => all.find(x => x.id === id), all, whole, "root")!;
   const asksOrRefused = (o: OS, app: string, r: ActionRequest, what: string) => {
     expect(mayReachEmberData(r, o), what).toBe(true);
     for (const mode of ["asking", "interactive", "assisted"] as const) {
@@ -525,6 +525,30 @@ describe("Ember's own files behind a file dialog the screen reader can't read wh
     // Positive evidence from a read cut short still counts: a path bar naming Ember's folder is refused.
     const named = read([...gtk([n(3, 1, "panel", "", { omitted: true })]), n(6, 1, "toggle button", "ember")], 5);
     expect(engine("autopilot", "linux", { gedit: "act" }).decide(step(named)).verdict).toBe("deny");
+  });
+
+  it("reads a GTK chooser's folder only from crumbs that reach the home folder or the root, so a Save deep in Ember's folder asks and Autopilot refuses it (r11-safety-y11-1)", () => {
+    // The reviewer's real read three folders below Ember's models: the path bar scrolled, no ember, .config or home crumb.
+    const deep: AxNode[] = [
+      n(1, null, "file chooser", "Speichern unter", { omitted: true }), n(2, 1, "file chooser", "File Chooser Widget", { omitted: true }),
+      n(3, 2, "text", "", { editable: true, text: "notes.txt", states: ["editable", "focused"] }), n(4, 2, "label", "Name:"),
+      n(5, 2, "scroll pane", "Places", { omitted: true }), n(8, 2, "filler", "PathBar Layer", { omitted: true }),
+      n(9, 8, "toggle button", "third-level-folder", { states: ["checked"] }), n(20, 8, "toggle button", "another-long-sub-folder-name"),
+      n(21, 8, "toggle button", "sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01"), n(22, 8, "toggle button", "models"),
+      n(10, 8, "push button", "Up Path"), n(11, 2, "table", "Files"), n(12, 11, "table cell", "x"), n(14, 1, "push button", "Save"),
+    ];
+    const step = (d: ReturnType<typeof read>) => req("gedit", "Save File", { kind: "click", element: { role: "push button", name: "Save" }, dialog: d });
+    const at = (all: AxNode[]) => dialogAround(all.find(x => x.id === 14), id => all.find(x => x.id === id), all, true, "u")!;
+    expect(at(deep).unread).toBe(true);
+    asksOrRefused("linux", "gedit", step(at(deep)), "real GTK deep in Ember's folder");
+    // Crumbs that reach the user's home folder, or the root, show where it saves: Documents and /tmp go as before.
+    const shows = (crumbs: string[]) => deep.filter(a => a.id < 20 || a.id > 22).map(a => (a.id === 9 ? { ...a, name: crumbs[0]! } : a))
+      .concat(crumbs.slice(1).map((c, i) => n(30 + i, 8, "toggle button", c)));
+    for (const crumbs of [["Documents", "u"], ["u"], ["x", "tmp", "/"]]) {
+      const d = at(shows(crumbs));
+      expect(d.unread, crumbs.join("/")).toBeUndefined();
+      for (const mode of ["interactive", "autopilot"] as const) expect(engine(mode, "linux", { gedit: "act" }).decide(step(d)).verdict, `${crumbs.join("/")} ${mode}`).toBe("allow");
+    }
   });
 
   it("knows a file dialog by its shape, whatever its title says, so a localised or an app's own Save dialog is judged as one (r11-safety-x11-3)", () => {
