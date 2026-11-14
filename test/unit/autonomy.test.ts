@@ -146,10 +146,10 @@ describe("Interactive's card (FEATURE_CONSENT_VERSION.autonomy, modes-A9)", () =
   it("gives Assisted a card of its own that says plainly who decides, what is sent, that it can be wrong and what it never clears (modes-C5, modes-x9p-4)", () => {
     expect(MODE_CARD_TEXT.assisted).toBe(ASSISTED_CONSENT_TEXT);
     expect(modeCard("assisted")).toEqual({ title: "Before you choose Assisted", text: ASSISTED_CONSENT_TEXT, yes: "I agree, use Assisted", no: "Not now" });
-    expect(FEATURE_CONSENT_VERSION.assisted).toBe(3);
+    expect(FEATURE_CONSENT_VERSION.assisted).toBe(4);
     expect(ASSISTED_CONSENT_TEXT).toMatch(/^In Assisted, Ember works as in Interactive, and where it would ask you it first checks the step against what you asked\. A lighter AI model makes that check\./);
     // What the model is sent, and that a match goes ahead whatever the step is.
-    expect(ASSISTED_CONSENT_TEXT).toContain("It is sent your own words for the task, typed or spoken, and Ember's short description of the step: the app, the window's title, the control's name, a dialog's words, the text to type and what it replaces, a cell's formula and where carried text came from; or the command, its computer, shell and folder.");
+    expect(ASSISTED_CONSENT_TEXT).toContain("It is sent your own words for the task, typed or spoken, and Ember's short description of the step: the app, the window's title, the control's name, a dialog's words, the text to type and what it replaces, a cell's formula and where carried text came from; or the command, its computer, shell and folder; or an extension's tool and what it is given.");
     expect(ASSISTED_CONSENT_TEXT).toMatch(/If it finds you asked for exactly that, Ember goes ahead without asking, also where the step sends, deletes, pays or installs, or the command changes your system, shows passwords or keys \(its output is then kept from the AI model\) or keeps running after you stop Ember\./);
     // Announced and recorded; it can be wrong; what it never clears; what happens otherwise; a stop always works.
     expect(ASSISTED_CONSENT_TEXT).toMatch(/Ember tells you each time, a command waits a few seconds with a Stop first, and What Ember did keeps a record\./);
@@ -162,8 +162,9 @@ describe("Interactive's card (FEATURE_CONSENT_VERSION.autonomy, modes-A9)", () =
     expect(ASSISTED_CONSENT_TEXT).not.toMatch(/"|Ctrl\+/);
     // (215: naming every part the check is sent took 12 words more; modes-x9p-4. 220: the commands it may now clear,
     // owner decision of 2026-11-14. 230: that a cleared secret's output is kept from the model, the commands lane's
-    // promise kept on the one card at round eleven's merge.)
-    expect(ASSISTED_CONSENT_TEXT.split(/\s+/).length).toBeLessThanOrEqual(230);
+    // promise kept on the one card at round eleven's merge. 240: that it is sent an extension's tool and what it is
+    // given, integrations-r12-1.)
+    expect(ASSISTED_CONSENT_TEXT.split(/\s+/).length).toBeLessThanOrEqual(240);
   });
 
   it("is versioned on its own, at 3 since it replaced Work without asking's card (an agreement to that one is none to this), at 4 since it says a dangerous command asked for exactly doesn't ask (accessibility-c11-1), at 5 since it follows the owner's table of 2026-11-14", () => {

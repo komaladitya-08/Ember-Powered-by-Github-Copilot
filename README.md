@@ -256,7 +256,8 @@ has its own card that says what it means, and a mode is in use only once you agr
 - **Autopilot** doesn't ask. Ember sends, deletes, pays, installs and runs dangerous commands, as an administrator
   too, and tells you as it goes, with a few seconds to stop each dangerous command: a risk you accept on its card. A
   command that shows passwords or keys runs too, but what it prints is kept from the AI model (you see it in the
-  command window), and Ember says so when a command will keep running after Stop. What you said no to, and a command
+  command window), and one that would also save them to a file is refused. Ember says so when a command will keep
+  running after Stop. What you said no to, and a command
   you ruled out in your request, it refuses instead of asking, and so it does a command that deletes, changes or reads something it
   can't name, such as a place held in a variable. It asks only where you or your organisation set commands to ask every
   time, in a distro Podman uses and in **Project work**; where the administrator of a computer reached over SSH
@@ -426,7 +427,7 @@ and VoiceOver on a Mac. While one runs:
 | Open settings | The settings shortcut, or start Ember again from your apps, the AppImage, `ember`, the Start menu or Applications |
 | What the handle's menu does | Settings' **Home**: **Ask Ember…** and **Stop everything**. Settings › **Your Ember › Ember on screen**: **Hide Ember until it needs me** for **Hide Ember**, **Follow my cursor** for **Stay put**, **Handle position** for **Move to the other side**, and **Quit Ember**. The microphone: its shortcut, or **Voice** in settings. **Read the last answer** and a long answer's **Read all**: settings' **Conversation**. **Bring Ember to a computer…**, **Disconnect** and **Cancel connecting**: settings' **Computers**. **Work on**: name the computer in your request ("on build-01, …") |
 | A command card (**Allow**, **Not now**) | Alt+Tab to **Ember commands** and Tab to the button; or Ember's allow and not-now keys, once the card has shown the whole command; or say “allow” or “not now” once Ember has asked (“Ember, allow” later), then (with **Only my voice can say yes (Voice Match)** on, only your voice can say yes) |
-| Any question of Ember's | Say “allow” or “not now” once Ember has asked (no name needed for a few seconds; “Ember, allow” later; on macOS, and on Linux without PulseAudio's parec, where Ember can't tell whether something else is playing, a yes always needs the name): anyone near the computer can answer by voice, unless you turn on **Only my voice can say yes (Voice Match)**, which then takes a yes only from your voice. Never “Always” by voice. **Apps & privacy › How Ember asks › Interactive** has Ember tell you instead of asking before routine steps; risky ones still ask. **Assisted** adds a check: before Ember asks, a lighter AI model reads the step against what you asked, and when it matches Ember goes ahead and tells you. **Autopilot** doesn't ask: Ember sends, deletes, pays, installs and runs dangerous commands without asking and tells you as it goes, a risk you accept on its card; it still asks before a command that would show passwords, keep running after you stop it or that it can't tell the effect of, and your organisation can turn it off. Say “Ember, switch to Autopilot” (or Assisted, or “go back to Interactive”) to change the mode once its card is agreed to in Settings: by voice by the same rule as a yes; typed only to a mode that asks more |
+| Any question of Ember's | Say “allow” or “not now” once Ember has asked (no name needed for a few seconds; “Ember, allow” later; on macOS, and on Linux without PulseAudio's parec, where Ember can't tell whether something else is playing, a yes always needs the name): anyone near the computer can answer by voice, unless you turn on **Only my voice can say yes (Voice Match)**, which then takes a yes only from your voice. Never “Always” by voice. **Apps & privacy › How Ember asks › Interactive** has Ember tell you instead of asking before routine steps; risky ones still ask. **Assisted** adds a check: before Ember asks, a lighter AI model reads the step against what you asked, and when it matches Ember goes ahead and tells you. **Autopilot** doesn't ask: Ember sends, deletes, pays, installs and runs dangerous commands without asking and tells you as it goes, a risk you accept on its card; a command that shows passwords or keys runs with what it prints kept from the AI model, it asks only where you or your organisation set commands to ask every time (see **How Ember asks**), and your organisation can turn it off. Say “Ember, switch to Autopilot” (or Assisted, or “go back to Interactive”) to change the mode once its card is agreed to in Settings: by voice by the same rule as a yes; typed only to a mode that asks more |
 | The command window | Tab and Shift+Tab move between the tabs, the buttons and the command's terminal, never into the command (Ctrl+I types a Tab for a program that wants one); Ctrl+Shift+C copies (Command+C on a Mac), and **Copy output** copies all a command printed |
 | Bubble buttons for other computers (**Bring Ember**, **Reconnect**, **Try again**) | Settings › **Computers** has the same; the bubble says so |
 | Sign-in and consent cards | Their window takes the keyboard; where the system keeps it in another app, a card you type into says so, and Alt+Tab reaches the card. Tab to a button, Enter presses the highlighted one, Esc cancels (**Not now** on a consent card). A consent card's yes counts once you have read all of it: Tab to its words and scroll with the arrow keys or Page Down. It is answered there only, never with Ember's keys or by voice |
@@ -484,14 +485,16 @@ the others are off until you turn them on in settings (**Commands**, **Computers
 it means.
 
 - **Commands** run in Ember's own **Ember commands** window, never in your terminal, where you can watch and stop
-  them. Most run straight away. In Interactive, the default, Ember stops and asks before anything that deletes or
-  overwrites data, pushes or publishes anywhere, touches passwords or keys, changes the system, or downloads and runs
-  code; when you asked for exactly that yourself ("delete build/", "can you delete build/?", but not a question, a
-  how-to or something already done), it says so and gives you 4 seconds to stop it. Assisted and Autopilot ask less
-  (**How Ember asks**, above). Asked for by voice, such a command asks instead on Windows, on
+  them. Most run straight away; one Ember doesn't know runs too, after it names it and gives you 4 seconds to stop
+  it. In Interactive, the default, Ember stops and asks before anything that deletes or overwrites data, pushes or
+  publishes anywhere, touches passwords or keys, changes the system, or downloads and runs code. When you asked for
+  exactly that yourself ("delete build/", "can you delete build/?", but not a question, a how-to or something already
+  done) and it only deletes or overwrites data, publishes something or changes the system, it says so and gives you 4
+  seconds to stop it instead; one that touches passwords or keys or downloads and runs code still asks. Assisted and
+  Autopilot ask less (**How Ember asks**, above). Asked for by voice, such a command asks instead on Windows, on
   macOS and on Linux without parec, where Ember can't tell your voice from what your speakers play. It reads a shell
-  script before running it: a script that does any of that always asks, and so does one it can't read in full, as most
-  real build and install scripts are. It never runs a command that would read or change its own safety
+  script before running it: in Interactive a script that does any of that asks, and so does one it can't read in full,
+  as most real build and install scripts are. It never runs a command that would read or change its own safety
   settings, records or programs, or press keys in its own windows.
 - **WSL**: Ember reads and uses the Linux apps WSL shows on Windows, opens them, and runs commands in your distros.
 - **Other computers**: on your click, Ember opens its own SSH connection with your SSH settings and keys, copies a

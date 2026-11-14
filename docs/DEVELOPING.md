@@ -156,7 +156,9 @@ environment, only through `scripts/runtime-env-live.sh`, which gives it a networ
   that can't be saved is left off without consent and the step says so before going on. A row switched off records
   nothing (a new user's listening and screenshots are written off in the same saved change as the consent, and only a
   row left on turns them back on, in its own). Someone who agreed to an earlier version sees what changed and
-  only Interactive's row: the rest of their settings stay as they are. Nothing in a settings file is in force before the
+  only Interactive's row: the rest of their settings stay as they are. One whose Assisted or Autopilot is in force on
+  its own card gets no row, and is told under what changed that their mode stays as they chose it and that what the
+  step says about asking is Interactive's (`keptModeLine`, `FirstRunView.keptMode`; first-run-c12-1). Nothing in a settings file is in force before the
   agreement, and the features with a card of their own (commands, memory, `voice.consent`, Interactive) stay off in
   `settings.ts` until agreed, so a settings file without the agreement never gains one. A new user's listening and
   screenshots rows that aren't turned on (switched off, managed, or listening without the speech models) write
@@ -368,8 +370,9 @@ environment, only through `scripts/runtime-env-live.sh`, which gives it a networ
     only `https://github.com` and its subdomains), shows **Waiting for you to finish in your browser** with **Check
     again**, then **Connected**; one whose sign-in lapsed says **Needs you to sign in again**.
   - Every add and connect first shows a consent card in place: only you add, read-only tools run once you agree,
-    Ember asks before any tool that changes or sends anything except in Autopilot, where it goes ahead and says so
-    (`ASKS_BEFORE_CHANGES`, `FEATURE_CONSENT_VERSION.extensions` 4; integrations-r10-1), results are information and never instructions, and
+    Ember asks before any tool that changes or sends anything except in Assisted, when its check finds the call in
+    what you asked, and in Autopilot, where it goes ahead and says so (`ASKS_BEFORE_CHANGES`,
+    `FEATURE_CONSENT_VERSION.extensions` 5; integrations-r10-1, -r12-1), results are information and never instructions, and
     where the item reaches (the marketplace's source, or GitHub's Copilot service for a connector).
     The first yes also records extensions' own consent (`settings.extensions`, `FEATURE_CONSENT_VERSION.extensions`;
     `consentCard`'s words are pinned to that version in extensions-runtime.test.ts) and turns extensions on; nothing
@@ -572,7 +575,9 @@ Ember's own description of the step, a line for each part: what kind of step it 
 control's role and name, a dialog's title and words, the text to type and, where it would replace what a field holds,
 up to 200 characters of that, the option or value chosen, a cell's formula, the apps carried text came from, and why
 Ember's rules would ask; for a command, the command, the computer, its system, shell and folder, and what the rules
-found. Assisted's card names these parts (`FEATURE_CONSENT_VERSION.assisted`, now 2). Every part that came from the screen, an app or the task's model is quoted as untrusted
+found; for an extension's call, the extension's and the tool's names, whether the tool says it only reads, what it is
+given and why Ember would ask (never the tool's description or anything it returned: `callForCheck`). Assisted's card
+names these parts (`FEATURE_CONSENT_VERSION.assisted`, now 4). Every part that came from the screen, an app or the task's model is quoted as untrusted
 data; the check never sees the screen, a read or a command's output. It answers with one of two fixed words. A match
 lets the step go ahead, a risky one included: the bubble and the task's card say "…, without asking: I checked it
 against what you asked.", the audit entry carries `autonomy: true` and `review: "match"`, and What Ember did shows
@@ -586,6 +591,17 @@ a name over 200 characters, typed text over 1,500, a request over 6,000). It nev
 step you said no to stays refused without reaching it. A task that text on screen tried to steer, that went off-task
 or where you said no has its steps checked too, the check being told so. On another computer reached over SSH every
 step still asks (its own policy asks for each one); steps in WSL apps, on this screen, are checked as any other here.
+An extension's call in the conversation that would ask because its tool changes or sends things, or because its
+server is on the internet (a read-only tool of a remote server), goes to the same check first, against your own words
+for that turn (`ExtensionsDeps.assisted` and `checkCall`, the host's `checkExtensionCall`; integrations-r12-1), the
+conversation's bubble saying "Checking this step against what you asked…" while it runs (r12-ui-x12-7). A match
+is said in the conversation's bubble ("Using a tool from <extension>, without asking: I checked it against what you
+asked."), audited as `verdict: "announce"`, `mode: "assisted"`, `review: "match"`, and shown in What Ember did as
+"Ember's check found this in what you asked."; anything else asks. A call after a no, one that may reach Ember's own
+files, one in a conversation an extension's text tried to steer, one whose server changed its list of tools, one with
+more than 2,500 characters of arguments or with arguments that, quoted for the check, no longer fit in the
+4,000 characters it is shown (r12-ui-y12-1), and a turn with no words of yours (a suggestion, a task's result) ask
+unchecked.
 
 **Autopilot** never asks about a step in an app. Every question Interactive would put up goes ahead instead,
 announced, a risky one included (`PolicyEngine.autopilotStep`, at the end of the engine's own judgement, on
@@ -914,7 +930,10 @@ it builds on:
   until all of it has been in view, as for long typed text (integrations-c9-3). Both write out every hidden
   character (`writeOutHidden`: format characters such as the tag characters that spell a sentence nothing draws,
   variation selectors, blank look-alikes) as `\u202e` or `\u{e0041}`, and so does the review card for each tool's
-  description and the words of its inputs (r10-integrations-y10-1). A yes counts only if the gate still allows the call when it comes. Every decision,
+  description and the words of its inputs (r10-integrations-y10-1). A yes counts only if the gate still allows the call when it comes. A
+  question nobody answered (it ran out of time or couldn't be put up) isn't asked again that turn, and the model is
+  told the user didn't answer, never that they said no (`UNANSWERED`; integrations-r10-4); one that Stop ended is told
+  as the stop it was (r12-ui-x12-3). Every decision,
   answer and result is an `extension` audit entry, with sizes and names only (the item's and the tool's, through
   `plainName`), and What Ember did draws a line for each (integrations-c9-2: the cards promised every use was there,
   and it drew none): asked, answered, refused, without asking, done and didn't work, and an item added, agreed to,
@@ -923,9 +942,17 @@ it builds on:
   change of hints alone (`readOnlyHint` to `destructiveHint`); the server's own list, asked after each of its calls,
   can, and such a tool is turned off as above. Ember decides by the hints it pinned, never by what a server says
   later. The next start's check (`refresh()`) re-pins nothing and turns a changed tool off.
-- **Failures are untrusted too.** The SDK can't rewrite a failed call's text, so `onPostToolUseFailure` adds Ember's
-  note that it is untrusted data, audits its size, and taints the conversation (any extension failure).
-  For the same reason no extension is called once Ember has filled something from its vault in this run (the
+- **Failures are untrusted too.** The SDK's failure hook can't rewrite a failed call's text, so Ember's launcher,
+  which every server's answers pass through, does: a JSON-RPC error's message and an `isError` result's text reach
+  the runtime only inside Ember's `<extension_failure untrusted="true">` tag, with `<` and `>` replaced, hidden
+  characters written out and anything but the text dropped, and the tag is marked `flagged` where the text held
+  hidden characters or markup like Ember's own (`app/main/extensions/failure-text.ts`; r12-ui-x12-2: a server could
+  close Ember's tags in its error and write a "user request" of its own). `onPostToolUseFailure` adds Ember's note
+  that it is untrusted data and audits its size. It taints the conversation as a result does: where its text reads
+  like instructions, is more than a result may hold or was saved to a file, isn't text at all, or was flagged. An
+  ordinary failure (a 404, a timeout, an HTML error page) taints nothing, and read-only calls go on without asking
+  (integrations-r12-2).
+  Because the runtime still passes the text on, no extension is called once Ember has filled something from its vault in this run (the
   gate's `vaultFilled`; "The vault", After a fill): the failure's text couldn't have the value taken out. At the
   first fill the conversation reloads without extension tools (`vaultFilledNow`; `forSession` gives none from then
   on), and Home says **Off until Ember starts again** for each item, with why (integrations-r10-2: it said
@@ -1691,6 +1718,9 @@ Environment variables for development:
 | `EMBER_MEMORY_LOG=30` | Development only: every that many seconds, logs `memory.report`: each Electron process's private bytes (Windows) and working set in MB, each renderer named after its page and window (`renderer mic Ember microphone`), and the totals. Working set counts the pages processes share once per process, so its sum over-counts; compare private bytes. The accessibility host and the Copilot runtime are processes of their own and aren't in it |
 | `EMBER_EXTENSIONS_LOCAL=1` | Development only: ExtensionsService accepts an absolute local folder holding a `marketplace.json` as a marketplace (Home's field still takes only GitHub repositories and https addresses, so this is for scripts and tests that call the service) |
 | `EMBER_REMOTE_DEV=1` | For the remote agent only: lets `ember-remote.cjs` run from a checkout's `dist/remote` instead of a verified install (§14.5); an installed agent ignores it |
+| `EMBER_REMOTE_PARTS_ID` | For the remote agent only, with `EMBER_REMOTE_DEV=1`: the parts id a development agent reports as its version (default `0.0.0-dev`; letters, digits and `._+-`, up to 80); the integration harness sets it |
+| `EMBER_REMOTE_TEST_DESKTOP` | For a development remote agent only (an installed one ignores it): a JSON desktop (`{"access":"screen","session":{"id":"ci","type":"x11"},"env":{…}}`) used in place of the one logind would give, which CI's runners don't have (`remote-desktop`, `remote-wayland`) |
+| `EMBER_REMOTE_WAYLAND=1` | For a development remote agent only: turns on Wayland's text-only access, which waits for its CI job (L5); `remote-wayland.test.ts` sets it |
 
 Apps Ember must never read or capture are listed under `privacy.neverLook` in `settings.json` (matched against app name
 and window title, ignoring characters that show nothing, such as a soft hyphen, and accents written apart; password

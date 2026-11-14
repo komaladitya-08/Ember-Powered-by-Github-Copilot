@@ -1842,6 +1842,9 @@ function start(): void {
     settings, admin: () => policy, client: () => agent?.copilotClient ?? null, confirmer: () => confirmer, audit: () => audit,
     // Autopilot: a call the gate would ask about is said in the conversation's bubble instead (never unsaid: it asks).
     autopilot: () => approvalsNow().autopilot, announce: words => agent?.announceUnasked(words) ?? false,
+    // Assisted: a call that would ask goes to its check first, against the user's own words for the turn
+    // (integrations-r12-1); no agent, no check, and it asks.
+    assisted: () => approvalsNow().check, checkCall: (step, signal) => agent?.checkExtensionCall(step, signal) ?? Promise.resolve(null),
     // After a fill from the vault no extension is called: a failed call's text reaches the model unredacted (vault-3-x9-4).
     vaultFilled: () => vaultRedactor.active,
     // A task's no holds its tools back while it is queued or running, and after it until the user's next own request
@@ -3004,6 +3007,8 @@ function start(): void {
         modelsReady: voice?.modelsReady ?? false,
         interactiveAgreed: modeAgreed(own.approvals, "interactive"),
         commandsCard: card !== null,
+        // A chosen Assisted or Autopilot in force on its own card stays (first-run-c12-1).
+        modeAbove: (m => (m === "assisted" || m === "autopilot" ? m : null))(approvalsState(own.approvals, policy).inForce),
       };
     },
     commandsCard: () => { const c = targets?.firstRunCommandsCard() ?? null; return c ? { title: c.title, body: c.body, sha256: c.sha256 } : null; },

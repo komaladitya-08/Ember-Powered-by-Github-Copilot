@@ -273,15 +273,18 @@ export const INSTALLED_TAG = "Added";
 
 export const CONNECTORS_HEADING = "Connectors";
 export const CONNECTORS_EMPTY = "GitHub-hosted connectors aren't available in Ember yet.";
-export const CONNECTORS_HINT = "To use an MCP server, add its plugin's marketplace above. Ember loads the plugin's MCP tools and asks before tools that can change things, except in Autopilot.";
+export const CONNECTORS_HINT = "To use an MCP server, add its plugin's marketplace above. Ember loads the plugin's MCP tools and asks before tools that can change things.";
 /**
  * The hint in the approval mode in force (null: below Interactive), true in each (home-c10-2): the extensions gate asks
- * in every mode but Autopilot, where its questions are announced instead (app/main/extensions/gate.ts).
+ * in Interactive and below, checks the call against what the user asked first in Assisted (integrations-r12-1), and
+ * announces it instead in Autopilot (app/main/extensions/gate.ts).
  */
 export function connectorsHint(mode: ApprovalMode | null): string {
   return mode === "autopilot"
     ? "To use an MCP server, add its plugin's marketplace above. Ember loads the plugin's MCP tools, and in Autopilot uses those that can change things without asking, telling you as it goes."
-    : CONNECTORS_HINT;
+    : mode === "assisted"
+      ? "To use an MCP server, add its plugin's marketplace above. Ember loads the plugin's MCP tools, and before one that can change things checks it against what you asked: it goes ahead if you asked for exactly that, and asks you otherwise."
+      : CONNECTORS_HINT;
 }
 
 /** A connector's row: its state and its one button. */
@@ -327,9 +330,11 @@ export const agreedTo = (i: Pick<Installed, "name" | "consented">) => (i.consent
 /** Bump FEATURE_CONSENT_VERSION.extensions with any change to these words (CLAUDE.md "Consent"). */
 /**
  * What a card promises about questions, true in every approval mode (gate.ts): in Autopilot a tool that changes or
- * sends is announced and used, not asked about (integrations-r10-1: the card said it always asked).
+ * sends is announced and used, not asked about (integrations-r10-1: the card said it always asked); in Assisted such a
+ * call goes to its check first, and goes ahead, announced, when the check finds it in what the user asked
+ * (integrations-r12-1: the card said only Autopilot didn't ask).
  */
-export const ASKS_BEFORE_CHANGES = "It asks you every time before a tool that changes or sends anything, except in Autopilot: there it goes ahead and tells you as it does.";
+export const ASKS_BEFORE_CHANGES = "It asks you before a tool that changes or sends anything, except in Assisted when its check finds you asked for exactly that, and in Autopilot. Then it goes ahead and tells you as it does.";
 
 export interface ConsentCard { title: string; lines: string[]; tools?: ToolInfo[]; yes: string; no: string }
 

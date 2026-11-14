@@ -21,6 +21,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { loadJobApi, type JobApi } from "../commands/run/win32-job";
+import { failureText } from "./failure-text";
 
 /** A remote server the launcher reaches for the runtime: its address and the plugin's headers (bridge()). */
 export interface RemoteSpec { url: string; headers: Record<string, string> }
@@ -81,7 +82,8 @@ export const MAX_LINE_BYTES = 64 * 1024 * 1024;
  * Dropped: the server's notice that its tool list changed, alone or in a batch (integrations-x9-1), and anything that
  * is no JSON-RPC message at all (not an object or a batch of them; a server's stray print). What is passed on is
  * written out again from what was read, never the server's own bytes, so the runtime can't read a line otherwise
- * than Ember did (an escaped method name, a key given twice).
+ * than Ember did (an escaped method name, a key given twice). An answer that says a call failed has its text
+ * rewritten (`failed()`), because the runtime gives that text to the model as it is (r12-ui-x12-2).
  */
 export function passedOn(line: string): string | null {
   let read: unknown;
@@ -89,10 +91,30 @@ export function passedOn(line: string): string | null {
   const message = (m: unknown): m is Record<string, unknown> => typeof m === "object" && m !== null && !Array.isArray(m);
   const keep = (m: unknown) => message(m) && m.method !== LIST_CHANGED;
   if (Array.isArray(read)) {
-    const kept = read.filter(keep);
+    const kept = read.filter(keep).map(m => failed(m as Record<string, unknown>));
     return kept.length ? JSON.stringify(kept) : null;
   }
-  return keep(read) ? JSON.stringify(read) : null;
+  return keep(read) ? JSON.stringify(failed(read as Record<string, unknown>)) : null;
+}
+
+/**
+ * An answer (an id, no method) that says a call failed, with only Ember's form of the server's text (failure-text.ts):
+ * a JSON-RPC error keeps its code and its message in Ember's tag, without its `data`; an `isError` result keeps its
+ * text items, each in Ember's tag, and nothing else (no pictures, no structured content). Any other message is as read.
+ */
+function failed(m: Record<string, unknown>): Record<string, unknown> {
+  if (!("id" in m) || "method" in m) return m;
+  if ("error" in m) {
+    const e = m.error as { code?: unknown; message?: unknown } | null;
+    const code = typeof e?.code === "number" ? e.code : -32_000;
+    return { ...m, error: { code, message: failureText(typeof e?.message === "string" ? e.message : "") } };
+  }
+  const r = m.result as { isError?: unknown; content?: unknown } | null;
+  if (typeof r !== "object" || r === null || r.isError !== true) return m;
+  const texts = (Array.isArray(r.content) ? r.content : [])
+    .filter((c): c is { type: "text"; text: string } => typeof c === "object" && c !== null && (c as { type?: unknown }).type === "text" && typeof (c as { text?: unknown }).text === "string")
+    .map(c => ({ type: "text", text: failureText(c.text) }));
+  return { ...m, result: { isError: true, content: texts.length ? texts : [{ type: "text", text: failureText("") }] } };
 }
 
 /**

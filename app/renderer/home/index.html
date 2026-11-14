@@ -71,6 +71,7 @@
         <div class="w-changes" id="w-changes" role="group" aria-labelledby="w-changes-h" hidden>
           <h3 id="w-changes-h">What's new</h3>
           <ul id="w-changes-list"></ul>
+          <p id="w-changes-mode" hidden></p>
         </div>
         <ul class="terms w-points" id="w-points" aria-label="What Ember does, in short"></ul>
         <details class="w-more" id="w-full">
@@ -617,7 +618,7 @@
     <section class="after-setup" id="commands" data-pane="commands" aria-labelledby="commands-h" hidden>
       <h2 id="commands-h" tabindex="-1">Commands</h2>
       <div class="stack">
-        <p class="intro" id="commands-intro">Ember runs commands in its own command window, where you can watch and stop them. Most run straight away, ones it doesn't know included. It asks first before code it can't read and before a dangerous command, one that deletes, publishes, touches secrets, changes the system, downloads and runs code or would keep running after you stop it, unless you asked for exactly that command and it only deletes or overwrites data, publishes something or changes the system: then it tells you first and gives you a few seconds to stop it.</p>
+        <p class="intro" id="commands-intro">Ember runs commands in its own command window, where you can watch and stop them. Most run straight away, and one it doesn't know runs after it names it, with a few seconds to stop it. It asks first before code it can't read and before a dangerous command, one that deletes, publishes, touches secrets, changes the system, downloads and runs code or would keep running after you stop it, unless you asked for exactly that command and it only deletes or overwrites data, publishes something or changes the system: then it tells you first and gives you a few seconds to stop it.</p>
         <div class="group" id="commands-list"></div>
         <p class="hint" id="commands-managed" hidden></p>
         <p class="hint"><button type="button" id="open-commands" class="link">Open the command window</button></p>
@@ -651,7 +652,7 @@
           <div class="stack" id="ext-connectors-group">
             <h3 class="sub" id="ext-connectors-h">Connectors</h3>
             <ul class="plain-list ext-list" id="ext-connectors" aria-labelledby="ext-connectors-h"></ul>
-            <p class="hint" id="connectors-hint">To use an MCP server, add its plugin's marketplace above. Ember loads the plugin's MCP tools and asks before tools that can change things, except in Autopilot.</p>
+            <p class="hint" id="connectors-hint">To use an MCP server, add its plugin's marketplace above. Ember loads the plugin's MCP tools and asks before tools that can change things.</p>
           </div>
         </div>
         <p class="hint" id="extensions-msg" role="status"></p>

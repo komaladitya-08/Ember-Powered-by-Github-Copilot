@@ -228,6 +228,13 @@ describe("every window", () => {
   });
 });
 
+describe("Home at its narrowest", () => {
+  it("wraps a long path in the privacy list and a hint, so Larger text at 420 px never scrolls sideways (accessibility-r12-2)", () => {
+    // Measured in Chrome at 420 px with Larger text: a Windows data folder in a .terms code was 455 px wide, a Mac's 432.
+    expect(read("app/renderer/home/styles.css")).toContain(".terms code, .hint code { font: 12px var(--ember-mono); overflow-wrap: anywhere; }");
+  });
+});
+
 describe("Windows contrast themes (forced colours)", () => {
   const css = (page: string) => page === "shared" ? shared : page === "bubble" ? BUBBLE_CSS : read(`app/renderer/${page}/styles.css`);
 

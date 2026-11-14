@@ -189,6 +189,10 @@ describe("docs/DEVELOPING.md", () => {
     const names = new Set(files("app").flatMap(f => [...read(f).matchAll(/devEnv\("([A-Z0-9_]+)"\)/g)].map(m => m[1])));
     expect(names.size).toBeGreaterThan(10);
     for (const n of names) expect(dev, n).toMatch(new RegExp(`\\b${n}\\b`));
+    // And ember-remote's own development switches, read from its environment, not through devEnv (install-docs-c12-3).
+    const remote = new Set(files("app/remote").flatMap(f => [...read(f).matchAll(/env\.(EMBER_REMOTE_[A-Z0-9_]+)/g)].map(m => m[1])));
+    expect([...remote].sort()).toEqual(expect.arrayContaining(["EMBER_REMOTE_DEV", "EMBER_REMOTE_PARTS_ID", "EMBER_REMOTE_TEST_DESKTOP", "EMBER_REMOTE_WAYLAND"]));
+    for (const n of remote) expect(dev, n).toMatch(new RegExp(`\\| \`${n}`));
     // Repository layout holds the layout and nothing else.
     const layout = section(dev, "Repository layout");
     expect(layout.split("\n").filter(l => /^#{2,} /.test(l) && !l.startsWith("## Repository layout"))).toEqual([]);
@@ -419,6 +423,16 @@ describe("what the docs say about consent versions and memory, against the code 
 describe("docs/COMMANDS-WSL-SSH.md", () => {
   const doc = read("docs/COMMANDS-WSL-SSH.md");
 
+  it("says in §2.3 that a program or a tool's command Ember doesn't know runs announced, never that it asks (accessibility-c12-1)", () => {
+    const at = doc.indexOf("### 2.3 What runs straight away");
+    const s23 = flat(doc.slice(at, doc.indexOf("### 2.4", at)));
+    expect(s23).not.toMatch(/Anything else asks/);
+    expect(s23).toContain("Anything else that isn't a danger runs too, announced by name with a few seconds to stop it");
+    // §2.4 says first what its "asks" means in each mode.
+    const s24 = flat(doc.slice(doc.indexOf("### 2.4 What asks first"), doc.indexOf("### 2.5 ")));
+    expect(s24).toMatch(/^### 2\.4 What asks first This section says what asks in Interactive, the default\./);
+  });
+
   it("says in §2.5b what Autopilot does instead of the questions it no longer puts (r11-copy-x11-5; owner decision of 2026-11-14)", () => {
     const at = doc.indexOf("### 2.5b When you chose Autopilot");
     const b = flat(doc.slice(at, doc.indexOf("### 2.6", at)));
@@ -493,6 +507,26 @@ describe("docs/COMMANDS-WSL-SSH.md", () => {
 describe("README.md", () => {
   const readme = read("README.md");
   const version = (JSON.parse(read("package.json")) as { version: string }).version;
+
+  it("never says, anywhere, that Autopilot still asks before a secrets command, one that outlives Stop or one it can't tell the effect of (install-docs-r12-1)", () => {
+    const all = flat(readme);
+    expect(all).not.toMatch(/still asks before a command/);
+    expect(all).not.toMatch(/can't tell the effect of/);
+    // The keyboard table's row says what How Ember asks says: only the user's or the organisation's "ask every time".
+    expect(all).toContain("**Autopilot** doesn't ask: Ember sends, deletes, pays, installs and runs dangerous commands without asking and tells you as it goes, a risk you accept on its card; a command that shows passwords or keys runs with what it prints kept from the AI model, it asks only where you or your organisation set commands to ask every time");
+  });
+
+  it("says Autopilot refuses a command that would save passwords or keys to a file, as the code does (install-docs-c12-2)", () => {
+    const modes = flat(section(readme, "How Ember asks"));
+    expect(modes).toContain("A command that shows passwords or keys runs too, but what it prints is kept from the AI model (you see it in the command window), and one that would also save them to a file is refused.");
+  });
+
+  it("gives the 4 s exception only to the commands EXACT_ONLY names, and says a command Ember doesn't know waits for its Stop (accessibility-r12-3, install-docs-r12-1)", () => {
+    const commands = flat(section(readme, "Commands, WSL and other computers"));
+    expect(commands).toContain("one Ember doesn't know runs too, after it names it and gives you 4 seconds to stop it.");
+    expect(commands).toContain("and it only deletes or overwrites data, publishes something or changes the system, it says so and gives you 4 seconds to stop it instead; one that touches passwords or keys or downloads and runs code still asks.");
+    expect(commands).not.toMatch(/a script that does any of that always asks/);
+  });
 
   it("explains the approval modes in a section of their own, and never says Ember asks before every app step or dangerous command (install-docs-r10-3)", () => {
     const modes = flat(section(readme, "How Ember asks"));

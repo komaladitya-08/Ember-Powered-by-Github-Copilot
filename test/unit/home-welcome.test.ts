@@ -8,7 +8,7 @@ import { readFileSync } from "node:fs";
 import { CONVERSATION_TEXT_LIMIT } from "../../app/shared/conversation";
 import { CONSENT_CHANGES, CONSENT_VERSION, consentChangesSince } from "../../app/shared/consent";
 import {
-  CONSENT_AGAIN, CONSENT_CHANGE_SOURCES, CONSENT_SOURCES, CONSENT_TEXT, recheckMessage, STEP_TEXT, aboutNext, askWhy, TRY_TEXT, WELCOME_STEPS, checkState, signInText, checksHeadline, checksLater, checksNext, consentPoints, firstStep, fixCommand,
+  CONSENT_AGAIN, keptModeLine, firstRunWhy, CONSENT_CHANGE_SOURCES, CONSENT_SOURCES, CONSENT_TEXT, recheckMessage, STEP_TEXT, aboutNext, askWhy, TRY_TEXT, WELCOME_STEPS, checkState, signInText, checksHeadline, checksLater, checksNext, consentPoints, firstStep, fixCommand,
   gated, plainChecks, serviceSummary, signInView, SKIP_OWN, SKIP_SIGN_IN, stepAfter, stepBefore, stepCount, summaryRows, switchedLine, voiceTry,
 } from "../../app/renderer/home/welcome-copy";
 
@@ -166,6 +166,13 @@ describe("the consent in short", () => {
     for (const line of Object.values(CONSENT_CHANGES)) expect(line, line).not.toMatch(/\bwe\b|\bus\b|\bour\b|"/i);
     expect(CONSENT_AGAIN.title).toBe("What's changed since you last agreed");
     expect(CONSENT_AGAIN.lead).toContain("Nothing is read, heard or sent until you do.");
+    // Under a broken policy each row says where to turn it on once the policy is fixed (first-run-c12-2).
+    expect(firstRunWhy("locked")).toBe("Your organisation's policy for me has a problem, so this stays off for now. Once it's fixed, you can turn it on in Settings.");
+    // A returning user's Assisted or Autopilot stays: said under what changed, which speaks of Interactive (first-run-c12-1),
+    // Autopilot's with where it still asks, as Home's own line says it (r12-ui-x12-4).
+    expect(keptModeLine("autopilot")).toBe("You chose Autopilot, and it stays as you chose it: I don't ask, except before commands where you or your organisation set them to ask every time, in a distro Podman uses and in “Project work”, and I tell you what I do as I go. What this page says about when I ask is for Interactive, the default.");
+    expect(keptModeLine("assisted")).toBe("You chose Assisted, and it stays as you chose it: where I would ask, I first check the step against what you asked. What this page says about when I ask is for Interactive, the default.");
+    expect(SCRIPT).toContain("const kept = changed.length && !consented() ? rowsView?.keptMode : undefined;");
     // The same gate: the step's button saves the current version, and nothing past it opens without it.
     expect(SCRIPT).toContain("step = firstStep(settings?.consent.version ?? 0);");
   });

@@ -27,6 +27,13 @@ export interface FirstRunFacts {
   interactiveAgreed: boolean;
   /** Main could build this computer's commands card (its text and hash) to show. */
   commandsCard: boolean;
+  /**
+   * The mode in force is above Interactive (Assisted or Autopilot, each on its own card: autonomy.ts standing): a
+   * returning user's chosen mode stays as it is, so Interactive's row isn't offered, and the view says their mode stays
+   * (first-run-c12-1: they were told switching the row off kept Ember asking, and that they could choose it "later").
+   * Absent: Interactive or below.
+   */
+  modeAbove?: "assisted" | "autopilot" | null;
 }
 
 /** Why a shown row can't be turned on here. */
@@ -43,11 +50,13 @@ export interface FirstRunRowState {
 /**
  * The rows the consent step shows, in order: all five for someone new; for someone who agreed to an earlier version,
  * Interactive's alone while its card isn't agreed to (they are below Interactive until they agree to it), and none
- * once it is. A row the organisation turned off (every row under a lockdown) is shown off and managed; listening
+ * once it is or while their Assisted or Autopilot is in force. A row the organisation turned off (every row under a lockdown) is shown off and managed; listening
  * without the speech models is shown off, saying they must be downloaded first.
  */
 export function firstRunRows(f: FirstRunFacts): FirstRunRowState[] {
-  const rows = f.returning ? (f.interactiveAgreed ? [] : (["interactive"] as const)) : FIRST_RUN_ROWS;
+  // A returning user whose Assisted or Autopilot is in force: Interactive's card matters only if they move to it, and
+  // Home asks for it then (first-run-c12-1).
+  const rows = f.returning ? (f.interactiveAgreed || f.modeAbove ? [] : (["interactive"] as const)) : FIRST_RUN_ROWS;
   return rows.map(row => {
     const why: FirstRunWhy | null = f.locked ? "locked" : !f.allowed[row] ? "organisation"
       : row === "voice" && !f.modelsReady ? "models" : row === "commands" && !f.commandsCard ? "unavailable" : null;
@@ -103,8 +112,11 @@ export interface FirstRunDone {
 /** This computer's commands card as main builds it (app/main/targets/consent.ts commandsConsent), shown whole in its row. */
 export interface FirstRunCard { title: string; body: string[]; sha256: string }
 
-/** What the consent step is told: the rows, and the commands card's text when its row is shown. */
-export interface FirstRunView { rows: FirstRunRowState[]; commands: FirstRunCard | null }
+/**
+ * What the consent step is told: the rows, and the commands card's text when its row is shown. `keptMode`: a returning
+ * user's Assisted or Autopilot, which stays in force, so the step says so beside what changed (first-run-c12-1).
+ */
+export interface FirstRunView { rows: FirstRunRowState[]; commands: FirstRunCard | null; keptMode?: "assisted" | "autopilot" }
 
 /** Home's channels for first run's agreement: main takes them only from the settings window (app/main/first-run.ts). */
 export const FIRST_RUN_IPC = {

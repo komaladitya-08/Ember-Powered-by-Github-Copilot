@@ -92,6 +92,20 @@ describe("first run's rows", () => {
     expect(firstRunRows(facts({ returning: true, interactiveAgreed: true }))).toEqual([]);
   });
 
+  it("shows a returning user whose Assisted or Autopilot stays in force no Interactive row, and says their mode stays (first-run-c12-1)", () => {
+    for (const mode of ["assisted", "autopilot"] as const) {
+      expect(firstRunRows(facts({ returning: true, modeAbove: mode }))).toEqual([]);
+      const r = rig({ facts: { returning: true, modeAbove: mode } });
+      expect(firstRunView(r.d)).toEqual({ rows: [], commands: null, keptMode: mode });
+      // The agreement records the consent alone: their mode and its card are left as they are.
+      expect(agreeFirstRun(r.d, ALL, SHA)).toEqual({ ok: true, failed: [] });
+      expect(r.order).toEqual(["consent"]);
+    }
+    // A new user's view never says so, and nor does one whose mode in force is Interactive or below.
+    expect(firstRunView(rig({ facts: { modeAbove: "autopilot" } }).d).keptMode).toBeUndefined();
+    expect(firstRunView(rig({ facts: { returning: true } }).d)).toEqual({ rows: [{ row: "interactive", offered: true, why: null }], commands: null });
+  });
+
   it.each(FIRST_RUN_ROWS)("shows %s off and managed when the organisation turned it off, and the agreement gives it nothing (slice4-3)", row => {
     const f = facts({ allowed: { ...ALL, [row]: false } });
     const rows = firstRunRows(f);

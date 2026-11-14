@@ -33,14 +33,16 @@ import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import type { ConnectResult, ExtensionsApi, Installed, Marketplace, MarketplaceEntry, ToolInfo } from "../../shared/extensions";
 import { EXTENSION_ON_UNSAVED, EXTENSION_UNSEALED, MARKETPLACE_BUILT_IN_KEPT, MARKETPLACE_MANAGED_KEPT, addMarketplaceFailed, browseFailed, extensionUnsaved } from "../../renderer/home/extensions-copy";
 import type { OS } from "../../shared/shortcuts";
-import { REFUSED, classify, emberReachOf, failureNote, gateAnnouncement, gateQuestion, plainName, wrapResult, writeOutHidden } from "./gate";
+import { CHECKABLE, REFUSED, RESULT_MAX, UNANSWERED, callForCheck, classify, emberReachOf, failureNote, gateAnnouncement, gateQuestion, plainName, wrapResult, writeOutHidden } from "./gate";
 import { pluginPath, readMarketplace, readPlugin, reachOf, firstFile, MARKETPLACE_PLACES, type ServerSpec } from "./manifest";
 import { canonical, checkPins, isReadOnly, pinAll, schemaWords, shownHash, toolHash, type PinnedTool } from "./pin";
 import { probeHttp, probeStdio, servedTools, type ProbeResult } from "./probe";
 import { SAVED_OUTPUT } from "../agent/runtime-temp";
+import type { StepVerdict } from "../commands/review";
 import { ExtensionStore, copyPlugin, type StoredItem, type StoredServer } from "./store";
 import { itemDigest, type ExtensionSealStore } from "./seal";
 import { MCP_TOOL_NAME, clashingToolNames, modelToolName } from "./tool-name";
+import { failureTaints } from "./failure-text";
 
 export interface ExtensionsDeps {
   /** `<userData>/extensions`. */
@@ -58,6 +60,19 @@ export interface ExtensionsDeps {
    * the gate would ask about is announced instead. Absent or false: it asks.
    */
   autopilot?: () => boolean;
+  /**
+   * Assisted's check is in force (policy/autonomy.ts approvalInputs().check: never with the organisation's
+   * `features.aiReview` false), read at each call: a call the gate would ask about because its tool changes things or
+   * its server is on the internet goes to the check first (checkCall), and goes ahead, announced, when the check finds
+   * it in the user's own words (integrations-r12-1, -c12-1). Absent or false: it asks.
+   */
+  assisted?: () => boolean;
+  /**
+   * Assisted's check for one call (main: AgentHost.checkExtensionCall): Ember's description of the call (gate.ts
+   * callForCheck) against the user's own words for the conversation's turn now, in a session of its own with no tools.
+   * Null where it couldn't check (no words of the user's own this turn, no answer in time, stopped): the call asks.
+   */
+  checkCall?: (step: string, signal: AbortSignal) => Promise<StepVerdict | null>;
   /**
    * Has Ember filled something from its vault since it started (main: VaultRedactor.active)? Read at each call: from
    * then on every extension call is denied (gate.ts VAULT_FILLED). A check that throws counts as yes. Absent: never.
@@ -179,6 +194,8 @@ function why(err: unknown, fallback: string): string {
  */
 interface SessionGate {
   refused: Set<string>;
+  /** Tools whose question nobody answered this turn: not asked again until the next turn, and never a no. */
+  unanswered: Set<string>;
   shown: Map<string, boolean>;
   live: (() => Promise<ShownTool[]>) | null;
   /** Server keys that changed their tool list this session (their hints can't be re-checked). */
@@ -902,7 +919,7 @@ export class ExtensionsService implements ExtensionsApi {
   forSession(): SessionExtensions | undefined {
     // After a fill from the vault every call is refused (gate.ts): the model isn't offered them (integrations-r10-2).
     if (!this.active() || this.vaultFilled()) return undefined;
-    const gate: SessionGate = { refused: new Set(), shown: new Map(), live: null, listChanged: new Set(), epoch: this.epoch, withdrawn: new Set(), mute: new Set(), stops: new Map(), tools: new Map() };
+    const gate: SessionGate = { refused: new Set(), unanswered: new Set(), shown: new Map(), live: null, listChanged: new Set(), epoch: this.epoch, withdrawn: new Set(), mute: new Set(), stops: new Map(), tools: new Map() };
     this.session = gate;
     const mcpServers: Record<string, MCPServerConfig> = {};
     for (const item of this.items) {
@@ -939,7 +956,7 @@ export class ExtensionsService implements ExtensionsApi {
       listChanged: server => this.announced(gate, server),
       settled: () => this.settle(gate),
       // (And a no this turn, to a question no task put, with it: integ-x-4. A task's no stands until userAsked.)
-      newTurn: () => { gate.refused.clear(); this.saidNoTurn = false; },
+      newTurn: () => { gate.refused.clear(); gate.unanswered.clear(); this.saidNoTurn = false; },
     };
   }
 
@@ -1156,7 +1173,7 @@ export class ExtensionsService implements ExtensionsApi {
       ...(current ? { item: { enabled: current.enabled, consented: current.consentedAt !== null } } : {}),
       ...(tool ? { tool } : {}),
       shownAsPinned: shownAsPinned && gate.shown.get(name) === true,
-      tainted: this.tainted, refused: gate.refused.has(name), saidNo: this.saidNoNow(), remote: e?.server.spec?.type !== "stdio",
+      tainted: this.tainted, refused: gate.refused.has(name), unanswered: gate.unanswered.has(name), saidNo: this.saidNoNow(), remote: e?.server.spec?.type !== "stdio",
       hintsStale: !!e && gate.listChanged.has(e.server.key), serverStopped: !!e && gate.withdrawn.has(e.server.key),
       autopilot: this.o.autopilot?.() === true,
       vaultFilled: this.vaultFilled(),
@@ -1200,12 +1217,29 @@ export class ExtensionsService implements ExtensionsApi {
     try { home = this.o.home ?? homedir(); } catch { /* no home known: any user's is judged */ }
     const own = e?.server.spec?.type === "stdio" ? this.store.pluginDir(e.item.id) : null;
     const emberData = emberReachOf(input.toolArgs, { os: this.o.os, home, ember: [path.dirname(this.o.dir)], own });
-    const { verdict, reason } = this.gateInput(gate, input.toolName, shownAsPinned, generation, emberData);
+    let { verdict, reason } = this.gateInput(gate, input.toolName, shownAsPinned, generation, emberData);
+    // Assisted: a call that would ask because its tool changes things or its server is on the internet is checked
+    // first against the user's own words for this turn (integrations-r12-1, -c12-1). Never after a no (said-no, and a
+    // read-only call to an internet server while a no stands, which sends what it is given out as a refused share
+    // would: r12-ui-x12-1), for what may reach Ember's own files, in a tainted conversation or for a server whose list
+    // changed (CHECKABLE), and never a deny.
+    let review: StepVerdict | "none" | undefined;
+    let checked = false;
+    if (verdict === "ask" && CHECKABLE.has(reason) && !this.saidNoNow() && e && this.assisted()) {
+      const step = callForCheck(e.item.name, e.tool, input.toolArgs, reason);
+      if (step) {
+        review = (await this.checkCall(step)) ?? "none";
+        // The check may have taken a while: the gate looks again, and a match counts only for the same question.
+        const now = this.gateInput(gate, input.toolName, shownAsPinned, generation, emberData);
+        checked = review === "match" && now.verdict === "ask" && now.reason === reason && !this.saidNoNow() && this.assisted();
+        ({ verdict, reason } = checked ? { verdict: "announce" as const, reason } : now);
+      }
+    }
     const argChars = (() => { try { return JSON.stringify(input.toolArgs ?? {}).length; } catch { return 0; } })();
     const base = { ext: e?.item.id ?? null, tool: input.toolName, ...named(e?.item, e?.tool), argChars };
     const deny = (r: string): PreToolUseHookOutput => ({ permissionDecision: "deny", permissionDecisionReason: r });
     try {
-      this.audit({ phase: "decision", ...base, verdict, reason, ...(verdict === "announce" ? { autonomy: true, mode: "autopilot" } : {}) });
+      this.audit({ phase: "decision", ...base, verdict, reason, ...(verdict === "announce" ? { autonomy: true, mode: checked ? "assisted" : "autopilot" } : {}), ...(review ? { review } : {}) });
     } catch (err) {
       // Not recorded, not run (fail closed).
       this.o.log.warn("extensions.audit_failed", { err });
@@ -1218,6 +1252,8 @@ export class ExtensionsService implements ExtensionsApi {
     // Autopilot: said in the conversation's bubble instead of asked, and only once it was said (a call that can't be
     // announced asks, as it does when Autopilot went out of force between the two looks).
     if (verdict === "announce" && before.verdict === "announce" && this.said(gateAnnouncement(e!.item.name))) return { permissionDecision: "allow" };
+    // Assisted's check found it in the user's own words: said as Autopilot's is, and only while the same question stands.
+    if (checked && before.verdict === "ask" && before.reason === reason && !this.saidNoNow() && this.assisted() && this.said(gateAnnouncement(e!.item.name, true))) return { permissionDecision: "allow" };
     const confirmer = this.o.confirmer();
     if (!confirmer) return deny("Ember can't ask the user right now, so it didn't do this.");
     const question = gateQuestion(e!.item.name, e!.tool.name, input.toolArgs, before.reason);
@@ -1235,8 +1271,16 @@ export class ExtensionsService implements ExtensionsApi {
       return current.verdict === "deny" ? deny(current.reason) : { permissionDecision: "allow" };
     }
     if (answer === "once" && after) return deny(after.reason);
+    // Nobody answered: Stop (or anything else that now denies the call) is said as itself (r12-ui-x12-3); otherwise it
+    // ran out of time or couldn't be put up, which is not a no, and it isn't asked again this turn.
+    if (answer !== "deny") {
+      const now = this.gateInput(gate, input.toolName, shownAsPinned, generation, emberData);
+      if (now.verdict === "deny") return deny(now.reason);
+      gate.unanswered.add(input.toolName);
+      return deny(UNANSWERED);
+    }
     gate.refused.add(input.toolName);
-    if (answer === "deny") this.saidNoTurn = true;
+    this.saidNoTurn = true;
     return deny(REFUSED);
   }
 
@@ -1244,6 +1288,25 @@ export class ExtensionsService implements ExtensionsApi {
   private async checked(gate: SessionGate, server: string | undefined): Promise<void> {
     if (server) await this.afterCall(gate, server).catch(err => this.o.log.warn("extensions.recheck_failed", { err }));
     await this.settle(gate);
+  }
+
+  /** Is Assisted's check in force now? A check that throws says no (the call asks). */
+  private assisted(): boolean {
+    try { return this.o.assisted?.() === true; } catch { return false; }
+  }
+
+  /** Assisted's check of one call; null where there is none, it failed or it was stopped (the call asks). */
+  private async checkCall(step: string): Promise<StepVerdict | null> {
+    // (Held here: the kill switch replaces the controller as it aborts it.)
+    const signal = this.stopAsks.signal;
+    if (!this.o.checkCall || signal.aborted) return null;
+    try {
+      const v = await this.o.checkCall(step, signal);
+      return signal.aborted ? null : v;
+    } catch (err) {
+      this.o.log.warn("extensions.check_failed", { err: err instanceof Error ? err.message : String(err) });
+      return null;
+    }
   }
 
   /** Says an Autopilot announcement; whether it was said (no announcer, or one that failed: not said). */
@@ -1257,19 +1320,27 @@ export class ExtensionsService implements ExtensionsApi {
   }
 
   /**
-   * A failed call: the SDK passes its text to the model as it is (a failure can't be rewritten), so Ember says it is
-   * untrusted, and the conversation is tainted (a failure is an easy way to smuggle text): every later call asks.
-   * Because it can't be rewritten, no extension is called once the vault has filled something (gate.ts VAULT_FILLED).
+   * A failed call: the SDK passes its text to the model as it is (this hook can't rewrite it), so Ember's launcher has
+   * already put a server's own text in Ember's untrusted tag (failure-text.ts, launch.ts `passedOn`), and this note
+   * says that failure's text is untrusted. The conversation is tainted as for a result (every later call asks): where
+   * the text reads like instructions, is more than a result may hold or was saved to a file (not scanned whole), isn't
+   * text Ember could read at all, or held hidden characters or markup that looks like Ember's own (the launcher's flag,
+   * or such text outside its tag: r12-ui-x12-2). An ordinary failure (a 404, a timeout) is not danger, and read-only
+   * calls go on as before (integrations-r12-2: every failure tainted, so one 404 made every read-only call ask for the
+   * conversation). No extension is called once the vault has filled something (gate.ts VAULT_FILLED).
    */
   private async failure(gate: SessionGate, input: PostToolUseFailureHookInput): Promise<PostToolUseFailureHookOutput> {
     const e = gate.tools.get(input.toolName);
     // As for a result: its server's list is compared with the pins before the runtime builds its next request.
     await this.checked(gate, e?.server.key);
-    const text = typeof input.error === "string" ? input.error : "";
+    const readable = typeof input.error === "string";
+    const text = readable ? input.error as string : "";
     const signals = injectionSignals(text);
-    this.tainted = true;
-    try { this.audit({ phase: "failed", ext: e?.item.id ?? null, tool: input.toolName, ...named(e?.item, e?.tool), chars: text.length, signals, ...(SAVED_OUTPUT.test(text) ? { truncated: true } : {}) }); } catch (err) { this.o.log.warn("extensions.audit_failed", { err }); }
-    return { additionalContext: failureNote(e?.item.name ?? "an extension", e?.tool.name ?? input.toolName) };
+    const truncated = SAVED_OUTPUT.test(text) || text.length > RESULT_MAX;
+    const taints = !readable || signals.length > 0 || truncated || failureTaints(text);
+    if (taints) this.tainted = true;
+    try { this.audit({ phase: "failed", ext: e?.item.id ?? null, tool: input.toolName, ...named(e?.item, e?.tool), chars: text.length, signals, ...(truncated ? { truncated: true } : {}), ...(readable ? {} : { unread: true }) }); } catch (err) { this.o.log.warn("extensions.audit_failed", { err }); }
+    return { additionalContext: failureNote(e?.item.name ?? "an extension", e?.tool.name ?? input.toolName, taints) };
   }
 
   private async result(gate: SessionGate, input: PostToolUseHookInput): Promise<PostToolUseHookOutput | void> {
