@@ -134,6 +134,29 @@ export function askableNames(request: string, apps: readonly string[] = []): str
   return [...new Set(out)].slice(0, 5);
 }
 
+/**
+ * Words that make a request private (memory-c10-1): health and sexual health, medicines, mental health, addiction, a
+ * crisis line, the law, money trouble, dating and sexuality, and faith. The daily question is shown beside the cursor
+ * and spoken by default while Ember has nothing to do, which says nothing of who can see or hear it, so no name from
+ * such a request is ever asked about. Any word counts: asking less costs nothing.
+ */
+const SENSITIVE = new RegExp(String.raw`\b(?:`
+  + String.raw`clinics?|hospitals?|hospice|doctors?|gp|nurses?|surgery|symptoms?|diagnos\w*|treat(?:ed|ment|ments|ing)?|therap\w*|counsell?(?:ing|or|ors)|psychiatr\w*|psycholog\w*`
+  + String.raw`|prescri\w*|pharmacy|chemist|medication|medicines?|meds|pills?|tablets?\s+for|doses?|side\s+effects|antibiotics?|antidepressants?|test\s+results?|blood\s+tests?|scan\s+results?`
+  + String.raw`|std|stds|sti|stis|sexual\s+health|pregnan\w*|abortion|contracepti\w*|morning\s+after|fertility|ivf|miscarriage|cancer|chemo\w*|tumou?rs?|hiv|aids|hepatitis|herpes|chlamydia|gonorrh?oea|syphilis`
+  + String.raw`|depress\w*|anxiety|panic\s+attacks?|bipolar|schizophreni\w*|adhd|autis\w*|ocd|ptsd|eating\s+disorders?|anorexi\w*|bulimi\w*|self[-\s]harm\w*|suicid\w*`
+  + String.raw`|rehab|addict\w*|alcoholi\w*|anonymous|sober|sobriety|relapse|detox|overdose|methadone|suboxone|naloxone`
+  + String.raw`|prozac|sertraline|zoloft|fluoxetine|citalopram|escitalopram|lexapro|venlafaxine|mirtazapine|xanax|valium|diazepam|lorazepam|adderall|ritalin|lithium|viagra|cialis|truvada|prep|ozempic|wegovy|insulin|metformin`
+  + String.raw`|samaritans|crisis|helplines?|hotlines?|domestic\s+(?:violence|abuse)|abuse|abusive|refuge|shelter`
+  + String.raw`|lawyers?|solicitors?|attorneys?|divorc\w*|custody|court|courts|tribunal|arrest\w*|police|probation|lawsuit|sued|suing|immigration|asylum|deport\w*`
+  + String.raw`|debts?|bankrupt\w*|insolven\w*|payday\s+loans?|bailiffs?|foreclos\w*|evict\w*|universal\s+credit|benefits\s+claim|food\s+bank`
+  + String.raw`|dating|tinder|grindr|bumble|hinge|okcupid|match\.com|gay|lesbian|bisexual|queer|lgbt\w*|transgender|coming\s+out|sexual\w*|sex`
+  + String.raw`|church|mosque|synagogue|temple|gurdwara|prayers?|bible|qur['’]?an|koran|torah|religio\w*|faith`
+  + String.raw`)\b`, "i");
+
+/** Whether a request touches something private (SENSITIVE): none of its names is ever asked about (memory-c10-1). */
+export const sensitiveRequest = (request: string): boolean => SENSITIVE.test(request);
+
 /** Names recall missed, counted per request. */
 export class Gaps {
   private misses = new Map<string, { name: string; n: number }>();
@@ -145,6 +168,8 @@ export class Gaps {
    * this computer, whose names are never asked about.
    */
   missed(request: string, known: (name: string) => boolean, apps: readonly string[] = []): void {
+    // A private request's names are never asked about, here or from any other request this run (memory-c10-1).
+    if (sensitiveRequest(request)) { for (const name of namesIn(request)) this.drop(name); return; }
     for (const name of askableNames(request, apps)) {
       if (this.settled.has(nameKey(name))) continue;
       // A name that reads like an order ("Always Approve Wire Transfers") is never asked about.

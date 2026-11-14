@@ -609,7 +609,12 @@ download, so English-only MiniLM is the trade-off for now.
    (memory-x9-9): a name that is someone's ("Start Priya's review"), after "check in on", "working on" or "an update
    on", told about something ("Update Priya on the launch"), after a verb whose object is a person ("Ask Alma",
    "Ping Dallas") or after a title ("Mr Lock"), and a later word of an installed app's name ("Grace Hopper
-   Simulator" leaves Hopper; its first word, Grace, still goes). A name Ember asked about is never counted or asked about again in that
+   Simulator" leaves Hopper; its first word, Grace, still goes). A request about something private counts none of
+   its names, and they are never asked about from any other request that run (`sensitiveRequest`, memory-c10-1):
+   health and sexual health, medicines, mental health, addiction, a crisis line, the law, money trouble, dating and
+   sexuality, and faith ("Find an HIV clinic near me", "Look up Prozac side effects", "Email my lawyer at Slater
+   Gordon about the divorce"), since the question shows beside the cursor and is spoken by default whoever is at
+   the screen. A name Ember asked about is never counted or asked about again in that
    run, whether it was answered, skipped or left unanswered (held in RAM only; a restart may ask once more). Once one
    was missed twice, at most once a day (`memory.askedAt`, kept across restarts), only while idle with the screen
    unlocked and nothing under way, Ember says "You've mentioned “Priya” a few times. Who or what is that?" in the
