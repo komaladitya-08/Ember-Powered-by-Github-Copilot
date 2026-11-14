@@ -34,8 +34,9 @@ jobs:
     name: Lint, typecheck, unit tests, build
     if: github.event_name != 'workflow_dispatch' || inputs.only == 'all' || inputs.only == 'linux'
     runs-on: ubuntu-24.04
-    # 40, not 25: the integration step took up to 15 min 4 s and the renderer journeys 7 min 3 s to 7 min 40 s on
-    # 13 November (runs 43498223125 to 43524755622), about 29 min in all, so 25 cancelled passing runs.
+    # 40, not 25: on 13 November the integration step took up to 16 min 24 s (run 43515013454) and the renderer
+    # journeys, where they finished, up to 7 min 20 s, about 30 min in all with the 6 min before them, so 25 cancelled
+    # passing runs. The integration step grew from 9 min in a day: split it if the job nears 40.
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

@@ -759,12 +759,20 @@ describe("staging in CI", () => {
     expect(el8).toContain('EMBER_SHERPA_CAPI="$(node scripts/voice/fetch-capi.mjs)" npm run test:integration -- test/integration/voice.test.ts');
   });
   it("gives the checks job the time its slowest measured run needs, so a passing gate isn't cancelled (install-docs-r10-1)", () => {
-    // Its integration step took up to 15 min 4 s and the renderer journeys up to 7 min 40 s with more to run, so
-    // 25 minutes cancelled it with nothing failing; the limit says what it was measured from.
+    // Its integration step took up to 16 min 24 s and the renderer journeys up to 7 min 20 s, so 25 minutes cancelled
+    // it with nothing failing; the limit says what it was measured from.
     const checks = ci.slice(ci.indexOf("\n  checks:\n"), ci.indexOf("\n  el8:\n"));
     const minutes = Number(/\n {4}timeout-minutes: (\d+)\n/.exec(checks)?.[1]);
     expect(minutes).toBeGreaterThanOrEqual(40);
     expect(checks).toMatch(/\n {4}# 40, not 25: [^\n]*\d+ min \d+ s/);
+  });
+
+  it("measures the checks job's limit from its slowest run, the one 25 minutes cancelled (r10-install-x10-2)", () => {
+    // Run 43515013454's integration step ran 22:02:10 to 22:18:34 and the job was cancelled at 25 min 15 s; a
+    // renderer journey cut off by the limit is not a duration, so the finished ones (up to 7 min 20 s) are quoted.
+    const checks = ci.slice(ci.indexOf("\n  checks:\n"), ci.indexOf("\n  el8:\n"));
+    expect(checks).toContain("16 min 24 s (run 43515013454)");
+    expect(checks).toContain("up to 7 min 20 s");
   });
   it("lets rpm.sh build another release of the same version (an upgrade to test)", () => {
     const spec = fs.readFileSync(path.resolve("packaging/rpm/ember.spec"), "utf8");
