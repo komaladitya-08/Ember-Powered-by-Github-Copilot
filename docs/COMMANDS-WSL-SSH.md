@@ -659,7 +659,9 @@ runs without a question, after an announcement: "delete build/" covers `rm -r bu
 ("Pushing feature-x to origin, as you asked.", naming a path in the home folder from ~ as the card does: "Deleting
 ~/proj/build, as you asked.", with "It starts in 4 seconds. Ctrl+Alt+X stops everything at once." and
 **Stop**), the command window shows "About to run this, as you asked" with the command, what it does and the model's
-reason, "Starts in 4 s.", "Or press Ctrl+Alt+X to stop everything." and **Stop**. While another app holds the stop
+reason, "Starts in 4 s.", "Or press Ctrl+Alt+X to stop everything." and **Stop** (a program Ember doesn't know that
+your words didn't name, and an ordinary command carrying text from another window, are headed "About to run this"
+instead). While another app holds the stop
 chord, both name its fallback (Ctrl+Alt+Shift+X); while another app holds that too,
 neither the bubble nor the command window names it: **Stop** is the way, as the spoken "Press Stop to cancel."
 says. When Ember speaks (**Speak replies, questions and results out loud** set to Always, the default, or a screen

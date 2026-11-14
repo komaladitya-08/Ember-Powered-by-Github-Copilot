@@ -904,6 +904,19 @@ export function autonomousCommand(d: CommandDecision, o: { scopes: AutonomyScope
   };
 }
 
+/**
+ * What an announcement's card says of why it runs, for its heading: the AI review cleared it, Autopilot announced it
+ * (its own or a remote's question: both end on AUTOPILOT_LINE), or the user's words didn't ask for it (a program Ember
+ * doesn't know, an ordinary command carrying text from another window: accessibility-r12-1). None: their words asked
+ * for exactly it. Pure.
+ */
+export function announceFlags(d: Pick<CommandDecision, "requested">, says: readonly string[]): Pick<CommandCard, "reviewed" | "autopilot" | "unrequested"> {
+  if (d.requested?.intent === "ai-review") return { reviewed: true };
+  if (says.includes(AUTOPILOT_LINE)) return { autopilot: true };
+  if (d.requested?.intent === UNKNOWN_ANNOUNCED || d.requested?.intent === "autonomy") return { unrequested: true };
+  return {};
+}
+
 /** What the audit's ended record says of a run whose output (or own end) didn't all come back (review wslio-x-5). */
 function cutFields(exit: RunExit): { outputCut?: true; endLost?: true; targetStopped?: true } {
   return { ...(exit.outputCut ? { outputCut: true } : {}), ...(exit.endLost ? { endLost: true } : {}), ...(exit.targetStopped ? { targetStopped: true } : {}) };
@@ -1364,9 +1377,7 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
     runId, target, targetLabel: binding.label, ...(binding.login ? { login: binding.login } : {}), shell, cwd, command: a.command, sha256, taskId: task,
     taskTitle: ctx.task.title, mode: cardMode, says, unasked: cardMode === "ask" && d.unasked, armMs: d.armMs,
     ...(cardMode !== "run" && d.classes.length ? { classes: d.classes } : {}),
-    ...(cardMode === "announce" && d.requested?.intent === "ai-review" ? { reviewed: true } : {}),
-    // Autopilot's announcement, its own or of a remote's question (both end on AUTOPILOT_LINE): the heading says so.
-    ...(cardMode === "announce" && says.includes(AUTOPILOT_LINE) ? { autopilot: true } : {}),
+    ...(cardMode === "announce" ? announceFlags(d, says) : {}),
     // The header says the home folder as ~ in a POSIX shell (commands-remote-8).
     ...(shell !== "powershell" && home ? { home } : {}),
   });

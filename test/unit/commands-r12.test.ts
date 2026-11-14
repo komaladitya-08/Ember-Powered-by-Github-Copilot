@@ -10,7 +10,9 @@ import { runCase, type ContextName } from "../fixtures/commands/corpus";
 import type { ShellId } from "../../app/main/commands/types";
 import { autopilotCommand, keptQuestion } from "../../app/main/commands/autopilot";
 import { LINES } from "../../app/main/commands/decide";
-import { OUTPUT_TAINT_LINE, SPOKEN_LINE } from "../../app/main/commands/flow";
+import { OUTPUT_TAINT_LINE, SPOKEN_LINE, announceFlags, autonomousCommand } from "../../app/main/commands/flow";
+import { ALL_SCOPES } from "../../app/main/policy/autonomy";
+import { announceHeading, ANNOUNCE_HEADING, UNREQUESTED_HEADING } from "../../app/renderer/command/copy";
 import { redactSecrets, SECRET_HIDDEN } from "../../app/main/commands/redact";
 import { classifyCommand } from "../../app/main/commands/classify";
 import { wordsRuleOut } from "../../app/main/commands/flow";
@@ -270,5 +272,27 @@ describe("what Autopilot's announcement says it did (commands-remote-r12-3)", ()
     }
     const d = autopilotCommand({ ...r.decision, says: [...r.decision.says, LINES.tainted, OUTPUT_TAINT_LINE, SPOKEN_LINE] }, { findings: r.cls.findings, mode: "on", askEvery: null, userAskEvery: false })!;
     expect(d.says).toEqual(expect.arrayContaining(["A step came up that you didn't ask for.", "An earlier command printed text that looked like instructions.", "You asked by voice. Ember can't tell your voice from what your speakers play."]));
+  });
+});
+
+describe("an announcement's heading says whether the user asked (accessibility-r12-1)", () => {
+  const heading = (d: Parameters<typeof announceFlags>[0], says: readonly string[]) => announceHeading(announceFlags(d, says));
+  it("never says \"as you asked\" of a program Ember doesn't know that the user didn't name, or of carried text", () => {
+    const unknown = decide("cargo watch -x test");
+    expect(unknown.verdict).toBe("announce");
+    expect(heading(unknown, unknown.says)).toBe(UNREQUESTED_HEADING);
+    expect(UNREQUESTED_HEADING).toBe("About to run this");
+    const carried = autonomousCommand({ verdict: "ask", reason: "", classes: [], rules: ["carried"], says: [], unasked: false, armMs: 0 },
+      { scopes: { ...ALL_SCOPES }, words: "put the address in the file", tainted: false, carried: { from: ["Firefox"] }, elsewhere: false, kind: "local" })!;
+    expect(carried.verdict).toBe("announce");
+    expect(heading(carried, carried.says)).toBe(UNREQUESTED_HEADING);
+  });
+
+  it("still says \"as you asked\" where the user's own words asked for exactly it", () => {
+    const named = decide("cargo watch -x test", { words: "run cargo watch -x test" });
+    expect(heading(named, named.says)).toBe(ANNOUNCE_HEADING);
+    const asked = decide("rm -rf build", { words: "delete the build folder" });
+    expect(asked.verdict).toBe("announce");
+    expect(heading(asked, asked.says)).toBe(ANNOUNCE_HEADING);
   });
 });
