@@ -1175,14 +1175,16 @@ describe("ExtensionsService", () => {
     expect(JSON.stringify(audit)).not.toMatch(/SENT-|FAILED-/);
   });
 
-  it("denies in Autopilot, and asks elsewhere, an extension's tool that changes things after a no anywhere in the conversation, until it ends (integrations-c11-1)", async () => {
+  it("denies in Autopilot, and asks elsewhere, an extension's tool that changes things after a task's no while that task runs, and after any other no for the rest of the turn (integrations-c11-1, integ-x-4)", async () => {
     let autopilot = true;
-    const s = await installed({ autopilot: () => autopilot, announce: () => true });
+    const live = new Set<string>(["t1"]);
+    const s = await installed({ autopilot: () => autopilot, announce: () => true, taskLive: t => live.has(t) });
     let ext = s.forSession()!;
     shown(ext);
     expect(await call(ext, "fake-post_message", { text: "a" })).toEqual({ permissionDecision: "allow" });
-    // A task's "Not now" (main's Confirmer tells the service): the next changing call isn't announced.
-    s.userSaidNo();
+    // A task's "Not now" (main's Confirmer tells the service, with the task): the next changing call isn't announced,
+    // in this turn or the next, while that task is queued or running.
+    s.userSaidNo("t1");
     ext.newTurn?.();
     expect(await call(ext, "fake-post_message", { text: "b" })).toMatchObject({ permissionDecision: "deny", permissionDecisionReason: SAID_NO_UNASKED });
     expect(await call(ext, "fake-lookup", { q: "x" })).toEqual({ permissionDecision: "allow" });
@@ -1190,22 +1192,42 @@ describe("ExtensionsService", () => {
     answers = ["once"];
     expect(await call(ext, "fake-post_message", { text: "c" })).toEqual({ permissionDecision: "allow" });
     expect(asked.at(-1)).toContain("You said no to something earlier");
-    // A reconnect keeps it; a new conversation clears it.
+    // A reconnect keeps it.
     autopilot = true;
     ext = s.forSession()!;
     shown(ext);
+    ext.newTurn?.();
     expect(await call(ext, "fake-post_message", { text: "d" })).toMatchObject({ permissionDecision: "deny" });
+    // Once that task is over, its no holds nothing else back: announced again, as before it.
+    live.delete("t1");
+    expect(await call(ext, "fake-post_message", { text: "d2" })).toEqual({ permissionDecision: "allow" });
+    // A check that can't tell whether the task runs counts as running.
+    const unsure = new ExtensionsService(deps({ autopilot: () => true, announce: () => true, taskLive: () => { throw new Error("down"); } }));
+    const ux = unsure.forSession()!;
+    shown(ux);
+    unsure.userSaidNo("t9");
+    ux.newTurn?.();
+    expect(await call(ux, "fake-post_message", { text: "u" })).toMatchObject({ permissionDecision: "deny", permissionDecisionReason: SAID_NO_UNASKED });
+    // A new conversation clears every no.
+    live.add("t2");
+    s.userSaidNo("t2");
     s.conversationEnded();
     ext = s.forSession()!;
     shown(ext);
     expect(await call(ext, "fake-post_message", { text: "e" })).toEqual({ permissionDecision: "allow" });
-    // A no to one of the gate's own questions does the same for the turns after it, whichever tool.
+    // A no to one of the gate's own questions (no task put it) holds for the rest of that turn, as the refused tool does.
     autopilot = false;
     answers = ["deny"];
     expect(await call(ext, "fake-post_message", { text: "f" })).toMatchObject({ permissionDecision: "deny" });
-    ext.newTurn?.();
     autopilot = true;
-    expect(await call(ext, "fake-post_message", { text: "g" })).toMatchObject({ permissionDecision: "deny", permissionDecisionReason: SAID_NO_UNASKED });
+    expect(await call(ext, "fake-post_message", { text: "g" })).toMatchObject({ permissionDecision: "deny" });
+    // And so does a no to a question no task put, told by main; the next turn is a new request.
+    ext.newTurn?.();
+    expect(await call(ext, "fake-post_message", { text: "h" })).toEqual({ permissionDecision: "allow" });
+    s.userSaidNo();
+    expect(await call(ext, "fake-post_message", { text: "i" })).toMatchObject({ permissionDecision: "deny", permissionDecisionReason: SAID_NO_UNASKED });
+    ext.newTurn?.();
+    expect(await call(ext, "fake-post_message", { text: "j" })).toEqual({ permissionDecision: "allow" });
   });
 
   it("calls no extension after a fill from the vault: not asked, not announced, audited as denied (vault-3-x9-4)", async () => {

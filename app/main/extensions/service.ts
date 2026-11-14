@@ -63,6 +63,11 @@ export interface ExtensionsDeps {
    */
   vaultFilled?: () => boolean;
   /**
+   * Is this task still queued or running (main: TaskManager's list)? A no to one of its questions stands while it is
+   * (userSaidNo). A check that throws counts as yes. Absent: every task's no stands until the conversation ends.
+   */
+  taskLive?: (task: string) => boolean;
+  /**
    * Says what Ember does without asking in the conversation's bubble (the gate's own words, gateAnnouncement); false
    * when it couldn't be said. Absent, or false: the call asks, since nothing goes ahead in Autopilot unannounced.
    */
@@ -224,11 +229,17 @@ export class ExtensionsService implements ExtensionsApi {
    */
   private tainted = false;
   /**
-   * The user said no to something in this conversation (an extension's call, or any question a task put: main's
-   * Confirmer tells userSaidNo): every later call of a tool that changes things asks, and Autopilot denies it
-   * (integrations-c11-1). Kept here as the taint is, across a reconnect; conversationEnded() clears it.
+   * The user said no to a question no task put (an extension's call, the conductor's) in the conductor's current turn:
+   * every later call of a tool that changes things asks, and Autopilot denies it, until the turn ends, as a refused
+   * tool is (integrations-c11-1; integ-x-4). Kept here, across a reconnect; conversationEnded() clears it.
    */
-  private saidNo = false;
+  private saidNoTurn = false;
+  /**
+   * The tasks whose questions the user said no to: while one of them is still queued or running (taskLive), every call
+   * of a tool that changes things asks, and Autopilot denies it, since it may be what that task's no refused done
+   * another way (CLAUDE.md "After a deny": per task; integ-x-4). Never cleared by a turn.
+   */
+  private saidNoTasks = new Set<string>();
   /**
    * Server keys that said their tool list changed in this conversation (integrations-x9-1). Kept here as the taint
    * is, across the reload such a word causes: a server that says it again stays out until the conversation ends.
@@ -263,11 +274,25 @@ export class ExtensionsService implements ExtensionsApi {
   }
 
   /**
-   * The user said no to a question (a task's step or command, or an extension's call): from now until the conversation
-   * ends, a tool that changes things asks, and Autopilot denies it (integrations-c11-1). An unanswered question isn't a no.
+   * The user said no to a question (`task`: the task that put it; none: an extension's call or the conductor's): a tool
+   * that changes things asks, and Autopilot denies it, while that task is queued or running, or for the rest of this
+   * turn (integrations-c11-1; integ-x-4). An unanswered question isn't a no.
    */
-  userSaidNo(): void {
-    this.saidNo = true;
+  userSaidNo(task?: string): void {
+    if (task) this.saidNoTasks.add(task);
+    else this.saidNoTurn = true;
+  }
+
+  /** Does a no stand now: this turn's, or one of a task still queued or running (a check that throws counts as yes)? */
+  private saidNoNow(): boolean {
+    if (this.saidNoTurn) return true;
+    for (const task of [...this.saidNoTasks]) {
+      let live: boolean;
+      try { live = this.o.taskLive ? this.o.taskLive(task) : true; } catch { live = true; /* can't tell: it stands */ }
+      if (live) return true;
+      this.saidNoTasks.delete(task);
+    }
+    return false;
   }
 
   /** The conversation was forgotten (sign-out, another account, a new conversation): its taint goes with it. */
@@ -275,7 +300,8 @@ export class ExtensionsService implements ExtensionsApi {
     this.stopPart().stop();
     this.session = null;
     this.tainted = false;
-    this.saidNo = false;
+    this.saidNoTurn = false;
+    this.saidNoTasks.clear();
     this.announcers.clear();
     this.heldOut.clear();
   }
@@ -835,7 +861,8 @@ export class ExtensionsService implements ExtensionsApi {
       },
       listChanged: server => this.announced(gate, server),
       settled: () => this.settle(gate),
-      newTurn: () => gate.refused.clear(),
+      // (And a no this turn, to a question no task put, with it: integ-x-4. A task's no stands while the task runs.)
+      newTurn: () => { gate.refused.clear(); this.saidNoTurn = false; },
     };
   }
 
@@ -1052,7 +1079,7 @@ export class ExtensionsService implements ExtensionsApi {
       ...(current ? { item: { enabled: current.enabled, consented: current.consentedAt !== null } } : {}),
       ...(tool ? { tool } : {}),
       shownAsPinned: shownAsPinned && gate.shown.get(name) === true,
-      tainted: this.tainted, refused: gate.refused.has(name), saidNo: this.saidNo, remote: e?.server.spec?.type !== "stdio",
+      tainted: this.tainted, refused: gate.refused.has(name), saidNo: this.saidNoNow(), remote: e?.server.spec?.type !== "stdio",
       hintsStale: !!e && gate.listChanged.has(e.server.key), serverStopped: !!e && gate.withdrawn.has(e.server.key),
       autopilot: this.o.autopilot?.() === true,
       vaultFilled: this.vaultFilled(),
@@ -1132,7 +1159,7 @@ export class ExtensionsService implements ExtensionsApi {
     }
     if (answer === "once" && after) return deny(after.reason);
     gate.refused.add(input.toolName);
-    if (answer === "deny") this.saidNo = true;
+    if (answer === "deny") this.saidNoTurn = true;
     return deny(REFUSED);
   }
 

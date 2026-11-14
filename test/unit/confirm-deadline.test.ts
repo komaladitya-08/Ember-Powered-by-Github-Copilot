@@ -132,6 +132,19 @@ describe("what a timed-out question says to do next (tasks-approvals-r1)", () =>
 });
 
 describe("the Confirmer's no", () => {
+  it("tells main which task's question the user said no to, so the extensions gate holds back only while it runs (integ-x-4)", async () => {
+    const told: (string | undefined)[] = [];
+    const c = new Confirmer(() => undefined, { armMs: 0, gapMs: 0, timeoutMs: 1000, onDeny: task => told.push(task) });
+    const q = c.ask({ ...Q, task: "t7" });
+    expect(c.answer("q1:deny")).toBe(true);
+    await q;
+    const { task: _task, ...untasked } = Q;
+    const own = c.ask(untasked);
+    expect(c.answer("q2:deny")).toBe(true);
+    await own;
+    expect(told).toEqual(["t7", undefined]);
+  });
+
   it("tells main of a “Not now” by click, key or voice, before the asker hears it, and never of a yes or a question nobody answered (integrations-c11-1)", async () => {
     vi.useFakeTimers();
     try {

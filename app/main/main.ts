@@ -1843,6 +1843,8 @@ function start(): void {
     autopilot: () => approvalsNow().autopilot, announce: words => agent?.announceUnasked(words) ?? false,
     // After a fill from the vault no extension is called: a failed call's text reaches the model unredacted (vault-3-x9-4).
     vaultFilled: () => vaultRedactor.active,
+    // A task's no holds its tools back while it is queued or running (integ-x-4).
+    taskLive: task => agent?.tasks?.list().some(t => t.id === task && (t.status === "queued" || t.status === "running")) ?? false,
     log: log.child("extensions"), os: platform.os,
     // macOS never runs Ember as plain Node (PLAN.md §2 "Node mode"): no launcher, so no extension's server, stdio or remote, runs there.
     launcher: platform.os === "darwin" ? null : { execPath: process.execPath, script: path.join(__dirname, "mcp-launch.cjs") },
@@ -3564,8 +3566,8 @@ function start(): void {
       // covered shows again: never "Thanks! Carrying on." for good after the task is done.
       afterAnswer: answerSettler({ onScreen: () => lastState.bubble, reshow: () => agent?.afterAnswer() ?? false, set: setState }),
       // A no to any question reaches the extensions gate: a tool that changes things asks after it, and Autopilot
-      // denies it, until the conversation ends (integrations-c11-1).
-      onDeny: () => extensions.userSaidNo(),
+      // denies it, while the task that asked runs, or for the rest of the turn (integrations-c11-1; integ-x-4).
+      onDeny: task => extensions.userSaidNo(task),
     });
     // Linux warns xtest.unavailable when XTest is missing.
     const xinput = inputRef = platform.openInput(ws, log);

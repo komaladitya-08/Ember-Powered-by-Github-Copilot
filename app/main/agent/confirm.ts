@@ -231,11 +231,11 @@ export interface ConfirmerTiming {
   /** Under a panel question, how to reach its window from the keyboard (main wires the targets runtime's panelHint). */
   panelHint?: (panel: QuestionPanel) => string | undefined;
   /**
-   * The user said no ("Not now", or "deny" by key or voice) to a question: main tells the extensions gate, so that a tool
-   * that changes things asks, and Autopilot denies it, for the rest of the conversation (integrations-c11-1). An
-   * unanswered question isn't a no.
+   * The user said no ("Not now", or "deny" by key or voice) to a question (`task`: the task that put it): main tells the
+   * extensions gate, so that a tool that changes things asks, and Autopilot denies it, while that task runs, or for the
+   * rest of the turn where no task put it (integrations-c11-1; integ-x-4). An unanswered question isn't a no.
    */
-  onDeny?: () => void;
+  onDeny?: (task?: string) => void;
 }
 
 export class Confirmer {
@@ -662,7 +662,7 @@ export class Confirmer {
       this.answerShown(shown, expired && !yes);
     }
     // Told before the asker hears it, so nothing it does next runs ahead of the no (integrations-c11-1).
-    if (answer === "deny") { try { this.onDeny?.(); } catch { /* telling the gate mustn't lose the answer */ } }
+    if (answer === "deny") { try { this.onDeny?.(p.q.task); } catch { /* telling the gate mustn't lose the answer */ } }
     p.resolve(answer);
     if (wasCurrent) this.onChange?.(null);
     if (wasCurrent && this.queue.length) {
