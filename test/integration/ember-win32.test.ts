@@ -498,6 +498,15 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
           w.on("move", note("move"));
           w.on("resize", note("resize"));
           w.webContents.on("ipc-message", (_e, channel) => seen.push({ t: Date.now(), what: `Ember's ${JSON.stringify(w.isDestroyed() ? "?" : w.getTitle())} page sends ${channel}` }));
+          // What main sends the Ask box's page (channel names only; cifix-x9-7): the context Ember read of the window
+          // the box opened over arrives this way, once per opening and late, as the bench's return at 0.9-1.5 s did.
+          if (w.getTitle() === "Ask Ember") {
+            const send = w.webContents.send.bind(w.webContents);
+            w.webContents.send = (channel: string, ...args: unknown[]) => {
+              seen.push({ t: Date.now(), what: `Ember sends the "Ask Ember" page ${channel}` });
+              send(channel, ...args);
+            };
+          }
         };
         BrowserWindow.getAllWindows().forEach(watch);
         app.on("browser-window-created", (_e, w) => watch(w));
