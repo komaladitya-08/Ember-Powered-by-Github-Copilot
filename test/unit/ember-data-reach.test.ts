@@ -6,6 +6,7 @@
  * refuses it.
  */
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { PolicyEngine, mayReachEmberData, namesEmberData, type ActionRequest } from "../../app/main/policy/policy";
@@ -17,7 +18,7 @@ import { VAULT_FILE } from "../../app/main/vault/store";
 import { ERASED_FILE, HISTORY_FILE } from "../../app/main/agent/conversation-store";
 import { RUN_FILE } from "../../app/main/run-marker";
 import { emberDataOf } from "../../app/main/extensions/gate";
-import { dialogAround } from "../../app/main/agent/worker";
+import { chosenIn, dialogAround } from "../../app/main/agent/worker";
 import type { AxNode } from "../../app/main/perception/sidecar";
 
 type OS = "linux" | "win32" | "darwin";
@@ -203,7 +204,8 @@ describe("Ember's own settings, audit log and policy reached through another app
     // Moving past that row, opening it with a click, and another row stay as they were.
     expect(mayReachEmberData(req("org.gnome.Nautilus", "Home", { kind: "keys", value: "Down", element: { role: "table cell", name: ".config" } }))).toBe(false);
     expect(mayReachEmberData(req("org.gnome.Nautilus", "Home", { kind: "click", element: { role: "table cell", name: ".config" } }))).toBe(false);
-    expect(mayReachEmberData(req("org.gnome.Nautilus", "Home", { kind: "keys", value: "Delete", element: { role: "table cell", name: "Documents" } }))).toBe(false);
+    // (As the worker reads it as the step is taken: the rows chosen, all of them read. Not known, it asks: safety-privacy-r11-2.)
+    expect(mayReachEmberData(req("org.gnome.Nautilus", "Home", { kind: "keys", value: "Delete", element: { role: "table cell", name: "Documents" }, chosen: { names: ["Documents"], whole: true } }))).toBe(false);
   });
 
   it("never sends such a step to Assisted's check, and Autopilot refuses the worker's held question about it (safety-privacy-r10-1)", async () => {
@@ -375,5 +377,49 @@ describe("Ember's own files reached by what a field or a file dialog holds, not 
     const hidden = read(nodes({ secret: true, text: undefined }));
     expect(hidden.fields).toBeUndefined();
     expect(mayReachEmberData(req("kate", "Save File — Kate", { kind: "click", element: { role: "push button", name: "Save" }, dialog: { ...hidden, items: ["Location", "Documents", "Save"], selected: [] } }))).toBe(true);
+  });
+
+  it("refuses in Autopilot, and asks elsewhere, a context menu's Move to Trash, a header button or a Delete in a file manager while the rows chosen hold the folder above Ember's data, or can't all be read in the home folder (safety-privacy-r11-2)", () => {
+    const trash = { kind: "click" as const, element: { role: "menu item", name: "Move to Trash" } };
+    const user = path.basename(os.homedir());
+    const rows: [OS, string, string, Partial<ActionRequest>][] = [
+      ["linux", "org.gnome.Nautilus", "Home", { ...trash, chosen: { names: [".config"], whole: true } }],
+      ["linux", "org.gnome.Nautilus", "Home", { kind: "click", element: { role: "push button", name: "Move to Trash" }, chosen: { names: ["Documents", ".config", "Music"], whole: true } }],
+      ["linux", "org.gnome.Nautilus", "Home", { kind: "keys", value: "Delete", element: { role: "table", name: "" }, chosen: { names: ["Documents", ".config"], whole: true } }],
+      ["linux", "org.gnome.Nautilus", "Home", { kind: "keys", value: "Delete", element: { role: "table", name: "" }, chosen: { names: ["Documents"], whole: false } }],
+      ["linux", "org.gnome.Nautilus", "Home", { ...trash }],
+      ["linux", "org.kde.dolphin", "Home — Dolphin", { kind: "click", element: { role: "menu item", name: "Cut" }, chosen: { names: [".config"], whole: true } }],
+      ["linux", "org.gnome.Nautilus", "/", { kind: "click", element: { role: "menu item", name: "Delete Permanently" }, chosen: { names: ["etc"], whole: true } }],
+      ["win32", "explorer", `${user} - File Explorer`, { kind: "click", element: { role: "menu item", name: "Delete" }, chosen: { names: ["AppData"], whole: true } }],
+      ["win32", "explorer", `${user} - File Explorer`, { kind: "click", element: { role: "menu item", name: "Delete" } }],
+      ["win32", "explorer", "Users - File Explorer", { kind: "keys", value: "Delete", element: { role: "list", name: "Items View" }, chosen: { names: [user], whole: true } }],
+      ["darwin", "Finder", user, { kind: "click", element: { role: "AXMenuItem", name: "Move to Trash" }, chosen: { names: ["Library"], whole: true } }],
+      ["darwin", "Finder", "Library", { kind: "keys", value: "cmd+BackSpace", element: { role: "AXList", name: "" }, chosen: { names: ["Application Support"], whole: true } }],
+    ];
+    for (const [o, app, w, step] of rows) {
+      const r = req(app, w, step);
+      const what = `${o} ${w} ${step.element?.name} ${JSON.stringify(step.chosen)}`;
+      expect(mayReachEmberData(r, o), what).toBe(true);
+      expect(engine("autopilot", o).decide(r).verdict, `${what} autopilot`).toBe("deny");
+      const inter = engine("interactive", o).decide(r);
+      expect(inter.verdict, `${what} interactive`).toBe("confirm");
+      expect(inter.autonomy, what).toBeFalsy();
+    }
+    // Other rows chosen, all read: as before (a risky step asks, and Autopilot announces it).
+    expect(mayReachEmberData(req("org.gnome.Nautilus", "Home", { ...trash, chosen: { names: ["Documents", "notes.txt"], whole: true } }))).toBe(false);
+    expect(mayReachEmberData(req("org.gnome.Nautilus", "Projects", { ...trash, chosen: { names: ["old"], whole: false } }))).toBe(false);
+    expect(mayReachEmberData(req("org.gnome.Nautilus", "Home", { kind: "click", element: { role: "menu item", name: "Open With Text Editor" }, chosen: { names: ["notes.txt"], whole: true } }))).toBe(false);
+  });
+
+  it("reads the rows chosen in a file manager as the step is taken, and can't tell them whole when one is unnamed or a row was left out (safety-privacy-r11-2)", () => {
+    const row = (id: number, name: string, selected: boolean, x: Partial<AxNode> = {}): AxNode => ({ id, parent: 1, depth: 1, role: "table cell", name, states: selected ? ["selected"] : [], bounds: null, ...x });
+    const view = (extra: AxNode[] = []): AxNode[] => [{ id: 1, parent: null, depth: 0, role: "table", name: "", states: [], bounds: null }, row(2, "Documents", true), row(3, ".config", true), row(4, "Music", false), ...extra];
+    expect(chosenIn(view(), true)).toEqual({ names: ["Documents", ".config"], whole: true });
+    expect(chosenIn(view(), false).whole).toBe(false);
+    expect(chosenIn(view([row(5, "", true, { withheld: true })]), true).whole).toBe(false);
+    expect(chosenIn(view([row(5, "Pictures", false, { omitted: true })]), true).whole).toBe(false);
+    expect(chosenIn([{ id: 1, parent: null, depth: 0, role: "menu", name: "", states: [], bounds: null }], true).whole).toBe(false);
+    const d = engine("autopilot").decide(req("org.gnome.Nautilus", "Home", { kind: "click", element: { role: "menu item", name: "Move to Trash" }, chosen: chosenIn(view(), true) }));
+    expect(d.verdict).toBe("deny");
   });
 });

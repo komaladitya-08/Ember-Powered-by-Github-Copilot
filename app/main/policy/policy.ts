@@ -14,6 +14,8 @@
  * passes neither gets exactly the answers it got before the port.
  */
 
+import { homedir } from "node:os";
+import { basename } from "node:path";
 import { isNeverLook, isSecretLabel, isSheetCell, quoteUntrusted, screenWord } from "../perception/elements";
 import { parseCombo } from "../hands/borrow";
 import { friendlyApp } from "../../shared/apps";
@@ -131,6 +133,11 @@ export interface ActionRequest {
    * dialog box (#32770), whose title bar's Close answers as its OK does.
    */
   dialog?: DialogFacts;
+  /**
+   * The rows chosen (selected) in the window's lists as the worker read it when the step is taken, by name; `whole`: the
+   * read listed every row and named each one chosen. A file manager's Delete, cut or "Move to Trash" acts on these.
+   */
+  chosen?: { names: readonly string[]; whole: boolean };
   /** For keys: the focused element is in a web page (Chromium's, Firefox's or an Electron app's), where Enter can send. */
   inPage?: boolean;
   /**
@@ -816,7 +823,7 @@ export function mayReachEmberData(r: ReachRequest, os: OS = "linux"): boolean {
   const title = r.window ?? "";
   const name = titleName(title);
   if (!/[/\\]/.test(title) && (EMBER_FILE.test(name) || EMBER_FOLDER.test(name))) return true;
-  if (inEmberDataParent(r, name)) return true;
+  if (inEmberDataParent(r, name, os)) return true;
   const item = (r.element?.name ?? "").trim();
   if (EMBER_FILE.test(item) || EMBER_FOLDER.test(item)) return true;
   // Typed, the folder's name reaches it in any case where case doesn't count (Windows, macOS: "EMBER", integ-y-1); and
@@ -827,7 +834,7 @@ export function mayReachEmberData(r: ReachRequest, os: OS = "linux"): boolean {
   return fileDialogMayReach(r, os);
 }
 /** What mayReachEmberData reads of a request. */
-type ReachRequest = Pick<ActionRequest, "kind" | "window" | "element" | "value"> & Partial<Pick<ActionRequest, "mode" | "currentText" | "typed" | "dialog" | "windowId">> & { app?: string };
+type ReachRequest = Pick<ActionRequest, "kind" | "window" | "element" | "value"> & Partial<Pick<ActionRequest, "mode" | "currentText" | "typed" | "dialog" | "windowId" | "chosen">> & { app?: string };
 /** The longest text heldTexts tries every caret position in (an "insert" whose caret isn't known). */
 const INSERT_MAX = 1024;
 /**
@@ -917,10 +924,31 @@ const FILE_MANAGER_APP = /^(?:(?:org\.gnome\.)?nautilus|files|(?:org\.kde\.)?dol
 const MOVING_KEY = /^(?:(?:shift\+)?tab|up|down|left|right|home|end|prior|next|page_up|page_down|escape|[a-z0-9])$/;
 /** A control there that removes, moves or renames what is selected: any menu item (the context menu's), or a button so named. */
 const MOVES_ITEMS = /delete|trash|\bbin\b|remove|erase|rename|\bcut\b|move/i;
+/** A file manager's title for the home folder or the top of the disk, whose rows hold the folders above Ember's data. */
+const HOME_TITLE = /^(?:home|home folder|\/|computer|file system)$/i;
+/** The user's own folder's name ("u": Explorer's and Finder's title for it, and its row in C:\Users or /home), or "". */
+function homeName(): string {
+  try { return basename(homedir()); } catch { return ""; /* no home folder to name: only HOME_TITLE counts */ }
+}
+/** Is this row's name a folder that holds Ember's data or policy folder, or that folder itself (".config", "AppData", "ember", the user's own)? */
+function holdsEmberFolder(name: string, caseless: boolean): boolean {
+  const n = name.trim(), home = homeName();
+  return EMBER_DATA_PARENT.test(n) || EMBER_FOLDER.test(caseless ? n.toLowerCase() : n) || (!!home && (caseless ? n.toLowerCase() === home.toLowerCase() : n === home));
+}
 /** Is `r` a step in a file manager showing the folder that holds Ember's data or policy folder that may move or remove it? */
-function inEmberDataParent(r: Pick<ActionRequest, "kind" | "element" | "value"> & { app?: string }, name: string): boolean {
+function inEmberDataParent(r: Pick<ActionRequest, "kind" | "element" | "value" | "chosen"> & { app?: string }, name: string, os: OS = "linux"): boolean {
   if (!FILE_MANAGER_APP.test((r.app ?? "").trim())) return false;
   const folder = name.split(/[/\\]/).filter(Boolean).pop() ?? "";
+  // What is chosen in the view when the step is taken (the worker's read as it is taken: a right-click's row, a
+  // select-all), for a step that moves or removes it: a row that holds Ember's data or policy folder (safety-privacy-r11-2).
+  // In the home folder, or the top of the disk, rows chosen that can't all be read may be one of them.
+  if (removesChosen(r, os)) {
+    const caseless = os !== "linux";
+    if (r.chosen?.names.some(n => holdsEmberFolder(n, caseless))) return true;
+    const home = homeName();
+    const atHome = HOME_TITLE.test(name.trim()) || (!!home && (caseless ? name.trim().toLowerCase() === home.toLowerCase() : name.trim() === home));
+    if (atHome && !r.chosen?.whole) return true;
+  }
   // That folder's own row, from the folder above it (Home's ".config", the user's "AppData", Finder's "Library"):
   // a key on it but one that moves about may delete, cut or rename it (r10-safety-y10-3).
   const onParentRow = r.kind === "keys" && EMBER_DATA_PARENT.test((r.element?.name ?? "").trim());
@@ -932,6 +960,20 @@ function inEmberDataParent(r: Pick<ActionRequest, "kind" | "element" | "value"> 
   if (r.kind !== "click" && r.kind !== "cursor_click" && r.kind !== "toggle") return false;
   const role = r.element?.role ?? "";
   return /menu item/.test(role) || (/button/.test(role) && MOVES_ITEMS.test(normalizeLabel(r.element?.name ?? "")));
+}
+/**
+ * Keys that delete, cut or rename what is chosen in a file manager (with any modifier: Shift+Delete, Finder's
+ * Cmd+Backspace), and Finder's Return, which renames.
+ */
+const REMOVING_KEY = /^(?:[a-z]+\+)*(?:delete|backspace|f2)$|^(?:ctrl|super|cmd)\+(?:shift\+)?x$/;
+/** May this file manager step move, remove or rename what is chosen: such a key, or a menu item or button so named? */
+function removesChosen(r: Pick<ActionRequest, "kind" | "element" | "value">, os: OS): boolean {
+  if (r.kind === "keys") {
+    const k = canonicalKeys(r.value ?? "", KEYS[os]);
+    return !k || REMOVING_KEY.test(keyFamily(k)) || (os === "darwin" && keyFamily(k) === "return");
+  }
+  if (r.kind !== "click" && r.kind !== "cursor_click" && r.kind !== "toggle") return false;
+  return /menu ?item|button/i.test(r.element?.role ?? "") && MOVES_ITEMS.test(normalizeLabel(r.element?.name ?? ""));
 }
 /** Why such a step asks, or is refused in Autopilot (mayReachEmberData). */
 export const EMBER_DATA_DOUBT = "this may be Ember's own settings, audit log or policy, which are for the user only";

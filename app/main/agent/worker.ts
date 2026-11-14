@@ -1085,6 +1085,20 @@ export function dialogAround(start: AxNode | undefined, get: (id: number) => AxN
 }
 
 /**
+ * The rows chosen (selected) in a window's lists, by name, as `all` was read (ActionRequest.chosen): what a file
+ * manager's Delete, cut or "Move to Trash" acts on (safety-privacy-r11-2). `whole`: the read was whole, nothing in it
+ * was left out, it holds a row at all, and every row chosen has a name it can be told by. Exported for its tests.
+ */
+export function chosenIn(all: Iterable<AxNode>, whole: boolean): { names: string[]; whole: boolean } {
+  const nodes = [...all];
+  const rows = nodes.filter(n => DIALOG_ROW.test(n.role));
+  const chosen = rows.filter(n => n.states.includes("selected"));
+  const told = chosen.every(n => !n.withheld && !n.secret && !!n.name.trim());
+  return { names: chosen.filter(n => !n.withheld && !n.secret && n.name.trim()).map(n => n.name).slice(0, DIALOG_ITEMS_MAX),
+    whole: whole && told && rows.length > 0 && !nodes.some(n => n.omitted) && chosen.length <= DIALOG_ITEMS_MAX };
+}
+
+/**
  * A field's label (`label`, inferred where it has no name) and the names of the elements around it, up to its window
  * (not the window's own title, which names the file): ActionRequest.around. Exported for its tests.
  */
@@ -1466,6 +1480,8 @@ export class Worker {
   private focusEditable = false;
   /** At that look: the dialog the focused element is in (Enter or Space there answers it, as a click does: dialogOf). */
   private focusDialog: Dialog | undefined;
+  /** At that look: the rows chosen in the window (chosenIn), which a Delete there acts on. */
+  private focusChosen: { names: string[]; whole: boolean } | undefined;
   /** Semantic context from the same quick read that supplied the key request. */
   private focusContext: string | null = null;
   /** focusContext's window alone, and whether a modal one is up: all a key in a living page needs still to hold (no question asked). */
@@ -4594,6 +4610,7 @@ export class Worker {
       this.focusInPage = !!f && (f.role === "document web" || inWebPage(f, byId));
       this.focusEditable = !!f && f.states.includes("editable");
       this.focusDialog = f ? dialogAround(f, byId, nodes, !!seen && !seen.truncated && !seen.busy) : undefined;
+      this.focusChosen = seen?.window ? chosenIn(nodes, !seen.truncated && !seen.busy) : undefined;
       // What may not change under keys on a living page: the window, and what the keys were judged against. A field's text
       // and selection count (a letter would replace what is newly selected), a read-only page's own words don't.
       if (this.focusContext !== null) {
@@ -5160,7 +5177,9 @@ export class Worker {
     // Text going into a field is judged after what this task typed into the window's other fields too.
     const adds = request.kind === "text" || request.kind === "cursor_text" ? request.value ?? "" : request.kind === "keys" ? typedChar(request.value ?? "", this.kc) ?? "" : "";
     const typedHere = adds && inWindow ? this.typedHere(this.fieldOf(request.element), adds) : undefined;
-    const req = { ...request, ...(typedHere ? { typedHere } : {}), onDesk: !!this.place, goal: this.userWords, askedIn: this.spec.target.app, agreed: this.agreed, readFrom: [...this.read.values()], ...(inWindow ? { windowId: this.windowId } : {}) };
+    // What is chosen in the window as the step is taken (keys: the look they were judged on; else the read the step made).
+    const chosen = !inWindow || request.chosen !== undefined ? undefined : request.kind === "keys" ? this.focusChosen : chosenIn(this.known.values(), this.knownWhole);
+    const req = { ...request, ...(typedHere ? { typedHere } : {}), ...(chosen ? { chosen } : {}), onDesk: !!this.place, goal: this.userWords, askedIn: this.spec.target.app, agreed: this.agreed, readFrom: [...this.read.values()], ...(inWindow ? { windowId: this.windowId } : {}) };
     let decision = this.d.policy.decide(req);
     // The limit on actions a minute paces the task (tasks-approvals-2): the step waits for the minute to free a slot,
     // then is decided afresh (another task may take that slot first: it waits again). A Stop ends the wait at once.
