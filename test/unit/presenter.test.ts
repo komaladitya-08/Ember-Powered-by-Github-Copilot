@@ -1587,6 +1587,40 @@ describe("Presenter: the answer stays while the Ask box beside it is open (compa
   });
 });
 
+describe("a background task's command countdown (companion-c12-1)", () => {
+  it("takes its countdown and its Stop off the cursor's bubble once the command starts, so no Stop is shown that does nothing (companion-c12-1)", () => {
+    vi.useFakeTimers();
+    const states: Partial<EmberState>[] = [];
+    const p = new Presenter(s => states.push(s), undefined, () => "Push my branch", new BubbleOwner(), undefined, false, { task: "t1", corner: true });
+    p.taskStarted();
+    p.progress("Looking at the repo");
+    p.announce("Pushing feature-x to origin, as you asked.", "ui:cmdstop:r1", 4000);
+    expect(states.at(-1)!.bubble).toMatchObject({ visible: true, actions: [{ id: "ui:cmdstop:r1", label: "Stop" }] });
+    p.endAnnouncement("ui:cmdstop:r1");
+    expect(states.at(-1)!.bubble!.visible).toBe(false);
+    expect(states.at(-1)!.bubble!.actions ?? []).toEqual([]);
+    // Its work goes on in the corner, as before, and the cursor's bubble stays its own.
+    const n = states.length;
+    p.progress("Pushing");
+    expect(states.slice(n).filter(s => s.bubble?.visible)).toEqual([]);
+  });
+
+  it("gives back the reply its countdown covered (companion-c12-1)", () => {
+    vi.useFakeTimers();
+    const states: Partial<EmberState>[] = [];
+    const owner = new BubbleOwner();
+    const conv = new Presenter(s => states.push(s), undefined, () => "Ember", owner);
+    const t = new Presenter(s => states.push(s), undefined, () => "Push my branch", owner, undefined, false, { task: "t1", corner: true });
+    conv.say("Tomorrow will be sunny, with a high of 21 degrees.");
+    t.taskStarted();
+    t.announce("Pushing feature-x to origin, as you asked.", "ui:cmdstop:r1", 4000);
+    expect(states.at(-1)!.bubble!.thought).toMatch(/It starts in 4 seconds/);
+    t.endAnnouncement("ui:cmdstop:r1");
+    expect(states.at(-1)!.bubble).toMatchObject({ visible: true, thought: "Tomorrow will be sunny, with a high of 21 degrees." });
+    expect(states.at(-1)!.bubble!.actions?.some(a => a.id === "ui:cmdstop:r1") ?? false).toBe(false);
+  });
+});
+
 describe("a background task's announcement and the foreground task's own (r11-copy-y11-3)", () => {
   it("never loses the foreground task's line taken without asking behind a background task's (r11-copy-y11-3)", () => {
     vi.useFakeTimers();

@@ -1484,6 +1484,10 @@ export class Presenter {
     if (!before || before.stopId !== stopId) return;
     this.beforeAnnounce = null;
     if (!this.state.bubble.actions.some(a => a.id === stopId)) return;
+    // A task in the background took the cursor's bubble for its countdown only ("take"): it gives it back, to what it
+    // covered or empty. Put back as "progress" it was dropped (apply), so the countdown and a Stop that no longer stops
+    // anything stayed up until the task ended (companion-c12-1).
+    if (this.inCorner) { this.hide(); return; }
     const b = before.bubble.visible ? before.bubble : { ...IDLE_BUBBLE, visible: true, title: this.name() };
     this.apply({ emotion: "focused", bubble: { ...b, visible: true, mood: "acting", streaming: true, actions: b.actions.filter(a => a.id !== stopId) } }, "progress");
   }
