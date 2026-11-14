@@ -188,3 +188,18 @@ describe("an option or a verb Ember doesn't know is said by name, never taken fo
     for (const cmd of ["sqlite3 app.sqlar -Ax", "sqlite3 -A app.sqlar -x", "sqlite3 --archive app.sqlar", "sqlite3 -Acf a.sqlar src"]) expect(decide(cmd).classes, cmd).toContain("destroy");
   });
 });
+
+describe("git's plumbing and submodules that throw away work not committed (commands-remote-c11-4)", () => {
+  it("asks before read-tree's reset or update, checkout-index's force and a forced submodule deinit or update", () => {
+    for (const cmd of ["git read-tree -u --reset HEAD", "git read-tree --reset HEAD", "git read-tree -mu HEAD", "git read-tree -u -m HEAD~1", "git checkout-index -a -f",
+      "git checkout-index --all --force", "git checkout-index -f src/a.c", "git submodule deinit -f --all", "git submodule deinit --force lib", "git submodule update -f",
+      "git submodule update --init --force", "git -C sub read-tree --reset -u HEAD"]) {
+      const d = decide(cmd);
+      expect(d.verdict, cmd).toBe("ask");
+      expect(d.classes, cmd).toContain("destroy");
+    }
+    for (const cmd of ["git read-tree HEAD", "git checkout-index -a --prefix=out/", "git submodule deinit lib", "git submodule update --init"]) {
+      expect(decide(cmd, { missing: ["/home/ana/proj/out"] }).rules, cmd).not.toContain("git.discard");
+    }
+  });
+});

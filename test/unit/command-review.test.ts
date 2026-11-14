@@ -77,7 +77,7 @@ describe("notReviewable (modes-C2, modes-C7; PLAN.md §10 \"Settled\" (7))", () 
       + "system.security system.setpriv system.settings system.sg system.sudo system.unschedule system.unshare system.users trash.empty upload.cloud upload.curl upload.rclone upload.rsync upload.scp "
       + "upload.session upload.unc wsl.manage wsl.system wsl.tool-distro wsl.unregister wsl.user escape.download-run escape.run-downloaded escape.npx escape.run-remote internal "
       // (2026-11-14) What an unknown program's own words say it deletes or sends, vercel's deploy and sqlite3's archive mode act now.
-      + "unknown-words.destroy unknown-words.publish tool.deploys sqlite.archive certutil.output").split(" "));
+      + "unknown-words.destroy unknown-words.publish tool.deploys sqlite.archive certutil.output git.discard").split(" "));
     const secret = /^secret\.|^path\.secret(-|$)|^path\.history$|^wsl\.export$|^unknown-words\.secret$/, cantTell = /^(unclear|unknown)\./;
     const unjudged = ids.filter(id => !outlivesStop(id) && !secret.test(id) && !cantTell.test(id) && !left.has(id));
     expect(unjudged).toEqual([]);

@@ -12894,7 +12894,10 @@
   },
   {
    "cmd": "git checkout-index -f -a",
-   "verdict": "run"
+   "verdict": "ask",
+   "rules": [
+    "git.discard"
+   ]
   },
   {
    "cmd": "git worktree add ~/.config/autostart",

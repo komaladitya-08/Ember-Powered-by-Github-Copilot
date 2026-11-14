@@ -8249,10 +8249,19 @@ git(["worktree"], h => {
 });
 // checkout-index writes each file at <prefix><path>: a prefix ending in a slash is a folder, any other the start of
 // each name (review #169). Without one it writes the work tree's own files (writesUnnamedFiles).
+/** What throws away work not yet committed: the class of commands-remote-c11-4 (git's plumbing and submodules). */
+const DISCARDS = "Overwrites files in the working folder, throwing away changes that weren't committed.";
+// read-tree with --reset, or -u (which writes the tree's files into the working folder), throws away what wasn't
+// committed: the index's staged changes and, with -u, the files themselves (commands-remote-c11-4).
+git(["read-tree"], h => {
+  if (h.args.some(a => a.v === null || /^(--reset|-u|--aggressive)$/.test(a.v) || /^-[a-z]*u/.test(a.v ?? ""))) h.e.add("destroy", "git.discard", DISCARDS, { program: "git read-tree" });
+});
 git(["checkout-index"], h => {
   const p = opts(h, { longValue: ["prefix", "stage"] });
   const files = p.operands.filter(a => a.v !== "--");
   const prefix = values(p, "prefix")[0];
+  // -f overwrites files that are already there, changes in them included (commands-remote-c11-4).
+  if (has(p, "f", "force") && (prefix === undefined || prefix === "")) h.e.add("destroy", "git.discard", DISCARDS, { program: "git checkout-index" });
   if (h.args.some(a => a.v === null && /^--prefix/.test(a.raw))) { h.e.add("destroy", "redirect.overwrite", "Writes to files Ember can't name."); return; }
   if (prefix === undefined || prefix === "") { h.e.readArgs(files, h.sc); return; }
   if (prefix === null || files.some(f => f.v === null)) { h.e.add("destroy", "redirect.overwrite", "Writes to files Ember can't name."); if (prefix === null) return; }
@@ -8307,6 +8316,10 @@ git(["config"], h => {
   } else if (key !== null && /^credential\./i.test(key)) h.e.add("secret", "secret.git-credential", SAYS.secrets, { program: "git config" });
 });
 git(["submodule"], h => {
+  // deinit -f removes a submodule's working folder with its changes; update -f checks it out over them (c11-4).
+  if (/^(deinit|update|sync|absorbgitdirs)$/.test(h.args[0]?.v ?? "") && h.args.slice(1).some(a => a.v === null || /^(-f|--force|-[a-z]*f[a-z]*)$/.test(a.v))) {
+    h.e.add("destroy", "git.discard", DISCARDS, { program: `git submodule ${h.args[0]?.v}` });
+  }
   if (h.args[0]?.v === "add") {
     // A submodule added from an address is a clone into its folder (named, else the address's last part): building in
     // it later runs the download (commands-remote-r8-1).
