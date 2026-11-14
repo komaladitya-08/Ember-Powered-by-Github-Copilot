@@ -527,6 +527,10 @@ const DETERMINER = /^(?:a|an|the|my|your|our|their|his|her|its|this|these|those)
 const PHRASE_NOUN = new Set(String.raw`account accounts card cards debit credit bank banking sim phone phones mobile laptop computer tablet work home
   office school wifi wi-fi router email emails login logins device devices desk family partner kids children friends colleagues
   app apps manager managers vault page pages screen screens field fields box boxes text texts message messages link links`.split(/\s+/).filter(Boolean));
+/** A verb that puts a value to use ("Use tangerine for password resets", "Types marmalade on the PIN pad"). */
+const USE_VERB = /^(?:use[sd]?|using|set|sets|setting|enters?|entered|types?|typed|tr(?:y|ies|ied)|cho(?:se|ose|oses)|picks?|picked|puts?)$/i;
+/** A word that is no grammar, no talk about passwords and no tool's or service's name, so may be a value. */
+const mayBeValue = (t: string) => !!t && !DETERMINER.test(t) && !ABOUT_SECRET.has(t) && !sayless(t) && !TOOL_NAME.test(t) && !SERVICE_WORD.test(t);
 /**
  * Whether every password's or PIN's name in `clause` is a topic, never a value's name (memory-r11-2): a name that heads
  * a topic word ("password resets", "the PIN pad"), or a plural no one owns ("reset passwords", "the LDAP passwords").
@@ -549,6 +553,8 @@ function topicOnly(clause: string): boolean {
     const plural = /s$/i.test(w) && !tokens.slice(Math.max(0, i - 3), i).some(t => OWNER.test(word(t)));
     if (!head && !plural) return false;
     if (/[:=]$/.test(tokens[j - 1]!)) return false;
+    // A word used or set before the topic is its value too ("Use tangerine for password resets").
+    if (tokens.slice(0, i).some((t, k) => USE_VERB.test(word(t)) && mayBeValue(word(tokens[k + 1] ?? "").toLowerCase()))) return false;
     let phrase = false;
     for (let k = j; k < tokens.length; k++) {
       const t = word(tokens[k]!).toLowerCase();

@@ -49,6 +49,8 @@ const AFTER_TOPIC = [
   "Passwords in the office all say marmalade", "Passwords aren't marmalade", "Password reset is marmalade now", "Password reset link code is tangerine",
   "The password reset code is tangerine", "Password resets and changes are marmalade", "PIN resets at the bank are marmalade",
   "Password policy at Globex is marmalade", "Password reset answer for Netflix: kingfisher", "Password resets always use marmalade",
+  // A value used before the topic.
+  "Use tangerine for password resets", "Types marmalade on the PIN pad", "I set kingfisher for the password reset", "Picked Tangerine for PIN resets",
 ];
 
 describe("a password or a PIN as a topic", () => {
