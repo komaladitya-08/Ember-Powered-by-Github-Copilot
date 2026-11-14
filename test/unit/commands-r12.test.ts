@@ -8,7 +8,9 @@
 import { describe, expect, it } from "vitest";
 import { runCase, type ContextName } from "../fixtures/commands/corpus";
 import type { ShellId } from "../../app/main/commands/types";
-import { keptQuestion } from "../../app/main/commands/autopilot";
+import { autopilotCommand, keptQuestion } from "../../app/main/commands/autopilot";
+import { LINES } from "../../app/main/commands/decide";
+import { OUTPUT_TAINT_LINE, SPOKEN_LINE } from "../../app/main/commands/flow";
 import { redactSecrets, SECRET_HIDDEN } from "../../app/main/commands/redact";
 import { classifyCommand } from "../../app/main/commands/classify";
 import { wordsRuleOut } from "../../app/main/commands/flow";
@@ -253,5 +255,20 @@ describe("a tool's add-on command Ember doesn't know (commands-remote-c12-1)", (
     for (const cmd of ["docker rm web", "docker push x/y", "docker swarm leave", "docker plugin install x", "kubectl delete pod x", "kubectl drain node1", "npm publish", "npm unpublish x", "gh frob"]) {
       expect(decide(cmd).verdict, cmd).toBe("ask");
     }
+  });
+});
+
+describe("what Autopilot's announcement says it did (commands-remote-r12-3)", () => {
+  it("never says Ember checks first, or is checking, where it announced without a check", () => {
+    const r = result("git push origin main", { words: "push my changes" });
+    expect(r.decision.says).toContain(LINES.inexact);
+    for (const extra of [[], [LINES.tainted], [OUTPUT_TAINT_LINE], [SPOKEN_LINE]]) {
+      const d = autopilotCommand({ ...r.decision, says: [...r.decision.says, ...extra] }, { findings: r.cls.findings, mode: "on", askEvery: null, userAskEvery: false })!;
+      expect(d.verdict).toBe("announce");
+      expect(d.says.join(" | ")).not.toMatch(/checks first|checking each step|asks first/);
+      expect(d.says).toContain("Your words don't name exactly this.");
+    }
+    const d = autopilotCommand({ ...r.decision, says: [...r.decision.says, LINES.tainted, OUTPUT_TAINT_LINE, SPOKEN_LINE] }, { findings: r.cls.findings, mode: "on", askEvery: null, userAskEvery: false })!;
+    expect(d.says).toEqual(expect.arrayContaining(["A step came up that you didn't ask for.", "An earlier command printed text that looked like instructions.", "You asked by voice. Ember can't tell your voice from what your speakers play."]));
   });
 });

@@ -241,6 +241,15 @@ export const WITHHELD_LINE = "Its output may hold passwords or keys, so Ember ke
 export const OUTLIVES_LINE = "Stop won't reach what this command leaves running.";
 
 /**
+ * A card's line as a fact, for an announcement nothing checked (commands-remote-r12-3): "Your words don't name exactly
+ * this, so Ember checks first." says only what is so ("Your words don't name exactly this."), and "Ember is checking
+ * each step: …" only what came up. Every other line is kept as it is.
+ */
+function factOnly(line: string): string {
+  return line.replace(/,? so (?:Ember|it) checks first\.$/, ".").replace(/^Ember is checking each step: (\p{L})/u, (_m, c: string) => c.toUpperCase());
+}
+
+/**
  * The decision for a command that asks, in Autopilot: announced with its Stop countdown, saying the kind of command
  * (its most serious class; that it keeps running after Stop first) and never its text, or null where it still asks
  * (autopilotAsks) or is refused (autopilotRefuses). The card shows the exact command and what the rules found, as an
@@ -257,7 +266,7 @@ export function autopilotCommand(d: CommandDecision, o: AutopilotInput): Command
     requested: { intent: AUTOPILOT_RULE, announce: `Running a command${does ? ` that ${does}` : ""}, ${AUTOPILOT_WORDS}` },
     rules: [...new Set([...d.rules, AUTOPILOT_RULE])],
     reason: `Autopilot was on, so Ember didn't ask${why ? ` (${why})` : ""}.`,
-    says: [...d.says, ...(secret ? [WITHHELD_LINE] : []), ...(outlives ? [OUTLIVES_LINE] : []), AUTOPILOT_LINE],
+    says: [...d.says.map(factOnly), ...(secret ? [WITHHELD_LINE] : []), ...(outlives ? [OUTLIVES_LINE] : []), AUTOPILOT_LINE],
     ...(secret ? { withheld: true } : {}),
     ...(outlives ? { outlivesStop: true } : {}),
   };
