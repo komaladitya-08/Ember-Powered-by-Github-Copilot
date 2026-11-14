@@ -78,18 +78,25 @@ export interface DoctorProbes {
   policyLocation?: string;
 }
 
+/**
+ * What the Mouse and keyboard row says of borrowing, true in every approval mode (install-docs-r10-4): below Interactive
+ * Ember asks first, Interactive and Assisted announce an ordinary borrow and Autopilot every one, so it never says
+ * "with your OK".
+ */
+const BORROWS = "Ember can borrow the mouse and keyboard when it needs to. It tells you when it does, and moving the mouse or pressing a key takes it back.";
+
 /** Each OS's own name and wording for the rows that differ off Linux. */
 const OFF_LINUX: Record<"win32" | "darwin", { name: string; input: { ok: string; no: string; fix?: string }; voices: string; helperFix: string; sessionFix: string }> = {
   win32: {
     name: "Windows",
-    input: { ok: "SendInput is available (Ember can borrow the mouse, with your OK).", no: "Windows didn't give Ember its input functions, so Ember can only act through accessibility." },
+    input: { ok: `SendInput is available: ${BORROWS}`, no: "Windows didn't give Ember its input functions, so Ember can only act through accessibility." },
     voices: "Uses Windows' voices.",
     helperFix: "Check the PowerShell row below; if it is fine, reinstall Ember.",
     sessionFix: "Sign in to Windows and start Ember from the Start menu.",
   },
   darwin: {
     name: "macOS",
-    input: { ok: "Ember may post mouse and keyboard events (it borrows them only with your OK).",
+    input: { ok: `Ember may post mouse and keyboard events: ${BORROWS}`,
       no: "macOS isn't letting Ember borrow the mouse and keyboard (it needs the Accessibility permission, and no app may be holding secure input).",
       fix: "Allow Ember in System Settings › Privacy & Security › Accessibility." },
     voices: "Uses macOS voices.",
@@ -188,7 +195,7 @@ export function doctorChecks(p: DoctorProbes): DoctorCheck[] {
     out.push(p.xtest === null
       ? { id: "xtest", status: "warn", label: "Mouse and keyboard", detail: "No X display to check." }
       : p.xtest
-        ? { id: "xtest", status: "ok", label: "Mouse and keyboard", detail: "XTest is available (Ember can borrow the mouse, with your OK)." }
+        ? { id: "xtest", status: "ok", label: "Mouse and keyboard", detail: `XTest is available: ${BORROWS}` }
         : { id: "xtest", status: "warn", label: "Mouse and keyboard", detail: "XTest isn't available, so Ember can only act through accessibility.", fix: "sudo dnf install libXtst" });
   }
 
