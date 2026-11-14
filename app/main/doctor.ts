@@ -249,7 +249,8 @@ export function doctorChecks(p: DoctorProbes): DoctorCheck[] {
   // Recognition can use WebAssembly; Kitten Nano requires native speech, with a local system voice otherwise.
   if (p.speechBackend) out.push(p.speechBackend.backend === "native"
     ? { id: "speech-engine", status: "ok", label: "Speech", detail: "On this computer (native)." }
-    : { id: "speech-engine", status: "ok", label: "Speech", detail: `Recognition uses WebAssembly (${p.speechBackend.why}). Replies use the system's voice.` });
+    // The system's voice only where there is one: the Speaking row below says when there isn't (install-docs-c12-1).
+    : { id: "speech-engine", status: "ok", label: "Speech", detail: `Recognition uses WebAssembly (${p.speechBackend.why}). ${p.speechDispatcher ? "Replies use the system's voice." : "Replies need the system's voice, which isn't available (see Speaking)."}` });
   // Kitten Nano speaks where its native speech and model are in: speech-dispatcher (a Recommends of the RPM) is then
   // only its fallback, never a reason to warn that Ember can't speak (voice-speaking-9).
   const ownVoice = linux && p.speechBackend?.backend === "native" && p.voiceModels !== "missing" && !missing.some(m => m.id === "tts");

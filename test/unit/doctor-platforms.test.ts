@@ -68,6 +68,13 @@ describe("ember doctor's Speech row (which build runs speech on Linux)", () => {
       .toEqual({ id: "speech-engine", status: "ok", label: "Speech", detail: "Recognition uses WebAssembly (this processor lacks avx2). Replies use the system's voice." });
   });
 
+  it("never says replies use the system's voice where the Speaking row says Ember can't read replies aloud (install-docs-c12-1)", () => {
+    const none = doctorChecks(base({ speechBackend: { backend: "wasm", why: "this processor lacks avx2" }, speechDispatcher: false }));
+    expect(byId(none, "speech-engine")!.detail).toBe("Recognition uses WebAssembly (this processor lacks avx2). Replies need the system's voice, which isn't available (see Speaking).");
+    expect(byId(none, "speech")!.detail).toBe("speech-dispatcher is missing, so Ember can't read replies aloud.");
+    expect(formatDoctor(none)).not.toMatch(/Replies use the system's voice/);
+  });
+
   it("says Ember speaks in its own voice when Kitten runs natively, with speech-dispatcher only its fallback (voice-speaking-9)", () => {
     const own = base({ speechBackend: { backend: "native", why: "sherpa-onnx's C API" }, voiceModels: "bundled", speechDispatcher: false });
     expect(byId(doctorChecks(own), "speech")).toEqual({ id: "speech", status: "ok", label: "Speaking",
