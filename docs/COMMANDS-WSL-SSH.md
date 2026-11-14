@@ -83,10 +83,11 @@ WSL card or a computer's card), nothing changes and it says "Ember couldn't show
 nothing changed." (when connecting, in the bubble with **Try again**). If a later Ember changes what the card says, the
 next command a task runs there shows the new card first. Under each switch, **Ask me before every command** makes every
 command on that computer ask. **Open the command window** shows it. Where commands run as root or as an administrator
-(Ember itself, a distro or a login that is, or one where Ember can't tell), every command asks anyway, so **Ask me
-before every command** shows on there, can't be turned off, and says why under it, as it does where your organisation
-asks. In Autopilot root is no reason to ask (§2.5b), so there the switch is your own again: it says those commands run
-without asking, after a few seconds to stop them, unless you turn it on, and turning it on makes every one ask. In a
+(Ember itself, a distro or a login that is, or one where Ember can't tell), every command asks in Interactive, so **Ask
+me before every command** shows on there, can't be turned off, and says why under it, as it does where your
+organisation asks. In Assisted the check may let one your request was about go ahead (§2.5a), and in Autopilot root is
+no reason to ask (§2.5b), so in both the switch is your own again: it says what those commands do in that mode, and
+turning it on makes every one ask. In a
 distro Podman uses, every command asks in every mode, Autopilot included, so the switch shows on there and can't be
 turned off, and says why under it.
 
@@ -1115,7 +1116,8 @@ ssh-askpass) and never-look apps are refused there as on Linux.
 - **Linux apps shown by an X server on Windows** (VcXsrv, X410, Xming, GWSL, Cygwin/X) are never used: "Linux apps
   shown by an X server (VcXsrv, X410…) can't be used; WSLg's can."
 - **WSL 1** shows no Linux apps: those distros are commands only.
-- **A distro whose default user is root**: Ember doesn't use its Linux apps, and every command there asks.
+- **A distro whose default user is root**: Ember doesn't use its Linux apps, and its commands run as root (§1): every
+  one asks in Interactive.
 
 ### 3.3 What a distro needs
 

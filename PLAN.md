@@ -4651,3 +4651,169 @@ under Model provider, after the yes, that it lasts until Ember closes for want o
 withdrew it, why and how to have it again). The model-facing run_command
 rule (worker-persona.ts, worker.ts) still says dangerous commands “stop and ask the user”, true in Interactive and not
 in Autopilot (model-facing, not user copy).
+
+### Product audit fixes, twelfth round (2026-11-14)
+
+Each area was rated again at 8015720 (round eleven's pushed head, CI green on all 18 jobs), by a re-rater and a
+challenger, under docs/APPROVALS.md's rule (for commands, a P1 is a dangerous command that runs unasked in Interactive
+or a broken refusal or "never"; an ordinary or unknown command that asks, or a question in Autopilot beyond the
+person's and the organisation's own settings, is friction, a P2). Scores (re-rater / challenger): Home 9.2 / 9.1; first
+run and setup 9.1 / 8.7; reliability and platform 9.1 / 8.6; speaking 8.8 / 8.7; install, docs and developer
+experience 8.7 / 8.7; tasks and approvals 8.7 / 8.7; accessibility and copy 8.7 / 8.6; memory 8.7 / 8.3; models,
+providers, extensions and projects 8.6 / 8.5; companion and Ask 8.5 / 7.5; listening 7.9 / 7.4; commands, WSL and SSH
+7.5 / 7.0; safety and privacy 7.6 / 7.4. Home stayed at 9 from both; first run fell to 8.7 from the challenger. The
+P1s: commands-remote-r12-1 (passwords in common config files neither secret paths nor hidden) and -r12-2 (the user's no
+in ordinary words not read, so Autopilot ran what they ruled out), both raters; safety-privacy-r12-1 and -c12-1 (any
+app's list of files could delete, move or rename the folder that holds Ember's data, announced) and -r12-2 (Ember's
+extensions and logs folders not recognised, and a planted extensions.json still started); voice-listening-r12-1 (a
+spoken switch to a mode that asks less taken on words Ember can't tell from other sound) and -r12-2 (raised by the
+challenger: a follow-up's nameless words over other sound counted as the user's own for commands); companion-c12-1 (a
+background task's countdown and Stop left on the bubble after its command started). Four lanes, each from 8015720, each
+package fixed, reviewed twice (x, then y) and repaired after each review.
+
+**r12-safety** (lane r12safe; fix 343d27c to a5d321c, repair d0b0a45 to 906e26c, resolve cd45e77, 453950c, 261757d).
+safety-privacy-r12-1 and -c12-1 (P1, 343d27c, narrowed by 9b41eb3 and cd45e77): in any app's list of files (an Open or
+Save dialog, a file manager Ember has no row for), a step that removes, moves or renames the folder that holds Ember's
+data (`listReachesEmberData`: a removing key, F6 and F8, Windows' Ctrl+D, a menu item or button that moves, a dialog's
+yes to one it names) asks every time and Autopilot refuses it, judged by what the step does, never by the app, and only
+where the view lists files (`filesInView`: a chooser, a window titled with a folder, or rows only a list of files shows;
+a spreadsheet's "Local" or a music app's "Library" goes as before: review x12-2). safety-privacy-r12-2 (P1): Ember's
+extensions, logs and run folders are told by what they show (343d27c), and extensions.json is sealed with the keyring
+(a137bea, `ExtensionSeal`, extensions-seal.bin): an item the seal doesn't hold is withdrawn, never probed or offered,
+and says so in Home until the user agrees again; existing installs are asked once (fail closed, said in CHANGELOG).
+A seal of each plugin's own copied folder (7c021ef, for review x12-4) was reverted (453950c) on review y12-2 and y12-3:
+a plugin's own runtime writes beside itself, and sealing that made every Python plugin need agreeing again.
+reliability-c12-1 (P2, df8c5f9 with 9a7bb4b, repaired d0b0a45): a vault file Ember can't parse is kept aside
+(vault.json.bad-<ms>) and never written over; one that only failed to read is retried once and then left where it is
+(x12-1: a passing EMFILE had moved a healthy vault aside), and Home says which (x12-6); Forget all removes the kept
+copies. memory-r12-1, -c12-1, -c12-2 (P2, f75d710, narrowed 906e26c and 261757d): a password said in a sign-in's own
+form, a user and value with only a space, and a wallet's seed words after the wallet is named are refused (y12-4 took
+back "My Netflix is sunshine" and unnamed seed words, kept as on 8015720). P3s: kdesu, lxqt-sudo, gksu and their kin
+are password prompts (dfcd2d2, safety-privacy-r10-2); new never-look defaults, GNOME Secrets on Linux and Proton Pass,
+NordPass and RoboForm on a Mac (daf8f63, r10-5). Left: r12-safety-x12-4 (P2: a plugin's own copy under
+extensions/plugins/<id>/ is not sealed; a file pasted there runs at the next launch); y12-4's remainder (owner, below);
+y12-5 (P3: a partly unreadable vault is copied aside at each start and Home's warning clears only with Forget all);
+Enter in GTK's rename popover is announced; other languages' button labels in a chooser; safety-privacy-c12-2, r11-4,
+c11-1, r10-4, r9-6; memory-r12-2, -r12-3, -c12-3, -c12-4; reliability-r12-1, r11-2, r11-3.
+
+**r12-commands** (lane r12cmd; fix 2a2becf to abf7432, repair 71222a0 to 4fab622, resolve eb7af5f to 0ea8e96).
+commands-remote-r12-1 (P1, 2a2becf, 064d499, 7f54ef3, 34e754d): mail, WordPress and PHP, XML, Redis, LDAP, Wi-Fi and
+NetworkManager, Subversion, SMB, sbt, Ivy, getmail and neomutt settings are secret paths, and the redactor hides their
+passwords (1 MiB of each new pattern's worst start: 139 to 216 ms for the whole redactor, on the output path through
+`redactSecretsYielding`, which gives Stop its turn). commands-remote-r12-2 (P1, e3d0430, 7fb07d4, eb7af5f): the user's
+no is read as people say it (`saysNoTo`: don't, never, without, the modal no "mustn't", "can't", "not allowed", the
+passive "pushing is not allowed", "leave the remote alone", a no split from its verb by commas), only where it governs
+the step ("no problem, just push it", "No, push it to main" stay requests). y11-8 (P1, 3c9c235, e2d98f6, f0b51f2,
+0ea8e96): a download or a conversion over an existing file, or over its own input, asks; f0b51f2 also found and fixed
+that 3c9c235's converter row never read its arguments (`pandoc ~/.aws/credentials -o x.html` ran unasked). y10-4 (P1,
+f2fa6d9, 31a08a0, b01f641): a file's contents sent inside an image, registry or package name, or an option's address,
+ask, also through a variable. commands-remote-c12-2 (P2, 6586eec, eb27e34, 14a6e40, c7eb3e1): opening files or the home
+folder to other accounts asks. tasks-approvals-r12-1 (P2, ba275f1, 71222a0, 69b6afb): in Assisted the check may clear a
+command as root the request was about, on this computer and over SSH (gate 2), as the table says (owner question (b)
+of round eleven, built to the table); the commands card says so (`FEATURE_CONSENT_VERSION.commands` 3). commands-remote-
+r12-4 and -c12-1 (P2, 39a1201, abf7432, ef122c1, 4fab622): Cloud Run reads, Kubernetes and Helm dry runs, `kubectl set
+env --list`, a bare `mount` listing, `swapon --show` and `losetup -a` run, and docker add-ons and kubectl plug-ins run
+announced by name with their words judged (dangerous words ask, and keep cloud.change). accessibility-r12-1 (21e2497):
+a countdown for a command the user didn't ask for is headed "About to run this". commands-remote-r12-3 (f29a400):
+Autopilot's lines say what it did. The model-facing run_command rule names no mode (7e9915d). Review y12-8 (P1, before
+this package, 91827ce): `oc whoami -t` is a secret. Left: intent.ts `affirmed()` reads a no to the end of its part (P2,
+as on main); npx and npm exec of an installed tool ask (P2); gh's, npm's and other cloud CLIs' unknown verbs and a docker
+group's unknown sub-verb ask (P2/P3); pdftoppm, pdftocairo, gs, sox and inkscape outputs are not converter outputs
+(P3); a variable filled by `read` or copied from another isn't followed (P3); c11-5, `journalctl --vacuum-*`,
+tasks-approvals-r12-2 and -c12-1 (P3); and the owner questions below.
+
+**r12-voice** (lane r12voice; fix 350a482 to ec04f1d, repair 7bf8478 to 34b9842; review y found three P3s, left).
+voice-listening-r12-1 (P1, 350a482): a spoken switch to a mode that asks less is refused on words Ember can't count as
+the user's own (`ModeIntentHeard.unchecked`, from `voiceUnchecked`) unless Voice Match verified them, and Home opens at
+the mode's row; one that asks more stays anyone's. voice-listening-r12-2 (P1, a8e8d5f, 7bf8478): a follow-up's nameless
+words over other sound or where nothing can tell, a conversation's where nothing can tell (x12-4), and what follows the
+user's "Hey Ember" and a pause while other sound plays are marked `heardOverSound`: heard, never the user's own words
+for commands, also when they trail off and are held (x12-1); Assisted's check still reads them (x12-2, CLAUDE.md).
+companion-c12-1 (P1, 732d29b): a background task's countdown and Stop leave the bubble once its command starts.
+companion-r11-1 and -c11-1 (P2, 6c7ed29, 58820f8): a background task's announcements and its waiting line reach the
+bubble and screen readers through a claim of their own ("aside") that never holds a foreground line or question back;
+an announcement that couldn't show within 2 minutes is dropped. voice-speaking-r12-1 and -r12-2 (edd10fe, ec04f1d,
+792ddb2, 34b9842): everyday Italian emails that open with a greeting are read in the Italian voice, a passage's own
+one-word label is said in its voice, and an English label or an English email that only opens with an Italian
+greeting stays Kitten's. Left: r12-voice-y12-1 (P3: after "Hey Ember" and a pause where nothing can tell whether sound
+plays, the request is unmarked, unlike the follow-up and conversation windows), -y12-2 (P3: ENGLISH_LABELS is an
+allow-list, "Heads-up:" misses it), -y12-3 (P3); voice-listening-r12-3, r11-3, c11-1; voice-speaking-c12-1, -c12-2;
+a German one-sentence notice after a lead-in; companion r11-2, c11-2, r10-*.
+
+**r12-ui** (lane r12ui; fix f54b1d8 to 7f5b873, repair a282e8d to 18ce80b, resolve 2e1db15).
+integrations-r12-1 and -c12-1 (P2, 9124f0b, a282e8d, 2e1db15): in Assisted an extension's call that would ask because
+its tool changes things or its server is on the internet goes to the check against the turn's own words (never while a
+no stands, x12-1; never for Ember's data, a tainted conversation or a changed list; asks unchecked when the quoted call
+would be cut or is over `STEP_CHECK_MAX`, y12-1), announced on a match and audited `mode: "assisted"`; the extensions
+card (5) and Assisted's card (4) say so; the conversation's bubble says "Checking this step against what you asked…"
+(x12-7). integrations-r12-2 (P2, f54b1d8, 60e4d34): a failed call taints only as a result would; its text reaches the
+model only in Ember's `<extension_failure untrusted>` tag, and hidden characters or markup like Ember's own taint
+(x12-2). integrations-r10-4 (9640075, d69cf16 with de92929): a question nobody answered is not a no, and Stop is told as
+itself (x12-3). first-run-c12-1 (P2, 6e6b7fc, 6fa2f5c): a returning Assisted or Autopilot user keeps their mode through
+first run's agreement. install-docs-r12-1 (P2, b0712cd) and the Home P3s (8ff075d with 3b33b08, 27284a6): README, the
+commands guide and Home say what each mode does with commands. accessibility-r12-2 (8f3337e): long paths wrap at 420
+px. install-docs-c12-1 to -c12-3 (a2254be, a4d3a90): the doctor's Speech row, README, the remote's environment
+switches. Left: COMMANDS_CARD_ASKS (P3, a commands-card text change: not batched into this round's commands 3, whose
+text is the commands lane's); first-run-r12-1 to -r12-3 and -c12-2's offer once the policy is fixed; home-r12-2's
+privacy-list line; accessibility-r12-3 in part; the two prose failure texts that don't taint (as a result with that
+text); app steps' `stepCheckPrompt` still slices at 4,000 characters (a refusal there is a policy change). Process: three
+lane commits fail on their own and are fixed by the next (df8c5f9 by 9a7bb4b, 8ff075d by 3b33b08, d69cf16 by
+de92929): lane commits are not rewritten, and each merge commit passes.
+
+**The merge** (a worktree of its own, r9/r12merge from 8015720; lanes merged by hand in the order safe, commands,
+voice, copy, one `--no-ff` merge commit each: 1e4371e, 79bfa1d, c6f77b2, 1ec2f56; lanes/r12merge/NOTES.md). The first
+three had no conflict. The fourth conflicted on one line in two files: `FEATURE_CONSENT_VERSION` and its pin in
+sshwsl-contract.test.ts, where the commands lane had commands 2 → 3 and the copy lane extensions 4 → 5 and assisted 3 →
+4; each card changed in one lane only, so each keeps one text and one bump (commands 3, extensions 5, assisted 4), and
+consent.ts's comment says what commands 3 changed. `CONSENT_VERSION` stays 11 (nothing new is read, sent or kept).
+Judged together and found right: Assisted's card (4) already says the check may clear a command that changes the
+system and never what the user or the organisation set to ask, so it is true of root in Assisted without a second
+text; an unsealed extension has no tools, so the Assisted check reaches only sealed ones; `heardOverSound` makes speech
+`voiceUnchecked`, which the commands lane's "the user's own words asked for exactly" never counts and Assisted's check
+(the extension call's too) still reads; Ember's new files (extensions-seal.bin, vault.json.bad-N) are in policy.ts
+`EMBER_FILE`, and commands refuse Ember's data folder as a whole. Nothing only the merge broke. Then one docs commit
+brought CHANGELOG 0.1.1, README, docs/COMMANDS-WSL-SSH.md, CLAUDE.md and .claude/rules/agent-and-policy.md to the merged
+code (the copy lane's CHANGELOG splice, which its session couldn't write; root in Assisted; a mode by voice on unchecked
+words; the extensions seal and the one-time agreement; the safety, commands, memory, voice and companion lines above).
+
+**Harnesses, with the head each was measured on.** Policy proof (`--base trees/main-01493d0 --intended
+allow/intended-round9.json --intended lanes/r11safe/intended-r11.json`), at 79bfa1d and at 1ec2f56: PASS, 287,678
+steps, regression 0 weaker / 254 stronger, equivalence 0 weaker (430 allowed) / 254 stronger, failClosed 0 / 0, flags
+lost 0 gained 0, 24 hard checks (the same 254 as round eleven's head). Commands comparison (corpus 304,576 cases;
+baselines 4d64d3a, 848a566 and today's main 01493d0): with round eleven's known file alone, each baseline shows 261 new
+looser cases and 3 weaker asks, the commands lane's intended set. They are 28 distinct commands, each checked against
+APPROVALS.md's dangers and found none (listings: `mount`, `mount -l`, `mount -t ext4`, `mount | grep sda`, `swapon
+--show`, `losetup -a`; reads: four gcloud list/describe forms; dry runs: three kubectl and one helm; `kubectl set env
+--list` twice; ten docker add-on and kubectl plug-in forms, run announced by name); every mount that names a device or a
+folder, `-a`, `--bind` or remount, and every swapon or losetup that changes something, still asks system.kernel. The 3
+weaker asks still ask (bare `mount` tainted or under the user's ask-every; a test sentence "maps … mount"), losing only
+the system class a bare listing never had. They are recorded, with their reasons, in the harness's
+known-looser-r12.json (792 looser, 9 weaker over three baselines). With both known files: in all five modes 0 new
+failures, 0 new weaker asks, 0 unproven; looser on purpose autopilot 197,352, assisted-match 54,715, assisted-nomatch
+511, interactive 511; "outside the mode's stated limits" autopilot 32,298 and assisted-match 6,014, which is the
+harness's pre-2026-11-14 limit text (secrets and outliving Stop "still ask in every mode"), every listed case one of
+those two kinds, changed on purpose by the owner's rule (round eleven's merge: 31,834 and 5,885); every run exits 1 on
+the plausibility guard only (44.6 / 43.0 % against 4d64d3a), as known. The final gate's numbers are in
+lanes/r12merge/NOTES.md and the PR.
+
+**Questions for the owner** (each built the stricter way until answered, except where the table already rules).
+(f) Switching to a mode that asks less by voice is now impossible on Windows and macOS without Voice Match, with Listen
+once on every OS, and for nameless words over other sound (voice-listening-r12-1, fail closed); the other side is that
+a person present can click. (g) After the user's own "Hey Ember" and a pause while music plays, the second breath is
+marked as not their own words for commands (r12-voice-x12-3), so a dangerous command they name then asks in
+Interactive; counting it as theirs where the speakers' stream doesn't read it as said let a video's quiet request
+through in every level pair tried. (h) Memory: "My Netflix is sunshine" (a lower-case word as what a service's account
+is) and unnamed seed words are kept, as before; telling them apart needs a dictionary or the BIP-39 word list (2,048
+words): ship it? Also kept: "Discord: hunter2", "The cabin Wi-Fi is dragonfly", "My work login is dragonfly"
+(safety-privacy-v4-1). (i) Commands: environment launchers handing a runner (`dotenv -- vitest run`) still ask how they
+run it (integ-y-1's pin), though APPROVALS.md says a wrapper around an ordinary command runs; folder-level copies from a
+remote (`rclone copy remote: .`, `aws s3 sync s3://b .`) replace changed files unasked while `rsync host:a/ .` asks;
+`mogrify` and `perl -i` edit in place unasked, as `sed -i` does; a converter's output named with its input's stem and a
+suffix (`pandoc notes.md -o notes-final.docx`) runs over an existing file of that name. (j) `kubectl ctx prod` (switch
+the current kube context) runs announced, as `kubectx prod` did, while `kubectl config use-context prod` asks
+(cloud.unknown-verb): a setting a later command obeys, not one of APPROVALS.md's dangers. Still open from round eleven:
+(a) code Ember can't read in Interactive, (c) a distro Podman uses and Project work asking in Autopilot, (d) unreadable
+native file dialogs, (e) Autopilot refusing a target it can't name; (b), root in Assisted, is built to the table.
+
+**Left.** CI on r9/r12merge (pushed by the integrator after this merge). By package, the lists above; the re-rate's
+P3s no package took up stay open as their reports list them.
