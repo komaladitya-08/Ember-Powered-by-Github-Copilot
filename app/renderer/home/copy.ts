@@ -312,9 +312,9 @@ export function privacyFoldWords(text: string, o: { screenImages: boolean; auton
     .replace(HAND_COMMANDS_FULL, o.autonomy === "autopilot"
       ? ", even on anything risky or hard to undo: Autopilot is on, so it tells you what it's doing as it goes and asks only where How Ember asks, below, says."
       : o.autonomy === "assisted"
-        ? ` on anything risky in an app, or before a command it knows is dangerous or code it can't read, unless Assisted's check finds the step in what you asked, or it is a command you asked for exactly that ${EXACT_ONLY}: then it goes ahead and tells you. ${UNKNOWN_RUNS} For ordinary steps it tells you what it's doing instead (How Ember asks, below).`
+        ? ` on anything risky in an app, or before a command it knows is dangerous or code it can't read, unless Assisted's check finds the step in what you asked, or you asked for exactly that command and it ${EXACT_ONLY}: then it goes ahead and tells you. ${UNKNOWN_RUNS} For ordinary steps it tells you what it's doing instead (How Ember asks, below).`
       : o.autonomy
-      ? ` on anything risky in an app, and before a command it knows is dangerous or code it can't read, except a command you asked for exactly that ${EXACT_ONLY}, which it shows you first with a few seconds to stop it. ${UNKNOWN_RUNS} For ordinary steps it tells you what it's doing instead (How Ember asks, below).`
+      ? ` on anything risky in an app, and before a command it knows is dangerous or code it can't read, except where you asked for exactly that command and it ${EXACT_ONLY}: it shows you that one first, with a few seconds to stop it. ${UNKNOWN_RUNS} For ordinary steps it tells you what it's doing instead (How Ember asks, below).`
       : o.grants ? ` in an app, except those you let it act in without asking (below), and even there before anything risky. ${HAND_COMMANDS} ${UNKNOWN_RUNS}`
         : ` in an app. ${HAND_COMMANDS} ${UNKNOWN_RUNS}`)
     .replace(" Only in Autopilot, it can fill in a login, a card or contact details from its vault, which the AI model never sees.", o.vaultFill === false
@@ -1048,9 +1048,9 @@ export const APPROVALS_HEADING = "How Ember asks";
 export const MODE_NAME: Readonly<Record<ApprovalMode, string>> = { interactive: "Interactive", assisted: "Assisted", autopilot: "Autopilot" };
 /** Each offered mode's one sentence under its name (a mode joins as it is built). */
 export const MODE_LINE: Readonly<Partial<Record<ApprovalMode, string>>> = {
-  interactive: `Ember tells you about ordinary steps as it does them, and asks before anything risky, such as sending, deleting or paying, unless it is a command you asked for exactly that ${EXACT_ONLY}: then it tells you first.`,
+  interactive: `Ember tells you about ordinary steps as it does them, and asks before anything risky, such as sending, deleting or paying, unless you asked for exactly that command and it ${EXACT_ONLY}: then it tells you first.`,
   assisted: "As Interactive, but before Ember asks, a lighter AI model checks the step against what you asked. If it matches, Ember goes ahead and tells you.",
-  autopilot: "Ember doesn't ask: it sends, deletes, pays and installs without asking, and tells you as it goes. You accept that risk when you choose it.",
+  autopilot: "Ember doesn't ask, except before commands where you or your organisation set them to ask every time: it sends, deletes, pays and installs without asking, and tells you as it goes. You accept that risk when you choose it.",
 };
 /** Each offered mode's card: its text, shown before the mode is chosen, and the version an agreement to it carries. */
 export const MODE_CARD_TEXT: Readonly<Partial<Record<ApprovalMode, string>>> = { interactive: AUTONOMY_CONSENT_TEXT, assisted: ASSISTED_CONSENT_TEXT, autopilot: AUTOPILOT_CONSENT_TEXT };
@@ -1065,7 +1065,7 @@ const CHECK_OFF_TEXT = `Your organisation turned off the check ${MODE_NAME.assis
 /** What Ember asks before while no mode is in force: said wherever the window says it is below Interactive. */
 const ASKS_BEFORE = "Ember asks before its first step in an app, before using your mouse and keyboard, before pressing OK on an app's message box and before moving text between apps";
 /** Under the modes while Autopilot is in force: that it is, what that means, and how to stop it (never left unsaid). */
-const AUTOPILOT_ON = `${MODE_NAME.autopilot} is on: Ember sends, deletes, pays and installs without asking, and tells you as it goes. “Ember, stop” or Ember's stop shortcut stops it.`;
+const AUTOPILOT_ON = `${MODE_NAME.autopilot} is on: Ember sends, deletes, pays and installs without asking, and tells you as it goes. It still asks before commands where you or your organisation set them to ask every time, in a distro Podman uses and in “Project work”. “Ember, stop” or Ember's stop shortcut stops it.`;
 /**
  * That a question can be answered by voice (by anyone heard while Voice Match is off, its default: 2026-11-12), and that
  * a mode can be chosen by saying its name (app/main/agent/autonomy-intent.ts: one that asks less only with its card
