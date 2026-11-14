@@ -2891,7 +2891,9 @@ downloads it on first use per target and checks it before sending.
   names it by its program, so "don't run frobtool" makes it ask, and Autopilot refuse it): a new tool goes into a row, the tables, or `unknownDoes`'s word lists
   in classify.ts, never into a question for not knowing it. In Autopilot only the organisation's "ask" and the user's own
   "ask every command" still ask (autopilot.ts `autopilotAsks`); a secret's command runs with its output withheld from
-  the model (`withheld`, flow.ts `WITHHELD_OUTPUT`, audited `outputWithheld`), one that outlives Stop says so
+  the model (`withheld`, flow.ts `WITHHELD_OUTPUT`, audited `outputWithheld`; one that also writes a file Ember can
+  name is refused, `secret-saved`, and not cleared by Assisted's check, and after a withheld run every later output of
+  the task is withheld too, `withheldSecrets`: r11-commands-y11-1), one that outlives Stop says so
   (`outlivesStop`), and the user's own no, a deletion or a write of what Ember can't name and an unknown verb of a
   terminal's remote control are refused (`autopilotRefuses`), also where a remote's gate 2 sends those rules back
   (flow.ts, before its countdown). Gate 2 takes Autopilot's announcement for what the

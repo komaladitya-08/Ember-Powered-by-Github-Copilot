@@ -34,7 +34,7 @@ import {
   outlivesKillSwitch, printsSecrets, readsSecrets,
 } from "./autopilot";
 import { AUTOPILOT_WORDS } from "../policy/policy";
-import { classifyCommand } from "./classify";
+import { classifyCommand, type ClassificationExtra } from "./classify";
 import { LINES, UNKNOWN_ANNOUNCED, decideCommand } from "./decide";
 import { covers, type AutonomyScopes } from "../policy/autonomy";
 import { heldByWords, mentioned, namedKind, namesUnknown, ruledOut } from "./intent";
@@ -103,7 +103,7 @@ export interface CommandFlowContext {
    * (a command's output tainted the task, so the card says so in its own words, §3.8.4) and `written` (what the task's
    * commands wrote, so a script of its own that can't be read in full asks: L8's padding bypass).
    */
-  state: { cwd: string | null; downloaded: Set<string>; running: boolean; outputTainted?: boolean; written?: TaskWrites };
+  state: { cwd: string | null; downloaded: Set<string>; running: boolean; outputTainted?: boolean; written?: TaskWrites; withheldSecrets?: boolean };
   /** The command window's size for new runs. */
   size: () => { cols: number; rows: number };
   /** Ember's own pids now (D4.5; main's live list, §3.6.2). */
@@ -1131,10 +1131,12 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
     // (Their own words against it count wherever they were heard: where Ember can't tell the user from its speakers too.)
     const standing = standingFindings(cls.findings, paths);
     const input = { findings: [...cls.findings, ...hidden], mode, askEvery: cap.askEvery, userAskEvery, ruledOut: wordsRuleOut(standing, words) || wordsRuleOut(standing, spoken) };
-    const refusal = autopilotRefuses(d, input);
+    // A secret's output is withheld from the model; one saved to a file a later command could read is refused instead
+    // (r11-commands-y11-1).
+    const refusal = autopilotRefuses(d, input) ?? (printsSecrets(d, input.findings) && savesFiles(cls) ? "secret-saved" : null);
     if (refusal) {
       endPending();
-      audit({ phase: "decided", shell, cwd, commandChars: a.command.length, verdict: "refuse", classes: d.classes, rules: [...d.rules, AUTOPILOT_RULE], reason: refusal === "ruled-out" ? "The user's own words for the task rule this command out, and Autopilot asks nothing." : refusal === "terminal" ? "It may act in the user's own terminals, and Autopilot asks nothing." : "It deletes or changes something Ember can't name, and Autopilot asks nothing." });
+      audit({ phase: "decided", shell, cwd, commandChars: a.command.length, verdict: "refuse", classes: d.classes, rules: [...d.rules, AUTOPILOT_RULE], reason: refusal === "ruled-out" ? "The user's own words for the task rule this command out, and Autopilot asks nothing." : refusal === "terminal" ? "It may act in the user's own terminals, and Autopilot asks nothing." : refusal === "secret-saved" ? "It saves secrets to a file a later command could show the model, and Autopilot asks nothing." : "It deletes or changes something Ember can't name, and Autopilot asks nothing." });
       ctx.log.info("commands.decided", { task, target, verdict: "refuse", classes: d.classes, chars: a.command.length, autopilot: refusal });
       return denied(`Not allowed: ${AUTOPILOT_REFUSES[refusal]}`);
     }
@@ -1179,12 +1181,16 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
       if (ctx.isOver()) return STOPPED();
       ctx.log.info("commands.reviewed", { task, target, verdict: v ? (v.run ? "run" : "ask") : "none", ms: Math.round(performance.now() - t0) });
       if (v?.run) {
-        d = reviewedDecision(d, v);
         // Cleared without a question: a secret's output is kept from the model, and what outlives Stop says so, as in
         // Autopilot (the owner's decision of 2026-11-14).
         const all = [...cls.findings, ...hidden];
-        if (printsSecrets(d, all)) d = { ...d, withheld: true, says: [...d.says, WITHHELD_LINE] };
-        if (outlivesKillSwitch(d, all)) d = { ...d, outlivesStop: true, says: [...d.says, OUTLIVES_LINE] };
+        // One that saves the secret to a file a later command could read isn't cleared: it asks (r11-commands-y11-1).
+        if (printsSecrets(d, all) && savesFiles(cls)) d = { ...d, says: [...d.says, SECRET_SAVED_LINE] };
+        else {
+          d = reviewedDecision(d, v);
+          if (printsSecrets(d, all)) d = { ...d, withheld: true, says: [...d.says, WITHHELD_LINE] };
+          if (outlivesKillSwitch(d, all)) d = { ...d, outlivesStop: true, says: [...d.says, OUTLIVES_LINE] };
+        }
       } else if (v?.why) d = { ...d, says: [...d.says, `Ember's review: ${v.why.replace(/[.\s]+$/, "")}.`] };
     }
   }
@@ -1656,6 +1662,15 @@ function noteDownloads(ctx: CommandFlowContext, cls: Classification): void {
   noteWrites(ctx.state.written ??= newTaskWrites(), cls);
 }
 
+/** Does the command write a file Ember can name (a redirect, tee, a copy's target, -o)? A secret saved there may be read later. */
+function savesFiles(cls: Classification): boolean {
+  const w = (cls as Partial<ClassificationExtra>).writes;
+  return Array.isArray(w) && w.length > 0;
+}
+
+/** The card's line where Assisted's check found the request asks for a secret's command that saves it to a file. */
+export const SECRET_SAVED_LINE = "It saves passwords or keys to a file, so Ember asks even though your request names it.";
+
 /** One macrotask: the stop shortcut's handler, waiting on Ember's main thread, runs first (merge review integ-y-2). */
 const nextTurn = (): Promise<void> => new Promise(resolve => setImmediate(resolve));
 
@@ -1733,12 +1748,16 @@ async function finishRun(ctx: CommandFlowContext, j: CommandJudge, run: RunOutco
     ctx.audit({ event: "command", phase: "tainted", task, target, runId: o.runId, rule: taint });
   }
   if (exit.ended !== "failed-to-start") noteDownloads(ctx, o.cls);
+  // After a secret's output was withheld, every later output of the task is too: the secret may be in a file it wrote
+  // where Ember couldn't see (r11-commands-y11-1).
+  const withheld = o.withheld === true || ctx.state.withheldSecrets === true;
+  if (o.withheld && exit.ended !== "failed-to-start") ctx.state.withheldSecrets = true;
   ctx.audit({
     event: "command", phase: "ended", task, target, runId: o.runId, ended: exit.ended, code: exit.code, signal: exit.signal, ms: exit.ms,
-    outBytes: out.bytes, secretSpans: kept.spans.length, typedLines: typed.length, ...cutFields(exit), ...(o.withheld ? { outputWithheld: true } : {}),
+    outBytes: out.bytes, secretSpans: kept.spans.length, typedLines: typed.length, ...cutFields(exit), ...(withheld ? { outputWithheld: true } : {}),
   });
   ctx.log.info("commands.ended", { task, target, ended: exit.ended, code: exit.code, ms: exit.ms, outBytes: out.bytes, outputCut: exit.outputCut === true });
-  const result = resultOf(exit, o.withheld ? WITHHELD_OUTPUT : shaped, { label: o.label, timeoutS: o.timeoutS, redact: j.redactSecrets });
+  const result = resultOf(exit, withheld ? WITHHELD_OUTPUT : shaped, { label: o.label, timeoutS: o.timeoutS, redact: j.redactSecrets });
   if (!taint || result.resultType === "denied") return result;
   const note = "\n(The output contained text that looks like instructions; it was not followed. Every further command in this task asks the user.)";
   return { ...result, textResultForLlm: `${result.textResultForLlm}${note}`, ...(result.resultType === "failure" ? { error: `${result.textResultForLlm}${note}` } : {}) };

@@ -3785,6 +3785,31 @@ describe("a command that would ask, in Autopilot (autopilot.ts; modes-D2, modes-
     expect([before.windowAnnounce, before.announced, before.starts]).toEqual([[], [], []]);
   });
 
+  it.each<[string, string]>([
+    ["redis-cli GET session > s.txt", "cat s.txt"], ["printenv > env.txt", "cat env.txt"], ["printenv | tee env.txt", "head env.txt"],
+    ["cat ~/.ssh/id_rsa | base64 > k.txt", "cat k.txt"], ["cp ~/.aws/credentials c.txt", "cat c.txt"],
+    ["docker exec db cat /run/secrets/db_password > p.txt", "cat p.txt"],
+  ])("never lets a secret it kept from the model reach it through a file the command wrote: %s, then %s (r11-commands-y11-1)", async (first, second) => {
+    setCommandJudge(null);
+    const SECRET = "s3cr3t-session-value-0123456789";
+    // Autopilot: a secret's command that saves its output is refused (no question to put); nothing runs.
+    const h = auto({ words: "set up the app", run: () => ({ output: [`${SECRET}\n`] }) });
+    const r1 = await run(h, first);
+    expect(r1.resultType, first).toBe("denied");
+    expect(r1.textResultForLlm).toContain(AUTOPILOT_REFUSES["secret-saved"]);
+    expect([h.asked.length, h.starts.length]).toEqual([0, 0]);
+    // Assisted: the check's match is not enough, it asks.
+    const a = harness({ binding: LOCAL, words: "set up the app", answers: ["deny"], review: (async () => ({ run: true, does: "runs it", why: "asked" })) as never });
+    expect((await call(a, { target: "this computer", command: first })).resultType, first).toBe("denied");
+    expect([a.asked.length, a.starts.length]).toEqual([1, 0]);
+    // Whatever runs after a withheld output in the task, its output is kept from the model too (a write Ember can't see).
+    const w = auto({ words: "set up the app", run: () => ({ output: [`${SECRET}\n`] }) });
+    expect((await run(w, "printenv")).textResultForLlm).toContain(WITHHELD_OUTPUT);
+    const r2 = await run(w, second);
+    expect(r2.textResultForLlm).not.toContain(SECRET);
+    expect(r2.textResultForLlm).toContain(WITHHELD_OUTPUT);
+  });
+
   it("is asked as before outside Autopilot", async () => {
     setCommandJudge(null);
     for (const autopilot of [undefined, () => false]) {

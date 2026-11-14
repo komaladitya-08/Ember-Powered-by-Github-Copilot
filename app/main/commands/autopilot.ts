@@ -39,7 +39,7 @@ export const readsSecrets = (rule: string): boolean => SECRET_RULE.test(rule.rep
 export type AutopilotAsk = "organisation" | "user";
 
 /** Why Autopilot refuses a command, having no question to put: the user's own no, or a target Ember can't name. */
-export type AutopilotRefusal = "ruled-out" | "unresolved" | "terminal";
+export type AutopilotRefusal = "ruled-out" | "unresolved" | "terminal" | "secret-saved";
 
 /**
  * What a remote's gate 2 answers with, among its rules, where its own administrator doesn't allow Autopilot: the PC
@@ -222,6 +222,7 @@ export const AUTOPILOT_REFUSES: Readonly<Record<AutopilotRefusal, string>> = {
   "ruled-out": "The user's own words for this task rule this command out. Don't try another way; tell the user in finish_task.",
   terminal: "It may act in the user's own terminals or editor, which Ember never does. Don't try another way; tell the user in finish_task.",
   unresolved: "It deletes or changes something Ember can't name (a variable, a substitution or another user's home), which could be Ember's own records. Write the command again with each place named plainly, so Ember can judge it.",
+  "secret-saved": "It reads passwords or keys and saves them to a file, where a later command would show them to you. Don't try another way; tell the user in finish_task.",
 };
 
 /** What each class of command does, in Ember's own words, for the announcement: never a word of the command. */

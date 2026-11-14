@@ -809,7 +809,9 @@ Since the owner's decision of 2026-11-14 Autopilot asks nothing of what a comman
   the model**: the card says "Its output may hold passwords or keys, so Ember keeps it from the AI model: only you see
   it here.", the model is told only that it ran and how it ended, and What Ember did records it; a downloaded program
   handed one counts (`npx tool ~/.ssh/id_rsa`: the card also says "Gives a password, key or other secret to code it
-  downloads.");
+  downloads."). One that saves them to a file a later command could show the model (`printenv > env.txt`, `cp
+  ~/.aws/credentials c.txt`) is refused instead, and Assisted's check doesn't clear it; after a command's output was
+  kept from the model, the output of every later command in that task is kept from it too;
 - a command that would keep running after Stop (a background job, `nohup`, `setsid`, a detached `screen` or `tmux`
   session, `docker run -d`, a process manager, a scheduled job, a program it opens, a service, a login or startup
   entry, the Windows registry), or that plants code to run later (a git hook, a git setting that names a program, a
