@@ -615,7 +615,7 @@ describe("Computers and Commands in settings (§8.3) and the onboarding line (§
     ].map(keep)).toEqual([
       // WSL only on Windows (review #198): the page's own intro is Linux's and macOS's.
       "Computers", "Ember can work on this computer and on computers you reach over SSH. Your voice and your GitHub sign-in always stay here.",
-      "Commands", "Ember runs commands in its own command window, where you can watch and stop them. It asks first before anything that deletes, publishes, touches secrets or changes the system.",
+      "Commands", "Ember runs commands in its own command window, where you can watch and stop them. It asks first before anything that touches secrets or downloads and runs code, and before anything that deletes, publishes or changes the system unless you asked for exactly that command: then it tells you first and gives you a few seconds to stop it.",
       "Let Ember work in WSL", "Offer to bring Ember along when I connect with SSH", "Host name or user@host", "Connect",
       "Ask me before every command", "Open the command window", "Your organisation doesn't allow Ember to work in WSL.",
       "Your organisation doesn't allow Ember on other computers.", "Your organisation lets Ember connect only to some computers.",
@@ -1598,11 +1598,11 @@ describe("Apps & privacy's screenshot switch (safety-privacy-7)", () => {
     // The words are first run's own, after the line's bold lead, as the page has them; with no mode in force here,
     // Apps & privacy says it asks (slice4-22).
     expect(page).toContain(`<b>It asks before acting</b>${hand}<span`);
-    expect(`It asks before acting${privacyFoldWords(hand, { screenImages: true })}`).toBe("It asks before acting in an app, and always before anything hard to undo. It never lets the AI model type or see passwords. Only in Autopilot, it can fill in a login, a card or contact details from its vault, which the AI model never sees. ");
+    expect(`It asks before acting${privacyFoldWords(hand, { screenImages: true })}`).toBe("It asks before acting in an app, and always before anything hard to undo, except a command you asked for exactly, which it shows you first with a few seconds to stop it. It never lets the AI model type or see passwords. Only in Autopilot, it can fill in a login, a card or contact details from its vault, which the AI model never sees. ");
     expect(`It asks before acting${privacyFoldWords(hand, { screenImages: true, autonomy: "interactive", grants: true })}`).toBe(
-      "It asks before acting on anything risky or hard to undo. For ordinary steps it tells you what it's doing instead (How Ember asks, below). It never lets the AI model type or see passwords. Only in Autopilot, it can fill in a login, a card or contact details from its vault, which the AI model never sees. ");
+      "It asks before acting on anything risky or hard to undo, except a command you asked for exactly, which it shows you first with a few seconds to stop it. For ordinary steps it tells you what it's doing instead (How Ember asks, below). It never lets the AI model type or see passwords. Only in Autopilot, it can fill in a login, a card or contact details from its vault, which the AI model never sees. ");
     expect(`It asks before acting${privacyFoldWords(hand, { screenImages: true, grants: true })}`).toBe(
-      "It asks before acting in an app, except those you let it act in without asking (below), and always before anything hard to undo. It never lets the AI model type or see passwords. Only in Autopilot, it can fill in a login, a card or contact details from its vault, which the AI model never sees. ");
+      "It asks before acting in an app, except those you let it act in without asking (below), and always before anything hard to undo, except a command you asked for exactly, which it shows you first with a few seconds to stop it. It never lets the AI model type or see passwords. Only in Autopilot, it can fill in a login, a card or contact details from its vault, which the AI model never sees. ");
     // The onboarding line's words after its lead, on either OS, are the ones the settings and the policy leave.
     const { onboardingRest } = await import("../../app/renderer/home/computers-copy");
     for (const os of ["linux", "win32"] as const) expect(privacyFoldWords(onboardingRest(os), { screenImages: true, targets: ": now" })).toBe(": now");
@@ -1613,7 +1613,7 @@ describe("Apps & privacy's screenshot switch (safety-privacy-7)", () => {
     const { privacyFoldWords } = await import("../../app/renderer/home/copy");
     const hand = " in an app unless you turn on Interactive, when you agree or later in settings, and always before anything hard to undo. It never lets the AI model type or see passwords. Only in Autopilot, it can fill in a login, a card or contact details from its vault, which the AI model never sees. ";
     expect(`It asks before acting${privacyFoldWords(hand, { screenImages: true, vaultFill: false })}`).toBe(
-      "It asks before acting in an app, and always before anything hard to undo. It never lets the AI model type or see passwords. Your organisation has turned off filling in logins, cards and contact details from its vault. ");
+      "It asks before acting in an app, and always before anything hard to undo, except a command you asked for exactly, which it shows you first with a few seconds to stop it. It never lets the AI model type or see passwords. Your organisation has turned off filling in logins, cards and contact details from its vault. ");
     expect(privacyFoldWords(hand, { screenImages: true, vaultFill: true })).toBe(privacyFoldWords(hand, { screenImages: true }));
     // Home passes it from the policy in force: the vault's switch, a lockdown, or a mode cap that keeps Autopilot out.
     const main = readFileSync(new URL("../../app/renderer/home/main.ts", import.meta.url), "utf8");

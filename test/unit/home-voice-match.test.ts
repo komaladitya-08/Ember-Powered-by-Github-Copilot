@@ -262,7 +262,7 @@ describe("How Ember asks (Apps & privacy, modes-A10)", () => {
     expect(approvalsView(state(agreed), false).rows).toEqual([{ ...ROW, checked: true, locked: false, title: "" }, { ...ASSISTED, ...FREE }, { ...AUTOPILOT, ...FREE }]);
     expect(approvalsView(state(agreed), false).inForce).toBe("interactive");
     expect(approvalsView(state(), false).rows).toEqual([{ ...ROW, ...FREE }, { ...ASSISTED, ...FREE }, { ...AUTOPILOT, ...FREE }]);
-    expect(MODE_LINE.interactive).toBe("Ember tells you about ordinary steps as it does them, and asks before anything risky, such as sending, deleting or paying.");
+    expect(MODE_LINE.interactive).toBe("Ember tells you about ordinary steps as it does them, and asks before anything risky, such as sending, deleting or paying, unless it is a command you asked for exactly: then it tells you first.");
     expect(MODE_LINE.assisted).toBe("As Interactive, but before Ember asks, a lighter AI model checks the step against what you asked. If it matches, Ember goes ahead and tells you.");
     // Assisted in force is the row marked (modes-C5).
     const assisted = { mode: "assisted" as const, consent: { ...agreed.consent, assisted: { version: modeCardVersion("assisted"), at: AT } } };

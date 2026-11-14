@@ -300,11 +300,11 @@ export function privacyFoldWords(text: string, o: { screenImages: boolean; auton
     .replace(" in an app unless you turn on Interactive, when you agree or later in settings, and always before anything hard to undo.", o.autonomy === "autopilot"
       ? ", even on anything risky or hard to undo: Autopilot is on, so it tells you what it's doing as it goes and asks only where How Ember asks, below, says."
       : o.autonomy === "assisted"
-        ? " on anything risky or hard to undo, unless Assisted's check finds the step in what you asked: then it goes ahead and tells you. For ordinary steps it tells you what it's doing instead (How Ember asks, below)."
+        ? " on anything risky or hard to undo, unless Assisted's check finds the step in what you asked, or it is a command you asked for exactly: then it goes ahead and tells you. For ordinary steps it tells you what it's doing instead (How Ember asks, below)."
       : o.autonomy
-      ? " on anything risky or hard to undo. For ordinary steps it tells you what it's doing instead (How Ember asks, below)."
-      : o.grants ? " in an app, except those you let it act in without asking (below), and always before anything hard to undo."
-        : " in an app, and always before anything hard to undo.")
+      ? " on anything risky or hard to undo, except a command you asked for exactly, which it shows you first with a few seconds to stop it. For ordinary steps it tells you what it's doing instead (How Ember asks, below)."
+      : o.grants ? " in an app, except those you let it act in without asking (below), and always before anything hard to undo, except a command you asked for exactly, which it shows you first with a few seconds to stop it."
+        : " in an app, and always before anything hard to undo, except a command you asked for exactly, which it shows you first with a few seconds to stop it.")
     .replace(" Only in Autopilot, it can fill in a login, a card or contact details from its vault, which the AI model never sees.", o.vaultFill === false
       ? " Your organisation has turned off filling in logins, cards and contact details from its vault."
       : " Only in Autopilot, it can fill in a login, a card or contact details from its vault, which the AI model never sees.");
@@ -945,11 +945,12 @@ export const MEMORY_QUESTIONS_HINT = "At most one question a day, only while you
 
 /**
  * Interactive's card (Apps & privacy › How Ember asks, FEATURE_CONSENT_VERSION.autonomy; app/main/policy/autonomy.ts):
- * what is announced instead of asked, what still asks every time, what never happens, that a stop always works, and
+ * what is announced instead of asked, what still asks every time (risky steps in an app; a dangerous command but one the
+ * user asked for exactly, which is announced in every mode: accessibility-c11-1), what never happens, that a stop always works, and
  * that anyone near the computer can answer a question by voice while Voice Match is off. Change it only with a bump of
  * that version.
  */
-export const AUTONOMY_CONSENT_TEXT = "In Interactive, Ember does ordinary steps without asking first: it works in your apps, borrows your mouse and keyboard, runs ordinary commands, moves text between apps and presses OK on a message box that has nothing else to choose. It tells you what it is doing as it goes, and keeps a record under What Ember did. It still asks every time before anything risky: sending, posting, submitting, sharing, deleting, overwriting, paying, installing, signing out, security settings, dangerous commands and any dialog that asks a question. It asks more often in your system's settings and security apps, and a task goes back to asking once you say no or a page or file tries to give it instructions. It never types passwords and never acts in sign-in prompts. “Ember, stop” or Ember's stop shortcut stops everything at once, and moving your mouse takes it back. While Voice Match is off, anyone near the computer can answer Ember's questions by voice.";
+export const AUTONOMY_CONSENT_TEXT = "In Interactive, Ember does ordinary steps without asking first: it works in your apps, borrows your mouse and keyboard, runs ordinary commands, moves text between apps and presses OK on a message box that has nothing else to choose. It tells you what it is doing as it goes, and keeps a record under What Ember did. It still asks every time before anything risky in an app: sending, posting, submitting, sharing, deleting, overwriting, paying, installing, signing out, security settings and any dialog that asks a question. It asks before a dangerous command too, unless you asked for exactly that command and it touches no passwords, keys or downloaded code: then it shows it first, with a few seconds to stop it. It asks more often in your system's settings and security apps, and a task goes back to asking once you say no or a page or file tries to give it instructions. It never types passwords and never acts in sign-in prompts. “Ember, stop” or Ember's stop shortcut stops everything at once, and moving your mouse takes it back. While Voice Match is off, anyone near the computer can answer Ember's questions by voice.";
 
 /**
  * Assisted's card (Apps & privacy › How Ember asks, FEATURE_CONSENT_VERSION.assisted; PolicyEngine.assist and
@@ -980,7 +981,7 @@ export const APPROVALS_HEADING = "How Ember asks";
 export const MODE_NAME: Readonly<Record<ApprovalMode, string>> = { interactive: "Interactive", assisted: "Assisted", autopilot: "Autopilot" };
 /** Each offered mode's one sentence under its name (a mode joins as it is built). */
 export const MODE_LINE: Readonly<Partial<Record<ApprovalMode, string>>> = {
-  interactive: "Ember tells you about ordinary steps as it does them, and asks before anything risky, such as sending, deleting or paying.",
+  interactive: "Ember tells you about ordinary steps as it does them, and asks before anything risky, such as sending, deleting or paying, unless it is a command you asked for exactly: then it tells you first.",
   assisted: "As Interactive, but before Ember asks, a lighter AI model checks the step against what you asked. If it matches, Ember goes ahead and tells you.",
   autopilot: "Ember doesn't ask: it sends, deletes, pays and installs without asking, and tells you as it goes. You accept that risk when you choose it.",
 };
@@ -1104,9 +1105,9 @@ export function approvalsView(state: ApprovalsState | null, managed: boolean, el
  */
 export function grantsHint(mode: ApprovalMode | null): string {
   const lead = "You add an app here by choosing “Always in …” when Ember asks.";
-  if (mode === "assisted") return `${lead} Before anything hard to undo, Ember asks every time unless Assisted's check finds the step in what you asked.`;
+  if (mode === "assisted") return `${lead} Before anything hard to undo in an app, Ember asks every time unless Assisted's check finds the step in what you asked.`;
   if (mode === "autopilot") return `${lead} Autopilot doesn't ask, even before anything hard to undo, so this list changes nothing while it is on.`;
-  return `${lead} Ember still asks every time before anything hard to undo.`;
+  return `${lead} Ember still asks every time before anything hard to undo in an app.`;
 }
 
 /**
@@ -1633,7 +1634,7 @@ export function describeEntry(e: ActivityEntry, words: EntryWords = LINUX_ENTRY_
       return { tag: e.verdict === "deny" ? "Refused" : "Asked you", cls: e.verdict === "deny" ? "no" : "ask", what, why: userWords(e.reason) };
     case "confirm":
       // A lasting grant says what it changes, as Apps & privacy's list of them does.
-      if (e.answer === "always") return { ...answerTag(e.answer), what, why: `From now on Ember may act in ${e.app ? friendlyApp(e.app) : "this app"} without asking first, but it still asks before anything hard to undo.` };
+      if (e.answer === "always") return { ...answerTag(e.answer), what, why: `From now on Ember may act in ${e.app ? friendlyApp(e.app) : "this app"} without asking first, but that doesn't cover anything hard to undo.` };
       return { ...answerTag(e.answer), what };
     case "action":
       return { tag: e.ok ? "Done" : "Didn't work", cls: e.ok ? "ok" : "no", what: `${what}${e.tier === 2 ? " (on Ember's desk)" : ""}`, why: userWords(forUser(e.error)) };

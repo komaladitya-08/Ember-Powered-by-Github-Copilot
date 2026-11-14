@@ -773,7 +773,7 @@ describe.skipIf(gate)("Home's Apps & privacy, as the person's own settings and t
     const base = { ...structuredClone(DEFAULT_SETTINGS), onboarded: true, consent: { version: 99, at: "2026-11-04T12:00:00Z" } };
     await page.evaluate(s => window.__pane.emit("onSettingsChanged", s), base);
     await page.evaluate(a => window.__pane.emit("onApprovals", a), approvalsState(DEFAULT_SETTINGS.approvals, null));
-    await expect.poll(shown).toContain("It asks before acting in an app, and always before anything hard to undo.");
+    await expect.poll(shown).toContain("It asks before acting in an app, and always before anything hard to undo, except a command you asked for exactly, which it shows you first with a few seconds to stop it.");
     expect(await plug()).toBe("Other computers and commands are off until you turn them on: Ember can work on computers you reach over SSH, and run commands in its own window. Each asks you first.");
     expect(await fold.evaluate(d => (d as HTMLDetailsElement).open)).toBe(true);
     expect(page.errors).toEqual([]);
@@ -789,7 +789,7 @@ describe.skipIf(gate)("Home's Apps & privacy, as the person's own settings and t
     const fold = page.locator("#privacy-terms-fold");
     await fold.locator("summary").click();
     expect(await page.locator("#privacy-terms li[data-icon='plug']").innerText()).toBe("Other computers and commands are turned off by your organisation.");
-    expect(await page.locator("#privacy-terms li[data-icon='hand']").innerText()).toContain("It asks before acting in an app, and always before anything hard to undo.");
+    expect(await page.locator("#privacy-terms li[data-icon='hand']").innerText()).toContain("It asks before acting in an app, and always before anything hard to undo, except a command you asked for exactly, which it shows you first with a few seconds to stop it.");
     expect(page.errors).toEqual([]);
     await page.close();
   });
@@ -1006,7 +1006,7 @@ describe.skipIf(gate)("Apps & privacy › How Ember asks, with a keyboard and a 
     const page = await open("privacy", { approvals: approvalsState(INTERACTIVE, null) });
     const rows = page.locator("#approvals button.mode");
     expect(await rows.evaluateAll(els => els.map(e => [e.id, e.getAttribute("role"), e.getAttribute("aria-checked"), e.querySelector("b")!.textContent, e.querySelector("span")!.textContent]))).toEqual([
-      ["mode-interactive", "radio", "true", "Interactive", "Ember tells you about ordinary steps as it does them, and asks before anything risky, such as sending, deleting or paying."],
+      ["mode-interactive", "radio", "true", "Interactive", "Ember tells you about ordinary steps as it does them, and asks before anything risky, such as sending, deleting or paying, unless it is a command you asked for exactly: then it tells you first."],
       ["mode-assisted", "radio", "false", "Assisted", "As Interactive, but before Ember asks, a lighter AI model checks the step against what you asked. If it matches, Ember goes ahead and tells you."],
       ["mode-autopilot", "radio", "false", "Autopilot", "Ember doesn't ask: it sends, deletes, pays and installs without asking, and tells you as it goes. You accept that risk when you choose it."],
     ]);

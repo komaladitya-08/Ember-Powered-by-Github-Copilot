@@ -21,15 +21,17 @@ export function computersIntro(os: OS | undefined): string {
   return os === "win32" ? COMPUTERS_INTRO_WINDOWS : COMPUTERS_INTRO;
 }
 export const COMMANDS_HEADING = "Commands";
-export const COMMANDS_INTRO = "Ember runs commands in its own command window, where you can watch and stop them. It asks first before anything that deletes, publishes, touches secrets or changes the system.";
+export const COMMANDS_INTRO = "Ember runs commands in its own command window, where you can watch and stop them. It asks first before anything that touches secrets or downloads and runs code, and before anything that deletes, publishes or changes the system unless you asked for exactly that command: then it tells you first and gives you a few seconds to stop it.";
 /**
- * The section's intro in the approval mode in force (null: below Interactive), true in each (home-c10-2): Assisted's
+ * The section's intro in the approval mode in force (null: below Interactive), true in each (home-c10-2): a dangerous
+ * command the user's own words asked for exactly is announced in every mode (commands/decide.ts rule 10), never one that
+ * touches secrets or downloads and runs code (accessibility-c11-1); Assisted's
  * check may clear a deletion, a push or a system change it finds in the user's words but never one that touches secrets
  * (commands/review.ts notReviewable); Autopilot announces those with their Stop countdown and still asks for secrets,
  * what would outlive Stop, what Ember can't tell and what the user's words rule out (commands/autopilot.ts autopilotAsks).
  */
 export function commandsIntro(mode: ApprovalMode | null): string {
-  if (mode === "assisted") return "Ember runs commands in its own command window, where you can watch and stop them. It asks first before anything that touches secrets, and before anything that deletes, publishes or changes the system unless Assisted's check finds it in what you asked.";
+  if (mode === "assisted") return "Ember runs commands in its own command window, where you can watch and stop them. It asks first before anything that touches secrets, before anything that downloads and runs code unless Assisted's check finds it in what you asked, and before anything that deletes, publishes or changes the system unless you asked for exactly that command or the check finds it: then it tells you first and gives you a few seconds to stop it.";
   if (mode === "autopilot") return "Ember runs commands in its own command window, where you can watch and stop them. In Autopilot it runs one that deletes, publishes or changes the system without asking, after a few seconds to stop it. It still asks before anything that touches secrets, would keep running after you stop it or has an effect it can't tell, before one you ruled out, and wherever you or your organisation set commands to ask every time or the administrator of a computer it reaches over SSH doesn't allow Autopilot there.";
   return COMMANDS_INTRO;
 }

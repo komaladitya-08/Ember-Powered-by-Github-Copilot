@@ -162,8 +162,8 @@ describe("Interactive's card (FEATURE_CONSENT_VERSION.autonomy, modes-A9)", () =
     expect(ASSISTED_CONSENT_TEXT.split(/\s+/).length).toBeLessThanOrEqual(215);
   });
 
-  it("is versioned on its own, at 3 since it replaced Work without asking's card: an agreement to that one is none to this", () => {
-    expect(FEATURE_CONSENT_VERSION.autonomy).toBe(3);
+  it("is versioned on its own, at 3 since it replaced Work without asking's card (an agreement to that one is none to this), at 4 since it says a dangerous command asked for exactly doesn't ask (accessibility-c11-1)", () => {
+    expect(FEATURE_CONSENT_VERSION.autonomy).toBe(4);
     expect(MODE_CARD_TEXT.interactive).toBe(AUTONOMY_CONSENT_TEXT);
     expect(modeCard("interactive")).toEqual({ title: "Before you choose Interactive", text: AUTONOMY_CONSENT_TEXT, yes: "I agree, use Interactive", no: "Not now" });
   });
@@ -171,14 +171,15 @@ describe("Interactive's card (FEATURE_CONSENT_VERSION.autonomy, modes-A9)", () =
   it("says plainly what is announced instead of asked, what still asks every time, what never happens, and that a stop always works", () => {
     expect(AUTONOMY_CONSENT_TEXT).toMatch(/^In Interactive, Ember does ordinary steps without asking first: it works in your apps, borrows your mouse and keyboard, runs ordinary commands, moves text between apps and presses OK on a message box that has nothing else to choose\./);
     expect(AUTONOMY_CONSENT_TEXT).toMatch(/It tells you what it is doing as it goes, and keeps a record under What Ember did\./);
-    expect(AUTONOMY_CONSENT_TEXT).toMatch(/It still asks every time before anything risky: sending, posting, submitting, sharing, deleting, overwriting, paying, installing, signing out, security settings, dangerous commands and any dialog that asks a question\./);
+    expect(AUTONOMY_CONSENT_TEXT).toMatch(/It still asks every time before anything risky in an app: sending, posting, submitting, sharing, deleting, overwriting, paying, installing, signing out, security settings and any dialog that asks a question\. It asks before a dangerous command too, unless you asked for exactly that command and it touches no passwords, keys or downloaded code: then it shows it first, with a few seconds to stop it\./);
     expect(AUTONOMY_CONSENT_TEXT).toMatch(/It asks more often in your system's settings and security apps, and a task goes back to asking once you say no or a page or file tries to give it instructions\./);
     expect(AUTONOMY_CONSENT_TEXT).toMatch(/It never types passwords and never acts in sign-in prompts\./);
     expect(AUTONOMY_CONSENT_TEXT).toMatch(/“Ember, stop” or Ember's stop shortcut stops everything at once, and moving your mouse takes it back\./);
     // Sentence case, curly quotes, no raw keys (CLAUDE.md "Writing UI copy").
     expect(AUTONOMY_CONSENT_TEXT).not.toMatch(/"|Ctrl\+/);
-    // Read in about half a minute: no longer than the card it replaced (about 160 words).
-    expect(AUTONOMY_CONSENT_TEXT.split(/\s+/).length).toBeLessThanOrEqual(160);
+    // Read in about half a minute: the card it replaced was about 160 words, and the exception for a command asked for
+    // exactly, which it left out, takes about 35 more (accessibility-c11-1).
+    expect(AUTONOMY_CONSENT_TEXT.split(/\s+/).length).toBeLessThanOrEqual(200);
   });
 
   it("says that anyone near the computer can answer a question by voice while Voice Match is off (owner decision of 2026-11-12)", () => {
