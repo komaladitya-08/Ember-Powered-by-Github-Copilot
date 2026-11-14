@@ -3774,6 +3774,40 @@ describe("a command that would ask, in Autopilot (autopilot.ts; modes-D2, modes-
       expect(asks.asked).toHaveLength(1);
     });
 
+    it.each<[string, string[], string]>([
+      ["run the cleanup script but don't delete anything", ["in-script:posix.rm"], "Deletes /srv/app and everything in it."],
+      ["run the release script, don't push", ["in-script:git.push"], "Pushes main to origin."],
+      ["run the deploy script but keep it local", ["in-script:npm.publish"], "Publishes the package."],
+    ])("refuses in Autopilot what the remote's own check found where the user's words %j rule it out, as on this computer (integ-x-1)", async (words, rules, says) => {
+      makeJudge();
+      const h = remote({ words, run: (_s, n) => (n === 1 ? sentBack(rules, [says]) : {}) });
+      expect(await call(h, { command: "./cleanup.sh" })).toMatchObject({ resultType: "denied", textResultForLlm: `Not allowed: ${AUTOPILOT_REFUSES["ruled-out"]}` });
+      expect([h.asked, h.windowAnnounce, h.announced]).toEqual([[], [], []]);
+      expect(h.starts).toHaveLength(1);
+      expect(h.audit.find(e => e.phase === "answered" && e.q === "remote")).toMatchObject({ answer: "refused", mode: "autopilot" });
+      // Words that don't rule it out: announced, as before.
+      const plain = remote({ words: "run the cleanup script", run: (_s, n) => (n === 1 ? sentBack(rules, [says]) : {}) });
+      expect((await call(plain, { command: "./cleanup.sh" })).resultType).toBe("success");
+      expect([plain.asked.length, plain.windowAnnounce.length, plain.starts.length]).toEqual([0, 1, 2]);
+      // Outside Autopilot the card asks, as before.
+      const asks = harness({ words, run: (_s, n) => (n === 1 ? sentBack(rules, [says]) : {}) });
+      expect((await call(asks, { command: "./cleanup.sh" })).resultType).toBe("success");
+      expect(asks.asked).toHaveLength(1);
+    });
+
+    it("refuses in Autopilot what the remote's own check found where it may be a deletion the user said no to in this task (integ-x-1)", async () => {
+      setCommandJudge(null);
+      const refusals = new Refusals();
+      const first = harness({ binding: LOCAL, refusals, answers: ["deny"] });
+      await run(first, "rm -rf build");
+      expect(first.asked).toHaveLength(1);
+      makeJudge();
+      const h = remote({ refusals, run: (_s, n) => (n === 1 ? sentBack(["in-script:posix.rm"], ["Deletes /srv/app and everything in it."]) : {}) });
+      expect(await call(h, { command: "./cleanup.sh" })).toMatchObject({ resultType: "denied", textResultForLlm: LIKE_REFUSED_AUTOPILOT });
+      expect([h.asked, h.windowAnnounce, h.announced]).toEqual([[], [], []]);
+      expect(h.starts).toHaveLength(1);
+    });
+
     it.each([["admin.no-autopilot"], ["posix.rm", "admin.no-autopilot"]])("asks with the card, as before, where the remote's rules say %s", async (...rules) => {
       makeJudge();
       const h = remote({ run: (_s, n) => (n === 1 ? sentBack(rules) : {}) });

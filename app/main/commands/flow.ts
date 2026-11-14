@@ -900,6 +900,54 @@ const remoteRules = (exit: RunExit) => {
   return Array.isArray(r) ? r.filter((x): x is string => typeof x === "string").slice(0, 32) : [];
 };
 
+/** The kinds of step the user's words can say no to by a verb (wordsRuleOut's KIND_VERBS): each one, where a rule's kind can't be told. */
+const WORDS_KINDS: readonly Finding["cls"][] = ["destroy", "remote-delete", "publish"];
+/** Rule ids by the kinds of step the classifier files them under (a rule may match more than one: each counts). */
+const REMOTE_DELETES = /^cloud\.delete|remote-delete|unpublish|obliterate|^(p4|svn)\.delete|^p4\.(revert|spec\.delete|shelve\.delete)|^gh\.api\.delete|delete-branch|deploy-key|^git\.push\.(delete|force|mirror|prune)|^docker\.cluster\.delete|delete-remote/i;
+const PUBLISHES = /^(send|net|upload|gh)\.|(^|[.-])(push|publish|upload|release|deploy|deploys|submit|shelve|unshelve|commit|dcommit|send-email|cvsexportcommit|daemon|registry)([.-]|$)|^cloud\.change$|^p4\.spec$|^docker\.cluster$/i;
+const DESTROYS = /(^|[.-])(rm|rmdir|unlink|del|delkey|rd|remove-item|remove-files|delete|clean|cleanup|reset|discard|restore|checkout|switch|drop|clear|revert|resolve|overwrite|tee|out-file|set-content|new-item|cp|mv|dd|copy-item|move-item|robocopy|rsync|trash|truncate|wipe|purge|erase|history|in-place|unpack|unregister|mount|backups|archive|cache|destroy|force|write|change|disk)([.-]|$)|^(redirect|download|archive|disk|db|sqlite)\.|^git\.branch\.[DM]$/i;
+const SYSTEM_CHANGES = /^(system|service|pkg|kill|path|wsl|tool|script)\.|(^|\.)(config|admin|context|privileged|tailscale)(\.|$)/i;
+
+/**
+ * The kinds of step a rule a remote's gate 2 sent back names, by its id alone (gate 2 sends rules and its own lines,
+ * no classes): every kind its id may be filed under; none where the id doesn't say.
+ */
+function kindsOfRule(rule: string): Finding["cls"][] {
+  const kinds: Finding["cls"][] = [];
+  if (readsSecrets(rule)) kinds.push("secret");
+  if (outlivesStop(rule) || /^escape\.|off-registry/.test(rule)) kinds.push("escape");
+  if (rule.startsWith("unclear.") || rule === "internal") kinds.push("unclear");
+  // (A program Ember doesn't know, given words of a kind it does: `unknown-words.secret`.)
+  const words = /^unknown-words\.(destroy|publish|remote-delete|secret|system|escape)$/.exec(rule);
+  if (words) kinds.push(words[1] as Finding["cls"]);
+  if (rule.startsWith("unknown.") || words) kinds.push("unknown");
+  if (REMOTE_DELETES.test(rule)) kinds.push("remote-delete");
+  if (PUBLISHES.test(rule)) kinds.push("publish");
+  if (DESTROYS.test(rule)) kinds.push("destroy");
+  if (SYSTEM_CHANGES.test(rule)) kinds.push("system");
+  return kinds;
+}
+
+/**
+ * What a remote's gate 2 found beyond the PC's own findings, as findings the user's words and the task's refusals are
+ * read against (integ-x-1): each rule (its `in-script:` dropped) under every kind its id may be, on nothing named.
+ * Where its kind can't be told, it stands for each kind of step words can say no to and counts as unread for the
+ * refusals: a doubt keeps it from going ahead, never lets it. Pure.
+ */
+export function remoteFindings(rules: readonly string[]): { findings: Finding[]; unread: boolean } {
+  const findings: Finding[] = [];
+  let unread = false;
+  for (const r of rules) {
+    const rule = r.replace(/^in-script:/, "");
+    if (rule.startsWith("admin.")) continue; // the organisation's: it asks anyway
+    let kinds = [...new Set(kindsOfRule(rule))];
+    if (kinds.length === 0 || kinds.includes("unclear") || kinds.includes("unknown")) unread = true;
+    if (kinds.length === 0) kinds = [...WORDS_KINDS];
+    for (const cls of kinds) findings.push({ cls, rule, says: "", program: "", objects: [], widening: [], at: 0 });
+  }
+  return { findings, unread };
+}
+
 /** Runs one run_command call to the end; returns the tool result (done, denied or fail). */
 export async function runCommandTool(a: RunCommandArgs, ctx: CommandFlowContext): Promise<ToolResultObject> {
   if (ctx.isOver()) return STOPPED();
@@ -1370,12 +1418,20 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
         const extra = remoteRules(exit);
         // What Autopilot refuses on this computer it refuses where the remote's own check found it too: a deletion or a
         // write of what can't be named, a terminal's remote-control verb (r11-commands-x11-2). No question to put.
-        const refusal = ctx.autopilot?.() ? autopilotRefuses({ rules: extra }, { findings: [] }) : null;
-        if (refusal) {
+        // And what the user's own words for the task rule out, and what may be something they said no to in this task,
+        // read against what the remote found as they are against the PC's own findings (integ-x-1).
+        const found = remoteFindings(extra);
+        const ruledOutThere = [words, spoken].some(w => wordsRuleOut(found.findings, w));
+        const refusal = ctx.autopilot?.() ? autopilotRefuses({ rules: extra }, { findings: [], ruledOut: ruledOutThere }) : null;
+        const likeThere = !refusal && !!ctx.autopilot?.() && found.findings.length > 0 && (ctx.refusals?.commandLike({
+          ...about, acts: [...about.acts, ...commandActs(found.findings, facts.os)],
+          named: [...(about.named ?? []), ...found.findings.map(f => ({ cls: f.cls, rule: f.rule, bare: true, opaque: found.unread || f.cls === "unclear" || f.cls === "unknown", words: [] }))],
+        }) ?? false);
+        if (refusal || likeThere) {
           reaskEnded(svc, runId, "refused");
           audit({ phase: "answered", answer: "refused", q: "remote", mode: "autopilot" });
-          ctx.log.info("commands.decided", { task, target, verdict: "refuse", classes: d.classes, chars: a.command.length, autopilot: refusal, remote: true });
-          return denied(`Not allowed: ${AUTOPILOT_REFUSES[refusal]}`);
+          ctx.log.info("commands.decided", { task, target, verdict: "refuse", classes: d.classes, chars: a.command.length, autopilot: refusal ?? "like-refused", remote: true });
+          return denied(refusal ? `Not allowed: ${AUTOPILOT_REFUSES[refusal]}` : LIKE_REFUSED_AUTOPILOT);
         }
         if (!toldRemote && ctx.autopilot?.()&& svc.mode() !== "ask" && !svc.userAskEvery() && extra.every(r => askedOfFinding({ rule: r }) !== "organisation")) {
           toldRemote = true;

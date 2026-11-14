@@ -16,6 +16,7 @@ import {
 import { classifyCommand } from "../../app/main/commands/classify";
 import { decideCommand } from "../../app/main/commands/decide";
 import { notReviewable, outlivesStop } from "../../app/main/commands/review";
+import { remoteFindings } from "../../app/main/commands/flow";
 import { AUTOPILOT_WORDS } from "../../app/main/policy/policy";
 import { describeEntry } from "../../app/renderer/home/copy";
 import type { ClassifyContext, CommandDecision, DangerClass, RunnerFacts } from "../../app/main/commands/types";
@@ -89,6 +90,26 @@ describe("what still asks in Autopilot (modes-D2, modes-D7; the owner's decision
     expect(rules.length).toBeGreaterThanOrEqual(15);
     expect(rules.filter(r => !readsSecrets(r))).toEqual([]);
     for (const other of ["posix.rm", "git.push", "system.sudo", "path.startup", "escape.download-run", "unclear.for", "pkg.system"]) expect(readsSecrets(other), other).toBe(false);
+  });
+});
+
+describe("what a remote's own check sent back, read for the user's words and refusals (integ-x-1)", () => {
+  it("files every rule the classifier names under the kind it does, among at most three (read from its source, which this never changes)", () => {
+    const dir = path.join(__dirname, "../../app/main/commands");
+    const source = readdirSync(dir).filter(f => f.endsWith(".ts")).map(f => readFileSync(path.join(dir, f), "utf8")).join("\n");
+    const pairs = [...source.matchAll(/(?:add|found)\("([a-z-]+)",\s*"([A-Za-z0-9.-]+)"|cls: "([a-z-]+)", rule: "([A-Za-z0-9.-]+)"/g)].map(m => [m[2] ?? m[4], m[1] ?? m[3]] as const);
+    expect(pairs.length).toBeGreaterThanOrEqual(200);
+    const wrong = pairs.filter(([rule, cls]) => {
+      const kinds = remoteFindings([`in-script:${rule}`]).findings.map(f => f.cls);
+      return !kinds.includes(cls as DangerClass) || new Set(kinds).size > 3;
+    });
+    expect(wrong).toEqual([]);
+  });
+
+  it("reads a rule it can't place as every kind words can say no to, and as unread; the organisation's as none", () => {
+    expect(remoteFindings(["tomorrow.frobnicate"])).toMatchObject({ unread: true, findings: [{ cls: "destroy" }, { cls: "remote-delete" }, { cls: "publish" }] });
+    expect(remoteFindings(["posix.rm"])).toMatchObject({ unread: false, findings: [{ cls: "destroy", rule: "posix.rm", objects: [] }] });
+    expect(remoteFindings(["admin.no-autopilot"])).toEqual({ unread: false, findings: [] });
   });
 });
 
