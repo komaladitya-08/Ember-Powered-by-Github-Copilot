@@ -948,6 +948,32 @@ export function remoteFindings(rules: readonly string[]): { findings: Finding[];
   return { findings, unread };
 }
 
+/** Words that keep a named thing as it is ("leave src alone", "keep main", "src is off limits"): HOLDS_BACK's keeping part, with no time in it. */
+const KEEPS = /(^|[^\p{L}\p{N}])(leave|leaving|keep|keeping|preserve|spare|skip|skipping|untouched|hands\s+off|stay\s+away|off[\s-]+limits|surviv(e|es|ing)|still\s+need|as\s+(it|they)\s+(is|are))(?=$|[^\p{L}\p{N}])/giu;
+/** Verbs that act on a thing, for a no that names one ("don't touch main", "never restart nginx"). */
+const ACTS_ON = /(?:^|[^\p{L}])(?:touch|chang|modif|edit|alter|overwrit|mess|break|delet|remov|eras|wipe|purg|discard|destroy|drop|rm|clean|clear|reset|publish|releas|upload|push|deploy|ship|send|commit|move|renam|restart|kill)\p{L}*/giu;
+/** Words left beside a keeping word or a no that name nothing: "leave it alone", "keep going", "keep me posted". */
+const NAMES_NOTHING = new Set("alone intact safe as is well me us posted informed updated eye mind short quiet simple sure in on with off for".split(" "));
+
+/**
+ * Do the user's words keep, or say no to acting on, something they name ("run the cleanup script, leave src alone",
+ * "don't touch main")? For what a remote's gate 2 found, which comes back with no objects (integ-y-1): where Ember can't
+ * tell what the step acts on, it can't tell that the named thing is not it, and a doubt counts as ruled out. Words with
+ * neither (a plain request, a time, "tell me when it's done") never count. Pure.
+ */
+export function keepsNamed(words: string): boolean {
+  return words.split(PARTS).some(whole => {
+    // ("Keep going", "keep trying until it passes": a keep of what Ember is doing, not of a thing.)
+    const part = whole.replace(/(^|[^\p{L}])keep(?:ing)?\s+(?:on\s+)?\p{L}+ing(?![\p{L}])/giu, "$1 ");
+    const keeps = new RegExp(KEEPS.source, "iu").test(part);
+    const acts = NEGATED.test(part) && new RegExp(ACTS_ON.source, "iu").test(part);
+    if (!keeps && !acts) return false;
+    const rest = part.toLowerCase().replace(KEEPS, "$1 ").replace(ACTS_ON, " ").split(/[^\p{L}\p{N}'’_./~-]+/u)
+      .filter(w => w.length >= 2 && !NEGATED.test(` ${w}`) && !GENERIC.has(w) && !NAMES_NOTHING.has(w) && !/ing$/.test(w));
+    return rest.length > 0;
+  });
+}
+
 /** Runs one run_command call to the end; returns the tool result (done, denied or fail). */
 export async function runCommandTool(a: RunCommandArgs, ctx: CommandFlowContext): Promise<ToolResultObject> {
   if (ctx.isOver()) return STOPPED();
@@ -1423,7 +1449,9 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
         // And what the user's own words for the task rule out, and what may be something they said no to in this task,
         // read against what the remote found as they are against the PC's own findings (integ-x-1).
         const found = remoteFindings(extra);
-        const ruledOutThere = [words, spoken].some(w => wordsRuleOut(found.findings, w));
+        // Gate 2 sends no objects back, so words that keep or say no to a named thing rule it out too (integ-y-1).
+        const unnamed = found.findings.some(f => f.objects.length === 0);
+        const ruledOutThere = [words, spoken].some(w => wordsRuleOut(found.findings, w) || (unnamed && keepsNamed(w)));
         const refusal = ctx.autopilot?.() ? autopilotRefuses({ rules: extra }, { findings: [], ruledOut: ruledOutThere }) : null;
         const likeThere = !refusal && !!ctx.autopilot?.() && found.findings.length > 0 && (ctx.refusals?.commandLike({
           ...about, acts: [...about.acts, ...commandActs(found.findings, facts.os)],

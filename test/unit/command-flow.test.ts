@@ -7,7 +7,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  ANNOUNCE_MS, CARD_LINES, CHECKING_COMMAND, CL_JUDGE, HELD_BACK_LINE, MAX_RUNS_PER_TARGET, OUTPUT_TAINT_LINE, SPOKEN_LINE, behindWrappers, commandSha256, heldDecision, namesTarget, normalName, runCommandTool, wordsRuleOut,
+  ANNOUNCE_MS, CARD_LINES, CHECKING_COMMAND, CL_JUDGE, HELD_BACK_LINE, MAX_RUNS_PER_TARGET, OUTPUT_TAINT_LINE, SPOKEN_LINE, behindWrappers, commandSha256, heldDecision, namesTarget, normalName, runCommandTool, wordsRuleOut, keepsNamed,
   setCommandJudge, shownQuote, type CommandFlowContext, type CommandJudge, type ShapeOptions,
   scriptLanguage, WITHHELD_OUTPUT, LIKE_REFUSED_AUTOPILOT,
 } from "../../app/main/commands/flow";
@@ -3778,7 +3778,10 @@ describe("a command that would ask, in Autopilot (autopilot.ts; modes-D2, modes-
       ["run the cleanup script but don't delete anything", ["in-script:posix.rm"], "Deletes /srv/app and everything in it."],
       ["run the release script, don't push", ["in-script:git.push"], "Pushes main to origin."],
       ["run the deploy script but keep it local", ["in-script:npm.publish"], "Publishes the package."],
-    ])("refuses in Autopilot what the remote's own check found where the user's words %j rule it out, as on this computer (integ-x-1)", async (words, rules, says) => {
+      // The remote sends no objects back, so words that hold back or say no to a named thing count as ruling it out (integ-y-1).
+      ["run the cleanup script, leave src alone", ["in-script:posix.rm"], "Deletes /srv/app/src and everything in it."],
+      ["run the release script, don't touch main", ["in-script:git.push"], "Pushes main to origin."],
+    ])("refuses in Autopilot what the remote's own check found where the user's words %j rule it out, as on this computer (integ-x-1, integ-y-1)", async (words, rules, says) => {
       makeJudge();
       const h = remote({ words, run: (_s, n) => (n === 1 ? sentBack(rules, [says]) : {}) });
       expect(await call(h, { command: "./cleanup.sh" })).toMatchObject({ resultType: "denied", textResultForLlm: `Not allowed: ${AUTOPILOT_REFUSES["ruled-out"]}` });
@@ -3793,6 +3796,12 @@ describe("a command that would ask, in Autopilot (autopilot.ts; modes-D2, modes-
       const asks = harness({ words, run: (_s, n) => (n === 1 ? sentBack(rules, [says]) : {}) });
       expect((await call(asks, { command: "./cleanup.sh" })).resultType).toBe("success");
       expect(asks.asked).toHaveLength(1);
+    });
+
+    it("reads as keeping a named thing only words that keep or say no to acting on one, never a plain request, a time or a thing left unnamed (integ-y-1)", () => {
+      for (const w of ["run the cleanup script, leave src alone", "run it but keep main", "don't touch main", "never restart nginx", "src is off limits", "leave /srv/app/src as it is"]) expect(keepsNamed(w), w).toBe(true);
+      for (const w of ["run the cleanup script", "run the cleanup script and tell me when it's done", "keep going until it passes", "leave it alone", "keep me posted",
+        "don't stop until the tests pass", "run it later", "run the release script once CI is green", "no need to ask", "don't touch anything"]) expect(keepsNamed(w), w).toBe(false);
     });
 
     it("refuses in Autopilot what the remote's own check found where it may be a deletion the user said no to in this task (integ-x-1)", async () => {
