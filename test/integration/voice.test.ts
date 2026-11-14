@@ -845,22 +845,29 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1" && process.env.EM
     };
     const own = voiced("To allow, press Control Alt Y; for not now, press Control Alt N.", 0.03);
     const stop = 0.5 + own.length / 16000 - 0.1;
-    const heard = (speech: Float32Array | null, on: number, window: "answer" | "follow-up" = "answer") => {
+    /** What the window did, and what the recognizer wrote the requests heard there as (`written`: heardWritten). */
+    const heardWritten = (speech: Float32Array | null, on: number, window: "answer" | "follow-up" = "answer") => {
       const mic = new Float32Array(at(stop + Math.max(0, on) + 3));
       mic.set(own, at(0.5));
       if (speech) for (let i = 0; i < speech.length; i++) mic[at(stop + on) + i] += speech[i];
       const s = session();
-      s.engine.questionUp(true);
-      const asks = Math.round(at(0.5) / 512), stops = Math.round(at(stop) / 512);
-      s.hear(inRoom(mic), { onFrame: k => {
-        if (k === asks) s.engine.selfSpeaking(true);
-        if (k !== stops) return;
-        s.engine.selfSpeaking(false);
-        if (window === "answer") s.engine.answerWindow(8000); else s.engine.followUp(8000);
-      } });
-      s.end();
-      return s.events;
+      const written: string[] = [];
+      const transcribe = backend.transcribe;
+      backend.transcribe = (x, purpose) => { const w = transcribe.call(backend, x, purpose); if (purpose !== "keyword") written.push(w); return w; };
+      try {
+        s.engine.questionUp(true);
+        const asks = Math.round(at(0.5) / 512), stops = Math.round(at(stop) / 512);
+        s.hear(inRoom(mic), { onFrame: k => {
+          if (k === asks) s.engine.selfSpeaking(true);
+          if (k !== stops) return;
+          s.engine.selfSpeaking(false);
+          if (window === "answer") s.engine.answerWindow(8000); else s.engine.followUp(8000);
+        } });
+        s.end();
+      } finally { backend.transcribe = transcribe; }
+      return { events: s.events, written };
     };
+    const heard = (speech: Float32Array | null, on: number, window: "answer" | "follow-up" = "answer") => heardWritten(speech, on, window).events;
     // Begun under Ember's voice or right as it ends: only its end can be heard ("Do it."), so it is asked for again,
     // never allowed. (On 64a6405 these came out as "Do it." or "Allow it." and allowed, 28 of 180 between -0.6 and 0.6 s.)
     const taken: string[] = [];
@@ -875,23 +882,29 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1" && process.env.EM
     // begun within 0.4 s of "stopped" was heard whole.) Phrases this voice is written right in nearly every time: its
     // "Allow it." often comes out "Lollet", and a lone "Okay." now and then "Oh, today.".
     // This voice comes out a little different each time, and the recognizer writes a rendition in forty or so as other
-    // words ("Yes, we.", "Guess please.", "Well, thanks."), which leave nothing and are asked for again: up to four
-    // renditions are tried, as in the test above, and none may leave as anything else or be taken for cut. With one
-    // each this failed in CI's C API run at a3cf645 (voice-answer-take-1). Measured on 40 kept renditions of each, on
-    // the C API and on WebAssembly alike, and the same on 681c36a: "Yes, please." 2 written wrong, "No, thanks." 1,
-    // "Okay, go with it." none. The three takes were whole (from 40 to 65 ms before the answer to 0.35 s after it,
-    // none of Ember's voice in them), and the recognizer wrote those renditions wrong on their own too.
+    // words ("Yes, we.", "Guess please.", "Well, thanks."), which leave nothing and are asked for again. Measured on 40
+    // kept renditions of each, on the C API and on WebAssembly alike, and the same on 681c36a: "Yes, please." 2 written
+    // wrong, "No, thanks." 1, "Okay, go with it." none. The three takes were whole (from 40 to 65 ms before the answer to
+    // 0.35 s after it, none of Ember's voice in them), and the recognizer wrote those renditions wrong on their own too.
+    // So, as in the test above, the window is checked against what the recognizer wrote in it: a rendition written as
+    // the answer leaves as that answer, once, and is never taken for cut; any other leaves nothing; renditions are made
+    // until one is written as the answer. Four tried blind passed only by the odds (voice-answer-take-1 failed with one
+    // each in CI's C API run at a3cf645), and a window that dropped a written answer passed whenever a later take got
+    // through.
     for (const [text, answer] of [["Yes, please.", "allow"], ["Okay, go with it.", "allow"], ["No, thanks.", "deny"]] as const) {
-      const whole: string[] = [];
-      for (let take = 0; take < 4 && !whole.length; take++) {
-        const events = heard(voiced(text, 0.1), 0.3);
+      const writtenAs: string[] = [];
+      let answered = false;
+      for (let take = 0; take < 16 && !answered; take++) {
+        const { events, written } = heardWritten(voiced(text, 0.1), 0.3);
         const u = sent(events);
-        expect(u.map(e => e.window), `${text}: ${JSON.stringify(events)}`).toEqual(u.length ? ["answer"] : []);
-        for (const e of u) { expect(spokenAnswer(e.text), `${text} heard as “${e.text}”`).toBe(answer); whole.push(e.text); }
+        answered = written.some(w => spokenAnswer(w) !== null);
+        writtenAs.push(...written);
+        expect(u.map(e => e.window), `${text} written as ${JSON.stringify(written)}: ${JSON.stringify(events)}`).toEqual(answered ? ["answer"] : []);
+        for (const e of u) expect(spokenAnswer(e.text), `${text} heard as “${e.text}”`).toBe(answer);
         // Never taken for begun under Ember's voice (that is the first part's, and says "say it again" for nothing here).
         expect(events.filter(e => e.type === "answer-over"), `${text}: ${JSON.stringify(events)}`).toEqual([]);
       }
-      expect(whole, `${text}: never heard as an answer in four renditions`).toHaveLength(1);
+      expect(answered, `${text}: the recognizer wrote none of 16 renditions as an answer (${writtenAs.join(" / ")})`).toBe(true);
     }
     // Ember's own read-out, and nothing after it: nothing, and nothing to say it again for.
     expect(heard(null, 0).filter(e => e.type === "utterance" || e.type === "answer-over")).toEqual([]);
