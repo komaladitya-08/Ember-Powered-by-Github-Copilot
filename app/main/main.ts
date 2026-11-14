@@ -1843,8 +1843,9 @@ function start(): void {
     autopilot: () => approvalsNow().autopilot, announce: words => agent?.announceUnasked(words) ?? false,
     // After a fill from the vault no extension is called: a failed call's text reaches the model unredacted (vault-3-x9-4).
     vaultFilled: () => vaultRedactor.active,
-    // A task's no holds its tools back while it is queued or running (integ-x-4).
-    taskLive: task => agent?.tasks?.list().some(t => t.id === task && (t.status === "queued" || t.status === "running")) ?? false,
+    // A task's no holds its tools back while it is queued or running, and after it until the user's next own request
+    // (integ-x-4, integ-y-2). Without an agent or its tasks Ember can't tell: it counts as running.
+    taskLive: task => agent?.tasks?.list().some(t => t.id === task && (t.status === "queued" || t.status === "running")) ?? true,
     log: log.child("extensions"), os: platform.os,
     // macOS never runs Ember as plain Node (PLAN.md §2 "Node mode"): no launcher, so no extension's server, stdio or remote, runs there.
     launcher: platform.os === "darwin" ? null : { execPath: process.execPath, script: path.join(__dirname, "mcp-launch.cjs") },
@@ -3566,7 +3567,8 @@ function start(): void {
       // covered shows again: never "Thanks! Carrying on." for good after the task is done.
       afterAnswer: answerSettler({ onScreen: () => lastState.bubble, reshow: () => agent?.afterAnswer() ?? false, set: setState }),
       // A no to any question reaches the extensions gate: a tool that changes things asks after it, and Autopilot
-      // denies it, while the task that asked runs, or for the rest of the turn (integrations-c11-1; integ-x-4).
+      // denies it, while the task that asked runs and until the user next asks something of their own after it, or for
+      // the rest of the turn (integrations-c11-1; integ-x-4, integ-y-2).
       onDeny: task => extensions.userSaidNo(task),
     });
     // Linux warns xtest.unavailable when XTest is missing.
@@ -3811,6 +3813,8 @@ function start(): void {
       signedOutWhy: () => (tokens?.unreadable ? sys.words.savedSignInRefused ?? null : tokens?.uncleared ? SIGN_OUT_NOT_KEPT : null),
       // Signed out while the user's own provider waits for its card: agreeing is the way on (integrations-r3-1).
       providerWaiting: ownProviderWaiting,
+      // The user's own request: a task's no that is over stops holding an extension's changing tools back (integ-y-2).
+      onOwnRequest: () => extensions.userAsked(),
       // Spoken without code or full addresses ("code shown in the bubble"), which nobody wants read out, sentence by
       // sentence as the answer streams in: Ember starts talking while Copilot is still writing, as a voice assistant does.
       onTurnStart: turn => {

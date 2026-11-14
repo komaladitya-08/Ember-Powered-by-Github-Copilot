@@ -893,10 +893,14 @@ it builds on:
 - **Ember's gate decides every call** (`gate.ts`, from `onPreToolUse`): off (the admin's `features.extensions`,
   LOCKDOWN, the user's switch or consent `FEATURE_CONSENT_VERSION.extensions`), stopped, disabled, changed, shown
   differently, or refused this turn: deny. After the user said no to a question (the Confirmer's `onDeny` tells
-  `userSaidNo()` which task put it), a tool that changes things asks and is never announced, and Autopilot denies it:
-  while that task is queued or running, and for the rest of the turn after a no to a question no task put (one of the
-  gate's own; integrations-c11-1, integ-x-4). A new conversation clears every no. A read-only tool in an agreed item,
-  with no injected text seen: allow.
+  `userSaidNo()` which task put it), a tool that changes things asks and is never announced, and Autopilot denies it
+  (a refusal, never a question): while that task is queued or running and, once it is over, until the user next asks
+  something of their own (the host's `onOwnRequest` tells `userAsked()`: a new request that goes to the conductor, not a
+  conductor turn, the task's end, a suggestion pressed or words heard over Ember's own voice), since the task ends
+  right after a no and the conductor acts next on its report (integ-y-2). A check that can't tell whether the task
+  runs counts as running. After a no to a question no task put (one of the gate's own) it holds for the rest of the
+  turn (integrations-c11-1, integ-x-4). A new conversation clears every no. A read-only tool in an agreed item, with no
+  injected text seen: allow.
   Read-only means `readOnlyHint` true with neither `destructiveHint` nor `openWorldHint` true, on a stdio server whose
   tool list hasn't changed this session: every call to a remote (HTTP) server's tools asks, since it sends its
   arguments there. Anything else: the Confirmer asks every time ("Use “post_message” from Slack? With "{…}"."), with

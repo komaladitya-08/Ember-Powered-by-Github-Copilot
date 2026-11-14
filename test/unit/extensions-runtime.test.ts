@@ -184,7 +184,7 @@ describe("the extensions gate", () => {
     expect(classify(gate({ tool: PINNED_POST, saidNo: true }))).toEqual({ verdict: "ask", reason: "said-no" });
     expect(classify(gate({ tool: PINNED_POST, saidNo: true, autopilot: true }))).toEqual({ verdict: "deny", reason: SAID_NO_UNASKED });
     expect(classify(gate({ tool: PINNED_POST, saidNo: true, autopilot: true, tainted: true }))).toEqual({ verdict: "deny", reason: SAID_NO_UNASKED });
-    expect(SAID_NO_UNASKED).toBe("The user said no to something earlier in this conversation, and this tool can change things, so it may be what they refused done another way. Autopilot can't ask them, so Ember didn't do it. Don't try this another way.");
+    expect(SAID_NO_UNASKED).toBe("The user said no to something earlier and hasn't asked for anything new since, and this tool can change things, so it may be what they refused done another way. Autopilot can't ask them, so Ember didn't do it. Don't try this another way.");
     expect(gateQuestion("Fake", "post_message", { text: "hi" }, "said-no").prompt).toContain("You said no to something earlier, and this can change things, so I'm asking first.");
     // A read-only tool changes nothing: as before. What was denied still says why as before.
     expect(classify(gate({ saidNo: true, autopilot: true }))).toEqual(classify(gate()));
@@ -1175,7 +1175,7 @@ describe("ExtensionsService", () => {
     expect(JSON.stringify(audit)).not.toMatch(/SENT-|FAILED-/);
   });
 
-  it("denies in Autopilot, and asks elsewhere, an extension's tool that changes things after a task's no while that task runs, and after any other no for the rest of the turn (integrations-c11-1, integ-x-4)", async () => {
+  it("denies in Autopilot, and asks elsewhere, an extension's tool that changes things after a task's no until the user's next own request once that task is over, and after any other no for the rest of the turn (integrations-c11-1, integ-x-4, integ-y-2)", async () => {
     let autopilot = true;
     const live = new Set<string>(["t1"]);
     const s = await installed({ autopilot: () => autopilot, announce: () => true, taskLive: t => live.has(t) });
@@ -1198,15 +1198,25 @@ describe("ExtensionsService", () => {
     shown(ext);
     ext.newTurn?.();
     expect(await call(ext, "fake-post_message", { text: "d" })).toMatchObject({ permissionDecision: "deny" });
-    // Once that task is over, its no holds nothing else back: announced again, as before it.
+    // The user's own request while the task still runs doesn't end it.
+    s.userAsked();
+    expect(await call(ext, "fake-post_message", { text: "d1" })).toMatchObject({ permissionDecision: "deny", permissionDecisionReason: SAID_NO_UNASKED });
+    // The task ends right after a no, and the conductor acts next on its report: the no still stands there, in that
+    // turn and the next (integ-y-2).
     live.delete("t1");
-    expect(await call(ext, "fake-post_message", { text: "d2" })).toEqual({ permissionDecision: "allow" });
-    // A check that can't tell whether the task runs counts as running.
+    expect(await call(ext, "fake-post_message", { text: "d2" })).toMatchObject({ permissionDecision: "deny", permissionDecisionReason: SAID_NO_UNASKED });
+    ext.newTurn?.();
+    expect(await call(ext, "fake-post_message", { text: "d3" })).toMatchObject({ permissionDecision: "deny", permissionDecisionReason: SAID_NO_UNASKED });
+    // After the user's next own request it is decided as usual: announced again, as before it.
+    s.userAsked();
+    expect(await call(ext, "fake-post_message", { text: "d4" })).toEqual({ permissionDecision: "allow" });
+    // A check that can't tell whether the task runs counts as running, also when the user asks next.
     const unsure = new ExtensionsService(deps({ autopilot: () => true, announce: () => true, taskLive: () => { throw new Error("down"); } }));
     const ux = unsure.forSession()!;
     shown(ux);
     unsure.userSaidNo("t9");
     ux.newTurn?.();
+    unsure.userAsked();
     expect(await call(ux, "fake-post_message", { text: "u" })).toMatchObject({ permissionDecision: "deny", permissionDecisionReason: SAID_NO_UNASKED });
     // A new conversation clears every no.
     live.add("t2");

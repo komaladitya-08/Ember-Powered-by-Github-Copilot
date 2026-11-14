@@ -353,6 +353,12 @@ export interface HostOptions {
   refuseConnect?: () => string | null;
   /** The policy changed while Ember ran (admin.ts heldUntilRestart): the notice offers Restart Ember, not settings. */
   policyHeld?: () => boolean;
+  /**
+   * A request of the user's own goes to the conductor (never a suggestion pressed, nor words heard over Ember's own
+   * voice; not a conductor turn, nor a task's end): main tells the extensions gate, where a no of a task that is over
+   * stops holding changing tools back (ExtensionsService.userAsked; integ-y-2).
+   */
+  onOwnRequest?: () => void;
   /** Is the computer online? A failed start while offline is retried instead of blamed on the sign-in. */
   isOnline?: () => boolean;
   /**
@@ -3395,6 +3401,9 @@ export class AgentHost {
     if (how.voiceUnchecked) this.voiceUnchecked.add(asked);
     if (how.suggested) this.suggested.add(asked);
     if (how.overEmber) this.overEmber.add(asked);
+    if (!how.suggested && !how.overEmber) {
+      try { this.o.onOwnRequest?.(); } catch (err) { this.o.log.warn("agent.own_request_failed", { err }); }
+    }
     // Its turn may start only after the one running now: it takes this context then (see conversationEvent).
     const request: UserRequest = {
       target: context?.target ?? null, words: text, screen: context?.text ? [context.text] : [], ...(context?.targetId ? { targetId: context.targetId } : {}),

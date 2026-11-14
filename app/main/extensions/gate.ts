@@ -53,9 +53,10 @@ export interface GateInput {
   /** The user said no to this tool earlier in the turn. */
   refused: boolean;
   /**
-   * The user said no to something in this conversation: one of its extension calls, or any question a task of it put
-   * (a step, a command; integrations-c11-1). The tool that changes things may be the refused thing done another way:
-   * it asks, never announced, and Autopilot, which has no question to put, denies it.
+   * A no of the user's still stands (ExtensionsService.saidNoNow): one to any question a task put (a step, a command),
+   * while that task runs and after it until the user's next own request, or one to an extension's call, for the rest of
+   * the turn (integrations-c11-1; integ-x-4, integ-y-2). The tool that changes things may be the refused thing done
+   * another way: it asks, never announced, and Autopilot, which has no question to put, denies it.
    */
   saidNo?: boolean;
   /**
@@ -95,8 +96,12 @@ export const EMBER_DATA_REFUSED = "Ember's settings, audit log and policy are fo
 /** What the model is told of such a call in Autopilot, where it can't be asked (one of Ember's files by name only). */
 export const EMBER_DATA_UNASKED = "This may be Ember's own settings, audit log or policy, which are for the user only, and Autopilot can't ask the user, so Ember didn't do it.";
 
-/** What the model is told of a changing call in Autopilot after the user said no in this conversation (integrations-c11-1). */
-export const SAID_NO_UNASKED = "The user said no to something earlier in this conversation, and this tool can change things, so it may be what they refused done another way. Autopilot can't ask them, so Ember didn't do it. Don't try this another way.";
+/**
+ * What the model is told of a changing call in Autopilot after a no that still stands: a task's, until the user's next
+ * own request once that task is over, or one to a question no task put, for the rest of the turn (integrations-c11-1;
+ * integ-x-4, integ-y-2).
+ */
+export const SAID_NO_UNASKED = "The user said no to something earlier and hasn't asked for anything new since, and this tool can change things, so it may be what they refused done another way. Autopilot can't ask them, so Ember didn't do it. Don't try this another way.";
 
 /** What the model is told of a changing call given a folder that holds Ember's data or policy folder. */
 export const EMBER_DATA_HELD = "This names a folder that holds Ember's settings, audit log and policy, which are for the user only, and a tool that changes things could move or delete it with them, so Ember didn't do it. Don't try this another way.";

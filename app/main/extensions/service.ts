@@ -63,8 +63,9 @@ export interface ExtensionsDeps {
    */
   vaultFilled?: () => boolean;
   /**
-   * Is this task still queued or running (main: TaskManager's list)? A no to one of its questions stands while it is
-   * (userSaidNo). A check that throws counts as yes. Absent: every task's no stands until the conversation ends.
+   * Is this task still queued or running (main: TaskManager's list)? A no to one of its questions stands while it is,
+   * and after it until the user's next own request (userSaidNo, userAsked). A check that throws counts as yes. Absent:
+   * every task's no stands until the conversation ends.
    */
   taskLive?: (task: string) => boolean;
   /**
@@ -235,9 +236,11 @@ export class ExtensionsService implements ExtensionsApi {
    */
   private saidNoTurn = false;
   /**
-   * The tasks whose questions the user said no to: while one of them is still queued or running (taskLive), every call
-   * of a tool that changes things asks, and Autopilot denies it, since it may be what that task's no refused done
-   * another way (CLAUDE.md "After a deny": per task; integ-x-4). Never cleared by a turn.
+   * The tasks whose questions the user said no to: while one of them is still queued or running (taskLive), and after
+   * it ends until the user's next own request (userAsked), every call of a tool that changes things asks, and Autopilot
+   * denies it, since it may be what that task's no refused done another way (CLAUDE.md "After a deny"; integ-x-4). The
+   * task ends right after a no and the conductor, which alone has extension tools, acts next on its report: the no
+   * stands there too (integ-y-2). Never cleared by a turn or by the task's end.
    */
   private saidNoTasks = new Set<string>();
   /**
@@ -275,24 +278,31 @@ export class ExtensionsService implements ExtensionsApi {
 
   /**
    * The user said no to a question (`task`: the task that put it; none: an extension's call or the conductor's): a tool
-   * that changes things asks, and Autopilot denies it, while that task is queued or running, or for the rest of this
-   * turn (integrations-c11-1; integ-x-4). An unanswered question isn't a no.
+   * that changes things asks, and Autopilot denies it, while that task is queued or running and until the user's next
+   * own request after it (userAsked), or for the rest of this turn (integrations-c11-1; integ-x-4, integ-y-2). An
+   * unanswered question isn't a no.
    */
   userSaidNo(task?: string): void {
     if (task) this.saidNoTasks.add(task);
     else this.saidNoTurn = true;
   }
 
-  /** Does a no stand now: this turn's, or one of a task still queued or running (a check that throws counts as yes)? */
-  private saidNoNow(): boolean {
-    if (this.saidNoTurn) return true;
+  /**
+   * The user said something of their own to the conductor (main: a new request of theirs, never a suggestion pressed nor
+   * words heard over Ember's own voice; not a conductor turn, nor a task's end): a no of a task that is over goes; one of
+   * a task still queued or running stands (a check that throws, or none, counts as running).
+   */
+  userAsked(): void {
     for (const task of [...this.saidNoTasks]) {
       let live: boolean;
       try { live = this.o.taskLive ? this.o.taskLive(task) : true; } catch { live = true; /* can't tell: it stands */ }
-      if (live) return true;
-      this.saidNoTasks.delete(task);
+      if (!live) this.saidNoTasks.delete(task);
     }
-    return false;
+  }
+
+  /** Does a no stand now: this turn's, or a task's not yet followed, once the task was over, by the user's own request? */
+  private saidNoNow(): boolean {
+    return this.saidNoTurn || this.saidNoTasks.size > 0;
   }
 
   /** The conversation was forgotten (sign-out, another account, a new conversation): its taint goes with it. */
@@ -861,7 +871,7 @@ export class ExtensionsService implements ExtensionsApi {
       },
       listChanged: server => this.announced(gate, server),
       settled: () => this.settle(gate),
-      // (And a no this turn, to a question no task put, with it: integ-x-4. A task's no stands while the task runs.)
+      // (And a no this turn, to a question no task put, with it: integ-x-4. A task's no stands until userAsked.)
       newTurn: () => { gate.refused.clear(); this.saidNoTurn = false; },
     };
   }

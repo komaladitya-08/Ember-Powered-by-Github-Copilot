@@ -312,6 +312,21 @@ describe("connecting and signing in", () => {
     await vi.waitFor(() => expect(told).toEqual(["thinking", "slow", "idle stopped", "thinking", "idle"]));
     await host.stop();
   });
+  it("tells main of each request of the user's own that goes to the conductor, never a suggestion pressed or words heard over Ember's voice (integ-y-2)", async () => {
+    let own = 0;
+    const { host } = makeHost({ onOwnRequest: () => { own++; } });
+    await host.start(TOKEN, "stored");
+    sim.holdTurns = true;
+    await host.ask("What's the weather?");
+    expect(own).toBe(1);
+    await host.ask("And tomorrow?", null, host.stopEpoch, { suggested: true });
+    await host.ask("And Sunday?", null, host.stopEpoch, { spoken: true, overEmber: true });
+    expect(own).toBe(1);
+    await host.ask("And Monday?", null, host.stopEpoch, { spoken: true, voiceUnchecked: true });
+    expect(own).toBe(2);
+    await host.stop();
+  });
+
   it("keeps a manually opened spoken request with its own queued turn", async () => {
     const started: { text: string; spoken: boolean; manual?: true }[] = [];
     const { host } = makeHost({ onTurnStart: turn => started.push(turn) });
