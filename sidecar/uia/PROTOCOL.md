@@ -410,8 +410,8 @@ has it, otherwise from `ValuePattern`:
 `{"secret": true}` and nothing else for a password field (`IsPassword`, an `Edit` with the protected state, or
 `IsPassword` unreadable). `{}` when the element has neither pattern. Errors: `gone`, `busy`.
 
-A plain native single-line Edit of the element's own process (`Edit` or WinForms' `WindowsForms10.EDIT.*`, a child
-window, not multi-line, not a password field) is read from the control itself: its value (`source: "value"`) and
+A plain native Edit of the element's own process (`Edit` or WinForms' `WindowsForms10.EDIT.*`, a child window,
+single-line or multi-line, not a password field) is read from the control itself: its value (`source: "value"`) and
 `EM_GETSEL`'s selection, a bare caret included, never TextPattern's ranges. Their caret arithmetic (Clone,
 `MoveEndpointByRange`, `GetText`, `CompareEndpoints`) made the app being read take the foreground from Ember's Ask box
 on Windows (cifix-x9-12). Where `EM_GETSEL` doesn't answer or the text is over 64 K characters, TextPattern gives the

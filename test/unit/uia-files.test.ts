@@ -129,23 +129,25 @@ describe("the bridge's bootstrap (ember_uia.ps1)", () => {
 describe("the bridge's C# (ember_uia.cs)", () => {
   const plain = code(cs);
 
-  it("reads a plain native single-line Edit's caret and selection from the control, never through TextPattern's ranges (cifix-x9-12)", () => {
+  it("reads a plain native Edit's caret and selection, single-line or multi-line, from the control, never through TextPattern's ranges (cifix-x9-12, cifix-x9-13)", () => {
     // On CI's Windows runner TextPattern's caret arithmetic over the bench's Name field handed the bench the foreground
     // from the Ask box while Ember read it. The control's own EM_GETSEL and value give the same, a bare caret included.
     const native = cs.slice(cs.indexOf("private static JObj NativeEditTextInfo("), cs.indexOf("private static object TextInfo(Call c)"));
-    expect(native).toContain("IntPtr hwnd = NativeSingleLineEdit(el);");
+    expect(native).toContain("IntPtr hwnd = NativeEdit(el);");
     expect(native).toContain("if (end < start) return null;");
     expect(native).not.toMatch(/end <= start/);
     expect(native).toContain(".Add(\"caret\", start).Add(\"selectionLength\", end - start)");
     // Password fields stay out of it, and the secret check comes before any read.
-    const edit = cs.slice(cs.indexOf("private static IntPtr NativeSingleLineEdit("), cs.indexOf("private static bool MaybeNativeSingleLineEdit("));
-    expect(edit).toContain("(style & (EsMultiline | EsPassword)) != 0");
+    const edit = cs.slice(cs.indexOf("private static IntPtr NativeEdit("), cs.indexOf("private static bool MaybeNativeEdit("));
+    expect(edit).toContain("(style & EsPassword) != 0) return IntPtr.Zero;");
+    // Multi-line Edits too (Notepad took the foreground at 688f6c1): the style no longer keeps them out.
+    expect(edit).not.toContain("EsMultiline");
     const info = cs.slice(cs.indexOf("private static object TextInfo(Call c)"));
     expect(info.indexOf("if (Props.IsSecret(el)) return new JObj().Add(\"secret\", true);")).toBeLessThan(info.indexOf("TextInfoOf(el, max, marks)"));
     // An Edit that falls through to TextPattern (EM_GETSEL unanswered, over 64 K characters) gets no caret arithmetic,
     // and one that can't be told is taken for one.
-    expect(info).toContain("if (selection.Length == 1 && !MaybeNativeSingleLineEdit(el))");
-    const maybe = cs.slice(cs.indexOf("private static bool MaybeNativeSingleLineEdit("), cs.indexOf("private static JObj NativeEditTextInfo("));
+    expect(info).toContain("if (selection.Length == 1 && !MaybeNativeEdit(el))");
+    const maybe = cs.slice(cs.indexOf("private static bool MaybeNativeEdit("), cs.indexOf("private static JObj NativeEditTextInfo("));
     expect(maybe.match(/return true;/g)).toHaveLength(3);
   });
 

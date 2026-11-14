@@ -761,7 +761,7 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
           for (const [k, v] of Object.entries(process.env)) if (v !== undefined && k !== "ELECTRON_RUN_AS_NODE") env[k] = v;
           const app = held.ember = await electron.launch({
             executablePath: createRequire(import.meta.url)("electron") as unknown as string, args: [root, "--autostart"], timeout: 60_000,
-            env: { ...env, EMBER_TEST_HOOKS: "1", EMBER_USER_DATA: userData, EMBER_TEST_ASK_READ: plan },
+            env: { ...env, EMBER_TEST_HOOKS: "1", EMBER_USER_DATA: userData, EMBER_TEST_ASK_READ: probePlan },
           });
           await waitFor("Ember's test hooks", () => app.evaluate(() => !!(globalThis as { __ember?: unknown }).__ember), 60_000);
           if (!(await app.evaluate(({ globalShortcut }, a) => globalShortcut.isRegistered(a), "Super+Alt+Space"))) { console.log(`read probe (${plan}): not run: another app holds the ask chord`); return; }
