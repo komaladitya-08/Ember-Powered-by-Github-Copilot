@@ -585,6 +585,25 @@ describe("redactSecrets: short secret names as YAML and JSON print them, schemes
   });
 });
 
+describe("redactSecrets and memory: a name ending in KEY or AUTH that says no secret (r10-commands-y10-6)", () => {
+  it.each([
+    "Our tables use SORT_KEY=created_at", "In the shop, PRIMARY_KEY=id for every table", "I set MUSIC_KEY=D minor for the song",
+    "Use ?key=abc in the maps link", "AUTH=on in the router", "FOREIGN_KEY: user_id", "PUBLIC_KEY=ssh-rsa AAAA", "foo key=val",
+    "PUBLIC_KEY=AAAAB3NzaC1yc2EAAAADAQABAAABAQC7",
+  ])("leaves the value and lets memory keep %j", text => {
+    expect(redactSecrets(text)).toBe(text);
+    expect(memoryRefusal(text)).toBeNull();
+  });
+
+  it.each([
+    ["SECRET_KEY=abc", `SECRET_KEY=${SECRET_HIDDEN}`], ["STRIPE_API_KEY=abc", `STRIPE_API_KEY=${SECRET_HIDDEN}`],
+    ["MY_PRIVATE_KEY: abc", `MY_PRIVATE_KEY: ${SECRET_HIDDEN}`], ["CACHE_KEY=a1b2c3d4e5f6", `CACHE_KEY=${SECRET_HIDDEN}`],
+    ["KEY=hunter2horse", `KEY=${SECRET_HIDDEN}`], ["AUTH: x9y8z7w6", `AUTH: ${SECRET_HIDDEN}`],
+  ])("still hides a key that says it is one or looks like one in %j", (text, want) => {
+    expect(redactSecrets(text)).toBe(want);
+  });
+});
+
 describe("the Azure Key Vault passes on output with no value in it (stop-yield-x9-left-1)", () => {
   const ids = '"https://kv.vault.azure.net/secrets/name-1/abc"\n';
   const big = ids.repeat(Math.ceil((4 * 1024 * 1024) / ids.length));

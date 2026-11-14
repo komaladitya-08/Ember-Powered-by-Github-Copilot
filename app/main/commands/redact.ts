@@ -87,6 +87,16 @@ const VALUE_NEEDS: ReadonlyMap<RegExp, readonly string[]> = new Map([
 ]);
 
 /** Patterns whose first group is kept and whose value is hidden. */
+/** The words before `_KEY` that say the key is a secret one (`SECRET_KEY`, `API_KEY`, `SIGNING_KEY`: r10-commands-y10-6). */
+const SECRET_KEY_WORDS =
+  "SECRET|API|PRIVATE|ACCESS|SIGNING|ENCRYPTION|ENC|MASTER|CLIENT|SESSION|LICENSE|LICENCE|ACCOUNT|SERVICE|DEPLOY|HMAC|JWT|AUTH|APP|CRYPTO|CIPHER|SSH|GPG|PGP|" +
+  "secret|api|private|access|signing|encryption|enc|master|client|session|license|licence|account|service|deploy|hmac|jwt|auth|app|crypto|cipher|ssh|gpg|pgp";
+/**
+ * A value that looks like a key or a scheme's credential: 8 or more letters, digits and `+/=_.-` with a letter and a
+ * digit among them, to the value's end (`created_at`, `id`, `on` and `D` are not: r10-commands-y10-6).
+ */
+const KEY_SHAPED = String.raw`["']?(?:(?:Basic|Bearer|Token|Digest|Negotiate|basic|bearer|token)[ \t]+|(?=[A-Za-z+/=_.-]{0,255}\d)(?=[0-9+/=_.-]{0,255}[A-Za-z])[A-Za-z0-9+/=_.-]{8,}(?![^\s"',;}\]]))`;
+
 const VALUE_PATTERNS: readonly RegExp[] = [
   /(aws_secret_access_key\s*[=:]\s*)\S+/gi,
   /(AccountKey=)[^;\s]+/g,
@@ -123,11 +133,15 @@ const VALUE_PATTERNS: readonly RegExp[] = [
   // filter's or a renderer's LOW_PASS, HIGH_PASS, BAND_PASS or RENDER_PASS (memory-x6-5; commands-remote-r10-6). The
   // name is at most 64 characters before its word, so each start is a bounded look.
   // An authorisation scheme's credential is hidden with it (`AUTH=Basic dXNl…`, `HTTP_AUTH=Bearer …`: r10-commands-x10-5).
-  /((?<![A-Za-z0-9_.-])(?!(?:OLD)?PWD=|(?:LOW|HIGH|BAND|ALL|RENDER)_PASS=)(?:[A-Za-z0-9_]{0,64}_)?(?:PASS|PASSPHRASE|AUTH|PW|PWD|KEY|pass|passphrase|auth|pw|pwd|key)=["']?)(?![$%{<*[])(?:(?:Basic|Bearer|Token|Digest|Negotiate|basic|bearer|token)[ \t]+)?[^\s"',;]+/g,
+  // A KEY is hidden when its name says it is a secret one (`SECRET_KEY`, `STRIPE_API_KEY`, `SIGNING_KEY`); any other
+  // KEY, and AUTH or KEY alone, only when its value looks like a key (8 or more letters and digits, both) or a scheme's
+  // credential: `SORT_KEY=created_at`, `PRIMARY_KEY=id`, `?key=abc` and `AUTH=on` are ordinary facts, and memory refused
+  // them as secrets (r10-commands-y10-6). PUBLIC_, SORT_, PRIMARY_ and FOREIGN_KEY are never hidden.
+  new RegExp(String.raw`((?<![A-Za-z0-9_.-])(?!(?:OLD)?PWD=|(?:LOW|HIGH|BAND|ALL|RENDER)_PASS=|(?:[A-Za-z0-9_]{0,64}_)?(?:PUBLIC|SORT|PRIMARY|FOREIGN|public|sort|primary|foreign)_(?:KEY|key)=)(?:(?:(?:[A-Za-z0-9_]{0,64}_)?(?:PASS|PASSPHRASE|PW|PWD|pass|passphrase|pw|pwd)|[A-Za-z0-9_]{0,64}_(?:AUTH|auth)|(?:[A-Za-z0-9_]{0,64}_)?(?:${SECRET_KEY_WORDS})_(?:KEY|key))=["']?|(?:[A-Za-z0-9_]{0,64}_)?(?:KEY|key|AUTH|auth)=["']?(?=${KEY_SHAPED})))(?![$%{<*[])(?:(?:Basic|Bearer|Token|Digest|Negotiate|basic|bearer|token)[ \t]+)?[^\s"',;]+`, "g"),
   // The same names as YAML and JSON print them (`docker compose config`'s `DB_PASS: hunter2`, `"REDIS_AUTH": "abc"`):
   // at a line's start, after a list's `- `, or after `{`, `[` or `,`, so prose keeps its words; a bare lower-case `key:`,
   // `pass:` or `auth:` (a selector's key, a field) needs a prefix (r10-commands-x10-5).
-  /((?:^|\n|[{[,])[ \t]*(?:-[ \t]+)?(?<q>["']?)(?!(?:OLD)?PWD\k<q>[ \t]*:|(?:LOW|HIGH|BAND|ALL|RENDER)_PASS\k<q>[ \t]*:)(?:[A-Za-z0-9_]{0,64}_(?:PASS|PASSPHRASE|AUTH|PW|PWD|KEY|PASSWD|pass|passphrase|auth|pw|pwd|key|passwd)|PASS|PASSPHRASE|AUTH|PW|KEY|PASSWD|passphrase)\k<q>[ \t]*:[ \t]*["']?)(?![$%{<*[])(?:(?:Basic|Bearer|Token|Digest|Negotiate|basic|bearer|token)[ \t]+)?[^\s"',;}\]]+/g,
+  new RegExp(String.raw`((?:^|\n|[{[,])[ \t]*(?:-[ \t]+)?(?<q>["']?)(?!(?:OLD)?PWD\k<q>[ \t]*:|(?:LOW|HIGH|BAND|ALL|RENDER)_PASS\k<q>[ \t]*:|(?:[A-Za-z0-9_]{0,64}_)?(?:PUBLIC|SORT|PRIMARY|FOREIGN|public|sort|primary|foreign)_(?:KEY|key)\k<q>[ \t]*:)(?:(?:[A-Za-z0-9_]{0,64}_(?:PASS|PASSPHRASE|AUTH|PW|PWD|PASSWD|pass|passphrase|auth|pw|pwd|passwd)|(?:[A-Za-z0-9_]{0,64}_)?(?:${SECRET_KEY_WORDS})_(?:KEY|key)|PASS|PASSPHRASE|PW|PASSWD|passphrase)\k<q>[ \t]*:[ \t]*["']?|(?:[A-Za-z0-9_]{0,64}_(?:KEY|key)|KEY|AUTH)\k<q>[ \t]*:[ \t]*["']?(?=${KEY_SHAPED})))(?![$%{<*[])(?:(?:Basic|Bearer|Token|Digest|Negotiate|basic|bearer|token)[ \t]+)?[^\s"',;}\]]+`, "g"),
   // A table's row whose first column names a secret, as `pulumi config --show-secrets`, `pulumi stack output` and
   // `netlify env:list` print them (`dbPassword   Tr0ub4dor&3`, `│ DB_PASSWORD │ hunter2 │`): the next column is hidden
   // (commands-remote-c10-1), or a single tab (`DB_PASSWORD\thunter2`: r10-commands-x10-5). Only at a line's start, the
