@@ -1045,11 +1045,13 @@ function inEmberDataParent(r: ReachRequest, name: string, os: OS = "linux"): boo
  * Cmd+Backspace), and Finder's Return, which renames.
  */
 const REMOVING_KEY = /^(?:[a-z]+\+)*(?:delete|backspace|f2)$|^(?:ctrl|super|cmd)\+(?:shift\+)?x$/;
+/** Windows Explorer's own delete, also in the common Open and Save dialogs that host its view (r12-safety-x12-3). */
+const WIN_DELETE_KEY = "ctrl+d";
 /** May this file manager step move, remove or rename what is chosen: such a key, or a menu item or button so named? */
 function removesChosen(r: Pick<ActionRequest, "kind" | "element" | "value">, os: OS): boolean {
   if (r.kind === "keys") {
     const k = canonicalKeys(r.value ?? "", KEYS[os]);
-    return !k || REMOVING_KEY.test(keyFamily(k)) || (os === "darwin" && keyFamily(k) === "return");
+    return !k || REMOVING_KEY.test(keyFamily(k)) || (os === "darwin" && keyFamily(k) === "return") || (os === "win32" && keyFamily(k) === WIN_DELETE_KEY);
   }
   if (r.kind !== "click" && r.kind !== "cursor_click" && r.kind !== "toggle") return false;
   return /menu ?item|button/i.test(r.element?.role ?? "") && MOVES_ITEMS.test(normalizeLabel(r.element?.name ?? ""));
@@ -1069,6 +1071,32 @@ function inFileChooser(r: ReachRequest): boolean {
   const page = browserApp(r.app ?? "") && (r.inPage === true || r.onPage === true || d?.page === true);
   return !page && (r.windowId?.role === "file chooser" || !!d?.fileChooser || FILE_DIALOG_NAME.test(titleName(d?.name ?? "")) || (FILE_DIALOG_NAME.test(titleName(r.window ?? "")) && !d?.alert));
 }
+/**
+ * A row that only a list of files shows (r12-safety-x12-2): "..", a dotfile or dot-folder, a name with a file's
+ * extension (never an address or a web domain), or a folder that sits beside or above the one that holds Ember's data
+ * (AppData's LocalLow and Roaming, Library's Caches and Preferences, a home folder's Documents and Downloads).
+ */
+const FILE_ROW = /^\.{1,2}$|^\.[\w-]|^(?:desktop|documents|downloads|movies|public|templates|appdata|locallow|roaming|caches|preferences|containers|launchagents|keychains)$/i;
+const FILE_EXT = /^[^\s@/:][^@/:]*\.[a-z][a-z0-9]{0,4}$/i;
+const WEB_EXT = /\.(?:com|org|net|edu|gov|io|co|uk|de|fr|info|biz|me|ai|app|dev)$/i;
+const fileRow = (n: string): boolean => { const t = n.trim(); return FILE_ROW.test(t) || EMBER_FILE.test(t) || (FILE_EXT.test(t) && !WEB_EXT.test(t) && !/^www\./i.test(t)); };
+/** A window title that is a folder's: a path, home or the top of the disk, or the folder above Ember's data itself. */
+function folderTitle(window: string, caseless: boolean): boolean {
+  const t = titleName(window), home = homeName();
+  return /^(?:[/~]|[a-z]:\\)/i.test(t) || /[/\\]/.test(t) || HOME_TITLE.test(t) || EMBER_DATA_PARENT.test(t)
+    || (!!home && (caseless ? t.toLowerCase() === home.toLowerCase() : t === home));
+}
+/**
+ * Is the view in front of a step outside the known file managers a list of files (r12-safety-x12-2)? A file chooser;
+ * a window titled with a folder; or rows that only a list of files shows, the step's own row among them, at least two
+ * where they are only shown (one such cell in a spreadsheet isn't a folder). A spreadsheet's cell, a music library's
+ * sidebar or a repository's branch named "Local" or "Library" is not.
+ */
+function filesInView(r: ReachRequest, chooser: boolean, caseless: boolean): boolean {
+  if (chooser || folderTitle(r.window ?? "", caseless)) return true;
+  if (fileRow(r.element?.name ?? "") || (r.chosen?.names ?? []).some(fileRow)) return true;
+  return (r.chosen?.shown ?? []).filter(fileRow).length >= 2;
+}
 /** Words in a dialog that say it removes, moves or renames what it names ("Delete selected “.config”?", "Move “.config” to:"). */
 const REMOVES_WORDS = /delete|trash|\bbin\b|remove|erase|rename|\bmove|\bcut\b|overwrite|replace/i;
 /**
@@ -1086,16 +1114,19 @@ function listReachesEmberData(r: ReachRequest, os: OS): boolean {
   const caseless = os !== "linux";
   const holder = (n: string) => { const t = n.trim(); return EMBER_DATA_PARENT.test(t) || EMBER_FOLDER.test(caseless ? t.toLowerCase() : t) || EMBER_FILE.test(t); };
   const d = r.dialog;
-  if (d?.text && REMOVES_WORDS.test(d.text) && commitsFileDialog(r, os)
-    && [...d.text.matchAll(QUOTED)].some(m => holder(m[1].split(/[/\\]/).filter(Boolean).pop() ?? ""))) return true;
   const chooser = inFileChooser(r);
+  // Only where the view lists files, or the dialog names a row only a list of files has (r12-safety-x12-2).
+  const files = filesInView(r, chooser, caseless);
+  if (d?.text && REMOVES_WORDS.test(d.text) && commitsFileDialog(r, os)
+    && [...d.text.matchAll(QUOTED)].some(m => { const n = m[1].split(/[/\\]/).filter(Boolean).pop() ?? ""; return holder(n) && (files || fileRow(n)); })) return true;
+  if (!files) return false;
   const chosen = [...(r.chosen?.names ?? []), ...(chooser ? d?.selected ?? [] : [])];
   const role = r.element?.role ?? "";
   if (r.kind === "keys") {
     const k = canonicalKeys(r.value ?? "", KEYS[os]);
     if (!k) return false;
     const f = keyFamily(k);
-    const removes = LIST_REMOVING_KEY.test(f) || (os === "darwin" && !chooser && f === "return");
+    const removes = LIST_REMOVING_KEY.test(f) || (os === "darwin" && !chooser && f === "return") || (os === "win32" && f === WIN_DELETE_KEY);
     if (!removes) return false;
     if (LIST_ROW.test(role) || /^axrow$/i.test(role)) return holder(r.element?.name ?? "") || chosen.some(holder);
     return LIST_VIEW.test(role.trim()) && chosen.some(holder);

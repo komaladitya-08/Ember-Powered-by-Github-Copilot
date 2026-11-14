@@ -610,7 +610,8 @@ settings, audit log and policy open in another app or their folder's path typed 
 can't tell a file or folder in front of it isn't one of those, such as “settings.json — Kate”, a project's settings.json
 in VS Code, a file manager titled “audit”, or a Delete, cut or rename in the folder that holds Ember's (“.config”,
 “Local”, “Application Support”) or of that folder itself from Home, in any app's list of files, an Open or Save dialog
-and a file manager Ember doesn't know included, or in its extensions or logs folder), the
+(Windows' Ctrl+D included) and a file manager Ember doesn't know included, though not a spreadsheet's cell, a music
+library's “Library” or a branch called “Local”, which go as before, or in its extensions or logs folder), the
 system's sign-in and password prompts, desktop-level keys and Ember's own shortcuts, making a file executable),
 consent and each first-use card, masked screenshots, the audit log (a step that can't be recorded isn't taken), Stop,
 the limits on tasks, steps, time and actions a minute, and your organisation's policy: `confirmEveryAction`,

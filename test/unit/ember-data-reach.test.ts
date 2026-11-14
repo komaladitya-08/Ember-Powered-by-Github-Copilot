@@ -767,9 +767,9 @@ describe("The folder that holds Ember's data reached from any app's list of file
       ["linux", "doublecmd", "Double Commander", { kind: "click", element: { role: "push button", name: "Yes" }, dialog: { name: "Double Commander", text: "Delete selected \".config\"?", alert: true } }],
       ["linux", "doublecmd", "Move", { kind: "click", element: { role: "push button", name: "OK" }, dialog: { name: "Move", text: "Move \".config\" to:", fields: ["/home/u/old-config"] } }],
       ["win32", "totalcmd64", "Total Commander 11.0", { kind: "keys", value: "F8", element: { role: "list item", name: "AppData" } }],
-      ["win32", "totalcmd64", "Total Commander 11.0", { kind: "keys", value: "F6", element: { role: "list item", name: "Local" } }],
-      ["darwin", "Path Finder", "u", { kind: "keys", value: "cmd+BackSpace", element: { role: "AXRow", name: "Library" } }],
-      ["darwin", "Path Finder", "u", { kind: "keys", value: "Return", element: { role: "AXRow", name: "Library" } }],
+      ["win32", "totalcmd64", "Total Commander 11.0", { kind: "keys", value: "F6", element: { role: "list item", name: "Local" }, chosen: { names: ["Local"], whole: true, shown: ["..", "Local", "LocalLow", "Roaming"] } }],
+      ["darwin", "Path Finder", "u", { kind: "keys", value: "cmd+BackSpace", element: { role: "AXRow", name: "Library" }, chosen: { names: ["Library"], whole: true, shown: ["Desktop", "Documents", "Downloads", "Library"] } }],
+      ["darwin", "Path Finder", "u", { kind: "keys", value: "Return", element: { role: "AXRow", name: "Library" }, chosen: { names: ["Library"], whole: true, shown: ["Desktop", "Documents", "Downloads", "Library"] } }],
       ["darwin", "Path Finder", "Library", { kind: "click", element: { role: "AXMenuItem", name: "Move to Trash" }, chosen: { names: ["Application Support"], whole: true } }],
     ];
     for (const [o, app, w, step] of rows) guarded(o, req(app, w, step), `${app} ${step.kind} ${step.element?.name} ${step.value ?? ""}`);
@@ -793,6 +793,48 @@ describe("The folder that holds Ember's data reached from any app's list of file
     }
     // An ordinary row's delete stays as the mode says: Autopilot announces it.
     expect(engine("autopilot").decide(req("doublecmd", "Double Commander", rows[0][3])).verdict).toBe("allow");
+  });
+
+  it("lets a row named Local, Library, etc, Application Support or (where case doesn't count) Ember in an app that doesn't list files go as before, announced (r12-safety-x12-2)", () => {
+    const sheet = { names: [] as string[], whole: true, shown: ["Rent", "1200", "Local", "Library", "Food", "a@example.com", "b@example.com", "example.org"] };
+    const rows: [OS, string, string, Partial<ActionRequest>][] = [
+      ...["Local", "Library", "etc", "Application Support"].map(name =>
+        ["linux", "soffice", "budget.ods - LibreOffice Calc", { kind: "keys", value: "F2", element: { role: "table cell", name }, chosen: sheet }] as [OS, string, string, Partial<ActionRequest>]),
+      ["win32", "excel", "budget.xlsx - Excel", { kind: "keys", value: "F2", element: { role: "data item", name: "Ember" }, chosen: sheet }],
+      ["win32", "excel", "budget.xlsx - Excel", { kind: "keys", value: "Delete", element: { role: "data item", name: "Local" }, chosen: sheet }],
+      ["darwin", "Music", "Music", { kind: "keys", value: "Return", element: { role: "AXRow", name: "Library" }, chosen: { names: ["Library"], whole: true, shown: ["Library", "Recently Added", "Artists", "Albums", "Songs", "Music Videos"] } }],
+      ["darwin", "Photos", "Photos", { kind: "keys", value: "Return", element: { role: "AXRow", name: "Library" }, chosen: { names: ["Library"], whole: true, shown: ["Library", "Memories", "People", "Places", "Favourites"] } }],
+      ["linux", "rhythmbox", "Rhythmbox", { kind: "keys", value: "Delete", element: { role: "table cell", name: "Library" }, chosen: { names: ["Library"], whole: true, shown: ["Library", "Music", "Podcasts", "Radio"] } }],
+      ["linux", "gitg", "repo - gitg", { kind: "keys", value: "Delete", element: { role: "tree item", name: "Local" }, chosen: { names: ["Local"], whole: true, shown: ["Local", "main", "feature/x", "Remote", "origin"] } }],
+      ["linux", "code", "repo - Visual Studio Code", { kind: "keys", value: "F2", element: { role: "tree item", name: "Local" }, chosen: { names: ["Local"], whole: true, shown: ["Local", "Remote", "Staged Changes"] } }],
+      ["linux", "gitg", "repo - gitg", { kind: "click", element: { role: "push button", name: "Delete" }, dialog: { name: "", text: "Delete branch “local”?", alert: true } }],
+      ["linux", "rhythmbox", "Rhythmbox", { kind: "click", element: { role: "menu item", name: "Remove" }, chosen: { names: ["Library"], whole: true, shown: ["Library", "Music", "Podcasts"] } }],
+    ];
+    for (const [o, app, w, step] of rows) {
+      const r = req(app, w, step), what = `${app} ${step.kind} ${step.element?.name} ${step.value ?? ""}`;
+      expect(mayReachEmberData(r, o), what).toBe(false);
+      expect(engine("autopilot", o).decide(r).verdict, `${what} autopilot`).not.toBe("deny");
+    }
+  });
+
+  it("still asks, and Autopilot refuses, where the list is a list of files: an editor's file tree, a commander at home or in AppData, Finder-like Library (r12-safety-x12-2)", () => {
+    const rows: [OS, string, string, Partial<ActionRequest>][] = [
+      ["linux", "code", "repo - Visual Studio Code", { kind: "keys", value: "F2", element: { role: "tree item", name: "Local" }, chosen: { names: ["Local"], whole: true, shown: ["Local", "package.json", ".gitignore", "src"] } }],
+      ["win32", "totalcmd64", "Total Commander 11.0", { kind: "keys", value: "F8", element: { role: "list item", name: "Local" }, chosen: { names: ["Local"], whole: true, shown: ["..", "Local", "LocalLow", "Roaming"] } }],
+      ["darwin", "ForkLift", "Library", { kind: "keys", value: "cmd+BackSpace", element: { role: "AXRow", name: "Application Support" }, chosen: { names: ["Application Support"], whole: true, shown: ["Application Support", "Caches", "Preferences"] } }],
+      ["linux", "doublecmd", "/home/u", { kind: "keys", value: "F8", element: { role: "table cell", name: "etc" }, chosen: { names: ["etc"], whole: true, shown: [] } }],
+      ["linux", "soffice", "budget.ods - LibreOffice Calc", { kind: "keys", value: "Delete", element: { role: "table cell", name: ".config" }, chosen: { names: [".config"], whole: true, shown: [".config"] } }],
+    ];
+    for (const [o, app, w, step] of rows) guarded(o, req(app, w, step), `${app} ${w} ${step.kind} ${step.element?.name} ${step.value ?? ""}`);
+  });
+
+  it("asks every time, and Autopilot refuses, Explorer's own Ctrl+D (delete) on AppData's Local in a Windows Open or Save dialog (r12-safety-x12-3)", () => {
+    const dlg = { name: "Open", text: "", fileChooser: true, fields: [""], items: ["AppData"], selected: ["Local"] };
+    guarded("win32", req("notepad", "Open", { kind: "keys", value: "ctrl+d", element: { role: "list item", name: "Local" }, dialog: dlg }), "notepad ctrl+d Local");
+    guarded("win32", req("notepad", "Open", { kind: "keys", value: "ctrl+d", element: { role: "list", name: "Items View" }, dialog: dlg }), "notepad ctrl+d list");
+    // Ctrl+D elsewhere is a bookmark (Linux file managers and choosers) or another row's: as before.
+    expect(mayReachEmberData(req("gedit", "Open", { kind: "keys", value: "ctrl+d", element: { role: "table cell", name: ".config" }, dialog: chooser([".config"]) }), "linux")).toBe(false);
+    expect(mayReachEmberData(req("notepad", "Open", { kind: "keys", value: "ctrl+d", element: { role: "list item", name: "notes.txt" }, dialog: { ...dlg, selected: ["notes.txt"] } }), "win32")).toBe(false);
   });
 });
 
