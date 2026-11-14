@@ -696,6 +696,129 @@ describe("AnswerLanguage judges a passage read out after an English lead-in by t
   });
 });
 
+describe("AnswerLanguage tells a passage's language from its own words, not from its lead-in or a header's label (voice-speaking-r11-1, voice-speaking-r11-2)", () => {
+  /** Ordinary short emails: the round's re-rate's (by language) and others written for the fix, none like the tests' one passage. */
+  const EMAILS: Record<string, string[]> = {
+    es: [
+      "Buenos días. Te envío el informe que me pediste ayer. Si tienes alguna pregunta, avísame. Saludos, Ana.",
+      "Hola Alex, ya tengo las entradas para el concierto del sábado. Quedamos a las siete delante del teatro. Besos, Lucía.",
+      "Estimado Alex, adjunto la factura de marzo. Agradecería el pago antes del día quince. Atentamente, Carlos.",
+      "Hola, mañana no podré ir a la oficina porque tengo médico. Trabajaré desde casa. Un saludo, Pedro.",
+      "Alex, gracias por tu ayuda con la presentación. Todo salió muy bien y el equipo está contento.",
+      "Buenas tardes, confirmo la reserva para cuatro personas el viernes a las nueve. Gracias, Restaurante Sol.",
+      "Hola Alex, ¿puedes revisar el documento antes de la reunión? Necesito tus comentarios hoy. Gracias, Marta.",
+      "Querido Alex, feliz cumpleaños. Espero que pases un día maravilloso con tu familia. Abrazos, tía Rosa.",
+    ],
+    it: [
+      "Buongiorno, ti mando il rapporto che mi hai chiesto ieri. Se hai domande, fammi sapere. Saluti, Giulia.",
+      "Ciao Alex, ho preso i biglietti per il concerto di sabato. Ci vediamo alle sette davanti al teatro. Baci, Chiara.",
+      "Gentile Alex, allego la fattura di marzo. Gradirei il pagamento entro il quindici. Cordiali saluti, Paolo.",
+      "Ciao, domani non posso venire in ufficio perché ho il medico. Lavoro da casa. Un saluto, Luca.",
+      "Alex, grazie per l'aiuto con la presentazione. È andato tutto benissimo e il gruppo è contento.",
+      "Buonasera, confermo la prenotazione per quattro persone venerdì alle nove. Grazie, Ristorante Sole.",
+      "Ciao Alex, puoi rivedere il documento prima della riunione? Mi servono i tuoi commenti oggi. Grazie, Marta.",
+      "Caro Alex, buon compleanno! Spero che tu passi una giornata meravigliosa con la tua famiglia. Abbracci, zia Rosa.",
+    ],
+    pt: [
+      "Bom dia, envio o relatório que você pediu ontem. Se tiver dúvidas, me avise. Abraços, Ana.",
+      "Oi Alex, comprei os ingressos para o show de sábado. Nos encontramos às sete na frente do teatro. Beijos, Luísa.",
+      "Prezado Alex, segue em anexo a fatura de março. Agradeço o pagamento até o dia quinze. Atenciosamente, Carlos.",
+      "Oi, amanhã não vou ao escritório porque tenho médico. Vou trabalhar de casa. Um abraço, Pedro.",
+      "Alex, obrigado pela ajuda com a apresentação. Correu tudo muito bem e a equipe está contente.",
+      "Boa tarde, confirmo a reserva para quatro pessoas na sexta às nove. Obrigado, Restaurante Sol.",
+      "Oi Alex, pode revisar o documento antes da reunião? Preciso dos seus comentários hoje. Obrigada, Marta.",
+      "Querido Alex, feliz aniversário! Espero que tenha um dia maravilhoso com a sua família. Abraços, tia Rosa.",
+    ],
+  };
+  const MORE: Record<string, string[]> = {
+    es: [
+      "Hola Alex, no te olvides de traer las llaves del coche mañana. Te espero a las ocho. Un beso, Carmen.",
+      "Buenas, si puedes, mándame el contrato firmado antes del jueves. Me hace falta para el banco. Gracias, Jorge.",
+      "Alex, mi vuelo llega tarde y no voy a poder cenar contigo. Lo siento mucho. Hablamos mañana, Elena.",
+      "Hola a todos, el lunes no hay clase porque es fiesta. Nos vemos el martes a la misma hora. Profesora Ruiz.",
+      "Te escribo para decirte que ya pagué la luz y el agua de este mes. Si falta algo, me dices. Pablo.",
+    ],
+    it: [
+      "Ciao Alex, non dimenticare di portare le chiavi della macchina domani. Ti aspetto alle otto. Un bacio, Carla.",
+      "Salve, se puoi mandami il contratto firmato entro giovedì. Mi serve per la banca. Grazie, Giorgio.",
+      "Alex, il mio volo arriva tardi e non riesco a cenare con te. Mi dispiace tanto. Ci sentiamo domani, Elena.",
+      "Ciao a tutti, lunedì non c'è lezione perché è festa. Ci vediamo martedì alla stessa ora. Professoressa Rossi.",
+      "Ti scrivo per dirti che ho già pagato la luce e l'acqua di questo mese. Se manca qualcosa, dimmi pure. Paolo.",
+    ],
+    pt: [
+      "Oi Alex, não esquece de trazer as chaves do carro amanhã. Te espero às oito. Um beijo, Carla.",
+      "Olá, se puder me manda o contrato assinado até quinta. Preciso dele para o banco. Obrigado, Jorge.",
+      "Alex, o meu voo chega atrasado e não vou conseguir jantar com você. Sinto muito. Falamos amanhã, Helena.",
+      "Oi pessoal, na segunda não tem aula porque é feriado. Nos vemos na terça no mesmo horário. Professora Lima.",
+      "Te escrevo para dizer que já paguei a luz e a água deste mês. Se faltar alguma coisa, me fala. Paulo.",
+    ],
+    fr: [
+      "Salut Alex, n'oublie pas d'apporter les clés de la voiture demain. Je t'attends à huit heures. Bisous, Carole.",
+      "Bonjour, si possible, envoie-moi le contrat signé avant jeudi. J'en ai besoin pour la banque. Merci, Georges.",
+      "Alex, mon vol arrive en retard et je ne pourrai pas dîner avec toi. Je suis désolée. On se parle demain, Hélène.",
+      "Bonjour à tous, lundi il n'y a pas cours car c'est férié. On se voit mardi à la même heure. Madame Roux.",
+      "Je t'écris pour te dire que j'ai déjà payé l'électricité et l'eau ce mois-ci. S'il manque quelque chose, dis-moi. Paul.",
+    ],
+    de: [
+      "Hallo Alex, vergiss nicht, morgen die Autoschlüssel mitzubringen. Ich warte um acht auf dich. Kuss, Karla.",
+      "Guten Tag, schick mir bitte den unterschriebenen Vertrag bis Donnerstag. Ich brauche ihn für die Bank. Danke, Jörg.",
+      "Alex, mein Flug kommt spät an und ich schaffe das Abendessen mit dir nicht. Es tut mir leid. Bis morgen, Helene.",
+      "Hallo zusammen, am Montag ist kein Unterricht, weil Feiertag ist. Wir sehen uns am Dienstag zur gleichen Zeit. Frau Roth.",
+      "Ich schreibe dir, weil ich Strom und Wasser für diesen Monat schon bezahlt habe. Wenn noch etwas fehlt, sag es mir. Paul.",
+    ],
+  };
+  const all = (["es", "it", "pt"] as const).flatMap(lang => EMAILS[lang].map(p => [lang, p] as const)).concat(Object.entries(MORE).flatMap(([lang, ps]) => ps.map(p => [lang, p] as const)));
+  const streamed = (answer: string) => {
+    const stream = new SpeechStream(100_000), language = new AnswerLanguage();
+    language.reset("read me the email");
+    const said: { text: string; lang: string | null }[] = [];
+    for (const word of answer.split(/(?<=\s)/)) said.push(...language.take(stream.push(word)));
+    said.push(...language.take(stream.finish(answer), true));
+    return said;
+  };
+  const flat = (text: string) => text.replace(/\s+/g, " ").trim();
+  /** Each piece of the passage in its language's voice, and the rest (lead-in, header lines, closing question) in Ember's. */
+  const voices = (before: string, passage: string, lang: string) => {
+    const said = streamed(`${before}\n\n${passage}\n\nWant me to reply?`);
+    return said.map(p => [flat(p.text), flat(passage).includes(flat(p.text)) && flat(p.text).length > 3 ? lang : null]).filter(([, want], i) => said[i].lang !== want);
+  };
+
+  it.each(["Here is the email from Ana:", "Here's the email from Alex's colleague:", "The message reads:"])("reads every ordinary Spanish, Italian, Portuguese, French and German email in its own voice after “%s” (voice-speaking-r11-1)", lead => {
+    // Kitten read 12 of the re-rate's 40 wholly with English sounds: their first 60 letters had too few short words.
+    for (const [lang, passage] of all) expect(voices(lead, passage, lang), `${lang}: ${passage}`).toEqual([]);
+  });
+
+  it.each([
+    "From: Sam\nSubject: Hi\nAttachments: a.pdf", "From: José\nReceived: today at 9:14", "Time: 9:14\nSender: José",
+    "**Sender:** José\n**Priority:** High", "From: Ana\nLabels: Work, Family\nFolder: Inbox", "Importance: Normal\nAttachment: plan.pdf",
+  ])("says header lines it doesn't know (%j) in Ember's voice, and the email after them in its own (voice-speaking-r11-2, voice-speaking-c11-1)", header => {
+    // A label outside the seven Ember knew was judged with the passage: the email went back to Kitten (18 of 40), or,
+    // once told, the English label was said by the passage's voice.
+    for (const [lang, passage] of all) expect(voices(header, passage, lang), `${lang}: ${passage}`).toEqual([]);
+  });
+
+  it("still says an English email, note or answer with labels and lead-ins wholly in Ember's own voice", () => {
+    for (const answer of [
+      "Here is the email from Ana:\n\nHi Alex, I can't make it to the meeting tomorrow. Can you send me the notes after? Thanks, Ana.\n\nWant me to reply?",
+      "Here is the email from Bob:\n\nNo worries about the delay. Do let me know if you need a hand with the slides. Cheers, Bob.",
+      "The message reads:\n\nCall me when you're in. I'm at the office till six, per usual.",
+      "Note: I saved the file in your Documents folder. Do you want me to open it?",
+      "Status: done. I moved 3 files to the Archive folder and left a note for you.",
+      "From: Sam\nSubject: Lunch\nAttachments: menu.pdf\n\nHey, want to grab lunch at noon? The new place on Main Street does a great burrito. Let me know! Sam",
+      "From: Ana\nPriority: High\n\nPlease sign the contract by Friday and send me a copy. I need it for the bank. Thanks.",
+      "Here's the note from Mum:\n\nNo need to bring anything, I have it all. See you at 7 o'clock.",
+      "Here is the email from Tom:\n\nMe and the team are in Lisbon next week. Do you want to meet up? Tom",
+      "Your next meeting: Design review at 3 pm in Room 4, with Ana and Tom.",
+    ]) expect(streamed(answer).filter(p => p.lang !== null), answer).toEqual([]);
+    for (const t of ["Tell me a joke.", "No, do it in a minute.", "Send me a copy per email.", "Do me a favour.", "O no, me again."]) expect(speechLanguage(t), t).toBeNull();
+  });
+
+  it("keeps a header whose label or value is in the passage's language with the passage, as before (r10-voice-x10-2)", () => {
+    const said = streamed("Asunto: reunión del lunes\n\nHola Alex, mañana no puedo ir a la oficina. Te llamo por la tarde. Un abrazo, Ana.");
+    expect(said.find(p => p.text.includes("reunión"))?.lang).toBe("es");
+  });
+});
+
 describe("AnswerLanguage says an English answer's own closing words in Ember's voice after a passage it read out in another language", () => {
   const said = (pieces: string[]) => { const a = new AnswerLanguage(); a.reset(""); return pieces.flatMap((p, i) => a.take([p], i === pieces.length - 1)).map(p => p.lang); };
   it("asks “Shall I reply to it?” in English after reading out a Spanish email, never in the Spanish voice (voice-speaking-c7-3)", () => {

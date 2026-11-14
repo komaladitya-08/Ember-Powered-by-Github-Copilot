@@ -1405,16 +1405,23 @@ from José:", also one that came in the same piece as the passage's first senten
 be another language's in an answer that looked English so far ("Okay, reading it now."), what follows is judged by
 itself, from its own first 60 letters, and waits until then unless it is clearly English: counted with the lead-in, whose
 English short words outnumber a first sentence's, a Spanish, Italian or Portuguese email was read by Kitten for 14 of
-16 ordinary lead-ins and layouts (now none; an Italian or Portuguese passage's first sentence with no accent still is,
-after a lead-in without a colon or on the same line). A message's header lines at the start of what is judged ("From:
-José", "To:", "Subject: Proyecto", "Date:": `HEADER`) are Kitten's, each said as it comes, when the value is in no
-other language and its only accented letters are in a name (a subject's first word counts as its own: "Subject: Reunión
+16 ordinary lead-ins and layouts (none for the tests' passages since; an Italian or Portuguese passage's first sentence with no accent still is,
+after a lead-in without a colon or on the same line). A passage is told by its own short words against English's, a
+sixth of its words being enough (`languageNow`), and the short words a language writes as often as English does ("a",
+"me", "no", "do", "in", "o": `ALSO_ENGLISH`) count for both: with a quarter of its words needed and those left out,
+ordinary three- or four-sentence emails were Kitten's in 12 of 40 after a plain lead-in, 7 of the 8 Portuguese ones
+(voice-speaking-r11-1; now none of those 40 nor of 25 more, with English emails and notes still Kitten's). A message's
+header lines at the start of what is judged ("From: José", "To:", "Subject: Proyecto", "Date:": `HEADER`; and any other
+one-line label of up to three words with its value, "Attachments: plan.pdf", "Received: today at 9:14", "Sender: José",
+"Priority: High": `HEADER_LABEL`, whose label Ember didn't know made the email Kitten's again in 18 of 40, or was said by
+the passage's voice: voice-speaking-r11-2, voice-speaking-c11-1) are Kitten's, each said as it comes, when the label and
+the value are in no other language and the value's only accented letters are in a name (a subject's first word counts as its own: "Subject: Reunión
 del lunes", "From: Иван" and "Subject: 会议" are judged with the message, since Kitten reads only English:
 r10-voice-x10-2), and so is a lead-in in no
 other language whose only accented letters are in a name ("José's email says:": `leadsIn`); the message after them is
 judged by itself. Judged as its first letters, the sender and subject diluted its short words, and a Spanish or Italian
 email was Kitten's with English sounds in 22 of 44 cases for "**From:** José / **Subject:** Proyecto", and after
-"José's email says:" in 3 of 5 languages (voice-speaking-r10-2, voice-speaking-c10-1; now none). A passage is judged without the clearly English pieces it ends
+"José's email says:" in 3 of 5 languages (voice-speaking-r10-2, voice-speaking-c10-1; none for the tests' passages since). A passage is judged without the clearly English pieces it ends
 with: counted with Ember's own "Shall I reply to it?", a chat message of two sentences was Kitten's for 15 of 15 (now
 6: a passage under 60 letters still needs two different short words of its language, or Spanish's "¿" or "¡", so
 "Ciao Alex, come stai? Ci vediamo domani." and "Olá Alex, tudo bem? Até amanhã no escritório." are Kitten's). Until then a piece that may be another language's ("Bien sûr !", with letters
