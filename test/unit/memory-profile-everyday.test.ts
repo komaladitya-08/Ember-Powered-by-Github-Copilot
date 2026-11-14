@@ -115,3 +115,27 @@ describe("a length alone, or “It's X, not Y”, never overwrites what the user
     expect(nameSaid("It's Raj, not Sam.", "Ram")).toBeNull();
   });
 });
+
+describe("“keep it short” beside a request to make something leaves the user's length alone (r10-memory-y10-1)", () => {
+  const MAKES: [string, "short" | "detailed"][] = [
+    ["Make a toast for my sister's wedding, keep it short", "short"], ["Give me a caption for this photo, keep it brief", "short"],
+    ["Create a bio for my LinkedIn. Keep it short.", "short"], ["Plan a speech for Friday, keep it brief please", "short"],
+    ["Make a shopping list, keep it short", "short"], ["Put together a eulogy for my gran, keep it brief", "short"],
+    ["Do a cover letter for Globex. Keep it detailed.", "detailed"], ["What's the capital of Peru? Keep it short.", "short"],
+  ];
+  it.each(MAKES)("“%s” keeps the profile's length (r10-memory-y10-1)", async (said, length) => {
+    expect(lengthSaid(said)).toBeNull();
+    const r = rig();
+    r.l.introduce({ name: "Ram", length: length === "short" ? "detailed" : "short" });
+    r.day();
+    const fact = length === "short" ? "Prefers short answers" : "Prefers detailed answers";
+    expect(r.remember(said, fact)).not.toMatch(/replacing \[f2\]/);
+    expect(r.list()).toContain(length === "short" ? "user: Prefers detailed answers" : "user: Prefers short answers");
+  });
+
+  it("still reads “keep it brief” as the user's length when it is all the turn says (r10-memory-y10-1)", () => {
+    for (const said of ["Keep it brief.", "Ember, keep it short please.", "Stop rambling, thanks.", "Please keep it brief. Stop rambling."]) {
+      expect(lengthSaid(said), said).toBe("short");
+    }
+  });
+});

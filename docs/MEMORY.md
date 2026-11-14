@@ -679,7 +679,7 @@ at Globex", and the everyday ways of memory-r10-2: "I go by Raj these days, not 
 when Ram is the name Ember has for them now, so "It's Paris, not London" renames no one: r10-memory-x10-3), a title,
 "Call me Dr. Patel please", and what others call them offered to Ember, "My friends call me Raj, and so can you") or
 how long its answers should be ("Stop being so brief, I want the full detail", "your answers are too long":
-`lengthSaid`, read the right way round; and, in a turn that hands Ember nothing to write and speaks of no one else,
+`lengthSaid`, read the right way round; and, in a turn that says nothing else (no request, question or errand beside it: r10-memory-y10-1),
 "Keep it brief", "Stop rambling", "Less waffle please": memory-r10-2; never a length alone, "Shorter, please" or
 "More detail", which may ask for one answer or a draft again: r10-memory-x10-3), and the fact the model saves
 for it, by the remember tool or when the turn is read, says the same name or length, the fact kept is the profile's

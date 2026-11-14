@@ -215,10 +215,15 @@ const KEEP_IT = new RegExp(String.raw`^(?:(?:please|just)\s+)*keep\s+(?:it|them|
  * a length alone ("Shorter, please", "More detail"), which may ask for one answer, a draft's or a letter's, again
  * shorter, and would then overwrite what the user set in Tell Ember about you (r10-memory-x10-3). Never in a turn that hands Ember words to work on or to pass on, speaks
  * of someone else or reports ("Write to Priya and keep it brief", "Tell Bob to stop rambling", "Priya said stop
- * rambling"), so "it" can only be Ember's answers.
+ * rambling"), nor beside anything else the turn asks for ("Make a toast, keep it short"), so "it" can only be Ember's
+ * answers.
  */
 function plainOrder(clause: string, own: string): Length | null {
   if (WRITING.test(own) || HANDS_OVER.test(own) || REPORTS.test(own) || TO_SOMEONE.test(own)) return null;
+  // Only when the turn says nothing else: beside any other ask ("Make a toast, keep it short", "What's the capital of
+  // Peru? Keep it short.") "it" is that one answer, never the user's length (r10-memory-y10-1).
+  const others = (own.match(/[^.;!?]+[.;!?]*/gu) ?? []).flatMap(sentence => sentence.replace(/[.;!?\s]+$/u, "").split(/,+|\s+(?:but|and)\s+/u));
+  if (!others.every(part => { const c = part.replace(OPENERS, "").trim(); return !c || CUT_SHORT.test(c) || KEEP_IT.test(c); })) return null;
   if (CUT_SHORT.test(clause)) return "short";
   const keep = KEEP_IT.exec(clause);
   return keep ? (/^(?:short|brief|concise)$/iu.test(keep[1]!) ? "short" : "detailed") : null;
