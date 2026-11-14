@@ -26,7 +26,7 @@ import type { BubbleState, EmberState } from "../../shared/overlay";
 import type { ConversationContext } from "../../shared/ipc";
 import { TaskManager, handedElsewhere, taskOutcome, titleOf, type KeptCard, type RetriedWords, type StopCause, type Task, type WorkerLike } from "./tasks";
 import { redactingClient, type ModelRedactor } from "./redacting-client";
-import { LINUX_WORKER_SYSTEM, Worker, type TaskSpec, type WorkerDeps, type WorkerSystem, type WorkerVault } from "./worker";
+import { CHECKING_STEP, LINUX_WORKER_SYSTEM, Worker, type TaskSpec, type WorkerDeps, type WorkerSystem, type WorkerVault } from "./worker";
 import type { Confirmer } from "./confirm";
 import type { WindowTarget } from "../perception";
 import type { Bounds } from "../perception/sidecar";
@@ -1470,6 +1470,8 @@ export class AgentHost {
     const said = this.userWordsOf(this.turn, { routine: false });
     const words = said.checkWords ?? said.commandWords ?? said.words ?? "";
     if (!words.trim()) return null;
+    // Said in the conversation's bubble while the check runs (up to REVIEW_MS), as a task's step is (r12-ui-x12-7).
+    try { this.presenter.progress(CHECKING_STEP); } catch (err) { this.o.log.warn("agent.checking_not_said", { err }); }
     return check({ userWords: words, step }, signal);
   }
   private callCheck: StepChecker | null = null;

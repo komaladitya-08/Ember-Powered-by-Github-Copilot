@@ -592,7 +592,8 @@ or where you said no has its steps checked too, the check being told so. On anot
 step still asks (its own policy asks for each one); steps in WSL apps, on this screen, are checked as any other here.
 An extension's call in the conversation that would ask because its tool changes or sends things, or because its
 server is on the internet (a read-only tool of a remote server), goes to the same check first, against your own words
-for that turn (`ExtensionsDeps.assisted` and `checkCall`, the host's `checkExtensionCall`; integrations-r12-1). A match
+for that turn (`ExtensionsDeps.assisted` and `checkCall`, the host's `checkExtensionCall`; integrations-r12-1), the
+conversation's bubble saying "Checking this step against what you asked…" while it runs (r12-ui-x12-7). A match
 is said in the conversation's bubble ("Using a tool from <extension>, without asking: I checked it against what you
 asked."), audited as `verdict: "announce"`, `mode: "assisted"`, `review: "match"`, and shown in What Ember did as
 "Ember's check found this in what you asked."; anything else asks. A call after a no, one that may reach Ember's own

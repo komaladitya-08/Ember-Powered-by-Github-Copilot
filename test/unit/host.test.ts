@@ -105,6 +105,7 @@ vi.mock("@github/copilot-sdk", async importOriginal => {
   return { ...real, CopilotClient: FakeClient, RuntimeConnection: { forStdio: () => ({}) } };
 });
 
+import { CHECKING_STEP } from "../../app/main/agent/worker";
 import { ACCOUNT_CHANGED_FORGOT, AgentHost, CUT_OFF, SIGN_OUT_NOT_KEPT, START_TIMEOUT_DETAIL, PROVIDER_MOVED_TASK, PROVIDER_SWITCH_TITLE, idleWord, proxyFromChromium, unansweredWord, startErrorReason, type AgentStatus, type HostOptions } from "../../app/main/agent/host";
 import type { ActiveProvider } from "../../app/main/provider";
 import { unavailableLine } from "../../app/renderer/ask/chips";
@@ -329,7 +330,7 @@ describe("connecting and signing in", () => {
 
   it("checks an extension's call in Assisted against the turn's own words, and never a suggestion's (integrations-r12-1)", async () => {
     const checked: { userWords: string; step: string }[] = [];
-    const { host } = makeHost({ checkStep: async i => { checked.push(i); return "match"; } });
+    const { host, patches } = makeHost({ checkStep: async i => { checked.push(i); return "match"; } });
     const signal = new AbortController().signal;
     expect(await host.checkExtensionCall("Tool: \"create_issue\"", signal)).toBeNull();
     await host.start(TOKEN, "stored");
@@ -337,12 +338,17 @@ describe("connecting and signing in", () => {
     await host.ask("Open an issue on ember-notes titled Dark mode is too dim");
     conductorSession().nextTurn();
     await host.ask("And close the old one", null, host.stopEpoch, { suggested: true });
+    const from = patches.length;
     expect(await host.checkExtensionCall("Tool: \"create_issue\"", signal)).toBe("match");
     expect(checked).toEqual([{ userWords: "Open an issue on ember-notes titled Dark mode is too dim", step: "Tool: \"create_issue\"" }]);
+    // The conversation's bubble says so while the check runs, as a task's does (r12-ui-x12-7).
+    expect(patches.slice(from).some(p => p.bubble?.thought === CHECKING_STEP)).toBe(true);
     conductorSession().emit("session.idle");
     conductorSession().nextTurn();
-    // The suggestion's turn: Ember's own words, never the user's, so nothing is checked and the call asks.
+    // The suggestion's turn: Ember's own words, never the user's, so nothing is checked (or said to be) and the call asks.
+    const before = patches.length;
     expect(await host.checkExtensionCall("Tool: \"close_issue\"", signal)).toBeNull();
+    expect(patches.slice(before).some(p => p.bubble?.thought === CHECKING_STEP)).toBe(false);
     expect(checked.length).toBe(1);
     await host.stop();
   });
