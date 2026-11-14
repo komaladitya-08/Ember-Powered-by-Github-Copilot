@@ -5,7 +5,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { classify, emberDataOf, emberReachOf, gateAnnouncement, gateQuestion, wrapResult, argsSummary, plainName, EMBER_DATA_HELD, EMBER_DATA_REFUSED, EMBER_DATA_UNASKED, REFUSED, SAID_NO_UNASKED, UNANSWERED, VAULT_FILLED, type GateInput } from "../../app/main/extensions/gate";
+import { callForCheck, classify, emberDataOf, emberReachOf, gateAnnouncement, gateQuestion, wrapResult, argsSummary, plainName, EMBER_DATA_HELD, EMBER_DATA_REFUSED, EMBER_DATA_UNASKED, REFUSED, SAID_NO_UNASKED, UNANSWERED, VAULT_FILLED, type GateInput } from "../../app/main/extensions/gate";
 import { canonical, checkPins, isReadOnly, pinAll, schemaWords, toolHash, shownHash, shownSchema, type ServedTool } from "../../app/main/extensions/pin";
 import { readMarketplace, readPlugin, serverSpec, inside, pluginPath, reachOf } from "../../app/main/extensions/manifest";
 import { probeHttp, probeStdio, rpcAnswer, servedTools } from "../../app/main/extensions/probe";
@@ -27,6 +27,7 @@ import { registerExtensionsIpc } from "../../app/main/extensions-ipc";
 import { taskLineOf } from "../../app/main/agent/confirm";
 import { describeEntry } from "../../app/renderer/home/copy";
 import { EXTENSIONS_IPC } from "../../app/shared/ipc";
+import { STEP_CHECK_MAX, stepCheckPrompt } from "../../app/main/commands/review";
 import { SAVED_OUTPUT, clearRuntimeTemp, runtimeTempDir, runtimeTempEnv } from "../../app/main/agent/runtime-temp";
 
 const FIXTURE = path.resolve("test/fixtures/mcp-fake.mjs");
@@ -2392,6 +2393,27 @@ describe("ExtensionsService", () => {
       await unanswered({ text: "ok" });
       expect(steps.length).toBe(2);
       expect(asked.length).toBe(3);
+    });
+
+    it("asks, unchecked, when the arguments grow past what the check is shown once quoted, never letting a match run what it didn't see (r12-ui-y12-1)", async () => {
+      const steps: string[] = [];
+      const s = await installed({ assisted: () => true, checkCall: async step => { steps.push(step); return "match"; }, announce: () => true });
+      const ext = s.forSession()!;
+      shown(ext);
+      // Each under 2,500 characters raw, longer quoted: "<" is written out in six, a zero-width space too, a quote in two.
+      for (const note of ["<".repeat(2400), "\u200b".repeat(2400), '"'.repeat(1200)]) {
+        const args = { note, share_with: "someone-else@example.com" };
+        expect(canonical(args).length).toBeLessThan(2500);
+        answers = [null];
+        expect(await call(ext, "fake-post_message", args)).toMatchObject({ permissionDecision: "deny" });
+        ext.newTurn?.();
+      }
+      expect(steps).toEqual([]);
+      expect(asked.length).toBe(3);
+      // What the check is shown is always the whole step, its last line Ember's own.
+      const whole = callForCheck("fake", { name: "post_message", annotations: {} } as never, { note: "<".repeat(300), share_with: "x@example.com" }, "changes")!;
+      expect(stepCheckPrompt({ userWords: "save a note", step: whole })).toContain(whole);
+      expect(whole.length).toBeLessThanOrEqual(STEP_CHECK_MAX);
     });
 
     it("stops waiting for the check when the kill switch is pulled, and denies the call", async () => {

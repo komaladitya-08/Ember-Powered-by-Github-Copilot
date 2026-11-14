@@ -598,7 +598,8 @@ is said in the conversation's bubble ("Using a tool from <extension>, without as
 asked."), audited as `verdict: "announce"`, `mode: "assisted"`, `review: "match"`, and shown in What Ember did as
 "Ember's check found this in what you asked."; anything else asks. A call after a no, one that may reach Ember's own
 files, one in a conversation an extension's text tried to steer, one whose server changed its list of tools, one with
-more than 2,500 characters of arguments, and a turn with no words of yours (a suggestion, a task's result) ask
+more than 2,500 characters of arguments or with arguments that, quoted for the check, no longer fit in the
+4,000 characters it is shown (r12-ui-y12-1), and a turn with no words of yours (a suggestion, a task's result) ask
 unchecked.
 
 **Autopilot** never asks about a step in an app. Every question Interactive would put up goes ahead instead,

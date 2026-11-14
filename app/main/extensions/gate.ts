@@ -31,6 +31,7 @@
 
 import type { Question } from "../agent/confirm";
 import { quoteUntrusted } from "../perception/elements";
+import { STEP_CHECK_MAX } from "../commands/review";
 import { INJECTION_NOTE } from "../perception/injection";
 import { AUTOPILOT_WORDS, CHECKED_WORDS, namesEmberData, namesEmberFile } from "../policy/policy";
 import { emberPathReach, type EmberPlace } from "../policy/ember-paths";
@@ -198,11 +199,21 @@ export function gateAnnouncement(extName: string, checked = false): string {
  */
 export const CHECKABLE: ReadonlySet<string> = new Set(["changes", "remote"]);
 
-/** The most of each part Assisted's check is shown of a call; a part past it isn't cut: the call asks, unchecked. */
+/**
+ * The most of each part Assisted's check is shown of a call; a part past it isn't cut: the call asks, unchecked. The
+ * limits are on the raw text; quoting can make it longer ("<" is written \u003c), so callForCheck also asks when a
+ * quoted part was cut or the whole description is longer than the check is shown (STEP_CHECK_MAX, r12-ui-y12-1).
+ */
 export const CALL_CHECK_LIMITS = { name: 200, tool: 200, args: 2500 } as const;
 
-/** A part from the extension or the conversation's model, as the check is shown it: quoted, its hidden characters written out. */
-const checkQuote = (s: string, max: number): string => writeOutHidden(quoteUntrusted(s, max));
+/**
+ * A part from the extension or the conversation's model, as the check is shown it: quoted, its hidden characters
+ * written out. Null where quoting cut it.
+ */
+const checkQuote = (s: string, max: number): string | null => {
+  const q = quoteUntrusted(s, max);
+  return q === quoteUntrusted(s, Number.MAX_SAFE_INTEGER) ? writeOutHidden(q) : null;
+};
 
 /**
  * Ember's own description of one extension call for Assisted's check (commands/review.ts StepCheckInput): a line for
@@ -215,14 +226,20 @@ export function callForCheck(extName: string, tool: Pick<PinnedTool, "name" | "a
   let text: string;
   try { text = args === undefined || args === null ? "" : canonical(args); } catch { return null; /* not readable whole: asks */ }
   if (extName.length > CALL_CHECK_LIMITS.name || tool.name.length > CALL_CHECK_LIMITS.tool || text.length > CALL_CHECK_LIMITS.args) return null;
+  const ext = checkQuote(extName, CALL_CHECK_LIMITS.name), name = checkQuote(tool.name, CALL_CHECK_LIMITS.tool);
+  const given = text && text !== "{}" ? checkQuote(text, CALL_CHECK_LIMITS.args) : "nothing";
+  if (ext === null || name === null || given === null) return null;
   const lines = [
     `Action: use a tool of an extension the user installed and agreed to, which ${isReadOnly(tool) ? "says it only reads" : "can change things or send what it is given"}`,
-    `Extension: ${checkQuote(extName, CALL_CHECK_LIMITS.name)}`,
-    `Tool: ${checkQuote(tool.name, CALL_CHECK_LIMITS.tool)}`,
-    `What it is given, as the conversation's model wrote it: ${text && text !== "{}" ? checkQuote(text, CALL_CHECK_LIMITS.args) : "nothing"}`,
+    `Extension: ${ext}`,
+    `Tool: ${name}`,
+    `What it is given, as the conversation's model wrote it: ${given}`,
     `Why Ember would ask first: ${reason === "remote" ? "the extension's server is on the internet, and gets what the tool is given" : "the tool can change things or send what it is given"}.`,
   ];
-  return lines.join("\n");
+  const step = lines.join("\n");
+  // stepCheckPrompt keeps only the first STEP_CHECK_MAX characters: a longer step would show the check part of the
+  // call, without its last arguments or Ember's own reason, and a match would then run what it never saw.
+  return step.length > STEP_CHECK_MAX ? null : step;
 }
 
 /**
