@@ -15,6 +15,17 @@ const read = (p: string) => fs.readFileSync(p, "utf8");
 const version = JSON.parse(read("package.json")).version as string;
 const flat = (s: string) => s.replace(/\s*\n\s*/g, " ");
 const section15 = () => read("docs/DEVELOPING.md").split("## 15. Publishing a release")[1].split("\n## ")[0];
+// Review ids as the audit writes them: install-docs-r11-1, modes-y9-y2-1, wslio-y-2, docs-3-x-1, "(critique wsl-17)",
+// review #116, a round's own (y10-1), and an area's own number (vault-12, memory-r10, r10-memory-4). Bare word-number
+// tokens are Ember's own words too (x86-64, build-01, phi-3, iso-8859-1), so a plain id counts only under an area the
+// audit uses (r11-notes-x11-3).
+const AUDIT_AREAS = "memory|commands|integrations?|integ|safety|voice|vault|home|install|first-run|tasks|companion|reliability|modes|cifix|rp|accessibility|remote|wslio|wsl|product|security|evalfix|stop|docs|slice\\d+";
+const REVIEW_IDS = new RegExp([
+  String.raw`review #\d+`, String.raw`\bcritique [a-z][a-z0-9-]*\d\b`,
+  String.raw`\b[a-z][a-z0-9]*(?:-[a-z]+)*(?:-[a-z]\d+)+-\d+\b`, String.raw`\b[a-z]+-\d+-[a-z]-\d+\b`,
+  String.raw`\b[a-z]+(?:-[a-z]+)*-[a-z]-\d+\b`, String.raw`\b[xyz]-\d+\b(?=[),;])`, String.raw`\b[xyz](?:[1-9]|1\d)-\d{1,2}\b`,
+  String.raw`\b(?:r\d+-)?(?:${AUDIT_AREAS})(?:-[a-z]+)*-[a-z]?\d+(?:-\d+)?\b`,
+].map(p => `${p}(?!\\.\\d)`).join("|"), "g");
 
 describe("release.mjs", () => {
   it("names the eight files the README downloads and the three of the GPL source", () => {
@@ -169,6 +180,59 @@ describe("release.mjs", () => {
     const notes = releaseNotes(read("CHANGELOG.md"), version, { repo, ref: `v${version}` });
     expect(notes.length).toBeLessThan(RELEASE_BODY_LIMIT);
     expect(notesProblems(notes)).toEqual([]);
+  });
+
+  it("keeps this version's notes to what users and administrators need, with room for the next change (install-docs-r11-1)", () => {
+    // 0.1.1's notes had 456 bytes left under the limit, 71 % of them audit notes: one more bullet failed the gate,
+    // and See what's new… opened a 122,000-character page. The audit's record (review ids, who found what, how it was
+    // fixed) is PLAN.md §10's; the notes say what changed, grouped by feature. Rewritten they are under 70,000
+    // bytes; this keeps a fifth of the limit free, so a later bullet has room and audit notes can't creep back.
+    const repo = /const REPO = "([^"]+)"/.exec(read("app/main/updates.ts"))?.[1] ?? "";
+    const notes = releaseNotes(read("CHANGELOG.md"), version, { repo, ref: `v${version}` });
+    const bytes = Buffer.byteLength(notes, "utf8");
+    expect(bytes, `${(RELEASE_BODY_LIMIT - bytes).toLocaleString("en-GB")} bytes left under GitHub's limit`).toBeLessThanOrEqual(RELEASE_BODY_LIMIT - 25_000);
+    const headings = notes.split("\n").filter(l => /^#{2,4} /.test(l));
+    expect(headings.filter(h => /audit|review fixes|follow-up| on \d{1,2} (October|November)\b/i.test(h))).toEqual([]);
+    expect(notes.match(REVIEW_IDS) ?? []).toEqual([]);
+  });
+
+  it("tells someone updating from 0.1.0 only of cards it showed them before as asked again (r11-notes-x11-1)", () => {
+    // 0.1.0 had the first-run agreement and the commands, WSL and SSH cards (FEATURE_CONSENT_VERSION { wsl: 1, ssh: 1,
+    // commands: 1 } at v0.1.0); memory, your own provider, extensions and the approval modes came after it, so their
+    // cards are met for the first time, never "again".
+    const notes = flat(releaseNotes(read("CHANGELOG.md"), version, { repo: "o/r", ref: `v${version}` }));
+    const again = notes.split(/(?<=\.) (?=[A-Z*])|(?=- \*\*)/).filter(s => /\bagain\b/.test(s) && /\b(asks?|asked|agree)\b/.test(s));
+    for (const s of again) expect(s).not.toMatch(/Interactive's card|Memory's note|provider's card|extension's card|Assisted's|Autopilot's/);
+    expect(notes).toContain("If you already use Ember, your settings stay and only Interactive is offered.");
+  });
+
+  it("says Ember ends what it finds a WSL run left running, not that it always can (r11-notes-x11-2)", () => {
+    // app/main/wsl/runner.ts sweeps only when it could read the running distros; one it can't tell about is never swept.
+    const notes = flat(releaseNotes(read("CHANGELOG.md"), version, { repo: "o/r", ref: `v${version}` }));
+    expect(notes).not.toContain("Ember ends whatever the run left running");
+    expect(notes).toContain("Ember ends whatever it finds the run left running");
+  });
+
+  it("still warns that a one-word yes said as a question can be taken as a yes (r11-notes-y11-1)", () => {
+    // docs/DEVELOPING.md (V2-S5): the recognizer writes "?" from the words, not the voice, so a lone "Okay?" said
+    // with a rising voice mostly comes out as "Okay." and allows; the notes must not imply that no question-yes counts.
+    const notes = flat(releaseNotes(read("CHANGELOG.md"), version, { repo: "o/r", ref: `v${version}` }));
+    const limits = notes.slice(notes.lastIndexOf("Known issues and limits"));
+    expect(limits).toContain("a one-word yes said as a question (“Okay?”) can still be taken as a yes");
+  });
+
+  it("lists routines among what is new since 0.1.0 with its own note (r11-notes-y11-2)", () => {
+    // ROUTINES_CONSENT_TEXT, FEATURE_CONSENT_VERSION.routines: routines default off with consent version 0.
+    const notes = flat(releaseNotes(read("CHANGELOG.md"), version, { repo: "o/r", ref: `v${version}` }));
+    expect(notes).toMatch(/What is new since 0\.1\.0 \([^)]*routines and lasting reminders[^)]*\) shows its own card or note/);
+  });
+
+  it("knows the audit's ids from Ember's own product words (r11-notes-x11-3)", () => {
+    for (const id of ["install-docs-r11-1", "wslio-y-2", "docs-3-x-1", "(critique wsl-17)", "review #116", "memory-x9-3", "modes-y9-y2-1", "vault-12;", "slice3-2", "r10-memory-4", "commands-remote-c10-2)", "(y10-1)", "x10-4"]) {
+      expect(id.match(REVIEW_IDS), id).not.toBeNull();
+    }
+    const words = "GNOME on Xorg (x86-64, glibc 2.28), hosts build-01, db-01; utf-8, iso-8859-1, phi-3, gemma-2, claude-3-5, llama-3-1, mistral-7b, all-MiniLM-L6-v2, Win+Alt+Y, ember-0.1.1-1.el8.x86_64.rpm, Ember-0.1.1-mac-arm64.dmg, CVE-2024-3094, SHA-256, H-1, Ember-0.1.1-win-x64.zip, mac-x64, Ember-voice-models-0.1.1.zip.";
+    expect(words.match(REVIEW_IDS) ?? []).toEqual([]);
   });
 });
 
