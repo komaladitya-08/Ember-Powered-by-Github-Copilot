@@ -190,8 +190,9 @@ export function gateAnnouncement(extName: string, checked = false): string {
 
 /**
  * The reasons a call that would ask may go to Assisted's check first (integrations-r12-1, -c12-1): a tool that changes
- * things or sends what it is given, and a read-only tool whose server is on the internet. Never a call after a no
- * (said-no), one that may reach Ember's own files (ember-data), one in a conversation an extension's text tried to steer
+ * things or sends what it is given, and a read-only tool whose server is on the internet. Never a call while a no
+ * stands (said-no, and a remote server's read-only call then: the service checks nothing while one stands,
+ * r12-ui-x12-1), one that may reach Ember's own files (ember-data), one in a conversation an extension's text tried to steer
  * (tainted) or one whose server changed its list of tools (hints-changed): those ask, unchecked, as do all of them with
  * no words of the user's own for the turn. A deny is never checked.
  */

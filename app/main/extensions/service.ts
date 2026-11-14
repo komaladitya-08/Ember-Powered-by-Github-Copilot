@@ -1151,17 +1151,19 @@ export class ExtensionsService implements ExtensionsApi {
     const emberData = emberReachOf(input.toolArgs, { os: this.o.os, home, ember: [path.dirname(this.o.dir)], own });
     let { verdict, reason } = this.gateInput(gate, input.toolName, shownAsPinned, generation, emberData);
     // Assisted: a call that would ask because its tool changes things or its server is on the internet is checked
-    // first against the user's own words for this turn (integrations-r12-1, -c12-1). Never after a no, for what may
-    // reach Ember's own files, in a tainted conversation or for a server whose list changed (CHECKABLE), and never a deny.
+    // first against the user's own words for this turn (integrations-r12-1, -c12-1). Never after a no (said-no, and a
+    // read-only call to an internet server while a no stands, which sends what it is given out as a refused share
+    // would: r12-ui-x12-1), for what may reach Ember's own files, in a tainted conversation or for a server whose list
+    // changed (CHECKABLE), and never a deny.
     let review: StepVerdict | "none" | undefined;
     let checked = false;
-    if (verdict === "ask" && CHECKABLE.has(reason) && e && this.assisted()) {
+    if (verdict === "ask" && CHECKABLE.has(reason) && !this.saidNoNow() && e && this.assisted()) {
       const step = callForCheck(e.item.name, e.tool, input.toolArgs, reason);
       if (step) {
         review = (await this.checkCall(step)) ?? "none";
         // The check may have taken a while: the gate looks again, and a match counts only for the same question.
         const now = this.gateInput(gate, input.toolName, shownAsPinned, generation, emberData);
-        checked = review === "match" && now.verdict === "ask" && now.reason === reason && this.assisted();
+        checked = review === "match" && now.verdict === "ask" && now.reason === reason && !this.saidNoNow() && this.assisted();
         ({ verdict, reason } = checked ? { verdict: "announce" as const, reason } : now);
       }
     }
@@ -1183,7 +1185,7 @@ export class ExtensionsService implements ExtensionsApi {
     // announced asks, as it does when Autopilot went out of force between the two looks).
     if (verdict === "announce" && before.verdict === "announce" && this.said(gateAnnouncement(e!.item.name))) return { permissionDecision: "allow" };
     // Assisted's check found it in the user's own words: said as Autopilot's is, and only while the same question stands.
-    if (checked && before.verdict === "ask" && before.reason === reason && this.assisted() && this.said(gateAnnouncement(e!.item.name, true))) return { permissionDecision: "allow" };
+    if (checked && before.verdict === "ask" && before.reason === reason && !this.saidNoNow() && this.assisted() && this.said(gateAnnouncement(e!.item.name, true))) return { permissionDecision: "allow" };
     const confirmer = this.o.confirmer();
     if (!confirmer) return deny("Ember can't ask the user right now, so it didn't do this.");
     const question = gateQuestion(e!.item.name, e!.tool.name, input.toolArgs, before.reason);

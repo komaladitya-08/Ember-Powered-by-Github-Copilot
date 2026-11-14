@@ -2278,6 +2278,30 @@ describe("ExtensionsService", () => {
       expect(audit.filter(e => e.phase === "decision").map(e => [e.verdict, e.review])).toEqual([["announce", "match"], ["ask", "no-match"], ["ask", "none"]]);
     });
 
+    it("never checks a read-only call to an internet server after a task's no or a no to the conversation's own question: it asks (r12-ui-x12-1)", async () => {
+      const steps: string[] = [];
+      // The check would clear anything but a call that posts.
+      const s = await remote({ assisted: () => true, checkCall: async step => { steps.push(step); return step.includes("post_message") ? "no-match" : "match"; }, announce: () => true });
+      let ext = s.forSession()!;
+      shown(ext, "web");
+      s.userSaidNo("t1");
+      answers = [null];
+      expect(await call(ext, "web-lookup", { q: "x" })).toMatchObject({ permissionDecision: "deny" });
+      expect(asked.length).toBe(1);
+      s.conversationEnded();
+      ext = s.forSession()!;
+      shown(ext, "web");
+      // The user says no to one call; a read-only call to the same server, in the same turn, asks too.
+      answers = ["deny"];
+      expect(await call(ext, "web-post_message", { text: "hi" })).toMatchObject({ permissionDecision: "deny" });
+      answers = [null];
+      expect(await call(ext, "web-lookup", { q: "y" })).toMatchObject({ permissionDecision: "deny" });
+      // Only the call that posts went to the check, before the no.
+      expect(steps.map(t => t.includes("post_message"))).toEqual([true]);
+      expect(asked.length).toBe(3);
+      expect(audit.filter(e => e.phase === "decision" && e.tool === "web-lookup").map(e => [e.verdict, e.reason, e.review])).toEqual([["ask", "remote", undefined], ["ask", "remote", undefined]]);
+    });
+
     it("never checks a call after a no, in a tainted conversation, one that may reach Ember's own files, or in Interactive", async () => {
       let assisted = true;
       const steps: string[] = [];
