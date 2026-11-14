@@ -30,12 +30,15 @@ tests don't stand in for them. **Known issues and limits**, at the end, lists wh
   sends what it hears there as text, that Listen once can open the microphone for one request while “Hey Ember” is off,
   what Project work sends and a saved workspace keeps, that “Keep my recent conversation” keeps its latest messages on
   this computer, that anyone near the computer can answer a question by voice, what its vault keeps (a login, a card or
-  contact details you give its Secure Form) and that the AI model never types or sees passwords, and that agreeing turns
-  on what you leave switched on in first run.
+  contact details you give its Secure Form) and that the AI model never types or sees passwords, what it asks before
+  (anything risky in an app, a dangerous command and code it can't read) and that a command it doesn't know runs and
+  it tells you, and that agreeing turns on what you leave switched on in first run.
 - **Interactive is offered once after the update**, and your settings stay: until you agree to its card, Ember asks
   before every step that isn't routine, and says so at the first such question. What is new since 0.1.0 (memory,
   routines and lasting reminders, your own model provider, extensions, update notices, Assisted and Autopilot) shows its
   own card or note the first time you turn it on, and no extension runs before you agree to its card.
+- **The commands card is asked again** before Ember next runs a command on a computer you turned commands on for,
+  since it now says what each approval mode does with a dangerous command and that a command Ember doesn't know runs.
 
 ### For administrators
 
@@ -194,21 +197,29 @@ tests don't stand in for them. **Known issues and limits**, at the end, lists wh
   with no “Always”, before anything risky (sending, posting, submitting, sharing, deleting, overwriting, paying,
   installing, signing out, security settings, going past a warning, dangerous commands), before a switch or a choice in
   the system's Settings, for keys it can't be sure of, for a dialog with anything to choose or a question in it, for
-  Enter in a chat box, a form or a composer, and through a task that a page tried to steer.
+  Enter in a chat box, a form or a composer, and through a task that a page tried to steer. Only dangerous commands
+  ask (deleting or overwriting, publishing or sending, reading or printing secrets, system changes and commands as an
+  administrator, downloading and running code, and what would keep running after Stop), and so does code Ember can't
+  read; an ordinary command, and one Ember doesn't know, runs and says so. A dangerous one you asked for exactly that only
+  deletes or overwrites data, publishes something or changes the system says so and gives you 4 seconds to stop it.
 - **Assisted**: as Interactive, and a step that would ask is first checked by a lighter model against your own words,
-  spoken ones too. One it finds in what you asked goes ahead, announced, a risky step included; anything else asks, as
-  does a task with no words of yours. It never clears a command that would read or print secrets or keep running after
-  Stop, a program Ember doesn't know, or a command your own words rule out or hold back (“don't push”, “keep it local”,
-  “after the tests pass”), which ask without the check. Its card says what the check is sent and that it can be wrong;
-  the check's words about a command reach the system journal only as their size.
-- **Autopilot**: Ember doesn't ask before steps, risky ones included; it announces and records each one, and Stop stops
-  it. It still asks before a command that would read or print secrets, one that would keep running after Stop (a
-  downloaded program told to detach included), one whose effect it can't tell (a program it doesn't know too), one your
-  own words rule out or hold back (“delete the build folder, but ask me first”, “…but only the logs”), one of the same
-  kind of danger as a command you said no to earlier in the task, and whatever your organisation's policy or **Ask me
-  before every command** requires. Its countdown card is headed “About to run this: Autopilot is on”; as root or an
-  administrator its commands run without asking, each with a few seconds to stop it, and the card says the command runs
-  as the administrator. The never-look list, masked screenshots, the system's own password prompts, consent and the
+  spoken ones too. One it finds in what you asked goes ahead, announced, a risky step or a dangerous command included:
+  a command it clears that reads or prints secrets runs with its output kept from the AI model, and one that would keep
+  running after Stop says so. Anything else asks, as does a task with no words of yours. It never clears a step you
+  said no to, a command your own words rule out or hold back (“don't push”, “keep it local”, “after the tests pass”), a
+  deletion or a write of a place Ember can't name, or what you or your organisation set to ask every time, which ask
+  without the check. Its card says what the check is sent and that it can be wrong; the check's words about a command
+  reach the system journal only as their size.
+- **Autopilot**: Ember doesn't ask before steps or commands, risky and dangerous ones included; it announces and records
+  each one, and Stop stops it. It asks only where your organisation's policy or your own **Ask me before every
+  command** for a computer says to. A command that reads or prints secrets runs, and what it prints is kept from the AI
+  model (you see it in the command window), as is every later command's output in that task; one that would also save
+  them to a file is refused. One that would keep running after Stop runs, and its card and the audit log say Stop won't
+  reach it. It refuses, without asking, a command your own words rule out or hold back (“delete the build folder, but
+  ask me first”, “…but only the logs”), one that may be something you said no to earlier in the task, and a deletion or
+  a write of a place Ember can't name (`rm -rf "$X"`). Its countdown card is headed “About to run this: Autopilot is
+  on”; as root or an administrator its commands run without asking, each with a few seconds to stop it, and the card
+  says the command runs as the administrator. The never-look list, masked screenshots, the system's own password prompts, consent and the
   audit log hold as before; only Ember fills a password, card or sign-in field, from its vault (below), and the AI model
   never types or sees one.
 - **Say a mode's name to change it** (“Ember, switch to Autopilot”, “Ember, ask me first again”). A mode that asks less
@@ -540,19 +551,22 @@ tests don't stand in for them. **Known issues and limits**, at the end, lists wh
 
 ### Commands, WSL and other computers
 
-- **A program Ember doesn't know asks first** (“It runs a program Ember doesn't know.”), in Autopilot too. A command
-  runs unasked only when Ember knows its program (about 750 everyday tools that read, list, convert, compile, test or
-  build, or a program in the task's own folder) and, for a tool with commands of its own, the command (`cargo build`
-  runs, `cargo watch` asks). Asking for it by name (“run dropdb on scratch”) announces it with its Stop instead.
+- **A program Ember doesn't know runs, and Ember tells you its name** with a few seconds to stop it, in every mode, as
+  does a tool's command or option it doesn't know (`cargo watch`), unless your words for the task say not to run it.
+  Not knowing a program isn't danger: what its own name and words say it does (`dropdb`, `deploy`, `--daemon`, a
+  password manager) is judged as that danger, and a dangerous command it hands on (`mytool mkfs /dev/sdb`) asks as that
+  command does.
 - **Commands that would type or run commands in your own terminal or editor are refused** (tmux's `send-keys`, `screen
   -X`, kitty's and wezterm's `send-text`, an editor's `--remote-send`, Terminal's `do script` and their like, however
   the verb is shortened or wrapped); what only prints what a terminal shows asks as a secret.
 - **What a helper runs is judged as the command it runs**: a command handed on to a program (as a quoted word, after
   `--exec`, `-x` or `--`), what `npm`, `yarn`, `pnpm` or `bun` runs by a script's name, what `node`, `npx`, `python3
   -m`, `xargs` (batch by batch), `kubectl exec` or `gcloud compute ssh --command` runs, and a variable that names the
-  program a build tool runs (`CC='sh -c "curl …|sh"' make`). `cross-env`, `dotenv` and their like ask as programs Ember
-  doesn't know, and `brew services start` and `npm config set` count as outliving Stop.
-- **Commands that read or print secrets ask in every mode**: a variable named like a secret handed to a program (`curl
+  program a build tool runs (`CC='sh -c "curl …|sh"' make`). What `cross-env`, `dotenv` and their like run is judged as
+  that command (`cross-env FOO=1 printenv` reads secrets), and `brew services start` and `npm config set` count as
+  outliving Stop.
+- **Commands that read or print secrets ask** in Interactive (in Autopilot they run with their output kept from the AI
+  model): a variable named like a secret handed to a program (`curl
   -H "Authorization: Bearer $GITHUB_TOKEN"`) and commands that print an environment or a secret (`ps` with environment
   output, `docker inspect`, `git show :.env`, `grep -r token .`, `heroku config`, `vercel env pull`, `gcloud secrets
   versions access`).
@@ -573,10 +587,11 @@ tests don't stand in for them. **Known issues and limits**, at the end, lists wh
   so `rsync --mkpath`, `shred -u`, `mvn -X deploy` and many more ask, or are refused on Ember's own files, as they are
   without the flag; where the manual and Ember's earlier reading disagree, the stricter verdict stands (`sudo -h host rm
   -rf ~` is refused).
-- **Loops and `if`.** A bash or sh loop (`for`, `while`, `until`) always asks first. An ordinary `if` runs without a
+- **Loops and `if`.** A bash or sh loop (`for`, `while`, `until`) is code Ember can't read: it asks first in
+  Interactive, goes to Assisted's check, and runs announced in Autopilot. An ordinary `if` runs without a
   question when Ember has nothing to say about any command in it and it has no `!`, sets no variable and changes no
   folder (`if [ -f package.json ]; then npm test; fi`); any other `if` asks as a whole, here and on an SSH computer.
-  Neither starts with only the 4-second Stop.
+  Below Autopilot neither starts with only the 4-second Stop.
 - **Only what you asked for in so many words starts with the 4-second Stop.** One whose object your words keep, leave
   out, place elsewhere or only describe (“delete everything but build/”) asks with its card, as does a dangerous step
   your words make conditional or put off (“only after I confirm”, “tomorrow”) or ask to be asked about first. A command
@@ -590,8 +605,9 @@ tests don't stand in for them. **Known issues and limits**, at the end, lists wh
 - **`tailscale` is classified**: `funnel`, `serve` and `file cp` ask as publishing; `up`, `down`, `set`, `login`,
   `logout` and `ssh` as system changes. Ember runs a Python virtual environment's programs by path (`.venv/bin/python -m
   pytest`) instead of sourcing `activate`, which asked every time.
-- **Where every command asks because commands run as root or an administrator,** Settings shows **Ask me before every
-  command** on, locked, with “Commands here run as the administrator, so Ember asks before every one.”
+- **Where commands run as root or an administrator,** every command is dangerous: it asks in Interactive and Assisted,
+  and Settings shows **Ask me before every command** on, locked, saying so; in Autopilot each runs after a few seconds
+  to stop it, unless you turn that switch on.
 - **A WSL command's output is never taken as whole without its end.** Each WSL run now ends with a mark of its own. When
   that mark doesn't come back (wsl.exe can lose the last of a long output), Ember ends whatever it finds the run left
   running, as Stop does, and the command window and the AI model are told that the command may not have finished and
