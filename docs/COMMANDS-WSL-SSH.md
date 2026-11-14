@@ -811,7 +811,8 @@ It still asks, with the card of §2.4, before:
 - a program, or a tool's command, Ember doesn't know, a cloud tool's verb whose effect Ember can't tell ("Ember can't
   tell whether this changes Heroku.") among them, since it too may be either of those;
 - a command your own words for the task rule out ("commit my work but don't push", "delete everything except
-  build", "push it, but without force"): that is your no, said in advance, and the card says "You didn't ask for
+  build", "push it, but without force", and a plain no to the kind of step: "don't delete anything", "push nothing",
+  "don't upload anything", "keep it local"): that is your no, said in advance, and the card says "You didn't ask for
   this."; and one your words hold back ("leave the build folder alone", "keep notes.txt", "hold off on publishing",
   "push tomorrow", "push main after the review", "once CI is green", "build is off limits", "I'll do the push"),
   where the card also says "Your words say to leave this or to wait, so Ember asks first."; and a step your words

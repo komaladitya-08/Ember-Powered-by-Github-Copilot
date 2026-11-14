@@ -3181,6 +3181,19 @@ describe("a command that would ask, in Autopilot (autopilot.ts; modes-D2, modes-
     ]) expect(ruled(words, command), `${words} / ${command}`).toBe(false);
   });
 
+  it("reads a plain no to the kind of step as their no: don't delete anything, dont push, push nothing, keep it local (wordsRuleOut; r10-commands-y10-9)", () => {
+    const ctx = { os: "linux" as const, home: "/home/ana", cwd: "/home/ana/proj", ember: FACTS.ember, downloaded: new Set<string>() };
+    const ruled = (words: string, command: string) => wordsRuleOut(classifyCommand(command, "bash", ctx).findings, words);
+    for (const [words, command] of [
+      ["tidy up, don't delete anything", "git clean -fdx"], ["don't publish the package, just build it", "npm publish"], ["don't upload anything", "twine upload dist/*"],
+      ["fix the tests, dont push", "git push"], ["fix the tests and push nothing", "git push"], ["fix the tests and keep it local", "git push"], ["nothing should be deleted", "rm -rf build out"],
+      ["tidy up but don’t remove anything", "rm -rf build"], ["never release this", "gh release create v1"],
+    ]) expect(ruled(words, command), `${words} / ${command}`).toBe(true);
+    for (const [words, command] of [
+      ["delete the build folder, don't touch src", "rm -rf build"], ["push my branch, nothing else", "ls"], ["it's not clean: delete build", "rm -rf build"], ["publish it, no tests needed", "npm publish"],
+    ]) expect(ruled(words, command), `${words} / ${command}`).toBe(false);
+  });
+
   it("reads a part that holds something back as their no to it too: leave alone, keep, hold off, not yet, wait, later (wordsRuleOut; modes-y9-4)", () => {
     const ctx = { os: "linux" as const, home: "/home/ana", cwd: "/home/ana/proj", ember: FACTS.ember, downloaded: new Set<string>() };
     const ruled = (words: string, command: string) => wordsRuleOut(classifyCommand(command, "bash", ctx).findings, words);

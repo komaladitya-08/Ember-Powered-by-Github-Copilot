@@ -713,6 +713,36 @@ function namesObject(findings: readonly Finding[], part: string): boolean {
   }));
 }
 
+/** A plain no in a part of the user's words ("don't", "dont", "never", "nothing should be…", "push nothing"). */
+const NEGATED = /(?:^|[^\p{L}])(?:don[’']?t|do not|never|nothing|none|not|no)(?![\p{L}])/iu;
+/** The verbs that name a kind of step, by the finding's class (r10-commands-y10-9). */
+const KIND_VERBS: Readonly<Partial<Record<Finding["cls"], RegExp>>> = {
+  destroy: /(?:^|[^\p{L}])(?:delet|remov|eras|wipe|purg|discard|destroy|drop|rm(?![\p{L}]))/iu,
+  "remote-delete": /(?:^|[^\p{L}])(?:delet|remov|unpublish|destroy|drop)/iu,
+  publish: /(?:^|[^\p{L}])(?:publish|releas|upload|push|deploy|ship)/iu,
+};
+/** Words that keep the work on this computer ("keep it local", "local only"): a no to publishing. */
+const KEEP_LOCAL = /\bkeep\b.*\blocal(?:ly)?\b|\blocal(?:ly)? only\b|\bstays? local\b/iu;
+/** Words that name no particular thing: a no said with only these, a negation and a verb is a no to the whole kind. */
+const GENERIC = new Set(("anything everything nothing any all it them this that these those the a an my our files file stuff things changes code package packages "
+  + "branch branches release releases please just yet ever should be been is are was will would i we you to of up out here there now today any more else at all").split(" "));
+/**
+ * Does a part of the user's words say no to the kind of step a finding is, by a verb that names it and nothing in
+ * particular ("tidy up, don't delete anything", "dont push", "push nothing", "don't upload anything", "keep it local")?
+ * The plain refusals the matchers above missed (r10-commands-y10-9); a no that names something else ("don't delete
+ * src") is left to them. Like them, it only ever keeps a question.
+ */
+function negatedKind(findings: readonly Finding[], words: string): boolean {
+  return words.split(PARTS).some(part => findings.some(f => {
+    const verb = KIND_VERBS[f.cls];
+    if (verb === undefined) return false;
+    if (f.cls === "publish" && KEEP_LOCAL.test(part)) return true;
+    if (!NEGATED.test(part) || !verb.test(part)) return false;
+    const rest = part.toLowerCase().split(/[^\p{L}\p{N}'’_.-]+/u).filter(w => w !== "" && !NEGATED.test(w) && !verb.test(w) && !GENERIC.has(w));
+    return rest.length === 0;
+  }));
+}
+
 /** Does a part of the user's words hold back what these findings act on, or the kind of step they are (HOLDS_BACK)? */
 function wordsHoldBack(findings: readonly Finding[], words: string): boolean {
   return words.split(PARTS).some(part => HOLDS_BACK.test(part) && (namesObject(findings, part) || namedKind(findings, part) || mentioned(findings, part)));
@@ -730,7 +760,7 @@ function wordsHoldBack(findings: readonly Finding[], words: string): boolean {
  */
 export function wordsRuleOut(findings: readonly Finding[], words: string): boolean {
   if (!words.trim() || findings.length === 0) return false;
-  if (ruledOut(findings, words)) return true;
+  if (ruledOut(findings, words) || negatedKind(findings, words)) return true;
   if (!mentioned(findings, words) && mentioned(findings, words.replace(SAYS_NOT, "$1 "))) return true;
   // Their asking to be asked first, and a deletion they narrow or send to the trash or a stash instead (integ-x-3).
   return wordsHoldBack(findings, words) || heldByWords(findings, words);
