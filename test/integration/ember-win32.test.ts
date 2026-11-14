@@ -16,7 +16,8 @@
  * for it (its first openings); then its right-click menu, opened once the field is the window under the pointer (waited
  * for and named in the output, window-at.ts: cifix-2; a box that closed before then fails at once, with which window
  * had the foreground and what Ember's windows did from the chord on: cifix-x9-2) and dismissed by a click on the bench,
- * leaves the bench the keyboard (review #77). Last, Ember started again with Text size set to Larger through its
+ * leaves the bench the keyboard (review #77). Then a probe that only prints opens the box twice more with its read of the
+ * bench delayed and off (EMBER_TEST_ASK_READ: cifix-x9-9). Last, Ember started again with Text size set to Larger through its
  * settings opens the box 728 × 142 DIP (173 with the tip's row), its page and field at that size (review #57;
  * ask-size.ts).
  *
@@ -47,7 +48,7 @@ import type { Capture } from "../../app/main/perception/capture";
 import { startOverlayChild, type OverlayChild } from "./overlay-child";
 import { PROBE_PACE_MS, PROBE_TEXT, probeTimeline, probeVerdict } from "./typeahead-probe";
 import { askWant, closeAsk, openAskAt, setTextSize, type InEmber } from "./ask-size";
-import { focusTrail, hoverActivation, waitForWindowAt, watchEvent, type TrailEvent, type WatchedWindow, type WindowAt } from "./window-at";
+import { focusTrail, hoverActivation, readProbeSummary, waitForWindowAt, watchEvent, type ProbeMark, type TrailEvent, type WatchedWindow, type WindowAt } from "./window-at";
 
 const required = process.env.EMBER_WIN32_TEST === "1";
 const onWindows = process.platform === "win32";
@@ -700,6 +701,132 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
       if (proc.exitCode === null) proc.kill();
     }
   });
+
+  // A probe, not a check (cifix-x9-9): the box is opened twice more over the bench, Ember's read of the bench first
+  // delayed to 4 s after the box shows, then off (EMBER_TEST_ASK_READ, development only), and each opening's timeline
+  // and one summary line are printed. If the bench's return to the foreground moves with the read and goes without
+  // it, the read is the cause. A box that closes meanwhile is the probe's finding. Nothing here can fail the suite:
+  // every step is bounded, its errors are printed, and Ember is closed and the bench given the keyboard back after.
+  it("prints when the bench takes the foreground back with the box's read delayed and off (read probe, cifix-x9-9)", async () => {
+    const main = path.join(root, "dist", "app", "main.cjs");
+    if (!fs.existsSync(main)) { console.log("read probe: not run: npm run build first"); return; }
+    const api = loadWin32();
+    if (!api || !input) { console.log("read probe: not run: no window system here"); return; }
+    for (const plan of ["delay:4000", "off"]) {
+      // Filled inside the bounded run, ended in finally.
+      const held: { ember: ElectronApplication | null; watcher: ChildProcess | null } = { ember: null, watcher: null };
+      let poll: ReturnType<typeof setInterval> | undefined;
+      try {
+        await Promise.race([(async () => {
+          const userData = path.join(dir, `ember-userData-probe-${plan.replace(/\W/g, "")}`);
+          fs.mkdirSync(userData, { recursive: true });
+          fs.writeFileSync(path.join(userData, "settings.json"), JSON.stringify({ version: 1, onboarded: true, wakeWord: false, consent: { version: 10, at: "2026-10-15T00:00:00.000Z" } }));
+          const env: Record<string, string> = {};
+          for (const [k, v] of Object.entries(process.env)) if (v !== undefined && k !== "ELECTRON_RUN_AS_NODE") env[k] = v;
+          const app = held.ember = await electron.launch({
+            executablePath: createRequire(import.meta.url)("electron") as unknown as string, args: [root, "--autostart"], timeout: 60_000,
+            env: { ...env, EMBER_TEST_HOOKS: "1", EMBER_USER_DATA: userData, EMBER_TEST_ASK_READ: plan },
+          });
+          await waitFor("Ember's test hooks", () => app.evaluate(() => !!(globalThis as { __ember?: unknown }).__ember), 60_000);
+          if (!(await app.evaluate(({ globalShortcut }, a) => globalShortcut.isRegistered(a), "Super+Alt+Space"))) { console.log(`read probe (${plan}): not run: another app holds the ask chord`); return; }
+          const marks: ProbeMark[] = [];
+          const lines: TrailEvent[] = [];
+          await app.evaluate(({ app: a, BrowserWindow }) => {
+            const seen: { t: number; what: string }[] = [];
+            (globalThis as { __probe?: typeof seen }).__probe = seen;
+            const watch = (w: InstanceType<typeof BrowserWindow>) => {
+              if (w.getTitle() !== "Ask Ember") return;
+              const note = (e: string) => () => seen.push({ t: Date.now(), what: e });
+              w.on("show", note("show"));
+              w.on("hide", note("hide"));
+              w.on("focus", note("focus"));
+              w.on("blur", note("blur"));
+              const send = w.webContents.send.bind(w.webContents);
+              w.webContents.send = (channel: string, ...args: unknown[]) => { seen.push({ t: Date.now(), what: `send ${channel}` }); send(channel, ...args); };
+            };
+            BrowserWindow.getAllWindows().forEach(watch);
+            a.on("browser-window-created", (_e, w) => watch(w));
+          });
+          let last = -1;
+          poll = setInterval(() => {
+            const id = api.foregroundWindow();
+            if (id === last) return;
+            last = id;
+            const pid = id ? api.threadProcess(id).pid : 0;
+            const whose = id === ready.hwnd ? "the bench" : pid === app.process().pid ? `Ember's ${JSON.stringify(api.title(id, false))}` : `${api.processImage(pid) ?? `pid ${pid}`} (class ${api.className(id)})`;
+            lines.push({ t: Date.now(), what: `foreground: ${whose}` });
+            if (id === ready.hwnd) marks.push({ t: Date.now(), kind: "bench foreground" });
+            else if (pid === app.process().pid) marks.push({ t: Date.now(), kind: "box foreground" });
+          }, 20);
+          const watcher = held.watcher = spawn(powershell, [...POWERSHELL_ARGS, "-File", watchScript], { stdio: ["pipe", "pipe", "ignore"], windowsHide: true });
+          const named = (w: WatchedWindow) => (w.root === ready.hwnd ? "the bench" : w.pid === app.process().pid ? `Ember's ${JSON.stringify(w.title)}` : `${w.image || `pid ${w.pid}`} (class ${w.className})`);
+          await new Promise<void>(resolve => {
+            readline.createInterface({ input: watcher.stdout! }).on("line", line => {
+              if (line.startsWith('{"ready":true')) { resolve(); return; }
+              const e = watchEvent(line, named);
+              if (!e) return;
+              lines.push(e);
+              if (e.what.startsWith("Windows says foreground: the bench")) marks.push({ t: e.t, kind: "bench foreground" });
+            });
+            watcher.on("exit", () => resolve());
+            setTimeout(resolve, 30_000).unref();
+          });
+          await front();
+          const name = ready.controls.Name;
+          input!.move(Math.round(name.x + name.width / 2), Math.round(name.y + name.height / 2));
+          await sleep(150);
+          input!.button(1, true);
+          input!.button(1, false);
+          await sleep(300);
+          const mods = ["Super_L", "Alt_L"].map(n => input!.keysymOf(n));
+          for (const k of mods) input!.keysym(k, true);
+          const chord = Date.now();
+          input!.keysym(input!.keysymOf("space"), true);
+          input!.keysym(input!.keysymOf("space"), false);
+          for (const k of [...mods].reverse()) input!.keysym(k, false);
+          // Long enough for the delayed read (4 s after the box shows) and the 1.5 s handover after it.
+          await sleep(plan === "off" ? 4_000 : 7_000);
+          const inEmber = await app.evaluate(() => (globalThis as { __probe?: { t: number; what: string }[] }).__probe ?? []).catch(() => []);
+          let contexts = 0;
+          for (const e of inEmber) {
+            lines.push({ t: e.t, what: `Ember's "Ask Ember" ${e.what}` });
+            if (e.what === "show") marks.push({ t: e.t, kind: "box shown" });
+            if (e.what === "hide") marks.push({ t: e.t, kind: "box hidden" });
+            // The first context goes as the box shows; the read's own answer is the next one.
+            if (e.what === "send agent:ask-context" && ++contexts === 2) marks.push({ t: e.t, kind: "read answered" });
+          }
+          const log = path.join(userData, "logs", "ember.log");
+          for (const raw of fs.existsSync(log) ? fs.readFileSync(log, "utf8").split("\n") : []) {
+            try {
+              const e = JSON.parse(raw) as { t?: unknown; msg?: unknown };
+              const t = typeof e.t === "string" ? Date.parse(e.t) : NaN;
+              if (typeof e.msg !== "string" || !(t >= chord)) continue;
+              lines.push({ t, what: `log ${e.msg}` });
+              if (e.msg === "ask.read_started") marks.push({ t, kind: "read started" });
+            } catch {
+              // a line still being written
+            }
+          }
+          console.log(focusTrail(`read probe (${plan}) from the chord`, chord, lines, 200));
+          console.log(readProbeSummary(plan, chord, marks));
+        })(), sleep(100_000).then(() => { throw new Error("it took over 100 s"); })]);
+      } catch (err) {
+        console.log(`read probe (${plan}): stopped: ${err instanceof Error ? err.message : String(err)}`);
+      } finally {
+        clearInterval(poll);
+        const w = held.watcher;
+        if (w) { w.stdin?.end(); setTimeout(() => { if (w.exitCode === null) w.kill(); }, 3_000).unref(); }
+        const ember = held.ember;
+        if (ember) {
+          const proc = ember.process();
+          await Promise.race([ember.close().catch(() => undefined), sleep(10_000)]);
+          if (proc.exitCode === null) proc.kill();
+        }
+        // The bench has the keyboard again for what follows, whatever the probe left.
+        await front().catch((err: unknown) => console.log(`read probe (${plan}): the bench didn't take the keyboard back: ${String(err)}`));
+      }
+    }
+  }, 240_000);
 
   it("opens the ask box as large as its words at Larger text, its window wider and taller, the tip's row too (review #57)", async () => {
     // Windows' box is a "toolbar" window without a resizing frame that, before the text size reached it, only ever

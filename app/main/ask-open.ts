@@ -95,3 +95,34 @@ function keyboardIn(ws: Pick<UserWindows<unknown>, "keyboardFocus"> | null): num
     return 0; // Can't be told: the read finds what it can.
   }
 }
+
+/**
+ * How the box's read of the window it opened over runs (cifix-x9-9, a probe's switch only): at once, as always
+ * ("now"), not at all ("off"), or `ms` after the box shows ("delay"). The Windows suite opens the box with each to see
+ * whether the app underneath taking the foreground back moves with that read. Anything but "off" or "delay:<ms>" (0 to
+ * 30 s) is "now", and main reads the switch through devEnv, so a packaged Ember always reads at once.
+ */
+export type AskReadPlan = { kind: "now" } | { kind: "off" } | { kind: "delay"; ms: number };
+
+/** The plan for `value`, EMBER_TEST_ASK_READ as devEnv gives it (undefined when packaged or unset). */
+export function askReadPlan(value: string | undefined): AskReadPlan {
+  if (value === "off") return { kind: "off" };
+  const m = value === undefined ? null : /^delay:(\d{1,5})$/.exec(value);
+  const ms = m ? Number(m[1]) : NaN;
+  return m && ms <= 30_000 ? { kind: "delay", ms } : { kind: "now" };
+}
+
+/**
+ * Runs the read as `plan` says and gives what it will answer: `start` begins the read and gives its answer (main's
+ * captureContext), at once for "now" (the same promise, nothing else done); never for "off" (null); after `later`'s
+ * delay for "delay", telling `started` when it begins.
+ */
+export function readAsPlanned<C>(plan: AskReadPlan, start: () => Promise<C | null>, later: (run: () => void, ms: number) => void,
+  started?: () => void): Promise<C | null> {
+  if (plan.kind === "now") return start();
+  if (plan.kind === "off") return Promise.resolve(null);
+  return new Promise<C | null>(resolve => later(() => {
+    started?.();
+    start().then(resolve, () => resolve(null));
+  }, plan.ms));
+}

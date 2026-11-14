@@ -7,7 +7,7 @@
 import { describe, expect, it } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
-import { focusTrail, hoverActivation, waitForWindowAt, watchEvent, type WindowAt } from "../integration/window-at";
+import { focusTrail, hoverActivation, readProbeSummary, waitForWindowAt, watchEvent, type WindowAt } from "../integration/window-at";
 
 const ASK: WindowAt = { id: 459336, className: "Chrome_WidgetWin_1", title: "Ask Ember", pid: 4000 };
 const OTHER: WindowAt = { id: 262636, className: "Chrome_WidgetWin_1", title: "Ember overlay", pid: 4000 };
@@ -166,5 +166,27 @@ describe("the foreground watcher's script (cifix-x9-6)", () => {
   it("hooks foreground, focus and minimise changes out of context, and ends when its input closes", () => {
     for (const s of ["EVENT_SYSTEM_FOREGROUND = 0x0003", "EVENT_OBJECT_FOCUS = 0x8005", "EVENT_SYSTEM_MINIMIZESTART = 0x0016", "WINEVENT_OUTOFCONTEXT = 0x0000", "Console.In.ReadLine()", "WM_QUIT"]) expect(ps1).toContain(s);
     expect(ps1).toContain('{\\"ready\\":true');
+  });
+});
+
+describe("readProbeSummary (cifix-x9-9)", () => {
+  it("times the bench's return from the box showing, the read's start and its answer, and says the box closed", () => {
+    expect(readProbeSummary("delay:4000", 1000, [
+      { t: 1020, kind: "box shown" }, { t: 5030, kind: "read started" }, { t: 5070, kind: "bench foreground" },
+      { t: 5080, kind: "box hidden" }, { t: 5110, kind: "read answered" },
+    ])).toBe("read probe (delay:4000): the box showed at 20 ms; the read started at 4030 ms and answered at 4110 ms; the bench took the foreground: "
+      + "4050 ms after the box showed, 40 ms after the read started, -40 ms after it answered; the box closed at 4080 ms (ms from the chord)");
+  });
+
+  it("says the read was off, and that the bench never came back and the box stayed open", () => {
+    expect(readProbeSummary("off", 0, [{ t: 15, kind: "box shown" }, { t: 30, kind: "box foreground" }]))
+      .toBe("read probe (off): the box showed at 15 ms; the read was off; the bench took the foreground: never; the box was still open at the end (ms from the chord)");
+  });
+
+  it("takes the read as started when the box showed for the usual read, and says when the box never showed", () => {
+    expect(readProbeSummary("now", 0, [{ t: 10, kind: "box shown" }, { t: 900, kind: "bench foreground" }, { t: 950, kind: "read answered" }]))
+      .toBe("read probe (now): the box showed at 10 ms; the read started at 10 ms and answered at 950 ms; the bench took the foreground: "
+        + "890 ms after the box showed, 890 ms after the read started, -50 ms after it answered; the box was still open at the end (ms from the chord)");
+    expect(readProbeSummary("off", 0, [])).toBe("read probe (off): the box never showed");
   });
 });

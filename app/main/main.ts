@@ -45,7 +45,7 @@ import { Perception, type QuickContext } from "./perception";
 import { warmText } from "./perception/capture";
 import { TEXT_WARM_DELAY_MS, scheduleTextWarm } from "./perception/text-warm";
 import { AskWindow, MAC_SETTLE_MS, WAIT_TIP_OPENINGS, showsWaitTip, stepsAsideFor } from "./ask";
-import { focusBeforeNow, openAskInOrder, userWindowsNow } from "./ask-open";
+import { askReadPlan, focusBeforeNow, openAskInOrder, readAsPlanned, userWindowsNow } from "./ask-open";
 import { notificationBody } from "./notification";
 import { askSees } from "./ask-sees";
 import { LISTEN_CUT_BY_QUESTION, LISTEN_ONCE_STOPS_ANSWER, VoiceService, cutByQuestion, electronDownloader, heldByQuestion, listenOnceInSettings, questionHoldsListen, voicePermissions } from "./voice";
@@ -1493,7 +1493,11 @@ function start(): void {
       holding: !!platform.keyboardHold, look,
       activeWindow: () => where?.active ?? null,
       keyboard: () => where?.keyboard ?? 0,
-      read: (active, before) => captureContext(active, before),
+      // EMBER_TEST_ASK_READ (development only, cifix-x9-9): the Windows suite's probe delays or skips this read.
+      read: (active, before) => {
+        callContext = readAsPlanned(askReadPlan(devEnv("EMBER_TEST_ASK_READ")), () => { captureContext(active, before); return callContext; },
+          (run, ms) => { setTimeout(run, ms); }, () => log.info("ask.read_started"));
+      },
       // The first few openings where Ember can't hold the letters typed meanwhile say to wait for the box (review #78).
       show: () => askWindow.show(overlay ? { ...overlay.position, size: settings.get().size } : null, {
         sees: null, history: askHistory, target: askTarget(), tip: showsWaitTip(!!platform.keyboardHold, settings.get().askOpened), listenOnce: listenOnceStatus("ask"),

@@ -130,3 +130,28 @@ export function watchEvent(line: string, name: (w: WatchedWindow) => string): Tr
   }
   return { t: e.t, what: `Windows says ${e.event}: ${name(w)} (window ${w.root}); ${keys}` };
 }
+
+/** What the read probe notes of one opening (cifix-x9-9), each at its time. */
+export interface ProbeMark { t: number; kind: "box shown" | "box hidden" | "read started" | "read answered" | "bench foreground" | "box foreground" }
+
+/**
+ * The read probe's summary of one opening (cifix-x9-9): when the box showed, when Ember's read of the bench started and
+ * answered (by the plan's word for a read that never runs), and each time the bench took the foreground after the box
+ * showed, in ms from the box showing and from the read's start; and whether the box was still open at the end.
+ * `chord`: when the suite pressed the chord. Plain words only: the probe prints it and never fails on it.
+ */
+export function readProbeSummary(plan: string, chord: number, marks: readonly ProbeMark[]): string {
+  const at = (k: ProbeMark["kind"]) => marks.filter(m => m.kind === k).map(m => m.t).sort((a, b) => a - b);
+  const shown = at("box shown")[0];
+  if (shown === undefined) return `read probe (${plan}): the box never showed`;
+  const started = plan === "off" ? undefined : at("read started").find(t => t >= shown - 50) ?? (plan === "now" ? shown : undefined);
+  const answered = at("read answered").find(t => t > shown);
+  const returns = at("bench foreground").filter(t => t > shown);
+  const hidden = at("box hidden").find(t => t > shown);
+  const ms = (t: number | undefined) => (t === undefined ? "never" : `${t - chord} ms`);
+  const read = plan === "off" ? "the read was off" : `the read started at ${ms(started)} and answered at ${ms(answered)}`;
+  const back = returns.length
+    ? returns.map(t => `${t - shown} ms after the box showed${started !== undefined ? `, ${t - started} ms after the read started` : ""}${answered !== undefined ? `, ${t - answered} ms after it answered` : ""}`).join("; ")
+    : "never";
+  return `read probe (${plan}): the box showed at ${ms(shown)}; ${read}; the bench took the foreground: ${back}; the box ${hidden === undefined ? "was still open at the end" : `closed at ${ms(hidden)}`} (ms from the chord)`;
+}
