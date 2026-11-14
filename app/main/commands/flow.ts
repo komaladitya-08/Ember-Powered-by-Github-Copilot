@@ -778,9 +778,56 @@ function negatedKind(findings: readonly Finding[], words: string): boolean {
   }));
 }
 
+/**
+ * A no said as people say it, before what it turns round: "don't", "do not", "never", "no", "without", "avoid", "stop
+ * before", "check with me before" (commands-remote-r12-2). Never a reminder or a go-ahead ("don't forget to", "don't
+ * hesitate to", "I don't mind if"), nor a bare "not", which states a fact as often as it refuses ("it's not working").
+ */
+const SAYS_NO = /(?:^|[^\p{L}])(?:don[’']?t|do\s+not|never|no|without|avoid|(?:stop|halt|pause)\s+(?:right\s+)?before|(?:check|confirm)\s+with\s+me(?:\s+first)?\s+before)(?![\p{L}])(?!\s+(?:ever\s+)?(?:forget|hesitate|fail|mind|care|worry|wait|stop\s+until)(?![\p{L}]))/iu;
+/** A kind of step as a no names it, beyond KIND_VERBS: installing software, root or an administrator, and printing secrets. */
+const NO_KIND_VERBS: readonly { when: (f: Finding) => boolean; verb: RegExp }[] = [
+  { when: f => /^pkg\./.test(f.rule), verb: /(?:^|[^\p{L}])(?:install|reinstall|uninstall|upgrad|downgrad|add\s+(?:any\s+)?(?:new\s+|more\s+)?(?:packag|dependenc|librar|modules?))/iu },
+  { when: f => /(^|\.)(sudo|doas|pkexec|su|runas|privileged|admin|elevat\w*)(\.|$)/.test(f.rule), verb: /(?:^|[^\p{L}])(?:root|sudo|doas|pkexec|admin|administrator|elevat|superuser|su(?![\p{L}]))/iu },
+  { when: f => f.cls === "secret", verb: /(?:^|[^\p{L}])(?:read|print|show|display|reveal|expose|cat(?![\p{L}])|look\s+(?:at|in))/iu },
+];
+/** Words a no may name beside its step that stand for every one of its kind ("any files", "my work", "to GitHub", "system-wide"). */
+const WHOLE_KIND = new Set([...GENERIC, ..."files folders folder directories directory data work stuff things everything changes code system system-wide wide github gitlab bitbucket remote remotes origin upstream server servers npm pypi registry registries prod production live internet web cloud rights privileges permissions deletions deletion pushes pushing publishing new more under circumstances whatever right first with me before need there".split(" ")]);
+
+/**
+ * Does a part of the user's words say no to the kind of step a finding is, in ordinary words, whatever it names after
+ * the verb (commands-remote-r12-2): a no (SAYS_NO) with the step's kind after it ("do not push the changes", "don't
+ * push to GitHub", "do not remove any files", "don't install any packages", "don't use root", "stop before
+ * publishing"). A no that names another thing beside a request that names this step's own thing ("delete build/ but
+ * don't delete src/") leaves it asked. A doubt counts as ruled out: it only ever keeps the user's no.
+ */
+function saysNoTo(findings: readonly Finding[], words: string): boolean {
+  const parts = words.split(PARTS);
+  // What the words ask for: each part up to its no ("delete build without removing src" asks to delete build).
+  const asked = parts.map(p => { const n = SAYS_NO.exec(p) ?? NEGATED.exec(p); return n ? p.slice(0, n.index) : p; }).join(". ");
+  return parts.some(part => {
+    const no = SAYS_NO.exec(part);
+    if (!no) return false;
+    const after = part.slice(no.index + no[0].length);
+    return findings.some(f => {
+      const verbs = [KIND_VERBS[f.cls], ...NO_KIND_VERBS.filter(k => k.when(f)).map(k => k.verb)].filter((v): v is RegExp => v !== undefined);
+      if (!verbs.some(v => v.test(after))) return false;
+      // What else the no names: a thing of its own, unless the words only stand for the whole kind.
+      const names = after.toLowerCase().split(/[^\p{L}\p{N}'’_./~-]+/u).filter(w => w !== "" && !WHOLE_KIND.has(w) && !verbs.some(v => v.test(w)) && !NEGATED.test(w) && !/^(use|using|touch|do|make|be|go|run|any|of)$/.test(w));
+      return !(names.length > 0 && !namesObject([f], after) && f.objects.some(o => o.text !== "") && namesObject([f], asked));
+    });
+  });
+}
+
+/**
+ * A part that keeps every one of a kind of thing ("keep all files", "keep everything", "preserve my data"): a no to
+ * deleting anything (commands-remote-r12-2). Never a keep of something named or of what Ember is doing ("keep going").
+ */
+const KEEPS_ALL = /^(?:\s*(?:please|and|but|just|also))*\s*(?:keep|preserve|spare)\s+(?:all|every|everything|any|my|our|the)?\s*(?:of\s+)?(?:the\s+|my\s+|our\s+)?(?:files?|folders?|directories|data|work|everything|code|stuff|things)(?:\s+(?:intact|safe|as\s+(?:it|they)\s+(?:is|are)))?\s*$/iu;
+
 /** Does a part of the user's words hold back what these findings act on, or the kind of step they are (HOLDS_BACK)? */
 function wordsHoldBack(findings: readonly Finding[], words: string): boolean {
-  return words.split(PARTS).some(part => HOLDS_BACK.test(part) && (namesObject(findings, part) || namedKind(findings, part) || mentioned(findings, part) || namesUnknown(findings, part)));
+  return words.split(PARTS).some(part => (HOLDS_BACK.test(part) && (namesObject(findings, part) || namedKind(findings, part) || mentioned(findings, part) || namesUnknown(findings, part)))
+    || (KEEPS_ALL.test(part) && findings.some(f => f.cls === "destroy")));
 }
 
 /**
@@ -795,7 +842,7 @@ function wordsHoldBack(findings: readonly Finding[], words: string): boolean {
  */
 export function wordsRuleOut(findings: readonly Finding[], words: string): boolean {
   if (!words.trim() || findings.length === 0) return false;
-  if (ruledOut(findings, words) || negatedKind(findings, words)) return true;
+  if (ruledOut(findings, words) || negatedKind(findings, words) || saysNoTo(findings, words)) return true;
   if (!mentioned(findings, words) && mentioned(findings, words.replace(SAYS_NOT, "$1 "))) return true;
   // Their asking to be asked first, and a deletion they narrow or send to the trash or a stash instead (integ-x-3).
   return wordsHoldBack(findings, words) || heldByWords(findings, words);

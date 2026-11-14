@@ -10,6 +10,8 @@ import { runCase, type ContextName } from "../fixtures/commands/corpus";
 import type { ShellId } from "../../app/main/commands/types";
 import { keptQuestion } from "../../app/main/commands/autopilot";
 import { redactSecrets, SECRET_HIDDEN } from "../../app/main/commands/redact";
+import { classifyCommand } from "../../app/main/commands/classify";
+import { wordsRuleOut } from "../../app/main/commands/flow";
 
 interface Opts { words?: string; shell?: ShellId; context?: ContextName; downloaded?: string[]; missing?: string[] }
 const result = (cmd: string, o: Opts = {}) =>
@@ -89,5 +91,38 @@ describe("passwords in common config formats, hidden from the model (commands-re
       "define('WP_DEBUG', true);", "'driver' => 'mysql',", "$config['base_url'] = 'https://x.example';", "<password/>", "<password></password>",
       "The password is stored in your keyring.", "passwordeval \"pass show mail\"",
     ]) expect(redactSecrets(text), text).toBe(text);
+  });
+});
+
+describe("the user's no in their own ordinary words (commands-remote-r12-2)", () => {
+  const ctx = { os: "linux" as const, home: "/home/ana", cwd: "/home/ana/proj", ember: { paths: ["/home/ana/.config/ember"], pids: [10], names: /^ember$/ }, downloaded: new Set<string>() };
+  const ruled = (words: string, command: string) => wordsRuleOut(classifyCommand(command, "bash", ctx).findings, words);
+
+  it("rules the step out, so Autopilot refuses it and Assisted never sends it to the check", () => {
+    for (const [words, command] of [
+      ["do not push the changes", "git push origin main"], ["don't push to github", "git push origin main"], ["don't push to the remote", "git push origin main"],
+      ["Fix the failing tests. Do not push the changes.", "git push origin main"], ["there's no need to push", "git push origin main"],
+      ["check with me before pushing", "git push origin main"], ["do not under any circumstances push to origin", "git push origin main"],
+      ["do not remove any files", "rm -rf build"], ["without deleting files", "rm -rf build"], ["do not delete any folders", "rm -rf build"],
+      ["don't remove any directories", "rm -rf build"], ["make no deletions", "rm -rf build"], ["don't delete my work", "rm -rf build"],
+      ["do not delete my data", "rm -rf build"], ["keep all files", "rm -rf build"], ["fix the tests, don't delete any tests", "rm -rf build"],
+      ["refactor but do not remove any code", "rm -rf build"], ["no file deletions", "rm -rf build"], ["keep everything", "rm -rf build"],
+      ["do not publish to npm", "npm publish"], ["stop before publishing", "npm publish"], ["bump the version and stop before you publish", "npm publish"],
+      ["never deploy this to production", "gh release create v1"], ["commit without pushing", "git push origin main"],
+      ["don't use root", "sudo dnf install -y nginx"], ["do not use administrator rights", "sudo dnf install -y nginx"],
+      ["don't install anything system-wide", "sudo dnf install -y nginx"], ["don't install any packages", "sudo dnf install -y nginx"],
+      ["don't install any new dependencies", "npm install lodash"], ["never use sudo for this", "sudo systemctl restart nginx"],
+    ]) expect(ruled(words, command), `${words} / ${command}`).toBe(true);
+  });
+
+  it("never rules out a step the words ask for, or one beside a no to something else", () => {
+    for (const [words, command] of [
+      ["push my changes", "git push origin main"], ["delete build/ but don't delete src/", "rm -rf build"], ["don't forget to push", "git push origin main"],
+      ["push if the tests don't fail", "git push origin main"], ["publish it, no need to ask", "npm publish"],
+      ["I don't mind if you push", "git push origin main"], ["don't hesitate to push", "git push origin main"], ["delete the build folder and keep going", "rm -rf build"],
+      ["clean the build folder, keep the sources", "rm -rf build"], ["install nginx", "sudo dnf install -y nginx"], ["delete build without removing src", "rm -rf build"],
+      ["remove build, never delete notes.txt", "rm -rf build"], ["don't run the linter, just push", "git push origin main"], ["keep it simple and push", "git push origin main"],
+      ["keep the tests passing, delete build", "rm -rf build"], ["no problem, install it", "pip install requests"], ["don't push", "ls -la"],
+    ]) expect(ruled(words, command), `${words} / ${command}`).toBe(false);
   });
 });

@@ -836,8 +836,10 @@ would have asked, this is what happens instead:
 It refuses, with no question to put:
 
 - a command your own words for the task rule out ("commit my work but don't push", "delete everything except
-  build", "push it, but without force", "don't delete anything", "keep it local", "don't run hugo"), or hold back ("leave the build
-  folder alone", "keep notes.txt", "hold off on publishing", "push tomorrow", "once CI is green", "I'll do the push"),
+  build", "push it, but without force", "don't delete anything", "keep it local", "don't run hugo", "do not push the
+  changes", "don't install any packages", "don't use root", "keep all files"), or hold back ("leave the build
+  folder alone", "keep notes.txt", "hold off on publishing", "push tomorrow", "once CI is green", "I'll do the push",
+  "stop before publishing", "check with me before pushing"),
   or ask to be asked about first ("but ask me first", "but back it up first", "but move it to the trash"): that is
   your no, said in advance;
 - a command of the same kind of danger as one you said no to earlier in the task (another push after a no to a push,
