@@ -203,6 +203,20 @@ describe("commands that print other programs' environments or a committed secret
   });
 });
 
+describe("Azure's app settings, secret values and a committed secret written out by git archive (r10-commands-y10-7)", () => {
+  it("asks as printing secrets", () => {
+    for (const cmd of ["az webapp config appsettings list -g rg -n app", "az functionapp config appsettings list -g rg -n f", "az containerapp secret list -g rg -n app --show-values",
+      "git archive HEAD .env | tar xO", "git archive --format=tar HEAD config/.env", "git archive -o out.tar HEAD -- .env"]) {
+      const d = decide(cmd);
+      expect(d.verdict, cmd).toBe("ask");
+      expect(d.rules.some(r => r.startsWith("secret.") || r === "path.secret"), cmd).toBe(true);
+    }
+    for (const cmd of ["az containerapp secret list -g rg -n app", "git archive HEAD src | tar x -C /tmp/x", "az webapp list"]) {
+      expect(decide(cmd).rules.some(r => r.startsWith("secret.") || r === "path.secret"), cmd).toBe(false);
+    }
+  });
+});
+
 describe("python's zipfile and tarfile unpacking outside the project (commands-remote-r10-7)", () => {
   it("asks before unpacking over the home folder or any folder outside the work tree, as unzip -d and tar -C do", () => {
     for (const cmd of ["python3 -m zipfile -e a.zip ~", "python3 -Im zipfile -e a.zip ~", "python3 -m tarfile -e a.tar ~", "python3 -m zipfile --extract a.zip /home/ana",

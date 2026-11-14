@@ -8004,6 +8004,9 @@ git(["archive"], h => {
   const remote = values(p, "remote").length > 0;
   if (remote) h.e.pipe.fetch = true;
   for (const o of values(p, "o", "output")) if (o) { const obj = h.e.usePath(lit(o), "write", h.sc); if (obj.abs) { h.e.add("destroy", "redirect.overwrite", `Overwrites ${obj.text} if it exists.`, { objects: [obj], ifExists: obj.abs }); if (remote) h.e.download(o, h.sc); } }
+  // The paths after the tree are read as those files are, so a secret's asks as `git show HEAD:.env` does
+  // (r10-commands-y10-7).
+  if (!remote) for (const a of p.operands.slice(1)) if (a.v !== "--") h.e.usePath(a, "read", h.sc);
 });
 git(["lfs"], h => {
   const sub = h.args[0]?.v;
@@ -8570,7 +8573,10 @@ reg(NATIVE, Object.keys(CLOUD_CLIS), h => {
   // out in full (`-raw` and `-json` don't mask what is marked sensitive): secrets too (commands-remote-r9-9). What the
   // verb is judged to do besides stays, so none of them loses a danger it had (`az keyvault secret download`,
   // `terraform state pull` asked as changes).
-  if ((h.key === "az" && (/^keyvault (secret|key|certificate) (show|download|backup)\b/.test(all) || /\b(keys list|list-keys|credential show|show-connection-string|get-credentials|list-credentials|keys renew)\b/.test(all)))
+  if ((h.key === "az" && (/^keyvault (secret|key|certificate) (show|download|backup)\b/.test(all) || /\b(keys list|list-keys|credential show|show-connection-string|get-credentials|list-credentials|keys renew)\b/.test(all)
+      // An app's settings as Azure prints them hold its connection strings and keys, and a container app's secrets with
+      // their values (r10-commands-y10-7).
+      || /^(webapp|functionapp|logicapp|staticwebapp) (config )?appsettings list\b/.test(all) || (/^containerapp secret (list|show)\b/.test(all) && h.args.some(a => a.v === "--show-values"))))
     || ((h.key === "terraform" || h.key === "tofu") && ((verbs[0] === "output" && h.args.some(a => /^-(raw|json)$/.test(a.v ?? ""))) || (verbs[0] === "show" && h.args.some(a => a.v === "-json")) || all.startsWith("state pull")))) {
     h.e.add("secret", "secret.cloud", SAYS.secrets, { program: `${h.key} ${verb}` });
   }

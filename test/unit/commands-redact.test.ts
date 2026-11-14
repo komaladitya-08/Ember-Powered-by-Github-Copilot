@@ -604,6 +604,31 @@ describe("redactSecrets and memory: a name ending in KEY or AUTH that says no se
   });
 });
 
+describe("redactSecrets: an environment's name and value pairs and more webhook addresses (r10-commands-y10-7)", () => {
+  it.each([
+    ["        env:\n        - name: DB_PASSWORD\n          value: hunter2xyz\n", `        env:\n        - name: DB_PASSWORD\n          value: ${SECRET_HIDDEN}\n`],
+    ['{"name":"DB_PASSWORD","value":"hunter2xyz"}', `{"name":"DB_PASSWORD","value":"${SECRET_HIDDEN}"}`],
+    ['  {\n    "name": "API_TOKEN",\n    "value": "abc123"\n  }', `  {\n    "name": "API_TOKEN",\n    "value": "${SECRET_HIDDEN}"\n  }`],
+    ["- name: SMTP_PASS\n  value: 'x9y8'", `- name: SMTP_PASS\n  value: '${SECRET_HIDDEN}'`],
+    ["https://outlook.office.com/webhook/abc-123@def/IncomingWebhook/xyz/0", `https://outlook.office.com/webhook/${SECRET_HIDDEN}`],
+    ["https://hooks.zapier.com/hooks/catch/123456/abcdef/", `https://hooks.zapier.com/hooks/catch/${SECRET_HIDDEN}`],
+    [`https://api.telegram.org/bot123456789:${"A".repeat(35)}/sendMessage`, `https://api.telegram.org/bot${SECRET_HIDDEN}/sendMessage`],
+  ])("hides the value in %j", (text, want) => {
+    expect(redactSecrets(text)).toBe(want);
+  });
+
+  it.each(["- name: LOG_LEVEL\n  value: debug", '{"name":"PORT","value":"8080"}', "- name: web\n  value: 3"])("leaves ordinary pairs alone: %j", text => {
+    expect(redactSecrets(text)).toBe(text);
+  });
+
+  it("takes linear time on a run of name and value pairs (1 MiB)", () => {
+    const text = "- name: A_PASSWORD\n  value: b\n".repeat(Math.ceil((1024 * 1024) / 30));
+    const t0 = performance.now();
+    redactSecrets(text);
+    expect(performance.now() - t0).toBeLessThan(1500);
+  });
+});
+
 describe("the Azure Key Vault passes on output with no value in it (stop-yield-x9-left-1)", () => {
   const ids = '"https://kv.vault.azure.net/secrets/name-1/abc"\n';
   const big = ids.repeat(Math.ceil((4 * 1024 * 1024) / ids.length));

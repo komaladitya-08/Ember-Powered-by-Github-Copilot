@@ -56,7 +56,8 @@ export const TOKEN_PATTERNS: readonly RegExp[] = [
   /\bya29\.[A-Za-z0-9_-]{20,}/g,
   /\bops_[A-Za-z0-9+/=_-]{50,}/g,
   /\bdp\.(?:st|ct|pt|sa|scim|audit)\.[A-Za-z0-9._-]{20,}/g,
-  /\b\d{8,10}:[A-Za-z0-9_-]{35}(?![A-Za-z0-9_-])/g,
+  // A Telegram bot's token, in its API's address too (`api.telegram.org/bot<id>:<token>/`: r10-commands-y10-7).
+  /(?:\b|(?<=\/bot))\d{8,10}:[A-Za-z0-9_-]{35}(?![A-Za-z0-9_-])/g,
   /\b[MNO][A-Za-z0-9_-]{23,25}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,40}(?![A-Za-z0-9_-])/g,
   /\$(?:1|2[aby]?|5|6|y|apr1|argon2(?:id|i|d)?)\$[A-Za-z0-9./$=,+-]{20,}/g,
   // Django's generated secret key (commands-remote-r10-6).
@@ -127,6 +128,13 @@ const VALUE_PATTERNS: readonly RegExp[] = [
   /(hooks\.slack\.com\/(?:services|workflows|triggers)\/)[A-Za-z0-9_/-]+/g,
   /(discord(?:app)?\.com\/api\/webhooks\/\d{1,30}\/)[A-Za-z0-9_-]+/g,
   /(\.webhook\.office\.com\/webhookb2\/)[^\s"'<>]+/g,
+  // Outlook's older connector address and Zapier's catch hook (r10-commands-y10-7).
+  /(outlook\.office(?:365)?\.com\/webhook\/)[^\s"'<>]+/g,
+  /(hooks\.zapier\.com\/hooks\/catch\/)[A-Za-z0-9_/-]+/g,
+  // A `value` whose sibling `name` says a secret, as Kubernetes and Azure print an environment (`- name: DB_PASSWORD`
+  // then `value: …`, `{"name": "API_TOKEN", "value": "…"}`): the name a bounded look, on its line or the next
+  // (r10-commands-y10-7).
+  new RegExp(String.raw`((?:^|\n|[{,])[ \t]*(?:-[ \t]+)?(?<nq>["']?)name\k<nq>[ \t]*:[ \t]*(?<vq>["']?)[A-Za-z0-9_.-]{0,64}?(?:PASSWORD|PASSWD|PASSPHRASE|SECRET|TOKEN|CREDENTIALS?|_PASS|_PW|_PWD|_AUTH|(?:SECRET|API|PRIVATE|ACCESS|SIGNING|ENCRYPTION|MASTER|CLIENT)_KEY|[Pp]assword|[Ss]ecret|[Tt]oken)\k<vq>[ \t]*,?[ \t]*(?:\r?\n[ \t]*)?(?<q>["']?)value\k<q>[ \t]*:[ \t]*["']?)(?![$%{<*[])[^\s"',;}\]]+`, "g"),
   // A variable as `env`, `ps e` and a .env file print it whose name ends in a short secret word after a `_` or is that
   // word (`DB_PASS=`, `REDIS_AUTH=`, `MYSQL_PW=`, `SIGNING_KEY=`, `AUTH=`, `PASSPHRASE=`), which KEY_VALUE's words
   // miss; never a variable, a placeholder or what is already hidden, nor PWD and OLDPWD, which are folders, nor a

@@ -219,12 +219,12 @@ Ember stops and asks before a command that:
   `env`, `printenv`), other programs' environments (`ps e`, `ps eww`, `ps -o env`, `docker inspect` without a
   `--format` that leaves them out, `docker compose config`, `systemctl show` of a unit's Environment,
   `systemctl show-environment`), a secret file as a commit or the index holds it (`git show HEAD:.env`, `git cat-file
-  -p :.env`, `git log -p -- .env`), a search of files for a secret's word (`grep -r PASSWORD .`), also with a PowerShell cmdlet Ember has no rule for whose name says a secret, credential,
+  -p :.env`, `git log -p -- .env`, `git archive HEAD .env`), a search of files for a secret's word (`grep -r PASSWORD .`), also with a PowerShell cmdlet Ember has no rule for whose name says a secret, credential,
   token, password, key, vault or certificate, or that is given `-AsPlainText` (`Get-Secret`, `Get-AzKeyVaultSecret`);
   reading the clipboard; taking a screenshot without Ember's privacy filters; recording from the microphone or the
   camera ("Records from the microphone or the camera.": `arecord`, `parecord`, `rec`, `sox -d`, `fswebcam`, `ffmpeg`
   with a capture device as its input, GStreamer's capture sources); a cloud vault's value or a service's keys (`az
-  keyvault secret show`, `az storage account keys list`, `terraform output -raw` or `-json`, `terraform show -json`), or an app's (`pulumi … --show-secrets`, `pulumi config
+  keyvault secret show`, `az storage account keys list`, `az webapp config appsettings list`, `az containerapp secret list --show-values`, `terraform output -raw` or `-json`, `terraform show -json`), or an app's (`pulumi … --show-secrets`, `pulumi config
   get`, `heroku config`, `netlify env:list`, `vercel env ls` and `env pull`, `firebase functions:config:get`, `gcloud
   secrets versions access`, and whatever run in a pod or an app would print secrets, judged as a command of its own,
   wrapped or after options: `kubectl exec pod -- env`, `kubectl exec pod -- sh -c env`, `kubectl exec pod -- cat
