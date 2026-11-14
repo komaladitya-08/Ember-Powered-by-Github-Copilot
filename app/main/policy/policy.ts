@@ -23,6 +23,7 @@ import { KEYS, SHORTCUTS, type KeyConventions, type OS } from "../../shared/shor
 import { ADMIN_APP, OFFICE_APP, OPENS_PROGRAMS, PLAIN_EDITOR, PROMPT_APP, READ_ONLY_WINDOW, RISKY_EXTRA, RUN_ANSWER_EXTRA, RUN_FILE_DIALOG_EXTRA, RUNS_PROGRAM_EXTRA, SECURITY_APP, SECURITY_CLASS, SECURITY_TITLE, SETTINGS_APP, TABBED_APP, TYPING_REFUSED, WEB_APP, placeName, type OpensPrograms, type TypingRefusal } from "./vocabulary";
 import { isRemoteSurface, REMOTE_SURFACE_REASON } from "./remote-surface";
 import { targetRules } from "./target-rules";
+import { emberPathReach, plainPath } from "./ember-paths";
 import { covers, movingWords, type AutonomyScope, type AutonomyScopes } from "./autonomy";
 import type { StepChecker, StepVerdict } from "../commands/review";
 import { SECRET_PARTS, savedPart, siteOrigin, vaultAppKey, type VaultDestination, type VaultKind, type VaultPart } from "../../shared/vault";
@@ -774,15 +775,6 @@ const EMBER_DATA_TYPED = /(?:^|[/\\%{\s"'“(=:]|\$)(?:\.config|appdata[/\\]loca
 /** Does text a task would type name Ember's data folder or the organisation's policy folder? */
 export const namesEmberData = (text: string | undefined): boolean => !!text && EMBER_DATA_TYPED.test(plainPath(normalizeLabel(text)));
 /**
- * A typed path as the dialog will read it (r10-safety-y10-2): a percent-escaped letter, digit or dot decoded ("%65mber"),
- * an escaped space unescaped ("Application\ Support"), and doubled separators and "/./" parts dropped.
- */
-const plainPath = (text: string): string => text
-  .replace(/%([0-9a-f]{2})/gi, (all, hex: string) => { const c = String.fromCharCode(parseInt(hex, 16)); return /[a-z0-9.]/i.test(c) ? c : all; })
-  .replace(/\\ /g, " ")
-  .replace(/([/\\])(?:\.[/\\])+/g, "$1")
-  .replace(/([/\\])[/\\]+/g, "$1");
-/**
  * Ember's own files by name (settings.json, the audit log's months, the mode's seal, the provider's key, its host and
  * its yes's seal, the vault, extensions.json, the organisation's policy.json, the GitHub token, the sign-out flag in
  * agent.json, routines, memory and its vectors, the kept conversation and its erasure mark, the voiceprint, the
@@ -803,7 +795,7 @@ const titleName = (title: string): string => title.replace(/\s+[-—–]\s+.*$/,
  * step asks every time in every mode that asks, is never announced, waived or checked, and Autopilot, which has no
  * question to put, refuses it.
  */
-export function mayReachEmberData(r: Pick<ActionRequest, "kind" | "window" | "element" | "value"> & { app?: string }): boolean {
+export function mayReachEmberData(r: Pick<ActionRequest, "kind" | "window" | "element" | "value"> & { app?: string }, os: OS = "linux"): boolean {
   if (r.kind === "read") return false;
   const title = r.window ?? "";
   const name = titleName(title);
@@ -811,15 +803,17 @@ export function mayReachEmberData(r: Pick<ActionRequest, "kind" | "window" | "el
   if (inEmberDataParent(r, name)) return true;
   const item = (r.element?.name ?? "").trim();
   if (EMBER_FILE.test(item) || EMBER_FOLDER.test(item)) return true;
-  if ((r.kind === "text" || r.kind === "cursor_text" || r.kind === "value") && r.value) return namesEmberFile(r.value);
+  // Typed, the folder's name reaches it in any case where case doesn't count (Windows, macOS: "EMBER", integ-y-1).
+  if ((r.kind === "text" || r.kind === "cursor_text" || r.kind === "value") && r.value) return namesEmberFile(r.value, os !== "linux");
   return false;
 }
 /**
  * Does `text` name one of Ember's own files or its data or audit folder's own name as a path's part ("settings.json",
  * "notes/audit")? Whose it is can't be told: mayReachEmberData's typed text, and an extension's arguments (gate.ts).
+ * `caseless`: on a system where case doesn't count in a path (Windows, macOS), "EMBER" and "Audit" are those folders.
  */
-export const namesEmberFile = (text: string): boolean =>
-  text.split(/[/\\\n]/).some(part => { const p = part.trim().replace(/^["'“]|["'”]$/g, ""); return EMBER_FILE.test(p) || EMBER_FOLDER.test(p); });
+export const namesEmberFile = (text: string, caseless = false): boolean =>
+  text.split(/[/\\\n]/).some(part => { const p = part.trim().replace(/^["'“]|["'”]$/g, ""); return EMBER_FILE.test(p) || EMBER_FOLDER.test(caseless ? p.toLowerCase() : p); });
 /**
  * The folders a file manager shows Ember's data or policy folder in (r10-safety-x10-2): its parent (".config",
  * "Local", "Application Support", "etc") and the parent's parent where that is the folder people open (AppData,
@@ -2891,7 +2885,7 @@ export class PolicyEngine {
    * refuses it. A refusal stays a refusal.
    */
   private ownDataDoubt(r: ActionRequest, d: Decision): Decision {
-    if (d.verdict === "deny" || d.tier === "read" || !mayReachEmberData(r)) return d;
+    if (d.verdict === "deny" || d.tier === "read" || !mayReachEmberData(r, this.os)) return d;
     if (this.autopilot) return { tier: "never", verdict: "deny", reason: `${EMBER_DATA_DOUBT}; Autopilot has no question to put, so Ember doesn't do it`, prompt: d.prompt };
     const { autonomy: _a, announce: _n, mode: _m, waivable: _w, needsGrant: _g, stepPrompt: _s, ...rest } = d;
     return { ...rest, tier: "confirm", verdict: "confirm", risky: true, everyTime: true, remember: false, reason: d.verdict === "confirm" ? `${d.reason}; ${EMBER_DATA_DOUBT}` : EMBER_DATA_DOUBT };
@@ -2955,7 +2949,7 @@ export class PolicyEngine {
   autopilotStep(r: ActionRequest, d: Decision): Decision {
     if (d.verdict !== "confirm" || !this.autopilot) return d;
     // Never a step that may reach Ember's own settings, audit log or policy: refused (ownDataDoubt).
-    if (mayReachEmberData(r)) return this.ownDataDoubt(r, d);
+    if (mayReachEmberData(r, this.os)) return this.ownDataDoubt(r, d);
     return { ...d, verdict: "allow", remember: false, autonomy: true, mode: "autopilot", reason: `${d.reason}; ${AUTOPILOT_REASON}`, announce: this.announcement(r, d, "autopilot") };
   }
 
@@ -3035,7 +3029,7 @@ export class PolicyEngine {
     const may = () => (this.o.assisted?.() ?? false) && !this.o.confirmEveryAction?.() && (this.o.actionsAllowed?.() ?? true);
     if (!steps.some(s => s.d.verdict === "confirm") || steps.some(s => s.d.verdict === "deny" || s.r.kind === "read")) return asIs();
     // Never a step that may reach Ember's own settings, audit log or policy (ownDataDoubt): the user answers it.
-    if (steps.some(s => mayReachEmberData(s.r))) return asIs();
+    if (steps.some(s => mayReachEmberData(s.r, this.os))) return asIs();
     // (Nor the user's words: a request too long to show whole could lose the "but don't…" at its end.)
     if (!may() || !o.words.trim() || o.words.trim().length > CHECK_LIMITS.words || o.signal.aborted) return asIs();
     const parts = steps.map(s => stepForCheck(s.r, s.d, this.keys));
@@ -3394,8 +3388,9 @@ export class PolicyEngine {
     if (r.kind !== "read" && isEmberWindow({ app: r.app, name: r.window, pid: r.windowId?.pid }, this.o.ownPid)) return never("Ember's own windows are for the user only");
     // Ember's settings, audit log and policy, open in another app: a task could forge the mode's agreement or weaken a setting there.
     if (r.kind !== "read" && showsEmberData(r.window)) return never("Ember's settings, audit log and policy are for the user only");
-    // Or their folder typed into an Open dialog or an address bar: the way to open them there (safety-privacy-r10-1).
-    if ((r.kind === "text" || r.kind === "cursor_text" || r.kind === "value" || r.kind === "select" || r.kind === "open_app") && namesEmberData(r.value)) return never("Ember's settings, audit log and policy are for the user only");
+    // Or their folder typed into an Open dialog or an address bar: the way to open them there (safety-privacy-r10-1),
+    // also as a pattern that reaches it ("~/.config/emb?r/settings.json", integ-y-1), as the classifier's `ember.path` is.
+    if ((r.kind === "text" || r.kind === "cursor_text" || r.kind === "value" || r.kind === "select" || r.kind === "open_app") && (namesEmberData(r.value) || (!!r.value && emberPathReach(r.value, { os }) === "names"))) return never("Ember's settings, audit log and policy are for the user only");
     // (The vault's fill is the one step that may reach a password field: decided below, in Autopilot only.)
     if (r.element?.role === "password text" && r.kind !== "vault_fill") return never("password fields are for the user only");
     if (r.element?.role === "terminal") return never("Ember doesn't type into terminal windows; it runs commands in its own command window when Commands is on");

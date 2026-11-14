@@ -5,7 +5,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { classify, emberDataOf, gateAnnouncement, gateQuestion, wrapResult, argsSummary, plainName, EMBER_DATA_REFUSED, EMBER_DATA_UNASKED, REFUSED, VAULT_FILLED, type GateInput } from "../../app/main/extensions/gate";
+import { classify, emberDataOf, emberReachOf, gateAnnouncement, gateQuestion, wrapResult, argsSummary, plainName, EMBER_DATA_HELD, EMBER_DATA_REFUSED, EMBER_DATA_UNASKED, REFUSED, VAULT_FILLED, type GateInput } from "../../app/main/extensions/gate";
 import { canonical, checkPins, isReadOnly, pinAll, schemaWords, toolHash, shownHash, shownSchema, type ServedTool } from "../../app/main/extensions/pin";
 import { readMarketplace, readPlugin, serverSpec, inside, pluginPath, reachOf } from "../../app/main/extensions/manifest";
 import { probeHttp, probeStdio, rpcAnswer, servedTools } from "../../app/main/extensions/probe";
@@ -218,6 +218,44 @@ describe("the extensions gate", () => {
     // Every deny before it still says its own reason.
     expect(classify(gate({ emberData: "names", allowed: false })).reason).toBe("Extensions are off.");
     expect(classify(gate({ emberData: null }))).toEqual(classify(gate()));
+  });
+
+  it("refuses a changing call given the folder that holds Ember's data, or a pattern that reaches it, and asks about “EMBER” where case doesn't count, as the commands classifier refuses them (integ-y-1)", () => {
+    const linux = { os: "linux", home: "/home/u" } as const;
+    const darwin = { os: "darwin", home: "/Users/u" } as const;
+    const win = { os: "win32", home: "C:\\Users\\u" } as const;
+    // A pattern that reaches the data folder, as `cat ~/.config/emb*/settings.js*` is refused (`ember.path`).
+    for (const [place, args] of [
+      [linux, { path: "/home/u/.config/emb*/settings.js*" }], [linux, { pattern: "~/.config/emb?r/**" }], [linux, { path: "$HOME/.config/*" }],
+      [darwin, { path: "~/Library/Application Support/emb*" }], [win, { path: "%LOCALAPPDATA%\\emb?r\\settings.json" }],
+      // With no home known, any user's.
+      [{ os: "linux" }, { path: "/home/ana/.config/e*r/audit" }],
+      // Climbing out of the server's own folder, which is inside Ember's data folder.
+      [{ ...linux, own: "/home/u/.config/ember/extensions/plugins/fake" }, { path: "../../../settings.json" }],
+      [{ ...linux, own: "/home/u/.config/ember/extensions/plugins/fake" }, { path: "../.." }],
+    ] as const) expect(emberDataOf(args, place), JSON.stringify(args)).toBe("names");
+    // The folder above it, as `rm -rf ~/.config` and `mv ~/.config /tmp/c` are refused.
+    for (const [place, args] of [
+      [linux, { source: "/home/u/.config", destination: "/tmp/c" }], [linux, { path: "~/.config/" }], [linux, { path: "/home/u" }], [linux, { path: "/" }],
+      [{ os: "linux" }, { path: "/home/ana/.config" }], [linux, { path: "~/.c*g" }],
+      [darwin, { path: "/Users/u/Library/Application Support" }], [darwin, { path: "~/library" }], [{ os: "darwin" }, { path: "/home/u/Library/Application Support" }],
+      [win, { path: "C:\\Users\\u\\AppData\\Local" }], [win, { path: "%LOCALAPPDATA%" }], [{ os: "linux" }, { path: "C:\\Users\\u\\AppData" }],
+    ] as const) expect(emberReachOf(args, place), JSON.stringify(args)).toEqual({ data: null, holds: true });
+    for (const o of [{}, { autopilot: true }, { tainted: true }, { remote: true }] as Partial<GateInput>[]) {
+      expect(classify(gate({ tool: PINNED_POST, emberHolds: true, ...o })), JSON.stringify(o)).toEqual({ verdict: "deny", reason: EMBER_DATA_HELD });
+      // A read-only tool only reads it: decided as before.
+      expect(classify(gate({ emberHolds: true, ...o })), JSON.stringify(o)).toEqual(classify(gate(o)));
+    }
+    // "EMBER" is the data folder where case doesn't count; on Linux it isn't ("Ember" is the hand-off folder).
+    for (const place of [darwin, win, undefined]) for (const name of ["EMBER", "Ember", "notes/Audit"]) expect(emberDataOf({ path: name }, place), `${place?.os} ${name}`).toBe("may");
+    expect(emberDataOf({ path: "Ember" }, linux)).toBeNull();
+    // Elsewhere stays as it was.
+    for (const args of [{ path: "/home/u/notes/todo.md" }, { path: "/tmp/c" }, { path: "~/.config/gedit/x" }, { url: "https://example.com/.config" }, { q: "weather in Leeds" }]) {
+      expect(emberReachOf(args, linux), JSON.stringify(args)).toEqual({ data: null, holds: false });
+    }
+    expect(emberDataOf({ path: "notes.txt" }, { ...linux, own: "/home/u/.config/ember/extensions/plugins/fake" })).toBeNull();
+    // Too many patterns to judge each: whose they reach can't be told.
+    expect(emberDataOf({ items: Array.from({ length: 300 }, (_, i) => `/tmp/*${i}`) }, linux)).toBe("may");
   });
 
   it("names the extension the user installed in its announcement, never the tool or its arguments", () => {
@@ -1143,6 +1181,24 @@ describe("ExtensionsService", () => {
     expect(audit.filter(e => e.event === "extension" && e.phase === "decision").map(e => e.verdict)).toEqual(["deny", "deny", "deny"]);
     // Its ordinary call is announced as before.
     expect(await call(ext, "fake-post_message", { text: "hello team" })).toEqual({ permissionDecision: "allow" });
+    expect(said).toHaveLength(1);
+  });
+
+  it("refuses in Autopilot an extension's move of the folder that holds Ember's data, a pattern that reaches it and a path out of its own folder, without asking or announcing (integ-y-1)", async () => {
+    const said: string[] = [];
+    const s = await installed({ home: "/home/u", autopilot: () => true, announce: words => { said.push(words); return true; } });
+    const ext = s.forSession()!;
+    shown(ext);
+    expect(await call(ext, "fake-post_message", { source: "~/.config", destination: "/tmp/c" })).toEqual({ permissionDecision: "deny", permissionDecisionReason: EMBER_DATA_HELD });
+    expect(await call(ext, "fake-post_message", { source: "/home/u/.config/emb?r", destination: "/tmp/c" })).toEqual({ permissionDecision: "deny", permissionDecisionReason: EMBER_DATA_REFUSED });
+    // Its server's folder is <data folder>/extensions/plugins/<id>: three folders up is the data folder.
+    expect(await call(ext, "fake-post_message", { path: "../../../.." })).toEqual({ permissionDecision: "deny", permissionDecisionReason: EMBER_DATA_HELD });
+    expect(await call(ext, "fake-post_message", { path: "../../../settings.json" })).toEqual({ permissionDecision: "deny", permissionDecisionReason: EMBER_DATA_REFUSED });
+    expect(asked).toEqual([]);
+    expect(said).toEqual([]);
+    // Reading the folder with a read-only tool, and a file in the server's own folder, go ahead as before.
+    expect(await call(ext, "fake-lookup", { q: "~/.config" })).toEqual({ permissionDecision: "allow" });
+    expect(await call(ext, "fake-post_message", { path: "out/report.txt" })).toEqual({ permissionDecision: "allow" });
     expect(said).toHaveLength(1);
   });
 

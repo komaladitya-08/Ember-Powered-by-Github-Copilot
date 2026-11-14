@@ -9,10 +9,12 @@
  * - Once Ember has filled something from its vault in this run (PLAN.md §2 "Approvals", "The vault"): deny, every
  *   tool. What an extension reads off a page or a window could hold what was filled, and a failed call's text goes
  *   to the model as the extension wrote it (the SDK lets no hook rewrite it: review vault-3-x9-4).
- * - Arguments that name Ember's data folder or the organisation's policy folder ("~/.config/ember/settings.json"):
- *   deny, in every mode, as the same path typed in an app or named in a command is (integ-x-2). Arguments that name
- *   one of Ember's own files or folders by name only ("settings.json", "audit"), whose they are can't be told: ask
- *   every time, read-only tools too, never announced, and Autopilot, which has no question to put, refuses.
+ * - Arguments that name Ember's data folder or the organisation's policy folder ("~/.config/ember/settings.json", a
+ *   pattern that reaches it, "~/.config/emb?r/**"): deny, in every mode, as the same path typed in an app or named in a
+ *   command is (integ-x-2, integ-y-1). A tool that changes things given the folder that holds one ("~/.config",
+ *   "%LOCALAPPDATA%", the home): deny, as the classifier refuses a command that moves or deletes it. Arguments that
+ *   name one of Ember's own files or folders by name only ("settings.json", "audit"), whose they are can't be told:
+ *   ask every time, read-only tools too, never announced, and Autopilot, which has no question to put, refuses.
  * - A tool that says it is read-only (annotations only ever make a call stricter), from an item the user agreed to,
  *   in a task no injected text has tainted: allow, and audit.
  * - Anything else (changing, destructive, open-world, unknown): ask every time, never "Always", with a question Ember
@@ -28,6 +30,7 @@ import type { Question } from "../agent/confirm";
 import { quoteUntrusted } from "../perception/elements";
 import { INJECTION_NOTE } from "../perception/injection";
 import { AUTOPILOT_WORDS, namesEmberData, namesEmberFile } from "../policy/policy";
+import { emberPathReach, type EmberPlace } from "../policy/ember-paths";
 import { canonical, isReadOnly, type PinnedTool } from "./pin";
 
 export type GateVerdict = "allow" | "announce" | "ask" | "deny";
@@ -72,6 +75,11 @@ export interface GateInput {
    * one of its files or folders by name only, whose it can't tell (ask, never announced; Autopilot denies).
    */
   emberData?: "names" | "may" | null;
+  /**
+   * The call's arguments name a folder that holds Ember's data or policy folder (emberReachOf: "~/.config", the home):
+   * a tool that changes things may move or delete it (deny); a read-only one only reads it.
+   */
+  emberHolds?: boolean;
 }
 
 /** What the model is told of a call whose arguments name Ember's data folder or the organisation's policy folder. */
@@ -80,15 +88,23 @@ export const EMBER_DATA_REFUSED = "Ember's settings, audit log and policy are fo
 /** What the model is told of such a call in Autopilot, where it can't be asked (one of Ember's files by name only). */
 export const EMBER_DATA_UNASKED = "This may be Ember's own settings, audit log or policy, which are for the user only, and Autopilot can't ask the user, so Ember didn't do it.";
 
+/** What the model is told of a changing call given a folder that holds Ember's data or policy folder. */
+export const EMBER_DATA_HELD = "This names a folder that holds Ember's settings, audit log and policy, which are for the user only, and a tool that changes things could move or delete it with them, so Ember didn't do it. Don't try this another way.";
+
 /** The most strings of a call's arguments Ember reads for its own files; past it (or nested deeper), "may". */
 const ARG_STRINGS = 5_000;
 const ARG_DEPTH = 16;
+/** The most patterns of a call's arguments judged as paths (each costs about 0.2 ms); past it, "may". */
+const ARG_PATTERNS = 256;
 
 /**
- * What a call's arguments name of Ember's own (integ-x-2): every string, keys included, is read as a typed path is
- * (namesEmberData, namesEmberFile). Arguments too many or too deep to read whole count as "may" (fail closed).
+ * What a call's arguments name of Ember's own (integ-x-2, integ-y-1): every string, keys included, is read as a typed
+ * path is (namesEmberData, namesEmberFile) and as a path the commands classifier would judge (emberPathReach, from
+ * `place`: this computer, its user's home, and the server's own folder a relative path is in). Arguments too many or
+ * too deep to read whole count as "may" (fail closed). `holds`: a string is a folder above Ember's data or policy
+ * folder, or a pattern that may match one.
  */
-export function emberDataOf(args: unknown): "names" | "may" | null {
+export function emberReachOf(args: unknown, place: EmberPlace = { os: "darwin" }): { data: "names" | "may" | null; holds: boolean } {
   const strings: string[] = [];
   let whole = true;
   const walk = (v: unknown, depth: number): void => {
@@ -99,9 +115,22 @@ export function emberDataOf(args: unknown): "names" | "may" | null {
     else if (v && typeof v === "object") for (const [k, x] of Object.entries(v as Record<string, unknown>)) { strings.push(k); walk(x, depth + 1); }
   };
   try { walk(args, 0); } catch { whole = false; /* a getter that throws: not read whole */ }
-  if (strings.some(t => namesEmberData(t))) return "names";
-  if (!whole || strings.some(t => namesEmberFile(t))) return "may";
-  return null;
+  // Case doesn't count in a path on Windows and macOS ("EMBER"); with no place, judged as if it doesn't.
+  const caseless = place.os !== "linux";
+  let patterns = 0;
+  const reach = strings.map(t => {
+    if (/[*?[]/.test(t) && ++patterns > ARG_PATTERNS) { whole = false; return null; }
+    return emberPathReach(t, place);
+  });
+  const holds = reach.includes("holds");
+  if (reach.includes("names") || strings.some(t => namesEmberData(t))) return { data: "names", holds };
+  if (!whole || strings.some(t => namesEmberFile(t, caseless))) return { data: "may", holds };
+  return { data: null, holds };
+}
+
+/** emberReachOf's `data`: what the arguments name of Ember's own data or policy folder or its files. */
+export function emberDataOf(args: unknown, place?: EmberPlace): "names" | "may" | null {
+  return emberReachOf(args, place).data;
 }
 
 /** What the model is told of a call refused because the vault has filled something in this run. */
@@ -121,6 +150,7 @@ export function classify(g: GateInput): { verdict: GateVerdict; reason: string }
   if (g.refused) return { verdict: "deny", reason: "The user said no to this tool. Don't try it again or try another way." };
   if (g.vaultFilled) return { verdict: "deny", reason: VAULT_FILLED };
   if (g.emberData === "names") return { verdict: "deny", reason: EMBER_DATA_REFUSED };
+  if (g.emberHolds && !isReadOnly(g.tool)) return { verdict: "deny", reason: EMBER_DATA_HELD };
   if (g.emberData === "may") return g.autopilot ? { verdict: "deny", reason: EMBER_DATA_UNASKED } : { verdict: "ask", reason: "ember-data" };
   if (isReadOnly(g.tool) && !g.tainted && !g.remote && !g.hintsStale) return { verdict: "allow", reason: "read-only" };
   return { verdict: g.autopilot ? "announce" : "ask", reason: g.tainted ? "tainted" : !isReadOnly(g.tool) ? "changes" : g.remote ? "remote" : "hints-changed" };

@@ -68,6 +68,28 @@ describe("Ember's own settings, audit log and policy reached through another app
     expect(namesEmberData("100%25 of the .config/./embers")).toBe(false);
   });
 
+  it("refuses typing a pattern that reaches their folder, and asks about “EMBER” typed where case doesn't count, as the commands classifier does (integ-y-1)", () => {
+    for (const [os, value] of [
+      ["linux", "~/.config/emb?r/settings.json"], ["linux", "/home/u/.config/e*/audit"], ["darwin", "~/Library/Application Support/emb*/settings.json"],
+      ["win32", "%LOCALAPPDATA%\\emb*\\settings.json"], ["win32", "C:\\Users\\u\\AppData\\Local\\e?ber"],
+    ] as [OS, string][]) {
+      for (const mode of ["asking", "interactive", "assisted", "autopilot"] as const) {
+        expect(engine(mode, os, { gedit: "act" }).decide(req("gedit", "Open", { kind: "text", value, element: { role: "text", name: "Location" } })).verdict, `${value} ${mode}`).toBe("deny");
+      }
+    }
+    for (const os of ["win32", "darwin"] as const) {
+      for (const value of ["EMBER", "Ember", "AUDIT"]) {
+        const r = req("gedit", "Open", { kind: "text", value, element: { role: "text", name: "Location" } });
+        expect(mayReachEmberData(r, os), `${os} ${value}`).toBe(true);
+        expect(engine("autopilot", os, { gedit: "act" }).decide(r).verdict, `${os} ${value}`).toBe("deny");
+        expect(engine("interactive", os, { gedit: "act" }).decide(r).verdict, `${os} ${value}`).toBe("confirm");
+      }
+    }
+    // On Linux "Ember" is the hand-off folder, and a folder above theirs typed alone only goes there.
+    expect(mayReachEmberData(req("gedit", "Open", { kind: "text", value: "Ember" }), "linux")).toBe(false);
+    expect(engine("autopilot", "linux", { gedit: "act" }).decide(req("gedit", "Open", { kind: "text", value: "~/.config", element: { role: "text", name: "Location" } })).verdict).not.toBe("deny");
+  });
+
   it("asks every time in an editor whose title names settings.json with no folder, and Autopilot refuses (safety-privacy-r10-1)", () => {
     const rows: [OS, string, string][] = [
       ["linux", "kate", "settings.json — Kate"], ["linux", "org.xfce.mousepad", "settings.json - Mousepad"],
