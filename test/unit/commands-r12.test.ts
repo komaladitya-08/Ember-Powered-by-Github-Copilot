@@ -187,3 +187,31 @@ describe("a file's contents sent in a registry's, an image's or a package's name
     ]) expect(decide(cmd).rules, cmd).not.toContain("send.contents");
   });
 });
+
+describe("opening the user's own files to every account (commands-remote-c12-2)", () => {
+  it("asks before a mode or an ACL that lets other accounts change files, or opens the home folder", () => {
+    for (const [cmd, shell, context] of [
+      ["chmod 777 ~", "bash", "linux"], ["chmod 777 ~/Documents", "bash", "linux"], ["chmod 666 ~/thesis.docx", "bash", "linux"], ["chmod o+w ~/notes.txt", "bash", "linux"],
+      ["chmod a+rwx ~/Documents", "bash", "linux"], ["chmod ugo+w notes.txt", "bash", "linux"], ["chmod 755 ~", "bash", "linux"], ["chmod go+rx /home/ana", "bash", "linux"],
+      ["chmod 1777 ~/shared", "bash", "linux"], ["chmod o=rwx ~/Documents", "bash", "linux"],
+      ["setfacl -m u:bob:rwx ~/Documents", "bash", "linux"], ["setfacl -m o::rwx ~", "bash", "linux"], ["setfacl -m other::rw ~/a.txt", "bash", "linux"], ["setfacl --modify g:staff:rw notes.txt", "bash", "linux"],
+      ["icacls C:\\Users\\ana\\Documents /grant Everyone:F", "powershell", "win32"], ["icacls C:\\Users\\ana\\Documents /grant Users:(OI)(CI)M", "cmd", "win32"],
+      ["icacls C:\\Users\\ana\\thesis.docx /grant bob:F", "powershell", "win32"], ["icacls C:\\Users\\ana /grant \"Authenticated Users\":W", "cmd", "win32"],
+      ["icacls C:\\Users\\ana\\Documents /grant *S-1-1-0:(F)", "cmd", "win32"],
+    ] as const) {
+      const d = decide(cmd, { shell, context });
+      expect(d.verdict, cmd).toBe("ask");
+      expect(d.rules, cmd).toContain("system.permissions");
+    }
+  });
+
+  it("still runs the everyday changes to a file's own permissions", () => {
+    for (const [cmd, shell, context] of [
+      ["chmod +x run.sh", "bash", "linux"], ["chmod 644 notes.txt", "bash", "linux"], ["chmod 755 run.sh", "bash", "linux"], ["chmod u+w notes.txt", "bash", "linux"],
+      ["chmod 700 ~", "bash", "linux"], ["chmod go-rwx ~/Documents", "bash", "linux"], ["chmod 664 notes.txt", "bash", "linux"], ["chmod g+w notes.txt", "bash", "linux"], ["chmod +w notes.txt", "bash", "linux"],
+      ["setfacl -m u:ana:rw notes.txt", "bash", "linux"], ["setfacl -x u:bob notes.txt", "bash", "linux"], ["setfacl -b notes.txt", "bash", "linux"], ["setfacl -m u:bob:r notes.txt", "bash", "linux"],
+      ["icacls C:\\Users\\ana\\notes.txt", "powershell", "win32"], ["icacls C:\\Users\\ana\\notes.txt /grant ana:F", "powershell", "win32"],
+      ["icacls C:\\Users\\ana\\notes.txt /remove Everyone", "cmd", "win32"], ["icacls C:\\Users\\ana\\notes.txt /grant Everyone:R", "cmd", "win32"],
+    ] as const) expect(decide(cmd, { shell, context }).verdict, cmd).toBe("run");
+  });
+});

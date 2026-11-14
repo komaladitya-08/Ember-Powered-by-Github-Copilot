@@ -6782,8 +6782,59 @@ reg(NATIVE, ["chmod", "chown", "chgrp", "setfacl", "chattr", "chflags"], h => {
   const outside = objs.some(o => o.abs === null || !h.sc.home || !isUnder(o.abs, h.sc.home, h.sc.path)) && !objs.every(o => o.abs !== null && inWorkTree(o.abs, h.sc.path));
   if (rec || h.key === "chattr" || (outside && objs.some(o => o.abs !== null && writeKind(o.abs, h.sc.path) === "system")) || (h.key !== "chmod" && outside)) {
     h.e.add("system", "system.permissions", "Changes who may read or change files.", { objects: objs, widening: rec ? ["recursive"] : [] });
+    return;
   }
+  // Other accounts let in, wherever the files are (commands-remote-c12-2): every account may change them (`chmod 777`,
+  // `o+w`), another account or group may (`setfacl -m u:bob:rwx`), or the home folder itself is opened to them.
+  const own = h.sc.home;
+  const home = !!own && objs.some(o => o.abs !== null && isUnder(o.abs, own, h.sc.path) && isUnder(own, o.abs, h.sc.path));
+  const self = ownAccount(h.sc);
+  const opens = h.key === "chmod" ? modeOpens(p.operands[0]?.v ?? null, home)
+    : h.key === "setfacl" ? values(p, "m", "M", "modify", "set").some(v => v === null || aclOpens(v, home, self)) : false;
+  if (opens) h.e.add("system", "system.permissions", OPENS_SAYS, { objects: objs });
 });
+
+/** What a change of permissions says when it lets other accounts in (commands-remote-c12-2). */
+const OPENS_SAYS = "Lets other accounts on this computer read or change these files.";
+/** The account a home folder is named for (`/home/ana`, `C:\Users\ana`), lower case: a grant to it is the user's own. */
+function ownAccount(sc: Scope): string {
+  return (sc.home ?? "").split(/[\\/]/).filter(Boolean).pop()?.toLowerCase() ?? "";
+}
+/**
+ * Whether a chmod mode lets every account change a file (the others' write bit: `777`, `666`, `o+w`, `a+rwx`), or,
+ * on the home folder itself, lets other accounts in at all (`755`, `go+rx`). A mode Ember can't read is a doubt.
+ * `+w` with no one named follows the umask, which keeps it the owner's.
+ */
+function modeOpens(mode: string | null, home: boolean): boolean {
+  if (mode === null) return true;
+  if (/^[0-7]{3,4}$/.test(mode)) {
+    const d = mode.slice(-3).split("").map(Number);
+    return (d[2] & 2) !== 0 || (home && (d[1] !== 0 || d[2] !== 0));
+  }
+  return mode.split(",").some(clause => {
+    const m = /^([ugoa]*)([-+=])([rwxXst]*|[ugo])$/.exec(clause);
+    if (!m) return /^[ugoa]*[+=]/.test(clause);
+    const [, who, op, perms] = m;
+    if (op === "-") return false;
+    const others = /[oa]/.test(who);
+    return (others && perms.includes("w")) || (home && /[goa]/.test(who) && perms !== "");
+  });
+}
+/**
+ * Whether setfacl's entries let another account in: write for every account (`o::rw`) or for another named user or
+ * group (`u:bob:rwx`, `g:staff:rw`), or, on the home folder itself, anything for them.
+ */
+function aclOpens(entries: string, home: boolean, self: string): boolean {
+  return entries.split(",").some(e => {
+    const [type = "", name = "", perms = ""] = e.replace(/^d(?:efault)?:/, "").split(":");
+    const t = type.toLowerCase();
+    const grants = /[rwx]/i.test(perms);
+    const write = /w/i.test(perms);
+    if (t === "o" || t === "other") return write || (home && grants);
+    if ((t === "u" || t === "user" || t === "g" || t === "group") && name !== "" && name.toLowerCase() !== self) return write || (home && grants);
+    return false;
+  });
+}
 
 // Archivers (§3.5.1, critique security-6).
 /** GNU tar's short options that take a value (-j, -J and -z are switches: commands-remote-i5a). */
@@ -11076,6 +11127,18 @@ reg(NATIVE, ["icacls", "cacls", "xcacls", "takeown"], h => {
   const obj = target ? h.e.usePath(target, rec ? "permTree" : "write", h.sc) : null;
   const outside = !obj || obj.abs === null || !h.sc.home || !isUnder(obj.abs, h.sc.home, h.sc.path);
   if (changes && (rec || outside)) h.e.add("system", "system.permissions", "Changes who may read or change files.", { widening: rec ? ["recursive"] : [] });
+  // A grant of change or delete to another account (Everyone, Users, `bob`), wherever the file is
+  // (commands-remote-c12-2): read-only grants and the user's own stay ordinary.
+  else if (flags.some(f => /^\/grant/.test(f))) {
+    const self = ownAccount(h.sc);
+    const grants = h.args.filter((_a, k) => k > 0 && /^\/grant/i.test(h.args[k - 1].v ?? "")).map(a => a.v);
+    if (grants.some(g => {
+      if (g === null) return true;
+      const at = g.lastIndexOf(":");
+      const who = g.slice(0, at).replace(/^.*\\/, "").replace(/^["']|["']$/g, "").toLowerCase();
+      return at < 0 || (who !== self && who !== "%username%" && /\b(F|M|W|D|WD|AD|DC|WDAC|WO|GA|GW)\b/.test(g.slice(at + 1).toUpperCase().replace(/[()]/g, " ")));
+    })) h.e.add("system", "system.permissions", OPENS_SAYS);
+  }
   if (flags.some(f => f === "/save")) { const out = h.args[h.args.findIndex(a => (a.v ?? "").toLowerCase() === "/save") + 1]; if (out) h.e.usePath(out, "write", h.sc); }
 });
 reg(NATIVE, ["schtasks"], h => { if (!h.args.some(a => /^[/-]query$/i.test(a.v ?? "")) || h.args.some(a => /^[/-](create|delete|change|run|end)$/i.test(a.v ?? ""))) h.e.add("system", "system.schedule", "Schedules something to run later or at login."); });
