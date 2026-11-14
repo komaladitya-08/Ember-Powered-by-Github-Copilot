@@ -452,6 +452,27 @@ describe("the home folder opened on Windows, and a mode copied to every account 
   });
 });
 
+describe("cacls grants and Samba's user shares (r12-commands-y12-7)", () => {
+  it("asks before cacls grants another account change or full rights, and before a user share is added", () => {
+    for (const [cmd, shell, context, rule] of [
+      ["cacls C:\\Users\\ana\\proj /E /G Everyone:F", "cmd", "win32", "system.permissions"], ["cacls C:\\Users\\ana\\proj /E /G Users:C", "cmd", "win32", "system.permissions"],
+      ["cacls C:\\Users\\ana\\notes.txt /G bob:W", "powershell", "win32", "system.permissions"], ["cacls C:\\Users\\ana /E /G Everyone:R", "cmd", "win32", "system.permissions"],
+      ["net usershare add docs /home/ana '' Everyone:F guest_ok=y", "bash", "linux", "net.share"], ["net usershare add docs ~/proj", "bash", "linux", "net.share"],
+    ] as const) {
+      const d = decide(cmd, { shell, context });
+      expect(d.verdict, cmd).toBe("ask");
+      expect(d.rules, cmd).toContain(rule);
+    }
+  });
+
+  it("still runs a read-only cacls grant below the home folder, the user's own, a listing, and usershare's reads", () => {
+    for (const [cmd, shell, context] of [
+      ["cacls C:\\Users\\ana\\notes.txt /E /G Everyone:R", "cmd", "win32"], ["cacls C:\\Users\\ana\\notes.txt /E /G ana:F", "cmd", "win32"],
+      ["cacls C:\\Users\\ana\\notes.txt", "cmd", "win32"], ["net usershare info", "bash", "linux"], ["net usershare list", "bash", "linux"],
+    ] as const) expect(decide(cmd, { shell, context }).verdict, cmd).toBe("run");
+  });
+});
+
 describe("read-only and everyday commands that asked (commands-remote-r12-4)", () => {
   it("runs reads of gcloud's and az's products, dry runs, listings and a launcher's own options", () => {
     for (const cmd of [

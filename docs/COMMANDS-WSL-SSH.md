@@ -222,7 +222,8 @@ Ember stops and asks before a command that:
   one that shares a folder outside your project (`python3 -m http.server`, `php -S 0.0.0.0:8000`, `caddy
   file-server`, `miniserve`, `busybox httpd`; one on `127.0.0.1` or `localhost` serving your project doesn't ask, but
   `caddy reverse-proxy` listens on every address whatever `--from` says),
-  opening a tunnel from the internet (`cloudflared tunnel`, `ngrok http`), changing cloud services or clusters
+  opening a tunnel from the internet (`cloudflared tunnel`, `ngrok http`), sharing a folder on the network (`net
+  share`, Samba's `net usershare add`), changing cloud services or clusters
   (`kubectl apply`, `terraform apply`), and scripts or targets named deploy, publish, release, push and the like;
 - **deletes from source control or a service**: `git push --force`, deleting a remote branch or tag, `p4 delete`,
   `p4 obliterate`, `p4 revert` of opened work, `gh repo delete`, `kubectl delete`, `terraform destroy`;
@@ -307,7 +308,8 @@ Ember stops and asks before a command that:
   folder (`docker run -v /var/run/docker.sock:…`, `-v /usr:…`),
   permissions changed recursively or outside your home, or that let other accounts in anywhere (every account allowed
   to change a file, `chmod 777`, `o+w`, `o=u`, another user or group given write by `setfacl`, `icacls /grant
-  Everyone:F`, or your home folder itself opened to them, `chmod 755 ~`, `icacls C:\Users\you /grant Everyone:R`;
+  Everyone:F` or `cacls /E /G Everyone:F`, or your home folder itself opened to them, `chmod 755 ~`, `icacls
+  C:\Users\you /grant Everyone:R`;
   `chmod +x`, `644` and a read-only grant stay ordinary), scheduled tasks and login items, shutting down or logging
   out, stopping other programs (`kill`, `taskkill`), your shell's start-up files (`~/.bashrc`, `~/.bashrc.d`,
   `$PROFILE`) and git hooks, putting a program in a folder your shell searches for commands (`~/.local/bin`, `~/bin`),

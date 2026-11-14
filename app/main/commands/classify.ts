@@ -11196,6 +11196,8 @@ reg(NATIVE, ["net", "net1"], h => {
   if ((verb === "start" || verb === "stop" || verb === "pause" || verb === "continue") && rest.length) { h.e.add("system", "service.change", "Starts, stops or changes a system service."); return; }
   if (/^(user|localgroup|group|accounts)$/.test(verb) && rest.length) { h.e.add("system", "system.users", "Changes users or groups."); if (rest.some(a => a.v === "*")) h.e.unclear("unclear.interactive", SAYS.interactive); return; }
   if (verb === "share" && rest.length) { h.e.add("publish", "net.share", "Shares a folder on the network."); return; }
+  // Samba's `net usershare add` shares a folder as this user, no root needed (r12-commands-y12-7); `info` and `list` read.
+  if (verb === "usershare" && (rest[0]?.v ?? "").toLowerCase() === "add") { h.e.add("publish", "net.share", "Shares a folder on the network."); return; }
   if (verb === "time" && rest.some(a => /^\/set$/i.test(a.v ?? ""))) { h.e.add("system", "system.kernel", "Changes how the system works."); return; }
   if ((verb === "session" || verb === "file") && rest.some(a => /^\/(delete|close)$/i.test(a.v ?? ""))) { h.e.add("system", "kill.process", "Stops programs that are running (network sessions)."); return; }
   // `net use [Z:] \\host\share` and `net view \\host` connect to that computer and sign in there (review #171).
@@ -11259,6 +11261,8 @@ reg(NATIVE, ["useradd", "userdel", "usermod", "groupadd", "groupdel", "groupmod"
 reg(NATIVE, ["icacls", "cacls", "xcacls", "takeown"], h => {
   const flags = h.args.map(a => (a.v ?? "").toLowerCase());
   const target = h.args.filter(a => !(a.v ?? "").startsWith("/") && !/^[a-z0-9\\]+:\(/i.test(a.v ?? ""))[0];
+  const oldStyle = h.key === "cacls" || h.key === "xcacls";
+  const isGrant = (f: string): boolean => /^\/grant/.test(f) || (oldStyle && (f === "/g" || f === "/p"));
   const rec = flags.includes("/t") || flags.includes("/r") || flags.includes("/s");
   const changes = h.key === "takeown" || h.key === "cacls" || h.key === "xcacls" || flags.some(f => /^\/(grant|deny|remove|setowner|reset|inheritance|setintegritylevel|restore|substitute)/.test(f));
   const obj = target ? h.e.usePath(target, rec ? "permTree" : "write", h.sc) : null;
@@ -11266,17 +11270,26 @@ reg(NATIVE, ["icacls", "cacls", "xcacls", "takeown"], h => {
   if (changes && (rec || outside)) h.e.add("system", "system.permissions", "Changes who may read or change files.", { widening: rec ? ["recursive"] : [] });
   // A grant of change or delete to another account (Everyone, Users, `bob`), wherever the file is
   // (commands-remote-c12-2): read-only grants and the user's own stay ordinary.
-  else if (flags.some(f => /^\/grant/.test(f))) {
+  // cacls' and xcacls' `/G` and `/P` grant as icacls' `/grant` does, each followed by one or more `user:perm`, with C
+  // (change) beside W and F (r12-commands-y12-7).
+  else if (flags.some(isGrant)) {
     const self = ownAccount(h.sc);
     // The home folder itself opened to another account at all, as chmod and setfacl ask (r12-commands-x12-7).
     const own = h.sc.home;
     const home = !!own && !!obj && obj.abs !== null && isUnder(obj.abs, own, h.sc.path) && isUnder(own, obj.abs, h.sc.path);
-    const grants = h.args.filter((_a, k) => k > 0 && /^\/grant/i.test(h.args[k - 1].v ?? "")).map(a => a.v);
+    const grants = h.args.filter((a, k) => {
+      if (k === 0 || (oldStyle && (a.v ?? "").startsWith("/"))) return false;
+      // (cacls' list runs to the next switch.)
+      let j = k - 1;
+      if (oldStyle) while (j > 0 && !(h.args[j].v ?? "").startsWith("/")) j--;
+      return isGrant((h.args[j].v ?? "").toLowerCase());
+    }).map(a => a.v);
     if (grants.some(g => {
       if (g === null) return true;
       const at = g.lastIndexOf(":");
       const who = g.slice(0, at).replace(/^.*\\/, "").replace(/^["']|["']$/g, "").toLowerCase();
-      return at < 0 || (who !== self && who !== "%username%" && (home || /\b(F|M|W|D|WD|AD|DC|WDAC|WO|GA|GW)\b/.test(g.slice(at + 1).toUpperCase().replace(/[()]/g, " "))));
+      return at < 0 || (who !== self && who !== "%username%" && (home || /\b(F|M|W|D|WD|AD|DC|WDAC|WO|GA|GW)\b/.test(g.slice(at + 1).toUpperCase().replace(/[()]/g, " "))
+        || (oldStyle && /^C$/i.test(g.slice(at + 1)))));
     })) h.e.add("system", "system.permissions", OPENS_SAYS);
   }
   if (flags.some(f => f === "/save")) { const out = h.args[h.args.findIndex(a => (a.v ?? "").toLowerCase() === "/save") + 1]; if (out) h.e.usePath(out, "write", h.sc); }
