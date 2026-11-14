@@ -215,3 +215,43 @@ describe("opening the user's own files to every account (commands-remote-c12-2)"
     ] as const) expect(decide(cmd, { shell, context }).verdict, cmd).toBe("run");
   });
 });
+
+describe("read-only and everyday commands that asked (commands-remote-r12-4)", () => {
+  it("runs reads of gcloud's and az's products, dry runs, listings and a launcher's own options", () => {
+    for (const cmd of [
+      "gcloud run services describe web", "gcloud run services list", "gcloud beta run services list", "gcloud deploy releases list", "az search service show -n x",
+      "kubectl set env deploy/web --list", "kubectl apply -f k.yaml --dry-run=client", "kubectl apply -f k.yaml --dry-run=server", "kubectl delete pod x --dry-run=client",
+      "helm upgrade web ./chart --dry-run", "mount", "mount -l", "mount -t ext4", "mount | grep sda", "swapon --show", "losetup -a",
+    ]) expect(decide(cmd).verdict, cmd).not.toBe("ask");
+  });
+
+  it("still asks before the changes beside them", () => {
+    for (const cmd of [
+      "gcloud run deploy web --image x", "gcloud run services delete web", "gcloud beta run deploy web", "kubectl apply -f k.yaml", "kubectl set env deploy/web A=1",
+      "kubectl apply -f k.yaml --dry-run=none", "helm upgrade web ./chart", "mount /dev/sdb1 /mnt", "swapon /swapfile", "losetup /dev/loop0 disk.img",
+      "env-cmd -e test rm -rf build", "env-cmd -e test npm publish",
+    ]) expect(decide(cmd).verdict, cmd).toBe("ask");
+  });
+
+  it("reads env-cmd's own options as options, so the command it runs is the one named (commands-remote-r12-4)", () => {
+    for (const cmd of ["env-cmd -e test npm test", "env-cmd --environments test npm test", "env-cmd -f .env.test npm test"]) {
+      expect(decide(cmd).reason + decide(cmd).says.join(" "), cmd).not.toMatch(/runs (test|\.env\.test)\b/);
+    }
+  });
+});
+
+describe("a tool's add-on command Ember doesn't know (commands-remote-c12-1)", () => {
+  it("runs announced by name, as any program Ember doesn't know", () => {
+    for (const cmd of ["docker scout cves web", "docker frob", "podman frob", "kubectl krew list", "kubectl ctx", "kubectl tree deploy web", "kubectl neat get pod x", "kubectl frob", "npm frob"]) {
+      const d = decide(cmd);
+      expect(d.verdict, cmd).toBe("announce");
+      expect(d.rules, cmd).toContain("unknown.verb");
+    }
+  });
+
+  it("still asks before their own dangerous commands, a group's command it doesn't know and gh's, which may be an alias", () => {
+    for (const cmd of ["docker rm web", "docker push x/y", "docker swarm leave", "docker plugin install x", "kubectl delete pod x", "kubectl drain node1", "npm publish", "npm unpublish x", "gh frob"]) {
+      expect(decide(cmd).verdict, cmd).toBe("ask");
+    }
+  });
+});

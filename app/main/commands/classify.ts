@@ -1973,9 +1973,18 @@ function launcherRuns(h: H): void {
   // runs may be dangerous (the owner's decision of 2026-11-14).
   const dd = h.args.findIndex(a => a.v === "--");
   let k = dd >= 0 ? dd + 1 : 0;
-  if (dd < 0) while (k < h.args.length && h.args[k].v !== null && (isOption(h.args[k]) || SETS_VARIABLE.test(h.args[k].v ?? ""))) k++;
+  // A launcher's options that take a value written apart (`env-cmd -e test`, `-f .env.test`, `dotenv -e .env.local`):
+  // the value is not the command (commands-remote-r12-4).
+  const valued = LAUNCHER_VALUE[h.key];
+  if (dd < 0) while (k < h.args.length && h.args[k].v !== null && (isOption(h.args[k]) || SETS_VARIABLE.test(h.args[k].v ?? ""))) k += valued?.has(h.args[k].v ?? "") ? 2 : 1;
   if (k < h.args.length) h.e.payload(h.args.slice(k), h.sc, h.prog);
 }
+/** Environment launchers' options that take a value written apart (launcherRuns). */
+const LAUNCHER_VALUE: Readonly<Record<string, ReadonlySet<string>>> = {
+  "env-cmd": new Set(["-e", "--environments", "-f", "--file", "-r", "--rc-file"]),
+  dotenv: new Set(["-e", "-v", "-p", "-c"]),
+  "dotenv-cli": new Set(["-e", "-v", "-p", "-c"]),
+};
 
 /**
  * A build tool's own sources, on top of the shared PROJECT_FILE list: `go run .` and `cargo run` build a folder, so a
@@ -4518,6 +4527,9 @@ function handedCommand(h: H, runnerAt: number, script?: { name: string; args: Ar
     const v = args[k].v;
     if (v === null || k === runnerAt) continue;
     const eq = v.startsWith("-") ? v.indexOf("=") : -1;
+    // An environment launcher's own option with its value (`env-cmd -e test`, `dotenv -e .env.local`) hands it no
+    // command (commands-remote-r12-4).
+    if (!script && eq < 0 && LAUNCHER_VALUE[h.key]?.has(v)) { k++; continue; }
     if (EXEC_OPTION.test(eq < 0 ? v : v.slice(0, eq))) {
       const value = eq < 0 ? args[k + 1]?.v : v.slice(eq + 1);
       if (eq < 0) k++;
@@ -8620,6 +8632,8 @@ reg(NATIVE, ["gh"], h => {
   if (group === "codespace" && (sub === "ssh" || sub === "code" || sub === "jupyter")) { h.e.unclear("unclear.interactive", SAYS.interactive); return; }
   if (["status", "search", "help", "completion", "version", "config", "attestation", "preview", "agent-task"].includes(group)) return;
   const what = GH_WHAT[group];
+  // (A command of gh's Ember doesn't know may be an alias from gh's settings, which Ember doesn't read: code it can't
+  // read, the owner's open point in docs/APPROVALS.md, so it asks; an extension can't be told from one.)
   if (!what) { h.e.unclear("unclear.gh-verb", "Ember can't tell which gh command this runs."); return; }
   if (sub === null) return;
   // A release's files or a workflow run's artifacts land in the folder, or in -D's (and -O's file): running one later
@@ -8860,6 +8874,10 @@ reg(NATIVE, ["docker", "podman", "nerdctl", "docker-compose", "podman-compose"],
     if (v === "start" && rest.some(a => /^-[a-z]*i/.test(a.v ?? "") || a.v === "--interactive")) h.e.unclear("unclear.interactive", SAYS.interactive);
     return;
   }
+  // A command of its own Ember doesn't know is an add-on, a program of its own (`docker scout` is docker-scout), run
+  // announced by name as any program Ember doesn't know (commands-remote-c12-1). A group's command it doesn't know
+  // (`docker swarm leave`, `docker plugin install`) still asks.
+  if (group === null && /^[a-z][a-z0-9-]*$/.test(v)) { h.e.add("unknown", "unknown.verb", unknownVerbSays(prog, v), { program: `${prog} ${v}` }); return; }
   h.e.unclear("unclear.docker-verb", "Ember can't tell which container command this runs.");
 });
 /**
@@ -8981,6 +8999,8 @@ function compose(h: H, prog: string, rest: Arg[]): void {
 
 // Cloud and cluster command-line tools (§3.5.2, §3.5.3, §3.5.4).
 /** Verbs the cloud CLIs use for changes (a resource name after them isn't the verb). */
+/** kubectl's own commands: any other word after it names a plug-in (commands-remote-c12-1). */
+const KUBECTL_OWN = new Set(["create", "expose", "run", "set", "explain", "get", "edit", "delete", "rollout", "scale", "autoscale", "certificate", "cluster-info", "top", "cordon", "uncordon", "drain", "taint", "describe", "logs", "attach", "exec", "port-forward", "proxy", "cp", "auth", "debug", "events", "diff", "apply", "patch", "replace", "wait", "kustomize", "label", "annotate", "completion", "alpha", "api-resources", "api-versions", "config", "plugin", "version", "options", "help"]);
 const CLOUD_VERBS = new Set(["create", "update", "set", "add", "start", "stop", "restart", "reset", "deploy", "run", "apply", "attach", "import", "export", "upload", "download", "copy", "move", "resize", "scale", "enable", "disable", "ssh", "scp", "connect", "invoke", "publish", "tag", "untag", "patch", "replace", "edit", "rollout", "login", "logout", "configure", "assign", "grant", "revoke", "rotate", "promote", "suspend", "resume", "reboot", "cancel", "approve", "submit", "write", "put", "push", "pull", "sync", "mount", "unmount", "init", "exec", "cp", "mv", "label", "annotate", "cordon", "uncordon", "taint", "expose", "autoscale", "port-forward", "proxy", "certificate"]);
 /** Verb shapes that change a cloud service ("run-instances", "put-object", "modify-db-instance", "s3 mb"). */
 const CLOUD_CHANGE = /^(?:s3 \S+|(?:create|update|put|set|run|start|stop|reboot|modify|attach|associate|disassociate|add|import|export|enable|disable|register|tag|untag|send|publish|invoke|apply|replace|restore|copy|reset|change|cancel|accept|reject|authorize|revoke|allocate|release|request|upload|deploy|scale|rotate|install|upgrade|rollback|promote|refresh|new|select|force-unlock|untaint|push|mv|renew|regenerate)(?:-.*)?)$/;
@@ -9126,12 +9146,16 @@ reg(NATIVE, Object.keys(CLOUD_CLIS), h => {
       // verb anywhere is the verb (one shaped like a change only before the first read verb: a name after `describe`
       // may look like one), then the first read verb, then the last word.
       const isRead = (v: string) => CLOUD_PATH_READ.has(v) || /^(describe|list|get)-/.test(v);
-      const firstRead = verbs.findIndex(isRead);
-      const known = verbs.find(v => CLOUD_DELETE.has(v) || /^(delete|terminate|remove|deregister|purge)-/.test(v))
-        ?? verbs.find(v => CLOUD_VERBS.has(v) || /^(create|update)-/.test(v))
-        ?? (firstRead < 0 ? verbs : verbs.slice(0, firstRead)).find(v => CLOUD_CHANGE.test(v))
-        ?? verbs[firstRead];
-      verb = known ?? verbs[verbs.length - 1];
+      // gcloud's and az's first word (after a release track) is a product's group, never its verb: `gcloud run services
+      // describe` is Cloud Run's describe, not a run (commands-remote-r12-4).
+      const track = (h.key === "gcloud" || h.key === "az") ? verbs.findIndex(v => !/^(alpha|beta|preview)$/.test(v)) : 0;
+      const path = track >= 0 && verbs.length > track + 1 && (h.key === "gcloud" || h.key === "az") ? verbs.slice(track + 1) : verbs;
+      const firstRead = path.findIndex(isRead);
+      const known = path.find(v => CLOUD_DELETE.has(v) || /^(delete|terminate|remove|deregister|purge)-/.test(v))
+        ?? path.find(v => CLOUD_VERBS.has(v) || /^(create|update)-/.test(v))
+        ?? (firstRead < 0 ? path : path.slice(0, firstRead)).find(v => CLOUD_CHANGE.test(v))
+        ?? path[firstRead];
+      verb = known ?? path[path.length - 1];
     }
   }
   const all = verbs.join(" ");
@@ -9222,7 +9246,11 @@ reg(NATIVE, Object.keys(CLOUD_CLIS), h => {
   }
   // `terraform providers` reads, bare or with `schema`; `mirror` and `lock` download the providers (as init does).
   const fetchesProviders = (h.key === "terraform" || h.key === "tofu") && verb === "providers" && verbs.length > 1 && verbs[1] !== "schema";
-  const read = !fetchesProviders && (CLOUD_READ.has(verb) || /^(describe|list|get)-/.test(verb) || CLOUD_READ_PHRASES.some(p => all === p || all.startsWith(`${p} `)));
+  // A dry run changes nothing (`kubectl apply --dry-run=client`, `helm upgrade --dry-run`), and `kubectl set env --list`
+  // only lists (commands-remote-r12-4).
+  const dry = (h.key === "kubectl" || h.key === "oc" || h.key === "helm") && h.args.some(a => /^--dry-run(=(client|server|true))?$/.test(a.v ?? ""))
+    || ((h.key === "kubectl" || h.key === "oc") && verbs[0] === "set" && verbs[1] === "env" && h.args.some(a => /^--list(=true)?$/.test(a.v ?? "")));
+  const read = !fetchesProviders && (dry || CLOUD_READ.has(verb) || /^(describe|list|get)-/.test(verb) || CLOUD_READ_PHRASES.some(p => all === p || all.startsWith(`${p} `)));
   if (read) return;
   // `terraform init` changes no infrastructure: it installs the providers and modules the folder's configuration names.
   if ((h.key === "terraform" || h.key === "tofu") && verb === "init") {
@@ -9242,6 +9270,9 @@ reg(NATIVE, Object.keys(CLOUD_CLIS), h => {
   // a tool's command Ember doesn't know, which may print secrets or change anything: Autopilot asks and Assisted's
   // check isn't asked (commands-remote-c10-1).
   const changes = !checkRun && (CLOUD_VERBS.has(verb) || CLOUD_CHANGE.test(verb) || (h.key === "ansible" || h.key === "ansible-playbook"));
+  // A command that isn't one of kubectl's own is a plug-in, a program of its own (`kubectl krew` is kubectl-krew), run
+  // announced by name as any program Ember doesn't know (commands-remote-c12-1).
+  if (!changes && h.key === "kubectl" && !KUBECTL_OWN.has(verb) && /^[a-z][a-z0-9_-]*$/.test(verb)) { h.e.add("unknown", "unknown.verb", unknownVerbSays("kubectl", verb), { program: `kubectl ${verb}` }); return; }
   h.e.add("publish", changes ? "cloud.change" : "cloud.unknown-verb", changes ? `Changes ${service}.` : `Ember can't tell whether this changes ${service}.`, { objects: [{ kind: "other", text: verb, abs: null }], program: `${h.key} ${verb}` });
 });
 
@@ -9461,7 +9492,13 @@ reg(NATIVE, ["npm", "pnpm", "yarn", "bun", "corepack"], h => {
     default: break;
   }
   const builtins = new Set(["test", "t", "tst", "start", "stop", "restart", "build", "pack", "version", "ls", "list", "outdated", "view", "info", "show", "search", "help", "doctor", "ping", "prefix", "root", "bin", "why", "explain", "fund", "audit", "diff", "query", "sbom", "completion", "edit", "explore", "repo", "docs", "bugs", "home", "shrinkwrap", "find-dupes", "pkg", "stars", "star", "unstar", "hook", "profile", "help-search", "licenses", "store", "env", "setup", "--version", "-v", "workspaces", "constraints", "dedupe"]);
-  if (h.key === "npm" && !builtins.has(verb) && !/^(test|start|stop|restart)$/.test(verb)) { h.e.unclear("unclear.npm-verb", "Ember can't tell which npm command this runs."); return; }
+  // npm has no add-ons: a command it doesn't have fails, so one Ember doesn't know runs announced by name
+  // (commands-remote-c12-1).
+  if (h.key === "npm" && !builtins.has(verb) && !/^(test|start|stop|restart)$/.test(verb)) {
+    if (/^[a-z][a-z0-9-]*$/.test(verb)) { h.e.add("unknown", "unknown.verb", unknownVerbSays("npm", verb), { program: `npm ${verb}` }); return; }
+    h.e.unclear("unclear.npm-verb", "Ember can't tell which npm command this runs.");
+    return;
+  }
   if (verb === "edit" || verb === "explore") { h.e.unclear("unclear.interactive", SAYS.interactive); return; }
   if (verb === "star" || verb === "unstar" || verb === "hook" || verb === "profile") { h.e.add("publish", "npm.registry", "Changes something on the registry."); return; }
   if (h.key !== "npm" && !builtins.has(verb)) {
@@ -11290,7 +11327,11 @@ reg(NATIVE, ["mount", "umount", "losetup", "modprobe", "insmod", "rmmod", "swapo
   if (h.key === "csrutil" && /^(disable|enable|clear)/.test(a[0] ?? "")) { h.e.add("system", "system.security", "Turns off or weakens a security protection."); return; }
   if (h.key === "subst" && a.length === 0) return;
   if (h.key === "subst") h.e.unclear("unclear.windows-path", "Ember can't tell which file this names.");
-  if (h.key === "mount" && a.length === 0) { h.e.add("system", "system.kernel", "Changes how the system works."); return; }
+  // With nothing to mount, mount lists what is mounted (`mount`, `mount -l`, `mount -t ext4`), as swapon and losetup
+  // list theirs (commands-remote-r12-4).
+  if (h.key === "mount" && a.every((x, k) => /^(-l|--show-labels|-v|--verbose)$/.test(x) || (/^(-t|--types)$/.test(x) && k + 1 < a.length) || (k > 0 && /^(-t|--types)$/.test(a[k - 1])) || /^--types=/.test(x))) return;
+  if (h.key === "swapon" && a.every(x => /^(-s|--summary|--show(=.*)?|--noheadings|--bytes|-v|--verbose)$/.test(x))) return;
+  if (h.key === "losetup" && a.every(x => /^(-a|--all|-l|--list|-n|--noheadings|-J|--json|-O|--output|--output-all|-v|--verbose)$/.test(x) || /^[A-Z,-]+$/.test(x))) return;
   h.e.add("system", "system.kernel", "Changes how the system works.");
 });
 // Desktop settings (review #108, #168). Every GNOME settings write (gsettings, dconf) changes the desktop's settings, as
