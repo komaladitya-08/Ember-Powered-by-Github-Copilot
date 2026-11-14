@@ -238,7 +238,7 @@ Ember stops and asks before a command that:
   `/etc/kubernetes/pki` and `admin.conf`), which print as bare values Ember's filter can't recognise, and Redis's
   (`redis-cli CONFIG GET requirepass` or a pattern, `ACL LIST`, `ACL GETUSER`, `AUTH`, and `GET` of a key named like a
   secret or one Ember can't see), and a secret file copied through an encoding or dumped (Windows' `certutil -encode`,
-  `-encodehex`, `-dump`; its `-decode` over a file asks as an overwrite, `-exportPVK`, `-recoverKey`, `-MergePFX` and `-ConvertEPF` write out private keys, `-delkey` deletes a key, `-dspublish`, `-ImportCert` and `-installcert` change what is trusted, and a verb or a switch of its Ember doesn't list is one it doesn't know); printing tokens or environment variables that may hold them (`gh auth token`,
+  `-encodehex`, `-dump`; its `-decode` over a file asks as an overwrite, `-exportPVK`, `-recoverKey`, `-MergePFX` and `-ConvertEPF` write out private keys, `-delkey` deletes a key, `-dspublish`, `-ImportCert` and `-installcert` change what is trusted, and a verb or a switch of its Ember doesn't list is one it doesn't know); printing tokens or environment variables that may hold them (`gh auth token`, `oc whoami -t`,
   `env`, `printenv`), other programs' environments (`ps e`, `ps eww`, `ps -o env`, `docker inspect` without a
   `--format` that leaves them out, `docker compose config`, `systemctl show` of a unit's Environment,
   `systemctl show-environment`), a secret file as a commit or the index holds it (`git show HEAD:.env`, `git cat-file
@@ -988,7 +988,7 @@ A command's output goes to Copilot as part of the task, marked as untrusted data
 40 lines and the last 160, with very long lines cut). Before it leaves this computer Ember removes terminal codes, cuts
 out every line you typed, withholds what follows a password-like prompt (until the program's next line after you press
 Enter, or to the end when the command can't take typing), and hides the passwords, keys and tokens it recognises
-(GitHub, AWS, Slack, Google, npm, OpenAI, Anthropic, Stripe, Hugging Face, GitLab, SendGrid, DigitalOcean and Twilio tokens and keys, private keys, JWTs, `password=` values, `Authorization:` headers, a Docker config's `"auth"`, a one-line `.netrc` entry's password, passwords
+(GitHub, AWS, Slack, Google, npm, OpenAI, Anthropic, Stripe, Hugging Face, GitLab, SendGrid, DigitalOcean, Twilio and OpenShift tokens and keys, private keys, JWTs, `password=` values, `Authorization:` headers, a Docker config's `"auth"`, a one-line `.netrc` entry's password, passwords
 as config files write them (PHP's `define('DB_PASSWORD', …)` and `'password' => …`, XML's `<password>…</password>` and
 `<add key="Password" value="…"/>`, a line that is only `password …`, a mail client's `smtp_pass = …`, curl's `user =
 name:…`, Subversion's cached `password` record, Redis's `requirepass …`, LDAP's `rootpw …` and `bindpw …`, a Wi-Fi

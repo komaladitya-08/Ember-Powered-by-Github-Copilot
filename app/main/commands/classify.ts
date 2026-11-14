@@ -4855,7 +4855,8 @@ function unknownDoes(h: H, verb?: string): void {
   }
   // The environment, which may hold tokens, printed or exported (`--export-env`, `--print-env`).
   if (words.includes("env") && words.some(t => ["export", "print", "show", "dump", "list"].includes(t))) found("secret", "unknown-words.secret", `By its words, ${base} may show passwords, keys or tokens.`);
-  else if (hasWord(UNKNOWN_SECRET) || UNKNOWN_SECRET_PROGRAMS.has(base)) found("secret", "unknown-words.secret", `By its words, ${base} may show passwords, keys or tokens.`);
+  // (An auth verb's `-t`, which shows the token: `glab auth status -t`, r12-commands-y12-8.)
+  else if (hasWord(UNKNOWN_SECRET) || UNKNOWN_SECRET_PROGRAMS.has(base) || (words.includes("auth") && h.args.some(a => a.v === "-t"))) found("secret", "unknown-words.secret", `By its words, ${base} may show passwords, keys or tokens.`);
   if (words.includes("global") || words.includes("system") || words.includes("systemwide") || first === "default" || UNKNOWN_SYSTEM_TOOLS.has(base)
     || (UNKNOWN_CONFIG.includes(first ?? "") && (words.some(t => UNKNOWN_CONFIG_WRITES.includes(t))
       // A key and its value after the settings verb (`poetry config repositories.x http://…`) set it.
@@ -9218,6 +9219,8 @@ reg(NATIVE, Object.keys(CLOUD_CLIS), h => {
   if ((h.key === "aws" && (verbs[0] === "configure" || AWS_SECRET.test(verb)))
     || (h.key === "az" && (/^(get-access-token|login)$/.test(verb) || all.startsWith("account get-access-token")))
     || (h.key === "gcloud" && /^auth\b/.test(all) && /(print-access-token|print-identity-token|login|activate-service-account)/.test(all))
+    // OpenShift's `oc whoami -t` prints the sign-in token (r12-commands-y12-8).
+    || (h.key === "oc" && verbs[0] === "whoami" && h.args.some(a => /^(-t|--show-token(=true)?)$/.test(a.v ?? "")))
     || ((h.key === "kubectl" || h.key === "oc") && ((verbs[0] === "config" && verbs[1] === "view" && h.args.some(a => a.v === "--raw" || a.v === "--flatten")) || (verbs[0] === "get" && /^secrets?$/.test(verbs[1] ?? "") && h.args.some(a => /^-o(yaml|json|=|$)|^--output/.test(a.v ?? "")))))
     || (h.key === "vault" && (/^(read|login|token|unwrap)$/.test(verb) || all.startsWith("kv get")))
     // A workload's or a config map's manifest written out whole holds its environment's values, passwords and tokens

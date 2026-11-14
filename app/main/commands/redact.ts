@@ -44,6 +44,8 @@ export const TOKEN_PATTERNS: readonly RegExp[] = [
   // Hugging Face and GitLab tokens.
   /\bhf_[A-Za-z0-9]{30,}/g,
   /\bglpat-[A-Za-z0-9_-]{20,}/g,
+  // OpenShift's sign-in token (`oc whoami -t`: r12-commands-y12-8).
+  /\bsha256~[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])/g,
   // SendGrid keys, DigitalOcean tokens and Twilio API keys, each a fixed shape (safety-privacy-r7-3).
   /\bSG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])/g,
   /\bdo[opr]_v1_[a-f0-9]{64}\b/g,

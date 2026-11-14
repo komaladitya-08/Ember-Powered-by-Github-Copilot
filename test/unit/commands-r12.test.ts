@@ -128,6 +128,26 @@ describe("passwords in Redis, LDAP, Wi-Fi, ini, ZNC and s-nail settings (r12-com
   });
 });
 
+describe("OpenShift's sign-in token (r12-commands-y12-8)", () => {
+  const TOKEN = "sha256~" + "Zk3pQ9vL2mXr7TbN4cYw8HfJ1sGd6EaU0oKiRtVnBqM";
+  it("reads oc whoami -t as printing a secret, and hides the token's shape in any output", () => {
+    for (const cmd of ["oc whoami -t", "oc whoami --show-token", "oc whoami --show-token=true"]) {
+      const r = result(cmd);
+      expect(r.decision.verdict, cmd).toBe("ask");
+      expect(r.decision.rules, cmd).toContain("secret.cloud");
+    }
+    for (const cmd of ["oc whoami", "oc whoami --show-server", "oc whoami --show-context"]) expect(result(cmd).decision.verdict, cmd).toBe("run");
+    expect(redactSecrets(`token: ${TOKEN}\n`)).not.toContain(TOKEN.slice(7));
+    expect(redactSecrets(TOKEN)).toBe(SECRET_HIDDEN);
+    expect(redactSecrets("sha256~short")).toBe("sha256~short");
+  });
+
+  it("reads -t or --show-token after an auth verb of a tool Ember doesn't know as printing a secret", () => {
+    for (const cmd of ["glab auth status -t", "glab auth status --show-token"]) expect(result(cmd).decision.classes, cmd).toContain("secret");
+    expect(result("glab auth status").decision.classes).not.toContain("secret");
+  });
+});
+
 describe("Subversion's, SMB's, sbt's and neomutt's stored passwords (r12-commands-x12-8)", () => {
   it("reads their files as secrets", () => {
     for (const cmd of [
