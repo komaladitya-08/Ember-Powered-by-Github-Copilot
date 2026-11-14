@@ -999,6 +999,14 @@ it builds on:
   once the list is saved. Home is told at once and the message line says the change wasn't saved (`extensionUnsaved`
   in app/renderer/home/extensions-copy.ts), and that the item may be back after a restart where not even the mark
   could be written. Turning an item on that can't be saved leaves it off.
+- **A list Ember didn't write** (safety-privacy-r12-2). `extensions.json` is a file any program can write, and an
+  item in it names a program the launcher starts. Each time Ember saves the list it seals a digest of every item it
+  wrote with the keyring (`extensions-seal.bin`, app/main/extensions/seal.ts). At start an item whose digest the seal
+  doesn't hold (pasted in, edited by hand, or written before the seal existed) is neither started nor probed, its
+  agreement is withdrawn, and Home says “Ember couldn't confirm you agreed to this, so it stays off until you agree
+  again.” (`EXTENSION_UNSEALED`); **Review and agree** trusts it again. No conversation gets extension tools until
+  the seal has been read. Without a keyring (`basic_text`) nothing is sealed, so an agreement lasts until Ember quits,
+  as the model provider's does.
 - **Off for now:** connectors (`connectors()` is empty, `connect()` says they aren't available: they need GitHub's
   service, which the spike couldn't reach without a real sign-in), `extension.mjs` extensions (bare tool names that
   aren't filtered by `availableTools` and could shadow Ember's), the SDK's catalog, legacy SSE servers, servers that
@@ -1618,6 +1626,7 @@ On Linux (Windows: §10.6, macOS: §11.6):
 | Computers added over SSH, WSL's switch, and each computer's command switches | `settings.json` (`targets`, `commands`) |
 | The approval mode chosen, and each mode's card as agreed to (How Ember asks); the same as Ember last recorded it itself, sealed with the keyring (0600) | `settings.json` (`approvals`); `~/.config/ember/approvals-seal.bin` |
 | The yes to your own model provider's card, as Ember recorded it, sealed with the keyring (0600) | `~/.config/ember/provider-seal.bin` |
+| The extensions list as Ember wrote it: a digest of each item, sealed with the keyring (0600) | `~/.config/ember/extensions-seal.bin` |
 | When the update check last asked GitHub, so a restart keeps to once a day (the first look waits until a day after it, at most a day; a failed look counts), and the last newer version it told you of, still shown as out after a restart until you run it (`updates.told`) | `settings.json` (`updates.checkedAt`, `updates.told`) |
 | SSH's password helper: a two-line wrapper, and a socket for each connection while it asks | `~/.config/ember/ssh/askpass`; `$XDG_RUNTIME_DIR/ea-*/` |
 | Node.js downloaded for other computers (SHA-256 checked) | `~/.config/ember/remote/runtime/` |

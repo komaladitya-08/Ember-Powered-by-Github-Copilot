@@ -808,7 +808,7 @@ export const namesEmberData = (text: string | undefined): boolean => !!text && E
  * source, integ-x-3, integ-y-3). Anything under the data folder, whatever its name (its sub-folders: extensions,
  * copilot, models, logs, desk-profiles), is Ember's by its path (namesEmberData, emberPathReach).
  */
-const EMBER_FILE = /^(?:settings\.json|project-workspaces-[\w-]+\.bin|audit-\d{4}-\d{2}\.jsonl|approvals-seal\.bin|provider-key\.(?:bin|host)|provider-seal\.bin|vault\.json|extensions\.json|policy\.json|github-token\.bin|agent\.json|routines\.json|memory(?:-vectors)?\.json|conversation\.(?:json|erased)|voiceprint\.json|words\.json|run\.json|ember\.log)$/i;
+const EMBER_FILE = /^(?:settings\.json|project-workspaces-[\w-]+\.bin|audit-\d{4}-\d{2}\.jsonl|approvals-seal\.bin|provider-key\.(?:bin|host)|provider-seal\.bin|extensions-seal\.bin|vault\.json|extensions\.json|policy\.json|github-token\.bin|agent\.json|routines\.json|memory(?:-vectors)?\.json|conversation\.(?:json|erased)|voiceprint\.json|words\.json|run\.json|ember\.log)$/i;
 const EMBER_FOLDER = /^(?:ember|audit)$/;
 /**
  * The data folder's own sub-folders that a view shows by name alone, each with what it holds that says it is Ember's

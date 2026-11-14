@@ -13,6 +13,7 @@ import { EMBER_DATA_QUESTION, EMBER_DATA_UNREAD_QUESTION, PolicyEngine, mayReach
 import { ALL_SCOPES } from "../../app/main/policy/autonomy";
 import { KEYS } from "../../app/shared/shortcuts";
 import { PROVIDER_SEAL_FILE } from "../../app/main/provider-record";
+import { EXTENSIONS_SEAL_FILE } from "../../app/main/extensions/seal";
 import { PROVIDER_KEY_FILE } from "../../app/main/provider";
 import { VAULT_FILE } from "../../app/main/vault/store";
 import { ERASED_FILE, HISTORY_FILE } from "../../app/main/agent/conversation-store";
@@ -223,7 +224,7 @@ describe("Ember's own settings, audit log and policy reached through another app
   it("refuses typing the path of anything Ember keeps in its data folder, whatever its name, and an extension's call that names it, in every mode (integ-y-3)", () => {
     // What the source joins to Ember's data folder itself: files, folders and names built at runtime alike.
     const walk = (dir: string): string[] => fs.readdirSync(dir, { withFileTypes: true }).flatMap(e => e.isDirectory() ? walk(path.join(dir, e.name)) : e.name.endsWith(".ts") ? [path.join(dir, e.name)] : []);
-    const constants: Record<string, string> = { PROVIDER_SEAL_FILE, PROVIDER_KEY_FILE, VAULT_FILE, RUN_FILE };
+    const constants: Record<string, string> = { PROVIDER_SEAL_FILE, EXTENSIONS_SEAL_FILE, PROVIDER_KEY_FILE, VAULT_FILE, RUN_FILE };
     // Names built at runtime, each by a sample (an unknown one fails below until it is listed here).
     const built: Record<string, string> = { '"project-workspaces-" + scopeKey.parse(scope) + ".bin"': "project-workspaces-0a1b.bin" };
     const children = new Set<string>();
@@ -252,7 +253,7 @@ describe("Ember's own settings, audit log and policy reached through another app
   it("knows by name alone the files Ember keeps at its data folder's top level, so an editor whose title names one with no folder asks, and Autopilot refuses (integ-x-3, integ-y-3)", () => {
     // The files the source names as it joins them to a folder (Ember's data folder, or a store's folder in it), its
     // constants, and the one whose name is built at runtime. Its sub-folders' files are Ember's by their path (above).
-    const files = new Set<string>([PROVIDER_SEAL_FILE, PROVIDER_KEY_FILE, VAULT_FILE, HISTORY_FILE, ERASED_FILE, RUN_FILE, "project-workspaces-0a1b.bin"]);
+    const files = new Set<string>([PROVIDER_SEAL_FILE, EXTENSIONS_SEAL_FILE, PROVIDER_KEY_FILE, VAULT_FILE, HISTORY_FILE, ERASED_FILE, RUN_FILE, "project-workspaces-0a1b.bin"]);
     const walk = (dir: string): string[] => fs.readdirSync(dir, { withFileTypes: true }).flatMap(e => e.isDirectory() ? walk(path.join(dir, e.name)) : e.name.endsWith(".ts") ? [path.join(dir, e.name)] : []);
     for (const f of walk("app/main")) {
       for (const m of fs.readFileSync(f, "utf8").matchAll(/path\.join\((?:userData|o\.userData|dir|this\.dir|opts\.dir|dataDir), "([\w-]+\.\w+)"\)/g)) files.add(m[1]);

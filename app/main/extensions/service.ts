@@ -31,7 +31,7 @@ import type { AuditLog } from "../policy/audit";
 import type { Settings, SettingsPatch } from "../settings";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import type { ConnectResult, ExtensionsApi, Installed, Marketplace, MarketplaceEntry, ToolInfo } from "../../shared/extensions";
-import { EXTENSION_ON_UNSAVED, MARKETPLACE_BUILT_IN_KEPT, MARKETPLACE_MANAGED_KEPT, addMarketplaceFailed, browseFailed, extensionUnsaved } from "../../renderer/home/extensions-copy";
+import { EXTENSION_ON_UNSAVED, EXTENSION_UNSEALED, MARKETPLACE_BUILT_IN_KEPT, MARKETPLACE_MANAGED_KEPT, addMarketplaceFailed, browseFailed, extensionUnsaved } from "../../renderer/home/extensions-copy";
 import type { OS } from "../../shared/shortcuts";
 import { REFUSED, classify, emberReachOf, failureNote, gateAnnouncement, gateQuestion, plainName, wrapResult, writeOutHidden } from "./gate";
 import { pluginPath, readMarketplace, readPlugin, reachOf, firstFile, MARKETPLACE_PLACES, type ServerSpec } from "./manifest";
@@ -39,6 +39,7 @@ import { canonical, checkPins, isReadOnly, pinAll, schemaWords, shownHash, toolH
 import { probeHttp, probeStdio, servedTools, type ProbeResult } from "./probe";
 import { SAVED_OUTPUT } from "../agent/runtime-temp";
 import { ExtensionStore, copyPlugin, type StoredItem, type StoredServer } from "./store";
+import { itemDigest, type ExtensionSealStore } from "./seal";
 import { MCP_TOOL_NAME, clashingToolNames, modelToolName } from "./tool-name";
 
 export interface ExtensionsDeps {
@@ -87,6 +88,12 @@ export interface ExtensionsDeps {
   fetch?: typeof fetch;
   /** Development and tests: a local folder may be added as a marketplace (EMBER_EXTENSIONS_LOCAL). */
   allowLocal?: boolean;
+  /**
+   * The keyring's seal of the list as Ember wrote it (seal.ts, safety-privacy-r12-2): at start an item it doesn't hold
+   * is neither started nor probed, and its agreement is withdrawn. Absent: none is kept, as with no keyring (every item
+   * in the file at start is untrusted; what Ember writes while it runs is trusted until it quits).
+   */
+  seal?: ExtensionSealStore;
   /** Tests: probes in place of the real ones. */
   probe?: (spec: ServerSpec, cwd: string) => Promise<ProbeResult>;
 }
@@ -255,10 +262,23 @@ export class ExtensionsService implements ExtensionsApi {
   private heldOut = new Set<string>();
   /** Installs and agreements run one at a time (two at once could take the same server key or copy into one folder). */
   private queue: Promise<unknown> = Promise.resolve();
+  /**
+   * Items read from the file that Ember can't tell it wrote (safety-privacy-r12-2): none of them is started or probed
+   * until the user agrees to it again in Home. Every item read at start is in it until the seal has been read.
+   */
+  private untrusted = new Map<StoredItem, string>();
+  /** A save while the seal was still being read at start: the seal is written once it has been. */
+  private sealOwed = false;
+  /** True until the seal has been read at start. */
+  private sealing = true;
+  /** Settles once the seal has been read and the list made to agree with it. */
+  readonly sealed: Promise<void>;
 
   constructor(private o: ExtensionsDeps) {
     this.store = new ExtensionStore(o.dir);
     this.items = this.store.read();
+    // Each item's digest as the file holds it, before anything here changes it (the off marks below).
+    for (const item of this.items) this.untrusted.set(item, itemDigest(item));
     // Turned off or removed while the list couldn't be written (integrations-r9-4): off before anything loads, and
     // the marks go once the list says so itself.
     const off = new Set(this.store.markedOff());
@@ -274,6 +294,41 @@ export class ExtensionsService implements ExtensionsApi {
     });
     // Revoke an earlier run's leases. Legacy pid files are dropped too; their numbers are never signalled.
     try { for (const f of fs.readdirSync(this.store.runDir)) fs.rmSync(path.join(this.store.runDir, f), { force: true }); } catch { /* no run folder yet */ }
+    this.sealed = (o.seal ? o.seal.read().catch(() => null) : Promise.resolve(null)).then(d => this.unseal(d));
+  }
+
+  /**
+   * The seal is read (null: none, or unreadable): an item in the file whose digest it doesn't hold was not written by
+   * Ember, or not as it is now. It stays in the list, so Home shows it, but its agreement is withdrawn and it is neither
+   * started nor probed until the user agrees to it again (safety-privacy-r12-2).
+   */
+  private unseal(digests: string[] | null): void {
+    const held = new Set(digests ?? []);
+    let withdrawn = 0;
+    for (const [item, digest] of [...this.untrusted]) {
+      if (!this.items.includes(item) || held.has(digest)) { this.untrusted.delete(item); continue; }
+      if (item.consentedAt !== null) { item.consentedAt = null; withdrawn++; }
+    }
+    this.sealing = false;
+    if (withdrawn) this.o.log.warn("extensions.unsealed", { withdrawn, keyring: digests !== null });
+    // The list on disk changed here before the seal was read (the off marks), or an agreement was withdrawn: saved,
+    // and sealed as it now is. Otherwise the seal already holds the list as it is on disk.
+    if (withdrawn) { try { this.save(); } catch (err) { this.o.log.warn("extensions.save_failed", { err }); } }
+    else if (this.sealOwed) this.writeSeal();
+    this.changed();
+  }
+
+  /** Seals the digests of the items Ember trusts now (none while the seal is still being read at start). */
+  private writeSeal(): void {
+    if (this.sealing) { this.sealOwed = true; return; }
+    if (!this.o.seal) return;
+    const digests = this.items.filter(i => !this.untrusted.has(i)).map(itemDigest);
+    void this.o.seal.write(digests).then(kept => { if (!kept) this.o.log.warn("extensions.seal_not_kept", {}); });
+  }
+
+  /** May this item be started or probed: read once the seal was, and either written by Ember or agreed again since? */
+  private trusted(item: StoredItem): boolean {
+    return !this.sealing && !this.untrusted.has(item);
   }
 
   /**
@@ -374,6 +429,7 @@ export class ExtensionsService implements ExtensionsApi {
 
   private save(): void {
     this.store.write(this.items);
+    this.writeSeal();
     // The list on disk is the whole truth again: no mark beside it is needed.
     this.store.clearOff();
   }
@@ -412,7 +468,9 @@ export class ExtensionsService implements ExtensionsApi {
     const status: Installed["status"] = this.busy.has(i.id) ? "starting" : !i.enabled ? "disabled" : failed ? "failed" : auth ? "needs-auth" : "ready";
     // A failure that no new try can change here: its review would only ever answer that it couldn't be checked.
     const stuck = i.servers.some(s => s.status === "failed" && (!s.spec || s.detail === NO_PROGRAMS || s.detail === NO_REMOTE));
-    const detail = status === "failed" ? failed?.detail : status === "needs-auth" ? auth?.detail : tools.some(t => t.changed) ? "A tool changed since you agreed to it. It stays off until you agree again." : undefined;
+    const detail = status === "failed" ? failed?.detail : status === "needs-auth" ? auth?.detail : tools.some(t => t.changed) ? "A tool changed since you agreed to it. It stays off until you agree again."
+      // Read from a list Ember can't tell it wrote (safety-privacy-r12-2): said plainly, with what makes it work again.
+      : !this.sealing && this.untrusted.has(i) ? EXTENSION_UNSEALED : undefined;
     return {
       id: i.id, kind: i.kind, name: i.name, source: i.source, enabled: i.enabled, consented: i.consentedAt !== null && this.consented(), status, tools, needsReview,
       reviewToken: this.reviewToken(i),
@@ -723,7 +781,7 @@ export class ExtensionsService implements ExtensionsApi {
     this.busy.add(id);
     const epoch = this.epoch;
     try {
-      await this.check(item);
+      await this.check(item, true);
       this.save();
       // A changed server or a newer Home card cannot turn this click into approval of an unseen list.
       if (!this.items.includes(item) || !this.allowed() || !this.consented() || epoch !== this.epoch) throw new Error("It was stopped. Review its tools before trying again.");
@@ -735,6 +793,8 @@ export class ExtensionsService implements ExtensionsApi {
         delete server.reviewTools;
       }
       item.consentedAt = new Date().toISOString();
+      // The user agreed to it in Home as it is now: Ember trusts it from here (safety-privacy-r12-2).
+      this.untrusted.delete(item);
       this.save();
     } finally {
       this.busy.delete(id);
@@ -742,8 +802,13 @@ export class ExtensionsService implements ExtensionsApi {
     }
   }
 
-  /** Lists an item's tools again and checks them against their pins: a changed tool is off (rug pull). */
-  private async check(item: StoredItem): Promise<void> {
+  /**
+   * Lists an item's tools again and checks them against their pins: a changed tool is off (rug pull). An item Ember
+   * can't tell it wrote is listed only for the user's own agreement in Home (`review`): listing starts its program.
+   */
+  private async check(item: StoredItem, review = false): Promise<void> {
+    await this.sealed;
+    if (!review && !this.trusted(item)) return;
     const epoch = this.epoch;
     for (const s of item.servers) {
       if (epoch !== this.epoch || !this.items.includes(item) || !this.active()) return;
@@ -766,8 +831,10 @@ export class ExtensionsService implements ExtensionsApi {
   }
 
   private async refreshNow(): Promise<void> {
+    await this.sealed;
     if (!this.active()) return;
-    for (const item of this.items.filter(i => i.enabled)) {
+    // An item Ember can't tell it wrote is never probed: probing a stdio server starts its program (safety-privacy-r12-2).
+    for (const item of this.items.filter(i => i.enabled && this.trusted(i))) {
       this.busy.add(item.id);
       try { await this.check(item); } catch (err) { this.o.log.warn("extensions.check_failed", { ext: item.id, err }); } finally { this.busy.delete(item.id); }
     }
@@ -839,7 +906,7 @@ export class ExtensionsService implements ExtensionsApi {
     this.session = gate;
     const mcpServers: Record<string, MCPServerConfig> = {};
     for (const item of this.items) {
-      if (!item.enabled || item.consentedAt === null) continue;
+      if (!item.enabled || item.consentedAt === null || !this.trusted(item)) continue;
       for (const s of item.servers) {
         // Every server runs through Ember's launcher, a remote one too (integrations-c9-4): with none, none loads.
         if (s.status !== "ready" || !s.spec || !this.o.launcher || this.heldOut.has(s.key)) continue;

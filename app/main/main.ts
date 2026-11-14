@@ -133,6 +133,7 @@ import { VAULT_IPC } from "../shared/vault";
 import { registerApprovalsIpc } from "./approvals-ipc";
 import { registerFirstRunIpc } from "./first-run";
 import { firstRunAllowsVoice } from "../shared/first-run";
+import { EXTENSIONS_SEAL_FILE, ExtensionSeal } from "./extensions/seal";
 import { PROVIDER_SEAL_FILE, ProviderRecord, ProviderSeal, type ProviderRecordDeps } from "./provider-record";
 import { PROVIDER_KEY_FILE, ProviderKeyStore, activeProvider, userProviderInForce, checkAgain, createProviderService, ownProviderAuth, providerSummary, providerWaitingHost, redactingLogger, type ActiveProvider, type FetchLike } from "./provider";
 import { PROVIDER_IPC } from "../shared/ipc";
@@ -1851,6 +1852,8 @@ function start(): void {
     launcher: platform.os === "darwin" ? null : { execPath: process.execPath, script: path.join(__dirname, "mcp-launch.cjs") },
     fetch: (u, i) => net.fetch(String(u), i as RequestInit),
     allowLocal: devEnv("EMBER_EXTENSIONS_LOCAL") === "1",
+    // An item is started only as Ember wrote it: the keyring's seal of the list (safety-privacy-r12-2).
+    seal: new ExtensionSeal(path.join(userData, EXTENSIONS_SEAL_FILE), safeStorage, { asyncKeyring: platform.os === "darwin" }),
   });
   // Every enabled extension's tools are checked against what the user agreed to before a conversation uses them.
   extensionsRef = extensions;
