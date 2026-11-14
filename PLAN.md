@@ -4155,8 +4155,8 @@ from the launcher's environment by the command itself, which lets it forge only 
 
 ### Product audit fixes, eleventh round (2026-11-14)
 
-After the WSL end marker was merged (269c399) and round ten's docs and test fixes were pushed, each area was rated
-again at af2ec94 (a read-only checkout, built; round ten's pushed head). All thirteen areas have a re-rater's score
+Each area was rated again at af2ec94 (a read-only checkout, built; round ten's pushed head when the re-rate began; round
+ten's docs corrections, 2bf2fff, and the WSL end marker, 269c399, were pushed while it ran). All thirteen areas have a re-rater's score
 and a challenger's. Scores (re-rater / challenger): Home 9.2 / 9.1; first run and setup 9.1 / 9.1; accessibility and
 copy 9.1 / 8.6; tasks and approvals 8.7 / 8.6; reliability and platform 8.7 / 8.5; listening 8.6 / 8.5; speaking 8.6 /
 8.5; models, providers, extensions and projects 8.6 / 8.4; companion and Ask 8.6 / 8.4; install, docs and developer
@@ -4169,7 +4169,7 @@ areas: commands' nine (the re-rater's commands-remote-r11-1 to -r11-4, r11-5 rai
 challenger's c11-1 to c11-4: a shell given its script on stdin after `-`, curl's `--output FILE` read as
 `--output-dir`, `duckdb -f`, secrets printed by container secret files and Redis, Python's own runners, Windows
 certutil, `tar -C DIR -c`, Autopilot announcing a deletion or write of a target Ember can't resolve, and git's
-tree-writing plumbing) and safety's one (safety-privacy-r11-1, a P2 by the re-rater, raised because Ember's folder
+tree-writing plumbing) and safety's one (safety-privacy-r11-1, a P2 by the re-rater, raised to P1 by the challenger because Ember's folder
 typed in parts, or a Save As over settings.json, was only announced in Autopilot, and a planted extensions.json then
 started as a server). The re-raters also listed P2s in companion (r11-1), install and docs (r11-1: 0.1.1's release
 notes had 456 bytes left under the gate's limit), integrations (r11-1), memory (r11-1, r11-2), reliability (r11-1),
@@ -4218,16 +4218,21 @@ mode; (4), Autopilot's sixth question, a command of the same kind of danger as o
 instead; (3), after a no everything that may be the refused thing asks, never announced by Autopilot: stands in
 Interactive and Assisted, and in Autopilot a command like a refused one is refused as an app step already was; (5) to
 (8) stand. Of that list's judgement calls, a word Ember can't resolve handed to a download-and-run asking in Autopilot
-is now read as a target Ember can't name and refused there, and every `service.*` command and registry write asking in
-Autopilot is now announced, as one Stop will not reach. The third checkpoint's (9), the env launchers asking as
+no longer asks: it still counts as handing the code a secret (`secret.handed-to-download`), so in Autopilot it is
+announced with its output withheld from the model (`npx tool $(date +%F)`, probed at b1d525c; it is not read as a
+target Ember can't name), and every `service.*` command and registry write asking in Autopilot is now announced, as
+one Stop will not reach. The third checkpoint's (9), the env launchers asking as
 programs Ember doesn't know: withdrawn, a launcher's command is judged as the command it runs (`cross-env
 NODE_ENV=test jest` runs, `cross-env FOO=1 printenv` asks as a secret reader); (10), terminal tab and session listings
-asking as unknown verbs: zellij's and it2api's listings are now filed as `secret.terminal`, which asks in Interactive
-and is withheld in Autopilot, and a remote-control verb Ember doesn't know is refused in Autopilot; (11), “ask me
+asking as unknown verbs: zellij's and it2api's listings are now filed as `secret.terminal` and, as remote-control verbs
+Ember doesn't know, `unclear.terminal-verb`: they ask in Interactive, are never shown to Assisted's check and, like
+every remote-control verb Ember doesn't know, are refused in Autopilot (`zellij action query-tab-names` and `it2api
+list-sessions`, probed at b1d525c); (11), “ask me
 first” making Autopilot ask: Autopilot refuses it as words that rule the command out. (12) to (14) stand. The tenth
 round's (19), Assisted holding ruled-out words in code, “as it asks in Autopilot”: Autopilot refuses; (21),
-`unclear.remote-command` among the questions Autopilot keeps: it announces; (22), task-written code asking by name: it
-asks in Interactive only, and (23), the three wider questions: they ask in Interactive and, in Autopilot, each is
+`unclear.remote-command` among the questions Assisted never checks and Autopilot keeps: as code Ember can't read, it
+goes to Assisted's check and Autopilot announces it; (22), task-written code asking by name: it still asks in
+Interactive, goes to Assisted's check and is announced in Autopilot, and (23), the three wider questions: they ask in Interactive and, in Autopilot, each is
 announced, a secret search with its output withheld. (15) is built, as the integrator recommended it (below), and
 (28), the commands card, is answered by the decision and built: one text for every mode, bumped. (16) to (18), (20)
 and (24) to (27) and (29) stand.
@@ -4243,7 +4248,7 @@ Autopilot's `autopilotAsks` keeps only “organisation” and “user”, and it
 target and a terminal verb; a secret's command is announced with its output withheld, `WITHHELD_OUTPUT` in place of
 the shaped text, `outputWithheld` in the audit; a command that outlives Stop says so, `outlivesStop`; Assisted's check
 takes secrets and outliving Stop; gate 2 on a remote follows; the Assisted and Autopilot cards reworded, assisted 2 to
-3 and autopilot 2 to 3; Home's commands intro), together with the recognition that replaces the closed default,
+3 and autopilot 2 to 3, 4 after the merge's repair (07f0d51); Home's commands intro), together with the recognition that replaces the closed default,
 `unknownDoes` in classify.ts (the words of an unknown program's name, verb and operands: delete, publish, secret and
 system words, an address, `NAME=value` read as a file, a home folder; installers, daemons, mounts, wine, notebooks; a
 launcher's command; the terminals' remote-control verbs; 41 of the danger-family commands in the generated data had
@@ -4358,7 +4363,7 @@ Autopilot after a countdown), with `FEATURE_CONSENT_VERSION.commands` 1 to 2, an
 Ember says so. The three mode cards say what each mode does (4759565): Interactive's names the dangerous classes and
 says code Ember can't read asks (autonomy 5), Assisted's says the check may clear secrets and what outlives Stop and
 never a step the user said no to or ruled out (assisted 3), Autopilot's lists no question it dropped and says what it
-does instead (autopilot 3, reworded again below). Home's Commands intro, each mode's line, Apps & privacy's fold,
+does instead (autopilot 3; 4 after the merge's repair, below). Home's Commands intro, each mode's line, Apps & privacy's fold,
 README's “How Ember asks” and COMMANDS-WSL-SSH.md §2.5b follow; one phrase for the exception, `EXACT_ONLY` (“only
 deletes or overwrites data, publishes something or changes the system”), stands on every card and line, pinned by a
 test that compares it with the classes `matchIntent` can announce. Review x (x11-1 to -x11-4 P2, -x11-5 to -x11-7 P3)
@@ -4411,7 +4416,7 @@ is still Kitten's in 3 of 40 and its closing is said in the passage's voice; a b
 under 60 letters; and the unlisted yeses (“their like”), which the owner may want accepted.
 
 **r11-notes** (lane r11integ; 34a6fb1, 4431f4b, 0ab8e3b). install-docs-r11-1 (P2): 0.1.1's release notes had 124,515
-bytes (122,403 characters), 485 under the gate's refusal and 71 % audit history. The 0.1.1 section was rewritten for
+bytes (122,403 characters) at 269c399 (456 bytes left at af2ec94, where it was rated), 485 under the gate's refusal and 71 % audit history. The 0.1.1 section was rewritten for
 users and administrators in the file's own voice: 68,749 bytes and 67,780 characters at 34a6fb1, 68,884 and 67,903 at
 0ab8e3b, so more than 56,000 bytes under GitHub's limit. 279 bullets of the old section were ticked twice against a
 checklist (a token diff of every quoted string, code span and number), and what was restored by the second pass is
@@ -4450,18 +4455,19 @@ r11-voice (c7dcc46). The Windows job at 13292a3 passed with the Ask box open ove
 the fix to the Windows Ask box holds for plain one-line and multi-line text boxes; fields with their own text
 providers (Chromium, WPF, Word) are still unchecked. The macOS release test that failed at 13292a3 is fixed by
 4d3d21f. The vault leak found on RHEL 8 (the real-window canary, round nine's “What CI found”) was closed at e2cbbf0,
-and a typed vault fill on a Chromium page under the borrowed keyboard has no real-window leak test yet. No CI result
-is recorded for r9/r11merge: 6f793bf was the merge's head when this was written.
+and a typed vault fill on a Chromium page under the borrowed keyboard has no real-window leak test yet. The pushed
+head is 0575461 (269c399 and APPROVALS.md), whose CI passed. Nothing of round eleven is pushed yet, so no CI result
+exists for the round's tree (r9/r11merge).
 
 **The merge** (a worktree of its own, r9/r11merge from 0575461, which holds APPROVALS.md; lanes merged in the order
 r11integ 49458a0, r11safe 11e0c32, r11cmd 33381db, r11ui 643b3b2, each checked with the gate before the next; 98
-commits since 269c399, 4 of them merges, every one with a signature header and the session's trailer and none with a
-co-author line, counted on the tree). The conflicts: none in r11integ's and r11safe's; one hunk of CLAUDE.md in
+commits since 269c399 at 6f793bf and 101 at b1d525c, 4 of them merges, every one with a signature header and the
+session's trailer and none with a co-author line, counted on the tree). The conflicts: none in r11integ's and r11safe's; one hunk of CLAUDE.md in
 r11cmd's (the lane's “Never” bullet on commands against r11safe's on Ember's own files), each bullet taken from the
 lane that changed it; and 12 files in r11ui's, each written from both sides, among them one text for each of the two
 cards, true of r11cmd's code (the Autopilot card of r11ui's, withheld output and all; the Assisted card of r11ui's
 with r11cmd's promise that a cleared secrets command's output is kept from the model folded in, 226 words),
-`FEATURE_CONSENT_VERSION` with one bump each (assisted 3, autopilot 3, commands 2, autonomy 5), and flow.ts, where
+`FEATURE_CONSENT_VERSION` with one bump each (assisted 3, autopilot 3, which the repair below took to 4, commands 2, autonomy 5), and flow.ts, where
 r11cmd's `LIKE_REFUSED_AUTOPILOT` and r11ui's `rootFactOnly` are both kept. Only the merge broke two tests, fixed
 inside 643b3b2 (the Assisted card's pin and word limit, and §2.5b's wording), and 53b9017 undid a loosening the
 merge's own policy proof showed: of the 402 steps r11safe's intended file explained, 24 were an ordinary Continue on a
@@ -4498,7 +4504,35 @@ longer say); integ-y-4 (P3: the merge's notes justified the 378 new questions in
 allows to ask”, which APPROVALS.md doesn't say; CLAUDE.md's “Never” bullet on Ember's own files supports them, and the
 question is below).
 
-<!-- R11-REPAIR -->
+**The second review's repair** (three commits after 6f793bf, each fix's new tests seen failing first). integ-y-1
+(2baa6a2): where a remote finding's objects are unknown, which is always so since gate 2 sends rule ids with no
+objects, words that keep a named thing (“leave src alone”, “keep main”, “src is off limits”, “as it is”) or say no to
+acting on one (“don't touch main”, “never restart nginx”) rule it out too (`keepsNamed` in flow.ts), so Autopilot
+refuses it as `ruled-out` and nothing more runs; outside Autopilot the card asks as before, so nothing new asks. Words
+with neither never count (a plain request, “once CI is green”, “tell me when it's done”, “keep going until it passes”,
+“leave it alone”, “keep me posted”, “no need to ask”). The review's probe (“run the cleanup script, leave src alone”,
+`in-script:posix.rm`) and a push row (“run the release script, don't touch main”) failed before and are refused now.
+integ-y-2 (843da56): a task's no against an extension's changing tool stands while the task runs and, once it is over,
+until the user's next own request to the conductor (`userAsked()`, which main calls through the host's new
+`onOwnRequest` as a request of the user's is queued for the conductor; never a suggestion pressed or words heard over
+Ember's own voice; a conductor turn and the task's end don't count, and a request while the task still runs doesn't end
+its no); a check that throws, or none, counts as running (main's `taskLive` now falls back to running, `?? true`);
+still a refusal in Autopilot and a question elsewhere, and the model's line now says the user hasn't asked for anything
+new since. integ-y-3 (b1d525c): README.md's Autopilot paragraph and CLAUDE.md's Autopilot bullet name a distro Podman
+uses and Project work, CLAUDE.md saying the owner hasn't ruled on them, pinned by a new test in asking-words.test.ts.
+integ-y-4: no change, since no code comment or rule justifies the unreadable native file dialog's question by the
+table (policy.ts cites CLAUDE.md's “Never” bullet; only the merge's notes had said “the table”); the owner's question,
+(d) below, and a real Windows and macOS Save before release stay open. Gate at b1d525c: lint and typecheck clean; `npm
+test` 539 files passed and 2 skipped, 18,111 tests passed (18,106 and 5 new), 20 skipped, 0 failed; the build; the
+kill-switch deadline 2 of 2; the policy proof as at 6f793bf (pass, 287,678 steps, 0 weaker, 254 stronger, 430
+allowed, failClosed 0 of 0, flags lost 0, 24 hard checks); the commands comparison in the default mode only (corpus
+299,341, 154 more from the new tests): against 4d64d3a 4,178 looser (4,150 allowed), 28 failures all recorded and
+none new, 0 weaker asks, 0 unproven, 60,182 stricter; against main 0 looser, 0 failures, 0 weaker, 0 unproven, 46,736
+stricter; exit 1 on the plausibility guard alone (44.9 %, 43.3 % and 49.3 %). The harness drives neither the SSH
+sent-back path nor the extensions gate, so integ-y-1 and -y-2 show in the unit tests only. Not run at b1d525c: the
+renderer journeys, smoke, the other modes of the commands comparison, the desktop suites, the eval, voice, the
+footprint budget, remote.yml, Windows and macOS. Left from it: gate 2 sending each finding's class and objects (both
+sides' zod schemas) would make integ-x-1's and -y-1's reading exact instead of wide.
 
 **Harnesses and gate, with the head each was measured on.** At 6f793bf: lint and typecheck clean; `npm test` 539 files
 passed and 2 skipped, 18,106 tests passed, 20 skipped, 0 failed (a first run found sshwsl-contract's version pin,
@@ -4536,7 +4570,9 @@ said to be asked again. Recorded because they change what a rule says: the close
 program, verb or option runs announced in every mode (§2 “Commands”); Autopilot asks for commands only at the
 organisation's and the user's own switch, and refuses what the user ruled out or like it (§2 “Approvals”); Assisted's
 check may clear secrets and what outlives Stop; the daily question is text in Home only; and an extension's changing
-tool asks, or in Autopilot is refused, after a no (§2 “Connectors”, CLAUDE.md's “After a deny”).
+tool asks, or in Autopilot is refused, after a no, until the user's next own request once the task that heard it is
+over (843da56; docs/DEVELOPING.md's extensions section says the scope, which §2's “Connectors” row and CLAUDE.md's
+“After a deny” don't yet name).
 
 **Settled by the integrator, for the owner to overrule** (continuing the tenth round's list). (30) **The daily
 question's rule, built as recommended** ((15) above): text in Home's conversation only, never spoken, never in the
@@ -4548,10 +4584,11 @@ refused in Autopilot**, a program Ember doesn't know after a no to code it could
 refused one done another way (`LIKE_REFUSED_AUTOPILOT`, r11cmd's departure 3); Interactive and Assisted ask. (32) **A
 write or deletion of what Ember can't name, and a terminal's remote-control verb Ember doesn't know, are refused in
 Autopilot**, and `ember …` asks in Interactive (`unclear.ember-program`: Ember's own program); see the questions. (33)
-**After any no, an extension's changing tool asks in Interactive and Assisted and is refused in Autopilot**, for as
-long as the task that heard the no runs and for the rest of the conductor's turn when no task put the question
-(8b5ee29); the second review found this too short (integ-y-2), and its repair is to be recorded at the marked line
-after the merge paragraph above. (34) **A step in a native file dialog Ember can't read whole asks in Interactive and
+**After any no, an extension's changing tool asks in Interactive and Assisted and is refused in Autopilot**, while
+the task that heard the no runs and, once it is over, until the user's next own request to the conductor, and for the
+rest of the conductor's turn when no task put the question (8b5ee29, widened by 843da56 after the second review found
+the task's end too short, integ-y-2; above). A request in a voice Ember couldn't check (`voiceUnchecked`) counts as
+the user's own here; see Left. (34) **A step in a native file dialog Ember can't read whole asks in Interactive and
 is refused in Autopilot**, with the exceptions r11safe built (a page's own “Save As”, an Electron app's excepted), on
 CLAUDE.md's “Never” bullet on Ember's own files; see the questions. (35) **An utterance made only of answer words is
 held, never taken as a yes**: the unlisted yeses are the owner's to accept or not.
@@ -4586,8 +4623,11 @@ it can't read. For: either may be Ember's own records or the user's own terminal
 from before, whether Windows needs the rule that takes the foreground back after the Ask box's handover, now that the
 plain text boxes are fixed (ea4bc03, 13292a3).
 
-**Left.** Open for round twelve: the round's own review y (integ-y-1 to -y-4 above, whose repair is not recorded
-here), CI on r9/r11merge (not run when this was written), the fields with their own text providers that may still hand
+**Left.** Open for round twelve: CI on r9/r11merge (nothing of round eleven is pushed, so none has run); a point
+to review from integ-y-2's repair, that a request in a voice Ember couldn't check (`voiceUnchecked`: every spoken
+request on Windows and macOS, and every Listen once) counts as the user's own next request and so clears an ended
+task's no against an extension's changing tool, though such a request is never the user's own words for commands;
+gate 2 sending each finding's class and objects (above); the fields with their own text providers that may still hand
 their app the foreground (Chromium, WPF, Word), and what only CI's WSL jobs can show. By package, the lists above. The
 re-rate's P3s that no package took up (those not named as fixed above): companion-r11-2 (P3: an unsent draft in the
 Ask box survives Forget everything, sign-out and an account change), companion-c11-2 (P3: the extensions gate's
@@ -4597,9 +4637,7 @@ first-run-c11-1 (P3: the “about you” step offers “Ember, get to know me”
 to -r11-4, home-c11-1, home-c11-2; install-docs-r11-3 (P3: Better recall's real-model test never runs in CI and its
 folder switch isn't documented), -r11-4 (this record's STATUS.md), -c11-1 (P3: README's removal steps never say to
 delete the macOS Keychain item “Ember Safe Storage” or the Linux keyring entry that also unlocks vault.json);
-integrations-r11-2 (P3: without a keyring the provider's card asks again at each start with no line saying why;
-5ad3260's note under Model provider may answer it, not checked); memory-r11-3 (P3: common ways of changing your name
-still don't replace the profile's), memory-c11-2 (P3: Better recall's download can't be cancelled), and r10-4 to r10-6
+memory-r11-3 (P3: common ways of changing your name still don't replace the profile's), memory-c11-2 (P3: Better recall's download can't be cancelled), and r10-4 to r10-6
 and c10-3; reliability-r11-2 (P3: starting Ember again while it is still quitting is lost), -r11-3 (P3: the setup
 check has no keyring row, though five things depend on it); safety-privacy-r11-4 (P3: a hand edit that empties the
 never-look list goes through silently), -c11-1 (P3: a menu item or row whose name carries Ember's path is announced);
@@ -4607,6 +4645,9 @@ tasks-approvals-r11-2 (P3: natural typed stops still go to the model while a tas
 commands-remote-r11-6 to -r11-8 and c11-5 (P3: Interactive's carried-text announcement is headed “as you asked” over
 its own “without asking as you let me”; `kubectl set env --list` and `gcloud run services describe` are described as
 changes; a fetch that was asked and allowed doesn't mark its file as a download; `loginctl enable-linger` is described
-as shutting down); and round ten's lists wherever this entry doesn't name them fixed. The model-facing run_command
+as shutting down); and round ten's lists wherever this entry doesn't name them fixed. integrations-r11-2 (P3: without a keyring the
+provider's card asks again at each start with no line saying why) is answered by reliability-r11-1's fix (5ad3260:
+under Model provider, after the yes, that it lasts until Ember closes for want of a keyring, and at a start that
+withdrew it, why and how to have it again). The model-facing run_command
 rule (worker-persona.ts, worker.ts) still says dangerous commands “stop and ask the user”, true in Interactive and not
 in Autopilot (model-facing, not user copy).
