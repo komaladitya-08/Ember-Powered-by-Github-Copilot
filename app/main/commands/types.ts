@@ -39,9 +39,14 @@ export interface CommandObject {
 
 /**
  * The rule of a deletion or a write whose target Ember can't resolve (commands-remote-c11-3): never reviewed by
- * Assisted's check (review.ts notReviewable), and asked about in Autopilot as what Ember can't tell.
+ * Assisted's check (review.ts notReviewable), and refused in Autopilot (autopilot.ts autopilotRefuses).
  */
 export const UNRESOLVED_TARGET_RULE = "unclear.unresolved-target";
+/**
+ * The rule of a terminal's or an editor's remote-control command Ember doesn't know, which may act in the user's own
+ * terminals (classify.ts toolVerbs): never reviewed by Assisted's check, and refused in Autopilot, as a never.
+ */
+export const TERMINAL_VERB_RULE = "unclear.terminal-verb";
 
 /** One reason a command is dangerous. */
 export interface Finding {
@@ -218,6 +223,13 @@ export interface CommandDecision {
    * request, so it is audited in a field of its own, which the system journal keeps as a size only (safety-privacy-v1).
    */
   review?: string;
+  /**
+   * Announced without a question though it reads or prints secrets (Autopilot, or Assisted's check): its output is
+   * withheld from the model, which is told only that it ran and how it ended (the owner's decision of 2026-11-14).
+   */
+  withheld?: boolean;
+  /** Announced without a question though it would outlive the kill switch: its announcement and audit say so. */
+  outlivesStop?: boolean;
 }
 
 /** Everything decideCommand reads. */

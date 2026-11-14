@@ -11,7 +11,7 @@
 import type {
   Classification, ClassifyContext, CommandObject, DangerClass, Finding, ParsedCommand, ShellFamily, ShellId, WindowsContext,
 } from "./types";
-import { PKG_CLEANS, PKG_PRUNES, PKG_REMOVES, SHELL_FAMILY, UNRESOLVED_TARGET_RULE } from "./types";
+import { PKG_CLEANS, PKG_PRUNES, PKG_REMOVES, SHELL_FAMILY, TERMINAL_VERB_RULE, UNRESOLVED_TARGET_RULE } from "./types";
 import { braceGroup, lexPosix, MAX_SIMPLE, type PList, type PSimple, type PWord, type PRedir, type Unclear } from "./lex-posix";
 import { lexPowerShell, restrictedExpression, type PsArg, type PsCommand, type PsRedir, type PsSeg, type PsStatement } from "./lex-powershell";
 import { lexCmd, type CSimple, type CWord } from "./lex-cmd";
@@ -701,7 +701,9 @@ class Classifier {
   asksAtLeast(from: number, rule: string, says: string): void {
     const found = this.findings.slice(from);
     for (const f of found) if (!f.widening.includes("fed")) f.widening.push("fed");
-    if (!found.some(f => f.ifExists === undefined && !READ_FLOW_RULE.test(f.rule))) this.unclear(rule, says);
+    // A program Ember doesn't know asks for nothing (the owner's decision of 2026-11-14), so it never stands for the
+    // question the other reading put.
+    if (!found.some(f => f.ifExists === undefined && !READ_FLOW_RULE.test(f.rule) && f.cls !== "unknown")) this.unclear(rule, says);
   }
 
   /**
@@ -1945,6 +1947,16 @@ function launcherSets(h: H): void {
     const m = SETS_VARIABLE.exec(a.v ?? a.raw);
     if (m && riskyAssignment(m[1], a.v === null ? null : m[2])) { h.e.unclear("unclear.assignment", "It changes how commands are found or run."); return; }
   }
+}
+/** The command an environment launcher runs. */
+function launcherRuns(h: H): void {
+  // The command it runs, after its `--` or after the words that set variables, is judged as a command of its own
+  // (`cross-env FOO=1 printenv` prints the environment): the launcher is only one Ember doesn't know, the command it
+  // runs may be dangerous (the owner's decision of 2026-11-14).
+  const dd = h.args.findIndex(a => a.v === "--");
+  let k = dd >= 0 ? dd + 1 : 0;
+  if (dd < 0) while (k < h.args.length && h.args[k].v !== null && (isOption(h.args[k]) || SETS_VARIABLE.test(h.args[k].v ?? ""))) k++;
+  if (k < h.args.length) h.e.payload(h.args.slice(k), h.sc, h.prog);
 }
 
 /**
@@ -4401,6 +4413,7 @@ function generic(h: H, noRow = false): void {
   if (INPUT_SYNTH.has(k)) { h.e.refuseWith("ember.input", "input"); return; }
   // Whatever its case: a case-insensitive disk finds `Cross-Env` (commands-runners-x9-5).
   if (ENV_LAUNCHERS.has(k.toLowerCase()) && !h.e.readsAsMain) launcherSets(h);
+  if (ENV_LAUNCHERS.has(k.toLowerCase())) launcherRuns(h);
   if (GUI_PROGRAMS.has(k)) h.e.unclear("unclear.gui", SAYS.openApp);
   if (INTERACTIVE.has(k)) interactive(h);
   if (LAUNCHERS.has(k)) { launcher(h); return; }
@@ -4598,10 +4611,136 @@ function runnerLine(h: H, name: Arg, given: readonly Arg[], wrapper: string): vo
   optionPaths({ ...h, key, args: rest }, true);
 }
 
+/** The remote controls of terminals, multiplexers and editors the user has open (their verbs' rows are in tables.ts). */
+const TERMINAL_REMOTES = new Set(["tmux", "screen", "zellij", "kitty", "kitten", "wezterm", "nvr", "it2api", "emacsclient"]);
 /**
- * The closed default (commands-closed, the integrator's decision of round nine, recorded for the owner): a program
- * Ember has no row for and that isn't on ORDINARY_PROGRAMS asks, class "unknown", rule `unknown.program`, whatever
- * its operands. A program given by a path in the command's own folder (the project's scripts and binaries: `./build.sh`,
+ * What a program, or a tool's verb, that Ember has no row for says it does, by its own words (the owner's decision of
+ * 2026-11-14: such a command runs, announced, unless it is dangerous; a dangerous one Ember doesn't recognise is the
+ * worst kind of miss). Read from the program's name, the verb, its plain operands and its long options' names, split
+ * into words: one that deletes, resets or overwrites (`dropdb`, `db:drop`, `migrate reset`, `--clean`, `downgrade`,
+ * `restore`), one that sends, publishes or deploys (`deploy`, `up` as its verb, `croc send`, `pastebinit`, a tunnel),
+ * one that shows secrets (a password manager, `token`, `credentials`) and one that changes settings for every project
+ * or the shell's start-up (`global`, `--system`, a version manager's `init`) is judged as that danger, beside its
+ * "unknown" finding, so it asks as the danger does wherever it would (unknown-words.*). Paths and file names are not
+ * read for words. It can only add a question.
+ */
+const UNKNOWN_DESTROY = ["drop", "destroy", "delete", "del", "remove", "rm", "rmi", "rmdir", "purge", "wipe", "reset", "truncate", "clean", "cleanup", "clear",
+  "flush", "flushall", "flushdb", "downgrade", "rollback", "prune", "nuke", "erase", "uninstall", "unregister", "unlink", "overwrite", "format", "kill",
+  "killall", "terminate", "teardown", "restore", "revert", "shred", "zap", "evict", "undo", "dismount", "migrate", "replace", "expire", "empty", "discard"];
+const UNKNOWN_PUBLISH = ["deploy", "publish", "push", "release", "send", "upload", "share", "post", "ship", "expose", "tunnel", "paste", "pastebin", "transfer",
+  "mail", "email", "submit", "sync", "broadcast", "tweet", "toot", "announce"];
+const UNKNOWN_SECRET = ["password", "passwords", "passwd", "secret", "secrets", "token", "tokens", "credential", "credentials", "creds", "apikey", "apikeys",
+  "privkey", "keyring", "keychain", "vault", "otp", "totp", "passphrase", "cookie", "cookies"];
+/**
+ * Programs with no row whose name says what they do, beside their words: package installers, daemons that detach,
+ * programs that run code Ember can't read (a Windows or .NET program, a notebook), and Ember's own program.
+ */
+const UNKNOWN_INSTALLERS = new Set(["cpan", "cpanm", "cpm", "luarocks", "nimble", "raco"]);
+const UNKNOWN_DAEMONS = new Set(["smbd", "nmbd", "sshd", "dnsmasq", "named", "slapd", "vsftpd", "proftpd", "xinetd", "inetd", "cupsd", "avahi-daemon", "rsyncd", "ntpd", "chronyd", "dhcpd", "squid"]);
+const UNKNOWN_RUNS_BINARY = new Set(["wine", "wine64", "mono", "crossover", "box64", "qemu-x86_64", "qemu-i386"]);
+const UNKNOWN_GUI = new Set(["explorer", "notepad", "mspaint", "calc", "wordpad", "write", "msedge", "iexplore", "start"]);
+/** Password managers and tunnels by their programs' names, whose verbs say nothing of either. */
+const UNKNOWN_SECRET_PROGRAMS = new Set(["rbw", "bw", "op", "lpass", "gopass", "passage", "pass", "keepassxc-cli", "kpcli", "pwsafe", "bitwarden", "enpass-cli", "1password", "ykman", "age-plugin-yubikey"]);
+const UNKNOWN_TUNNELS = new Set(["bore", "ngrok", "frpc", "localtunnel", "lt", "zrok", "pinggy", "tunnelto", "telebit", "inlets", "chisel", "rathole", "sish", "expose"]);
+/** System tools whose every command Ember doesn't know changes the system (`systemctl log-level debug`). */
+const UNKNOWN_SYSTEM_TOOLS = new Set(["systemctl", "launchctl", "loginctl", "timedatectl", "hostnamectl", "localectl", "resolvectl", "networkctl", "nmcli", "sysctl",
+  "firewall-cmd", "ufw", "netsh", "sc", "bcdedit", "reg", "defaults", "scutil", "pmset", "csrutil", "spctl", "tccutil", "dscl", "systemsetup", "networksetup",
+  "initctl", "service", "rc-service", "rc-update", "update-rc.d", "chkconfig", "sv", "kexec", "pm-suspend", "pm-hibernate", "pm-suspend-hybrid", "rtcwake",
+  "mklink", "attrib", "fsutil", "wsl"]);
+/** Tools whose `init` writes the shell's start-up files (`conda init`), as a version manager's does. */
+const UNKNOWN_SHELL_INIT = new Set(["conda", "mamba", "micromamba", "zoxide", "starship", "atuin", "direnv", "mise", "rtx", "fnm", "sdk", "volta", "pixi"]);
+/** A settings verb, and the words with it that write a setting later commands obey (`mamba config --add channels …`). */
+const UNKNOWN_CONFIG = ["config", "configure", "settings", "setting", "set", "setenv", "sources", "source", "remote", "registry", "channel", "channels"];
+const UNKNOWN_CONFIG_WRITES = ["add", "set", "append", "prepend", "remove", "unset", "write", "w", "global", "edit", "default", "channels", "registry", "index", "url",
+  "repositories", "repository", "repo", "source", "sources", "mirror", "mirrors", "proxy", "http", "https"];
+/** The user's own folders in their home folder, whole: what an unknown program is handed of them may be anything there. */
+const USER_FOLDERS = /^(Documents|Desktop|Pictures|Downloads|Music|Videos|Movies|Public|Templates|OneDrive[^\\/]*|Dropbox|iCloud Drive|Library\/Mobile Documents)$/i;
+/** A word of the program's own name names the danger whole, or starts or ends with it (`dropdb`, `pastebinit`, `pg_restore`). */
+const nameHas = (tokens: readonly string[], list: readonly string[]): boolean =>
+  tokens.some(t => list.some(w => t === w || (w.length >= 4 && t.length > w.length && (t.startsWith(w) || t.endsWith(w)))));
+function unknownDoes(h: H, verb?: string): void {
+  const base = h.prog.split(/[\\/]/).pop()!.toLowerCase().replace(/\.(exe|com|bat|cmd|ps1|sh|py)$/, "");
+  const split = (w: string): string[] => w.replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase().split(/[^a-z0-9]+/).filter(t => t !== "");
+  const name = split(base);
+  // The operands and the long options' names: never a path, a file name or an address, whose words are the user's.
+  const words: string[] = [...(verb ? split(verb) : [])];
+  let first: string | null = verb ? (split(verb)[0] ?? null) : null;
+  for (const a of h.args) {
+    const v = a.v;
+    if (v === null || v === "" || /[\\/]|^[a-z][a-z0-9+.-]*:\/\/|\.[A-Za-z0-9]{1,5}$|^~/.test(v)) continue;
+    if (v.startsWith("--")) { words.push(...split(v.slice(2).split("=")[0])); continue; }
+    if (v.startsWith("-")) continue;
+    if (first === null) first = split(v)[0] ?? null;
+    words.push(...split(v));
+  }
+  const found = (cls: DangerClass, rule: string, says: string) => h.e.add(cls, rule, says, { program: base });
+  // A word that sets a variable is handed over for the program to set (it may be a launcher): one that changes how
+  // commands are found or run asks as `env NAME=value` does, and its value, or a `name:value` word's, is judged as a
+  // file the program may read (`X=/etc/shadow`, `KEY=id_rsa`, `x:.env`: integ2-z-2).
+  for (const a of h.args) {
+    const m = a.v === null ? null : /^([A-Za-z_][A-Za-z0-9_.-]*)([=:])([\s\S]+)$/.exec(a.v);
+    if (!m || (m[2] === ":" && /^[A-Za-z]$/.test(m[1]) && h.sc.path.flavour !== "posix") || /^[a-z][a-z0-9+.-]*:\/\//i.test(a.v ?? "")) continue;
+    if (m[2] === "=" && riskyAssignment(m[1], m[3])) h.e.unclear("unclear.assignment", `It hands ${base} a setting that changes how commands are found or run.`);
+    if (!/\s/.test(m[3])) h.e.usePath({ ...a, v: m[3], raw: m[3], param: undefined }, "read", h.sc);
+    // `host:path` is scp's and rsync's way to name a file on another computer (`backup-server:data.txt`).
+    if (m[2] === ":" && !/^\/\//.test(m[3])) found("publish", "unknown-words.publish", `By its words, ${base} may copy files to or from another computer.`);
+  }
+  // A folder that holds the user's own files (Documents, Pictures…): Ember can't tell what the program does with it,
+  // as with the home folder (commands-remote-c8-2).
+  const home = h.sc.home;
+  if (home) (() => {
+    for (const a of h.args) {
+      // The word, an option's attached value, or a variable's value handed over (`--dir=~/Documents`, `X=~/Pictures`).
+      // A POSIX list of paths joined by colons (`./src:/home/ana/Documents`, a volume's two sides) is each of them.
+      const whole = a.v === null ? null : a.v.replace(/^[^=]*=/, "");
+      const parts = whole === null ? [] : h.sc.path.flavour === "posix" ? whole.split(":") : [whole];
+      for (const v of parts) {
+        if (a.glob || URL_LIKE.test(v) || !(v.startsWith("~") || isAbsolute(v, h.sc.path.flavour))) continue;
+        const abs = resolveTargetPath(v.replace(/[\\/]+$/, ""), { os: h.sc.os, home, cwd: h.sc.cwd ?? "" });
+        const rel = abs.slice(home.length).replace(/^[\\/]+/, "");
+        if (isUnder(home, abs, h.sc.path)) { h.e.unclear("unclear.broad-folder", `Ember can't tell what ${base} does with your home folder.`); return; }
+        if (isUnder(abs, home, h.sc.path) && USER_FOLDERS.test(rel)) { h.e.unclear("unclear.broad-folder", `Ember can't tell what ${base} does with your ${rel.split(/[\\/]/)[0]} folder.`); return; }
+      }
+    }
+  })();
+  const hasWord = (list: readonly string[]) => words.some(t => list.includes(t)) || nameHas(name, list);
+  if (hasWord(UNKNOWN_DESTROY)) found("destroy", "unknown-words.destroy", `By its words, ${base} may delete, reset or overwrite data.`);
+  if (hasWord(UNKNOWN_PUBLISH) || first === "up" || UNKNOWN_TUNNELS.has(base) || (base === "lerna" && first === "version")) found("publish", "unknown-words.publish", `By its words, ${base} may send, publish or deploy something.`);
+  // What its name says: an installer of packages, a daemon (it detaches), a mount, a program that runs a Windows or
+  // .NET program or a notebook's code, Ember's own program, a Windows program that opens a window.
+  if (UNKNOWN_INSTALLERS.has(base)) found("system", "unknown-words.system", `${base} installs packages.`);
+  if (UNKNOWN_DAEMONS.has(base)) found("escape", "escape.detach", `${base} is a server that keeps running after Stop.`);
+  if (/^mount[._]/.test(base)) found("system", "unknown-words.system", `${base} mounts a disk or a share.`);
+  if (UNKNOWN_RUNS_BINARY.has(base) || (base === "jupyter" && words.includes("execute")) || base === "papermill") h.e.unclear("unclear.runs-code", `${base} runs code Ember can't read first.`);
+  if (/^(pwsh|powershell)$/.test(base)) h.e.unclear("unclear.other-shell", "It runs PowerShell, whose script Ember doesn't read here.");
+  if (/^(ember|electron)$/.test(base)) h.e.unclear("unclear.ember-program", `It starts ${base === "ember" ? "Ember" : "Electron"}, which Ember can't tell the effect of.`);
+  if (UNKNOWN_GUI.has(base)) h.e.unclear("unclear.gui", SAYS.openApp);
+  if (base === "glab" && words.some(t => ["create", "merge", "close", "approve", "update", "note", "comment", "delete", "fork", "archive", "revoke"].includes(t))) found("publish", "unknown-words.publish", `By its words, ${base} may send, publish or deploy something.`);
+  if (base === "skopeo" && (first === "copy" || first === "sync")) found("publish", "unknown-words.publish", `${base} copies images, which may publish them.`);
+  if (base === "skopeo" && first === "delete") found("remote-delete", "unknown-words.remote-delete", `${base} deletes an image from a registry.`);
+  if (base === "p4" && first !== null && VCS_TREE_WRITERS.p4.has(first)) found("destroy", "unknown-words.destroy", `By its words, ${base} may delete, reset or overwrite data.`);
+  if (/^nircmdc?$/.test(base) && words.some(t => /^(send|set|click|move)/.test(t))) h.e.refuseWith("ember.input", "input");
+  // Options that leave it running once Stop is pulled (`--fork`, `--detach`, `--daemon`): it outlives the kill switch.
+  if (h.args.some(a => a.v !== null && /^--(fork|detach(ed)?|daemon(ize)?|background|bg|nohup|disown)(=|$)/i.test(a.v))) {
+    found("escape", "escape.detach", `By its options, ${base} keeps running after Stop.`);
+  }
+  // The environment, which may hold tokens, printed or exported (`--export-env`, `--print-env`).
+  if (words.includes("env") && words.some(t => ["export", "print", "show", "dump", "list"].includes(t))) found("secret", "unknown-words.secret", `By its words, ${base} may show passwords, keys or tokens.`);
+  else if (hasWord(UNKNOWN_SECRET) || UNKNOWN_SECRET_PROGRAMS.has(base)) found("secret", "unknown-words.secret", `By its words, ${base} may show passwords, keys or tokens.`);
+  if (words.includes("global") || words.includes("system") || words.includes("systemwide") || first === "default" || UNKNOWN_SYSTEM_TOOLS.has(base)
+    || (UNKNOWN_CONFIG.includes(first ?? "") && (words.some(t => UNKNOWN_CONFIG_WRITES.includes(t))
+      // A key and its value after the settings verb (`poetry config repositories.x http://…`) set it.
+      || h.args.filter(a => a.v === null || (!a.v.startsWith("-") && !UNKNOWN_CONFIG.includes(a.v))).length >= 2))
+    || ((/env$/.test(base) || UNKNOWN_SHELL_INIT.has(base)) && first === "init")) {
+    found("system", "unknown-words.system", `By its words, ${base} may change settings for every project or your shell's start-up.`);
+  }
+}
+
+/**
+ * A program Ember has no row for and that isn't on ORDINARY_PROGRAMS is one it doesn't know: class "unknown", rule
+ * `unknown.program`, which the decision announces by name and never asks for alone (the owner's decision of
+ * 2026-11-14, which ended round nine's closed default); what its own words say it does is judged beside it
+ * (unknownDoes). A program given by a path in the command's own folder (the project's scripts and binaries: `./build.sh`,
  * `bin/tool`, `node_modules/.bin/x`) is judged as before (a download in the task still asks); one given by a path
  * elsewhere (`/usr/local/bin/x`, `~/bin/x`) is known by its name as a bare name is. The user's own words naming the
  * program announce it (intent.ts). generic() still judges its operands.
@@ -4618,14 +4757,15 @@ function unknownProgram(h: H): void {
   if (knownProgram(h.key) && !(h.key === "convert" && h.sc.os === "win32")) {
     // A TeX engine's shell escape runs the commands the document names (`\write18`).
     if (TEX_ENGINES.has(h.key) && h.args.some(a => a.v === null || /^--?(shell-escape|enable-write18)$/.test(a.v))) {
-      const escape = h.args.find(a => a.v === null || /escape|write18/.test(a.v))?.v ?? "";
-      h.e.add("unknown", "unknown.verb", unknownVerbSays(h.prog, escape), { program: `${h.prog} ${escape}`.trim() });
+      // The commands the document names are code Ember doesn't read first.
+      h.e.unclear("unclear.shell-escape", `It lets ${h.prog} run the commands the document names, which Ember can't read first.`);
     }
     return;
   }
   // A cmd name that is a batch file in the folder (`build` for build.bat) is the project's own, read as a script.
   if (h.sc.family === "cmd" && !h.pn.isPath && h.pn.ext === "" && [".bat", ".cmd"].some(e => h.e.onRecord(lit(h.nameArg.v + e), h.sc))) return;
   h.e.add("unknown", "unknown.program", SAYS.unknownProgram, { program: withOperandVerb(h) });
+  unknownDoes(h);
 }
 
 /**
@@ -4713,8 +4853,11 @@ const REMOTE_READS: Readonly<Record<string, ReadonlySet<string>>> = {
   // `ls` prints each window's environment variables and its processes' command lines (commands-classes-y9-10).
   kitty: new Set(["get-text", "ls"]),
   wezterm: new Set(["get-text"]),
-  zellij: new Set(["dump-screen", "edit-scrollback"]),
-  it2api: new Set(["get-buffer", "get-prompt"]),
+  // The names of the user's tabs and sessions, their layout (which holds the commands running in them) and their
+  // clients say what the user is doing in their own terminals: read as their text is (integ-x-1; the owner's decision
+  // of 2026-11-14, under which a verb Ember doesn't know no longer asks).
+  zellij: new Set(["dump-screen", "edit-scrollback", "query-tab-names", "list-clients", "dump-layout"]),
+  it2api: new Set(["get-buffer", "get-prompt", "list-sessions", "show-hierarchy", "show-focus"]),
 };
 /** Their options that take the next word, before the verb (`zellij -s work action …`, `kitten @ --to unix:/x …`). */
 const REMOTE_VALUES = new Set(["-s", "--session", "-l", "--layout", "-c", "--config", "--config-dir", "--data-dir", "--to", "--password", "--password-file", "--password-env", "--use-password", "--class", "--pane-id", "--window-id"]);
@@ -4997,7 +5140,8 @@ function toolPayload(h: H): void {
         const m = v === null ? null : /^(-o|--output)(?:=(.*))?$/.exec(v);
         if (!m) continue;
         const out = m[2] !== undefined ? m[2] : args[k + 1]?.v ?? null;
-        if (out === null || !ownFolder(out, h.sc, h.e.ctx.cwd || null)) h.e.add("unknown", "unknown.verb", unknownVerbSays(h.prog, "compile -o"), { program: "deno compile -o" });
+        // A program written outside the project may be one a command name finds (`~/bin`, /usr/local/bin): a system change.
+        if (out === null || !ownFolder(out, h.sc, h.e.ctx.cwd || null)) h.e.add("system", "path.bin", "Writes a program outside the project, where a command's name may find it.", { program: "deno compile -o" });
         return;
       }
       return;
@@ -5059,7 +5203,20 @@ const TEX_ENGINES = new Set(["latex", "pdflatex", "xelatex", "lualatex", "tex", 
  */
 function toolVerbs(h: H, tool: OrdinaryVerbs, noRow: boolean): void {
   const args = h.args;
-  const say = (verb: string): void => { h.e.add("unknown", "unknown.verb", unknownVerbSays(h.prog, verb), { program: `${h.prog} ${verb}`.trim() }); };
+  const say = (verb: string): void => {
+    // A command of a terminal's or an editor's remote control that Ember doesn't know may act in the user's own
+    // terminals or editor (`tmux select-pane`, `zellij action close-pane`, `nvr notes.txt`), which Ember never does:
+    // since a verb Ember doesn't know no longer asks (the owner's decision of 2026-11-14), it is one Ember can't tell
+    // (`unclear.terminal-verb`), which asks, is never shown to Assisted's check and is refused in Autopilot
+    // (TERMINAL_VERB_RULE). One only written short, or behind options Ember doesn't know, is a listing verb as
+    // likely: it is said as unknown.
+    const at0 = args.findIndex(a => a.v === verb.split(" ")[0]);
+    const listing = !["nvr", "it2api", "emacsclient"].includes(h.key)
+      && (/^(list|ls|has|show|display)/.test(verb) || args.slice(0, Math.max(0, at0)).some(a => a.v !== null && a.v.startsWith("-") && !(tool.values ?? []).includes(a.v)));
+    if (TERMINAL_REMOTES.has(h.key) && verb !== "" && !listing) { h.e.unclear(TERMINAL_VERB_RULE, `It may act in your own terminals or editor through ${h.prog}, in a way Ember can't tell.`); return; }
+    h.e.add("unknown", "unknown.verb", unknownVerbSays(h.prog, verb), { program: `${h.prog} ${verb}`.trim() });
+    unknownDoes(h, verb);
+  };
   const vals = new Set(tool.values ?? []);
   const operand = (start: number): number => {
     for (let k = start; k < args.length; k++) {
@@ -5079,8 +5236,26 @@ function toolVerbs(h: H, tool: OrdinaryVerbs, noRow: boolean): void {
   } else at = operand(0);
   const always = tool.asks?.[""] ?? [];
   const bad = args.find(a => a.v !== null && always.includes(a.v.split("=")[0]));
-  if (bad) { say(bad.v ?? ""); return; }
-  if (at < 0) { if (noRow || tool.bare === "asks") say(""); return; }
+  // An option that changes what later commands obey, or that acts beyond the project (`xcodebuild -exportArchive`), is
+  // a system change, said beside the option Ember names (the owner's decision of 2026-11-14: only the danger asks);
+  // tmux's -c is judged as the command it runs, its -f as a file of commands Ember doesn't read.
+  if (bad) {
+    h.e.add("unknown", "unknown.verb", unknownVerbSays(h.prog, bad.v ?? ""), { program: `${h.prog} ${bad.v ?? ""}`.trim() });
+    const o = (bad.v ?? "").split("=")[0];
+    if (h.key === "tmux" && o === "-f") h.e.unclear("unclear.hidden-command", `Ember can't tell what ${h.prog} runs.`);
+    else if (!(h.key === "tmux" && o === "-c")) h.e.add("system", "tool.setting", `It changes a setting of ${h.prog}'s that later commands obey, or acts beyond the project.`);
+    return;
+  }
+  // A runner of files given code inline (`tsx -e`, `ts-node --eval`): code Ember can't read first.
+  if (tool.files && args.some(a => a.v !== null && /^(-e|--eval|-p|--print)(=|$)/.test(a.v))) h.e.unclear("unclear.inline-code", "It runs code given on the command line.");
+  if (at < 0) {
+    // A terminal's or an editor's remote control with no verb opens or joins the user's own sessions (`zellij`).
+    if (tool.bare === "asks" && TERMINAL_REMOTES.has(h.key)) { h.e.unclear(TERMINAL_VERB_RULE, `It may act in your own terminals or editor through ${h.prog}, in a way Ember can't tell.`); return; }
+    if (noRow || tool.bare === "asks") say("");
+    // With no command, vercel deploys the folder.
+    if (tool.bare === "asks" && h.key === "vercel") h.e.add("publish", "tool.deploys", `With no command, ${h.prog} deploys the folder.`);
+    return;
+  }
   // A file is the project's own, never an address (`deno https://x/y.ts`, `npm:`, `jsr:`: commands-closed-y9-4).
   const known = (w: string): boolean => tool.verbs.includes(w) || ((tool.files?.test(w) ?? false) && !/^[a-z][a-z0-9+.-]+:/i.test(w));
   const words: Arg[] = [args[at]];
@@ -5092,7 +5267,13 @@ function toolVerbs(h: H, tool: OrdinaryVerbs, noRow: boolean): void {
   for (const a of words) {
     if (a.v === null) { say(a.raw); return; }
     const parts = tool.all ? a.v.split(";").map(p => p.trim().split(/\s+/)[0]).filter(p => p !== "") : [a.v];
-    for (const p of parts) if (!known(p)) { say(p); return; }
+    for (const p of parts) {
+      if (known(p)) continue;
+      say(p);
+      // A runner of files given an address or a registry's name runs code it downloads (`deno https://…`, `tsx npm:x`).
+      if (tool.files && /^[a-z][a-z0-9+.-]+:/i.test(p)) h.e.add("escape", "escape.download-run", SAYS.downloadsAndRuns);
+      return;
+    }
   }
   const verb = args[at].v ?? "";
   const sub = tool.sub?.[verb];
@@ -5103,7 +5284,7 @@ function toolVerbs(h: H, tool: OrdinaryVerbs, noRow: boolean): void {
   }
   const asks = tool.asks?.[verb] ?? [];
   const opt = args.slice(at + 1).find(a => a.v !== null && asks.includes(a.v.split("=")[0]));
-  if (opt) say(`${verb} ${opt.v}`);
+  if (opt) { say(`${verb} ${opt.v}`); h.e.add("system", "tool.setting", `It changes a setting of ${h.prog}'s that later commands obey, or acts beyond the project.`); }
 }
 
 /** A program word's key as the allow-list knows it: a version suffix dropped (`python3.12`, `gcc-13`, `clang-17`). */
@@ -5297,7 +5478,7 @@ function unknownCmdlet(h: H): void {
   const verb = h.key.split("-")[0];
   if (PS_NAME_LOOKUPS.has(h.key) && h.args.some(a => a.v === null)) h.e.unclear("unclear.unresolved-arg", `Ember can't tell which arguments ${h.prog} gets.`);
   if (!PS_READ_VERBS.has(verb)) h.e.unclear("unclear.cmdlet", `Ember can't tell what ${h.prog} changes.`);
-  else if (!PS_ORDINARY_VERBS.has(verb) && !PS_ORDINARY_CMDLETS.has(h.key) && !h.e.readsAsMain) h.e.add("unknown", "unknown.program", SAYS.unknownProgram);
+  else if (!PS_ORDINARY_VERBS.has(verb) && !PS_ORDINARY_CMDLETS.has(h.key) && !h.e.readsAsMain) { h.e.add("unknown", "unknown.program", SAYS.unknownProgram); unknownDoes(h); }
   // One whose noun names a secret, or that prints one as plain text, hands it to the output whatever its verb
   // (`Get-Secret`, `Get-AzKeyVaultSecret -AsPlainText`, `Get-AzStorageAccountKey`: commands-closed-y9-5).
   if (/secret|credential|token|passw(or)?d|apikey|vault|certificate|keys?$/.test(h.key.slice(verb.length + 1)) || h.args.some(a => /^-asplaintext\b/i.test(a.v ?? a.raw))) {
@@ -5629,7 +5810,7 @@ function redisCommand(h: H, words: readonly (string | null)[]): void {
     || (REDIS_KEY_READS.test(cmd) && rest.some(secretKey))) {
     h.e.add("secret", "secret.db", SAYS.secrets);
   }
-  if (cmd === "acl" && /^(list|getuser|users|whoami|cat|log|genpass|help)$/.test(sub)) return;
+  // (ACL's every verb still asks as a change, as on main: what reads a password asks as a secret on top.)
   if (cmd && !REDIS_READS.test(cmd)) h.e.add("destroy", "db.change", "Changes or deletes data in a database.");
   if (cmd === "config" && /^(set|rewrite|resetstat)$/i.test(words[1] ?? "")) h.e.add("system", "system.kernel", "Changes how the system works.");
 }

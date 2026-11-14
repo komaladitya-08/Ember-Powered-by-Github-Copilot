@@ -86,10 +86,21 @@ describe("output that is a secret by where it comes from (commands-remote-r11-4)
       expect(r.decision.rules, cmd).toContain("secret.db");
       expect(keptQuestion(r.decision, r.cls.findings), cmd).toBe("secret");
     }
-    // Ordinary reads still run, and ACL's lists that print no password aren't a change.
-    for (const cmd of ["redis-cli PING", "redis-cli GET counter", "redis-cli CONFIG GET maxmemory", "redis-cli INFO", "redis-cli ACL WHOAMI", "redis-cli ACL USERS"]) {
+    // Ordinary reads still run.
+    for (const cmd of ["redis-cli PING", "redis-cli GET counter", "redis-cli CONFIG GET maxmemory", "redis-cli INFO"]) {
       expect(decide(cmd).verdict, cmd).toBe("run");
     }
+  });
+});
+
+describe("redis-cli's ACL, decided no less safely than on main (commands-remote-r11-4)", () => {
+  it("asks before every ACL verb as a change, as main did, and as a secret where it prints passwords", () => {
+    for (const cmd of ["redis-cli ACL WHOAMI", "redis-cli ACL USERS", "redis-cli ACL LIST", "redis-cli ACL GETUSER default", "redis-cli ACL CAT"]) {
+      const d = decide(cmd);
+      expect(d.verdict, cmd).toBe("ask");
+      expect(d.rules, cmd).toContain("db.change");
+    }
+    for (const cmd of ["redis-cli ACL LIST", "redis-cli ACL GETUSER default"]) expect(decide(cmd).rules, cmd).toContain("secret.db");
   });
 });
 

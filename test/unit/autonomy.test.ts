@@ -146,7 +146,7 @@ describe("Interactive's card (FEATURE_CONSENT_VERSION.autonomy, modes-A9)", () =
   it("gives Assisted a card of its own that says plainly who decides, what is sent, that it can be wrong and what it never clears (modes-C5, modes-x9p-4)", () => {
     expect(MODE_CARD_TEXT.assisted).toBe(ASSISTED_CONSENT_TEXT);
     expect(modeCard("assisted")).toEqual({ title: "Before you choose Assisted", text: ASSISTED_CONSENT_TEXT, yes: "I agree, use Assisted", no: "Not now" });
-    expect(FEATURE_CONSENT_VERSION.assisted).toBe(2);
+    expect(FEATURE_CONSENT_VERSION.assisted).toBe(3);
     expect(ASSISTED_CONSENT_TEXT).toMatch(/^In Assisted, Ember works as in Interactive, and where it would ask you it first checks the step against what you asked\. A lighter AI model makes that check\./);
     // What the model is sent, and that a match goes ahead whatever the step is.
     expect(ASSISTED_CONSENT_TEXT).toContain("It is sent your own words for the task, typed or spoken, and Ember's short description of the step: the app, the window's title, the control's name, a dialog's words, the text to type and what it replaces, a cell's formula and where carried text came from; or the command, its computer, shell and folder.");
@@ -154,7 +154,9 @@ describe("Interactive's card (FEATURE_CONSENT_VERSION.autonomy, modes-A9)", () =
     // Announced and recorded; it can be wrong; what it never clears; what happens otherwise; a stop always works.
     expect(ASSISTED_CONSENT_TEXT).toMatch(/Ember tells you each time, a command waits a few seconds with a Stop first, and What Ember did keeps a record\./);
     expect(ASSISTED_CONSENT_TEXT).toMatch(/The model can be wrong: it may let through a step you didn't mean\./);
-    expect(ASSISTED_CONSENT_TEXT).toMatch(/It never clears a command that would show passwords or keys or keep running after you stop Ember, a step you said no to, anything Ember refuses, such as typing a password, or what you or your organisation set to ask every time\./);
+    // A cleared command that shows secrets has its output kept from the model (the owner's decision of 2026-11-14).
+    expect(ASSISTED_CONSENT_TEXT).toContain("If it clears a command that shows passwords or keys, the AI model isn't shown its output.");
+    expect(ASSISTED_CONSENT_TEXT).toMatch(/It never clears a step you said no to, anything Ember refuses, such as typing a password, or what you or your organisation set to ask every time\./);
     expect(ASSISTED_CONSENT_TEXT).toMatch(/If it finds no match or can't tell, Ember asks you\. “Ember, stop” or Ember's stop shortcut stops everything at once\.$/);
     // No shortcut is named (another app may hold it), no straight quotes, and it stays short enough to read.
     expect(ASSISTED_CONSENT_TEXT).not.toMatch(/"|Ctrl\+/);

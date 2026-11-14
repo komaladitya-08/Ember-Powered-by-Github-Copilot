@@ -23,14 +23,15 @@ export function computersIntro(os: OS | undefined): string {
 export const COMMANDS_HEADING = "Commands";
 export const COMMANDS_INTRO = "Ember runs commands in its own command window, where you can watch and stop them. It asks first before anything that deletes, publishes, touches secrets or changes the system.";
 /**
- * The section's intro in the approval mode in force (null: below Interactive), true in each (home-c10-2): Assisted's
- * check may clear a deletion, a push or a system change it finds in the user's words but never one that touches secrets
- * (commands/review.ts notReviewable); Autopilot announces those with their Stop countdown and still asks for secrets,
- * what would outlive Stop, what Ember can't tell and what the user's words rule out (commands/autopilot.ts autopilotAsks).
+ * The section's intro in the approval mode in force (null: below Interactive), true in each (home-c10-2; the owner's
+ * decision of 2026-11-14): Assisted's check may clear a dangerous command it finds in the user's words (commands/
+ * review.ts notReviewable); Autopilot announces every one with its Stop countdown, keeping what a secret's command
+ * prints from the model, and asks only where the user or the organisation set every command to ask
+ * (commands/autopilot.ts autopilotAsks).
  */
 export function commandsIntro(mode: ApprovalMode | null): string {
-  if (mode === "assisted") return "Ember runs commands in its own command window, where you can watch and stop them. It asks first before anything that touches secrets, and before anything that deletes, publishes or changes the system unless Assisted's check finds it in what you asked.";
-  if (mode === "autopilot") return "Ember runs commands in its own command window, where you can watch and stop them. In Autopilot it runs one that deletes, publishes or changes the system without asking, after a few seconds to stop it. It still asks before anything that touches secrets, would keep running after you stop it or has an effect it can't tell, before one you ruled out, and wherever you or your organisation set commands to ask every time or the administrator of a computer it reaches over SSH doesn't allow Autopilot there.";
+  if (mode === "assisted") return "Ember runs commands in its own command window, where you can watch and stop them. It asks first before anything that deletes, publishes, touches secrets or changes the system, unless Assisted's check finds it in what you asked.";
+  if (mode === "autopilot") return "Ember runs commands in its own command window, where you can watch and stop them. In Autopilot it runs every command without asking, after a few seconds to stop it, and keeps what one that touches secrets prints from the AI model. It still asks wherever you or your organisation set commands to ask every time, or the administrator of a computer it reaches over SSH doesn't allow Autopilot there.";
   return COMMANDS_INTRO;
 }
 export const WSL_SWITCH = "Let Ember work in WSL";

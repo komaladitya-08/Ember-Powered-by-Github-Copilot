@@ -403,7 +403,7 @@ export const RECORDERS = new Set([
 ]);
 
 /** Disk erasing and partitioning (§3.5.1): always class a. */
-export const DISK_TOOLS = new Set(["mke2fs", "mkswap", "wipefs", "fdisk", "sfdisk", "gdisk", "sgdisk", "parted", "cfdisk", "blkdiscard", "diskpart", "format-volume", "clear-disk", "initialize-disk", "remove-partition", "badblocks", "hdparm", "nvme", "zpool", "cryptsetup", "lvremove", "vgremove", "pvremove", "mdadm", "partprobe", "gparted"]);
+export const DISK_TOOLS = new Set(["mke2fs", "mkswap", "wipefs", "fdisk", "sfdisk", "gdisk", "sgdisk", "parted", "cfdisk", "blkdiscard", "diskpart", "format-volume", "clear-disk", "initialize-disk", "remove-partition", "badblocks", "hdparm", "nvme", "zpool", "cryptsetup", "lvremove", "vgremove", "pvremove", "mdadm", "partprobe", "gparted", "newfs", "newfs_hfs", "newfs_apfs", "newfs_msdos", "newfs_exfat"]);
 
 /** Script, target and package-script names (§3.5.9, L8). */
 export const NAME_PUBLISH = new Set(["deploy", "publish", "release", "push", "upload", "ship", "prod", "production", "promote"]);

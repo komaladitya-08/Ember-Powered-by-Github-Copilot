@@ -290,11 +290,14 @@ describe("deleting with a tool Ember had no row for (commands-remote-c8-2)", () 
     // folder and what is in it still let it be announced, and a folder elsewhere only when the words give it too
     // (modes-y9-7).
     for (const cmd of ["mytool .", "mytool src", "mytool ~/Documents", "mytool ../other"]) {
-      expect(run(cmd).decision.rules, cmd).toEqual(["unknown.program"]);
+      // A folder of the user's own files is one Ember can't tell what the program does with (the owner's decision of
+      // 2026-11-14, under which a program Ember doesn't know no longer asks for that alone).
+      expect(run(cmd).decision.rules, cmd).toEqual(cmd === "mytool ~/Documents" ? ["unknown.program", "unclear.broad-folder"] : ["unknown.program"]);
       // A plain word after it says what it is to do, so the words name that too (commands-closed-x9-1).
       const elsewhere = cmd === "mytool ~/Documents" || cmd === "mytool ../other";
       const said = (words: string) => runCase({ cmd, verdict: "run", words }, { shell: "bash", context: "linux" }).decision.verdict;
-      expect(said(cmd === "mytool src" ? "run mytool on src" : "run mytool"), cmd).toBe(elsewhere ? "ask" : "announce");
+      // Only the folder of the user's own files asks (unclear.broad-folder); the rest is announced, by the words or not.
+      expect(said(cmd === "mytool src" ? "run mytool on src" : "run mytool"), cmd).toBe(elsewhere && cmd === "mytool ~/Documents" ? "ask" : "announce");
     }
   });
 

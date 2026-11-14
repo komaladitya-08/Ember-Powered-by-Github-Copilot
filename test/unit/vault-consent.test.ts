@@ -37,8 +37,8 @@ describe("the consent and the vault", () => {
   });
 
   it("asks someone who agreed to Autopilot's old card again before Autopilot is in force (vault-4)", () => {
-    expect(FEATURE_CONSENT_VERSION.autopilot).toBe(2);
-    expect(modeCardVersion("autopilot")).toBe(2);
+    expect(FEATURE_CONSENT_VERSION.autopilot).toBe(3);
+    expect(modeCardVersion("autopilot")).toBe(3);
     const policy = AdminPolicySchema.parse({});
     const at = "2026-11-12T10:00:00.000Z";
     const card = (version: number) => ({ version, at });
@@ -49,7 +49,7 @@ describe("the consent and the vault", () => {
     expect(state.why).toBe("card");
     // An agreement that carries the old card's version is refused; the new one puts Autopilot in force.
     expect(chooseMode(agreedOld, "autopilot", 1, policy, at).ok).toBe(false);
-    const again = chooseMode(agreedOld, "autopilot", 2, policy, at);
+    const again = chooseMode(agreedOld, "autopilot", FEATURE_CONSENT_VERSION.autopilot, policy, at);
     expect(again.ok && modeInForce(again.approvals, policy)).toBe("autopilot");
   });
 });

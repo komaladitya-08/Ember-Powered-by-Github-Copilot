@@ -50,9 +50,9 @@ describe("the approval mode setting (modes-A1)", () => {
     expect("trust" in DEFAULT_SETTINGS).toBe(false);
   });
 
-  it("versions each mode's card on its own: Interactive's is Work without asking's, bumped to 3; Assisted's at 2 since it named all the check is sent (modes-x9p-4); Autopilot's is 2 since its card says what the vault does (vault-4)", () => {
-    expect(FEATURE_CONSENT_VERSION).toMatchObject({ autonomy: 3, assisted: 2, autopilot: 2 });
-    expect(APPROVAL_MODES.map(modeCardVersion)).toEqual([3, 2, 2]);
+  it("versions each mode's card on its own: Interactive's is Work without asking's, bumped to 3; Assisted's at 3 since it says a cleared secret's output is kept from the model, Autopilot's at 3 since it says only “ask every time” still asks (the owner's decision of 2026-11-14)", () => {
+    expect(FEATURE_CONSENT_VERSION).toMatchObject({ autonomy: 3, assisted: 3, autopilot: 3 });
+    expect(APPROVAL_MODES.map(modeCardVersion)).toEqual([3, 3, 3]);
     expect(["asking", ...APPROVAL_MODES, "nonsense"].map(modeRank)).toEqual([0, 1, 2, 3, 0]);
   });
 

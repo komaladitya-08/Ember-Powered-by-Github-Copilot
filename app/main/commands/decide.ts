@@ -2,7 +2,9 @@
  * The command decision (design §3.8.2, OWNER DECISION 4): run, announce, ask or refuse, by eleven rules in order, the
  * first that applies deciding. Ember's own refusals and the administrator's "off" refuse; root or an elevated token,
  * the administrator's "ask", the user's "ask every", a tainted task and carried text ask even for ordinary commands;
- * an ordinary command runs; a dangerous one the user's own words named exactly announces; everything else asks. The
+ * an ordinary command runs; a program, or a tool's verb or option, Ember has no row for (class "unknown") is announced
+ * by name with its Stop countdown and never asks for that alone (the owner's decision of 2026-11-14: only dangerous
+ * commands ask); a dangerous one the user's own words named exactly announces; everything else asks. The
  * card's lines (§3.8.4) come in their fixed order. `reason` goes to the audit journal, which keeps it, so it never
  * holds a path or the command's text (only `command` and `cwd` are reduced to sizes there). Pure.
  */
@@ -41,6 +43,12 @@ const CLASS_REASON: Readonly<Record<DangerClass, string>> = {
   unclear: "Ember can't tell exactly what it does",
   unknown: "it runs a program, or a tool's command, that Ember doesn't know",
 };
+
+/**
+ * The intent of an announcement made only because the command runs a program, or a tool's verb or option, that Ember
+ * doesn't know (the owner's decision of 2026-11-14): it needs no words of the user's, as an ordinary command needs none.
+ */
+export const UNKNOWN_ANNOUNCED = "unknown-program";
 
 /** How long Allow stays disarmed for a dangerous or policy-wide ask, and for an ordinary command asked by policy only. */
 export const ARM_ASK_MS = 1500;
@@ -99,6 +107,24 @@ export function decideCommand(i: DecideInput): CommandDecision {
   // 9. An ordinary command, nothing asking: it runs.
   if (!policyAsk && F.length === 0) {
     return { verdict: "run", reason: "An ordinary command.", classes: [], rules: [], says: windowsLine, unasked: false, armMs: 0 };
+  }
+  // 9b. Nothing but a program, or a tool's verb or option, that Ember has no row for: not dangerous, so it runs,
+  // announced by name with its Stop countdown (the owner's decision of 2026-11-14), with the user's words or without.
+  const dangers = F.filter(f => f.cls !== "unknown");
+  if (!policyAsk && dangers.length === 0) {
+    const names = uniq(F.map(f => f.program.replace(/\.(exe|com|bat|cmd)(?= |$)/i, "")).filter(n => n.trim() !== "")).slice(0, 3);
+    const extra = cls as Partial<ClassificationExtra>;
+    const m = i.userWords.trim() !== "" && extra.writtenOut !== true ? matchIntent({ ...cls, findings: F }, i.userWords, {
+      os: i.facts.os, home: i.facts.home, cwd: typeof extra.cwd === "string" ? extra.cwd : "", ember: i.facts.ember,
+      downloaded: new Set<string>(), ...(i.facts.wsl ? { wsl: { mountRoot: i.facts.wsl.mountRoot, windows: i.facts.wsl.windows } } : {}),
+      git: i.git,
+    }) : null;
+    return {
+      verdict: "announce", reason: m ? `The user's own words asked for this (${m.intent}).` : "It runs a program, or a tool's command, that Ember doesn't know.",
+      classes: ["unknown"], rules: findingRules, says: [...findingLines(F), ...windowsLine],
+      requested: m ? { intent: m.intent, announce: m.announce } : { intent: UNKNOWN_ANNOUNCED, announce: names.length ? `Running ${joinList(names)}, which I don't know.` : "Running a program I don't know." },
+      unasked: false, armMs: 0,
+    };
   }
   // 10. The user's own words asked for exactly this. Never a line judged as its written-out form (a `[[ … ]]`
   // test as `[ … ]`: unroll.ts): what it does behind a test asks, as every `[[ … ]]` did (commands-b7-2).

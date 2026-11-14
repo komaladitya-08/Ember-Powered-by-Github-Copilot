@@ -4339,7 +4339,7 @@
   },
   {
    "cmd": "& 'C:\\Program Files\\x\\$name.exe'",
-   "verdict": "ask",
+   "verdict": "announce",
    "rules": [
     "unknown.program"
    ]
@@ -6043,7 +6043,7 @@
   },
   {
    "cmd": "frobnicate $env:APPDATA\\ember\\settings.json",
-   "verdict": "ask",
+   "verdict": "announce",
    "rules": [
     "unknown.program"
    ]
@@ -6096,7 +6096,7 @@
   },
   {
    "cmd": "frobnicate.exe X=C:\\Windows\\x.dll",
-   "verdict": "ask",
+   "verdict": "announce",
    "rules": [
     "unknown.program"
    ],
@@ -6112,7 +6112,7 @@
   },
   {
    "cmd": "frobnicate C:data.txt",
-   "verdict": "ask",
+   "verdict": "announce",
    "words": "use frobnicate",
    "rules": [
     "unknown.program"

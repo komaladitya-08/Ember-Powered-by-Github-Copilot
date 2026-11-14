@@ -1835,7 +1835,8 @@ export function matchIntent(cls: Classification, userWords: string, ctx: Classif
     // plain file in the task's folder (modes-y9-7).
     if (!unknown.every(f => extrasNamed(cls, f, userWords, ctx))) return null;
     const announce = `Running ${joinList(names)}, as you asked.`;
-    const rest = F.filter(f => f.cls !== "unknown");
+    // What its own words say it does (classify.ts unknownDoes) is what naming it whole asks for (commands-closed-x9-1).
+    const rest = F.filter(f => f.cls !== "unknown" && !f.rule.startsWith("unknown-words."));
     if (rest.length === 0) return { intent: "unknown", announce };
     const m = matchIntent({ ...cls, findings: rest }, userWords, ctx);
     return m && { intent: `${m.intent}+unknown`, announce: `${m.announce} ${announce}` };

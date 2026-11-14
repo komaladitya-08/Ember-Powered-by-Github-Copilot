@@ -16,7 +16,7 @@ import { modeCardVersion } from "../../app/shared/approvals";
 import { readFileSync } from "node:fs";
 import { Refusals, commandActs, commandNamed, likeCommand, riskNames, sameCommand, stepMarksForCommands, stepNames, type CommandAsked } from "../../app/main/policy/refusals";
 import { Worker, leftUndone, type WorkerDeps } from "../../app/main/agent/worker";
-import { LIKE_REFUSED_LINE, LIKE_REFUSED_RULE, commandSha256, runCommandTool, setCommandJudge, type CommandFlowContext } from "../../app/main/commands/flow";
+import { LIKE_REFUSED_AUTOPILOT, LIKE_REFUSED_LINE, LIKE_REFUSED_RULE, commandSha256, runCommandTool, setCommandJudge, type CommandFlowContext } from "../../app/main/commands/flow";
 import { classifyCommand } from "../../app/main/commands/classify";
 import { standingFindings, type ClassifyContext, type RunSpec } from "../../app/main/commands/types";
 import { describeEntry } from "../../app/renderer/home/copy";
@@ -533,6 +533,17 @@ function commands(answers: (string | null)[], o: { words?: string; go?: boolean;
   return { st, run, refusals, ctx };
 }
 
+/**
+ * In Autopilot, which has no question to put, a command that may be the refused one is refused (the owner's decision
+ * of 2026-11-14): checked here, true; elsewhere it still asks, and the caller checks that.
+ */
+function likeRefusedInAutopilot(r: { textResultForLlm: string; resultType: string }, h: { st: { asked: string[]; reviewed: string[]; announced: string[] } }, mode: { autopilot?: boolean }): boolean {
+  if (!mode.autopilot) { expect(r.resultType).toBe("success"); return false; }
+  expect(r.textResultForLlm).toBe(LIKE_REFUSED_AUTOPILOT);
+  expect([h.st.asked, h.st.reviewed, h.st.announced]).toEqual([[], [], []]);
+  return true;
+}
+
 describe("a command the user said no to, through the flow (commands-remote-r9-8)", () => {
   afterEach(() => setCommandJudge(null));
 
@@ -601,7 +612,7 @@ describe("a command the user said no to, through the flow (commands-remote-r9-8)
     expect((await h.run(refused)).textResultForLlm).toMatch(/^The user said no\./);
     for (const mode of [{ review: true }, { review: false, autopilot: true }, { review: false }]) {
       const again = commands(["once"], { refusals: h.refusals, words: "clean up and publish the package", ...mode });
-      expect((await again.run(next)).resultType, next).toBe("success");
+      if (likeRefusedInAutopilot(await again.run(next), again, mode)) continue;
       expect([again.st.asked, again.st.reviewed, again.st.announced], next).toEqual([[next], [], []]);
       const decided = again.st.audit.find(e => e.phase === "decided")!;
       expect(decided).toMatchObject({ verdict: "ask" });
@@ -614,7 +625,7 @@ describe("a command the user said no to, through the flow (commands-remote-r9-8)
     const h = commands(["deny"], { review: false });
     await h.run("rm -rf build");
     const cards: string[][] = [];
-    const again = commands([], { refusals: h.refusals, autopilot: true, review: false });
+    const again = commands([], { refusals: h.refusals, review: false });
     (again.ctx.confirmer as unknown as { ask: unknown }).ask = (async (q: { panel: { card: { says: string[] } } }) => { cards.push(q.panel.card.says); return "deny"; }) as never;
     await again.run("git clean -fdx");
     expect(cards[0][0]).toBe(LIKE_REFUSED_LINE);
@@ -627,7 +638,7 @@ describe("a command the user said no to, through the flow (commands-remote-r9-8)
       expect((await h.run(first)).textResultForLlm, first).toMatch(/^The user said no\./);
       for (const mode of [{ review: true }, { review: false, autopilot: true }, { review: false }]) {
         const again = commands(["once"], { refusals: h.refusals, words: "update main on github", ...mode });
-        expect((await again.run(later)).resultType, `${first} => ${later}`).toBe("success");
+        if (likeRefusedInAutopilot(await again.run(later), again, mode)) continue;
         expect([again.st.asked, again.st.reviewed, again.st.announced], `${first} => ${later}`).toEqual([[later], [], []]);
         expect(again.st.audit.find(e => e.phase === "decided")!.rules as string[]).toContain(LIKE_REFUSED_RULE);
       }
@@ -642,7 +653,7 @@ describe("a command the user said no to, through the flow (commands-remote-r9-8)
     expect((await h.run(refused)).textResultForLlm).toMatch(/^The user said no\./);
     for (const mode of [{ review: true }, { review: false, autopilot: true }, { review: false }]) {
       const again = commands(["once"], { refusals: h.refusals, ...mode });
-      expect((await again.run(next)).resultType, next).toBe("success");
+      if (likeRefusedInAutopilot(await again.run(next), again, mode)) continue;
       expect([again.st.asked, again.st.reviewed, again.st.announced], next).toEqual([[next], [], []]);
       expect(again.st.audit.find(e => e.phase === "decided")!.rules as string[]).toContain(LIKE_REFUSED_RULE);
     }
@@ -658,20 +669,23 @@ describe("a command the user said no to, through the flow (commands-remote-r9-8)
     }
   });
 
-  it("asks about the same kind of danger to something else, and leaves another kind as it was: another branch asks in Autopilot, a deletion after a refused push is announced (modes-y9-y9-1)", async () => {
+  it("refuses the same kind of danger to something else in Autopilot, and leaves another kind as it was: another branch is refused, a deletion after a refused push is announced (modes-y9-y9-1; the owner's decision of 2026-11-14)", async () => {
     const push = commands(["deny"], { review: false, words: "" });
     expect((await push.run("git push origin main")).textResultForLlm).toMatch(/^The user said no\./);
     const auto = commands(["once"], { refusals: push.refusals, autopilot: true, review: false, words: "" });
-    expect((await auto.run("git push origin feature")).resultType).toBe("success");
+    expect((await auto.run("git push origin feature")).textResultForLlm).toBe(LIKE_REFUSED_AUTOPILOT);
     expect((await auto.run("rm -rf build")).resultType).toBe("success");
-    expect([auto.st.asked, auto.st.announced]).toEqual([["git push origin feature"], ["rm -rf build"]]);
-    for (const [refused, next] of [["frobnicate build", "othertool --version"], ["cargo frob", "cargo zork"]]) {
-      const h = commands(["deny"], { review: false });
-      expect((await h.run(refused)).textResultForLlm).toMatch(/^The user said no\./);
-      const again = commands(["once"], { refusals: h.refusals, review: false });
-      expect((await again.run(next)).resultType, next).toBe("success");
-      expect(again.st.asked, next).toEqual([next]);
-    }
+    expect([auto.st.asked, auto.st.announced]).toEqual([[], ["rm -rf build"]]);
+    // A program Ember doesn't know is announced, but after a no to code Ember couldn't read it may be that code done
+    // another way, so it asks.
+    const fresh = commands([], { review: false });
+    expect((await fresh.run("othertool --version")).resultType).toBe("success");
+    expect([fresh.st.asked, fresh.st.announced]).toEqual([[], ["othertool --version"]]);
+    const h = commands(["deny"], { review: false });
+    expect((await h.run("eval \"$X\"")).textResultForLlm).toMatch(/^The user said no\./);
+    const again = commands(["once"], { refusals: h.refusals, review: false });
+    expect((await again.run("othertool --version")).resultType).toBe("success");
+    expect([again.st.asked, again.st.announced]).toEqual([["othertool --version"], []]);
   });
 
   it("asks about a deletion by command after a no to a deletion in an app, whatever it names: no word of the step refuses a command (modes-y9-2, modes-y9-y9-3)", async () => {
@@ -679,8 +693,10 @@ describe("a command the user said no to, through the flow (commands-remote-r9-8)
     refusals.noteStep(stepMarksForCommands(["delete"]), "refused");
     for (const mode of [{ review: true }, { review: false, autopilot: true }, { review: false }]) {
       const h = commands(["once", "once"], { refusals, ...mode });
-      expect((await h.run("rm ~/report.pdf")).resultType).toBe("success");
-      expect((await h.run("rm -rf build")).resultType).toBe("success");
+      const a = await h.run("rm ~/report.pdf");
+      const b = await h.run("rm -rf build");
+      if (mode.autopilot) { expect([a.textResultForLlm, b.textResultForLlm, h.st.asked, h.st.announced]).toEqual([LIKE_REFUSED_AUTOPILOT, LIKE_REFUSED_AUTOPILOT, [], []]); continue; }
+      expect([a.resultType, b.resultType]).toEqual(["success", "success"]);
       expect([h.st.asked, h.st.reviewed, h.st.announced]).toEqual([["rm ~/report.pdf", "rm -rf build"], [], []]);
     }
   });

@@ -2856,7 +2856,7 @@
   },
   {
    "cmd": "node_modules\\.bin\\cross-env.cmd NODE_ENV=test jest",
-   "verdict": "ask",
+   "verdict": "announce",
    "rules": [
     "unknown.program"
    ]
@@ -2879,7 +2879,7 @@
   },
   {
    "cmd": "frobnicate X=C:\\Windows\\x.dll",
-   "verdict": "ask",
+   "verdict": "announce",
    "rules": [
     "unknown.program"
    ],
@@ -2887,7 +2887,7 @@
   },
   {
    "cmd": "frobnicate C:data.txt",
-   "verdict": "ask",
+   "verdict": "announce",
    "words": "use frobnicate",
    "rules": [
     "unknown.program"
