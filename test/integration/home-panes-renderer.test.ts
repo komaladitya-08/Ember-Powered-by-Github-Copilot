@@ -764,7 +764,7 @@ describe.skipIf(gate)("Home's Apps & privacy, as the person's own settings and t
     const plug = () => page.locator("#privacy-terms li[data-icon='plug']").innerText();
     expect(await page.locator("#mode-interactive").getAttribute("aria-checked")).toBe("true");
     expect(await plug()).toBe("Other computers and commands: you let Ember run commands on this computer. It runs commands only in its own window, where you can watch and stop them. Other computers are off until you turn them on.");
-    expect(await hand()).toMatch(/^It asks before acting on anything risky or hard to undo\. For ordinary steps it tells you what it's doing instead \(How Ember asks, below\)\. It never lets the AI model type or see passwords\./);
+    expect(await hand()).toMatch(/^It asks before acting on anything risky or hard to undo, except a command you asked for exactly, which it shows you first with a few seconds to stop it\. For ordinary steps it tells you what it's doing instead \(How Ember asks, below\)\. It never lets the AI model type or see passwords\./);
     // First run's own words are untouched.
     expect(await page.locator("#w-full li[data-icon='plug']").evaluate(e => e.textContent)).toContain("are off until you turn them on");
     expect(await page.locator("#w-full li[data-icon='hand']").evaluate(e => e.textContent)).toContain("It asks before acting in an app unless you turn on Interactive, when you agree or later in settings. It also asks before anything hard to undo, unless you asked for exactly that command (it shows it first, with a few seconds to stop it) or later choose Assisted or Autopilot in settings, which ask less.");
@@ -834,7 +834,7 @@ describe.skipIf(gate)("Home's Apps & privacy, as the person's own settings and t
     const hand = await page.locator("#privacy-terms li[data-icon='hand']").innerText();
     expect(hand).not.toContain("it tells you what it's doing instead");
     expect(hand).not.toContain("without asking (below)");
-    expect(hand).toMatch(/^It asks before acting in an app, and always before anything hard to undo\. It never lets the AI model type or see passwords\./);
+    expect(hand).toMatch(/^It asks before acting in an app, and always before anything hard to undo, except a command you asked for exactly, which it shows you first with a few seconds to stop it\. It never lets the AI model type or see passwords\./);
     expect(await page.locator("#privacy-terms li[data-icon='plug']").innerText()).toBe("Other computers and commands are turned off by your organisation.");
     // Screenshots too, as a lockdown read at start says, and the switches under the fold as it says they are
     // (safety-privacy-w5-2): the settings still hold Send screenshots for tasks on and Interactive chosen and agreed to.
@@ -880,7 +880,7 @@ describe.skipIf(gate)("Home's Apps & privacy, as the person's own settings and t
     expect(await notice()).toMatch(/^Some settings are managed by your organisation \(\/etc\/ember\/policy\.json\)\./);
     // The policy file changes while Ember runs: main sends the held lockdown, as a status read would carry it.
     await page.evaluate(a => window.__pane.emit("onAdminChanged", a), homeAdmin(heldUntilRestart(ordinary)));
-    await expect.poll(() => line("hand")).toMatch(/^It asks before acting in an app, and always before anything hard to undo\. It never lets the AI model type or see passwords\./);
+    await expect.poll(() => line("hand")).toMatch(/^It asks before acting in an app, and always before anything hard to undo, except a command you asked for exactly, which it shows you first with a few seconds to stop it\. It never lets the AI model type or see passwords\./);
     expect(await line("send")).toContain("nothing is sent to a model service until you restart Ember, so Ember can't answer or act.");
     expect(await line("send")).not.toContain("GitHub Copilot");
     expect(await line("eye")).toContain("Send screenshots for tasks is off (below), so it takes no screenshots for tasks.");
@@ -917,7 +917,7 @@ describe.skipIf(gate)("Apps & privacy › How Ember asks, with a keyboard and a 
     const row = page.locator("#mode-interactive");
     expect(await row.getAttribute("role")).toBe("radio");
     expect(await row.getAttribute("aria-checked")).toBe("false");
-    expect(await row.innerText()).toMatch(/^Interactive\s+Ember tells you about ordinary steps as it does them, and asks before anything risky, such as sending, deleting or paying\.$/);
+    expect(await row.innerText()).toMatch(/^Interactive\s+Ember tells you about ordinary steps as it does them, and asks before anything risky, such as sending, deleting or paying, unless it is a command you asked for exactly: then it tells you first\.$/);
     expect(await page.locator("#approvals-note").innerText()).toBe("Until you agree to Interactive, Ember asks before its first step in an app, before using your mouse and keyboard, before pressing OK on an app's message box and before moving text between apps.");
     // The card is there to read and agree to, but the keyboard stays where it was.
     expect(await page.locator("#approvals-card").isVisible()).toBe(true);
