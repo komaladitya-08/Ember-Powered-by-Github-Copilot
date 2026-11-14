@@ -3003,6 +3003,8 @@ function start(): void {
         modelsReady: voice?.modelsReady ?? false,
         interactiveAgreed: modeAgreed(own.approvals, "interactive"),
         commandsCard: card !== null,
+        // A chosen Assisted or Autopilot in force on its own card stays (first-run-c12-1).
+        modeAbove: (m => (m === "assisted" || m === "autopilot" ? m : null))(approvalsState(own.approvals, policy).inForce),
       };
     },
     commandsCard: () => { const c = targets?.firstRunCommandsCard() ?? null; return c ? { title: c.title, body: c.body, sha256: c.sha256 } : null; },

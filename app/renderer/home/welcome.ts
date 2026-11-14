@@ -25,7 +25,7 @@ import {
   ACTION_LABEL, failureView, inMyVoice, keyPlaceholder, modelRows, ownProviderOffer, PROVIDER_STEP, providerCheckLine, providerFailField, providerModelMissing, providerInUse, providerInUseLine, providerKeepLabel, providerKeptLine, signInWays, taskModelChoices, type FailureAction,
 } from "./first-run-copy";
 import {
-  CHECK_AGAIN, CHECKS_DETAIL, recheckMessage, CONSENT_AGAIN, CONSENT_TEXT, checkState, checksNext, NAV, signInText, SKIP_OWN, SKIP_SIGN_IN, START_LABEL, STEP_TEXT, SUMMARY_NOTE, TRY_TEXT, WELCOME_STEPS, checksHeadline, checksLater, switchedLine,
+  CHECK_AGAIN, CHECKS_DETAIL, recheckMessage, CONSENT_AGAIN, keptModeLine, CONSENT_TEXT, checkState, checksNext, NAV, signInText, SKIP_OWN, SKIP_SIGN_IN, START_LABEL, STEP_TEXT, SUMMARY_NOTE, TRY_TEXT, WELCOME_STEPS, checksHeadline, checksLater, switchedLine,
   DEFAULT_SIZE, FIRST_RUN_ROWS_TEXT, aboutNext, askWhy, consentPoints, firstRunFailed, firstRunRowText, firstRunWhy, firstStep, gated, plainChecks, serviceSummary, signInView, stepAfter, stepBefore, stepCount, stepLanding, stepPosition, summaryRows, voiceTry, type WelcomeStep,
 } from "./welcome-copy";
 
@@ -298,6 +298,12 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
       $("w-changes-list").replaceChildren(...changed.map(text => el("li", { textContent: text })));
     }
     renderRows();
+    // A returning user's Assisted or Autopilot stays: said under what changed, which speaks of Interactive (first-run-c12-1).
+    const kept = changed.length && !consented() ? rowsView?.keptMode : undefined;
+    const keptText = kept ? keptModeLine(kept) : "";
+    const keptEl = $("w-changes-mode");
+    if (keptEl.textContent !== keptText) keptEl.textContent = keptText;
+    if (keptEl.hidden !== !keptText) keptEl.hidden = !keptText;
     const note = consented() ? [CONSENT_TEXT.agreed, agreeNote].filter(Boolean).join(" ") : declined ? CONSENT_TEXT.declined : agreeNote;
     if ($("w-consent-note").textContent !== note) $("w-consent-note").textContent = note;
     if (consented()) return { label: NAV.next, why: "", alt: "" };

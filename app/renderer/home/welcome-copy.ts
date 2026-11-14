@@ -190,6 +190,16 @@ export const CONSENT_AGAIN = {
   changes: "What's new",
 } as const;
 
+/**
+ * Under what changed, for a returning user whose Assisted or Autopilot stays in force (first-run-c12-1): their mode
+ * stays as they chose it, and what the step says about asking is Interactive's, the default's.
+ */
+export function keptModeLine(mode: "assisted" | "autopilot"): string {
+  return mode === "autopilot"
+    ? "You chose Autopilot, and it stays as you chose it: I don't ask, and tell you what I do as I go. What this page says about when I ask is for Interactive, the default."
+    : "You chose Assisted, and it stays as you chose it: where I would ask, I first check the step against what you asked. What this page says about when I ask is for Interactive, the default.";
+}
+
 /** The consent step's buttons and what "Not now" says. */
 export const CONSENT_TEXT = {
   agree: "Agree and continue",

@@ -36,8 +36,10 @@ export interface FirstRunDeps {
 /** The view the consent step draws: none of the rows once the current consent is recorded. */
 export function firstRunView(d: Pick<FirstRunDeps, "facts" | "consented" | "commandsCard">): FirstRunView {
   if (d.consented()) return { rows: [], commands: null };
-  const rows = firstRunRows(d.facts());
-  return { rows, commands: rows.some(r => r.row === "commands") ? d.commandsCard() : null };
+  const facts = d.facts();
+  const rows = firstRunRows(facts);
+  const kept = facts.returning && facts.modeAbove ? { keptMode: facts.modeAbove } : {};
+  return { rows, commands: rows.some(r => r.row === "commands") ? d.commandsCard() : null, ...kept };
 }
 
 /** What a row's own card records, as one settings change (commands and Interactive go through their own paths). */

@@ -14,6 +14,7 @@ import { AGREE_ARM_MS } from "../../app/shared/provider";
 import { CONSENT_VERSION } from "../../app/shared/consent";
 import { commandsConsent } from "../../app/main/targets/consent";
 import { AUTONOMY_CONSENT_TEXT, MEMORY_CONSENT_TEXT, SCREEN_IMAGES_TEXT, memoryTroubleText } from "../../app/renderer/home/copy";
+import { keptModeLine } from "../../app/renderer/home/welcome-copy";
 
 declare global {
   interface Window {
@@ -1795,6 +1796,25 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     await expect.poll(() => first.locator("#w-title").innerText()).toBe("What I do, and what I don't");
     expect(await first.locator("#w-changes").isHidden()).toBe(true);
     expect((p as Page & { errors: string[] }).errors).toEqual([]);
+  });
+
+  it("(q2) someone whose Autopilot or Assisted stays is told so under what changed, and offered no Interactive row (first-run-c12-1)", async () => {
+    for (const mode of ["autopilot", "assisted"] as const) {
+      const p = await open({ consent: 10, agent: readyAgent(), firstRun: { rows: [], commands: null, keptMode: mode } as never });
+      expect(await p.locator("#w-title").innerText()).toBe("What's changed since you last agreed");
+      await expect.poll(() => p.locator("#w-changes-mode").innerText()).toBe(keptModeLine(mode));
+      expect(await p.locator("#w-changes-mode").isVisible()).toBe(true);
+      expect(await p.locator(".w-row").count()).toBe(0);
+      expect(await p.locator("#w-rows").isHidden()).toBe(true);
+      if (process.env.EMBER_UI_EVIDENCE) {
+        fs.mkdirSync(process.env.EMBER_UI_EVIDENCE, { recursive: true });
+        await p.screenshot({ path: path.join(process.env.EMBER_UI_EVIDENCE, `consent-kept-${mode}.png`), fullPage: true });
+      }
+      expect((p as Page & { errors: string[] }).errors).toEqual([]);
+    }
+    // Someone in Interactive or below is told nothing of the kind.
+    const p = await open({ consent: 10, agent: readyAgent() });
+    expect(await p.locator("#w-changes-mode").isHidden()).toBe(true);
   });
 
   it("(q3) with my own provider in force, the consent's short form says my requests go to it, as the full text does, never to Copilot (first-run-r2-2)", async () => {

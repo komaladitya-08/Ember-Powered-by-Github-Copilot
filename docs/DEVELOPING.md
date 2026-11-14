@@ -156,7 +156,9 @@ environment, only through `scripts/runtime-env-live.sh`, which gives it a networ
   that can't be saved is left off without consent and the step says so before going on. A row switched off records
   nothing (a new user's listening and screenshots are written off in the same saved change as the consent, and only a
   row left on turns them back on, in its own). Someone who agreed to an earlier version sees what changed and
-  only Interactive's row: the rest of their settings stay as they are. Nothing in a settings file is in force before the
+  only Interactive's row: the rest of their settings stay as they are. One whose Assisted or Autopilot is in force on
+  its own card gets no row, and is told under what changed that their mode stays as they chose it and that what the
+  step says about asking is Interactive's (`keptModeLine`, `FirstRunView.keptMode`; first-run-c12-1). Nothing in a settings file is in force before the
   agreement, and the features with a card of their own (commands, memory, `voice.consent`, Interactive) stay off in
   `settings.ts` until agreed, so a settings file without the agreement never gains one. A new user's listening and
   screenshots rows that aren't turned on (switched off, managed, or listening without the speech models) write
