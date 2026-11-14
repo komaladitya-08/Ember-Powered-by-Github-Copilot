@@ -419,6 +419,13 @@ describe("Ember's own files reached by what a field or a file dialog holds, not 
     expect(engine("interactive", "linux").decide(own).prompt).not.toContain(EMBER_DATA_UNREAD_QUESTION);
     // The browser's own file chooser, a native window, is still judged as a file dialog it can't read whole.
     asksOrRefused("linux", "firefox", req("firefox", "Save As", { kind: "click", element: { role: "push button", name: "Save" } }), "native chooser");
+    // An Electron app's own window is a web view too, and it does save to disk: its "Save As" it can't read whole still
+    // asks (Autopilot refuses it), as without the web view (integ-x-5).
+    for (const x of [{ onPage: true }, { inPage: true }, { onPage: true, dialog: { name: "Save As", text: "Name:", page: true } }] as Partial<ActionRequest>[]) {
+      const save = req("code", "Save As", { kind: "click", element: { role: "push button", name: "Save" }, ...x });
+      expect(mayReachEmberData(save), JSON.stringify(x)).toBe(true);
+      asksOrRefused("linux", "code", save, `electron ${JSON.stringify(x)}`);
+    }
   });
 
   it("reads a file dialog's fields, its path bar and its chosen rows as it is when the step is taken, and leaves its fields unknown when one can't be read (safety-privacy-r11-1)", () => {
