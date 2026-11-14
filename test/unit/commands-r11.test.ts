@@ -203,3 +203,15 @@ describe("git's plumbing and submodules that throw away work not committed (comm
     }
   });
 });
+
+describe("a workload's manifest or helm's values written out whole (commands-remote-y10-7)", () => {
+  it("files them as secrets, so Interactive asks and Autopilot keeps the output from the model", () => {
+    for (const cmd of ["kubectl get deploy x -o yaml", "kubectl get pod web -o json", "kubectl get cm app -o yaml", "kubectl get deployment/x -oyaml", "oc get sts db -o yaml",
+      "kubectl -n prod get configmap app --output=json", "kubectl get cronjob backup -o jsonpath='{.spec}'", "helm get values x -a", "helm get values x --all", "helm get all x", "helm get manifest x"]) {
+      const r = result(cmd);
+      expect(r.decision.verdict, cmd).toBe("ask");
+      expect(keptQuestion(r.decision, r.cls.findings), cmd).toBe("secret");
+    }
+    for (const cmd of ["kubectl get pods", "kubectl get deploy -o wide", "helm get values x", "kubectl get svc x -o yaml"]) expect(decide(cmd).classes, cmd).not.toContain("secret");
+  });
+});

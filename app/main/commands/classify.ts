@@ -8249,6 +8249,19 @@ git(["worktree"], h => {
 });
 // checkout-index writes each file at <prefix><path>: a prefix ending in a slash is a folder, any other the start of
 // each name (review #169). Without one it writes the work tree's own files (writesUnnamedFiles).
+/** Kubernetes kinds whose manifest holds a container's environment or a config's values (`kubectl get deploy -o yaml`). */
+const K8S_HOLDS_ENV = /^((deploy(ment)?s?|po(d|ds)?|sts|statefulsets?|ds|daemonsets?|jobs?|cronjobs?|cj|rs|replicasets?|cm|configmaps?|all)(\.[a-z.]+)?)(\/|,|$)/;
+/** Does kubectl's `-o`/`--output` write the objects out whole (yaml, json, a template), or is it one Ember can't see? */
+function wholeOutput(args: readonly Arg[]): boolean {
+  return args.some((a, k) => {
+    const m = /^(?:-o|--output)(?:=?(.*))?$/.exec(a.v ?? "");
+    if (a.v === null || !m) return false;
+    const format = m[1] !== undefined && m[1] !== "" ? m[1] : args[k + 1]?.v ?? null;
+    // A template that picks only names and states (`{.items[0].metadata.name}`) holds none of the environment.
+    if (format !== null && /^(jsonpath|go-template|template)/.test(format) && /\.(metadata|status)\./.test(format) && !/\.(env|data|stringData|spec|value|containers)\b|\{\.?\}|\{\.items\}/i.test(format)) return false;
+    return format === null || /^(yaml|json|jsonpath|go-template|template)/.test(format);
+  });
+}
 /** What throws away work not yet committed: the class of commands-remote-c11-4 (git's plumbing and submodules). */
 const DISCARDS = "Overwrites files in the working folder, throwing away changes that weren't committed.";
 // read-tree with --reset, or -u (which writes the tree's files into the working folder), throws away what wasn't
@@ -8987,7 +9000,12 @@ reg(NATIVE, Object.keys(CLOUD_CLIS), h => {
     || (h.key === "az" && (/^(get-access-token|login)$/.test(verb) || all.startsWith("account get-access-token")))
     || (h.key === "gcloud" && /^auth\b/.test(all) && /(print-access-token|print-identity-token|login|activate-service-account)/.test(all))
     || ((h.key === "kubectl" || h.key === "oc") && ((verbs[0] === "config" && verbs[1] === "view" && h.args.some(a => a.v === "--raw" || a.v === "--flatten")) || (verbs[0] === "get" && /^secrets?$/.test(verbs[1] ?? "") && h.args.some(a => /^-o(yaml|json|=|$)|^--output/.test(a.v ?? "")))))
-    || (h.key === "vault" && (/^(read|login|token|unwrap)$/.test(verb) || all.startsWith("kv get")))) {
+    || (h.key === "vault" && (/^(read|login|token|unwrap)$/.test(verb) || all.startsWith("kv get")))
+    // A workload's or a config map's manifest written out whole holds its environment's values, passwords and tokens
+    // put there included, and helm's values with every default or its whole release hold the chart's secrets
+    // (commands-remote-y10-7).
+    || ((h.key === "kubectl" || h.key === "oc") && verbs[0] === "get" && K8S_HOLDS_ENV.test(verbs[1] ?? "") && wholeOutput(h.args))
+    || (h.key === "helm" && verbs[0] === "get" && (/^(all|manifest|values)$/.test(verbs[1] ?? "")) && (verbs[1] !== "values" || h.args.some(a => /^(-a|--all)$/.test(a.v ?? ""))))) {
     h.e.add("secret", "secret.cloud", SAYS.secrets, { program: `${h.key} ${verb}` });
     return;
   }
