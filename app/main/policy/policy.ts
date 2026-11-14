@@ -778,11 +778,14 @@ export const namesEmberData = (text: string | undefined): boolean => !!text && E
  * Ember's own files by name (settings.json, the audit log's months, the mode's seal, the provider's key, its host and
  * its yes's seal, the vault, extensions.json, the organisation's policy.json, the GitHub token, the sign-out flag in
  * agent.json, routines, memory and its vectors, the kept conversation and its erasure mark, the voiceprint, the
- * personal words, the run marker and the log), and its data and audit folders' own names as a file manager titles a
- * window that shows them ("ember", "audit": lower case, as Ember makes them; the ~/Ember hand-off folder is "Ember").
- * Every file Ember keeps in its data folder is here: ember-data-reach.test.ts reads them from the source (integ-x-3).
+ * personal words, the run marker, the log and the project workspaces' files), and its data and audit folders' own
+ * names as a file manager titles a window that shows them ("ember", "audit": lower case, as Ember makes them; the
+ * ~/Ember hand-off folder is "Ember"). These are the names that say whose a file is with no folder in sight: every file
+ * Ember keeps at its data folder's top level under a name of its own (ember-data-reach.test.ts reads them from the
+ * source, integ-x-3, integ-y-3). Anything under the data folder, whatever its name (its sub-folders: extensions,
+ * copilot, models, logs, desk-profiles), is Ember's by its path (namesEmberData, emberPathReach).
  */
-const EMBER_FILE = /^(?:settings\.json|audit-\d{4}-\d{2}\.jsonl|approvals-seal\.bin|provider-key\.(?:bin|host)|provider-seal\.bin|vault\.json|extensions\.json|policy\.json|github-token\.bin|agent\.json|routines\.json|memory(?:-vectors)?\.json|conversation\.(?:json|erased)|voiceprint\.json|words\.json|run\.json|ember\.log)$/i;
+const EMBER_FILE = /^(?:settings\.json|project-workspaces-[\w-]+\.bin|audit-\d{4}-\d{2}\.jsonl|approvals-seal\.bin|provider-key\.(?:bin|host)|provider-seal\.bin|vault\.json|extensions\.json|policy\.json|github-token\.bin|agent\.json|routines\.json|memory(?:-vectors)?\.json|conversation\.(?:json|erased)|voiceprint\.json|words\.json|run\.json|ember\.log)$/i;
 const EMBER_FOLDER = /^(?:ember|audit)$/;
 /** A title's name before the app's own part ("settings.json — Kate", "*settings.json - Notepad", "audit - File Explorer"). */
 const titleName = (title: string): string => title.replace(/\s+[-—–]\s+.*$/, "").replace(/^[*•●]\s*/, "").replace(/\s*[*•●]$/, "").trim();
