@@ -620,7 +620,9 @@ function leadsIn(piece: string): boolean {
   }
   if (!LEAD_IN.test(piece) || FOREIGN_MARKS.test(piece) || languageOf(piece, 1) !== null) return false;
   const tokens = piece.split(/\s+/u).filter(t => /\p{L}/u.test(t));
-  const own = tokens.filter((t, i) => !/^\p{Lu}/u.test(t) || (i === 0 && !/['’]s\W*$/u.test(t)));
+  // A first word before a saying verb is a name too ("José wrote:"): r10-voice-y10-1.
+  const named = /['’]s\W*$/u.test(tokens[0] ?? "") || /^(?:wrote|writes|says|said)\W*$/u.test(tokens[1] ?? "");
+  const own = tokens.filter((t, i) => !/^\p{Lu}/u.test(t) || (i === 0 && !named));
   return !ACCENTED.test(own.join(" ")) && !/[^\p{Script=Latin}\P{L}]/u.test(piece);
 }
 

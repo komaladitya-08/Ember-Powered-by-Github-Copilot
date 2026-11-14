@@ -1335,7 +1335,8 @@ and one of Ember's own closing words ("want", "shall", "reply", "anything", "els
 `ownClosing`; a piece of one word only with "reply", "translate", "anything", "forward" or "draft", so a Dutch email's
 own "Help!" keeps its voice: r10-voice-x10-3), or the pronoun "I" after its first word, is Kitten's too: "Want me to reply?", "Shall I reply?" and
 "Anything else?" took the passage's voice, or went unsaid without one, in 28 of 44 cases while the follow-up window
-opened for them (voice-speaking-r10-1; now none, and the passage's own sign-offs, "Grazie mille, Marco.", keep its
+opened for them (voice-speaking-r10-1; now none, also after a lead-in that opens with a name and a saying verb, "José
+wrote:" (r10-voice-y10-1), though not yet after a bare "José:"; and the passage's own sign-offs, "Grazie mille, Marco.", keep its
 voice).) The answer is judged in passages: after a lead-in said in Kitten's voice (a piece that ends with a colon: "Here is the email
 from José:", also one that came in the same piece as the passage's first sentence), and from the first sentence that may
 be another language's in an answer that looked English so far ("Okay, reading it now."), what follows is judged by

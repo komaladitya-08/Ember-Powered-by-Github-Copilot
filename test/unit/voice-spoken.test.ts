@@ -628,6 +628,15 @@ describe("AnswerLanguage judges a passage read out after an English lead-in by t
     expect(said.slice(1, -1).map(p => p.lang)).toEqual(said.slice(1, -1).map(() => lang));
   });
 
+  // A lead-in that opens with a name with an accent and a saying verb ("José wrote:") wasn't counted as Ember's, so the
+  // passage was judged with it and the closing took the passage's voice in 28 of 44 cases (r10-voice-y10-1).
+  const NAMED = ["José wrote:", "José says:", "José writes:", "Ángel wrote:", "Zoë said:"];
+  it.each(LATIN.flatMap(lang => NAMED.flatMap(lead => ["Shall I reply?", "Want me to reply?", "Anything else?"].map(close => [lang, lead, close] as const))))("asks the closing question in Ember's own voice after a %s passage led in by %j: %j (r10-voice-y10-1)", (lang, lead, close) => {
+    const said = streamed(`${lead}\n\n${PASSAGES[lang]}\n\n${close}`);
+    expect(said.at(-1)).toEqual({ text: close, lang: null });
+    expect(said.slice(1, -1).map(p => p.lang)).toEqual(said.slice(1, -1).map(() => lang));
+  });
+
   // A passage's own one-word line that is also one of Ember's closing words ("Help!", which Dutch and German write too)
   // went to Kitten (r10-voice-x10-3).
   it.each([
