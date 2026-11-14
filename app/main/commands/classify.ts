@@ -5198,8 +5198,9 @@ const TEX_ENGINES = new Set(["latex", "pdflatex", "xelatex", "lualatex", "tex", 
 /**
  * A verb-keyed tool's verb against the ones Ember knows (ORDINARY_VERBS, commands-closed): the verb is the first word
  * that isn't an option or an option's value (by the tool's global grammar where it has one). One off the list, a
- * sub-verb off its list, an option that makes a known verb change a setting, or (`noRow`: a tool with no row) no verb
- * at all asks (`unknown.verb`), named with the verb for the user's words to match ("cabal exec", "stack exec").
+ * sub-verb off its list, or (`noRow`: a tool with no row) no verb at all is `unknown.verb`, announced by name and named
+ * with the verb for the user's words to match ("cabal exec", "stack exec"); an option that makes a known verb change a
+ * setting is `tool.setting`, which asks (the owner's decision of 2026-11-14).
  */
 function toolVerbs(h: H, tool: OrdinaryVerbs, noRow: boolean): void {
   const args = h.args;
