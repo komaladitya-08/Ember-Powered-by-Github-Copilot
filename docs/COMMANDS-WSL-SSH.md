@@ -173,7 +173,11 @@ Ember stops and asks before a command that:
   folders don't ask, such as your project's from its build folder, `qmake ..`, nor does an install prefix, `./configure
   --prefix ~/.local`), `git clean`,
   `git reset --hard`, discarding changes (`git checkout -- <file>`, `git restore`), `git branch -D`,
-  `git stash drop`, overwriting a file that exists (`>`, `cp` or `mv` onto it, `dd of=`, `tee` without `-a`; a `cp`
+  `git stash drop`, overwriting a file that exists (`>`, `cp` or `mv` onto it, `dd of=`, `tee` without `-a`, a
+  download saved over it by `curl -o`, `wget -O`, `aws s3 cp`, `rclone copyto`, `gh release download --clobber`,
+  `fetch -o`, Windows' `certutil -urlcache`, `bitsadmin /transfer` or `Start-BitsTransfer`, or a conversion saved over
+  it by `pandoc -o`, ImageMagick's `convert` or `magick`, `qpdf`, `pdftk … output` or `pdfunite`, unless its name is
+  the input's own, made again, or one for an output such as `out.pdf`; a `cp`
   or `mv` into a folder asks only when a file of the same name is in it, "Replaces ~/Documents/report.pdf if it
   exists.", on this computer, in WSL and on an SSH computer, which each say which names are folders; but
   `cp --parents`, `rsync -R` (`--relative`, `--files-from` or a `/./` in the name), which put a file at its path

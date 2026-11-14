@@ -126,3 +126,42 @@ describe("the user's no in their own ordinary words (commands-remote-r12-2)", ()
     ]) expect(ruled(words, command), `${words} / ${command}`).toBe(false);
   });
 });
+
+describe("a download or a conversion saved over a file that is there (y11-8)", () => {
+  const W = "C:\\Users\\ana\\Documents\\thesis.docx";
+  it("asks before it replaces an existing file, on Linux and Windows", () => {
+    for (const [cmd, shell, context] of [
+      ["aws s3 cp s3://b/k thesis.docx", "bash", "linux"], ["aws s3 cp s3://b/k ~/Documents/thesis.docx", "bash", "linux"],
+      ["rclone copyto r:a thesis.docx", "bash", "linux"], ["rclone moveto r:a thesis.docx", "bash", "linux"],
+      ["rclone copyurl https://x.example/a thesis.docx", "bash", "linux"],
+      ["gh release download v1 --clobber -O thesis.docx", "bash", "linux"], ["gh release download v1 -p '*.zip' --clobber", "bash", "linux"], ["gh run download 12 --clobber -D out", "bash", "linux"],
+      ["pandoc in.md -o thesis.docx", "bash", "linux"], ["pandoc --output=thesis.docx in.md", "bash", "linux"], ["pandoc -othesis.docx in.md", "bash", "linux"],
+      ["convert in.png thesis.png", "bash", "linux"], ["convert in.png -resize 50% thesis.png", "bash", "linux"], ["magick in.png thesis.png", "bash", "linux"],
+      ["qpdf in.pdf thesis.pdf", "bash", "linux"], ["pdftk a.pdf b.pdf cat output thesis.pdf", "bash", "linux"], ["pdfunite a.pdf b.pdf thesis.pdf", "bash", "linux"],
+      ["fetch -o thesis.docx https://x.example/a", "bash", "linux"], ["aria2c --allow-overwrite=true -o thesis.docx https://x.example/a", "bash", "linux"],
+      [`certutil -urlcache -f https://x.example/n.txt ${W}`, "powershell", "win32"], [`certutil -urlcache -split -f https://x.example/n.txt ${W}`, "cmd", "win32"],
+      [`bitsadmin /transfer j https://x.example/n.txt ${W}`, "cmd", "win32"],
+      [`Start-BitsTransfer -Source https://x.example/n.txt -Destination ${W}`, "powershell", "win32"], [`Start-BitsTransfer https://x.example/n.txt ${W}`, "powershell", "win32"],
+    ] as const) {
+      const d = decide(cmd, { shell, context });
+      expect(d.verdict, cmd).toBe("ask");
+      expect(d.classes, cmd).toContain("destroy");
+    }
+  });
+
+  it("runs as before where nothing is there to replace, and where the tool keeps what is there", () => {
+    for (const [cmd, missing] of [
+      ["aws s3 cp s3://b/k new.docx", "/home/ana/proj/new.docx"], ["rclone copyto r:a new.docx", "/home/ana/proj/new.docx"], ["pandoc in.md -o new.docx", "/home/ana/proj/new.docx"],
+      ["convert in.png new.png", "/home/ana/proj/new.png"], ["qpdf in.pdf new.pdf", "/home/ana/proj/new.pdf"],
+    ] as const) expect(decide(cmd, { missing: [missing] }).verdict, cmd).toBe("run");
+    // An output named for its input is that input made again: replacing it is ordinary.
+    for (const cmd of ["pandoc a.md -o a.html", "pandoc -o notes.pdf notes.md", "convert photo.png photo-small.jpg", "magick a.png -resize 50% a.jpg", "qpdf --linearize in.pdf in-web.pdf"]) {
+      expect(decide(cmd).verdict, cmd).toBe("run");
+    }
+    // aria2c renames rather than replaces by default; gh refuses an existing file without --clobber; a compiler's
+    // output is rebuilt from its source; an identify or a pandoc to stdout writes nothing.
+    for (const cmd of ["aria2c -o thesis.docx https://x.example/a", "gh release download v1 -O thesis.docx", "gcc -o a.out main.c", "identify in.png", "pandoc in.md", "convert -version", "aws s3 cp s3://b/k -"]) {
+      expect(decide(cmd).classes, cmd).not.toContain("destroy");
+    }
+  });
+});

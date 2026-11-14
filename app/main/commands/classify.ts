@@ -4351,7 +4351,7 @@ const KNOWN_ORDINARY = new Set([
 const NOT_RUNNERS = new Set([
   "trust", "plutil", "plistbuddy", "systemsetup", "update-ca-trust", "update-ca-certificates", "bazelisk", "sponge", "unrar", "dpkg-deb",
   "desktop-file-install", "desktop-file-edit", "update-desktop-database", "busybox", "caddy", "miniserve", "cloudflared", "ngrok", "tailscale",
-  "ssh-copy-id", "mount_smbfs", "mount_afp", "mount_webdav", "del", "scrub",
+  "ssh-copy-id", "mount_smbfs", "mount_afp", "mount_webdav", "del", "scrub", "qpdf", "pdftk", "pdfunite", "img2pdf",
 ]);
 /** Program keys that, as an unknown program's operand, suggest it runs them (a wrapper Ember doesn't know). */
 let RUNNERS: ReadonlySet<string> | null = null;
@@ -8550,6 +8550,12 @@ reg(NATIVE, ["gh"], h => {
     h.e.download(".", h.sc);
     const dp = parseOpts(rest, { shortValue: "DOnpAR", longValue: ["dir", "output", "name", "pattern", "archive", "repo"] });
     for (const d of values(dp, "D", "dir", "O", "output")) { if (d) h.e.download(d, h.sc); else h.e.markUnnamed(null, h.sc); }
+    // --clobber replaces what is there, which gh otherwise refuses (y11-8): the file -O names, or the folder's files.
+    if (has(dp, "clobber")) {
+      const out = optionWords(rest, dp, "O", "output");
+      if (out.length) for (const o of out) overwrites(h, o, "download.output");
+      else { const dirs = optionWords(rest, dp, "D", "dir"); for (const d of dirs.length ? dirs : [lit(".")]) overwritesInto(h, d); }
+    }
     return;
   }
   if ((group === "repo" || group === "gist") && sub === "clone") {
@@ -9092,7 +9098,17 @@ reg(NATIVE, Object.keys(CLOUD_CLIS), h => {
       h.e.add("publish", "upload.cloud", "Sends data to AWS S3.", { program: `aws s3 ${sub}` });
       return;
     }
-    if ((sub === "cp" || sub === "sync") && fromS3) { const dest = rest.filter(a => !isOption(a)).pop(); if (dest) { h.e.usePath(dest, "write", h.sc); h.e.download(dest.v, h.sc); } return; }
+    // A file or a folder here, replaced where it is there (y11-8): `cp`/`mv` of one key name a file unless --recursive.
+    if ((sub === "cp" || sub === "mv" || sub === "sync") && fromS3) {
+      const dest = rest.filter(a => !isOption(a)).pop();
+      if (dest) {
+        // (A folder it copies into is judged as before: files of the same name in it are replaced only where they differ.)
+        if (!(sub === "sync" || h.args.some(a => a.v === "--recursive" || a.v === "-r") || /[\\/]$/.test(dest.v ?? ""))) overwrites(h, dest, "download.output");
+        else h.e.usePath(dest, "write", h.sc);
+        if (dest.v !== null && dest.v !== "-") h.e.download(dest.v, h.sc);
+      }
+      return;
+    }
   }
   if (h.key === "gsutil" && /^(cp|mv|rsync)$/.test(verb)) {
     const ops = rest.filter(a => !isOption(a)).slice(1).map(a => a.v ?? "");
@@ -10190,9 +10206,11 @@ reg(NATIVE, ["aria2c", "fetch", "axel", "lwp-download"], h => {
     if (got.unnamed && dir !== null) h.e.downloadUnnamed(dir ?? ".", h.sc);
   };
   const outs = optionWords(h.args, p, "o", "out", "output");
+  // fetch's -o replaces a file that is there; aria2c renames instead unless told to overwrite (y11-8).
+  const clobbers = h.key === "fetch" || (h.key === "aria2c" && h.args.some(a => /^--allow-overwrite(=true)?$/.test(a.v ?? "")));
   for (const w of outs) {
     if (w.v === null) h.e.downloadTo(dir ? { ...w, parts: [`${dir}/`, ...(w.parts ?? [{ name: null }])] } : w, h.sc);
-    else if (w.v !== "-") saveAs(h, at(w.v));
+    else if (w.v !== "-") { if (clobbers) overwrites(h, lit(at(w.v)), "download.output"); saveAs(h, at(w.v)); }
   }
   if (h.key === "lwp-download" && p.operands.length >= 2) {
     const [url, to] = p.operands;
@@ -10413,6 +10431,8 @@ reg(NATIVE, ["rclone"], h => {
       // Files copied here from a remote (`rclone copy remote:x .`, `copyurl URL file`) are downloads: running one later
       // asks (commands-remote-r8-2). Into a folder (copy, sync, bisync), of unknown name; copyto/moveto name the file.
       if (/^(copy|copyto|sync|move|moveto|copyurl|bisync|rcat)$/.test(verb) && (verb === "copyurl" || ops.slice(0, -1).some(remote))) {
+        // What it saves replaces a file of the same name there (y11-8); sync's deleting is judged above.
+        if (dest && /^(copyto|moveto|rcat|copyurl)$/.test(verb)) overwrites(h, lit(dest), "download.output");
         if (/^(copyto|moveto|rcat)$/.test(verb) && dest) h.e.download(dest, h.sc);
         else if (verb === "copyurl") { const f = ops[ops.length - 1]; if (f && !remote(f)) h.e.download(f, h.sc); else h.e.markUnnamed(".", h.sc); }
         else h.e.markUnnamed(dest || ".", h.sc);
@@ -10697,6 +10717,17 @@ function overwrites(h: H, f: Arg, rule = "redirect.overwrite"): void {
   h.e.add("destroy", rule, `Overwrites ${obj.text} if it exists.`, obj.kind === "glob" ? { objects: [obj] } : { objects: [obj], ifExists: obj.abs });
 }
 
+/**
+ * A folder a program saves files into under their own names, told to replace what is there of the same name (`gh
+ * release download --clobber`): an overwrite where the folder exists, as rsync's is (y11-8). A folder Ember can't name
+ * is a write it can't name.
+ */
+function overwritesInto(h: H, dir: Arg, rule = "download.output"): void {
+  const obj = h.e.usePath(dir, "write", h.sc);
+  if (obj.abs === null) { h.e.add("destroy", rule, "Writes to a file Ember can't name."); return; }
+  h.e.add("destroy", rule, `Replaces files in ${obj.text} that have the same names.`, { objects: [obj], ifExists: obj.abs });
+}
+
 // Text tools that also write a file: sort -o, uniq's second operand, xxd's second operand, iconv -o, patch's file.
 reg(NATIVE, ["sort", "gsort"], h => {
   const p = opts(h, { shortValue: "ktoSTy", longValue: ["key", "field-separator", "output", "buffer-size", "temporary-directory", "parallel", "files0-from", "batch-size", "compress-program", "random-source", "sort"] });
@@ -10733,6 +10764,46 @@ reg(NATIVE, ["dos2unix", "unix2dos", "mac2unix", "unix2mac"], h => {
     if (pairs[k + 1].v && h.e.isDownloaded(pairs[k], h.sc)) h.e.carryDownload(pairs[k + 1].v ?? "", h.sc);
   }
   if (pairs.length % 2 === 1) h.e.readArgs([pairs[pairs.length - 1]], h.sc, { unresolvedUnclear: true });
+});
+/**
+ * Converters that write their result under a name the command gives, replacing a file there (y11-8): pandoc's `-o`,
+ * ImageMagick's last file (`convert in.png out.png`, `magick …`), qpdf's and pdfunite's last file, pdftk's `output`,
+ * img2pdf's `-o`. Unlike a compiler's `-o`, which is rebuilt from its source, what a converter's output name collides
+ * with may be the user's own document. On Windows `convert` is the system's disk converter, judged as a program Ember
+ * doesn't know (commands-closed-y9-4).
+ */
+/** A converter's output named as one (the converters' row below): `out`, `output`, `result`, `converted`, a scratch letter. */
+const CONVERTED_NAME = /^(?:out|output|outfile|result|results|converted|new|tmp|temp|test|preview|[a-z]|[a-z]?\d+)$/;
+reg(NATIVE, ["pandoc", "convert", "magick", "qpdf", "pdftk", "pdfunite", "img2pdf"], h => {
+  if (h.key === "convert" && h.sc.os === "win32") { unknownProgram(h); generic(h, true); return; }
+  const words = h.args.filter(a => a.v === null || !a.v.startsWith("-"));
+  // An output named for one of its inputs (`a.md` to `a.html`, `photo.png` to `photo-small.jpg`) is that input's
+  // rendering, made again from it, and one named as an output or a scratch file (`out.pdf`, `output.png`, `b.jpg`) is
+  // the command's own: replacing either is ordinary. Any other name may be another document of the user's.
+  const stem = (v: string): string => (v.split(/[\\/]/).pop() ?? "").replace(/\.[^.]*$/, "").toLowerCase();
+  const out = (f: Arg, inputs: readonly Arg[]): void => {
+    const s = f.v === null ? "" : stem(f.v);
+    if (s !== "" && (CONVERTED_NAME.test(s) || inputs.some(i => i !== f && i.v !== null && stem(i.v) !== "" && s.startsWith(stem(i.v))))) { h.e.usePath(f, "write", h.sc); return; }
+    overwrites(h, f);
+  };
+  if (h.key === "pandoc" || h.key === "img2pdf") {
+    const outs: Arg[] = [];
+    for (let k = 0; k < h.args.length; k++) {
+      const v = h.args[k].v ?? "";
+      if (v === "-o" || v === "--output") { const f = h.args[k + 1]; if (f) { outs.push(f); k++; } }
+      else if (v.startsWith("--output=")) outs.push(lit(v.slice("--output=".length)));
+      else if (/^-o./.test(v)) outs.push(lit(v.slice(2)));
+    }
+    const inputs = words.filter(w => !outs.includes(w));
+    for (const f of outs) out(f, inputs);
+    return;
+  }
+  if (h.key === "pdftk") { const k = h.args.findIndex(a => a.v === "output"); const f = k >= 0 ? h.args[k + 1] : undefined; if (f) out(f, h.args.slice(0, k)); return; }
+  // ImageMagick's own verbs that only read (`magick identify`, `magick compare` to a file is still a write).
+  if (h.key === "magick" && /^(identify|-?version|-?help)$/.test(words[0]?.v ?? "")) return;
+  if (h.key === "qpdf" && h.args.some(a => a.v === "--replace-input")) return;
+  // The last file is the output; one file alone (`convert -version`, `qpdf --check in.pdf`) writes nothing.
+  if (words.length >= 2) out(words[words.length - 1], words.slice(0, -1));
 });
 reg(NATIVE, ["uniq", "guniq"], h => {
   // --group and --all-repeated take a method only after = (commands-remote-i5a).
@@ -10805,7 +10876,8 @@ reg(NATIVE, ["certutil"], h => {
   // A key container deleted, and a certificate published or installed where it is trusted (r11-commands-y11-5).
   if (flags.some(f => /^[-/]delkey$/.test(f))) h.e.add("destroy", "certutil.delkey", "Deletes a key, which can't be got back.");
   if (flags.some(f => /^[-/](dspublish|importcert|installcert|addeccurve|deleteecccurve|setreg|delreg)$/.test(f))) h.e.add("system", "system.security", TRUST_SAYS);
-  if (flags.some(f => /^[-/]urlcache$/.test(f))) { const out = h.args.filter(a => !(a.v ?? "").startsWith("-") && !(a.v ?? "").startsWith("/")).pop(); if (out?.v && !URL_LIKE.test(out.v)) { h.e.usePath(out, "write", h.sc); h.e.download(out.v, h.sc); } }
+  // What -urlcache saves replaces a file of that name (y11-8).
+  if (flags.some(f => /^[-/]urlcache$/.test(f))) { const out = h.args.filter(a => !(a.v ?? "").startsWith("-") && !(a.v ?? "").startsWith("/")).pop(); if (out?.v && !URL_LIKE.test(out.v)) { overwrites(h, out, "download.output"); h.e.download(out.v, h.sc); } }
   // Its verbs are a closed list (commands-remote-c11-1): the ones that copy a file through an encoding read their input
   // and write (or, with -f, overwrite) their output, as copy does, so a key encoded or dumped asks as a secret, a document
   // decoded over asks, and a share or address as the output sends; -dump and the hash verbs read what they are given; a
@@ -11377,7 +11449,7 @@ reg(NATIVE, ["wscript", "cscript", "regsvr32", "regsvr", "installutil", "regasm"
 reg(NATIVE, ["bitsadmin"], h => {
   const a = h.args.map(x => (x.v ?? "").toLowerCase());
   if (a.includes("/upload")) { h.e.add("publish", "send.http", "Sends data to another computer."); return; }
-  if (a.includes("/transfer")) { const dest = h.args[h.args.length - 1]; if (dest?.v && !URL_LIKE.test(dest.v)) { h.e.usePath(dest, "write", h.sc); h.e.download(dest.v, h.sc); } return; }
+  if (a.includes("/transfer")) { const dest = h.args[h.args.length - 1]; if (dest?.v && !URL_LIKE.test(dest.v)) { overwrites(h, dest, "download.output"); h.e.download(dest.v, h.sc); } return; }
   if (a.some(x => /^\/(list|info|getstate|monitor|util|\?)/.test(x))) return;
   h.e.add("escape", "escape.background", SAYS.keepsRunning);
 });
@@ -12008,7 +12080,8 @@ reg(CMDLETS, ["start-bitstransfer"], h => {
   const dests = b.named.get("Destination") ?? [];
   for (const d of dests) {
     if (d.v === null) { h.e.downloadTo(d, h.sc); continue; }
-    h.e.usePath(d, "write", h.sc);
+    // BITS replaces a file that is there (y11-8).
+    overwrites(h, d, "download.output");
     h.e.download(d.v, h.sc);
   }
   // With no destination it saves into the current folder under the address's name (commands-remote-c5-2).
