@@ -9,10 +9,17 @@
  *
  * A value is never logged, returned by list(), or kept in memory here: open() decrypts one entry for main's fill and
  * returns it to that caller only. Plain Node: the keyring (SecretBox) is injected.
+ *
+ * A file that is there but can't be read whole (torn by a crash or a lost write, an entry that isn't well formed, a
+ * read error) is never written over (reliability-c12-1): it is kept aside as it is, `vault.json.bad-<time>` (moved
+ * where nothing in it could be read, copied where some entries still can), Home says the vault couldn't be read
+ * (`unreadable`), and nothing is filled from what couldn't be read. Where it can't be kept aside, nothing new is kept.
+ * Each write is flushed to the disk, the file and its folder, before it counts, as settings.json's is.
  */
 
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
+import path from "node:path";
 import type { SecretBox } from "../agent/auth";
 import {
   VAULT_KINDS, VAULT_MAX_ENTRIES, checkValues, sameDestination, validDestination,
@@ -43,8 +50,21 @@ function validEntry(v: unknown): v is FileEntry {
 export class VaultStore {
   /** Times everything was forgotten: a Save being sealed across one keeps nothing (Sign out, Forget everything). */
   private forgotten = 0;
+  /** The file was there but couldn't be read whole in this run (reliability-c12-1): Home says so. */
+  private trouble = false;
+  /** It couldn't be kept aside either: nothing is written over it. */
+  private stuck = false;
 
-  constructor(private file: string, private box: SecretBox, private opts: { asyncKeyring?: boolean; now?: () => number } = {}) {}
+  /**
+   * `keepAside` (tests): keeps the file Ember couldn't read at `to`, moved or copied; false when it couldn't be.
+   */
+  constructor(private file: string, private box: SecretBox, private opts: { asyncKeyring?: boolean; now?: () => number; keepAside?: (file: string, to: string, move: boolean) => boolean } = {}) {}
+
+  /** Was the vault's file there but unreadable, in whole or in part, in this run? It is kept aside, never written over. */
+  unreadable(): boolean {
+    this.read();
+    return this.trouble;
+  }
 
   /**
    * Can values be kept here? Only with a real keyring: never `basic_text` (the key would lie beside the file), nor a
@@ -133,7 +153,15 @@ export class VaultStore {
   /** Forgets every entry: the file goes. True when nothing is left on disk. */
   forgetAll(): boolean {
     this.forgotten++;
-    return this.remove();
+    // What was kept aside because it couldn't be read goes too: it holds sealed values all the same.
+    let aside = true;
+    try {
+      const dir = path.dirname(this.file), base = `${path.basename(this.file)}.bad-`;
+      for (const f of fs.readdirSync(dir)) if (f.startsWith(base)) { try { fs.rmSync(path.join(dir, f), { force: true }); } catch { aside = false; } }
+    } catch { /* no folder: nothing kept aside */ }
+    this.trouble = false;
+    this.stuck = false;
+    return this.remove() && aside;
   }
 
   private remove(): boolean {
@@ -142,30 +170,76 @@ export class VaultStore {
     return !fs.existsSync(this.file);
   }
 
-  /** The entries the file holds that are well formed; none when it is missing or unreadable. */
+  /** The entries the file holds that are well formed; none when it is missing or unreadable (then kept aside). */
   private read(): FileEntry[] {
     let text: string;
-    try { text = fs.readFileSync(this.file, "utf8"); } catch { return []; /* none kept yet */ }
-    try {
-      const v = JSON.parse(text) as unknown;
-      if (!isObj(v) || v.v !== 1 || !Array.isArray(v.entries)) return [];
-      return v.entries.filter(validEntry).slice(0, VAULT_MAX_ENTRIES);
-    } catch {
-      return []; // not one of these files
+    try { text = fs.readFileSync(this.file, "utf8"); } catch (err) {
+      // None kept yet; any other failure (EIO, EACCES) is a file that is there and can't be read.
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") this.setAside(true);
+      return [];
     }
+    let v: unknown;
+    try { v = JSON.parse(text); } catch { v = undefined; }
+    if (!isObj(v) || v.v !== 1 || !Array.isArray(v.entries)) {
+      this.setAside(true); // torn, or not one of these files: nothing in it can be read
+      return [];
+    }
+    const good = v.entries.filter(validEntry);
+    // Some entries can't be read: the file is kept as it is, and the ones that can still be used.
+    if (good.length !== v.entries.length) this.setAside(false);
+    return good.slice(0, VAULT_MAX_ENTRIES);
+  }
+
+  /**
+   * Keeps the file that couldn't be read whole aside, as it is (`move`: nothing in it could be read, so vault.json
+   * goes; else a copy, the entries that could be read staying in use). Once per run for a copy; where it can't be kept,
+   * nothing is written over it (stuck).
+   */
+  private setAside(move: boolean): void {
+    if (this.trouble && !move && !this.stuck) return;
+    this.trouble = true;
+    const to = `${this.file}.bad-${(this.opts.now ?? Date.now)()}`;
+    const keep = this.opts.keepAside ?? keepAside;
+    let kept = false;
+    try { kept = keep(this.file, to, move); } catch { kept = false; }
+    if (!kept) this.stuck = true;
+    else if (move) this.stuck = false;
   }
 
   private write(entries: FileEntry[]): boolean {
+    // Never over a file that couldn't be read and couldn't be kept aside (reliability-c12-1).
+    if (this.stuck) return false;
     if (!entries.length) return this.remove();
     const tmp = `${this.file}.${process.pid}.tmp`;
     try {
-      fs.writeFileSync(tmp, JSON.stringify({ v: 1, entries }), { mode: 0o600 });
+      const fd = fs.openSync(tmp, "w", 0o600);
+      try { fs.writeFileSync(fd, JSON.stringify({ v: 1, entries })); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
       fs.chmodSync(tmp, 0o600);
       fs.renameSync(tmp, this.file);
+      syncFolder(path.dirname(this.file));
       return true;
     } catch {
       try { fs.rmSync(tmp, { force: true }); } catch { /* nothing was written */ }
       return false;
     }
   }
+}
+
+/** Flushes a folder's entries (a rename) to the disk where the system can (not on Windows, where opening one fails). */
+function syncFolder(dir: string): void {
+  let fd: number | undefined;
+  try { fd = fs.openSync(dir, "r"); fs.fsyncSync(fd); } catch { /* Windows can't open a folder: its rename is already durable */ } finally {
+    if (fd !== undefined) { try { fs.closeSync(fd); } catch { /* closed already */ } }
+  }
+}
+
+/** Keeps `file` at `to` (0600), never over anything there: moved (a hard link, then the name removed) or copied. */
+function keepAside(file: string, to: string, move: boolean): boolean {
+  if (fs.existsSync(to)) return false;
+  if (move) {
+    try { fs.linkSync(file, to); } catch { fs.copyFileSync(file, to, fs.constants.COPYFILE_EXCL); }
+    fs.rmSync(file, { force: true });
+  } else fs.copyFileSync(file, to, fs.constants.COPYFILE_EXCL);
+  try { fs.chmodSync(to, 0o600); } catch { /* Windows keeps its own ACLs */ }
+  return true;
 }

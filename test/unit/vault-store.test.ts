@@ -360,3 +360,80 @@ describe("VaultStore", () => {
     expect(JSON.stringify(said)).not.toContain(CANARY);
   });
 });
+
+describe("a vault file Ember can't read", () => {
+  const aside = (dir: string) => fs.readdirSync(dir).filter(f => f.startsWith(`${VAULT_FILE}.bad-`));
+
+  it("keeps a torn file aside, untouched, says it can't be read, and saves a new entry beside it, never over it (reliability-c12-1)", async () => {
+    const dir = tmp(), file = path.join(dir, VAULT_FILE);
+    const store = new VaultStore(file, box());
+    expect((await store.add("login", GITHUB, login)).ok).toBe(true);
+    expect((await store.add("card", MAIL, card)).ok).toBe(true);
+    const whole = fs.readFileSync(file, "utf8");
+    fs.writeFileSync(file, whole.slice(0, whole.length - 3));
+    const torn = fs.readFileSync(file, "utf8");
+    // Read afresh, as at the next start: nothing listed, nothing to fill, and the reason said.
+    const next = new VaultStore(file, box());
+    expect(next.list()).toEqual([]);
+    expect(next.unreadable()).toBe(true);
+    const [kept] = aside(dir);
+    expect(kept).toBeDefined();
+    expect(fs.readFileSync(path.join(dir, kept), "utf8")).toBe(torn);
+    if (process.platform !== "win32") expect(fs.statSync(path.join(dir, kept)).mode & 0o777).toBe(0o600);
+    // A new entry is kept, and the torn file with the two before it is still there as it was.
+    expect((await next.add("login", { site: "https://gitlab.com" }, { user: "b", password: "pw2secretxyz" })).ok).toBe(true);
+    expect(next.list()).toHaveLength(1);
+    expect(aside(dir)).toEqual([kept]);
+    expect(fs.readFileSync(path.join(dir, kept), "utf8")).toBe(torn);
+    expect(next.unreadable()).toBe(true);
+  });
+
+  it("keeps aside a file with an entry it can't read, and still lists and fills the ones it can (reliability-c12-1)", async () => {
+    const dir = tmp(), file = path.join(dir, VAULT_FILE);
+    const store = new VaultStore(file, box());
+    const a = await store.add("login", GITHUB, login);
+    const v = JSON.parse(fs.readFileSync(file, "utf8"));
+    v.entries.push({ id: "not-an-id", kind: "login" });
+    fs.writeFileSync(file, JSON.stringify(v));
+    const before = fs.readFileSync(file, "utf8");
+    const next = new VaultStore(file, box());
+    expect(next.list().map(e => e.id)).toEqual([a.ok ? a.id : ""]);
+    expect(next.unreadable()).toBe(true);
+    expect(fs.readFileSync(path.join(dir, aside(dir)[0]), "utf8")).toBe(before);
+    expect(await next.open(a.ok ? a.id : "")).not.toBeNull();
+  });
+
+  it("keeps nothing new where the unreadable file can't be kept aside, so it is never written over (reliability-c12-1)", async () => {
+    const dir = tmp(), file = path.join(dir, VAULT_FILE);
+    fs.writeFileSync(file, "{\"v\":1,\"entries\":[{\"id\"");
+    const torn = fs.readFileSync(file, "utf8");
+    const store = new VaultStore(file, box(), { keepAside: () => false });
+    expect(store.list()).toEqual([]);
+    expect(store.unreadable()).toBe(true);
+    expect(await store.add("login", GITHUB, login)).toEqual({ ok: false, why: "write" });
+    expect(fs.readFileSync(file, "utf8")).toBe(torn);
+  });
+
+  it("says nothing of a vault that is only missing or fine (reliability-c12-1)", async () => {
+    const dir = tmp(), file = path.join(dir, VAULT_FILE);
+    const store = new VaultStore(file, box());
+    expect(store.list()).toEqual([]);
+    expect(store.unreadable()).toBe(false);
+    await store.add("login", GITHUB, login);
+    expect(new VaultStore(file, box()).unreadable()).toBe(false);
+    expect(aside(dir)).toEqual([]);
+  });
+});
+
+describe("forgetting everything in a vault that couldn't be read", () => {
+  it("removes what was kept aside too, since it holds sealed values all the same (reliability-c12-1)", async () => {
+    const dir = tmp(), file = path.join(dir, VAULT_FILE);
+    fs.writeFileSync(file, "{\"v\":1,\"entries\":[{");
+    const store = new VaultStore(file, box());
+    expect(store.unreadable()).toBe(true);
+    expect(fs.readdirSync(dir).some(f => f.startsWith(`${VAULT_FILE}.bad-`))).toBe(true);
+    expect(store.forgetAll()).toBe(true);
+    expect(fs.readdirSync(dir)).toEqual([]);
+    expect(store.unreadable()).toBe(false);
+  });
+});

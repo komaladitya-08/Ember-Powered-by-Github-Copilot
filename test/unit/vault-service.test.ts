@@ -326,3 +326,16 @@ describe("main's wiring of the vault", () => {
     expect(keepClearOf({ home: null, prompt: null, command: null, commandCard: false })).toEqual({ aside: null, avoid: [] });
   });
 });
+
+describe("a vault whose file couldn't be read, in Home", () => {
+  it("says so in Home's state, fills nothing from it, and says nothing of a vault that reads (reliability-c12-1)", async () => {
+    const h = make();
+    const a = await h.service.keep("login", GITHUB, login);
+    if (!a.ok) throw new Error("not kept");
+    expect(h.service.homeState()).not.toHaveProperty("unreadable");
+    const text = fs.readFileSync(h.file, "utf8");
+    fs.writeFileSync(h.file, text.slice(0, -4));
+    expect(h.service.homeState()).toEqual({ allowed: true, entries: [], unreadable: true });
+    expect(h.service.has("login", GITHUB)).toBe(false);
+  });
+});

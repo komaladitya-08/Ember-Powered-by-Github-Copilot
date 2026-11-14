@@ -148,7 +148,12 @@ export interface VaultEntryRow {
  * The vault as Home shows it. `allowed`: the organisation lets it be used (`features.vault`; a lockdown turns it off).
  * The keyring isn't asked for Home (on macOS asking can prompt): the Secure Form says so when one is needed.
  */
-export interface VaultHomeState { allowed: boolean; entries: VaultEntryRow[] }
+export interface VaultHomeState {
+  allowed: boolean;
+  entries: VaultEntryRow[];
+  /** Its file was there but couldn't be read whole: kept aside as it was, and nothing filled from it (reliability-c12-1). */
+  unreadable?: true;
+}
 
 /**
  * What the Secure Form shows: built by main from the kind and the destination's identity (and, for a site, the browser
