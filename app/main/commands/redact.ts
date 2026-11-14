@@ -323,7 +323,7 @@ function inMapping(text: string, at: number, end: number, q: string): boolean {
 const URL_CREDENTIALS = /:\/\/[^/\s:@]*:[^/\s@]+@/g;
 
 /**
- * Key-value pairs whose key names a secret: `password=…`, `token: …`, `"api_key": "…"` (the value only). The key may
+ * Key-value pairs whose key names a secret: `password=…`, PHP's `'password' => …` and `$config['password'] = …`, `token: …`, `"api_key": "…"` (the value only). The key may
  * carry a prefix or suffix (`DB_PASSWORD`, `client_secret_id`); the value runs to whitespace, a quote, a comma or a
  * semicolon. A value that is already hidden is left alone. The match starts at the secret word (a prefix stays in the
  * text as it is) and the suffix is at most 256 characters, taken whole (a lookahead and its back-reference: none of its
@@ -332,14 +332,15 @@ const URL_CREDENTIALS = /:\/\/[^/\s:@]*:[^/\s@]+@/g;
  * run, which froze Ember for minutes on one long token of output.
  */
 const KEY_VALUE =
-  /((?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret)(?=([A-Za-z0-9_.-]{0,256}))\2["']?\]?\s*(?:=>|=|:)\s*["']?)([^\s"',;]+)/gi;
+  /((?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret)(?=([A-Za-z0-9_.-]{0,256}))\2(?:["']\]|["'])?\s*(?:=>|=|:)\s*["']?)([^\s"',;]+)/gi;
 
 /** The words a config's key ends in when its value is a secret, for CONFIG_PATTERNS (case is ignored where they're used). */
 const CONFIG_SECRET = String.raw`(?:password|passwd|passphrase|pwd|secret|token|api[_-]?key|private[_-]?key|client[_-]?secret)`;
 /**
  * Passwords as common config formats write them, which KEY_VALUE's `key=value` and `key: value` miss
  * (commands-remote-r12-1); each keeps its first group and hides the value:
- * - PHP's `define('DB_PASSWORD', '…')` and WordPress's keys and salts (`AUTH_KEY`, `SECURE_AUTH_SALT`);
+ * - PHP's `define('DB_PASSWORD', '…')` and WordPress's keys and salts (`AUTH_KEY`, `SECURE_AUTH_SALT`), never the
+ *   sample's "put your unique phrase here";
  * - an XML element named for a secret (`<password>…</password>`, Maven's, FileZilla's `<Pass encoding="base64">`),
  *   never an empty one, a placeholder (`${env.PW}`) or a name that only holds the word (`<passage>`, `<compass>`);
  * - an XML `key` or `name` attribute that names a secret with its `value` (.NET's `<add key="Password" value="…"/>`);
@@ -351,7 +352,7 @@ const CONFIG_SECRET = String.raw`(?:password|passwd|passphrase|pwd|secret|token|
  * Each look is bounded, so a long run of output stays linear.
  */
 const CONFIG_PATTERNS: readonly RegExp[] = [
-  new RegExp(String.raw`(\bdefine\s{0,8}\(\s{0,8}(["'])[A-Za-z0-9_]{0,64}?(?:${CONFIG_SECRET}|pass|key|salt)\2\s{0,8},\s{0,8}(["']))(?![$%{<*[])(?:(?!\3)[^\n\\]){1,1000}(?=\3)`, "gi"),
+  new RegExp(String.raw`(\bdefine\s{0,8}\(\s{0,8}(["'])[A-Za-z0-9_]{0,64}?(?:${CONFIG_SECRET}|pass|key|salt)\2\s{0,8},\s{0,8}(["']))(?![$%{<*[])(?!put your unique phrase)(?:(?!\3)[^\n\\]){1,1000}(?=\3)`, "gi"),
   new RegExp(String.raw`(<(?:[A-Za-z0-9_.:-]{0,64}?${CONFIG_SECRET}|(?:[A-Za-z0-9_.:-]{0,64}[_.:-])?pass)(?:\s[^<>]{0,200})?>)(?![$%{*\s])[^<]{1,2000}(?=<\/)`, "gi"),
   new RegExp(String.raw`(<[A-Za-z][\w.:-]{0,64}\s(?:[^<>]{0,200}?\s)?(?:key|name)\s{0,8}=\s{0,8}(["'])[\w.:-]{0,64}?(?:${CONFIG_SECRET}|pass)\2(?:\s[^<>]{0,200}?)?\svalue\s{0,8}=\s{0,8}(["']))(?![$%{*])(?:(?!\3)[^<>\n]){1,1000}(?=\3)`, "gi"),
   /((?:^|\n)[ \t]*(?:password|Password|PASSWORD|passwd|pass|Pass|PASS)[ \t]+)(?![$%{<*[#])(?:"[^"\n]+"|'[^'\n]+'|[^\s"']+)(?=[ \t]*(?:\r?\n|$))/g,
