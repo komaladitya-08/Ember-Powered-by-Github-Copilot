@@ -115,6 +115,7 @@ import { ACK_MS, acknowledgement, afterAck } from "./acknowledge";
 import { MemoryService } from "./memory/service";
 import { memoryViewOf } from "./memory/view";
 import { githubMemoryAccount, MemoryEpochAccount, MemoryOwner, type MemoryWait } from "./memory/owner";
+import { endOfSession } from "./session-end";
 import { MemoryLearning, linesAfterAskedForget, linesAfterForget, linesAfterRestore, withLearned, type MemoryLine } from "./memory/learning";
 import type { OneShot } from "./memory/learn";
 import { memoryActionOpens } from "./memory/questions";
@@ -3205,7 +3206,8 @@ function start(): void {
 
   /**
    * The session ends (log-off, shut down) without will-quit on Windows and macOS (G10), and on Linux as the X server
-   * goes: settings are saved and whatever Ember holds is let go of at once, as quitting would.
+   * goes: settings are saved and whatever Ember holds is let go of at once, as quitting would. The agent stops as
+   * quitting stops it, and the saved conversation and memory are written before this returns (app/main/session-end.ts).
    */
   let sessionEnding = false;
   const endSession = (source: string) => {
@@ -3214,6 +3216,7 @@ function start(): void {
     log.info("app.session_end", { source });
     endThisRun("session-end");
     try { settings.flush(); } catch (err) { log.warn("settings.not_saved", { err }); }
+    endOfSession({ agent, history: historyStore, learning, memory, log });
     // With the display gone there is no pointer or key to let go of, and asking X would end Ember mid-way.
     if (source !== "display-gone") {
       borrowRef?.stop();

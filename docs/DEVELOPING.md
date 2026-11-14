@@ -221,7 +221,9 @@ environment, only through `scripts/runtime-env-live.sh`, which gives it a networ
   keeps this session's questions, answers and task results (in memory only by default; quitting or signing out forgets them).
   - **Keep my recent conversation after Ember closes** (`keepConversation`, off by default; Home › Conversation): saves the
     latest 60 messages (at most 2 MiB) in `conversation.json` in the data folder (mode 0600, folder 0700; written
-    atomically through a temp file, fsync and rename, last state wins), and shows them again after a restart once the
+    atomically through a temp file, fsync and rename, last state wins; when the desktop session ends (log-off, shutdown,
+    the display going away) the agent stops as quitting stops it and the latest state is written at once, an answer
+    under way as it stands), and shows them again after a restart once the
     signed-in account is known and is the one that saved them (a file of another account, or while the account can't be
     told, is never shown; another account's file is deleted). The saved lines are for the person to read, and Home says
     so under the last of them, with their day beside their time: the model starts a fresh session at every launch and
