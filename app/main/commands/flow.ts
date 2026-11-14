@@ -1468,9 +1468,12 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
       if (live.state !== "on") return denied(`${live.why ?? `Commands are off on ${place}.`} Don't try another way; tell the user in finish_task.`);
       if (svc.binding.id !== target || svc.runner.target !== target) return denied("The command's computer changed. Finish the task saying so.");
       // (Autopilot's announcement stands while Autopilot does: there root alone is no reason to ask, as when it was decided.)
+      // (Assisted's check cleared it under root's rule: root still alone is no reason to ask, as when it was decided;
+      // any other rule, or root arriving after, still is: r12-commands-x12-1.)
+      const rootCleared = d.requested?.intent === "ai-review" && cap.askEvery === "root";
       const everyAsks = announcedAt !== null
         ? !ctx.autopilot?.() || (live.askEvery !== null && live.askEvery !== "root")
-        : live.askEvery !== null;
+        : live.askEvery !== null && !(rootCleared && live.askEvery === "root");
       if (svc.mode() === "off" || (approvedAt === null && (everyAsks || svc.userAskEvery() || svc.mode() === "ask"))) {
         return denied("Command permissions changed while this command was waiting. It did not run. Ask the user for a new request.");
       }
