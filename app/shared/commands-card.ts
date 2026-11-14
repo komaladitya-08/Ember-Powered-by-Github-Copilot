@@ -20,8 +20,11 @@ export const EXACT_ONLY = "only deletes or overwrites data, publishes something 
 /** The classes EXACT_ONLY names, in its order (deletes covers a deletion in source control or a remote service too). */
 export const EXACT_ONLY_CLASSES = ["destroy", "remote-delete", "publish", "system"] as const;
 
-/** Ember runs as root or an elevated administrator there: every command counts as a system change (decide.ts). */
-export const COMMANDS_CARD_PRIVILEGED = "Commands here run as the administrator, so Ember counts every one as dangerous, even one you asked for exactly.";
+/**
+ * Ember runs as root or an elevated administrator there: every command asks in Interactive and Assisted (decide.ts;
+ * review.ts notReviewable keeps each from the check), and Autopilot announces each (r11-copy-x11-2).
+ */
+export const COMMANDS_CARD_PRIVILEGED = "Commands here run as the administrator, so in Interactive and Assisted Ember asks before every one, even one you asked for exactly. In Autopilot, each runs after a few seconds to stop it.";
 
 /** A distro Podman uses: every command asks there, in every mode (the tool's switch counts as the user's own). */
 export const COMMANDS_CARD_PODMAN = "Podman uses this distro, so Ember asks before every command here.";

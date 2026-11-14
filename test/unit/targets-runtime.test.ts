@@ -599,7 +599,7 @@ describe("consent cards (§8.4) and their records (§7.4)", () => {
       expect(c.body[0]).toContain(`${SHORTCUTS[osName].stop.label} stops everything at once`);
       expect(c.sha256).toBe(consentSha256(c));
     }
-    expect(win.body).toEqual(expect.arrayContaining(["Commands here run as the administrator, so Ember counts every one as dangerous, even one you asked for exactly.", "Commands here run in Windows PowerShell and can't ask you for answers or passwords."]));
+    expect(win.body).toEqual(expect.arrayContaining(["Commands here run as the administrator, so in Interactive and Assisted Ember asks before every one, even one you asked for exactly. In Autopilot, each runs after a few seconds to stop it.", "Commands here run in Windows PowerShell and can't ask you for answers or passwords."]));
     const wsl = commandsConsent({ os: "win32", target: "wsl:podman-machine-default", targetLabel: "podman-machine-default (WSL)", facts: { kind: "wsl", privileged: false, windows: false, podman: true } });
     expect(wsl.title).toBe("Let Ember run commands on podman-machine-default (WSL)?");
     expect(wsl.body).toEqual(expect.arrayContaining(["Commands in WSL can also reach your Windows files and programs.", "Podman uses this distro, so Ember asks before every command here."]));
@@ -2647,7 +2647,7 @@ describe("first run's commands row", () => {
 
   it("says an elevated Ember asks before every command, as the card does (slice4-20)", () => {
     const r = rig({ elevated: () => true });
-    expect(r.t.firstRunCommandsCard()!.body).toContain("Commands here run as the administrator, so Ember counts every one as dangerous, even one you asked for exactly.");
+    expect(r.t.firstRunCommandsCard()!.body).toContain("Commands here run as the administrator, so in Interactive and Assisted Ember asks before every one, even one you asked for exactly. In Autopilot, each runs after a few seconds to stop it.");
   });
 
   it("records nothing for another card's hash, nor where the organisation turned commands off (slice4-21)", () => {
