@@ -102,3 +102,19 @@ describe("a password or PIN said with its value anywhere in the clause (r10-memo
     expect(saidSecret(text)).toBeNull();
   });
 });
+
+describe("a password said as p/w or pass word, across “…”, as a long PIN or in the next sentence (r10-memory-y10-3)", () => {
+  const SAID = ["Netflix p/w is sunshine", "Their p/w is sunshine", "Netflix p.w. is sunshine", "My pword is sunshine", "Pass word for Netflix is sunshine",
+    "My pass word is sunshine", "Netflix pass code is rex99", "Netflix password... sunshine", "Netflix password…sunshine", "Netflix password? 123456789.",
+    "Set a new Netflix password. It is sunshine.", "Changed the Netflix password today. Now it's sunshine!", "Gmail password changed. That's bluebird now.",
+    "PIN 041", "Bank PIN is 041234567", "My Netflix password is 123456789012"];
+  it.each(SAID.map(s => [s]))("refuses %j as a fact (r10-memory-y10-3)", text => {
+    expect(factRefusal(text)).not.toBeNull();
+  });
+
+  const KEPT = ["Changed their Netflix password in 2024", "Password must be at least 12 characters", "Updated the Netflix password. It is much stronger now.",
+    "Forgot the Netflix password... again", "Has a strong Gmail password. It's in the password manager.", "Changed the wifi password 3 times this year"];
+  it.each(KEPT.map(s => [s]))("keeps %j, which holds no value (r10-memory-y10-3)", text => {
+    expect(saidSecret(text)).toBeNull();
+  });
+});

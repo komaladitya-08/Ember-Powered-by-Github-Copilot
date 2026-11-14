@@ -248,12 +248,14 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
     digits anywhere in a sentence that names a password, a PIN or a passcode ("My bank PIN is my birthday, 0412"; never
     a year as a time, "Changed their password in 2024"), what is used for a service ("For Netflix I use sunshine"), a
     login as a user and a value, and a value shaped like a password before what it is for ("hunter2 for the VPN").
-    Beyond those orders, a clause (to a full stop, ";" or "!", across "?", dashes, arrows, slashes and commas) that
-    names a password, a passcode, a PIN, pwd or pw (also "mot de passe", "contraseña", "Passwort", "senha") is refused
+    Beyond those orders, a clause (to a full stop, ";" or "!", across "?", "…", dashes, arrows, slashes and commas,
+    and on into a next sentence that opens "It is", "Now it's" or "That's") that names a password, a passcode, a PIN,
+    pwd, pw, p/w, pword, "pass word" or "pass code" (also "mot de passe", "contraseña", "Passwort", "senha") is refused
     when it holds any word of three letters or more that isn't grammar or how people talk about one (keeping,
     changing, forgetting, typing it, where it is written down), a service's or a password manager's name, or a
-    number (r10-memory-x10-1): "sunshine's my Netflix password", "My Netflix password? sunshine.", "Netflix pw
-    sunshine". So is "bluebird is what I use for Gmail" and a login's user and value ("Netflix login: ram /
+    number, or a number of three digits or more that isn't a year after a time word or a count (r10-memory-x10-1,
+    r10-memory-y10-3): "sunshine's my Netflix password", "My Netflix password? sunshine.", "Netflix pw sunshine",
+    "Set a new Netflix password. It is sunshine.", "PIN 041". So is "bluebird is what I use for Gmail" and a login's user and value ("Netflix login: ram /
     sunshine"). That fails closed: "Works at Globex and forgot their password" is refused too, for its "Globex".
     Never a password manager, a PIN reset or password rules, nor a postal PIN code. A word said with no password's
     name ("My Netflix is sunshine", "I log into Netflix with sunshine", "If Netflix asks, the answer is sunshine")

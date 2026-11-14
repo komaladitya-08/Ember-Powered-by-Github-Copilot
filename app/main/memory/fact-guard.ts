@@ -321,7 +321,7 @@ function digitsBesideName(text: string): boolean {
  * service's name or before a colon) and the names in French, Spanish, German and Portuguese. Never what heads a tool
  * (a password manager, app, vault, keeper or generator), nor a postal "PIN code".
  */
-const CLAUSE_NAME = new RegExp(String.raw`\b(?:(?:password|passcode|passphrase|passwd|(?:${WHOSE}|card|bank|phone|sim|debit|credit|atm)\s+pin(?![\s-]*code)|pwd|pw)s?\b(?![\s-]+(?:managers?|apps?|vault|keeper|generators?)\b)`
+const CLAUSE_NAME = new RegExp(String.raw`\b(?:(?:password|passcode|passphrase|passwd|(?:${WHOSE}|card|bank|phone|sim|debit|credit|atm)\s+pin(?![\s-]*code)|pwd|pw|p\/w|pword|pass\s+(?:word|code))s?\b(?![\s-]+(?:managers?|apps?|vault|keeper|generators?)\b)`
   + String.raw`|(?:${SERVICES})\s+pass\b|^\s*pass\s*[:=]|mot\s+de\s+passe|contrase[ñn]a|passwort|senha)`, "i");
 /**
  * Words a sentence about a password or a PIN may hold beside its name without holding its value: grammar, how people
@@ -353,7 +353,7 @@ const ABOUT_SECRET = new Set(String.raw`a an the my your our their his her its t
   month months week weeks year years day days hour hours minute minutes time times few couple
   times attempt attempts try tries tried
   hashed hash hashes masked salted encrypted encoded hidden entered protected redacted obscured starred cost
-  passkey passkeys instead ember sticker label underneath under behind back front inside bottom top`.split(/\s+/).filter(Boolean));
+  passkey passkeys pword much instead ember sticker label underneath under behind back front inside bottom top`.split(/\s+/).filter(Boolean));
 /** A password manager's or a sign-in tool's name, which a sentence about passwords names without holding one. */
 const TOOL_NAME = /^(?:1password|bitwarden|lastpass|keepass(?:xc)?|dashlane|keeper|nordpass|proton\s*pass|keychain|authy|okta|sso|2fa|mfa|totp|otp|face|touch|id|yubikey)$/i;
 const SERVICE_WORD = new RegExp(String.raw`^(?:${SERVICES})$`, "i");
@@ -361,18 +361,26 @@ const SERVICE_WORD = new RegExp(String.raw`^(?:${SERVICES})$`, "i");
 /**
  * A word that may be the value in a clause that names a password or a PIN (CLAUSE_NAME), whatever the word order
  * (r10-memory-x10-1): "sunshine's my Netflix password", "My Netflix password? sunshine.", "Netflix pw sunshine". A
- * clause runs to a full stop, ";", "!" or a line's end, across "?", "—", "→", "/" and commas. A word is the value
+ * clause runs to a full stop, ";", "!" or a line's end, across "?", "—", "→", "/", commas, "…" and into a next sentence
+ * that opens "It is", "Now it's" or "That's" (r10-memory-y10-3). A word is the value
  * unless it is in ABOUT_SECRET, a service's or a tool's name, or a number (`digitsBesideName` reads a PIN's digits).
  * Fail closed: an unknown word beside a password's name costs the fact, never the password.
  */
 function valueInClause(text: string): boolean {
-  for (const clause of text.split(/[.;!\n]+(?:\s|$)/)) {
+  // "p.w." is the name, "..." and "…" go on with the clause, and "It is…", "Now it's…", "That's…" go on with the sentence
+  // before (r10-memory-y10-3).
+  const joined = text.replace(/\bp\.w\.?/gi, " pw ").replace(/\.{2,}|…/g, " , ")
+    .replace(/[.!?]\s+(?=(?:now\s+|and\s+)?(?:it\s+is|it['’]s|that\s+is|that['’]s)\b)/gi, " , ");
+  for (const clause of joined.split(/[.;!\n]+(?:\s|$)/)) {
     // A PIN in capitals anywhere; "pin" in lower case only after whose it is, so "Likes to pin recipes" names none.
     if (!CLAUSE_NAME.test(clause) && !/\bPINs?\b(?![\s-]*code)/.test(clause)) continue;
     const words = clause.replace(/mot\s+de\s+passe|contrase[ñn]a|passwort|senha/gi, " ").replace(/->|[→—–]|\s-+\s/g, " ")
       .split(/[\s,:?()"“”=/]+/).map(w => w.replace(/['’]s$/i, "").replace(/^['‘’]+|['‘’]+$/g, "")).filter(Boolean);
-    for (const w of words) {
+    for (const [i, w] of words.entries()) {
       const lw = w.toLowerCase();
+      // Three digits or more beside the name are its value, but a year after a time word or a count before what it counts (r10-memory-y10-3).
+      if (/^\d{3,}$/.test(lw) && !(/^(?:19|20)\d\d$/.test(lw) && TIME_WORD.test(words[i - 1] ?? "")) && !NOT_CODE_AFTER.test(words[i + 1] ?? "")
+        && !/^(?:characters?|chars?|letters?|digits?)$/i.test(words[i + 1] ?? "")) return true;
       if (/^\d+$|^[*•·.]+$/.test(lw) || ABOUT_SECRET.has(lw) || TOOL_NAME.test(lw) || SERVICE_WORD.test(lw) || sayless(lw) || ALGORITHM.test(lw)) continue;
       if (/^(?:[a-z]+['’](?:s|t|re|ve|ll|d|m))$/i.test(lw)) continue;
       if (lw.length >= 3 || /["“]/.test(w)) return true;
