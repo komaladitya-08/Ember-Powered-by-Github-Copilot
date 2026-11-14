@@ -2858,8 +2858,8 @@ describe("Assisted's check for commands that would ask (review.ts; modes-C2, mod
   it.each<["linux" | "win32", string]>([["linux", CARD_LINES.rootAutopilot], ["win32", CARD_LINES.adminAutopilot]])(
     "never says each command asks first on the countdown of a privileged command the check cleared, on %s (tasks-approvals-c11-1)", async (os, line) => {
       setCommandJudge(null);
-      // (Every privileged command here is "ask every": never reviewed. A privileged Ember whose capability says
-      // otherwise still gets a card that is true.)
+      // (A privileged Ember's "ask every" is root's, which no longer keeps a command from the check:
+      // tasks-approvals-r12-1. Its countdown says only the fact.)
       const r = reviewer({ run: true, does: "installs htop", why: "you asked to install htop" });
       const h = harness({ binding: LOCAL, words: "install htop with dnf", review: r.review, facts: { privileged: true, os } });
       expect((await call(h, { target: "this computer", command: "rm -r build" })).resultType).toBe("success");
@@ -2868,6 +2868,28 @@ describe("Assisted's check for commands that would ask (review.ts; modes-C2, mod
       expect(says.join(" ")).not.toMatch(/asks first/);
       expect(says).toContain(line);
     });
+
+  it("runs a command as root the check cleared, with the real root capability, never refusing it as changed permissions (r12-commands-x12-1)", async () => {
+    setCommandJudge(null);
+    const r = reviewer({ run: true, does: "installs htop", why: "you asked to install htop" });
+    const h = harness({ binding: LOCAL, words: "install htop with dnf", review: r.review, facts: { privileged: true, os: "linux" }, cap: () => ({ state: "on", askEvery: "root" }) });
+    const res = await call(h, { target: "this computer", command: "dnf install -y htop" });
+    expect(String(res.textResultForLlm)).not.toMatch(/permissions changed/);
+    expect(res.resultType).toBe("success");
+    expect(h.asked).toEqual([]);
+    expect(h.windowAnnounce).toHaveLength(1);
+    expect(h.starts).toHaveLength(1);
+  });
+
+  it("still refuses a command the check cleared as root when the admin's every-command rule arrives while it counts down (r12-commands-x12-1)", async () => {
+    setCommandJudge(null);
+    const r = reviewer({ run: true, does: "installs htop", why: "you asked to install htop" });
+    let calls = 0;
+    const h = harness({ binding: LOCAL, words: "install htop with dnf", review: r.review, facts: { privileged: true, os: "linux" }, cap: () => ({ state: "on", askEvery: calls++ === 0 ? "root" : "admin" }) });
+    const res = await call(h, { target: "this computer", command: "dnf install -y htop" });
+    expect(res.resultType).not.toBe("success");
+    expect(h.starts).toHaveLength(0);
+  });
 
   it("runs a command the reviewer finds in the user's words with its announcement (Stop countdown), not a question", async () => {
     setCommandJudge(null);

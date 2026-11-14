@@ -339,6 +339,9 @@ describe("the command window's words (§8.5)", () => {
     expect(commandCopy.announceHeading({ reviewed: true })).toBe(commandCopy.REVIEWED_HEADING);
     expect(commandCopy.announceHeading({ autopilot: true })).toBe(commandCopy.AUTOPILOT_HEADING);
     expect(commandCopy.announceHeading({})).toBe(commandCopy.ANNOUNCE_HEADING);
+    // A program Ember doesn't know, or carried text, that the user's words didn't ask for (accessibility-r12-1).
+    expect(keep(commandCopy.UNREQUESTED_HEADING)).toBe("About to run this");
+    expect(commandCopy.announceHeading({ unrequested: true })).toBe(commandCopy.UNREQUESTED_HEADING);
     expect(commandMain).toMatch(/function buildAnnounce\([^]*?el\("h1", "heading", announceHeading\(card\)\)/);
     expect(keep(commandCopy.announceKeyText("linux"))).toBe("Or press Ctrl+Alt+X to stop everything.");
     expect(keep(commandCopy.announceKeyText("win32"))).toBe("Or press Win+Alt+X to stop everything.");
@@ -592,7 +595,7 @@ describe("the first-use consent cards (§8.4)", () => {
     // What the computer's commands can reach comes right after how to stop them (review #270).
     expect(all.body.slice(1, 5).map(keep)).toEqual([
       "Commands in WSL can also reach your Windows files and programs.",
-      "Commands here run as the administrator, so in Interactive and Assisted Ember asks before every one, even one you asked for exactly. In Autopilot, each runs after a few seconds to stop it.",
+      "Commands here run as the administrator, so in Interactive Ember asks before every one, even one you asked for exactly. In Assisted, each goes ahead when a check finds it in what you asked for, and asks otherwise. In Autopilot, each runs after a few seconds to stop it.",
       "Commands here run in Windows PowerShell and can't ask you for answers or passwords.",
       "Podman uses this distro, so Ember asks before every command here.",
     ]);

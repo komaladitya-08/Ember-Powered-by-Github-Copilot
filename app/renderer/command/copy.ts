@@ -36,9 +36,14 @@ export const ANNOUNCE_HEADING = "About to run this, as you asked";
 export const REVIEWED_HEADING = "About to run this: Ember checked it against your request";
 /** The same for Autopilot's announcement (commands/autopilot.ts): the user didn't ask for exactly this (tasks-approvals-r10-1). */
 export const AUTOPILOT_HEADING = "About to run this: Autopilot is on";
+/**
+ * The same for a command the user's words didn't ask for and nothing had to clear: a program Ember doesn't know, or an
+ * ordinary command carrying text from another window (accessibility-r12-1).
+ */
+export const UNREQUESTED_HEADING = "About to run this";
 /** The announcement's heading for its card: "as you asked" only where the user's own words asked for exactly it. */
-export function announceHeading(card: Pick<CommandCard, "reviewed" | "autopilot">): string {
-  return card.reviewed ? REVIEWED_HEADING : card.autopilot ? AUTOPILOT_HEADING : ANNOUNCE_HEADING;
+export function announceHeading(card: Pick<CommandCard, "reviewed" | "autopilot" | "unrequested">): string {
+  return card.reviewed ? REVIEWED_HEADING : card.autopilot ? AUTOPILOT_HEADING : card.unrequested ? UNREQUESTED_HEADING : ANNOUNCE_HEADING;
 }
 export const ALLOW_LABEL = "Allow";
 export const NOT_NOW_LABEL = "Not now";

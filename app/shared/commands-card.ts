@@ -21,10 +21,11 @@ export const EXACT_ONLY = "only deletes or overwrites data, publishes something 
 export const EXACT_ONLY_CLASSES = ["destroy", "remote-delete", "publish", "system"] as const;
 
 /**
- * Ember runs as root or an elevated administrator there: every command asks in Interactive and Assisted (decide.ts;
- * review.ts notReviewable keeps each from the check), and Autopilot announces each (r11-copy-x11-2).
+ * Ember runs as root or an elevated administrator there: every command asks in Interactive (decide.ts), Assisted's
+ * check may let one the request was about go ahead (review.ts notReviewable: tasks-approvals-r12-1), and Autopilot
+ * announces each (r11-copy-x11-2).
  */
-export const COMMANDS_CARD_PRIVILEGED = "Commands here run as the administrator, so in Interactive and Assisted Ember asks before every one, even one you asked for exactly. In Autopilot, each runs after a few seconds to stop it.";
+export const COMMANDS_CARD_PRIVILEGED = "Commands here run as the administrator, so in Interactive Ember asks before every one, even one you asked for exactly. In Assisted, each goes ahead when a check finds it in what you asked for, and asks otherwise. In Autopilot, each runs after a few seconds to stop it.";
 
 /** A distro Podman uses: every command asks there, in every mode (the tool's switch counts as the user's own). */
 export const COMMANDS_CARD_PODMAN = "Podman uses this distro, so Ember asks before every command here.";

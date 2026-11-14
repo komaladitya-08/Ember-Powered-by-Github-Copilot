@@ -44,6 +44,8 @@ export const TOKEN_PATTERNS: readonly RegExp[] = [
   // Hugging Face and GitLab tokens.
   /\bhf_[A-Za-z0-9]{30,}/g,
   /\bglpat-[A-Za-z0-9_-]{20,}/g,
+  // OpenShift's sign-in token (`oc whoami -t`: r12-commands-y12-8).
+  /\bsha256~[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])/g,
   // SendGrid keys, DigitalOcean tokens and Twilio API keys, each a fixed shape (safety-privacy-r7-3).
   /\bSG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])/g,
   /\bdo[opr]_v1_[a-f0-9]{64}\b/g,
@@ -118,12 +120,13 @@ const VALUE_PATTERNS: readonly RegExp[] = [
   // (merge review integ-y-3).
   VAULT_VALUE_FIRST,
   // A Docker config's `"auth": "<base64 of user:password>"`, and a .netrc entry written on one line
-  // (`machine host login bob password …`); a password on a line of its own is not told from prose (safety-privacy-r7-3).
+  // (`machine host login bob password …`, Emacs's .authinfo with its `port` too: commands-remote-r12-1); a password on a
+  // line of its own is CONFIG_PATTERNS' (safety-privacy-r7-3).
   // An entry is told by its login, or with none by a dotted host: "the default password is admin" and "machine learning
   // password reset" are sentences, and hiding their next word made commands and notes that say them hold a secret
   // (regression review of round seven, safety-privacy-x7-2).
   /("auth"\s{0,8}:\s{0,8}")[A-Za-z0-9+/]{16,}={0,2}(?=")/g,
-  /(\b(?:(?:machine[ \t]+\S+|default)(?:[ \t]+(?:login|account)[ \t]+\S+){1,2}|machine[ \t]+[\w-]+(?:\.[\w-]+)+)[ \t]+password[ \t]+)\S+/g,
+  /(\b(?:(?:machine[ \t]+\S+|default)(?:[ \t]+(?:login|account|port|user)[ \t]+\S+){1,3}|machine[ \t]+[\w-]+(?:\.[\w-]+)+)[ \t]+password[ \t]+)\S+/g,
   // A webhook's address is its own key: whoever has it can post (Slack, Discord, Teams; commands-remote-r10-6).
   /(hooks\.slack\.com\/(?:services|workflows|triggers)\/)[A-Za-z0-9_/-]+/g,
   /(discord(?:app)?\.com\/api\/webhooks\/\d{1,30}\/)[A-Za-z0-9_-]+/g,
@@ -322,7 +325,7 @@ function inMapping(text: string, at: number, end: number, q: string): boolean {
 const URL_CREDENTIALS = /:\/\/[^/\s:@]*:[^/\s@]+@/g;
 
 /**
- * Key-value pairs whose key names a secret: `password=…`, `token: …`, `"api_key": "…"` (the value only). The key may
+ * Key-value pairs whose key names a secret: `password=…`, PHP's `'password' => …` and `$config['password'] = …`, `token: …`, `"api_key": "…"` (the value only). The key may
  * carry a prefix or suffix (`DB_PASSWORD`, `client_secret_id`); the value runs to whitespace, a quote, a comma or a
  * semicolon. A value that is already hidden is left alone. The match starts at the secret word (a prefix stays in the
  * text as it is) and the suffix is at most 256 characters, taken whole (a lookahead and its back-reference: none of its
@@ -331,7 +334,46 @@ const URL_CREDENTIALS = /:\/\/[^/\s:@]*:[^/\s@]+@/g;
  * run, which froze Ember for minutes on one long token of output.
  */
 const KEY_VALUE =
-  /((?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret)(?=([A-Za-z0-9_.-]{0,256}))\2["']?\s*(?:=|:)\s*["']?)([^\s"',;]+)/gi;
+  /((?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret)(?=([A-Za-z0-9_.-]{0,256}))\2(?:["']\]|["'])?\s*(?:=>|=|:)\s*["']?)([^\s"',;]+)/gi;
+
+/** The words a config's key ends in when its value is a secret, for CONFIG_PATTERNS (case is ignored where they're used). */
+const CONFIG_SECRET = String.raw`(?:password|passwd|passphrase|pwd|secret|token|api[_-]?key|private[_-]?key|client[_-]?secret)`;
+/**
+ * Passwords as common config formats write them, which KEY_VALUE's `key=value` and `key: value` miss
+ * (commands-remote-r12-1); each keeps its first group and hides the value:
+ * - PHP's `define('DB_PASSWORD', '…')` and WordPress's keys and salts (`AUTH_KEY`, `SECURE_AUTH_SALT`), never the
+ *   sample's "put your unique phrase here";
+ * - an XML element named for a secret (`<password>…</password>`, Maven's, FileZilla's `<Pass encoding="base64">`),
+ *   never an empty one, a placeholder (`${env.PW}`) or a name that only holds the word (`<passage>`, `<compass>`);
+ * - an XML `key` or `name` attribute that names a secret with its `value` (.NET's `<add key="Password" value="…"/>`);
+ * - a line that is only `password X` or `Pass X` (msmtp, mbsync, fetchmail), never a sentence or Python's `pass`;
+ * - a mail client's `smtp_pass = …`, `set imap_pass="…"`, offlineimap's `remotepass = …`, never `bypass` or `compass`
+ *   or a filter's `low_pass`;
+ * - a quoted password after the word (`with password '…'`, fetchmail's);
+ * - curl's and wget's `user = name:password` in their settings files, and `--user name:password` on a line of its own;
+ * - Subversion's cached login, the `V n` value after a `K n` / `password` key.
+ * - Redis's, OpenLDAP's and nslcd's password lines, a Wi-Fi key, an ini's bare `pass = X` and s-nail's `set password-…=`.
+ * Each look is bounded, so a long run of output stays linear.
+ */
+const CONFIG_PATTERNS: readonly RegExp[] = [
+  new RegExp(String.raw`(\bdefine\s{0,8}\(\s{0,8}(["'])[A-Za-z0-9_]{0,64}?(?:${CONFIG_SECRET}|pass|key|salt)\2\s{0,8},\s{0,8}(["']))(?![$%{<*[])(?!put your unique phrase)(?:(?!\3)[^\n\\]){1,1000}(?=\3)`, "gi"),
+  new RegExp(String.raw`(<(?:[A-Za-z0-9_.:-]{0,64}?${CONFIG_SECRET}|(?:[A-Za-z0-9_.:-]{0,64}[_.:-])?pass)(?:\s[^<>]{0,200})?>)(?![$%{*\s])[^<]{1,2000}(?=<\/)`, "gi"),
+  new RegExp(String.raw`(<[A-Za-z][\w.:-]{0,64}\s(?:[^<>]{0,200}?\s)?(?:key|name)\s{0,8}=\s{0,8}(["'])[\w.:-]{0,64}?(?:${CONFIG_SECRET}|pass)\2(?:\s[^<>]{0,200}?)?\svalue\s{0,8}=\s{0,8}(["']))(?![$%{*])(?:(?!\3)[^<>\n]){1,1000}(?=\3)`, "gi"),
+  /((?:^|\n)[ \t]*(?:password|Password|PASSWORD|passwd|pass|Pass|PASS)[ \t]+)(?![$%{<*[#])(?:"[^"\n]+"|'[^'\n]+'|[^\s"']+)(?=[ \t]*(?:\r?\n|$))/g,
+  new RegExp(String.raw`((?:^|\n)[ \t]*(?:set[ \t]+)?(?![\w.-]{0,64}?(?:low|high|band|all|render)[_.-]pass\b)(?:[A-Za-z0-9_.-]{0,64}[_.-]|remote|local)(?:pass|pw)[ \t]*[=:][ \t]*["']?)(?![$%{<*[])[^\s"',;]+`, "gi"),
+  /(\b(?:password|passwd)[ \t]+(["']))(?![$%{<*[])(?:(?!\2)[^\n]){1,256}(?=\2)/gi,
+  /((?:^|\n)[ \t]*(?:--?)?(?:proxy-)?user[ \t]*(?:=|:|[ \t])[ \t]*["']?[^\s"':]+:)(?![$%{<*[])[^\s"']+/g,
+  // Subversion's cached login, a K/V record: the V line after a `password` key (r12-commands-x12-8).
+  /((?:^|\n)K[ \t]\d{1,4}\r?\n(?:password|passphrase)\r?\nV[ \t]\d{1,6}\r?\n)[^\r\n]+/g,
+  // Redis's, OpenLDAP's and nslcd's password lines (`requirepass X`, `masterauth X`, `rootpw X`, `bindpw X`) and a
+  // `PassPhrase X`, also as grep -n numbers them (`507:requirepass X`); a Wi-Fi key (`psk=X`, wpa_supplicant's
+  // `psk="X"`, hostapd's `wpa_psk=X`); an ini's bare `pass = X` (rclone, ZNC's `Pass = plain#X`); s-nail's `set
+  // password-user@host=X` (r12-commands-y12-4).
+  /((?:^|\n)[ \t]*(?:\d{1,9}[:-])?(?:requirepass|masterauth|rootpw|bind_?pw|passphrase)[ \t]+)(?![$%<*[#]|\{\{)(?:"[^"\n]+"|'[^'\n]+'|[^\s"']+)/gi,
+  /((?:^|\n)[ \t]*(?:\d{1,9}[:-])?(?:wpa_)?psk[ \t]*=[ \t]*"?)(?![$%{<*[])[^\s"]+/gi,
+  /((?:^|\n)[ \t]*(?:\d{1,9}[:-])?pass[ \t]*=[ \t]*["']?)(?![$%{<*[])[^\s"',;]+/gi,
+  /((?:^|\n)[ \t]*(?:\d{1,9}[:-])?set[ \t]+password-[^\s=]{1,256}=["']?)(?![$%{<*[])[^\s"']+/gi,
+];
 
 /**
  * Replaces what looks like a secret in `text` with "[secret hidden]" (§3.11 step 4): GitHub, AWS, Slack, Google, npm,
@@ -361,6 +403,7 @@ const passes = (guarded: boolean): readonly ((text: string) => string)[] => [
     const leave = g.option !== undefined && (ownName(g.option, g.value) || inMapping(whole, at, at + match.length, g.q ?? ""));
     return leave ? match : `${g.keep}${SECRET_HIDDEN}`;
   })),
+  ...CONFIG_PATTERNS.map(re => (t: string) => t.replace(re, (_m, keep: string) => keep + SECRET_HIDDEN)),
   t => t.replace(URL_CREDENTIALS, `://${SECRET_HIDDEN}@`),
   t => t.replace(KEY_VALUE, (m, keep: string, _suffix: string, value: string) => (value.startsWith("[secret") ? m : keep + SECRET_HIDDEN)),
 ];

@@ -5229,10 +5229,7 @@
   },
   {
    "cmd": "mount",
-   "verdict": "ask",
-   "classes": [
-    "system"
-   ]
+   "verdict": "run"
   },
   {
    "cmd": "losetup -f disk.img",

@@ -149,7 +149,8 @@ async function inspectSoon(inspect: CommandGateInput["inspect"], paths: string[]
  * rule (the PC resends with the rules a needs_confirm carried once the user said yes to them, §3.8.3 step 13). A
  * finding inside a script the command runs (read only here) is covered only after a yes, by its own `in-script:` rule
  * id. An approval older than 120 s counts as none. Autopilot's announcement on the stamp (`announced`, as fresh, and
- * only with `autopilotOk`) covers root and what a yes would cover of a finding, but never this administrator's "ask",
+ * only with `autopilotOk`) covers root and what a yes would cover of a finding, as a stamp the PC's Assisted check
+ * cleared covers root with `assistedOk` (r12-commands-y12-6), but never this administrator's "ask",
  * a stamp of "ask" without its yes, nor a finding of this administrator's own (askedOfFinding). Without `autopilotOk` a stamp that says
  * Autopilot announced it wants the user's yes whatever it names (`noAutopilot`, rule `admin.no-autopilot`), and so
  * does one the PC's Assisted check cleared without `assistedOk` (`noCheck`, `admin.no-check`) or its Interactive mode
@@ -213,7 +214,11 @@ export async function gateCommand(i: CommandGateInput): Promise<CommandGate> {
     isOver: () => false, probeMs: SCRIPT_MS, budgetMs: SCRIPTS_MS, ...(i.now ? { now: i.now } : {}),
   });
   if (cls.refuse) return { status: "deny", reason: line(cls.refuse.says) || GATE_WORDS.mismatch };
-  if (i.facts.privileged && !approval && !told) asks.push(GATE_WORDS.root);
+  // The PC's Assisted check cleared it, where this computer's policy lets Assisted be: on a root login that stands in
+  // for root's question too, as Autopilot's announcement does, for the owner's rule lets the check clear a command as
+  // root (r12-commands-y12-6). This administrator's "ask" still asks (above).
+  const cleared = stamp.rules.includes(REVIEW_RULE) && i.assistedOk === true;
+  if (i.facts.privileged && !approval && !told && !cleared) asks.push(GATE_WORDS.root);
 
   // An overwrite counts only when its target exists here (§3.8.2 rule 3).
   // And a download-and-run handed a key or a token is a secret's finding here as on the PC (modes-y9-5): the PC's

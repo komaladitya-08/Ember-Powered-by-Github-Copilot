@@ -778,9 +778,130 @@ function negatedKind(findings: readonly Finding[], words: string): boolean {
   }));
 }
 
+/**
+ * A no said as people say it, before what it turns round: "don't", "do not", "never", "no", "without", "avoid", "stop
+ * before", "check with me before" (commands-remote-r12-2), and the modal no: "mustn't", "shouldn't", "can't", "you're
+ * not allowed to", "I forbid" (r12-commands-y12-1). Never a reminder or a go-ahead ("don't forget to", "don't hesitate
+ * to", "I don't mind if", "never ask me before", "it won't hurt to"), nor a bare "not", which states a fact as often as
+ * it refuses ("it's not working").
+ */
+const SAYS_NO = /(?:^|[^\p{L}])(?:don[’']?t|do\s+not|never|no|without|avoid|forbid|prohibit|(?:must|should|shall|could)n[’']?t|(?:must|should|shall|may|can|could|will)\s+not|can[’']?t|cannot|won[’']?t|not\s+(?:allowed|permitted|supposed)\s+to|(?:stop|halt|pause)\s+(?:right\s+)?before|(?<!(?:never|don[’']?t|not)\s+)(?:check|confirm)\s+with\s+me(?:\s+first)?\s+before)(?![\p{L}])(?!\s+(?:ever\s+)?(?:forget|hesitate|fail|mind|care|worry|wait|stop\s+until|ask|bother|(?:check|confirm)\s+with|hurt|harm|matter|go\s+wrong|be\s+(?:a\s+|an\s+)?(?:problem|issue))(?![\p{L}]))/iu;
+/** A kind of step as a no names it, beyond KIND_VERBS: installing software, root or an administrator, and printing secrets. */
+const NO_KIND_VERBS: readonly { when: (f: Finding) => boolean; verb: RegExp }[] = [
+  { when: f => /^pkg\./.test(f.rule), verb: /(?:^|[^\p{L}])(?:install|reinstall|uninstall|upgrad|downgrad|add\s+(?:any\s+)?(?:new\s+|more\s+)?(?:packag|dependenc|librar|modules?))/iu },
+  { when: f => /(^|\.)(sudo|doas|pkexec|su|runas|privileged|admin|elevat\w*)(\.|$)/.test(f.rule), verb: /(?:^|[^\p{L}])(?:root|sudo|doas|pkexec|admin|administrator|elevat|superuser|su(?![\p{L}]))/iu },
+  { when: f => f.cls === "secret", verb: /(?:^|[^\p{L}])(?:read|print|show|display|reveal|expose|cat(?![\p{L}])|look\s+(?:at|in))/iu },
+];
+/** Words a no may name beside its step that stand for every one of its kind ("any files", "my work", "to GitHub", "system-wide"). */
+const WHOLE_KIND = new Set([...GENERIC, ..."files folders folder directories directory data work stuff things everything changes code system system-wide wide github gitlab bitbucket remote remotes origin upstream server servers npm pypi registry registries prod production live internet web cloud rights privileges permissions deletions deletion pushes pushing publishing new more under circumstances whatever right first with me before need there".split(" ")]);
+
+/**
+ * Does a part of the user's words say no to the kind of step a finding is, in ordinary words, whatever it names after
+ * the verb (commands-remote-r12-2): a no (SAYS_NO) with the step's kind after it ("do not push the changes", "don't
+ * push to GitHub", "do not remove any files", "don't install any packages", "don't use root", "stop before
+ * publishing"). A no that names another thing beside a request that names this step's own thing ("delete build/ but
+ * don't delete src/") leaves it asked. A doubt counts as ruled out: it only ever keeps the user's no.
+ */
+function saysNoTo(findings: readonly Finding[], words: string): boolean {
+  const parts = noParts(words);
+  // What the words ask for: each part up to its no ("delete build without removing src" asks to delete build).
+  const asked = parts.map(p => { const n = SAYS_NO.exec(p) ?? NEGATED.exec(p); return n ? p.slice(0, n.index) : p; }).join(". ");
+  return parts.some(part => findings.some(f => {
+    const verbs = [KIND_VERBS[f.cls], ...NO_KIND_VERBS.filter(k => k.when(f)).map(k => k.verb)].filter((v): v is RegExp => v !== undefined);
+    if (verbs.length === 0) return false;
+    // The remote left alone is a no to sending anything to it (r12-commands-x12-4).
+    if ((f.cls === "publish" || f.cls === "remote-delete") && LEAVES_REMOTE.test(part)) return true;
+    // The step's own word with a no after it ("pushing is not allowed", "nothing gets pushed": r12-commands-x12-4).
+    if (verbs.some(v => passiveNo(part, v))) return true;
+    for (const no of part.matchAll(SAYS_NO_ALL)) {
+      // ("no problem", "no worries": an idiom that turns nothing down, r12-commands-x12-3.)
+      if (NO_IDIOM.test(part.slice(no.index))) continue;
+      const after = part.slice(no.index + no[0].length);
+      // A bare "No" said as an answer before the request ("No, push it", "No — delete build"), and the user's own
+      // habit or ability with the step's verb straight after ("I never push without tests", "I can't push from
+      // here"): r12-commands-y12-2.
+      if (BARE_NO.test(no[0]) && /^\s*[,.;:!?—–-]/u.test(after)) continue;
+      if (HABIT_NO.test(no[0]) && /(?:^|[^\p{L}])(?:i|we)\s*$/iu.test(part.slice(0, no.index + 1))
+        && verbs.some(v => new RegExp(v.source, "iu").exec(after)?.index === 0)) continue;
+      if (!verbs.some(v => governs(after, v))) continue;
+      // What else the no names: a thing of its own, unless the words only stand for the whole kind.
+      const names = after.toLowerCase().split(/[^\p{L}\p{N}'’_./~-]+/u).filter(w => w !== "" && !WHOLE_KIND.has(w) && !verbs.some(v => v.test(w)) && !NEGATED.test(w) && !/^(use|using|touch|do|make|be|go|run|any|of)$/.test(w));
+      if (!(names.length > 0 && !namesObject([f], after) && f.objects.some(o => o.text !== "") && namesObject([f], asked))) return true;
+    }
+    return false;
+  }));
+}
+
+/** A no that is the bare word "no" (r12-commands-y12-2). */
+const BARE_NO = /^[^\p{L}]?no$/iu;
+/** A no that, after "I" or "we", may tell a habit or an ability ("I never push…", "I can't push…"): r12-commands-y12-2. */
+const HABIT_NO = /^[^\p{L}]?(?:never|can[’']?t|cannot|couldn[’']?t)$/iu;
+/** Every no in a part (SAYS_NO, found again and again). */
+const SAYS_NO_ALL = new RegExp(SAYS_NO.source, "giu");
+/** "no" in an idiom that turns nothing down ("no problem", "no worries", "no rush"): r12-commands-x12-3. */
+const NO_IDIOM = /^no\s+(?:problems?|probs?|worr(?:y|ies)|rush|hurry|biggie|matter|doubt|question|pressure|sweat|stress|fuss)(?![\p{L}])/iu;
+/**
+ * Words between a no and a step's verb that start another clause ("without a PR just push", "I don't need a review so
+ * push it", "no rush, go ahead and publish"): the no is to something else (r12-commands-x12-3).
+ */
+const TURNS = /(?:^|[^\p{L}])(?:so|just|go|ahead|then|instead|anyway|simply|therefore|hence|thus|and|but)(?![\p{L}])/iu;
+/** A no that states a fact ("I don't have root", "I don't know the tests"), not a refusal (r12-commands-x12-3). */
+const NO_FACT = /^\s*(?:have|own|know)(?![\p{L}])/iu;
+/** Does the no govern a verb of the step: the verb after it, with no fact and no turn to another clause between? */
+function governs(after: string, verb: RegExp): boolean {
+  if (NO_FACT.test(after)) return false;
+  const m = new RegExp(verb.source, "giu");
+  for (const v of after.matchAll(m)) if (!TURNS.test(after.slice(0, v.index))) return true;
+  return false;
+}
+/** Asides that may stand between a no and its step ("Do not, under any circumstances, push"; "Never, ever, push"). */
+const NO_ASIDE = /^(?:\s*(?:under\s+any\s+circumstances|ever|please|whatever\s+happens|at\s+all|at\s+any\s+point|really|seriously|i\s+repeat|repeat|again|okay|ok)\s*)*$/iu;
+/**
+ * The parts of the words, with a no whose step comes after an aside joined to it: PARTS splits at the commas
+ * (r12-commands-x12-4).
+ */
+function noParts(words: string): string[] {
+  const raw = words.split(PARTS);
+  const parts: string[] = [];
+  for (let i = 0; i < raw.length; i++) {
+    let p = raw[i];
+    // (Never a bare "No" said as an answer: "No, push it to main" is a request, r12-commands-y12-2.)
+    const endsInNo = (t: string) => [...t.matchAll(SAYS_NO_ALL)].some(n => !BARE_NO.test(n[0]) && NO_ASIDE.test(t.slice(n.index + n[0].length)));
+    while (i + 1 < raw.length && endsInNo(p)) p = `${p} ${raw[++i]}`;
+    parts.push(p);
+  }
+  return parts;
+}
+/**
+ * The step's word with its no after it: "pushing is not allowed", "pushes are forbidden", "nothing gets pushed",
+ * "nothing should be deleted" (r12-commands-x12-4).
+ */
+function passiveNo(part: string, verb: RegExp): boolean {
+  const m = new RegExp(verb.source, "giu");
+  for (const v of part.matchAll(m)) {
+    const at = v.index + v[0].length;
+    const tail = part.slice(at).replace(/^[\p{L}]*/u, "");
+    if (/^\s+(?:is|are|was|were|will\s+be)\s+(?:not|never)\s+(?:allowed|permitted|ok|okay|wanted|an\s+option)(?![\p{L}])/iu.test(tail)) return true;
+    if (/^\s+(?:isn[’']t|aren[’']t|won[’']t\s+be)\s+(?:allowed|permitted|ok|okay|wanted|an\s+option)(?![\p{L}])/iu.test(tail)) return true;
+    if (/^\s+(?:is|are)\s+(?:forbidden|prohibited|banned|off\s+the\s+table)(?![\p{L}])/iu.test(tail)) return true;
+    const before = part.slice(0, v.index);
+    if (/(?:^|[^\p{L}])nothing\s+(?:gets?|got|is|was|should(?:\s+(?:be|get))?|must(?:\s+(?:be|get))?|may\s+be|will(?:\s+(?:be|get))?|can\s+be)\s*$/iu.test(before)) return true;
+  }
+  return false;
+}
+/** Words that leave the remote alone ("leave the remote alone", "don't touch origin"): a no to sending (r12-commands-x12-4). */
+const LEAVES_REMOTE = /(?:^|[^\p{L}])(?:(?:leave|leaving)\s+(?:the\s+|my\s+|our\s+)?(?:remotes?|origin|upstream|github|gitlab|bitbucket|registry|server)\s+(?:alone|untouched|be)|(?:don[’']?t|do\s+not|never)\s+touch\s+(?:the\s+|my\s+|our\s+)?(?:remotes?|origin|upstream|github|gitlab|bitbucket|registry|server))(?![\p{L}])/iu;
+
+/**
+ * A part that keeps every one of a kind of thing ("keep all files", "keep everything", "preserve my data"): a no to
+ * deleting anything (commands-remote-r12-2). Never a keep of something named or of what Ember is doing ("keep going").
+ */
+const KEEPS_ALL = /^(?:\s*(?:please|and|but|just|also))*\s*(?:keep|preserve|spare)\s+(?:all|every|everything|any|my|our|the)?\s*(?:of\s+)?(?:the\s+|my\s+|our\s+)?(?:files?|folders?|directories|data|work|everything|code|stuff|things)(?:\s+(?:intact|safe|as\s+(?:it|they)\s+(?:is|are)))?\s*$/iu;
+
 /** Does a part of the user's words hold back what these findings act on, or the kind of step they are (HOLDS_BACK)? */
 function wordsHoldBack(findings: readonly Finding[], words: string): boolean {
-  return words.split(PARTS).some(part => HOLDS_BACK.test(part) && (namesObject(findings, part) || namedKind(findings, part) || mentioned(findings, part) || namesUnknown(findings, part)));
+  return words.split(PARTS).some(part => (HOLDS_BACK.test(part) && (namesObject(findings, part) || namedKind(findings, part) || mentioned(findings, part) || namesUnknown(findings, part)))
+    || (KEEPS_ALL.test(part) && findings.some(f => f.cls === "destroy")));
 }
 
 /**
@@ -795,7 +916,7 @@ function wordsHoldBack(findings: readonly Finding[], words: string): boolean {
  */
 export function wordsRuleOut(findings: readonly Finding[], words: string): boolean {
   if (!words.trim() || findings.length === 0) return false;
-  if (ruledOut(findings, words) || negatedKind(findings, words)) return true;
+  if (ruledOut(findings, words) || negatedKind(findings, words) || saysNoTo(findings, words)) return true;
   if (!mentioned(findings, words) && mentioned(findings, words.replace(SAYS_NOT, "$1 "))) return true;
   // Their asking to be asked first, and a deletion they narrow or send to the trash or a stash instead (integ-x-3).
   return wordsHoldBack(findings, words) || heldByWords(findings, words);
@@ -855,6 +976,19 @@ export function autonomousCommand(d: CommandDecision, o: { scopes: AutonomyScope
     requested: { intent: "autonomy", announce: `Running a command with text from ${from}, without asking as you let me.` },
     reason: "Working without asking: an ordinary command that carries text read elsewhere in the task.",
   };
+}
+
+/**
+ * What an announcement's card says of why it runs, for its heading: the AI review cleared it, Autopilot announced it
+ * (its own or a remote's question: both end on AUTOPILOT_LINE), or the user's words didn't ask for it (a program Ember
+ * doesn't know, an ordinary command carrying text from another window: accessibility-r12-1). None: their words asked
+ * for exactly it. Pure.
+ */
+export function announceFlags(d: Pick<CommandDecision, "requested">, says: readonly string[]): Pick<CommandCard, "reviewed" | "autopilot" | "unrequested"> {
+  if (d.requested?.intent === "ai-review") return { reviewed: true };
+  if (says.includes(AUTOPILOT_LINE)) return { autopilot: true };
+  if (d.requested?.intent === UNKNOWN_ANNOUNCED || d.requested?.intent === "autonomy") return { unrequested: true };
+  return {};
 }
 
 /** What the audit's ended record says of a run whose output (or own end) didn't all come back (review wslio-x-5). */
@@ -1317,9 +1451,7 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
     runId, target, targetLabel: binding.label, ...(binding.login ? { login: binding.login } : {}), shell, cwd, command: a.command, sha256, taskId: task,
     taskTitle: ctx.task.title, mode: cardMode, says, unasked: cardMode === "ask" && d.unasked, armMs: d.armMs,
     ...(cardMode !== "run" && d.classes.length ? { classes: d.classes } : {}),
-    ...(cardMode === "announce" && d.requested?.intent === "ai-review" ? { reviewed: true } : {}),
-    // Autopilot's announcement, its own or of a remote's question (both end on AUTOPILOT_LINE): the heading says so.
-    ...(cardMode === "announce" && says.includes(AUTOPILOT_LINE) ? { autopilot: true } : {}),
+    ...(cardMode === "announce" ? announceFlags(d, says) : {}),
     // The header says the home folder as ~ in a POSIX shell (commands-remote-8).
     ...(shell !== "powershell" && home ? { home } : {}),
   });
@@ -1410,9 +1542,12 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
       if (live.state !== "on") return denied(`${live.why ?? `Commands are off on ${place}.`} Don't try another way; tell the user in finish_task.`);
       if (svc.binding.id !== target || svc.runner.target !== target) return denied("The command's computer changed. Finish the task saying so.");
       // (Autopilot's announcement stands while Autopilot does: there root alone is no reason to ask, as when it was decided.)
+      // (Assisted's check cleared it under root's rule: root still alone is no reason to ask, as when it was decided;
+      // any other rule, or root arriving after, still is: r12-commands-x12-1.)
+      const rootCleared = d.requested?.intent === "ai-review" && cap.askEvery === "root";
       const everyAsks = announcedAt !== null
         ? !ctx.autopilot?.() || (live.askEvery !== null && live.askEvery !== "root")
-        : live.askEvery !== null;
+        : live.askEvery !== null && !(rootCleared && live.askEvery === "root");
       if (svc.mode() === "off" || (approvedAt === null && (everyAsks || svc.userAskEvery() || svc.mode() === "ask"))) {
         return denied("Command permissions changed while this command was waiting. It did not run. Ask the user for a new request.");
       }

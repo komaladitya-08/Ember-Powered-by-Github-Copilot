@@ -434,6 +434,11 @@ export interface CommandCard {
   /** An announcement Autopilot made (commands/autopilot.ts), of a command the user didn't ask for exactly: its heading says so. */
   autopilot?: boolean;
   /**
+   * An announcement of a command the user's words didn't ask for: a program Ember doesn't know, or an ordinary command
+   * carrying text from another window. Its heading never says "as you asked" (accessibility-r12-1).
+   */
+  unrequested?: boolean;
+  /**
    * The target's home folder, for a POSIX shell: the header says it as ~ ("in ~/src/app", commands-remote-8). Shown
    * only; the approval binds the whole `cwd`.
    */

@@ -497,6 +497,8 @@ class Classifier {
    * can't see: only for Ember's own refusal, never to resolve a word for anything else (commands-remote-c3-2).
    */
   protected varValues = new Map<string, string[]>();
+  /** The words as written that the text assigns a POSIX variable (sendsContents: `T=$(cat notes.txt); docker pull x.io/$T`). */
+  protected varRaws = new Map<string, string[]>();
   /** Variables the text sets to words Ember can't see (mayHoldWords): a command's output, a read, a loop over such words. */
   private wordVars = new Set<string>();
   /**
@@ -878,11 +880,17 @@ class Classifier {
     return (this.varValues.get(name) ?? []).filter(f => !f.includes(UNSEEN) && !f.startsWith(PATTERN));
   }
 
+  /** Keeps what a declaration (`export IMG=…$(cat notes.txt)`) assigns as written, for sendsContents (r12-commands-y12-3). */
+  noteVarRaw(name: string, raw: string, sc: Scope): void {
+    if (sc.family === "posix") this.varRaws.set(name, [...(this.varRaws.get(name) ?? []), raw]);
+  }
+
   setVar(name: string, values: readonly Arg[] | null, sc: Scope, loop = false, exported = false): void {
     if (!loop) this.setsVars = true;
     if (!/^([A-Za-z_]\w*|[1-9@*])$/.test(name)) return;
     if (!loop) this.loopVars.delete(name);
     if (sc.family !== "posix") return;
+    if (values !== null) this.varRaws.set(name, [...(this.varRaws.get(name) ?? []), ...values.map(a => a.raw)]);
     const forms = values === null ? [UNSEEN] : values.flatMap(a => (a.v !== null ? [a.glob ? PATTERN + (a.pattern ?? a.v) : a.v] : a.parts ? this.formsOf(a.parts) : [UNSEEN]));
     if (values === null || values.some(a => this.mayHoldWords(a))) this.wordVars.add(name);
     if (exported || this.allExport || /^[A-Z][A-Z0-9_]*$/.test(name)) for (const f of forms) this.judgeForm(f, null, sc, exported || this.allExport);
@@ -1838,6 +1846,32 @@ function saysLittle(inner: string): boolean {
   }
   return true;
 }
+/** Registries' clients and their verbs that send the names they are given to a registry (sendsContents: y10-4). */
+/** The container clients, whose `run` and `create` pull the image they name (sendsContents). */
+const IMAGE_CLIENTS = new Set(["docker", "podman", "nerdctl", "buildah"]);
+/** An image named with its registry's host (`x.io/app`, `registry:5000/app`). */
+const IMAGE_HOST = /^["']?[\w-]+(?:\.[\w-]+)+(?::\d+)?\/|^["']?[\w-]+:\d+\//;
+/** The word before a container's image: none, or an option that takes no value (`--rm`, `-it`, `--name=x`). */
+const takesNoValue = (prev: string): boolean => prev === "" || /^--[\w-]+=/.test(prev) || /^(?:--(?:rm|detach|interactive|tty|init|privileged|read-only|publish-all|quiet|no-healthcheck|sig-proxy|oom-kill-disable)|-[dtiPq]+)$/.test(prev);
+/** scp's and git's `host:path` address (`x.io:repo`, `git@x.io:ana/notes.git`), never a Windows drive or a URL. */
+const HOST_PATH = /^["']?(?:[\w.-]+@[\w.-]+|[\w-]+(?:\.[\w-]+)+):(?!\/\/)/;
+const REGISTRY_VERBS: Readonly<Record<string, ReadonlySet<string>>> = (() => {
+  // (`docker inspect` and the like ask this computer's daemon; skopeo, crane, oras and regctl only ever ask a registry.)
+  const images = new Set(["pull", "push", "search", "manifest", "login", "run", "create"]);
+  const remote = new Set(["inspect", "copy", "list-tags", "ls", "cat", "fetch", "digest", "pull", "push", "manifest", "config", "blob", "tag", "image", "repo", "artifact", "discover", "attach", "login"]);
+  const node = new Set(["view", "v", "info", "show", "search", "s", "find", "install", "i", "add", "exec", "dlx", "x", "create", "init", "outdated", "dist-tag", "access", "owner", "deprecate", "publish", "unpublish"]);
+  const py = new Set(["index", "download", "install", "search"]);
+  const out: Record<string, ReadonlySet<string>> = {};
+  for (const k of ["docker", "podman", "nerdctl", "buildah"]) out[k] = images;
+  for (const k of ["skopeo", "crane", "oras", "regctl"]) out[k] = remote;
+  for (const k of ["npm", "pnpm", "yarn", "bun"]) out[k] = node;
+  for (const k of ["pip", "pip3", "pipx", "poetry"]) out[k] = py;
+  out.gem = new Set(["search", "query", "install", "fetch", "list", "specification"]);
+  out.cargo = new Set(["search", "install", "add", "info"]);
+  out.go = new Set(["get", "install"]);
+  out.helm = new Set(["pull", "push", "install", "upgrade", "search", "show", "template", "fetch"]);
+  return out;
+})();
 /** Programs whose words are, or hold, a command line they hand to a shell: judged there (nested()), never as their own files. */
 const NESTS_TEXT = new Set(["sh", "bash", "zsh", "dash", "ksh", "ash", "fish", "cmd", "powershell", "pwsh", "wsl", "watch", "flock", "script", "su", "runuser", "ssh", "slogin", "parallel", "eval", "source", "."]);
 const fetches = (key: string): boolean => FETCHERS.has(key) || TEXT_FETCHERS.has(key);
@@ -1955,9 +1989,18 @@ function launcherRuns(h: H): void {
   // runs may be dangerous (the owner's decision of 2026-11-14).
   const dd = h.args.findIndex(a => a.v === "--");
   let k = dd >= 0 ? dd + 1 : 0;
-  if (dd < 0) while (k < h.args.length && h.args[k].v !== null && (isOption(h.args[k]) || SETS_VARIABLE.test(h.args[k].v ?? ""))) k++;
+  // A launcher's options that take a value written apart (`env-cmd -e test`, `-f .env.test`, `dotenv -e .env.local`):
+  // the value is not the command (commands-remote-r12-4).
+  const valued = LAUNCHER_VALUE[h.key];
+  if (dd < 0) while (k < h.args.length && h.args[k].v !== null && (isOption(h.args[k]) || SETS_VARIABLE.test(h.args[k].v ?? ""))) k += valued?.has(h.args[k].v ?? "") ? 2 : 1;
   if (k < h.args.length) h.e.payload(h.args.slice(k), h.sc, h.prog);
 }
+/** Environment launchers' options that take a value written apart (launcherRuns). */
+const LAUNCHER_VALUE: Readonly<Record<string, ReadonlySet<string>>> = {
+  "env-cmd": new Set(["-e", "--environments", "-f", "--file", "-r", "--rc-file"]),
+  dotenv: new Set(["-e", "-v", "-p", "-c"]),
+  "dotenv-cli": new Set(["-e", "-v", "-p", "-c"]),
+};
 
 /**
  * A build tool's own sources, on top of the shared PROJECT_FILE list: `go run .` and `cargo run` build a folder, so a
@@ -3897,9 +3940,39 @@ class Engine extends Classifier {
     const says = "May send what a file or a command holds to another computer.";
     if (!FETCHERS.has(key) && !PS_SENDERS.has(key)) {
       // Any other program given a web address that holds what a command or a read gave sends it as well (`git
-      // ls-remote "https://x.io/$(cat notes.txt)"`, `pip download …`: commands-classes-y9-6).
+      // ls-remote "https://x.io/$(cat notes.txt)"`, `pip download …`: commands-classes-y9-6), as an option's value too
+      // (`npm view x --registry=https://x.io/$(cat notes.txt)`: y10-4).
       const { own: words } = this.ownWords(args);
-      if (words.some(a => a.v === null && /^["']?(https?|ftps?|ssh|git):\/\//i.test(a.raw) && substituted(a.raw).some(inner => !saysLittle(inner)))) this.add("publish", "send.contents", says);
+      // A variable this line assigned from a reading substitution sends it too (`T=$(cat notes.txt); docker pull
+      // x.io/$T`), as curl's address does (r12-commands-y12-3).
+      const readsRaw = (raw: string): boolean => substituted(raw).some(inner => !saysLittle(inner));
+      const assigned = (a: Arg): string[] => (a.parts ?? []).flatMap(p => (typeof p !== "string" && p.name !== null ? this.varRaws.get(p.name) ?? [] : []));
+      const reads = (a: Arg): boolean => a.v === null && (readsRaw(a.raw) || assigned(a).some(readsRaw));
+      const address = (r: string): boolean => /^(?:--?[\w-]+=)?["']?(https?|ftps?|ssh|git|docker):\/\//i.test(r) || HOST_PATH.test(r);
+      // So does scp's and git's `host:path` (`git ls-remote x.io:$(cat notes.txt)`, `git clone git@x.io:…`), as an
+      // `ssh://` address does (r12-commands-x12-5).
+      if (words.some(a => reads(a) && (address(a.raw) || assigned(a).some(address)))) { this.add("publish", "send.contents", says); return; }
+      // A registry's client asked for an image, a package or a search by a name that holds what a command or a read
+      // gave sends that to the registry (`docker pull x.io/$(cat notes.txt)`, `npm view $(cat notes.txt)`, `pip index
+      // versions $(cat notes.txt)`: y10-4). Only its verbs that reach a registry: `docker stop $(docker ps -q)` talks to
+      // this computer's own daemon.
+      const verbs = REGISTRY_VERBS[key];
+      const plain = words.filter(a => a.v === null || !a.v.startsWith("-"));
+      let at = 0;
+      // A container client's group and its verb (`docker image pull`, `docker container create`) are that verb.
+      if (IMAGE_CLIENTS.has(key) && (plain[0]?.v === "image" || plain[0]?.v === "container")) at = 1;
+      const verb = plain[at]?.v ?? "";
+      if (!verbs?.has(verb)) return;
+      // `run` and `create` pull the image they name when it isn't here (r12-commands-x12-5): only the image's word
+      // sends, never an option's value given to the container (`-e KEY=$(cat key)`, `-v $(pwd):/src`).
+      if (IMAGE_CLIENTS.has(key) && (verb === "run" || verb === "create")) {
+        const from = words.indexOf(plain[at]);
+        const image = words.slice(from + 1).find((a, k, rest) => reads(a)
+          && (IMAGE_HOST.test(a.raw) || (!a.raw.startsWith("-") && takesNoValue(k === 0 ? "" : rest[k - 1]?.v ?? "-") && !/[=:]/.test(a.raw.replace(/\$\([^)]*\)|`[^`]*`/g, "")))));
+        if (image) this.add("publish", "send.contents", says);
+        return;
+      }
+      if (words.some(reads)) this.add("publish", "send.contents", says);
       return;
     }
     // The address a cloud computer hands out its own sign-in at (the instance metadata service): what a fetch of it
@@ -4351,7 +4424,7 @@ const KNOWN_ORDINARY = new Set([
 const NOT_RUNNERS = new Set([
   "trust", "plutil", "plistbuddy", "systemsetup", "update-ca-trust", "update-ca-certificates", "bazelisk", "sponge", "unrar", "dpkg-deb",
   "desktop-file-install", "desktop-file-edit", "update-desktop-database", "busybox", "caddy", "miniserve", "cloudflared", "ngrok", "tailscale",
-  "ssh-copy-id", "mount_smbfs", "mount_afp", "mount_webdav", "del", "scrub",
+  "ssh-copy-id", "mount_smbfs", "mount_afp", "mount_webdav", "del", "scrub", "qpdf", "pdftk", "pdfunite", "img2pdf",
 ]);
 /** Program keys that, as an unknown program's operand, suggest it runs them (a wrapper Ember doesn't know). */
 let RUNNERS: ReadonlySet<string> | null = null;
@@ -4491,6 +4564,9 @@ function handedCommand(h: H, runnerAt: number, script?: { name: string; args: Ar
     const v = args[k].v;
     if (v === null || k === runnerAt) continue;
     const eq = v.startsWith("-") ? v.indexOf("=") : -1;
+    // An environment launcher's own option with its value (`env-cmd -e test`, `dotenv -e .env.local`) hands it no
+    // command (commands-remote-r12-4).
+    if (!script && eq < 0 && LAUNCHER_VALUE[h.key]?.has(v)) { k++; continue; }
     if (EXEC_OPTION.test(eq < 0 ? v : v.slice(0, eq))) {
       const value = eq < 0 ? args[k + 1]?.v : v.slice(eq + 1);
       if (eq < 0) k++;
@@ -4779,7 +4855,8 @@ function unknownDoes(h: H, verb?: string): void {
   }
   // The environment, which may hold tokens, printed or exported (`--export-env`, `--print-env`).
   if (words.includes("env") && words.some(t => ["export", "print", "show", "dump", "list"].includes(t))) found("secret", "unknown-words.secret", `By its words, ${base} may show passwords, keys or tokens.`);
-  else if (hasWord(UNKNOWN_SECRET) || UNKNOWN_SECRET_PROGRAMS.has(base)) found("secret", "unknown-words.secret", `By its words, ${base} may show passwords, keys or tokens.`);
+  // (An auth verb's `-t`, which shows the token: `glab auth status -t`, r12-commands-y12-8.)
+  else if (hasWord(UNKNOWN_SECRET) || UNKNOWN_SECRET_PROGRAMS.has(base) || (words.includes("auth") && h.args.some(a => a.v === "-t"))) found("secret", "unknown-words.secret", `By its words, ${base} may show passwords, keys or tokens.`);
   if (words.includes("global") || words.includes("system") || words.includes("systemwide") || first === "default" || UNKNOWN_SYSTEM_TOOLS.has(base)
     || (UNKNOWN_CONFIG.includes(first ?? "") && (words.some(t => UNKNOWN_CONFIG_WRITES.includes(t))
       // A key and its value after the settings verb (`poetry config repositories.x http://…`) set it.
@@ -5240,6 +5317,18 @@ const RUNS_BY_OPTION: readonly (readonly [RegExp, RegExp])[] = [
 /** An option of a tool that Ember doesn't know: said by name, never as a danger (the owner's decision of 2026-11-14). */
 function unknownOptionSays(tool: string, option: string): string {
   return `It runs ${tool} with ${option}, an option Ember doesn't know.`;
+}
+/**
+ * A tool's add-on (`docker scout` is the program docker-scout, `kubectl krew` is kubectl-krew): announced by name as a
+ * command of the tool Ember doesn't know, and its operands judged as an unknown program's are (unknownDoes, generic),
+ * so a deletion, a handed command or a secret in them is still found (r12-commands-x12-2).
+ */
+function addOn(h: H, tool: string, verbArg: Arg, rest: Arg[]): void {
+  const v = verbArg.v ?? "";
+  h.e.add("unknown", "unknown.verb", unknownVerbSays(tool, v), { program: `${tool} ${v}` });
+  const sub: H = { ...h, key: `${tool}-${v}`, prog: `${tool}-${v}`, nameArg: verbArg, args: rest };
+  unknownDoes(sub);
+  generic(sub, true);
 }
 function unknownVerbSays(tool: string, verb: string): string {
   return verb === "" ? `It runs ${tool} with no command, and Ember doesn't know what that does.` : `It runs ${tool} ${verb}, a command of ${tool} that Ember doesn't know.`;
@@ -6755,8 +6844,63 @@ reg(NATIVE, ["chmod", "chown", "chgrp", "setfacl", "chattr", "chflags"], h => {
   const outside = objs.some(o => o.abs === null || !h.sc.home || !isUnder(o.abs, h.sc.home, h.sc.path)) && !objs.every(o => o.abs !== null && inWorkTree(o.abs, h.sc.path));
   if (rec || h.key === "chattr" || (outside && objs.some(o => o.abs !== null && writeKind(o.abs, h.sc.path) === "system")) || (h.key !== "chmod" && outside)) {
     h.e.add("system", "system.permissions", "Changes who may read or change files.", { objects: objs, widening: rec ? ["recursive"] : [] });
+    return;
   }
+  // Other accounts let in, wherever the files are (commands-remote-c12-2): every account may change them (`chmod 777`,
+  // `o+w`), another account or group may (`setfacl -m u:bob:rwx`), or the home folder itself is opened to them.
+  const own = h.sc.home;
+  const home = !!own && objs.some(o => o.abs !== null && isUnder(o.abs, own, h.sc.path) && isUnder(own, o.abs, h.sc.path));
+  const self = ownAccount(h.sc);
+  // (A mode copied from another file with --reference is one Ember can't name: on the home folder a doubt, r12-commands-y12-9.)
+  const opens = h.key === "chmod" ? (values(p, "reference").length ? home : modeOpens(p.operands[0]?.v ?? null, home))
+    : h.key === "setfacl" ? values(p, "m", "M", "modify", "set").some(v => v === null || aclOpens(v, home, self)) : false;
+  if (opens) h.e.add("system", "system.permissions", OPENS_SAYS, { objects: objs });
 });
+
+/** What a change of permissions says when it lets other accounts in (commands-remote-c12-2). */
+const OPENS_SAYS = "Lets other accounts on this computer read or change these files.";
+/** The account a home folder is named for (`/home/ana`, `C:\Users\ana`), lower case: a grant to it is the user's own. */
+function ownAccount(sc: Scope): string {
+  return (sc.home ?? "").split(/[\\/]/).filter(Boolean).pop()?.toLowerCase() ?? "";
+}
+/**
+ * Whether a chmod mode lets every account change a file (the others' write bit: `777`, `666`, `o+w`, `a+rwx`), or,
+ * on the home folder itself, lets other accounts in at all (`755`, `go+rx`). A mode Ember can't read is a doubt.
+ * `+w` with no one named follows the umask, which keeps it the owner's.
+ */
+function modeOpens(mode: string | null, home: boolean): boolean {
+  if (mode === null) return true;
+  if (/^[0-7]{3,4}$/.test(mode)) {
+    const d = mode.slice(-3).split("").map(Number);
+    return (d[2] & 2) !== 0 || (home && (d[1] !== 0 || d[2] !== 0));
+  }
+  return mode.split(",").some(clause => {
+    const m = /^([ugoa]*)([-+=])([rwxXst]*|[ugo])$/.exec(clause);
+    if (!m) return /^[ugoa]*[+=]/.test(clause);
+    const [, who, op, perms] = m;
+    if (op === "-") return false;
+    const others = /[oa]/.test(who);
+    // A copy of a class's bits (`o=u`, `a=u`) gives what that class has, which may be write: a doubt, so it opens
+    // (r12-commands-x12-7).
+    if (/^[ugo]$/.test(perms)) return others || (home && /[goa]/.test(who));
+    return (others && perms.includes("w")) || (home && /[goa]/.test(who) && perms !== "");
+  });
+}
+/**
+ * Whether setfacl's entries let another account in: write for every account (`o::rw`) or for another named user or
+ * group (`u:bob:rwx`, `g:staff:rw`), or, on the home folder itself, anything for them.
+ */
+function aclOpens(entries: string, home: boolean, self: string): boolean {
+  return entries.split(",").some(e => {
+    const [type = "", name = "", perms = ""] = e.replace(/^d(?:efault)?:/, "").split(":");
+    const t = type.toLowerCase();
+    const grants = /[rwx]/i.test(perms);
+    const write = /w/i.test(perms);
+    if (t === "o" || t === "other") return write || (home && grants);
+    if ((t === "u" || t === "user" || t === "g" || t === "group") && name !== "" && name.toLowerCase() !== self) return write || (home && grants);
+    return false;
+  });
+}
 
 // Archivers (§3.5.1, critique security-6).
 /** GNU tar's short options that take a value (-j, -J and -z are switches: commands-remote-i5a). */
@@ -7794,6 +7938,7 @@ reg(NATIVE, ["export", "declare", "typeset", "local", "readonly"], h => {
     if (n.v !== null && n.v.includes("=") && commandLineSecret(n.v)) h.e.add("secret", "secret.token-arg", SAYS.tokenArg);
     // `export d=~/.config/ember` gives d a value as an assignment does (commands-remote-c3-2); `export d` hands the value
     // it has to the programs that run, so it is judged as when it is exported as it is set (commands-remote-v5-2).
+    if (n.v === null && n.raw.includes("=")) h.e.noteVarRaw(name, n.raw.slice(n.raw.indexOf("=") + 1), h.sc);
     if ((n.v ?? n.raw).includes("=")) h.e.setVar(name, n.v !== null ? [lit(n.v.slice(n.v.indexOf("=") + 1))] : null, h.sc, false, h.key === "export" || has(p, "x"));
     else if (h.key === "export" || has(p, "x")) {
       h.e.useUnjudged([name], true);
@@ -8542,6 +8687,8 @@ reg(NATIVE, ["gh"], h => {
   if (group === "codespace" && (sub === "ssh" || sub === "code" || sub === "jupyter")) { h.e.unclear("unclear.interactive", SAYS.interactive); return; }
   if (["status", "search", "help", "completion", "version", "config", "attestation", "preview", "agent-task"].includes(group)) return;
   const what = GH_WHAT[group];
+  // (A command of gh's Ember doesn't know may be an alias from gh's settings, which Ember doesn't read: code it can't
+  // read, the owner's open point in docs/APPROVALS.md, so it asks; an extension can't be told from one.)
   if (!what) { h.e.unclear("unclear.gh-verb", "Ember can't tell which gh command this runs."); return; }
   if (sub === null) return;
   // A release's files or a workflow run's artifacts land in the folder, or in -D's (and -O's file): running one later
@@ -8550,6 +8697,12 @@ reg(NATIVE, ["gh"], h => {
     h.e.download(".", h.sc);
     const dp = parseOpts(rest, { shortValue: "DOnpAR", longValue: ["dir", "output", "name", "pattern", "archive", "repo"] });
     for (const d of values(dp, "D", "dir", "O", "output")) { if (d) h.e.download(d, h.sc); else h.e.markUnnamed(null, h.sc); }
+    // --clobber replaces what is there, which gh otherwise refuses (y11-8): the file -O names, or the folder's files.
+    if (has(dp, "clobber")) {
+      const out = optionWords(rest, dp, "O", "output");
+      if (out.length) for (const o of out) overwrites(h, o, "download.output");
+      else { const dirs = optionWords(rest, dp, "D", "dir"); for (const d of dirs.length ? dirs : [lit(".")]) overwritesInto(h, d); }
+    }
     return;
   }
   if ((group === "repo" || group === "gist") && sub === "clone") {
@@ -8776,6 +8929,12 @@ reg(NATIVE, ["docker", "podman", "nerdctl", "docker-compose", "podman-compose"],
     if (v === "start" && rest.some(a => /^-[a-z]*i/.test(a.v ?? "") || a.v === "--interactive")) h.e.unclear("unclear.interactive", SAYS.interactive);
     return;
   }
+  // A command of its own Ember doesn't know is an add-on, a program of its own (`docker scout` is docker-scout), run
+  // announced by name as any program Ember doesn't know (commands-remote-c12-1). A group's command it doesn't know
+  // (`docker swarm leave`, `docker plugin install`) still asks.
+  // Only docker has add-ons: podman's and nerdctl's other words are their own commands (`podman unshare` runs a command,
+  // `play kube` starts pods), which Ember can't tell the effect of (r12-commands-x12-2).
+  if (prog === "docker" && !isCompose && group === null && /^[a-z][a-z0-9-]*$/.test(v)) { addOn(h, prog, verbs[0], rest); return; }
   h.e.unclear("unclear.docker-verb", "Ember can't tell which container command this runs.");
 });
 /**
@@ -8897,6 +9056,8 @@ function compose(h: H, prog: string, rest: Arg[]): void {
 
 // Cloud and cluster command-line tools (§3.5.2, §3.5.3, §3.5.4).
 /** Verbs the cloud CLIs use for changes (a resource name after them isn't the verb). */
+/** kubectl's own commands: any other word after it names a plug-in (commands-remote-c12-1). */
+const KUBECTL_OWN = new Set(["create", "expose", "run", "set", "explain", "get", "edit", "delete", "rollout", "scale", "autoscale", "certificate", "cluster-info", "top", "cordon", "uncordon", "drain", "taint", "describe", "logs", "attach", "exec", "port-forward", "proxy", "cp", "auth", "debug", "events", "diff", "apply", "patch", "replace", "wait", "kustomize", "label", "annotate", "completion", "alpha", "api-resources", "api-versions", "config", "plugin", "version", "options", "help"]);
 const CLOUD_VERBS = new Set(["create", "update", "set", "add", "start", "stop", "restart", "reset", "deploy", "run", "apply", "attach", "import", "export", "upload", "download", "copy", "move", "resize", "scale", "enable", "disable", "ssh", "scp", "connect", "invoke", "publish", "tag", "untag", "patch", "replace", "edit", "rollout", "login", "logout", "configure", "assign", "grant", "revoke", "rotate", "promote", "suspend", "resume", "reboot", "cancel", "approve", "submit", "write", "put", "push", "pull", "sync", "mount", "unmount", "init", "exec", "cp", "mv", "label", "annotate", "cordon", "uncordon", "taint", "expose", "autoscale", "port-forward", "proxy", "certificate"]);
 /** Verb shapes that change a cloud service ("run-instances", "put-object", "modify-db-instance", "s3 mb"). */
 const CLOUD_CHANGE = /^(?:s3 \S+|(?:create|update|put|set|run|start|stop|reboot|modify|attach|associate|disassociate|add|import|export|enable|disable|register|tag|untag|send|publish|invoke|apply|replace|restore|copy|reset|change|cancel|accept|reject|authorize|revoke|allocate|release|request|upload|deploy|scale|rotate|install|upgrade|rollback|promote|refresh|new|select|force-unlock|untaint|push|mv|renew|regenerate)(?:-.*)?)$/;
@@ -9042,12 +9203,16 @@ reg(NATIVE, Object.keys(CLOUD_CLIS), h => {
       // verb anywhere is the verb (one shaped like a change only before the first read verb: a name after `describe`
       // may look like one), then the first read verb, then the last word.
       const isRead = (v: string) => CLOUD_PATH_READ.has(v) || /^(describe|list|get)-/.test(v);
-      const firstRead = verbs.findIndex(isRead);
-      const known = verbs.find(v => CLOUD_DELETE.has(v) || /^(delete|terminate|remove|deregister|purge)-/.test(v))
-        ?? verbs.find(v => CLOUD_VERBS.has(v) || /^(create|update)-/.test(v))
-        ?? (firstRead < 0 ? verbs : verbs.slice(0, firstRead)).find(v => CLOUD_CHANGE.test(v))
-        ?? verbs[firstRead];
-      verb = known ?? verbs[verbs.length - 1];
+      // gcloud's and az's first word (after a release track) is a product's group, never its verb: `gcloud run services
+      // describe` is Cloud Run's describe, not a run (commands-remote-r12-4).
+      const track = (h.key === "gcloud" || h.key === "az") ? verbs.findIndex(v => !/^(alpha|beta|preview)$/.test(v)) : 0;
+      const path = track >= 0 && verbs.length > track + 1 && (h.key === "gcloud" || h.key === "az") ? verbs.slice(track + 1) : verbs;
+      const firstRead = path.findIndex(isRead);
+      const known = path.find(v => CLOUD_DELETE.has(v) || /^(delete|terminate|remove|deregister|purge)-/.test(v))
+        ?? path.find(v => CLOUD_VERBS.has(v) || /^(create|update)-/.test(v))
+        ?? (firstRead < 0 ? path : path.slice(0, firstRead)).find(v => CLOUD_CHANGE.test(v))
+        ?? path[firstRead];
+      verb = known ?? path[path.length - 1];
     }
   }
   const all = verbs.join(" ");
@@ -9055,6 +9220,8 @@ reg(NATIVE, Object.keys(CLOUD_CLIS), h => {
   if ((h.key === "aws" && (verbs[0] === "configure" || AWS_SECRET.test(verb)))
     || (h.key === "az" && (/^(get-access-token|login)$/.test(verb) || all.startsWith("account get-access-token")))
     || (h.key === "gcloud" && /^auth\b/.test(all) && /(print-access-token|print-identity-token|login|activate-service-account)/.test(all))
+    // OpenShift's `oc whoami -t` prints the sign-in token (r12-commands-y12-8).
+    || (h.key === "oc" && verbs[0] === "whoami" && h.args.some(a => /^(-t|--show-token(=true)?)$/.test(a.v ?? "")))
     || ((h.key === "kubectl" || h.key === "oc") && ((verbs[0] === "config" && verbs[1] === "view" && h.args.some(a => a.v === "--raw" || a.v === "--flatten")) || (verbs[0] === "get" && /^secrets?$/.test(verbs[1] ?? "") && h.args.some(a => /^-o(yaml|json|=|$)|^--output/.test(a.v ?? "")))))
     || (h.key === "vault" && (/^(read|login|token|unwrap)$/.test(verb) || all.startsWith("kv get")))
     // A workload's or a config map's manifest written out whole holds its environment's values, passwords and tokens
@@ -9092,7 +9259,17 @@ reg(NATIVE, Object.keys(CLOUD_CLIS), h => {
       h.e.add("publish", "upload.cloud", "Sends data to AWS S3.", { program: `aws s3 ${sub}` });
       return;
     }
-    if ((sub === "cp" || sub === "sync") && fromS3) { const dest = rest.filter(a => !isOption(a)).pop(); if (dest) { h.e.usePath(dest, "write", h.sc); h.e.download(dest.v, h.sc); } return; }
+    // A file or a folder here, replaced where it is there (y11-8): `cp`/`mv` of one key name a file unless --recursive.
+    if ((sub === "cp" || sub === "mv" || sub === "sync") && fromS3) {
+      const dest = rest.filter(a => !isOption(a)).pop();
+      if (dest) {
+        // (A folder it copies into is judged as before: files of the same name in it are replaced only where they differ.)
+        if (!(sub === "sync" || h.args.some(a => a.v === "--recursive" || a.v === "-r") || /[\\/]$/.test(dest.v ?? ""))) overwrites(h, dest, "download.output");
+        else h.e.usePath(dest, "write", h.sc);
+        if (dest.v !== null && dest.v !== "-") h.e.download(dest.v, h.sc);
+      }
+      return;
+    }
   }
   if (h.key === "gsutil" && /^(cp|mv|rsync)$/.test(verb)) {
     const ops = rest.filter(a => !isOption(a)).slice(1).map(a => a.v ?? "");
@@ -9128,7 +9305,11 @@ reg(NATIVE, Object.keys(CLOUD_CLIS), h => {
   }
   // `terraform providers` reads, bare or with `schema`; `mirror` and `lock` download the providers (as init does).
   const fetchesProviders = (h.key === "terraform" || h.key === "tofu") && verb === "providers" && verbs.length > 1 && verbs[1] !== "schema";
-  const read = !fetchesProviders && (CLOUD_READ.has(verb) || /^(describe|list|get)-/.test(verb) || CLOUD_READ_PHRASES.some(p => all === p || all.startsWith(`${p} `)));
+  // A dry run changes nothing (`kubectl apply --dry-run=client`, `helm upgrade --dry-run`), and `kubectl set env --list`
+  // only lists (commands-remote-r12-4).
+  const dry = (h.key === "kubectl" || h.key === "oc" || h.key === "helm") && h.args.some(a => /^--dry-run(=(client|server|true))?$/.test(a.v ?? ""))
+    || ((h.key === "kubectl" || h.key === "oc") && verbs[0] === "set" && verbs[1] === "env" && h.args.some(a => /^--list(=true)?$/.test(a.v ?? "")));
+  const read = !fetchesProviders && (dry || CLOUD_READ.has(verb) || /^(describe|list|get)-/.test(verb) || CLOUD_READ_PHRASES.some(p => all === p || all.startsWith(`${p} `)));
   if (read) return;
   // `terraform init` changes no infrastructure: it installs the providers and modules the folder's configuration names.
   if ((h.key === "terraform" || h.key === "tofu") && verb === "init") {
@@ -9148,6 +9329,19 @@ reg(NATIVE, Object.keys(CLOUD_CLIS), h => {
   // a tool's command Ember doesn't know, which may print secrets or change anything: Autopilot asks and Assisted's
   // check isn't asked (commands-remote-c10-1).
   const changes = !checkRun && (CLOUD_VERBS.has(verb) || CLOUD_CHANGE.test(verb) || (h.key === "ansible" || h.key === "ansible-playbook"));
+  // A command that isn't one of kubectl's own is a plug-in, a program of its own (`kubectl krew` is kubectl-krew), run
+  // announced by name as any program Ember doesn't know (commands-remote-c12-1).
+  if (!changes && h.key === "kubectl" && !KUBECTL_OWN.has(verb) && /^[a-z][a-z0-9_-]*$/.test(verb)) {
+    const at = h.args.findIndex(a => a.v === verb);
+    if (at >= 0) {
+      const from = h.e.findings.length;
+      addOn(h, "kubectl", h.args[at], h.args.slice(at + 1));
+      // A plug-in acts on the cluster with the user's own sign-in: one whose words say it does something dangerous
+      // changes the cluster as well, as every command of kubectl's Ember didn't know did (r12-commands-x12-2).
+      if (h.e.findings.slice(from).some(f => f.cls !== "unknown")) h.e.add("publish", "cloud.change", `Changes ${service}.`, { objects: [{ kind: "other", text: verb, abs: null }], program: `${h.key} ${verb}` });
+      return;
+    }
+  }
   h.e.add("publish", changes ? "cloud.change" : "cloud.unknown-verb", changes ? `Changes ${service}.` : `Ember can't tell whether this changes ${service}.`, { objects: [{ kind: "other", text: verb, abs: null }], program: `${h.key} ${verb}` });
 });
 
@@ -9367,6 +9561,8 @@ reg(NATIVE, ["npm", "pnpm", "yarn", "bun", "corepack"], h => {
     default: break;
   }
   const builtins = new Set(["test", "t", "tst", "start", "stop", "restart", "build", "pack", "version", "ls", "list", "outdated", "view", "info", "show", "search", "help", "doctor", "ping", "prefix", "root", "bin", "why", "explain", "fund", "audit", "diff", "query", "sbom", "completion", "edit", "explore", "repo", "docs", "bugs", "home", "shrinkwrap", "find-dupes", "pkg", "stars", "star", "unstar", "hook", "profile", "help-search", "licenses", "store", "env", "setup", "--version", "-v", "workspaces", "constraints", "dedupe"]);
+  // (npm takes a command's abbreviation or a common misspelling for it, `npm publ` and `npm isntall` among them, so
+  // a word Ember doesn't list may be any of its commands, publish included: it asks (commands-remote-c12-1, left).)
   if (h.key === "npm" && !builtins.has(verb) && !/^(test|start|stop|restart)$/.test(verb)) { h.e.unclear("unclear.npm-verb", "Ember can't tell which npm command this runs."); return; }
   if (verb === "edit" || verb === "explore") { h.e.unclear("unclear.interactive", SAYS.interactive); return; }
   if (verb === "star" || verb === "unstar" || verb === "hook" || verb === "profile") { h.e.add("publish", "npm.registry", "Changes something on the registry."); return; }
@@ -10190,9 +10386,11 @@ reg(NATIVE, ["aria2c", "fetch", "axel", "lwp-download"], h => {
     if (got.unnamed && dir !== null) h.e.downloadUnnamed(dir ?? ".", h.sc);
   };
   const outs = optionWords(h.args, p, "o", "out", "output");
+  // fetch's -o replaces a file that is there; aria2c renames instead unless told to overwrite (y11-8).
+  const clobbers = h.key === "fetch" || (h.key === "aria2c" && h.args.some(a => /^--allow-overwrite(=true)?$/.test(a.v ?? "")));
   for (const w of outs) {
     if (w.v === null) h.e.downloadTo(dir ? { ...w, parts: [`${dir}/`, ...(w.parts ?? [{ name: null }])] } : w, h.sc);
-    else if (w.v !== "-") saveAs(h, at(w.v));
+    else if (w.v !== "-") { if (clobbers) overwrites(h, lit(at(w.v)), "download.output"); saveAs(h, at(w.v)); }
   }
   if (h.key === "lwp-download" && p.operands.length >= 2) {
     const [url, to] = p.operands;
@@ -10413,6 +10611,8 @@ reg(NATIVE, ["rclone"], h => {
       // Files copied here from a remote (`rclone copy remote:x .`, `copyurl URL file`) are downloads: running one later
       // asks (commands-remote-r8-2). Into a folder (copy, sync, bisync), of unknown name; copyto/moveto name the file.
       if (/^(copy|copyto|sync|move|moveto|copyurl|bisync|rcat)$/.test(verb) && (verb === "copyurl" || ops.slice(0, -1).some(remote))) {
+        // What it saves replaces a file of the same name there (y11-8); sync's deleting is judged above.
+        if (dest && /^(copyto|moveto|rcat|copyurl)$/.test(verb)) overwrites(h, lit(dest), "download.output");
         if (/^(copyto|moveto|rcat)$/.test(verb) && dest) h.e.download(dest, h.sc);
         else if (verb === "copyurl") { const f = ops[ops.length - 1]; if (f && !remote(f)) h.e.download(f, h.sc); else h.e.markUnnamed(".", h.sc); }
         else h.e.markUnnamed(dest || ".", h.sc);
@@ -10697,6 +10897,17 @@ function overwrites(h: H, f: Arg, rule = "redirect.overwrite"): void {
   h.e.add("destroy", rule, `Overwrites ${obj.text} if it exists.`, obj.kind === "glob" ? { objects: [obj] } : { objects: [obj], ifExists: obj.abs });
 }
 
+/**
+ * A folder a program saves files into under their own names, told to replace what is there of the same name (`gh
+ * release download --clobber`): an overwrite where the folder exists, as rsync's is (y11-8). A folder Ember can't name
+ * is a write it can't name.
+ */
+function overwritesInto(h: H, dir: Arg, rule = "download.output"): void {
+  const obj = h.e.usePath(dir, "write", h.sc);
+  if (obj.abs === null) { h.e.add("destroy", rule, "Writes to a file Ember can't name."); return; }
+  h.e.add("destroy", rule, `Replaces files in ${obj.text} that have the same names.`, { objects: [obj], ifExists: obj.abs });
+}
+
 // Text tools that also write a file: sort -o, uniq's second operand, xxd's second operand, iconv -o, patch's file.
 reg(NATIVE, ["sort", "gsort"], h => {
   const p = opts(h, { shortValue: "ktoSTy", longValue: ["key", "field-separator", "output", "buffer-size", "temporary-directory", "parallel", "files0-from", "batch-size", "compress-program", "random-source", "sort"] });
@@ -10733,6 +10944,84 @@ reg(NATIVE, ["dos2unix", "unix2dos", "mac2unix", "unix2mac"], h => {
     if (pairs[k + 1].v && h.e.isDownloaded(pairs[k], h.sc)) h.e.carryDownload(pairs[k + 1].v ?? "", h.sc);
   }
   if (pairs.length % 2 === 1) h.e.readArgs([pairs[pairs.length - 1]], h.sc, { unresolvedUnclear: true });
+});
+/**
+ * Converters that write their result under a name the command gives, replacing a file there (y11-8): pandoc's `-o`,
+ * ImageMagick's last file (`convert in.png out.png`, `magick …`), qpdf's and pdfunite's last file, pdftk's `output`,
+ * img2pdf's `-o`, and the other converters' outputs (CONVERTER_OUTPUT). Unlike a compiler's `-o`, which is rebuilt from its source, what a converter's output name collides
+ * with may be the user's own document. On Windows `convert` is the system's disk converter, judged as a program Ember
+ * doesn't know (commands-closed-y9-4).
+ */
+/** A converter's output named as one (the converters' row below): `out`, `output`, `result`, `converted`, a scratch letter. */
+const CONVERTED_NAME = /^(?:out|output|outfile|result|results|converted|new|tmp|temp|test|preview|[a-z]|[a-z]?\d+)$/;
+/**
+ * The other converters Ember runs as ordinary and where each takes its output (r12-commands-y12-5): an option, or the
+ * last of two or more files named with an extension (`pdftotext in.pdf out.txt`; an option's value such as `-f 1` has
+ * none). pngquant
+ * isn't here: it keeps an existing file unless told `--force`.
+ */
+const CONVERTER_OUTPUT: Readonly<Record<string, readonly string[] | "last">> = {
+  pdftotext: "last", ps2pdf: "last", pdf2ps: "last", "heif-convert": "last", avifenc: "last", avifdec: "last",
+  "rsvg-convert": ["-o", "--output"], cwebp: ["-o"], dwebp: ["-o"], gif2webp: ["-o"], img2webp: ["-o"], "heif-enc": ["-o", "--output"],
+  optipng: ["-out"], asciidoctor: ["-o", "--out-file"],
+};
+reg(NATIVE, ["pandoc", "convert", "magick", "qpdf", "pdftk", "pdfunite", "img2pdf", ...Object.keys(CONVERTER_OUTPUT)], h => {
+  if (h.key === "convert" && h.sc.os === "win32") { unknownProgram(h); generic(h, true); return; }
+  // In PowerShell a hyphenated name is a cmdlet Ember doesn't know, as it was before this row named it.
+  if (h.sc.family === "powershell" && /^[a-z]+-[a-z0-9]+$/.test(h.key)) { unknownCmdlet(h); return; }
+  // What it is given is read, as the ordinary programs' row read it before this row (a secret asks, Ember's own files
+  // are refused: r12-commands-y12-5).
+  h.e.readArgs(h.args, h.sc, { unresolvedUnclear: true });
+  const words = h.args.filter(a => a.v === null || !a.v.startsWith("-"));
+  // An output named for one of its inputs (`a.md` to `a.html`, `photo.png` to `photo-small.jpg`) is that input's
+  // rendering, made again from it, and one named as an output or a scratch file (`out.pdf`, `output.png`, `b.jpg`) is
+  // the command's own: replacing either is ordinary. Any other name may be another document of the user's.
+  const stem = (v: string): string => (v.split(/[\\/]/).pop() ?? "").replace(/\.[^.]*$/, "").toLowerCase();
+  // An output that is one of its inputs (`magick photo.jpg -quality 10 photo.jpg`) replaces the original, whatever its
+  // name (r12-commands-x12-6).
+  const at = (v: string): string => { const r = resolveTargetPath(v, { os: h.sc.os, home: h.sc.home ?? "", cwd: h.sc.cwd ?? "" }); return h.sc.os === "linux" ? r : r.toLowerCase(); };
+  const out = (f: Arg, inputs: readonly Arg[]): void => {
+    const s = f.v === null ? "" : stem(f.v);
+    if (f.v !== null && inputs.some(i => i !== f && i.v !== null && at(i.v) === at(f.v!))) { overwrites(h, f); return; }
+    if (s !== "" && (CONVERTED_NAME.test(s) || inputs.some(i => i !== f && i.v !== null && stem(i.v) !== "" && s.startsWith(stem(i.v))))) { h.e.usePath(f, "write", h.sc); return; }
+    overwrites(h, f);
+  };
+  if (h.key === "pandoc" || h.key === "img2pdf") {
+    const outs: Arg[] = [];
+    for (let k = 0; k < h.args.length; k++) {
+      const v = h.args[k].v ?? "";
+      if (v === "-o" || v === "--output") { const f = h.args[k + 1]; if (f) { outs.push(f); k++; } }
+      else if (v.startsWith("--output=")) outs.push(lit(v.slice("--output=".length)));
+      else if (/^-o./.test(v)) outs.push(lit(v.slice(2)));
+    }
+    const inputs = words.filter(w => !outs.includes(w));
+    for (const f of outs) out(f, inputs);
+    return;
+  }
+  const where = CONVERTER_OUTPUT[h.key];
+  if (where === "last") {
+    // The last of two or more files named with an extension: an option's value (`-f 1`, `-enc UTF-8`) has none.
+    const files = words.filter(w => w.v !== null && /\.[A-Za-z0-9]{1,6}$/.test(w.v));
+    const last = words[words.length - 1];
+    if (files.length >= 2 && files[files.length - 1] === last) out(last, words.slice(0, -1));
+    return;
+  }
+  if (where) {
+    const outs: Arg[] = [];
+    for (let k = 0; k < h.args.length; k++) {
+      const v = h.args[k].v ?? "";
+      if (where.includes(v)) { const f = h.args[k + 1]; if (f) { outs.push(f); k++; } }
+      else { const o = where.find(n => n.startsWith("--") && v.startsWith(`${n}=`)); if (o) outs.push(lit(v.slice(o.length + 1))); }
+    }
+    for (const f of outs) out(f, words.filter(w => !outs.includes(w)));
+    return;
+  }
+  if (h.key === "pdftk") { const k = h.args.findIndex(a => a.v === "output"); const f = k >= 0 ? h.args[k + 1] : undefined; if (f) out(f, h.args.slice(0, k)); return; }
+  // ImageMagick's own verbs that only read (`magick identify`, `magick compare` to a file is still a write).
+  if (h.key === "magick" && /^(identify|-?version|-?help)$/.test(words[0]?.v ?? "")) return;
+  if (h.key === "qpdf" && h.args.some(a => a.v === "--replace-input")) return;
+  // The last file is the output; one file alone (`convert -version`, `qpdf --check in.pdf`) writes nothing.
+  if (words.length >= 2) out(words[words.length - 1], words.slice(0, -1));
 });
 reg(NATIVE, ["uniq", "guniq"], h => {
   // --group and --all-repeated take a method only after = (commands-remote-i5a).
@@ -10805,7 +11094,8 @@ reg(NATIVE, ["certutil"], h => {
   // A key container deleted, and a certificate published or installed where it is trusted (r11-commands-y11-5).
   if (flags.some(f => /^[-/]delkey$/.test(f))) h.e.add("destroy", "certutil.delkey", "Deletes a key, which can't be got back.");
   if (flags.some(f => /^[-/](dspublish|importcert|installcert|addeccurve|deleteecccurve|setreg|delreg)$/.test(f))) h.e.add("system", "system.security", TRUST_SAYS);
-  if (flags.some(f => /^[-/]urlcache$/.test(f))) { const out = h.args.filter(a => !(a.v ?? "").startsWith("-") && !(a.v ?? "").startsWith("/")).pop(); if (out?.v && !URL_LIKE.test(out.v)) { h.e.usePath(out, "write", h.sc); h.e.download(out.v, h.sc); } }
+  // What -urlcache saves replaces a file of that name (y11-8).
+  if (flags.some(f => /^[-/]urlcache$/.test(f))) { const out = h.args.filter(a => !(a.v ?? "").startsWith("-") && !(a.v ?? "").startsWith("/")).pop(); if (out?.v && !URL_LIKE.test(out.v)) { overwrites(h, out, "download.output"); h.e.download(out.v, h.sc); } }
   // Its verbs are a closed list (commands-remote-c11-1): the ones that copy a file through an encoding read their input
   // and write (or, with -f, overwrite) their output, as copy does, so a key encoded or dumped asks as a secret, a document
   // decoded over asks, and a share or address as the output sends; -dump and the hash verbs read what they are given; a
@@ -10909,6 +11199,8 @@ reg(NATIVE, ["net", "net1"], h => {
   if ((verb === "start" || verb === "stop" || verb === "pause" || verb === "continue") && rest.length) { h.e.add("system", "service.change", "Starts, stops or changes a system service."); return; }
   if (/^(user|localgroup|group|accounts)$/.test(verb) && rest.length) { h.e.add("system", "system.users", "Changes users or groups."); if (rest.some(a => a.v === "*")) h.e.unclear("unclear.interactive", SAYS.interactive); return; }
   if (verb === "share" && rest.length) { h.e.add("publish", "net.share", "Shares a folder on the network."); return; }
+  // Samba's `net usershare add` shares a folder as this user, no root needed (r12-commands-y12-7); `info` and `list` read.
+  if (verb === "usershare" && (rest[0]?.v ?? "").toLowerCase() === "add") { h.e.add("publish", "net.share", "Shares a folder on the network."); return; }
   if (verb === "time" && rest.some(a => /^\/set$/i.test(a.v ?? ""))) { h.e.add("system", "system.kernel", "Changes how the system works."); return; }
   if ((verb === "session" || verb === "file") && rest.some(a => /^\/(delete|close)$/i.test(a.v ?? ""))) { h.e.add("system", "kill.process", "Stops programs that are running (network sessions)."); return; }
   // `net use [Z:] \\host\share` and `net view \\host` connect to that computer and sign in there (review #171).
@@ -10972,11 +11264,37 @@ reg(NATIVE, ["useradd", "userdel", "usermod", "groupadd", "groupdel", "groupmod"
 reg(NATIVE, ["icacls", "cacls", "xcacls", "takeown"], h => {
   const flags = h.args.map(a => (a.v ?? "").toLowerCase());
   const target = h.args.filter(a => !(a.v ?? "").startsWith("/") && !/^[a-z0-9\\]+:\(/i.test(a.v ?? ""))[0];
+  const oldStyle = h.key === "cacls" || h.key === "xcacls";
+  const isGrant = (f: string): boolean => /^\/grant/.test(f) || (oldStyle && (f === "/g" || f === "/p"));
   const rec = flags.includes("/t") || flags.includes("/r") || flags.includes("/s");
   const changes = h.key === "takeown" || h.key === "cacls" || h.key === "xcacls" || flags.some(f => /^\/(grant|deny|remove|setowner|reset|inheritance|setintegritylevel|restore|substitute)/.test(f));
   const obj = target ? h.e.usePath(target, rec ? "permTree" : "write", h.sc) : null;
   const outside = !obj || obj.abs === null || !h.sc.home || !isUnder(obj.abs, h.sc.home, h.sc.path);
   if (changes && (rec || outside)) h.e.add("system", "system.permissions", "Changes who may read or change files.", { widening: rec ? ["recursive"] : [] });
+  // A grant of change or delete to another account (Everyone, Users, `bob`), wherever the file is
+  // (commands-remote-c12-2): read-only grants and the user's own stay ordinary.
+  // cacls' and xcacls' `/G` and `/P` grant as icacls' `/grant` does, each followed by one or more `user:perm`, with C
+  // (change) beside W and F (r12-commands-y12-7).
+  else if (flags.some(isGrant)) {
+    const self = ownAccount(h.sc);
+    // The home folder itself opened to another account at all, as chmod and setfacl ask (r12-commands-x12-7).
+    const own = h.sc.home;
+    const home = !!own && !!obj && obj.abs !== null && isUnder(obj.abs, own, h.sc.path) && isUnder(own, obj.abs, h.sc.path);
+    const grants = h.args.filter((a, k) => {
+      if (k === 0 || (oldStyle && (a.v ?? "").startsWith("/"))) return false;
+      // (cacls' list runs to the next switch.)
+      let j = k - 1;
+      if (oldStyle) while (j > 0 && !(h.args[j].v ?? "").startsWith("/")) j--;
+      return isGrant((h.args[j].v ?? "").toLowerCase());
+    }).map(a => a.v);
+    if (grants.some(g => {
+      if (g === null) return true;
+      const at = g.lastIndexOf(":");
+      const who = g.slice(0, at).replace(/^.*\\/, "").replace(/^["']|["']$/g, "").toLowerCase();
+      return at < 0 || (who !== self && who !== "%username%" && (home || /\b(F|M|W|D|WD|AD|DC|WDAC|WO|GA|GW)\b/.test(g.slice(at + 1).toUpperCase().replace(/[()]/g, " "))
+        || (oldStyle && /^C$/i.test(g.slice(at + 1)))));
+    })) h.e.add("system", "system.permissions", OPENS_SAYS);
+  }
   if (flags.some(f => f === "/save")) { const out = h.args[h.args.findIndex(a => (a.v ?? "").toLowerCase() === "/save") + 1]; if (out) h.e.usePath(out, "write", h.sc); }
 });
 reg(NATIVE, ["schtasks"], h => { if (!h.args.some(a => /^[/-]query$/i.test(a.v ?? "")) || h.args.some(a => /^[/-](create|delete|change|run|end)$/i.test(a.v ?? ""))) h.e.add("system", "system.schedule", "Schedules something to run later or at login."); });
@@ -11128,7 +11446,11 @@ reg(NATIVE, ["mount", "umount", "losetup", "modprobe", "insmod", "rmmod", "swapo
   if (h.key === "csrutil" && /^(disable|enable|clear)/.test(a[0] ?? "")) { h.e.add("system", "system.security", "Turns off or weakens a security protection."); return; }
   if (h.key === "subst" && a.length === 0) return;
   if (h.key === "subst") h.e.unclear("unclear.windows-path", "Ember can't tell which file this names.");
-  if (h.key === "mount" && a.length === 0) { h.e.add("system", "system.kernel", "Changes how the system works."); return; }
+  // With nothing to mount, mount lists what is mounted (`mount`, `mount -l`, `mount -t ext4`), as swapon and losetup
+  // list theirs (commands-remote-r12-4).
+  if (h.key === "mount" && a.every((x, k) => /^(-l|--show-labels|-v|--verbose)$/.test(x) || (/^(-t|--types)$/.test(x) && k + 1 < a.length) || (k > 0 && /^(-t|--types)$/.test(a[k - 1])) || /^--types=/.test(x))) return;
+  if (h.key === "swapon" && a.every(x => /^(-s|--summary|--show(=.*)?|--noheadings|--bytes|-v|--verbose)$/.test(x))) return;
+  if (h.key === "losetup" && a.every(x => /^(-a|--all|-l|--list|-n|--noheadings|-J|--json|-O|--output|--output-all|-v|--verbose)$/.test(x) || /^[A-Z,-]+$/.test(x))) return;
   h.e.add("system", "system.kernel", "Changes how the system works.");
 });
 // Desktop settings (review #108, #168). Every GNOME settings write (gsettings, dconf) changes the desktop's settings, as
@@ -11377,7 +11699,7 @@ reg(NATIVE, ["wscript", "cscript", "regsvr32", "regsvr", "installutil", "regasm"
 reg(NATIVE, ["bitsadmin"], h => {
   const a = h.args.map(x => (x.v ?? "").toLowerCase());
   if (a.includes("/upload")) { h.e.add("publish", "send.http", "Sends data to another computer."); return; }
-  if (a.includes("/transfer")) { const dest = h.args[h.args.length - 1]; if (dest?.v && !URL_LIKE.test(dest.v)) { h.e.usePath(dest, "write", h.sc); h.e.download(dest.v, h.sc); } return; }
+  if (a.includes("/transfer")) { const dest = h.args[h.args.length - 1]; if (dest?.v && !URL_LIKE.test(dest.v)) { overwrites(h, dest, "download.output"); h.e.download(dest.v, h.sc); } return; }
   if (a.some(x => /^\/(list|info|getstate|monitor|util|\?)/.test(x))) return;
   h.e.add("escape", "escape.background", SAYS.keepsRunning);
 });
@@ -12008,7 +12330,8 @@ reg(CMDLETS, ["start-bitstransfer"], h => {
   const dests = b.named.get("Destination") ?? [];
   for (const d of dests) {
     if (d.v === null) { h.e.downloadTo(d, h.sc); continue; }
-    h.e.usePath(d, "write", h.sc);
+    // BITS replaces a file that is there (y11-8).
+    overwrites(h, d, "download.output");
     h.e.download(d.v, h.sc);
   }
   // With no destination it saves into the current folder under the address's name (commands-remote-c5-2).

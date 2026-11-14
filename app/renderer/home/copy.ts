@@ -1112,6 +1112,13 @@ export function approvalsNote(state: ApprovalsState | null, managed: boolean, el
     if (elevated === "root") return `${said} Ember is running as root, so in Autopilot its commands run as root without asking, each with a few seconds to stop it. Start it as yourself to change that.`;
     return said;
   }
+  // Assisted's check may clear a command as root the request was about (commands/review.ts: tasks-approvals-r12-1).
+  if (state?.inForce === "assisted" && !below) {
+    if (elevated === "administrator") return `${said} Ember is running as an administrator, so it asks before every command the check doesn't find in what you asked for. Start it normally to change that.`;
+    if (elevated === "maybe-administrator") return `${said} Ember may be running as an administrator (it couldn't tell), and then it asks before every command the check doesn't find in what you asked for. Start it normally to be sure.`;
+    if (elevated === "root") return `${said} Ember is running as root, so it asks before every command the check doesn't find in what you asked for. Start it as yourself to change that.`;
+    return said;
+  }
   if (elevated === "administrator") return `${said} Ember is running as an administrator, so it asks before every command. Start it normally to change that.`;
   if (elevated === "maybe-administrator") return `${said} Ember may be running as an administrator (it couldn't tell), and then it asks before every command. Start it normally to be sure.`;
   if (elevated === "root") return `${said} Ember is running as root, so it asks before every command. Start it as yourself to change that.`;

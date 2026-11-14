@@ -170,6 +170,11 @@ export const ASK_EVERY_PRIVILEGED = "Commands here run as the administrator, so 
  * own switch, or the organisation's, keeps every command asking there (home-c10-1).
  */
 export const ASK_EVERY_PRIVILEGED_AUTOPILOT = "Commands here run as the administrator. In Autopilot each one runs without asking, after a few seconds to stop it, unless you turn this on.";
+/**
+ * The same place in Assisted, where the check may clear a command as root the request was about (commands/review.ts:
+ * tasks-approvals-r12-1) and only the user's own switch, or the organisation's, keeps every command from it.
+ */
+export const ASK_EVERY_PRIVILEGED_ASSISTED = "Commands here run as the administrator. In Assisted each one asks unless the check finds it in what you asked for, and every one asks if you turn this on.";
 /** The same place in a distro Podman uses, where every command asks in every mode (decide.ts LINES.toolDistro's fact). */
 export const ASK_EVERY_TOOL = "Podman uses this distro, so Ember asks before every command here.";
 export const WSL_MANAGED = "Your organisation doesn't allow Ember to work in WSL.";
@@ -303,7 +308,8 @@ export function computersView(i: {
  * command” shows on and can't be turned off, with why under it (accessibility-c8-3: it showed off and could be flipped,
  * to no effect). Only how it shows: the user's own setting is left as it was. In Autopilot (`mode`, the approval mode
  * in force; null below Interactive) root is no reason to ask, so there the switch is the user's own again, free to turn
- * on, and says so (home-c10-1: it showed on and locked, and the one setting that would make them ask couldn't be set).
+ * on, and says so (home-c10-1: it showed on and locked, and the one setting that would make them ask couldn't be set),
+ * and so in Assisted, whose check may clear a command as root (tasks-approvals-r12-1).
  * In a distro Podman uses (TargetSummary.toolOwned) every command asks in every mode, so it shows on and locked there,
  * with why (r10-modes-copy-x10-4).
  */
@@ -331,8 +337,10 @@ export function commandsView(i: { summaries: readonly TargetSummary[]; settings:
     // A distro Podman uses asks before every command in every mode, whoever runs them (r10-modes-copy-x10-4).
     const tool = mode !== "off" && i.summaries.some(t => t.id === id && t.toolOwned === true);
     const autopilot = i.mode === "autopilot";
-    const asks = mode === "ask" || tool || (privileged && !autopilot);
-    const why = [tool ? ASK_EVERY_TOOL : null, privileged ? (!autopilot ? ASK_EVERY_PRIVILEGED : mode !== "ask" && !tool ? ASK_EVERY_PRIVILEGED_AUTOPILOT : null) : null, mode === "ask" ? ASK_EVERY_MANAGED : null].filter((s): s is string => s !== null);
+    const assisted = i.mode === "assisted";
+    const asks = mode === "ask" || tool || (privileged && !autopilot && !assisted);
+    const free = mode !== "ask" && !tool;
+    const why = [tool ? ASK_EVERY_TOOL : null, privileged ? (autopilot ? (free ? ASK_EVERY_PRIVILEGED_AUTOPILOT : null) : assisted ? (free ? ASK_EVERY_PRIVILEGED_ASSISTED : null) : ASK_EVERY_PRIVILEGED) : null, mode === "ask" ? ASK_EVERY_MANAGED : null].filter((s): s is string => s !== null);
     return {
       id, kind,
       run: { label: runLabel(kind, label), checked: on, disabled: mode === "off" },
