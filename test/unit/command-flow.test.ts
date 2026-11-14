@@ -3669,6 +3669,25 @@ describe("a command that would ask, in Autopilot (autopilot.ts; modes-D2, modes-
       expect(h.audit.find(e => e.phase === "answered" && e.q === "remote")).toMatchObject({ answer: "announced", outlivesStop: true });
     });
 
+    it.each<[string[], "unresolved" | "terminal"]>([
+      [["in-script:unclear.unresolved-target"], "unresolved"], [["unclear.unresolved-target"], "unresolved"], [["posix.rm", "unclear.unresolved-target"], "unresolved"],
+      [["in-script:unclear.terminal-verb"], "terminal"], [["unclear.terminal-verb"], "terminal"],
+    ])("refuses, as on this computer, where the remote's rules say %j, and runs nothing more (r11-commands-x11-2)", async (rules, why) => {
+      makeJudge();
+      const h = remote({ run: (_s, n) => (n === 1 ? sentBack(rules) : {}) });
+      const ends: [string, string][] = [];
+      (h.ctx.service.window as unknown as { reaskEnded: (runId: string, why: string) => void }).reaskEnded = (runId, w) => { ends.push([runId, w]); };
+      expect(await call(h)).toMatchObject({ resultType: "denied", textResultForLlm: `Not allowed: ${AUTOPILOT_REFUSES[why]}` });
+      expect([h.asked, h.windowAnnounce, h.announced]).toEqual([[], [], []]);
+      expect(h.starts).toHaveLength(1);
+      expect(ends).toEqual([[h.starts[0].runId, "refused"]]);
+      expect(h.audit.find(e => e.phase === "answered" && e.q === "remote")).toMatchObject({ answer: "refused", mode: "autopilot" });
+      // Outside Autopilot the card asks, as before.
+      const asks = harness({ run: (_s, n) => (n === 1 ? sentBack(rules) : {}) });
+      expect((await call(asks)).resultType).toBe("success");
+      expect(asks.asked).toHaveLength(1);
+    });
+
     it.each([["admin.no-autopilot"], ["posix.rm", "admin.no-autopilot"]])("asks with the card, as before, where the remote's rules say %s", async (...rules) => {
       makeJudge();
       const h = remote({ run: (_s, n) => (n === 1 ? sentBack(rules) : {}) });

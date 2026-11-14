@@ -1323,7 +1323,16 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
         // where every command asks there: those go to the card below, as does whatever the remote still wants a yes for
         // after the announcement (its own administrator's policy holds as the organisation's).
         const extra = remoteRules(exit);
-        if (!toldRemote && ctx.autopilot?.() && svc.mode() !== "ask" && !svc.userAskEvery() && extra.every(r => askedOfFinding({ rule: r }) !== "organisation")) {
+        // What Autopilot refuses on this computer it refuses where the remote's own check found it too: a deletion or a
+        // write of what can't be named, a terminal's remote-control verb (r11-commands-x11-2). No question to put.
+        const refusal = ctx.autopilot?.() ? autopilotRefuses({ rules: extra }, { findings: [] }) : null;
+        if (refusal) {
+          reaskEnded(svc, runId, "refused");
+          audit({ phase: "answered", answer: "refused", q: "remote", mode: "autopilot" });
+          ctx.log.info("commands.decided", { task, target, verdict: "refuse", classes: d.classes, chars: a.command.length, autopilot: refusal, remote: true });
+          return denied(`Not allowed: ${AUTOPILOT_REFUSES[refusal]}`);
+        }
+        if (!toldRemote && ctx.autopilot?.()&& svc.mode() !== "ask" && !svc.userAskEvery() && extra.every(r => askedOfFinding({ rule: r }) !== "organisation")) {
           toldRemote = true;
           // What the remote found that reads or prints secrets keeps the output from the model; what outlives Stop says so.
           const secretThere = extra.some(r => readsSecrets(r));
