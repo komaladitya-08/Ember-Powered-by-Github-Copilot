@@ -4457,6 +4457,14 @@ const EXEC_WORDS = new Set(["exec", "run", "x", "do", "sh", "shell", "spawn", "w
  * never announce; the project's own script (a path in the task's folder) is judged by the handed command alone.
  * `runnerAt`: where generic() already found a runner's name among the words, and read on from there.
  */
+/**
+ * What a trial finds only because it reads an operand as a program (a file's name, a path, a word that may be a
+ * verb): a program Ember doesn't know, its words, a path or a program that waits for input. Anything else it finds is
+ * what the handed command is.
+ */
+const HANDED_TRIAL_ONLY = /^(unknown\.|unknown-words\.|unclear\.(script-|interactive|hidden-command))/;
+/** How many of handedCommand's trials are running inside one another (each classifies the rest of the line again). */
+let handedTrials = 0;
 function handedCommand(h: H, runnerAt: number, script?: { name: string; args: Arg[] }): void {
   if (script && h.e.readsAsMain) return;
   const args = script ? script.args : h.args;
@@ -4495,6 +4503,36 @@ function handedCommand(h: H, runnerAt: number, script?: { name: string; args: Ar
   const first = firstOperand(args);
   let at = args.findIndex(a => a.v === "--");
   if (at < 0 && first.v !== null && EXEC_WORDS.has(first.v)) at = first.at;
+  // Behind a program Ember has no row for, its words from one of its first three operands on may be a command it runs
+  // (`prlimit mkfs.ext4 /dev/sdb1`, `nocache env`, `zzwrap -n 3 printenv`, `zzwrap 'mkfs.vfat /dev/sdc1'`): each is
+  // tried as one on its own, and where Ember refuses that command or finds a danger in it (not only what it finds of
+  // any word read as a program), it is judged as that command and asks how the one runs the other
+  // (r11-commands-y11-2). Past two such trials inside one another it asks how without trying (each trial classifies
+  // the rest of the line again).
+  if (at < 0 && runnerAt < 0 && !script && unknown) {
+    let tried = 0;
+    for (let k = first.at; k < args.length && tried < 3; k++) {
+      const v = args[k].v;
+      if (v === null || v.startsWith("-") || !/^[A-Za-z/.~]/.test(v) || URL_LIKE.test(v)) continue;
+      tried++;
+      const quoted = /\s/.test(v.trim());
+      const text = quoted ? v : args.slice(k).map(a => a.raw).join(" ");
+      let dangerous = true;
+      if (handedTrials < 2) {
+        handedTrials++;
+        try {
+          const c = classifyCommand(text, shell, { ...h.e.ctx, cwd: h.sc.cwd ?? h.e.ctx.cwd });
+          dangerous = c.refuse !== null || c.findings.some(f => !HANDED_TRIAL_ONLY.test(f.rule));
+        } catch { /* a trial that fails is no proof of an ordinary command: judged as one below */ } finally { handedTrials--; }
+      }
+      if (!dangerous) continue;
+      hidden(v.trim().split(/\s+/)[0]);
+      if (quoted) h.e.nested(v, shell, h.sc, prog);
+      else h.e.payload(args.slice(k), h.sc, prog);
+      return;
+    }
+    return;
+  }
   if (at < 0 || at + 1 >= args.length || (runnerAt >= 0 && runnerAt <= at + 1 + (args[at + 1].v === "--" ? 1 : 0))) return;
   const rest = args.slice(args[at + 1].v === "--" ? at + 2 : at + 1);
   const next = rest[0];

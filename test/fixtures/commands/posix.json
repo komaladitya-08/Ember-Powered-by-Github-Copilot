@@ -12037,12 +12037,12 @@
   },
   {
    "cmd": "foo update-ca-trust",
-   "verdict": "announce",
+   "verdict": "ask",
    "words": "run foo update-ca-trust"
   },
   {
    "cmd": "foo update-ca-certificates",
-   "verdict": "announce",
+   "verdict": "ask",
    "words": "run foo update-ca-certificates"
   },
   {

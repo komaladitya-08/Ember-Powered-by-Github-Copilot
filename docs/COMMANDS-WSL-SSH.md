@@ -386,7 +386,9 @@ Ember stops and asks before a command that:
   A command handed to a program Ember doesn't know is read as a command too, so the whole asks at least as that
   command would alone: one quoted word (`mytool 'rm -rf build'`), the value of an option named like one that runs
   things (`--exec`, `--command`, `--cmd`, `--run`, `-x`, `-c`, `-s`, `-e`), and the words after `--` or after a first
-  word such as `exec` or `run`; naming the program in your words never announces it then. The project's own script
+  word such as `exec` or `run`; and its words from one of its first three operands on, where Ember finds a danger in
+  them read as a command (`prlimit mkfs.ext4 /dev/sdb1`, `nocache env`, `zzwrap 'mkfs.vfat /dev/sdc1'`); naming the
+  program in your words never announces it then. The project's own script
   given one (`./run.sh --exec 'npm publish'`) asks about that command, and runs as before when Ember finds nothing
   in it, however the script is started: by its path, by a shell or an interpreter (`bash run.sh 'npm publish'`,
   `python3 tool.py --exec 'npm publish'`, `node tool.js -- git push --force`, `tsx`, `bun`, `deno run`, `pwsh

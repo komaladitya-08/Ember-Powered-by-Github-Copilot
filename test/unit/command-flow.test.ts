@@ -3511,8 +3511,9 @@ describe("a command that would ask, in Autopilot (autopilot.ts; modes-D2, modes-
     // The classifier names these secrets itself, so nothing is left hiding behind the wrapper…
     expect(hidden("sudo -h host printenv")).toEqual([]);
     expect(hidden("sudo -h host gh auth token")).toEqual([]);
-    // …and behind a program it says nothing of, the secret reader is found.
-    expect(hidden("sudo -h host mytool printenv")).toEqual(["secret.env"]);
+    // …nor where it tries the words of a program it doesn't know as the command it runs (r11-commands-y11-2).
+    expect(hidden("sudo -h host mytool printenv")).toEqual([]);
+    expect(classifyCommand("sudo -h host mytool printenv", "bash", ctx).findings.map(f => f.rule)).toContain("secret.env");
     // A program the classifier judged itself, an ordinary one with nothing behind it, and no wrapper at all: nothing.
     for (const command of ["sudo apt install pass", "sudo systemctl restart nginx", "sudo ls /root", "sudo -u deploy make install", "timeout 5 make test", "printenv", "rm -rf build", "sudo printenv"]) {
       expect(hidden(command), command).toEqual([]);
@@ -3520,7 +3521,7 @@ describe("a command that would ask, in Autopilot (autopilot.ts; modes-D2, modes-
     // It only ever adds a question: a word that names such a program behind an ordinary one counts (`sudo ls env`).
     expect(hidden("sudo ls env")).toEqual(["secret.env"]);
     // A part that can't be judged counts as unclear, which asks.
-    const unjudged = behindWrappers(classifyCommand("sudo -h host mytool printenv", "bash", ctx), () => { throw new Error("no"); });
+    const unjudged = behindWrappers(classifyCommand("sudo ls env", "bash", ctx), () => { throw new Error("no"); });
     expect(unjudged.length).toBeGreaterThan(0);
     for (const f of unjudged) expect(f).toEqual({ cls: "unclear", rule: "unclear.behind-wrapper" });
   });
@@ -4824,5 +4825,21 @@ describe("programs that run what they are given, however it is given (round elev
       expect((await local(reads, run)).resultType, run).toBe("success");
     }
     expect([own.asked, reads.asked]).toEqual([[], []]);
+  });
+
+  it.each([
+    "prlimit --nofile=1024 mkfs.ext4 /dev/sdb1", "prlimit mkfs.ext4 /dev/sdb1", "zzwrap mkfs.ext4 /dev/sdb1", "zzwrap mkfs.vfat /dev/sdc1", "zzwrap mkfs.btrfs -f /dev/sdb",
+    "zzwrap mkntfs /dev/sdb1", "zzwrap mkdosfs /dev/sdb1", "zzwrap /sbin/mkfs.ext4 /dev/sdb1", "zzwrap 'mkfs.ext4 /dev/sdb1'", "prlimit printenv", "nocache env",
+    "zzwrap env", "zzwrap fc -l", "cpulimit printenv", "eatmydata mkfs.ext4 /dev/sdb1", "rlwrap printenv", "proot mkfs.ext4 /dev/sdb1",
+  ])("asks before a program Ember doesn't know runs a dangerous one Ember knows: %s (r11-commands-y11-2)", async command => {
+    const h = flow();
+    const r = await local(h, command);
+    expect([r.resultType, h.asked.length, h.windowAnnounce.length, h.starts.length], command).toEqual(["denied", 1, 0, 0]);
+    // What it runs that is ordinary, or that Ember doesn't know either, is announced as before.
+    for (const ok of [command.replace(/'?(mkfs\S*|mkntfs|mkdosfs|printenv|env|fc)\b.*$/, "make"), command.replace(/'?(mkfs\S*|mkntfs|mkdosfs|printenv|env|fc)\b.*$/, "zzbuild")]) {
+      const o = flow();
+      expect((await local(o, ok)).resultType, ok).toBe("success");
+      expect(o.asked, ok).toEqual([]);
+    }
   });
 });

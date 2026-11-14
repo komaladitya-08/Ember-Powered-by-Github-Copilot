@@ -20,7 +20,7 @@ const decide = (cmd: string, o: { words?: string; shell?: ShellId; context?: Con
 describe("a program Ember doesn't know (commands-closed A)", () => {
   it("asks before a database wiper, a deploy or a runner of quoted commands it has no row for (commands-closed, commands-remote-r9-2, r9-4)", () => {
     for (const cmd of ["dropdb prod", "dropdb --if-exists prod", "pg_restore --clean -d prod a.dump", "mongorestore --drop", "rails db:drop",
-      "prisma migrate reset --force", "supabase db reset", "alembic downgrade base", "railway up", "terragrunt destroy", "etcdctl del --prefix /",
+      "prisma migrate reset --force", "supabase db reset", "alembic downgrade base", "railway up", "terragrunt destroy", "etcdctl del --prefix /app",
       "kafka-topics --delete --topic x", "hyperfine 'rm -rf ~/Documents'", "nodemon --exec 'npm publish'", "watchexec 'rm -rf build'",
       "ls *.c | entr -s 'git push --force'", "pastebinit notes.txt", "croc send notes.txt", "bore local 8000 --to bore.pub",
       "rbw get github"]) {
@@ -30,6 +30,9 @@ describe("a program Ember doesn't know (commands-closed A)", () => {
       expect(d.classes, cmd).toContain("unknown");
       expect(d.says, cmd).toContain("It runs a program Ember doesn't know.");
     }
+    // `del` is also a deleter Ember knows (del-cli): handed `/`, which holds Ember's own folder, it is refused
+    // (r11-commands-y11-2).
+    expect(decide("etcdctl del --prefix /").verdict).toBe("refuse");
   });
 
   it("asks the same behind a wrapper, in a pipe, a substitution, a nested shell and from a path outside the command's folder (commands-closed)", () => {
