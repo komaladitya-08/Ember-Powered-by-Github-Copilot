@@ -919,7 +919,9 @@ it builds on:
   can, and such a tool is turned off as above. Ember decides by the hints it pinned, never by what a server says
   later. The next start's check (`refresh()`) re-pins nothing and turns a changed tool off.
 - **Failures are untrusted too.** The SDK can't rewrite a failed call's text, so `onPostToolUseFailure` adds Ember's
-  note that it is untrusted data, audits its size, and taints the conversation (any extension failure).
+  note that it is untrusted data and audits its size. It taints the conversation as a result does: where its text
+  reads like instructions, is more than a result may hold or was saved to a file, or isn't text at all. An ordinary
+  failure (a 404, a timeout) taints nothing, and read-only calls go on without asking (integrations-r12-2).
   For the same reason no extension is called once Ember has filled something from its vault in this run (the
   gate's `vaultFilled`; "The vault", After a fill): the failure's text couldn't have the value taken out. At the
   first fill the conversation reloads without extension tools (`vaultFilledNow`; `forSession` gives none from then

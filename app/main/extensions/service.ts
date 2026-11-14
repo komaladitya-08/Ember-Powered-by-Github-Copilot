@@ -33,7 +33,7 @@ import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import type { ConnectResult, ExtensionsApi, Installed, Marketplace, MarketplaceEntry, ToolInfo } from "../../shared/extensions";
 import { EXTENSION_ON_UNSAVED, MARKETPLACE_BUILT_IN_KEPT, MARKETPLACE_MANAGED_KEPT, addMarketplaceFailed, browseFailed, extensionUnsaved } from "../../renderer/home/extensions-copy";
 import type { OS } from "../../shared/shortcuts";
-import { REFUSED, classify, emberReachOf, failureNote, gateAnnouncement, gateQuestion, plainName, wrapResult, writeOutHidden } from "./gate";
+import { REFUSED, RESULT_MAX, classify, emberReachOf, failureNote, gateAnnouncement, gateQuestion, plainName, wrapResult, writeOutHidden } from "./gate";
 import { pluginPath, readMarketplace, readPlugin, reachOf, firstFile, MARKETPLACE_PLACES, type ServerSpec } from "./manifest";
 import { canonical, checkPins, isReadOnly, pinAll, schemaWords, shownHash, toolHash, type PinnedTool } from "./pin";
 import { probeHttp, probeStdio, servedTools, type ProbeResult } from "./probe";
@@ -1190,19 +1190,25 @@ export class ExtensionsService implements ExtensionsApi {
   }
 
   /**
-   * A failed call: the SDK passes its text to the model as it is (a failure can't be rewritten), so Ember says it is
-   * untrusted, and the conversation is tainted (a failure is an easy way to smuggle text): every later call asks.
+   * A failed call: the SDK passes its text to the model as it is (a failure can't be rewritten), so Ember says that
+   * failure's text is untrusted. The conversation is tainted as for a result (every later call asks): where the text
+   * reads like instructions, is more than a result may hold or was saved to a file (not scanned whole), or isn't text
+   * Ember could read at all. An ordinary failure (a 404, a timeout) is not danger, and read-only calls go on as before
+   * (integrations-r12-2: every failure tainted, so one 404 made every read-only call ask for the conversation).
    * Because it can't be rewritten, no extension is called once the vault has filled something (gate.ts VAULT_FILLED).
    */
   private async failure(gate: SessionGate, input: PostToolUseFailureHookInput): Promise<PostToolUseFailureHookOutput> {
     const e = gate.tools.get(input.toolName);
     // As for a result: its server's list is compared with the pins before the runtime builds its next request.
     await this.checked(gate, e?.server.key);
-    const text = typeof input.error === "string" ? input.error : "";
+    const readable = typeof input.error === "string";
+    const text = readable ? input.error as string : "";
     const signals = injectionSignals(text);
-    this.tainted = true;
-    try { this.audit({ phase: "failed", ext: e?.item.id ?? null, tool: input.toolName, ...named(e?.item, e?.tool), chars: text.length, signals, ...(SAVED_OUTPUT.test(text) ? { truncated: true } : {}) }); } catch (err) { this.o.log.warn("extensions.audit_failed", { err }); }
-    return { additionalContext: failureNote(e?.item.name ?? "an extension", e?.tool.name ?? input.toolName) };
+    const truncated = SAVED_OUTPUT.test(text) || text.length > RESULT_MAX;
+    const taints = !readable || signals.length > 0 || truncated;
+    if (taints) this.tainted = true;
+    try { this.audit({ phase: "failed", ext: e?.item.id ?? null, tool: input.toolName, ...named(e?.item, e?.tool), chars: text.length, signals, ...(truncated ? { truncated: true } : {}), ...(readable ? {} : { unread: true }) }); } catch (err) { this.o.log.warn("extensions.audit_failed", { err }); }
+    return { additionalContext: failureNote(e?.item.name ?? "an extension", e?.tool.name ?? input.toolName, taints) };
   }
 
   private async result(gate: SessionGate, input: PostToolUseHookInput): Promise<PostToolUseHookOutput | void> {
