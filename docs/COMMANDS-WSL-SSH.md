@@ -361,7 +361,8 @@ Ember stops and asks before a command that:
   2026-11-14): it runs, announced by name with its few seconds to stop it, in every mode ("Running hugo, which I
   don't know."; the card says "It runs a program Ember doesn't know." or "It runs cargo watch, a command of cargo
   that Ember doesn't know."), and with "…, as you asked." where your own words for the task ask to run it by name
-  with the words after it. What its own words say it does is judged as that danger, so such a command still asks
+  with the words after it. Where your own words for the task say not to run it ("don't run hugo", "leave hugo
+  alone"), it asks, saying you didn't ask for it, and Autopilot refuses it. What its own words say it does is judged as that danger, so such a command still asks
   where it would delete, send, show secrets or change the system: its name, its command, its plain words and its
   long options are read (`dropdb prod`, `rails db:drop`, `prisma migrate reset`, `pg_restore --clean`, `kafka-topics
   --delete` delete; `railway up`, `croc send`, `pastebinit`, `vercel` with no command, `lerna version`, a tunnel such
@@ -821,7 +822,7 @@ Since the owner's decision of 2026-11-14 Autopilot asks nothing of what a comman
 It refuses, with no question to put:
 
 - a command your own words for the task rule out ("commit my work but don't push", "delete everything except
-  build", "push it, but without force", "don't delete anything", "keep it local"), or hold back ("leave the build
+  build", "push it, but without force", "don't delete anything", "keep it local", "don't run hugo"), or hold back ("leave the build
   folder alone", "keep notes.txt", "hold off on publishing", "push tomorrow", "once CI is green", "I'll do the push"),
   or ask to be asked about first ("but ask me first", "but back it up first", "but move it to the trash"): that is
   your no, said in advance;
@@ -832,6 +833,8 @@ It refuses, with no question to put:
   log, settings or vault: the model is told to send it again with the place named plainly, and Ember judges what it
   names;
 - a command of a terminal's or an editor's remote control that Ember doesn't know, which may act in your own terminals.
+
+The last two are refused on a computer reached over SSH too, where that computer's own check (§4.5) is what finds them.
 
 It still asks, with the card of §2.4, only where your organisation asks for every command, where you turned on **Ask
 me before every command** for that computer, in a Podman distro and in a project's chosen command folder, and before

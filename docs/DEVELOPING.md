@@ -2887,12 +2887,14 @@ downloads it on first use per target and checks it before sending.
 - **Only dangerous commands ask** (the owner's decision of 2026-11-14; CLAUDE.md "Never", .claude/rules/agent-and-policy.md
   "What Ember doesn't know"). A program, or a tool's verb or option, the classifier has no row for is class `unknown`
   and is announced by name in every mode (decide.ts `UNKNOWN_ANNOUNCED`); it never asks for that alone. What keeps a
-  dangerous one asking is recognising what it does: a new tool goes into a row, the tables, or `unknownDoes`'s word lists
+  dangerous one asking is recognising what it does (and the user's own words against it: intent.ts `namesUnknown`
+  names it by its program, so "don't run frobtool" makes it ask, and Autopilot refuse it): a new tool goes into a row, the tables, or `unknownDoes`'s word lists
   in classify.ts, never into a question for not knowing it. In Autopilot only the organisation's "ask" and the user's own
   "ask every command" still ask (autopilot.ts `autopilotAsks`); a secret's command runs with its output withheld from
   the model (`withheld`, flow.ts `WITHHELD_OUTPUT`, audited `outputWithheld`), one that outlives Stop says so
   (`outlivesStop`), and the user's own no, a deletion or a write of what Ember can't name and an unknown verb of a
-  terminal's remote control are refused (`autopilotRefuses`). Gate 2 takes Autopilot's announcement for what the
+  terminal's remote control are refused (`autopilotRefuses`), also where a remote's gate 2 sends those rules back
+  (flow.ts, before its countdown). Gate 2 takes Autopilot's announcement for what the
   stamp names, and the PC withholds the output of what the remote's rules say reads secrets.
 - **Electron** may be imported only in `main.ts`, `windows.ts`, `overlay.ts`, `handle.ts`, `ask.ts`, `voice.ts`,
   `revive.ts`, `desk/view.ts` and the preloads; ESLint enforces it. The two new windows' factories are in

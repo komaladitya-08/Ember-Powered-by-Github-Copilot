@@ -243,7 +243,7 @@ has its own card that says what it means, and a mode is in use only once you agr
   and before a command that deletes, publishes, touches passwords or keys, changes the system, downloads and runs
   code, or would keep running after you stop it (unless you asked for exactly that command: then it tells you and gives you
   4 seconds to stop it). Every other command runs, a program Ember doesn't know included: it tells you its name and
-  gives you the same 4 seconds.
+  gives you the same 4 seconds (unless your own words for the task say not to run it: then it asks).
 - **Assisted** is Interactive with a check: before Ember asks, a lighter AI model reads the step against what you
   asked, in your own words. When it matches, Ember goes ahead and tells you, a risky step included; otherwise it asks.
   A command it clears that shows passwords or keys runs with what it prints kept from the AI model. A command your own
