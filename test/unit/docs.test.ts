@@ -1312,6 +1312,16 @@ describe("CHANGELOG.md", () => {
     expect(createHash("sha256").update(published).digest("hex")).toBe("5277a56b459959d94a200f51f02477aebc9d9d65358c1d3fcc875b275442e4c6");
   });
 
+  it("says in this version's notes that a WSL run whose end never came back is said to be incomplete (install-docs-r11-1)", () => {
+    // flow.ts tells the model, and copy.ts the command window, when a WSL run ended without its end marker.
+    expect(read("app/main/commands/flow.ts")).toContain("Ember didn't get the end of this run, so the command may not have finished");
+    expect(read("app/renderer/command/copy.ts")).toContain("but Ember didn't get its end: the command may not have finished");
+    expect(read("app/main/commands/flow.ts")).toContain("but the end of its output was lost on the way back, so the output below is incomplete");
+    const notes = flat(releaseNotes(changelog, version, { repo: "o/r", ref: `v${version}` }));
+    expect(notes).toContain("**A WSL command's output is never taken as whole without its end.**");
+    expect(notes).toMatch(/the command window and the AI model are told that the command may not have finished and the output is incomplete/);
+  });
+
   it("names the same best-effort computers as the README", () => {
     const readme = flat(read("README.md"));
     const where = /- \*\*Where it runs\*\*: ([^]*?)(?= - \*\*)/.exec(flat(changelog))?.[1] ?? "";

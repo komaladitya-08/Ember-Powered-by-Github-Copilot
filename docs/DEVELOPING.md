@@ -3172,7 +3172,10 @@ The README sends users to the Releases page and tells them to check each file ag
 needs both. CI publishes them when a `v<v>` tag is pushed:
 
 1. On `main`, set `version` in package.json to `<v>` and give CHANGELOG.md a `## <v> (<date>)` section: its text
-   becomes the release's notes. While `<v>` isn't published, the README's **Download** line sends readers to the
+   becomes the release's notes. Write it for users and administrators, one bullet per behaviour grouped by feature,
+   with the limits under **Known issues and limits**; the audit's record (review ids, who found what, how it was
+   fixed) goes in PLAN.md §10, and release.test.ts keeps the notes at least 25,000 bytes under GitHub's limit and
+   free of review ids. While `<v>` isn't published, the README's **Download** line sends readers to the
    newest published release's own README (`blob/v<that version>/README.md`) and names what `<v>` packages differently,
    and **From npm** says `ember-copilot` isn't on npm until `<v>` is published (docs.test.ts checks both while `<v>`
    isn't out). In the commit you tag, replace that line with one that says the README describes `<v>`, and drop

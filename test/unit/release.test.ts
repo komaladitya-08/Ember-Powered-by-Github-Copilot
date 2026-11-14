@@ -170,6 +170,22 @@ describe("release.mjs", () => {
     expect(notes.length).toBeLessThan(RELEASE_BODY_LIMIT);
     expect(notesProblems(notes)).toEqual([]);
   });
+
+  it("keeps this version's notes to what users and administrators need, with room for the next change (install-docs-r11-1)", () => {
+    // 0.1.1's notes had 456 bytes left under the limit, 71 % of them audit notes: one more bullet failed the gate,
+    // and See what's new… opened a 122,000-character page. The audit's record (review ids, who found what, how it was
+    // fixed) is PLAN.md §10's; the notes say what changed, grouped by feature. Rewritten they are under 70,000
+    // bytes; this keeps a fifth of the limit free, so a later bullet has room and audit notes can't creep back.
+    const repo = /const REPO = "([^"]+)"/.exec(read("app/main/updates.ts"))?.[1] ?? "";
+    const notes = releaseNotes(read("CHANGELOG.md"), version, { repo, ref: `v${version}` });
+    const bytes = Buffer.byteLength(notes, "utf8");
+    expect(bytes, `${(RELEASE_BODY_LIMIT - bytes).toLocaleString("en-GB")} bytes left under GitHub's limit`).toBeLessThanOrEqual(RELEASE_BODY_LIMIT - 25_000);
+    const headings = notes.split("\n").filter(l => /^#{2,4} /.test(l));
+    expect(headings.filter(h => /audit|review fixes|follow-up| on \d{1,2} (October|November)\b/i.test(h))).toEqual([]);
+    // Review ids as the audit writes them: install-docs-r11-1, wslio-y-2, docs-3-x-1, "(critique wsl-17)", review #116.
+    const ids = /review #\d+|\b[a-z]+(?:-[a-z0-9]+)*-(?:[a-z]+\d*|\d+)-\d+\b(?!\.\d)|\b[a-z]+\d*-[a-z]?\d+\b(?=[),;])/g;
+    expect(notes.match(ids) ?? []).toEqual([]);
+  });
 });
 
 describe("ci.yml's release job", () => {
