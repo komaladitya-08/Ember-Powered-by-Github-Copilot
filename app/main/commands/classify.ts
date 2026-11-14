@@ -6851,7 +6851,8 @@ reg(NATIVE, ["chmod", "chown", "chgrp", "setfacl", "chattr", "chflags"], h => {
   const own = h.sc.home;
   const home = !!own && objs.some(o => o.abs !== null && isUnder(o.abs, own, h.sc.path) && isUnder(own, o.abs, h.sc.path));
   const self = ownAccount(h.sc);
-  const opens = h.key === "chmod" ? modeOpens(p.operands[0]?.v ?? null, home)
+  // (A mode copied from another file with --reference is one Ember can't name: on the home folder a doubt, r12-commands-y12-9.)
+  const opens = h.key === "chmod" ? (values(p, "reference").length ? home : modeOpens(p.operands[0]?.v ?? null, home))
     : h.key === "setfacl" ? values(p, "m", "M", "modify", "set").some(v => v === null || aclOpens(v, home, self)) : false;
   if (opens) h.e.add("system", "system.permissions", OPENS_SAYS, { objects: objs });
 });

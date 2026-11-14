@@ -452,6 +452,13 @@ describe("the home folder opened on Windows, and a mode copied to every account 
   });
 });
 
+describe("chmod --reference on the home folder (r12-commands-y12-9)", () => {
+  it("asks as a mode Ember can't name on the home folder, and runs as before elsewhere", () => {
+    for (const cmd of ["chmod --reference=/tmp ~", "chmod --reference /tmp /home/ana"]) expect(decide(cmd).rules, cmd).toContain("system.permissions");
+    for (const cmd of ["chmod --reference=run.sh build.sh", "chmod --reference=notes.txt ~/proj/a.txt"]) expect(decide(cmd).verdict, cmd).toBe("run");
+  });
+});
+
 describe("cacls grants and Samba's user shares (r12-commands-y12-7)", () => {
   it("asks before cacls grants another account change or full rights, and before a user share is added", () => {
     for (const [cmd, shell, context, rule] of [
