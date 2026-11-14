@@ -831,6 +831,23 @@ describe("AnswerLanguage tells a passage's language from its own words, not from
     ]) expect(voices(lead, passage, "it"), passage).toEqual([]);
   });
 
+  it("says a passage's own one-word label (“Promemoria:”, “Avviso:”, “Recordatorio:”, “Aviso:”) in the passage's voice, never Kitten's (voice-speaking-r12-2)", () => {
+    for (const [passage, lang] of [
+      ["Promemoria: pagamento affitto in scadenza lunedì. Grazie per la puntualità.", "it"],
+      ["Avviso: domani manutenzione dalle otto alle dieci. Ci scusiamo per il disagio.", "it"],
+      ["Recordatorio: la cita con el dentista es el martes a las diez.", "es"],
+      ["Aviso: a reunião foi adiada para quinta-feira.", "pt"],
+    ] as const) expect(voices("Here is the email:", passage, lang), passage).toEqual([]);
+    // An English one stays Ember's, and so do a header and a lead-in of its own.
+    for (const answer of [
+      "Here is the email:\n\nReminder: the meeting moved to Thursday at ten. Please confirm.\n\nShould I write back?",
+      "Here are your notes:\n\nUpdate:\nThe build is green and the release is ready.",
+      "Here's the summary:\n\nNote: I saved the file in Documents.",
+      "The error says:\n\nWarning: disk almost full.",
+      "Here is the email from Ana:\n\nFrom: Ana\nSubject: Lunch\n\nAre we still on for Friday?",
+    ]) expect(streamed(answer).filter(p => p.lang !== null), answer).toEqual([]);
+  });
+
   it("still says an English email with an Italian greeting, dish or place in it wholly in Ember's own voice (voice-speaking-r12-1)", () => {
     for (const passage of [
       "Ciao Alex, just confirming the payment arrived. Thanks!",

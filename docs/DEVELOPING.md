@@ -1457,7 +1457,12 @@ the value are in no other language and the value's only accented letters are in 
 del lunes", "From: Иван" and "Subject: 会议" are judged with the message, since Kitten reads only English:
 r10-voice-x10-2), and so is a lead-in in no
 other language whose only accented letters are in a name ("José's email says:": `leadsIn`); the message after them is
-judged by itself. Judged as its first letters, the sender and subject diluted its short words, and a Spanish or Italian
+judged by itself. A lone word and a colon at the start of a passage after such a lead-in is the passage's own label
+("Promemoria:", "Recordatorio:", "Aviso:": `LONE_LABEL`), said in the voice of the words after it and left out of what
+is judged; taken for Ember's own lead-in, it was said by Kitten with English sounds (voice-speaking-r12-2), and an
+English one ("Reminder:") is Kitten's as before. A passage too short to reach 60 letters is judged at its end without
+Ember's own closing ("Want me to reply?", whose "me" made it as English as the passage). Judged as its first letters,
+the sender and subject diluted its short words, and a Spanish or Italian
 email was Kitten's with English sounds in 22 of 44 cases for "**From:** José / **Subject:** Proyecto", and after
 "José's email says:" in 3 of 5 languages (voice-speaking-r10-2, voice-speaking-c10-1; none for the tests' passages since). A passage is judged without the clearly English pieces it ends
 with: counted with Ember's own "Shall I reply to it?", a chat message of two sentences was Kitten's for 15 of 15 (now

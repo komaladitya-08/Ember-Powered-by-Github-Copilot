@@ -694,6 +694,9 @@ function leadsIn(piece: string): boolean {
   return !ACCENTED.test(own.join(" ")) && !/[^\p{Script=Latin}\P{L}]/u.test(piece);
 }
 
+/** A lone word and a colon ("Promemoria:", "**Avviso:**"), as the stream writes a label on its own line. */
+const LONE_LABEL = /^\s*[*_]*\p{L}[\p{L}'’-]*[*_]*\s*[:：][*_]*\s*$/u;
+
 /** A short lead-in and what it leads in to, in one piece ("It says: Hola Alex, ¿cómo estás?"). */
 const INLINE_LEAD = /^([^:：\n]{1,80}[:：])\s+(\S[\s\S]*)$/u;
 
@@ -749,7 +752,11 @@ export class AnswerLanguage {
   /** take, for one piece (null: none, the message only ended). */
   private one(piece: string | null, end: boolean, more: boolean): { text: string; lang: string | null }[] {
     const another = (text: string) => mayBeAnother(text) || speechLanguage(text, this.asked) !== null;
-    if (piece !== null && this.lang === undefined && !this.asked && !this.held.length && !(end && !more) && leadsIn(piece)) {
+    // A lone word and a colon at the start of a passage, after Ember's own lead-in, is the passage's label ("Promemoria:",
+    // "Recordatorio:"): held with the words after it, and said in their voice. As a lead-in of Ember's own, it
+    // was said by Kitten with English sounds (voice-speaking-r12-2); an English one ("Reminder:") stays Kitten's so.
+    const label = this.passage && piece !== null && LONE_LABEL.test(piece);
+    if (piece !== null && this.lang === undefined && !this.asked && !this.held.length && !(end && !more) && !label && leadsIn(piece)) {
       // A header line or a lead-in of Ember's own at the start of what is judged: said in Ember's voice, and what follows
       // it is judged by itself (leadsIn).
       this.text = "";
@@ -763,10 +770,11 @@ export class AnswerLanguage {
       const cut = INLINE_LEAD.exec(piece);
       if (cut && !another(cut[1]) && another(cut[2])) return [...this.one(cut[1], false, more), ...this.one(cut[2], end, more)];
     }
-    if (piece !== null) { this.held.push(piece); this.text += ` ${piece}`; }
+    // (The label itself isn't judged: the passage's own first 60 letters are, as before it.)
+    if (piece !== null) { this.held.push(piece); if (!label) this.text += ` ${piece}`; }
     let lang = this.lang;
     if (lang === undefined) {
-      if (!this.text.trim()) return [];
+      if (!this.text.trim() && !(end && this.held.length)) return [];
       // What Ember's voice has said of this answer already looked English, and isn't counted against what may be another
       // language's: a passage after "Okay, reading it now." is judged from its first such sentence.
       if (this.spoken && piece !== null && another(this.held.join(" "))) this.passageFromHeld();
@@ -821,7 +829,10 @@ export class AnswerLanguage {
   private beforeClosing(end: boolean): string | null {
     if (!this.passage) return null;
     let n = this.held.length;
-    while (n > 1 && englishClearly(this.held[n - 1].replace(QUOTED, " "))) n--;
+    // (Ember's own closing too, which englishClearly misses for want of two English short words: "Want me to reply?"
+    // counted with a short passage gave it as many English words as its own, and Kitten read it: voice-speaking-r12-2.)
+    const closing = (t: string) => englishClearly(t) || Object.keys(STOPWORDS).every(lang => lang === "en" || ownClosing(t, lang));
+    while (n > 1 && closing(this.held[n - 1].replace(QUOTED, " "))) n--;
     const rest = this.held.slice(0, n).join(" ");
     if (!rest.trim()) return null;
     const found = n < this.held.length ? this.languageNow(rest) : null;
