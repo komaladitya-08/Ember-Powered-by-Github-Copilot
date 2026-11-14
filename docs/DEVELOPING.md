@@ -1342,7 +1342,10 @@ itself, from its own first 60 letters, and waits until then unless it is clearly
 English short words outnumber a first sentence's, a Spanish, Italian or Portuguese email was read by Kitten for 14 of
 16 ordinary lead-ins and layouts (now none; an Italian or Portuguese passage's first sentence with no accent still is,
 after a lead-in without a colon or on the same line). A message's header lines at the start of what is judged ("From:
-José", "To:", "Subject: Proyecto", "Date:": `HEADER`) are Kitten's, each said as it comes, and so is a lead-in in no
+José", "To:", "Subject: Proyecto", "Date:": `HEADER`) are Kitten's, each said as it comes, when the value is in no
+other language and its only accented letters are in a name (a subject's first word counts as its own: "Subject: Reunión
+del lunes", "From: Иван" and "Subject: 会议" are judged with the message, since Kitten reads only English:
+r10-voice-x10-2), and so is a lead-in in no
 other language whose only accented letters are in a name ("José's email says:": `leadsIn`); the message after them is
 judged by itself. Judged as its first letters, the sender and subject diluted its short words, and a Spanish or Italian
 email was Kitten's with English sounds in 22 of 44 cases for "**From:** José / **Subject:** Proyecto", and after

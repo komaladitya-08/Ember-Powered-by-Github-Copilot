@@ -634,7 +634,7 @@ describe("AnswerLanguage judges a passage read out after an English lead-in by t
   // which was held and judged with the email (voice-speaking-c10-1).
   const HEADERS = [
     "**From:** José\n**Subject:** Proyecto\n\n", "From: José\nSubject: Proyecto\n\n", "From: José\nSubject: Project update\n\n",
-    "From: **José**\nSubject: **Proyecto**\n\n", "**From:** Marco Rossi\n**Subject:** Riunione di lunedì\n\n", "From: José García\nSubject: Proyecto\n\n",
+    "From: **José**\nSubject: **Proyecto**\n\n", "**From:** Marco Rossi\n**Subject:** Progetto\n\n", "From: José García\nSubject: Proyecto\n\n",
     "From: Ana\nDate: Monday\nSubject: Hola\n\n", "Here is the email:\n\n**From:** José\n**To:** Alex\n**Subject:** Proyecto\n\n", "José's email says:\n\n",
     "Sure. José's email says:\n\n",
   ];
@@ -644,6 +644,26 @@ describe("AnswerLanguage judges a passage read out after an English lead-in by t
     expect(flat(passage.map(p => p.text).join(" "))).toBe(flat(PASSAGES[lang]));
     expect(passage.map(p => [flat(p.text), p.lang])).toEqual(passage.map(p => [flat(p.text), lang]));
     expect(said.filter(p => !passage.includes(p)).map(p => [flat(p.text), p.lang])).toEqual(said.filter(p => !passage.includes(p)).map(p => [flat(p.text), null]));
+  });
+
+  // A header line's value in the passage's language was given to Kitten, which reads only English: a Russian or
+  // Chinese sender and subject were said in English sounds or not at all, a Spanish subject in English sounds
+  // (r10-voice-x10-2). Only a header whose value passes a lead-in's checks is Ember's.
+  it.each([
+    ["ru", "From: Иван\nSubject: Встреча в понедельник\n\n", ["Иван", "Встреча в понедельник"]],
+    ["zh", "From: 小王\nSubject: 会议\n\n", ["小王", "会议"]],
+    ["es", "Subject: Reunión del lunes\n\n", ["Reunión del lunes"]],
+    ["es", "From: José\nSubject: Reunión del lunes\n\n", ["Reunión del lunes"]],
+    ["it", "**From:** Marco Rossi\n**Subject:** Riunione di lunedì\n\n", ["Riunione di lunedì"]],
+    ["ru", "**From:** Иван\n**Subject:** Встреча\n\n", ["Иван", "Встреча"]],
+  ])("says a %s header's value in the passage's voice, never Kitten's (%j) (r10-voice-x10-2)", (lang, head, values) => {
+    const said = streamed(`${head}${PASSAGES[lang]}\n\nWant me to reply?`);
+    for (const value of values) {
+      const piece = said.find(p => p.text.includes(value));
+      expect([value, piece?.lang]).toEqual([value, lang]);
+    }
+    for (const p of said.filter(p => flat(PASSAGES[lang]).includes(flat(p.text)))) expect([flat(p.text), p.lang]).toEqual([flat(p.text), lang]);
+    expect(said.at(-1)).toEqual({ text: "Want me to reply?", lang: null });
   });
 
   it.each([

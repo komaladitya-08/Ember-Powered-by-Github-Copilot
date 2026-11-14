@@ -593,14 +593,24 @@ const HEADER = /^\s*(?:from|to|cc|bcc|subject|date|sent|re|reply-to)\s*[:：]/iu
 
 /**
  * Whether `piece`, which starts what is being judged, is Ember's own and leads in to a passage: a message's header line
- * (HEADER), or a lead-in (LEAD_IN) in no other language whose only letters with an accent are in a name ("José's email
+ * (HEADER) whose value is in no other language, or a lead-in (LEAD_IN) in no other language whose only letters with an accent are in a name ("José's email
  * says:"). Judged as the passage's first letters, a sender and a subject diluted its short words and the whole Spanish
  * or Italian email was Kitten's with English sounds, in 22 of 44 cases for "**From:** José / **Subject:** Proyecto"
  * (voice-speaking-r10-2), and so after "José's email says:" in 3 of 5 languages (voice-speaking-c10-1). A name is a
  * capitalised word after the first, or one with "'s".
  */
 function leadsIn(piece: string): boolean {
-  if (HEADER.test(piece)) return true;
+  const header = HEADER.exec(piece);
+  if (header) {
+    // Only a header whose value is Ember's too: a sender's name ("José García") or a subject in no other language, with
+    // an accent only in a name. "Subject: Встреча в понедельник.", "From: 小王." and "Subject: Reunión del lunes." are
+    // the passage's, and were given to Kitten, which reads only English (r10-voice-x10-2).
+    const value = piece.slice(header[0].length).replace(/[*_]/g, " ");
+    if (FOREIGN_MARKS.test(value) || /[^\p{Script=Latin}\P{L}]/u.test(value) || languageOf(value, 1) !== null) return false;
+    if (/^\s*(?:from|to|cc|bcc|reply-to)\s*[:：]/iu.test(header[0])) return true;
+    const tokens = value.split(/\s+/u).filter(t => /\p{L}/u.test(t));
+    return !ACCENTED.test(tokens.filter((t, i) => i === 0 || !/^\p{Lu}/u.test(t)).join(" "));
+  }
   if (!LEAD_IN.test(piece) || FOREIGN_MARKS.test(piece) || languageOf(piece, 1) !== null) return false;
   const tokens = piece.split(/\s+/u).filter(t => /\p{L}/u.test(t));
   const own = tokens.filter((t, i) => !/^\p{Lu}/u.test(t) || (i === 0 && !/['’]s\W*$/u.test(t)));
