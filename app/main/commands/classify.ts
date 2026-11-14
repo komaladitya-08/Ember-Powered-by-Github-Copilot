@@ -10794,7 +10794,10 @@ reg(NATIVE, ["certutil"], h => {
     return;
   }
   const flags = h.args.map(a => (a.v ?? "").toLowerCase());
-  if (flags.some(f => /^[-/](exportpfx|backupkey|backup|getkey|importpfx|repairstore|delstore|addstore|viewdelstore|deletehelloContainer)$/i.test(f))) h.e.add("secret", "secret.program", SAYS.secrets);
+  if (flags.some(f => /^[-/](exportpfx|backupkey|backup|getkey|importpfx|repairstore|delstore|addstore|viewdelstore|deletehelloContainer|exportpvk|recoverkey|mergepfx|convertepf)$/i.test(f))) h.e.add("secret", "secret.program", SAYS.secrets);
+  // A key container deleted, and a certificate published or installed where it is trusted (r11-commands-y11-5).
+  if (flags.some(f => /^[-/]delkey$/.test(f))) h.e.add("destroy", "certutil.delkey", "Deletes a key, which can't be got back.");
+  if (flags.some(f => /^[-/](dspublish|importcert|installcert|addeccurve|deleteecccurve|setreg|delreg)$/.test(f))) h.e.add("system", "system.security", TRUST_SAYS);
   if (flags.some(f => /^[-/]urlcache$/.test(f))) { const out = h.args.filter(a => !(a.v ?? "").startsWith("-") && !(a.v ?? "").startsWith("/")).pop(); if (out?.v && !URL_LIKE.test(out.v)) { h.e.usePath(out, "write", h.sc); h.e.download(out.v, h.sc); } }
   // Its verbs are a closed list (commands-remote-c11-1): the ones that copy a file through an encoding read their input
   // and write (or, with -f, overwrite) their output, as copy does, so a key encoded or dumped asks as a secret, a document
@@ -10836,6 +10839,7 @@ const CERTUTIL_READS = new Set(["dump", "hashfile", "asn", "verify", "dumppfx", 
 const CERTUTIL_OTHER = new Set([
   "store", "user", "ping", "pingadmin", "cainfo", "config", "getconfig", "getreg", "verifystore", "viewstore", "urlcache", "error", "?", "help", "tcainfo", "ca.cert", "ca.chain",
   "exportpfx", "backupkey", "backup", "getkey", "importpfx", "repairstore", "delstore", "addstore", "viewdelstore", "deletehellocontainer", "scinfo", "key", "csplist", "csptest",
+  "exportpvk", "recoverkey", "mergepfx", "convertepf", "delkey", "dspublish", "importcert", "installcert", "addeccurve", "deleteecccurve", "setreg", "delreg",
 ]);
 /** Its switches, and the ones that take the next word. */
 const CERTUTIL_FLAGS = new Set(["f", "v", "user", "enterprise", "gmt", "seconds", "silent", "split", "unicode", "utf8", "nocr", "nocrlf", "q", "quiet"]);

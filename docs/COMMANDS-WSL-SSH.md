@@ -224,7 +224,7 @@ Ember stops and asks before a command that:
   `/etc/kubernetes/pki` and `admin.conf`), which print as bare values Ember's filter can't recognise, and Redis's
   (`redis-cli CONFIG GET requirepass` or a pattern, `ACL LIST`, `ACL GETUSER`, `AUTH`, and `GET` of a key named like a
   secret or one Ember can't see), and a secret file copied through an encoding or dumped (Windows' `certutil -encode`,
-  `-encodehex`, `-dump`; its `-decode` over a file asks as an overwrite, and a verb or a switch of its Ember doesn't list is one it doesn't know); printing tokens or environment variables that may hold them (`gh auth token`,
+  `-encodehex`, `-dump`; its `-decode` over a file asks as an overwrite, `-exportPVK`, `-recoverKey`, `-MergePFX` and `-ConvertEPF` write out private keys, `-delkey` deletes a key, `-dspublish`, `-ImportCert` and `-installcert` change what is trusted, and a verb or a switch of its Ember doesn't list is one it doesn't know); printing tokens or environment variables that may hold them (`gh auth token`,
   `env`, `printenv`), other programs' environments (`ps e`, `ps eww`, `ps -o env`, `docker inspect` without a
   `--format` that leaves them out, `docker compose config`, `systemctl show` of a unit's Environment,
   `systemctl show-environment`), a secret file as a commit or the index holds it (`git show HEAD:.env`, `git cat-file

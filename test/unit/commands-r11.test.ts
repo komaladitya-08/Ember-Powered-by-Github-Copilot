@@ -125,6 +125,18 @@ describe("Windows certutil's file verbs (commands-remote-c11-1)", () => {
     // Hashing, listing a store and encoding into a new file still run.
     for (const cmd of ["certutil -hashfile a.zip SHA256", "certutil -store my", "certutil -encode a.txt b.txt"]) expect(decide(cmd, { ...PS, missing: ["C:\\Users\\ana\\proj\\b.txt"] }).verdict, cmd).toBe("run");
   });
+
+  it.each<[string, string]>([
+    ["certutil -exportPVK My 01 out", "secret"], ["certutil -recoverKey 01 out.pfx", "secret"], ["certutil -MergePFX a.pfx,b.pfx out.pfx", "secret"],
+    ["certutil -ConvertEPF a.pfx out.epf", "secret"], ["certutil -delkey MyKey", "destroy"], ["certutil -dspublish -f a.cer RootCA", "system"],
+    ["certutil -ImportCert a.cer", "system"], ["certutil -installcert a.cer", "system"], ["certutil /delkey MyKey", "destroy"],
+  ])("asks before %s, which exports or deletes a key or changes what is trusted (r11-commands-y11-5)", (cmd, cls) => {
+    for (const o of [PS, CMD]) {
+      const d = decide(cmd, o);
+      expect(d.verdict, cmd).toBe("ask");
+      expect(d.classes, cmd).toContain(cls);
+    }
+  });
 });
 
 describe("tar's -C before what it packs, and cpio's names from its input (commands-remote-c11-2)", () => {
