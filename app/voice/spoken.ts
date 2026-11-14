@@ -416,7 +416,7 @@ const STOPWORDS: Readonly<Record<string, ReadonlySet<string>>> = {
   fr: new Set("le la les des du une est et je j vous nous pas que qui pour dans sur avec ce cette il elle sont ai mais ou au aux l c qu de un en ne se y moi lui leur sa ses ces ça cela à vos votre mon ma mes tu te si toi tes".split(" ")),
   de: new Set("der die das und ist nicht ich sie wir ein eine mit zu dem auf für von sich auch wie oder aber habe es sind des im nur noch dir mich mir kann wird du hast den bei aus".split(" ")),
   es: new Set("el la los las del que y en un una es por para con se está como pero muy yo de lo al eso esto hay su sus mi te le si tu ya".split(" ")),
-  it: new Set("il di che e è un una non sono con del della gli le mi ho anche nel ma lo si questo più alla alle nella sul dei delle la ho hai ti ci vuoi tua tuo al da io".split(" ")),
+  it: new Set("il di che e è un una non sono con del della gli le mi ho anche nel ma lo si questo più alla alle nella sul dei delle la ho hai ti ci vuoi tua tuo al da io l c dal dalla dalle dallo dai dagli dall dell nell sull sua suo suoi nostro nostra vostro vostra mio mia tra fra sei lei loro ogni se".split(" ")),
   pt: new Set("os que e é uma para não da em na por se eu você de dos das ao às mas isso seu sua ele ela foi um já são tem está nas quer te à nos ou meu minha".split(" ")),
   nl: new Set("de het een en niet ik je van dat op te met zijn voor maar ook wat om naar uit bij nog aan heb kan".split(" ")),
 };
@@ -432,8 +432,20 @@ const STOPWORDS: Readonly<Record<string, ReadonlySet<string>>> = {
 const ALSO_ENGLISH: Readonly<Record<string, ReadonlySet<string>>> = {
   en: new Set(["me", "per", "o"]), es: new Set(["a", "me", "no"]), it: new Set(["a", "in", "per"]), pt: new Set(["o", "a", "do", "no", "me"]), nl: new Set(["me"]),
 };
-/** The short words of `words` that count towards `lang` when finding a passage's language (STOPWORDS and ALSO_ENGLISH). */
-const counted = (words: readonly string[], lang: string): string[] => words.filter(w => STOPWORDS[lang]?.has(w) || ALSO_ENGLISH[lang]?.has(w));
+/**
+ * The words a language's everyday email opens and closes with, which English never writes ("Ciao Alex", "Caro Alex",
+ * "Grazie mille", "Cordiali saluti"): counted with its short words, and a sign of its own. An Italian email of two short
+ * sentences after its greeting had one Italian short word Ember counted ("Caro Alex, complimenti per la promozione!",
+ * "Ciao Alex, grazie mille per ieri sera…") and was read wholly by Kitten with English sounds in 7 of 30
+ * (voice-speaking-r12-1). Never a name's first word either (wordsBesidesNames): "Ciao Alex" isn't a name.
+ */
+const GREETINGS: Readonly<Record<string, ReadonlySet<string>>> = {
+  it: new Set("ciao grazie buongiorno buonasera buonanotte caro cara cari care carissimo carissima egregio gentilissimo gentilissima saluti cordiali distinti cordialità baci bacioni prego scusa scusi scusate".split(" ")),
+};
+/** The short words of `words` that count towards `lang` when finding a passage's language (STOPWORDS, ALSO_ENGLISH and GREETINGS). */
+const counted = (words: readonly string[], lang: string): string[] => words.filter(w => STOPWORDS[lang]?.has(w) || ALSO_ENGLISH[lang]?.has(w) || GREETINGS[lang]?.has(w));
+/** A word some language greets with (GREETINGS): never the first word of a name. */
+const greets = (token: string): boolean => Object.values(GREETINGS).some(g => g.has(token.toLowerCase().replace(/[^\p{L}]+/gu, "")));
 
 /**
  * Letters and marks one of these languages writes and the others seldom do. Only to tell two languages apart whose
@@ -469,7 +481,7 @@ const NAME_JOINS = new Set("de del della di da do dos das du des la le les el en
  */
 function wordsBesidesNames(text: string): string[] {
   const kept: string[] = [];
-  const capital = (t: string) => /^(?:[dl][’'])?\p{Lu}/u.test(t);
+  const capital = (t: string) => /^(?:[dl][’'])?\p{Lu}/u.test(t) && !greets(t);
   for (const clause of text.split(/[.,;:!?¡¿()[\]{}"“”«»„—–\n]+/u)) {
     const tokens = clause.split(/\s+/u).filter(t => /\p{L}/u.test(t));
     for (let i = 0; i < tokens.length;) {

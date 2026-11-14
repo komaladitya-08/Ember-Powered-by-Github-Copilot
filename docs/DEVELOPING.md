@@ -1434,7 +1434,13 @@ after a lead-in without a colon or on the same line). A passage is told by its o
 sixth of its words being enough (`languageNow`), and the short words a language writes as often as English does ("a",
 "me", "no", "do", "in", "o": `ALSO_ENGLISH`) count for both: with a quarter of its words needed and those left out,
 ordinary three- or four-sentence emails were Kitten's in 12 of 40 after a plain lead-in, 7 of the 8 Portuguese ones
-(voice-speaking-r11-1; now none of those 40 nor of 25 more, with English emails and notes still Kitten's). Told so,
+(voice-speaking-r11-1; now none of those 40 nor of 25 more, with English emails and notes still Kitten's). An
+everyday Italian email's greeting and courtesy words ("Ciao", "Caro", "Grazie", "Cordiali saluti": `GREETINGS`) count as
+its short words and are never taken for the first word of a name ("Ciao Alex"), and its elided and other common short
+words ("l'", "c'", "dell'", "dal", "suo", "sua", "tra", "se") are counted: Italian emails that open with a greeting or
+hold few short words were Kitten's for 7 of the re-rate's 30 and 6 of 30 written after the fix (voice-speaking-r12-1;
+now none of either, nor of 30 more written before it, with 60 English emails, Italian names and greetings in some, and
+15 French ones as before). Told so,
 from fewer than a quarter, a passage needs two signs of its own (two different short words that aren't `ALSO_ENGLISH`,
 or one and a letter only it writes: `MARKS`) and no letters only unlisted languages write (`UNLISTED_LETTERS`: Polish
 "ł", "ś", Romanian "ș", Czech "ř", the Nordic "å", "ø", the "š", "č" and "ž" of Croatian, Bosnian, Serbian and Slovene,
