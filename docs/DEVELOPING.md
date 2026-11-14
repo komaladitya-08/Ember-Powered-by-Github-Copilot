@@ -903,10 +903,15 @@ it builds on:
   on), and Home says **Off until Ember starts again** for each item, with why (integrations-r10-2: it said
   **Ready** while the gate refused every call).
 - **Ember's own files.** A call whose arguments name Ember's data folder or the organisation's policy folder
-  (`~/.config/ember/settings.json`, `%LOCALAPPDATA%\ember`) is refused in every mode, Autopilot included, as the same
-  path typed in an app or named in a command is; one that names one of Ember's files or folders by name only
-  (`settings.json`, `audit`) asks every time, a read-only tool's too, and Autopilot refuses it (gate.ts
-  `emberDataOf`, integ-x-2: a file tool could rewrite settings.json, announced, in Autopilot).
+  (`~/.config/ember/settings.json`, `%LOCALAPPDATA%\ember`, a pattern such as `~/.config/emb?r/**`, or a relative path
+  that climbs out of a local server's own folder into it) is refused in every mode, Autopilot included, as the same
+  path typed in an app or named in a command is. So is a call of a tool that changes things given the folder that
+  holds it (`~/.config`, `%LOCALAPPDATA%`, `~/Library/Application Support`, the home), which moving or deleting takes
+  Ember's data with (integ-y-1). One that names one of Ember's files or folders by name only (`settings.json`, `audit`,
+  `EMBER` on Windows and macOS), or a file's content that only mentions the folder, asks every time, a read-only
+  tool's too, saying why (“It may reach my own settings, audit log or policy, which are for you only.”), and
+  Autopilot refuses it (gate.ts `emberReachOf`, integ-x-2, integ-y-2: a file tool could rewrite settings.json,
+  announced, in Autopilot).
 - **Taint lasts the conversation**, across reconnects; it ends when the conversation is forgotten.
 - **Results are untrusted.** `onPostToolUse` replaces each result with `<extension_result untrusted="true">` text (`<`
   escaped, capped at 60 000 characters, images dropped); `injection.ts` scans it, and a flagged result makes every

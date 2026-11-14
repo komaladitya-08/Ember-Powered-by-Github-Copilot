@@ -17,6 +17,7 @@
 
 import crypto from "node:crypto";
 import fs from "node:fs";
+import { homedir } from "node:os";
 import path from "node:path";
 import type { CopilotClient, MCPServerConfig } from "@github/copilot-sdk";
 import type { AdminPolicy } from "../admin";
@@ -32,7 +33,7 @@ import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import type { ConnectResult, ExtensionsApi, Installed, Marketplace, MarketplaceEntry, ToolInfo } from "../../shared/extensions";
 import { EXTENSION_ON_UNSAVED, MARKETPLACE_BUILT_IN_KEPT, MARKETPLACE_MANAGED_KEPT, addMarketplaceFailed, browseFailed, extensionUnsaved } from "../../renderer/home/extensions-copy";
 import type { OS } from "../../shared/shortcuts";
-import { REFUSED, classify, emberDataOf, failureNote, gateAnnouncement, gateQuestion, plainName, wrapResult, writeOutHidden } from "./gate";
+import { REFUSED, classify, emberReachOf, failureNote, gateAnnouncement, gateQuestion, plainName, wrapResult, writeOutHidden } from "./gate";
 import { pluginPath, readMarketplace, readPlugin, reachOf, firstFile, MARKETPLACE_PLACES, type ServerSpec } from "./manifest";
 import { canonical, checkPins, isReadOnly, pinAll, schemaWords, shownHash, toolHash, type PinnedTool } from "./pin";
 import { probeHttp, probeStdio, servedTools, type ProbeResult } from "./probe";
@@ -68,6 +69,8 @@ export interface ExtensionsDeps {
   announce?: (words: string) => boolean;
   log: Logger;
   os: OS;
+  /** The user's home, where a call's `~` and the folders above Ember's data folder are (default os.homedir()). */
+  home?: string;
   /**
    * How the runtime starts Ember's launcher (dist/app/mcp-launch.cjs, as plain Node), or null where Ember can't run as
    * plain Node (macOS: RunAsNode is off, PLAN.md §2 "Node mode"): stdio servers then don't run at all (fail closed).
@@ -1024,7 +1027,7 @@ export class ExtensionsService implements ExtensionsApi {
   }
 
   /** Read policy synchronously, after metadata awaits and again immediately before returning Allow. */
-  private gateInput(gate: SessionGate, name: string, shownAsPinned: boolean, generation: number, emberData: "names" | "may" | null) {
+  private gateInput(gate: SessionGate, name: string, shownAsPinned: boolean, generation: number, reach: { data: "names" | "may" | null; holds: boolean }) {
     const e = gate.tools.get(name);
     const current = e && this.items.includes(e.item) ? e.item : undefined;
     const server = current?.servers.find(s => s === e?.server && s.status === "ready");
@@ -1038,7 +1041,7 @@ export class ExtensionsService implements ExtensionsApi {
       hintsStale: !!e && gate.listChanged.has(e.server.key), serverStopped: !!e && gate.withdrawn.has(e.server.key),
       autopilot: this.o.autopilot?.() === true,
       vaultFilled: this.vaultFilled(),
-      emberData,
+      emberData: reach.data, emberHolds: reach.holds,
     });
     if (decision.verdict === "deny") return decision;
     if (gate !== this.session || generation !== this.generation) return { verdict: "deny" as const, reason: "Extensions changed. Wait for the conversation to reload before trying again." };
@@ -1072,8 +1075,12 @@ export class ExtensionsService implements ExtensionsApi {
     await this.settle(gate);
     const generation = this.generation;
     const shownAsPinned = await this.shownNow(gate, input.toolName, generation);
-    // Read once: what the arguments name of Ember's own settings, audit log or policy (integ-x-2).
-    const emberData = emberDataOf(input.toolArgs);
+    // Read once: what the arguments name of Ember's own settings, audit log or policy (integ-x-2), judged on this
+    // computer, where a stdio server's relative path is in its own folder inside Ember's data folder (integ-y-1).
+    let home: string | null = null;
+    try { home = this.o.home ?? homedir(); } catch { /* no home known: any user's is judged */ }
+    const own = e?.server.spec?.type === "stdio" ? this.store.pluginDir(e.item.id) : null;
+    const emberData = emberReachOf(input.toolArgs, { os: this.o.os, home, ember: [path.dirname(this.o.dir)], own });
     const { verdict, reason } = this.gateInput(gate, input.toolName, shownAsPinned, generation, emberData);
     const argChars = (() => { try { return JSON.stringify(input.toolArgs ?? {}).length; } catch { return 0; } })();
     const base = { ext: e?.item.id ?? null, tool: input.toolName, ...named(e?.item, e?.tool), argChars };
@@ -1094,7 +1101,7 @@ export class ExtensionsService implements ExtensionsApi {
     if (verdict === "announce" && before.verdict === "announce" && this.said(gateAnnouncement(e!.item.name))) return { permissionDecision: "allow" };
     const confirmer = this.o.confirmer();
     if (!confirmer) return deny("Ember can't ask the user right now, so it didn't do this.");
-    const question = gateQuestion(e!.item.name, e!.tool.name, input.toolArgs);
+    const question = gateQuestion(e!.item.name, e!.tool.name, input.toolArgs, before.reason);
     const answer = await confirmer.ask(question, this.stopAsks.signal).catch(() => null);
     // The question may have been up a while: the item, its pin and the live tool are checked again before a yes counts.
     const shownAfter = answer === "once" && await this.shownNow(gate, input.toolName, generation);
