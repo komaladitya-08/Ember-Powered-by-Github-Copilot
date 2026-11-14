@@ -104,7 +104,8 @@ describe("Windows certutil's file verbs (commands-remote-c11-1)", () => {
       ["certutil -encode %USERPROFILE%\\.ssh\\id_rsa o.txt", "path.secret", CMD], ["certutil /encode %USERPROFILE%\\.ssh\\id_rsa o.txt", "path.secret", CMD],
       ["certutil -f -decode in.b64 report.docx", "certutil.output", PS], ["certutil -decodehex in.hex report.docx", "certutil.output", PS],
       ["certutil -f -decode in.b64 ~\\Documents\\old\\a.docx", "certutil.output", PS], ["certutil -encode report.docx \\\\x.example\\share\\r.txt", "upload.unc", PS],
-      ["certutil -v -encode ~\\.ssh\\id_rsa o.txt", "path.secret", PS], ["certutil -frobnicate x", "unclear.option-value", PS], ["certutil -decode in.b64 /tmp/x", "unclear.option-value", PS],
+      ["certutil -v -encode ~\\.ssh\\id_rsa o.txt", "path.secret", PS], ["certutil -decode in.b64 /tmp/x", "certutil.output", PS], ["certutil -decode in.b64 /Users/ana/Documents/a.docx", "certutil.output", PS],
+      ["certutil -encode -zz a.txt ~\\.ssh\\id_rsa", "path.secret", PS],
     ] as const) {
       const d = decide(cmd, o);
       expect(d.verdict, cmd).toBe("ask");
@@ -159,5 +160,20 @@ describe("a deletion or a write of something Ember can't name (commands-remote-c
     for (const cmd of ["Remove-Item $p -Recurse", "Set-Content $f x"]) expect(decide(cmd, { shell: "powershell", context: "win32" }).rules, cmd).toContain(UNRESOLVED_TARGET_RULE);
     // A deletion Ember can name is judged as before.
     for (const cmd of ["rm -rf build", "echo hi > out.txt"]) expect(decide(cmd).rules, cmd).not.toContain(UNRESOLVED_TARGET_RULE);
+  });
+});
+
+describe("an option or a verb Ember doesn't know is said by name, never taken for a danger (commands-remote-r11-3, -c11-1; the owner's decision of 2026-11-14)", () => {
+  it("names sqlite3's, duckdb's and certutil's unlisted options and verbs as unknown, and still judges what follows them", () => {
+    for (const [cmd, rule, o] of [
+      ["sqlite3 -frob a.db .tables", "unknown.option", {}], ["duckdb -zz a.db", "unknown.option", {}], ["duckdb -frobnicate app.db", "unknown.option", {}],
+      ["certutil -frobnicate x", "unknown.verb", { shell: "powershell", context: "win32" }], ["certutil -hashfile -zz a.zip", "unknown.option", { shell: "powershell", context: "win32" }],
+    ] as [string, string, Opts][]) {
+      const d = decide(cmd, o);
+      expect(d.rules, cmd).toContain(rule);
+      expect(d.rules.filter(r => r.startsWith("unclear.")), cmd).toEqual([]);
+    }
+    // sqlite3's archive mode is a write, whatever spelling.
+    for (const cmd of ["sqlite3 app.sqlar -Ax", "sqlite3 -A app.sqlar -x", "sqlite3 --archive app.sqlar", "sqlite3 -Acf a.sqlar src"]) expect(decide(cmd).classes, cmd).toContain("destroy");
   });
 });

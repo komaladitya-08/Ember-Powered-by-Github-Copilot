@@ -4662,8 +4662,8 @@ describe("programs that run what they are given, however it is given (round elev
     const ok = flow({ "/home/ana/proj/q.sql": "SELECT count(*) FROM users;\n" });
     for (const run of ["duckdb app.db -f q.sql", "duckdb -f q.sql", "sqlite3 -header -csv app.db 'SELECT 1'", "duckdb -json app.db -c 'SELECT 1'"]) expect((await local(ok, run)).resultType, run).toBe("success");
     expect(ok.asked).toEqual([]);
-    // An option sqlite3 or duckdb doesn't list, or sqlite3's archive mode (it unpacks files over the folder's), asks.
-    for (const run of ["sqlite3 app.sqlar -Ax", "sqlite3 -A app.sqlar -x", "duckdb -frobnicate app.db", "sqlite3 --archive app.sqlar"]) {
+    // sqlite3's archive mode (it unpacks files over the folder's) asks, as a write.
+    for (const run of ["sqlite3 app.sqlar -Ax", "sqlite3 -A app.sqlar -x", "sqlite3 --archive app.sqlar", "sqlite3 -Acf a.sqlar src"]) {
       const h = flow();
       expect((await local(h, run)).resultType, run).toBe("denied");
     }

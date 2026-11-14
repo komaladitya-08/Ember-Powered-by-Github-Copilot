@@ -5040,6 +5040,10 @@ const RUNS_BY_OPTION: readonly (readonly [RegExp, RegExp])[] = [
  * command of cargo that Ember doesn't know.", or for a tool that acts with no command, "It runs vercel with no
  * command, and Ember doesn't know what that does."
  */
+/** An option of a tool that Ember doesn't know: said by name, never as a danger (the owner's decision of 2026-11-14). */
+function unknownOptionSays(tool: string, option: string): string {
+  return `It runs ${tool} with ${option}, an option Ember doesn't know.`;
+}
 function unknownVerbSays(tool: string, verb: string): string {
   return verb === "" ? `It runs ${tool} with no command, and Ember doesn't know what that does.` : `It runs ${tool} ${verb}, a command of ${tool} that Ember doesn't know.`;
 }
@@ -5815,12 +5819,15 @@ reg(NATIVE, ["psql", "sqlite3", "sqlite", "duckdb", "sqlcmd", "cqlsh", "clickhou
     if (h.s.stdin === "file") stdinFile(h);
   }
   else if (k === "sqlite3" || k === "sqlite" || k === "duckdb") {
-    // The options each takes, by its own -help: one it doesn't list (or sqlite3's -A, which packs and unpacks files) may
-    // run or write something Ember can't tell, so it asks rather than reads as a flag (commands-remote-r11-3).
+    // The options each takes, by its own -help. sqlite3's -A (archive mode) unpacks files over the folder's, so it is a
+    // write; an option it doesn't list is one Ember doesn't know, said and announced by name (the owner's decision of
+    // 2026-11-14: only what is dangerous asks), and its next word is read as a word of its own (commands-remote-r11-3).
     const known = k === "duckdb" ? DUCKDB_OPTS : SQLITE_OPTS;
     for (const a of h.args) {
       const name = /^--?([A-Za-z][\w-]*)$/.exec(a.v ?? "")?.[1];
-      if (a.v !== null && isOption(a) && (name === undefined || !(name in known))) { h.e.unclear("unclear.option-value", SAYS.optionValue); break; }
+      // (What follows -A is the archive's own command and its files.)
+      if (a.v !== null && k !== "duckdb" && /^(-A|--?archive$)/.test(a.v)) { h.e.add("destroy", "sqlite.archive", "Unpacks files from the database over the folder's, or packs files into it."); break; }
+      else if (a.v !== null && isOption(a) && (name === undefined || !(name in known))) { h.e.add("unknown", "unknown.option", unknownOptionSays(h.prog, a.v), { program: `${h.prog} ${a.v}` }); break; }
     }
     // A value option's value is not the database or its SQL.
     const valueAt = new Set<number>();
@@ -10526,20 +10533,26 @@ reg(NATIVE, ["certutil"], h => {
   // Its verbs are a closed list (commands-remote-c11-1): the ones that copy a file through an encoding read their input
   // and write (or, with -f, overwrite) their output, as copy does, so a key encoded or dumped asks as a secret, a document
   // decoded over asks, and a share or address as the output sends; -dump and the hash verbs read what they are given; a
-  // verb or an option not listed here asks.
+  // verb or an option not listed here is one Ember doesn't know.
   const words: Arg[] = [];
   let verb: string | null = null;
   for (let k = 0; k < h.args.length; k++) {
     const a = h.args[k];
     const m = /^[-/]([A-Za-z.]+)$/.exec(a.v ?? "");
     if (a.v === null || !/^[-/]/.test(a.v)) { words.push(a); continue; }
-    if (!m) { h.e.unclear("unclear.option-value", SAYS.optionValue); return; }
+    // A word that starts with a slash may be a path (`/tmp/x`) as well as a switch: it is judged as both, so a file it
+    // names is never left unjudged for being read as an option.
+    if (!m) { h.e.add("unknown", "unknown.option", unknownOptionSays("certutil", a.v), { program: `certutil ${a.v}` }); if (a.v.startsWith("/")) words.push(a); continue; }
     const n = m[1].toLowerCase();
     if (CERTUTIL_VALUE_OPTS.has(n)) { k++; continue; }
     if (CERTUTIL_FLAGS.has(n)) continue;
     if (verb === null && (CERTUTIL_COPIES.has(n) || CERTUTIL_READS.has(n) || CERTUTIL_OTHER.has(n))) { verb = n; continue; }
-    h.e.unclear("unclear.option-value", SAYS.optionValue);
-    return;
+    // A verb or a switch this row doesn't list is one Ember doesn't know (announced by name: the owner's decision of
+    // 2026-11-14); one that copies through an encoding is judged above whatever follows it.
+    if (verb === null) h.e.add("unknown", "unknown.verb", unknownVerbSays("certutil", a.v), { program: `certutil ${a.v}` });
+    else h.e.add("unknown", "unknown.option", unknownOptionSays("certutil", a.v), { program: `certutil ${a.v}` });
+    if (verb === null) return;
+    if (a.v.startsWith("/")) words.push(a);
   }
   if (verb === null) return;
   if (CERTUTIL_COPIES.has(verb)) {

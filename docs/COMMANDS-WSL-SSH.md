@@ -191,8 +191,8 @@ Ember stops and asks before a command that:
   `tee` and `pager` after a `;` or at the start of a line, `--pager` and `--init-command`, and every sqlite3 or
   duckdb dot-command (in duckdb's `-c` and `-s` text as well) but the ones that only
   show things written whole, `.tables`, `.schema`, `.mode`, `.headers` and the like, because sqlite3 takes any
-  shortening: `.sh` is `.shell`, `.o` is `.output`; an option of sqlite3's or duckdb's that their own help doesn't list, and
-  sqlite3's archive mode `-A`, ask too), and package scripts, make targets and SQL or command files named clean, wipe, purge,
+  shortening: `.sh` is `.shell`, `.o` is `.output`; sqlite3's archive mode `-A`, which unpacks files over the folder's,
+  asks as a write, and an option of sqlite3's or duckdb's that their own help doesn't list is one Ember doesn't know), and package scripts, make targets and SQL or command files named clean, wipe, purge,
   reset, drop and the like (`psql -f drop_users.sql`, `psql app < drop_users.sql`), and any SQL file a client runs
   (`psql -f`, `psql <`, `mysql <`, `sqlite3 <`, `duckdb <`, `duckdb -f`, `sqlcmd -i`, `clickhouse-client --queries-file`): Ember
   reads it first and judges it as the client's own text (for `sqlcmd`, its `!!` and `:` commands and T-SQL's
@@ -224,7 +224,7 @@ Ember stops and asks before a command that:
   `/etc/kubernetes/pki` and `admin.conf`), which print as bare values Ember's filter can't recognise, and Redis's
   (`redis-cli CONFIG GET requirepass` or a pattern, `ACL LIST`, `ACL GETUSER`, `AUTH`, and `GET` of a key named like a
   secret or one Ember can't see), and a secret file copied through an encoding or dumped (Windows' `certutil -encode`,
-  `-encodehex`, `-dump`; its `-decode` over a file asks as an overwrite, and a verb of its Ember doesn't list asks); printing tokens or environment variables that may hold them (`gh auth token`,
+  `-encodehex`, `-dump`; its `-decode` over a file asks as an overwrite, and a verb or a switch of its Ember doesn't list is one it doesn't know); printing tokens or environment variables that may hold them (`gh auth token`,
   `env`, `printenv`), other programs' environments (`ps e`, `ps eww`, `ps -o env`, `docker inspect` without a
   `--format` that leaves them out, `docker compose config`, `systemctl show` of a unit's Environment,
   `systemctl show-environment`), a secret file as a commit or the index holds it (`git show HEAD:.env`, `git cat-file
