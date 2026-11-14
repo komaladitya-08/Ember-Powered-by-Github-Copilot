@@ -2261,9 +2261,8 @@ describe("ExtensionsService", () => {
   });
 
   it("tells the model the user stopped everything, not that a question went unanswered, when Stop ends the question (r12-ui-x12-3)", async () => {
-    let s!: ExtensionsService;
     const asking: string[] = [];
-    s = await installed({ confirmer: () => ({ ask: (q: { prompt: string }, signal: AbortSignal) => new Promise(r => { asking.push(q.prompt); s.stopPart().stop(); if (signal.aborted) r(null); else signal.addEventListener("abort", () => r(null)); }) }) as never });
+    const s: ExtensionsService = await installed({ confirmer: () => ({ ask: (q: { prompt: string }, signal: AbortSignal) => new Promise(r => { asking.push(q.prompt); s.stopPart().stop(); if (signal.aborted) r(null); else signal.addEventListener("abort", () => r(null)); }) }) as never });
     const ext = s.forSession()!;
     shown(ext);
     const out = await call(ext, "fake-post_message", { text: "hi" }) as { permissionDecision: string; permissionDecisionReason?: string };
