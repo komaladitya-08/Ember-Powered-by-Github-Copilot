@@ -223,7 +223,8 @@ Ember stops and asks before a command that:
   `/var/run/secrets`, systemd's `/run/credentials`, a Vault agent's `/vault/secrets`, `/etc/ssl/private`, a cluster's
   `/etc/kubernetes/pki` and `admin.conf`), which print as bare values Ember's filter can't recognise, and Redis's
   (`redis-cli CONFIG GET requirepass` or a pattern, `ACL LIST`, `ACL GETUSER`, `AUTH`, and `GET` of a key named like a
-  secret or one Ember can't see); printing tokens or environment variables that may hold them (`gh auth token`,
+  secret or one Ember can't see), and a secret file copied through an encoding or dumped (Windows' `certutil -encode`,
+  `-encodehex`, `-dump`; its `-decode` over a file asks as an overwrite, and a verb of its Ember doesn't list asks); printing tokens or environment variables that may hold them (`gh auth token`,
   `env`, `printenv`), other programs' environments (`ps e`, `ps eww`, `ps -o env`, `docker inspect` without a
   `--format` that leaves them out, `docker compose config`, `systemctl show` of a unit's Environment,
   `systemctl show-environment`), a secret file as a commit or the index holds it (`git show HEAD:.env`, `git cat-file

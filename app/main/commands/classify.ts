@@ -10470,7 +10470,44 @@ reg(NATIVE, ["certutil"], h => {
   const flags = h.args.map(a => (a.v ?? "").toLowerCase());
   if (flags.some(f => /^[-/](exportpfx|backupkey|backup|getkey|importpfx|repairstore|delstore|addstore|viewdelstore|deletehelloContainer)$/i.test(f))) h.e.add("secret", "secret.program", SAYS.secrets);
   if (flags.some(f => /^[-/]urlcache$/.test(f))) { const out = h.args.filter(a => !(a.v ?? "").startsWith("-") && !(a.v ?? "").startsWith("/")).pop(); if (out?.v && !URL_LIKE.test(out.v)) { h.e.usePath(out, "write", h.sc); h.e.download(out.v, h.sc); } }
+  // Its verbs are a closed list (commands-remote-c11-1): the ones that copy a file through an encoding read their input
+  // and write (or, with -f, overwrite) their output, as copy does, so a key encoded or dumped asks as a secret, a document
+  // decoded over asks, and a share or address as the output sends; -dump and the hash verbs read what they are given; a
+  // verb or an option not listed here asks.
+  const words: Arg[] = [];
+  let verb: string | null = null;
+  for (let k = 0; k < h.args.length; k++) {
+    const a = h.args[k];
+    const m = /^[-/]([A-Za-z.]+)$/.exec(a.v ?? "");
+    if (a.v === null || !/^[-/]/.test(a.v)) { words.push(a); continue; }
+    if (!m) { h.e.unclear("unclear.option-value", SAYS.optionValue); return; }
+    const n = m[1].toLowerCase();
+    if (CERTUTIL_VALUE_OPTS.has(n)) { k++; continue; }
+    if (CERTUTIL_FLAGS.has(n)) continue;
+    if (verb === null && (CERTUTIL_COPIES.has(n) || CERTUTIL_READS.has(n) || CERTUTIL_OTHER.has(n))) { verb = n; continue; }
+    h.e.unclear("unclear.option-value", SAYS.optionValue);
+    return;
+  }
+  if (verb === null) return;
+  if (CERTUTIL_COPIES.has(verb)) {
+    if (words[0]) h.e.usePath(words[0], "read", h.sc);
+    if (words[1]) overwrites(h, words[1], "certutil.output");
+    return;
+  }
+  if (CERTUTIL_READS.has(verb)) h.e.readArgs(words, h.sc, { unresolvedUnclear: true });
 });
+/** certutil's verbs that copy a file through an encoding: the first word is read, the second written. */
+const CERTUTIL_COPIES = new Set(["encode", "decode", "encodehex", "decodehex"]);
+/** Its verbs that read and print the files they are given (-dump prints any file in hex and text). */
+const CERTUTIL_READS = new Set(["dump", "hashfile", "asn", "verify", "dumppfx", "verifyctl", "checkcert"]);
+/** Its other verbs this row knows: listing and checking stores and services, and those judged above. */
+const CERTUTIL_OTHER = new Set([
+  "store", "user", "ping", "pingadmin", "cainfo", "config", "getconfig", "getreg", "verifystore", "viewstore", "urlcache", "error", "?", "help", "tcainfo", "ca.cert", "ca.chain",
+  "exportpfx", "backupkey", "backup", "getkey", "importpfx", "repairstore", "delstore", "addstore", "viewdelstore", "deletehellocontainer", "scinfo", "key", "csplist", "csptest",
+]);
+/** Its switches, and the ones that take the next word. */
+const CERTUTIL_FLAGS = new Set(["f", "v", "user", "enterprise", "gmt", "seconds", "silent", "split", "unicode", "utf8", "nocr", "nocrlf", "q", "quiet"]);
+const CERTUTIL_VALUE_OPTS = new Set(["p", "config", "t", "csp", "dc", "restrict", "out", "sid", "kdf", "alg", "pin", "privatekey", "ekpolicy", "policyserver", "anonymous", "kerberos", "clientcertificate", "username", "cert"]);
 reg(NATIVE, ["procdump", "procdump64"], h => { if (h.args.some(a => /lsass/i.test(a.v ?? ""))) h.e.add("secret", "secret.program", SAYS.secrets); });
 reg(NATIVE, ["netsh"], h => {
   const a = h.args.map(x => (x.v ?? "").toLowerCase());
