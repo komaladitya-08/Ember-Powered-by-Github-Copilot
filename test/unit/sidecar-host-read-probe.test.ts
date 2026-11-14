@@ -69,6 +69,21 @@ describe("the host's read with a probe's stage left out (cifix-x9-10)", () => {
     expect(r.secretKeys).toEqual([]);
   });
 
+  it("times each text look by role for \"time-texts\", leaving nothing out of the read (cifix-x9-11)", async () => {
+    const h = harness();
+    const r = await h.read({ probeSkip: "time-texts" }) as ReadWindowResult & { probeTexts?: { i: number; role: string; start: number; end: number; steps: unknown[] }[] };
+    expect(r.nodes.map(n => n.name)).toContain("Name");
+    expect(r.probeTexts?.length).toBeGreaterThan(0);
+    for (const l of r.probeTexts!) {
+      expect(typeof l.role).toBe("string");
+      expect(l.end).toBeGreaterThanOrEqual(l.start);
+      // Roles and times only: nothing a look read is in them.
+      expect(JSON.stringify(l)).not.toContain("a long note");
+    }
+    const plain = await harness().read() as { probeTexts?: unknown };
+    expect(plain.probeTexts).toBeUndefined();
+  });
+
   it("reads the window whole for a stage it doesn't know", async () => {
     const r = await harness().read({ probeSkip: "everything" });
     expect(r.nodes.map(n => n.name)).toContain("Name");

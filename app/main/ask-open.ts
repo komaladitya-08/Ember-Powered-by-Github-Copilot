@@ -110,14 +110,15 @@ export type AskReadPlan = { kind: "now" } | { kind: "off" } | { kind: "delay"; m
  * main's own part); in the host, "lookup", all after listing the windows and finding the one read (no tree walk);
  * "texts", the text and selection reads of its fields; "looks", the looks at fields around secret ones, with nothing of
  * the read given back at all (no field is then left unredacted). Each only reads less and gives back less.
+ * "time-texts" leaves nothing out: the host times each text look and its steps, and main logs them (cifix-x9-11).
  */
-export const ASK_READ_STAGES = ["read", "lookup", "texts", "looks"] as const;
+export const ASK_READ_STAGES = ["read", "lookup", "texts", "looks", "time-texts"] as const;
 export type AskReadStage = typeof ASK_READ_STAGES[number];
 
 /** The plan for `value`, EMBER_TEST_ASK_READ as devEnv gives it (undefined when packaged or unset). */
 export function askReadPlan(value: string | undefined): AskReadPlan {
   if (value === "off") return { kind: "off" };
-  const skip = value === undefined ? null : /^skip:([a-z]+)$/.exec(value);
+  const skip = value === undefined ? null : /^skip:([a-z-]+)$/.exec(value);
   if (skip && (ASK_READ_STAGES as readonly string[]).includes(skip[1])) return { kind: "skip", stage: skip[1] as AskReadStage };
   const m = value === undefined ? null : /^delay:(\d{1,5})$/.exec(value);
   const ms = m ? Number(m[1]) : NaN;

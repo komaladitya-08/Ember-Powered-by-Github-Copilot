@@ -3163,7 +3163,7 @@ namespace Ember.Uia
     }
 
     // A plain native Edit keeps its selected range after losing focus, even when UIA's TextPattern fails.
-    private static JObj NativeEditTextInfo(AutomationElement el, int max)
+    private static JObj NativeEditTextInfo(AutomationElement el, int max, List<object> marks)
     {
       IntPtr hwnd = new IntPtr(el.Current.NativeWindowHandle);
       if (hwnd == IntPtr.Zero || Win.PidOf(hwnd) != el.Current.ProcessId) return null;
@@ -3175,14 +3175,25 @@ namespace Ember.Uia
       if ((style & WsChild) == 0 || (style & (EsMultiline | EsPassword)) != 0) return null;
       const uint EmGetSel = 0xB0, SmtoAbortIfHung = 0x2, SmtoErrorOnExit = 0x20;
       IntPtr result;
+      Mark(marks, "edit selection message");
       if (Native.SendMessageTimeoutW(hwnd, EmGetSel, IntPtr.Zero, IntPtr.Zero, SmtoAbortIfHung | SmtoErrorOnExit, 30, out result) == IntPtr.Zero) return null;
       long offsets = result.ToInt64();
       int start = (int)(offsets & 0xFFFF), end = (int)((offsets >> 16) & 0xFFFF);
       if (offsets == -1 || end <= start || end > max) return null;
+      Mark(marks, "edit value");
       string text = el.GetCurrentPropertyValue(ValuePattern.ValueProperty, true) as string;
       if (text == null || end > text.Length || text.Length > max) return null;
       return new JObj().Add("source", "value").Add("text", text).Add("selection", text.Substring(start, end - start))
         .Add("caret", start).Add("selectionLength", end - start).Add("caretAtEnd", end == text.Length);
+    }
+
+    // A development probe's marks (cifix-x9-11): when each step of a text read began, in ms since 1970, so the Windows
+    // suite can tell which one hands the read app the foreground. Only with "probe": true; nothing else changes.
+    private static void Mark(List<object> marks, string step)
+    {
+      if (marks == null) return;
+      long now = (long)(DateTime.UtcNow - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalMilliseconds;
+      marks.Add(new JObj().Add("step", step).Add("t", now));
     }
 
     private static object TextInfo(Call c)
@@ -3190,24 +3201,39 @@ namespace Ember.Uia
       Entry e = (Entry)c.Target;
       AutomationElement el = (AutomationElement)e.Element;
       int max = Args.Int(c.Params, "maxChars", Props.TextCap, 1, 100000);
+      List<object> marks = Args.Flag(c.Params, "probe", false) ? new List<object>() : null;
+      Mark(marks, "secret check");
       if (Props.IsSecret(el)) return new JObj().Add("secret", true);
+      JObj r = TextInfoOf(el, max, marks);
+      Mark(marks, "done");
+      if (marks != null) r.Add("probe", marks);
+      return r;
+    }
+
+    private static JObj TextInfoOf(AutomationElement el, int max, List<object> marks)
+    {
       try
       {
-        JObj native = NativeEditTextInfo(el, max);
+        Mark(marks, "native edit");
+        JObj native = NativeEditTextInfo(el, max, marks);
         if (native != null) return native;
       }
       catch (System.ComponentModel.Win32Exception) { /* Try UIA's normal text path. */ }
       catch (InvalidOperationException) { /* The provider did not expose a native Edit value. */ }
       object pattern;
       JObj r = new JObj();
+      Mark(marks, "text pattern");
       if (el.TryGetCurrentPattern(TextPattern.Pattern, out pattern) && pattern != null)
       {
         TextPattern text = (TextPattern)pattern;
+        Mark(marks, "document range");
         TextPatternRange document = text.DocumentRange;
         bool truncated = false;
+        Mark(marks, "document text");
         r.Add("source", "text").Add("text", Cut(document.GetText(max + 1), max, ref truncated));
         if (truncated) r.Add("truncated", true);
         TextPatternRange[] selection;
+        Mark(marks, "selection");
         try { selection = text.GetSelection(); }
         catch (InvalidOperationException) { selection = null; }
         if (selection != null && selection.Length > 0)
@@ -3222,6 +3248,7 @@ namespace Ember.Uia
           r.Add("selection", Cut(selected.ToString(), max, ref cut));
           if (selection.Length == 1)
           {
+            Mark(marks, "caret");
             TextPatternRange before = document.Clone();
             before.MoveEndpointByRange(TextPatternRangeEndpoint.End, selection[0], TextPatternRangeEndpoint.Start);
             string head = before.GetText(max + 1);
@@ -3236,6 +3263,7 @@ namespace Ember.Uia
         }
         return r;
       }
+      Mark(marks, "value pattern");
       if (el.TryGetCurrentPattern(ValuePattern.Pattern, out pattern) && pattern != null)
       {
         string value = el.GetCurrentPropertyValue(ValuePattern.ValueProperty) as string;

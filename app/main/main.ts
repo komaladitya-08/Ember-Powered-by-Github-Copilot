@@ -3432,7 +3432,13 @@ function start(): void {
       seenBy.readWindow = params => {
         const asked = probeReadParams(askProbe, params ?? {});
         log.info("ask.read_probe", { skip: askProbe.stage });
-        return asked ? readWindow(asked) : Promise.resolve({ window: null, nodes: [], ms: 0 });
+        if (!asked) return Promise.resolve({ window: null, nodes: [], ms: 0 });
+        // The text looks' times (role and times only, never what was read): "time-texts" (cifix-x9-11).
+        return readWindow(asked).then(r => {
+          const looks = (r as { probeTexts?: unknown }).probeTexts;
+          if (Array.isArray(looks)) log.info("ask.read_probe_texts", { looks: JSON.stringify(looks).slice(0, 8_000) });
+          return r;
+        });
       };
     }
     const wsSeen = ws && wrapWindowsForWsl(ws, wslOptions);

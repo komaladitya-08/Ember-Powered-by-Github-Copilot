@@ -155,3 +155,18 @@ export function readProbeSummary(plan: string, chord: number, marks: readonly Pr
     : "never";
   return `read probe (${plan}): the box showed at ${ms(shown)}; ${read}; the bench took the foreground: ${back}; the box ${hidden === undefined ? "was still open at the end" : `closed at ${ms(hidden)}`} (ms from the chord)`;
 }
+
+/** One text look of the read as the host timed it (sidecar-host reading.ts TimedLook, cifix-x9-11). */
+export interface ProbeLook { i: number; role: string; start: number; end: number; steps: { step: string; t: number }[] }
+
+/**
+ * Which text look of the read, and which step of it, was under way at `t` (when the bench took the foreground,
+ * cifix-x9-11): the look whose span holds `t` (or ended within `slackMs` before it, as Windows reports the change a
+ * moment after the call that made it), and its latest step begun by then. Plain words for the probe's output.
+ */
+export function lookAt(looks: readonly ProbeLook[], t: number, slackMs = 30): string {
+  const look = looks.find(l => l.start <= t && t <= l.end) ?? [...looks].reverse().find(l => l.end <= t && t - l.end <= slackMs);
+  if (!look) return `no text look was under way at ${t}`;
+  const step = [...look.steps].sort((a, b) => a.t - b.t).filter(s => s.t <= t).at(-1);
+  return `text look ${look.i} (${look.role || "no role"}), ${step ? `in its step "${step.step}", begun ${t - step.t} ms before` : "before its first step"}${t > look.end ? `, which had ended ${t - look.end} ms before` : ""}`;
+}

@@ -99,7 +99,10 @@ function holdsToo(r: RawNode, role: string): boolean {
 }
 
 /** The text and selection a read's snapshot didn't carry: a few text looks, within the read's time. */
-async function fillTexts(host: Host, read: ReadRecord, built: ReturnType<typeof buildNodes>, until: number): Promise<void> {
+/** One text look as a development probe times it (cifix-x9-11): its place, the element's role, its span and steps. */
+export interface TimedLook { i: number; role: string; start: number; end: number; steps: { step: string; t: number }[] }
+
+async function fillTexts(host: Host, read: ReadRecord, built: ReturnType<typeof buildNodes>, until: number, timed?: TimedLook[]): Promise<void> {
   const byId = new Map(built.nodes.map(n => [n.id, n]));
   // The focused element's selection first: Ember reads none as "nothing selected" (and lets a key replace it).
   const wanted = [...built.wanted].sort((a, b) => Number(b.selection) - Number(a.selection)).slice(0, TEXT_LOOKS);
@@ -107,7 +110,9 @@ async function fillTexts(host: Host, read: ReadRecord, built: ReturnType<typeof 
     if (Date.now() >= until) break;
     const node = byId.get(w.id);
     if (!node || node.secret) continue;
-    const info = await unlessBusy(() => host.provider.textInfo(read.raw[w.index].handle, ELEMENT_TEXT)).catch(() => undefined);
+    const start = Date.now();
+    const info = await unlessBusy(() => host.provider.textInfo(read.raw[w.index].handle, ELEMENT_TEXT, timed ? { probe: true } : undefined)).catch(() => undefined);
+    if (timed) timed.push({ i: timed.length, role: node.role, start, end: Date.now(), steps: info?.probe ?? [] });
     if (!info) continue;
     if (info.secret) {
       // The platform says it is a password field: it is secret, and nothing of it is kept.
@@ -167,6 +172,8 @@ async function readWindow(host: Host, params: Record<string, unknown>): Promise<
   const win = findWindow(host.findable(windows), { pid, title, path, ownPid });
   // A development probe's stage left out (main sends it only for EMBER_TEST_ASK_READ=skip:<stage>, cifix-x9-10).
   const probeSkip = typeof params.probeSkip === "string" ? params.probeSkip : "";
+  // "time-texts" leaves nothing out: each text look is timed, step by step, and given back as probeTexts (cifix-x9-11).
+  const timedLooks: TimedLook[] | undefined = probeSkip === "time-texts" ? [] : undefined;
   if (!win) {
     // A window whose app didn't answer is busy (a file dialog listing a big folder), not gone.
     const lower = title.toLowerCase();
@@ -218,7 +225,7 @@ async function readWindow(host: Host, params: Record<string, unknown>): Promise<
       for (let i = 0; i < snap.nodes.length; i++) {
         if (built.ctx[i] && !listed.has(i) && holdsToo(snap.nodes[i], built.roles[i])) host.snapshots.hold({ handle: snap.nodes[i].handle, read, index: i });
       }
-      if (!busy && probeSkip !== "texts") await fillTexts(host, read, built, t0 + READ_TOTAL_MS);
+      if (!busy && probeSkip !== "texts") await fillTexts(host, read, built, t0 + READ_TOTAL_MS, timedLooks);
       if (probeSkip === "looks") {
         // Without the looks no field is redacted, so nothing of the read is given back.
         host.snapshots.end();
@@ -244,6 +251,7 @@ async function readWindow(host: Host, params: Record<string, unknown>): Promise<
   };
   if (busy) out.busy = true;
   else if (over) out.slow = true;
+  if (timedLooks) out.probeTexts = timedLooks;
   host.snapshots.end();
   return out;
 }

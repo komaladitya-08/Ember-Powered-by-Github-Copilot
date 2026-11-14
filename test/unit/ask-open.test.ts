@@ -272,7 +272,7 @@ describe("the probe's switch for the box's read (EMBER_TEST_ASK_READ, cifix-x9-9
 
 describe("the probe's stages of the read (EMBER_TEST_ASK_READ=skip:<stage>, cifix-x9-10)", () => {
   it("names one stage to leave out, and reads at once otherwise", () => {
-    for (const stage of ["read", "lookup", "texts", "looks"]) expect(askReadPlan(`skip:${stage}`)).toEqual({ kind: "skip", stage });
+    for (const stage of ["read", "lookup", "texts", "looks", "time-texts"]) expect(askReadPlan(`skip:${stage}`)).toEqual({ kind: "skip", stage });
     for (const v of ["skip:", "skip:all", "skip:Read", "skip:texts,looks"]) expect(askReadPlan(v)).toEqual({ kind: "now" });
   });
 

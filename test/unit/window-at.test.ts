@@ -7,7 +7,7 @@
 import { describe, expect, it } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
-import { focusTrail, hoverActivation, readProbeSummary, waitForWindowAt, watchEvent, type WindowAt } from "../integration/window-at";
+import { focusTrail, hoverActivation, lookAt, readProbeSummary, waitForWindowAt, watchEvent, type WindowAt } from "../integration/window-at";
 
 const ASK: WindowAt = { id: 459336, className: "Chrome_WidgetWin_1", title: "Ask Ember", pid: 4000 };
 const OTHER: WindowAt = { id: 262636, className: "Chrome_WidgetWin_1", title: "Ember overlay", pid: 4000 };
@@ -191,5 +191,25 @@ describe("readProbeSummary (cifix-x9-9)", () => {
     // A stage left out (cifix-x9-10): the rest of the read still starts as the box shows.
     expect(readProbeSummary("skip:texts", 0, [{ t: 10, kind: "box shown" }, { t: 700, kind: "read answered" }]))
       .toBe("read probe (skip:texts): the box showed at 10 ms; the read started at 10 ms and answered at 700 ms; the bench took the foreground: never; the box was still open at the end (ms from the chord)");
+  });
+});
+
+describe("lookAt (cifix-x9-11)", () => {
+  const looks = [
+    { i: 0, role: "text", start: 100, end: 160, steps: [{ step: "secret check", t: 101 }, { step: "native edit", t: 102 }, { step: "text pattern", t: 110 }, { step: "selection", t: 140 }] },
+    { i: 1, role: "combo box", start: 170, end: 200, steps: [{ step: "value pattern", t: 175 }] },
+  ];
+  it("names the look and the step under way when the bench took the foreground", () => {
+    expect(lookAt(looks, 150)).toBe('text look 0 (text), in its step "selection", begun 10 ms before');
+    expect(lookAt(looks, 180)).toBe('text look 1 (combo box), in its step "value pattern", begun 5 ms before');
+  });
+
+  it("takes a look that had just ended, since Windows reports the change a moment after the call", () => {
+    expect(lookAt(looks, 220)).toBe('text look 1 (combo box), in its step "value pattern", begun 45 ms before, which had ended 20 ms before');
+  });
+
+  it("says when no look was under way", () => {
+    expect(lookAt(looks, 50)).toBe("no text look was under way at 50");
+    expect(lookAt([], 50)).toBe("no text look was under way at 50");
   });
 });

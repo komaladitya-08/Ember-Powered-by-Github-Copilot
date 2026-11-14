@@ -393,7 +393,7 @@ Errors: `failed` `unsupported:<op>` (no such pattern), `failed` `<ExceptionType>
 
 ### `textInfo`
 
-Params: `{handle, maxChars?: 2000, deadlineMs?}` (`maxChars` 1-100000). Result, from `TextPattern` when the element
+Params: `{handle, maxChars?: 2000, probe?: false, deadlineMs?}` (`maxChars` 1-100000). Result, from `TextPattern` when the element
 has it, otherwise from `ValuePattern`:
 
 | field | meaning |
@@ -405,6 +405,7 @@ has it, otherwise from `ValuePattern`:
 | `caret` | offset of the selection's start in `text`, when the selection is a single range that starts within the first `maxChars` characters (TextPattern only) |
 | `selectionLength` | length of that single selection, 0 for a bare caret |
 | `caretAtEnd` | whether that single selection ends at the end of the document |
+| `probe` | with `probe: true` only (a development probe): `[{step, t}]`, when each step of the read began, ms since 1970 |
 
 `{"secret": true}` and nothing else for a password field (`IsPassword`, an `Edit` with the protected state, or
 `IsPassword` unreadable). `{}` when the element has neither pattern. Errors: `gone`, `busy`.

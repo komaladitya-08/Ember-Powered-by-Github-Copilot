@@ -48,7 +48,7 @@ import type { Capture } from "../../app/main/perception/capture";
 import { startOverlayChild, type OverlayChild } from "./overlay-child";
 import { PROBE_PACE_MS, PROBE_TEXT, probeTimeline, probeVerdict } from "./typeahead-probe";
 import { askWant, closeAsk, openAskAt, setTextSize, type InEmber } from "./ask-size";
-import { focusTrail, hoverActivation, readProbeSummary, waitForWindowAt, watchEvent, type ProbeMark, type TrailEvent, type WatchedWindow, type WindowAt } from "./window-at";
+import { focusTrail, hoverActivation, lookAt, readProbeSummary, waitForWindowAt, watchEvent, type ProbeLook, type ProbeMark, type TrailEvent, type WatchedWindow, type WindowAt } from "./window-at";
 
 const required = process.env.EMBER_WIN32_TEST === "1";
 const onWindows = process.platform === "win32";
@@ -714,7 +714,10 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
     if (!api || !input) { console.log("read probe: not run: no window system here"); return; }
     // At 2d7b0b4 the bench came back 780 ms into the delayed read and never with it off (cifix-x9-9): the read does it.
     // Now one opening per stage of it left out (cifix-x9-10), so the stage whose absence keeps the bench away is named.
-    for (const plan of ["skip:read", "skip:lookup", "skip:texts", "skip:looks"]) {
+    // At 079e73d (cifix-x9-10) the bench stayed away with the read off, its lookup off and its text looks off, and came
+    // back with only the looks around secret fields off: the text looks do it. Now each text look and its steps are
+    // timed (skip:time-texts, nothing left out), twice, and the look and step under way at the return are printed.
+    for (const plan of ["skip:time-texts", "skip:time-texts"]) {
       // Filled inside the bounded run, ended in finally.
       const held: { ember: ElectronApplication | null; watcher: ChildProcess | null } = { ember: null, watcher: null };
       let poll: ReturnType<typeof setInterval> | undefined;
@@ -732,6 +735,7 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
           await waitFor("Ember's test hooks", () => app.evaluate(() => !!(globalThis as { __ember?: unknown }).__ember), 60_000);
           if (!(await app.evaluate(({ globalShortcut }, a) => globalShortcut.isRegistered(a), "Super+Alt+Space"))) { console.log(`read probe (${plan}): not run: another app holds the ask chord`); return; }
           const marks: ProbeMark[] = [];
+          const looks: ProbeLook[] = [];
           const lines: TrailEvent[] = [];
           await app.evaluate(({ app: a, BrowserWindow }) => {
             const seen: { t: number; what: string }[] = [];
@@ -805,12 +809,23 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
               if (typeof e.msg !== "string" || !(t >= chord)) continue;
               lines.push({ t, what: `log ${e.msg}` });
               if (e.msg === "ask.read_started") marks.push({ t, kind: "read started" });
+              if (e.msg === "ask.read_probe_texts" && typeof (e as { looks?: unknown }).looks === "string") {
+                try {
+                  for (const l of JSON.parse((e as { looks: string }).looks) as ProbeLook[]) {
+                    looks.push(l);
+                    lines.push({ t: l.start, what: `text look ${l.i} (${l.role}) began; steps ${l.steps.map(s => `${s.step} at ${s.t - chord} ms`).join(", ")}; ended at ${l.end - chord} ms` });
+                  }
+                } catch {
+                  // cut short in the log: the timeline says what it has
+                }
+              }
             } catch {
               // a line still being written
             }
           }
           console.log(focusTrail(`read probe (${plan}) from the chord`, chord, lines, 200));
           console.log(readProbeSummary(plan, chord, marks));
+          for (const m of marks) if (m.kind === "bench foreground" && m.t > (marks.find(x => x.kind === "box shown")?.t ?? Infinity)) console.log(`read probe (${plan}): at the bench's return (${m.t - chord} ms): ${lookAt(looks, m.t)}`);
         })(), sleep(100_000).then(() => { throw new Error("it took over 100 s"); })]);
       } catch (err) {
         console.log(`read probe (${plan}): stopped: ${err instanceof Error ? err.message : String(err)}`);
