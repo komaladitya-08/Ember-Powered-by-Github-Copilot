@@ -767,7 +767,7 @@ describe("AnswerLanguage tells a passage's language from its own words, not from
       "Ich schreibe dir, weil ich Strom und Wasser für diesen Monat schon bezahlt habe. Wenn noch etwas fehlt, sag es mir. Paul.",
     ],
   };
-  const all = (["es", "it", "pt"] as const).flatMap(lang => EMAILS[lang].map(p => [lang, p] as const)).concat(Object.entries(MORE).flatMap(([lang, ps]) => ps.map(p => [lang, p] as const)));
+  const all = ["es", "it", "pt"].flatMap(lang => EMAILS[lang].map(p => [lang, p] as const)).concat(Object.entries(MORE).flatMap(([lang, ps]) => ps.map(p => [lang, p] as const)));
   const streamed = (answer: string) => {
     const stream = new SpeechStream(100_000), language = new AnswerLanguage();
     language.reset("read me the email");
