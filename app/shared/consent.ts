@@ -80,9 +80,10 @@ export function consentChangesSince(agreed: number): string[] {
  * call in what the user asked, where 4 said only Autopilot went ahead, and `assisted` 4 names what its check is sent
  * of such a call: the extension's tool and what it is given, never the tool's description (integrations-r12-1).
  * `commands` 3 (2026-11-14): its card for a computer whose commands run as root says Assisted's check may clear
- * one the request was about, where 2 said every such command asks there (tasks-approvals-r12-1).
+ * one the request was about, where 2 said every such command asks there (tasks-approvals-r12-1). `assisted` 5: its
+ * card says the check may clear a command that runs as root or an administrator, which 4 left out (integ-x-4).
  */
-export const FEATURE_CONSENT_VERSION = { wsl: 1, ssh: 1, commands: 3, memory: 4, routines: 1, extensions: 5, autonomy: 5, provider: 1, updates: 1, assisted: 4, autopilot: 4 } as const;
+export const FEATURE_CONSENT_VERSION = { wsl: 1, ssh: 1, commands: 3, memory: 4, routines: 1, extensions: 5, autonomy: 5, provider: 1, updates: 1, assisted: 5, autopilot: 4 } as const;
 
 /**
  * A first-use consent card (§8.4): its exact text, and a hash of it that the yes must carry back. Shown in Ember's

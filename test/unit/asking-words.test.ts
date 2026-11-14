@@ -257,7 +257,7 @@ describe("the three mode cards are true to the owner's table for commands (owner
     const { ASSISTED_CONSENT_TEXT: card } = await import("../../app/renderer/home/copy");
     expect(card).not.toMatch(/never clears a command that would show passwords or keys/);
     expect(card).toContain("It never clears a step you said no to, a command your words for the task rule out, anything Ember refuses, such as typing a password, or what you or your organisation set to ask every time.");
-    expect(FEATURE_CONSENT_VERSION.assisted).toBe(4);
+    expect(FEATURE_CONSENT_VERSION.assisted).toBe(5);
   });
 
   it("Autopilot's card lists no question it no longer puts, and says what it does instead", async () => {

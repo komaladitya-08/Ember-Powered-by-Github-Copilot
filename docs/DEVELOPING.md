@@ -577,7 +577,7 @@ up to 200 characters of that, the option or value chosen, a cell's formula, the 
 Ember's rules would ask; for a command, the command, the computer, its system, shell and folder, and what the rules
 found; for an extension's call, the extension's and the tool's names, whether the tool says it only reads, what it is
 given and why Ember would ask (never the tool's description or anything it returned: `callForCheck`). Assisted's card
-names these parts (`FEATURE_CONSENT_VERSION.assisted`, now 4). Every part that came from the screen, an app or the task's model is quoted as untrusted
+names these parts (`FEATURE_CONSENT_VERSION.assisted`, now 5). Every part that came from the screen, an app or the task's model is quoted as untrusted
 data; the check never sees the screen, a read or a command's output. It answers with one of two fixed words. A match
 lets the step go ahead, a risky one included: the bubble and the task's card say "…, without asking: I checked it
 against what you asked.", the audit entry carries `autonomy: true` and `review: "match"`, and What Ember did shows
