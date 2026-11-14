@@ -5543,6 +5543,22 @@ function inlineSql(h: H, short: string[], long: string[]): (string | null)[] {
  * SQL a client reads from stdin: a here-document or another program's output is judged when seen, else asks (review
  * #166). A file redirect (`psql < dump.sql`) runs as `psql -f dump.sql` does (stdinFile).
  */
+/**
+ * sqlite3's and duckdb's options (`-help`), each with how many words it takes. Any other asks (commands-remote-r11-3),
+ * and so does sqlite3's -A (archive mode: it packs files into the database and unpacks them over the folder's).
+ */
+const SQLITE_OPTS: Readonly<Record<string, number>> = {
+  append: 0, ascii: 0, bail: 0, batch: 0, box: 0, column: 0, cmd: 1, csv: 0, deserialize: 0, echo: 0, init: 1, header: 0, noheader: 0,
+  help: 0, html: 0, interactive: 0, json: 0, line: 0, list: 0, lookaside: 2, markdown: 0, maxsize: 1, memtrace: 0, mmap: 1, newline: 1,
+  nofollow: 0, nonce: 1, nullvalue: 1, pagecache: 2, pcachetrace: 0, quote: 0, readonly: 0, safe: 0, separator: 1, sorterref: 1, stats: 0,
+  table: 0, tabs: 0, version: 0, vfs: 1, zip: 0, heap: 2,
+};
+const DUCKDB_OPTS: Readonly<Record<string, number>> = {
+  append: 0, ascii: 0, bail: 0, batch: 0, box: 0, column: 0, cmd: 1, c: 1, csv: 0, echo: 0, f: 1, init: 1, header: 0, noheader: 0, help: 0,
+  html: 0, interactive: 0, json: 0, jsonlines: 0, line: 0, list: 0, markdown: 0, newline: 1, "no-stdin": 0, nullvalue: 1, quote: 0, readonly: 0,
+  s: 1, safe: 0, separator: 1, "storage-version": 1, table: 0, tabs: 0, unsigned: 0, unredacted: 0, version: 0,
+};
+
 function sqlFromStdin(h: H, client?: SqlClient): void {
   if (h.s.stdin === "pipe" || h.s.stdin === "heredoc") fromStdin(h, t => databaseText(h, [t], client));
   else if (h.s.stdin === "file") stdinFile(h, client);
@@ -5764,8 +5780,30 @@ reg(NATIVE, ["psql", "sqlite3", "sqlite", "duckdb", "sqlcmd", "cqlsh", "clickhou
     if (h.s.stdin === "file") stdinFile(h);
   }
   else if (k === "sqlite3" || k === "sqlite" || k === "duckdb") {
-    // -cmd's and -init's values are not the database or its SQL.
-    const ops = h.args.filter((a, j) => !isOption(a) && !/^--?(cmd|init)$/.test(h.args[j - 1]?.v ?? ""));
+    // The options each takes, by its own -help: one it doesn't list (or sqlite3's -A, which packs and unpacks files) may
+    // run or write something Ember can't tell, so it asks rather than reads as a flag (commands-remote-r11-3).
+    const known = k === "duckdb" ? DUCKDB_OPTS : SQLITE_OPTS;
+    for (const a of h.args) {
+      const name = /^--?([A-Za-z][\w-]*)$/.exec(a.v ?? "")?.[1];
+      if (a.v !== null && isOption(a) && (name === undefined || !(name in known))) { h.e.unclear("unclear.option-value", SAYS.optionValue); break; }
+    }
+    // A value option's value is not the database or its SQL.
+    const valueAt = new Set<number>();
+    h.args.forEach((a, j) => { const n = /^--?([A-Za-z][\w-]*)$/.exec(a.v ?? "")?.[1]; const takes = n !== undefined ? known[n] ?? 0 : 0; for (let t = 1; t <= takes; t++) valueAt.add(j + t); });
+    const ops = h.args.filter((a, j) => !isOption(a) && !valueAt.has(j));
+    // duckdb's -f FILE runs the file's SQL, as `.read FILE` and `duckdb < FILE` do: read first and judged as its text.
+    for (const [j, a] of h.args.entries()) {
+      if (k !== "duckdb" || !/^--?f$/.test(a.v ?? "")) continue;
+      const f = h.args[j + 1]?.v ?? null;
+      if (f === null) h.e.unclear("unclear.sql", "It runs database commands from a file Ember can't name.");
+      else if (STDIN_NAME.test(f)) sqlFromStdin(h, "sqlite");
+      else if (STREAM_NAME.test(f)) h.e.unclear("unclear.script-stream", SAYS.scriptStream);
+      else {
+        if (h.e.isDownloaded(lit(f), h.sc)) h.e.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
+        nameCheck(h, f);
+        h.e.recordScript(lit(f), "sqlite", h.sc);
+      }
+    }
     // duckdb's -c and -s take the text to run, with a database named or not (commands-remote-x7-7).
     const given = k === "duckdb" ? h.args.flatMap((a, j) => (/^--?[cs]$/.test(a.v ?? "") ? [h.args[j + 1]?.v ?? null] : [])) : [];
     databaseText(h, [...ops.slice(1).map(a => a.v), ...given, ...inlineSql(h, [], ["cmd"]).map(x => x), ...h.args.flatMap((a, j) => (a.v === "-cmd" ? [h.args[j + 1]?.v ?? null] : []))], "sqlite");

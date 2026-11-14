@@ -191,9 +191,10 @@ Ember stops and asks before a command that:
   `tee` and `pager` after a `;` or at the start of a line, `--pager` and `--init-command`, and every sqlite3 or
   duckdb dot-command (in duckdb's `-c` and `-s` text as well) but the ones that only
   show things written whole, `.tables`, `.schema`, `.mode`, `.headers` and the like, because sqlite3 takes any
-  shortening: `.sh` is `.shell`, `.o` is `.output`), and package scripts, make targets and SQL or command files named clean, wipe, purge,
+  shortening: `.sh` is `.shell`, `.o` is `.output`; an option of sqlite3's or duckdb's that their own help doesn't list, and
+  sqlite3's archive mode `-A`, ask too), and package scripts, make targets and SQL or command files named clean, wipe, purge,
   reset, drop and the like (`psql -f drop_users.sql`, `psql app < drop_users.sql`), and any SQL file a client runs
-  (`psql -f`, `psql <`, `mysql <`, `sqlite3 <`, `duckdb <`, `sqlcmd -i`, `clickhouse-client --queries-file`): Ember
+  (`psql -f`, `psql <`, `mysql <`, `sqlite3 <`, `duckdb <`, `duckdb -f`, `sqlcmd -i`, `clickhouse-client --queries-file`): Ember
   reads it first and judges it as the client's own text (for `sqlcmd`, its `!!` and `:` commands and T-SQL's
   `xp_cmdshell`, `OPENROWSET`, `BULK INSERT` and dynamic `EXEC(…)` ask; for `clickhouse-client`, table functions that
   reach files, addresses, other servers or programs such as `url(…)`, `file(…)` and `executable(…)`), and one this

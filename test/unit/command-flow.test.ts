@@ -4616,8 +4616,8 @@ describe("programs that run what they are given, however it is given (round elev
   const local = (h: Harness, command: string) => call(h, { target: "this computer", command });
   const MODES: [string, Parameters<typeof harness>[0]][] = [["at the defaults", {}], ["in Autopilot", { autopilot: () => true }]];
   /** The task writes `file` (holding `text`), then runs `run`: it must ask (and so be denied), never run or be announced. */
-  const asksAfterWrite = async (file: string, text: string, run: string, rule?: string): Promise<void> => {
-    for (const [mode, o] of MODES) {
+  const asksAfterWrite = async (file: string, text: string, run: string, rule?: string, modes = MODES): Promise<void> => {
+    for (const [mode, o] of modes) {
       const h = flow({ [`/home/ana/proj/${file}`]: text }, o);
       expect((await local(h, `printf x > ${file}`)).resultType, `${run} ${mode}`).toBe("success");
       h.existing.add(`/home/ana/proj/${file}`);
@@ -4648,5 +4648,24 @@ describe("programs that run what they are given, however it is given (round elev
     const ok = flow({ "/home/ana/proj/check.sh": "ls -la\n" });
     for (const run of ["bash - < check.sh", "sh /dev/stdin < check.sh"]) expect((await local(ok, run)).resultType, run).toBe("success");
     expect(ok.asked).toEqual([]);
+  });
+
+  it("reads the SQL file duckdb's -f runs, as `duckdb < a.sql` reads it (commands-remote-r11-3)", async () => {
+    for (const run of ["duckdb app.db -f a.sql", "duckdb -f a.sql", "duckdb -f a.sql app.db", "duckdb --f a.sql app.db", "duckdb -readonly app.db -f a.sql", "duckdb -bail -f a.sql"]) {
+      // A deletion is announced in Autopilot; what Ember can't tell (a `.shell` line) still asks there.
+      await asksAfterWrite("a.sql", "DROP TABLE users;\n", run, "db.change", MODES.slice(0, 1));
+      await asksAfterWrite("a.sql", ".shell rm -rf ~\n", run);
+    }
+    // A project's file is read too: a `.shell` line asks, a plain query runs.
+    const shell = flow({ "/home/ana/proj/x.sql": ".shell rm -rf ~\n" });
+    expect((await local(shell, "duckdb app.db -f x.sql")).resultType).toBe("denied");
+    const ok = flow({ "/home/ana/proj/q.sql": "SELECT count(*) FROM users;\n" });
+    for (const run of ["duckdb app.db -f q.sql", "duckdb -f q.sql", "sqlite3 -header -csv app.db 'SELECT 1'", "duckdb -json app.db -c 'SELECT 1'"]) expect((await local(ok, run)).resultType, run).toBe("success");
+    expect(ok.asked).toEqual([]);
+    // An option sqlite3 or duckdb doesn't list, or sqlite3's archive mode (it unpacks files over the folder's), asks.
+    for (const run of ["sqlite3 app.sqlar -Ax", "sqlite3 -A app.sqlar -x", "duckdb -frobnicate app.db", "sqlite3 --archive app.sqlar"]) {
+      const h = flow();
+      expect((await local(h, run)).resultType, run).toBe("denied");
+    }
   });
 });
