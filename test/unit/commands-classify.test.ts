@@ -1184,10 +1184,12 @@ describe("shell scripts to read (L8, the lead's ruling)", () => {
     expect(rules(Array.from({ length: 17 }, (_, k) => `sh s${k}.sh`).join("; "))).toContain("unclear.scripts");
   });
 
-  it("records no script for an interpreter, a downloaded file, `sh -c`, or stdin", () => {
-    expect(scripts("node app.js", "bash", "linux")).toEqual([]);
-    expect(scripts("python x.py", "bash", "linux")).toEqual([]);
-    expect(scripts("deno run main.ts", "bash", "linux")).toEqual([]);
+  it("records no script for a downloaded file, `sh -c`, or stdin, and an interpreter's as code Ember doesn't read", () => {
+    // An interpreter's script is recorded as code: it asks only when the task wrote it (commands-remote-r10-9).
+    expect(scripts("node app.js", "bash", "linux")).toEqual([{ path: "/home/ana/proj/app.js", as: "code", cwd: "/home/ana/proj" }]);
+    expect(scripts("python x.py", "bash", "linux")).toEqual([{ path: "/home/ana/proj/x.py", as: "code", cwd: "/home/ana/proj" }]);
+    // deno's too (r10-commands-x10-6).
+    expect(scripts("deno run main.ts", "bash", "linux")).toEqual([{ path: "/home/ana/proj/main.ts", as: "code", cwd: "/home/ana/proj" }]);
     expect(scripts("sh -c 'echo hi'", "bash", "linux")).toEqual([]);
     expect(scripts("sh", "bash", "linux")).toEqual([]);
     // A secret or Ember's own file is never read as a script (running it asks or is refused by the path's own rule).

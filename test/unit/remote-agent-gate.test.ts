@@ -513,3 +513,43 @@ describe("gate 2 for desktop steps (§5.3.7)", () => {
     expect(ok).toEqual({ status: "ok" });
   });
 });
+
+describe("gate 2 and the PC's Assisted check and Interactive announcements under this computer's own policy (commands-remote-c10-2)", () => {
+  const PUSH = finding("publish", "git.push.force", "Deletes or overwrites the current branch on the branch's remote.");
+  /** A stamp as the PC sends one for a command its Assisted check cleared, or its Interactive mode announced. */
+  const checked = (f: Finding[]) => spec({ verdict: "announce", classes: [...new Set(f.map(x => x.cls))], rules: [...f.map(x => x.rule), "ai-review"] });
+  const autonomous = (f: Finding[]) => spec({ verdict: "announce", classes: [...new Set(f.map(x => x.cls))], rules: [...f.map(x => x.rule), "carried", "autonomy"] });
+  const gate = (f: Finding[], s: RunSpec, o: Partial<CommandGateInput> = {}) => gateCommand(input({ spec: s, classify: classifier(() => f).classify, ...o }));
+
+  it("wants the user's yes for what Assisted's check cleared where this computer's administrator turned the check or the modes off, or capped them below Assisted", async () => {
+    for (const assistedOk of [false, undefined]) {
+      for (const f of [[RM], [PUSH], []]) {
+        expect(await gate(f, checked(f), { assistedOk, interactiveOk: true }), String(assistedOk)).toMatchObject({ status: "needs_confirm", says: [GATE_WORDS.noCheck], rules: ["admin.no-check"] });
+      }
+    }
+    // Allowed there: covered by its class, as before.
+    expect(await gate([RM], checked([RM]), { assistedOk: true, interactiveOk: true })).toMatchObject({ status: "ok", approved: false });
+    // The user's own yes runs it whatever.
+    expect((await gate([RM], spec({ verdict: "ask", classes: ["destroy"], rules: ["posix.rm", "ai-review", "admin.no-check"], approval: { ageMs: 100 } }))).status).toBe("ok");
+  });
+
+  it("wants the user's yes for what Interactive announced where this computer's administrator turned the modes off", async () => {
+    for (const interactiveOk of [false, undefined]) {
+      expect(await gate([], autonomous([]), { interactiveOk })).toMatchObject({ status: "needs_confirm", says: [GATE_WORDS.noAutonomy], rules: ["admin.no-autonomy"] });
+    }
+    expect(await gate([], autonomous([]), { interactiveOk: true })).toMatchObject({ status: "ok" });
+  });
+
+  it("reads this computer's policy for each: the check needs the modes, the check itself and a cap at Assisted or above", async () => {
+    const { assistedPermitted, autonomyPermitted } = await import("../../app/main/policy/autonomy");
+    const base = { features: {}, allowGrants: true, confirmEveryAction: false };
+    expect(assistedPermitted(null)).toBe(true);
+    expect(assistedPermitted(base)).toBe(true);
+    for (const off of [{ ...base, features: { aiReview: false } }, { ...base, features: { autonomy: false } }, { ...base, allowGrants: false }, { ...base, approvals: { maxMode: "interactive" as const } },
+      { ...base, confirmEveryAction: true }, { ...base, features: { actions: false } }]) {
+      expect(assistedPermitted(off), JSON.stringify(off)).toBe(false);
+    }
+    expect(assistedPermitted({ ...base, approvals: { maxMode: "assisted" as const } })).toBe(true);
+    expect(autonomyPermitted({ ...base, approvals: { maxMode: "interactive" as const } })).toBe(true);
+  });
+});

