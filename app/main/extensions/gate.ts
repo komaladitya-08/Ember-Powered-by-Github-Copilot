@@ -311,8 +311,8 @@ export function failureNote(extName: string, toolName: string, tainted = true): 
 export const REFUSED = "The user said no. Don't try this again or try another way; tell them you didn't do it.";
 
 /**
- * What the model is told of a call whose question nobody answered (it ran out of time, was stopped or couldn't be put
- * up): not a no (CLAUDE.md "A question nobody answered is not a no"), and not asked again this turn (integrations-r10-4:
+ * What the model is told of a call whose question nobody answered (it ran out of time or couldn't be put up; a Stop is
+ * told as the gate's own deny): not a no (CLAUDE.md "A question nobody answered is not a no"), and not asked again this turn (integrations-r10-4:
  * the model was told "The user said no").
  */
 export const UNANSWERED = "The user didn't answer the question about this, so Ember didn't do it. Don't try it again now; tell them it waits for their yes if they still want it.";

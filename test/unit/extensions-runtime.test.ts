@@ -2260,6 +2260,18 @@ describe("ExtensionsService", () => {
     expect(await call(ext, "fake-post_message", { text: "again" })).toEqual({ permissionDecision: "deny", permissionDecisionReason: REFUSED });
   });
 
+  it("tells the model the user stopped everything, not that a question went unanswered, when Stop ends the question (r12-ui-x12-3)", async () => {
+    let s!: ExtensionsService;
+    const asking: string[] = [];
+    s = await installed({ confirmer: () => ({ ask: (q: { prompt: string }, signal: AbortSignal) => new Promise(r => { asking.push(q.prompt); s.stopPart().stop(); if (signal.aborted) r(null); else signal.addEventListener("abort", () => r(null)); }) }) as never });
+    const ext = s.forSession()!;
+    shown(ext);
+    const out = await call(ext, "fake-post_message", { text: "hi" }) as { permissionDecision: string; permissionDecisionReason?: string };
+    expect(asking.length).toBe(1);
+    expect(out).toEqual({ permissionDecision: "deny", permissionDecisionReason: "The user stopped everything. Don't start anything now." });
+    expect(out.permissionDecisionReason).not.toBe(UNANSWERED);
+  });
+
   describe("in Assisted (integrations-r12-1, -c12-1)", () => {
     const remote = async (o: Partial<ExtensionsDeps>) => {
       writeJson("market/.claude-plugin/marketplace.json", { name: "local-market", plugins: [{ name: "remote", source: "./plugins/remote" }] });

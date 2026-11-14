@@ -1204,8 +1204,14 @@ export class ExtensionsService implements ExtensionsApi {
       return current.verdict === "deny" ? deny(current.reason) : { permissionDecision: "allow" };
     }
     if (answer === "once" && after) return deny(after.reason);
-    // Nobody answered (it ran out of time, was stopped, or couldn't be put up): not a no, and not asked again this turn.
-    if (answer !== "deny") { gate.unanswered.add(input.toolName); return deny(UNANSWERED); }
+    // Nobody answered: Stop (or anything else that now denies the call) is said as itself (r12-ui-x12-3); otherwise it
+    // ran out of time or couldn't be put up, which is not a no, and it isn't asked again this turn.
+    if (answer !== "deny") {
+      const now = this.gateInput(gate, input.toolName, shownAsPinned, generation, emberData);
+      if (now.verdict === "deny") return deny(now.reason);
+      gate.unanswered.add(input.toolName);
+      return deny(UNANSWERED);
+    }
     gate.refused.add(input.toolName);
     this.saidNoTurn = true;
     return deny(REFUSED);

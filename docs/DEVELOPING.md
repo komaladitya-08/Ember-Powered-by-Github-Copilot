@@ -924,8 +924,9 @@ it builds on:
   character (`writeOutHidden`: format characters such as the tag characters that spell a sentence nothing draws,
   variation selectors, blank look-alikes) as `\u202e` or `\u{e0041}`, and so does the review card for each tool's
   description and the words of its inputs (r10-integrations-y10-1). A yes counts only if the gate still allows the call when it comes. A
-  question nobody answered (it ran out of time, was stopped or couldn't be put up) isn't asked again that turn, and the
-  model is told the user didn't answer, never that they said no (`UNANSWERED`; integrations-r10-4). Every decision,
+  question nobody answered (it ran out of time or couldn't be put up) isn't asked again that turn, and the model is
+  told the user didn't answer, never that they said no (`UNANSWERED`; integrations-r10-4); one that Stop ended is told
+  as the stop it was (r12-ui-x12-3). Every decision,
   answer and result is an `extension` audit entry, with sizes and names only (the item's and the tool's, through
   `plainName`), and What Ember did draws a line for each (integrations-c9-2: the cards promised every use was there,
   and it drew none): asked, answered, refused, without asking, done and didn't work, and an item added, agreed to,
