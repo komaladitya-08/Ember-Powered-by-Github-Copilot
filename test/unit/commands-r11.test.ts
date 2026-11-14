@@ -215,3 +215,19 @@ describe("a workload's manifest or helm's values written out whole (commands-rem
     for (const cmd of ["kubectl get pods", "kubectl get deploy -o wide", "helm get values x", "kubectl get svc x -o yaml"]) expect(decide(cmd).classes, cmd).not.toContain("secret");
   });
 });
+
+describe("a program Ember doesn't know, after the user's words against it (r11-commands-x11-1)", () => {
+  it("asks, saying they didn't ask for it, where their words name it and say not to; announces it otherwise", () => {
+    for (const [cmd, words] of [
+      ["frobtool build", "Don't run frobtool."], ["frobtool build --all", "tidy up, never use frobtool"], ["cargo frobnicate", "Build it, but don't run cargo frobnicate."],
+      ["/opt/tools/frobtool build", "no frobtool please"], ["cargo frobnicate --release", "do not run cargo frobnicate"],
+    ]) {
+      const d = decide(cmd, { words });
+      expect(d.verdict, `${cmd} / ${words}`).toBe("ask");
+      expect(d.says, `${cmd} / ${words}`).toContain("You didn't ask for this.");
+    }
+    for (const [cmd, words] of [["frobtool build", "run frobtool"], ["frobtool build", "don't push, build it with frobtool"], ["cargo frobnicate", "don't run cargo build, run cargo frobnicate"], ["frobtool build", ""]]) {
+      expect(decide(cmd, { words }).verdict, `${cmd} / ${words}`).toBe("announce");
+    }
+  });
+});

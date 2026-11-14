@@ -109,9 +109,10 @@ export function decideCommand(i: DecideInput): CommandDecision {
     return { verdict: "run", reason: "An ordinary command.", classes: [], rules: [], says: windowsLine, unasked: false, armMs: 0 };
   }
   // 9b. Nothing but a program, or a tool's verb or option, that Ember has no row for: not dangerous, so it runs,
-  // announced by name with its Stop countdown (the owner's decision of 2026-11-14), with the user's words or without.
+  // announced by name with its Stop countdown (the owner's decision of 2026-11-14), with the user's words or without,
+  // but never over their words against it: that asks, as any step they ruled out does (r11-commands-x11-1).
   const dangers = F.filter(f => f.cls !== "unknown");
-  if (!policyAsk && dangers.length === 0) {
+  if (!policyAsk && dangers.length === 0 && !ruledOut(F, i.userWords)) {
     const names = uniq(F.map(f => f.program.replace(/\.(exe|com|bat|cmd)(?= |$)/i, "")).filter(n => n.trim() !== "")).slice(0, 3);
     const extra = cls as Partial<ClassificationExtra>;
     const m = i.userWords.trim() !== "" && extra.writtenOut !== true ? matchIntent({ ...cls, findings: F }, i.userWords, {

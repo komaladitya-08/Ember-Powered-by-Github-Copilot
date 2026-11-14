@@ -3193,6 +3193,31 @@ describe("a command that would ask, in Autopilot (autopilot.ts; modes-D2, modes-
     expect(h.audit.find(e => e.phase === "decided")).toMatchObject({ verdict: "refuse", rules: expect.arrayContaining(["autopilot"]) });
   });
 
+  it.each<[string, string, string | undefined]>([
+    ["Build it, but don't run cargo frobnicate.", "cargo frobnicate", undefined],
+    ["Don't run cargo frobnicate.", "cargo frobnicate", undefined],
+    ["Don't run frobtool.", "frobtool build", undefined],
+    ["tidy up, never use frobtool", "frobtool build --all", undefined],
+    ["no frobtool please, just build it", "/opt/tools/frobtool.exe build", undefined],
+    ["leave frobtool alone, just build it", "frobtool build", undefined],
+    ["", "frobtool build", "don't run frobtool"],
+  ])("refuses in Autopilot, and asks elsewhere, a program Ember doesn't know that the user's words rule out: %s (r11-commands-x11-1)", async (words, command, spoken) => {
+    setCommandJudge(null);
+    const o = { words, ...(spoken !== undefined ? { spoken } : {}) };
+    const a = auto(o);
+    expect(await run(a, command)).toMatchObject({ resultType: "denied", textResultForLlm: `Not allowed: ${AUTOPILOT_REFUSES["ruled-out"]}` });
+    expect([a.asked, a.windowAnnounce, a.announced, a.starts]).toEqual([[], [], [], []]);
+    // Interactive, as for `git push` after "Don't push.": it asks, saying they didn't ask for it.
+    const i = harness({ binding: LOCAL, answers: ["deny"], ...o });
+    expect((await run(i, command)).resultType).toBe("denied");
+    expect(i.asked).toHaveLength(1);
+    expect([i.windowAnnounce, i.starts]).toEqual([[], []]);
+    // Words that don't say no to it leave it announced, as the owner's rule says.
+    const ok = auto({ words: "run frobtool and cargo frobnicate" });
+    expect((await run(ok, command)).resultType).toBe("success");
+    expect(ok.asked).toEqual([]);
+  });
+
   it("reads a command as ruled out only where the words name it and say not to (wordsRuleOut)", () => {
     const ctx = { os: "linux" as const, home: "/home/ana", cwd: "/home/ana/proj", ember: FACTS.ember, downloaded: new Set<string>() };
     const ruled = (words: string, command: string) => wordsRuleOut(classifyCommand(command, "bash", ctx).findings, words);

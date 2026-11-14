@@ -2064,6 +2064,9 @@ export function ruledOut(findings: readonly Finding[], userWords: string): boole
   const asked = wordsOf(affirmed(userWords));
   return findings.some(f => {
     if (leftOut(f, userWords)) return true;
+    // A program, or a tool's command, Ember has no row for is named by its own name only: "don't run frobtool", "never
+    // use cargo frobnicate" rule it out (r11-commands-x11-1).
+    if (parts.some(p => namesUnknown([f], p))) return true;
     const row = rowOf(f, findings);
     const verbs = [...(row ? KIND_VERBS[row] ?? [] : []), ...(RULE_KIND_VERBS[f.rule] ?? [])];
     // A flag's words: `--force` (and `--force-with-lease`) is "force".
@@ -2094,6 +2097,23 @@ export function ruledOut(findings: readonly Finding[], userWords: string): boole
       if (rest.some(x => own.has(x))) return true;
       return rest.length === 0 && kindSaid;
     });
+  });
+}
+
+/**
+ * Do these words name a program, or a tool's command, that Ember has no row for (an `unknown.*` finding) whole, its
+ * folder and a Windows extension aside (`/opt/frobtool`, `cargo frobnicate`, `C:\Tools\app.exe`): its words one after
+ * another, together at least three letters? An unknown program's finding names the word after it too, which is only
+ * what it is given, so that one is named by its first word (r11-commands-x11-1).
+ */
+export function namesUnknown(findings: readonly Finding[], words: string): boolean {
+  const ws = userWordList(words);
+  return findings.some(f => {
+    if (f.cls !== "unknown") return false;
+    const program = f.rule === "unknown.program" ? f.program.split(/\s+/)[0] : f.program;
+    const name = userWordList(program.split(/\s+/).map(w => w.split(/[\\/]/).pop() ?? "").join(" ").replace(/\.(exe|com|bat|cmd|ps1)(?=\s|$)/gi, ""));
+    if (name.length === 0 || name.join("").length < 3) return false;
+    return ws.some((_w, k) => name.every((n, j) => ws[k + j] === n));
   });
 }
 

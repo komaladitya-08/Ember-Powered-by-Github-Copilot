@@ -37,7 +37,7 @@ import { AUTOPILOT_WORDS } from "../policy/policy";
 import { classifyCommand } from "./classify";
 import { LINES, UNKNOWN_ANNOUNCED, decideCommand } from "./decide";
 import { covers, type AutonomyScopes } from "../policy/autonomy";
-import { heldByWords, mentioned, namedKind, ruledOut } from "./intent";
+import { heldByWords, mentioned, namedKind, namesUnknown, ruledOut } from "./intent";
 import { capLines, cleanOutput, cleanOutputAsync, clearCutSteps, CUT_SLACK, redactedWhole, shapeCleaned, shapeOutput, type ShapeOptions } from "./output";
 import { resolveTargetPath } from "./paths";
 import { trackSecretPrompts, type SecretTracker } from "./prompts";
@@ -755,7 +755,7 @@ function negatedKind(findings: readonly Finding[], words: string): boolean {
 
 /** Does a part of the user's words hold back what these findings act on, or the kind of step they are (HOLDS_BACK)? */
 function wordsHoldBack(findings: readonly Finding[], words: string): boolean {
-  return words.split(PARTS).some(part => HOLDS_BACK.test(part) && (namesObject(findings, part) || namedKind(findings, part) || mentioned(findings, part)));
+  return words.split(PARTS).some(part => HOLDS_BACK.test(part) && (namesObject(findings, part) || namedKind(findings, part) || mentioned(findings, part) || namesUnknown(findings, part)));
 }
 
 /**
@@ -1036,9 +1036,21 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
       armMs: Math.max(d.armMs, 1500),
     };
   }
+  const spoken = ctx.task.spokenWords?.() ?? "";
+  // A program Ember doesn't know is announced without words, but never over the user's words against it, wherever they
+  // were heard ("leave frobtool alone", "don't run frobtool" by voice): it asks, and Autopilot refuses it below
+  // (r11-commands-x11-1).
+  if (d.verdict === "announce" && d.requested?.intent === UNKNOWN_ANNOUNCED) {
+    const left = standingFindings(cls.findings, paths);
+    if (wordsRuleOut(left, words) || wordsRuleOut(left, spoken)) {
+      d = {
+        ...d, verdict: "ask", requested: undefined, unasked: true, says: [...d.says.filter(l => l !== LINES.unasked), LINES.unasked],
+        reason: "It asks first: the user's own words rule it out.", armMs: Math.max(d.armMs, 1500),
+      };
+    }
+  }
   // Words heard where Ember can't tell the user from its speakers didn't count (OWNER V1): when they named it, the card
   // says so instead of "You didn't ask for this."
-  const spoken = ctx.task.spokenWords?.() ?? "";
   if (d.verdict === "ask" && d.unasked && spoken.trim() && !ruledOut(cls.findings, spoken) && (mentioned(cls.findings, spoken) || namedKind(cls.findings, spoken))) {
     const says = d.says.includes(LINES.unasked) ? d.says.map(l => (l === LINES.unasked ? SPOKEN_LINE : l)) : [...d.says];
     if (!says.includes(SPOKEN_LINE)) says.splice(says.includes(LINES.windows) ? says.indexOf(LINES.windows) : says.length, 0, SPOKEN_LINE);
