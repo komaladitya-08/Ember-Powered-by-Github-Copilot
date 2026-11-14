@@ -194,7 +194,7 @@ section > p.hint:empty:is([role], [aria-live]) { position: absolute; }
 /* Footnotes: under their group, in the secondary label. */
 .hint { margin: 0 4px; min-width: 0; overflow-wrap: anywhere; color: var(--muted); font: var(--type-footnote); }
 .copilot .hint, .group .hint { margin: 0; }
-.terms code, .hint code { font: 12px var(--ember-mono); }
+.terms code, .hint code { font: 12px var(--ember-mono); overflow-wrap: anywhere; }
 
 /* ───── Copilot ───── */
 .agent-line { margin: 0; display: flex; align-items: center; gap: 10px; font-weight: 500; }
