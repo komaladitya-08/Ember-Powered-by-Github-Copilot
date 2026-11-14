@@ -106,7 +106,7 @@ describe("the Commands intro, the Routines hint and the Connectors hint are true
     expect(page).toContain(`<p class="intro" id="commands-intro">${cc.commandsIntro(null)}</p>`);
     expect(cc.commandsIntro("interactive")).toBe(cc.COMMANDS_INTRO);
     expect(cc.commandsIntro("assisted")).toBe("Ember runs commands in its own command window, where you can watch and stop them. Most run straight away, ones it doesn't know included. Before code it can't read or a dangerous command, one that deletes, publishes, touches secrets, changes the system, downloads and runs code or would keep running after you stop it, Assisted's check reads it against what you asked: if it finds it there, or you asked for exactly that command and it only deletes or overwrites data, publishes something or changes the system, Ember tells you first and gives you a few seconds to stop it; otherwise it asks.");
-    expect(cc.commandsIntro("autopilot")).toBe("Ember runs commands in its own command window, where you can watch and stop them. In Autopilot it asks before none of them: a dangerous one runs after a few seconds to stop it, what a command that touches secrets prints is kept from the AI model, and Ember says when one would keep running after you stop it. One you said no to, or ruled out in your request, is refused. It still asks wherever you or your organisation set commands to ask every time, and it isn't in Autopilot on a computer reached over SSH whose administrator doesn't allow it.");
+    expect(cc.commandsIntro("autopilot")).toBe("Ember runs commands in its own command window, where you can watch and stop them. In Autopilot it asks before none of them: a dangerous one runs after a few seconds to stop it, what a command that touches secrets prints is kept from the AI model, and Ember says when one would keep running after you stop it. One you said no to, or ruled out in your request, is refused, and so is one that deletes, changes or reads something Ember can't name, such as a place held in a variable. It still asks wherever you or your organisation set commands to ask every time, and it isn't in Autopilot on a computer reached over SSH whose administrator doesn't allow it.");
     // The owner's table of 2026-11-14: unknown commands run in every mode, and Autopilot lists no question it no longer puts.
     expect(cc.commandsIntro("interactive")).toBe("Ember runs commands in its own command window, where you can watch and stop them. Most run straight away, ones it doesn't know included. It asks first before code it can't read and before a dangerous command, one that deletes, publishes, touches secrets, changes the system, downloads and runs code or would keep running after you stop it, unless you asked for exactly that command and it only deletes or overwrites data, publishes something or changes the system: then it tells you first and gives you a few seconds to stop it.");
   });
@@ -255,7 +255,7 @@ describe("the three mode cards are true to the owner's table for commands (owner
     expect(card).not.toMatch(/still asks before a command|one whose effect it can't tell|one you may have ruled out/);
     expect(card).toContain("A command that shows passwords or keys runs too, but what it prints is kept from the AI model: only you see it. One that would keep running after you stop Ember runs too, and Ember says Stop won't reach it.");
     expect(card).toContain("It asks only where your organisation, or your own “Ask me before every command” for a computer, says to, and before it turns on something you haven't agreed to yet.");
-    expect(card).toContain("It refuses, without asking, a step you said no to, what your words for the task rule out and anything that may be one of those.");
+    expect(card).toContain("It refuses, without asking, a step you said no to, what your words for the task rule out and anything that may be one of those, and a command that deletes, changes or reads something it can't name, such as a place held in a variable.");
     expect(FEATURE_CONSENT_VERSION.autopilot).toBe(3);
   });
 });
@@ -324,5 +324,15 @@ describe("Apps & privacy's line about other computers and commands promises no q
     const line = os === "win32" ? cc.ONBOARDING_LINE.settingsWindows : cc.ONBOARDING_LINE.settings;
     expect(line).not.toMatch(/Each asks you first/);
     expect(line).toMatch(/ Each asks you before it turns on\.$/);
+  });
+});
+
+describe("Autopilot says it refuses a command that changes something Ember can't name (r11-copy-x11-7)", () => {
+  // The commands lane's autopilotRefuses "unresolved": a deletion, write or read of a place held in a variable, a
+  // substitution or another user's home, which could be Ember's own records, is refused, not asked about.
+  it("on its card and in Home's Commands", async () => {
+    const { AUTOPILOT_CONSENT_TEXT: card } = await import("../../app/renderer/home/copy");
+    expect(card).toContain("It refuses, without asking, a step you said no to, what your words for the task rule out and anything that may be one of those, and a command that deletes, changes or reads something it can't name, such as a place held in a variable.");
+    expect(cc.commandsIntro("autopilot")).toContain("One you said no to, or ruled out in your request, is refused, and so is one that deletes, changes or reads something Ember can't name, such as a place held in a variable.");
   });
 });

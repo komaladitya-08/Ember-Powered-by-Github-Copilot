@@ -336,7 +336,7 @@ describe("How Ember asks (Apps & privacy, modes-A10)", () => {
       "A command that shows passwords or keys runs too, but what it prints is kept from the AI model: only you see it.",
       "It asks only where your organisation, or your own “Ask me before every command” for a computer, says to, and before it turns on something you haven't agreed to yet.",
       "The AI model never types or sees passwords or card numbers: Ember asks you once in its Secure Form, keeps them locked in its vault for that app or site, and fills them in there itself.",
-      "It refuses, without asking, a step you said no to, what your words for the task rule out and anything that may be one of those.",
+      "It refuses, without asking, a step you said no to, what your words for the task rule out and anything that may be one of those, and a command that deletes, changes or reads something it can't name, such as a place held in a variable.",
       "It never acts in your system's sign-in and password prompts, never uses your terminals, never reads windows on your never-look list and never runs a command that touches its own settings, record or Stop.",
       "“Ember, stop” or Ember's stop shortcut stops everything at once.",
       "Your organisation can turn Autopilot off.",
@@ -347,8 +347,9 @@ describe("How Ember asks (Apps & privacy, modes-A10)", () => {
     expect(AUTOPILOT_CONSENT_TEXT).not.toMatch(/never types passwords or card numbers,/);
     // Short enough to be read: the vault's sentence took it from 246 words to 275, and the commands it still asks
     // about that it left unsaid (one the user's words rule out, one that may be a command they said no to: integ-x-6) to 280;
-    // saying what it does instead of the questions it no longer puts (owner decision of 2026-11-14) to 314.
-    expect(AUTOPILOT_CONSENT_TEXT.split(/\s+/).length).toBeLessThanOrEqual(320);
+    // saying what it does instead of the questions it no longer puts (owner decision of 2026-11-14) to 314, and the
+    // command it refuses because it can't name what it changes (r11-copy-x11-7) to 334.
+    expect(AUTOPILOT_CONSENT_TEXT.split(/\s+/).length).toBeLessThanOrEqual(335);
     // In force: its row is the one marked, nothing is offered to agree to, and the note says it is on and how to stop it.
     const on = { mode: "autopilot" as const, consent: { ...agreed.consent, autopilot: { version: modeCardVersion("autopilot"), at: AT } } };
     const v = approvalsView(state(on), false);
