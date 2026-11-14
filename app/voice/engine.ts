@@ -2306,7 +2306,8 @@ export class VoiceEngine {
     // A follow-up takes whatever is said without the name, by design (it goes to Copilot as a request). Over other sound,
     // or where nothing can tell, those words may be a video's or a call's: heard, never the user's own words for commands
     // (heardOverSound). A video's "Delete the old reports folder." was announced in Interactive, as the user's own words
-    // asked for it exactly, and Assisted's check matched it (voice-listening-r12-2). A no is anyone's, as above.
+    // asked for it exactly (voice-listening-r12-2). Assisted's check still reads them, as it reads all unchecked speech
+    // (CLAUDE.md; r12-voice-x12-2). A no is anyone's, as above.
     if (this.mode.reason === "follow-up" && !this.overSound && !named && !spotted() && !no && (this.soundPlaying(t0) || !this.soundKnown(t0))) this.heardOverSound = true;
     // So a conversation's, where nothing can tell (Linux with parec, its stream stalled: main counts the speakers as
     // rejected). Over sound known to play it is marked overSound above (r12-voice-x12-4).
