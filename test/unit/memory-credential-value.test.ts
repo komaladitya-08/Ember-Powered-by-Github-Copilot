@@ -39,6 +39,7 @@ const PASSWORDS = [
 const KEYS = [
   // The challenger's kept examples.
   "API key 9b2f4e1a-7c3d-4e8b-a1f2-6d5c4b3a2e10", "Access token 9b2f4e1a-7c3d-4e8b-a1f2-6d5c4b3a2e10", "Bearer token 3f9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c",
+  // The two OpenWeather values are written in halves: whole, GitHub's push protection reads the made-up key as a real one.
   "Personal access token 3f9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c", "OpenWeather key " + "3f9a8b7c6d5e4f3a" + "2b1c0d9e8f7a6b5c",
   "My OpenWeather key is " + "3f9a8b7c6d5e4f3a" + "2b1c0d9e8f7a6b5c", "Mailgun key 3f9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c", "Session cookie 3f9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c",
   "The key for the weather API is 3f9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c", "API key sk-proj-a8f7d6s5a4d3f2g1h0j9k8l7",
