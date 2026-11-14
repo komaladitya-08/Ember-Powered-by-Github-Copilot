@@ -17,7 +17,7 @@ import { memoryPausedReply } from "../../shared/memory-owner";
 import { memoryIds, recallNote } from "./format";
 import { DUPLICATE, type AddResult, type Fact, type NewFact, type Source } from "./graph";
 import { ConversationHold, HELD_ALL, HELD_CORRECTED, HELD_FORGOTTEN, HELD_UNSAID } from "./hold";
-import { IntroSchema, Interview, INTRO_DONE, INTRO_MANAGED, INTRO_NOTHING, INTRO_OFF, INTRO_UNCHECKED, SPOKEN_FACT, introFacts, isGetToKnowMe, type Intro } from "./intro";
+import { IntroSchema, Interview, INTRO_DONE, INTRO_MANAGED, INTRO_NOTHING, INTRO_OFF, INTRO_UNCHECKED, SPOKEN_FACT, introFacts, isGetToKnowMe, type Intro, type IntroField, type IntroResult } from "./intro";
 import { CallBudget, Learner, onlyAsked, soundsLikeInstruction, type KeptFact, type LearnBudget, type OneShot } from "./learn";
 import type { MemoryOwnerReason } from "./owner";
 import {
@@ -483,11 +483,28 @@ export class MemoryLearning {
    * or null when memory isn't in force or the answers aren't valid.
    */
   introduce(sent: unknown): number | null {
+    return this.introduceAnswers(sent)?.kept ?? null;
+  }
+
+  /**
+   * `introduce`, answer by answer: how many were kept and which weren't (memory-r11-2), so Home says which answer and
+   * why. Null when memory isn't in force or the answers aren't valid.
+   */
+  introduceAnswers(sent: unknown): IntroResult | null {
     if (!this.d.inForce()) return null;
     const a = IntroSchema.safeParse(sent);
     if (!a.success) return null;
-    // Typed into the form, and listed there at once: no "Ember learned" line for each ("forget that" still reaches them).
-    return this.keepAll(introFacts(a.data as Intro), false);
+    const answers = a.data as Intro;
+    let kept = 0;
+    const notKept: IntroField[] = [];
+    for (const field of Object.keys(answers) as IntroField[]) {
+      const facts = introFacts({ [field]: answers[field] } as Intro);
+      if (!facts.length) continue;
+      // Typed into the form, and listed there at once: no "Ember learned" line for each ("forget that" still reaches them).
+      const n = this.keepAll(facts, false);
+      if (n) kept += n; else notKept.push(field);
+    }
+    return { kept, notKept };
   }
 
   /**

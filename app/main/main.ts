@@ -2896,7 +2896,7 @@ function start(): void {
     if (!vaultGone) throw new Error("Ember couldn't finish deleting the vault's file on this computer. Try Forget again.");
   }));
   // "Tell Ember about you": checked whole (IntroSchema, every string bounded) and kept only while memory is in force.
-  ipcMain.handle(IPC.memoryIntroduce, guard((answers: unknown) => learning.introduce(answers)));
+  ipcMain.handle(IPC.memoryIntroduce, guard((answers: unknown) => learning.introduceAnswers(answers)));
   // Better recall's model: its state, and the user's Download (the agreement to fetch it) and Remove.
   ipcMain.handle(IPC.memoryModel, guard(() => betterRecall.status()));
   ipcMain.handle(IPC.memoryModelDownload, guard(() => { void betterRecall.download().catch(() => { /* Settings is told why, in the status */ }); }));

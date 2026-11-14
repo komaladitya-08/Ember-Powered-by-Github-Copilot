@@ -981,7 +981,8 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     // Start that couldn't be saved says why in the notice at the top (review #84).
     // What was answered is saved, then on (nothing answered, or memory left off: nothing is kept).
     if (step === "about") {
-      if (about.ready && about.filled) void saveStep(async () => (await about.submit() ?? 0) > 0 && !about.filled, "done");
+      // An answer memory didn't keep stays on the step once, saying which and why; its Skip then goes on (memory-r11-2).
+      if (about.ready && about.filled) void saveStep(async () => (await about.submit() ?? 0) > 0 && !about.filled && !about.refused, "done");
       else go("done");
       return;
     }

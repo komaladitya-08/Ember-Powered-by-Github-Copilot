@@ -21,6 +21,8 @@ declare global {
     __frEmit: (name: string, value: unknown) => void;
     __frPend: Record<string, { resolve: (v: unknown) => void; reject: (e: Error) => void }[]>;
     __frFailOff: boolean;
+    /** The answers the stand-in for main refuses as secrets (memory-r11-2). */
+    __frRefuse?: string[];
     __frState: { settings: Record<string, unknown> & { provider: Record<string, unknown> }; agent: Record<string, unknown> };
   }
 }
@@ -120,6 +122,12 @@ async function open(seed: Seed = {}): Promise<Page> {
       if (name === "openAsk") return async () => { window.__frCalls.push("openAsk"); };
       if (name === "quit") return async () => { window.__frCalls.push("quit"); };
       if (name === "cancelSignIn") return async () => { window.__frCalls.push("cancelSignIn"); };
+      // As main's introduceAnswers: what it kept and which answers it refused as secrets.
+      if (name === "introduceMe") return async (answers: Record<string, unknown>) => {
+        window.__frCalls.push(`introduce:${Object.keys(answers).join(",")}`);
+        const notKept = Object.keys(answers).filter(k => window.__frRefuse?.includes(k));
+        return { kept: Object.keys(answers).length - notKept.length, notKept };
+      };
       return () => new Promise(() => undefined);
     } }) as never;
     if (!noBridge) {
@@ -1676,6 +1684,46 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect(await next(on).innerText()).toBe("Continue");
     expect([...(p as Page & { errors: string[] }).errors, ...(on as Page & { errors: string[] }).errors]).toEqual([]);
   });
+
+  it("(q3) tells me about you says which answer memory didn't keep and why, keeps it marked, and lets me go on with Skip (memory-r11-2)", async () => {
+    const p = await open({ agent: readyAgent() });
+    await p.evaluate(() => { window.__frState.settings.memory = { on: true, questions: true, askedAt: null, consent: { version: 99, at: "2026-11-04T12:00:00Z" } }; window.__frEmit("onSettingsChanged", window.__frState.settings); window.__frRefuse = ["work"]; });
+    await next(p).click();
+    await next(p).click();
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Try me out");
+    await emit(p, "onMemory", { rows: [], ownership: "ready", epoch: 1 });
+    await p.locator("#w-alt").click();
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Tell me about you");
+    await p.locator("#w-ay-name").fill("Ram");
+    await p.locator("#w-ay-work").fill("IT support, Netflix pw sunshine");
+    expect(await next(p).innerText()).toBe("Save and continue");
+    await next(p).click();
+    await expect.poll(() => p.locator("#w-ay-msg").innerText()).toBe("Saved 1 answer. Ember didn't keep your role and work, because it may hold a password, a code or an ID number, which Ember never keeps. Change it or leave it out.");
+    // Still on the step, the kept answer gone from the form, the refused one marked and focused.
+    expect(await p.locator("#w-title").innerText()).toBe("Tell me about you");
+    expect(await p.locator("#w-ay-name").inputValue()).toBe("");
+    expect(await p.locator("#w-ay-work").inputValue()).toBe("IT support, Netflix pw sunshine");
+    expect(await p.locator("#w-ay-work").getAttribute("aria-invalid")).toBe("true");
+    expect(await p.locator("#w-ay-work").getAttribute("aria-describedby")).toBe("w-ay-msg");
+    expect(await p.evaluate(() => document.activeElement?.id)).toBe("w-ay-work");
+    expect(await next(p).innerText()).toBe("Skip for now");
+    if (process.env.EMBER_UI_EVIDENCE) {
+      fs.mkdirSync(process.env.EMBER_UI_EVIDENCE, { recursive: true });
+      await p.screenshot({ path: path.join(process.env.EMBER_UI_EVIDENCE, "about-you-not-kept.png"), fullPage: true });
+    }
+    // A change is a new answer to save (typed back, too); cleared, Skip goes on without it.
+    await p.locator("#w-ay-work").fill("IT support");
+    expect(await p.locator("#w-ay-work").getAttribute("aria-invalid")).toBeNull();
+    expect(await next(p).innerText()).toBe("Save and continue");
+    await p.locator("#w-ay-work").fill("IT support, Netflix pw sunshine");
+    expect(await next(p).innerText()).toBe("Save and continue");
+    await p.locator("#w-ay-work").fill("");
+    expect(await next(p).innerText()).toBe("Skip for now");
+    await next(p).click();
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Ready to start");
+    expect((await calls(p)).filter(c => c.startsWith("introduce"))).toEqual(["introduce:name,work"]);
+    expect((p as Page & { errors: string[] }).errors).toEqual([]);
+  }, 20_000);
 
   it("(q) someone who agreed to an earlier version starts at the consent and is told what changed (first-run-4, safety-privacy-8)", async () => {
     const p = await open({ consent: 6, agent: readyAgent() });

@@ -4,7 +4,7 @@ import type { EnvReport, FixId, TargetFixId } from "../main/environment";
 import type { Settings, SettingsPatch } from "../main/settings";
 import type { AgentStatus, AnswerStream, TranscriptEntry } from "../main/agent/host";
 import type { MemoryItem, MemoryTrouble } from "../main/memory/service";
-import type { Intro } from "../main/memory/intro";
+import type { Intro, IntroResult } from "../main/memory/intro";
 import type { MemoryModelStatus } from "../main/memory/better-recall";
 import type { MemoryOwnerReason, MemoryOwnership } from "../main/memory/owner";
 import type { MemoryCorrection } from "./memory-correction";
@@ -515,8 +515,8 @@ export interface EmberHomeApi {
   forgetAllMemory(): Promise<void>;
   /** Saves one explicit local correction without changing the fact's original source authority. */
   correctMemory(change: MemoryCorrection): Promise<MemoryItem>;
-  /** Keeps "Tell Ember about you"'s answers; how many were kept, or null while memory is off. */
-  introduceMe(answers: Intro): Promise<number | null>;
+  /** Keeps "Tell Ember about you"'s answers; how many were kept and which weren't (memory-r11-2), or null while memory is off. */
+  introduceMe(answers: Intro): Promise<IntroResult | null>;
   /** Better recall's model: whether it is here, and changes; the user's Download (the agreement to fetch it) and Remove. */
   memoryModel(): Promise<MemoryModelStatus>;
   onMemoryModel(fn: (s: MemoryModelStatus) => void): () => void;

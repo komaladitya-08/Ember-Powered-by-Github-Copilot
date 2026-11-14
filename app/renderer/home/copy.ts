@@ -960,6 +960,24 @@ export function aboutYouSaved(kept: number | null): string {
   return kept === 1 ? "Saved 1 answer." : `Saved ${kept} answers.`;
 }
 
+/** What each answer is called when Ember says it didn't keep it. */
+const ABOUT_YOU_ANSWER: Record<"name" | "work" | "apps" | "hours" | "length" | "spoken", string> = {
+  name: "what to call you", work: "your role and work", apps: "the apps you use", hours: "your timezone or hours",
+  length: "how long you like answers", spoken: "whether you like replies spoken",
+};
+/**
+ * Said after Save when memory refused answers as secrets (memory-r11-2): which, and why, with what was kept. The
+ * answers not kept stay in their fields, marked, so they can be changed or left out; a retry of the same words can
+ * never be kept, so it never says "Try again".
+ */
+export function aboutYouNotKept(kept: number, notKept: readonly (keyof typeof ABOUT_YOU_ANSWER)[]): string {
+  const names = notKept.map(f => ABOUT_YOU_ANSWER[f]);
+  const which = names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names.at(-1)}` : names.join("");
+  const [they, them] = names.length > 1 ? ["they", "them"] : ["it", "it"];
+  const why = `Ember didn't keep ${which}, because ${they} may hold a password, a code or an ID number, which Ember never keeps. Change ${them} or leave ${them} out.`;
+  return kept ? `${aboutYouSaved(kept)} ${why}` : why;
+}
+
 /** Under the "Ask me questions" switch. */
 export const MEMORY_QUESTIONS_HINT = "At most one question a day, only while you're not using Ember, about names it keeps finding nothing on. Your answer is kept as something you told it.";
 

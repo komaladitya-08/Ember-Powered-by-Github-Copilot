@@ -289,7 +289,7 @@ it.skipIf(process.env.EMBER_MEMORY_TEST !== "1")("says why saved memory is pause
         if (name.startsWith("on")) return (fn: (value: unknown) => void) => { listeners[name] = fn; return () => { delete listeners[name]; }; };
         if (name === "getStatus") return async () => seed.status;
         if (name === "updateSettings") return async (patch: unknown) => { patches.push(patch); return {}; };
-        if (name === "introduceMe") return async (answers: Record<string, unknown>) => Object.keys(answers).length;
+        if (name === "introduceMe") return async (answers: Record<string, unknown>) => ({ kept: Object.keys(answers).length, notKept: [] });
         if (name === "memory") return async () => ({ rows: [], ownership: "locked", reason: "own-provider" });
         if (name === "voiceWords" || name === "reminders" || name === "conversation") return async () => [];
         return () => new Promise(() => undefined);

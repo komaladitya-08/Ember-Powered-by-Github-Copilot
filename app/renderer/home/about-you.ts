@@ -11,7 +11,8 @@
 import type { Settings, SettingsPatch } from "../../main/settings";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import { speakSettings } from "../../shared/speech";
-import { ABOUT_YOU, MEMORY_CONSENT_TEXT, aboutYouHint, aboutYouSaved, aboutYouSpoken, introFromForm } from "./copy";
+import type { IntroField, IntroResult } from "../../main/memory/intro";
+import { ABOUT_YOU, MEMORY_CONSENT_TEXT, aboutYouHint, aboutYouNotKept, aboutYouSaved, aboutYouSpoken, introFromForm } from "./copy";
 
 export interface AboutYouOptions {
   /** Prefix for the element ids ("ay" in Settings, "w-ay" in first run). */
@@ -42,8 +43,10 @@ export interface AboutYou {
   readonly ready: boolean;
   /** Memory is paused (`owner`): no answers can be kept, and nothing is asked. */
   readonly paused: boolean;
-  /** Any question is answered. */
+  /** Any question is answered with something not yet refused (an answer memory didn't keep, unchanged, isn't). */
   readonly filled: boolean;
+  /** An answer memory didn't keep (a secret) is still in its field, unchanged and marked (memory-r11-2). */
+  readonly refused: boolean;
   /** Sends the answers; how many were kept (null: not kept). */
   submit(): Promise<number | null>;
 }
@@ -91,10 +94,15 @@ export function mountAboutYou(host: HTMLElement, o: AboutYouOptions): AboutYou {
   const managedLine = el("p", { className: "row-note", textContent: ABOUT_YOU.managed });
   const pausedLine = el("p", { className: "row-note about-paused" });
 
+  /** The answers memory didn't keep, as they were sent: unchanged, they are marked and not sent again (memory-r11-2). */
+  const refusedAs = new Map<IntroField, string>();
+  const unmark = (key: IntroField, control: HTMLInputElement | HTMLSelectElement) => {
+    if (refusedAs.has(key) && refusedAs.get(key) !== control.value) { refusedAs.delete(key); control.removeAttribute("aria-invalid"); }
+  };
   const text = (key: "name" | "work" | "apps" | "hours", label: string, max: number) => {
     const row = el("div", { className: "field-row about-field" });
     const input = el("input", { id: id(key), type: "text", maxLength: max, spellcheck: false, autocomplete: "off" });
-    input.addEventListener("input", () => o.changed?.());
+    input.addEventListener("input", () => { unmark(key, input); o.changed?.(); });
     row.append(el("label", { htmlFor: input.id, textContent: label }), input);
     return { row, input };
   };
@@ -102,7 +110,7 @@ export function mountAboutYou(host: HTMLElement, o: AboutYouOptions): AboutYou {
     const row = el("label", { className: "choice about-field" });
     const select = el("select", { id: id(key) });
     select.append(...Object.entries(options).map(([value, words]) => el("option", { value, textContent: words })));
-    select.addEventListener("change", () => o.changed?.());
+    select.addEventListener("change", () => { unmark(key, select); o.changed?.(); });
     row.append(el("span", { textContent: label }), select);
     return { row, select };
   };
@@ -129,32 +137,53 @@ export function mountAboutYou(host: HTMLElement, o: AboutYouOptions): AboutYou {
   const voice = el("p", { className: "hint" });
   host.replaceChildren(group, status, voice);
 
-  const answers = () => introFromForm({
+  const all = () => introFromForm({
     name: name.input.value, work: work.input.value, apps: apps.input.value,
     length: length.select.value, spoken: spoken.select.value, hours: hours.input.value,
   });
+  const controls: Record<IntroField, HTMLInputElement | HTMLSelectElement> = {
+    name: name.input, work: work.input, apps: apps.input, hours: hours.input, length: length.select, spoken: spoken.select,
+  };
+  /** The answers to send: all but those memory didn't keep and that are unchanged since. */
+  const answers = () => Object.fromEntries(Object.entries(all()).filter(([k]) => !refusedAs.has(k as IntroField))) as ReturnType<typeof all>;
 
   async function submit(): Promise<number | null> {
     if (saving) return null;
     if (!ready()) { status.textContent = aboutYouSaved(null); return null; }
     const a = answers();
-    if (!Object.keys(a).length) { status.textContent = aboutYouSaved(0); return 0; }
-    const controls = [name.input, work.input, apps.input, hours.input, length.select, spoken.select];
-    const submitted = controls.map(f => f.value);
+    // Only answers memory didn't keep are left: say so again, never "Nothing to save yet".
+    if (!Object.keys(a).length) { status.textContent = refusedAs.size ? aboutYouNotKept(0, [...refusedAs.keys()]) : aboutYouSaved(0); return 0; }
+    const sent = Object.keys(a) as IntroField[];
+    const submitted = new Map(sent.map(k => [k, controls[k].value]));
     saving = true;
     save?.setAttribute("aria-disabled", "true");
     status.textContent = "Saving…";
-    let kept: number | null;
-    try { kept = await window.ember.introduceMe(a); }
-    catch { kept = null; }
+    let result: IntroResult | null;
+    try { result = await window.ember.introduceMe(a); }
+    catch { result = null; }
     finally { saving = false; save?.removeAttribute("aria-disabled"); }
-    const count = Object.keys(a).length;
+    const kept = result?.kept ?? null;
+    // Which answers memory didn't keep (a secret, refused whole): never "Try again", which can't work (memory-r11-2).
+    const notKept = (result?.notKept ?? []).filter(k => sent.includes(k));
     // Spoken replies is Ember's real speaking choice, not only a remembered preference (memory-5).
-    const spokenSet = a.spoken !== undefined && kept ? await o.save(speakSettings(a.spoken ? "always" : "never")).catch(() => false) : false;
-    status.textContent = !kept ? "Couldn't save your answers. Try again."
-      : (kept < count ? `Saved ${kept} of ${count} answers. Your answers are still here to review.` : aboutYouSaved(kept))
+    const spokenKept = a.spoken !== undefined && !notKept.includes("spoken");
+    const spokenSet = spokenKept && kept ? await o.save(speakSettings(a.spoken ? "always" : "never")).catch(() => false) : false;
+    status.textContent = (!result || (!kept && !notKept.length) ? "Couldn't save your answers. Try again."
+      : notKept.length ? aboutYouNotKept(kept ?? 0, notKept) : aboutYouSaved(kept))
         + (spokenSet && a.spoken !== undefined ? ` ${aboutYouSpoken(a.spoken)}` : "");
-    if (kept === count) controls.forEach((f, i) => { if (f.value === submitted[i]) f.value = ""; });
+    if (result) {
+      // What was kept leaves the form; what wasn't stays, marked, until it is changed or cleared.
+      for (const k of sent) {
+        const control = controls[k];
+        if (control.value !== submitted.get(k)) continue;
+        if (notKept.includes(k)) {
+          refusedAs.set(k, control.value);
+          control.setAttribute("aria-invalid", "true");
+          control.setAttribute("aria-describedby", status.id);
+        } else control.value = "";
+      }
+      if (notKept.length) controls[notKept[0]!].focus();
+    }
     o.changed?.();
     return kept;
   }
@@ -179,6 +208,7 @@ export function mountAboutYou(host: HTMLElement, o: AboutYouOptions): AboutYou {
     get ready() { return ready(); },
     get paused() { return !managed && !!paused; },
     get filled() { return Object.keys(answers()).length > 0; },
+    get refused() { return refusedAs.size > 0; },
     submit,
   };
 }

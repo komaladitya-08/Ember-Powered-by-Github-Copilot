@@ -675,7 +675,11 @@ download, so English-only MiniLM is the trade-off for now.
 first run's **Try me out** step (**Personalise memory…**) asks what to call the user, their role and work, the apps they use most, short or detailed and spoken or
 not, and their timezone or hours. Every answer is optional; while memory is off the form offers its note first (an
 explicit yes). Main checks the answers with `IntroSchema` (strict, bounded) and keeps them as `user` facts with a
-label Ember wrote ("Likes to be called Ram"), each replacing the one before. "Ember, get to know me" asks the same
+label Ember wrote ("Likes to be called Ram"), each replacing the one before. An answer the guard refuses as a
+secret is named, with why, under the form ("Ember didn't keep your role and work, because it may hold a password, a
+code or an ID number…": `introduceAnswers`, `aboutYouNotKept`), never "Try again", which can't help: it stays in its
+field marked (`aria-invalid`) and isn't sent again until it is changed, the kept answers leave the form, and first
+run's step offers Skip for now to go on without it (memory-r11-2). "Ember, get to know me" asks the same
 aloud, answered by the host before the conversation (`intent`): "skip" skips, "that's all" stops, and an answer heard
 where Ember can't tell the user from its speakers (`voiceUnchecked`) isn't kept. Asked for in such a voice (every
 spoken request on Windows and macOS, every Listen once, Linux with the speakers' check off), it asks nothing, since
