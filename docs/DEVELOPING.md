@@ -3026,10 +3026,12 @@ system, `/proc`, koffi, timers and the environment come in as fakes or parameter
 renderer logic through exported pure modules (state reducers, option objects), never a DOM or xterm. Name the files
 `test/unit/{sshwsl,commands,wsl,ssh,remote,targets,command,prompt,askpass,visible-text}*`: those are what the
 `unit-matrix` job runs on every OS. The classifier's cases live in `test/fixtures/commands/{posix,powershell,cmd,wsl}.json`;
-add one with every fix. The default is closed (commands-closed): a program with no row asks (class `unknown`, rule
-`unknown.program`) unless it is on `ORDINARY_PROGRAMS` (tables.ts) or given by a path in the task's folder (where it
-started, not after a `cd`), and a verb-keyed tool on `ORDINARY_VERBS` asks (`unknown.verb`) for a verb off its list that its row found nothing in; the
-user's own words naming the program announce it (`matchIntent`). `test/fixtures/commands/everyday.json` holds over 400
+add one with every fix. A program with no row is `unknown.program` (class `unknown`) unless it is on
+`ORDINARY_PROGRAMS` (tables.ts) or given by a path in the task's folder (where it started, not after a `cd`), and a
+verb-keyed tool on `ORDINARY_VERBS` gives `unknown.verb` for a verb off its list that its row found nothing in; not
+knowing is not danger (docs/APPROVALS.md, the owner's decision of 2026-11-14): such a command runs announced by name with
+its Stop in every mode (decide.ts rule 9b), unless the user's words rule it out, and what its own words say it does is
+judged as that danger (`unknownDoes`); the user's own words naming it say so on the announcement (`matchIntent`). `test/fixtures/commands/everyday.json` holds over 400
 everyday commands that must keep running with no question (commands-closed.test.ts): add a program to either list only
 when it fits their rule (it reads, lists, measures, converts, compiles, tests or builds what it is given, and can't run a
 command given as an argument, delete, publish, change the system or read secrets), and add its everyday line there. An option table lists only the options that take the next word (a switch listed there hides the
