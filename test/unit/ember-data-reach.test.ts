@@ -9,7 +9,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { PolicyEngine, mayReachEmberData, namesEmberData, type ActionRequest } from "../../app/main/policy/policy";
+import { EMBER_DATA_QUESTION, EMBER_DATA_UNREAD_QUESTION, PolicyEngine, mayReachEmberData, namesEmberData, type ActionRequest } from "../../app/main/policy/policy";
 import { ALL_SCOPES } from "../../app/main/policy/autonomy";
 import { KEYS } from "../../app/shared/shortcuts";
 import { PROVIDER_SEAL_FILE } from "../../app/main/provider-record";
@@ -421,5 +421,26 @@ describe("Ember's own files reached by what a field or a file dialog holds, not 
     expect(chosenIn([{ id: 1, parent: null, depth: 0, role: "menu", name: "", states: [], bounds: null }], true).whole).toBe(false);
     const d = engine("autopilot").decide(req("org.gnome.Nautilus", "Home", { kind: "click", element: { role: "menu item", name: "Move to Trash" }, chosen: chosenIn(view(), true) }));
     expect(d.verdict).toBe("deny");
+  });
+
+  it("says in the question that the step may reach Ember's own settings or record, in Ember's words (safety-privacy-r11-3)", () => {
+    expect(EMBER_DATA_QUESTION).toBe("This may be my own settings or my record of what I did, so say no unless you asked for that.");
+    expect(EMBER_DATA_UNREAD_QUESTION).toBe("I can't read where this saves or what it opens, so it may be my own settings or my record of what I did: say no unless you asked for that.");
+    const rows: [OS, string, string, Partial<ActionRequest>, string][] = [
+      ["linux", "kate", "settings.json — Kate", { kind: "click" }, EMBER_DATA_QUESTION],
+      ["linux", "kate", "settings.json — Kate", { kind: "keys", value: "ctrl+s" }, EMBER_DATA_QUESTION],
+      ["win32", "notepad", "settings.json - Notepad", { kind: "keys", value: "ctrl+s" }, EMBER_DATA_QUESTION],
+      ["win32", "explorer", "ember - File Explorer", { kind: "keys", value: "Delete", element: { role: "list item", name: "audit" } }, EMBER_DATA_QUESTION],
+      ["linux", "kate", "File Already Exists — Kate", { kind: "click", element: { role: "push button", name: "Overwrite" }, dialog: { name: "File Already Exists", text: "A file named \"settings.json\" already exists.", alert: true } }, EMBER_DATA_QUESTION],
+      ["linux", "kate", "Save File — Kate", { kind: "click", element: { role: "push button", name: "Save" }, dialog: { name: "Save File", text: "" } }, EMBER_DATA_UNREAD_QUESTION],
+    ];
+    for (const [o, app, w, x, line] of rows) {
+      for (const mode of ["asking", "interactive"] as const) {
+        const d = engine(mode, o, { [app]: "act" }).decide(req(app, w, x));
+        expect(d.verdict, `${w} ${mode}`).toBe("confirm");
+        expect(d.prompt, `${w} ${mode}`).toContain(line);
+        expect(d.prompt.split(line)).toHaveLength(2);
+      }
+    }
   });
 });

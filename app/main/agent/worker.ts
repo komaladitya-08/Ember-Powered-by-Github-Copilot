@@ -1061,7 +1061,7 @@ export function dialogAround(start: AxNode | undefined, get: (id: number) => AxN
         return [{ role: n.role, name: n.name, ...(editable ? { editable: true } : {}) }];
       }) : undefined;
       // What its fields hold and its other names say now (a file dialog's name, its path bar, its folder's drop-down):
-      // its Save or Open is judged by them (policy.ts's fileDialogMayReach). A field that can't be read leaves them unknown.
+      // its Save or Open is judged by them (policy.ts's fileDialogReach). A field that can't be read leaves them unknown.
       const inside = nodes.filter(n => n.id !== top && chain(n));
       const fieldNodes = inside.filter(n => n.editable === true || n.states.includes("editable") || /combo/.test(n.role));
       const fields = fieldNodes.some(n => n.secret || n.withheld) ? undefined

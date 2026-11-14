@@ -819,19 +819,26 @@ const titleName = (title: string): string => title.replace(/\s+[-—–]\s+.*$/,
  * question to put, refuses it.
  */
 export function mayReachEmberData(r: ReachRequest, os: OS = "linux"): boolean {
-  if (r.kind === "read") return false;
+  return emberDataReach(r, os) !== null;
+}
+/**
+ * How a step may reach Ember's own files (mayReachEmberData): "file", by what it names or where it is; "unread", only
+ * because a file dialog's name or folder couldn't be read whole as its Save or Open is pressed; null, it doesn't.
+ */
+function emberDataReach(r: ReachRequest, os: OS): "file" | "unread" | null {
+  if (r.kind === "read") return null;
   const title = r.window ?? "";
   const name = titleName(title);
-  if (!/[/\\]/.test(title) && (EMBER_FILE.test(name) || EMBER_FOLDER.test(name))) return true;
-  if (inEmberDataParent(r, name, os)) return true;
+  if (!/[/\\]/.test(title) && (EMBER_FILE.test(name) || EMBER_FOLDER.test(name))) return "file";
+  if (inEmberDataParent(r, name, os)) return "file";
   const item = (r.element?.name ?? "").trim();
-  if (EMBER_FILE.test(item) || EMBER_FOLDER.test(item)) return true;
+  if (EMBER_FILE.test(item) || EMBER_FOLDER.test(item)) return "file";
   // Typed, the folder's name reaches it in any case where case doesn't count (Windows, macOS: "EMBER", integ-y-1); and
   // what the field holds once this step is taken, not only this step's piece (safety-privacy-r11-1). A Windows short
   // name ("EMBER~1", "APPDAT~1") may be any folder, Ember's too: whose it is can't be told.
   const caseless = os !== "linux";
-  if (heldTexts(r).some(t => namesEmberFile(t, caseless) || (os === "win32" && SHORT_NAME.test(t)))) return true;
-  return fileDialogMayReach(r, os);
+  if (heldTexts(r).some(t => namesEmberFile(t, caseless) || (os === "win32" && SHORT_NAME.test(t)))) return "file";
+  return fileDialogReach(r, os);
 }
 /** What mayReachEmberData reads of a request. */
 type ReachRequest = Pick<ActionRequest, "kind" | "window" | "element" | "value"> & Partial<Pick<ActionRequest, "mode" | "currentText" | "typed" | "dialog" | "windowId" | "chosen">> & { app?: string };
@@ -876,22 +883,21 @@ const LIST_ROW = /cell|list item|tree item|icon|table row|^row$/;
  * Enter (anything but backing out, typing a character or moving about) in a file dialog whose name and folder can't be
  * read whole: where it saves or what it opens can't be told.
  */
-function fileDialogMayReach(r: ReachRequest, os: OS): boolean {
-  if (r.kind === "read") return false;
+function fileDialogReach(r: ReachRequest, os: OS): "file" | "unread" | null {
+  if (r.kind === "read") return null;
   const d = r.dialog;
   const caseless = os !== "linux";
   if (d?.text && (d.text.split(/[\s,;:?!]+/).some(t => EMBER_FILE.test(t.replace(/^["“'‘(]+|["”'’).]+$/g, "")))
-    || [...d.text.matchAll(QUOTED)].some(m => namesEmberFile(m[1], caseless)))) return true;
+    || [...d.text.matchAll(QUOTED)].some(m => namesEmberFile(m[1], caseless)))) return "file";
   const file = r.windowId?.role === "file chooser" || !!d?.fileChooser || FILE_DIALOG_NAME.test(titleName(d?.name ?? "")) || (FILE_DIALOG_NAME.test(titleName(r.window ?? "")) && (!d || !d.alert));
-  if (!file) return false;
+  if (!file) return null;
   if (d && ((d.fields ?? []).some(t => namesEmberFile(t, caseless) || (os === "win32" && SHORT_NAME.test(t)))
-    || [...(d.items ?? []), ...(d.selected ?? [])].some(t => namesEmberFile(t, caseless)) || (d.controls ?? []).some(c => !LIST_ROW.test(c.role) && namesEmberFile(c.name, caseless)))) return true;
+    || [...(d.items ?? []), ...(d.selected ?? [])].some(t => namesEmberFile(t, caseless)) || (d.controls ?? []).some(c => !LIST_ROW.test(c.role) && namesEmberFile(c.name, caseless)))) return "file";
   // Read whole: every field read, its other names (where it is) all read, and what it saves or opens named: a field's
   // text, a chosen row, or the row this step itself opens.
   const named = (d?.fields ?? []).some(t => t.trim() !== "") || !!d?.selected?.length || (!!r.element?.name.trim() && LIST_ROW.test(r.element.role));
   const whole = !!d && !d.truncated && !!d.fields && Array.isArray(d.items) && named;
-  if (whole) return false;
-  return commitsFileDialog(r, os);
+  return !whole && commitsFileDialog(r, os) ? "unread" : null;
 }
 /** Does this step press, choose or enter something in a file dialog: not backing out, typing a character, or moving about? */
 function commitsFileDialog(r: ReachRequest, os: OS): boolean {
@@ -977,6 +983,13 @@ function removesChosen(r: Pick<ActionRequest, "kind" | "element" | "value">, os:
 }
 /** Why such a step asks, or is refused in Autopilot (mayReachEmberData). */
 export const EMBER_DATA_DOUBT = "this may be Ember's own settings, audit log or policy, which are for the user only";
+/**
+ * What the question about such a step adds, in Ember's own words (never the model's), so the user can tell it from any
+ * other step (safety-privacy-r11-3).
+ */
+export const EMBER_DATA_QUESTION = "This may be my own settings or my record of what I did, so say no unless you asked for that.";
+/** The same, where only a file dialog that couldn't be read whole is the doubt. */
+export const EMBER_DATA_UNREAD_QUESTION = "I can't read where this saves or what it opens, so it may be my own settings or my record of what I did: say no unless you asked for that.";
 /** One list with the screen reader's (which also withholds these fields' contents), plus look-alike folding. */
 export const isSecretField = (s: string) => SECRET_FIELD.test(normalizeLabel(s)) || isSecretLabel(normalizeLabel(s));
 
@@ -3020,7 +3033,10 @@ export class PolicyEngine {
     if (d.verdict === "deny" || d.tier === "read" || !mayReachEmberData(r, this.os)) return d;
     if (this.autopilot) return { tier: "never", verdict: "deny", reason: `${EMBER_DATA_DOUBT}; Autopilot has no question to put, so Ember doesn't do it`, prompt: d.prompt };
     const { autonomy: _a, announce: _n, mode: _m, waivable: _w, needsGrant: _g, stepPrompt: _s, ...rest } = d;
-    return { ...rest, tier: "confirm", verdict: "confirm", risky: true, everyTime: true, remember: false, reason: d.verdict === "confirm" ? `${d.reason}; ${EMBER_DATA_DOUBT}` : EMBER_DATA_DOUBT };
+    // The question says so, in Ember's words (safety-privacy-r11-3).
+    const line = emberDataReach(r, this.os) === "unread" ? EMBER_DATA_UNREAD_QUESTION : EMBER_DATA_QUESTION;
+    const prompt = d.prompt.includes(line) ? d.prompt : `${d.prompt} ${line}`;
+    return { ...rest, tier: "confirm", verdict: "confirm", risky: true, everyTime: true, remember: false, prompt, reason: d.verdict === "confirm" ? `${d.reason}; ${EMBER_DATA_DOUBT}` : EMBER_DATA_DOUBT };
   }
 
   /**
