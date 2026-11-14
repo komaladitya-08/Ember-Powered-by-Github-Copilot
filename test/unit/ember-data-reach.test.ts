@@ -300,6 +300,41 @@ describe("Ember's own files reached by what a field or a file dialog holds, not 
     for (const [os, app, w, x] of rows) denied(os, app, req(app, w, { element: loc, ...x }), `${os} ${w} ${JSON.stringify(x)}`);
   });
 
+  it("judges what a document already holds only where it may be a path, so a note about Ember's folder can be added to as before (r11-safety-y11-2)", () => {
+    const doc = (_os: OS, app: string, w: string, x: Partial<ActionRequest>) => req(app, w, { element: { role: "text", name: "" }, multiLine: true, ...x });
+    const rows: [OS, string, string, Partial<ActionRequest>][] = [
+      ["linux", "gedit", "README.md (~/proj) - gedit", { kind: "text", mode: "append", value: "\nMore.", currentText: "Ember keeps data in ~/.config/ember/settings.json" }],
+      ["linux", "gedit", "notes.txt (~/Documents) - gedit", { kind: "text", mode: "append", value: "\nnext", currentText: "todo\naudit\n" }],
+      ["darwin", "TextEdit", "notes.txt", { kind: "text", mode: "append", value: "next item", currentText: "Q3 plan\nAudit\n- book room" }],
+      ["win32", "WINWORD", "Story - Word", { kind: "keys", value: "Return", currentText: "Chapter 1\nEmber\nThe fire" }],
+    ];
+    for (const [os, app, w, x] of rows) {
+      const r = doc(os, app, w, x);
+      expect(mayReachEmberData(r, os), `${app} ${JSON.stringify(x)}`).toBe(false);
+      for (const mode of ["interactive", "autopilot"] as const) expect(engine(mode, os, { [app]: "act" }).decide(r).verdict, `${app} ${mode}`).toBe("allow");
+    }
+    // A one-line field (or one whose lines aren't known) and any field in a dialog are still judged by what they hold.
+    denied("linux", "gedit", req("gedit", "Save As", { element: loc, kind: "text", mode: "append", value: "ings.json", currentText: "~/.config/ember/sett" }), "one line");
+    denied("linux", "gedit", req("gedit", "Save As", { element: loc, multiLine: true, kind: "keys", value: "Return", currentText: "~/.config/ember/settings.json", dialog: { name: "Save As", text: "", fields: ["~/.config/ember/settings.json"] } }), "in a dialog");
+    // What the step itself types is judged in a document too.
+    denied("linux", "gedit", doc("linux", "gedit", "notes.txt - gedit", { kind: "text", mode: "append", value: "~/.config/ember/settings.json", currentText: "todo" }), "typed");
+  });
+
+  it("takes only a path's part shaped like one for a Windows short name, so \"~5 minutes\" types as before and EMBER~1 still asks (r11-safety-y11-3)", () => {
+    const rows: [string, string, Partial<ActionRequest>][] = [
+      ["notepad", "notes.txt - Notepad", { kind: "text", mode: "append", value: "It takes ~5 minutes", element: { role: "edit", name: "Text Editor" } }],
+      ["notepad", "notes.txt - Notepad", { kind: "text", mode: "append", value: " ok", currentText: "Walk ~2 km", element: { role: "edit", name: "Text Editor" } }],
+      ["msedge", "New tab - Microsoft Edge", { kind: "text", mode: "replace", value: "lego set ~3 years old", element: { role: "edit", name: "Search" } }],
+    ];
+    for (const [app, w, x] of rows) {
+      const r = req(app, w, x);
+      expect(mayReachEmberData(r, "win32"), JSON.stringify(x)).toBe(false);
+      expect(engine("autopilot", "win32", { [app]: "act" }).decide(r).verdict, JSON.stringify(x)).toBe("allow");
+    }
+    asksOrRefused("win32", "notepad", req("notepad", "Save As", { kind: "text", value: "EMBER~1", element: loc }), "EMBER~1");
+    asksOrRefused("win32", "notepad", req("notepad", "Save As", { kind: "text", value: "notepad C:\\APPDAT~1.X\\a.txt", element: loc }), "APPDAT~1.X");
+  });
+
   it("refuses Save, Open or Enter in a dialog whose field holds their folder, in every mode (safety-privacy-r11-1)", () => {
     const dialog = (name: string, fields: string[]) => ({ name, text: "", fields, controls: [{ role: "text", name: "Location", editable: true }, { role: "push button", name: "Save" }] });
     const rows: [OS, string, string, Partial<ActionRequest>][] = [

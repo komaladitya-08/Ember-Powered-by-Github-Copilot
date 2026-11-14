@@ -26,7 +26,6 @@ import { ADMIN_APP, OFFICE_APP, OPENS_PROGRAMS, PLAIN_EDITOR, PROMPT_APP, READ_O
 import { isRemoteSurface, REMOTE_SURFACE_REASON } from "./remote-surface";
 import { targetRules } from "./target-rules";
 import { emberPathReach, plainPath } from "./ember-paths";
-import { SHORT_NAME } from "../commands/paths";
 import { covers, movingWords, type AutonomyScope, type AutonomyScopes } from "./autonomy";
 import type { StepChecker, StepVerdict } from "../commands/review";
 import { SECRET_PARTS, savedPart, siteOrigin, vaultAppKey, type VaultDestination, type VaultKind, type VaultPart } from "../../shared/vault";
@@ -841,24 +840,33 @@ function emberDataReach(r: ReachRequest, os: OS): "file" | "unread" | null {
   // what the field holds once this step is taken, not only this step's piece (safety-privacy-r11-1). A Windows short
   // name ("EMBER~1", "APPDAT~1") may be any folder, Ember's too: whose it is can't be told.
   const caseless = os !== "linux";
-  if (heldTexts(r).some(t => namesEmberFile(t, caseless) || (os === "win32" && SHORT_NAME.test(t)))) return "file";
+  if (heldTexts(r).some(t => namesEmberFile(t, caseless) || (os === "win32" && hasShortName(t)))) return "file";
   return fileDialogReach(r, os);
 }
+/**
+ * A Windows 8.3 short name as a path's part: up to 6 characters, "~", a number, an optional extension of up to 3
+ * ("EMBER~1", "APPDAT~1"). Parts are split at slashes, quotes and spaces, so "~5 minutes" isn't one (r11-safety-y11-3).
+ */
+const SHORT_NAME_PART = /^[^\s\\/.~]{1,6}~\d+(?:\.[^\s\\/.]{0,3})?$/i;
+const hasShortName = (text: string): boolean => text.split(/[\\/\s"'“”]+/).some(p => SHORT_NAME_PART.test(p));
 /** What mayReachEmberData reads of a request. */
-type ReachRequest = Pick<ActionRequest, "kind" | "window" | "element" | "value"> & Partial<Pick<ActionRequest, "mode" | "currentText" | "typed" | "dialog" | "windowId" | "chosen">> & { app?: string };
+type ReachRequest = Pick<ActionRequest, "kind" | "window" | "element" | "value"> & Partial<Pick<ActionRequest, "mode" | "currentText" | "typed" | "dialog" | "windowId" | "chosen" | "multiLine">> & { app?: string };
 /** The longest text heldTexts tries every caret position in (an "insert" whose caret isn't known). */
 const INSERT_MAX = 1024;
 /**
  * What a field holds, or may hold, once this step is taken (safety-privacy-r11-1): what was typed into it in pieces
  * (`typed`), what it holds now (`currentText`: Enter commits it, a key adds to it), and what this step's text makes of
  * that (appended, or inserted at a caret that isn't known: at every place). A path typed in parts, key by key or
- * finished by what the field held is judged whole.
+ * finished by what the field held is judged whole. A field of several lines outside a dialog (a document's text) is no
+ * path: only this step's own text is judged there (r11-safety-y11-2).
  */
 function heldTexts(r: ReachRequest): string[] {
   const text = r.kind === "text" || r.kind === "cursor_text" || r.kind === "value";
   if (!text && r.kind !== "keys" && r.kind !== "select" && r.kind !== "open_app") return [];
+  const own = r.kind !== "keys" && r.value ? [r.value] : [];
+  if (r.multiLine === true && !r.dialog) return own;
   const out = [r.typed, r.currentText].filter((t): t is string => !!t);
-  if (r.kind !== "keys" && r.value) out.push(r.value);
+  out.push(...own);
   if (!text || !r.value) return out;
   const now = r.currentText ?? "";
   if (!now || r.mode === "replace" || r.mode === undefined) return out;
@@ -895,7 +903,7 @@ function fileDialogReach(r: ReachRequest, os: OS): "file" | "unread" | null {
     || [...d.text.matchAll(QUOTED)].some(m => namesEmberFile(m[1], caseless)))) return "file";
   const file = r.windowId?.role === "file chooser" || !!d?.fileChooser || FILE_DIALOG_NAME.test(titleName(d?.name ?? "")) || (FILE_DIALOG_NAME.test(titleName(r.window ?? "")) && (!d || !d.alert));
   if (!file) return null;
-  if (d && ((d.fields ?? []).some(t => namesEmberFile(t, caseless) || (os === "win32" && SHORT_NAME.test(t)))
+  if (d && ((d.fields ?? []).some(t => namesEmberFile(t, caseless) || (os === "win32" && hasShortName(t)))
     || [...(d.items ?? []), ...(d.selected ?? [])].some(t => namesEmberFile(t, caseless)) || (d.controls ?? []).some(c => !LIST_ROW.test(c.role) && namesEmberFile(c.name, caseless)))) return "file";
   // Read whole: every field read, its other names (where it is) all read, and what it saves or opens named: a field's
   // text, a chosen row, or the row this step itself opens.
