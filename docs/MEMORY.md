@@ -278,7 +278,9 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
     3f9a…", "Session cookie 3f9a…"), as is a run of 16 or more in mixed case there whatever its digits ("OpenAI key
     sk-AbCdEf…", never words joined in camel case such as "HashiCorpVaultCluster": r11-memory-x11-3), and alone when
     it can be nothing else (a UUID, 24 or more hex digits, a run of 20 or more with four letters and four digits, a
-    JSON web token "eyJ….….…": "Uses sk-proj-a8f7… for OpenAI"); a word shaped like a password in
+    JSON web token "eyJ….….…", a known key's prefix such as "sk-", "SG.", "xoxb-", "ghp_" or "glpat-", or a run of 24
+    or more with six capitals and six small letters that isn't words in camel case, r11-memory-y11-2: "Uses
+    sk-proj-a8f7… for OpenAI", "Twilio AbCdEfGh…"); a word shaped like a password in
     a clause that names a thing people sign in to (a service, a VPN, Wi-Fi, a router or a NAS, AWS, Azure, RADIUS,
     LDAP, SSH, a database, an administrator, a password manager: "Remember Summer2024 for the VPN", "For the VPN it's
     Summer2024", "My Bitwarden is Summer2024", "My Netflix account: ram@example.com, Summer2024"); any lone word after a

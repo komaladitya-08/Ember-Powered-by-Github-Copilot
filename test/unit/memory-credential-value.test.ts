@@ -66,6 +66,14 @@ const FEW_DIGIT_KEYS = [
   "The bot uses token XyZaBcDeFgHiJkLmNoPq", "Weather API kEyKeYkEyKeYkEyKeY", "Use eyJhbGciOiJSUzI1NiJ9.eyJpc3MiOiJhIn0.c2ln for staging",
 ];
 
+/** A key with few digits and no key's name beside it, by its shape or a known prefix (r11-memory-y11-2). */
+const KEYS_ALONE = [
+  "OpenAI sk-AbCdEfGhIjKlMnOpQrStUvWxYz", "Twilio AbCdEfGhIjKlMnOpQrStUvWx", "Mailgun AbCdEfGhIjKlMnOpQrStUvWxYzAb",
+  "Netlify XyZaBcDeFgHiJkLmNoPqRsTuVwXyZaBc", "For Vercel use XyZaBcDeFgHiJkLmNoPqRsTuVwXyZaBc", "Okta QwErTyUiOpAsDfGhJkLzXcVbNm",
+  "Deploys use QwErTyUiOpAsDfGhJkLzXcVbNm", "The CI var is QwErTyUiOpAsDfGhJkLzXcVbNm", "Deploy with wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY",
+  "Sendgrid SG.AbCdEfGhIjKlMnOp.QrStUvWxYzAbCdEfGh", "Slack xoxb-AbCdEfGhIjKlMnOpQrStUv", "glpat-AbCdEfGhIjKlMnOpQrSt",
+];
+
 /** Ordinary facts beside those values, which memory still keeps. */
 const ORDINARY = [
   "The secret is patience", "My secret is that I dislike meetings", "The shared secret is rotated monthly", "The client secret is configured in Azure",
@@ -86,6 +94,8 @@ const ORDINARY = [
   // Words joined in camel case beside a key's name, which are no key (r11-memory-x11-3).
   "The API key is in HashiCorpVaultCluster", "Uses the GitHubActionsRunner token", "Session cookie name is JSESSIONIDCookie",
   "The auth flow uses OpenIDConnectProvider",
+  // Long words joined in camel case alone, which are no key (r11-memory-y11-2).
+  "Works on the InternationalBusinessMachinesCorporation account", "Maintains the AbstractSingletonProxyFactoryBean class",
 ];
 
 describe("a credential's value in a fact, wherever its name stands", () => {
@@ -104,6 +114,10 @@ describe("a credential's value in a fact, wherever its name stands", () => {
   });
 
   it.each(FEW_DIGIT_KEYS.map(s => [s]))("refuses %j, a key by its shape whatever its digits (r11-memory-x11-3)", text => {
+    expect(factRefusal(text)).not.toBeNull();
+  });
+
+  it.each(KEYS_ALONE.map(s => [s]))("refuses %j, a key alone by its shape or its prefix (r11-memory-y11-2)", text => {
     expect(factRefusal(text)).not.toBeNull();
   });
 

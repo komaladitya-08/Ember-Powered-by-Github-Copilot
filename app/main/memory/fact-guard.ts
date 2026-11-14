@@ -216,14 +216,22 @@ function keyShaped(raw: string, alone: boolean): boolean {
   // A JSON web token, which can be nothing else ("eyJhbGciOi….eyJzdWIi….sig"), with or without a key's name (r11-memory-x11-3).
   if (/^eyJ[\w-]{8,}\.[\w-]{4,}\.[\w-]*$/.test(v)) return true;
   if (!/^[A-Za-z0-9_\-+/=.~]+$/.test(v) || v.length < 16) return false;
+  // A known key's prefix with a key's length after it ("sk-…", "SG.…", "xoxb-…", "glpat-…"), with or without a key's name (r11-memory-y11-2).
+  if (KEY_PREFIX.test(v)) return true;
   // One run of letters and digits as long as a key's ("a8f7d6s5a4d3f2g1h0j9k8l7"), never words joined ("bert-base-uncased").
   return v.split(/[-_.+/=~]+/).some(run => (run.length >= (alone ? 20 : 12)
     && (run.match(/\d/g)?.length ?? 0) >= (alone ? 4 : 2) && (run.match(/[A-Za-z]/g)?.length ?? 0) >= (alone ? 4 : 2))
     // Beside a key's name, a run of 16 or more in mixed case is one whatever its digits ("API key AbCdEfGhIjKl…":
     // r11-memory-x11-3), unless it is words joined in camel case ("HashiCorpVaultCluster", "JSESSIONIDCookie").
     || (!alone && run.length >= 16 && /^[A-Za-z0-9]+$/.test(run) && (run.match(/[A-Z]/g)?.length ?? 0) >= 3 && (run.match(/[a-z]/g)?.length ?? 0) >= 3
+      && !/^(?:[a-z]{2,})?(?:[A-Z]+[a-z]{2,}|[A-Z]{2,}\d*)+$/.test(run))
+    // Alone, a run of 24 or more with six capitals and six small letters that isn't words in camel case
+    // ("Twilio AbCdEfGhIjKlMnOpQrStUvWx", "Deploy with wJalrXUtnFEMIK7MDENG…": r11-memory-y11-2).
+    || (alone && run.length >= 24 && /^[A-Za-z0-9]+$/.test(run) && (run.match(/[A-Z]/g)?.length ?? 0) >= 6 && (run.match(/[a-z]/g)?.length ?? 0) >= 6
       && !/^(?:[a-z]{2,})?(?:[A-Z]+[a-z]{2,}|[A-Z]{2,}\d*)+$/.test(run)));
 }
+/** The prefixes of well-known API keys and tokens, with at least 12 letters and digits after them. */
+const KEY_PREFIX = /^(?:sk-(?:ant-)?|sk_(?:live_|test_)?|pk_(?:live_|test_)?|rk_(?:live_|test_)?|SG\.|xox[abprs]-|AIza|gh[pousr]_|github_pat_|glpat-|npm_)[A-Za-z0-9_\-.]{12,}$/;
 
 /** A word shaped like a password (`strict`), never a product's name, an amount, a standard, a handle or a user at a host. */
 function passwordShaped(raw: string): boolean {
