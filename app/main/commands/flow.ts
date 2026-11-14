@@ -795,9 +795,13 @@ export function autonomousCommand(d: CommandDecision, o: { scopes: AutonomyScope
 /** The result the model gets for how a run ended (§3.8.6). */
 function resultOf(exit: RunExit, shaped: string, o: { label: string; timeoutS: number; redact: (s: string) => string }): ToolResultObject {
   switch (exit.ended) {
-    case "exit":
+    case "exit": {
+      const how = exit.code !== null ? `exit code ${exit.code}` : exit.signal ? `signal ${exit.signal}` : "no exit code";
+      // Never "done" on output known to be incomplete: the model would take the part for the whole.
+      if (exit.outputCut) return fail(`It ran and ended with ${how}, but the end of its output was lost on the way back, so the output below is incomplete. Don't run it again only to see the rest.\n${shaped}`);
       if (exit.code === 0) return done(shaped);
-      return fail(`It ended with ${exit.code !== null ? `exit code ${exit.code}` : exit.signal ? `signal ${exit.signal}` : "no exit code"}.\n${shaped}`);
+      return fail(`It ended with ${how}.\n${shaped}`);
+    }
     case "stopped-user":
       return fail(`The user stopped it after ${seconds(exit.ms)} s. Don't run it again unless they ask.\n${shaped}`);
     case "stopped-task":
@@ -1612,9 +1616,9 @@ async function finishRun(ctx: CommandFlowContext, j: CommandJudge, run: RunOutco
   if (exit.ended !== "failed-to-start") noteDownloads(ctx, o.cls);
   ctx.audit({
     event: "command", phase: "ended", task, target, runId: o.runId, ended: exit.ended, code: exit.code, signal: exit.signal, ms: exit.ms,
-    outBytes: out.bytes, secretSpans: kept.spans.length, typedLines: typed.length,
+    outBytes: out.bytes, secretSpans: kept.spans.length, typedLines: typed.length, ...(exit.outputCut ? { outputCut: true } : {}),
   });
-  ctx.log.info("commands.ended", { task, target, ended: exit.ended, code: exit.code, ms: exit.ms, outBytes: out.bytes });
+  ctx.log.info("commands.ended", { task, target, ended: exit.ended, code: exit.code, ms: exit.ms, outBytes: out.bytes, outputCut: exit.outputCut === true });
   const result = resultOf(exit, shaped, { label: o.label, timeoutS: o.timeoutS, redact: j.redactSecrets });
   if (!taint || result.resultType === "denied") return result;
   const note = "\n(The output contained text that looks like instructions; it was not followed. Every further command in this task asks the user.)";

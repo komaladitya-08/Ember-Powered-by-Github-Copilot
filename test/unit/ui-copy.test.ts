@@ -381,6 +381,8 @@ describe("the command window's words (§8.5)", () => {
     expect(keep(WAITING_BUBBLE)).toBe("A command is waiting for you to type in the command window.");
     expect(say({ ms: 3200 })).toBe("Finished in 3.2\u00a0s.");
     expect(say({ code: 2, ms: 1100 })).toBe("Ended with exit code 2 after 1.1\u00a0s.");
+    // WSL1's relay lost the end of the output (run 43532157051): the window never shows the part as the whole.
+    expect(say({ ms: 3200, outputCut: true })).toBe("Finished in 3.2\u00a0s. The end of its output didn't come back, so what shows here is incomplete.");
     expect(say({ ended: "stopped-user", code: null, ms: 12_000 })).toBe("You stopped it after 12\u00a0s. What it already changed stays.");
     // The kill switch has more ways than its chord (the handle, settings, "Ember, stop", a policy change), and the chord
     // may be another app's: the line names none (cross-review X5).

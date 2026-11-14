@@ -3518,3 +3518,14 @@ tools; the extra list after each call), -r9-3's (unlisted libraries of a service
 -r9-10, -r9-11, -r9-12 (P3); a key with a hidden character saved by an earlier build counts as no key while Home's row
 says one is saved; and the owner's: whether Projects takes data and settings files (`.csv`, `.xml`, `.ini`, `.conf`),
 refused meanwhile. Earlier rounds' Left stands except where this round's fixes are named above.
+
+WSL1's lost tail (remote.yml's WSL1 job, run 43532157051 at b474faa): wsl.test.ts's 4 MiB check got 4,128,768 of
+4,194,304 bytes back through `wsl.exe --exec /bin/cat`, exactly 64 KiB short, with exit code 0, after passing on every
+earlier run. Ember's own job host doesn't relay stdout (it inherits it), so the loss is in wsl.exe's relay as the Linux
+process exits (inferred). Ember now never takes WSL output as whole without an end marker: a WSL run ends with
+`outputCut` (the model is told the output is incomplete, the command window says so) and a fixed script's output is no
+answer, so a script read cut short is never judged as the whole script. SSH's framed stream needs no marker: its loss
+can only come as ssh exits, which ends the link (runs end "lost"); a remote run whose last bytes don't arrive in time
+ends with `outputCut` too. The 4 MiB channel check now takes every byte back while cat still runs, as SSH's link uses
+the channel, and a second check runs 4 MiB through the runner and requires `outputCut` exactly when it came back short.
+Left: only CI's WSL1 and WSL2 jobs run the new launcher and script texts on real WSL.

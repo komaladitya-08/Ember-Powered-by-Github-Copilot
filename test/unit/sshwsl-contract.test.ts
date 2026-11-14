@@ -16,7 +16,7 @@ import { DEFAULT_SETTINGS, HostRecordSchema, SettingsSchema, repairSettings } fr
 import { CONSENT_VERSION, FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
 import { DISTRO_NAME, HOST_ID, LOCAL_TARGET, parseTargetId, targetIdOf, type TargetKind } from "../../app/shared/targets";
 import { journalLine } from "../../app/main/policy/audit";
-import { NO_RC, POSIX_PRELUDE, PS_INNER, WSL_EVAL, posixBody, posixInner } from "../../app/main/commands/run/shells";
+import { NO_RC, POSIX_PRELUDE, PS_INNER, WSL_EVAL, WSL_RUN_END, posixBody, posixInner } from "../../app/main/commands/run/shells";
 import {
   CAPS, EV_SCHEMAS, OP_SCHEMAS, emberNamesRegExp,
   type DesktopState, type EvMap, type EvName, type Hello, type Op, type OpArgs, type OpResult, type Welcome,
@@ -551,8 +551,15 @@ describe("the fixed launcher texts (§3.3)", () => {
 
   it("reads the command, unsets it, sizes the PTY and evals it, in that order", () => {
     expect(posixBody({ pty: true, from: "env" })).toBe(`${POSIX_PRELUDE}; c=$EMBER_CMD; unset EMBER_CMD; unset BASH_ENV ENV; stty cols "$EMBER_COLS" rows "$EMBER_ROWS" 2>/dev/null; unset EMBER_COLS EMBER_ROWS; eval "$c"`);
-    expect(posixBody({ pty: false, from: "b64" })).toBe(`${POSIX_PRELUDE}; c=$(printf %s "$EMBER_CMD_B64" | base64 -d) || exit 126; unset EMBER_CMD_B64; unset BASH_ENV ENV; eval "$c"`);
+    expect(posixBody({ pty: false, from: "b64" })).toBe(`${POSIX_PRELUDE}; c=$(printf %s "$EMBER_CMD_B64" | base64 -d) || exit 126; unset EMBER_CMD_B64; unset BASH_ENV ENV; ${WSL_RUN_END}`);
+    expect(posixBody({ pty: true, from: "b64" }).endsWith(`; ${WSL_RUN_END}`)).toBe(true);
     expect(POSIX_PRELUDE).toBe('set +f; export PAGER=cat GIT_PAGER=cat SYSTEMD_PAGER=cat MANPAGER=cat; [ -n "$LANG" ] || export LANG=C.UTF-8; printf "\\033]777;ember-start\\007"');
+  });
+
+  it("ends a WSL run with its end marker and the command's exit code, printed last by the shell that started it (WSL1's lost tail, run 43532157051)", () => {
+    expect(WSL_RUN_END).toBe('trap : INT; ( eval "$c" ); e=$?; printf "\\033]777;ember-end;%s\\007" "$e"; exit $e');
+    // Linux's and a remote's runs are as before: only WSL's relay loses a tail.
+    for (const pty of [true, false]) expect(posixBody({ pty, from: "env" }).endsWith('; eval "$c"')).toBe(true);
   });
 
   it("pins PowerShell's launcher exactly", () => {

@@ -17,9 +17,21 @@ export const NO_RC: Readonly<Record<"bash" | "zsh" | "sh", readonly string[]>> =
 export const POSIX_PRELUDE = 'set +f; export PAGER=cat GIT_PAGER=cat SYSTEMD_PAGER=cat MANPAGER=cat; [ -n "$LANG" ] || export LANG=C.UTF-8; printf "\\033]777;ember-start\\007"';
 
 /**
+ * How a WSL run ends (from "b64", which only WSL uses): the command in a subshell, then the end marker with its exit
+ * code, printed by the shell that started it, last. wsl.exe's relay on WSL1 can lose the last 64 KiB of a Linux
+ * process's output when it exits (remote.yml's WSL1 job, run 43532157051: 4,128,768 of 4,194,304 bytes back, exit code
+ * 0), so a run whose output ends without this marker lost its end on the way and is reported so, never as complete.
+ * The subshell keeps a command's own `exit`, `exec` or `exec >file` from skipping the marker; `trap : INT` keeps a
+ * Ctrl+C typed into the PTY from ending this shell before it prints it (the subshell's INT is the default again, so
+ * the command still stops). One line, no single quote: WSL_EVAL's split and posixInner's quotes take it unchanged.
+ */
+export const WSL_RUN_END = 'trap : INT; ( eval "$c" ); e=$?; printf "\\033]777;ember-end;%s\\007" "$e"; exit $e';
+
+/**
  * The body every POSIX run executes: the prelude, the command text read and unset first (from EMBER_CMD, or decoded
  * from EMBER_CMD_B64 for WSL), the PTY's size set inside script(1) (whose PTY starts without one), then `eval "$c"`,
- * which runs the text exactly as `bash -c "$c"` would (same parser, here-docs and `exit` included).
+ * which runs the text exactly as `bash -c "$c"` would (same parser, here-docs and `exit` included); WSL's then ends
+ * with WSL_RUN_END's marker.
  */
 export function posixBody(o: { pty: boolean; from: "env" | "b64" }): string {
   return [
@@ -29,7 +41,7 @@ export function posixBody(o: { pty: boolean; from: "env" | "b64" }): string {
     "unset BASH_ENV ENV",
     // script(1)'s PTY starts without a size: the tab's, fixed for the run (§3.10).
     ...(o.pty ? ['stty cols "$EMBER_COLS" rows "$EMBER_ROWS" 2>/dev/null; unset EMBER_COLS EMBER_ROWS'] : []),
-    'eval "$c"',
+    o.from === "b64" ? WSL_RUN_END : 'eval "$c"',
   ].join("; ");
 }
 

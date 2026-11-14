@@ -2066,6 +2066,21 @@ describe("running and what comes back (§3.8.3 steps 12-14, §3.8.6)", () => {
     }
   });
 
+  it("never says done when the end of a run's output was lost on the way back: it says the output is incomplete (WSL1's lost tail, run 43532157051)", async () => {
+    makeJudge();
+    for (const code of [0, 2]) {
+      const h = harness({ run: () => ({ output: ["first part\n"], exit: exitOk({ code, outputCut: true }) }) });
+      const r = await call(h);
+      expect(r.resultType).toBe("failure");
+      expect(r.textResultForLlm.startsWith(`It ran and ended with exit code ${code}, but the end of its output was lost on the way back, so the output below is incomplete. Don't run it again only to see the rest.\n<command_output`)).toBe(true);
+      expect(h.audit.find(e => e.phase === "ended")).toMatchObject({ ended: "exit", code, outputCut: true });
+    }
+    // A whole run's audit says nothing of it.
+    const whole = harness();
+    await call(whole);
+    expect(whole.audit.find(e => e.phase === "ended")).not.toHaveProperty("outputCut");
+  });
+
   it("the task's stop stops the run, and the tool says only that; the run's end is still audited and its typing forgotten", async () => {
     makeJudge();
     const h = harness({ run: () => ({ hang: true, typed: ["hunter22"] }) });

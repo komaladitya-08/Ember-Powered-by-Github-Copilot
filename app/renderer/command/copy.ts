@@ -167,6 +167,7 @@ export function statusLine(exit: RunExit & { stragglers?: string[] }, o: { label
         : exit.code !== null ? `Ended with exit code ${exit.code} after ${d}.`
         : exit.signal ? `Ended by ${exit.signal} after ${d}.`
         : `Ended after ${d}.`;
+      if (exit.outputCut) line += " The end of its output didn't come back, so what shows here is incomplete.";
       break;
     case "stopped-user": line = `You stopped it after ${d}. ${stays}`; break;
     case "stopped-task": line = `Stopped with its task after ${d}. ${stays}`; break;

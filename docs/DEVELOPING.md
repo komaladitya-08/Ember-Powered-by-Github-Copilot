@@ -2795,6 +2795,14 @@ downloads it on first use per target and checks it before sending.
   test). **koffi loads lazily**, inside the function that needs it, in `app/main/commands/**`, `app/main/wsl/**`,
   `app/main/remote/**` and `app/remote/**`: a macOS remote ships no koffi, so a top-level import would crash the agent
   there. Never `koffi.view()`.
+- **Nothing from WSL counts as whole without its end marker**: wsl.exe's relay on WSL1 can lose the last 64 KiB of a
+  Linux process's output as it exits, with exit code 0 (remote.yml's WSL1 job, run 43532157051). A WSL run's launcher
+  ends with `WSL_RUN_END` (`app/main/commands/run/shells.ts`) and every fixed script with `SCRIPT_END`
+  (`app/main/wsl/runner.ts`), each printing `ESC ] 777;ember-end;<code> BEL` last. A run that ends by itself without it
+  ends with `outputCut`, which the model gets as a failure saying the output is incomplete, and the command window as
+  "The end of its output didn't come back, so what shows here is incomplete."; a fixed script's output without it is no
+  answer (facts unreadable, no script read, unknown paths). A remote run whose last bytes don't arrive within the tail's
+  wait ends with `outputCut` too. Anything new that carries data through wsl.exe needs the marker or SSH's frames.
 - **A target's paths use the target's rules**: `node:path/posix` or `node:path/win32`, or `resolveTargetPath`, never
   `node:path`, in `app/main/commands/**`, `app/main/wsl/runner.ts`, `app/main/wsl/service.ts`, `app/main/remote/**`
   and `app/remote/**` (ESLint enforces it): a Windows PC runs commands on Linux targets.

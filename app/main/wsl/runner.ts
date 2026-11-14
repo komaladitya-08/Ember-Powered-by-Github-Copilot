@@ -15,6 +15,9 @@
  *   commands (checked: `printf 'while read p; do …; done\necho INJECTED\n' | dash -s` runs `echo INJECTED`).
  * - The start marker the launcher prints decides whether the command started: output that ends without it is a
  *   failed start whose reason is wsl.exe's (or the launcher's) own error text, decoded (critique wsl-17).
+ * - An end marker decides whether all of the output came back: wsl.exe's relay on WSL1 can lose the last 64 KiB of a
+ *   Linux process's output as it exits (remote.yml's WSL1 job, run 43532157051). A run that ends by itself without
+ *   WSL_RUN_END's marker ends with `outputCut`, and a fixed script's output without SCRIPT_END's is no answer at all.
  * - Stop: `\x03` through the job host's stdin (PTY) or the in-distro sweep with INT (pipes), then sweeps with TERM and
  *   KILL, and only then the job host (killing wsl.exe first would orphan the Linux tree; critique wsl-16).
  * - A distro whose first-run set-up is pending, a hidden tool distro and a name discovery doesn't list are refused.
@@ -134,16 +137,44 @@ export function cdLine(cwd: string): string {
 const inDistroSh = (distro: string): string[] => ["-d", distro, "--cd", "/", "--exec", "/bin/sh", "-s"];
 
 /**
- * The text Ember writes to `/bin/sh -s`: the fixed `script`, then `exit` (stdin stays open: see the module comment).
- * `lines` reach the script as its stdin through a quoted here-document (`<<'EMBER_DATA_<random>'`), so the shell never
- * parses them: they are data whatever they hold. Throws when a line can't be carried (a line break or NUL in it).
+ * What every fixed script ends with, after its subshell: the end marker with the script's exit code, then that code
+ * again as `$?` for the final `exit`. Printed only once the shell has read the whole script (it is the script's last
+ * line, after the subshell `/bin/sh -s` parses whole) and the script has run, so output without it lost its end on
+ * the way, or the script's own end never reached the shell (see the module comment).
+ */
+export const SCRIPT_END = "e=$?; printf '\\033]777;ember-end;%s\\007' \"$e\"; (exit $e)";
+
+/**
+ * The text Ember writes to `/bin/sh -s`: the fixed `script` in a subshell (its own `exit 3` still reaches SCRIPT_END),
+ * SCRIPT_END, then `exit` (stdin stays open: see the module comment). `lines` reach the script as its stdin through a
+ * quoted here-document (`<<'EMBER_DATA_<random>'`), so the shell never parses them: they are data whatever they hold.
+ * Throws when a line can't be carried (a line break or NUL in it).
  */
 export function scriptInput(script: string, lines?: readonly string[], delimiter = `EMBER_DATA_${randomBytes(8).toString("hex")}`): string {
-  if (!lines) return `${script}\nexit\n`;
+  if (!lines) return `(\n${script}\n)\n${SCRIPT_END}\nexit\n`;
   if (!/^[A-Za-z0-9_]+$/.test(delimiter)) throw new Error("bad here-document delimiter");
   for (const l of lines) if (!carriable(l) || l === delimiter) throw new Error("a line can't be passed to WSL");
   const body = lines.length ? `${lines.join("\n")}\n` : "";
-  return `{\n${script}\n} <<'${delimiter}'\n${body}${delimiter}\nexit\n`;
+  return `(\n${script}\n) <<'${delimiter}'\n${body}${delimiter}\n${SCRIPT_END}\nexit\n`;
+}
+
+/** The end marker WSL_RUN_END and SCRIPT_END print (an OSC sequence output shaping strips): `ESC ] 777;ember-end;<code> BEL`. */
+// eslint-disable-next-line no-control-regex -- the marker is made of control characters
+export const END_MARKER = /\x1b\]777;ember-end;(\d{1,3})\x07/;
+/** The longest END_MARKER: what is carried from one chunk to the next so a marker split between chunks is found. */
+const END_MARKER_MAX = "\x1b]777;ember-end;255\x07".length;
+
+/**
+ * A fixed script's output whole: what it printed before SCRIPT_END's marker, which must be the last thing in it (no
+ * process of a fixed script prints after it). Null when the marker isn't there: the end was lost on the way back, or
+ * the shell never got the whole script, and what did come is no answer.
+ */
+export function scriptDone(stdout: Uint8Array): { out: Buffer; code: number } | null {
+  const buf = Buffer.from(stdout.buffer, stdout.byteOffset, stdout.byteLength);
+  const tail = buf.subarray(Math.max(0, buf.length - END_MARKER_MAX)).toString("latin1");
+  const m = new RegExp(`${END_MARKER.source}$`).exec(tail);
+  if (!m) return null;
+  return { out: buf.subarray(0, buf.length - m[0].length), code: Number(m[1]) };
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -514,7 +545,9 @@ export function createWslRunner(d: WslRunnerDeps): WslRunner {
     const r = await mayStart(() => d.exec.run(inDistroSh(name), { stdin: scriptInput(`${cdLine("~")}\n${FACTS_SCRIPT}`), timeoutMs: BOOT_TIMEOUT_MS, inDistro: true }));
     if (r.error) throw new Error(r.error);
     if (r.timedOut) throw new Error(`${name} took too long to start`);
-    const lines = parseFacts(r.stdout.toString("utf8"));
+    // Facts only from output that came back whole (a cut-off `home=/ho` would otherwise read as a home folder).
+    const whole = scriptDone(r.stdout);
+    const lines = whole ? parseFacts(whole.out.toString("utf8")) : null;
     if (!lines) {
       // wsl.exe writes its own errors to stdout, not stderr.
       const why = decodeMessage(r.stderr) || (r.code !== 0 ? decodeMessage(r.stdout) : "");
@@ -543,7 +576,14 @@ export function createWslRunner(d: WslRunnerDeps): WslRunner {
       const call = () => d.exec.run(inDistroSh(name), { stdin: input, timeoutMs: o.timeoutMs ?? BOOT_TIMEOUT_MS, inDistro: true });
       const r = o.mayBoot ? await mayStart(call) : await call();
       if (r.error || r.timedOut) return null;
-      return { code: r.code, stdout: r.stdout, stderr: decodeMessage(r.stderr) };
+      // Only output that came back whole is an answer: a script's text cut short (readScript) would be judged as if it
+      // were all of it, and a cut-off inspect line would name another path.
+      const whole = scriptDone(r.stdout);
+      if (!whole) {
+        d.log.warn("wsl.script_cut", { distro: name, code: r.code, outBytes: r.stdout.length });
+        return null;
+      }
+      return { code: r.code, stdout: whole.out, stderr: decodeMessage(r.stderr) };
     } catch (err) {
       d.log.warn("wsl.script_failed", { distro: name, err });
       return null;
@@ -564,8 +604,10 @@ export function createWslRunner(d: WslRunnerDeps): WslRunner {
       return []; // not a run id Ember made: nothing of it can be in the distro
     }
     const r = await d.exec.run(["-d", name, "--exec", "/bin/sh", "-s", "--", ...args], { stdin: scriptInput(SWEEP_SCRIPT), timeoutMs: SWEEP_TIMEOUT_MS, inDistro: true });
-    const names = sweptNames(r.stdout.toString("utf8"));
-    d.log.debug("wsl.sweep", { distro: name, signal, code: r.code, found: names.length, timedOut: r.timedOut, error: r.error });
+    const whole = scriptDone(r.stdout);
+    // What came is still named when the end was lost (a sweep's names are only reported, never acted on).
+    const names = sweptNames((whole?.out ?? r.stdout).toString("utf8"));
+    d.log.debug("wsl.sweep", { distro: name, signal, code: r.code, found: names.length, timedOut: r.timedOut, error: r.error, whole: whole !== null });
     return names;
   };
 
@@ -652,6 +694,10 @@ class Run {
   private ended = false;
   private started = false;
   private exited: { code: number | null; signal: string | null } | null = null;
+  /** WSL_RUN_END's marker came on stdout: everything the launcher's shell wrote before it is in. */
+  private endSeen = false;
+  /** The last bytes of stdout so far (latin1), so a marker split between chunks is found. */
+  private endCarry = "";
   private readonly t0: number;
   private readonly held: { out: Buffer[]; err: Buffer[]; outBytes: number; errBytes: number } = { out: [], err: [], outBytes: 0, errBytes: 0 };
   private keptHead: Buffer[] = [];
@@ -753,6 +799,7 @@ class Run {
 
   private data(stream: "out" | "err", chunk: Buffer): void {
     if (this.ended) return;
+    if (stream === "out" && !this.endSeen) this.lookForEnd(chunk);
     if (this.started) {
       this.emit(chunk);
       return;
@@ -778,6 +825,13 @@ class Run {
     this.emit(out);
     // A Stop that came while the command was starting: the ladder begins now that there is something to stop.
     if (this.stopWhy && !this.ladder && !this.exited) this.climb();
+  }
+
+  /** Notes WSL_RUN_END's marker in stdout (it passes on with the output, as the start marker does: shaping strips both). */
+  private lookForEnd(chunk: Buffer): void {
+    const text = this.endCarry + chunk.toString("latin1");
+    if (END_MARKER.test(text)) this.endSeen = true;
+    else this.endCarry = text.slice(-(END_MARKER_MAX - 1));
   }
 
   private emit(chunk: Buffer): void {
@@ -941,6 +995,12 @@ class Run {
       return;
     }
     const exit: Partial<RunExit> & { ended: RunExit["ended"] } = { ended: this.stopWhy ? ENDED[this.stopWhy] : "exit", code, signal };
+    if (!this.stopWhy && !this.endSeen) {
+      // Ended by itself, yet the launcher's last word never came: the end of the output was lost on the way (WSL1's
+      // relay), and what came is reported as incomplete, never as all of it. A stopped run needs no marker: it was cut.
+      exit.outputCut = true;
+      this.d.log.warn("wsl.output_cut", { distro: this.d.distro, runId: this.spec.runId, code, outBytes: this.outBytes });
+    }
     if (this.ladder) {
       // Done once the last sweep has named what outlived the run (at most its own time limit later).
       void this.ladder.then(() => this.end(exit));
@@ -982,8 +1042,8 @@ class Run {
     if (this.ladder || e.ended !== "exit") this.setStragglers([]);
     for (const t of this.timers) clearTimeout(t);
     this.exitedQuietly();
-    const exit: RunExit = { code: e.code ?? null, signal: e.signal ?? null, ended: e.ended, ms: Math.max(0, this.r.now() - this.t0), ...(e.error ? { error: e.error } : {}) };
-    this.d.log.info("wsl.run_ended", { distro: this.d.distro, runId: this.spec.runId, ended: exit.ended, code: exit.code, ms: exit.ms, outBytes: this.outBytes, error: exit.error });
+    const exit: RunExit = { code: e.code ?? null, signal: e.signal ?? null, ended: e.ended, ms: Math.max(0, this.r.now() - this.t0), ...(e.error ? { error: e.error } : {}), ...(e.outputCut ? { outputCut: true } : {}) };
+    this.d.log.info("wsl.run_ended", { distro: this.d.distro, runId: this.spec.runId, ended: exit.ended, code: exit.code, ms: exit.ms, outBytes: this.outBytes, error: exit.error, outputCut: exit.outputCut === true });
     this.resolveDone(exit);
   }
 }

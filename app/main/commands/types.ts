@@ -311,6 +311,11 @@ export interface RunExit {
   ms: number;
   /** failed-to-start and refused-remote: why, in plain words. */
   error?: string;
+  /**
+   * exit: the run ended, but the end of its output never came back (WSL1's relay lost it, or a remote's last bytes
+   * didn't arrive in time), so the output is incomplete and is never reported as all of it.
+   */
+  outputCut?: boolean;
   /** refused-remote: the remote would run it after the user's yes (gate 2's needs_confirm). */
   needsConfirm?: boolean;
   /** refused-remote: the card lines the remote's own check produced (untrusted text, shown quoted). */

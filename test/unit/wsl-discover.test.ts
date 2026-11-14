@@ -17,7 +17,7 @@ import { LXSS_KEY } from "../../app/main/wsl/lxss";
 import { decodeLines } from "../../app/main/wsl/decode";
 import { FACTS_SCRIPT } from "../../app/main/wsl/runner";
 import type { WslFacts } from "../../app/main/wsl/types";
-import { answerWith, fakeLog, FakeRegistry, fakeSpawn, flush, forbiddenOptions, utf16, type SpawnCall } from "./wsl-wa-fakes";
+import { answerScript, answerWith, fakeLog, FakeRegistry, fakeSpawn, flush, forbiddenOptions, utf16, type SpawnCall } from "./wsl-wa-fakes";
 
 const EXE = "C:\\Program Files\\WSL\\wsl.exe";
 const INBOX = "C:\\Windows\\System32\\wsl.exe";
@@ -194,11 +194,11 @@ function pc(o: {
         running.add(distro); // anything run with -d starts the distro: the tests check discovery never does
         if (script.includes(FACTS_SCRIPT.split("\n")[0])) {
           const uid = o.uid?.[distro] ?? 1000;
-          answerWith(call, { stdout: `uid=${uid}\nuser=${uid ? "ana" : "root"}\nhome=${uid ? "/home/ana" : "/root"}\nshell=/bin/bash\nshell=/bin/sh\nscript=/usr/bin/script\ninterop=1\nmountc=/mnt/c/\npython3=1\nbase64=1\n` });
+          answerScript(call, { stdout: `uid=${uid}\nuser=${uid ? "ana" : "root"}\nhome=${uid ? "/home/ana" : "/root"}\nshell=/bin/bash\nshell=/bin/sh\nscript=/usr/bin/script\ninterop=1\nmountc=/mnt/c/\npython3=1\nbase64=1\n` });
         } else if (script.includes("boot_id")) {
-          answerWith(call, { stdout: o.bootId ?? "6f1d9e0c-3b2a-4c5d-8e7f-0a1b2c3d4e5f\n" });
+          answerScript(call, { stdout: o.bootId ?? "6f1d9e0c-3b2a-4c5d-8e7f-0a1b2c3d4e5f\n" });
         } else {
-          answerWith(call, { stdout: "", code: 0 });
+          answerScript(call, { stdout: "", code: 0 });
         }
       };
     }
