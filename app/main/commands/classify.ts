@@ -11,7 +11,7 @@
 import type {
   Classification, ClassifyContext, CommandObject, DangerClass, Finding, ParsedCommand, ShellFamily, ShellId, WindowsContext,
 } from "./types";
-import { PKG_CLEANS, PKG_PRUNES, PKG_REMOVES, SHELL_FAMILY } from "./types";
+import { PKG_CLEANS, PKG_PRUNES, PKG_REMOVES, SHELL_FAMILY, UNRESOLVED_TARGET_RULE } from "./types";
 import { braceGroup, lexPosix, MAX_SIMPLE, type PList, type PSimple, type PWord, type PRedir, type Unclear } from "./lex-posix";
 import { lexPowerShell, restrictedExpression, type PsArg, type PsCommand, type PsRedir, type PsSeg, type PsStatement } from "./lex-powershell";
 import { lexCmd, type CSimple, type CWord } from "./lex-cmd";
@@ -226,6 +226,7 @@ export const SAYS = {
   downloadsUnnamed: "Downloads to a file Ember can't name.",
   guardedWord: "It uses a ${…:?} word, which Ember reads as the folder it names but can't be sure of.",
   optionValue: "Ember can't tell whether one of its options takes the word after it.",
+  unresolvedTarget: "It deletes or changes something Ember can't name, which could be your keys or Ember's own records.",
   namedKeyword: "It runs a program named like one of the shell's own words.",
   scriptStream: "It runs a script from a stream, which Ember can't read first.",
   downloadsProgram: "Downloads a program and runs it.",
@@ -421,6 +422,16 @@ class WordMarks {
 }
 
 /** The classifier's state for one command text. */
+/**
+ * Does a path's text hold what Ember can't resolve: a variable (but a loop's own, which names the files the loop
+ * lists), a command or process substitution, or another user's home (commands-remote-c11-3)?
+ */
+function unresolvable(text: string, loopVars: ReadonlyMap<string, unknown>): boolean {
+  if (/`|[<>]\(|^["']?~[A-Za-z0-9_+-]/.test(text)) return true;
+  for (const m of text.matchAll(/\$(\{?)([A-Za-z_][A-Za-z0-9_]*|[0-9@*#?!$-]|\()/g)) if (!loopVars.has(m[2])) return true;
+  return false;
+}
+
 class Classifier {
   findings: Finding[] = [];
   commands: ParsedCommand[] = [];
@@ -577,6 +588,13 @@ class Classifier {
     if (ifExists !== undefined) f.ifExists = ifExists;
     if (o.inFolder) f.inFolder = { says: cardWords(o.inFolder.says, o.inFolder.objects, wrappers, this.ctx.cwd || null, this.ctx.os, home, this.loopVars), objects: shown(o.inFolder.objects), ifExists: opened(o.inFolder.objects, o.inFolder.ifExists) };
     this.findings.push(f);
+    // A deletion or a write whose target Ember can't resolve may be anything, a secret or Ember's own audit log,
+    // settings or vault included, which only a path Ember can name is refused for: it is judged as if it could be the
+    // worst place, so it asks in every mode, Autopilot and a remote's gate 2 too, and never goes to Assisted's check
+    // (commands-remote-c11-3).
+    if (cls === "destroy" && ((o.objects ?? []).some(ob => ob.abs === null && (ob.kind === "path" || ob.kind === "glob" || ob.kind === "other") && unresolvable(ob.text, this.loopVars)) || said === "Writes to a file Ember can't name.")) {
+      this.unclear(UNRESOLVED_TARGET_RULE, SAYS.unresolvedTarget);
+    }
   }
 
   /** Takes back findings added since `from` that `drop` picks: a nested reading's, which the caller's own finding covers. */

@@ -11,6 +11,8 @@ import type { ShellId } from "../../app/main/commands/types";
 import { optIs, parseOpts, has, values } from "../../app/main/commands/words";
 import { lit } from "../../app/main/commands/words";
 import { keptQuestion } from "../../app/main/commands/autopilot";
+import { notReviewable } from "../../app/main/commands/review";
+import { UNRESOLVED_TARGET_RULE } from "../../app/main/commands/types";
 
 interface Opts { words?: string; shell?: ShellId; context?: ContextName; downloaded?: string[]; missing?: string[] }
 const result = (cmd: string, o: Opts = {}) =>
@@ -137,5 +139,25 @@ describe("tar's -C before what it packs, and cpio's names from its input (comman
       expect(decide(cmd).rules, cmd).toContain("path.secret");
     }
     expect(decide("find . -name '*.c' | cpio -o > x.cpio").rules).toContain("unclear.unresolved-arg");
+  });
+});
+
+describe("a deletion or a write of something Ember can't name (commands-remote-c11-3)", () => {
+  const UNNAMED = [
+    "rm -rf \"$X\"", "rm -rf $(cat dirs.txt)", "rm -rf ${D}/*", "find \"$D\" -delete", "truncate -s0 \"$F\"", "echo > \"$LOG\"", "cp a.txt \"$OUT\"",
+    "mv x \"$(dirname \"$P\")/y\"", "shred -u ~bob/x",
+  ];
+  it("is judged as if it could be Ember's own records: it asks, even when the user's words ask to delete, and no check may clear it", () => {
+    for (const cmd of UNNAMED) {
+      for (const words of ["", "delete the folder", "clear the log file"]) {
+        const r = result(cmd, { words });
+        expect(r.decision.verdict, `${cmd} / ${words}`).toBe("ask");
+        expect(r.decision.rules, cmd).toContain(UNRESOLVED_TARGET_RULE);
+        expect(notReviewable(r.decision, { words: words || "tidy up", mode: "on", askEvery: null, userAskEvery: false, command: cmd, findings: r.cls.findings }), cmd).toBe("it changes something Ember can't name");
+      }
+    }
+    for (const cmd of ["Remove-Item $p -Recurse", "Set-Content $f x"]) expect(decide(cmd, { shell: "powershell", context: "win32" }).rules, cmd).toContain(UNRESOLVED_TARGET_RULE);
+    // A deletion Ember can name is judged as before.
+    for (const cmd of ["rm -rf build", "echo hi > out.txt"]) expect(decide(cmd).rules, cmd).not.toContain(UNRESOLVED_TARGET_RULE);
   });
 });

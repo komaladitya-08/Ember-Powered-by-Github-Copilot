@@ -20,7 +20,7 @@
  */
 
 import { keptQuestion } from "./autopilot";
-import type { CommandDecision, Finding } from "./types";
+import { UNRESOLVED_TARGET_RULE, type CommandDecision, type Finding } from "./types";
 
 /** What the reviewer is shown. */
 export interface ReviewInput {
@@ -114,6 +114,9 @@ export function notReviewable(d: CommandDecision, o: { words: string; mode: stri
   if (kept === "secret") return "it would read or print secrets";
   if (kept === "outlives-stop") return "it would keep running after Stop";
   if (kept === "unknown") return "it runs a program Ember doesn't know";
+  // A deletion or a write of something Ember can't name may be Ember's own records, which no check may clear
+  // (commands-remote-c11-3).
+  if ([...d.rules, ...(o.findings ?? []).map(f => f.rule.replace(/^in-script:/, ""))].includes(UNRESOLVED_TARGET_RULE)) return "it changes something Ember can't name";
   if (o.words.trim().length > REVIEW_LIMITS.words || o.command.length > REVIEW_LIMITS.command || d.says.join(" ").length > REVIEW_LIMITS.findings) return "it is too long to show the reviewer whole";
   return null;
 }

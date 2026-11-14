@@ -1519,11 +1519,11 @@ describe("the card's words from the classifier (review #214)", () => {
     expect(says("for f in notes.txt; do rm \"$f\"; done")).toEqual(["Deletes notes.txt."]);
     expect(says("for f in *.log old/*.txt; do rm \"$f\"; done")).toEqual(["Deletes each file the loop names."]);
     // A variable the loop's body sets again holds what it was set to, not the loop's file (commands-remote-c2-3).
-    expect(says("for f in *.log; do f=~/Documents; rm -rf \"$f\"; done")).toEqual(["Deletes \"$f\" and everything in it."]);
+    expect(says("for f in *.log; do f=~/Documents; rm -rf \"$f\"; done")).toEqual(["Deletes \"$f\" and everything in it.", "It deletes or changes something Ember can't name, which could be your keys or Ember's own records."]);
     expect(says("while IFS= read -r l; do rm -rf \"$l\"; done < list.txt")).toEqual(["Deletes each file listed in its input and everything in it."]);
     expect(says("find . -name '*.log' | while read -r f; do rm \"$f\"; done")).toEqual(["Deletes each file listed in its input."]);
     // Anything else stays as written: a variable that isn't the loop's, or more than the variable.
-    expect(says("rm \"$X\"")).toEqual(["Deletes \"$X\"."]);
+    expect(says("rm \"$X\"")).toEqual(["Deletes \"$X\".", "It deletes or changes something Ember can't name, which could be your keys or Ember's own records."]);
     expect(says("for f in *.log; do rm \"$f.bak\"; done")).toEqual(["Deletes \"$f.bak\"."]);
     for (const cmd of ["for f in *.log; do rm \"$f\"; done", "while read -r l; do rm \"$l\"; done < list.txt"]) {
       for (const l of says(cmd)) expect(l, cmd).not.toMatch(/\$/);

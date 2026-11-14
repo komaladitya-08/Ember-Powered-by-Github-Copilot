@@ -37,6 +37,12 @@ export interface CommandObject {
   resolved?: string;
 }
 
+/**
+ * The rule of a deletion or a write whose target Ember can't resolve (commands-remote-c11-3): never reviewed by
+ * Assisted's check (review.ts notReviewable), and asked about in Autopilot as what Ember can't tell.
+ */
+export const UNRESOLVED_TARGET_RULE = "unclear.unresolved-target";
+
 /** One reason a command is dangerous. */
 export interface Finding {
   cls: DangerClass;
