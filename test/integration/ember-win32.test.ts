@@ -47,7 +47,7 @@ import type { Capture } from "../../app/main/perception/capture";
 import { startOverlayChild, type OverlayChild } from "./overlay-child";
 import { PROBE_PACE_MS, PROBE_TEXT, probeTimeline, probeVerdict } from "./typeahead-probe";
 import { askWant, closeAsk, openAskAt, setTextSize, type InEmber } from "./ask-size";
-import { focusTrail, hoverActivation, waitForWindowAt, type TrailEvent, type WindowAt } from "./window-at";
+import { focusTrail, hoverActivation, waitForWindowAt, watchEvent, type TrailEvent, type WatchedWindow, type WindowAt } from "./window-at";
 
 const required = process.env.EMBER_WIN32_TEST === "1";
 const onWindows = process.platform === "win32";
@@ -57,6 +57,7 @@ const TITLE = "Ember Bench (Windows)";
 const powershell = path.win32.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
 const POWERSHELL_ARGS = ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass"];
 const benchScript = path.join(root, "test", "fixtures", "win_bench.ps1");
+const watchScript = path.join(root, "test", "fixtures", "win_foreground_watch.ps1");
 const packaged = process.env.EMBER_PACKAGED_APP ? path.resolve(root, process.env.EMBER_PACKAGED_APP) : "";
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 /**
@@ -411,6 +412,7 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
       return w ? { visible: w.isVisible(), focused: w.isFocused() } : null;
     });
     let fgTimer: ReturnType<typeof setInterval> | undefined;
+    let watcher: ChildProcess | null = null;
     try {
       await waitFor("Ember's test hooks", () => ember.evaluate(() => !!(globalThis as { __ember?: unknown }).__ember), 60_000);
       const accel = "Super+Alt+Space";
@@ -463,6 +465,26 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
         shownLast = now;
       };
       fgTimer = setInterval(() => { readForeground(); readWindows(); }, 20);
+      // Every foreground, focus and minimise change as Windows reports it, however brief (cifix-x9-6: the window list
+      // at bcbd4f1 showed nothing coming or going when the bench took the keyboard back), with the Win and Alt keys'
+      // state then. Best effort: a watcher that doesn't start is said in the timeline, and the test goes on.
+      const watched = (w: WatchedWindow) => (w.root === ready.hwnd ? "the bench"
+        : emberPid !== undefined && w.pid === emberPid ? `Ember's ${JSON.stringify(w.title)}`
+        : `${w.image || `pid ${w.pid}`} (class ${w.className}, title ${JSON.stringify(w.title)})`);
+      watcher = spawn(powershell, [...POWERSHELL_ARGS, "-File", watchScript], { stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+      const watchErr: string[] = [];
+      watcher.stderr?.on("data", (d: Buffer) => { if (watchErr.join("").length < 2_000) watchErr.push(d.toString()); });
+      const watchReady = new Promise<boolean>(resolve => {
+        readline.createInterface({ input: watcher!.stdout! }).on("line", line => {
+          if (line.startsWith('{"ready":true')) { resolve(true); return; }
+          const e = watchEvent(line, watched);
+          if (e) trail.push(e);
+        });
+        watcher!.on("exit", () => resolve(false));
+        watcher!.on("error", () => resolve(false));
+        setTimeout(() => resolve(false), 30_000).unref();
+      });
+      if (!(await watchReady)) trail.push({ t: Date.now(), what: `the foreground watcher didn't start: ${watchErr.join("").trim().slice(0, 300) || "no answer in 30 s"}` });
       await ember.evaluate(({ app, BrowserWindow }) => {
         const seen: { t: number; what: string }[] = [];
         (globalThis as { __winTrail?: typeof seen }).__winTrail = seen;
@@ -496,7 +518,7 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
             // a line still being written
           }
         }
-        return `${focusTrail("from the chord", pressedFrom, [...trail, ...inEmber, ...logged], 100)}; ${windowTracking()}`;
+        return `${focusTrail("from the chord", pressedFrom, [...trail, ...inEmber, ...logged], 200)}; ${windowTracking()}`;
       };
       await front();
       const x = input!;
@@ -517,6 +539,8 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
       x.keysym(space, true);
       x.keysym(space, false);
       for (const k of [...mods].reverse()) x.keysym(k, false);
+      // VK_LWIN 0x5B, VK_MENU 0x12: what Windows thinks of the chord's keys once they were let go.
+      step(`the chord's keys let go (Win ${api.asyncKeyDown(0x5b) ? "still down" : "up"}, Alt ${api.asyncKeyDown(0x12) ? "still down" : "up"})`);
       const typedAt: number[] = [];
       for (const ch of PROBE_TEXT) {
         typedAt.push(Date.now());
@@ -656,6 +680,12 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
       expect((await askWindow())?.visible, "the box after a click activated the bench").toBe(false);
     } finally {
       clearInterval(fgTimer);
+      // Its input closing ends it; killed if it doesn't go.
+      if (watcher) {
+        const w = watcher;
+        w.stdin?.end();
+        setTimeout(() => { if (w.exitCode === null) w.kill(); }, 3_000).unref();
+      }
       const proc = ember.process();
       await Promise.race([ember.close().catch(() => undefined), sleep(10_000)]);
       if (proc.exitCode === null) proc.kill();

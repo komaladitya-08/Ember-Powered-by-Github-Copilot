@@ -5,7 +5,9 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { focusTrail, hoverActivation, waitForWindowAt, type WindowAt } from "../integration/window-at";
+import fs from "node:fs";
+import path from "node:path";
+import { focusTrail, hoverActivation, waitForWindowAt, watchEvent, type WindowAt } from "../integration/window-at";
 
 const ASK: WindowAt = { id: 459336, className: "Chrome_WidgetWin_1", title: "Ask Ember", pid: 4000 };
 const OTHER: WindowAt = { id: 262636, className: "Chrome_WidgetWin_1", title: "Ember overlay", pid: 4000 };
@@ -122,5 +124,39 @@ describe("hoverActivation (cifix-x9-3)", () => {
 
   it("says unknown when the registry couldn't be read, never off", () => {
     expect(hoverActivation("", "")).toBe("activate on hover: unknown (UserPreferencesMask unreadable, ActiveWndTrkTimeout unset)");
+  });
+});
+
+describe("watchEvent (cifix-x9-6)", () => {
+  const name = (w: { root: number; className: string; image: string }) => (w.root === 77 ? "the bench" : `${w.image} (class ${w.className})`);
+  it("names the window Windows made the foreground and says which of the chord's keys were down", () => {
+    const line = '{"t":1700000000900,"event":"foreground","hwnd":5,"root":5,"class":"Windows.UI.Core.CoreWindow","title":"Start","pid":9,"image":"C:\\\\Windows\\\\explorer.exe","win":true,"alt":false}';
+    expect(watchEvent(line, name)).toEqual({ t: 1700000000900, what: "Windows says foreground: C:\\Windows\\explorer.exe (class Windows.UI.Core.CoreWindow) (window 5); Win down, Alt up" });
+  });
+
+  it("takes the focus moving to another window, and a minimise, in the suite's words", () => {
+    expect(watchEvent('{"t":1,"event":"focus","root":77,"class":"x","title":"","pid":2,"image":"","win":false,"alt":false}', name)?.what)
+      .toBe("Windows says focus: the bench (window 77); Win up, Alt up");
+    expect(watchEvent('{"t":2,"event":"minimize-start","root":77,"win":false,"alt":true}', name)?.what)
+      .toBe("Windows says minimize-start: the bench (window 77); Win up, Alt down");
+  });
+
+  it("skips the ready line, half a line and events it doesn't know", () => {
+    expect(watchEvent('{"ready":true,"t":1}', name)).toBeNull();
+    expect(watchEvent('{"t":1,"event":"fore', name)).toBeNull();
+    expect(watchEvent('{"t":1,"event":"destroy","root":1}', name)).toBeNull();
+    expect(watchEvent("null", name)).toBeNull();
+  });
+});
+
+describe("the foreground watcher's script (cifix-x9-6)", () => {
+  const ps1 = fs.readFileSync(path.resolve("test/fixtures/win_foreground_watch.ps1"), "latin1");
+  it("is ASCII, which Windows PowerShell 5.1 reads the same without a byte-order mark", () => {
+    expect([...ps1].filter(c => c.charCodeAt(0) > 0x7e || (c.charCodeAt(0) < 0x20 && c !== "\n" && c !== "\t")).length).toBe(0);
+  });
+
+  it("hooks foreground, focus and minimise changes out of context, and ends when its input closes", () => {
+    for (const s of ["EVENT_SYSTEM_FOREGROUND = 0x0003", "EVENT_OBJECT_FOCUS = 0x8005", "EVENT_SYSTEM_MINIMIZESTART = 0x0016", "WINEVENT_OUTOFCONTEXT = 0x0000", "Console.In.ReadLine()", "WM_QUIT"]) expect(ps1).toContain(s);
+    expect(ps1).toContain('{\\"ready\\":true');
   });
 });

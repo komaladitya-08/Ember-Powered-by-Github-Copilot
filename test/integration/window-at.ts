@@ -95,3 +95,24 @@ export function hoverActivation(maskQuery: string, timeoutQuery: string): string
   const on = mask ? (parseInt(mask.slice(0, 2), 16) & 1) === 1 : null;
   return `activate on hover: ${on === null ? "unknown" : on ? "on" : "off"} (UserPreferencesMask ${mask ?? "unreadable"}, ActiveWndTrkTimeout ${timeout ? `${parseInt(timeout, 16)} ms` : "unset"})`;
 }
+
+/** A window as the foreground watcher names it (test/fixtures/win_foreground_watch.ps1). */
+export interface WatchedWindow { root: number; className: string; title: string; pid: number; image: string }
+
+const WATCH_EVENTS = new Set(["foreground", "focus", "minimize-start", "minimize-end"]);
+
+/**
+ * One line of the foreground watcher as a timeline event (cifix-x9-6): what Windows says changed, the window by
+ * `name` (the suite's words for the bench and Ember's windows), and whether the Windows and Alt keys were down then.
+ * Null for its ready line, a line still being written, or anything else that isn't one of its events.
+ */
+export function watchEvent(line: string, name: (w: WatchedWindow) => string): TrailEvent | null {
+  let e: Record<string, unknown>;
+  try { e = JSON.parse(line) as Record<string, unknown>; } catch { return null; }
+  if (!e || typeof e !== "object" || typeof e.t !== "number" || typeof e.event !== "string" || !WATCH_EVENTS.has(e.event)) return null;
+  const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+  const str = (v: unknown) => (typeof v === "string" ? v : "");
+  const w: WatchedWindow = { root: num(e.root), className: str(e.class), title: str(e.title), pid: num(e.pid), image: str(e.image) };
+  const keys = `Win ${e.win === true ? "down" : "up"}, Alt ${e.alt === true ? "down" : "up"}`;
+  return { t: e.t, what: `Windows says ${e.event}: ${name(w)} (window ${w.root}); ${keys}` };
+}
