@@ -257,9 +257,32 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
     r10-memory-y10-3): "sunshine's my Netflix password", "My Netflix password? sunshine.", "Netflix pw sunshine",
     "Set a new Netflix password. It is sunshine.", "PIN 041". So is "bluebird is what I use for Gmail" and a login's user and value ("Netflix login: ram /
     sunshine"). That fails closed: "Works at Globex and forgot their password" is refused too, for its "Globex".
-    Never a password manager, a PIN reset or password rules, nor a postal PIN code. A word said with no password's
-    name ("My Netflix is sunshine", "I log into Netflix with sunshine", "If Netflix asks, the answer is sunshine")
-    isn't read as one.
+    Never a password manager, a PIN reset or password rules, nor a postal PIN code.
+  - a credential by its value, wherever its name stands (memory-r11-1, memory-c11-1; `credentialValue`): a word that
+    can only be a key or a token (a UUID, 16 or more hex digits, a run of 12 or more letters and digits) beside a
+    key's, a token's, a cookie's, an API's or a hook's name with or without "is" ("API key 9b2f…", "Bearer token
+    3f9a…", "Session cookie 3f9a…"), and alone when it can be nothing else (a UUID, 24 or more hex digits, a run of
+    20 or more with four letters and four digits: "Uses sk-proj-a8f7… for OpenAI"); a word shaped like a password in
+    a clause that names a thing people sign in to (a service, a VPN, Wi-Fi, a router or a NAS, AWS, Azure, RADIUS,
+    LDAP, SSH, a database, an administrator, a password manager: "Remember Summer2024 for the VPN", "For the VPN it's
+    Summer2024", "My Bitwarden is Summer2024", "My Netflix account: ram@example.com, Summer2024"); any lone word after a
+    secret's, a password's, a PIN's, a key's or a token's name with what it is for before it, in any position ("My
+    AWS secret is Summer2024", "My VPN secret is sunshine", "Our Jenkins secret: tangerine"), after a sign-in thing
+    and a colon or a dash ("Netflix: sunshine", "Spotify — Bluebird77"), after a login for a service that signs in by
+    e-mail ("The login for Netflix is sunshine"), or as the next sentence after a password's name ("Netflix password.
+    sunshine"); a user and any value after a sign-in thing ("Gmail: ram99 / sunshine"); a word in lower case after a
+    verb of signing in and "with" ("I log into Netflix with sunshine") or after a service that "uses" it; four to
+    eight digits used "for everything" or "everywhere"; and an NHS, CHI, Medicare or social insurance number. A
+    secret with nothing before it is a password only by its shape ("The secret is patience" and "Our family secret is
+    cinnamon" are kept), a login's lone word is its user's name (plain words: "The GitHub login is octocat"), and a
+    handle where people give theirs ("GitHub: octocat2"), a product named for what it is ("VPN: NordVPN2"), a
+    standard, a speed, a band and a user at a computer named by words ("admin@localhost") are no password. Of the
+    1,998 sentences the memory tests keep as facts, it refuses none; of 65 more everyday facts about services, two,
+    both refused before it ("The Wi-Fi is BT-Hub-6A", "Prefers tokens over passwords"). Still kept: a dictionary word
+    said as what a service "is" ("My Netflix is sunshine"), a capitalised word after a verb of signing in ("Logs in
+    with Sunshine"), and a word shaped like a product's name after the thing it is for with no colon or dash
+    ("Remember Pinecone7 for the Wi-Fi"), which can't be told from "Uses Figma2 for Slack", and a word in lower case
+    where people give their handle ("Discord: hunter2"), which can't be told from "GitHub: octocat2".
 
   A value is read as `guard.ts` reads a login's (`LOGIN_VALUE`: a digit or a symbol, never an address, a scheme such
   as OAuth2 or 2FA, a version, a date or a hyphenated word), four to eight digits where a code goes, and where a tool
