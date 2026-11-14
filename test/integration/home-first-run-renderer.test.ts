@@ -1670,8 +1670,8 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect(changed[2]).toContain("Your other settings stay as they are.");
     // Version 10: what the vault keeps, and that only Autopilot fills it in (vault-4).
     expect(changed[3]).toBe("If you give me a login, a card or contact details in my Secure Form, I keep them in a vault on this computer, locked with your computer's keyring, until you forget them. Only Autopilot fills them in, and the AI model never sees them.");
-    // Version 11: where it doesn't ask before something hard to undo (Settled 28, accessibility-c11-1).
-    expect(changed[4]).toBe("I say plainly where I don't ask before something hard to undo: a command you asked for exactly, which I show you first with a few seconds to stop it, and Assisted or Autopilot if you choose them later, which ask less.");
+    // Version 11: what asks, and that a command Ember doesn't know runs (Settled 28, accessibility-c11-1, r11-copy-x11-3).
+    expect(changed[4]).toBe("I say plainly what I ask before: anything risky in an app, and a command I know is dangerous or code I can't read, unless you asked for exactly that command and it only deletes or overwrites data, publishes something or changes the system. A command I don't know runs, and I tell you, and Assisted and Autopilot, if you choose them later, ask less.");
     expect(await p.locator(".w-row").evaluateAll(rows => rows.map(r => (r as HTMLElement).dataset.row))).toEqual(["interactive"]);
     expect(await p.locator("#w-row-interactive").isChecked()).toBe(true);
     // The usual points and the full text are still there; nothing goes on until Agree is saved.

@@ -243,7 +243,8 @@ has its own card that says what it means, and a mode is in use only once you agr
   changing security settings or answering a dialog's question. It asks before a dangerous command too: one that
   deletes, publishes, touches passwords or keys, changes the system or runs as an administrator, downloads and runs
   code or would keep running after you stop it, and before code it can't read. If you asked for exactly that command
-  and it only deletes, publishes or changes the system, it tells you instead and gives you 4 seconds to stop it.
+  and it only deletes or overwrites data, publishes something or changes the system, and Ember isn't running as an
+  administrator, it tells you instead and gives you 4 seconds to stop it.
 - **Assisted** is Interactive with a check: before Ember asks, a lighter AI model reads the step against what you
   asked, in your own words. When it matches, Ember goes ahead and tells you, a risky step or a dangerous command
   included; otherwise it asks. A step you said no to, or that your own words for the task rule out, always asks or is

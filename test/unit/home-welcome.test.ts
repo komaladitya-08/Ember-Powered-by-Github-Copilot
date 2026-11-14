@@ -97,9 +97,12 @@ describe("the consent in short", () => {
       ["eye", /I read the window you're working in, and for tasks I may take a screenshot of it\./, "reads the window you're working in"],
       ["eye", /Never password prompts, or apps on your never-look list\./, "App windows on your never-look list and password prompts are never read"],
       ["send", /your request and what I read go to GitHub Copilot\. Nothing is sent before you ask\./, "Nothing is sent before you ask."],
-      ["hand", /I ask before acting in an app unless you turn on Interactive\. I also ask before anything hard to undo, unless you asked for exactly that command \(I show it first, with a few seconds to stop it\) or later choose Assisted or Autopilot, which ask less\. I never let the AI model type or see passwords\./, "It never lets the AI model type or see passwords."],
-      ["hand", /unless you asked for exactly that command \(I show it first, with a few seconds to stop it\)/, "It also asks before anything hard to undo, unless you asked for exactly that command (it shows it first, with a few seconds to stop it)"],
-      ["hand", /or later choose Assisted or Autopilot, which ask less\./, "or later choose Assisted or Autopilot in settings, which ask less."],
+      ["hand", /^I ask before acting in an app unless you turn on Interactive, and then still before anything risky there\./, "and then still before anything risky there"],
+      // What asks among commands, in the one phrase every card uses for the exception (r11-copy-x11-1, -x11-3).
+      ["hand", /I ask before a command I know is dangerous and before code I can't read, unless you asked for exactly that command and it only deletes or overwrites data, publishes something or changes the system \(I show it first, with a few seconds to stop it\)\./, "It asks before a command it knows is dangerous and before code it can't read, unless you asked for exactly that command and it only deletes or overwrites data, publishes something or changes the system (it shows it first, with a few seconds to stop it)"],
+      ["hand", /A command I don't know runs, and I tell you\./, "A command it doesn't know runs, and it tells you."],
+      ["hand", /Assisted and Autopilot, if you choose them later, ask less\. I never let the AI model type or see passwords\./, "Assisted and Autopilot, if you choose them later in settings, ask less."],
+      ["hand", /I never let the AI model type or see passwords\./, "It never lets the AI model type or see passwords."],
       // The vault fills a login itself in Autopilot, so the line says so beside the password promise (merge review integ-x-2).
       ["hand", /Only in Autopilot, I can fill in a login, a card or contact details from my vault\.$/, "Only in Autopilot, it can fill in a login, a card or contact details from its vault, which the AI model never sees."],
       ["hand", /unless you turn on Interactive/, "It asks before acting</b> in an app unless you turn on Interactive"],

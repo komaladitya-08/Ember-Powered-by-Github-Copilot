@@ -664,7 +664,7 @@ describe.skipIf(gate)("Home's Apps & privacy, after setup (2026-11-07 product au
     // and commands switches it offers, and that “Hey Ember” is turned on as you agree (slice4-x9-5).
     expect(consent).toContain("The list is in settings");
     expect(shown).toBe(consent?.replace("The list is in settings", "The list is below, under Never look at")
-      .replace(" in an app unless you turn on Interactive, when you agree or later in settings. It also asks before anything hard to undo, unless you asked for exactly that command (it shows it first, with a few seconds to stop it) or later choose Assisted or Autopilot in settings, which ask less.", " in an app, and always before anything hard to undo, except a command you asked for exactly, which it shows you first with a few seconds to stop it.")
+      .replace(" in an app unless you turn on Interactive, when you agree or later in settings, and then still before anything risky there. It asks before a command it knows is dangerous and before code it can't read, unless you asked for exactly that command and it only deletes or overwrites data, publishes something or changes the system (it shows it first, with a few seconds to stop it). A command it doesn't know runs, and it tells you. Assisted and Autopilot, if you choose them later in settings, ask less.", " in an app. It asks before a command it knows is dangerous and before code it can't read, unless you asked for exactly that command and it only deletes or overwrites data, publishes something or changes the system (it shows it first, with a few seconds to stop it). A command it doesn't know runs, and it tells you.")
       .replace(" unless you turn on “Hey Ember”, when you agree or later in settings, or", " unless you turn on “Hey Ember” in Settings › Voice, or")
       .replace(" Each asks you before it turns on, except commands on this computer, which have their own switch here.", " Each asks you first."));
     expect(shown).not.toContain("Agreeing turns on");
@@ -764,16 +764,16 @@ describe.skipIf(gate)("Home's Apps & privacy, as the person's own settings and t
     const plug = () => page.locator("#privacy-terms li[data-icon='plug']").innerText();
     expect(await page.locator("#mode-interactive").getAttribute("aria-checked")).toBe("true");
     expect(await plug()).toBe("Other computers and commands: you let Ember run commands on this computer. It runs commands only in its own window, where you can watch and stop them. Other computers are off until you turn them on.");
-    expect(await hand()).toMatch(/^It asks before acting on anything risky or hard to undo, except a command you asked for exactly, which it shows you first with a few seconds to stop it\. For ordinary steps it tells you what it's doing instead \(How Ember asks, below\)\. It never lets the AI model type or see passwords\./);
+    expect(await hand()).toMatch(/^It\ asks\ before\ acting\ on\ anything\ risky\ in\ an\ app,\ and\ before\ a\ command\ it\ knows\ is\ dangerous\ or\ code\ it\ can't\ read,\ except\ a\ command\ you\ asked\ for\ exactly\ that\ only\ deletes\ or\ overwrites\ data,\ publishes\ something\ or\ changes\ the\ system,\ which\ it\ shows\ you\ first\ with\ a\ few\ seconds\ to\ stop\ it\.\ A\ command\ it\ doesn't\ know\ runs,\ and\ it\ tells\ you\. For ordinary steps it tells you what it's doing instead \(How Ember asks, below\)\. It never lets the AI model type or see passwords\./);
     // First run's own words are untouched.
     expect(await page.locator("#w-full li[data-icon='plug']").evaluate(e => e.textContent)).toContain("are off until you turn them on");
-    expect(await page.locator("#w-full li[data-icon='hand']").evaluate(e => e.textContent)).toContain("It asks before acting in an app unless you turn on Interactive, when you agree or later in settings. It also asks before anything hard to undo, unless you asked for exactly that command (it shows it first, with a few seconds to stop it) or later choose Assisted or Autopilot in settings, which ask less.");
+    expect(await page.locator("#w-full li[data-icon='hand']").evaluate(e => e.textContent)).toContain("It asks before acting in an app unless you turn on Interactive, when you agree or later in settings, and then still before anything risky there. It asks before a command it knows is dangerous and before code it can't read, unless you asked for exactly that command and it only deletes or overwrites data, publishes something or changes the system (it shows it first, with a few seconds to stop it). A command it doesn't know runs, and it tells you. Assisted and Autopilot, if you choose them later in settings, ask less.");
     await evidence(page, "privacy-terms-on");
     // Both turned off again (main tells Home the settings changed): word for word as before it started, still open.
     const base = { ...structuredClone(DEFAULT_SETTINGS), onboarded: true, consent: { version: 99, at: "2026-11-04T12:00:00Z" } };
     await page.evaluate(s => window.__pane.emit("onSettingsChanged", s), base);
     await page.evaluate(a => window.__pane.emit("onApprovals", a), approvalsState(DEFAULT_SETTINGS.approvals, null));
-    await expect.poll(shown).toContain("It asks before acting in an app, and always before anything hard to undo, except a command you asked for exactly, which it shows you first with a few seconds to stop it.");
+    await expect.poll(shown).toContain("It asks before acting in an app. It asks before a command it knows is dangerous and before code it can't read, unless you asked for exactly that command and it only deletes or overwrites data, publishes something or changes the system (it shows it first, with a few seconds to stop it). A command it doesn't know runs, and it tells you.");
     expect(await plug()).toBe("Other computers and commands are off until you turn them on: Ember can work on computers you reach over SSH, and run commands in its own window. Each asks you first.");
     expect(await fold.evaluate(d => (d as HTMLDetailsElement).open)).toBe(true);
     expect(page.errors).toEqual([]);
@@ -789,7 +789,7 @@ describe.skipIf(gate)("Home's Apps & privacy, as the person's own settings and t
     const fold = page.locator("#privacy-terms-fold");
     await fold.locator("summary").click();
     expect(await page.locator("#privacy-terms li[data-icon='plug']").innerText()).toBe("Other computers and commands are turned off by your organisation.");
-    expect(await page.locator("#privacy-terms li[data-icon='hand']").innerText()).toContain("It asks before acting in an app, and always before anything hard to undo, except a command you asked for exactly, which it shows you first with a few seconds to stop it.");
+    expect(await page.locator("#privacy-terms li[data-icon='hand']").innerText()).toContain("It asks before acting in an app. It asks before a command it knows is dangerous and before code it can't read, unless you asked for exactly that command and it only deletes or overwrites data, publishes something or changes the system (it shows it first, with a few seconds to stop it). A command it doesn't know runs, and it tells you.");
     expect(page.errors).toEqual([]);
     await page.close();
   });
@@ -834,7 +834,7 @@ describe.skipIf(gate)("Home's Apps & privacy, as the person's own settings and t
     const hand = await page.locator("#privacy-terms li[data-icon='hand']").innerText();
     expect(hand).not.toContain("it tells you what it's doing instead");
     expect(hand).not.toContain("without asking (below)");
-    expect(hand).toMatch(/^It asks before acting in an app, and always before anything hard to undo, except a command you asked for exactly, which it shows you first with a few seconds to stop it\. It never lets the AI model type or see passwords\./);
+    expect(hand).toMatch(/^It\ asks\ before\ acting\ in\ an\ app\.\ It\ asks\ before\ a\ command\ it\ knows\ is\ dangerous\ and\ before\ code\ it\ can't\ read,\ unless\ you\ asked\ for\ exactly\ that\ command\ and\ it\ only\ deletes\ or\ overwrites\ data,\ publishes\ something\ or\ changes\ the\ system\ \(it\ shows\ it\ first,\ with\ a\ few\ seconds\ to\ stop\ it\)\.\ A\ command\ it\ doesn't\ know\ runs,\ and\ it\ tells\ you\. It never lets the AI model type or see passwords\./);
     expect(await page.locator("#privacy-terms li[data-icon='plug']").innerText()).toBe("Other computers and commands are turned off by your organisation.");
     // Screenshots too, as a lockdown read at start says, and the switches under the fold as it says they are
     // (safety-privacy-w5-2): the settings still hold Send screenshots for tasks on and Interactive chosen and agreed to.
@@ -880,7 +880,7 @@ describe.skipIf(gate)("Home's Apps & privacy, as the person's own settings and t
     expect(await notice()).toMatch(/^Some settings are managed by your organisation \(\/etc\/ember\/policy\.json\)\./);
     // The policy file changes while Ember runs: main sends the held lockdown, as a status read would carry it.
     await page.evaluate(a => window.__pane.emit("onAdminChanged", a), homeAdmin(heldUntilRestart(ordinary)));
-    await expect.poll(() => line("hand")).toMatch(/^It asks before acting in an app, and always before anything hard to undo, except a command you asked for exactly, which it shows you first with a few seconds to stop it\. It never lets the AI model type or see passwords\./);
+    await expect.poll(() => line("hand")).toMatch(/^It\ asks\ before\ acting\ in\ an\ app\.\ It\ asks\ before\ a\ command\ it\ knows\ is\ dangerous\ and\ before\ code\ it\ can't\ read,\ unless\ you\ asked\ for\ exactly\ that\ command\ and\ it\ only\ deletes\ or\ overwrites\ data,\ publishes\ something\ or\ changes\ the\ system\ \(it\ shows\ it\ first,\ with\ a\ few\ seconds\ to\ stop\ it\)\.\ A\ command\ it\ doesn't\ know\ runs,\ and\ it\ tells\ you\. It never lets the AI model type or see passwords\./);
     expect(await line("send")).toContain("nothing is sent to a model service until you restart Ember, so Ember can't answer or act.");
     expect(await line("send")).not.toContain("GitHub Copilot");
     expect(await line("eye")).toContain("Send screenshots for tasks is off (below), so it takes no screenshots for tasks.");
@@ -917,7 +917,7 @@ describe.skipIf(gate)("Apps & privacy › How Ember asks, with a keyboard and a 
     const row = page.locator("#mode-interactive");
     expect(await row.getAttribute("role")).toBe("radio");
     expect(await row.getAttribute("aria-checked")).toBe("false");
-    expect(await row.innerText()).toMatch(/^Interactive\s+Ember tells you about ordinary steps as it does them, and asks before anything risky, such as sending, deleting or paying, unless it is a command you asked for exactly: then it tells you first\.$/);
+    expect(await row.innerText()).toMatch(/^Interactive\s+Ember tells you about ordinary steps as it does them, and asks before anything risky, such as sending, deleting or paying, unless\ it\ is\ a\ command\ you\ asked\ for\ exactly\ that\ only\ deletes\ or\ overwrites\ data,\ publishes\ something\ or\ changes\ the\ system:\ then\ it\ tells\ you\ first\.$/);
     expect(await page.locator("#approvals-note").innerText()).toBe("Until you agree to Interactive, Ember asks before its first step in an app, before using your mouse and keyboard, before pressing OK on an app's message box and before moving text between apps.");
     // The card is there to read and agree to, but the keyboard stays where it was.
     expect(await page.locator("#approvals-card").isVisible()).toBe(true);
@@ -1006,7 +1006,7 @@ describe.skipIf(gate)("Apps & privacy › How Ember asks, with a keyboard and a 
     const page = await open("privacy", { approvals: approvalsState(INTERACTIVE, null) });
     const rows = page.locator("#approvals button.mode");
     expect(await rows.evaluateAll(els => els.map(e => [e.id, e.getAttribute("role"), e.getAttribute("aria-checked"), e.querySelector("b")!.textContent, e.querySelector("span")!.textContent]))).toEqual([
-      ["mode-interactive", "radio", "true", "Interactive", "Ember tells you about ordinary steps as it does them, and asks before anything risky, such as sending, deleting or paying, unless it is a command you asked for exactly: then it tells you first."],
+      ["mode-interactive", "radio", "true", "Interactive", "Ember tells you about ordinary steps as it does them, and asks before anything risky, such as sending, deleting or paying, unless it is a command you asked for exactly that only deletes or overwrites data, publishes something or changes the system: then it tells you first."],
       ["mode-assisted", "radio", "false", "Assisted", "As Interactive, but before Ember asks, a lighter AI model checks the step against what you asked. If it matches, Ember goes ahead and tells you."],
       ["mode-autopilot", "radio", "false", "Autopilot", "Ember doesn't ask: it sends, deletes, pays and installs without asking, and tells you as it goes. You accept that risk when you choose it."],
     ]);
