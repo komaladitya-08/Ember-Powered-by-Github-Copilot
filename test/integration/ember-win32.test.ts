@@ -16,8 +16,8 @@
  * for it (its first openings); then its right-click menu, opened once the field is the window under the pointer (waited
  * for and named in the output, window-at.ts: cifix-2; a box that closed before then fails at once, with which window
  * had the foreground and what Ember's windows did from the chord on: cifix-x9-2) and dismissed by a click on the bench,
- * leaves the bench the keyboard (review #77). Then a probe that only prints opens the box twice more with its read of the
- * bench delayed and off (EMBER_TEST_ASK_READ: cifix-x9-9). Last, Ember started again with Text size set to Larger through its
+ * leaves the bench the keyboard (review #77). Then a probe that only prints opens the box again with each stage of its read
+ * of the bench left out (EMBER_TEST_ASK_READ: cifix-x9-9, cifix-x9-10). Last, Ember started again with Text size set to Larger through its
  * settings opens the box 728 × 142 DIP (173 with the tip's row), its page and field at that size (review #57;
  * ask-size.ts).
  *
@@ -702,17 +702,19 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
     }
   });
 
-  // A probe, not a check (cifix-x9-9): the box is opened twice more over the bench, Ember's read of the bench first
-  // delayed to 4 s after the box shows, then off (EMBER_TEST_ASK_READ, development only), and each opening's timeline
-  // and one summary line are printed. If the bench's return to the foreground moves with the read and goes without
-  // it, the read is the cause. A box that closes meanwhile is the probe's finding. Nothing here can fail the suite:
+  // A probe, not a check (cifix-x9-9, cifix-x9-10): the box is opened again over the bench once for each stage of
+  // Ember's read of it left out (EMBER_TEST_ASK_READ=skip:<stage>, development only; delay:<ms> and off showed the
+  // read is what hands the bench the foreground), and each opening's timeline and one summary line are printed. A box
+  // that closes meanwhile is the probe's finding. Nothing here can fail the suite:
   // every step is bounded, its errors are printed, and Ember is closed and the bench given the keyboard back after.
-  it("prints when the bench takes the foreground back with the box's read delayed and off (read probe, cifix-x9-9)", async () => {
+  it("prints when the bench takes the foreground back with each stage of the box's read left out (read probe, cifix-x9-9, cifix-x9-10)", async () => {
     const main = path.join(root, "dist", "app", "main.cjs");
     if (!fs.existsSync(main)) { console.log("read probe: not run: npm run build first"); return; }
     const api = loadWin32();
     if (!api || !input) { console.log("read probe: not run: no window system here"); return; }
-    for (const plan of ["delay:4000", "off"]) {
+    // At 2d7b0b4 the bench came back 780 ms into the delayed read and never with it off (cifix-x9-9): the read does it.
+    // Now one opening per stage of it left out (cifix-x9-10), so the stage whose absence keeps the bench away is named.
+    for (const plan of ["skip:read", "skip:lookup", "skip:texts", "skip:looks"]) {
       // Filled inside the bounded run, ended in finally.
       const held: { ember: ElectronApplication | null; watcher: ChildProcess | null } = { ember: null, watcher: null };
       let poll: ReturnType<typeof setInterval> | undefined;
@@ -785,7 +787,7 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
           input!.keysym(input!.keysymOf("space"), false);
           for (const k of [...mods].reverse()) input!.keysym(k, false);
           // Long enough for the delayed read (4 s after the box shows) and the 1.5 s handover after it.
-          await sleep(plan === "off" ? 4_000 : 7_000);
+          await sleep(plan.startsWith("delay:") ? 7_000 : 4_000);
           const inEmber = await app.evaluate(() => (globalThis as { __probe?: { t: number; what: string }[] }).__probe ?? []).catch(() => []);
           let contexts = 0;
           for (const e of inEmber) {
@@ -826,7 +828,7 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
         await front().catch((err: unknown) => console.log(`read probe (${plan}): the bench didn't take the keyboard back: ${String(err)}`));
       }
     }
-  }, 240_000);
+  }, 420_000);
 
   it("opens the ask box as large as its words at Larger text, its window wider and taller, the tip's row too (review #57)", async () => {
     // Windows' box is a "toolbar" window without a resizing frame that, before the text size reached it, only ever

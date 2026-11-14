@@ -45,7 +45,7 @@ import { Perception, type QuickContext } from "./perception";
 import { warmText } from "./perception/capture";
 import { TEXT_WARM_DELAY_MS, scheduleTextWarm } from "./perception/text-warm";
 import { AskWindow, MAC_SETTLE_MS, WAIT_TIP_OPENINGS, showsWaitTip, stepsAsideFor } from "./ask";
-import { askReadPlan, focusBeforeNow, openAskInOrder, readAsPlanned, userWindowsNow } from "./ask-open";
+import { askReadPlan, focusBeforeNow, openAskInOrder, probeReadParams, readAsPlanned, userWindowsNow } from "./ask-open";
 import { notificationBody } from "./notification";
 import { askSees } from "./ask-sees";
 import { LISTEN_CUT_BY_QUESTION, LISTEN_ONCE_STOPS_ANSWER, VoiceService, cutByQuestion, electronDownloader, heldByQuestion, listenOnceInSettings, questionHoldsListen, voicePermissions } from "./voice";
@@ -3424,6 +3424,17 @@ function start(): void {
     const privacy = wslAwarePrivacy({ isSecurityWindow: sys.privacy.isSecurityWindow, isTerminalApp: a => isTerminalWindowApp(a.name ?? a.id, sys.apps, platform.os) });
     const wslOptions = { os: platform.os, log: log.child("wsl"), ws: () => wsRef, wsl: () => targets?.wsl ?? null, settings };
     const seenBy = wrapForWsl(sidecar, wslOptions);
+    // EMBER_TEST_ASK_READ=skip:<stage> (development only, cifix-x9-10): the Windows suite's probe leaves one stage of
+    // the reads out to find which hands the foreground to the window read. Without it nothing here is changed.
+    const askProbe = askReadPlan(devEnv("EMBER_TEST_ASK_READ"));
+    if (askProbe.kind === "skip") {
+      const readWindow = seenBy.readWindow.bind(seenBy);
+      seenBy.readWindow = params => {
+        const asked = probeReadParams(askProbe, params ?? {});
+        log.info("ask.read_probe", { skip: askProbe.stage });
+        return asked ? readWindow(asked) : Promise.resolve({ window: null, nodes: [], ms: 0 });
+      };
+    }
     const wsSeen = ws && wrapWindowsForWsl(ws, wslOptions);
     wsSeenRef = wsSeen;
     // The host's status for the setup checks (why it couldn't start, PowerShell's language mode), asked after the cold

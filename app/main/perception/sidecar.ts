@@ -771,7 +771,7 @@ export class AtspiSidecar {
    * aren't acted on (what has the keyboard before a key): it doesn't push the reads acted on out of the sidecar's
    * last few, so the ids of the latest perceive_window stay known. `focusBefore`: the ask box's quick look (FocusBefore).
    */
-  readWindow(params: { pid?: number; title?: string; path?: string; maxDepth?: number; maxNodes?: number; neverLook?: string[]; skipPids?: number[]; ownPid?: number; keep?: boolean; cells?: string[]; focusBefore?: FocusBefore } = {}): Promise<ReadWindowResult> {
+  readWindow(params: { pid?: number; title?: string; path?: string; maxDepth?: number; maxNodes?: number; neverLook?: string[]; skipPids?: number[]; ownPid?: number; keep?: boolean; cells?: string[]; focusBefore?: FocusBefore; probeSkip?: string } = {}): Promise<ReadWindowResult> {
     return this.request<ReadWindowResult & { secretKeys?: unknown; withheldKeys?: unknown }>("read_window", params).then(({ secretKeys, withheldKeys, ...r }) => {
       this.remember(secretKeys);
       this.remember(withheldKeys, this.withheld);

@@ -9,7 +9,7 @@
 
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
-import { askReadPlan, focusBeforeNow, openAskInOrder, readAsPlanned, userWindowsNow } from "../../app/main/ask-open";
+import { askReadPlan, focusBeforeNow, openAskInOrder, probeReadParams, readAsPlanned, userWindowsNow } from "../../app/main/ask-open";
 import { Perception } from "../../app/main/perception";
 import type { AtspiSidecar, AxWindow } from "../../app/main/perception/sidecar";
 import type { PerceptionWindows, X11Window } from "../../app/main/platform/types";
@@ -262,7 +262,31 @@ describe("the probe's switch for the box's read (EMBER_TEST_ASK_READ, cifix-x9-9
   it("is read through devEnv, which a packaged Ember answers with nothing", () => {
     const MAIN = readFileSync(new URL("../../app/main/main.ts", import.meta.url), "utf8");
     expect(MAIN).toContain("const devEnv = (name: string): string | undefined => (app.isPackaged ? undefined : process.env[name]);");
-    expect(MAIN.match(/EMBER_TEST_ASK_READ/g)?.length).toBe(2);
+    expect(MAIN.match(/EMBER_TEST_ASK_READ/g)?.length).toBe(4);
+    expect(MAIN.match(/devEnv\("EMBER_TEST_ASK_READ"\)/g)?.length).toBe(2);
+    // The reads are changed only for a stage named.
+    expect(MAIN).toContain('if (askProbe.kind === "skip") {\n      const readWindow = seenBy.readWindow.bind(seenBy);');
     expect(MAIN).toContain('askReadPlan(devEnv("EMBER_TEST_ASK_READ"))');
+  });
+});
+
+describe("the probe's stages of the read (EMBER_TEST_ASK_READ=skip:<stage>, cifix-x9-10)", () => {
+  it("names one stage to leave out, and reads at once otherwise", () => {
+    for (const stage of ["read", "lookup", "texts", "looks"]) expect(askReadPlan(`skip:${stage}`)).toEqual({ kind: "skip", stage });
+    for (const v of ["skip:", "skip:all", "skip:Read", "skip:texts,looks"]) expect(askReadPlan(v)).toEqual({ kind: "now" });
+  });
+
+  it("starts the read at once when a stage is left out", () => {
+    let starts = 0;
+    void readAsPlanned({ kind: "skip", stage: "texts" }, () => { starts++; return Promise.resolve(null); }, () => { throw new Error("scheduled"); });
+    expect(starts).toBe(1);
+  });
+
+  it("makes no host read for \"read\", names the host's stage for the others, and leaves the parameters alone otherwise", () => {
+    const params = { pid: 30, title: "Ember Bench (Windows)" };
+    expect(probeReadParams({ kind: "skip", stage: "read" }, params)).toBeNull();
+    expect(probeReadParams({ kind: "skip", stage: "lookup" }, params)).toEqual({ ...params, probeSkip: "lookup" });
+    expect(probeReadParams({ kind: "now" }, params)).toBe(params);
+    expect(probeReadParams({ kind: "delay", ms: 4000 }, params)).toBe(params);
   });
 });

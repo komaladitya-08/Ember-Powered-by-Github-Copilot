@@ -144,7 +144,7 @@ export function readProbeSummary(plan: string, chord: number, marks: readonly Pr
   const at = (k: ProbeMark["kind"]) => marks.filter(m => m.kind === k).map(m => m.t).sort((a, b) => a - b);
   const shown = at("box shown")[0];
   if (shown === undefined) return `read probe (${plan}): the box never showed`;
-  const started = plan === "off" ? undefined : at("read started").find(t => t >= shown - 50) ?? (plan === "now" ? shown : undefined);
+  const started = plan === "off" ? undefined : at("read started").find(t => t >= shown - 50) ?? (plan === "now" || plan.startsWith("skip:") ? shown : undefined);
   const answered = at("read answered").find(t => t > shown);
   const returns = at("bench foreground").filter(t => t > shown);
   const hidden = at("box hidden").find(t => t > shown);

@@ -188,5 +188,8 @@ describe("readProbeSummary (cifix-x9-9)", () => {
       .toBe("read probe (now): the box showed at 10 ms; the read started at 10 ms and answered at 950 ms; the bench took the foreground: "
         + "890 ms after the box showed, 890 ms after the read started, -50 ms after it answered; the box was still open at the end (ms from the chord)");
     expect(readProbeSummary("off", 0, [])).toBe("read probe (off): the box never showed");
+    // A stage left out (cifix-x9-10): the rest of the read still starts as the box shows.
+    expect(readProbeSummary("skip:texts", 0, [{ t: 10, kind: "box shown" }, { t: 700, kind: "read answered" }]))
+      .toBe("read probe (skip:texts): the box showed at 10 ms; the read started at 10 ms and answered at 700 ms; the bench took the foreground: never; the box was still open at the end (ms from the chord)");
   });
 });

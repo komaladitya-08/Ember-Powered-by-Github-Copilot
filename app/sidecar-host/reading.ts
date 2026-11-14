@@ -165,6 +165,8 @@ async function readWindow(host: Host, params: Record<string, unknown>): Promise<
     throw err;
   }
   const win = findWindow(host.findable(windows), { pid, title, path, ownPid });
+  // A development probe's stage left out (main sends it only for EMBER_TEST_ASK_READ=skip:<stage>, cifix-x9-10).
+  const probeSkip = typeof params.probeSkip === "string" ? params.probeSkip : "";
   if (!win) {
     // A window whose app didn't answer is busy (a file dialog listing a big folder), not gone.
     const lower = title.toLowerCase();
@@ -182,6 +184,10 @@ async function readWindow(host: Host, params: Record<string, unknown>): Promise<
   let cut: string[] = [];
   let over = false;
   let secretKeys: WireKey[] = [], withheldKeys: WireKey[] = [];
+  if (probeSkip === "lookup") {
+    host.snapshots.end();
+    return { window, nodes: [], truncated: false, cut: [], others: [], secretKeys: [], withheldKeys: [], ms: since(t0) };
+  }
   if (!busy) {
     const budget = Math.max(300, Math.min(READ_BUDGET_MS, READ_TOTAL_MS - since(t0)));
     const snap: Snapshot | undefined = await unlessBusy(() => host.provider.snapshot(win.handle, {
@@ -212,7 +218,12 @@ async function readWindow(host: Host, params: Record<string, unknown>): Promise<
       for (let i = 0; i < snap.nodes.length; i++) {
         if (built.ctx[i] && !listed.has(i) && holdsToo(snap.nodes[i], built.roles[i])) host.snapshots.hold({ handle: snap.nodes[i].handle, read, index: i });
       }
-      if (!busy) await fillTexts(host, read, built, t0 + READ_TOTAL_MS);
+      if (!busy && probeSkip !== "texts") await fillTexts(host, read, built, t0 + READ_TOTAL_MS);
+      if (probeSkip === "looks") {
+        // Without the looks no field is redacted, so nothing of the read is given back.
+        host.snapshots.end();
+        return { window, nodes: [], truncated: false, cut: [], others: [], secretKeys: [], withheldKeys: [], ms: since(t0) };
+      }
       const keyOf = (id: number) => host.keyOf(snap.nodes[built.indexOf.get(id)!]);
       // Secret fields it doesn't list may be named in what it lists; past where the snapshot ended, nothing is known.
       // An offscreen element the bridge left out past maxNodes ("offscreen") is a child of what holds the last element
