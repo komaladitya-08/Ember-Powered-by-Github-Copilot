@@ -140,6 +140,15 @@ describe("release.mjs", () => {
       expect(long.status, long.stdout).toBe(1);
       expect(long.stderr).toContain(`CHANGELOG.md's ${version} section is too long for a release`);
       expect(long.stderr).toContain("bytes; GitHub takes a release body under 125,000");
+      // Reached through a link to its folder (as on macOS, whose temporary folder is one), it still checks.
+      const link = `${dir}-link`;
+      fs.symlinkSync(dir, link, "junction");
+      try {
+        const linked = spawnSync(process.execPath, [path.join(link, "scripts/package/release.mjs"), "--readme", `v${version}`, "o/r"], { encoding: "utf8" });
+        expect(linked.status, linked.stdout).toBe(1);
+      } finally {
+        fs.rmSync(link, { force: true });
+      }
       log("Short notes.");
       const short = run();
       expect(short.status, short.stderr).toBe(0);

@@ -161,7 +161,17 @@ function main() {
   console.log(`release ${tag}: ${releaseFiles(version).length} files, notes in ${notesFile}`);
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// Run directly, not imported. Both paths are resolved through links first: Node names this module by its real path,
+// so reached through a link (macOS's /var is one) the two differed, and the script checked nothing and exited 0.
+const direct = (() => {
+  try {
+    return Boolean(process.argv[1]) && fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    // A path that can't be resolved isn't this script.
+    return false;
+  }
+})();
+if (direct) {
   try {
     main();
   } catch (err) {
