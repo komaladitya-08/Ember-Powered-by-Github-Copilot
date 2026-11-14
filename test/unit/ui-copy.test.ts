@@ -617,7 +617,7 @@ describe("Computers and Commands in settings (§8.3) and the onboarding line (§
     ].map(keep)).toEqual([
       // WSL only on Windows (review #198): the page's own intro is Linux's and macOS's.
       "Computers", "Ember can work on this computer and on computers you reach over SSH. Your voice and your GitHub sign-in always stay here.",
-      "Commands", "Ember runs commands in its own command window, where you can watch and stop them. It asks first before anything that touches secrets or downloads and runs code, and before anything that deletes, publishes or changes the system unless you asked for exactly that command: then it tells you first and gives you a few seconds to stop it.",
+      "Commands", "Ember runs commands in its own command window, where you can watch and stop them. Most run straight away, ones it doesn't know included. It asks first before code it can't read and before a dangerous command, one that deletes, publishes, touches secrets, changes the system, downloads and runs code or would keep running after you stop it, unless you asked for exactly that command and it only deletes, publishes or changes the system: then it tells you first and gives you a few seconds to stop it.",
       "Let Ember work in WSL", "Offer to bring Ember along when I connect with SSH", "Host name or user@host", "Connect",
       "Ask me before every command", "Open the command window", "Your organisation doesn't allow Ember to work in WSL.",
       "Your organisation doesn't allow Ember on other computers.", "Your organisation lets Ember connect only to some computers.",

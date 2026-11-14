@@ -31,10 +31,10 @@ describe("“Ask me before every command” on a computer where commands run as 
     }
   });
 
-  it("in Autopilot, is the user's own switch, free to turn on, and says root commands run without asking unless it is on, but those Autopilot still asks about (r10-modes-copy-y10-2)", () => {
+  it("in Autopilot, is the user's own switch, free to turn on, and says root commands run without asking unless it is on (r10-modes-copy-y10-2; owner decision of 2026-11-14)", () => {
     expect(row("autopilot").askEvery).toMatchObject({ checked: false, disabled: false, shown: true });
     expect(row("autopilot", true).askEvery).toMatchObject({ checked: true, disabled: false });
-    expect(row("autopilot").managed).toBe("Commands here run as the administrator. In Autopilot each one runs without asking, after a few seconds to stop it, except those Autopilot still asks about, unless you turn this on.");
+    expect(row("autopilot").managed).toBe("Commands here run as the administrator. In Autopilot each one runs without asking, after a few seconds to stop it, unless you turn this on.");
     expect(row("autopilot").managed).not.toMatch(/asks before every one/);
   });
 
@@ -99,12 +99,14 @@ describe("“Ask me before every command” in a distro Podman uses (r10-modes-c
 });
 
 describe("the Commands intro, the Routines hint and the Connectors hint are true in every mode (home-c10-2)", () => {
-  it("says what commands ask before, per mode, Autopilot's naming a command that keeps running after Stop and one you ruled out (r10-modes-copy-y10-2)", () => {
+  it("says what commands ask before, per mode, Autopilot's naming a command that keeps running after Stop and one you ruled out (r10-modes-copy-y10-2; owner decision of 2026-11-14)", () => {
     expect(text(page)).toContain(cc.commandsIntro(null));
     expect(page).toContain(`<p class="intro" id="commands-intro">${cc.commandsIntro(null)}</p>`);
     expect(cc.commandsIntro("interactive")).toBe(cc.COMMANDS_INTRO);
-    expect(cc.commandsIntro("assisted")).toBe("Ember runs commands in its own command window, where you can watch and stop them. It asks first before anything that touches secrets, before anything that downloads and runs code unless Assisted's check finds it in what you asked, and before anything that deletes, publishes or changes the system unless you asked for exactly that command or the check finds it: then it tells you first and gives you a few seconds to stop it.");
-    expect(cc.commandsIntro("autopilot")).toBe("Ember runs commands in its own command window, where you can watch and stop them. In Autopilot it runs one that deletes, publishes or changes the system without asking, after a few seconds to stop it. It still asks before anything that touches secrets, would keep running after you stop it or has an effect it can't tell, before one you ruled out, and wherever you or your organisation set commands to ask every time or the administrator of a computer it reaches over SSH doesn't allow Autopilot there.");
+    expect(cc.commandsIntro("assisted")).toBe("Ember runs commands in its own command window, where you can watch and stop them. Most run straight away, ones it doesn't know included. Before code it can't read or a dangerous command, one that deletes, publishes, touches secrets, changes the system, downloads and runs code or would keep running after you stop it, Assisted's check reads it against what you asked: if it finds it there, or you asked for exactly that command, Ember tells you first and gives you a few seconds to stop it; otherwise it asks.");
+    expect(cc.commandsIntro("autopilot")).toBe("Ember runs commands in its own command window, where you can watch and stop them. In Autopilot it asks before none of them: a dangerous one runs after a few seconds to stop it, what a command that touches secrets prints is kept from the AI model, and Ember says when one would keep running after you stop it. One you said no to, or ruled out in your request, is refused. It still asks wherever you or your organisation set commands to ask every time, and it isn't in Autopilot on a computer reached over SSH whose administrator doesn't allow it.");
+    // The owner's table of 2026-11-14: unknown commands run in every mode, and Autopilot lists no question it no longer puts.
+    expect(cc.commandsIntro("interactive")).toBe("Ember runs commands in its own command window, where you can watch and stop them. Most run straight away, ones it doesn't know included. It asks first before code it can't read and before a dangerous command, one that deletes, publishes, touches secrets, changes the system, downloads and runs code or would keep running after you stop it, unless you asked for exactly that command and it only deletes, publishes or changes the system: then it tells you first and gives you a few seconds to stop it.");
   });
 
   it("says what a routine's steps ask before, per mode, and that Assisted's check reads what you said, not the saved steps (r10-modes-copy-x10-1)", () => {

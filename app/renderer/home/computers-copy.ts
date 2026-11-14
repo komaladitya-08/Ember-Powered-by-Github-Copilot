@@ -21,18 +21,19 @@ export function computersIntro(os: OS | undefined): string {
   return os === "win32" ? COMPUTERS_INTRO_WINDOWS : COMPUTERS_INTRO;
 }
 export const COMMANDS_HEADING = "Commands";
-export const COMMANDS_INTRO = "Ember runs commands in its own command window, where you can watch and stop them. It asks first before anything that touches secrets or downloads and runs code, and before anything that deletes, publishes or changes the system unless you asked for exactly that command: then it tells you first and gives you a few seconds to stop it.";
+export const COMMANDS_INTRO = "Ember runs commands in its own command window, where you can watch and stop them. Most run straight away, ones it doesn't know included. It asks first before code it can't read and before a dangerous command, one that deletes, publishes, touches secrets, changes the system, downloads and runs code or would keep running after you stop it, unless you asked for exactly that command and it only deletes, publishes or changes the system: then it tells you first and gives you a few seconds to stop it.";
 /**
- * The section's intro in the approval mode in force (null: below Interactive), true in each (home-c10-2): a dangerous
- * command the user's own words asked for exactly is announced in every mode (commands/decide.ts rule 10), never one that
- * touches secrets or downloads and runs code (accessibility-c11-1); Assisted's
- * check may clear a deletion, a push or a system change it finds in the user's words but never one that touches secrets
- * (commands/review.ts notReviewable); Autopilot announces those with their Stop countdown and still asks for secrets,
- * what would outlive Stop, what Ember can't tell and what the user's words rule out (commands/autopilot.ts autopilotAsks).
+ * The section's intro in the approval mode in force (null: below Interactive), true in each (home-c10-2) and to the
+ * owner's table of 2026-11-14: an ordinary command and one Ember doesn't know run in every mode; a dangerous one (and
+ * code Ember can't read) asks in Interactive, except one the user's own words asked for exactly that only deletes,
+ * publishes or changes the system (commands/decide.ts rule 10; accessibility-c11-1); Assisted's check may clear any of
+ * them it finds in the user's words (commands/review.ts notReviewable); Autopilot asks none of them, keeps a secrets
+ * command's output from the model, names what Stop won't reach and refuses what the user said no to or ruled out, and
+ * only the organisation's and the user's own "ask every command" still ask (commands/autopilot.ts autopilotAsks).
  */
 export function commandsIntro(mode: ApprovalMode | null): string {
-  if (mode === "assisted") return "Ember runs commands in its own command window, where you can watch and stop them. It asks first before anything that touches secrets, before anything that downloads and runs code unless Assisted's check finds it in what you asked, and before anything that deletes, publishes or changes the system unless you asked for exactly that command or the check finds it: then it tells you first and gives you a few seconds to stop it.";
-  if (mode === "autopilot") return "Ember runs commands in its own command window, where you can watch and stop them. In Autopilot it runs one that deletes, publishes or changes the system without asking, after a few seconds to stop it. It still asks before anything that touches secrets, would keep running after you stop it or has an effect it can't tell, before one you ruled out, and wherever you or your organisation set commands to ask every time or the administrator of a computer it reaches over SSH doesn't allow Autopilot there.";
+  if (mode === "assisted") return "Ember runs commands in its own command window, where you can watch and stop them. Most run straight away, ones it doesn't know included. Before code it can't read or a dangerous command, one that deletes, publishes, touches secrets, changes the system, downloads and runs code or would keep running after you stop it, Assisted's check reads it against what you asked: if it finds it there, or you asked for exactly that command, Ember tells you first and gives you a few seconds to stop it; otherwise it asks.";
+  if (mode === "autopilot") return "Ember runs commands in its own command window, where you can watch and stop them. In Autopilot it asks before none of them: a dangerous one runs after a few seconds to stop it, what a command that touches secrets prints is kept from the AI model, and Ember says when one would keep running after you stop it. One you said no to, or ruled out in your request, is refused. It still asks wherever you or your organisation set commands to ask every time, and it isn't in Autopilot on a computer reached over SSH whose administrator doesn't allow it.";
   return COMMANDS_INTRO;
 }
 export const WSL_SWITCH = "Let Ember work in WSL";
@@ -166,7 +167,7 @@ export const ASK_EVERY_PRIVILEGED = "Commands here run as the administrator, so 
  * The same place in Autopilot, where root is no reason to ask (commands/autopilot.ts autopilotAsks) and only the user's
  * own switch, or the organisation's, keeps every command asking there (home-c10-1).
  */
-export const ASK_EVERY_PRIVILEGED_AUTOPILOT = "Commands here run as the administrator. In Autopilot each one runs without asking, after a few seconds to stop it, except those Autopilot still asks about, unless you turn this on.";
+export const ASK_EVERY_PRIVILEGED_AUTOPILOT = "Commands here run as the administrator. In Autopilot each one runs without asking, after a few seconds to stop it, unless you turn this on.";
 /** The same place in a distro Podman uses, where every command asks in every mode (decide.ts LINES.toolDistro's fact). */
 export const ASK_EVERY_TOOL = "Podman uses this distro, so Ember asks before every command here.";
 export const WSL_MANAGED = "Your organisation doesn't allow Ember to work in WSL.";
