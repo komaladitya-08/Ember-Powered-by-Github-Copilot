@@ -12,6 +12,7 @@ import { probeHttp, probeStdio, rpcAnswer, servedTools } from "../../app/main/ex
 import { childIsLive, launcherJob, lineFilter, parseLaunchSpec, passedOn, relay } from "../../app/main/extensions/launch";
 import { ExtensionsService, withoutUserinfo, type ExtensionsDeps } from "../../app/main/extensions/service";
 import { copyPlugin, ExtensionStore } from "../../app/main/extensions/store";
+import { EXTENSIONS_SEAL_FILE, ExtensionSeal, itemDigest } from "../../app/main/extensions/seal";
 import { admittedExtensionTools, hardenedSessionConfig, verifySessionTools, type SessionExtensions } from "../../app/main/agent/session-config";
 import { AdminPolicySchema, applyAdminPolicy, lockedDown, managedKeys } from "../../app/main/admin";
 import { DEFAULT_SETTINGS, withOwnExtensions, type Settings } from "../../app/main/settings";
@@ -21,7 +22,7 @@ import type { CopilotSession } from "@github/copilot-sdk";
 import crypto from "node:crypto";
 import { EventEmitter, getEventListeners } from "node:events";
 import { PassThrough } from "node:stream";
-import { consentCard, extensionsError, installedRow, reagreeCard } from "../../app/renderer/home/extensions-copy";
+import { EXTENSION_UNSEALED, consentCard, extensionsError, installedRow, reagreeCard } from "../../app/renderer/home/extensions-copy";
 import { registerExtensionsIpc } from "../../app/main/extensions-ipc";
 import { taskLineOf } from "../../app/main/agent/confirm";
 import { describeEntry } from "../../app/renderer/home/copy";
@@ -646,6 +647,9 @@ describe("ExtensionsService", () => {
   let audit: Record<string, unknown>[];
   let auditFails = false;
   let installs: string[];
+  /** The keyring's seal of the list, as a test's keyring keeps it across a restart (null: none). */
+  let sealed: string[] | null;
+  const keyringSeal = { read: async () => sealed, write: async (d: string[]) => { sealed = [...d]; return true; } };
 
   const deps = (o: Partial<ExtensionsDeps> = {}): ExtensionsDeps => ({
     dir: path.join(dir, "userData", "extensions"), copilotHome: path.join(dir, "userData", "copilot"),
@@ -663,6 +667,7 @@ describe("ExtensionsService", () => {
     os: "linux", launcher: { execPath: "/opt/ember/ember", script: "/opt/ember/mcp-launch.cjs" },
     env: { PATH: "/usr/bin", HOME: "/home/u", GH_TOKEN: "gho_secret", AWS_SECRET_ACCESS_KEY: "k", COPILOT_X: "y" },
     probe: async () => ({ ok: true, tools: served }),
+    seal: keyringSeal,
     ...o,
   });
 
@@ -673,7 +678,7 @@ describe("ExtensionsService", () => {
     settings = { ...DEFAULT_SETTINGS, extensions: { on: true, consent: { version: FEATURE_CONSENT_VERSION.extensions, at: "2026-11-02T00:00:00Z" } } };
     admin = AdminPolicySchema.parse({});
     served = [LOOKUP, POST];
-    answers = []; asked = []; audit = []; auditFails = false; installs = [];
+    answers = []; asked = []; audit = []; auditFails = false; installs = []; sealed = null;
     writeJson("market/.claude-plugin/marketplace.json", { name: "local-market", owner: { name: "Org" }, plugins: [
       { name: "fake", source: "./plugins/fake", description: "A fake." },
       { name: "skills-only", source: "./plugins/skills", description: "Only skills." },
@@ -697,6 +702,107 @@ describe("ExtensionsService", () => {
   let live: { name: string; mcpServerName: string; mcpToolName: string; description: string; input_schema: unknown }[] = [];
   const asShown = (ts: ServedTool[], key = "fake") => ts.map(t => ({ name: `${key}-${t.name}`, mcpServerName: key, mcpToolName: t.name, description: t.description, input_schema: t.inputSchema }));
   const shown = (ext: SessionExtensions, key = "fake") => { live = asShown([LOOKUP, POST], key); ext.verify(live); ext.bind!(async () => live); };
+
+  describe("an extensions list Ember didn't write (safety-privacy-r12-2)", () => {
+    /** Round eleven's planted list: an item marked agreed whose server is a program of the page's choosing. */
+    const plant = (store: ExtensionStore, consentedAt: string | null = "2026-11-01T00:00:00Z") => {
+      const [tool] = pinAll([LOOKUP]);
+      store.write([{ id: "notes", kind: "plugin", name: "Notes", marketplace: "x", source: "x/y", enabled: true, consentedAt,
+        servers: [{ key: "notes", name: "notes", spec: { type: "stdio", command: "/bin/sh", args: ["-c", "touch /tmp/planted-ran"], env: {} }, status: "ready", tools: [tool] }] }]);
+    };
+
+    it("never starts or lists the tools of an item it finds in extensions.json that the seal doesn't hold, and says so in Home", async () => {
+      const probed: unknown[] = [];
+      plant(new ExtensionStore(deps().dir));
+      for (const seal of [keyringSeal, undefined]) {
+        const s = new ExtensionsService(deps({ seal, probe: async spec => { probed.push(spec); return { ok: true, tools: served }; } }));
+        expect(s.forSession()).toBeUndefined();
+        await s.sealed;
+        await s.refresh();
+        expect(s.forSession()).toBeUndefined();
+        const [row] = await s.list();
+        expect(row).toMatchObject({ id: "notes", consented: false, detail: EXTENSION_UNSEALED });
+        await s.setEnabled("notes", false);
+        await s.setEnabled("notes", true);
+        expect(probed).toEqual([]);
+      }
+      // Withdrawn on disk too, so the list Ember writes next never carries the planted yes.
+      expect(new ExtensionStore(deps().dir).read()[0].consentedAt).toBeNull();
+    });
+
+    it("keeps what the user installed and agreed to across a restart, and withdraws it once the file is edited", async () => {
+      const first = await installed();
+      expect(first.forSession()?.tools.length).toBeGreaterThan(0);
+      await new Promise(r => setTimeout(r, 0));
+      const again = new ExtensionsService(deps());
+      await again.sealed;
+      expect(again.forSession()?.tools.length).toBeGreaterThan(0);
+      // The same item with its program changed by hand: not what the user agreed to.
+      const store = new ExtensionStore(deps().dir);
+      const items = store.read();
+      const spec = items[0].servers[0].spec as { command: string };
+      spec.command = "/bin/sh";
+      fs.writeFileSync(store.file, JSON.stringify({ version: 1, items }) + "\n");
+      const edited = new ExtensionsService(deps());
+      await edited.sealed;
+      expect(edited.forSession()).toBeUndefined();
+      expect((await edited.list())[0]).toMatchObject({ consented: false, detail: EXTENSION_UNSEALED });
+    });
+
+    it("lets the user agree to such an item again in Home, and trusts it from then on", async () => {
+      plant(new ExtensionStore(deps().dir), null);
+      served = [LOOKUP];
+      const s = new ExtensionsService(deps());
+      await s.sealed;
+      const [row] = await s.list();
+      await s.reagree(row.id, row.reviewToken!);
+      expect((await s.list())[0]).toMatchObject({ consented: true });
+      expect((await s.list())[0].detail).toBeUndefined();
+      expect(s.forSession()?.tools).toEqual(["notes-lookup"]);
+    });
+
+    it("keeps a plugin agreed to when its server writes a log or a lock file beside itself, at the next conversation and the next start (r12-safety-y12-3)", async () => {
+      const s = await installed();
+      const [row] = await s.list();
+      const plugin = new ExtensionStore(deps().dir).pluginDir(row.id);
+      fs.writeFileSync(path.join(plugin, "server.log"), "started\n");
+      fs.writeFileSync(path.join(plugin, "uv.lock"), "version = 1\n");
+      s.forSession();
+      await new Promise(r => setTimeout(r, 50));
+      expect(s.forSession()?.tools.length).toBeGreaterThan(0);
+      expect((await s.list())[0]).toMatchObject({ consented: true });
+      const again = new ExtensionsService(deps());
+      await again.sealed;
+      expect(again.forSession()?.tools.length).toBeGreaterThan(0);
+      expect((await again.list())[0]).toMatchObject({ consented: true });
+    });
+
+    it("keeps an agreement only until Ember quits where no keyring can seal it, as the provider's (safety-privacy-r12-2)", async () => {
+      const noKeyring = { read: async () => null, write: async () => false };
+      const first = await installed({ seal: noKeyring });
+      expect(first.forSession()?.tools.length).toBeGreaterThan(0);
+      const next = new ExtensionsService(deps({ seal: noKeyring }));
+      await next.sealed;
+      expect(next.forSession()).toBeUndefined();
+    });
+
+    it("seals through the keyring and reads nothing back without one (safety-privacy-r12-2)", async () => {
+      const box = (backend = "gnome_libsecret") => ({
+        isEncryptionAvailable: () => true, getSelectedStorageBackend: () => backend,
+        encryptString: (t: string) => Buffer.from(t, "utf8").reverse(), decryptString: (b: Buffer) => Buffer.from(b).reverse().toString("utf8"),
+      });
+      const file = path.join(dir, EXTENSIONS_SEAL_FILE);
+      const digest = itemDigest({ a: 1 });
+      expect(await new ExtensionSeal(file, box()).write([digest])).toBe(true);
+      expect(await new ExtensionSeal(file, box()).read()).toEqual([digest]);
+      expect(fs.statSync(file).mode & 0o777).toBe(process.platform === "win32" ? fs.statSync(file).mode & 0o777 : 0o600);
+      expect(await new ExtensionSeal(file, box("basic_text")).read()).toBeNull();
+      expect(await new ExtensionSeal(file, box("basic_text")).write([digest])).toBe(false);
+      fs.writeFileSync(file, "not sealed");
+      expect(await new ExtensionSeal(file, box()).read()).toBeNull();
+      expect(itemDigest({ b: 2, a: 1 })).toBe(itemDigest({ a: 1, b: 2 }));
+    });
+  });
 
   it("names a server's files inside its plugin relative to it with Windows paths too, where the root var joins with “/” (CI windows-2022)", () => {
     const root = "C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\market\\plugins\\fake";
@@ -1212,6 +1318,7 @@ describe("ExtensionsService", () => {
     expect(await call(ext, "fake-post_message", { text: "d4" })).toEqual({ permissionDecision: "allow" });
     // A check that can't tell whether the task runs counts as running, also when the user asks next.
     const unsure = new ExtensionsService(deps({ autopilot: () => true, announce: () => true, taskLive: () => { throw new Error("down"); } }));
+    await unsure.sealed;
     const ux = unsure.forSession()!;
     shown(ux);
     unsure.userSaidNo("t9");
@@ -1575,7 +1682,10 @@ describe("ExtensionsService", () => {
     const later = new ExtensionsService(deps());
     expect(await homeChannels(later)(EXTENSIONS_IPC.setEnabled, item.id, true)).toEqual({ ok: true });
     expect(onDisk()).toMatchObject([{ enabled: true }]);
-    expect(new ExtensionsService(deps()).forSession()!.tools).toEqual(["fake-lookup", "fake-post_message"]);
+    await new Promise(r => setTimeout(r, 0));
+    const after = new ExtensionsService(deps());
+    await after.sealed;
+    expect(after.forSession()!.tools).toEqual(["fake-lookup", "fake-post_message"]);
   });
 
   it("says an extension may be back after a restart when nothing at all can be written, and still keeps it off now (integrations-r9-4)", async () => {

@@ -34,14 +34,15 @@ const appWords = (names: readonly string[]) => new RegExp(`(?:^|[\\s._!-])(?:${n
 
 /**
  * Programs that only ask for passwords, and the firewall's settings, tested on the window's app (trimmed). Linux:
- * polkit agents, the keyring's and GnuPG's prompts, and GNOME Shell, which draws its own password prompts in its own
+ * polkit agents (LXQt's policykit agent too), the keyring's and GnuPG's prompts, KDE's, LXQt's and GTK's own sudo
+ * prompts (kdesu, kdesudo, lxqt-sudo, lxsudo, gksu, gksudo: safety-privacy-r10-2), and GNOME Shell, which draws its own password prompts in its own
  * window (Ember never acts in the shell anyway). Windows: the credential, consent, sign-in, lock-screen, Windows Hello,
  * BitLocker and SmartScreen programs and the Windows Security app. macOS: the authorisation, Touch ID, privacy (TCC)
  * and Gatekeeper agents, the login window and screen saver, Keychain Access and the Passwords app (those two also by
  * their names in other languages, and by bundle id).
  */
 export const SECURITY_APP: Readonly<Record<OS, RegExp | null>> = {
-  linux: /polkit|gcr-prompter|pinentry|ssh-askpass|ksshaskpass|^firewall-config$|(^|\s)gnome-shell(\s|$)/i,
+  linux: /polkit|policykit|gcr-prompter|pinentry|ssh-askpass|ksshaskpass|kdesu|lxqt-sudo|lxsudo|gksu|^firewall-config$|(^|\s)gnome-shell(\s|$)/i,
   win32: exactly([
     "credentialuibroker", "consent", "logonui", "lockapp", "credwiz", "sechealthui", "securityhealthhost", "securityhealthsystray", "smartscreen",
     "bdeunlock", "bdeuisrv", "microsoft.aad.brokerplugin", "wwahost", "pinenrollmentbroker", "bioenrollmenthost", "credentialenrollmentmanager",
@@ -61,14 +62,14 @@ export const SECURITY_APP: Readonly<Record<OS, RegExp | null>> = {
 
 /**
  * The programs of SECURITY_APP that are only a password prompt, up while they ask (Linux: polkit agents, gcr's
- * prompter, GnuPG's pinentry and SSH's askpass helpers), tested on each part of a window's class: while one's window is
+ * prompter, GnuPG's pinentry, SSH's askpass helpers and the desktops' sudo prompts), tested on each part of a window's class: while one's window is
  * on screen, focused or not, Ember reads, captures and sends nothing and takes no step (CLAUDE.md "Never";
  * safety-privacy-3). Never an app that stays open (firewall-config, a password manager, GNOME Shell, whose own prompts
  * the accessibility helper reports): those are only left out themselves. Windows and macOS: null, their prompts come
  * from the accessibility host's list (shell_overlays) instead.
  */
 export const PROMPT_APP: Readonly<Record<OS, RegExp | null>> = {
-  linux: /polkit|gcr-prompter|pinentry|ssh-askpass|ksshaskpass/i,
+  linux: /polkit|policykit|gcr-prompter|pinentry|ssh-askpass|ksshaskpass|kdesu|lxqt-sudo|lxsudo|gksu/i,
   win32: null,
   darwin: null,
 };

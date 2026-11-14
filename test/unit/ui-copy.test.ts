@@ -106,7 +106,7 @@ describe("settings window words", () => {
     expect(neverLookLabel("polkit")).toBe("Password prompts (polkit)");
     expect(neverLookLabel("Thunderbird")).toBe("Thunderbird");
     expect(missingDefaults(["KeePassXC", "Signal"])).toEqual(["seahorse", "passwords and keys", "1password", "bitwarden", "polkit", "keepass", "lastpass", "dashlane",
-      "enpass", "proton pass", "kwallet"]);
+      "enpass", "proton pass", "kwallet", "org.gnome.world.secrets"]);
     expect(missingDefaults(NEVER_LOOK_DEFAULTS)).toEqual([]);
   });
 

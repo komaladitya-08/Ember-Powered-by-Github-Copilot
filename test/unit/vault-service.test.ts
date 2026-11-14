@@ -32,11 +32,11 @@ const MAIL: VaultDestination = { app: "thunderbird" };
 const login = { user: "quillon", password: CANARY };
 const appName = (key: string) => (key === "thunderbird" ? "Thunderbird" : key === "firefox" ? "Firefox" : "");
 
-function make(o: { allowed?: boolean | (() => boolean); consented?: boolean; autopilot?: boolean; box?: Partial<SecretBox>; answer?: "saved" | "cancelled" | "unavailable" | "stopped" } = {}) {
+function make(o: { allowed?: boolean | (() => boolean); consented?: boolean; autopilot?: boolean; box?: Partial<SecretBox>; answer?: "saved" | "cancelled" | "unavailable" | "stopped"; keepAside?: () => boolean } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-vault-svc-"));
   dirs.push(dir);
   const file = path.join(dir, VAULT_FILE);
-  const store = new VaultStore(file, box(o.box), { now: (() => { let t = 1_700_000_000_000; return () => t++; })() });
+  const store = new VaultStore(file, box(o.box), { now: (() => { let t = 1_700_000_000_000; return () => t++; })(), ...(o.keepAside ? { keepAside: o.keepAside } : {}) });
   const state = { allowed: o.allowed ?? true, consented: o.consented ?? true, autopilot: o.autopilot ?? true };
   const asked: VaultFormRequest[] = [];
   const logged: unknown[] = [];
@@ -324,5 +324,24 @@ describe("main's wiring of the vault", () => {
     expect(keepClearOf({ home: null, prompt: null, command: null, commandCard: false, vault: shown(5) })).toEqual({ aside: rect(5), avoid: [rect(5)] });
     expect(keepClearOf({ home: null, prompt: null, command: null, commandCard: false, vault: { ...shown(5), visible: false } })).toEqual({ aside: null, avoid: [] });
     expect(keepClearOf({ home: null, prompt: null, command: null, commandCard: false })).toEqual({ aside: null, avoid: [] });
+  });
+});
+
+describe("a vault whose file couldn't be read, in Home", () => {
+  it("says so in Home's state, fills nothing from it, and says nothing of a vault that reads (reliability-c12-1)", async () => {
+    const h = make();
+    const a = await h.service.keep("login", GITHUB, login);
+    if (!a.ok) throw new Error("not kept");
+    expect(h.service.homeState()).not.toHaveProperty("unreadable");
+    const text = fs.readFileSync(h.file, "utf8");
+    fs.writeFileSync(h.file, text.slice(0, -4));
+    expect(h.service.homeState()).toEqual({ allowed: true, entries: [], unreadable: true });
+    expect(h.service.has("login", GITHUB)).toBe(false);
+  });
+
+  it("says the file was left as it was, not kept aside, where it can't be kept aside (r12-safety-x12-6)", () => {
+    const h = make({ keepAside: () => false });
+    fs.writeFileSync(h.file, "{\"v\":1,\"entries\":[{");
+    expect(h.service.homeState()).toEqual({ allowed: true, entries: [], unreadable: true, left: true });
   });
 });

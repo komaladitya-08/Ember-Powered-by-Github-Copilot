@@ -13,6 +13,7 @@ import { EMBER_DATA_QUESTION, EMBER_DATA_UNREAD_QUESTION, PolicyEngine, mayReach
 import { ALL_SCOPES } from "../../app/main/policy/autonomy";
 import { KEYS } from "../../app/shared/shortcuts";
 import { PROVIDER_SEAL_FILE } from "../../app/main/provider-record";
+import { EXTENSIONS_SEAL_FILE } from "../../app/main/extensions/seal";
 import { PROVIDER_KEY_FILE } from "../../app/main/provider";
 import { VAULT_FILE } from "../../app/main/vault/store";
 import { ERASED_FILE, HISTORY_FILE } from "../../app/main/agent/conversation-store";
@@ -223,7 +224,7 @@ describe("Ember's own settings, audit log and policy reached through another app
   it("refuses typing the path of anything Ember keeps in its data folder, whatever its name, and an extension's call that names it, in every mode (integ-y-3)", () => {
     // What the source joins to Ember's data folder itself: files, folders and names built at runtime alike.
     const walk = (dir: string): string[] => fs.readdirSync(dir, { withFileTypes: true }).flatMap(e => e.isDirectory() ? walk(path.join(dir, e.name)) : e.name.endsWith(".ts") ? [path.join(dir, e.name)] : []);
-    const constants: Record<string, string> = { PROVIDER_SEAL_FILE, PROVIDER_KEY_FILE, VAULT_FILE, RUN_FILE };
+    const constants: Record<string, string> = { PROVIDER_SEAL_FILE, EXTENSIONS_SEAL_FILE, PROVIDER_KEY_FILE, VAULT_FILE, RUN_FILE };
     // Names built at runtime, each by a sample (an unknown one fails below until it is listed here).
     const built: Record<string, string> = { '"project-workspaces-" + scopeKey.parse(scope) + ".bin"': "project-workspaces-0a1b.bin" };
     const children = new Set<string>();
@@ -252,7 +253,7 @@ describe("Ember's own settings, audit log and policy reached through another app
   it("knows by name alone the files Ember keeps at its data folder's top level, so an editor whose title names one with no folder asks, and Autopilot refuses (integ-x-3, integ-y-3)", () => {
     // The files the source names as it joins them to a folder (Ember's data folder, or a store's folder in it), its
     // constants, and the one whose name is built at runtime. Its sub-folders' files are Ember's by their path (above).
-    const files = new Set<string>([PROVIDER_SEAL_FILE, PROVIDER_KEY_FILE, VAULT_FILE, HISTORY_FILE, ERASED_FILE, RUN_FILE, "project-workspaces-0a1b.bin"]);
+    const files = new Set<string>([PROVIDER_SEAL_FILE, EXTENSIONS_SEAL_FILE, PROVIDER_KEY_FILE, VAULT_FILE, HISTORY_FILE, ERASED_FILE, RUN_FILE, "project-workspaces-0a1b.bin"]);
     const walk = (dir: string): string[] => fs.readdirSync(dir, { withFileTypes: true }).flatMap(e => e.isDirectory() ? walk(path.join(dir, e.name)) : e.name.endsWith(".ts") ? [path.join(dir, e.name)] : []);
     for (const f of walk("app/main")) {
       for (const m of fs.readFileSync(f, "utf8").matchAll(/path\.join\((?:userData|o\.userData|dir|this\.dir|opts\.dir|dataDir), "([\w-]+\.\w+)"\)/g)) files.add(m[1]);
@@ -711,5 +712,183 @@ describe("Ember's own files behind a file dialog the screen reader can't read wh
     // A folder that shows none of them, its choice not all read: as before.
     const other = chosenIn(view(n(5, 1, "table cell", "", { omitted: true })), true);
     expect(mayReachEmberData(req("org.gnome.Nautilus", "Projekte", { kind: "keys", value: "Delete", element: { role: "table cell", name: "Documents" }, chosen: other }))).toBe(false);
+  });
+});
+
+describe("The folder that holds Ember's data reached from any app's list of files, not only a known file manager's", () => {
+  /** Asks every time in Interactive (never announced), with Ember's own line in the question, and Autopilot refuses it. */
+  const guarded = (o: OS, r: ActionRequest, what: string) => {
+    expect(mayReachEmberData(r, o), what).toBe(true);
+    expect(engine("autopilot", o).decide(r).verdict, `${what} autopilot`).toBe("deny");
+    const inter = engine("interactive", o).decide(r);
+    expect(inter.verdict, `${what} interactive`).toBe("confirm");
+    expect(inter.autonomy, what).toBeFalsy();
+    expect(inter.prompt, what).toContain(EMBER_DATA_QUESTION);
+  };
+  const chooser = (selected: string[], items = ["Home", "Desktop"]) => ({ name: "Open", text: "", fileChooser: true, fields: ["/home/u"], items, selected });
+
+  it("asks every time, and Autopilot refuses, a rename or a delete of .config, AppData's Local or Library in an app's own Open or Save dialog (safety-privacy-r12-1)", () => {
+    const rows: [OS, string, Partial<ActionRequest>][] = [
+      ["linux", "gedit", { kind: "click", element: { role: "menu item", name: "Rename…" }, dialog: chooser([".config"]), chosen: { names: [".config"], whole: true, shown: [".config", "Documents"] } }],
+      ["linux", "gedit", { kind: "click", element: { role: "menu item", name: "Delete" }, dialog: chooser([".config"]) }],
+      ["linux", "gedit", { kind: "keys", value: "Delete", element: { role: "table cell", name: ".config" }, dialog: chooser([".config"]) }],
+      ["linux", "gedit", { kind: "keys", value: "F2", element: { role: "table cell", name: ".config" }, dialog: chooser([".config"]) }],
+      ["linux", "gedit", { kind: "click", element: { role: "push button", name: "Rename" }, dialog: chooser([".config"]) }],
+      ["linux", "gedit", { kind: "click", element: { role: "push button", name: "Delete" }, dialog: { name: "", text: "Are you sure you want to permanently delete “.config”? If you delete an item, it will be permanently lost.", alert: true } }],
+      ["win32", "notepad", { kind: "keys", value: "Delete", element: { role: "list item", name: "Local" }, dialog: { name: "Open", text: "", fileChooser: true, fields: [""], items: ["AppData"], selected: ["Local"] } }],
+      ["win32", "notepad", { kind: "click", element: { role: "menu item", name: "Delete" }, dialog: { name: "Open", text: "", fileChooser: true, fields: [""], items: ["u"], selected: ["AppData"] } }],
+      ["darwin", "TextEdit", { kind: "click", element: { role: "AXMenuItem", name: "Move to Trash" }, dialog: { name: "Open", text: "", fileChooser: true, fields: [""], items: ["u"], selected: ["Library"] } }],
+    ];
+    for (const [o, app, step] of rows) guarded(o, req(app, "Open", step), `${app} ${step.kind} ${step.element?.name} ${step.value ?? ""}`);
+  });
+
+  it("lets an Open or Save dialog's ordinary steps go as before, announced: another row's delete or rename, and going into .config (safety-privacy-r12-1)", () => {
+    const rows: [OS, string, Partial<ActionRequest>][] = [
+      ["linux", "gedit", { kind: "keys", value: "Delete", element: { role: "table cell", name: "notes.txt" }, dialog: chooser(["notes.txt"]) }],
+      ["linux", "gedit", { kind: "click", element: { role: "menu item", name: "Rename…" }, dialog: chooser(["Documents"]), chosen: { names: ["Documents"], whole: true } }],
+      ["linux", "gedit", { kind: "keys", value: "Return", element: { role: "table cell", name: ".config" }, dialog: chooser([".config"]) }],
+      ["linux", "gedit", { kind: "click", element: { role: "push button", name: "Open" }, dialog: chooser([".config"]) }],
+      ["linux", "gedit", { kind: "click", element: { role: "menu item", name: "Show Hidden Files" }, dialog: chooser([".config"]), chosen: { names: [".config"], whole: true } }],
+      ["darwin", "TextEdit", { kind: "keys", value: "Return", element: { role: "AXRow", name: "Library" }, dialog: { name: "Open", text: "", fileChooser: true, fields: [""], items: ["u"], selected: ["Library"] } }],
+      ["linux", "gedit", { kind: "click", element: { role: "push button", name: "No" }, dialog: { name: "", text: "Are you sure you want to permanently delete “.config”?", alert: true } }],
+    ];
+    for (const [o, app, step] of rows) expect(mayReachEmberData(req(app, "Open", step), o), `${app} ${step.element?.name} ${step.value ?? ""}`).toBe(false);
+  });
+
+  it("lets a Windows or macOS Open dialog's menu items that move nothing go as before, announced, while Local or Library is selected (r12-safety-y12-1)", () => {
+    const win = { name: "Open", text: "", fileChooser: true, fields: [""], items: ["Local", "LocalLow", "Roaming"], selected: ["Local"] };
+    const mac = { name: "Open", text: "", fileChooser: true, fields: [""], items: ["u"], selected: ["Library"] };
+    const rows: [OS, string, Partial<ActionRequest>][] = [
+      ...["Details", "Large icons", "Name", "Folder", "Pin to Quick access", "Scan with Microsoft Defender..."].map(name =>
+        ["win32", "notepad", { kind: "click", element: { role: "menu item", name }, dialog: win }] as [OS, string, Partial<ActionRequest>]),
+      ...["Get Info", "Quick Look “Library”", "Tags…"].map(name =>
+        ["darwin", "TextEdit", { kind: "click", element: { role: "AXMenuItem", name }, dialog: mac }] as [OS, string, Partial<ActionRequest>]),
+    ];
+    for (const [o, app, step] of rows) {
+      const r = req(app, "Open", step);
+      expect(mayReachEmberData(r, o), `${app} ${step.element?.name}`).toBe(false);
+      expect(engine("autopilot", o).decide(r).verdict, `${app} ${step.element?.name} autopilot`).not.toBe("deny");
+    }
+  });
+
+  it("asks every time, and Autopilot refuses, a delete, a move or a rename of .config, AppData or Library in a file manager Ember has no row for (safety-privacy-c12-1)", () => {
+    const rows: [OS, string, string, Partial<ActionRequest>][] = [
+      ["linux", "doublecmd", "Double Commander", { kind: "keys", value: "F8", element: { role: "table cell", name: ".config" } }],
+      ["linux", "doublecmd", "Double Commander", { kind: "keys", value: "F6", element: { role: "table cell", name: ".config" } }],
+      ["linux", "doublecmd", "Double Commander", { kind: "keys", value: "shift+F6", element: { role: "table cell", name: ".config" } }],
+      ["linux", "doublecmd", "Double Commander", { kind: "keys", value: "F2", element: { role: "table cell", name: ".config" } }],
+      ["linux", "doublecmd", "Double Commander", { kind: "click", element: { role: "push button", name: "F6 Move" }, chosen: { names: [".config"], whole: true } }],
+      ["linux", "krusader", "Krusader", { kind: "keys", value: "Delete", element: { role: "table", name: "" }, chosen: { names: ["Documents", ".config"], whole: true } }],
+      ["linux", "konqueror", "Home", { kind: "click", element: { role: "menu item", name: "Move to Trash" }, chosen: { names: [".config"], whole: true } }],
+      ["linux", "doublecmd", "Double Commander", { kind: "click", element: { role: "push button", name: "Yes" }, dialog: { name: "Double Commander", text: "Delete selected \".config\"?", alert: true } }],
+      ["linux", "doublecmd", "Move", { kind: "click", element: { role: "push button", name: "OK" }, dialog: { name: "Move", text: "Move \".config\" to:", fields: ["/home/u/old-config"] } }],
+      ["win32", "totalcmd64", "Total Commander 11.0", { kind: "keys", value: "F8", element: { role: "list item", name: "AppData" } }],
+      ["win32", "totalcmd64", "Total Commander 11.0", { kind: "keys", value: "F6", element: { role: "list item", name: "Local" }, chosen: { names: ["Local"], whole: true, shown: ["..", "Local", "LocalLow", "Roaming"] } }],
+      ["darwin", "Path Finder", "u", { kind: "keys", value: "cmd+BackSpace", element: { role: "AXRow", name: "Library" }, chosen: { names: ["Library"], whole: true, shown: ["Desktop", "Documents", "Downloads", "Library"] } }],
+      ["darwin", "Path Finder", "u", { kind: "keys", value: "Return", element: { role: "AXRow", name: "Library" }, chosen: { names: ["Library"], whole: true, shown: ["Desktop", "Documents", "Downloads", "Library"] } }],
+      ["darwin", "Path Finder", "Library", { kind: "click", element: { role: "AXMenuItem", name: "Move to Trash" }, chosen: { names: ["Application Support"], whole: true } }],
+    ];
+    for (const [o, app, w, step] of rows) guarded(o, req(app, w, step), `${app} ${step.kind} ${step.element?.name} ${step.value ?? ""}`);
+  });
+
+  it("lets other apps' ordinary steps go as before: another row's delete, a copy, going into the folder, and typing in a field so named (safety-privacy-c12-1)", () => {
+    const rows: [OS, string, string, Partial<ActionRequest>][] = [
+      ["linux", "doublecmd", "Double Commander", { kind: "keys", value: "F8", element: { role: "table cell", name: "Documents" } }],
+      ["linux", "doublecmd", "Double Commander", { kind: "keys", value: "F5", element: { role: "table cell", name: ".config" } }],
+      ["linux", "doublecmd", "Double Commander", { kind: "keys", value: "Return", element: { role: "table cell", name: ".config" } }],
+      ["linux", "rhythmbox", "Rhythmbox", { kind: "keys", value: "Return", element: { role: "tree item", name: "Library" } }],
+      ["linux", "rhythmbox", "Rhythmbox", { kind: "keys", value: "BackSpace", element: { role: "text", name: "Search" }, chosen: { names: ["Library"], whole: true } }],
+      ["linux", "gnome-calculator", "Calculator", { kind: "keys", value: "BackSpace", element: { role: "text", name: "Local" } }],
+      ["linux", "doublecmd", "Double Commander", { kind: "click", element: { role: "push button", name: "F5 Copy" }, chosen: { names: [".config"], whole: true } }],
+      ["win32", "totalcmd64", "Total Commander 11.0", { kind: "keys", value: "F8", element: { role: "list item", name: "Downloads" } }],
+      ["linux", "doublecmd", "Double Commander", { kind: "click", element: { role: "push button", name: "Yes" }, dialog: { name: "Double Commander", text: "Delete selected \"old notes\"?", alert: true } }],
+    ];
+    for (const [o, app, w, step] of rows) {
+      const r = req(app, w, step);
+      expect(mayReachEmberData(r, o), `${app} ${step.element?.name} ${step.value ?? ""}`).toBe(false);
+    }
+    // An ordinary row's delete stays as the mode says: Autopilot announces it.
+    expect(engine("autopilot").decide(req("doublecmd", "Double Commander", rows[0][3])).verdict).toBe("allow");
+  });
+
+  it("lets a row named Local, Library, etc, Application Support or (where case doesn't count) Ember in an app that doesn't list files go as before, announced (r12-safety-x12-2)", () => {
+    const sheet = { names: [] as string[], whole: true, shown: ["Rent", "1200", "Local", "Library", "Food", "a@example.com", "b@example.com", "example.org"] };
+    const rows: [OS, string, string, Partial<ActionRequest>][] = [
+      ...["Local", "Library", "etc", "Application Support"].map(name =>
+        ["linux", "soffice", "budget.ods - LibreOffice Calc", { kind: "keys", value: "F2", element: { role: "table cell", name }, chosen: sheet }] as [OS, string, string, Partial<ActionRequest>]),
+      ["win32", "excel", "budget.xlsx - Excel", { kind: "keys", value: "F2", element: { role: "data item", name: "Ember" }, chosen: sheet }],
+      ["win32", "excel", "budget.xlsx - Excel", { kind: "keys", value: "Delete", element: { role: "data item", name: "Local" }, chosen: sheet }],
+      ["darwin", "Music", "Music", { kind: "keys", value: "Return", element: { role: "AXRow", name: "Library" }, chosen: { names: ["Library"], whole: true, shown: ["Library", "Recently Added", "Artists", "Albums", "Songs", "Music Videos"] } }],
+      ["darwin", "Photos", "Photos", { kind: "keys", value: "Return", element: { role: "AXRow", name: "Library" }, chosen: { names: ["Library"], whole: true, shown: ["Library", "Memories", "People", "Places", "Favourites"] } }],
+      ["linux", "rhythmbox", "Rhythmbox", { kind: "keys", value: "Delete", element: { role: "table cell", name: "Library" }, chosen: { names: ["Library"], whole: true, shown: ["Library", "Music", "Podcasts", "Radio"] } }],
+      ["linux", "gitg", "repo - gitg", { kind: "keys", value: "Delete", element: { role: "tree item", name: "Local" }, chosen: { names: ["Local"], whole: true, shown: ["Local", "main", "feature/x", "Remote", "origin"] } }],
+      ["linux", "code", "repo - Visual Studio Code", { kind: "keys", value: "F2", element: { role: "tree item", name: "Local" }, chosen: { names: ["Local"], whole: true, shown: ["Local", "Remote", "Staged Changes"] } }],
+      ["linux", "gitg", "repo - gitg", { kind: "click", element: { role: "push button", name: "Delete" }, dialog: { name: "", text: "Delete branch “local”?", alert: true } }],
+      ["linux", "rhythmbox", "Rhythmbox", { kind: "click", element: { role: "menu item", name: "Remove" }, chosen: { names: ["Library"], whole: true, shown: ["Library", "Music", "Podcasts"] } }],
+    ];
+    for (const [o, app, w, step] of rows) {
+      const r = req(app, w, step), what = `${app} ${step.kind} ${step.element?.name} ${step.value ?? ""}`;
+      expect(mayReachEmberData(r, o), what).toBe(false);
+      expect(engine("autopilot", o).decide(r).verdict, `${what} autopilot`).not.toBe("deny");
+    }
+  });
+
+  it("still asks, and Autopilot refuses, where the list is a list of files: an editor's file tree, a commander at home or in AppData, Finder-like Library (r12-safety-x12-2)", () => {
+    const rows: [OS, string, string, Partial<ActionRequest>][] = [
+      ["linux", "code", "repo - Visual Studio Code", { kind: "keys", value: "F2", element: { role: "tree item", name: "Local" }, chosen: { names: ["Local"], whole: true, shown: ["Local", "package.json", ".gitignore", "src"] } }],
+      ["win32", "totalcmd64", "Total Commander 11.0", { kind: "keys", value: "F8", element: { role: "list item", name: "Local" }, chosen: { names: ["Local"], whole: true, shown: ["..", "Local", "LocalLow", "Roaming"] } }],
+      ["darwin", "ForkLift", "Library", { kind: "keys", value: "cmd+BackSpace", element: { role: "AXRow", name: "Application Support" }, chosen: { names: ["Application Support"], whole: true, shown: ["Application Support", "Caches", "Preferences"] } }],
+      ["linux", "doublecmd", "/home/u", { kind: "keys", value: "F8", element: { role: "table cell", name: "etc" }, chosen: { names: ["etc"], whole: true, shown: [] } }],
+      ["linux", "soffice", "budget.ods - LibreOffice Calc", { kind: "keys", value: "Delete", element: { role: "table cell", name: ".config" }, chosen: { names: [".config"], whole: true, shown: [".config"] } }],
+    ];
+    for (const [o, app, w, step] of rows) guarded(o, req(app, w, step), `${app} ${w} ${step.kind} ${step.element?.name} ${step.value ?? ""}`);
+  });
+
+  it("asks every time, and Autopilot refuses, Explorer's own Ctrl+D (delete) on AppData's Local in a Windows Open or Save dialog (r12-safety-x12-3)", () => {
+    const dlg = { name: "Open", text: "", fileChooser: true, fields: [""], items: ["AppData"], selected: ["Local"] };
+    guarded("win32", req("notepad", "Open", { kind: "keys", value: "ctrl+d", element: { role: "list item", name: "Local" }, dialog: dlg }), "notepad ctrl+d Local");
+    guarded("win32", req("notepad", "Open", { kind: "keys", value: "ctrl+d", element: { role: "list", name: "Items View" }, dialog: dlg }), "notepad ctrl+d list");
+    // Ctrl+D elsewhere is a bookmark (Linux file managers and choosers) or another row's: as before.
+    expect(mayReachEmberData(req("gedit", "Open", { kind: "keys", value: "ctrl+d", element: { role: "table cell", name: ".config" }, dialog: chooser([".config"]) }), "linux")).toBe(false);
+    expect(mayReachEmberData(req("notepad", "Open", { kind: "keys", value: "ctrl+d", element: { role: "list item", name: "notes.txt" }, dialog: { ...dlg, selected: ["notes.txt"] } }), "win32")).toBe(false);
+  });
+});
+
+describe("Ember's data folder's own sub-folders and files, told by what the view shows", () => {
+  const guarded = (o: OS, r: ActionRequest, what: string) => {
+    expect(mayReachEmberData(r, o), what).toBe(true);
+    expect(engine("autopilot", o).decide(r).verdict, `${what} autopilot`).toBe("deny");
+    const inter = engine("interactive", o).decide(r);
+    expect(inter.verdict, `${what} interactive`).toBe("confirm");
+    expect(inter.autonomy, what).toBeFalsy();
+  };
+
+  it("asks every time, and Autopilot refuses, a paste, a delete or a move in its extensions or logs folder opened by that name alone (safety-privacy-r12-2)", () => {
+    const ext = { names: [] as string[], whole: true, shown: ["plugins", "run"] };
+    const rows: [OS, string, string, Partial<ActionRequest>][] = [
+      ["linux", "org.gnome.Nautilus", "extensions", { kind: "keys", value: "ctrl+v", element: { role: "table", name: "" }, chosen: ext }],
+      ["linux", "org.gnome.Nautilus", "extensions", { kind: "click", element: { role: "menu item", name: "Paste" }, chosen: ext }],
+      ["linux", "org.gnome.Nautilus", "extensions", { kind: "keys", value: "Delete", element: { role: "table", name: "" }, chosen: { names: ["extensions.json", "plugins", "run"], whole: true, shown: ["extensions.json", "plugins", "run"] } }],
+      ["linux", "org.gnome.Nautilus", "extensions", { kind: "click", element: { role: "menu item", name: "Move to Trash" }, chosen: { names: ["plugins"], whole: true, shown: ["extensions.json", "plugins", "run"] } }],
+      ["win32", "explorer", "extensions - File Explorer", { kind: "keys", value: "Delete", element: { role: "list", name: "Items View" }, chosen: { names: ["extensions.json"], whole: true, shown: ["extensions.json", "plugins", "run"] } }],
+      ["linux", "org.gnome.Nautilus", "logs", { kind: "keys", value: "Delete", element: { role: "table", name: "" }, chosen: { names: ["ember.log", "ember.log.1"], whole: true, shown: ["ember.log", "ember.log.1"] } }],
+      ["darwin", "Finder", "logs", { kind: "keys", value: "cmd+BackSpace", element: { role: "AXList", name: "" }, chosen: { names: ["ember.log.1"], whole: true, shown: ["ember.log", "ember.log.1"] } }],
+      // Ember's own files among the rows chosen, wherever they are, as a row so named already is.
+      ["linux", "org.gnome.Nautilus", "Downloads", { kind: "keys", value: "Delete", element: { role: "table", name: "" }, chosen: { names: ["photo.jpg", "vault.json"], whole: true } }],
+      ["linux", "doublecmd", "Double Commander", { kind: "click", element: { role: "menu item", name: "Delete" }, chosen: { names: ["settings.json"], whole: true } }],
+    ];
+    for (const [o, app, w, step] of rows) guarded(o, req(app, w, step), `${app} ${w} ${step.kind} ${step.element?.name} ${step.value ?? ""}`);
+  });
+
+  it("lets other folders of the same names go as before, and a copy of a file named like one of Ember's (safety-privacy-r12-2)", () => {
+    const rows: [OS, string, string, Partial<ActionRequest>][] = [
+      ["linux", "org.gnome.Nautilus", "logs", { kind: "keys", value: "ctrl+v", element: { role: "table", name: "" }, chosen: { names: [], whole: true, shown: ["app.log", "build.log"] } }],
+      ["linux", "org.gnome.Nautilus", "logs", { kind: "keys", value: "Delete", element: { role: "table", name: "" }, chosen: { names: ["build.log"], whole: true, shown: ["app.log", "build.log"] } }],
+      ["linux", "org.gnome.Nautilus", "extensions", { kind: "keys", value: "Delete", element: { role: "table", name: "" }, chosen: { names: ["ublock"], whole: true, shown: ["ublock", "manifest.json"] } }],
+      ["linux", "org.gnome.Nautilus", "run", { kind: "keys", value: "ctrl+v", element: { role: "table", name: "" }, chosen: { names: [], whole: true, shown: ["script.sh"] } }],
+      ["linux", "org.gnome.Nautilus", "models", { kind: "keys", value: "ctrl+v", element: { role: "table", name: "" }, chosen: { names: [], whole: true, shown: ["resnet.onnx"] } }],
+      ["linux", "org.gnome.Nautilus", "Downloads", { kind: "keys", value: "ctrl+c", element: { role: "table", name: "" }, chosen: { names: ["extensions.json"], whole: true } }],
+    ];
+    for (const [o, app, w, step] of rows) expect(mayReachEmberData(req(app, w, step), o), `${w} ${step.value ?? step.element?.name}`).toBe(false);
   });
 });

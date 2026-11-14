@@ -9,7 +9,7 @@ import { isNeverLook } from "../../app/main/perception/elements";
 describe("never-look defaults", () => {
   it("keep today's Linux list, in today's order, followed by the password managers the other OSes' lists have (safety-privacy-r9-3)", () => {
     expect(NEVER_LOOK_DEFAULTS.linux).toEqual(["keepassxc", "seahorse", "passwords and keys", "1password", "bitwarden", "polkit", "keepass", "lastpass", "dashlane",
-      "enpass", "proton pass", "kwallet"]);
+      "enpass", "proton pass", "kwallet", "org.gnome.world.secrets"]);
   });
 
   it.each([["firefox", "LastPass - My Vault"], ["firefox", "Dashlane"], ["firefox", "Proton Pass"], ["keepass2", "Database.kdbx - KeePass"], ["enpass", "Enpass"],
@@ -24,7 +24,7 @@ describe("never-look defaults", () => {
 
   it("start Windows and macOS with their own password managers and the system's password prompt (design §9.11)", () => {
     expect(NEVER_LOOK_DEFAULTS.win32).toEqual(["keepass", "1password", "bitwarden", "lastpass", "dashlane", "nordpass", "roboform", "enpass", "keeper", "credentialuibroker"]);
-    expect(NEVER_LOOK_DEFAULTS.darwin).toEqual(["keepassxc", "1password", "bitwarden", "lastpass", "dashlane", "enpass", "strongbox", "macpass", "keychain access", "securityagent"]);
+    expect(NEVER_LOOK_DEFAULTS.darwin).toEqual(["keepassxc", "1password", "bitwarden", "lastpass", "dashlane", "enpass", "strongbox", "macpass", "proton pass", "nordpass", "roboform", "keychain access", "securityagent"]);
   });
 
   it("are what a fresh install on this OS starts with", () => {
@@ -44,7 +44,7 @@ describe("never-look defaults", () => {
 describe("never-look names", () => {
   it("read each default as the settings window always has", () => {
     expect(NEVER_LOOK_DEFAULTS.linux.map(neverLookLabel)).toEqual(["KeePassXC", "Seahorse", "Passwords and Keys", "1Password", "Bitwarden", "Password prompts (polkit)",
-      "KeePass", "LastPass", "Dashlane", "Enpass", "Proton Pass", "KDE Wallet"]);
+      "KeePass", "LastPass", "Dashlane", "Enpass", "Proton Pass", "KDE Wallet", "Secrets"]);
     expect(neverLookLabel(" KeePassXC ")).toBe("KeePassXC");
     expect(neverLookLabel("Thunderbird")).toBe("Thunderbird");
   });
@@ -57,7 +57,7 @@ describe("never-look names", () => {
 describe("missingDefaults", () => {
   it("offers back the OS's defaults the user removed (case-insensitive), as the settings window did", () => {
     expect(missingDefaults(["KeePassXC", "Signal"], "linux")).toEqual(["seahorse", "passwords and keys", "1password", "bitwarden", "polkit", "keepass", "lastpass", "dashlane",
-      "enpass", "proton pass", "kwallet"]);
+      "enpass", "proton pass", "kwallet", "org.gnome.world.secrets"]);
     expect(missingDefaults(NEVER_LOOK_DEFAULTS.linux, "linux")).toEqual([]);
     expect(missingDefaults([" Polkit "], "linux")).not.toContain("polkit");
   });
@@ -65,5 +65,17 @@ describe("missingDefaults", () => {
   it("offers only that OS's defaults", () => {
     expect(missingDefaults([], "win32")).toEqual([...NEVER_LOOK_DEFAULTS.win32]);
     expect(missingDefaults([], "darwin")).toEqual([...NEVER_LOOK_DEFAULTS.darwin]);
+  });
+});
+
+describe("never-look defaults for the password managers round twelve found missing", () => {
+  it.each([["linux", "org.gnome.World.Secrets", "Passwords.kdbx"], ["darwin", "Proton Pass", "Proton Pass"], ["darwin", "NordPass", "NordPass"], ["darwin", "RoboForm", "RoboForm"]] as const)(
+    "never look at %s's %s by default (safety-privacy-r10-5)", (os, app, name) => {
+      expect(isNeverLook({ app, name }, [...NEVER_LOOK_DEFAULTS[os]])).toBe(true);
+    });
+
+  it("still looks at a window that only says “secrets” on Linux (safety-privacy-r10-5)", () => {
+    expect(isNeverLook({ app: "firefox", name: "Secrets of the Nile — Mozilla Firefox" }, [...NEVER_LOOK_DEFAULTS.linux])).toBe(false);
+    expect(isNeverLook({ app: "evince", name: "trade-secrets.pdf" }, [...NEVER_LOOK_DEFAULTS.linux])).toBe(false);
   });
 });

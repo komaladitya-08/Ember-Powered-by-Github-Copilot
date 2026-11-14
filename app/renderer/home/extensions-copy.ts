@@ -45,6 +45,12 @@ export function extensionUnsaved(what: "removed" | "off", kept: boolean): string
     ? "Ember turned it off but couldn't save the removal, so it is still listed. Check that the disk isn't full, then remove it again."
     : "Ember turned it off, but couldn't save its list of extensions. Check that the disk isn't full.";
 }
+/**
+ * An installed item read from a list Ember can't tell it wrote, or whose plugin's files changed since
+ * (app/main/extensions/seal.ts, safety-privacy-r12-2, r12-safety-x12-4): its agreement was withdrawn, and it doesn't
+ * run until the user agrees to it again.
+ */
+export const EXTENSION_UNSEALED = "Ember couldn't confirm you agreed to this, so it stays off until you agree again.";
 /** Said when turning an item on couldn't be saved: it is left off (integrations-r9-4). */
 export const EXTENSION_ON_UNSAVED = "Ember couldn't save that, so it left it off. Check that the disk isn't full, then try again.";
 

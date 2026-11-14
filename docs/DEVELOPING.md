@@ -464,7 +464,8 @@ or sees password or payment fields (only in Autopilot does Ember fill one itself
 authentication windows. While a password prompt (polkit, keyring, sudo) is open, Ember doesn't read the screen,
 take screenshots or press keys (nor asks to borrow your mouse or keyboard, or says it's borrowing them without asking,
 while one such as pinentry or ssh-askpass has the keyboard); while GNOME Shell's own prompt is up, or the window of a
-prompt program (pinentry, ssh-askpass, a polkit agent or gcr's prompter) is open, focused or not (or Ember can't tell,
+prompt program (pinentry, ssh-askpass, a polkit agent, gcr's prompter, or KDE's, LXQt's or GTK's sudo prompt:
+kdesu, lxqt-sudo, gksu) is open, focused or not (or Ember can't tell,
 because the shell is too busy or didn't answer, the window list can't be read, or the accessibility helper isn't
 working: then Ember says so and points to the setup check),
 it also sends no window's text or titles with your request and takes no step in any app (nor asks you about one, or says
@@ -608,7 +609,9 @@ as Interactive has it (password, card and secret fields, your terminals, never-l
 settings, audit log and policy open in another app or their folder's path typed in one step (and a step where Ember
 can't tell a file or folder in front of it isn't one of those, such as “settings.json — Kate”, a project's settings.json
 in VS Code, a file manager titled “audit”, or a Delete, cut or rename in the folder that holds Ember's (“.config”,
-“Local”, “Application Support”) or of that folder itself from Home), the
+“Local”, “Application Support”) or of that folder itself from Home, in any app's list of files, an Open or Save dialog
+(Windows' Ctrl+D included) and a file manager Ember doesn't know included, though not a spreadsheet's cell, a music
+library's “Library” or a branch called “Local”, which go as before, or in its extensions or logs folder), the
 system's sign-in and password prompts, desktop-level keys and Ember's own shortcuts, making a file executable),
 consent and each first-use card, masked screenshots, the audit log (a step that can't be recorded isn't taken), Stop,
 the limits on tasks, steps, time and actions a minute, and your organisation's policy: `confirmEveryAction`,
@@ -998,6 +1001,16 @@ it builds on:
   once the list is saved. Home is told at once and the message line says the change wasn't saved (`extensionUnsaved`
   in app/renderer/home/extensions-copy.ts), and that the item may be back after a restart where not even the mark
   could be written. Turning an item on that can't be saved leaves it off.
+- **A list Ember didn't write** (safety-privacy-r12-2). `extensions.json` is a file any program can write, and an
+  item in it names a program the launcher starts. Each time Ember saves the list it seals a digest of every item it
+  wrote with the keyring (`extensions-seal.bin`, app/main/extensions/seal.ts). At start an item whose digest the seal
+  doesn't hold (pasted in, edited by hand, or written before the seal existed) is neither started nor probed, its
+  agreement is withdrawn, and Home says “Ember couldn't confirm you agreed to this, so it stays off until you agree
+  again.” (`EXTENSION_UNSEALED`); **Review and agree** trusts it again. No conversation gets extension tools until
+  the seal has been read. Without a keyring (`basic_text`) nothing is sealed, so an agreement lasts until Ember quits,
+  as the model provider's does. The seal covers the list, not a plugin's own copy in `extensions/plugins/<id>/`, which
+  its server runs from and may write into (a log, a lock file, a `.venv`): a file changed there is not caught yet
+  (r12-safety-x12-4, open).
 - **Off for now:** connectors (`connectors()` is empty, `connect()` says they aren't available: they need GitHub's
   service, which the spike couldn't reach without a real sign-in), `extension.mjs` extensions (bare tool names that
   aren't filtered by `availableTools` and could shadow Ember's), the SDK's catalog, legacy SSE servers, servers that
@@ -1617,6 +1630,7 @@ On Linux (Windows: §10.6, macOS: §11.6):
 | Computers added over SSH, WSL's switch, and each computer's command switches | `settings.json` (`targets`, `commands`) |
 | The approval mode chosen, and each mode's card as agreed to (How Ember asks); the same as Ember last recorded it itself, sealed with the keyring (0600) | `settings.json` (`approvals`); `~/.config/ember/approvals-seal.bin` |
 | The yes to your own model provider's card, as Ember recorded it, sealed with the keyring (0600) | `~/.config/ember/provider-seal.bin` |
+| The extensions list as Ember wrote it: a digest of each item, sealed with the keyring (0600) | `~/.config/ember/extensions-seal.bin` |
 | When the update check last asked GitHub, so a restart keeps to once a day (the first look waits until a day after it, at most a day; a failed look counts), and the last newer version it told you of, still shown as out after a restart until you run it (`updates.told`) | `settings.json` (`updates.checkedAt`, `updates.told`) |
 | SSH's password helper: a two-line wrapper, and a socket for each connection while it asks | `~/.config/ember/ssh/askpass`; `$XDG_RUNTIME_DIR/ea-*/` |
 | Node.js downloaded for other computers (SHA-256 checked) | `~/.config/ember/remote/runtime/` |
@@ -1869,7 +1883,15 @@ details the user gives Ember in its own **Secure Form**, each bound to one desti
   opens nothing; only the kind, the destination and the date are in the clear, which is all Home lists. Nothing is
   kept where the keyring is `basic_text`, can't be named or refuses: the form then says the vault can't be used on
   this computer. The keyring is asked only when a form is about to open or a Save arrives (on macOS off the main
-  thread), never for Home's list.
+  thread), never for Home's list. Each save is flushed to the disk, the file and its folder, before it counts.
+- **A file that can't be read** (reliability-c12-1, r12-safety-x12-1). A `vault.json` that is read whole but torn (a
+  crash or lost power while it was saved) or holds an entry that isn't well formed is never written over: it is kept
+  aside as it was, `vault.json.bad-<time>` (0600; moved where nothing in it reads, copied where some entries still
+  do, which stay listed and usable), Apps & privacy › Vault says so (`VAULT_FILE_UNREADABLE`) at every start while
+  such a file is kept, and nothing is filled from what couldn't be read. A read that fails (EMFILE, EIO, EACCES) is
+  tried once more and then left where it is, never moved: nothing is listed, filled or kept until it reads again.
+  There, and where a torn file can't even be kept aside, nothing new is kept and Home says the file was left as it
+  was (`VAULT_FILE_LEFT`). Forget all, Sign out and Forget everything remove what was kept aside too.
 - **The Secure Form** (app/main/vault/form.ts, `createVaultWindow` in windows.ts, app/renderer/vault, its own preload).
   Only main opens it, one form at a time, each in a window of its own that closes once it is answered. Its heading
   ("Login for github.com"), its line saying where Ember fills it in and its labels are built by main from the kind

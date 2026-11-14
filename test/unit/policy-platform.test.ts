@@ -221,7 +221,7 @@ describe("windows and labels by each OS's vocabulary", () => {
   it("keeps the Linux rows as the expressions they were (frozen copies)", () => {
     const same = (a: RegExp | null, b: RegExp) => { expect(a?.source).toBe(b.source); expect(a?.flags).toBe(b.flags); };
     same(SECURITY_TITLE.linux, /^\s*(authenticat(e|ion)\b.*\b(required|request)\b|authenticate\s*$|(password|passphrase|pin) (required|request(ed)?)\b|enter (the |your |a )?(password|passphrase|pin)\b|unlock\b.*\b(keyring|private key|password|passphrase)\b|\[sudo\]|sudo password\b)/);
-    same(SECURITY_APP.linux, /polkit|gcr-prompter|pinentry|ssh-askpass|ksshaskpass|^firewall-config$|(^|\s)gnome-shell(\s|$)/i);
+    same(SECURITY_APP.linux, /polkit|policykit|gcr-prompter|pinentry|ssh-askpass|ksshaskpass|kdesu|lxqt-sudo|lxsudo|gksu|^firewall-config$|(^|\s)gnome-shell(\s|$)/i);
     same(TABBED_APP.linux, /firefox|chrom(e|ium)|epiphany|^web$|falkon|midori|opera|brave|vivaldi|konqueror|librewolf|seamonkey|thunderbird|evolution|geary|claws|mail|slack|teams|discord|element|mattermost|rocket\.?chat|signal|telegram/i);
     same(WEB_APP.linux, /firefox|chrom(e|ium)|epiphany|^web$|falkon|midori|opera|brave|vivaldi|konqueror|librewolf|seamonkey|electron|slack|teams|discord|element|mattermost|rocket\.?chat|signal|telegram|whatsapp/i);
     same(OFFICE_APP.linux, /soffice|libreoffice/i);

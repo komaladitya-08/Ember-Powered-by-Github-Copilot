@@ -5,8 +5,10 @@
  * names (everyday words too, NEVER_LOOK_APP_ONLY, against the app and the start of a word in the title), never
  * generic words such as "passwords" or "windows security" (those are exact matches in the
  * security-window vocabulary, policy/vocabulary.ts). The Linux row is the list it had, followed by the password managers
- * the other OSes' lists have and Linux's own (Proton Pass's web vault, KDE Wallet; safety-privacy-r9-3). Windows and macOS (design §9.11)
- * start with the password managers people use there, as their programs and windows name them ("keepass" also covers
+ * the other OSes' lists have and Linux's own (Proton Pass's web vault, KDE Wallet; safety-privacy-r9-3; GNOME Secrets by its app id, since
+ * "secrets" is an everyday word in titles: safety-privacy-r10-5). Windows and macOS (design §9.11)
+ * start with the password managers people use there (on macOS Proton Pass, NordPass and RoboForm too:
+ * safety-privacy-r10-5), as their programs and windows name them ("keepass" also covers
  * KeePassXC), and the system's own password prompt: Windows' CredentialUIBroker, macOS's SecurityAgent, and Keychain
  * Access.
  */
@@ -15,9 +17,9 @@ import type { OS } from "./shortcuts";
 
 /** What a fresh install never looks at, stored lower case as matched. */
 export const NEVER_LOOK_DEFAULTS: Readonly<Record<OS, readonly string[]>> = {
-  linux: ["keepassxc", "seahorse", "passwords and keys", "1password", "bitwarden", "polkit", "keepass", "lastpass", "dashlane", "enpass", "proton pass", "kwallet"],
+  linux: ["keepassxc", "seahorse", "passwords and keys", "1password", "bitwarden", "polkit", "keepass", "lastpass", "dashlane", "enpass", "proton pass", "kwallet", "org.gnome.world.secrets"],
   win32: ["keepass", "1password", "bitwarden", "lastpass", "dashlane", "nordpass", "roboform", "enpass", "keeper", "credentialuibroker"],
-  darwin: ["keepassxc", "1password", "bitwarden", "lastpass", "dashlane", "enpass", "strongbox", "macpass", "keychain access", "securityagent"],
+  darwin: ["keepassxc", "1password", "bitwarden", "lastpass", "dashlane", "enpass", "strongbox", "macpass", "proton pass", "nordpass", "roboform", "keychain access", "securityagent"],
 };
 
 /**
@@ -49,6 +51,7 @@ export const NEVER_LOOK_NAMES: Readonly<Record<string, string>> = {
   securityagent: "Password prompts (SecurityAgent)",
   "proton pass": "Proton Pass",
   kwallet: "KDE Wallet",
+  "org.gnome.world.secrets": "Secrets",
 };
 
 /** An entry as the settings window shows it. */

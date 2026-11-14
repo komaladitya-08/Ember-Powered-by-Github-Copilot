@@ -280,4 +280,15 @@ describe("while an authentication prompt's own X11 window is open, focused or no
     }
     for (const app of ["firewall-config", "gnome-shell", "seahorse", "keepassxc", "gedit", ""]) expect(isPromptWindow({ app }), app).toBe(false);
   });
+
+  it("takes KDE's, LXQt's and GTK's own sudo prompts for password prompts, so nothing is read, captured or sent while one is up (safety-privacy-r10-2)", () => {
+    for (const app of ["kdesu", "kdesudo", "lxqt-sudo", "lxsudo", "gksu", "gksudo", "lxqt-policykit-agent"]) {
+      expect(isPromptWindow({ app }), app).toBe(true);
+      expect(isSecurityWindow({ app }), app).toBe(true);
+    }
+    for (const app of ["kdenlive", "sudoku", "gnome-sudoku", "lxqt-panel", "lxqt-config"]) {
+      expect(isPromptWindow({ app }), app).toBe(false);
+      expect(isSecurityWindow({ app }), app).toBe(false);
+    }
+  });
 });

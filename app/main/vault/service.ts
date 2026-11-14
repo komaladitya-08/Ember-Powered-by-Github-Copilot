@@ -19,7 +19,7 @@ import type { VaultAnswer, VaultFormController } from "./form";
 import type { VaultKept, VaultMeta, VaultStore } from "./store";
 
 /** The part of the store the service uses. */
-export type VaultStoreLike = Pick<VaultStore, "list" | "find" | "forget" | "forgetAll" | "canPersist" | "add" | "open">;
+export type VaultStoreLike = Pick<VaultStore, "list" | "find" | "forget" | "forgetAll" | "canPersist" | "add" | "open"> & Partial<Pick<VaultStore, "unreadable" | "leftInPlace">>;
 
 /**
  * What using an entry came to: what `put` answered, or why nothing was handed to it. `off`: the vault can't be used now
@@ -75,7 +75,13 @@ export class VaultService {
 
   /** What Home shows: whether it may be used, and the entries (kind, where, when). */
   homeState(): VaultHomeState {
-    return { allowed: this.allowed(), entries: this.o.store.list().map(m => entryRow(m, this.o.appName)) };
+    const entries = this.o.store.list().map(m => entryRow(m, this.o.appName));
+    // Its file was there but couldn't be read whole: kept aside, and said in Home (reliability-c12-1).
+    let unreadable: boolean, left: boolean;
+    try { unreadable = this.o.store.unreadable?.() ?? false; } catch { unreadable = true; /* can't tell: said */ }
+    // Left where it was rather than kept aside: nothing new is kept, and Home says that instead (r12-safety-x12-6).
+    try { left = unreadable && (this.o.store.leftInPlace?.() ?? false); } catch { left = true; /* can't tell: the stricter words */ }
+    return { allowed: this.allowed(), entries, ...(unreadable ? { unreadable: true } : {}), ...(left ? { left: true } : {}) };
   }
 
   /**

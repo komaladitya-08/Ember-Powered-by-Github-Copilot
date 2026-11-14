@@ -6,7 +6,7 @@
 import { describe, expect, it } from "vitest";
 import fs from "node:fs";
 import {
-  VAULT_EMPTY, VAULT_HINT, VAULT_OFF_HINT, VAULT_WORDS, forgetEverythingScope, signOutScope, vaultForgetAllScope, vaultForgetLabel, vaultHint, vaultRowText,
+  VAULT_EMPTY, VAULT_FILE_LEFT, VAULT_FILE_UNREADABLE, VAULT_HINT, VAULT_OFF_HINT, VAULT_WORDS, forgetEverythingScope, signOutScope, vaultForgetAllScope, vaultForgetLabel, vaultHint, vaultRowText,
 } from "../../app/renderer/home/copy";
 
 const read = (f: string) => fs.readFileSync(f, "utf8");
@@ -54,5 +54,17 @@ describe("Apps & privacy › Vault", () => {
     expect(signOutScope({ ...c, kept: true })).toContain("Forget everything in Memory removes it. It also forgets what you saved in the vault.");
     expect(forgetEverythingScope(c)).toContain("if you keep one. It also forgets what you saved in the vault. 2 tasks, 1 reminder and 3 routines stay as they are");
     expect(signOutScope({ ...c, facts: null })).toMatch(/It also forgets what you saved in the vault\. Ember couldn't count everything right now/);
+  });
+});
+
+describe("Apps & privacy › Vault when its file couldn't be read", () => {
+  it("says plainly that what couldn't be read isn't listed or filled in, and that the file was kept (reliability-c12-1)", () => {
+    expect(VAULT_FILE_UNREADABLE).toBe("Ember couldn't read its vault, so what it couldn't read isn't listed here and isn't filled in. It kept the file aside, unchanged, beside the vault in its data folder. Anything you give it again is kept as new.");
+    expect(read("app/renderer/home/vault.ts")).toContain("state.unreadable ? `${vaultHint(state.allowed)} ${state.left ? VAULT_FILE_LEFT : VAULT_FILE_UNREADABLE}` : vaultHint(state.allowed)");
+  });
+
+  it("never says the file was kept aside where it was left as it was and nothing new is kept (r12-safety-x12-6)", () => {
+    expect(VAULT_FILE_LEFT).toBe("Ember couldn't read its vault, so what it couldn't read isn't listed here and isn't filled in. It left the file as it was and keeps nothing new until it can read it. Check that your account can open vault.json in Ember's data folder, then restart Ember.");
+    expect(VAULT_FILE_LEFT).not.toMatch(/aside|kept as new/);
   });
 });
