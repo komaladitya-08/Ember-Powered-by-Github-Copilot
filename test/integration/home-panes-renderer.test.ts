@@ -664,9 +664,9 @@ describe.skipIf(gate)("Home's Apps & privacy, after setup (2026-11-07 product au
     // and commands switches it offers, and that “Hey Ember” is turned on as you agree (slice4-x9-5).
     expect(consent).toContain("The list is in settings");
     expect(shown).toBe(consent?.replace("The list is in settings", "The list is below, under Never look at")
-      .replace(" in an app unless you turn on Interactive, when you agree or later in settings, and always", " in an app, and always")
+      .replace(" in an app unless you turn on Interactive, when you agree or later in settings. It also asks before anything hard to undo, unless you asked for exactly that command (it shows it first, with a few seconds to stop it) or later choose Assisted or Autopilot in settings, which ask less.", " in an app, and always before anything hard to undo, except a command you asked for exactly, which it shows you first with a few seconds to stop it.")
       .replace(" unless you turn on “Hey Ember”, when you agree or later in settings, or", " unless you turn on “Hey Ember” in Settings › Voice, or")
-      .replace(" Each asks you first. Commands on this computer have their own switch here.", " Each asks you first."));
+      .replace(" Each asks you before it turns on, except commands on this computer, which have their own switch here.", " Each asks you first."));
     expect(shown).not.toContain("Agreeing turns on");
     expect(shown).toContain("It sends no usage statistics.");
     expect(shown).toContain("~/.config/ember");
@@ -767,7 +767,7 @@ describe.skipIf(gate)("Home's Apps & privacy, as the person's own settings and t
     expect(await hand()).toMatch(/^It asks before acting on anything risky or hard to undo\. For ordinary steps it tells you what it's doing instead \(How Ember asks, below\)\. It never lets the AI model type or see passwords\./);
     // First run's own words are untouched.
     expect(await page.locator("#w-full li[data-icon='plug']").evaluate(e => e.textContent)).toContain("are off until you turn them on");
-    expect(await page.locator("#w-full li[data-icon='hand']").evaluate(e => e.textContent)).toContain("It asks before acting in an app unless you turn on Interactive, when you agree or later in settings, and always before anything hard to undo.");
+    expect(await page.locator("#w-full li[data-icon='hand']").evaluate(e => e.textContent)).toContain("It asks before acting in an app unless you turn on Interactive, when you agree or later in settings. It also asks before anything hard to undo, unless you asked for exactly that command (it shows it first, with a few seconds to stop it) or later choose Assisted or Autopilot in settings, which ask less.");
     await evidence(page, "privacy-terms-on");
     // Both turned off again (main tells Home the settings changed): word for word as before it started, still open.
     const base = { ...structuredClone(DEFAULT_SETTINGS), onboarded: true, consent: { version: 99, at: "2026-11-04T12:00:00Z" } };

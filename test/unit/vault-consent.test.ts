@@ -16,9 +16,9 @@ const PAGE = fs.readFileSync("app/renderer/home/index.html", "utf8");
 const flat = (s: string) => s.replace(/\s+/g, " ");
 
 describe("the consent and the vault", () => {
-  it("is version 10, and tells someone who agreed before what the vault keeps and who uses it (vault-4)", () => {
-    expect(CONSENT_VERSION).toBe(10);
-    expect(consentChangesSince(9)).toEqual(["If you give me a login, a card or contact details in my Secure Form, I keep them in a vault on this computer, locked with your computer's keyring, until you forget them. Only Autopilot fills them in, and the AI model never sees them."]);
+  it("is version 10 or later, and tells someone who agreed before what the vault keeps and who uses it (vault-4)", () => {
+    expect(CONSENT_VERSION).toBeGreaterThanOrEqual(10);
+    expect(consentChangesSince(9).slice(0, 1)).toEqual(["If you give me a login, a card or contact details in my Secure Form, I keep them in a vault on this computer, locked with your computer's keyring, until you forget them. Only Autopilot fills them in, and the AI model never sees them."]);
     expect(CONSENT_CHANGES[10]).not.toMatch(/\bwe\b|\bus\b|\bour\b|"/i);
   });
 

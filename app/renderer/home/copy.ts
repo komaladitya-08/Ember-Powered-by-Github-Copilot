@@ -297,7 +297,7 @@ export function privacyFoldWords(text: string, o: { screenImages: boolean; auton
   const out = text.replace("The list is in settings", "The list is below, under Never look at")
     // First run's agreement is behind the person here: “Hey Ember” is in its own section (slice4-x9-5).
     .replace(" unless you turn on “Hey Ember”, when you agree or later in settings, or", " unless you turn on “Hey Ember” in Settings › Voice, or")
-    .replace(" in an app unless you turn on Interactive, when you agree or later in settings, and always before anything hard to undo.", o.autonomy === "autopilot"
+    .replace(" in an app unless you turn on Interactive, when you agree or later in settings. It also asks before anything hard to undo, unless you asked for exactly that command (it shows it first, with a few seconds to stop it) or later choose Assisted or Autopilot in settings, which ask less.", o.autonomy === "autopilot"
       ? ", even on anything risky or hard to undo: Autopilot is on, so it tells you what it's doing as it goes and asks only where How Ember asks, below, says."
       : o.autonomy === "assisted"
         ? " on anything risky or hard to undo, unless Assisted's check finds the step in what you asked, or it is a command you asked for exactly: then it goes ahead and tells you. For ordinary steps it tells you what it's doing instead (How Ember asks, below)."

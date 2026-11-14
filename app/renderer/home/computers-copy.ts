@@ -49,8 +49,8 @@ export const OPEN_COMMANDS = "Open the command window";
  */
 export const ONBOARDING_LINE = {
   lead: "Other computers and commands",
-  rest: " are off until you turn them on: Ember can work on computers you reach over SSH, and run commands in its own window. Each asks you first. Commands on this computer have their own switch here.",
-  restWindows: " are off until you turn them on: Ember can work in WSL, on computers you reach over SSH, and run commands in its own window. Each asks you first. Commands on this computer have their own switch here.",
+  rest: " are off until you turn them on: Ember can work on computers you reach over SSH, and run commands in its own window. Each asks you before it turns on, except commands on this computer, which have their own switch here.",
+  restWindows: " are off until you turn them on: Ember can work in WSL, on computers you reach over SSH, and run commands in its own window. Each asks you before it turns on, except commands on this computer, which have their own switch here.",
   settings: " are off until you turn them on: Ember can work on computers you reach over SSH, and run commands in its own window. Each asks you first.",
   settingsWindows: " are off until you turn them on: Ember can work in WSL, on computers you reach over SSH, and run commands in its own window. Each asks you first.",
 } as const;

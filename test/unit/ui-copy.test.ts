@@ -698,9 +698,9 @@ describe("Computers and Commands in settings (§8.3) and the onboarding line (§
     const page = readFileSync(new URL("../../app/renderer/home/index.html", import.meta.url), "utf8");
     const l = computersCopy.ONBOARDING_LINE;
     expect(page).toContain(`<li data-icon="plug"><b>${l.lead}</b><span id="targets-note">${l.rest}</span></li>`);
-    expect(keep(`${l.lead}${l.rest}`)).toBe("Other computers and commands are off until you turn them on: Ember can work on computers you reach over SSH, and run commands in its own window. Each asks you first. Commands on this computer have their own switch here.");
+    expect(keep(`${l.lead}${l.rest}`)).toBe("Other computers and commands are off until you turn them on: Ember can work on computers you reach over SSH, and run commands in its own window. Each asks you before it turns on, except commands on this computer, which have their own switch here.");
     // WSL is Windows' alone (review #221).
-    expect(keep(`${l.lead}${computersCopy.onboardingRest("win32")}`)).toBe("Other computers and commands are off until you turn them on: Ember can work in WSL, on computers you reach over SSH, and run commands in its own window. Each asks you first. Commands on this computer have their own switch here.");
+    expect(keep(`${l.lead}${computersCopy.onboardingRest("win32")}`)).toBe("Other computers and commands are off until you turn them on: Ember can work in WSL, on computers you reach over SSH, and run commands in its own window. Each asks you before it turns on, except commands on this computer, which have their own switch here.");
     // Apps & privacy, where first run's rows aren't, says it without their sentence (slice4-23).
     expect(keep(`${l.lead}${l.settings}`)).toBe("Other computers and commands are off until you turn them on: Ember can work on computers you reach over SSH, and run commands in its own window. Each asks you first.");
     for (const s of [computersCopy.COMPUTERS_INTRO, computersCopy.COMMANDS_INTRO, computersCopy.WSL_SWITCH, computersCopy.OFFER_SWITCH, computersCopy.ADD_PLACEHOLDER, computersCopy.OPEN_COMMANDS]) {
@@ -1594,7 +1594,7 @@ describe("Apps & privacy's screenshot switch (safety-privacy-7)", () => {
 
   it("says ordinary steps go ahead without asking while a mode is in force, and which apps never ask (safety-privacy-c4-1)", async () => {
     const { privacyFoldWords } = await import("../../app/renderer/home/copy");
-    const hand = " in an app unless you turn on Interactive, when you agree or later in settings, and always before anything hard to undo. It never lets the AI model type or see passwords. Only in Autopilot, it can fill in a login, a card or contact details from its vault, which the AI model never sees. ";
+    const hand = " in an app unless you turn on Interactive, when you agree or later in settings. It also asks before anything hard to undo, unless you asked for exactly that command (it shows it first, with a few seconds to stop it) or later choose Assisted or Autopilot in settings, which ask less. It never lets the AI model type or see passwords. Only in Autopilot, it can fill in a login, a card or contact details from its vault, which the AI model never sees. ";
     // The words are first run's own, after the line's bold lead, as the page has them; with no mode in force here,
     // Apps & privacy says it asks (slice4-22).
     expect(page).toContain(`<b>It asks before acting</b>${hand}<span`);
@@ -1611,7 +1611,7 @@ describe("Apps & privacy's screenshot switch (safety-privacy-7)", () => {
 
   it("doesn't say Ember can fill in from its vault where the organisation turned that off (merge review integ-y-4)", async () => {
     const { privacyFoldWords } = await import("../../app/renderer/home/copy");
-    const hand = " in an app unless you turn on Interactive, when you agree or later in settings, and always before anything hard to undo. It never lets the AI model type or see passwords. Only in Autopilot, it can fill in a login, a card or contact details from its vault, which the AI model never sees. ";
+    const hand = " in an app unless you turn on Interactive, when you agree or later in settings. It also asks before anything hard to undo, unless you asked for exactly that command (it shows it first, with a few seconds to stop it) or later choose Assisted or Autopilot in settings, which ask less. It never lets the AI model type or see passwords. Only in Autopilot, it can fill in a login, a card or contact details from its vault, which the AI model never sees. ";
     expect(`It asks before acting${privacyFoldWords(hand, { screenImages: true, vaultFill: false })}`).toBe(
       "It asks before acting in an app, and always before anything hard to undo, except a command you asked for exactly, which it shows you first with a few seconds to stop it. It never lets the AI model type or see passwords. Your organisation has turned off filling in logins, cards and contact details from its vault. ");
     expect(privacyFoldWords(hand, { screenImages: true, vaultFill: true })).toBe(privacyFoldWords(hand, { screenImages: true }));

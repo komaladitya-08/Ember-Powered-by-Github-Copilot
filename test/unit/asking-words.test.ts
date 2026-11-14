@@ -53,7 +53,7 @@ describe("“Ask me before every command” on a computer where commands run as 
 });
 
 describe("Apps & privacy says what Ember asks before in the mode in force (home-r10-1)", () => {
-  const hand = " in an app unless you turn on Interactive, when you agree or later in settings, and always before anything hard to undo. It never lets the AI model type or see passwords. Only in Autopilot, it can fill in a login, a card or contact details from its vault, which the AI model never sees. ";
+  const hand = " in an app unless you turn on Interactive, when you agree or later in settings. It also asks before anything hard to undo, unless you asked for exactly that command (it shows it first, with a few seconds to stop it) or later choose Assisted or Autopilot in settings, which ask less. It never lets the AI model type or see passwords. Only in Autopilot, it can fill in a login, a card or contact details from its vault, which the AI model never sees. ";
   const fold = (mode: ApprovalMode | null) => `${privacyFoldWords("It asks before acting", { screenImages: true, autonomy: mode })}${privacyFoldWords(hand, { screenImages: true, autonomy: mode })}`;
 
   it("says risky steps ask in Interactive, go to the check in Assisted, and don't ask in Autopilot", () => {
@@ -150,7 +150,7 @@ describe("How Ember asks, for an elevated Ember in Assisted (home-c10-3: not rep
 
 describe("no sentence promises a question about a dangerous command the user asked for exactly, in any mode (accessibility-c11-1)", () => {
   // decideCommand's rule 10 announces such a command in every mode, with a few seconds to stop it (CLAUDE.md "Never").
-  const hand = " in an app unless you turn on Interactive, when you agree or later in settings, and always before anything hard to undo. ";
+  const hand = " in an app unless you turn on Interactive, when you agree or later in settings. It also asks before anything hard to undo, unless you asked for exactly that command (it shows it first, with a few seconds to stop it) or later choose Assisted or Autopilot in settings, which ask less. ";
   const fold = (mode: ApprovalMode | null) => `${privacyFoldWords("It asks before acting", { screenImages: true, autonomy: mode })}${privacyFoldWords(hand, { screenImages: true, autonomy: mode })}`;
   const ASKS_ABOUT = /\b(asks?|ask)\b[^.]*\b(delet|dangerous|hard to undo|risky|publish)/i;
   const TRUE_OF_IT = /exactly|in an app\b/;
@@ -173,5 +173,31 @@ describe("no sentence promises a question about a dangerous command the user ask
 
   it("says an app's grant doesn't cover anything hard to undo, true in every mode", () => {
     expect(describeEntry({ t: "2026-11-14T10:00:00Z", event: "confirm", kind: "click", app: "gedit", element: { role: "push button", name: "Save" }, answer: "always" } as never)?.why).toBe("From now on Ember may act in gedit without asking first, but that doesn't cover anything hard to undo.");
+  });
+});
+
+describe("Before Ember starts promises no question a mode doesn't put (Settled 28: first-run-r10-7, -r10-8)", () => {
+  const full = page.slice(page.indexOf("<details class=\"w-more\" id=\"w-full\">"), page.indexOf("</details>", page.indexOf("id=\"w-full\"")));
+  const handFull = text(full.match(/<li data-icon="hand">[\s\S]*?<\/li>/)![0]);
+
+  it("says where it doesn't ask before something hard to undo: a command asked for exactly, and the modes that ask less", async () => {
+    const { consentPoints } = await import("../../app/renderer/home/welcome-copy");
+    const hand = consentPoints({ service: "GitHub Copilot", kept: "kept 30 days", locked: false }).find(p => p.icon === "hand")!.text;
+    for (const s of [handFull, hand]) {
+      expect(s).not.toMatch(/always before anything hard to undo/);
+      expect(s).toMatch(/exactly that command/);
+      expect(s).toMatch(/Assisted or Autopilot[^.]*ask less/);
+    }
+  });
+
+  it("doesn't say every other computer and command asks first where commands on this computer turn on with the agreement", () => {
+    expect(text(full)).not.toMatch(/Each asks you first\. Commands on this computer have their own switch here\./);
+    for (const os of ["linux", "win32"] as const) expect(cc.onboardingRest(os)).toMatch(/Each asks you before it turns on, except commands on this computer, which have their own switch here\.$/);
+  });
+
+  it("is a new version of the consent, and tells someone who agreed before what changed", async () => {
+    const { CONSENT_VERSION, consentChangesSince } = await import("../../app/shared/consent");
+    expect(CONSENT_VERSION).toBe(11);
+    expect(consentChangesSince(10)).toEqual(["I say plainly where I don't ask before something hard to undo: a command you asked for exactly, which I show you first with a few seconds to stop it, and Assisted or Autopilot if you choose them later, which ask less."]);
   });
 });

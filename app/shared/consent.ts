@@ -20,8 +20,11 @@ import type { TargetId } from "./targets";
  * 10 (2026-11-13): the vault keeps something new on this computer: logins, cards and contact details the user gives
  * in Ember's Secure Form, sealed with the keyring, which only Autopilot fills in and no model sees (owner decision of
  * 2026-11-12, app/main/vault/).
+ * 11 (2026-11-14): "Before Ember starts" no longer says Ember always asks before anything hard to undo: it says that a
+ * command the user asked for exactly is shown first with a few seconds to stop it, and that Assisted and Autopilot ask
+ * less (PLAN.md §10 Settled 28; first-run-r10-7, -r10-8, accessibility-c11-1).
  */
-export const CONSENT_VERSION = 10;
+export const CONSENT_VERSION = 11;
 
 /**
  * What each bump of CONSENT_VERSION changed, in Ember's words, for someone who agreed to an earlier version: first run
@@ -38,6 +41,7 @@ export const CONSENT_CHANGES: Readonly<Record<number, string>> = {
   8: "While one of my questions is up, anyone near the computer can answer it by voice, and for a few seconds after I ask, I listen for that answer without my name. With Voice Match on, only your voice can say yes.",
   9: "If you haven't agreed to Interactive yet, agreeing now turns it on unless you switch it off here or your organisation keeps it off, so I don't ask before ordinary steps in an app. Your other settings stay as they are.",
   10: "If you give me a login, a card or contact details in my Secure Form, I keep them in a vault on this computer, locked with your computer's keyring, until you forget them. Only Autopilot fills them in, and the AI model never sees them.",
+  11: "I say plainly where I don't ask before something hard to undo: a command you asked for exactly, which I show you first with a few seconds to stop it, and Assisted or Autopilot if you choose them later, which ask less.",
 };
 
 /** The changes since the version the user agreed to (`agreed`), oldest first: none for a first agreement (0) or a current one. */
