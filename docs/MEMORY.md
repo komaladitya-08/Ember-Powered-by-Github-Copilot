@@ -263,7 +263,10 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
     passwords"), is refused only for a value's shape when every word after the topic's own words is grammar or talk
     about passwords, or stands in a phrase that says where or for whom ("…at Globex", "…for card holders", "…and
     laptops"); any other word after it is the value, and so is one after ":", "=", "to", "as", a dash, a verb or a
-    copula, which each end such a phrase (r11-memory-x11-1). So "IT support: password resets and laptops", "Helpdesk,
+    copula, which each end such a phrase (r11-memory-x11-1). Such a phrase names one thing: modifiers ("card",
+    "banking") and then one head word, a place, a group, a thing or a name; a further word is the value ("Passwords
+    for my laptop marmalade", "Password resets for Globex tangerine"), as is a word of letters and digits anywhere in
+    the clause, and the clause is read on across ";" (r11-memory-y11-1). So "IT support: password resets and laptops", "Helpdesk,
     I unlock accounts and reset passwords" and "Tests the PIN pad firmware at Verifone" are kept, and "Password
     resets: sunshine", "Reset passwords to tangerine", "Passwords sunshine and rainbow", "Password reset code is
     tangerine", "Password recovery is tangerine" and "Passwords at home all start with marmalade" are refused. 7 of

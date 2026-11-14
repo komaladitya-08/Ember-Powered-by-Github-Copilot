@@ -550,6 +550,10 @@ const DETERMINER = /^(?:a|an|the|my|your|our|their|his|her|its|this|these|those)
 const PHRASE_NOUN = new Set(String.raw`account accounts card cards debit credit bank banking sim phone phones mobile laptop computer tablet work home
   office school wifi wi-fi router email emails login logins device devices desk family partner kids children friends colleagues
   app apps manager managers vault page pages screen screens field fields box boxes text texts message messages link links`.split(/\s+/).filter(Boolean));
+/** The words of PHRASE_NOUN that qualify the phrase's head rather than name it ("…for card holders", "…for the banking app"). */
+const PHRASE_MODIFIER = /^(?:card|cards|debit|credit|sim|banking|wifi|wi-fi|email)$/;
+/** A word of letters and digits, which a sentence about passwords as a topic doesn't hold ("…for Globex Bluebird77"). */
+const LETTERS_AND_DIGITS = /^(?=(?:[^a-z]*[a-z]){3})(?=[^\d]*\d)\S+$/i;
 /** A verb that puts a value to use ("Use tangerine for password resets", "Types marmalade on the PIN pad"). */
 const USE_VERB = /^(?:use[sd]?|using|set|sets|setting|enters?|entered|types?|typed|tr(?:y|ies|ied)|cho(?:se|ose|oses)|picks?|picked|puts?)$/i;
 /** A word that is no grammar, no talk about passwords and no tool's or service's name, so may be a value. */
@@ -578,17 +582,28 @@ function topicOnly(clause: string): boolean {
     if (/[:=]$/.test(tokens[j - 1]!)) return false;
     // A word used or set before the topic is its value too ("Use tangerine for password resets").
     if (tokens.slice(0, i).some((t, k) => USE_VERB.test(word(t)) && mayBeValue(word(tokens[k + 1] ?? "").toLowerCase()))) return false;
+    // A phrase names one thing (r11-memory-y11-1): modifiers, then one head word; a further word is the value
+    // ("Passwords for my laptop marmalade", "Password resets for Globex Bluebird77").
     let phrase = false;
+    let heads = 0;
+    let afterName = false;
     for (let k = j; k < tokens.length; k++) {
       const t = word(tokens[k]!).toLowerCase();
       // The next name is read on its own, by the loop above.
       if (TOPIC_NAME.test(t)) break;
-      if (PHRASE_START.test(t)) phrase = true;
+      const name = afterName;
+      afterName = false;
+      if (PHRASE_START.test(t)) { phrase = true; heads = 0; }
       else if (DETERMINER.test(t)) { /* passes through */ }
       else if (!t || /^[-–—→]+$/.test(t)) phrase = false;
-      else if (ABOUT_SECRET.has(t) || sayless(t) || /^[a-z]+['’](?:s|t|re|ve|ll|d|m)$/.test(t)) { if (!PHRASE_NOUN.has(t)) phrase = false; }
-      // A word that may be the value: only a place's, a group's or a thing's name in such a phrase, never one alone after a comma at the clause's end.
-      else if (!phrase || (k === tokens.length - 1 && /,$/.test(tokens[k - 1]!))) return false;
+      else if (ABOUT_SECRET.has(t) || sayless(t) || /^[a-z]+['’](?:s|t|re|ve|ll|d|m)$/.test(t)) {
+        if (!PHRASE_NOUN.has(t)) phrase = false;
+        // A place or a thing is a head ("…at home", "…for my laptop"), but a modifier ("…for card holders") or what a service's name heads ("…the Netflix account").
+        else if (phrase && !PHRASE_MODIFIER.test(t) && !name && ++heads > 1) return false;
+      }
+      // A word that may be the value: only one place's, group's or thing's name in such a phrase, never one alone after a comma at the clause's end.
+      else if (!phrase || ++heads > 1 || (k === tokens.length - 1 && /,$/.test(tokens[k - 1]!))) return false;
+      else afterName = TOOL_NAME.test(t) || SERVICE_WORD.test(t);
       if (/[:=]$/.test(tokens[k]!)) phrase = false;
     }
   }
@@ -600,12 +615,16 @@ function valueInClause(text: string): boolean {
   // before (r10-memory-y10-3).
   const joined = text.replace(/\bp\.w\.?/gi, " pw ").replace(/\.{2,}|…/g, " , ")
     .replace(/[.!?]\s+(?=(?:now\s+|and\s+)?(?:it\s+is|it['’]s|that\s+is|that['’]s)\b)/gi, " , ");
-  for (const clause of joined.split(/[.;!\n]+(?:\s|$)/)) {
+  const parts = joined.split(/([.;!\n]+(?:\s|$))/);
+  for (let c = 0; c < parts.length; c += 2) {
+    const clause = parts[c]!;
     // A PIN in capitals anywhere; "pin" in lower case only after whose it is, so "Likes to pin recipes" names none.
     if (!CLAUSE_NAME.test(clause) && !/\bPINs?\b(?![\s-]*code)/.test(clause)) continue;
     // Passwords as a topic, not a value ("IT support: password resets and laptops"): only a value's shape counts (memory-r11-2).
     if (topicOnly(clause)) {
-      if (clause.split(/\s+/).some(w => passwordShaped(w) || /["“]/.test(w))) return true;
+      if (clause.split(/\s+/).some(w => passwordShaped(w) || (LETTERS_AND_DIGITS.test(word(w)) && !TOOL_NAME.test(word(w)) && !SERVICE_WORD.test(word(w))) || /["“]/.test(w))) return true;
+      // A topic goes on across ";" ("I handle password resets; the default is marmalade", r11-memory-y11-1).
+      if (/;/.test(parts[c + 1] ?? "") && parts[c + 2]?.trim() && !topicOnly(`${clause} ${parts[c + 2]}`)) return true;
       continue;
     }
     const words = clause.replace(/mot\s+de\s+passe|contrase[ñn]a|passwort|senha/gi, " ").replace(/->|[→—–]|\s-+\s/g, " ")

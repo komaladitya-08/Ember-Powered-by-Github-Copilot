@@ -53,7 +53,24 @@ const AFTER_TOPIC = [
   "Use tangerine for password resets", "Types marmalade on the PIN pad", "I set kingfisher for the password reset", "Picked Tangerine for PIN resets",
 ];
 
+/** A value after a phrase that says where or for whom (r11-memory-y11-1): a phrase names one thing, and a further word is the value. */
+const AFTER_PHRASE = [
+  "Passwords for my laptop marmalade", "Passwords on the router marmalade", "Passwords on my router tangerine", "Passwords for home tangerine",
+  "Passwords in the office tangerine", "Passwords for Netflix tangerine", "Passwords for Gmail and Netflix tangerine",
+  "Passwords for the family tangerine", "Passwords for the kids sunflower and daisy", "Passwords of my kids sunflower and daisy",
+  "The passwords for the kids sunflower", "Passwords around the house sunflower", "Shared passwords at home tangerine",
+  "Wi-Fi passwords for the cabin sunflower", "Passwords used at home sunflower", "Passwords at work begin marmalade",
+  "Password reset at the bank tangerine", "Password resets at Globex tangerine", "Password resets for Globex Bluebird77",
+  "Password reset in Okta sunflower", "Password reset by phone sunflower", "Password recovery from Gmail sunflower",
+  "Password policy for the office Bluebird", "PIN pad at the shop Bluebird", "Password resets across the office sunflower",
+  "Handles password resets on the Netflix account marmalade", "I handle password resets; the default is marmalade",
+];
+
 describe("a password or a PIN as a topic", () => {
+  it.each(AFTER_PHRASE.map(s => [s]))("refuses %j, a value after a where-or-for-whom phrase (r11-memory-y11-1)", text => {
+    expect(factRefusal(text)).not.toBeNull();
+  });
+
   it.each(AFTER_TOPIC.map(s => [s]))("refuses %j, a value after the topic's words (r11-memory-x11-1)", text => {
     expect(factRefusal(text)).not.toBeNull();
   });
