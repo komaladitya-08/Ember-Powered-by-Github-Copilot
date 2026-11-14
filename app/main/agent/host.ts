@@ -3236,8 +3236,8 @@ export class AgentHost {
     const first = this.betweenTurns();
     // The approval mode by its name, "work without asking" or "ask me first again": set here and never by the
     // conductor (it has no tool for it). To a mode that asks less only by voice, from anyone heard while Voice Match is
-    // off and only from the owner's verified voice while it is on, never over Ember's voice, and only with that mode's
-    // card agreed to in Home; to one that asks more, from anyone (autonomy-intent.ts).
+    // off and only from the owner's verified voice while it is on, never over Ember's voice nor on words Ember can't tell
+    // from other sound (voiceUnchecked) unless Voice Match verified them, and only with that mode's card agreed to in Home; to one that asks more, from anyone (autonomy-intent.ts).
     const mode = this.o.autonomy ? modeIntent(text) : null;
     if (mode && this.o.autonomy) {
       // A suggestion pressed is no one's voice: as typed.
@@ -3245,7 +3245,7 @@ export class AgentHost {
       let plan: ReturnType<typeof planModeIntent> = { reply: AUTONOMY_NOT_SAVED };
       let saved = true;
       try {
-        plan = planModeIntent(mode, this.o.autonomy.state(), { spoken, verified: how.verified === true, short: how.short === true, overEmber: how.overEmber === true });
+        plan = planModeIntent(mode, this.o.autonomy.state(), { spoken, verified: how.verified === true, short: how.short === true, overEmber: how.overEmber === true, unchecked: how.voiceUnchecked === true });
         if (plan.set !== undefined) saved = this.o.autonomy.set(plan.set, { via: spoken ? "voice" : "typed", verified: how.verified === true });
         if (plan.open) this.o.autonomy.open(plan.open.mode, plan.open.card);
       } catch (err) { saved = false; this.o.log.warn("agent.autonomy_not_saved", { err }); }

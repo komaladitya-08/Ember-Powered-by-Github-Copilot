@@ -416,7 +416,7 @@ const STOPWORDS: Readonly<Record<string, ReadonlySet<string>>> = {
   fr: new Set("le la les des du une est et je j vous nous pas que qui pour dans sur avec ce cette il elle sont ai mais ou au aux l c qu de un en ne se y moi lui leur sa ses ces ça cela à vos votre mon ma mes tu te si toi tes".split(" ")),
   de: new Set("der die das und ist nicht ich sie wir ein eine mit zu dem auf für von sich auch wie oder aber habe es sind des im nur noch dir mich mir kann wird du hast den bei aus".split(" ")),
   es: new Set("el la los las del que y en un una es por para con se está como pero muy yo de lo al eso esto hay su sus mi te le si tu ya".split(" ")),
-  it: new Set("il di che e è un una non sono con del della gli le mi ho anche nel ma lo si questo più alla alle nella sul dei delle la ho hai ti ci vuoi tua tuo al da io".split(" ")),
+  it: new Set("il di che e è un una non sono con del della gli le mi ho anche nel ma lo si questo più alla alle nella sul dei delle la ho hai ti ci vuoi tua tuo al da io l c dal dalla dalle dallo dai dagli dall dell nell sull sua suo suoi nostro nostra vostro vostra mio mia tra fra sei lei loro ogni se".split(" ")),
   pt: new Set("os que e é uma para não da em na por se eu você de dos das ao às mas isso seu sua ele ela foi um já são tem está nas quer te à nos ou meu minha".split(" ")),
   nl: new Set("de het een en niet ik je van dat op te met zijn voor maar ook wat om naar uit bij nog aan heb kan".split(" ")),
 };
@@ -432,8 +432,22 @@ const STOPWORDS: Readonly<Record<string, ReadonlySet<string>>> = {
 const ALSO_ENGLISH: Readonly<Record<string, ReadonlySet<string>>> = {
   en: new Set(["me", "per", "o"]), es: new Set(["a", "me", "no"]), it: new Set(["a", "in", "per"]), pt: new Set(["o", "a", "do", "no", "me"]), nl: new Set(["me"]),
 };
-/** The short words of `words` that count towards `lang` when finding a passage's language (STOPWORDS and ALSO_ENGLISH). */
-const counted = (words: readonly string[], lang: string): string[] => words.filter(w => STOPWORDS[lang]?.has(w) || ALSO_ENGLISH[lang]?.has(w));
+/**
+ * The words a language's everyday email opens and closes with, which English never writes ("Ciao Alex", "Caro Alex",
+ * "Grazie mille", "Cordiali saluti"): counted with its short words, and a sign of its own. An Italian email of two short
+ * sentences after its greeting had one Italian short word Ember counted ("Caro Alex, complimenti per la promozione!",
+ * "Ciao Alex, grazie mille per ieri sera…") and was read wholly by Kitten with English sounds in 7 of 30
+ * (voice-speaking-r12-1). Never a name's first word either (wordsBesidesNames): "Ciao Alex" isn't a name.
+ */
+const GREETINGS: Readonly<Record<string, ReadonlySet<string>>> = {
+  it: new Set("ciao grazie buongiorno buonasera buonanotte caro cara cari care carissimo carissima egregio gentilissimo gentilissima saluti cordiali distinti cordialità baci bacioni prego scusa scusi scusate".split(" ")),
+};
+/** The short words of `words` that count towards `lang` when finding a passage's language (STOPWORDS, ALSO_ENGLISH and GREETINGS). */
+const counted = (words: readonly string[], lang: string): string[] => words.filter(w => STOPWORDS[lang]?.has(w) || ALSO_ENGLISH[lang]?.has(w) || GREETINGS[lang]?.has(w));
+/** What splits a sentence into clauses (wordsBesidesNames, and a greeting's own words in languageOf). */
+const CLAUSE = /[.,;:!?¡¿()[\]{}"“”«»„—–\n]+/u;
+/** A word some language greets with (GREETINGS): never the first word of a name. */
+const greets = (token: string): boolean => Object.values(GREETINGS).some(g => g.has(token.toLowerCase().replace(/[^\p{L}]+/gu, "")));
 
 /**
  * Letters and marks one of these languages writes and the others seldom do. Only to tell two languages apart whose
@@ -469,8 +483,8 @@ const NAME_JOINS = new Set("de del della di da do dos das du des la le les el en
  */
 function wordsBesidesNames(text: string): string[] {
   const kept: string[] = [];
-  const capital = (t: string) => /^(?:[dl][’'])?\p{Lu}/u.test(t);
-  for (const clause of text.split(/[.,;:!?¡¿()[\]{}"“”«»„—–\n]+/u)) {
+  const capital = (t: string) => /^(?:[dl][’'])?\p{Lu}/u.test(t) && !greets(t);
+  for (const clause of text.split(CLAUSE)) {
     const tokens = clause.split(/\s+/u).filter(t => /\p{L}/u.test(t));
     for (let i = 0; i < tokens.length;) {
       let capitals = 0, end = i;
@@ -513,7 +527,8 @@ function languageOf(quoting: string, minDifferent: number, prefer: string | null
     // Japanese mixes kana with Han: any kana among them is Japanese.
     if (lang === "ja" ? n && letters.filter(c => /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u.test(c)).length * 2 > letters.length : n * 2 > letters.length) return lang;
   }
-  const words = wordsBesidesNames(text);
+  // A word said again at once is one sign, not two: a sung "tra la la" counted as three Italian words (r12-voice-x12-7).
+  const words = wordsBesidesNames(text).filter((w, i, all) => w !== all[i - 1]);
   const english = counted(words, "en").length;
   let best: string | null = null, most = 0, different = 0, tie = [0, 0, 0, 0];
   const others = Object.keys(STOPWORDS).filter(lang => lang !== "en");
@@ -540,6 +555,17 @@ function languageOf(quoting: string, minDifferent: number, prefer: string | null
   // "Hola, mañana no podré ir a la oficina…" has "la" and "ñ").
   const own = new Set(counted(words, best).filter(w => !ALSO_ENGLISH[best]?.has(w))).size + (text.match(MARKS[best] ?? /(?!)/gu) ? 1 : 0);
   if (share > 4 && own < 2) return null;
+  // Nor where its signs are all greetings and the word each greets ("Cara mia, happy birthday!", "Cordiali saluti,
+  // Marco Rossi, Sales Manager."): an English email may open or close so. A short word of its own besides is needed
+  // (r12-voice-x12-7).
+  const greeting = GREETINGS[best];
+  if (share > 4 && greeting && words.some(w => greeting.has(w))) {
+    const besides = text.split(CLAUSE).flatMap(clause => {
+      const own = wordsBesidesNames(clause);
+      return own.filter((w, i) => !greeting.has(w) && !greeting.has(own[i - 1] ?? ""));
+    });
+    if (!counted(besides, best).some(w => !ALSO_ENGLISH[best]?.has(w))) return null;
+  }
   // Nor where it writes two of Catalan's everyday words: a Catalan email's "que", "si", "per", "les" and "de" made it
   // French or Italian, said by such a voice or not at all where there is none (r11-voice-y11-3).
   if (share > 4 && words.filter(w => CATALAN.has(w)).length >= 2) return null;
@@ -682,6 +708,20 @@ function leadsIn(piece: string): boolean {
   return !ACCENTED.test(own.join(" ")) && !/[^\p{Script=Latin}\P{L}]/u.test(piece);
 }
 
+/** A lone word and a colon ("Promemoria:", "**Avviso:**"), as the stream writes a label on its own line. */
+const LONE_LABEL = /^\s*[*_]*\p{L}[\p{L}'’-]*[*_]*\s*[:：][*_]*\s*$/u;
+/**
+ * English labels Ember or an email writes on a line of their own ("Reminder:", "**Update:**"): Kitten's, whatever
+ * follows them. Taken for the passage's own, "Reminder:" before an Italian notice was said with Italian sounds
+ * (r12-voice-x12-6).
+ */
+const ENGLISH_LABELS: ReadonlySet<string> = new Set(("reminder note notes notice update updates warning alert important urgent subject from to cc bcc " +
+  "date time when where sender message summary status result results details location attachment attachments priority " +
+  "reply answer question translation original quote excerpt text body title preview ps fyi deadline action todo heads " +
+  "re fwd fw hi hello dear thanks regards cheers email").split(" "));
+/** A lone label in no English word (LONE_LABEL, ENGLISH_LABELS): the passage's own. */
+const ownLabel = (piece: string): boolean => LONE_LABEL.test(piece) && !ENGLISH_LABELS.has(piece.toLowerCase().replace(/[^\p{L}]+/gu, ""));
+
 /** A short lead-in and what it leads in to, in one piece ("It says: Hola Alex, ¿cómo estás?"). */
 const INLINE_LEAD = /^([^:：\n]{1,80}[:：])\s+(\S[\s\S]*)$/u;
 
@@ -737,7 +777,12 @@ export class AnswerLanguage {
   /** take, for one piece (null: none, the message only ended). */
   private one(piece: string | null, end: boolean, more: boolean): { text: string; lang: string | null }[] {
     const another = (text: string) => mayBeAnother(text) || speechLanguage(text, this.asked) !== null;
-    if (piece !== null && this.lang === undefined && !this.asked && !this.held.length && !(end && !more) && leadsIn(piece)) {
+    // A lone word and a colon at the start of a passage, after Ember's own lead-in, is the passage's label ("Promemoria:",
+    // "Recordatorio:"): held with the words after it, and said in their voice. As a lead-in of Ember's own, it
+    // was said by Kitten with English sounds (voice-speaking-r12-2); an English one ("Reminder:") stays Kitten's so
+    // (ownLabel: r12-voice-x12-6).
+    const label = this.passage && piece !== null && ownLabel(piece);
+    if (piece !== null && this.lang === undefined && !this.asked && !this.held.length && !(end && !more) && !label && leadsIn(piece)) {
       // A header line or a lead-in of Ember's own at the start of what is judged: said in Ember's voice, and what follows
       // it is judged by itself (leadsIn).
       this.text = "";
@@ -751,10 +796,11 @@ export class AnswerLanguage {
       const cut = INLINE_LEAD.exec(piece);
       if (cut && !another(cut[1]) && another(cut[2])) return [...this.one(cut[1], false, more), ...this.one(cut[2], end, more)];
     }
-    if (piece !== null) { this.held.push(piece); this.text += ` ${piece}`; }
+    // (The label itself isn't judged: the passage's own first 60 letters are, as before it.)
+    if (piece !== null) { this.held.push(piece); if (!label) this.text += ` ${piece}`; }
     let lang = this.lang;
     if (lang === undefined) {
-      if (!this.text.trim()) return [];
+      if (!this.text.trim() && !(end && this.held.length)) return [];
       // What Ember's voice has said of this answer already looked English, and isn't counted against what may be another
       // language's: a passage after "Okay, reading it now." is judged from its first such sentence.
       if (this.spoken && piece !== null && another(this.held.join(" "))) this.passageFromHeld();
@@ -809,7 +855,10 @@ export class AnswerLanguage {
   private beforeClosing(end: boolean): string | null {
     if (!this.passage) return null;
     let n = this.held.length;
-    while (n > 1 && englishClearly(this.held[n - 1].replace(QUOTED, " "))) n--;
+    // (Ember's own closing too, which englishClearly misses for want of two English short words: "Want me to reply?"
+    // counted with a short passage gave it as many English words as its own, and Kitten read it: voice-speaking-r12-2.)
+    const closing = (t: string) => englishClearly(t) || Object.keys(STOPWORDS).every(lang => lang === "en" || ownClosing(t, lang));
+    while (n > 1 && closing(this.held[n - 1].replace(QUOTED, " "))) n--;
     const rest = this.held.slice(0, n).join(" ");
     if (!rest.trim()) return null;
     const found = n < this.held.length ? this.languageNow(rest) : null;

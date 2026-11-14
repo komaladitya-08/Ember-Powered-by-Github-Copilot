@@ -10,7 +10,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { AUTONOMY_NOT_SAVED, modeIntent, planModeIntent, type ModeIntentHeard, type ModeIntentState } from "../../app/main/agent/autonomy-intent";
+import { AUTONOMY_NOT_SAVED, MODE_NAME, modeIntent, planModeIntent, type ModeIntentHeard, type ModeIntentState } from "../../app/main/agent/autonomy-intent";
 import { AgentHost } from "../../app/main/agent/host";
 import { SettingsStore } from "../../app/main/settings";
 import { modeInForce, type ApprovalsSetting } from "../../app/main/policy/autonomy";
@@ -27,7 +27,7 @@ const card = (m: ApprovalMode) => ({ version: modeCardVersion(m), at: AT });
 const ALL_AGREED = (mode: ApprovalMode): ApprovalsSetting => ({ mode, consent: { interactive: card("interactive"), assisted: card("assisted"), autopilot: card("autopilot") } });
 
 const state = (o: Partial<ModeIntentState> = {}): ModeIntentState => ({ inForce: "interactive", agreed: ["interactive", "assisted", "autopilot"], managed: false, cap: null, checkOff: false, voiceMatch: "off", ...o });
-const VOICE: ModeIntentHeard = { spoken: true, verified: false, short: false, overEmber: false };
+const VOICE: ModeIntentHeard = { spoken: true, verified: false, short: false, overEmber: false, unchecked: false };
 const TYPED: ModeIntentHeard = { ...VOICE, spoken: false };
 
 describe("modeIntent: a mode named, whole requests only (modes-E1)", () => {
@@ -82,6 +82,26 @@ describe("planModeIntent: a mode that asks less, by the spoken-answer rule (mode
     expect(planModeIntent({ kind: "without-asking" }, state({ inForce: "asking", voiceMatch: "on" }), { ...VOICE, short: true }).reply).toBe("Say a little more so I can be sure it's you: “Ember, please work without asking from now on.”");
     expect(planModeIntent({ kind: "to", mode: "autopilot" }, state({ voiceMatch: "on" }), { ...VOICE, verified: true }).set).toBe("autopilot");
     expect(planModeIntent({ kind: "to", mode: "autopilot" }, state({ voiceMatch: "unready" }), { ...VOICE, verified: true })).toEqual({ open: { mode: "autopilot", card: false }, reply: expect.stringMatching(/^Voice Match is on but isn't ready yet/) });
+  });
+
+  it("never switches to a mode that asks less on words Ember can't tell from other sound, unless Voice Match verified them, and says how to switch in Settings (voice-listening-r12-1)", () => {
+    // Windows, macOS, Linux without the speakers' stream, Listen once, and nameless words over a video in a follow-up:
+    // voiceUnchecked. A video's or a call's "Switch to Autopilot." is no one's choice there.
+    const UNCHECKED = { ...VOICE, unchecked: true };
+    for (const mode of ["interactive", "assisted", "autopilot"] as const) {
+      const plan = planModeIntent({ kind: "to", mode }, state({ inForce: "asking" }), UNCHECKED);
+      expect(plan.set, mode).toBeUndefined();
+      expect(plan).toEqual({ open: { mode, card: false }, reply: `I couldn't be sure that was you and not other sound, so I didn't switch. I've opened it in Settings: choose ${MODE_NAME[mode]} there.` });
+    }
+    expect(planModeIntent({ kind: "without-asking" }, state({ inForce: "asking" }), UNCHECKED).set).toBeUndefined();
+    // Voice Match on and the owner's voice verified: theirs, as the spoken-answer rule takes it.
+    expect(planModeIntent({ kind: "to", mode: "autopilot" }, state({ voiceMatch: "on" }), { ...UNCHECKED, verified: true }).set).toBe("autopilot");
+    // Not verified with Voice Match on: as before, that voice's own replies.
+    expect(planModeIntent({ kind: "to", mode: "autopilot" }, state({ voiceMatch: "on" }), UNCHECKED)).toEqual({ reply: "That didn't sound like you, so I didn't switch." });
+    // A mode that asks more stays anyone's, heard however.
+    expect(planModeIntent({ kind: "to", mode: "interactive" }, state({ inForce: "autopilot" }), UNCHECKED).set).toBe("interactive");
+    expect(planModeIntent({ kind: "ask-first" }, state({ inForce: "autopilot" }), UNCHECKED).set).toBe("asking");
+    expect(planModeIntent({ kind: "off", mode: "autopilot" }, state({ inForce: "autopilot" }), UNCHECKED).set).toBe("interactive");
   });
 
   it("opens the mode's card when it isn't agreed to, whoever asks, and never chooses it", () => {
@@ -166,6 +186,18 @@ describe("the mode by voice and typed words through the host, as main wires it (
     expect(c.entries()).toEqual([]);
     expect(c.opened).toEqual([["autopilot", false], ["autopilot", false]]);
     expect(c.answers.at(-1)).toBe("I was still speaking, so I didn't take that. Say it again now that I've stopped.");
+  });
+
+  it("never switches to Autopilot on a request main marks as unchecked, and still goes back to Interactive on one (voice-listening-r12-1)", async () => {
+    const c = host(ALL_AGREED("interactive"));
+    await c.h.ask("Switch to Autopilot.", null, c.h.stopEpoch, { spoken: true, voiceUnchecked: true });
+    expect(c.inForce()).toBe("interactive");
+    expect(c.entries()).toEqual([]);
+    expect(c.opened).toEqual([["autopilot", false]]);
+    expect(c.answers.at(-1)).toBe("I couldn't be sure that was you and not other sound, so I didn't switch. I've opened it in Settings: choose Autopilot there.");
+    const d = host(ALL_AGREED("autopilot"));
+    await d.h.ask("Go back to Interactive.", null, d.h.stopEpoch, { spoken: true, voiceUnchecked: true });
+    expect(d.inForce()).toBe("interactive");
   });
 
   it("with Voice Match on, switches only for the owner's verified voice, and says so in the record", async () => {

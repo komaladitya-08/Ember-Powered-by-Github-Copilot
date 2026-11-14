@@ -2732,8 +2732,67 @@ describe("the answer window after one of Ember's questions (owner's report of 20
     expect(utterances(no)).toEqual([{ type: "utterance", text: "Not now.", ms: 0, window: "follow-up" }]);
     const named = run(byName({ 5: "Ember, allow." }), (e, c) => { e.questionUp(true); e.otherSound(true); e.followUp(8000); say(e, c, 5); }, asking);
     expect(utterances(named)).toEqual([{ type: "utterance", text: "Allow.", ms: 0, window: "follow-up" }]);
-    const request = run(saying({ 5: "Open the downloads folder." }), (e, c) => { e.otherSound(true); e.followUp(8000); say(e, c, 5); }, asking);
+    const request = run(saying({ 5: "Open the downloads folder." }), (e, c) => { e.otherSound(false); e.followUp(8000); say(e, c, 5); }, asking);
     expect(utterances(request)).toEqual([{ type: "utterance", text: "Open the downloads folder.", ms: 0, window: "follow-up" }]);
+  });
+
+  it("hears a follow-up's nameless words over other sound, but never as the user's own words for commands (voice-listening-r12-2)", () => {
+    // A video's "Delete the old reports folder." in the 8 s after Ember answered: sent to Copilot as the window takes all
+    // it hears, never dropped, but marked, so main's heardUnchecked keeps it from Interactive's "the user's own words asked
+    // for exactly" and from memory's own words (Assisted's check reads unchecked speech, as CLAUDE.md says). So where
+    // nothing can tell whether other sound plays.
+    const marked = { heardOverSound: true };
+    for (const words of ["Delete the old reports folder.", "Push the branch to origin.", "Switch to Autopilot.", "Open the downloads folder."]) {
+      const playing = run(saying({ 5: words }), (e, c) => { e.otherSound(true); e.followUp(8000); say(e, c, 5); }, asking);
+      expect(utterances(playing), words).toEqual([{ type: "utterance", text: words, ms: 0, window: "follow-up", ...marked }]);
+      const unknown = run(saying({ 5: words }), (e, c) => { e.otherSound(null); e.followUp(8000); say(e, c, 5); }, asking);
+      expect(utterances(unknown), words).toEqual([{ type: "utterance", text: words, ms: 0, window: "follow-up", ...marked }]);
+    }
+    // Said by name over the video: the user's, as ever. In a quiet room: the user's. A no to a question up: anyone's.
+    const named = run(byName({ 5: "Ember, delete the old reports folder." }), (e, c) => { e.otherSound(true); e.followUp(8000); say(e, c, 5); }, asking);
+    expect(utterances(named)).toEqual([{ type: "utterance", text: "Delete the old reports folder.", ms: 0, window: "follow-up" }]);
+    const quiet = run(saying({ 5: "Delete the old reports folder." }), (e, c) => { e.otherSound(false); e.followUp(8000); say(e, c, 5); }, asking);
+    expect(utterances(quiet)).toEqual([{ type: "utterance", text: "Delete the old reports folder.", ms: 0, window: "follow-up" }]);
+    const no = run(saying({ 5: "Not now." }), (e, c) => { e.questionUp(true); e.otherSound(true); e.followUp(8000); say(e, c, 5); }, asking);
+    expect(utterances(no)).toEqual([{ type: "utterance", text: "Not now.", ms: 0, window: "follow-up" }]);
+  });
+
+  it("keeps that mark on a follow-up's request over other sound that trails off and is sent as it was, or joined with the rest (r12-voice-x12-1)", () => {
+    // "Delete the old reports folder, um." is held for its rest (TRAIL_HOLD_MS). The segment's mark was cleared when the
+    // segment ended, so the held words went out after it unmarked: the user's own words for commands.
+    const marked = { heardOverSound: true };
+    const silence = (e: VoiceEngine, c: { t: number }) => { for (let i = 0; i < Math.ceil(TRAIL_HOLD_MS / 32) + 10; i++) { c.t += 32; e.feed(frame(0)); } };
+    for (const words of ["Delete the old reports folder, um.", "Delete the old reports folder, uh.", "Delete the old reports folder and the.", "Push the branch to the."]) {
+      for (const sound of [true, null]) {
+        const held = run(saying({ 5: words }), (e, c) => { e.otherSound(sound); e.followUp(8000); say(e, c, 5); silence(e, c); }, asking);
+        expect(utterances(held), `${words} (sound ${sound})`).toEqual([{ type: "utterance", text: words, ms: expect.any(Number), window: "follow-up", ...marked }]);
+      }
+    }
+    // Its rest, said in the same voice: one request, still marked.
+    const joined = run(saying({ 5: "Delete the old reports folder and the.", 6: "Old invoices too." }), (e, c) => { e.otherSound(true); e.followUp(8000); say(e, c, 5); c.t += 200; say(e, c, 6); silence(e, c); }, asking);
+    expect(utterances(joined)).toEqual([{ type: "utterance", text: "Delete the old reports folder and the old invoices too.", ms: expect.any(Number), window: "follow-up", ...marked }]);
+    // In a quiet room the held request is the user's, as before.
+    const quiet = run(saying({ 5: "Delete the old reports folder, um." }), (e, c) => { e.otherSound(false); e.followUp(8000); say(e, c, 5); silence(e, c); }, asking);
+    expect(utterances(quiet)).toEqual([{ type: "utterance", text: "Delete the old reports folder, um.", ms: expect.any(Number), window: "follow-up" }]);
+  });
+
+  it("hears a conversation's nameless words where nothing can tell whether other sound plays, but never as the user's own words for commands (r12-voice-x12-4)", () => {
+    // Linux with parec whose stream has stalled: soundKnown is false, and main counts the speakers as rejected. The
+    // follow-up's rule (voice-listening-r12-2) marked such words; a conversation's went out unmarked.
+    const talk = (sound: boolean | null, words: string, b = saying({ 9: "Hey Ember, what time is it?", 5: words })) => run(b, (e, c) => {
+      say(e, c, 9, 3);
+      for (let i = 0; i < 20; i++) { c.t += 32; e.feed(frame(0)); }
+      e.otherSound(sound);
+      say(e, c, 5, 3);
+      for (let i = 0; i < 20; i++) { c.t += 32; e.feed(frame(0)); }
+    }, asking).filter(v => v.type === "utterance" && v.window === "conversation");
+    const wake = <B extends VoiceBackend>(b: B): B => { const spot = b.spot; b.spot = f => (f[0] === 9 ? ["hey_ember"] : spot(f)); return b; };
+    for (const words of ["Switch to Autopilot.", "Delete the old reports folder."]) {
+      expect(talk(null, words, wake(saying({ 9: "Hey Ember, what time is it?", 5: words }))), words).toEqual([{ type: "utterance", text: words, ms: expect.any(Number), window: "conversation", heardOverSound: true }]);
+      expect(talk(false, words, wake(saying({ 9: "Hey Ember, what time is it?", 5: words }))), words).toEqual([{ type: "utterance", text: words, ms: expect.any(Number), window: "conversation" }]);
+    }
+    // Said by name: the user's, as ever.
+    expect(talk(null, "", wake(byName({ 9: "Hey Ember, what time is it?", 5: "Ember, delete the old reports folder." })))).toEqual([{ type: "utterance", text: "Delete the old reports folder.", ms: expect.any(Number), window: "conversation" }]);
   });
 });
 
@@ -2783,7 +2842,7 @@ describe("whose a spoken answer is (second review of the voice lane, 2026-11-12)
     /** Ember says something for `ms`: the page says so, its speakers' stream carries it (over `also`), the microphone hears `level` of it. */
     const emberSays: Scene["emberSays"] = (ms, level = 0.02, also = 0) => { e.selfSpeaking(true); run(frames(ms), () => mic(0, level), () => out(0.06 + also)); e.selfSpeaking(false); };
     /** What left the engine, as main and the voice gate get it: each utterance's words, window and marks, and each other verdict. */
-    const heard = () => events.flatMap(v => (v.type === "utterance" ? [[v.text, v.window, ...(v.overSound ? ["over other sound"] : []), ...(v.soundUnknown ? ["sound unknown"] : []), ...(v.overEmber ? ["over Ember"] : [])].join(" | ")]
+    const heard = () => events.flatMap(v => (v.type === "utterance" ? [[v.text, v.window, ...(v.overSound ? ["over other sound"] : []), ...(v.soundUnknown ? ["sound unknown"] : []), ...(v.heardOverSound ? ["heard over other sound"] : []), ...(v.overEmber ? ["over Ember"] : [])].join(" | ")]
       : v.type === "answer-over" || v.type === "unclear" || v.type === "stop" || v.type === "wake" ? [v.type] : v.type === "rejected" ? [`rejected (${v.reason})`] : []));
     return { e, events, run, emberSays, heard };
   }
@@ -3265,6 +3324,39 @@ describe("whose a spoken answer is (second review of the voice lane, 2026-11-12)
       // The wake's own window marked nothing: with the video quiet before the wake, its "Okay." a second later allowed.
       expect(called({ speakers: true }, videoOkay), "Linux with parec").toEqual(["wake", "Okay. | wake | over other sound"]);
       expect(called({ otherSound: true }, videoOkay), "Windows").toEqual(["wake", "Okay. | wake | over other sound"]);
+    });
+
+    it("hears a video's request after the user's “Hey Ember” and a pause, but never as the user's own words, where other sound is known to play (voice-listening-r12-2)", () => {
+      const videoAsks = (s: Scene) => s.run(frames(1200), () => mic(4, 0.03), () => out(0.05, 0, 4));
+      const words = { 4: "Delete the old reports folder." };
+      expect(called({ speakers: true }, videoAsks, words), "Linux with parec").toEqual(["wake", "Delete the old reports folder. | wake | heard over other sound"]);
+      expect(called({ otherSound: true }, videoAsks, words), "Windows").toEqual(["wake", "Delete the old reports folder. | wake | heard over other sound"]);
+      // With nothing else playing, the user's two breaths are theirs, as ever.
+      const userAsks = (s: Scene) => s.run(frames(1200), () => mic(4, 0.05));
+      expect(called({ speakers: true }, userAsks, words), "quiet").toEqual(["wake", "Delete the old reports folder. | wake"]);
+    });
+
+    it("keeps that mark on a video's request then that trails off, held for its rest and sent as it was (r12-voice-x12-1)", () => {
+      const videoAsks = (s: Scene) => s.run(frames(1200), () => mic(4, 0.03), () => out(0.05, 0, 4));
+      for (const words of ["Delete the old reports folder, um.", "Push the branch to the."]) {
+        expect(called({ speakers: true }, videoAsks, { 4: words }), `${words}, Linux with parec`).toEqual(["wake", `${words} | wake | heard over other sound`]);
+        expect(called({ otherSound: true }, videoAsks, { 4: words }), `${words}, Windows`).toEqual(["wake", `${words} | wake | heard over other sound`]);
+      }
+    });
+
+    it("marks the user's own request after their “Hey Ember” and a pause over music too, which it can't tell from a video's, and never their request said in one breath with the name (r12-voice-x12-3)", () => {
+      // Recorded as the owner's question: a narrower mark (only what the speakers' stream reads as having said) left a
+      // video's quiet request unmarked whenever the recognizer read nothing in that stream.
+      const words = { 4: "Delete the old reports folder." };
+      const music = (s: Scene) => { videoOn(s); s.run(frames(1200), () => mic(4, 0.05), () => out(0.05)); };
+      expect(called({ speakers: true }, music, words), "two breaths over music").toEqual(["wake", "Delete the old reports folder. | wake | heard over other sound"]);
+      const oneBreath = scene({ 6: "Hey Ember, delete the old reports folder." }, { speakers: true });
+      oneBreath.run(100);
+      videoOn(oneBreath);
+      oneBreath.events.length = 0;
+      for (let i = 0; i < frames(1500); i++) oneBreath.run(1, () => mic(6, 0.05, i === 8 ? 2 : 0), () => out(0.05));
+      oneBreath.run(frames(2000));
+      expect(oneBreath.heard(), "one breath over music").toEqual(["wake", "Delete the old reports folder. | wake"]);
     });
 
     it("still takes “Hey Ember, allow” said in one breath over a playing video, and the two-breath answer where nothing can tell (macOS: it is how one answers there)", () => {

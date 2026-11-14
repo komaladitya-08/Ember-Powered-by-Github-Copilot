@@ -2172,7 +2172,8 @@ function start(): void {
           // one's request, and never go to Copilot.
           if (spokenReply.kind === "none" && e.window === "answer") break;
           // A follow-up (no wake word) keeps the context from the last call. Without speaker rejection, a call, a video or
-          // Ember's own voice can say it: it doesn't count as the user's own words for a dangerous command (OWNER V1).
+          // Ember's own voice can say it, and said without the name over other sound a video can (`heardOverSound`): it
+          // doesn't count as the user's own words for a dangerous command then (OWNER V1, voice-listening-r12-2).
           // `verified`: Voice Match matched the owner's voice (what may choose a mode that asks less while it is on).
           turnLatency.heard(e.ms);
           // Near-misses corrected against the user's own words (personal/correct.ts): never into a risky request.

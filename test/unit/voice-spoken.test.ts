@@ -813,6 +813,93 @@ describe("AnswerLanguage tells a passage's language from its own words, not from
     for (const t of ["Tell me a joke.", "No, do it in a minute.", "Send me a copy per email.", "Do me a favour.", "O no, me again."]) expect(speechLanguage(t), t).toBeNull();
   });
 
+  it.each(["Here is the email from Davide:", "Here's the message:", "From: Sam\nSubject: Hi"])("reads an everyday Italian email that opens with a greeting or holds few short words in the Italian voice after “%s” (voice-speaking-r12-1)", lead => {
+    // A second set, written apart from round eleven's: the re-rate's own (Kitten read 7 of 30 of them with English sounds)
+    // and the fix's. "Caro Alex" and "Ciao Alex" were taken for a name, "l'", "dal" and "suo" weren't counted, and a
+    // long second sentence left the first's short words under a sixth.
+    for (const passage of [
+      "Caro Alex, complimenti per la promozione! Festeggiamo sabato sera in pizzeria? Un abbraccio, Davide.",
+      "Ciao Alex, grazie mille per ieri sera. Cena buonissima e compagnia fantastica. Alla prossima! Elisa.",
+      "Gentile cliente, il suo ordine numero 4521 è stato spedito oggi. Arriverà entro tre giorni lavorativi.",
+      "Salve, vorrei disdire l'abbonamento a partire dal prossimo mese. Potete confermare? Distinti saluti, Carla.",
+      "Ciao Alex, in allegato il contratto firmato. Per qualsiasi dubbio scrivimi. Buon fine settimana. Sergio.",
+      "Ciao, domani piove, porta l'ombrello. Ci vediamo in ufficio.",
+      "Gentile utente, la sua password scadrà tra cinque giorni. Può cambiarla dal suo profilo.",
+      "Ciao, ho trovato un appartamento vicino all'ufficio. Due camere, balcone, affitto ragionevole. Che ne pensi?",
+      "Caro collega, allego il verbale dell'ultima riunione. Fammi sapere se manca qualcosa.",
+      "Ciao, la nonna sta meglio. L'hanno dimessa stamattina. Domani andiamo a trovarla insieme?",
+    ]) expect(voices(lead, passage, "it"), passage).toEqual([]);
+  });
+
+  it("says a passage's own one-word label (“Promemoria:”, “Avviso:”, “Recordatorio:”, “Aviso:”) in the passage's voice, never Kitten's (voice-speaking-r12-2)", () => {
+    for (const [passage, lang] of [
+      ["Promemoria: pagamento affitto in scadenza lunedì. Grazie per la puntualità.", "it"],
+      ["Avviso: domani manutenzione dalle otto alle dieci. Ci scusiamo per il disagio.", "it"],
+      ["Recordatorio: la cita con el dentista es el martes a las diez.", "es"],
+      ["Aviso: a reunião foi adiada para quinta-feira.", "pt"],
+    ] as const) expect(voices("Here is the email:", passage, lang), passage).toEqual([]);
+    // An English one stays Ember's, and so do a header and a lead-in of its own.
+    for (const answer of [
+      "Here is the email:\n\nReminder: the meeting moved to Thursday at ten. Please confirm.\n\nShould I write back?",
+      "Here are your notes:\n\nUpdate:\nThe build is green and the release is ready.",
+      "Here's the summary:\n\nNote: I saved the file in Documents.",
+      "The error says:\n\nWarning: disk almost full.",
+      "Here is the email from Ana:\n\nFrom: Ana\nSubject: Lunch\n\nAre we still on for Friday?",
+    ]) expect(streamed(answer).filter(p => p.lang !== null), answer).toEqual([]);
+  });
+
+  it("says an English label on its own line before a passage in another language in Ember's own voice, as the docs say (r12-voice-x12-6)", () => {
+    // LONE_LABEL took any lone word and a colon for the passage's own: "Reminder:" before an Italian notice was said
+    // with Italian sounds.
+    for (const [label, passage, lang] of [
+      ["Reminder:", "La riunione è spostata a martedì alle dieci. Grazie a tutti.", "it"],
+      ["Note:", "La riunione è spostata a martedì alle dieci. Grazie a tutti.", "it"],
+      ["**Update:**", "La cita con el dentista es el martes a las diez.", "es"],
+      ["Important:", "A reunião foi adiada para quinta-feira de manhã.", "pt"],
+      ["Warning:", "Le serveur sera arrêté ce soir à minuit pour la maintenance.", "fr"],
+    ] as const) {
+      const said = streamed(`Here's the message:\n\n${label}\n\n${passage}\n\nWant me to reply?`);
+      expect(said.filter(p => p.text.includes(label.replace(/\*/g, ""))).map(p => p.lang), label).toEqual([null]);
+      expect(said.filter(p => p.lang !== null).map(p => p.lang), `${label} ${passage}`).toContain(lang);
+    }
+    // The passage's own label in its language is still said in its voice (voice-speaking-r12-2).
+    const own = streamed("Here's the message:\n\nPromemoria:\n\nLa riunione è spostata a martedì alle dieci. Grazie a tutti.\n\nWant me to reply?");
+    expect(own.filter(p => p.text.includes("Promemoria")).map(p => p.lang)).toEqual(["it"]);
+  });
+
+  it("still says an English email with an Italian greeting, dish or place in it wholly in Ember's own voice (voice-speaking-r12-1)", () => {
+    for (const passage of [
+      "Ciao Alex, just confirming the payment arrived. Thanks!",
+      "I need the slides by five. Can you make it? Grazie mille!",
+      "We'll miss you so much. Good luck with the new job in London! Baci, Sofia.",
+      "Dinner at my parents' is at eight. Don't forget the bottle of Chianti we bought, and the tiramisù.",
+      "Your subscription to La Gazzetta has been renewed. Thanks for staying with us another year.",
+      "Caro, the meeting is at the Palazzo Vecchio at ten. Scusa for the short notice!",
+    ]) expect(streamed(`Here is the email from Ana:\n\n${passage}\n\nWant me to reply?`).filter(p => p.lang !== null), passage).toEqual([]);
+  });
+
+  it("never reads an English email that only opens with an Italian greeting or a sung “tra la la” in the Italian voice (r12-voice-x12-7)", () => {
+    // GREETINGS and the new short words ("tra", "mia") were enough on their own: the whole English sentence went to the
+    // Italian voice, which says nothing where none is installed.
+    for (const passage of [
+      "Cara mia, happy birthday!",
+      "Tra la la, the bakery is open again.",
+      "Cordiali saluti, Marco Rossi, Sales Manager.",
+      "Caro amico, long time no see. Lunch next week?",
+      "Buongiorno! Coffee at nine?",
+      "Scusa scusa, I forgot. Sending it now.",
+      "Ciao ciao, see you tomorrow.",
+      "La la land is on tonight, the late show.",
+    ]) expect(streamed(`Here is the email from Ana:\n\n${passage}\n\nWant me to reply?`).filter(p => p.lang !== null), passage).toEqual([]);
+    // An Italian one whose greeting comes with Italian after it is still Italian's (voice-speaking-r12-1).
+    for (const passage of [
+      "Cara mia, ci vediamo stasera alle otto.",
+      "Ciao, domani piove, porta l'ombrello.",
+      "Cordiali saluti, e grazie per la pazienza.",
+      "Tra cinque giorni la sua password scadrà.",
+    ]) expect(streamed(`Here is the email from Ana:\n\n${passage}\n\nWant me to reply?`).map(p => p.lang), passage).toContain("it");
+  });
+
   it("never gives an email in a language it has no list for to a listed language's voice by the short words they share (r11-voice-x11-4)", () => {
     // Polish emails went to a Portuguese voice ("o", "do", "na"), which says nothing where none is installed, and a
     // Romanian one to a French voice; Kitten had read them.

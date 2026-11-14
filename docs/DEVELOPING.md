@@ -678,7 +678,9 @@ Say a mode's name, “Ember, switch to Autopilot”, “Assisted mode”, “go 
 change it. A mode that asks less is chosen only by voice, by the rule for a spoken yes: from anyone heard while
 **Only my voice can say yes (Voice Match)** is off, and only from your verified voice while it is on (one too short to
 be sure of is asked for again; while Voice Match is on but not ready, from nobody), never from words heard over Ember's
-own voice, and only once that mode's card has been agreed to in Settings: before that, Settings opens at its card, and
+own voice, never from words Ember can't tell from other sound unless Voice Match verified your voice (on Windows and
+macOS, on Linux without `parec`, with Listen once, and what is said without the name over other sound: Settings opens
+at the mode's row instead), and only once that mode's card has been agreed to in Settings: before that, Settings opens at its card, and
 saying the name never agrees to it. Typed words and a suggestion pressed never choose a mode that asks less: Settings
 opens at its row. The organisation's cap and switches hold as in Settings. A mode that asks more is chosen by anyone,
 typed too; where that mode's card isn't agreed to, Ember says where it lands (below Interactive, or in Interactive) and
@@ -1179,7 +1181,16 @@ this window; on the real models taken 28 times in 40, never now, and your own �
 the stream, is taken as before, 40 of 40). And a wake itself is checked against that stream by the two spotters alone,
 whose miss now and then left a video's own “Ember, go ahead.” a wake from idle and a yes by name (2 of 96 runs): a yes
 a wake carries is the speakers' where the recognizer reads it in what their stream played (`speakersSaid`; none of 96
-now, and your own “Hey Ember, allow it.” over a video's talk is taken as before, 7 of 8). The first
+now, and your own “Hey Ember, allow it.” over a video's talk is taken as before, 7 of 8). A request said without the
+name in a follow-up window while other sound plays, or in a follow-up or a conversation where nothing can tell, and one
+said after your “Hey Ember” and a pause while other sound is known to play (your own too: Ember can't tell your second
+breath over music from a video's, so a command you name then asks in Interactive, and memory doesn't keep it as yours;
+say it in one breath with the name to have it count: r12-voice-x12-3), is heard and sent as ever (held for its rest
+too when it trails off, “…, um.”, with its mark: r12-voice-x12-1, r12-voice-x12-4), but never counts as your own words
+for a command (`heardOverSound`, `heardUnchecked`): a video's “Delete the old reports folder.” then asks in Interactive rather than
+being announced as you asked, and memory doesn't keep it as yours (voice-listening-r12-2). Assisted's check still reads
+it, as it reads every unchecked spoken request, so it may still go ahead there when the check finds the step in it
+(r12-voice-x12-2). The first
 time something said then without the name isn't heard, the status line says “Music or a video is playing: say “Ember”
 first.” for 5 s (engine.ts `dropped`), once a conversation; while a question is up, an answer dropped so, in the answer
 window, a follow-up, a conversation or after a wake, makes the question say once why and to say the answer right after the name, in one go (`dropped` says which
@@ -1441,7 +1452,16 @@ after a lead-in without a colon or on the same line). A passage is told by its o
 sixth of its words being enough (`languageNow`), and the short words a language writes as often as English does ("a",
 "me", "no", "do", "in", "o": `ALSO_ENGLISH`) count for both: with a quarter of its words needed and those left out,
 ordinary three- or four-sentence emails were Kitten's in 12 of 40 after a plain lead-in, 7 of the 8 Portuguese ones
-(voice-speaking-r11-1; now none of those 40 nor of 25 more, with English emails and notes still Kitten's). Told so,
+(voice-speaking-r11-1; now none of those 40 nor of 25 more, with English emails and notes still Kitten's). An
+everyday Italian email's greeting and courtesy words ("Ciao", "Caro", "Grazie", "Cordiali saluti": `GREETINGS`) count as
+its short words and are never taken for the first word of a name ("Ciao Alex"), and its elided and other common short
+words ("l'", "c'", "dell'", "dal", "suo", "sua", "tra", "se") are counted: Italian emails that open with a greeting or
+hold few short words were Kitten's for 7 of the re-rate's 30 and 6 of 30 written after the fix (voice-speaking-r12-1;
+now none of either, nor of 30 more written before it, with 60 English emails, Italian names and greetings in some, and
+15 French ones as before). Greetings alone, with the word each greets, are no sign, and a word said twice at once is
+one: an English email that only opens with “Cara mia,” or “Cordiali saluti,” or sings “Tra la la” is Kitten's
+(r12-voice-x12-7: 3 of the review's 160 English passages and 2 of 30 written for the repair went to the Italian voice,
+none now; 29 of those 30 in Italian stay Italian, as before). Told so,
 from fewer than a quarter, a passage needs two signs of its own (two different short words that aren't `ALSO_ENGLISH`,
 or one and a letter only it writes: `MARKS`) and no letters only unlisted languages write (`UNLISTED_LETTERS`: Polish
 "ł", "ś", Romanian "ș", Czech "ř", the Nordic "å", "ø", the "š", "č" and "ž" of Croatian, Bosnian, Serbian and Slovene,
@@ -1458,7 +1478,13 @@ the value are in no other language and the value's only accented letters are in 
 del lunes", "From: Иван" and "Subject: 会议" are judged with the message, since Kitten reads only English:
 r10-voice-x10-2), and so is a lead-in in no
 other language whose only accented letters are in a name ("José's email says:": `leadsIn`); the message after them is
-judged by itself. Judged as its first letters, the sender and subject diluted its short words, and a Spanish or Italian
+judged by itself. A lone word and a colon at the start of a passage after such a lead-in is the passage's own label
+("Promemoria:", "Recordatorio:", "Aviso:": `LONE_LABEL`), said in the voice of the words after it and left out of what
+is judged; taken for Ember's own lead-in, it was said by Kitten with English sounds (voice-speaking-r12-2), and an
+English one ("Reminder:", "Note:", "Update:": `ENGLISH_LABELS`) is Kitten's as before, whatever language follows it
+(r12-voice-x12-6). A passage too short to reach 60 letters is judged at its end without
+Ember's own closing ("Want me to reply?", whose "me" made it as English as the passage). Judged as its first letters,
+the sender and subject diluted its short words, and a Spanish or Italian
 email was Kitten's with English sounds in 22 of 44 cases for "**From:** José / **Subject:** Proyecto", and after
 "José's email says:" in 3 of 5 languages (voice-speaking-r10-2, voice-speaking-c10-1; none for the tests' passages since). A passage is judged without the clearly English pieces it ends
 with: counted with Ember's own "Shall I reply to it?", a chat message of two sentences was Kitten's for 15 of 15 (now

@@ -114,9 +114,12 @@ export type VoiceEvent =
    * `soundUnknown` (with `overSound`): a yes to a question said without the name where nothing could tell whether other
    * sound played (soundKnown), so it is taken as said over it. `nameDoubted` (with `overSound`): the recognizer wrote the
    * name first, but it couldn't be told from what the speakers played (namedByUser), so the note says so rather than ask
-   * for the name the user just said (voice-safety-x9-4).
+   * for the name the user just said (voice-safety-x9-4). `heardOverSound`: said without the name in a follow-up window
+   * while other sound played, or where nothing could tell (soundKnown), or after a wake's own speech while other sound
+   * played: heard, as the window takes all it hears, but never the user's own words for commands (main's
+   * heardUnchecked; voice-listening-r12-2).
    */
-  | { type: "utterance"; text: string; ms: number; window: ListeningWindow; cut?: boolean; overEmber?: true; overSound?: true; soundUnknown?: true; nameDoubted?: true; verified?: true; short?: true; restScore?: number; unchecked?: true }
+  | { type: "utterance"; text: string; ms: number; window: ListeningWindow; cut?: boolean; overEmber?: true; overSound?: true; soundUnknown?: true; nameDoubted?: true; heardOverSound?: true; verified?: true; short?: true; restScore?: number; unchecked?: true }
   /** `voice`: Voice Match found the request wasn't the owner's (`score`: how close it came); it is heard all the same (match.ts). */
   | { type: "rejected"; keyword: string; reason: "self" | "speakers" | "check" | "voice"; heard?: string; score?: number }
   /**
@@ -957,6 +960,8 @@ export class VoiceEngine {
   private output: boolean | null = false;
   /** The utterance under way is a yes said without the name where nothing could tell whether other sound played. */
   private soundUnknown = false;
+  /** See the utterance's `heardOverSound`. */
+  private heardOverSound = false;
   /** A reply is on its way or a task is at work: the conversation stays open (main says so). */
   private busy = false;
   /** Ember's latest words, to tell its own voice from the user's (spokenByEmber). */
@@ -1104,7 +1109,7 @@ export class VoiceEngine {
    * A request that trailed off, waiting until `until` for the rest of it (trailsOff); `t0`: when it was heard; `level`:
    * its loudness (soundLevel: with the wake phrase, when it was said in the same breath), which the rest must come near.
    */
-  private held: { text: string; audio: Float32Array; withWake: boolean; until: number; t0: number; level: number } | null = null;
+  private held: { text: string; audio: Float32Array; withWake: boolean; until: number; t0: number; level: number; heardOverSound: boolean } | null = null;
   stopsOnly(on: boolean): void {
     this.onlyStops = on;
     this.pendingWake = null;
@@ -2109,6 +2114,7 @@ export class VoiceEngine {
     this.overSound = false;
     this.nameDoubted = false;
     this.soundUnknown = false;
+    this.heardOverSound = false;
     this.clipped = false;
     this.cutIn = false;
     this.cutInCheckedAt = 0;
@@ -2297,6 +2303,15 @@ export class VoiceEngine {
     // out of a video was rejected as a wake, and its words then sent as the follow-up: V2-S2). (A conversation is marked
     // above, by the other sound that said it: it hears on through Ember's own voice, whose "remember" is no one's name.)
     if ((this.mode.reason === "follow-up" || this.mode.reason === "answer") && this.namedBySpeakers(spokenFrom) && !no) this.overSound = true;
+    // A follow-up takes whatever is said without the name, by design (it goes to Copilot as a request). Over other sound,
+    // or where nothing can tell, those words may be a video's or a call's: heard, never the user's own words for commands
+    // (heardOverSound). A video's "Delete the old reports folder." was announced in Interactive, as the user's own words
+    // asked for it exactly (voice-listening-r12-2). Assisted's check still reads them, as it reads all unchecked speech
+    // (CLAUDE.md; r12-voice-x12-2). A no is anyone's, as above.
+    if (this.mode.reason === "follow-up" && !this.overSound && !named && !spotted() && !no && (this.soundPlaying(t0) || !this.soundKnown(t0))) this.heardOverSound = true;
+    // So a conversation's, where nothing can tell (Linux with parec, its stream stalled: main counts the speakers as
+    // rejected). Over sound known to play it is marked overSound above (r12-voice-x12-4).
+    if (conversation && !this.overSound && !named && !spotted() && !no && !this.soundKnown(t0)) this.heardOverSound = true;
     if (conversation && this.overEmber && !this.cutIn) {
       // All of what was said over Ember, its end heard: Ember's own voice, a "yeah", or the user cutting in.
       if (this.peak < this.echo * ECHO_MARGIN || (BACKCHANNEL.test(heard) && !this.answering(heard))) { this.peak = 0; return; }
@@ -2354,12 +2369,14 @@ export class VoiceEngine {
         // next, as before the hold (on the real models they were joined to it in 12 of 18 cases at 12–19 dB under:
         // voice-listening-c1-2).
         const listensOn = this.mode.reason === "conversation";
-        this.sendRequest(held.text, held.audio, held.withWake, false, held.t0);
+        this.sendRequest(held.text, held.audio, held.withWake, false, held.t0, held.heardOverSound);
         if (!listensOn || this.mode.kind !== "listening") return;
       } else if (!stopped(text)) {
         text = `${held.text.replace(/[\s,.…-]+$/, "")} ${text.replace(/^[A-Z](?![A-Z.])/, c => c.toLowerCase())}`;
         withWake = held.withWake;
         joined = true;
+        // Its first part's mark goes with the whole (r12-voice-x12-1).
+        if (held.heardOverSound) this.heardOverSound = true;
         audio = new Float32Array(held.audio.length + clip.audio.length);
         audio.set(held.audio);
         audio.set(clip.audio, held.audio.length);
@@ -2484,9 +2501,14 @@ export class VoiceEngine {
       this.mode.until = Math.max(this.mode.until, this.now() + 4000);
       return;
     }
+    // So the words after the user's own "Hey Ember" and a pause, where other sound is known to play: the name was the
+    // user's, the request after it may be the video's (heardOverSound, as V2-S6 below for a yes; voice-listening-r12-2).
+    // Judged before a hold, so that a request that trails off keeps it (r12-voice-x12-1).
+    if (later && !joined && !named && !no && !this.overSound && this.soundPlaying(t0)) this.heardOverSound = true;
     if (!held && !cut && !bargeIn && !this.overEmber && !this.overSound && trailsOff(text) && !this.answering(text)) {
-      // "And make the text a.": the speaker paused to think. Held for the rest of it (the window stays open meanwhile).
-      this.held = { text, audio, withWake, until: this.now() + TRAIL_HOLD_MS, t0, level: this.soundLevel(audio) };
+      // "And make the text a.": the speaker paused to think. Held for the rest of it (the window stays open meanwhile),
+      // with its mark: the segment's own is cleared when the segment ends (r12-voice-x12-1).
+      this.held = { text, audio, withWake, until: this.now() + TRAIL_HOLD_MS, t0, level: this.soundLevel(audio), heardOverSound: this.heardOverSound };
       this.mode.until = Math.max(this.mode.until, this.held.until);
       return;
     }
@@ -2525,11 +2547,11 @@ export class VoiceEngine {
   private sendHeld(): void {
     const h = this.held;
     this.held = null;
-    if (h && this.mode.kind === "listening") this.sendRequest(h.text, h.audio, h.withWake, false, h.t0);
+    if (h && this.mode.kind === "listening") this.sendRequest(h.text, h.audio, h.withWake, false, h.t0, h.heardOverSound);
   }
 
   /** The window's request goes to main (`audio`: what Voice Match checks), and the window ends or, in a conversation, listens on. */
-  private sendRequest(text: string, audio: Float32Array, withWake: boolean, cut: boolean, t0: number): void {
+  private sendRequest(text: string, audio: Float32Array, withWake: boolean, cut: boolean, t0: number, heardOverSound = this.heardOverSound): void {
     if (this.mode.kind !== "listening") return;
     const conversation = this.mode.reason === "conversation";
     // A wake's request sets the loudness its follow-up must come near; after three follow-ups in a row, the next request needs "Hey Ember" (MAX_FOLLOW_UPS).
@@ -2540,7 +2562,7 @@ export class VoiceEngine {
     this.followUps = window === "follow-up" ? this.followUps + 1 : window === "answer" ? this.followUps : 0;
     this.requestAudio = audio;
     this.requestWithWake = withWake;
-    this.emit({ type: "utterance", text, ms: this.now() - t0, window, ...(cut ? { cut } : {}), ...(this.overEmber ? { overEmber: true as const } : {}), ...(this.overSound ? { overSound: true as const } : {}), ...(this.soundUnknown ? { soundUnknown: true as const } : {}), ...(this.overSound && this.nameDoubted ? { nameDoubted: true as const } : {}) });
+    this.emit({ type: "utterance", text, ms: this.now() - t0, window, ...(cut ? { cut } : {}), ...(this.overEmber ? { overEmber: true as const } : {}), ...(this.overSound ? { overSound: true as const } : {}), ...(this.soundUnknown ? { soundUnknown: true as const } : {}), ...(this.overSound && this.nameDoubted ? { nameDoubted: true as const } : {}), ...(heardOverSound && !this.overSound ? { heardOverSound: true as const } : {}) });
     this.echo *= ECHO_DECAY;
     if (conversation && this.mode.kind === "listening") {
       // The microphone stays with the user: the next thing they say is heard as this one was, whatever Ember does meanwhile.

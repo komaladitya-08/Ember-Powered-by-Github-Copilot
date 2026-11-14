@@ -835,6 +835,11 @@ describe("whose words a heard request counts as, for commands", () => {
     expect(heardUnchecked({ overSound: true }, false, true)).toBe(true);
   });
 
+  it("never a video's in a follow-up window: nameless words heard over other sound stay unchecked, unless Voice Match fully matched (voice-listening-r12-2)", () => {
+    expect(heardUnchecked({ heardOverSound: true }, false, true)).toBe(true);
+    expect(heardUnchecked({ heardOverSound: true, verified: true }, false, true)).toBe(false);
+  });
+
   it("the owner's, over other sound, once Voice Match fully matched", () => {
     expect(heardUnchecked({ overSound: true, verified: true }, false, true)).toBe(false);
   });
