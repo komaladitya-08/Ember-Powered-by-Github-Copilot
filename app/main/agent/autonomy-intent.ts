@@ -117,6 +117,13 @@ export interface ModeIntentHeard {
   short: boolean;
   /** Heard over Ember's own voice, or since it last spoke (VoiceService.selfSpokeSince): never what asks less. */
   overEmber: boolean;
+  /**
+   * Heard where Ember can't tell the words from other sound (UserRequest.voiceUnchecked, voice-answer.ts heardUnchecked):
+   * on Windows and macOS, on Linux without the speakers' stream, Listen once, and nameless words said over other sound.
+   * Never what asks less unless Voice Match verified the owner's voice (voice-listening-r12-1): a video's or a call's
+   * "Switch to Autopilot." is no one's choice.
+   */
+  unchecked: boolean;
 }
 
 /**
@@ -204,6 +211,9 @@ export function planModeIntent(intent: ModeIntent, s: ModeIntentState, heard: Mo
   if (s.voiceMatch === "on" && !heard.verified) {
     if (heard.short) return { reply: `Say a little more so I can be sure it's you: “Ember, please ${intent.kind === "without-asking" ? "work without asking from now on" : `switch to ${name}`}.”` };
     return { reply: "That didn't sound like you, so I didn't switch." };
+  }
+  if (heard.unchecked && !(s.voiceMatch === "on" && heard.verified)) {
+    return { open: { mode: to, card: false }, reply: `I couldn't be sure that was you and not other sound, so I didn't switch. I've opened it in Settings: choose ${name} there.` };
   }
   return { set: to, reply: NOW_IN[to] };
 }

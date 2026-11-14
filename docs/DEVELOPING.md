@@ -675,7 +675,9 @@ Say a mode's name, “Ember, switch to Autopilot”, “Assisted mode”, “go 
 change it. A mode that asks less is chosen only by voice, by the rule for a spoken yes: from anyone heard while
 **Only my voice can say yes (Voice Match)** is off, and only from your verified voice while it is on (one too short to
 be sure of is asked for again; while Voice Match is on but not ready, from nobody), never from words heard over Ember's
-own voice, and only once that mode's card has been agreed to in Settings: before that, Settings opens at its card, and
+own voice, never from words Ember can't tell from other sound unless Voice Match verified your voice (on Windows and
+macOS, on Linux without `parec`, with Listen once, and what is said without the name over other sound: Settings opens
+at the mode's row instead), and only once that mode's card has been agreed to in Settings: before that, Settings opens at its card, and
 saying the name never agrees to it. Typed words and a suggestion pressed never choose a mode that asks less: Settings
 opens at its row. The organisation's cap and switches hold as in Settings. A mode that asks more is chosen by anyone,
 typed too; where that mode's card isn't agreed to, Ember says where it lands (below Interactive, or in Interactive) and
