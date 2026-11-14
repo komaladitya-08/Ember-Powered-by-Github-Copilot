@@ -311,7 +311,9 @@ environment, only through `scripts/runtime-env-live.sh`, which gives it a networ
     same fact (docs/MEMORY.md says how that is told). Learned facts are recalled by meaning too, once Better recall's
     model is in. After 5 idle minutes (no turn, no task,
     the screen unlocked) it tidies (consolidate, then one model pass, at most 6 a day). At most once a day while
-    idle it asks about a name it keeps finding nothing on (**Ask me questions now and then**, on by default). A new
+    idle it asks, as text in Home's conversation only (never aloud or beside the cursor), about someone or a project
+    you called yours ("my colleague Priya") that it keeps finding nothing on (**Ask me questions now and then**, on by
+    default). A new
     fact shows in the conversation as "Ember learned: …" with **Undo**; once forgotten the line says "Ember forgot: …"
     with an Undo that puts it back, and focus stays on it. What you forget or correct is never learned back from what
     was said before: Forget, a correction and Forget everything drop the turns and task results not yet read (and the
@@ -877,7 +879,10 @@ it builds on:
     turned off the same way. A session never bound, or whose list can't be read, denies every extension call.
 - **Ember's gate decides every call** (`gate.ts`, from `onPreToolUse`): off (the admin's `features.extensions`,
   LOCKDOWN, the user's switch or consent `FEATURE_CONSENT_VERSION.extensions`), stopped, disabled, changed, shown
-  differently, or refused this turn: deny. A read-only tool in an agreed item, with no injected text seen: allow.
+  differently, or refused this turn: deny. After the user said no to anything in the conversation (one of its
+  extension calls, or any question a task put: the Confirmer's `onDeny` tells `userSaidNo()`), a tool that changes
+  things asks and is never announced, and Autopilot denies it, until the conversation ends (integrations-c11-1). A
+  read-only tool in an agreed item, with no injected text seen: allow.
   Read-only means `readOnlyHint` true with neither `destructiveHint` nor `openWorldHint` true, on a stdio server whose
   tool list hasn't changed this session: every call to a remote (HTTP) server's tools asks, since it sends its
   arguments there. Anything else: the Confirmer asks every time ("Use “post_message” from Slack? With "{…}"."), with
@@ -1715,9 +1720,13 @@ the address in force and its saved key are kept and come back with the switch (i
   "no agreement" in its place); until that seal is read no
   provider of the user's is in force, and one that doesn't match is withdrawn, so Home shows the card again. Without
   a keyring (`basic_text`) nothing is sealed: the yes lasts until Ember quits, and the card asks again at the next
-  start. Every change of the user's provider in force is a `provider` audit entry (its host, the one before, and
+  start. Models & connections says so under the group (`providerSealLine`, from the record's `notes()`): after the
+  yes, that it lasts until Ember closes and why; at a start that withdrew it, why (no keyring, or a seal that didn't
+  match) and to agree again (reliability-r11-1). Every change of the user's provider in force is a `provider` audit entry (its host, the one before, and
   `via`: home, settings or start), shown in What Ember did as "Model service: <host>"; one coming into force that
-  can't be recorded isn't taken. Home's changes merge into the user's own
+  can't be recorded isn't taken: "I agree" then leaves the provider as it was and says why ("Ember couldn't record
+  this in its audit log, so it isn't using <host>. Check that the disk isn't full, then agree again.":
+  integrations-r11-1). Home's changes merge into the user's own
   settings (`withOwnProvider`), never writing back values the policy applied. "I agree" is armed as Ember's questions
   are: for 500 ms after the card is drawn for another host it ignores activation, and the host is taken when it is
   pressed, so a card redrawn at all between the press and the click (pressing blurs the address field, which saves it) agrees

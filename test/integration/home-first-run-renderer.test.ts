@@ -13,7 +13,7 @@ import { DEFAULT_SETTINGS } from "../../app/main/settings";
 import { AGREE_ARM_MS } from "../../app/shared/provider";
 import { CONSENT_VERSION } from "../../app/shared/consent";
 import { commandsConsent } from "../../app/main/targets/consent";
-import { AUTONOMY_CONSENT_TEXT, MEMORY_CONSENT_TEXT, SCREEN_IMAGES_TEXT } from "../../app/renderer/home/copy";
+import { AUTONOMY_CONSENT_TEXT, MEMORY_CONSENT_TEXT, SCREEN_IMAGES_TEXT, memoryTroubleText } from "../../app/renderer/home/copy";
 
 declare global {
   interface Window {
@@ -21,6 +21,10 @@ declare global {
     __frEmit: (name: string, value: unknown) => void;
     __frPend: Record<string, { resolve: (v: unknown) => void; reject: (e: Error) => void }[]>;
     __frFailOff: boolean;
+    /** The answers the stand-in for main refuses as secrets (memory-r11-2). */
+    __frRefuse?: string[];
+    /** The stand-in for main can't read saved memory (r11-memory-x11-4). */
+    __frUnreadable?: boolean;
     __frState: { settings: Record<string, unknown> & { provider: Record<string, unknown> }; agent: Record<string, unknown> };
   }
 }
@@ -120,6 +124,13 @@ async function open(seed: Seed = {}): Promise<Page> {
       if (name === "openAsk") return async () => { window.__frCalls.push("openAsk"); };
       if (name === "quit") return async () => { window.__frCalls.push("quit"); };
       if (name === "cancelSignIn") return async () => { window.__frCalls.push("cancelSignIn"); };
+      // As main's introduceAnswers: what it kept and which answers it refused as secrets.
+      if (name === "introduceMe") return async (answers: Record<string, unknown>) => {
+        window.__frCalls.push(`introduce:${Object.keys(answers).join(",")}`);
+        if (window.__frUnreadable) return { kept: 0, notKept: [], unreadable: true };
+        const notKept = Object.keys(answers).filter(k => window.__frRefuse?.includes(k));
+        return { kept: Object.keys(answers).length - notKept.length, notKept };
+      };
       return () => new Promise(() => undefined);
     } }) as never;
     if (!noBridge) {
@@ -590,6 +601,29 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect((p as Page & { errors: string[] }).errors).toEqual([]);
   });
 
+  it("(aq) without a keyring, Models & connections says why my provider's yes was withdrawn at start, and that a yes lasts until Ember closes (reliability-r11-1)", async () => {
+    const host = "127.0.0.1:18210";
+    const withdrawn = await open({ home: true, provider: { on: true, baseUrl: `http://${host}/v1` }, providerState: { seal: { withdrawn: { host, why: "keyring" } } } });
+    await expect.poll(() => withdrawn.locator("#byok-consent").isVisible()).toBe(true);
+    await expect.poll(() => withdrawn.locator("#byok-seal").isVisible()).toBe(true);
+    expect(await withdrawn.locator("#byok-seal").innerText()).toBe(`Your agreement to use ${host} couldn't be kept when Ember started, because this computer has no keyring Ember can use. Agree again to use it until Ember closes, or set up a keyring to keep it.`);
+    if (process.env.EMBER_UI_EVIDENCE) {
+      fs.mkdirSync(process.env.EMBER_UI_EVIDENCE, { recursive: true });
+      await withdrawn.screenshot({ path: path.join(process.env.EMBER_UI_EVIDENCE, "byok-seal-withdrawn.png"), fullPage: true });
+    }
+    expect((withdrawn as Page & { errors: string[] }).errors).toEqual([]);
+    const lasts = await open({ home: true, liveState: true, provider: { on: true, baseUrl: `http://${host}/v1`, consent: { version: 1, at: "2026-11-08T12:00:00Z", host } }, providerState: { seal: { lasts: { host, why: "keyring" } } } });
+    await expect.poll(() => lasts.locator("#byok-seal").isVisible()).toBe(true);
+    expect(await lasts.locator("#byok-seal").innerText()).toBe(`Your agreement to use ${host} lasts until Ember closes: this computer has no keyring Ember can use to keep it, so Ember asks again next time it starts.`);
+    expect(await lasts.locator("#byok-consent").isVisible()).toBe(false);
+    if (process.env.EMBER_UI_EVIDENCE) await lasts.screenshot({ path: path.join(process.env.EMBER_UI_EVIDENCE, "byok-seal-lasts.png"), fullPage: true });
+    // Another address: nothing about the old host's yes.
+    await lasts.locator("#byok-url").fill("http://127.0.0.1:18211/v1");
+    await lasts.keyboard.press("Tab");
+    await expect.poll(() => lasts.locator("#byok-seal").isVisible()).toBe(false);
+    expect((lasts as Page & { errors: string[] }).errors).toEqual([]);
+  });
+
   it("(v) Home says the provider's note came up when the endpoint is entered, and why Test connection waits (integrations-7, WCAG 4.1.3)", async () => {
     const p = await open({ home: true, provider: { on: true, baseUrl: "" } });
     const test = p.locator("#byok-test");
@@ -849,7 +883,7 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
   it("(w) Home's key row on a computer with no keyring says how to get one (integrations-13)", async () => {
     const p = await open({ home: true, provider: { on: true, baseUrl: "https://api.example.com/v1" }, providerState: { keyring: false } });
     await expect.poll(() => p.locator("#byok-no-keyring").isVisible()).toBe(true);
-    expect(await p.locator("#byok-no-keyring").innerText()).toBe("This computer has no keyring for passwords, so Ember can't keep a key safely here. Set up a keyring (GNOME Keyring or KWallet), then come back to save one. A model server on this computer that needs no key still works.");
+    expect(await p.locator("#byok-no-keyring").innerText()).toBe("This computer has no keyring for passwords, so Ember can't keep a key safely here. Set up a keyring (GNOME Keyring or KWallet), then come back to save one. A model server on this computer that needs no key still works, but Ember asks you to agree to it again each time it starts.");
     expect(await p.locator("#byok-key-form").isVisible()).toBe(false);
   });
 
@@ -1653,6 +1687,74 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect(await next(on).innerText()).toBe("Continue");
     expect([...(p as Page & { errors: string[] }).errors, ...(on as Page & { errors: string[] }).errors]).toEqual([]);
   });
+
+  it("(q3) tells me about you says which answer memory didn't keep and why, keeps it marked, and lets me go on with Skip (memory-r11-2)", async () => {
+    const p = await open({ agent: readyAgent() });
+    await p.evaluate(() => { window.__frState.settings.memory = { on: true, questions: true, askedAt: null, consent: { version: 99, at: "2026-11-04T12:00:00Z" } }; window.__frEmit("onSettingsChanged", window.__frState.settings); window.__frRefuse = ["work"]; });
+    await next(p).click();
+    await next(p).click();
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Try me out");
+    await emit(p, "onMemory", { rows: [], ownership: "ready", epoch: 1 });
+    await p.locator("#w-alt").click();
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Tell me about you");
+    await p.locator("#w-ay-name").fill("Ram");
+    await p.locator("#w-ay-work").fill("IT support, Netflix pw sunshine");
+    expect(await next(p).innerText()).toBe("Save and continue");
+    await next(p).click();
+    await expect.poll(() => p.locator("#w-ay-msg").innerText()).toBe("Saved 1 answer. Ember didn't keep your role and work, because it may hold a password, a code or an ID number, which Ember never keeps. Change it or leave it out.");
+    // Still on the step, the kept answer gone from the form, the refused one marked and focused.
+    expect(await p.locator("#w-title").innerText()).toBe("Tell me about you");
+    expect(await p.locator("#w-ay-name").inputValue()).toBe("");
+    expect(await p.locator("#w-ay-work").inputValue()).toBe("IT support, Netflix pw sunshine");
+    expect(await p.locator("#w-ay-work").getAttribute("aria-invalid")).toBe("true");
+    expect(await p.locator("#w-ay-work").getAttribute("aria-describedby")).toBe("w-ay-msg");
+    expect(await p.evaluate(() => document.activeElement?.id)).toBe("w-ay-work");
+    expect(await next(p).innerText()).toBe("Skip for now");
+    if (process.env.EMBER_UI_EVIDENCE) {
+      fs.mkdirSync(process.env.EMBER_UI_EVIDENCE, { recursive: true });
+      await p.screenshot({ path: path.join(process.env.EMBER_UI_EVIDENCE, "about-you-not-kept.png"), fullPage: true });
+    }
+    // A change is a new answer to save (typed back, too); cleared, Skip goes on without it.
+    await p.locator("#w-ay-work").fill("IT support");
+    expect(await p.locator("#w-ay-work").getAttribute("aria-invalid")).toBeNull();
+    // Changed, it is no longer described by the status line, which goes on to say other things (r11-memory-y11-4).
+    expect(await p.locator("#w-ay-work").getAttribute("aria-describedby")).toBeNull();
+    expect(await next(p).innerText()).toBe("Save and continue");
+    await p.locator("#w-ay-work").fill("IT support, Netflix pw sunshine");
+    expect(await next(p).innerText()).toBe("Save and continue");
+    await p.locator("#w-ay-work").fill("");
+    expect(await next(p).innerText()).toBe("Skip for now");
+    await next(p).click();
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Ready to start");
+    expect((await calls(p)).filter(c => c.startsWith("introduce"))).toEqual(["introduce:name,work"]);
+    expect((p as Page & { errors: string[] }).errors).toEqual([]);
+  }, 20_000);
+
+  it("(q3) tells me about you says saved memory can't be read, never that my answers may hold a password, and keeps them as typed (r11-memory-x11-4)", async () => {
+    const p = await open({ agent: readyAgent() });
+    await p.evaluate(() => { window.__frState.settings.memory = { on: true, questions: true, askedAt: null, consent: { version: 99, at: "2026-11-04T12:00:00Z" } }; window.__frEmit("onSettingsChanged", window.__frState.settings); window.__frUnreadable = true; });
+    await next(p).click();
+    await next(p).click();
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Try me out");
+    await emit(p, "onMemory", { rows: [], ownership: "ready", epoch: 1 });
+    await p.locator("#w-alt").click();
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Tell me about you");
+    await p.locator("#w-ay-name").fill("Ram");
+    await p.locator("#w-ay-work").fill("Product designer at Acme");
+    await next(p).click();
+    await expect.poll(() => p.locator("#w-ay-msg").innerText()).toBe(memoryTroubleText("unreadable"));
+    expect(await p.locator("#w-ay-msg").innerText()).not.toMatch(/password/);
+    // Nothing was kept and no answer is to blame: both stay as typed, unmarked.
+    expect(await p.locator("#w-ay-name").inputValue()).toBe("Ram");
+    expect(await p.locator("#w-ay-work").inputValue()).toBe("Product designer at Acme");
+    expect(await p.locator("#w-ay-work").getAttribute("aria-invalid")).toBeNull();
+    expect(await p.locator("#w-title").innerText()).toBe("Tell me about you");
+    if (process.env.EMBER_UI_EVIDENCE) {
+      fs.mkdirSync(process.env.EMBER_UI_EVIDENCE, { recursive: true });
+      await p.screenshot({ path: path.join(process.env.EMBER_UI_EVIDENCE, "about-you-unreadable.png"), fullPage: true });
+    }
+    expect((p as Page & { errors: string[] }).errors).toEqual([]);
+  }, 20_000);
 
   it("(q) someone who agreed to an earlier version starts at the consent and is told what changed (first-run-4, safety-privacy-8)", async () => {
     const p = await open({ consent: 6, agent: readyAgent() });

@@ -69,6 +69,13 @@ export interface AxNode {
   bounds: Bounds | null;
   actions?: string[];
   text?: string;
+  /**
+   * Its text holds more than a read gives (200 characters): `text` is only its start, so what a field holds isn't all
+   * known (a file dialog's name read so is unread: r11-safety-x11-1).
+   */
+  textCut?: boolean;
+  /** An editable text the reader read and found empty: without it, a field with no `text` may hold what couldn't be read (r11-safety-x11-2). */
+  empty?: boolean;
   /** Selected text, for the focused text element only (never for passwords). */
   selection?: string;
   /** A drop-down (combo box): the option it shows as chosen (never for a secret one). */

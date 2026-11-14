@@ -14,6 +14,8 @@
  * passes neither gets exactly the answers it got before the port.
  */
 
+import { homedir } from "node:os";
+import { basename } from "node:path";
 import { isNeverLook, isSecretLabel, isSheetCell, quoteUntrusted, screenWord } from "../perception/elements";
 import { parseCombo } from "../hands/borrow";
 import { friendlyApp } from "../../shared/apps";
@@ -45,6 +47,21 @@ export type TextMode = "replace" | "insert" | "append";
  * can be typed or written into it (a field, a mail's body), as the reader says.
  */
 export interface DialogControl { role: string; name: string; caption?: boolean; editable?: boolean }
+/**
+ * The dialog a step's element sits in (ActionRequest.dialog). `fields`: what each of its fields holds (an entry's text,
+ * a drop-down's chosen option), read now; absent when one of them couldn't be read (a secret one, a name withheld).
+ * `items`: the names of everything else in it but the rows of a list (a file dialog's path bar, its folder's drop-down,
+ * Windows' "Address: …"), absent when there were too many to read. `selected`: the names of the rows chosen in its
+ * list (what Open opens when no name is typed). `fileChooser`: a file dialog, by the screen reader's role or by its shape
+ * (a one-line field beside a list of rows, whatever its title's language: r11-safety-x11-3). `unread`: not all of it was
+ * read (the read cut short, something under it left out, a field's text cut or not known: r11-safety-x11-1, -x11-2),
+ * so what it doesn't name can't be told. A file dialog's Save or Open is judged by what these hold when it is pressed,
+ * never by what one step typed (safety-privacy-r11-1).
+ */
+export interface DialogFacts {
+  name: string; text: string; alert?: boolean; page?: boolean; truncated?: boolean; controls?: DialogControl[]; messageBox?: boolean;
+  fields?: readonly string[]; items?: readonly string[]; selected?: readonly string[]; fileChooser?: boolean; unread?: boolean;
+}
 
 export interface ActionRequest {
   taskId: string;
@@ -117,7 +134,13 @@ export interface ActionRequest {
    * whole window with nothing left out under it: absent, it isn't known (acknowledgesOnly). `messageBox`: a Win32
    * dialog box (#32770), whose title bar's Close answers as its OK does.
    */
-  dialog?: { name: string; text: string; alert?: boolean; page?: boolean; truncated?: boolean; controls?: DialogControl[]; messageBox?: boolean };
+  dialog?: DialogFacts;
+  /**
+   * The rows chosen (selected) in the window's lists as the worker read it when the step is taken, by name; `whole`: the
+   * read listed every row and named each one chosen. A file manager's Delete, cut or "Move to Trash" acts on these.
+   * `shown`: every row the view lists by name, chosen or not (which folder it shows, whatever its title says).
+   */
+  chosen?: { names: readonly string[]; whole: boolean; shown?: readonly string[] };
   /** For keys: the focused element is in a web page (Chromium's, Firefox's or an Electron app's), where Enter can send. */
   inPage?: boolean;
   /**
@@ -798,17 +821,106 @@ const titleName = (title: string): string => title.replace(/\s+[-—–]\s+.*$/,
  * step asks every time in every mode that asks, is never announced, waived or checked, and Autopilot, which has no
  * question to put, refuses it.
  */
-export function mayReachEmberData(r: Pick<ActionRequest, "kind" | "window" | "element" | "value"> & { app?: string }, os: OS = "linux"): boolean {
-  if (r.kind === "read") return false;
+export function mayReachEmberData(r: ReachRequest, os: OS = "linux"): boolean {
+  return emberDataReach(r, os) !== null;
+}
+/**
+ * How a step may reach Ember's own files (mayReachEmberData): "file", by what it names or where it is; "unread", only
+ * because a file dialog's name or folder couldn't be read whole as its Save or Open is pressed; null, it doesn't.
+ */
+function emberDataReach(r: ReachRequest, os: OS): "file" | "unread" | null {
+  if (r.kind === "read") return null;
   const title = r.window ?? "";
   const name = titleName(title);
-  if (!/[/\\]/.test(title) && (EMBER_FILE.test(name) || EMBER_FOLDER.test(name))) return true;
-  if (inEmberDataParent(r, name)) return true;
+  if (!/[/\\]/.test(title) && (EMBER_FILE.test(name) || EMBER_FOLDER.test(name))) return "file";
+  if (inEmberDataParent(r, name, os)) return "file";
   const item = (r.element?.name ?? "").trim();
-  if (EMBER_FILE.test(item) || EMBER_FOLDER.test(item)) return true;
-  // Typed, the folder's name reaches it in any case where case doesn't count (Windows, macOS: "EMBER", integ-y-1).
-  if ((r.kind === "text" || r.kind === "cursor_text" || r.kind === "value") && r.value) return namesEmberFile(r.value, os !== "linux");
-  return false;
+  if (EMBER_FILE.test(item) || EMBER_FOLDER.test(item)) return "file";
+  // Typed, the folder's name reaches it in any case where case doesn't count (Windows, macOS: "EMBER", integ-y-1); and
+  // what the field holds once this step is taken, not only this step's piece (safety-privacy-r11-1). A Windows short
+  // name ("EMBER~1", "APPDAT~1") may be any folder, Ember's too: whose it is can't be told.
+  const caseless = os !== "linux";
+  if (heldTexts(r).some(t => namesEmberFile(t, caseless) || (os === "win32" && hasShortName(t)))) return "file";
+  return fileDialogReach(r, os);
+}
+/**
+ * A Windows 8.3 short name as a path's part: up to 6 characters, "~", a number, an optional extension of up to 3
+ * ("EMBER~1", "APPDAT~1"). Parts are split at slashes, quotes and spaces, so "~5 minutes" isn't one (r11-safety-y11-3).
+ */
+const SHORT_NAME_PART = /^[^\s\\/.~]{1,6}~\d+(?:\.[^\s\\/.]{0,3})?$/i;
+const hasShortName = (text: string): boolean => text.split(/[\\/\s"'“”]+/).some(p => SHORT_NAME_PART.test(p));
+/** What mayReachEmberData reads of a request. */
+type ReachRequest = Pick<ActionRequest, "kind" | "window" | "element" | "value"> & Partial<Pick<ActionRequest, "mode" | "currentText" | "typed" | "dialog" | "windowId" | "chosen" | "multiLine">> & { app?: string };
+/** The longest text heldTexts tries every caret position in (an "insert" whose caret isn't known). */
+const INSERT_MAX = 1024;
+/**
+ * What a field holds, or may hold, once this step is taken (safety-privacy-r11-1): what was typed into it in pieces
+ * (`typed`), what it holds now (`currentText`: Enter commits it, a key adds to it), and what this step's text makes of
+ * that (appended, or inserted at a caret that isn't known: at every place). A path typed in parts, key by key or
+ * finished by what the field held is judged whole. A field of several lines outside a dialog (a document's text) is no
+ * path: only this step's own text is judged there (r11-safety-y11-2).
+ */
+function heldTexts(r: ReachRequest): string[] {
+  const text = r.kind === "text" || r.kind === "cursor_text" || r.kind === "value";
+  if (!text && r.kind !== "keys" && r.kind !== "select" && r.kind !== "open_app") return [];
+  const own = r.kind !== "keys" && r.value ? [r.value] : [];
+  if (r.multiLine === true && !r.dialog) return own;
+  const out = [r.typed, r.currentText].filter((t): t is string => !!t);
+  out.push(...own);
+  if (!text || !r.value) return out;
+  const now = r.currentText ?? "";
+  if (!now || r.mode === "replace" || r.mode === undefined) return out;
+  out.push(now + r.value, r.value + now);
+  if (r.mode === "insert" && now.length <= INSERT_MAX) for (let i = 1; i < now.length; i++) out.push(now.slice(0, i) + r.value + now.slice(i));
+  return out;
+}
+/** Does any of what the step leaves a field holding, or a dialog's fields and folder show, name Ember's data or policy folder? */
+function namesEmberDataHeld(r: ReachRequest, os: OS): boolean {
+  const named = (t: string) => namesEmberData(t) || emberPathReach(t, { os }) === "names";
+  if (heldTexts(r).some(named)) return true;
+  const d = r.dialog;
+  if (!d || r.kind === "read") return false;
+  return (d.fields ?? []).some(named) || namesEmberData(d.text) || (d.items ?? []).some(t => namesEmberData(t)) || (d.controls ?? []).some(c => namesEmberData(c.name));
+}
+/** A file dialog's own title (whole): "Save As", "Open File", Kate's "Save File — Kate". */
+const FILE_DIALOG_NAME = /^(?:save|save as|save file|save file as|save a copy|save copy|save image|export|export as|export file|open|open file|open files|open folder|select file|select files|select folder|select a file|choose file|choose files|choose a file|choose folder|browse|browse for folder|insert file|insert image|insert picture|upload|upload file|file upload|attach|attach file|attach files)$/i;
+/** Names in quotes in a dialog's words ("A file named “settings.json” already exists"). */
+const QUOTED = /["“”'‘’«»]([^"“”'‘’«»\n]{1,200})["“”'‘’«»]/g;
+/** A row of a list: what a file dialog's folder holds, not where it is (DialogFacts.items leaves these out). */
+const LIST_ROW = /cell|list item|tree item|icon|table row|^row$/;
+/**
+ * Is this a step in a file dialog, or a dialog about a file, that may reach one of Ember's files (safety-privacy-r11-1)?
+ * A dialog whose words name one of its files ("A file named “settings.json” already exists", "permanently delete
+ * “vault.json”"); a file dialog whose fields, path bar or folder name one of its files or folders; and Save, Open,
+ * Enter (anything but backing out, typing a character or moving about) in a file dialog whose name and folder can't be
+ * read whole: where it saves or what it opens can't be told.
+ */
+function fileDialogReach(r: ReachRequest, os: OS): "file" | "unread" | null {
+  if (r.kind === "read") return null;
+  const d = r.dialog;
+  const caseless = os !== "linux";
+  if (d?.text && (d.text.split(/[\s,;:?!]+/).some(t => EMBER_FILE.test(t.replace(/^["“'‘(]+|["”'’).]+$/g, "")))
+    || [...d.text.matchAll(QUOTED)].some(m => namesEmberFile(m[1], caseless)))) return "file";
+  const file = r.windowId?.role === "file chooser" || !!d?.fileChooser || FILE_DIALOG_NAME.test(titleName(d?.name ?? "")) || (FILE_DIALOG_NAME.test(titleName(r.window ?? "")) && (!d || !d.alert));
+  if (!file) return null;
+  if (d && ((d.fields ?? []).some(t => namesEmberFile(t, caseless) || (os === "win32" && hasShortName(t)))
+    || [...(d.items ?? []), ...(d.selected ?? [])].some(t => namesEmberFile(t, caseless)) || (d.controls ?? []).some(c => !LIST_ROW.test(c.role) && namesEmberFile(c.name, caseless)))) return "file";
+  // Read whole: every field read, its other names (where it is) all read, and what it saves or opens named: a field's
+  // text, a chosen row, or the row this step itself opens.
+  const named = (d?.fields ?? []).some(t => t.trim() !== "") || !!d?.selected?.length || (!!r.element?.name.trim() && LIST_ROW.test(r.element.role));
+  const whole = !!d && !d.truncated && !d.unread && !!d.fields && Array.isArray(d.items) && named;
+  return !whole && commitsFileDialog(r, os) ? "unread" : null;
+}
+/** Does this step press, choose or enter something in a file dialog: not backing out, typing a character, or moving about? */
+function commitsFileDialog(r: ReachRequest, os: OS): boolean {
+  if (r.kind === "click" || r.kind === "cursor_click" || r.kind === "toggle") return !BACKS_OFF.test(normalizeLabel(r.element?.name ?? ""));
+  if (r.kind === "keys") {
+    const k = canonicalKeys(r.value ?? "");
+    if (!k) return true;
+    if (typedChar(r.value ?? "", KEYS[os]) !== null) return false;
+    return !MOVING_KEY.test(keyFamily(k));
+  }
+  return r.kind !== "select" && r.kind !== "scroll" && r.kind !== "text" && r.kind !== "cursor_text" && r.kind !== "value";
 }
 /**
  * Does `text` name one of Ember's own files or its data or audit folder's own name as a path's part ("settings.json",
@@ -816,7 +928,11 @@ export function mayReachEmberData(r: Pick<ActionRequest, "kind" | "window" | "el
  * `caseless`: on a system where case doesn't count in a path (Windows, macOS), "EMBER" and "Audit" are those folders.
  */
 export const namesEmberFile = (text: string, caseless = false): boolean =>
-  text.split(/[/\\\n]/).some(part => { const p = part.trim().replace(/^["'“]|["'”]$/g, ""); return EMBER_FILE.test(p) || EMBER_FOLDER.test(caseless ? p.toLowerCase() : p); });
+  text.split(/[/\\\n]/).some(part => {
+    // Where case doesn't count, Windows also saves "settings.json." and "settings.json::$DATA" as settings.json (r11-safety-y11-5).
+    const p = part.trim().replace(/^["'“]|["'”]$/g, ""), f = caseless ? p.replace(/:.*$/, "").replace(/[. ]+$/, "") : p;
+    return EMBER_FILE.test(p) || EMBER_FOLDER.test(caseless ? p.toLowerCase() : p) || (f !== p && (EMBER_FILE.test(f) || EMBER_FOLDER.test(f.toLowerCase())));
+  });
 /**
  * The folders a file manager shows Ember's data or policy folder in (r10-safety-x10-2): its parent (".config",
  * "Local", "Application Support", "etc") and the parent's parent where that is the folder people open (AppData,
@@ -830,10 +946,38 @@ const FILE_MANAGER_APP = /^(?:(?:org\.gnome\.)?nautilus|files|(?:org\.kde\.)?dol
 const MOVING_KEY = /^(?:(?:shift\+)?tab|up|down|left|right|home|end|prior|next|page_up|page_down|escape|[a-z0-9])$/;
 /** A control there that removes, moves or renames what is selected: any menu item (the context menu's), or a button so named. */
 const MOVES_ITEMS = /delete|trash|\bbin\b|remove|erase|rename|\bcut\b|move/i;
+/** A file manager's title for the home folder or the top of the disk, whose rows hold the folders above Ember's data. */
+const HOME_TITLE = /^(?:home|home folder|\/|computer|file system)$/i;
+/** The user's own folder's name ("u": Explorer's and Finder's title for it, and its row in C:\Users or /home), or "". */
+function homeName(): string {
+  try { return basename(homedir()); } catch { return ""; /* no home folder to name: only HOME_TITLE counts */ }
+}
+/** Is this row's name a folder that holds Ember's data or policy folder, or that folder itself (".config", "AppData", "ember", the user's own)? */
+function holdsEmberFolder(name: string, caseless: boolean): boolean {
+  const n = name.trim(), home = homeName();
+  return EMBER_DATA_PARENT.test(n) || EMBER_FOLDER.test(caseless ? n.toLowerCase() : n) || (!!home && (caseless ? n.toLowerCase() === home.toLowerCase() : n === home));
+}
 /** Is `r` a step in a file manager showing the folder that holds Ember's data or policy folder that may move or remove it? */
-function inEmberDataParent(r: Pick<ActionRequest, "kind" | "element" | "value"> & { app?: string }, name: string): boolean {
+function inEmberDataParent(r: Pick<ActionRequest, "kind" | "element" | "value" | "chosen"> & { app?: string }, name: string, os: OS = "linux"): boolean {
   if (!FILE_MANAGER_APP.test((r.app ?? "").trim())) return false;
   const folder = name.split(/[/\\]/).filter(Boolean).pop() ?? "";
+  // What is chosen in the view when the step is taken (the worker's read as it is taken: a right-click's row, a
+  // select-all), for a step that moves or removes it: a row that holds Ember's data or policy folder (safety-privacy-r11-2).
+  // In the home folder, or the top of the disk, rows chosen that can't all be read may be one of them.
+  // Any menu item, and any button but one that backs off, may be one in the desktop's language ("Löschen", "Couper",
+  // "In den Papierkorb legen"): only English names are known (r11-safety-y11-4).
+  const anyControl = (r.kind === "click" || r.kind === "cursor_click" || r.kind === "toggle")
+    && (/menu ?item/i.test(r.element?.role ?? "") || (/button/i.test(r.element?.role ?? "") && !BACKS_OFF.test(normalizeLabel(r.element?.name ?? ""))));
+  if (removesChosen(r, os) || anyControl) {
+    const caseless = os !== "linux";
+    if (r.chosen?.names.some(n => holdsEmberFolder(n, caseless))) return true;
+    const home = homeName();
+    // At home by its title, or by what it shows (".config", "AppData", "Library" among its rows), whatever the title's
+    // language (r11-safety-x11-4).
+    const atHome = HOME_TITLE.test(name.trim()) || (!!home && (caseless ? name.trim().toLowerCase() === home.toLowerCase() : name.trim() === home))
+      || (r.chosen?.shown ?? []).some(n => holdsEmberFolder(n, caseless));
+    if (atHome && !r.chosen?.whole) return true;
+  }
   // That folder's own row, from the folder above it (Home's ".config", the user's "AppData", Finder's "Library"):
   // a key on it but one that moves about may delete, cut or rename it (r10-safety-y10-3).
   const onParentRow = r.kind === "keys" && EMBER_DATA_PARENT.test((r.element?.name ?? "").trim());
@@ -846,8 +990,29 @@ function inEmberDataParent(r: Pick<ActionRequest, "kind" | "element" | "value"> 
   const role = r.element?.role ?? "";
   return /menu item/.test(role) || (/button/.test(role) && MOVES_ITEMS.test(normalizeLabel(r.element?.name ?? "")));
 }
+/**
+ * Keys that delete, cut or rename what is chosen in a file manager (with any modifier: Shift+Delete, Finder's
+ * Cmd+Backspace), and Finder's Return, which renames.
+ */
+const REMOVING_KEY = /^(?:[a-z]+\+)*(?:delete|backspace|f2)$|^(?:ctrl|super|cmd)\+(?:shift\+)?x$/;
+/** May this file manager step move, remove or rename what is chosen: such a key, or a menu item or button so named? */
+function removesChosen(r: Pick<ActionRequest, "kind" | "element" | "value">, os: OS): boolean {
+  if (r.kind === "keys") {
+    const k = canonicalKeys(r.value ?? "", KEYS[os]);
+    return !k || REMOVING_KEY.test(keyFamily(k)) || (os === "darwin" && keyFamily(k) === "return");
+  }
+  if (r.kind !== "click" && r.kind !== "cursor_click" && r.kind !== "toggle") return false;
+  return /menu ?item|button/i.test(r.element?.role ?? "") && MOVES_ITEMS.test(normalizeLabel(r.element?.name ?? ""));
+}
 /** Why such a step asks, or is refused in Autopilot (mayReachEmberData). */
 export const EMBER_DATA_DOUBT = "this may be Ember's own settings, audit log or policy, which are for the user only";
+/**
+ * What the question about such a step adds, in Ember's own words (never the model's), so the user can tell it from any
+ * other step (safety-privacy-r11-3).
+ */
+export const EMBER_DATA_QUESTION = "This may be my own settings or my record of what I did, so say no unless you asked for that.";
+/** The same, where only a file dialog that couldn't be read whole is the doubt. */
+export const EMBER_DATA_UNREAD_QUESTION = "I can't read where this saves or what it opens, so it may be my own settings or my record of what I did: say no unless you asked for that.";
 /** One list with the screen reader's (which also withholds these fields' contents), plus look-alike folding. */
 export const isSecretField = (s: string) => SECRET_FIELD.test(normalizeLabel(s)) || isSecretLabel(normalizeLabel(s));
 
@@ -2891,7 +3056,10 @@ export class PolicyEngine {
     if (d.verdict === "deny" || d.tier === "read" || !mayReachEmberData(r, this.os)) return d;
     if (this.autopilot) return { tier: "never", verdict: "deny", reason: `${EMBER_DATA_DOUBT}; Autopilot has no question to put, so Ember doesn't do it`, prompt: d.prompt };
     const { autonomy: _a, announce: _n, mode: _m, waivable: _w, needsGrant: _g, stepPrompt: _s, ...rest } = d;
-    return { ...rest, tier: "confirm", verdict: "confirm", risky: true, everyTime: true, remember: false, reason: d.verdict === "confirm" ? `${d.reason}; ${EMBER_DATA_DOUBT}` : EMBER_DATA_DOUBT };
+    // The question says so, in Ember's words (safety-privacy-r11-3).
+    const line = emberDataReach(r, this.os) === "unread" ? EMBER_DATA_UNREAD_QUESTION : EMBER_DATA_QUESTION;
+    const prompt = d.prompt.includes(line) ? d.prompt : `${d.prompt} ${line}`;
+    return { ...rest, tier: "confirm", verdict: "confirm", risky: true, everyTime: true, remember: false, prompt, reason: d.verdict === "confirm" ? `${d.reason}; ${EMBER_DATA_DOUBT}` : EMBER_DATA_DOUBT };
   }
 
   /**
@@ -3393,7 +3561,9 @@ export class PolicyEngine {
     if (r.kind !== "read" && showsEmberData(r.window)) return never("Ember's settings, audit log and policy are for the user only");
     // Or their folder typed into an Open dialog or an address bar: the way to open them there (safety-privacy-r10-1),
     // also as a pattern that reaches it ("~/.config/emb?r/settings.json", integ-y-1), as the classifier's `ember.path` is.
-    if ((r.kind === "text" || r.kind === "cursor_text" || r.kind === "value" || r.kind === "select" || r.kind === "open_app") && (namesEmberData(r.value) || (!!r.value && emberPathReach(r.value, { os }) === "names"))) return never("Ember's settings, audit log and policy are for the user only");
+    // And what a field holds once the step is taken (typed in pieces, key by key, finished by what it held) or a dialog's
+    // fields and folder show when its Save or Open is pressed (safety-privacy-r11-1).
+    if (namesEmberDataHeld(r, os)) return never("Ember's settings, audit log and policy are for the user only");
     // (The vault's fill is the one step that may reach a password field: decided below, in Autopilot only.)
     if (r.element?.role === "password text" && r.kind !== "vault_fill") return never("password fields are for the user only");
     if (r.element?.role === "terminal") return never("Ember doesn't type into terminal windows; it runs commands in its own command window when Commands is on");

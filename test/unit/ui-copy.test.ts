@@ -27,7 +27,7 @@ import type { ApprovalsState } from "../../app/shared/approvals";
 import * as conv from "../../app/renderer/home/copy";
 import { composerRefusal, composerSendRefusal } from "../../app/main/agent/composer-refusal";
 import { friendlyError, lostWords } from "../../app/main/agent/presenter";
-import { PROVIDER_NO_KEYRING, PROVIDER_NO_MODEL_HERE, PROVIDER_WORDS, reminderDeleteScope, betterRecallDownloadLabel, betterRecallProgress, betterRecallText, modelDestination, providerAgreedChecked, providerAgreedText, providerAgreedUnlisted, providerHeldUnlisted, providerCardShown, providerConsentText, providerHeldChecking, providerHeldHint, providerHeldKept, providerHeldKey, recipientWords, providerHint, providerTestText, providerTestWaits } from "../../app/renderer/home/copy";
+import { PROVIDER_NO_KEYRING, PROVIDER_NO_MODEL_HERE, providerSealLine, PROVIDER_WORDS, reminderDeleteScope, betterRecallDownloadLabel, betterRecallProgress, betterRecallText, modelDestination, providerAgreedChecked, providerAgreedText, providerAgreedUnlisted, providerHeldUnlisted, providerCardShown, providerConsentText, providerHeldChecking, providerHeldHint, providerHeldKept, providerHeldKey, recipientWords, providerHint, providerTestText, providerTestWaits } from "../../app/renderer/home/copy";
 
 describe("settings window words", () => {
   it("counts model calls and tokens the way people say them", () => {
@@ -1056,7 +1056,7 @@ describe("the Model provider group's words (Copilot section)", () => {
     expect(providerTestText({ ok: true, host: "models.example.com", models: 12, ids: ["gpt-4.1"] })).toBe("Connected to models.example.com. It lists 12 models, such as gpt-4.1.");
     expect(providerTestText({ ok: false, why: "models.example.com needs an API key." })).toBe("models.example.com needs an API key.");
     // With the way forward (integrations-13).
-    expect(PROVIDER_NO_KEYRING).toBe("This computer has no keyring for passwords, so Ember can't keep a key safely here. Set up a keyring (GNOME Keyring or KWallet), then come back to save one. A model server on this computer that needs no key still works.");
+    expect(PROVIDER_NO_KEYRING).toBe("This computer has no keyring for passwords, so Ember can't keep a key safely here. Set up a keyring (GNOME Keyring or KWallet), then come back to save one. A model server on this computer that needs no key still works, but Ember asks you to agree to it again each time it starts.");
     expect(PROVIDER_WORDS).toEqual({
       keySaved: "Key saved.", keyRemoved: "Key removed.", pasteKey: "Paste the API key first.", testing: "Testing…",
       testFailed: "Ember couldn't test the connection. Try again.",
@@ -1675,5 +1675,19 @@ describe("the log file in About this build (rp-8)", () => {
     expect(main).toContain(`ipcMain.handle(IPC.showLogFile, guard(() => { shell.showItemInFolder(log.file); }));`);
     const preload = readFileSync(new URL("../../app/preload/home.ts", import.meta.url), "utf8");
     expect(preload).toContain(`showLogFile: () => ipcRenderer.invoke(IPC.showLogFile),`);
+  });
+});
+
+describe("the own provider's seal, as Home says it (reliability-r11-1)", () => {
+  it("says why the yes lasts only until Ember closes, or why a start withdrew it, only for the host it is about", () => {
+    const h = "127.0.0.1:18210";
+    expect(providerSealLine({ host: h, agreed: true, seal: { lasts: { host: h, why: "keyring" } } })).toBe("Your agreement to use 127.0.0.1:18210 lasts until Ember closes: this computer has no keyring Ember can use to keep it, so Ember asks again next time it starts.");
+    expect(providerSealLine({ host: h, agreed: true, seal: { lasts: { host: h, why: "write" } } })).toBe("Your agreement to use 127.0.0.1:18210 lasts until Ember closes: Ember couldn't save it safely on this computer, so it asks again next time it starts.");
+    expect(providerSealLine({ host: h, agreed: false, seal: { withdrawn: { host: h, why: "keyring" } } })).toBe("Your agreement to use 127.0.0.1:18210 couldn't be kept when Ember started, because this computer has no keyring Ember can use. Agree again to use it until Ember closes, or set up a keyring to keep it.");
+    expect(providerSealLine({ host: h, agreed: false, seal: { withdrawn: { host: h, why: "seal" } } })).toBe("Ember couldn't confirm your agreement to use 127.0.0.1:18210 when it started, so it isn't using it. Agree again to use it.");
+    expect(providerSealLine({ host: "other.example", agreed: true, seal: { lasts: { host: h, why: "keyring" } } })).toBeNull();
+    expect(providerSealLine({ host: h, agreed: true, seal: { withdrawn: { host: h, why: "keyring" } } })).toBeNull();
+    expect(providerSealLine({ host: h, agreed: false, seal: { lasts: { host: h, why: "keyring" } } })).toBeNull();
+    expect(providerSealLine({ host: h, agreed: true })).toBeNull();
   });
 });

@@ -3,6 +3,9 @@
  * about, and, at most once a day while the user is idle and nothing is under way, asks about the one it missed most
  * ("Who or what is “Priya”?"). The answer, in the user's own words, is a `user` fact about that name. The question is
  * built here from the name alone (words from the user's own requests, never from the screen); no model writes it.
+ * Only a name the user called their own person or project counts ("my colleague Priya", "our Atlas project":
+ * `namedAsTheirs`), since no list can name every clinic, group or medicine (r10-memory-y10-2), and the question is
+ * text in Home only, never said aloud or shown beside the cursor (MemoryLearning's `say`).
  *
  * Also "forget that": forgets what Ember learned or was told last, within a few minutes, without a model turn.
  * Pure: MemoryLearning (./learning.ts) decides when.
@@ -41,11 +44,11 @@ export function namesIn(request: string): string[] {
 }
 
 /**
- * `namesIn`, each name with the words of its sentence before it (folded), nearest last, the word after it, and whether
- * it is someone's ("Priya's review").
+ * `namesIn`, each name with the words of its sentence before it (folded), nearest last, the word after it, the words
+ * after that (`rest`, folded, at most three), and whether it is someone's ("Priya's review").
  */
-function namedIn(request: string): { name: string; before: string[]; after: string; owns: boolean }[] {
-  const out: { name: string; before: string[]; after: string; owns: boolean }[] = [];
+function namedIn(request: string): { name: string; before: string[]; after: string; rest: string[]; owns: boolean }[] {
+  const out: { name: string; before: string[]; after: string; rest: string[]; owns: boolean }[] = [];
   for (const sentence of request.split(/[.!?\n]+/)) {
     const raws = sentence.trim().split(/\s+/);
     const words = raws.map(raw => raw.replace(/^[^\p{L}]+|[^\p{L}\p{N}]+$/gu, "").replace(/['’]s$/, ""));
@@ -54,7 +57,7 @@ function namedIn(request: string): { name: string; before: string[]; after: stri
     // At most three words: a longer capitalised run is a title or a heading, not a name (review of PR #142).
     const end = (at: number) => {
       if (run.length && run.length <= MAX_NAME_WORDS) {
-        out.push({ name: run.join(" "), before: words.slice(0, from).map(fold), after: fold(words[at] ?? ""), owns: /['’]s\W*$/.test(raws[at - 1] ?? "") });
+        out.push({ name: run.join(" "), before: words.slice(0, from).map(fold), after: fold(words[at] ?? ""), rest: words.slice(at + 1, at + 4).map(fold), owns: /['’]s\W*$/.test(raws[at - 1] ?? "") });
       }
       run = [];
     };
@@ -124,6 +127,36 @@ function personOrProject(near: readonly string[], after: string): boolean {
   return PROJECT_AFTER.test(after);
 }
 
+/** Whose a person or a project is when the user calls it theirs. */
+const MINE = /^(?:my|our)$/;
+/**
+ * The people a user calls theirs by an everyday relation, at work or at home. Never a doctor, a therapist, a lawyer, a
+ * counsellor, a sponsor or a caseworker, whose name says something private (r10-memory-y10-2).
+ */
+const THEIR_PERSON = /^(?:colleagues?|co-?workers?|teammates?|team-?mates?|manager|boss|line-?manager|friends?|partner|wife|husband|sons?|daughters?|brothers?|sisters?|mum|mom|mother|dad|father|parents?|cousins?|aunt|uncle|niece|nephew|neighbou?rs?|flatmates?|housemates?|roommates?|clients?|customers?|assistant|mentor|mentee|intern|reports?|director|lead|grandma|grandpa|grandmother|grandfather|nan|nana|granny|girlfriend|boyfriend|fianc[eé]e?|kids?|children|child|baby)$/;
+/** The projects a user calls theirs. */
+const THEIR_PROJECT = /^(?:project|projects|team|product|app|repo|repository|service|startup|company|business|codebase|website|site|platform|programme|program|initiative|workstream|band)$/;
+/** A word that may stand between "my" and the relation ("my new manager Priya", "our big project Atlas"). */
+const RELATION_ADJ = /^(?:new|old|best|little|big|older|younger|eldest|youngest|senior|junior|main|current|former|side|pet|favourite|favorite|work|team|line|tech|project|product|account|engineering|design)$/;
+const relation = (w: string | undefined) => !!w && (THEIR_PERSON.test(w) || THEIR_PROJECT.test(w));
+
+/**
+ * Whether a name is one the user calls their own person or project there (r10-memory-y10-2): "my colleague Priya",
+ * "our new project Atlas", "Priya, my manager", "our Atlas project". Nothing else counts: "Email Priya" says nothing
+ * of who Priya is, and "Book me in at Marie Stopes" names a clinic where a person's name could stand.
+ */
+function calledTheirs(before: readonly string[], after: string, rest: readonly string[]): boolean {
+  const [b1, b2, b3] = [before.at(-1), before.at(-2), before.at(-3)];
+  if (relation(b1) && (MINE.test(b2 ?? "") || (RELATION_ADJ.test(b2 ?? "") && MINE.test(b3 ?? "")))) return true;
+  if (MINE.test(b1 ?? "") && THEIR_PROJECT.test(after)) return true;
+  return MINE.test(after) && (relation(rest[0]) || (RELATION_ADJ.test(rest[0] ?? "") && relation(rest[1])));
+}
+
+/** The names in a request the user calls their own person or project (`calledTheirs`). */
+export function namedAsTheirs(request: string): string[] {
+  return [...new Set(namedIn(request).filter(n => calledTheirs(n.before, n.after, n.rest)).map(n => n.name))].slice(0, 5);
+}
+
 /**
  * The names in a request that Ember may ask about (memory-r9-8): `namesIn`, without what everyone knows (NOT_SOMEONE,
  * EVERYDAY, but after a verb whose object is someone or a title: "Ask Alma", "Mr Lock"), an app installed on this
@@ -132,7 +165,7 @@ function personOrProject(near: readonly string[], after: string): boolean {
  * People and projects are named otherwise ("Email Priya", "a note to Priya about Atlas", "Priya's review", "working on
  * Atlas", "Update Priya on the launch"): memory-x9-9. Where it can't tell, it doesn't ask.
  */
-export function askableNames(request: string, apps: readonly string[] = []): string[] {
+export function askableNames(request: string, apps: readonly string[] = [], theirs: ReadonlySet<string> = new Set()): string[] {
   // An app by its whole name or its first word ("Visual Studio Code", "Visual"), never a later word or someone's
   // ("Grace Hopper Simulator" leaves Hopper, "Sam's Club" leaves Sam: memory-x9-9).
   const installed = new Set(apps.flatMap(a => {
@@ -140,7 +173,7 @@ export function askableNames(request: string, apps: readonly string[] = []): str
     return [fold(a), ...(/['’]s$/.test(first) || fold(first).length < 3 ? [] : [fold(first)])];
   }));
   const out: string[] = [];
-  for (const { name, before, after, owns } of namedIn(request)) {
+  for (const { name, before, after, rest, owns } of namedIn(request)) {
     const words = fold(name).split(/\s+/);
     const near = before.filter(w => w && !DETERMINER_BEFORE.test(w));
     const last = near.at(-1) ?? "";
@@ -150,8 +183,10 @@ export function askableNames(request: string, apps: readonly string[] = []): str
     if (!owns && !someone && APP_VERB.test(last) && !(last === "update" && /^(?:on|about)$/.test(after))) continue;
     if (!owns && WHERE.test(last) && !(last === "on" && ABOUT_ON.test(near.at(-2) ?? "") || (near.at(-2) === "in" && ABOUT_ON.test(near.at(-3) ?? "")))) continue;
     if (!owns && last === "to" && TRAVEL.test(near.at(-2) ?? "")) continue;
-    // Only where someone or a project stands (r10-memory-x10-2): a word list can't name every clinic, group or medicine.
-    if (!owns && !someone && !personOrProject(near, after)) continue;
+    // Only someone or a project the user called theirs (r10-memory-y10-2): here ("my colleague Priya"), or earlier
+    // this run and standing where someone or a project does now (r10-memory-x10-2). A word list can't name every
+    // clinic, group or medicine, and a name merely beside "with" or "to" may be one.
+    if (!calledTheirs(before, after, rest) && !(theirs.has(nameKey(name)) && (owns || someone || personOrProject(near, after)))) continue;
     out.push(name);
   }
   return [...new Set(out)].slice(0, 5);
@@ -159,9 +194,9 @@ export function askableNames(request: string, apps: readonly string[] = []): str
 
 /**
  * Words that make a request private (memory-c10-1): health and sexual health, medicines, mental health, addiction, a
- * crisis line, the law, money trouble, dating and sexuality, and faith. The daily question is shown beside the cursor
- * and spoken by default while Ember has nothing to do, which says nothing of who can see or hear it, so no name from
- * such a request is ever asked about. Any word counts: asking less costs nothing.
+ * crisis line, the law, money trouble, dating and sexuality, and faith. The daily question is written in Home's
+ * conversation while Ember has nothing to do, never said aloud, but that says nothing of who can see the screen, so no
+ * name from such a request is ever asked about. Any word counts: asking less costs nothing.
  */
 const SENSITIVE = new RegExp(String.raw`\b(?:`
   + String.raw`clinics?|hospitals?|hospice|doctors?|gp|nurses?|surgery|symptoms?|diagnos\w*|treat(?:ed|ment|ments|ing)?|therap\w*|counsell?(?:ing|or|ors)|psychiatr\w*|psycholog\w*`
@@ -186,6 +221,8 @@ export class Gaps {
   private misses = new Map<string, { name: string; n: number }>();
   /** The names Ember asked about this run, whatever was answered: never counted or asked about again (memory-r9-8). */
   private settled = new Set<string>();
+  /** The names the user called their own person or project this run (`namedAsTheirs`), in RAM only. */
+  private theirs = new Set<string>();
 
   /**
    * Recall found nothing for `request`; `known`: whether memory already knows a name; `apps`: the apps installed on
@@ -194,7 +231,9 @@ export class Gaps {
   missed(request: string, known: (name: string) => boolean, apps: readonly string[] = []): void {
     // A private request's names are never asked about, here or from any other request this run (memory-c10-1).
     if (sensitiveRequest(request)) { for (const name of namesIn(request)) this.drop(name); return; }
-    for (const name of askableNames(request, apps)) {
+    for (const name of namedAsTheirs(request)) this.theirs.add(nameKey(name));
+    if (this.theirs.size > 50) this.theirs.delete(this.theirs.values().next().value!);
+    for (const name of askableNames(request, apps, this.theirs)) {
       if (this.settled.has(nameKey(name))) continue;
       // A name that reads like an order ("Always Approve Wire Transfers") is never asked about.
       if (known(name) || soundsLikeInstruction(name)) continue;
@@ -217,7 +256,7 @@ export class Gaps {
    * unanswered (memory-r9-8). In RAM only: the names of a question nobody answered are kept nowhere.
    */
   drop(name: string): void { this.misses.delete(nameKey(name)); this.settled.add(nameKey(name)); }
-  clear(): void { this.misses.clear(); this.settled.clear(); }
+  clear(): void { this.misses.clear(); this.settled.clear(); this.theirs.clear(); }
 }
 
 /** Ember's question about a gap. */

@@ -1777,7 +1777,8 @@ function start(): void {
     idle: () => agent?.idle ?? false,
     // Fail closed: without a lock watcher the screen counts as locked (nothing runs while away).
     locked: () => screenLock?.locked ?? true,
-    say: text => agent?.sayFromMemory(text) ?? false,
+    // Text in Home's conversation only, while Home is open to read it: never the bubble, a card or the voice (r10-memory-y10-2).
+    say: text => homeOpen() && (agent?.noteFromMemory(text) ?? false),
     openMemory,
     onLearned: items => {
       const t = new Date().toISOString();
@@ -2238,7 +2239,9 @@ function start(): void {
   const providerRecord = new ProviderRecord({ settings: settings as unknown as ProviderRecordDeps["settings"], log: log.child("provider"),
     inForce: () => { const p = userProviderInForce(settings.get(), admin); return p ? endpointHost(p.baseUrl) : null; },
     seal: new ProviderSeal(path.join(userData, PROVIDER_SEAL_FILE), safeStorage, { asyncKeyring: platform.os === "darwin" }),
-    heldChanged: () => { void agent?.providerChanged(); sendToHome(PROVIDER_IPC.changed, null); } });
+    heldChanged: () => { void agent?.providerChanged(); sendToHome(PROVIDER_IPC.changed, null); },
+    // A seal not kept, or a yes this start withdrew: Home says why (reliability-r11-1).
+    notesChanged: () => sendToHome(PROVIDER_IPC.changed, null) });
   const providers = createProviderService({
     settings, admin: () => admin, consented: () => consented(), record: providerRecord,
     keys: new ProviderKeyStore(path.join(userData, PROVIDER_KEY_FILE), safeStorage, { asyncKeyring: platform.os === "darwin" }),
@@ -2894,7 +2897,7 @@ function start(): void {
     if (!vaultGone) throw new Error("Ember couldn't finish deleting the vault's file on this computer. Try Forget again.");
   }));
   // "Tell Ember about you": checked whole (IntroSchema, every string bounded) and kept only while memory is in force.
-  ipcMain.handle(IPC.memoryIntroduce, guard((answers: unknown) => learning.introduce(answers)));
+  ipcMain.handle(IPC.memoryIntroduce, guard((answers: unknown) => learning.introduceAnswers(answers)));
   // Better recall's model: its state, and the user's Download (the agreement to fetch it) and Remove.
   ipcMain.handle(IPC.memoryModel, guard(() => betterRecall.status()));
   ipcMain.handle(IPC.memoryModelDownload, guard(() => { void betterRecall.download().catch(() => { /* Settings is told why, in the status */ }); }));
@@ -3560,6 +3563,9 @@ function start(): void {
       // An answer nobody replaces (a task in the corner ends on its card) goes after its moment, or what the question
       // covered shows again: never "Thanks! Carrying on." for good after the task is done.
       afterAnswer: answerSettler({ onScreen: () => lastState.bubble, reshow: () => agent?.afterAnswer() ?? false, set: setState }),
+      // A no to any question reaches the extensions gate: a tool that changes things asks after it, and Autopilot
+      // denies it, until the conversation ends (integrations-c11-1).
+      onDeny: () => extensions.userSaidNo(),
     });
     // Linux warns xtest.unavailable when XTest is missing.
     const xinput = inputRef = platform.openInput(ws, log);

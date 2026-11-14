@@ -161,6 +161,181 @@ function keySaid(text: string): boolean {
   return false;
 }
 
+// ───── A credential by its value (memory-r11-1, memory-c11-1) ─────
+//
+// The rules above read a password by the shape of its sentence, and each round found a shape they missed ("My AWS
+// secret is …", "Gmail: ram99 / sunshine", "API key 9b2f…" with no "is"). What a credential is doesn't depend on its
+// sentence: these read the value. A value shaped like a key or a token is refused wherever it stands; a value shaped
+// like a password is refused in a clause that names a thing people sign in to; and a lone word is refused where a
+// credential's name or a sign-in thing's stands right before it, whatever the words between. Fail closed: a word that
+// may be the password costs the fact.
+
+/** Things people sign in to: a service, what takes a password, a server's or a directory's name, a password manager. */
+const SIGN_IN_THING = String.raw`(?:${SERVICES}|${PASSWORDED}|router|nas|aws|azure|gcp|radius|ldap|active\s+directory|ssh|sftp|ftp|smtp|imap|database|mysql|postgres(?:ql)?|admin|bitwarden|1password|lastpass|keepass(?:xc)?|dashlane|nordpass|okta|jenkins)`;
+const THING_WORD = new RegExp(String.raw`(?:^|[^\w-])${SIGN_IN_THING}(?![\w-])`, "i");
+/** Where people give their public handle, and a handle's shape there (lower case: "octocat2", "ram-k"). */
+const HANDLE_PLACE = /\b(?:github|gitlab|twitter|instagram|reddit|discord|linkedin|facebook|steam|xbox|psn|playstation)\b/i;
+const HANDLE = /^[a-z][a-z0-9_.-]{1,38}$/;
+/**
+ * A credential's own name, which a lone word after it is the value of. A login's or a sign-in's lone word may be the
+ * user's name ("The GitHub login is octocat", which `memoryRefusal` reads by its shape: safety-privacy-v4-1), so it
+ * counts only after a service that signs in by e-mail ("The login for Netflix is sunshine").
+ */
+const CRED_NOUN = String.raw`(?:secrets?|passwords?|passcodes?|passphrases?|passwd|pwd|pw|pins?|keys?|tokens?|logins?|log-ins?|sign-ins?)`;
+/** A login's lone word that is a user's name by convention ("The router login is admin"). */
+const USER_WORD = /^(?:admin|administrator|root|user|guest|pi|ubuntu|ec2-user)$/i;
+/** What a key or a token is called, beside which a value shaped like one is the key (memory-c11-1). */
+const KEY_NOUN = /^(?:keys?|apikeys?|tokens?|secrets?|cookies?|credentials?|creds|bearer|api|auth|authorization|session|sessions|pat|password|passwords|hook|webhook|hooks)$/i;
+/**
+ * Words a lone word after a credential's name may be without being its value: what says none, a state ("rotated",
+ * "configured", "expired"), a plan ("premium", "family"), where it is kept. Anything else is the value.
+ */
+const NOT_LONE = new Set(String.raw`configured rotated revoked enabled disabled active inactive generated issued provisioned unset blank empty
+  elsewhere somewhere nowhere fine slow down up broken off on paused cancelled canceled premium family basic standard free paid trial
+  shared monthly yearly annual weekly yes no new old annoying long short simple hard easy secure insecure fun boring great useless
+  expensive cheap again done gone lost known unknown everywhere anywhere there here same different`.split(/\s+/).filter(Boolean));
+/** Who keeps a family's or a trade's secret, which is never a password ("Our family secret is cinnamon"). */
+const STORY_SECRET = /^(?:family|trade|top|open|little|big|best-kept|biggest|deepest|darkest|dark|dirty|guilty|only|real|recipe|kitchen|grandma['’]?s?|nan['’]?s?|mum['’]?s?|dad['’]?s?|success|happiness)$/i;
+/** How someone signs in that is no password ("Signs in with passkeys", "Logs in with fingerprint"). */
+const SIGN_IN_WAY = /^(?:sso|saml|oauth|oidc|passkeys?|fingerprints?|face|touch|biometrics?|google|apple|microsoft|github|okta|yubikey|yubikeys|keys|cards?|badges?|phone|passwords?|pins?|codes?|email|e-mail|ease|difficulty|trouble|problems?)$/i;
+
+/** A name with a hyphened number or letter, as a whole word ("Vitamin-D3"). */
+const HYPHENED = new RegExp(String.raw`^${HYPHEN_NAME}`);
+/** A way of signing in or a standard with its version ("OAuth2", "WPA3"), never a password. */
+const AUTH_WORD = /^(?:oauth|saml|fido|ntlm|kerberos|ldaps?|openid|oidc|u2f|webauthn|totp|hotp|2fa|mfa|sso|tls|ssl|wpa|wep|jwt|x509)\d*$/i;
+/** A value without the quotes, brackets and stops around it. */
+const word = (raw: string) => raw.replace(/^[("'“‘[]+|[)"'”’\],.;:!?]+$/g, "");
+
+/** A word that can only be a key or a token: a UUID, a long run of hex, or a long run of letters and digits (`alone`: without a key's name beside it). */
+function keyShaped(raw: string, alone: boolean): boolean {
+  const v = word(raw);
+  if (/:\/\/|^[~./\\]|^[\w.+-]+@[\w-]+\.|^[@#$£€]/.test(v)) return false;
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v)) return true;
+  const hex = v.replace(/-/g, "");
+  if (/^[0-9a-f]+$/i.test(hex) && /\d/.test(hex) && /[a-f]/i.test(hex) && hex.length >= (alone ? 24 : 16)) return true;
+  // A JSON web token, which can be nothing else ("eyJhbGciOi….eyJzdWIi….sig"), with or without a key's name (r11-memory-x11-3).
+  if (/^eyJ[\w-]{8,}\.[\w-]{4,}\.[\w-]*$/.test(v)) return true;
+  if (!/^[A-Za-z0-9_\-+/=.~]+$/.test(v) || v.length < 16) return false;
+  // A known key's prefix with a key's length after it ("sk-…", "SG.…", "xoxb-…", "glpat-…"), with or without a key's name (r11-memory-y11-2).
+  if (KEY_PREFIX.test(v)) return true;
+  // One run of letters and digits as long as a key's ("a8f7d6s5a4d3f2g1h0j9k8l7"), never words joined ("bert-base-uncased").
+  return v.split(/[-_.+/=~]+/).some(run => (run.length >= (alone ? 20 : 12)
+    && (run.match(/\d/g)?.length ?? 0) >= (alone ? 4 : 2) && (run.match(/[A-Za-z]/g)?.length ?? 0) >= (alone ? 4 : 2))
+    // Beside a key's name, a run of 16 or more in mixed case is one whatever its digits ("API key AbCdEfGhIjKl…":
+    // r11-memory-x11-3), unless it is words joined in camel case ("HashiCorpVaultCluster", "JSESSIONIDCookie").
+    || (!alone && run.length >= 16 && /^[A-Za-z0-9]+$/.test(run) && (run.match(/[A-Z]/g)?.length ?? 0) >= 3 && (run.match(/[a-z]/g)?.length ?? 0) >= 3
+      && !/^(?:[a-z]{2,})?(?:[A-Z]+[a-z]{2,}|[A-Z]{2,}\d*)+$/.test(run))
+    // Alone, a run of 24 or more with six capitals and six small letters that isn't words in camel case
+    // ("Twilio AbCdEfGhIjKlMnOpQrStUvWx", "Deploy with wJalrXUtnFEMIK7MDENG…": r11-memory-y11-2).
+    || (alone && run.length >= 24 && /^[A-Za-z0-9]+$/.test(run) && (run.match(/[A-Z]/g)?.length ?? 0) >= 6 && (run.match(/[a-z]/g)?.length ?? 0) >= 6
+      && !/^(?:[a-z]{2,})?(?:[A-Z]+[a-z]{2,}|[A-Z]{2,}\d*)+$/.test(run)));
+}
+/** The prefixes of well-known API keys and tokens, with at least 12 letters and digits after them. */
+const KEY_PREFIX = /^(?:sk-(?:ant-)?|sk_(?:live_|test_)?|pk_(?:live_|test_)?|rk_(?:live_|test_)?|SG\.|xox[abprs]-|AIza|gh[pousr]_|github_pat_|glpat-|npm_)[A-Za-z0-9_\-.]{12,}$/;
+
+/** A word shaped like a password (`strict`), never a product's name, an amount, a standard, a handle or a user at a host. */
+function passwordShaped(raw: string): boolean {
+  const v = word(raw);
+  // A user at a computer named by words ("admin@localhost", "jsmith@corp"), never "p4ss@word", which has a digit.
+  if (/^[@#-]|[$(){}`<>|\\=]/.test(v) || AT_HOST.test(v) || /^[A-Za-z_][A-Za-z_.-]*@[A-Za-z][A-Za-z-]*$/.test(v) || PRODUCT.test(v) || AMOUNT.test(v)) return false;
+  if (/^[A-Z][A-Z0-9]*(?:[-/][A-Z0-9]+)+$/.test(v) || /^[^\s]{1,11}-[a-z]{3,}$/.test(v) || ALGORITHM.test(v) || HYPHENED.test(v)) return false;
+  if (AUTH_WORD.test(v)) return false;
+  return strict(v);
+}
+
+/** A lone word: ends its clause, or goes on with a word that says what it is for ("…for Netflix", "…on the VPN"). */
+const LONE = String.raw`["'“]?(?<v>[^\s"'”,;!?/]{2,40}?)["'”]?(?=\s*(?:$|\n|[.,;!?)](?:\s|$)|\s+(?:for|on|at|to|in|with|from|and|but)\b))`;
+/** "My AWS secret is …", "Our Jenkins secret: …", "The login for Netflix is …": a credential's name after what it is for, then a lone word. */
+const NAMED_LONE = new RegExp(String.raw`(?:^|[^\w'’-])(?<q>(?:[\w'’.+-]+\s+){0,3})(?<noun>${CRED_NOUN})(?:\s+(?:for|to|of|on)\s+(?:${WHOSE}\s+)?[\w'’.+-]+(?:\s+[\w'’.+-]+)?)?\s*(?:\s(?:is|was|are|were)\s|['’]s\s|[:=]|\s[-–—]\s)\s*${NOW}${LONE}`, "gi");
+/** "Netflix: sunshine", "Spotify — Bluebird77": a sign-in thing alone, then a lone word ("My Bitwarden is …" only by its shape, above). */
+const THING_LONE = new RegExp(String.raw`^\s*(?:${WHOSE}\s+)?(?:[\w'’-]+\s+)?${SIGN_IN_THING}(?:\s+(?:account|login|sign-in|pass))?(?:\s+(?:at|for|in|on|of)\s+(?:${WHOSE}\s+)?[\w'’-]+(?:\s+[\w'’-]+)?)?\s*(?:[:=]|\s[-–—]\s|[-–—]\s)\s*${LONE}\s*$`, "i");
+/** "Gmail: ram99 / sunshine", "My Gmail login is ram99 / sunshine": a sign-in thing, a user, then any value. */
+const THING_PAIR = new RegExp(String.raw`${SIGN_IN_THING}(?:\s+(?:account|login|log-in|sign-in|credentials?))?\s*(?:[:=]|\s(?:is|was)\s|\s(?=[\w.@-]+\s*/))\s*["'“]?[A-Za-z][\w.@-]{1,40}["'”]?\s*(?:/|,|\band\b|&)\s*["'“]?(?<v>[^\s"'”.,;:!?]{2,40})(?=["'”]?(?:\s|$|[.,;!?](?:\s|$)))`, "gi");
+/** "Netflix password. sunshine": a credential's name ending its sentence, and a lone word as the next. */
+const NAME_THEN_WORD = new RegExp(String.raw`\b${CRED_NOUN}\s*[.:!?]\s+["'“]?(?<v>[^\s"'”.,;:!?]{2,40})["'”]?\s*[.!]?\s*$`, "i");
+/** "I log into Netflix with sunshine": a verb of signing in, then "with" and a lone word in lower case. */
+const ACCESS_WITH_WORD = new RegExp(String.raw`\b${ACCESS}\b[^.;!?\n]{0,80}?\b(?:with|using)\s+["'“]?(?<v>[a-z][a-z'’-]{2,})["'”]?\s*[.!]?\s*$`, "i");
+/** "Netflix uses sunshine": a service that "uses" a lone word in lower case. */
+const SERVICE_USES_WORD = new RegExp(String.raw`\b(?:${SERVICES}|${PASSWORDED})\s+uses\s+["'“]?(?<v>[a-z][a-z'’-]{2,})["'”]?\s*[.!]?\s*$`, "i");
+/** "I always use my birthday 0412 for everything", "Remember 0412 everywhere": digits used for everything, never a count of something. */
+const DIGITS_EVERYWHERE = /(?<![\w.£$€])#?\d{4,8}(?![\w.])(?!\s+(?:miles?|km|steps|people|times|users?|[a-z]+s)\b)[^.;!?\n]{0,20}?(?:\bfor\s+(?:everything|all\b|every\b)|\beverywhere\b)/i;
+
+/**
+ * The states a lone word after a credential's own name may say without being its value ("The client secret is
+ * configured", "Forgot the password. Again"). Named one by one (r11-memory-x11-2): any other word there is the value,
+ * whatever its ending ("blessed", "butterfly") or whether it is a plan's word ("My AWS secret is premium").
+ */
+const NAMED_STATE = new Set(String.raw`configured rotated revoked enabled disabled active inactive generated issued provisioned unset blank empty
+  expired expiring changed reset stored saved hidden encrypted masked hashed lost gone done again out safe elsewhere somewhere nowhere
+  here there it this that mine yours ours theirs same different because`.split(/\s+/).filter(Boolean));
+
+/**
+ * Whether a lone word may be a credential's value: after a credential's own name (`name`) unless a state it names
+ * (NAMED_STATE); after a sign-in thing (`thing`, "Netflix: premium") unless talk about it (ABOUT_SECRET, NOT_LONE, a
+ * tool's name); after a sign-in thing and a user (`pair`, "Gmail: ram99 / …") whatever the word but grammar.
+ */
+function loneValue(v: string, after: "name" | "thing" | "pair"): boolean {
+  const raw = word(v), w = raw.toLowerCase();
+  if (!w || sayless(w)) return false;
+  if (after === "name" && NAMED_STATE.has(w)) return false;
+  // After a user, only grammar goes on the sentence ("My SSH login is pi@host, why does…").
+  if (after === "pair" && /^(?:why|what|when|where|how|who|which|and|or|but|so|then|the|a|an|it|is|are|was|were|i|you|we|they|he|she|my|your|our|their|his|her|its|this|that|please|thanks)$/.test(w)) return false;
+  if (after === "thing" && (ABOUT_SECRET.has(w) || NOT_LONE.has(w) || TOOL_NAME.test(w) || /^(?:that|because)$/.test(w))) return false;
+  // An issue, a handle, a user at a host, a standard ("WPA2-PSK") or a name with a hyphened number ("Vitamin-D3").
+  return !/^[#@]/.test(raw) && !AT_HOST.test(raw) && !/^[A-Z][A-Z0-9]*(?:[-/][A-Z0-9]+)+$/.test(raw) && !HYPHENED.test(raw);
+}
+
+/**
+ * Whether `text` holds a credential's value however it is said (memory-r11-1, memory-c11-1): a key or a token by its
+ * shape (beside a key's name, or alone when it can be nothing else); a password's shape in a clause about a sign-in
+ * thing; a lone word after a credential's or a sign-in thing's name, in any position; a user and any value after a
+ * sign-in thing.
+ */
+function credentialValue(text: string): "key" | "password" | null {
+  for (const clause of text.split(/[.;!?\n]+(?:\s|$)/)) {
+    const words = clause.split(/\s+/).filter(Boolean);
+    const keyName = words.some(w => KEY_NOUN.test(word(w)));
+    if (words.some(w => keyShaped(w, !keyName))) return "key";
+    // A handle where people name theirs ("GitHub: octocat2") is no password; a word shaped like one anywhere else is.
+    if (THING_WORD.test(clause) && words.some((w, i) => passwordShaped(w) && !(HANDLE_PLACE.test(clause) && HANDLE.test(word(w)) && i > 0))) return "password";
+  }
+  for (const m of text.matchAll(NAMED_LONE)) {
+    const q = (m.groups!.q ?? "").trim().split(/\s+/).filter(Boolean).filter(w => !new RegExp(String.raw`^${WHOSE}$`, "i").test(w));
+    const noun = m.groups!.noun!.toLowerCase();
+    const v = m.groups!.v!;
+    if (!loneValue(v, "name")) continue;
+    if (/^(?:logins?|log-ins?|sign-ins?)$/.test(noun)) {
+      if (THING_WORD.test(m[0]) && !HANDLE_PLACE.test(m[0]) && !USER_WORD.test(word(v)) && !/@|:\d|^v?\d/.test(v)) return "password";
+      continue;
+    }
+    // "The secret is patience": a secret with no thing before it is a password only by its shape.
+    if (/^secrets?$/.test(noun) && (!q.length || q.some(w => STORY_SECRET.test(w)))) { if (passwordShaped(v)) return "password"; continue; }
+    // A key alone is a door's ("The key is under the mat"): only after what it opens in software, and a token's value by its shape.
+    if (/^(?:keys?|tokens?)$/.test(noun) && !(q.length && THING_WORD.test(q.join(" ")))) continue;
+    return "password";
+  }
+  const lone = THING_LONE.exec(text)?.groups?.v;
+  // A product named for what it is ("VPN: NordVPN2") is no password; any other product-like word there may be one.
+  if (lone && loneValue(lone, "thing") && !(HANDLE_PLACE.test(text) && HANDLE.test(word(lone))) && !(PRODUCT.test(word(lone)) && /vpn|wi-?fi|router|nas/i.test(text) && /vpn|wifi|router|nas/i.test(lone)) && !AMOUNT.test(word(lone)) && !/^[A-Z][A-Z0-9]*(?:[-/][A-Z0-9]+)+$|-[a-z]{3,}$/.test(word(lone))) return "password";
+  for (const m of text.matchAll(THING_PAIR)) {
+    const v = word(m.groups!.v!);
+    // A standard, a speed or a band beside a network's name ("Wi-Fi: HomeNet / 5GHz", "…, 802.11ac") is no password.
+    if (!loneValue(v, "pair") || AMOUNT.test(v) || /^[\d.]+[a-z]*$/i.test(v) || AUTH_WORD.test(v)) continue;
+    return "password";
+  }
+  const after = NAME_THEN_WORD.exec(text);
+  if (after && loneValue(after.groups!.v!, "name")) return "password";
+  for (const re of [ACCESS_WITH_WORD, SERVICE_USES_WORD]) {
+    const m = re.exec(text);
+    // In lower case only: a capitalised word there is a product's or a browser's name ("…using Chrome").
+    if (m && /^["'“]?[a-z]/.test(m.groups!.v!) && loneValue(m.groups!.v!, "thing") && !SIGN_IN_WAY.test(m.groups!.v!)) return "password";
+  }
+  return DIGITS_EVERYWHERE.test(text) ? "password" : null;
+}
+
+/** An NHS, CHI, Medicare or social insurance number said with its name (PLAN §10 round 10, "left"). */
+const HEALTH_ID = /\b(?:nhs|chi|medicare|health\s+(?:and\s+care\s+)?|social\s+insurance|sin)\s+(?:number|no\.?|#)\s*(?:(?:is|was)\s+|[:=]\s*)?\d{3}[\s-]?\d{3}[\s-]?\d{3,4}(?:[\s-]?\d)?\b/i;
+
 /**
  * Why a fact may not be kept for what it says with a verb or under one of these names, in a few words for the model
  * to pass on, or null. Read only after `memoryRefusal` found nothing (`factRefusal`).
@@ -171,6 +346,9 @@ export function saidSecret(text: string): string | null {
     || SHORT_PASS.test(text) || THE_PASS.test(text) || symbolValue(text) || codeBeside(text) || adminValue(text) || NETWORK_KEY.test(text)
     || SECURITY_QUESTION.test(text) || inWordOrder(text)) return "it holds a password, PIN or code";
   if (keySaid(text)) return "it holds a password, token or key";
+  const credential = credentialValue(text);
+  if (credential) return credential === "key" ? "it holds a password, token or key" : "it holds a password, PIN or code";
+  if (HEALTH_ID.test(text)) return "it holds an account or ID number";
   if (CARD_DIGITS.test(text) && CARD_WORD.test(text)) return "it holds a card's security code";
   if (US_BANK.test(text) || ID_DOCUMENT.test(text)) return "it holds an account or ID number";
   return null;
@@ -366,14 +544,97 @@ const SERVICE_WORD = new RegExp(String.raw`^(?:${SERVICES})$`, "i");
  * unless it is in ABOUT_SECRET, a service's or a tool's name, or a number (`digitsBesideName` reads a PIN's digits).
  * Fail closed: an unknown word beside a password's name costs the fact, never the password.
  */
+/** A password's or a PIN's name in a clause, as `topicOnly` reads it. */
+const TOPIC_NAME = /^(?:passwords?|passcodes?|passphrases?|passwd|pins?|pwd|pw|pword)$/i;
+/** What a password's or a PIN's name heads when it is a topic ("password resets", "PIN pad", "password policy", "PIN unblocks"). */
+const TOPIC_HEAD = /^(?:resets?|unlocks?|unblocks?|polic(?:y|ies)|rules?|flows?|services?|teams?|pads?|entry|entries|screens?|pages?|audits?|hygiene|management|managers?|guidance|security|storage|expiry|changes?|requirements?|strength|support|recovery|sync|sharing|vaults?|apps?|tools?|systems?|projects?|migrations?|rotation|training|forms?|fields?|prompts?|length|complexity|readers?|terminals?|firmware|tickets?|requests?|issues?|queries|calls?)$/i;
+/** Whose a plural is ("my passwords"): then it holds values. */
+const OWNER = /^(?:my|our|your|his|her|their|its)$/i;
+/** What opens a phrase after a topic that says where or for whom ("…at Globex", "…for card holders", "…and laptops"). */
+const PHRASE_START = /^(?:at|for|in|on|of|across|within|from|by|and|or|over|around|throughout)$/i;
+/** Words that pass through such a phrase without ending it. */
+const DETERMINER = /^(?:a|an|the|my|your|our|their|his|her|its|this|these|those)$/i;
+/** The words of ABOUT_SECRET that are things or places, which such a phrase may name ("…for the banking app", "…at home"). */
+const PHRASE_NOUN = new Set(String.raw`account accounts card cards debit credit bank banking sim phone phones mobile laptop computer tablet work home
+  office school wifi wi-fi router email emails login logins device devices desk family partner kids children friends colleagues
+  app apps manager managers vault page pages screen screens field fields box boxes text texts message messages link links`.split(/\s+/).filter(Boolean));
+/** The words of PHRASE_NOUN that qualify the phrase's head rather than name it ("…for card holders", "…for the banking app"). */
+const PHRASE_MODIFIER = /^(?:card|cards|debit|credit|sim|banking|wifi|wi-fi|email)$/;
+/** A word of letters and digits, which a sentence about passwords as a topic doesn't hold ("…for Globex Bluebird77"). */
+const LETTERS_AND_DIGITS = /^(?=(?:[^a-z]*[a-z]){3})(?=[^\d]*\d)\S+$/i;
+/** A verb that puts a value to use ("Use tangerine for password resets", "Types marmalade on the PIN pad"). */
+const USE_VERB = /^(?:use[sd]?|using|set|sets|setting|enters?|entered|types?|typed|tr(?:y|ies|ied)|cho(?:se|ose|oses)|picks?|picked|puts?)$/i;
+/** A word that is no grammar, no talk about passwords and no tool's or service's name, so may be a value. */
+const mayBeValue = (t: string) => !!t && !DETERMINER.test(t) && !ABOUT_SECRET.has(t) && !sayless(t) && !TOOL_NAME.test(t) && !SERVICE_WORD.test(t);
+/**
+ * Whether every password's or PIN's name in `clause` is a topic, never a value's name (memory-r11-2): a name that heads
+ * a topic word ("password resets", "the PIN pad"), or a plural no one owns ("reset passwords", "the LDAP passwords").
+ * Every word after the topic's own words, up to the next such name, is read (r11-memory-x11-1): grammar and talk about
+ * passwords (ABOUT_SECRET), or a word in a phrase that says where or for whom ("…at Globex", "…and laptops"). Any other
+ * word is the value ("Password reset code is tangerine", "Passwords at home all start with marmalade"), and so is one set
+ * off by ":", "=", "to", "as", a dash, a verb or a copula, which each end such a phrase. Fail closed.
+ */
+function topicOnly(clause: string): boolean {
+  const tokens = clause.split(/\s+/).filter(Boolean);
+  let named = false;
+  for (const [i, raw] of tokens.entries()) {
+    const w = word(raw);
+    if (!TOPIC_NAME.test(w)) continue;
+    named = true;
+    // The topic's words after the name ("reset flow", "pad firmware"), none of them set off by ":" or "=".
+    let j = i + 1;
+    if (!/[:=]$/.test(raw)) while (j < tokens.length && TOPIC_HEAD.test(word(tokens[j]!)) && !/[:=]$/.test(tokens[j - 1]!)) j++;
+    const head = j > i + 1;
+    const plural = /s$/i.test(w) && !tokens.slice(Math.max(0, i - 3), i).some(t => OWNER.test(word(t)));
+    if (!head && !plural) return false;
+    if (/[:=]$/.test(tokens[j - 1]!)) return false;
+    // A word used or set before the topic is its value too ("Use tangerine for password resets").
+    if (tokens.slice(0, i).some((t, k) => USE_VERB.test(word(t)) && mayBeValue(word(tokens[k + 1] ?? "").toLowerCase()))) return false;
+    // A phrase names one thing (r11-memory-y11-1): modifiers, then one head word; a further word is the value
+    // ("Passwords for my laptop marmalade", "Password resets for Globex Bluebird77").
+    let phrase = false;
+    let heads = 0;
+    let afterName = false;
+    for (let k = j; k < tokens.length; k++) {
+      const t = word(tokens[k]!).toLowerCase();
+      // The next name is read on its own, by the loop above.
+      if (TOPIC_NAME.test(t)) break;
+      const name = afterName;
+      afterName = false;
+      if (PHRASE_START.test(t)) { phrase = true; heads = 0; }
+      else if (DETERMINER.test(t)) { /* passes through */ }
+      else if (!t || /^[-–—→]+$/.test(t)) phrase = false;
+      else if (ABOUT_SECRET.has(t) || sayless(t) || /^[a-z]+['’](?:s|t|re|ve|ll|d|m)$/.test(t)) {
+        if (!PHRASE_NOUN.has(t)) phrase = false;
+        // A place or a thing is a head ("…at home", "…for my laptop"), but a modifier ("…for card holders") or what a service's name heads ("…the Netflix account").
+        else if (phrase && !PHRASE_MODIFIER.test(t) && !name && ++heads > 1) return false;
+      }
+      // A word that may be the value: only one place's, group's or thing's name in such a phrase, never one alone after a comma at the clause's end.
+      else if (!phrase || ++heads > 1 || (k === tokens.length - 1 && /,$/.test(tokens[k - 1]!))) return false;
+      else afterName = TOOL_NAME.test(t) || SERVICE_WORD.test(t);
+      if (/[:=]$/.test(tokens[k]!)) phrase = false;
+    }
+  }
+  return named;
+}
+
 function valueInClause(text: string): boolean {
   // "p.w." is the name, "..." and "…" go on with the clause, and "It is…", "Now it's…", "That's…" go on with the sentence
   // before (r10-memory-y10-3).
   const joined = text.replace(/\bp\.w\.?/gi, " pw ").replace(/\.{2,}|…/g, " , ")
     .replace(/[.!?]\s+(?=(?:now\s+|and\s+)?(?:it\s+is|it['’]s|that\s+is|that['’]s)\b)/gi, " , ");
-  for (const clause of joined.split(/[.;!\n]+(?:\s|$)/)) {
+  const parts = joined.split(/([.;!\n]+(?:\s|$))/);
+  for (let c = 0; c < parts.length; c += 2) {
+    const clause = parts[c]!;
     // A PIN in capitals anywhere; "pin" in lower case only after whose it is, so "Likes to pin recipes" names none.
     if (!CLAUSE_NAME.test(clause) && !/\bPINs?\b(?![\s-]*code)/.test(clause)) continue;
+    // Passwords as a topic, not a value ("IT support: password resets and laptops"): only a value's shape counts (memory-r11-2).
+    if (topicOnly(clause)) {
+      if (clause.split(/\s+/).some(w => passwordShaped(w) || (LETTERS_AND_DIGITS.test(word(w)) && !TOOL_NAME.test(word(w)) && !SERVICE_WORD.test(word(w))) || /["“]/.test(w))) return true;
+      // A topic goes on across ";" ("I handle password resets; the default is marmalade", r11-memory-y11-1).
+      if (/;/.test(parts[c + 1] ?? "") && parts[c + 2]?.trim() && !topicOnly(`${clause} ${parts[c + 2]}`)) return true;
+      continue;
+    }
     const words = clause.replace(/mot\s+de\s+passe|contrase[ñn]a|passwort|senha/gi, " ").replace(/->|[→—–]|\s-+\s/g, " ")
       .split(/[\s,:?()"“”=/]+/).map(w => w.replace(/['’]s$/i, "").replace(/^['‘’]+|['‘’]+$/g, "")).filter(Boolean);
     for (const [i, w] of words.entries()) {

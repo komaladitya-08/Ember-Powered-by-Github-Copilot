@@ -22,6 +22,14 @@ export const IntroSchema = z.object({
   hours: z.string().max(120).optional(),
 }).strict();
 export type Intro = z.infer<typeof IntroSchema>;
+/** One of the introduction's answers. */
+export type IntroField = keyof Intro;
+/**
+ * What memory did with an introduction (memory-r11-2): how many answers it kept, and which it didn't (a secret, which
+ * the guard refuses whole), so the form can say which and why instead of "Try again". `unreadable`: memory.json
+ * couldn't be read, so nothing was kept and no answer is to blame (r11-memory-x11-4).
+ */
+export interface IntroResult { kept: number; notKept: IntroField[]; unreadable?: true }
 
 const USER = [{ name: "User", kind: "person" as const }];
 const clean = (s: string | undefined) => (s ?? "").replace(/\s+/g, " ").trim().replace(/[.!]+$/, "");

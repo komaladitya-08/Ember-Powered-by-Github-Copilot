@@ -12,6 +12,8 @@
 
 import { copilotReviewer, copilotStepChecker } from "./reviewer";
 import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import crypto from "node:crypto";
 import { defineTool, type CopilotClient, type CopilotSession, type ProviderConfig, type Tool, type ToolResultObject } from "@github/copilot-sdk";
 import { z } from "zod";
@@ -36,7 +38,7 @@ import { helperCantRun } from "../perception/sidecar";
 import { SECRET_PARTS, VAULT_FILL, VAULT_WHATS, sameDestination, savedPart, type VaultDestination, type VaultKind, type VaultPart, type VaultWhat } from "../../shared/vault";
 import { vaultTarget } from "../policy/policy";
 import { VAULT_FILL_NO_ANSWER, VAULT_FILL_UNAVAILABLE } from "../perception/sidecar";
-import type { PolicyEngine, ActionKind, ActionRequest, Agreement, Decision, DialogControl, ReadSource, TextMode, WindowId } from "../policy/policy";
+import type { PolicyEngine, ActionKind, ActionRequest, Agreement, Decision, DialogControl, DialogFacts, ReadSource, TextMode, WindowId } from "../policy/policy";
 import { AUTOPILOT_WORDS, CHECKED_WORDS, isRiskyControl, riskyOnPage } from "../policy/policy";
 import type { CommandReviewer, StepChecker } from "../commands/review";
 import { afterTheStep, type AuditEntry, type AuditLog } from "../policy/audit";
@@ -998,8 +1000,18 @@ function intoSheet(n: AxNode | undefined, byId: (id: number) => AxNode | undefin
  * A dialog as the policy reads it (ActionRequest.dialog): its title, its words, whether it is a message box or a page's
  * own, whether its words were cut, and (from a whole read only) every control in it.
  */
-type Dialog = { name: string; text: string; alert?: boolean; page?: boolean; truncated?: boolean; controls?: DialogControl[]; messageBox?: boolean };
+type Dialog = DialogFacts;
+/** At most this many of a dialog's other names are read into DialogFacts.items (a file dialog's path bar and folder). */
+const DIALOG_ITEMS_MAX = 400;
+/** A list's rows (DialogFacts.items leaves them out: what a folder holds, not where it is). */
+const DIALOG_ROW = /cell|list item|tree item|icon|table row|^row$/;
 const DIALOG_ROLE = /^(dialog|alert|file chooser|color chooser|font chooser)$/;
+/** What lists a folder's files in a file dialog (its rows' container): Windows' Items View, macOS's outline, Qt's tree. */
+const FILE_LIST_ROLE = /^(?:list|tree|table|tree table)$/;
+/** A name that shows a folder's whole path (Windows' "Address: C:\Users\a", "~/Documents", "/home/a"). */
+const SHOWS_PATH = /(?:^|[\s:])(?:[a-z]:\\|\\\\|~?\/)[^\s/\\]/i;
+/** The crumb of a GTK path bar that is the file system's root (r11-safety-y11-1). */
+const ROOT_CRUMB = /^(?:\/|file ?system)$/i;
 /**
  * Roles that are something to press, choose, tick or type into (on every OS's screen reader): anything with one of
  * these in a dialog is a control of it. An element that is editable or has an action of its own counts too, whatever
@@ -1018,9 +1030,10 @@ const CONTROL_ROLE = /button|check|radio|toggle|switch|combo|entry|^text$|passwo
  * dialog holds (`controls`), which policy.ts's acknowledgesOnly needs before "Work without asking" presses its one OK.
  * A title bar's Minimise, Maximise, Restore, Help and system menu are left out; its Close is a control of its own
  * (`caption`: it may cancel), and anything else in a title bar (a custom one's buttons and check boxes) counts as the
- * control it is. Exported for its tests.
+ * control it is. `home`: the user's home folder's name, the crumb that shows a GTK path bar reaches home. Exported for
+ * its tests.
  */
-export function dialogAround(start: AxNode | undefined, get: (id: number) => AxNode | undefined, all: Iterable<AxNode>, whole = false): Dialog | undefined {
+export function dialogAround(start: AxNode | undefined, get: (id: number) => AxNode | undefined, all: Iterable<AxNode>, whole = false, home = path.basename(os.homedir())): Dialog | undefined {
   let cur = start;
   for (let i = 0; cur && i < 40; i++) {
     if (DIALOG_ROLE.test(cur.role)) {
@@ -1056,15 +1069,63 @@ export function dialogAround(start: AxNode | undefined, get: (id: number) => AxN
         // was written there.)
         return [{ role: n.role, name: n.name, ...(editable ? { editable: true } : {}) }];
       }) : undefined;
+      // What its fields hold and its other names say now (a file dialog's name, its path bar, its folder's drop-down):
+      // its Save or Open is judged by them (policy.ts's fileDialogReach). A field that can't be read leaves them unknown.
+      const inside = nodes.filter(n => n.id !== top && chain(n));
+      const fieldNodes = inside.filter(n => n.editable === true || n.states.includes("editable") || /combo/.test(n.role));
+      const fields = fieldNodes.some(n => n.secret || n.withheld) ? undefined
+        : fieldNodes.map(n => (/combo/.test(n.role) ? n.selected ?? n.text ?? n.name : n.text) ?? "").filter(Boolean);
+      // Not all of it read (r11-safety-x11-1, -x11-2): the read cut short or busy, a field's text cut to what a read gives
+      // or not given without the reader saying it was empty, or something under it left out (but rows of its list
+      // scrolled away, which hold files) while the read doesn't show where it saves: GTK's checked path-bar crumb (its own
+      // widget and the crumbs scrolled away are always left out of a real read) or a path (Windows' "Address: C:\…").
+      // What it does say still counts; only "nothing of Ember's here" can't be told.
+      const inList = (a: AxNode) => [a, ...(chain(a) ?? [])].some(x => DIALOG_ROW.test(x.role) || FILE_LIST_ROLE.test(x.role));
+      const textField = (a: AxNode) => !/combo/.test(a.role) || a.editable === true;
+      // A checked crumb shows the folder only while the crumbs beside it reach the user's home folder or the root: a path
+      // bar scrolled deep in a folder (its upper crumbs left out) shows none of what lies above (r11-safety-y11-1).
+      const reachesRoot = (a: AxNode) => inside.some(b => b.parent === a.parent && /toggle/.test(b.role)
+        && (b.name.trim() === home || ROOT_CRUMB.test(b.name.trim())));
+      const located = inside.some(a => (/toggle/.test(a.role) && a.states.includes("checked") && !!a.name.trim() && reachesRoot(a)) || SHOWS_PATH.test(a.name));
+      const unread = !whole || ((!!cur.omitted || inside.some(a => a.omitted && !inList(a))) && !located)
+        || fieldNodes.some(a => a.textCut || (textField(a) && !a.text && !a.empty && !a.secret && !a.withheld));
+      // A file dialog by its shape, whatever its title's language (r11-safety-x11-3): a one-line field to type a name or
+      // a path into beside a list of rows (Windows' common dialog, macOS's save sheet, Qt's and GTK's own).
+      const shaped = fieldNodes.some(a => textField(a) && !a.states.includes("multi line"))
+        && inside.some(a => DIALOG_ROW.test(a.role) || FILE_LIST_ROLE.test(a.role));
+      const named = inside.filter(n => !DIALOG_ROW.test(n.role) && !n.secret && !n.withheld && n.name);
+      const items = named.length > DIALOG_ITEMS_MAX ? undefined : named.map(n => n.name);
+      // The rows chosen in its list (what Open opens when no name is typed); one whose name is withheld can't be told.
+      const chosen = inside.filter(n => DIALOG_ROW.test(n.role) && n.states.includes("selected"));
+      const selected = chosen.some(n => n.withheld || !n.name) ? undefined : chosen.map(n => n.name).slice(0, DIALOG_ITEMS_MAX);
       return {
         name: cur.name, text: words.slice(0, DIALOG_TEXT_MAX), ...(alert ? { alert } : {}), ...(page ? { page } : {}),
         ...(words.length > DIALOG_TEXT_MAX ? { truncated: true } : {}), ...(controls ? { controls } : {}),
         ...(cur.dialogBox ? { messageBox: true } : {}),
+        ...(fields ? { fields } : {}), ...(items ? { items } : {}), ...(selected?.length ? { selected } : {}),
+        ...(cur.role === "file chooser" || shaped ? { fileChooser: true } : {}), ...(unread ? { unread: true } : {}),
       };
     }
     cur = cur.parent !== null ? get(cur.parent) : undefined;
   }
   return undefined;
+}
+
+/**
+ * The rows chosen (selected) in a window's lists, by name, as `all` was read (ActionRequest.chosen): what a file
+ * manager's Delete, cut or "Move to Trash" acts on (safety-privacy-r11-2). `whole`: the read was whole, nothing in it
+ * was left out, it holds a row at all, and every row chosen has a name it can be told by. Exported for its tests.
+ */
+export function chosenIn(all: Iterable<AxNode>, whole: boolean): { names: string[]; whole: boolean; shown: string[] } {
+  const nodes = [...all];
+  const rows = nodes.filter(n => DIALOG_ROW.test(n.role));
+  const chosen = rows.filter(n => n.states.includes("selected"));
+  const told = chosen.every(n => !n.withheld && !n.secret && !!n.name.trim());
+  const named = (n: AxNode) => !n.withheld && !n.secret && !!n.name.trim();
+  return { names: chosen.filter(named).map(n => n.name).slice(0, DIALOG_ITEMS_MAX),
+    whole: whole && told && rows.length > 0 && !nodes.some(n => n.omitted) && chosen.length <= DIALOG_ITEMS_MAX,
+    // Every row the view shows, chosen or not: whether it is the folder above Ember's data, whatever its title (r11-safety-x11-4).
+    shown: rows.filter(named).map(n => n.name).slice(0, DIALOG_ITEMS_MAX) };
 }
 
 /**
@@ -1449,6 +1510,8 @@ export class Worker {
   private focusEditable = false;
   /** At that look: the dialog the focused element is in (Enter or Space there answers it, as a click does: dialogOf). */
   private focusDialog: Dialog | undefined;
+  /** At that look: the rows chosen in the window (chosenIn), which a Delete there acts on. */
+  private focusChosen: { names: string[]; whole: boolean } | undefined;
   /** Semantic context from the same quick read that supplied the key request. */
   private focusContext: string | null = null;
   /** focusContext's window alone, and whether a modal one is up: all a key in a living page needs still to hold (no question asked). */
@@ -4577,6 +4640,7 @@ export class Worker {
       this.focusInPage = !!f && (f.role === "document web" || inWebPage(f, byId));
       this.focusEditable = !!f && f.states.includes("editable");
       this.focusDialog = f ? dialogAround(f, byId, nodes, !!seen && !seen.truncated && !seen.busy) : undefined;
+      this.focusChosen = seen?.window ? chosenIn(nodes, !seen.truncated && !seen.busy) : undefined;
       // What may not change under keys on a living page: the window, and what the keys were judged against. A field's text
       // and selection count (a letter would replace what is newly selected), a read-only page's own words don't.
       if (this.focusContext !== null) {
@@ -5143,7 +5207,9 @@ export class Worker {
     // Text going into a field is judged after what this task typed into the window's other fields too.
     const adds = request.kind === "text" || request.kind === "cursor_text" ? request.value ?? "" : request.kind === "keys" ? typedChar(request.value ?? "", this.kc) ?? "" : "";
     const typedHere = adds && inWindow ? this.typedHere(this.fieldOf(request.element), adds) : undefined;
-    const req = { ...request, ...(typedHere ? { typedHere } : {}), onDesk: !!this.place, goal: this.userWords, askedIn: this.spec.target.app, agreed: this.agreed, readFrom: [...this.read.values()], ...(inWindow ? { windowId: this.windowId } : {}) };
+    // What is chosen in the window as the step is taken (keys: the look they were judged on; else the read the step made).
+    const chosen = !inWindow || request.chosen !== undefined ? undefined : request.kind === "keys" ? this.focusChosen : chosenIn(this.known.values(), this.knownWhole);
+    const req = { ...request, ...(typedHere ? { typedHere } : {}), ...(chosen ? { chosen } : {}), onDesk: !!this.place, goal: this.userWords, askedIn: this.spec.target.app, agreed: this.agreed, readFrom: [...this.read.values()], ...(inWindow ? { windowId: this.windowId } : {}) };
     let decision = this.d.policy.decide(req);
     // The limit on actions a minute paces the task (tasks-approvals-2): the step waits for the minute to free a slot,
     // then is decided afresh (another task may take that slot first: it waits again). A Stop ends the wait at once.

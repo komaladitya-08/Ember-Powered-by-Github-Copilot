@@ -128,6 +128,9 @@ async function fillTexts(host: Host, read: ReadRecord, built: ReturnType<typeof 
     if (w.text) {
       const text = readText(info.text, NODE_TEXT);
       if (text) node.text = text;
+      // Cut, or read and empty: a field's held text is known whole only so (r11-safety-x11-1, -x11-2).
+      if (text && (info.text?.length ?? 0) > NODE_TEXT) node.textCut = true;
+      else if (info.text === "" && node.editable) node.empty = true;
     }
     if (w.selection && info.selection) node.selection = info.selection.slice(0, SELECTION_TEXT);
   }

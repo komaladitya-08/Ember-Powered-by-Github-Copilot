@@ -257,9 +257,52 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
     r10-memory-y10-3): "sunshine's my Netflix password", "My Netflix password? sunshine.", "Netflix pw sunshine",
     "Set a new Netflix password. It is sunshine.", "PIN 041". So is "bluebird is what I use for Gmail" and a login's user and value ("Netflix login: ram /
     sunshine"). That fails closed: "Works at Globex and forgot their password" is refused too, for its "Globex".
-    Never a password manager, a PIN reset or password rules, nor a postal PIN code. A word said with no password's
-    name ("My Netflix is sunshine", "I log into Netflix with sunshine", "If Netflix asks, the answer is sunshine")
-    isn't read as one.
+    Never a password manager, a PIN reset or password rules, nor a postal PIN code. A clause whose every password's
+    or PIN's name is a topic (memory-r11-2, `topicOnly`): it heads a topic word ("password resets", "the PIN pad
+    firmware", "password policy", "PIN unblocks") or is a plural no one owns ("reset passwords", "the LDAP
+    passwords"), is refused only for a value's shape when every word after the topic's own words is grammar or talk
+    about passwords, or stands in a phrase that says where or for whom ("…at Globex", "…for card holders", "…and
+    laptops"); any other word after it is the value, and so is one after ":", "=", "to", "as", a dash, a verb or a
+    copula, which each end such a phrase (r11-memory-x11-1). Such a phrase names one thing: modifiers ("card",
+    "banking") and then one head word, a place, a group, a thing or a name; a further word is the value ("Passwords
+    for my laptop marmalade", "Password resets for Globex tangerine"), as is a word of letters and digits anywhere in
+    the clause, and the clause is read on across ";" (r11-memory-y11-1). So "IT support: password resets and laptops", "Helpdesk,
+    I unlock accounts and reset passwords" and "Tests the PIN pad firmware at Verifone" are kept, and "Password
+    resets: sunshine", "Reset passwords to tangerine", "Passwords sunshine and rainbow", "Password reset code is
+    tangerine", "Password recovery is tangerine" and "Passwords at home all start with marmalade" are refused. 7 of
+    10 IT, helpdesk and security roles were refused before it, none now; it costs a topic said with a verb or an
+    adjective after it ("Password resets are annoying", "Passwords don't match"), which round ten refused too.
+  - a credential by its value, wherever its name stands (memory-r11-1, memory-c11-1; `credentialValue`): a word that
+    can only be a key or a token (a UUID, 16 or more hex digits, a run of 12 or more letters and digits) beside a
+    key's, a token's, a cookie's, an API's or a hook's name with or without "is" ("API key 9b2f…", "Bearer token
+    3f9a…", "Session cookie 3f9a…"), as is a run of 16 or more in mixed case there whatever its digits ("OpenAI key
+    sk-AbCdEf…", never words joined in camel case such as "HashiCorpVaultCluster": r11-memory-x11-3), and alone when
+    it can be nothing else (a UUID, 24 or more hex digits, a run of 20 or more with four letters and four digits, a
+    JSON web token "eyJ….….…", a known key's prefix such as "sk-", "SG.", "xoxb-", "ghp_" or "glpat-", or a run of 24
+    or more with six capitals and six small letters that isn't words in camel case, r11-memory-y11-2: "Uses
+    sk-proj-a8f7… for OpenAI", "Twilio AbCdEfGh…"); a word shaped like a password in
+    a clause that names a thing people sign in to (a service, a VPN, Wi-Fi, a router or a NAS, AWS, Azure, RADIUS,
+    LDAP, SSH, a database, an administrator, a password manager: "Remember Summer2024 for the VPN", "For the VPN it's
+    Summer2024", "My Bitwarden is Summer2024", "My Netflix account: ram@example.com, Summer2024"); any lone word after a
+    secret's, a password's, a PIN's, a key's or a token's name with what it is for before it, in any position ("My
+    AWS secret is Summer2024", "My VPN secret is sunshine", "Our Jenkins secret: tangerine"), after a sign-in thing
+    and a colon or a dash ("Netflix: sunshine", "Spotify — Bluebird77"), after a login for a service that signs in by
+    e-mail ("The login for Netflix is sunshine"), or as the next sentence after a password's name ("Netflix password.
+    sunshine"), whatever its ending and unless it is a state the guard names one by one ("rotated", "configured",
+    "expired"; a plan's word such as "premium" says no value only after a sign-in thing: "Netflix: premium",
+    r11-memory-x11-2); a user and any value but grammar after a sign-in thing ("Gmail: ram99 / sunshine"); a word in lower case after a
+    verb of signing in and "with" ("I log into Netflix with sunshine") or after a service that "uses" it; four to
+    eight digits used "for everything" or "everywhere"; and an NHS, CHI, Medicare or social insurance number. A
+    secret with nothing before it is a password only by its shape ("The secret is patience" and "Our family secret is
+    cinnamon" are kept), a login's lone word is its user's name (plain words: "The GitHub login is octocat"), and a
+    handle where people give theirs ("GitHub: octocat2"), a product named for what it is ("VPN: NordVPN2"), a
+    standard, a speed, a band and a user at a computer named by words ("admin@localhost") are no password. Of the
+    1,998 sentences the memory tests keep as facts, it refuses none; of 65 more everyday facts about services, two,
+    both refused before it ("The Wi-Fi is BT-Hub-6A", "Prefers tokens over passwords"). Still kept: a dictionary word
+    said as what a service "is" ("My Netflix is sunshine"), a capitalised word after a verb of signing in ("Logs in
+    with Sunshine"), and a word shaped like a product's name after the thing it is for with no colon or dash
+    ("Remember Pinecone7 for the Wi-Fi"), which can't be told from "Uses Figma2 for Slack", and a word in lower case
+    where people give their handle ("Discord: hunter2"), which can't be told from "GitHub: octocat2".
 
   A value is read as `guard.ts` reads a login's (`LOGIN_VALUE`: a digit or a symbol, never an address, a scheme such
   as OAuth2 or 2FA, a version, a date or a hyphenated word), four to eight digits where a code goes, and where a tool
@@ -626,16 +669,21 @@ download, so English-only MiniLM is the trade-off for now.
    health and sexual health, medicines, mental health, addiction, a crisis line, the law, money trouble, dating and
    sexuality, and faith ("Find an HIV clinic near me", "Look up Prozac side effects", "Email my lawyer at Slater
    Gordon about the divorce", and a specialist, a scan, a weigh-in, a "-Anon" group, an overdraft or a festival),
-   since the question shows beside the cursor and is spoken by default whoever is at the screen. As a word list
-   can't name every clinic, group or medicine, a name also counts only where someone or a project stands
-   (r10-memory-x10-2): after "with", "to", "from", "about" or "for" (never "search for", "look for"), after a verb
-   whose object is a person or a title, someone's ("Priya's review"), after "working on" or "the status of", or before
-   a project's word ("the Atlas notes"). So "Find Narcotics meetings", "Is Mounjaro covered?", "Book me in at Marie
-   Stopes" and "Did Omar reply" count nothing. A name Ember asked about is never counted or asked about again in that
+   since whoever is at the screen may read the question. As a word list can't name every clinic, group or medicine,
+   a name counts only once the user has called it their own person or project (r10-memory-y10-2, settled by the
+   integrator, the owner can overrule; `namedAsTheirs`): "my colleague Priya", "my new teammate Omar", "Bob, my
+   manager", "our Atlas project", by an everyday relation at work or at home (a colleague, a manager, a friend, a
+   sister, a client) or a project's word, never a doctor, a therapist, a lawyer, a counsellor or a sponsor. Once it
+   has, later in that run (in RAM only) it counts where someone or a project stands (r10-memory-x10-2): after "with",
+   "to", "from", "about" or "for" (never "search for", "look for"), after a verb whose object is a person or a title,
+   someone's ("Priya's review"), after "working on" or "the status of", or before a project's word ("the Atlas
+   notes"). So "Find Narcotics meetings", "Is Mounjaro covered?", "Book me in with Marie Stopes", "Email Dr Shah
+   about the results" and "Email Priya the notes" count nothing. A name Ember asked about is never counted or asked about again in that
    run, whether it was answered, skipped or left unanswered (held in RAM only; a restart may ask once more). Once one
    was missed twice, at most once a day (`memory.askedAt`, kept across restarts), only while idle with the screen
-   unlocked and nothing under way, Ember says "You've mentioned “Priya” a few times. Who or what is that?" in the
-   conversation (and aloud when replies are spoken). The question is built from the name alone; no model writes it.
+   unlocked, nothing under way and Home open, Ember writes "You've mentioned “Priya” a few times. Who or what is
+   that?" in Home's conversation only: never aloud, never in the bubble or a corner card (r10-memory-y10-2,
+   `noteFromMemory`). The question is built from the name alone; no model writes it.
    The next short statement about the name within ten minutes is the answer, a `user` fact ("Priya: leads the
    platform team"); "skip", "forget that", a new request or anything else lets it go to the conversation. **Ask me questions now and then** (`memory.questions`, on by default) turns
    it off.
@@ -644,7 +692,11 @@ download, so English-only MiniLM is the trade-off for now.
 first run's **Try me out** step (**Personalise memory…**) asks what to call the user, their role and work, the apps they use most, short or detailed and spoken or
 not, and their timezone or hours. Every answer is optional; while memory is off the form offers its note first (an
 explicit yes). Main checks the answers with `IntroSchema` (strict, bounded) and keeps them as `user` facts with a
-label Ember wrote ("Likes to be called Ram"), each replacing the one before. "Ember, get to know me" asks the same
+label Ember wrote ("Likes to be called Ram"), each replacing the one before. An answer the guard refuses as a
+secret is named, with why, under the form ("Ember didn't keep your role and work, because it may hold a password, a
+code or an ID number…": `introduceAnswers`, `aboutYouNotKept`), never "Try again", which can't help: it stays in its
+field marked (`aria-invalid`) and isn't sent again until it is changed, the kept answers leave the form, and first
+run's step offers Skip for now to go on without it (memory-r11-2). "Ember, get to know me" asks the same
 aloud, answered by the host before the conversation (`intent`): "skip" skips, "that's all" stops, and an answer heard
 where Ember can't tell the user from its speakers (`voiceUnchecked`) isn't kept. Asked for in such a voice (every
 spoken request on Windows and macOS, every Listen once, Linux with the speakers' check off), it asks nothing, since

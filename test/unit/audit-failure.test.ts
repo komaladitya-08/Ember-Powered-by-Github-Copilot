@@ -9,7 +9,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { AuditLog, afterTheStep } from "../../app/main/policy/audit";
 import { Worker, type WorkerDeps } from "../../app/main/agent/worker";
 import { Presenter } from "../../app/main/agent/presenter";
@@ -50,6 +50,29 @@ describe("AuditLog when it can't write (review #117)", () => {
     fs.mkdirSync(log.file);
     expect(() => log.write({ event: "decision", task: "t4" })).toThrow();
     expect(errors).toHaveLength(2);
+  });
+
+  it("keeps the first entry written once a full disk has space again, though the write that failed left half a line (reliability-c11-1)", () => {
+    const dir = tmp();
+    const log = new AuditLog(dir, () => new Date("2026-10-15T10:00:00Z"));
+    log.write({ event: "decision", task: "first" });
+    // The disk fills part-way through a line: what fitted stays in the file, with no newline, and the append throws.
+    const real = fs.appendFileSync;
+    const torn = vi.spyOn(fs, "appendFileSync").mockImplementationOnce((file, data) => {
+      real(file as string, String(data).slice(0, 40));
+      throw Object.assign(new Error("ENOSPC: no space left on device"), { code: "ENOSPC" });
+    });
+    try {
+      expect(() => log.write({ event: "action", task: "big", note: "x".repeat(10_000) })).toThrow(/ENOSPC/);
+    } finally { torn.mockRestore(); }
+    log.write({ event: "action", task: "after", ok: true });
+    const lines = fs.readFileSync(log.file, "utf8").split("\n").filter(Boolean);
+    expect(lines.map(l => JSON.parse(l).task)).toEqual(["first", "after"]);
+    expect(new AuditLog(dir, () => new Date("2026-10-15T10:00:00Z")).recent().map(e => e.task)).toEqual(["after", "first"]);
+    // A line cut short some other way (power lost mid-write) leaves the next entry whole too.
+    fs.appendFileSync(log.file, "{\"t\":\"2026-10-15T10:00:00Z\",\"event\":\"act");
+    log.write({ event: "action", task: "later", ok: true });
+    expect(new AuditLog(dir, () => new Date("2026-10-15T10:00:00Z")).recent().map(e => e.task)).toEqual(["later", "after", "first"]);
   });
 
   it("tells entries written after their step (an action, a command that started or ended) from those before it", () => {

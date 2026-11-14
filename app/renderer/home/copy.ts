@@ -4,7 +4,7 @@
  * name an OS reads exactly as before.
  */
 
-import type { ActivityEntry, ClearHearingStatus, ConversationContext, HearResult, InstallKind, NaturalVoiceStatus, RetryResult, SpeechModelId, StatusPlatform, UpdateStatus } from "../../shared/ipc";
+import type { ActivityEntry, ClearHearingStatus, ConversationContext, HearResult, InstallKind, NaturalVoiceStatus, ProviderSealNotes, RetryResult, SpeechModelId, StatusPlatform, UpdateStatus } from "../../shared/ipc";
 import { kindName, type VaultKind } from "../../shared/vault";
 // Plain words for an unnamed control's role: the same table the May I? question uses.
 import { aRoleWord } from "../../shared/role-words";
@@ -652,7 +652,27 @@ export function providerHint(o: { managed: "organisation" | "off" | null; inForc
  * Shown in place of the key field when the computer can't keep a key safely (no keyring, or basic_text): with the way
  * forward main's KEY_NO_KEYRING gives (integrations-13). Only Linux lacks one: Windows and macOS always have theirs.
  */
-export const PROVIDER_NO_KEYRING = "This computer has no keyring for passwords, so Ember can't keep a key safely here. Set up a keyring (GNOME Keyring or KWallet), then come back to save one. A model server on this computer that needs no key still works.";
+export const PROVIDER_NO_KEYRING = "This computer has no keyring for passwords, so Ember can't keep a key safely here. Set up a keyring (GNOME Keyring or KWallet), then come back to save one. A model server on this computer that needs no key still works, but Ember asks you to agree to it again each time it starts.";
+
+/**
+ * Under the Model provider group, about the card's yes for the host in the field (reliability-r11-1): agreed, that it
+ * lasts until Ember closes, and why (no keyring, or a seal that couldn't be saved); not agreed, why this start withdrew
+ * it and how to have it again. Null when there is nothing to say for that host.
+ */
+export function providerSealLine(o: { host: string | null; agreed: boolean; seal?: ProviderSealNotes }): string | null {
+  const { lasts, withdrawn } = o.seal ?? {};
+  if (o.agreed && lasts && lasts.host === o.host) {
+    return lasts.why === "keyring"
+      ? `Your agreement to use ${lasts.host} lasts until Ember closes: this computer has no keyring Ember can use to keep it, so Ember asks again next time it starts.`
+      : `Your agreement to use ${lasts.host} lasts until Ember closes: Ember couldn't save it safely on this computer, so it asks again next time it starts.`;
+  }
+  if (!o.agreed && withdrawn && withdrawn.host === o.host) {
+    return withdrawn.why === "keyring"
+      ? `Your agreement to use ${withdrawn.host} couldn't be kept when Ember started, because this computer has no keyring Ember can use. Agree again to use it until Ember closes, or set up a keyring to keep it.`
+      : `Ember couldn't confirm your agreement to use ${withdrawn.host} when it started, so it isn't using it. Agree again to use it.`;
+  }
+  return null;
+}
 
 /** The Model provider group's short messages (under the group, in its status line). */
 export const PROVIDER_WORDS = {
@@ -940,8 +960,38 @@ export function aboutYouSaved(kept: number | null): string {
   return kept === 1 ? "Saved 1 answer." : `Saved ${kept} answers.`;
 }
 
+/** What each answer is called when Ember says it didn't keep it. */
+const ABOUT_YOU_ANSWER: Record<"name" | "work" | "apps" | "hours" | "length" | "spoken", string> = {
+  name: "what to call you", work: "your role and work", apps: "the apps you use", hours: "your timezone or hours",
+  length: "how long you like answers", spoken: "whether you like replies spoken",
+};
+/**
+ * Said after Save when memory refused answers as secrets (memory-r11-2): which, and why, with what was kept. The
+ * answers not kept stay in their fields, marked, so they can be changed or left out; a retry of the same words can
+ * never be kept, so it never says "Try again".
+ */
+export function aboutYouNotKept(kept: number, notKept: readonly (keyof typeof ABOUT_YOU_ANSWER)[]): string {
+  const names = notKept.map(f => ABOUT_YOU_ANSWER[f]);
+  const which = names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names.at(-1)}` : names.join("");
+  const [they, them] = names.length > 1 ? ["they", "them"] : ["it", "it"];
+  const why = `Ember didn't keep ${which}, because ${they} may hold a password, a code or an ID number, which Ember never keeps. Change ${them} or leave ${them} out.`;
+  return kept ? `${aboutYouSaved(kept)} ${why}` : why;
+}
+
+/**
+ * What "Tell Ember about you" says after Save (memory-r11-2): what was kept and which of the answers sent (`sent`)
+ * memory refused as secrets and why, or that saved memory can't be read (r11-memory-x11-4), never that every answer
+ * may hold a password because nothing could be kept.
+ */
+export function aboutYouOutcome(r: { kept: number; notKept: readonly (keyof typeof ABOUT_YOU_ANSWER)[]; unreadable?: true } | null, sent: readonly (keyof typeof ABOUT_YOU_ANSWER)[]): string {
+  if (r?.unreadable) return memoryTroubleText("unreadable");
+  const notKept = (r?.notKept ?? []).filter(k => sent.includes(k));
+  if (!r || (!r.kept && !notKept.length)) return "Couldn't save your answers. Try again.";
+  return notKept.length ? aboutYouNotKept(r.kept, notKept) : aboutYouSaved(r.kept);
+}
+
 /** Under the "Ask me questions" switch. */
-export const MEMORY_QUESTIONS_HINT = "At most one question a day, only while you're not using Ember, about names it keeps finding nothing on. Your answer is kept as something you told it.";
+export const MEMORY_QUESTIONS_HINT = "At most one question a day, only while you're not using Ember, about someone or a project you've called yours that it knows nothing about. It's written here in Home, never said aloud. Your answer is kept as something you told it.";
 
 /**
  * Interactive's card (Apps & privacy › How Ember asks, FEATURE_CONSENT_VERSION.autonomy; app/main/policy/autonomy.ts):
@@ -1540,6 +1590,7 @@ const EXTENSION_ASKED: Readonly<Record<string, string>> = {
   tainted: "An extension's answer read like instructions, so Ember asks before every extension's tool.",
   "hints-changed": "Its server changed its list of tools during the conversation.",
   "ember-data": "It may reach Ember's own settings, audit log or policy, which are for you only.",
+  "said-no": "You said no to something earlier in the conversation, and it can change things.",
 };
 
 /**

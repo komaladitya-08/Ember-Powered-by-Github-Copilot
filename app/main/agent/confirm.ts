@@ -230,6 +230,12 @@ export interface ConfirmerTiming {
   panelReady?: (n: number) => boolean;
   /** Under a panel question, how to reach its window from the keyboard (main wires the targets runtime's panelHint). */
   panelHint?: (panel: QuestionPanel) => string | undefined;
+  /**
+   * The user said no ("Not now", or "deny" by key or voice) to a question: main tells the extensions gate, so that a tool
+   * that changes things asks, and Autopilot denies it, for the rest of the conversation (integrations-c11-1). An
+   * unanswered question isn't a no.
+   */
+  onDeny?: () => void;
 }
 
 export class Confirmer {
@@ -250,6 +256,7 @@ export class Confirmer {
   private answerMs: number | (() => number);
   private expiredMs: number | (() => number);
   private afterAnswer: ConfirmerTiming["afterAnswer"];
+  private onDeny: ConfirmerTiming["onDeny"];
   /** The answer's bubble is up: afterAnswer runs when this fires. */
   private answerTimer: ReturnType<typeof setTimeout> | null = null;
   /** Waiting for no question to be up or queued (settled()). */
@@ -272,6 +279,7 @@ export class Confirmer {
     this.answerMs = t.answerMs ?? ANSWER_MS;
     this.expiredMs = t.expiredMs ?? EXPIRED_MS;
     this.afterAnswer = t.afterAnswer;
+    this.onDeny = t.onDeny;
   }
 
   /**
@@ -653,6 +661,8 @@ export class Confirmer {
       this.show({ emotion: yes ? "focused" : "neutral", talking: false, bubble: shown });
       this.answerShown(shown, expired && !yes);
     }
+    // Told before the asker hears it, so nothing it does next runs ahead of the no (integrations-c11-1).
+    if (answer === "deny") { try { this.onDeny?.(); } catch { /* telling the gate mustn't lose the answer */ } }
     p.resolve(answer);
     if (wasCurrent) this.onChange?.(null);
     if (wasCurrent && this.queue.length) {
