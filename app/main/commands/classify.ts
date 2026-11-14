@@ -11,7 +11,7 @@
 import type {
   Classification, ClassifyContext, CommandObject, DangerClass, Finding, ParsedCommand, ShellFamily, ShellId, WindowsContext,
 } from "./types";
-import { PKG_CLEANS, PKG_PRUNES, PKG_REMOVES, SHELL_FAMILY } from "./types";
+import { PKG_CLEANS, PKG_PRUNES, PKG_REMOVES, SHELL_FAMILY, TERMINAL_VERB_RULE, UNRESOLVED_TARGET_RULE } from "./types";
 import { braceGroup, lexPosix, MAX_SIMPLE, type PList, type PSimple, type PWord, type PRedir, type Unclear } from "./lex-posix";
 import { lexPowerShell, restrictedExpression, type PsArg, type PsCommand, type PsRedir, type PsSeg, type PsStatement } from "./lex-powershell";
 import { lexCmd, type CSimple, type CWord } from "./lex-cmd";
@@ -226,6 +226,7 @@ export const SAYS = {
   downloadsUnnamed: "Downloads to a file Ember can't name.",
   guardedWord: "It uses a ${…:?} word, which Ember reads as the folder it names but can't be sure of.",
   optionValue: "Ember can't tell whether one of its options takes the word after it.",
+  unresolvedTarget: "It deletes or changes something Ember can't name, which could be your keys or Ember's own records.",
   namedKeyword: "It runs a program named like one of the shell's own words.",
   scriptStream: "It runs a script from a stream, which Ember can't read first.",
   downloadsProgram: "Downloads a program and runs it.",
@@ -421,6 +422,16 @@ class WordMarks {
 }
 
 /** The classifier's state for one command text. */
+/**
+ * Does a path's text hold what Ember can't resolve: a variable (but a loop's own, which names the files the loop
+ * lists), a command or process substitution, or another user's home (commands-remote-c11-3)?
+ */
+function unresolvable(text: string, loopVars: ReadonlyMap<string, unknown>): boolean {
+  if (/`|[<>]\(|^["']?~[A-Za-z0-9_+-]/.test(text)) return true;
+  for (const m of text.matchAll(/\$(\{?)([A-Za-z_][A-Za-z0-9_]*|[0-9@*#?!$-]|\()/g)) if (!loopVars.has(m[2])) return true;
+  return false;
+}
+
 class Classifier {
   findings: Finding[] = [];
   commands: ParsedCommand[] = [];
@@ -577,6 +588,13 @@ class Classifier {
     if (ifExists !== undefined) f.ifExists = ifExists;
     if (o.inFolder) f.inFolder = { says: cardWords(o.inFolder.says, o.inFolder.objects, wrappers, this.ctx.cwd || null, this.ctx.os, home, this.loopVars), objects: shown(o.inFolder.objects), ifExists: opened(o.inFolder.objects, o.inFolder.ifExists) };
     this.findings.push(f);
+    // A deletion or a write whose target Ember can't resolve may be anything, a secret or Ember's own audit log,
+    // settings or vault included, which only a path Ember can name is refused for: it is judged as if it could be the
+    // worst place, so it asks in every mode, Autopilot and a remote's gate 2 too, and never goes to Assisted's check
+    // (commands-remote-c11-3).
+    if (cls === "destroy" && ((o.objects ?? []).some(ob => ob.abs === null && (ob.kind === "path" || ob.kind === "glob" || ob.kind === "other") && unresolvable(ob.text, this.loopVars)) || said === "Writes to a file Ember can't name.")) {
+      this.unclear(UNRESOLVED_TARGET_RULE, SAYS.unresolvedTarget);
+    }
   }
 
   /** Takes back findings added since `from` that `drop` picks: a nested reading's, which the caller's own finding covers. */
@@ -683,7 +701,9 @@ class Classifier {
   asksAtLeast(from: number, rule: string, says: string): void {
     const found = this.findings.slice(from);
     for (const f of found) if (!f.widening.includes("fed")) f.widening.push("fed");
-    if (!found.some(f => f.ifExists === undefined && !READ_FLOW_RULE.test(f.rule))) this.unclear(rule, says);
+    // A program Ember doesn't know asks for nothing (the owner's decision of 2026-11-14), so it never stands for the
+    // question the other reading put.
+    if (!found.some(f => f.ifExists === undefined && !READ_FLOW_RULE.test(f.rule) && f.cls !== "unknown")) this.unclear(rule, says);
   }
 
   /**
@@ -1927,6 +1947,16 @@ function launcherSets(h: H): void {
     const m = SETS_VARIABLE.exec(a.v ?? a.raw);
     if (m && riskyAssignment(m[1], a.v === null ? null : m[2])) { h.e.unclear("unclear.assignment", "It changes how commands are found or run."); return; }
   }
+}
+/** The command an environment launcher runs. */
+function launcherRuns(h: H): void {
+  // The command it runs, after its `--` or after the words that set variables, is judged as a command of its own
+  // (`cross-env FOO=1 printenv` prints the environment): the launcher is only one Ember doesn't know, the command it
+  // runs may be dangerous (the owner's decision of 2026-11-14).
+  const dd = h.args.findIndex(a => a.v === "--");
+  let k = dd >= 0 ? dd + 1 : 0;
+  if (dd < 0) while (k < h.args.length && h.args[k].v !== null && (isOption(h.args[k]) || SETS_VARIABLE.test(h.args[k].v ?? ""))) k++;
+  if (k < h.args.length) h.e.payload(h.args.slice(k), h.sc, h.prog);
 }
 
 /**
@@ -3351,6 +3381,9 @@ class Engine extends Classifier {
     // test files it is given (r10-commands-x10-6).
     if (key === "java") { const src = args.find(a => a.v !== null && !a.v.startsWith("-") && /\.java$/i.test(a.v)); if (src) this.recordScript(src, "code", h.sc); }
     if (key === "pytest" || key === "py.test") pytestCode(h, args);
+    // coverage runs the program it is given; scons runs its SConstruct, Python (commands-remote-r11-5).
+    if (key === "coverage" && args.some(a => a.v === "run")) givenCode(h, args.slice(args.findIndex(a => a.v === "run") + 1));
+    if (key === "scons") runnerFiles(h, parseOpts(args, { shortValue: "fCIjY", longValue: ["file", "makefile", "sconstruct", "directory", "include-dir", "jobs", "repository"] }));
     // A deleter that had no row before commands-remote-c8-2 keeps an unknown program's `-o` (commands-remote-x8-5),
     // and so does toybox (commands-closed-y9-1).
     optionPaths(h, !n || UNKNOWN_OPTIONS.has(key));
@@ -4380,6 +4413,7 @@ function generic(h: H, noRow = false): void {
   if (INPUT_SYNTH.has(k)) { h.e.refuseWith("ember.input", "input"); return; }
   // Whatever its case: a case-insensitive disk finds `Cross-Env` (commands-runners-x9-5).
   if (ENV_LAUNCHERS.has(k.toLowerCase()) && !h.e.readsAsMain) launcherSets(h);
+  if (ENV_LAUNCHERS.has(k.toLowerCase())) launcherRuns(h);
   if (GUI_PROGRAMS.has(k)) h.e.unclear("unclear.gui", SAYS.openApp);
   if (INTERACTIVE.has(k)) interactive(h);
   if (LAUNCHERS.has(k)) { launcher(h); return; }
@@ -4423,6 +4457,14 @@ const EXEC_WORDS = new Set(["exec", "run", "x", "do", "sh", "shell", "spawn", "w
  * never announce; the project's own script (a path in the task's folder) is judged by the handed command alone.
  * `runnerAt`: where generic() already found a runner's name among the words, and read on from there.
  */
+/**
+ * What a trial finds only because it reads an operand as a program (a file's name, a path, a word that may be a
+ * verb): a program Ember doesn't know, its words, a path or a program that waits for input. Anything else it finds is
+ * what the handed command is.
+ */
+const HANDED_TRIAL_ONLY = /^(unknown\.|unknown-words\.|unclear\.(script-|interactive|hidden-command))/;
+/** How many of handedCommand's trials are running inside one another (each classifies the rest of the line again). */
+let handedTrials = 0;
 function handedCommand(h: H, runnerAt: number, script?: { name: string; args: Arg[] }): void {
   if (script && h.e.readsAsMain) return;
   const args = script ? script.args : h.args;
@@ -4461,6 +4503,36 @@ function handedCommand(h: H, runnerAt: number, script?: { name: string; args: Ar
   const first = firstOperand(args);
   let at = args.findIndex(a => a.v === "--");
   if (at < 0 && first.v !== null && EXEC_WORDS.has(first.v)) at = first.at;
+  // Behind a program Ember has no row for, its words from one of its first three operands on may be a command it runs
+  // (`prlimit mkfs.ext4 /dev/sdb1`, `nocache env`, `zzwrap -n 3 printenv`, `zzwrap 'mkfs.vfat /dev/sdc1'`): each is
+  // tried as one on its own, and where Ember refuses that command or finds a danger in it (not only what it finds of
+  // any word read as a program), it is judged as that command and asks how the one runs the other
+  // (r11-commands-y11-2). Past two such trials inside one another it asks how without trying (each trial classifies
+  // the rest of the line again).
+  if (at < 0 && runnerAt < 0 && !script && unknown) {
+    let tried = 0;
+    for (let k = first.at; k < args.length && tried < 3; k++) {
+      const v = args[k].v;
+      if (v === null || v.startsWith("-") || !/^[A-Za-z/.~]/.test(v) || URL_LIKE.test(v)) continue;
+      tried++;
+      const quoted = /\s/.test(v.trim());
+      const text = quoted ? v : args.slice(k).map(a => a.raw).join(" ");
+      let dangerous = true;
+      if (handedTrials < 2) {
+        handedTrials++;
+        try {
+          const c = classifyCommand(text, shell, { ...h.e.ctx, cwd: h.sc.cwd ?? h.e.ctx.cwd });
+          dangerous = c.refuse !== null || c.findings.some(f => !HANDED_TRIAL_ONLY.test(f.rule));
+        } catch { /* a trial that fails is no proof of an ordinary command: judged as one below */ } finally { handedTrials--; }
+      }
+      if (!dangerous) continue;
+      hidden(v.trim().split(/\s+/)[0]);
+      if (quoted) h.e.nested(v, shell, h.sc, prog);
+      else h.e.payload(args.slice(k), h.sc, prog);
+      return;
+    }
+    return;
+  }
   if (at < 0 || at + 1 >= args.length || (runnerAt >= 0 && runnerAt <= at + 1 + (args[at + 1].v === "--" ? 1 : 0))) return;
   const rest = args.slice(args[at + 1].v === "--" ? at + 2 : at + 1);
   const next = rest[0];
@@ -4577,10 +4649,151 @@ function runnerLine(h: H, name: Arg, given: readonly Arg[], wrapper: string): vo
   optionPaths({ ...h, key, args: rest }, true);
 }
 
+/** The remote controls of terminals, multiplexers and editors the user has open (their verbs' rows are in tables.ts). */
+const TERMINAL_REMOTES = new Set(["tmux", "screen", "zellij", "kitty", "kitten", "wezterm", "nvr", "it2api", "emacsclient"]);
 /**
- * The closed default (commands-closed, the integrator's decision of round nine, recorded for the owner): a program
- * Ember has no row for and that isn't on ORDINARY_PROGRAMS asks, class "unknown", rule `unknown.program`, whatever
- * its operands. A program given by a path in the command's own folder (the project's scripts and binaries: `./build.sh`,
+ * What a program, or a tool's verb, that Ember has no row for says it does, by its own words (the owner's decision of
+ * 2026-11-14: such a command runs, announced, unless it is dangerous; a dangerous one Ember doesn't recognise is the
+ * worst kind of miss). Read from the program's name, the verb, its plain operands and its long options' names, split
+ * into words: one that deletes, resets or overwrites (`dropdb`, `db:drop`, `migrate reset`, `--clean`, `downgrade`,
+ * `restore`), one that sends, publishes or deploys (`deploy`, `up` as its verb, `croc send`, `pastebinit`, a tunnel),
+ * one that shows secrets (a password manager, `token`, `credentials`) and one that changes settings for every project
+ * or the shell's start-up (`global`, `--system`, a version manager's `init`) is judged as that danger, beside its
+ * "unknown" finding, so it asks as the danger does wherever it would (unknown-words.*). Paths and file names are not
+ * read for words. It can only add a question.
+ */
+const UNKNOWN_DESTROY = ["drop", "destroy", "delete", "del", "remove", "rm", "rmi", "rmdir", "purge", "wipe", "reset", "truncate", "clean", "cleanup", "clear",
+  "flush", "flushall", "flushdb", "downgrade", "rollback", "prune", "nuke", "erase", "uninstall", "unregister", "unlink", "overwrite", "format", "kill",
+  "killall", "terminate", "teardown", "restore", "revert", "shred", "zap", "evict", "undo", "dismount", "migrate", "replace", "expire", "empty", "discard"];
+const UNKNOWN_PUBLISH = ["deploy", "publish", "push", "release", "send", "upload", "share", "post", "ship", "expose", "tunnel", "paste", "pastebin", "transfer",
+  "mail", "email", "submit", "sync", "broadcast", "tweet", "toot", "announce"];
+const UNKNOWN_SECRET = ["password", "passwords", "passwd", "secret", "secrets", "token", "tokens", "credential", "credentials", "creds", "apikey", "apikeys",
+  "privkey", "keyring", "keychain", "vault", "otp", "totp", "passphrase", "cookie", "cookies"];
+/**
+ * Programs with no row whose name says what they do, beside their words: package installers, daemons that detach,
+ * programs that run code Ember can't read (a Windows or .NET program, a notebook), and Ember's own program.
+ */
+const UNKNOWN_INSTALLERS = new Set(["cpan", "cpanm", "cpm", "luarocks", "nimble", "raco"]);
+const UNKNOWN_DAEMONS = new Set(["smbd", "nmbd", "sshd", "dnsmasq", "named", "slapd", "vsftpd", "proftpd", "xinetd", "inetd", "cupsd", "avahi-daemon", "rsyncd", "ntpd", "chronyd", "dhcpd", "squid"]);
+const UNKNOWN_RUNS_BINARY = new Set(["wine", "wine64", "mono", "crossover", "box64", "qemu-x86_64", "qemu-i386"]);
+const UNKNOWN_GUI = new Set(["explorer", "notepad", "mspaint", "calc", "wordpad", "write", "msedge", "iexplore", "start"]);
+/** Password managers and tunnels by their programs' names, whose verbs say nothing of either. */
+const UNKNOWN_SECRET_PROGRAMS = new Set(["rbw", "bw", "op", "lpass", "gopass", "passage", "pass", "keepassxc-cli", "kpcli", "pwsafe", "bitwarden", "enpass-cli", "1password", "ykman", "age-plugin-yubikey"]);
+const UNKNOWN_TUNNELS = new Set(["bore", "ngrok", "frpc", "localtunnel", "lt", "zrok", "pinggy", "tunnelto", "telebit", "inlets", "chisel", "rathole", "sish", "expose"]);
+/** System tools whose every command Ember doesn't know changes the system (`systemctl log-level debug`). */
+const UNKNOWN_SYSTEM_TOOLS = new Set(["systemctl", "launchctl", "loginctl", "timedatectl", "hostnamectl", "localectl", "resolvectl", "networkctl", "nmcli", "sysctl",
+  "firewall-cmd", "ufw", "netsh", "sc", "bcdedit", "reg", "defaults", "scutil", "pmset", "csrutil", "spctl", "tccutil", "dscl", "systemsetup", "networksetup",
+  "initctl", "service", "rc-service", "rc-update", "update-rc.d", "chkconfig", "sv", "kexec", "pm-suspend", "pm-hibernate", "pm-suspend-hybrid", "rtcwake",
+  "mklink", "attrib", "fsutil", "wsl"]);
+/** Tools whose `init` writes the shell's start-up files (`conda init`), as a version manager's does. */
+const UNKNOWN_SHELL_INIT = new Set(["conda", "mamba", "micromamba", "zoxide", "starship", "atuin", "direnv", "mise", "rtx", "fnm", "sdk", "volta", "pixi"]);
+/** A settings verb, and the words with it that write a setting later commands obey (`mamba config --add channels …`). */
+const UNKNOWN_CONFIG = ["config", "configure", "settings", "setting", "set", "setenv", "sources", "source", "remote", "registry", "channel", "channels"];
+const UNKNOWN_CONFIG_WRITES = ["add", "set", "append", "prepend", "remove", "unset", "write", "w", "global", "edit", "default", "channels", "registry", "index", "url",
+  "repositories", "repository", "repo", "source", "sources", "mirror", "mirrors", "proxy", "http", "https"];
+/** The user's own folders in their home folder, whole: what an unknown program is handed of them may be anything there. */
+const USER_FOLDERS = /^(Documents|Desktop|Pictures|Downloads|Music|Videos|Movies|Public|Templates|OneDrive[^\\/]*|Dropbox|iCloud Drive|Library\/Mobile Documents)$/i;
+/** A word of the program's own name names the danger whole, or starts or ends with it (`dropdb`, `pastebinit`, `pg_restore`). */
+const nameHas = (tokens: readonly string[], list: readonly string[]): boolean =>
+  tokens.some(t => list.some(w => t === w || (w.length >= 4 && t.length > w.length && (t.startsWith(w) || t.endsWith(w)))));
+function unknownDoes(h: H, verb?: string): void {
+  const base = h.prog.split(/[\\/]/).pop()!.toLowerCase().replace(/\.(exe|com|bat|cmd|ps1|sh|py)$/, "");
+  const split = (w: string): string[] => w.replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase().split(/[^a-z0-9]+/).filter(t => t !== "");
+  const name = split(base);
+  // The operands and the long options' names: never a path, a file name or an address, whose words are the user's.
+  const words: string[] = [...(verb ? split(verb) : [])];
+  let first: string | null = verb ? (split(verb)[0] ?? null) : null;
+  for (const a of h.args) {
+    const v = a.v;
+    if (v === null || v === "" || /[\\/]|^[a-z][a-z0-9+.-]*:\/\/|\.[A-Za-z0-9]{1,5}$|^~/.test(v)) continue;
+    if (v.startsWith("--")) { words.push(...split(v.slice(2).split("=")[0])); continue; }
+    if (v.startsWith("-")) continue;
+    if (first === null) first = split(v)[0] ?? null;
+    words.push(...split(v));
+  }
+  const found = (cls: DangerClass, rule: string, says: string) => h.e.add(cls, rule, says, { program: base });
+  // Its plain operands may be code it runs (`swift x.swift`, `uv run x.py`, `zzrunner ./x.zz`): each is recorded as code
+  // Ember doesn't read, so one the task wrote or downloaded asks as `python3 x.py` does; any other runs as before
+  // (r11-commands-y11-3).
+  let codeOperands = 0;
+  // A file's name handed to another program as its program (`uv run x.py`, `pwsh x.ps1`, which run it from this
+  // folder) is such code too; a bare name at the start of a line is found on the PATH.
+  if (!verb && h.sc.wrappers.length > 0 && h.nameArg.v !== null && !h.pn.isPath && /\.[A-Za-z][A-Za-z0-9]{0,5}$/.test(h.nameArg.v)) h.e.recordImplied(h.nameArg, h.sc);
+  for (const a of h.args) {
+    if (codeOperands >= 8) break;
+    const v = a.v;
+    // (Not a name through `..`, which only the target's real path could place: such a name asks for that alone.)
+    if (v === null || v === "" || v === "-" || v.startsWith("-") || a.glob || URL_LIKE.test(v) || /[=:]/.test(v.replace(/^[A-Za-z]:\\/, "")) || /(^|[\\/])\.\.([\\/]|$)/.test(v)) continue;
+    codeOperands++;
+    h.e.recordImplied(a, h.sc);
+  }
+  // A word that sets a variable is handed over for the program to set (it may be a launcher): one that changes how
+  // commands are found or run asks as `env NAME=value` does, and its value, or a `name:value` word's, is judged as a
+  // file the program may read (`X=/etc/shadow`, `KEY=id_rsa`, `x:.env`: integ2-z-2).
+  for (const a of h.args) {
+    const m = a.v === null ? null : /^([A-Za-z_][A-Za-z0-9_.-]*)([=:])([\s\S]+)$/.exec(a.v);
+    if (!m || (m[2] === ":" && /^[A-Za-z]$/.test(m[1]) && h.sc.path.flavour !== "posix") || /^[a-z][a-z0-9+.-]*:\/\//i.test(a.v ?? "")) continue;
+    if (m[2] === "=" && riskyAssignment(m[1], m[3])) h.e.unclear("unclear.assignment", `It hands ${base} a setting that changes how commands are found or run.`);
+    if (!/\s/.test(m[3])) h.e.usePath({ ...a, v: m[3], raw: m[3], param: undefined }, "read", h.sc);
+    // `host:path` is scp's and rsync's way to name a file on another computer (`backup-server:data.txt`).
+    if (m[2] === ":" && !/^\/\//.test(m[3])) found("publish", "unknown-words.publish", `By its words, ${base} may copy files to or from another computer.`);
+  }
+  // A folder that holds the user's own files (Documents, Pictures…): Ember can't tell what the program does with it,
+  // as with the home folder (commands-remote-c8-2).
+  const home = h.sc.home;
+  if (home) (() => {
+    for (const a of h.args) {
+      // The word, an option's attached value, or a variable's value handed over (`--dir=~/Documents`, `X=~/Pictures`).
+      // A POSIX list of paths joined by colons (`./src:/home/ana/Documents`, a volume's two sides) is each of them.
+      const whole = a.v === null ? null : a.v.replace(/^[^=]*=/, "");
+      const parts = whole === null ? [] : h.sc.path.flavour === "posix" ? whole.split(":") : [whole];
+      for (const v of parts) {
+        if (a.glob || URL_LIKE.test(v) || !(v.startsWith("~") || isAbsolute(v, h.sc.path.flavour))) continue;
+        const abs = resolveTargetPath(v.replace(/[\\/]+$/, ""), { os: h.sc.os, home, cwd: h.sc.cwd ?? "" });
+        const rel = abs.slice(home.length).replace(/^[\\/]+/, "");
+        if (isUnder(home, abs, h.sc.path)) { h.e.unclear("unclear.broad-folder", `Ember can't tell what ${base} does with your home folder.`); return; }
+        if (isUnder(abs, home, h.sc.path) && USER_FOLDERS.test(rel)) { h.e.unclear("unclear.broad-folder", `Ember can't tell what ${base} does with your ${rel.split(/[\\/]/)[0]} folder.`); return; }
+      }
+    }
+  })();
+  const hasWord = (list: readonly string[]) => words.some(t => list.includes(t)) || nameHas(name, list);
+  if (hasWord(UNKNOWN_DESTROY)) found("destroy", "unknown-words.destroy", `By its words, ${base} may delete, reset or overwrite data.`);
+  if (hasWord(UNKNOWN_PUBLISH) || first === "up" || UNKNOWN_TUNNELS.has(base) || (base === "lerna" && first === "version")) found("publish", "unknown-words.publish", `By its words, ${base} may send, publish or deploy something.`);
+  // What its name says: an installer of packages, a daemon (it detaches), a mount, a program that runs a Windows or
+  // .NET program or a notebook's code, Ember's own program, a Windows program that opens a window.
+  if (UNKNOWN_INSTALLERS.has(base)) found("system", "unknown-words.system", `${base} installs packages.`);
+  if (UNKNOWN_DAEMONS.has(base)) found("escape", "escape.detach", `${base} is a server that keeps running after Stop.`);
+  if (/^mount[._]/.test(base)) found("system", "unknown-words.system", `${base} mounts a disk or a share.`);
+  if (UNKNOWN_RUNS_BINARY.has(base) || (base === "jupyter" && words.includes("execute")) || base === "papermill") h.e.unclear("unclear.runs-code", `${base} runs code Ember can't read first.`);
+  if (/^(pwsh|powershell)$/.test(base)) h.e.unclear("unclear.other-shell", "It runs PowerShell, whose script Ember doesn't read here.");
+  if (/^(ember|electron)$/.test(base)) h.e.unclear("unclear.ember-program", `It starts ${base === "ember" ? "Ember" : "Electron"}, which Ember can't tell the effect of.`);
+  if (UNKNOWN_GUI.has(base)) h.e.unclear("unclear.gui", SAYS.openApp);
+  if (base === "glab" && words.some(t => ["create", "merge", "close", "approve", "update", "note", "comment", "delete", "fork", "archive", "revoke"].includes(t))) found("publish", "unknown-words.publish", `By its words, ${base} may send, publish or deploy something.`);
+  if (base === "skopeo" && (first === "copy" || first === "sync")) found("publish", "unknown-words.publish", `${base} copies images, which may publish them.`);
+  if (base === "skopeo" && first === "delete") found("remote-delete", "unknown-words.remote-delete", `${base} deletes an image from a registry.`);
+  if (base === "p4" && first !== null && VCS_TREE_WRITERS.p4.has(first)) found("destroy", "unknown-words.destroy", `By its words, ${base} may delete, reset or overwrite data.`);
+  if (/^nircmdc?$/.test(base) && words.some(t => /^(send|set|click|move)/.test(t))) h.e.refuseWith("ember.input", "input");
+  // Options that leave it running once Stop is pulled (`--fork`, `--detach`, `--daemon`): it outlives the kill switch.
+  if (h.args.some(a => a.v !== null && /^--(fork|detach(ed)?|daemon(ize)?|background|bg|nohup|disown)(=|$)/i.test(a.v))) {
+    found("escape", "escape.detach", `By its options, ${base} keeps running after Stop.`);
+  }
+  // The environment, which may hold tokens, printed or exported (`--export-env`, `--print-env`).
+  if (words.includes("env") && words.some(t => ["export", "print", "show", "dump", "list"].includes(t))) found("secret", "unknown-words.secret", `By its words, ${base} may show passwords, keys or tokens.`);
+  else if (hasWord(UNKNOWN_SECRET) || UNKNOWN_SECRET_PROGRAMS.has(base)) found("secret", "unknown-words.secret", `By its words, ${base} may show passwords, keys or tokens.`);
+  if (words.includes("global") || words.includes("system") || words.includes("systemwide") || first === "default" || UNKNOWN_SYSTEM_TOOLS.has(base)
+    || (UNKNOWN_CONFIG.includes(first ?? "") && (words.some(t => UNKNOWN_CONFIG_WRITES.includes(t))
+      // A key and its value after the settings verb (`poetry config repositories.x http://…`) set it.
+      || h.args.filter(a => a.v === null || (!a.v.startsWith("-") && !UNKNOWN_CONFIG.includes(a.v))).length >= 2))
+    || ((/env$/.test(base) || UNKNOWN_SHELL_INIT.has(base)) && first === "init")) {
+    found("system", "unknown-words.system", `By its words, ${base} may change settings for every project or your shell's start-up.`);
+  }
+}
+
+/**
+ * A program Ember has no row for and that isn't on ORDINARY_PROGRAMS is one it doesn't know: class "unknown", rule
+ * `unknown.program`, which the decision announces by name and never asks for alone (the owner's decision of
+ * 2026-11-14, which ended round nine's closed default); what its own words say it does is judged beside it
+ * (unknownDoes). A program given by a path in the command's own folder (the project's scripts and binaries: `./build.sh`,
  * `bin/tool`, `node_modules/.bin/x`) is judged as before (a download in the task still asks); one given by a path
  * elsewhere (`/usr/local/bin/x`, `~/bin/x`) is known by its name as a bare name is. The user's own words naming the
  * program announce it (intent.ts). generic() still judges its operands.
@@ -4597,14 +4810,15 @@ function unknownProgram(h: H): void {
   if (knownProgram(h.key) && !(h.key === "convert" && h.sc.os === "win32")) {
     // A TeX engine's shell escape runs the commands the document names (`\write18`).
     if (TEX_ENGINES.has(h.key) && h.args.some(a => a.v === null || /^--?(shell-escape|enable-write18)$/.test(a.v))) {
-      const escape = h.args.find(a => a.v === null || /escape|write18/.test(a.v))?.v ?? "";
-      h.e.add("unknown", "unknown.verb", unknownVerbSays(h.prog, escape), { program: `${h.prog} ${escape}`.trim() });
+      // The commands the document names are code Ember doesn't read first.
+      h.e.unclear("unclear.shell-escape", `It lets ${h.prog} run the commands the document names, which Ember can't read first.`);
     }
     return;
   }
   // A cmd name that is a batch file in the folder (`build` for build.bat) is the project's own, read as a script.
   if (h.sc.family === "cmd" && !h.pn.isPath && h.pn.ext === "" && [".bat", ".cmd"].some(e => h.e.onRecord(lit(h.nameArg.v + e), h.sc))) return;
   h.e.add("unknown", "unknown.program", SAYS.unknownProgram, { program: withOperandVerb(h) });
+  unknownDoes(h);
 }
 
 /**
@@ -4692,8 +4906,11 @@ const REMOTE_READS: Readonly<Record<string, ReadonlySet<string>>> = {
   // `ls` prints each window's environment variables and its processes' command lines (commands-classes-y9-10).
   kitty: new Set(["get-text", "ls"]),
   wezterm: new Set(["get-text"]),
-  zellij: new Set(["dump-screen", "edit-scrollback"]),
-  it2api: new Set(["get-buffer", "get-prompt"]),
+  // The names of the user's tabs and sessions, their layout (which holds the commands running in them) and their
+  // clients say what the user is doing in their own terminals: read as their text is (integ-x-1; the owner's decision
+  // of 2026-11-14, under which a verb Ember doesn't know no longer asks).
+  zellij: new Set(["dump-screen", "edit-scrollback", "query-tab-names", "list-clients", "dump-layout"]),
+  it2api: new Set(["get-buffer", "get-prompt", "list-sessions", "show-hierarchy", "show-focus"]),
 };
 /** Their options that take the next word, before the verb (`zellij -s work action …`, `kitten @ --to unix:/x …`). */
 const REMOTE_VALUES = new Set(["-s", "--session", "-l", "--layout", "-c", "--config", "--config-dir", "--data-dir", "--to", "--password", "--password-file", "--password-env", "--use-password", "--class", "--pane-id", "--window-id"]);
@@ -4976,7 +5193,8 @@ function toolPayload(h: H): void {
         const m = v === null ? null : /^(-o|--output)(?:=(.*))?$/.exec(v);
         if (!m) continue;
         const out = m[2] !== undefined ? m[2] : args[k + 1]?.v ?? null;
-        if (out === null || !ownFolder(out, h.sc, h.e.ctx.cwd || null)) h.e.add("unknown", "unknown.verb", unknownVerbSays(h.prog, "compile -o"), { program: "deno compile -o" });
+        // A program written outside the project may be one a command name finds (`~/bin`, /usr/local/bin): a system change.
+        if (out === null || !ownFolder(out, h.sc, h.e.ctx.cwd || null)) h.e.add("system", "path.bin", "Writes a program outside the project, where a command's name may find it.", { program: "deno compile -o" });
         return;
       }
       return;
@@ -5019,6 +5237,10 @@ const RUNS_BY_OPTION: readonly (readonly [RegExp, RegExp])[] = [
  * command of cargo that Ember doesn't know.", or for a tool that acts with no command, "It runs vercel with no
  * command, and Ember doesn't know what that does."
  */
+/** An option of a tool that Ember doesn't know: said by name, never as a danger (the owner's decision of 2026-11-14). */
+function unknownOptionSays(tool: string, option: string): string {
+  return `It runs ${tool} with ${option}, an option Ember doesn't know.`;
+}
 function unknownVerbSays(tool: string, verb: string): string {
   return verb === "" ? `It runs ${tool} with no command, and Ember doesn't know what that does.` : `It runs ${tool} ${verb}, a command of ${tool} that Ember doesn't know.`;
 }
@@ -5029,12 +5251,26 @@ const TEX_ENGINES = new Set(["latex", "pdflatex", "xelatex", "lualatex", "tex", 
 /**
  * A verb-keyed tool's verb against the ones Ember knows (ORDINARY_VERBS, commands-closed): the verb is the first word
  * that isn't an option or an option's value (by the tool's global grammar where it has one). One off the list, a
- * sub-verb off its list, an option that makes a known verb change a setting, or (`noRow`: a tool with no row) no verb
- * at all asks (`unknown.verb`), named with the verb for the user's words to match ("cabal exec", "stack exec").
+ * sub-verb off its list, or (`noRow`: a tool with no row) no verb at all is `unknown.verb`, announced by name and named
+ * with the verb for the user's words to match ("cabal exec", "stack exec"); an option that makes a known verb change a
+ * setting is `tool.setting`, which asks (the owner's decision of 2026-11-14).
  */
 function toolVerbs(h: H, tool: OrdinaryVerbs, noRow: boolean): void {
   const args = h.args;
-  const say = (verb: string): void => { h.e.add("unknown", "unknown.verb", unknownVerbSays(h.prog, verb), { program: `${h.prog} ${verb}`.trim() }); };
+  const say = (verb: string): void => {
+    // A command of a terminal's or an editor's remote control that Ember doesn't know may act in the user's own
+    // terminals or editor (`tmux select-pane`, `zellij action close-pane`, `nvr notes.txt`), which Ember never does:
+    // since a verb Ember doesn't know no longer asks (the owner's decision of 2026-11-14), it is one Ember can't tell
+    // (`unclear.terminal-verb`), which asks, is never shown to Assisted's check and is refused in Autopilot
+    // (TERMINAL_VERB_RULE). One only written short, or behind options Ember doesn't know, is a listing verb as
+    // likely: it is said as unknown.
+    const at0 = args.findIndex(a => a.v === verb.split(" ")[0]);
+    const listing = !["nvr", "it2api", "emacsclient"].includes(h.key)
+      && (/^(list|ls|has|show|display)/.test(verb) || args.slice(0, Math.max(0, at0)).some(a => a.v !== null && a.v.startsWith("-") && !(tool.values ?? []).includes(a.v)));
+    if (TERMINAL_REMOTES.has(h.key) && verb !== "" && !listing) { h.e.unclear(TERMINAL_VERB_RULE, `It may act in your own terminals or editor through ${h.prog}, in a way Ember can't tell.`); return; }
+    h.e.add("unknown", "unknown.verb", unknownVerbSays(h.prog, verb), { program: `${h.prog} ${verb}`.trim() });
+    unknownDoes(h, verb);
+  };
   const vals = new Set(tool.values ?? []);
   const operand = (start: number): number => {
     for (let k = start; k < args.length; k++) {
@@ -5054,8 +5290,26 @@ function toolVerbs(h: H, tool: OrdinaryVerbs, noRow: boolean): void {
   } else at = operand(0);
   const always = tool.asks?.[""] ?? [];
   const bad = args.find(a => a.v !== null && always.includes(a.v.split("=")[0]));
-  if (bad) { say(bad.v ?? ""); return; }
-  if (at < 0) { if (noRow || tool.bare === "asks") say(""); return; }
+  // An option that changes what later commands obey, or that acts beyond the project (`xcodebuild -exportArchive`), is
+  // a system change, said beside the option Ember names (the owner's decision of 2026-11-14: only the danger asks);
+  // tmux's -c is judged as the command it runs, its -f as a file of commands Ember doesn't read.
+  if (bad) {
+    h.e.add("unknown", "unknown.verb", unknownVerbSays(h.prog, bad.v ?? ""), { program: `${h.prog} ${bad.v ?? ""}`.trim() });
+    const o = (bad.v ?? "").split("=")[0];
+    if (h.key === "tmux" && o === "-f") h.e.unclear("unclear.hidden-command", `Ember can't tell what ${h.prog} runs.`);
+    else if (!(h.key === "tmux" && o === "-c")) h.e.add("system", "tool.setting", `It changes a setting of ${h.prog}'s that later commands obey, or acts beyond the project.`);
+    return;
+  }
+  // A runner of files given code inline (`tsx -e`, `ts-node --eval`): code Ember can't read first.
+  if (tool.files && args.some(a => a.v !== null && /^(-e|--eval|-p|--print)(=|$)/.test(a.v))) h.e.unclear("unclear.inline-code", "It runs code given on the command line.");
+  if (at < 0) {
+    // A terminal's or an editor's remote control with no verb opens or joins the user's own sessions (`zellij`).
+    if (tool.bare === "asks" && TERMINAL_REMOTES.has(h.key)) { h.e.unclear(TERMINAL_VERB_RULE, `It may act in your own terminals or editor through ${h.prog}, in a way Ember can't tell.`); return; }
+    if (noRow || tool.bare === "asks") say("");
+    // With no command, vercel deploys the folder.
+    if (tool.bare === "asks" && h.key === "vercel") h.e.add("publish", "tool.deploys", `With no command, ${h.prog} deploys the folder.`);
+    return;
+  }
   // A file is the project's own, never an address (`deno https://x/y.ts`, `npm:`, `jsr:`: commands-closed-y9-4).
   const known = (w: string): boolean => tool.verbs.includes(w) || ((tool.files?.test(w) ?? false) && !/^[a-z][a-z0-9+.-]+:/i.test(w));
   const words: Arg[] = [args[at]];
@@ -5067,7 +5321,13 @@ function toolVerbs(h: H, tool: OrdinaryVerbs, noRow: boolean): void {
   for (const a of words) {
     if (a.v === null) { say(a.raw); return; }
     const parts = tool.all ? a.v.split(";").map(p => p.trim().split(/\s+/)[0]).filter(p => p !== "") : [a.v];
-    for (const p of parts) if (!known(p)) { say(p); return; }
+    for (const p of parts) {
+      if (known(p)) continue;
+      say(p);
+      // A runner of files given an address or a registry's name runs code it downloads (`deno https://…`, `tsx npm:x`).
+      if (tool.files && /^[a-z][a-z0-9+.-]+:/i.test(p)) h.e.add("escape", "escape.download-run", SAYS.downloadsAndRuns);
+      return;
+    }
   }
   const verb = args[at].v ?? "";
   const sub = tool.sub?.[verb];
@@ -5078,7 +5338,7 @@ function toolVerbs(h: H, tool: OrdinaryVerbs, noRow: boolean): void {
   }
   const asks = tool.asks?.[verb] ?? [];
   const opt = args.slice(at + 1).find(a => a.v !== null && asks.includes(a.v.split("=")[0]));
-  if (opt) say(`${verb} ${opt.v}`);
+  if (opt) { say(`${verb} ${opt.v}`); h.e.add("system", "tool.setting", `It changes a setting of ${h.prog}'s that later commands obey, or acts beyond the project.`); }
 }
 
 /** A program word's key as the allow-list knows it: a version suffix dropped (`python3.12`, `gcc-13`, `clang-17`). */
@@ -5236,7 +5496,7 @@ function optionFiles(h: H, args: readonly Arg[], p: Parsed, files: Partial<Recor
   for (const use of ["read", "write", "into", "cd"] as const) {
     const names = files[use] ?? [];
     for (const o of p.opts) {
-      if (o.value === undefined || !names.some(n => optIs(o.name, n))) continue;
+      if (o.value === undefined || !names.some(n => optIs(o.name, n, p.long))) continue;
       const v = o.value;
       if (v !== null && (v === "" || STDIN_NAME.test(v) || NULL_SINKS.has(v.toLowerCase()) || /^std(out|err)$/.test(v))) continue;
       // The word itself when the value came apart from the option, so a variable in it keeps its parts.
@@ -5272,7 +5532,7 @@ function unknownCmdlet(h: H): void {
   const verb = h.key.split("-")[0];
   if (PS_NAME_LOOKUPS.has(h.key) && h.args.some(a => a.v === null)) h.e.unclear("unclear.unresolved-arg", `Ember can't tell which arguments ${h.prog} gets.`);
   if (!PS_READ_VERBS.has(verb)) h.e.unclear("unclear.cmdlet", `Ember can't tell what ${h.prog} changes.`);
-  else if (!PS_ORDINARY_VERBS.has(verb) && !PS_ORDINARY_CMDLETS.has(h.key) && !h.e.readsAsMain) h.e.add("unknown", "unknown.program", SAYS.unknownProgram);
+  else if (!PS_ORDINARY_VERBS.has(verb) && !PS_ORDINARY_CMDLETS.has(h.key) && !h.e.readsAsMain) { h.e.add("unknown", "unknown.program", SAYS.unknownProgram); unknownDoes(h); }
   // One whose noun names a secret, or that prints one as plain text, hands it to the output whatever its verb
   // (`Get-Secret`, `Get-AzKeyVaultSecret -AsPlainText`, `Get-AzStorageAccountKey`: commands-closed-y9-5).
   if (/secret|credential|token|passw(or)?d|apikey|vault|certificate|keys?$/.test(h.key.slice(verb.length + 1)) || h.args.some(a => /^-asplaintext\b/i.test(a.v ?? a.raw))) {
@@ -5450,7 +5710,7 @@ reg(NATIVE, ["grep", "egrep", "fgrep", "rg", "ag", "ack", "ugrep", "git-grep"], 
   // ag/ack/ugrep's pager, ugrep's per-file filter, rg's --pre and --hostname-bin. Seen text is the command it runs.
   if (values(p, "pre", "hostname-bin").length) h.e.unclear("unclear.rg-pre", "It runs a program on every file Ember can't see.");
   const pagerCmds = [...values(p, "pager", "open-files-in-pager"), ...values(p, "filter")];
-  if (h.key === "git-grep" && p.opts.some(o => o.value === undefined && optIs(o.name, "open-files-in-pager"))) pagerCmds.push(null);
+  if (h.key === "git-grep" && p.opts.some(o => o.value === undefined && optIs(o.name, "open-files-in-pager", p.long))) pagerCmds.push(null);
   // git grep's -O takes the rest of its word as the pager, after any flags bundled before it (`-nOcmd`); a bundle with
   // a value option before it (-e, -f, -m, -A, -B, -C) gives that option the rest instead.
   if (h.key === "git-grep") for (const a of h.args) { const m = /^-([A-Za-z0-9]*?)O(.*)$/.exec(a.v ?? ""); if (m && !/[efmABC]/.test(m[1])) pagerCmds.push(m[2] || null); }
@@ -5491,10 +5751,10 @@ reg(NATIVE, ["mysql", "mariadb", "mysqldump", "mysqladmin", "mysqlimport"], h =>
     for (const o of p.opts) {
       if (o.value === undefined) continue;
       const a: Arg = o.value === null ? { v: null, raw: "?", glob: false, ...(o.parts ? { parts: o.parts } : {}) } : lit(o.value);
-      if (optIs(o.name, "tee")) h.e.usePath(a, "write", h.sc);
-      else if (optIs(o.name, "init-command")) databaseText(h, [o.value], "mysql");
-      else if (optIs(o.name, "pager")) clientShell(h, o.value);
-      else if (optIs(o.name, "plugin-dir")) { h.e.usePath(a, "read", h.sc); h.e.unclear("unclear.sql", "It loads client plugins from a folder Ember doesn't read."); }
+      if (optIs(o.name, "tee", p.long)) h.e.usePath(a, "write", h.sc);
+      else if (optIs(o.name, "init-command", p.long)) databaseText(h, [o.value], "mysql");
+      else if (optIs(o.name, "pager", p.long)) clientShell(h, o.value);
+      else if (optIs(o.name, "plugin-dir", p.long)) { h.e.usePath(a, "read", h.sc); h.e.unclear("unclear.sql", "It loads client plugins from a folder Ember doesn't read."); }
     }
   }
   if (h.key === "mysqladmin" && h.args.some(a => /^(drop|shutdown|flush-|kill|password|reload|refresh)/.test(a.v ?? ""))) h.e.add("destroy", "db.change", "Changes or deletes data in a database.");
@@ -5543,6 +5803,22 @@ function inlineSql(h: H, short: string[], long: string[]): (string | null)[] {
  * SQL a client reads from stdin: a here-document or another program's output is judged when seen, else asks (review
  * #166). A file redirect (`psql < dump.sql`) runs as `psql -f dump.sql` does (stdinFile).
  */
+/**
+ * sqlite3's and duckdb's options (`-help`), each with how many words it takes. Any other asks (commands-remote-r11-3),
+ * and so does sqlite3's -A (archive mode: it packs files into the database and unpacks them over the folder's).
+ */
+const SQLITE_OPTS: Readonly<Record<string, number>> = {
+  append: 0, ascii: 0, bail: 0, batch: 0, box: 0, column: 0, cmd: 1, csv: 0, deserialize: 0, echo: 0, init: 1, header: 0, noheader: 0,
+  help: 0, html: 0, interactive: 0, json: 0, line: 0, list: 0, lookaside: 2, markdown: 0, maxsize: 1, memtrace: 0, mmap: 1, newline: 1,
+  nofollow: 0, nonce: 1, nullvalue: 1, pagecache: 2, pcachetrace: 0, quote: 0, readonly: 0, safe: 0, separator: 1, sorterref: 1, stats: 0,
+  table: 0, tabs: 0, version: 0, vfs: 1, zip: 0, heap: 2,
+};
+const DUCKDB_OPTS: Readonly<Record<string, number>> = {
+  append: 0, ascii: 0, bail: 0, batch: 0, box: 0, column: 0, cmd: 1, c: 1, csv: 0, echo: 0, f: 1, init: 1, header: 0, noheader: 0, help: 0,
+  html: 0, interactive: 0, json: 0, jsonlines: 0, line: 0, list: 0, markdown: 0, newline: 1, "no-stdin": 0, nullvalue: 1, quote: 0, readonly: 0,
+  s: 1, safe: 0, separator: 1, "storage-version": 1, table: 0, tabs: 0, unsigned: 0, unredacted: 0, version: 0,
+};
+
 function sqlFromStdin(h: H, client?: SqlClient): void {
   if (h.s.stdin === "pipe" || h.s.stdin === "heredoc") fromStdin(h, t => databaseText(h, [t], client));
   else if (h.s.stdin === "file") stdinFile(h, client);
@@ -5567,6 +5843,8 @@ function stdinFile(h: H, client?: SqlClient): void {
 }
 
 /** redis-cli's commands that only read or watch (anything else changes the database). */
+/** redis commands that print the values of the keys they name. */
+const REDIS_KEY_READS = /^(get|mget|getex|getdel|getrange|hget|hgetall|hmget|hvals|lrange|lindex|smembers|srandmember|zrange|xrange|xread|dump|json\.get|substr)$/;
 const REDIS_READS = /^(get|mget|exists|keys|scan|sscan|hscan|zscan|type|ttl|pttl|strlen|hget|hgetall|hkeys|hvals|hlen|hexists|lrange|llen|lindex|smembers|scard|sismember|zrange|zrangebyscore|zcard|zscore|info|ping|dbsize|time|echo|memory|object|client|slowlog|latency|monitor|subscribe|psubscribe|pubsub|xrange|xlen|xread|bitcount|getrange|getbit|role|lastsave|command|config)$/;
 /**
  * One redis-cli command (its words, null for one Ember can't see): a change to the data, or to how the server works.
@@ -5575,6 +5853,18 @@ const REDIS_READS = /^(get|mget|exists|keys|scan|sscan|hscan|zscan|type|ttl|pttl
 function redisCommand(h: H, words: readonly (string | null)[]): void {
   if (words[0] === null || (/^config$/i.test(words[0] ?? "") && words[1] === null)) { h.e.unclear("unclear.sql", "It runs database commands Ember can't see."); return; }
   const cmd = (words[0] ?? "").toLowerCase();
+  const sub = (words[1] ?? "").toLowerCase();
+  // What prints a secret by where it comes from (the redactor can't tell a bare value is one): CONFIG GET of a password
+  // or of a pattern, ACL's users with their password hashes, AUTH's password on the line, and GET of a key named like a
+  // secret (commands-remote-r11-4). A word Ember can't see may be any of them.
+  const rest = words.slice(cmd === "config" || cmd === "acl" ? 2 : 1);
+  const secretKey = (w: string | null) => w === null || SECRET_WORD.test(w) || /session|jwt|auth|cred/i.test(w);
+  if ((cmd === "config" && sub === "get" && rest.some(w => w === null || /[*?[]/.test(w) || /pass|auth|secret|key|user|acl/i.test(w)))
+    || (cmd === "acl" && /^(list|getuser|save|dryrun)$/.test(sub)) || cmd === "auth" || (cmd === "hello" && words.some(w => /^auth$/i.test(w ?? "")))
+    || (REDIS_KEY_READS.test(cmd) && rest.some(secretKey))) {
+    h.e.add("secret", "secret.db", SAYS.secrets);
+  }
+  // (ACL's every verb still asks as a change, as on main: what reads a password asks as a secret on top.)
   if (cmd && !REDIS_READS.test(cmd)) h.e.add("destroy", "db.change", "Changes or deletes data in a database.");
   if (cmd === "config" && /^(set|rewrite|resetstat)$/i.test(words[1] ?? "")) h.e.add("system", "system.kernel", "Changes how the system works.");
 }
@@ -5718,10 +6008,10 @@ reg(NATIVE, ["psql", "sqlite3", "sqlite", "duckdb", "sqlcmd", "cqlsh", "clickhou
     for (const o of p.opts) {
       if (o.value === undefined) continue;
       const a: Arg = o.value === null ? { v: null, raw: "?", glob: false, ...(o.parts ? { parts: o.parts } : {}) } : lit(o.value);
-      if (optIs(o.name, "o") || optIs(o.name, "output")) {
+      if (optIs(o.name, "o") || optIs(o.name, "output", p.long)) {
         if (o.value !== null && o.value.trim().startsWith("|")) clientShell(h, o.value.trim().slice(1));
         else overwrites(h, a);
-      } else if (optIs(o.name, "L") || optIs(o.name, "log-file")) h.e.usePath(a, "write", h.sc);
+      } else if (optIs(o.name, "L") || optIs(o.name, "log-file", p.long)) h.e.usePath(a, "write", h.sc);
     }
     // SQL read from stdin or a here-document (`psql <<< '\! id'`, `psql -f - <<< …`): judge the seen text, else ask;
     // a file given as another descriptor (`-f /dev/fd/3`) can't be read first (review #166).
@@ -5764,8 +6054,33 @@ reg(NATIVE, ["psql", "sqlite3", "sqlite", "duckdb", "sqlcmd", "cqlsh", "clickhou
     if (h.s.stdin === "file") stdinFile(h);
   }
   else if (k === "sqlite3" || k === "sqlite" || k === "duckdb") {
-    // -cmd's and -init's values are not the database or its SQL.
-    const ops = h.args.filter((a, j) => !isOption(a) && !/^--?(cmd|init)$/.test(h.args[j - 1]?.v ?? ""));
+    // The options each takes, by its own -help. sqlite3's -A (archive mode) unpacks files over the folder's, so it is a
+    // write; an option it doesn't list is one Ember doesn't know, said and announced by name (the owner's decision of
+    // 2026-11-14: only what is dangerous asks), and its next word is read as a word of its own (commands-remote-r11-3).
+    const known = k === "duckdb" ? DUCKDB_OPTS : SQLITE_OPTS;
+    for (const a of h.args) {
+      const name = /^--?([A-Za-z][\w-]*)$/.exec(a.v ?? "")?.[1];
+      // (What follows -A is the archive's own command and its files.)
+      if (a.v !== null && k !== "duckdb" && /^(-A|--?archive$)/.test(a.v)) { h.e.add("destroy", "sqlite.archive", "Unpacks files from the database over the folder's, or packs files into it."); break; }
+      else if (a.v !== null && isOption(a) && (name === undefined || !(name in known))) { h.e.add("unknown", "unknown.option", unknownOptionSays(h.prog, a.v), { program: `${h.prog} ${a.v}` }); break; }
+    }
+    // A value option's value is not the database or its SQL.
+    const valueAt = new Set<number>();
+    h.args.forEach((a, j) => { const n = /^--?([A-Za-z][\w-]*)$/.exec(a.v ?? "")?.[1]; const takes = n !== undefined ? known[n] ?? 0 : 0; for (let t = 1; t <= takes; t++) valueAt.add(j + t); });
+    const ops = h.args.filter((a, j) => !isOption(a) && !valueAt.has(j));
+    // duckdb's -f FILE runs the file's SQL, as `.read FILE` and `duckdb < FILE` do: read first and judged as its text.
+    for (const [j, a] of h.args.entries()) {
+      if (k !== "duckdb" || !/^--?f$/.test(a.v ?? "")) continue;
+      const f = h.args[j + 1]?.v ?? null;
+      if (f === null) h.e.unclear("unclear.sql", "It runs database commands from a file Ember can't name.");
+      else if (STDIN_NAME.test(f)) sqlFromStdin(h, "sqlite");
+      else if (STREAM_NAME.test(f)) h.e.unclear("unclear.script-stream", SAYS.scriptStream);
+      else {
+        if (h.e.isDownloaded(lit(f), h.sc)) h.e.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
+        nameCheck(h, f);
+        h.e.recordScript(lit(f), "sqlite", h.sc);
+      }
+    }
     // duckdb's -c and -s take the text to run, with a database named or not (commands-remote-x7-7).
     const given = k === "duckdb" ? h.args.flatMap((a, j) => (/^--?[cs]$/.test(a.v ?? "") ? [h.args[j + 1]?.v ?? null] : [])) : [];
     databaseText(h, [...ops.slice(1).map(a => a.v), ...given, ...inlineSql(h, [], ["cmd"]).map(x => x), ...h.args.flatMap((a, j) => (a.v === "-cmd" ? [h.args[j + 1]?.v ?? null] : []))], "sqlite");
@@ -6468,6 +6783,29 @@ function tarSpec(bsd: boolean): OptSpec {
 function tarRunsCommand(p: Parsed, bsd: boolean): boolean {
   return has(p, "to-command", "use-compress-program", "info-script", "new-volume-script", "checkpoint-action", "rsh-command") || (!bsd && has(p, "I", "F")) || values(p, "checkpoint-action").length > 0;
 }
+/** tar's operands with each -C before it applied (commands-remote-c11-2): what it packs, by where tar finds it. */
+function tarMembers(h: H, a: readonly Arg[], p: Parsed): Arg[] {
+  const cds = p.opts.filter(o => o.value !== undefined && (o.name === "-C" || optIs(o.name, "directory", p.long)));
+  if (cds.length === 0) return p.operands;
+  const flavour = h.sc.path.flavour;
+  return p.operands.map(op => {
+    const at = a.indexOf(op);
+    let dir: string | null = "";
+    for (const c of cds) {
+      if (at >= 0 && c.at > at) break;
+      const v = c.value ?? null;
+      if (v === null || dir === null) { dir = null; continue; }
+      dir = dir === "" || isAbsolute(v, flavour) || v.startsWith("~") ? v : `${dir}/${v}`;
+    }
+    if (dir === "" || op.v === null) return op;
+    if (dir === null) return { v: null, raw: op.raw, glob: false };
+    if (isAbsolute(op.v, flavour) || op.v.startsWith("~")) return op;
+    const base = dir.replace(/\/+$/, "") || "/";
+    const rel = op.v.replace(/^(\.\/+)+/, "");
+    const v = rel === "." || rel === "" ? base : `${base}/${rel}`;
+    return { ...op, v, raw: v };
+  });
+}
 reg(NATIVE, ["tar", "bsdtar", "gtar"], h => {
   const a = [...h.args];
   // Old-style bundled first argument (`tar xzf x.tgz`).
@@ -6498,7 +6836,11 @@ reg(NATIVE, ["tar", "bsdtar", "gtar"], h => {
     else if (archive !== "-" && !NULL_SINKS.has(archive.toLowerCase())) h.e.usePath(arc, create ? "write" : "read", h.sc);
   }
   if (create) {
-    const inputs = objsOf(h, p.operands, "readTree");
+    // What it packs is found under the -C (--directory) before it, each -C taken from the one before (GNU and bsdtar):
+    // `tar -C ~ -cf - .ssh` packs ~/.ssh, never ./.ssh (commands-remote-c11-2). A folder Ember can't see makes what
+    // follows a name it can't resolve, judged as one.
+    const inputs = objsOf(h, tarMembers(h, a, p), "readTree");
+    if (inputs.some(o => o.abs === null && o.text !== "-")) h.e.unclear("unclear.unresolved-arg", "It packs files Ember can't name.");
     if (has(p, "remove-files")) h.e.add("destroy", "archive.remove-files", `Deletes ${listOf(inputs)} after packing them.`, { objects: inputs });
     if (archive && archive !== "-" && !NULL_SINKS.has(archive.toLowerCase()) && !URL_LIKE.test(archive)) {
       const obj = h.e.usePath(lit(archive), "write", h.sc);
@@ -6614,6 +6956,14 @@ reg(NATIVE, ["cpio"], h => {
   if (has(p, "p", "pass-through")) {
     const dest = p.operands[0];
     if (dest) h.e.usePath(dest, "write", h.sc);
+  }
+  // -o and -p pack or copy the files whose names it reads from its input (`echo ~/.ssh/id_rsa | cpio -o`): the names
+  // Ember can see are read as what it packs; names from a program's output it can't see may be any file, so it asks
+  // (commands-remote-c11-2).
+  if (has(p, "o", "create", "p", "pass-through")) {
+    const t = h.s.stdinText;
+    if (typeof t === "string") h.e.readArgs(t.split(/\r?\n/).map(x => x.trim()).filter(x => x !== "").map(x => lit(x.replace(/^~(?=\/|$)/, "~"))), h.sc, { unresolvedUnclear: true });
+    else if (h.s.stdin !== null) h.e.unclear("unclear.unresolved-arg", "It packs the files named in its input, which Ember can't see.");
   }
 });
 
@@ -6811,7 +7161,18 @@ reg(NATIVE, ["awk", "gawk", "mawk", "nawk"], h => {
 
 // Shells: -c text classified as POSIX (§3.4.5); scripts by name; stdin after a fetch is download-and-run (§3.4.7).
 reg(NATIVE, [...Object.keys(POSIX_SHELLS), ...OTHER_SHELLS], h => {
-  const p = parseOpts(h.args, { shortValue: "oO", longValue: ["rcfile", "init-file"], stopAtOperand: true });
+  // A `+x` or `+o name` before the script turns a setting off: an option, never the script (`bash +x - < a.sh` reads
+  // its script from stdin: commands-remote-r11-1).
+  const shArgs: Arg[] = [];
+  for (let k = 0, opts = true; k < h.args.length; k++) {
+    const v = h.args[k].v;
+    if (opts && v !== null && /^\+[A-Za-z]+$/.test(v)) { if (/[oO]$/.test(v)) k++; continue; }
+    if (v === null || v === "--" || v === "-" || !v.startsWith("-")) opts = false;
+    shArgs.push(h.args[k]);
+    // `-o errexit`, `--rcfile x`: the value is the option's.
+    if (opts && v !== null && (/^-[A-Za-z]*[oO]$/.test(v) || v === "--rcfile" || v === "--init-file") && k + 1 < h.args.length) shArgs.push(h.args[++k]);
+  }
+  const p = parseOpts(shArgs, { shortValue: "oO", longValue: ["rcfile", "init-file"], stopAtOperand: true });
   const posixShell = POSIX_SHELLS[h.key];
   const cIdx = h.args.findIndex(a => a.v !== null && /^-[a-zA-Z]*c[a-zA-Z]*$/.test(a.v) && !a.v.startsWith("--"));
   if (has(p, "l", "login", "i", "rcfile", "init-file") || values(p, "O").length) h.e.unclear("unclear.login-shell", "It starts a shell that runs your profile files.");
@@ -6877,11 +7238,13 @@ function intoInterpreter(h: H, readAs?: ScriptRef["as"]): void {
     return;
   }
   if (h.s.stdin === "file") {
-    // `bash < x.sh`: the file is the program.
+    // `bash < x.sh`: the file is the program. One given to a program whose language Ember doesn't say how to read
+    // (`fish < x`, `cmake -P - < x`) asks: what runs is never left unread by default (commands-remote-r11-1).
     for (const r of h.s.redirs) {
       if (r.kind !== "read" || !r.target) continue;
       if (h.e.isDownloaded(r.target, h.sc)) h.e.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
       if (readAs !== undefined) h.e.recordScript(r.target, readAs, h.sc);
+      else h.e.unclear("unclear.stdin-code", "Runs code Ember can't see.");
     }
     return;
   }
@@ -6896,6 +7259,11 @@ function intoInterpreter(h: H, readAs?: ScriptRef["as"]): void {
 function pytestCode(h: H, args: readonly Arg[]): void {
   if (h.e.readsAsMain || h.sc.cwd === null) return;
   h.e.recordScript(lit("conftest.py"), "code", h.sc);
+  // A plugin it loads by its module's name (`-p a`, `-pa`) is code too (commands-remote-r11-5).
+  args.forEach((a, k) => {
+    const m = a.v === "-p" ? args[k + 1]?.v ?? null : /^-p(.+)$/.exec(a.v ?? "")?.[1] ?? null;
+    if (m !== null && !m.startsWith("no:")) moduleCode(h, m);
+  });
   for (const a of args) if (a.v !== null && !a.v.startsWith("-") && /\.py(::\S*)?$/.test(a.v)) h.e.recordScript(lit(a.v.replace(/::.*$/, "")), "code", h.sc);
 }
 function runScript(h: H, script: Arg, readAs?: ScriptRef["as"]): void {
@@ -6904,7 +7272,9 @@ function runScript(h: H, script: Arg, readAs?: ScriptRef["as"]): void {
     else h.e.unclear("unclear.script", "It runs a script Ember can't name.");
     return;
   }
-  if (script.v === "-" || script.v === "/dev/stdin") { intoInterpreter(h); return; }
+  // `bash - < x.sh`, `python3 /dev/stdin < a.py`: the file on stdin is the program, read as `bash < x.sh` reads it
+  // (commands-remote-r11-1, r11-5).
+  if (script.v === "-" || script.v === "/dev/stdin") { intoInterpreter(h, readAs); return; }
   h.e.usePath(script, "exec", h.sc);
   // A folder given as the program (`node .`, `python3 tool`) runs its entry file (commands-remote-c7-3).
   const folder = script.v.replace(/\/+$/, "") || "/";
@@ -6925,6 +7295,71 @@ function runScript(h: H, script: Arg, readAs?: ScriptRef["as"]): void {
   nameCheck(h, script.v, script.v);
   handedToScript(h, script);
 }
+/** A Python module named to be imported and run (`-m a.b`, `-p a`, `-c a`): its file and its package's, as code. */
+function moduleCode(h: H, mod: string): void {
+  if (!/^[A-Za-z_][\w.]*$/.test(mod)) return;
+  const file = mod.split(".")[0];
+  h.e.recordImplied(lit(`${file}.py`), h.sc);
+  for (const f of [`${file}/__main__.py`, `${file}/__init__.py`]) h.e.recordImplied(lit(f), h.sc);
+}
+
+/**
+ * Python's own modules that run the program they are given (a file, or a module by its name): a profiler, a tracer, a
+ * test runner, doctest and inspect, which imports it. What they run is code Ember doesn't read, so one the task wrote
+ * asks, as `python3 a.py` does (commands-remote-r11-5). Every other module of Python's own only reads its files.
+ */
+const PY_RUNS_GIVEN = new Set(["cProfile", "profile", "trace", "unittest", "doctest", "inspect", "runpy"]);
+/** The words after such a module that name code: each .py file, and each word that may be a module's name. */
+function givenCode(h: H, args: readonly Arg[]): void {
+  for (const a of args) {
+    if (a.v === null || a.v.startsWith("-") || a.v.includes("=")) continue;
+    if (/\.pyw?$/i.test(a.v)) h.e.recordScript(a, "code", h.sc);
+    else moduleCode(h, a.v);
+  }
+}
+
+/**
+ * The program file a task runner runs (its recipes or tasks, in a language Ember doesn't read), by its own option or
+ * by the names it looks for in its folder (`-C`'s, or this one): one the task wrote asks, as a script it wrote does
+ * (r10-commands-y10-5, commands-remote-r11-5). `module`: the option names a Python module (invoke's `-c`).
+ */
+const RUNNER_FILES: Readonly<Record<string, { opts: readonly string[]; names: readonly string[]; dir?: readonly string[]; module?: readonly string[] }>> = {
+  make: { opts: ["f", "file", "makefile"], names: ["GNUmakefile", "makefile", "Makefile"], dir: ["C", "directory"] },
+  gmake: { opts: ["f", "file", "makefile"], names: ["GNUmakefile", "makefile", "Makefile"], dir: ["C", "directory"] },
+  "mingw32-make": { opts: ["f", "file", "makefile"], names: ["GNUmakefile", "makefile", "Makefile"], dir: ["C", "directory"] },
+  nmake: { opts: ["f"], names: ["makefile", "Makefile"] },
+  just: { opts: ["f", "justfile"], names: ["justfile", "Justfile", ".justfile"], dir: ["d", "working-directory"] },
+  rake: { opts: ["f", "rakefile"], names: ["Rakefile", "rakefile", "Rakefile.rb", "rakefile.rb"], dir: ["C", "directory"] },
+  invoke: { opts: [], names: ["tasks.py", "tasks/__init__.py"], dir: ["r", "search-root"], module: ["c", "collection"] },
+  inv: { opts: [], names: ["tasks.py", "tasks/__init__.py"], dir: ["r", "search-root"], module: ["c", "collection"] },
+  nox: { opts: ["f", "noxfile"], names: ["noxfile.py"] },
+  tox: { opts: ["c", "conf"], names: ["tox.ini", "setup.cfg", "pyproject.toml", "toxfile.py"] },
+  task: { opts: ["t", "taskfile"], names: ["Taskfile.yml", "Taskfile.yaml", "taskfile.yml", "taskfile.yaml"], dir: ["d", "dir"] },
+  mage: { opts: [], names: ["magefile.go"], dir: ["d"] },
+  ant: { opts: ["f", "file", "buildfile"], names: ["build.xml"] },
+  gradle: { opts: ["b", "build-file", "c", "settings-file", "I", "init-script"], names: ["build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts"], dir: ["p", "project-dir"] },
+  gradlew: { opts: ["b", "build-file", "c", "settings-file", "I", "init-script"], names: ["build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts"], dir: ["p", "project-dir"] },
+  mvn: { opts: ["f", "file"], names: ["pom.xml"] },
+  mvnw: { opts: ["f", "file"], names: ["pom.xml"] },
+  sbt: { opts: [], names: ["build.sbt"] },
+  lein: { opts: [], names: ["project.clj"] },
+  ninja: { opts: ["f"], names: ["build.ninja"], dir: ["C"] },
+  scons: { opts: ["f", "file", "makefile", "sconstruct"], names: ["SConstruct", "Sconstruct", "sconstruct", "SConstruct.py"], dir: ["C", "directory"] },
+};
+function runnerFiles(h: H, p: Parsed): void {
+  const t = RUNNER_FILES[h.key];
+  if (!t) return;
+  const dirs = t.dir ? values(p, ...t.dir) : [];
+  const dir = dirs.length ? dirs[dirs.length - 1] : ".";
+  if (dir === null) return;
+  const at = (f: string) => lit(dir === "." || f.startsWith("/") || f.startsWith("~") ? f : `${dir}/${f}`);
+  const given = values(p, ...t.opts);
+  const mods = t.module ? values(p, ...t.module) : [];
+  for (const m of mods) if (m !== null) moduleCode(h, dir === "." ? m : `${dir}/${m}`.replace(/\//g, "."));
+  if (mods.length) return;
+  for (const f of given.length ? given : t.names) if (f && !STDIN_NAME.test(f) && !STREAM_NAME.test(f)) h.e.recordImplied(at(f), h.sc);
+}
+
 /** The files node or python runs when given a folder (package.json names node's). */
 const ENTRY_FILES = ["index.js", "index.mjs", "index.cjs", "index.json", "index.node", "package.json", "__main__.py"];
 /** Extensions an interpreter adds to a bare program name it is given (`node x` runs x.js), to match a download by name. */
@@ -7104,6 +7539,7 @@ reg(NATIVE, Object.keys(INTERPRETERS).filter(k => !["awk", "gawk", "mawk", "nawk
       // (judgeScripts), and so does a conftest.py or a test file it wrote that pytest loads (r10-commands-x10-6).
       // Python's own and the everyday tools' modules are found where they are installed.
       // A package runs its __main__.py after its __init__.py (r10-commands-y10-5).
+      if (PY_RUNS_GIVEN.has(mod) || mod === "coverage") givenCode(h, (afterModule(h, p) ?? []).filter(a => a.v !== "run"));
       if (!PY_OWN_MODULES.has(mod) && !PY_TOOL_MODULES.has(mod)) {
         h.e.recordScript(lit(`${file}.py`), "code", h.sc);
         for (const f of [`${file}/__main__.py`, `${file}/__init__.py`]) h.e.recordImplied(lit(f), h.sc);
@@ -7154,7 +7590,7 @@ reg(NATIVE, ["source", "."], h => {
   if (!script) return;
   if (script.v === null || script.v === "/dev/stdin" || script.v === "-") {
     if (script.fetch || (script.v === "/dev/stdin" && h.s.fetchBefore)) h.e.add("escape", "escape.download-run", SAYS.downloadsAndRuns);
-    else if (script.v === "/dev/stdin") intoInterpreter(h);
+    else if (script.v === "/dev/stdin") intoInterpreter(h, h.sc.shell === "zsh" || h.sc.shell === "bash" ? h.sc.shell : "sh");
     else h.e.unclear("unclear.source", "It runs a script Ember can't name.");
     return;
   }
@@ -7867,10 +8303,34 @@ git(["worktree"], h => {
 });
 // checkout-index writes each file at <prefix><path>: a prefix ending in a slash is a folder, any other the start of
 // each name (review #169). Without one it writes the work tree's own files (writesUnnamedFiles).
+/** Kubernetes kinds whose manifest holds a container's environment or a config's values (`kubectl get deploy -o yaml`). */
+const K8S_HOLDS_ENV = /^((deploy(ment)?s?|po(d|ds)?|sts|statefulsets?|ds|daemonsets?|jobs?|cronjobs?|cj|rs|replicasets?|cm|configmaps?|all|dc|deploymentconfigs?)(\.[a-z.]+)?)(\/|,|$)/;
+/** Does kubectl's `-o`/`--output` write the objects out whole (yaml, json, a template), or is it one Ember can't see? */
+function wholeOutput(args: readonly Arg[]): boolean {
+  return args.some((a, k) => {
+    const m = /^(?:-o|--output)(?:=?(.*))?$/.exec(a.v ?? "");
+    if (a.v === null || !m) return false;
+    const format = m[1] !== undefined && m[1] !== "" ? m[1] : args[k + 1]?.v ?? null;
+    // A template that picks only names and states (`{.items[0].metadata.name}`) holds none of the environment.
+    if (format !== null && /^(jsonpath|go-template|template)/.test(format) && /\.(metadata|status)\./.test(format) && !/\.(env|data|stringData|spec|value|containers)\b|\{\.?\}|\{\.items\}/i.test(format)) return false;
+    // Columns that pick a container's environment, a config's data or a value print them too (r11-commands-y11-6).
+    if (format !== null && /^custom-columns/.test(format)) return /\.(env|envFrom|data|stringData|value)\b/i.test(format);
+    return format === null || /^(yaml|json|jsonpath|go-template|template)/.test(format);
+  });
+}
+/** What throws away work not yet committed: the class of commands-remote-c11-4 (git's plumbing and submodules). */
+const DISCARDS = "Overwrites files in the working folder, throwing away changes that weren't committed.";
+// read-tree with --reset, or -u (which writes the tree's files into the working folder), throws away what wasn't
+// committed: the index's staged changes and, with -u, the files themselves (commands-remote-c11-4).
+git(["read-tree"], h => {
+  if (h.args.some(a => a.v === null || /^(--reset|-u|--aggressive)$/.test(a.v) || /^-[a-z]*u/.test(a.v ?? ""))) h.e.add("destroy", "git.discard", DISCARDS, { program: "git read-tree" });
+});
 git(["checkout-index"], h => {
   const p = opts(h, { longValue: ["prefix", "stage"] });
   const files = p.operands.filter(a => a.v !== "--");
   const prefix = values(p, "prefix")[0];
+  // -f overwrites files that are already there, changes in them included (commands-remote-c11-4).
+  if (has(p, "f", "force") && (prefix === undefined || prefix === "")) h.e.add("destroy", "git.discard", DISCARDS, { program: "git checkout-index" });
   if (h.args.some(a => a.v === null && /^--prefix/.test(a.raw))) { h.e.add("destroy", "redirect.overwrite", "Writes to files Ember can't name."); return; }
   if (prefix === undefined || prefix === "") { h.e.readArgs(files, h.sc); return; }
   if (prefix === null || files.some(f => f.v === null)) { h.e.add("destroy", "redirect.overwrite", "Writes to files Ember can't name."); if (prefix === null) return; }
@@ -7925,6 +8385,10 @@ git(["config"], h => {
   } else if (key !== null && /^credential\./i.test(key)) h.e.add("secret", "secret.git-credential", SAYS.secrets, { program: "git config" });
 });
 git(["submodule"], h => {
+  // deinit -f removes a submodule's working folder with its changes; update -f checks it out over them (c11-4).
+  if (/^(deinit|update|sync|absorbgitdirs)$/.test(h.args[0]?.v ?? "") && h.args.slice(1).some(a => a.v === null || /^(-f|--force|-[a-z]*f[a-z]*)$/.test(a.v))) {
+    h.e.add("destroy", "git.discard", DISCARDS, { program: `git submodule ${h.args[0]?.v}` });
+  }
   if (h.args[0]?.v === "add") {
     // A submodule added from an address is a clone into its folder (named, else the address's last part): building in
     // it later runs the download (commands-remote-r8-1).
@@ -8592,7 +9056,17 @@ reg(NATIVE, Object.keys(CLOUD_CLIS), h => {
     || (h.key === "az" && (/^(get-access-token|login)$/.test(verb) || all.startsWith("account get-access-token")))
     || (h.key === "gcloud" && /^auth\b/.test(all) && /(print-access-token|print-identity-token|login|activate-service-account)/.test(all))
     || ((h.key === "kubectl" || h.key === "oc") && ((verbs[0] === "config" && verbs[1] === "view" && h.args.some(a => a.v === "--raw" || a.v === "--flatten")) || (verbs[0] === "get" && /^secrets?$/.test(verbs[1] ?? "") && h.args.some(a => /^-o(yaml|json|=|$)|^--output/.test(a.v ?? "")))))
-    || (h.key === "vault" && (/^(read|login|token|unwrap)$/.test(verb) || all.startsWith("kv get")))) {
+    || (h.key === "vault" && (/^(read|login|token|unwrap)$/.test(verb) || all.startsWith("kv get")))
+    // A workload's or a config map's manifest written out whole holds its environment's values, passwords and tokens
+    // put there included, and helm's values with every default or its whole release hold the chart's secrets
+    // (commands-remote-y10-7).
+    || ((h.key === "kubectl" || h.key === "oc") && verbs[0] === "get" && K8S_HOLDS_ENV.test(verbs[1] ?? "") && wholeOutput(h.args))
+    // `describe` of a workload prints its containers' environment values, and of a config map its data; lambda's
+    // configuration holds its environment variables (r11-commands-y11-6). (A pod's, everyday debugging, still runs:
+    // left for the owner.)
+    || ((h.key === "kubectl" || h.key === "oc") && verbs[0] === "describe" && K8S_HOLDS_ENV.test(verbs[1] ?? "") && !/^po(d|ds)?(\/|,|$)/.test(verbs[1] ?? ""))
+    || (h.key === "aws" && /^lambda get-function(-configuration)?\b/.test(all))
+    || (h.key === "helm" && verbs[0] === "get" && (/^(all|manifest|values)$/.test(verbs[1] ?? "")) && (verbs[1] !== "values" || h.args.some(a => /^(-a|--all)$/.test(a.v ?? ""))))) {
     h.e.add("secret", "secret.cloud", SAYS.secrets, { program: `${h.key} ${verb}` });
     return;
   }
@@ -9182,7 +9656,7 @@ const MVN_WORDS: Readonly<Record<string, string>> = {
 reg(NATIVE, ["make", "gmake", "mingw32-make", "nmake", "just", "rake", "invoke", "inv", "ant", "sbt", "lein", "gradle", "gradlew", "mvn", "mvnw", "nox", "tox", "task", "mage", "ninja"], h => {
   // make's -j and -l take the next word only when it is a number (`make -j install` builds install); Maven's -X, nox's -r and
   // tox's -v, -r and -n take no value, and Maven's options of two or more letters are whole words (commands-remote-i5a).
-  const valueShort: Record<string, string> = { make: "CfIoWE", gmake: "CfIoWE", "mingw32-make": "CfIoWE", nmake: "fX", just: "fd", rake: "fIrRCeEp", gradle: "pbcgIxDP", gradlew: "pbcgIxDP", mvn: "bDflPsTt", mvnw: "bDflPsTt", nox: "sfeptk", tox: "ecxfm", task: "dt", ant: "fDl", ninja: "Cfjkldtw" };
+  const valueShort: Record<string, string> = { make: "CfIoWE", gmake: "CfIoWE", "mingw32-make": "CfIoWE", nmake: "fX", just: "fd", rake: "fIrRCeEp", gradle: "pbcgIxDP", gradlew: "pbcgIxDP", mvn: "bDflPsTt", mvnw: "bDflPsTt", nox: "sfeptk", tox: "ecxfmc", task: "dt", ant: "fDl", ninja: "Cfjkldtw", invoke: "cfr", inv: "cfr", mage: "d" };
   const mvn = h.key === "mvn" || h.key === "mvnw";
   const gnuMake = /^(g|mingw32-)?make$/.test(h.key);
   const args = mvn ? h.args.map(a => (a.v !== null && MVN_WORDS[a.v] ? { ...a, v: MVN_WORDS[a.v] } : a)) : h.args;
@@ -9195,7 +9669,7 @@ reg(NATIVE, ["make", "gmake", "mingw32-make", "nmake", "just", "rake", "invoke",
   // one was a target or an option of its own (commands-held-10).
   const p = heldOpts(h, {
     shortValue: valueShort[h.key] ?? "", shortNumeric: /make$/.test(h.key) ? "jl" : "", longNumeric: ["jobs", "load-average", ...(/^gradlew?$/.test(h.key) ? ["max-workers"] : [])],
-    longValue: ["file", "makefile", "directory", "include-dir", "old-file", "what-if", "justfile", "working-directory", "set", "project-dir", "build-file", "settings-file", "gradle-user-home", "init-script", "exclude-task", "projects", "resume-from", "settings", "global-settings", "session", "sessions", "keywords", "environment", "envlist", "taskfile", "dir", "global-toolchains", "toolchains", "encrypt-master-password", "encrypt-password", "builder", "log-file", "activate-profiles", "threads", "define"],
+    longValue: ["file", "makefile", "directory", "include-dir", "old-file", "what-if", "justfile", "working-directory", "set", "project-dir", "build-file", "settings-file", "gradle-user-home", "init-script", "exclude-task", "projects", "resume-from", "settings", "global-settings", "session", "sessions", "keywords", "environment", "envlist", "taskfile", "dir", "global-toolchains", "toolchains", "encrypt-master-password", "encrypt-password", "builder", "log-file", "activate-profiles", "threads", "define", "collection", "search-root", "noxfile", "rakefile", "buildfile", "conf"],
   }, { shortValue: mvn ? "fsplDPTtbgrX" : h.key === "nox" ? "sfeptkr" : h.key === "tox" ? "ecvrnx" : valueShort[h.key] ?? "", shortNumeric: /make$/.test(h.key) ? "jl" : "", numericAny: gnuMake ? ["j", "l"] : [], numericCountOnly: ["threads", "max-workers", ...(gnuMake ? [] : ["j", "l"])], longNumeric: ["jobs", "load-average", "threads", ...(/^gradlew?$/.test(h.key) ? ["max-workers"] : [])], longValue: ["file", "makefile", "directory", "include-dir", "old-file", "what-if", "justfile", "working-directory", "set", "project-dir", "build-file", "settings-file", "gradle-user-home", "init-script", "exclude-task", "projects", "resume-from", "settings", "global-settings", "session", "sessions", "keywords", "environment", "envlist", "taskfile", "dir", "jobs", "load-average"] }, args, h.args);
   // A makefile read from stdin, /dev/stdin or a process substitution is a build program Ember can't vouch for: its
   // recipes run shell (review #166). Ember asks unless it can see the whole text and it is plainly ordinary.
@@ -9211,12 +9685,7 @@ reg(NATIVE, ["make", "gmake", "mingw32-make", "nmake", "just", "rake", "invoke",
   for (const f of values(p, "f", "file", "makefile", "justfile", "build-file", "b", "settings-file", "c", "init-script", "I")) if (f && !STDIN_NAME.test(f)) h.e.usePath(lit(f), "read", h.sc);
   // A makefile's recipes are shell Ember doesn't read: one the task wrote asks, as a script it wrote does
   // (r10-commands-y10-5). Its folder is -C's, or this one.
-  if (gnuMake) {
-    const given = values(p, "f", "file", "makefile");
-    const dirs = values(p, "C", "directory");
-    const dir = dirs.length ? dirs[dirs.length - 1] : ".";
-    if (dir !== null) for (const f of given.length ? given : ["GNUmakefile", "makefile", "Makefile"]) if (f) h.e.recordImplied(lit(dir === "." || f.startsWith("/") ? f : `${dir}/${f}`), h.sc);
-  }
+  runnerFiles(h, p);
   // `ninja -t <tool>` runs one of ninja's own tools, not a target (review #167).
   if (h.key === "ninja" && values(p, "t").length) { ninjaTool(h, values(p, "t")[0]); return; }
   // make takes the word after -j or -l only when it is a count or a variable, so a value the text gives a variable there
@@ -9481,7 +9950,7 @@ reg(NATIVE, ["softwareupdate", "installer", "msiexec", "pkgutil", "dism", "add-a
  * (its next word, or the pieces of one attached before a command: Opt.parts), so the values a variable is given count.
  */
 function optionWords(args: readonly Arg[], p: Parsed, ...names: string[]): Arg[] {
-  return p.opts.filter(o => o.value !== undefined && names.some(n => optIs(o.name, n))).map(o => {
+  return p.opts.filter(o => o.value !== undefined && names.some(n => optIs(o.name, n, p.long))).map(o => {
     if (typeof o.value === "string") return lit(o.value);
     if (o.parts) return { v: null, raw: args[o.at]?.raw ?? "", glob: false, parts: o.parts };
     const next = args[o.at + 1];
@@ -9542,7 +10011,8 @@ reg(NATIVE, ["curl", "curl.exe"], h => {
   if (values(p, "K", "config").length) { h.e.unclear("unclear.curl-config", "It reads its options from a file Ember can't see."); h.e.markUnnamed(null, h.sc); }
   if (has(p, "n", "netrc") || values(p, "netrc-file").length) h.e.add("secret", "secret.netrc", SAYS.secrets);
   for (const f of values(p, "netrc-file")) if (f) h.e.usePath(lit(f), "read", h.sc);
-  if (values(p, "u", "user", "proxy-user").some(u => u !== null && u.includes(":") && !u.endsWith(":")) || values(p, "oauth2-bearer").length) h.e.add("secret", "secret.token-arg", SAYS.tokenArg);
+  // `--proxy` is read for a password as main read it (by prefix, as `--proxy-user`), now that it is its own option.
+  if (values(p, "u", "user", "proxy-user", "proxy").some(u => u !== null && u.includes(":") && !u.endsWith(":")) || values(p, "oauth2-bearer").length) h.e.add("secret", "secret.token-arg", SAYS.tokenArg);
   for (const k of values(p, "key", "E", "cert")) if (k) h.e.usePath(lit(k.split(":")[0]), "read", h.sc);
   const uploads = values(p, "T", "upload-file");
   for (const u of uploads) if (u) h.e.usePath(lit(u), "read", h.sc);
@@ -10331,9 +10801,56 @@ reg(NATIVE, ["certutil"], h => {
     return;
   }
   const flags = h.args.map(a => (a.v ?? "").toLowerCase());
-  if (flags.some(f => /^[-/](exportpfx|backupkey|backup|getkey|importpfx|repairstore|delstore|addstore|viewdelstore|deletehelloContainer)$/i.test(f))) h.e.add("secret", "secret.program", SAYS.secrets);
+  if (flags.some(f => /^[-/](exportpfx|backupkey|backup|getkey|importpfx|repairstore|delstore|addstore|viewdelstore|deletehelloContainer|exportpvk|recoverkey|mergepfx|convertepf)$/i.test(f))) h.e.add("secret", "secret.program", SAYS.secrets);
+  // A key container deleted, and a certificate published or installed where it is trusted (r11-commands-y11-5).
+  if (flags.some(f => /^[-/]delkey$/.test(f))) h.e.add("destroy", "certutil.delkey", "Deletes a key, which can't be got back.");
+  if (flags.some(f => /^[-/](dspublish|importcert|installcert|addeccurve|deleteecccurve|setreg|delreg)$/.test(f))) h.e.add("system", "system.security", TRUST_SAYS);
   if (flags.some(f => /^[-/]urlcache$/.test(f))) { const out = h.args.filter(a => !(a.v ?? "").startsWith("-") && !(a.v ?? "").startsWith("/")).pop(); if (out?.v && !URL_LIKE.test(out.v)) { h.e.usePath(out, "write", h.sc); h.e.download(out.v, h.sc); } }
+  // Its verbs are a closed list (commands-remote-c11-1): the ones that copy a file through an encoding read their input
+  // and write (or, with -f, overwrite) their output, as copy does, so a key encoded or dumped asks as a secret, a document
+  // decoded over asks, and a share or address as the output sends; -dump and the hash verbs read what they are given; a
+  // verb or an option not listed here is one Ember doesn't know.
+  const words: Arg[] = [];
+  let verb: string | null = null;
+  for (let k = 0; k < h.args.length; k++) {
+    const a = h.args[k];
+    const m = /^[-/]([A-Za-z.]+)$/.exec(a.v ?? "");
+    if (a.v === null || !/^[-/]/.test(a.v)) { words.push(a); continue; }
+    // A word that starts with a slash may be a path (`/tmp/x`) as well as a switch: it is judged as both, so a file it
+    // names is never left unjudged for being read as an option.
+    if (!m) { h.e.add("unknown", "unknown.option", unknownOptionSays("certutil", a.v), { program: `certutil ${a.v}` }); if (a.v.startsWith("/")) words.push(a); continue; }
+    const n = m[1].toLowerCase();
+    if (CERTUTIL_VALUE_OPTS.has(n)) { k++; continue; }
+    if (CERTUTIL_FLAGS.has(n)) continue;
+    if (verb === null && (CERTUTIL_COPIES.has(n) || CERTUTIL_READS.has(n) || CERTUTIL_OTHER.has(n))) { verb = n; continue; }
+    // A verb or a switch this row doesn't list is one Ember doesn't know (announced by name: the owner's decision of
+    // 2026-11-14); one that copies through an encoding is judged above whatever follows it.
+    if (verb === null) h.e.add("unknown", "unknown.verb", unknownVerbSays("certutil", a.v), { program: `certutil ${a.v}` });
+    else h.e.add("unknown", "unknown.option", unknownOptionSays("certutil", a.v), { program: `certutil ${a.v}` });
+    if (verb === null) return;
+    if (a.v.startsWith("/")) words.push(a);
+  }
+  if (verb === null) return;
+  if (CERTUTIL_COPIES.has(verb)) {
+    if (words[0]) h.e.usePath(words[0], "read", h.sc);
+    if (words[1]) overwrites(h, words[1], "certutil.output");
+    return;
+  }
+  if (CERTUTIL_READS.has(verb)) h.e.readArgs(words, h.sc, { unresolvedUnclear: true });
 });
+/** certutil's verbs that copy a file through an encoding: the first word is read, the second written. */
+const CERTUTIL_COPIES = new Set(["encode", "decode", "encodehex", "decodehex"]);
+/** Its verbs that read and print the files they are given (-dump prints any file in hex and text). */
+const CERTUTIL_READS = new Set(["dump", "hashfile", "asn", "verify", "dumppfx", "verifyctl", "checkcert"]);
+/** Its other verbs this row knows: listing and checking stores and services, and those judged above. */
+const CERTUTIL_OTHER = new Set([
+  "store", "user", "ping", "pingadmin", "cainfo", "config", "getconfig", "getreg", "verifystore", "viewstore", "urlcache", "error", "?", "help", "tcainfo", "ca.cert", "ca.chain",
+  "exportpfx", "backupkey", "backup", "getkey", "importpfx", "repairstore", "delstore", "addstore", "viewdelstore", "deletehellocontainer", "scinfo", "key", "csplist", "csptest",
+  "exportpvk", "recoverkey", "mergepfx", "convertepf", "delkey", "dspublish", "importcert", "installcert", "addeccurve", "deleteecccurve", "setreg", "delreg",
+]);
+/** Its switches, and the ones that take the next word. */
+const CERTUTIL_FLAGS = new Set(["f", "v", "user", "enterprise", "gmt", "seconds", "silent", "split", "unicode", "utf8", "nocr", "nocrlf", "q", "quiet"]);
+const CERTUTIL_VALUE_OPTS = new Set(["p", "config", "t", "csp", "dc", "restrict", "out", "sid", "kdf", "alg", "pin", "privatekey", "ekpolicy", "policyserver", "anonymous", "kerberos", "clientcertificate", "username", "cert"]);
 reg(NATIVE, ["procdump", "procdump64"], h => { if (h.args.some(a => /lsass/i.test(a.v ?? ""))) h.e.add("secret", "secret.program", SAYS.secrets); });
 reg(NATIVE, ["netsh"], h => {
   const a = h.args.map(x => (x.v ?? "").toLowerCase());

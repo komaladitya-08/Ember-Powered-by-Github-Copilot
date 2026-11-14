@@ -28,13 +28,16 @@ import type { OS } from "../../shared/shortcuts";
 import type { TargetId } from "../../shared/targets";
 import { pendingCommand } from "./pending";
 import { carriedText } from "./carried";
-import { notReviewable, reviewedDecision, type CommandReviewer } from "./review";
-import { AUTOPILOT_LINE, AUTOPILOT_RULE, askedOfFinding, autopilotCommand, handedSecrets } from "./autopilot";
+import { notReviewable, outlivesStop, reviewedDecision, type CommandReviewer } from "./review";
+import {
+  AUTOPILOT_LINE, AUTOPILOT_REFUSES, AUTOPILOT_RULE, OUTLIVES_LINE, WITHHELD_LINE, askedOfFinding, autopilotCommand, autopilotRefuses, handedSecrets,
+  outlivesKillSwitch, printsSecrets, readsSecrets,
+} from "./autopilot";
 import { AUTOPILOT_WORDS } from "../policy/policy";
-import { classifyCommand } from "./classify";
-import { LINES, decideCommand } from "./decide";
+import { classifyCommand, type ClassificationExtra } from "./classify";
+import { LINES, UNKNOWN_ANNOUNCED, decideCommand } from "./decide";
 import { covers, type AutonomyScopes } from "../policy/autonomy";
-import { heldByWords, mentioned, namedKind, ruledOut } from "./intent";
+import { heldByWords, mentioned, namedKind, namesUnknown, ruledOut } from "./intent";
 import { capLines, cleanOutput, cleanOutputAsync, clearCutSteps, CUT_SLACK, redactedWhole, shapeCleaned, shapeOutput, type ShapeOptions } from "./output";
 import { resolveTargetPath } from "./paths";
 import { trackSecretPrompts, type SecretTracker } from "./prompts";
@@ -45,7 +48,7 @@ import {
   ALWAYS_ASK,
   type Classification, type ClassifyContext, type CommandCapability, type CommandCard, type CommandDecision, type CommandMode, type CommandRunner,
   type CommandService, type DecideInput, type Finding, type GitFacts, type PathFact, type RunCommandArgs, type RunExit, type RunnerFacts, type RunningCommand,
-  type RunSpec, SHELL_FAMILY, type ShellId, standingFindings,
+  type RunSpec, SHELL_FAMILY, type ShellId, standingFindings, unnamedTarget,
 } from "./types";
 import { judgedText } from "./unroll";
 
@@ -100,7 +103,7 @@ export interface CommandFlowContext {
    * (a command's output tainted the task, so the card says so in its own words, §3.8.4) and `written` (what the task's
    * commands wrote, so a script of its own that can't be read in full asks: L8's padding bypass).
    */
-  state: { cwd: string | null; downloaded: Set<string>; running: boolean; outputTainted?: boolean; written?: TaskWrites };
+  state: { cwd: string | null; downloaded: Set<string>; running: boolean; outputTainted?: boolean; written?: TaskWrites; withheldSecrets?: boolean };
   /** The command window's size for new runs. */
   size: () => { cols: number; rows: number };
   /** Ember's own pids now (D4.5; main's live list, §3.6.2). */
@@ -666,7 +669,9 @@ export function heldDecision(d: CommandDecision, r: AskReasons, kind: TargetBind
     policyOnly = false;
     for (const f of left) if (f.says.trim() && !lines.includes(f.says)) lines.push(f.says);
   }
-  const unrequested = d.verdict === "announce" && (!r.words.trim() || !d.requested);
+  // A program Ember doesn't know, and nothing else, is announced without the user's words (decide.ts UNKNOWN_ANNOUNCED).
+  const unknownOnly = d.requested?.intent === UNKNOWN_ANNOUNCED && d.classes.every(c => c === "unknown") && left.every(f => f.cls === "unknown");
+  const unrequested = d.verdict === "announce" && !unknownOnly && (!r.words.trim() || !d.requested);
   if (!lines.length && !unrequested && !missed) return d;
   return {
     ...d, verdict: "ask", requested: undefined,
@@ -678,12 +683,14 @@ export function heldDecision(d: CommandDecision, r: AskReasons, kind: TargetBind
   };
 }
 
+/** What the model is told when Autopilot refuses a command that may be one the user said no to earlier in the task. */
+export const LIKE_REFUSED_AUTOPILOT = "Not allowed: the user said no to something like this earlier in this task. Don't try another way; tell the user in finish_task.";
 /** The card's line, and the rule, of a command that may be one the user said no to earlier in the task (Refusals.commandLike). */
 export const LIKE_REFUSED_LINE = "You said no to something like this earlier in this task.";
 export const LIKE_REFUSED_RULE = "refused-like";
 
 /** Words that turn a part of a request round: "do not push", "don't delete src", "never force", "everything except build". */
-const SAYS_NOT = /(^|[^\p{L}\p{N}])(do\s+not|don['’]?t|does\s+not|doesn['’]?t|never|not|without|except|no|nothing|avoid)(?=$|[^\p{L}\p{N}])/giu;
+const SAYS_NOT = /(^|[^\p{L}\p{N}])(do\s+not|don['’]?t|does\s+not|doesn['’]?t|never|not|without|except|no|nothing|avoid|(?:stop|quit)\s+using|refrain\s+from)(?=$|[^\p{L}\p{N}])/giu;
 
 /**
  * Words that hold a part of a request back without a "not": "leave the build folder alone", "keep build", "hold off on
@@ -717,7 +724,7 @@ function namesObject(findings: readonly Finding[], part: string): boolean {
 }
 
 /** A plain no in a part of the user's words ("don't", "dont", "never", "nothing should be…", "push nothing"). */
-const NEGATED = /(?:^|[^\p{L}])(?:don[’']?t|do not|never|nothing|none|not|no)(?![\p{L}])/iu;
+const NEGATED = /(?:^|[^\p{L}])(?:don[’']?t|do not|never|nothing|none|not|no|(?:stop|quit)\s+using|refrain\s+from)(?![\p{L}])/iu;
 /** The verbs that name a kind of step, by the finding's class (r10-commands-y10-9). */
 const KIND_VERBS: Readonly<Partial<Record<Finding["cls"], RegExp>>> = {
   destroy: /(?:^|[^\p{L}])(?:delet|remov|eras|wipe|purg|discard|destroy|drop|rm(?![\p{L}]))/iu,
@@ -741,14 +748,15 @@ function negatedKind(findings: readonly Finding[], words: string): boolean {
     if (verb === undefined) return false;
     if (f.cls === "publish" && KEEP_LOCAL.test(part)) return true;
     if (!NEGATED.test(part) || !verb.test(part)) return false;
-    const rest = part.toLowerCase().split(/[^\p{L}\p{N}'’_.-]+/u).filter(w => w !== "" && !NEGATED.test(w) && !verb.test(w) && !GENERIC.has(w));
+    // ("stop using", "refrain from" are one no: r11-commands-y11-7.)
+    const rest = part.toLowerCase().replace(/(stop|quit)\s+using|refrain\s+from/gu, "not").split(/[^\p{L}\p{N}'’_.-]+/u).filter(w => w !== "" && !NEGATED.test(w) && !verb.test(w) && !GENERIC.has(w));
     return rest.length === 0;
   }));
 }
 
 /** Does a part of the user's words hold back what these findings act on, or the kind of step they are (HOLDS_BACK)? */
 function wordsHoldBack(findings: readonly Finding[], words: string): boolean {
-  return words.split(PARTS).some(part => HOLDS_BACK.test(part) && (namesObject(findings, part) || namedKind(findings, part) || mentioned(findings, part)));
+  return words.split(PARTS).some(part => HOLDS_BACK.test(part) && (namesObject(findings, part) || namedKind(findings, part) || mentioned(findings, part) || namesUnknown(findings, part)));
 }
 
 /**
@@ -1029,9 +1037,21 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
       armMs: Math.max(d.armMs, 1500),
     };
   }
+  const spoken = ctx.task.spokenWords?.() ?? "";
+  // A program Ember doesn't know is announced without words, but never over the user's words against it, wherever they
+  // were heard ("leave frobtool alone", "don't run frobtool" by voice): it asks, and Autopilot refuses it below
+  // (r11-commands-x11-1).
+  if (d.verdict === "announce" && d.requested?.intent === UNKNOWN_ANNOUNCED) {
+    const left = standingFindings(cls.findings, paths);
+    if (wordsRuleOut(left, words) || wordsRuleOut(left, spoken)) {
+      d = {
+        ...d, verdict: "ask", requested: undefined, unasked: true, says: [...d.says.filter(l => l !== LINES.unasked), LINES.unasked],
+        reason: "It asks first: the user's own words rule it out.", armMs: Math.max(d.armMs, 1500),
+      };
+    }
+  }
   // Words heard where Ember can't tell the user from its speakers didn't count (OWNER V1): when they named it, the card
   // says so instead of "You didn't ask for this."
-  const spoken = ctx.task.spokenWords?.() ?? "";
   if (d.verdict === "ask" && d.unasked && spoken.trim() && !ruledOut(cls.findings, spoken) && (mentioned(cls.findings, spoken) || namedKind(cls.findings, spoken))) {
     const says = d.says.includes(LINES.unasked) ? d.says.map(l => (l === LINES.unasked ? SPOKEN_LINE : l)) : [...d.says];
     if (!says.includes(SPOKEN_LINE)) says.splice(says.includes(LINES.windows) ? says.indexOf(LINES.windows) : says.length, 0, SPOKEN_LINE);
@@ -1083,6 +1103,13 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
   // in every mode: never announced (by the user's earlier words, Interactive or Autopilot) and never shown to
   // Assisted's check. The user's yes is theirs to give (modes-y9-9, y9-2).
   const like = d.verdict !== "refuse" && d.verdict !== "run" && (ctx.refusals?.commandLike(about) ?? false);
+  // Autopilot has no question to put: what may be the refused thing is refused (the owner's decision of 2026-11-14).
+  if (like && ctx.autopilot?.()) {
+    endPending();
+    audit({ phase: "decided", shell, cwd, commandChars: a.command.length, verdict: "refuse", classes: d.classes, rules: [...d.rules, LIKE_REFUSED_RULE, AUTOPILOT_RULE], reason: "The user said no to something like this earlier in this task, and Autopilot asks nothing." });
+    ctx.log.info("commands.decided", { task, target, verdict: "refuse", classes: d.classes, chars: a.command.length, like: true });
+    return denied(LIKE_REFUSED_AUTOPILOT);
+  }
   if (like) {
     d = {
       ...d, verdict: "ask", requested: undefined, rules: [...new Set([...d.rules, LIKE_REFUSED_RULE])], says: [LIKE_REFUSED_LINE, ...d.says.filter(l => l !== LIKE_REFUSED_LINE)],
@@ -1094,20 +1121,27 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
   const autonomous = like ? null : autonomousCommand(d, { scopes: ctx.autonomy?.() ?? null, words, tainted: tainted || !!ctx.state.outputTainted, carried, elsewhere: others.length > 0 || places.length > 0, kind: binding.kind });
   if (autonomous) d = autonomous;
   // Autopilot: a command that still asks is announced with its Stop countdown instead, whatever the task was held to
-  // asking for (steered, off-task, the user said no: the refused command itself was refused above), as an
-  // administrator too. Only a command that would read or print secrets, keep running after Stop or do something Ember
-  // can't tell, one the user's own words rule out, and what the organisation's or the user's own "ask every command"
-  // requires, still ask (autopilot.ts).
-  // What a wrapper may hide where the classifier read its options wrongly: judged apart, to keep a question only, for
-  // Autopilot and for Assisted's check alike (one predicate reads both: autopilot.ts keptQuestion).
+  // asking for (steered, off-task: the refused command itself, and what may be it, were refused above), as an
+  // administrator too, secrets (its output then withheld from the model) and what outlives Stop (said so) included.
+  // Only what the organisation's or the user's own "ask every command" requires still asks; one the user's own words
+  // rule out, and one whose target Ember can't name, are refused (autopilot.ts; the owner's decision of 2026-11-14).
+  // What a wrapper may hide where the classifier read its options wrongly: judged apart, for Autopilot and for
+  // Assisted's check alike, so a secret behind it is still withheld and what outlives Stop is still said.
   const hidden = d.verdict === "ask" && (ctx.autopilot?.() || ctx.review) ? behindWrappers(cls, text => j.classifyCommand(text, shell, cctx).findings) : [];
   if (ctx.autopilot?.() && d.verdict === "ask" && !like) {
     // (Their own words against it count wherever they were heard: where Ember can't tell the user from its speakers too.)
     const standing = standingFindings(cls.findings, paths);
-    // A line judged as its written-out form (a `[[ … ]]` test read as `[ … ]`: unroll.ts) never announces, here either:
-    // what it does behind the test is Ember's reading of it, so it counts as a command it can't tell (commands-b7-2).
-    if ((cls as { writtenOut?: boolean }).writtenOut === true) hidden.push({ cls: "unclear", rule: "unclear.written-out" });
-    const auto = autopilotCommand(d, { findings: [...cls.findings, ...hidden], mode, askEvery: cap.askEvery, userAskEvery, ruledOut: wordsRuleOut(standing, words) || wordsRuleOut(standing, spoken) });
+    const input = { findings: [...cls.findings, ...hidden], mode, askEvery: cap.askEvery, userAskEvery, ruledOut: wordsRuleOut(standing, words) || wordsRuleOut(standing, spoken), unnamed: unnamedTarget(cls) };
+    // A secret's output is withheld from the model; one saved to a file a later command could read is refused instead
+    // (r11-commands-y11-1).
+    const refusal = autopilotRefuses(d, input) ?? (printsSecrets(d, input.findings) && savesFiles(cls) ? "secret-saved" : null);
+    if (refusal) {
+      endPending();
+      audit({ phase: "decided", shell, cwd, commandChars: a.command.length, verdict: "refuse", classes: d.classes, rules: [...d.rules, AUTOPILOT_RULE], reason: refusal === "ruled-out" ? "The user's own words for the task rule this command out, and Autopilot asks nothing." : refusal === "terminal" ? "It may act in the user's own terminals, and Autopilot asks nothing." : refusal === "secret-saved" ? "It saves secrets to a file a later command could show the model, and Autopilot asks nothing." : "It deletes or changes something Ember can't name, and Autopilot asks nothing." });
+      ctx.log.info("commands.decided", { task, target, verdict: "refuse", classes: d.classes, chars: a.command.length, autopilot: refusal });
+      return denied(`Not allowed: ${AUTOPILOT_REFUSES[refusal]}`);
+    }
+    const auto = autopilotCommand(d, input);
     // Root or an elevated Ember asks in every other mode, and its card line said "each one asks first": on Autopilot's
     // announcement that is untrue, so it states the fact alone (tasks-approvals-r10-1).
     if (auto) d = { ...auto, says: auto.says.map(l => (l === CARD_LINES.root ? CARD_LINES.rootAutopilot : l === CARD_LINES.admin ? CARD_LINES.adminAutopilot : l)) };
@@ -1130,7 +1164,7 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
     // Autopilot holds them: never left to the check's reading of a negation (commands-remote-c10-3).
     const standing = standingFindings(cls.findings, paths);
     const ruledOut = [words, spoken, checkWords].some(w => wordsRuleOut(standing, w));
-    const blocked = notReviewable(d, { words: checkWords, mode, askEvery: cap.askEvery, userAskEvery, command: a.command, findings: [...cls.findings, ...hidden], ruledOut });
+    const blocked = notReviewable(d, { words: checkWords, mode, askEvery: cap.askEvery, userAskEvery, command: a.command, findings: [...cls.findings, ...hidden], ruledOut, unnamed: unnamedTarget(cls) });
     if (ruledOut && [words, spoken, checkWords].some(w => wordsHoldBack(standing, w)) && !d.says.includes(HELD_BACK_LINE)) {
       const at = d.says.findIndex(l => l === LINES.unasked || l === LINES.inexact || l === LINES.windows);
       const [keep, drop] = at < 0 ? [d.says.length, 0] : d.says[at] === LINES.unasked ? [at + 1, 0] : d.says[at] === LINES.inexact ? [at, 1] : [at, 0];
@@ -1147,8 +1181,18 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
       const v = await Promise.race([asked, stopped]).finally(() => ctx.signal.removeEventListener("abort", stop));
       if (ctx.isOver()) return STOPPED();
       ctx.log.info("commands.reviewed", { task, target, verdict: v ? (v.run ? "run" : "ask") : "none", ms: Math.round(performance.now() - t0) });
-      if (v?.run) d = reviewedDecision(d, v);
-      else if (v?.why) d = { ...d, says: [...d.says, `Ember's review: ${v.why.replace(/[.\s]+$/, "")}.`] };
+      if (v?.run) {
+        // Cleared without a question: a secret's output is kept from the model, and what outlives Stop says so, as in
+        // Autopilot (the owner's decision of 2026-11-14).
+        const all = [...cls.findings, ...hidden];
+        // One that saves the secret to a file a later command could read isn't cleared: it asks (r11-commands-y11-1).
+        if (printsSecrets(d, all) && savesFiles(cls)) d = { ...d, says: [...d.says, SECRET_SAVED_LINE] };
+        else {
+          d = reviewedDecision(d, v);
+          if (printsSecrets(d, all)) d = { ...d, withheld: true, says: [...d.says, WITHHELD_LINE] };
+          if (outlivesKillSwitch(d, all)) d = { ...d, outlivesStop: true, says: [...d.says, OUTLIVES_LINE] };
+        }
+      } else if (v?.why) d = { ...d, says: [...d.says, `Ember's review: ${v.why.replace(/[.\s]+$/, "")}.`] };
     }
   }
   // The checks are done: a boot from here on happens in the run, whose tab shows it (followStatus).
@@ -1156,9 +1200,11 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
   const refused = d.verdict === "refuse";
   audit({
     phase: "decided", shell, cwd, ...(refused ? {} : { command: j.redactSecrets(a.command).slice(0, AUDIT_COMMAND_CHARS) }), commandChars: a.command.length,
-    verdict: d.verdict, classes: d.classes, rules: d.rules, ...(d.requested ? { requested: "user", intent: d.requested.intent } : {}), reason: d.reason,
+    verdict: d.verdict, classes: d.classes, rules: d.rules, ...(d.requested ? { requested: d.requested.intent === UNKNOWN_ANNOUNCED ? "unknown" : "user", intent: d.requested.intent } : {}), reason: d.reason,
     ...(d.requested?.intent === AUTOPILOT_RULE ? { mode: "autopilot" } : {}),
     ...(d.review ? { review: d.review } : {}),
+    ...(d.withheld ? { outputWithheld: true } : {}),
+    ...(d.outlivesStop ? { outlivesStop: true } : {}),
   });
   ctx.log.info("commands.decided", { task, target, verdict: d.verdict, classes: d.classes, chars: a.command.length });
 
@@ -1253,6 +1299,8 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
     let rules = d.rules;
     let asked = false;
     let toldRemote = false;
+    // Its output is kept from the model: a secret's, announced without a question (autopilot.ts printsSecrets).
+    let withheld = d.withheld === true;
     for (;;) {
       // Every await above can outlive consent or a switch change. Fail closed on tightening; a new request
       // gets a new decision/card rather than treating an old announcement as approval.
@@ -1294,17 +1342,31 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
         // where every command asks there: those go to the card below, as does whatever the remote still wants a yes for
         // after the announcement (its own administrator's policy holds as the organisation's).
         const extra = remoteRules(exit);
-        if (!toldRemote && ctx.autopilot?.() && svc.mode() !== "ask" && !svc.userAskEvery() && extra.every(r => askedOfFinding({ rule: r }) === null)) {
+        // What Autopilot refuses on this computer it refuses where the remote's own check found it too: a deletion or a
+        // write of what can't be named, a terminal's remote-control verb (r11-commands-x11-2). No question to put.
+        const refusal = ctx.autopilot?.() ? autopilotRefuses({ rules: extra }, { findings: [] }) : null;
+        if (refusal) {
+          reaskEnded(svc, runId, "refused");
+          audit({ phase: "answered", answer: "refused", q: "remote", mode: "autopilot" });
+          ctx.log.info("commands.decided", { task, target, verdict: "refuse", classes: d.classes, chars: a.command.length, autopilot: refusal, remote: true });
+          return denied(`Not allowed: ${AUTOPILOT_REFUSES[refusal]}`);
+        }
+        if (!toldRemote && ctx.autopilot?.()&& svc.mode() !== "ask" && !svc.userAskEvery() && extra.every(r => askedOfFinding({ rule: r }) !== "organisation")) {
           toldRemote = true;
+          // What the remote found that reads or prints secrets keeps the output from the model; what outlives Stop says so.
+          const secretThere = extra.some(r => readsSecrets(r));
+          const outlivesThere = extra.some(r => outlivesStop(r.replace(/^in-script:/, "")));
+          if (secretThere) withheld = true;
           let went: true | ToolResultObject | null = null;
           try {
-            went = await countdown(`Running a command that ${binding.label}'s own check asked about, ${AUTOPILOT_WORDS}`, [...lines.filter(l => l !== AUTOPILOT_LINE), AUTOPILOT_LINE]);
+            went = await countdown(`Running a command that ${binding.label}'s own check asked about, ${AUTOPILOT_WORDS}`,
+              [...lines.filter(l => l !== AUTOPILOT_LINE && l !== WITHHELD_LINE && l !== OUTLIVES_LINE), ...(withheld ? [WITHHELD_LINE] : []), ...(outlivesThere || d.outlivesStop ? [OUTLIVES_LINE] : []), AUTOPILOT_LINE]);
           } finally {
             // No run is coming for this tab: it says so instead of waiting for one.
             if (went !== true) reaskEnded(svc, runId, ctx.isOver() ? "stopped" : "no");
           }
           if (went !== true) return went;
-          audit({ phase: "answered", answer: "announced", q: "remote", mode: "autopilot" });
+          audit({ phase: "answered", answer: "announced", q: "remote", mode: "autopilot", ...(secretThere ? { outputWithheld: true } : {}), ...(outlivesThere ? { outlivesStop: true } : {}) });
           announcedAt = performance.now();
           rules = [...new Set([...rules, ...extra])];
           runId = newRunId();
@@ -1332,7 +1394,7 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
       // The retry sent back too: that is the remote's refusal, and its tab says so (review #274).
       if (exit.ended === "refused-remote" && exit.needsConfirm) reaskEnded(svc, runId, "refused");
       if (exit.ended === "refused-remote") return resultOf(exit, "", { label: binding.label, timeoutS, redact: j.redactSecrets });
-      return await finishRun(ctx, j, run, { cls, label: binding.label, shell, timeoutS, runId });
+      return await finishRun(ctx, j, run, { cls, label: binding.label, shell, timeoutS, runId, withheld });
     }
   } finally {
     release();
@@ -1601,6 +1663,15 @@ function noteDownloads(ctx: CommandFlowContext, cls: Classification): void {
   noteWrites(ctx.state.written ??= newTaskWrites(), cls);
 }
 
+/** Does the command write a file Ember can name (a redirect, tee, a copy's target, -o)? A secret saved there may be read later. */
+function savesFiles(cls: Classification): boolean {
+  const w = (cls as Partial<ClassificationExtra>).writes;
+  return Array.isArray(w) && w.length > 0;
+}
+
+/** The card's line where Assisted's check found the request asks for a secret's command that saves it to a file. */
+export const SECRET_SAVED_LINE = "It saves passwords or keys to a file, so Ember asks even though your request names it.";
+
 /** One macrotask: the stop shortcut's handler, waiting on Ember's main thread, runs first (merge review integ-y-2). */
 const nextTurn = (): Promise<void> => new Promise(resolve => setImmediate(resolve));
 
@@ -1617,7 +1688,14 @@ const nextTurn = (): Promise<void> => new Promise(resolve => setImmediate(resolv
  * Ember.js build output that says "ember" on every line. One known pass is longer still: the Key Vault value pattern over 4 MiB of secret
  * ids with no value, about 1.6 s.
  */
-async function finishRun(ctx: CommandFlowContext, j: CommandJudge, run: RunOutcome, o: { cls: Classification; label: string; shell: ShellId; timeoutS: number; runId: string }): Promise<ToolResultObject> {
+/**
+ * What the model is told in place of a command's output that was withheld from it: a command that reads or prints
+ * secrets, announced without a question (the owner's decision of 2026-11-14). The user sees the output in the command
+ * window; the model learns only that it ran and how it ended.
+ */
+export const WITHHELD_OUTPUT = "(Its output may hold passwords or keys, so Ember kept it from you: the user can see it in the command window. Don't run it again or another way to see it.)";
+
+async function finishRun(ctx: CommandFlowContext, j: CommandJudge, run: RunOutcome, o: { cls: Classification; label: string; shell: ShellId; timeoutS: number; runId: string; withheld?: boolean }): Promise<ToolResultObject> {
   const { exit, out, tracker, running } = run;
   const typed = running.typedLines();
   running.forgetTyped();
@@ -1671,12 +1749,16 @@ async function finishRun(ctx: CommandFlowContext, j: CommandJudge, run: RunOutco
     ctx.audit({ event: "command", phase: "tainted", task, target, runId: o.runId, rule: taint });
   }
   if (exit.ended !== "failed-to-start") noteDownloads(ctx, o.cls);
+  // After a secret's output was withheld, every later output of the task is too: the secret may be in a file it wrote
+  // where Ember couldn't see (r11-commands-y11-1).
+  const withheld = o.withheld === true || ctx.state.withheldSecrets === true;
+  if (o.withheld && exit.ended !== "failed-to-start") ctx.state.withheldSecrets = true;
   ctx.audit({
     event: "command", phase: "ended", task, target, runId: o.runId, ended: exit.ended, code: exit.code, signal: exit.signal, ms: exit.ms,
-    outBytes: out.bytes, secretSpans: kept.spans.length, typedLines: typed.length, ...cutFields(exit),
+    outBytes: out.bytes, secretSpans: kept.spans.length, typedLines: typed.length, ...cutFields(exit), ...(withheld ? { outputWithheld: true } : {}),
   });
   ctx.log.info("commands.ended", { task, target, ended: exit.ended, code: exit.code, ms: exit.ms, outBytes: out.bytes, outputCut: exit.outputCut === true });
-  const result = resultOf(exit, shaped, { label: o.label, timeoutS: o.timeoutS, redact: j.redactSecrets });
+  const result = resultOf(exit, withheld ? WITHHELD_OUTPUT : shaped, { label: o.label, timeoutS: o.timeoutS, redact: j.redactSecrets });
   if (!taint || result.resultType === "denied") return result;
   const note = "\n(The output contained text that looks like instructions; it was not followed. Every further command in this task asks the user.)";
   return { ...result, textResultForLlm: `${result.textResultForLlm}${note}`, ...(result.resultType === "failure" ? { error: `${result.textResultForLlm}${note}` } : {}) };

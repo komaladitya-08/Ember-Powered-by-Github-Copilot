@@ -37,6 +37,47 @@ export interface CommandObject {
   resolved?: string;
 }
 
+/**
+ * The rule of a deletion or a write whose target Ember can't resolve (commands-remote-c11-3): never reviewed by
+ * Assisted's check (review.ts notReviewable), and refused in Autopilot (autopilot.ts autopilotRefuses).
+ */
+export const UNRESOLVED_TARGET_RULE = "unclear.unresolved-target";
+/**
+ * The rules that say a command reaches a place Ember can't name (a variable, a substitution, a folder `cd` moved to
+ * by one, a download's unnamed file): Autopilot refuses it and Assisted's check never sees it, as it may be Ember's own
+ * records (commands-remote-c11-3, r11-commands-y11-4).
+ */
+export const UNRESOLVED_RULES: ReadonlySet<string> = new Set([UNRESOLVED_TARGET_RULE, "unclear.folder", "download.unnamed"]);
+/** Programs that write or delete the files they are given in place (`dd of=$F`, `sed -i … "$F"`, `rsync --delete a/ "$D"`). */
+const WRITES_GIVEN = new Set(["dd", "sed", "gsed", "perl", "rsync", "tee", "sponge"]);
+/**
+ * Deleters and copiers whose targets the classifier resolves itself, a loop's variable over a pattern included, and
+ * files UNRESOLVED_TARGET_RULE for where it can't (commands-remote-c11-3).
+ */
+const RESOLVES_OWN = new Set(["rm", "rmdir", "unlink", "shred", "cp", "mv", "install", "truncate", "ln", "find"]);
+
+/**
+ * A deletion or a write in a command whose words Ember can't all resolve (`git -C "$D" clean -fdx`, `unzip -d "$D"`, `dd of=$F`), or
+ * whose operands come from its input (`xargs rm < list`): what it deletes or writes may be Ember's own records, so it
+ * counts as UNRESOLVED_RULES do (r11-commands-y11-4).
+ */
+export function unnamedTarget(cls: Pick<Classification, "findings" | "commands">): boolean {
+  // A program that writes what it is given, with a word Ember can't resolve, whatever was found of it.
+  if (cls.commands.some(c => WRITES_GIVEN.has(c.program.split(/[\\/]/).pop() ?? "") && c.args.some(a => a === null))) return true;
+  return cls.findings.some(f => {
+    if (f.cls !== "destroy") return false;
+    const c = cls.commands[f.at];
+    if (c === undefined) return false;
+    if (c.wrappers.some(w => /^(xargs|parallel)\b/.test(w))) return true;
+    return !RESOLVES_OWN.has(c.program.split(/[\\/]/).pop() ?? "") && c.args.some(a => a === null);
+  });
+}
+/**
+ * The rule of a terminal's or an editor's remote-control command Ember doesn't know, which may act in the user's own
+ * terminals (classify.ts toolVerbs): never reviewed by Assisted's check, and refused in Autopilot, as a never.
+ */
+export const TERMINAL_VERB_RULE = "unclear.terminal-verb";
+
 /** One reason a command is dangerous. */
 export interface Finding {
   cls: DangerClass;
@@ -212,6 +253,13 @@ export interface CommandDecision {
    * request, so it is audited in a field of its own, which the system journal keeps as a size only (safety-privacy-v1).
    */
   review?: string;
+  /**
+   * Announced without a question though it reads or prints secrets (Autopilot, or Assisted's check): its output is
+   * withheld from the model, which is told only that it ran and how it ended (the owner's decision of 2026-11-14).
+   */
+  withheld?: boolean;
+  /** Announced without a question though it would outlive the kill switch: its announcement and audit say so. */
+  outlivesStop?: boolean;
 }
 
 /** Everything decideCommand reads. */

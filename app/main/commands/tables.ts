@@ -403,7 +403,7 @@ export const RECORDERS = new Set([
 ]);
 
 /** Disk erasing and partitioning (§3.5.1): always class a. */
-export const DISK_TOOLS = new Set(["mke2fs", "mkswap", "wipefs", "fdisk", "sfdisk", "gdisk", "sgdisk", "parted", "cfdisk", "blkdiscard", "diskpart", "format-volume", "clear-disk", "initialize-disk", "remove-partition", "badblocks", "hdparm", "nvme", "zpool", "cryptsetup", "lvremove", "vgremove", "pvremove", "mdadm", "partprobe", "gparted"]);
+export const DISK_TOOLS = new Set(["mke2fs", "mkswap", "mkntfs", "mkdosfs", "mkexfatfs", "mformat", "wipefs", "fdisk", "sfdisk", "gdisk", "sgdisk", "parted", "cfdisk", "blkdiscard", "diskpart", "format-volume", "clear-disk", "initialize-disk", "remove-partition", "badblocks", "hdparm", "nvme", "zpool", "cryptsetup", "lvremove", "vgremove", "pvremove", "mdadm", "partprobe", "gparted", "newfs", "newfs_hfs", "newfs_apfs", "newfs_msdos", "newfs_exfat"]);
 
 /** Script, target and package-script names (§3.5.9, L8). */
 export const NAME_PUBLISH = new Set(["deploy", "publish", "release", "push", "upload", "ship", "prod", "production", "promote"]);
@@ -735,9 +735,10 @@ const BUNDLE_VERBS: OrdinaryVerbs = {
 
 /**
  * The verbs Ember knows of the verb-keyed tools (commands-closed, the closed default): the verbs that read, build,
- * test or run the project's own code. A tool Ember has no row for runs only with one of these (and asks with no verb);
- * a tool with a row asks for a verb off the list that its row judged ordinary (`cargo zzz` runs `cargo-zzz`, `mix
- * ecto.drop`, `tmux send-keys`, `stack exec`), "It runs cargo zzz, a command of cargo that Ember doesn't know." What a row
+ * test or run the project's own code. A tool Ember has no row for runs unannounced only with one of these, and with
+ * another verb or none is announced by name; so is a tool with a row, for a verb off the list that its row judged
+ * ordinary (`cargo zzz` runs `cargo-zzz`, `stack exec`), "It runs cargo zzz, a command of cargo that Ember doesn't
+ * know." (the owner's decision of 2026-11-14: never a question for that alone). What a row
  * judges dangerous it still says in its own words. Never a verb that writes shell start-up files (`conda init`), a
  * home-wide default (`sdk default`, `asdf set -u`), or empties a cache or an environment (`pip cache purge`, `poetry env
  * remove`): those ask as a prune does (commands-closed-x9-5).

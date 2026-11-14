@@ -26,7 +26,8 @@ describe("python's own options bundled before -m (commands-remote-r10-1)", () =>
     for (const b of BUNDLES) for (const [rest, rule] of cases) {
       for (const cmd of [`python3 ${b} ${rest}`, `python3 ${b}${rest}`]) {
         const d = decide(cmd);
-        expect(d.verdict, cmd).toBe("ask");
+        // A module Ember doesn't know (flask) is announced by name, never asked for alone (the owner's decision of 2026-11-14).
+        expect(d.verdict, cmd).toBe(rule === "unknown.program" ? "announce" : "ask");
         expect(d.rules, cmd).toContain(rule);
       }
     }
@@ -289,20 +290,22 @@ describe("cloud tools' commands that print secrets, and their verbs Ember doesn'
     for (const cmd of ['kubectl exec pod -- sh -c "$(cat x)"', "kubectl exec pod -i -- sh < x.sh", "cat x.sh | kubectl exec -i pod -- sh", "oc exec pod --stdin -- bash < x.sh"]) {
       const d = decide(cmd);
       expect(d.verdict, cmd).toBe("ask");
-      expect(autopilotAsks(d, { mode: "on", askEvery: null, userAskEvery: false, findings: result(cmd).cls.findings }), cmd).not.toBeNull();
+      // Code Ember can't read asks in Interactive; Autopilot runs it, announced (the owner's decision of 2026-11-14).
+      expect(d.classes, cmd).toContain("unclear");
+      expect(autopilotAsks(d, { mode: "on", askEvery: null, userAskEvery: false, findings: result(cmd).cls.findings }), cmd).toBeNull();
     }
     for (const cmd of ["gcloud compute ssh vm --command 'ls /app'", "kubectl exec pod -- ls /app", "fly ssh console -Cuptime"]) expect(decide(cmd).classes, cmd).not.toContain("secret");
     expect(autopilotAsks(decide("kubectl exec pod -- ls /app"), { mode: "on", askEvery: null, userAskEvery: false, findings: result("kubectl exec pod -- ls /app").cls.findings })).toBeNull();
   });
 
-  it("files a verb it can't tell as one it doesn't know, which Autopilot asks about and Assisted's check never sees", () => {
+  it("files a verb it can't tell as a change it may make to the service, which asks in Interactive and Autopilot announces (the owner's decision of 2026-11-14)", () => {
     for (const cmd of ["heroku apps:frobnicate", "gcloud frobnicate x", "pulumi stack frob", "netlify frob"]) {
       const d = decide(cmd);
       expect(d.verdict, cmd).toBe("ask");
       expect(d.rules, cmd).toContain("cloud.unknown-verb");
       expect(d.rules, cmd).not.toContain("cloud.change");
-      expect(keptQuestion(d, []), cmd).toBe("unknown");
-      expect(autopilotAsks(d, { mode: "on", askEvery: null, userAskEvery: false, findings: [] }), cmd).toBe("unclear");
+      expect(keptQuestion(d, []), cmd).toBeNull();
+      expect(autopilotAsks(d, { mode: "on", askEvery: null, userAskEvery: false, findings: [] }), cmd).toBeNull();
     }
     // A verb that changes the service is a change as before.
     expect(decide("kubectl apply -f x.yaml").rules).toContain("cloud.change");

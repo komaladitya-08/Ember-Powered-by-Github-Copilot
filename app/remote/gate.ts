@@ -14,8 +14,11 @@
  * Autopilot on the PC (PLAN.md §2 "Approvals", §10 "Settled" (3); owner decision of 2026-11-12) announces instead of
  * asking, and says so on the stamp (`announced`). That stands in for the user's yes here only while this machine's own
  * administrator allows Autopilot (`autopilotOk`: its policy holds as the organisation's), never where that
- * administrator asks for every command or every action, and never for a command whose findings here say it would read
- * or print secrets, outlive the kill switch or do something Ember can't tell: those still want the user's own yes.
+ * administrator asks for every command or every action, and never for a finding of its own policy's (`admin.*`). Since
+ * the owner's decision of 2026-11-14 a finding here that reads or prints secrets, outlives the kill switch or can't be
+ * told is covered by the announcement too: the PC, told its rules, withholds a secret's output from the model and says
+ * Stop won't reach what outlives it. A program, or a tool's verb or option, that Ember doesn't know is not a danger and
+ * never asks here, as it never asks on the PC.
  */
 
 import { createHash } from "node:crypto";
@@ -147,8 +150,7 @@ async function inspectSoon(inspect: CommandGateInput["inspect"], paths: string[]
  * finding inside a script the command runs (read only here) is covered only after a yes, by its own `in-script:` rule
  * id. An approval older than 120 s counts as none. Autopilot's announcement on the stamp (`announced`, as fresh, and
  * only with `autopilotOk`) covers root and what a yes would cover of a finding, but never this administrator's "ask",
- * a stamp of "ask" without its yes, a line judged as its written-out form, nor a finding that would read or print
- * secrets, outlive the kill switch or that can't be told (askedOfFinding). Without `autopilotOk` a stamp that says
+ * a stamp of "ask" without its yes, nor a finding of this administrator's own (askedOfFinding). Without `autopilotOk` a stamp that says
  * Autopilot announced it wants the user's yes whatever it names (`noAutopilot`, rule `admin.no-autopilot`), and so
  * does one the PC's Assisted check cleared without `assistedOk` (`noCheck`, `admin.no-check`) or its Interactive mode
  * announced without `interactiveOk` (`noAutonomy`, `admin.no-autonomy`): commands-remote-c10-2.
@@ -231,11 +233,12 @@ export async function gateCommand(i: CommandGateInput): Promise<CommandGate> {
   // the PC, so here too only the user's yes covers what it does (commands-remote-r6-2).
   const writtenOut = (cls as { writtenOut?: boolean }).writtenOut === true;
   /** Does the user's yes, or Autopilot's announcement where it may stand in for one, cover this finding? */
-  const agreed = (f: Finding) => approval !== null || (told && !writtenOut && askedOfFinding(f) === null);
+  const agreed = (f: Finding) => approval !== null || (told && askedOfFinding(f) !== "organisation");
   const covered = (f: Finding) => (f.widening.includes(IN_SCRIPT)
     ? agreed(f) && stamp.rules.includes(ruleOf(f))
     : stamp.rules.includes(f.rule) && (agreed(f) || (!writtenOut && stamp.classes.includes(f.cls) && !ALWAYS_ASK.has(f.cls))));
-  const extra = findings.filter(f => !covered(f));
+  // A program Ember doesn't know is no danger, here as on the PC (the owner's decision of 2026-11-14).
+  const extra = findings.filter(f => f.cls !== "unknown" && !covered(f));
   if (extra.length || asks.length) {
     const rules = [...new Set([...extra.map(ruleOf), ...(refusedAutopilot ? [NO_AUTOPILOT_RULE] : []), ...(refusedCheck ? [NO_CHECK_RULE] : []), ...(refusedAutonomy ? [NO_AUTONOMY_RULE] : [])])].slice(0, 64);
     return {

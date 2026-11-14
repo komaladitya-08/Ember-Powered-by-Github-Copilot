@@ -81,7 +81,7 @@ command on that computer ask. **Open the command window** shows it. Where comman
 (Ember itself, a distro or a login that is, or one where Ember can't tell), every command asks anyway, so **Ask me
 before every command** shows on there, can't be turned off, and says why under it, as it does where your organisation
 asks. In Autopilot root is no reason to ask (§2.5b), so there the switch is your own again: it says those commands run
-without asking, after a few seconds to stop them, except those Autopilot still asks about (§2.5b), unless you turn it on, and turning it on makes every one ask. In a
+without asking, after a few seconds to stop them, unless you turn it on, and turning it on makes every one ask. In a
 distro Podman uses, every command asks in every mode, Autopilot included, so the switch shows on there and can't be
 turned off, and says why under it.
 
@@ -191,9 +191,10 @@ Ember stops and asks before a command that:
   `tee` and `pager` after a `;` or at the start of a line, `--pager` and `--init-command`, and every sqlite3 or
   duckdb dot-command (in duckdb's `-c` and `-s` text as well) but the ones that only
   show things written whole, `.tables`, `.schema`, `.mode`, `.headers` and the like, because sqlite3 takes any
-  shortening: `.sh` is `.shell`, `.o` is `.output`), and package scripts, make targets and SQL or command files named clean, wipe, purge,
+  shortening: `.sh` is `.shell`, `.o` is `.output`; sqlite3's archive mode `-A`, which unpacks files over the folder's,
+  asks as a write, and an option of sqlite3's or duckdb's that their own help doesn't list is one Ember doesn't know), and package scripts, make targets and SQL or command files named clean, wipe, purge,
   reset, drop and the like (`psql -f drop_users.sql`, `psql app < drop_users.sql`), and any SQL file a client runs
-  (`psql -f`, `psql <`, `mysql <`, `sqlite3 <`, `duckdb <`, `sqlcmd -i`, `clickhouse-client --queries-file`): Ember
+  (`psql -f`, `psql <`, `mysql <`, `sqlite3 <`, `duckdb <`, `duckdb -f`, `sqlcmd -i`, `clickhouse-client --queries-file`): Ember
   reads it first and judges it as the client's own text (for `sqlcmd`, its `!!` and `:` commands and T-SQL's
   `xp_cmdshell`, `OPENROWSET`, `BULK INSERT` and dynamic `EXEC(…)` ask; for `clickhouse-client`, table functions that
   reach files, addresses, other servers or programs such as `url(…)`, `file(…)` and `executable(…)`), and one this
@@ -218,7 +219,12 @@ Ember stops and asks before a command that:
   `.netrc`, `.npmrc`, `.pypirc`, `.env` files, GitHub Copilot's sign-in (`~/.config/github-copilot`, `~/.copilot`), cloud
   and hosting tools' sign-ins (`~/.config/gcloud`, `~/.oci`, `~/.config/doctl`), Kerberos tickets, the display's key
   (`~/.Xauthority`), chat apps' and VS Code's stored sign-ins, keychains and credential stores, browser profiles,
-  password managers, `/etc/shadow`, your shell history; printing tokens or environment variables that may hold them (`gh auth token`,
+  password managers, `/etc/shadow`, your shell history, secrets mounted for a container or a service (`/run/secrets`,
+  `/var/run/secrets`, systemd's `/run/credentials`, a Vault agent's `/vault/secrets`, `/etc/ssl/private`, a cluster's
+  `/etc/kubernetes/pki` and `admin.conf`), which print as bare values Ember's filter can't recognise, and Redis's
+  (`redis-cli CONFIG GET requirepass` or a pattern, `ACL LIST`, `ACL GETUSER`, `AUTH`, and `GET` of a key named like a
+  secret or one Ember can't see), and a secret file copied through an encoding or dumped (Windows' `certutil -encode`,
+  `-encodehex`, `-dump`; its `-decode` over a file asks as an overwrite, `-exportPVK`, `-recoverKey`, `-MergePFX` and `-ConvertEPF` write out private keys, `-delkey` deletes a key, `-dspublish`, `-ImportCert` and `-installcert` change what is trusted, and a verb or a switch of its Ember doesn't list is one it doesn't know); printing tokens or environment variables that may hold them (`gh auth token`,
   `env`, `printenv`), other programs' environments (`ps e`, `ps eww`, `ps -o env`, `docker inspect` without a
   `--format` that leaves them out, `docker compose config`, `systemctl show` of a unit's Environment,
   `systemctl show-environment`), a secret file as a commit or the index holds it (`git show HEAD:.env`, `git cat-file
@@ -233,7 +239,12 @@ Ember stops and asks before a command that:
   wrapped or after options: `kubectl exec pod -- env`, `kubectl exec pod -- sh -c env`, `kubectl exec pod -- cat
   .env`, a file under `/run/secrets/`, `heroku run -a app env`, `fly ssh console -C "sh -c env"`, `fly ssh console -Cenv`, `gcloud compute ssh vm --command env`, `az vm run-command invoke … --scripts env`, inline code that
   prints its environment; a pod's command Ember can't read, `kubectl exec pod -- sh -c "$(cat x)"` or `kubectl exec -i pod -- sh < x.sh`,
-  asks as code nobody is shown);
+  asks as code nobody is shown); a workload's or a config map's manifest written out whole, which holds the values of
+  its environment (`kubectl get deploy x -o yaml`, `kubectl get pod web -o json`, `kubectl get cm app -o yaml`, a
+  jsonpath or a template that reaches past the names, custom columns that pick the environment, OpenShift's `oc get dc`,
+  and `kubectl describe` of a deployment, set, job or config map, but not of a pod), helm's values with every default or
+  its whole release (`helm get values x -a`, `helm get all x`, `helm get manifest x`) and a Lambda function's
+  configuration (`aws lambda get-function-configuration`);
   a Wi-Fi password (`nmcli device wifi show-password`); a file named for what it holds (`password.txt`,
   `secrets.txt`, `credentials.txt`, `.vault_pass`, `.htpasswd`, `~/.boto`, `~/.s3cfg`, Composer's `auth.json`,
   FileZilla's and Pidgin's saved sign-ins); a fetch of a cloud computer's own sign-in address, however it
@@ -260,13 +271,13 @@ Ember stops and asks before a command that:
   file to read (`$(date | sed p notes)`) ask;
 - **changes the system or needs privileges**: `sudo`, `su`, `runas`, installing or removing packages (`apt`, `dnf`,
   `brew`, `winget`, `npm install`, `pip install`), services (`systemctl start`, `launchctl load`, and a package
-  manager's own: `brew services start`, `snap start`, `snap set`; these keep running after Stop, so Assisted's check
-  never clears them and Autopilot asks), a setting later commands obey ("Changes a setting later commands obey,
+  manager's own: `brew services start`, `snap start`, `snap set`; these keep running after Stop, which Autopilot's
+  announcement and a cleared check's say), a setting later commands obey ("Changes a setting later commands obey,
   such as where packages come from.": `npm config set registry …`, `npm set …`, `yarn config set`, `pnpm config
   set`, `composer config <key> <value>`, `gh config set`, `yarn plugin import` or `remove` (a plugin is code every
   later yarn command loads; `yarn plugin list` runs) and `yarn policies set-version`; such a setting may name a
-  program later commands run, so Assisted's check never clears it and Autopilot asks; `go env -w`, `pip config set` and their like ask as
-  commands Ember doesn't know), where git fetches from and pushes to and whether it checks the server (`git remote
+  program later commands run, so it counts as keeping running after Stop; `go env -w`, `pip config set` and their like ask as
+  a setting too), where git fetches from and pushes to and whether it checks the server (`git remote
   set-url`, `git config remote.origin.url …`, `git config http.sslVerify false`), the registry and desktop settings (`gsettings set`,
   `dconf write`, and `defaults write` to the screen saver, firewall and remote-access settings), the firewall, the
   certificates the computer trusts, users and groups, giving a container the container engine's socket or a system
@@ -348,35 +359,38 @@ Ember stops and asks before a command that:
   test` and `cd src && npm test` run as before; in a task that downloaded nothing, `cd src; npm test` runs too),
   running a program or script from another computer's share (`\\server\share\x.exe`),
   `npx <package>`, `nohup`, `setsid`, `&`, `docker run -d`, `Start-Process` without `-Wait`;
-- **runs a program Ember doesn't know** ("It runs a program Ember doesn't know."): `dropdb prod`, `rails db:drop`,
-  `hyperfine 'rm -rf build'`, `kafka-topics --delete …`, also behind `sudo`, `env`, `nice`, `time`, in a pipe or in
-  `$( … )`, or given by a path outside the command's folder (`/usr/local/bin/x`, `~/bin/x`), and an unknown cmdlet
-  whose verb isn't one of those in §2.3 (`Show-Thing`); or **a command of a tool Ember doesn't know** ("It runs
-  cargo watch, a command of cargo that Ember doesn't know."): `cargo watch -s …`, `stack exec -- …`, `mix ecto.drop`, `tmux
-  send-keys …`, `go env -w …`, `pip config set …`, `deno publish`, `vercel` with no command (it deploys). When your own
-  words for the task ask to run the program by name (or the tool and its command), with the words after it that say
-  what it is to do ("run dropdb on the scratch database" for `dropdb scratch`, "run rails db:migrate"; every plain
-  word the command gives it, also after an option, so `dropdb -p 5433 production` needs "production", and never a
-  word that is only part of a longer name, "prod" in "prod-copy", or that comes after "while"), it is announced
-  instead, as in §2.5, and the announcement names them; a question about the program or a mention of it asks for
-  nothing. Whatever else the command gives the program must be yours too: an option only when your words write it
-  out (`--verbose`, `-p 5433`) or, for a long option with no value, say its name ("to list the topics" for
-  `--list`); a number, a host, an address or a folder outside the task's only when your words write it out; a plain
-  file in the task's folder needs no naming, but a word that joins it to something else with `=`, `:` or `,`
-  (`./out=/home/ana/Documents`, `src/x,https://…`) is no plain file and is named only written out. An option whose name says the program leaves the command and runs on
-  (`--fork`, `--detach`, `--daemon`, `--background`) or shows a secret (`--print-token`) always asks, whatever you
-  said: "in the background" never makes a detached run announceable. What else the command does is judged as before, and so is the command such a tool runs for you: what
+- a program, or a tool's command or option, **Ember doesn't know is not a danger** (the owner's decision of
+  2026-11-14): it runs, announced by name with its few seconds to stop it, in every mode ("Running hugo, which I
+  don't know."; the card says "It runs a program Ember doesn't know." or "It runs cargo watch, a command of cargo
+  that Ember doesn't know."), and with "…, as you asked." where your own words for the task ask to run it by name
+  with the words after it. Where your own words for the task say not to run it ("don't run hugo", "leave hugo
+  alone"), it asks, saying you didn't ask for it, and Autopilot refuses it. What its own words say it does is judged as that danger, so such a command still asks
+  where it would delete, send, show secrets or change the system: its name, its command, its plain words and its
+  long options are read (`dropdb prod`, `rails db:drop`, `prisma migrate reset`, `pg_restore --clean`, `kafka-topics
+  --delete` delete; `railway up`, `croc send`, `pastebinit`, `vercel` with no command, `lerna version`, a tunnel such
+  as `bore`, and a `host:path` word send or publish; a password manager such as `rbw`, and `--print-token`,
+  `--show-secrets` or `--export-env`, show secrets; `nodenv global`, `conda init`, `sdk default`, `go env -w`, `pip
+  config set`, `poetry config <key> <value>` and `gem sources --add` change a setting later commands obey; `--fork`,
+  `--detach`, `--daemon` and `--background` keep it running after Stop), and so does one handed a setting that
+  changes how commands are found or run (`LD_PRELOAD=…`, `NODE_OPTIONS=…`), a secret's file behind a name (`X=/etc/shadow`,
+  `x=.env`), or your home folder, a folder that holds it or one of your own folders (`~/Documents`, `--dir=~/Pictures`).
+  A command of a terminal's or an editor's remote control that Ember doesn't know (`tmux select-pane`, `zellij action
+  close-pane`, `nvr notes.txt`) may act in your own terminals: it asks, is never shown to Assisted's check, and
+  Autopilot refuses it. What else the command does is judged as before, and so is the command such a tool runs for you: what
   follows `stack exec --`, `pyenv exec`, `rustup run stable` or `entr`, and the shell text in `cargo watch -s`,
   `nodemon --exec` and `hyperfine '…'` are judged as commands of their own, and one Ember can't read (a tmux shell
   command, `watchexec` without `--`, Maven's `-Dexec.executable`, Gradle's `--init-script`) asks, whatever your words
   say, and a `busybox` or `toybox` applet is judged as that program. An everyday tool given a command to run asks the
   same way: a tmux format with `#(…)`, `gcc -wrapper`, `ctest --build-and-test … --test-command` and `ctest -S`,
-  `prove --exec`, and `cmake -P` with a script outside the task's folder. `deno` given an address instead of a file
-  asks, and so does `convert` on Windows, where it is the system's disk converter (ImageMagick is `magick` there).
+  `prove --exec`, and `cmake -P` with a script outside the task's folder. `deno` or `tsx` given an address instead of
+  a file downloads and runs code, `tsx -e` runs code written inline, a TeX engine's shell escape runs what the document
+  names, and `convert` on Windows is the system's disk converter (ImageMagick is `magick` there).
   A command handed to a program Ember doesn't know is read as a command too, so the whole asks at least as that
   command would alone: one quoted word (`mytool 'rm -rf build'`), the value of an option named like one that runs
   things (`--exec`, `--command`, `--cmd`, `--run`, `-x`, `-c`, `-s`, `-e`), and the words after `--` or after a first
-  word such as `exec` or `run`; naming the program in your words never announces it then. The project's own script
+  word such as `exec` or `run`; and its words from one of its first three operands on, where Ember finds a danger in
+  them read as a command (`prlimit mkfs.ext4 /dev/sdb1`, `nocache env`, `zzwrap 'mkfs.vfat /dev/sdc1'`); naming the
+  program in your words never announces it then. The project's own script
   given one (`./run.sh --exec 'npm publish'`) asks about that command, and runs as before when Ember finds nothing
   in it, however the script is started: by its path, by a shell or an interpreter (`bash run.sh 'npm publish'`,
   `python3 tool.py --exec 'npm publish'`, `node tool.js -- git push --force`, `tsx`, `bun`, `deno run`, `pwsh
@@ -384,13 +398,14 @@ Ember stops and asks before a command that:
   `just --shell` are read or ask the same way.
   A launcher that runs a tool by its name is judged as that tool run directly: `python3 -m twine upload dist/*`
   publishes, `python3 -m keyring get …` prints a password, `python3 -m venv --clear DIR` deletes what is in DIR, and
-  a module Ember doesn't know asks as a program it doesn't know (`python3 -m flask run`; Python's own everyday
+  a module Ember doesn't know is announced as a program it doesn't know (`python3 -m flask run`; Python's own everyday
   modules and the project's test and build tools run: `-m pytest`, `-m venv .venv`, `-m json.tool`, `-m build`). A
   versioned name is the same program (`python3.12 -c …`, `pip3.12 install`). `mise exec -- …`, `nix shell … -c …`, `nix
-  develop -c …`, `pixi run …`, `devbox run …` and `direnv exec . …` are read the same way and still ask as programs
-  Ember doesn't know. `dotenv`, `dotenvx`, `env-cmd`, `cross-env`, `cross-env-shell` and `with-contenv` ask as programs
-  Ember doesn't know whatever they are handed (`cross-env NODE_ENV=test jest` asks): the variables and the files
-  they load can name code the command then runs. So does the project's own copy, by its path, by npm's Windows
+  develop -c …`, `pixi run …`, `devbox run …` and `direnv exec . …` are read the same way. `dotenv`, `dotenvx`,
+  `env-cmd`, `cross-env`, `cross-env-shell` and `with-contenv` are programs Ember doesn't know, announced by name
+  (`cross-env NODE_ENV=test jest`), and the command they run is judged as a command of its own (`cross-env FOO=1
+  printenv` asks: it prints the environment); a variable they set that names code, or a file the task downloaded that
+  they load, asks. So does the project's own copy, by its path, by npm's Windows
   shim or through `node` (`./node_modules/.bin/cross-env …`, `.\node_modules\.bin\cross-env.ps1 …`, `cross-env.cmd
   …`, `node node_modules/.bin/cross-env …`), and so does one a package manager runs
   (`yarn cross-env …`, `pnpm run cross-env …`, `bun --bun cross-env …`, `pnpm recursive cross-env …`, `yarn lerna exec --
@@ -762,24 +777,17 @@ system, one that downloads and runs a program, one that runs as root or an admin
 read in another window, one your words place on another computer, and one in a task that something on screen or in a
 command's output tried to steer. The card's lines say each of those, and the model is shown them.
 
-Never reviewed, always asked: a command that would read or print passwords, keys or other secrets (so none reaches a
-model); a command that would keep running after Stop (a background job, `nohup`, `setsid`, a detached `screen` or
-`tmux` session, `docker run -d`, a process manager, a downloaded program told to detach (`npx tool --daemon`, `curl …
-| sh -s -- --detach`, `sh install.sh --daemon` for a file the task downloaded), a scheduled job, a program it
-opens, a service started, enabled, stopped or loaded, a login or startup entry, a change to the Windows registry, a git hook or a git setting that
-names a program, a shell's start-up file, a program put on the command path, a tunnel, a message to a desktop
-service over D-Bus, a WMI or CIM call, an alias or a `trap`), so that Stop stops everything; a downloaded program
-that is handed a key, credentials or a token (`npx tool ~/.ssh/id_rsa`, `KEY=~/.ssh/id_rsa npx tool`), or a word Ember can't resolve
-(`npx tool $(…)`); a program, or a tool's command, Ember doesn't know (a cloud tool's verb whose effect it can't tell
-included), one that runs code nobody is shown (`rundll32`, `mshta`, `wscript`, `run-parts`, a script the task wrote
-in a language Ember doesn't read) and a sandbox or a wrapper whose command Ember doesn't judge (`bwrap`,
-`firejail`, `envdir`, `expect`), since nobody can tell what it does; every command when your organisation, or
-you (**Ask me before every command**), asked for that; a task
-without your own words; a command your own words rule out or hold back ("don't push anything", "leave the build
-folder alone", "push it later"), as Autopilot asks about it; and a command, a request or a list of findings too long to show whole (a command over 4,000
-characters). A command you said no to is refused without being reviewed, and one that may be it, where Ember can't
-tell, asks without being reviewed (§2.5). A loop or inline code whose programs Ember knows is still reviewed: that is
-the one place Assisted asks less than Autopilot. On a computer reached over SSH, that
+Reviewed too since the owner's decision of 2026-11-14: a command that reads or prints passwords, keys or other secrets
+(when the check clears it, its output is kept from the model: the model is told only that it ran and how it ended,
+and the command window shows it to you); one that would keep running after Stop (when the check clears it, the
+announcement says Stop won't reach what it leaves running); a downloaded program handed a key or a word Ember can't
+resolve; and code Ember can't read. A program Ember doesn't know never asks, so the check never sees it alone. Never
+reviewed, always asked: every command when your organisation, or you (**Ask me before every command**), asked for
+that; a task without your own words; a command your own words rule out or hold back ("don't push anything", "leave
+the build folder alone", "push it later"), which Autopilot refuses; a deletion or a write of something Ember can't
+name (`rm -rf "$X"`: it could be Ember's own records); a command of a terminal's remote control that Ember doesn't
+know; and a command, a request or a list of findings too long to show whole (a command over 4,000 characters). A command you said no to is refused without being reviewed, and one that may be it, where Ember can't
+tell, asks without being reviewed (§2.5). On a computer reached over SSH, that
 computer's own check still asks about what it finds, as before, and what the check cleared runs there only where that
 computer's own administrator allows the modes, leaves the check on (`features.aiReview`) and caps the mode at
 Assisted or above; elsewhere it wants your approval ("This computer's administrator doesn't allow Ember's check of
@@ -799,37 +807,46 @@ window shows "About to run this: Autopilot is on" (never "as you asked"), the ex
 found ("Commands here run as root (the administrator).", without "so each one asks first", where that is why it would
 have asked), "Autopilot is on, so Ember didn't ask first." and the countdown with **Stop**, as in §2.5. Nothing is sent to a model to decide this.
 
-It still asks, with the card of §2.4, before:
+Since the owner's decision of 2026-11-14 Autopilot asks nothing of what a command is:
 
-- a command that would read or print passwords, keys or other secrets, so that none reaches the model; a downloaded
-  program that is handed one counts (`npx tool ~/.ssh/id_rsa`, `npx tool --token=$GITHUB_TOKEN`: the card says "Gives
-  a password, key or other secret to code it downloads.");
+- a command that would read or print passwords, keys or other secrets runs, announced, and **its output is kept from
+  the model**: the card says "Its output may hold passwords or keys, so Ember keeps it from the AI model: only you see
+  it here.", the model is told only that it ran and how it ended, and What Ember did records it; a downloaded program
+  handed one counts (`npx tool ~/.ssh/id_rsa`: the card also says "Gives a password, key or other secret to code it
+  downloads."). One that saves them to a file a later command could show the model (`printenv > env.txt`, `cp
+  ~/.aws/credentials c.txt`) is refused instead, and Assisted's check doesn't clear it; after a command's output was
+  kept from the model, the output of every later command in that task is kept from it too;
 - a command that would keep running after Stop (a background job, `nohup`, `setsid`, a detached `screen` or `tmux`
-  session, `docker run -d`, a process manager, a downloaded program told to detach (`npx tool --daemon`), a
-  scheduled job, a program it opens, a service started, enabled,
-  stopped or loaded, a login or startup entry, a change to the Windows registry), or that plants code to run later (a
-  git hook, a git setting that names a program, a shell's start-up file, a program put on the command path, a
-  tunnel), so that Stop stops everything;
-- a command Ember can't tell the effect of (a loop, a line behind a `[[ … ]]` test, code written inline, `eval`,
-  text handed to `xargs` that Ember can't see, a program that waits for typing), since it may be either of those;
-- a program, or a tool's command, Ember doesn't know, a cloud tool's verb whose effect Ember can't tell ("Ember can't
-  tell whether this changes Heroku.") among them, since it too may be either of those;
+  session, `docker run -d`, a process manager, a scheduled job, a program it opens, a service, a login or startup
+  entry, the Windows registry), or that plants code to run later (a git hook, a git setting that names a program, a
+  shell's start-up file, a program put on the command path, a tunnel), runs, announced as "Running a command that
+  keeps running after Stop, without asking: Autopilot is on.", and the card and the audit say "Stop won't reach what
+  this command leaves running.";
+- code Ember can't read (a loop, a line behind a `[[ … ]]` test, code written inline, `eval`, text handed to `xargs`
+  that Ember can't see, a script the task wrote) runs, announced.
+
+It refuses, with no question to put:
+
 - a command your own words for the task rule out ("commit my work but don't push", "delete everything except
-  build", "push it, but without force", and a plain no to the kind of step: "don't delete anything", "push nothing",
-  "don't upload anything", "keep it local"): that is your no, said in advance, and the card says "You didn't ask for
-  this."; and one your words hold back ("leave the build folder alone", "keep notes.txt", "hold off on publishing",
-  "push tomorrow", "push main after the review", "once CI is green", "build is off limits", "I'll do the push"),
-  where the card also says "Your words say to leave this or to wait, so Ember asks first."; and a step your words
-  name and ask to be asked about first ("delete the build folder, but ask me first", "push main, but check with me
-  first"), or a deletion they narrow, make wait on a copy or send to the trash, the bin or a stash instead ("but
-  only the logs", "but back it up first", "but move it to the trash");
-- a command of the same kind of danger as one you said no to earlier in the task, whatever either names (another
-  push after a no to a push, another deletion after a no to a deletion or to deleting something in an app), any
-  dangerous command after a no to one Ember couldn't read, and one Ember can't read (a loop, inline code) after a no
-  to a dangerous one: the card says "You said no to something like this earlier in this task.";
-- every command where your organisation asks for that, where you turned on **Ask me before every command** for that
-  computer, in a Podman distro, and in a project's chosen command folder;
-- turning commands on for a computer the first time (§2.1).
+  build", "push it, but without force", "don't delete anything", "keep it local", "don't run hugo"), or hold back ("leave the build
+  folder alone", "keep notes.txt", "hold off on publishing", "push tomorrow", "once CI is green", "I'll do the push"),
+  or ask to be asked about first ("but ask me first", "but back it up first", "but move it to the trash"): that is
+  your no, said in advance;
+- a command of the same kind of danger as one you said no to earlier in the task (another push after a no to a push,
+  another deletion after a no to a deletion), any dangerous command after a no to one Ember couldn't read, and one
+  Ember can't read after a no to a dangerous one: it may be the refused one done another way;
+- a deletion or a write of something Ember can't name (`rm -rf "$X"`, `> "$LOG"`, `dd of=$F`, `sed -i … "$F"`,
+  `rsync --delete a/ "$D"`, `git -C "$D" clean -fdx`, `unzip -d "$D"`, `cd "$D" && rm -rf audit`, `curl -o "$F"`, or
+  `xargs rm < list`, whose targets come from a list), which could be Ember's own audit log, settings or vault; Assisted's
+  check never sees one either: the model is told to send it again with the place named plainly, and Ember judges what it
+  names;
+- a command of a terminal's or an editor's remote control that Ember doesn't know, which may act in your own terminals.
+
+The last two are refused on a computer reached over SSH too, where that computer's own check (§4.5) is what finds them.
+
+It still asks, with the card of §2.4, only where your organisation asks for every command, where you turned on **Ask
+me before every command** for that computer, in a Podman distro and in a project's chosen command folder, and before
+turning commands on for a computer the first time (§2.1).
 
 A command that touches Ember's own settings, records, policy or processes is refused as in every mode (§2.6), a
 downloaded program pointed at one of those files included (`npx tool ~/.config/ember/settings.json`). **Stop**
@@ -840,10 +857,11 @@ computer, doesn't run its command.
 On a computer reached over SSH the command is checked there again, as always. Ember tells that computer that
 Autopilot announced the command rather than that you said yes. It runs the command only where its own administrator
 allows Autopilot (where not, it answers "This computer's administrator doesn't allow Autopilot, so it wants your
-approval." and you get the card), and still wants your yes for a command it finds would read secrets, keep running
-after Stop or that it can't tell, and wherever its administrator asks for every command. When it finds more than this computer did, the
-bubble says "Running a command that <computer>'s own check asked about, without asking: Autopilot is on.", its lines
-show with a countdown of their own, and anything it still wants a yes for after that gets the card. What Ember did
+approval." and you get the card), and wherever its administrator asks for every command. When it finds more than this
+computer did, the bubble says "Running a command that <computer>'s own check asked about, without asking: Autopilot is
+on.", its lines show with a countdown of their own (with the lines above where what it found reads secrets, whose
+output is then kept from the model, or keeps running after Stop), and anything it still wants a yes for after that
+gets the card. What Ember did
 records each of these as "Announced" with "Autopilot was on, so Ember didn't ask (…)." Your organisation can forbid
 Autopilot with `approvals.maxMode` or `features.autonomy: false`.
 
@@ -978,13 +996,18 @@ an earlier command printed text that looked like instructions.").
 - **As root or administrator**, every command asks ("Commands here run as root (the administrator), so each one asks
   first." / "Ember is running as an administrator here, so each command asks first.").
 - **Ember judges the command line it can see, and the shell scripts it can read.** A shell script is read and judged
-  first (§2.4); one Ember can't read all of (`case`, functions, `{ … }` groups, a `[[` with arithmetic, a variable in
+  first (§2.4), however the shell is given it (`bash a.sh`, `bash < a.sh`, `bash - < a.sh`, `sh /dev/stdin < a.sh`),
+  and a file given on stdin to a program whose language Ember doesn't say how to read (`fish < a.sh`) asks. What an
+  archiver packs is judged where it finds it: under tar's `-C` before it (`tar -C ~ -cf - .ssh` packs `~/.ssh`), and the
+  names `cpio -o` reads from its input (names it can't see, `find … | cpio -o`, ask); one Ember can't read all of (`case`, functions, `{ … }` groups, a `[[` with arithmetic, a variable in
   a file name, more than 64 commands or 8,000 characters, or zsh's, PowerShell's or cmd's `if` and `for`) asks, so most build and install scripts ask. A SQL file a database client runs is read and judged the same way, and so is a sed or awk program file (`sed -f`, `awk -f`). What a build file, a program, a script in another language, or a shell script too big to read
   (more than 64 KB) does inside (`make`, `npm test`, `python build.py`) runs like a build, unless its name says deploy,
   publish, release, push, upload, delete, clean, wipe, prod, install or the like, which asks. A script this task
   downloaded always asks, and one it wrote asks when it can't be read in full; a script in another language (Python,
   Node, Ruby…, run by its interpreter or by a `#!` line naming one, or by `deno`, `bun`, `tsx`, `ts-node`, `go run`,
-  `java a.java`, `python3 -m a`, and the conftest.py or the test files pytest is given) that this task wrote by name,
+  `java a.java`, `python3 -m a`, Python's own runners `python3 -m cProfile`, `profile`, `trace`, `unittest`, `doctest` and
+  `inspect` and `runpy`, `coverage run`, `python3 - < a.py`, a plugin `pytest -p` loads, the conftest.py or the test files pytest is
+  given, and a file handed to a program Ember doesn't know: `swift x.swift`, `uv run x.py`, `pwsh x.ps1`) that this task wrote by name,
   changed with a patch it wrote (`git apply`, `patch`) or downloaded asks, since Ember can't read it first. A script an earlier command of the
   task downloaded is asked about without being read (it is code from elsewhere either way); one the same line
   downloads is read as it stands before the download (§2.4).
@@ -1458,7 +1481,7 @@ Each item says what Ember can't do in this release and what happens instead.
 | L5 | Wayland remotes: no screenshots, no mouse or keyboard | Reading and controls only; commands only until Ember's Wayland test passes |
 | L6 | No desktop on Mac remotes; no Windows remotes | Commands only on a Mac (protected folders need full disk access for remote users); Windows remotes refused with a message |
 | L7 | No mouse or keyboard in WSLg Linux apps; X servers' Linux apps unusable | Ember uses their controls; X-server windows and unidentified ones are refused and blacked out |
-| L8 | Ember judges the command line and the shell scripts and SQL files it can read (up to 64 KB, read on the computer that runs them; over SSH by that computer's helper), not what a build file, a program or a script in another language does inside | Those run as ordinary unless their name says publish, delete, install and the like, or the task wrote the script in another language by name or downloaded it, which asks (so does a Makefile `make` runs, a package.json whose script `npm test` or `npm run` runs, a package's `__main__.py` or `__init__.py` that `python3 -m pkg` or `python3 pkg` runs, or a module `node -r` or `--import` preloads, when the task wrote it by name); a shell script Ember can read but not follow in full (`case`, functions, `trap`, `{ … }` groups, a `[[` with arithmetic, a variable in a file name, more than 64 commands or 8,000 characters, zsh's, PowerShell's or cmd's `if` and `for`) asks, which most real scripts do; a shell script this task downloaded always asks, one it wrote asks when it can't be read in full, and other scripts too big to read keep the name rule. Writes Ember can't see (`uudecode`, `split`, `base64 -o` on a Mac, a program that generates a script such as `python gen.py`) don't make a script the task's own, so its size alone doesn't ask; over SSH, the helper forgets what a task wrote or downloaded when it restarts on a reconnect, so a padded script written before the reconnect runs unread after it |
+| L8 | Ember judges the command line and the shell scripts and SQL files it can read (up to 64 KB, read on the computer that runs them; over SSH by that computer's helper), not what a build file, a program or a script in another language does inside | Those run as ordinary unless their name says publish, delete, install and the like, or the task wrote the script in another language by name or downloaded it, which asks (so does a Makefile `make` runs, or the program file of another task runner (a justfile, Rakefile, tasks.py, noxfile.py, tox.ini, Taskfile, SConstruct, build.gradle, pom.xml, build.xml, build.sbt, project.clj), a package.json whose script `npm test` or `npm run` runs, a package's `__main__.py` or `__init__.py` that `python3 -m pkg` or `python3 pkg` runs, or a module `node -r` or `--import` preloads, when the task wrote it by name); a shell script Ember can read but not follow in full (`case`, functions, `trap`, `{ … }` groups, a `[[` with arithmetic, a variable in a file name, more than 64 commands or 8,000 characters, zsh's, PowerShell's or cmd's `if` and `for`) asks, which most real scripts do; a shell script this task downloaded always asks, one it wrote asks when it can't be read in full, and other scripts too big to read keep the name rule. Writes Ember can't see (`uudecode`, `split`, `base64 -o` on a Mac, a program that generates a script such as `python gen.py`) don't make a script the task's own, so its size alone doesn't ask; over SSH, the helper forgets what a task wrote or downloaded when it restarts on a reconnect, so a padded script written before the reconnect runs unread after it |
 | L9 | No shell profile | Aliases and tools set up in rc files are missing; use full paths; Homebrew is added on macOS |
 | L10 | Stop can miss programs that leave on purpose; over SSH a command outlives a silent link by up to 20 s | Ember asks before the forms it recognises (`nohup`, `setsid`, `&`, `docker run -d`…), not before a program that detaches by itself, and names stragglers; the administrator can lower the grace to 3 s; after an Ember crash, a command on this computer (Linux or macOS) runs on until it writes output or ends (`script` from util-linux 2.39 on doesn't end it when Ember goes), and Linux programs of a WSL command until they write output or the distro stops; a Windows command ends with Ember |
 | L11 | Another always-on-top window could cover the command card | The approve chord works only while the card says the whole command is in view; on Windows and macOS the card can't be captured (L27) |

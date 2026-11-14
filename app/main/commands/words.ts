@@ -110,6 +110,11 @@ export interface Parsed {
   restAt: number;
   /** An option value that is missing (the line ends after a value-taking option). */
   missingValue: boolean;
+  /**
+   * The long names the table knows (its value options, without dashes): one written whole is that option only, never
+   * an abbreviation of a longer one (`curl --output a.py` is not `--output-dir`: commands-remote-r11-2).
+   */
+  long?: ReadonlySet<string>;
 }
 
 /** A command that prints the number of processors (`nproc`, `getconf _NPROCESSORS_ONLN`, `sysctl -n hw.ncpu`). */
@@ -266,7 +271,7 @@ export function parseOpts(args: readonly Arg[], spec: OptSpec = {}): Parsed {
       opts.push({ name: `-${c}`, at: k });
     }
   }
-  return { opts, operands, restAt, missingValue };
+  return { opts, operands, restAt, missingValue, long: new Set([...longValue, ...longNumeric, ...(spec.longOptional ?? [])]) };
 }
 
 /**
@@ -295,20 +300,25 @@ function attachedOption(a: Arg, spec: OptSpec): Omit<Opt, "at">[] | null {
 
 /** Whether a parsed line has a short option (`"r"`) or a long one (`"recursive"`, also when abbreviated to 3+ letters). */
 export function has(p: Parsed, ...names: string[]): boolean {
-  return p.opts.some(o => names.some(n => optIs(o.name, n)));
+  return p.opts.some(o => names.some(n => optIs(o.name, n, p.long)));
 }
 
 /** The values given for an option (short or long names). */
 export function values(p: Parsed, ...names: string[]): (string | null)[] {
-  return p.opts.filter(o => o.value !== undefined && names.some(n => optIs(o.name, n))).map(o => o.value ?? null);
+  return p.opts.filter(o => o.value !== undefined && names.some(n => optIs(o.name, n, p.long))).map(o => o.value ?? null);
 }
 
-/** Whether an option as written is `n` (a single letter: short; else long, abbreviations of 3+ letters included). */
-export function optIs(written: string, n: string): boolean {
+/**
+ * Whether an option as written is `n` (a single letter: short; else long, abbreviations of 3+ letters included). A
+ * name written whole that is one of `known` (the table's own long names) is that option only: getopt_long and curl take
+ * an exact name before any abbreviation, so `--output` is never `--output-dir` (commands-remote-r11-2).
+ */
+export function optIs(written: string, n: string, known?: ReadonlySet<string>): boolean {
   if (n.length === 1) return written === `-${n}`;
   if (!written.startsWith("--") && !written.startsWith("-")) return false;
   const w = written.replace(/^--?/, "");
   if (w === n) return true;
+  if (known?.has(w)) return false;
   return written.startsWith("--") && w.length >= 3 && n.startsWith(w);
 }
 

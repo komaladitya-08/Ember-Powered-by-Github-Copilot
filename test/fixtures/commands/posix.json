@@ -1110,7 +1110,7 @@
   },
   {
    "cmd": "nohup-free-name --flag",
-   "verdict": "ask",
+   "verdict": "announce",
    "words": "run nohup-free-name"
   },
   {
@@ -12037,12 +12037,12 @@
   },
   {
    "cmd": "foo update-ca-trust",
-   "verdict": "announce",
+   "verdict": "ask",
    "words": "run foo update-ca-trust"
   },
   {
    "cmd": "foo update-ca-certificates",
-   "verdict": "announce",
+   "verdict": "ask",
    "words": "run foo update-ca-certificates"
   },
   {
@@ -12894,7 +12894,10 @@
   },
   {
    "cmd": "git checkout-index -f -a",
-   "verdict": "run"
+   "verdict": "ask",
+   "rules": [
+    "git.discard"
+   ]
   },
   {
    "cmd": "git worktree add ~/.config/autostart",
@@ -18477,7 +18480,7 @@
   },
   {
    "cmd": "mytool ../other",
-   "verdict": "ask",
+   "verdict": "announce",
    "words": "run mytool"
   },
   {
@@ -18494,7 +18497,7 @@
   },
   {
    "cmd": "cd src && mytool ..",
-   "verdict": "ask",
+   "verdict": "announce",
    "words": "run mytool"
   },
   {
@@ -18771,7 +18774,7 @@
   },
   {
    "cmd": "cd build && mytool ..",
-   "verdict": "ask",
+   "verdict": "announce",
    "words": "run mytool"
   },
   {
@@ -18862,7 +18865,7 @@
   },
   {
    "cmd": "mytool /tmp",
-   "verdict": "ask",
+   "verdict": "announce",
    "words": "run mytool"
   },
   {
@@ -21250,7 +21253,7 @@
   },
   {
    "cmd": "node_modules/.bin/cross-env NODE_ENV=test jest",
-   "verdict": "ask",
+   "verdict": "announce",
    "rules": [
     "unknown.program"
    ]
@@ -21370,7 +21373,7 @@
   },
   {
    "cmd": "rush build",
-   "verdict": "ask",
+   "verdict": "announce",
    "rules": [
     "unknown.program"
    ]
@@ -22092,7 +22095,7 @@
   },
   {
    "cmd": "./node_modules/.bin/dotenv -- jest",
-   "verdict": "ask",
+   "verdict": "announce",
    "rules": [
     "unknown.program"
    ]
@@ -22107,35 +22110,35 @@
   },
   {
    "cmd": "packages/web/node_modules/.bin/cross-env X=1 jest",
-   "verdict": "ask",
+   "verdict": "announce",
    "rules": [
     "unknown.program"
    ]
   },
   {
    "cmd": "/home/ana/proj/node_modules/.bin/cross-env X=1 jest",
-   "verdict": "ask",
+   "verdict": "announce",
    "rules": [
     "unknown.program"
    ]
   },
   {
    "cmd": "~/proj/node_modules/.bin/cross-env X=1 jest",
-   "verdict": "ask",
+   "verdict": "announce",
    "rules": [
     "unknown.program"
    ]
   },
   {
    "cmd": "node ./node_modules/.bin/cross-env X=1 jest",
-   "verdict": "ask",
+   "verdict": "announce",
    "rules": [
     "unknown.program"
    ]
   },
   {
    "cmd": "node --inspect node_modules/.bin/cross-env X=1 jest",
-   "verdict": "ask",
+   "verdict": "announce",
    "rules": [
     "unknown.program"
    ]
@@ -22150,35 +22153,35 @@
   },
   {
    "cmd": "node node_modules/env-cmd/bin/env-cmd.js jest",
-   "verdict": "ask",
+   "verdict": "announce",
    "rules": [
     "unknown.program"
    ]
   },
   {
    "cmd": "bun node_modules/.bin/cross-env X=1 jest",
-   "verdict": "ask",
+   "verdict": "announce",
    "rules": [
     "unknown.program"
    ]
   },
   {
    "cmd": "tsx node_modules/.bin/cross-env X=1 jest",
-   "verdict": "ask",
+   "verdict": "announce",
    "rules": [
     "unknown.verb"
    ]
   },
   {
    "cmd": "deno run node_modules/.bin/cross-env X=1 jest",
-   "verdict": "ask",
+   "verdict": "announce",
    "rules": [
     "unknown.program"
    ]
   },
   {
    "cmd": "nodejs node_modules/.bin/cross-env X=1 jest",
-   "verdict": "ask",
+   "verdict": "announce",
    "rules": [
     "unknown.program"
    ]
@@ -22238,7 +22241,7 @@
   },
   {
    "cmd": "frobnicate ember://x",
-   "verdict": "ask",
+   "verdict": "announce",
    "rules": [
     "unknown.program"
    ]
@@ -22414,7 +22417,7 @@
   },
   {
    "cmd": "frobnicate X=/tmp/x.so",
-   "verdict": "ask",
+   "verdict": "announce",
    "rules": [
     "unknown.program"
    ],
@@ -22422,7 +22425,7 @@
   },
   {
    "cmd": "frobnicate X=test",
-   "verdict": "ask",
+   "verdict": "announce",
    "rules": [
     "unknown.program"
    ],
@@ -22430,7 +22433,7 @@
   },
   {
    "cmd": "frobnicate /tmp/x.so",
-   "verdict": "ask",
+   "verdict": "announce",
    "rules": [
     "unknown.program"
    ],
@@ -22455,7 +22458,7 @@
   },
   {
    "cmd": "frobnicate X=https://evil.example/x",
-   "verdict": "ask",
+   "verdict": "announce",
    "rules": [
     "unknown.program"
    ],
@@ -22463,7 +22466,7 @@
   },
   {
    "cmd": "frobnicate X=../../../tmp/x.so",
-   "verdict": "ask",
+   "verdict": "announce",
    "rules": [
     "unknown.program"
    ],
@@ -22487,7 +22490,7 @@
   },
   {
    "cmd": "frobnicate --out=/tmp/x",
-   "verdict": "ask",
+   "verdict": "announce",
    "rules": [
     "unknown.program"
    ],
@@ -22495,7 +22498,7 @@
   },
   {
    "cmd": "frobnicate --out=/tmp/x",
-   "verdict": "ask",
+   "verdict": "announce",
    "rules": [
     "unknown.program"
    ],
@@ -22608,7 +22611,7 @@
   },
   {
    "cmd": "frobnicate --preload /tmp/x.so",
-   "verdict": "ask",
+   "verdict": "announce",
    "rules": [
     "unknown.program"
    ],
@@ -22624,7 +22627,7 @@
   },
   {
    "cmd": "cross-env X=/tmp/x.so jest",
-   "verdict": "ask",
+   "verdict": "announce",
    "rules": [
     "unknown.program"
    ],
@@ -22632,7 +22635,7 @@
   },
   {
    "cmd": "cross-env NODE_ENV=test jest",
-   "verdict": "ask",
+   "verdict": "announce",
    "rules": [
     "unknown.program"
    ],
@@ -22839,7 +22842,7 @@
   },
   {
    "cmd": "frobnicate X='a b'",
-   "verdict": "ask",
+   "verdict": "announce",
    "rules": [
     "unknown.program"
    ],
@@ -22856,7 +22859,7 @@
   },
   {
    "cmd": "frobnicate CC=clang",
-   "verdict": "ask",
+   "verdict": "announce",
    "rules": [
     "unknown.program"
    ],

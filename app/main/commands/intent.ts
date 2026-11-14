@@ -976,7 +976,7 @@ function scriptNamed(name: string, w: Words): boolean {
 const KEEPS = /(^|[^\p{L}\p{N}])((everything|anything|all)\s+but|other\s+than|apart\s+from|aside\s+from|excluding|besides|instead\s+of|rather\s+than|keep|keeping|leave|leaving|spare|sparing|preserve|preserving)(?=$|[^\p{L}\p{N}])/iu;
 
 /** Words that turn a request around ("don't delete build", "never push to main"): nothing announces then. */
-const NEGATION = /(^|[^\p{L}\p{N}])(not|never|no|none|nothing|don['’]?t|doesn['’]?t|didn['’]?t|won['’]?t|wouldn['’]?t|shouldn['’]?t|mustn['’]?t|isn['’]?t|aren['’]?t|can['’]?t|cannot|without|except|avoid|neither|nor|unless)(?=$|[^\p{L}\p{N}])/iu;
+const NEGATION = /(^|[^\p{L}\p{N}])(not|never|no|none|nothing|don['’]?t|doesn['’]?t|didn['’]?t|won['’]?t|wouldn['’]?t|shouldn['’]?t|mustn['’]?t|isn['’]?t|aren['’]?t|can['’]?t|cannot|without|except|avoid|neither|nor|unless|(stop|quit)\s+using|refrain\s+from|leave\s+\S+(\s+\S+)?\s+out)(?=$|[^\p{L}\p{N}])/iu;
 
 /**
  * A condition the step waits on ("if the build fails", "only after I confirm", "once the tests pass", "when I tell you"),
@@ -1835,7 +1835,8 @@ export function matchIntent(cls: Classification, userWords: string, ctx: Classif
     // plain file in the task's folder (modes-y9-7).
     if (!unknown.every(f => extrasNamed(cls, f, userWords, ctx))) return null;
     const announce = `Running ${joinList(names)}, as you asked.`;
-    const rest = F.filter(f => f.cls !== "unknown");
+    // What its own words say it does (classify.ts unknownDoes) is what naming it whole asks for (commands-closed-x9-1).
+    const rest = F.filter(f => f.cls !== "unknown" && !f.rule.startsWith("unknown-words."));
     if (rest.length === 0) return { intent: "unknown", announce };
     const m = matchIntent({ ...cls, findings: rest }, userWords, ctx);
     return m && { intent: `${m.intent}+unknown`, announce: `${m.announce} ${announce}` };
@@ -2063,6 +2064,9 @@ export function ruledOut(findings: readonly Finding[], userWords: string): boole
   const asked = wordsOf(affirmed(userWords));
   return findings.some(f => {
     if (leftOut(f, userWords)) return true;
+    // A program, or a tool's command, Ember has no row for is named by its own name only: "don't run frobtool", "never
+    // use cargo frobnicate" rule it out (r11-commands-x11-1).
+    if (parts.some(p => namesUnknown([f], p))) return true;
     const row = rowOf(f, findings);
     const verbs = [...(row ? KIND_VERBS[row] ?? [] : []), ...(RULE_KIND_VERBS[f.rule] ?? [])];
     // A flag's words: `--force` (and `--force-with-lease`) is "force".
@@ -2093,6 +2097,23 @@ export function ruledOut(findings: readonly Finding[], userWords: string): boole
       if (rest.some(x => own.has(x))) return true;
       return rest.length === 0 && kindSaid;
     });
+  });
+}
+
+/**
+ * Do these words name a program, or a tool's command, that Ember has no row for (an `unknown.*` finding) whole, its
+ * folder and a Windows extension aside (`/opt/frobtool`, `cargo frobnicate`, `C:\Tools\app.exe`): its words one after
+ * another, together at least three letters? An unknown program's finding names the word after it too, which is only
+ * what it is given, so that one is named by its first word (r11-commands-x11-1).
+ */
+export function namesUnknown(findings: readonly Finding[], words: string): boolean {
+  const ws = userWordList(words);
+  return findings.some(f => {
+    if (f.cls !== "unknown") return false;
+    const program = f.rule === "unknown.program" ? f.program.split(/\s+/)[0] : f.program;
+    const name = userWordList(program.split(/\s+/).map(w => w.split(/[\\/]/).pop() ?? "").join(" ").replace(/\.(exe|com|bat|cmd|ps1)(?=\s|$)/gi, ""));
+    if (name.length === 0 || name.join("").length < 3) return false;
+    return ws.some((_w, k) => name.every((n, j) => ws[k + j] === n));
   });
 }
 

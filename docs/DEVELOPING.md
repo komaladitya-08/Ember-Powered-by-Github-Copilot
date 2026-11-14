@@ -657,8 +657,8 @@ same to the same thing however it names it (`find build -delete`, `mv build /tmp
 `build` after `rm -rf build`), is refused without another question, never checked by Assisted and never announced, and
 "What Ember did" says "You said no to this step earlier in this task." Only what is recognisably the same is refused
 so: a no to Delete in Files doesn't refuse Delete in Mail, nor a no to pushing `main` a push of `feature`. Everything
-else that may be what you refused asks, for the rest of the task and in every mode, never checked by Assisted and
-never announced (`likeCommand()`, the worker's `like`; rule `refused-like`): after a no to a command, a later command
+else that may be what you refused asks, for the rest of the task and in every mode (in Autopilot, which has no
+question to put, a command that may be it is refused), never checked by Assisted and never announced (`likeCommand()`, the worker's `like`; rule `refused-like`): after a no to a command, a later command
 with a danger of a kind the refused one had, whatever either names (a push by the remote's URL after a no to a push
 by its name, a push of `feature` after a no to a push of `main`, `rm -rf dist` after a no to `rm -rf build`), any
 dangerous command after a no to one Ember couldn't read (inline code, a loop, a program it doesn't know), and any
@@ -2893,6 +2893,22 @@ downloads it on first use per target and checks it before sending.
 
 ### 14.3 Rules for this code
 
+- **Only dangerous commands ask** (the owner's decision of 2026-11-14; CLAUDE.md "Never", .claude/rules/agent-and-policy.md
+  "What Ember doesn't know"). A program, or a tool's verb or option, the classifier has no row for is class `unknown`
+  and is announced by name in every mode (decide.ts `UNKNOWN_ANNOUNCED`); it never asks for that alone. What keeps a
+  dangerous one asking is recognising what it does (and the user's own words against it: intent.ts `namesUnknown`
+  names it by its program, so "don't run frobtool", "stop using frobtool", "refrain from frobtool" and "leave frobtool
+  out of it" make it ask, and Autopilot refuse it: intent.ts `NEGATION`, flow.ts `NEGATED`/`SAYS_NOT`, r11-commands-y11-7): a new tool goes into a row, the tables, or `unknownDoes`'s word lists
+  in classify.ts, never into a question for not knowing it. In Autopilot only the organisation's "ask" and the user's own
+  "ask every command" still ask (autopilot.ts `autopilotAsks`); a secret's command runs with its output withheld from
+  the model (`withheld`, flow.ts `WITHHELD_OUTPUT`, audited `outputWithheld`; one that also writes a file Ember can
+  name is refused, `secret-saved`, and not cleared by Assisted's check, and after a withheld run every later output of
+  the task is withheld too, `withheldSecrets`: r11-commands-y11-1), one that outlives Stop says so
+  (`outlivesStop`), and the user's own no, a deletion or a write of what Ember can't name (types.ts `UNRESOLVED_RULES`,
+  `unnamedTarget`: r11-commands-y11-4) and an unknown verb of a
+  terminal's remote control are refused (`autopilotRefuses`), also where a remote's gate 2 sends those rules back
+  (flow.ts, before its countdown). Gate 2 takes Autopilot's announcement for what the
+  stamp names, and the PC withholds the output of what the remote's rules say reads secrets.
 - **Electron** may be imported only in `main.ts`, `windows.ts`, `overlay.ts`, `handle.ts`, `ask.ts`, `voice.ts`,
   `revive.ts`, `desk/view.ts` and the preloads; ESLint enforces it. The two new windows' factories are in
   `windows.ts`, and their controllers take the window by injection.
