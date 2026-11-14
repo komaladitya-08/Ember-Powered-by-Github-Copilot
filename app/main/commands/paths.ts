@@ -265,6 +265,10 @@ const SECRET_HOME_POSIX = [
   ".msmtprc", ".config/msmtp/", ".mbsyncrc", ".config/isyncrc", ".fetchmailrc", ".offlineimaprc", ".config/offlineimap/",
   ".authinfo*", ".config/aerc/accounts.conf", ".muttrc", ".mutt/muttrc", ".config/mutt/", ".curlrc", ".wgetrc",
   ".config/hexchat/servlist.conf", ".xchat2/servlist_.conf",
+  // Subversion's cached logins (a K/V record), SMB mount credentials, Ivy's and sbt's repository logins, getmail's and
+  // neomutt's settings (r12-commands-x12-8).
+  ".subversion/auth/", ".smbcredentials", ".ivy2/.credentials", ".sbt/.credentials", ".getmail/", ".config/getmail/",
+  ".neomuttrc", ".config/neomutt/",
   // macOS.
   "Library/Keychains/", "Library/Cookies/", "Library/Application Support/Google/Chrome/",
   "Library/Application Support/Firefox/", "Library/Application Support/1Password/",

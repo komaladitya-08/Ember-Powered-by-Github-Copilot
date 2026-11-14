@@ -98,6 +98,30 @@ describe("passwords in common config formats, hidden from the model (commands-re
   });
 });
 
+describe("Subversion's, SMB's, sbt's and neomutt's stored passwords (r12-commands-x12-8)", () => {
+  it("reads their files as secrets", () => {
+    for (const cmd of [
+      "cat ~/.subversion/auth/svn.simple/0a1b", "grep -r password ~/.subversion/auth", "cat ~/.smbcredentials", "cat ~/.ivy2/.credentials", "cat ~/.sbt/.credentials",
+      "cat ~/.getmail/getmailrc", "cat ~/.config/getmail/getmailrc", "cat ~/.neomuttrc", "cat ~/.config/neomutt/neomuttrc",
+    ]) {
+      const r = result(cmd);
+      expect(r.decision.verdict, cmd).toBe("ask");
+      expect(r.decision.rules, cmd).toContain("path.secret");
+    }
+    for (const cmd of ["cat ~/.subversion/config", "cat ~/.sbt/1.0/global.sbt", "ls ~/.subversion"]) expect(result(cmd).decision.rules, cmd).not.toContain("path.secret");
+  });
+
+  it("hides the value of svn's K/V password record, never its other values", () => {
+    const rec = `K 8\npassword\nV 10\n${PW}\nK 15\nsvn:realmstring\nV 30\n<https://svn.example:443> Repo\nK 8\nusername\nV 3\nana\nEND\n`;
+    const out = redactSecrets(rec);
+    expect(out).not.toContain(PW);
+    expect(out).toContain(SECRET_HIDDEN);
+    expect(out).toContain("<https://svn.example:443> Repo");
+    expect(out).toContain("\nana\n");
+    expect(redactSecrets("K 8\npasstype\nV 6\nsimple\n")).toContain("simple");
+  });
+});
+
 describe("the user's no in their own ordinary words (commands-remote-r12-2)", () => {
   const ctx = { os: "linux" as const, home: "/home/ana", cwd: "/home/ana/proj", ember: { paths: ["/home/ana/.config/ember"], pids: [10], names: /^ember$/ }, downloaded: new Set<string>() };
   const ruled = (words: string, command: string) => wordsRuleOut(classifyCommand(command, "bash", ctx).findings, words);

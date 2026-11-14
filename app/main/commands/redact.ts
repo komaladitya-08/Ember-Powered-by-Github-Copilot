@@ -348,7 +348,8 @@ const CONFIG_SECRET = String.raw`(?:password|passwd|passphrase|pwd|secret|token|
  * - a mail client's `smtp_pass = …`, `set imap_pass="…"`, offlineimap's `remotepass = …`, never `bypass` or `compass`
  *   or a filter's `low_pass`;
  * - a quoted password after the word (`with password '…'`, fetchmail's);
- * - curl's and wget's `user = name:password` in their settings files, and `--user name:password` on a line of its own.
+ * - curl's and wget's `user = name:password` in their settings files, and `--user name:password` on a line of its own;
+ * - Subversion's cached login, the `V n` value after a `K n` / `password` key.
  * Each look is bounded, so a long run of output stays linear.
  */
 const CONFIG_PATTERNS: readonly RegExp[] = [
@@ -359,6 +360,8 @@ const CONFIG_PATTERNS: readonly RegExp[] = [
   new RegExp(String.raw`((?:^|\n)[ \t]*(?:set[ \t]+)?(?![\w.-]{0,64}?(?:low|high|band|all|render)[_.-]pass\b)(?:[A-Za-z0-9_.-]{0,64}[_.-]|remote|local)(?:pass|pw)[ \t]*[=:][ \t]*["']?)(?![$%{<*[])[^\s"',;]+`, "gi"),
   /(\b(?:password|passwd)[ \t]+(["']))(?![$%{<*[])(?:(?!\2)[^\n]){1,256}(?=\2)/gi,
   /((?:^|\n)[ \t]*(?:--?)?(?:proxy-)?user[ \t]*(?:=|:|[ \t])[ \t]*["']?[^\s"':]+:)(?![$%{<*[])[^\s"']+/g,
+  // Subversion's cached login, a K/V record: the V line after a `password` key (r12-commands-x12-8).
+  /((?:^|\n)K[ \t]\d{1,4}\r?\n(?:password|passphrase)\r?\nV[ \t]\d{1,6}\r?\n)[^\r\n]+/g,
 ];
 
 /**
