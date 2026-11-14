@@ -269,6 +269,8 @@ export const listenOnceShown = (s: ListenOnceStatus | undefined): boolean => !(s
 export interface VoiceStatus {
   state: MicState;
   detail: string | null;
+  /** With `state` "error": the microphone is what failed (VoiceService.micFault), not the voice process or its models. */
+  micFault?: boolean;
   /** The microphone Ember hears through while it captures, as the system names it (kept on this computer). */
   micLabel?: string;
   /** Listening can start: the wake word, voice activity and speech recognition models are in. */
@@ -721,6 +723,8 @@ export interface ExtensionsState {
   consented?: boolean;
   /** false while Ember isn't connected (signed out, connecting): no marketplace can be listed, and nothing added runs. */
   connected?: boolean;
+  /** true once Ember filled something from its vault in this run: nothing added runs until Ember starts again. */
+  heldByVault?: boolean;
   /** Set when the list couldn't be read: one plain sentence. */
   error?: string;
 }
@@ -789,6 +793,11 @@ export interface ProviderState {
   host: string | null;
   /** The card was agreed to for that host: until then nothing goes there, Test connection included. */
   agreed: boolean;
+  /**
+   * The yes settings.json holds is held back (provider-record.ts: its seal not read yet, or a forged yes that couldn't be
+   * put back): Home treats it as not agreed, whatever the settings it holds say (integ-x-1).
+   */
+  held?: boolean;
 }
 
 /** How a provider action went: `why` is one plain sentence for the page. */

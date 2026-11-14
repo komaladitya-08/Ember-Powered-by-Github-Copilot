@@ -7,7 +7,7 @@
 import { describe, expect, it } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
-import { focusTrail, hoverActivation, waitForWindowAt, watchEvent, type WindowAt } from "../integration/window-at";
+import { focusTrail, hoverActivation, lookAt, readProbeSummary, waitForWindowAt, watchEvent, type WindowAt } from "../integration/window-at";
 
 const ASK: WindowAt = { id: 459336, className: "Chrome_WidgetWin_1", title: "Ask Ember", pid: 4000 };
 const OTHER: WindowAt = { id: 262636, className: "Chrome_WidgetWin_1", title: "Ember overlay", pid: 4000 };
@@ -141,6 +141,14 @@ describe("watchEvent (cifix-x9-6)", () => {
       .toBe("Windows says minimize-start: the bench (window 77); Win up, Alt down");
   });
 
+  it("names the watched app's own events, so what it did as it took the foreground back is in the timeline (cifix-x9-8)", () => {
+    expect(watchEvent('{"t":3,"event":"process","code":"0x8005","root":77,"object":-4,"child":0,"win":false,"alt":false}', name)?.what)
+      .toBe("its own event focus (object -4, child 0) in the bench (window 77); Win up, Alt up");
+    expect(watchEvent('{"t":3,"event":"process","code":"0x4e00","root":77,"object":0,"child":0}', name)?.what)
+      .toBe("its own event 0x4e00 (object 0, child 0) in the bench (window 77); Win up, Alt up");
+    expect(watchEvent('{"t":3,"event":"process","code":"bad","root":77}', name)?.what).toBe("its own event ? (object 0, child 0) in the bench (window 77); Win up, Alt up");
+  });
+
   it("skips the ready line, half a line and events it doesn't know", () => {
     expect(watchEvent('{"ready":true,"t":1}', name)).toBeNull();
     expect(watchEvent('{"t":1,"event":"fore', name)).toBeNull();
@@ -158,5 +166,50 @@ describe("the foreground watcher's script (cifix-x9-6)", () => {
   it("hooks foreground, focus and minimise changes out of context, and ends when its input closes", () => {
     for (const s of ["EVENT_SYSTEM_FOREGROUND = 0x0003", "EVENT_OBJECT_FOCUS = 0x8005", "EVENT_SYSTEM_MINIMIZESTART = 0x0016", "WINEVENT_OUTOFCONTEXT = 0x0000", "Console.In.ReadLine()", "WM_QUIT"]) expect(ps1).toContain(s);
     expect(ps1).toContain('{\\"ready\\":true');
+  });
+});
+
+describe("readProbeSummary (cifix-x9-9)", () => {
+  it("times the bench's return from the box showing, the read's start and its answer, and says the box closed", () => {
+    expect(readProbeSummary("delay:4000", 1000, [
+      { t: 1020, kind: "box shown" }, { t: 5030, kind: "read started" }, { t: 5070, kind: "bench foreground" },
+      { t: 5080, kind: "box hidden" }, { t: 5110, kind: "read answered" },
+    ])).toBe("read probe (delay:4000): the box showed at 20 ms; the read started at 4030 ms and answered at 4110 ms; the bench took the foreground: "
+      + "4050 ms after the box showed, 40 ms after the read started, -40 ms after it answered; the box closed at 4080 ms (ms from the chord)");
+  });
+
+  it("says the read was off, and that the bench never came back and the box stayed open", () => {
+    expect(readProbeSummary("off", 0, [{ t: 15, kind: "box shown" }, { t: 30, kind: "box foreground" }]))
+      .toBe("read probe (off): the box showed at 15 ms; the read was off; the bench took the foreground: never; the box was still open at the end (ms from the chord)");
+  });
+
+  it("takes the read as started when the box showed for the usual read, and says when the box never showed", () => {
+    expect(readProbeSummary("now", 0, [{ t: 10, kind: "box shown" }, { t: 900, kind: "bench foreground" }, { t: 950, kind: "read answered" }]))
+      .toBe("read probe (now): the box showed at 10 ms; the read started at 10 ms and answered at 950 ms; the bench took the foreground: "
+        + "890 ms after the box showed, 890 ms after the read started, -50 ms after it answered; the box was still open at the end (ms from the chord)");
+    expect(readProbeSummary("off", 0, [])).toBe("read probe (off): the box never showed");
+    // A stage left out (cifix-x9-10): the rest of the read still starts as the box shows.
+    expect(readProbeSummary("skip:texts", 0, [{ t: 10, kind: "box shown" }, { t: 700, kind: "read answered" }]))
+      .toBe("read probe (skip:texts): the box showed at 10 ms; the read started at 10 ms and answered at 700 ms; the bench took the foreground: never; the box was still open at the end (ms from the chord)");
+  });
+});
+
+describe("lookAt (cifix-x9-11)", () => {
+  const looks = [
+    { i: 0, role: "text", start: 100, end: 160, steps: [{ step: "secret check", t: 101 }, { step: "native edit", t: 102 }, { step: "text pattern", t: 110 }, { step: "selection", t: 140 }] },
+    { i: 1, role: "combo box", start: 170, end: 200, steps: [{ step: "value pattern", t: 175 }] },
+  ];
+  it("names the look and the step under way when the bench took the foreground", () => {
+    expect(lookAt(looks, 150)).toBe('text look 0 (text), in its step "selection", begun 10 ms before');
+    expect(lookAt(looks, 180)).toBe('text look 1 (combo box), in its step "value pattern", begun 5 ms before');
+  });
+
+  it("takes a look that had just ended, since Windows reports the change a moment after the call", () => {
+    expect(lookAt(looks, 220)).toBe('text look 1 (combo box), in its step "value pattern", begun 45 ms before, which had ended 20 ms before');
+  });
+
+  it("says when no look was under way", () => {
+    expect(lookAt(looks, 50)).toBe("no text look was under way at 50");
+    expect(lookAt([], 50)).toBe("no text look was under way at 50");
   });
 });

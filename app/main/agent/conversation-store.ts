@@ -8,6 +8,8 @@
  * - The file is `{ version, account, savedAt, entries }`, bounded to CONVERSATION_LIMIT entries, the per-message text
  *   limit and MAX_BYTES in all; the oldest entries go first. Only the fields Home displays are kept.
  * - Writes are coalesced (one in flight, the last state wins) and atomic: a unique temp file, fsync, then rename.
+ *   `flushNow()` writes the latest state synchronously when the desktop session ends and there is no time to wait; a
+ *   write still in flight then gives up at its rename, so it can't put an older state back.
  * - `clear()` bumps an epoch and deletes the file at once; a write begun or queued before it checks the epoch
  *   immediately before its rename and gives up, so a clear is never undone by a late write. It says whether everything
  *   went (false: a file could not be deleted; it is then emptied if that can be done, and never loaded again by this
@@ -117,6 +119,8 @@ export class HistoryStore {
   private pending: { account: string; entries: SavedEntry[] } | null = null;
   private timer: NodeJS.Timeout | null = null;
   private running: Promise<void> | null = null;
+  /** The job the write in flight is writing, until it is on disk or given up (flushNow writes it if nothing is newer). */
+  private inflight: { account: string; entries: SavedEntry[] } | null = null;
   private seq = 0;
   /** A deletion failed and has not succeeded since: the saved copy must not be loaded, and every clear retries it. */
   private erasePending = false;
@@ -198,6 +202,7 @@ export class HistoryStore {
   clear(): boolean {
     this.epoch++;
     this.pending = null;
+    this.inflight = null;
     if (this.timer) { clearTimeout(this.timer); this.timer = null; }
     return this.eraseAll(true);
   }
@@ -222,6 +227,38 @@ export class HistoryStore {
     }
   }
 
+  /**
+   * Writes the latest state now, synchronously (temp file, fsync, rename), for the end of the desktop session: there may
+   * be no will-quit and no turn of the event loop left. A write begun earlier gives up at its rename (the epoch moves),
+   * so it can't replace this one with an older state. Never throws; a failure is logged and reported as `problem`.
+   */
+  flushNow(): void {
+    if (this.timer) { clearTimeout(this.timer); this.timer = null; }
+    const job = this.pending ?? this.inflight;
+    this.pending = null;
+    if (!job) return;
+    this.epoch++;
+    this.inflight = null;
+    const tmp = `${this.file}.tmp-${process.pid}-${++this.seq}`;
+    this.gen = Math.max(this.gen, this.markerGen() ?? 0);
+    const body = JSON.stringify({ version: HISTORY_VERSION, account: job.account, gen: this.gen, savedAt: new Date().toISOString(), entries: job.entries }) + "\n";
+    try {
+      fs.mkdirSync(this.o.dir, { recursive: true, mode: 0o700 });
+      const fd = fs.openSync(tmp, "w", 0o600);
+      try { fs.writeFileSync(fd, body, "utf8"); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+      fs.renameSync(tmp, this.file);
+      try { const d = fs.openSync(this.o.dir, "r"); try { fs.fsyncSync(d); } finally { fs.closeSync(d); } } catch { /* unsupported here (Windows): the data is already safe */ }
+      const replaced = this.erasePending || this.exposed;
+      if (replaced) this.dropMarker();
+      this.setProblem(() => { this.saveFailed = false; if (replaced) { this.erasePending = false; this.exposed = false; } });
+    } catch (err) {
+      this.o.log.warn("history.not_saved", { code: (err as NodeJS.ErrnoException).code });
+      this.setProblem(() => { this.saveFailed = true; });
+    } finally {
+      try { fs.rmSync(tmp, { force: true }); } catch { /* already renamed or gone */ }
+    }
+  }
+
   private setProblem(change: () => void): void {
     const before = this.problem;
     change();
@@ -232,6 +269,7 @@ export class HistoryStore {
     if (this.running || !this.pending) return;
     const job = this.pending;
     this.pending = null;
+    this.inflight = job;
     const epoch = this.epoch;
     const tmp = `${this.file}.tmp-${process.pid}-${++this.seq}`;
     // Under at least the marker's generation (a save after a clear supersedes the marker), never under a lower one.
@@ -262,6 +300,7 @@ export class HistoryStore {
       }
     })().finally(() => {
       this.running = null;
+      if (this.inflight === job) this.inflight = null;
       if (this.pending) this.timer = setTimeout(() => { this.timer = null; this.pump(); }, this.delayMs);
     });
     this.running.catch(() => undefined);

@@ -42,6 +42,18 @@ describe("announcement", () => {
     expect(announcement(view({ visible: false, thought: "Hello" }))).toBe("");
   });
 
+  it("says Ember's own announcement of a step it took without asking, once, though Ember works (companion-r10-1)", () => {
+    const auto = view({ mood: "acting", title: "Cinder", thought: "Clicking in Thunderbird, without asking: Autopilot is on.", autonomous: true });
+    expect(announcement(auto, "Cinder")).toBe("Cinder says: Clicking in Thunderbird, without asking: Autopilot is on.");
+    // A borrowed mouse says how to take it back.
+    expect(announcement(view({ mood: "acting", thought: "Using your mouse to click in Files, without asking as you let me. Move the mouse or press a key to take it back.", autonomous: true })))
+      .toBe("Ember says: Using your mouse to click in Files, without asking as you let me. Move the mouse or press a key to take it back.");
+    expect(announcement({ ...auto, where: "on build-01" }, "Cinder")).toBe("Cinder says, on build-01: Clicking in Thunderbird, without asking: Autopilot is on.");
+    // Only Ember's own announcement: a working note, or the tag on another mood, stays as it was.
+    expect(announcement(view({ mood: "acting", thought: "Task note: opening the inbox" }))).toBe("");
+    expect(announcement({ ...auto, streaming: true })).toBe("");
+  });
+
   it("says once that Ember is still waiting, and how the keyboard stops it, though the bubble still thinks (accessibility-visual-2)", () => {
     const stalled = view({ mood: "thinking", title: "Still waiting for Copilot…", thought: "“what time is it in Tokyo”", streaming: true, stalled: true, step: "Or press Ctrl+Alt+E and use Stop response in Home. Ctrl+Alt+X stops everything." });
     expect(announcement(stalled)).toBe("Ember says: Still waiting for Copilot… Or press Ctrl+Alt+E and use Stop response in Home. Ctrl+Alt+X stops everything.");

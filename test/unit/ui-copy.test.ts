@@ -333,7 +333,12 @@ describe("the command window's words (§8.5)", () => {
     // A command the review cleared (the user didn't ask for exactly it) says so in the announcement's heading.
     expect(keep(commandCopy.REVIEWED_HEADING)).toBe("About to run this: Ember checked it against your request");
     const commandMain = readFileSync(new URL("../../app/renderer/command/main.ts", import.meta.url), "utf8");
-    expect(commandMain).toMatch(/function buildAnnounce\([^]*?el\("h1", "heading", card\.reviewed \? REVIEWED_HEADING : ANNOUNCE_HEADING\)/);
+    // Autopilot's announcement of a command the user didn't ask for says so, never "as you asked" (tasks-approvals-r10-1).
+    expect(keep(commandCopy.AUTOPILOT_HEADING)).toBe("About to run this: Autopilot is on");
+    expect(commandCopy.announceHeading({ reviewed: true })).toBe(commandCopy.REVIEWED_HEADING);
+    expect(commandCopy.announceHeading({ autopilot: true })).toBe(commandCopy.AUTOPILOT_HEADING);
+    expect(commandCopy.announceHeading({})).toBe(commandCopy.ANNOUNCE_HEADING);
+    expect(commandMain).toMatch(/function buildAnnounce\([^]*?el\("h1", "heading", announceHeading\(card\)\)/);
     expect(keep(commandCopy.announceKeyText("linux"))).toBe("Or press Ctrl+Alt+X to stop everything.");
     expect(keep(commandCopy.announceKeyText("win32"))).toBe("Or press Win+Alt+X to stop everything.");
     expect(keep(commandCopy.announceKeyText("darwin"))).toBe("Or press Control+Shift+Command+X to stop everything.");
@@ -1241,7 +1246,7 @@ describe("Home's conversation words (2026-11-07 product audit)", () => {
     // A broken policy file isn't the user's to restart away, and any other refusal is as before.
     expect(composerRefusal({ phase: "error", reason: "policy" }, null, false)).toBe("Your organisation's Ember policy has a problem, so Ember can't answer until it's fixed.");
     expect(composerRefusal({ phase: "error", reason: "network" }, null, true)).toBe("Copilot can't be reached right now. Your message is still here: send it again once you're online.");
-    expect(readFileSync("app/main/main.ts", "utf8")).toContain("composerSendRefusal(status, stops, status.phase === \"signed-out\" && !fixedProvider ? providerWaitingHost(settings.get(), admin) : null, !!admin.held)");
+    expect(readFileSync("app/main/main.ts", "utf8")).toContain("composerSendRefusal(status, stops, status.phase === \"signed-out\" ? ownProviderWaiting() : null, !!admin.held)");
   });
 
   it("takes a refused send's reason away once Ember is connected again, and says the message can go now (reliability-c7-2)", () => {
@@ -1323,7 +1328,7 @@ describe("Home's conversation words (2026-11-07 product audit)", () => {
     const consent = at('if (!consented()) throw new Error("Finish setup before sending a request.");');
     const locked = at('if (screenLock?.locked) throw new Error("Unlock your screen before sending a request.");');
     const stops = at("const stops = agent?.stopsWith(text) === true;");
-    const refused = at("const refusal = composerSendRefusal(status, stops, status.phase === \"signed-out\" && !fixedProvider ? providerWaitingHost(settings.get(), admin) : null, !!admin.held);");
+    const refused = at("const refusal = composerSendRefusal(status, stops, status.phase === \"signed-out\" ? ownProviderWaiting() : null, !!admin.held);");
     expect(consent).toBeLessThan(locked);
     expect(locked).toBeLessThan(stops);
     expect(stops).toBeLessThan(refused);
@@ -1594,7 +1599,7 @@ describe("Apps & privacy's screenshot switch (safety-privacy-7)", () => {
     // Apps & privacy says it asks (slice4-22).
     expect(page).toContain(`<b>It asks before acting</b>${hand}<span`);
     expect(`It asks before acting${privacyFoldWords(hand, { screenImages: true })}`).toBe("It asks before acting in an app, and always before anything hard to undo. It never lets the AI model type or see passwords. Only in Autopilot, it can fill in a login, a card or contact details from its vault, which the AI model never sees. ");
-    expect(`It asks before acting${privacyFoldWords(hand, { screenImages: true, autonomy: true, grants: true })}`).toBe(
+    expect(`It asks before acting${privacyFoldWords(hand, { screenImages: true, autonomy: "interactive", grants: true })}`).toBe(
       "It asks before acting on anything risky or hard to undo. For ordinary steps it tells you what it's doing instead (How Ember asks, below). It never lets the AI model type or see passwords. Only in Autopilot, it can fill in a login, a card or contact details from its vault, which the AI model never sees. ");
     expect(`It asks before acting${privacyFoldWords(hand, { screenImages: true, grants: true })}`).toBe(
       "It asks before acting in an app, except those you let it act in without asking (below), and always before anything hard to undo. It never lets the AI model type or see passwords. Only in Autopilot, it can fill in a login, a card or contact details from its vault, which the AI model never sees. ");

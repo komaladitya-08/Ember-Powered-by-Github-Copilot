@@ -12,7 +12,11 @@
     {"t":<ms>,"event":"foreground"|"focus"|"minimize-start"|"minimize-end","hwnd":N,"root":N,"class":"...","title":"...",
      "pid":N,"image":"...","win":true|false,"alt":true|false}
   "focus" lines come only when the focus moves to another top-level window ("root"), not within one.
+  With -WatchPid N it also prints the events of that one process's windows (cifix-x9-8: what the app the Ask box opened
+  over did itself as it took the foreground back), at most 400, leaving out moves and value, name and state changes:
+    {"t":<ms>,"event":"process","code":"0x0003","hwnd":N,"root":N,"object":N,"child":N,...the same window fields}
 #>
+param([int]$WatchPid = 0)
 $ErrorActionPreference = 'Stop'
 
 $source = @'
@@ -78,6 +82,27 @@ public static class EmberForegroundWatch
     lock (gate) { Console.Out.Write(line + "\n"); Console.Out.Flush(); }
   }
 
+  static int processLines = 0;
+
+  static void OnProcessEvent(IntPtr hook, uint ev, IntPtr hwnd, int idObject, int idChild, uint thread, uint time)
+  {
+    // Moves, and value, name, state, description and help changes: many, and not what activates a window.
+    if (ev == 0x800B || ev == 0x800C || ev == 0x800E || ev == 0x800A || ev == 0x800D || ev == 0x8010 || ev == 0x8011) return;
+    if (processLines >= 400) return;
+    processLines++;
+    IntPtr root = hwnd == IntPtr.Zero ? IntPtr.Zero : GetAncestor(hwnd, GA_ROOT);
+    if (root == IntPtr.Zero) root = hwnd;
+    uint pid = 0; if (root != IntPtr.Zero) GetWindowThreadProcessId(root, out pid);
+    bool win = (GetAsyncKeyState(0x5B) & 0x8000) != 0 || (GetAsyncKeyState(0x5C) & 0x8000) != 0;
+    bool alt = (GetAsyncKeyState(0x12) & 0x8000) != 0;
+    Write("{\"t\":" + Now() + ",\"event\":\"process\",\"code\":\"0x" + ev.ToString("x4") + "\",\"hwnd\":" + hwnd.ToInt64() + ",\"root\":" + root.ToInt64()
+      + ",\"object\":" + idObject + ",\"child\":" + idChild + ",\"class\":" + Json(root == IntPtr.Zero ? "" : Text(root, true))
+      + ",\"title\":" + Json(root == IntPtr.Zero ? "" : Text(root, false)) + ",\"pid\":" + pid + ",\"image\":\"\""
+      + ",\"win\":" + (win ? "true" : "false") + ",\"alt\":" + (alt ? "true" : "false") + "}");
+  }
+
+  static WinEventProc processProc = OnProcessEvent;
+
   static void OnEvent(IntPtr hook, uint ev, IntPtr hwnd, int idObject, int idChild, uint thread, uint time)
   {
     if (hwnd == IntPtr.Zero) return;
@@ -93,12 +118,14 @@ public static class EmberForegroundWatch
       + ",\"image\":" + Json(Image(pid)) + ",\"win\":" + (win ? "true" : "false") + ",\"alt\":" + (alt ? "true" : "false") + "}");
   }
 
-  public static void Run()
+  public static void Run(int watchPid)
   {
     uint tid = GetCurrentThreadId();
     IntPtr a = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, IntPtr.Zero, proc, 0, 0, WINEVENT_OUTOFCONTEXT);
     IntPtr b = SetWinEventHook(EVENT_SYSTEM_MINIMIZESTART, EVENT_SYSTEM_MINIMIZEEND, IntPtr.Zero, proc, 0, 0, WINEVENT_OUTOFCONTEXT);
     IntPtr c = SetWinEventHook(EVENT_OBJECT_FOCUS, EVENT_OBJECT_FOCUS, IntPtr.Zero, proc, 0, 0, WINEVENT_OUTOFCONTEXT);
+    // EVENT_MIN to EVENT_MAX for the one process asked about.
+    IntPtr d = watchPid > 0 ? SetWinEventHook(0x00000001, 0x7FFFFFFF, IntPtr.Zero, processProc, (uint)watchPid, 0, WINEVENT_OUTOFCONTEXT) : IntPtr.Zero;
     if (a == IntPtr.Zero) { Console.Error.WriteLine("SetWinEventHook failed"); return; }
     // Its input closing (the test done, or gone) ends the message loop.
     Thread reader = new Thread(delegate () { try { while (Console.In.ReadLine() != null) { } } catch { } PostThreadMessage(tid, WM_QUIT, IntPtr.Zero, IntPtr.Zero); });
@@ -107,7 +134,7 @@ public static class EmberForegroundWatch
     Write("{\"ready\":true,\"t\":" + Now() + "}");
     MSG msg;
     while (GetMessage(out msg, IntPtr.Zero, 0, 0) > 0) { }
-    UnhookWinEvent(a); if (b != IntPtr.Zero) UnhookWinEvent(b); if (c != IntPtr.Zero) UnhookWinEvent(c);
+    UnhookWinEvent(a); if (b != IntPtr.Zero) UnhookWinEvent(b); if (c != IntPtr.Zero) UnhookWinEvent(c); if (d != IntPtr.Zero) UnhookWinEvent(d);
   }
 }
 '@
@@ -119,4 +146,4 @@ try {
   exit 1
 }
 [Console]::OutputEncoding = New-Object Text.UTF8Encoding $false
-[EmberForegroundWatch]::Run()
+[EmberForegroundWatch]::Run($WatchPid)

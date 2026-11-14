@@ -1,12 +1,13 @@
 // What a GitHub release of Ember holds, and its notes (docs/DEVELOPING.md §15). CI's release job runs it on a v* tag,
 // in the folder holding the four package artifacts, before it writes SHA256SUMS and publishes:
 //   node scripts/package/release.mjs <folder> <tag> <owner/repo> <notes.md>
-//   node scripts/package/release.mjs --readme <tag>    (only the README's check, which the tag's checks job runs first)
+//   node scripts/package/release.mjs --readme <tag> [<owner/repo>]   (the README's and the notes' checks alone,
+//   which the tag's checks job runs first; the repository defaults to $GITHUB_REPOSITORY)
 // It refuses a tag that isn't v<package.json's version>, a folder missing one of the release's files or holding one
 // more, a version CHANGELOG.md has no "## <version> (" section for, and a README whose Download section still says the
 // version isn't out: the notes link the README at the tag, so it is what everyone reads (install-docs-c1-1). The notes
 // are that section, its relative links made absolute at the tag (a release page resolves them elsewhere) and its
-// wrapped lines joined.
+// wrapped lines joined, and it refuses notes GitHub would refuse (install-docs-r10-2).
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -45,6 +46,27 @@ export function releaseNotes(changelog, version, o) {
   const base = `https://github.com/${o.repo}/blob/${o.ref}/`;
   // [text](target): a target with no scheme, not an anchor and not site-absolute is a file in the repository.
   return `${body.replace(/\]\((?![a-z][a-z0-9+.-]*:|#|\/)([^)\s]+)\)/gi, (_m, target) => `](${base}${target})`)}\n`;
+}
+
+/**
+ * GitHub's limit for a release body ("body is too long (maximum is 125000 characters)"). GitHub doesn't document
+ * the unit, and its neighbouring limits are counted both ways (an issue comment in bytes, a pull request's body in
+ * code points), so the notes are held under it in UTF-16 units and in UTF-8 bytes, the stricter of the two.
+ */
+export const RELEASE_BODY_LIMIT = 125_000;
+
+/**
+ * What would make GitHub refuse `notes` as a release body: one line per unit it is too long in, or none.
+ * @param {string} notes
+ */
+export function notesProblems(notes) {
+  const n = (/** @type {number} */ v) => v.toLocaleString("en-GB");
+  const limit = `GitHub takes a release body under ${n(RELEASE_BODY_LIMIT)}`;
+  const bytes = Buffer.byteLength(notes, "utf8");
+  return [
+    ...(notes.length >= RELEASE_BODY_LIMIT ? [`the notes are ${n(notes.length)} characters; ${limit}`] : []),
+    ...(bytes >= RELEASE_BODY_LIMIT ? [`the notes are ${n(bytes)} bytes; ${limit}`] : []),
+  ];
 }
 
 /**
@@ -110,12 +132,23 @@ function main() {
     const wrong = readmeProblems(fs.readFileSync(path.join(root, "README.md"), "utf8"), version);
     if (wrong.length) throw new Error(`README.md isn't ready for ${version}'s release (docs/DEVELOPING.md §15 step 1):\n  ${wrong.join("\n  ")}`);
   };
+  const notes = (/** @type {string} */ repo, /** @type {string} */ tag) => {
+    const text = releaseNotes(fs.readFileSync(path.join(root, "CHANGELOG.md"), "utf8"), version, { repo, ref: tag });
+    const long = notesProblems(text);
+    if (long.length) throw new Error(`CHANGELOG.md's ${version} section is too long for a release:\n  ${long.join("\n  ")}`);
+    return text;
+  };
   if (process.argv[2] === "--readme") {
     const tag = process.argv[3];
-    if (!tag) throw new Error("usage: node scripts/package/release.mjs --readme <tag>");
+    // The notes' links name the repository, so their length depends on it: the release job's own.
+    const repo = process.argv[4] ?? process.env.GITHUB_REPOSITORY;
+    if (!tag || !repo) throw new Error("usage: node scripts/package/release.mjs --readme <tag> [<owner/repo>]");
     if (tag !== `v${version}`) throw new Error(`the tag ${tag} isn't v${version}, package.json's version`);
     readme();
-    console.log(`release ${tag}: README.md describes ${version}`);
+    // The release job needs every other job, so notes GitHub would refuse are refused here too, in the tag's first
+    // minute rather than at its run's end (r10-install-x10-1).
+    notes(repo, tag);
+    console.log(`release ${tag}: README.md describes ${version} and its notes fit a release`);
     return;
   }
   const [dir, tag, repo, notesFile] = process.argv.slice(2);
@@ -124,11 +157,21 @@ function main() {
   readme();
   const problems = releaseProblems(fs.readdirSync(dir).filter(f => fs.statSync(path.join(dir, f)).isFile()), version);
   if (problems.length) throw new Error(`the release folder isn't what the README downloads:\n  ${problems.join("\n  ")}`);
-  fs.writeFileSync(notesFile, releaseNotes(fs.readFileSync(path.join(root, "CHANGELOG.md"), "utf8"), version, { repo, ref: tag }));
+  fs.writeFileSync(notesFile, notes(repo, tag));
   console.log(`release ${tag}: ${releaseFiles(version).length} files, notes in ${notesFile}`);
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// Run directly, not imported. Both paths are resolved through links first: Node names this module by its real path,
+// so reached through a link (macOS's /var is one) the two differed, and the script checked nothing and exited 0.
+const direct = (() => {
+  try {
+    return Boolean(process.argv[1]) && fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    // A path that can't be resolved isn't this script.
+    return false;
+  }
+})();
+if (direct) {
   try {
     main();
   } catch (err) {

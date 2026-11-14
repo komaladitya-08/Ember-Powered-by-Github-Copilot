@@ -2435,6 +2435,19 @@ export class VoiceEngine {
       this.mode.until = Math.max(this.mode.until, this.now() + this.mode.ms);
       return;
     }
+    // While a question waits, a yes asked as a question ("Ember, okay?") is no yes and no request, at a wake too; and in
+    // a follow-up, a conversation or the answer window, a few words that sound like an answer ("Yes, but wait.", "Okay
+    // then.", "No, I don't want that.", "Hold on.": nearAnswer) are most likely one misheard or hedged. Neither is sent:
+    // the question says once how to answer. They went to Copilot as a request, or vanished, closers included (V2-F5,
+    // V2-F7, voice-listening-r10-1). "Why?" and "Which file?" are requests as ever. Before the closers, but never what
+    // ends a conversation: "Okay, that's all." still ends it, sending nothing (voice-product-x9-3).
+    const answerLike = this.mode.reason === "follow-up" || this.mode.reason === "answer" || conversation;
+    if (this.questionWaiting && this.mode.reason !== "manual" && !this.answering(text) && !endsConversation(text) && (askedYes(text) || (answerLike && nearAnswer(text)))) {
+      this.peak = 0;
+      this.mode.until = Math.max(this.mode.until, this.now() + this.mode.ms);
+      this.emit({ type: "unclear" });
+      return;
+    }
     // While one of Ember's questions is up, "No.", "Not now.", "Okay." or "That's fine." answers it (main's
     // voice-answer.ts), so it is sent rather than taken for "that's all" (owner's report of 2026-11-12).
     if (this.mode.reason === "follow-up" && !this.answering(text) && isCloser(text, this.mode.afterQuestion)) {
@@ -2446,18 +2459,6 @@ export class VoiceEngine {
       // "That's all.": the conversation is over. "Thanks.": there is nothing to answer, and the user may have more to say.
       if (endsConversation(text)) { this.endListening("timeout"); return; }
       if (!this.cutIn && isCloser(text, this.mode.afterQuestion)) { this.peak = 0; this.mode.until = Math.max(this.mode.until, this.now() + this.mode.ms); return; }
-    }
-    // While a question waits, a yes asked as a question ("Ember, okay?") is no yes and no request, at a wake too; and in
-    // a follow-up, a conversation or the answer window, a few words that start like an answer ("Yes, but wait.", "Sure,
-    // okay then.") are most likely one misheard or hedged. Neither is sent: the question says once how to answer. They
-    // went to Copilot as a request, or vanished (V2-F5, V2-F7). "Why?" and "Which file?" are requests as ever. After the
-    // closers: "Okay, that's all." still ends a conversation, sending nothing (voice-product-x9-3).
-    const answerLike = this.mode.reason === "follow-up" || this.mode.reason === "answer" || conversation;
-    if (this.questionWaiting && this.mode.reason !== "manual" && !this.answering(text) && (askedYes(text) || (answerLike && nearAnswer(text)))) {
-      this.peak = 0;
-      this.mode.until = Math.max(this.mode.until, this.now() + this.mode.ms);
-      this.emit({ type: "unclear" });
-      return;
     }
     if (bargeIn && this.afterHush < AFTER_HUSH_FRAMES && (!this.mode.held || !this.hearsSpeakers(this.now()))) {
       // Said over Ember's voice, and not a stop: maybe not what was said (see AFTER_HUSH_FRAMES). Ember has been hushed,

@@ -85,7 +85,10 @@ export function registerExtensionsIpc(
       // Not connected: an empty list is why, not "no marketplaces" (integrations-v2).
       let connected = true;
       try { connected = api.connected?.() !== false; } catch { /* unknown: taken as connected, as before */ }
-      return { available: true, allowed, consented, ...(connected ? {} : { connected: false }), installed: Array.isArray(installed) ? installed : [], marketplaces: Array.isArray(marketplaces) ? marketplaces : [] };
+      // After a fill from the vault the gate refuses every call: never "Ready" then (integrations-r10-2).
+      let held = false;
+      try { held = api.heldByVault?.() === true; } catch { held = true; }
+      return { available: true, allowed, consented, ...(connected ? {} : { connected: false }), ...(held ? { heldByVault: true } : {}), installed: Array.isArray(installed) ? installed : [], marketplaces: Array.isArray(marketplaces) ? marketplaces : [] };
     } catch (err) {
       return { available: true, allowed, installed: [], marketplaces: [], error: raw(EXTENSIONS_IPC.state, err).why };
     }

@@ -23,6 +23,8 @@ export interface ModeSealStore {
   read(): Promise<ApprovalsSetting | null>;
   /** Seals `s`; false when it can't be kept (no keyring, a write that failed). */
   write(s: ApprovalsSetting): Promise<boolean>;
+  /** Whether there is a keyring to seal with at all (not `basic_text`): what Home says when nothing could be kept. */
+  available?(): Promise<boolean>;
 }
 
 export class ModeSeal implements ModeSealStore {
@@ -31,6 +33,8 @@ export class ModeSeal implements ModeSealStore {
 
   /** `asyncKeyring` (macOS): the keyring is asked off the main process's thread, as the sign-in's is (auth.ts TokenStore). */
   constructor(private file: string, private box: SecretBox, private opts: { asyncKeyring?: boolean } = {}) {}
+
+  available(): Promise<boolean> { return this.usable().catch(() => false); }
 
   private async usable(): Promise<boolean> {
     if (this.box.getSelectedStorageBackend?.() === "basic_text") return false;

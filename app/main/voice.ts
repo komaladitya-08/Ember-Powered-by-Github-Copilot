@@ -266,6 +266,8 @@ export class VoiceService {
   /** Closes the speech-only window once it has been quiet for SPEAKER_IDLE_MS. */
   private speakerIdle: NodeJS.Timeout | null = null;
   private state: MicState = "off";
+  /** Whether the current "error" came from the microphone (micFault). */
+  private micError = false;
   private muted = false;
   private wanted = false;
   /** The screen is locked: no listening and no speech until it's unlocked. */
@@ -396,8 +398,8 @@ export class VoiceService {
         return;
       }
       if (paused) { this.captureGeneration++; this.cancelListenOnce(); }
-      if (s.state === "error") { this.o.log.error("voice.mic_error", { message: s.message }); this.setState("error", micHelp(s.message, this.o.micHint)); this.teardown(); }
-      else if (s.state === "lost") { this.o.log.warn("voice.mic_lost", { message: s.message }); this.micLost = true; this.interruptEnrol(); this.setState("error", `${micHelp(s.message, this.o.micHint)} Trying again…`); }
+      if (s.state === "error") { this.o.log.error("voice.mic_error", { message: s.message }); this.setState("error", micHelp(s.message, this.o.micHint), true); this.teardown(); }
+      else if (s.state === "lost") { this.o.log.warn("voice.mic_lost", { message: s.message }); this.micLost = true; this.interruptEnrol(); this.setState("error", `${micHelp(s.message, this.o.micHint)} Trying again…`, true); }
       else if (s.state === "capturing") {
         this.o.log.info("voice.mic", { device: s.device, rate: s.rate, context: s.context });
         this.micDevice = typeof s.device === "string" ? s.device.trim().slice(0, 80) : "";
@@ -463,6 +465,14 @@ export class VoiceService {
 
   get micState(): MicState {
     return this.state;
+  }
+
+  /**
+   * The "error" state is the microphone's (it failed, went away, sends only silence or no sound arrives), not the
+   * voice process's, its models' or a restart's, so first run names the microphone only then (r10-modes-copy-x10-3).
+   */
+  get micFault(): boolean {
+    return this.state === "error" && this.micError;
   }
 
   /** Which microphone Ember hears through, while it captures (null: none, or the system gave no name). */
@@ -1604,13 +1614,13 @@ export class VoiceService {
         this.o.log.warn("voice.silent", { on: m.on });
         const was = this.micSilent;
         this.micSilent = m.on;
-        if (m.on) { this.captureGeneration++; this.cancelListenOnce(); this.interruptEnrol(); this.setState("error", SILENT_TEXT); }
+        if (m.on) { this.captureGeneration++; this.cancelListenOnce(); this.interruptEnrol(); this.setState("error", SILENT_TEXT, true); }
         else if (was && this.state === "error") this.setState("waiting"); // (not another error, such as a lost microphone)
         return;
       }
       if (m.type === "stalled") {
         // The mic page says when it lost the microphone (and gets it back itself); otherwise audio just stopped.
-        if (!this.micLost) { this.o.log.warn("voice.stalled", { ms: m.ms }); this.restartLater("No sound is arriving from the microphone."); }
+        if (!this.micLost) { this.o.log.warn("voice.stalled", { ms: m.ms }); this.restartLater("No sound is arriving from the microphone.", true); }
         return;
       }
       // Every utterance the voice process sends is counted, dropped or not: a voice-sample names its request by this number.
@@ -1695,14 +1705,14 @@ export class VoiceService {
   }
 
   /** Listening broke (the voice process or the mic page died, or no sound arrives): start again after 1 s, 5 s, then every 30 s, saying so meanwhile. */
-  private restartLater(why: string): void {
+  private restartLater(why: string, mic = false): void {
     if (this.manual?.temporary) { this.cancelListenOnce(`${why} Try again.`); return; }
     this.teardown();
     if (!this.wanted || this.muted) return;
     if (this.readyAt && Date.now() - this.readyAt > 60_000) this.failures = 0; // it had been working: start the backoff over
     const ms = RESTART_MS[Math.min(this.failures++, RESTART_MS.length - 1)];
     this.o.log.warn("voice.restart", { why, inMs: ms, attempt: this.failures });
-    this.setState("error", `${why} Trying again in ${ms / 1000} s…`);
+    this.setState("error", `${why} Trying again in ${ms / 1000} s…`, mic);
     this.cancelRetry();
     this.retry = setTimeout(() => { this.retry = null; void this.start(); }, ms);
   }
@@ -1808,7 +1818,8 @@ export class VoiceService {
     if (s && (s.saying || this.speakingPage === "speaker")) this.speakingEnded();
   }
 
-  private setState(s: MicState, detail?: string): void {
+  /** `mic`: an "error" the microphone caused (micFault), not the voice process, its models or its restarts. */
+  private setState(s: MicState, detail?: string, mic = false): void {
     // While Ember learns a voice, the voice line says so whenever it has nothing of its own to say: a window that ended
     // as teaching began (a conversation's) left "Listening for “Ember”" beside the phrase to say (voice-listening-r2).
     if (s === "waiting" && detail === undefined && this.enrolling) detail = ENROL_TEXT;
@@ -1819,6 +1830,7 @@ export class VoiceService {
       if (!hearing) this.o.onLevel?.({ mic: null });
     }
     this.state = s;
+    this.micError = s === "error" && mic;
     this.o.onState(s, detail);
   }
 }

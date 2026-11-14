@@ -223,13 +223,44 @@ open -n -W --stdout ~/ember-doctor.txt -a /Applications/Ember.app --args --docto
    do it), **Try me out** (stop Ember, ask it something, and say “Hey Ember” if you like) and **Ready to start**, a
    summary of what you chose.
 2. To ask, press Ctrl+Alt+Space (on Windows Win+Alt+Space, on a Mac Control+Shift+Command+Space; see **Shortcuts**),
-   type your request and press Enter. Ember answers in its bubble beside your cursor, and asks "May I?" before it does
-   something in an app.
+   type your request and press Enter. Ember answers in its bubble beside your cursor. When and how it asks "May I?"
+   before it acts in an app is your choice: see **How Ember asks**, below.
 3. To stop, press Ctrl+Alt+X (on Windows Win+Alt+X, on a Mac Control+Shift+Command+X) or say “Ember, stop”:
    everything stops at once.
 4. If something doesn't work, run the setup check (`ember doctor`, the AppImage's `doctor`, `.\ember-doctor.cmd` on
    Windows, or the `open` command above on a Mac), or open Ember's settings with Ctrl+Alt+E (on Windows Win+Alt+E, on
    a Mac Control+Shift+Command+E) or by starting Ember again.
+
+## How Ember asks
+
+How much Ember asks before it acts is your choice, in Settings › **Apps & privacy** › **How Ember asks**. Each mode
+has its own card that says what it means, and a mode is in use only once you agree to its card.
+
+- **Interactive** is the default (first run turns it on with its card; switch it off there if you like). For ordinary
+  steps, such as a first step in an app, using your mouse and keyboard or moving text from another window, Ember tells
+  you what it's doing instead of asking. It asks every time before anything risky: sending, posting, sharing,
+  deleting, overwriting, paying, installing, signing out, changing security settings or answering a dialog's question,
+  and before a command that deletes, publishes, touches passwords or keys, changes the system or downloads and runs
+  code (unless you asked for exactly that command: then it tells you and gives you 4 seconds to stop it).
+- **Assisted** is Interactive with a check: before Ember asks, a lighter AI model reads the step against what you
+  asked, in your own words. When it matches, Ember goes ahead and tells you, a risky step included; otherwise it asks.
+  A command that would touch passwords or keys, keep running after you stop it, run a program Ember doesn't know or
+  do what your own words for the task rule out always asks, and so does every command wherever you or your
+  organisation set commands to ask every time, or on a computer reached over SSH whose own administrator doesn't allow
+  the check there.
+- **Autopilot** doesn't ask. Ember sends, deletes, pays, installs and runs dangerous commands, as an administrator
+  too, and tells you as it goes, with a few seconds to stop each dangerous command: a risk you accept on its card. It
+  still asks before a command that would show passwords or keys, keep running after you stop it, or whose effect it
+  can't tell, one your own words for the task rule out, and wherever you or your organisation set commands to ask
+  every time or the administrator of a computer reached over SSH doesn't allow Autopilot there. Only in Autopilot
+  does Ember fill in logins and cards from its vault (below).
+
+In every mode “Ember, stop” or the stop shortcut stops everything at once, Ember never retries a step you said no to,
+never acts in your system's password prompts or your terminals, never lets the AI model see a password, and **What
+Ember did** lists every step. Until you agree to Interactive's card, or where your organisation keeps Ember there,
+Ember also asks before its first step in an app, before using your mouse and keyboard, before pressing OK on an app's
+message box and before moving text between apps. Your organisation can cap the mode or turn the modes off. You can
+also change mode by voice ("Ember, switch to Assisted"; see **Shortcuts**).
 
 ## Hear about new versions
 
@@ -445,10 +476,11 @@ the others are off until you turn them on in settings (**Commands**, **Computers
 it means.
 
 - **Commands** run in Ember's own **Ember commands** window, never in your terminal, where you can watch and stop
-  them. Most run straight away. Ember stops and asks before anything that deletes or overwrites data, pushes or
-  publishes anywhere, touches passwords or keys, changes the system, or downloads and runs code; when you asked for
-  exactly that yourself ("delete build/", "can you delete build/?", but not a question, a how-to or something already
-  done), it says so and gives you 4 seconds to stop it. Asked for by voice, such a command asks instead on Windows, on
+  them. Most run straight away. In Interactive, the default, Ember stops and asks before anything that deletes or
+  overwrites data, pushes or publishes anywhere, touches passwords or keys, changes the system, or downloads and runs
+  code; when you asked for exactly that yourself ("delete build/", "can you delete build/?", but not a question, a
+  how-to or something already done), it says so and gives you 4 seconds to stop it. Assisted and Autopilot ask less
+  (**How Ember asks**, above). Asked for by voice, such a command asks instead on Windows, on
   macOS and on Linux without parec, where Ember can't tell your voice from what your speakers play. It reads a shell
   script before running it: a script that does any of that always asks, and so does one it can't read in full, as most
   real build and install scripts are. It never runs a command that would read or change its own safety

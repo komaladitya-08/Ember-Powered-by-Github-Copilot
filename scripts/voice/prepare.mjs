@@ -4,7 +4,8 @@
 //   --clips            also (with the TTS voice) synthesizes new test clips into <dir>/clips, a scratch folder.
 //   --voice <name>     the TTS voice: amy (the default, which the committed clips are in) or ryan, another speaker
 //                      (Voice Match's end-to-end test needs a voice that isn't the owner's); --clips then go into
-//                      <dir>/clips-<name> (amy's into <dir>/clips).
+//                      <dir>/clips-<name> (amy's into <dir>/clips). Another voice's "wake" comes in four renditions
+//                      (wake.wav, wake-2.wav, wake-3.wav, wake-4.wav), for that test to pick one Ember hears properly.
 //   --update-fixtures  as --clips, but into test/fixtures/voice, replacing the committed clips. The voice is random
 //                      on every run, so new clips must pass the voice tests before they're committed (git restore
 //                      test/fixtures/voice puts the old ones back); the committed clips keep the tests repeatable.
@@ -95,15 +96,23 @@ export const CLIPS = {
 // Into a scratch folder unless the committed clips are to be replaced (--update-fixtures).
 const clips = updateFixtures ? path.join(root, "test/fixtures/voice") : path.join(dir, voiceName === "amy" ? "clips" : `clips-${voiceName}`);
 fs.mkdirSync(clips, { recursive: true });
+// The voice comes out a little different on every rendition, and the wake's check now and then takes back the wake of
+// one ("Hey Ember, turn on night light." heard as "Amber turner" a moment after the phrase: 3 of 600 renditions and
+// frame placements of ryan's, measured on the C API). Voice Match's end-to-end test must hear its other voice's wake
+// properly before it can test the voice, so another voice's "wake" comes in four renditions for it to pick from
+// (test/smoke/voice.mjs otherWake). The committed clips are amy's one each.
+const TAKES = voiceName === "amy" ? {} : { wake: 4 };
 for (const [name, text] of Object.entries(CLIPS)) {
-  const parts = text.split("|").map(t => tts.generate({ text: t, sid: 0, speed: 1.0 }).samples);
-  const gap = new Float32Array(16000 * 0.9);
-  const lead = new Float32Array(16000 * 0.6);
-  const pieces = [lead, ...parts.flatMap((p, i) => (i ? [gap, p] : [p])), lead];
-  const samples = new Float32Array(pieces.reduce((n, p) => n + p.length, 0));
-  let at = 0;
-  for (const p of pieces) { samples.set(p, at); at += p.length; }
-  sherpa.writeWave(path.join(clips, `${name}.wav`), { samples, sampleRate: 16000 });
+  for (let take = 1; take <= (TAKES[name] ?? 1); take++) {
+    const parts = text.split("|").map(t => tts.generate({ text: t, sid: 0, speed: 1.0 }).samples);
+    const gap = new Float32Array(16000 * 0.9);
+    const lead = new Float32Array(16000 * 0.6);
+    const pieces = [lead, ...parts.flatMap((p, i) => (i ? [gap, p] : [p])), lead];
+    const samples = new Float32Array(pieces.reduce((n, p) => n + p.length, 0));
+    let at = 0;
+    for (const p of pieces) { samples.set(p, at); at += p.length; }
+    sherpa.writeWave(path.join(clips, take === 1 ? `${name}.wav` : `${name}-${take}.wav`), { samples, sampleRate: 16000 });
+  }
 }
 fs.writeFileSync(path.join(clips, "clips.json"), JSON.stringify(CLIPS, null, 2) + "\n");
 console.log(`models in ${models}\nTTS voice in ${ttsDir}\nclips in ${clips}${updateFixtures ? " (run the voice tests before committing them; git restore test/fixtures/voice puts the old ones back)" : ""}`);

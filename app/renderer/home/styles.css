@@ -770,6 +770,9 @@ html { scroll-padding-top: 16px; }
 .consent .ext-consent-title { margin: 0 0 8px; font-weight: 600; color: var(--fg); }
 .ext-consent-tool { min-width: 0; overflow-wrap: anywhere; }
 .ext-consent-tool .ext-tool-desc { margin: 3px 0 0; }
+/* What the model reads of a tool's inputs (integrations-c9-1): whole, in the footnote's size, under its description. */
+.ext-tool-inputs { margin: 2px 0 0; padding-left: 16px; display: grid; gap: 2px; color: var(--muted); font: var(--type-footnote); list-style: disc; }
+.plain-list .ext-tool-inputs li { display: list-item; }
 .ext-consent-lines { margin: 0 0 12px; padding-left: 18px; display: grid; gap: 6px; color: var(--muted); font: var(--type-callout); text-wrap: pretty; }
 .plain-list .ext-consent-lines li { display: list-item; }
 /* In a list, the card's Not now is the bordered button again (the list's buttons are text buttons). */

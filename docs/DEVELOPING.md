@@ -106,7 +106,7 @@ row should be green on RHEL 8.4 with GNOME on Xorg. If `npm ci` reports that Ele
 | `npm run test:integration -- test/integration/vault-leak.test.ts` | The vault's leak test ("The vault", below): every kind of entry filled with canary values on the real runtime with the scripted model, then looked for in everything the model was sent and everything Ember wrote (runs anywhere); with `EMBER_ATSPI_TEST=1` on a desktop with pyatspi, also a real Electron sign-in page (its site read, the helper's fill refused) and a GTK sign-in window filled through the real helper and X11 |
 | `npm run test:integration -- test/integration/borrow-live.test.ts test/integration/desk-robust.test.ts` | Borrowing the mouse and keyboard on a private Xvfb (other keyboard layouts need `setxkbmap`; skipped without Xvfb), and Ember's desk when things go wrong (its display dying, Ember killed). Need only Xvfb (and `xauth`, `dbus-daemon` for the desk), no desktop session |
 | `DISPLAY=:55 scripts/demo/as-demo-user.sh env PATH="$PATH" node test/demo/m6-tour.mjs out/` | Guide tour: Ember points, the user clicks; then a question about the selected text |
-| `node scripts/voice/prepare.mjs` | Downloads the standard verified speech models into `.cache/voice`, including the default Kitten Nano voice (63.8 MB), for the voice tests and tour. `--tts-voice` also fetches a separate test-only Piper Amy/Ryan voice (pinned by SHA-256), which the evaluation's missed-wakes gate needs; `--clips` synthesises new test clips into `.cache/voice/clips`, leaving the committed ones alone (with `--voice ryan`, in another speaker's voice into `.cache/voice/clips-ryan`, for the voice end-to-end test's Voice Match); `--update-fixtures` writes them over `test/fixtures/voice` instead. The voice is random on every run, so check new clips with the voice tests before committing them (`git restore test/fixtures/voice` puts the old ones back) |
+| `node scripts/voice/prepare.mjs` | Downloads the standard verified speech models into `.cache/voice`, including the default Kitten Nano voice (63.8 MB), for the voice tests and tour. `--tts-voice` also fetches a separate test-only Piper Amy/Ryan voice (pinned by SHA-256), which the evaluation's missed-wakes gate needs; `--clips` synthesises new test clips into `.cache/voice/clips`, leaving the committed ones alone (with `--voice ryan`, in another speaker's voice into `.cache/voice/clips-ryan`, for the voice end-to-end test's Voice Match, with four renditions of its wake, of which the test uses the first that Ember's voice engine hears properly off-line); `--update-fixtures` writes them over `test/fixtures/voice` instead. The voice is random on every run, so check new clips with the voice tests before committing them (`git restore test/fixtures/voice` puts the old ones back) |
 | `node scripts/voice/match-bench.mjs <speakers> [--cache <file>]` | Voice Match that keeps learning (docs/ASSISTANT.md §7): false rejects and accepts before and after learning, in the enrolment's room and on another microphone, and the drift attack, on a folder of speakers' 16 kHz clips (LibriSpeech dev-clean through ffmpeg, as its header says). `--cache` keeps the voiceprints (numbers only) for trying other limits. Needs the speech models |
 | `node scripts/voice/words-bench.mjs [--show]` | Personal vocabulary for recognition (docs/ASSISTANT.md §7): word error rate of the voice clips and of synthesised requests with app and people's names, raw, corrected against a lexicon, and with corrections taught from a first take. Needs `node scripts/voice/prepare.mjs --tts-voice --voice ryan` |
 | `DISPLAY=:55 scripts/demo/as-demo-user.sh env PATH="$PATH" node test/demo/m5-tour.mjs out/` | Voice tour: a WAV file plays the microphone; the video gets the audio |
@@ -168,7 +168,7 @@ environment, only through `scripts/runtime-env-live.sh`, which gives it a networ
   **Check again**, which reads the rows anew once you have run the command or changed the setting yourself (Home's
   setup check has it too; on Linux a missing pyatspi is looked for at once, not only every 30 s, in the background, so Ember
   keeps answering while that import takes up to 5 s) (**Show the details** has every
-  row); you try the stop shortcut, “Hey Ember” with a level meter that follows your request after the wake word (only while it is on, agreed to, allowed by the organisation, not muted and listening) and a first
+  row); you try the stop shortcut, “Hey Ember” with a level meter that follows your request after the wake word (only while it is on, agreed to, allowed by the organisation, not muted and listening; on, with the microphone not working or turned off, the step and **Ready to start** say so and name the microphone, never that it is off; on, but not listening for another reason, such as damaged speech models or the voice process failing, they say Ember can't listen right now and that Settings › Voice says why, without blaming the microphone) and a first
   request in the ask box; and **Ready to start** sums it up before **Start** (neither says Ember's name, nor does “Setup is finished.”, which a screen reader is told as Start lands on Home's status line: after a changed consent “Hey Ember” already listens, first-run-r6-1). Nothing is read, heard or sent before
   **Agree and continue** (it saves the consent; the steps after it can't be reached without it). Back works on every
   step but the first. A run that agreed but didn't finish opens at sign-in next time. After an update that changed the consent
@@ -221,7 +221,9 @@ environment, only through `scripts/runtime-env-live.sh`, which gives it a networ
   keeps this session's questions, answers and task results (in memory only by default; quitting or signing out forgets them).
   - **Keep my recent conversation after Ember closes** (`keepConversation`, off by default; Home › Conversation): saves the
     latest 60 messages (at most 2 MiB) in `conversation.json` in the data folder (mode 0600, folder 0700; written
-    atomically through a temp file, fsync and rename, last state wins), and shows them again after a restart once the
+    atomically through a temp file, fsync and rename, last state wins; when the desktop session ends (log-off, shutdown,
+    the display going away) the agent stops as quitting stops it and the latest state is written at once, an answer
+    under way as it stands), and shows them again after a restart once the
     signed-in account is known and is the one that saved them (a file of another account, or while the account can't be
     told, is never shown; another account's file is deleted). The saved lines are for the person to read, and Home says
     so under the last of them, with their day beside their time: the model starts a fresh session at every launch and
@@ -351,7 +353,7 @@ environment, only through `scripts/runtime-env-live.sh`, which gives it a networ
     `isDefault`) is listed as **Built into Copilot** and one the organisation's managed settings provide as **Set by
     your organisation**, neither with **Remove** (the runtime refuses to remove them, and main says so in a sentence
     rather than nothing); a plugin from Copilot's own says it is listed in a marketplace built into Copilot, never
-    one "you added" (`FEATURE_CONSENT_VERSION.extensions` 3). Browsing fetches the list from GitHub (Copilot's own) or
+    one "you added" (since `FEATURE_CONSENT_VERSION.extensions` 3). Browsing fetches the list from GitHub (Copilot's own) or
     from the address the user added. A list Ember couldn't fetch or read says so (`browseFailed`: "Ember couldn't
     reach “<name>”. Check the network, then press Browse again." when git couldn't reach it, a proxy refused or TLS
     inspection got in the way) with **Browse again**, never "This marketplace lists nothing yet.", which is only for a
@@ -364,7 +366,8 @@ environment, only through `scripts/runtime-env-live.sh`, which gives it a networ
     only `https://github.com` and its subdomains), shows **Waiting for you to finish in your browser** with **Check
     again**, then **Connected**; one whose sign-in lapsed says **Needs you to sign in again**.
   - Every add and connect first shows a consent card in place: only you add, read-only tools run once you agree,
-    Ember asks before any tool that changes or sends anything, results are information and never instructions, and
+    Ember asks before any tool that changes or sends anything except in Autopilot, where it goes ahead and says so
+    (`ASKS_BEFORE_CHANGES`, `FEATURE_CONSENT_VERSION.extensions` 4; integrations-r10-1), results are information and never instructions, and
     where the item reaches (the marketplace's source, or GitHub's Copilot service for a connector).
     The first yes also records extensions' own consent (`settings.extensions`, `FEATURE_CONSENT_VERSION.extensions`;
     `consentCard`'s words are pinned to that version in extensions-runtime.test.ts) and turns extensions on; nothing
@@ -531,7 +534,15 @@ Interactive, and the agreement to Assisted's or Autopilot's card, count only whe
 recorded itself, which it seals with the system's keyring in `approvals-seal.bin` (0600) after every change made in
 Home or by voice or typed words. Until that seal is read at start Ember is at most Interactive; where it doesn't
 match, or there is none, the file is put right (`autonomy.unsealed`): at most Interactive, those two cards not agreed.
-Without a keyring (`basic_text`) nothing is sealed, so an agreement to Assisted or Autopilot lasts until Ember quits.
+Without a keyring (`basic_text`) nothing is sealed, so an agreement to Assisted or Autopilot lasts until Ember quits,
+and Home says so under the modes while it is in force ("Autopilot lasts until Ember closes: this computer has no
+keyring Ember can use to keep it safely, so Ember starts in Interactive next time", or "…so Ember asks before each
+step next time" when Interactive's own card was never agreed: r10-memory-x10-4); a seal that couldn't be written
+for another reason says "Ember couldn't save it safely on this computer"). At the next start, once a choice was put
+back, the note opens with why ("Your choice of Autopilot couldn't be kept when Ember started, because this computer
+has no keyring Ember can use…", or, for a seal that didn't match, "Ember couldn't confirm your choice of Autopilot
+when it started…") until a mode is chosen again (`ModeRecord.notes`, reliability-r10-1). The agreement is never kept
+less safely to spare it: its card is read again.
 A lower mode or a withdrawn card in the file is taken, at start or while running, and recorded (`via: "file"`). Ember
 also never acts in an app's window whose title shows a file in its data folder or in the organisation's policy folder
 ("settings.json (~/.config/ember) - gedit"). While
@@ -591,7 +602,11 @@ call to an extension's tool that would ask is said in the conversation's bubble 
 would ask is announced where neither administrator asks for a click before every action or forbids "Always" or
 acting; the step's stamp says it was announced, never that you said yes, and the remote's own check accepts that only
 where its own administrator allows Autopilot (it refuses the step otherwise). Autopilot keeps every refusal exactly
-as Interactive has it (password, card and secret fields, your terminals, never-look and Ember's own windows, the
+as Interactive has it (password, card and secret fields, your terminals, never-look and Ember's own windows, its
+settings, audit log and policy open in another app or their folder's path typed in one step (and a step where Ember
+can't tell a file or folder in front of it isn't one of those, such as “settings.json — Kate”, a project's settings.json
+in VS Code, a file manager titled “audit”, or a Delete, cut or rename in the folder that holds Ember's (“.config”,
+“Local”, “Application Support”) or of that folder itself from Home), the
 system's sign-in and password prompts, desktop-level keys and Ember's own shortcuts, making a file executable),
 consent and each first-use card, masked screenshots, the audit log (a step that can't be recorded isn't taken), Stop,
 the limits on tasks, steps, time and actions a minute, and your organisation's policy: `confirmEveryAction`,
@@ -728,14 +743,23 @@ switch (V2-S8); in a follow-up window and after “Hey Ember” they stop as bef
 no answer (most likely one misheard: one test voice's lone “Allow.” comes out “Hello”) make the question say once how
 to answer (`unclear`). So do, there and in a follow-up or a conversation while a question waits, up to four words
 that start like an answer and aren't one (“Yes, but wait.”, “No, hang on.”: `nearAnswer` in app/shared/spoken-answer.ts),
-and, in any window, a yes asked as a question said by name (“Ember, okay?”: `askedYes`): nothing of them is sent, where
+up to six with a no word or a no of more than one word anywhere, not asked as a question (“No, I don't want that.”,
+“That's not what I meant.”, “Leave it, I said.”), a
+hold (“Wait.”, “Hold on.”) and an assent that isn't a yes (“Okay then.”, “Perfect.”, “Sounds great.”, which vanished as
+closers), and, in any window, a yes asked as a question said by name (“Ember, okay?”: `askedYes`): nothing of them is sent, where
 they went to Copilot or vanished (V2-F5, V2-F7). “Why?” and “Which file?” are requests as ever. So are words that hold
 a stop (“No, stop the task.”, “Okay, stop typing.”): never a near-miss, they reach main, which stops everything on
 them while a task is at work (voice-product-y9-1). “Okay, Ember.”, which
 the spotter hears as “Hey Ember”, is only a wake and answers nothing: nothing tells whose the “Okay” before the name
 is, and a video's or a colleague's rode on the user's name as their yes (voice-product-y9-2); what others say right
 after the user's bare “Hey Ember” goes nowhere either (voice-product-x9-1). “Okay, that's all.”
-still ends a conversation or a follow-up, the closers judged before the near-miss check (voice-product-x9-3). The answer window opens no conversation, is
+still ends a conversation or a follow-up: what ends one is never a near-miss (voice-product-x9-3). Everyday refusals
+that start with no no word are noes (“Of course not.”, “I said no.”, “Hell no.”, “Never.”, “Leave it.”), and so is a no
+said in short parts that are each one (“No thank you, leave it.”, “Nope, not today.”), and a no with a lead or a tail
+that only a no takes here (“Just leave it.”, “I said leave it.”, “Thanks, leave it.”, “Leave it for now.”, “Leave it
+be.”; the same words around a yes, “Thanks, go ahead.”, are no answer): they vanished in the answer window or went to
+Copilot as a request while the question waited (voice-listening-r10-1, r10-voice-x10-1). Noes are heard more widely
+than yeses, since a no is anyone's and declining is the safe side; no yes was added. The answer window opens no conversation, is
 no follow-up, ends with the question, and takes no yes said over other sound unless it is said with the name (the
 question then says so, once); a no is anyone's there too, as it is in a conversation and a follow-up: “No.”, “Not
 now.” and “Don't do it.” over a playing video were dropped in the answer window and a conversation, and the question
@@ -834,16 +858,14 @@ it builds on:
     the one checked as the session loaded. Nothing Ember asks a server can stand in for that: a server can answer
     Ember's question as agreed and the runtime's with new text (integrations-x9-1: it did, in every request of the
     conversation, 5 of 5).
-  - *When the runtime does hear that a server's list changed* (`mcp.tools.list_changed`: a remote server, which has
-    no launcher between, or anything that got past it), that word is the change. The server is disabled in the
+  - *When the runtime does hear that a server's list changed* (`mcp.tools.list_changed`: anything that got past the
+    launcher), that word is the change. The server is disabled in the
     session at once, unasked, the conversation is tainted and reloads between turns, where the runtime's first list
     is checked against the pins as at every load. A server that says it again in the same conversation stays out
     of it until the conversation ends, and each of its tools whose entry in its own list then differs from the pin is
     marked changed (off until the user agrees again); the others come back in the next conversation. The event is heard from the
-    session's first moment (`onEvent` in the session's config). Not closed for a remote server: a notice that
-    reaches the runtime a few milliseconds before it builds a request can put the new text in that one request,
-    before Ember hears of it; after that the server is out and every extension call asks. Closing it needs the
-    runtime not to refresh a tool list mid-session, or Ember between the runtime and a remote server too.
+    session's first moment (`onEvent` in the session's config). A remote server's notice no longer reaches the
+    runtime either: the launcher stands between them too (below).
   - *After each of a server's calls*, before the result goes back, Ember asks that server for its list
     (`session.rpc.mcp.listTools`, at most 1.5 s, and not again in that session once unanswered) and compares each
     admitted tool with its pin whole, hints too: a head start on a server that changes a tool as it answers and says
@@ -859,8 +881,16 @@ it builds on:
   Read-only means `readOnlyHint` true with neither `destructiveHint` nor `openWorldHint` true, on a stdio server whose
   tool list hasn't changed this session: every call to a remote (HTTP) server's tools asks, since it sends its
   arguments there. Anything else: the Confirmer asks every time ("Use “post_message” from Slack? With "{…}"."), with
-  Allow and Not now, never Always. A yes counts only if the gate still allows the call when it comes. Every decision,
-  answer and result is an `extension` audit entry, with sizes only.
+  Allow and Not now, never Always. Where the sentence shows only the first 200 characters of the arguments, the
+  question carries all of them to read, one field to a line (`argsDetail`, the question's `detail`), and Allow waits
+  until all of it has been in view, as for long typed text (integrations-c9-3). Both write out every hidden
+  character (`writeOutHidden`: format characters such as the tag characters that spell a sentence nothing draws,
+  variation selectors, blank look-alikes) as `\u202e` or `\u{e0041}`, and so does the review card for each tool's
+  description and the words of its inputs (r10-integrations-y10-1). A yes counts only if the gate still allows the call when it comes. Every decision,
+  answer and result is an `extension` audit entry, with sizes and names only (the item's and the tool's, through
+  `plainName`), and What Ember did draws a line for each (integrations-c9-2: the cards promised every use was there,
+  and it drew none): asked, answered, refused, without asking, done and didn't work, and an item added, agreed to,
+  removed or a tool turned off.
 - **Hints changed mid-session.** The runtime's tool list has no hints, so what the model is shown can't tell a
   change of hints alone (`readOnlyHint` to `destructiveHint`); the server's own list, asked after each of its calls,
   can, and such a tool is turned off as above. Ember decides by the hints it pinned, never by what a server says
@@ -868,7 +898,20 @@ it builds on:
 - **Failures are untrusted too.** The SDK can't rewrite a failed call's text, so `onPostToolUseFailure` adds Ember's
   note that it is untrusted data, audits its size, and taints the conversation (any extension failure).
   For the same reason no extension is called once Ember has filled something from its vault in this run (the
-  gate's `vaultFilled`; "The vault", After a fill): the failure's text couldn't have the value taken out.
+  gate's `vaultFilled`; "The vault", After a fill): the failure's text couldn't have the value taken out. At the
+  first fill the conversation reloads without extension tools (`vaultFilledNow`; `forSession` gives none from then
+  on), and Home says **Off until Ember starts again** for each item, with why (integrations-r10-2: it said
+  **Ready** while the gate refused every call).
+- **Ember's own files.** A call whose arguments name Ember's data folder or the organisation's policy folder
+  (`~/.config/ember/settings.json`, `%LOCALAPPDATA%\ember`, a pattern such as `~/.config/emb?r/**`, or a relative path
+  that climbs out of a local server's own folder into it) is refused in every mode, Autopilot included, as the same
+  path typed in an app or named in a command is. So is a call of a tool that changes things given the folder that
+  holds it (`~/.config`, `%LOCALAPPDATA%`, `~/Library/Application Support`, the home), which moving or deleting takes
+  Ember's data with (integ-y-1). One that names one of Ember's files or folders by name only (`settings.json`, `audit`,
+  `EMBER` on Windows and macOS), or a file's content that only mentions the folder, asks every time, a read-only
+  tool's too, saying why (“It may reach my own settings, audit log or policy, which are for you only.”), and
+  Autopilot refuses it (gate.ts `emberReachOf`, integ-x-2, integ-y-2: a file tool could rewrite settings.json,
+  announced, in Autopilot).
 - **Taint lasts the conversation**, across reconnects; it ends when the conversation is forgotten.
 - **Results are untrusted.** `onPostToolUse` replaces each result with `<extension_result untrusted="true">` text (`<`
   escaped, capped at 60 000 characters, images dropped); `injection.ts` scans it, and a flagged result makes every
@@ -879,9 +922,15 @@ it builds on:
   would be readable by every user.
 - **Pins.** At install and at each start (and when an item is turned on) Ember lists each server's tools itself
   (`probe.ts`, in its own process group, ended whole) and compares SHA-256 pins of name, description, schema and hints
-  (`pin.ts`); a changed tool is off until the user agrees again in Home. Known gap: **Agree again** (and install)
-  pins the tools the server serves at that moment without showing them to the user first; the card naming the served
-  tools, with a hash carried back on the yes, is a follow-up.
+  (`pin.ts`); a changed tool is off until the user agrees again in Home. The review card (**Review and agree**,
+  **Review tools**) shows each served tool's name, description and badge, and under them every word of its input
+  schema the model reads too (`schemaWords`: each parameter by its path with its title, description, choices,
+  default and examples, and the schema's own description; every key that isn't JSON Schema's own word, with its
+  value, numbers and booleans too, and the names in `patternProperties`, `dependentRequired` and their like; only
+  JSON Schema's own words, a dialect's own `$schema` address and a `#/$defs/…` reference to a definition on the card
+  are left out; integrations-c9-1 and r10-integrations-x10-1: the model read parameter descriptions, such keys and
+  names the card never showed). Its yes carries a hash of exactly that list (`reviewToken`), so a server that changes
+  between the card and the click is refused.
 - **Servers' environment.** The runtime would start a stdio server with its whole environment (the spike saw
   `GH_TOKEN` and cloud keys reach it), so it starts Ember's launcher (`dist/app/mcp-launch.cjs`, plain Node), which
   starts the server with `appEnv()`'s allowlist and the plugin's own values only, no shell, and records its process id
@@ -893,7 +942,25 @@ it builds on:
   own environment; it is not a sandbox. A stdio server runs as the user and can read what the user can, including the
   environment of the Copilot runtime that started it (`/proc/<pid>/environ` on Linux), which holds the GitHub token
   (the SDK passes it as `COPILOT_SDK_AUTH_TOKEN`). Install only extensions you would run yourself. `node` is Ember's own
-  Node. macOS has no plain-Node mode, so stdio servers don't run there yet; remote servers must use HTTPS.
+  Node. Remote servers must use HTTPS (plain http on loopback only).
+- **A remote server runs through the launcher too** (integrations-c9-4). Given a remote server's address, the
+  runtime followed its 307 to another host with the plugin's header and the call's arguments, and gave the model that
+  host's answer: a request from the user's own computer, loopback and the LAN included, to an address no consent
+  card names. So the runtime never gets a remote server's address: it starts the launcher as a stdio server with the
+  address and headers in its spec (`remote`), and the launcher's `bridge()` posts each message to that address alone
+  (the server's `mcp-session-id` and protocol version carried), with `redirect: "manual"`: any 3xx is refused, and the
+  runtime is answered "The extension's server sent Ember to another address…" (also for a sign-in it can't do, and a
+  server it can't reach, so no request waits). Answers, JSON or an event stream, go through `passedOn` like a stdio
+  server's lines, one message a line, so a remote server's notice that its list changed never reaches the runtime.
+  The launcher reaches a proxy from the environment (`NODE_USE_ENV_PROXY`, the proxy without its user name and
+  password). macOS has no plain-Node mode, so neither stdio nor remote servers run there yet, and **Add** says so.
+- **Only what can be agreed to is added** (integrations-c9-5). Adding probes each server; one that didn't start (its
+  program isn't installed), didn't answer or needs a sign-in Ember can't do would keep the item from ever being agreed
+  to, so the item isn't added and Home says why in one sentence ("Ember didn't add “weather”: its server didn't start.
+  Check that the program it runs is installed, then add it again."). An item added earlier whose server stops
+  starting says **Didn't start** with its reason, never **Waiting for you to agree**; **Review and agree** probes it
+  again, but where no try can change it (no launcher on this computer, a server Ember can't run: `stuck`) only
+  **Remove** is offered (r10-integrations-x10-4).
 - **Hot reload.** Installing, removing, turning an item on or off, agreeing again and the kill switch move
   `generation`; the host reconnects between turns (the conversation resumed), as memory does. The kill switch moves
   it only when the conversation had extension tools loaded or a server launched, so a stop with none installed or
@@ -1320,14 +1387,29 @@ list's "1. La La Land." is Kitten's too. (One way only: in an answer said in ano
 English outside what it quotes, with none of that language's short words and no letter of another script, is
 Kitten's, so "Shall I reply to it?" after a Spanish email read out is asked in English, however the answer opened
 ("Sure.", "José wrote:"); "Il s'appelle Gone with the Wind." and "Ошибка: The file was not found." keep their answer's
-voice, but a piece with none of its language's short words ("Er heißt Gone with the Wind.") is still Kitten's.) The
-answer is judged in passages: after a lead-in said in Kitten's voice (a piece that ends with a colon: "Here is the email
+voice, but a piece with none of its language's short words ("Er heißt Gone with the Wind.") is still Kitten's. After
+a passage read out, a short piece with none of that language's short words, no letter with an accent outside a name
+and one of Ember's own closing words ("want", "shall", "reply", "anything", "else", "translate", "or", "to", "you": app/voice/spoken.ts
+`ownClosing`; a piece of one word only with "reply", "translate", "anything", "forward" or "draft", so a Dutch email's
+own "Help!" keeps its voice: r10-voice-x10-3), or the pronoun "I" after its first word, is Kitten's too: "Want me to reply?", "Shall I reply?" and
+"Anything else?" took the passage's voice, or went unsaid without one, in 28 of 44 cases while the follow-up window
+opened for them (voice-speaking-r10-1; now none, also after a lead-in that opens with a name and a saying verb, "José
+wrote:" (r10-voice-y10-1), though not yet after a bare "José:"; and the passage's own sign-offs, "Grazie mille, Marco.", keep its
+voice).) The answer is judged in passages: after a lead-in said in Kitten's voice (a piece that ends with a colon: "Here is the email
 from José:", also one that came in the same piece as the passage's first sentence), and from the first sentence that may
 be another language's in an answer that looked English so far ("Okay, reading it now."), what follows is judged by
 itself, from its own first 60 letters, and waits until then unless it is clearly English: counted with the lead-in, whose
 English short words outnumber a first sentence's, a Spanish, Italian or Portuguese email was read by Kitten for 14 of
 16 ordinary lead-ins and layouts (now none; an Italian or Portuguese passage's first sentence with no accent still is,
-after a lead-in without a colon or on the same line). A passage is judged without the clearly English pieces it ends
+after a lead-in without a colon or on the same line). A message's header lines at the start of what is judged ("From:
+José", "To:", "Subject: Proyecto", "Date:": `HEADER`) are Kitten's, each said as it comes, when the value is in no
+other language and its only accented letters are in a name (a subject's first word counts as its own: "Subject: Reunión
+del lunes", "From: Иван" and "Subject: 会议" are judged with the message, since Kitten reads only English:
+r10-voice-x10-2), and so is a lead-in in no
+other language whose only accented letters are in a name ("José's email says:": `leadsIn`); the message after them is
+judged by itself. Judged as its first letters, the sender and subject diluted its short words, and a Spanish or Italian
+email was Kitten's with English sounds in 22 of 44 cases for "**From:** José / **Subject:** Proyecto", and after
+"José's email says:" in 3 of 5 languages (voice-speaking-r10-2, voice-speaking-c10-1; now none). A passage is judged without the clearly English pieces it ends
 with: counted with Ember's own "Shall I reply to it?", a chat message of two sentences was Kitten's for 15 of 15 (now
 6: a passage under 60 letters still needs two different short words of its language, or Spanish's "¿" or "¡", so
 "Ciao Alex, come stai? Ci vediamo domani." and "Olá Alex, tudo bem? Até amanhã no escritório." are Kitten's). Until then a piece that may be another language's ("Bien sûr !", with letters
@@ -1496,6 +1578,7 @@ On Linux (Windows: §10.6, macOS: §11.6):
 | App profiles used on the desk (kept separate from yours) | `~/.config/ember/desk-profiles/` |
 | Computers added over SSH, WSL's switch, and each computer's command switches | `settings.json` (`targets`, `commands`) |
 | The approval mode chosen, and each mode's card as agreed to (How Ember asks); the same as Ember last recorded it itself, sealed with the keyring (0600) | `settings.json` (`approvals`); `~/.config/ember/approvals-seal.bin` |
+| The yes to your own model provider's card, as Ember recorded it, sealed with the keyring (0600) | `~/.config/ember/provider-seal.bin` |
 | When the update check last asked GitHub, so a restart keeps to once a day (the first look waits until a day after it, at most a day; a failed look counts), and the last newer version it told you of, still shown as out after a restart until you run it (`updates.told`) | `settings.json` (`updates.checkedAt`, `updates.told`) |
 | SSH's password helper: a two-line wrapper, and a socket for each connection while it asks | `~/.config/ember/ssh/askpass`; `$XDG_RUNTIME_DIR/ea-*/` |
 | Node.js downloaded for other computers (SHA-256 checked) | `~/.config/ember/remote/runtime/` |
@@ -1525,6 +1608,7 @@ Environment variables for development:
 | `EMBER_PYTHON=/usr/bin/python3.12` | Python for the accessibility sidecar (Linux; default: `/usr/libexec/platform-python`, then `python3`) |
 | `EMBER_AX_PROVIDER=fake` | Windows and macOS, development only: the accessibility host reads a pretend desktop instead of the real one (a small bench, or the windows in the JSON file `EMBER_AX_FAKE_DESKTOP` names) |
 | `EMBER_TEST_EXTENSIONS=demo` | Development only: settings' **Extensions** section runs on a pretend runtime held in memory (`app/main/extensions-demo.ts`), which reaches no network, runs nothing and opens no browser: `demo` has marketplaces, plugins (one with a changed tool) and connectors (one needing a sign-in again), `empty` has nothing added, and `managed` is turned off by the organisation. For the render checks |
+| `EMBER_TEST_ASK_READ=off`, `delay:<ms>` or `skip:<stage>` | Development only: the Ask box's read of the window it opened over is skipped (`off`), starts that long after the box shows (up to 30 000 ms; `ask.read_started` is logged when it does), or runs with one stage left out (`read`: no accessibility host read at all; `lookup`: no tree walk; `texts`: no text and selection reads; `looks`: no looks around secret fields, and then nothing of the read given back; `time-texts`: nothing left out, each text look's role and the start of each of its steps logged as `ask.read_probe_texts`, never what it read; every read of that Ember, `ask.read_probe` logged), for `ember-win32`'s read probe; any other value, or none, reads at once as always, and a packaged Ember ignores it |
 | `EMBER_TEST_ALLOW_LOOPBACK_SSH=1` | Development only: lets Ember connect over SSH to this same computer (`127.0.0.1`), for the SSH tests (§14.5) |
 | `EMBER_MEMORY_LOG=30` | Development only: every that many seconds, logs `memory.report`: each Electron process's private bytes (Windows) and working set in MB, each renderer named after its page and window (`renderer mic Ember microphone`), and the totals. Working set counts the pages processes share once per process, so its sum over-counts; compare private bytes. The accessibility host and the Copilot runtime are processes of their own and aren't in it |
 | `EMBER_EXTENSIONS_LOCAL=1` | Development only: ExtensionsService accepts an absolute local folder holding a `marketplace.json` as a marketplace (Home's field still takes only GitHub repositories and https addresses, so this is for scripts and tests that call the service) |
@@ -1624,11 +1708,23 @@ the address in force and its saved key are kept and come back with the switch (i
   instead of to Copilot, screenshots for tasks included. Nothing goes there until the user agrees, and the yes holds
   only for that host (`provider.consent.host`, `FEATURE_CONSENT_VERSION.provider`): another address asks again. The
   yes is recorded only by main (`PROVIDER_IPC.agree`, for the host the endpoint in settings names); Home's general
-  settings changes can't carry it (`settingsFromHome` drops `provider.consent`, as it does `extensions.consent`), and they merge into the user's own
+  settings changes can't carry it (`settingsFromHome` drops `provider.consent`, as it does `extensions.consent`), and
+  nor can `settings.json` (safety-privacy-c10-1; app/main/provider-record.ts): a yes the file gains while Ember runs
+  (typed there by hand, or by an editor a task drives) is put back, and at start a yes is taken only where it matches
+  the seal Ember wrote with the keyring when the user agreed (`provider-seal.bin`, 0600; taking the yes back seals
+  "no agreement" in its place); until that seal is read no
+  provider of the user's is in force, and one that doesn't match is withdrawn, so Home shows the card again. Without
+  a keyring (`basic_text`) nothing is sealed: the yes lasts until Ember quits, and the card asks again at the next
+  start. Every change of the user's provider in force is a `provider` audit entry (its host, the one before, and
+  `via`: home, settings or start), shown in What Ember did as "Model service: <host>"; one coming into force that
+  can't be recorded isn't taken. Home's changes merge into the user's own
   settings (`withOwnProvider`), never writing back values the policy applied. "I agree" is armed as Ember's questions
   are: for 500 ms after the card is drawn for another host it ignores activation, and the host is taken when it is
   pressed, so a card redrawn at all between the press and the click (pressing blurs the address field, which saves it) agrees
-  to nothing (`AgreeGuard`). While the card waits with no GitHub sign-in, nothing is connected, and Models &
+  to nothing (`AgreeGuard`). While the card waits (a yes withdrawn or held at start included), nothing is connected,
+  with a GitHub sign-in or without one: the user chose their own provider, so nothing goes to Copilot in its place
+  (r10-safety-x10-1; the agent's `providerWaiting`, a sign-in found meanwhile kept for when the switch is turned off),
+  and Models &
   connections says "Not connected: Ember is waiting for you to agree to use <host>." and points to the card or the
   switch, with no "Sign in with GitHub" or "Use my own provider" (`homeConnectionView`'s `own`: integrations-c2-3).
   Nothing else points to Copilot then (integrations-r3-1): a request from the Ask box, by voice or from Home is
@@ -2166,7 +2262,7 @@ EMBER_WIN32_TEST=1 EMBER_PACKAGED_APP=dist/package/Ember node scripts/run-integr
 | `ax-sidecar` | `EMBER_UIA_TEST` | The accessibility host end to end through Ember's own client, against the bench |
 | `win32-system` | `EMBER_WINSYS_TEST` | System integration: the app list, Notepad opened through `explorer.exe` without Ember's environment, dark mode switched and put back, no HKLM policy, the login item on and off |
 | `win32-vocabulary` | `EMBER_WINSYS_TEST` | The vocabularies against real windows: a console, the stored-credentials dialog, File Explorer's address box, the Run dialog, the clipboard's password markers |
-| `ember-win32` | `EMBER_WIN32_TEST`, `EMBER_PACKAGED_APP` | Ember's own composition and Perception against the bench: no system dialog at rest, the password field blacked out, the overlay out of screenshots, the Settings window matched by process id, the packaged host's ping; then Ember itself (`npm run build` first) opened with the real Win+Alt+Space, pressed while the user types in the bench's Name field, printing what the ask box holds of letters typed straight after (the typed-ahead probe: Windows has no keyboard hold) and, from Ember's log (`ask.open`, `ask.keyboard`), when Ember heard the chord, showed the box and had the keyboard, how many letters were typed before then and how many reached the bench's Name field, and expecting the box's "wait for this box" tip on these first openings; then the field's right-click menu, opened once the field is the window under the pointer (waited for up to 22 s while another program's window or none is there, with whatever was over it meanwhile named in the output; one of Ember's own windows staying over the field for 2 s fails the test at once, because a click there would go to Ember's bubble instead) and dismissed by a click on the bench, which must leave the bench the keyboard (from before the chord to the right-click it prints a timeline: the suite's own steps, the foreground and the window under the pointer every 20 ms, every window that comes or goes, every foreground, focus and minimise change Windows reports through `test/fixtures/win_foreground_watch.ps1` with the Win and Alt keys' state, Ember's windows' events and log lines, and whether the runner activates windows on hover; a box that closed by itself before the pointer moves fails the test); then Ember started again with Text size at Larger, opening the ask box at 728 × 111 (142 with that tip's row) with its field's text at 23.4 px |
+| `ember-win32` | `EMBER_WIN32_TEST`, `EMBER_PACKAGED_APP` | Ember's own composition and Perception against the bench: no system dialog at rest, the password field blacked out, the overlay out of screenshots, the Settings window matched by process id, the packaged host's ping; then Ember itself (`npm run build` first) opened with the real Win+Alt+Space, pressed while the user types in the bench's Name field, printing what the ask box holds of letters typed straight after (the typed-ahead probe: Windows has no keyboard hold) and, from Ember's log (`ask.open`, `ask.keyboard`), when Ember heard the chord, showed the box and had the keyboard, how many letters were typed before then and how many reached the bench's Name field, and expecting the box's "wait for this box" tip on these first openings; then the field's right-click menu, opened once the field is the window under the pointer (waited for up to 22 s while another program's window or none is there, with whatever was over it meanwhile named in the output; one of Ember's own windows staying over the field for 2 s fails the test at once, because a click there would go to Ember's bubble instead) and dismissed by a click on the bench, which must leave the bench the keyboard (from before the chord to the right-click it prints a timeline: the suite's own steps, the foreground and the window under the pointer every 20 ms, every window that comes or goes, every foreground, focus and minimise change Windows reports through `test/fixtures/win_foreground_watch.ps1` with the Win and Alt keys' state, Ember's windows' events and log lines, and whether the runner activates windows on hover; a box that closed by itself before the pointer moves fails the test, and so does a box that lost the keyboard even once while it was up, Ember's read of the bench running meanwhile: the read must leave it the foreground, not its 1.5 s handover); then a read probe that only prints: the box opened again once for each stage of its read of the bench left out (`EMBER_TEST_ASK_READ=skip:<stage>`), each opening's timeline and a summary of when the bench took the foreground against the box showing and the read's start and answer; then Ember started again with Text size at Larger, opening the ask box at 728 × 111 (142 with that tip's row) with its field's text at 23.4 px |
 
 CI's first step exports what the runner is (`EMBER_CI_ELEVATED`, `EMBER_CI_LUA`, `EMBER_CI_SERVER`): Windows Server
 2022, run as an administrator (its shell too), one 1024×768 screen at 100 % and no Store apps. A check that runner
@@ -2854,8 +2950,10 @@ downloads it on first use per target and checks it before sending.
   over a colour code on every few characters (`stripTerminal`'s CSI pass, the marking and unmarking around the
   vault's pass) about 150-200 ms, MySQL's `-p` pattern about 140-200 ms, the instructions check (`outputTaint`, all
   its rules at once) over Ember.js build output, which says "ember" on every line, about 190-230 ms, and one known past
-  300 ms: the Azure Key
-  Vault value pattern over 4 MiB of secret ids with no value, about 1.6 s in one pass.
+  300 ms: the Azure Key Vault value pattern over 4 MiB of secret ids that also holds a `"value"`, about 1.5-2 s in one
+  pass. Without a `"value"` (or without a secret id) the pattern isn't searched at all (`VALUE_NEEDS`: a pass whose
+  text lacks what its pattern can't match without gives the same bytes back; the redaction tests fold the passes with
+  and without that check and compare them byte for byte), so ids alone take about 170 ms.
 - **Command output is not completion status**: remote runs use the child process's exit code and signal. Printed
   `ember-exit` sequences on stdout or stderr cannot override them, including on pipes and Linux/macOS PTYs.
 - **Nothing changes without them**: with commands off everywhere and only this computer, the prompts are today's
@@ -3079,9 +3177,10 @@ needs both. CI publishes them when a `v<v>` tag is pushed:
    and **From npm** says `ember-copilot` isn't on npm until `<v>` is published (docs.test.ts checks both while `<v>`
    isn't out). In the commit you tag, replace that line with one that says the README describes `<v>`, and drop
    **From npm**'s note: the release's notes link the README at the tag, and **See what's new…** opens those notes, so
-   the tag's README is the one everyone who updates reads, for good. `node scripts/package/release.mjs --readme v<v>`
-   checks it; the tag's checks job runs that first and the release job again, and both refuse a README that still
-   says `<v>` isn't out or sends readers to another version.
+   the tag's README is the one everyone who updates reads, for good. `node scripts/package/release.mjs --readme v<v>
+   <owner/repo>` checks it and the notes; the tag's checks job runs that first and the release job again, and both
+   refuse a README that still says `<v>` isn't out or sends readers to another version, and notes GitHub would refuse
+   (step 3), so a tag with either fails in its first minutes rather than after every platform's job.
 2. Tag that commit and push the tag: `git tag v<v> && git push origin v<v>`.
 3. The tag runs every job of `ci.yml`, the Intel Mac's included, and each platform's job uploads its packages
    (`ember-packages`, `ember-windows`, `ember-macos`, `ember-macos-x64`). Once all of them pass, the **release** job,
@@ -3093,8 +3192,10 @@ needs both. CI publishes them when a `v<v>` tag is pushed:
    `Ember-<v>-x86_64.AppImage`, `Ember-voice-models-<v>.zip`, `Ember-<v>-win-x64.zip`,
    `Ember-<v>-mac-arm64.dmg`, `Ember-<v>-mac-arm64.zip`, `Ember-<v>-mac-x64.dmg` and `Ember-<v>-mac-x64.zip`. It
    refuses a tag that isn't package.json's version, and takes the notes from CHANGELOG.md, with relative links made
-   absolute at the tag and wrapped lines joined. The job then writes the checksums, one line per file (a hash, two
-   spaces and the file name, which is what `sha256sum -c` reads):
+   absolute at the tag and wrapped lines joined, and refuses notes of 125,000 characters or UTF-8 bytes or more
+   (GitHub refuses a longer release body and doesn't say which it counts; curly quotes and `…` take 3 bytes each).
+   The job then writes the checksums, one line per file (a hash, two spaces and the file name, which is what
+   `sha256sum -c` reads):
 
    ```bash
    sha256sum ember-*.rpm Ember-*.AppImage Ember-*.zip Ember-*.dmg source-*.zip > SHA256SUMS

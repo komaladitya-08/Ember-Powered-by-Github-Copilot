@@ -13,7 +13,7 @@
  * marks itself, change it upwards. Plain Node: the settings store, the seal and the audit log are passed in.
  */
 
-import { APPROVAL_MODES, modeRank, type ApprovalMode, type ModeInForce } from "../../shared/approvals";
+import { APPROVAL_MODES, modeRank, type ApprovalMode, type ModeInForce, type SealNotes, type SealTrouble } from "../../shared/approvals";
 import { autonomyHeld, autonomyPermitted, holdAutonomyOff, holdUntilSealed, modeAgreed, modeInForce, modeWithoutHold, releaseAutonomyHold, type ApprovalsSetting, type AutonomyAdmin } from "./autonomy";
 import type { AuditEntry } from "./audit";
 import type { ModeSealStore } from "./mode-seal";
@@ -59,6 +59,8 @@ export interface ModeRecordDeps {
   seal?: ModeSealStore;
   /** The policy in force now (it may change while Ember runs: the held lockdown). */
   admin: () => AutonomyAdmin | null;
+  /** What `notes` says changed (a seal not kept, a start that put the mode back): Home is told again. */
+  onNotes?: () => void;
   log: { info(event: string, fields?: Record<string, unknown>): void; warn(event: string, fields?: Record<string, unknown>): void };
 }
 
@@ -79,6 +81,10 @@ export class ModeRecord {
   private mine: ApprovalsSetting | null = null;
   /** Settles once the seal has been read at start and the setting made to agree with it. */
   readonly sealed: Promise<void>;
+  /** The last seal Ember wrote couldn't be kept, and why (reliability-r10-1). */
+  private notKept: SealTrouble | null = null;
+  /** This start put the mode chosen back, and why: said until a mode is chosen again (reliability-r10-1). */
+  private startedLower: NonNullable<SealNotes["started"]> | null = null;
 
   constructor(private d: ModeRecordDeps) {
     const own = d.settings.own().approvals;
@@ -90,7 +96,18 @@ export class ModeRecord {
     this.good = own;
     this.seen = JSON.stringify(own);
     d.settings.onChange(() => this.changed());
-    this.sealed = check && seal ? seal.read().catch(() => null).then(s => this.unseal(s)) : Promise.resolve();
+    this.sealed = check && seal
+      ? seal.read().catch(() => null).then(async s => this.unseal(s, s || (await seal.available?.().catch(() => false)) !== false ? "unconfirmed" : "keyring"))
+      : Promise.resolve();
+  }
+
+  /**
+   * What Home is told of the seal (reliability-r10-1): that a mode above Interactive lasts until Ember closes because
+   * it couldn't be sealed, and that this start put the mode chosen back. The agreement is never kept less safely to
+   * spare the user this: falling back is right, silently is not.
+   */
+  notes(): SealNotes {
+    return { ...(this.notKept ? { kept: this.notKept } : {}), ...(this.startedLower ? { started: this.startedLower } : {}) };
   }
 
   /**
@@ -107,18 +124,29 @@ export class ModeRecord {
     if (!this.d.seal || how.via === "file" || how.via === "policy" || autonomyHeld()) return;
     const own = this.d.settings.own().approvals;
     this.mine = own;
-    void this.d.seal.write(own).then(kept => { if (!kept) this.d.log.warn("autonomy.seal_not_kept", {}); });
+    // A mode chosen again: what was said of the start no longer holds.
+    if (this.startedLower && (how.via === "home" || how.via === "voice" || how.via === "typed")) { this.startedLower = null; this.d.onNotes?.(); }
+    const seal = this.d.seal;
+    void seal.write(own).then(async kept => {
+      if (!kept) this.d.log.warn("autonomy.seal_not_kept", {});
+      // Only the newest choice's outcome is said, and only while it holds something above Interactive to keep.
+      if (this.mine !== own) return;
+      const was = this.notKept;
+      this.notKept = kept || !claimsAboveInteractive(own) ? null : (await seal.available?.().catch(() => false)) === false ? "keyring" : "save";
+      if (this.notKept !== was) this.d.onNotes?.();
+    });
   }
 
   /**
    * The seal is read (null: none, or unreadable): settings.json's setting is made to agree with it (trustedAtStart),
    * and the mode it then gives is in force, recorded as found at start.
    */
-  private unseal(sealed: ApprovalsSetting | null): void {
+  private unseal(sealed: ApprovalsSetting | null, why: "keyring" | "unconfirmed"): void {
     const own = this.d.settings.own().approvals;
     const want = trustedAtStart(own, this.mine ?? sealed);
     if (JSON.stringify(want) !== JSON.stringify(own)) {
       this.d.log.warn("autonomy.unsealed", { chosen: own.mode, kept: want.mode });
+      if (modeRank(want.mode) < modeRank(own.mode)) { this.startedLower = { chosen: own.mode, why }; this.d.onNotes?.(); }
       try {
         this.undoing = true;
         try { this.d.settings.update({ approvals: want }); } finally { this.undoing = false; }

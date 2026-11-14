@@ -84,8 +84,11 @@ function say(text: string, error = false): void {
   el.classList.toggle("error", error);
 }
 
-/** The user agreed to the card for this very host. */
-const agreedFor = (p: Own, host: string | null) => !!host && p.consent.version >= FEATURE_CONSENT_VERSION.provider && p.consent.host === host;
+/**
+ * The user agreed to the card for this very host, and main hasn't said that yes is held back (its seal not read yet, or
+ * a forged one: the settings the page holds still show it, integ-x-1).
+ */
+const agreedFor = (p: Own, host: string | null) => !!host && p.consent.version >= FEATURE_CONSENT_VERSION.provider && p.consent.host === host && !(state?.held && state.host === host);
 
 /**
  * Saves the fields changed, and only those: main merges them into the user's own settings (withOwnProvider), so values

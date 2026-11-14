@@ -99,10 +99,20 @@ export function hoverActivation(maskQuery: string, timeoutQuery: string): string
 /** A window as the foreground watcher names it (test/fixtures/win_foreground_watch.ps1). */
 export interface WatchedWindow { root: number; className: string; title: string; pid: number; image: string }
 
-const WATCH_EVENTS = new Set(["foreground", "focus", "minimize-start", "minimize-end"]);
+const WATCH_EVENTS = new Set(["foreground", "focus", "minimize-start", "minimize-end", "process"]);
+
+/** The names of the WinEvents an app's own windows raise that bear on the keyboard (winuser.h). */
+const WIN_EVENT_NAMES: Record<string, string> = {
+  "0x0003": "foreground", "0x0004": "menu start", "0x0005": "menu end", "0x0006": "popup menu start", "0x0007": "popup menu end",
+  "0x0008": "capture start", "0x0009": "capture end", "0x0016": "minimise start", "0x0017": "minimise end",
+  "0x8000": "object created", "0x8001": "object destroyed", "0x8002": "object shown", "0x8003": "object hidden",
+  "0x8004": "object reordered", "0x8005": "focus", "0x8006": "selection", "0x8007": "selection added",
+  "0x8008": "selection removed", "0x8009": "selection within",
+};
 
 /**
- * One line of the foreground watcher as a timeline event (cifix-x9-6): what Windows says changed, the window by
+ * One line of the foreground watcher as a timeline event (cifix-x9-6): what Windows says changed (or, for "process",
+ * what the watched app's own windows raised: cifix-x9-8), the window by
  * `name` (the suite's words for the bench and Ember's windows), and whether the Windows and Alt keys were down then.
  * Null for its ready line, a line still being written, or anything else that isn't one of its events.
  */
@@ -114,5 +124,49 @@ export function watchEvent(line: string, name: (w: WatchedWindow) => string): Tr
   const str = (v: unknown) => (typeof v === "string" ? v : "");
   const w: WatchedWindow = { root: num(e.root), className: str(e.class), title: str(e.title), pid: num(e.pid), image: str(e.image) };
   const keys = `Win ${e.win === true ? "down" : "up"}, Alt ${e.alt === true ? "down" : "up"}`;
+  if (e.event === "process") {
+    const code = typeof e.code === "string" && /^0x[0-9a-f]{4,8}$/.test(e.code) ? e.code : "?";
+    return { t: e.t, what: `its own event ${WIN_EVENT_NAMES[code] ?? code} (object ${num(e.object)}, child ${num(e.child)}) in ${name(w)} (window ${w.root}); ${keys}` };
+  }
   return { t: e.t, what: `Windows says ${e.event}: ${name(w)} (window ${w.root}); ${keys}` };
+}
+
+/** What the read probe notes of one opening (cifix-x9-9), each at its time. */
+export interface ProbeMark { t: number; kind: "box shown" | "box hidden" | "read started" | "read answered" | "bench foreground" | "box foreground" }
+
+/**
+ * The read probe's summary of one opening (cifix-x9-9): when the box showed, when Ember's read of the bench started and
+ * answered (by the plan's word for a read that never runs), and each time the bench took the foreground after the box
+ * showed, in ms from the box showing and from the read's start; and whether the box was still open at the end.
+ * `chord`: when the suite pressed the chord. Plain words only: the probe prints it and never fails on it.
+ */
+export function readProbeSummary(plan: string, chord: number, marks: readonly ProbeMark[]): string {
+  const at = (k: ProbeMark["kind"]) => marks.filter(m => m.kind === k).map(m => m.t).sort((a, b) => a - b);
+  const shown = at("box shown")[0];
+  if (shown === undefined) return `read probe (${plan}): the box never showed`;
+  const started = plan === "off" ? undefined : at("read started").find(t => t >= shown - 50) ?? (plan === "now" || plan.startsWith("skip:") ? shown : undefined);
+  const answered = at("read answered").find(t => t > shown);
+  const returns = at("bench foreground").filter(t => t > shown);
+  const hidden = at("box hidden").find(t => t > shown);
+  const ms = (t: number | undefined) => (t === undefined ? "never" : `${t - chord} ms`);
+  const read = plan === "off" ? "the read was off" : `the read started at ${ms(started)} and answered at ${ms(answered)}`;
+  const back = returns.length
+    ? returns.map(t => `${t - shown} ms after the box showed${started !== undefined ? `, ${t - started} ms after the read started` : ""}${answered !== undefined ? `, ${t - answered} ms after it answered` : ""}`).join("; ")
+    : "never";
+  return `read probe (${plan}): the box showed at ${ms(shown)}; ${read}; the bench took the foreground: ${back}; the box ${hidden === undefined ? "was still open at the end" : `closed at ${ms(hidden)}`} (ms from the chord)`;
+}
+
+/** One text look of the read as the host timed it (sidecar-host reading.ts TimedLook, cifix-x9-11). */
+export interface ProbeLook { i: number; role: string; start: number; end: number; steps: { step: string; t: number }[] }
+
+/**
+ * Which text look of the read, and which step of it, was under way at `t` (when the bench took the foreground,
+ * cifix-x9-11): the look whose span holds `t` (or ended within `slackMs` before it, as Windows reports the change a
+ * moment after the call that made it), and its latest step begun by then. Plain words for the probe's output.
+ */
+export function lookAt(looks: readonly ProbeLook[], t: number, slackMs = 30): string {
+  const look = looks.find(l => l.start <= t && t <= l.end) ?? [...looks].reverse().find(l => l.end <= t && t - l.end <= slackMs);
+  if (!look) return `no text look was under way at ${t}`;
+  const step = [...look.steps].sort((a, b) => a.t - b.t).filter(s => s.t <= t).at(-1);
+  return `text look ${look.i} (${look.role || "no role"}), ${step ? `in its step "${step.step}", begun ${t - step.t} ms before` : "before its first step"}${t > look.end ? `, which had ended ${t - look.end} ms before` : ""}`;
 }

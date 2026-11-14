@@ -4,7 +4,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { commandLineSecret, redactSecrets, SECRET_HIDDEN } from "../../app/main/commands/redact";
+import { commandLineSecret, REDACT_PASSES, redactSecrets, SECRET_HIDDEN, UNGUARDED_PASSES } from "../../app/main/commands/redact";
 import { memoryRefusal } from "../../app/main/memory/guard";
 
 const GH = `ghp_${"a1B2".repeat(9)}`;
@@ -517,4 +517,149 @@ describe("an Azure Key Vault secret printed with its tags (commands-classes-x9-7
       expect(Date.now() - t).toBeLessThan(2000);
     }
   });
+});
+
+describe("redactSecrets: environments, tables and webhook addresses (commands-remote-r10-6, -c10-1)", () => {
+  it.each([
+    ["DB_PASS=hunter2horse", `DB_PASS=${SECRET_HIDDEN}`],
+    ["ADMIN_PASS=hunter2horse\nSMTP_PASS=x9y8z7", `ADMIN_PASS=${SECRET_HIDDEN}\nSMTP_PASS=${SECRET_HIDDEN}`],
+    ["PASSPHRASE=hunter2horse", `PASSPHRASE=${SECRET_HIDDEN}`],
+    ["AUTH=hunter2horse", `AUTH=${SECRET_HIDDEN}`],
+    ["REDIS_AUTH=hunter2horse", `REDIS_AUTH=${SECRET_HIDDEN}`],
+    ["MYSQL_PW=hunter2horse", `MYSQL_PW=${SECRET_HIDDEN}`],
+    ["SIGNING_KEY=abcdef0123", `SIGNING_KEY=${SECRET_HIDDEN}`],
+    ["PATH=/usr/bin DB_PASS=hunter2horse HOME=/root", `PATH=/usr/bin DB_PASS=${SECRET_HIDDEN} HOME=/root`],
+    ["REDIS_URL=redis://:Sekr1tPw@cache:6379", `REDIS_URL=redis://${SECRET_HIDDEN}@cache:6379`],
+    ["amqp://:guestpw@rabbit/", `amqp://${SECRET_HIDDEN}@rabbit/`],
+    ["DJANGO_KEY=django-insecure-abcdefghijklmnop", `DJANGO_KEY=${SECRET_HIDDEN}`],
+    ["SECRET=django-insecure-a8#k!z@q2&w", `SECRET=${SECRET_HIDDEN}`],
+    ["hook https://hooks.slack.com/services/T000/B000/XXXXXXXXXXXXXXXX done", `hook https://hooks.slack.com/services/${SECRET_HIDDEN} done`],
+    ["https://discord.com/api/webhooks/123456789/abcDEF_ghi-jkl", `https://discord.com/api/webhooks/123456789/${SECRET_HIDDEN}`],
+    ["https://acme.webhook.office.com/webhookb2/abc-123@def/IncomingWebhook/xyz/0", `https://acme.webhook.office.com/webhookb2/${SECRET_HIDDEN}`],
+    ["KEY                VALUE\ndbPassword         hunter2-correct-horse\napiToken           ZXhhbXBsZV90b2tlbl92YWx1ZQ",
+      `KEY                VALUE\ndbPassword         ${SECRET_HIDDEN}\napiToken           ${SECRET_HIDDEN}`],
+    ["    OUTPUT       VALUE\n    dbPassword   Tr0ub4dor&3xyz\n    adminKey     a1b2c3d4e5f6g7h8i9j0",
+      `    OUTPUT       VALUE\n    dbPassword   ${SECRET_HIDDEN}\n    adminKey     ${SECRET_HIDDEN}`],
+    ["│ DB_PASSWORD │ hunter2 │ All │", `│ DB_PASSWORD │ ${SECRET_HIDDEN} │ All │`],
+  ])("hides the value in %j", (text, want) => {
+    expect(redactSecrets(text)).toBe(want);
+  });
+
+  it.each([
+    "tests pass: 12, fail: 0", "PATH=/usr/bin HOME=/root", "secretstorage   3.3.1", "tokenizer.json   12K", "monkey    3", "Bypass the cache",
+    "https://example.com/a?b=c", "keyboard  us", "LOW_PASS=8000 HIGH_PASS=200 RENDER_PASS=shadow2",
+  ])("leaves ordinary text alone: %j", text => {
+    expect(redactSecrets(text)).toBe(text);
+  });
+
+  it.each([["names ending like a secret", "a_pass=b "], ["table rows", "dbPassword   x\n"], ["webhook prefixes", "hooks.slack.com/services/"], ["empty users", "://:@"]])(
+    "takes linear time on a run of %s (1 MiB)", (_name, unit) => {
+      const text = unit.repeat(Math.ceil((1024 * 1024) / unit.length));
+      const t0 = performance.now();
+      redactSecrets(text);
+      expect(performance.now() - t0).toBeLessThan(1500);
+    });
+});
+
+describe("redactSecrets: short secret names as YAML and JSON print them, schemes and tab-parted rows (r10-commands-x10-5)", () => {
+  it.each([
+    ["environment:\n  DB_PASS: hunter2\n  REDIS_AUTH: abc", `environment:\n  DB_PASS: ${SECRET_HIDDEN}\n  REDIS_AUTH: ${SECRET_HIDDEN}`],
+    ["SIGNING_KEY: abc", `SIGNING_KEY: ${SECRET_HIDDEN}`], ["DB_PW: abc", `DB_PW: ${SECRET_HIDDEN}`], ["  db_pass: 'hunter2'", `  db_pass: '${SECRET_HIDDEN}'`],
+    ["  - SMTP_PASS: x9y8z7", `  - SMTP_PASS: ${SECRET_HIDDEN}`], ['{"DB_PASS": "x1", "API_KEY": "y2"}', `{"DB_PASS": "${SECRET_HIDDEN}", "API_KEY": "${SECRET_HIDDEN}"}`],
+    ["AUTH=Basic dXNlcjpwYXNz", `AUTH=${SECRET_HIDDEN}`], ["HTTP_AUTH=Bearer abc.def.ghi", `HTTP_AUTH=${SECRET_HIDDEN}`], ["PROXY_AUTH: Basic dXNlcjpwYXNz", `PROXY_AUTH: ${SECRET_HIDDEN}`],
+    ["DB_PASSWORD\thunter2", `DB_PASSWORD\t${SECRET_HIDDEN}`],
+  ])("hides the value in %j", (text, want) => {
+    expect(redactSecrets(text)).toBe(want);
+  });
+
+  it.each(["The PASS: rate was high", "- key: app", "  key: password", "auth: required", "LOW_PASS: 8000", "secretKeyRef:", "Checks passed: 12"])(
+    "leaves prose and ordinary fields alone: %j", text => {
+      expect(redactSecrets(text)).toBe(text);
+    });
+
+  it("takes linear time on a run of YAML names ending like a secret (1 MiB)", () => {
+    const text = "  a_pass: b\n".repeat(Math.ceil((1024 * 1024) / 12));
+    const t0 = performance.now();
+    redactSecrets(text);
+    expect(performance.now() - t0).toBeLessThan(1500);
+  });
+});
+
+describe("redactSecrets and memory: a name ending in KEY or AUTH that says no secret (r10-commands-y10-6)", () => {
+  it.each([
+    "Our tables use SORT_KEY=created_at", "In the shop, PRIMARY_KEY=id for every table", "I set MUSIC_KEY=D minor for the song",
+    "Use ?key=abc in the maps link", "AUTH=on in the router", "FOREIGN_KEY: user_id", "PUBLIC_KEY=ssh-rsa AAAA", "foo key=val",
+    "PUBLIC_KEY=AAAAB3NzaC1yc2EAAAADAQABAAABAQC7",
+  ])("leaves the value and lets memory keep %j", text => {
+    expect(redactSecrets(text)).toBe(text);
+    expect(memoryRefusal(text)).toBeNull();
+  });
+
+  it.each([
+    ["SECRET_KEY=abc", `SECRET_KEY=${SECRET_HIDDEN}`], ["STRIPE_API_KEY=abc", `STRIPE_API_KEY=${SECRET_HIDDEN}`],
+    ["MY_PRIVATE_KEY: abc", `MY_PRIVATE_KEY: ${SECRET_HIDDEN}`], ["CACHE_KEY=a1b2c3d4e5f6", `CACHE_KEY=${SECRET_HIDDEN}`],
+    ["KEY=hunter2horse", `KEY=${SECRET_HIDDEN}`], ["AUTH: x9y8z7w6", `AUTH: ${SECRET_HIDDEN}`],
+  ])("still hides a key that says it is one or looks like one in %j", (text, want) => {
+    expect(redactSecrets(text)).toBe(want);
+  });
+});
+
+describe("redactSecrets: an environment's name and value pairs and more webhook addresses (r10-commands-y10-7)", () => {
+  it.each([
+    ["        env:\n        - name: DB_PASSWORD\n          value: hunter2xyz\n", `        env:\n        - name: DB_PASSWORD\n          value: ${SECRET_HIDDEN}\n`],
+    ['{"name":"DB_PASSWORD","value":"hunter2xyz"}', `{"name":"DB_PASSWORD","value":"${SECRET_HIDDEN}"}`],
+    ['  {\n    "name": "API_TOKEN",\n    "value": "abc123"\n  }', `  {\n    "name": "API_TOKEN",\n    "value": "${SECRET_HIDDEN}"\n  }`],
+    ["- name: SMTP_PASS\n  value: 'x9y8'", `- name: SMTP_PASS\n  value: '${SECRET_HIDDEN}'`],
+    ["https://outlook.office.com/webhook/abc-123@def/IncomingWebhook/xyz/0", `https://outlook.office.com/webhook/${SECRET_HIDDEN}`],
+    ["https://hooks.zapier.com/hooks/catch/123456/abcdef/", `https://hooks.zapier.com/hooks/catch/${SECRET_HIDDEN}`],
+    [`https://api.telegram.org/bot123456789:${"A".repeat(35)}/sendMessage`, `https://api.telegram.org/bot${SECRET_HIDDEN}/sendMessage`],
+  ])("hides the value in %j", (text, want) => {
+    expect(redactSecrets(text)).toBe(want);
+  });
+
+  it.each(["- name: LOG_LEVEL\n  value: debug", '{"name":"PORT","value":"8080"}', "- name: web\n  value: 3"])("leaves ordinary pairs alone: %j", text => {
+    expect(redactSecrets(text)).toBe(text);
+  });
+
+  it("takes linear time on a run of name and value pairs (1 MiB)", () => {
+    const text = "- name: A_PASSWORD\n  value: b\n".repeat(Math.ceil((1024 * 1024) / 30));
+    const t0 = performance.now();
+    redactSecrets(text);
+    expect(performance.now() - t0).toBeLessThan(1500);
+  });
+});
+
+describe("the Azure Key Vault passes on output with no value in it (stop-yield-x9-left-1)", () => {
+  const ids = '"https://kv.vault.azure.net/secrets/name-1/abc"\n';
+  const big = ids.repeat(Math.ceil((4 * 1024 * 1024) / ids.length));
+  const fold = (passes: readonly ((t: string) => string)[], text: string) => passes.reduce((t, pass) => pass(t), text);
+
+  it("takes one pass well under Stop's 300 ms over 4 MiB of secret ids with no value", () => {
+    // The best of three runs of each pass, so another program's load on the machine isn't counted (here: about 170 ms,
+    // the vault pass's 1,500 to 2,200 ms before).
+    let worst = 0;
+    for (const pass of REDACT_PASSES) {
+      let best = Infinity;
+      for (let k = 0; k < 3; k++) {
+        const t0 = performance.now();
+        pass(big);
+        best = Math.min(best, performance.now() - t0);
+      }
+      worst = Math.max(worst, best);
+    }
+    expect(worst).toBeLessThan(300);
+  }, 60_000);
+
+  it("gives the same bytes as the passes without the check, with a value or without one", () => {
+    expect(fold(REDACT_PASSES, big)).toBe(fold(UNGUARDED_PASSES, big));
+    const pieces = ['"id": "https://kv.vault.azure.net/secrets/a/1"', '"value": "s3cr3t"', '"value":"x\\"y"', ", ", '"tags": {"value": "t"}', "{", "}", "\n", "vault.azure.net/secrets/",
+      '"value"', ' "contentType": "text/plain"', '"id"', ": ", '"', "value", "vault.azure.net"];
+    let seed = 7;
+    const rnd = (n: number) => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed % n; };
+    for (let k = 0; k < 2000; k++) {
+      const text = Array.from({ length: 1 + rnd(14) }, () => pieces[rnd(pieces.length)]).join("");
+      expect(fold(REDACT_PASSES, text), text).toBe(fold(UNGUARDED_PASSES, text));
+    }
+    // (The unguarded fold over 4 MiB is the slow search itself: seconds on a loaded machine.)
+  }, 60_000);
 });

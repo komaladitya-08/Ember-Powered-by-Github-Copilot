@@ -26,7 +26,7 @@ import type { DesktopController } from "./desktop";
 import type { ChildPolicy } from "./desktop-ipc";
 import { IpcError } from "./desktop-ipc";
 import { gateCommand, GATE_WORDS } from "./gate";
-import { autopilotPermitted } from "../main/policy/autonomy";
+import { assistedPermitted, autonomyPermitted, autopilotPermitted } from "../main/policy/autonomy";
 import { startLiveness, type Liveness } from "./liveness";
 import type { LockResult } from "./lock";
 import type { AgentOs } from "./places";
@@ -428,6 +428,8 @@ export class Server {
       spec: a.spec, epoch: a.epoch, agentEpoch: this.epoch, fresh: !!this.liveness?.fresh(), targetId: null,
       mode: commandMode(d.policy.current, "ssh"), facts, classify: d.classify, inspect: d.inspect,
       autopilotOk: autopilotPermitted(d.policy.current.policy),
+      // Its own switches for Assisted's check and for the modes hold here as the organisation's (commands-remote-c10-2).
+      assistedOk: assistedPermitted(d.policy.current.policy), interactiveOk: autonomyPermitted(d.policy.current.policy),
       ...(d.readScript ? { readScript: d.readScript } : {}), task: this.taskMemory(a.spec.taskId), now: d.now,
     });
     const { spec } = a;

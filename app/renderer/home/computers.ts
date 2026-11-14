@@ -9,8 +9,9 @@
 import type { Status, StatusPlatform } from "../../shared/ipc";
 import type { Settings } from "../../main/settings";
 import type { TargetSummary, TargetsAct } from "../../shared/targets";
+import type { ApprovalMode } from "../../shared/approvals";
 import {
-  ACT_FAILED, ADD_INVALID, actMessage, actResult, addPending, addResult, cardPending, commandsView, unbrokenRuns, computersIntro, computersView, hostInput, type ComputerRow, type EmberTargetsApi,
+  ACT_FAILED, ADD_INVALID, actMessage, actResult, addPending, addResult, cardPending, commandsIntro, commandsView, unbrokenRuns, computersIntro, computersView, hostInput, type ComputerRow, type EmberTargetsApi,
   type RowAction, type Switch, type TargetsAdmin,
 } from "./computers-copy";
 
@@ -28,6 +29,8 @@ let summaries: TargetSummary[] | null = null;
 let settings: Settings | null = null;
 let admin: TargetsAdmin = { source: null, features: {} };
 let os: StatusPlatform["os"] | undefined;
+/** The approval mode in force (null below Interactive), which says whether root asks (home-c10-1, home-c10-2). */
+let mode: ApprovalMode | null = null;
 
 /** What the settings window knows of the organisation's rules for computers (main may send more: see TargetsAdmin). */
 function adminOf(a: Status["admin"]): TargetsAdmin {
@@ -193,7 +196,9 @@ function draw(): void {
   $("computers-managed").hidden = managed.length === 0;
   $("computers-managed").textContent = managed.join(" ");
 
-  const v = commandsView({ summaries: summaries!, settings: settings!, admin });
+  const introNow = commandsIntro(mode);
+  if ($("commands-intro").textContent !== introNow) $("commands-intro").textContent = introNow;
+  const v = commandsView({ summaries: summaries!, settings: settings!, admin, mode });
   const ckey = JSON.stringify(v.rows);
   if (ckey !== commandsKey) {
     commandsKey = ckey;
@@ -208,6 +213,13 @@ function draw(): void {
   }
   $("commands-managed").hidden = v.managed.length === 0;
   $("commands-managed").textContent = v.managed.join(" ");
+}
+
+/** The approval mode in force changed (or arrived): null below Interactive. */
+export function targetsMode(m: ApprovalMode | null): void {
+  if (m === mode) return;
+  mode = m;
+  draw();
 }
 
 /** The settings changed (or arrived). */

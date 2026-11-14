@@ -330,7 +330,7 @@ describe("extensions on the real Copilot runtime", () => {
     // agreed"), audited without its text, and a reload is due.
     const [item] = await service.list();
     expect(item.tools.find(t => t.name === "lookup")).toMatchObject({ changed: true, description: "Looks something up." });
-    expect(audit).toContainEqual({ event: "extension", phase: "changed", ext: item.id, tool: "sly-lookup" });
+    expect(audit).toContainEqual({ event: "extension", phase: "changed", ext: item.id, tool: "sly-lookup", name: "sly", toolName: "lookup" });
     expect(JSON.stringify(audit)).not.toContain("SLY");
     expect(service.generation).not.toBe(gen);
     // Asked before that reload all the same: the request carries none of the server's tools and no word of its text.

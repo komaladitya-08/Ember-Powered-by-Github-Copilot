@@ -283,18 +283,25 @@ export const SCREEN_IMAGES_TEXT = {
  * A piece of the text in Apps & privacy's copy of "Before Ember starts" (safety-privacy-9), said as it is there
  * (safety-privacy-r4): the never-look list is below in that pane, not somewhere "in settings", and with Send
  * screenshots for tasks off the screenshot clause says so. First run's own words stay as they are.
- * `autonomy`: an approval mode is in force (How Ember asks, below), so ordinary steps aren't asked about
- * (safety-privacy-c4-1); `grants`: the person let Ember act in some apps without asking (the list below). `targets`:
+ * `autonomy`: the approval mode in force (How Ember asks, below; null or absent below Interactive), so ordinary steps
+ * aren't asked about (safety-privacy-c4-1), and risky ones are said as that mode treats them: asked in Interactive,
+ * checked against the user's words in Assisted, announced in Autopilot (home-r10-1); `grants`: the person let Ember act in some apps without asking (the list below). `targets`:
  * the onboarding line's words after its lead, as the settings and the policy leave them (targetsFoldRest,
  * safety-privacy-r4-2). `vaultFill: false`: the organisation turned the vault off (`features.vault`, a lockdown) or
  * keeps Ember below Autopilot, so nothing is filled in from the vault and the line doesn't say it can be (integ-y-4).
  */
-export function privacyFoldWords(text: string, o: { screenImages: boolean; autonomy?: boolean; grants?: boolean; targets?: string; vaultFill?: boolean }): string {
+export function privacyFoldWords(text: string, o: { screenImages: boolean; autonomy?: ApprovalMode | null; grants?: boolean; targets?: string; vaultFill?: boolean }): string {
   if (o.targets !== undefined && (text === onboardingRest("linux") || text === onboardingRest("win32"))) return o.targets;
+  // The line's bold lead, a text of its own on the page: in Autopilot it doesn't ask.
+  if (text === "It asks before acting" && o.autonomy === "autopilot") return "It doesn't ask before acting";
   const out = text.replace("The list is in settings", "The list is below, under Never look at")
     // First run's agreement is behind the person here: “Hey Ember” is in its own section (slice4-x9-5).
     .replace(" unless you turn on “Hey Ember”, when you agree or later in settings, or", " unless you turn on “Hey Ember” in Settings › Voice, or")
-    .replace(" in an app unless you turn on Interactive, when you agree or later in settings, and always before anything hard to undo.", o.autonomy
+    .replace(" in an app unless you turn on Interactive, when you agree or later in settings, and always before anything hard to undo.", o.autonomy === "autopilot"
+      ? ", even on anything risky or hard to undo: Autopilot is on, so it tells you what it's doing as it goes and asks only where How Ember asks, below, says."
+      : o.autonomy === "assisted"
+        ? " on anything risky or hard to undo, unless Assisted's check finds the step in what you asked: then it goes ahead and tells you. For ordinary steps it tells you what it's doing instead (How Ember asks, below)."
+      : o.autonomy
       ? " on anything risky or hard to undo. For ordinary steps it tells you what it's doing instead (How Ember asks, below)."
       : o.grants ? " in an app, except those you let it act in without asking (below), and always before anything hard to undo."
         : " in an app, and always before anything hard to undo.")
@@ -1026,7 +1033,10 @@ export function approvalsNote(state: ApprovalsState | null, managed: boolean, el
   const below = managed || state?.why === "organisation";
   const lockedRow = below || !state ? "" : state.checkOff && state.why !== "check-off" && state.offered.includes("assisted") ? ` ${CHECK_OFF_TEXT}, so ${MODE_NAME.assisted} can't be chosen.`
     : state.cap && (state.why !== "cap" || state.inForce === "asking") && state.offered.some(m => modeRank(m) > modeRank(state.cap)) ? ` Your organisation allows ${MODE_NAME[state.cap]} at most.` : "";
-  const said = `${base}${lockedRow}`;
+  // That the mode in force lasts only until Ember closes goes before how to answer by voice, beside what is on.
+  const kept = below || !state ? "" : sealKeptLine(state);
+  const told = kept && base.includes(ANSWER_BY_VOICE) ? base.replace(ANSWER_BY_VOICE, `${kept} ${ANSWER_BY_VOICE}`) : kept ? `${base} ${kept}` : base;
+  const said = `${below || !state ? "" : sealStartLine(state)}${told}${lockedRow}`;
   // Autopilot doesn't ask for that (commands/autopilot.ts autopilotAsks: root is no reason to ask there): say what
   // happens instead (modes-x9p-1).
   if (state?.inForce === "autopilot" && !below) {
@@ -1039,6 +1049,31 @@ export function approvalsNote(state: ApprovalsState | null, managed: boolean, el
   if (elevated === "maybe-administrator") return `${said} Ember may be running as an administrator (it couldn't tell), and then it asks before every command. Start it normally to be sure.`;
   if (elevated === "root") return `${said} Ember is running as root, so it asks before every command. Start it as yourself to change that.`;
   return said;
+}
+
+/**
+ * Before the note, once a start put the mode chosen back (reliability-r10-1): why, and how to have it again. Without a
+ * keyring the choice can only last until Ember closes; a seal that didn't match (a hand edit, a lost file) is said
+ * as not confirmed.
+ */
+function sealStartLine(state: ApprovalsState): string {
+  if (!state.started) return "";
+  const chosen = MODE_NAME[state.started.chosen];
+  const inUse = state.inForce === "asking" ? "" : `, so ${MODE_NAME[state.inForce]} is in use`;
+  return state.started.why === "keyring"
+    ? `Your choice of ${chosen} couldn't be kept when Ember started, because this computer has no keyring Ember can use${inUse}. Choose ${chosen} again to use it until Ember closes. `
+    : `Ember couldn't confirm your choice of ${chosen} when it started${inUse}. Choose ${chosen} again to use it. `;
+}
+
+/** After the note, while a mode above Interactive couldn't be sealed for the next start: that it lasts until Ember closes (reliability-r10-1). */
+function sealKeptLine(state: ApprovalsState): string {
+  if (!state.kept || state.inForce === "asking" || state.inForce === "interactive") return "";
+  const mode = MODE_NAME[state.inForce];
+  // The next start as main worked it out: below Interactive when its card was never agreed (r10-memory-x10-4).
+  const next = state.nextStart === "interactive" ? `starts in ${MODE_NAME.interactive} next time` : "asks before each step next time";
+  return state.kept === "keyring"
+    ? `${mode} lasts until Ember closes: this computer has no keyring Ember can use to keep it safely, so Ember ${next}.`
+    : `${mode} lasts until Ember closes: Ember couldn't save it safely on this computer, so it ${next}.`;
 }
 
 /** A mode's row: its name and sentence, whether it is the one in force, and whether the organisation locks it. */
@@ -1060,6 +1095,30 @@ export function approvalsView(state: ApprovalsState | null, managed: boolean, el
   });
   const card = state && !below && state.inForce === "asking" && state.why !== "not-recorded" && rows.some(r => r.mode === "interactive" && !r.locked) ? "interactive" : null;
   return { rows, note: approvalsNote(state, managed, elevated, org), card, inForce };
+}
+
+/**
+ * The hint under the apps Ember may act in without asking first, in the approval mode in force (null: below
+ * Interactive), true in each (home-r10-1): Assisted's check may clear a risky step it finds in the user's words, and
+ * Autopilot asks nothing, so offers no “Always in …” and the list changes nothing while it is on.
+ */
+export function grantsHint(mode: ApprovalMode | null): string {
+  const lead = "You add an app here by choosing “Always in …” when Ember asks.";
+  if (mode === "assisted") return `${lead} Before anything hard to undo, Ember asks every time unless Assisted's check finds the step in what you asked.`;
+  if (mode === "autopilot") return `${lead} Autopilot doesn't ask, even before anything hard to undo, so this list changes nothing while it is on.`;
+  return `${lead} Ember still asks every time before anything hard to undo.`;
+}
+
+/**
+ * Voice › Routines' hint in the approval mode in force (null: below Interactive), true in each (home-c10-2): Assisted's
+ * check reads what the user said to run a routine, never its saved steps (agent/host.ts gives the check no steps:
+ * r10-modes-copy-x10-1), and Autopilot doesn't ask.
+ */
+export function routinesHint(mode: ApprovalMode | null): string {
+  const lead = "Off, reminders last until Ember closes, and no routine is saved or run. On, saying a routine's name runs its steps,";
+  if (mode === "assisted") return `${lead} and Ember still asks before anything risky unless Assisted's check finds it in what you said to run the routine, never in its saved steps.`;
+  if (mode === "autopilot") return `${lead} and in Autopilot Ember doesn't ask first, even before anything risky: it tells you as it goes.`;
+  return `${lead} and Ember still asks before anything risky.`;
 }
 
 /**
@@ -1474,6 +1533,49 @@ function connectionLine(e: ActivityEntry): EntryView | null {
   }
 }
 
+/** Why the extensions gate asked, by its reason (gate.ts classify), as the user reads it. */
+const EXTENSION_ASKED: Readonly<Record<string, string>> = {
+  changes: "It can change things or send what it is given.",
+  remote: "Its server is on the internet, and gets what it is given.",
+  tainted: "An extension's answer read like instructions, so Ember asks before every extension's tool.",
+  "hints-changed": "Its server changed its list of tools during the conversation.",
+  "ember-data": "It may reach Ember's own settings, audit log or policy, which are for you only.",
+};
+
+/**
+ * An extension's line (extensions/service.ts's audit, integrations-c9-2: the cards promise every use is here): added,
+ * agreed to, removed, a tool turned off, and each use of a tool, asked about, answered, refused, announced, done or
+ * failed. Names only, as the user added the item and as its server names the tool; never what was sent or returned.
+ */
+function extensionLine(e: ActivityEntry): EntryView | null {
+  const name = typeof e.name === "string" && e.name ? `“${e.name}”` : "";
+  const from = name || "an extension";
+  const use = typeof e.toolName === "string" && e.toolName ? `Use “${e.toolName}” from ${from.replace(/^“(.*)”$/, "$1")}` : `Use a tool from ${from.replace(/^“(.*)”$/, "$1")}`;
+  switch (e.phase) {
+    case "installed": return { tag: "Added", cls: "ok", what: name ? `Extension ${name}` : "An extension" };
+    case "removed": return { tag: "Removed", cls: "", what: name ? `Extension ${name}` : "An extension" };
+    case "agreed": return { tag: "You agreed", cls: "ok", what: "To use extensions" };
+    case "reagreed": return { tag: "You agreed", cls: "ok", what: `To the tools of ${from}` };
+    case "changed": return { tag: "Turned off", cls: "no", what: use, why: "It changed since you agreed to it." };
+    case "decision":
+      // A read-only tool's use: its result line says it.
+      if (e.verdict === "allow") return null;
+      if (e.verdict === "announce") return { tag: "Without asking", cls: "", what: use, why: AUTOPILOT_WHY };
+      if (e.verdict === "ask") return { tag: "Asked you", cls: "ask", what: use, ...(typeof e.reason === "string" && EXTENSION_ASKED[e.reason] ? { why: EXTENSION_ASKED[e.reason] } : {}) };
+      // The gate's reason is for the model too: only its first sentence, the one that says why.
+      return { tag: "Refused", cls: "no", what: use, why: userWords(typeof e.reason === "string" ? e.reason.split(/(?<=\.)\s+/)[0] : undefined) };
+    case "answer":
+      if (e.answer === "stale") return { tag: "Refused", cls: "no", what: use, why: "It changed while Ember asked, so your yes didn't count." };
+      return { ...answerTag(e.answer === "allow" ? "once" : e.answer), what: use };
+    case "result":
+      return { tag: "Done", cls: "ok", what: use, ...(e.truncated === true ? { why: "Its answer was too long to check, so Ember treats it as information only." } : Array.isArray(e.signals) && e.signals.length ? { why: "Its answer read like instructions, so Ember treated it as information only." } : {}) };
+    case "failed":
+      return { tag: "Didn't work", cls: "no", what: use };
+    default:
+      return null;
+  }
+}
+
 /**
  * The entries with each command's shell carried from its decision to its answer and its end (newest first, as main
  * sends them): only the decision says which shell, and an ordinary command's decision has no line of its own.
@@ -1553,11 +1655,19 @@ export function describeEntry(e: ActivityEntry, words: EntryWords = LINUX_ENTRY_
       const name = (MODE_NAME as Record<string, string | undefined>)[e.mode];
       return { tag: "Setting", cls: "", what: `${name ? `${APPROVALS_HEADING}: ${name}` : `${APPROVALS_HEADING}: before ordinary steps, as no mode is in use`}${by}` };
     }
+    case "provider": {
+      // The user's own model provider in force changed (provider-record.ts, safety-privacy-c10-1): its host only.
+      const host = typeof e.host === "string" && e.host ? e.host : null;
+      const by = e.via === "start" ? " (as Ember started)" : "";
+      return { tag: "Setting", cls: "", what: `${host ? `Model service: ${host}` : "Model service: your own provider is no longer in use"}${by}` };
+    }
     case "command":
       return commandLine(e);
     case "remote":
     case "wsl":
       return connectionLine(e);
+    case "extension":
+      return extensionLine(e);
     default:
       return null;
   }
