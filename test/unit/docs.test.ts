@@ -419,6 +419,17 @@ describe("what the docs say about consent versions and memory, against the code 
 describe("docs/COMMANDS-WSL-SSH.md", () => {
   const doc = read("docs/COMMANDS-WSL-SSH.md");
 
+  it("says in §2.5b what Autopilot does instead of the questions it no longer puts (r11-copy-x11-5; owner decision of 2026-11-14)", () => {
+    const at = doc.indexOf("### 2.5b When you chose Autopilot");
+    const b = flat(doc.slice(at, doc.indexOf("### 2.6", at)));
+    expect(b).not.toMatch(/It still asks, with the card of §2\.4, before/);
+    expect(b).not.toMatch(/still wants your yes for a command it finds would read secrets/);
+    expect(b).toContain("Autopilot asks before no command for what the command does");
+    expect(b).toContain("what it prints is kept from the model");
+    expect(b).toContain("Stop won't reach what this command leaves running.");
+    expect(b).toContain("It asks, with the card of §2.4, only:");
+  });
+
   it("lists printf's escapes that Ember can't see as escapes, never a plain full stop (commands-y6-5)", () => {
     const listed = /other than a line break, a tab and `\\0`\s*\(([^)]*)\)/.exec(flat(doc))?.[1] ?? "";
     expect([...listed.matchAll(/`([^`]*)`/g)].map(m => m[1])).toEqual(["\\056", "\\x2e", "\\u002e"]);

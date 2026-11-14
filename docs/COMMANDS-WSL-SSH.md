@@ -802,39 +802,38 @@ window shows "About to run this: Autopilot is on" (never "as you asked"), the ex
 found ("Commands here run as root (the administrator).", without "so each one asks first", where that is why it would
 have asked), "Autopilot is on, so Ember didn't ask first." and the countdown with **Stop**, as in §2.5. Nothing is sent to a model to decide this.
 
-It still asks, with the card of §2.4, before the commands below. Where Ember runs as root or an administrator, that
-card too says "Commands here run as root (the administrator)." (or "Ember is running as an administrator here.") without
-"so each one asks first", after the line that is its reason, which is the one the bubble says; so does the countdown of
-a command Assisted's check cleared:
+Autopilot asks before no command for what the command does (the owner's decision of 2026-11-14). Where Interactive
+would have asked, this is what happens instead:
 
-- a command that would read or print passwords, keys or other secrets, so that none reaches the model; a downloaded
-  program that is handed one counts (`npx tool ~/.ssh/id_rsa`, `npx tool --token=$GITHUB_TOKEN`: the card says "Gives
-  a password, key or other secret to code it downloads.");
+- a command that would read or print passwords, keys or other secrets runs, announced, and what it prints is kept from
+  the model, which is told only that it ran, how it ended and that its output was kept from it; you see the output in
+  the command window, whose card says "Its output may hold passwords or keys, so Ember keeps it from the AI model: only
+  you see it here." A downloaded program that is handed one counts (`npx tool ~/.ssh/id_rsa`, `npx tool
+  --token=$GITHUB_TOKEN`);
 - a command that would keep running after Stop (a background job, `nohup`, `setsid`, a detached `screen` or `tmux`
-  session, `docker run -d`, a process manager, a downloaded program told to detach (`npx tool --daemon`), a
-  scheduled job, a program it opens, a service started, enabled,
-  stopped or loaded, a login or startup entry, a change to the Windows registry), or that plants code to run later (a
-  git hook, a git setting that names a program, a shell's start-up file, a program put on the command path, a
-  tunnel), so that Stop stops everything;
-- a command Ember can't tell the effect of (a loop, a line behind a `[[ … ]]` test, code written inline, `eval`,
-  text handed to `xargs` that Ember can't see, a program that waits for typing), since it may be either of those;
-- a program, or a tool's command, Ember doesn't know, a cloud tool's verb whose effect Ember can't tell ("Ember can't
-  tell whether this changes Heroku.") among them, since it too may be either of those;
-- a command your own words for the task rule out ("commit my work but don't push", "delete everything except
-  build", "push it, but without force", and a plain no to the kind of step: "don't delete anything", "push nothing",
-  "don't upload anything", "keep it local"): that is your no, said in advance, and the card says "You didn't ask for
-  this."; and one your words hold back ("leave the build folder alone", "keep notes.txt", "hold off on publishing",
-  "push tomorrow", "push main after the review", "once CI is green", "build is off limits", "I'll do the push"),
-  where the card also says "Your words say to leave this or to wait, so Ember asks first."; and a step your words
-  name and ask to be asked about first ("delete the build folder, but ask me first", "push main, but check with me
-  first"), or a deletion they narrow, make wait on a copy or send to the trash, the bin or a stash instead ("but
-  only the logs", "but back it up first", "but move it to the trash");
+  session, `docker run -d`, a process manager, a scheduled job, a service started or enabled, a login or startup
+  entry, a change to the Windows registry) or that plants code to run later (a git hook, a git setting that names a
+  program, a shell's start-up file) runs, announced, and its card and What Ember did say "Stop won't reach what this
+  command leaves running.";
+- a command Ember can't tell the effect of (a loop, code written inline, `eval`, text handed to `xargs` that Ember
+  can't see) runs, announced; a program, or a tool's command, Ember doesn't know runs announced in every mode;
+- a command your own words for the task rule out or hold back ("commit my work but don't push", "don't delete
+  anything", "leave the build folder alone", "push tomorrow", "delete the build folder, but ask me first") is refused
+  without a question: that is your no, said in advance;
 - a command of the same kind of danger as one you said no to earlier in the task, whatever either names (another
   push after a no to a push, another deletion after a no to a deletion or to deleting something in an app), any
-  dangerous command after a no to one Ember couldn't read, and one Ember can't read (a loop, inline code) after a no
-  to a dangerous one: the card says "You said no to something like this earlier in this task.";
+  dangerous command after a no to one Ember couldn't read, and one Ember can't read after a no to a dangerous one, is
+  refused without a question: it may be what you said no to;
+- a deletion or a write of something Ember can't name (a variable, a substitution, another user's home), which could
+  be Ember's own records, is refused, and the model is told to write the command again with each place named.
+
+It asks, with the card of §2.4, only:
+
 - every command where your organisation asks for that, where you turned on **Ask me before every command** for that
-  computer, in a Podman distro, and in a project's chosen command folder;
+  computer, in a Podman distro, and in a project's chosen command folder; where Ember runs as root or an
+  administrator, that card says "Commands here run as root (the administrator)." (or "Ember is running as an
+  administrator here.") without "so each one asks first", after the line that is its reason, which is the one the
+  bubble says; so does the countdown of a command Assisted's check cleared;
 - turning commands on for a computer the first time (§2.1).
 
 A command that touches Ember's own settings, records, policy or processes is refused as in every mode (§2.6), a
@@ -846,8 +845,9 @@ computer, doesn't run its command.
 On a computer reached over SSH the command is checked there again, as always. Ember tells that computer that
 Autopilot announced the command rather than that you said yes. It runs the command only where its own administrator
 allows Autopilot (where not, it answers "This computer's administrator doesn't allow Autopilot, so it wants your
-approval." and you get the card), and still wants your yes for a command it finds would read secrets, keep running
-after Stop or that it can't tell, and wherever its administrator asks for every command. When it finds more than this computer did, the
+approval." and you get the card), and still wants your yes wherever its administrator asks for every command or its
+own policy asks; a command it finds would read secrets has its output kept from the model, and one that would keep
+running after Stop is said so, as here. When it finds more than this computer did, the
 bubble says "Running a command that <computer>'s own check asked about, without asking: Autopilot is on.", its lines
 show with a countdown of their own, and anything it still wants a yes for after that gets the card. What Ember did
 records each of these as "Announced" with "Autopilot was on, so Ember didn't ask (…)." Your organisation can forbid
