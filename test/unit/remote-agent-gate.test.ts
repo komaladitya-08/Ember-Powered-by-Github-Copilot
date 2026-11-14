@@ -537,6 +537,16 @@ describe("gate 2 and the PC's Assisted check and Interactive announcements under
     expect((await gate([RM], spec({ verdict: "ask", classes: ["destroy"], rules: ["posix.rm", "ai-review", "admin.no-check"], approval: { ageMs: 100 } }))).status).toBe("ok");
   });
 
+  it("runs on a root login what the PC's Assisted check cleared where this computer allows the check, and asks otherwise (r12-commands-y12-6)", async () => {
+    const root = { facts: facts({ privileged: true }) };
+    expect(await gate([RM], checked([RM]), { ...root, assistedOk: true, interactiveOk: true })).toMatchObject({ status: "ok", approved: false });
+    expect(await gate([], checked([]), { ...root, assistedOk: true, interactiveOk: true })).toMatchObject({ status: "ok" });
+    // Not where this computer's administrator turned the check off, asks every command, or for Interactive's announcement.
+    expect(await gate([], checked([]), { ...root, assistedOk: false, interactiveOk: true })).toMatchObject({ status: "needs_confirm", says: [GATE_WORDS.noCheck, GATE_WORDS.root] });
+    expect(await gate([], checked([]), { ...root, mode: "ask", assistedOk: true, interactiveOk: true })).toMatchObject({ status: "needs_confirm", says: [GATE_WORDS.adminAsks] });
+    expect(await gate([], autonomous([]), { ...root, interactiveOk: true })).toMatchObject({ status: "needs_confirm", reason: GATE_WORDS.root });
+  });
+
   it("wants the user's yes for what Interactive announced where this computer's administrator turned the modes off", async () => {
     for (const interactiveOk of [false, undefined]) {
       expect(await gate([], autonomous([]), { interactiveOk })).toMatchObject({ status: "needs_confirm", says: [GATE_WORDS.noAutonomy], rules: ["admin.no-autonomy"] });

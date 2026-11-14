@@ -1044,8 +1044,9 @@ an earlier command printed text that looked like instructions.").
 - **On Windows**, commands run in Windows PowerShell 5.1 (not PowerShell 7) and can't take typing, so they can't ask
   you for a password or an answer; a cmd command runs inside PowerShell as `cmd /c "…"`. Stop ends the command and
   everything it started at once.
-- **As root or administrator**, every command asks ("Commands here run as root (the administrator), so each one asks
-  first." / "Ember is running as an administrator here, so each command asks first.").
+- **As root or administrator**, every command asks in Interactive ("Commands here run as root (the administrator), so
+  each one asks first." / "Ember is running as an administrator here, so each command asks first."); Assisted's check
+  may clear one the request was about, and Autopilot announces it.
 - **Ember judges the command line it can see, and the shell scripts it can read.** A shell script is read and judged
   first (§2.4), however the shell is given it (`bash a.sh`, `bash < a.sh`, `bash - < a.sh`, `sh /dev/stdin < a.sh`),
   and a file given on stdin to a program whose language Ember doesn't say how to read (`fish < a.sh`) asks. What an
@@ -1283,7 +1284,9 @@ first click **Allow**.
   (System Settings › General › Sharing › Remote Login › ⓘ).
 - **WSL on another PC**: commands only (its Linux apps show on that PC's screen).
 - **Windows**: not supported yet ("build-01 runs Windows: Ember can't work there yet.").
-- **Logged in as root**: Ember doesn't use the screen, and every command asks.
+- **Logged in as root**: Ember doesn't use the screen, and in Interactive every command asks; in Assisted one the
+  check finds in what you asked goes ahead, announced, where that computer's own policy allows Assisted, and in
+  Autopilot each is announced.
 
 ### 4.5 Commands on build-01
 
