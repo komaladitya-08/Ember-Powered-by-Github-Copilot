@@ -503,6 +503,25 @@ describe("read-only and everyday commands that asked (commands-remote-r12-4)", (
     ]) expect(decide(cmd).verdict, cmd).toBe("ask");
   });
 
+  it("reads a dry run as kubectl and helm do: the last value before `--`, never in what a pod runs (integ-x-1)", () => {
+    for (const [cmd, rule] of [
+      ["kubectl delete ns prod --dry-run=client --dry-run=none", "cloud.delete"], ["kubectl delete pod x --dry-run=client --dry-run=false", "cloud.delete"],
+      ["kubectl delete pod x --dry-run=0", "cloud.delete"], ["kubectl delete pod x --dry-run=client $X", "cloud.delete"],
+      ["kubectl apply -f k.yaml --dry-run=client --dry-run=none", "cloud.change"], ["helm upgrade web ./chart --dry-run --dry-run=false", "cloud.change"],
+      ["kubectl exec x -- sh -c 'rm -rf /data' --dry-run=client", "cloud.change"], ["kubectl run x --image=busybox -- rm -rf /data --dry-run", "cloud.change"],
+      ["kubectl run x --image=busybox --dry-run=client", "cloud.change"], ["kubectl apply -f k.yaml -- --dry-run=client", "cloud.change"],
+      ["kubectl set env deploy/web --list --list=false A=1", "cloud.change"],
+    ] as const) {
+      const d = decide(cmd);
+      expect(d.verdict, cmd).toBe("ask");
+      expect(d.rules, cmd).toContain(rule);
+    }
+    for (const cmd of ["kubectl apply -f k.yaml --dry-run=client", "kubectl apply -f k.yaml --dry-run=none --dry-run=server", "kubectl delete pod x --dry-run"]) {
+      const ctx = { os: "linux" as const, home: "/home/ana", cwd: "/home/ana/proj", ember: { paths: ["/home/ana/.config/ember"], pids: [10], names: /^ember$/ }, downloaded: new Set<string>() };
+      expect(classifyCommand(cmd, "bash", ctx).findings, cmd).toEqual([]);
+    }
+  });
+
   it("reads env-cmd's own options as options, so the command it runs is the one named (commands-remote-r12-4)", () => {
     for (const cmd of ["env-cmd -e test npm test", "env-cmd --environments test npm test", "env-cmd -f .env.test npm test"]) {
       expect(decide(cmd).reason + decide(cmd).says.join(" "), cmd).not.toMatch(/runs (test|\.env\.test)\b/);

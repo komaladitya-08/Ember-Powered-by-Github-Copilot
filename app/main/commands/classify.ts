@@ -9134,6 +9134,22 @@ function podRunsUnread(key: string, verbs: readonly string[], rest: readonly Arg
   return stdin && s.stdin !== null && there[0]?.v !== undefined && there[0].v !== null && POSIX_SHELLS[programName(there[0].v, { os: "linux", family: "posix", wsl: false, mountRoot: "" }).key] !== undefined;
 }
 
+/**
+ * The value pflag keeps of a repeated `--name[=value]` (the last one) among a command's own words, before `--`: "" for
+ * the bare flag, undefined when it isn't there, and null when a word after the last one Ember read can't be read (it
+ * may be another).
+ */
+function lastLongFlag(args: readonly Arg[], name: string): string | null | undefined {
+  let got: string | null | undefined;
+  for (const a of args) {
+    if (a.v === "--") break;
+    if (a.v === null) { if (got !== undefined) got = null; continue; }
+    if (a.v === `--${name}`) got = "";
+    else if (a.v.startsWith(`--${name}=`)) got = a.v.slice(name.length + 3);
+  }
+  return got;
+}
+
 /** heroku run's options that take a value written apart (`-a app`, `--size standard-2x`). */
 const HEROKU_RUN_VALUE = /^(-a|--app|-r|--remote|-s|--size|-e|--env|--type|-x|--exit-code-file)$/;
 /** A word as the shell would hand it on: plain, or single-quoted; one Ember can't resolve as written. */
@@ -9306,9 +9322,16 @@ reg(NATIVE, Object.keys(CLOUD_CLIS), h => {
   // `terraform providers` reads, bare or with `schema`; `mirror` and `lock` download the providers (as init does).
   const fetchesProviders = (h.key === "terraform" || h.key === "tofu") && verb === "providers" && verbs.length > 1 && verbs[1] !== "schema";
   // A dry run changes nothing (`kubectl apply --dry-run=client`, `helm upgrade --dry-run`), and `kubectl set env --list`
-  // only lists (commands-remote-r12-4).
-  const dry = (h.key === "kubectl" || h.key === "oc" || h.key === "helm") && h.args.some(a => /^--dry-run(=(client|server|true))?$/.test(a.v ?? ""))
-    || ((h.key === "kubectl" || h.key === "oc") && verbs[0] === "set" && verbs[1] === "env" && h.args.some(a => /^--list(=true)?$/.test(a.v ?? "")));
+  // only lists (commands-remote-r12-4). The flag counts as pflag reads it (integ-x-1): its last value before `--` (the
+  // words after it are the pod's), dry only as client, server, true or bare; `exec`, `run`, `debug`, `cp` and `attach`
+  // run something whatever it says.
+  const kube = h.key === "kubectl" || h.key === "oc";
+  const dryValue = lastLongFlag(h.args, "dry-run");
+  const dryRun = (kube || h.key === "helm") && !(kube && /^(exec|run|debug|cp|attach)$/.test(verbs[0] ?? ""))
+    && dryValue !== undefined && dryValue !== null && /^(|client|server|true)$/.test(dryValue);
+  const listValue = kube && verbs[0] === "set" && verbs[1] === "env" ? lastLongFlag(h.args, "list") : undefined;
+  const listsEnv = listValue !== undefined && listValue !== null && /^(|true)$/.test(listValue);
+  const dry = dryRun || listsEnv;
   const read = !fetchesProviders && (dry || CLOUD_READ.has(verb) || /^(describe|list|get)-/.test(verb) || CLOUD_READ_PHRASES.some(p => all === p || all.startsWith(`${p} `)));
   if (read) return;
   // `terraform init` changes no infrastructure: it installs the providers and modules the folder's configuration names.
