@@ -755,6 +755,22 @@ describe("The folder that holds Ember's data reached from any app's list of file
     for (const [o, app, step] of rows) expect(mayReachEmberData(req(app, "Open", step), o), `${app} ${step.element?.name} ${step.value ?? ""}`).toBe(false);
   });
 
+  it("lets a Windows or macOS Open dialog's menu items that move nothing go as before, announced, while Local or Library is selected (r12-safety-y12-1)", () => {
+    const win = { name: "Open", text: "", fileChooser: true, fields: [""], items: ["Local", "LocalLow", "Roaming"], selected: ["Local"] };
+    const mac = { name: "Open", text: "", fileChooser: true, fields: [""], items: ["u"], selected: ["Library"] };
+    const rows: [OS, string, Partial<ActionRequest>][] = [
+      ...["Details", "Large icons", "Name", "Folder", "Pin to Quick access", "Scan with Microsoft Defender..."].map(name =>
+        ["win32", "notepad", { kind: "click", element: { role: "menu item", name }, dialog: win }] as [OS, string, Partial<ActionRequest>]),
+      ...["Get Info", "Quick Look “Library”", "Tags…"].map(name =>
+        ["darwin", "TextEdit", { kind: "click", element: { role: "AXMenuItem", name }, dialog: mac }] as [OS, string, Partial<ActionRequest>]),
+    ];
+    for (const [o, app, step] of rows) {
+      const r = req(app, "Open", step);
+      expect(mayReachEmberData(r, o), `${app} ${step.element?.name}`).toBe(false);
+      expect(engine("autopilot", o).decide(r).verdict, `${app} ${step.element?.name} autopilot`).not.toBe("deny");
+    }
+  });
+
   it("asks every time, and Autopilot refuses, a delete, a move or a rename of .config, AppData or Library in a file manager Ember has no row for (safety-privacy-c12-1)", () => {
     const rows: [OS, string, string, Partial<ActionRequest>][] = [
       ["linux", "doublecmd", "Double Commander", { kind: "keys", value: "F8", element: { role: "table cell", name: ".config" } }],

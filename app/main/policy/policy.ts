@@ -1063,8 +1063,6 @@ const LIST_VIEW = /^(?:list|table|tree|tree table|layered pane|icon view|directo
  * cut and F2, and the two-pane commanders' F6 (move) and F8 (delete), with any modifier (Shift+F6 renames in place).
  */
 const LIST_REMOVING_KEY = /^(?:[a-z]+\+)*(?:delete|backspace|f2|f6|f8)$|^(?:ctrl|super|cmd)\+(?:shift\+)?x$/;
-/** A menu item that only shows, sorts, opens or copies, in a file chooser's own menu: it moves nothing chosen. */
-const KEEPS_ITEMS = /^(?:visit|open|copy location|copy|add to bookmarks|bookmark|show|hide|sort|reload|refresh|properties)\b/i;
 /** A file chooser: an app's own Open or Save dialog, by its role, its shape or its title (never a browser's web page). */
 function inFileChooser(r: ReachRequest): boolean {
   const d = r.dialog;
@@ -1105,8 +1103,8 @@ const REMOVES_WORDS = /delete|trash|\bbin\b|remove|erase|rename|\bmove|\bcut\b|o
  * app's own Open or Save dialog (GTK's chooser, Windows' common dialog) and a file manager Ember has no row for (Double
  * Commander, Total Commander, Path Finder) show the same rows and offer the same Delete, Rename and Move: judged by
  * what the step does to a row so named, never by knowing the app. A key that removes, moves or renames, pressed on such
- * a row or on the list with one chosen; a menu item or a button that does (in a chooser any menu item but one that only
- * shows, sorts, opens or copies); and a dialog's yes to removing, moving or renaming one it names in quotes. A key in a
+ * a row or on the list with one chosen; a menu item or a button that does (in a chooser too, never one that only views,
+ * pins or tags: r12-safety-y12-1); and a dialog's yes to removing, moving or renaming one it names in quotes. A key in a
  * text field, Enter on a row (it opens the folder; on macOS outside a chooser it renames, as Finder's does) and every
  * other row's step go as before.
  */
@@ -1134,7 +1132,9 @@ function listReachesEmberData(r: ReachRequest, os: OS): boolean {
   if (r.kind !== "click" && r.kind !== "cursor_click" && r.kind !== "toggle") return false;
   const label = normalizeLabel(r.element?.name ?? "");
   const item = /menu ?item/i.test(role), button = /button/i.test(role);
-  const moves = ((item || button) && MOVES_ITEMS.test(label)) || (chooser && item && !KEEPS_ITEMS.test(label));
+  // In a file chooser too, only an item that moves: a Windows or macOS dialog's View, New, Pin, Get Info or Tags
+  // menu moves nothing chosen (r12-safety-y12-1).
+  const moves = (item || button) && MOVES_ITEMS.test(label);
   return moves && chosen.some(holder);
 }
 /** Why such a step asks, or is refused in Autopilot (mayReachEmberData). */
