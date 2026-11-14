@@ -531,7 +531,14 @@ Interactive, and the agreement to Assisted's or Autopilot's card, count only whe
 recorded itself, which it seals with the system's keyring in `approvals-seal.bin` (0600) after every change made in
 Home or by voice or typed words. Until that seal is read at start Ember is at most Interactive; where it doesn't
 match, or there is none, the file is put right (`autonomy.unsealed`): at most Interactive, those two cards not agreed.
-Without a keyring (`basic_text`) nothing is sealed, so an agreement to Assisted or Autopilot lasts until Ember quits.
+Without a keyring (`basic_text`) nothing is sealed, so an agreement to Assisted or Autopilot lasts until Ember quits,
+and Home says so under the modes while it is in force ("Autopilot lasts until Ember closes: this computer has no
+keyring Ember can use to keep it safely, so Ember starts in Interactive next time"; a seal that couldn't be written
+for another reason says "Ember couldn't save it safely on this computer"). At the next start, once a choice was put
+back, the note opens with why ("Your choice of Autopilot couldn't be kept when Ember started, because this computer
+has no keyring Ember can use…", or, for a seal that didn't match, "Ember couldn't confirm your choice of Autopilot
+when it started…") until a mode is chosen again (`ModeRecord.notes`, reliability-r10-1). The agreement is never kept
+less safely to spare it: its card is read again.
 A lower mode or a withdrawn card in the file is taken, at start or while running, and recorded (`via: "file"`). Ember
 also never acts in an app's window whose title shows a file in its data folder or in the organisation's policy folder
 ("settings.json (~/.config/ember) - gedit"). While

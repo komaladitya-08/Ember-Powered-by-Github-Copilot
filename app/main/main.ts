@@ -656,7 +656,7 @@ function start(): void {
     unexpectedExit: lastRun ? { startedAt: lastRun.startedAt, version: lastRun.version } : null,
     admin: homeAdmin(admin),
     platform: platformStatus(),
-    approvals: approvalsState(settings.own().approvals, policy),
+    approvals: approvalsState(settings.own().approvals, policy, modes.notes()),
     };
   }));
   // Every entry the log keeps: the window shows the newest 80 it has lines for (a command writes several entries).
@@ -1880,6 +1880,8 @@ function start(): void {
    * a mode that asks less that can't be recorded is undone (policy/mode-record.ts).
    */
   const modes = new ModeRecord({ settings, admin: () => policy, log,
+    // A mode that can't be sealed lasts until Ember closes, and a start that put the choice back says why (reliability-r10-1).
+    onNotes: () => tellApprovals(),
     // What Ember recorded itself, sealed with the keyring: a mode above Interactive is taken from settings.json at start
     // only where it matches (modes-x9s-2). On macOS the keychain is asked off the main thread, as the sign-in's is.
     seal: new ModeSeal(path.join(userData, "approvals-seal.bin"), safeStorage, { asyncKeyring: platform.os === "darwin" }) });
@@ -1891,7 +1893,7 @@ function start(): void {
    */
   let approvalsTold = "";
   const tellApprovals = () => {
-    const state = approvalsState(settings.own().approvals, policy);
+    const state = approvalsState(settings.own().approvals, policy, modes.notes());
     const now = JSON.stringify(state);
     if (now === approvalsTold) return;
     approvalsTold = now;
@@ -2952,13 +2954,13 @@ function start(): void {
     const url = event.senderFrame?.url ?? "";
     return isTrustedSender(url) && !!home && !home.isDestroyed() && event.sender === home.webContents;
   }, {
-    state: () => approvalsState(settings.own().approvals, policy),
+    state: () => approvalsState(settings.own().approvals, policy, modes.notes()),
     choose: (mode, version) => {
       const next = chooseMode(settings.own().approvals, mode, version, policy, new Date().toISOString());
-      if (!next.ok) return { ok: false, why: next.why, state: approvalsState(settings.own().approvals, policy) };
+      if (!next.ok) return { ok: false, why: next.why, state: approvalsState(settings.own().approvals, policy, modes.notes()) };
       modes.as({ via: "home", verified: false }, () => settings.update({ approvals: next.approvals }));
       // Chosen only once it is in force: a mode whose audit entry couldn't be written was undone.
-      const state = approvalsState(settings.own().approvals, policy);
+      const state = approvalsState(settings.own().approvals, policy, modes.notes());
       return state.inForce === mode ? { ok: true, state } : { ok: false, why: "not-recorded", state };
     },
   }, { log: log.child("approvals") });

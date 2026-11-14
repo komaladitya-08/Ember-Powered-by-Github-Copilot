@@ -1026,7 +1026,10 @@ export function approvalsNote(state: ApprovalsState | null, managed: boolean, el
   const below = managed || state?.why === "organisation";
   const lockedRow = below || !state ? "" : state.checkOff && state.why !== "check-off" && state.offered.includes("assisted") ? ` ${CHECK_OFF_TEXT}, so ${MODE_NAME.assisted} can't be chosen.`
     : state.cap && (state.why !== "cap" || state.inForce === "asking") && state.offered.some(m => modeRank(m) > modeRank(state.cap)) ? ` Your organisation allows ${MODE_NAME[state.cap]} at most.` : "";
-  const said = `${base}${lockedRow}`;
+  // That the mode in force lasts only until Ember closes goes before how to answer by voice, beside what is on.
+  const kept = below || !state ? "" : sealKeptLine(state);
+  const told = kept && base.includes(ANSWER_BY_VOICE) ? base.replace(ANSWER_BY_VOICE, `${kept} ${ANSWER_BY_VOICE}`) : kept ? `${base} ${kept}` : base;
+  const said = `${below || !state ? "" : sealStartLine(state)}${told}${lockedRow}`;
   // Autopilot doesn't ask for that (commands/autopilot.ts autopilotAsks: root is no reason to ask there): say what
   // happens instead (modes-x9p-1).
   if (state?.inForce === "autopilot" && !below) {
@@ -1039,6 +1042,29 @@ export function approvalsNote(state: ApprovalsState | null, managed: boolean, el
   if (elevated === "maybe-administrator") return `${said} Ember may be running as an administrator (it couldn't tell), and then it asks before every command. Start it normally to be sure.`;
   if (elevated === "root") return `${said} Ember is running as root, so it asks before every command. Start it as yourself to change that.`;
   return said;
+}
+
+/**
+ * Before the note, once a start put the mode chosen back (reliability-r10-1): why, and how to have it again. Without a
+ * keyring the choice can only last until Ember closes; a seal that didn't match (a hand edit, a lost file) is said
+ * as not confirmed.
+ */
+function sealStartLine(state: ApprovalsState): string {
+  if (!state.started) return "";
+  const chosen = MODE_NAME[state.started.chosen];
+  const inUse = state.inForce === "asking" ? "" : `, so ${MODE_NAME[state.inForce]} is in use`;
+  return state.started.why === "keyring"
+    ? `Your choice of ${chosen} couldn't be kept when Ember started, because this computer has no keyring Ember can use${inUse}. Choose ${chosen} again to use it until Ember closes. `
+    : `Ember couldn't confirm your choice of ${chosen} when it started${inUse}. Choose ${chosen} again to use it. `;
+}
+
+/** After the note, while a mode above Interactive couldn't be sealed for the next start: that it lasts until Ember closes (reliability-r10-1). */
+function sealKeptLine(state: ApprovalsState): string {
+  if (!state.kept || state.inForce === "asking" || state.inForce === "interactive") return "";
+  const mode = MODE_NAME[state.inForce];
+  return state.kept === "keyring"
+    ? `${mode} lasts until Ember closes: this computer has no keyring Ember can use to keep it safely, so Ember starts in ${MODE_NAME.interactive} next time.`
+    : `${mode} lasts until Ember closes: Ember couldn't save it safely on this computer, so it starts in ${MODE_NAME.interactive} next time.`;
 }
 
 /** A mode's row: its name and sentence, whether it is the one in force, and whether the organisation locks it. */
