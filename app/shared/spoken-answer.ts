@@ -6,6 +6,8 @@
  * no Electron and no Node, so both load it.
  */
 
+import { modeIntent } from "../main/agent/autonomy-intent";
+
 /** The name as the recognizer may write it. */
 const NAMES = new Set(["ember", "amber", "emma"]);
 /** Words that only lead into an answer: one of them may ("Okay, go ahead"), never a run of them (review of #143). */
@@ -188,6 +190,8 @@ const ANSWER_WORDS = new Set([
 ]);
 
 /** The words a near-miss answer by name may start with and still be a yes, put with more (r11-voice-x11-1). */
+/** Words that make what a yes leads a correction ("Okay, email Sam instead."): r11-voice-y11-2. */
+const CORRECTS = new Set(["instead", "rather", "but"]);
 const YES_LEADS = new Set(["yes", "yeah", "yep", "yup", "sure", "okay", "ok", "fine", "allow", "alright"]);
 
 /**
@@ -262,6 +266,8 @@ export function assentSound(text: string): boolean {
  */
 export function nearAnswer(text: string, named = false): boolean {
   if (spokenAnswer(text) !== null) return false;
+  // A mode change ("Autopilot off.", "Interactive mode.") is main's own request: never held (r11-voice-y11-1).
+  if (modeIntent(text) !== null) return false;
   const words = norm(text).replace(/[,.!;:?？]/g, " ").split(/\s+/).filter(Boolean);
   let i = 0;
   if (words[i] === "hey") i++;
@@ -283,17 +289,19 @@ export function nearAnswer(text: string, named = false): boolean {
   if (rest.every(w => ANSWER_WORDS.has(w)) && rest.some(w => SAYS_SO.has(w))) return true;
   // "Why not.", "Sure, why not.": an assent, not a no.
   if (/^(?:\S+ )?why not$/.test(said)) return true;
-  // By name, a yes led with a word or two more ("Ember, yes, send it.", "Ember, yes sir."): the user's yes, put so, and
-  // never a correction, which no yes leads (r11-voice-x11-1: it went to Copilot as a request while the question waited).
-  if (named && rest.length <= 4 && YES_LEADS.has(rest[0])) return true;
+  const acts = rest.some((w, j) => REQUEST_WORDS.has(w) && !OWNED.has(rest[j - 1])) || /\bgo (?:to|into|back|home|through|up|down)\b/.test(said) || TELLS.test(said);
+  // By name, a yes led with a word or two more that asks nothing ("Ember, yes sir."): the user's yes, put so
+  // (r11-voice-x11-1). What acts or corrects ("Ember, sure, open Firefox.", "okay, email Sam instead") is a request, as
+  // what is said by name and isn't an answer is (r11-voice-y11-2).
+  if (named && rest.length <= 4 && YES_LEADS.has(rest[0]) && !acts && !rest.some(w => CORRECTS.has(w))) return true;
   // By name, what holds a no and more is a correction or a report ("Ember, it's not loading."): a request.
   if (named && rest.some(w => NO_WORDS.has(w))) return false;
-  // Up to four words with no request in them, by name or not ("Agreed.", "By all means.", "You bet."): an assent that
-  // isn't on the list, held by default rather than sent (r11-voice-x11-2); but courtesies and sounds alone ("Thanks.",
-  // "Um.") aren't, nor what tells of something ("I told you.": the room's talk goes nowhere in an answer window). A
+  // Up to four words with no request in them, without the name ("Agreed.", "By all means.", "You bet."): an assent that
+  // isn't on the list, held by default rather than sent (r11-voice-x11-2); by name, what isn't an answer is a request
+  // ("Hey Ember, kill the task.", "Hey Ember, dark mode.": r11-voice-y11-2). Courtesies and sounds alone ("Thanks.",
+  // "Um.") aren't held, nor what tells of something ("I told you.": the room's talk goes nowhere in an answer window). A
   // verb after "your", "my", "good" or "a" is a noun: "Your call.", "Sounds like a plan."
-  const acts = rest.some((w, j) => REQUEST_WORDS.has(w) && !OWNED.has(rest[j - 1])) || /\bgo (?:to|into|back|home|through|up|down)\b/.test(said) || TELLS.test(said);
-  if (rest.length <= 4 && (!acts || said === "make it so") && !noAnswer(rest)) return true;
+  if (!named && rest.length <= 4 && (!acts || said === "make it so") && !noAnswer(rest)) return true;
   // A no of more than one word inside, too ("Please just leave it there.", "Leave it, I said."): r10-voice-x10-1.
   return !named && (rest.some(w => NO_WORDS.has(w)) || NO_PHRASES.some(n => ` ${said} `.includes(n)));
 }

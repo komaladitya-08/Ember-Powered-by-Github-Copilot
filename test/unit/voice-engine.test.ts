@@ -3485,7 +3485,7 @@ describe("whose a spoken answer is (second review of the voice lane, 2026-11-12)
     });
 
     it("says once it didn't catch a short yes with a word more said by name, or an assent that isn't on the list, in every window, and never sends it (r11-voice-x11-1, r11-voice-x11-2)", () => {
-      for (const words of ["Yes, send it.", "Yep, delete it.", "Yes sir.", "Why not.", "Fine by me."]) for (const where of ["follow-up", "conversation"] as const) {
+      for (const words of ["Yes sir.", "Why not.", "Fine by me."]) for (const where of ["follow-up", "conversation"] as const) {
         const named = waiting({ 5: `Ember, ${words}` }, where, { otherSound: false });
         says(named, 5, 1, "user");
         expect(named.heard().filter(h => h !== "wake"), `Ember, ${words} in ${where}`).toEqual(["unclear"]);
@@ -3500,6 +3500,18 @@ describe("whose a spoken answer is (second review of the voice lane, 2026-11-12)
         const s = waiting({ 5: `Hey Ember, ${words}` }, where, { otherSound: false });
         says(s, 5, 1, "user");
         expect(s.heard().filter(h => h !== "wake"), `${words} in ${where}`).toEqual([`${words} | ${where}`]);
+      }
+    });
+
+    it("sends a mode change, a short request or a yes-led correction said by name while a question waits, in every window, at a wake too (r11-voice-y11-1, r11-voice-y11-2)", () => {
+      // They were held: the note once, then silence, and the mode that asks less stayed on.
+      for (const words of [
+        "Autopilot off.", "Leave autopilot.", "End autopilot.", "Disable autopilot.", "Interactive mode.", "Autopilot mode off.",
+        "Kill the task.", "End it.", "Dark mode.", "Gedit.", "Sure, open Firefox.", "Okay, email Sam instead.",
+      ]) for (const where of WHERE) {
+        const s = waiting({ 5: `Hey Ember, ${words}` }, where, { otherSound: false });
+        says(s, 5, 1, "user");
+        expect(s.heard().filter(h => h !== "wake"), `${words} in ${where}`).toEqual([`${words} | ${where === "answer" ? "wake" : where}`]);
       }
     });
 

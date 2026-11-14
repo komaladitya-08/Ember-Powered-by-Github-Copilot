@@ -750,14 +750,17 @@ closers), up to six words that are all an answer's words, one of them saying so:
 list (“Of course, go ahead.”, “Thanks, go ahead.”, “Just do it.”, “Definitely.”, which is never taken as a yes on a
 guess; voice-listening-r11-1), up to four words with nothing in them that asks Ember to do or tell something (no verb
 it acts on, no question, nothing that tells of something done: “Agreed.”, “By all means.”, “You bet.”, “Be my guest.”,
-“Mm-hmm.”, held by default so a new way to say yes is never sent: r11-voice-x11-2; a short request with no verb Ember
-knows is held so too, and the note says how to answer), and, in any window, a yes asked as a question said by name
+“Mm-hmm.”, held by default without the name so a new way to say yes is never sent: r11-voice-x11-2; a short request
+with no verb Ember knows is held so too without the name, and the note says how to answer), and, in any window, a yes asked as a question said by name
 (“Ember, okay?”: `askedYes`): nothing of them is sent, where they went to Copilot or vanished (V2-F5, V2-F7). Said by
 name (at a wake, or the user's own name in a follow-up or a conversation), what starts like an answer is held only
-when a yes leads it (“Ember, yes, send it.”, “Ember, yes sir.”: r11-voice-x11-1), and what holds a no and more is a
-request, as at a wake (“Hey Ember, don't email Bob, email Sam.”, “Ember, no, I meant the other file.”, “Ember, it's not
+when a yes leads it and nothing more is asked or corrected (“Ember, yes sir.”: r11-voice-x11-1; “Ember, yes, send
+it.”, “Hey Ember, sure, open Firefox.”, “Hey Ember, okay, email Sam instead.” are requests), a short request with no
+verb Ember knows is a request (“Hey Ember, kill the task.”, “Hey Ember, dark mode.”: r11-voice-y11-2), and what holds
+a no and more is a request, as at a wake (“Hey Ember, don't email Bob, email Sam.”, “Ember, no, I meant the other file.”, “Ember, it's not
 loading.”, which a conversation held and never sent: voice-listening-r11-2). “Why?”, “Which file?” and a question
-without its mark (“Do you agree”: r11-voice-x11-3) are requests as ever. So are words that hold
+without its mark (“Do you agree”: r11-voice-x11-3) are requests as ever, and so is a change of approval mode in any window, by name or not (“Autopilot off.”,
+“Interactive mode.”: main's `modeIntent`, r11-voice-y11-1). So are words that hold
 a stop (“No, stop the task.”, “Okay, stop typing.”): never a near-miss, they reach main, which stops everything on
 them while a task is at work (voice-product-y9-1). “Okay, Ember.”, which
 the spotter hears as “Hey Ember”, is only a wake and answers nothing: nothing tells whose the “Okay” before the name

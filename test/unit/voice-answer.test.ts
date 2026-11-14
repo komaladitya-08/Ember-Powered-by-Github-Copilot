@@ -512,7 +512,7 @@ describe("spoken answers as people say them (owner report of 2026-11-03: “Embe
     for (const t of ["No.", "Not now.", "Leave it.", "I said no."]) expect(spokenAnswer(`Ember, ${t}`), t).toBe("deny");
   });
 
-  it("holds a short yes with a word more said by name as a near-miss, as without it, and only a no-led correction becomes a request (r11-voice-x11-1)", () => {
+  it("holds a short yes with a word more as a near-miss, by name too where it asks nothing more, and a yes-led request said by name is a request (r11-voice-x11-1, r11-voice-y11-2)", () => {
     // By name they went to Copilot as a request while the question stayed up.
     for (const t of [
       "Yes, send it.", "Yep, delete it.", "Yes sir.", "Yes, ma'am.", "Sure, buddy.", "Okay by me.", "Fine by me.", "Why not.",
@@ -520,8 +520,12 @@ describe("spoken answers as people say them (owner report of 2026-11-03: “Embe
     ]) {
       expect(spokenAnswer(t), t).toBeNull();
       expect(nearAnswer(t), t).toBe(true);
+    }
+    for (const t of ["Yes sir.", "Yes, ma'am.", "Sure, buddy.", "Okay by me.", "Fine by me.", "Why not.", "Sure, why not.", "Yes, the blue one."]) {
       expect(nearAnswer(t, true), `${t} by name`).toBe(true);
     }
+    // Said by name, what a yes leads and acts on is a request, as on main (r11-voice-y11-2).
+    for (const t of ["Yes, send it.", "Yep, delete it.", "Yeah, open it.", "Okay, now send it."]) expect(nearAnswer(t, true), `${t} by name`).toBe(false);
   });
 
   it("holds an assent of a few words that isn't on the list, in every window, and sends a short request with a verb or a question (r11-voice-x11-2, r11-voice-x11-3)", () => {
@@ -533,10 +537,10 @@ describe("spoken answers as people say them (owner report of 2026-11-03: “Embe
       // Neighbours the review didn't give.
       "Fair enough.", "As you wish.", "Very well.", "Suits me.", "No objection.", "Righto.", "Works for me.", "Will do.",
     ];
+    // Without the name; said by name, what isn't an answer is a request (r11-voice-y11-2).
     for (const t of assents) {
       expect(spokenAnswer(t), t).toBeNull();
       expect(nearAnswer(t), t).toBe(true);
-      expect(nearAnswer(t, true), `${t} by name`).toBe(true);
     }
     // A request Ember can act on is still one: a verb, a question (with its mark or without it), or one of main's own.
     for (const t of [
@@ -548,6 +552,29 @@ describe("spoken answers as people say them (owner report of 2026-11-03: “Embe
     ]) {
       expect(nearAnswer(t), t).toBe(false);
       expect(nearAnswer(t, true), `${t} by name`).toBe(false);
+    }
+  });
+
+  it("never holds a mode change said while a question waits, by name or not, so it reaches main (r11-voice-y11-1)", () => {
+    // They were held as near-misses and never reached main's modeIntent, so Autopilot or Assisted stayed on.
+    for (const t of [
+      "Autopilot off.", "Leave autopilot.", "End autopilot.", "Disable autopilot.", "Interactive mode.", "Autopilot mode off.",
+      "Assisted mode.", "Assisted off.", "No more autopilot.", "Exit assisted.",
+    ]) {
+      expect(nearAnswer(t), t).toBe(false);
+      expect(nearAnswer(t, true), `${t} by name`).toBe(false);
+      expect(nearAnswer(`Hey Ember, ${t}`, true), `Hey Ember, ${t}`).toBe(false);
+    }
+  });
+
+  it("sends a short request or a yes-led correction said by name while a question waits, and holds a bare yes with an address (r11-voice-y11-2)", () => {
+    // By name they were held as near-misses, and the note is said once per question, so a second try got silence.
+    for (const t of [
+      "Kill the task.", "End the task.", "End it.", "Abandon it.", "Freeze.", "Hold it.", "Dark mode.", "Volume up.", "Gedit.",
+      "Weather tomorrow.", "Sure, open Firefox.", "Okay, email Sam instead.", "Okay, now send it.",
+    ]) expect(nearAnswer(`Hey Ember, ${t}`, true), `Hey Ember, ${t}`).toBe(false);
+    for (const t of ["Yes sir.", "Yes, ma'am.", "Sure, buddy.", "Okay by me.", "Fine by me.", "Why not.", "Sure, why not."]) {
+      expect(nearAnswer(`Ember, ${t}`, true), `Ember, ${t}`).toBe(true);
     }
   });
 

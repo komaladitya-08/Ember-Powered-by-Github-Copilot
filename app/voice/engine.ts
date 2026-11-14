@@ -2451,9 +2451,11 @@ export class VoiceEngine {
     // ends a conversation: "Okay, that's all." still ends it, sending nothing (voice-product-x9-3).
     // Said by name (a wake, or the user's name in a window that needs none: namedByUser), what holds a no and more ("Hey
     // Ember, don't email Bob, email Sam.") is a request, as at a wake, and in a conversation it was held and never sent
-    // (voice-listening-r11-2); a yes put with more ("Ember, yes, send it.") and an everyday yes that isn't on the list
-    // ("Agreed.", "By all means.") are held, by name or not, and went to Copilot as a request (voice-listening-r11-1,
-    // r11-voice-x11-1, -x11-2).
+    // (voice-listening-r11-2); a yes put with a word more that asks nothing ("Ember, yes sir.") is held, and so,
+    // without the name, is an everyday yes that isn't on the list ("Agreed.", "By all means."): they went to Copilot as a
+    // request (voice-listening-r11-1, r11-voice-x11-1, -x11-2). By name, a short request or a yes-led one ("Hey Ember,
+    // kill the task.", "Ember, sure, open Firefox.") is a request, and a mode change ("Autopilot off.") is never held,
+    // by name or not (r11-voice-y11-1, -y11-2).
     const answerLike = this.mode.reason === "follow-up" || this.mode.reason === "answer" || conversation;
     const byName = this.mode.reason === "wake" || named;
     if (this.questionWaiting && this.mode.reason !== "manual" && !this.answering(text) && !endsConversation(text) && (askedYes(text) || ((answerLike || byName) && nearAnswer(text, byName)))) {
