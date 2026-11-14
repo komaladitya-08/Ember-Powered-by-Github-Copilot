@@ -320,6 +320,33 @@ describe("Ember's own files reached by what a field or a file dialog holds, not 
     denied("linux", "gedit", doc("linux", "gedit", "notes.txt - gedit", { kind: "text", mode: "append", value: "~/.config/ember/settings.json", currentText: "todo" }), "typed");
   });
 
+  it("lets Enter or typing in a one-line field go as before where what it holds is a web address or names a folder called ember outside a data folder (integ-x-3)", () => {
+    const bar = { role: "entry", name: "Search with Google or enter address" };
+    const rows: [OS, string, string, Partial<ActionRequest>][] = [
+      ["linux", "firefox", "acme/ember — Mozilla Firefox", { kind: "keys", value: "Return", element: bar, currentText: "https://github.com/acme/ember" }],
+      ["linux", "firefox", "New Tab — Mozilla Firefox", { kind: "text", value: "https://github.com/acme/ember", element: bar }],
+      ["win32", "chrome", "New Tab - Google Chrome", { kind: "text", value: "https://example.com/audit/settings.json", element: bar }],
+      ["linux", "firefox", "New Tab — Mozilla Firefox", { kind: "text", value: "github.com/acme/ember", element: bar }],
+      ["linux", "slack", "general - Slack", { kind: "text", value: "it's in Downloads/ember", element: { role: "entry", name: "Message" } }],
+      ["darwin", "Slack", "general - Slack", { kind: "keys", value: "Return", element: { role: "AXTextField", name: "Message" }, currentText: "see ~/projects/EMBER" }],
+    ];
+    for (const [os, app, w, x] of rows) {
+      const r = req(app, w, x);
+      expect(mayReachEmberData(r, os), `${os} ${app} ${JSON.stringify(x)}`).toBe(false);
+      for (const mode of ["interactive", "autopilot"] as const) expect(engine(mode, os, { [app]: "act" }).decide(r).verdict, `${app} ${mode} ${JSON.stringify(x)}`).toBe("allow");
+    }
+    // Under a data folder it still may be Ember's, a file of its by name still is, a file: address is a path, and a file
+    // dialog or a file manager is still judged by any part of what it holds.
+    for (const [os, app, w, x] of [
+      ["darwin", "Slack", "general - Slack", { kind: "text", value: "Library/Application Support/EMBER/x", element: { role: "AXTextField", name: "Message" } }],
+      ["linux", "slack", "general - Slack", { kind: "text", value: "notes/settings.json", element: { role: "entry", name: "Message" } }],
+      ["linux", "firefox", "New Tab — Mozilla Firefox", { kind: "keys", value: "Return", element: bar, currentText: "file:///srv/x/ember/audit/settings.json" }],
+      ["linux", "gedit", "Save As", { kind: "text", value: "Downloads/ember", element: loc }],
+      ["linux", "org.gnome.Nautilus", "Home", { kind: "keys", value: "Return", element: loc, currentText: "projects/ember" }],
+      ["win32", "slack", "general - Slack", { kind: "text", value: "C://Users/u/AppData/Local/EMBER", element: { role: "edit", name: "Message" } }],
+    ] as [OS, string, string, Partial<ActionRequest>][]) expect(mayReachEmberData(req(app, w, x), os), `${os} ${app} ${JSON.stringify(x)}`).toBe(true);
+  });
+
   it("takes Windows' trailing dot or space and a \"::$DATA\" stream for the file they save as, so \"settings.json.\" asks too (r11-safety-y11-5)", () => {
     for (const name of ["settings.json.", "settings.json::$DATA", "settings.json. .", "EMBER.\\x.txt"]) {
       asksOrRefused("win32", "notepad", req("notepad", "Save As", { kind: "text", value: name, element: loc }), name);

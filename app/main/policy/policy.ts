@@ -840,8 +840,31 @@ function emberDataReach(r: ReachRequest, os: OS): "file" | "unread" | null {
   // what the field holds once this step is taken, not only this step's piece (safety-privacy-r11-1). A Windows short
   // name ("EMBER~1", "APPDAT~1") may be any folder, Ember's too: whose it is can't be told.
   const caseless = os !== "linux";
-  if (heldTexts(r).some(t => namesEmberFile(t, caseless) || (os === "win32" && hasShortName(t)))) return "file";
+  // Outside a dialog, a file chooser or a file manager, what a field holds is judged as a path only where it may be
+  // one: a web address is none, and the folder's name counts only under a data folder (integ-x-3: an address bar's
+  // "https://github.com/acme/ember", a chat's "Downloads/ember"). Ember's own file names count everywhere.
+  const anyPart = !!r.dialog || r.windowId?.role === "file chooser" || FILE_DIALOG_NAME.test(name) || FILE_MANAGER_APP.test((r.app ?? "").trim());
+  if (heldTexts(r).some(t => (anyPart ? namesEmberFile(t, caseless) : namesEmberPath(t, caseless)) || (os === "win32" && hasShortName(t)))) return "file";
   return fileDialogReach(r, os);
+}
+/** An address on the web, or anywhere but a file (a scheme of two letters or more: "C://" is a drive): it is no path on this computer. */
+const WEB_ADDRESS = /^\s*[a-z][a-z0-9+.-]+:\/\//i;
+/** A folder Ember's data or policy folder sits in, as a path's part (".config", "Local", "Application Support", "%LOCALAPPDATA%"). */
+const DATA_PARENT_PART = /^(?:\.config|local|roaming|appdata|application support|library|etc|%(?:local)?appdata%|\$\{?xdg_config_home\}?)$/i;
+/**
+ * Does `text`, held by a field outside any dialog, file chooser or file manager, name one of Ember's own files, or its
+ * data or audit folder's name under a folder that holds Ember's (integ-x-3)? A web address (but a file: one) names none.
+ */
+function namesEmberPath(text: string, caseless: boolean): boolean {
+  if (WEB_ADDRESS.test(text) && !/^\s*file:/i.test(text)) return false;
+  const parts = text.split(/[/\\\n]/);
+  const bare = (p: string) => p.trim().replace(/^["'“]|["'”]$/g, "");
+  return parts.some((part, i) => {
+    if (!namesEmberFile(part, caseless)) return false;
+    const p = bare(part), f = caseless ? p.replace(/:.*$/, "").replace(/[. ]+$/, "").toLowerCase() : p;
+    if (!EMBER_FOLDER.test(f)) return true; // one of its files, by name
+    return i > 0 && DATA_PARENT_PART.test(bare(parts[i - 1]));
+  });
 }
 /**
  * A Windows 8.3 short name as a path's part: up to 6 characters, "~", a number, an optional extension of up to 3
