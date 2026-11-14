@@ -212,8 +212,9 @@ tests don't stand in for them. **Known issues and limits**, at the end, lists wh
   reach the system journal only as their size.
 - **Autopilot**: Ember doesn't ask before steps or commands, risky and dangerous ones included; it announces and records
   each one, and Stop stops it. It asks only where your organisation's policy or your own **Ask me before every
-  command** for a computer says to. A command that reads or prints secrets runs, and what it prints is kept from the AI
-  model (you see it in the command window), as is every later command's output in that task; one that would also save
+  command** for a computer says to, in a distro Podman uses and in **Project work**. A command that reads or prints
+  secrets runs, and what it prints is kept from the AI model (you see it in the command window), as is every later
+  command's output in that task; one that would also save
   them to a file is refused. One that would keep running after Stop runs, and its card and the audit log say Stop won't
   reach it. It refuses, without asking, a command your own words rule out or hold back (“delete the build folder, but
   ask me first”, “…but only the logs”), one that may be something you said no to earlier in the task, and a deletion or

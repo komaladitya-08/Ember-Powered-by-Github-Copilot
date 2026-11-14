@@ -30,11 +30,12 @@ export const COMMANDS_INTRO = `Ember runs commands in its own command window, wh
  * commands-card.ts EXACT_ONLY says (commands/decide.ts rule 10; accessibility-c11-1, r11-copy-x11-1); Assisted's check may clear any of
  * them it finds in the user's words (commands/review.ts notReviewable); Autopilot asks none of them, keeps a secrets
  * command's output from the model, names what Stop won't reach and refuses what the user said no to or ruled out, and
- * only the organisation's and the user's own "ask every command" still ask (commands/autopilot.ts autopilotAsks).
+ * only the organisation's and the user's own "ask every command" still ask, and every command in a distro Podman uses and
+ * in Project work (commands/autopilot.ts autopilotAsks; integ-x-2).
  */
 export function commandsIntro(mode: ApprovalMode | null): string {
   if (mode === "assisted") return `Ember runs commands in its own command window, where you can watch and stop them. Most run straight away, ones it doesn't know included. Before code it can't read or a dangerous command, one that deletes, publishes, touches secrets, changes the system, downloads and runs code or would keep running after you stop it, Assisted's check reads it against what you asked: if it finds it there, or you asked for exactly that command and it ${EXACT_ONLY}, Ember tells you first and gives you a few seconds to stop it; otherwise it asks.`;
-  if (mode === "autopilot") return "Ember runs commands in its own command window, where you can watch and stop them. In Autopilot it asks before none of them: a dangerous one runs after a few seconds to stop it, what a command that touches secrets prints is kept from the AI model, and Ember says when one would keep running after you stop it. One you said no to, or ruled out in your request, is refused, and so is one that deletes, changes or reads something Ember can't name, such as a place held in a variable. It still asks wherever you or your organisation set commands to ask every time, and it isn't in Autopilot on a computer reached over SSH whose administrator doesn't allow it.";
+  if (mode === "autopilot") return "Ember runs commands in its own command window, where you can watch and stop them. In Autopilot it asks before none of them: a dangerous one runs after a few seconds to stop it, what a command that touches secrets prints is kept from the AI model, and Ember says when one would keep running after you stop it. One you said no to, or ruled out in your request, is refused, and so is one that deletes, changes or reads something Ember can't name, such as a place held in a variable. It still asks wherever you or your organisation set commands to ask every time, in a distro Podman uses and in “Project work”, and it isn't in Autopilot on a computer reached over SSH whose administrator doesn't allow it.";
   return COMMANDS_INTRO;
 }
 export const WSL_SWITCH = "Let Ember work in WSL";

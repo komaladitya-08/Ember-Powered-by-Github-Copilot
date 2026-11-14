@@ -37,8 +37,8 @@ describe("the consent and the vault", () => {
   });
 
   it("asks someone who agreed to Autopilot's old card again before Autopilot is in force (vault-4)", () => {
-    expect(FEATURE_CONSENT_VERSION.autopilot).toBe(3);
-    expect(modeCardVersion("autopilot")).toBe(3);
+    expect(FEATURE_CONSENT_VERSION.autopilot).toBe(4);
+    expect(modeCardVersion("autopilot")).toBe(4);
     const policy = AdminPolicySchema.parse({});
     const at = "2026-11-12T10:00:00.000Z";
     const card = (version: number) => ({ version, at });
