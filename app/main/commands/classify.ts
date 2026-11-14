@@ -5583,6 +5583,8 @@ function stdinFile(h: H, client?: SqlClient): void {
 }
 
 /** redis-cli's commands that only read or watch (anything else changes the database). */
+/** redis commands that print the values of the keys they name. */
+const REDIS_KEY_READS = /^(get|mget|getex|getdel|getrange|hget|hgetall|hmget|hvals|lrange|lindex|smembers|srandmember|zrange|xrange|xread|dump|json\.get|substr)$/;
 const REDIS_READS = /^(get|mget|exists|keys|scan|sscan|hscan|zscan|type|ttl|pttl|strlen|hget|hgetall|hkeys|hvals|hlen|hexists|lrange|llen|lindex|smembers|scard|sismember|zrange|zrangebyscore|zcard|zscore|info|ping|dbsize|time|echo|memory|object|client|slowlog|latency|monitor|subscribe|psubscribe|pubsub|xrange|xlen|xread|bitcount|getrange|getbit|role|lastsave|command|config)$/;
 /**
  * One redis-cli command (its words, null for one Ember can't see): a change to the data, or to how the server works.
@@ -5591,6 +5593,18 @@ const REDIS_READS = /^(get|mget|exists|keys|scan|sscan|hscan|zscan|type|ttl|pttl
 function redisCommand(h: H, words: readonly (string | null)[]): void {
   if (words[0] === null || (/^config$/i.test(words[0] ?? "") && words[1] === null)) { h.e.unclear("unclear.sql", "It runs database commands Ember can't see."); return; }
   const cmd = (words[0] ?? "").toLowerCase();
+  const sub = (words[1] ?? "").toLowerCase();
+  // What prints a secret by where it comes from (the redactor can't tell a bare value is one): CONFIG GET of a password
+  // or of a pattern, ACL's users with their password hashes, AUTH's password on the line, and GET of a key named like a
+  // secret (commands-remote-r11-4). A word Ember can't see may be any of them.
+  const rest = words.slice(cmd === "config" || cmd === "acl" ? 2 : 1);
+  const secretKey = (w: string | null) => w === null || SECRET_WORD.test(w) || /session|jwt|auth|cred/i.test(w);
+  if ((cmd === "config" && sub === "get" && rest.some(w => w === null || /[*?[]/.test(w) || /pass|auth|secret|key|user|acl/i.test(w)))
+    || (cmd === "acl" && /^(list|getuser|save|dryrun)$/.test(sub)) || cmd === "auth" || (cmd === "hello" && words.some(w => /^auth$/i.test(w ?? "")))
+    || (REDIS_KEY_READS.test(cmd) && rest.some(secretKey))) {
+    h.e.add("secret", "secret.db", SAYS.secrets);
+  }
+  if (cmd === "acl" && /^(list|getuser|users|whoami|cat|log|genpass|help)$/.test(sub)) return;
   if (cmd && !REDIS_READS.test(cmd)) h.e.add("destroy", "db.change", "Changes or deletes data in a database.");
   if (cmd === "config" && /^(set|rewrite|resetstat)$/i.test(words[1] ?? "")) h.e.add("system", "system.kernel", "Changes how the system works.");
 }

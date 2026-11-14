@@ -10,6 +10,7 @@ import { runCase, type ContextName } from "../fixtures/commands/corpus";
 import type { ShellId } from "../../app/main/commands/types";
 import { optIs, parseOpts, has, values } from "../../app/main/commands/words";
 import { lit } from "../../app/main/commands/words";
+import { keptQuestion } from "../../app/main/commands/autopilot";
 
 interface Opts { words?: string; shell?: ShellId; context?: ContextName; downloaded?: string[]; missing?: string[] }
 const result = (cmd: string, o: Opts = {}) =>
@@ -51,5 +52,41 @@ describe("a long option written whole that is a prefix of another (commands-remo
 
   it("still reads a proxy's password, as main read --proxy by --proxy-user's prefix", () => {
     for (const cmd of ["curl --proxy http://u:pw@proxy:3128 https://x.example", "curl --proxy-user u:pw https://x.example"]) expect(decide(cmd).rules, cmd).toContain("secret.token-arg");
+  });
+});
+
+describe("output that is a secret by where it comes from (commands-remote-r11-4)", () => {
+  it("asks before reading a container's, a service's or a cluster's mounted secrets, in every mode", () => {
+    for (const cmd of [
+      "cat /run/secrets/db_password", "cat /run/secrets/postgres_password", "cat /var/run/secrets/kubernetes.io/serviceaccount/token", "head -c 100 /run/secrets/x",
+      "cat /run/credentials/app.service/db", "base64 /run/secrets/db", "cp /run/secrets/db /tmp/x", "tar czf - /run/secrets", "grep . /run/secrets/*",
+      "cat /etc/kubernetes/admin.conf", "cat /etc/rancher/k3s/k3s.yaml", "cat /var/lib/rancher/k3s/server/token", "cat /vault/secrets/config", "cat /etc/ssl/private/site.key",
+      "less /etc/credstore/db", "xxd /run/keys/x",
+    ]) {
+      const r = result(cmd);
+      expect(r.decision.verdict, cmd).toBe("ask");
+      expect(r.decision.rules, cmd).toContain("path.secret");
+      expect(keptQuestion(r.decision, r.cls.findings), cmd).toBe("secret");
+    }
+    expect(decide("Get-Content C:\\ProgramData\\Docker\\secrets\\db", { shell: "powershell", context: "win32" }).rules).toContain("path.secret");
+    // Listing the folder still runs.
+    for (const cmd of ["ls /run/secrets", "ls -la /var/run/secrets/kubernetes.io/serviceaccount"]) expect(decide(cmd).verdict, cmd).toBe("run");
+  });
+
+  it("asks before redis-cli prints a password, a pattern of settings, its users or a key named like a secret", () => {
+    for (const cmd of [
+      "redis-cli CONFIG GET requirepass", "redis-cli -h prod CONFIG GET '*'", "redis-cli config get masterauth", "redis-cli CONFIG GET '*pass*'", "redis-cli CONFIG GET tls-key-file-pass",
+      "redis-cli CONFIG GET maxmemory requirepass", "redis-cli ACL LIST", "redis-cli ACL GETUSER default", "redis-cli AUTH hunter2 PING", "redis-cli HELLO 3 AUTH default hunter2",
+      "redis-cli GET api_token", "redis-cli GET session:abc", "redis-cli HGETALL user:1:credentials", "redis-cli MGET a db_password", "redis-cli GET \"$KEY\"",
+    ]) {
+      const r = result(cmd);
+      expect(r.decision.verdict, cmd).toBe("ask");
+      expect(r.decision.rules, cmd).toContain("secret.db");
+      expect(keptQuestion(r.decision, r.cls.findings), cmd).toBe("secret");
+    }
+    // Ordinary reads still run, and ACL's lists that print no password aren't a change.
+    for (const cmd of ["redis-cli PING", "redis-cli GET counter", "redis-cli CONFIG GET maxmemory", "redis-cli INFO", "redis-cli ACL WHOAMI", "redis-cli ACL USERS"]) {
+      expect(decide(cmd).verdict, cmd).toBe("run");
+    }
   });
 });

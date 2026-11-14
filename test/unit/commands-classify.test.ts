@@ -2455,8 +2455,10 @@ describe("database clients that run what their input gives them (commands-remote
     }
     for (const cmd of ["c=FLUSHALL; redis-cli $c", "c=FLUSHALL; redis-cli \"$c\"", "c='DEL users'; redis-cli -n 0 $c"]) expect(rules(cmd), cmd).toContain("db.change");
     expect(classifyCommand("redis-cli \"$CMD\"", "bash", contextOf("linux")).findings.map(f => f.says)).toContain("It runs database commands Ember can't see.");
-    // A read, as written or through a variable, and a key Ember can't see after a command it can, run as before.
-    for (const cmd of ["c=PING; redis-cli \"$c\"", "c='GET x'; redis-cli $c", "redis-cli GET \"$k\"", "redis-cli -h \"$HOST\" PING"]) expect(rules(cmd), cmd).toEqual([]);
+    // A read, as written or through a variable, runs as before; a key Ember can't see may be named like a secret, so
+    // reading its value asks as one (commands-remote-r11-4).
+    for (const cmd of ["c=PING; redis-cli \"$c\"", "c='GET x'; redis-cli $c", "redis-cli -h \"$HOST\" PING"]) expect(rules(cmd), cmd).toEqual([]);
+    expect(rules("redis-cli GET \"$k\"")).toEqual(["secret.db"]);
   });
 
   it("never runs redis-cli with options a variable holds, which may write its dump over a file or read a key (commands-z6-2)", () => {

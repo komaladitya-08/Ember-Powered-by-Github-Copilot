@@ -301,6 +301,13 @@ const SECRET_ABSOLUTE_POSIX = [
   "/run/user/*/krb5cc*", "/run/user/*/gdm/Xauthority",
   // Keyboards and mice as devices: reading one records what is typed, passwords included.
   "/dev/input/",
+  // Secrets given to a container or a service by where they are mounted, whose bare values the redactor can't tell
+  // apart from other text: Docker's and Kubernetes' secrets, systemd's credentials, a Vault agent's, TLS private keys
+  // and a cluster's own keys and admin sign-in (commands-remote-r11-4).
+  "/run/secrets/", "/var/run/secrets/", "/run/credentials/", "/etc/credstore/", "/etc/credstore.encrypted/", "/run/keys/", "/vault/secrets/",
+  "/var/lib/kubelet/pods/*/volumes/kubernetes.io~secret/", "/etc/kubernetes/pki/", "/etc/kubernetes/admin.conf", "/etc/rancher/k3s/k3s.yaml",
+  "/var/lib/rancher/k3s/server/token", "/var/lib/rancher/k3s/server/cred/", "/etc/ssl/private/", "/etc/pki/tls/private/",
+  "/var/lib/systemd/credential.secret",
 ];
 
 /** Secret basenames anywhere (§3.6.1). */
@@ -499,6 +506,8 @@ export function secretKind(p: string, use: PathUse, env: PathEnv): "secret" | "h
     if (underEntries(p, homes, SECRET_HOME_EITHER, env, true)) return sshReadOk(p, use, env) ? null : "secret";
     const sysRoot = env.windows?.systemRoot ?? "C:\\Windows";
     if (isUnder(p, `${sysRoot}\\System32\\config`, env)) return "secret";
+    // A Windows container's Docker secrets (commands-remote-r11-4).
+    if (isUnder(p, "C:\\ProgramData\\Docker\\secrets", env)) return "secret";
     return secretBasename(name, true) ? "secret" : null;
   }
   if (underEntries(p, homes, HISTORY_HOME, env, ci)) return "history";
