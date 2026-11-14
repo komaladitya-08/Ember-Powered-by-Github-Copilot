@@ -96,7 +96,7 @@ const OFF_LINUX: Record<"win32" | "darwin", { name: string; input: { ok: string;
   },
   darwin: {
     name: "macOS",
-    input: { ok: `Ember may post mouse and keyboard events: ${BORROWS}`,
+    input: { ok: `Mouse and keyboard events are allowed: ${BORROWS}`,
       no: "macOS isn't letting Ember borrow the mouse and keyboard (it needs the Accessibility permission, and no app may be holding secure input).",
       fix: "Allow Ember in System Settings › Privacy & Security › Accessibility." },
     voices: "Uses macOS voices.",
