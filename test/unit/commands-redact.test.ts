@@ -561,6 +561,30 @@ describe("redactSecrets: environments, tables and webhook addresses (commands-re
     });
 });
 
+describe("redactSecrets: short secret names as YAML and JSON print them, schemes and tab-parted rows (r10-commands-x10-5)", () => {
+  it.each([
+    ["environment:\n  DB_PASS: hunter2\n  REDIS_AUTH: abc", `environment:\n  DB_PASS: ${SECRET_HIDDEN}\n  REDIS_AUTH: ${SECRET_HIDDEN}`],
+    ["SIGNING_KEY: abc", `SIGNING_KEY: ${SECRET_HIDDEN}`], ["DB_PW: abc", `DB_PW: ${SECRET_HIDDEN}`], ["  db_pass: 'hunter2'", `  db_pass: '${SECRET_HIDDEN}'`],
+    ["  - SMTP_PASS: x9y8z7", `  - SMTP_PASS: ${SECRET_HIDDEN}`], ['{"DB_PASS": "x1", "API_KEY": "y2"}', `{"DB_PASS": "${SECRET_HIDDEN}", "API_KEY": "${SECRET_HIDDEN}"}`],
+    ["AUTH=Basic dXNlcjpwYXNz", `AUTH=${SECRET_HIDDEN}`], ["HTTP_AUTH=Bearer abc.def.ghi", `HTTP_AUTH=${SECRET_HIDDEN}`], ["PROXY_AUTH: Basic dXNlcjpwYXNz", `PROXY_AUTH: ${SECRET_HIDDEN}`],
+    ["DB_PASSWORD\thunter2", `DB_PASSWORD\t${SECRET_HIDDEN}`],
+  ])("hides the value in %j", (text, want) => {
+    expect(redactSecrets(text)).toBe(want);
+  });
+
+  it.each(["The PASS: rate was high", "- key: app", "  key: password", "auth: required", "LOW_PASS: 8000", "secretKeyRef:", "Checks passed: 12"])(
+    "leaves prose and ordinary fields alone: %j", text => {
+      expect(redactSecrets(text)).toBe(text);
+    });
+
+  it("takes linear time on a run of YAML names ending like a secret (1 MiB)", () => {
+    const text = "  a_pass: b\n".repeat(Math.ceil((1024 * 1024) / 12));
+    const t0 = performance.now();
+    redactSecrets(text);
+    expect(performance.now() - t0).toBeLessThan(1500);
+  });
+});
+
 describe("the Azure Key Vault passes on output with no value in it (stop-yield-x9-left-1)", () => {
   const ids = '"https://kv.vault.azure.net/secrets/name-1/abc"\n';
   const big = ids.repeat(Math.ceil((4 * 1024 * 1024) / ids.length));

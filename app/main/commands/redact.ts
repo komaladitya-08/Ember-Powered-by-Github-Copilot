@@ -122,11 +122,17 @@ const VALUE_PATTERNS: readonly RegExp[] = [
   // miss; never a variable, a placeholder or what is already hidden, nor PWD and OLDPWD, which are folders, nor a
   // filter's or a renderer's LOW_PASS, HIGH_PASS, BAND_PASS or RENDER_PASS (memory-x6-5; commands-remote-r10-6). The
   // name is at most 64 characters before its word, so each start is a bounded look.
-  /((?<![A-Za-z0-9_.-])(?!(?:OLD)?PWD=|(?:LOW|HIGH|BAND|ALL|RENDER)_PASS=)(?:[A-Za-z0-9_]{0,64}_)?(?:PASS|PASSPHRASE|AUTH|PW|PWD|KEY|pass|passphrase|auth|pw|pwd|key)=["']?)(?![$%{<*[])[^\s"',;]+/g,
+  // An authorisation scheme's credential is hidden with it (`AUTH=Basic dXNl…`, `HTTP_AUTH=Bearer …`: r10-commands-x10-5).
+  /((?<![A-Za-z0-9_.-])(?!(?:OLD)?PWD=|(?:LOW|HIGH|BAND|ALL|RENDER)_PASS=)(?:[A-Za-z0-9_]{0,64}_)?(?:PASS|PASSPHRASE|AUTH|PW|PWD|KEY|pass|passphrase|auth|pw|pwd|key)=["']?)(?![$%{<*[])(?:(?:Basic|Bearer|Token|Digest|Negotiate|basic|bearer|token)[ \t]+)?[^\s"',;]+/g,
+  // The same names as YAML and JSON print them (`docker compose config`'s `DB_PASS: hunter2`, `"REDIS_AUTH": "abc"`):
+  // at a line's start, after a list's `- `, or after `{`, `[` or `,`, so prose keeps its words; a bare lower-case `key:`,
+  // `pass:` or `auth:` (a selector's key, a field) needs a prefix (r10-commands-x10-5).
+  /((?:^|\n|[{[,])[ \t]*(?:-[ \t]+)?(?<q>["']?)(?!(?:OLD)?PWD\k<q>[ \t]*:|(?:LOW|HIGH|BAND|ALL|RENDER)_PASS\k<q>[ \t]*:)(?:[A-Za-z0-9_]{0,64}_(?:PASS|PASSPHRASE|AUTH|PW|PWD|KEY|PASSWD|pass|passphrase|auth|pw|pwd|key|passwd)|PASS|PASSPHRASE|AUTH|PW|KEY|PASSWD|passphrase)\k<q>[ \t]*:[ \t]*["']?)(?![$%{<*[])(?:(?:Basic|Bearer|Token|Digest|Negotiate|basic|bearer|token)[ \t]+)?[^\s"',;}\]]+/g,
   // A table's row whose first column names a secret, as `pulumi config --show-secrets`, `pulumi stack output` and
   // `netlify env:list` print them (`dbPassword   Tr0ub4dor&3`, `│ DB_PASSWORD │ hunter2 │`): the next column is hidden
-  // (commands-remote-c10-1). Only at a line's start, the name a bounded look.
-  /((?:^|\n)[ \t]*(?:[│|][ \t]*)?[A-Za-z0-9_.-]{0,64}?(?:[Pp]assword|PASSWORD|[Pp]asswd|PASSWD|[Pp]assphrase|PASSPHRASE|[Ss]ecret|SECRET|[Tt]oken|TOKEN|[Cc]redentials?|CREDENTIALS?|(?<=[a-z0-9])Key|(?<=[_.-])(?:[Kk]ey|KEY|[Pp]ass|PASS|[Pp]wd|PWD|[Aa]uth|AUTH))(?![A-Za-z0-9_.-])(?:[ \t]{2,}|[ \t]*[│|][ \t]*))(?![│|[])[^\s│|]+/g,
+  // (commands-remote-c10-1), or a single tab (`DB_PASSWORD\thunter2`: r10-commands-x10-5). Only at a line's start, the
+  // name a bounded look.
+  /((?:^|\n)[ \t]*(?:[│|][ \t]*)?[A-Za-z0-9_.-]{0,64}?(?:[Pp]assword|PASSWORD|[Pp]asswd|PASSWD|[Pp]assphrase|PASSPHRASE|[Ss]ecret|SECRET|[Tt]oken|TOKEN|[Cc]redentials?|CREDENTIALS?|(?<=[a-z0-9])Key|(?<=[_.-])(?:[Kk]ey|KEY|[Pp]ass|PASS|[Pp]wd|PWD|[Aa]uth|AUTH))(?![A-Za-z0-9_.-])(?:[ \t]{2,}|\t|[ \t]*[│|][ \t]*))(?![│|[])[^\s│|]+/g,
   // The same secret-named options OPTION_SECRET notices (`--db-pass=x`): the option name with its `=` stays, the
   // value is hidden. The leading space or quote is kept too, prose words like "compass" never reach a value this way.
   /((?:^|[\s"'])--?(?:[A-Za-z0-9]+[-_.])*(?:password|passwd|pass|pwd|token|secret|api[-_]?key|access[-_]?key|private[-_]?key|client[-_]?secret)=)[^\s"',;]+/gi,
