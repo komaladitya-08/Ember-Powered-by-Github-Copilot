@@ -225,6 +225,22 @@ describe("cloud tools' commands that print secrets, and their verbs Ember doesn'
     }
   });
 
+  it("files what a pod or an app is told to run as a secret when it would print one, wrapped or after an option (r10-commands-x10-4)", () => {
+    for (const cmd of [
+      "kubectl exec pod -- sh -c env", "kubectl exec pod -- bash -c printenv", "kubectl exec pod -- sh -c 'cat .env'", "heroku run -a app env", "heroku run --app app printenv",
+      "heroku run --app=app -s standard-2x env", 'heroku run "sh -c env"', 'fly ssh console -C "sh -c env"', `kubectl exec pod -- node -e "console.log(process.env)"`,
+      "kubectl exec pod -- cat .env", "kubectl exec pod -- cat /run/secrets/db", "oc exec pod -- sh -c 'printenv DB_PASSWORD'", "kubectl exec -it pod -c app -- cat ~/.ssh/id_rsa",
+    ]) {
+      const d = decide(cmd);
+      const r = result(cmd);
+      expect(d.verdict, cmd).toBe("ask");
+      expect(d.classes, cmd).toContain("secret");
+      expect(keptQuestion(d, r.cls.findings), cmd).toBe("secret");
+    }
+    // What only lists or checks there stays a change to the service, announced in Autopilot as before.
+    for (const cmd of ["kubectl exec pod -- ls /app", "heroku run -a app rake db:version", "kubectl exec pod -- sh -c 'ls -l'"]) expect(decide(cmd).classes, cmd).not.toContain("secret");
+  });
+
   it("files a verb it can't tell as one it doesn't know, which Autopilot asks about and Assisted's check never sees", () => {
     for (const cmd of ["heroku apps:frobnicate", "gcloud frobnicate x", "pulumi stack frob", "netlify frob"]) {
       const d = decide(cmd);

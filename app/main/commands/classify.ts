@@ -8364,7 +8364,7 @@ const CLOUD_PATH_READ = new Set(["get", "list", "describe", "show", "logs", "top
  * Firebase's config and secrets, gcloud's `secrets versions access`, and an environment printed by a command run in a
  * pod or an app (`kubectl exec pod -- env`, `heroku run env`, `fly ssh console -C env`).
  */
-function cloudPrintsSecrets(key: string, verbs: readonly string[], rest: readonly Arg[]): boolean {
+function cloudPrintsSecrets(key: string, verbs: readonly string[], rest: readonly Arg[], ctx: ClassifyContext): boolean {
   const words = rest.map(a => (a.v ?? "").toLowerCase());
   if (words.some(w => w === "--show-secrets" || w.startsWith("--show-secrets="))) return true;
   const [v0 = "", v1 = "", v2 = ""] = verbs;
@@ -8374,19 +8374,53 @@ function cloudPrintsSecrets(key: string, verbs: readonly string[], rest: readonl
   if (key === "vercel" && v0 === "env" && /^(ls|list|pull|get)$/.test(v1)) return true;
   if (key === "firebase" && /^(functions:config:get|functions:secrets:access|apphosting:secrets:access)$/.test(v0)) return true;
   if (key === "gcloud" && v0 === "secrets" && v1 === "versions" && v2 === "access") return true;
-  // What runs there: after `--` (kubectl, oc), after `run` (heroku), or fly's -C/--command.
-  const env = (cmd: string): boolean => /^(\S*\/)?(env|printenv|set|export|declare)(\s|$)|environ/.test(cmd.trim());
+  // What runs there: after `--` (kubectl, oc: its words as given), after `run` and its options (heroku: joined and run
+  // by a shell), or fly's -C/--command (shell text), judged as a command line of its own.
   const dash = rest.findIndex(a => a.v === "--");
-  if ((key === "kubectl" || key === "oc") && (v0 === "exec" || v0 === "debug") && dash >= 0 && env(rest.slice(dash + 1).map(a => a.v ?? "?").join(" "))) return true;
-  if (key === "heroku" && v0 === "run" && env(rest.filter(a => !isOption(a)).slice(1).map(a => a.v ?? "?").join(" "))) return true;
+  if ((key === "kubectl" || key === "oc") && (v0 === "exec" || v0 === "debug") && dash >= 0) return remotePrintsSecrets(rest.slice(dash + 1).map(argWord).join(" "), ctx);
+  if (key === "heroku" && v0 === "run") {
+    const at = rest.findIndex(a => (a.v ?? "").toLowerCase() === "run");
+    let k = at + 1;
+    for (; k < rest.length; k++) {
+      const w = rest[k].v;
+      if (w === null || !w.startsWith("-")) break;
+      if (w === "--") { k++; break; }
+      if (HEROKU_RUN_VALUE.test(w)) k++;
+    }
+    if (remotePrintsSecrets(rest.slice(k).map(a => a.v ?? a.raw).join(" "), ctx)) return true;
+  }
   if ((key === "fly" || key === "flyctl") && v0 === "ssh") {
     for (let k = 0; k < rest.length; k++) {
       const w = rest[k].v ?? "";
       const cmd = w === "-C" || w === "--command" ? rest[k + 1]?.v ?? "env" : w.startsWith("--command=") ? w.slice(10) : null;
-      if (cmd !== null && env(cmd)) return true;
+      if (cmd !== null && remotePrintsSecrets(cmd, ctx)) return true;
     }
   }
   return false;
+}
+
+/** heroku run's options that take a value written apart (`-a app`, `--size standard-2x`). */
+const HEROKU_RUN_VALUE = /^(-a|--app|-r|--remote|-s|--size|-e|--env|--type|-x|--exit-code-file)$/;
+/** A word as the shell would hand it on: plain, or single-quoted; one Ember can't resolve as written. */
+function argWord(a: Arg): string {
+  if (a.v === null) return a.raw;
+  return /^[\w@%+=:,./-]+$/.test(a.v) ? a.v : `'${a.v.replace(/'/g, "'\\''")}'`;
+}
+/**
+ * An environment printed by code given inline (`node -e 'console.log(process.env)'`, `python3 -c '…os.environ…'`), or
+ * the folders a container is handed its secrets in (Docker's and Kubernetes' `/run/secrets/`).
+ */
+const PRINTS_ENV = /^(\S*\/)?(env|printenv|set|export|declare)(\s|$)|environ|process\.env|\$env:|getenv|\bENV\b|%ENV|os\.Environ|(^|[\s'"=:])(\/var)?\/run\/secrets(\/|\s|$)/;
+/**
+ * Whether a command run in a pod or an app reads or prints secrets (r10-commands-x10-4): classified as a command line
+ * of its own, a secret's finding there (`sh -c env`, `cat .env`, `cat /run/secrets/db`) counts, and so does an
+ * environment printed by inline code. Only the secret is lifted: the rest runs on the other computer.
+ */
+function remotePrintsSecrets(text: string, ctx: ClassifyContext): boolean {
+  if (PRINTS_ENV.test(text.trim())) return true;
+  if (text.trim() === "" || text.length > 4096) return text.length > 4096;
+  const got = classifyCommand(text, "bash", { ...ctx, script: false });
+  return got.findings.some(f => f.cls === "secret" || f.rule === "path.secret" || f.rule === "secret.env");
 }
 
 const AWS_SECRET = /^(get-session-token|assume-role.*|get-login-password|get-authorization-token|get-secret-value|get-parameters?|get-parameters-by-path|decrypt|get-federation-token|create-access-key|get-credentials-for-identity|get-signin-token)$/;
@@ -8405,7 +8439,7 @@ reg(NATIVE, Object.keys(CLOUD_CLIS), h => {
     positional.push(a.v);
   }
   const verbs = positional.map(p => p.toLowerCase());
-  if (cloudPrintsSecrets(h.key, verbs, rest)) h.e.add("secret", "secret.cloud", SAYS.secrets);
+  if (cloudPrintsSecrets(h.key, verbs, rest, h.e.ctx)) h.e.add("secret", "secret.cloud", SAYS.secrets);
   // A syntax check or a listing reads (review #30). `--check` doesn't: a task with `check_mode: false` still changes the
   // managed computers, so it asks without saying that it changes them.
   if (h.key === "ansible-playbook" && h.args.some(a => /^(--syntax-check|--list-hosts|--list-tasks|--list-tags)$/.test(a.v ?? ""))) return;

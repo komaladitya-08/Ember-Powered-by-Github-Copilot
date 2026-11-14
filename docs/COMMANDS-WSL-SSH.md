@@ -225,8 +225,10 @@ Ember stops and asks before a command that:
   with a capture device as its input, GStreamer's capture sources); a cloud vault's value or a service's keys (`az
   keyvault secret show`, `az storage account keys list`, `terraform output -raw` or `-json`, `terraform show -json`), or an app's (`pulumi … --show-secrets`, `pulumi config
   get`, `heroku config`, `netlify env:list`, `vercel env ls` and `env pull`, `firebase functions:config:get`, `gcloud
-  secrets versions access`, and `env` run in a pod or an app: `kubectl exec pod -- env`, `heroku run env`, `fly ssh
-  console -C env`);
+  secrets versions access`, and whatever run in a pod or an app would print secrets, judged as a command of its own,
+  wrapped or after options: `kubectl exec pod -- env`, `kubectl exec pod -- sh -c env`, `kubectl exec pod -- cat
+  .env`, a file under `/run/secrets/`, `heroku run -a app env`, `fly ssh console -C "sh -c env"`, inline code that
+  prints its environment);
   a Wi-Fi password (`nmcli device wifi show-password`); a file named for what it holds (`password.txt`,
   `secrets.txt`, `credentials.txt`, `.vault_pass`, `.htpasswd`, `~/.boto`, `~/.s3cfg`, Composer's `auth.json`,
   FileZilla's and Pidgin's saved sign-ins); a fetch of a cloud computer's own sign-in address, however it
