@@ -239,6 +239,9 @@ export function forBubble(text: string): string {
 const ACK_MS = ANSWER_MS;
 /** A task whose work is in the bubble keeps it while it writes; this long without a word, another task's work may show. */
 const QUIET_MS = 15_000;
+/** A background task's aside held off by another task's work is tried again this often, this many times (2 minutes). */
+const ASIDE_RETRY_MS = 5000;
+const ASIDE_RETRIES = 24;
 /**
  * Once the Ask box closes, a bubble it held (BubbleOwner.holdForAsk) stays at least this long (times More time to read
  * and answer), or what was left of its own time if that is longer: a glance back at what was being replied to.
@@ -253,9 +256,14 @@ export const ASK_AFTER_MS = 4000;
  *   steps). It shows when nobody else holds the bubble, then holds it until it goes.
  * - "step": a guide step. Like a reply, and it also replaces an answer that has finished.
  * - "take": the user asked, or Ember itself has to say something: it shows now.
+ * - "aside": a background task's line for the user (its announcement of a step taken without asking, a line they must
+ *   act on: companion-r11-1, -c11-1). It shows only while the bubble is free (nobody holds it, no other task's work is
+ *   in it, no question), never holds it, and anything else replaces it at once; held off, it waits and shows when the
+ *   bubble frees, after everything else waiting. So it never holds back or drops a foreground line or a question, and
+ *   the bubble's polite live region reads it when it shows.
  * Main's own bubble ("Listening…") holds off all but "take"; a question with buttons holds off everything.
  */
-export type Claim = "progress" | "reply" | "step" | "take";
+export type Claim = "progress" | "reply" | "step" | "take" | "aside";
 
 /**
  * The bubble every presenter shares (the conversation and each task). `current` wrote it last: a
@@ -356,7 +364,8 @@ export class BubbleOwner {
     const h = this.holder;
     // Another task's work is in the bubble and still going: this task's work shows on its card.
     const s = this.stage;
-    if (claim === "progress" && s && s.p !== p && s.p.visible && this.now() - s.at < QUIET_MS) return false;
+    if ((claim === "progress" || claim === "aside") && s && s.p !== p && s.p.visible && this.now() - s.at < QUIET_MS) return false;
+    if (claim === "aside") return h === null || h === p;
     if (h === null || h === p || claim === "take") return true;
     // A guide step replaces an answer that has finished (not one still coming, nor main's bubble).
     return claim === "step" && h instanceof Presenter && !h.busy;
@@ -375,7 +384,7 @@ export class BubbleOwner {
     if (claim === "progress" && (onScreen || this.stage?.p === p)) this.stage = { p, at: this.now() };
     if (!onScreen) return;
     this.current = p;
-    if (claim !== "progress") this.holder = p;
+    if (claim !== "progress" && claim !== "aside") this.holder = p;
     else if (this.holder === p) this.holder = null;
   }
 
@@ -419,7 +428,8 @@ export class BubbleOwner {
     const h = this.holder;
     if (h !== null && !(h instanceof Presenter)) return false;
     const latest = [...this.showing].reverse();
-    return [...(h ? [h] : []), ...latest.filter(p => p.kind !== "progress"), ...latest].some(p => p.reshow());
+    // (A background task's line for the user last: it never comes before anything else waiting.)
+    return [...(h ? [h] : []), ...latest.filter(p => p.kind !== "progress" && p.kind !== "aside"), ...latest.filter(p => p.kind !== "aside"), ...latest].some(p => p.reshow());
   }
 
   /**
@@ -903,6 +913,12 @@ export class Presenter {
 
   /** Updates what this presenter shows; it reaches the screen only if the bubble is its to write. Returns whether it did. */
   private apply(patch: Partial<EmberState>, claim: Claim = this.guiding ? "reply" : this.work): boolean {
+    // A background task's line for the user is up or waiting (aside): its running work stays on its card meanwhile, and
+    // the first of it after a line that needed the user ("A command is waiting…") means that line is over.
+    if (claim === "progress" && this.inCorner && this.kind === "aside" && this.visible) {
+      if (!this.asideNeedsYou) return false;
+      this.hide();
+    }
     this.state = { ...this.state, ...patch, bubble: { ...this.state.bubble, ...(patch.bubble ?? {}), ...(this.taskId ? { task: this.taskId } : {}), ...(this.where ? { where: this.where } : {}) } };
     // "Still waiting" is news for screen readers only while the bubble says it (BubbleState.stalled).
     if (patch.bubble && !isStillWaiting(this.state.bubble.title)) delete this.state.bubble.stalled;
@@ -918,6 +934,7 @@ export class Presenter {
       return false;
     }
     this.kind = claim;
+    if (claim !== "aside") this.asideNeedsYou = false;
     const ok = this.owner.allows(this, claim);
     const was = this.owner.current === this && !this.unseen;
     this.unseen = !ok;
@@ -1019,7 +1036,7 @@ export class Presenter {
    */
   reshow(as?: Claim): boolean {
     if (!this.visible) return false;
-    const claim = as ?? (this.kind === "progress" ? "progress" : "reply");
+    const claim = as ?? (this.kind === "progress" || this.kind === "aside" ? this.kind : "reply");
     if (!this.owner.allows(this, claim)) return false;
     this.unseen = false;
     this.newStep = false;
@@ -1421,8 +1438,10 @@ export class Presenter {
     const note = text.replace(/\s+/g, " ");
     if (!note.trim()) return;
     const needsYou = more?.needsYou === true;
-    this.apply({ emotion: "focused", bubble: { ...this.state.bubble, visible: true, mood: needsYou ? "attention" : "acting", thought: clip(note), streaming: !needsYou,
-      ...(more?.actions ? { actions: more.actions } : {}), ...(more && "step" in more ? { step: more.step ?? null } : {}) } });
+    const patch: Partial<EmberState> = { emotion: "focused", bubble: { ...this.state.bubble, visible: true, mood: needsYou ? "attention" : "acting", thought: clip(note), streaming: !needsYou,
+      ...(more?.actions ? { actions: more.actions } : {}), ...(more && "step" in more ? { step: more.step ?? null } : {}) } };
+    if (needsYou && this.aside(patch, true)) return;
+    this.apply(patch);
   }
 
   /**
@@ -1446,7 +1465,8 @@ export class Presenter {
     if (!said) return;
     this.announcing = true;
     try {
-      this.apply({ emotion: "focused", bubble: { ...this.state.bubble, visible: true, mood: "acting", title: this.name(), thought: clip(said), step: null, streaming: false, actions: [], autonomous: true } });
+      const patch: Partial<EmberState> = { emotion: "focused", bubble: { ...this.state.bubble, visible: true, mood: "acting", title: this.name(), thought: clip(said), step: null, streaming: false, actions: [], autonomous: true } };
+      if (!this.aside(patch, false)) this.apply(patch);
     } finally {
       this.announcing = false;
     }
@@ -1454,6 +1474,43 @@ export class Presenter {
 
   /** workedWithoutAsking is applying its announcement: the only bubble that may carry the "Without asking" tag. */
   private announcing = false;
+  /** The aside in this presenter's bubble is a line the user must act on: it goes with the task's next work. */
+  private asideNeedsYou = false;
+  /** Tries an aside held off by another task's work again, until it shows or its time to wait is up (asideRetries). */
+  private asideTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /**
+   * A background task's line for the user now (companion-r11-1, -c11-1): its announcement of a step taken without
+   * asking, or a line they must act on (`needsYou`). Its work shows only on its card, but these come to the cursor's
+   * bubble, and so to its polite live region, as an aside (Claim): only while the bubble is free, never holding it, so
+   * no foreground line, reply, guide step or question waits for it; held off, it waits its turn. An announcement goes
+   * after its reading time once shown; a line that needs the user, with the task's next work. Returns false where the
+   * presenter isn't in the corner: its bubble is the task's own, and the line goes there as before.
+   */
+  private aside(patch: Partial<EmberState>, needsYou: boolean): boolean {
+    if (!this.inCorner || this.silent) return false;
+    this.cancelHide();
+    this.cancelAside();
+    const shown = this.apply(patch, "aside");
+    this.asideNeedsYou = needsYou;
+    if (!needsYou) this.hideLater(Math.min(30_000, 6000 + (patch.bubble?.thought ?? "").length * 50));
+    // Held off by another task's work in the bubble, which frees it by going quiet rather than going: tried again.
+    if (!shown) this.retryAside(ASIDE_RETRIES);
+    return true;
+  }
+
+  private retryAside(left: number): void {
+    if (left <= 0) return;
+    this.asideTimer = this.timers.set(() => {
+      this.asideTimer = null;
+      if (this.kind !== "aside" || !this.visible || !this.unseen) return;
+      if (!this.reshow("aside")) this.retryAside(left - 1);
+    }, ASIDE_RETRY_MS);
+  }
+
+  private cancelAside(): void {
+    if (this.asideTimer) { this.timers.clear(this.asideTimer); this.asideTimer = null; }
+  }
 
   /**
    * A command the user's own words asked for is about to run (D4.4, §3.9.2): the announcement ("Pushing feature-x to

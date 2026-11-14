@@ -1621,6 +1621,96 @@ describe("a background task's command countdown (companion-c12-1)", () => {
   });
 });
 
+describe("a background task's lines for the user, queued behind everyone else's (companion-r11-1, companion-c11-1)", () => {
+  const ANN = "Deleting 3 messages in Thunderbird, without asking: Autopilot is on.";
+  const WAITING = "A command is waiting for you to type in the command window.";
+  /** The conversation, a foreground task and a background (corner) task sharing one bubble, as in the host. */
+  function scene(question?: { up: () => boolean; answered: () => Promise<void> }) {
+    vi.useFakeTimers();
+    const owner = new BubbleOwner(question);
+    const states: { who: string; s: Partial<EmberState> }[] = [];
+    const mk = (who: string, o?: { task: string; corner?: boolean }) => new Presenter(s => states.push({ who, s }), undefined, () => who, owner, undefined, false, o ? { ...o, readTime: () => 1 } : { readTime: () => 1 });
+    const talk = mk("ember");
+    const back = mk("back", { task: "b", corner: true });
+    const fore = mk("fore", { task: "f", corner: true });
+    fore.foreground = true;
+    const shown = () => states.filter(x => x.s.bubble).map(x => `${x.who}:${x.s.bubble!.visible ? x.s.bubble!.thought : "(hidden)"}`).filter((x, i, a) => x !== a[i - 1]);
+    const last = () => states.filter(x => x.s.bubble).at(-1)!;
+    return { owner, talk, back, fore, shown, last };
+  }
+
+  it("brings a background task's announcement to the cursor's bubble with its tag, where the bubble's polite live region reads it (companion-r11-1)", () => {
+    const { back, last } = scene();
+    back.taskStarted();
+    back.progress("Looking at the inbox");
+    back.workedWithoutAsking(ANN);
+    expect(last().who).toBe("back");
+    expect(last().s.bubble).toMatchObject({ visible: true, thought: ANN, autonomous: true });
+    // Its running work after it stays on its card, and the announcement stays its reading time, then goes.
+    back.progress("Deleting");
+    expect(last().s.bubble).toMatchObject({ visible: true, thought: ANN });
+    vi.advanceTimersByTime(6000 + ANN.length * 50 + 10);
+    expect(last().s.bubble!.visible).toBe(false);
+  });
+
+  it("brings a background task's waiting line to the bubble, and takes it away once the command stops waiting (companion-c11-1)", () => {
+    const { back, last } = scene();
+    back.taskStarted();
+    back.progress(WAITING, { actions: [{ id: "ui:cmdshow:r1", label: "Show" }], step: "Press Win+Alt+E", needsYou: true });
+    expect(last().s.bubble).toMatchObject({ visible: true, thought: WAITING, mood: "attention", actions: [{ id: "ui:cmdshow:r1", label: "Show" }] });
+    back.progress("Running the command", { actions: [] });
+    expect(last().s.bubble!.visible).toBe(false);
+  });
+
+  it("never holds back a line that comes after it: a foreground task's, a reply, a guide step (companion-r11-1, order: background first)", () => {
+    const { talk, back, fore, shown } = scene();
+    back.workedWithoutAsking(ANN);
+    fore.taskStarted();
+    fore.progress("Clicking Send");
+    expect(shown().at(-1)).toBe("fore:Clicking Send");
+    back.workedWithoutAsking(ANN);
+    fore.workedWithoutAsking("Borrowing your mouse in Firefox, without asking: Interactive is on.");
+    expect(shown().at(-1)).toBe("fore:Borrowing your mouse in Firefox, without asking: Interactive is on.");
+    back.workedWithoutAsking(ANN);
+    talk.say("It is half past three.");
+    expect(shown().at(-1)).toBe("ember:It is half past three.");
+  });
+
+  it("waits behind a reply being read, a foreground task at work and a question, and shows once each is over (companion-r11-1, order: background second)", () => {
+    const { talk, back, fore, shown } = scene();
+    talk.say("It is half past three.");
+    back.workedWithoutAsking(ANN);
+    expect(shown().at(-1)).toBe("ember:It is half past three.");
+    // The reply's reading time (6 s and 50 ms a letter), then the announcement's own.
+    vi.advanceTimersByTime(7200);
+    expect(shown().at(-1)).toBe(`back:${ANN}`);
+    vi.advanceTimersByTime(60_000);
+    // A foreground task's work in the bubble: the background line waits until it has gone quiet, never over it.
+    fore.taskStarted();
+    fore.progress("Clicking Send");
+    back.workedWithoutAsking(ANN);
+    expect(shown().at(-1)).toBe("fore:Clicking Send");
+    vi.advanceTimersByTime(5000);
+    fore.progress("Typing the reply");
+    expect(shown().at(-1)).toBe("fore:Typing the reply");
+    vi.advanceTimersByTime(16_000);
+    expect(shown().at(-1)).toBe(`back:${ANN}`);
+  });
+
+  it("waits behind a question, and shows once it is answered (companion-c11-1)", async () => {
+    let up = true;
+    let answered!: () => void;
+    const { back, shown } = scene({ up: () => up, answered: () => new Promise<void>(r => { answered = r; }) });
+    back.taskStarted();
+    back.progress(WAITING, { needsYou: true });
+    expect(shown()).toEqual([]);
+    up = false;
+    answered();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(shown().at(-1)).toBe(`back:${WAITING}`);
+  });
+});
+
 describe("a background task's announcement and the foreground task's own (r11-copy-y11-3)", () => {
   it("never loses the foreground task's line taken without asking behind a background task's (r11-copy-y11-3)", () => {
     vi.useFakeTimers();
