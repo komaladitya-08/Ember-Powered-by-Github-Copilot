@@ -320,6 +320,12 @@ describe("Ember's own files reached by what a field or a file dialog holds, not 
     denied("linux", "gedit", doc("linux", "gedit", "notes.txt - gedit", { kind: "text", mode: "append", value: "~/.config/ember/settings.json", currentText: "todo" }), "typed");
   });
 
+  it("takes Windows' trailing dot or space and a \"::$DATA\" stream for the file they save as, so \"settings.json.\" asks too (r11-safety-y11-5)", () => {
+    for (const name of ["settings.json.", "settings.json::$DATA", "settings.json. .", "EMBER.\\x.txt"]) {
+      asksOrRefused("win32", "notepad", req("notepad", "Save As", { kind: "text", value: name, element: loc }), name);
+    }
+  });
+
   it("takes only a path's part shaped like one for a Windows short name, so \"~5 minutes\" types as before and EMBER~1 still asks (r11-safety-y11-3)", () => {
     const rows: [string, string, Partial<ActionRequest>][] = [
       ["notepad", "notes.txt - Notepad", { kind: "text", mode: "append", value: "It takes ~5 minutes", element: { role: "edit", name: "Text Editor" } }],

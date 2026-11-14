@@ -928,7 +928,11 @@ function commitsFileDialog(r: ReachRequest, os: OS): boolean {
  * `caseless`: on a system where case doesn't count in a path (Windows, macOS), "EMBER" and "Audit" are those folders.
  */
 export const namesEmberFile = (text: string, caseless = false): boolean =>
-  text.split(/[/\\\n]/).some(part => { const p = part.trim().replace(/^["'“]|["'”]$/g, ""); return EMBER_FILE.test(p) || EMBER_FOLDER.test(caseless ? p.toLowerCase() : p); });
+  text.split(/[/\\\n]/).some(part => {
+    // Where case doesn't count, Windows also saves "settings.json." and "settings.json::$DATA" as settings.json (r11-safety-y11-5).
+    const p = part.trim().replace(/^["'“]|["'”]$/g, ""), f = caseless ? p.replace(/:.*$/, "").replace(/[. ]+$/, "") : p;
+    return EMBER_FILE.test(p) || EMBER_FOLDER.test(caseless ? p.toLowerCase() : p) || (f !== p && (EMBER_FILE.test(f) || EMBER_FOLDER.test(f.toLowerCase())));
+  });
 /**
  * The folders a file manager shows Ember's data or policy folder in (r10-safety-x10-2): its parent (".config",
  * "Local", "Application Support", "etc") and the parent's parent where that is the folder people open (AppData,
