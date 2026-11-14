@@ -81,3 +81,42 @@ describe("the daily question never names something private from past requests (m
     expect(r.said.join("\n")).toContain(`“${name}”`);
   });
 });
+
+/** The review's private requests that avoid every listed word (r10-memory-x10-2), then neighbours of each kind. */
+const UNLISTED: [string, string][] = [
+  ["Find the nearest Planned Parenthood", "Is Planned Parenthood open Saturday?"],
+  ["Book me in at Marie Stopes", "What time does Marie Stopes open?"],
+  ["Find a Gamblers Help group near me", "Is the Gamblers Help group on tonight?"],
+  ["Email my oncologist Dr Shah about the PET scan", "Did Dr Shah reply about the PET scan?"],
+  ["Find Narcotics meetings near me", "When is the next Narcotics meeting?"],
+  ["Search for StepChange advice on my overdraft", "Did StepChange reply?"],
+  ["Book a session with Dr Shah at the Tavistock", "Move my Tavistock session to Friday"],
+  ["Look up Mounjaro side-effects", "Is Mounjaro covered?"],
+  ["Remind me about my Weight Watchers weigh-in", "When is Weight Watchers?"],
+  ["Find Al-Anon meetings near me", "When does Al-Anon meet?"],
+  ["Find a Ramadan iftar near me", "Is the Ramadan iftar on tonight?"],
+  // Neighbours: a brand of medicine, a clinic by its name, a group by its name, a specialist.
+  ["Is Wegovy cheaper than Saxenda", "Does Saxenda work faster?"],
+  ["Book me in at Dean Street", "What time does Dean Street close?"],
+  ["Look up Nar-Anon in Leeds", "When does Nar-Anon meet?"],
+  ["Email my psychiatrist Dr Patel", "Did Dr Patel reply?"],
+  ["Find a Diwali puja near me", "Is the Diwali puja on tonight?"],
+];
+
+describe("the daily question asks only about a name where someone or a project stands (r10-memory-x10-2)", () => {
+  it.each(UNLISTED)("never asks about a name from “%s” and “%s” (r10-memory-x10-2)", async (a, b) => {
+    const r = learning();
+    for (const q of [a, b, a, b]) await r.ask(q);
+    await r.idle();
+    expect(r.said).toEqual([]);
+  });
+
+  it("asks about someone named after “with”, “to”, “about” or a person's verb, never as a question's subject (r10-memory-x10-2)", () => {
+    const top = (qs: string[]) => { const g = new Gaps(); for (const q of qs) g.missed(q, () => false); return g.top(); };
+    expect(top(["Is Krita any good for sketches", "Does Krita do layers"])).toBeNull();
+    expect(top(["Did Omar reply", "Has Omar sent it"])).toBeNull();
+    expect(top(["Search for StepChange", "Look for StepChange"])).toBeNull();
+    expect(top(["Lunch with Omar on Friday", "Send the deck to Omar"])).toBe("Omar");
+    expect(top(["What's the status of Atlas", "Summarise the Atlas notes"])).toBe("Atlas");
+  });
+});

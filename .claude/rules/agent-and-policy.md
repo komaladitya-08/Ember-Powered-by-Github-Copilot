@@ -317,8 +317,9 @@ docs/MEMORY.md is the design. The core (app/main/memory/) is pure and has no Ele
     `forRequest(request, own)`. Gaps are counted only in `forRequest`, from the user's own words, never from the
     recall tool (`context`), whose query the model wrote and the screen may steer, and only for names that may be
     someone or something of the user's (`askableNames`: never an app, a site, a setting or a place, nor a name
-    already asked about this run: memory-r9-8), and never from a private request (`sensitiveRequest`: health,
-    medicines, addiction, a crisis line, the law, money trouble, dating, sexuality, faith: memory-c10-1);
+    already asked about this run: memory-r9-8; and only where someone or a project stands, `personOrProject`:
+    r10-memory-x10-2), and never from a private request (`sensitiveRequest`: health, medicines, addiction, a crisis
+    line, the law, money trouble, dating, sexuality, faith: memory-c10-1);
   - so does the mark `asked()` gives as a request is asked, back to `heard` with its turn: a Forget, a correction and
     Forget everything drop every turn and result said before them (`dropSaid`: waiting, being read or still under
     way; with no mark, any within `FORGOTTEN_TURN_MS`, as every `taskDone` result is), never a similarity of words

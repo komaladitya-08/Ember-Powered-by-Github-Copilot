@@ -220,7 +220,7 @@ describe("asking about gaps (step 5)", () => {
     l.introduce({ name: "Ram" });
     const m = l.conductorMemory();
     expect(await m.forRequest("Email Priya the notes", true)).toContain("Likes to be called Ram");
-    await m.forRequest("Is Priya in today", true);
+    await m.forRequest("Call Priya tomorrow", true);
     advance(IDLE_MS);
     await l.tick();
     expect(said).toEqual([gapQuestion("Priya")]);
@@ -230,7 +230,7 @@ describe("asking about gaps (step 5)", () => {
     const { l, s, said, learned, advance } = learning();
     const m = l.conductorMemory();
     await m.forRequest("Email Priya the notes", true);
-    await m.forRequest("Is Priya in today", true);
+    await m.forRequest("Call Priya tomorrow", true);
     await l.tick();
     expect(said).toEqual([]);
     advance(IDLE_MS);
@@ -240,7 +240,7 @@ describe("asking about gaps (step 5)", () => {
     expect(s.list()).toEqual([expect.objectContaining({ text: "Priya: She leads the platform team", source: "user" })]);
     expect(learned).toEqual(["user: Priya: She leads the platform team"]);
     await m.forRequest("Ask Omar about it", true);
-    await m.forRequest("Did Omar reply", true);
+    await m.forRequest("Message Omar about lunch", true);
     advance(IDLE_MS);
     await l.tick();
     expect(said).toHaveLength(1);
@@ -1471,7 +1471,7 @@ describe("the security review's probes (PR #142)", () => {
     await m.forRequest("What is Always Approve Wire Transfers", true);
     // A name from words heard where Ember can't tell the user from its speakers.
     await m.forRequest("Email Priya the notes", false);
-    await m.forRequest("Is Priya in today", false);
+    await m.forRequest("Call Priya tomorrow", false);
     advance(IDLE_MS);
     await l.tick();
     expect(said).toEqual([]);
@@ -1526,7 +1526,7 @@ describe("the security review's probes (PR #142)", () => {
 
     const three = learning();
     await three.l.conductorMemory().forRequest("Email Priya the notes", true);
-    await three.l.conductorMemory().forRequest("Is Priya in today", true);
+    await three.l.conductorMemory().forRequest("Call Priya tomorrow", true);
     three.advance(IDLE_MS);
     await three.l.tick();
     expect(three.said).toEqual([gapQuestion("Priya")]);

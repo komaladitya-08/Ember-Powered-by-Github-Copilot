@@ -103,6 +103,27 @@ const TITLE = /^(?:mr|mrs|ms|miss|mx|dr|prof|sir|dame|lady|lord)$/;
 /** Words before "on" that make what follows someone or a project ("check in on Priya", "working on Atlas", "an update on Atlas"). */
 const ABOUT_ON = /^(?:check|checking|checked|work|works|working|worked|update|updates|news|progress|status|report|notes|feedback|thoughts|follow|following|focus|focusing|wait|waiting|count|counting|depend|depending|rely|relying)$/;
 
+/** Words before a name that make it someone ("a note to Priya", "dinner with Sam", "the report from Priya", "notes for Bob"). */
+const PERSON_BEFORE = /^(?:with|to|from|cc|bcc|about|for)$/;
+/** Verbs whose object is a thing to be found, never someone to ask about ("Search for StepChange", "Look for Al-Anon"). */
+const FIND_VERB = /^(?:find|search|look|looking|lookup|google|research|locate|browse|check)$/;
+/** Words after a name that make it a project ("the Atlas notes", "Email Priya the Atlas plan"). */
+const PROJECT_AFTER = /^(?:project|projects|team|notes|plan|plans|review|update|updates|report|doc|docs|deck|spec|specs|launch|roadmap|budget|board|repo|sprint|release|milestone|proposal|slides|draft|backlog|migration|tickets|issues|workstream|programme|program|rollout)$/;
+
+/**
+ * Whether a name stands where someone or a project does (r10-memory-x10-2): after "with", "to", "from", "about" or
+ * "for" (never "search for", "look for"), after "on" or "of" behind a word of work ("working on Atlas", "the status of
+ * Atlas"), told about something ("Update Priya on the launch"), or before a project's word ("the Atlas notes").
+ * Anything else, "Find Narcotics meetings", "Is Mounjaro covered?", "Book me in at Marie Stopes", is never asked about.
+ */
+function personOrProject(near: readonly string[], after: string): boolean {
+  const last = near.at(-1) ?? "";
+  if (PERSON_BEFORE.test(last)) return !((last === "for" || last === "about") && FIND_VERB.test(near.at(-2) ?? ""));
+  if ((last === "on" || last === "of") && (ABOUT_ON.test(near.at(-2) ?? "") || (near.at(-2) === "in" && ABOUT_ON.test(near.at(-3) ?? "")))) return true;
+  if (last === "update" && /^(?:on|about)$/.test(after)) return true;
+  return PROJECT_AFTER.test(after);
+}
+
 /**
  * The names in a request that Ember may ask about (memory-r9-8): `namesIn`, without what everyone knows (NOT_SOMEONE,
  * EVERYDAY, but after a verb whose object is someone or a title: "Ask Alma", "Mr Lock"), an app installed on this
@@ -129,6 +150,8 @@ export function askableNames(request: string, apps: readonly string[] = []): str
     if (!owns && !someone && APP_VERB.test(last) && !(last === "update" && /^(?:on|about)$/.test(after))) continue;
     if (!owns && WHERE.test(last) && !(last === "on" && ABOUT_ON.test(near.at(-2) ?? "") || (near.at(-2) === "in" && ABOUT_ON.test(near.at(-3) ?? "")))) continue;
     if (!owns && last === "to" && TRAVEL.test(near.at(-2) ?? "")) continue;
+    // Only where someone or a project stands (r10-memory-x10-2): a word list can't name every clinic, group or medicine.
+    if (!owns && !someone && !personOrProject(near, after)) continue;
     out.push(name);
   }
   return [...new Set(out)].slice(0, 5);
@@ -142,16 +165,17 @@ export function askableNames(request: string, apps: readonly string[] = []): str
  */
 const SENSITIVE = new RegExp(String.raw`\b(?:`
   + String.raw`clinics?|hospitals?|hospice|doctors?|gp|nurses?|surgery|symptoms?|diagnos\w*|treat(?:ed|ment|ments|ing)?|therap\w*|counsell?(?:ing|or|ors)|psychiatr\w*|psycholog\w*`
-  + String.raw`|prescri\w*|pharmacy|chemist|medication|medicines?|meds|pills?|tablets?\s+for|doses?|side\s+effects|antibiotics?|antidepressants?|test\s+results?|blood\s+tests?|scan\s+results?`
+  + String.raw`|dr|doctor|\w+olog(?:ist|ists|y)|\w+iatrist|gyna?e\w*|obstetric\w*|midwi\w*|smears?|scans?|mri|biops\w*|jabs?|injections?|hormones?|hrt|testosterone|oestrogen|estrogen|gender|weigh-?ins?|weight\s+(?:loss|watchers)`
+  + String.raw`|prescri\w*|pharmacy|chemist|medication|medicines?|meds|pills?|tablets?\s+for|doses?|side[-\s]effects?|antibiotics?|antidepressants?|test\s+results?|blood\s+tests?|scan\s+results?`
   + String.raw`|std|stds|sti|stis|sexual\s+health|pregnan\w*|abortion|contracepti\w*|morning\s+after|fertility|ivf|miscarriage|cancer|chemo\w*|tumou?rs?|hiv|aids|hepatitis|herpes|chlamydia|gonorrh?oea|syphilis`
   + String.raw`|depress\w*|anxiety|panic\s+attacks?|bipolar|schizophreni\w*|adhd|autis\w*|ocd|ptsd|eating\s+disorders?|anorexi\w*|bulimi\w*|self[-\s]harm\w*|suicid\w*`
-  + String.raw`|rehab|addict\w*|alcoholi\w*|anonymous|sober|sobriety|relapse|detox|overdose|methadone|suboxone|naloxone`
+  + String.raw`|rehab|addict\w*|alcoholi\w*|anonymous|\w*-anon|narcotics?|gamblers?|gambling|sober|sobriety|relapse|detox|overdose|methadone|suboxone|naloxone`
   + String.raw`|prozac|sertraline|zoloft|fluoxetine|citalopram|escitalopram|lexapro|venlafaxine|mirtazapine|xanax|valium|diazepam|lorazepam|adderall|ritalin|lithium|viagra|cialis|truvada|prep|ozempic|wegovy|insulin|metformin`
   + String.raw`|samaritans|crisis|helplines?|hotlines?|domestic\s+(?:violence|abuse)|abuse|abusive|refuge|shelter`
   + String.raw`|lawyers?|solicitors?|attorneys?|divorc\w*|custody|court|courts|tribunal|arrest\w*|police|probation|lawsuit|sued|suing|immigration|asylum|deport\w*`
-  + String.raw`|debts?|bankrupt\w*|insolven\w*|payday\s+loans?|bailiffs?|foreclos\w*|evict\w*|universal\s+credit|benefits\s+claim|food\s+bank`
+  + String.raw`|debts?|overdrafts?|overdrawn|arrears|bankrupt\w*|insolven\w*|payday\s+loans?|bailiffs?|foreclos\w*|evict\w*|universal\s+credit|benefits\s+claim|food\s+bank`
   + String.raw`|dating|tinder|grindr|bumble|hinge|okcupid|match\.com|gay|lesbian|bisexual|queer|lgbt\w*|transgender|coming\s+out|sexual\w*|sex`
-  + String.raw`|church|mosque|synagogue|temple|gurdwara|prayers?|bible|qur['’]?an|koran|torah|religio\w*|faith`
+  + String.raw`|church|mosque|synagogue|temple|gurdwara|prayers?|bible|qur['’]?an|koran|torah|religio\w*|faith|ramadan|iftar|eid|diwali|puja|passover|lent|sabbath|baptism`
   + String.raw`)\b`, "i");
 
 /** Whether a request touches something private (SENSITIVE): none of its names is ever asked about (memory-c10-1). */
