@@ -11,6 +11,9 @@ The detail lives in the docs. Read the one for the area you are changing:
 - `docs/ASSISTANT.md` is the plan for voice latency, recognition, a natural voice and a smaller footprint, with the
   measurements behind it.
 - `docs/MEMORY.md` is the long-term memory design: what it keeps, the safety limits, and the plan.
+- `docs/APPROVALS.md` is the owner's rule for when Ember asks (only for what is dangerous; Autopilot asks nothing), and
+  how to apply it. Read it before you change the approval modes, the command classifier, the policy or a card that
+  describes them, or act on a review finding about them. Where this file or the code says otherwise, it wins.
 
 Topic rules in `.claude/rules/` load when you open matching files:
 - `design-system.md`: renderers, windows, the bubble, the characters and the icon.
@@ -188,6 +191,10 @@ Ember drives a real person's desktop, so these rules are hard limits. They imple
 
 ## How to work in this repo
 
+- **Questions are a cost.** Ember asks only before something dangerous (docs/APPROVALS.md). Fix a dangerous thing that
+  ran unasked by recognising the danger, never by making what Ember doesn't know ask; a question about an ordinary
+  command, or any question in Autopilot beyond the person's and the organisation's own settings, is a defect. Where
+  something must be protected without a question, refuse it or keep it from the model.
 - **Scope.** The request sets the scope. Make routine judgment calls yourself, and ask only when different readings would lead to materially different work. A pre-existing bug, a performance concern or cleanup the task doesn't need goes in your summary as a follow-up, not into the change.
 - **Edits.** Edit files surgically. Don't rewrite a whole file for a local change.
 - **Checking before "done."** Before you call a change done, run a real check that exercises it: the relevant tests from the gate, the typecheck, the build, and for visual changes the render check. A syntax-only check, or a command that failed to start, doesn't count. If a check can't run here (no platform-python, no Electron binary), say which one and why.
