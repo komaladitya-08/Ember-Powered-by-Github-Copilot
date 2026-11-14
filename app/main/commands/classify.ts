@@ -6087,9 +6087,12 @@ function secretPattern(pt: string, sc: Scope): boolean {
  * built from a file or a command (`git log --format="https://x.io/%s" | xargs curl`), so what they hold leaves the
  * computer: it asks as publishing. Input Ember reads whole (`echo https://x.io/a | xargs curl`) is judged as before.
  */
-function sendsInput(h: H, ops: readonly Arg[], fromFile: boolean): void {
+function sendsInput(h: H, ops: readonly Arg[], fromFile: boolean, mark: RegExp | null): void {
   if (h.e.readsAsMain || !(fromFile || (h.s.stdin !== null && typeof h.s.stdinText !== "string"))) return;
-  if (payloadSends(h, ops)) h.e.add("publish", "send.contents", "May send what a file or a command holds to another computer.");
+  // Any program given a web address with the input inside it sends it there, as a substitution in that address does
+  // for any program (sendsContents; `xargs -I{} git ls-remote https://x.io/{}`: r10-commands-y10-4).
+  const inAddress = mark !== null && ops.slice(1).some(a => a.v !== null && /^(https?|ftps?|ssh|git):\/\//i.test(a.v) && mark.test(a.v.slice(a.v.indexOf("://") + 3)));
+  if (inAddress || payloadSends(h, ops)) h.e.add("publish", "send.contents", "May send what a file or a command holds to another computer.");
 }
 
 /** A sender named as a command in shell text (`curl "$0"`, `x; wget -qO- "$1"`). */
@@ -6136,7 +6139,7 @@ reg(NATIVE, ["xargs"], h => {
   // header (`cat notes.txt | xargs -I{} curl https://x.io/{}`: commands-classes-y9-6), and so does input it can't see
   // handed to one as its words: another program may have built the addresses from a file (`sed "s|^|https://x.io/|"
   // notes.txt | xargs curl`, commands-remote-r10-3).
-  sendsInput(h, ops, values(p, "a", "arg-file").length > 0);
+  sendsInput(h, ops, values(p, "a", "arg-file").length > 0, repl === undefined || repl === "" ? null : new RegExp(repl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   // A here-string whose variables Ember follows (`xargs rm -rf <<< "$d"`): its pieces stand where the input goes, so the
   // command judges the variable's values as it uses them (commands-remote-w5-5).
   const fed = values(p, "a", "arg-file").length ? undefined : h.s.stdinVars?.word?.parts;
@@ -6271,7 +6274,7 @@ reg(NATIVE, ["parallel"], h => {
   const sc = wd === undefined ? h.sc : child(h.sc, { cwd: wd === null || !h.sc.cwd ? null : resolveTargetPath(wd, { os: h.sc.os, home: h.sc.home ?? "", cwd: h.sc.cwd }) }, more(h.sc));
   // A here-string's variables stand for the input, as with xargs (commands-remote-w5-5).
   const fed = values(p, "a", "arg-file").length ? undefined : h.s.stdinVars?.word?.parts;
-  sendsInput(h, p.operands, values(p, "a", "arg-file").length > 0 || h.args.some(a => a.v !== null && /^::::\+?$/.test(a.v)));
+  sendsInput(h, p.operands, values(p, "a", "arg-file").length > 0 || h.args.some(a => a.v !== null && /^::::\+?$/.test(a.v)), /\{[^{}\s]*\}/);
   h.e.payload([...p.operands, { v: null, raw: "(input)", glob: false, ...(fed ? { parts: fed } : {}) }], sc, "parallel");
 });
 
