@@ -209,6 +209,17 @@ describe("python's zipfile and tarfile unpacking outside the project (commands-r
     }
     expect(result("python3 -m zipfile -e a.zip out", { downloaded: ["/home/ana/proj/a.zip"] }).cls.downloads).toContain("/home/ana/proj/out");
   });
+
+  it("asks before tarfile -e with no folder unpacks over the home folder, the current one, as tar xf does (r10-commands-y10-1)", () => {
+    for (const cmd of ["cd ~ && python3 -m tarfile -e a.tgz", "cd ~ && python3 -m tarfile --extract a.tgz", "cd /etc && python3 -m tarfile -v -e a.tar"]) {
+      const d = decide(cmd);
+      expect(d.verdict, cmd).toBe("ask");
+      expect(d.rules, cmd).toContain("archive.unpack");
+    }
+    expect(decide("cd ~ && tar xf a.tgz").rules).toContain("archive.unpack");
+    expect(decide("python3 -m tarfile -e a.tgz").verdict).toBe("run");
+    expect(result("python3 -m tarfile -e a.tgz", { downloaded: ["/home/ana/proj/a.tgz"] }).cls.downloads).toContain("/home/ana/proj");
+  });
 });
 
 describe("cloud tools' commands that print secrets, and their verbs Ember doesn't know (commands-remote-c10-1)", () => {
