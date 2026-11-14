@@ -489,10 +489,26 @@ describe("cacls grants and Samba's user shares (r12-commands-y12-7)", () => {
 describe("read-only and everyday commands that asked (commands-remote-r12-4)", () => {
   it("runs reads of gcloud's and az's products, dry runs, listings and a launcher's own options", () => {
     for (const cmd of [
-      "gcloud run services describe web", "gcloud run services list", "gcloud beta run services list", "gcloud deploy releases list", "az search service show -n x",
-      "kubectl set env deploy/web --list", "kubectl apply -f k.yaml --dry-run=client", "kubectl apply -f k.yaml --dry-run=server", "kubectl delete pod x --dry-run=client",
-      "helm upgrade web ./chart --dry-run", "mount", "mount -l", "mount -t ext4", "mount | grep sda", "swapon --show", "losetup -a",
+      "gcloud run services list", "gcloud beta run services list", "gcloud deploy releases list", "az search service show -n x",
+      "kubectl apply -f k.yaml --dry-run=client", "kubectl apply -f k.yaml --dry-run=server", "kubectl delete pod x --dry-run=client",
+      "helm template web ./chart", "mount", "mount -l", "mount -t ext4", "mount | grep sda", "swapon --show", "losetup -a",
     ]) expect(decide(cmd).verdict, cmd).not.toBe("ask");
+  });
+
+  it("reads a listing or a description that prints a workload's environment as secrets: asked, and kept from the model in Autopilot (integ-x-2)", () => {
+    for (const cmd of [
+      "kubectl set env deploy/web --list", "kubectl set env deploy/web --list --resolve", "oc set env dc/web --list", "gcloud run services describe web",
+      "gcloud beta run jobs describe j", "helm upgrade web ./chart --dry-run", "helm install web ./chart --dry-run=server",
+    ]) {
+      const r = result(cmd);
+      expect(r.decision.verdict, cmd).toBe("ask");
+      expect(r.decision.rules, cmd).toContain("secret.cloud");
+      expect(r.decision.rules, cmd).not.toContain("cloud.change");
+      expect(keptQuestion(r.decision, r.cls.findings), cmd).toBe("secret");
+      const d = autopilotCommand(r.decision, { findings: r.cls.findings, mode: "on", askEvery: null, userAskEvery: false });
+      expect(d?.verdict, cmd).toBe("announce");
+      expect(d?.withheld, cmd).toBe(true);
+    }
   });
 
   it("still asks before the changes beside them", () => {
