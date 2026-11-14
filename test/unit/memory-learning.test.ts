@@ -209,7 +209,11 @@ describe("asking about gaps (step 5)", () => {
     expect(namesIn("Draft a note to Priya Shah about Atlas")).toEqual(["Priya Shah", "Atlas"]);
     expect(namesIn("Open Settings")).toEqual([]);
     const g = new Gaps();
+    // Only a name the user called theirs counts (r10-memory-y10-2).
     g.missed("Email Priya", () => false);
+    g.missed("Call Priya tomorrow", () => false);
+    expect(g.top()).toBeNull();
+    g.missed("Email my colleague Priya", () => false);
     expect(g.top()).toBeNull();
     g.missed("Call Priya tomorrow", () => false);
     expect(g.top()).toBe("Priya");
@@ -219,7 +223,7 @@ describe("asking about gaps (step 5)", () => {
     const { l, said, advance } = learning();
     l.introduce({ name: "Ram" });
     const m = l.conductorMemory();
-    expect(await m.forRequest("Email Priya the notes", true)).toContain("Likes to be called Ram");
+    expect(await m.forRequest("Email my colleague Priya the notes", true)).toContain("Likes to be called Ram");
     await m.forRequest("Call Priya tomorrow", true);
     advance(IDLE_MS);
     await l.tick();
@@ -229,7 +233,7 @@ describe("asking about gaps (step 5)", () => {
   it("asks at most once a day, only while idle with the screen unlocked, and keeps the answer as the user's", async () => {
     const { l, s, said, learned, advance } = learning();
     const m = l.conductorMemory();
-    await m.forRequest("Email Priya the notes", true);
+    await m.forRequest("Email my colleague Priya the notes", true);
     await m.forRequest("Call Priya tomorrow", true);
     await l.tick();
     expect(said).toEqual([]);
@@ -239,7 +243,7 @@ describe("asking about gaps (step 5)", () => {
     expect(l.intent("She leads the platform team", { own: true })).toBe("Thanks. I'll remember that about “Priya”.");
     expect(s.list()).toEqual([expect.objectContaining({ text: "Priya: She leads the platform team", source: "user" })]);
     expect(learned).toEqual(["user: Priya: She leads the platform team"]);
-    await m.forRequest("Ask Omar about it", true);
+    await m.forRequest("Ask my friend Omar about it", true);
     await m.forRequest("Message Omar about lunch", true);
     advance(IDLE_MS);
     await l.tick();
@@ -252,14 +256,14 @@ describe("asking about gaps (step 5)", () => {
   it("never asks while busy, locked or with questions off, lets a request pass, and keeps no answer it couldn't tell was the user's", async () => {
     for (const o of [{ idle: false }, { locked: true }, { questions: false }]) {
       const { l, said, advance } = learning(o);
-      await l.conductorMemory().forRequest("Email Priya", true);
+      await l.conductorMemory().forRequest("Email my colleague Priya", true);
       await l.conductorMemory().forRequest("Call Priya", true);
       advance(IDLE_MS);
       await l.tick();
       expect(said, JSON.stringify(o)).toEqual([]);
     }
     const { l, s, said, advance } = learning();
-    await l.conductorMemory().forRequest("Email Priya", true);
+    await l.conductorMemory().forRequest("Email my colleague Priya", true);
     await l.conductorMemory().forRequest("Call Priya", true);
     advance(IDLE_MS);
     await l.tick();
@@ -1525,7 +1529,7 @@ describe("the security review's probes (PR #142)", () => {
     expect(two.s.list()).toEqual([]);
 
     const three = learning();
-    await three.l.conductorMemory().forRequest("Email Priya the notes", true);
+    await three.l.conductorMemory().forRequest("Email my colleague Priya the notes", true);
     await three.l.conductorMemory().forRequest("Call Priya tomorrow", true);
     three.advance(IDLE_MS);
     await three.l.tick();

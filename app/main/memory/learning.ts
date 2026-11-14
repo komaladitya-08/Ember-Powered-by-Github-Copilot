@@ -69,7 +69,10 @@ export interface LearningDeps {
   idle: () => boolean;
   /** The screen is locked (or that can't be told: then true). */
   locked: () => boolean;
-  /** Says Ember's question in the conversation (and aloud when replies are spoken). False when it couldn't now. */
+  /**
+   * Shows Ember's question as text in Home's conversation, never aloud, in the bubble or a corner card (r10-memory-y10-2).
+   * False when it couldn't now (Home isn't open, or something is under way).
+   */
   say: (text: string) => boolean;
   /**
    * Opens Settings › Memory: at its list for a forget request (`list`), at its note's words for the interview asked for

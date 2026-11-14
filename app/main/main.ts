@@ -1777,7 +1777,8 @@ function start(): void {
     idle: () => agent?.idle ?? false,
     // Fail closed: without a lock watcher the screen counts as locked (nothing runs while away).
     locked: () => screenLock?.locked ?? true,
-    say: text => agent?.sayFromMemory(text) ?? false,
+    // Text in Home's conversation only, while Home is open to read it: never the bubble, a card or the voice (r10-memory-y10-2).
+    say: text => homeOpen() && (agent?.noteFromMemory(text) ?? false),
     openMemory,
     onLearned: items => {
       const t = new Date().toISOString();

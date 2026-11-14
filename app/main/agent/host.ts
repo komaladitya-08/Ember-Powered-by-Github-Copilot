@@ -3165,15 +3165,13 @@ export class AgentHost {
   }
 
   /**
-   * Memory's question (app/main/memory/questions.ts): said as Ember's own line, shown and spoken like an answer, only
-   * while nothing is under way and Ember is connected. False when it can't be said now.
+   * Memory's question (app/main/memory/questions.ts): Ember's own line in Home's conversation only, never in the
+   * bubble or a corner card and never said aloud, whoever is near (r10-memory-y10-2: a name from the user's requests
+   * may be private). Only while nothing is under way and Ember is connected. False when it can't be shown now.
    */
-  sayFromMemory(text: string): boolean {
+  noteFromMemory(text: string): boolean {
     if (!this.idle || !this.betweenTurns() || this.status.phase !== "ready") return false;
     this.remember("ember", text);
-    this.o.onTurnStart?.({ text: "", spoken: false });
-    this.presenter.say(text);
-    this.o.onAnswer?.(text);
     return true;
   }
 

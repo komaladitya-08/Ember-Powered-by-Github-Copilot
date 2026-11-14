@@ -657,16 +657,21 @@ download, so English-only MiniLM is the trade-off for now.
    health and sexual health, medicines, mental health, addiction, a crisis line, the law, money trouble, dating and
    sexuality, and faith ("Find an HIV clinic near me", "Look up Prozac side effects", "Email my lawyer at Slater
    Gordon about the divorce", and a specialist, a scan, a weigh-in, a "-Anon" group, an overdraft or a festival),
-   since the question shows beside the cursor and is spoken by default whoever is at the screen. As a word list
-   can't name every clinic, group or medicine, a name also counts only where someone or a project stands
-   (r10-memory-x10-2): after "with", "to", "from", "about" or "for" (never "search for", "look for"), after a verb
-   whose object is a person or a title, someone's ("Priya's review"), after "working on" or "the status of", or before
-   a project's word ("the Atlas notes"). So "Find Narcotics meetings", "Is Mounjaro covered?", "Book me in at Marie
-   Stopes" and "Did Omar reply" count nothing. A name Ember asked about is never counted or asked about again in that
+   since whoever is at the screen may read the question. As a word list can't name every clinic, group or medicine,
+   a name counts only once the user has called it their own person or project (r10-memory-y10-2, settled by the
+   integrator, the owner can overrule; `namedAsTheirs`): "my colleague Priya", "my new teammate Omar", "Bob, my
+   manager", "our Atlas project", by an everyday relation at work or at home (a colleague, a manager, a friend, a
+   sister, a client) or a project's word, never a doctor, a therapist, a lawyer, a counsellor or a sponsor. Once it
+   has, later in that run (in RAM only) it counts where someone or a project stands (r10-memory-x10-2): after "with",
+   "to", "from", "about" or "for" (never "search for", "look for"), after a verb whose object is a person or a title,
+   someone's ("Priya's review"), after "working on" or "the status of", or before a project's word ("the Atlas
+   notes"). So "Find Narcotics meetings", "Is Mounjaro covered?", "Book me in with Marie Stopes", "Email Dr Shah
+   about the results" and "Email Priya the notes" count nothing. A name Ember asked about is never counted or asked about again in that
    run, whether it was answered, skipped or left unanswered (held in RAM only; a restart may ask once more). Once one
    was missed twice, at most once a day (`memory.askedAt`, kept across restarts), only while idle with the screen
-   unlocked and nothing under way, Ember says "You've mentioned “Priya” a few times. Who or what is that?" in the
-   conversation (and aloud when replies are spoken). The question is built from the name alone; no model writes it.
+   unlocked, nothing under way and Home open, Ember writes "You've mentioned “Priya” a few times. Who or what is
+   that?" in Home's conversation only: never aloud, never in the bubble or a corner card (r10-memory-y10-2,
+   `noteFromMemory`). The question is built from the name alone; no model writes it.
    The next short statement about the name within ten minutes is the answer, a `user` fact ("Priya: leads the
    platform team"); "skip", "forget that", a new request or anything else lets it go to the conversation. **Ask me questions now and then** (`memory.questions`, on by default) turns
    it off.

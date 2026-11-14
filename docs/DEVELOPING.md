@@ -311,7 +311,9 @@ environment, only through `scripts/runtime-env-live.sh`, which gives it a networ
     same fact (docs/MEMORY.md says how that is told). Learned facts are recalled by meaning too, once Better recall's
     model is in. After 5 idle minutes (no turn, no task,
     the screen unlocked) it tidies (consolidate, then one model pass, at most 6 a day). At most once a day while
-    idle it asks about a name it keeps finding nothing on (**Ask me questions now and then**, on by default). A new
+    idle it asks, as text in Home's conversation only (never aloud or beside the cursor), about someone or a project
+    you called yours ("my colleague Priya") that it keeps finding nothing on (**Ask me questions now and then**, on by
+    default). A new
     fact shows in the conversation as "Ember learned: …" with **Undo**; once forgotten the line says "Ember forgot: …"
     with an Undo that puts it back, and focus stays on it. What you forget or correct is never learned back from what
     was said before: Forget, a correction and Forget everything drop the turns and task results not yet read (and the

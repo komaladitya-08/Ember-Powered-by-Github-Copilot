@@ -360,7 +360,9 @@ docs/MEMORY.md is the design. The core (app/main/memory/) is pure and has no Ele
     name>" to the interview's name question (`Interview.answers`), whose name is kept without its lead-in
     (`nameFrom`); the spoken interview is never started by unchecked speech (it says why and opens the form,
     `INTRO_UNCHECKED`) and ends "I'll remember that" only when memory kept something (memory-r9-6); Ember's question
-    is built from a name alone (`gapQuestion`), never one that reads like an order;
+    is built from a name alone (`gapQuestion`), never one that reads like an order, only about a name the user called
+    their own person or project (`namedAsTheirs`), and is text in Home's conversation only, never spoken, in the
+    bubble or a corner card (`noteFromMemory`, r10-memory-y10-2);
   - every Forget goes through `MemoryLearning.forget()` so "forget that" lets go of it too and its "Ember learned"
     line says so where it was (`onForgot` with what went: `linesAfterForget`, then `linesAfterRestore`, never taken
     off the page under the user's focus: memory-c1-3); forgetting an open fact Ember kept just now (within `FORGET_THAT_MS`: its line's Undo, "forget that", a

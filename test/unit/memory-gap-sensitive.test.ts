@@ -1,6 +1,6 @@
 /**
- * The daily question shows beside the cursor and is spoken by default while Ember has nothing to do, which says
- * nothing of who is at the screen (memory-c10-1). So it never asks about a name from a request about health, sexual
+ * The daily question showed beside the cursor and was spoken by default while Ember had nothing to do, which says
+ * nothing of who is at the screen (memory-c10-1); since r10-memory-y10-2 it is text in Home only. So it never asks about a name from a request about health, sexual
  * health or medicines, addiction, a crisis line, the law, money trouble, dating or sexuality, or faith: "You've
  * mentioned “HIV” a few times. Who or what is that?" must never be shown or said. Names from other requests are
  * asked about as before.
@@ -35,11 +35,11 @@ const SENSITIVE: [string, string][] = [
   ["Find the times at St Mary's church", "Is St Mary's mass at nine"],
 ];
 
-/** Ordinary requests whose names Ember still asks about. */
+/** Ordinary requests whose names Ember still asks about: the user's own people (r10-memory-y10-2). */
 const ORDINARY: [string, string, string][] = [
-  ["Draft a note to Priya about Atlas", "Email Priya the Atlas plan", "Priya"],
-  ["Ask Hopper about payroll", "Message Hopper about lunch", "Hopper"],
-  ["Book a table with Sam for Friday", "Remind me about dinner with Sam", "Sam"],
+  ["Draft a note to my colleague Priya about Atlas", "Email Priya the Atlas plan", "Priya"],
+  ["Ask my manager Hopper about payroll", "Message Hopper about lunch", "Hopper"],
+  ["Book a table with my friend Sam for Friday", "Remind me about dinner with Sam", "Sam"],
 ];
 
 function learning() {
@@ -116,7 +116,9 @@ describe("the daily question asks only about a name where someone or a project s
     expect(top(["Is Krita any good for sketches", "Does Krita do layers"])).toBeNull();
     expect(top(["Did Omar reply", "Has Omar sent it"])).toBeNull();
     expect(top(["Search for StepChange", "Look for StepChange"])).toBeNull();
-    expect(top(["Lunch with Omar on Friday", "Send the deck to Omar"])).toBe("Omar");
-    expect(top(["What's the status of Atlas", "Summarise the Atlas notes"])).toBe("Atlas");
+    expect(top(["Lunch with my friend Omar on Friday", "Send the deck to Omar"])).toBe("Omar");
+    expect(top(["What's the status of our Atlas project", "Summarise the Atlas notes"])).toBe("Atlas");
+    // Named only, never called theirs: nothing (r10-memory-y10-2).
+    expect(top(["Lunch with Omar on Friday", "Send the deck to Omar"])).toBeNull();
   });
 });

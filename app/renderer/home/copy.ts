@@ -979,7 +979,7 @@ export function aboutYouNotKept(kept: number, notKept: readonly (keyof typeof AB
 }
 
 /** Under the "Ask me questions" switch. */
-export const MEMORY_QUESTIONS_HINT = "At most one question a day, only while you're not using Ember, about names it keeps finding nothing on. Your answer is kept as something you told it.";
+export const MEMORY_QUESTIONS_HINT = "At most one question a day, only while you're not using Ember, about someone or a project you've called yours that it knows nothing about. It's written here in Home, never said aloud. Your answer is kept as something you told it.";
 
 /**
  * Interactive's card (Apps & privacy › How Ember asks, FEATURE_CONSENT_VERSION.autonomy; app/main/policy/autonomy.ts):
