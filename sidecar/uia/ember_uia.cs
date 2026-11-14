@@ -3162,29 +3162,64 @@ namespace Ember.Uia
       return s.Substring(0, max);
     }
 
-    // A plain native Edit keeps its selected range after losing focus, even when UIA's TextPattern fails.
-    private static JObj NativeEditTextInfo(AutomationElement el, int max, List<object> marks)
+    /// <summary>
+    /// A plain native single-line Edit of the element's own process (Edit or WinForms' EDIT class, a child window, not
+    /// multi-line, not a password field), or IntPtr.Zero. Its caret and selection are read from the control itself:
+    /// UI Automation's TextPattern ranges over it (the caret arithmetic: Clone, MoveEndpointByRange, GetText,
+    /// CompareEndpoints) made the app take the foreground from the Ask box (cifix-x9-12: CI's Windows job at addfc65,
+    /// both openings, the bench's return in that step and in no other).
+    /// </summary>
+    private static IntPtr NativeSingleLineEdit(AutomationElement el)
     {
       IntPtr hwnd = new IntPtr(el.Current.NativeWindowHandle);
-      if (hwnd == IntPtr.Zero || Win.PidOf(hwnd) != el.Current.ProcessId) return null;
+      if (hwnd == IntPtr.Zero || Win.PidOf(hwnd) != el.Current.ProcessId) return IntPtr.Zero;
       string cls = Win.ClassName(hwnd);
       if (!cls.Equals("Edit", StringComparison.OrdinalIgnoreCase) &&
-          !cls.StartsWith("WindowsForms10.EDIT.", StringComparison.OrdinalIgnoreCase)) return null;
+          !cls.StartsWith("WindowsForms10.EDIT.", StringComparison.OrdinalIgnoreCase)) return IntPtr.Zero;
       const int GwlStyle = -16, WsChild = 0x40000000, EsMultiline = 0x4, EsPassword = 0x20;
       int style = Native.GetWindowLongW(hwnd, GwlStyle);
-      if ((style & WsChild) == 0 || (style & (EsMultiline | EsPassword)) != 0) return null;
+      if ((style & WsChild) == 0 || (style & (EsMultiline | EsPassword)) != 0) return IntPtr.Zero;
+      return hwnd;
+    }
+
+    // Whether the element may be one (NativeSingleLineEdit): an element that can't be told is taken for one, so its
+    // caret is left unread rather than read through TextPattern's ranges.
+    private static bool MaybeNativeSingleLineEdit(AutomationElement el)
+    {
+      try { return NativeSingleLineEdit(el) != IntPtr.Zero; }
+      catch (ElementNotAvailableException) { return true; }
+      catch (System.ComponentModel.Win32Exception) { return true; }
+      catch (InvalidOperationException) { return true; }
+    }
+
+    // A plain native Edit keeps its selected range after losing focus, even when UIA's TextPattern fails; its bare caret
+    // too, so both are read from it (EM_GETSEL) and its value, never from TextPattern's ranges (NativeSingleLineEdit).
+    private static JObj NativeEditTextInfo(AutomationElement el, int max, List<object> marks)
+    {
+      IntPtr hwnd = NativeSingleLineEdit(el);
+      if (hwnd == IntPtr.Zero) return null;
       const uint EmGetSel = 0xB0, SmtoAbortIfHung = 0x2, SmtoErrorOnExit = 0x20;
       IntPtr result;
       Mark(marks, "edit selection message");
       if (Native.SendMessageTimeoutW(hwnd, EmGetSel, IntPtr.Zero, IntPtr.Zero, SmtoAbortIfHung | SmtoErrorOnExit, 30, out result) == IntPtr.Zero) return null;
       long offsets = result.ToInt64();
+      if (offsets == -1) return null;
       int start = (int)(offsets & 0xFFFF), end = (int)((offsets >> 16) & 0xFFFF);
-      if (offsets == -1 || end <= start || end > max) return null;
+      if (end < start) return null;
       Mark(marks, "edit value");
       string text = el.GetCurrentPropertyValue(ValuePattern.ValueProperty, true) as string;
-      if (text == null || end > text.Length || text.Length > max) return null;
-      return new JObj().Add("source", "value").Add("text", text).Add("selection", text.Substring(start, end - start))
-        .Add("caret", start).Add("selectionLength", end - start).Add("caretAtEnd", end == text.Length);
+      // EM_GETSEL's offsets are 16-bit words: past that they can't be trusted, and the text is read without them.
+      if (text == null || text.Length > 0xFFFF || end > text.Length) return null;
+      bool truncated = false;
+      JObj r = new JObj().Add("source", "value").Add("text", Cut(text, max, ref truncated));
+      if (truncated) r.Add("truncated", true);
+      // As TextPattern's read gave them: the selection (empty for a bare caret) where it lies within what is read.
+      if (end <= max)
+      {
+        r.Add("selection", text.Substring(start, end - start)).Add("caret", start).Add("selectionLength", end - start)
+          .Add("caretAtEnd", end == text.Length);
+      }
+      return r;
     }
 
     // A development probe's marks (cifix-x9-11): when each step of a text read began, in ms since 1970, so the Windows
@@ -3246,7 +3281,9 @@ namespace Ember.Uia
           }
           bool cut = false;
           r.Add("selection", Cut(selected.ToString(), max, ref cut));
-          if (selection.Length == 1)
+          // Never for a plain native single-line Edit (NativeSingleLineEdit): its caret is read from the control or not
+          // at all (an Edit whose EM_GETSEL didn't answer, or whose text is past 64 K characters).
+          if (selection.Length == 1 && !MaybeNativeSingleLineEdit(el))
           {
             Mark(marks, "caret");
             TextPatternRange before = document.Clone();

@@ -657,6 +657,13 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
       if (!box?.visible) throw new Error(`the Ask box before the right-click (review #77): ${box ? "closed" : "gone"} since it was shown, so there is no field to press; ${await trailNow()}`);
       // Printed when it passes too: what a pass looked like is the comparison a failure needs (cifix-x9-3).
       console.log(`the Ask box up before the right-click (review #77); ${await trailNow()}`);
+      // cifix-x9-12: Ember's read of the bench, which runs while the box is up, must leave the box the foreground. It
+      // didn't: TextPattern's caret arithmetic over the bench's Name field handed the bench the foreground about 1 s in,
+      // and only the box's 1.5 s handover took it back (or, landing after it, the box closed). The box must not have lost
+      // the keyboard once, from showing to now, the read answered meanwhile: the handover must not be what keeps it up.
+      const lost = (await ember.evaluate(() => (globalThis as { __winTrail?: { t: number; what: string }[] }).__winTrail ?? []))
+        .filter(e => e.what === "Ember's \"Ask Ember\" blur" && e.t >= pressedAt);
+      expect(lost.map(e => e.t - pressedAt), `the Ask box lost the keyboard while it was up (cifix-x9-12); ${await trailNow()}`).toEqual([]);
       await reaches("the Ask field under the pointer before the right-click (review #77)", askId, at.x, at.y, ASK_FIELD_WAIT_MS);
       expect(hit(at.x, at.y), "the right-click reaches the Ask field").toBe(askId);
       x.button(3, true);
