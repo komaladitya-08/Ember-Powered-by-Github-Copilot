@@ -196,6 +196,24 @@ describe("a download or a conversion saved over a file that is there (y11-8)", (
   });
 });
 
+describe("a conversion saved over its own input (r12-commands-x12-6)", () => {
+  it("asks before the original is replaced, whatever its name", () => {
+    for (const cmd of [
+      "magick photo.jpg -quality 10 photo.jpg", "convert photo.jpg -resize 10% photo.jpg", "pandoc thesis.docx -o thesis.docx", "convert out.png -resize 50% out.png",
+      "convert ./photo.jpg -strip photo.jpg", "qpdf thesis.pdf thesis.pdf", "pandoc -o notes.md notes.md", "magick ~/Pictures/a.png -resize 50% /home/ana/Pictures/a.png",
+    ]) {
+      const d = decide(cmd);
+      expect(d.verdict, cmd).toBe("ask");
+    }
+  });
+
+  it("still runs a rendering named for its input or as an output", () => {
+    for (const cmd of ["pandoc thesis.md -o thesis.pdf", "convert photo.png photo.jpg", "convert photo.png -resize 50% photo-small.png", "convert input.png output.png", "pandoc in.md --output=out.pdf"]) {
+      expect(decide(cmd).verdict, cmd).toBe("run");
+    }
+  });
+});
+
 describe("a file's contents sent in a registry's, an image's or a package's name (y10-4)", () => {
   it("asks as sending, as a fetch with the same address does", () => {
     for (const cmd of [

@@ -10933,8 +10933,12 @@ reg(NATIVE, ["pandoc", "convert", "magick", "qpdf", "pdftk", "pdfunite", "img2pd
   // rendering, made again from it, and one named as an output or a scratch file (`out.pdf`, `output.png`, `b.jpg`) is
   // the command's own: replacing either is ordinary. Any other name may be another document of the user's.
   const stem = (v: string): string => (v.split(/[\\/]/).pop() ?? "").replace(/\.[^.]*$/, "").toLowerCase();
+  // An output that is one of its inputs (`magick photo.jpg -quality 10 photo.jpg`) replaces the original, whatever its
+  // name (r12-commands-x12-6).
+  const at = (v: string): string => { const r = resolveTargetPath(v, { os: h.sc.os, home: h.sc.home ?? "", cwd: h.sc.cwd ?? "" }); return h.sc.os === "linux" ? r : r.toLowerCase(); };
   const out = (f: Arg, inputs: readonly Arg[]): void => {
     const s = f.v === null ? "" : stem(f.v);
+    if (f.v !== null && inputs.some(i => i !== f && i.v !== null && at(i.v) === at(f.v!))) { overwrites(h, f); return; }
     if (s !== "" && (CONVERTED_NAME.test(s) || inputs.some(i => i !== f && i.v !== null && stem(i.v) !== "" && s.startsWith(stem(i.v))))) { h.e.usePath(f, "write", h.sc); return; }
     overwrites(h, f);
   };

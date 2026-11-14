@@ -178,7 +178,8 @@ Ember stops and asks before a command that:
   download saved over it by `curl -o`, `wget -O`, `aws s3 cp`, `rclone copyto`, `gh release download --clobber`,
   `fetch -o`, Windows' `certutil -urlcache`, `bitsadmin /transfer` or `Start-BitsTransfer`, or a conversion saved over
   it by `pandoc -o`, ImageMagick's `convert` or `magick`, `qpdf`, `pdftk … output` or `pdfunite`, unless its name is
-  the input's own, made again, or one for an output such as `out.pdf`; a `cp`
+  the input's own, made again (`thesis.md` to `thesis.pdf`), or one for an output such as `out.pdf`, and never when
+  it is the input itself (`magick photo.jpg -quality 10 photo.jpg`, which replaces the original); a `cp`
   or `mv` into a folder asks only when a file of the same name is in it, "Replaces ~/Documents/report.pdf if it
   exists.", on this computer, in WSL and on an SSH computer, which each say which names are folders; but
   `cp --parents`, `rsync -R` (`--relative`, `--files-from` or a `/./` in the name), which put a file at its path
