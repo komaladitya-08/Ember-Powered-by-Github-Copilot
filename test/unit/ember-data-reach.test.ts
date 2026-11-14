@@ -506,6 +506,22 @@ describe("Ember's own files behind a file dialog the screen reader can't read wh
     scrolled[2] = n(3, 1, "list", "Items View", { omitted: true });
     expect(read(scrolled, 7).unread).toBeUndefined();
     expect(engine("autopilot", "win32", { notepad: "act" }).decide(req("notepad", "Save As", { ...save, dialog: read(scrolled, 7) })).verdict).toBe("allow");
+    // A real GTK chooser (read under Xvfb with AT-SPI): its own widget, its places and its path bar's scrolled crumbs are
+    // always left out of the read, but its name and its current folder (the checked crumb) are read: as before.
+    const real = (folder: string, crumbs: string[], name: string): AxNode[] => [
+      n(1, null, "file chooser", "Speichern unter", { omitted: true }), n(2, 1, "file chooser", "File Chooser Widget", { omitted: true }),
+      n(3, 2, "text", "", { editable: true, text: name, states: ["editable", "focused"] }), n(4, 2, "label", "Name:"),
+      n(5, 2, "scroll pane", "Places", { omitted: true }), n(6, 5, "list box", "", { omitted: true }), n(7, 6, "list item", "", { omitted: true, states: ["selected"] }),
+      n(8, 2, "filler", "PathBar Layer", { omitted: true }), n(9, 8, "toggle button", folder, { states: ["checked"] }),
+      ...crumbs.map((c, i) => n(20 + i, 8, "toggle button", c)), n(10, 8, "push button", "Up Path"),
+      n(11, 2, "table", "Files"), n(12, 11, "table cell", "x"), n(13, 1, "push button", "Cancel"), n(14, 1, "push button", "Save"),
+    ];
+    const home = read(real("root", [], "notes.txt"), 14);
+    expect(home.unread).toBeUndefined();
+    for (const mode of ["interactive", "autopilot"] as const) expect(engine(mode, "linux", { gedit: "act" }).decide(step(home)).verdict, mode).toBe("allow");
+    asksOrRefused("linux", "gedit", step(read(real("ember", [".config", "d", "home"], "settings.json"), 14)), "real GTK in ember");
+    // Its path bar left out entirely: where it saves can't be told.
+    asksOrRefused("linux", "gedit", step(read(real("root", [], "notes.txt").filter(a => a.id !== 9), 14)), "real GTK, no crumb");
     // Positive evidence from a read cut short still counts: a path bar naming Ember's folder is refused.
     const named = read([...gtk([n(3, 1, "panel", "", { omitted: true })]), n(6, 1, "toggle button", "ember")], 5);
     expect(engine("autopilot", "linux", { gedit: "act" }).decide(step(named)).verdict).toBe("deny");

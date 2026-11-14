@@ -1006,6 +1006,8 @@ const DIALOG_ROW = /cell|list item|tree item|icon|table row|^row$/;
 const DIALOG_ROLE = /^(dialog|alert|file chooser|color chooser|font chooser)$/;
 /** What lists a folder's files in a file dialog (its rows' container): Windows' Items View, macOS's outline, Qt's tree. */
 const FILE_LIST_ROLE = /^(?:list|tree|table|tree table)$/;
+/** A name that shows a folder's whole path (Windows' "Address: C:\Users\a", "~/Documents", "/home/a"). */
+const SHOWS_PATH = /(?:^|[\s:])(?:[a-z]:\\|\\\\|~?\/)[^\s/\\]/i;
 /**
  * Roles that are something to press, choose, tick or type into (on every OS's screen reader): anything with one of
  * these in a dialog is a control of it. An element that is editable or has an action of its own counts too, whatever
@@ -1068,13 +1070,15 @@ export function dialogAround(start: AxNode | undefined, get: (id: number) => AxN
       const fieldNodes = inside.filter(n => n.editable === true || n.states.includes("editable") || /combo/.test(n.role));
       const fields = fieldNodes.some(n => n.secret || n.withheld) ? undefined
         : fieldNodes.map(n => (/combo/.test(n.role) ? n.selected ?? n.text ?? n.name : n.text) ?? "").filter(Boolean);
-      // Not all of it read (r11-safety-x11-1, -x11-2): the read cut short or busy, something under it left out (but rows of
-      // its list scrolled away, which hold files, not where it saves or what name it saves under), a field's text cut to
-      // what a read gives, or a field with no text the reader didn't say was empty. What it does say still counts; only
-      // "nothing of Ember's here" can't be told.
+      // Not all of it read (r11-safety-x11-1, -x11-2): the read cut short or busy, a field's text cut to what a read gives
+      // or not given without the reader saying it was empty, or something under it left out (but rows of its list
+      // scrolled away, which hold files) while the read doesn't show where it saves: GTK's checked path-bar crumb (its own
+      // widget and the crumbs scrolled away are always left out of a real read) or a path (Windows' "Address: C:\…").
+      // What it does say still counts; only "nothing of Ember's here" can't be told.
       const inList = (a: AxNode) => [a, ...(chain(a) ?? [])].some(x => DIALOG_ROW.test(x.role) || FILE_LIST_ROLE.test(x.role));
       const textField = (a: AxNode) => !/combo/.test(a.role) || a.editable === true;
-      const unread = !whole || !!cur.omitted || inside.some(a => a.omitted && !inList(a))
+      const located = inside.some(a => (/toggle/.test(a.role) && a.states.includes("checked") && !!a.name.trim()) || SHOWS_PATH.test(a.name));
+      const unread = !whole || ((!!cur.omitted || inside.some(a => a.omitted && !inList(a))) && !located)
         || fieldNodes.some(a => a.textCut || (textField(a) && !a.text && !a.empty && !a.secret && !a.withheld));
       // A file dialog by its shape, whatever its title's language (r11-safety-x11-3): a one-line field to type a name or
       // a path into beside a list of rows (Windows' common dialog, macOS's save sheet, Qt's and GTK's own).
