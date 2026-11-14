@@ -1168,7 +1168,11 @@ this window; on the real models taken 28 times in 40, never now, and your own �
 the stream, is taken as before, 40 of 40). And a wake itself is checked against that stream by the two spotters alone,
 whose miss now and then left a video's own “Ember, go ahead.” a wake from idle and a yes by name (2 of 96 runs): a yes
 a wake carries is the speakers' where the recognizer reads it in what their stream played (`speakersSaid`; none of 96
-now, and your own “Hey Ember, allow it.” over a video's talk is taken as before, 7 of 8). The first
+now, and your own “Hey Ember, allow it.” over a video's talk is taken as before, 7 of 8). A request said without the
+name in a follow-up window while other sound plays, or where nothing can tell, and one said after your “Hey Ember” and a
+pause while other sound is known to play, is heard and sent as ever, but never counts as your own words for a command
+(`heardOverSound`, `heardUnchecked`): a video's “Delete the old reports folder.” then asks in Interactive rather than
+being announced as you asked, and Assisted's check never matches it (voice-listening-r12-2). The first
 time something said then without the name isn't heard, the status line says “Music or a video is playing: say “Ember”
 first.” for 5 s (engine.ts `dropped`), once a conversation; while a question is up, an answer dropped so, in the answer
 window, a follow-up, a conversation or after a wake, makes the question say once why and to say the answer right after the name, in one go (`dropped` says which
