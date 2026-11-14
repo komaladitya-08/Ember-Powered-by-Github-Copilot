@@ -271,6 +271,14 @@ describe("the three mode cards are true to the owner's table for commands (owner
       expect(said).toContain("in “Project work”");
     }
   });
+
+  it("says in the README and in CLAUDE.md, as the card does, that Autopilot also asks in Podman's distro and Project work (integ-y-3)", () => {
+    const readme = readFileSync(new URL("../../README.md", import.meta.url), "utf8").replace(/\s+/g, " ");
+    const claude = readFileSync(new URL("../../CLAUDE.md", import.meta.url), "utf8").replace(/\s+/g, " ");
+    expect(readme).toContain("It asks only where you or your organisation set commands to ask every time, in a distro Podman uses and in **Project work**;");
+    const bullet = claude.slice(claude.indexOf("**Autopilot**: it never asks"));
+    expect(bullet.slice(0, bullet.indexOf("Everything else that would ask"))).toMatch(/in a distro Podman uses .* and in Project work .*the owner hasn't ruled on/);
+  });
 });
 
 describe("the exception for a dangerous command asked for exactly is said one way, true to what can go ahead (r11-copy-x11-1)", () => {
