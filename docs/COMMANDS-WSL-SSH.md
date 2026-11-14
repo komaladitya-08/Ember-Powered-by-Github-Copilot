@@ -132,7 +132,7 @@ Most commands: reading files, listing folders, searching, building, running test
 `npm test`, `make`, `df -h`. They still run in the command window where you can watch and stop them, they are
 recorded in the audit log, and their output goes back to Copilot as described in §2.7.
 
-Ember runs a program straight away only when it knows it: one it has a rule for, or one on its list of everyday tools
+Ember runs a program straight away, without naming it first, when it knows it: one it has a rule for, or one on its list of everyday tools
 that only read, list, search, measure, convert, compile, test or build what they are given (`cat`, `rg`, `fd`, `jq`,
 `tree`, `gcc`, `tsc`, `pytest`, `eslint`, `ffprobe`, `pdftotext`, `lscpu` and some hundreds more), and in PowerShell a
 cmdlet it has no rule for only when its verb only reads (`Get-`, `Test-`, `Measure-`, `Select-`, `Where-`, `Sort-`,
@@ -146,9 +146,15 @@ still judged. Of a tool
 with several commands (`cargo`, `go`, `pip`, `uv`, `poetry`, `stack`, `cabal`, `mix`, `sbt`, `bazel`, `deno`, `dotnet`,
 `systemctl`, `tmux`, `pyenv`, `nvm`, `next`, `ng`, `turbo`, `nx`, `lerna`, `pre-commit` and others), only the commands
 Ember knows run straight away: `cargo build`, `go mod tidy`, `pip config list`, `tmux ls`, `next build`, `turbo run
-build`, `pre-commit run`, and `tsx` or `ts-node` with one of the project's files. Anything else asks (§2.4).
+build`, `pre-commit run`, and `tsx` or `ts-node` with one of the project's files. Anything else that isn't a danger
+runs too, announced by name with a few seconds to stop it ("Running hugo, which I don't know."; §2.4): not knowing a
+program is not a danger (accessibility-c12-1).
 
 ### 2.4 What asks first
+
+This section says what asks in Interactive, the default. Where you asked for exactly that command it may run with a
+few seconds to stop it instead (§2.5), in Assisted Ember's check may let it go ahead (§2.5a), and in Autopilot it runs,
+announced, but where you or your organisation set commands to ask every time (§2.5b).
 
 Ember stops and asks before a command that:
 
