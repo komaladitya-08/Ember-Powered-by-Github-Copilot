@@ -805,8 +805,9 @@ function resultOf(exit: RunExit, shaped: string, o: { label: string; timeoutS: n
       // Never "done" on output known to be incomplete: the model would take the part for the whole. Without the run's
       // own end Ember doesn't know the command finished at all (review wslio-x-3): it says so, and to look first.
       if (exit.endLost) {
-        const stopped = exit.targetStopped ? ` (${o.label} stopped meanwhile)` : "";
-        return fail(`Ember didn't get the end of this run, so the command may not have finished${stopped}, and the output below is incomplete. Check what it did before you run it again.\n${shaped}`);
+        // wsl.exe's own code is said as WSL's (review wslio-y-2): the command's may never have come.
+        const said = [exit.code !== null ? `WSL reported exit code ${exit.code}` : exit.signal ? `WSL reported signal ${exit.signal}` : "", exit.targetStopped ? `${o.label} stopped meanwhile` : ""].filter(Boolean);
+        return fail(`Ember didn't get the end of this run, so the command may not have finished${said.length ? ` (${said.join("; ")})` : ""}, and the output below is incomplete. Check what it did before you run it again.\n${shaped}`);
       }
       if (exit.outputCut) return fail(`It ran and ended with ${how}, but the end of its output was lost on the way back, so the output below is incomplete. Don't run it again only to see the rest.\n${shaped}`);
       if (exit.code === 0) return done(shaped);

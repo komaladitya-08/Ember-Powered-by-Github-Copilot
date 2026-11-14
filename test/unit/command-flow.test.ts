@@ -2080,7 +2080,7 @@ describe("running and what comes back (§3.8.3 steps 12-14, §3.8.6)", () => {
       const h = harness({ run: () => ({ output: ["first part\n"], exit: exitOk({ code: 0, outputCut: true, endLost: true, ...(targetStopped ? { targetStopped } : {}) }) }) });
       const r = await call(h);
       expect(r.resultType).toBe("failure");
-      expect(r.textResultForLlm.startsWith(`Ember didn't get the end of this run, so the command may not have finished${targetStopped ? " (build-01 stopped meanwhile)" : ""}, and the output below is incomplete. Check what it did before you run it again.\n<command_output`), r.textResultForLlm).toBe(true);
+      expect(r.textResultForLlm.startsWith(`Ember didn't get the end of this run, so the command may not have finished (WSL reported exit code 0${targetStopped ? "; build-01 stopped meanwhile" : ""}), and the output below is incomplete. Check what it did before you run it again.\n<command_output`), r.textResultForLlm).toBe(true);
       expect(r.textResultForLlm).not.toContain("It ran and ended");
       expect(h.audit.find(e => e.phase === "ended")).toMatchObject({ ended: "exit", code: 0, outputCut: true, endLost: true, ...(targetStopped ? { targetStopped } : {}) });
     }

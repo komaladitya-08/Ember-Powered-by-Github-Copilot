@@ -171,8 +171,10 @@ export function statusLine(exit: RunExit & { stragglers?: string[] | null }, o: 
         : exit.signal ? `Ended by ${exit.signal} after ${d}.`
         : `Ended after ${d}.`;
       if (exit.endLost) {
-        // Without the run's own end, "Finished" or an exit code would be a guess (review wslio-x-3).
-        line = `Ember didn't get the end of this run after ${d}: the command may not have finished${exit.targetStopped ? `, and ${o.label} stopped` : ""}. What shows here is incomplete.`;
+        // Without the run's own end, "Finished" would be a guess (review wslio-x-3); wsl.exe's code is said as WSL's, and
+        // the time is how long it ran, not how long Ember waited (review wslio-y-2, -y-5).
+        const said = [exit.code !== null ? `WSL reported exit code ${exit.code}` : "", exit.targetStopped ? `${o.label} stopped` : ""].filter(Boolean);
+        line = `Ran for ${d}, but Ember didn't get its end: the command may not have finished${said.length ? ` (${said.join("; ")})` : ""}. What shows here is incomplete.`;
       } else if (exit.outputCut) line += " The end of its output didn't come back, so what shows here is incomplete.";
       break;
     case "stopped-user": line = `You stopped it after ${d}. ${stays}`; break;

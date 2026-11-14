@@ -2802,13 +2802,20 @@ downloads it on first use per target and checks it before sending.
   `kill $$` can't leave the rest running past the run), then prints `ESC ] 777;ember-end;<nonce>;<code> BEL` last;
   every fixed script ends with `scriptEnd` (`app/main/wsl/runner.ts`). The nonce is random per run (`EMBER_END`, read
   and unset by the launcher, never exported) or per script call, so no output can hold it. A run that ends by itself
-  without its marker ends with `outputCut` and `endLost` (and `targetStopped` when the distro no longer runs): the model
-  is told Ember didn't get the end of the run, that the command may not have finished and to check before running it
-  again, the audit's ended record carries the same fields, and the command window says "Ember didn't get the end of
-  this run after …: the command may not have finished. What shows here is incomplete.". A fixed script's output
-  without its marker is no answer (facts unreadable, no script read, unknown paths), and a sweep's makes what was left
-  running unknown ("Ember couldn't tell whether anything it started is still running."). A remote run whose last
-  bytes don't arrive within the tail's wait ends with `outputCut` alone (its agent did see it end).
+  without its marker is looked at before it is reported. In a distro known to run, whatever still carries the run's id
+  is swept for: nothing means the command ended and only its output's end was lost (`outputCut`, wsl.exe's exit code
+  as its own: "It ran and ended with exit code 0, but the end of its output was lost on the way back…"); something
+  means its launcher went while the command went on (`kill -9 $PPID`), so the Stop ladder's TERM and KILL sweeps end
+  it, and the run ends with `outputCut` and `endLost`. A distro that no longer runs adds `targetStopped`; one WSL
+  couldn't say about is never swept, and what was left is unknown. With `endLost` the model is told Ember didn't get
+  the end of the run, that the command may not have finished (WSL's exit code said as WSL's) and to check before
+  running it again; the audit's ended records carry the same fields; the command window says "Ran for …, but Ember
+  didn't get its end: the command may not have finished (WSL reported exit code N). What shows here is incomplete.". A
+  Stop during that look goes to the sweeps and ends the run as stopped, and the run's time is taken at wsl.exe's exit.
+  A fixed script's output without its marker is no answer (facts unreadable, no script read, unknown paths), and a
+  sweep's makes what was left running unknown ("Ember couldn't tell whether anything it started is still running."). A
+  remote run whose last bytes don't arrive within the tail's wait ends with `outputCut` alone (its agent did see it
+  end).
   `test/unit/wsl-launcher-shells.test.ts` runs the launcher in bash, dash, zsh, mksh and busybox sh where they are
   installed. Anything new that carries data through wsl.exe needs the marker or SSH's frames.
 - **A target's paths use the target's rules**: `node:path/posix` or `node:path/win32`, or `resolveTargetPath`, never
