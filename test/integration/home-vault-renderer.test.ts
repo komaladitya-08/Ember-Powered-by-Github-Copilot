@@ -9,10 +9,10 @@ import path from "node:path";
 import { chromium, type Browser, type Page } from "playwright-core";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { DEFAULT_SETTINGS } from "../../app/main/settings";
-import { VAULT_HINT, VAULT_OFF_HINT, VAULT_UNREAD } from "../../app/renderer/home/copy";
+import { VAULT_FILE_UNREADABLE, VAULT_HINT, VAULT_OFF_HINT, VAULT_UNREAD } from "../../app/renderer/home/copy";
 import type { VaultEntryRow } from "../../app/shared/vault";
 
-declare global { interface Window { __vaultHome: { calls: string[]; allowed: boolean; entries: VaultEntryRow[]; fail: boolean; unread: boolean; changed: (() => void)[] } } }
+declare global { interface Window { __vaultHome: { calls: string[]; allowed: boolean; unreadable: boolean; entries: VaultEntryRow[]; fail: boolean; unread: boolean; changed: (() => void)[] } } }
 
 const on = process.env.EMBER_UIUX_TEST === "1";
 const shots = process.env.EMBER_VAULT_SHOTS;
@@ -45,7 +45,7 @@ const ENTRIES: VaultEntryRow[] = [
   { id: "11111111-1111-4111-8111-000000000001", kind: "login", where: "github.com", site: true, savedAt: T },
 ];
 
-async function open(o: { entries?: VaultEntryRow[]; allowed?: boolean; bridge?: boolean; scheme?: "light" | "dark"; width?: number; managed?: string[] } = {}): Promise<{ page: Page; errors: string[] }> {
+async function open(o: { entries?: VaultEntryRow[]; allowed?: boolean; unreadable?: boolean; bridge?: boolean; scheme?: "light" | "dark"; width?: number; managed?: string[] } = {}): Promise<{ page: Page; errors: string[] }> {
   const settings = structuredClone(DEFAULT_SETTINGS);
   settings.onboarded = true; settings.consent = { version: 99, at: "2026-11-04T12:00:00Z" };
   const status = { appVersion: "0.1.1", settings, environment: { checks: [], versions: { node: "24", electron: "44", chrome: "152" } }, logFile: "/test/ember.log", settingsNotice: null,
@@ -61,15 +61,15 @@ async function open(o: { entries?: VaultEntryRow[]; allowed?: boolean; bridge?: 
       if (name === "getStatus") return async () => seed.status;
       return () => new Promise(() => undefined);
     } }) as never;
-    const v = window.__vaultHome = { calls: [] as string[], allowed: seed.allowed, entries: seed.entries, fail: false, unread: false, changed: [] as (() => void)[] };
+    const v = window.__vaultHome = { calls: [] as string[], allowed: seed.allowed, unreadable: seed.unreadable, entries: seed.entries, fail: false, unread: false, changed: [] as (() => void)[] };
     if (!seed.bridge) return;
     window.emberVault = {
-      state: async () => { if (v.unread) throw new Error("no"); return { allowed: v.allowed, entries: v.entries }; },
+      state: async () => { if (v.unread) throw new Error("no"); return { allowed: v.allowed, entries: v.entries, ...(v.unreadable ? { unreadable: true as const } : {}) }; },
       onChanged: fn => { v.changed.push(fn); return () => undefined; },
       forget: async id => { v.calls.push(`forget:${id}`); if (v.fail) return false; v.entries = v.entries.filter(e => e.id !== id); for (const f of v.changed) f(); return true; },
       forgetAll: async () => { v.calls.push("forgetAll"); if (v.fail) return false; v.entries = []; for (const f of v.changed) f(); return true; },
     };
-  }, { status, entries: o.entries ?? ENTRIES, allowed: o.allowed ?? true, bridge: o.bridge ?? true });
+  }, { status, entries: o.entries ?? ENTRIES, allowed: o.allowed ?? true, unreadable: o.unreadable ?? false, bridge: o.bridge ?? true });
   await page.goto(`${base}/app/renderer/home/index.html`);
   await page.evaluate(() => document.body.classList.remove("loading", "first-run"));
   await page.locator('a[href="#privacy-h"]').click();
@@ -112,6 +112,17 @@ it.skipIf(!on)("lists what the vault keeps by kind, destination and day, named f
   await shot(page, "vault-home-light");
   expect(errors).toEqual([]);
   await page.close();
+});
+
+it.skipIf(!on)("says with the hint that its file couldn't be read and was kept aside, in light and dark (reliability-c12-1)", async () => {
+  for (const scheme of ["light", "dark"] as const) {
+    const { page, errors } = await open({ entries: [], unreadable: true, scheme });
+    await expect.poll(() => page.locator("#vault-hint").innerText()).toBe(`${VAULT_HINT} ${VAULT_FILE_UNREADABLE}`);
+    expect(await rows(page)).toEqual([]);
+    await shot(page, `vault-home-unreadable-${scheme}`);
+    expect(errors).toEqual([]);
+    await page.close();
+  }
 });
 
 it.skipIf(!on)("forgets one entry by keyboard, says so, and keeps the keyboard in the list (vault-3)", async () => {
