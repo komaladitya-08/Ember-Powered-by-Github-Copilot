@@ -139,7 +139,7 @@ describe("the Commands intro, the Routines hint and the Connectors hint are true
     const main = readFileSync(new URL("../../app/renderer/home/main.ts", import.meta.url), "utf8");
     for (const s of ["$(\"routines-hint\").textContent = routinesHint(modeNow)", "$(\"connectors-hint\").textContent = connectorsHint(modeNow)"]) expect(main).toContain(s);
     const pane = readFileSync(new URL("../../app/renderer/home/computers.ts", import.meta.url), "utf8");
-    expect(pane).toContain("commandsIntro(mode)");
+    expect(pane).toContain("commandsIntro(mode, ");
   });
 });
 
@@ -394,5 +394,17 @@ describe("Home's words for each mode read plainly and name where Autopilot still
   it("never says a command Ember doesn't know runs straight away: it runs after Ember names it, with a few seconds to stop it (accessibility-r12-3)", () => {
     for (const s of [cc.COMMANDS_INTRO, cc.commandsIntro("assisted"), text(page)]) expect(s).not.toMatch(/ones it doesn't know included/);
     expect(cc.COMMANDS_INTRO).toContain("Most run straight away, and one it doesn't know runs after it names it, with a few seconds to stop it.");
+  });
+});
+
+describe("the Commands intro where the organisation turned commands off (home-r12-2)", () => {
+  it("says commands are off, in every mode, and nothing of how they run or ask", () => {
+    for (const m of [null, "interactive", "assisted", "autopilot"] as const) {
+      expect(cc.commandsIntro(m, true)).toBe("Ember runs commands in its own command window, where you can watch and stop them. Your organisation has turned commands off, so none run.");
+      expect(cc.commandsIntro(m, false)).toBe(cc.commandsIntro(m));
+    }
+    // Home draws it so wherever every row it lists is off by the organisation.
+    const script = readFileSync(new URL("../../app/renderer/home/computers.ts", import.meta.url), "utf8");
+    expect(script).toContain('const introNow = commandsIntro(mode, v.rows.length > 0 && v.rows.every(r => modeFor(admin, r.kind) === "off"));');
   });
 });

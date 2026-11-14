@@ -11,7 +11,7 @@ import type { Settings } from "../../main/settings";
 import type { TargetSummary, TargetsAct } from "../../shared/targets";
 import type { ApprovalMode } from "../../shared/approvals";
 import {
-  ACT_FAILED, ADD_INVALID, actMessage, actResult, addPending, addResult, cardPending, commandsIntro, commandsView, unbrokenRuns, computersIntro, computersView, hostInput, type ComputerRow, type EmberTargetsApi,
+  ACT_FAILED, ADD_INVALID, actMessage, actResult, addPending, addResult, cardPending, commandsIntro, commandsView, modeFor, unbrokenRuns, computersIntro, computersView, hostInput, type ComputerRow, type EmberTargetsApi,
   type RowAction, type Switch, type TargetsAdmin,
 } from "./computers-copy";
 
@@ -196,9 +196,10 @@ function draw(): void {
   $("computers-managed").hidden = managed.length === 0;
   $("computers-managed").textContent = managed.join(" ");
 
-  const introNow = commandsIntro(mode);
-  if ($("commands-intro").textContent !== introNow) $("commands-intro").textContent = introNow;
   const v = commandsView({ summaries: summaries!, settings: settings!, admin, mode });
+  // Off by the organisation wherever a row could run them: the intro says so, not how commands run (home-r12-2).
+  const introNow = commandsIntro(mode, v.rows.length > 0 && v.rows.every(r => modeFor(admin, r.kind) === "off"));
+  if ($("commands-intro").textContent !== introNow) $("commands-intro").textContent = introNow;
   const ckey = JSON.stringify(v.rows);
   if (ckey !== commandsKey) {
     commandsKey = ckey;
