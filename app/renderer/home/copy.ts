@@ -1062,9 +1062,11 @@ function sealStartLine(state: ApprovalsState): string {
 function sealKeptLine(state: ApprovalsState): string {
   if (!state.kept || state.inForce === "asking" || state.inForce === "interactive") return "";
   const mode = MODE_NAME[state.inForce];
+  // The next start as main worked it out: below Interactive when its card was never agreed (r10-memory-x10-4).
+  const next = state.nextStart === "interactive" ? `starts in ${MODE_NAME.interactive} next time` : "asks before each step next time";
   return state.kept === "keyring"
-    ? `${mode} lasts until Ember closes: this computer has no keyring Ember can use to keep it safely, so Ember starts in ${MODE_NAME.interactive} next time.`
-    : `${mode} lasts until Ember closes: Ember couldn't save it safely on this computer, so it starts in ${MODE_NAME.interactive} next time.`;
+    ? `${mode} lasts until Ember closes: this computer has no keyring Ember can use to keep it safely, so Ember ${next}.`
+    : `${mode} lasts until Ember closes: Ember couldn't save it safely on this computer, so it ${next}.`;
 }
 
 /** A mode's row: its name and sentence, whether it is the one in force, and whether the organisation locks it. */

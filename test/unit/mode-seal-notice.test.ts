@@ -101,3 +101,22 @@ describe("an approval mode that can't be kept on this computer (reliability-r10-
     expect(next.state().started).toBeUndefined();
   });
 });
+
+describe("what the next start is said to be when a mode can't be kept (r10-memory-x10-4)", () => {
+  const ONLY_AUTOPILOT: ApprovalsSetting = { mode: "autopilot", consent: { interactive: NONE, assisted: NONE, autopilot: { version: modeCardVersion("autopilot"), at: AT } } };
+  it("says Ember asks before each step next time when Interactive's card was never agreed (r10-memory-x10-4)", () => {
+    const state = approvalsState(ONLY_AUTOPILOT, null, { kept: "keyring" });
+    expect(state.inForce).toBe("autopilot");
+    expect(state.nextStart).toBe("asking");
+    const note = approvalsNote(state, false);
+    expect(note).toContain("Autopilot lasts until Ember closes: this computer has no keyring Ember can use to keep it safely, so Ember asks before each step next time.");
+    expect(note).not.toContain("Interactive next time");
+    expect(approvalsNote(approvalsState(ONLY_AUTOPILOT, null, { kept: "save" }), false)).toContain("Ember couldn't save it safely on this computer, so it asks before each step next time.");
+  });
+
+  it("still says Interactive next time when its card is agreed (r10-memory-x10-4)", () => {
+    const state = approvalsState(AUTOPILOT, null, { kept: "keyring" });
+    expect(state.nextStart).toBe("interactive");
+    expect(approvalsNote(state, false)).toContain("so Ember starts in Interactive next time.");
+  });
+});

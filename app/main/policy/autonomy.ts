@@ -169,6 +169,16 @@ export function autonomyInForce(s: ApprovalsSetting | undefined, admin?: Autonom
   return approvalInputs(modeInForce(s, admin)).scopes;
 }
 
+/**
+ * What a start with no seal puts in force (mode-record.ts trustedAtStart with none): Interactive at most, and no card
+ * above it agreed, so below Interactive when its own card isn't (r10-memory-x10-4).
+ */
+function startsWithoutSeal(own: ApprovalsSetting, admin: AutonomyAdmin | null | undefined): "interactive" | "asking" {
+  const none = { version: 0, at: null };
+  const next = standing({ mode: "interactive", consent: { ...own.consent, assisted: none, autopilot: none } }, admin).mode;
+  return next === "interactive" ? "interactive" : "asking";
+}
+
 /** The modes as Home is told of them: `own` is the user's own setting, never the one with the policy applied. */
 export function approvalsState(own: ApprovalsSetting, admin: AutonomyAdmin | null | undefined, notes: SealNotes = {}): ApprovalsState {
   const at = standing(own, admin);
@@ -185,7 +195,7 @@ export function approvalsState(own: ApprovalsSetting, admin: AutonomyAdmin | nul
     cap: admin?.approvals?.maxMode ?? null,
     ...(admin?.features.aiReview === false ? { checkOff: true as const } : {}),
     // What the record says of the seal (reliability-r10-1): only while it still bears on the mode in force.
-    ...(notes.kept && !lowered && modeRank(at.mode) > modeRank("interactive") ? { kept: notes.kept } : {}),
+    ...(notes.kept && !lowered && modeRank(at.mode) > modeRank("interactive") ? { kept: notes.kept, nextStart: startsWithoutSeal(own, admin) } : {}),
     ...(notes.started ? { started: notes.started } : {}),
   };
 }

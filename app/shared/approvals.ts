@@ -55,6 +55,11 @@ export interface ApprovalsState {
    * (reliability-r10-1): `keyring`, there is no keyring Ember can use; `save`, the seal couldn't be written.
    */
   kept?: SealTrouble;
+  /**
+   * With `kept`: what the next start will put in force, since that start keeps no agreement above Interactive
+   * (mode-record.ts trustedAtStart): Interactive when its card is agreed, else below it (r10-memory-x10-4).
+   */
+  nextStart?: "interactive" | "asking";
   /** At this start the mode chosen was put back to Interactive or below, and why: said until a mode is chosen again (reliability-r10-1). */
   started?: { chosen: ApprovalMode; why: "keyring" | "unconfirmed" };
 }

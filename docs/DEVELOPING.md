@@ -535,7 +535,8 @@ Home or by voice or typed words. Until that seal is read at start Ember is at mo
 match, or there is none, the file is put right (`autonomy.unsealed`): at most Interactive, those two cards not agreed.
 Without a keyring (`basic_text`) nothing is sealed, so an agreement to Assisted or Autopilot lasts until Ember quits,
 and Home says so under the modes while it is in force ("Autopilot lasts until Ember closes: this computer has no
-keyring Ember can use to keep it safely, so Ember starts in Interactive next time"; a seal that couldn't be written
+keyring Ember can use to keep it safely, so Ember starts in Interactive next time", or "…so Ember asks before each
+step next time" when Interactive's own card was never agreed: r10-memory-x10-4); a seal that couldn't be written
 for another reason says "Ember couldn't save it safely on this computer"). At the next start, once a choice was put
 back, the note opens with why ("Your choice of Autopilot couldn't be kept when Ember started, because this computer
 has no keyring Ember can use…", or, for a seal that didn't match, "Ember couldn't confirm your choice of Autopilot
