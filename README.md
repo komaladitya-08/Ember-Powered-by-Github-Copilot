@@ -255,7 +255,8 @@ has its own card that says what it means, and a mode is in use only once you agr
 - **Autopilot** doesn't ask. Ember sends, deletes, pays, installs and runs dangerous commands, as an administrator
   too, and tells you as it goes, with a few seconds to stop each dangerous command: a risk you accept on its card. A
   command that shows passwords or keys runs too, but what it prints is kept from the AI model (you see it in the
-  command window), and Ember says so when a command will keep running after Stop. What you said no to, and a command
+  command window), and one that would also save them to a file is refused. Ember says so when a command will keep
+  running after Stop. What you said no to, and a command
   you ruled out in your request, it refuses instead of asking, and so it does a command that deletes, changes or reads something it
   can't name, such as a place held in a variable. It asks only where you or your organisation set commands to ask every
   time, in a distro Podman uses and in **Project work**; where the administrator of a computer reached over SSH

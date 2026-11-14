@@ -1667,6 +1667,9 @@ Environment variables for development:
 | `EMBER_MEMORY_LOG=30` | Development only: every that many seconds, logs `memory.report`: each Electron process's private bytes (Windows) and working set in MB, each renderer named after its page and window (`renderer mic Ember microphone`), and the totals. Working set counts the pages processes share once per process, so its sum over-counts; compare private bytes. The accessibility host and the Copilot runtime are processes of their own and aren't in it |
 | `EMBER_EXTENSIONS_LOCAL=1` | Development only: ExtensionsService accepts an absolute local folder holding a `marketplace.json` as a marketplace (Home's field still takes only GitHub repositories and https addresses, so this is for scripts and tests that call the service) |
 | `EMBER_REMOTE_DEV=1` | For the remote agent only: lets `ember-remote.cjs` run from a checkout's `dist/remote` instead of a verified install (§14.5); an installed agent ignores it |
+| `EMBER_REMOTE_PARTS_ID` | For the remote agent only, with `EMBER_REMOTE_DEV=1`: the parts id a development agent reports as its version (default `0.0.0-dev`; letters, digits and `._+-`, up to 80); the integration harness sets it |
+| `EMBER_REMOTE_TEST_DESKTOP` | For a development remote agent only (an installed one ignores it): a JSON desktop (`{"access":"screen","session":{"id":"ci","type":"x11"},"env":{…}}`) used in place of the one logind would give, which CI's runners don't have (`remote-desktop`, `remote-wayland`) |
+| `EMBER_REMOTE_WAYLAND=1` | For a development remote agent only: turns on Wayland's text-only access, which waits for its CI job (L5); `remote-wayland.test.ts` sets it |
 
 Apps Ember must never read or capture are listed under `privacy.neverLook` in `settings.json` (matched against app name
 and window title, ignoring characters that show nothing, such as a soft hyphen, and accents written apart; password

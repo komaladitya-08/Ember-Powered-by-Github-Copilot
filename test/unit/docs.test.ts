@@ -189,6 +189,10 @@ describe("docs/DEVELOPING.md", () => {
     const names = new Set(files("app").flatMap(f => [...read(f).matchAll(/devEnv\("([A-Z0-9_]+)"\)/g)].map(m => m[1])));
     expect(names.size).toBeGreaterThan(10);
     for (const n of names) expect(dev, n).toMatch(new RegExp(`\\b${n}\\b`));
+    // And ember-remote's own development switches, read from its environment, not through devEnv (install-docs-c12-3).
+    const remote = new Set(files("app/remote").flatMap(f => [...read(f).matchAll(/env\.(EMBER_REMOTE_[A-Z0-9_]+)/g)].map(m => m[1])));
+    expect([...remote].sort()).toEqual(expect.arrayContaining(["EMBER_REMOTE_DEV", "EMBER_REMOTE_PARTS_ID", "EMBER_REMOTE_TEST_DESKTOP", "EMBER_REMOTE_WAYLAND"]));
+    for (const n of remote) expect(dev, n).toMatch(new RegExp(`\\| \`${n}`));
     // Repository layout holds the layout and nothing else.
     const layout = section(dev, "Repository layout");
     expect(layout.split("\n").filter(l => /^#{2,} /.test(l) && !l.startsWith("## Repository layout"))).toEqual([]);
@@ -510,6 +514,11 @@ describe("README.md", () => {
     expect(all).not.toMatch(/can't tell the effect of/);
     // The keyboard table's row says what How Ember asks says: only the user's or the organisation's "ask every time".
     expect(all).toContain("**Autopilot** doesn't ask: Ember sends, deletes, pays, installs and runs dangerous commands without asking and tells you as it goes, a risk you accept on its card; a command that shows passwords or keys runs with what it prints kept from the AI model, it asks only where you or your organisation set commands to ask every time");
+  });
+
+  it("says Autopilot refuses a command that would save passwords or keys to a file, as the code does (install-docs-c12-2)", () => {
+    const modes = flat(section(readme, "How Ember asks"));
+    expect(modes).toContain("A command that shows passwords or keys runs too, but what it prints is kept from the AI model (you see it in the command window), and one that would also save them to a file is refused.");
   });
 
   it("gives the 4 s exception only to the commands EXACT_ONLY names, and says a command Ember doesn't know waits for its Stop (accessibility-r12-3, install-docs-r12-1)", () => {
