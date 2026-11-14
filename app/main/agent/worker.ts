@@ -1078,7 +1078,7 @@ export function dialogAround(start: AxNode | undefined, get: (id: number) => AxN
         || fieldNodes.some(a => a.textCut || (textField(a) && !a.text && !a.empty && !a.secret && !a.withheld));
       // A file dialog by its shape, whatever its title's language (r11-safety-x11-3): a one-line field to type a name or
       // a path into beside a list of rows (Windows' common dialog, macOS's save sheet, Qt's and GTK's own).
-      const shaped = fieldNodes.some(a => !/combo/.test(a.role) && !a.states.includes("multi line"))
+      const shaped = fieldNodes.some(a => textField(a) && !a.states.includes("multi line"))
         && inside.some(a => DIALOG_ROW.test(a.role) || FILE_LIST_ROLE.test(a.role));
       const named = inside.filter(n => !DIALOG_ROW.test(n.role) && !n.secret && !n.withheld && n.name);
       const items = named.length > DIALOG_ITEMS_MAX ? undefined : named.map(n => n.name);

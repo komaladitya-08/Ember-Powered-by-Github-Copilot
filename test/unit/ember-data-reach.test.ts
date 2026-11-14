@@ -525,6 +525,9 @@ describe("Ember's own files behind a file dialog the screen reader can't read wh
       const sheet = [n(1, null, "dialog", title), n(2, 1, "text", "Save As:", { editable: true, text: "words.json" }), n(3, 1, "tree table", ""), n(4, 3, "table row", "Documents"), n(5, 1, "push button", "Save")];
       asksOrRefused("darwin", "app", req("app", title, { kind: "click", element: { role: "push button", name: "Save" }, dialog: read(sheet, 5) }), `${title} sheet`);
     }
+    // Windows' File name as the editable combo box it is, with no edit listed inside it, its text cut.
+    const combo = [n(1, null, "dialog", "Guardar como"), n(2, 1, "list", "Items View"), n(3, 2, "list item", "a.txt"), n(4, 1, "combo box", "Nombre:", { editable: true, text: "x".repeat(200), textCut: true }), n(5, 1, "button", "Guardar")];
+    asksOrRefused("win32", "app", req("app", "Guardar como", { kind: "click", element: { role: "button", name: "Guardar" }, dialog: read(combo, 5) }), "editable combo name");
     // A dialog with a field and no rows (a Find box, a rename) isn't taken for one.
     const find = [n(1, null, "dialog", "Suchen"), n(2, 1, "edit", "Suchen nach:", { editable: true, text: "notes" }), n(3, 1, "button", "Weitersuchen")];
     expect(read(find, 3).fileChooser).toBeUndefined();
