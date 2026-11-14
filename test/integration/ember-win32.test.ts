@@ -724,12 +724,36 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
     // At 079e73d (cifix-x9-10) the bench stayed away with the read off, its lookup off and its text looks off, and came
     // back with only the looks around secret fields off: the text looks do it. Now each text look and its steps are
     // timed (skip:time-texts, nothing left out), twice, and the look and step under way at the return are printed.
-    for (const plan of ["skip:time-texts", "skip:time-texts"]) {
+    // At addfc65 (cifix-x9-11) the bench came back in the caret step of the text look of its Name field, a native
+    // single-line Edit, and ea4bc03 reads such an Edit's caret from the control (cifix-x9-12). Whether the same happens
+    // over other text fields is not known (cifix-x9-13): the box opens once more over the bench, to confirm the fix,
+    // then over Notepad (a multi-line native Edit) and WordPad (RichEdit), where Windows has them, to see.
+    const openings: { plan: string; target: "bench" | "notepad" | "wordpad" }[] = [
+      { plan: "skip:time-texts", target: "bench" }, { plan: "skip:time-texts", target: "notepad" }, { plan: "skip:time-texts", target: "wordpad" },
+    ];
+    for (const { plan: probePlan, target } of openings) {
+      const plan = `${probePlan} over ${target}`;
       // Filled inside the bounded run, ended in finally.
-      const held: { ember: ElectronApplication | null; watcher: ChildProcess | null } = { ember: null, watcher: null };
+      const held: { ember: ElectronApplication | null; watcher: ChildProcess | null; app: ChildProcess | null } = { ember: null, watcher: null, app: null };
+      // The window read: the bench's, or the app started for this opening.
+      let readHwnd = ready.hwnd;
+      const readName = target === "bench" ? "the bench" : `the read app (${target})`;
       let poll: ReturnType<typeof setInterval> | undefined;
       try {
         await Promise.race([(async () => {
+          if (target !== "bench") {
+            const exe = target === "notepad" ? path.win32.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "notepad.exe")
+              : path.win32.join(process.env.ProgramFiles ?? "C:\\Program Files", "Windows NT", "Accessories", "wordpad.exe");
+            if (!fs.existsSync(exe)) { console.log(`read probe (${plan}): not run: ${exe} isn't on this runner`); return; }
+            const child = held.app = spawn(exe, [], { stdio: "ignore" });
+            const pid = child.pid ?? 0;
+            readHwnd = await waitFor(`${target}'s window`, () => {
+              for (let w = api.topWindow(), n = 0; w && n < 2_000; w = api.nextWindow(w), n++) {
+                if (api.isVisible(w) && api.threadProcess(w).pid === pid && api.title(w, false)) return w;
+              }
+              return 0;
+            }, 20_000);
+          }
           const userData = path.join(dir, `ember-userData-probe-${plan.replace(/\W/g, "")}`);
           fs.mkdirSync(userData, { recursive: true });
           fs.writeFileSync(path.join(userData, "settings.json"), JSON.stringify({ version: 1, onboarded: true, wakeWord: false, consent: { version: 10, at: "2026-10-15T00:00:00.000Z" } }));
@@ -766,30 +790,43 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
             if (id === last) return;
             last = id;
             const pid = id ? api.threadProcess(id).pid : 0;
-            const whose = id === ready.hwnd ? "the bench" : pid === app.process().pid ? `Ember's ${JSON.stringify(api.title(id, false))}` : `${api.processImage(pid) ?? `pid ${pid}`} (class ${api.className(id)})`;
+            const whose = id === readHwnd ? readName : pid === app.process().pid ? `Ember's ${JSON.stringify(api.title(id, false))}` : `${api.processImage(pid) ?? `pid ${pid}`} (class ${api.className(id)})`;
             lines.push({ t: Date.now(), what: `foreground: ${whose}` });
-            if (id === ready.hwnd) marks.push({ t: Date.now(), kind: "bench foreground" });
+            if (id === readHwnd) marks.push({ t: Date.now(), kind: "bench foreground" });
             else if (pid === app.process().pid) marks.push({ t: Date.now(), kind: "box foreground" });
           }, 20);
           const watcher = held.watcher = spawn(powershell, [...POWERSHELL_ARGS, "-File", watchScript], { stdio: ["pipe", "pipe", "ignore"], windowsHide: true });
-          const named = (w: WatchedWindow) => (w.root === ready.hwnd ? "the bench" : w.pid === app.process().pid ? `Ember's ${JSON.stringify(w.title)}` : `${w.image || `pid ${w.pid}`} (class ${w.className})`);
+          const named = (w: WatchedWindow) => (w.root === readHwnd ? readName : w.pid === app.process().pid ? `Ember's ${JSON.stringify(w.title)}` : `${w.image || `pid ${w.pid}`} (class ${w.className})`);
           await new Promise<void>(resolve => {
             readline.createInterface({ input: watcher.stdout! }).on("line", line => {
               if (line.startsWith('{"ready":true')) { resolve(); return; }
               const e = watchEvent(line, named);
               if (!e) return;
               lines.push(e);
-              if (e.what.startsWith("Windows says foreground: the bench")) marks.push({ t: e.t, kind: "bench foreground" });
+              if (e.what.startsWith(`Windows says foreground: ${readName}`)) marks.push({ t: e.t, kind: "bench foreground" });
             });
             watcher.on("exit", () => resolve());
             setTimeout(resolve, 30_000).unref();
           });
-          await front();
-          const name = ready.controls.Name;
-          input!.move(Math.round(name.x + name.width / 2), Math.round(name.y + name.height / 2));
-          await sleep(150);
-          input!.button(1, true);
-          input!.button(1, false);
+          if (target === "bench") {
+            await front();
+            const name = ready.controls.Name;
+            input!.move(Math.round(name.x + name.width / 2), Math.round(name.y + name.height / 2));
+            await sleep(150);
+            input!.button(1, true);
+            input!.button(1, false);
+          } else {
+            // Into the app's text, a few letters typed: a bare caret after text, as in the bench's Name field.
+            input!.activate(readHwnd);
+            await waitFor(`${target} to be the active window`, () => api.foregroundWindow() === readHwnd, 5_000);
+            const r = api.windowRect(readHwnd);
+            if (r) input!.move(Math.round(r.x + r.width / 2), Math.round(r.y + r.height / 2));
+            await sleep(150);
+            input!.button(1, true);
+            input!.button(1, false);
+            await sleep(150);
+            for (const ch of "hello") { input!.textKey!(ch, true); input!.textKey!(ch, false); await sleep(40); }
+          }
           await sleep(300);
           const mods = ["Super_L", "Alt_L"].map(n => input!.keysymOf(n));
           for (const k of mods) input!.keysym(k, true);
@@ -840,6 +877,9 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
         clearInterval(poll);
         const w = held.watcher;
         if (w) { w.stdin?.end(); setTimeout(() => { if (w.exitCode === null) w.kill(); }, 3_000).unref(); }
+        // The app started for this opening goes, unsaved (nothing it holds is kept).
+        const started = held.app;
+        if (started && started.exitCode === null) started.kill();
         const ember = held.ember;
         if (ember) {
           const proc = ember.process();
