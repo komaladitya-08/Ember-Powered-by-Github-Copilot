@@ -333,7 +333,7 @@ const URL_CREDENTIALS = /:\/\/[^/\s:@]*:[^/\s@]+@/g;
  * time stays linear: an open-ended class on either side made every start in a long run of letters rescan the whole
  * run, which froze Ember for minutes on one long token of output.
  */
-const KEY_VALUE =
+export const KEY_VALUE =
   /((?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret)(?=([A-Za-z0-9_.-]{0,256}))\2(?:["']\]|["'])?\s*(?:=>|=|:)\s*["']?)([^\s"',;]+)/gi;
 
 /** The words a config's key ends in when its value is a secret, for CONFIG_PATTERNS (case is ignored where they're used). */
@@ -390,8 +390,9 @@ export function redactSecrets(text: string): string {
 /**
  * redactSecrets's passes, in order: each reads and replaces in the whole text it is given, as redactSecrets folds them.
  * A pass can match across lines (a private key block, a list's `\n- ` separator), so the text is never cut into
- * slices; a caller that must keep Ember's main thread free between passes runs them one at a time
- * (redactSecretsYielding) and gets the same bytes, since it is the same list (merge review integ-y-2).
+ * slices but by KEY_VALUE's own pass, which cuts it only where no match can cross (keyValueSteps, integ-x-3); a caller
+ * that must keep Ember's main thread free between passes runs them one at a time (redactSecretsYielding) and gets the
+ * same bytes, since it is the same list (merge review integ-y-2).
  */
 const passes = (guarded: boolean): readonly ((text: string) => string)[] => [
   ...TOKEN_PATTERNS.map(re => (re === PRIVATE_KEY ? hidePrivateKeys : (t: string) => t.replace(re, SECRET_HIDDEN))),
@@ -405,7 +406,7 @@ const passes = (guarded: boolean): readonly ((text: string) => string)[] => [
   })),
   ...CONFIG_PATTERNS.map(re => (t: string) => t.replace(re, (_m, keep: string) => keep + SECRET_HIDDEN)),
   t => t.replace(URL_CREDENTIALS, `://${SECRET_HIDDEN}@`),
-  t => t.replace(KEY_VALUE, (m, keep: string, _suffix: string, value: string) => (value.startsWith("[secret") ? m : keep + SECRET_HIDDEN)),
+  hideKeyValues,
 ];
 /** redactSecrets's passes (above), each value pattern checked first for the text it can't match without (VALUE_NEEDS). */
 export const REDACT_PASSES: readonly ((text: string) => string)[] = passes(true);
@@ -420,9 +421,92 @@ export function* redactSteps(text: string): Generator<void, string, void> {
   let out = text;
   for (const pass of REDACT_PASSES) {
     yield;
-    out = pass(out);
+    out = pass === hideKeyValues ? yield* keyValueSteps(out) : pass(out);
   }
   return out;
+}
+
+/** KEY_VALUE's pass at once: the same bytes as its whole-text replace (keyValueSteps). */
+function hideKeyValues(text: string): string {
+  return runSteps(keyValueSteps(text));
+}
+
+/** The most text KEY_VALUE reads in one step (integ-x-3: on 4 MiB of output one whole-text pass held Ember's main
+ * thread 358 ms, longer than Stop's 300 ms). */
+export const KEY_VALUE_SLICE = 256 * 1024;
+/** How far before its `=` or `:` (and the spaces before it) a KEY_VALUE match can start: the secret word (at most 13),
+ * its suffix (at most 256) and a quote and a bracket, with room to spare. */
+const KEY_REACH = 300;
+const SPACES_AFTER = /[\s"'>]*/y;
+const VALUE_RUN = /[^\s"',;]*/y;
+const CUT = /[,;\s]/g;
+const OPS_PER_STEP = 65_536;
+
+/**
+ * KEY_VALUE's replace in steps of at most `slice` characters, a step yielded between them, with the same bytes as
+ * `text.replace(KEY_VALUE, …)` over the whole text (integ-x-3). Every match holds an `=` or `:`, starts at most
+ * KEY_REACH before it and its spaces and ends where its value does, so only the spans around them are read (none, in
+ * output with neither). A match never holds a `,` or a `;`, nor a run of spaces with no `=`, `:` or `>` before it and
+ * no `=` or `:` after it, so a span is cut only after one of those: what each piece matches is what the whole did.
+ */
+export function* keyValueSteps(text: string, slice = KEY_VALUE_SLICE): Generator<void, string, void> {
+  const spans: [number, number][] = [];
+  const op = /[=:]/g;
+  let runStart = -1, runEnd = -1;
+  let ops = 0;
+  for (let m = op.exec(text); m; m = op.exec(text)) {
+    // Finding the spans is a step every OPS_PER_STEP signs too (4 MiB of `a=1 ` holds a million).
+    if (++ops % OPS_PER_STEP === 0) yield;
+    const o = m.index;
+    let s = o;
+    while (s > 0 && /\s/.test(text[s - 1])) s--;
+    s = Math.max(0, s - KEY_REACH);
+    SPACES_AFTER.lastIndex = o + 1;
+    SPACES_AFTER.exec(text);
+    const k = SPACES_AFTER.lastIndex;
+    if (!(k >= runStart && k < runEnd)) {
+      VALUE_RUN.lastIndex = k;
+      VALUE_RUN.exec(text);
+      runStart = k;
+      runEnd = VALUE_RUN.lastIndex;
+    }
+    const e = Math.max(k, runEnd);
+    const last = spans[spans.length - 1];
+    if (last && s <= last[1]) last[1] = Math.max(last[1], e);
+    else spans.push([s, e]);
+  }
+  const replace = (piece: string): string => piece.replace(KEY_VALUE, (m, keep: string, _suffix: string, value: string) => (value.startsWith("[secret") ? m : keep + SECRET_HIDDEN));
+  let out = "";
+  let at = 0;
+  let first = true;
+  for (const [s, e] of spans) {
+    out += text.slice(at, s);
+    let from = s;
+    while (from < e) {
+      const to = e - from <= slice ? e : cutAfter(text, from + slice, e);
+      if (!first) yield;
+      first = false;
+      out += replace(text.slice(from, to));
+      from = to;
+    }
+    at = e;
+  }
+  return at === 0 && spans.length === 0 ? text : out + text.slice(at);
+}
+
+/** The first place at or after `want` (before `end`; else `end`) that no KEY_VALUE match crosses (keyValueSteps). */
+function cutAfter(text: string, want: number, end: number): number {
+  CUT.lastIndex = want;
+  for (let m = CUT.exec(text); m && m.index < end; m = CUT.exec(text)) {
+    const i = m.index;
+    if (text[i] === "," || text[i] === ";") return i + 1;
+    let a = i, b = i;
+    while (a > 0 && /\s/.test(text[a - 1])) a--;
+    while (b < end && /\s/.test(text[b])) b++;
+    if (!(a > 0 && /[=:>]/.test(text[a - 1])) && !(b < text.length && /[=:]/.test(text[b]))) return b;
+    CUT.lastIndex = b;
+  }
+  return end;
 }
 
 /** Runs steps to their end at once: what the synchronous functions return. */

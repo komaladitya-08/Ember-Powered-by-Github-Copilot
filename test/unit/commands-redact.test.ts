@@ -4,7 +4,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { commandLineSecret, REDACT_PASSES, redactSecrets, SECRET_HIDDEN, UNGUARDED_PASSES } from "../../app/main/commands/redact";
+import { commandLineSecret, KEY_VALUE, keyValueSteps, REDACT_PASSES, redactSecrets, redactSteps, runSteps, SECRET_HIDDEN, UNGUARDED_PASSES } from "../../app/main/commands/redact";
 import { memoryRefusal } from "../../app/main/memory/guard";
 
 const GH = `ghp_${"a1B2".repeat(9)}`;
@@ -662,4 +662,51 @@ describe("the Azure Key Vault passes on output with no value in it (stop-yield-x
     }
     // (The unguarded fold over 4 MiB is the slow search itself: seconds on a loaded machine.)
   }, 60_000);
+});
+
+describe("the key-value pass in slices (integ-x-3)", () => {
+  const atOnce = (t: string): string => t.replace(KEY_VALUE, (m, keep: string, _s: string, value: string) => (value.startsWith("[secret") ? m : keep + SECRET_HIDDEN));
+  const longestStep = (text: string): { ms: number; out: string } => {
+    const steps = keyValueSteps(text);
+    let ms = 0;
+    for (;;) {
+      const t = performance.now();
+      const r = steps.next();
+      ms = Math.max(ms, performance.now() - t);
+      if (r.done) return { ms, out: r.value };
+    }
+  };
+
+  it("hides the same values as one whole-text replace, wherever the slices fall", () => {
+    // Small slices over text made of what a match holds and what ends one, so cuts fall beside, between and inside them.
+    const parts = ["password", "token", "API_KEY", "secret_x", "=", ":", "=>", " ", "  ", "\n", "\t", "\"", "'", "\"]", ",", ";", ">", "abc", "x1", "[secret hidden]", "-", "."];
+    let seed = 12_345;
+    const rand = (n: number): number => { seed = (seed * 1_103_515_245 + 12_345) % 2_147_483_648; return seed % n; };
+    for (let k = 0; k < 3000; k++) {
+      let t = "";
+      const n = 1 + rand(60);
+      for (let i = 0; i < n; i++) t += parts[rand(parts.length)];
+      for (const slice of [1, 3, 8, 40]) expect(runSteps(keyValueSteps(t, slice)), JSON.stringify(t)).toBe(atOnce(t));
+    }
+    for (const t of ["token = \n  abc, password:\n\n'x' y", `${"token".repeat(100)}:v ${"a".repeat(500)} token=z`, "a; token\t=>\t\"v\";b", "pwd:" + "x".repeat(2000)]) {
+      for (const slice of [1, 7, 64]) expect(runSteps(keyValueSteps(t, slice)), t.slice(0, 60)).toBe(atOnce(t));
+    }
+  });
+
+  it("never holds Ember's main thread for a whole 4 MiB pass, so Stop gets it within 300 ms", () => {
+    const MiB = 4 * 1024 * 1024;
+    const fill = (unit: string): string => unit.repeat(Math.ceil(MiB / unit.length)).slice(0, MiB);
+    for (const text of [fill("token"), fill(`${"token".repeat(60)}: `), fill("token=1 "), fill("password: x\n"), fill(`${"token".repeat(40)}:'v'`)]) {
+      const { ms, out } = longestStep(text);
+      expect(out).toBe(atOnce(text));
+      // One whole-text pass took 330 to 358 ms on `token` repeated; a slice is a sixteenth of it.
+      expect(ms, text.slice(0, 40)).toBeLessThan(150);
+    }
+  }, 120_000);
+
+  it("is a step of its own between the redactor's other passes, with the same bytes", () => {
+    const text = `${"token".repeat(60)}: x\n`.repeat(4000) + "password=hunter2x";
+    expect(runSteps(redactSteps(text))).toBe(redactSecrets(text));
+    expect(redactSecrets(text)).toContain(`password=${SECRET_HIDDEN}`);
+  });
 });
