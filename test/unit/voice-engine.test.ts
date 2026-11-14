@@ -3470,6 +3470,36 @@ describe("whose a spoken answer is (second review of the voice lane, 2026-11-12)
       }
     });
 
+    it("says once it didn't catch an everyday yes that isn't on the list, in every window, by name and at a wake too, and never sends or takes it (voice-listening-r11-1)", () => {
+      // They vanished in the answer window, or went to Copilot as a request while the question stayed up.
+      for (const words of ["Of course, go ahead.", "Thanks, go ahead.", "Just do it.", "Hell yes.", "Definitely.", "Keep going."]) {
+        for (const where of WHERE) {
+          const s = waiting({ 5: words }, where, { otherSound: false });
+          says(s, 5, 0, "user");
+          expect(s.heard(), `${words} in ${where}`).toEqual(["unclear"]);
+          const named = waiting({ 5: `Ember, ${words}` }, where, { otherSound: false });
+          says(named, 5, 1, "user");
+          expect(named.heard().filter(h => h !== "wake"), `Ember, ${words} in ${where}`).toEqual(["unclear"]);
+        }
+      }
+    });
+
+    it("sends a correction said by name while a question waits as a request, in a follow-up and a conversation, as at a wake (voice-listening-r11-2)", () => {
+      // In a conversation (the default) it was held as a near-miss answer: never sent, and the user told it wasn't taken
+      // as an answer.
+      for (const words of ["Don't email Bob, email Sam.", "No, I meant the other file.", "Not the draft, the report.", "Never use my work address.", "It's not loading."]) {
+        for (const where of ["follow-up", "conversation"] as const) {
+          const s = waiting({ 5: `Hey Ember, ${words}` }, where, { otherSound: false });
+          says(s, 5, 1, "user");
+          expect(s.heard().filter(h => h !== "wake"), `${words} in ${where}`).toEqual([`${words} | ${where}`]);
+        }
+      }
+      // Without the name, as before: a few words with a no in them can't be told from an answer.
+      const s = waiting({ 5: "No, I meant the other file." }, "conversation", { otherSound: false });
+      says(s, 5, 0, "user");
+      expect(s.heard()).toEqual(["unclear"]);
+    });
+
     it("says once it didn't catch “No, never mind.” in a question's answer window, and stops on it in a follow-up or a conversation, never sending it (r10-voice-y10-2)", () => {
       // They vanished in the answer window while the question stayed up for anyone's yes.
       for (const words of ["No, never mind.", "Okay, never mind."]) for (const where of WHERE) {

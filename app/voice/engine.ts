@@ -2441,8 +2441,13 @@ export class VoiceEngine {
     // the question says once how to answer. They went to Copilot as a request, or vanished, closers included (V2-F5,
     // V2-F7, voice-listening-r10-1). "Why?" and "Which file?" are requests as ever. Before the closers, but never what
     // ends a conversation: "Okay, that's all." still ends it, sending nothing (voice-product-x9-3).
+    // Said by name (a wake, or the user's name in a window that needs none: namedByUser), only what is an answer's words
+    // and nothing more ("Ember, just do it.", "Hey Ember, hold on.") is held: a correction ("Hey Ember, don't email Bob,
+    // email Sam.") is a request, as at a wake, and in a conversation it was held and never sent (voice-listening-r11-2);
+    // an everyday yes that isn't on the list, by name or at a wake, went to Copilot as a request (voice-listening-r11-1).
     const answerLike = this.mode.reason === "follow-up" || this.mode.reason === "answer" || conversation;
-    if (this.questionWaiting && this.mode.reason !== "manual" && !this.answering(text) && !endsConversation(text) && (askedYes(text) || (answerLike && nearAnswer(text)))) {
+    const byName = this.mode.reason === "wake" || named;
+    if (this.questionWaiting && this.mode.reason !== "manual" && !this.answering(text) && !endsConversation(text) && (askedYes(text) || ((answerLike || byName) && nearAnswer(text, byName)))) {
       this.peak = 0;
       this.mode.until = Math.max(this.mode.until, this.now() + this.mode.ms);
       this.emit({ type: "unclear" });

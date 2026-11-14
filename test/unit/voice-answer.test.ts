@@ -467,6 +467,51 @@ describe("spoken answers as people say them (owner report of 2026-11-03: “Embe
     }
   });
 
+  it("takes an everyday yes that isn't on the list as a near-miss, never a yes and never a request, and turns no no or hold into a yes (voice-listening-r11-1)", () => {
+    // They vanished in the answer window, or went to Copilot as a request while the question stayed up.
+    const unlisted = [
+      "Of course, go ahead.", "Thanks, go ahead.", "Just do it.", "Hell yes.", "Definitely.", "Certainly.", "Keep going.",
+      // Neighbours the review didn't give: every word a yes, an emphasis or a courtesy.
+      "Absolutely, go ahead.", "Yes, definitely.", "Sure, go for it.", "Yeah, that's fine, thanks.", "Totally, do it.",
+      "Of course, go on, thanks.", "Yes, of course, go ahead.", "No problem, go ahead.", "No worries, go ahead.", "Go on then.", "Just go ahead.", "Carry on.", "Yes, please, do it.",
+      "Ember, of course, go ahead.", "Hey Ember, just do it.",
+    ];
+    for (const t of unlisted) {
+      expect(spokenAnswer(t), t).toBeNull();
+      expect(nearAnswer(t), t).toBe(true);
+      expect(nearAnswer(t, true), `${t} by name`).toBe(true);
+    }
+    // A request that holds a yes's words and more is still a request, and so is anything asked.
+    for (const t of ["Go ahead and send it.", "Do it again tomorrow.", "Of course, open the report.", "Can you do it?", "Thanks.", "Thank you so much.", "Keep the draft."]) {
+      expect(nearAnswer(t), t).toBe(false);
+    }
+    // Fuzz: no no, hold or near-miss becomes a yes, and every no stays a no, whatever courtesy or emphasis is around it.
+    const around = ["", "Just ", "Thanks, ", "Of course, ", "Definitely ", "Hey Ember, ", "Okay, "];
+    const after = ["", ", thanks", ", please", ", definitely", ", go on"];
+    for (const no of [...SPOKEN_NO].concat(["wait", "hold on", "not that one", "no, wait"])) for (const a of around) for (const b of after) {
+      const t = `${a}${no}${b}.`;
+      expect(spokenAnswer(t), t).not.toBe("allow");
+    }
+  });
+
+  it("takes what is said by name that holds more than an answer's words for a request, not a near-miss, while a no said by name is still a no (voice-listening-r11-2)", () => {
+    // In a conversation a short correction said by name while a question waited was held as a near-miss: never sent,
+    // and the user told it wasn't taken as an answer.
+    for (const t of [
+      "Don't email Bob, email Sam.", "No, I meant the other file.", "Not the draft, the report.", "Never use my work address.",
+      "Don't forget to email Sam too.", "It's not loading.", "Don't close the other window.", "No, the other one.",
+      "Not Bob, Sam.", "Never mind the subject.", "Yes, but use the new address.",
+    ]) {
+      expect(spokenAnswer(t), t).toBeNull();
+      expect(nearAnswer(t, true), `${t} by name`).toBe(false);
+    }
+    // What can't be told from an answer by name is still a near-miss: a hold, an assent, an answer's words only.
+    for (const t of ["Wait.", "Hold on.", "Okay then.", "Perfect.", "Not that one.", "Yes, no.", "No, wait."]) expect(nearAnswer(t, true), t).toBe(true);
+    // And without the name, as before (voice-listening-r10-1).
+    for (const t of ["No, I don't want that.", "That's not what I meant.", "Not the draft, the report."]) expect(nearAnswer(t), t).toBe(true);
+    for (const t of ["No.", "Not now.", "Leave it.", "I said no."]) expect(spokenAnswer(`Ember, ${t}`), t).toBe("deny");
+  });
+
   it("still never hears Always, a yes inside a longer request, or an answer it can't be sure of", () => {
     for (const other of [
       "Always.", "Always allow.", "Yes, always.", "Allow always.", "Go ahead and always allow it.", "Yes and also delete the files.",

@@ -746,8 +746,13 @@ that start like an answer and aren't one (“Yes, but wait.”, “No, hang on.�
 up to six with a no word or a no of more than one word anywhere, not asked as a question (“No, I don't want that.”,
 “That's not what I meant.”, “Leave it, I said.”), a
 hold (“Wait.”, “Hold on.”) and an assent that isn't a yes (“Okay then.”, “Perfect.”, “Sounds great.”, which vanished as
-closers), and, in any window, a yes asked as a question said by name (“Ember, okay?”: `askedYes`): nothing of them is sent, where
-they went to Copilot or vanished (V2-F5, V2-F7). “Why?” and “Which file?” are requests as ever. So are words that hold
+closers), up to six words that are all an answer's words, one of them saying so: an everyday yes that isn't on the
+list (“Of course, go ahead.”, “Thanks, go ahead.”, “Just do it.”, “Definitely.”, which is never taken as a yes on a
+guess; voice-listening-r11-1), and, in any window, a yes asked as a question said by name (“Ember, okay?”: `askedYes`): nothing of them is sent, where
+they went to Copilot or vanished (V2-F5, V2-F7). Said by name (at a wake, or the user's own name in a follow-up or a
+conversation), only a hold, an assent or an answer's words alone are held so, the unlisted yes included: what says
+more is a request, as at a wake (“Hey Ember, don't email Bob, email Sam.”, “Ember, no, I meant the other file.”, which a
+conversation held and never sent: voice-listening-r11-2). “Why?” and “Which file?” are requests as ever. So are words that hold
 a stop (“No, stop the task.”, “Okay, stop typing.”): never a near-miss, they reach main, which stops everything on
 them while a task is at work (voice-product-y9-1). “Okay, Ember.”, which
 the spotter hears as “Hey Ember”, is only a wake and answers nothing: nothing tells whose the “Okay” before the name
