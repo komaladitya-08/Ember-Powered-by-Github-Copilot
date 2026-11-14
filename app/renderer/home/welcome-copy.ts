@@ -197,7 +197,7 @@ export const CONSENT_AGAIN = {
  */
 export function keptModeLine(mode: "assisted" | "autopilot"): string {
   return mode === "autopilot"
-    ? "You chose Autopilot, and it stays as you chose it: I don't ask, and tell you what I do as I go. What this page says about when I ask is for Interactive, the default."
+    ? "You chose Autopilot, and it stays as you chose it: I don't ask, except before commands where you or your organisation set them to ask every time, in a distro Podman uses and in “Project work”, and I tell you what I do as I go. What this page says about when I ask is for Interactive, the default."
     : "You chose Assisted, and it stays as you chose it: where I would ask, I first check the step against what you asked. What this page says about when I ask is for Interactive, the default.";
 }
 
