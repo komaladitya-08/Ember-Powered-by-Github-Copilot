@@ -77,7 +77,7 @@ export class VaultService {
   homeState(): VaultHomeState {
     const entries = this.o.store.list().map(m => entryRow(m, this.o.appName));
     // Its file was there but couldn't be read whole: kept aside, and said in Home (reliability-c12-1).
-    let unreadable = false;
+    let unreadable: boolean;
     try { unreadable = this.o.store.unreadable?.() ?? false; } catch { unreadable = true; /* can't tell: said */ }
     return { allowed: this.allowed(), entries, ...(unreadable ? { unreadable: true } : {}) };
   }

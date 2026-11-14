@@ -200,8 +200,8 @@ export class VaultStore {
     this.trouble = true;
     const to = `${this.file}.bad-${(this.opts.now ?? Date.now)()}`;
     const keep = this.opts.keepAside ?? keepAside;
-    let kept = false;
-    try { kept = keep(this.file, to, move); } catch { kept = false; }
+    let kept: boolean;
+    try { kept = keep(this.file, to, move); } catch { kept = false; /* kept nowhere: nothing is written over it */ }
     if (!kept) this.stuck = true;
     else if (move) this.stuck = false;
   }
