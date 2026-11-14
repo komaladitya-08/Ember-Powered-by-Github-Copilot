@@ -112,3 +112,30 @@ describe("Windows certutil's file verbs (commands-remote-c11-1)", () => {
     for (const cmd of ["certutil -hashfile a.zip SHA256", "certutil -store my", "certutil -encode a.txt b.txt"]) expect(decide(cmd, { ...PS, missing: ["C:\\Users\\ana\\proj\\b.txt"] }).verdict, cmd).toBe("run");
   });
 });
+
+describe("tar's -C before what it packs, and cpio's names from its input (commands-remote-c11-2)", () => {
+  it("judges what tar packs under the -C before it, so a secret folder asks and Ember's own is refused", () => {
+    for (const cmd of [
+      "tar -C ~ -cf - .ssh", "tar czf - -C ~ .ssh", "tar -C ~ -cf - .aws", "tar -C ~ -cf - .gnupg", "tar -C ~ -cf - .config/gh", "tar -C ~/.ssh -cf - .",
+      "tar -C ~/.ssh -cf - ./", "tar --directory ~ -czf - .ssh", "tar --directory=/home/ana -cf - .ssh", "tar -cf a.tar -C build out -C ~ .aws", "tar -C / -cf - home/ana/.ssh",
+      "tar -C ~ -C .ssh -cf - .", "gtar -C ~ -cf - .ssh", "bsdtar -C ~ -cf - .ssh", "tar -C ~ -cf - ./.ssh", "tar -C /run -cf - secrets",
+    ]) {
+      const d = decide(cmd);
+      expect(d.verdict, cmd).toBe("ask");
+      expect(d.rules, cmd).toContain("path.secret");
+    }
+    for (const cmd of ["bsdtar -C ~/.config -cf - ember", "tar -C ~ -cf - .config/ember/audit", "tar -C ~/.config -czf - ember", "tar --directory ~/.config -cf /tmp/x ember --remove-files"]) {
+      expect(result(cmd).cls.refuse?.rule, cmd).toBe("ember.path");
+    }
+    // A folder or a member Ember can't see asks; the project's own packing runs.
+    for (const cmd of ["tar -C \"$D\" -cf - x", "tar -cf - \"$X\""]) expect(decide(cmd).rules, cmd).toContain("unclear.unresolved-arg");
+    for (const cmd of ["tar -C build -czf out.tgz .", "tar czf x.tgz src", "tar -C dist -cf - ."]) { const d = decide(cmd, { missing: ["/home/ana/proj/out.tgz", "/home/ana/proj/x.tgz"] }); expect(d.verdict, `${cmd} ${d.rules}`).toBe("run"); }
+  });
+
+  it("judges the names cpio packs from its input, and asks when it can't see them", () => {
+    for (const cmd of ["cpio -o <<< ~/.ssh/id_rsa", "echo ~/.ssh/id_rsa | cpio -o", "printf '%s\\n' ~/.aws/credentials | cpio -ov > x.cpio", "echo ~/.ssh/id_rsa | cpio -pd /tmp/x"]) {
+      expect(decide(cmd).rules, cmd).toContain("path.secret");
+    }
+    expect(decide("find . -name '*.c' | cpio -o > x.cpio").rules).toContain("unclear.unresolved-arg");
+  });
+});

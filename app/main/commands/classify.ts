@@ -6523,6 +6523,29 @@ function tarSpec(bsd: boolean): OptSpec {
 function tarRunsCommand(p: Parsed, bsd: boolean): boolean {
   return has(p, "to-command", "use-compress-program", "info-script", "new-volume-script", "checkpoint-action", "rsh-command") || (!bsd && has(p, "I", "F")) || values(p, "checkpoint-action").length > 0;
 }
+/** tar's operands with each -C before it applied (commands-remote-c11-2): what it packs, by where tar finds it. */
+function tarMembers(h: H, a: readonly Arg[], p: Parsed): Arg[] {
+  const cds = p.opts.filter(o => o.value !== undefined && (o.name === "-C" || optIs(o.name, "directory", p.long)));
+  if (cds.length === 0) return p.operands;
+  const flavour = h.sc.path.flavour;
+  return p.operands.map(op => {
+    const at = a.indexOf(op);
+    let dir: string | null = "";
+    for (const c of cds) {
+      if (at >= 0 && c.at > at) break;
+      const v = c.value ?? null;
+      if (v === null || dir === null) { dir = null; continue; }
+      dir = dir === "" || isAbsolute(v, flavour) || v.startsWith("~") ? v : `${dir}/${v}`;
+    }
+    if (dir === "" || op.v === null) return op;
+    if (dir === null) return { v: null, raw: op.raw, glob: false };
+    if (isAbsolute(op.v, flavour) || op.v.startsWith("~")) return op;
+    const base = dir.replace(/\/+$/, "") || "/";
+    const rel = op.v.replace(/^(\.\/+)+/, "");
+    const v = rel === "." || rel === "" ? base : `${base}/${rel}`;
+    return { ...op, v, raw: v };
+  });
+}
 reg(NATIVE, ["tar", "bsdtar", "gtar"], h => {
   const a = [...h.args];
   // Old-style bundled first argument (`tar xzf x.tgz`).
@@ -6553,7 +6576,11 @@ reg(NATIVE, ["tar", "bsdtar", "gtar"], h => {
     else if (archive !== "-" && !NULL_SINKS.has(archive.toLowerCase())) h.e.usePath(arc, create ? "write" : "read", h.sc);
   }
   if (create) {
-    const inputs = objsOf(h, p.operands, "readTree");
+    // What it packs is found under the -C (--directory) before it, each -C taken from the one before (GNU and bsdtar):
+    // `tar -C ~ -cf - .ssh` packs ~/.ssh, never ./.ssh (commands-remote-c11-2). A folder Ember can't see makes what
+    // follows a name it can't resolve, judged as one.
+    const inputs = objsOf(h, tarMembers(h, a, p), "readTree");
+    if (inputs.some(o => o.abs === null && o.text !== "-")) h.e.unclear("unclear.unresolved-arg", "It packs files Ember can't name.");
     if (has(p, "remove-files")) h.e.add("destroy", "archive.remove-files", `Deletes ${listOf(inputs)} after packing them.`, { objects: inputs });
     if (archive && archive !== "-" && !NULL_SINKS.has(archive.toLowerCase()) && !URL_LIKE.test(archive)) {
       const obj = h.e.usePath(lit(archive), "write", h.sc);
@@ -6669,6 +6696,14 @@ reg(NATIVE, ["cpio"], h => {
   if (has(p, "p", "pass-through")) {
     const dest = p.operands[0];
     if (dest) h.e.usePath(dest, "write", h.sc);
+  }
+  // -o and -p pack or copy the files whose names it reads from its input (`echo ~/.ssh/id_rsa | cpio -o`): the names
+  // Ember can see are read as what it packs; names from a program's output it can't see may be any file, so it asks
+  // (commands-remote-c11-2).
+  if (has(p, "o", "create", "p", "pass-through")) {
+    const t = h.s.stdinText;
+    if (typeof t === "string") h.e.readArgs(t.split(/\r?\n/).map(x => x.trim()).filter(x => x !== "").map(x => lit(x.replace(/^~(?=\/|$)/, "~"))), h.sc, { unresolvedUnclear: true });
+    else if (h.s.stdin !== null) h.e.unclear("unclear.unresolved-arg", "It packs the files named in its input, which Ember can't see.");
   }
 });
 
