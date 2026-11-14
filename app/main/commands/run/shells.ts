@@ -29,8 +29,10 @@ export const POSIX_PRELUDE = 'set +f; export PAGER=cat GIT_PAGER=cat SYSTEMD_PAG
  * - The text reaches it as EMBER_C, in its environment only (never on an argv), and it unsets it before `eval`, as
  *   this shell did EMBER_CMD_B64; the nonce (EMBER_END, random per run) is read and unset here and never exported, so
  *   neither the command's environment nor anything it prints from elsewhere holds it.
- * - `trap : INT TERM`: a Ctrl+C or the Stop ladder's TERM ends the command, and this shell waits for it and says so;
- *   a `kill $PPID` can't end this shell and leave the command running (KILL still ends both: the ladder's next step).
+ * - `trap : INT TERM`: a Ctrl+C or the Stop ladder's TERM ends the command, and this shell waits for it and says so,
+ *   and a plain `kill $PPID` from the command can't end this shell. A `kill -9 $PPID` can (SIGKILL can't be trapped):
+ *   then no marker comes, and the runner ends whatever still carries the run's id before it reports the run
+ *   (runner.ts, review wslio-y-1).
  * - This shell's own stderr goes to /dev/null once the command starts, and the fresh shell takes the real one back
  *   from fd 3 (and closes 3) before the command's text: a shell reports a child killed by a signal ("Killed",
  *   "Terminated"), which the one shell before never did, and dash and busybox report it under the redirections of the

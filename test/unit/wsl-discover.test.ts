@@ -9,6 +9,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
 import {
+  readRunningKnown,
   createWslExec, envGet, guiDisabled, HIDDEN_DISTRO, jobHostArgv, LIST_TIMEOUT_MS, locateWslExe, parseListVerbose, parseRunning, parseVersion, probeEnv,
 } from "../../app/main/wsl/discover";
 import { createWsl, createWslWith, windowsContextOf, type WslDeps } from "../../app/main/wsl/service";
@@ -498,5 +499,19 @@ describe("listing time limits", () => {
     const f = await p;
     expect(f.distros).toEqual([]);
     expect(fake.calls.every(c => c.child.killed)).toBe(true);
+  });
+});
+
+describe("readRunningKnown", () => {
+  const exec = (r: Partial<{ code: number | null; stdout: Buffer; timedOut: boolean; error: string | null }>) => ({
+    run: async () => ({ code: 0, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0), timedOut: false, error: null, ...r }),
+  });
+
+  it("reads the running set, and says it couldn't when wsl.exe didn't answer, never \"none running\" (review wslio-y-3)", async () => {
+    expect(await readRunningKnown(exec({ stdout: utf16("Ubuntu\r\n") }), ["Ubuntu", "Debian"])).toEqual(new Set(["Ubuntu"]));
+    // None running: wsl.exe answers, with a non-zero code.
+    expect(await readRunningKnown(exec({ code: 1, stdout: utf16("There are no running distributions.\r\n") }), ["Ubuntu"])).toEqual(new Set());
+    expect(await readRunningKnown(exec({ code: null, timedOut: true }), ["Ubuntu"])).toBeNull();
+    expect(await readRunningKnown(exec({ code: null, error: "couldn't start wsl.exe" }), ["Ubuntu"])).toBeNull();
   });
 });

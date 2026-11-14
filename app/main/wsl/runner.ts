@@ -431,6 +431,8 @@ export interface WslRunnerDeps {
   isRunning: () => boolean;
   /** The running set read now. */
   runningNow: () => Promise<Set<string>>;
+  /** The running set read now, or null when it couldn't be read (default: runningNow, which reads unknown as none). */
+  runningRead?: () => Promise<Set<string> | null>;
   windows: () => WindowsContext;
   /** Ember's own Windows paths (§3.6.2), translated under the mount root for the classifier. */
   winPaths: readonly string[];
@@ -726,8 +728,12 @@ class Run {
   /** This run's end marker nonce (EMBER_END), and the marker it makes. */
   private readonly endId = endNonce();
   private readonly endRe = endMarker(this.endId);
-  /** Ended by itself without its marker: whether the distro still runs is being read before the run ends. */
+  /** Ended by itself without its marker: what is left of it is being read (and ended) before the run ends. */
   private checking = false;
+  /** That end's TERM and KILL sweeps, once begun: what still carried the run's id after them. */
+  private lostLadder: Promise<string[] | null> | null = null;
+  /** When wsl.exe exited (a run's time is its own, not the time Ember then took to look). */
+  private exitedAt: number | null = null;
   /** The last bytes of stdout so far (latin1), so a marker split between chunks is found. */
   private endCarry = "";
   private readonly t0: number;
@@ -820,6 +826,7 @@ class Run {
     });
     child.on("exit", (code, signal) => {
       this.exited = { code, signal };
+      this.exitedAt = this.r.now();
       this.timers.push(setTimeout(() => this.finish(), 1_000));
     });
     child.on("close", (code, signal) => {
@@ -923,8 +930,15 @@ class Run {
 
   /** Stop, the kill switch or the time limit: the WSL ladder once the command runs (step 1 synchronously). */
   stop(why: "user" | "task" | "killswitch" | "timeout"): void {
-    // `checking`: it has already ended by itself, and only how is still being read: nothing is left to stop.
-    if (this.ended || this.stopWhy || this.checking) return;
+    if (this.ended || this.stopWhy) return;
+    if (this.checking) {
+      // It ended by itself without its marker and Ember is still looking at what is left of it: the Stop goes straight
+      // to the TERM and KILL sweeps once the distro is known to run (a sweep would start a stopped one), and the run
+      // ends as stopped (review wslio-y-3).
+      this.stopWhy = why;
+      this.d.log.info("wsl.run_stopping", { distro: this.d.distro, runId: this.spec.runId, why, started: this.started, ended: true });
+      return;
+    }
     this.stopWhy = why;
     if (!this.child) {
       // Still checking, reading facts or starting the distro: it never spawns.
@@ -1012,7 +1026,8 @@ class Run {
 
   /** wsl.exe ended (its output read): the run's exit. */
   private finish(): void {
-    if (this.ended || !this.exited) return;
+    // `checking`: wsl.exe's "exit" and "close" each call it; the look at a markerless end is under way already.
+    if (this.ended || !this.exited || this.checking) return;
     const { code, signal } = this.exited;
     if (!this.started && this.stopWhy && !this.ladder) {
       // Stopped before its command started: nothing ran; a last sweep catches a launcher that started late.
@@ -1037,22 +1052,72 @@ class Run {
     }
     if (!this.stopWhy && !this.endSeen) {
       // Ended by itself, yet the launcher's last word never came: the end of the output was lost on the way (WSL1's
-      // relay), or the launcher's shell never got to say it (the distro stopped, the shell was killed), so the command
-      // may not have finished (review wslio-x-3). Whether the distro still runs is read first, to say so.
+      // relay), or the launcher's shell never got to say it (the distro stopped; it was killed, `kill -9 $PPID` from
+      // the command included), so the command may not have finished (review wslio-x-3). Before the run is reported:
+      // - the running set is read: a stopped distro is said so, and one it can't tell about is never swept (a sweep
+      //   would start it);
+      // - in a running distro, whatever still carries the run's id is looked for. Nothing: the command ended, only its
+      //   output's end was lost, and wsl.exe's exit code is its own (review wslio-y-2). Something: the launcher is gone
+      //   while the command goes on, which nothing may do past its run, so the Stop ladder's TERM and KILL sweeps end
+      //   it (review wslio-y-1);
+      // - the run's time is taken at wsl.exe's exit, not after this look (review wslio-y-3).
       exit.outputCut = true;
-      exit.endLost = true;
       this.checking = true;
-      void this.d.runningNow().then(set => set.has(this.d.distro), () => null).then(running => {
+      const ms = Math.max(0, (this.exitedAt ?? this.r.now()) - this.t0);
+      void (async () => {
+        const read = this.d.runningRead ?? this.d.runningNow;
+        const set = await read().catch(() => null);
+        const running = set ? set.has(this.d.distro) : null;
+        let lost = true;
+        let left: string[] | null = running === false ? [] : null;
+        if (running === true) {
+          const found = this.stopWhy ? null : await this.r.sweep("0", this.spec.runId);
+          if (found !== null && found.length === 0 && !this.stopWhy) {
+            lost = false;
+            left = [];
+          } else {
+            left = await this.endWhatIsLeft();
+          }
+        }
         this.checking = false;
+        if (lost) exit.endLost = true;
         if (running === false) exit.targetStopped = true;
-        this.d.log.warn("wsl.output_cut", { distro: this.d.distro, runId: this.spec.runId, code, outBytes: this.outBytes, running });
-        this.end(exit);
-        this.lookForStragglers(running);
+        this.d.log.warn("wsl.output_cut", { distro: this.d.distro, runId: this.spec.runId, code, outBytes: this.outBytes, running, endLost: lost, stopped: this.stopWhy });
+        this.setStragglers(left);
+        if (left?.length) this.d.log.warn("commands.straggler", { distro: this.d.distro, runId: this.spec.runId, count: left.length });
+        // A Stop meanwhile: it ended as stopped, as any run the user stopped.
+        if (this.stopWhy) this.end({ ended: ENDED[this.stopWhy], code, signal, ms });
+        else this.end({ ...exit, ms });
+      })().catch(err => {
+        this.checking = false;
+        this.setStragglers(null);
+        this.d.log.warn("wsl.output_cut_check_failed", { distro: this.d.distro, err });
+        this.end({ ...exit, endLost: true, ms });
       });
       return;
     }
     this.end(exit);
     this.lookForStragglers(null);
+  }
+
+  /**
+   * The Stop ladder's TERM and KILL sweeps for a run that ended without its marker while something still carries its id
+   * (or the user stopped it meanwhile): TERM, KILL at the ladder's KILL step, and a last KILL that names what is left.
+   * Once, however often it is asked for.
+   */
+  private endWhatIsLeft(): Promise<string[] | null> {
+    if (!this.lostLadder) {
+      const runId = this.spec.runId;
+      const wait = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
+      this.lostLadder = (async () => {
+        await this.r.sweep("TERM", runId);
+        await wait(LADDER_MS.kill - LADDER_MS.term);
+        await this.r.sweep("KILL", runId);
+        await wait(LADDER_MS.last - LADDER_MS.kill);
+        return this.r.sweep("KILL", runId);
+      })();
+    }
+    return this.lostLadder;
   }
 
   /**
@@ -1092,7 +1157,7 @@ class Run {
     if (this.ladder || e.ended !== "exit") this.setStragglers([]);
     for (const t of this.timers) clearTimeout(t);
     this.exitedQuietly();
-    const exit: RunExit = { code: e.code ?? null, signal: e.signal ?? null, ended: e.ended, ms: Math.max(0, this.r.now() - this.t0), ...(e.error ? { error: e.error } : {}), ...(e.outputCut ? { outputCut: true } : {}), ...(e.endLost ? { endLost: true } : {}), ...(e.targetStopped ? { targetStopped: true } : {}) };
+    const exit: RunExit = { code: e.code ?? null, signal: e.signal ?? null, ended: e.ended, ms: e.ms ?? Math.max(0, this.r.now() - this.t0), ...(e.error ? { error: e.error } : {}), ...(e.outputCut ? { outputCut: true } : {}), ...(e.endLost ? { endLost: true } : {}), ...(e.targetStopped ? { targetStopped: true } : {}) };
     this.d.log.info("wsl.run_ended", { distro: this.d.distro, runId: this.spec.runId, ended: exit.ended, code: exit.code, ms: exit.ms, outBytes: this.outBytes, error: exit.error, outputCut: exit.outputCut === true });
     this.resolveDone(exit);
   }

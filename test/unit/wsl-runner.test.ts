@@ -301,6 +301,8 @@ function distro(o: {
   cachedRunning?: boolean;
   /** runningNow() answers only once this settles. */
   runningNowWait?: Promise<void>;
+  /** The runner's runningRead (null: WSL didn't answer); without it the runner reads runningNow. */
+  runningRead?: () => Promise<Set<string> | null>;
   /** Every fixed script's output loses this many of its last bytes on the way back (WSL1's relay; its end marker first). */
   cutLast?: number;
   /** Only the sweeps' output is cut (the rest comes back whole). */
@@ -365,6 +367,7 @@ function distro(o: {
       if (o.runningNowWait) await o.runningNowWait;
       return new Set(running ? ["Ubuntu"] : []);
     },
+    ...(o.runningRead ? { runningRead: o.runningRead } : {}),
     windows: () => WINDOWS,
     winPaths: WINDOWS.emberPaths, learnedUid: uid => void uids.push(uid),
   });
@@ -478,19 +481,84 @@ describe("WSL runner: starting a command", () => {
     // `wsl --shutdown` meanwhile: the launcher's shell never got to say its end.
     w.setRunning(false);
     w.runs[0].child.exit(1);
-    // A Stop while Ember reads whether the distro still runs has nothing left to stop.
-    run.stop("user");
     const exit = await run.done;
     expect(exit).toMatchObject({ ended: "exit", code: 1, outputCut: true, endLost: true, targetStopped: true });
-    expect(w.sweeps).toHaveLength(0);
     // Nothing is looked for in a distro that isn't running (a look would start it again).
+    expect(w.sweeps).toHaveLength(0);
     await expect(run.stragglers).resolves.toEqual([]);
-    const still = distro();
-    const r2 = still.runner.start(spec());
-    await until(() => still.runs.length === 1);
-    still.runs[0].child.out(MARKER);
-    still.runs[0].child.exit(0);
-    expect(await r2.done).not.toHaveProperty("targetStopped");
+  });
+
+  it("reports a finished run whose output's end was lost with its own exit code, once nothing carrying its id is left (review wslio-y-2)", async () => {
+    // What CI saw: the command ended, wsl.exe said 0, and WSL1's relay dropped the last 64 KiB with the marker in it.
+    const w = distro();
+    const run = w.runner.start(spec());
+    await until(() => w.runs.length === 1);
+    w.runs[0].child.out(`${MARKER}${"x".repeat(70_000)}`);
+    w.runs[0].child.exit(0);
+    const exit = await run.done;
+    expect(exit).toMatchObject({ ended: "exit", code: 0, outputCut: true });
+    expect(exit.endLost).toBeUndefined();
+    expect(exit.targetStopped).toBeUndefined();
+    expect(w.sweeps.map(s => s.signal)).toEqual(["0"]);
+    await expect(run.stragglers).resolves.toEqual([]);
+  });
+
+  it("ends whatever still carries the run's id when its launcher went without its marker, before the run is reported (review wslio-y-1)", async () => {
+    // `kill -9 $PPID` in pipes mode: the launcher's shell is gone, and the command's own shell runs the rest of the text.
+    vi.useFakeTimers();
+    try {
+      const w = distro({ sweepNames: { "0": ["sh", "sleep"], TERM: ["sh", "sleep"], KILL: [] } });
+      const run = w.runner.start(spec());
+      await vi.advanceTimersByTimeAsync(0);
+      w.runs[0].child.out(`${MARKER}a\n`);
+      w.runs[0].child.exit(137);
+      let exit: RunExit | null = null;
+      void run.done.then(e => { exit = e; });
+      await vi.advanceTimersByTimeAsync(LADDER_MS.kill - LADDER_MS.term - 1);
+      expect(w.sweeps.map(s => s.signal)).toEqual(["0", "TERM"]);
+      expect(exit).toBeNull();
+      await vi.advanceTimersByTimeAsync(LADDER_MS.last);
+      expect(w.sweeps.map(s => s.signal)).toEqual(["0", "TERM", "KILL", "KILL"]);
+      expect(exit).toMatchObject({ ended: "exit", code: 137, outputCut: true, endLost: true });
+      expect(exit!.targetStopped).toBeUndefined();
+      await expect(run.stragglers).resolves.toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("never says a distro stopped when WSL couldn't say, never sweeps it, and times the run to wsl.exe's exit (review wslio-y-3)", async () => {
+    let answer!: (v: Set<string> | null) => void;
+    const w = distro({ runningRead: () => new Promise(r => { answer = r; }) });
+    const run = w.runner.start(spec());
+    await until(() => w.runs.length === 1);
+    w.runs[0].child.out(MARKER);
+    w.runs[0].child.exit(0);
+    await until(() => typeof answer === "function");
+    await new Promise(r => setTimeout(r, 300));
+    answer(null);
+    const exit = await run.done;
+    expect(exit).toMatchObject({ ended: "exit", code: 0, outputCut: true, endLost: true });
+    expect(exit.targetStopped).toBeUndefined();
+    expect(exit.ms).toBeLessThan(250);
+    expect(w.sweeps).toHaveLength(0);
+    // What is left is unknown, not "nothing".
+    await expect(run.stragglers).resolves.toBeNull();
+  });
+
+  it("takes a Stop while Ember looks at a run that ended without its marker: straight to the TERM and KILL sweeps, ended as stopped (review wslio-y-3)", async () => {
+    let answer!: (v: Set<string> | null) => void;
+    const w = distro({ runningRead: () => new Promise(r => { answer = r; }) });
+    const run = w.runner.start(spec());
+    await until(() => w.runs.length === 1);
+    w.runs[0].child.out(MARKER);
+    w.runs[0].child.exit(0);
+    await until(() => typeof answer === "function");
+    run.stop("user");
+    answer(new Set(["Ubuntu"]));
+    const exit = await run.done;
+    expect(exit).toMatchObject({ ended: "stopped-user", code: 0 });
+    expect(w.sweeps.map(s => s.signal)).toEqual(["TERM", "KILL", "KILL"]);
   });
 
   it("never names a part of what was left running as all of it when the sweep's answer didn't all come back (review wslio-x-7)", async () => {
@@ -536,7 +604,8 @@ describe("WSL runner: starting a command", () => {
     w.runs[0].child.out(`\x1b]777;ember-end;${nonce.replace(/^./, c => (c === "0" ? "1" : "0"))};0\x07`);
     w.runs[0].child.out("x".repeat(10_000));
     w.runs[0].child.exit(0);
-    expect(await run.done).toMatchObject({ ended: "exit", code: 0, outputCut: true, endLost: true });
+    // Nothing carries its id (the fake's sweep): it ended, and only its output's end is unknown (review wslio-y-2).
+    expect(await run.done).toMatchObject({ ended: "exit", code: 0, outputCut: true });
     const other = distro();
     const second = other.runner.start(spec());
     await until(() => other.runs.length === 1);
