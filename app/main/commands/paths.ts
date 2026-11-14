@@ -339,6 +339,8 @@ function secretBasename(name: string, ci: boolean): boolean {
   if (/^\.(vault[-_]?pass(word)?(\.txt)?|htpasswd|pgpass|boto|s3cfg)$/.test(l)) return true;
   // WordPress's settings file is its database password and its signing keys (commands-remote-r12-1); its sample isn't.
   if (l === "wp-config.php") return true;
+  // Wi-Fi keys: NetworkManager's keyfiles, wpa_supplicant's and an access point's settings (r12-commands-y12-4).
+  if (/\.nmconnection$/.test(l) || /^(wpa_supplicant|hostapd)[\w.-]*\.conf$/.test(l)) return true;
   return false;
 }
 

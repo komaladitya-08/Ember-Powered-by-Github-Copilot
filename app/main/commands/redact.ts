@@ -350,6 +350,7 @@ const CONFIG_SECRET = String.raw`(?:password|passwd|passphrase|pwd|secret|token|
  * - a quoted password after the word (`with password '…'`, fetchmail's);
  * - curl's and wget's `user = name:password` in their settings files, and `--user name:password` on a line of its own;
  * - Subversion's cached login, the `V n` value after a `K n` / `password` key.
+ * - Redis's, OpenLDAP's and nslcd's password lines, a Wi-Fi key, an ini's bare `pass = X` and s-nail's `set password-…=`.
  * Each look is bounded, so a long run of output stays linear.
  */
 const CONFIG_PATTERNS: readonly RegExp[] = [
@@ -362,6 +363,14 @@ const CONFIG_PATTERNS: readonly RegExp[] = [
   /((?:^|\n)[ \t]*(?:--?)?(?:proxy-)?user[ \t]*(?:=|:|[ \t])[ \t]*["']?[^\s"':]+:)(?![$%{<*[])[^\s"']+/g,
   // Subversion's cached login, a K/V record: the V line after a `password` key (r12-commands-x12-8).
   /((?:^|\n)K[ \t]\d{1,4}\r?\n(?:password|passphrase)\r?\nV[ \t]\d{1,6}\r?\n)[^\r\n]+/g,
+  // Redis's, OpenLDAP's and nslcd's password lines (`requirepass X`, `masterauth X`, `rootpw X`, `bindpw X`) and a
+  // `PassPhrase X`, also as grep -n numbers them (`507:requirepass X`); a Wi-Fi key (`psk=X`, wpa_supplicant's
+  // `psk="X"`, hostapd's `wpa_psk=X`); an ini's bare `pass = X` (rclone, ZNC's `Pass = plain#X`); s-nail's `set
+  // password-user@host=X` (r12-commands-y12-4).
+  /((?:^|\n)[ \t]*(?:\d{1,9}[:-])?(?:requirepass|masterauth|rootpw|bind_?pw|passphrase)[ \t]+)(?![$%<*[#]|\{\{)(?:"[^"\n]+"|'[^'\n]+'|[^\s"']+)/gi,
+  /((?:^|\n)[ \t]*(?:\d{1,9}[:-])?(?:wpa_)?psk[ \t]*=[ \t]*"?)(?![$%{<*[])[^\s"]+/gi,
+  /((?:^|\n)[ \t]*(?:\d{1,9}[:-])?pass[ \t]*=[ \t]*["']?)(?![$%{<*[])[^\s"',;]+/gi,
+  /((?:^|\n)[ \t]*(?:\d{1,9}[:-])?set[ \t]+password-[^\s=]{1,256}=["']?)(?![$%{<*[])[^\s"']+/gi,
 ];
 
 /**

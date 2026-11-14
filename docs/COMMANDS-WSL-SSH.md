@@ -229,7 +229,8 @@ Ember stops and asks before a command that:
   `.netrc`, `.npmrc`, `.pypirc`, `.env` files, WordPress's `wp-config.php`, the settings files where mail, chat and
   download clients keep a password (`~/.msmtprc`, `~/.mbsyncrc`, `~/.fetchmailrc`, `~/.offlineimaprc`, `~/.authinfo`,
   mutt's and aerc's, `~/.curlrc`, `~/.wgetrc`, HexChat's `servlist.conf`, Subversion's `~/.subversion/auth`, `~/.smbcredentials`,
-  Ivy's and sbt's `.credentials`, getmail's and neomutt's settings), GitHub Copilot's sign-in (`~/.config/github-copilot`, `~/.copilot`), cloud
+  Ivy's and sbt's `.credentials`, getmail's and neomutt's settings), Wi-Fi keys (NetworkManager's `*.nmconnection`,
+  `wpa_supplicant*.conf`, `hostapd*.conf`), GitHub Copilot's sign-in (`~/.config/github-copilot`, `~/.copilot`), cloud
   and hosting tools' sign-ins (`~/.config/gcloud`, `~/.oci`, `~/.config/doctl`), Kerberos tickets, the display's key
   (`~/.Xauthority`), chat apps' and VS Code's stored sign-ins, keychains and credential stores, browser profiles,
   password managers, `/etc/shadow`, your shell history, secrets mounted for a container or a service (`/run/secrets`,
@@ -990,7 +991,8 @@ Enter, or to the end when the command can't take typing), and hides the password
 (GitHub, AWS, Slack, Google, npm, OpenAI, Anthropic, Stripe, Hugging Face, GitLab, SendGrid, DigitalOcean and Twilio tokens and keys, private keys, JWTs, `password=` values, `Authorization:` headers, a Docker config's `"auth"`, a one-line `.netrc` entry's password, passwords
 as config files write them (PHP's `define('DB_PASSWORD', …)` and `'password' => …`, XML's `<password>…</password>` and
 `<add key="Password" value="…"/>`, a line that is only `password …`, a mail client's `smtp_pass = …`, curl's `user =
-name:…`, Subversion's cached `password` record), passwords
+name:…`, Subversion's cached `password` record, Redis's `requirepass …`, LDAP's `rootpw …` and `bindpw …`, a Wi-Fi
+`psk=…`, an ini's `pass = …`, s-nail's `set password-…=…`), passwords
 in URLs, a password given to a program's short option such as `mysql -p…` (also after a prompt such as `C:\>`, a
 comment's `#` or from a quoted folder), `curl -u user:…`, `docker login -p …` or `sshpass -p …`, the same where the arguments are a list
 (`["mysql", "-uroot", "-p…"]`, `["sshpass", "-p", "…"]`, `"--password", "…"`, but not after `"--no-password"`, nor `"none"`,

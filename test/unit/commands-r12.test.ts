@@ -98,6 +98,36 @@ describe("passwords in common config formats, hidden from the model (commands-re
   });
 });
 
+describe("passwords in Redis, LDAP, Wi-Fi, ini, ZNC and s-nail settings (r12-commands-y12-4)", () => {
+  it("hides their values, also in grep -n's numbered lines", () => {
+    for (const [text, kept] of [
+      [`requirepass ${PW}`, "requirepass "], [`requirepass "${PW}"`, "requirepass "], [`masterauth ${PW}`, "masterauth "],
+      [`507:requirepass ${PW}`, "507:requirepass "], [`rootpw ${PW}`, "rootpw "], [`rootpw {SSHA}${PW}`, "rootpw "], [`bindpw ${PW}`, "bindpw "],
+      [`bind_pw ${PW}`, "bind_pw "], [`PassPhrase ${PW}`, "PassPhrase "], [`psk=${PW}`, "psk="], [`  psk="${PW}"`, `  psk="`], [`wpa_psk=${PW}`, "wpa_psk="],
+      [`[remote]\ntype = sftp\npass = ${PW}\n`, "pass = "], [`Pass = plain#${PW}`, "Pass = "], [`set password-ana@mail.x.org=${PW}`, "set password-ana@mail.x.org="],
+    ] as const) {
+      const out = redactSecrets(text);
+      expect(out, text).not.toContain(PW);
+      expect(out, text).toContain(kept + SECRET_HIDDEN);
+    }
+  });
+
+  it("leaves the settings around them", () => {
+    for (const text of [
+      "requirepass", "# requirepass foobared", "bind 127.0.0.1", "pass = ${RCLONE_PASS}", "psk-mode = on", "set editor=vim", "bypass = true", "rootdn \"cn=admin\"",
+      "The passphrase protects your key.",
+    ]) expect(redactSecrets(text), text).toBe(text);
+  });
+
+  it("reads Wi-Fi keyfiles and access-point settings as secrets", () => {
+    for (const cmd of [
+      "cat /etc/NetworkManager/system-connections/Home.nmconnection", "cat /etc/wpa_supplicant/wpa_supplicant.conf", "cat /etc/hostapd/hostapd.conf",
+      "cat wpa_supplicant-wlan0.conf",
+    ]) expect(result(cmd).decision.rules, cmd).toContain("path.secret");
+    for (const cmd of ["ls /etc/NetworkManager/system-connections", "cat /etc/hostapd/hostapd.deny"]) expect(result(cmd).decision.rules, cmd).not.toContain("path.secret");
+  });
+});
+
 describe("Subversion's, SMB's, sbt's and neomutt's stored passwords (r12-commands-x12-8)", () => {
   it("reads their files as secrets", () => {
     for (const cmd of [
