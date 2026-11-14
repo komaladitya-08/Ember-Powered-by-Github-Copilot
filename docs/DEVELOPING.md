@@ -1720,7 +1720,9 @@ the address in force and its saved key are kept and come back with the switch (i
   a keyring (`basic_text`) nothing is sealed: the yes lasts until Ember quits, and the card asks again at the next
   start. Every change of the user's provider in force is a `provider` audit entry (its host, the one before, and
   `via`: home, settings or start), shown in What Ember did as "Model service: <host>"; one coming into force that
-  can't be recorded isn't taken. Home's changes merge into the user's own
+  can't be recorded isn't taken: "I agree" then leaves the provider as it was and says why ("Ember couldn't record
+  this in its audit log, so it isn't using <host>. Check that the disk isn't full, then agree again.":
+  integrations-r11-1). Home's changes merge into the user's own
   settings (`withOwnProvider`), never writing back values the policy applied. "I agree" is armed as Ember's questions
   are: for 500 ms after the card is drawn for another host it ignores activation, and the host is taken when it is
   pressed, so a card redrawn at all between the press and the click (pressing blurs the address field, which saves it) agrees

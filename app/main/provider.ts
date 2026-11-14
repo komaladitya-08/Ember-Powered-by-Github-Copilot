@@ -204,6 +204,14 @@ export function providerNotAgreed(host: string): string {
   return `Agree to the note above first: Ember sends nothing to ${host} until you do.`;
 }
 
+/**
+ * The card's yes couldn't be recorded in the audit log (a full disk, a file that can't be written), so it wasn't taken:
+ * the provider stays as it was, and Home says why once (integrations-r11-1).
+ */
+export function providerNotRecorded(host: string): string {
+  return `Ember couldn't record this in its audit log, so it isn't using ${host}. Check that the disk isn't full, then agree again.`;
+}
+
 /** Why the key couldn't be kept, in plain words (Home shows it under the field). */
 export const KEY_NO_KEYRING = "Ember can't keep the key safely here: this computer has no keyring for passwords, so the key would be saved as plain text. Set up a keyring (GNOME Keyring or KWallet), then try again.";
 export const KEY_WRITE_FAILED = "Ember couldn't save the key: its data folder can't be written. Try again.";
@@ -572,6 +580,13 @@ export function createProviderService(d: ProviderServiceDeps) {
         if (endpointHost(move?.baseUrl ?? own.baseUrl) !== host) return { ok: false, why: PROVIDER_HOST_CHANGED };
         const yes = () => d.settings.update({ provider: { ...own, ...move, on: true, consent: { version: FEATURE_CONSENT_VERSION.provider, at: (d.now?.() ?? new Date()).toISOString(), host } } });
         if (d.record) d.record.as(yes); else yes();
+        // A yes the record holds back (its coming into force couldn't be audited) is no yes: the provider goes back to
+        // what it was, as Ember's own change, and Home says why rather than "Agreed" (integrations-r11-1).
+        if (d.record?.held?.()) {
+          d.record.as(() => d.settings.update({ provider: own }));
+          d.log.warn("provider.agree_unrecorded", {});
+          return { ok: false, why: providerNotRecorded(host) };
+        }
         d.log.info("provider.agreed", {});
         return { ok: true };
       },
