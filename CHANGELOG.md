@@ -607,8 +607,8 @@ tests don't stand in for them. **Known issues and limits**, at the end, lists wh
   `logout` and `ssh` as system changes. Ember runs a Python virtual environment's programs by path (`.venv/bin/python -m
   pytest`) instead of sourcing `activate`, which asked every time.
 - **Where commands run as root or an administrator,** every command is dangerous: it asks in Interactive and Assisted,
-  and Settings shows **Ask me before every command** on, locked, saying so; in Autopilot each runs after a few seconds
-  to stop it, unless you turn that switch on.
+  where Settings shows **Ask me before every command** on and locked, saying so; in Autopilot the switch is yours, and
+  each command runs after a few seconds to stop it unless you turn it on.
 - **A WSL command's output is never taken as whole without its end.** Each WSL run now ends with a mark of its own. When
   that mark doesn't come back (wsl.exe can lose the last of a long output), Ember ends whatever it finds the run left
   running, as Stop does, and the command window and the AI model are told that the command may not have finished and
