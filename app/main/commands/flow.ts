@@ -801,22 +801,83 @@ const WHOLE_KIND = new Set([...GENERIC, ..."files folders folder directories dir
  * don't delete src/") leaves it asked. A doubt counts as ruled out: it only ever keeps the user's no.
  */
 function saysNoTo(findings: readonly Finding[], words: string): boolean {
-  const parts = words.split(PARTS);
+  const parts = noParts(words);
   // What the words ask for: each part up to its no ("delete build without removing src" asks to delete build).
   const asked = parts.map(p => { const n = SAYS_NO.exec(p) ?? NEGATED.exec(p); return n ? p.slice(0, n.index) : p; }).join(". ");
-  return parts.some(part => {
-    const no = SAYS_NO.exec(part);
-    if (!no) return false;
-    const after = part.slice(no.index + no[0].length);
-    return findings.some(f => {
-      const verbs = [KIND_VERBS[f.cls], ...NO_KIND_VERBS.filter(k => k.when(f)).map(k => k.verb)].filter((v): v is RegExp => v !== undefined);
-      if (!verbs.some(v => v.test(after))) return false;
+  return parts.some(part => findings.some(f => {
+    const verbs = [KIND_VERBS[f.cls], ...NO_KIND_VERBS.filter(k => k.when(f)).map(k => k.verb)].filter((v): v is RegExp => v !== undefined);
+    if (verbs.length === 0) return false;
+    // The remote left alone is a no to sending anything to it (r12-commands-x12-4).
+    if ((f.cls === "publish" || f.cls === "remote-delete") && LEAVES_REMOTE.test(part)) return true;
+    // The step's own word with a no after it ("pushing is not allowed", "nothing gets pushed": r12-commands-x12-4).
+    if (verbs.some(v => passiveNo(part, v))) return true;
+    for (const no of part.matchAll(SAYS_NO_ALL)) {
+      // ("no problem", "no worries": an idiom that turns nothing down, r12-commands-x12-3.)
+      if (NO_IDIOM.test(part.slice(no.index))) continue;
+      const after = part.slice(no.index + no[0].length);
+      if (!verbs.some(v => governs(after, v))) continue;
       // What else the no names: a thing of its own, unless the words only stand for the whole kind.
       const names = after.toLowerCase().split(/[^\p{L}\p{N}'’_./~-]+/u).filter(w => w !== "" && !WHOLE_KIND.has(w) && !verbs.some(v => v.test(w)) && !NEGATED.test(w) && !/^(use|using|touch|do|make|be|go|run|any|of)$/.test(w));
-      return !(names.length > 0 && !namesObject([f], after) && f.objects.some(o => o.text !== "") && namesObject([f], asked));
-    });
-  });
+      if (!(names.length > 0 && !namesObject([f], after) && f.objects.some(o => o.text !== "") && namesObject([f], asked))) return true;
+    }
+    return false;
+  }));
 }
+
+/** Every no in a part (SAYS_NO, found again and again). */
+const SAYS_NO_ALL = new RegExp(SAYS_NO.source, "giu");
+/** "no" in an idiom that turns nothing down ("no problem", "no worries", "no rush"): r12-commands-x12-3. */
+const NO_IDIOM = /^no\s+(?:problems?|probs?|worr(?:y|ies)|rush|hurry|biggie|matter|doubt|question|pressure|sweat|stress|fuss)(?![\p{L}])/iu;
+/**
+ * Words between a no and a step's verb that start another clause ("without a PR just push", "I don't need a review so
+ * push it", "no rush, go ahead and publish"): the no is to something else (r12-commands-x12-3).
+ */
+const TURNS = /(?:^|[^\p{L}])(?:so|just|go|ahead|then|instead|anyway|simply|therefore|hence|thus|and|but)(?![\p{L}])/iu;
+/** A no that states a fact ("I don't have root", "I don't know the tests"), not a refusal (r12-commands-x12-3). */
+const NO_FACT = /^\s*(?:have|own|know)(?![\p{L}])/iu;
+/** Does the no govern a verb of the step: the verb after it, with no fact and no turn to another clause between? */
+function governs(after: string, verb: RegExp): boolean {
+  if (NO_FACT.test(after)) return false;
+  const m = new RegExp(verb.source, "giu");
+  for (const v of after.matchAll(m)) if (!TURNS.test(after.slice(0, v.index))) return true;
+  return false;
+}
+/** Asides that may stand between a no and its step ("Do not, under any circumstances, push"; "Never, ever, push"). */
+const NO_ASIDE = /^(?:\s*(?:under\s+any\s+circumstances|ever|please|whatever\s+happens|at\s+all|at\s+any\s+point|really|seriously|i\s+repeat|repeat|again|okay|ok)\s*)*$/iu;
+/**
+ * The parts of the words, with a no whose step comes after an aside joined to it: PARTS splits at the commas
+ * (r12-commands-x12-4).
+ */
+function noParts(words: string): string[] {
+  const raw = words.split(PARTS);
+  const parts: string[] = [];
+  for (let i = 0; i < raw.length; i++) {
+    let p = raw[i];
+    const endsInNo = (t: string) => [...t.matchAll(SAYS_NO_ALL)].some(n => NO_ASIDE.test(t.slice(n.index + n[0].length)));
+    while (i + 1 < raw.length && endsInNo(p)) p = `${p} ${raw[++i]}`;
+    parts.push(p);
+  }
+  return parts;
+}
+/**
+ * The step's word with its no after it: "pushing is not allowed", "pushes are forbidden", "nothing gets pushed",
+ * "nothing should be deleted" (r12-commands-x12-4).
+ */
+function passiveNo(part: string, verb: RegExp): boolean {
+  const m = new RegExp(verb.source, "giu");
+  for (const v of part.matchAll(m)) {
+    const at = v.index + v[0].length;
+    const tail = part.slice(at).replace(/^[\p{L}]*/u, "");
+    if (/^\s+(?:is|are|was|were|will\s+be)\s+(?:not|never)\s+(?:allowed|permitted|ok|okay|wanted|an\s+option)(?![\p{L}])/iu.test(tail)) return true;
+    if (/^\s+(?:isn[’']t|aren[’']t|won[’']t\s+be)\s+(?:allowed|permitted|ok|okay|wanted|an\s+option)(?![\p{L}])/iu.test(tail)) return true;
+    if (/^\s+(?:is|are)\s+(?:forbidden|prohibited|banned|off\s+the\s+table)(?![\p{L}])/iu.test(tail)) return true;
+    const before = part.slice(0, v.index);
+    if (/(?:^|[^\p{L}])nothing\s+(?:gets?|got|is|was|should(?:\s+(?:be|get))?|must(?:\s+(?:be|get))?|may\s+be|will(?:\s+(?:be|get))?|can\s+be)\s*$/iu.test(before)) return true;
+  }
+  return false;
+}
+/** Words that leave the remote alone ("leave the remote alone", "don't touch origin"): a no to sending (r12-commands-x12-4). */
+const LEAVES_REMOTE = /(?:^|[^\p{L}])(?:(?:leave|leaving)\s+(?:the\s+|my\s+|our\s+)?(?:remotes?|origin|upstream|github|gitlab|bitbucket|registry|server)\s+(?:alone|untouched|be)|(?:don[’']?t|do\s+not|never)\s+touch\s+(?:the\s+|my\s+|our\s+)?(?:remotes?|origin|upstream|github|gitlab|bitbucket|registry|server))(?![\p{L}])/iu;
 
 /**
  * A part that keeps every one of a kind of thing ("keep all files", "keep everything", "preserve my data"): a no to

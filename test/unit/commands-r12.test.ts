@@ -131,6 +131,32 @@ describe("the user's no in their own ordinary words (commands-remote-r12-2)", ()
   });
 });
 
+describe("a no that governs the step, and only then (r12-commands-x12-3, r12-commands-x12-4)", () => {
+  const ctx = { os: "linux" as const, home: "/home/ana", cwd: "/home/ana/proj", ember: { paths: ["/home/ana/.config/ember"], pids: [10], names: /^ember$/ }, downloaded: new Set<string>() };
+  const ruled = (words: string, command: string) => wordsRuleOut(classifyCommand(command, "bash", ctx).findings, words);
+
+  it("never reads a plain request as a no: an idiom, a no to something else, or a fact before the step (r12-commands-x12-3)", () => {
+    for (const [words, command] of [
+      ["no problem just push it", "git push origin feature"], ["Without a PR just push the branch", "git push origin feature"],
+      ["I don't need a review so push it", "git push origin feature"], ["install htop, I don't have root so use sudo", "sudo dnf install htop"],
+      ["no worries just push the branch", "git push origin feature"], ["no rush so push it whenever", "git push origin feature"],
+      ["without a review just push", "git push origin feature"], ["don't wait for CI, just push", "git push origin feature"],
+      ["no problem go ahead and publish", "npm publish"], ["no need for a PR so push it", "git push origin feature"],
+    ]) expect(ruled(words, command), `${words} / ${command}`).toBe(false);
+  });
+
+  it("reads the no in an aside, the passive and leaving the remote alone as a no to the step (r12-commands-x12-4)", () => {
+    for (const [words, command] of [
+      ["fix the typo. Do not, under any circumstances, push", "git push origin feature"], ["fix the typo; pushing is not allowed", "git push origin feature"],
+      ["fix the typo. Nothing gets pushed", "git push origin feature"], ["fix the typo and leave the remote alone", "git push origin feature"],
+      ["fix the typo. Never, ever, push", "git push origin feature"], ["fix it. Pushes are forbidden", "git push origin feature"],
+      ["fix it, nothing should be pushed", "git push origin feature"], ["fix it. Don't touch the remote", "git push origin feature"],
+      ["tidy up; deleting is not allowed", "rm -rf build"], ["tidy up. Do not, please, delete", "rm -rf build"], ["bump it; publishing is not permitted", "npm publish"],
+      ["leave origin alone", "git push origin feature"], ["don't you dare push", "git push origin feature"],
+    ]) expect(ruled(words, command), `${words} / ${command}`).toBe(true);
+  });
+});
+
 describe("a download or a conversion saved over a file that is there (y11-8)", () => {
   const W = "C:\\Users\\ana\\Documents\\thesis.docx";
   it("asks before it replaces an existing file, on Linux and Windows", () => {
