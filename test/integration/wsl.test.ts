@@ -193,8 +193,8 @@ suite("WSL on a real Windows runner", () => {
     console.log("pty run", JSON.stringify(out));
     expect(exit).toMatchObject({ ended: "exit", code: 3 });
     expect(out.startsWith(MARKER)).toBe(true);
-    // The launcher's last word, with the command's code: the whole output came back (WSL_RUN_END).
-    expect(out).toContain("\x1b]777;ember-end;3\x07");
+    // The launcher's last word, with its nonce and the command's code: the whole output came back (wslRunEnd).
+    expect(out).toMatch(/\x1b\]777;ember-end;[0-9a-f]{16};3\x07/); // eslint-disable-line no-control-regex -- the end marker
     expect(exit.outputCut).toBeUndefined();
     expect(out).toMatch(/\/dev\/pts\/\d+/);
     expect(out).toContain("term=xterm-256color");
@@ -250,6 +250,34 @@ suite("WSL on a real Windows runner", () => {
     const exit = await cmd.done;
     expect(exit.ended).toBe("stopped-user");
     expect(await carrying(runner, cmd.runId)).toBe("");
+  }, LONG);
+
+  it("lets nothing of a command go on after `kill $$` has ended its run (review wslio-x-1)", async () => {
+    await run(runner, "rm -f /tmp/ember-wa-after");
+    const { exit, out } = await run(runner, "echo before; kill $$; sleep 2; echo after; touch /tmp/ember-wa-after");
+    console.log("kill $$", JSON.stringify(exit), JSON.stringify(out.slice(-200)));
+    expect(exit).toMatchObject({ ended: "exit", code: 143 });
+    expect(exit.outputCut).toBeUndefined();
+    expect(out).toContain("before");
+    expect(out).not.toMatch(/after|Terminated/);
+    await new Promise(r => setTimeout(r, 3_000));
+    const left = await runner.runScript("[ -e /tmp/ember-wa-after ] && echo made || echo none");
+    expect(left?.stdout.toString().trim()).toBe("none");
+  }, LONG);
+
+  it("lets Ctrl+C typed into a run reach a program that handles it (review wslio-x-2)", async () => {
+    const catcher = "python3 -c 'import signal,time,sys\nsignal.signal(signal.SIGINT, lambda *a: print(\"caught\", flush=True))\nprint(\"ready\", flush=True)\ntime.sleep(1.5)\nprint(\"done\", flush=True)'";
+    const cmd = runner.start(spec(catcher));
+    const chunks: Buffer[] = [];
+    cmd.onOutput(c => void chunks.push(Buffer.from(c)));
+    await waitFor(cmd, "ready");
+    cmd.input(Buffer.from("\x03"));
+    const exit = await cmd.done;
+    const out = Buffer.concat(chunks).toString("utf8");
+    console.log("ctrl+c handled", JSON.stringify(exit), JSON.stringify(out.slice(-200)));
+    expect(out).toMatch(/caught[\s\S]*done/);
+    expect(exit).toMatchObject({ ended: "exit", code: 0 });
+    expect(exit.outputCut).toBeUndefined();
   }, LONG);
 
   it("names a program that outlives the run, and leaves it alone", async () => {
@@ -384,8 +412,9 @@ suite("WSL on a real Windows runner", () => {
     // The PTY ends lines with CR LF; the markers are OSC sequences output shaping strips.
     // A cut may end inside a CR LF or inside the end marker itself.
     // eslint-disable-next-line no-control-regex -- the markers are made of control characters
-    const text = out.replace(/\x1b\]777;ember-(start|end;\d+)\x07/g, "").replace(/\x1b\][^\x07]*$/, "").replace(/\r\n/g, "\n").replace(/\r$/, "");
-    console.log("4 MiB run", JSON.stringify({ ...exit, chars: text.length, expected: expected.length, endMarker: out.includes("\x1b]777;ember-end;0\x07") }));
+    const text = out.replace(/\x1b\]777;ember-(start|end;[0-9a-f]{16};\d+)\x07/g, "").replace(/\x1b\][^\x07]*$/, "").replace(/\r\n/g, "\n").replace(/\r$/, "");
+    // eslint-disable-next-line no-control-regex -- the end marker
+    console.log("4 MiB run", JSON.stringify({ ...exit, chars: text.length, expected: expected.length, endMarker: /\x1b\]777;ember-end;[0-9a-f]{16};0\x07/.test(out) }));
     expect(exit).toMatchObject({ ended: "exit", code: 0 });
     expect(expected.startsWith(text)).toBe(true);
     // Whole exactly when Ember says it is whole.

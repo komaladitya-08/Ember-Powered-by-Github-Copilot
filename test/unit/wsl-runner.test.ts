@@ -15,7 +15,7 @@ import { runCommandTool, setCommandJudge, type CommandFlowContext } from "../../
 import { BOOT_TIMEOUT_MS, createWslExec } from "../../app/main/wsl/discover";
 import {
   createWslRunner, FACTS_SCRIPT, FACTS_TTL_MS, GIT_SCRIPT, INSPECT_SCRIPT, LADDER_MS, mountRootOf, parseFacts, parseGitFacts, PRESTART_STOP_MS, PRESTART_SWEEP_MS,
-  parseInspect, parseScriptRead, READ_SCRIPT, runnerFacts, SCRIPT_MARKER, SCRIPT_READ_BYTES, SCRIPT_READ_MS, SCRIPT_END, scriptDone, scriptInput, SWEEP_SCRIPT, toWslPath,
+  parseInspect, parseScriptRead, READ_SCRIPT, runnerFacts, SCRIPT_MARKER, SCRIPT_READ_BYTES, SCRIPT_READ_MS, scriptDone, scriptEnd, scriptInput, SWEEP_SCRIPT, toWslPath,
   windowsRunEnv, wslLaunch, type WslRunner,
 } from "../../app/main/wsl/runner";
 import type { WslDistro } from "../../app/main/wsl/types";
@@ -23,7 +23,7 @@ import { classifyCommand } from "../../app/main/commands/classify";
 import { decideCommand } from "../../app/main/commands/decide";
 import { withRealPaths } from "../../app/main/commands/scripts";
 import { bindingOf, contextOf, factsOf } from "../fixtures/commands/corpus";
-import { fakeLog, fakeSpawn, flush, forbiddenOptions, answerScript, answerWith, utf16, type SpawnCall } from "./wsl-wa-fakes";
+import { fakeLog, fakeSpawn, flush, forbiddenOptions, answerScript, answerWith, runEndBytes, scriptEndBytes, utf16, type SpawnCall } from "./wsl-wa-fakes";
 
 const EXE = "C:\\Program Files\\WSL\\wsl.exe";
 const JOB: JobHostRef = { execPath: "C:\\Program Files\\Ember\\Ember.exe", script: "C:\\Program Files\\Ember\\resources\\app\\job-host.cjs" };
@@ -120,46 +120,57 @@ describe("runnerFacts", () => {
 });
 
 describe("scriptDone", () => {
-  const end = (code: number) => Buffer.from(`\x1b]777;ember-end;${code}\x07`, "latin1");
+  const N = "0123456789abcdef";
+  const end = (code: number, nonce = N) => Buffer.from(`\x1b]777;ember-end;${nonce};${code}\x07`, "latin1");
 
   it("gives what a fixed script printed before its end marker, and the code the marker carries", () => {
-    expect(scriptDone(Buffer.concat([Buffer.from("uid=1000\nhome=/home/ana\n"), end(0)]))).toEqual({ out: Buffer.from("uid=1000\nhome=/home/ana\n"), code: 0 });
-    expect(scriptDone(end(97))).toEqual({ out: Buffer.alloc(0), code: 97 });
+    expect(scriptDone(Buffer.concat([Buffer.from("uid=1000\nhome=/home/ana\n"), end(0)]), N)).toEqual({ out: Buffer.from("uid=1000\nhome=/home/ana\n"), code: 0 });
+    expect(scriptDone(end(97), N)).toEqual({ out: Buffer.alloc(0), code: 97 });
+    // A PTY's `stty olcuc` upper-cases it (review wslio-x-9): the nonce decides, not the case.
+    expect(scriptDone(Buffer.from(end(0).toString("latin1").toUpperCase(), "latin1"), N)).toEqual({ out: Buffer.alloc(0), code: 0 });
   });
 
   it("is no answer when the end never came back: output cut short is never read as all of it (WSL1's lost tail, run 43532157051)", () => {
-    expect(scriptDone(Buffer.from("uid=1000\nhome=/ho"))).toBeNull();
-    expect(scriptDone(Buffer.alloc(0))).toBeNull();
+    expect(scriptDone(Buffer.from("uid=1000\nhome=/ho"), N)).toBeNull();
+    expect(scriptDone(Buffer.alloc(0), N)).toBeNull();
     // Half a marker, and a marker the output only quotes before more output, aren't its end.
-    expect(scriptDone(Buffer.concat([Buffer.from("x"), end(0).subarray(0, 10)]))).toBeNull();
-    expect(scriptDone(Buffer.concat([end(0), Buffer.from("more")]))).toBeNull();
+    expect(scriptDone(Buffer.concat([Buffer.from("x"), end(0).subarray(0, 10)]), N)).toBeNull();
+    expect(scriptDone(Buffer.concat([end(0), Buffer.from("more")]), N)).toBeNull();
+  });
+
+  it("takes no marker but this call's own: a file a script read, ending in another nonce's marker or none, isn't its end (review wslio-x-6)", () => {
+    expect(scriptDone(Buffer.concat([Buffer.from("echo ok\n"), end(0, "fedcba9876543210")]), N)).toBeNull();
+    expect(scriptDone(Buffer.from("echo ok\n\x1b]777;ember-end;0\x07", "latin1"), N)).toBeNull();
   });
 });
 
 describe("scriptInput", () => {
+  const N = "0123456789abcdef";
   it("ends a fixed script with exit (the job host's stdin stays open)", () => {
-    expect(scriptInput("echo hi")).toBe(`(\necho hi\n)\n${SCRIPT_END}\nexit\n`);
+    expect(scriptInput("echo hi", { end: N })).toBe(`(\necho hi\n)\n${scriptEnd(N)}\nexit\n`);
   });
 
-  it("prints the end marker with the script's own exit code last, once the shell has read and run all of it (WSL1's lost tail, run 43532157051)", () => {
-    expect(SCRIPT_END).toBe("e=$?; printf '\\033]777;ember-end;%s\\007' \"$e\"; (exit $e)");
+  it("prints the end marker with this call's nonce and the script's own exit code last, once the shell has read and run all of it (WSL1's lost tail, run 43532157051)", () => {
+    expect(scriptEnd(N)).toBe("e=$?; printf '\\033]777;ember-end;0123456789abcdef;%s\\007' \"$e\"; (exit $e)");
+    expect(() => scriptEnd("x; rm -rf ~")).toThrow();
     // The script runs in a subshell: its own `exit 3` still reaches the marker, and `(exit $e)` hands the final `exit` its code.
-    const text = scriptInput("exit 3", ["x"], "EMBER_DATA_abc");
-    expect(text).toBe(`(\nexit 3\n) <<'EMBER_DATA_abc'\nx\nEMBER_DATA_abc\n${SCRIPT_END}\nexit\n`);
+    const text = scriptInput("exit 3", { end: N, lines: ["x"], delimiter: "EMBER_DATA_abc" });
+    expect(text).toBe(`(\nexit 3\n) <<'EMBER_DATA_abc'\nx\nEMBER_DATA_abc\n${scriptEnd(N)}\nexit\n`);
   });
 
   it("passes data only inside a quoted here-document with a random delimiter", () => {
-    const text = scriptInput(INSPECT_SCRIPT, ["/a; rm -rf ~", "$(reboot)", "`id`"], "EMBER_DATA_abc");
-    expect(text).toBe(`(\n${INSPECT_SCRIPT}\n) <<'EMBER_DATA_abc'\n/a; rm -rf ~\n$(reboot)\n\`id\`\nEMBER_DATA_abc\n${SCRIPT_END}\nexit\n`);
-    const a = scriptInput("cat", ["x"]), b = scriptInput("cat", ["x"]);
+    const text = scriptInput(INSPECT_SCRIPT, { end: N, lines: ["/a; rm -rf ~", "$(reboot)", "`id`"], delimiter: "EMBER_DATA_abc" });
+    expect(text).toBe(`(\n${INSPECT_SCRIPT}\n) <<'EMBER_DATA_abc'\n/a; rm -rf ~\n$(reboot)\n\`id\`\nEMBER_DATA_abc\n${scriptEnd(N)}\nexit\n`);
+    const a = scriptInput("cat", { end: N, lines: ["x"] }), b = scriptInput("cat", { end: N, lines: ["x"] });
     expect(/<<'(EMBER_DATA_[0-9a-f]{16})'/.exec(a)![1]).not.toBe(/<<'(EMBER_DATA_[0-9a-f]{16})'/.exec(b)![1]);
   });
 
   it("refuses data that could end the here-document early", () => {
-    expect(() => scriptInput("cat", ["a\nexit"])).toThrow();
-    expect(() => scriptInput("cat", ["a\rb"])).toThrow();
-    expect(() => scriptInput("cat", ["a\0b"])).toThrow();
-    expect(() => scriptInput("cat", ["EMBER_DATA_abc"], "EMBER_DATA_abc")).toThrow();
+    const end = "0123456789abcdef";
+    expect(() => scriptInput("cat", { end, lines: ["a\nexit"] })).toThrow();
+    expect(() => scriptInput("cat", { end, lines: ["a\rb"] })).toThrow();
+    expect(() => scriptInput("cat", { end, lines: ["a\0b"] })).toThrow();
+    expect(() => scriptInput("cat", { end, lines: ["EMBER_DATA_abc"], delimiter: "EMBER_DATA_abc" })).toThrow();
   });
 });
 
@@ -193,7 +204,7 @@ describe("parseInspect and parseGitFacts", () => {
 describe("wslLaunch", () => {
   const pty = runnerFacts(parseFacts(FACTS_OUT)!, { winPaths: [], windows: WINDOWS });
   const pipes = { ...pty, script: null, pty: false };
-  const o = { exe: EXE, distro: "Ubuntu", jobHost: JOB, env: ENV };
+  const o = { exe: EXE, distro: "Ubuntu", jobHost: JOB, env: ENV, end: "00112233aabbccdd" };
 
   it("runs util-linux script under env SHELL=/bin/sh, through the job host, with WSL_EVAL as the only -c text (PTY)", () => {
     const l = wslLaunch(spec(), pty, o);
@@ -213,7 +224,8 @@ describe("wslLaunch", () => {
     expect([l.command, ...l.args]).toEqual([
       JOB.execPath, JOB.script, "--batch", "--", EXE, "-d", "Ubuntu", "--cd", "/", "--exec", "/bin/bash", ...NO_RC.bash, "-c", WSL_EVAL,
     ]);
-    expect(l.env.EMBER_INNER).toBe(`${WSL_CD}; ${posixBody({ pty: false, from: "b64" })}`);
+    expect(l.env.EMBER_INNER).toBe(`${WSL_CD}; ${posixBody({ pty: false, from: "b64", shell: "bash", path: "/bin/bash" })}`);
+    expect(l.env.EMBER_END).toBe("00112233aabbccdd");
     expect(l.env.TERM).toBe("dumb");
     expect(wslLaunch(spec({ shell: "sh" }), pipes, o).args.slice(-4)).toEqual(["--exec", "/bin/sh", "-c", WSL_EVAL]);
   });
@@ -234,13 +246,13 @@ describe("wslLaunch", () => {
 
   it("replaces the user's WSLENV with exactly Ember's variables, and sets WSL_UTF8", () => {
     const p = wslLaunch(spec(), pty, o).env;
-    expect(p.WSLENV).toBe("EMBER_INNER/u:EMBER_CMD_B64/u:EMBER_RUN_ID/u:EMBER_CWD/u:EMBER_COLS/u:EMBER_ROWS/u:TERM/u:PWD/u");
+    expect(p.WSLENV).toBe("EMBER_INNER/u:EMBER_CMD_B64/u:EMBER_RUN_ID/u:EMBER_END/u:EMBER_CWD/u:EMBER_COLS/u:EMBER_ROWS/u:TERM/u:PWD/u");
     expect(p.PWD).toBe("/home/ana/proj");
     expect(Object.keys(p).filter(k => k.toUpperCase() === "WSLENV")).toEqual(["WSLENV"]);
     expect(p).toMatchObject({ WSL_UTF8: "1", EMBER_RUN_ID: RUN_ID, EMBER_COLS: "120", EMBER_ROWS: "30", ELECTRON_RUN_AS_NODE: "1" });
     // Pipes also send §3.3.1's non-interactive defaults across.
     const q = wslLaunch(spec(), pipes, o).env;
-    expect(q.WSLENV).toBe("EMBER_INNER/u:EMBER_CMD_B64/u:EMBER_RUN_ID/u:EMBER_CWD/u:EMBER_COLS/u:EMBER_ROWS/u:TERM/u:PWD/u:GIT_TERMINAL_PROMPT/u:DEBIAN_FRONTEND/u:SSH_ASKPASS_REQUIRE/u");
+    expect(q.WSLENV).toBe("EMBER_INNER/u:EMBER_CMD_B64/u:EMBER_RUN_ID/u:EMBER_END/u:EMBER_CWD/u:EMBER_COLS/u:EMBER_ROWS/u:TERM/u:PWD/u:GIT_TERMINAL_PROMPT/u:DEBIAN_FRONTEND/u:SSH_ASKPASS_REQUIRE/u");
     expect(q).toMatchObject({ GIT_TERMINAL_PROMPT: "0", DEBIAN_FRONTEND: "noninteractive", SSH_ASKPASS_REQUIRE: "never" });
     expect(p.GIT_TERMINAL_PROMPT).toBeUndefined();
   });
@@ -301,7 +313,7 @@ function distro(o: {
   const reply = (call: SpawnCall, r: Parameters<typeof answerScript>[1]) => {
     if (!o.cutLast) return answerScript(call, r);
     // What answerScript would print, less its last bytes, from wsl.exe that still exits with the script's code.
-    const whole = Buffer.concat([Buffer.isBuffer(r.stdout) ? r.stdout : Buffer.from(r.stdout ?? "", "utf8"), Buffer.from(`\x1b]777;ember-end;${r.code ?? 0}\x07`, "latin1")]);
+    const whole = Buffer.concat([Buffer.isBuffer(r.stdout) ? r.stdout : Buffer.from(r.stdout ?? "", "utf8"), scriptEndBytes(call, r.code ?? 0)]);
     answerWith(call, { ...r, stdout: whole.subarray(0, Math.max(0, whole.length - o.cutLast)) });
   };
   const fake = fakeSpawn(call => {
@@ -322,7 +334,7 @@ function distro(o: {
           const out = o.inspect ? o.inspect(hereDoc(script)) : hereDoc(script).map(p => `1\t${p}\n`).join("");
           if (out === null) reply(call, { stderr: utf16("chdir failed\r\n"), code: 1 });
           else reply(call, { stdout: out });
-        } else if (script.endsWith(`\ntrue\n)\n${SCRIPT_END}\nexit\n`)) {
+        } else if (/\ntrue\n\)\ne=\$\?; printf '[^\n]*\nexit\n$/.test(script)) {
           boots.push(call);
           if (!o.hang?.includes("boot")) reply(call, { stdout: "" });
         } else if (script.includes(READ_SCRIPT)) {
@@ -440,12 +452,14 @@ describe("WSL runner: starting a command", () => {
     expect(w.log.lines.some(l => l.msg === "wsl.output_cut")).toBe(true);
   });
 
-  it("takes a run's output as whole once the end marker came, split between chunks or followed by a background program's output", async () => {
-    for (const parts of [["\x1b]777;ember-e", "nd;0\x07"], ["\x1b]777;ember-end;0\x07", "late line from a background job\n"]]) {
+  it("takes a run's output as whole once its own end marker came, split between chunks or followed by a background program's output", async () => {
+    for (const split of [[0, 10], [0, 30], [1, 0]]) {
       const w = distro();
       const run = w.runner.start(spec());
       await until(() => w.runs.length === 1);
       w.runs[0].child.out(`${MARKER}output\n`);
+      const end = runEndBytes(w.runs[0], 0);
+      const parts = split[0] ? [end, Buffer.from("late line from a background job\n")] : [end.subarray(0, split[1]), end.subarray(split[1])];
       for (const p of parts) w.runs[0].child.out(p);
       w.runs[0].child.exit(0);
       const exit = await run.done;
@@ -459,14 +473,34 @@ describe("WSL runner: starting a command", () => {
     const run = w.runner.start(spec());
     await until(() => w.runs.length === 1);
     w.runs[0].child.out(MARKER);
-    w.runs[0].child.err("\x1b]777;ember-end;0\x07");
+    w.runs[0].child.err(runEndBytes(w.runs[0], 0));
     w.runs[0].child.exit(0);
     expect(await run.done).toMatchObject({ outputCut: true });
   });
 
+  it("takes no end marker the output itself printed: a file's fixed marker, or one with another nonce, hides no lost tail (review wslio-x-4)", async () => {
+    const w = distro();
+    const run = w.runner.start(spec());
+    await until(() => w.runs.length === 1);
+    const nonce = w.runs[0].options.env.EMBER_END;
+    // A fresh nonce per run, 16 hex digits, and only through the launcher's environment (WSLENV).
+    expect(nonce).toMatch(/^[0-9a-f]{16}$/);
+    expect(w.runs[0].options.env.WSLENV.split(":")).toContain("EMBER_END/u");
+    w.runs[0].child.out(`\x1b]777;ember-end;0\x07${MARKER}log line\n\x1b]777;ember-end;0\x07 from a cat'd file\n`);
+    w.runs[0].child.out(`\x1b]777;ember-end;${nonce.replace(/^./, c => (c === "0" ? "1" : "0"))};0\x07`);
+    w.runs[0].child.out("x".repeat(10_000));
+    w.runs[0].child.exit(0);
+    expect(await run.done).toMatchObject({ ended: "exit", code: 0, outputCut: true });
+    const other = distro();
+    const second = other.runner.start(spec());
+    await until(() => other.runs.length === 1);
+    expect(other.runs[0].options.env.EMBER_END).not.toBe(nonce);
+    second.stop("task");
+  });
+
   it("reads no facts, no script, no paths and no git facts from output whose end was lost on the way back (WSL1's lost tail)", async () => {
     // Only the end marker lost: everything the script printed came, yet none of it is taken as the whole answer.
-    const w = distro({ cutLast: "\x1b]777;ember-end;0\x07".length, read: () => "echo ok\n" });
+    const w = distro({ cutLast: "\x1b]777;ember-end;0123456789abcdef;0\x07".length, read: () => "echo ok\n" });
     await expect(w.runner.facts()).rejects.toThrow("Ember couldn't read Ubuntu's set-up");
     // A script cut short would be judged as if it were all of it: the flow then asks, as for one it can't read.
     const r = distro({ cutLast: 30, read: () => `echo ok\n${"#".repeat(40)}\nrm -rf ~\n` });
@@ -531,7 +565,8 @@ describe("WSL runner: starting a command", () => {
     for (const c of w.calls) expect([...c.args, ...Object.values(c.options.env)].join(" ")).not.toContain("SECRET-COMMAND-TEXT");
     expect(forbiddenOptions(w.calls)).toEqual([]);
     expect(w.sweeps[0].signal).toBe("0"); // a natural end only looks for what outlived the run
-    expect(w.sweeps[0].call.child.stdinText()).toBe(`(\n${SWEEP_SCRIPT}\n)\n${SCRIPT_END}\nexit\n`);
+    const sent = w.sweeps[0].call.child.stdinText();
+    expect(sent).toBe(`(\n${SWEEP_SCRIPT}\n)\n${scriptEnd(/ember-end;([0-9a-f]{16});/.exec(sent)![1])}\nexit\n`);
   });
 
   it("doesn't start a distro the command shut down just to look for what outlived the run", async () => {
@@ -872,7 +907,8 @@ describe("WSL runner: inspect and git facts", () => {
     const w = distro({ git: "branch=feature-x\npush=simple\nupstream=origin/feature-x\n" });
     expect(await w.runner.gitFacts("/home/ana/proj")).toEqual({ branch: "feature-x", pushDefault: "simple", upstream: "origin/feature-x" });
     expect(w.probes.at(-1)!.wsl.slice(0, 4)).toEqual(["-d", "Ubuntu", "--cd", "/"]);
-    expect(w.probes.at(-1)!.child.stdinText()).toBe(`(\ncd -- '/home/ana/proj' || exit 97\n${GIT_SCRIPT}\n)\n${SCRIPT_END}\nexit\n`);
+    const sent = w.probes.at(-1)!.child.stdinText();
+    expect(sent).toBe(`(\ncd -- '/home/ana/proj' || exit 97\n${GIT_SCRIPT}\n)\n${scriptEnd(/ember-end;([0-9a-f]{16});/.exec(sent)![1])}\nexit\n`);
     expect(await distro({ git: "branch=\npush=\nupstream=\n" }).runner.gitFacts("/tmp")).toBeNull();
   });
 

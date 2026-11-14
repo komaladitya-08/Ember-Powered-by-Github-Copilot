@@ -2797,8 +2797,12 @@ downloads it on first use per target and checks it before sending.
   there. Never `koffi.view()`.
 - **Nothing from WSL counts as whole without its end marker**: wsl.exe's relay on WSL1 can lose the last 64 KiB of a
   Linux process's output as it exits, with exit code 0 (remote.yml's WSL1 job, run 43532157051). A WSL run's launcher
-  ends with `WSL_RUN_END` (`app/main/commands/run/shells.ts`) and every fixed script with `SCRIPT_END`
-  (`app/main/wsl/runner.ts`), each printing `ESC ] 777;ember-end;<code> BEL` last. A run that ends by itself without it
+  (`wslRunEnd` in `app/main/commands/run/shells.ts`) runs the command's text in a fresh shell of the same program, the
+  text in its environment only (never a subshell: `$$`, `exit`, `exec`, traps and Ctrl+C keep their meaning, and
+  `kill $$` can't leave the rest running past the run), and every fixed script ends with `scriptEnd`
+  (`app/main/wsl/runner.ts`), each printing `ESC ] 777;ember-end;<nonce>;<code> BEL` last. The nonce is random per run
+  (`EMBER_END`, read and unset by the launcher, never exported) or per script call, so no output can hold it.
+  `test/unit/wsl-launcher-shells.test.ts` runs the launcher in bash, dash, zsh, mksh and busybox sh where installed. A run that ends by itself without it
   ends with `outputCut`, which the model gets as a failure saying the output is incomplete, and the command window as
   "The end of its output didn't come back, so what shows here is incomplete."; a fixed script's output without it is no
   answer (facts unreadable, no script read, unknown paths). A remote run whose last bytes don't arrive within the tail's
