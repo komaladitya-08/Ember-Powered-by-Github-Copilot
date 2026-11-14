@@ -4392,6 +4392,30 @@ describe("SQL files and scripts in other languages a command runs (commands-remo
     }
   });
 
+  it("asks before node preloads, python runs a package, make runs a Makefile or npm runs a package.json the task wrote (r10-commands-y10-5)", async () => {
+    for (const [write, run, file] of [
+      ["echo 'x' > a.js", "node --require ./a.js server.js", "a.js"], ["echo 'x' > a.js", "node -r ./a.js server.js", "a.js"],
+      ["echo 'x' > a.mjs", "node --import ./a.mjs x.js", "a.mjs"], ["echo 'x' > a.mjs", "node --loader=./a.mjs x.js", "a.mjs"],
+      ["echo 'x' > pkg/__main__.py", "python3 -m pkg", "pkg/__main__.py"], ["echo 'x' > pkg/__init__.py", "python3 -m pkg", "pkg/__init__.py"],
+      ["echo 'x' > pkg/__main__.py", "python3 pkg", "pkg/__main__.py"], ["echo 'x' > pkg/__main__.py", "python3 pkg/", "pkg/__main__.py"],
+      ["printf 'all:\\n\\trm -rf ~/Documents\\n' > Makefile", "make", "Makefile"], ["printf 'x' > build.mk", "make -f build.mk", "build.mk"], ["printf 'x' > sub/Makefile", "make -C sub", "sub/Makefile"],
+      ["echo '{\"scripts\":{\"test\":\"rm -rf ~\"}}' > package.json", "npm test", "package.json"],
+      ["echo '{}' > package.json", "npm run build", "package.json"], ["echo '{}' > package.json", "yarn run build", "package.json"],
+    ] as const) {
+      const h = flow();
+      expect((await local(h, write)).resultType, write).toBe("success");
+      h.existing.add(`/home/ana/proj/${file}`);
+      expect((await local(h, run)).resultType, run).toBe("denied");
+      expect(h0rules(h), run).toContain("unclear.script-code");
+    }
+    // The project's own files still run.
+    for (const run of ["node -r ./setup.js server.js", "python3 -m pkg", "python3 pkg", "make", "npm test", "npm run build"]) {
+      const ok = flow();
+      for (const f of ["setup.js", "pkg/__main__.py", "Makefile", "package.json"]) ok.existing.add(`/home/ana/proj/${f}`);
+      expect((await local(ok, run)).resultType, run).toBe("success");
+    }
+  });
+
   it("follows a #! interpreter given by path, so a shell script the task wrote there is read and asks (r10-commands-x10-1)", async () => {
     for (const [shebang, interp] of [
       ["#!/home/ana/proj/bin/python3\nprint(1)\n", "/home/ana/proj/bin/python3"], ["#!/usr/bin/env ./bin/python3\nprint(1)\n", "/home/ana/proj/bin/python3"],

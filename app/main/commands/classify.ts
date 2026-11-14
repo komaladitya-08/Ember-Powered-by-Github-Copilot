@@ -194,6 +194,12 @@ export interface ScriptRef {
    * the project's tooling and is judged as before the closed default, as the script itself is (commands-closed-x9-4).
    */
   project?: true;
+  /**
+   * A file the program runs without being named as its script (a Makefile, package.json, a package's __main__.py, a
+   * preloaded module): only a write that names it makes it this command's own, never one Ember can't name (`git pull
+   * && make` and a build.sh whose make writes files runs as before: r10-commands-y10-5).
+   */
+  implied?: true;
 }
 
 /** The administrator's policy key (HKLM\SOFTWARE\Policies\Ember, in any spelling of the hive), refused (D4.5). */
@@ -1237,6 +1243,13 @@ class Classifier {
    * beside that. A pattern, a stream (`/dev/fd/3`, `/proc/self/fd/0`) or more scripts than Ember reads (MAX_SCRIPTS)
    * asks: what would run can't be read first.
    */
+  /** recordScript for a file a program runs without naming it as its script (ScriptRef.implied). */
+  recordImplied(a: Arg, sc: Scope): void {
+    const before = this.scripts.length;
+    this.recordScript(a, "code", sc);
+    if (this.scripts.length > before) this.scripts[this.scripts.length - 1].implied = true;
+  }
+
   recordScript(a: Arg, as: ScriptRef["as"], sc: Scope, candidate = false): void {
     if (a.v === null || a.v === "-" || a.v === "/dev/stdin" || sc.foreign) return;
     if (a.glob) { this.unclear("unclear.script-pattern", "It runs a script named by a pattern, which Ember can't read first."); return; }
@@ -1292,6 +1305,7 @@ class Classifier {
       const hit = (w: { p: string; env: PathEnv }) => names.some(n => isUnder(n, w.p, w.env));
       const snap = this.candidates.get(r);
       if (snap) return snap.unnamed || this.written.slice(0, snap.written).some(hit);
+      if (r.implied) return this.written.some(hit);
       return this.writesUnnamed || this.written.some(hit);
     });
   }
@@ -6902,6 +6916,9 @@ function runScript(h: H, script: Arg, readAs?: ScriptRef["as"]): void {
   // Read first all the same, unless the task's record holds it (recordScript); a folder's entry file, a name an
   // interpreter completes or a pattern that is a download is not this file.
   if (readAs !== undefined && !hit) h.e.recordScript(script, readAs, h.sc);
+  // A folder's entry file is code too (`python3 pkg` runs pkg/__main__.py): one the task wrote asks (r10-commands-y10-5).
+  const entries = /^(python|pypy|py$)/.test(h.key) ? ["__main__.py"] : /^node/.test(h.key) ? ["index.js", "index.mjs", "index.cjs"] : [];
+  if (readAs !== undefined && !script.glob && (/(^|\/)\.{1,2}$|\/$/.test(script.v) || !/\.[^./]+$/.test(folder))) for (const n of entries) h.e.recordImplied(lit(`${folder}/${n}`), h.sc);
   nameCheck(h, script.v, script.v);
   handedToScript(h, script);
 }
@@ -7083,7 +7100,11 @@ reg(NATIVE, Object.keys(INTERPRETERS).filter(k => !["awk", "gawk", "mawk", "nawk
       // A module the task wrote in this folder (`python3 -m a` after writing a.py) is code Ember doesn't read: it asks
       // (judgeScripts), and so does a conftest.py or a test file it wrote that pytest loads (r10-commands-x10-6).
       // Python's own and the everyday tools' modules are found where they are installed.
-      if (!PY_OWN_MODULES.has(mod) && !PY_TOOL_MODULES.has(mod)) h.e.recordScript(lit(`${file}.py`), "code", h.sc);
+      // A package runs its __main__.py after its __init__.py (r10-commands-y10-5).
+      if (!PY_OWN_MODULES.has(mod) && !PY_TOOL_MODULES.has(mod)) {
+        h.e.recordScript(lit(`${file}.py`), "code", h.sc);
+        for (const f of [`${file}/__main__.py`, `${file}/__init__.py`]) h.e.recordImplied(lit(f), h.sc);
+      }
       if (mod === "pytest") pytestCode(h, afterModule(h, p) ?? []);
     }
     h.e.readArgs(p.operands, h.sc);
@@ -7095,6 +7116,8 @@ reg(NATIVE, Object.keys(INTERPRETERS).filter(k => !["awk", "gawk", "mawk", "nawk
       if (!r) continue;
       h.e.usePath(lit(r), "read", h.sc);
       if (/^(\.{1,2}[\\/]|[\\/]|~)/.test(r) && h.e.isDownloaded(lit(r), h.sc)) h.e.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
+      // One the task wrote is code Ember doesn't read: it asks, as `node a.js` does (r10-commands-y10-5).
+      if (/^(\.{1,2}[\\/]|[\\/]|~)/.test(r)) h.e.recordImplied(lit(r), h.sc);
     }
     // `node --run <script>` runs a package.json script, judged by its name like `npm run`.
     const run = values(p, "run");
@@ -8758,6 +8781,8 @@ reg(NATIVE, ["npm", "pnpm", "yarn", "bun", "corepack"], h => {
     return;
   }
   const specs = rest.filter(a => !isOption(a));
+  // A package script is shell Ember doesn't read from package.json: one the task wrote asks (r10-commands-y10-5).
+  if (/^(run|run-script|rum|urn|test|tst|t|start|stop|restart)$/.test(verb) && h.key !== "corepack") h.e.recordImplied(lit("package.json"), h.sc);
   // `pnpm recursive x`, `pnpm m x` and `pnpm multi x` are `pnpm -r x`: the line after the word is pnpm's own
   // (commands-runners-x9-5).
   if (h.key === "pnpm" && /^(recursive|m|multi)$/.test(verb) && specs.length > 0 && !h.e.readsAsMain) { NATIVE.pnpm({ ...h, args: rest }); return; }
@@ -9148,6 +9173,14 @@ reg(NATIVE, ["make", "gmake", "mingw32-make", "nmake", "just", "rake", "invoke",
     return;
   }
   for (const f of values(p, "f", "file", "makefile", "justfile", "build-file", "b", "settings-file", "c", "init-script", "I")) if (f && !STDIN_NAME.test(f)) h.e.usePath(lit(f), "read", h.sc);
+  // A makefile's recipes are shell Ember doesn't read: one the task wrote asks, as a script it wrote does
+  // (r10-commands-y10-5). Its folder is -C's, or this one.
+  if (gnuMake) {
+    const given = values(p, "f", "file", "makefile");
+    const dirs = values(p, "C", "directory");
+    const dir = dirs.length ? dirs[dirs.length - 1] : ".";
+    if (dir !== null) for (const f of given.length ? given : ["GNUmakefile", "makefile", "Makefile"]) if (f) h.e.recordImplied(lit(dir === "." || f.startsWith("/") ? f : `${dir}/${f}`), h.sc);
+  }
   // `ninja -t <tool>` runs one of ninja's own tools, not a target (review #167).
   if (h.key === "ninja" && values(p, "t").length) { ninjaTool(h, values(p, "t")[0]); return; }
   // make takes the word after -j or -l only when it is a count or a variable, so a value the text gives a variable there

@@ -379,7 +379,7 @@ export async function judgeScripts(cls: Classification, io: ScriptIo | null, cla
   const writes = new Set<string>(outer.writes ?? []);
   let anywhere = outer.writesAnywhere === true;
   /** Each script read: its names (lexical, and real when known) and how deep it runs. */
-  type Ran = { names: string[]; depth: number };
+  type Ran = { names: string[]; depth: number; implied?: true };
   /** What each script's own text writes, by that script: another script it runs may change under it. */
   const inner: { by: Ran; writes: string[]; anywhere: boolean }[] = [];
   const ran: Ran[] = [];
@@ -419,7 +419,7 @@ export async function judgeScripts(cls: Classification, io: ScriptIo | null, cla
       where = (await factOf(ref.open, folder)).real;
       if (where === null) { unclear("unclear.script-path", SCRIPT_UNSURE, flavour.basename(ref.path)); continue; }
     }
-    const me: Ran = { names: where !== null && where !== ref.path ? [ref.path, where] : [ref.path], depth };
+    const me: Ran = { names: where !== null && where !== ref.path ? [ref.path, where] : [ref.path], depth, ...(ref.implied ? { implied: true as const } : {}) };
     ran.push(me);
     const name = flavour.basename(ref.path);
     // Its own by any of its names: a write through a link (`> l/t.sh`, l → .) is remembered where it landed too.
@@ -521,8 +521,9 @@ export async function judgeScripts(cls: Classification, io: ScriptIo | null, cla
   const outerAnywhere = outer.writesAnywhere === true;
   for (const r of ran) {
     const hit = (p: string) => r.names.some(n => isUnder(n, p, cmp));
-    const byScript = inner.some(w => w.by !== r && (w.anywhere || w.writes.some(hit)));
-    const byLine = r.depth > 1 && (outerAnywhere || outerWrites.some(hit));
+    // A file run without being named (ScriptRef.implied) is written first only by a write that names it.
+    const byScript = inner.some(w => w.by !== r && ((w.anywhere && !r.implied) || w.writes.some(hit)));
+    const byLine = r.depth > 1 && ((outerAnywhere && !r.implied) || outerWrites.some(hit));
     if (byScript || byLine) { unclear("unclear.script-written", WRITTEN_FIRST); break; }
   }
   const moreWrites = writes.size !== (outer.writes ?? []).length || anywhere !== outerAnywhere;
