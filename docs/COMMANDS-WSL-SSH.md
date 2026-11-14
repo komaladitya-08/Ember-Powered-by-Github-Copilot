@@ -220,7 +220,9 @@ Ember stops and asks before a command that:
   `p4 obliterate`, `p4 revert` of opened work, `gh repo delete`, `kubectl delete`, `terraform destroy`;
 - **reads or changes passwords, keys or other secrets**: anything under `~/.ssh` (except reading public keys,
   `known_hosts` and `config`), `~/.gnupg`, `~/.aws`, `~/.azure`, `~/.kube`, `~/.config/gh`, `~/.docker/config.json`,
-  `.netrc`, `.npmrc`, `.pypirc`, `.env` files, GitHub Copilot's sign-in (`~/.config/github-copilot`, `~/.copilot`), cloud
+  `.netrc`, `.npmrc`, `.pypirc`, `.env` files, WordPress's `wp-config.php`, the settings files where mail, chat and
+  download clients keep a password (`~/.msmtprc`, `~/.mbsyncrc`, `~/.fetchmailrc`, `~/.offlineimaprc`, `~/.authinfo`,
+  mutt's and aerc's, `~/.curlrc`, `~/.wgetrc`, HexChat's `servlist.conf`), GitHub Copilot's sign-in (`~/.config/github-copilot`, `~/.copilot`), cloud
   and hosting tools' sign-ins (`~/.config/gcloud`, `~/.oci`, `~/.config/doctl`), Kerberos tickets, the display's key
   (`~/.Xauthority`), chat apps' and VS Code's stored sign-ins, keychains and credential stores, browser profiles,
   password managers, `/etc/shadow`, your shell history, secrets mounted for a container or a service (`/run/secrets`,
@@ -957,6 +959,9 @@ A command's output goes to Copilot as part of the task, marked as untrusted data
 out every line you typed, withholds what follows a password-like prompt (until the program's next line after you press
 Enter, or to the end when the command can't take typing), and hides the passwords, keys and tokens it recognises
 (GitHub, AWS, Slack, Google, npm, OpenAI, Anthropic, Stripe, Hugging Face, GitLab, SendGrid, DigitalOcean and Twilio tokens and keys, private keys, JWTs, `password=` values, `Authorization:` headers, a Docker config's `"auth"`, a one-line `.netrc` entry's password, passwords
+as config files write them (PHP's `define('DB_PASSWORD', …)` and `'password' => …`, XML's `<password>…</password>` and
+`<add key="Password" value="…"/>`, a line that is only `password …`, a mail client's `smtp_pass = …`, curl's `user =
+name:…`), passwords
 in URLs, a password given to a program's short option such as `mysql -p…` (also after a prompt such as `C:\>`, a
 comment's `#` or from a quoted folder), `curl -u user:…`, `docker login -p …` or `sshpass -p …`, the same where the arguments are a list
 (`["mysql", "-uroot", "-p…"]`, `["sshpass", "-p", "…"]`, `"--password", "…"`, but not after `"--no-password"`, nor `"none"`,

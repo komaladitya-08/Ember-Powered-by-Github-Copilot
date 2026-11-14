@@ -259,6 +259,12 @@ const SECRET_HOME_POSIX = [
   ".config/heroku/", ".config/op/", ".oci/", ".config/helm/", ".m2/settings.xml", ".Xauthority", ".ICEauthority",
   ".config/Slack/", ".config/discord/", ".config/Signal/", ".config/Code/User/globalStorage/", ".config/vivaldi/",
   ".config/opera/",
+  // Mail, chat and download clients that keep a password in their own settings file, in plain text or a format the
+  // redactor can't always read (`password X`, `Pass X`, hexchat's `P=`, curl's `user = name:password`):
+  // commands-remote-r12-1.
+  ".msmtprc", ".config/msmtp/", ".mbsyncrc", ".config/isyncrc", ".fetchmailrc", ".offlineimaprc", ".config/offlineimap/",
+  ".authinfo*", ".config/aerc/accounts.conf", ".muttrc", ".mutt/muttrc", ".config/mutt/", ".curlrc", ".wgetrc",
+  ".config/hexchat/servlist.conf", ".xchat2/servlist_.conf",
   // macOS.
   "Library/Keychains/", "Library/Cookies/", "Library/Application Support/Google/Chrome/",
   "Library/Application Support/Firefox/", "Library/Application Support/1Password/",
@@ -327,6 +333,8 @@ function secretBasename(name: string, ci: boolean): boolean {
   if (/^\.?(passwords?|secrets?)(\.(txt|csv|json|ya?ml|ini|cfg|conf|md|bak|old))?$/.test(l)) return true;
   if (/^\.?(credentials?|api[-_]?keys?|tokens?)\.(txt|csv|ini|cfg|conf|bak|old)$/.test(l)) return true;
   if (/^\.(vault[-_]?pass(word)?(\.txt)?|htpasswd|pgpass|boto|s3cfg)$/.test(l)) return true;
+  // WordPress's settings file is its database password and its signing keys (commands-remote-r12-1); its sample isn't.
+  if (l === "wp-config.php") return true;
   return false;
 }
 
