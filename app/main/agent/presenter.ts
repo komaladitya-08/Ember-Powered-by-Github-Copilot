@@ -1500,11 +1500,15 @@ export class Presenter {
   }
 
   private retryAside(left: number): void {
-    if (left <= 0) return;
     this.asideTimer = this.timers.set(() => {
       this.asideTimer = null;
       if (this.kind !== "aside" || !this.visible || !this.unseen) return;
-      if (!this.reshow("aside")) this.retryAside(left - 1);
+      if (this.reshow("aside")) return;
+      if (left > 1) { this.retryAside(left - 1); return; }
+      // Its time to wait is up: an announcement is news no longer, and showing it whenever the bubble next freed said a
+      // step minutes old in the present tense (r12-voice-x12-5). It goes, its row staying on the card. A line the user
+      // must act on still holds, and waits on (it goes with the task's next work).
+      if (!this.asideNeedsYou) this.hide();
     }, ASIDE_RETRY_MS);
   }
 

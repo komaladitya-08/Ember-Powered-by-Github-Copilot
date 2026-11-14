@@ -1697,6 +1697,31 @@ describe("a background task's lines for the user, queued behind everyone else's 
     expect(shown().at(-1)).toBe(`back:${ANN}`);
   });
 
+  it("drops an announcement it couldn't show within its 2 minutes, never showing it stale when the bubble next frees (r12-voice-x12-5)", () => {
+    const { back, fore, shown } = scene();
+    fore.taskStarted();
+    fore.progress("Step 0");
+    back.taskStarted();
+    back.progress("Looking at the inbox");
+    back.workedWithoutAsking(ANN);
+    // The foreground task works on for 400 s, a line every 10 s; the background task moves on meanwhile.
+    for (let i = 1; i <= 40; i++) { vi.advanceTimersByTime(10_000); fore.progress(`Step ${i}`); }
+    back.progress("Done deleting, now archiving");
+    fore.outcome({ title: "Done", text: "Sent.", emotion: "happy", gesture: "none", mood: "done" } as never);
+    vi.advanceTimersByTime(60_000);
+    expect(shown().filter(l => l === `back:${ANN}`)).toEqual([]);
+    // A line that needs the user still waits its turn as long as it holds (companion-c11-1).
+    const s2 = scene();
+    s2.fore.taskStarted();
+    s2.fore.progress("Step 0");
+    s2.back.taskStarted();
+    s2.back.progress(WAITING, { needsYou: true });
+    for (let i = 1; i <= 20; i++) { vi.advanceTimersByTime(10_000); s2.fore.progress(`Step ${i}`); }
+    s2.fore.outcome({ title: "Done", text: "Sent.", emotion: "happy", gesture: "none", mood: "done" } as never);
+    vi.advanceTimersByTime(60_000);
+    expect(s2.shown().at(-1)).toBe(`back:${WAITING}`);
+  });
+
   it("waits behind a question, and shows once it is answered (companion-c11-1)", async () => {
     let up = true;
     let answered!: () => void;
