@@ -30,13 +30,15 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # The checks job's slowest run (43515013454, d41898c): about 6 min before the integration step, 16 min 24 s in it
+  # and the renderer journeys up to 7 min 20 s where they finished, about 30 min in all, so 40 leaves about 10. The
+  # integration step grew from 9 min in a day: split it if the job nears 40.
   checks:
     name: Lint, typecheck, unit tests, build
     if: github.event_name != 'workflow_dispatch' || inputs.only == 'all' || inputs.only == 'linux'
     runs-on: ubuntu-24.04
-    # 40, not 25: on 13 November the integration step took up to 16 min 24 s (run 43515013454) and the renderer
-    # journeys, where they finished, up to 7 min 20 s, about 30 min in all with the 6 min before them, so 25 cancelled
-    # passing runs. The integration step grew from 9 min in a day: split it if the job nears 40.
+    # 40, not 25: at d41898c the integration step (the speech tests among them) took 16 min 24 s, and the job ran
+    # out of time 2 min 43 s into the renderer journeys with nothing failing (install-docs-r10-1).
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

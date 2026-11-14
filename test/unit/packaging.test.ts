@@ -770,9 +770,10 @@ describe("staging in CI", () => {
   it("measures the checks job's limit from its slowest run, the one 25 minutes cancelled (r10-install-x10-2)", () => {
     // Run 43515013454's integration step ran 22:02:10 to 22:18:34 and the job was cancelled at 25 min 15 s; a
     // renderer journey cut off by the limit is not a duration, so the finished ones (up to 7 min 20 s) are quoted.
-    const checks = ci.slice(ci.indexOf("\n  checks:\n"), ci.indexOf("\n  el8:\n"));
-    expect(checks).toContain("16 min 24 s (run 43515013454)");
+    const checks = ci.slice(ci.indexOf("\n  # The checks job's slowest run"), ci.indexOf("\n  el8:\n"));
+    expect(checks).toMatch(/^\n {2}# The checks job's slowest run \(43515013454, d41898c\)[^\n]*16 min 24 s/);
     expect(checks).toContain("up to 7 min 20 s");
+    expect(checks).toContain("\n  checks:\n");
   });
   it("lets rpm.sh build another release of the same version (an upgrade to test)", () => {
     const spec = fs.readFileSync(path.resolve("packaging/rpm/ember.spec"), "utf8");
