@@ -33,7 +33,7 @@ import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import type { ConnectResult, ExtensionsApi, Installed, Marketplace, MarketplaceEntry, ToolInfo } from "../../shared/extensions";
 import { EXTENSION_ON_UNSAVED, MARKETPLACE_BUILT_IN_KEPT, MARKETPLACE_MANAGED_KEPT, addMarketplaceFailed, browseFailed, extensionUnsaved } from "../../renderer/home/extensions-copy";
 import type { OS } from "../../shared/shortcuts";
-import { CHECKABLE, REFUSED, RESULT_MAX, callForCheck, classify, emberReachOf, failureNote, gateAnnouncement, gateQuestion, plainName, wrapResult, writeOutHidden } from "./gate";
+import { CHECKABLE, REFUSED, RESULT_MAX, UNANSWERED, callForCheck, classify, emberReachOf, failureNote, gateAnnouncement, gateQuestion, plainName, wrapResult, writeOutHidden } from "./gate";
 import { pluginPath, readMarketplace, readPlugin, reachOf, firstFile, MARKETPLACE_PLACES, type ServerSpec } from "./manifest";
 import { canonical, checkPins, isReadOnly, pinAll, schemaWords, shownHash, toolHash, type PinnedTool } from "./pin";
 import { probeHttp, probeStdio, servedTools, type ProbeResult } from "./probe";
@@ -186,6 +186,8 @@ function why(err: unknown, fallback: string): string {
  */
 interface SessionGate {
   refused: Set<string>;
+  /** Tools whose question nobody answered this turn: not asked again until the next turn, and never a no. */
+  unanswered: Set<string>;
   shown: Map<string, boolean>;
   live: (() => Promise<ShownTool[]>) | null;
   /** Server keys that changed their tool list this session (their hints can't be re-checked). */
@@ -849,7 +851,7 @@ export class ExtensionsService implements ExtensionsApi {
   forSession(): SessionExtensions | undefined {
     // After a fill from the vault every call is refused (gate.ts): the model isn't offered them (integrations-r10-2).
     if (!this.active() || this.vaultFilled()) return undefined;
-    const gate: SessionGate = { refused: new Set(), shown: new Map(), live: null, listChanged: new Set(), epoch: this.epoch, withdrawn: new Set(), mute: new Set(), stops: new Map(), tools: new Map() };
+    const gate: SessionGate = { refused: new Set(), unanswered: new Set(), shown: new Map(), live: null, listChanged: new Set(), epoch: this.epoch, withdrawn: new Set(), mute: new Set(), stops: new Map(), tools: new Map() };
     this.session = gate;
     const mcpServers: Record<string, MCPServerConfig> = {};
     for (const item of this.items) {
@@ -886,7 +888,7 @@ export class ExtensionsService implements ExtensionsApi {
       listChanged: server => this.announced(gate, server),
       settled: () => this.settle(gate),
       // (And a no this turn, to a question no task put, with it: integ-x-4. A task's no stands until userAsked.)
-      newTurn: () => { gate.refused.clear(); this.saidNoTurn = false; },
+      newTurn: () => { gate.refused.clear(); gate.unanswered.clear(); this.saidNoTurn = false; },
     };
   }
 
@@ -1103,7 +1105,7 @@ export class ExtensionsService implements ExtensionsApi {
       ...(current ? { item: { enabled: current.enabled, consented: current.consentedAt !== null } } : {}),
       ...(tool ? { tool } : {}),
       shownAsPinned: shownAsPinned && gate.shown.get(name) === true,
-      tainted: this.tainted, refused: gate.refused.has(name), saidNo: this.saidNoNow(), remote: e?.server.spec?.type !== "stdio",
+      tainted: this.tainted, refused: gate.refused.has(name), unanswered: gate.unanswered.has(name), saidNo: this.saidNoNow(), remote: e?.server.spec?.type !== "stdio",
       hintsStale: !!e && gate.listChanged.has(e.server.key), serverStopped: !!e && gate.withdrawn.has(e.server.key),
       autopilot: this.o.autopilot?.() === true,
       vaultFilled: this.vaultFilled(),
@@ -1199,8 +1201,10 @@ export class ExtensionsService implements ExtensionsApi {
       return current.verdict === "deny" ? deny(current.reason) : { permissionDecision: "allow" };
     }
     if (answer === "once" && after) return deny(after.reason);
+    // Nobody answered (it ran out of time, was stopped, or couldn't be put up): not a no, and not asked again this turn.
+    if (answer !== "deny") { gate.unanswered.add(input.toolName); return deny(UNANSWERED); }
     gate.refused.add(input.toolName);
-    if (answer === "deny") this.saidNoTurn = true;
+    this.saidNoTurn = true;
     return deny(REFUSED);
   }
 

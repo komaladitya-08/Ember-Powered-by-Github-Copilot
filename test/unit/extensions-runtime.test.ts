@@ -5,7 +5,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { classify, emberDataOf, emberReachOf, gateAnnouncement, gateQuestion, wrapResult, argsSummary, plainName, EMBER_DATA_HELD, EMBER_DATA_REFUSED, EMBER_DATA_UNASKED, REFUSED, SAID_NO_UNASKED, VAULT_FILLED, type GateInput } from "../../app/main/extensions/gate";
+import { classify, emberDataOf, emberReachOf, gateAnnouncement, gateQuestion, wrapResult, argsSummary, plainName, EMBER_DATA_HELD, EMBER_DATA_REFUSED, EMBER_DATA_UNASKED, REFUSED, SAID_NO_UNASKED, UNANSWERED, VAULT_FILLED, type GateInput } from "../../app/main/extensions/gate";
 import { canonical, checkPins, isReadOnly, pinAll, schemaWords, toolHash, shownHash, shownSchema, type ServedTool } from "../../app/main/extensions/pin";
 import { readMarketplace, readPlugin, serverSpec, inside, pluginPath, reachOf } from "../../app/main/extensions/manifest";
 import { probeHttp, probeStdio, rpcAnswer, servedTools } from "../../app/main/extensions/probe";
@@ -2207,6 +2207,29 @@ describe("ExtensionsService", () => {
     answers = ["once"];
     expect(await call(ext, "web-lookup", { q: "x" })).toEqual({ permissionDecision: "allow" });
     expect(asked).toEqual(['Use “lookup” from remote? With "{\\"q\\":\\"x\\"}".']);
+  });
+
+  it("never tells the model the user said no to a question nobody answered, nor asks it again this turn (integrations-r10-4)", async () => {
+    const s = await installed();
+    const ext = s.forSession()!;
+    shown(ext);
+    answers = [null];
+    const first = await call(ext, "fake-post_message", { text: "hi" }) as { permissionDecision: string; permissionDecisionReason?: string };
+    expect(first.permissionDecision).toBe("deny");
+    expect(first.permissionDecisionReason).toBe(UNANSWERED);
+    expect(first.permissionDecisionReason).not.toMatch(/said no/);
+    // Not asked again this turn, and still not called a no.
+    const again = await call(ext, "fake-post_message", { text: "hi" }) as { permissionDecision: string; permissionDecisionReason?: string };
+    expect(again).toEqual({ permissionDecision: "deny", permissionDecisionReason: UNANSWERED });
+    expect(asked.length).toBe(1);
+    // An unanswered question isn't a no: a tool that changes things isn't held back for it (said-no), and next turn it asks again.
+    ext.newTurn?.();
+    answers = ["once"];
+    expect(await call(ext, "fake-post_message", { text: "hi" })).toEqual({ permissionDecision: "allow" });
+    expect(asked.length).toBe(2);
+    // A real no is still said as one.
+    answers = ["deny"];
+    expect(await call(ext, "fake-post_message", { text: "again" })).toEqual({ permissionDecision: "deny", permissionDecisionReason: REFUSED });
   });
 
   describe("in Assisted (integrations-r12-1, -c12-1)", () => {

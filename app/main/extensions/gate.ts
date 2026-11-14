@@ -54,6 +54,8 @@ export interface GateInput {
   tainted: boolean;
   /** The user said no to this tool earlier in the turn. */
   refused: boolean;
+  /** A question about this tool went unanswered earlier in the turn: not asked again now, and never called a no. */
+  unanswered?: boolean;
   /**
    * A no of the user's still stands (ExtensionsService.saidNoNow): one to any question a task put (a step, a command),
    * while that task runs and after it until the user's next own request, or one to an extension's call, for the rest of
@@ -167,6 +169,7 @@ export function classify(g: GateInput): { verdict: GateVerdict; reason: string }
   if (g.serverStopped) return { verdict: "deny", reason: "Ember stopped this extension's server for now, because it changed its list of tools during the conversation. Don't try its tools again now; tell the user." };
   if (!g.shownAsPinned) return changed;
   if (g.refused) return { verdict: "deny", reason: "The user said no to this tool. Don't try it again or try another way." };
+  if (g.unanswered) return { verdict: "deny", reason: UNANSWERED };
   if (g.vaultFilled) return { verdict: "deny", reason: VAULT_FILLED };
   if (g.emberData === "names") return { verdict: "deny", reason: EMBER_DATA_REFUSED };
   if (g.emberHolds && !isReadOnly(g.tool)) return { verdict: "deny", reason: EMBER_DATA_HELD };
@@ -305,6 +308,13 @@ export function failureNote(extName: string, toolName: string, tainted = true): 
 
 /** What the model is told after the user said no (final: no retry, no other way). */
 export const REFUSED = "The user said no. Don't try this again or try another way; tell them you didn't do it.";
+
+/**
+ * What the model is told of a call whose question nobody answered (it ran out of time, was stopped or couldn't be put
+ * up): not a no (CLAUDE.md "A question nobody answered is not a no"), and not asked again this turn (integrations-r10-4:
+ * the model was told "The user said no").
+ */
+export const UNANSWERED = "The user didn't answer the question about this, so Ember didn't do it. Don't try it again now; tell them it waits for their yes if they still want it.";
 
 /** The most of a result the model gets. */
 export const RESULT_MAX = 60_000;
