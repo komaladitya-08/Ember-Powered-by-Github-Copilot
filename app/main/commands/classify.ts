@@ -8304,7 +8304,7 @@ git(["worktree"], h => {
 // checkout-index writes each file at <prefix><path>: a prefix ending in a slash is a folder, any other the start of
 // each name (review #169). Without one it writes the work tree's own files (writesUnnamedFiles).
 /** Kubernetes kinds whose manifest holds a container's environment or a config's values (`kubectl get deploy -o yaml`). */
-const K8S_HOLDS_ENV = /^((deploy(ment)?s?|po(d|ds)?|sts|statefulsets?|ds|daemonsets?|jobs?|cronjobs?|cj|rs|replicasets?|cm|configmaps?|all)(\.[a-z.]+)?)(\/|,|$)/;
+const K8S_HOLDS_ENV = /^((deploy(ment)?s?|po(d|ds)?|sts|statefulsets?|ds|daemonsets?|jobs?|cronjobs?|cj|rs|replicasets?|cm|configmaps?|all|dc|deploymentconfigs?)(\.[a-z.]+)?)(\/|,|$)/;
 /** Does kubectl's `-o`/`--output` write the objects out whole (yaml, json, a template), or is it one Ember can't see? */
 function wholeOutput(args: readonly Arg[]): boolean {
   return args.some((a, k) => {
@@ -8313,6 +8313,8 @@ function wholeOutput(args: readonly Arg[]): boolean {
     const format = m[1] !== undefined && m[1] !== "" ? m[1] : args[k + 1]?.v ?? null;
     // A template that picks only names and states (`{.items[0].metadata.name}`) holds none of the environment.
     if (format !== null && /^(jsonpath|go-template|template)/.test(format) && /\.(metadata|status)\./.test(format) && !/\.(env|data|stringData|spec|value|containers)\b|\{\.?\}|\{\.items\}/i.test(format)) return false;
+    // Columns that pick a container's environment, a config's data or a value print them too (r11-commands-y11-6).
+    if (format !== null && /^custom-columns/.test(format)) return /\.(env|envFrom|data|stringData|value)\b/i.test(format);
     return format === null || /^(yaml|json|jsonpath|go-template|template)/.test(format);
   });
 }
@@ -9059,6 +9061,11 @@ reg(NATIVE, Object.keys(CLOUD_CLIS), h => {
     // put there included, and helm's values with every default or its whole release hold the chart's secrets
     // (commands-remote-y10-7).
     || ((h.key === "kubectl" || h.key === "oc") && verbs[0] === "get" && K8S_HOLDS_ENV.test(verbs[1] ?? "") && wholeOutput(h.args))
+    // `describe` of a workload prints its containers' environment values, and of a config map its data; lambda's
+    // configuration holds its environment variables (r11-commands-y11-6). (A pod's, everyday debugging, still runs:
+    // left for the owner.)
+    || ((h.key === "kubectl" || h.key === "oc") && verbs[0] === "describe" && K8S_HOLDS_ENV.test(verbs[1] ?? "") && !/^po(d|ds)?(\/|,|$)/.test(verbs[1] ?? ""))
+    || (h.key === "aws" && /^lambda get-function(-configuration)?\b/.test(all))
     || (h.key === "helm" && verbs[0] === "get" && (/^(all|manifest|values)$/.test(verbs[1] ?? "")) && (verbs[1] !== "values" || h.args.some(a => /^(-a|--all)$/.test(a.v ?? ""))))) {
     h.e.add("secret", "secret.cloud", SAYS.secrets, { program: `${h.key} ${verb}` });
     return;

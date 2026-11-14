@@ -226,6 +226,21 @@ describe("a workload's manifest or helm's values written out whole (commands-rem
     }
     for (const cmd of ["kubectl get pods", "kubectl get deploy -o wide", "helm get values x", "kubectl get svc x -o yaml"]) expect(decide(cmd).classes, cmd).not.toContain("secret");
   });
+
+  it.each([
+    "oc get dc web -o yaml", "oc get deploymentconfig web -o json", "kubectl get deploy web -o custom-columns=E:.spec.template.spec.containers[*].env",
+    "kubectl describe deploy web", "kubectl describe sts db", "oc describe cm app", "aws lambda get-function-configuration --function-name x",
+  ])("files %s as a secret too, as it prints the environment's values (r11-commands-y11-6)", cmd => {
+    const r = result(cmd);
+    expect(r.decision.verdict, cmd).toBe("ask");
+    expect(keptQuestion(r.decision, r.cls.findings), cmd).toBe("secret");
+  });
+
+  it("still runs a listing of names and a description of what holds no environment (r11-commands-y11-6)", () => {
+    for (const cmd of ["kubectl describe svc web", "kubectl describe node n1", "kubectl describe pod web-1", "kubectl get deploy -o custom-columns=NAME:.metadata.name", "aws lambda list-functions"]) {
+      expect(decide(cmd).classes, cmd).not.toContain("secret");
+    }
+  });
 });
 
 describe("a program Ember doesn't know, after the user's words against it (r11-commands-x11-1)", () => {
