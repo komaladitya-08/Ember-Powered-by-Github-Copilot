@@ -39,7 +39,7 @@ import { canonical, checkPins, isReadOnly, pinAll, schemaWords, shownHash, toolH
 import { probeHttp, probeStdio, servedTools, type ProbeResult } from "./probe";
 import { SAVED_OUTPUT } from "../agent/runtime-temp";
 import { ExtensionStore, copyPlugin, type StoredItem, type StoredServer } from "./store";
-import { itemDigest, type ExtensionSealStore } from "./seal";
+import { itemDigest, pluginDigest, pluginStamp, sealDigest, type ExtensionSealStore } from "./seal";
 import { MCP_TOOL_NAME, clashingToolNames, modelToolName } from "./tool-name";
 
 export interface ExtensionsDeps {
@@ -267,6 +267,11 @@ export class ExtensionsService implements ExtensionsApi {
    * until the user agrees to it again in Home. Every item read at start is in it until the seal has been read.
    */
   private untrusted = new Map<StoredItem, string>();
+  /**
+   * Each trusted item's plugin folder as it was when Ember trusted it (r12-safety-x12-4): its digest, sealed with the
+   * item, and a stamp to tell cheaply that nothing changed since. A folder that differs is never launched or probed.
+   */
+  private folders = new Map<StoredItem, { digest: string; stamp: string }>();
   /** A save while the seal was still being read at start: the seal is written once it has been. */
   private sealOwed = false;
   /** True until the seal has been read at start. */
@@ -294,7 +299,17 @@ export class ExtensionsService implements ExtensionsApi {
     });
     // Revoke an earlier run's leases. Legacy pid files are dropped too; their numbers are never signalled.
     try { for (const f of fs.readdirSync(this.store.runDir)) fs.rmSync(path.join(this.store.runDir, f), { force: true }); } catch { /* no run folder yet */ }
-    this.sealed = (o.seal ? o.seal.read().catch(() => null) : Promise.resolve(null)).then(d => this.unseal(d));
+    const store = this.store;
+    this.sealed = (async () => {
+      const digests = o.seal ? await o.seal.read().catch(() => null) : null;
+      // Each item's folder as it is now, its stamp taken first so that a change while it is read shows later.
+      const now = new Map<StoredItem, { digest: string; stamp: string }>();
+      for (const item of this.untrusted.keys()) {
+        const dir = store.pluginDir(item.id), stamp = pluginStamp(dir);
+        now.set(item, { stamp, digest: await pluginDigest(dir) });
+      }
+      this.unseal(digests, now);
+    })();
   }
 
   /**
@@ -302,11 +317,14 @@ export class ExtensionsService implements ExtensionsApi {
    * Ember, or not as it is now. It stays in the list, so Home shows it, but its agreement is withdrawn and it is neither
    * started nor probed until the user agrees to it again (safety-privacy-r12-2).
    */
-  private unseal(digests: string[] | null): void {
+  private unseal(digests: string[] | null, folders: Map<StoredItem, { digest: string; stamp: string }>): void {
     const held = new Set(digests ?? []);
     let withdrawn = 0;
     for (const [item, digest] of [...this.untrusted]) {
-      if (!this.items.includes(item) || held.has(digest)) { this.untrusted.delete(item); continue; }
+      if (!this.items.includes(item)) { this.untrusted.delete(item); continue; }
+      const folder = folders.get(item);
+      // The item as written and its plugin's files as copied, both as sealed (r12-safety-x12-4).
+      if (folder && held.has(sealDigest(digest, folder.digest))) { this.untrusted.delete(item); this.folders.set(item, folder); continue; }
       if (item.consentedAt !== null) { item.consentedAt = null; withdrawn++; }
     }
     this.sealing = false;
@@ -322,13 +340,52 @@ export class ExtensionsService implements ExtensionsApi {
   private writeSeal(): void {
     if (this.sealing) { this.sealOwed = true; return; }
     if (!this.o.seal) return;
-    const digests = this.items.filter(i => !this.untrusted.has(i)).map(itemDigest);
+    // Each with its folder as Ember trusted it, never as it is now: a folder changed since stays unsealed.
+    const digests = this.items.filter(i => !this.untrusted.has(i) && this.folders.has(i)).map(i => sealDigest(itemDigest(i), this.folders.get(i)!.digest));
     void this.o.seal.write(digests).then(kept => { if (!kept) this.o.log.warn("extensions.seal_not_kept", {}); });
   }
 
   /** May this item be started or probed: read once the seal was, and either written by Ember or agreed again since? */
   private trusted(item: StoredItem): boolean {
     return !this.sealing && !this.untrusted.has(item);
+  }
+
+  /** Trusts an item's plugin folder as it is now (Ember copied it, or the user agreed to it as it is). */
+  private async trustFolder(item: StoredItem): Promise<void> {
+    const dir = this.store.pluginDir(item.id), stamp = pluginStamp(dir);
+    this.folders.set(item, { stamp, digest: await pluginDigest(dir) });
+  }
+
+  /**
+   * Is a trusted item's plugin folder as it was when Ember trusted it (r12-safety-x12-4)? Its stamp first; where that
+   * changed, its content: the same content takes the new stamp, and a change withdraws the agreement, as an item the
+   * seal doesn't hold has it withdrawn at start, so it is neither launched nor probed until the user agrees again.
+   */
+  private async intact(item: StoredItem): Promise<boolean> {
+    const was = this.folders.get(item);
+    if (!was) return false;
+    const dir = this.store.pluginDir(item.id), stamp = pluginStamp(dir);
+    if (stamp === was.stamp) return true;
+    const digest = await pluginDigest(dir);
+    if (this.folders.get(item) !== was || !this.items.includes(item)) return false;
+    if (digest === was.digest) { this.folders.set(item, { digest, stamp }); return true; }
+    this.folders.delete(item);
+    this.untrusted.set(item, itemDigest(item));
+    if (item.consentedAt !== null) item.consentedAt = null;
+    this.o.log.warn("extensions.plugin_changed", { ext: item.id });
+    this.stopServers(item.id);
+    try { this.save(); } catch (err) { this.o.log.warn("extensions.save_failed", { err }); }
+    this.changed();
+    return false;
+  }
+
+  /** The same, synchronously, for a session's tools: only an unchanged stamp counts; anything else is looked at and left out now. */
+  private intactNow(item: StoredItem): boolean {
+    const was = this.folders.get(item);
+    if (was && pluginStamp(this.store.pluginDir(item.id)) === was.stamp) return true;
+    // Looked at by content: the same files are taken back (the next conversation has them), changed ones withdrawn.
+    void this.intact(item).then(ok => { if (ok) this.changed(); }, err => this.o.log.warn("extensions.check_failed", { ext: item.id, err }));
+    return false;
   }
 
   /**
@@ -687,6 +744,8 @@ export class ExtensionsService implements ExtensionsApi {
         ...(manifest.version ?? listed.version ? { version: manifest.version ?? listed.version } : {}),
         ...(manifest.description ? { description: manifest.description } : {}),
       };
+      // Ember copied these files itself: trusted as they are now (r12-safety-x12-4).
+      await this.trustFolder(item);
       this.items.push(item);
       this.save();
       this.audit({ phase: "installed", ext: id, ...named(item), servers: servers.length, tools: servers.reduce((n, s) => n + s.tools.length, 0) });
@@ -793,7 +852,8 @@ export class ExtensionsService implements ExtensionsApi {
         delete server.reviewTools;
       }
       item.consentedAt = new Date().toISOString();
-      // The user agreed to it in Home as it is now: Ember trusts it from here (safety-privacy-r12-2).
+      // The user agreed to it in Home as it is now, its files with it: Ember trusts it from here (safety-privacy-r12-2, x12-4).
+      await this.trustFolder(item);
       this.untrusted.delete(item);
       this.save();
     } finally {
@@ -808,7 +868,7 @@ export class ExtensionsService implements ExtensionsApi {
    */
   private async check(item: StoredItem, review = false): Promise<void> {
     await this.sealed;
-    if (!review && !this.trusted(item)) return;
+    if (!review && (!this.trusted(item) || !(await this.intact(item)))) return;
     const epoch = this.epoch;
     for (const s of item.servers) {
       if (epoch !== this.epoch || !this.items.includes(item) || !this.active()) return;
@@ -906,7 +966,7 @@ export class ExtensionsService implements ExtensionsApi {
     this.session = gate;
     const mcpServers: Record<string, MCPServerConfig> = {};
     for (const item of this.items) {
-      if (!item.enabled || item.consentedAt === null || !this.trusted(item)) continue;
+      if (!item.enabled || item.consentedAt === null || !this.trusted(item) || !this.intactNow(item)) continue;
       for (const s of item.servers) {
         // Every server runs through Ember's launcher, a remote one too (integrations-c9-4): with none, none loads.
         if (s.status !== "ready" || !s.spec || !this.o.launcher || this.heldOut.has(s.key)) continue;

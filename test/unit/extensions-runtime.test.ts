@@ -761,6 +761,48 @@ describe("ExtensionsService", () => {
       expect(s.forSession()?.tools).toEqual(["notes-lookup"]);
     });
 
+    it("never starts a plugin whose own files were changed after Ember copied them, at the next start or the next conversation (r12-safety-x12-4)", async () => {
+      const first = await installed();
+      const [row] = await first.list();
+      const plugin = new ExtensionStore(deps().dir).pluginDir(row.id);
+      // One of the files Ember copied (the fixture's server is named, not shipped).
+      const server = path.join(plugin, "hooks", "hooks.json");
+      expect(fs.existsSync(server)).toBe(true);
+      await new Promise(r => setTimeout(r, 0));
+      // What its own runtime writes beside its files changes nothing: still trusted at the next start.
+      fs.mkdirSync(path.join(plugin, "__pycache__"));
+      fs.writeFileSync(path.join(plugin, "__pycache__", "x.pyc"), "bytecode");
+      fs.mkdirSync(path.join(plugin, ".venv"));
+      fs.writeFileSync(path.join(plugin, ".venv", "pyvenv.cfg"), "home = /usr/bin");
+      const again = new ExtensionsService(deps());
+      await again.sealed;
+      expect(again.forSession()?.tools.length).toBeGreaterThan(0);
+      // A file pasted over its own while Ember runs: left out of the next conversation, and its agreement withdrawn.
+      fs.appendFileSync(server, "\n// planted\n");
+      expect(again.forSession()).toBeUndefined();
+      await vi.waitFor(async () => expect((await again.list())[0]).toMatchObject({ consented: false, detail: EXTENSION_UNSEALED }));
+      expect(again.forSession()).toBeUndefined();
+      // And at the next start, a new file beside it is the same: nothing is probed until the user agrees again.
+      const probed: unknown[] = [];
+      fs.writeFileSync(path.join(plugin, "lib.mjs"), "export default 1;");
+      const next = new ExtensionsService(deps({ probe: async spec => { probed.push(spec); return { ok: true, tools: served }; } }));
+      await next.sealed;
+      await next.refresh();
+      expect(next.forSession()).toBeUndefined();
+      expect((await next.list())[0]).toMatchObject({ consented: false, detail: EXTENSION_UNSEALED });
+      expect(probed).toEqual([]);
+    });
+
+    it("takes a plugin's files back when only their stamp changed, not what they hold (r12-safety-x12-4)", async () => {
+      const s = await installed();
+      const [row] = await s.list();
+      const file = path.join(new ExtensionStore(deps().dir).pluginDir(row.id), "hooks", "hooks.json");
+      fs.writeFileSync(file, fs.readFileSync(file));
+      s.forSession();
+      await vi.waitFor(() => expect(s.forSession()?.tools.length).toBeGreaterThan(0));
+      expect((await s.list())[0]).toMatchObject({ consented: true });
+    });
+
     it("keeps an agreement only until Ember quits where no keyring can seal it, as the provider's (safety-privacy-r12-2)", async () => {
       const noKeyring = { read: async () => null, write: async () => false };
       const first = await installed({ seal: noKeyring });
@@ -1633,6 +1675,8 @@ describe("ExtensionsService", () => {
     const restarted = new ExtensionsService(deps());
     expect(await restarted.list()).toMatchObject([{ id: item.id, enabled: false, status: "disabled" }]);
     expect(restarted.forSession()).toBeUndefined();
+    // (That run has read its seal and its plugin's files before the next one starts: only one Ember runs at a time.)
+    await restarted.sealed;
     // With room again the next start saves that, and Remove removes it.
     diskFull(false);
     const later = new ExtensionsService(deps());
