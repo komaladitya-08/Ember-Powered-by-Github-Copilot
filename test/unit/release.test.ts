@@ -160,16 +160,15 @@ describe("release.mjs", () => {
     expect(checks).toContain('run: node scripts/package/release.mjs --readme "$GITHUB_REF_NAME" "$GITHUB_REPOSITORY"');
   });
 
-  it("knows this version's notes are under GitHub's limit in characters but over it in bytes, until CHANGELOG.md's section is trimmed (install-docs-r10-2, r10-install-x10-1)", () => {
-    // GitHub refuses a release body of 125,000 or more, so the release job refuses these notes, and so does the tag's
-    // first check. This pins today's state honestly: it turns red when the trim lands (then it must say `[]`) and when
-    // the notes pass the limit in characters too. The notes are measured as the job writes them: links made absolute
-    // for the repository Ember's releases come from.
+  it("keeps this version's notes, as releaseNotes builds them, under GitHub's 125,000 limit for a release body, in characters and in bytes (install-docs-r10-2, r10-install-x10-1)", () => {
+    // GitHub refuses a release body of 125,000 or more, so the release job and the tag's first check would refuse
+    // them. The notes are measured as the job writes them: links made absolute for the repository Ember's releases
+    // come from.
     const repo = /const REPO = "([^"]+)"/.exec(read("app/main/updates.ts"))?.[1] ?? "";
     expect(repo).toMatch(/^[\w.-]+\/[\w.-]+$/);
     const notes = releaseNotes(read("CHANGELOG.md"), version, { repo, ref: `v${version}` });
     expect(notes.length).toBeLessThan(RELEASE_BODY_LIMIT);
-    expect(notesProblems(notes)).toEqual([expect.stringMatching(/^the notes are [\d,]+ bytes; GitHub takes a release body under 125,000$/)]);
+    expect(notesProblems(notes)).toEqual([]);
   });
 });
 
