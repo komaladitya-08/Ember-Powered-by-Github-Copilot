@@ -1445,7 +1445,10 @@ its short words and are never taken for the first word of a name ("Ciao Alex"), 
 words ("l'", "c'", "dell'", "dal", "suo", "sua", "tra", "se") are counted: Italian emails that open with a greeting or
 hold few short words were Kitten's for 7 of the re-rate's 30 and 6 of 30 written after the fix (voice-speaking-r12-1;
 now none of either, nor of 30 more written before it, with 60 English emails, Italian names and greetings in some, and
-15 French ones as before). Told so,
+15 French ones as before). Greetings alone, with the word each greets, are no sign, and a word said twice at once is
+one: an English email that only opens with “Cara mia,” or “Cordiali saluti,” or sings “Tra la la” is Kitten's
+(r12-voice-x12-7: 3 of the review's 160 English passages and 2 of 30 written for the repair went to the Italian voice,
+none now; 29 of those 30 in Italian stay Italian, as before). Told so,
 from fewer than a quarter, a passage needs two signs of its own (two different short words that aren't `ALSO_ENGLISH`,
 or one and a letter only it writes: `MARKS`) and no letters only unlisted languages write (`UNLISTED_LETTERS`: Polish
 "ł", "ś", Romanian "ș", Czech "ř", the Nordic "å", "ø", the "š", "č" and "ž" of Croatian, Bosnian, Serbian and Slovene,

@@ -444,6 +444,8 @@ const GREETINGS: Readonly<Record<string, ReadonlySet<string>>> = {
 };
 /** The short words of `words` that count towards `lang` when finding a passage's language (STOPWORDS, ALSO_ENGLISH and GREETINGS). */
 const counted = (words: readonly string[], lang: string): string[] => words.filter(w => STOPWORDS[lang]?.has(w) || ALSO_ENGLISH[lang]?.has(w) || GREETINGS[lang]?.has(w));
+/** What splits a sentence into clauses (wordsBesidesNames, and a greeting's own words in languageOf). */
+const CLAUSE = /[.,;:!?¡¿()[\]{}"“”«»„—–\n]+/u;
 /** A word some language greets with (GREETINGS): never the first word of a name. */
 const greets = (token: string): boolean => Object.values(GREETINGS).some(g => g.has(token.toLowerCase().replace(/[^\p{L}]+/gu, "")));
 
@@ -482,7 +484,7 @@ const NAME_JOINS = new Set("de del della di da do dos das du des la le les el en
 function wordsBesidesNames(text: string): string[] {
   const kept: string[] = [];
   const capital = (t: string) => /^(?:[dl][’'])?\p{Lu}/u.test(t) && !greets(t);
-  for (const clause of text.split(/[.,;:!?¡¿()[\]{}"“”«»„—–\n]+/u)) {
+  for (const clause of text.split(CLAUSE)) {
     const tokens = clause.split(/\s+/u).filter(t => /\p{L}/u.test(t));
     for (let i = 0; i < tokens.length;) {
       let capitals = 0, end = i;
@@ -525,7 +527,8 @@ function languageOf(quoting: string, minDifferent: number, prefer: string | null
     // Japanese mixes kana with Han: any kana among them is Japanese.
     if (lang === "ja" ? n && letters.filter(c => /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u.test(c)).length * 2 > letters.length : n * 2 > letters.length) return lang;
   }
-  const words = wordsBesidesNames(text);
+  // A word said again at once is one sign, not two: a sung "tra la la" counted as three Italian words (r12-voice-x12-7).
+  const words = wordsBesidesNames(text).filter((w, i, all) => w !== all[i - 1]);
   const english = counted(words, "en").length;
   let best: string | null = null, most = 0, different = 0, tie = [0, 0, 0, 0];
   const others = Object.keys(STOPWORDS).filter(lang => lang !== "en");
@@ -552,6 +555,17 @@ function languageOf(quoting: string, minDifferent: number, prefer: string | null
   // "Hola, mañana no podré ir a la oficina…" has "la" and "ñ").
   const own = new Set(counted(words, best).filter(w => !ALSO_ENGLISH[best]?.has(w))).size + (text.match(MARKS[best] ?? /(?!)/gu) ? 1 : 0);
   if (share > 4 && own < 2) return null;
+  // Nor where its signs are all greetings and the word each greets ("Cara mia, happy birthday!", "Cordiali saluti,
+  // Marco Rossi, Sales Manager."): an English email may open or close so. A short word of its own besides is needed
+  // (r12-voice-x12-7).
+  const greeting = GREETINGS[best];
+  if (share > 4 && greeting && words.some(w => greeting.has(w))) {
+    const besides = text.split(CLAUSE).flatMap(clause => {
+      const own = wordsBesidesNames(clause);
+      return own.filter((w, i) => !greeting.has(w) && !greeting.has(own[i - 1] ?? ""));
+    });
+    if (!counted(besides, best).some(w => !ALSO_ENGLISH[best]?.has(w))) return null;
+  }
   // Nor where it writes two of Catalan's everyday words: a Catalan email's "que", "si", "per", "les" and "de" made it
   // French or Italian, said by such a voice or not at all where there is none (r11-voice-y11-3).
   if (share > 4 && words.filter(w => CATALAN.has(w)).length >= 2) return null;

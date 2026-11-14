@@ -878,6 +878,28 @@ describe("AnswerLanguage tells a passage's language from its own words, not from
     ]) expect(streamed(`Here is the email from Ana:\n\n${passage}\n\nWant me to reply?`).filter(p => p.lang !== null), passage).toEqual([]);
   });
 
+  it("never reads an English email that only opens with an Italian greeting or a sung “tra la la” in the Italian voice (r12-voice-x12-7)", () => {
+    // GREETINGS and the new short words ("tra", "mia") were enough on their own: the whole English sentence went to the
+    // Italian voice, which says nothing where none is installed.
+    for (const passage of [
+      "Cara mia, happy birthday!",
+      "Tra la la, the bakery is open again.",
+      "Cordiali saluti, Marco Rossi, Sales Manager.",
+      "Caro amico, long time no see. Lunch next week?",
+      "Buongiorno! Coffee at nine?",
+      "Scusa scusa, I forgot. Sending it now.",
+      "Ciao ciao, see you tomorrow.",
+      "La la land is on tonight, the late show.",
+    ]) expect(streamed(`Here is the email from Ana:\n\n${passage}\n\nWant me to reply?`).filter(p => p.lang !== null), passage).toEqual([]);
+    // An Italian one whose greeting comes with Italian after it is still Italian's (voice-speaking-r12-1).
+    for (const passage of [
+      "Cara mia, ci vediamo stasera alle otto.",
+      "Ciao, domani piove, porta l'ombrello.",
+      "Cordiali saluti, e grazie per la pazienza.",
+      "Tra cinque giorni la sua password scadrà.",
+    ]) expect(streamed(`Here is the email from Ana:\n\n${passage}\n\nWant me to reply?`).map(p => p.lang), passage).toContain("it");
+  });
+
   it("never gives an email in a language it has no list for to a listed language's voice by the short words they share (r11-voice-x11-4)", () => {
     // Polish emails went to a Portuguese voice ("o", "do", "na"), which says nothing where none is installed, and a
     // Romanian one to a French voice; Kitten had read them.
