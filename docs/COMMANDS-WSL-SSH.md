@@ -978,7 +978,8 @@ an earlier command printed text that looked like instructions.").
 - **As root or administrator**, every command asks ("Commands here run as root (the administrator), so each one asks
   first." / "Ember is running as an administrator here, so each command asks first.").
 - **Ember judges the command line it can see, and the shell scripts it can read.** A shell script is read and judged
-  first (§2.4); one Ember can't read all of (`case`, functions, `{ … }` groups, a `[[` with arithmetic, a variable in
+  first (§2.4), however the shell is given it (`bash a.sh`, `bash < a.sh`, `bash - < a.sh`, `sh /dev/stdin < a.sh`),
+  and a file given on stdin to a program whose language Ember doesn't say how to read (`fish < a.sh`) asks; one Ember can't read all of (`case`, functions, `{ … }` groups, a `[[` with arithmetic, a variable in
   a file name, more than 64 commands or 8,000 characters, or zsh's, PowerShell's or cmd's `if` and `for`) asks, so most build and install scripts ask. A SQL file a database client runs is read and judged the same way, and so is a sed or awk program file (`sed -f`, `awk -f`). What a build file, a program, a script in another language, or a shell script too big to read
   (more than 64 KB) does inside (`make`, `npm test`, `python build.py`) runs like a build, unless its name says deploy,
   publish, release, push, upload, delete, clean, wipe, prod, install or the like, which asks. A script this task

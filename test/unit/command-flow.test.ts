@@ -4597,3 +4597,56 @@ describe("Assisted's check and the user's own words against a command (commands-
     expect(r.seen).toEqual(["rm -r build"]);
   });
 });
+
+describe("programs that run what they are given, however it is given (round eleven: commands-remote-r11-*, -c11-*)", () => {
+  /** CL's own judge on this computer in ~/proj; `texts` serves readScript by path (missing: unreadable). */
+  const flow = (texts: Record<string, string> = {}, o: Parameters<typeof harness>[0] = {}) => {
+    setCommandJudge(null);
+    const reads: string[] = [];
+    const existing = new Set<string>();
+    const h = harness({
+      binding: LOCAL, answers: ["deny", "deny", "deny", "deny"], state: { cwd: "/home/ana/proj", downloaded: new Set(), running: false },
+      paths: p => ({ exists: existing.has(p), real: p }),
+      readScript: async path => { reads.push(path); return texts[path] ?? null; },
+      run: () => ({ output: ["done\n"] }),
+      ...o,
+    });
+    return Object.assign(h, { reads, existing });
+  };
+  const local = (h: Harness, command: string) => call(h, { target: "this computer", command });
+  const MODES: [string, Parameters<typeof harness>[0]][] = [["at the defaults", {}], ["in Autopilot", { autopilot: () => true }]];
+  /** The task writes `file` (holding `text`), then runs `run`: it must ask (and so be denied), never run or be announced. */
+  const asksAfterWrite = async (file: string, text: string, run: string, rule?: string): Promise<void> => {
+    for (const [mode, o] of MODES) {
+      const h = flow({ [`/home/ana/proj/${file}`]: text }, o);
+      expect((await local(h, `printf x > ${file}`)).resultType, `${run} ${mode}`).toBe("success");
+      h.existing.add(`/home/ana/proj/${file}`);
+      const r = await local(h, run);
+      expect([r.resultType, h.windowAnnounce.length, h.starts.length], `${run} ${mode}`).toEqual(["denied", 0, 1]);
+      if (rule) expect(h0rules(h), `${run} ${mode}`).toContain(rule);
+    }
+  };
+
+  it("reads a shell's script given on stdin after `-` or /dev/stdin, as `bash < x.sh` reads it (commands-remote-r11-1)", async () => {
+    for (const run of [
+      "bash - < a.sh", "bash -e - < a.sh", "bash -x - < a.sh", "bash -- - < a.sh", "bash -o errexit - < a.sh", "bash +x - < a.sh", "bash - 0< a.sh",
+      "sh - < a.sh", "dash - < a.sh", "zsh - < a.sh", "ksh - < a.sh", "bash --posix - < a.sh", "sh /dev/stdin < a.sh", "nice bash - < a.sh",
+      "command bash - < a.sh", "exec bash - < a.sh", "bash -eu - arg < a.sh", "bash -o errexit +x - < a.sh", "source /dev/stdin < a.sh", ". /dev/stdin < a.sh", "env bash - < a.sh",
+    ]) await asksAfterWrite("a.sh", "rm -rf /home/ana/Documents\ncat /home/ana/.ssh/id_rsa\n", run, "path.secret");
+    // A project's script it reads asks for what is in it, as `bash deploy.sh` does.
+    for (const run of ["bash - < deploy.sh", "sh /dev/stdin < deploy.sh"]) {
+      const h = flow({ "/home/ana/proj/deploy.sh": "git push --force origin main\n" });
+      expect((await local(h, run)).resultType, run).toBe("denied");
+      expect(h0rules(h), run).toContain("git.push.force");
+    }
+    // A shell Ember can't read, given a file on stdin, asks as `fish x.fish` does.
+    for (const run of ["fish < deploy.sh", "fish - < deploy.sh", "fish /dev/stdin < deploy.sh", "csh < deploy.sh", "tcsh - < deploy.sh"]) {
+      const h = flow({ "/home/ana/proj/deploy.sh": "echo hi\n" });
+      expect((await local(h, run)).resultType, run).toBe("denied");
+    }
+    // A project script that only reads still runs.
+    const ok = flow({ "/home/ana/proj/check.sh": "ls -la\n" });
+    for (const run of ["bash - < check.sh", "sh /dev/stdin < check.sh"]) expect((await local(ok, run)).resultType, run).toBe("success");
+    expect(ok.asked).toEqual([]);
+  });
+});

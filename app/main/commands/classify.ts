@@ -6811,7 +6811,18 @@ reg(NATIVE, ["awk", "gawk", "mawk", "nawk"], h => {
 
 // Shells: -c text classified as POSIX (§3.4.5); scripts by name; stdin after a fetch is download-and-run (§3.4.7).
 reg(NATIVE, [...Object.keys(POSIX_SHELLS), ...OTHER_SHELLS], h => {
-  const p = parseOpts(h.args, { shortValue: "oO", longValue: ["rcfile", "init-file"], stopAtOperand: true });
+  // A `+x` or `+o name` before the script turns a setting off: an option, never the script (`bash +x - < a.sh` reads
+  // its script from stdin: commands-remote-r11-1).
+  const shArgs: Arg[] = [];
+  for (let k = 0, opts = true; k < h.args.length; k++) {
+    const v = h.args[k].v;
+    if (opts && v !== null && /^\+[A-Za-z]+$/.test(v)) { if (/[oO]$/.test(v)) k++; continue; }
+    if (v === null || v === "--" || v === "-" || !v.startsWith("-")) opts = false;
+    shArgs.push(h.args[k]);
+    // `-o errexit`, `--rcfile x`: the value is the option's.
+    if (opts && v !== null && (/^-[A-Za-z]*[oO]$/.test(v) || v === "--rcfile" || v === "--init-file") && k + 1 < h.args.length) shArgs.push(h.args[++k]);
+  }
+  const p = parseOpts(shArgs, { shortValue: "oO", longValue: ["rcfile", "init-file"], stopAtOperand: true });
   const posixShell = POSIX_SHELLS[h.key];
   const cIdx = h.args.findIndex(a => a.v !== null && /^-[a-zA-Z]*c[a-zA-Z]*$/.test(a.v) && !a.v.startsWith("--"));
   if (has(p, "l", "login", "i", "rcfile", "init-file") || values(p, "O").length) h.e.unclear("unclear.login-shell", "It starts a shell that runs your profile files.");
@@ -6877,11 +6888,13 @@ function intoInterpreter(h: H, readAs?: ScriptRef["as"]): void {
     return;
   }
   if (h.s.stdin === "file") {
-    // `bash < x.sh`: the file is the program.
+    // `bash < x.sh`: the file is the program. One given to a program whose language Ember doesn't say how to read
+    // (`fish < x`, `cmake -P - < x`) asks: what runs is never left unread by default (commands-remote-r11-1).
     for (const r of h.s.redirs) {
       if (r.kind !== "read" || !r.target) continue;
       if (h.e.isDownloaded(r.target, h.sc)) h.e.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
       if (readAs !== undefined) h.e.recordScript(r.target, readAs, h.sc);
+      else h.e.unclear("unclear.stdin-code", "Runs code Ember can't see.");
     }
     return;
   }
@@ -6904,7 +6917,9 @@ function runScript(h: H, script: Arg, readAs?: ScriptRef["as"]): void {
     else h.e.unclear("unclear.script", "It runs a script Ember can't name.");
     return;
   }
-  if (script.v === "-" || script.v === "/dev/stdin") { intoInterpreter(h); return; }
+  // `bash - < x.sh`, `python3 /dev/stdin < a.py`: the file on stdin is the program, read as `bash < x.sh` reads it
+  // (commands-remote-r11-1, r11-5).
+  if (script.v === "-" || script.v === "/dev/stdin") { intoInterpreter(h, readAs); return; }
   h.e.usePath(script, "exec", h.sc);
   // A folder given as the program (`node .`, `python3 tool`) runs its entry file (commands-remote-c7-3).
   const folder = script.v.replace(/\/+$/, "") || "/";
@@ -7154,7 +7169,7 @@ reg(NATIVE, ["source", "."], h => {
   if (!script) return;
   if (script.v === null || script.v === "/dev/stdin" || script.v === "-") {
     if (script.fetch || (script.v === "/dev/stdin" && h.s.fetchBefore)) h.e.add("escape", "escape.download-run", SAYS.downloadsAndRuns);
-    else if (script.v === "/dev/stdin") intoInterpreter(h);
+    else if (script.v === "/dev/stdin") intoInterpreter(h, h.sc.shell === "zsh" || h.sc.shell === "bash" ? h.sc.shell : "sh");
     else h.e.unclear("unclear.source", "It runs a script Ember can't name.");
     return;
   }
