@@ -87,7 +87,7 @@ describe("notReviewable (modes-C2, modes-C7; PLAN.md §10 \"Settled\" (7))", () 
     const built = [...new Set([...src.matchAll(/add\(\s*"[a-z-]+",\s*`([^`$]*\$\{[^`]*)`/g)].map(m => m[1].replace(/\$\{[^}]*\}/g, "*")))].sort();
     expect(built).toEqual(["*.publish", "*.push", "*.remote-host", "*.rm", "escape.*", "gh.*.*", "gh.*.delete", "posix.*"]);
   });
-  it("has looked at every rule id the classifier has for what it can't tell: Assisted's check reads each, but a target Ember can't name and what may act in the user's terminals (modes-y9-x9-3; the owner's decision of 2026-11-14)", () => {
+  it("has looked at every rule id the classifier has for what it can't tell: Assisted's check reads each, but a target or a folder Ember can't name and what may act in the user's terminals (modes-y9-x9-3, r11-commands-y11-4; the owner's decision of 2026-11-14)", () => {
     const dir = path.join(__dirname, "../../app/main/commands");
     const src = ["classify.ts", "tables.ts", "scripts.ts", "decide.ts"].map(f => readFileSync(path.join(dir, f), "utf8")).join("\n");
     const ids = [...new Set([...src.matchAll(/"(unclear\.[a-z0-9-]+)"/g)].map(m => m[1]))];
@@ -104,8 +104,10 @@ describe("notReviewable (modes-C2, modes-C7; PLAN.md §10 \"Settled\" (7))", () 
     // Since the owner's decision of 2026-11-14 the check reads every one of them, what outlives Stop and code nobody is
     // shown included, but a deletion or a write of something Ember can't name and what may act in the user's own
     // terminals, which Autopilot refuses.
-    expect(ids.filter(id => held(id) !== null)).toEqual([]);
+    expect(ids.filter(id => held(id) !== null)).toEqual(["unclear.folder"]);
     expect(held("unclear.terminal-verb")).toBe("it may act in the user's own terminals");
+    // A folder `cd` moved to by a word Ember can't resolve is such a place too (r11-commands-y11-4).
+    expect(held("unclear.folder")).toBe("it changes something Ember can't name");
     expect(held("unclear.unresolved-target")).toBe("it changes something Ember can't name");
     expect(ids.filter(id => !left.has(id) && !outlivesStop(id) && !CODE_NOBODY_SEES.includes(id) && held(id) === null).sort()).toEqual(["unclear.ember-program", "unclear.p4-verb", "unclear.rclone-verb", "unclear.runs-code", "unclear.shell-escape"]);
     // A message to a desktop service may start a unit or a program; WMI creates processes; a start verb opens something;

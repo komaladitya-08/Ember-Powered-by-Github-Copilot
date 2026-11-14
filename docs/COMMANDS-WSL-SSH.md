@@ -833,8 +833,10 @@ It refuses, with no question to put:
 - a command of the same kind of danger as one you said no to earlier in the task (another push after a no to a push,
   another deletion after a no to a deletion), any dangerous command after a no to one Ember couldn't read, and one
   Ember can't read after a no to a dangerous one: it may be the refused one done another way;
-- a deletion or a write of something Ember can't name (`rm -rf "$X"`, `> "$LOG"`), which could be Ember's own audit
-  log, settings or vault: the model is told to send it again with the place named plainly, and Ember judges what it
+- a deletion or a write of something Ember can't name (`rm -rf "$X"`, `> "$LOG"`, `dd of=$F`, `sed -i … "$F"`,
+  `rsync --delete a/ "$D"`, `git -C "$D" clean -fdx`, `unzip -d "$D"`, `cd "$D" && rm -rf audit`, `curl -o "$F"`, or
+  `xargs rm < list`, whose targets come from a list), which could be Ember's own audit log, settings or vault; Assisted's
+  check never sees one either: the model is told to send it again with the place named plainly, and Ember judges what it
   names;
 - a command of a terminal's or an editor's remote control that Ember doesn't know, which may act in your own terminals.
 

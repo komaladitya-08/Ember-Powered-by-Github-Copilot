@@ -24,7 +24,7 @@
 
 import { AUTOPILOT_WORDS } from "../policy/policy";
 import { DOWNLOADS_ONLY, outlivesStop } from "./review";
-import { SHELL_FAMILY, TERMINAL_VERB_RULE, UNRESOLVED_TARGET_RULE, type Classification, type CommandCapability, type CommandDecision, type CommandMode, type DangerClass, type Finding, type ShellId } from "./types";
+import { SHELL_FAMILY, TERMINAL_VERB_RULE, UNRESOLVED_RULES, type Classification, type CommandCapability, type CommandDecision, type CommandMode, type DangerClass, type Finding, type ShellId } from "./types";
 
 /**
  * A rule of the classifier's that says a command would read or print secrets, whatever class its finding carries:
@@ -61,12 +61,6 @@ export function askedOfFinding(f: { cls?: DangerClass; rule: string }): "organis
   return null;
 }
 
-/**
- * The rule that says a deletion or a write is of what Ember can't resolve (a variable, a substitution, another user's
- * home): it may be Ember's own audit log, settings or vault, which only a path Ember can name is refused for
- * (commands-remote-c11-3). An argument Ember can't resolve that is only read (`--port $PORT`) is no such thing.
- */
-const UNRESOLVED_RULES: ReadonlySet<string> = new Set([UNRESOLVED_TARGET_RULE]);
 /** And one that may act in the user's own terminals or editor, which Ember never does (classify.ts toolVerbs). */
 const NEVER_RULES: ReadonlySet<string> = new Set([TERMINAL_VERB_RULE]);
 
@@ -168,6 +162,8 @@ export interface AutopilotInput {
    * this." already reads): never announced over their words, it is refused (autopilotRefuses).
    */
   ruledOut?: boolean;
+  /** It deletes or writes where Ember can't resolve every word, or from its input (types.ts unnamedTarget). */
+  unnamed?: boolean;
 }
 
 /**
@@ -209,11 +205,11 @@ export function autopilotAsks(d: Pick<CommandDecision, "classes" | "rules">, o: 
  * rule it out, what it deletes or writes is what Ember can't resolve (UNRESOLVED_RULES), or it may act in the user's
  * own terminals (NEVER_RULES); null for none.
  */
-export function autopilotRefuses(d: Pick<CommandDecision, "rules">, o: Pick<AutopilotInput, "findings" | "ruledOut">): AutopilotRefusal | null {
+export function autopilotRefuses(d: Pick<CommandDecision, "rules">, o: Pick<AutopilotInput, "findings" | "ruledOut" | "unnamed">): AutopilotRefusal | null {
   if (o.ruledOut) return "ruled-out";
   const rules = [...d.rules, ...o.findings.map(f => f.rule)].map(r => r.replace(/^in-script:/, ""));
   if (rules.some(r => NEVER_RULES.has(r))) return "terminal";
-  if (rules.some(r => UNRESOLVED_RULES.has(r))) return "unresolved";
+  if (o.unnamed || rules.some(r => UNRESOLVED_RULES.has(r))) return "unresolved";
   return null;
 }
 
@@ -221,7 +217,7 @@ export function autopilotRefuses(d: Pick<CommandDecision, "rules">, o: Pick<Auto
 export const AUTOPILOT_REFUSES: Readonly<Record<AutopilotRefusal, string>> = {
   "ruled-out": "The user's own words for this task rule this command out. Don't try another way; tell the user in finish_task.",
   terminal: "It may act in the user's own terminals or editor, which Ember never does. Don't try another way; tell the user in finish_task.",
-  unresolved: "It deletes or changes something Ember can't name (a variable, a substitution or another user's home), which could be Ember's own records. Write the command again with each place named plainly, so Ember can judge it.",
+  unresolved: "It may delete, change or read something Ember can't name (a variable, a substitution, a list it reads or another user's home), which could be Ember's own records. Write the command again with each place named plainly, so Ember can judge it.",
   "secret-saved": "It reads passwords or keys and saves them to a file, where a later command would show them to you. Don't try another way; tell the user in finish_task.",
 };
 

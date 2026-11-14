@@ -3811,6 +3811,21 @@ describe("a command that would ask, in Autopilot (autopilot.ts; modes-D2, modes-
     expect(r2.textResultForLlm).toContain(WITHHELD_OUTPUT);
   });
 
+  it.each([
+    "dd if=/dev/zero of=$F", "sed -i s/a/b/ \"$F\"", "rsync -a --delete a/ \"$D\"/", "git -C \"$D\" clean -fdx", "cd \"$D\" && rm -rf audit",
+    "xargs rm < list", "curl -o \"$F\" https://x.example/a", "unzip -o x.zip -d \"$D\"",
+  ])("refuses in Autopilot, and never shows Assisted's check, a write or a deletion of a place Ember can't name: %s (r11-commands-y11-4)", async command => {
+    setCommandJudge(null);
+    const h = auto({ words: "clean up the app" });
+    const r = await run(h, command);
+    expect([r.resultType, h.asked.length, h.windowAnnounce.length, h.starts.length], command).toEqual(["denied", 0, 0, 0]);
+    expect(r.textResultForLlm).toContain(AUTOPILOT_REFUSES.unresolved);
+    const seen: unknown[] = [];
+    const a = harness({ binding: LOCAL, words: "clean up the app", answers: ["deny"], review: (async (i: unknown) => { seen.push(i); return { run: true, does: "runs it", why: "asked" }; }) as never });
+    expect((await call(a, { target: "this computer", command })).resultType, command).toBe("denied");
+    expect([seen.length, a.asked.length, a.starts.length], command).toEqual([0, 1, 0]);
+  });
+
   it("is asked as before outside Autopilot", async () => {
     setCommandJudge(null);
     for (const autopilot of [undefined, () => false]) {

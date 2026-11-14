@@ -48,7 +48,7 @@ import {
   ALWAYS_ASK,
   type Classification, type ClassifyContext, type CommandCapability, type CommandCard, type CommandDecision, type CommandMode, type CommandRunner,
   type CommandService, type DecideInput, type Finding, type GitFacts, type PathFact, type RunCommandArgs, type RunExit, type RunnerFacts, type RunningCommand,
-  type RunSpec, SHELL_FAMILY, type ShellId, standingFindings,
+  type RunSpec, SHELL_FAMILY, type ShellId, standingFindings, unnamedTarget,
 } from "./types";
 import { judgedText } from "./unroll";
 
@@ -1130,7 +1130,7 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
   if (ctx.autopilot?.() && d.verdict === "ask" && !like) {
     // (Their own words against it count wherever they were heard: where Ember can't tell the user from its speakers too.)
     const standing = standingFindings(cls.findings, paths);
-    const input = { findings: [...cls.findings, ...hidden], mode, askEvery: cap.askEvery, userAskEvery, ruledOut: wordsRuleOut(standing, words) || wordsRuleOut(standing, spoken) };
+    const input = { findings: [...cls.findings, ...hidden], mode, askEvery: cap.askEvery, userAskEvery, ruledOut: wordsRuleOut(standing, words) || wordsRuleOut(standing, spoken), unnamed: unnamedTarget(cls) };
     // A secret's output is withheld from the model; one saved to a file a later command could read is refused instead
     // (r11-commands-y11-1).
     const refusal = autopilotRefuses(d, input) ?? (printsSecrets(d, input.findings) && savesFiles(cls) ? "secret-saved" : null);
@@ -1163,7 +1163,7 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
     // Autopilot holds them: never left to the check's reading of a negation (commands-remote-c10-3).
     const standing = standingFindings(cls.findings, paths);
     const ruledOut = [words, spoken, checkWords].some(w => wordsRuleOut(standing, w));
-    const blocked = notReviewable(d, { words: checkWords, mode, askEvery: cap.askEvery, userAskEvery, command: a.command, findings: [...cls.findings, ...hidden], ruledOut });
+    const blocked = notReviewable(d, { words: checkWords, mode, askEvery: cap.askEvery, userAskEvery, command: a.command, findings: [...cls.findings, ...hidden], ruledOut, unnamed: unnamedTarget(cls) });
     if (ruledOut && [words, spoken, checkWords].some(w => wordsHoldBack(standing, w)) && !d.says.includes(HELD_BACK_LINE)) {
       const at = d.says.findIndex(l => l === LINES.unasked || l === LINES.inexact || l === LINES.windows);
       const [keep, drop] = at < 0 ? [d.says.length, 0] : d.says[at] === LINES.unasked ? [at + 1, 0] : d.says[at] === LINES.inexact ? [at, 1] : [at, 0];

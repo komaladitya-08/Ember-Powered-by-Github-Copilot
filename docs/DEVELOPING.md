@@ -2894,7 +2894,8 @@ downloads it on first use per target and checks it before sending.
   the model (`withheld`, flow.ts `WITHHELD_OUTPUT`, audited `outputWithheld`; one that also writes a file Ember can
   name is refused, `secret-saved`, and not cleared by Assisted's check, and after a withheld run every later output of
   the task is withheld too, `withheldSecrets`: r11-commands-y11-1), one that outlives Stop says so
-  (`outlivesStop`), and the user's own no, a deletion or a write of what Ember can't name and an unknown verb of a
+  (`outlivesStop`), and the user's own no, a deletion or a write of what Ember can't name (types.ts `UNRESOLVED_RULES`,
+  `unnamedTarget`: r11-commands-y11-4) and an unknown verb of a
   terminal's remote control are refused (`autopilotRefuses`), also where a remote's gate 2 sends those rules back
   (flow.ts, before its countdown). Gate 2 takes Autopilot's announcement for what the
   stamp names, and the PC withholds the output of what the remote's rules say reads secrets.

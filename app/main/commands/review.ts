@@ -21,7 +21,7 @@
  */
 
 import { keptQuestion } from "./autopilot";
-import { TERMINAL_VERB_RULE, UNRESOLVED_TARGET_RULE, type CommandDecision, type Finding } from "./types";
+import { TERMINAL_VERB_RULE, UNRESOLVED_RULES, type CommandDecision, type Finding } from "./types";
 
 /** What the reviewer is shown. */
 export interface ReviewInput {
@@ -107,7 +107,7 @@ export const REVIEW_LIMITS = { words: 6000, command: 4000, why: 400, findings: 1
  * `ruledOut`: the user's own words rule the command out or hold it back (flow.ts wordsRuleOut), which Autopilot
  * refuses in code: it is never left to the check either (commands-remote-c10-3).
  */
-export function notReviewable(d: CommandDecision, o: { words: string; mode: string; askEvery: unknown; userAskEvery: boolean; command: string; findings?: readonly Pick<Finding, "cls" | "rule">[]; ruledOut?: boolean }): string | null {
+export function notReviewable(d: CommandDecision, o: { words: string; mode: string; askEvery: unknown; userAskEvery: boolean; command: string; findings?: readonly Pick<Finding, "cls" | "rule">[]; ruledOut?: boolean; unnamed?: boolean }): string | null {
   if (d.verdict !== "ask") return "it doesn't ask";
   if (!o.words.trim()) return "no words of the user's";
   if (o.mode === "ask" || o.askEvery) return "every command asks here";
@@ -118,7 +118,7 @@ export function notReviewable(d: CommandDecision, o: { words: string; mode: stri
   // A deletion or a write of something Ember can't name may be Ember's own records, which no check may clear
   // (commands-remote-c11-3).
   const rules = [...d.rules, ...(o.findings ?? []).map(f => f.rule.replace(/^in-script:/, ""))];
-  if (rules.includes(UNRESOLVED_TARGET_RULE)) return "it changes something Ember can't name";
+  if (o.unnamed || rules.some(r => UNRESOLVED_RULES.has(r))) return "it changes something Ember can't name";
   // One that may act in the user's own terminals or editor, which Ember never does, Autopilot refuses.
   if (rules.includes(TERMINAL_VERB_RULE)) return "it may act in the user's own terminals";
   if (o.words.trim().length > REVIEW_LIMITS.words || o.command.length > REVIEW_LIMITS.command || d.says.join(" ").length > REVIEW_LIMITS.findings) return "it is too long to show the reviewer whole";
