@@ -89,14 +89,25 @@ export class AuditLog {
     try { this.sink?.(line); } catch { /* the journal is a copy; the file is the record */ }
   }
 
+  /**
+   * One line, whole or not at all (reliability-c11-1): a write the disk cut short is taken back to where the file
+   * ended, and a file that ends part-way through a line (a power cut) gets its newline first, so the next entry never
+   * joins a torn line that readers skip.
+   */
   private append(line: string): void {
+    const file = this.file;
+    const size = sizeOf(file);
+    const text = (size !== null && size > 0 && !endsWithNewline(file, size) ? "\n" : "") + line + "\n";
     try {
-      fs.appendFileSync(this.file, line + "\n", { mode: 0o600 });
+      fs.appendFileSync(file, text, { mode: 0o600 });
     } catch (err) {
+      if (size !== null && (err as NodeJS.ErrnoException).code !== "ENOENT") {
+        try { if ((sizeOf(file) ?? size) > size) fs.truncateSync(file, size); } catch { /* the next write starts a line of its own anyway */ }
+      }
       // A folder removed while Ember runs (a clean-up tool) is made again: writing works without a restart (review #117).
       if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
       fs.mkdirSync(this.dir, { recursive: true, mode: 0o700 });
-      fs.appendFileSync(this.file, line + "\n", { mode: 0o600 });
+      fs.appendFileSync(file, line + "\n", { mode: 0o600 });
     }
   }
 
@@ -370,5 +381,24 @@ export function journalLine(line: string): string {
     return JSON.stringify(e);
   } catch {
     return line;
+  }
+}
+
+/** The file's size, or null when it isn't there (or can't be asked). */
+function sizeOf(file: string): number | null {
+  try { return fs.statSync(file).size; } catch { return null; /* not there yet: the append makes it */ }
+}
+
+/** Does the file's last byte end a line? A file that can't be read is taken as whole (nothing is added to it). */
+function endsWithNewline(file: string, size: number): boolean {
+  let fd: number | null = null;
+  try {
+    fd = fs.openSync(file, "r");
+    const b = Buffer.alloc(1);
+    return fs.readSync(fd, b, 0, 1, size - 1) === 1 ? b[0] === 0x0a : true;
+  } catch {
+    return true; // can't be read: the append says whether it can be written
+  } finally {
+    if (fd !== null) { try { fs.closeSync(fd); } catch { /* closing a read handle can't lose anything */ } }
   }
 }
