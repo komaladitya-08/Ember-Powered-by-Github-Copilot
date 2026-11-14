@@ -16,7 +16,7 @@
 import { memoryPausedReply } from "../../shared/memory-owner";
 import { memoryIds, recallNote } from "./format";
 import { DUPLICATE, type AddResult, type Fact, type NewFact, type Source } from "./graph";
-import { ConversationHold, HELD_ALL, HELD_CORRECTED, HELD_FORGOTTEN } from "./hold";
+import { ConversationHold, HELD_ALL, HELD_CORRECTED, HELD_FORGOTTEN, HELD_UNSAID } from "./hold";
 import { IntroSchema, Interview, INTRO_DONE, INTRO_MANAGED, INTRO_NOTHING, INTRO_OFF, INTRO_UNCHECKED, SPOKEN_FACT, introFacts, isGetToKnowMe, type Intro } from "./intro";
 import { CallBudget, Learner, onlyAsked, soundsLikeInstruction, type KeptFact, type LearnBudget, type OneShot } from "./learn";
 import type { MemoryOwnerReason } from "./owner";
@@ -247,10 +247,10 @@ export class MemoryLearning {
         const refs = about.length ? about : undefined;
         const theirs = rememberedSource(fact, said, refs) === "user"
           && (!onlyAsked(fact, said) || memoryAsk(said) === "remember" || remembersWithMore(said) || !!profileSaid(fact, refs ?? [{ name: "User" }], said));
-        const held = this.hold.heldBack(fact, theirs ? "user" : "conversation", "tool");
+        const held = this.hold.heldBack(fact, theirs ? "user" : "conversation", "tool", said);
         if (held) {
           this.d.log.info("memory.learn_skipped", { why: "forgotten_here" });
-          return held === "all" ? HELD_ALL : held === "corrected" ? HELD_CORRECTED : HELD_FORGOTTEN;
+          return held === "all" ? HELD_ALL : held === "corrected" ? HELD_CORRECTED : held === "unsaid" ? HELD_UNSAID : HELD_FORGOTTEN;
         }
         const before = new Set(m.list().map(i => i.id));
         const answer = m.remember(fact, about, said, replaces);

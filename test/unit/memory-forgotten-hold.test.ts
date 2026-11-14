@@ -90,7 +90,10 @@ describe("a fact forgotten in Settings stays forgotten for the rest of the conve
     r.l.forgetCounted(r.s.list()[0]!.id);
     r.advance(10 * 60_000);
     expect(await r.task("Book a table", "Booked Rosa's and chose the vegetarian menu.", [{ fact: "Prefers the vegetarian menu", evidence: "chose the vegetarian menu" }])).toBe(0);
-    // What a task found that is nothing like it is still learned.
+    // Nor anything else a task finds until the conversation ends: its result is Ember's own work, which may say what
+    // went in words that share none with it (memory-r10-3). After it ends, what a task finds is learned again.
+    expect(await r.task("Find my mail app", "Thunderbird is the mail app in use.", [{ fact: "Mail app in use is Thunderbird", evidence: "Thunderbird is the mail app in use" }])).toBe(0);
+    r.l.conversationEnded();
     expect(await r.task("Find my mail app", "Thunderbird is the mail app in use.", [{ fact: "Mail app in use is Thunderbird", evidence: "Thunderbird is the mail app in use" }])).toBe(1);
     expect(r.list()).toEqual(["task: Mail app in use is Thunderbird"]);
   });

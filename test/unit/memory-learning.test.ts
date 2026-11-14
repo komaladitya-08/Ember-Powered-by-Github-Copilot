@@ -663,6 +663,11 @@ describe("a Forget drops the turns said before it, however the extraction words 
     l.taskDone("Book a table", "Booked Rosa's: the user eats no meat, so the vegetable menu.");
     expect(await l.flush()).toBe(0);
     advance(61_000);
+    // In the same conversation a task's result is held back until it ends (memory-r10-3); in the next, it is learned.
+    l.taskDone("Book a table", "Booked Rosa's: the user eats no meat, so the vegetable menu.");
+    expect(await l.flush()).toBe(0);
+    l.conversationEnded();
+    advance(61_000);
     l.taskDone("Book a table", "Booked Rosa's: the user eats no meat, so the vegetable menu.");
     expect(await l.flush()).toBe(1);
     expect(s.list().map(i => i.text)).toEqual(["Eats no meat"]);
@@ -699,7 +704,12 @@ describe("a Forget drops the turns said before it, however the extraction words 
     l.taskDone("Book a table", "Booked Rosa's: the user eats no meat, so the vegetable menu.", asked);
     expect(await l.flush()).toBe(0);
     advance(61_000);
+    // Held back until the conversation ends (memory-r10-3), then learned.
     l.taskDone("Book a table", "Booked Rosa's: the user eats no meat, so the vegetable menu.", asked);
+    expect(await l.flush()).toBe(0);
+    l.conversationEnded();
+    advance(61_000);
+    l.taskDone("Book a table", "Booked Rosa's: the user eats no meat, so the vegetable menu.", tools.asked());
     expect(await l.flush()).toBe(1);
     expect(s.list().map(i => i.text)).toEqual(["Eats no meat"]);
   });

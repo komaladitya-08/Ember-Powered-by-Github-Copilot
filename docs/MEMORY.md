@@ -509,7 +509,10 @@ download, so English-only MiniLM is the trade-off for now.
      their own words (`ownWords`), or one whose evidence is their words word for word and holds half of the fact or
      more (`RESTS_ON`), however the model worded it, so "I've just moved to Leeds for the new job" still teaches
      "Lives in Leeds" (memory-x9-3). Ember's reply may say what went in words that share none with it, so what rests
-     on the reply, or on words of the user's that don't say it, waits; after Forget everything, a task's result and
+     on the reply, or on words of the user's that don't say it, waits. The remember tool is held to the same rule by
+     the user's words in the request it answers, so "Does not eat meat" from a reply after "Is vegetarian" was
+     forgotten is refused (`HELD_UNSAID`), and a task's result teaches nothing until the conversation ends, since it
+     is Ember's own work; what a correction says now may still be said again (memory-r10-3). After Forget everything, a task's result and
      the remember tool are held to the same (`HELD_ALL`), and a turn teaches only what the user states in it
      (`statedByUser`), never what a question of theirs names ("Did I tell you I was vegetarian?"). The words are held in RAM, never on disk, and Undo lifts
      it. It learns less: a fact Ember inferred from its own reply in that conversation waits for the next. The
