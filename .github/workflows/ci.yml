@@ -45,10 +45,11 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      # The release's notes link the README at the tag: fail the tag's run at once if it says this version isn't out.
-      - name: The tagged README describes this version (docs/DEVELOPING.md §15 step 1)
+      # The release's notes link the README at the tag: fail the tag's run at once if it says this version isn't out,
+      # or if GitHub would refuse the notes, which the release job finds only after every other job.
+      - name: The tagged README describes this version and its notes fit a release (docs/DEVELOPING.md §15 step 1)
         if: startsWith(github.ref, 'refs/tags/v')
-        run: node scripts/package/release.mjs --readme "$GITHUB_REF_NAME"
+        run: node scripts/package/release.mjs --readme "$GITHUB_REF_NAME" "$GITHUB_REPOSITORY"
       - run: npm install -g npm@11.6.2
       - run: npm ci
         env:

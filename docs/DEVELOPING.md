@@ -3090,9 +3090,10 @@ needs both. CI publishes them when a `v<v>` tag is pushed:
    and **From npm** says `ember-copilot` isn't on npm until `<v>` is published (docs.test.ts checks both while `<v>`
    isn't out). In the commit you tag, replace that line with one that says the README describes `<v>`, and drop
    **From npm**'s note: the release's notes link the README at the tag, and **See what's new…** opens those notes, so
-   the tag's README is the one everyone who updates reads, for good. `node scripts/package/release.mjs --readme v<v>`
-   checks it; the tag's checks job runs that first and the release job again, and both refuse a README that still
-   says `<v>` isn't out or sends readers to another version.
+   the tag's README is the one everyone who updates reads, for good. `node scripts/package/release.mjs --readme v<v>
+   <owner/repo>` checks it and the notes; the tag's checks job runs that first and the release job again, and both
+   refuse a README that still says `<v>` isn't out or sends readers to another version, and notes GitHub would refuse
+   (step 3), so a tag with either fails in its first minutes rather than after every platform's job.
 2. Tag that commit and push the tag: `git tag v<v> && git push origin v<v>`.
 3. The tag runs every job of `ci.yml`, the Intel Mac's included, and each platform's job uploads its packages
    (`ember-packages`, `ember-windows`, `ember-macos`, `ember-macos-x64`). Once all of them pass, the **release** job,
