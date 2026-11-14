@@ -513,6 +513,39 @@ const SERVICE_WORD = new RegExp(String.raw`^(?:${SERVICES})$`, "i");
  * unless it is in ABOUT_SECRET, a service's or a tool's name, or a number (`digitsBesideName` reads a PIN's digits).
  * Fail closed: an unknown word beside a password's name costs the fact, never the password.
  */
+/** A password's or a PIN's name in a clause, as `topicOnly` reads it. */
+const TOPIC_NAME = /^(?:passwords?|passcodes?|passphrases?|passwd|pins?|pwd|pw|pword)$/i;
+/** What a password's or a PIN's name heads when it is a topic ("password resets", "PIN pad", "password policy", "PIN unblocks"). */
+const TOPIC_HEAD = /^(?:resets?|unlocks?|unblocks?|polic(?:y|ies)|rules?|flows?|services?|teams?|pads?|entry|entries|screens?|pages?|audits?|hygiene|management|managers?|guidance|security|storage|expiry|changes?|requirements?|strength|support|recovery|sync|sharing|vaults?|apps?|tools?|systems?|projects?|migrations?|rotation|training|forms?|fields?|prompts?|length|complexity|readers?|terminals?|firmware|tickets?|requests?|issues?|queries|calls?)$/i;
+/** Whose a plural is ("my passwords"): then it holds values. */
+const OWNER = /^(?:my|our|your|his|her|their|its)$/i;
+/**
+ * Whether every password's or PIN's name in `clause` is a topic, never a value's name (memory-r11-2): a name that heads
+ * a topic word ("password resets", "the PIN pad"), or a plural no one owns ("reset passwords", "the LDAP passwords"),
+ * either one not followed by what introduces a value ("…: X", "…to X", "…as X", "passwords are X").
+ */
+function topicOnly(clause: string): boolean {
+  const tokens = clause.split(/\s+/).filter(Boolean);
+  let named = false;
+  for (const [i, raw] of tokens.entries()) {
+    const w = word(raw);
+    if (!TOPIC_NAME.test(w)) continue;
+    named = true;
+    // The topic's words after the name ("reset flow", "pad firmware"), none of them set off by ":" or "=".
+    let j = i + 1;
+    if (!/[:=]$/.test(raw)) while (j < tokens.length && TOPIC_HEAD.test(word(tokens[j]!)) && !/[:=]$/.test(tokens[j - 1]!)) j++;
+    const head = j > i + 1;
+    const plural = /s$/i.test(w) && !tokens.slice(Math.max(0, i - 3), i).some(t => OWNER.test(word(t)));
+    if (!head && !plural) return false;
+    if (/[:=]$/.test(tokens[j - 1]!)) return false;
+    // What comes next is grammar or talk about passwords, never a word that may be the value ("Passwords sunshine and rain").
+    const next = word(tokens[j] ?? "").toLowerCase();
+    if (next && (/^(?:to|as|=)$/.test(next) || (!head && /^(?:are|were|is|was)$/.test(next))
+      || !(ABOUT_SECRET.has(next) || sayless(next) || /^[a-z]+['’](?:s|t|re|ve|ll|d|m)$/.test(next)))) return false;
+  }
+  return named;
+}
+
 function valueInClause(text: string): boolean {
   // "p.w." is the name, "..." and "…" go on with the clause, and "It is…", "Now it's…", "That's…" go on with the sentence
   // before (r10-memory-y10-3).
@@ -521,6 +554,11 @@ function valueInClause(text: string): boolean {
   for (const clause of joined.split(/[.;!\n]+(?:\s|$)/)) {
     // A PIN in capitals anywhere; "pin" in lower case only after whose it is, so "Likes to pin recipes" names none.
     if (!CLAUSE_NAME.test(clause) && !/\bPINs?\b(?![\s-]*code)/.test(clause)) continue;
+    // Passwords as a topic, not a value ("IT support: password resets and laptops"): only a value's shape counts (memory-r11-2).
+    if (topicOnly(clause)) {
+      if (clause.split(/\s+/).some(w => passwordShaped(w) || /["“]/.test(w))) return true;
+      continue;
+    }
     const words = clause.replace(/mot\s+de\s+passe|contrase[ñn]a|passwort|senha/gi, " ").replace(/->|[→—–]|\s-+\s/g, " ")
       .split(/[\s,:?()"“”=/]+/).map(w => w.replace(/['’]s$/i, "").replace(/^['‘’]+|['‘’]+$/g, "")).filter(Boolean);
     for (const [i, w] of words.entries()) {
