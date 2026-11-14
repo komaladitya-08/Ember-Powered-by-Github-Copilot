@@ -36,7 +36,7 @@ import { helperCantRun } from "../perception/sidecar";
 import { SECRET_PARTS, VAULT_FILL, VAULT_WHATS, sameDestination, savedPart, type VaultDestination, type VaultKind, type VaultPart, type VaultWhat } from "../../shared/vault";
 import { vaultTarget } from "../policy/policy";
 import { VAULT_FILL_NO_ANSWER, VAULT_FILL_UNAVAILABLE } from "../perception/sidecar";
-import type { PolicyEngine, ActionKind, ActionRequest, Agreement, Decision, DialogControl, ReadSource, TextMode, WindowId } from "../policy/policy";
+import type { PolicyEngine, ActionKind, ActionRequest, Agreement, Decision, DialogControl, DialogFacts, ReadSource, TextMode, WindowId } from "../policy/policy";
 import { AUTOPILOT_WORDS, CHECKED_WORDS, isRiskyControl, riskyOnPage } from "../policy/policy";
 import type { CommandReviewer, StepChecker } from "../commands/review";
 import { afterTheStep, type AuditEntry, type AuditLog } from "../policy/audit";
@@ -998,7 +998,11 @@ function intoSheet(n: AxNode | undefined, byId: (id: number) => AxNode | undefin
  * A dialog as the policy reads it (ActionRequest.dialog): its title, its words, whether it is a message box or a page's
  * own, whether its words were cut, and (from a whole read only) every control in it.
  */
-type Dialog = { name: string; text: string; alert?: boolean; page?: boolean; truncated?: boolean; controls?: DialogControl[]; messageBox?: boolean };
+type Dialog = DialogFacts;
+/** At most this many of a dialog's other names are read into DialogFacts.items (a file dialog's path bar and folder). */
+const DIALOG_ITEMS_MAX = 400;
+/** A list's rows (DialogFacts.items leaves them out: what a folder holds, not where it is). */
+const DIALOG_ROW = /cell|list item|tree item|icon|table row|^row$/;
 const DIALOG_ROLE = /^(dialog|alert|file chooser|color chooser|font chooser)$/;
 /**
  * Roles that are something to press, choose, tick or type into (on every OS's screen reader): anything with one of
@@ -1056,10 +1060,23 @@ export function dialogAround(start: AxNode | undefined, get: (id: number) => AxN
         // was written there.)
         return [{ role: n.role, name: n.name, ...(editable ? { editable: true } : {}) }];
       }) : undefined;
+      // What its fields hold and its other names say now (a file dialog's name, its path bar, its folder's drop-down):
+      // its Save or Open is judged by them (policy.ts's fileDialogMayReach). A field that can't be read leaves them unknown.
+      const inside = nodes.filter(n => n.id !== top && chain(n));
+      const fieldNodes = inside.filter(n => n.editable === true || n.states.includes("editable") || /combo/.test(n.role));
+      const fields = fieldNodes.some(n => n.secret || n.withheld) ? undefined
+        : fieldNodes.map(n => (/combo/.test(n.role) ? n.selected ?? n.text ?? n.name : n.text) ?? "").filter(Boolean);
+      const named = inside.filter(n => !DIALOG_ROW.test(n.role) && !n.secret && !n.withheld && n.name);
+      const items = named.length > DIALOG_ITEMS_MAX ? undefined : named.map(n => n.name);
+      // The rows chosen in its list (what Open opens when no name is typed); one whose name is withheld can't be told.
+      const chosen = inside.filter(n => DIALOG_ROW.test(n.role) && n.states.includes("selected"));
+      const selected = chosen.some(n => n.withheld || !n.name) ? undefined : chosen.map(n => n.name).slice(0, DIALOG_ITEMS_MAX);
       return {
         name: cur.name, text: words.slice(0, DIALOG_TEXT_MAX), ...(alert ? { alert } : {}), ...(page ? { page } : {}),
         ...(words.length > DIALOG_TEXT_MAX ? { truncated: true } : {}), ...(controls ? { controls } : {}),
         ...(cur.dialogBox ? { messageBox: true } : {}),
+        ...(fields ? { fields } : {}), ...(items ? { items } : {}), ...(selected?.length ? { selected } : {}),
+        ...(cur.role === "file chooser" ? { fileChooser: true } : {}),
       };
     }
     cur = cur.parent !== null ? get(cur.parent) : undefined;

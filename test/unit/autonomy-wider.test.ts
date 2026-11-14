@@ -434,7 +434,8 @@ describe("a message box goes ahead only by its structure: one OK and nothing els
 
   it("acknowledges a real Win32 message box (#32770 with its one OK): its title bar's Close returns OK too, so it is no second choice", () => {
     const dialog = readBox(msgBox(true));
-    expect(dialog).toEqual({ name: "Notepad", text: "Cannot find \"milk\"", controls: [{ role: "push button", name: "Close", caption: true }, OK], messageBox: true });
+    expect(dialog).toEqual({ name: "Notepad", text: "Cannot find \"milk\"", controls: [{ role: "push button", name: "Close", caption: true }, OK], messageBox: true,
+      fields: [], items: ["Notepad", "Close", "Cannot find \"milk\"", "OK"] });
     expect(engine("win32").decide(notepad({ element: { role: "push button", name: "OK" }, dialog }))).toMatchObject({ verdict: "allow", autonomy: true, answersDialog: true });
     // With a Cancel beside the OK, it asks.
     const two = readBox(msgBox(true, [{ id: 6, parent: 1, depth: 1, role: "push button", name: "Cancel", states: [], bounds: null }]));
@@ -743,7 +744,7 @@ describe("the worker's reading of a dialog (dialogAround)", () => {
   const read = (nodes: AxNode[], whole = true) => dialogAround(nodes.find(n => n.id === 3), id => nodes.find(n => n.id === id), nodes, whole)!;
 
   it("marks a dialog drawn by a web page (page), and words cut at DIALOG_TEXT_MAX (truncated)", () => {
-    expect(read(dialogNodes())).toEqual({ name: "gedit", text: "Cannot find \"milk\"", alert: true, controls: [{ role: "push button", name: "OK" }] });
+    expect(read(dialogNodes())).toEqual({ name: "gedit", text: "Cannot find \"milk\"", alert: true, controls: [{ role: "push button", name: "OK" }], fields: [], items: ["Cannot find \"milk\"", "OK"] });
     const inPage: AxNode[] = [{ id: 0, parent: null, depth: 0, role: "document web", name: "Shop", states: [], bounds: FRAME }, ...dialogNodes().map(n => (n.id === 1 ? { ...n, parent: 0 } : n))];
     expect(read(inPage).page).toBe(true);
     const long: AxNode[] = dialogNodes([{ id: 4, parent: 1, depth: 1, role: "label", name: "x".repeat(DIALOG_TEXT_MAX), states: [], bounds: null }]);

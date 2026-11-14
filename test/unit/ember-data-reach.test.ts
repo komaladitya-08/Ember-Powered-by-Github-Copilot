@@ -17,6 +17,8 @@ import { VAULT_FILE } from "../../app/main/vault/store";
 import { ERASED_FILE, HISTORY_FILE } from "../../app/main/agent/conversation-store";
 import { RUN_FILE } from "../../app/main/run-marker";
 import { emberDataOf } from "../../app/main/extensions/gate";
+import { dialogAround } from "../../app/main/agent/worker";
+import type { AxNode } from "../../app/main/perception/sidecar";
 
 type OS = "linux" | "win32" | "darwin";
 type Mode = "asking" | "interactive" | "assisted" | "autopilot";
@@ -260,5 +262,118 @@ describe("Ember's own settings, audit log and policy reached through another app
       expect(engine("interactive", "linux", { kate: "act" }).decide(r).verdict, f).toBe("confirm");
       expect(engine("autopilot", "linux", { kate: "act" }).decide(r).verdict, f).toBe("deny");
     }
+  });
+});
+
+describe("Ember's own files reached by what a field or a file dialog holds, not by what one step typed", () => {
+  const modes = ["asking", "interactive", "assisted", "autopilot"] as const;
+  const loc = { role: "text", name: "Location" };
+  const denied = (os: OS, app: string, r: ActionRequest, what: string) => {
+    for (const mode of modes) expect(engine(mode, os, { [app]: "act" }).decide(r).verdict, `${what} ${mode}`).toBe("deny");
+  };
+  const asksOrRefused = (os: OS, app: string, r: ActionRequest, what: string) => {
+    for (const mode of ["asking", "interactive", "assisted"] as const) {
+      const d = engine(mode, os, { [app]: "act" }).decide(r);
+      expect(d.verdict, `${what} ${mode}`).toBe("confirm");
+      expect(d.everyTime, `${what} ${mode}`).toBe(true);
+      expect(d.autonomy, `${what} ${mode}`).toBeFalsy();
+    }
+    expect(engine("autopilot", os, { [app]: "act" }).decide(r).verdict, `${what} autopilot`).toBe("deny");
+  };
+
+  it("refuses the last piece of their folder typed in parts, key by key, or appended to what the field holds, in every mode (safety-privacy-r11-1)", () => {
+    const rows: [OS, string, string, Partial<ActionRequest>][] = [
+      ["linux", "kate", "Save File — Kate", { kind: "text", mode: "append", value: "ings.json", typed: "~/.config/ember/settings.json" }],
+      ["linux", "kate", "Save File — Kate", { kind: "text", mode: "append", value: "er/sett", typed: "~/.config/ember/sett" }],
+      ["linux", "gedit", "Save As", { kind: "text", mode: "append", value: "ings.json", currentText: "~/.config/ember/sett" }],
+      ["linux", "gedit", "Save As", { kind: "text", mode: "insert", value: "ember/", currentText: "~/.config/settings.json" }],
+      ["linux", "gedit", "Save As", { kind: "keys", value: "r", currentText: "~/.config/embe", typed: "~/.config/ember" }],
+      ["linux", "kate", "Save File — Kate", { kind: "keys", value: "Return", currentText: "~/.config/ember/settings.json" }],
+      ["linux", "kate", "Save File — Kate", { kind: "cursor_text", mode: "append", value: "ber", typed: "/home/u/.config/em" + "ber" }],
+      ["win32", "notepad", "Save As", { kind: "text", mode: "append", value: "mber\\settings.json", currentText: "%LOCALAPPDATA%\\e" }],
+      ["win32", "notepad", "Save As", { kind: "keys", value: "Return", currentText: "C:\\Users\\a\\AppData\\Local\\ember\\audit\\audit-2026-11.jsonl" }],
+      ["darwin", "TextEdit", "Save", { kind: "keys", value: "Return", currentText: "~/Library/Application Support/ember/settings.json" }],
+      ["linux", "gedit", "Save As", { kind: "text", mode: "append", value: "*/settings.json", currentText: "~/.config/emb" }],
+    ];
+    for (const [os, app, w, x] of rows) denied(os, app, req(app, w, { element: loc, ...x }), `${os} ${w} ${JSON.stringify(x)}`);
+  });
+
+  it("refuses Save, Open or Enter in a dialog whose field holds their folder, in every mode (safety-privacy-r11-1)", () => {
+    const dialog = (name: string, fields: string[]) => ({ name, text: "", fields, controls: [{ role: "text", name: "Location", editable: true }, { role: "push button", name: "Save" }] });
+    const rows: [OS, string, string, Partial<ActionRequest>][] = [
+      ["linux", "kate", "Save File — Kate", { kind: "click", element: { role: "push button", name: "Save" }, dialog: dialog("Save File", ["~/.config/ember/settings.json"]) }],
+      ["linux", "gedit", "Open", { kind: "click", element: { role: "push button", name: "Open" }, dialog: dialog("Open", ["/home/u/.config/ember/audit"]) }],
+      ["linux", "gedit", "Open", { kind: "keys", value: "Return", element: { role: "table cell", name: "notes.txt" }, dialog: dialog("Open", ["~/.config/emb?r/settings.json"]) }],
+      ["win32", "notepad", "Save As", { kind: "click", element: { role: "button", name: "Save" }, dialog: dialog("Save As", ["%LOCALAPPDATA%\\ember\\settings.json"]) }],
+    ];
+    for (const [os, app, w, x] of rows) denied(os, app, req(app, w, x), `${os} ${w} ${JSON.stringify(x)}`);
+  });
+
+  it("asks every time before Overwrite, Replace or Yes on a dialog that names one of their files, and Autopilot refuses it (safety-privacy-r11-1)", () => {
+    const rows: [OS, string, string, string, string, string][] = [
+      ["linux", "kate", "File Already Exists — Kate", "Overwrite", "File Already Exists", "A file named \"settings.json\" already exists. Are you sure you want to overwrite it?"],
+      ["linux", "gedit", "", "Replace", "", "A file named “audit-2026-11.jsonl” already exists. Do you want to replace it?"],
+      ["win32", "notepad", "Confirm Save As", "Yes", "Confirm Save As", "settings.json already exists.\nDo you want to replace it?"],
+      ["darwin", "TextEdit", "Save", "Replace", "", "“extensions.json” already exists. Do you want to replace it?"],
+      ["linux", "org.gnome.Nautilus", "Home", "Delete", "", "Are you sure you want to permanently delete “vault.json”?"],
+    ];
+    for (const [os, app, w, button, name, text] of rows) {
+      asksOrRefused(os, app, req(app, w, { kind: "click", element: { role: "push button", name: button }, dialog: { name, text, alert: true } }), `${os} ${button} ${text}`);
+    }
+    // A dialog about another file stays as it was (asked as a risky step, announced in Autopilot).
+    const other = req("kate", "File Already Exists — Kate", { kind: "click", element: { role: "push button", name: "Overwrite" }, dialog: { name: "File Already Exists", text: "A file named \"notes.txt\" already exists.", alert: true } });
+    expect(mayReachEmberData(other)).toBe(false);
+  });
+
+  it("asks every time before a file dialog's Save or Open when its name field or its folder names one of their files or folders, and Autopilot refuses it (safety-privacy-r11-1)", () => {
+    const rows: Partial<ActionRequest>[] = [
+      { kind: "click", element: { role: "push button", name: "Save" }, dialog: { name: "Save File", text: "Name:", fields: ["settings.json"], items: ["Home", ".config"], controls: [{ role: "text", name: "Name", editable: true }, { role: "push button", name: "Save" }] } },
+      { kind: "click", element: { role: "push button", name: "Save" }, dialog: { name: "Save File", text: "Name:", fields: ["notes.json"], items: ["u", ".config", "ember"], controls: [{ role: "text", name: "Name", editable: true }, { role: "toggle button", name: "ember" }, { role: "push button", name: "Save" }] } },
+      { kind: "keys", value: "Return", element: { role: "text", name: "Name" }, dialog: { name: "Save As", text: "", fields: ["ember"], items: [], controls: [{ role: "text", name: "Name", editable: true }] } },
+    ];
+    for (const x of rows) asksOrRefused("linux", "gedit", req("gedit", "Save As", x), JSON.stringify(x));
+    // Windows' 8.3 short names may be any folder, Ember's included.
+    asksOrRefused("win32", "notepad", req("notepad", "Save As", { kind: "text", value: "C:\\Users\\a\\AppData\\Local\\EMBER~1\\settings.json", element: loc }), "8.3");
+    asksOrRefused("win32", "notepad", req("notepad", "Save As", { kind: "text", value: "C:\\Users\\a\\APPDAT~1\\Local\\EMBER~1", element: loc }), "8.3 folder");
+  });
+
+  it("asks every time before Save, Open or Enter in a file dialog whose name or folder can't be read whole, and Autopilot refuses it; one read whole goes as before (safety-privacy-r11-1)", () => {
+    const save = { role: "push button", name: "Save" };
+    const unread: Partial<ActionRequest>[] = [
+      { kind: "click", element: save, dialog: { name: "Save File", text: "Name:" } },
+      { kind: "click", element: save, dialog: { name: "Save As", text: "Name:", fields: [], items: [] } },
+      { kind: "click", element: save, dialog: { name: "Save As", text: "Name:", fields: ["notes.txt"], items: [], truncated: true, controls: [] } },
+      { kind: "keys", value: "Return", element: { role: "text", name: "Name" }, dialog: { name: "Open File", text: "" } },
+      { kind: "click", element: save },
+    ];
+    for (const x of unread) asksOrRefused("linux", "kate", req("kate", "Save File — Kate", x), JSON.stringify(x));
+    // Read whole: its fields, its folder and its controls, none of them Ember's.
+    const whole = req("kate", "Save File — Kate", { kind: "click", element: save, dialog: { name: "Save File", text: "Name:", fields: ["notes.txt"], items: ["u", "Documents", "notes.txt"], controls: [{ role: "text", name: "Name", editable: true }, save] } });
+    expect(mayReachEmberData(whole)).toBe(false);
+    expect(engine("autopilot", "linux", { kate: "act" }).decide(whole).verdict).toBe("allow");
+    // Cancel backs out, wherever the dialog is.
+    expect(mayReachEmberData(req("kate", "Save File — Kate", { kind: "click", element: { role: "push button", name: "Cancel" }, dialog: { name: "Save File", text: "" } }))).toBe(false);
+  });
+
+  it("reads a file dialog's fields, its path bar and its chosen rows as it is when the step is taken, and leaves its fields unknown when one can't be read (safety-privacy-r11-1)", () => {
+    const n = (id: number, parent: number | null, role: string, name: string, x: Partial<AxNode> = {}): AxNode => ({ id, parent, depth: parent === null ? 0 : 1, role, name, states: [], bounds: null, ...x });
+    const nodes = (field: Partial<AxNode> = {}): AxNode[] => [
+      n(1, null, "file chooser", "Save File"),
+      n(2, 1, "text", "Location", { editable: true, text: "~/.config/ember/settings.json", ...field }),
+      n(3, 1, "toggle button", "ember"),
+      n(4, 1, "table cell", "settings.json", { states: ["selected"] }),
+      n(5, 1, "push button", "Save"),
+    ];
+    const read = (all: AxNode[]) => dialogAround(all.find(x => x.id === 5), id => all.find(x => x.id === id), all, true)!;
+    const d = read(nodes());
+    expect(d.fileChooser).toBe(true);
+    expect(d.fields).toEqual(["~/.config/ember/settings.json"]);
+    expect(d.items).toEqual(["Location", "ember", "Save"]);
+    expect(d.selected).toEqual(["settings.json"]);
+    for (const mode of modes) expect(engine(mode, "linux", { kate: "act" }).decide(req("kate", "Save File — Kate", { kind: "click", element: { role: "push button", name: "Save" }, dialog: d })).verdict, mode).toBe("deny");
+    // A field whose contents are withheld: what it holds can't be told, so its Save asks (and Autopilot refuses it).
+    const hidden = read(nodes({ secret: true, text: undefined }));
+    expect(hidden.fields).toBeUndefined();
+    expect(mayReachEmberData(req("kate", "Save File — Kate", { kind: "click", element: { role: "push button", name: "Save" }, dialog: { ...hidden, items: ["Location", "Documents", "Save"], selected: [] } }))).toBe(true);
   });
 });

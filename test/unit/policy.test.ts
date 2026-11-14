@@ -1322,8 +1322,10 @@ describe("policy: review round 9", () => {
       element: { role: "text", name: "" }, ...o });
     // A text editor's lines, its Save dialog's name field, LibreOffice's own fields, a spin button: Enter starts a line, saves, searches or applies.
     expect(enter({ multiLine: true }).verdict).toBe("allow");
-    expect(enter({ element: { role: "text", name: "Name:" }, window: "Save As", windowId: { pid: 3, path: "/1", role: "file chooser" } }).verdict).toBe("allow");
-    expect(enter({ app: "firefox", element: { role: "text", name: "Name:" }, window: "Save As", windowId: { pid: 3, path: "/1", role: "file chooser" }, inPage: false }).verdict).toBe("allow");
+    // (The file dialog as the worker reads it: its name and folder, so where it saves is known: safety-privacy-r11-1.)
+    const saveAs = { name: "Save As", text: "Name:", fields: ["notes.txt"], items: ["Home", "Documents"] };
+    expect(enter({ element: { role: "text", name: "Name:" }, window: "Save As", windowId: { pid: 3, path: "/1", role: "file chooser" }, dialog: saveAs }).verdict).toBe("allow");
+    expect(enter({ app: "firefox", element: { role: "text", name: "Name:" }, window: "Save As", windowId: { pid: 3, path: "/1", role: "file chooser" }, inPage: false, dialog: saveAs }).verdict).toBe("allow");
     expect(enter({ app: "soffice", window: "Find and Replace", element: { role: "text", name: "Find:" } }).verdict).toBe("allow");
     expect(enter({ app: "soffice", window: "budget.ods - LibreOffice Calc", element: { role: "text", name: "Name:" }, windowId: { pid: 3, path: "/1", role: "dialog" } }).verdict).toBe("allow");
     expect(enter({ element: { role: "spin button", name: "Font size" }, app: "firefox", inPage: false }).verdict).toBe("allow");

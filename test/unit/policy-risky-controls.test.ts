@@ -496,7 +496,7 @@ describe("a button or link that goes past a warning, or answers a dialog's quest
     for (const [name, dialog, app] of [["Find Next", { name: "Find & Replace", text: "Find: Replace:" }, "soffice"],
       ["Find All", { name: "Find and Replace", text: "Search for Replace with Match case Whole words only" }, "soffice"],
       ["Copy link", { name: "Share", text: "Share this document with people. Anyone with the link can view." }, "firefox"],
-      ["Done", { name: "Share “Budget”", text: "Add people and groups" }, "firefox"], ["Save", { name: "Save As", text: "Name: Save in folder: Recent Starred Home Desktop Trash" }, "gedit"],
+      ["Done", { name: "Share “Budget”", text: "Add people and groups" }, "firefox"], ["Save", { name: "Save As", text: "Name: Save in folder: Recent Starred Home Desktop Trash", fields: ["letter.odt", "Documents"], items: ["Recent", "Starred", "Home", "Desktop", "Trash"] }, "gedit"],
       ["Next", { name: "Export as PDF", text: "Sign PDF documents" }, "soffice"], ["Insert", { name: "Insert Hyperlink", text: "Internet Mail Document New Document URL: Text: Delete" }, "soffice"]] as const) {
       expect(engine().decide(click(name, { app, window: "letter.odt", inPage: undefined, goal: "tidy up the letter", dialog })).verdict, `${name} in ${dialog.name}`).toBe("allow");
     }
