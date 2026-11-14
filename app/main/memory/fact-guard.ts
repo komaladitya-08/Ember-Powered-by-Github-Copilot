@@ -519,10 +519,21 @@ const TOPIC_NAME = /^(?:passwords?|passcodes?|passphrases?|passwd|pins?|pwd|pw|p
 const TOPIC_HEAD = /^(?:resets?|unlocks?|unblocks?|polic(?:y|ies)|rules?|flows?|services?|teams?|pads?|entry|entries|screens?|pages?|audits?|hygiene|management|managers?|guidance|security|storage|expiry|changes?|requirements?|strength|support|recovery|sync|sharing|vaults?|apps?|tools?|systems?|projects?|migrations?|rotation|training|forms?|fields?|prompts?|length|complexity|readers?|terminals?|firmware|tickets?|requests?|issues?|queries|calls?)$/i;
 /** Whose a plural is ("my passwords"): then it holds values. */
 const OWNER = /^(?:my|our|your|his|her|their|its)$/i;
+/** What opens a phrase after a topic that says where or for whom ("…at Globex", "…for card holders", "…and laptops"). */
+const PHRASE_START = /^(?:at|for|in|on|of|across|within|from|by|and|or|over|around|throughout)$/i;
+/** Words that pass through such a phrase without ending it. */
+const DETERMINER = /^(?:a|an|the|my|your|our|their|his|her|its|this|these|those)$/i;
+/** The words of ABOUT_SECRET that are things or places, which such a phrase may name ("…for the banking app", "…at home"). */
+const PHRASE_NOUN = new Set(String.raw`account accounts card cards debit credit bank banking sim phone phones mobile laptop computer tablet work home
+  office school wifi wi-fi router email emails login logins device devices desk family partner kids children friends colleagues
+  app apps manager managers vault page pages screen screens field fields box boxes text texts message messages link links`.split(/\s+/).filter(Boolean));
 /**
  * Whether every password's or PIN's name in `clause` is a topic, never a value's name (memory-r11-2): a name that heads
- * a topic word ("password resets", "the PIN pad"), or a plural no one owns ("reset passwords", "the LDAP passwords"),
- * either one not followed by what introduces a value ("…: X", "…to X", "…as X", "passwords are X").
+ * a topic word ("password resets", "the PIN pad"), or a plural no one owns ("reset passwords", "the LDAP passwords").
+ * Every word after the topic's own words, up to the next such name, is read (r11-memory-x11-1): grammar and talk about
+ * passwords (ABOUT_SECRET), or a word in a phrase that says where or for whom ("…at Globex", "…and laptops"). Any other
+ * word is the value ("Password reset code is tangerine", "Passwords at home all start with marmalade"), and so is one set
+ * off by ":", "=", "to", "as", a dash, a verb or a copula, which each end such a phrase. Fail closed.
  */
 function topicOnly(clause: string): boolean {
   const tokens = clause.split(/\s+/).filter(Boolean);
@@ -538,10 +549,19 @@ function topicOnly(clause: string): boolean {
     const plural = /s$/i.test(w) && !tokens.slice(Math.max(0, i - 3), i).some(t => OWNER.test(word(t)));
     if (!head && !plural) return false;
     if (/[:=]$/.test(tokens[j - 1]!)) return false;
-    // What comes next is grammar or talk about passwords, never a word that may be the value ("Passwords sunshine and rain").
-    const next = word(tokens[j] ?? "").toLowerCase();
-    if (next && (/^(?:to|as|=)$/.test(next) || (!head && /^(?:are|were|is|was)$/.test(next))
-      || !(ABOUT_SECRET.has(next) || sayless(next) || /^[a-z]+['’](?:s|t|re|ve|ll|d|m)$/.test(next)))) return false;
+    let phrase = false;
+    for (let k = j; k < tokens.length; k++) {
+      const t = word(tokens[k]!).toLowerCase();
+      // The next name is read on its own, by the loop above.
+      if (TOPIC_NAME.test(t)) break;
+      if (PHRASE_START.test(t)) phrase = true;
+      else if (DETERMINER.test(t)) { /* passes through */ }
+      else if (!t || /^[-–—→]+$/.test(t)) phrase = false;
+      else if (ABOUT_SECRET.has(t) || sayless(t) || /^[a-z]+['’](?:s|t|re|ve|ll|d|m)$/.test(t)) { if (!PHRASE_NOUN.has(t)) phrase = false; }
+      // A word that may be the value: only a place's, a group's or a thing's name in such a phrase, never one alone after a comma at the clause's end.
+      else if (!phrase || (k === tokens.length - 1 && /,$/.test(tokens[k - 1]!))) return false;
+      if (/[:=]$/.test(tokens[k]!)) phrase = false;
+    }
   }
   return named;
 }

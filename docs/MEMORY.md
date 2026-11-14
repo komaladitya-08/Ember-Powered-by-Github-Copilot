@@ -260,12 +260,15 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
     Never a password manager, a PIN reset or password rules, nor a postal PIN code. A clause whose every password's
     or PIN's name is a topic (memory-r11-2, `topicOnly`): it heads a topic word ("password resets", "the PIN pad
     firmware", "password policy", "PIN unblocks") or is a plural no one owns ("reset passwords", "the LDAP
-    passwords"), with nothing after it but grammar or talk about passwords and nothing setting a value off (":", "=",
-    "to", "as", "passwords are"), is refused only for a value's shape: so "IT support: password resets and laptops",
-    "Helpdesk, I unlock accounts and reset passwords" and "Tests the PIN pad firmware at Verifone" are kept, and
-    "Password resets: sunshine", "Reset passwords to tangerine", "Passwords sunshine and rainbow" and "My passwords
-    are sunshine and rainbow" are still refused. 7 of 10 IT, helpdesk and security roles were refused before it, none
-    now.
+    passwords"), is refused only for a value's shape when every word after the topic's own words is grammar or talk
+    about passwords, or stands in a phrase that says where or for whom ("…at Globex", "…for card holders", "…and
+    laptops"); any other word after it is the value, and so is one after ":", "=", "to", "as", a dash, a verb or a
+    copula, which each end such a phrase (r11-memory-x11-1). So "IT support: password resets and laptops", "Helpdesk,
+    I unlock accounts and reset passwords" and "Tests the PIN pad firmware at Verifone" are kept, and "Password
+    resets: sunshine", "Reset passwords to tangerine", "Passwords sunshine and rainbow", "Password reset code is
+    tangerine", "Password recovery is tangerine" and "Passwords at home all start with marmalade" are refused. 7 of
+    10 IT, helpdesk and security roles were refused before it, none now; it costs a topic said with a verb or an
+    adjective after it ("Password resets are annoying", "Passwords don't match"), which round ten refused too.
   - a credential by its value, wherever its name stands (memory-r11-1, memory-c11-1; `credentialValue`): a word that
     can only be a key or a token (a UUID, 16 or more hex digits, a run of 12 or more letters and digits) beside a
     key's, a token's, a cookie's, an API's or a hook's name with or without "is" ("API key 9b2f…", "Bearer token

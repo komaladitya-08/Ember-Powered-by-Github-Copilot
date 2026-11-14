@@ -37,7 +37,25 @@ const VALUES = [
   "IT support, passwords: bluebird", "The LDAP passwords are tangerine", "PIN pad 4821",
 ];
 
+/** A value after a topic phrase, by a copula, "all", a verb or a credential's own word (r11-memory-x11-1), then neighbours. */
+const AFTER_TOPIC = [
+  "My password reset code is tangerine", "Netflix password reset code is tangerine", "Bank password reset code is tangerine",
+  "The password reset code for the bank is tangerine", "Gmail password reset is tangerine", "Wi-Fi password reset is tangerine",
+  "Router password reset is tangerine", "Password reset is sunshine", "Password reset was tangerine", "Password reset now is tangerine",
+  "Password recovery is tangerine", "Password unlock is tangerine", "Password reset is Tangerine", "Password reset is correct horse battery staple",
+  "Passwords all are tangerine", "Passwords all tangerine", "Password resets are marmalade", "Password changes always to marmalade",
+  "Passwords at home all start with marmalade",
+  // Neighbours.
+  "Passwords in the office all say marmalade", "Passwords aren't marmalade", "Password reset is marmalade now", "Password reset link code is tangerine",
+  "The password reset code is tangerine", "Password resets and changes are marmalade", "PIN resets at the bank are marmalade",
+  "Password policy at Globex is marmalade", "Password reset answer for Netflix: kingfisher", "Password resets always use marmalade",
+];
+
 describe("a password or a PIN as a topic", () => {
+  it.each(AFTER_TOPIC.map(s => [s]))("refuses %j, a value after the topic's words (r11-memory-x11-1)", text => {
+    expect(factRefusal(text)).not.toBeNull();
+  });
+
   it.each(TOPICS.map(s => [s]))("keeps %j, which names passwords as work, not a value (memory-r11-2)", text => {
     expect(factRefusal(text)).toBeNull();
     expect(new MemoryGraph().add({ text: `Role and work: ${text}`, about: USER, source: "user" }).kind).toBe("added");
