@@ -903,13 +903,6 @@ export class Presenter {
 
   /** Updates what this presenter shows; it reaches the screen only if the bubble is its to write. Returns whether it did. */
   private apply(patch: Partial<EmberState>, claim: Claim = this.guiding ? "reply" : this.work): boolean {
-    // A background task's line for the user is up (cornerSay): its running work stays on its card meanwhile, and the
-    // first of it after a line that needed the user ("A command is waiting…") means that line is over.
-    if (claim === "progress" && this.inCorner && this.cornerNote !== null && this.visible) {
-      if (this.cornerNote !== "needs-you") return false;
-      this.hide();
-    }
-    if (!this.saying) this.cornerNote = null;
     this.state = { ...this.state, ...patch, bubble: { ...this.state.bubble, ...(patch.bubble ?? {}), ...(this.taskId ? { task: this.taskId } : {}), ...(this.where ? { where: this.where } : {}) } };
     // "Still waiting" is news for screen readers only while the bubble says it (BubbleState.stalled).
     if (patch.bubble && !isStillWaiting(this.state.bubble.title)) delete this.state.bubble.stalled;
@@ -1095,7 +1088,6 @@ export class Presenter {
   /** This presenter's bubble goes. If it was on screen, the latest one waiting shows instead, or the bubble empties. */
   private hide(): void {
     this.cancelHide();
-    this.cornerNote = null;
     this.guiding = false;
     this.held = false;
     const onScreen = this.owner.current === this && !this.unseen;
@@ -1429,10 +1421,8 @@ export class Presenter {
     const note = text.replace(/\s+/g, " ");
     if (!note.trim()) return;
     const needsYou = more?.needsYou === true;
-    const patch: Partial<EmberState> = { emotion: "focused", bubble: { ...this.state.bubble, visible: true, mood: needsYou ? "attention" : "acting", thought: clip(note), streaming: !needsYou,
-      ...(more?.actions ? { actions: more.actions } : {}), ...(more && "step" in more ? { step: more.step ?? null } : {}) } };
-    if (needsYou && this.cornerSay(patch, "needs-you")) return;
-    this.apply(patch);
+    this.apply({ emotion: "focused", bubble: { ...this.state.bubble, visible: true, mood: needsYou ? "attention" : "acting", thought: clip(note), streaming: !needsYou,
+      ...(more?.actions ? { actions: more.actions } : {}), ...(more && "step" in more ? { step: more.step ?? null } : {}) } });
   }
 
   /**
@@ -1456,8 +1446,7 @@ export class Presenter {
     if (!said) return;
     this.announcing = true;
     try {
-      const patch: Partial<EmberState> = { emotion: "focused", bubble: { ...this.state.bubble, visible: true, mood: "acting", title: this.name(), thought: clip(said), step: null, streaming: false, actions: [], autonomous: true } };
-      if (!this.cornerSay(patch, "announce")) this.apply(patch);
+      this.apply({ emotion: "focused", bubble: { ...this.state.bubble, visible: true, mood: "acting", title: this.name(), thought: clip(said), step: null, streaming: false, actions: [], autonomous: true } });
     } finally {
       this.announcing = false;
     }
@@ -1465,32 +1454,6 @@ export class Presenter {
 
   /** workedWithoutAsking is applying its announcement: the only bubble that may carry the "Without asking" tag. */
   private announcing = false;
-  /** A background task's line for the user (cornerSay) is in its bubble: an announcement, or a line that needs them. */
-  private cornerNote: "announce" | "needs-you" | null = null;
-  /** cornerSay is applying its line. */
-  private saying = false;
-
-  /**
-   * A background task's line that needs the user now (companion-r11-1, -c11-1): its announcement of a step taken
-   * without asking, or a line they have to act on. Its work shows only on its card (PresenterOptions.corner), but these
-   * come to the cursor as its questions do, and so to the bubble's and the card's live regions: as something to read,
-   * which waits for a question or an answer on screen and goes after its reading time (as a result does). Returns false
-   * where the presenter isn't in the corner: its bubble is the task's own, and the line goes there as before.
-   */
-  private cornerSay(patch: Partial<EmberState>, kind: "announce" | "needs-you"): boolean {
-    if (!this.inCorner || this.silent) return false;
-    this.cancelHide();
-    this.saying = true;
-    try {
-      this.apply(patch, "reply");
-    } finally {
-      this.saying = false;
-    }
-    this.cornerNote = kind;
-    const said = patch.bubble?.thought ?? "";
-    this.hideLater(Math.min(30_000, 6000 + said.length * 50));
-    return true;
-  }
 
   /**
    * A command the user's own words asked for is about to run (D4.4, §3.9.2): the announcement ("Pushing feature-x to

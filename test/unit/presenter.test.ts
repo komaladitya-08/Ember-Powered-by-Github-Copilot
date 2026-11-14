@@ -1587,66 +1587,31 @@ describe("Presenter: the answer stays while the Ask box beside it is open (compa
   });
 });
 
-describe("a task in the corner: the lines that need the user still come to the cursor (companion-r11-1, -c11-1)", () => {
-  const corner = (o: { owner?: BubbleOwner } = {}) => {
-    const states: Partial<EmberState>[] = [];
+describe("a background task's announcement and the foreground task's own (r11-copy-y11-3)", () => {
+  it("never loses the foreground task's line taken without asking behind a background task's (r11-copy-y11-3)", () => {
     vi.useFakeTimers();
-    const p = new Presenter(s => states.push(s), undefined, () => "Ember", o.owner ?? new BubbleOwner(), undefined, false, { task: "t1", corner: true });
-    return { p, states, last: () => states[states.length - 1] };
-  };
-  const SAID = "Clicking in Thunderbird, without asking: Autopilot is on.";
-  const WAITING = "A command is waiting for you to type in the command window.";
-
-  it("keeps a background task's work on its card, as before", () => {
-    const { p, states } = corner();
-    p.progress("Looking at Thunderbird");
-    p.note("Two newsletters left");
-    expect(states).toEqual([]);
+    const owner = new BubbleOwner();
+    const shown: string[] = [];
+    const mk = (id: string) => new Presenter(s => { if (s.bubble?.visible) shown.push(`${id}: ${s.bubble.thought}`); }, undefined, () => id, owner, undefined, false, { task: id, corner: true, readTime: () => 1 });
+    const fore = mk("f");
+    const back = mk("b");
+    fore.foreground = true;
+    fore.taskStarted();
+    fore.progress("Clicking Send");
+    back.workedWithoutAsking("Deleting 3 messages in Thunderbird, without asking: Autopilot is on.");
+    fore.workedWithoutAsking("Borrowing your mouse in Firefox, without asking: Interactive is on.");
+    expect(shown).toContain("f: Borrowing your mouse in Firefox, without asking: Interactive is on.");
   });
 
-  it("shows a step it took without asking beside the cursor, tagged, for screen readers too, then lets it go (companion-r11-1)", () => {
-    const { p, states, last } = corner();
-    p.progress("Looking at Thunderbird");
-    p.workedWithoutAsking(SAID);
-    expect(states).toHaveLength(1);
-    expect(last().bubble).toMatchObject({ visible: true, thought: SAID, autonomous: true, task: "t1", streaming: false });
-    // The task's running work stays on its card meanwhile: it doesn't replace the announcement.
-    p.progress("Opening the next message");
-    expect(states).toHaveLength(1);
-    vi.advanceTimersByTime(31_000);
-    expect(last().bubble).toMatchObject({ visible: false });
-    // Back in the background: its work is on its card again.
-    const n = states.length;
-    p.progress("Opening the next message");
-    expect(states).toHaveLength(n);
-  });
-
-  it("shows the announcement once a question that held it off is answered, not never (companion-r11-1)", async () => {
-    let up = true;
-    let done!: () => void;
-    const answered = new Promise<void>(r => { done = r; });
-    const owner = new BubbleOwner({ up: () => up, answered: () => answered });
-    const { p, states, last } = corner({ owner });
-    p.workedWithoutAsking(SAID);
-    expect(states).toEqual([]);
-    up = false;
-    done();
-    await Promise.resolve();
-    owner.afterAnswer();
-    expect(last().bubble).toMatchObject({ visible: true, thought: SAID, autonomous: true });
-  });
-
-  it("says a command waits for typing beside the cursor with Show, and takes it down once the command stops waiting (companion-c11-1)", () => {
-    const { p, states, last } = corner();
-    p.progress("Running a command…");
-    p.progress(WAITING, { actions: [{ id: "ui:cmdshow:r1", label: "Show" }], step: "Press Alt+Tab to go there.", needsYou: true });
-    expect(states).toHaveLength(1);
-    expect(last().bubble).toMatchObject({ visible: true, thought: WAITING, mood: "attention", streaming: false, actions: [{ id: "ui:cmdshow:r1", label: "Show" }] });
-    // The run stopped waiting: the flow says its earlier words again, which go back to the card.
-    p.progress("Running a command…", { actions: [], step: null });
-    expect(last().bubble).toMatchObject({ visible: false });
-    const n = states.length;
-    p.progress("Running a command…");
-    expect(states).toHaveLength(n);
+  it("shows a guide step at once, not behind a background task's announcement (r11-copy-y11-3)", () => {
+    vi.useFakeTimers();
+    const owner = new BubbleOwner();
+    const shown: string[] = [];
+    const push = (id: string) => (s: Partial<EmberState>) => { if (s.bubble?.visible) shown.push(`${id}: ${s.bubble.thought || s.bubble.step}`); };
+    const back = new Presenter(push("b"), undefined, () => "Back", owner, undefined, false, { task: "b", corner: true });
+    const guide = new Presenter(push("g"), undefined, () => "Guide", owner, undefined, false, { task: "g" });
+    back.workedWithoutAsking("Deleting 3 messages in Thunderbird, without asking: Autopilot is on.");
+    guide.guide("Now open Settings", "Click the gear at the top right.");
+    expect(shown.some(l => l.startsWith("g: "))).toBe(true);
   });
 });

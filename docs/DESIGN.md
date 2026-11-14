@@ -109,10 +109,7 @@ They share one emotion rig, so switching never changes behaviour.
   "Without asking" tag in the accent tint, set only by Ember (`BubbleState.autonomous`): a task's
   own note never carries it. Screen readers hear that announcement once, in the bubble's live region and in the corner
   card's ("Ember says: Clicking in Thunderbird, without asking: Autopilot is on."), a borrowed mouse's with how to
-  take it back, though Ember is still at work. A task working in the corner brings that announcement, and a line it
-needs the user for ("A command is waiting for you to type in the command window.", with **Show**), to the cursor
-as it brings its questions: the line waits behind a question on screen, its work stays on its card meanwhile, and it
-goes after its reading time (the waiting line as soon as the command stops waiting). When
+  take it back, though Ember is still at work. When
   "Thinking…" has heard nothing from Copilot for 10 seconds it says "Still waiting for Copilot…"
   (or "Still waiting for your model provider…" or "…for the model service…" when that is the one in use) with **Stop** (that turn only; tasks go on), and so does a turn that goes quiet for 30. Its step names the keyboard's ways to stop,
   which the bubble's Stop can't offer ("Or press Ctrl+Alt+E and use Stop response in Home. Ctrl+Alt+X stops
