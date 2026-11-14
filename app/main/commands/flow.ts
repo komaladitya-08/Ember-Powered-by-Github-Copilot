@@ -1412,9 +1412,11 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
         const at = d.says.findIndex(l => l === LINES.unasked || l === LINES.inexact || l === LINES.windows);
         const lines = at < 0 ? [...d.says, ...own] : [...d.says.slice(0, at), ...own, ...d.says.slice(at)];
         // Autopilot: the remote's own question is announced instead of asked, once, with its lines on a countdown of its
-        // own. Never where its rules say the command would read or print secrets, outlive Stop or can't be told, or
-        // where every command asks there: those go to the card below, as does whatever the remote still wants a yes for
-        // after the announcement (its own administrator's policy holds as the organisation's).
+        // own, also where its rules say the command would read or print secrets (its output then kept from the model),
+        // outlive Stop (said so) or can't be told, but for what is refused just below (the owner's decision of
+        // 2026-11-14). Only an organisation's rule (`admin.*`: the remote's own administrator's policy) and the user's
+        // own "ask every command" there go to the card below, as does whatever the remote still wants a yes for after
+        // the announcement.
         const extra = remoteRules(exit);
         // What Autopilot refuses on this computer it refuses where the remote's own check found it too: a deletion or a
         // write of what can't be named, a terminal's remote-control verb (r11-commands-x11-2). No question to put.
