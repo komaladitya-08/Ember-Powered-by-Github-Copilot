@@ -464,7 +464,8 @@ or sees password or payment fields (only in Autopilot does Ember fill one itself
 authentication windows. While a password prompt (polkit, keyring, sudo) is open, Ember doesn't read the screen,
 take screenshots or press keys (nor asks to borrow your mouse or keyboard, or says it's borrowing them without asking,
 while one such as pinentry or ssh-askpass has the keyboard); while GNOME Shell's own prompt is up, or the window of a
-prompt program (pinentry, ssh-askpass, a polkit agent or gcr's prompter) is open, focused or not (or Ember can't tell,
+prompt program (pinentry, ssh-askpass, a polkit agent, gcr's prompter, or KDE's, LXQt's or GTK's sudo prompt:
+kdesu, lxqt-sudo, gksu) is open, focused or not (or Ember can't tell,
 because the shell is too busy or didn't answer, the window list can't be read, or the accessibility helper isn't
 working: then Ember says so and points to the setup check),
 it also sends no window's text or titles with your request and takes no step in any app (nor asks you about one, or says
