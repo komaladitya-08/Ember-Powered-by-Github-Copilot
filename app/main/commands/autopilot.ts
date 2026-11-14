@@ -169,9 +169,10 @@ const UNKNOWN_BY_ANOTHER_NAME = /^unclear\.(([a-z0-9]+-)?verb|program|program-le
  * a PowerShell module, a git hook run by name (modes-y9-x9-3); and a sandbox or a wrapper whose command the classifier
  * doesn't judge (`bwrap`, `firejail`, `envdir`, `expect`: `bwrap … systemd-run …` starts what outlives Stop, and its
  * only finding is the wrapper's name; modes-y9-y9-5), and a script the task wrote in a language Ember doesn't read
- * (`unclear.script-code`: commands-remote-r10-9).
+ * (`unclear.script-code`: commands-remote-r10-9), or a pod's command Ember can't read (`kubectl exec -i pod -- sh <
+ * x.sh`, `unclear.remote-command`: r10-commands-y10-8).
  */
-const CODE_NOBODY_SEES = /^unclear\.(rundll32|mshta|wscript|cscript|msdt|pcalua|scriptrunner|syncappvpublishingserver|odbcconf|msxsl|ieexec|control|presentationhost|run-parts|import-module|git-hook|bwrap|firejail|envdir|expect|script-code)$/;
+const CODE_NOBODY_SEES = /^unclear\.(rundll32|mshta|wscript|cscript|msdt|pcalua|scriptrunner|syncappvpublishingserver|odbcconf|msxsl|ieexec|control|presentationhost|run-parts|import-module|git-hook|bwrap|firejail|envdir|expect|script-code|remote-command)$/;
 /** Is this a program, or a tool's command, the classifier doesn't know (the closed default, and its older rules for the same)? */
 const unknownTo = (f: { cls?: DangerClass; rule: string }): boolean => {
   const rule = f.rule.replace(/^in-script:/, "");

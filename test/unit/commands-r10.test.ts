@@ -278,6 +278,23 @@ describe("cloud tools' commands that print secrets, and their verbs Ember doesn'
     for (const cmd of ["kubectl exec pod -- ls /app", "heroku run -a app rake db:version", "kubectl exec pod -- sh -c 'ls -l'"]) expect(decide(cmd).classes, cmd).not.toContain("secret");
   });
 
+  it("judges a cloud computer's --command and --scripts and an attached -C as a pod's, and asks about one it can't read (r10-commands-y10-8)", () => {
+    for (const cmd of ["gcloud compute ssh vm --command env", "gcloud compute ssh vm --command=printenv", "gcloud compute ssh vm --zone z --command 'cat .env'",
+      "az vm run-command invoke -g rg -n vm --command-id RunShellScript --scripts env", "az vm run-command invoke -g rg -n vm --command-id RunShellScript --scripts 'cat .env'",
+      "fly ssh console -Cenv", "flyctl ssh console -C'sh -c env'"]) {
+      const d = decide(cmd);
+      expect(d.classes, cmd).toContain("secret");
+      expect(keptQuestion(d, result(cmd).cls.findings), cmd).toBe("secret");
+    }
+    for (const cmd of ['kubectl exec pod -- sh -c "$(cat x)"', "kubectl exec pod -i -- sh < x.sh", "cat x.sh | kubectl exec -i pod -- sh", "oc exec pod --stdin -- bash < x.sh"]) {
+      const d = decide(cmd);
+      expect(d.verdict, cmd).toBe("ask");
+      expect(autopilotAsks(d, { mode: "on", askEvery: null, userAskEvery: false, findings: result(cmd).cls.findings }), cmd).not.toBeNull();
+    }
+    for (const cmd of ["gcloud compute ssh vm --command 'ls /app'", "kubectl exec pod -- ls /app", "fly ssh console -Cuptime"]) expect(decide(cmd).classes, cmd).not.toContain("secret");
+    expect(autopilotAsks(decide("kubectl exec pod -- ls /app"), { mode: "on", askEvery: null, userAskEvery: false, findings: result("kubectl exec pod -- ls /app").cls.findings })).toBeNull();
+  });
+
   it("files a verb it can't tell as one it doesn't know, which Autopilot asks about and Assisted's check never sees", () => {
     for (const cmd of ["heroku apps:frobnicate", "gcloud frobnicate x", "pulumi stack frob", "netlify frob"]) {
       const d = decide(cmd);

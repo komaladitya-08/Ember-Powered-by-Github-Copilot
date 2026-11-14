@@ -8473,14 +8473,40 @@ function cloudPrintsSecrets(key: string, verbs: readonly string[], rest: readonl
     }
     if (remotePrintsSecrets(rest.slice(k).map(a => a.v ?? a.raw).join(" "), ctx)) return true;
   }
-  if ((key === "fly" || key === "flyctl") && v0 === "ssh") {
+  // fly's -C (attached too: `-Cenv`) and gcloud's `compute ssh --command` are shell text run there; one Ember can't
+  // read is taken as printing them (r10-commands-y10-8).
+  const fly = (key === "fly" || key === "flyctl") && v0 === "ssh";
+  if (fly || (key === "gcloud" && v0 === "compute" && v1 === "ssh")) {
     for (let k = 0; k < rest.length; k++) {
       const w = rest[k].v ?? "";
-      const cmd = w === "-C" || w === "--command" ? rest[k + 1]?.v ?? "env" : w.startsWith("--command=") ? w.slice(10) : null;
+      const cmd = w === "--command" || (fly && w === "-C") ? rest[k + 1]?.v ?? "env" : w.startsWith("--command=") ? w.slice(10) : fly && /^-C./.test(w) ? w.slice(2) : null;
       if (cmd !== null && remotePrintsSecrets(cmd, ctx)) return true;
     }
   }
+  // Azure's run-command runs each word after --scripts as a line of shell (r10-commands-y10-8).
+  if (key === "az" && v0 === "vm" && v1 === "run-command") {
+    const at = rest.findIndex(a => a.v === "--scripts");
+    if (at >= 0) {
+      const lines: string[] = [];
+      for (let k = at + 1; k < rest.length && !(rest[k].v ?? "").startsWith("--"); k++) lines.push(rest[k].v ?? "env");
+      if (remotePrintsSecrets(lines.join("\n"), ctx)) return true;
+    }
+  }
   return false;
+}
+
+/**
+ * Whether what a pod runs is text Ember can't read (r10-commands-y10-8): a word after `--` it can't resolve
+ * (`sh -c "$(cat x)"`), or a shell there fed this computer's input (`-i … -- sh < x.sh`, `cat x.sh | kubectl exec -i`).
+ */
+function podRunsUnread(key: string, verbs: readonly string[], rest: readonly Arg[], s: Simple): boolean {
+  if (!((key === "kubectl" || key === "oc") && (verbs[0] === "exec" || verbs[0] === "debug"))) return false;
+  const dash = rest.findIndex(a => a.v === "--");
+  if (dash < 0) return false;
+  const there = rest.slice(dash + 1);
+  if (there.some(a => a.v === null)) return true;
+  const stdin = rest.slice(0, dash).some(a => a.v !== null && /^(-[A-Za-z]*i[A-Za-z]*|--stdin(=true)?)$/.test(a.v));
+  return stdin && s.stdin !== null && there[0]?.v !== undefined && there[0].v !== null && POSIX_SHELLS[programName(there[0].v, { os: "linux", family: "posix", wsl: false, mountRoot: "" }).key] !== undefined;
 }
 
 /** heroku run's options that take a value written apart (`-a app`, `--size standard-2x`). */
@@ -8524,6 +8550,7 @@ reg(NATIVE, Object.keys(CLOUD_CLIS), h => {
   }
   const verbs = positional.map(p => p.toLowerCase());
   if (cloudPrintsSecrets(h.key, verbs, rest, h.e.ctx)) h.e.add("secret", "secret.cloud", SAYS.secrets);
+  if (podRunsUnread(h.key, verbs, rest, h.s)) h.e.unclear("unclear.remote-command", "It runs a command in the pod that Ember can't read first.");
   // A syntax check or a listing reads (review #30). `--check` doesn't: a task with `check_mode: false` still changes the
   // managed computers, so it asks without saying that it changes them.
   if (h.key === "ansible-playbook" && h.args.some(a => /^(--syntax-check|--list-hosts|--list-tasks|--list-tags)$/.test(a.v ?? ""))) return;

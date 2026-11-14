@@ -228,8 +228,9 @@ Ember stops and asks before a command that:
   get`, `heroku config`, `netlify env:list`, `vercel env ls` and `env pull`, `firebase functions:config:get`, `gcloud
   secrets versions access`, and whatever run in a pod or an app would print secrets, judged as a command of its own,
   wrapped or after options: `kubectl exec pod -- env`, `kubectl exec pod -- sh -c env`, `kubectl exec pod -- cat
-  .env`, a file under `/run/secrets/`, `heroku run -a app env`, `fly ssh console -C "sh -c env"`, inline code that
-  prints its environment);
+  .env`, a file under `/run/secrets/`, `heroku run -a app env`, `fly ssh console -C "sh -c env"`, `fly ssh console -Cenv`, `gcloud compute ssh vm --command env`, `az vm run-command invoke … --scripts env`, inline code that
+  prints its environment; a pod's command Ember can't read, `kubectl exec pod -- sh -c "$(cat x)"` or `kubectl exec -i pod -- sh < x.sh`,
+  asks as code nobody is shown);
   a Wi-Fi password (`nmcli device wifi show-password`); a file named for what it holds (`password.txt`,
   `secrets.txt`, `credentials.txt`, `.vault_pass`, `.htpasswd`, `~/.boto`, `~/.s3cfg`, Composer's `auth.json`,
   FileZilla's and Pidgin's saved sign-ins); a fetch of a cloud computer's own sign-in address, however it

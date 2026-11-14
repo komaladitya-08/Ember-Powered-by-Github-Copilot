@@ -104,7 +104,7 @@ describe("notReviewable (modes-C2, modes-C7; PLAN.md §10 \"Settled\" (7))", () 
     }
     // Code nobody is shown: a Windows script host and its like, every script of a folder, a module, a hook.
     for (const rule of ["unclear.rundll32", "unclear.mshta", "unclear.wscript", "unclear.cscript", "unclear.msdt", "unclear.pcalua", "unclear.scriptrunner", "unclear.odbcconf", "unclear.msxsl", "unclear.ieexec",
-      "unclear.control", "unclear.presentationhost", "unclear.syncappvpublishingserver", "unclear.run-parts", "unclear.import-module", "unclear.git-hook",
+      "unclear.control", "unclear.presentationhost", "unclear.syncappvpublishingserver", "unclear.run-parts", "unclear.import-module", "unclear.git-hook", "unclear.remote-command",
       // And a sandbox or a wrapper whose command the classifier doesn't judge (`bwrap … systemd-run …`): modes-y9-y9-5.
       "unclear.bwrap", "unclear.firejail", "unclear.envdir", "unclear.expect",
       // And a script the task wrote in a language Ember doesn't read (commands-remote-r10-9).
