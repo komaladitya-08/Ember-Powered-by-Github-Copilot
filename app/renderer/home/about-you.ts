@@ -97,7 +97,7 @@ export function mountAboutYou(host: HTMLElement, o: AboutYouOptions): AboutYou {
   /** The answers memory didn't keep, as they were sent: unchanged, they are marked and not sent again (memory-r11-2). */
   const refusedAs = new Map<IntroField, string>();
   const unmark = (key: IntroField, control: HTMLInputElement | HTMLSelectElement) => {
-    if (refusedAs.has(key) && refusedAs.get(key) !== control.value) { refusedAs.delete(key); control.removeAttribute("aria-invalid"); }
+    if (refusedAs.has(key) && refusedAs.get(key) !== control.value) { refusedAs.delete(key); control.removeAttribute("aria-invalid"); control.removeAttribute("aria-describedby"); }
   };
   const text = (key: "name" | "work" | "apps" | "hours", label: string, max: number) => {
     const row = el("div", { className: "field-row about-field" });

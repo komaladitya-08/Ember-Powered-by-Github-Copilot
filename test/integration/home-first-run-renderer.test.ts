@@ -1717,6 +1717,8 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     // A change is a new answer to save (typed back, too); cleared, Skip goes on without it.
     await p.locator("#w-ay-work").fill("IT support");
     expect(await p.locator("#w-ay-work").getAttribute("aria-invalid")).toBeNull();
+    // Changed, it is no longer described by the status line, which goes on to say other things (r11-memory-y11-4).
+    expect(await p.locator("#w-ay-work").getAttribute("aria-describedby")).toBeNull();
     expect(await next(p).innerText()).toBe("Save and continue");
     await p.locator("#w-ay-work").fill("IT support, Netflix pw sunshine");
     expect(await next(p).innerText()).toBe("Save and continue");
