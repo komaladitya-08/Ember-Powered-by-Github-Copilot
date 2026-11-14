@@ -246,7 +246,7 @@ describe("the three mode cards are true to the owner's table for commands (owner
   it("Assisted's card no longer says its check never clears a secrets command or one that outlives Stop", async () => {
     const { ASSISTED_CONSENT_TEXT: card } = await import("../../app/renderer/home/copy");
     expect(card).not.toMatch(/never clears a command that would show passwords or keys/);
-    expect(card).toContain("It never clears a step you said no to or one your words for the task rule out, anything Ember refuses, such as typing a password, or what you or your organisation set to ask every time.");
+    expect(card).toContain("It never clears a step you said no to, a command your words for the task rule out, anything Ember refuses, such as typing a password, or what you or your organisation set to ask every time.");
     expect(FEATURE_CONSENT_VERSION.assisted).toBe(3);
   });
 
@@ -255,7 +255,7 @@ describe("the three mode cards are true to the owner's table for commands (owner
     expect(card).not.toMatch(/still asks before a command|one whose effect it can't tell|one you may have ruled out/);
     expect(card).toContain("A command that shows passwords or keys runs too, but what it prints is kept from the AI model: only you see it. One that would keep running after you stop Ember runs too, and Ember says Stop won't reach it.");
     expect(card).toContain("It asks only where your organisation, or your own “Ask me before every command” for a computer, says to, and before it turns on something you haven't agreed to yet.");
-    expect(card).toContain("It refuses, without asking, a step you said no to, what your words for the task rule out and anything that may be one of those, and a command that deletes, changes or reads something it can't name, such as a place held in a variable.");
+    expect(card).toContain("It refuses, without asking, a step you said no to and anything that may be one, a command your words for the task rule out, and a command that deletes, changes or reads something it can't name, such as a place held in a variable.");
     expect(FEATURE_CONSENT_VERSION.autopilot).toBe(3);
   });
 });
@@ -332,7 +332,22 @@ describe("Autopilot says it refuses a command that changes something Ember can't
   // substitution or another user's home, which could be Ember's own records, is refused, not asked about.
   it("on its card and in Home's Commands", async () => {
     const { AUTOPILOT_CONSENT_TEXT: card } = await import("../../app/renderer/home/copy");
-    expect(card).toContain("It refuses, without asking, a step you said no to, what your words for the task rule out and anything that may be one of those, and a command that deletes, changes or reads something it can't name, such as a place held in a variable.");
+    expect(card).toContain("It refuses, without asking, a step you said no to and anything that may be one, a command your words for the task rule out, and a command that deletes, changes or reads something it can't name, such as a place held in a variable.");
     expect(cc.commandsIntro("autopilot")).toContain("One you said no to, or ruled out in your request, is refused, and so is one that deletes, changes or reads something Ember can't name, such as a place held in a variable.");
+  });
+});
+
+describe("Assisted's and Autopilot's cards promise the user's ruled-out words only for commands (r11-copy-y11-1, -y11-2)", () => {
+  // Only commands are held to what the user's words rule out (flow.ts wordsRuleOut, review.ts notReviewable): an app
+  // step those words veto asks in Interactive, goes to Assisted's check and is announced in Autopilot.
+  const ruledOut = (words: string) => [...words.matchAll(/([^.]{0,40})\b(?:rule out|ruled out)\b/g)].map(m => m[0]);
+  const readme = readFileSync(new URL("../../README.md", import.meta.url), "utf8");
+  const howAsks = readme.slice(readme.indexOf("- **Assisted** is Interactive"), readme.indexOf("In every mode “Ember, stop”")).replace(/\s+/g, " ");
+
+  it("names a command wherever a card or the README says Ember holds to what your words rule out", async () => {
+    const { ASSISTED_CONSENT_TEXT, AUTOPILOT_CONSENT_TEXT } = await import("../../app/renderer/home/copy");
+    const found = [ASSISTED_CONSENT_TEXT, AUTOPILOT_CONSENT_TEXT, howAsks].flatMap(ruledOut);
+    expect(found.length).toBeGreaterThanOrEqual(3);
+    for (const phrase of found) expect(phrase).toMatch(/command/);
   });
 });

@@ -336,7 +336,7 @@ describe("How Ember asks (Apps & privacy, modes-A10)", () => {
       "A command that shows passwords or keys runs too, but what it prints is kept from the AI model: only you see it.",
       "It asks only where your organisation, or your own “Ask me before every command” for a computer, says to, and before it turns on something you haven't agreed to yet.",
       "The AI model never types or sees passwords or card numbers: Ember asks you once in its Secure Form, keeps them locked in its vault for that app or site, and fills them in there itself.",
-      "It refuses, without asking, a step you said no to, what your words for the task rule out and anything that may be one of those, and a command that deletes, changes or reads something it can't name, such as a place held in a variable.",
+      "It refuses, without asking, a step you said no to and anything that may be one, a command your words for the task rule out, and a command that deletes, changes or reads something it can't name, such as a place held in a variable.",
       "It never acts in your system's sign-in and password prompts, never uses your terminals, never reads windows on your never-look list and never runs a command that touches its own settings, record or Stop.",
       "“Ember, stop” or Ember's stop shortcut stops everything at once.",
       "Your organisation can turn Autopilot off.",

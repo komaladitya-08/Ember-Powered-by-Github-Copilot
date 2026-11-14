@@ -154,7 +154,7 @@ describe("Interactive's card (FEATURE_CONSENT_VERSION.autonomy, modes-A9)", () =
     // Announced and recorded; it can be wrong; what it never clears; what happens otherwise; a stop always works.
     expect(ASSISTED_CONSENT_TEXT).toMatch(/Ember tells you each time, a command waits a few seconds with a Stop first, and What Ember did keeps a record\./);
     expect(ASSISTED_CONSENT_TEXT).toMatch(/The model can be wrong: it may let through a step you didn't mean\./);
-    expect(ASSISTED_CONSENT_TEXT).toMatch(/It never clears a step you said no to or one your words for the task rule out, anything Ember refuses, such as typing a password, or what you or your organisation set to ask every time\./);
+    expect(ASSISTED_CONSENT_TEXT).toMatch(/It never clears a step you said no to, a command your words for the task rule out, anything Ember refuses, such as typing a password, or what you or your organisation set to ask every time\./);
     expect(ASSISTED_CONSENT_TEXT).toMatch(/If it finds no match or can't tell, Ember asks you\. “Ember, stop” or Ember's stop shortcut stops everything at once\.$/);
     // No shortcut is named (another app may hold it), no straight quotes, and it stays short enough to read.
     expect(ASSISTED_CONSENT_TEXT).not.toMatch(/"|Ctrl\+/);

@@ -247,14 +247,14 @@ has its own card that says what it means, and a mode is in use only once you agr
   administrator, it tells you instead and gives you 4 seconds to stop it.
 - **Assisted** is Interactive with a check: before Ember asks, a lighter AI model reads the step against what you
   asked, in your own words. When it matches, Ember goes ahead and tells you, a risky step or a dangerous command
-  included; otherwise it asks. A step you said no to, or that your own words for the task rule out, always asks or is
-  refused, and so does every command wherever you or your organisation set commands to ask every time, or on a
+  included; otherwise it asks. A step you said no to, or a command your own words for the task rule out, always asks
+  or is refused, and so does every command wherever you or your organisation set commands to ask every time, or on a
   computer reached over SSH whose own administrator doesn't allow the check there.
 - **Autopilot** doesn't ask. Ember sends, deletes, pays, installs and runs dangerous commands, as an administrator
   too, and tells you as it goes, with a few seconds to stop each dangerous command: a risk you accept on its card. A
   command that shows passwords or keys runs too, but what it prints is kept from the AI model (you see it in the
-  command window), and Ember says so when a command will keep running after Stop. What you said no to, or ruled out in
-  your request, it refuses instead of asking, and so it does a command that deletes, changes or reads something it
+  command window), and Ember says so when a command will keep running after Stop. What you said no to, and a command
+  you ruled out in your request, it refuses instead of asking, and so it does a command that deletes, changes or reads something it
   can't name, such as a place held in a variable. It asks only where you or your organisation set commands to ask every
   time; where the administrator of a computer reached over SSH doesn't allow Autopilot, Ember isn't in Autopilot
   there. Only in Autopilot does Ember fill in logins and cards from its vault (below).

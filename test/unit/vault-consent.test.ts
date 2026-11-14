@@ -31,7 +31,7 @@ describe("the consent and the vault", () => {
   });
 
   it("says on Autopilot's card that Ember fills what was saved in the vault and the model never types or sees it (vault-4)", () => {
-    expect(AUTOPILOT_CONSENT_TEXT.split("\n\n")[2]).toBe("It refuses, without asking, a step you said no to, what your words for the task rule out and anything that may be one of those, and a command that deletes, changes or reads something it can't name, such as a place held in a variable. It never acts in your system's sign-in and password prompts, never uses your terminals, never reads windows on your never-look list and never runs a command that touches its own settings, record or Stop. The AI model never types or sees passwords or card numbers: Ember asks you once in its Secure Form, keeps them locked in its vault for that app or site, and fills them in there itself.");
+    expect(AUTOPILOT_CONSENT_TEXT.split("\n\n")[2]).toBe("It refuses, without asking, a step you said no to and anything that may be one, a command your words for the task rule out, and a command that deletes, changes or reads something it can't name, such as a place held in a variable. It never acts in your system's sign-in and password prompts, never uses your terminals, never reads windows on your never-look list and never runs a command that touches its own settings, record or Stop. The AI model never types or sees passwords or card numbers: Ember asks you once in its Secure Form, keeps them locked in its vault for that app or site, and fills them in there itself.");
     expect(AUTOPILOT_CONSENT_TEXT).not.toMatch(/never types passwords or card numbers,/);
     expect(AUTOPILOT_CONSENT_TEXT.split("\n\n")).toHaveLength(4);
   });
