@@ -3537,7 +3537,8 @@ helper's fill) and every sandboxed renderer died at start on the Windows runner;
 GTK role and a history save) and the checks job was cancelled; at d41898c `el8` and macOS passed, Windows failed on the
 Ask box again and the checks job was cancelled; at bc47669 the macOS job's `npm test` failed on two tests that were at
 fault; at 32178e6 every job passed, and so at bcbd4f1 and addfc65; at 079e73d every job passed but the voice end-to-end
-test. CI had not reported on ea4bc03 or 688f6c1, nor on d9172da, which is not pushed, when this was written.
+test. At ea4bc03 the run was cancelled by the next push, and at 688f6c1 every job passed; the heads after it are in the
+tenth round's entry (“CI after the round”).
 
 **The vault's page address on Chromium** (9f13339). The `el8` job's real-window canary test failed at 16f5ee2: the
 helper found an Electron sign-in page's document but read '' as its address. It read only the Document interface's
@@ -3662,11 +3663,14 @@ handover stays in the product). Why the arithmetic does it was not established: 
 client, so a Win32 edit without a provider of its own is served by client-side proxies in the bridge's process that talk
 to the control by window messages, which fits but is not shown. Seen on Windows Server 2022, elevated, on CI only; on a
 real desktop the box could have closed by itself about a second after it opened when the return landed past the
-handover. Still open: a multi-line edit, a rich-edit box, a Chromium page and a WPF window still reach the same
-arithmetic and may hand their app the foreground as the bench did; 688f6c1 adds a probe that opens the box over the
-bench, Notepad and WordPad with each text read timed, and no other field's read was changed on its evidence, which CI
-had not returned. If it shows Notepad's or WordPad's step, the direct read extends to multi-line edits (`EM_GETSEL` and
-the text) or to rich edits (`EM_EXGETSEL`); a Chromium or WPF field needs its own opening first. A rule that takes the
+handover. 688f6c1 added a probe that opens the box over the bench, Notepad and WordPad. CI's run of it (every job
+passed) confirmed ea4bc03: the box never lost the keyboard in the main test, and the bench never took the foreground in
+the probe; but Notepad's multi-line edit took it 958 to 962 ms after the box showed, before Ember's read answered at 998
+ms, and WordPad's rich edit never did in a 2.8 s read. 13292a3 reads a multi-line native edit's caret and selection from
+the control too (the same 64 K limit, password fields left out, the same fail-closed rule) and leaves rich edits as they
+were; at 13292a3 the Windows job passed and the probe's Notepad opening kept the box open to the end. Still open: a
+Chromium page, a WPF window and Word answer through their own text providers and still reach the same arithmetic;
+whether they hand their app the foreground is unmeasured and needs an opening over each. A rule that takes the
 foreground back after the handover was written down with its hazards (an Alt+Tab to the app must not be fought, nor a
 user typing into the box) and not built, since the cause is in the read.
 
@@ -3704,7 +3708,8 @@ the gate alone and pass at the lane's tip (r10-integrations' 23209c1, 5fb8d71 an
 b85ba86 and 208df26; r10-memory's 9d6b84c, which fails ui-copy.test.ts until 4a1f7d9 right after it, over a curly
 apostrophe's spelling in a regular expression). At d9172da the branch has 137 commits since 16f5ee2, 13 of them merges
 (22 on the first-parent line), each with a signature header and the session's trailer and none with a co-author line
-(counted on the tree; the machine has no allowed-signers file to verify them against).
+(counted on the tree; the machine has no allowed-signers file to verify them against). At af2ec94, the pushed head, it
+has 147, 15 of them merges (26 on the first-parent line), the same holding.
 
 **r10-commands** (lane r10cmd; 39 commits to f4d8085). Thirteen findings, each confirmed on the tree first, fixed as a
 class: commands-remote-r10-1 and -r10-2 (`python3 -Im twine`, `-OOmtwine`, `make -kCr`: a short option cluster is read
@@ -3965,9 +3970,20 @@ capitals, which commands refuse as `ember.path`, so an agreed filesystem extensi
 in Autopilot), integ-y-2 (P3: the check reads every string of every call, remote servers' included, so `{query:
 "ember"}` asks, and the question doesn't say why) and integ-y-3 (P3: the test's claim that every file in the data folder
 is known misses `project-workspaces-<scope>.bin`, the desk profiles' owner.json and the sub-folders `extensions/`,
-`copilot/`, `models/` and `logs/`). **Open when this was written:** integ-y-1 (P2, being fixed by a separate package),
-integ-y-2, integ-y-3 and integ-x-5 (P3). r9/r10merge was then merged into r9/final (d9172da, a clean merge: 2d7b0b4's
-pin of a line of main.ts is what changed under it).
+`copilot/`, `models/` and `logs/`). r9/r10merge was then merged into r9/final (d9172da, a clean merge: 2d7b0b4's pin of
+a line of main.ts is what changed under it). The gatefs package then fixed review Y's three (492b5a0, d6eae29, 45f96ac,
+merged at ac0301f), each with a test seen failing first: integ-y-1, an extension's call is judged by the commands
+classifier's own path rules (`policy/ember-paths.ts`), so a pattern or a relative path out of a local server's folder
+that reaches the data or policy folder is refused in every mode, and so is a tool that changes things given a folder
+that holds it (`~/.config`, the home, `/`; `EMBER_DATA_HELD`), while “EMBER” or “Audit” by name asks on Windows and
+macOS, Autopilot refusing, and text typed in an app that reaches the folder by a pattern is refused too; integ-y-2, text
+of more than one line is a file's content, so a mention of the folder in it asks (Autopilot refusing) where it was
+refused, and the question ends “It may reach my own settings, audit log or policy, which are for you only.”; integ-y-3,
+a test reads everything the source joins to the data folder, literal, constant or built, and EMBER_FILE knows
+`project-workspaces-*.bin`. Measured at 45f96ac: `npm test` 533 files, 17,547 passed, 20 skipped; the extensions
+integration 6 of 6; the policy proof against main as below, unchanged. It left: a shell-like extension tool given a
+command line is caught only by the full data path, a changing tool given the home or `/` as its working folder is
+refused in every mode, and links are judged by their text. Open: integ-x-5 (P3).
 
 **Harnesses and gate, with the head each was measured on.** On d1feab9 (the merge job's last): lint and typecheck clean;
 `npm test` 532 files passed and 2 skipped, 17,523 tests passed, 17 skipped, 0 failed; the build; the extensions,
@@ -3985,9 +4001,22 @@ machine's python3.12 and at-spi 2.52, not EL8's); the fifteen renderer journeys,
 test:sidecar` 150 (python3, not 3.6); the launcher's pack dry run. On the merges' trees `npm test` read 16,907 passed at
 243065e, 17,129 at 01c7a73, 17,387 at 1aefaba and 17,516 (17 skipped) at f9c28ef. The lanes' heads read 17,001 (r10cmd,
 f4d8085), 17,097 (r10safe, c3776de), 17,136 (r10ui, 5dcbd15) and 16,894 (r10integ, 71ff770), each 17 to 20 skipped, none
-failing. On d9172da, the final head, the gate's own result was not known when this was written. Not run here: the eval
-(no gsettings schemas), Windows, macOS, sshd, a real keyring, platform-python 3.6, `ssh-macos`, a real microphone and
-speakers, and a screen reader.
+failing. On d9172da (the integrator's run): lint and typecheck clean; `npm test` 17,541 passed, 20 skipped; the build;
+the seventeen el8 desktop files, 86 passed and 1 skipped; the fifteen renderer journeys, 244 passed; the kill-switch
+deadline 2 of 2; smoke 3. On af2ec94, the pushed head: `npm test` 17,550 passed, 17 skipped; the build. Not run here:
+the eval (no gsettings schemas), Windows, macOS, sshd, a real keyring, platform-python 3.6, `ssh-macos`, a real
+microphone and speakers, and a screen reader.
+
+**CI after the round.** 13292a3 (d9172da with the multi-line edit fix) was pushed and its CI started at 04:29, and
+af2ec94's (with the gatefs merge, 4d3d21f and this record) at 04:55. At 13292a3 the Windows, RHEL 8, package, eval and
+voice end-to-end jobs passed, and so did remote.yml; the macOS job failed one unit test, release.test.ts's “refuses
+notes GitHub would refuse in the tag's first check”: the test copies the script into the temporary folder, which macOS
+reaches through a link, and the script, comparing its own path with the one it was started by, did nothing and exited 0
+(4d3d21f resolves both through links first; the test now runs it through a link too and fails without the change). The
+checks job failed one voice integration test, “hears a bare answer said once one of Ember's questions is asked, without
+the name” (“Allow it.” never heard as an answer in four renditions); its cause was not established when this was
+corrected, and no change was made for it. At af2ec94 remote.yml, the eval, the package and the voice end-to-end jobs had
+passed and the rest were still running.
 
 **The container restart.** At about 00:18 on 14 November (the integrator's log; the commits put it between 00:15 and
 00:21) the container restarted and cut five jobs off mid-stage: the four lane workflows and the WSL agent. They were
@@ -4008,8 +4037,12 @@ ends after the tail window with fewer bytes than its exit message said still end
 marker to the shell wrapper and to the fixed scripts, a run that ends naturally without it ends as “output cut”
 (`RunExit.outputCut`, in the result, the audit entry and the status line), and the remote's exit does the same when
 fewer bytes arrived than it counted; the 4 MiB test now runs through the product's own framing. It passed lint,
-typecheck and the build and 1,681 tests of 27 unit files with 1 skipped; its first reviewer left nothing and the review
-was relaunched. It is not in d9172da.
+typecheck and the build and 1,681 tests of 27 unit files with 1 skipped. Its first reviewer left nothing and the review
+was relaunched; the second (wslio-x-1 to -x-9) found a P1, three P2s and five P3s: x-1 (P1: the wrapper's `kill $$`
+leaves the rest of a WSL command running after the run ends, beyond Stop), x-2 (Ctrl+C typed into a dash or busybox run
+ends the run instead of reaching the program), x-3 (“It ran and ended with exit code N” is told when the command never
+finished) and x-4 (the end marker is a fixed string any output can forge, to hide a lost tail). Its repair was under way
+when this was corrected. It is not in d9172da or af2ec94.
 
 **Settled by the integrator, for the owner to overrule** (continuing the ninth round's list, which stands). Every
 judgement call the lanes' notes record; none changes a decision of the owner's. (15) **The daily question's remaining
@@ -4083,14 +4116,16 @@ back (§2 “Approvals”, §5), steps that may reach Ember's own files are refu
 release body is counted in bytes as well as characters (docs/DEVELOPING.md §15), and “Use my own model provider” on
 before its card is agreed leaves Copilot disconnected.
 
-**Left.** Open for round eleven: CI's result for d9172da, the three Windows field kinds that may still hand their app
-the foreground (above), and the WSL end marker's review. By package, the lists above. The re-rate's P3s that no package
-took up (those not named as fixed above): accessibility-r10-1, -r10-2, accessibility-c10-1, -c10-2; companion-r10-2,
--r10-3, -r10-5 (a “yes” typed into the Ask box while a question is up gets no answer of any kind: P3 by the challenger),
--r10-6 to -r10-8; first-run-r10-2 to -r10-8 and -c10-1, -c10-2; home-r10-2 to -r10-4; install-docs-r10-4 to -r10-6 and
--c10-1; integrations-r10-4 and -c10-1; memory-r10-4 to -r10-7 and -c10-2, -c10-3; reliability-r10-2 and -c10-1;
-safety-privacy-r10-2 to -r10-5 and -c10-3; tasks-approvals-r10-2 to -r10-5 and -c10-1; voice-listening-r10-2 to -r10-6
-and -c10-1; voice-speaking-r10-3 to -r10-5 and -c10-1; commands-remote-r10-10 to -r10-12 and -c10-4; and round nine's
-lists wherever this entry doesn't name them fixed (its integrations-c9-1 to -c9-5, integrations-x9-1's remote residue
-and the Stop at a run's end are, above). The owner's, in addition to the Settled list: (15)'s rule for the daily
-question, (28)'s commands card, and whether Windows needs the rule that takes the foreground back (above).
+**Left.** Open for round eleven: CI's result for af2ec94 and the voice test that failed at 13292a3 (“CI after the
+round”), the Windows fields with their own text providers (Chromium, WPF, Word) that may still hand their app the
+foreground (round nine's entry), and the WSL end marker's repair (wslio-x-1, P1, and the rest of its review). By
+package, the lists above. The re-rate's P3s that no package took up (those not named as fixed above):
+accessibility-r10-1, -r10-2, accessibility-c10-1, -c10-2; companion-r10-2, -r10-3, -r10-5 (a “yes” typed into the Ask
+box while a question is up gets no answer of any kind: P3 by the challenger), -r10-6 to -r10-8; first-run-r10-2 to
+-r10-8 and -c10-1, -c10-2; home-r10-2 to -r10-4; install-docs-r10-4 to -r10-6 and -c10-1; integrations-r10-4 and -c10-1;
+memory-r10-4 to -r10-7 and -c10-2, -c10-3; reliability-r10-2 and -c10-1; safety-privacy-r10-2 to -r10-5 and -c10-3;
+tasks-approvals-r10-2 to -r10-5 and -c10-1; voice-listening-r10-2 to -r10-6 and -c10-1; voice-speaking-r10-3 to -r10-5
+and -c10-1; commands-remote-r10-10 to -r10-12 and -c10-4; and round nine's lists wherever this entry doesn't name them
+fixed (its integrations-c9-1 to -c9-5, integrations-x9-1's remote residue and the Stop at a run's end are, above). The
+owner's, in addition to the Settled list: (15)'s rule for the daily question, (28)'s commands card, and whether Windows
+needs the rule that takes the foreground back (above).

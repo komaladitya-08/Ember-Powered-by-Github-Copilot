@@ -139,8 +139,8 @@ the automated tests don't stand in for them.
   key press that didn't count, says why and how to answer. The audit log says the answer was spoken. With Voice Match
   on, half a second of your voice after “Ember” is enough to recognise you, and a shorter yes counts for the questions
   of a task you asked for in your recognised voice, within 10 minutes (never a command card, a consent card or another
-  task's question, nor a yes too quiet to tell; the audit says `trust: "task-voice"`). A yes asked as a question (“Is
-  that okay?”) isn't one; a bare “Okay?” is taken.
+  task's question, nor a yes too quiet to tell). A yes asked as a question (“Is that okay?”) isn't one; a bare “Okay?”
+  is taken.
 - **Allow works on web pages**: an Allow for a step on a page that changes by itself (a video playing, a preview) goes
   ahead when the page didn't change while you decided, where Ember used to compare it with an outdated copy and ask
   again. A search result whose title merely holds a word like “install” or “share” opens without being called
@@ -445,16 +445,15 @@ the automated tests don't stand in for them.
   it fits beside neither, never on Ember, and it keeps off the task cards. A question that comes up while you type shows
   beside the box; where there is no room the box moves aside, and the question never moves. An answer already on screen
   stays where it is as the box opens or grows, and stays up while the box is open and a few seconds after you close it.
-  One opened in full with **Read all**, one still being written and one whose **Read all**, hint or suggestions arrive
-  as it finishes keep clear of the box: above or below it, or, where it fits nowhere whole, cut short to the room with
-  its text scrolling inside and Close in view, and whole again once the box closes. Only the box's own Listen once moves
-  it aside, never “Hey Ember” said nearby while you type; on Linux a click beside the box reaches the app underneath and
-  closes it.
+  One opened in full, one still being written and one whose **Read all**, hint or suggestions arrive as it finishes keep
+  clear of the box: above or below it, or, where it fits nowhere whole, cut short to the room with its text scrolling
+  inside and Close in view, and whole again once the box closes. Only the box's own Listen once moves it aside, never
+  “Hey Ember” said nearby while you type; on Linux a click beside the box reaches the app underneath and closes it.
 - **A screen reader hears what Ember did without asking** (“Ember says: …”, once), a borrowed mouse included, and
   **Forget everything**, signing out and changing account clear the Ask box's ↑ history too.
-- **On Windows the Ask box stays open while Ember reads the app it opened over.** Reading a plain one-line text box
-  handed that app the foreground about a second after the box opened, and the box closed by itself; Ember now reads such
-  a box's caret and selection from the control. Other text fields (multi-line, rich text, web pages) may still do it.
+- **On Windows the Ask box stays open while Ember reads the app it opened over.** Reading a plain text box (one line or
+  several, as in Notepad) handed that app the foreground about a second after the box opened, and the box closed by
+  itself; Ember now reads such a box's caret and selection from the control. Web pages and WPF fields are untested.
 - **Ask's suggestions follow what is on screen:** none while a task's question is up, “Close it” or “Read it out” only
   while the answer they reply to shows, and “Yes, please” or “No, thanks” only while the offer they answer shows: not
   while the bubble cuts it off under **Read all**, and for an answer opened in full only once its last line has been in
@@ -515,14 +514,13 @@ the automated tests don't stand in for them.
   microphone it says so, and pressed while Ember talks or answers, it stops that first and listens.
 - **A screen reader doesn't read Ember's listening lines over your request.** While Ember's microphone is open for a
   request (after “Hey Ember”, in a conversation or during Listen once), Settings' voice line and Listen once's line in
-  Settings and in Ask still show what changed but don't tell a screen reader, so “Hearing you…”, “Ember is already
-  listening.” and “Answer Ember's question first.” aren't read out over what you say. After an answer, while Ember waits
-  for your follow-up, the voice line says “Listening…”. Hear me more clearly's line, the Speak note, Task activity's
-  “Waiting for you” and “Done” and Ask's “I'll see: …” wait until the microphone closes, and then only what is still
-  news is said, once. These lines are worded without Ember's name, so said through your speakers they neither wake Ember
-  nor become your request. After **Forget my voice** the keyboard moves to **Teach my voice**, and as listening starts
-  it goes to Listen once, not the “Hey Ember” switch, whose reading woke Ember. The line about Ember's voice is said
-  only once it has held.
+  Settings and in Ask still show what changed but don't tell a screen reader, so “Hearing you…” and their like aren't
+  read out over what you say. After an answer, while Ember waits for your follow-up, the voice line says “Listening…”.
+  Hear me more clearly's line, the Speak note, Task activity's “Waiting for you” and “Done” and Ask's “I'll see: …” wait
+  until the microphone closes, and then only what is still news is said, once. These lines are worded without Ember's
+  name, so said through your speakers they neither wake Ember nor become your request. After **Forget my voice** the
+  keyboard moves to **Teach my voice**, and as listening starts it goes to Listen once, not the “Hey Ember” switch,
+  whose reading woke Ember. The line about Ember's voice is said only once it has held.
 - **Teaching Ember your voice with a screen reader on speakers learns your voice, not the screen reader's.** Ember
   leaves out what the screen reader reads of each prompt, and when you speak before it has finished, Settings says “Your
   screen reader was still reading. Wait for it to finish, then say:” and the phrase again. On headphones, where the
@@ -706,19 +704,21 @@ the automated tests don't stand in for them.
   control on a page whose title only mentions a payment (the question says why) and “Disable Line Numbers” in a window
   titled for security.
 - **Going past a warning is a risky step.** “Enable Macros”, “Keep anyway”, “Proceed to example.com (unsafe)”, “Turn off
-  Safe Browsing”, “Load Remote Content” and their like ask by a click or by Enter as risky steps do, never with Always
-  and in Interactive never only announced, and the question says it goes past a warning or turns off a protection; “Go
-  to page 2” and “Disable spell check” don't. In a dialog whose words ask (“Are you sure…?”), or a message box on Linux,
-  an answer that doesn't back off is a risky step too, quoting the dialog: a browser's “Leave page”, “Reload”, “Close
-  tabs” and “Resend” and “No” to saving your changes; Cancel, Stay, “Not now” and “Remind Me Later” don't. In a window
-  Ember could read only in part, a question written in it makes its buttons ask too, and in Interactive Enter in a
-  search box that also types a message or picks people, or in a window for sending money or sharing, asks.
-- **Ember's own files are guarded from other apps.** Typing the path of Ember's data or policy folder is refused in
-  every mode. Where Ember can't tell that a file isn't its own (settings.json, the audit log, the policy, the seals or
-  the vault named in an editor's title with no folder, a folder titled “ember” or “audit”, a Delete, cut or rename in
-  the folder that holds Ember's), each step asks every time, never announced or checked, and Autopilot refuses it, so
-  any project's settings.json in an editor asks at every step. An agreed extension's tool that names those files is
-  treated alike.
+  Safe Browsing” and their like ask by a click or by Enter as risky steps do, never with Always and in Interactive never
+  only announced, and the question says it goes past a warning or turns off a protection; “Go to page 2” and “Disable
+  spell check” don't. In a dialog whose words ask (“Are you sure…?”), or a message box on Linux, an answer that doesn't
+  back off is a risky step too, quoting the dialog: a browser's “Leave page”, “Reload”, “Close tabs” and “Resend” and
+  “No” to saving your changes; Cancel, Stay, “Not now” and “Remind Me Later” don't. In a window Ember could read only in
+  part, a question written in it makes its buttons ask too, and in Interactive Enter in a search box that also types a
+  message or picks people, or in a window for sending money or sharing, asks.
+- **Ember's own files are guarded from other apps.** Typing the path of Ember's data or policy folder in one step, or a
+  pattern that reaches it, is refused in every mode. Where Ember can't tell that a file isn't its own (settings.json,
+  the audit log, the policy, the seals or the vault named in an editor's title with no folder, a folder titled “ember”
+  or “audit”, a key that deletes, cuts or renames in the folder that holds Ember's), each step asks every time, never
+  announced or checked, and Autopilot refuses it, so any project's settings.json in an editor asks at every step. Not
+  yet caught: the path typed in parts over several steps, and a context menu's Move to Trash there, which Autopilot
+  announces. An agreed extension's call that reaches the data folder, or changes the folder that holds it, is refused in
+  every mode; one that may reach Ember's files asks, saying why, and Autopilot refuses it.
 - **The vault reads a Chrome or Electron page's address** (it read none there, so nothing matched its site), and a line
   that repeats a filled user name is blacked out in screenshots.
 - **Enter in a dialog that asks or warns asks as a risky step does** while none of its buttons has the keyboard (on
@@ -745,14 +745,15 @@ the automated tests don't stand in for them.
   their like ask as programs Ember doesn't know, as do terminal tab and session listings such as `it2api list-sessions`;
   `brew services start`, `snap start`, `flatpak run` and `npm config set` count as changing something that outlives Stop
   (Autopilot asks, and Assisted's check never clears them).
-- **More commands ask.** `python3 -Em twine upload` and `make -kCr` (bundled options), `xargs` or `parallel` putting a
-  file's contents into an address, a PowerShell expression or a DNS lookup, downloads by `s3cmd`, `yt-dlp` and `gdown`,
-  `python3 -m zipfile -e a.zip ~`, and a program the task wrote or downloaded in Python, Node, Deno, Bun, Go or Java, or
-  a Makefile or `package.json` it named (a project's own build after a pull still runs). So do commands that print an
-  environment or a secret (`ps` with environment output, `docker inspect`, `git show :.env`, `grep -r token .`, `pulumi
-  config get`, `heroku config`, `vercel env pull`, `gcloud secrets versions access`) and what `kubectl exec` or `gcloud
-  compute ssh --command` runs in a pod or an app; Autopilot keeps these questions, and more short secret names, a
-  scheme's credential and webhook addresses are hidden in output.
+- **More commands ask.** `python3 -Em twine upload` and `make -kCr dir publish` (bundled options), `xargs` or `parallel`
+  putting a file's contents into an address, a PowerShell expression or a DNS lookup, running what `s3cmd`, `yt-dlp` or
+  `gdown` downloaded, `python3 -m zipfile -e a.zip ~`, and a program the task wrote or downloaded in Python, Node, Deno,
+  Bun, Go or Java, or a Makefile or `package.json` it named (a project's own build after a pull still runs). So do
+  commands that print an environment or a secret (`ps` with environment output, `docker inspect`, `git show :.env`,
+  `grep -r token .`, `pulumi config get`, `heroku config`, `vercel env pull`, `gcloud secrets versions access`) and what
+  `kubectl exec` or `gcloud compute ssh --command` runs is judged as its own command line. Autopilot keeps the questions
+  about secrets and about what it can't read, and more short secret names, a scheme's credential and webhook addresses
+  are hidden in output.
 - **In Autopilot, a command your own words hold back asks** (“delete the build folder, but ask me first”, “…but move it
   to the trash”, “…but only the logs”), as does a downloaded program told to detach (`--daemon`).
 - **In Assisted, a command your own words rule out or hold back asks without the check** (“don't push”, “keep it local”
@@ -761,16 +762,15 @@ the automated tests don't stand in for them.
   instead of drawing 100 by 30, with lines cut off and the end of the output out of view. After you enlarge the
   command window and close it, the next command starts at the size of the window it opens in.
 - **A bash or sh loop on a command line (`for`, `while`, `until`) always asks first, however plain its body,** as in
-  0.1.0 (“Ember can't tell exactly what this does.”): Ember judges the commands in a loop only once, so `for f in
-  --hard; do git reset $f; done` never runs without a question. Ember's own folder named in a loop is still refused
-  first. **An ordinary `if` runs without a question** when Ember has nothing to say about any command in it, and it has
-  no `!`, sets no variable and changes no folder (`if [ -f package.json ]; then npm test; fi`). Any other `if` asks as a
-  whole, on this computer and on an SSH computer alike: one with a command that asks or writes over a file, a `cd`, a
-  variable set or a `[[ … ]]` test, text Ember can't see read, or a command run with PATH changed or a library
-  preloaded. Neither starts with only the 4-second Stop, even when your words asked for the command in it, and a
-  download made inside either is remembered, so running it later asks. A `read`, `mapfile` or `getopts` of text Ember
-  can't see asks outside them too, as do zsh's short forms run from a bash script; a simple `[[ … ]]` test outside an
-  `if` or a loop is judged as `[ … ]`.
+  0.1.0: Ember judges the commands in a loop only once, so `for f in --hard; do git reset $f; done` never runs without a
+  question. Ember's own folder named in a loop is still refused first. **An ordinary `if` runs without a question** when
+  Ember has nothing to say about any command in it, and it has no `!`, sets no variable and changes no folder (`if [ -f
+  package.json ]; then npm test; fi`). Any other `if` asks as a whole, on this computer and on an SSH computer alike:
+  one with a command that asks or writes over a file, a `cd`, a variable set or a `[[ … ]]` test, text Ember can't see
+  read, or a command run with PATH changed or a library preloaded. Neither starts with only the 4-second Stop, even when
+  your words asked for the command in it, and a download made inside either is remembered, so running it later asks. A
+  `read`, `mapfile` or `getopts` of text Ember can't see asks outside them too, as do zsh's short forms run from a bash
+  script; a simple `[[ … ]]` test outside an `if` or a loop is judged as `[ … ]`.
 - **Running a file the task downloaded still asks once it is renamed or copied:** after `mv`, `cp`, `ln`, `rsync`,
   `tee`, `dd`, a redirect, `sort -o`, `split`, an unpacked `tar` or `zip`, a copy through `xargs`, PowerShell's
   `Copy-Item`, `Move-Item` and `Rename-Item` and cmd's `copy`, `move`, `ren`, `xcopy`, `robocopy` and `mklink`, and when
@@ -781,13 +781,13 @@ the automated tests don't stand in for them.
 - **A download whose saved name Ember can't tell asks** (“Downloads to a file Ember can't name.”): one the server or a
   list names (`curl -OJ`, `wget -r`, `wget -i`), one saved under a name or folder held in a variable (`curl -o "$f"`,
   wget, aria2c, PowerShell's `-OutFile`), a WebClient's `DownloadFile`, and one fetched from an address held in a
-  variable or fed through xargs (`wget $URL`). `wget -x` marks the folder it makes, `http -d` asks, text fetched into a
-  variable and written to a file marks that file, and a file handed over by `gh run download`, a bucket, `s3cmd`,
-  `docker cp`, `kubectl cp`, `scp` or `ssh host cat x > x` counts as a download. Afterwards running a file from the
-  folder it saved into, or that folder's build tools and test runners, asks too (anywhere, when Ember can't tell the
-  folder); where the file that runs has no name Ember knows, the card says “May run a file downloaded in this task: …”.
-  A downloaded patch applied (`patch`, `git apply`, `git am`) or code pulled from an address (`git pull https://…`)
-  marks the files it changes, so the next `make`, `npm test` or build script there asks.
+  variable or fed through xargs. `wget -x` marks the folder it makes, `http -d` asks, text fetched into a variable and
+  written to a file marks that file, and a file handed over by `gh run download`, a bucket, `s3cmd`, `docker cp`,
+  `kubectl cp`, `scp` or `ssh host cat x > x` counts as a download. Afterwards running a file from the folder it saved
+  into, or that folder's build tools and test runners, asks too (anywhere, when Ember can't tell the folder); where the
+  file that runs has no name Ember knows, the card says “May run a file downloaded in this task: …”. A downloaded patch
+  applied (`patch`, `git apply`, `git am`) or code pulled from an address (`git pull https://…`) marks the files it
+  changes, so the next `make`, `npm test` or build script there asks.
 - **What a download brings in asks in more ways.** Once a task has downloaded anything, a build tool, test runner or
   `python3 -m` in a folder Ember can't name asks (“May run a file downloaded in this task”), so `git clone …; cd app;
   npm test` asks as `cd app && npm test` did. Java, mono, wine, `node x`, `awk -f`, `sed -f` and `psql -f` given a
@@ -828,36 +828,35 @@ the automated tests don't stand in for them.
   your words name not to do keeps it (`rm -rf src` after “delete build/ but don't delete src/”), and after “… and
   nothing else”, a step that does more than you named keeps it (a force push you didn't ask for).
 - **Only what the verb you used acts on can start a command with the 4-second Stop.** One whose object your words keep,
-  leave out, place or only describe asks with the command's card instead: “delete everything but build/”, “kill 5678,
-  1234 is my editor” for `kill 1234`, “delete my old branches, main and develop stay” for `git branch -D main`, “delete
-  the build folder in dist” for `rm -rf build` (a folder named after “in”, “from” or “of” is where the path must be),
-  and a copy over the file your words read from. So does a dangerous step your words hold back: one they make
-  conditional or put off (“only after I confirm”, “if the build fails”, “tomorrow”), ask to be asked about or shown
-  first (“ask me first”) or only ask how to do. Everyday words don't hold it back (“as soon as possible”, “if it
-  exists”, a later time for another step of yours, “stop apache, then nginx”). Saying the verb again or listing after a
-  colon still counts, and a bare `gh pr merge` asks when your words number one. A place said anywhere in your words that
-  isn't where the command works asks too (“on the server, delete the build folder”), as does a `cd` to another folder
-  before the step, words that describe another folder than the one deleted, a deadline, a day or each time something
-  happens, and a copy asked for first, while an order of steps (“before npm install”) is announced.
+  leave out, place or only describe asks with the command's card instead: “delete everything but build/”, “delete my old
+  branches, main and develop stay” for `git branch -D main`, “delete the build folder in dist” for `rm -rf build` (a
+  folder named after “in”, “from” or “of” is where the path must be), and a copy over the file your words read from. So
+  does a dangerous step your words hold back: one they make conditional or put off (“only after I confirm”, “if the
+  build fails”, “tomorrow”), ask to be asked about or shown first (“ask me first”) or only ask how to do. Everyday words
+  don't hold it back (“as soon as possible”, “if it exists”, a later time for another step of yours). Saying the verb
+  again or listing after a colon still counts, and a bare `gh pr merge` asks when your words number one. A place said
+  anywhere in your words that isn't where the command works asks too (“on the server, delete the build folder”), as does
+  a `cd` to another folder before the step, words that describe another folder than the one deleted, a deadline, a day
+  or each time something happens, and a copy asked for first, while an order of steps (“before npm install”) is
+  announced.
 - **Ember refuses a command that reaches its own settings and records through a variable**, as it does when they are
-  named. In bash and other POSIX shells that is through a loop's list (`for f in ~/.config/ember/*; do rm -f "$f";
-  done`), an assignment (`d=~/.config/ember; rm -rf "$d"`), `set --`, `printf -v`, a here-string given to `read`,
-  `xargs` or `mapfile`, a cut or a default of a variable (`${XDG_CONFIG_HOME:-$HOME/.config}/ember`), a wrapper's
-  option, the program's own name, an `export` that hands the variable to a program, or the shell's own echo or printf
-  printing it into another program or a file; on Windows, through a PowerShell variable (`$d =
-  "$env:LOCALAPPDATA\ember"; Remove-Item -Recurse $d`). It refuses the same when the folder a command works in is its
-  own, named after `cd --` or `pushd --` or given to `patch -d` or `--directory`. A command that only tests such a
-  variable, prints it on the terminal or gives it to a text filter that only reads it runs, and a refusal says whether
-  Ember's files would be read or changed. A value it can't see at all, such as what `read` takes from a file, asks.
+  named. In bash and other POSIX shells that is through a loop's list, an assignment (`d=~/.config/ember; rm -rf "$d"`),
+  `set --`, `printf -v`, a here-string given to `read`, `xargs` or `mapfile`, a cut or a default of a variable
+  (`${XDG_CONFIG_HOME:-$HOME/.config}/ember`), a wrapper's option, the program's own name, an `export` that hands the
+  variable to a program, or the shell's own echo or printf printing it into another program or a file; on Windows,
+  through a PowerShell variable (`$d = "$env:LOCALAPPDATA\ember"; Remove-Item -Recurse $d`). It refuses the same when
+  the folder a command works in is its own, named after `cd --` or `pushd --` or given to `patch -d` or `--directory`. A
+  command that only tests such a variable, prints it on the terminal or gives it to a text filter that only reads it
+  runs, and a refusal says whether Ember's files would be read or changed. A value it can't see at all, such as what
+  `read` takes from a file, asks.
 - **A flag doesn't hide what a command does.** Ember reads the options of the tools it knows as their manuals give them,
-  so a switch doesn't take the file or the command after it for its own: `rsync --mkpath`, `shred -u`, `xargs -l`,
-  `docker run -P`, `cp --update`, `make -j install`, `mvn -X deploy` and many more ask, or are refused on Ember's own
-  files, as they are without the flag, and `cp`, `mv` or `install` with no destination, or a container run with no
-  image, asks. A file or folder an option names is judged as that file (`zstd -o`, `file -f`, `tar
-  --listed-incremental`, `sudo -R`). A job count runs as a number, a processor count or arithmetic (`make -j4`, `make -j
-  $(nproc)`), and so does a variable given to make's `-j` apart; one attached to its option, a variable given apart to
-  most other tools and a count read from a file ask (`make -j$N`, `mvn --threads $N`), and `T=deploy; make -j "$T"` asks
-  as `make deploy` does.
+  so a switch doesn't take the file or the command after it for its own: `rsync --mkpath`, `shred -u`, `cp --update`,
+  `mvn -X deploy` and many more ask, or are refused on Ember's own files, as they are without the flag, and `cp`, `mv`
+  or `install` with no destination, or a container run with no image, asks. A file or folder an option names is judged
+  as that file (`zstd -o`, `file -f`, `tar --listed-incremental`, `sudo -R`). A job count runs as a number, a processor
+  count or arithmetic (`make -j $(nproc)`), and so does a variable given to make's `-j` apart; one attached to its
+  option, a variable given apart to most other tools and a count read from a file ask (`make -j$N`), and `T=deploy; make
+  -j "$T"` asks as `make deploy` does.
 - **xargs is judged batch by batch.** `printf 'status\npush --force\n' | xargs -L1 git` asks about the force push, which the second batch used to run unjudged, and input of more than 32 batches asks.
 - **A database change given on a client's input asks,** as one on its command line does: `redis-cli <<< FLUSHALL`, `echo
   'db.dropDatabase()' | mongosh` and `psql app < drop_users.sql`. A SQL file a client runs (`psql -f`, a `<`, `sqlcmd
@@ -872,7 +871,7 @@ the automated tests don't stand in for them.
   `activate`, which asked every time.
 - **Stop answers at the end of a run that kept much output.** Hiding secrets in up to 4 MiB of output runs in small
   steps, so Stop is answered within about 220 ms where it waited 1.2 to 1.9 s, and a stopped run hands the model
-  nothing; output full of Azure Key Vault secret ids with a `"value"` among them can still hold it about 1.6 s.
+  nothing; output full of Azure Key Vault secret ids with a `"value"` among them can still hold it 1.6 to 2 s.
 - **Every command the bubble tags “Risky step” gets the caution edge and a plain Allow** on its card, not only
   deleting ones.
 - **Closing the command window while a command runs** makes **Keep it open** the highlighted choice and **Stop and
@@ -936,13 +935,12 @@ the automated tests don't stand in for them.
   with its address and saved key.
 - **A switch of model service waits for what Ember is doing, then happens at once:** made while Ember answers or a task
   runs, it takes effect as soon as the answer ends, you press Stop or the last task finishes, and a request you make
-  meanwhile waits for it: Home says so under Send (“This goes to the new model service once what's under way now has
-  finished. Stop response cancels it.”), with “Switching model service…” in its status panel, never “Thinking…”. A
-  finished task's card stays through the switch, with its result, **Try again** and **Close** (unless the new connection
-  fails or you sign out first). On the new service Try again starts from your own words, never the goal or screen text
-  from the conversation before, and only for a task your request asked for alone; for one from a request split into
-  several tasks, a routine or a reply such as “yes do that”, the card offers Close and says “The model service has
-  changed: ask me again and I'll try it on the new one.”, so finished work isn't done twice.
+  meanwhile waits for it: Home says so under Send (Stop response cancels it), with “Switching model service…” in its
+  status panel, never “Thinking…”. A finished task's card stays through the switch, with its result, **Try again** and
+  **Close** (unless the new connection fails or you sign out first). On the new service Try again starts from your own
+  words, never the goal or screen text from the conversation before, and only for a task your request asked for alone;
+  for one from a request split into several tasks, a routine or a reply such as “yes do that”, the card offers Close and
+  says “The model service has changed: ask me again and I'll try it on the new one.”, so finished work isn't done twice.
 - **Your extensions ask you to agree again, once.** A plugin from Copilot's built-in marketplace shows that
   marketplace as “Built into Copilot”, with no Remove that did nothing, and its card no longer says you added the
   marketplace. Because the card changed, no extension runs until you agree again.
@@ -989,34 +987,33 @@ the automated tests don't stand in for them.
   a host (“pi@192.168.1.20”), a sort key, a primary key, a router's `AUTH` setting and code that names a token with code
   for its value (`max_tokens=256`), so Projects requests, reviewed patches and task views that hold them aren't refused.
   A user name with a digit said as a login is refused, as it may be the password. Still kept: a password said with no
-  password's name (“My Netflix is sunshine”), a recovery phrase with no name Ember knows, a date of birth, and some
-  shorthand in a file or a task's view (“The Wi-Fi is BlueSky99”, “The gym's code is 4821”) and a password after
-  “salted”, so keep passwords out of the files you give Projects; a few ordinary facts are refused (“The Wi-Fi is
-  HomeNet5G”).
+  password's name (“My Netflix is sunshine”, “HomeNet's key is BlueSky99”) or alone in the next sentence (“Netflix
+  password. sunshine”), a recovery phrase with no name Ember knows, a date of birth, and in a file or a task's view some
+  shorthand (“The Wi-Fi is BlueSky99”, “The gym's code is 4821”) and a password after “salted”, so keep passwords out of
+  the files you give Projects; a few ordinary facts are refused (“The Wi-Fi is HomeNet5G”).
 - **Passwords in code, settings and forms are held back in more of the ways a file holds them,** in memory, Projects and
   task views: a value under a key named for a secret in a Ruby or PHP hash, a YAML mapping or list, a pretty-printed
   JSON section, a Python dict or a dotted setting, `define('DB_PASSWORD', '…')`, `<password>…</password>` and a quoted
   passphrase (`ADMIN_PASSWORD="Key Lime Pie 2024!"`); a password a form or table puts on the line below its label or
   beside an empty field, in a field's value or a list's option; one in a password prompt's comment; and one given to a
   program on its command line (see Safety and privacy). Projects still sends login forms and prompts, OAuth clients, UI
-  text (`"forgotPassword": "Forgot your password?"`), locale files, a “Remember password” check box and build files that
-  link MySQL, and takes requests such as “Add a token: string field to the Session interface”, but holds back a sign-up
-  form whose line under its password field is a hint such as “Use 12 or more characters and a symbol (!@#$%^&*)”.
+  text (“Forgot your password?”), locale files, a “Remember password” check box and build files that link MySQL, and
+  takes requests such as “Add a token: string field to the Session interface”, but holds back a sign-up form whose line
+  under its password field is a hint such as “Use 12 or more characters and a symbol (!@#$%^&*)”.
 - **Memory says why it is paused.** While Ember connects, uses your own model provider or can't reach GitHub,
   Settings › Memory says so instead of suggesting Forget everything, Home says “Memory paused”, and Tell Ember about
   you no longer fails with “Try again”. While your own provider can't connect, memory says it waits for that, not for
   your GitHub account; under an earlier note, Ember says memory is paused until you review it; and first run's “Tell
   me about you” says why memory is paused and offers Continue.
-- **Requests that start with “forget”, “remember” or “keep in mind” reach Ember while memory is off** (“Forget what I
-  said, open Firefox instead”). After answering a request to keep something it states (“Remember my wife likes tulips”,
-  “I'm vegetarian, remember that”) or to keep what was just said (“Keep that in mind”), but never after “Remember the
-  file I mentioned” or “Don't forget my car keys on the table”, Ember adds that memory is off, so it won't keep this
-  after Ember closes, with **Open Memory**. Asked to forget something about you (“Forget my address”), everything
-  (“Clear your memory”), someone (“Forget Priya's birthday”) or something only its memory holds (“Delete my email from
-  memory”), it says memory is off (and opens Settings › Memory at its search) or why memory is paused. Other forgets and
-  clears (“Clear all”, an app, a day, a device) reach the conversation, with nothing opened. Asked to forget something
-  about you with more after it (“Forget my address and open Firefox”), Ember does the rest and then says memory can't
-  change what's saved, and **Open Memory** opens Memory's list, where Forget is. Neither promises what memory can't do.
+- **Requests that start with “forget”, “remember” or “keep in mind” reach Ember while memory is off**. After answering a
+  request to keep something it states (“Remember my wife likes tulips”) or to keep what was just said (“Keep that in
+  mind”), but never after “Remember the file I mentioned” or “Don't forget my car keys on the table”, Ember adds that
+  memory is off, so it won't keep this after Ember closes, with **Open Memory**. Asked to forget something about you
+  (“Forget my address”), everything (“Clear your memory”), someone (“Forget Priya's birthday”) or something only its
+  memory holds (“Delete my email from memory”), it says memory is off (and opens Settings › Memory at its search) or why
+  memory is paused. Other forgets and clears (“Clear all”, an app, a day, a device) reach the conversation, with nothing
+  opened. Asked to forget something about you with more after it (“Forget my address and open Firefox”), Ember does the
+  rest and then says memory can't change what's saved, and **Open Memory** opens Memory's list, where Forget is.
 - **No request lands on “I agree, remember”.** While memory is off, “Ember, get to know me” and the **Open Memory**
   after a request to remember open Settings › Memory at its note's words, and “I agree, remember”, like **I agree,
   work without asking**, ignores a press in the first half second after its card appears.
@@ -1063,7 +1060,8 @@ the automated tests don't stand in for them.
 - **Memory learns the way you say it.** “I go by Raj”, “It's Raj, not Ram”, “Keep it brief” and “Stop rambling” replace
   what Ember knows about you; “Shorter, please” and “…, keep it short” beside a request don't. After a Forget in
   Settings, the remember tool keeps only what rests on your own words until the conversation ends; the daily question
-  never asks about a name from a private request (health, money, law, faith).
+  doesn't ask about a name from a request about health, money, law or faith, but a clinic's or a medicine's name put
+  where a person's goes (“Email Planned Parenthood…”) can still be asked about, aloud.
 - **With memory turned off by your organisation, Settings still lists what was saved**, with Forget and Forget
   everything. A name or answer length you tell Ember in conversation replaces the one from Tell Ember about you; “What
   do you remember about me?” says how many facts there are beside the six it gives; and the daily question no longer
