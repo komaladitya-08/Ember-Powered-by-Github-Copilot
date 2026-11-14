@@ -232,7 +232,7 @@ function passwordShaped(raw: string): boolean {
 /** A lone word: ends its clause, or goes on with a word that says what it is for ("…for Netflix", "…on the VPN"). */
 const LONE = String.raw`["'“]?(?<v>[^\s"'”,;!?/]{2,40}?)["'”]?(?=\s*(?:$|\n|[.,;!?)](?:\s|$)|\s+(?:for|on|at|to|in|with|from|and|but)\b))`;
 /** "My AWS secret is …", "Our Jenkins secret: …", "The login for Netflix is …": a credential's name after what it is for, then a lone word. */
-const NAMED_LONE = new RegExp(String.raw`(?:^|[^\w'’-])(?<q>(?:[\w'’.+-]+\s+){0,3})(?<noun>${CRED_NOUN})(?:\s+(?:for|to|of|on)\s+(?:${WHOSE}\s+)?[\w'’.+-]+(?:\s+[\w'’.+-]+)?)?\s*(?:\s(?:is|was|are|were)\s|[:=]|\s[-–—]\s)\s*${NOW}${LONE}`, "gi");
+const NAMED_LONE = new RegExp(String.raw`(?:^|[^\w'’-])(?<q>(?:[\w'’.+-]+\s+){0,3})(?<noun>${CRED_NOUN})(?:\s+(?:for|to|of|on)\s+(?:${WHOSE}\s+)?[\w'’.+-]+(?:\s+[\w'’.+-]+)?)?\s*(?:\s(?:is|was|are|were)\s|['’]s\s|[:=]|\s[-–—]\s)\s*${NOW}${LONE}`, "gi");
 /** "Netflix: sunshine", "Spotify — Bluebird77": a sign-in thing alone, then a lone word ("My Bitwarden is …" only by its shape, above). */
 const THING_LONE = new RegExp(String.raw`^\s*(?:${WHOSE}\s+)?(?:[\w'’-]+\s+)?${SIGN_IN_THING}(?:\s+(?:account|login|sign-in|pass))?(?:\s+(?:at|for|in|on|of)\s+(?:${WHOSE}\s+)?[\w'’-]+(?:\s+[\w'’-]+)?)?\s*(?:[:=]|\s[-–—]\s|[-–—]\s)\s*${LONE}\s*$`, "i");
 /** "Gmail: ram99 / sunshine", "My Gmail login is ram99 / sunshine": a sign-in thing, a user, then any value. */
@@ -246,10 +246,27 @@ const SERVICE_USES_WORD = new RegExp(String.raw`\b(?:${SERVICES}|${PASSWORDED})\
 /** "I always use my birthday 0412 for everything", "Remember 0412 everywhere": digits used for everything, never a count of something. */
 const DIGITS_EVERYWHERE = /(?<![\w.£$€])#?\d{4,8}(?![\w.])(?!\s+(?:miles?|km|steps|people|times|users?|[a-z]+s)\b)[^.;!?\n]{0,20}?(?:\bfor\s+(?:everything|all\b|every\b)|\beverywhere\b)/i;
 
-/** Whether a lone word after a credential's name may be its value. */
-function loneValue(v: string): boolean {
+/**
+ * The states a lone word after a credential's own name may say without being its value ("The client secret is
+ * configured", "Forgot the password. Again"). Named one by one (r11-memory-x11-2): any other word there is the value,
+ * whatever its ending ("blessed", "butterfly") or whether it is a plan's word ("My AWS secret is premium").
+ */
+const NAMED_STATE = new Set(String.raw`configured rotated revoked enabled disabled active inactive generated issued provisioned unset blank empty
+  expired expiring changed reset stored saved hidden encrypted masked hashed lost gone done again out safe elsewhere somewhere nowhere
+  here there it this that mine yours ours theirs same different because`.split(/\s+/).filter(Boolean));
+
+/**
+ * Whether a lone word may be a credential's value: after a credential's own name (`name`) unless a state it names
+ * (NAMED_STATE); after a sign-in thing (`thing`, "Netflix: premium") unless talk about it (ABOUT_SECRET, NOT_LONE, a
+ * tool's name); after a sign-in thing and a user (`pair`, "Gmail: ram99 / …") whatever the word but grammar.
+ */
+function loneValue(v: string, after: "name" | "thing" | "pair"): boolean {
   const raw = word(v), w = raw.toLowerCase();
-  if (!w || sayless(w) || ABOUT_SECRET.has(w) || NOT_LONE.has(w) || TOOL_NAME.test(w) || /^(?:[a-z]{4,}(?:ed|ly)|that|because)$/.test(w)) return false;
+  if (!w || sayless(w)) return false;
+  if (after === "name" && NAMED_STATE.has(w)) return false;
+  // After a user, only grammar goes on the sentence ("My SSH login is pi@host, why does…").
+  if (after === "pair" && /^(?:why|what|when|where|how|who|which|and|or|but|so|then|the|a|an|it|is|are|was|were|i|you|we|they|he|she|my|your|our|their|his|her|its|this|that|please|thanks)$/.test(w)) return false;
+  if (after === "thing" && (ABOUT_SECRET.has(w) || NOT_LONE.has(w) || TOOL_NAME.test(w) || /^(?:that|because)$/.test(w))) return false;
   // An issue, a handle, a user at a host, a standard ("WPA2-PSK") or a name with a hyphened number ("Vitamin-D3").
   return !/^[#@]/.test(raw) && !AT_HOST.test(raw) && !/^[A-Z][A-Z0-9]*(?:[-/][A-Z0-9]+)+$/.test(raw) && !HYPHENED.test(raw);
 }
@@ -272,7 +289,7 @@ function credentialValue(text: string): "key" | "password" | null {
     const q = (m.groups!.q ?? "").trim().split(/\s+/).filter(Boolean).filter(w => !new RegExp(String.raw`^${WHOSE}$`, "i").test(w));
     const noun = m.groups!.noun!.toLowerCase();
     const v = m.groups!.v!;
-    if (!loneValue(v)) continue;
+    if (!loneValue(v, "name")) continue;
     if (/^(?:logins?|log-ins?|sign-ins?)$/.test(noun)) {
       if (THING_WORD.test(m[0]) && !HANDLE_PLACE.test(m[0]) && !USER_WORD.test(word(v)) && !/@|:\d|^v?\d/.test(v)) return "password";
       continue;
@@ -285,19 +302,19 @@ function credentialValue(text: string): "key" | "password" | null {
   }
   const lone = THING_LONE.exec(text)?.groups?.v;
   // A product named for what it is ("VPN: NordVPN2") is no password; any other product-like word there may be one.
-  if (lone && loneValue(lone) && !(HANDLE_PLACE.test(text) && HANDLE.test(word(lone))) && !(PRODUCT.test(word(lone)) && /vpn|wi-?fi|router|nas/i.test(text) && /vpn|wifi|router|nas/i.test(lone)) && !AMOUNT.test(word(lone)) && !/^[A-Z][A-Z0-9]*(?:[-/][A-Z0-9]+)+$|-[a-z]{3,}$/.test(word(lone))) return "password";
+  if (lone && loneValue(lone, "thing") && !(HANDLE_PLACE.test(text) && HANDLE.test(word(lone))) && !(PRODUCT.test(word(lone)) && /vpn|wi-?fi|router|nas/i.test(text) && /vpn|wifi|router|nas/i.test(lone)) && !AMOUNT.test(word(lone)) && !/^[A-Z][A-Z0-9]*(?:[-/][A-Z0-9]+)+$|-[a-z]{3,}$/.test(word(lone))) return "password";
   for (const m of text.matchAll(THING_PAIR)) {
     const v = word(m.groups!.v!);
     // A standard, a speed or a band beside a network's name ("Wi-Fi: HomeNet / 5GHz", "…, 802.11ac") is no password.
-    if (!loneValue(v) || AMOUNT.test(v) || /^[\d.]+[a-z]*$/i.test(v) || AUTH_WORD.test(v)) continue;
+    if (!loneValue(v, "pair") || AMOUNT.test(v) || /^[\d.]+[a-z]*$/i.test(v) || AUTH_WORD.test(v)) continue;
     return "password";
   }
   const after = NAME_THEN_WORD.exec(text);
-  if (after && loneValue(after.groups!.v!)) return "password";
+  if (after && loneValue(after.groups!.v!, "name")) return "password";
   for (const re of [ACCESS_WITH_WORD, SERVICE_USES_WORD]) {
     const m = re.exec(text);
     // In lower case only: a capitalised word there is a product's or a browser's name ("…using Chrome").
-    if (m && /^["'“]?[a-z]/.test(m.groups!.v!) && loneValue(m.groups!.v!) && !SIGN_IN_WAY.test(m.groups!.v!)) return "password";
+    if (m && /^["'“]?[a-z]/.test(m.groups!.v!) && loneValue(m.groups!.v!, "thing") && !SIGN_IN_WAY.test(m.groups!.v!)) return "password";
   }
   return DIGITS_EVERYWHERE.test(text) ? "password" : null;
 }

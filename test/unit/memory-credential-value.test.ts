@@ -48,6 +48,16 @@ const KEYS = [
   "Auth 9b2f4e1a7c3d4e8ba1f26d5c4b3a2e10", "Weather API 3f9a8b7c6d5e4f3a",
 ];
 
+/** A password that ends in "-ly" or "-ed", or is a plan's or a state's word, in each new shape (r11-memory-x11-2), then neighbours. */
+const LY_ED = [
+  "Netflix: butterfly", "Netflix: dragonfly", "Netflix: Butterfly", "Netflix — dragonfly", "Gmail: ram99 / butterfly", "Spotify login is butterfly",
+  "The login for Netflix is kimberly", "My VPN secret is blessed", "My VPN secret is butterfly", "My AWS secret is Beverly", "Our Okta secret's butterfly",
+  "Netflix password. butterfly", "I log into Netflix with butterfly", "Netflix uses butterfly", "Wi-Fi: blessed", "Wi-Fi: Butterfly",
+  "My AWS secret is family", "My AWS secret is secure", "My AWS secret is premium", "My AWS secret is everywhere",
+  // Neighbours.
+  "Spotify: lovely", "Our Jenkins secret: wicked", "My Okta secret is holly", "Zoom password. sacred", "Gmail: ram99, shelly", "Disney+: firefly",
+];
+
 /** Ordinary facts beside those values, which memory still keeps. */
 const ORDINARY = [
   "The secret is patience", "My secret is that I dislike meetings", "The shared secret is rotated monthly", "The client secret is configured in Azure",
@@ -76,6 +86,10 @@ describe("a credential's value in a fact, wherever its name stands", () => {
   it.each(KEYS.map(s => [s]))("refuses %j, a key or a token by its shape, with or without \"is\" (memory-c11-1)", text => {
     expect(factRefusal(text)).not.toBeNull();
     expect(new MemoryGraph().add({ text, about: USER, source: "user" }).kind).toBe("refused");
+  });
+
+  it.each(LY_ED.map(s => [s]))("refuses %j, a password whatever its ending (r11-memory-x11-2)", text => {
+    expect(factRefusal(text)).not.toBeNull();
   });
 
   it.each(ORDINARY.map(s => [s]))("keeps the ordinary fact %j beside those values (memory-r11-1, memory-c11-1)", text => {

@@ -281,7 +281,9 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
     AWS secret is Summer2024", "My VPN secret is sunshine", "Our Jenkins secret: tangerine"), after a sign-in thing
     and a colon or a dash ("Netflix: sunshine", "Spotify — Bluebird77"), after a login for a service that signs in by
     e-mail ("The login for Netflix is sunshine"), or as the next sentence after a password's name ("Netflix password.
-    sunshine"); a user and any value after a sign-in thing ("Gmail: ram99 / sunshine"); a word in lower case after a
+    sunshine"), whatever its ending and unless it is a state the guard names one by one ("rotated", "configured",
+    "expired"; a plan's word such as "premium" says no value only after a sign-in thing: "Netflix: premium",
+    r11-memory-x11-2); a user and any value but grammar after a sign-in thing ("Gmail: ram99 / sunshine"); a word in lower case after a
     verb of signing in and "with" ("I log into Netflix with sunshine") or after a service that "uses" it; four to
     eight digits used "for everything" or "everywhere"; and an NHS, CHI, Medicare or social insurance number. A
     secret with nothing before it is a password only by its shape ("The secret is patience" and "Our family secret is
