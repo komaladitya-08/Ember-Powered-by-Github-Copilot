@@ -379,8 +379,9 @@ Ember stops and asks before a command that:
 - a program, or a tool's command or option, **Ember doesn't know is not a danger** (the owner's decision of
   2026-11-14): it runs, announced by name with its few seconds to stop it, in every mode ("Running hugo, which I
   don't know."; the card says "It runs a program Ember doesn't know." or "It runs cargo watch, a command of cargo
-  that Ember doesn't know."; an add-on of docker or kubectl, such as `docker scout` or `kubectl krew`, and a command
-  npm doesn't have are such commands too, while one of gh's may be an alias Ember can't read and asks), and with "…, as
+  that Ember doesn't know."; an add-on of docker or kubectl, such as `docker scout` or `kubectl krew`, is such a command
+  too, while one of gh's may be an alias Ember can't read and one of npm's an abbreviation of any of its commands, `npm
+  publ`, so those ask), and with "…, as
   you asked." where your own words for the task ask to run it by name
   with the words after it. Where your own words for the task say not to run it ("don't run hugo", "leave hugo
   alone"), it asks, saying you didn't ask for it, and Autopilot refuses it. What its own words say it does is judged as that danger, so such a command still asks

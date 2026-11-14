@@ -9492,13 +9492,9 @@ reg(NATIVE, ["npm", "pnpm", "yarn", "bun", "corepack"], h => {
     default: break;
   }
   const builtins = new Set(["test", "t", "tst", "start", "stop", "restart", "build", "pack", "version", "ls", "list", "outdated", "view", "info", "show", "search", "help", "doctor", "ping", "prefix", "root", "bin", "why", "explain", "fund", "audit", "diff", "query", "sbom", "completion", "edit", "explore", "repo", "docs", "bugs", "home", "shrinkwrap", "find-dupes", "pkg", "stars", "star", "unstar", "hook", "profile", "help-search", "licenses", "store", "env", "setup", "--version", "-v", "workspaces", "constraints", "dedupe"]);
-  // npm has no add-ons: a command it doesn't have fails, so one Ember doesn't know runs announced by name
-  // (commands-remote-c12-1).
-  if (h.key === "npm" && !builtins.has(verb) && !/^(test|start|stop|restart)$/.test(verb)) {
-    if (/^[a-z][a-z0-9-]*$/.test(verb)) { h.e.add("unknown", "unknown.verb", unknownVerbSays("npm", verb), { program: `npm ${verb}` }); return; }
-    h.e.unclear("unclear.npm-verb", "Ember can't tell which npm command this runs.");
-    return;
-  }
+  // (npm takes a command's abbreviation or a common misspelling for it, `npm publ` and `npm isntall` among them, so
+  // a word Ember doesn't list may be any of its commands, publish included: it asks (commands-remote-c12-1, left).)
+  if (h.key === "npm" && !builtins.has(verb) && !/^(test|start|stop|restart)$/.test(verb)) { h.e.unclear("unclear.npm-verb", "Ember can't tell which npm command this runs."); return; }
   if (verb === "edit" || verb === "explore") { h.e.unclear("unclear.interactive", SAYS.interactive); return; }
   if (verb === "star" || verb === "unstar" || verb === "hook" || verb === "profile") { h.e.add("publish", "npm.registry", "Changes something on the registry."); return; }
   if (h.key !== "npm" && !builtins.has(verb)) {

@@ -246,15 +246,15 @@ describe("read-only and everyday commands that asked (commands-remote-r12-4)", (
 
 describe("a tool's add-on command Ember doesn't know (commands-remote-c12-1)", () => {
   it("runs announced by name, as any program Ember doesn't know", () => {
-    for (const cmd of ["docker scout cves web", "docker frob", "podman frob", "kubectl krew list", "kubectl ctx", "kubectl tree deploy web", "kubectl neat get pod x", "kubectl frob", "npm frob"]) {
+    for (const cmd of ["docker scout cves web", "docker frob", "podman frob", "kubectl krew list", "kubectl ctx", "kubectl tree deploy web", "kubectl neat get pod x", "kubectl frob"]) {
       const d = decide(cmd);
       expect(d.verdict, cmd).toBe("announce");
       expect(d.rules, cmd).toContain("unknown.verb");
     }
   });
 
-  it("still asks before their own dangerous commands, a group's command it doesn't know and gh's, which may be an alias", () => {
-    for (const cmd of ["docker rm web", "docker push x/y", "docker swarm leave", "docker plugin install x", "kubectl delete pod x", "kubectl drain node1", "npm publish", "npm unpublish x", "gh frob"]) {
+  it("still asks before their own dangerous commands, a group's command it doesn't know, gh's, which may be an alias, and npm's, which may be an abbreviation", () => {
+    for (const cmd of ["docker rm web", "docker push x/y", "docker swarm leave", "docker plugin install x", "kubectl delete pod x", "kubectl drain node1", "npm publish", "npm unpublish x", "gh frob", "npm publ", "npm isntall x", "npm frob"]) {
       expect(decide(cmd).verdict, cmd).toBe("ask");
     }
   });
