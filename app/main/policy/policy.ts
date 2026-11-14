@@ -850,7 +850,7 @@ function emberDataReach(r: ReachRequest, os: OS): "file" | "unread" | null {
 const SHORT_NAME_PART = /^[^\s\\/.~]{1,6}~\d+(?:\.[^\s\\/.]{0,3})?$/i;
 const hasShortName = (text: string): boolean => text.split(/[\\/\s"'“”]+/).some(p => SHORT_NAME_PART.test(p));
 /** What mayReachEmberData reads of a request. */
-type ReachRequest = Pick<ActionRequest, "kind" | "window" | "element" | "value"> & Partial<Pick<ActionRequest, "mode" | "currentText" | "typed" | "dialog" | "windowId" | "chosen" | "multiLine">> & { app?: string };
+type ReachRequest = Pick<ActionRequest, "kind" | "window" | "element" | "value"> & Partial<Pick<ActionRequest, "mode" | "currentText" | "typed" | "dialog" | "windowId" | "chosen" | "multiLine" | "inPage" | "onPage">> & { app?: string };
 /** The longest text heldTexts tries every caret position in (an "insert" whose caret isn't known). */
 const INSERT_MAX = 1024;
 /**
@@ -909,7 +909,11 @@ function fileDialogReach(r: ReachRequest, os: OS): "file" | "unread" | null {
   // text, a chosen row, or the row this step itself opens.
   const named = (d?.fields ?? []).some(t => t.trim() !== "") || !!d?.selected?.length || (!!r.element?.name.trim() && LIST_ROW.test(r.element.role));
   const whole = !!d && !d.truncated && !d.unread && !!d.fields && Array.isArray(d.items) && named;
-  return !whole && commitsFileDialog(r, os) ? "unread" : null;
+  // A web page, or a page's own dialog, titled "Upload" or "Save As" is no file dialog: a page saves nothing to disk
+  // and opens no file but through the browser's own chooser, a window of its own judged as one. Its ordinary steps
+  // stay announced in Interactive (docs/APPROVALS.md: a question only where a dialog can't be read).
+  const page = r.inPage === true || r.onPage === true || d?.page === true;
+  return !whole && !page && commitsFileDialog(r, os) ? "unread" : null;
 }
 /** Does this step press, choose or enter something in a file dialog: not backing out, typing a character, or moving about? */
 function commitsFileDialog(r: ReachRequest, os: OS): boolean {

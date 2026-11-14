@@ -398,6 +398,29 @@ describe("Ember's own files reached by what a field or a file dialog holds, not 
     expect(mayReachEmberData(req("kate", "Save File — Kate", { kind: "click", element: { role: "push button", name: "Cancel" }, dialog: { name: "Save File", text: "" } }))).toBe(false);
   });
 
+  it("lets an ordinary step on a web page titled like a file dialog go as before, announced in Interactive, since a page saves and opens nothing but through the browser's own chooser (docs/APPROVALS.md)", () => {
+    const go = { role: "push button", name: "Continue" };
+    const rows: Partial<ActionRequest>[] = [
+      { kind: "click", element: go, onPage: true },
+      { kind: "keys", value: "F5", element: { role: "document web", name: "Page" }, inPage: true },
+      { kind: "click", element: go, onPage: true, dialog: { name: "Save As", text: "Name:", page: true } },
+    ];
+    for (const [title, x] of [["Save As — Mozilla Firefox", rows[0]], ["Open - Google Chrome", rows[1]]] as const) {
+      const r = req("firefox", title, x);
+      expect(mayReachEmberData(r), title).toBe(false);
+      const i = engine("interactive", "linux").decide(r);
+      expect(i.verdict, `${title} interactive`).toBe("allow");
+      expect(i.announce, title).toBeTruthy();
+      expect(engine("autopilot", "linux").decide(r).verdict, `${title} autopilot`).toBe("allow");
+    }
+    // A page's own dialog titled so is judged as any page's dialog is, not as one Ember can't read where it saves.
+    const own = req("firefox", "Browse — Mozilla Firefox", rows[2]);
+    expect(mayReachEmberData(own)).toBe(false);
+    expect(engine("interactive", "linux").decide(own).prompt).not.toContain(EMBER_DATA_UNREAD_QUESTION);
+    // The browser's own file chooser, a native window, is still judged as a file dialog it can't read whole.
+    asksOrRefused("linux", "firefox", req("firefox", "Save As", { kind: "click", element: { role: "push button", name: "Save" } }), "native chooser");
+  });
+
   it("reads a file dialog's fields, its path bar and its chosen rows as it is when the step is taken, and leaves its fields unknown when one can't be read (safety-privacy-r11-1)", () => {
     const n = (id: number, parent: number | null, role: string, name: string, x: Partial<AxNode> = {}): AxNode => ({ id, parent, depth: parent === null ? 0 : 1, role, name, states: [], bounds: null, ...x });
     const nodes = (field: Partial<AxNode> = {}): AxNode[] => [
