@@ -809,7 +809,7 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
         const left = exit ? stragglersOf(run) : null;
         if (left && exit) {
           void left.then(names => {
-            if (!names.length || disposed || !tabs.includes(t)) return;
+            if ((names !== null && !names.length) || disposed || !tabs.includes(t)) return;
             t.status = statusLine({ ...exit, stragglers: names }, { label: c.targetLabel, os: o.os });
             push();
           });
@@ -907,11 +907,12 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
  * The names a run says it left running (RUN's and WA's runs: `stragglers`, a promise settled after their last sweep or
  * the look a run that ended by itself gets), as plain strings; null for a run that doesn't say (a remote's).
  */
-export function stragglersOf(run: RunningCommand): Promise<string[]> | null {
+export function stragglersOf(run: RunningCommand): Promise<string[] | null> | null {
   const s = (run as RunningCommand & { stragglers?: unknown }).stragglers;
   if (!s || typeof (s as PromiseLike<unknown>).then !== "function") return null;
   return Promise.resolve(s as PromiseLike<unknown>).then(
-    v => (Array.isArray(v) ? v.filter((n): n is string => typeof n === "string" && n !== "").slice(0, 64) : []),
+    // null: the runner couldn't tell (its look didn't all come back, review wslio-x-7).
+    v => (v === null ? null : Array.isArray(v) ? v.filter((n): n is string => typeof n === "string" && n !== "").slice(0, 64) : []),
     () => [],
   );
 }
@@ -919,7 +920,8 @@ export function stragglersOf(run: RunningCommand): Promise<string[]> | null {
 /** A finished run's symbol: done (exit 0), stopped (by the user, its task or the kill switch), else failed. */
 export function outcomeOf(exit: RunExit | null): TabView["outcome"] {
   if (!exit) return "failed";
-  if (exit.ended === "exit" && exit.code === 0) return "done";
+  // Without the run's own end it isn't known to be done (review wslio-x-3).
+  if (exit.ended === "exit" && exit.code === 0 && !exit.endLost) return "done";
   if (exit.ended === "stopped-user" || exit.ended === "stopped-task" || exit.ended === "killswitch") return "stopped";
   return "failed";
 }

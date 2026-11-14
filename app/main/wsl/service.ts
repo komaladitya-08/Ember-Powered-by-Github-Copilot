@@ -20,7 +20,7 @@ import type { JobHostRef, WindowsContext } from "../commands/types";
 import type { PlatformDoctorRow } from "../platform/types";
 import type { WslFacts, WslService } from "./types";
 import { decodeWsl } from "./decode";
-import { createWslExec, discoverWsl, envGet, locateWslExe, noWsl, readRunning, type WslChild, type WslSpawn } from "./discover";
+import { createWslExec, discoverWsl, envGet, locateWslExe, noWsl, readRunning, readRunningKnown, type WslChild, type WslSpawn } from "./discover";
 import { loadLxssRegistry, type RegistryReader } from "./lxss";
 import type { SecretTracker } from "../commands/prompts";
 import { BOOT_ID_SCRIPT, createWslRunner, type WslRunner } from "./runner";
@@ -181,6 +181,20 @@ export function createWslWith(o: WslOptions, deps: WslDeps): WslServiceImpl | nu
     return new Set(await runningInflight);
   };
 
+  /** The running set read now, or null when it couldn't be read (wsl.exe failed or timed out, or the service is gone). */
+  const runningRead = async (): Promise<Set<string> | null> => {
+    if (disposed) return null;
+    try {
+      const f = cache?.facts ?? (await facts());
+      const set = await readRunningKnown(exec, f.distros.map(d => d.name));
+      if (set) applyRunning(set);
+      return set;
+    } catch (err) {
+      log.warn("wsl.running_failed", { err });
+      return null;
+    }
+  };
+
   const isRunning = (distro: string): boolean => {
     if (!disposed && now() - running.at > RUNNING_CACHE_MS && !runningInflight && !inflight) {
       void runningNow().catch(err => log.warn("wsl.running_failed", { err }));
@@ -215,7 +229,7 @@ export function createWslWith(o: WslOptions, deps: WslDeps): WslServiceImpl | nu
     if (!r) {
       r = createWslRunner({
         log, distro, env: o.env, jobHost: o.jobHost, spawn: deps.spawn, exec, exe: () => exe,
-        listed: () => listed(distro), isRunning: () => isRunning(distro), runningNow, windows: () => windows,
+        listed: () => listed(distro), isRunning: () => isRunning(distro), runningNow, runningRead, windows: () => windows,
         winPaths: o.ember.winPaths, learnedUid: uid => learnedUid(distro, uid), trackSecrets: deps.trackSecrets, now,
       });
       runners.set(distro, r);

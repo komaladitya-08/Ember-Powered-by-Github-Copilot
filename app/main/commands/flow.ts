@@ -825,12 +825,27 @@ export function autonomousCommand(d: CommandDecision, o: { scopes: AutonomyScope
   };
 }
 
+/** What the audit's ended record says of a run whose output (or own end) didn't all come back (review wslio-x-5). */
+function cutFields(exit: RunExit): { outputCut?: true; endLost?: true; targetStopped?: true } {
+  return { ...(exit.outputCut ? { outputCut: true } : {}), ...(exit.endLost ? { endLost: true } : {}), ...(exit.targetStopped ? { targetStopped: true } : {}) };
+}
+
 /** The result the model gets for how a run ended (§3.8.6). */
 function resultOf(exit: RunExit, shaped: string, o: { label: string; timeoutS: number; redact: (s: string) => string }): ToolResultObject {
   switch (exit.ended) {
-    case "exit":
+    case "exit": {
+      const how = exit.code !== null ? `exit code ${exit.code}` : exit.signal ? `signal ${exit.signal}` : "no exit code";
+      // Never "done" on output known to be incomplete: the model would take the part for the whole. Without the run's
+      // own end Ember doesn't know the command finished at all (review wslio-x-3): it says so, and to look first.
+      if (exit.endLost) {
+        // wsl.exe's own code is said as WSL's (review wslio-y-2): the command's may never have come.
+        const said = [exit.code !== null ? `WSL reported exit code ${exit.code}` : exit.signal ? `WSL reported signal ${exit.signal}` : "", exit.targetStopped ? `${o.label} stopped meanwhile` : ""].filter(Boolean);
+        return fail(`Ember didn't get the end of this run, so the command may not have finished${said.length ? ` (${said.join("; ")})` : ""}, and the output below is incomplete. Check what it did before you run it again.\n${shaped}`);
+      }
+      if (exit.outputCut) return fail(`It ran and ended with ${how}, but the end of its output was lost on the way back, so the output below is incomplete. Don't run it again only to see the rest.\n${shaped}`);
       if (exit.code === 0) return done(shaped);
-      return fail(`It ended with ${exit.code !== null ? `exit code ${exit.code}` : exit.signal ? `signal ${exit.signal}` : "no exit code"}.\n${shaped}`);
+      return fail(`It ended with ${how}.\n${shaped}`);
+    }
     case "stopped-user":
       return fail(`The user stopped it after ${seconds(exit.ms)} s. Don't run it again unless they ask.\n${shaped}`);
     case "stopped-task":
@@ -1393,7 +1408,7 @@ async function runOnce(ctx: CommandFlowContext, j: CommandJudge, o: {
       if (!exit) return;
       ctx.audit({
         event: "command", phase: "ended", task: o.stamp.taskId, target: svc.binding.id, runId: o.runId, ended: exit.ended, code: exit.code, signal: exit.signal,
-        ms: exit.ms, outBytes: out.bytes, secretSpans: tracker.spans().length, typedLines: typed,
+        ms: exit.ms, outBytes: out.bytes, secretSpans: tracker.spans().length, typedLines: typed, ...cutFields(exit),
       });
     });
   };
@@ -1658,9 +1673,9 @@ async function finishRun(ctx: CommandFlowContext, j: CommandJudge, run: RunOutco
   if (exit.ended !== "failed-to-start") noteDownloads(ctx, o.cls);
   ctx.audit({
     event: "command", phase: "ended", task, target, runId: o.runId, ended: exit.ended, code: exit.code, signal: exit.signal, ms: exit.ms,
-    outBytes: out.bytes, secretSpans: kept.spans.length, typedLines: typed.length,
+    outBytes: out.bytes, secretSpans: kept.spans.length, typedLines: typed.length, ...cutFields(exit),
   });
-  ctx.log.info("commands.ended", { task, target, ended: exit.ended, code: exit.code, ms: exit.ms, outBytes: out.bytes });
+  ctx.log.info("commands.ended", { task, target, ended: exit.ended, code: exit.code, ms: exit.ms, outBytes: out.bytes, outputCut: exit.outputCut === true });
   const result = resultOf(exit, shaped, { label: o.label, timeoutS: o.timeoutS, redact: j.redactSecrets });
   if (!taint || result.resultType === "denied") return result;
   const note = "\n(The output contained text that looks like instructions; it was not followed. Every further command in this task asks the user.)";

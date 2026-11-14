@@ -10,7 +10,9 @@
  * script (a PTY on WSL1 too), exit codes, a multi-line command through EMBER_CMD_B64, WSLENV replaced, a failed start
  * with wsl.exe's own message decoded; Stop (Ctrl+C, and the sweeps when the command ignores it), stragglers named; an
  * interop child ended with the job; inspect (paths as data, symlinks resolved), script reads and git facts; boot ids; the doctor row;
- * and L22's channel check (4 MiB of random bytes through wsl.exe's stdio unchanged; the ssh half waits for SA).
+ * L22's channel check (4 MiB of random bytes through wsl.exe's stdio unchanged while the Linux side runs; the ssh half
+ * waits for SA); 4 MiB crossing as the Linux side exits, whole whenever its end marker comes; that 4 MiB a run prints
+ * as it ends arrive whole or the run says its output was cut (WSL1's relay); `kill $$` and a Ctrl+C a program handles.
  *
  * Skipped without EMBER_WSL_TEST; with EMBER_WSL_TEST=1 it fails when Windows, WSL, the distro or the built job host is
  * missing. The jobs' set-up exports EMBER_WSL_TEST_DISTRO, EMBER_WSL_EXPECT_VERSION, EMBER_WSL_EXPECT_ROOT,
@@ -192,6 +194,9 @@ suite("WSL on a real Windows runner", () => {
     console.log("pty run", JSON.stringify(out));
     expect(exit).toMatchObject({ ended: "exit", code: 3 });
     expect(out.startsWith(MARKER)).toBe(true);
+    // The launcher's last word, with its nonce and the command's code: the whole output came back (wslRunEnd).
+    expect(out).toMatch(/\x1b\]777;ember-end;[0-9a-f]{16};3\x07/); // eslint-disable-line no-control-regex -- the end marker
+    expect(exit.outputCut).toBeUndefined();
     expect(out).toMatch(/\/dev\/pts\/\d+/);
     expect(out).toContain("term=xterm-256color");
     expect(out).toContain("é 日本");
@@ -246,6 +251,34 @@ suite("WSL on a real Windows runner", () => {
     const exit = await cmd.done;
     expect(exit.ended).toBe("stopped-user");
     expect(await carrying(runner, cmd.runId)).toBe("");
+  }, LONG);
+
+  it("lets nothing of a command go on after `kill $$` has ended its run (review wslio-x-1)", async () => {
+    await run(runner, "rm -f /tmp/ember-wa-after");
+    const { exit, out } = await run(runner, "echo before; kill $$; sleep 2; echo after; touch /tmp/ember-wa-after");
+    console.log("kill $$", JSON.stringify(exit), JSON.stringify(out.slice(-200)));
+    expect(exit).toMatchObject({ ended: "exit", code: 143 });
+    expect(exit.endLost).toBeUndefined();
+    expect(out).toContain("before");
+    expect(out).not.toMatch(/after|Terminated/);
+    await new Promise(r => setTimeout(r, 3_000));
+    const left = await runner.runScript("[ -e /tmp/ember-wa-after ] && echo made || echo none");
+    expect(left?.stdout.toString().trim()).toBe("none");
+  }, LONG);
+
+  it("lets Ctrl+C typed into a run reach a program that handles it (review wslio-x-2)", async () => {
+    const catcher = "python3 -c 'import signal,time,sys\nsignal.signal(signal.SIGINT, lambda *a: print(\"caught\", flush=True))\nprint(\"ready\", flush=True)\ntime.sleep(1.5)\nprint(\"done\", flush=True)'";
+    const cmd = runner.start(spec(catcher));
+    const chunks: Buffer[] = [];
+    cmd.onOutput(c => void chunks.push(Buffer.from(c)));
+    await waitFor(cmd, "ready");
+    cmd.input(Buffer.from("\x03"));
+    const exit = await cmd.done;
+    const out = Buffer.concat(chunks).toString("utf8");
+    console.log("ctrl+c handled", JSON.stringify(exit), JSON.stringify(out.slice(-200)));
+    expect(out).toMatch(/caught[\s\S]*done/);
+    expect(exit).toMatchObject({ ended: "exit", code: 0 });
+    expect(exit.endLost).toBeUndefined();
   }, LONG);
 
   it("names a program that outlives the run, and leaves it alone", async () => {
@@ -333,18 +366,92 @@ suite("WSL on a real Windows runner", () => {
     expect(rows[0]).toMatchObject({ id: "wsl", label: "WSL" });
   }, LONG);
 
-  it("carries 4 MiB of random bytes through wsl.exe's stdio unchanged (L22's channel)", async () => {
+  it("carries 4 MiB of random bytes through wsl.exe's stdio unchanged while the Linux side runs (L22's channel)", async () => {
+    // As SSH's link uses the channel: the framed stream flows while ssh in the distro runs, and the link ends only when
+    // ssh does. So the PC takes every byte back before it closes stdin and lets cat exit.
     const exe = (await wsl.facts()).wslExe!;
     const data = randomBytes(4 * 1024 * 1024);
     const child = spawn(exe, ["-d", DISTRO, "--exec", "/bin/cat"], { env: { ...process.env, WSL_UTF8: "1", WSLENV: "" }, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
     const got: Buffer[] = [];
-    child.stdout.on("data", b => void got.push(b));
+    let bytes = 0;
     const done = new Promise<number | null>(resolve => child.on("close", code => resolve(code)));
-    child.stdin.end(data);
+    const allBack = new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`only ${bytes} of ${data.length} bytes came back while cat ran`)), LONG - 10_000);
+      child.stdout.on("data", (b: Buffer) => {
+        got.push(b);
+        bytes += b.length;
+        if (bytes >= data.length) {
+          clearTimeout(timer);
+          resolve();
+        }
+      });
+      child.on("close", () => {
+        clearTimeout(timer);
+        if (bytes < data.length) reject(new Error(`cat ended with ${bytes} of ${data.length} bytes back`));
+      });
+    });
+    child.stdin.write(data);
+    await allBack;
+    child.stdin.end();
     expect(await done).toBe(0);
     const back = Buffer.concat(got);
     expect(back.length).toBe(data.length);
     expect(back.equals(data)).toBe(true);
     // The ssh half (`wsl.exe --exec /usr/bin/ssh` carrying the framed stream) is SA's ssh-windows test once it merges.
   }, LONG);
+
+  it("carries 4 MiB across wsl.exe as the Linux side exits, whole whenever the end marker comes, and mostly whole (WSL1's lost tail)", async () => {
+    // The way the product now sends data that ends with the process (a run's output, a fixed script's answer): the
+    // Linux side's last word is the end marker with a nonce. WSL1's relay once lost exactly the last 64 KiB here with
+    // exit code 0 (remote.yml's WSL1 job, run 43532157051: 4,128,768 of 4,194,304). Each try: with the marker every
+    // byte came, without it what came is the data's start (so Ember can say it's cut). And at least one of three
+    // tries comes whole: a relay that lost every tail would leave every WSL run "incomplete" (review wslio-x-8).
+    const exe = (await wsl.facts()).wslExe!;
+    const results: { bytes: number; marker: boolean }[] = [];
+    for (let i = 0; i < 3; i++) {
+      const data = randomBytes(4 * 1024 * 1024);
+      const nonce = randomBytes(8).toString("hex");
+      // The text through WSLENV, as Ember's launcher goes: no quote or backslash on wsl.exe's argv (critique wsl-18).
+      const text = 'cat; printf "\\033]777;ember-end;%s;%s\\007" "$EMBER_END" "$?"';
+      const child = spawn(exe, ["-d", DISTRO, "--exec", "/bin/sh", "-c", "set -f; eval $EMBER_T"], {
+        env: { ...process.env, WSL_UTF8: "1", EMBER_END: nonce, EMBER_T: text, WSLENV: "EMBER_END/u:EMBER_T/u" }, windowsHide: true, stdio: ["pipe", "pipe", "pipe"],
+      });
+      const got: Buffer[] = [];
+      child.stdout.on("data", (b: Buffer) => void got.push(b));
+      const done = new Promise<number | null>(resolve => child.on("close", code => resolve(code)));
+      child.stdin.end(data);
+      expect(await done).toBe(0);
+      const back = Buffer.concat(got);
+      const end = Buffer.from(`\x1b]777;ember-end;${nonce};0\x07`, "latin1");
+      const marker = back.length >= end.length && back.subarray(back.length - end.length).equals(end);
+      results.push({ bytes: marker ? back.length - end.length : back.length, marker });
+      if (marker) expect(back.subarray(0, back.length - end.length).equals(data)).toBe(true);
+      else expect(data.subarray(0, Math.min(back.length, data.length)).equals(back.subarray(0, data.length))).toBe(true);
+    }
+    console.log("at exit", JSON.stringify(results));
+    expect(results.some(r => r.marker)).toBe(true);
+  }, LONG * 2);
+
+  it("never hands back a run's output cut short as all of it: 4 MiB a run prints as it ends arrive whole with the end marker, or the run says so", async () => {
+    // Through the product's own path (the job host, wsl.exe and script's PTY): the end marker decides. Three runs: each
+    // is whole exactly when Ember says so, and at least one is whole (a relay that cut every tail fails here).
+    const lines = 600_000;
+    let expected = "";
+    for (let i = 1; i <= lines; i++) expected += `${i}\n`;
+    const seen: { chars: number; cut: boolean }[] = [];
+    for (let i = 0; i < 3; i++) {
+      const { exit, out } = await run(runner, `seq 1 ${lines}`);
+      // The PTY ends lines with CR LF; the markers are OSC sequences output shaping strips. A cut may end inside a CR LF
+      // or inside the end marker itself, down to its lone ESC.
+      // eslint-disable-next-line no-control-regex -- the markers are made of control characters
+      const text = out.replace(/\x1b\]777;ember-(start|end;[0-9a-f]{16};\d+)\x07/g, "").replace(/\x1b(\][^\x07]*)?$/, "").replace(/\r\n/g, "\n").replace(/\r$/, "");
+      console.log("4 MiB run", JSON.stringify({ ...exit, chars: text.length, expected: expected.length }));
+      expect(exit).toMatchObject({ ended: "exit", code: 0 });
+      expect(expected.startsWith(text)).toBe(true);
+      // Whole exactly when Ember says it is whole.
+      expect(exit.outputCut === true).toBe(text !== expected);
+      seen.push({ chars: text.length, cut: exit.outputCut === true });
+    }
+    expect(seen.some(r => !r.cut)).toBe(true);
+  }, LONG * 3);
 });

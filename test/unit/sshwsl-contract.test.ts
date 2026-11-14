@@ -16,7 +16,7 @@ import { DEFAULT_SETTINGS, HostRecordSchema, SettingsSchema, repairSettings } fr
 import { CONSENT_VERSION, FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
 import { DISTRO_NAME, HOST_ID, LOCAL_TARGET, parseTargetId, targetIdOf, type TargetKind } from "../../app/shared/targets";
 import { journalLine } from "../../app/main/policy/audit";
-import { NO_RC, POSIX_PRELUDE, PS_INNER, WSL_EVAL, posixBody, posixInner } from "../../app/main/commands/run/shells";
+import { NO_RC, POSIX_PRELUDE, PS_INNER, WSL_EVAL, posixBody, posixInner, wslRunEnd } from "../../app/main/commands/run/shells";
 import {
   CAPS, EV_SCHEMAS, OP_SCHEMAS, emberNamesRegExp,
   type DesktopState, type EvMap, type EvName, type Hello, type Op, type OpArgs, type OpResult, type Welcome,
@@ -522,7 +522,7 @@ describe("the protocol's schemas", () => {
 
 const BODIES = [
   posixBody({ pty: true, from: "env" }), posixBody({ pty: false, from: "env" }),
-  posixBody({ pty: true, from: "b64" }), posixBody({ pty: false, from: "b64" }),
+  ...(["bash", "zsh", "sh"] as const).flatMap(shell => [true, false].map(pty => posixBody({ pty, from: "b64", shell, path: `/usr/bin/${shell}` }))),
 ];
 const INNERS = (["bash", "zsh", "sh"] as const).flatMap(sh => (["env", "b64"] as const).map(from => posixInner(sh, `/usr/bin/${sh}`, from)));
 
@@ -544,15 +544,29 @@ describe("the fixed launcher texts (§3.3)", () => {
   });
 
   it("survives WSL_EVAL's split and re-join unchanged (every EMBER_INNER value)", () => {
-    for (const t of [...INNERS, posixBody({ pty: false, from: "b64" })]) expect(t.split(/[ \t\n]+/).join(" ")).toBe(t);
+    for (const t of [...INNERS, ...BODIES]) expect(t.split(/[ \t\n]+/).join(" ")).toBe(t);
     expect(WSL_EVAL).toBe("set -f; eval $EMBER_INNER");
     expect(WSL_EVAL).not.toMatch(/['"\\]/);
   });
 
   it("reads the command, unsets it, sizes the PTY and evals it, in that order", () => {
     expect(posixBody({ pty: true, from: "env" })).toBe(`${POSIX_PRELUDE}; c=$EMBER_CMD; unset EMBER_CMD; unset BASH_ENV ENV; stty cols "$EMBER_COLS" rows "$EMBER_ROWS" 2>/dev/null; unset EMBER_COLS EMBER_ROWS; eval "$c"`);
-    expect(posixBody({ pty: false, from: "b64" })).toBe(`${POSIX_PRELUDE}; c=$(printf %s "$EMBER_CMD_B64" | base64 -d) || exit 126; unset EMBER_CMD_B64; unset BASH_ENV ENV; eval "$c"`);
+    expect(posixBody({ pty: false, from: "b64", shell: "bash", path: "/usr/bin/bash" })).toBe(`${POSIX_PRELUDE}; c=$(printf %s "$EMBER_CMD_B64" | base64 -d) || exit 126; unset EMBER_CMD_B64; unset BASH_ENV ENV; ${wslRunEnd("bash", "/usr/bin/bash")}`);
+    expect(posixBody({ pty: true, from: "b64", shell: "zsh", path: "/bin/zsh" }).endsWith(`; ${wslRunEnd("zsh", "/bin/zsh")}`)).toBe(true);
+    expect(posixInner("sh", "/bin/dash", "b64")).toBe(`exec /bin/dash -c '${posixBody({ pty: true, from: "b64", shell: "sh", path: "/bin/dash" })}'`);
     expect(POSIX_PRELUDE).toBe('set +f; export PAGER=cat GIT_PAGER=cat SYSTEMD_PAGER=cat MANPAGER=cat; [ -n "$LANG" ] || export LANG=C.UTF-8; printf "\\033]777;ember-start\\007"');
+  });
+
+  it("ends a WSL run with its end marker and the command's exit code, printed last by the shell that started it (WSL1's lost tail, run 43532157051)", () => {
+    // A fresh shell of the same program, the text in its environment only, never a subshell (review wslio-x-1, -x-2);
+    // the nonce read and unset, never exported (review wslio-x-4); this shell's own job reports kept out of the output.
+    expect(wslRunEnd("bash", "/usr/bin/bash")).toBe('n=$EMBER_END; unset EMBER_END; trap : INT TERM; exec 3>&2 2>/dev/null; EMBER_C=$c /usr/bin/bash --noprofile --norc -c "exec 2>&3 3>&-; c=\\$EMBER_C; unset EMBER_C; eval \\"\\$c\\"" 3>&3; e=$?; printf "\\033]777;ember-end;%s;%s\\007" "$n" "$e"; exit $e');
+    expect(wslRunEnd("zsh", "/bin/zsh")).toContain("EMBER_C=$c /bin/zsh -f -c ");
+    expect(wslRunEnd("sh", "/bin/sh")).toContain("EMBER_C=$c /bin/sh -c ");
+    expect(() => wslRunEnd("sh", "/bin/s h")).toThrow();
+    expect(wslRunEnd("bash", "/usr/bin/bash")).not.toMatch(/\( eval/);
+    // Linux's and a remote's runs are as before: only WSL's relay loses a tail.
+    for (const pty of [true, false]) expect(posixBody({ pty, from: "env" }).endsWith('; eval "$c"')).toBe(true);
   });
 
   it("pins PowerShell's launcher exactly", () => {

@@ -4118,8 +4118,8 @@ before its card is agreed leaves Copilot disconnected.
 
 **Left.** Open for round eleven: CI's result for af2ec94 and the voice test that failed at 13292a3 (“CI after the
 round”), the Windows fields with their own text providers (Chromium, WPF, Word) that may still hand their app the
-foreground (round nine's entry), and the WSL end marker's repair (wslio-x-1, P1, and the rest of its review). By
-package, the lists above. The re-rate's P3s that no package took up (those not named as fixed above):
+foreground (round nine's entry), and what only CI's WSL jobs can show of the WSL end marker (below). By package, the
+lists above. The re-rate's P3s that no package took up (those not named as fixed above):
 accessibility-r10-1, -r10-2, accessibility-c10-1, -c10-2; companion-r10-2, -r10-3, -r10-5 (a “yes” typed into the Ask
 box while a question is up gets no answer of any kind: P3 by the challenger), -r10-6 to -r10-8; first-run-r10-2 to
 -r10-8 and -c10-1, -c10-2; home-r10-2 to -r10-4; install-docs-r10-4 to -r10-6 and -c10-1; integrations-r10-4 and -c10-1;
@@ -4129,3 +4129,26 @@ and -c10-1; commands-remote-r10-10 to -r10-12 and -c10-4; and round nine's lists
 fixed (its integrations-c9-1 to -c9-5, integrations-x9-1's remote residue and the Stop at a run's end are, above). The
 owner's, in addition to the Settled list: (15)'s rule for the daily question, (28)'s commands card, and whether Windows
 needs the rule that takes the foreground back (above).
+
+**The WSL end marker (merged after two reviews and a resolve; r9/wslio).** remote.yml's WSL1 job at b474faa (run
+43532157051) got 4,128,768 of 4,194,304 bytes back through `wsl.exe --exec /bin/cat`, exactly 64 KiB short, with exit
+code 0, after passing on every earlier run and since. Ember's job host doesn't relay stdout (it inherits it), so the
+loss is taken to be in wsl.exe's relay as the Linux process exits (inferred: nothing public confirms it). The product
+had the same exposure: a WSL command whose tail was lost was reported as complete, and one of Ember's fixed scripts
+(facts, inspect, git facts, a script read, a sweep) cut short was read as whole. Now a WSL run's launcher runs the
+command's text in a fresh shell of the same program and prints an end marker last, with a nonce the command can't know
+(`EMBER_END`, read and unset); a fixed script carries a marker with a nonce per call, and `scriptDone` takes only
+output that ends with it, so every caller fails closed (facts unreadable, unknown paths, no script read, a sweep that
+"couldn't tell"). A run that ends without its marker is swept by its id: what still carries it is ended on Stop's own
+ladder; if nothing does, the command did end and is reported with wsl.exe's exit code and its output marked cut; where
+the distro stopped or the list couldn't be read, the model and the window are told the end didn't arrive and the
+command may not have finished. The exit code is only ever the process's. The first review (wslio-x-1 to -x-9) found a
+P1 in the first form (a subshell, in which `kill $$` ended the launcher and the rest ran on past Stop), a lost Ctrl+C
+on dash and busybox, a forgeable fixed marker and a false "it ended"; the second (wslio-y-1 to -y-5) found `kill -9
+$PPID` in pipes mode reopening the escape, which the sweep closes, and the over-corrected wording. Shown with real
+shells (bash, dash, zsh, mksh, busybox sh; pipes and a PTY): 40 of 40 in wsl-launcher-shells.test.ts, Stop's cases the
+same as at b474faa, and every launcher but WSL's byte-identical. The 4 MiB checks in wsl.test.ts run the tail across
+the exit through the marker, and once through the runner. Left: only CI's WSL1 and WSL2 jobs run the launcher and
+script texts on real wsl.exe; pipes mode never runs there (CI's distros have script(1)); "at least one of three whole"
+would pass with two tails cut; zsh reads /etc/zshenv twice a command and `SHLVL` is one higher; the nonce can be read
+from the launcher's environment by the command itself, which lets it forge only its own output's end.

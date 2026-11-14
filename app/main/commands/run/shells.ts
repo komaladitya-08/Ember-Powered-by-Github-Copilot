@@ -17,11 +17,46 @@ export const NO_RC: Readonly<Record<"bash" | "zsh" | "sh", readonly string[]>> =
 export const POSIX_PRELUDE = 'set +f; export PAGER=cat GIT_PAGER=cat SYSTEMD_PAGER=cat MANPAGER=cat; [ -n "$LANG" ] || export LANG=C.UTF-8; printf "\\033]777;ember-start\\007"';
 
 /**
+ * How a WSL run ends (from "b64", which only WSL uses). wsl.exe's relay on WSL1 can lose the last 64 KiB of a Linux
+ * process's output when it exits (remote.yml's WSL1 job, run 43532157051: 4,128,768 of 4,194,304 bytes back, exit code
+ * 0), so the shell wsl.exe started runs the command's text in a fresh shell of the same program and, once that has
+ * ended, prints the end marker last: `ESC ] 777;ember-end;<nonce>;<code> BEL`. A run whose output holds no marker with
+ * its own nonce lost its end on the way, and is reported so (runner.ts), never as complete.
+ * - A fresh shell, not a subshell (review wslio-x-1, -x-2): `$$`, `exit`, `exec`, traps, signals and Ctrl+C mean in it
+ *   what they meant in the one shell before. In a subshell `$$` named this outer shell, so `kill $$` ended the run while
+ *   the rest of the text went on past it and past Stop, and dash's and busybox's subshells died at a Ctrl+C a program
+ *   in them handled.
+ * - The text reaches it as EMBER_C, in its environment only (never on an argv), and it unsets it before `eval`, as
+ *   this shell did EMBER_CMD_B64; the nonce (EMBER_END, random per run) is read and unset here and never exported, so
+ *   neither the command's environment nor anything it prints from elsewhere holds it.
+ * - `trap : INT TERM`: a Ctrl+C or the Stop ladder's TERM ends the command, and this shell waits for it and says so,
+ *   and a plain `kill $PPID` from the command can't end this shell. A `kill -9 $PPID` can (SIGKILL can't be trapped):
+ *   then no marker comes, and the runner ends whatever still carries the run's id before it reports the run
+ *   (runner.ts, review wslio-y-1).
+ * - This shell's own stderr goes to /dev/null once the command starts, and the fresh shell takes the real one back
+ *   from fd 3 (and closes 3) before the command's text: a shell reports a child killed by a signal ("Killed",
+ *   "Terminated"), which the one shell before never did, and dash and busybox report it under the redirections of the
+ *   command they wait for, so fd 2 can't be given on its command line; `3>&3` is, because mksh opens `exec`'s fds
+ *   above 2 close-on-exec.
+ * One line, no single quote, no run of spaces: WSL_EVAL's split and posixInner's quotes take it unchanged. `shellPath`
+ * must be made only of [A-Za-z0-9/._-] (launchArgv checks it).
+ */
+export function wslRunEnd(shell: "bash" | "zsh" | "sh", shellPath: string): string {
+  if (!/^\/[A-Za-z0-9/._-]*$/.test(shellPath)) throw new Error("a shell path WSL's launcher can't hold");
+  const fresh = [shellPath, ...NO_RC[shell]].join(" ");
+  return `n=$EMBER_END; unset EMBER_END; trap : INT TERM; exec 3>&2 2>/dev/null; EMBER_C=$c ${fresh} -c "exec 2>&3 3>&-; c=\\$EMBER_C; unset EMBER_C; eval \\"\\$c\\"" 3>&3; e=$?; printf "\\033]777;ember-end;%s;%s\\007" "$n" "$e"; exit $e`;
+}
+
+/** What posixBody reads the command from: EMBER_CMD (Linux, macOS, a remote), or EMBER_CMD_B64 with WSL's end. */
+export type BodyFrom = { pty: boolean; from: "env" } | { pty: boolean; from: "b64"; shell: "bash" | "zsh" | "sh"; path: string };
+
+/**
  * The body every POSIX run executes: the prelude, the command text read and unset first (from EMBER_CMD, or decoded
  * from EMBER_CMD_B64 for WSL), the PTY's size set inside script(1) (whose PTY starts without one), then `eval "$c"`,
- * which runs the text exactly as `bash -c "$c"` would (same parser, here-docs and `exit` included).
+ * which runs the text exactly as `bash -c "$c"` would (same parser, here-docs and `exit` included); WSL's runs it in
+ * wslRunEnd's fresh shell and ends with its marker.
  */
-export function posixBody(o: { pty: boolean; from: "env" | "b64" }): string {
+export function posixBody(o: BodyFrom): string {
   return [
     POSIX_PRELUDE,
     o.from === "env" ? "c=$EMBER_CMD; unset EMBER_CMD" : 'c=$(printf %s "$EMBER_CMD_B64" | base64 -d) || exit 126; unset EMBER_CMD_B64',
@@ -29,7 +64,7 @@ export function posixBody(o: { pty: boolean; from: "env" | "b64" }): string {
     "unset BASH_ENV ENV",
     // script(1)'s PTY starts without a size: the tab's, fixed for the run (§3.10).
     ...(o.pty ? ['stty cols "$EMBER_COLS" rows "$EMBER_ROWS" 2>/dev/null; unset EMBER_COLS EMBER_ROWS'] : []),
-    'eval "$c"',
+    o.from === "b64" ? wslRunEnd(o.shell, o.path) : 'eval "$c"',
   ].join("; ");
 }
 
@@ -38,7 +73,8 @@ export function posixBody(o: { pty: boolean; from: "env" | "b64" }): string {
  * only of [A-Za-z0-9/._-], else the run fails to start) without rc files on posixBody({ pty: true, from }).
  */
 export function posixInner(shell: "bash" | "zsh" | "sh", shellPath: string, from: "env" | "b64"): string {
-  return `exec ${shellPath} ${NO_RC[shell].join(" ")} -c '${posixBody({ pty: true, from })}'`.replace(/ {2,}/g, " ");
+  const body = from === "b64" ? posixBody({ pty: true, from, shell, path: shellPath }) : posixBody({ pty: true, from });
+  return `exec ${shellPath} ${NO_RC[shell].join(" ")} -c '${body}'`.replace(/ {2,}/g, " ");
 }
 
 /**

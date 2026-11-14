@@ -77,7 +77,7 @@ const WINDOWS_PROGRAM = /^[A-Za-z]:\\[^"\0\r\n<>|?*]+$/;
  * What crosses into a distro for every WSL run (WSLENV, each `/u`: from Windows into WSL only). PWD is the run's
  * folder as Ember named it (posixPwd), never Windows' own.
  */
-export const WSLENV_RUN: readonly string[] = ["EMBER_INNER", "EMBER_CMD_B64", "EMBER_RUN_ID", "EMBER_CWD", "EMBER_COLS", "EMBER_ROWS", "TERM", "PWD"];
+export const WSLENV_RUN: readonly string[] = ["EMBER_INNER", "EMBER_CMD_B64", "EMBER_RUN_ID", "EMBER_END", "EMBER_CWD", "EMBER_COLS", "EMBER_ROWS", "TERM", "PWD"];
 /**
  * The PWD a POSIX run's shell starts with: its folder as Ember judged it. A POSIX shell keeps an inherited PWD that
  * names its current folder (through links too) and otherwise starts from the folder's real path, so with the task's
@@ -102,7 +102,7 @@ const size = (n: number, fallback: number) => (Number.isFinite(n) && n >= 1 ? St
 export function launchArgv(
   spec: RunSpec,
   facts: RunnerFacts,
-  o: { jobHost: JobHostRef | null; wsl?: { exe: string; distro: string } },
+  o: { jobHost: JobHostRef | null; wsl?: { exe: string; distro: string; end: string } },
 ): { command: string; args: string[]; options: LaunchOptions; env: Record<string, string> } {
   if (!RUN_ID.test(spec.runId)) throw new LaunchError("The run has no valid id.");
   if (typeof spec.command !== "string" || spec.command.includes("\0")) throw new LaunchError("The command holds a NUL character, which can't be handed to a shell.");
@@ -129,9 +129,11 @@ export function launchArgv(
     if (!DISTRO_NAME.test(o.wsl.distro)) throw new LaunchError("Ember can't pass that distribution's name to WSL.");
     if (!WINDOWS_PROGRAM.test(o.wsl.exe)) throw new LaunchError("Ember can't find wsl.exe.");
     if (WSL_CWD_BAD.test(spec.cwd) || !spec.cwd.startsWith("/")) throw new LaunchError("Ember can't pass that folder to WSL.");
+    // The end marker's nonce (wslRunEnd): random per run, so no output can hold this run's marker ahead of it.
+    if (!/^[0-9a-f]{16}$/.test(o.wsl.end)) throw new LaunchError("The run has no valid end marker.");
     const { shell, path } = posixPath();
     const pty = safeScript?.kind === "util-linux";
-    const inner = `${WSL_CD}; ${pty ? posixInner(shell, path, "b64") : posixBody({ pty: false, from: "b64" })}`;
+    const inner = `${WSL_CD}; ${pty ? posixInner(shell, path, "b64") : posixBody({ pty: false, from: "b64", shell, path })}`;
     const rest = pty
       ? ["-d", o.wsl.distro, "--cd", "/", "--exec", "/usr/bin/env", "SHELL=/bin/sh", safeScript.path, "-q", "-e", "-f", "-c", WSL_EVAL, "/dev/null"]
       : ["-d", o.wsl.distro, "--cd", "/", "--exec", path, ...NO_RC[shell], "-c", WSL_EVAL];
@@ -146,6 +148,7 @@ export function launchArgv(
         EMBER_INNER: inner,
         EMBER_CMD_B64: Buffer.from(spec.command, "utf8").toString("base64"),
         EMBER_RUN_ID: spec.runId,
+        EMBER_END: o.wsl.end,
         // WSL_CD's folder: the run's, as decided.
         EMBER_CWD: spec.cwd,
         ...(pty ? { EMBER_COLS: cols, EMBER_ROWS: rows } : {}),

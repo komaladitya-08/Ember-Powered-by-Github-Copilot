@@ -15,6 +15,7 @@ import {
 // ─────────────── Fixtures and fakes (no process is ever started) ───────────────
 
 const RUN_ID = "0123456789abcdef";
+const END = "00112233aabbccdd";
 const JOB_HOST = { execPath: "C:\\Program Files\\Ember\\Ember.exe", script: "C:\\Program Files\\Ember\\resources\\app\\dist\\app\\job-host.cjs" };
 const PS = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
 const ember = { paths: ["/home/ana/.config/ember"], pids: [10], names: /^ember$/ };
@@ -252,7 +253,7 @@ describe("launchArgv", () => {
 
   it("runs WSL commands with script through the job host, the text as base64 and WSLENV replaced", () => {
     const s = spec({ cwd: "/home/ana/src" });
-    const got = launchArgv(s, linux, { jobHost: JOB_HOST, wsl: { exe: "C:\\Windows\\System32\\wsl.exe", distro: "Ubuntu-22.04" } });
+    const got = launchArgv(s, linux, { jobHost: JOB_HOST, wsl: { exe: "C:\\Windows\\System32\\wsl.exe", distro: "Ubuntu-22.04", end: END } });
     expect(got.command).toBe(JOB_HOST.execPath);
     expect(got.args).toEqual([
       JOB_HOST.script, "--interactive", "--", "C:\\Windows\\System32\\wsl.exe",
@@ -261,22 +262,22 @@ describe("launchArgv", () => {
     expect(got.options).toEqual({ detached: false, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
     expect(got.env).toEqual({
       ELECTRON_RUN_AS_NODE: "1", WSL_UTF8: "1", EMBER_INNER: `${WSL_CD}; ${posixInner("bash", "/usr/bin/bash", "b64")}`,
-      EMBER_CMD_B64: Buffer.from(s.command, "utf8").toString("base64"), EMBER_RUN_ID: RUN_ID, EMBER_CWD: "/home/ana/src", EMBER_COLS: "100", EMBER_ROWS: "30",
-      TERM: "xterm-256color", PWD: "/home/ana/src", WSLENV: "EMBER_INNER/u:EMBER_CMD_B64/u:EMBER_RUN_ID/u:EMBER_CWD/u:EMBER_COLS/u:EMBER_ROWS/u:TERM/u:PWD/u",
+      EMBER_CMD_B64: Buffer.from(s.command, "utf8").toString("base64"), EMBER_RUN_ID: RUN_ID, EMBER_END: END, EMBER_CWD: "/home/ana/src", EMBER_COLS: "100", EMBER_ROWS: "30",
+      TERM: "xterm-256color", PWD: "/home/ana/src", WSLENV: "EMBER_INNER/u:EMBER_CMD_B64/u:EMBER_RUN_ID/u:EMBER_END/u:EMBER_CWD/u:EMBER_COLS/u:EMBER_ROWS/u:TERM/u:PWD/u",
     });
     expect(Buffer.from(got.env.EMBER_CMD_B64, "base64").toString("utf8")).toBe(s.command);
   });
 
   it("runs WSL commands without script in batch mode on WSL_EVAL", () => {
-    const got = launchArgv(spec(), linuxPipes, { jobHost: JOB_HOST, wsl: { exe: "C:\\Windows\\System32\\wsl.exe", distro: "Debian" } });
+    const got = launchArgv(spec(), linuxPipes, { jobHost: JOB_HOST, wsl: { exe: "C:\\Windows\\System32\\wsl.exe", distro: "Debian", end: END } });
     expect(got.args).toEqual([JOB_HOST.script, "--batch", "--", "C:\\Windows\\System32\\wsl.exe", "-d", "Debian", "--cd", "/", "--exec", "/usr/bin/bash", "--noprofile", "--norc", "-c", WSL_EVAL]);
     // wsl.exe starts the shell in /; the shell goes to the run's folder itself, failing when it isn't there (CI).
-    expect(got.env.EMBER_INNER).toBe(`${WSL_CD}; ${posixBody({ pty: false, from: "b64" })}`);
+    expect(got.env.EMBER_INNER).toBe(`${WSL_CD}; ${posixBody({ pty: false, from: "b64", shell: "bash", path: "/usr/bin/bash" })}`);
     expect(got.env.EMBER_CWD).toBe("/home/ana/src");
     expect(got.env.TERM).toBe("dumb");
     // Nobody can type into a pipe run: the non-interactive defaults (fixed values) cross into the distro (RUN's gap).
     expect(got.env).toMatchObject({ GIT_TERMINAL_PROMPT: "0", DEBIAN_FRONTEND: "noninteractive", SSH_ASKPASS_REQUIRE: "never" });
-    expect(got.env.WSLENV).toBe("EMBER_INNER/u:EMBER_CMD_B64/u:EMBER_RUN_ID/u:EMBER_CWD/u:EMBER_COLS/u:EMBER_ROWS/u:TERM/u:PWD/u:GIT_TERMINAL_PROMPT/u:DEBIAN_FRONTEND/u:SSH_ASKPASS_REQUIRE/u");
+    expect(got.env.WSLENV).toBe("EMBER_INNER/u:EMBER_CMD_B64/u:EMBER_RUN_ID/u:EMBER_END/u:EMBER_CWD/u:EMBER_COLS/u:EMBER_ROWS/u:TERM/u:PWD/u:GIT_TERMINAL_PROMPT/u:DEBIAN_FRONTEND/u:SSH_ASKPASS_REQUIRE/u");
     // The shell inside starts with the run's folder as Ember named it, links included (§3.6, L25).
     expect(got.env.PWD).toBe("/home/ana/src");
   });
@@ -289,7 +290,7 @@ describe("launchArgv", () => {
         launchArgv(spec({ command, shell: "zsh" }), mac, { jobHost: null }),
         launchArgv(spec({ command }), linuxPipes, { jobHost: null }),
         launchArgv(spec({ command, shell: "powershell", cwd: "C:\\x" }), windows, { jobHost: JOB_HOST }),
-        launchArgv(spec({ command }), linux, { jobHost: JOB_HOST, wsl: { exe: "C:\\Windows\\System32\\wsl.exe", distro: "Ubuntu" } }),
+        launchArgv(spec({ command }), linux, { jobHost: JOB_HOST, wsl: { exe: "C:\\Windows\\System32\\wsl.exe", distro: "Ubuntu", end: END } }),
       ];
       for (const l of launches) {
         const argv = [l.command, ...l.args].join("\n");
@@ -322,12 +323,14 @@ describe("launchArgv", () => {
     refuse(() => launchArgv(spec({ cwd: "/home/ana/\uD800" }), linux, { jobHost: null }), /exactly as shown/);
     expect(launchArgv(spec({ command: "echo \u{1F600} \uD83D\uDE00" }), linux, { jobHost: null }).env.EMBER_CMD).toBe("echo \u{1F600} \u{1F600}");
     refuse(() => launchArgv(spec({ runId: "../../etc" }), linux, { jobHost: null }), /id/);
-    const wsl = { exe: "C:\\Windows\\System32\\wsl.exe", distro: "Ubuntu" };
+    const wsl = { exe: "C:\\Windows\\System32\\wsl.exe", distro: "Ubuntu", end: END };
     for (const cwd of ['/home/ana/"x"', "/home/ana/a\\b", "/home/ana/a\nb", "/home/ana/\x1b[2J", "relative/dir"]) {
       refuse(() => launchArgv(spec({ cwd }), linux, { jobHost: JOB_HOST, wsl }), /can't pass that folder to WSL/);
     }
     refuse(() => launchArgv(spec(), linux, { jobHost: null, wsl }), /Part of Ember.s install is missing/);
     refuse(() => launchArgv(spec(), linux, { jobHost: JOB_HOST, wsl: { ...wsl, distro: "Ubuntu --exec x" } }), /name/);
+    // The end marker's nonce goes into the launcher's environment: 16 hex digits only (review wslio-x-4).
+    for (const end of ["", "0123", "0123456789ABCDEF", "0123456789abcdef; x"]) refuse(() => launchArgv(spec(), linux, { jobHost: JOB_HOST, wsl: { ...wsl, end } }), /end marker/);
   });
 
   it("keeps the PTY's size within reason", () => {

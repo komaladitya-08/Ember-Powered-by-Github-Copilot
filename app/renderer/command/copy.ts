@@ -143,6 +143,9 @@ export function outsideText(s: unknown, max: number): string {
 /** One clause of outside text, its own closing full stop dropped (also inside a closing quote: "…Ember." becomes "…Ember"). */
 const clause = (s: string | undefined) => outsideText(s, 300).replace(/[.!]+(["'”’)\]]*)$/, "$1");
 
+/** What the status line says when Ember's look for what a run left running didn't all come back. */
+export const STRAGGLERS_UNKNOWN = "Ember couldn't tell whether anything it started is still running.";
+
 /**
  * "1 program it started is still running: make. Ask Ember to stop it, or end it yourself." / "2 programs it started
  * are still running: a, b. Ask Ember to stop them, or end them yourself." (what to do about them: review #275).
@@ -163,7 +166,7 @@ export function stragglerText(names: readonly string[]): string {
  * "build-01 refused it: …", plus any program still running.
  * `exit.stragglers` is read when the runner reports it (not in RunExit yet).
  */
-export function statusLine(exit: RunExit & { stragglers?: string[] }, o: { label: string; os: OS }): string {
+export function statusLine(exit: RunExit & { stragglers?: string[] | null }, o: { label: string; os: OS }): string {
   const d = durationText(exit.ms);
   const stays = "What it already changed stays.";
   let line: string;
@@ -173,6 +176,12 @@ export function statusLine(exit: RunExit & { stragglers?: string[] }, o: { label
         : exit.code !== null ? `Ended with exit code ${exit.code} after ${d}.`
         : exit.signal ? `Ended by ${exit.signal} after ${d}.`
         : `Ended after ${d}.`;
+      if (exit.endLost) {
+        // Without the run's own end, "Finished" would be a guess (review wslio-x-3); wsl.exe's code is said as WSL's, and
+        // the time is how long it ran, not how long Ember waited (review wslio-y-2, -y-5).
+        const said = [exit.code !== null ? `WSL reported exit code ${exit.code}` : "", exit.targetStopped ? `${o.label} stopped` : ""].filter(Boolean);
+        line = `Ran for ${d}, but Ember didn't get its end: the command may not have finished${said.length ? ` (${said.join("; ")})` : ""}. What shows here is incomplete.`;
+      } else if (exit.outputCut) line += " The end of its output didn't come back, so what shows here is incomplete.";
       break;
     case "stopped-user": line = `You stopped it after ${d}. ${stays}`; break;
     case "stopped-task": line = `Stopped with its task after ${d}. ${stays}`; break;
@@ -183,7 +192,9 @@ export function statusLine(exit: RunExit & { stragglers?: string[] }, o: { label
     case "refused-remote": line = `${o.label} refused it: ${clause(exit.error) || "it gave no reason"}.`; break;
     default: line = `Ended after ${d}.`;
   }
-  const more = stragglerText(Array.isArray(exit.stragglers) ? exit.stragglers.filter(n => typeof n === "string").map(n => outsideText(n, 64)) : []);
+  // null: the runner's look didn't all come back, so a part of it is never shown as all that is left (review wslio-x-7).
+  const more = exit.stragglers === null ? STRAGGLERS_UNKNOWN
+    : stragglerText(Array.isArray(exit.stragglers) ? exit.stragglers.filter(n => typeof n === "string").map(n => outsideText(n, 64)) : []);
   return more ? `${line} ${more}` : line;
 }
 

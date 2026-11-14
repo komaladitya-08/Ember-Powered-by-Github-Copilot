@@ -330,6 +330,17 @@ export async function readRunning(exec: WslExec, known: readonly string[]): Prom
   return parseRunning(decodeLines(r.stdout), known);
 }
 
+/**
+ * The running set as readRunning reads it, or null when wsl.exe didn't answer (it failed to start or timed out): there
+ * "unknown" must not read as "stopped" (review wslio-y-3).
+ */
+export async function readRunningKnown(exec: WslExec, known: readonly string[]): Promise<Set<string> | null> {
+  if (known.length === 0) return new Set();
+  const r = await exec.run(["--list", "--running", "--quiet"], { timeoutMs: LIST_TIMEOUT_MS, inDistro: false });
+  if (r.error || r.timedOut) return null;
+  return parseRunning(decodeLines(r.stdout), known);
+}
+
 /** Reads WSL's facts now (§4.1). Never starts a distro. */
 export async function discoverWsl(i: DiscoverInput): Promise<WslFacts> {
   const profile = envGet(i.env, "USERPROFILE");
