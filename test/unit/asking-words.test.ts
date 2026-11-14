@@ -121,9 +121,11 @@ describe("the Commands intro, the Routines hint and the Connectors hint are true
     expect(routinesHint("autopilot")).toBe("Off, reminders last until Ember closes, and no routine is saved or run. On, saying a routine's name runs its steps, and in Autopilot Ember doesn't ask first, even before anything risky: it tells you as it goes.");
   });
 
-  it("says what an extension's tools ask before, per mode (Assisted asks: the extensions gate isn't checked)", () => {
+  it("says what an extension's tools ask before, per mode, Assisted's check included (integrations-r12-1)", () => {
     expect(page).toContain(`<p class="hint" id="connectors-hint">${connectorsHint(null)}</p>`);
-    for (const m of [null, "interactive", "assisted"] as const) expect(connectorsHint(m)).toBe(CONNECTORS_HINT);
+    for (const m of [null, "interactive"] as const) expect(connectorsHint(m)).toBe(CONNECTORS_HINT);
+    expect(CONNECTORS_HINT).toBe("To use an MCP server, add its plugin's marketplace above. Ember loads the plugin's MCP tools and asks before tools that can change things.");
+    expect(connectorsHint("assisted")).toBe("To use an MCP server, add its plugin's marketplace above. Ember loads the plugin's MCP tools, and before one that can change things checks it against what you asked: it goes ahead if you asked for exactly that, and asks you otherwise.");
     expect(connectorsHint("autopilot")).toBe("To use an MCP server, add its plugin's marketplace above. Ember loads the plugin's MCP tools, and in Autopilot uses those that can change things without asking, telling you as it goes.");
   });
 
@@ -247,7 +249,7 @@ describe("the three mode cards are true to the owner's table for commands (owner
     const { ASSISTED_CONSENT_TEXT: card } = await import("../../app/renderer/home/copy");
     expect(card).not.toMatch(/never clears a command that would show passwords or keys/);
     expect(card).toContain("It never clears a step you said no to, a command your words for the task rule out, anything Ember refuses, such as typing a password, or what you or your organisation set to ask every time.");
-    expect(FEATURE_CONSENT_VERSION.assisted).toBe(3);
+    expect(FEATURE_CONSENT_VERSION.assisted).toBe(4);
   });
 
   it("Autopilot's card lists no question it no longer puts, and says what it does instead", async () => {

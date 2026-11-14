@@ -327,6 +327,26 @@ describe("connecting and signing in", () => {
     await host.stop();
   });
 
+  it("checks an extension's call in Assisted against the turn's own words, and never a suggestion's (integrations-r12-1)", async () => {
+    const checked: { userWords: string; step: string }[] = [];
+    const { host } = makeHost({ checkStep: async i => { checked.push(i); return "match"; } });
+    const signal = new AbortController().signal;
+    expect(await host.checkExtensionCall("Tool: \"create_issue\"", signal)).toBeNull();
+    await host.start(TOKEN, "stored");
+    sim.holdTurns = true;
+    await host.ask("Open an issue on ember-notes titled Dark mode is too dim");
+    conductorSession().nextTurn();
+    await host.ask("And close the old one", null, host.stopEpoch, { suggested: true });
+    expect(await host.checkExtensionCall("Tool: \"create_issue\"", signal)).toBe("match");
+    expect(checked).toEqual([{ userWords: "Open an issue on ember-notes titled Dark mode is too dim", step: "Tool: \"create_issue\"" }]);
+    conductorSession().emit("session.idle");
+    conductorSession().nextTurn();
+    // The suggestion's turn: Ember's own words, never the user's, so nothing is checked and the call asks.
+    expect(await host.checkExtensionCall("Tool: \"close_issue\"", signal)).toBeNull();
+    expect(checked.length).toBe(1);
+    await host.stop();
+  });
+
   it("keeps a manually opened spoken request with its own queued turn", async () => {
     const started: { text: string; spoken: boolean; manual?: true }[] = [];
     const { host } = makeHost({ onTurnStart: turn => started.push(turn) });

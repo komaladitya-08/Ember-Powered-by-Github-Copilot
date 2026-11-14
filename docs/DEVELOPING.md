@@ -368,8 +368,9 @@ environment, only through `scripts/runtime-env-live.sh`, which gives it a networ
     only `https://github.com` and its subdomains), shows **Waiting for you to finish in your browser** with **Check
     again**, then **Connected**; one whose sign-in lapsed says **Needs you to sign in again**.
   - Every add and connect first shows a consent card in place: only you add, read-only tools run once you agree,
-    Ember asks before any tool that changes or sends anything except in Autopilot, where it goes ahead and says so
-    (`ASKS_BEFORE_CHANGES`, `FEATURE_CONSENT_VERSION.extensions` 4; integrations-r10-1), results are information and never instructions, and
+    Ember asks before any tool that changes or sends anything except in Assisted, when its check finds the call in
+    what you asked, and in Autopilot, where it goes ahead and says so (`ASKS_BEFORE_CHANGES`,
+    `FEATURE_CONSENT_VERSION.extensions` 5; integrations-r10-1, -r12-1), results are information and never instructions, and
     where the item reaches (the marketplace's source, or GitHub's Copilot service for a connector).
     The first yes also records extensions' own consent (`settings.extensions`, `FEATURE_CONSENT_VERSION.extensions`;
     `consentCard`'s words are pinned to that version in extensions-runtime.test.ts) and turns extensions on; nothing
@@ -571,7 +572,9 @@ Ember's own description of the step, a line for each part: what kind of step it 
 control's role and name, a dialog's title and words, the text to type and, where it would replace what a field holds,
 up to 200 characters of that, the option or value chosen, a cell's formula, the apps carried text came from, and why
 Ember's rules would ask; for a command, the command, the computer, its system, shell and folder, and what the rules
-found. Assisted's card names these parts (`FEATURE_CONSENT_VERSION.assisted`, now 2). Every part that came from the screen, an app or the task's model is quoted as untrusted
+found; for an extension's call, the extension's and the tool's names, whether the tool says it only reads, what it is
+given and why Ember would ask (never the tool's description or anything it returned: `callForCheck`). Assisted's card
+names these parts (`FEATURE_CONSENT_VERSION.assisted`, now 4). Every part that came from the screen, an app or the task's model is quoted as untrusted
 data; the check never sees the screen, a read or a command's output. It answers with one of two fixed words. A match
 lets the step go ahead, a risky one included: the bubble and the task's card say "…, without asking: I checked it
 against what you asked.", the audit entry carries `autonomy: true` and `review: "match"`, and What Ember did shows
@@ -585,6 +588,15 @@ a name over 200 characters, typed text over 1,500, a request over 6,000). It nev
 step you said no to stays refused without reaching it. A task that text on screen tried to steer, that went off-task
 or where you said no has its steps checked too, the check being told so. On another computer reached over SSH every
 step still asks (its own policy asks for each one); steps in WSL apps, on this screen, are checked as any other here.
+An extension's call in the conversation that would ask because its tool changes or sends things, or because its
+server is on the internet (a read-only tool of a remote server), goes to the same check first, against your own words
+for that turn (`ExtensionsDeps.assisted` and `checkCall`, the host's `checkExtensionCall`; integrations-r12-1). A match
+is said in the conversation's bubble ("Using a tool from <extension>, without asking: I checked it against what you
+asked."), audited as `verdict: "announce"`, `mode: "assisted"`, `review: "match"`, and shown in What Ember did as
+"Ember's check found this in what you asked."; anything else asks. A call after a no, one that may reach Ember's own
+files, one in a conversation an extension's text tried to steer, one whose server changed its list of tools, one with
+more than 2,500 characters of arguments, and a turn with no words of yours (a suggestion, a task's result) ask
+unchecked.
 
 **Autopilot** never asks about a step in an app. Every question Interactive would put up goes ahead instead,
 announced, a risky one included (`PolicyEngine.autopilotStep`, at the end of the engine's own judgement, on

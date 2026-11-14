@@ -1019,9 +1019,10 @@ export const AUTONOMY_CONSENT_TEXT = `In Interactive, Ember does ordinary steps 
  * commands/review.ts): that a lighter model decides whether a step matches what the user asked, what it is sent, that
  * a match goes ahead whatever the step is, that it is announced and recorded, that the model can be wrong, what it
  * never clears, and that a stop always works. Since version 3 (the owner's decision of 2026-11-14) it says that a
- * cleared command that shows secrets has its output kept from the model. Change it only with a bump of that version.
+ * cleared command that shows secrets has its output kept from the model. Since version 4 it names what the check is sent
+ * of an extension's call (integrations-r12-1: such calls asked, unchecked). Change it only with a bump of that version.
  */
-export const ASSISTED_CONSENT_TEXT = "In Assisted, Ember works as in Interactive, and where it would ask you it first checks the step against what you asked. A lighter AI model makes that check. It is sent your own words for the task, typed or spoken, and Ember's short description of the step: the app, the window's title, the control's name, a dialog's words, the text to type and what it replaces, a cell's formula and where carried text came from; or the command, its computer, shell and folder. If it finds you asked for exactly that, Ember goes ahead without asking, also where the step sends, deletes, pays or installs, or the command changes your system, shows passwords or keys (its output is then kept from the AI model) or keeps running after you stop Ember. Ember tells you each time, a command waits a few seconds with a Stop first, and What Ember did keeps a record. The model can be wrong: it may let through a step you didn't mean. It never clears a step you said no to, a command your words for the task rule out, anything Ember refuses, such as typing a password, or what you or your organisation set to ask every time. If it finds no match or can't tell, Ember asks you. “Ember, stop” or Ember's stop shortcut stops everything at once.";
+export const ASSISTED_CONSENT_TEXT = "In Assisted, Ember works as in Interactive, and where it would ask you it first checks the step against what you asked. A lighter AI model makes that check. It is sent your own words for the task, typed or spoken, and Ember's short description of the step: the app, the window's title, the control's name, a dialog's words, the text to type and what it replaces, a cell's formula and where carried text came from; or the command, its computer, shell and folder; or an extension's tool and what it is given. If it finds you asked for exactly that, Ember goes ahead without asking, also where the step sends, deletes, pays or installs, or the command changes your system, shows passwords or keys (its output is then kept from the AI model) or keeps running after you stop Ember. Ember tells you each time, a command waits a few seconds with a Stop first, and What Ember did keeps a record. The model can be wrong: it may let through a step you didn't mean. It never clears a step you said no to, a command your words for the task rule out, anything Ember refuses, such as typing a password, or what you or your organisation set to ask every time. If it finds no match or can't tell, Ember asks you. “Ember, stop” or Ember's stop shortcut stops everything at once.";
 
 /**
  * Autopilot's card (Apps & privacy › How Ember asks, FEATURE_CONSENT_VERSION.autopilot; PolicyEngine.autopilotStep,
@@ -1628,7 +1629,8 @@ function extensionLine(e: ActivityEntry): EntryView | null {
     case "decision":
       // A read-only tool's use: its result line says it.
       if (e.verdict === "allow") return null;
-      if (e.verdict === "announce") return { tag: "Without asking", cls: "", what: use, why: AUTOPILOT_WHY };
+      // Announced in Autopilot, or in Assisted once its check found the call in what the user asked (integrations-r12-1).
+      if (e.verdict === "announce") return { tag: "Without asking", cls: "", what: use, why: e.mode === "assisted" ? "Ember's check found this in what you asked." : AUTOPILOT_WHY };
       if (e.verdict === "ask") return { tag: "Asked you", cls: "ask", what: use, ...(typeof e.reason === "string" && EXTENSION_ASKED[e.reason] ? { why: EXTENSION_ASKED[e.reason] } : {}) };
       // The gate's reason is for the model too: only its first sentence, the one that says why.
       return { tag: "Refused", cls: "no", what: use, why: userWords(typeof e.reason === "string" ? e.reason.split(/(?<=\.)\s+/)[0] : undefined) };

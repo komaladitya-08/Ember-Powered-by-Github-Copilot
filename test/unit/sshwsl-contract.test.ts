@@ -126,7 +126,7 @@ describe("settings for targets and commands", () => {
 
   it("versions global consent separately from the feature cards", () => {
     expect(CONSENT_VERSION).toBe(11);
-    expect(FEATURE_CONSENT_VERSION).toEqual({ wsl: 1, ssh: 1, commands: 2, memory: 4, routines: 1, extensions: 4, autonomy: 5, provider: 1, updates: 1, assisted: 3, autopilot: 4 });
+    expect(FEATURE_CONSENT_VERSION).toEqual({ wsl: 1, ssh: 1, commands: 2, memory: 4, routines: 1, extensions: 5, autonomy: 5, provider: 1, updates: 1, assisted: 4, autopilot: 4 });
   });
 });
 

@@ -33,11 +33,12 @@ import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import type { ConnectResult, ExtensionsApi, Installed, Marketplace, MarketplaceEntry, ToolInfo } from "../../shared/extensions";
 import { EXTENSION_ON_UNSAVED, MARKETPLACE_BUILT_IN_KEPT, MARKETPLACE_MANAGED_KEPT, addMarketplaceFailed, browseFailed, extensionUnsaved } from "../../renderer/home/extensions-copy";
 import type { OS } from "../../shared/shortcuts";
-import { REFUSED, RESULT_MAX, classify, emberReachOf, failureNote, gateAnnouncement, gateQuestion, plainName, wrapResult, writeOutHidden } from "./gate";
+import { CHECKABLE, REFUSED, RESULT_MAX, callForCheck, classify, emberReachOf, failureNote, gateAnnouncement, gateQuestion, plainName, wrapResult, writeOutHidden } from "./gate";
 import { pluginPath, readMarketplace, readPlugin, reachOf, firstFile, MARKETPLACE_PLACES, type ServerSpec } from "./manifest";
 import { canonical, checkPins, isReadOnly, pinAll, schemaWords, shownHash, toolHash, type PinnedTool } from "./pin";
 import { probeHttp, probeStdio, servedTools, type ProbeResult } from "./probe";
 import { SAVED_OUTPUT } from "../agent/runtime-temp";
+import type { StepVerdict } from "../commands/review";
 import { ExtensionStore, copyPlugin, type StoredItem, type StoredServer } from "./store";
 import { MCP_TOOL_NAME, clashingToolNames, modelToolName } from "./tool-name";
 
@@ -57,6 +58,19 @@ export interface ExtensionsDeps {
    * the gate would ask about is announced instead. Absent or false: it asks.
    */
   autopilot?: () => boolean;
+  /**
+   * Assisted's check is in force (policy/autonomy.ts approvalInputs().check: never with the organisation's
+   * `features.aiReview` false), read at each call: a call the gate would ask about because its tool changes things or
+   * its server is on the internet goes to the check first (checkCall), and goes ahead, announced, when the check finds
+   * it in the user's own words (integrations-r12-1, -c12-1). Absent or false: it asks.
+   */
+  assisted?: () => boolean;
+  /**
+   * Assisted's check for one call (main: AgentHost.checkExtensionCall): Ember's description of the call (gate.ts
+   * callForCheck) against the user's own words for the conversation's turn now, in a session of its own with no tools.
+   * Null where it couldn't check (no words of the user's own this turn, no answer in time, stopped): the call asks.
+   */
+  checkCall?: (step: string, signal: AbortSignal) => Promise<StepVerdict | null>;
   /**
    * Has Ember filled something from its vault since it started (main: VaultRedactor.active)? Read at each call: from
    * then on every extension call is denied (gate.ts VAULT_FILLED). A check that throws counts as yes. Absent: never.
@@ -1133,12 +1147,27 @@ export class ExtensionsService implements ExtensionsApi {
     try { home = this.o.home ?? homedir(); } catch { /* no home known: any user's is judged */ }
     const own = e?.server.spec?.type === "stdio" ? this.store.pluginDir(e.item.id) : null;
     const emberData = emberReachOf(input.toolArgs, { os: this.o.os, home, ember: [path.dirname(this.o.dir)], own });
-    const { verdict, reason } = this.gateInput(gate, input.toolName, shownAsPinned, generation, emberData);
+    let { verdict, reason } = this.gateInput(gate, input.toolName, shownAsPinned, generation, emberData);
+    // Assisted: a call that would ask because its tool changes things or its server is on the internet is checked
+    // first against the user's own words for this turn (integrations-r12-1, -c12-1). Never after a no, for what may
+    // reach Ember's own files, in a tainted conversation or for a server whose list changed (CHECKABLE), and never a deny.
+    let review: StepVerdict | "none" | undefined;
+    let checked = false;
+    if (verdict === "ask" && CHECKABLE.has(reason) && e && this.assisted()) {
+      const step = callForCheck(e.item.name, e.tool, input.toolArgs, reason);
+      if (step) {
+        review = (await this.checkCall(step)) ?? "none";
+        // The check may have taken a while: the gate looks again, and a match counts only for the same question.
+        const now = this.gateInput(gate, input.toolName, shownAsPinned, generation, emberData);
+        checked = review === "match" && now.verdict === "ask" && now.reason === reason && this.assisted();
+        ({ verdict, reason } = checked ? { verdict: "announce" as const, reason } : now);
+      }
+    }
     const argChars = (() => { try { return JSON.stringify(input.toolArgs ?? {}).length; } catch { return 0; } })();
     const base = { ext: e?.item.id ?? null, tool: input.toolName, ...named(e?.item, e?.tool), argChars };
     const deny = (r: string): PreToolUseHookOutput => ({ permissionDecision: "deny", permissionDecisionReason: r });
     try {
-      this.audit({ phase: "decision", ...base, verdict, reason, ...(verdict === "announce" ? { autonomy: true, mode: "autopilot" } : {}) });
+      this.audit({ phase: "decision", ...base, verdict, reason, ...(verdict === "announce" ? { autonomy: true, mode: checked ? "assisted" : "autopilot" } : {}), ...(review ? { review } : {}) });
     } catch (err) {
       // Not recorded, not run (fail closed).
       this.o.log.warn("extensions.audit_failed", { err });
@@ -1151,6 +1180,8 @@ export class ExtensionsService implements ExtensionsApi {
     // Autopilot: said in the conversation's bubble instead of asked, and only once it was said (a call that can't be
     // announced asks, as it does when Autopilot went out of force between the two looks).
     if (verdict === "announce" && before.verdict === "announce" && this.said(gateAnnouncement(e!.item.name))) return { permissionDecision: "allow" };
+    // Assisted's check found it in the user's own words: said as Autopilot's is, and only while the same question stands.
+    if (checked && before.verdict === "ask" && before.reason === reason && this.assisted() && this.said(gateAnnouncement(e!.item.name, true))) return { permissionDecision: "allow" };
     const confirmer = this.o.confirmer();
     if (!confirmer) return deny("Ember can't ask the user right now, so it didn't do this.");
     const question = gateQuestion(e!.item.name, e!.tool.name, input.toolArgs, before.reason);
@@ -1177,6 +1208,25 @@ export class ExtensionsService implements ExtensionsApi {
   private async checked(gate: SessionGate, server: string | undefined): Promise<void> {
     if (server) await this.afterCall(gate, server).catch(err => this.o.log.warn("extensions.recheck_failed", { err }));
     await this.settle(gate);
+  }
+
+  /** Is Assisted's check in force now? A check that throws says no (the call asks). */
+  private assisted(): boolean {
+    try { return this.o.assisted?.() === true; } catch { return false; }
+  }
+
+  /** Assisted's check of one call; null where there is none, it failed or it was stopped (the call asks). */
+  private async checkCall(step: string): Promise<StepVerdict | null> {
+    // (Held here: the kill switch replaces the controller as it aborts it.)
+    const signal = this.stopAsks.signal;
+    if (!this.o.checkCall || signal.aborted) return null;
+    try {
+      const v = await this.o.checkCall(step, signal);
+      return signal.aborted ? null : v;
+    } catch (err) {
+      this.o.log.warn("extensions.check_failed", { err: err instanceof Error ? err.message : String(err) });
+      return null;
+    }
   }
 
   /** Says an Autopilot announcement; whether it was said (no announcer, or one that failed: not said). */

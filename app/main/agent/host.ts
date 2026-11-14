@@ -44,6 +44,8 @@ import { NO_CAPS } from "./persona";
 import type { SignInWith } from "./github-app";
 import { SessionToolsTimeoutError, type SessionExtensions } from "./session-config";
 import { copilotOneShot } from "./one-shot";
+import { copilotStepChecker } from "./reviewer";
+import type { StepChecker, StepVerdict } from "../commands/review";
 import { PROJECT_SYSTEM, ProjectModelError, projectFailureText, type ProjectModelFailure } from "./project";
 import { workspaceOwners } from "./project-workspaces";
 import { runCommandTool } from "../commands/flow";
@@ -359,6 +361,8 @@ export interface HostOptions {
    * stops holding changing tools back (ExtensionsService.userAsked; integ-y-2).
    */
   onOwnRequest?: () => void;
+  /** Tests: Assisted's check of an extension's call (checkExtensionCall) in place of a session on Copilot. */
+  checkStep?: StepChecker;
   /** Is the computer online? A failed start while offline is retried instead of blamed on the sign-in. */
   isOnline?: () => boolean;
   /**
@@ -1453,6 +1457,23 @@ export class AgentHost {
    * extensions gate's announcement in Autopilot (extensions/gate.ts gateAnnouncement: Ember's own words, never a
    * model's). Whether it was said: the gate asks instead when it wasn't.
    */
+  /**
+   * Assisted's check of one extension call in the conversation (extensions/service.ts checkCall; integrations-r12-1):
+   * `step`, Ember's own description of the call (gate.ts callForCheck), against the user's own words for the turn now
+   * as a task's check reads them (userWordsOf's checkWords: unchecked speech included, never a suggestion pressed, words
+   * heard over Ember's own voice or a routine's saved steps). Null, so the call asks, where the turn has no words of the
+   * user's own (a task's result, a suggestion), Ember isn't connected, or the check couldn't answer.
+   */
+  async checkExtensionCall(step: string, signal: AbortSignal): Promise<StepVerdict | null> {
+    const check = this.callCheck;
+    if (!check || this.status.phase !== "ready") return null;
+    const said = this.userWordsOf(this.turn, { routine: false });
+    const words = said.checkWords ?? said.commandWords ?? said.words ?? "";
+    if (!words.trim()) return null;
+    return check({ userWords: words, step }, signal);
+  }
+  private callCheck: StepChecker | null = null;
+
   announceUnasked(words: string): boolean {
     try {
       this.presenter.workedWithoutAsking(words);
@@ -2318,6 +2339,8 @@ export class AgentHost {
       this.memoryOn = !!memory;
       // Memory's own model calls (learning, sleep-time refinement) go on this connection, each a session with no tools.
       this.o.memory?.useModel?.(memory ? copilotOneShot({ client, model: choice.conductor, provider: provider?.config, workDir: path.join(this.o.userData, "copilot", "empty-workdir"), log: this.o.log.child("memory") }) : null);
+      // Assisted's check of an extension's call (checkExtensionCall), on the conversation's model, as a task's steps are.
+      this.callCheck = this.o.checkStep ?? copilotStepChecker({ client, model: choice.conductor, provider: provider?.config, workDir: path.join(this.o.userData, "copilot", "empty-workdir"), log: this.o.log.child("extensions") });
       const routines = this.keepRoutines();
       // The extension tools as they are now (none while extensions are off): a later change reconnects between turns.
       this.extensionsGen = this.o.extensions?.generation ?? 0;

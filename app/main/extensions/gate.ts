@@ -32,7 +32,7 @@
 import type { Question } from "../agent/confirm";
 import { quoteUntrusted } from "../perception/elements";
 import { INJECTION_NOTE } from "../perception/injection";
-import { AUTOPILOT_WORDS, namesEmberData, namesEmberFile } from "../policy/policy";
+import { AUTOPILOT_WORDS, CHECKED_WORDS, namesEmberData, namesEmberFile } from "../policy/policy";
 import { emberPathReach, type EmberPlace } from "../policy/ember-paths";
 import { canonical, isReadOnly, type PinnedTool } from "./pin";
 
@@ -177,11 +177,48 @@ export function classify(g: GateInput): { verdict: GateVerdict; reason: string }
 }
 
 /**
- * What Ember says as it uses an extension's tool without asking, in Autopilot: the extension by the name the user
- * installed and agreed to it under, never the tool's own name or its arguments, which are the server's and the model's.
+ * What Ember says as it uses an extension's tool without asking, in Autopilot (or, `checked`, in Assisted once its
+ * check found the call in the user's own words): the extension by the name the user installed and agreed to it under,
+ * never the tool's own name or its arguments, which are the server's and the model's.
  */
-export function gateAnnouncement(extName: string): string {
-  return `Using a tool from ${plainName(extName)}, ${AUTOPILOT_WORDS}`;
+export function gateAnnouncement(extName: string, checked = false): string {
+  return `Using a tool from ${plainName(extName)}, ${checked ? CHECKED_WORDS : AUTOPILOT_WORDS}`;
+}
+
+/**
+ * The reasons a call that would ask may go to Assisted's check first (integrations-r12-1, -c12-1): a tool that changes
+ * things or sends what it is given, and a read-only tool whose server is on the internet. Never a call after a no
+ * (said-no), one that may reach Ember's own files (ember-data), one in a conversation an extension's text tried to steer
+ * (tainted) or one whose server changed its list of tools (hints-changed): those ask, unchecked, as do all of them with
+ * no words of the user's own for the turn. A deny is never checked.
+ */
+export const CHECKABLE: ReadonlySet<string> = new Set(["changes", "remote"]);
+
+/** The most of each part Assisted's check is shown of a call; a part past it isn't cut: the call asks, unchecked. */
+export const CALL_CHECK_LIMITS = { name: 200, tool: 200, args: 2500 } as const;
+
+/** A part from the extension or the conversation's model, as the check is shown it: quoted, its hidden characters written out. */
+const checkQuote = (s: string, max: number): string => writeOutHidden(quoteUntrusted(s, max));
+
+/**
+ * Ember's own description of one extension call for Assisted's check (commands/review.ts StepCheckInput): a line for
+ * each part, the labels and the note Ember's own, and every part that came from the extension (its name, the tool's
+ * name) or from the conversation's model (the arguments) quoted as untrusted data, never the tool's description (the
+ * server's prose, the most room to steer the check) nor anything it returned. Null where the call
+ * can't be shown whole (a part past CALL_CHECK_LIMITS, arguments that can't be written out): it then asks, unchecked.
+ */
+export function callForCheck(extName: string, tool: Pick<PinnedTool, "name" | "annotations">, args: unknown, reason: string): string | null {
+  let text: string;
+  try { text = args === undefined || args === null ? "" : canonical(args); } catch { return null; /* not readable whole: asks */ }
+  if (extName.length > CALL_CHECK_LIMITS.name || tool.name.length > CALL_CHECK_LIMITS.tool || text.length > CALL_CHECK_LIMITS.args) return null;
+  const lines = [
+    `Action: use a tool of an extension the user installed and agreed to, which ${isReadOnly(tool) ? "says it only reads" : "can change things or send what it is given"}`,
+    `Extension: ${checkQuote(extName, CALL_CHECK_LIMITS.name)}`,
+    `Tool: ${checkQuote(tool.name, CALL_CHECK_LIMITS.tool)}`,
+    `What it is given, as the conversation's model wrote it: ${text && text !== "{}" ? checkQuote(text, CALL_CHECK_LIMITS.args) : "nothing"}`,
+    `Why Ember would ask first: ${reason === "remote" ? "the extension's server is on the internet, and gets what the tool is given" : "the tool can change things or send what it is given"}.`,
+  ];
+  return lines.join("\n");
 }
 
 /**
