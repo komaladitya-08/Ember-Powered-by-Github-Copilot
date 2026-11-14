@@ -317,6 +317,75 @@ function digitsBesideName(text: string): boolean {
 }
 
 /**
+ * A password's or a PIN's name for `valueInClause` (a PIN in lower case only after whose it is): its own words, the short ones people type (pwd, pw; "pass" after a
+ * service's name or before a colon) and the names in French, Spanish, German and Portuguese. Never what heads a tool
+ * (a password manager, app, vault, keeper or generator), nor a postal "PIN code".
+ */
+const CLAUSE_NAME = new RegExp(String.raw`\b(?:(?:password|passcode|passphrase|passwd|(?:${WHOSE}|card|bank|phone|sim|debit|credit|atm)\s+pin(?![\s-]*code)|pwd|pw)s?\b(?![\s-]+(?:managers?|apps?|vault|keeper|generators?)\b)`
+  + String.raw`|(?:${SERVICES})\s+pass\b|^\s*pass\s*[:=]|mot\s+de\s+passe|contrase[ñn]a|passwort|senha)`, "i");
+/**
+ * Words a sentence about a password or a PIN may hold beside its name without holding its value: grammar, how people
+ * talk about keeping, changing, forgetting and typing one, where it is kept, how long and how often. Any other word of
+ * three letters or more in that clause may be the value, so the clause is refused (r10-memory-x10-1).
+ */
+const ABOUT_SECRET = new Set(String.raw`a an the my your our their his her its this that these those it i you he she we they me him them us mine yours
+  is are was were be been being am has have had having do does did done will would can could should may might must shall
+  not no nor never always often usually sometimes again still also too very just only even ever yet already once twice thrice
+  and or but so if when while because though although as at by for from in into on onto of off out over to up down with without
+  about after before since until till during through per every each all any some few many more most less least other another same
+  different new old own first last next one two three four five six seven eight nine ten few several what which who whose how why
+  where there here then than now today yesterday tomorrow recently lately soon monthly weekly yearly daily annually regularly
+  password passwords passcode passcodes passphrase passphrases passwd pin pins pwd pw pass code codes number numbers digit digits
+  character characters chars letter letters symbol symbols word words length long short longer shorter strong stronger weak weaker
+  secure safe safely unsafe complex simple easy hard memorable unique random reused
+  forgot forget forgets forgetting forgotten change changes changed changing reset resets resetting update updates updated updating
+  expire expires expired expiring expiry renew renews renewed keep keeps kept keeping store stores stored storing save saves saved
+  write writes wrote written writing note notes noted share shares shared sharing lose loses lost need needs needed want wants wanted
+  ask asks asked asking type types typed typing enter enters entered entering use uses used using set sets setting choose chooses chose
+  chosen make makes made get gets got gotten getting send sends sent give gives gave given know knows knew known remember remembers
+  remembered recover recovers recovered locked lock lose sign signs signed signing log logs logged logging prefer prefers preferred
+  like likes hate hates require requires required need wrong right correct incorrect again manager managers app apps vault keeper
+  generator generators field fields box boxes prompt prompts screen screens page pages hint hints rule rules policy policies
+  requirement requirements email emails text texts message messages link links request requests reminder reminders
+  account accounts card cards debit credit bank banking sim phone phones mobile laptop computer tablet work home office school
+  wifi wi-fi router email login logins device devices drawer notebook paper desk wallet somewhere place places safe envelope
+  family partner wife husband kids children mum dad parents friend friends colleague colleagues boss
+  month months week weeks year years day days hour hours minute minutes time times few couple
+  times attempt attempts try tries tried
+  hashed hash hashes masked salted encrypted encoded hidden entered protected redacted obscured starred cost
+  passkey passkeys instead ember sticker label underneath under behind back front inside bottom top`.split(/\s+/).filter(Boolean));
+/** A password manager's or a sign-in tool's name, which a sentence about passwords names without holding one. */
+const TOOL_NAME = /^(?:1password|bitwarden|lastpass|keepass(?:xc)?|dashlane|keeper|nordpass|proton\s*pass|keychain|authy|okta|sso|2fa|mfa|totp|otp|face|touch|id|yubikey)$/i;
+const SERVICE_WORD = new RegExp(String.raw`^(?:${SERVICES})$`, "i");
+
+/**
+ * A word that may be the value in a clause that names a password or a PIN (CLAUSE_NAME), whatever the word order
+ * (r10-memory-x10-1): "sunshine's my Netflix password", "My Netflix password? sunshine.", "Netflix pw sunshine". A
+ * clause runs to a full stop, ";", "!" or a line's end, across "?", "—", "→", "/" and commas. A word is the value
+ * unless it is in ABOUT_SECRET, a service's or a tool's name, or a number (`digitsBesideName` reads a PIN's digits).
+ * Fail closed: an unknown word beside a password's name costs the fact, never the password.
+ */
+function valueInClause(text: string): boolean {
+  for (const clause of text.split(/[.;!\n]+(?:\s|$)/)) {
+    // A PIN in capitals anywhere; "pin" in lower case only after whose it is, so "Likes to pin recipes" names none.
+    if (!CLAUSE_NAME.test(clause) && !/\bPINs?\b(?![\s-]*code)/.test(clause)) continue;
+    const words = clause.replace(/mot\s+de\s+passe|contrase[ñn]a|passwort|senha/gi, " ").replace(/->|[→—–]|\s-+\s/g, " ")
+      .split(/[\s,:?()"“”=/]+/).map(w => w.replace(/['’]s$/i, "").replace(/^['‘’]+|['‘’]+$/g, "")).filter(Boolean);
+    for (const w of words) {
+      const lw = w.toLowerCase();
+      if (/^\d+$|^[*•·.]+$/.test(lw) || ABOUT_SECRET.has(lw) || TOOL_NAME.test(lw) || SERVICE_WORD.test(lw) || sayless(lw) || ALGORITHM.test(lw)) continue;
+      if (/^(?:[a-z]+(?:'|’)(?:s|t|re|ve|ll|d|m))$/i.test(lw)) continue;
+      if (lw.length >= 3 || /["“]/.test(w)) return true;
+    }
+  }
+  return false;
+}
+/** "bluebird is what I use for Gmail", "Sunshine99 is what I type for Netflix": a value, then what it is typed for. */
+const WHAT_I_TYPE = new RegExp(String.raw`(?:^|[.;!?:,]\s*)["'“]?(?<value>[^\s"'”.,;:!?]{2,40})["'”]?\s+is\s+what\s+(?:i|we|you|they|he|she)\s+(?:type|use|enter|put|key)s?\s+(?:for|on|in|into|at)\s+(?:${WHOSE}\s+)?(?:[\w'’-]+\s+){0,2}?(?:${SERVICES}|${PASSWORDED}|router|login|account|${DEVICES}|${LOCKED})\b`, "gi");
+/** "Netflix login: ram / sunshine", "Gmail sign-in: ram, bluebird": a login's user and its value after the login's name, any value. */
+const LOGIN_PAIR = new RegExp(String.raw`\b(?:login|log-in|sign-in|credentials?)\s*[:=]\s*["'“]?[A-Za-z][\w.@-]{1,40}["'”]?\s*(?:/|,|\band\b)\s*["'“]?(?<value>[^\s"'”.,;!?]{2,40})`, "gi");
+
+/**
  * A password or a PIN said in an everyday word order (memory-r10-1): the value before its name, after who uses it, set off
  * by commas, after "has the password", as a phrase "used as" one, beside its digits, what is used for a service, or a
  * value shaped like one before what it is for.
@@ -324,7 +393,8 @@ function digitsBesideName(text: string): boolean {
  */
 function inWordOrder(text: string): boolean {
   return valued(VALUE_FIRST, text) || valued(NAME_THEN_USER, text) || AS_SECRET.test(text) || valued(APPOSED, text) || valued(HAS_THE, text)
-    || digitsBesideName(text) || valued(FOR_SERVICE, text) || valued(LOGIN_AND, text) || valueFor(text);
+    || digitsBesideName(text) || valued(FOR_SERVICE, text) || valued(LOGIN_AND, text) || valueFor(text)
+    || valued(WHAT_I_TYPE, text) || valued(LOGIN_PAIR, text) || valueInClause(text);
 }
 
 /** Why `text` may not be remembered as a fact, or null when it may: `memoryRefusal`, then what only a fact is read for. */

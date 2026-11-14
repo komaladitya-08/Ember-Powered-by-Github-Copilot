@@ -70,3 +70,35 @@ describe("a password or PIN said in an everyday word order (memory-r10-1)", () =
     s.stop();
   });
 });
+
+/** The adversarial review's kept examples (r10-memory-x10-1), then three neighbours of each shape. */
+const ANY_ORDER = [
+  "sunshine's my Netflix password", "sunshine — that's my Netflix password", "My Netflix password? sunshine.",
+  "the password for Netflix, if you need it, is sunshine", "My Gmail password is the same as my Netflix one: sunshine",
+  "I always use sunshine for my passwords", "Netflix password → sunshine", "My pwd is sunshine", "Netflix pw sunshine",
+  "Netflix login: ram / sunshine", "Sunshine99 is what I type for Netflix", "Use sunshine when Netflix asks for my password",
+  "Type sunshine into Netflix's password box", "My Netflix password used to be sunshine and still is",
+  // Neighbours.
+  "bluebird's the Gmail password", "Fido — that's the bank PIN", "The Wi-Fi password? bluebird", "Gmail pwd bluebird",
+  "The PIN for the bank, in case you need it, is Fido", "Spotify password -> bluebird", "Gmail login: ram / bluebird",
+  "bluebird is what I use for Gmail", "Enter bluebird when Spotify asks for a password", "Put Fido in the PIN box",
+  "Their passcode has always been bluebird", "Mot de passe Netflix: soleil", "Contraseña de Netflix es sol123",
+];
+
+/** Facts that name a password or a PIN beside everyday words, with no value in them, kept as before (r10-memory-x10-1). */
+const NAMES_ONLY = [
+  "Has the password for Netflix written down somewhere safe", "The password I use for work expires monthly", "Their PIN is in the drawer",
+  "Forgot their Gmail password again yesterday", "Keeps every password in a notebook at home", "Wants a stronger password for the bank",
+  "Changes the Netflix password every few months", "Needs a new PIN for the debit card", "Their password has 16 characters",
+  "Locked out after typing the wrong password three times", "Got a password reset email from Netflix", "Uses 1Password for passwords",
+];
+
+describe("a password or PIN said with its value anywhere in the clause (r10-memory-x10-1)", () => {
+  it.each(ANY_ORDER.map(s => [s]))("refuses %j as a fact (r10-memory-x10-1)", text => {
+    expect(factRefusal(text)).not.toBeNull();
+  });
+
+  it.each(NAMES_ONLY.map(s => [s]))("keeps %j, which names a password but holds none (r10-memory-x10-1)", text => {
+    expect(saidSecret(text)).toBeNull();
+  });
+});
