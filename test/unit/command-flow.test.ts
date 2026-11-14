@@ -7,7 +7,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  ANNOUNCE_MS, CARD_LINES, CHECKING_COMMAND, CL_JUDGE, HELD_BACK_LINE, LIKE_REFUSED_LINE, MAX_RUNS_PER_TARGET, OUTPUT_TAINT_LINE, SPOKEN_LINE, behindWrappers, commandSha256, heldDecision, namesTarget, normalName, runCommandTool, wordsRuleOut,
+  ANNOUNCE_MS, CARD_LINES, CHECKING_COMMAND, CL_JUDGE, HELD_BACK_LINE, MAX_RUNS_PER_TARGET, OUTPUT_TAINT_LINE, SPOKEN_LINE, behindWrappers, commandSha256, heldDecision, namesTarget, normalName, runCommandTool, wordsRuleOut,
   setCommandJudge, shownQuote, type CommandFlowContext, type CommandJudge, type ShapeOptions,
   scriptLanguage,
 } from "../../app/main/commands/flow";
@@ -3169,44 +3169,30 @@ describe("a command that would ask, in Autopilot (autopilot.ts; modes-D2, modes-
     expect(card.says).toContain(AUTOPILOT_LINE);
   });
 
-  it.each<[string, Parameters<typeof harness>[0], string, string]>([
-    ["a key it reads", { words: "show me my key" }, "cat ~/.ssh/id_rsa", "Reads or changes passwords"],
-    ["a server it leaves running", { words: "start the server" }, "nohup ./server &", ""],
-    ["a program it doesn't know", { words: "tidy up" }, "frobnicate --all", ""],
-    ["a loop it can't tell", { words: "tidy up" }, "for f in *.log; do rm $f; done", ""],
-    ["a deletion the user's words rule out", { words: "tidy up but don't delete build" }, "rm -rf build", ""],
-    ["a deletion the user's words hold back", { words: "tidy up but leave build alone for now" }, "rm -rf build", ""],
-  ])("never gives root as the reason when Autopilot still asks about %s as root or an administrator (tasks-approvals-r11-1)", async (_what, o, command, first) => {
+  // Under the owner's decision of 2026-11-14 Autopilot asks only where the organisation or the user's own switch says
+  // so (autopilot.ts autopilotAsks): those are the questions it still puts as root (r11-copy-x11-4).
+  it.each<[string, Parameters<typeof harness>[0], string]>([
+    ["the user's own “Ask me before every command”", { askEvery: true }, CARD_LINES.userAsk],
+    ["the organisation's policy", { mode: "ask" }, CARD_LINES.adminAsk],
+  ])("never gives root as the reason when Autopilot still asks, for %s, as root or an administrator (tasks-approvals-r11-1, r11-copy-x11-4)", async (_what, o, first) => {
     setCommandJudge(null);
     for (const os of ["linux", "win32"] as const) {
-      const h = auto({ ...o, answers: ["deny"], facts: { privileged: true, os }, cap: () => ({ state: "on", askEvery: "root" }) });
-      expect((await run(h, command)).resultType).toBe("denied");
-      expect(h.asked).toHaveLength(1);
-      const q = h.asked[0] as { prompt: string; panel: { card: CommandCard } };
-      const says = q.panel.card.says;
-      expect(says, os).not.toContain(CARD_LINES.root);
-      expect(says, os).not.toContain(CARD_LINES.admin);
-      expect(says.join(" "), os).not.toMatch(/so each (one|command) asks first/);
-      expect(says, os).toContain(os === "win32" ? CARD_LINES.adminAutopilot : CARD_LINES.rootAutopilot);
-      // The bubble's reason is the one Autopilot asks for, not the root fact.
-      expect(q.prompt, os).not.toMatch(/root|administrator/);
-      if (first) expect(q.prompt, os).toContain(first);
+      for (const command of ["rm -rf build", "make test"]) {
+        const h = auto({ ...o, words: "tidy up the build", answers: ["deny"], facts: { privileged: true, os }, cap: () => ({ state: "on", askEvery: "root" }) });
+        expect((await run(h, command)).resultType, `${os} ${command}`).toBe("denied");
+        expect(h.asked).toHaveLength(1);
+        const q = h.asked[0] as { prompt: string; panel: { card: CommandCard } };
+        const says = q.panel.card.says;
+        expect(says, os).not.toContain(CARD_LINES.root);
+        expect(says, os).not.toContain(CARD_LINES.admin);
+        expect(says.join(" "), os).not.toMatch(/so each (one|command) asks first/);
+        expect(says, os).toContain(os === "win32" ? CARD_LINES.adminAutopilot : CARD_LINES.rootAutopilot);
+        // The bubble's reason is the switch that asks, not the root fact.
+        expect(says[0], os).toBe(first);
+        expect(q.prompt, os).not.toMatch(/root|administrator/);
+        expect(q.prompt, os).toContain(first);
+      }
     }
-  });
-
-  it("never gives root as the reason on the card of a command like one refused earlier, as root in Autopilot (tasks-approvals-r11-1)", async () => {
-    setCommandJudge(null);
-    const refusals = new Refusals();
-    const state = { cwd: null, downloaded: new Set<string>(), running: false };
-    const root = { words: "tidy up my temporary files", facts: { privileged: true }, cap: (): CommandCapability => ({ state: "on", askEvery: "root" }), refusals, state };
-    const stopped = auto({ ...root, announce: false });
-    expect((await run(stopped, "rm -rf /tmp/a")).textResultForLlm).toMatch(/^The user stopped it before it ran\./);
-    const h = auto({ ...root, answers: ["deny"] });
-    expect((await run(h, "find /tmp/b -delete")).resultType).toBe("denied");
-    const q = h.asked[0] as { prompt: string; panel: { card: CommandCard } };
-    expect(q.panel.card.says[0]).toBe(LIKE_REFUSED_LINE);
-    expect(q.panel.card.says.join(" ")).not.toMatch(/so each (one|command) asks first/);
-    expect(q.prompt).toBe(`On this computer: ${LIKE_REFUSED_LINE}`);
   });
 
   it("says nothing of the command itself in the bubble: its kind only", async () => {
