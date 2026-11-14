@@ -194,9 +194,9 @@ export function askableNames(request: string, apps: readonly string[] = [], thei
 
 /**
  * Words that make a request private (memory-c10-1): health and sexual health, medicines, mental health, addiction, a
- * crisis line, the law, money trouble, dating and sexuality, and faith. The daily question is shown beside the cursor
- * and spoken by default while Ember has nothing to do, which says nothing of who can see or hear it, so no name from
- * such a request is ever asked about. Any word counts: asking less costs nothing.
+ * crisis line, the law, money trouble, dating and sexuality, and faith. The daily question is written in Home's
+ * conversation while Ember has nothing to do, never said aloud, but that says nothing of who can see the screen, so no
+ * name from such a request is ever asked about. Any word counts: asking less costs nothing.
  */
 const SENSITIVE = new RegExp(String.raw`\b(?:`
   + String.raw`clinics?|hospitals?|hospice|doctors?|gp|nurses?|surgery|symptoms?|diagnos\w*|treat(?:ed|ment|ments|ing)?|therap\w*|counsell?(?:ing|or|ors)|psychiatr\w*|psycholog\w*`

@@ -579,7 +579,7 @@ export class MemoryLearning {
       if (request || !answersQuestion(text) || !describes(text, q.name) || !this.d.inForce()) return null;
       if (!how.own) return "I couldn't be sure that was you, so I didn't keep it.";
       if (soundsLikeInstruction(text)) return "I'll keep descriptions, not instructions, so I didn't keep that.";
-      return this.keepAll([gapFact(q.name, text)]) ? `Thanks. I'll remember that about “${q.name}”.` : "I couldn't keep that.";
+      return this.keepAll([gapFact(q.name, text)]) ? "Thanks. I'll remember that." : "I couldn't keep that.";
     }
     return null;
   }

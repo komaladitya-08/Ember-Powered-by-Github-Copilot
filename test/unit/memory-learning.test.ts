@@ -240,7 +240,8 @@ describe("asking about gaps (step 5)", () => {
     advance(IDLE_MS);
     await l.tick();
     expect(said).toEqual([gapQuestion("Priya")]);
-    expect(l.intent("She leads the platform team", { own: true })).toBe("Thanks. I'll remember that about “Priya”.");
+    // The reply goes to the bubble and may be spoken, so it says no name, as the question isn't said aloud (r11-memory-y11-3).
+    expect(l.intent("She leads the platform team", { own: true })).toBe("Thanks. I'll remember that.");
     expect(s.list()).toEqual([expect.objectContaining({ text: "Priya: She leads the platform team", source: "user" })]);
     expect(learned).toEqual(["user: Priya: She leads the platform team"]);
     await m.forRequest("Ask my friend Omar about it", true);
