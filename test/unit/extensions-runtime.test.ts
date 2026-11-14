@@ -5,7 +5,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { classify, emberDataOf, emberReachOf, gateAnnouncement, gateQuestion, wrapResult, argsSummary, plainName, EMBER_DATA_HELD, EMBER_DATA_REFUSED, EMBER_DATA_UNASKED, REFUSED, VAULT_FILLED, type GateInput } from "../../app/main/extensions/gate";
+import { classify, emberDataOf, emberReachOf, gateAnnouncement, gateQuestion, wrapResult, argsSummary, plainName, EMBER_DATA_HELD, EMBER_DATA_REFUSED, EMBER_DATA_UNASKED, REFUSED, SAID_NO_UNASKED, VAULT_FILLED, type GateInput } from "../../app/main/extensions/gate";
 import { canonical, checkPins, isReadOnly, pinAll, schemaWords, toolHash, shownHash, shownSchema, type ServedTool } from "../../app/main/extensions/pin";
 import { readMarketplace, readPlugin, serverSpec, inside, pluginPath, reachOf } from "../../app/main/extensions/manifest";
 import { probeHttp, probeStdio, rpcAnswer, servedTools } from "../../app/main/extensions/probe";
@@ -178,6 +178,18 @@ describe("the extensions gate", () => {
     // Everything that was denied before says why as before.
     expect(classify(gate({ vaultFilled: true, allowed: false })).reason).toBe("Extensions are off.");
     expect(classify(gate({ vaultFilled: false }))).toEqual(classify(gate()));
+  });
+
+  it("asks, never announces, a tool that changes things once the user said no in the conversation, and Autopilot denies it (integrations-c11-1)", () => {
+    expect(classify(gate({ tool: PINNED_POST, saidNo: true }))).toEqual({ verdict: "ask", reason: "said-no" });
+    expect(classify(gate({ tool: PINNED_POST, saidNo: true, autopilot: true }))).toEqual({ verdict: "deny", reason: SAID_NO_UNASKED });
+    expect(classify(gate({ tool: PINNED_POST, saidNo: true, autopilot: true, tainted: true }))).toEqual({ verdict: "deny", reason: SAID_NO_UNASKED });
+    expect(SAID_NO_UNASKED).toBe("The user said no to something earlier in this conversation, and this tool can change things, so it may be what they refused done another way. Autopilot can't ask them, so Ember didn't do it. Don't try this another way.");
+    expect(gateQuestion("Fake", "post_message", { text: "hi" }, "said-no").prompt).toContain("You said no to something earlier, and this can change things, so I'm asking first.");
+    // A read-only tool changes nothing: as before. What was denied still says why as before.
+    expect(classify(gate({ saidNo: true, autopilot: true }))).toEqual(classify(gate()));
+    expect(classify(gate({ tool: PINNED_POST, saidNo: true, refused: true }))).toEqual(classify(gate({ tool: PINNED_POST, refused: true })));
+    expect(classify(gate({ tool: PINNED_POST, saidNo: true, vaultFilled: true })).reason).toBe(VAULT_FILLED);
   });
 
   it("announces instead of asking in Autopilot, whatever made it ask, and denies exactly what it denied (modes-D3)", () => {
@@ -1134,13 +1146,15 @@ describe("ExtensionsService", () => {
     answers = ["once"];
     expect(await call(ext, "fake-post_message", { text: "SENT-hi" })).toEqual({ permissionDecision: "allow" });
     await result("fake-post_message");
-    answers = ["deny"];
-    expect(await call(ext, "fake-post_message", { text: "SENT-again" })).toMatchObject({ permissionDecision: "deny" });
-    expect(await call(ext, "fake-post_message", { text: "SENT-again" })).toMatchObject({ permissionDecision: "deny" });
     ext.newTurn?.();
     autopilot = true;
     expect(await call(ext, "fake-post_message", { text: "SENT-third" })).toEqual({ permissionDecision: "allow" });
     await ext.postToolUseFailure!({ toolName: "fake-post_message", toolArgs: {}, error: "FAILED-boom", sessionId: "s", timestamp: new Date(), workingDirectory: "/" });
+    // (After a no, Autopilot denies a tool that changes things: integrations-c11-1. So the no comes last here.)
+    autopilot = false;
+    answers = ["deny"];
+    expect(await call(ext, "fake-post_message", { text: "SENT-again" })).toMatchObject({ permissionDecision: "deny" });
+    expect(await call(ext, "fake-post_message", { text: "SENT-again" })).toMatchObject({ permissionDecision: "deny" });
     ext = s.forSession()!;
     const lines = audit.filter(e => e.event === "extension").map(e => describeEntry({ t: "2026-11-13T00:00:00Z", ...e } as never)).filter(Boolean).map(v => [v!.tag, v!.what, v!.why ?? null]);
     expect(lines).toEqual([
@@ -1150,14 +1164,48 @@ describe("ExtensionsService", () => {
       ["Asked you", "Use “post_message” from fake", "It can change things or send what it is given."],
       ["You allowed", "Use “post_message” from fake", null],
       ["Done", "Use “post_message” from fake", null],
-      ["Asked you", "Use “post_message” from fake", "It can change things or send what it is given."],
-      ["You said no", "Use “post_message” from fake", null],
-      ["Refused", "Use “post_message” from fake", "You said no to this tool."],
       ["Without asking", "Use “post_message” from fake", "Autopilot was on, so Ember didn't ask."],
       ["Didn't work", "Use “post_message” from fake", null],
+      // (A call that failed taints the conversation: integrations-r9.)
+      ["Asked you", "Use “post_message” from fake", "An extension's answer read like instructions, so Ember asks before every extension's tool."],
+      ["You said no", "Use “post_message” from fake", null],
+      ["Refused", "Use “post_message” from fake", "You said no to this tool."],
     ]);
     // Sizes and names only: never what was sent or what came back.
     expect(JSON.stringify(audit)).not.toMatch(/SENT-|FAILED-/);
+  });
+
+  it("denies in Autopilot, and asks elsewhere, an extension's tool that changes things after a no anywhere in the conversation, until it ends (integrations-c11-1)", async () => {
+    let autopilot = true;
+    const s = await installed({ autopilot: () => autopilot, announce: () => true });
+    let ext = s.forSession()!;
+    shown(ext);
+    expect(await call(ext, "fake-post_message", { text: "a" })).toEqual({ permissionDecision: "allow" });
+    // A task's "Not now" (main's Confirmer tells the service): the next changing call isn't announced.
+    s.userSaidNo();
+    ext.newTurn?.();
+    expect(await call(ext, "fake-post_message", { text: "b" })).toMatchObject({ permissionDecision: "deny", permissionDecisionReason: SAID_NO_UNASKED });
+    expect(await call(ext, "fake-lookup", { q: "x" })).toEqual({ permissionDecision: "allow" });
+    autopilot = false;
+    answers = ["once"];
+    expect(await call(ext, "fake-post_message", { text: "c" })).toEqual({ permissionDecision: "allow" });
+    expect(asked.at(-1)).toContain("You said no to something earlier");
+    // A reconnect keeps it; a new conversation clears it.
+    autopilot = true;
+    ext = s.forSession()!;
+    shown(ext);
+    expect(await call(ext, "fake-post_message", { text: "d" })).toMatchObject({ permissionDecision: "deny" });
+    s.conversationEnded();
+    ext = s.forSession()!;
+    shown(ext);
+    expect(await call(ext, "fake-post_message", { text: "e" })).toEqual({ permissionDecision: "allow" });
+    // A no to one of the gate's own questions does the same for the turns after it, whichever tool.
+    autopilot = false;
+    answers = ["deny"];
+    expect(await call(ext, "fake-post_message", { text: "f" })).toMatchObject({ permissionDecision: "deny" });
+    ext.newTurn?.();
+    autopilot = true;
+    expect(await call(ext, "fake-post_message", { text: "g" })).toMatchObject({ permissionDecision: "deny", permissionDecisionReason: SAID_NO_UNASKED });
   });
 
   it("calls no extension after a fill from the vault: not asked, not announced, audited as denied (vault-3-x9-4)", async () => {

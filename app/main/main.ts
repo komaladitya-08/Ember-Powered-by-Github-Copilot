@@ -3560,6 +3560,9 @@ function start(): void {
       // An answer nobody replaces (a task in the corner ends on its card) goes after its moment, or what the question
       // covered shows again: never "Thanks! Carrying on." for good after the task is done.
       afterAnswer: answerSettler({ onScreen: () => lastState.bubble, reshow: () => agent?.afterAnswer() ?? false, set: setState }),
+      // A no to any question reaches the extensions gate: a tool that changes things asks after it, and Autopilot
+      // denies it, until the conversation ends (integrations-c11-1).
+      onDeny: () => extensions.userSaidNo(),
     });
     // Linux warns xtest.unavailable when XTest is missing.
     const xinput = inputRef = platform.openInput(ws, log);

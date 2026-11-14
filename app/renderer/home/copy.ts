@@ -1540,6 +1540,7 @@ const EXTENSION_ASKED: Readonly<Record<string, string>> = {
   tainted: "An extension's answer read like instructions, so Ember asks before every extension's tool.",
   "hints-changed": "Its server changed its list of tools during the conversation.",
   "ember-data": "It may reach Ember's own settings, audit log or policy, which are for you only.",
+  "said-no": "You said no to something earlier in the conversation, and it can change things.",
 };
 
 /**

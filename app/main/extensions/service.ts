@@ -224,6 +224,12 @@ export class ExtensionsService implements ExtensionsApi {
    */
   private tainted = false;
   /**
+   * The user said no to something in this conversation (an extension's call, or any question a task put: main's
+   * Confirmer tells userSaidNo): every later call of a tool that changes things asks, and Autopilot denies it
+   * (integrations-c11-1). Kept here as the taint is, across a reconnect; conversationEnded() clears it.
+   */
+  private saidNo = false;
+  /**
    * Server keys that said their tool list changed in this conversation (integrations-x9-1). Kept here as the taint
    * is, across the reload such a word causes: a server that says it again stays out until the conversation ends.
    */
@@ -256,11 +262,20 @@ export class ExtensionsService implements ExtensionsApi {
     try { for (const f of fs.readdirSync(this.store.runDir)) fs.rmSync(path.join(this.store.runDir, f), { force: true }); } catch { /* no run folder yet */ }
   }
 
+  /**
+   * The user said no to a question (a task's step or command, or an extension's call): from now until the conversation
+   * ends, a tool that changes things asks, and Autopilot denies it (integrations-c11-1). An unanswered question isn't a no.
+   */
+  userSaidNo(): void {
+    this.saidNo = true;
+  }
+
   /** The conversation was forgotten (sign-out, another account, a new conversation): its taint goes with it. */
   conversationEnded(): void {
     this.stopPart().stop();
     this.session = null;
     this.tainted = false;
+    this.saidNo = false;
     this.announcers.clear();
     this.heldOut.clear();
   }
@@ -1037,7 +1052,7 @@ export class ExtensionsService implements ExtensionsApi {
       ...(current ? { item: { enabled: current.enabled, consented: current.consentedAt !== null } } : {}),
       ...(tool ? { tool } : {}),
       shownAsPinned: shownAsPinned && gate.shown.get(name) === true,
-      tainted: this.tainted, refused: gate.refused.has(name), remote: e?.server.spec?.type !== "stdio",
+      tainted: this.tainted, refused: gate.refused.has(name), saidNo: this.saidNo, remote: e?.server.spec?.type !== "stdio",
       hintsStale: !!e && gate.listChanged.has(e.server.key), serverStopped: !!e && gate.withdrawn.has(e.server.key),
       autopilot: this.o.autopilot?.() === true,
       vaultFilled: this.vaultFilled(),
@@ -1117,6 +1132,7 @@ export class ExtensionsService implements ExtensionsApi {
     }
     if (answer === "once" && after) return deny(after.reason);
     gate.refused.add(input.toolName);
+    if (answer === "deny") this.saidNo = true;
     return deny(REFUSED);
   }
 

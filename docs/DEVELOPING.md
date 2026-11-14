@@ -877,7 +877,10 @@ it builds on:
     turned off the same way. A session never bound, or whose list can't be read, denies every extension call.
 - **Ember's gate decides every call** (`gate.ts`, from `onPreToolUse`): off (the admin's `features.extensions`,
   LOCKDOWN, the user's switch or consent `FEATURE_CONSENT_VERSION.extensions`), stopped, disabled, changed, shown
-  differently, or refused this turn: deny. A read-only tool in an agreed item, with no injected text seen: allow.
+  differently, or refused this turn: deny. After the user said no to anything in the conversation (one of its
+  extension calls, or any question a task put: the Confirmer's `onDeny` tells `userSaidNo()`), a tool that changes
+  things asks and is never announced, and Autopilot denies it, until the conversation ends (integrations-c11-1). A
+  read-only tool in an agreed item, with no injected text seen: allow.
   Read-only means `readOnlyHint` true with neither `destructiveHint` nor `openWorldHint` true, on a stdio server whose
   tool list hasn't changed this session: every call to a remote (HTTP) server's tools asks, since it sends its
   arguments there. Anything else: the Confirmer asks every time ("Use “post_message” from Slack? With "{…}"."), with

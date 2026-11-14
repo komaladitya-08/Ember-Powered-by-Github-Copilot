@@ -53,6 +53,12 @@ export interface GateInput {
   /** The user said no to this tool earlier in the turn. */
   refused: boolean;
   /**
+   * The user said no to something in this conversation: one of its extension calls, or any question a task of it put
+   * (a step, a command; integrations-c11-1). The tool that changes things may be the refused thing done another way:
+   * it asks, never announced, and Autopilot, which has no question to put, denies it.
+   */
+  saidNo?: boolean;
+  /**
    * The tool's server is remote (HTTP): every call sends its arguments to that server, and the consent card promises
    * Ember asks before anything that sends, so even its read-only tools ask.
    */
@@ -88,6 +94,9 @@ export const EMBER_DATA_REFUSED = "Ember's settings, audit log and policy are fo
 
 /** What the model is told of such a call in Autopilot, where it can't be asked (one of Ember's files by name only). */
 export const EMBER_DATA_UNASKED = "This may be Ember's own settings, audit log or policy, which are for the user only, and Autopilot can't ask the user, so Ember didn't do it.";
+
+/** What the model is told of a changing call in Autopilot after the user said no in this conversation (integrations-c11-1). */
+export const SAID_NO_UNASKED = "The user said no to something earlier in this conversation, and this tool can change things, so it may be what they refused done another way. Autopilot can't ask them, so Ember didn't do it. Don't try this another way.";
 
 /** What the model is told of a changing call given a folder that holds Ember's data or policy folder. */
 export const EMBER_DATA_HELD = "This names a folder that holds Ember's settings, audit log and policy, which are for the user only, and a tool that changes things could move or delete it with them, so Ember didn't do it. Don't try this another way.";
@@ -155,6 +164,7 @@ export function classify(g: GateInput): { verdict: GateVerdict; reason: string }
   if (g.emberData === "names") return { verdict: "deny", reason: EMBER_DATA_REFUSED };
   if (g.emberHolds && !isReadOnly(g.tool)) return { verdict: "deny", reason: EMBER_DATA_HELD };
   if (g.emberData === "may") return g.autopilot ? { verdict: "deny", reason: EMBER_DATA_UNASKED } : { verdict: "ask", reason: "ember-data" };
+  if (g.saidNo && !isReadOnly(g.tool)) return g.autopilot ? { verdict: "deny", reason: SAID_NO_UNASKED } : { verdict: "ask", reason: "said-no" };
   if (isReadOnly(g.tool) && !g.tainted && !g.remote && !g.hintsStale) return { verdict: "allow", reason: "read-only" };
   return { verdict: g.autopilot ? "announce" : "ask", reason: g.tainted ? "tainted" : !isReadOnly(g.tool) ? "changes" : g.remote ? "remote" : "hints-changed" };
 }
@@ -216,6 +226,7 @@ export function argsDetail(args: unknown, max = SUMMARY_MAX): string | undefined
 /** What a question adds, in Ember's words, when it asks because of what the call may reach (classify's reason). */
 const ASKS_BECAUSE: Partial<Record<string, string>> = {
   "ember-data": "It may reach my own settings, audit log or policy, which are for you only.",
+  "said-no": "You said no to something earlier, and this can change things, so I'm asking first.",
 };
 
 /**
