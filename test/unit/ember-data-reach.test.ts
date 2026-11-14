@@ -446,6 +446,31 @@ describe("Ember's own files reached by what a field or a file dialog holds, not 
     expect(mayReachEmberData(req("org.gnome.Nautilus", "Home", { kind: "click", element: { role: "menu item", name: "Open With Text Editor" }, chosen: { names: ["notes.txt"], whole: true } }))).toBe(false);
   });
 
+  it("takes any menu item, and any button but one that backs off, for one that may move the rows chosen when they hold the folder above Ember's data, in any language (r11-safety-y11-4)", () => {
+    const rows: [OS, string, string, string, string, string][] = [
+      ["linux", "org.gnome.Nautilus", "Persönlicher Ordner", "menu item", "In den Papierkorb verschieben", ".config"],
+      ["linux", "org.gnome.Nautilus", "Persönlicher Ordner", "menu item", "Löschen", ".config"],
+      ["linux", "org.gnome.Nautilus", "Persönlicher Ordner", "push button", "Löschen", ".config"],
+      ["linux", "org.gnome.Nautilus", "Dossier personnel", "menu item", "Mettre à la corbeille", ".config"],
+      ["linux", "org.gnome.Nautilus", "Dossier personnel", "menu item", "Couper", ".config"],
+      ["linux", "org.gnome.Nautilus", "Persönlicher Ordner", "menu item", "Umbenennen…", ".config"],
+      ["win32", "explorer", "Ordner", "menu item", "Löschen", "AppData"],
+      ["win32", "explorer", "Ordner", "menu item", "Ausschneiden", "AppData"],
+      ["darwin", "Finder", "Privat", "AXMenuItem", "In den Papierkorb legen", "Library"],
+    ];
+    for (const [o, app, w, role, name, holder] of rows) {
+      const r = req(app, w, { kind: "click", element: { role, name }, chosen: { names: [holder], whole: true } });
+      expect(mayReachEmberData(r, o), `${w} ${name}`).toBe(true);
+      expect(engine("autopilot", o).decide(r).verdict, `${w} ${name} autopilot`).toBe("deny");
+      const inter = engine("interactive", o).decide(r);
+      expect(inter.verdict, `${w} ${name} interactive`).toBe("confirm");
+      expect(inter.autonomy, `${w} ${name}`).toBeFalsy();
+    }
+    // Backing off stays as it was, and other rows chosen, all read, go as before.
+    expect(mayReachEmberData(req("org.gnome.Nautilus", "Home", { kind: "click", element: { role: "push button", name: "Cancel" }, chosen: { names: [".config"], whole: true } }))).toBe(false);
+    expect(mayReachEmberData(req("org.gnome.Nautilus", "Persönlicher Ordner", { kind: "click", element: { role: "menu item", name: "Löschen" }, chosen: { names: ["Dokumente"], whole: true } }))).toBe(false);
+  });
+
   it("reads the rows chosen in a file manager as the step is taken, and can't tell them whole when one is unnamed or a row was left out (safety-privacy-r11-2)", () => {
     const row = (id: number, name: string, selected: boolean, x: Partial<AxNode> = {}): AxNode => ({ id, parent: 1, depth: 1, role: "table cell", name, states: selected ? ["selected"] : [], bounds: null, ...x });
     const view = (extra: AxNode[] = []): AxNode[] => [{ id: 1, parent: null, depth: 0, role: "table", name: "", states: [], bounds: null }, row(2, "Documents", true), row(3, ".config", true), row(4, "Music", false), ...extra];

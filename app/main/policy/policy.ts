@@ -960,7 +960,11 @@ function inEmberDataParent(r: Pick<ActionRequest, "kind" | "element" | "value" |
   // What is chosen in the view when the step is taken (the worker's read as it is taken: a right-click's row, a
   // select-all), for a step that moves or removes it: a row that holds Ember's data or policy folder (safety-privacy-r11-2).
   // In the home folder, or the top of the disk, rows chosen that can't all be read may be one of them.
-  if (removesChosen(r, os)) {
+  // Any menu item, and any button but one that backs off, may be one in the desktop's language ("Löschen", "Couper",
+  // "In den Papierkorb legen"): only English names are known (r11-safety-y11-4).
+  const anyControl = (r.kind === "click" || r.kind === "cursor_click" || r.kind === "toggle")
+    && (/menu ?item/i.test(r.element?.role ?? "") || (/button/i.test(r.element?.role ?? "") && !BACKS_OFF.test(normalizeLabel(r.element?.name ?? ""))));
+  if (removesChosen(r, os) || anyControl) {
     const caseless = os !== "linux";
     if (r.chosen?.names.some(n => holdsEmberFolder(n, caseless))) return true;
     const home = homeName();
