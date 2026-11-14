@@ -754,7 +754,7 @@ describe.skipIf(gate)("Home's Apps & privacy, as the person's own settings and t
   });
 
   it("says what the person turned on: commands on this computer, and ordinary steps without asking (safety-privacy-r4-2, safety-privacy-c4-1)", async () => {
-    const agreed = { version: 1, at: "2026-11-04T12:00:00Z" };
+    const agreed = { version: FEATURE_CONSENT_VERSION.commands, at: "2026-11-04T12:00:00Z" };
     const on = { commands: { local: { on: true, askEvery: false, consent: agreed } }, approvals: INTERACTIVE };
     const page = await open("privacy", { settings: on, approvals: approvalsState(INTERACTIVE, null) });
     const fold = page.locator("#privacy-terms-fold");
@@ -781,7 +781,7 @@ describe.skipIf(gate)("Home's Apps & privacy, as the person's own settings and t
   });
 
   it("never offers what the organisation's lockdown turned off, nor says what the person turned on is on (safety-privacy-r4-2)", async () => {
-    const agreed = { version: 1, at: "2026-11-04T12:00:00Z" };
+    const agreed = { version: FEATURE_CONSENT_VERSION.commands, at: "2026-11-04T12:00:00Z" };
     const page = await open("privacy", {
       settings: { commands: { local: { on: true, askEvery: false, consent: agreed } }, screenImages: false },
       admin: { source: "/etc/ember/policy.json", error: "Unrecognized key", retentionDays: null, confirmEveryAction: true, allowGrants: false, features: { voice: false, screenImages: false, ssh: false, wsl: false, autonomy: false }, managed: ["screenImages", "autonomy"], commands: { local: "off", wsl: "off", ssh: "off" } },
@@ -816,7 +816,7 @@ describe.skipIf(gate)("Home's Apps & privacy, as the person's own settings and t
     // policy at start), the admin the held lockdown.
     const held = heldUntilRestart({ policy: AdminPolicySchema.parse({ commands: { local: "on" } }), source: "/etc/ember/policy.json" });
     const p = held.policy;
-    const agreed = { version: 1, at: "2026-11-04T12:00:00Z" };
+    const agreed = { version: FEATURE_CONSENT_VERSION.commands, at: "2026-11-04T12:00:00Z" };
     const page = await open("privacy", {
       // (Main says how the modes stand under the policy in force: below Interactive.)
       approvals: approvalsState(INTERACTIVE, p),
@@ -857,7 +857,7 @@ describe.skipIf(gate)("Home's Apps & privacy, as the person's own settings and t
   });
 
   it("says what the held lockdown leaves as soon as the policy changes while it is open, without opening again (safety-privacy-w5-1)", async () => {
-    const agreed = { version: 1, at: "2026-11-04T12:00:00Z" };
+    const agreed = { version: FEATURE_CONSENT_VERSION.commands, at: "2026-11-04T12:00:00Z" };
     const ordinary = { policy: AdminPolicySchema.parse({ commands: { local: "on" } }), source: "/etc/ember/policy.json" };
     const page = await open("privacy", {
       approvals: approvalsState(INTERACTIVE, ordinary.policy),

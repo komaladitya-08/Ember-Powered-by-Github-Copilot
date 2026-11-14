@@ -11,7 +11,10 @@ it means before anything happens: one for WSL, one for each computer you connect
 other computer. People who already use Ember keep their settings: first run's agreement doesn't turn commands on for
 them, and nothing new happens until they accept a card. An organisation that turned commands off on this computer
 (`commands.local`) sees the row off and managed, and an Ember running as root or an administrator says in that card
-that it asks before every command.
+that it counts every command as dangerous. The commands card says, in one text for every approval mode, what each mode
+does with a dangerous command (Interactive asks, Assisted's check may let it go ahead, Autopilot asks nothing), that
+in Autopilot a command that shows passwords or keys has its output kept from the model, and what holds in every mode:
+your no, and your organisation's or your own **Ask me before every command** (owner decision of 2026-11-14).
 
 Wherever Ember works, **your voice and your GitHub sign-in stay on this computer**. Listening, speech recognition,
 the Copilot conversation and Ember's questions all stay here; another computer only receives the steps Ember takes

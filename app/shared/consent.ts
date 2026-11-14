@@ -69,7 +69,7 @@ export function consentChangesSince(agreed: number): string[] {
  * Autopilot Ember uses a tool that changes or sends without asking and says so, where 3 said it always asked
  * (integrations-r10-1).
  */
-export const FEATURE_CONSENT_VERSION = { wsl: 1, ssh: 1, commands: 1, memory: 4, routines: 1, extensions: 4, autonomy: 4, provider: 1, updates: 1, assisted: 2, autopilot: 2 } as const;
+export const FEATURE_CONSENT_VERSION = { wsl: 1, ssh: 1, commands: 2, memory: 4, routines: 1, extensions: 4, autonomy: 4, provider: 1, updates: 1, assisted: 2, autopilot: 2 } as const;
 
 /**
  * A first-use consent card (§8.4): its exact text, and a hash of it that the yes must carry back. Shown in Ember's

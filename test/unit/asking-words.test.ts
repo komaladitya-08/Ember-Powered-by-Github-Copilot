@@ -201,3 +201,32 @@ describe("Before Ember starts promises no question a mode doesn't put (Settled 2
     expect(consentChangesSince(10)).toEqual(["I say plainly where I don't ask before something hard to undo: a command you asked for exactly, which I show you first with a few seconds to stop it, and Assisted or Autopilot if you choose them later, which ask less."]);
   });
 });
+
+describe("the commands card is true in every approval mode, as root too (Settled 28: r10-modes-copy-y10-1; owner decision of 2026-11-14)", () => {
+  const facts = { kind: "local" as const, privileged: true, windows: false, podman: false };
+  const PRIVILEGED = "Commands here run as the administrator, so Ember counts every one as dangerous, even one you asked for exactly.";
+  const MAIN = "Most commands run straight away, ones Ember doesn't know included. A command is dangerous if it deletes or overwrites data, pushes or publishes anywhere, shows passwords or keys, changes the system, downloads and runs code or would keep running after you stop Ember, and so is code Ember can't read. In Interactive, the default, Ember asks you before a dangerous command, unless you asked for exactly that command and it touches no passwords, keys or downloaded code: then it shows it first, with a few seconds to stop it. In Assisted, it goes ahead when a check finds the command in what you asked for, and asks otherwise. In Autopilot, it asks nothing and tells you as it goes.";
+  const ALWAYS = "In every mode, Ember doesn't run again a command you said no to in a task, and it asks before every command wherever your organisation, or your own “Ask me before every command” for that computer, says so.";
+  const OUTPUT = "What a command prints goes to GitHub Copilot as part of the task. Ember hides passwords and keys it recognises, and never sees what you type into a command. In Autopilot, what a command that shows passwords or keys prints is kept from GitHub Copilot: only you see it, in the command window. If a command prints something that looks like instructions, Ember doesn't follow it, and in Interactive every further command in that task asks you first.";
+
+  it("says, in one text for every mode, what asks in Interactive, what Assisted's check clears and that Autopilot asks nothing, and pins it whole", async () => {
+    const { commandsConsent } = await import("../../app/main/targets/consent");
+    const card = commandsConsent({ os: "linux", target: "local", targetLabel: "This computer", facts, stopKey: "Ctrl+Alt+X" });
+    expect(card.body.slice(1)).toEqual([PRIVILEGED, MAIN, ALWAYS, OUTPUT]);
+    for (const line of card.body) {
+      expect(line).not.toMatch(/so Ember asks before every one/);
+      expect(line).not.toMatch(/always before anything that touches passwords or keys/);
+      expect(line).not.toMatch(/still asks about/);
+    }
+  });
+
+  it("is the same text in the prompt window, and asks everyone again", async () => {
+    const { commandsConsent } = await import("../../app/main/targets/consent");
+    const promptCopy = await import("../../app/renderer/prompt/copy");
+    const { FEATURE_CONSENT_VERSION } = await import("../../app/shared/consent");
+    const card = commandsConsent({ os: "linux", target: "local", targetLabel: "This computer", facts, stopKey: "Ctrl+Alt+X" });
+    const shown = promptCopy.consentText({ feature: "commands", os: "linux", target: "local", targetLabel: "This computer", stopKey: "Ctrl+Alt+X", commands: { privileged: true } });
+    expect(shown.body).toEqual(card.body);
+    expect(FEATURE_CONSENT_VERSION.commands).toBe(2);
+  });
+});

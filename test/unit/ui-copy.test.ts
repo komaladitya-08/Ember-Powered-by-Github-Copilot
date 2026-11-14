@@ -5,6 +5,7 @@ import {
 } from "../../app/renderer/home/copy";
 import { cardTask, cardText } from "../../app/renderer/handle/card";
 import { DEFAULT_SETTINGS } from "../../app/main/settings";
+import { FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
 import { memoryOwnerOffersErase, memoryOwnerText, memoryPausedReply } from "../../app/shared/memory-owner";
 import { HOST_OS } from "../../app/main/platform/os";
 import { NEVER_LOOK_DEFAULTS as NEVER_LOOK_BY_OS } from "../../app/shared/never-look";
@@ -581,8 +582,9 @@ describe("the first-use consent cards (§8.4)", () => {
     expect(keep(local.title)).toBe("Let Ember run commands on this computer?");
     expect(local.body.map(keep)).toEqual([
       "Ember runs commands in its own command window, where you can watch them and stop them. Ctrl+Alt+X stops everything at once; what a command already changed stays changed. It never types into your own terminal windows.",
-      "Most commands run straight away. Before anything that deletes or overwrites data, pushes or publishes anywhere, touches passwords or keys, changes the system, or downloads and runs code, Ember stops and asks you. If you asked for exactly that yourself, it tells you first and gives you a few seconds to stop it.",
-      "What a command prints goes to GitHub Copilot as part of the task. Ember hides passwords and keys it recognises, and never sees what you type into a command. If a command prints something that looks like instructions, Ember doesn't follow it and asks you before every further command in that task.",
+      "Most commands run straight away, ones Ember doesn't know included. A command is dangerous if it deletes or overwrites data, pushes or publishes anywhere, shows passwords or keys, changes the system, downloads and runs code or would keep running after you stop Ember, and so is code Ember can't read. In Interactive, the default, Ember asks you before a dangerous command, unless you asked for exactly that command and it touches no passwords, keys or downloaded code: then it shows it first, with a few seconds to stop it. In Assisted, it goes ahead when a check finds the command in what you asked for, and asks otherwise. In Autopilot, it asks nothing and tells you as it goes.",
+      "In every mode, Ember doesn't run again a command you said no to in a task, and it asks before every command wherever your organisation, or your own “Ask me before every command” for that computer, says so.",
+      "What a command prints goes to GitHub Copilot as part of the task. Ember hides passwords and keys it recognises, and never sees what you type into a command. In Autopilot, what a command that shows passwords or keys prints is kept from GitHub Copilot: only you see it, in the command window. If a command prints something that looks like instructions, Ember doesn't follow it, and in Interactive every further command in that task asks you first.",
     ]);
     expect([local.yes, local.no]).toEqual(["Turn on", "Not now"]);
     const all = promptCopy.consentText({ feature: "commands", os: "win32", target: "wsl:podman-machine-default", targetLabel: "podman-machine-default (WSL)", commands: { wsl: true, privileged: true, windows: true, podman: true } });
@@ -590,7 +592,7 @@ describe("the first-use consent cards (§8.4)", () => {
     // What the computer's commands can reach comes right after how to stop them (review #270).
     expect(all.body.slice(1, 5).map(keep)).toEqual([
       "Commands in WSL can also reach your Windows files and programs.",
-      "Commands here run as the administrator, so Ember asks before every one.",
+      "Commands here run as the administrator, so Ember counts every one as dangerous, even one you asked for exactly.",
       "Commands here run in Windows PowerShell and can't ask you for answers or passwords.",
       "Podman uses this distro, so Ember asks before every command here.",
     ]);
@@ -721,13 +723,13 @@ describe("Computers and Commands in settings (§8.3) and the onboarding line (§
     expect(rest(base, none)).toBe(l.settings);
     expect(rest(base, none, "win32")).toBe(l.settingsWindows);
     // Commands on this computer, turned on with their card (the re-rater's probe).
-    const local = { ...base, commands: { local: { on: true, askEvery: false, consent: agreed } } } as Settings;
+    const local = { ...base, commands: { local: { on: true, askEvery: false, consent: { ...agreed, version: FEATURE_CONSENT_VERSION.commands } } } } as Settings;
     expect(keep(`${l.lead}${rest(local, none)}`)).toBe("Other computers and commands: you let Ember run commands on this computer. It runs commands only in its own window, where you can watch and stop them. Other computers are off until you turn them on.");
     expect(keep(`${l.lead}${rest(local, none, "win32")}`)).toBe("Other computers and commands: you let Ember run commands on this computer. It runs commands only in its own window, where you can watch and stop them. Other computers and WSL are off until you turn them on.");
     // A computer reached over SSH, with and without commands there.
     const ssh = { ...base, targets: { ...base.targets, hosts: [host] } } as Settings;
     expect(keep(`${l.lead}${rest(ssh, none)}`)).toBe("Other computers and commands: you let Ember work on computers you reach over SSH. Commands on this computer are off until you turn them on.");
-    const both = { ...ssh, commands: { local: local.commands.local, "ssh:build-01": { on: true, askEvery: false, consent: agreed } } } as Settings;
+    const both = { ...ssh, commands: { local: local.commands.local, "ssh:build-01": { on: true, askEvery: false, consent: { ...agreed, version: FEATURE_CONSENT_VERSION.commands } } } } as Settings;
     expect(keep(`${l.lead}${rest(both, none)}`)).toBe("Other computers and commands: you let Ember run commands on this computer, and work and run commands on computers you reach over SSH. It runs commands only in its own window, where you can watch and stop them.");
     // WSL on Windows (elsewhere it isn't Ember's to use).
     const wsl = { ...base, targets: { ...base.targets, wsl: { on: true, consent: agreed } } } as Settings;
@@ -952,8 +954,9 @@ describe("every new SSH, WSL and commands string", () => {
         const word = w.replace(/^[(“"‘]+|[)”"’.,:;?!…]+$/g, "");
         if (/^[A-Z][a-z]/.test(word)) {
           const afterStop = new RegExp(`[.:?!] ${w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`).test(s);
-          // (The approval modes' names, and the sections "What Ember did" and "How Ember asks", are names too.)
-          expect(afterStop || PROPER.test(word) || /^(Ubuntu|Remove|Voice|Match|Interactive|Assisted|Autopilot|What|How|Secure|Form)$/.test(word), `${word} in: ${s}`).toBe(true);
+          // (The approval modes' names, and the sections "What Ember did" and "How Ember asks", are names too, and so is
+          // a switch's name in curly quotes: “Ask me before every command”.)
+          expect(afterStop || w.startsWith("“") || PROPER.test(word) || /^(Ubuntu|Remove|Voice|Match|Interactive|Assisted|Autopilot|What|How|Secure|Form)$/.test(word), `${word} in: ${s}`).toBe(true);
         }
       }
     }
