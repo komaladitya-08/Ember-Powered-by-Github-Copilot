@@ -189,9 +189,12 @@ export function nearAnswer(text: string): boolean {
   if (NAMES.has(words[i])) i++;
   const rest = words.slice(i);
   if (!rest.length || rest.length > 6) return false;
-  // ("Never mind." is a request of its own, as "cancel" is: review of #127.)
-  if (rest.some(w => STOP_WORDS.has(w)) || /\bnever mind\b/.test(rest.join(" "))) return false;
+  if (rest.some(w => STOP_WORDS.has(w))) return false;
+  // "No, never mind." stays a near-miss as before, said once in the answer window (r10-voice-y10-2); elsewhere the
+  // engine stops on it first.
   if (rest.length <= 4 && (ANSWER_LEADS.has(rest[0]) || (rest[0] === "do" && rest[1] === "not"))) return true;
+  // ("Never mind." is a request of its own, as "cancel" is: review of #127.)
+  if (/\bnever mind\b/.test(rest.join(" "))) return false;
   if (HOLD.test(rest.join(" "))) return true;
   if (rest.length <= 4 && rest.every(w => ASSENT.has(w)) && rest.some(w => ASSENT_CORE.has(w))) return true;
   // A no of more than one word inside, too ("Please just leave it there.", "Leave it, I said."): r10-voice-x10-1.

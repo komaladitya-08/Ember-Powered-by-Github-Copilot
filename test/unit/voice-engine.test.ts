@@ -3470,6 +3470,15 @@ describe("whose a spoken answer is (second review of the voice lane, 2026-11-12)
       }
     });
 
+    it("says once it didn't catch “No, never mind.” in a question's answer window, and stops on it in a follow-up or a conversation, never sending it (r10-voice-y10-2)", () => {
+      // They vanished in the answer window while the question stayed up for anyone's yes.
+      for (const words of ["No, never mind.", "Okay, never mind."]) for (const where of WHERE) {
+        const s = waiting({ 5: words }, where, { otherSound: false });
+        says(s, 5, 0, "user");
+        expect(s.heard(), `${words} in ${where}`).toEqual([where === "answer" ? "unclear" : "stop"]);
+      }
+    });
+
     it("still ends a conversation or a follow-up on “Okay, that's all.” said while a question waits, sending nothing (voice-product-x9-3)", () => {
       // The near-miss check ran before the closers: the window stayed open and the question got "I didn't catch that…".
       for (const words of ["Okay, that's all.", "No, that's all."]) for (const where of ["follow-up", "conversation"] as const) {
