@@ -301,8 +301,9 @@ Ember stops and asks before a command that:
   certificates the computer trusts, users and groups, giving a container the container engine's socket or a system
   folder (`docker run -v /var/run/docker.sock:…`, `-v /usr:…`),
   permissions changed recursively or outside your home, or that let other accounts in anywhere (every account allowed
-  to change a file, `chmod 777`, `o+w`, another user or group given write by `setfacl`, `icacls /grant Everyone:F`, or
-  your home folder itself opened to them, `chmod 755 ~`; `chmod +x`, `644` and a read-only grant stay ordinary), scheduled tasks and login items, shutting down or logging
+  to change a file, `chmod 777`, `o+w`, `o=u`, another user or group given write by `setfacl`, `icacls /grant
+  Everyone:F`, or your home folder itself opened to them, `chmod 755 ~`, `icacls C:\Users\you /grant Everyone:R`;
+  `chmod +x`, `644` and a read-only grant stay ordinary), scheduled tasks and login items, shutting down or logging
   out, stopping other programs (`kill`, `taskkill`), your shell's start-up files (`~/.bashrc`, `~/.bashrc.d`,
   `$PROFILE`) and git hooks, putting a program in a folder your shell searches for commands (`~/.local/bin`, `~/bin`),
   settings a program runs code from (`~/.vimrc`, `~/.tmux.conf`, `~/.config/pip`, `~/.cargo/config.toml`), and

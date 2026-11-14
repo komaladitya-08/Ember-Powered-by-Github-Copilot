@@ -285,6 +285,27 @@ describe("opening the user's own files to every account (commands-remote-c12-2)"
   });
 });
 
+describe("the home folder opened on Windows, and a mode copied to every account (r12-commands-x12-7)", () => {
+  it("asks before any grant to another account on the home folder itself, and before o=u or a=u", () => {
+    for (const [cmd, shell, context] of [
+      ["icacls C:\\Users\\ana /grant Everyone:R", "powershell", "win32"], ["icacls C:\\Users\\ana /grant Users:(OI)(CI)RX", "cmd", "win32"],
+      ["icacls C:\\Users\\ana\\ /grant bob:R", "cmd", "win32"],
+      ["chmod o=u notes.txt", "bash", "linux"], ["chmod a=u notes.txt", "bash", "linux"], ["chmod o+u ~/Documents", "bash", "linux"], ["chmod g=u ~", "bash", "linux"],
+    ] as const) {
+      const d = decide(cmd, { shell, context });
+      expect(d.verdict, cmd).toBe("ask");
+      expect(d.rules, cmd).toContain("system.permissions");
+    }
+  });
+
+  it("still runs a read-only grant below the home folder, the user's own on it, and a copy kept to the group", () => {
+    for (const [cmd, shell, context] of [
+      ["icacls C:\\Users\\ana\\notes.txt /grant Everyone:R", "cmd", "win32"], ["icacls C:\\Users\\ana /grant ana:F", "cmd", "win32"],
+      ["chmod g=u notes.txt", "bash", "linux"], ["chmod u=g notes.txt", "bash", "linux"],
+    ] as const) expect(decide(cmd, { shell, context }).verdict, cmd).toBe("run");
+  });
+});
+
 describe("read-only and everyday commands that asked (commands-remote-r12-4)", () => {
   it("runs reads of gcloud's and az's products, dry runs, listings and a launcher's own options", () => {
     for (const cmd of [

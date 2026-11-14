@@ -6865,6 +6865,9 @@ function modeOpens(mode: string | null, home: boolean): boolean {
     const [, who, op, perms] = m;
     if (op === "-") return false;
     const others = /[oa]/.test(who);
+    // A copy of a class's bits (`o=u`, `a=u`) gives what that class has, which may be write: a doubt, so it opens
+    // (r12-commands-x12-7).
+    if (/^[ugo]$/.test(perms)) return others || (home && /[goa]/.test(who));
     return (others && perms.includes("w")) || (home && /[goa]/.test(who) && perms !== "");
   });
 }
@@ -11209,12 +11212,15 @@ reg(NATIVE, ["icacls", "cacls", "xcacls", "takeown"], h => {
   // (commands-remote-c12-2): read-only grants and the user's own stay ordinary.
   else if (flags.some(f => /^\/grant/.test(f))) {
     const self = ownAccount(h.sc);
+    // The home folder itself opened to another account at all, as chmod and setfacl ask (r12-commands-x12-7).
+    const own = h.sc.home;
+    const home = !!own && !!obj && obj.abs !== null && isUnder(obj.abs, own, h.sc.path) && isUnder(own, obj.abs, h.sc.path);
     const grants = h.args.filter((_a, k) => k > 0 && /^\/grant/i.test(h.args[k - 1].v ?? "")).map(a => a.v);
     if (grants.some(g => {
       if (g === null) return true;
       const at = g.lastIndexOf(":");
       const who = g.slice(0, at).replace(/^.*\\/, "").replace(/^["']|["']$/g, "").toLowerCase();
-      return at < 0 || (who !== self && who !== "%username%" && /\b(F|M|W|D|WD|AD|DC|WDAC|WO|GA|GW)\b/.test(g.slice(at + 1).toUpperCase().replace(/[()]/g, " ")));
+      return at < 0 || (who !== self && who !== "%username%" && (home || /\b(F|M|W|D|WD|AD|DC|WDAC|WO|GA|GW)\b/.test(g.slice(at + 1).toUpperCase().replace(/[()]/g, " "))));
     })) h.e.add("system", "system.permissions", OPENS_SAYS);
   }
   if (flags.some(f => f === "/save")) { const out = h.args[h.args.findIndex(a => (a.v ?? "").toLowerCase() === "/save") + 1]; if (out) h.e.usePath(out, "write", h.sc); }
