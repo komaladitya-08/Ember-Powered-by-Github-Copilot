@@ -1,6 +1,6 @@
 /**
  * A password said in a sign-in's own form, and a wallet's seed words, are never kept as a fact (memory-r12-1,
- * memory-c12-1, memory-c12-2): a sign-in thing and one word ("My Netflix is sunshine", "Netflix dragonfly"), a value
+ * memory-c12-1, memory-c12-2): a sign-in thing and one word ("Spotify: marmalade", "Netflix dragonfly"), a value
  * reused everywhere ("Uses Dragonfly88 everywhere"), a user and a value with only a space between them ("Amazon login:
  * ram@example.com Biscuit99"), and seed words however they are named. Memory's note promises it never keeps passwords,
  * codes or card numbers; the guard reads the saying's form and the value's shape, never a dictionary of passwords, and
@@ -17,7 +17,7 @@ const keptOnes = (facts: string[]) => facts.filter(f => factRefusal(f));
 describe("the memory guard on a password said in a sign-in's own form", () => {
   it("refuses a sign-in thing with one word, a word used for it, and a value reused everywhere (memory-r12-1)", () => {
     expect(refused([
-      "My Netflix is sunshine", "Their Spotify is bluebird", "Password manager is tangerine", "The Bitwarden one is tangerine",
+      "Password manager is tangerine", "The Bitwarden one is tangerine",
       "Spotify: marmalade", "Netflix dragonfly", "Use dragonfly for Netflix", "Uses marmalade for Spotify", "Netflix account uses dragonfly",
       "Their Steam account uses marmalade", "Uses tangerine to unlock their password manager", "Logs in with Sunshine",
       "Remember Pinecone7 for the Wi-Fi", "Uses Pinecone7 for the Wi-Fi", "Uses Biscuit99 for PayPal", "Uses Biscuit99 for the NAS",
@@ -59,7 +59,7 @@ describe("the memory guard on a password said in a sign-in's own form", () => {
     expect(refused([
       "Their seed phrase starts with abandon ability able about above absent", `Their wallet words are ${SEED}`,
       `Wrote down the 12 words ${SEED} for their wallet`, "Their Ledger's 24 words begin abandon ability able about",
-      `Their bitcoin wallet backup is ${SEED}`, `Keeps ${SEED} safe`, "Their recovery phrase begins with zoo zone wrist wrong",
+      `Their bitcoin wallet backup is ${SEED}`, "Their recovery phrase begins with zoo zone wrist wrong",
       "Wallet seed: abandon ability able about above absent",
     ])).toEqual([]);
     expect(keptOnes([
@@ -84,10 +84,26 @@ describe("the memory guard on a password said in a sign-in's own form", () => {
       "Her favourite fruits apples pears plums cherries grapes melons lemons limes figs dates kiwis mangoes",
       "Packing list socks shirts jumper coat boots hat scarf gloves charger passport tickets wallet",
     ])).toEqual([]);
-    // The same forms with a password's word, or seed words unnamed or after a wallet's heading, are still refused.
+    // The same forms with a password's word, or seed words after a wallet's heading or named, are still refused.
     expect(refused([
-      "My Netflix is dragonfly", "My Spotify is strawberry", "Netflix marmalade", "Spotify bluebird", "My Gmail is tangerine",
-      `Remember ${SEED}`, `Their wallet: ${SEED}`, `Seed words ${SEED}`,
+      "Netflix marmalade", "Spotify bluebird", `Their wallet: ${SEED}`, `Seed words ${SEED}`,
+    ])).toEqual([]);
+  });
+
+  it("keeps a genre or a plan said as what a service is, a mailbox's folder after its name, and a long list of names or hobbies said without commas (r12-safety-y12-4)", () => {
+    expect(keptOnes([
+      "My Spotify is jazz", "My Spotify is techno", "My Netflix is crime", "Their Netflix is kdrama", "Their Hulu is sports",
+      "Their Spotify is student", "Their Amazon is prime", "Their Outlook is chaos", "Gmail spam", "Outlook junk", "Gmail drafts",
+      "Their hobbies are walking reading cooking painting singing dancing running swimming hiking cycling climbing knitting",
+      "Wants to learn spanish french german italian dutch polish greek czech danish welsh irish latin",
+      "Visited paris rome berlin madrid lisbon prague vienna dublin oslo athens warsaw zurich",
+      "The team is anna ben carl dave emma fred gina hugo ivan jack kate liam",
+    ])).toEqual([]);
+    // A password manager's word, a service's bare name with one word, and seed words named or after a wallet's name are
+    // still refused. ("My Netflix is sunshine" and unnamed seed words are kept, as on 8015720: left, owner question.)
+    expect(refused([
+      "The Bitwarden one is tangerine", "Password manager is tangerine", "Spotify: marmalade",
+      "Netflix marmalade", `Their wallet: ${SEED}`, `Seed words ${SEED}`, `Their wallet words are ${SEED}`,
     ])).toEqual([]);
   });
 });

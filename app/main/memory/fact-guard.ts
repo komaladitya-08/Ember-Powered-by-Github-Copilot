@@ -336,7 +336,7 @@ function credentialValue(text: string): "key" | "password" | null {
 // ───── A password said in a sign-in's own form, and a wallet's seed words (memory-r12-1, memory-c12-1, memory-c12-2) ─────
 //
 // The rules above read a lone word as a password after a credential's name or a password's shape. A dictionary word
-// said where a sign-in's value goes ("My Netflix is sunshine", "Discord: hunter2", "Netflix account uses dragonfly"), a
+// said where a sign-in's value goes ("Spotify: marmalade", "Discord: hunter2", "Netflix account uses dragonfly"), a
 // value reused everywhere ("Uses Dragonfly88 everywhere"), a user and a value with only a space between them ("Amazon
 // login: ram@example.com Biscuit99") and a wallet's seed words said any way ("Their wallet words are abandon ability…")
 // are read here by the saying's form and the words' shape, never by a dictionary of passwords.
@@ -358,7 +358,7 @@ const STATE_ENDING = /(?:able|ible|ous|ful|less|ive|ish|ed|ing|est|al|ic|ary|ory
  * What people say a service holds or does with its name ("Netflix shows", "Spotify playlists", "Slack huddles",
  * "Netflix tonight"): never a password beside it (r12-safety-x12-5).
  */
-const SERVICE_TALK = /^(?:shows?|series|films?|movies?|documentar(?:y|ies)|episodes?|seasons?|playlists?|podcasts?|albums?|songs?|tracks?|music|radio|audiobooks?|channels?|huddles?|threads?|messages?|calls?|meetings?|chats?|emails?|mails?|inbox|photos?|videos?|games?|tonight|today|later|binge|night|marathon|subscription|account|plan|profile|app|wrapped|originals?|kids|family|premium|deals?|orders?|returns?|purchases?)$/i;
+const SERVICE_TALK = /^(?:shows?|series|films?|movies?|documentar(?:y|ies)|episodes?|seasons?|playlists?|podcasts?|albums?|songs?|tracks?|music|radio|audiobooks?|channels?|huddles?|threads?|messages?|calls?|meetings?|chats?|emails?|mails?|inbox|spam|junk|drafts|archive|photos?|videos?|games?|tonight|today|later|binge|night|marathon|subscription|account|plan|profile|app|wrapped|originals?|kids|family|premium|deals?|orders?|returns?|purchases?)$/i;
 /** Products named with their version, which a person may use everywhere ("Windows11", "Office365"): a pass for VALUE_EVERYWHERE's product shape. */
 const KNOWN_PRODUCT = /^(?:windows|win|office|iphone|ipad|pixel|galaxy|fedora|ubuntu|debian|rhel|centos|rocky|alma|python|java|jdk|node|php|perl|ruby|excel|photoshop|macos|ios|android|xbox|ps|playstation|switch|canon|nikon|sony|kotlin|swift|net|dotnet|vue|react|angular|django|rails|postgres|mysql|redis|chrome|firefox|safari|edge|opera|vim|emacs|vscode|outlook|teams|zoom|figma|tailwind|bootstrap|gpt|llama|gemini|kde|gnome|plasma|qt|gtk|lua|go|rust|cuda|opengl|vulkan|directx|dx|hdmi|usb|wifi|wpa|bt|ipv|http|tls|ssl)\d/i;
 /** A browser or an app a person signs in through, never a password ("Logs in with Chrome", "Signs in with Duo"). */
@@ -381,12 +381,19 @@ function signInWord(raw: string): boolean {
 }
 
 /**
- * The accounts that "is" a word may be the password of ("My Netflix is sunshine"): services and password managers,
+ * The accounts that "is" a word may be the password of ("My Netflix is x7Kq9pLm"): services and password managers,
  * never a network, a router, a bank or a database, which "is" what they are ("The Wi-Fi is mesh", "Their bank is local").
  */
 const SIGN_IN_ACCOUNT = String.raw`(?:netflix|spotify|hulu|disney\+?|amazon|prime\s+video|gmail|outlook|hotmail|yahoo|icloud|apple\s+id|paypal|venmo|ebay|steam|xbox|playstation|psn|nintendo|uber|airbnb|dropbox|facebook|instagram|twitter|linkedin|reddit|discord|github|gitlab|jira|slack|zoom|bitwarden|1password|lastpass|keepass(?:xc)?|dashlane|nordpass|okta)`;
-/** "My Netflix is sunshine", "Discord: hunter2", "The cabin Wi-Fi is dragonfly", "Password manager is tangerine", "The Bitwarden one is tangerine": a sign-in thing, then one word ending the fact. */
+/** "Spotify: marmalade", "Discord: hunter2", "The cabin Wi-Fi is dragonfly", "Password manager is tangerine", "The Bitwarden one is tangerine": a sign-in thing, then one word ending the fact. */
 const THING_IS_WORD = new RegExp(String.raw`^\s*(?:${WHOSE}\s+)?(?:[\w'’-]+\s+)?(?:(?:${SIGN_IN_THING})(?:\s+(?:one|pass))?(?:\s*[:=]\s*|\s+[-–—]\s+)|(?:${SIGN_IN_ACCOUNT}|password\s+manager)(?:\s+(?:one|pass))?\s+(?:is|was|uses)\s+)["'“]?(?<v>[^\s"'”,;!?]{2,40}?)["'”]?\s*[.!]?\s*$`, "i");
+/**
+ * A service's account said as what it "is" ("My Spotify is jazz", "Their Amazon is prime"): its lone word is a genre, a
+ * plan or a mood far more often than a password, so only a password's shape is read there (r12-safety-y12-4).
+ */
+const ACCOUNT_IS = new RegExp(String.raw`^\s*(?:${WHOSE}\s+)?(?:[\w'’-]+\s+)?(?:${SIGN_IN_ACCOUNT})(?:\s+(?:one|pass))?\s+(?:is|was)\s+`, "i");
+/** A password manager named, whose lone word can only be what unlocks it ("The Bitwarden one is tangerine"). */
+const PASSWORD_MANAGER = /\b(?:bitwarden|1password|lastpass|keepass(?:xc)?|dashlane|nordpass|password\s+manager)\b/i;
 // A login's or an account's lone word may be the user's name ("The GitHub login is octocat": safety-privacy-v4-1), so
 // THING_IS_WORD takes none of those words; NAMED_LONE reads a login's lone word where it can only be the password.
 /** "Netflix dragonfly": a service and a lower-case word alone (a capitalised one is a product: "Steam Deck"). */
@@ -414,41 +421,33 @@ const ACCESS_WITH_NAME = new RegExp(String.raw`\b${ACCESS}\b[^.;!?\n]{0,80}?\b(?
 const SEED_NAMED = /\b(?:(?:seed|recovery|mnemonic|backup|secret|wallet)\s+(?:phrase|words?|seed|sentence)|wallet\s+backup|(?:12|twelve|15|fifteen|18|eighteen|24|twenty[- ]four)\s+(?:secret\s+)?words)\b/i;
 /** Grammar of three letters or more, which no seed word list holds (BIP-39's words are 3 to 8 letters, none of these). */
 const SEED_STOP = /^(?:the|and|for|with|that|this|from|are|was|were|has|have|had|their|they|you|your|his|her|its|our|not|she|him|them|who|what|when|where|which|there|then|than|into|been|does|did|would|could|should|these|those|very|just)$/;
-/**
- * What says the words after it are a list of things, not a wallet's seed (r12-safety-x12-5): a heading ("Shopping
- * list:", "Plants on the balcony:", "Favourite words:") or a list named ("my shopping list milk eggs…").
- */
-const LIST_CUE = /:|\b(?:list|lists|words|names|items|things|ingredients|groceries|shopping|favourites?|favorites?|spelling|vocab(?:ulary)?|plants|herbs|flowers|box|basket|order|menu|bands|songs|books|films|games|toys)\b/i;
-/** A wallet named before the words ("Their wallet: abandon ability…"): a heading there is the seed's, never a list's. */
+/** A wallet named before the words ("Their wallet: abandon ability…"): a long run of short words there is its seed. */
 const WALLET_WORD = /\b(?:wallet|ledger|trezor|metamask|bitcoin|btc|crypto|ethereum|eth|mnemonic|seed|recovery)\b/i;
-/** A plural noun's ending ("eggs", "potatoes"): a seed word list has almost none (its words ending in s are "-ss" or "-us"). */
+/** A plural noun's ending ("eggs", "potatoes"). */
 const PLURAL = /[^su]s$/;
 /**
- * A wallet's seed words, by their shape (memory-c12-2): a run of twelve or more lower-case words of three to eight
- * letters with no grammar between them, not after a list's heading and with no more than two plural nouns among them
- * (r12-safety-x12-5: a shopping list, a veg box, a child's spelling words, said without commas as speech writes them);
- * or, where the seed words are named, a run of four or more of which three are no talk about keeping them ("…starts
- * with abandon ability able about").
+ * A wallet's seed words, by their shape where a wallet or its seed is named (memory-c12-2): a run of twelve or more
+ * lower-case words of three to eight letters with no grammar between them, or, where the seed words are named, a run of
+ * four or more of which three are no talk about keeping them ("…starts with abandon ability able about"). Unnamed, such a
+ * run is a list of hobbies, places or names said without commas as speech writes them (r12-safety-y12-4).
  */
 function seedWords(text: string): boolean {
   const named = SEED_NAMED.test(text);
-  let run = 0, plain = 0, plural = 0, before = "";
+  let run = 0, plain = 0, wallet = named;
   const said: string[] = [];
   for (const raw of text.split(/\s+/)) {
     const w = raw.replace(/^["'“(]+|["'”),.;:!?]+$/g, "");
     const seedLike = /^[a-z]{3,8}$/.test(w) && !SEED_STOP.test(w);
     if (seedLike) {
-      if (run === 0) before = said.join(" ");
-      // A list named in the run's own first words ("Remember my shopping list milk eggs…") heads it too.
-      if (run < 2) before += ` ${w}`;
+      // A wallet named before the run, never one of its own words ("Packing list socks … passport tickets wallet").
+      if (run === 0) wallet = named || WALLET_WORD.test(said.join(" "));
       run++;
       if (!ABOUT_SECRET.has(w) && !NOT_LONE.has(w)) plain++;
-      if (PLURAL.test(w)) plural++;
-    } else { run = 0; plain = 0; plural = 0; }
+    } else { run = 0; plain = 0; }
     said.push(raw);
-    if ((run >= 12 && (named || ((!LIST_CUE.test(before) || WALLET_WORD.test(before)) && plural <= 2))) || (named && run >= 4 && plain >= 3)) return true;
+    if ((run >= 12 && wallet) || (named && run >= 4 && plain >= 3)) return true;
     // Punctuation after a word ends its run: a list ("hiking, camping, …") is no seed.
-    if (/[,.;:!?)]$/.test(raw)) { run = 0; plain = 0; plural = 0; }
+    if (/[,.;:!?)]$/.test(raw)) { run = 0; plain = 0; }
   }
   return false;
 }
@@ -461,6 +460,8 @@ function signInForm(text: string): boolean {
     // A handle where people name theirs ("Their GitHub is octocat") is no password; nor, after a service's bare name,
     // what it holds or a plural noun ("Netflix shows", "Spotify podcasts": r12-safety-x12-5) unless shaped like one.
     if (re === THING_THEN_WORD && v && !passwordShaped(word(v)) && (SERVICE_TALK.test(word(v)) || PLURAL.test(word(v)))) continue;
+    // What a service's account "is" is read only in a password's shape, or where a password manager is named.
+    if (re === THING_IS_WORD && v && !passwordShaped(word(v)) && ACCOUNT_IS.test(text) && !PASSWORD_MANAGER.test(text)) continue;
     if (v && signInWord(v) && !(re === THING_IS_WORD && HANDLE_PLACE.test(text) && HANDLE.test(word(v)))) return true;
   }
   for (const re of [VALUE_EVERYWHERE, WHAT_EVERYWHERE]) {
