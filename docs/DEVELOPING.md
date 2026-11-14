@@ -2888,7 +2888,8 @@ downloads it on first use per target and checks it before sending.
   "What Ember doesn't know"). A program, or a tool's verb or option, the classifier has no row for is class `unknown`
   and is announced by name in every mode (decide.ts `UNKNOWN_ANNOUNCED`); it never asks for that alone. What keeps a
   dangerous one asking is recognising what it does (and the user's own words against it: intent.ts `namesUnknown`
-  names it by its program, so "don't run frobtool" makes it ask, and Autopilot refuse it): a new tool goes into a row, the tables, or `unknownDoes`'s word lists
+  names it by its program, so "don't run frobtool", "stop using frobtool", "refrain from frobtool" and "leave frobtool
+  out of it" make it ask, and Autopilot refuse it: intent.ts `NEGATION`, flow.ts `NEGATED`/`SAYS_NOT`, r11-commands-y11-7): a new tool goes into a row, the tables, or `unknownDoes`'s word lists
   in classify.ts, never into a question for not knowing it. In Autopilot only the organisation's "ask" and the user's own
   "ask every command" still ask (autopilot.ts `autopilotAsks`); a secret's command runs with its output withheld from
   the model (`withheld`, flow.ts `WITHHELD_OUTPUT`, audited `outputWithheld`; one that also writes a file Ember can

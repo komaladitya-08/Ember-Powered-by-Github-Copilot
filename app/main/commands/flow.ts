@@ -690,7 +690,7 @@ export const LIKE_REFUSED_LINE = "You said no to something like this earlier in 
 export const LIKE_REFUSED_RULE = "refused-like";
 
 /** Words that turn a part of a request round: "do not push", "don't delete src", "never force", "everything except build". */
-const SAYS_NOT = /(^|[^\p{L}\p{N}])(do\s+not|don['’]?t|does\s+not|doesn['’]?t|never|not|without|except|no|nothing|avoid)(?=$|[^\p{L}\p{N}])/giu;
+const SAYS_NOT = /(^|[^\p{L}\p{N}])(do\s+not|don['’]?t|does\s+not|doesn['’]?t|never|not|without|except|no|nothing|avoid|(?:stop|quit)\s+using|refrain\s+from)(?=$|[^\p{L}\p{N}])/giu;
 
 /**
  * Words that hold a part of a request back without a "not": "leave the build folder alone", "keep build", "hold off on
@@ -724,7 +724,7 @@ function namesObject(findings: readonly Finding[], part: string): boolean {
 }
 
 /** A plain no in a part of the user's words ("don't", "dont", "never", "nothing should be…", "push nothing"). */
-const NEGATED = /(?:^|[^\p{L}])(?:don[’']?t|do not|never|nothing|none|not|no)(?![\p{L}])/iu;
+const NEGATED = /(?:^|[^\p{L}])(?:don[’']?t|do not|never|nothing|none|not|no|(?:stop|quit)\s+using|refrain\s+from)(?![\p{L}])/iu;
 /** The verbs that name a kind of step, by the finding's class (r10-commands-y10-9). */
 const KIND_VERBS: Readonly<Partial<Record<Finding["cls"], RegExp>>> = {
   destroy: /(?:^|[^\p{L}])(?:delet|remov|eras|wipe|purg|discard|destroy|drop|rm(?![\p{L}]))/iu,
@@ -748,7 +748,8 @@ function negatedKind(findings: readonly Finding[], words: string): boolean {
     if (verb === undefined) return false;
     if (f.cls === "publish" && KEEP_LOCAL.test(part)) return true;
     if (!NEGATED.test(part) || !verb.test(part)) return false;
-    const rest = part.toLowerCase().split(/[^\p{L}\p{N}'’_.-]+/u).filter(w => w !== "" && !NEGATED.test(w) && !verb.test(w) && !GENERIC.has(w));
+    // ("stop using", "refrain from" are one no: r11-commands-y11-7.)
+    const rest = part.toLowerCase().replace(/(stop|quit)\s+using|refrain\s+from/gu, "not").split(/[^\p{L}\p{N}'’_.-]+/u).filter(w => w !== "" && !NEGATED.test(w) && !verb.test(w) && !GENERIC.has(w));
     return rest.length === 0;
   }));
 }

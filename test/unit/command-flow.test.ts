@@ -3201,6 +3201,12 @@ describe("a command that would ask, in Autopilot (autopilot.ts; modes-D2, modes-
     ["no frobtool please, just build it", "/opt/tools/frobtool.exe build", undefined],
     ["leave frobtool alone, just build it", "frobtool build", undefined],
     ["", "frobtool build", "don't run frobtool"],
+    // More ways of saying it (r11-commands-y11-7).
+    ["Stop using frobtool.", "frobtool build", undefined],
+    ["Quit using frobtool.", "frobtool build", undefined],
+    ["Please refrain from frobtool.", "frobtool build", undefined],
+    ["Stop using git push.", "git push origin main", undefined],
+    ["Refrain from pushing.", "git push origin main", undefined],
   ])("refuses in Autopilot, and asks elsewhere, a program Ember doesn't know that the user's words rule out: %s (r11-commands-x11-1)", async (words, command, spoken) => {
     setCommandJudge(null);
     const o = { words, ...(spoken !== undefined ? { spoken } : {}) };

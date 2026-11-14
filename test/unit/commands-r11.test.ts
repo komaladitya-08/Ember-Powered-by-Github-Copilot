@@ -243,6 +243,23 @@ describe("a workload's manifest or helm's values written out whole (commands-rem
   });
 });
 
+describe("more ways of saying not to use a program (r11-commands-y11-7)", () => {
+  it.each<[string, string]>([
+    ["frobtool build", "Stop using frobtool."], ["frobtool build", "Quit using frobtool."], ["frobtool build", "Please refrain from frobtool."],
+    ["frobtool build", "Build it but leave frobtool out of it."], ["git push origin main", "Stop using git push."], ["git push origin main", "Refrain from pushing."],
+  ])("asks before %s after “%s”, saying they didn't ask for it (r11-commands-y11-7)", (cmd, words) => {
+    const d = decide(cmd, { words });
+    expect(d.verdict, `${cmd} / ${words}`).toBe("ask");
+    expect(d.says, `${cmd} / ${words}`).toContain("You didn't ask for this.");
+  });
+
+  it("still announces where the words only stop something else (r11-commands-y11-7)", () => {
+    for (const [cmd, words] of [["frobtool build", "Stop the dev server, then build it with frobtool."], ["frobtool build", "Stop using make, run frobtool instead."]]) {
+      expect(decide(cmd, { words }).verdict, `${cmd} / ${words}`).toBe("announce");
+    }
+  });
+});
+
 describe("a program Ember doesn't know, after the user's words against it (r11-commands-x11-1)", () => {
   it("asks, saying they didn't ask for it, where their words name it and say not to; announces it otherwise", () => {
     for (const [cmd, words] of [

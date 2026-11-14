@@ -976,7 +976,7 @@ function scriptNamed(name: string, w: Words): boolean {
 const KEEPS = /(^|[^\p{L}\p{N}])((everything|anything|all)\s+but|other\s+than|apart\s+from|aside\s+from|excluding|besides|instead\s+of|rather\s+than|keep|keeping|leave|leaving|spare|sparing|preserve|preserving)(?=$|[^\p{L}\p{N}])/iu;
 
 /** Words that turn a request around ("don't delete build", "never push to main"): nothing announces then. */
-const NEGATION = /(^|[^\p{L}\p{N}])(not|never|no|none|nothing|don['’]?t|doesn['’]?t|didn['’]?t|won['’]?t|wouldn['’]?t|shouldn['’]?t|mustn['’]?t|isn['’]?t|aren['’]?t|can['’]?t|cannot|without|except|avoid|neither|nor|unless)(?=$|[^\p{L}\p{N}])/iu;
+const NEGATION = /(^|[^\p{L}\p{N}])(not|never|no|none|nothing|don['’]?t|doesn['’]?t|didn['’]?t|won['’]?t|wouldn['’]?t|shouldn['’]?t|mustn['’]?t|isn['’]?t|aren['’]?t|can['’]?t|cannot|without|except|avoid|neither|nor|unless|(stop|quit)\s+using|refrain\s+from|leave\s+\S+(\s+\S+)?\s+out)(?=$|[^\p{L}\p{N}])/iu;
 
 /**
  * A condition the step waits on ("if the build fails", "only after I confirm", "once the tests pass", "when I tell you"),
