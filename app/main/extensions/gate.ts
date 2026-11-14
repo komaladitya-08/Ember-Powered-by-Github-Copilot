@@ -13,8 +13,9 @@
  *   pattern that reaches it, "~/.config/emb?r/**"): deny, in every mode, as the same path typed in an app or named in a
  *   command is (integ-x-2, integ-y-1). A tool that changes things given the folder that holds one ("~/.config",
  *   "%LOCALAPPDATA%", the home): deny, as the classifier refuses a command that moves or deletes it. Arguments that
- *   name one of Ember's own files or folders by name only ("settings.json", "audit"), whose they are can't be told:
- *   ask every time, read-only tools too, never announced, and Autopilot, which has no question to put, refuses.
+ *   name one of Ember's own files or folders by name only ("settings.json", "audit"), whose they are can't be told,
+ *   and text of more than one line that mentions the folder (a file's content, not its path): ask every time, saying
+ *   why, read-only tools too, never announced, and Autopilot, which has no question to put, refuses.
  * - A tool that says it is read-only (annotations only ever make a call stricter), from an item the user agreed to,
  *   in a task no injected text has tainted: allow, and audit.
  * - Anything else (changing, destructive, open-world, unknown): ask every time, never "Always", with a question Ember
@@ -100,9 +101,10 @@ const ARG_PATTERNS = 256;
 /**
  * What a call's arguments name of Ember's own (integ-x-2, integ-y-1): every string, keys included, is read as a typed
  * path is (namesEmberData, namesEmberFile) and as a path the commands classifier would judge (emberPathReach, from
- * `place`: this computer, its user's home, and the server's own folder a relative path is in). Arguments too many or
- * too deep to read whole count as "may" (fail closed). `holds`: a string is a folder above Ember's data or policy
- * folder, or a pattern that may match one.
+ * `place`: this computer, its user's home, and the server's own folder a relative path is in). Text of more than one
+ * line is a file's content, never one path, so a mention of the folder in it asks ("may") unless the whole of it,
+ * read as one path, is in the folder (integ-y-2). Arguments too many or too deep to read whole count as "may" (fail
+ * closed). `holds`: a string is a folder above Ember's data or policy folder, or a pattern that may match one.
  */
 export function emberReachOf(args: unknown, place: EmberPlace = { os: "darwin" }): { data: "names" | "may" | null; holds: boolean } {
   const strings: string[] = [];
@@ -117,14 +119,15 @@ export function emberReachOf(args: unknown, place: EmberPlace = { os: "darwin" }
   try { walk(args, 0); } catch { whole = false; /* a getter that throws: not read whole */ }
   // Case doesn't count in a path on Windows and macOS ("EMBER"); with no place, judged as if it doesn't.
   const caseless = place.os !== "linux";
+  const content = (t: string) => /[\n\r]/.test(t);
   let patterns = 0;
   const reach = strings.map(t => {
     if (/[*?[]/.test(t) && ++patterns > ARG_PATTERNS) { whole = false; return null; }
     return emberPathReach(t, place);
   });
   const holds = reach.includes("holds");
-  if (reach.includes("names") || strings.some(t => namesEmberData(t))) return { data: "names", holds };
-  if (!whole || strings.some(t => namesEmberFile(t, caseless))) return { data: "may", holds };
+  if (reach.includes("names") || strings.some(t => !content(t) && namesEmberData(t))) return { data: "names", holds };
+  if (!whole || strings.some(t => namesEmberFile(t, caseless) || (content(t) && namesEmberData(t)))) return { data: "may", holds };
   return { data: null, holds };
 }
 
@@ -210,8 +213,16 @@ export function argsDetail(args: unknown, max = SUMMARY_MAX): string | undefined
   return writeOutHidden(JSON.stringify(JSON.parse(text), null, 2));
 }
 
-/** The question for a call the gate asks about: built by Ember from the request alone; no "Always". */
-export function gateQuestion(extName: string, toolName: string, args: unknown): Question {
+/** What a question adds, in Ember's words, when it asks because of what the call may reach (classify's reason). */
+const ASKS_BECAUSE: Partial<Record<string, string>> = {
+  "ember-data": "It may reach my own settings, audit log or policy, which are for you only.",
+};
+
+/**
+ * The question for a call the gate asks about: built by Ember from the request alone; no "Always". `reason`, the
+ * gate's (classify), says why where the call may reach Ember's own files (integ-y-2), as What Ember did says it.
+ */
+export function gateQuestion(extName: string, toolName: string, args: unknown, reason?: string): Question {
   const summary = argsSummary(args, SUMMARY_MAX);
   // What the sentence cuts off is there to read whole, and Allow waits until it has all been in view (confirm.ts).
   const detail = argsDetail(args);
@@ -221,7 +232,7 @@ export function gateQuestion(extName: string, toolName: string, args: unknown): 
     // No "Your task:" line: `context` is the plugin, which the sentence already names, never what the person asked
     // for (integrations-r9-6: the card read "Your task: fake.").
     taskLine: "",
-    prompt: `Use “${plainName(toolName, 40)}” from ${plainName(extName)}?${summary ? ` With ${summary}.` : ""}`,
+    prompt: `Use “${plainName(toolName, 40)}” from ${plainName(extName)}?${summary ? ` With ${summary}.` : ""}${reason && ASKS_BECAUSE[reason] ? ` ${ASKS_BECAUSE[reason]}` : ""}`,
     options: [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }],
     ...(detail ? { detail } : {}),
   };

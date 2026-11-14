@@ -908,8 +908,10 @@ it builds on:
   path typed in an app or named in a command is. So is a call of a tool that changes things given the folder that
   holds it (`~/.config`, `%LOCALAPPDATA%`, `~/Library/Application Support`, the home), which moving or deleting takes
   Ember's data with (integ-y-1). One that names one of Ember's files or folders by name only (`settings.json`, `audit`,
-  `EMBER` on Windows and macOS) asks every time, a read-only tool's too, and Autopilot refuses it (gate.ts
-  `emberReachOf`, integ-x-2: a file tool could rewrite settings.json, announced, in Autopilot).
+  `EMBER` on Windows and macOS), or a file's content that only mentions the folder, asks every time, a read-only
+  tool's too, saying why (“It may reach my own settings, audit log or policy, which are for you only.”), and
+  Autopilot refuses it (gate.ts `emberReachOf`, integ-x-2, integ-y-2: a file tool could rewrite settings.json,
+  announced, in Autopilot).
 - **Taint lasts the conversation**, across reconnects; it ends when the conversation is forgotten.
 - **Results are untrusted.** `onPostToolUse` replaces each result with `<extension_result untrusted="true">` text (`<`
   escaped, capped at 60 000 characters, images dropped); `injection.ts` scans it, and a flagged result makes every

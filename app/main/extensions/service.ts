@@ -1101,7 +1101,7 @@ export class ExtensionsService implements ExtensionsApi {
     if (verdict === "announce" && before.verdict === "announce" && this.said(gateAnnouncement(e!.item.name))) return { permissionDecision: "allow" };
     const confirmer = this.o.confirmer();
     if (!confirmer) return deny("Ember can't ask the user right now, so it didn't do this.");
-    const question = gateQuestion(e!.item.name, e!.tool.name, input.toolArgs);
+    const question = gateQuestion(e!.item.name, e!.tool.name, input.toolArgs, before.reason);
     const answer = await confirmer.ask(question, this.stopAsks.signal).catch(() => null);
     // The question may have been up a while: the item, its pin and the live tool are checked again before a yes counts.
     const shownAfter = answer === "once" && await this.shownNow(gate, input.toolName, generation);

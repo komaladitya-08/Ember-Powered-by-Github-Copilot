@@ -258,6 +258,17 @@ describe("the extensions gate", () => {
     expect(emberDataOf({ items: Array.from({ length: 300 }, (_, i) => `/tmp/*${i}`) }, linux)).toBe("may");
   });
 
+  it("asks, saying why, about a file's content that only mentions Ember's data folder, and still refuses a path into it (integ-y-2)", () => {
+    // More than one line is a file's content, never one path: it asks, and Autopilot refuses (classify's "may").
+    expect(emberDataOf({ path: "/home/u/docs/ember.md", content: "# Where Ember keeps things\n\nSettings live in ~/.config/ember/settings.json.\n" })).toBe("may");
+    // A path read whole, even of more than one line, and one line that names the folder, are still refused.
+    expect(emberDataOf({ path: "/home/u/.config/ember/notes\nmore" }, { os: "linux", home: "/home/u" })).toBe("names");
+    expect(emberDataOf({ text: "Settings live in ~/.config/ember/settings.json." })).toBe("names");
+    const q = gateQuestion("files", "write_file", { path: "settings.json" }, "ember-data");
+    expect(q.prompt).toBe('Use “write_file” from files? With "{\\"path\\":\\"settings.json\\"}". It may reach my own settings, audit log or policy, which are for you only.');
+    expect(gateQuestion("files", "write_file", { path: "a" }, "changes").prompt).toBe('Use “write_file” from files? With "{\\"path\\":\\"a\\"}".');
+  });
+
   it("names the extension the user installed in its announcement, never the tool or its arguments", () => {
     expect(gateAnnouncement("Slack <b>tools</b>\u202e")).toBe("Using a tool from Slack btools/b, without asking: Autopilot is on.");
     expect(gateAnnouncement("\u0007")).toBe("Using a tool from an extension, without asking: Autopilot is on.");
@@ -1200,6 +1211,15 @@ describe("ExtensionsService", () => {
     expect(await call(ext, "fake-lookup", { q: "~/.config" })).toEqual({ permissionDecision: "allow" });
     expect(await call(ext, "fake-post_message", { path: "out/report.txt" })).toEqual({ permissionDecision: "allow" });
     expect(said).toHaveLength(1);
+  });
+
+  it("says why it asks about a call that may reach one of Ember's own files (integ-y-2)", async () => {
+    const s = await installed({ home: "/home/u" });
+    const ext = s.forSession()!;
+    shown(ext);
+    answers = ["deny"];
+    expect((await call(ext, "fake-lookup", { q: "settings.json" })).permissionDecision).toBe("deny");
+    expect(asked).toEqual(['Use “lookup” from fake? With "{\\"q\\":\\"settings.json\\"}". It may reach my own settings, audit log or policy, which are for you only.']);
   });
 
   it("gives no new conversation an extension's tools after a fill from the vault, and tells Home (integrations-r10-2)", async () => {

@@ -242,8 +242,9 @@ docs/DEVELOPING.md "Extensions: the runtime and the gate" is the design; app/mai
   by the classifier's own `isEmberPath` and `globReaches` through policy/ember-paths.ts's `emberPathReach` (integ-y-1).
   A changing tool given a folder that holds one (`~/.config`, `%LOCALAPPDATA%`, the home: `holdsEmberPath`) is denied
   too (`EMBER_DATA_HELD`); a read-only one is decided as before. One that names Ember's files or folders by name only
-  (`namesEmberFile`; “EMBER” too on Windows and macOS) asks every time, read-only tools too, and Autopilot denies it
-  (integ-x-2).
+  (`namesEmberFile`; “EMBER” too on Windows and macOS), or text of more than one line that only mentions the folder (a
+  file's content, never one path), asks every time, read-only tools too, its question saying why (`gateQuestion`'s
+  `reason`: integ-y-2), and Autopilot denies it (integ-x-2).
 - **Results** are rewritten by `wrapResult()` (untrusted, `<` escaped, capped, no images) and scanned by injection.ts.
   Failures can't be rewritten: `onPostToolUseFailure` adds `failureNote()` and taints the conversation. Taint lives on
   the service for the whole conversation (reconnects included), never on one session.
