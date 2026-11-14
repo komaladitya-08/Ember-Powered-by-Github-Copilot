@@ -328,6 +328,12 @@ describe("every converter's output saved over a file that is there (r12-commands
     expect(decide("cwebp logo.png -o hero.webp", { missing: ["/home/ana/proj/hero.webp"] }).verdict).toBe("run");
   });
 
+  it("still reads a hyphenated converter's name in PowerShell as a cmdlet Ember doesn't know, as before (r12-commands-y12-5)", () => {
+    for (const cmd of ["rsvg-convert logo.svg", "heif-convert IMG_1.heic IMG_1.jpg", "heif-enc a.png -o b.heic"]) {
+      expect(decide(cmd, { shell: "powershell", context: "win32" }).rules, cmd).toContain("unclear.cmdlet");
+    }
+  });
+
   it("still reads what a converter is given: a secret file asks and Ember's own is refused, as before y11-8's change (r12-commands-y12-5)", () => {
     for (const cmd of [
       "pandoc ~/.aws/credentials -o x.html", "convert ~/.ssh/id_rsa x.png", "qpdf ~/.aws/credentials x.pdf", "pdftk ~/.aws/credentials cat output x.pdf", "img2pdf ~/.ssh/id_rsa -o x.pdf",

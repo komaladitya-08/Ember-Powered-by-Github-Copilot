@@ -10967,6 +10967,8 @@ const CONVERTER_OUTPUT: Readonly<Record<string, readonly string[] | "last">> = {
 };
 reg(NATIVE, ["pandoc", "convert", "magick", "qpdf", "pdftk", "pdfunite", "img2pdf", ...Object.keys(CONVERTER_OUTPUT)], h => {
   if (h.key === "convert" && h.sc.os === "win32") { unknownProgram(h); generic(h, true); return; }
+  // In PowerShell a hyphenated name is a cmdlet Ember doesn't know, as it was before this row named it.
+  if (h.sc.family === "powershell" && /^[a-z]+-[a-z0-9]+$/.test(h.key)) { unknownCmdlet(h); return; }
   // What it is given is read, as the ordinary programs' row read it before this row (a secret asks, Ember's own files
   // are refused: r12-commands-y12-5).
   h.e.readArgs(h.args, h.sc, { unresolvedUnclear: true });
