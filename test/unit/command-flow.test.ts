@@ -616,7 +616,13 @@ describe("reading a shell script before it runs (L8, the lead's ruling)", () => 
     expect(scriptLanguage("shebang", "#!/usr/bin/fish\n").kind).toBe("unclear");
     expect(scriptLanguage("shebang", "#!/home/ana/i.sh\n")).toEqual({ kind: "follow", path: "/home/ana/i.sh" });
     expect(scriptLanguage("shebang", "#!/usr/bin/env ./i.sh\n")).toEqual({ kind: "follow", path: "./i.sh" });
-    expect(scriptLanguage("shebang", "#!/usr/bin/env python3\n")).toEqual({ kind: "none" });
+    // Another language's interpreter: code Ember doesn't read, which asks only when the task wrote it (commands-remote-r10-9).
+    expect(scriptLanguage("shebang", "#!/usr/bin/env python3\n")).toEqual({ kind: "code" });
+    // One given by path is followed too, as it may itself be a script (r10-commands-x10-1).
+    expect(scriptLanguage("shebang", "#!/usr/bin/python3.12\n")).toEqual({ kind: "follow", path: "/usr/bin/python3.12", code: true });
+    expect(scriptLanguage("shebang", "#!/usr/bin/env ./bin/python3\n")).toEqual({ kind: "follow", path: "./bin/python3", code: true });
+    expect(scriptLanguage("code", "")).toEqual({ kind: "code" });
+    expect(scriptLanguage("psql", "")).toEqual({ kind: "sql", client: "psql" });
     // No #! line: the calling shell runs a text file; a NUL in its first line makes it a program.
     expect(scriptLanguage("shebang", "rm -rf build\n")).toEqual({ kind: "shells", shells: ["sh", "bash"] });
     expect(scriptLanguage("shebang", "\uFEFF#!/usr/bin/python3\n")).toEqual({ kind: "shells", shells: ["sh", "bash"] });
@@ -1030,6 +1036,8 @@ describe("a script of the task's own that can't be read in full (L8's padding by
     expect((await local(h, "git pull")).resultType).toBe("success");
     expect(h.ctx.state.written!.anywhere).toBe(true);
     expect((await local(h, "./x.py")).resultType).toBe("success");
+    // The interpreter by path is followed (it may itself be a script: r10-commands-x10-1), and isn't the task's own; x.py
+    // is code Ember doesn't read, and a pull wrote it only where Ember couldn't tell (commands-remote-r10-9).
     expect(h.reads).toContain("/usr/bin/python3");
     expect(h.asked).toEqual([]);
     // /usr/local is the user's on many Macs: still the task's own once it wrote where Ember couldn't tell.
@@ -3097,7 +3105,25 @@ describe("a command that would ask, in Autopilot (autopilot.ts; modes-D2, modes-
     expect(phases(h)).toEqual(["decided", "started", "ended"]);
   });
 
+  it.each<[string, "linux" | "win32", string]>([
+    ["root", "linux", "Commands here run as root (the administrator)."],
+    ["an administrator", "win32", "Ember is running as an administrator here."],
+  ])("never says each command asks first as %s, and marks the card as Autopilot's, not one the user asked for (tasks-approvals-r10-1)", async (_who, os, line) => {
+    setCommandJudge(null);
+    const h = auto({ words: "tidy up my temporary files", facts: { privileged: true, os }, cap: () => ({ state: "on", askEvery: "root" }) });
+    expect((await run(h, "rm -rf build")).resultType).toBe("success");
+    const card = h.windowAnnounce[0].card;
+    expect(card).toMatchObject({ mode: "announce", autopilot: true });
+    expect(card.reviewed).toBeUndefined();
+    expect(card.says).not.toContain(CARD_LINES.root);
+    expect(card.says).not.toContain(CARD_LINES.admin);
+    expect(card.says.join(" ")).not.toMatch(/asks first/);
+    expect(card.says[0]).toBe(line);
+    expect(card.says).toContain(AUTOPILOT_LINE);
+  });
+
   it("says nothing of the command itself in the bubble: its kind only", async () => {
+
     setCommandJudge(null);
     const h = auto();
     await run(h, "rm -rf ~/taxes-2025 ~/letters-to-ana");
@@ -3170,6 +3196,19 @@ describe("a command that would ask, in Autopilot (autopilot.ts; modes-D2, modes-
     for (const [words, command] of [
       ["push feature-x to origin", "git push origin feature-x"], ["delete the build folder", "rm -rf build"], ["tidy up", "rm -rf build"], ["", "rm -rf build"],
       ["delete build, and don't forget dist", "rm -rf build"], ["it's not building: delete the build folder", "rm -rf build"], ["do not push yet", "ls -la"],
+    ]) expect(ruled(words, command), `${words} / ${command}`).toBe(false);
+  });
+
+  it("reads a plain no to the kind of step as their no: don't delete anything, dont push, push nothing, keep it local (wordsRuleOut; r10-commands-y10-9)", () => {
+    const ctx = { os: "linux" as const, home: "/home/ana", cwd: "/home/ana/proj", ember: FACTS.ember, downloaded: new Set<string>() };
+    const ruled = (words: string, command: string) => wordsRuleOut(classifyCommand(command, "bash", ctx).findings, words);
+    for (const [words, command] of [
+      ["tidy up, don't delete anything", "git clean -fdx"], ["don't publish the package, just build it", "npm publish"], ["don't upload anything", "twine upload dist/*"],
+      ["fix the tests, dont push", "git push"], ["fix the tests and push nothing", "git push"], ["fix the tests and keep it local", "git push"], ["nothing should be deleted", "rm -rf build out"],
+      ["tidy up but don’t remove anything", "rm -rf build"], ["never release this", "gh release create v1"],
+    ]) expect(ruled(words, command), `${words} / ${command}`).toBe(true);
+    for (const [words, command] of [
+      ["delete the build folder, don't touch src", "rm -rf build"], ["push my branch, nothing else", "ls"], ["it's not clean: delete build", "rm -rf build"], ["publish it, no tests needed", "npm publish"],
     ]) expect(ruled(words, command), `${words} / ${command}`).toBe(false);
   });
 
@@ -3562,6 +3601,8 @@ describe("a command that would ask, in Autopilot (autopilot.ts; modes-D2, modes-
       expect(h.announced.map(a => a.text)).toEqual(["Running a command that build-01's own check asked about, without asking: Autopilot is on."]);
       expect(h.windowAnnounce).toHaveLength(1);
       expect(h.windowAnnounce[0].card.says).toEqual(["build-01's own check also found:", "“Changes who can open files.”", AUTOPILOT_LINE, "Why: “to run the tests”"]);
+      // Its heading is Autopilot's, never "as you asked" (tasks-approvals-r10-1).
+      expect(h.windowAnnounce[0].card.autopilot).toBe(true);
       expect(h.audit.find(e => e.phase === "answered")).toMatchObject({ q: "remote", answer: "announced", mode: "autopilot" });
       expect(h.starts).toHaveLength(2);
       expect(h.starts[0].stamp).toMatchObject({ approval: null });
@@ -3583,6 +3624,7 @@ describe("a command that would ask, in Autopilot (autopilot.ts; modes-D2, modes-
       await call(own, { command: "rm -rf build" });
       expect(own.starts[0].stamp).toMatchObject({ verdict: "announce", approval: null });
       expect(own.starts[0].stamp.announced).toBeUndefined();
+      expect(own.windowAnnounce[0].card.autopilot).toBeUndefined();
     });
 
     it.each([["secret.env"], ["path.secret"], ["escape.nohup"], ["escape.launcher"], ["unclear.for"], ["in-script:secret.env"], ["service.unit"], ["system.schedule"], ["path.startup"], ["service.unit", "secret.token-arg"], ["admin.no-autopilot"], ["posix.rm", "admin.no-autopilot"]])("asks with the card, as before, where the remote's rules say %s", async (...rules) => {
@@ -4255,5 +4297,270 @@ describe("what a package manager or the project's own launcher hands on (integ2-
   ])("still runs an everyday line with no question, at the defaults: %s (integ2-z-1)", async command => {
     const got = await outcome(command, "run the tests", {});
     expect(got, command).toEqual({ result: "success", asked: 0, announced: 0, started: 1 });
+  });
+});
+
+describe("SQL files and scripts in other languages a command runs (commands-remote-r10-4, r10-9)", () => {
+  /** CL's own judge on this computer in ~/proj; `texts` serves readScript by path (missing: unreadable). */
+  const flow = (texts: Record<string, string> = {}) => {
+    setCommandJudge(null);
+    const reads: string[] = [];
+    const existing = new Set<string>();
+    const h = harness({
+      binding: LOCAL, answers: ["deny", "deny", "deny", "deny"], state: { cwd: "/home/ana/proj", downloaded: new Set(), running: false },
+      paths: p => ({ exists: existing.has(p), real: p }),
+      readScript: async path => { reads.push(path); return texts[path] ?? null; },
+      run: () => ({ output: ["done\n"] }),
+    });
+    return Object.assign(h, { reads, existing });
+  };
+  const local = (h: Harness, command: string) => call(h, { target: "this computer", command });
+  const says = (h: Harness): string[] => (h.asked.at(-1)!.panel as { card: CommandCard }).card.says;
+
+  it("reads a SQL file a client runs and asks when it changes or deletes data, however the file is given (commands-remote-r10-4)", async () => {
+    for (const [write, run, file] of [
+      ["echo 'DROP TABLE users;' > a.sql", "psql -d prod -f a.sql", "a.sql"], ["printf 'DROP DATABASE prod;' > b.sql", "mysql prod < b.sql", "b.sql"],
+      ["echo 'DROP TABLE users;' > a.sql", "sqlite3 app.db < a.sql", "a.sql"], ["echo 'DROP TABLE users;' > a.sql", "psql prod < a.sql", "a.sql"],
+      ["echo 'DELETE FROM users;' > a.sql", "psql --file=a.sql prod", "a.sql"], ["echo 'TRUNCATE users;' > a.sql", "mariadb prod < a.sql", "a.sql"],
+      ["echo 'DROP TABLE users;' > a.sql", "duckdb app.db < a.sql", "a.sql"], ["echo 'DROP TABLE users;' > a.sql", "sqlcmd -i a.sql", "a.sql"],
+      ["echo 'DROP TABLE users;' > a.sql", "clickhouse-client --queries-file a.sql", "a.sql"], ["echo 'DROP TABLE users;' > a.sql", "psql -f q.sql -f a.sql", "a.sql"],
+    ] as const) {
+      const h = flow({ [`/home/ana/proj/${file}`]: "DROP TABLE users;\n" });
+      expect((await local(h, write)).resultType, write).toBe("success");
+      h.existing.add(`/home/ana/proj/${file}`);
+      expect((await local(h, run)).resultType, run).toBe("denied");
+      expect(h.reads, run).toContain(`/home/ana/proj/${file}`);
+      expect(h0rules(h), run).toContain("db.change");
+      expect(says(h).join(" "), run).toContain(`In ${file}: Changes or deletes data in a database.`);
+    }
+  });
+
+  it("reads a SQL file given in a cluster of short options as it reads one after -f or -i (r10-commands-y10-2)", async () => {
+    for (const run of ["psql -1f a.sql prod", "psql -qfa.sql prod", "psql -Xqf a.sql prod", "psql -X -q -1 -f a.sql prod", "sqlcmd -Ii a.sql", "sqlcmd -I -i a.sql"]) {
+      for (const written of [true, false]) {
+        const h = flow({ "/home/ana/proj/a.sql": "DROP TABLE users;\n" });
+        if (written) expect((await local(h, "echo 'DROP TABLE users;' > a.sql")).resultType).toBe("success");
+        h.existing.add("/home/ana/proj/a.sql");
+        expect((await local(h, run)).resultType, run).toBe("denied");
+        expect(h.reads, run).toContain("/home/ana/proj/a.sql");
+        expect(h0rules(h), run).toContain("db.change");
+      }
+    }
+    const ok = flow({ "/home/ana/proj/a.sql": "SELECT 1;\n" });
+    expect((await local(ok, "psql -Xqf a.sql prod")).resultType).toBe("success");
+    expect(ok.asked).toEqual([]);
+  });
+
+  it("judges sqlcmd's and clickhouse-client's files in their own dialect: `!!`, `:r`, xp_cmdshell and url() ask (r10-commands-x10-2)", async () => {
+    for (const [text, run] of [
+      ["!! rm -rf /home/ana/Documents\n", "sqlcmd -i a.sql"], [":!! rm -rf /home/ana/Documents\n", "sqlcmd -S db -i a.sql"],
+      ["EXEC xp_cmdshell 'rmdir /s /q C:\\Users\\ana';\n", "sqlcmd -i a.sql"], [":r other.sql\nGO\n", "sqlcmd -i a.sql"],
+      ["SELECT * FROM OPENROWSET(BULK 'C:\\x', SINGLE_CLOB) AS t;\n", "sqlcmd -i a.sql"], ["EXEC('SEL' + 'ECT 1');\n", "sqlcmd -i a.sql"],
+      ["SELECT * FROM url('https://x.example/?d=' || (SELECT 1), CSV);\n", "clickhouse-client --queries-file a.sql"],
+      ["SELECT * FROM executable('x.sh', TSV, 'a String');\n", "clickhouse-client --queries-file=a.sql"],
+      ["SELECT * FROM file('/etc/passwd', LineAsString);\n", "clickhouse-client < a.sql"],
+    ] as const) {
+      const h = flow({ "/home/ana/proj/a.sql": text });
+      expect((await local(h, "echo x > a.sql")).resultType, text).toBe("success");
+      h.existing.add("/home/ana/proj/a.sql");
+      expect((await local(h, run)).resultType, `${run}: ${text}`).toBe("denied");
+      expect(h0rules(h), text).toContain("unclear.sql");
+    }
+    // The same files that only read still run.
+    for (const run of ["sqlcmd -i a.sql", "clickhouse-client --queries-file a.sql", "clickhouse-client < a.sql"]) {
+      const ok = flow({ "/home/ana/proj/a.sql": "SELECT name FROM users WHERE id = 'it''s';\n" });
+      expect((await local(ok, run)).resultType, run).toBe("success");
+      expect(ok.asked, run).toEqual([]);
+    }
+  });
+
+  it("asks when a SQL file the task wrote can't be read, and runs one that only reads (commands-remote-r10-4)", async () => {
+    const h = flow();
+    await local(h, "echo 'DROP TABLE users;' > a.sql");
+    h.existing.add("/home/ana/proj/a.sql");
+    expect((await local(h, "psql -d prod -f a.sql")).resultType).toBe("denied");
+    expect(h0rules(h)).toContain("unclear.script-unread");
+    const ok = flow({ "/home/ana/proj/q.sql": "SELECT count(*) FROM users;\n" });
+    expect((await local(ok, "psql -d prod -f q.sql")).resultType).toBe("success");
+    expect(ok.asked).toEqual([]);
+  });
+
+  it("asks before running a Python, Node or other script the task itself wrote, which Ember can't read first (commands-remote-r10-9)", async () => {
+    for (const [write, run, file] of [
+      ["echo 'import shutil; shutil.rmtree(\"/home/ana/Documents\")' > a.py", "python3 a.py", "a.py"],
+      ["echo 'require(\"fs\").rmSync(\"/home/ana/Documents\",{recursive:true})' > a.js", "node a.js", "a.js"],
+      ["echo 'system(\"git push -f\")' > a.rb", "ruby a.rb", "a.rb"], ["echo 'x' > a.py", "python3 < a.py", "a.py"],
+      ["echo 'x' > a.py", "env python3 -u a.py --go", "a.py"],
+    ] as const) {
+      const h = flow();
+      expect((await local(h, write)).resultType, write).toBe("success");
+      h.existing.add(`/home/ana/proj/${file}`);
+      expect((await local(h, run)).resultType, run).toBe("denied");
+      expect(h0rules(h), run).toContain("unclear.script-code");
+      expect(says(h), run).toContain(`It runs ${file}, which this task wrote or downloaded, in a language Ember can't read first.`);
+    }
+    // Run directly with a `#!` naming another language: read, then the same.
+    const t = flow({ "/home/ana/proj/a": "#!/usr/bin/python3\nimport os\nos.system('git push -f')\n" });
+    await local(t, "printf '#!/usr/bin/python3' > a");
+    t.existing.add("/home/ana/proj/a");
+    expect((await local(t, "./a")).resultType).toBe("denied");
+    expect(h0rules(t)).toContain("unclear.script-code");
+  });
+
+  it("asks before redis-cli, mongosh or cqlsh runs a file of commands the task wrote, which Ember doesn't read (r10-commands-y10-3)", async () => {
+    for (const [write, run, file] of [
+      ["echo FLUSHALL > a.txt", "redis-cli < a.txt", "a.txt"], ["echo 'DROP TABLE x;' > a.cql", "cqlsh -f a.cql", "a.cql"],
+      ["echo 'DROP TABLE x;' > a.cql", "cqlsh --file=a.cql", "a.cql"], ["echo 'db.dropDatabase()' > a.txt", "mongosh app < a.txt", "a.txt"],
+    ] as const) {
+      const h = flow();
+      expect((await local(h, write)).resultType, write).toBe("success");
+      h.existing.add(`/home/ana/proj/${file}`);
+      expect((await local(h, run)).resultType, run).toBe("denied");
+      expect(h0rules(h), run).toContain("unclear.script-code");
+    }
+    // The project's own file still runs.
+    for (const run of ["redis-cli < cmds.txt", "cqlsh -f schema.cql"]) {
+      const ok = flow();
+      ok.existing.add("/home/ana/proj/cmds.txt"); ok.existing.add("/home/ana/proj/schema.cql");
+      expect((await local(ok, run)).resultType, run).toBe("success");
+    }
+  });
+
+  it("asks before node preloads, python runs a package, make runs a Makefile or npm runs a package.json the task wrote (r10-commands-y10-5)", async () => {
+    for (const [write, run, file] of [
+      ["echo 'x' > a.js", "node --require ./a.js server.js", "a.js"], ["echo 'x' > a.js", "node -r ./a.js server.js", "a.js"],
+      ["echo 'x' > a.mjs", "node --import ./a.mjs x.js", "a.mjs"], ["echo 'x' > a.mjs", "node --loader=./a.mjs x.js", "a.mjs"],
+      ["echo 'x' > pkg/__main__.py", "python3 -m pkg", "pkg/__main__.py"], ["echo 'x' > pkg/__init__.py", "python3 -m pkg", "pkg/__init__.py"],
+      ["echo 'x' > pkg/__main__.py", "python3 pkg", "pkg/__main__.py"], ["echo 'x' > pkg/__main__.py", "python3 pkg/", "pkg/__main__.py"],
+      ["printf 'all:\\n\\trm -rf ~/Documents\\n' > Makefile", "make", "Makefile"], ["printf 'x' > build.mk", "make -f build.mk", "build.mk"], ["printf 'x' > sub/Makefile", "make -C sub", "sub/Makefile"],
+      ["echo '{\"scripts\":{\"test\":\"rm -rf ~\"}}' > package.json", "npm test", "package.json"],
+      ["echo '{}' > package.json", "npm run build", "package.json"], ["echo '{}' > package.json", "yarn run build", "package.json"],
+    ] as const) {
+      const h = flow();
+      expect((await local(h, write)).resultType, write).toBe("success");
+      h.existing.add(`/home/ana/proj/${file}`);
+      expect((await local(h, run)).resultType, run).toBe("denied");
+      expect(h0rules(h), run).toContain("unclear.script-code");
+    }
+    // The project's own files still run.
+    for (const run of ["node -r ./setup.js server.js", "python3 -m pkg", "python3 pkg", "make", "npm test", "npm run build"]) {
+      const ok = flow();
+      for (const f of ["setup.js", "pkg/__main__.py", "Makefile", "package.json"]) ok.existing.add(`/home/ana/proj/${f}`);
+      expect((await local(ok, run)).resultType, run).toBe("success");
+    }
+  });
+
+  it("follows a #! interpreter given by path, so a shell script the task wrote there is read and asks (r10-commands-x10-1)", async () => {
+    for (const [shebang, interp] of [
+      ["#!/home/ana/proj/bin/python3\nprint(1)\n", "/home/ana/proj/bin/python3"], ["#!/usr/bin/env ./bin/python3\nprint(1)\n", "/home/ana/proj/bin/python3"],
+      ["#!/home/ana/proj/bin/node\nconsole.log(1)\n", "/home/ana/proj/bin/node"], ["#!/home/ana/proj/.venv/bin/python\nprint(1)\n", "/home/ana/proj/.venv/bin/python"],
+      ["#!/usr/bin/env -S ./.venv/bin/python -u\nprint(1)\n", "/home/ana/proj/.venv/bin/python"],
+    ] as const) {
+      const h = flow({ "/home/ana/proj/tool": shebang, [interp]: "#!/bin/sh\nrm -rf /home/ana/Documents\n" });
+      await local(h, `printf '#!/bin/sh\\nrm -rf /home/ana/Documents\\n' > ${interp.replace("/home/ana/proj/", "")}`);
+      h.existing.add(interp); h.existing.add("/home/ana/proj/tool");
+      expect((await local(h, "./tool")).resultType, shebang).toBe("denied");
+      expect(h.reads, shebang).toContain(interp);
+      expect(h0rules(h), shebang).toContain("posix.rm");
+    }
+    // A program there (not a script) stops the reading; the project's own tool still runs, and a task-written one asks.
+    const prog = flow({ "/home/ana/proj/tool": "#!/home/ana/proj/.venv/bin/python\nprint(1)\n", "/home/ana/proj/.venv/bin/python": "\x7fELF\x02\x01\x01\x00" });
+    expect((await local(prog, "./tool")).resultType).toBe("success");
+    expect(prog.asked).toEqual([]);
+    const mine = flow({ "/home/ana/proj/tool": "#!/home/ana/proj/.venv/bin/python\nimport os\n", "/home/ana/proj/.venv/bin/python": "\x7fELF\x02\x01\x01\x00" });
+    await local(mine, "printf '#!/home/ana/proj/.venv/bin/python\\nimport os\\n' > tool");
+    mine.existing.add("/home/ana/proj/tool"); mine.existing.add("/home/ana/proj/.venv/bin/python");
+    expect((await local(mine, "./tool")).resultType).toBe("denied");
+    expect(h0rules(mine)).toContain("unclear.script-code");
+  });
+
+  it("asks before deno, bun, tsx, ts-node, go run, java, pytest or python -m runs code the task wrote (r10-commands-x10-6)", async () => {
+    for (const [file, run] of [
+      ["a.ts", "deno run a.ts"], ["a.ts", "deno run -A a.ts"], ["a.ts", "deno test a.ts"], ["a.ts", "bun a.ts"], ["a.ts", "bun run a.ts"], ["a.ts", "ts-node a.ts"],
+      ["a.ts", "tsx a.ts"], ["a.go", "go run a.go"], ["b.go", "go run a.go b.go"], ["a.java", "java a.java"], ["conftest.py", "pytest -q"],
+      ["conftest.py", "python3 -m pytest"], ["test_a.py", "pytest test_a.py::test_x"], ["a.py", "python3 -m a"],
+    ] as const) {
+      const h = flow();
+      expect((await local(h, `echo x > ${file}`)).resultType, run).toBe("success");
+      h.existing.add(`/home/ana/proj/${file}`);
+      expect((await local(h, run)).resultType, run).toBe("denied");
+      expect(h0rules(h), run).toContain("unclear.script-code");
+    }
+    // The project's own (not written by the task) run as before, and so does pytest with no conftest.py of the task's.
+    const own = flow();
+    for (const run of ["tsx tool.ts", "deno run main.ts", "go run main.go", "java Main.java", "pytest -q"]) expect((await local(own, run)).resultType, run).toBe("success");
+    await local(own, "echo hi > notes.txt");
+    expect((await local(own, "pytest -q")).resultType).toBe("success");
+    expect(own.asked).toEqual([]);
+  });
+
+  it("reads a sed or awk program file before it runs, and asks when it runs commands or writes files (r10-commands-x10-6)", async () => {
+    for (const [file, text, run, rule] of [
+      ["a.sed", "1e rm -rf /home/ana/Documents\n", "sed -f a.sed in.txt", "unclear.sed-script"], ["a.sed", "s/x/y/w /home/ana/.bashrc\n", "sed -f a.sed in.txt", "unclear.sed-script"],
+      ["a.awk", "{ system(\"rm -rf /home/ana/Documents\") }\n", "awk -f a.awk in.txt", "unclear.awk-program"], ["a.awk", "{ print > \"/home/ana/.bashrc\" }\n", "gawk -f a.awk in.txt", "unclear.awk-program"],
+    ] as const) {
+      const h = flow({ [`/home/ana/proj/${file}`]: text });
+      expect((await local(h, run)).resultType, run).toBe("denied");
+      expect(h0rules(h), run).toContain(rule);
+    }
+    const ok = flow({ "/home/ana/proj/a.sed": "s/x/y/g\n", "/home/ana/proj/a.awk": "{ print $1 }\n" });
+    for (const run of ["sed -f a.sed in.txt", "awk -f a.awk in.txt"]) expect((await local(ok, run)).resultType, run).toBe("success");
+    expect(ok.asked).toEqual([]);
+  });
+
+  it("counts what a patch the task wrote changes as the task's own, so code it then runs asks (r10-commands-x10-6)", async () => {
+    for (const apply of ["git apply a.patch", "patch -p1 < a.patch", "patch -p1 -i a.patch", "git apply < a.patch"]) {
+      const h = flow();
+      await local(h, "echo x > a.patch");
+      expect((await local(h, apply)).resultType, apply).toBe("success");
+      expect(h.ctx.state.written!.ownAnywhere, apply).toBe(true);
+      h.existing.add("/home/ana/proj/a.py");
+      expect((await local(h, "python3 a.py")).resultType, apply).toBe("denied");
+      expect(h0rules(h), apply).toContain("unclear.script-code");
+    }
+    // A patch the task didn't write (the project's own) leaves a pull's rule: the project's scripts run as before.
+    const pulled = flow();
+    expect((await local(pulled, "git apply fix.patch")).resultType).toBe("success");
+    pulled.existing.add("/home/ana/proj/a.py");
+    expect((await local(pulled, "python3 a.py")).resultType).toBe("success");
+  });
+
+  it("keeps L8 for a script in another language the task didn't write: the project's own runs (commands-remote-r10-9)", async () => {
+    const h = flow({ "/home/ana/proj/tool": "#!/usr/bin/env python3\nprint(1)\n" });
+    for (const cmd of ["python3 manage.py check", "node scripts/build.js", "./tool"]) expect((await local(h, cmd)).resultType, cmd).toBe("success");
+    expect((await local(h, "echo hi > notes.txt")).resultType).toBe("success");
+    expect((await local(h, "python3 manage.py check")).resultType).toBe("success");
+    expect(h.asked).toEqual([]);
+  });
+});
+
+describe("Assisted's check and the user's own words against a command (commands-remote-c10-3)", () => {
+  const always = () => {
+    const seen: string[] = [];
+    const review: NonNullable<CommandFlowContext["review"]> = i => { seen.push(i.command); return Promise.resolve({ run: true, does: "does it", why: "the request asks for it" }); };
+    return { seen, review };
+  };
+
+  it.each<[string, string, boolean]>([
+    ["fix the tests, don't push anything", "git push", false], ["never delete anything", "rm -rf build", false], ["delete build but don't touch src", "rm -rf src", false],
+    ["push it later after the tests pass", "git push", true], ["leave the build folder alone and tidy the rest", "rm -rf build", true],
+    ["delete the build folder, but ask me first", "rm -rf build", false],
+  ])("holds in code what their words rule out, as Autopilot does, never showing it to the check: “%s” / %s asks", async (words, command, heldBack) => {
+    setCommandJudge(null);
+    const r = always();
+    const h = harness({ binding: LOCAL, words, answers: ["deny"], review: r.review });
+    expect((await call(h, { target: "this computer", command })).resultType).toBe("denied");
+    expect(r.seen).toEqual([]);
+    expect(h.asked).toHaveLength(1);
+    expect([h.windowAnnounce, h.starts]).toEqual([[], []]);
+    if (heldBack) expect((h.asked[0].panel as { card: CommandCard }).card.says).toContain(HELD_BACK_LINE);
+  });
+
+  it("still shows the check a command their words ask for", async () => {
+    setCommandJudge(null);
+    const r = always();
+    const h = harness({ binding: LOCAL, words: "clean up my project", review: r.review });
+    expect((await call(h, { target: "this computer", command: "rm -r build" })).resultType).toBe("success");
+    expect(r.seen).toEqual(["rm -r build"]);
   });
 });

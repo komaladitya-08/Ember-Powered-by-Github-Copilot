@@ -208,3 +208,21 @@ describe("the corner card's live region", () => {
     expect(main.indexOf("  tasksNews(s);\n", at)).toBe(-1);
   });
 });
+
+describe("Ember's announcement of a step it took without asking (companion-r10-1)", () => {
+  const auto: BubbleView = { visible: true, mood: "acting", title: "Ember", thought: "Clicking in Thunderbird, without asking: Autopilot is on.", streaming: false, autonomous: true };
+
+  it("is said in the card's live region, once, and leaves it when Ember works on", () => {
+    const live = new HandleLive();
+    expect(live.bubble(auto, null)).toBe("Ember says: Clicking in Thunderbird, without asking: Autopilot is on.");
+    expect(live.bubble(auto, null)).toBeNull();
+    expect(live.bubble(carryingOn, null)).toBe("");
+  });
+
+  it("reaches the live region from the card and from the overlay's bubble, which pass the tag on", () => {
+    const handle = readFileSync(new URL("../../app/renderer/handle/main.ts", import.meta.url), "utf8");
+    expect(handle).toContain("...(b.autonomous ? { autonomous: true } : {})");
+    const bubble = readFileSync(new URL("../../packages/bubble/src/bubble.ts", import.meta.url), "utf8");
+    expect(bubble).toContain("...(this.root.dataset.autonomous === \"true\" ? { autonomous: true } : {})");
+  });
+});

@@ -8,7 +8,7 @@
 import { describe, expect, it } from "vitest";
 import { ANSWER_CLOSED_STATUS, ANSWER_LISTENING_STATUS, SHORT_YES_FLOOR, TASK_VOICE_MS, TaskVoiceTrust, VoiceRefusals, answerStatusOnQuestion, answerWindowStatus, heardAnswer, heardUnchecked, refusalEndsTrust, refusalLine, refusalNote, rejectionEndsTrust, spokenAnswer, voiceAnswer, voiceAnswerSaid, VOICE_ANSWER_REFUSED, type VoiceAnswerInput } from "../../app/main/agent/voice-answer";
 import { Confirmer, type Question } from "../../app/main/agent/confirm";
-import { SPOKEN_NO, SPOKEN_YES } from "../../app/shared/spoken-answer";
+import { SPOKEN_NO, SPOKEN_YES, nearAnswer } from "../../app/shared/spoken-answer";
 import { questionAloud } from "../../app/main/agent/presenter";
 import fs from "node:fs";
 import path from "node:path";
@@ -434,6 +434,37 @@ describe("spoken answers as people say them (owner report of 2026-11-03: “Embe
 
   it("hears the noes people naturally say", () => {
     for (const no of ["Nah.", "No, not yet.", "Not right now.", "Don't allow it.", "No, no.", "Deny it.", "Ember, not now, thanks.", "Okay, no."]) expect(spokenAnswer(no), no).toBe("deny");
+  });
+
+  it("hears an everyday refusal that doesn't start with a no word, and a no said in two short parts, but no yes more widely (voice-listening-r10-1)", () => {
+    // They read as no answer: vanishing in the answer window, or sent to Copilot as a request while the question waited.
+    for (const no of [
+      "Of course not.", "I said no.", "Hell no.", "No thank you, leave it.", "Certainly not.", "Definitely not.", "Never.",
+      "Leave it.", "No, leave it.", "Not at all.", "I'd rather not.", "Better not.", "I don't think so.", "No, not now.",
+      "No thanks, don't.", "Nope, not today.", "I said not now.", "Please, leave it.",
+    ]) expect(spokenAnswer(no), no).toBe("deny");
+    // A no and a yes together, a no with a request after it, and a yes in two parts read as no answer, as before.
+    for (const other of ["No, do it.", "Leave it, go ahead.", "No, leave it open and send it.", "Yes, go on, do it.", "Okay, then.", "Of course, leave it."]) {
+      expect(spokenAnswer(other), other).toBeNull();
+    }
+    for (const w of SPOKEN_YES) expect(SPOKEN_NO.has(w), w).toBe(false);
+  });
+
+  it("hears an everyday no with a word or two around it as the answer, and a few words around one as a near-miss, never a yes (r10-voice-x10-1)", () => {
+    // Neither a no nor a near-miss: they vanished in the answer window, or went to Copilot as a request while the
+    // question waited.
+    for (const no of [
+      "Just leave it.", "Leave it for now.", "Leave it be.", "I said leave it.", "Thanks, leave it.", "Thank you, leave it.",
+      "Just not now.", "Not now, just leave it.", "No, just leave it for now.", "Ember, just leave it.", "I said leave it alone.",
+    ]) expect(spokenAnswer(no), no).toBe("deny");
+    for (const near of ["Please just leave it there.", "Okay, leave it for later.", "Leave it, I said."]) {
+      expect(spokenAnswer(near), near).toBeNull();
+      expect(nearAnswer(near), near).toBe(true);
+    }
+    // The same words around a yes are no more a yes than before.
+    for (const other of ["Thanks, go ahead.", "Just do it.", "I said yes.", "Thank you, allow it.", "Go ahead for now.", "Just go ahead.", "Allow it for now."]) {
+      expect(spokenAnswer(other), other).toBeNull();
+    }
   });
 
   it("still never hears Always, a yes inside a longer request, or an answer it can't be sure of", () => {

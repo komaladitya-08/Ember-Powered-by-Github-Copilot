@@ -297,7 +297,7 @@ describe("Ember's hello once it starts", () => {
     expect(hello(at({ phase: "signed-out", providerWaiting: null }))).toEqual(hello(at({ phase: "signed-out" })));
     // main gives the hello the host the note waits for, as it gives the host's answers (providerWaiting), signed out only.
     const greet = MAIN.slice(MAIN.indexOf("  const greet = () => {"), MAIN.indexOf("  const busyTasks = "));
-    expect(greet).toContain("const providerWaiting = phase === \"signed-out\" && !fixedProvider ? providerWaitingHost(settings.get(), admin) : null;");
+    expect(greet).toContain("const providerWaiting = phase === \"signed-out\" ? ownProviderWaiting() : null;");
     expect(greet).toMatch(/hello\(\{[^}]*\bproviderWaiting, service, cannotWork \}\)/);
   });
 

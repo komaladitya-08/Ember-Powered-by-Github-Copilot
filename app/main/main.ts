@@ -115,6 +115,7 @@ import { ACK_MS, acknowledgement, afterAck } from "./acknowledge";
 import { MemoryService } from "./memory/service";
 import { memoryViewOf } from "./memory/view";
 import { githubMemoryAccount, MemoryEpochAccount, MemoryOwner, type MemoryWait } from "./memory/owner";
+import { endOfSession } from "./session-end";
 import { MemoryLearning, linesAfterAskedForget, linesAfterForget, linesAfterRestore, withLearned, type MemoryLine } from "./memory/learning";
 import type { OneShot } from "./memory/learn";
 import { memoryActionOpens } from "./memory/questions";
@@ -132,7 +133,8 @@ import { VAULT_IPC } from "../shared/vault";
 import { registerApprovalsIpc } from "./approvals-ipc";
 import { registerFirstRunIpc } from "./first-run";
 import { firstRunAllowsVoice } from "../shared/first-run";
-import { PROVIDER_KEY_FILE, ProviderKeyStore, activeProvider, checkAgain, createProviderService, ownProviderAuth, providerSummary, providerWaitingHost, redactingLogger, type ActiveProvider, type FetchLike } from "./provider";
+import { PROVIDER_SEAL_FILE, ProviderRecord, ProviderSeal, type ProviderRecordDeps } from "./provider-record";
+import { PROVIDER_KEY_FILE, ProviderKeyStore, activeProvider, userProviderInForce, checkAgain, createProviderService, ownProviderAuth, providerSummary, providerWaitingHost, redactingLogger, type ActiveProvider, type FetchLike } from "./provider";
 import { PROVIDER_IPC } from "../shared/ipc";
 import { APPROVALS_IPC, modeCardVersion, modeRank } from "../shared/approvals";
 import { recentLimit } from "../shared/ipc";
@@ -655,7 +657,7 @@ function start(): void {
     unexpectedExit: lastRun ? { startedAt: lastRun.startedAt, version: lastRun.version } : null,
     admin: homeAdmin(admin),
     platform: platformStatus(),
-    approvals: approvalsState(settings.own().approvals, policy),
+    approvals: approvalsState(settings.own().approvals, policy, modes.notes()),
     };
   }));
   // Every entry the log keeps: the window shows the newest 80 it has lines for (a command writes several entries).
@@ -818,7 +820,7 @@ function start(): void {
     // The user's own provider or the organisation's service is named, never GitHub or Copilot (first-run-r1).
     const service = agent?.getStatus().service;
     // Signed out while the user's own provider waits for its card: agreeing is the way on (integrations-v4-3).
-    const providerWaiting = phase === "signed-out" && !fixedProvider ? providerWaitingHost(settings.get(), admin) : null;
+    const providerWaiting = phase === "signed-out" ? ownProviderWaiting() : null;
     const h = hello({ phase, waiting, overlay: !!overlay, keys, settingsKey: keyName("settings"), settingsOpen, rows: connected ? setupRows() : [], providerWaiting, service, cannotWork });
     const bubble = { ...IDLE_BUBBLE, visible: true, mood: h.mood, title: "Hi, I'm Ember!", thought: h.thought, actions: h.actions };
     setState({ emotion: "happy", talking: true, bubble });
@@ -1411,6 +1413,8 @@ function start(): void {
    */
   const forgetSessionWords = () => {
     recentAsks = [];
+    // And the Ask box's history (↑ brings back the last 20 requests): the person's own words too (companion-r10-4).
+    askHistory = [];
     personalRef?.forgetSession();
     if (lastState.suggest) showState({ suggest: null });
   };
@@ -1649,6 +1653,7 @@ function start(): void {
   };
   const voiceStatus = (detail?: string) => ({
     state: voice?.micState ?? "off", detail: detail ?? null,
+    ...(voice?.micFault ? { micFault: true } : {}),
     ...(voice?.micLabel ? { micLabel: voice.micLabel } : {}),
     modelsReady: voice?.modelsReady ?? false,
     modelsMissing: (voice?.missingModels ?? VOICE_MODELS).map(m => m.id), modelsBytes: voice ? modelsBytes(voice.missingModels) : VOICE_MODELS_BYTES,
@@ -1838,7 +1843,7 @@ function start(): void {
     // After a fill from the vault no extension is called: a failed call's text reaches the model unredacted (vault-3-x9-4).
     vaultFilled: () => vaultRedactor.active,
     log: log.child("extensions"), os: platform.os,
-    // macOS never runs Ember as plain Node (PLAN.md §2 "Node mode"): no launcher, so no stdio servers there.
+    // macOS never runs Ember as plain Node (PLAN.md §2 "Node mode"): no launcher, so no extension's server, stdio or remote, runs there.
     launcher: platform.os === "darwin" ? null : { execPath: process.execPath, script: path.join(__dirname, "mcp-launch.cjs") },
     fetch: (u, i) => net.fetch(String(u), i as RequestInit),
     allowLocal: devEnv("EMBER_EXTENSIONS_LOCAL") === "1",
@@ -1883,6 +1888,8 @@ function start(): void {
    * a mode that asks less that can't be recorded is undone (policy/mode-record.ts).
    */
   const modes = new ModeRecord({ settings, admin: () => policy, log,
+    // A mode that can't be sealed lasts until Ember closes, and a start that put the choice back says why (reliability-r10-1).
+    onNotes: () => tellApprovals(),
     // What Ember recorded itself, sealed with the keyring: a mode above Interactive is taken from settings.json at start
     // only where it matches (modes-x9s-2). On macOS the keychain is asked off the main thread, as the sign-in's is.
     seal: new ModeSeal(path.join(userData, "approvals-seal.bin"), safeStorage, { asyncKeyring: platform.os === "darwin" }) });
@@ -1894,7 +1901,7 @@ function start(): void {
    */
   let approvalsTold = "";
   const tellApprovals = () => {
-    const state = approvalsState(settings.own().approvals, policy);
+    const state = approvalsState(settings.own().approvals, policy, modes.notes());
     const now = JSON.stringify(state);
     if (now === approvalsTold) return;
     approvalsTold = now;
@@ -2225,8 +2232,15 @@ function start(): void {
   // Never logged (the agent's log is redacted), audited, shown or passed on. The keyring is asked only once the user's
   // provider is on with a key saved for its host: never otherwise, and on macOS only off the main thread (a Keychain
   // prompt there would hold Ember, and a second Ember waiting to hand over to it).
+  // The card's yes for the user's own provider is taken from settings.json only as Ember recorded it (sealed with the
+  // keyring; a yes the file gains while Ember runs is put back), and every change of the provider in force is audited
+  // (provider-record.ts, safety-privacy-c10-1). Until the seal is read at start, no provider of the user's is in force.
+  const providerRecord = new ProviderRecord({ settings: settings as unknown as ProviderRecordDeps["settings"], log: log.child("provider"),
+    inForce: () => { const p = userProviderInForce(settings.get(), admin); return p ? endpointHost(p.baseUrl) : null; },
+    seal: new ProviderSeal(path.join(userData, PROVIDER_SEAL_FILE), safeStorage, { asyncKeyring: platform.os === "darwin" }),
+    heldChanged: () => { void agent?.providerChanged(); sendToHome(PROVIDER_IPC.changed, null); } });
   const providers = createProviderService({
-    settings, admin: () => admin, consented: () => consented(),
+    settings, admin: () => admin, consented: () => consented(), record: providerRecord,
     keys: new ProviderKeyStore(path.join(userData, PROVIDER_KEY_FILE), safeStorage, { asyncKeyring: platform.os === "darwin" }),
     // Electron's fetch follows the system's proxy, as the runtime does.
     fetch: (url, init) => net.fetch(url, init) as unknown as ReturnType<FetchLike>,
@@ -2246,12 +2260,15 @@ function start(): void {
     appName: friendlyApp, log: log.child("vault"),
     changed: () => sendToHome(VAULT_IPC.changed, null),
     // Every value is noted by the redactor before it is put anywhere (nothing read back holds it).
-    filling: (part, value) => vaultRedactor.note(part, value),
+    // Extensions stop at the first fill (gate.ts VAULT_FILLED): the conversation reloads without them and Home says so.
+    filling: (part, value) => { vaultRedactor.note(part, value); extensionsRef?.vaultFilledNow(); },
   });
   vaultRef = vault;
   /** The endpoint in force now: the administrator's (or a development test server) once main has set it, else the user's own. */
   let fixedProvider: ActiveProvider | null = null;
-  const providerNow = (): ActiveProvider | null => activeProvider({ fixed: fixedProvider, settings: settings.get(), admin, key: providers.key() });
+  const providerNow = (): ActiveProvider | null => (!fixedProvider && providerRecord.held() ? null : activeProvider({ fixed: fixedProvider, settings: settings.get(), admin, key: providers.key() }));
+  /** The host whose card the user's own provider waits for, its yes held back included: nothing connects meanwhile (r10-safety-x10-1). */
+  const ownProviderWaiting = (): string | null => (fixedProvider ? null : providerWaitingHost(settings.get(), admin, providerRecord.held()));
   /** Sign-ins Copilot refused this run (a stale GH_TOKEN, an expired one): the next source is used instead, until Sign out (review #139). */
   const refusedTokens = new Set<string>();
   /**
@@ -2323,7 +2340,7 @@ function start(): void {
     // Still starting, offline or reconnecting is said as such: Models & connections can't help with those. Signed out
     // while the user's own provider waits for its note, the host it waits for is named (integrations-r4-3).
     const status = agent?.getStatus() ?? { phase: "signed-out" as const };
-    const refusal = composerSendRefusal(status, stops, status.phase === "signed-out" && !fixedProvider ? providerWaitingHost(settings.get(), admin) : null, !!admin.held);
+    const refusal = composerSendRefusal(status, stops, status.phase === "signed-out" ? ownProviderWaiting() : null, !!admin.held);
     if (refusal) throw new Error(refusal);
     // Home is Ember's own window. Its composer shares only the user's explicit request, never Home or stale app context.
     void askEmber(text, {}, Promise.resolve(null));
@@ -2946,13 +2963,13 @@ function start(): void {
     const url = event.senderFrame?.url ?? "";
     return isTrustedSender(url) && !!home && !home.isDestroyed() && event.sender === home.webContents;
   }, {
-    state: () => approvalsState(settings.own().approvals, policy),
+    state: () => approvalsState(settings.own().approvals, policy, modes.notes()),
     choose: (mode, version) => {
       const next = chooseMode(settings.own().approvals, mode, version, policy, new Date().toISOString());
-      if (!next.ok) return { ok: false, why: next.why, state: approvalsState(settings.own().approvals, policy) };
+      if (!next.ok) return { ok: false, why: next.why, state: approvalsState(settings.own().approvals, policy, modes.notes()) };
       modes.as({ via: "home", verified: false }, () => settings.update({ approvals: next.approvals }));
       // Chosen only once it is in force: a mode whose audit entry couldn't be written was undone.
-      const state = approvalsState(settings.own().approvals, policy);
+      const state = approvalsState(settings.own().approvals, policy, modes.notes());
       return state.inForce === mode ? { ok: true, state } : { ok: false, why: "not-recorded", state };
     },
   }, { log: log.child("approvals") });
@@ -3197,7 +3214,8 @@ function start(): void {
 
   /**
    * The session ends (log-off, shut down) without will-quit on Windows and macOS (G10), and on Linux as the X server
-   * goes: settings are saved and whatever Ember holds is let go of at once, as quitting would.
+   * goes: settings are saved and whatever Ember holds is let go of at once, as quitting would. The agent stops as
+   * quitting stops it, and the saved conversation and memory are written before this returns (app/main/session-end.ts).
    */
   let sessionEnding = false;
   const endSession = (source: string) => {
@@ -3206,6 +3224,7 @@ function start(): void {
     log.info("app.session_end", { source });
     endThisRun("session-end");
     try { settings.flush(); } catch (err) { log.warn("settings.not_saved", { err }); }
+    endOfSession({ agent, history: historyStore, learning, memory, log });
     // With the display gone there is no pointer or key to let go of, and asking X would end Ember mid-way.
     if (source !== "display-gone") {
       borrowRef?.stop();
@@ -3512,6 +3531,7 @@ function start(): void {
     // The approval mode as the log opens: changes made before now, and the mode found in force in settings.json at start
     // (by hand, or from the last run): recorded, or else not in force (fail closed).
     modes.opened(audit);
+    providerRecord.opened(audit);
     tellApprovals();
     // Nothing is pruned while the policy can't be used: its retention can't be read then.
     const keepDays = auditRetentionDays(admin);
@@ -3782,7 +3802,7 @@ function start(): void {
       // (A Sign out whose saved sign-in couldn't be removed is said, never passed over: reliability-r9-2.)
       signedOutWhy: () => (tokens?.unreadable ? sys.words.savedSignInRefused ?? null : tokens?.uncleared ? SIGN_OUT_NOT_KEPT : null),
       // Signed out while the user's own provider waits for its card: agreeing is the way on (integrations-r3-1).
-      providerWaiting: () => (fixedProvider ? null : providerWaitingHost(settings.get(), admin)),
+      providerWaiting: ownProviderWaiting,
       // Spoken without code or full addresses ("code shown in the bubble"), which nobody wants read out, sentence by
       // sentence as the answer streams in: Ember starts talking while Copilot is still writing, as a voice assistant does.
       onTurnStart: turn => {
@@ -3940,6 +3960,9 @@ function start(): void {
       if (brainStarted || !consented()) return;
       brainStarted = true;
       const since = signOuts;
+      // The user's own provider's yes is checked against its seal first (provider-record.ts): no provider of theirs
+      // before that. (A sign-out meanwhile is still seen: `since` is taken before.)
+      await providerRecord.sealed;
       // macOS asks for the login keychain password before Ember may read its saved sign-in (after every update of an
       // ad-hoc-signed Ember). The read is asynchronous there, and Ember's windows still come up first, with a status that
       // says what the prompt is for (review #241). Only on the first start of a new version: other starts read at once,
@@ -3963,7 +3986,8 @@ function start(): void {
       // the next source. Signed out while it looked (the settings window is up during a keychain prompt or a slow
       // renewal): nothing found then is connected (final review S1).
       const { phase } = provider ? { phase: await agent?.start(null, undefined, "auto") } : await connectWith(found, "auto", since);
-      if (phase === "signed-out") { currentToken = null; keeper.use(null); }
+      // (Held back for the user's own provider's card, the sign-in found is kept for when it is turned off: r10-safety-x10-1.)
+      if (phase === "signed-out" && !ownProviderWaiting()) { currentToken = null; keeper.use(null); }
     };
     brainStart = startBrain();
     settings.onChange(() => { const p = startBrain(); if (brainStarted) brainStart = brainStart.then(() => p); });

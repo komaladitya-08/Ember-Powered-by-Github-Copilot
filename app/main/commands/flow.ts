@@ -350,6 +350,9 @@ const UNSEEN = "Ember couldn't show the command in its command window, so it sto
 export const CARD_LINES = {
   root: "Commands here run as root (the administrator), so each one asks first.",
   admin: "Ember is running as an administrator here, so each command asks first.",
+  /** The same two facts on Autopilot's announcement, where root is no reason to ask (tasks-approvals-r10-1). */
+  rootAutopilot: "Commands here run as root (the administrator).",
+  adminAutopilot: "Ember is running as an administrator here.",
   adminAsk: "Your organisation asks you to approve every command.",
   userAsk: "You asked Ember to check every command with you.",
   tool: "Podman uses this distro: Ember asks before every command here.",
@@ -713,6 +716,36 @@ function namesObject(findings: readonly Finding[], part: string): boolean {
   }));
 }
 
+/** A plain no in a part of the user's words ("don't", "dont", "never", "nothing should be…", "push nothing"). */
+const NEGATED = /(?:^|[^\p{L}])(?:don[’']?t|do not|never|nothing|none|not|no)(?![\p{L}])/iu;
+/** The verbs that name a kind of step, by the finding's class (r10-commands-y10-9). */
+const KIND_VERBS: Readonly<Partial<Record<Finding["cls"], RegExp>>> = {
+  destroy: /(?:^|[^\p{L}])(?:delet|remov|eras|wipe|purg|discard|destroy|drop|rm(?![\p{L}]))/iu,
+  "remote-delete": /(?:^|[^\p{L}])(?:delet|remov|unpublish|destroy|drop)/iu,
+  publish: /(?:^|[^\p{L}])(?:publish|releas|upload|push|deploy|ship)/iu,
+};
+/** Words that keep the work on this computer ("keep it local", "local only"): a no to publishing. */
+const KEEP_LOCAL = /\bkeep\b.*\blocal(?:ly)?\b|\blocal(?:ly)? only\b|\bstays? local\b/iu;
+/** Words that name no particular thing: a no said with only these, a negation and a verb is a no to the whole kind. */
+const GENERIC = new Set(("anything everything nothing any all it them this that these those the a an my our files file stuff things changes code package packages "
+  + "branch branches release releases please just yet ever should be been is are was will would i we you to of up out here there now today any more else at all").split(" "));
+/**
+ * Does a part of the user's words say no to the kind of step a finding is, by a verb that names it and nothing in
+ * particular ("tidy up, don't delete anything", "dont push", "push nothing", "don't upload anything", "keep it local")?
+ * The plain refusals the matchers above missed (r10-commands-y10-9); a no that names something else ("don't delete
+ * src") is left to them. Like them, it only ever keeps a question.
+ */
+function negatedKind(findings: readonly Finding[], words: string): boolean {
+  return words.split(PARTS).some(part => findings.some(f => {
+    const verb = KIND_VERBS[f.cls];
+    if (verb === undefined) return false;
+    if (f.cls === "publish" && KEEP_LOCAL.test(part)) return true;
+    if (!NEGATED.test(part) || !verb.test(part)) return false;
+    const rest = part.toLowerCase().split(/[^\p{L}\p{N}'’_.-]+/u).filter(w => w !== "" && !NEGATED.test(w) && !verb.test(w) && !GENERIC.has(w));
+    return rest.length === 0;
+  }));
+}
+
 /** Does a part of the user's words hold back what these findings act on, or the kind of step they are (HOLDS_BACK)? */
 function wordsHoldBack(findings: readonly Finding[], words: string): boolean {
   return words.split(PARTS).some(part => HOLDS_BACK.test(part) && (namesObject(findings, part) || namedKind(findings, part) || mentioned(findings, part)));
@@ -730,7 +763,7 @@ function wordsHoldBack(findings: readonly Finding[], words: string): boolean {
  */
 export function wordsRuleOut(findings: readonly Finding[], words: string): boolean {
   if (!words.trim() || findings.length === 0) return false;
-  if (ruledOut(findings, words)) return true;
+  if (ruledOut(findings, words) || negatedKind(findings, words)) return true;
   if (!mentioned(findings, words) && mentioned(findings, words.replace(SAYS_NOT, "$1 "))) return true;
   // Their asking to be asked first, and a deletion they narrow or send to the trash or a stash instead (integ-x-3).
   return wordsHoldBack(findings, words) || heldByWords(findings, words);
@@ -1060,7 +1093,9 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
     // what it does behind the test is Ember's reading of it, so it counts as a command it can't tell (commands-b7-2).
     if ((cls as { writtenOut?: boolean }).writtenOut === true) hidden.push({ cls: "unclear", rule: "unclear.written-out" });
     const auto = autopilotCommand(d, { findings: [...cls.findings, ...hidden], mode, askEvery: cap.askEvery, userAskEvery, ruledOut: wordsRuleOut(standing, words) || wordsRuleOut(standing, spoken) });
-    if (auto) d = auto;
+    // Root or an elevated Ember asks in every other mode, and its card line said "each one asks first": on Autopilot's
+    // announcement that is untrue, so it states the fact alone (tasks-approvals-r10-1).
+    if (auto) d = { ...auto, says: auto.says.map(l => (l === CARD_LINES.root ? CARD_LINES.rootAutopilot : l === CARD_LINES.admin ? CARD_LINES.adminAutopilot : l)) };
     // The card says why it still asks where their words held it back: after "You didn't ask for this." (which the
     // card keeps), and in place of "your words don't name exactly this", a doubt of Ember's (modes-y9-x9-6).
     else if (wordsHoldBack(standing, words) || wordsHoldBack(standing, spoken)) {
@@ -1076,7 +1111,16 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
   // requires, are never reviewed (review.ts). The task's bubble says it is checking; a Stop doesn't wait for the answer.
   if (ctx.review && d.verdict === "ask" && !like) {
     const checkWords = ctx.task.checkWords?.() ?? words;
-    const blocked = notReviewable(d, { words: checkWords, mode, askEvery: cap.askEvery, userAskEvery, command: a.command, findings: [...cls.findings, ...hidden] });
+    // The user's own words against it (their no, said in advance, or a step they hold back) are held in code, as
+    // Autopilot holds them: never left to the check's reading of a negation (commands-remote-c10-3).
+    const standing = standingFindings(cls.findings, paths);
+    const ruledOut = [words, spoken, checkWords].some(w => wordsRuleOut(standing, w));
+    const blocked = notReviewable(d, { words: checkWords, mode, askEvery: cap.askEvery, userAskEvery, command: a.command, findings: [...cls.findings, ...hidden], ruledOut });
+    if (ruledOut && [words, spoken, checkWords].some(w => wordsHoldBack(standing, w)) && !d.says.includes(HELD_BACK_LINE)) {
+      const at = d.says.findIndex(l => l === LINES.unasked || l === LINES.inexact || l === LINES.windows);
+      const [keep, drop] = at < 0 ? [d.says.length, 0] : d.says[at] === LINES.unasked ? [at + 1, 0] : d.says[at] === LINES.inexact ? [at, 1] : [at, 0];
+      d = { ...d, says: [...d.says.slice(0, keep), HELD_BACK_LINE, ...d.says.slice(keep + drop)] };
+    }
     if (blocked === null) {
       const t0 = performance.now();
       try { ctx.presenter.progress(CHECKING_COMMAND); } catch (err) { ctx.log.warn("commands.checking_not_said", { err }); }
@@ -1113,6 +1157,8 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
     taskTitle: ctx.task.title, mode: cardMode, says, unasked: cardMode === "ask" && d.unasked, armMs: d.armMs,
     ...(cardMode !== "run" && d.classes.length ? { classes: d.classes } : {}),
     ...(cardMode === "announce" && d.requested?.intent === "ai-review" ? { reviewed: true } : {}),
+    // Autopilot's announcement, its own or of a remote's question (both end on AUTOPILOT_LINE): the heading says so.
+    ...(cardMode === "announce" && says.includes(AUTOPILOT_LINE) ? { autopilot: true } : {}),
     // The header says the home folder as ~ in a POSIX shell (commands-remote-8).
     ...(shell !== "powershell" && home ? { home } : {}),
   });

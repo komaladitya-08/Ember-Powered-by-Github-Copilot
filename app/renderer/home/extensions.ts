@@ -15,7 +15,7 @@ import { marketplaceSource } from "../../shared/extensions-input";
 import {
   BROWSE_AGAIN, BROWSE_DONE, BROWSE_EMPTY, CONNECTORS_EMPTY, MARKETPLACES_NOT_CONNECTED, EXTENSIONS_FAILED, EXTENSIONS_LOADING, EXTENSIONS_ON_LABEL, INSTALLED_EMPTY, extensionsOnHint, INSTALLED_TAG, MARKETPLACES_EMPTY, MARKETPLACE_INVALID,
   addedMarketplace, added, addingMarketplace, agreedTo, browseLabel, browsingHeading, browsingLoading, connectOpened, connectPending, connected, connectorRow,
-  consentCard, disconnected, entryCard, extensionsBlocked, extensionsError, installedRow, marketplaceRow, reagreeCard, removeMarketplaceLabel, removeMarketplaceQuestion,
+  TOOL_INPUTS_HEADING, toolInputsLabel, consentCard, disconnected, entryCard, extensionsBlocked, extensionsError, installedRow, marketplaceRow, reagreeCard, removeMarketplaceLabel, removeMarketplaceQuestion,
   removed, removedMarketplace, toolBadge, type ConsentCard, type ItemAction,
 } from "./extensions-copy";
 
@@ -213,6 +213,13 @@ function consentNode(c: ConsentCard): HTMLElement {
       const row = el("li", "ext-consent-tool");
       row.append(el("b", "", `${tool.server ? `${tool.server}: ` : ""}${tool.name}`), el("span", "", ` · ${toolBadge(tool).label}`));
       if (tool.description) row.append(el("p", "ext-tool-desc", tool.description));
+      // What the model reads of its inputs too, whole (integrations-c9-1).
+      if (tool.inputs?.length) {
+        const inputs = el("ul", "ext-tool-inputs");
+        inputs.setAttribute("aria-label", toolInputsLabel(tool.name));
+        for (const w of tool.inputs) inputs.append(el("li", "", w));
+        row.append(el("p", "ext-tool-desc", TOOL_INPUTS_HEADING), inputs);
+      }
       lines.append(row);
     }
   }
@@ -246,7 +253,7 @@ function statusLine(text: string, tone: keyof typeof PHASE): HTMLElement {
 }
 
 function installedItem(i: Installed): HTMLLIElement {
-  const r = installedRow(i, sectionOn(), state?.connected !== false);
+  const r = installedRow(i, sectionOn(), state?.connected !== false, state?.heldByVault === true);
   const li = el("li", "ext-item");
   const head = el("div", "ext-head");
   const text = el("span", "ext-text");
@@ -423,7 +430,7 @@ function draw(): void {
   $("ext-on-group").hidden = !state.allowed || !agreed;
   $("ext-on-hint").hidden = !state.allowed || !agreed;
   ($("ext-on") as HTMLInputElement).checked = sectionOn();
-  $("ext-on-hint").textContent = extensionsOnHint(sectionOn());
+  $("ext-on-hint").textContent = extensionsOnHint(sectionOn(), state.heldByVault === true);
   const key = JSON.stringify([state, browsing, connectors, connectorsError, [...pending], asking, [...busy], sectionOn()]);
   if (key === drawn) return;
   drawn = key;

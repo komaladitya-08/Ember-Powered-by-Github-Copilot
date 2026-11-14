@@ -1164,9 +1164,10 @@ describe("a file's contents leaving through xargs, a PowerShell variable or curl
       expect(d.rules, label(cmd, o)).toContain("send.contents");
       expect(d.classes, label(cmd, o)).toContain("publish");
     }
-    // Input Ember sees whole, and a list of addresses fetched one by one, are as before.
+    // Input Ember sees whole is as before. A list read from a file and fetched one by one sends each word to the
+    // address it names: Ember can't tell a list of addresses from addresses built out of a file (commands-remote-r10-3).
     expect(decide("echo a | xargs -I{} curl https://x.io/{}").rules).not.toContain("send.contents");
-    expect(decide("cat urls.txt | xargs -I{} curl -O {}").rules).not.toContain("send.contents");
+    expect(decide("cat urls.txt | xargs -I{} curl -O {}").rules).toContain("send.contents");
   });
 
   it("asks before a PowerShell variable filled from a command leaves inside an address, and before curl's --variable reads a file", () => {

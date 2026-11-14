@@ -15,7 +15,7 @@
  * no, asks as before (worker.ts). Pure but for the hold, so it is unit-tested without Electron.
  */
 
-import { APPROVAL_MODES, modeCardVersion, modeRank, type ApprovalMode, type ApprovalsState, type ModeInForce, type ModeWhy } from "../../shared/approvals";
+import { APPROVAL_MODES, modeCardVersion, modeRank, type ApprovalMode, type ApprovalsState, type ModeInForce, type ModeWhy, type SealNotes } from "../../shared/approvals";
 
 export { APPROVAL_MODES, type ApprovalMode, type ModeInForce };
 
@@ -56,6 +56,14 @@ export const autonomyPermitted = (admin: AutonomyAdmin | null | undefined): bool
  */
 export const autopilotPermitted = (admin: AutonomyAdmin | null | undefined): boolean =>
   autonomyPermitted(admin) && (admin?.approvals?.maxMode ?? "autopilot") === "autopilot";
+
+/**
+ * May Assisted's check stand in for the user's yes under this administrator's policy: the modes allowed, the check not
+ * turned off (`features.aiReview`), and the cap at Assisted or above? What a computer reached over SSH asks of its own
+ * policy before it runs what the PC's check cleared (app/remote/gate.ts; commands-remote-c10-2).
+ */
+export const assistedPermitted = (admin: AutonomyAdmin | null | undefined): boolean =>
+  autonomyPermitted(admin) && admin?.features.aiReview !== false && modeRank(admin?.approvals?.maxMode ?? "autopilot") >= modeRank("assisted");
 
 /** The modes Home offers a row and a card for, and the only ones its choice may name (chooseMode). */
 export const OFFERED_MODES: readonly ApprovalMode[] = ["interactive", "assisted", "autopilot"];
@@ -169,8 +177,18 @@ export function autonomyInForce(s: ApprovalsSetting | undefined, admin?: Autonom
   return approvalInputs(modeInForce(s, admin)).scopes;
 }
 
+/**
+ * What a start with no seal puts in force (mode-record.ts trustedAtStart with none): Interactive at most, and no card
+ * above it agreed, so below Interactive when its own card isn't (r10-memory-x10-4).
+ */
+function startsWithoutSeal(own: ApprovalsSetting, admin: AutonomyAdmin | null | undefined): "interactive" | "asking" {
+  const none = { version: 0, at: null };
+  const next = standing({ mode: "interactive", consent: { ...own.consent, assisted: none, autopilot: none } }, admin).mode;
+  return next === "interactive" ? "interactive" : "asking";
+}
+
 /** The modes as Home is told of them: `own` is the user's own setting, never the one with the policy applied. */
-export function approvalsState(own: ApprovalsSetting, admin: AutonomyAdmin | null | undefined): ApprovalsState {
+export function approvalsState(own: ApprovalsSetting, admin: AutonomyAdmin | null | undefined, notes: SealNotes = {}): ApprovalsState {
   const at = standing(own, admin);
   // The organisation's reason holds whatever else does; then the hold.
   const lowered = held && at.why !== "organisation";
@@ -184,6 +202,9 @@ export function approvalsState(own: ApprovalsSetting, admin: AutonomyAdmin | nul
     agreed: APPROVAL_MODES.filter(m => modeAgreed(own, m)),
     cap: admin?.approvals?.maxMode ?? null,
     ...(admin?.features.aiReview === false ? { checkOff: true as const } : {}),
+    // What the record says of the seal (reliability-r10-1): only while it still bears on the mode in force.
+    ...(notes.kept && !lowered && modeRank(at.mode) > modeRank("interactive") ? { kept: notes.kept, nextStart: startsWithoutSeal(own, admin) } : {}),
+    ...(notes.started ? { started: notes.started } : {}),
   };
 }
 

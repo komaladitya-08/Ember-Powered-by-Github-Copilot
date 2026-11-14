@@ -9,6 +9,10 @@
  * - Once Ember has filled something from its vault in this run (PLAN.md §2 "Approvals", "The vault"): deny, every
  *   tool. What an extension reads off a page or a window could hold what was filled, and a failed call's text goes
  *   to the model as the extension wrote it (the SDK lets no hook rewrite it: review vault-3-x9-4).
+ * - Arguments that name Ember's data folder or the organisation's policy folder ("~/.config/ember/settings.json"):
+ *   deny, in every mode, as the same path typed in an app or named in a command is (integ-x-2). Arguments that name
+ *   one of Ember's own files or folders by name only ("settings.json", "audit"), whose they are can't be told: ask
+ *   every time, read-only tools too, never announced, and Autopilot, which has no question to put, refuses.
  * - A tool that says it is read-only (annotations only ever make a call stricter), from an item the user agreed to,
  *   in a task no injected text has tainted: allow, and audit.
  * - Anything else (changing, destructive, open-world, unknown): ask every time, never "Always", with a question Ember
@@ -23,7 +27,7 @@
 import type { Question } from "../agent/confirm";
 import { quoteUntrusted } from "../perception/elements";
 import { INJECTION_NOTE } from "../perception/injection";
-import { AUTOPILOT_WORDS } from "../policy/policy";
+import { AUTOPILOT_WORDS, namesEmberData, namesEmberFile } from "../policy/policy";
 import { canonical, isReadOnly, type PinnedTool } from "./pin";
 
 export type GateVerdict = "allow" | "announce" | "ask" | "deny";
@@ -63,6 +67,41 @@ export interface GateInput {
    * extension is called from then on, in any mode.
    */
   vaultFilled?: boolean;
+  /**
+   * What the call's arguments name of Ember's own (emberDataOf): "names", its data or policy folder (deny); "may",
+   * one of its files or folders by name only, whose it can't tell (ask, never announced; Autopilot denies).
+   */
+  emberData?: "names" | "may" | null;
+}
+
+/** What the model is told of a call whose arguments name Ember's data folder or the organisation's policy folder. */
+export const EMBER_DATA_REFUSED = "Ember's settings, audit log and policy are for the user only, so no extension may read or change them. Don't try this another way.";
+
+/** What the model is told of such a call in Autopilot, where it can't be asked (one of Ember's files by name only). */
+export const EMBER_DATA_UNASKED = "This may be Ember's own settings, audit log or policy, which are for the user only, and Autopilot can't ask the user, so Ember didn't do it.";
+
+/** The most strings of a call's arguments Ember reads for its own files; past it (or nested deeper), "may". */
+const ARG_STRINGS = 5_000;
+const ARG_DEPTH = 16;
+
+/**
+ * What a call's arguments name of Ember's own (integ-x-2): every string, keys included, is read as a typed path is
+ * (namesEmberData, namesEmberFile). Arguments too many or too deep to read whole count as "may" (fail closed).
+ */
+export function emberDataOf(args: unknown): "names" | "may" | null {
+  const strings: string[] = [];
+  let whole = true;
+  const walk = (v: unknown, depth: number): void => {
+    if (!whole) return;
+    if (strings.length > ARG_STRINGS || depth > ARG_DEPTH) { whole = false; return; }
+    if (typeof v === "string") strings.push(v);
+    else if (Array.isArray(v)) for (const x of v) walk(x, depth + 1);
+    else if (v && typeof v === "object") for (const [k, x] of Object.entries(v as Record<string, unknown>)) { strings.push(k); walk(x, depth + 1); }
+  };
+  try { walk(args, 0); } catch { whole = false; /* a getter that throws: not read whole */ }
+  if (strings.some(t => namesEmberData(t))) return "names";
+  if (!whole || strings.some(t => namesEmberFile(t))) return "may";
+  return null;
 }
 
 /** What the model is told of a call refused because the vault has filled something in this run. */
@@ -81,6 +120,8 @@ export function classify(g: GateInput): { verdict: GateVerdict; reason: string }
   if (!g.shownAsPinned) return changed;
   if (g.refused) return { verdict: "deny", reason: "The user said no to this tool. Don't try it again or try another way." };
   if (g.vaultFilled) return { verdict: "deny", reason: VAULT_FILLED };
+  if (g.emberData === "names") return { verdict: "deny", reason: EMBER_DATA_REFUSED };
+  if (g.emberData === "may") return g.autopilot ? { verdict: "deny", reason: EMBER_DATA_UNASKED } : { verdict: "ask", reason: "ember-data" };
   if (isReadOnly(g.tool) && !g.tainted && !g.remote && !g.hintsStale) return { verdict: "allow", reason: "read-only" };
   return { verdict: g.autopilot ? "announce" : "ask", reason: g.tainted ? "tainted" : !isReadOnly(g.tool) ? "changes" : g.remote ? "remote" : "hints-changed" };
 }
@@ -93,15 +134,27 @@ export function gateAnnouncement(extName: string): string {
   return `Using a tool from ${plainName(extName)}, ${AUTOPILOT_WORDS}`;
 }
 
-/** Characters that reorder or hide text: bidi controls, zero-width marks, the soft hyphen, the byte-order mark. */
-const INVISIBLE = /[\u00ad\u061c\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/g;
+/**
+ * Characters that reorder or hide text: every format character (\p{Cf}: bidi controls, zero-width marks, the soft
+ * hyphen, the byte-order mark, the tag characters that spell a hidden sentence), the variation selectors and the blank
+ * look-alikes, as app/shared/visible-text.ts marks them (r10-integrations-y10-1: tag characters showed as nothing).
+ */
+const INVISIBLE = /[\p{Cf}\u00ad\u061c\u115f\u1160\u180e\u200b-\u200f\u202a-\u202e\u2060-\u206f\u2800\u3164\uffa0\ufeff\u{e0000}-\u{e007f}]|\u034f|\u17b4|\u17b5|\u180b|\u180c|\u180d|\u180f|[\ufe00-\ufe0f]|[\u{e0100}-\u{e01ef}]/gu;
+
+/** Text with its hidden characters written out (\u202e, \u{e0041}), so what the model reads is what the user sees. */
+export function writeOutHidden(s: string): string {
+  return s.replace(INVISIBLE, c => {
+    const n = c.codePointAt(0)!;
+    return n > 0xffff ? `\\u{${n.toString(16)}}` : `\\u${n.toString(16).padStart(4, "0")}`;
+  });
+}
 
 /** A name from an extension, safe for the bubble: no control characters, no markup, capped. */
 export function plainName(s: string, max = 60): string {
   // Control characters, markup, and the invisible ones that reorder or hide text (bidi controls, zero-width marks), so
   // a name can't make the question read as something it isn't.
   // eslint-disable-next-line no-control-regex -- control characters are exactly what is removed
-  const t = s.replace(/[\u0000-\u001f\u007f-\u009f<>\u00ad\u061c\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/g, "").replace(/\s+/g, " ").trim();
+  const t = s.replace(/[\u0000-\u001f\u007f-\u009f<>]/g, "").replace(INVISIBLE, "").replace(/\s+/g, " ").trim();
   return (t.length > max ? `${t.slice(0, max)}…` : t) || "an extension";
 }
 
@@ -109,12 +162,29 @@ export function plainName(s: string, max = 60): string {
 export function argsSummary(args: unknown, max = 200): string {
   const text = args === undefined || args === null || (typeof args === "object" && !Object.keys(args as object).length) ? "" : canonical(args);
   // quoteUntrusted (JSON) leaves the invisible characters that reorder or hide text as they are: they are written out.
-  return text ? quoteUntrusted(text, max).replace(INVISIBLE, c => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`) : "";
+  return text ? writeOutHidden(quoteUntrusted(text, max)) : "";
+}
+
+/** The most of a call's arguments its question's sentence shows (argsSummary); the rest is in its `detail`. */
+const SUMMARY_MAX = 200;
+
+/**
+ * The whole of a call's arguments, to read where the question's sentence shows only their start (integrations-c9-3:
+ * a second address and an attachment past the first 200 characters were nowhere to read). One field to a line, as
+ * JSON with its keys in order, its hidden characters written out. Undefined when the sentence shows them all.
+ */
+export function argsDetail(args: unknown, max = SUMMARY_MAX): string | undefined {
+  if (args === undefined || args === null || (typeof args === "object" && !Object.keys(args as object).length)) return undefined;
+  const text = canonical(args);
+  if (text.length <= max) return undefined;
+  return writeOutHidden(JSON.stringify(JSON.parse(text), null, 2));
 }
 
 /** The question for a call the gate asks about: built by Ember from the request alone; no "Always". */
 export function gateQuestion(extName: string, toolName: string, args: unknown): Question {
-  const summary = argsSummary(args);
+  const summary = argsSummary(args, SUMMARY_MAX);
+  // What the sentence cuts off is there to read whole, and Allow waits until it has all been in view (confirm.ts).
+  const detail = argsDetail(args);
   return {
     title: "May I?",
     context: plainName(extName),
@@ -123,6 +193,7 @@ export function gateQuestion(extName: string, toolName: string, args: unknown): 
     taskLine: "",
     prompt: `Use “${plainName(toolName, 40)}” from ${plainName(extName)}?${summary ? ` With ${summary}.` : ""}`,
     options: [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }],
+    ...(detail ? { detail } : {}),
   };
 }
 

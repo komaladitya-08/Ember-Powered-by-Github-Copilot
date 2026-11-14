@@ -256,7 +256,7 @@ describe("redactingClient: where text leaves for a model (vault-3)", () => {
     expect(main).toContain("redact: vaultRedactor,");
     expect(main).toContain("redact: text => vaultRedactor.text(text),");
     expect(main).toContain("entry => vaultRedactor.deep(entry));");
-    expect(main).toContain("filling: (part, value) => vaultRedactor.note(part, value),");
+    expect(main).toContain("filling: (part, value) => { vaultRedactor.note(part, value); extensionsRef?.vaultFilledNow(); },");
     // Screen text passes it whole before it is cut short for a model (vault-3-x9-2).
     expect(main).toContain("setQuoteRedactor(text => vaultRedactor.text(text));");
     // So does a command's output, before its lines are cut (vault-3-y9-1), a pattern at a time at a run's end (merge

@@ -107,7 +107,9 @@ They share one emotion rig, so switching never changes behaviour.
   says it), with Home closed as well, never while the microphone is open for a request: then once it has closed,
   even where the task's card went meanwhile (a voice conversation stays open longer than a done card). A step Ember took **without asking** (in an approval mode: How Ember asks) shows its announcement with a
   "Without asking" tag in the accent tint, set only by Ember (`BubbleState.autonomous`): a task's
-  own note never carries it. When
+  own note never carries it. Screen readers hear that announcement once, in the bubble's live region and in the corner
+  card's ("Ember says: Clicking in Thunderbird, without asking: Autopilot is on."), a borrowed mouse's with how to
+  take it back, though Ember is still at work. When
   "Thinking…" has heard nothing from Copilot for 10 seconds it says "Still waiting for Copilot…"
   (or "Still waiting for your model provider…" or "…for the model service…" when that is the one in use) with **Stop** (that turn only; tasks go on), and so does a turn that goes quiet for 30. Its step names the keyboard's ways to stop,
   which the bubble's Stop can't offer ("Or press Ctrl+Alt+E and use Stop response in Home. Ctrl+Alt+X stops

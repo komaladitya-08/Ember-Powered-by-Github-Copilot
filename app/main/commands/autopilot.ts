@@ -159,17 +159,20 @@ export interface AutopilotInput {
 /**
  * The classifier's "unclear" rules that say it doesn't know the program or the tool's command that runs, rather than
  * that it can't follow text whose programs it knows: a verb of git, gh, npm, docker, a cloud tool or a package manager
- * off its list, a cmdlet it has no row for, a program it can't name or that hides behind another's words.
+ * off its list, a cmdlet it has no row for, a program it can't name or that hides behind another's words, and a cloud
+ * tool's verb it can't tell the effect of (`cloud.unknown-verb`: `heroku apps:frobnicate`, commands-remote-c10-1).
  */
-const UNKNOWN_BY_ANOTHER_NAME = /^unclear\.(([a-z0-9]+-)?verb|program|program-letters|cmdlet|git-ext|gh-extension|hidden-command)$/;
+const UNKNOWN_BY_ANOTHER_NAME = /^unclear\.(([a-z0-9]+-)?verb|program|program-letters|cmdlet|git-ext|gh-extension|hidden-command)$|^cloud\.unknown-verb$/;
 /**
  * And those that say the command runs code nobody is shown, the checking model included: a Windows script host and
  * the programs that load code for another (`rundll32`, `mshta`, `wscript`…), every script of a folder (`run-parts`),
  * a PowerShell module, a git hook run by name (modes-y9-x9-3); and a sandbox or a wrapper whose command the classifier
  * doesn't judge (`bwrap`, `firejail`, `envdir`, `expect`: `bwrap … systemd-run …` starts what outlives Stop, and its
- * only finding is the wrapper's name; modes-y9-y9-5).
+ * only finding is the wrapper's name; modes-y9-y9-5), and a script the task wrote in a language Ember doesn't read
+ * (`unclear.script-code`: commands-remote-r10-9), or a pod's command Ember can't read (`kubectl exec -i pod -- sh <
+ * x.sh`, `unclear.remote-command`: r10-commands-y10-8).
  */
-const CODE_NOBODY_SEES = /^unclear\.(rundll32|mshta|wscript|cscript|msdt|pcalua|scriptrunner|syncappvpublishingserver|odbcconf|msxsl|ieexec|control|presentationhost|run-parts|import-module|git-hook|bwrap|firejail|envdir|expect)$/;
+const CODE_NOBODY_SEES = /^unclear\.(rundll32|mshta|wscript|cscript|msdt|pcalua|scriptrunner|syncappvpublishingserver|odbcconf|msxsl|ieexec|control|presentationhost|run-parts|import-module|git-hook|bwrap|firejail|envdir|expect|script-code|remote-command)$/;
 /** Is this a program, or a tool's command, the classifier doesn't know (the closed default, and its older rules for the same)? */
 const unknownTo = (f: { cls?: DangerClass; rule: string }): boolean => {
   const rule = f.rule.replace(/^in-script:/, "");

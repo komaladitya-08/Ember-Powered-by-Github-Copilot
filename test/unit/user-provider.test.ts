@@ -133,6 +133,17 @@ describe("which endpoint is in force", () => {
     expect(providerWaitingHost(withProvider({ consent: { version: 0, at: null, host: "" } }), parseAdminPolicy("{", "/etc/ember/policy.json"))).toBeNull();
   });
 
+  it("waits for its card too while the record holds an agreed yes back, so nothing goes to Copilot in its place (r10-safety-x10-1)", () => {
+    expect(providerWaitingHost(withProvider(), NONE, true)).toBe("models.example.com");
+    expect(providerWaitingHost(withProvider({ on: false }), NONE, true)).toBeNull();
+    expect(providerWaitingHost(withProvider(), policy({ features: { userProvider: false } }), true)).toBeNull();
+    // main gives the agent, the hello and Home's composer that wait, held included, and keeps a sign-in found meanwhile.
+    const main = fs.readFileSync("app/main/main.ts", "utf8");
+    expect(main).toContain("const ownProviderWaiting = (): string | null => (fixedProvider ? null : providerWaitingHost(settings.get(), admin, providerRecord.held()));");
+    expect(main).toContain("providerWaiting: ownProviderWaiting,");
+    expect(main).toContain('if (phase === "signed-out" && !ownProviderWaiting()) { currentToken = null; keeper.use(null); }');
+  });
+
   it("gives way to the organisation's own provider, which always wins", () => {
     const admin = policy({ provider: { type: "azure", baseUrl: "https://corp.openai.azure.com" } });
     const fixed = { kind: "admin" as const, config: { type: "azure" as const, baseUrl: "https://corp.openai.azure.com" } };

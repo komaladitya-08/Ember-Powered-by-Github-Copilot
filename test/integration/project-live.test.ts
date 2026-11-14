@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
-import { _electron } from "playwright-core";
+import { _electron, type Page } from "playwright-core";
 import { expect, it } from "vitest";
 import { CONSENT_VERSION, FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
 import { MemoryGraph } from "../../app/main/memory/graph";
@@ -13,6 +13,20 @@ import { firstRunWhy } from "../../app/renderer/home/welcome-copy";
 import { modelsReady } from "../../app/voice/models";
 // @ts-expect-error -- plain JS test helper
 import { startMockLlm } from "../mock-llm/server.mjs";
+
+/**
+ * A yes to the user's own provider written into settings.json is not a yes (provider-record.ts, safety-privacy-c10-1):
+ * Ember puts it back as it starts, connects to nothing and shows the provider's card in Home. A journey that starts with
+ * its provider on agrees there, as a person does, and only then goes on to its own steps.
+ */
+async function agreeToProviderInHome(home: Page, host: string): Promise<void> {
+  await home.locator('a[href="#copilot-h"]').click({ timeout: 15_000 });
+  await home.locator("#byok-consent").waitFor({ state: "visible", timeout: 30_000 });
+  expect(await home.evaluate(() => window.ember.agentStatus().then(s => s?.phase))).toBe("signed-out");
+  await home.waitForTimeout(AGREE_ARM_MS);
+  await home.locator("#byok-yes").click();
+  await expect.poll(() => home.locator("#byok-msg").innerText(), { timeout: 15_000 }).toContain(`Agreed. Ember now sends your requests to ${host}`);
+}
 
 it.skipIf(process.env.EMBER_PROJECT_TEST !== "1")("shares only selected files and applies the exact diff after confirmation", async () => {
   const requireCjs = createRequire(import.meta.url);
@@ -277,6 +291,7 @@ it.skipIf(process.env.EMBER_PROJECT_TEST !== "1")("keeps the chosen files, the t
     const page = () => app?.windows().find(win => win.url().includes("/renderer/home/index.html"));
     await expect.poll(() => !!page(), { timeout: 20_000 }).toBe(true);
     const home = page()!;
+    await agreeToProviderInHome(home, host);
     await home.locator('a[href="#project-h"]').click({ timeout: 15_000 });
     await expect.poll(() => home.locator("#project-pick").isEnabled(), { timeout: 30_000 }).toBe(true);
     await home.locator("#project-pick").click();
@@ -346,6 +361,7 @@ it.skipIf(process.env.EMBER_PROJECT_TEST !== "1")("keeps my own provider in forc
     const page = () => app?.windows().find(win => win.url().includes("/renderer/home/index.html"));
     await expect.poll(() => !!page(), { timeout: 20_000 }).toBe(true);
     const home = page()!;
+    await agreeToProviderInHome(home, host);
     await home.locator('a[href="#project-h"]').click({ timeout: 15_000 });
     await expect.poll(() => home.locator("#project-pick").isEnabled(), { timeout: 30_000 }).toBe(true);
     await home.locator("#project-pick").click();

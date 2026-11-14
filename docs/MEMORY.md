@@ -240,7 +240,26 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
     beside them makes them a time, a year, a size, a count, a price or an address ("at 0630", "in 2021", "1200 mm
     wide", "5000 points", "costs 1000", "4821 Elm Street", "Card ending 4242"); a value after an administrator's name,
     or a login's with a symbol or a user before it ("Router admin is admin123", "Default login admin/admin123"); a network's key said with no "is"; a
-    security question's answer said beside it; and a passport's or a driving licence's number.
+    security question's answer said beside it; and a passport's or a driving licence's number;
+  - a password or a PIN in any everyday word order (memory-r10-1): the value before its name ("sunshine is my Netflix
+    password", "Rex is their bank PIN"), after who uses it ("The password I use is sunshine"), set off by commas ("I
+    use the same password, sunshine, everywhere", "Password is the dog's name, Rex"), after "has the password" or "set
+    the passcode as", a word or a phrase used as one ("Uses purple monkey dishwasher as a password"), four to eight
+    digits anywhere in a sentence that names a password, a PIN or a passcode ("My bank PIN is my birthday, 0412"; never
+    a year as a time, "Changed their password in 2024"), what is used for a service ("For Netflix I use sunshine"), a
+    login as a user and a value, and a value shaped like a password before what it is for ("hunter2 for the VPN").
+    Beyond those orders, a clause (to a full stop, ";" or "!", across "?", "…", dashes, arrows, slashes and commas,
+    and on into a next sentence that opens "It is", "Now it's" or "That's") that names a password, a passcode, a PIN,
+    pwd, pw, p/w, pword, "pass word" or "pass code" (also "mot de passe", "contraseña", "Passwort", "senha") is refused
+    when it holds any word of three letters or more that isn't grammar or how people talk about one (keeping,
+    changing, forgetting, typing it, where it is written down), a service's or a password manager's name, or a
+    number, or a number of three digits or more that isn't a year after a time word or a count (r10-memory-x10-1,
+    r10-memory-y10-3): "sunshine's my Netflix password", "My Netflix password? sunshine.", "Netflix pw sunshine",
+    "Set a new Netflix password. It is sunshine.", "PIN 041". So is "bluebird is what I use for Gmail" and a login's user and value ("Netflix login: ram /
+    sunshine"). That fails closed: "Works at Globex and forgot their password" is refused too, for its "Globex".
+    Never a password manager, a PIN reset or password rules, nor a postal PIN code. A word said with no password's
+    name ("My Netflix is sunshine", "I log into Netflix with sunshine", "If Netflix asks, the answer is sunshine")
+    isn't read as one.
 
   A value is read as `guard.ts` reads a login's (`LOGIN_VALUE`: a digit or a symbol, never an address, a scheme such
   as OAuth2 or 2FA, a version, a date or a hyphenated word), four to eight digits where a code goes, and where a tool
@@ -339,7 +358,8 @@ download, so English-only MiniLM is the trade-off for now.
   or password fields, and audio. The perception layer withholds these already. Memory takes only what reached the
   conductor or a worker legitimately.
 - **The user's to see and change.** Settings gets a Memory section: what Ember knows, grouped by entity, with
-  per-fact forget and "Forget everything". Saying "forget that" in conversation works too. Sign-out erases the
+  per-fact forget and "Forget everything", which also clears what was asked this session: the suggestions drawn from
+  it and the Ask box's history (↑). Saying "forget that" in conversation works too. Sign-out erases the
   verified account's memory along with the conversation. Memory Ember couldn't verify as this account's in this run
   stays, and the Sign out question says so ("Saved memory Ember can't match to this account stays on this computer;
   Forget everything in Memory removes it."). When another account signs in and Ember erases the previous one's
@@ -501,7 +521,10 @@ download, so English-only MiniLM is the trade-off for now.
      their own words (`ownWords`), or one whose evidence is their words word for word and holds half of the fact or
      more (`RESTS_ON`), however the model worded it, so "I've just moved to Leeds for the new job" still teaches
      "Lives in Leeds" (memory-x9-3). Ember's reply may say what went in words that share none with it, so what rests
-     on the reply, or on words of the user's that don't say it, waits; after Forget everything, a task's result and
+     on the reply, or on words of the user's that don't say it, waits. The remember tool is held to the same rule by
+     the user's words in the request it answers, so "Does not eat meat" from a reply after "Is vegetarian" was
+     forgotten is refused (`HELD_UNSAID`), and a task's result teaches nothing until the conversation ends, since it
+     is Ember's own work; what a correction says now may still be said again, in its own words and with nothing more beside it (memory-r10-3, r10-memory-y10-4). After Forget everything, a task's result and
      the remember tool are held to the same (`HELD_ALL`), and a turn teaches only what the user states in it
      (`statedByUser`), never what a question of theirs names ("Did I tell you I was vegetarian?"). The words are held in RAM, never on disk, and Undo lifts
      it. It learns less: a fact Ember inferred from its own reply in that conversation waits for the next. The
@@ -598,7 +621,17 @@ download, so English-only MiniLM is the trade-off for now.
    (memory-x9-9): a name that is someone's ("Start Priya's review"), after "check in on", "working on" or "an update
    on", told about something ("Update Priya on the launch"), after a verb whose object is a person ("Ask Alma",
    "Ping Dallas") or after a title ("Mr Lock"), and a later word of an installed app's name ("Grace Hopper
-   Simulator" leaves Hopper; its first word, Grace, still goes). A name Ember asked about is never counted or asked about again in that
+   Simulator" leaves Hopper; its first word, Grace, still goes). A request about something private counts none of
+   its names, and they are never asked about from any other request that run (`sensitiveRequest`, memory-c10-1):
+   health and sexual health, medicines, mental health, addiction, a crisis line, the law, money trouble, dating and
+   sexuality, and faith ("Find an HIV clinic near me", "Look up Prozac side effects", "Email my lawyer at Slater
+   Gordon about the divorce", and a specialist, a scan, a weigh-in, a "-Anon" group, an overdraft or a festival),
+   since the question shows beside the cursor and is spoken by default whoever is at the screen. As a word list
+   can't name every clinic, group or medicine, a name also counts only where someone or a project stands
+   (r10-memory-x10-2): after "with", "to", "from", "about" or "for" (never "search for", "look for"), after a verb
+   whose object is a person or a title, someone's ("Priya's review"), after "working on" or "the status of", or before
+   a project's word ("the Atlas notes"). So "Find Narcotics meetings", "Is Mounjaro covered?", "Book me in at Marie
+   Stopes" and "Did Omar reply" count nothing. A name Ember asked about is never counted or asked about again in that
    run, whether it was answered, skipped or left unanswered (held in RAM only; a restart may ask once more). Once one
    was missed twice, at most once a day (`memory.askedAt`, kept across restarts), only while idle with the screen
    unlocked and nothing under way, Ember says "You've mentioned “Priya” a few times. Who or what is that?" in the
@@ -645,8 +678,13 @@ A new name or answer length told in conversation takes the profile's place too (
 user's own words in a turn tell Ember what to call them ("Call me Sam from now on", "my name is Sam", "I go by Sam
 now", "I'd like to be called Sam", and the other ways people say it: "Can you call me Sam?", "Call me Sam, not
 Ram", "I'm Sam, not Ram", "Don't call me Ram, call me Sam", "I'd rather be called Sam", "My name is Sam and I work
-at Globex": `nameSaid`, memory-x9-4) or how long its answers should be ("Stop being so brief, I want the
-full detail", "your answers are too long": `lengthSaid`, read the right way round), and the fact the model saves
+at Globex", and the everyday ways of memory-r10-2: "I go by Raj these days, not Ram", "It's Raj, not Ram" (only
+when Ram is the name Ember has for them now, so "It's Paris, not London" renames no one: r10-memory-x10-3), a title,
+"Call me Dr. Patel please", and what others call them offered to Ember, "My friends call me Raj, and so can you") or
+how long its answers should be ("Stop being so brief, I want the full detail", "your answers are too long":
+`lengthSaid`, read the right way round; and, in a turn that says nothing else (no request, question or errand beside it: r10-memory-y10-1),
+"Keep it brief", "Stop rambling", "Less waffle please": memory-r10-2; never a length alone, "Shorter, please" or
+"More detail", which may ask for one answer or a draft again: r10-memory-x10-3), and the fact the model saves
 for it, by the remember tool or when the turn is read, says the same name or length, the fact kept is the profile's
 own: "Likes to be called Sam" under `called`, or the answer length under `answer_length` (in the user's words when
 the fact is mostly theirs already, else "Prefers short answers" or "Prefers detailed answers"), `user`, replacing

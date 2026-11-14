@@ -616,6 +616,84 @@ describe("AnswerLanguage judges a passage read out after an English lead-in by t
     const said = streamed("Aquí tienes los archivos que pediste esta mañana, con todo lo que hay en la carpeta:\n\nInforme.pdf y notas.txt.", "¿qué archivos hay en la carpeta de descargas?");
     expect(said.map(p => p.lang)).toEqual(["es", "es", "es"]);
   });
+
+  // The closing questions a model ends a read-out with. Only "Shall I reply to it?" was tested; the rest have one
+  // English short word or none, or one another language shares ("I" is Italian's "i"), and took the passage's voice, or
+  // went unsaid without one, while the follow-up window opened for them (voice-speaking-r10-1).
+  const CLOSING = ["Shall I reply to it?", "Shall I reply?", "Want me to reply?", "Should I reply?", "Do you want me to answer?", "Want me to draft a reply?", "Anything else?", "Would you like me to reply to José?", "Should I translate it?", "Want a translation?", "Reply, or leave it?"];
+  const LATIN = ["es", "fr", "de", "it", "pt", "nl"];
+  it.each(LATIN.flatMap(lang => CLOSING.map(close => [lang, close] as const)))("asks the closing question in Ember's own voice after a %s passage: %j (voice-speaking-r10-1)", (lang, close) => {
+    const said = streamed(`Here is the email from José:\n\n${PASSAGES[lang]}\n\n${close}`);
+    expect(said.at(-1)).toEqual({ text: close, lang: null });
+    expect(said.slice(1, -1).map(p => p.lang)).toEqual(said.slice(1, -1).map(() => lang));
+  });
+
+  // A lead-in that opens with a name with an accent and a saying verb ("José wrote:") wasn't counted as Ember's, so the
+  // passage was judged with it and the closing took the passage's voice in 28 of 44 cases (r10-voice-y10-1).
+  const NAMED = ["José wrote:", "José says:", "José writes:", "Ángel wrote:", "Zoë said:"];
+  it.each(LATIN.flatMap(lang => NAMED.flatMap(lead => ["Shall I reply?", "Want me to reply?", "Anything else?"].map(close => [lang, lead, close] as const))))("asks the closing question in Ember's own voice after a %s passage led in by %j: %j (r10-voice-y10-1)", (lang, lead, close) => {
+    const said = streamed(`${lead}\n\n${PASSAGES[lang]}\n\n${close}`);
+    expect(said.at(-1)).toEqual({ text: close, lang: null });
+    expect(said.slice(1, -1).map(p => p.lang)).toEqual(said.slice(1, -1).map(() => lang));
+  });
+
+  // A passage's own one-word line that is also one of Ember's closing words ("Help!", which Dutch and German write too)
+  // went to Kitten (r10-voice-x10-3).
+  it.each([
+    ["nl", "Hallo Jan, kun je me helpen met het project? Help!"],
+    ["nl", "Hallo Jan, ik hoop dat alles goed met je gaat. Kun je de documenten meenemen? Help!"],
+    ["de", "Hallo Alex, ich hoffe, es geht dir gut. Kannst du bitte die Unterlagen mitbringen? Help!"],
+  ])("keeps a %s passage's own one-word line in its voice (%j) (r10-voice-x10-3)", (lang, passage) => {
+    const said = streamed(`Here is the email:\n\n${passage}\n\nWant me to reply?`);
+    expect(said.find(p => flat(p.text).endsWith("Help!"))?.lang).toBe(lang);
+    expect(said.at(-1)).toEqual({ text: "Want me to reply?", lang: null });
+  });
+
+  // An email shown with its sender and subject lines: they were judged as the passage's first letters, which they
+  // diluted, and the message was Kitten's with English sounds in 22 of 44 cases for "**From:** José / **Subject:**
+  // Proyecto" (voice-speaking-r10-2). So for a lead-in whose only word with an accent is a name ("José's email says:"),
+  // which was held and judged with the email (voice-speaking-c10-1).
+  const HEADERS = [
+    "**From:** José\n**Subject:** Proyecto\n\n", "From: José\nSubject: Proyecto\n\n", "From: José\nSubject: Project update\n\n",
+    "From: **José**\nSubject: **Proyecto**\n\n", "**From:** Marco Rossi\n**Subject:** Progetto\n\n", "From: José García\nSubject: Proyecto\n\n",
+    "From: Ana\nDate: Monday\nSubject: Hola\n\n", "Here is the email:\n\n**From:** José\n**To:** Alex\n**Subject:** Proyecto\n\n", "José's email says:\n\n",
+    "Sure. José's email says:\n\n",
+  ];
+  it.each(LATIN.flatMap(lang => HEADERS.map(head => [lang, head] as const)))("reads a %s email in its own voice after the header lines or lead-in %j, said in Ember's (voice-speaking-r10-2)", (lang, head) => {
+    const said = streamed(`${head}${PASSAGES[lang]}\n\nWant me to reply?`);
+    const passage = said.filter(p => flat(PASSAGES[lang]).includes(flat(p.text)) && !flat(head).includes(flat(p.text)));
+    expect(flat(passage.map(p => p.text).join(" "))).toBe(flat(PASSAGES[lang]));
+    expect(passage.map(p => [flat(p.text), p.lang])).toEqual(passage.map(p => [flat(p.text), lang]));
+    expect(said.filter(p => !passage.includes(p)).map(p => [flat(p.text), p.lang])).toEqual(said.filter(p => !passage.includes(p)).map(p => [flat(p.text), null]));
+  });
+
+  // A header line's value in the passage's language was given to Kitten, which reads only English: a Russian or
+  // Chinese sender and subject were said in English sounds or not at all, a Spanish subject in English sounds
+  // (r10-voice-x10-2). Only a header whose value passes a lead-in's checks is Ember's.
+  it.each([
+    ["ru", "From: Иван\nSubject: Встреча в понедельник\n\n", ["Иван", "Встреча в понедельник"]],
+    ["zh", "From: 小王\nSubject: 会议\n\n", ["小王", "会议"]],
+    ["es", "Subject: Reunión del lunes\n\n", ["Reunión del lunes"]],
+    ["es", "From: José\nSubject: Reunión del lunes\n\n", ["Reunión del lunes"]],
+    ["it", "**From:** Marco Rossi\n**Subject:** Riunione di lunedì\n\n", ["Riunione di lunedì"]],
+    ["ru", "**From:** Иван\n**Subject:** Встреча\n\n", ["Иван", "Встреча"]],
+  ])("says a %s header's value in the passage's voice, never Kitten's (%j) (r10-voice-x10-2)", (lang, head, values) => {
+    const said = streamed(`${head}${PASSAGES[lang]}\n\nWant me to reply?`);
+    for (const value of values) {
+      const piece = said.find(p => p.text.includes(value));
+      expect([value, piece?.lang]).toEqual([value, lang]);
+    }
+    for (const p of said.filter(p => flat(PASSAGES[lang]).includes(flat(p.text)))) expect([flat(p.text), p.lang]).toEqual([flat(p.text), lang]);
+    expect(said.at(-1)).toEqual({ text: "Want me to reply?", lang: null });
+  });
+
+  it.each([
+    ["From: Sam\nSubject: Lunch\n\nAre we still on for lunch on Friday? Let me know.\n\nWant me to reply?"],
+    ["Subject: the café meeting is moved to Monday, and the room is booked."],
+    ["Here is the email:\n\nFrom: José\nSubject: Résumé\n\nThanks for sending your résumé, I will read it tonight.\n\nAnything else?"],
+  ])("still says an English email with header lines wholly in Ember's own voice (%j) (voice-speaking-r10-2)", answer => {
+    expect(streamed(answer, "read me the latest email").map(p => p.lang).filter(Boolean)).toEqual([]);
+  });
 });
 
 describe("AnswerLanguage says an English answer's own closing words in Ember's voice after a passage it read out in another language", () => {

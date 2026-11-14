@@ -50,7 +50,25 @@ export interface ApprovalsState {
   cap: ApprovalMode | null;
   /** The organisation turned Assisted's check off (`features.aiReview: false`): Assisted can't be chosen, and its row says so. */
   checkOff?: true;
+  /**
+   * The mode in force above Interactive couldn't be sealed for the next start, so it lasts until Ember closes
+   * (reliability-r10-1): `keyring`, there is no keyring Ember can use; `save`, the seal couldn't be written.
+   */
+  kept?: SealTrouble;
+  /**
+   * With `kept`: what the next start will put in force, since that start keeps no agreement above Interactive
+   * (mode-record.ts trustedAtStart): Interactive when its card is agreed, else below it (r10-memory-x10-4).
+   */
+  nextStart?: "interactive" | "asking";
+  /** At this start the mode chosen was put back to Interactive or below, and why: said until a mode is chosen again (reliability-r10-1). */
+  started?: { chosen: ApprovalMode; why: "keyring" | "unconfirmed" };
 }
+
+/** Why a mode above Interactive can't be kept for the next start. */
+export type SealTrouble = "keyring" | "save";
+
+/** What the mode's record says of the seal, for ApprovalsState (app/main/policy/mode-record.ts `notes`). */
+export type SealNotes = Pick<ApprovalsState, "kept" | "started">;
 
 /**
  * What a choice came to: the state after it, and when it wasn't made, why (Home words it: copy.ts modeRefusal).

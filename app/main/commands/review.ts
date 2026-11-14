@@ -100,12 +100,16 @@ export const REVIEW_LIMITS = { words: 6000, command: 4000, why: 400, findings: 1
  * reviewed: nobody, the checking model included, can know what an unknown program does (modes-y9-6). Assisted is
  * looser than Autopilot in one place only: a command that is "unclear" and nothing more (a loop, inline code, a
  * pipeline into xargs: its programs are known and the reviewer can read it) goes to the check, where Autopilot asks.
+ * `ruledOut`: the user's own words rule the command out or hold it back (flow.ts wordsRuleOut), which Autopilot asks
+ * about in code: it is never left to the check either (commands-remote-c10-3).
  */
-export function notReviewable(d: CommandDecision, o: { words: string; mode: string; askEvery: unknown; userAskEvery: boolean; command: string; findings?: readonly Pick<Finding, "cls" | "rule">[] }): string | null {
+export function notReviewable(d: CommandDecision, o: { words: string; mode: string; askEvery: unknown; userAskEvery: boolean; command: string; findings?: readonly Pick<Finding, "cls" | "rule">[]; ruledOut?: boolean }): string | null {
   if (d.verdict !== "ask") return "it doesn't ask";
   if (!o.words.trim()) return "no words of the user's";
   if (o.mode === "ask" || o.askEvery) return "every command asks here";
   if (o.userAskEvery) return "the user asked to check every command";
+  // Their no, said in advance (flow.ts wordsRuleOut), is held in code, as Autopilot holds it (commands-remote-c10-3).
+  if (o.ruledOut) return "the user's own words rule it out";
   const kept = keptQuestion(d, o.findings ?? []);
   if (kept === "secret") return "it would read or print secrets";
   if (kept === "outlives-stop") return "it would keep running after Stop";

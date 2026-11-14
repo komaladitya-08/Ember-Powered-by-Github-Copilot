@@ -775,6 +775,13 @@
   },
   {
    "cmd": "docker inspect web",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ]
+  },
+  {
+   "cmd": "docker inspect --format '{{.State.Status}}' web",
    "verdict": "run"
   },
   {

@@ -118,6 +118,12 @@ export interface BubbleView {
    * news, so it is said once with its step (the keyboard's way to stop), though it still thinks (accessibility-visual-2).
    */
   stalled?: boolean;
+  /**
+   * Ember's own announcement of a step it took without asking (BubbleState.autonomous, its "Without asking" tag): said
+   * once though Ember works, so a screen reader hears every step taken unasked, a borrowed mouse among them, as the eye
+   * sees it (companion-r10-1). Its words are policy's, never model text.
+   */
+  autonomous?: boolean;
 }
 
 /**
@@ -168,6 +174,7 @@ export function announcement(v: BubbleView, speaker = "Ember"): string {
     case "error": return both ? `${speaker} has a problem${at}: ${withHint}` : "";
     case "idle": case "done": return text || title ? `${speaker} says${at}: ${hint ? `${end(text || title)} ${end(hint)}` : text || title}` : "";
     case "guiding": return text || title ? `${speaker} says${at}: ${text || title}` : "";
+    case "acting": return v.autonomous && text ? `${speaker} says${at}: ${text}` : "";
     default: return "";
   }
 }
@@ -1421,6 +1428,7 @@ export class ReasoningBubble {
       visible: true, mood: this.mood, title: this.title.textContent ?? "", thought: this.thoughtRaw, streaming: this.streaming, where: this.where,
       step: this.step.hidden ? null : this.stepRaw, ...(this.whole ? { whole: this.whole.text, wholeSeen: this.wholeSeenByMain } : {}),
       ...(this.risky && this.mood === "attention" ? { risky: true } : {}), ...(this.stalled ? { stalled: true } : {}),
+      ...(this.root.dataset.autonomous === "true" ? { autonomous: true } : {}),
     };
     const text = announcement(view, this.speaker);
     if (text === this.announced) return;

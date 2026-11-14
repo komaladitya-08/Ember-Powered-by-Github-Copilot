@@ -361,8 +361,10 @@ export interface HostOptions {
    */
   signedOutWhy?: () => string | null;
   /**
-   * The host whose card the user's own provider waits for (on, allowed and with an address, not agreed to for it), or
-   * null: signed out then, agreeing to it is the way on, not a GitHub sign-in (integrations-r3-1).
+   * The host whose card the user's own provider waits for (on, allowed and with an address, not agreed to for it, or its
+   * yes withdrawn or held at start: provider-record.ts), or null. Agreeing to it is the way on, not a GitHub sign-in
+   * (integrations-r3-1), and while it waits nothing connects to Copilot either, signed in or not: the user chose their
+   * own provider, so their words go nowhere rather than to GitHub (r10-safety-x10-1).
    */
   providerWaiting?: () => string | null;
   /**
@@ -1055,6 +1057,8 @@ export class AgentHost {
   private active: ActiveProvider | null = null;
   /** What providerNow() said as this connection started (providerKey), to see a change since. */
   private startedProvider = "";
+  /** This connection held Copilot back while the user's own provider waits for its card (providerWaiting). */
+  private ownWaits = false;
   /** Requests asked after the model service changed while a turn or a task was under way: sent to the new one later. */
   private held: { text: string; context: Parameters<AgentHost["ask"]>[1]; epoch: number; how: Parameters<AgentHost["ask"]>[3] }[] = [];
   /** Requests asked that wait for a connection, or for a silent turn to end, before they are sent (conversationTurn). */
@@ -2022,8 +2026,12 @@ export class AgentHost {
       this.dropHanded();
       return;
     }
-    if (!token && !provider) {
-      this.setStatus({ phase: "signed-out", detail: this.o.signedOutWhy?.() ?? (this.signOutUnsaved ? SIGN_OUT_NOT_KEPT : this.signedOut), login: undefined, source: undefined, service: undefined });
+    // The user's own provider waits for its card: no Copilot in its place, whatever sign-in there is (r10-safety-x10-1).
+    const waitsFor = provider ? null : this.o.providerWaiting?.() ?? null;
+    this.ownWaits = !!waitsFor;
+    if ((!token && !provider) || waitsFor) {
+      const why = waitsFor && token ? providerWaitingWhy(waitsFor) : this.o.signedOutWhy?.() ?? (this.signOutUnsaved ? SIGN_OUT_NOT_KEPT : this.signedOut);
+      this.setStatus({ phase: "signed-out", detail: why, login: undefined, source: undefined, service: undefined });
       this.o.memory?.pauseAccount?.("signed-out");
       this.dropHanded();
       return;
@@ -2969,7 +2977,9 @@ export class AgentHost {
 
   /** The endpoint in force is no longer the one this connection started with. */
   private providerMoved(): boolean {
-    return providerKey(this.providerNow()) !== this.startedProvider;
+    // (The user's own provider starting or ending its wait for a card moves Copilot out or back in: r10-safety-x10-1.)
+    const now = this.providerNow();
+    return providerKey(now) !== this.startedProvider || this.ownWaits !== (!now && !!this.o.providerWaiting?.());
   }
 
   /**
