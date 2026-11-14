@@ -351,7 +351,7 @@ environment, only through `scripts/runtime-env-live.sh`, which gives it a networ
     `isDefault`) is listed as **Built into Copilot** and one the organisation's managed settings provide as **Set by
     your organisation**, neither with **Remove** (the runtime refuses to remove them, and main says so in a sentence
     rather than nothing); a plugin from Copilot's own says it is listed in a marketplace built into Copilot, never
-    one "you added" (`FEATURE_CONSENT_VERSION.extensions` 3). Browsing fetches the list from GitHub (Copilot's own) or
+    one "you added" (since `FEATURE_CONSENT_VERSION.extensions` 3). Browsing fetches the list from GitHub (Copilot's own) or
     from the address the user added. A list Ember couldn't fetch or read says so (`browseFailed`: "Ember couldn't
     reach “<name>”. Check the network, then press Browse again." when git couldn't reach it, a proxy refused or TLS
     inspection got in the way) with **Browse again**, never "This marketplace lists nothing yet.", which is only for a
@@ -364,7 +364,8 @@ environment, only through `scripts/runtime-env-live.sh`, which gives it a networ
     only `https://github.com` and its subdomains), shows **Waiting for you to finish in your browser** with **Check
     again**, then **Connected**; one whose sign-in lapsed says **Needs you to sign in again**.
   - Every add and connect first shows a consent card in place: only you add, read-only tools run once you agree,
-    Ember asks before any tool that changes or sends anything, results are information and never instructions, and
+    Ember asks before any tool that changes or sends anything except in Autopilot, where it goes ahead and says so
+    (`ASKS_BEFORE_CHANGES`, `FEATURE_CONSENT_VERSION.extensions` 4; integrations-r10-1), results are information and never instructions, and
     where the item reaches (the marketplace's source, or GitHub's Copilot service for a connector).
     The first yes also records extensions' own consent (`settings.extensions`, `FEATURE_CONSENT_VERSION.extensions`;
     `consentCard`'s words are pinned to that version in extensions-runtime.test.ts) and turns extensions on; nothing
@@ -834,16 +835,14 @@ it builds on:
     the one checked as the session loaded. Nothing Ember asks a server can stand in for that: a server can answer
     Ember's question as agreed and the runtime's with new text (integrations-x9-1: it did, in every request of the
     conversation, 5 of 5).
-  - *When the runtime does hear that a server's list changed* (`mcp.tools.list_changed`: a remote server, which has
-    no launcher between, or anything that got past it), that word is the change. The server is disabled in the
+  - *When the runtime does hear that a server's list changed* (`mcp.tools.list_changed`: anything that got past the
+    launcher), that word is the change. The server is disabled in the
     session at once, unasked, the conversation is tainted and reloads between turns, where the runtime's first list
     is checked against the pins as at every load. A server that says it again in the same conversation stays out
     of it until the conversation ends, and each of its tools whose entry in its own list then differs from the pin is
     marked changed (off until the user agrees again); the others come back in the next conversation. The event is heard from the
-    session's first moment (`onEvent` in the session's config). Not closed for a remote server: a notice that
-    reaches the runtime a few milliseconds before it builds a request can put the new text in that one request,
-    before Ember hears of it; after that the server is out and every extension call asks. Closing it needs the
-    runtime not to refresh a tool list mid-session, or Ember between the runtime and a remote server too.
+    session's first moment (`onEvent` in the session's config). A remote server's notice no longer reaches the
+    runtime either: the launcher stands between them too (below).
   - *After each of a server's calls*, before the result goes back, Ember asks that server for its list
     (`session.rpc.mcp.listTools`, at most 1.5 s, and not again in that session once unanswered) and compares each
     admitted tool with its pin whole, hints too: a head start on a server that changes a tool as it answers and says
@@ -859,8 +858,16 @@ it builds on:
   Read-only means `readOnlyHint` true with neither `destructiveHint` nor `openWorldHint` true, on a stdio server whose
   tool list hasn't changed this session: every call to a remote (HTTP) server's tools asks, since it sends its
   arguments there. Anything else: the Confirmer asks every time ("Use “post_message” from Slack? With "{…}"."), with
-  Allow and Not now, never Always. A yes counts only if the gate still allows the call when it comes. Every decision,
-  answer and result is an `extension` audit entry, with sizes only.
+  Allow and Not now, never Always. Where the sentence shows only the first 200 characters of the arguments, the
+  question carries all of them to read, one field to a line (`argsDetail`, the question's `detail`), and Allow waits
+  until all of it has been in view, as for long typed text (integrations-c9-3). Both write out every hidden
+  character (`writeOutHidden`: format characters such as the tag characters that spell a sentence nothing draws,
+  variation selectors, blank look-alikes) as `\u202e` or `\u{e0041}`, and so does the review card for each tool's
+  description and the words of its inputs (r10-integrations-y10-1). A yes counts only if the gate still allows the call when it comes. Every decision,
+  answer and result is an `extension` audit entry, with sizes and names only (the item's and the tool's, through
+  `plainName`), and What Ember did draws a line for each (integrations-c9-2: the cards promised every use was there,
+  and it drew none): asked, answered, refused, without asking, done and didn't work, and an item added, agreed to,
+  removed or a tool turned off.
 - **Hints changed mid-session.** The runtime's tool list has no hints, so what the model is shown can't tell a
   change of hints alone (`readOnlyHint` to `destructiveHint`); the server's own list, asked after each of its calls,
   can, and such a tool is turned off as above. Ember decides by the hints it pinned, never by what a server says
@@ -868,7 +875,10 @@ it builds on:
 - **Failures are untrusted too.** The SDK can't rewrite a failed call's text, so `onPostToolUseFailure` adds Ember's
   note that it is untrusted data, audits its size, and taints the conversation (any extension failure).
   For the same reason no extension is called once Ember has filled something from its vault in this run (the
-  gate's `vaultFilled`; "The vault", After a fill): the failure's text couldn't have the value taken out.
+  gate's `vaultFilled`; "The vault", After a fill): the failure's text couldn't have the value taken out. At the
+  first fill the conversation reloads without extension tools (`vaultFilledNow`; `forSession` gives none from then
+  on), and Home says **Off until Ember starts again** for each item, with why (integrations-r10-2: it said
+  **Ready** while the gate refused every call).
 - **Taint lasts the conversation**, across reconnects; it ends when the conversation is forgotten.
 - **Results are untrusted.** `onPostToolUse` replaces each result with `<extension_result untrusted="true">` text (`<`
   escaped, capped at 60 000 characters, images dropped); `injection.ts` scans it, and a flagged result makes every
@@ -879,9 +889,15 @@ it builds on:
   would be readable by every user.
 - **Pins.** At install and at each start (and when an item is turned on) Ember lists each server's tools itself
   (`probe.ts`, in its own process group, ended whole) and compares SHA-256 pins of name, description, schema and hints
-  (`pin.ts`); a changed tool is off until the user agrees again in Home. Known gap: **Agree again** (and install)
-  pins the tools the server serves at that moment without showing them to the user first; the card naming the served
-  tools, with a hash carried back on the yes, is a follow-up.
+  (`pin.ts`); a changed tool is off until the user agrees again in Home. The review card (**Review and agree**,
+  **Review tools**) shows each served tool's name, description and badge, and under them every word of its input
+  schema the model reads too (`schemaWords`: each parameter by its path with its title, description, choices,
+  default and examples, and the schema's own description; every key that isn't JSON Schema's own word, with its
+  value, numbers and booleans too, and the names in `patternProperties`, `dependentRequired` and their like; only
+  JSON Schema's own words, a dialect's own `$schema` address and a `#/$defs/…` reference to a definition on the card
+  are left out; integrations-c9-1 and r10-integrations-x10-1: the model read parameter descriptions, such keys and
+  names the card never showed). Its yes carries a hash of exactly that list (`reviewToken`), so a server that changes
+  between the card and the click is refused.
 - **Servers' environment.** The runtime would start a stdio server with its whole environment (the spike saw
   `GH_TOKEN` and cloud keys reach it), so it starts Ember's launcher (`dist/app/mcp-launch.cjs`, plain Node), which
   starts the server with `appEnv()`'s allowlist and the plugin's own values only, no shell, and records its process id
@@ -893,7 +909,25 @@ it builds on:
   own environment; it is not a sandbox. A stdio server runs as the user and can read what the user can, including the
   environment of the Copilot runtime that started it (`/proc/<pid>/environ` on Linux), which holds the GitHub token
   (the SDK passes it as `COPILOT_SDK_AUTH_TOKEN`). Install only extensions you would run yourself. `node` is Ember's own
-  Node. macOS has no plain-Node mode, so stdio servers don't run there yet; remote servers must use HTTPS.
+  Node. Remote servers must use HTTPS (plain http on loopback only).
+- **A remote server runs through the launcher too** (integrations-c9-4). Given a remote server's address, the
+  runtime followed its 307 to another host with the plugin's header and the call's arguments, and gave the model that
+  host's answer: a request from the user's own computer, loopback and the LAN included, to an address no consent
+  card names. So the runtime never gets a remote server's address: it starts the launcher as a stdio server with the
+  address and headers in its spec (`remote`), and the launcher's `bridge()` posts each message to that address alone
+  (the server's `mcp-session-id` and protocol version carried), with `redirect: "manual"`: any 3xx is refused, and the
+  runtime is answered "The extension's server sent Ember to another address…" (also for a sign-in it can't do, and a
+  server it can't reach, so no request waits). Answers, JSON or an event stream, go through `passedOn` like a stdio
+  server's lines, one message a line, so a remote server's notice that its list changed never reaches the runtime.
+  The launcher reaches a proxy from the environment (`NODE_USE_ENV_PROXY`, the proxy without its user name and
+  password). macOS has no plain-Node mode, so neither stdio nor remote servers run there yet, and **Add** says so.
+- **Only what can be agreed to is added** (integrations-c9-5). Adding probes each server; one that didn't start (its
+  program isn't installed), didn't answer or needs a sign-in Ember can't do would keep the item from ever being agreed
+  to, so the item isn't added and Home says why in one sentence ("Ember didn't add “weather”: its server didn't start.
+  Check that the program it runs is installed, then add it again."). An item added earlier whose server stops
+  starting says **Didn't start** with its reason, never **Waiting for you to agree**; **Review and agree** probes it
+  again, but where no try can change it (no launcher on this computer, a server Ember can't run: `stuck`) only
+  **Remove** is offered (r10-integrations-x10-4).
 - **Hot reload.** Installing, removing, turning an item on or off, agreeing again and the kill switch move
   `generation`; the host reconnects between turns (the conversation resumed), as memory does. The kill switch moves
   it only when the conversation had extension tools loaded or a server launched, so a stop with none installed or
@@ -3056,9 +3090,10 @@ needs both. CI publishes them when a `v<v>` tag is pushed:
    and **From npm** says `ember-copilot` isn't on npm until `<v>` is published (docs.test.ts checks both while `<v>`
    isn't out). In the commit you tag, replace that line with one that says the README describes `<v>`, and drop
    **From npm**'s note: the release's notes link the README at the tag, and **See what's new…** opens those notes, so
-   the tag's README is the one everyone who updates reads, for good. `node scripts/package/release.mjs --readme v<v>`
-   checks it; the tag's checks job runs that first and the release job again, and both refuse a README that still
-   says `<v>` isn't out or sends readers to another version.
+   the tag's README is the one everyone who updates reads, for good. `node scripts/package/release.mjs --readme v<v>
+   <owner/repo>` checks it and the notes; the tag's checks job runs that first and the release job again, and both
+   refuse a README that still says `<v>` isn't out or sends readers to another version, and notes GitHub would refuse
+   (step 3), so a tag with either fails in its first minutes rather than after every platform's job.
 2. Tag that commit and push the tag: `git tag v<v> && git push origin v<v>`.
 3. The tag runs every job of `ci.yml`, the Intel Mac's included, and each platform's job uploads its packages
    (`ember-packages`, `ember-windows`, `ember-macos`, `ember-macos-x64`). Once all of them pass, the **release** job,
@@ -3070,8 +3105,10 @@ needs both. CI publishes them when a `v<v>` tag is pushed:
    `Ember-<v>-x86_64.AppImage`, `Ember-voice-models-<v>.zip`, `Ember-<v>-win-x64.zip`,
    `Ember-<v>-mac-arm64.dmg`, `Ember-<v>-mac-arm64.zip`, `Ember-<v>-mac-x64.dmg` and `Ember-<v>-mac-x64.zip`. It
    refuses a tag that isn't package.json's version, and takes the notes from CHANGELOG.md, with relative links made
-   absolute at the tag and wrapped lines joined. The job then writes the checksums, one line per file (a hash, two
-   spaces and the file name, which is what `sha256sum -c` reads):
+   absolute at the tag and wrapped lines joined, and refuses notes of 125,000 characters or UTF-8 bytes or more
+   (GitHub refuses a longer release body and doesn't say which it counts; curly quotes and `…` take 3 bytes each).
+   The job then writes the checksums, one line per file (a hash, two spaces and the file name, which is what
+   `sha256sum -c` reads):
 
    ```bash
    sha256sum ember-*.rpm Ember-*.AppImage Ember-*.zip Ember-*.dmg source-*.zip > SHA256SUMS

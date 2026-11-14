@@ -1474,6 +1474,48 @@ function connectionLine(e: ActivityEntry): EntryView | null {
   }
 }
 
+/** Why the extensions gate asked, by its reason (gate.ts classify), as the user reads it. */
+const EXTENSION_ASKED: Readonly<Record<string, string>> = {
+  changes: "It can change things or send what it is given.",
+  remote: "Its server is on the internet, and gets what it is given.",
+  tainted: "An extension's answer read like instructions, so Ember asks before every extension's tool.",
+  "hints-changed": "Its server changed its list of tools during the conversation.",
+};
+
+/**
+ * An extension's line (extensions/service.ts's audit, integrations-c9-2: the cards promise every use is here): added,
+ * agreed to, removed, a tool turned off, and each use of a tool, asked about, answered, refused, announced, done or
+ * failed. Names only, as the user added the item and as its server names the tool; never what was sent or returned.
+ */
+function extensionLine(e: ActivityEntry): EntryView | null {
+  const name = typeof e.name === "string" && e.name ? `“${e.name}”` : "";
+  const from = name || "an extension";
+  const use = typeof e.toolName === "string" && e.toolName ? `Use “${e.toolName}” from ${from.replace(/^“(.*)”$/, "$1")}` : `Use a tool from ${from.replace(/^“(.*)”$/, "$1")}`;
+  switch (e.phase) {
+    case "installed": return { tag: "Added", cls: "ok", what: name ? `Extension ${name}` : "An extension" };
+    case "removed": return { tag: "Removed", cls: "", what: name ? `Extension ${name}` : "An extension" };
+    case "agreed": return { tag: "You agreed", cls: "ok", what: "To use extensions" };
+    case "reagreed": return { tag: "You agreed", cls: "ok", what: `To the tools of ${from}` };
+    case "changed": return { tag: "Turned off", cls: "no", what: use, why: "It changed since you agreed to it." };
+    case "decision":
+      // A read-only tool's use: its result line says it.
+      if (e.verdict === "allow") return null;
+      if (e.verdict === "announce") return { tag: "Without asking", cls: "", what: use, why: AUTOPILOT_WHY };
+      if (e.verdict === "ask") return { tag: "Asked you", cls: "ask", what: use, ...(typeof e.reason === "string" && EXTENSION_ASKED[e.reason] ? { why: EXTENSION_ASKED[e.reason] } : {}) };
+      // The gate's reason is for the model too: only its first sentence, the one that says why.
+      return { tag: "Refused", cls: "no", what: use, why: userWords(typeof e.reason === "string" ? e.reason.split(/(?<=\.)\s+/)[0] : undefined) };
+    case "answer":
+      if (e.answer === "stale") return { tag: "Refused", cls: "no", what: use, why: "It changed while Ember asked, so your yes didn't count." };
+      return { ...answerTag(e.answer === "allow" ? "once" : e.answer), what: use };
+    case "result":
+      return { tag: "Done", cls: "ok", what: use, ...(e.truncated === true ? { why: "Its answer was too long to check, so Ember treats it as information only." } : Array.isArray(e.signals) && e.signals.length ? { why: "Its answer read like instructions, so Ember treated it as information only." } : {}) };
+    case "failed":
+      return { tag: "Didn't work", cls: "no", what: use };
+    default:
+      return null;
+  }
+}
+
 /**
  * The entries with each command's shell carried from its decision to its answer and its end (newest first, as main
  * sends them): only the decision says which shell, and an ordinary command's decision has no line of its own.
@@ -1558,6 +1600,8 @@ export function describeEntry(e: ActivityEntry, words: EntryWords = LINUX_ENTRY_
     case "remote":
     case "wsl":
       return connectionLine(e);
+    case "extension":
+      return extensionLine(e);
     default:
       return null;
   }

@@ -351,6 +351,26 @@ describe.skipIf(gate)("Home's What Ember did, as the person looks back (2026-11-
     await page.close();
   });
 
+  it("draws each use of an extension's tools, as its cards promise (integrations-c9-2)", async () => {
+    if (new Date().getHours() === 0) return;
+    const ext = { event: "extension", ext: "notes-octo-1a2b3c", name: "Notes", tool: "notes-post", toolName: "post", argChars: 12 };
+    const activity = [
+      { t: minutesAgo(1), ...ext, phase: "result", chars: 2, signals: [] },
+      { t: minutesAgo(2), ...ext, phase: "answer", answer: "allow" },
+      { t: minutesAgo(3), ...ext, phase: "decision", verdict: "ask", reason: "changes" },
+      { t: minutesAgo(4), ...ext, phase: "decision", verdict: "announce", reason: "changes", autonomy: true, mode: "autopilot" },
+      { t: minutesAgo(5), event: "extension", phase: "installed", ext: "notes-octo-1a2b3c", name: "Notes", servers: 1, tools: 2 },
+    ] as unknown as ActivityEntry[];
+    const page = await open("home", { activity });
+    await page.locator("#activity-fold > summary").click();
+    await expect.poll(() => lineCount(page)).toBe(5);
+    const text = await page.locator("#activity").innerText();
+    for (const words of ["Use “post” from Notes", "Asked you", "You allowed", "Without asking", "Autopilot was on, so Ember didn't ask.", "Extension “Notes”"]) expect(text).toContain(words);
+    await evidence(page, "activity-extensions");
+    expect(page.errors).toEqual([]);
+    await page.close();
+  });
+
   it("reads further back in the record when the lines read run out (safety-privacy-5)", async () => {
     if (new Date().getHours() === 0) return;
     // 600 today: the first read (500) can't hold them all.

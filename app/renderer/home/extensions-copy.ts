@@ -90,11 +90,14 @@ export function toolCounts(tools: readonly ToolInfo[]): string {
  * An installed item's status, as words beside its symbol (never colour alone). `on`: the section's Use extensions
  * switch; while it is off nothing added runs (integrations-11).
  */
-export function installedStatus(i: Installed, on = true, connected = true): { text: string; tone: "ok" | "wait" | "fail" | "off" } {
+export function installedStatus(i: Installed, on = true, connected = true, heldByVault = false): { text: string; tone: "ok" | "wait" | "fail" | "off" } {
   if (i.needsReview || i.tools.some(t => t.changed)) return { text: "Changed since you agreed", tone: "fail" };
-  if (!i.consented) return { text: "Waiting for you to agree", tone: "wait" };
+  // One that stopped starting says so, not that it waits for an agreement it can't be given (integrations-c9-5).
+  if (!i.consented && i.status !== "failed" && i.status !== "needs-auth") return { text: "Waiting for you to agree", tone: "wait" };
   if (!i.enabled || i.status === "disabled") return { text: "Off", tone: "off" };
   if (!on) return { text: "Off: extensions are off", tone: "off" };
+  // The gate refuses every call after a fill from the vault, until Ember starts again (integrations-r10-2).
+  if (heldByVault) return { text: "Off until Ember starts again", tone: "off" };
   // Nothing runs before Ember is connected: "Ready" then said it did (integrations-v2).
   if (!connected && i.status === "ready") return { text: "Ready once Ember connects", tone: "wait" };
   switch (i.status) {
@@ -130,19 +133,24 @@ const detailLine = (d: string | undefined): string | null => {
   return s === EXTENSIONS_FAILED ? null : s;
 };
 
-export function installedRow(i: Installed, on = true, connected = true): InstalledRow {
-  const status = installedStatus(i, on, connected);
+/** Why nothing added runs after a fill from the vault (integrations-r10-2). */
+export const HELD_BY_VAULT = "Ember filled something from your vault, so it uses no extension until it starts again.";
+
+export function installedRow(i: Installed, on = true, connected = true, heldByVault = false): InstalledRow {
+  const status = installedStatus(i, on, connected, heldByVault);
   const changed = i.needsReview || i.tools.some(t => t.changed);
   const meta = [kindLabel(i.kind), ...(i.publisher ? [`by ${i.publisher}`] : []), i.source, ...(i.version ? [i.version] : [])].join(" · ");
   const note = changed ? "Its tools changed since you agreed, so Ember stopped using the ones that changed. Check what they do now, then agree again."
-    : !i.consented ? "Ember uses none of its tools until you agree."
     : i.status === "needs-auth" ? i.kind === "connector" ? `Connect “${i.name}” again to sign in on GitHub's page.`
       : "Check this plugin's authentication setup with its provider, then remove it and add it again."
     : i.status === "failed" && i.enabled ? detailLine(i.detail) ?? "Turn it off and on again, or remove it and add it again."
+    : !i.consented ? "Ember uses none of its tools until you agree."
+    : i.enabled && on && heldByVault ? HELD_BY_VAULT
     : i.enabled && i.tools.some(t => t.nameConflict) ? "Some tool names clash in Copilot. Ember leaves those tools off."
     : null;
   const actions: ItemAction[] = [];
-  if (changed || !i.consented) actions.push({ act: "reagree", label: i.consented ? "Review tools" : "Review and agree", ariaLabel: `Review tools: ${i.name}` });
+  // Not where it can never pass: no launcher here, a server Ember can't run (r10-integrations-x10-4).
+  if ((changed || !i.consented) && !i.stuck) actions.push({ act: "reagree", label: i.consented ? "Review tools" : "Review and agree", ariaLabel: `Review tools: ${i.name}` });
   if (i.kind === "connector" && i.status === "needs-auth") actions.push({ act: "connect", label: "Connect again", ariaLabel: `Connect again: ${i.name}` });
   actions.push(i.kind === "connector"
     ? { act: "disconnect", label: "Disconnect", ariaLabel: `Disconnect ${i.name}`, confirm: disconnectQuestion(i.name), danger: true }
@@ -165,7 +173,8 @@ export const INSTALLED_EMPTY = "Nothing added yet. Browse a marketplace below.";
 
 /** The section's own switch, shown once extensions are agreed to: off stops every server and uses no tool. */
 export const EXTENSIONS_ON_LABEL = "Use extensions";
-export function extensionsOnHint(on: boolean): string {
+export function extensionsOnHint(on: boolean, heldByVault = false): string {
+  if (on && heldByVault) return `${HELD_BY_VAULT} What you added stays here.`;
   return on ? "Ember may use the tools you agreed to. Turn this off to stop them all: what you added stays here."
     : "Off: Ember uses no extension's tools and runs nothing you added. What you added stays here.";
 }
@@ -257,7 +266,7 @@ export const INSTALLED_TAG = "Added";
 
 export const CONNECTORS_HEADING = "Connectors";
 export const CONNECTORS_EMPTY = "GitHub-hosted connectors aren't available in Ember yet.";
-export const CONNECTORS_HINT = "To use an MCP server, add its plugin's marketplace above. Ember loads the plugin's MCP tools and asks before tools that can change things.";
+export const CONNECTORS_HINT = "To use an MCP server, add its plugin's marketplace above. Ember loads the plugin's MCP tools and asks before tools that can change things, except in Autopilot.";
 
 /** A connector's row: its state and its one button. */
 export interface ConnectorRow {
@@ -300,6 +309,12 @@ export const agreedTo = (i: Pick<Installed, "name" | "consented">) => (i.consent
 // ───── The consent card, before anything is added or connected ─────
 
 /** Bump FEATURE_CONSENT_VERSION.extensions with any change to these words (CLAUDE.md "Consent"). */
+/**
+ * What a card promises about questions, true in every approval mode (gate.ts): in Autopilot a tool that changes or
+ * sends is announced and used, not asked about (integrations-r10-1: the card said it always asked).
+ */
+export const ASKS_BEFORE_CHANGES = "It asks you every time before a tool that changes or sends anything, except in Autopilot: there it goes ahead and tells you as it does.";
+
 export interface ConsentCard { title: string; lines: string[]; tools?: ToolInfo[]; yes: string; no: string }
 
 /**
@@ -317,7 +332,7 @@ export function consentCard(e: Pick<MarketplaceEntry, "name" | "kind" | "source"
     title: connector ? `Before you connect “${e.name}”` : `Before you add “${e.name}”`,
     lines: [
       "Only you add, turn off and remove extensions, here in settings. Ember never adds one by itself.",
-      connector ? "Once you agree, Ember may use its read-only tools when they help with what you ask. It asks you every time before a tool that changes or sends anything." : "Adding it runs its servers to find their tools. Ember shows you that list next, and uses none until you review it and agree.",
+      connector ? `Once you agree, Ember may use its read-only tools when they help with what you ask. ${ASKS_BEFORE_CHANGES}` : "Adding it runs its servers to find their tools. Ember shows you that list next, and uses none until you review it and agree.",
       "What its tools return is treated as information, never as instructions, and every use is in What Ember did.",
       "If its tools change later, Ember stops using them until you agree again.",
       reach,
@@ -329,7 +344,13 @@ export function consentCard(e: Pick<MarketplaceEntry, "name" | "kind" | "source"
 }
 
 /** The re-agree card for an item whose tools changed: the same promises, and the tools as they are now. */
+/** Above a tool's inputs on the review card: the words the model reads of them as well (integrations-c9-1). */
+export const TOOL_INPUTS_HEADING = "What the AI model also reads about its inputs:";
+export const toolInputsLabel = (tool: string) => `Inputs of ${tool}`;
+
 export function reagreeCard(i: Installed): ConsentCard {
+  // "Read-only" only where some are (integrations-r10-3: a plugin with none was promised "these read-only tools").
+  const readOnly = (i.reviewTools ?? i.tools).some(t => t.readOnly);
   return {
     title: i.consented ? `Agree again to “${i.name}”` : `Review the tools in “${i.name}”`,
     tools: i.reviewTools ?? i.tools,
@@ -337,7 +358,7 @@ export function reagreeCard(i: Installed): ConsentCard {
       `Tools to review: ${toolCounts(i.reviewTools ?? i.tools)}.`,
       ...(i.reaches ?? []),
       "Only you add, turn off and remove extensions, here in settings. Ember never adds one by itself.",
-      "Once you agree, Ember may use these read-only tools when they help with what you ask. It asks you every time before a tool that changes or sends anything.",
+      `Once you agree, Ember may use these ${readOnly ? "read-only " : ""}tools when they help with what you ask. ${ASKS_BEFORE_CHANGES}`,
       "What its tools return is treated as information, never as instructions, and every use is in What Ember did.",
       "If its tools change later, Ember stops using them until you agree again.",
     ],

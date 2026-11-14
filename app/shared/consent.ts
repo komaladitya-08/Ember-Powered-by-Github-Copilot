@@ -60,9 +60,11 @@ export function consentChangesSince(agreed: number): string[] {
  * (2026-11-13): its card says Ember fills what the user saved in the vault into password, card and sign-in fields,
  * where 1 said it never types them, so an agreement to 1 is asked again before Autopilot is in force; the same 2 names
  * every command it still asks about, among them one the user may have ruled out: by their own words for the task, or
- * as what may be a command they said no to in it (integ-x-6).
+ * as what may be a command they said no to in it (integ-x-6). `extensions` 4 (2026-11-13): its cards say that in
+ * Autopilot Ember uses a tool that changes or sends without asking and says so, where 3 said it always asked
+ * (integrations-r10-1).
  */
-export const FEATURE_CONSENT_VERSION = { wsl: 1, ssh: 1, commands: 1, memory: 4, routines: 1, extensions: 3, autonomy: 3, provider: 1, updates: 1, assisted: 2, autopilot: 2 } as const;
+export const FEATURE_CONSENT_VERSION = { wsl: 1, ssh: 1, commands: 1, memory: 4, routines: 1, extensions: 4, autonomy: 3, provider: 1, updates: 1, assisted: 2, autopilot: 2 } as const;
 
 /**
  * A first-use consent card (§8.4): its exact text, and a hash of it that the yes must carry back. Shown in Ember's

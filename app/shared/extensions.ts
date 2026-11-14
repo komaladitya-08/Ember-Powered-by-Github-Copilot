@@ -5,10 +5,14 @@
  */
 
 export type Kind = "plugin" | "connector" | "extension";
-export interface ToolInfo { server?: string; name: string; description: string; readOnly: boolean; changed?: boolean; nameConflict?: boolean }
+export interface ToolInfo { server?: string; name: string; description: string; readOnly: boolean; changed?: boolean; nameConflict?: boolean;
+  /** For review: every word of its inputs the model reads too (parameters, their descriptions, choices), one line each. */
+  inputs?: string[] }
 export interface Installed { id: string; kind: Kind; name: string; publisher?: string; source: string; version?: string;
   enabled: boolean; consented: boolean; status: "ready" | "starting" | "needs-auth" | "failed" | "disabled";
   detail?: string; tools: ToolInfo[];
+  /** It can't start on this computer however often it is tried (no launcher here, a server Ember can't run): no review. */
+  stuck?: boolean;
   /** The exact discovered tools awaiting review, grouped by server; the token binds Home's click to this list. */
   reviewTools?: ToolInfo[]; reviewToken?: string; needsReview?: boolean;
   /** Where it reaches: the commands it runs on this computer and the hosts it calls (runtime addition). */
@@ -34,6 +38,11 @@ export interface ExtensionsApi {
   consented(): boolean;
   /** Ember's model connection is up, so the runtime can list marketplaces and run what was added (absent: assumed so). */
   connected?(): boolean;
+  /**
+   * Ember filled something from its vault in this run, so it uses no extension until it starts again (gate.ts
+   * VAULT_FILLED; integrations-r10-2). A check that fails says yes. Absent: never.
+   */
+  heldByVault?(): boolean;
   /** Records that agreement (and turns extensions on); Home calls it from the card's yes. */
   agree(): Promise<void>;
   list(): Promise<Installed[]>;
