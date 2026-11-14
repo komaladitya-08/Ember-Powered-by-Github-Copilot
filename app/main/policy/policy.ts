@@ -810,6 +810,26 @@ export const namesEmberData = (text: string | undefined): boolean => !!text && E
  */
 const EMBER_FILE = /^(?:settings\.json|project-workspaces-[\w-]+\.bin|audit-\d{4}-\d{2}\.jsonl|approvals-seal\.bin|provider-key\.(?:bin|host)|provider-seal\.bin|vault\.json|extensions\.json|policy\.json|github-token\.bin|agent\.json|routines\.json|memory(?:-vectors)?\.json|conversation\.(?:json|erased)|voiceprint\.json|words\.json|run\.json|ember\.log)$/i;
 const EMBER_FOLDER = /^(?:ember|audit)$/;
+/**
+ * The data folder's own sub-folders that a view shows by name alone, each with what it holds that says it is Ember's
+ * (safety-privacy-r12-2): the extensions folder (extensions.json, or its plugins and run folders together, as Ember
+ * makes them before anything is installed, or the off marks' folder), the logs folder (ember.log and its rotated
+ * copies) and the extensions' run folder (its lease files). A folder of the same name showing anything else is
+ * someone else's ("logs" in a project), and goes as before.
+ */
+const EMBER_SUBFOLDER: Record<string, (shown: string[]) => boolean> = {
+  extensions: shown => shown.includes("extensions.json") || (shown.includes("plugins") && shown.includes("run")) || (shown.includes("off") && shown.includes("plugins")),
+  logs: shown => shown.some(n => /^ember\.log(?:\.\d+)?$/.test(n)),
+  run: shown => shown.some(n => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.lease$/.test(n)),
+};
+/** Is the window one of the data folder's own sub-folders, by its name and what it shows (EMBER_SUBFOLDER)? */
+function showsEmberSubfolder(r: ReachRequest, name: string): boolean {
+  const folder = (name.split(/[/\\]/).filter(Boolean).pop() ?? "").trim().toLowerCase();
+  const tell = Object.hasOwn(EMBER_SUBFOLDER, folder) ? EMBER_SUBFOLDER[folder] : undefined;
+  if (!tell) return false;
+  const shown = [...(r.chosen?.shown ?? []), ...(r.chosen?.names ?? []), ...(r.dialog?.items ?? []), ...(r.dialog?.selected ?? [])].map(n => n.trim());
+  return tell(shown);
+}
 /** A title's name before the app's own part ("settings.json — Kate", "*settings.json - Notepad", "audit - File Explorer"). */
 const titleName = (title: string): string => title.replace(/\s+[-—–]\s+.*$/, "").replace(/^[*•●]\s*/, "").replace(/\s*[*•●]$/, "").trim();
 /**
@@ -833,6 +853,7 @@ function emberDataReach(r: ReachRequest, os: OS): "file" | "unread" | null {
   const title = r.window ?? "";
   const name = titleName(title);
   if (!/[/\\]/.test(title) && (EMBER_FILE.test(name) || EMBER_FOLDER.test(name))) return "file";
+  if (showsEmberSubfolder(r, name)) return "file";
   if (inEmberDataParent(r, name, os)) return "file";
   const item = (r.element?.name ?? "").trim();
   if (EMBER_FILE.test(item) || EMBER_FOLDER.test(item)) return "file";
@@ -986,8 +1007,8 @@ function holdsEmberFolder(name: string, caseless: boolean): boolean {
   return EMBER_DATA_PARENT.test(n) || EMBER_FOLDER.test(caseless ? n.toLowerCase() : n) || (!!home && (caseless ? n.toLowerCase() === home.toLowerCase() : n === home));
 }
 /** Is `r` a step in a file manager showing the folder that holds Ember's data or policy folder that may move or remove it? */
-function inEmberDataParent(r: Pick<ActionRequest, "kind" | "element" | "value" | "chosen"> & { app?: string }, name: string, os: OS = "linux"): boolean {
-  if (!FILE_MANAGER_APP.test((r.app ?? "").trim())) return false;
+function inEmberDataParent(r: ReachRequest, name: string, os: OS = "linux"): boolean {
+  if (!FILE_MANAGER_APP.test((r.app ?? "").trim())) return listReachesEmberData(r, os);
   const folder = name.split(/[/\\]/).filter(Boolean).pop() ?? "";
   // What is chosen in the view when the step is taken (the worker's read as it is taken: a right-click's row, a
   // select-all), for a step that moves or removes it: a row that holds Ember's data or policy folder (safety-privacy-r11-2).
@@ -998,7 +1019,8 @@ function inEmberDataParent(r: Pick<ActionRequest, "kind" | "element" | "value" |
     && (/menu ?item/i.test(r.element?.role ?? "") || (/button/i.test(r.element?.role ?? "") && !BACKS_OFF.test(normalizeLabel(r.element?.name ?? ""))));
   if (removesChosen(r, os) || anyControl) {
     const caseless = os !== "linux";
-    if (r.chosen?.names.some(n => holdsEmberFolder(n, caseless))) return true;
+    // One of Ember's own files among them, by name, as a row so named is (safety-privacy-r12-2).
+    if (r.chosen?.names.some(n => holdsEmberFolder(n, caseless) || EMBER_FILE.test(n.trim()))) return true;
     const home = homeName();
     // At home by its title, or by what it shows (".config", "AppData", "Library" among its rows), whatever the title's
     // language (r11-safety-x11-4).
@@ -1031,6 +1053,58 @@ function removesChosen(r: Pick<ActionRequest, "kind" | "element" | "value">, os:
   }
   if (r.kind !== "click" && r.kind !== "cursor_click" && r.kind !== "toggle") return false;
   return /menu ?item|button/i.test(r.element?.role ?? "") && MOVES_ITEMS.test(normalizeLabel(r.element?.name ?? ""));
+}
+/** A focused list's row, or the list itself (a select-all Delete with the view focused): where a key acts on the rows chosen. */
+const LIST_VIEW = /^(?:list|table|tree|tree table|layered pane|icon view|directory pane|axlist|axtable|axoutline|axbrowser)$/i;
+/**
+ * Keys that remove, move or rename the row they are pressed on in any app's list of files: the file managers' Delete,
+ * cut and F2, and the two-pane commanders' F6 (move) and F8 (delete), with any modifier (Shift+F6 renames in place).
+ */
+const LIST_REMOVING_KEY = /^(?:[a-z]+\+)*(?:delete|backspace|f2|f6|f8)$|^(?:ctrl|super|cmd)\+(?:shift\+)?x$/;
+/** A menu item that only shows, sorts, opens or copies, in a file chooser's own menu: it moves nothing chosen. */
+const KEEPS_ITEMS = /^(?:visit|open|copy location|copy|add to bookmarks|bookmark|show|hide|sort|reload|refresh|properties)\b/i;
+/** A file chooser: an app's own Open or Save dialog, by its role, its shape or its title (never a browser's web page). */
+function inFileChooser(r: ReachRequest): boolean {
+  const d = r.dialog;
+  const page = browserApp(r.app ?? "") && (r.inPage === true || r.onPage === true || d?.page === true);
+  return !page && (r.windowId?.role === "file chooser" || !!d?.fileChooser || FILE_DIALOG_NAME.test(titleName(d?.name ?? "")) || (FILE_DIALOG_NAME.test(titleName(r.window ?? "")) && !d?.alert));
+}
+/** Words in a dialog that say it removes, moves or renames what it names ("Delete selected “.config”?", "Move “.config” to:"). */
+const REMOVES_WORDS = /delete|trash|\bbin\b|remove|erase|rename|\bmove|\bcut\b|overwrite|replace/i;
+/**
+ * Is `r` a step in any app's list of files but a known file manager's (inEmberDataParent has those) that may remove,
+ * move or rename the folder that holds Ember's data or policy folder, or that folder (safety-privacy-r12-1, -c12-1)? An
+ * app's own Open or Save dialog (GTK's chooser, Windows' common dialog) and a file manager Ember has no row for (Double
+ * Commander, Total Commander, Path Finder) show the same rows and offer the same Delete, Rename and Move: judged by
+ * what the step does to a row so named, never by knowing the app. A key that removes, moves or renames, pressed on such
+ * a row or on the list with one chosen; a menu item or a button that does (in a chooser any menu item but one that only
+ * shows, sorts, opens or copies); and a dialog's yes to removing, moving or renaming one it names in quotes. A key in a
+ * text field, Enter on a row (it opens the folder; on macOS outside a chooser it renames, as Finder's does) and every
+ * other row's step go as before.
+ */
+function listReachesEmberData(r: ReachRequest, os: OS): boolean {
+  const caseless = os !== "linux";
+  const holder = (n: string) => { const t = n.trim(); return EMBER_DATA_PARENT.test(t) || EMBER_FOLDER.test(caseless ? t.toLowerCase() : t) || EMBER_FILE.test(t); };
+  const d = r.dialog;
+  if (d?.text && REMOVES_WORDS.test(d.text) && commitsFileDialog(r, os)
+    && [...d.text.matchAll(QUOTED)].some(m => holder(m[1].split(/[/\\]/).filter(Boolean).pop() ?? ""))) return true;
+  const chooser = inFileChooser(r);
+  const chosen = [...(r.chosen?.names ?? []), ...(chooser ? d?.selected ?? [] : [])];
+  const role = r.element?.role ?? "";
+  if (r.kind === "keys") {
+    const k = canonicalKeys(r.value ?? "", KEYS[os]);
+    if (!k) return false;
+    const f = keyFamily(k);
+    const removes = LIST_REMOVING_KEY.test(f) || (os === "darwin" && !chooser && f === "return");
+    if (!removes) return false;
+    if (LIST_ROW.test(role) || /^axrow$/i.test(role)) return holder(r.element?.name ?? "") || chosen.some(holder);
+    return LIST_VIEW.test(role.trim()) && chosen.some(holder);
+  }
+  if (r.kind !== "click" && r.kind !== "cursor_click" && r.kind !== "toggle") return false;
+  const label = normalizeLabel(r.element?.name ?? "");
+  const item = /menu ?item/i.test(role), button = /button/i.test(role);
+  const moves = ((item || button) && MOVES_ITEMS.test(label)) || (chooser && item && !KEEPS_ITEMS.test(label));
+  return moves && chosen.some(holder);
 }
 /** Why such a step asks, or is refused in Autopilot (mayReachEmberData). */
 export const EMBER_DATA_DOUBT = "this may be Ember's own settings, audit log or policy, which are for the user only";
