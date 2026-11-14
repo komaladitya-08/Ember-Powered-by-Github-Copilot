@@ -1004,6 +1004,8 @@ const DIALOG_ITEMS_MAX = 400;
 /** A list's rows (DialogFacts.items leaves them out: what a folder holds, not where it is). */
 const DIALOG_ROW = /cell|list item|tree item|icon|table row|^row$/;
 const DIALOG_ROLE = /^(dialog|alert|file chooser|color chooser|font chooser)$/;
+/** What lists a folder's files in a file dialog (its rows' container): Windows' Items View, macOS's outline, Qt's tree. */
+const FILE_LIST_ROLE = /^(?:list|tree|table|tree table)$/;
 /**
  * Roles that are something to press, choose, tick or type into (on every OS's screen reader): anything with one of
  * these in a dialog is a control of it. An element that is editable or has an action of its own counts too, whatever
@@ -1066,6 +1068,18 @@ export function dialogAround(start: AxNode | undefined, get: (id: number) => AxN
       const fieldNodes = inside.filter(n => n.editable === true || n.states.includes("editable") || /combo/.test(n.role));
       const fields = fieldNodes.some(n => n.secret || n.withheld) ? undefined
         : fieldNodes.map(n => (/combo/.test(n.role) ? n.selected ?? n.text ?? n.name : n.text) ?? "").filter(Boolean);
+      // Not all of it read (r11-safety-x11-1, -x11-2): the read cut short or busy, something under it left out (but rows of
+      // its list scrolled away, which hold files, not where it saves or what name it saves under), a field's text cut to
+      // what a read gives, or a field with no text the reader didn't say was empty. What it does say still counts; only
+      // "nothing of Ember's here" can't be told.
+      const inList = (a: AxNode) => [a, ...(chain(a) ?? [])].some(x => DIALOG_ROW.test(x.role) || FILE_LIST_ROLE.test(x.role));
+      const textField = (a: AxNode) => !/combo/.test(a.role) || a.editable === true;
+      const unread = !whole || !!cur.omitted || inside.some(a => a.omitted && !inList(a))
+        || fieldNodes.some(a => a.textCut || (textField(a) && !a.text && !a.empty && !a.secret && !a.withheld));
+      // A file dialog by its shape, whatever its title's language (r11-safety-x11-3): a one-line field to type a name or
+      // a path into beside a list of rows (Windows' common dialog, macOS's save sheet, Qt's and GTK's own).
+      const shaped = fieldNodes.some(a => !/combo/.test(a.role) && !a.states.includes("multi line"))
+        && inside.some(a => DIALOG_ROW.test(a.role) || FILE_LIST_ROLE.test(a.role));
       const named = inside.filter(n => !DIALOG_ROW.test(n.role) && !n.secret && !n.withheld && n.name);
       const items = named.length > DIALOG_ITEMS_MAX ? undefined : named.map(n => n.name);
       // The rows chosen in its list (what Open opens when no name is typed); one whose name is withheld can't be told.
@@ -1076,7 +1090,7 @@ export function dialogAround(start: AxNode | undefined, get: (id: number) => AxN
         ...(words.length > DIALOG_TEXT_MAX ? { truncated: true } : {}), ...(controls ? { controls } : {}),
         ...(cur.dialogBox ? { messageBox: true } : {}),
         ...(fields ? { fields } : {}), ...(items ? { items } : {}), ...(selected?.length ? { selected } : {}),
-        ...(cur.role === "file chooser" ? { fileChooser: true } : {}),
+        ...(cur.role === "file chooser" || shaped ? { fileChooser: true } : {}), ...(unread ? { unread: true } : {}),
       };
     }
     cur = cur.parent !== null ? get(cur.parent) : undefined;

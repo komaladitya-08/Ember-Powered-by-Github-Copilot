@@ -308,6 +308,20 @@ class Secrets(unittest.TestCase):
         self.assertTrue(e.node_info(pw).get("secret"))
         self.assertNotIn("text", e.node_info(pw))
 
+    def test_says_when_a_fields_text_was_cut_or_is_empty_r11_safety_x11_1(self):
+        # A field holding more than a read gives (200 characters) says so, so what it holds isn't taken for all of it;
+        # one read and found empty says that, so "empty" and "not known" differ (r11-safety-x11-2).
+        long_path = "/home/u/Documents/" + "./" * 100 + "../.config/ember/extensions.json"
+        cut = e.node_of(Acc("text", "Name", text=long_path), "text", "Name", ["editable"], None)
+        self.assertEqual(len(cut["text"]), 200)
+        self.assertTrue(cut.get("textCut"))
+        whole = e.node_of(Acc("text", "Name", text="x" * 200), "text", "Name", ["editable"], None)
+        self.assertNotIn("textCut", whole)
+        empty = e.node_of(Acc("text", "Name", text=""), "text", "Name", ["editable"], None)
+        self.assertTrue(empty.get("empty"))
+        self.assertNotIn("text", empty)
+        self.assertNotIn("empty", e.node_of(Acc("text", "Name", text=None), "text", "Name", ["editable"], None))
+
     def test_fields_named_or_labelled_secret(self):
         card = Acc("text", "Card number", text="4111 1111 1111 1111")
         cvv = Acc("text", "", text="123", labelled_by=[Acc("label", "CVV")])

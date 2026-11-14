@@ -248,11 +248,17 @@ def actions(acc):
 
 
 def text_of(acc, limit=200):
+    return text_and_count(acc, limit)[0]
+
+
+def text_and_count(acc, limit=200):
+    """Its text up to `limit` characters and how many it holds: (None, 0) where it has no text to read."""
     try:
         t = acc.queryText()
-        return t.getText(0, min(t.characterCount, limit))
+        count = t.characterCount
+        return t.getText(0, min(count, limit)), count
     except Exception:
-        return None
+        return None, 0
 
 
 def cell_text(acc, limit=200):
@@ -904,9 +910,15 @@ def node_of(acc, role, name, states, bounds):
         if secret:
             node["secret"] = True
         else:
-            txt = text_of(acc)
+            txt, count = text_and_count(acc)
             if txt and txt.strip(OBJECT_CHAR):
                 node["text"] = txt
+                if count > len(txt):
+                    # More than a read gives: what the field holds isn't all here (r11-safety-x11-1).
+                    node["textCut"] = True
+            elif txt == "" and count == 0 and "editable" in states:
+                # Read, and empty: not the same as text that couldn't be read (r11-safety-x11-2).
+                node["empty"] = True
             if "focused" in states:
                 sel = selection_of(acc)
                 if sel:

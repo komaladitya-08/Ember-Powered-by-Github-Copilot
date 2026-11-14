@@ -53,12 +53,15 @@ export interface DialogControl { role: string; name: string; caption?: boolean; 
  * a drop-down's chosen option), read now; absent when one of them couldn't be read (a secret one, a name withheld).
  * `items`: the names of everything else in it but the rows of a list (a file dialog's path bar, its folder's drop-down,
  * Windows' "Address: …"), absent when there were too many to read. `selected`: the names of the rows chosen in its
- * list (what Open opens when no name is typed). `fileChooser`: the screen reader's own file dialog. A file dialog's Save or Open is judged by
- * what these hold when it is pressed, never by what one step typed (safety-privacy-r11-1).
+ * list (what Open opens when no name is typed). `fileChooser`: a file dialog, by the screen reader's role or by its shape
+ * (a one-line field beside a list of rows, whatever its title's language: r11-safety-x11-3). `unread`: not all of it was
+ * read (the read cut short, something under it left out, a field's text cut or not known: r11-safety-x11-1, -x11-2),
+ * so what it doesn't name can't be told. A file dialog's Save or Open is judged by what these hold when it is pressed,
+ * never by what one step typed (safety-privacy-r11-1).
  */
 export interface DialogFacts {
   name: string; text: string; alert?: boolean; page?: boolean; truncated?: boolean; controls?: DialogControl[]; messageBox?: boolean;
-  fields?: readonly string[]; items?: readonly string[]; selected?: readonly string[]; fileChooser?: boolean;
+  fields?: readonly string[]; items?: readonly string[]; selected?: readonly string[]; fileChooser?: boolean; unread?: boolean;
 }
 
 export interface ActionRequest {
@@ -896,7 +899,7 @@ function fileDialogReach(r: ReachRequest, os: OS): "file" | "unread" | null {
   // Read whole: every field read, its other names (where it is) all read, and what it saves or opens named: a field's
   // text, a chosen row, or the row this step itself opens.
   const named = (d?.fields ?? []).some(t => t.trim() !== "") || !!d?.selected?.length || (!!r.element?.name.trim() && LIST_ROW.test(r.element.role));
-  const whole = !!d && !d.truncated && !!d.fields && Array.isArray(d.items) && named;
+  const whole = !!d && !d.truncated && !d.unread && !!d.fields && Array.isArray(d.items) && named;
   return !whole && commitsFileDialog(r, os) ? "unread" : null;
 }
 /** Does this step press, choose or enter something in a file dialog: not backing out, typing a character, or moving about? */

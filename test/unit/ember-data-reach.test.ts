@@ -444,3 +444,89 @@ describe("Ember's own files reached by what a field or a file dialog holds, not 
     }
   });
 });
+
+describe("Ember's own files behind a file dialog the screen reader can't read whole, or doesn't call a file dialog", () => {
+  const n = (id: number, parent: number | null, role: string, name: string, x: Partial<AxNode> = {}): AxNode => ({ id, parent, depth: parent === null ? 0 : 1, role, name, states: [], bounds: null, ...x });
+  const read = (all: AxNode[], at: number, whole = true) => dialogAround(all.find(x => x.id === at), id => all.find(x => x.id === id), all, whole)!;
+  const asksOrRefused = (o: OS, app: string, r: ActionRequest, what: string) => {
+    expect(mayReachEmberData(r, o), what).toBe(true);
+    for (const mode of ["asking", "interactive", "assisted"] as const) {
+      const d = engine(mode, o, { [app]: "act" }).decide(r);
+      expect(d.verdict, `${what} ${mode}`).toBe("confirm");
+      expect(d.everyTime, `${what} ${mode}`).toBe(true);
+      expect(d.autonomy, `${what} ${mode}`).toBeFalsy();
+    }
+    expect(engine("autopilot", o, { [app]: "act" }).decide(r).verdict, `${what} autopilot`).toBe("deny");
+  };
+  const winSave = (field: Partial<AxNode>, title = "Save As"): AxNode[] => [
+    n(1, null, "dialog", title, { dialogBox: true }),
+    n(2, 1, "tool bar", "Address: Documents"),
+    n(3, 1, "list", "Items View"),
+    n(4, 3, "list item", "notes.txt"),
+    n(5, 1, "edit", "File name:", { editable: true, ...field }),
+    n(6, 1, "combo box", "Save as type:", { selected: "Text Documents (*.txt)" }),
+    n(7, 1, "button", "Save"),
+    n(8, 1, "button", "Cancel"),
+  ];
+  const save = { kind: "click" as const, element: { role: "button", name: "Save" } };
+
+  it("takes a field the reader cut short for one whose path can't be read whole, so Save or Enter asks, and Autopilot refuses it (r11-safety-x11-1)", () => {
+    // A path pasted from a page the task read, whose part in Ember's folder lies past the 200 characters a read gives.
+    const path = "C:\\Users\\a\\Documents\\" + "..\\Documents\\".repeat(16) + "..\\..\\AppData\\Local\\ember\\settings.json";
+    const cut = winSave({ text: path.slice(0, 200), textCut: true });
+    const d = read(cut, 7);
+    asksOrRefused("win32", "notepad", req("notepad", "Save As", { ...save, dialog: d }), "Save, the name cut");
+    asksOrRefused("win32", "notepad", req("notepad", "Save As", { kind: "keys", value: "Return", element: { role: "edit", name: "File name:" }, currentText: path.slice(0, 200), dialog: read(cut, 5) }), "Enter, the name cut");
+    // The same on Linux's file chooser, cut at its reader's 200 characters.
+    const lin = "/home/u/Documents/" + "./".repeat(1000) + "../.config/ember/extensions.json";
+    const gtk = [n(1, null, "file chooser", "Save File"), n(2, 1, "text", "Name", { editable: true, text: lin.slice(0, 200), textCut: true }), n(3, 1, "toggle button", "Documents"), n(4, 1, "push button", "Save")];
+    asksOrRefused("linux", "gedit", req("gedit", "Save File", { kind: "click", element: { role: "push button", name: "Save" }, dialog: read(gtk, 4) }), "GTK Save, the name cut");
+    // One the reader gave whole (200 characters exactly, an ordinary name) goes as before.
+    const full = read(winSave({ text: "n".repeat(196) + ".txt" }), 7);
+    expect(mayReachEmberData(req("notepad", "Save As", { ...save, dialog: full }), "win32")).toBe(false);
+    expect(engine("autopilot", "win32", { notepad: "act" }).decide(req("notepad", "Save As", { ...save, dialog: full })).verdict).toBe("allow");
+  });
+
+  it("reads a file dialog whole only when the read was whole, nothing under it was left out and each field's text is known, empty included (r11-safety-x11-2)", () => {
+    const gtk = (x: AxNode[] = []): AxNode[] => [n(1, null, "file chooser", "Save File"), n(2, 1, "text", "Name", { editable: true, text: "settings.jsonx" }), n(5, 1, "push button", "Save"), ...x];
+    const step = (d: ReturnType<typeof read>) => req("gedit", "Save File", { kind: "click", element: { role: "push button", name: "Save" }, dialog: d });
+    // Read cut short, or with the panel that holds its path bar left out: where it saves can't be told.
+    asksOrRefused("linux", "gedit", step(read(gtk(), 5, false)), "read cut short");
+    asksOrRefused("linux", "gedit", step(read(gtk([n(3, 1, "panel", "", { omitted: true })]), 5)), "path bar left out");
+    // Windows' File name edit whose text the reader couldn't get, with a row chosen: what it saves as can't be told.
+    const unknown = winSave({});
+    unknown[3] = n(4, 3, "list item", "notes.txt", { states: ["selected"] });
+    asksOrRefused("win32", "notepad", req("notepad", "Save As", { ...save, dialog: read(unknown, 7) }), "File name unknown");
+    // Read and found empty, a row chosen: Save saves as that row, read whole.
+    const empty = winSave({ empty: true });
+    empty[3] = n(4, 3, "list item", "notes.txt", { states: ["selected"] });
+    expect(mayReachEmberData(req("notepad", "Save As", { ...save, dialog: read(empty, 7) }), "win32")).toBe(false);
+    // Rows of its list scrolled away hold files, not where it saves: still read whole.
+    const scrolled = winSave({ text: "notes.txt" });
+    scrolled[2] = n(3, 1, "list", "Items View", { omitted: true });
+    expect(read(scrolled, 7).unread).toBeUndefined();
+    expect(engine("autopilot", "win32", { notepad: "act" }).decide(req("notepad", "Save As", { ...save, dialog: read(scrolled, 7) })).verdict).toBe("allow");
+    // Positive evidence from a read cut short still counts: a path bar naming Ember's folder is refused.
+    const named = read([...gtk([n(3, 1, "panel", "", { omitted: true })]), n(6, 1, "toggle button", "ember")], 5);
+    expect(engine("autopilot", "linux", { gedit: "act" }).decide(step(named)).verdict).toBe("deny");
+  });
+
+  it("knows a file dialog by its shape, whatever its title says, so a localised or an app's own Save dialog is judged as one (r11-safety-x11-3)", () => {
+    for (const title of ["Speichern unter", "Enregistrer sous", "Enter name of file to save to…", "Save Image As", "Export Image", "Save Page As", "名前を付けて保存"]) {
+      // Its name field names one of Ember's files: asks, and Autopilot refuses.
+      const named = winSave({ text: "settings.json" }, title);
+      asksOrRefused("win32", "app", req("app", title, { ...save, dialog: read(named, 7) }), `${title} settings.json`);
+      // Its folder shown as breadcrumb buttons, Ember's among them.
+      const crumbs = [...winSave({ text: "notes.txt" }, title), n(9, 2, "button", "AppData"), n(10, 2, "button", "Local"), n(11, 2, "button", "ember")];
+      asksOrRefused("win32", "app", req("app", title, { ...save, dialog: read(crumbs, 7) }), `${title} breadcrumb`);
+      // Its name the reader couldn't get: can't be read whole.
+      asksOrRefused("win32", "app", req("app", title, { ...save, dialog: read(winSave({}, title), 7) }), `${title} unread`);
+      // macOS's save sheet: a text field and an outline of rows, a "dialog" to the reader.
+      const sheet = [n(1, null, "dialog", title), n(2, 1, "text", "Save As:", { editable: true, text: "words.json" }), n(3, 1, "tree table", ""), n(4, 3, "table row", "Documents"), n(5, 1, "push button", "Save")];
+      asksOrRefused("darwin", "app", req("app", title, { kind: "click", element: { role: "push button", name: "Save" }, dialog: read(sheet, 5) }), `${title} sheet`);
+    }
+    // A dialog with a field and no rows (a Find box, a rename) isn't taken for one.
+    const find = [n(1, null, "dialog", "Suchen"), n(2, 1, "edit", "Suchen nach:", { editable: true, text: "notes" }), n(3, 1, "button", "Weitersuchen")];
+    expect(read(find, 3).fileChooser).toBeUndefined();
+  });
+});
