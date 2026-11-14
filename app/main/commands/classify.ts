@@ -5236,7 +5236,7 @@ function optionFiles(h: H, args: readonly Arg[], p: Parsed, files: Partial<Recor
   for (const use of ["read", "write", "into", "cd"] as const) {
     const names = files[use] ?? [];
     for (const o of p.opts) {
-      if (o.value === undefined || !names.some(n => optIs(o.name, n))) continue;
+      if (o.value === undefined || !names.some(n => optIs(o.name, n, p.long))) continue;
       const v = o.value;
       if (v !== null && (v === "" || STDIN_NAME.test(v) || NULL_SINKS.has(v.toLowerCase()) || /^std(out|err)$/.test(v))) continue;
       // The word itself when the value came apart from the option, so a variable in it keeps its parts.
@@ -5450,7 +5450,7 @@ reg(NATIVE, ["grep", "egrep", "fgrep", "rg", "ag", "ack", "ugrep", "git-grep"], 
   // ag/ack/ugrep's pager, ugrep's per-file filter, rg's --pre and --hostname-bin. Seen text is the command it runs.
   if (values(p, "pre", "hostname-bin").length) h.e.unclear("unclear.rg-pre", "It runs a program on every file Ember can't see.");
   const pagerCmds = [...values(p, "pager", "open-files-in-pager"), ...values(p, "filter")];
-  if (h.key === "git-grep" && p.opts.some(o => o.value === undefined && optIs(o.name, "open-files-in-pager"))) pagerCmds.push(null);
+  if (h.key === "git-grep" && p.opts.some(o => o.value === undefined && optIs(o.name, "open-files-in-pager", p.long))) pagerCmds.push(null);
   // git grep's -O takes the rest of its word as the pager, after any flags bundled before it (`-nOcmd`); a bundle with
   // a value option before it (-e, -f, -m, -A, -B, -C) gives that option the rest instead.
   if (h.key === "git-grep") for (const a of h.args) { const m = /^-([A-Za-z0-9]*?)O(.*)$/.exec(a.v ?? ""); if (m && !/[efmABC]/.test(m[1])) pagerCmds.push(m[2] || null); }
@@ -5491,10 +5491,10 @@ reg(NATIVE, ["mysql", "mariadb", "mysqldump", "mysqladmin", "mysqlimport"], h =>
     for (const o of p.opts) {
       if (o.value === undefined) continue;
       const a: Arg = o.value === null ? { v: null, raw: "?", glob: false, ...(o.parts ? { parts: o.parts } : {}) } : lit(o.value);
-      if (optIs(o.name, "tee")) h.e.usePath(a, "write", h.sc);
-      else if (optIs(o.name, "init-command")) databaseText(h, [o.value], "mysql");
-      else if (optIs(o.name, "pager")) clientShell(h, o.value);
-      else if (optIs(o.name, "plugin-dir")) { h.e.usePath(a, "read", h.sc); h.e.unclear("unclear.sql", "It loads client plugins from a folder Ember doesn't read."); }
+      if (optIs(o.name, "tee", p.long)) h.e.usePath(a, "write", h.sc);
+      else if (optIs(o.name, "init-command", p.long)) databaseText(h, [o.value], "mysql");
+      else if (optIs(o.name, "pager", p.long)) clientShell(h, o.value);
+      else if (optIs(o.name, "plugin-dir", p.long)) { h.e.usePath(a, "read", h.sc); h.e.unclear("unclear.sql", "It loads client plugins from a folder Ember doesn't read."); }
     }
   }
   if (h.key === "mysqladmin" && h.args.some(a => /^(drop|shutdown|flush-|kill|password|reload|refresh)/.test(a.v ?? ""))) h.e.add("destroy", "db.change", "Changes or deletes data in a database.");
@@ -5718,10 +5718,10 @@ reg(NATIVE, ["psql", "sqlite3", "sqlite", "duckdb", "sqlcmd", "cqlsh", "clickhou
     for (const o of p.opts) {
       if (o.value === undefined) continue;
       const a: Arg = o.value === null ? { v: null, raw: "?", glob: false, ...(o.parts ? { parts: o.parts } : {}) } : lit(o.value);
-      if (optIs(o.name, "o") || optIs(o.name, "output")) {
+      if (optIs(o.name, "o") || optIs(o.name, "output", p.long)) {
         if (o.value !== null && o.value.trim().startsWith("|")) clientShell(h, o.value.trim().slice(1));
         else overwrites(h, a);
-      } else if (optIs(o.name, "L") || optIs(o.name, "log-file")) h.e.usePath(a, "write", h.sc);
+      } else if (optIs(o.name, "L") || optIs(o.name, "log-file", p.long)) h.e.usePath(a, "write", h.sc);
     }
     // SQL read from stdin or a here-document (`psql <<< '\! id'`, `psql -f - <<< …`): judge the seen text, else ask;
     // a file given as another descriptor (`-f /dev/fd/3`) can't be read first (review #166).
@@ -9496,7 +9496,7 @@ reg(NATIVE, ["softwareupdate", "installer", "msiexec", "pkgutil", "dism", "add-a
  * (its next word, or the pieces of one attached before a command: Opt.parts), so the values a variable is given count.
  */
 function optionWords(args: readonly Arg[], p: Parsed, ...names: string[]): Arg[] {
-  return p.opts.filter(o => o.value !== undefined && names.some(n => optIs(o.name, n))).map(o => {
+  return p.opts.filter(o => o.value !== undefined && names.some(n => optIs(o.name, n, p.long))).map(o => {
     if (typeof o.value === "string") return lit(o.value);
     if (o.parts) return { v: null, raw: args[o.at]?.raw ?? "", glob: false, parts: o.parts };
     const next = args[o.at + 1];
@@ -9557,7 +9557,8 @@ reg(NATIVE, ["curl", "curl.exe"], h => {
   if (values(p, "K", "config").length) { h.e.unclear("unclear.curl-config", "It reads its options from a file Ember can't see."); h.e.markUnnamed(null, h.sc); }
   if (has(p, "n", "netrc") || values(p, "netrc-file").length) h.e.add("secret", "secret.netrc", SAYS.secrets);
   for (const f of values(p, "netrc-file")) if (f) h.e.usePath(lit(f), "read", h.sc);
-  if (values(p, "u", "user", "proxy-user").some(u => u !== null && u.includes(":") && !u.endsWith(":")) || values(p, "oauth2-bearer").length) h.e.add("secret", "secret.token-arg", SAYS.tokenArg);
+  // `--proxy` is read for a password as main read it (by prefix, as `--proxy-user`), now that it is its own option.
+  if (values(p, "u", "user", "proxy-user", "proxy").some(u => u !== null && u.includes(":") && !u.endsWith(":")) || values(p, "oauth2-bearer").length) h.e.add("secret", "secret.token-arg", SAYS.tokenArg);
   for (const k of values(p, "key", "E", "cert")) if (k) h.e.usePath(lit(k.split(":")[0]), "read", h.sc);
   const uploads = values(p, "T", "upload-file");
   for (const u of uploads) if (u) h.e.usePath(lit(u), "read", h.sc);
