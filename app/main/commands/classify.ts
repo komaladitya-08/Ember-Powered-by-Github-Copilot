@@ -5709,7 +5709,8 @@ reg(NATIVE, ["psql", "sqlite3", "sqlite", "duckdb", "sqlcmd", "cqlsh", "clickhou
     }
     // SQL read from stdin or a here-document (`psql <<< '\! id'`, `psql -f - <<< …`): judge the seen text, else ask;
     // a file given as another descriptor (`-f /dev/fd/3`) can't be read first (review #166).
-    const files = inlineSql(h, ["f"], ["file"]);
+    // A file given in a cluster (`-1f a.sql`, `-qfa.sql`, `-Xqf a.sql`) is read as getopt reads it (r10-commands-y10-2).
+    const files = [...new Set([...inlineSql(h, ["f"], ["file"]), ...values(p, "f", "file")])];
     if (files.some(f => f !== null && STDIN_NAME.test(f)) || (!inlineSql(h, ["c"], ["command"]).length && !files.length)) sqlFromStdin(h, "psql");
     if (files.some(f => f !== null && !STDIN_NAME.test(f) && STREAM_NAME.test(f))) h.e.unclear("unclear.script-stream", SAYS.scriptStream);
     // A SQL script this task downloaded, run with -f, is download-and-run (its `\!`, `COPY … FROM PROGRAM` run code):
@@ -5725,11 +5726,14 @@ reg(NATIVE, ["psql", "sqlite3", "sqlite", "duckdb", "sqlcmd", "cqlsh", "clickhou
     // Each judged in its own dialect: sqlcmd's `!!` and `:r`, T-SQL's xp_cmdshell, ClickHouse's url() and file()
     // (r10-commands-x10-2).
     const client: SqlClient = k === "sqlcmd" ? "sqlcmd" : "clickhouse";
-    const inline = k === "sqlcmd" ? inlineSql(h, ["Q", "q"], []) : inlineSql(h, ["q"], ["query"]);
+    // sqlcmd's clusters (`-Ii a.sql`, `-IQ "…"`) are read as getopt reads them, its optional-value letters (k, r, X, N)
+    // taken as flags so no letter after them is missed (r10-commands-y10-2).
+    const sq = k === "sqlcmd" ? opts(h, { shortValue: "SUPdHlthswaioQqvfcmVKyYzZ" }) : null;
+    const inline = k === "sqlcmd" ? [...new Set([...inlineSql(h, ["Q", "q"], []), ...values(sq!, "Q", "q")])] : inlineSql(h, ["q"], ["query"]);
     databaseText(h, inline, client);
     // The SQL files they run (sqlcmd's -i, clickhouse-client's --queries-file) are read first and judged as SQL, as
     // psql's -f is (commands-remote-r10-4); one Ember can't name asks.
-    const files = k === "sqlcmd" ? inlineSql(h, ["i"], ["input-file"]) : inlineSql(h, [], ["queries-file"]);
+    const files = k === "sqlcmd" ? [...new Set([...inlineSql(h, ["i"], ["input-file"]), ...values(sq!, "i")])] : inlineSql(h, [], ["queries-file"]);
     for (const f of files) {
       if (f === null) h.e.unclear("unclear.sql", "It runs database commands from a file Ember can't name.");
       else if (!STDIN_NAME.test(f) && !STREAM_NAME.test(f)) h.e.recordScript(lit(f), client, h.sc);

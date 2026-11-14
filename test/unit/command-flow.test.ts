@@ -4301,6 +4301,22 @@ describe("SQL files and scripts in other languages a command runs (commands-remo
     }
   });
 
+  it("reads a SQL file given in a cluster of short options as it reads one after -f or -i (r10-commands-y10-2)", async () => {
+    for (const run of ["psql -1f a.sql prod", "psql -qfa.sql prod", "psql -Xqf a.sql prod", "psql -X -q -1 -f a.sql prod", "sqlcmd -Ii a.sql", "sqlcmd -I -i a.sql"]) {
+      for (const written of [true, false]) {
+        const h = flow({ "/home/ana/proj/a.sql": "DROP TABLE users;\n" });
+        if (written) expect((await local(h, "echo 'DROP TABLE users;' > a.sql")).resultType).toBe("success");
+        h.existing.add("/home/ana/proj/a.sql");
+        expect((await local(h, run)).resultType, run).toBe("denied");
+        expect(h.reads, run).toContain("/home/ana/proj/a.sql");
+        expect(h0rules(h), run).toContain("db.change");
+      }
+    }
+    const ok = flow({ "/home/ana/proj/a.sql": "SELECT 1;\n" });
+    expect((await local(ok, "psql -Xqf a.sql prod")).resultType).toBe("success");
+    expect(ok.asked).toEqual([]);
+  });
+
   it("judges sqlcmd's and clickhouse-client's files in their own dialect: `!!`, `:r`, xp_cmdshell and url() ask (r10-commands-x10-2)", async () => {
     for (const [text, run] of [
       ["!! rm -rf /home/ana/Documents\n", "sqlcmd -i a.sql"], [":!! rm -rf /home/ana/Documents\n", "sqlcmd -S db -i a.sql"],
