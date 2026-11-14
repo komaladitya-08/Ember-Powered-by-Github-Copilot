@@ -318,7 +318,7 @@ export class ProviderKeyStore {
  * What Home's Model provider group shows (PROVIDER_IPC.state). The keyring is asked only while the provider is on and no
  * key is saved for its host (the one case where Home must say whether one can be kept); otherwise it is never touched.
  */
-export async function providerStateOf(o: { settings: Settings; admin: LoadedAdminPolicy; keys: Pick<ProviderKeyStore, "savedHost" | "canPersist"> }): Promise<ProviderState> {
+export async function providerStateOf(o: { settings: Settings; admin: LoadedAdminPolicy; keys: Pick<ProviderKeyStore, "savedHost" | "canPersist">; held?: boolean }): Promise<ProviderState> {
   const p = o.settings.provider;
   const allowed = o.admin.error === undefined && userProviderAllowed(o.admin.policy);
   const host = endpointHost(p.baseUrl);
@@ -328,9 +328,12 @@ export async function providerStateOf(o: { settings: Settings; admin: LoadedAdmi
     managed: allowed ? null : o.admin.policy.provider ? "organisation" : "off",
     keySaved,
     keyring: allowed && p.on && !keySaved ? await o.keys.canPersist().catch(() => false) : true, // a keyring that fails must not hide inForce and host
-    inForce: userProviderInForce(o.settings, o.admin) !== null,
+    // A yes the record holds back (provider-record.ts: its seal not read yet, or a forged one it couldn't put back) is
+    // neither in force nor agreed: Home shows the card, and Test connection waits (integ-x-1).
+    inForce: !o.held && userProviderInForce(o.settings, o.admin) !== null,
     host,
-    agreed: providerAgreed(p),
+    agreed: !o.held && providerAgreed(p),
+    held: !!o.held,
   };
 }
 
@@ -416,7 +419,7 @@ export interface ProviderServiceDeps {
    * The record of the card's yes (provider-record.ts): the yes is written through it, as Ember's own, and sealed; a yes
    * that reaches settings.json any other way is put back (safety-privacy-c10-1).
    */
-  record?: { as<T>(change: () => T): T };
+  record?: { as<T>(change: () => T): T; held?(): boolean };
 }
 
 /** Said when the card's yes names another host than the endpoint in settings now (it changed meanwhile). */
@@ -442,6 +445,11 @@ export function createProviderService(d: ProviderServiceDeps) {
   const retire = () => { if (stored && !retired.includes(stored.key)) retired.push(stored.key); stored = null; };
   const allowed = () => { const a = d.admin(); return a.error === undefined && userProviderAllowed(a.policy); };
   const hostNow = () => endpointHost(d.settings.get().provider.baseUrl);
+  /**
+   * The card's yes as Ember recorded it: none while the record holds the file's yes back (its seal not read yet, or a
+   * forged one it couldn't put back, or not audited), so nothing goes to that host, Test connection included (integ-x-1).
+   */
+  const agreedNow = (p: Settings["provider"]) => !(d.record?.held?.() ?? false) && providerAgreed(p);
 
   /** Reads the saved key when it is for the endpoint now and not read yet; `always`: even with the provider off (a test). */
   const readKey = (always = false): Promise<void> => {
@@ -473,7 +481,7 @@ export function createProviderService(d: ProviderServiceDeps) {
       if (problem) return { ok: false, why: problem };
       if (!(await d.keys.canPersist())) return { ok: false, why: KEY_NO_KEYRING };
       key = { key: draft.key.trim(), host };
-    } else if (hostNow() === host && providerAgreed(d.settings.get().provider)) {
+    } else if (hostNow() === host && agreedNow(d.settings.get().provider)) {
       await readKey(true);
       key = stored;
     }
@@ -518,7 +526,7 @@ export function createProviderService(d: ProviderServiceDeps) {
       retire();
     },
     api: {
-      state: () => providerStateOf({ settings: d.settings.get(), admin: d.admin(), keys: d.keys }),
+      state: () => providerStateOf({ settings: d.settings.get(), admin: d.admin(), keys: d.keys, held: d.record?.held?.() ?? false }),
       saveKey: async (key: string): Promise<KeySave> => {
         if (!allowed()) return { ok: false, why: PROVIDER_MANAGED };
         const host = hostNow();
@@ -574,8 +582,11 @@ export function createProviderService(d: ProviderServiceDeps) {
         const started = revision;
         const p = d.settings.get().provider;
         // Checked before the keyring is asked: nothing at all for a host whose card isn't agreed.
+        // A yes the record holds back is no yes: nothing goes to that host (integ-x-1).
+        const host = endpointHost(p.baseUrl);
+        if (host && providerAgreed(p) && !agreedNow(p)) return { ok: false, why: providerNotAgreed(host) };
         if (providerAgreed(p)) await readKey(true);
-        if (started !== revision || !d.consented() || !allowed() || p !== d.settings.get().provider) return { ok: false, why: PROVIDER_HOST_CHANGED };
+        if (started !== revision || !d.consented() || !allowed() || p !== d.settings.get().provider || (providerAgreed(p) && !agreedNow(p))) return { ok: false, why: PROVIDER_HOST_CHANGED };
         const r = await testConnection(p, stored, d.fetch);
         d.log.info("provider.tested", { ok: r.ok });
         return r;

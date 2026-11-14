@@ -793,6 +793,11 @@ export interface ProviderState {
   host: string | null;
   /** The card was agreed to for that host: until then nothing goes there, Test connection included. */
   agreed: boolean;
+  /**
+   * The yes settings.json holds is held back (provider-record.ts: its seal not read yet, or a forged yes that couldn't be
+   * put back): Home treats it as not agreed, whatever the settings it holds say (integ-x-1).
+   */
+  held?: boolean;
 }
 
 /** How a provider action went: `why` is one plain sentence for the page. */
