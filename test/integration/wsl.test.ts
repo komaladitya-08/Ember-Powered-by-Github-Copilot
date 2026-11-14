@@ -11,7 +11,8 @@
  * with wsl.exe's own message decoded; Stop (Ctrl+C, and the sweeps when the command ignores it), stragglers named; an
  * interop child ended with the job; inspect (paths as data, symlinks resolved), script reads and git facts; boot ids; the doctor row;
  * L22's channel check (4 MiB of random bytes through wsl.exe's stdio unchanged while the Linux side runs; the ssh half
- * waits for SA); and that 4 MiB a run prints as it ends arrive whole or the run says its output was cut (WSL1's relay).
+ * waits for SA); 4 MiB crossing as the Linux side exits, whole whenever its end marker comes; that 4 MiB a run prints
+ * as it ends arrive whole or the run says its output was cut (WSL1's relay); `kill $$` and a Ctrl+C a program handles.
  *
  * Skipped without EMBER_WSL_TEST; with EMBER_WSL_TEST=1 it fails when Windows, WSL, the distro or the built job host is
  * missing. The jobs' set-up exports EMBER_WSL_TEST_DISTRO, EMBER_WSL_EXPECT_VERSION, EMBER_WSL_EXPECT_ROOT,
@@ -257,7 +258,7 @@ suite("WSL on a real Windows runner", () => {
     const { exit, out } = await run(runner, "echo before; kill $$; sleep 2; echo after; touch /tmp/ember-wa-after");
     console.log("kill $$", JSON.stringify(exit), JSON.stringify(out.slice(-200)));
     expect(exit).toMatchObject({ ended: "exit", code: 143 });
-    expect(exit.outputCut).toBeUndefined();
+    expect(exit.endLost).toBeUndefined();
     expect(out).toContain("before");
     expect(out).not.toMatch(/after|Terminated/);
     await new Promise(r => setTimeout(r, 3_000));
@@ -277,7 +278,7 @@ suite("WSL on a real Windows runner", () => {
     console.log("ctrl+c handled", JSON.stringify(exit), JSON.stringify(out.slice(-200)));
     expect(out).toMatch(/caught[\s\S]*done/);
     expect(exit).toMatchObject({ ended: "exit", code: 0 });
-    expect(exit.outputCut).toBeUndefined();
+    expect(exit.endLost).toBeUndefined();
   }, LONG);
 
   it("names a program that outlives the run, and leaves it alone", async () => {
@@ -367,10 +368,7 @@ suite("WSL on a real Windows runner", () => {
 
   it("carries 4 MiB of random bytes through wsl.exe's stdio unchanged while the Linux side runs (L22's channel)", async () => {
     // As SSH's link uses the channel: the framed stream flows while ssh in the distro runs, and the link ends only when
-    // ssh does. So the PC takes every byte back before it closes stdin and lets cat exit. With `child.stdin.end(data)`
-    // the bytes had to cross wsl.exe as the Linux process exited, and WSL1's relay once lost exactly the last 64 KiB
-    // there with exit code 0 (remote.yml's WSL1 job, run 43532157051: 4,128,768 of 4,194,304); nothing of Ember's sends
-    // data that way without its own end marker (WSL_RUN_END, SCRIPT_END) or frames, which the next test checks.
+    // ssh does. So the PC takes every byte back before it closes stdin and lets cat exit.
     const exe = (await wsl.facts()).wslExe!;
     const data = randomBytes(4 * 1024 * 1024);
     const child = spawn(exe, ["-d", DISTRO, "--exec", "/bin/cat"], { env: { ...process.env, WSL_UTF8: "1", WSLENV: "" }, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
@@ -402,22 +400,58 @@ suite("WSL on a real Windows runner", () => {
     // The ssh half (`wsl.exe --exec /usr/bin/ssh` carrying the framed stream) is SA's ssh-windows test once it merges.
   }, LONG);
 
-  it("never hands back a run's output cut short as all of it: 4 MiB through the runner arrive whole with the end marker, or the run says it was cut", async () => {
-    // Printed as the last thing before the Linux side exits, through the product's own path (the job host, wsl.exe and
-    // script's PTY): the end marker decides. WSL1's relay may lose the tail here; Ember must then say so (outputCut).
+  it("carries 4 MiB across wsl.exe as the Linux side exits, whole whenever the end marker comes, and mostly whole (WSL1's lost tail)", async () => {
+    // The way the product now sends data that ends with the process (a run's output, a fixed script's answer): the
+    // Linux side's last word is the end marker with a nonce. WSL1's relay once lost exactly the last 64 KiB here with
+    // exit code 0 (remote.yml's WSL1 job, run 43532157051: 4,128,768 of 4,194,304). Each try: with the marker every
+    // byte came, without it what came is the data's start (so Ember can say it's cut). And at least one of three
+    // tries comes whole: a relay that lost every tail would leave every WSL run "incomplete" (review wslio-x-8).
+    const exe = (await wsl.facts()).wslExe!;
+    const results: { bytes: number; marker: boolean }[] = [];
+    for (let i = 0; i < 3; i++) {
+      const data = randomBytes(4 * 1024 * 1024);
+      const nonce = randomBytes(8).toString("hex");
+      // The text through WSLENV, as Ember's launcher goes: no quote or backslash on wsl.exe's argv (critique wsl-18).
+      const text = 'cat; printf "\\033]777;ember-end;%s;%s\\007" "$EMBER_END" "$?"';
+      const child = spawn(exe, ["-d", DISTRO, "--exec", "/bin/sh", "-c", "set -f; eval $EMBER_T"], {
+        env: { ...process.env, WSL_UTF8: "1", EMBER_END: nonce, EMBER_T: text, WSLENV: "EMBER_END/u:EMBER_T/u" }, windowsHide: true, stdio: ["pipe", "pipe", "pipe"],
+      });
+      const got: Buffer[] = [];
+      child.stdout.on("data", (b: Buffer) => void got.push(b));
+      const done = new Promise<number | null>(resolve => child.on("close", code => resolve(code)));
+      child.stdin.end(data);
+      expect(await done).toBe(0);
+      const back = Buffer.concat(got);
+      const end = Buffer.from(`\x1b]777;ember-end;${nonce};0\x07`, "latin1");
+      const marker = back.length >= end.length && back.subarray(back.length - end.length).equals(end);
+      results.push({ bytes: marker ? back.length - end.length : back.length, marker });
+      if (marker) expect(back.subarray(0, back.length - end.length).equals(data)).toBe(true);
+      else expect(data.subarray(0, Math.min(back.length, data.length)).equals(back.subarray(0, data.length))).toBe(true);
+    }
+    console.log("at exit", JSON.stringify(results));
+    expect(results.some(r => r.marker)).toBe(true);
+  }, LONG * 2);
+
+  it("never hands back a run's output cut short as all of it: 4 MiB a run prints as it ends arrive whole with the end marker, or the run says so", async () => {
+    // Through the product's own path (the job host, wsl.exe and script's PTY): the end marker decides. Three runs: each
+    // is whole exactly when Ember says so, and at least one is whole (a relay that cut every tail fails here).
     const lines = 600_000;
     let expected = "";
     for (let i = 1; i <= lines; i++) expected += `${i}\n`;
-    const { exit, out } = await run(runner, `seq 1 ${lines}`);
-    // The PTY ends lines with CR LF; the markers are OSC sequences output shaping strips.
-    // A cut may end inside a CR LF or inside the end marker itself.
-    // eslint-disable-next-line no-control-regex -- the markers are made of control characters
-    const text = out.replace(/\x1b\]777;ember-(start|end;[0-9a-f]{16};\d+)\x07/g, "").replace(/\x1b\][^\x07]*$/, "").replace(/\r\n/g, "\n").replace(/\r$/, "");
-    // eslint-disable-next-line no-control-regex -- the end marker
-    console.log("4 MiB run", JSON.stringify({ ...exit, chars: text.length, expected: expected.length, endMarker: /\x1b\]777;ember-end;[0-9a-f]{16};0\x07/.test(out) }));
-    expect(exit).toMatchObject({ ended: "exit", code: 0 });
-    expect(expected.startsWith(text)).toBe(true);
-    // Whole exactly when Ember says it is whole.
-    expect(exit.outputCut === true).toBe(text !== expected);
-  }, LONG);
+    const seen: { chars: number; cut: boolean }[] = [];
+    for (let i = 0; i < 3; i++) {
+      const { exit, out } = await run(runner, `seq 1 ${lines}`);
+      // The PTY ends lines with CR LF; the markers are OSC sequences output shaping strips. A cut may end inside a CR LF
+      // or inside the end marker itself, down to its lone ESC.
+      // eslint-disable-next-line no-control-regex -- the markers are made of control characters
+      const text = out.replace(/\x1b\]777;ember-(start|end;[0-9a-f]{16};\d+)\x07/g, "").replace(/\x1b(\][^\x07]*)?$/, "").replace(/\r\n/g, "\n").replace(/\r$/, "");
+      console.log("4 MiB run", JSON.stringify({ ...exit, chars: text.length, expected: expected.length }));
+      expect(exit).toMatchObject({ ended: "exit", code: 0 });
+      expect(expected.startsWith(text)).toBe(true);
+      // Whole exactly when Ember says it is whole.
+      expect(exit.outputCut === true).toBe(text !== expected);
+      seen.push({ chars: text.length, cut: exit.outputCut === true });
+    }
+    expect(seen.some(r => !r.cut)).toBe(true);
+  }, LONG * 3);
 });
