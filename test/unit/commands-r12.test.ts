@@ -246,7 +246,7 @@ describe("read-only and everyday commands that asked (commands-remote-r12-4)", (
 
 describe("a tool's add-on command Ember doesn't know (commands-remote-c12-1)", () => {
   it("runs announced by name, as any program Ember doesn't know", () => {
-    for (const cmd of ["docker scout cves web", "docker frob", "podman frob", "kubectl krew list", "kubectl ctx", "kubectl tree deploy web", "kubectl neat get pod x", "kubectl frob"]) {
+    for (const cmd of ["docker scout cves web", "docker frob", "docker scout quickview web", "kubectl krew list", "kubectl ctx", "kubectl tree deployment web", "kubectl neat get pod x", "kubectl frob"]) {
       const d = decide(cmd);
       expect(d.verdict, cmd).toBe("announce");
       expect(d.rules, cmd).toContain("unknown.verb");
@@ -256,6 +256,32 @@ describe("a tool's add-on command Ember doesn't know (commands-remote-c12-1)", (
   it("still asks before their own dangerous commands, a group's command it doesn't know, gh's, which may be an alias, and npm's, which may be an abbreviation", () => {
     for (const cmd of ["docker rm web", "docker push x/y", "docker swarm leave", "docker plugin install x", "kubectl delete pod x", "kubectl drain node1", "npm publish", "npm unpublish x", "gh frob", "npm publ", "npm isntall x", "npm frob"]) {
       expect(decide(cmd).verdict, cmd).toBe("ask");
+    }
+  });
+});
+
+describe("what a docker add-on or kubectl plug-in is handed (r12-commands-x12-2)", () => {
+  it("judges an add-on's operands as an unknown program's are judged, so a deletion or a handed command still asks", () => {
+    for (const cmd of [
+      "docker frob rm -rf /home/ana/projects", "kubectl frob delete ns prod", "docker scout push web", "kubectl krew install evil",
+      "kubectl frob bash -c 'rm -rf ~/projects'", "docker frob --detach", "kubectl frob show secrets",
+    ]) {
+      const d = decide(cmd);
+      expect(d.verdict, cmd).toBe("ask");
+    }
+  });
+
+  it("keeps podman's and nerdctl's commands Ember doesn't know as unclear, since they have no add-ons", () => {
+    for (const cmd of ["podman unshare rm -rf /home/ana/projects", "podman unshare ls", "podman play kube pod.yaml", "podman quadlet install x.container", "podman frob", "nerdctl frob", "podman auto-update"]) {
+      const d = decide(cmd);
+      expect(d.verdict, cmd).toBe("ask");
+      expect(d.rules, cmd).not.toContain("unknown.verb");
+    }
+  });
+
+  it("still runs an add-on with ordinary operands, announced", () => {
+    for (const cmd of ["docker scout cves web", "kubectl krew list", "kubectl tree deployment web", "kubectl ctx", "docker frob", "kubectl neat get pod x"]) {
+      expect(decide(cmd).verdict, cmd).toBe("announce");
     }
   });
 });

@@ -5280,6 +5280,18 @@ const RUNS_BY_OPTION: readonly (readonly [RegExp, RegExp])[] = [
 function unknownOptionSays(tool: string, option: string): string {
   return `It runs ${tool} with ${option}, an option Ember doesn't know.`;
 }
+/**
+ * A tool's add-on (`docker scout` is the program docker-scout, `kubectl krew` is kubectl-krew): announced by name as a
+ * command of the tool Ember doesn't know, and its operands judged as an unknown program's are (unknownDoes, generic),
+ * so a deletion, a handed command or a secret in them is still found (r12-commands-x12-2).
+ */
+function addOn(h: H, tool: string, verbArg: Arg, rest: Arg[]): void {
+  const v = verbArg.v ?? "";
+  h.e.add("unknown", "unknown.verb", unknownVerbSays(tool, v), { program: `${tool} ${v}` });
+  const sub: H = { ...h, key: `${tool}-${v}`, prog: `${tool}-${v}`, nameArg: verbArg, args: rest };
+  unknownDoes(sub);
+  generic(sub, true);
+}
 function unknownVerbSays(tool: string, verb: string): string {
   return verb === "" ? `It runs ${tool} with no command, and Ember doesn't know what that does.` : `It runs ${tool} ${verb}, a command of ${tool} that Ember doesn't know.`;
 }
@@ -8877,7 +8889,9 @@ reg(NATIVE, ["docker", "podman", "nerdctl", "docker-compose", "podman-compose"],
   // A command of its own Ember doesn't know is an add-on, a program of its own (`docker scout` is docker-scout), run
   // announced by name as any program Ember doesn't know (commands-remote-c12-1). A group's command it doesn't know
   // (`docker swarm leave`, `docker plugin install`) still asks.
-  if (group === null && /^[a-z][a-z0-9-]*$/.test(v)) { h.e.add("unknown", "unknown.verb", unknownVerbSays(prog, v), { program: `${prog} ${v}` }); return; }
+  // Only docker has add-ons: podman's and nerdctl's other words are their own commands (`podman unshare` runs a command,
+  // `play kube` starts pods), which Ember can't tell the effect of (r12-commands-x12-2).
+  if (prog === "docker" && !isCompose && group === null && /^[a-z][a-z0-9-]*$/.test(v)) { addOn(h, prog, verbs[0], rest); return; }
   h.e.unclear("unclear.docker-verb", "Ember can't tell which container command this runs.");
 });
 /**
@@ -9272,7 +9286,10 @@ reg(NATIVE, Object.keys(CLOUD_CLIS), h => {
   const changes = !checkRun && (CLOUD_VERBS.has(verb) || CLOUD_CHANGE.test(verb) || (h.key === "ansible" || h.key === "ansible-playbook"));
   // A command that isn't one of kubectl's own is a plug-in, a program of its own (`kubectl krew` is kubectl-krew), run
   // announced by name as any program Ember doesn't know (commands-remote-c12-1).
-  if (!changes && h.key === "kubectl" && !KUBECTL_OWN.has(verb) && /^[a-z][a-z0-9_-]*$/.test(verb)) { h.e.add("unknown", "unknown.verb", unknownVerbSays("kubectl", verb), { program: `kubectl ${verb}` }); return; }
+  if (!changes && h.key === "kubectl" && !KUBECTL_OWN.has(verb) && /^[a-z][a-z0-9_-]*$/.test(verb)) {
+    const at = h.args.findIndex(a => a.v === verb);
+    if (at >= 0) { addOn(h, "kubectl", h.args[at], h.args.slice(at + 1)); return; }
+  }
   h.e.add("publish", changes ? "cloud.change" : "cloud.unknown-verb", changes ? `Changes ${service}.` : `Ember can't tell whether this changes ${service}.`, { objects: [{ kind: "other", text: verb, abs: null }], program: `${h.key} ${verb}` });
 });
 
