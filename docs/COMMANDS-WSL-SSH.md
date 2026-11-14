@@ -177,7 +177,9 @@ Ember stops and asks before a command that:
   `git stash drop`, overwriting a file that exists (`>`, `cp` or `mv` onto it, `dd of=`, `tee` without `-a`, a
   download saved over it by `curl -o`, `wget -O`, `aws s3 cp`, `rclone copyto`, `gh release download --clobber`,
   `fetch -o`, Windows' `certutil -urlcache`, `bitsadmin /transfer` or `Start-BitsTransfer`, or a conversion saved over
-  it by `pandoc -o`, ImageMagick's `convert` or `magick`, `qpdf`, `pdftk … output` or `pdfunite`, unless its name is
+  it by `pandoc -o`, ImageMagick's `convert` or `magick`, `qpdf`, `pdftk … output`, `pdfunite`, `pdftotext`,
+  `ps2pdf`, `pdf2ps`, `rsvg-convert -o`, `cwebp -o`, `dwebp -o`, `heif-convert`, `avifenc`, `optipng -out` or
+  `asciidoctor -o` (`pngquant` keeps what is there unless told `--force`), unless its name is
   the input's own, made again (`thesis.md` to `thesis.pdf`), or one for an output such as `out.pdf`, and never when
   it is the input itself (`magick photo.jpg -quality 10 photo.jpg`, which replaces the original); a `cp`
   or `mv` into a folder asks only when a file of the same name is in it, "Replaces ~/Documents/report.pdf if it

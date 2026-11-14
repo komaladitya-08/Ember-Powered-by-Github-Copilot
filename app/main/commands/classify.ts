@@ -10947,14 +10947,28 @@ reg(NATIVE, ["dos2unix", "unix2dos", "mac2unix", "unix2mac"], h => {
 /**
  * Converters that write their result under a name the command gives, replacing a file there (y11-8): pandoc's `-o`,
  * ImageMagick's last file (`convert in.png out.png`, `magick …`), qpdf's and pdfunite's last file, pdftk's `output`,
- * img2pdf's `-o`. Unlike a compiler's `-o`, which is rebuilt from its source, what a converter's output name collides
+ * img2pdf's `-o`, and the other converters' outputs (CONVERTER_OUTPUT). Unlike a compiler's `-o`, which is rebuilt from its source, what a converter's output name collides
  * with may be the user's own document. On Windows `convert` is the system's disk converter, judged as a program Ember
  * doesn't know (commands-closed-y9-4).
  */
 /** A converter's output named as one (the converters' row below): `out`, `output`, `result`, `converted`, a scratch letter. */
 const CONVERTED_NAME = /^(?:out|output|outfile|result|results|converted|new|tmp|temp|test|preview|[a-z]|[a-z]?\d+)$/;
-reg(NATIVE, ["pandoc", "convert", "magick", "qpdf", "pdftk", "pdfunite", "img2pdf"], h => {
+/**
+ * The other converters Ember runs as ordinary and where each takes its output (r12-commands-y12-5): an option, or the
+ * last of two or more files named with an extension (`pdftotext in.pdf out.txt`; an option's value such as `-f 1` has
+ * none). pngquant
+ * isn't here: it keeps an existing file unless told `--force`.
+ */
+const CONVERTER_OUTPUT: Readonly<Record<string, readonly string[] | "last">> = {
+  pdftotext: "last", ps2pdf: "last", pdf2ps: "last", "heif-convert": "last", avifenc: "last", avifdec: "last",
+  "rsvg-convert": ["-o", "--output"], cwebp: ["-o"], dwebp: ["-o"], gif2webp: ["-o"], img2webp: ["-o"], "heif-enc": ["-o", "--output"],
+  optipng: ["-out"], asciidoctor: ["-o", "--out-file"],
+};
+reg(NATIVE, ["pandoc", "convert", "magick", "qpdf", "pdftk", "pdfunite", "img2pdf", ...Object.keys(CONVERTER_OUTPUT)], h => {
   if (h.key === "convert" && h.sc.os === "win32") { unknownProgram(h); generic(h, true); return; }
+  // What it is given is read, as the ordinary programs' row read it before this row (a secret asks, Ember's own files
+  // are refused: r12-commands-y12-5).
+  h.e.readArgs(h.args, h.sc, { unresolvedUnclear: true });
   const words = h.args.filter(a => a.v === null || !a.v.startsWith("-"));
   // An output named for one of its inputs (`a.md` to `a.html`, `photo.png` to `photo-small.jpg`) is that input's
   // rendering, made again from it, and one named as an output or a scratch file (`out.pdf`, `output.png`, `b.jpg`) is
@@ -10979,6 +10993,24 @@ reg(NATIVE, ["pandoc", "convert", "magick", "qpdf", "pdftk", "pdfunite", "img2pd
     }
     const inputs = words.filter(w => !outs.includes(w));
     for (const f of outs) out(f, inputs);
+    return;
+  }
+  const where = CONVERTER_OUTPUT[h.key];
+  if (where === "last") {
+    // The last of two or more files named with an extension: an option's value (`-f 1`, `-enc UTF-8`) has none.
+    const files = words.filter(w => w.v !== null && /\.[A-Za-z0-9]{1,6}$/.test(w.v));
+    const last = words[words.length - 1];
+    if (files.length >= 2 && files[files.length - 1] === last) out(last, words.slice(0, -1));
+    return;
+  }
+  if (where) {
+    const outs: Arg[] = [];
+    for (let k = 0; k < h.args.length; k++) {
+      const v = h.args[k].v ?? "";
+      if (where.includes(v)) { const f = h.args[k + 1]; if (f) { outs.push(f); k++; } }
+      else { const o = where.find(n => n.startsWith("--") && v.startsWith(`${n}=`)); if (o) outs.push(lit(v.slice(o.length + 1))); }
+    }
+    for (const f of outs) out(f, words.filter(w => !outs.includes(w)));
     return;
   }
   if (h.key === "pdftk") { const k = h.args.findIndex(a => a.v === "output"); const f = k >= 0 ? h.args[k + 1] : undefined; if (f) out(f, h.args.slice(0, k)); return; }

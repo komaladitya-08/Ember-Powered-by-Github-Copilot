@@ -307,6 +307,38 @@ describe("a conversion saved over its own input (r12-commands-x12-6)", () => {
   });
 });
 
+describe("every converter's output saved over a file that is there (r12-commands-y12-5)", () => {
+  it("asks before it replaces an existing file not named for its input", () => {
+    for (const cmd of [
+      "pdftotext report.pdf notes.txt", "ps2pdf draft.ps thesis.pdf", "pdf2ps report.pdf thesis.ps", "rsvg-convert -o banner.png logo.svg", "rsvg-convert --output=banner.png logo.svg",
+      "cwebp logo.png -o hero.webp", "dwebp hero.webp -o banner.png", "gif2webp anim.gif -o hero.webp", "heif-convert IMG_1.heic cover.jpg", "optipng -out final.png big.png",
+      "asciidoctor -o thesis.html notes.adoc", "asciidoctor --out-file=thesis.html notes.adoc", "avifenc photo.png cover.avif", "ps2pdf draft.ps draft.ps",
+    ]) {
+      const d = decide(cmd);
+      expect(d.verdict, cmd).toBe("ask");
+      expect(d.classes, cmd).toContain("destroy");
+    }
+  });
+
+  it("still runs one named for its input or as an output, a new file, and pngquant, which keeps what is there", () => {
+    for (const cmd of [
+      "pdftotext report.pdf", "pdftotext report.pdf report.txt", "pdftotext report.pdf -", "ps2pdf draft.ps", "ps2pdf draft.ps out.pdf", "cwebp logo.png -o logo.webp",
+      "heif-convert IMG_1.heic IMG_1.jpg", "optipng big.png", "asciidoctor notes.adoc", "rsvg-convert logo.svg", "pngquant -o small.png big.png", "pdftotext -f 1 -l 2 report.pdf", "pdftotext -enc UTF-8 report.pdf",
+    ]) expect(decide(cmd).classes, cmd).not.toContain("destroy");
+    expect(decide("cwebp logo.png -o hero.webp", { missing: ["/home/ana/proj/hero.webp"] }).verdict).toBe("run");
+  });
+
+  it("still reads what a converter is given: a secret file asks and Ember's own is refused, as before y11-8's change (r12-commands-y12-5)", () => {
+    for (const cmd of [
+      "pandoc ~/.aws/credentials -o x.html", "convert ~/.ssh/id_rsa x.png", "qpdf ~/.aws/credentials x.pdf", "pdftk ~/.aws/credentials cat output x.pdf", "img2pdf ~/.ssh/id_rsa -o x.pdf",
+      "cwebp ~/.ssh/id_rsa -o x.webp", "pdftotext ~/.aws/credentials x.txt", "pdftotext ~/.aws/credentials",
+    ]) expect(decide(cmd).rules, cmd).toContain("path.secret");
+    for (const cmd of ["magick ~/.config/ember/settings.json x.png", "optipng ~/.config/ember/settings.json", "pandoc ~/.config/ember/audit.jsonl -o x.html"]) {
+      expect(decide(cmd).verdict, cmd).toBe("refuse");
+    }
+  });
+});
+
 describe("a file's contents sent in a registry's, an image's or a package's name (y10-4)", () => {
   it("asks as sending, as a fetch with the same address does", () => {
     for (const cmd of [
