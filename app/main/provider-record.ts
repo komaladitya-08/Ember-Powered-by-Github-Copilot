@@ -15,6 +15,7 @@ import fs from "node:fs";
 import { z } from "zod";
 import type { SecretBox } from "./agent/auth";
 import type { AuditEntry } from "./policy/audit";
+import type { ProviderSealNotes } from "../shared/ipc";
 
 /** The card's yes as settings.json holds it (SettingsSchema `provider.consent`). */
 export interface ProviderConsent { version: number; at: string | null; host: string }
@@ -35,7 +36,12 @@ export interface ProviderSealStore {
   read(): Promise<ProviderConsent | null>;
   /** Seals `c`; false when it can't be kept (no keyring, a write that failed). */
   write(c: ProviderConsent): Promise<boolean>;
+  /** Whether a keyring Ember can use is here at all (absent: taken as there is one): says why a seal wasn't kept. */
+  keeps?(): Promise<boolean>;
 }
+
+/** What Home says of the seal (reliability-r11-1): app/shared/ipc.ts's ProviderSealNotes. */
+export type { ProviderSealNotes };
 
 /** The file in Ember's data folder that holds the sealed agreement. */
 export const PROVIDER_SEAL_FILE = "provider-seal.bin";
@@ -50,6 +56,10 @@ export class ProviderSeal implements ProviderSealStore {
   private async usable(): Promise<boolean> {
     if (this.box.getSelectedStorageBackend?.() === "basic_text") return false;
     return this.opts.asyncKeyring ? ((await this.box.isAsyncEncryptionAvailable?.()) ?? true) : this.box.isEncryptionAvailable();
+  }
+
+  keeps(): Promise<boolean> {
+    return this.usable().catch(() => false);
   }
 
   async read(): Promise<ProviderConsent | null> {
@@ -98,6 +108,8 @@ export interface ProviderRecordDeps {
   log: { info(event: string, fields?: Record<string, unknown>): void; warn(event: string, fields?: Record<string, unknown>): void };
   /** held() changed (the seal was read, the log opened): main reconnects. */
   heldChanged?: () => void;
+  /** notes() changed (a seal wasn't kept, or this start withdrew an agreement): main tells Home. */
+  notesChanged?: () => void;
 }
 
 export class ProviderRecord {
@@ -116,13 +128,20 @@ export class ProviderRecord {
   private recorded: string | null = null;
   /** Settles once the seal has been read at start and the file made to agree with it. */
   readonly sealed: Promise<void>;
+  /** What Home says of the seal (notes()). */
+  private sealNotes: ProviderSealNotes = {};
+  /** Bumped by every agreement Home writes, so an older seal's outcome says nothing of a newer one. */
+  private sealRun = 0;
 
   constructor(private d: ProviderRecordDeps) {
     const own = d.settings.own().provider.consent;
     this.good = own;
     this.sealing = agrees(own);
     d.settings.onChange(() => this.changed());
-    this.sealed = this.sealing ? (d.seal ? d.seal.read().catch(() => null) : Promise.resolve(null)).then(s => this.unseal(s)) : Promise.resolve();
+    const keeps = () => (d.seal?.keeps ? d.seal.keeps().catch(() => false) : Promise.resolve(!!d.seal));
+    this.sealed = this.sealing
+      ? Promise.all([d.seal ? d.seal.read().catch(() => null) : Promise.resolve(null), keeps()]).then(([s, k]) => this.unseal(s, k))
+      : Promise.resolve();
     if (!this.sealing) this.record("start");
   }
 
@@ -142,23 +161,47 @@ export class ProviderRecord {
     // The user agreed in Home now: what the file held before the seal was read is theirs now.
     this.sealing = false;
     this.record("home");
-    if (this.d.seal && agrees(now)) void this.d.seal.write(now).then(kept => { if (!kept) this.d.log.warn("provider.seal_not_kept", {}); });
-    else if (agrees(was)) this.forgetSeal();
+    const run = ++this.sealRun;
+    // A new yes, or none, is what Home speaks of now: a start's withdrawal is answered by it.
+    this.setNotes({});
+    if (this.d.seal && agrees(now)) {
+      const seal = this.d.seal;
+      void seal.write(now).then(async kept => {
+        if (kept) return;
+        this.d.log.warn("provider.seal_not_kept", {});
+        // Said until Ember quits (or another yes): the agreement can't be kept for the next start (reliability-r11-1).
+        const keyring = seal.keeps ? await seal.keeps().catch(() => false) : true;
+        if (run === this.sealRun) this.setNotes({ lasts: { host: now.host, why: keyring ? "write" : "keyring" } });
+      });
+    } else if (agrees(was)) this.forgetSeal();
     return out;
   }
 
-  /** The seal is read (null: none, or unreadable): an agreement in the file that doesn't match it is withdrawn. */
-  private unseal(sealed: ProviderConsent | null): void {
-    if (!this.sealing) return;
-    const was = this.held();
-    try { this.unsealNow(sealed); } finally { if (this.held() !== was) this.d.heldChanged?.(); }
+  /** What Home says of the seal now (reliability-r11-1). */
+  notes(): ProviderSealNotes {
+    return { ...this.sealNotes };
   }
 
-  private unsealNow(sealed: ProviderConsent | null): void {
+  private setNotes(n: ProviderSealNotes): void {
+    if (JSON.stringify(n) === JSON.stringify(this.sealNotes)) return;
+    this.sealNotes = n;
+    this.d.notesChanged?.();
+  }
+
+  /** The seal is read (null: none, or unreadable): an agreement in the file that doesn't match it is withdrawn. */
+  private unseal(sealed: ProviderConsent | null, keyring = true): void {
+    if (!this.sealing) return;
+    const was = this.held();
+    try { this.unsealNow(sealed, keyring); } finally { if (this.held() !== was) this.d.heldChanged?.(); }
+  }
+
+  private unsealNow(sealed: ProviderConsent | null, keyring: boolean): void {
     const own = this.d.settings.own().provider.consent;
     if (agrees(own) && !same(own, sealed)) {
       this.d.log.warn("provider.unsealed", {});
       this.putBack(NO_PROVIDER_CONSENT);
+      // Home says why, and how to have it again (reliability-r11-1).
+      this.setNotes({ withdrawn: { host: own.host, why: keyring ? "seal" : "keyring" } });
     }
     this.good = this.d.settings.own().provider.consent;
     this.sealing = false;

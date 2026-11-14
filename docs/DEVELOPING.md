@@ -1718,7 +1718,9 @@ the address in force and its saved key are kept and come back with the switch (i
   "no agreement" in its place); until that seal is read no
   provider of the user's is in force, and one that doesn't match is withdrawn, so Home shows the card again. Without
   a keyring (`basic_text`) nothing is sealed: the yes lasts until Ember quits, and the card asks again at the next
-  start. Every change of the user's provider in force is a `provider` audit entry (its host, the one before, and
+  start. Models & connections says so under the group (`providerSealLine`, from the record's `notes()`): after the
+  yes, that it lasts until Ember closes and why; at a start that withdrew it, why (no keyring, or a seal that didn't
+  match) and to agree again (reliability-r11-1). Every change of the user's provider in force is a `provider` audit entry (its host, the one before, and
   `via`: home, settings or start), shown in What Ember did as "Model service: <host>"; one coming into force that
   can't be recorded isn't taken: "I agree" then leaves the provider as it was and says why ("Ember couldn't record
   this in its audit log, so it isn't using <host>. Check that the disk isn't full, then agree again.":

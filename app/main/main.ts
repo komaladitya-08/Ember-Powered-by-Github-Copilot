@@ -2238,7 +2238,9 @@ function start(): void {
   const providerRecord = new ProviderRecord({ settings: settings as unknown as ProviderRecordDeps["settings"], log: log.child("provider"),
     inForce: () => { const p = userProviderInForce(settings.get(), admin); return p ? endpointHost(p.baseUrl) : null; },
     seal: new ProviderSeal(path.join(userData, PROVIDER_SEAL_FILE), safeStorage, { asyncKeyring: platform.os === "darwin" }),
-    heldChanged: () => { void agent?.providerChanged(); sendToHome(PROVIDER_IPC.changed, null); } });
+    heldChanged: () => { void agent?.providerChanged(); sendToHome(PROVIDER_IPC.changed, null); },
+    // A seal not kept, or a yes this start withdrew: Home says why (reliability-r11-1).
+    notesChanged: () => sendToHome(PROVIDER_IPC.changed, null) });
   const providers = createProviderService({
     settings, admin: () => admin, consented: () => consented(), record: providerRecord,
     keys: new ProviderKeyStore(path.join(userData, PROVIDER_KEY_FILE), safeStorage, { asyncKeyring: platform.os === "darwin" }),

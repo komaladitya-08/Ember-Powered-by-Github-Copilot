@@ -590,6 +590,29 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect((p as Page & { errors: string[] }).errors).toEqual([]);
   });
 
+  it("(aq) without a keyring, Models & connections says why my provider's yes was withdrawn at start, and that a yes lasts until Ember closes (reliability-r11-1)", async () => {
+    const host = "127.0.0.1:18210";
+    const withdrawn = await open({ home: true, provider: { on: true, baseUrl: `http://${host}/v1` }, providerState: { seal: { withdrawn: { host, why: "keyring" } } } });
+    await expect.poll(() => withdrawn.locator("#byok-consent").isVisible()).toBe(true);
+    await expect.poll(() => withdrawn.locator("#byok-seal").isVisible()).toBe(true);
+    expect(await withdrawn.locator("#byok-seal").innerText()).toBe(`Your agreement to use ${host} couldn't be kept when Ember started, because this computer has no keyring Ember can use. Agree again to use it until Ember closes, or set up a keyring to keep it.`);
+    if (process.env.EMBER_UI_EVIDENCE) {
+      fs.mkdirSync(process.env.EMBER_UI_EVIDENCE, { recursive: true });
+      await withdrawn.screenshot({ path: path.join(process.env.EMBER_UI_EVIDENCE, "byok-seal-withdrawn.png"), fullPage: true });
+    }
+    expect((withdrawn as Page & { errors: string[] }).errors).toEqual([]);
+    const lasts = await open({ home: true, liveState: true, provider: { on: true, baseUrl: `http://${host}/v1`, consent: { version: 1, at: "2026-11-08T12:00:00Z", host } }, providerState: { seal: { lasts: { host, why: "keyring" } } } });
+    await expect.poll(() => lasts.locator("#byok-seal").isVisible()).toBe(true);
+    expect(await lasts.locator("#byok-seal").innerText()).toBe(`Your agreement to use ${host} lasts until Ember closes: this computer has no keyring Ember can use to keep it, so Ember asks again next time it starts.`);
+    expect(await lasts.locator("#byok-consent").isVisible()).toBe(false);
+    if (process.env.EMBER_UI_EVIDENCE) await lasts.screenshot({ path: path.join(process.env.EMBER_UI_EVIDENCE, "byok-seal-lasts.png"), fullPage: true });
+    // Another address: nothing about the old host's yes.
+    await lasts.locator("#byok-url").fill("http://127.0.0.1:18211/v1");
+    await lasts.keyboard.press("Tab");
+    await expect.poll(() => lasts.locator("#byok-seal").isVisible()).toBe(false);
+    expect((lasts as Page & { errors: string[] }).errors).toEqual([]);
+  });
+
   it("(v) Home says the provider's note came up when the endpoint is entered, and why Test connection waits (integrations-7, WCAG 4.1.3)", async () => {
     const p = await open({ home: true, provider: { on: true, baseUrl: "" } });
     const test = p.locator("#byok-test");

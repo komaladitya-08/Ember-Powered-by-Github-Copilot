@@ -15,7 +15,7 @@ import type { Settings, SettingsPatch } from "../../main/settings";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import { AZURE_API_VERSION, AgreeGuard, agreeAction, endpointHost, endpointProblem, heldAnswer, heldPress, latestOnly, MODEL_ID, type ProviderType } from "../../shared/provider";
 import { noteProviderChoice } from "./provider-choice";
-import { type OwnProvider, PROVIDER_NO_KEYRING, PROVIDER_WORDS, providerAgreedChecked, providerAgreedText, providerAgreedUnlisted, providerCardShown, providerConsentText, providerHeldChecking, providerHeldHint, providerHeldKept, providerHeldKey, providerHeldUnlisted, providerHint, providerTestText, providerTestWaits } from "./copy";
+import { type OwnProvider, PROVIDER_NO_KEYRING, PROVIDER_WORDS, providerSealLine, providerAgreedChecked, providerAgreedText, providerAgreedUnlisted, providerCardShown, providerConsentText, providerHeldChecking, providerHeldHint, providerHeldKept, providerHeldKey, providerHeldUnlisted, providerHint, providerTestText, providerTestWaits } from "./copy";
 import { providerFailField, providerKeepLabel } from "./first-run-copy";
 
 declare global { interface Window { emberProvider?: EmberProviderApi } }
@@ -278,6 +278,10 @@ function draw(): void {
   $("byok-no-keyring").hidden = keyring || saved;
   $("byok-no-keyring").textContent = PROVIDER_NO_KEYRING;
   $("byok-hint").textContent = held ? providerHeldHint(held.from, host) : providerHint({ managed, inForce: !!state?.inForce, on, host, signedOut });
+  // Why the yes lasts only until Ember closes, or why this start withdrew it (reliability-r11-1).
+  const sealLine = on && !held ? providerSealLine({ host, agreed: agreedFor(p, host), ...(state?.seal ? { seal: state.seal } : {}) }) : null;
+  $("byok-seal").hidden = sealLine === null;
+  $("byok-seal").textContent = sealLine ?? "";
   onDestination();
 }
 

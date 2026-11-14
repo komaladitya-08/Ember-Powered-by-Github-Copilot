@@ -4,7 +4,7 @@
  * name an OS reads exactly as before.
  */
 
-import type { ActivityEntry, ClearHearingStatus, ConversationContext, HearResult, InstallKind, NaturalVoiceStatus, RetryResult, SpeechModelId, StatusPlatform, UpdateStatus } from "../../shared/ipc";
+import type { ActivityEntry, ClearHearingStatus, ConversationContext, HearResult, InstallKind, NaturalVoiceStatus, ProviderSealNotes, RetryResult, SpeechModelId, StatusPlatform, UpdateStatus } from "../../shared/ipc";
 import { kindName, type VaultKind } from "../../shared/vault";
 // Plain words for an unnamed control's role: the same table the May I? question uses.
 import { aRoleWord } from "../../shared/role-words";
@@ -652,7 +652,27 @@ export function providerHint(o: { managed: "organisation" | "off" | null; inForc
  * Shown in place of the key field when the computer can't keep a key safely (no keyring, or basic_text): with the way
  * forward main's KEY_NO_KEYRING gives (integrations-13). Only Linux lacks one: Windows and macOS always have theirs.
  */
-export const PROVIDER_NO_KEYRING = "This computer has no keyring for passwords, so Ember can't keep a key safely here. Set up a keyring (GNOME Keyring or KWallet), then come back to save one. A model server on this computer that needs no key still works.";
+export const PROVIDER_NO_KEYRING = "This computer has no keyring for passwords, so Ember can't keep a key safely here. Set up a keyring (GNOME Keyring or KWallet), then come back to save one. A model server on this computer that needs no key still works, but Ember asks you to agree to it again each time it starts.";
+
+/**
+ * Under the Model provider group, about the card's yes for the host in the field (reliability-r11-1): agreed, that it
+ * lasts until Ember closes, and why (no keyring, or a seal that couldn't be saved); not agreed, why this start withdrew
+ * it and how to have it again. Null when there is nothing to say for that host.
+ */
+export function providerSealLine(o: { host: string | null; agreed: boolean; seal?: ProviderSealNotes }): string | null {
+  const { lasts, withdrawn } = o.seal ?? {};
+  if (o.agreed && lasts && lasts.host === o.host) {
+    return lasts.why === "keyring"
+      ? `Your agreement to use ${lasts.host} lasts until Ember closes: this computer has no keyring Ember can use to keep it, so Ember asks again next time it starts.`
+      : `Your agreement to use ${lasts.host} lasts until Ember closes: Ember couldn't save it safely on this computer, so it asks again next time it starts.`;
+  }
+  if (!o.agreed && withdrawn && withdrawn.host === o.host) {
+    return withdrawn.why === "keyring"
+      ? `Your agreement to use ${withdrawn.host} couldn't be kept when Ember started, because this computer has no keyring Ember can use. Agree again to use it until Ember closes, or set up a keyring to keep it.`
+      : `Ember couldn't confirm your agreement to use ${withdrawn.host} when it started, so it isn't using it. Agree again to use it.`;
+  }
+  return null;
+}
 
 /** The Model provider group's short messages (under the group, in its status line). */
 export const PROVIDER_WORDS = {

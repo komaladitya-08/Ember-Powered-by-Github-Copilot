@@ -185,3 +185,43 @@ describe("agreeing to the user's own provider while the audit log can't be writt
     expect(c.used()).toBe("models.example.com");
   });
 });
+
+describe("the own provider's yes without a keyring to keep it (reliability-r11-1)", () => {
+  const noKeyring = (value: ProviderConsent | null = null): ProviderSealStore => ({ read: async () => value, write: async () => false, keeps: async () => false });
+  it("says after the yes that it lasts until Ember closes, and why, and Home's state carries it (reliability-r11-1)", async () => {
+    let told = 0;
+    const c = setup(provider(GOOD, NO_PROVIDER_CONSENT), { seal: noKeyring() });
+    (c.record as unknown as { d: ProviderRecordDeps }).d.notesChanged = () => { told++; };
+    expect(c.service.api.agree("models.example.com")).toEqual({ ok: true });
+    await new Promise(r => setTimeout(r, 0));
+    expect(c.record.notes()).toEqual({ lasts: { host: "models.example.com", why: "keyring" } });
+    expect(told).toBe(1);
+    expect((await c.service.api.state()).seal).toEqual({ lasts: { host: "models.example.com", why: "keyring" } });
+    // A keyring that is there but whose seal couldn't be saved says so differently.
+    const d = setup(provider(GOOD, NO_PROVIDER_CONSENT), { seal: { read: async () => null, write: async () => false, keeps: async () => true } });
+    d.service.api.agree("models.example.com");
+    await new Promise(r => setTimeout(r, 0));
+    expect(d.record.notes()).toEqual({ lasts: { host: "models.example.com", why: "write" } });
+    // Kept: nothing to say.
+    const m = memorySeal(null);
+    const e = setup(provider(GOOD, NO_PROVIDER_CONSENT), { seal: m.store });
+    e.service.api.agree("models.example.com");
+    await new Promise(r => setTimeout(r, 0));
+    expect(e.record.notes()).toEqual({});
+    expect((await e.service.api.state()).seal).toBeUndefined();
+  });
+
+  it("says at a start that withdrew the yes why it did, until the user agrees again (reliability-r11-1)", async () => {
+    const c = setup(provider(GOOD, yes("models.example.com")), { seal: noKeyring() });
+    await c.record.sealed;
+    expect(c.used()).toBeNull();
+    expect(c.record.notes()).toEqual({ withdrawn: { host: "models.example.com", why: "keyring" } });
+    expect(c.service.api.agree("models.example.com")).toEqual({ ok: true });
+    await new Promise(r => setTimeout(r, 0));
+    expect(c.record.notes()).toEqual({ lasts: { host: "models.example.com", why: "keyring" } });
+    // With a keyring, a seal that doesn't match is "couldn't confirm".
+    const d = setup(provider(GOOD, yes("models.example.com")), { seal: { read: async () => null, write: async () => true, keeps: async () => true } });
+    await d.record.sealed;
+    expect(d.record.notes()).toEqual({ withdrawn: { host: "models.example.com", why: "seal" } });
+  });
+});

@@ -24,7 +24,7 @@ import { friendlyError } from "./agent/presenter";
 import type { Fields, Logger } from "./logger";
 import { FEATURE_CONSENT_VERSION } from "../shared/consent";
 import { endpointHost, MAX_API_KEY, MODEL_ID } from "../shared/provider";
-import type { ProviderDraft, ProviderMove, ProviderState, RetryResult } from "../shared/ipc";
+import type { ProviderDraft, ProviderMove, ProviderSealNotes, ProviderState, RetryResult } from "../shared/ipc";
 
 /** The user's provider settings (SettingsSchema `provider`). */
 export type UserProviderSettings = Settings["provider"];
@@ -326,7 +326,7 @@ export class ProviderKeyStore {
  * What Home's Model provider group shows (PROVIDER_IPC.state). The keyring is asked only while the provider is on and no
  * key is saved for its host (the one case where Home must say whether one can be kept); otherwise it is never touched.
  */
-export async function providerStateOf(o: { settings: Settings; admin: LoadedAdminPolicy; keys: Pick<ProviderKeyStore, "savedHost" | "canPersist">; held?: boolean }): Promise<ProviderState> {
+export async function providerStateOf(o: { settings: Settings; admin: LoadedAdminPolicy; keys: Pick<ProviderKeyStore, "savedHost" | "canPersist">; held?: boolean; seal?: ProviderSealNotes }): Promise<ProviderState> {
   const p = o.settings.provider;
   const allowed = o.admin.error === undefined && userProviderAllowed(o.admin.policy);
   const host = endpointHost(p.baseUrl);
@@ -342,6 +342,7 @@ export async function providerStateOf(o: { settings: Settings; admin: LoadedAdmi
     host,
     agreed: !o.held && providerAgreed(p),
     held: !!o.held,
+    ...(o.seal && (o.seal.lasts || o.seal.withdrawn) ? { seal: o.seal } : {}),
   };
 }
 
@@ -427,7 +428,7 @@ export interface ProviderServiceDeps {
    * The record of the card's yes (provider-record.ts): the yes is written through it, as Ember's own, and sealed; a yes
    * that reaches settings.json any other way is put back (safety-privacy-c10-1).
    */
-  record?: { as<T>(change: () => T): T; held?(): boolean };
+  record?: { as<T>(change: () => T): T; held?(): boolean; notes?(): ProviderSealNotes };
 }
 
 /** Said when the card's yes names another host than the endpoint in settings now (it changed meanwhile). */
@@ -534,7 +535,7 @@ export function createProviderService(d: ProviderServiceDeps) {
       retire();
     },
     api: {
-      state: () => providerStateOf({ settings: d.settings.get(), admin: d.admin(), keys: d.keys, held: d.record?.held?.() ?? false }),
+      state: () => providerStateOf({ settings: d.settings.get(), admin: d.admin(), keys: d.keys, held: d.record?.held?.() ?? false, seal: d.record?.notes?.() }),
       saveKey: async (key: string): Promise<KeySave> => {
         if (!allowed()) return { ok: false, why: PROVIDER_MANAGED };
         const host = hostNow();

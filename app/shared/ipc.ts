@@ -798,6 +798,19 @@ export interface ProviderState {
    * put back): Home treats it as not agreed, whatever the settings it holds say (integ-x-1).
    */
   held?: boolean;
+  /** What Home says of the agreement's seal (provider-record.ts, reliability-r11-1). */
+  seal?: ProviderSealNotes;
+}
+
+/**
+ * What Home says of the seal of the card's yes (reliability-r11-1): `lasts`, the agreement in force for that host
+ * couldn't be sealed for the next start (`keyring`: no keyring Ember can use; `write`: the seal couldn't be saved), so
+ * it lasts until Ember quits; `withdrawn`, this start put back an agreement to that host it couldn't confirm
+ * (`keyring`: there is no keyring to have sealed it; `seal`: the seal didn't match, or couldn't be read).
+ */
+export interface ProviderSealNotes {
+  lasts?: { host: string; why: "keyring" | "write" };
+  withdrawn?: { host: string; why: "keyring" | "seal" };
 }
 
 /** How a provider action went: `why` is one plain sentence for the page. */
