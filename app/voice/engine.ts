@@ -24,7 +24,7 @@
  * Right after a wake, only a voice about as loud as the wake phrase is a request.
  */
 
-import { askedYes, nearAnswer, spokenAnswer } from "../shared/spoken-answer";
+import { askedYes, assentSound, nearAnswer, spokenAnswer } from "../shared/spoken-answer";
 import { BandFilter, LEVEL_BAND } from "./room-band";
 
 export const SAMPLE_RATE = 16_000;
@@ -2377,6 +2377,14 @@ export class VoiceEngine {
     // "Okay, Ember." while a question waits is only the wake phrase, and answers nothing: the "Okay" comes before the
     // name, where nothing tells whose it is (a video's or a colleague's word ran into the user's own name and was taken
     // as their yes by name, unmarked on Windows and macOS: voice-product-y9-2). "Okay" said after it answers.
+    if (this.questionWaiting && this.mode.reason !== "manual" && assentSound(text)) {
+      // "Mm-hmm." while a question waits: a yes said as a sound, never taken as one and no filler to listen past; the
+      // question says once how to answer (r11-voice-x11-2: it vanished in every window).
+      this.peak = 0;
+      this.mode.until = Math.max(this.mode.until, this.now() + this.mode.ms);
+      this.emit({ type: "unclear" });
+      return;
+    }
     if (!saysSomething(text)) {
       // Only the wake phrase (or a cough, or "um"): keep listening for the request.
       if (this.mode.reason !== "manual") this.mode.until = Math.max(this.mode.until, this.now() + 4000);
@@ -2441,10 +2449,11 @@ export class VoiceEngine {
     // the question says once how to answer. They went to Copilot as a request, or vanished, closers included (V2-F5,
     // V2-F7, voice-listening-r10-1). "Why?" and "Which file?" are requests as ever. Before the closers, but never what
     // ends a conversation: "Okay, that's all." still ends it, sending nothing (voice-product-x9-3).
-    // Said by name (a wake, or the user's name in a window that needs none: namedByUser), only what is an answer's words
-    // and nothing more ("Ember, just do it.", "Hey Ember, hold on.") is held: a correction ("Hey Ember, don't email Bob,
-    // email Sam.") is a request, as at a wake, and in a conversation it was held and never sent (voice-listening-r11-2);
-    // an everyday yes that isn't on the list, by name or at a wake, went to Copilot as a request (voice-listening-r11-1).
+    // Said by name (a wake, or the user's name in a window that needs none: namedByUser), what holds a no and more ("Hey
+    // Ember, don't email Bob, email Sam.") is a request, as at a wake, and in a conversation it was held and never sent
+    // (voice-listening-r11-2); a yes put with more ("Ember, yes, send it.") and an everyday yes that isn't on the list
+    // ("Agreed.", "By all means.") are held, by name or not, and went to Copilot as a request (voice-listening-r11-1,
+    // r11-voice-x11-1, -x11-2).
     const answerLike = this.mode.reason === "follow-up" || this.mode.reason === "answer" || conversation;
     const byName = this.mode.reason === "wake" || named;
     if (this.questionWaiting && this.mode.reason !== "manual" && !this.answering(text) && !endsConversation(text) && (askedYes(text) || ((answerLike || byName) && nearAnswer(text, byName)))) {

@@ -3484,6 +3484,25 @@ describe("whose a spoken answer is (second review of the voice lane, 2026-11-12)
       }
     });
 
+    it("says once it didn't catch a short yes with a word more said by name, or an assent that isn't on the list, in every window, and never sends it (r11-voice-x11-1, r11-voice-x11-2)", () => {
+      for (const words of ["Yes, send it.", "Yep, delete it.", "Yes sir.", "Why not.", "Fine by me."]) for (const where of ["follow-up", "conversation"] as const) {
+        const named = waiting({ 5: `Ember, ${words}` }, where, { otherSound: false });
+        says(named, 5, 1, "user");
+        expect(named.heard().filter(h => h !== "wake"), `Ember, ${words} in ${where}`).toEqual(["unclear"]);
+      }
+      for (const words of ["Agreed.", "You bet.", "Uh-huh.", "Roger that.", "By all means.", "I think so.", "Be my guest.", "Mm-hmm.", "Fair enough."]) for (const where of WHERE) {
+        const s = waiting({ 5: words }, where, { otherSound: false });
+        says(s, 5, 0, "user");
+        expect(s.heard(), `${words} in ${where}`).toEqual(["unclear"]);
+      }
+      // A short request is still one, said by name, and a question without its mark too (r11-voice-x11-3).
+      for (const words of ["Open the report.", "Do you agree", "Status."]) for (const where of ["follow-up", "conversation"] as const) {
+        const s = waiting({ 5: `Hey Ember, ${words}` }, where, { otherSound: false });
+        says(s, 5, 1, "user");
+        expect(s.heard().filter(h => h !== "wake"), `${words} in ${where}`).toEqual([`${words} | ${where}`]);
+      }
+    });
+
     it("sends a correction said by name while a question waits as a request, in a follow-up and a conversation, as at a wake (voice-listening-r11-2)", () => {
       // In a conversation (the default) it was held as a near-miss answer: never sent, and the user told it wasn't taken
       // as an answer.

@@ -512,6 +512,45 @@ describe("spoken answers as people say them (owner report of 2026-11-03: “Embe
     for (const t of ["No.", "Not now.", "Leave it.", "I said no."]) expect(spokenAnswer(`Ember, ${t}`), t).toBe("deny");
   });
 
+  it("holds a short yes with a word more said by name as a near-miss, as without it, and only a no-led correction becomes a request (r11-voice-x11-1)", () => {
+    // By name they went to Copilot as a request while the question stayed up.
+    for (const t of [
+      "Yes, send it.", "Yep, delete it.", "Yes sir.", "Yes, ma'am.", "Sure, buddy.", "Okay by me.", "Fine by me.", "Why not.",
+      "Sure, why not.", "Yeah, open it.", "Okay, now send it.", "Yes, the blue one.",
+    ]) {
+      expect(spokenAnswer(t), t).toBeNull();
+      expect(nearAnswer(t), t).toBe(true);
+      expect(nearAnswer(t, true), `${t} by name`).toBe(true);
+    }
+  });
+
+  it("holds an assent of a few words that isn't on the list, in every window, and sends a short request with a verb or a question (r11-voice-x11-2, r11-voice-x11-3)", () => {
+    // They went to Copilot as a request while the question waited, or vanished in the answer window.
+    const assents = [
+      "Agreed.", "You bet.", "Uh-huh.", "Roger that.", "It's fine.", "Granted.", "I think so.", "Be my guest.", "By all means.",
+      "Make it so.", "Fire away.", "Okie dokie.", "Permission granted.", "Good to go.", "Ready.", "Whatever.", "Your call.",
+      "Up to you.", "Yah.", "Yea.", "Yeh.", "K.",
+      // Neighbours the review didn't give.
+      "Fair enough.", "As you wish.", "Very well.", "Suits me.", "No objection.", "Righto.", "Works for me.", "Will do.",
+    ];
+    for (const t of assents) {
+      expect(spokenAnswer(t), t).toBeNull();
+      expect(nearAnswer(t), t).toBe(true);
+      expect(nearAnswer(t, true), `${t} by name`).toBe(true);
+    }
+    // A request Ember can act on is still one: a verb, a question (with its mark or without it), or one of main's own.
+    for (const t of [
+      "Open the report.", "Send it to Sam.", "Translate it.", "Keep the draft.", "Go to settings.", "Show me.", "Read it out.",
+      "Do you agree", "Do you", "Can you do it", "Is it done", "What's new", "How's it going", "What did I miss",
+      "Status.", "Progress report.", "Status update.", "Again.", "Once more.", "One more time.", "Repeat that.", "Retry.",
+      "Catch me up.", "Fill me in.", "Anything new", "Anything happened", "Tell me again.", "Say that again.", "Just show me.", "Thanks.", "Thank you so much.",
+      "Um.", "Hmm.", "Uh.", "Make it bold.",
+    ]) {
+      expect(nearAnswer(t), t).toBe(false);
+      expect(nearAnswer(t, true), `${t} by name`).toBe(false);
+    }
+  });
+
   it("still never hears Always, a yes inside a longer request, or an answer it can't be sure of", () => {
     for (const other of [
       "Always.", "Always allow.", "Yes, always.", "Allow always.", "Go ahead and always allow it.", "Yes and also delete the files.",
