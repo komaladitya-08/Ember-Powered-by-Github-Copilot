@@ -52,14 +52,20 @@ function ownTelling(said: string): string | null {
 
 /** A name's word. */
 const WORD = String.raw`\p{L}[\p{L}'’-]{0,29}`;
-/** A name of one to three words, the further ones capitalised as names are. */
-const A_NAME = String.raw`${WORD}(?:\s+\p{Lu}[\p{L}'’-]{0,29}){0,2}(?![\p{L}\p{N}'’-])`;
+/** A title before a name ("Dr. Patel", "Mrs Shah"): memory-r10-2. */
+const TITLE = String.raw`(?:(?:Dr|Mr|Mrs|Ms|Mx|Prof|Sir|Dame)\.?\s+)`;
+/** A name of one to three words, the further ones capitalised as names are, perhaps after a title. */
+const A_NAME = String.raw`${TITLE}?${WORD}(?:\s+\p{Lu}[\p{L}'’-]{0,29}){0,2}(?![\p{L}\p{N}'’-])`;
+/** A sentence, never cut at a title's full stop ("Call me Dr. Patel please."). */
+const SENTENCE = /(?:\b(?:Dr|Mr|Mrs|Ms|Mx|Prof)\.|[^.;!?])+[.;!?]*/gu;
 const NAME = new RegExp(`^(${A_NAME})`, "u");
 /** What begins a clause that tells Ember what to call the user; the rest of the clause is the name and what may follow it. */
 const NAME_LEADS: readonly RegExp[] = [
   /^(?:you\s+(?:can|could|may|should)\s+)?(?:just\s+)?call\s+me\s+(.+)$/iu,
   /^my\s+name(?:\s+is|['’]s)(?:\s+(?:now|actually))?\s+(.+)$/iu,
   /^i\s+(?:now\s+)?go\s+by\s+(.+)$/iu,
+  // What others call them, offered to Ember ("My friends call me Raj, and so can you"): only with the offer (memory-r10-2).
+  /^(?:my\s+)?(?:friends|family|mates|colleagues|people|everyone|everybody|most\s+people)\s+calls?\s+me\s+(.+?)[,\s]+(?:and\s+)?(?:so\s+(?:can|could|should|may)\s+you|you\s+(?:can|could|should|may)\s+(?:too|as\s+well))$/iu,
   /^i(?:['’]d|\s+would)\s+(?:like|prefer|love)\s+to\s+be\s+called\s+(.+)$/iu,
   /^i\s+(?:like|prefer|want)\s+to\s+be\s+called\s+(.+)$/iu,
   /^i(?:(?:['’]d|\s+would)\s+(?:like|prefer|love)|\s+want|\s+need)\s+you\s+to\s+call\s+me\s+(.+)$/iu,
@@ -71,13 +77,18 @@ const NAME_LEADS: readonly RegExp[] = [
 const ASKS_FOR = /^(?:can|could|would|will)\s+you\s+(?:(?:please|just)\s+)*call\s+me\s+(.+)$/iu;
 /** "I'm Sam, not Ram": a name only when it is set against another, both written as names ("I'm tired, not hungry" names no one). */
 const I_AM = /^i(?:['’]m|\s+am)\s+(.+)$/iu;
+/**
+ * "It's Raj, not Ram": the same, only against the name Ember has for the user now (memory-r10-2), since "It's Paris, not
+ * London" and "It's March, not June" set two capitalised words against each other too (r10-memory-x10-3).
+ */
+const IT_IS = /^it(?:['’]s|\s+is)\s+(.+)$/iu;
 /** A name set against another ("Sam, not Ram", "Sam instead of Ram"). */
 const NOT_OTHER = new RegExp(String.raw`^,?\s+(?:and\s+)?(?:not|instead\s+of|rather\s+than)\s+(${A_NAME})`, "iu");
 /** How the user goes on to something else after the name ("…and I work at Globex", "…, Ram is my middle name"). */
 const GOES_ON = /^(?:\s*,|\s+(?:and|but|because|since|so)\b)\s*\S/iu;
 const capitalised = (name: string) => name.split(/\s+/u).every(w => /^\p{Lu}/u.test(w));
 /** What may follow the name ("Sam from now on", "Sam instead, please"). */
-const NAME_TAIL = /^[,\s]+(?:from\s+now\s+on|from\s+here\s+on|going\s+forward|in\s+future|now|instead|please|thanks|thank\s+you|actually|by\s+the\s+way|btw|is\s+fine|will\s+do|ok(?:ay)?)(?![\p{L}\p{N}'’-])/iu;
+const NAME_TAIL = /^[,\s]+(?:these\s+days|nowadays|from\s+now\s+on|from\s+here\s+on|going\s+forward|in\s+future|now|instead|please|thanks|thank\s+you|actually|by\s+the\s+way|btw|is\s+fine|will\s+do|ok(?:ay)?)(?![\p{L}\p{N}'’-])/iu;
 /** Words after "call me" that name no one ("call me a taxi", "call me back", "call me when it's done"). */
 const NOT_A_NAME = /^(?:a|an|the|back|later|when|if|at|on|in|after|before|tomorrow|tonight|today|now|soon|about|to|up|out|again|once|whenever|maybe|sometime|and|or|not|what|whatever|anything|something|it|that|this|you|me|him|her|them|us|by|with|for|from|is|are|was|(?:mon|tues|wednes|thurs|fri|satur|sun)day)$/iu;
 const named = (name: string) => !name.split(/\s+/u).some(w => NOT_A_NAME.test(w));
@@ -88,16 +99,17 @@ const named = (name: string) => !name.split(/\s+/u).some(w => NOT_A_NAME.test(w)
  * ("from now on", "please"), another name it is set against ("not Ram", "instead of Ram"), or how the user goes on
  * ("and I work at Globex"), never a report (memory-x9-4).
  */
-function nameIn(clause: string, asks: boolean): string | null {
-  for (const lead of asks ? [ASKS_FOR] : [...NAME_LEADS, I_AM]) {
+function nameIn(clause: string, asks: boolean, current: string | null): string | null {
+  for (const lead of asks ? [ASKS_FOR] : [...NAME_LEADS, I_AM, IT_IS]) {
     const m = lead.exec(clause);
     const name = m ? NAME.exec(m[1]!)?.[1] : undefined;
     if (!m || !name || !named(name)) continue;
     let rest = m[1]!.slice(name.length);
     const against = NOT_OTHER.exec(rest)?.[1];
     if (against) rest = rest.slice(NOT_OTHER.exec(rest)![0].length);
-    // "I'm …" names the user only against another name, both written as names.
-    if (lead === I_AM && !(against && capitalised(name) && capitalised(against) && named(against))) continue;
+    // "I'm …" and "It's …" name the user only against another name, both written as names.
+    if ((lead === I_AM || lead === IT_IS) && !(against && capitalised(name) && capitalised(against) && named(against))) continue;
+    if (lead === IT_IS && !(current && fold(against!) === fold(current))) continue;
     for (let tail = NAME_TAIL.exec(rest); tail; tail = NAME_TAIL.exec(rest)) rest = rest.slice(tail[0].length);
     if (!rest.replace(/[\s,;:]+$/u, "")) return name;
     // The user goes on to something else: only after a name written as one, and never into a report ("…, said my boss").
@@ -116,11 +128,11 @@ function nameIn(clause: string, asks: boolean): string | null {
  * Sam"), a condition, "call me back", "call me a taxi", what follows a colon or stands in quotes, nor a turn that
  * hands Ember words to work on (memory-x9-1).
  */
-export function nameSaid(said: string): string | null {
+export function nameSaid(said: string, current: string | null = null): string | null {
   const own = ownTelling(said);
   if (own === null || HANDS_OVER.test(own)) return null;
-  for (const sentence of own.match(/[^.;!?]+[.;!?]*/gu) ?? []) {
-    const name = nameIn(sentence.replace(/[.;!?\s]+$/u, "").replace(OPENERS, "").trim(), /\?\s*$/u.test(sentence));
+  for (const sentence of own.match(SENTENCE) ?? []) {
+    const name = nameIn(sentence.replace(/[.;!?\s]+$/u, "").replace(OPENERS, "").trim(), /\?\s*$/u.test(sentence), current);
     if (name) return name;
   }
   return null;
@@ -185,12 +197,36 @@ export function lengthSaid(said: string): Length | null {
     for (const part of sentence.replace(/[.;!?\s]+$/u, "").split(/,+|\s+(?:but|and)\s+/u)) {
       const clause = part.replace(OPENERS, "").trim();
       // A question tells nothing ("Why are your answers so short?") unless it asks Ember for it ("Can you give me shorter answers?").
-      if (!clause || (asks && !/^(?:can|could|would|will)\s+you\b/iu.test(clause)) || !aboutAnswers(clause)) continue;
-      const length = lengthOf(clause);
+      if (!clause || (asks && !/^(?:can|could|would|will)\s+you\b/iu.test(clause))) continue;
+      const length = aboutAnswers(clause) ? lengthOf(clause) : plainOrder(clause, own);
       if (length) found.add(length);
     }
   }
   return found.size === 1 ? [...found][0]! : null;
+}
+
+/** Ember told to be shorter without naming its answers ("Stop rambling", "Less waffle please", "No more waffling"). */
+const CUT_SHORT = /^(?:(?:please|just)\s+)*(?:stop|quit|no\s+more|less|cut(?:\s+out)?(?:\s+the)?|enough(?:\s+of\s+the)?)\s+(?:rambling|waffl(?:e|ing)|padding|fluff|essays|walls?\s+of\s+text)(?:\s+please)?$/iu;
+/** "Keep it brief", "Keep it short please": "it" being Ember's answers, alone in the clause. */
+const KEEP_IT = new RegExp(String.raw`^(?:(?:please|just)\s+)*keep\s+(?:it|them|things|everything)\s+${DEGREE}(short|brief|concise|detailed|thorough)(?:\s+please)?$`, "iu");
+
+/**
+ * A length told plainly without naming Ember's answers (memory-r10-2), or null: "Keep it brief", "Stop rambling". Never
+ * a length alone ("Shorter, please", "More detail"), which may ask for one answer, a draft's or a letter's, again
+ * shorter, and would then overwrite what the user set in Tell Ember about you (r10-memory-x10-3). Never in a turn that hands Ember words to work on or to pass on, speaks
+ * of someone else or reports ("Write to Priya and keep it brief", "Tell Bob to stop rambling", "Priya said stop
+ * rambling"), nor beside anything else the turn asks for ("Make a toast, keep it short"), so "it" can only be Ember's
+ * answers.
+ */
+function plainOrder(clause: string, own: string): Length | null {
+  if (WRITING.test(own) || HANDS_OVER.test(own) || REPORTS.test(own) || TO_SOMEONE.test(own)) return null;
+  // Only when the turn says nothing else: beside any other ask ("Make a toast, keep it short", "What's the capital of
+  // Peru? Keep it short.") "it" is that one answer, never the user's length (r10-memory-y10-1).
+  const others = (own.match(/[^.;!?]+[.;!?]*/gu) ?? []).flatMap(sentence => sentence.replace(/[.;!?\s]+$/u, "").split(/,+|\s+(?:but|and)\s+/u));
+  if (!others.every(part => { const c = part.replace(OPENERS, "").trim(); return !c || CUT_SHORT.test(c) || KEEP_IT.test(c); })) return null;
+  if (CUT_SHORT.test(clause)) return "short";
+  const keep = KEEP_IT.exec(clause);
+  return keep ? (/^(?:short|brief|concise)$/iu.test(keep[1]!) ? "short" : "detailed") : null;
 }
 
 /** Who a fact about the user is said of, when it says: "The user's…", "User…", "Their…". */
@@ -213,10 +249,10 @@ const ANSWER_WORD = /\b(?:answers?|repl(?:y|ies)|responses?|explanations?|detail
 const AGAINST = new RegExp(String.raw`,?\s+(?:and\s+)?(?:not|instead\s+of|rather\s+than)\s+${WORD}(?:\s+${WORD}){0,2}[.!]?$`, "iu");
 
 /** The name a fact says to call the user by, when it says that and nothing else (but the name it is no longer); or null. */
-function nameInFact(fact: string): string | null {
+export function nameInFact(fact: string): string | null {
   const says = fact.trim().replace(AGAINST, "");
   const name = NAME_FACT.exec(says)?.[1];
-  return name && !negated(says) && new RegExp(String.raw`^${WORD}(?:\s+${WORD}){0,2}$`, "u").test(name) && named(name) ? name : null;
+  return name && !negated(says) && new RegExp(String.raw`^${TITLE}?${WORD}(?:\s+${WORD}){0,2}$`, "u").test(name) && named(name) ? name : null;
 }
 
 /** The length a fact says Ember's answers should be, when it says that and nothing else; or null. */
@@ -256,13 +292,13 @@ export function aboutUser(about: readonly Ref[], name?: string): boolean {
  * null: the fact is about the user alone (`about`), says only what to call them and gives the name they said, or says
  * only how long answers should be and gives the length they said. Never a name that reads like an order. `theirs`: the
  * fact is already mostly the user's own words (`ownFact`), so an answer length keeps them ("Prefers long answers")
- * under the profile's relation.
+ * under the profile's relation. `current`: the name Ember has for the user now, which "It's Raj, not Ram" must name.
  */
-export function profileSaid(fact: string, about: readonly Ref[], said: string, theirs = false): NewFact | null {
+export function profileSaid(fact: string, about: readonly Ref[], said: string, theirs = false, current: string | null = null): NewFact | null {
   if (!said.trim()) return null;
   const called = nameInFact(fact);
   if (called) {
-    const name = nameSaid(said);
+    const name = nameSaid(said, current);
     if (name && fold(name) === fold(called) && !soundsLikeInstruction(name) && aboutUser(about, name)) return introFacts({ name })[0] ?? null;
     return null;
   }

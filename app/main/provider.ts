@@ -80,13 +80,15 @@ export function userProviderInForce(s: Settings, loaded: LoadedAdminPolicy): Use
 }
 
 /**
- * The host whose card the user's own provider waits for: on and allowed, with a usable address that isn't agreed to;
- * null otherwise. Signed out then, agreeing to it is the way on, not a GitHub sign-in (integrations-r3-1).
+ * The host whose card the user's own provider waits for: on and allowed, with a usable address that isn't agreed to,
+ * or whose yes the record holds back (`held`: provider-record.ts, until its seal is read or its coming into force is
+ * audited); null otherwise. Agreeing to it is the way on, not a GitHub sign-in (integrations-r3-1), and while it waits
+ * Ember connects to nothing, Copilot included (r10-safety-x10-1).
  */
-export function providerWaitingHost(s: Settings, loaded: LoadedAdminPolicy): string | null {
+export function providerWaitingHost(s: Settings, loaded: LoadedAdminPolicy, held = false): string | null {
   if (loaded.error !== undefined || !userProviderAllowed(loaded.policy)) return null;
   const host = endpointHost(s.provider.baseUrl);
-  return s.provider.on && host && !providerAgreed(s.provider) ? host : null;
+  return s.provider.on && host && (held || !providerAgreed(s.provider)) ? host : null;
 }
 
 /**
@@ -410,6 +412,11 @@ export interface ProviderServiceDeps {
   /** The endpoint in force may have changed (a key saved, removed, read or deleted): main reconnects and tells Home. */
   changed: () => void;
   now?: () => Date;
+  /**
+   * The record of the card's yes (provider-record.ts): the yes is written through it, as Ember's own, and sealed; a yes
+   * that reaches settings.json any other way is put back (safety-privacy-c10-1).
+   */
+  record?: { as<T>(change: () => T): T };
 }
 
 /** Said when the card's yes names another host than the endpoint in settings now (it changed meanwhile). */
@@ -555,7 +562,8 @@ export function createProviderService(d: ProviderServiceDeps) {
         if (!allowed()) return { ok: false, why: PROVIDER_MANAGED };
         const own = d.settings.own().provider;
         if (endpointHost(move?.baseUrl ?? own.baseUrl) !== host) return { ok: false, why: PROVIDER_HOST_CHANGED };
-        d.settings.update({ provider: { ...own, ...move, on: true, consent: { version: FEATURE_CONSENT_VERSION.provider, at: (d.now?.() ?? new Date()).toISOString(), host } } });
+        const yes = () => d.settings.update({ provider: { ...own, ...move, on: true, consent: { version: FEATURE_CONSENT_VERSION.provider, at: (d.now?.() ?? new Date()).toISOString(), host } } });
+        if (d.record) d.record.as(yes); else yes();
         d.log.info("provider.agreed", {});
         return { ok: true };
       },

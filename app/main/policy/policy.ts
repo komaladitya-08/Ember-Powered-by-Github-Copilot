@@ -758,12 +758,93 @@ export function isEmberWindow(w: { app?: string; name?: string; pid?: number | n
  * ~/Library/Application Support/ember) or the organisation's policy folder (/etc/ember, /Library/Application
  * Support/Ember), as editors and file managers put it: "settings.json (~/.config/ember) - gedit". A task never acts there
  * (modes-x9s-2): settings.json, the audit log and the policy are Ember's own, as its windows are. A title that names no
- * folder (Notepad's "settings.json - Notepad") isn't caught here; the mode itself is never taken from the file
- * (policy/mode-record.ts).
+ * folder (Notepad's "settings.json - Notepad") isn't caught here: mayReachEmberData makes its steps ask (or Autopilot
+ * refuse them), and the mode itself is never taken from the file (policy/mode-record.ts).
  */
 const EMBER_DATA_TITLE = /(?:^|[/\\]|%)(?:\.config|appdata[/\\]local|localappdata%|application support|etc)[/\\]ember(?=$|[/\\)\]\s"'”»])/i;
 /** Does this window's title show something in Ember's data folder or the organisation's policy folder? */
 export const showsEmberData = (title: string | undefined): boolean => !!title && EMBER_DATA_TITLE.test(title);
+/**
+ * Ember's data folder or the organisation's policy folder named in text a task would type (safety-privacy-r10-1): an
+ * Open dialog's location, a file manager's address bar ("~/.config/ember/settings.json", "%LOCALAPPDATA%\ember",
+ * "$XDG_CONFIG_HOME/ember"). Typing it is the road to opening settings.json or the audit log in another app, so it is
+ * refused, as a command that names the folder is (the classifier's `ember.path`).
+ */
+const EMBER_DATA_TYPED = /(?:^|[/\\%{\s"'“(=:]|\$)(?:\.config|appdata[/\\]local|localappdata%|application support|etc|xdg_config_home\}?)[/\\]ember(?=$|[/\\)\]\s"'”»,;:])/i;
+/** Does text a task would type name Ember's data folder or the organisation's policy folder? */
+export const namesEmberData = (text: string | undefined): boolean => !!text && EMBER_DATA_TYPED.test(plainPath(normalizeLabel(text)));
+/**
+ * A typed path as the dialog will read it (r10-safety-y10-2): a percent-escaped letter, digit or dot decoded ("%65mber"),
+ * an escaped space unescaped ("Application\ Support"), and doubled separators and "/./" parts dropped.
+ */
+const plainPath = (text: string): string => text
+  .replace(/%([0-9a-f]{2})/gi, (all, hex: string) => { const c = String.fromCharCode(parseInt(hex, 16)); return /[a-z0-9.]/i.test(c) ? c : all; })
+  .replace(/\\ /g, " ")
+  .replace(/([/\\])(?:\.[/\\])+/g, "$1")
+  .replace(/([/\\])[/\\]+/g, "$1");
+/**
+ * Ember's own files by name (settings.json, the audit log's months, the mode's seal, the provider's key and its host,
+ * the vault, extensions.json, the organisation's policy.json), and its data and audit folders' own names as a file
+ * manager titles a window that shows them ("ember", "audit": lower case, as Ember makes them; the ~/Ember hand-off
+ * folder is "Ember").
+ */
+const EMBER_FILE = /^(?:settings\.json|audit-\d{4}-\d{2}\.jsonl|approvals-seal\.bin|provider-key\.(?:bin|host)|vault\.json|extensions\.json|policy\.json|github-token\.bin)$/i;
+const EMBER_FOLDER = /^(?:ember|audit)$/;
+/** A title's name before the app's own part ("settings.json — Kate", "*settings.json - Notepad", "audit - File Explorer"). */
+const titleName = (title: string): string => title.replace(/\s+[-—–]\s+.*$/, "").replace(/^[*•●]\s*/, "").replace(/\s*[*•●]$/, "").trim();
+/**
+ * May this step reach one of Ember's own files or folders, where Ember can't tell whose they are (safety-privacy-r10-1,
+ * -c10-2)? A window whose title names one of Ember's files with no folder ("settings.json — Kate", TextEdit's
+ * "settings.json", Notepad's), a file manager's window titled with its data or audit folder's name ("audit", "ember -
+ * File Explorer"), an item named like one of them (a row in Files, Explorer or an Open dialog), or text typed that names
+ * one as a path's last part. A title that shows another folder says whose the file is, and isn't one of these. Such a
+ * step asks every time in every mode that asks, is never announced, waived or checked, and Autopilot, which has no
+ * question to put, refuses it.
+ */
+export function mayReachEmberData(r: Pick<ActionRequest, "kind" | "window" | "element" | "value"> & { app?: string }): boolean {
+  if (r.kind === "read") return false;
+  const title = r.window ?? "";
+  const name = titleName(title);
+  if (!/[/\\]/.test(title) && (EMBER_FILE.test(name) || EMBER_FOLDER.test(name))) return true;
+  if (inEmberDataParent(r, name)) return true;
+  const item = (r.element?.name ?? "").trim();
+  if (EMBER_FILE.test(item) || EMBER_FOLDER.test(item)) return true;
+  if ((r.kind === "text" || r.kind === "cursor_text" || r.kind === "value") && r.value) {
+    return r.value.split(/[/\\\n]/).some(part => { const p = part.trim().replace(/^["'“]|["'”]$/g, ""); return EMBER_FILE.test(p) || EMBER_FOLDER.test(p); });
+  }
+  return false;
+}
+/**
+ * The folders a file manager shows Ember's data or policy folder in (r10-safety-x10-2): its parent (".config",
+ * "Local", "Application Support", "etc") and the parent's parent where that is the folder people open (AppData,
+ * Library). A select-all Delete there, or Delete with the view focused after type-ahead, names neither the folder nor
+ * its files.
+ */
+const EMBER_DATA_PARENT = /^(?:\.config|local|appdata|application support|library|etc)$/i;
+/** File managers by the app name the platform reports (Files, Dolphin, Thunar, Nemo, Caja, PCManFM, File Explorer, Finder). */
+const FILE_MANAGER_APP = /^(?:(?:org\.gnome\.)?nautilus|files|(?:org\.kde\.)?dolphin|thunar|nemo|caja|pcmanfm(?:-qt)?|explorer(?:\.exe)?|file explorer|finder|com\.apple\.finder)$/i;
+/** Keys that only move about or pick by type-ahead there: every other key (Delete, a cut, F2, Finder's Return) may move or remove what is selected. */
+const MOVING_KEY = /^(?:(?:shift\+)?tab|up|down|left|right|home|end|prior|next|page_up|page_down|escape|[a-z0-9])$/;
+/** A control there that removes, moves or renames what is selected: any menu item (the context menu's), or a button so named. */
+const MOVES_ITEMS = /delete|trash|\bbin\b|remove|erase|rename|\bcut\b|move/i;
+/** Is `r` a step in a file manager showing the folder that holds Ember's data or policy folder that may move or remove it? */
+function inEmberDataParent(r: Pick<ActionRequest, "kind" | "element" | "value"> & { app?: string }, name: string): boolean {
+  if (!FILE_MANAGER_APP.test((r.app ?? "").trim())) return false;
+  const folder = name.split(/[/\\]/).filter(Boolean).pop() ?? "";
+  // That folder's own row, from the folder above it (Home's ".config", the user's "AppData", Finder's "Library"):
+  // a key on it but one that moves about may delete, cut or rename it (r10-safety-y10-3).
+  const onParentRow = r.kind === "keys" && EMBER_DATA_PARENT.test((r.element?.name ?? "").trim());
+  if (!EMBER_DATA_PARENT.test(folder) && !onParentRow) return false;
+  if (r.kind === "keys") {
+    const k = canonicalKeys(r.value ?? "");
+    return !k || !MOVING_KEY.test(keyFamily(k));
+  }
+  if (r.kind !== "click" && r.kind !== "cursor_click" && r.kind !== "toggle") return false;
+  const role = r.element?.role ?? "";
+  return /menu item/.test(role) || (/button/.test(role) && MOVES_ITEMS.test(normalizeLabel(r.element?.name ?? "")));
+}
+/** Why such a step asks, or is refused in Autopilot (mayReachEmberData). */
+export const EMBER_DATA_DOUBT = "this may be Ember's own settings, audit log or policy, which are for the user only";
 /** One list with the screen reader's (which also withholds these fields' contents), plus look-alike folding. */
 export const isSecretField = (s: string) => SECRET_FIELD.test(normalizeLabel(s)) || isSecretLabel(normalizeLabel(s));
 
@@ -2794,7 +2875,20 @@ export class PolicyEngine {
 
   /** The decision as every mode's rules give it, then Autopilot's say on what would still ask (autopilotStep). */
   private judge(r: ActionRequest, count: boolean): Decision {
-    return this.autopilotStep(r, this.judgeAsked(r, count));
+    return this.ownDataDoubt(r, this.autopilotStep(r, this.judgeAsked(r, count)));
+  }
+
+  /**
+   * A step that may reach Ember's own settings, audit log or policy where Ember can't tell whose the file is
+   * (mayReachEmberData; safety-privacy-r10-1, -c10-2): whatever let it go ahead (a grant, Interactive's waiver, a first
+   * step's trust) it asks, every time, risky, never remembered nor announced; Autopilot, which has no question to put,
+   * refuses it. A refusal stays a refusal.
+   */
+  private ownDataDoubt(r: ActionRequest, d: Decision): Decision {
+    if (d.verdict === "deny" || d.tier === "read" || !mayReachEmberData(r)) return d;
+    if (this.autopilot) return { tier: "never", verdict: "deny", reason: `${EMBER_DATA_DOUBT}; Autopilot has no question to put, so Ember doesn't do it`, prompt: d.prompt };
+    const { autonomy: _a, announce: _n, mode: _m, waivable: _w, needsGrant: _g, stepPrompt: _s, ...rest } = d;
+    return { ...rest, tier: "confirm", verdict: "confirm", risky: true, everyTime: true, remember: false, reason: d.verdict === "confirm" ? `${d.reason}; ${EMBER_DATA_DOUBT}` : EMBER_DATA_DOUBT };
   }
 
   /**
@@ -2854,6 +2948,8 @@ export class PolicyEngine {
    */
   autopilotStep(r: ActionRequest, d: Decision): Decision {
     if (d.verdict !== "confirm" || !this.autopilot) return d;
+    // Never a step that may reach Ember's own settings, audit log or policy: refused (ownDataDoubt).
+    if (mayReachEmberData(r)) return this.ownDataDoubt(r, d);
     return { ...d, verdict: "allow", remember: false, autonomy: true, mode: "autopilot", reason: `${d.reason}; ${AUTOPILOT_REASON}`, announce: this.announcement(r, d, "autopilot") };
   }
 
@@ -2932,6 +3028,8 @@ export class PolicyEngine {
     const asIs = () => steps.map(s => s.d);
     const may = () => (this.o.assisted?.() ?? false) && !this.o.confirmEveryAction?.() && (this.o.actionsAllowed?.() ?? true);
     if (!steps.some(s => s.d.verdict === "confirm") || steps.some(s => s.d.verdict === "deny" || s.r.kind === "read")) return asIs();
+    // Never a step that may reach Ember's own settings, audit log or policy (ownDataDoubt): the user answers it.
+    if (steps.some(s => mayReachEmberData(s.r))) return asIs();
     // (Nor the user's words: a request too long to show whole could lose the "but don't…" at its end.)
     if (!may() || !o.words.trim() || o.words.trim().length > CHECK_LIMITS.words || o.signal.aborted) return asIs();
     const parts = steps.map(s => stepForCheck(s.r, s.d, this.keys));
@@ -3290,6 +3388,8 @@ export class PolicyEngine {
     if (r.kind !== "read" && isEmberWindow({ app: r.app, name: r.window, pid: r.windowId?.pid }, this.o.ownPid)) return never("Ember's own windows are for the user only");
     // Ember's settings, audit log and policy, open in another app: a task could forge the mode's agreement or weaken a setting there.
     if (r.kind !== "read" && showsEmberData(r.window)) return never("Ember's settings, audit log and policy are for the user only");
+    // Or their folder typed into an Open dialog or an address bar: the way to open them there (safety-privacy-r10-1).
+    if ((r.kind === "text" || r.kind === "cursor_text" || r.kind === "value" || r.kind === "select" || r.kind === "open_app") && namesEmberData(r.value)) return never("Ember's settings, audit log and policy are for the user only");
     // (The vault's fill is the one step that may reach a password field: decided below, in Autopilot only.)
     if (r.element?.role === "password text" && r.kind !== "vault_fill") return never("password fields are for the user only");
     if (r.element?.role === "terminal") return never("Ember doesn't type into terminal windows; it runs commands in its own command window when Commands is on");

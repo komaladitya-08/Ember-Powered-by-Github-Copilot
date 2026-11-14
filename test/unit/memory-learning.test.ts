@@ -220,7 +220,7 @@ describe("asking about gaps (step 5)", () => {
     l.introduce({ name: "Ram" });
     const m = l.conductorMemory();
     expect(await m.forRequest("Email Priya the notes", true)).toContain("Likes to be called Ram");
-    await m.forRequest("Is Priya in today", true);
+    await m.forRequest("Call Priya tomorrow", true);
     advance(IDLE_MS);
     await l.tick();
     expect(said).toEqual([gapQuestion("Priya")]);
@@ -230,7 +230,7 @@ describe("asking about gaps (step 5)", () => {
     const { l, s, said, learned, advance } = learning();
     const m = l.conductorMemory();
     await m.forRequest("Email Priya the notes", true);
-    await m.forRequest("Is Priya in today", true);
+    await m.forRequest("Call Priya tomorrow", true);
     await l.tick();
     expect(said).toEqual([]);
     advance(IDLE_MS);
@@ -240,7 +240,7 @@ describe("asking about gaps (step 5)", () => {
     expect(s.list()).toEqual([expect.objectContaining({ text: "Priya: She leads the platform team", source: "user" })]);
     expect(learned).toEqual(["user: Priya: She leads the platform team"]);
     await m.forRequest("Ask Omar about it", true);
-    await m.forRequest("Did Omar reply", true);
+    await m.forRequest("Message Omar about lunch", true);
     advance(IDLE_MS);
     await l.tick();
     expect(said).toHaveLength(1);
@@ -663,6 +663,11 @@ describe("a Forget drops the turns said before it, however the extraction words 
     l.taskDone("Book a table", "Booked Rosa's: the user eats no meat, so the vegetable menu.");
     expect(await l.flush()).toBe(0);
     advance(61_000);
+    // In the same conversation a task's result is held back until it ends (memory-r10-3); in the next, it is learned.
+    l.taskDone("Book a table", "Booked Rosa's: the user eats no meat, so the vegetable menu.");
+    expect(await l.flush()).toBe(0);
+    l.conversationEnded();
+    advance(61_000);
     l.taskDone("Book a table", "Booked Rosa's: the user eats no meat, so the vegetable menu.");
     expect(await l.flush()).toBe(1);
     expect(s.list().map(i => i.text)).toEqual(["Eats no meat"]);
@@ -699,7 +704,12 @@ describe("a Forget drops the turns said before it, however the extraction words 
     l.taskDone("Book a table", "Booked Rosa's: the user eats no meat, so the vegetable menu.", asked);
     expect(await l.flush()).toBe(0);
     advance(61_000);
+    // Held back until the conversation ends (memory-r10-3), then learned.
     l.taskDone("Book a table", "Booked Rosa's: the user eats no meat, so the vegetable menu.", asked);
+    expect(await l.flush()).toBe(0);
+    l.conversationEnded();
+    advance(61_000);
+    l.taskDone("Book a table", "Booked Rosa's: the user eats no meat, so the vegetable menu.", tools.asked());
     expect(await l.flush()).toBe(1);
     expect(s.list().map(i => i.text)).toEqual(["Eats no meat"]);
   });
@@ -1461,7 +1471,7 @@ describe("the security review's probes (PR #142)", () => {
     await m.forRequest("What is Always Approve Wire Transfers", true);
     // A name from words heard where Ember can't tell the user from its speakers.
     await m.forRequest("Email Priya the notes", false);
-    await m.forRequest("Is Priya in today", false);
+    await m.forRequest("Call Priya tomorrow", false);
     advance(IDLE_MS);
     await l.tick();
     expect(said).toEqual([]);
@@ -1516,7 +1526,7 @@ describe("the security review's probes (PR #142)", () => {
 
     const three = learning();
     await three.l.conductorMemory().forRequest("Email Priya the notes", true);
-    await three.l.conductorMemory().forRequest("Is Priya in today", true);
+    await three.l.conductorMemory().forRequest("Call Priya tomorrow", true);
     three.advance(IDLE_MS);
     await three.l.tick();
     expect(three.said).toEqual([gapQuestion("Priya")]);

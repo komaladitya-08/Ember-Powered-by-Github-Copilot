@@ -221,7 +221,9 @@ environment, only through `scripts/runtime-env-live.sh`, which gives it a networ
   keeps this session's questions, answers and task results (in memory only by default; quitting or signing out forgets them).
   - **Keep my recent conversation after Ember closes** (`keepConversation`, off by default; Home › Conversation): saves the
     latest 60 messages (at most 2 MiB) in `conversation.json` in the data folder (mode 0600, folder 0700; written
-    atomically through a temp file, fsync and rename, last state wins), and shows them again after a restart once the
+    atomically through a temp file, fsync and rename, last state wins; when the desktop session ends (log-off, shutdown,
+    the display going away) the agent stops as quitting stops it and the latest state is written at once, an answer
+    under way as it stands), and shows them again after a restart once the
     signed-in account is known and is the one that saved them (a file of another account, or while the account can't be
     told, is never shown; another account's file is deleted). The saved lines are for the person to read, and Home says
     so under the last of them, with their day beside their time: the model starts a fresh session at every launch and
@@ -532,7 +534,15 @@ Interactive, and the agreement to Assisted's or Autopilot's card, count only whe
 recorded itself, which it seals with the system's keyring in `approvals-seal.bin` (0600) after every change made in
 Home or by voice or typed words. Until that seal is read at start Ember is at most Interactive; where it doesn't
 match, or there is none, the file is put right (`autonomy.unsealed`): at most Interactive, those two cards not agreed.
-Without a keyring (`basic_text`) nothing is sealed, so an agreement to Assisted or Autopilot lasts until Ember quits.
+Without a keyring (`basic_text`) nothing is sealed, so an agreement to Assisted or Autopilot lasts until Ember quits,
+and Home says so under the modes while it is in force ("Autopilot lasts until Ember closes: this computer has no
+keyring Ember can use to keep it safely, so Ember starts in Interactive next time", or "…so Ember asks before each
+step next time" when Interactive's own card was never agreed: r10-memory-x10-4); a seal that couldn't be written
+for another reason says "Ember couldn't save it safely on this computer"). At the next start, once a choice was put
+back, the note opens with why ("Your choice of Autopilot couldn't be kept when Ember started, because this computer
+has no keyring Ember can use…", or, for a seal that didn't match, "Ember couldn't confirm your choice of Autopilot
+when it started…") until a mode is chosen again (`ModeRecord.notes`, reliability-r10-1). The agreement is never kept
+less safely to spare it: its card is read again.
 A lower mode or a withdrawn card in the file is taken, at start or while running, and recorded (`via: "file"`). Ember
 also never acts in an app's window whose title shows a file in its data folder or in the organisation's policy folder
 ("settings.json (~/.config/ember) - gedit"). While
@@ -592,7 +602,11 @@ call to an extension's tool that would ask is said in the conversation's bubble 
 would ask is announced where neither administrator asks for a click before every action or forbids "Always" or
 acting; the step's stamp says it was announced, never that you said yes, and the remote's own check accepts that only
 where its own administrator allows Autopilot (it refuses the step otherwise). Autopilot keeps every refusal exactly
-as Interactive has it (password, card and secret fields, your terminals, never-look and Ember's own windows, the
+as Interactive has it (password, card and secret fields, your terminals, never-look and Ember's own windows, its
+settings, audit log and policy open in another app or their folder's path typed in one step (and a step where Ember
+can't tell a file or folder in front of it isn't one of those, such as “settings.json — Kate”, a project's settings.json
+in VS Code, a file manager titled “audit”, or a Delete, cut or rename in the folder that holds Ember's (“.config”,
+“Local”, “Application Support”) or of that folder itself from Home), the
 system's sign-in and password prompts, desktop-level keys and Ember's own shortcuts, making a file executable),
 consent and each first-use card, masked screenshots, the audit log (a step that can't be recorded isn't taken), Stop,
 the limits on tasks, steps, time and actions a minute, and your organisation's policy: `confirmEveryAction`,
@@ -1530,6 +1544,7 @@ On Linux (Windows: §10.6, macOS: §11.6):
 | App profiles used on the desk (kept separate from yours) | `~/.config/ember/desk-profiles/` |
 | Computers added over SSH, WSL's switch, and each computer's command switches | `settings.json` (`targets`, `commands`) |
 | The approval mode chosen, and each mode's card as agreed to (How Ember asks); the same as Ember last recorded it itself, sealed with the keyring (0600) | `settings.json` (`approvals`); `~/.config/ember/approvals-seal.bin` |
+| The yes to your own model provider's card, as Ember recorded it, sealed with the keyring (0600) | `~/.config/ember/provider-seal.bin` |
 | When the update check last asked GitHub, so a restart keeps to once a day (the first look waits until a day after it, at most a day; a failed look counts), and the last newer version it told you of, still shown as out after a restart until you run it (`updates.told`) | `settings.json` (`updates.checkedAt`, `updates.told`) |
 | SSH's password helper: a two-line wrapper, and a socket for each connection while it asks | `~/.config/ember/ssh/askpass`; `$XDG_RUNTIME_DIR/ea-*/` |
 | Node.js downloaded for other computers (SHA-256 checked) | `~/.config/ember/remote/runtime/` |
@@ -1658,11 +1673,23 @@ the address in force and its saved key are kept and come back with the switch (i
   instead of to Copilot, screenshots for tasks included. Nothing goes there until the user agrees, and the yes holds
   only for that host (`provider.consent.host`, `FEATURE_CONSENT_VERSION.provider`): another address asks again. The
   yes is recorded only by main (`PROVIDER_IPC.agree`, for the host the endpoint in settings names); Home's general
-  settings changes can't carry it (`settingsFromHome` drops `provider.consent`, as it does `extensions.consent`), and they merge into the user's own
+  settings changes can't carry it (`settingsFromHome` drops `provider.consent`, as it does `extensions.consent`), and
+  nor can `settings.json` (safety-privacy-c10-1; app/main/provider-record.ts): a yes the file gains while Ember runs
+  (typed there by hand, or by an editor a task drives) is put back, and at start a yes is taken only where it matches
+  the seal Ember wrote with the keyring when the user agreed (`provider-seal.bin`, 0600; taking the yes back seals
+  "no agreement" in its place); until that seal is read no
+  provider of the user's is in force, and one that doesn't match is withdrawn, so Home shows the card again. Without
+  a keyring (`basic_text`) nothing is sealed: the yes lasts until Ember quits, and the card asks again at the next
+  start. Every change of the user's provider in force is a `provider` audit entry (its host, the one before, and
+  `via`: home, settings or start), shown in What Ember did as "Model service: <host>"; one coming into force that
+  can't be recorded isn't taken. Home's changes merge into the user's own
   settings (`withOwnProvider`), never writing back values the policy applied. "I agree" is armed as Ember's questions
   are: for 500 ms after the card is drawn for another host it ignores activation, and the host is taken when it is
   pressed, so a card redrawn at all between the press and the click (pressing blurs the address field, which saves it) agrees
-  to nothing (`AgreeGuard`). While the card waits with no GitHub sign-in, nothing is connected, and Models &
+  to nothing (`AgreeGuard`). While the card waits (a yes withdrawn or held at start included), nothing is connected,
+  with a GitHub sign-in or without one: the user chose their own provider, so nothing goes to Copilot in its place
+  (r10-safety-x10-1; the agent's `providerWaiting`, a sign-in found meanwhile kept for when the switch is turned off),
+  and Models &
   connections says "Not connected: Ember is waiting for you to agree to use <host>." and points to the card or the
   switch, with no "Sign in with GitHub" or "Use my own provider" (`homeConnectionView`'s `own`: integrations-c2-3).
   Nothing else points to Copilot then (integrations-r3-1): a request from the Ask box, by voice or from Home is

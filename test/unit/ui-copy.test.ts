@@ -1232,7 +1232,7 @@ describe("Home's conversation words (2026-11-07 product audit)", () => {
     // A broken policy file isn't the user's to restart away, and any other refusal is as before.
     expect(composerRefusal({ phase: "error", reason: "policy" }, null, false)).toBe("Your organisation's Ember policy has a problem, so Ember can't answer until it's fixed.");
     expect(composerRefusal({ phase: "error", reason: "network" }, null, true)).toBe("Copilot can't be reached right now. Your message is still here: send it again once you're online.");
-    expect(readFileSync("app/main/main.ts", "utf8")).toContain("composerSendRefusal(status, stops, status.phase === \"signed-out\" && !fixedProvider ? providerWaitingHost(settings.get(), admin) : null, !!admin.held)");
+    expect(readFileSync("app/main/main.ts", "utf8")).toContain("composerSendRefusal(status, stops, status.phase === \"signed-out\" ? ownProviderWaiting() : null, !!admin.held)");
   });
 
   it("takes a refused send's reason away once Ember is connected again, and says the message can go now (reliability-c7-2)", () => {
@@ -1314,7 +1314,7 @@ describe("Home's conversation words (2026-11-07 product audit)", () => {
     const consent = at('if (!consented()) throw new Error("Finish setup before sending a request.");');
     const locked = at('if (screenLock?.locked) throw new Error("Unlock your screen before sending a request.");');
     const stops = at("const stops = agent?.stopsWith(text) === true;");
-    const refused = at("const refusal = composerSendRefusal(status, stops, status.phase === \"signed-out\" && !fixedProvider ? providerWaitingHost(settings.get(), admin) : null, !!admin.held);");
+    const refused = at("const refusal = composerSendRefusal(status, stops, status.phase === \"signed-out\" ? ownProviderWaiting() : null, !!admin.held);");
     expect(consent).toBeLessThan(locked);
     expect(locked).toBeLessThan(stops);
     expect(stops).toBeLessThan(refused);

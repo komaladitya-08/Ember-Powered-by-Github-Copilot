@@ -17,7 +17,7 @@ import { memoryBlock } from "./format";
 import { ENTITY_KINDS, MAX_FACT_CHARS, type AddResult, type Entity, type EntityKind, type Fact, type GraphClock, MemoryGraph, type NewFact, type Source } from "./graph";
 import { factRefusal } from "./fact-guard";
 import { recall, type Recalled } from "./recall";
-import { profileKind, profileSaid } from "./profile";
+import { nameInFact, profileKind, profileSaid } from "./profile";
 import { memoryFile, type MemoryFile } from "./store";
 import { samePolarity, terms } from "./text";
 
@@ -203,6 +203,12 @@ export class MemoryService {
     this.o.semantic?.changed(this.graph);
   }
 
+  /** The name the user's profile has for them now ("Likes to be called Ram" gives Ram), or null (r10-memory-x10-3). */
+  currentName(): string | null {
+    const f = profileFacts(this.g).find(x => x.predicate === "called");
+    return f ? nameInFact(f.text) : null;
+  }
+
   /**
    * The model saves a fact. `said`: what the user said in this turn (whose words make it theirs). The answer is for the
    * model: what happened, in a few words.
@@ -214,7 +220,7 @@ export class MemoryService {
     // What to call the user, or how long answers should be, told in their own words this turn and saved as a fact
     // about them alone: the profile's own fact, theirs, which replaces the one before whatever the model called the
     // relation (memory-r9-5). A fact about anyone or anything else is kept as the model gave it (memory-x9-1).
-    const own = profileSaid(fact, refs, said, source === "user");
+    const own = profileSaid(fact, refs, said, source === "user", this.currentName());
     const r = this.g.add(own ?? { text: fact, about: refs, source, ...(replaces ? { predicate: replaces, single: true } : {}) });
     if (r.kind === "refused") return `Not remembered: ${r.reason}. Tell the user plainly if they asked you to remember it.`;
     this.dirty();

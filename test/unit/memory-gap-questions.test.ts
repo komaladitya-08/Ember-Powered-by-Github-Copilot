@@ -58,8 +58,8 @@ describe("which names Ember asks about (memory-r9-8)", () => {
 
   it("never asks about an app installed on this computer, by its name or its first word (memory-r9-8)", () => {
     const apps = ["Krita", "Obsidian", "LibreOffice Writer", "Visual Studio Code"];
-    expect(asksAfter(["Is Krita any good for sketches", "Does Krita do layers"])).toBe("Krita");
-    expect(asksAfter(["Is Krita any good for sketches", "Does Krita do layers"], apps)).toBeNull();
+    expect(asksAfter(["Ask Krita about sketches", "Message Krita about layers"])).toBe("Krita");
+    expect(asksAfter(["Ask Krita about sketches", "Message Krita about layers"], apps)).toBeNull();
     expect(asksAfter(["What does Writer do with footnotes", "Why is Writer slow"], apps)).toBeNull();
     expect(askableNames("Compare Obsidian and Priya's notes", apps)).toEqual(["Priya"]);
   });

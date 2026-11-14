@@ -90,7 +90,10 @@ describe("a fact forgotten in Settings stays forgotten for the rest of the conve
     r.l.forgetCounted(r.s.list()[0]!.id);
     r.advance(10 * 60_000);
     expect(await r.task("Book a table", "Booked Rosa's and chose the vegetarian menu.", [{ fact: "Prefers the vegetarian menu", evidence: "chose the vegetarian menu" }])).toBe(0);
-    // What a task found that is nothing like it is still learned.
+    // Nor anything else a task finds until the conversation ends: its result is Ember's own work, which may say what
+    // went in words that share none with it (memory-r10-3). After it ends, what a task finds is learned again.
+    expect(await r.task("Find my mail app", "Thunderbird is the mail app in use.", [{ fact: "Mail app in use is Thunderbird", evidence: "Thunderbird is the mail app in use" }])).toBe(0);
+    r.l.conversationEnded();
     expect(await r.task("Find my mail app", "Thunderbird is the mail app in use.", [{ fact: "Mail app in use is Thunderbird", evidence: "Thunderbird is the mail app in use" }])).toBe(1);
     expect(r.list()).toEqual(["task: Mail app in use is Thunderbird"]);
   });
@@ -294,11 +297,13 @@ describe("a correction that keeps the old words still keeps the old statement ou
     expect(r.list()).toEqual([`user: ${after}`]);
   });
 
-  it("lets the corrected fact be said the new way round in other words, and the old way round by the user themselves (memory-x9-2)", async () => {
+  it("lets the corrected fact be said again in its new words, and the old way round by the user themselves (memory-x9-2, r10-memory-y10-4)", async () => {
     const r = rig();
     await r.turn("Remember that I'm vegetarian", "Noted.", { remember: "Is vegetarian" });
     r.l.correct(r.s.list()[0]!, "Is not vegetarian");
-    expect((await r.turn("What's for dinner?", "Steak?", { remember: "Stopped being vegetarian" })).told).toMatch(/^Remembered \[/);
+    expect((await r.turn("What's for dinner?", "Steak?", { remember: "Is not vegetarian" })).told).not.toMatch(/^Not remembered/);
+    // In other words it says more than the correction, from Ember's reply: held until the conversation ends (r10-memory-y10-4).
+    expect((await r.turn("What's for dinner?", "Steak?", { remember: "Stopped being vegetarian" })).told).toMatch(/^Not remembered/);
     // The user changes their mind, in their own words: theirs.
     expect((await r.turn("Actually I'm vegetarian again, remember that", "Noted.", { remember: "Is vegetarian again" })).told).toMatch(/^Remembered \[/);
     expect(r.list()).toContain("user: Is vegetarian again");

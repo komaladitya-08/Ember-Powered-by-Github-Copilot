@@ -2,8 +2,9 @@
  * What a Forget means for the conversation it was made in (memory-r9-1). The conversation still holds what the user had
  * Ember forget or correct: their own statement, earlier `<memory>` blocks, Ember's answers. So until it ends:
  * - nothing much like what went is kept again but in the user's own words (`heldBack`): never from Ember's own later
- *   reply, a task it started or its remember tool, however long after the Forget; and a turn teaches only what rests
- *   on what the user said in it, so what they state themselves is still learned (memory-x9-3);
+ *   reply, a task it started or its remember tool, however long after the Forget; and a turn and the remember tool
+ *   keep only what rests on what the user said in that request, so what they state themselves is still learned
+ *   (memory-x9-3), and a task's result nothing (memory-r10-3);
  * - the conversation is told what went, by id and only for facts it was given (`changes`, ./format.ts `memoryChanged`):
  *   a forgotten fact's words are never sent again. For a fact Ember learned by reading it, which has no id there, it is
  *   told only that something of that kind went (memory-x9-7).
@@ -29,6 +30,11 @@ export const HELD_MAX = 50;
 export const HELD_FORGOTTEN = "Not remembered: the user had Ember forget this earlier in this conversation. Keep it again only when they say it again themselves, in their own words.";
 /** And for one that says what a fact said before the user corrected it. */
 export const HELD_CORRECTED = "Not remembered: the user corrected this in Settings earlier in this conversation, and this says what it said before. Keep it again only when they say it themselves, in their own words.";
+/**
+ * And for any other fact that doesn't rest on what the user said in that request (memory-r10-3): Ember's own reply may
+ * say what went in words that share none with it ("Does not eat meat" after "Is vegetarian" was forgotten).
+ */
+export const HELD_UNSAID = "Not remembered: the user had Ember forget or correct something earlier in this conversation, so until it ends only what rests on their own words in this request is kept. If they said this, save it in their own words.";
 /** And, after Forget everything, for any fact that isn't. */
 export const HELD_ALL = "Not remembered: the user had Ember forget everything earlier in this conversation, so until a new conversation only what they say themselves is kept. If they said this in this request, save it in their own words.";
 
@@ -241,11 +247,13 @@ export class ConversationHold {
    * - from a turn, anything that doesn't rest on what the user said in it (`restsOnUser`): Ember's reply may say what
    *   went in words that share none with it ("You don't eat meat" for "Is vegetarian"). What the user states is still
    *   learned, however the model words it (memory-x9-3);
+   * - from the remember tool, the same (`unsaid`), by the user's words in the request it answers (`said`): it was
+   *   refused only what was like it, and "Does not eat meat" came back from Ember's own reply (memory-r10-3);
+   * - from a task, anything (`unsaid`): a task's result is Ember's own work, never the user's words (memory-r10-3);
    * - after Forget everything, anything from a task or the remember tool, and from a turn anything but what the user
    *   states in it (`statedByUser`: never a question that names the fact, memory-x9-2).
-   * The remember tool is otherwise refused only what is like it, so "remember…" still keeps what the model words freely.
    */
-  heldBack(text: string, source: Source, from: HeldFrom): "all" | "like" | "corrected" | null {
+  heldBack(text: string, source: Source, from: HeldFrom, said = ""): "all" | "like" | "corrected" | "unsaid" | null {
     if (source === "user" || (!this.heldAll && !this.held.length)) return null;
     const turn = typeof from === "object" ? from : null;
     if (this.heldAll && !(turn && statedByUser(text, turn))) return "all";
@@ -254,6 +262,10 @@ export class ConversationHold {
       if (h.was && saysBefore(text, h.was.before, h.was.after)) return "corrected";
       if (like(h.words, words)) return h.was ? "corrected" : "like";
     }
-    return turn && !restsOnUser(text, turn) ? "like" : null;
+    if (turn) return restsOnUser(text, turn) ? null : "like";
+    // What a correction says now is the user's own words, typed in Settings, so Ember may say it again: only when the
+    // fact says nothing more, or "Works at Initech and does not eat meat" brings a Forget back with it (r10-memory-y10-4).
+    if (words.size && this.held.some(h => h.was && share(words, new Set(terms(h.was.after))) === 1)) return null;
+    return from === "tool" && restsOnUser(text, { said }) ? null : "unsaid";
   }
 }
