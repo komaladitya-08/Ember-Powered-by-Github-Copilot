@@ -848,6 +848,25 @@ describe("AnswerLanguage tells a passage's language from its own words, not from
     ]) expect(streamed(answer).filter(p => p.lang !== null), answer).toEqual([]);
   });
 
+  it("says an English label on its own line before a passage in another language in Ember's own voice, as the docs say (r12-voice-x12-6)", () => {
+    // LONE_LABEL took any lone word and a colon for the passage's own: "Reminder:" before an Italian notice was said
+    // with Italian sounds.
+    for (const [label, passage, lang] of [
+      ["Reminder:", "La riunione è spostata a martedì alle dieci. Grazie a tutti.", "it"],
+      ["Note:", "La riunione è spostata a martedì alle dieci. Grazie a tutti.", "it"],
+      ["**Update:**", "La cita con el dentista es el martes a las diez.", "es"],
+      ["Important:", "A reunião foi adiada para quinta-feira de manhã.", "pt"],
+      ["Warning:", "Le serveur sera arrêté ce soir à minuit pour la maintenance.", "fr"],
+    ] as const) {
+      const said = streamed(`Here's the message:\n\n${label}\n\n${passage}\n\nWant me to reply?`);
+      expect(said.filter(p => p.text.includes(label.replace(/\*/g, ""))).map(p => p.lang), label).toEqual([null]);
+      expect(said.filter(p => p.lang !== null).map(p => p.lang), `${label} ${passage}`).toContain(lang);
+    }
+    // The passage's own label in its language is still said in its voice (voice-speaking-r12-2).
+    const own = streamed("Here's the message:\n\nPromemoria:\n\nLa riunione è spostata a martedì alle dieci. Grazie a tutti.\n\nWant me to reply?");
+    expect(own.filter(p => p.text.includes("Promemoria")).map(p => p.lang)).toEqual(["it"]);
+  });
+
   it("still says an English email with an Italian greeting, dish or place in it wholly in Ember's own voice (voice-speaking-r12-1)", () => {
     for (const passage of [
       "Ciao Alex, just confirming the payment arrived. Thanks!",

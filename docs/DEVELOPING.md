@@ -1465,7 +1465,8 @@ other language whose only accented letters are in a name ("José's email says:":
 judged by itself. A lone word and a colon at the start of a passage after such a lead-in is the passage's own label
 ("Promemoria:", "Recordatorio:", "Aviso:": `LONE_LABEL`), said in the voice of the words after it and left out of what
 is judged; taken for Ember's own lead-in, it was said by Kitten with English sounds (voice-speaking-r12-2), and an
-English one ("Reminder:") is Kitten's as before. A passage too short to reach 60 letters is judged at its end without
+English one ("Reminder:", "Note:", "Update:": `ENGLISH_LABELS`) is Kitten's as before, whatever language follows it
+(r12-voice-x12-6). A passage too short to reach 60 letters is judged at its end without
 Ember's own closing ("Want me to reply?", whose "me" made it as English as the passage). Judged as its first letters,
 the sender and subject diluted its short words, and a Spanish or Italian
 email was Kitten's with English sounds in 22 of 44 cases for "**From:** José / **Subject:** Proyecto", and after

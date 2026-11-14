@@ -696,6 +696,17 @@ function leadsIn(piece: string): boolean {
 
 /** A lone word and a colon ("Promemoria:", "**Avviso:**"), as the stream writes a label on its own line. */
 const LONE_LABEL = /^\s*[*_]*\p{L}[\p{L}'’-]*[*_]*\s*[:：][*_]*\s*$/u;
+/**
+ * English labels Ember or an email writes on a line of their own ("Reminder:", "**Update:**"): Kitten's, whatever
+ * follows them. Taken for the passage's own, "Reminder:" before an Italian notice was said with Italian sounds
+ * (r12-voice-x12-6).
+ */
+const ENGLISH_LABELS: ReadonlySet<string> = new Set(("reminder note notes notice update updates warning alert important urgent subject from to cc bcc " +
+  "date time when where sender message summary status result results details location attachment attachments priority " +
+  "reply answer question translation original quote excerpt text body title preview ps fyi deadline action todo heads " +
+  "re fwd fw hi hello dear thanks regards cheers email").split(" "));
+/** A lone label in no English word (LONE_LABEL, ENGLISH_LABELS): the passage's own. */
+const ownLabel = (piece: string): boolean => LONE_LABEL.test(piece) && !ENGLISH_LABELS.has(piece.toLowerCase().replace(/[^\p{L}]+/gu, ""));
 
 /** A short lead-in and what it leads in to, in one piece ("It says: Hola Alex, ¿cómo estás?"). */
 const INLINE_LEAD = /^([^:：\n]{1,80}[:：])\s+(\S[\s\S]*)$/u;
@@ -754,8 +765,9 @@ export class AnswerLanguage {
     const another = (text: string) => mayBeAnother(text) || speechLanguage(text, this.asked) !== null;
     // A lone word and a colon at the start of a passage, after Ember's own lead-in, is the passage's label ("Promemoria:",
     // "Recordatorio:"): held with the words after it, and said in their voice. As a lead-in of Ember's own, it
-    // was said by Kitten with English sounds (voice-speaking-r12-2); an English one ("Reminder:") stays Kitten's so.
-    const label = this.passage && piece !== null && LONE_LABEL.test(piece);
+    // was said by Kitten with English sounds (voice-speaking-r12-2); an English one ("Reminder:") stays Kitten's so
+    // (ownLabel: r12-voice-x12-6).
+    const label = this.passage && piece !== null && ownLabel(piece);
     if (piece !== null && this.lang === undefined && !this.asked && !this.held.length && !(end && !more) && !label && leadsIn(piece)) {
       // A header line or a lead-in of Ember's own at the start of what is judged: said in Ember's voice, and what follows
       // it is judged by itself (leadsIn).
