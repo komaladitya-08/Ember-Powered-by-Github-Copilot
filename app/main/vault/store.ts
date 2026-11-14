@@ -11,9 +11,12 @@
  * returns it to that caller only. Plain Node: the keyring (SecretBox) is injected.
  *
  * A file that is there but can't be read whole (torn by a crash or a lost write, an entry that isn't well formed, a
- * read error) is never written over (reliability-c12-1): it is kept aside as it is, `vault.json.bad-<time>` (moved
- * where nothing in it could be read, copied where some entries still can), Home says the vault couldn't be read
- * (`unreadable`), and nothing is filled from what couldn't be read. Where it can't be kept aside, nothing new is kept.
+ * read error) is never written over (reliability-c12-1): a file read whole that parses wrong is kept aside as it is,
+ * `vault.json.bad-<time>` (moved where nothing in it could be read, copied where some entries still can), Home says
+ * the vault couldn't be read (`unreadable`) for as long as such a file is kept, across starts, until everything is
+ * forgotten, and nothing is filled from what couldn't be read. A read that fails (EMFILE, EIO, EACCES) is tried once
+ * more and then left where it is, never moved (r12-safety-x12-1): nothing is listed or kept until it reads again.
+ * Where a file can't be kept aside, or can't be read now, nothing new is kept (`leftInPlace`).
  * Each write is flushed to the disk, the file and its folder, before it counts, as settings.json's is.
  */
 
@@ -54,16 +57,27 @@ export class VaultStore {
   private trouble = false;
   /** It couldn't be kept aside either: nothing is written over it. */
   private stuck = false;
+  /** The last read of the file failed (an error, not what it holds): it stays where it is and nothing is written. */
+  private failed = false;
 
   /**
    * `keepAside` (tests): keeps the file Ember couldn't read at `to`, moved or copied; false when it couldn't be.
    */
   constructor(private file: string, private box: SecretBox, private opts: { asyncKeyring?: boolean; now?: () => number; keepAside?: (file: string, to: string, move: boolean) => boolean } = {}) {}
 
-  /** Was the vault's file there but unreadable, in whole or in part, in this run? It is kept aside, never written over. */
+  /**
+   * Was the vault's file there but unreadable, in whole or in part? True while it can't be read now, and while a file
+   * that couldn't be read is kept aside (across starts, until everything is forgotten). Never written over.
+   */
   unreadable(): boolean {
     this.read();
-    return this.trouble;
+    return this.trouble || this.failed || this.keptAside();
+  }
+
+  /** Is the file that couldn't be read left where it was (it can't be read now, or couldn't be kept aside), so nothing new is kept? */
+  leftInPlace(): boolean {
+    this.read();
+    return this.failed || this.stuck;
   }
 
   /**
@@ -161,6 +175,7 @@ export class VaultStore {
     } catch { /* no folder: nothing kept aside */ }
     this.trouble = false;
     this.stuck = false;
+    this.failed = false;
     return this.remove() && aside;
   }
 
@@ -172,12 +187,9 @@ export class VaultStore {
 
   /** The entries the file holds that are well formed; none when it is missing or unreadable (then kept aside). */
   private read(): FileEntry[] {
-    let text: string;
-    try { text = fs.readFileSync(this.file, "utf8"); } catch (err) {
-      // None kept yet; any other failure (EIO, EACCES) is a file that is there and can't be read.
-      if ((err as NodeJS.ErrnoException).code !== "ENOENT") this.setAside(true);
-      return [];
-    }
+    const text = this.readText();
+    this.failed = text === false;
+    if (typeof text !== "string") return [];
     let v: unknown;
     try { v = JSON.parse(text); } catch { v = undefined; }
     if (!isObj(v) || v.v !== 1 || !Array.isArray(v.entries)) {
@@ -188,6 +200,29 @@ export class VaultStore {
     // Some entries can't be read: the file is kept as it is, and the ones that can still be used.
     if (good.length !== v.entries.length) this.setAside(false);
     return good.slice(0, VAULT_MAX_ENTRIES);
+  }
+
+  /**
+   * The file's text; null when there is none yet (ENOENT), false when it is there and reading it failed twice (EMFILE,
+   * EIO, EACCES): that says nothing of what it holds, so it is left where it is, never kept aside (r12-safety-x12-1).
+   */
+  private readText(): string | null | false {
+    for (let attempt = 0; ; attempt++) {
+      try { return fs.readFileSync(this.file, "utf8"); } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+        if (attempt > 0) return false;
+      }
+    }
+  }
+
+  /** Is a file that couldn't be read kept aside beside the vault? */
+  private keptAside(): boolean {
+    try {
+      const base = `${path.basename(this.file)}.bad-`;
+      return fs.readdirSync(path.dirname(this.file)).some(f => f.startsWith(base));
+    } catch {
+      return false; // no folder: nothing kept aside
+    }
   }
 
   /**
@@ -207,8 +242,8 @@ export class VaultStore {
   }
 
   private write(entries: FileEntry[]): boolean {
-    // Never over a file that couldn't be read and couldn't be kept aside (reliability-c12-1).
-    if (this.stuck) return false;
+    // Never over a file that couldn't be read and couldn't be kept aside, or can't be read now (reliability-c12-1, x12-1).
+    if (this.stuck || this.failed) return false;
     if (!entries.length) return this.remove();
     const tmp = `${this.file}.${process.pid}.tmp`;
     try {

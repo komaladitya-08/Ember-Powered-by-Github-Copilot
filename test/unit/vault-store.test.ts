@@ -4,7 +4,7 @@
  * kept on basic_text, in a 0600 file of its own, and nothing a list or a failure says ever holds a value.
  */
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -412,6 +412,50 @@ describe("a vault file Ember can't read", () => {
     expect(store.unreadable()).toBe(true);
     expect(await store.add("login", GITHUB, login)).toEqual({ ok: false, why: "write" });
     expect(fs.readFileSync(file, "utf8")).toBe(torn);
+  });
+
+  it("never moves a healthy vault aside for one passing read error, and lists it again once it reads (r12-safety-x12-1)", async () => {
+    const dir = tmp(), file = path.join(dir, VAULT_FILE);
+    const store = new VaultStore(file, box());
+    await store.add("login", GITHUB, login);
+    await store.add("card", MAIL, card);
+    const whole = fs.readFileSync(file, "utf8");
+    const real = fs.readFileSync;
+    let fails = 1;
+    const spy = vi.spyOn(fs, "readFileSync").mockImplementation(((p: fs.PathOrFileDescriptor, ...a: unknown[]) => {
+      if (fails > 0 && String(p) === file) { fails--; throw Object.assign(new Error("EMFILE: too many open files"), { code: "EMFILE" }); }
+      return (real as (...x: unknown[]) => unknown)(p, ...a);
+    }) as typeof fs.readFileSync);
+    try {
+      // One failure is retried at once: the vault is listed as it is.
+      expect(store.list()).toHaveLength(2);
+      // A failure that lasts: nothing is listed or kept now, and nothing is moved or written over.
+      fails = 10;
+      expect(store.list()).toEqual([]);
+      expect(store.unreadable()).toBe(true);
+      expect(store.leftInPlace()).toBe(true);
+      fails = 10;
+      expect(await store.add("login", { site: "https://gitlab.com" }, login)).toEqual({ ok: false, why: "write" });
+    } finally { spy.mockRestore(); }
+    expect(aside(dir)).toEqual([]);
+    expect(fs.readFileSync(file, "utf8")).toBe(whole);
+    expect(store.list()).toHaveLength(2);
+    expect(store.unreadable()).toBe(false);
+    expect(new VaultStore(file, box()).list()).toHaveLength(2);
+  });
+
+  it("still says at the next start that a file was kept aside, until everything is forgotten (r12-safety-x12-1)", async () => {
+    const dir = tmp(), file = path.join(dir, VAULT_FILE);
+    fs.writeFileSync(file, "{\"v\":1,\"entries\":[{\"id\"");
+    expect(new VaultStore(file, box()).unreadable()).toBe(true);
+    const next = new VaultStore(file, box());
+    expect(next.list()).toEqual([]);
+    expect(next.unreadable()).toBe(true);
+    expect(next.leftInPlace()).toBe(false);
+    expect((await next.add("login", GITHUB, login)).ok).toBe(true);
+    expect(new VaultStore(file, box()).unreadable()).toBe(true);
+    expect(next.forgetAll()).toBe(true);
+    expect(new VaultStore(file, box()).unreadable()).toBe(false);
   });
 
   it("says nothing of a vault that is only missing or fine (reliability-c12-1)", async () => {

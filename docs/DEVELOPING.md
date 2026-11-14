@@ -1881,12 +1881,14 @@ details the user gives Ember in its own **Secure Form**, each bound to one desti
   kept where the keyring is `basic_text`, can't be named or refuses: the form then says the vault can't be used on
   this computer. The keyring is asked only when a form is about to open or a Save arrives (on macOS off the main
   thread), never for Home's list. Each save is flushed to the disk, the file and its folder, before it counts.
-- **A file that can't be read** (reliability-c12-1). A `vault.json` that is there but torn (a crash or lost power
-  while it was saved), holds an entry that isn't well formed, or can't be read at all is never written over: it is
-  kept aside as it was, `vault.json.bad-<time>` (0600; moved where nothing in it reads, copied where some entries
-  still do, which stay listed and usable), Apps & privacy › Vault says so (`VAULT_FILE_UNREADABLE`), and nothing is
-  filled from what couldn't be read. Where it can't even be kept aside, nothing new is kept. Forget all, Sign out and
-  Forget everything remove what was kept aside too.
+- **A file that can't be read** (reliability-c12-1, r12-safety-x12-1). A `vault.json` that is read whole but torn (a
+  crash or lost power while it was saved) or holds an entry that isn't well formed is never written over: it is kept
+  aside as it was, `vault.json.bad-<time>` (0600; moved where nothing in it reads, copied where some entries still
+  do, which stay listed and usable), Apps & privacy › Vault says so (`VAULT_FILE_UNREADABLE`) at every start while
+  such a file is kept, and nothing is filled from what couldn't be read. A read that fails (EMFILE, EIO, EACCES) is
+  tried once more and then left where it is, never moved: nothing is listed, filled or kept until it reads again.
+  There, and where a torn file can't even be kept aside, nothing new is kept and Home says the file was left as it
+  was (`VAULT_FILE_LEFT`). Forget all, Sign out and Forget everything remove what was kept aside too.
 - **The Secure Form** (app/main/vault/form.ts, `createVaultWindow` in windows.ts, app/renderer/vault, its own preload).
   Only main opens it, one form at a time, each in a window of its own that closes once it is answered. Its heading
   ("Login for github.com"), its line saying where Ember fills it in and its labels are built by main from the kind

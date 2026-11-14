@@ -4,7 +4,7 @@
  * organisation's switch off the list stays, with Forget, and the hint says nothing new is kept or filled in.
  */
 import type { EmberVaultHomeApi, VaultEntryRow, VaultHomeState } from "../../shared/vault";
-import { VAULT_EMPTY, VAULT_FILE_UNREADABLE, VAULT_UNREAD, VAULT_WORDS, vaultDay, vaultForgetAllScope, vaultForgetLabel, vaultHint, vaultRowText } from "./copy";
+import { VAULT_EMPTY, VAULT_FILE_LEFT, VAULT_FILE_UNREADABLE, VAULT_UNREAD, VAULT_WORDS, vaultDay, vaultForgetAllScope, vaultForgetLabel, vaultHint, vaultRowText } from "./copy";
 
 declare global { interface Window { emberVault?: EmberVaultHomeApi } }
 
@@ -42,7 +42,8 @@ export function mountVault(bridge: EmberVaultHomeApi | undefined): void {
     if (focusAt === null && held >= 0) focusAt = held;
     rows = state.entries;
     // Its file couldn't be read whole: said with the hint, every time the list is drawn (reliability-c12-1).
-    const text = state.unreadable ? `${vaultHint(state.allowed)} ${VAULT_FILE_UNREADABLE}` : vaultHint(state.allowed);
+    // Left where it was, nothing new is kept: said instead of "kept aside" (r12-safety-x12-6).
+    const text = state.unreadable ? `${vaultHint(state.allowed)} ${state.left ? VAULT_FILE_LEFT : VAULT_FILE_UNREADABLE}` : vaultHint(state.allowed);
     if (hint.textContent !== text) hint.textContent = text;
     list.replaceChildren(...(rows.length
       ? rows.map((r, i) => {

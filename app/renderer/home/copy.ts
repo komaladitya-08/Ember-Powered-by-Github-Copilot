@@ -2133,6 +2133,11 @@ export const VAULT_EMPTY = "Nothing saved yet.";
  * what it held isn't listed or filled in, and the file is kept aside, never saved over.
  */
 export const VAULT_FILE_UNREADABLE = "Ember couldn't read its vault, so what it couldn't read isn't listed here and isn't filled in. It kept the file aside, unchanged, beside the vault in its data folder. Anything you give it again is kept as new.";
+/**
+ * The same where the file was left where it was (it can't be read now, or couldn't be kept aside): nothing new is
+ * kept until it can be read, so it is never saved over (r12-safety-x12-6).
+ */
+export const VAULT_FILE_LEFT = "Ember couldn't read its vault, so what it couldn't read isn't listed here and isn't filled in. It left the file as it was and keeps nothing new until it can read it. Check that your account can open vault.json in Ember's data folder, then restart Ember.";
 /** While the list couldn't be read from Ember. */
 export const VAULT_UNREAD = "Ember couldn't read the vault's list. Close and reopen this window to try again.";
 /** A row's words: "Login for github.com, saved 12 November 2026" (never a value). `date`: the day as this computer writes it. */

@@ -153,6 +153,8 @@ export interface VaultHomeState {
   entries: VaultEntryRow[];
   /** Its file was there but couldn't be read whole: kept aside as it was, and nothing filled from it (reliability-c12-1). */
   unreadable?: true;
+  /** It was left where it was (it can't be read now, or couldn't be kept aside), so nothing new is kept (r12-safety-x12-6). */
+  left?: true;
 }
 
 /**
