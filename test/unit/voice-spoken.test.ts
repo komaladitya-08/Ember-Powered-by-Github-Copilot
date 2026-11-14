@@ -813,6 +813,22 @@ describe("AnswerLanguage tells a passage's language from its own words, not from
     for (const t of ["Tell me a joke.", "No, do it in a minute.", "Send me a copy per email.", "Do me a favour.", "O no, me again."]) expect(speechLanguage(t), t).toBeNull();
   });
 
+  it("never gives an email in a language it has no list for to a listed language's voice by the short words they share (r11-voice-x11-4)", () => {
+    // Polish emails went to a Portuguese voice ("o", "do", "na"), which says nothing where none is installed, and a
+    // Romanian one to a French voice; Kitten had read them.
+    for (const passage of [
+      "Cześć Alex, nie zapomnij jutro przynieść kluczy do samochodu. Czekam na ciebie o ósmej. Pozdrawiam, Karolina.",
+      "Hej, spotkanie zostało przeniesione na wtorek o dziesiątej. Daj znać, czy pasuje. Kasia.",
+      "Bună Alex, nu uita să aduci cheile de la mașină mâine. Te aștept la opt. Cu drag, Carmen.",
+      // Neighbours the review didn't give.
+      "Dzień dobry, przesyłam fakturę za marzec. Proszę o płatność do piętnastego. Pozdrawiam, Tomasz.",
+      "Ahoj Alexi, zítra nezapomeň přinést klíče od auta. Čekám na tebe v osm. Pa, Petra.",
+      "Hei Alex, husk å ta med bilnøklene i morgen. Jeg venter på deg klokka åtte. Klem, Kari.",
+      "Merhaba Alex, yarın arabanın anahtarlarını getirmeyi unutma. Seni saat sekizde bekliyorum. Sevgiler, Ayşe.",
+      "Szia Alex, ne felejtsd el holnap elhozni a kocsikulcsot. Nyolckor várlak. Puszi, Kati.",
+    ]) expect(streamed(`Here is the email from Ana:\n\n${passage}\n\nWant me to reply?`).filter(p => p.lang !== null), passage).toEqual([]);
+  });
+
   it("keeps a header whose label or value is in the passage's language with the passage, as before (r10-voice-x10-2)", () => {
     const said = streamed("Asunto: reunión del lunes\n\nHola Alex, mañana no puedo ir a la oficina. Te llamo por la tarde. Un abrazo, Ana.");
     expect(said.find(p => p.text.includes("reunión"))?.lang).toBe("es");

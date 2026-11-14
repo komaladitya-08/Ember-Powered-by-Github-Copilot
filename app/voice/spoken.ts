@@ -443,6 +443,14 @@ const counted = (words: readonly string[], lang: string): string[] => words.filt
 const OWN_LETTERS: Readonly<Record<string, RegExp>> = {
   es: /[ñáíóú¿¡]/giu, fr: /[àâçèêëîïôûùœ]/giu, de: /[äöß]/giu, it: /[ìò]/giu, pt: /[ãõ]/giu,
 };
+/**
+ * Letters that only languages outside STOPWORDS write (Polish, Czech, Slovak, Romanian, Turkish, Hungarian, the Nordic
+ * languages, Croatian): a passage that writes them isn't one of the listed languages, however many short words it
+ * shares with one (r11-voice-x11-4).
+ */
+const UNLISTED_LETTERS = /[ąęłńśźżćěřůďťňľĺŕășțşţğıőűåøæðþđ]/giu;
+/** The letters of OWN_LETTERS no unlisted language writes as well (Hungarian and Czech write "á", "í", "ó" and "ú"). */
+const MARKS: Readonly<Record<string, RegExp>> = { ...OWN_LETTERS, es: /[ñ¿¡]/gu };
 /** A short word two languages write that is far commoner in one: Spanish's "and", French's "there" ("il y a"). */
 const LEANS: Readonly<Record<string, ReadonlySet<string>>> = { es: new Set(["y"]) };
 
@@ -517,7 +525,17 @@ function languageOf(quoting: string, minDifferent: number, prefer: string | null
     const better = found.length > most || (differs >= 0 && rank[differs] > tie[differs]);
     if (better) { best = lang; most = found.length; different = new Set(found).size; tie = rank; }
   }
-  return best && different >= minDifferent && most * share >= words.length && most > english ? best : null;
+  if (!best || different < minDifferent || most * share < words.length || most <= english) return null;
+  // Told from fewer short words than a quarter (a passage's own words: share 6), never where it writes letters none of
+  // these languages do: a Polish email's "o", "do" and "na" made it Portuguese, said by a Portuguese voice or not at all
+  // where there is none, where Kitten had read it, and a Romanian one went to a French voice (r11-voice-x11-4).
+  if (share > 4 && (text.match(UNLISTED_LETTERS) ?? []).length >= 2) return null;
+  // Nor on the short words it shares with English alone: two signs of its own are needed, different short words only it
+  // and not English writes, or one and a letter only it writes (a Hungarian email's "el" and "a" made it Spanish;
+  // "Hola, mañana no podré ir a la oficina…" has "la" and "ñ").
+  const own = new Set(counted(words, best).filter(w => !ALSO_ENGLISH[best]?.has(w))).size + (text.match(MARKS[best] ?? /(?!)/gu) ? 1 : 0);
+  if (share > 4 && own < 2) return null;
+  return best;
 }
 
 /** The words of `words` that are `lang`'s short words (none for a language written in its own script). */
