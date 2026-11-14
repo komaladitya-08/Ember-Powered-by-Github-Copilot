@@ -32,9 +32,10 @@ tests don't stand in for them. **Known issues and limits**, at the end, lists wh
   this computer, that anyone near the computer can answer a question by voice, what its vault keeps (a login, a card or
   contact details you give its Secure Form) and that the AI model never types or sees passwords, and that agreeing turns
   on what you leave switched on in first run.
-- **Also asked again after the update**: Interactive's card (until you agree, Ember asks before every step that isn't
-  routine, and says so at the first such question), Memory's note if memory was on, your own model provider's card if
-  you use one, and each extension's card (no extension runs until you agree again).
+- **Interactive is offered once after the update**, and your settings stay: until you agree to its card, Ember asks
+  before every step that isn't routine, and says so at the first such question. What is new since 0.1.0 (memory, your
+  own model provider, extensions, update notices, Assisted and Autopilot) shows its own card or note the first time you
+  turn it on, and no extension runs before you agree to its card.
 
 ### For administrators
 
@@ -592,11 +593,11 @@ tests don't stand in for them. **Known issues and limits**, at the end, lists wh
 - **Where every command asks because commands run as root or an administrator,** Settings shows **Ask me before every
   command** on, locked, with “Commands here run as the administrator, so Ember asks before every one.”
 - **A WSL command's output is never taken as whole without its end.** Each WSL run now ends with a mark of its own. When
-  that mark doesn't come back (wsl.exe can lose the last of a long output), Ember ends whatever the run left running, as
-  Stop does, and the command window and the AI model are told that the command may not have finished and the output is
-  incomplete (“Ran for 3.2 s, but Ember didn't get its end…”), with WSL's own exit code where it gave one. Where nothing
-  was left running, the command did end: Ember says so, and that the end of its output was lost, so the model doesn't
-  run it again only to see the rest.
+  that mark doesn't come back (wsl.exe can lose the last of a long output), Ember ends whatever it finds the run left
+  running, as Stop does, and the command window and the AI model are told that the command may not have finished and
+  the output is incomplete (“Ran for 3.2 s, but Ember didn't get its end…”), with WSL's own exit code where it gave one.
+  Where nothing was left running, the command did end: Ember says so, and that the end of its output was lost, so the
+  model doesn't run it again only to see the rest.
 - **A command on another computer can't hide its real exit code or signal** behind what it prints.
 - **Stop answers at the end of a run that kept much output**: hiding secrets in up to 4 MiB of output runs in small
   steps, so Stop is answered within about 220 ms where it waited 1.2 to 1.9 s, and a stopped run hands the model

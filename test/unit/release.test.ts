@@ -15,6 +15,17 @@ const read = (p: string) => fs.readFileSync(p, "utf8");
 const version = JSON.parse(read("package.json")).version as string;
 const flat = (s: string) => s.replace(/\s*\n\s*/g, " ");
 const section15 = () => read("docs/DEVELOPING.md").split("## 15. Publishing a release")[1].split("\n## ")[0];
+// Review ids as the audit writes them: install-docs-r11-1, modes-y9-y2-1, wslio-y-2, docs-3-x-1, "(critique wsl-17)",
+// review #116, a round's own (y10-1), and an area's own number (vault-12, memory-r10, r10-memory-4). Bare word-number
+// tokens are Ember's own words too (x86-64, build-01, phi-3, iso-8859-1), so a plain id counts only under an area the
+// audit uses (r11-notes-x11-3).
+const AUDIT_AREAS = "memory|commands|integrations?|integ|safety|voice|vault|home|install|first-run|tasks|companion|reliability|modes|cifix|rp|accessibility|remote|wslio|wsl|product|security|evalfix|stop|docs|slice\\d+";
+const REVIEW_IDS = new RegExp([
+  String.raw`review #\d+`, String.raw`\bcritique [a-z][a-z0-9-]*\d\b`,
+  String.raw`\b[a-z][a-z0-9]*(?:-[a-z]+)*(?:-[a-z]\d+)+-\d+\b`, String.raw`\b[a-z]+-\d+-[a-z]-\d+\b`,
+  String.raw`\b[a-z]+(?:-[a-z]+)*-[a-z]-\d+\b`, String.raw`\b[xyz]-\d+\b(?=[),;])`, String.raw`\b[xyz](?:[1-9]|1\d)-\d{1,2}\b`,
+  String.raw`\b(?:r\d+-)?(?:${AUDIT_AREAS})(?:-[a-z]+)*-[a-z]?\d+(?:-\d+)?\b`,
+].map(p => `${p}(?!\\.\\d)`).join("|"), "g");
 
 describe("release.mjs", () => {
   it("names the eight files the README downloads and the three of the GPL source", () => {
@@ -182,9 +193,32 @@ describe("release.mjs", () => {
     expect(bytes, `${(RELEASE_BODY_LIMIT - bytes).toLocaleString("en-GB")} bytes left under GitHub's limit`).toBeLessThanOrEqual(RELEASE_BODY_LIMIT - 25_000);
     const headings = notes.split("\n").filter(l => /^#{2,4} /.test(l));
     expect(headings.filter(h => /audit|review fixes|follow-up| on \d{1,2} (October|November)\b/i.test(h))).toEqual([]);
-    // Review ids as the audit writes them: install-docs-r11-1, wslio-y-2, docs-3-x-1, "(critique wsl-17)", review #116.
-    const ids = /review #\d+|\b[a-z]+(?:-[a-z0-9]+)*-(?:[a-z]+\d*|\d+)-\d+\b(?!\.\d)|\b[a-z]+\d*-[a-z]?\d+\b(?=[),;])/g;
-    expect(notes.match(ids) ?? []).toEqual([]);
+    expect(notes.match(REVIEW_IDS) ?? []).toEqual([]);
+  });
+
+  it("tells someone updating from 0.1.0 only of cards it showed them before as asked again (r11-notes-x11-1)", () => {
+    // 0.1.0 had the first-run agreement and the commands, WSL and SSH cards (FEATURE_CONSENT_VERSION { wsl: 1, ssh: 1,
+    // commands: 1 } at v0.1.0); memory, your own provider, extensions and the approval modes came after it, so their
+    // cards are met for the first time, never "again".
+    const notes = flat(releaseNotes(read("CHANGELOG.md"), version, { repo: "o/r", ref: `v${version}` }));
+    const again = notes.split(/(?<=\.) (?=[A-Z*])|(?=- \*\*)/).filter(s => /\bagain\b/.test(s) && /\b(asks?|asked|agree)\b/.test(s));
+    for (const s of again) expect(s).not.toMatch(/Interactive's card|Memory's note|provider's card|extension's card|Assisted's|Autopilot's/);
+    expect(notes).toContain("If you already use Ember, your settings stay and only Interactive is offered.");
+  });
+
+  it("says Ember ends what it finds a WSL run left running, not that it always can (r11-notes-x11-2)", () => {
+    // app/main/wsl/runner.ts sweeps only when it could read the running distros; one it can't tell about is never swept.
+    const notes = flat(releaseNotes(read("CHANGELOG.md"), version, { repo: "o/r", ref: `v${version}` }));
+    expect(notes).not.toContain("Ember ends whatever the run left running");
+    expect(notes).toContain("Ember ends whatever it finds the run left running");
+  });
+
+  it("knows the audit's ids from Ember's own product words (r11-notes-x11-3)", () => {
+    for (const id of ["install-docs-r11-1", "wslio-y-2", "docs-3-x-1", "(critique wsl-17)", "review #116", "memory-x9-3", "modes-y9-y2-1", "vault-12;", "slice3-2", "r10-memory-4", "commands-remote-c10-2)", "(y10-1)", "x10-4"]) {
+      expect(id.match(REVIEW_IDS), id).not.toBeNull();
+    }
+    const words = "GNOME on Xorg (x86-64, glibc 2.28), hosts build-01, db-01; utf-8, iso-8859-1, phi-3, gemma-2, claude-3-5, llama-3-1, mistral-7b, all-MiniLM-L6-v2, Win+Alt+Y, ember-0.1.1-1.el8.x86_64.rpm, Ember-0.1.1-mac-arm64.dmg, CVE-2024-3094, SHA-256, H-1, Ember-0.1.1-win-x64.zip, mac-x64, Ember-voice-models-0.1.1.zip.";
+    expect(words.match(REVIEW_IDS) ?? []).toEqual([]);
   });
 });
 
