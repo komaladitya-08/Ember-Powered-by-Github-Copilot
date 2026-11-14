@@ -213,6 +213,20 @@ describe("release.mjs", () => {
     expect(notes).toContain("Ember ends whatever it finds the run left running");
   });
 
+  it("still warns that a one-word yes said as a question can be taken as a yes (r11-notes-y11-1)", () => {
+    // docs/DEVELOPING.md (V2-S5): the recognizer writes "?" from the words, not the voice, so a lone "Okay?" said
+    // with a rising voice mostly comes out as "Okay." and allows; the notes must not imply that no question-yes counts.
+    const notes = flat(releaseNotes(read("CHANGELOG.md"), version, { repo: "o/r", ref: `v${version}` }));
+    const limits = notes.slice(notes.lastIndexOf("Known issues and limits"));
+    expect(limits).toContain("a one-word yes said as a question (“Okay?”) can still be taken as a yes");
+  });
+
+  it("lists routines among what is new since 0.1.0 with its own note (r11-notes-y11-2)", () => {
+    // ROUTINES_CONSENT_TEXT, FEATURE_CONSENT_VERSION.routines: routines default off with consent version 0.
+    const notes = flat(releaseNotes(read("CHANGELOG.md"), version, { repo: "o/r", ref: `v${version}` }));
+    expect(notes).toMatch(/What is new since 0\.1\.0 \([^)]*routines and lasting reminders[^)]*\) shows its own card or note/);
+  });
+
   it("knows the audit's ids from Ember's own product words (r11-notes-x11-3)", () => {
     for (const id of ["install-docs-r11-1", "wslio-y-2", "docs-3-x-1", "(critique wsl-17)", "review #116", "memory-x9-3", "modes-y9-y2-1", "vault-12;", "slice3-2", "r10-memory-4", "commands-remote-c10-2)", "(y10-1)", "x10-4"]) {
       expect(id.match(REVIEW_IDS), id).not.toBeNull();

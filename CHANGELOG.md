@@ -33,9 +33,9 @@ tests don't stand in for them. **Known issues and limits**, at the end, lists wh
   contact details you give its Secure Form) and that the AI model never types or sees passwords, and that agreeing turns
   on what you leave switched on in first run.
 - **Interactive is offered once after the update**, and your settings stay: until you agree to its card, Ember asks
-  before every step that isn't routine, and says so at the first such question. What is new since 0.1.0 (memory, your
-  own model provider, extensions, update notices, Assisted and Autopilot) shows its own card or note the first time you
-  turn it on, and no extension runs before you agree to its card.
+  before every step that isn't routine, and says so at the first such question. What is new since 0.1.0 (memory,
+  routines and lasting reminders, your own model provider, extensions, update notices, Assisted and Autopilot) shows its
+  own card or note the first time you turn it on, and no extension runs before you agree to its card.
 
 ### For administrators
 
@@ -697,6 +697,8 @@ tests don't stand in for them. **Known issues and limits**, at the end, lists wh
 - **The vault**: a card's security code, and any secret under six characters, is kept by its field alone, so a page that
   repeats it elsewhere isn't hidden; a few rare forms of a saved detail (reversed, base64, a very long output's cut)
   aren't yet found.
+- **A yes said as a question**: a one-word yes said as a question (“Okay?”) can still be taken as a yes, since what
+  Ember hears rarely keeps the question mark; say “no” or “wait” if you aren't sure.
 - **Spoken answers on Windows and macOS**: Ember can't tell who said its name over what the speakers play, and on macOS
   a conversation can't tell a song from you yet. A short Italian or Portuguese message after an English lead-in may not
   get its own voice.
