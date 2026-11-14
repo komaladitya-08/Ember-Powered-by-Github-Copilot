@@ -4668,4 +4668,29 @@ describe("programs that run what they are given, however it is given (round elev
       expect((await local(h, run)).resultType, run).toBe("denied");
     }
   });
+
+  it("asks before Python's own runners, coverage or a task runner runs a file the task wrote, in every mode (commands-remote-r11-5)", async () => {
+    for (const [file, run] of [
+      ["a.py", "python3 -m cProfile a.py"], ["a.py", "python3 -m cProfile -s time a.py"], ["a.py", "python3 -m profile a.py"], ["a.py", "python3 -m trace --count a.py"],
+      ["a.py", "python3 -m trace --listfuncs a.py"], ["a.py", "python3 -m unittest a.py"], ["a.py", "python3 -m unittest a"], ["a.py", "python3 -m unittest a.TestX"],
+      ["a.py", "python3 -m doctest a.py"], ["a.py", "python3 -m cProfile -m a"], ["a.py", "python3 -m inspect a"], ["a.py", "pypy3 -m cProfile a.py"],
+      ["a.py", "python3 -Im cProfile a.py"], ["a.py", "python3 -m coverage run a.py"], ["a.py", "coverage run a.py"], ["a.py", "coverage run --branch -m a"],
+      ["a.py", "python3 - < a.py"], ["a.js", "node - < a.js"], ["a.py", "pytest -p a"], ["a.py", "pytest -pa -q"], ["a.py", "nox -f a.py"],
+      ["noxfile.py", "nox"], ["a.py", "invoke -c a x"], ["tasks.py", "invoke build"], ["tasks.py", "inv build"], ["a.py", "scons -f a.py"], ["SConstruct", "scons"],
+      ["Rakefile", "rake"], ["justfile", "just build"], ["build.gradle", "gradle build"], ["pom.xml", "mvn test"], ["tox.ini", "tox"], ["Taskfile.yml", "task build"],
+      ["sub/Makefile", "make -C sub"], ["build.xml", "ant"],
+    ] as const) await asksAfterWrite(file, "import shutil\n", run, "unclear.script-code");
+    // The project's own files still run, and Python's modules that only read run on a file the task wrote.
+    const own = flow();
+    for (const run of ["python3 -m cProfile tool.py", "python3 -m unittest", "coverage run -m pytest", "nox", "invoke build", "scons", "rake", "gradle build", "mvn test", "tox"]) {
+      expect((await local(own, run)).resultType, run).toBe("success");
+    }
+    const reads = flow();
+    await local(reads, "printf x > a.py");
+    reads.existing.add("/home/ana/proj/a.py");
+    for (const run of ["python3 -m py_compile a.py", "python3 -m tokenize a.py", "python3 -m json.tool a.json", "black a.py", "ruff check a.py"]) {
+      expect((await local(reads, run)).resultType, run).toBe("success");
+    }
+    expect([own.asked, reads.asked]).toEqual([[], []]);
+  });
 });

@@ -3351,6 +3351,9 @@ class Engine extends Classifier {
     // test files it is given (r10-commands-x10-6).
     if (key === "java") { const src = args.find(a => a.v !== null && !a.v.startsWith("-") && /\.java$/i.test(a.v)); if (src) this.recordScript(src, "code", h.sc); }
     if (key === "pytest" || key === "py.test") pytestCode(h, args);
+    // coverage runs the program it is given; scons runs its SConstruct, Python (commands-remote-r11-5).
+    if (key === "coverage" && args.some(a => a.v === "run")) givenCode(h, args.slice(args.findIndex(a => a.v === "run") + 1));
+    if (key === "scons") runnerFiles(h, parseOpts(args, { shortValue: "fCIjY", longValue: ["file", "makefile", "sconstruct", "directory", "include-dir", "jobs", "repository"] }));
     // A deleter that had no row before commands-remote-c8-2 keeps an unknown program's `-o` (commands-remote-x8-5),
     // and so does toybox (commands-closed-y9-1).
     optionPaths(h, !n || UNKNOWN_OPTIONS.has(key));
@@ -6961,6 +6964,11 @@ function intoInterpreter(h: H, readAs?: ScriptRef["as"]): void {
 function pytestCode(h: H, args: readonly Arg[]): void {
   if (h.e.readsAsMain || h.sc.cwd === null) return;
   h.e.recordScript(lit("conftest.py"), "code", h.sc);
+  // A plugin it loads by its module's name (`-p a`, `-pa`) is code too (commands-remote-r11-5).
+  args.forEach((a, k) => {
+    const m = a.v === "-p" ? args[k + 1]?.v ?? null : /^-p(.+)$/.exec(a.v ?? "")?.[1] ?? null;
+    if (m !== null && !m.startsWith("no:")) moduleCode(h, m);
+  });
   for (const a of args) if (a.v !== null && !a.v.startsWith("-") && /\.py(::\S*)?$/.test(a.v)) h.e.recordScript(lit(a.v.replace(/::.*$/, "")), "code", h.sc);
 }
 function runScript(h: H, script: Arg, readAs?: ScriptRef["as"]): void {
@@ -6992,6 +7000,71 @@ function runScript(h: H, script: Arg, readAs?: ScriptRef["as"]): void {
   nameCheck(h, script.v, script.v);
   handedToScript(h, script);
 }
+/** A Python module named to be imported and run (`-m a.b`, `-p a`, `-c a`): its file and its package's, as code. */
+function moduleCode(h: H, mod: string): void {
+  if (!/^[A-Za-z_][\w.]*$/.test(mod)) return;
+  const file = mod.split(".")[0];
+  h.e.recordImplied(lit(`${file}.py`), h.sc);
+  for (const f of [`${file}/__main__.py`, `${file}/__init__.py`]) h.e.recordImplied(lit(f), h.sc);
+}
+
+/**
+ * Python's own modules that run the program they are given (a file, or a module by its name): a profiler, a tracer, a
+ * test runner, doctest and inspect, which imports it. What they run is code Ember doesn't read, so one the task wrote
+ * asks, as `python3 a.py` does (commands-remote-r11-5). Every other module of Python's own only reads its files.
+ */
+const PY_RUNS_GIVEN = new Set(["cProfile", "profile", "trace", "unittest", "doctest", "inspect"]);
+/** The words after such a module that name code: each .py file, and each word that may be a module's name. */
+function givenCode(h: H, args: readonly Arg[]): void {
+  for (const a of args) {
+    if (a.v === null || a.v.startsWith("-") || a.v.includes("=")) continue;
+    if (/\.pyw?$/i.test(a.v)) h.e.recordScript(a, "code", h.sc);
+    else moduleCode(h, a.v);
+  }
+}
+
+/**
+ * The program file a task runner runs (its recipes or tasks, in a language Ember doesn't read), by its own option or
+ * by the names it looks for in its folder (`-C`'s, or this one): one the task wrote asks, as a script it wrote does
+ * (r10-commands-y10-5, commands-remote-r11-5). `module`: the option names a Python module (invoke's `-c`).
+ */
+const RUNNER_FILES: Readonly<Record<string, { opts: readonly string[]; names: readonly string[]; dir?: readonly string[]; module?: readonly string[] }>> = {
+  make: { opts: ["f", "file", "makefile"], names: ["GNUmakefile", "makefile", "Makefile"], dir: ["C", "directory"] },
+  gmake: { opts: ["f", "file", "makefile"], names: ["GNUmakefile", "makefile", "Makefile"], dir: ["C", "directory"] },
+  "mingw32-make": { opts: ["f", "file", "makefile"], names: ["GNUmakefile", "makefile", "Makefile"], dir: ["C", "directory"] },
+  nmake: { opts: ["f"], names: ["makefile", "Makefile"] },
+  just: { opts: ["f", "justfile"], names: ["justfile", "Justfile", ".justfile"], dir: ["d", "working-directory"] },
+  rake: { opts: ["f", "rakefile"], names: ["Rakefile", "rakefile", "Rakefile.rb", "rakefile.rb"], dir: ["C", "directory"] },
+  invoke: { opts: [], names: ["tasks.py", "tasks/__init__.py"], dir: ["r", "search-root"], module: ["c", "collection"] },
+  inv: { opts: [], names: ["tasks.py", "tasks/__init__.py"], dir: ["r", "search-root"], module: ["c", "collection"] },
+  nox: { opts: ["f", "noxfile"], names: ["noxfile.py"] },
+  tox: { opts: ["c", "conf"], names: ["tox.ini", "setup.cfg", "pyproject.toml", "toxfile.py"] },
+  task: { opts: ["t", "taskfile"], names: ["Taskfile.yml", "Taskfile.yaml", "taskfile.yml", "taskfile.yaml"], dir: ["d", "dir"] },
+  mage: { opts: [], names: ["magefile.go"], dir: ["d"] },
+  ant: { opts: ["f", "file", "buildfile"], names: ["build.xml"] },
+  gradle: { opts: ["b", "build-file", "c", "settings-file", "I", "init-script"], names: ["build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts"], dir: ["p", "project-dir"] },
+  gradlew: { opts: ["b", "build-file", "c", "settings-file", "I", "init-script"], names: ["build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts"], dir: ["p", "project-dir"] },
+  mvn: { opts: ["f", "file"], names: ["pom.xml"] },
+  mvnw: { opts: ["f", "file"], names: ["pom.xml"] },
+  sbt: { opts: [], names: ["build.sbt"] },
+  lein: { opts: [], names: ["project.clj"] },
+  ninja: { opts: ["f"], names: ["build.ninja"], dir: ["C"] },
+  scons: { opts: ["f", "file", "makefile", "sconstruct"], names: ["SConstruct", "Sconstruct", "sconstruct", "SConstruct.py"], dir: ["C", "directory"] },
+};
+function runnerFiles(h: H, p: Parsed): void {
+  const t = RUNNER_FILES[h.key];
+  if (!t) return;
+  const dirs = t.dir ? values(p, ...t.dir) : [];
+  const dir = dirs.length ? dirs[dirs.length - 1] : ".";
+  if (dir === null) return;
+  const at = (f: string) => lit(dir === "." || f.startsWith("/") || f.startsWith("~") ? f : `${dir}/${f}`);
+  const given = values(p, ...t.opts);
+  const mods = t.module ? values(p, ...t.module) : [];
+  for (const m of mods) if (m !== null) moduleCode(h, dir === "." ? m : `${dir}/${m}`.replace(/\//g, "."));
+  if (mods.length) return;
+  for (const f of given.length ? given : t.names) if (f && !STDIN_NAME.test(f) && !STREAM_NAME.test(f)) h.e.recordImplied(at(f), h.sc);
+}
+
 /** The files node or python runs when given a folder (package.json names node's). */
 const ENTRY_FILES = ["index.js", "index.mjs", "index.cjs", "index.json", "index.node", "package.json", "__main__.py"];
 /** Extensions an interpreter adds to a bare program name it is given (`node x` runs x.js), to match a download by name. */
@@ -7171,6 +7244,7 @@ reg(NATIVE, Object.keys(INTERPRETERS).filter(k => !["awk", "gawk", "mawk", "nawk
       // (judgeScripts), and so does a conftest.py or a test file it wrote that pytest loads (r10-commands-x10-6).
       // Python's own and the everyday tools' modules are found where they are installed.
       // A package runs its __main__.py after its __init__.py (r10-commands-y10-5).
+      if (PY_RUNS_GIVEN.has(mod) || mod === "coverage") givenCode(h, (afterModule(h, p) ?? []).filter(a => a.v !== "run"));
       if (!PY_OWN_MODULES.has(mod) && !PY_TOOL_MODULES.has(mod)) {
         h.e.recordScript(lit(`${file}.py`), "code", h.sc);
         for (const f of [`${file}/__main__.py`, `${file}/__init__.py`]) h.e.recordImplied(lit(f), h.sc);
@@ -9249,7 +9323,7 @@ const MVN_WORDS: Readonly<Record<string, string>> = {
 reg(NATIVE, ["make", "gmake", "mingw32-make", "nmake", "just", "rake", "invoke", "inv", "ant", "sbt", "lein", "gradle", "gradlew", "mvn", "mvnw", "nox", "tox", "task", "mage", "ninja"], h => {
   // make's -j and -l take the next word only when it is a number (`make -j install` builds install); Maven's -X, nox's -r and
   // tox's -v, -r and -n take no value, and Maven's options of two or more letters are whole words (commands-remote-i5a).
-  const valueShort: Record<string, string> = { make: "CfIoWE", gmake: "CfIoWE", "mingw32-make": "CfIoWE", nmake: "fX", just: "fd", rake: "fIrRCeEp", gradle: "pbcgIxDP", gradlew: "pbcgIxDP", mvn: "bDflPsTt", mvnw: "bDflPsTt", nox: "sfeptk", tox: "ecxfm", task: "dt", ant: "fDl", ninja: "Cfjkldtw" };
+  const valueShort: Record<string, string> = { make: "CfIoWE", gmake: "CfIoWE", "mingw32-make": "CfIoWE", nmake: "fX", just: "fd", rake: "fIrRCeEp", gradle: "pbcgIxDP", gradlew: "pbcgIxDP", mvn: "bDflPsTt", mvnw: "bDflPsTt", nox: "sfeptk", tox: "ecxfmc", task: "dt", ant: "fDl", ninja: "Cfjkldtw", invoke: "cfr", inv: "cfr", mage: "d" };
   const mvn = h.key === "mvn" || h.key === "mvnw";
   const gnuMake = /^(g|mingw32-)?make$/.test(h.key);
   const args = mvn ? h.args.map(a => (a.v !== null && MVN_WORDS[a.v] ? { ...a, v: MVN_WORDS[a.v] } : a)) : h.args;
@@ -9262,7 +9336,7 @@ reg(NATIVE, ["make", "gmake", "mingw32-make", "nmake", "just", "rake", "invoke",
   // one was a target or an option of its own (commands-held-10).
   const p = heldOpts(h, {
     shortValue: valueShort[h.key] ?? "", shortNumeric: /make$/.test(h.key) ? "jl" : "", longNumeric: ["jobs", "load-average", ...(/^gradlew?$/.test(h.key) ? ["max-workers"] : [])],
-    longValue: ["file", "makefile", "directory", "include-dir", "old-file", "what-if", "justfile", "working-directory", "set", "project-dir", "build-file", "settings-file", "gradle-user-home", "init-script", "exclude-task", "projects", "resume-from", "settings", "global-settings", "session", "sessions", "keywords", "environment", "envlist", "taskfile", "dir", "global-toolchains", "toolchains", "encrypt-master-password", "encrypt-password", "builder", "log-file", "activate-profiles", "threads", "define"],
+    longValue: ["file", "makefile", "directory", "include-dir", "old-file", "what-if", "justfile", "working-directory", "set", "project-dir", "build-file", "settings-file", "gradle-user-home", "init-script", "exclude-task", "projects", "resume-from", "settings", "global-settings", "session", "sessions", "keywords", "environment", "envlist", "taskfile", "dir", "global-toolchains", "toolchains", "encrypt-master-password", "encrypt-password", "builder", "log-file", "activate-profiles", "threads", "define", "collection", "search-root", "noxfile", "rakefile", "buildfile", "conf"],
   }, { shortValue: mvn ? "fsplDPTtbgrX" : h.key === "nox" ? "sfeptkr" : h.key === "tox" ? "ecvrnx" : valueShort[h.key] ?? "", shortNumeric: /make$/.test(h.key) ? "jl" : "", numericAny: gnuMake ? ["j", "l"] : [], numericCountOnly: ["threads", "max-workers", ...(gnuMake ? [] : ["j", "l"])], longNumeric: ["jobs", "load-average", "threads", ...(/^gradlew?$/.test(h.key) ? ["max-workers"] : [])], longValue: ["file", "makefile", "directory", "include-dir", "old-file", "what-if", "justfile", "working-directory", "set", "project-dir", "build-file", "settings-file", "gradle-user-home", "init-script", "exclude-task", "projects", "resume-from", "settings", "global-settings", "session", "sessions", "keywords", "environment", "envlist", "taskfile", "dir", "jobs", "load-average"] }, args, h.args);
   // A makefile read from stdin, /dev/stdin or a process substitution is a build program Ember can't vouch for: its
   // recipes run shell (review #166). Ember asks unless it can see the whole text and it is plainly ordinary.
@@ -9278,12 +9352,7 @@ reg(NATIVE, ["make", "gmake", "mingw32-make", "nmake", "just", "rake", "invoke",
   for (const f of values(p, "f", "file", "makefile", "justfile", "build-file", "b", "settings-file", "c", "init-script", "I")) if (f && !STDIN_NAME.test(f)) h.e.usePath(lit(f), "read", h.sc);
   // A makefile's recipes are shell Ember doesn't read: one the task wrote asks, as a script it wrote does
   // (r10-commands-y10-5). Its folder is -C's, or this one.
-  if (gnuMake) {
-    const given = values(p, "f", "file", "makefile");
-    const dirs = values(p, "C", "directory");
-    const dir = dirs.length ? dirs[dirs.length - 1] : ".";
-    if (dir !== null) for (const f of given.length ? given : ["GNUmakefile", "makefile", "Makefile"]) if (f) h.e.recordImplied(lit(dir === "." || f.startsWith("/") ? f : `${dir}/${f}`), h.sc);
-  }
+  runnerFiles(h, p);
   // `ninja -t <tool>` runs one of ninja's own tools, not a target (review #167).
   if (h.key === "ninja" && values(p, "t").length) { ninjaTool(h, values(p, "t")[0]); return; }
   // make takes the word after -j or -l only when it is a count or a variable, so a value the text gives a variable there
