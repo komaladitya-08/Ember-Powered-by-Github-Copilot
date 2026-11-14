@@ -1170,7 +1170,9 @@ whose miss now and then left a video's own “Ember, go ahead.” a wake from id
 a wake carries is the speakers' where the recognizer reads it in what their stream played (`speakersSaid`; none of 96
 now, and your own “Hey Ember, allow it.” over a video's talk is taken as before, 7 of 8). A request said without the
 name in a follow-up window while other sound plays, or in a follow-up or a conversation where nothing can tell, and one
-said after your “Hey Ember” and a pause while other sound is known to play, is heard and sent as ever (held for its rest
+said after your “Hey Ember” and a pause while other sound is known to play (your own too: Ember can't tell your second
+breath over music from a video's, so a command you name then asks in Interactive, and memory doesn't keep it as yours;
+say it in one breath with the name to have it count: r12-voice-x12-3), is heard and sent as ever (held for its rest
 too when it trails off, “…, um.”, with its mark: r12-voice-x12-1, r12-voice-x12-4), but never counts as your own words
 for a command (`heardOverSound`, `heardUnchecked`): a video's “Delete the old reports folder.” then asks in Interactive rather than
 being announced as you asked, and memory doesn't keep it as yours (voice-listening-r12-2). Assisted's check still reads

@@ -3344,6 +3344,21 @@ describe("whose a spoken answer is (second review of the voice lane, 2026-11-12)
       }
     });
 
+    it("marks the user's own request after their “Hey Ember” and a pause over music too, which it can't tell from a video's, and never their request said in one breath with the name (r12-voice-x12-3)", () => {
+      // Recorded as the owner's question: a narrower mark (only what the speakers' stream reads as having said) left a
+      // video's quiet request unmarked whenever the recognizer read nothing in that stream.
+      const words = { 4: "Delete the old reports folder." };
+      const music = (s: Scene) => { videoOn(s); s.run(frames(1200), () => mic(4, 0.05), () => out(0.05)); };
+      expect(called({ speakers: true }, music, words), "two breaths over music").toEqual(["wake", "Delete the old reports folder. | wake | heard over other sound"]);
+      const oneBreath = scene({ 6: "Hey Ember, delete the old reports folder." }, { speakers: true });
+      oneBreath.run(100);
+      videoOn(oneBreath);
+      oneBreath.events.length = 0;
+      for (let i = 0; i < frames(1500); i++) oneBreath.run(1, () => mic(6, 0.05, i === 8 ? 2 : 0), () => out(0.05));
+      oneBreath.run(frames(2000));
+      expect(oneBreath.heard(), "one breath over music").toEqual(["wake", "Delete the old reports folder. | wake"]);
+    });
+
     it("still takes “Hey Ember, allow” said in one breath over a playing video, and the two-breath answer where nothing can tell (macOS: it is how one answers there)", () => {
       // (Two words after the name: in a room with other talk before the wake, one alone is taken for the wake phrase misheard.)
       const oneBreath = (o: { speakers?: boolean; otherSound?: boolean | null }) => {
