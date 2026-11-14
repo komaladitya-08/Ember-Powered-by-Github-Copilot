@@ -269,7 +269,7 @@ describe("file paths and the terminal named in a request, on macOS", () => {
 
 describe("never-look on macOS", () => {
   it("starts with the password managers, Keychain Access and SecurityAgent, each with its name", () => {
-    expect(NEVER_LOOK_DEFAULTS.darwin.map(neverLookLabel)).toEqual(["KeePassXC", "1Password", "Bitwarden", "LastPass", "Dashlane", "Enpass", "Strongbox", "MacPass",
+    expect(NEVER_LOOK_DEFAULTS.darwin.map(neverLookLabel)).toEqual(["KeePassXC", "1Password", "Bitwarden", "LastPass", "Dashlane", "Enpass", "Strongbox", "MacPass", "Proton Pass", "NordPass", "RoboForm",
       "Keychain Access", "Password prompts (SecurityAgent)"]);
     for (const d of NEVER_LOOK_DEFAULTS.darwin) expect(NEVER_LOOK_NAMES[d], d).toBeTruthy();
   });

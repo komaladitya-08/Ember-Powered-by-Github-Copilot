@@ -190,8 +190,8 @@ describe("the settings window before a status names an OS", () => {
     expect(describeEntry({ t, event: "stop", source: "voice" })?.what).toBe("Everything stopped (“Ember, stop”)");
     expect(entryWords(undefined)).toBe(LINUX_ENTRY_WORDS);
     // The six it had, then the password managers the other OSes' lists have (safety-privacy-r9-3).
-    expect([...NEVER_LOOK_DEFAULTS]).toEqual(["keepassxc", "seahorse", "passwords and keys", "1password", "bitwarden", "polkit", "keepass", "lastpass", "dashlane", "enpass", "proton pass", "kwallet"]);
-    expect(missingDefaults(["Bitwarden"])).toEqual(["keepassxc", "seahorse", "passwords and keys", "1password", "polkit", "keepass", "lastpass", "dashlane", "enpass", "proton pass", "kwallet"]);
+    expect([...NEVER_LOOK_DEFAULTS]).toEqual(["keepassxc", "seahorse", "passwords and keys", "1password", "bitwarden", "polkit", "keepass", "lastpass", "dashlane", "enpass", "proton pass", "kwallet", "org.gnome.world.secrets"]);
+    expect(missingDefaults(["Bitwarden"])).toEqual(["keepassxc", "seahorse", "passwords and keys", "1password", "polkit", "keepass", "lastpass", "dashlane", "enpass", "proton pass", "kwallet", "org.gnome.world.secrets"]);
   });
 
   it("names where Stop everything was pressed: the handle's menu or settings", () => {
