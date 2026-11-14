@@ -345,9 +345,20 @@ function credentialValue(text: string): "key" | "password" | null {
 const STATE_WORD = new Set(String.raw`fast quick slow good bad great awful terrible flaky patchy spotty weak strong poor fine ok okay decent solid
   rubbish brilliant excellent amazing perfect useless lovely nice cheap expensive dear pricey free paid busy quiet loud dead off on out up down
   back gone working broken unreliable reliable laggy buggy glitchy iffy dodgy shaky better worse cheaper faster slower bigger smaller best worst
-  ours mine theirs yours his hers private public open closed locked full empty great fab awesome cool meh crap pants`.split(/\s+/).filter(Boolean));
-/** A word's ending that makes it an adjective or a verb's form ("unreliable", "dangerous", "shared", "buffering"), never a lone password. */
-const STATE_ENDING = /(?:able|ible|ous|ful|less|ive|ish|ed|ing|est)$/i;
+  ours mine theirs yours his hers private public open closed locked full empty great fab awesome cool meh crap pants
+  personal work home family main primary secondary spare old new business school uni college junk burner shared joint kids
+  premium basic standard pro plus duo trial annual monthly yearly`.split(/\s+/).filter(Boolean));
+/**
+ * A word's ending that makes it an adjective or a verb's form ("unreliable", "dangerous", "shared", "buffering",
+ * "personal", "chaotic", "temporary", "noisy", "messy": r12-safety-x12-5), never a lone password. Not "-ly" or "-ry"
+ * ("dragonfly", "strawberry" may be one).
+ */
+const STATE_ENDING = /(?:able|ible|ous|ful|less|ive|ish|ed|ing|est|al|ic|ary|ory|[^aeiou][sztdkpgh]y|[aeiou][sz]y)$/i;
+/**
+ * What people say a service holds or does with its name ("Netflix shows", "Spotify playlists", "Slack huddles",
+ * "Netflix tonight"): never a password beside it (r12-safety-x12-5).
+ */
+const SERVICE_TALK = /^(?:shows?|series|films?|movies?|documentar(?:y|ies)|episodes?|seasons?|playlists?|podcasts?|albums?|songs?|tracks?|music|radio|audiobooks?|channels?|huddles?|threads?|messages?|calls?|meetings?|chats?|emails?|mails?|inbox|photos?|videos?|games?|tonight|today|later|binge|night|marathon|subscription|account|plan|profile|app|wrapped|originals?|kids|family|premium|deals?|orders?|returns?|purchases?)$/i;
 /** Products named with their version, which a person may use everywhere ("Windows11", "Office365"): a pass for VALUE_EVERYWHERE's product shape. */
 const KNOWN_PRODUCT = /^(?:windows|win|office|iphone|ipad|pixel|galaxy|fedora|ubuntu|debian|rhel|centos|rocky|alma|python|java|jdk|node|php|perl|ruby|excel|photoshop|macos|ios|android|xbox|ps|playstation|switch|canon|nikon|sony|kotlin|swift|net|dotnet|vue|react|angular|django|rails|postgres|mysql|redis|chrome|firefox|safari|edge|opera|vim|emacs|vscode|outlook|teams|zoom|figma|tailwind|bootstrap|gpt|llama|gemini|kde|gnome|plasma|qt|gtk|lua|go|rust|cuda|opengl|vulkan|directx|dx|hdmi|usb|wifi|wpa|bt|ipv|http|tls|ssl)\d/i;
 /** A browser or an app a person signs in through, never a password ("Logs in with Chrome", "Signs in with Duo"). */
@@ -404,20 +415,40 @@ const SEED_NAMED = /\b(?:(?:seed|recovery|mnemonic|backup|secret|wallet)\s+(?:ph
 /** Grammar of three letters or more, which no seed word list holds (BIP-39's words are 3 to 8 letters, none of these). */
 const SEED_STOP = /^(?:the|and|for|with|that|this|from|are|was|were|has|have|had|their|they|you|your|his|her|its|our|not|she|him|them|who|what|when|where|which|there|then|than|into|been|does|did|would|could|should|these|those|very|just)$/;
 /**
+ * What says the words after it are a list of things, not a wallet's seed (r12-safety-x12-5): a heading ("Shopping
+ * list:", "Plants on the balcony:", "Favourite words:") or a list named ("my shopping list milk eggs…").
+ */
+const LIST_CUE = /:|\b(?:list|lists|words|names|items|things|ingredients|groceries|shopping|favourites?|favorites?|spelling|vocab(?:ulary)?|plants|herbs|flowers|box|basket|order|menu|bands|songs|books|films|games|toys)\b/i;
+/** A wallet named before the words ("Their wallet: abandon ability…"): a heading there is the seed's, never a list's. */
+const WALLET_WORD = /\b(?:wallet|ledger|trezor|metamask|bitcoin|btc|crypto|ethereum|eth|mnemonic|seed|recovery)\b/i;
+/** A plural noun's ending ("eggs", "potatoes"): a seed word list has almost none (its words ending in s are "-ss" or "-us"). */
+const PLURAL = /[^su]s$/;
+/**
  * A wallet's seed words, by their shape (memory-c12-2): a run of twelve or more lower-case words of three to eight
- * letters with no grammar between them, anywhere; or, where the seed words are named, a run of four or more of which
- * three are no talk about keeping them ("…starts with abandon ability able about").
+ * letters with no grammar between them, not after a list's heading and with no more than two plural nouns among them
+ * (r12-safety-x12-5: a shopping list, a veg box, a child's spelling words, said without commas as speech writes them);
+ * or, where the seed words are named, a run of four or more of which three are no talk about keeping them ("…starts
+ * with abandon ability able about").
  */
 function seedWords(text: string): boolean {
   const named = SEED_NAMED.test(text);
-  let run = 0, plain = 0;
+  let run = 0, plain = 0, plural = 0, before = "";
+  const said: string[] = [];
   for (const raw of text.split(/\s+/)) {
     const w = raw.replace(/^["'“(]+|["'”),.;:!?]+$/g, "");
     const seedLike = /^[a-z]{3,8}$/.test(w) && !SEED_STOP.test(w);
-    if (seedLike) { run++; if (!ABOUT_SECRET.has(w) && !NOT_LONE.has(w)) plain++; } else { run = 0; plain = 0; }
-    if (run >= 12 || (named && run >= 4 && plain >= 3)) return true;
+    if (seedLike) {
+      if (run === 0) before = said.join(" ");
+      // A list named in the run's own first words ("Remember my shopping list milk eggs…") heads it too.
+      if (run < 2) before += ` ${w}`;
+      run++;
+      if (!ABOUT_SECRET.has(w) && !NOT_LONE.has(w)) plain++;
+      if (PLURAL.test(w)) plural++;
+    } else { run = 0; plain = 0; plural = 0; }
+    said.push(raw);
+    if ((run >= 12 && (named || ((!LIST_CUE.test(before) || WALLET_WORD.test(before)) && plural <= 2))) || (named && run >= 4 && plain >= 3)) return true;
     // Punctuation after a word ends its run: a list ("hiking, camping, …") is no seed.
-    if (/[,.;:!?)]$/.test(raw)) { run = 0; plain = 0; }
+    if (/[,.;:!?)]$/.test(raw)) { run = 0; plain = 0; plural = 0; }
   }
   return false;
 }
@@ -427,7 +458,9 @@ function signInForm(text: string): boolean {
   if (seedWords(text)) return true;
   for (const re of [THING_IS_WORD, THING_THEN_WORD, ACCOUNT_USES_WORD, USE_WORD_FOR, USE_TO_UNLOCK]) {
     const v = re.exec(text)?.groups?.v;
-    // A handle where people name theirs ("Their GitHub is octocat") is no password.
+    // A handle where people name theirs ("Their GitHub is octocat") is no password; nor, after a service's bare name,
+    // what it holds or a plural noun ("Netflix shows", "Spotify podcasts": r12-safety-x12-5) unless shaped like one.
+    if (re === THING_THEN_WORD && v && !passwordShaped(word(v)) && (SERVICE_TALK.test(word(v)) || PLURAL.test(word(v)))) continue;
     if (v && signInWord(v) && !(re === THING_IS_WORD && HANDLE_PLACE.test(text) && HANDLE.test(word(v)))) return true;
   }
   for (const re of [VALUE_EVERYWHERE, WHAT_EVERYWHERE]) {

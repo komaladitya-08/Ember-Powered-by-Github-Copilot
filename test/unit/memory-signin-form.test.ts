@@ -69,4 +69,25 @@ describe("the memory guard on a password said in a sign-in's own form", () => {
       "Their favourite bands are blur oasis pulp suede and elastica", "Wrote down the 24 words on the card that came with the Ledger", "Their wallet is brown leather",
     ])).toEqual([]);
   });
+
+  it("keeps a service named with what it holds or how it is, and a list said without commas, as speech writes it (r12-safety-x12-5)", () => {
+    expect(keptOnes([
+      "My Slack is noisy", "My Gmail is personal", "My Slack is chaotic", "My Gmail is temporary", "My Discord is noisy", "My Slack is messy",
+      "Her Netflix is family", "My Zoom is basic", "Netflix documentaries", "Spotify podcasts", "Netflix shows", "Spotify playlists",
+      "Slack huddles", "Netflix series", "Netflix tonight", "Steam games", "Slack channels", "Amazon orders", "Spotify songs", "Gmail filters",
+      "Shopping list: milk eggs bread butter cheese apples bananas onions garlic carrots potatoes rice",
+      "Remember my shopping list milk eggs bread butter cheese apples bananas onions garlic carrots potatoes and rice",
+      "Weekly veg box: kale leeks onions carrots potatoes beets turnips celery garlic chard spinach lettuce",
+      "Favourite words: hygge saudade wabi sabi ikigai fernweh komorebi tsundoku sisu lagom jayus gezellig",
+      "Plants on the balcony: basil thyme mint sage rosemary chives parsley oregano dill lavender fennel lovage",
+      "Daughter's spelling words: apple table chair water happy little window yellow garden pencil sister mother",
+      "Her favourite fruits apples pears plums cherries grapes melons lemons limes figs dates kiwis mangoes",
+      "Packing list socks shirts jumper coat boots hat scarf gloves charger passport tickets wallet",
+    ])).toEqual([]);
+    // The same forms with a password's word, or seed words unnamed or after a wallet's heading, are still refused.
+    expect(refused([
+      "My Netflix is dragonfly", "My Spotify is strawberry", "Netflix marmalade", "Spotify bluebird", "My Gmail is tangerine",
+      `Remember ${SEED}`, `Their wallet: ${SEED}`, `Seed words ${SEED}`,
+    ])).toEqual([]);
+  });
 });

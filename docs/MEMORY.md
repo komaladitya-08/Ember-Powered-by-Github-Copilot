@@ -311,14 +311,21 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
     the Wi-Fi", never "Uses Figma2 for Slack"); a user and a value with only a space or "with" between them after a
     sign-in thing or a login ("Amazon login: ram@example.com Biscuit99", "Signs in to PayPal as ram@example.com with
     Biscuit99"); and a wallet's seed words by their shape, twelve or more lower-case words of three to eight letters
-    with no grammar between them anywhere, or four or more where seed words are named ("Their seed phrase starts with
-    abandon ability able about"). A network, a router, a bank or a database "is" what it is ("The Wi-Fi is mesh",
-    "Their bank is local"), a capitalised word there is a brand's ("The VPN is GlobalProtect"), an adjective or a
-    verb's form is a state ("The Wi-Fi is unreliable"), and talk about keeping seed words is kept ("The 24 words are
-    stored offline somewhere safe"). The memory tests' sentences are all kept as before, and of 66 more everyday facts
+    with no grammar between them, not after a list's heading or name (but a wallet's: "Their wallet: abandon…") and
+    with no more than two plural nouns among them, or four or more where seed words are named ("Their seed phrase
+    starts with abandon ability able about"). A network, a router, a bank or a database "is" what it is ("The Wi-Fi
+    is mesh", "Their bank is local"), a capitalised word there is a brand's ("The VPN is GlobalProtect"), an adjective
+    or a verb's form is a state ("The Wi-Fi is unreliable", "My Slack is noisy", "My Gmail is personal"), what a
+    service holds or a plural noun after its bare name is talk about it ("Netflix shows", "Spotify podcasts", "Slack
+    huddles"), a list said without commas is kept ("Shopping list: milk eggs bread…", "Remember my shopping list milk
+    eggs…"), and talk about keeping seed words is kept ("The 24 words are stored offline somewhere safe")
+    (r12-safety-x12-5). The memory tests' sentences are all kept as before, and of 66 more everyday facts
     about the same services, networks and wallets none is refused. Still kept: a word in lower case where people give
     their handle ("Discord: hunter2"), which can't be told from "GitHub: octocat2", and one word in lower case said as
-    what a Wi-Fi network "is" ("The cabin Wi-Fi is dragonfly"), which can't be told from its network's name.
+    what a Wi-Fi network "is" ("The cabin Wi-Fi is dragonfly"), which can't be told from its network's name. Still
+    refused: a list of twelve or more three-to-eight-letter words said with no heading, no commas and few plurals
+    ("They play guitar drums piano violin cello…"), which can't be told from unnamed seed words without the seed word
+    list itself.
 
   A value is read as `guard.ts` reads a login's (`LOGIN_VALUE`: a digit or a symbol, never an address, a scheme such
   as OAuth2 or 2FA, a version, a date or a hyphenated word), four to eight digits where a code goes, and where a tool
