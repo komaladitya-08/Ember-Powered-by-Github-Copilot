@@ -272,8 +272,10 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
   - a credential by its value, wherever its name stands (memory-r11-1, memory-c11-1; `credentialValue`): a word that
     can only be a key or a token (a UUID, 16 or more hex digits, a run of 12 or more letters and digits) beside a
     key's, a token's, a cookie's, an API's or a hook's name with or without "is" ("API key 9b2f…", "Bearer token
-    3f9a…", "Session cookie 3f9a…"), and alone when it can be nothing else (a UUID, 24 or more hex digits, a run of
-    20 or more with four letters and four digits: "Uses sk-proj-a8f7… for OpenAI"); a word shaped like a password in
+    3f9a…", "Session cookie 3f9a…"), as is a run of 16 or more in mixed case there whatever its digits ("OpenAI key
+    sk-AbCdEf…", never words joined in camel case such as "HashiCorpVaultCluster": r11-memory-x11-3), and alone when
+    it can be nothing else (a UUID, 24 or more hex digits, a run of 20 or more with four letters and four digits, a
+    JSON web token "eyJ….….…": "Uses sk-proj-a8f7… for OpenAI"); a word shaped like a password in
     a clause that names a thing people sign in to (a service, a VPN, Wi-Fi, a router or a NAS, AWS, Azure, RADIUS,
     LDAP, SSH, a database, an administrator, a password manager: "Remember Summer2024 for the VPN", "For the VPN it's
     Summer2024", "My Bitwarden is Summer2024", "My Netflix account: ram@example.com, Summer2024"); any lone word after a

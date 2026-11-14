@@ -58,6 +58,14 @@ const LY_ED = [
   "Spotify: lovely", "Our Jenkins secret: wicked", "My Okta secret is holly", "Zoom password. sacred", "Gmail: ram99, shelly", "Disney+: firefly",
 ];
 
+/** A key named without "is" or ":", with few digits in its runs, and a token alone by its shape (r11-memory-x11-3), then neighbours. */
+const FEW_DIGIT_KEYS = [
+  "OpenAI key sk-AbCdEfGhIjKlMnOpQrStUvWxYz", "API key AbCdEfGhIjKlMnOpQrStUvWxYz", "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.abc",
+  // Neighbours.
+  "Stripe key pk_live_AbCdEfGhIjKlMnOpQrSt", "Access token QwErTyUiOpAsDfGhJkLz", "Session token eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.sig",
+  "The bot uses token XyZaBcDeFgHiJkLmNoPq", "Weather API kEyKeYkEyKeYkEyKeY", "Use eyJhbGciOiJSUzI1NiJ9.eyJpc3MiOiJhIn0.c2ln for staging",
+];
+
 /** Ordinary facts beside those values, which memory still keeps. */
 const ORDINARY = [
   "The secret is patience", "My secret is that I dislike meetings", "The shared secret is rotated monthly", "The client secret is configured in Azure",
@@ -75,6 +83,9 @@ const ORDINARY = [
   "Wi-Fi: HomeNet / band: 5GHz", "Wi-Fi: HomeNet, 802.11ac", "The credentials are base64", "Logs into Gmail using Chrome",
   "Commit 3f9a8b7 fixed the build", "The Zoom room is 845 2231 9087", "The secret ingredient is cumin", "Uses Okta for single sign-on",
   "Netflix: shared with Mum", "The AWS bill was £120 in March", "Our app uses Kubernetes on AWS",
+  // Words joined in camel case beside a key's name, which are no key (r11-memory-x11-3).
+  "The API key is in HashiCorpVaultCluster", "Uses the GitHubActionsRunner token", "Session cookie name is JSESSIONIDCookie",
+  "The auth flow uses OpenIDConnectProvider",
 ];
 
 describe("a credential's value in a fact, wherever its name stands", () => {
@@ -89,6 +100,10 @@ describe("a credential's value in a fact, wherever its name stands", () => {
   });
 
   it.each(LY_ED.map(s => [s]))("refuses %j, a password whatever its ending (r11-memory-x11-2)", text => {
+    expect(factRefusal(text)).not.toBeNull();
+  });
+
+  it.each(FEW_DIGIT_KEYS.map(s => [s]))("refuses %j, a key by its shape whatever its digits (r11-memory-x11-3)", text => {
     expect(factRefusal(text)).not.toBeNull();
   });
 
