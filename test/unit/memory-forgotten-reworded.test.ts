@@ -74,4 +74,18 @@ describe("a fact forgotten in Settings, put back by the remember tool in other w
     expect(h.heldBack("Works at Globex", "conversation", "tool", "Remember that I work at Globex")).toBeNull();
     expect(h.heldBack("Does not eat meat", "user", "tool", "I don't eat meat")).toBeNull();
   });
+  it("keeps nothing more beside a correction's new words after a Forget in the same conversation (r10-memory-y10-4)", () => {
+    const h = new ConversationHold();
+    h.asked();
+    h.gave("[f1] Is vegetarian\n[f2] Works at Globex");
+    h.forgot("f1", "Is vegetarian", "u1");
+    h.corrected("f2", "Works at Globex", "Works at Initech");
+    const said = "What should I cook tonight?";
+    for (const fact of ["Works at Initech and does not eat meat", "Works at Initech, eats no meat", "Works at Initech; follows a plant-based diet"]) {
+      expect(h.heldBack(fact, "conversation", "tool", said)).toBe("unsaid");
+      expect(h.heldBack(fact, "conversation", "task")).toBe("unsaid");
+    }
+    // The correction's own words alone may still be said again.
+    expect(h.heldBack("Works at Initech", "conversation", "tool", said)).toBeNull();
+  });
 });

@@ -297,11 +297,13 @@ describe("a correction that keeps the old words still keeps the old statement ou
     expect(r.list()).toEqual([`user: ${after}`]);
   });
 
-  it("lets the corrected fact be said the new way round in other words, and the old way round by the user themselves (memory-x9-2)", async () => {
+  it("lets the corrected fact be said again in its new words, and the old way round by the user themselves (memory-x9-2, r10-memory-y10-4)", async () => {
     const r = rig();
     await r.turn("Remember that I'm vegetarian", "Noted.", { remember: "Is vegetarian" });
     r.l.correct(r.s.list()[0]!, "Is not vegetarian");
-    expect((await r.turn("What's for dinner?", "Steak?", { remember: "Stopped being vegetarian" })).told).toMatch(/^Remembered \[/);
+    expect((await r.turn("What's for dinner?", "Steak?", { remember: "Is not vegetarian" })).told).not.toMatch(/^Not remembered/);
+    // In other words it says more than the correction, from Ember's reply: held until the conversation ends (r10-memory-y10-4).
+    expect((await r.turn("What's for dinner?", "Steak?", { remember: "Stopped being vegetarian" })).told).toMatch(/^Not remembered/);
     // The user changes their mind, in their own words: theirs.
     expect((await r.turn("Actually I'm vegetarian again, remember that", "Noted.", { remember: "Is vegetarian again" })).told).toMatch(/^Remembered \[/);
     expect(r.list()).toContain("user: Is vegetarian again");

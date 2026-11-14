@@ -263,8 +263,9 @@ export class ConversationHold {
       if (like(h.words, words)) return h.was ? "corrected" : "like";
     }
     if (turn) return restsOnUser(text, turn) ? null : "like";
-    // What a correction says now is the user's own words, typed in Settings, so Ember may say it again.
-    if (this.held.some(h => h.was && like(new Set(terms(h.was.after)), words))) return null;
+    // What a correction says now is the user's own words, typed in Settings, so Ember may say it again: only when the
+    // fact says nothing more, or "Works at Initech and does not eat meat" brings a Forget back with it (r10-memory-y10-4).
+    if (words.size && this.held.some(h => h.was && share(words, new Set(terms(h.was.after))) === 1)) return null;
     return from === "tool" && restsOnUser(text, { said }) ? null : "unsaid";
   }
 }
