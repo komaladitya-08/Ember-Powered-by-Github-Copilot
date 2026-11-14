@@ -374,7 +374,7 @@ function valueInClause(text: string): boolean {
     for (const w of words) {
       const lw = w.toLowerCase();
       if (/^\d+$|^[*•·.]+$/.test(lw) || ABOUT_SECRET.has(lw) || TOOL_NAME.test(lw) || SERVICE_WORD.test(lw) || sayless(lw) || ALGORITHM.test(lw)) continue;
-      if (/^(?:[a-z]+(?:'|’)(?:s|t|re|ve|ll|d|m))$/i.test(lw)) continue;
+      if (/^(?:[a-z]+['’](?:s|t|re|ve|ll|d|m))$/i.test(lw)) continue;
       if (lw.length >= 3 || /["“]/.test(w)) return true;
     }
   }
