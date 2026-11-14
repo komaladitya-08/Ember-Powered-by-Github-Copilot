@@ -414,7 +414,7 @@ describe("Ember's own files reached by what a field or a file dialog holds, not 
   it("reads the rows chosen in a file manager as the step is taken, and can't tell them whole when one is unnamed or a row was left out (safety-privacy-r11-2)", () => {
     const row = (id: number, name: string, selected: boolean, x: Partial<AxNode> = {}): AxNode => ({ id, parent: 1, depth: 1, role: "table cell", name, states: selected ? ["selected"] : [], bounds: null, ...x });
     const view = (extra: AxNode[] = []): AxNode[] => [{ id: 1, parent: null, depth: 0, role: "table", name: "", states: [], bounds: null }, row(2, "Documents", true), row(3, ".config", true), row(4, "Music", false), ...extra];
-    expect(chosenIn(view(), true)).toEqual({ names: ["Documents", ".config"], whole: true });
+    expect(chosenIn(view(), true)).toEqual({ names: ["Documents", ".config"], whole: true, shown: ["Documents", ".config", "Music"] });
     expect(chosenIn(view(), false).whole).toBe(false);
     expect(chosenIn(view([row(5, "", true, { withheld: true })]), true).whole).toBe(false);
     expect(chosenIn(view([row(5, "Pictures", false, { omitted: true })]), true).whole).toBe(false);
@@ -528,5 +528,22 @@ describe("Ember's own files behind a file dialog the screen reader can't read wh
     // A dialog with a field and no rows (a Find box, a rename) isn't taken for one.
     const find = [n(1, null, "dialog", "Suchen"), n(2, 1, "edit", "Suchen nach:", { editable: true, text: "notes" }), n(3, 1, "button", "Weitersuchen")];
     expect(read(find, 3).fileChooser).toBeUndefined();
+  });
+
+  it("takes a file manager showing the folders above Ember's data for the home folder, whatever its title, so a Delete whose choice can't all be read asks, and Autopilot refuses it (r11-safety-x11-4)", () => {
+    const row = (id: number, name: string, selected = false): AxNode => n(id, 1, "table cell", name, { states: selected ? ["selected"] : [] });
+    const view = (...more: AxNode[]): AxNode[] => [n(1, null, "table", ""), row(2, "Documents", true), row(3, "Music"), ...more];
+    for (const [o, title, holder] of [["linux", "Persönlicher Ordner", ".config"], ["linux", "Dossier personnel", ".config"], ["linux", "Carpeta personal", ".config"], ["linux", "u - File Manager", ".config"], ["win32", "Ordner", "AppData"], ["darwin", "Privat", "Library"]] as [OS, string, string][]) {
+      const chosen = chosenIn(view(row(4, holder), n(5, 1, "table cell", "", { omitted: true })), true);
+      expect(chosen.whole).toBe(false);
+      const app = o === "linux" ? "org.gnome.Nautilus" : o === "win32" ? "explorer" : "Finder";
+      const r = req(app, title, { kind: "keys", value: "Delete", element: { role: "table cell", name: "Documents" }, chosen });
+      expect(mayReachEmberData(r, o), title).toBe(true);
+      expect(engine("autopilot", o).decide(r).verdict, `${title} autopilot`).toBe("deny");
+      expect(engine("interactive", o).decide(r).autonomy, title).toBeFalsy();
+    }
+    // A folder that shows none of them, its choice not all read: as before.
+    const other = chosenIn(view(n(5, 1, "table cell", "", { omitted: true })), true);
+    expect(mayReachEmberData(req("org.gnome.Nautilus", "Projekte", { kind: "keys", value: "Delete", element: { role: "table cell", name: "Documents" }, chosen: other }))).toBe(false);
   });
 });

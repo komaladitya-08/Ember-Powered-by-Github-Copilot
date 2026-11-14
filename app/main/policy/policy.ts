@@ -139,8 +139,9 @@ export interface ActionRequest {
   /**
    * The rows chosen (selected) in the window's lists as the worker read it when the step is taken, by name; `whole`: the
    * read listed every row and named each one chosen. A file manager's Delete, cut or "Move to Trash" acts on these.
+   * `shown`: every row the view lists by name, chosen or not (which folder it shows, whatever its title says).
    */
-  chosen?: { names: readonly string[]; whole: boolean };
+  chosen?: { names: readonly string[]; whole: boolean; shown?: readonly string[] };
   /** For keys: the focused element is in a web page (Chromium's, Firefox's or an Electron app's), where Enter can send. */
   inPage?: boolean;
   /**
@@ -955,7 +956,10 @@ function inEmberDataParent(r: Pick<ActionRequest, "kind" | "element" | "value" |
     const caseless = os !== "linux";
     if (r.chosen?.names.some(n => holdsEmberFolder(n, caseless))) return true;
     const home = homeName();
-    const atHome = HOME_TITLE.test(name.trim()) || (!!home && (caseless ? name.trim().toLowerCase() === home.toLowerCase() : name.trim() === home));
+    // At home by its title, or by what it shows (".config", "AppData", "Library" among its rows), whatever the title's
+    // language (r11-safety-x11-4).
+    const atHome = HOME_TITLE.test(name.trim()) || (!!home && (caseless ? name.trim().toLowerCase() === home.toLowerCase() : name.trim() === home))
+      || (r.chosen?.shown ?? []).some(n => holdsEmberFolder(n, caseless));
     if (atHome && !r.chosen?.whole) return true;
   }
   // That folder's own row, from the folder above it (Home's ".config", the user's "AppData", Finder's "Library"):

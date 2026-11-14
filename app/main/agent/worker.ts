@@ -1103,13 +1103,16 @@ export function dialogAround(start: AxNode | undefined, get: (id: number) => AxN
  * manager's Delete, cut or "Move to Trash" acts on (safety-privacy-r11-2). `whole`: the read was whole, nothing in it
  * was left out, it holds a row at all, and every row chosen has a name it can be told by. Exported for its tests.
  */
-export function chosenIn(all: Iterable<AxNode>, whole: boolean): { names: string[]; whole: boolean } {
+export function chosenIn(all: Iterable<AxNode>, whole: boolean): { names: string[]; whole: boolean; shown: string[] } {
   const nodes = [...all];
   const rows = nodes.filter(n => DIALOG_ROW.test(n.role));
   const chosen = rows.filter(n => n.states.includes("selected"));
   const told = chosen.every(n => !n.withheld && !n.secret && !!n.name.trim());
-  return { names: chosen.filter(n => !n.withheld && !n.secret && n.name.trim()).map(n => n.name).slice(0, DIALOG_ITEMS_MAX),
-    whole: whole && told && rows.length > 0 && !nodes.some(n => n.omitted) && chosen.length <= DIALOG_ITEMS_MAX };
+  const named = (n: AxNode) => !n.withheld && !n.secret && !!n.name.trim();
+  return { names: chosen.filter(named).map(n => n.name).slice(0, DIALOG_ITEMS_MAX),
+    whole: whole && told && rows.length > 0 && !nodes.some(n => n.omitted) && chosen.length <= DIALOG_ITEMS_MAX,
+    // Every row the view shows, chosen or not: whether it is the folder above Ember's data, whatever its title (r11-safety-x11-4).
+    shown: rows.filter(named).map(n => n.name).slice(0, DIALOG_ITEMS_MAX) };
 }
 
 /**
