@@ -32,7 +32,7 @@ import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import type { ConnectResult, ExtensionsApi, Installed, Marketplace, MarketplaceEntry, ToolInfo } from "../../shared/extensions";
 import { EXTENSION_ON_UNSAVED, MARKETPLACE_BUILT_IN_KEPT, MARKETPLACE_MANAGED_KEPT, addMarketplaceFailed, browseFailed, extensionUnsaved } from "../../renderer/home/extensions-copy";
 import type { OS } from "../../shared/shortcuts";
-import { REFUSED, classify, failureNote, gateAnnouncement, gateQuestion, plainName, wrapResult, writeOutHidden } from "./gate";
+import { REFUSED, classify, emberDataOf, failureNote, gateAnnouncement, gateQuestion, plainName, wrapResult, writeOutHidden } from "./gate";
 import { pluginPath, readMarketplace, readPlugin, reachOf, firstFile, MARKETPLACE_PLACES, type ServerSpec } from "./manifest";
 import { canonical, checkPins, isReadOnly, pinAll, schemaWords, shownHash, toolHash, type PinnedTool } from "./pin";
 import { probeHttp, probeStdio, servedTools, type ProbeResult } from "./probe";
@@ -1024,7 +1024,7 @@ export class ExtensionsService implements ExtensionsApi {
   }
 
   /** Read policy synchronously, after metadata awaits and again immediately before returning Allow. */
-  private gateInput(gate: SessionGate, name: string, shownAsPinned: boolean, generation: number) {
+  private gateInput(gate: SessionGate, name: string, shownAsPinned: boolean, generation: number, emberData: "names" | "may" | null) {
     const e = gate.tools.get(name);
     const current = e && this.items.includes(e.item) ? e.item : undefined;
     const server = current?.servers.find(s => s === e?.server && s.status === "ready");
@@ -1038,6 +1038,7 @@ export class ExtensionsService implements ExtensionsApi {
       hintsStale: !!e && gate.listChanged.has(e.server.key), serverStopped: !!e && gate.withdrawn.has(e.server.key),
       autopilot: this.o.autopilot?.() === true,
       vaultFilled: this.vaultFilled(),
+      emberData,
     });
     if (decision.verdict === "deny") return decision;
     if (gate !== this.session || generation !== this.generation) return { verdict: "deny" as const, reason: "Extensions changed. Wait for the conversation to reload before trying again." };
@@ -1071,7 +1072,9 @@ export class ExtensionsService implements ExtensionsApi {
     await this.settle(gate);
     const generation = this.generation;
     const shownAsPinned = await this.shownNow(gate, input.toolName, generation);
-    const { verdict, reason } = this.gateInput(gate, input.toolName, shownAsPinned, generation);
+    // Read once: what the arguments name of Ember's own settings, audit log or policy (integ-x-2).
+    const emberData = emberDataOf(input.toolArgs);
+    const { verdict, reason } = this.gateInput(gate, input.toolName, shownAsPinned, generation, emberData);
     const argChars = (() => { try { return JSON.stringify(input.toolArgs ?? {}).length; } catch { return 0; } })();
     const base = { ext: e?.item.id ?? null, tool: input.toolName, ...named(e?.item, e?.tool), argChars };
     const deny = (r: string): PreToolUseHookOutput => ({ permissionDecision: "deny", permissionDecisionReason: r });
@@ -1083,7 +1086,7 @@ export class ExtensionsService implements ExtensionsApi {
       return deny("Ember couldn't record this step, so it didn't take it.");
     }
     if (verdict === "deny") return deny(reason);
-    const before = this.gateInput(gate, input.toolName, shownAsPinned, generation);
+    const before = this.gateInput(gate, input.toolName, shownAsPinned, generation, emberData);
     if (before.verdict === "deny") return deny(before.reason);
     if (verdict === "allow" && before.verdict === "allow") return { permissionDecision: "allow" };
     // Autopilot: said in the conversation's bubble instead of asked, and only once it was said (a call that can't be
@@ -1095,14 +1098,14 @@ export class ExtensionsService implements ExtensionsApi {
     const answer = await confirmer.ask(question, this.stopAsks.signal).catch(() => null);
     // The question may have been up a while: the item, its pin and the live tool are checked again before a yes counts.
     const shownAfter = answer === "once" && await this.shownNow(gate, input.toolName, generation);
-    const after = answer === "once" ? this.gateInput(gate, input.toolName, shownAfter, generation) : null;
+    const after = answer === "once" ? this.gateInput(gate, input.toolName, shownAfter, generation, emberData) : null;
     const yes = answer === "once" && after !== null && after.verdict !== "deny";
     // A spoken answer says so, and whether Voice Match verified it (confirm.ts answerVoice).
     const how = confirmer.howAnswered?.(question);
     const channel = how?.via === "voice" ? { via: "voice", verified: how.verified === true, ...(how.trust ? { trust: how.trust } : {}) } : {};
     try { this.audit({ phase: "answer", ...base, answer: yes ? "allow" : answer === null ? "none" : answer === "once" ? "stale" : "deny", ...channel }); } catch { return deny("Ember couldn't record this step, so it didn't take it."); }
     if (yes) {
-      const current = this.gateInput(gate, input.toolName, shownAfter, generation);
+      const current = this.gateInput(gate, input.toolName, shownAfter, generation, emberData);
       return current.verdict === "deny" ? deny(current.reason) : { permissionDecision: "allow" };
     }
     if (answer === "once" && after) return deny(after.reason);

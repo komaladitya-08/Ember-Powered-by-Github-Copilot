@@ -1539,6 +1539,7 @@ const EXTENSION_ASKED: Readonly<Record<string, string>> = {
   remote: "Its server is on the internet, and gets what it is given.",
   tainted: "An extension's answer read like instructions, so Ember asks before every extension's tool.",
   "hints-changed": "Its server changed its list of tools during the conversation.",
+  "ember-data": "It may reach Ember's own settings, audit log or policy, which are for you only.",
 };
 
 /**

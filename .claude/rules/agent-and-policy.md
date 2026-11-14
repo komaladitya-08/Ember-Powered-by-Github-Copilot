@@ -235,7 +235,10 @@ docs/DEVELOPING.md "Extensions: the runtime and the gate" is the design; app/mai
   one equal to an Ember tool (an MCP tool replaces it silently), never `builtin:`.
 - **Every call goes through `gate.ts`'s `classify()`**: hints only make a call stricter; a changing tool asks every
   time with a question built by `gateQuestion()` (no Always); a deny is final for the turn; every decision and result
-  is audited with sizes only; a call that can't be recorded is denied.
+  is audited with sizes only; a call that can't be recorded is denied. A call whose arguments (every string, keys
+  included: `emberDataOf()`) name Ember's data or policy folder is denied in every mode (`EMBER_DATA_REFUSED`), as the
+  same path typed in an app (`namesEmberData`) or named in a command (`ember.path`) is; one that names Ember's files or
+  folders by name only (`namesEmberFile`) asks every time, read-only tools too, and Autopilot denies it (integ-x-2).
 - **Results** are rewritten by `wrapResult()` (untrusted, `<` escaped, capped, no images) and scanned by injection.ts.
   Failures can't be rewritten: `onPostToolUseFailure` adds `failureNote()` and taints the conversation. Taint lives on
   the service for the whole conversation (reconnects included), never on one session.

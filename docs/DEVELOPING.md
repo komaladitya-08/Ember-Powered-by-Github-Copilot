@@ -902,6 +902,11 @@ it builds on:
   first fill the conversation reloads without extension tools (`vaultFilledNow`; `forSession` gives none from then
   on), and Home says **Off until Ember starts again** for each item, with why (integrations-r10-2: it said
   **Ready** while the gate refused every call).
+- **Ember's own files.** A call whose arguments name Ember's data folder or the organisation's policy folder
+  (`~/.config/ember/settings.json`, `%LOCALAPPDATA%\ember`) is refused in every mode, Autopilot included, as the same
+  path typed in an app or named in a command is; one that names one of Ember's files or folders by name only
+  (`settings.json`, `audit`) asks every time, a read-only tool's too, and Autopilot refuses it (gate.ts
+  `emberDataOf`, integ-x-2: a file tool could rewrite settings.json, announced, in Autopilot).
 - **Taint lasts the conversation**, across reconnects; it ends when the conversation is forgotten.
 - **Results are untrusted.** `onPostToolUse` replaces each result with `<extension_result untrusted="true">` text (`<`
   escaped, capped at 60 000 characters, images dropped); `injection.ts` scans it, and a flagged result makes every

@@ -5,7 +5,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { classify, gateAnnouncement, gateQuestion, wrapResult, argsSummary, plainName, REFUSED, VAULT_FILLED, type GateInput } from "../../app/main/extensions/gate";
+import { classify, emberDataOf, gateAnnouncement, gateQuestion, wrapResult, argsSummary, plainName, EMBER_DATA_REFUSED, EMBER_DATA_UNASKED, REFUSED, VAULT_FILLED, type GateInput } from "../../app/main/extensions/gate";
 import { canonical, checkPins, isReadOnly, pinAll, schemaWords, toolHash, shownHash, shownSchema, type ServedTool } from "../../app/main/extensions/pin";
 import { readMarketplace, readPlugin, serverSpec, inside, pluginPath, reachOf } from "../../app/main/extensions/manifest";
 import { probeHttp, probeStdio, rpcAnswer, servedTools } from "../../app/main/extensions/probe";
@@ -194,6 +194,30 @@ describe("the extensions gate", () => {
       expect(auto(o), JSON.stringify(o)).toEqual(classify(gate(o)));
       expect(auto(o).verdict).toBe("deny");
     }
+  });
+
+  it("refuses a call whose arguments name Ember's data or policy folder in every mode, and asks, never announces, one that names Ember's files by name only (integ-x-2)", () => {
+    // The same path typed in an app is refused (policy.ts namesEmberData), and as a command it is (ember.path).
+    for (const args of [
+      { path: "/home/u/.config/ember/settings.json", content: "{}" },
+      { paths: ["notes.txt", "~/.config/ember/audit/audit-2026-11.jsonl"] },
+      { target: { dir: "C:\\Users\\u\\AppData\\Local\\ember" } },
+      { file: "/Library/Application Support/Ember/policy.json" },
+      { "~/.config/%65mber/settings.json": true },
+    ]) expect(emberDataOf(args), JSON.stringify(args)).toBe("names");
+    for (const args of [{ path: "settings.json" }, { path: "backup/approvals-seal.bin" }, { name: "audit" }]) expect(emberDataOf(args), JSON.stringify(args)).toBe("may");
+    for (const args of [{ path: "/home/u/notes/todo.md" }, { q: "weather in Leeds" }, {}, undefined, null, 3]) expect(emberDataOf(args), JSON.stringify(args)).toBeNull();
+    // Too deep to read whole: whose it is can't be told.
+    let deep: unknown = "x";
+    for (let i = 0; i < 40; i++) deep = [deep];
+    expect(emberDataOf({ deep })).toBe("may");
+    for (const o of [{}, { tool: PINNED_POST }, { tainted: true }, { autopilot: true }, { autopilot: true, tool: PINNED_POST, tainted: true }, { remote: true }] as Partial<GateInput>[]) {
+      expect(classify(gate({ emberData: "names", ...o })), JSON.stringify(o)).toEqual({ verdict: "deny", reason: EMBER_DATA_REFUSED });
+      expect(classify(gate({ emberData: "may", ...o })), JSON.stringify(o)).toEqual(o.autopilot ? { verdict: "deny", reason: EMBER_DATA_UNASKED } : { verdict: "ask", reason: "ember-data" });
+    }
+    // Every deny before it still says its own reason.
+    expect(classify(gate({ emberData: "names", allowed: false })).reason).toBe("Extensions are off.");
+    expect(classify(gate({ emberData: null }))).toEqual(classify(gate()));
   });
 
   it("names the extension the user installed in its announcement, never the tool or its arguments", () => {
@@ -1104,6 +1128,22 @@ describe("ExtensionsService", () => {
     // A check that fails counts as filled.
     filled = "unknown";
     expect(await call(ext, "fake-lookup", { q: "x" })).toEqual({ permissionDecision: "deny", permissionDecisionReason: VAULT_FILLED });
+  });
+
+  it("refuses an extension's write to Ember's settings in Autopilot, a steered task's included, without asking or announcing it (integ-x-2)", async () => {
+    const said: string[] = [];
+    const s = await installed({ autopilot: () => true, announce: words => { said.push(words); return true; } });
+    const ext = s.forSession()!;
+    shown(ext);
+    expect(await call(ext, "fake-post_message", { text: "/home/u/.config/ember/settings.json" })).toEqual({ permissionDecision: "deny", permissionDecisionReason: EMBER_DATA_REFUSED });
+    expect(await call(ext, "fake-lookup", { q: "~/.config/ember/audit" })).toEqual({ permissionDecision: "deny", permissionDecisionReason: EMBER_DATA_REFUSED });
+    expect(await call(ext, "fake-post_message", { text: "settings.json" })).toEqual({ permissionDecision: "deny", permissionDecisionReason: EMBER_DATA_UNASKED });
+    expect(asked).toEqual([]);
+    expect(said).toEqual([]);
+    expect(audit.filter(e => e.event === "extension" && e.phase === "decision").map(e => e.verdict)).toEqual(["deny", "deny", "deny"]);
+    // Its ordinary call is announced as before.
+    expect(await call(ext, "fake-post_message", { text: "hello team" })).toEqual({ permissionDecision: "allow" });
+    expect(said).toHaveLength(1);
   });
 
   it("gives no new conversation an extension's tools after a fill from the vault, and tells Home (integrations-r10-2)", async () => {

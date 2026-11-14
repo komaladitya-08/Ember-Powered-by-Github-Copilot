@@ -809,11 +809,15 @@ export function mayReachEmberData(r: Pick<ActionRequest, "kind" | "window" | "el
   if (inEmberDataParent(r, name)) return true;
   const item = (r.element?.name ?? "").trim();
   if (EMBER_FILE.test(item) || EMBER_FOLDER.test(item)) return true;
-  if ((r.kind === "text" || r.kind === "cursor_text" || r.kind === "value") && r.value) {
-    return r.value.split(/[/\\\n]/).some(part => { const p = part.trim().replace(/^["'“]|["'”]$/g, ""); return EMBER_FILE.test(p) || EMBER_FOLDER.test(p); });
-  }
+  if ((r.kind === "text" || r.kind === "cursor_text" || r.kind === "value") && r.value) return namesEmberFile(r.value);
   return false;
 }
+/**
+ * Does `text` name one of Ember's own files or its data or audit folder's own name as a path's part ("settings.json",
+ * "notes/audit")? Whose it is can't be told: mayReachEmberData's typed text, and an extension's arguments (gate.ts).
+ */
+export const namesEmberFile = (text: string): boolean =>
+  text.split(/[/\\\n]/).some(part => { const p = part.trim().replace(/^["'“]|["'”]$/g, ""); return EMBER_FILE.test(p) || EMBER_FOLDER.test(p); });
 /**
  * The folders a file manager shows Ember's data or policy folder in (r10-safety-x10-2): its parent (".config",
  * "Local", "Application Support", "etc") and the parent's parent where that is the folder people open (AppData,
