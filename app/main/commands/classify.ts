@@ -42,7 +42,7 @@ type OS = ClassifyContext["os"];
 /** A `..` segment in a POSIX path. */
 const DOT_DOT = /(^|\/)\.\.(\/|$)/;
 /** How a script is read that the kernel or a POSIX shell opens by the name as written (`..` walked through links). */
-const POSIX_OPENERS: ReadonlySet<string> = new Set(["sh", "bash", "zsh", "shebang", "psql", "mysql", "sqlite", "sqlcmd", "clickhouse", "code"]);
+const POSIX_OPENERS: ReadonlySet<string> = new Set(["sh", "bash", "zsh", "shebang", "psql", "mysql", "sqlite", "sqlcmd", "clickhouse", "sed", "awk", "code"]);
 /** The card's words for a script whose path has a `..` the target couldn't resolve (L25). */
 export const SCRIPT_UNSURE = "Ember can't tell which script this runs.";
 
@@ -139,6 +139,11 @@ export interface ClassificationExtra extends Classification {
   /** Of those, the writes Ember can't place that no finding stands for (a checkout's work tree, an archive unpacked). */
   writesUnplaced?: boolean;
   /**
+   * The patch files it applies (`git apply a.patch`, `patch -p1 < a.diff`), absolute: one the task wrote makes what it
+   * changes the task's own writing too (TaskWrites.ownAnywhere, r10-commands-x10-6).
+   */
+  patches?: string[];
+  /**
    * The line sets a variable (but a `for` list's or a read's own, judged apart), changes the folder, its options or
    * positional words, or sources or execs (shellStateChanged): its commands are judged in the folder and with the values
    * the line starts with, so withoutReadFlow keeps an if's own words, as main did (commands-b7-1, b7-3). A loop's words it
@@ -166,10 +171,11 @@ export interface ScriptRef {
   /**
    * How to read its text: a POSIX shell, PowerShell, cmd, or "shebang" (run directly: the `#!` line names the
    * interpreter, and a text file without one is run by the calling shell); a database client's SQL ("psql", "mysql",
-   * "sqlite", "sqlcmd", "clickhouse": judged as that client's own text, commands-remote-r10-4, r10-commands-x10-2); or "code", a program in a language Ember
+   * "sqlite", "sqlcmd", "clickhouse": judged as that client's own text, commands-remote-r10-4, r10-commands-x10-2); a sed or awk program file
+   * ("sed", "awk": judged as `-e`'s or the program's text, r10-commands-x10-6); or "code", a program in a language Ember
    * doesn't read (Python, Node, Ruby…), which asks only when the task wrote it (commands-remote-r10-9).
    */
-  as: "sh" | "bash" | "zsh" | "powershell" | "cmd" | "shebang" | "psql" | "mysql" | "sqlite" | "sqlcmd" | "clickhouse" | "code";
+  as: "sh" | "bash" | "zsh" | "powershell" | "cmd" | "shebang" | "psql" | "mysql" | "sqlite" | "sqlcmd" | "clickhouse" | "sed" | "awk" | "code";
   /** The folder it runs in (its relative paths resolve there, not beside the script); "" when unknown. */
   cwd: string;
   /**
@@ -424,6 +430,13 @@ class Classifier {
   execOut: Arg[] = [];
   /** Of `downloads`, those to drop when the target says they are a folder (ClassificationExtra.downloadsIfFile). */
   downloadsIfFile: string[] = [];
+  /** The patch files the line applies (ClassificationExtra.patches). */
+  patches: string[] = [];
+  /** Notes a patch file the line applies (git apply, patch): absolute on the target. */
+  notePatch(a: Arg, sc: Scope): void {
+    if (a.v === null || a.v === "-" || STDIN_NAME.test(a.v) || (!isAbsolute(a.v, sc.path.flavour) && !a.v.startsWith("~") && !sc.cwd)) return;
+    this.patches.push(resolveTargetPath(a.v, { os: sc.os, home: sc.home ?? "", cwd: sc.cwd ?? "" }));
+  }
   needsGit = false;
   programs: string[] = [];
   windowsReach = false;
@@ -2474,6 +2487,7 @@ class Engine extends Classifier {
       // command), writes where it likes once the user says yes.
       writesAnywhere: this.unnamedAnywhere || this.findings.some(f => f.cls === "unclear" || f.cls === "escape"),
       writesUnplaced: this.unnamedAnywhere,
+      ...(this.patches.length ? { patches: [...new Set(this.patches)] } : {}),
       holdsFlow: this.setsVars || this.commands.some(changesShellState),
       ...(this.downloadsIfFile.length ? { downloadsIfFile: this.downloadsIfFile } : {}),
     };
@@ -3316,6 +3330,13 @@ class Engine extends Classifier {
     const files = !n ? (ORDINARY_VERBS[key] ?? ORDINARY_VERBS[unversioned(key)])?.files : key === "bun" ? /\.(m|c)?(j|t)sx?$/i : undefined;
     const script = files ? args.find(a => a.v !== null && !a.v.startsWith("-") && files.test(a.v)) : undefined;
     if (script) handedToScript(h, script);
+    // Its source is code Ember doesn't read: one the task wrote asks (judgeScripts; `tsx a.ts`, `bun a.ts`, `dart a.dart`:
+    // r10-commands-x10-6). A .dll is a program, built or given.
+    if (script && !/\.dll$/i.test(script.v ?? "")) this.recordScript(script, "code", h.sc);
+    // java runs a single source file by its name (`java a.java`), and pytest loads conftest.py from its folder and the
+    // test files it is given (r10-commands-x10-6).
+    if (key === "java") { const src = args.find(a => a.v !== null && !a.v.startsWith("-") && /\.java$/i.test(a.v)); if (src) this.recordScript(src, "code", h.sc); }
+    if (key === "pytest" || key === "py.test") pytestCode(h, args);
     // A deleter that had no row before commands-remote-c8-2 keeps an unknown program's `-o` (commands-remote-x8-5),
     // and so does toybox (commands-closed-y9-1).
     optionPaths(h, !n || UNKNOWN_OPTIONS.has(key));
@@ -6664,6 +6685,8 @@ reg(NATIVE, ["sed", "gsed"], h => {
   for (const f of scriptFiles) if (f) h.e.usePath(lit(f), "read", h.sc);
   // A sed program file this task downloaded runs code (its `e`, `w`/`r` commands): download-and-run (commands-remote-r8-2).
   if (scriptFiles.some(f => f !== null && h.e.isDownloaded(lit(f), h.sc))) h.e.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
+  // Any other is read first and judged as `-e`'s text (r10-commands-x10-6).
+  for (const f of scriptFiles) if (f !== null && !STDIN_NAME.test(f) && !STREAM_NAME.test(f)) h.e.recordScript(lit(f), "sed", h.sc);
   if (scripts.length === 0 && scriptFiles.length === 0) { scripts = [files[0]?.v ?? null]; files = files.slice(1); }
   for (const s of scripts) if (s === null || !sedScriptOk(s)) h.e.unclear("unclear.sed-script", "Its sed script can run commands or write files Ember can't see.");
   if (scripts.some(s => s === null || !sedScriptOk(s)) && typeof h.s.stdinText === "string") h.e.judgeInput(h.s.stdinText, h.sc);
@@ -6744,6 +6767,10 @@ reg(NATIVE, ["awk", "gawk", "mawk", "nawk"], h => {
   // `awk -f -` / `-f /dev/stdin` reads its program from stdin: judge the seen text, else ask (review #166).
   if (progFiles.some(f => f === null || STDIN_NAME.test(f))) fromStdin(h, t => { if (!awkProgramOk(t)) h.e.unclear("unclear.awk-program", "Its awk program can run commands or write files."); });
   else if (progFiles.some(f => f !== null && STREAM_NAME.test(f))) h.e.unclear("unclear.script-stream", SAYS.scriptStream);
+  // Its program files are read first and judged as program text (r10-commands-x10-6); a library -l loads is a program.
+  for (const f of values(p, "f", "file", "i", "include", "E", "exec")) {
+    if (f !== null && !STDIN_NAME.test(f) && !STREAM_NAME.test(f) && !/^inplace(\.awk)?$/.test(f)) h.e.recordScript(lit(f), "awk", h.sc);
+  }
   let files = p.operands;
   const inline = values(p, "e", "source");
   if (progFiles.length === 0 && inline.length === 0) { inline.push(files[0]?.v ?? null); files = files.slice(1); }
@@ -6834,6 +6861,15 @@ function intoInterpreter(h: H, readAs?: ScriptRef["as"]): void {
 }
 
 /** A script given to an interpreter or shell: judged by name, refused if Ember's, escape if downloaded in this task. */
+/**
+ * What pytest loads as code: the conftest.py in its folder and the test files it is given (`pytest test_a.py`), each
+ * code Ember doesn't read, so one the task wrote asks (r10-commands-x10-6). A test it finds by itself isn't named.
+ */
+function pytestCode(h: H, args: readonly Arg[]): void {
+  if (h.e.readsAsMain || h.sc.cwd === null) return;
+  h.e.recordScript(lit("conftest.py"), "code", h.sc);
+  for (const a of args) if (a.v !== null && !a.v.startsWith("-") && /\.py(::\S*)?$/.test(a.v)) h.e.recordScript(lit(a.v.replace(/::.*$/, "")), "code", h.sc);
+}
 function runScript(h: H, script: Arg, readAs?: ScriptRef["as"]): void {
   if (script.v === null) {
     if (script.fetch) h.e.add("escape", "escape.download-run", SAYS.downloadsAndRuns);
@@ -7031,6 +7067,11 @@ reg(NATIVE, Object.keys(INTERPRETERS).filter(k => !["awk", "gawk", "mawk", "nawk
         || (/^(pytest|unittest|nose2?|doctest)$/.test(mod) && h.sc.cwd !== null && h.e.downloadedProjectFile(h.sc.cwd, h.sc))
         || (h.sc.cwd === null && h.e.holdsAnyDownload());
       if (runsDownload) h.e.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
+      // A module the task wrote in this folder (`python3 -m a` after writing a.py) is code Ember doesn't read: it asks
+      // (judgeScripts), and so does a conftest.py or a test file it wrote that pytest loads (r10-commands-x10-6).
+      // Python's own and the everyday tools' modules are found where they are installed.
+      if (!PY_OWN_MODULES.has(mod) && !PY_TOOL_MODULES.has(mod)) h.e.recordScript(lit(`${file}.py`), "code", h.sc);
+      if (mod === "pytest") pytestCode(h, afterModule(h, p) ?? []);
     }
     h.e.readArgs(p.operands, h.sc);
     return;
@@ -7625,6 +7666,7 @@ git(["remote"], h => {
 git(["apply", "am"], h => {
   const files = h.args.filter(a => !isOption(a));
   h.e.readArgs(files, h.sc);
+  for (const f of [...files, ...h.s.redirs.flatMap(r => (r.kind === "read" && r.target ? [r.target] : []))]) h.e.notePatch(f, h.sc);
   if (h.args.some(a => /^--(check|stat|numstat|summary|show-current-patch|abort|skip|quit)$/.test(a.v ?? ""))) return;
   if (appliesDownload(h, files)) h.e.markUnnamed(".", h.sc);
 });
@@ -8929,7 +8971,8 @@ reg(NATIVE, ["pipx", "poetry", "pipenv", "uv", "rye", "pdm", "hatch", "conda", "
     return;
   }
   if ((h.key === "deno") && verb === "eval") { h.e.unclear("unclear.inline-code", "It runs code given on the command line."); return; }
-  if (h.key === "deno" && (verb === "run" || verb === "test" || verb === "task")) { if (verb === "task") nameCheck(h, specs[0]?.v ?? ""); else if (specs[0]) runScript(h, specs[0]); return; }
+  // What deno runs or tests is code Ember doesn't read: one the task wrote asks (r10-commands-x10-6).
+  if (h.key === "deno" && (verb === "run" || verb === "test" || verb === "task")) { if (verb === "task") nameCheck(h, specs[0]?.v ?? ""); else if (specs[0]) runScript(h, specs[0], "code"); return; }
   if ((h.key === "poetry" || h.key === "pipenv") && verb === "shell") { h.e.unclear("unclear.interactive", SAYS.interactive); return; }
   if (/^(poetry|flit|hatch|pdm|uv|rye)$/.test(h.key) && verb === "publish") { h.e.add("publish", `${h.key}.publish`, "Publishes a package to the registry.", { program: `${h.key} publish`, objects: [{ kind: "package", text: "", abs: null }] }); return; }
   if (h.key === "gem" && verb === "push") { h.e.add("publish", "gem.push", `Publishes ${specs[0]?.v ?? "a gem"} to the registry.`, { program: "gem push", objects: [{ kind: "package", text: specs[0]?.v ?? "", abs: null }] }); return; }
@@ -9003,7 +9046,8 @@ reg(NATIVE, ["go"], h => {
   }
   if (verb === "install" || verb === "get") { languageInstall(h, rest.filter(a => !isOption(a))); return; }
   if (verb === "run" && rest.some(a => /@/.test(a.v ?? "") && !isOption(a))) { h.e.add("escape", "escape.npx", SAYS.downloadsProgram); return; }
-  if (verb === "run") { const s = rest.find(a => !isOption(a)); if (s) runScript(h, s); return; }
+  // `go run a.go b.go`: each source is code Ember doesn't read; one the task wrote asks (r10-commands-x10-6).
+  if (verb === "run") { const s = rest.find(a => !isOption(a)); if (s) runScript(h, s, "code"); for (const a of rest) if (a !== s && a.v !== null && /\.go$/i.test(a.v)) h.e.recordScript(a, "code", h.sc); return; }
   if (verb === "clean" && rest.some(a => /^-(cache|modcache|testcache|fuzzcache)$/.test(a.v ?? ""))) h.e.add("destroy", "script.destroy", "Runs clean, whose name says it deletes things.");
   // build and test -c write the program where -o says, a file or a folder (review #169).
   if (verb === "build" || verb === "test") {
@@ -10179,6 +10223,7 @@ reg(NATIVE, ["patch", "gpatch"], h => {
   if (patchFile) h.e.usePath(patchFile, "read", sc);
   // A patch this task downloaded, or one fetched into it: what it changes is that download (commands-remote-c5-4).
   const patches = [...values(p, "i", "input").flatMap(f => (f ? [lit(f)] : [])), ...(patchFile ? [patchFile] : [])];
+  for (const f of [...patches, ...h.s.redirs.flatMap(r => (r.kind === "read" && r.target ? [r.target] : []))]) h.e.notePatch(f, sc);
   if (appliesDownload(ph, patches)) {
     if (file?.v) h.e.carryDownload(file.v, sc);
     else h.e.markUnnamed(".", sc);

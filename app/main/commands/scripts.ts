@@ -33,6 +33,8 @@ export type ScriptLanguage =
   | { kind: "follow"; path: string; code?: true }
   /** A database client's SQL: judged as that client's own text (commands-remote-r10-4, r10-commands-x10-2). */
   | { kind: "sql"; client: SqlFileClient }
+  /** A sed or awk program file: judged as that program's own text (r10-commands-x10-6). */
+  | { kind: "filter"; program: "sed" | "awk" }
   /**
    * A script in a language Ember doesn't read (Python, Node, Ruby…, or a `#!` naming one): L8 unchanged, unless the
    * task wrote it, when it asks (commands-remote-r10-9).
@@ -58,6 +60,7 @@ export function scriptLanguage(as: ScriptRef["as"], text: string): ScriptLanguag
     case "powershell": return { kind: "shells", shells: ["powershell"] };
     case "cmd": return { kind: "shells", shells: ["cmd"] };
     case "psql": case "mysql": case "sqlite": case "sqlcmd": case "clickhouse": return { kind: "sql", client: as };
+    case "sed": case "awk": return { kind: "filter", program: as };
     case "code": return { kind: "code" };
     case "shebang": break;
   }
@@ -111,6 +114,17 @@ export function sqlAsCommand(client: SqlFileClient, text: string): string | null
   return `${SQL_PROGRAM[client]} <<'${SQL_END}'\n${text}\n${SQL_END}\n`;
 }
 
+/**
+ * A sed or awk program file's text as the command line the classifier judges it by (r10-commands-x10-6): `sed -e '…'`
+ * or `awk '…'`, whose program text the classifier reads (sed's `e` and `w`, awk's `system()` and `print >` ask); null
+ * for a NUL, which no program text holds.
+ */
+export function filterAsCommand(program: "sed" | "awk", text: string): string | null {
+  if (text.includes("\0")) return null;
+  const quoted = `'${text.replace(/'/g, "'\\''")}'`;
+  return program === "sed" ? `sed -e ${quoted}\n` : `awk ${quoted}\n`;
+}
+
 /** The card's words for a script of the task's own in a language Ember doesn't read (commands-remote-r10-9). */
 export const unreadOwnCode = (name: string) => `It runs ${name}, which this task wrote or downloaded, in a language Ember can't read first.`;
 
@@ -123,6 +137,11 @@ export interface TaskWrites {
   paths: Set<string>;
   /** Something was written where Ember can't tell, or more than it keeps: every script counts as the task's own. */
   anywhere: boolean;
+  /**
+   * What was written where Ember can't tell was the task's own writing: a patch it wrote, applied (`git apply a.patch`).
+   * Every script then counts as written by name too, so code Ember doesn't read asks (r10-commands-x10-6).
+   */
+  ownAnywhere?: boolean;
 }
 
 /** At most this many paths are kept per task; past that, every script counts as written (fail closed). */
@@ -139,6 +158,12 @@ export const newTaskWrites = (): TaskWrites => ({ paths: new Set(), anywhere: fa
 export function noteWrites(w: TaskWrites, cls: Classification): void {
   const x = cls as Partial<ClassificationExtra>;
   if (x.writesAnywhere === true) w.anywhere = true;
+  // A patch the task wrote (by name, or under a folder it wrote) or downloaded: what it changes is the task's own writing.
+  const patches = Array.isArray(x.patches) ? x.patches.filter((p): p is string => typeof p === "string" && p !== "") : [];
+  if (patches.some(p => [...w.paths].some(q => p === q || p.startsWith(`${q.replace(/[\\/]+$/, "")}/`) || p.startsWith(`${q.replace(/[\\/]+$/, "")}\\`)))) {
+    w.anywhere = true;
+    w.ownAnywhere = true;
+  }
   for (const p of Array.isArray(x.writes) ? x.writes : []) {
     if (typeof p !== "string" || p === "") continue;
     if (w.paths.size >= MAX_TASK_WRITES && !w.paths.has(p)) { w.anywhere = true; break; }
@@ -403,7 +428,7 @@ export async function judgeScripts(cls: Classification, io: ScriptIo | null, cla
     // the target says nothing is there (a file this same command makes asks anyway: classify's own rule). L8 for any
     // other, and for one that is the task's own only because it wrote where Ember couldn't tell (`git pull`, a build):
     // a project's scripts after a pull run as before (commands-remote-r10-9).
-    const named: TaskWrites | null = env.written ? { paths: env.written.paths, anywhere: false } : null;
+    const named: TaskWrites | null = env.written ? { paths: env.written.paths, anywhere: env.written.ownAnywhere === true } : null;
     const ownByName = (p: string | null): boolean => p !== null && taskWrote(p, named, env.downloaded, cmp);
     const ownCode = async (): Promise<void> => {
       if (!(ownByName(ref.path) || ownByName(where) || (env.written?.paths.size ?? 0) > 0 || env.downloaded.size > 0)) return;
@@ -449,9 +474,10 @@ export async function judgeScripts(cls: Classification, io: ScriptIo | null, cla
     };
     // A SQL file is judged as its client's own text, in a here-document the classifier reads whole; one Ember can't
     // put there asks (commands-remote-r10-4).
-    const sql = lang.kind === "sql" ? sqlAsCommand(lang.client, text) : null;
+    const sql = lang.kind === "sql" ? sqlAsCommand(lang.client, text) : lang.kind === "filter" ? filterAsCommand(lang.program, text) : null;
     if (lang.kind === "sql" && sql === null) { unclear("unclear.sql", "It runs database commands Ember can't read first.", name); continue; }
-    const shells: ShellId[] = lang.kind === "sql" ? ["bash"] : lang.shells;
+    if (lang.kind === "filter" && sql === null) { unclear("unclear.script", "It runs a program file Ember can't read first.", name); continue; }
+    const shells: ShellId[] = lang.kind === "sql" || lang.kind === "filter" ? ["bash"] : lang.shells;
     for (const shell of shells) {
       let got = classify(sql ?? text, shell, sctx);
       const wanted = [...new Set([...got.probe, ...got.findings.flatMap(f => (f.ifExists === undefined ? [] : [f.ifExists]))])].slice(0, 64);

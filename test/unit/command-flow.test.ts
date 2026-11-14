@@ -4381,6 +4381,57 @@ describe("SQL files and scripts in other languages a command runs (commands-remo
     expect(h0rules(mine)).toContain("unclear.script-code");
   });
 
+  it("asks before deno, bun, tsx, ts-node, go run, java, pytest or python -m runs code the task wrote (r10-commands-x10-6)", async () => {
+    for (const [file, run] of [
+      ["a.ts", "deno run a.ts"], ["a.ts", "deno run -A a.ts"], ["a.ts", "deno test a.ts"], ["a.ts", "bun a.ts"], ["a.ts", "bun run a.ts"], ["a.ts", "ts-node a.ts"],
+      ["a.ts", "tsx a.ts"], ["a.go", "go run a.go"], ["b.go", "go run a.go b.go"], ["a.java", "java a.java"], ["conftest.py", "pytest -q"],
+      ["conftest.py", "python3 -m pytest"], ["test_a.py", "pytest test_a.py::test_x"], ["a.py", "python3 -m a"],
+    ] as const) {
+      const h = flow();
+      expect((await local(h, `echo x > ${file}`)).resultType, run).toBe("success");
+      h.existing.add(`/home/ana/proj/${file}`);
+      expect((await local(h, run)).resultType, run).toBe("denied");
+      expect(h0rules(h), run).toContain("unclear.script-code");
+    }
+    // The project's own (not written by the task) run as before, and so does pytest with no conftest.py of the task's.
+    const own = flow();
+    for (const run of ["tsx tool.ts", "deno run main.ts", "go run main.go", "java Main.java", "pytest -q"]) expect((await local(own, run)).resultType, run).toBe("success");
+    await local(own, "echo hi > notes.txt");
+    expect((await local(own, "pytest -q")).resultType).toBe("success");
+    expect(own.asked).toEqual([]);
+  });
+
+  it("reads a sed or awk program file before it runs, and asks when it runs commands or writes files (r10-commands-x10-6)", async () => {
+    for (const [file, text, run, rule] of [
+      ["a.sed", "1e rm -rf /home/ana/Documents\n", "sed -f a.sed in.txt", "unclear.sed-script"], ["a.sed", "s/x/y/w /home/ana/.bashrc\n", "sed -f a.sed in.txt", "unclear.sed-script"],
+      ["a.awk", "{ system(\"rm -rf /home/ana/Documents\") }\n", "awk -f a.awk in.txt", "unclear.awk-program"], ["a.awk", "{ print > \"/home/ana/.bashrc\" }\n", "gawk -f a.awk in.txt", "unclear.awk-program"],
+    ] as const) {
+      const h = flow({ [`/home/ana/proj/${file}`]: text });
+      expect((await local(h, run)).resultType, run).toBe("denied");
+      expect(h0rules(h), run).toContain(rule);
+    }
+    const ok = flow({ "/home/ana/proj/a.sed": "s/x/y/g\n", "/home/ana/proj/a.awk": "{ print $1 }\n" });
+    for (const run of ["sed -f a.sed in.txt", "awk -f a.awk in.txt"]) expect((await local(ok, run)).resultType, run).toBe("success");
+    expect(ok.asked).toEqual([]);
+  });
+
+  it("counts what a patch the task wrote changes as the task's own, so code it then runs asks (r10-commands-x10-6)", async () => {
+    for (const apply of ["git apply a.patch", "patch -p1 < a.patch", "patch -p1 -i a.patch", "git apply < a.patch"]) {
+      const h = flow();
+      await local(h, "echo x > a.patch");
+      expect((await local(h, apply)).resultType, apply).toBe("success");
+      expect(h.ctx.state.written!.ownAnywhere, apply).toBe(true);
+      h.existing.add("/home/ana/proj/a.py");
+      expect((await local(h, "python3 a.py")).resultType, apply).toBe("denied");
+      expect(h0rules(h), apply).toContain("unclear.script-code");
+    }
+    // A patch the task didn't write (the project's own) leaves a pull's rule: the project's scripts run as before.
+    const pulled = flow();
+    expect((await local(pulled, "git apply fix.patch")).resultType).toBe("success");
+    pulled.existing.add("/home/ana/proj/a.py");
+    expect((await local(pulled, "python3 a.py")).resultType).toBe("success");
+  });
+
   it("keeps L8 for a script in another language the task didn't write: the project's own runs (commands-remote-r10-9)", async () => {
     const h = flow({ "/home/ana/proj/tool": "#!/usr/bin/env python3\nprint(1)\n" });
     for (const cmd of ["python3 manage.py check", "node scripts/build.js", "./tool"]) expect((await local(h, cmd)).resultType, cmd).toBe("success");

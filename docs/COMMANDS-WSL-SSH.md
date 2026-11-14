@@ -972,12 +972,13 @@ an earlier command printed text that looked like instructions.").
   first." / "Ember is running as an administrator here, so each command asks first.").
 - **Ember judges the command line it can see, and the shell scripts it can read.** A shell script is read and judged
   first (§2.4); one Ember can't read all of (`case`, functions, `{ … }` groups, a `[[` with arithmetic, a variable in
-  a file name, more than 64 commands or 8,000 characters, or zsh's, PowerShell's or cmd's `if` and `for`) asks, so most build and install scripts ask. A SQL file a database client runs is read and judged the same way. What a build file, a program, a script in another language, or a shell script too big to read
+  a file name, more than 64 commands or 8,000 characters, or zsh's, PowerShell's or cmd's `if` and `for`) asks, so most build and install scripts ask. A SQL file a database client runs is read and judged the same way, and so is a sed or awk program file (`sed -f`, `awk -f`). What a build file, a program, a script in another language, or a shell script too big to read
   (more than 64 KB) does inside (`make`, `npm test`, `python build.py`) runs like a build, unless its name says deploy,
   publish, release, push, upload, delete, clean, wipe, prod, install or the like, which asks. A script this task
   downloaded always asks, and one it wrote asks when it can't be read in full; a script in another language (Python,
-  Node, Ruby…, run by its interpreter or by a `#!` line naming one) that this task wrote by name or downloaded asks,
-  since Ember can't read it first. A script an earlier command of the
+  Node, Ruby…, run by its interpreter or by a `#!` line naming one, or by `deno`, `bun`, `tsx`, `ts-node`, `go run`,
+  `java a.java`, `python3 -m a`, and the conftest.py or the test files pytest is given) that this task wrote by name,
+  changed with a patch it wrote (`git apply`, `patch`) or downloaded asks, since Ember can't read it first. A script an earlier command of the
   task downloaded is asked about without being read (it is code from elsewhere either way); one the same line
   downloads is read as it stands before the download (§2.4).
 - **Links.** Ember checks where each path really leads before it decides (a link into `~/.ssh` counts as `~/.ssh`,

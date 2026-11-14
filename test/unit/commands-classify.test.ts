@@ -1188,7 +1188,8 @@ describe("shell scripts to read (L8, the lead's ruling)", () => {
     // An interpreter's script is recorded as code: it asks only when the task wrote it (commands-remote-r10-9).
     expect(scripts("node app.js", "bash", "linux")).toEqual([{ path: "/home/ana/proj/app.js", as: "code", cwd: "/home/ana/proj" }]);
     expect(scripts("python x.py", "bash", "linux")).toEqual([{ path: "/home/ana/proj/x.py", as: "code", cwd: "/home/ana/proj" }]);
-    expect(scripts("deno run main.ts", "bash", "linux")).toEqual([]);
+    // deno's too (r10-commands-x10-6).
+    expect(scripts("deno run main.ts", "bash", "linux")).toEqual([{ path: "/home/ana/proj/main.ts", as: "code", cwd: "/home/ana/proj" }]);
     expect(scripts("sh -c 'echo hi'", "bash", "linux")).toEqual([]);
     expect(scripts("sh", "bash", "linux")).toEqual([]);
     // A secret or Ember's own file is never read as a script (running it asks or is refused by the path's own rule).
