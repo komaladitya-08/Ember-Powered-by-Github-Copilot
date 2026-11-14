@@ -166,7 +166,8 @@ export function firstRunRowText(row: FirstRunRow, o: { commands: FirstRunCard | 
 
 /** Why a row can't be turned on here, in one sentence (app/shared/first-run.ts FirstRunWhy). */
 export function firstRunWhy(why: FirstRunWhy): string {
-  if (why === "locked") return "Your organisation's policy for me has a problem, so this stays off for now.";
+  // Agreeing records the rows off, and first run isn't shown again: where to turn each on later (first-run-c12-2).
+  if (why === "locked") return "Your organisation's policy for me has a problem, so this stays off for now. Once it's fixed, you can turn it on in Settings.";
   if (why === "organisation") return "Managed by your organisation, which has turned this off.";
   if (why === "models") return "The speech models aren't on this computer yet, so this stays off for now. You can download them later in Settings › Voice, which asks you first.";
   return "I can't turn this on here right now. You can turn it on later in Settings.";

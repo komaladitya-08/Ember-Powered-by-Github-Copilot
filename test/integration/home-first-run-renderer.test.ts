@@ -2046,7 +2046,7 @@ describe.skipIf(gate)("first run's one agreement (owner decision of 2026-11-12)"
     const locked = await open({ consent: 0, firstRun: { rows: ALL_ROWS.map(r => ({ ...r, offered: false, why: "locked" })), commands: null } });
     await toConsent(locked);
     expect(await locked.locator(".w-row input:checked").count()).toBe(0);
-    expect(await locked.locator("#w-row-interactive-why").innerText()).toBe("Your organisation's policy for me has a problem, so this stays off for now.");
+    expect(await locked.locator("#w-row-interactive-why").innerText()).toBe("Your organisation's policy for me has a problem, so this stays off for now. Once it's fixed, you can turn it on in Settings.");
   }, 30_000);
 
   it("says what couldn't be turned on before going on, and that nothing is on when the agreement wasn't saved (slice4-29)", async () => {
