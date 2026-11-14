@@ -41,6 +41,7 @@ import { SAVED_OUTPUT } from "../agent/runtime-temp";
 import type { StepVerdict } from "../commands/review";
 import { ExtensionStore, copyPlugin, type StoredItem, type StoredServer } from "./store";
 import { MCP_TOOL_NAME, clashingToolNames, modelToolName } from "./tool-name";
+import { failureTaints } from "./failure-text";
 
 export interface ExtensionsDeps {
   /** `<userData>/extensions`. */
@@ -1246,12 +1247,14 @@ export class ExtensionsService implements ExtensionsApi {
   }
 
   /**
-   * A failed call: the SDK passes its text to the model as it is (a failure can't be rewritten), so Ember says that
-   * failure's text is untrusted. The conversation is tainted as for a result (every later call asks): where the text
-   * reads like instructions, is more than a result may hold or was saved to a file (not scanned whole), or isn't text
-   * Ember could read at all. An ordinary failure (a 404, a timeout) is not danger, and read-only calls go on as before
-   * (integrations-r12-2: every failure tainted, so one 404 made every read-only call ask for the conversation).
-   * Because it can't be rewritten, no extension is called once the vault has filled something (gate.ts VAULT_FILLED).
+   * A failed call: the SDK passes its text to the model as it is (this hook can't rewrite it), so Ember's launcher has
+   * already put a server's own text in Ember's untrusted tag (failure-text.ts, launch.ts `passedOn`), and this note
+   * says that failure's text is untrusted. The conversation is tainted as for a result (every later call asks): where
+   * the text reads like instructions, is more than a result may hold or was saved to a file (not scanned whole), isn't
+   * text Ember could read at all, or held hidden characters or markup that looks like Ember's own (the launcher's flag,
+   * or such text outside its tag: r12-ui-x12-2). An ordinary failure (a 404, a timeout) is not danger, and read-only
+   * calls go on as before (integrations-r12-2: every failure tainted, so one 404 made every read-only call ask for the
+   * conversation). No extension is called once the vault has filled something (gate.ts VAULT_FILLED).
    */
   private async failure(gate: SessionGate, input: PostToolUseFailureHookInput): Promise<PostToolUseFailureHookOutput> {
     const e = gate.tools.get(input.toolName);
@@ -1261,7 +1264,7 @@ export class ExtensionsService implements ExtensionsApi {
     const text = readable ? input.error as string : "";
     const signals = injectionSignals(text);
     const truncated = SAVED_OUTPUT.test(text) || text.length > RESULT_MAX;
-    const taints = !readable || signals.length > 0 || truncated;
+    const taints = !readable || signals.length > 0 || truncated || failureTaints(text);
     if (taints) this.tainted = true;
     try { this.audit({ phase: "failed", ext: e?.item.id ?? null, tool: input.toolName, ...named(e?.item, e?.tool), chars: text.length, signals, ...(truncated ? { truncated: true } : {}), ...(readable ? {} : { unread: true }) }); } catch (err) { this.o.log.warn("extensions.audit_failed", { err }); }
     return { additionalContext: failureNote(e?.item.name ?? "an extension", e?.tool.name ?? input.toolName, taints) };

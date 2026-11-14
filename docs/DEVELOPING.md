@@ -934,11 +934,17 @@ it builds on:
   change of hints alone (`readOnlyHint` to `destructiveHint`); the server's own list, asked after each of its calls,
   can, and such a tool is turned off as above. Ember decides by the hints it pinned, never by what a server says
   later. The next start's check (`refresh()`) re-pins nothing and turns a changed tool off.
-- **Failures are untrusted too.** The SDK can't rewrite a failed call's text, so `onPostToolUseFailure` adds Ember's
-  note that it is untrusted data and audits its size. It taints the conversation as a result does: where its text
-  reads like instructions, is more than a result may hold or was saved to a file, or isn't text at all. An ordinary
-  failure (a 404, a timeout) taints nothing, and read-only calls go on without asking (integrations-r12-2).
-  For the same reason no extension is called once Ember has filled something from its vault in this run (the
+- **Failures are untrusted too.** The SDK's failure hook can't rewrite a failed call's text, so Ember's launcher,
+  which every server's answers pass through, does: a JSON-RPC error's message and an `isError` result's text reach
+  the runtime only inside Ember's `<extension_failure untrusted="true">` tag, with `<` and `>` replaced, hidden
+  characters written out and anything but the text dropped, and the tag is marked `flagged` where the text held
+  hidden characters or markup like Ember's own (`app/main/extensions/failure-text.ts`; r12-ui-x12-2: a server could
+  close Ember's tags in its error and write a "user request" of its own). `onPostToolUseFailure` adds Ember's note
+  that it is untrusted data and audits its size. It taints the conversation as a result does: where its text reads
+  like instructions, is more than a result may hold or was saved to a file, isn't text at all, or was flagged. An
+  ordinary failure (a 404, a timeout, an HTML error page) taints nothing, and read-only calls go on without asking
+  (integrations-r12-2).
+  Because the runtime still passes the text on, no extension is called once Ember has filled something from its vault in this run (the
   gate's `vaultFilled`; "The vault", After a fill): the failure's text couldn't have the value taken out. At the
   first fill the conversation reloads without extension tools (`vaultFilledNow`; `forSession` gives none from then
   on), and Home says **Off until Ember starts again** for each item, with why (integrations-r10-2: it said

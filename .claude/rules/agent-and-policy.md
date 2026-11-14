@@ -246,8 +246,12 @@ docs/DEVELOPING.md "Extensions: the runtime and the gate" is the design; app/mai
   file's content, never one path), asks every time, read-only tools too, its question saying why (`gateQuestion`'s
   `reason`: integ-y-2), and Autopilot denies it (integ-x-2).
 - **Results** are rewritten by `wrapResult()` (untrusted, `<` escaped, capped, no images) and scanned by injection.ts.
-  Failures can't be rewritten: `onPostToolUseFailure` adds `failureNote()` and taints the conversation as a result
-  would (flagged, too long to scan whole, saved to a file, or not text), never for failing alone. Taint lives on
+  The failure hook can't rewrite a failure, so the launcher does (`passedOn`, failure-text.ts): a JSON-RPC error's
+  message and an `isError` result's text reach the runtime only in Ember's `<extension_failure untrusted>` tag, `<`
+  and `>` replaced, hidden characters written out, `data` and anything but text dropped (r12-ui-x12-2).
+  `onPostToolUseFailure` adds `failureNote()` and taints the conversation as a result would (flagged, too long to
+  scan whole, saved to a file, or not text), and where the text hid characters or wrote markup like Ember's own
+  (`failureTaints`), never for failing alone. Taint lives on
   the service for the whole conversation (reconnects included), never on one session.
 - **A pin decides what the model is shown, not only which calls run.** Check pins as the session loads
   (`verify`, awaited by `verifySessionTools`, against the runtime's own metadata, which is what the model is sent)
