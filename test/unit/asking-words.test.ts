@@ -318,3 +318,11 @@ describe("the commands card's line for an Ember running as the administrator is 
     expect(COMMANDS_CARD_PRIVILEGED).toBe("Commands here run as the administrator, so in Interactive and Assisted Ember asks before every one, even one you asked for exactly. In Autopilot, each runs after a few seconds to stop it.");
   });
 });
+
+describe("Apps & privacy's line about other computers and commands promises no question before every command (r11-copy-x11-6)", () => {
+  it.each(["linux", "win32"] as const)("says each asks before it turns on, as first run's line does (%s)", os => {
+    const line = os === "win32" ? cc.ONBOARDING_LINE.settingsWindows : cc.ONBOARDING_LINE.settings;
+    expect(line).not.toMatch(/Each asks you first/);
+    expect(line).toMatch(/ Each asks you before it turns on\.$/);
+  });
+});

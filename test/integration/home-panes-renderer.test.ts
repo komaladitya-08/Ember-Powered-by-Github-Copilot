@@ -666,7 +666,7 @@ describe.skipIf(gate)("Home's Apps & privacy, after setup (2026-11-07 product au
     expect(shown).toBe(consent?.replace("The list is in settings", "The list is below, under Never look at")
       .replace(" in an app unless you turn on Interactive, when you agree or later in settings, and then still before anything risky there. It asks before a command it knows is dangerous and before code it can't read, unless you asked for exactly that command and it only deletes or overwrites data, publishes something or changes the system (it shows it first, with a few seconds to stop it). A command it doesn't know runs, and it tells you. Assisted and Autopilot, if you choose them later in settings, ask less.", " in an app. It asks before a command it knows is dangerous and before code it can't read, unless you asked for exactly that command and it only deletes or overwrites data, publishes something or changes the system (it shows it first, with a few seconds to stop it). A command it doesn't know runs, and it tells you.")
       .replace(" unless you turn on “Hey Ember”, when you agree or later in settings, or", " unless you turn on “Hey Ember” in Settings › Voice, or")
-      .replace(" Each asks you before it turns on, except commands on this computer, which have their own switch here.", " Each asks you first."));
+      .replace(" Each asks you before it turns on, except commands on this computer, which have their own switch here.", " Each asks you before it turns on."));
     expect(shown).not.toContain("Agreeing turns on");
     expect(shown).toContain("It sends no usage statistics.");
     expect(shown).toContain("~/.config/ember");
@@ -774,7 +774,7 @@ describe.skipIf(gate)("Home's Apps & privacy, as the person's own settings and t
     await page.evaluate(s => window.__pane.emit("onSettingsChanged", s), base);
     await page.evaluate(a => window.__pane.emit("onApprovals", a), approvalsState(DEFAULT_SETTINGS.approvals, null));
     await expect.poll(shown).toContain("It asks before acting in an app. It asks before a command it knows is dangerous and before code it can't read, unless you asked for exactly that command and it only deletes or overwrites data, publishes something or changes the system (it shows it first, with a few seconds to stop it). A command it doesn't know runs, and it tells you.");
-    expect(await plug()).toBe("Other computers and commands are off until you turn them on: Ember can work on computers you reach over SSH, and run commands in its own window. Each asks you first.");
+    expect(await plug()).toBe("Other computers and commands are off until you turn them on: Ember can work on computers you reach over SSH, and run commands in its own window. Each asks you before it turns on.");
     expect(await fold.evaluate(d => (d as HTMLDetailsElement).open)).toBe(true);
     expect(page.errors).toEqual([]);
     await page.close();
