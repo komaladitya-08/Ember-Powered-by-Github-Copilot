@@ -5,10 +5,17 @@
  * or "ember", an item named like one of its files) asks every time, never announced, waived or checked, and Autopilot
  * refuses it.
  */
+import fs from "node:fs";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { PolicyEngine, mayReachEmberData, namesEmberData, type ActionRequest } from "../../app/main/policy/policy";
 import { ALL_SCOPES } from "../../app/main/policy/autonomy";
 import { KEYS } from "../../app/shared/shortcuts";
+import { PROVIDER_SEAL_FILE } from "../../app/main/provider-record";
+import { PROVIDER_KEY_FILE } from "../../app/main/provider";
+import { VAULT_FILE } from "../../app/main/vault/store";
+import { ERASED_FILE, HISTORY_FILE } from "../../app/main/agent/conversation-store";
+import { RUN_FILE } from "../../app/main/run-marker";
 
 type OS = "linux" | "win32" | "darwin";
 type Mode = "asking" | "interactive" | "assisted" | "autopilot";
@@ -184,5 +191,21 @@ describe("Ember's own settings, audit log and policy reached through another app
     expect(out.verdict).toBe("confirm");
     const auto = engine("autopilot", "linux", { kate: "act" });
     expect(auto.autopilotStep(r, { ...d, verdict: "confirm" }).verdict).toBe("deny");
+  });
+
+  it("knows every file Ember keeps in its data folder by name, so an editor whose title names one with no folder asks, and Autopilot refuses (integ-x-3)", () => {
+    // The files the source names as it joins them to a folder (Ember's data folder, or a folder of it), and its constants.
+    const files = new Set<string>([PROVIDER_SEAL_FILE, PROVIDER_KEY_FILE, VAULT_FILE, HISTORY_FILE, ERASED_FILE, RUN_FILE]);
+    const walk = (dir: string): string[] => fs.readdirSync(dir, { withFileTypes: true }).flatMap(e => e.isDirectory() ? walk(path.join(dir, e.name)) : e.name.endsWith(".ts") ? [path.join(dir, e.name)] : []);
+    for (const f of walk("app/main")) {
+      for (const m of fs.readFileSync(f, "utf8").matchAll(/path\.join\((?:userData|o\.userData|dir|this\.dir|opts\.dir|dataDir), "([\w-]+\.\w+)"\)/g)) files.add(m[1]);
+    }
+    for (const f of ["provider-seal.bin", "agent.json", "routines.json", "memory.json", "voiceprint.json", "conversation.json", "words.json", "settings.json", "approvals-seal.bin"]) expect(files, f).toContain(f);
+    for (const f of files) {
+      const r = req("kate", `${f} — Kate`, { kind: "keys", value: "ctrl+s" });
+      expect(mayReachEmberData(r), f).toBe(true);
+      expect(engine("interactive", "linux", { kate: "act" }).decide(r).verdict, f).toBe("confirm");
+      expect(engine("autopilot", "linux", { kate: "act" }).decide(r).verdict, f).toBe("deny");
+    }
   });
 });

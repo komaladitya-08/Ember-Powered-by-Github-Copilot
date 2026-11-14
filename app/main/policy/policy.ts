@@ -783,12 +783,14 @@ const plainPath = (text: string): string => text
   .replace(/([/\\])(?:\.[/\\])+/g, "$1")
   .replace(/([/\\])[/\\]+/g, "$1");
 /**
- * Ember's own files by name (settings.json, the audit log's months, the mode's seal, the provider's key and its host,
- * the vault, extensions.json, the organisation's policy.json), and its data and audit folders' own names as a file
- * manager titles a window that shows them ("ember", "audit": lower case, as Ember makes them; the ~/Ember hand-off
- * folder is "Ember").
+ * Ember's own files by name (settings.json, the audit log's months, the mode's seal, the provider's key, its host and
+ * its yes's seal, the vault, extensions.json, the organisation's policy.json, the GitHub token, the sign-out flag in
+ * agent.json, routines, memory and its vectors, the kept conversation and its erasure mark, the voiceprint, the
+ * personal words, the run marker and the log), and its data and audit folders' own names as a file manager titles a
+ * window that shows them ("ember", "audit": lower case, as Ember makes them; the ~/Ember hand-off folder is "Ember").
+ * Every file Ember keeps in its data folder is here: ember-data-reach.test.ts reads them from the source (integ-x-3).
  */
-const EMBER_FILE = /^(?:settings\.json|audit-\d{4}-\d{2}\.jsonl|approvals-seal\.bin|provider-key\.(?:bin|host)|vault\.json|extensions\.json|policy\.json|github-token\.bin)$/i;
+const EMBER_FILE = /^(?:settings\.json|audit-\d{4}-\d{2}\.jsonl|approvals-seal\.bin|provider-key\.(?:bin|host)|provider-seal\.bin|vault\.json|extensions\.json|policy\.json|github-token\.bin|agent\.json|routines\.json|memory(?:-vectors)?\.json|conversation\.(?:json|erased)|voiceprint\.json|words\.json|run\.json|ember\.log)$/i;
 const EMBER_FOLDER = /^(?:ember|audit)$/;
 /** A title's name before the app's own part ("settings.json — Kate", "*settings.json - Notepad", "audit - File Explorer"). */
 const titleName = (title: string): string => title.replace(/\s+[-—–]\s+.*$/, "").replace(/^[*•●]\s*/, "").replace(/\s*[*•●]$/, "").trim();
