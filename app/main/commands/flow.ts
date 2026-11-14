@@ -350,6 +350,9 @@ const UNSEEN = "Ember couldn't show the command in its command window, so it sto
 export const CARD_LINES = {
   root: "Commands here run as root (the administrator), so each one asks first.",
   admin: "Ember is running as an administrator here, so each command asks first.",
+  /** The same two facts on Autopilot's announcement, where root is no reason to ask (tasks-approvals-r10-1). */
+  rootAutopilot: "Commands here run as root (the administrator).",
+  adminAutopilot: "Ember is running as an administrator here.",
   adminAsk: "Your organisation asks you to approve every command.",
   userAsk: "You asked Ember to check every command with you.",
   tool: "Podman uses this distro: Ember asks before every command here.",
@@ -1060,7 +1063,9 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
     // what it does behind the test is Ember's reading of it, so it counts as a command it can't tell (commands-b7-2).
     if ((cls as { writtenOut?: boolean }).writtenOut === true) hidden.push({ cls: "unclear", rule: "unclear.written-out" });
     const auto = autopilotCommand(d, { findings: [...cls.findings, ...hidden], mode, askEvery: cap.askEvery, userAskEvery, ruledOut: wordsRuleOut(standing, words) || wordsRuleOut(standing, spoken) });
-    if (auto) d = auto;
+    // Root or an elevated Ember asks in every other mode, and its card line said "each one asks first": on Autopilot's
+    // announcement that is untrue, so it states the fact alone (tasks-approvals-r10-1).
+    if (auto) d = { ...auto, says: auto.says.map(l => (l === CARD_LINES.root ? CARD_LINES.rootAutopilot : l === CARD_LINES.admin ? CARD_LINES.adminAutopilot : l)) };
     // The card says why it still asks where their words held it back: after "You didn't ask for this." (which the
     // card keeps), and in place of "your words don't name exactly this", a doubt of Ember's (modes-y9-x9-6).
     else if (wordsHoldBack(standing, words) || wordsHoldBack(standing, spoken)) {
@@ -1113,6 +1118,8 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
     taskTitle: ctx.task.title, mode: cardMode, says, unasked: cardMode === "ask" && d.unasked, armMs: d.armMs,
     ...(cardMode !== "run" && d.classes.length ? { classes: d.classes } : {}),
     ...(cardMode === "announce" && d.requested?.intent === "ai-review" ? { reviewed: true } : {}),
+    // Autopilot's announcement, its own or of a remote's question (both end on AUTOPILOT_LINE): the heading says so.
+    ...(cardMode === "announce" && says.includes(AUTOPILOT_LINE) ? { autopilot: true } : {}),
     // The header says the home folder as ~ in a POSIX shell (commands-remote-8).
     ...(shell !== "powershell" && home ? { home } : {}),
   });

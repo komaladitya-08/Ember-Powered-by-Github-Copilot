@@ -34,6 +34,12 @@ export function isRiskyCard(card: Pick<CommandCard, "classes">): boolean {
 export const ANNOUNCE_HEADING = "About to run this, as you asked";
 /** The same for a command the AI review cleared (commands/review.ts): the user didn't ask for exactly this. */
 export const REVIEWED_HEADING = "About to run this: Ember checked it against your request";
+/** The same for Autopilot's announcement (commands/autopilot.ts): the user didn't ask for exactly this (tasks-approvals-r10-1). */
+export const AUTOPILOT_HEADING = "About to run this: Autopilot is on";
+/** The announcement's heading for its card: "as you asked" only where the user's own words asked for exactly it. */
+export function announceHeading(card: Pick<CommandCard, "reviewed" | "autopilot">): string {
+  return card.reviewed ? REVIEWED_HEADING : card.autopilot ? AUTOPILOT_HEADING : ANNOUNCE_HEADING;
+}
 export const ALLOW_LABEL = "Allow";
 export const NOT_NOW_LABEL = "Not now";
 export const STOP_LABEL = "Stop";

@@ -80,7 +80,10 @@ next command a task runs there shows the new card first. Under each switch, **As
 command on that computer ask. **Open the command window** shows it. Where commands run as root or as an administrator
 (Ember itself, a distro or a login that is, or one where Ember can't tell), every command asks anyway, so **Ask me
 before every command** shows on there, can't be turned off, and says why under it, as it does where your organisation
-asks.
+asks. In Autopilot root is no reason to ask (§2.5b), so there the switch is your own again: it says those commands run
+without asking, after a few seconds to stop them, except those Autopilot still asks about (§2.5b), unless you turn it on, and turning it on makes every one ask. In a
+distro Podman uses, every command asks in every mode, Autopilot included, so the switch shows on there and can't be
+turned off, and says why under it.
 
 To turn commands off again, turn the switch off. This cancels commands still waiting for approval, a countdown or a
 free slot. Turning the switch back on does not revive them. Commands already running keep running. The stop chord (Ctrl+Alt+X on Linux, Win+Alt+X on Windows,
@@ -767,8 +770,9 @@ publishes, changes the system, downloads and runs a program, runs as root or an 
 Ember itself runs as one), carries text read in another window, or belongs to a task that something on screen or in a
 command's output tried to steer or that has none of your own words. The bubble says the kind of command and nothing of
 its text ("Running a command that deletes or overwrites data, without asking: Autopilot is on."), and the command
-window shows the exact command, what Ember's checks found, "Autopilot is on, so Ember didn't ask first." and the
-countdown with **Stop**, as in §2.5. Nothing is sent to a model to decide this.
+window shows "About to run this: Autopilot is on" (never "as you asked"), the exact command, what Ember's checks
+found ("Commands here run as root (the administrator).", without "so each one asks first", where that is why it would
+have asked), "Autopilot is on, so Ember didn't ask first." and the countdown with **Stop**, as in §2.5. Nothing is sent to a model to decide this.
 
 It still asks, with the card of §2.4, before:
 

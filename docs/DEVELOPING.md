@@ -168,7 +168,7 @@ environment, only through `scripts/runtime-env-live.sh`, which gives it a networ
   **Check again**, which reads the rows anew once you have run the command or changed the setting yourself (Home's
   setup check has it too; on Linux a missing pyatspi is looked for at once, not only every 30 s, in the background, so Ember
   keeps answering while that import takes up to 5 s) (**Show the details** has every
-  row); you try the stop shortcut, “Hey Ember” with a level meter that follows your request after the wake word (only while it is on, agreed to, allowed by the organisation, not muted and listening) and a first
+  row); you try the stop shortcut, “Hey Ember” with a level meter that follows your request after the wake word (only while it is on, agreed to, allowed by the organisation, not muted and listening; on, with the microphone not working or turned off, the step and **Ready to start** say so and name the microphone, never that it is off; on, but not listening for another reason, such as damaged speech models or the voice process failing, they say Ember can't listen right now and that Settings › Voice says why, without blaming the microphone) and a first
   request in the ask box; and **Ready to start** sums it up before **Start** (neither says Ember's name, nor does “Setup is finished.”, which a screen reader is told as Start lands on Home's status line: after a changed consent “Hey Ember” already listens, first-run-r6-1). Nothing is read, heard or sent before
   **Agree and continue** (it saves the consent; the steps after it can't be reached without it). Back works on every
   step but the first. A run that agreed but didn't finish opens at sign-in next time. After an update that changed the consent
@@ -743,14 +743,23 @@ switch (V2-S8); in a follow-up window and after “Hey Ember” they stop as bef
 no answer (most likely one misheard: one test voice's lone “Allow.” comes out “Hello”) make the question say once how
 to answer (`unclear`). So do, there and in a follow-up or a conversation while a question waits, up to four words
 that start like an answer and aren't one (“Yes, but wait.”, “No, hang on.”: `nearAnswer` in app/shared/spoken-answer.ts),
-and, in any window, a yes asked as a question said by name (“Ember, okay?”: `askedYes`): nothing of them is sent, where
+up to six with a no word or a no of more than one word anywhere, not asked as a question (“No, I don't want that.”,
+“That's not what I meant.”, “Leave it, I said.”), a
+hold (“Wait.”, “Hold on.”) and an assent that isn't a yes (“Okay then.”, “Perfect.”, “Sounds great.”, which vanished as
+closers), and, in any window, a yes asked as a question said by name (“Ember, okay?”: `askedYes`): nothing of them is sent, where
 they went to Copilot or vanished (V2-F5, V2-F7). “Why?” and “Which file?” are requests as ever. So are words that hold
 a stop (“No, stop the task.”, “Okay, stop typing.”): never a near-miss, they reach main, which stops everything on
 them while a task is at work (voice-product-y9-1). “Okay, Ember.”, which
 the spotter hears as “Hey Ember”, is only a wake and answers nothing: nothing tells whose the “Okay” before the name
 is, and a video's or a colleague's rode on the user's name as their yes (voice-product-y9-2); what others say right
 after the user's bare “Hey Ember” goes nowhere either (voice-product-x9-1). “Okay, that's all.”
-still ends a conversation or a follow-up, the closers judged before the near-miss check (voice-product-x9-3). The answer window opens no conversation, is
+still ends a conversation or a follow-up: what ends one is never a near-miss (voice-product-x9-3). Everyday refusals
+that start with no no word are noes (“Of course not.”, “I said no.”, “Hell no.”, “Never.”, “Leave it.”), and so is a no
+said in short parts that are each one (“No thank you, leave it.”, “Nope, not today.”), and a no with a lead or a tail
+that only a no takes here (“Just leave it.”, “I said leave it.”, “Thanks, leave it.”, “Leave it for now.”, “Leave it
+be.”; the same words around a yes, “Thanks, go ahead.”, are no answer): they vanished in the answer window or went to
+Copilot as a request while the question waited (voice-listening-r10-1, r10-voice-x10-1). Noes are heard more widely
+than yeses, since a no is anyone's and declining is the safe side; no yes was added. The answer window opens no conversation, is
 no follow-up, ends with the question, and takes no yes said over other sound unless it is said with the name (the
 question then says so, once); a no is anyone's there too, as it is in a conversation and a follow-up: “No.”, “Not
 now.” and “Don't do it.” over a playing video were dropped in the answer window and a conversation, and the question
@@ -1368,14 +1377,29 @@ list's "1. La La Land." is Kitten's too. (One way only: in an answer said in ano
 English outside what it quotes, with none of that language's short words and no letter of another script, is
 Kitten's, so "Shall I reply to it?" after a Spanish email read out is asked in English, however the answer opened
 ("Sure.", "José wrote:"); "Il s'appelle Gone with the Wind." and "Ошибка: The file was not found." keep their answer's
-voice, but a piece with none of its language's short words ("Er heißt Gone with the Wind.") is still Kitten's.) The
-answer is judged in passages: after a lead-in said in Kitten's voice (a piece that ends with a colon: "Here is the email
+voice, but a piece with none of its language's short words ("Er heißt Gone with the Wind.") is still Kitten's. After
+a passage read out, a short piece with none of that language's short words, no letter with an accent outside a name
+and one of Ember's own closing words ("want", "shall", "reply", "anything", "else", "translate", "or", "to", "you": app/voice/spoken.ts
+`ownClosing`; a piece of one word only with "reply", "translate", "anything", "forward" or "draft", so a Dutch email's
+own "Help!" keeps its voice: r10-voice-x10-3), or the pronoun "I" after its first word, is Kitten's too: "Want me to reply?", "Shall I reply?" and
+"Anything else?" took the passage's voice, or went unsaid without one, in 28 of 44 cases while the follow-up window
+opened for them (voice-speaking-r10-1; now none, also after a lead-in that opens with a name and a saying verb, "José
+wrote:" (r10-voice-y10-1), though not yet after a bare "José:"; and the passage's own sign-offs, "Grazie mille, Marco.", keep its
+voice).) The answer is judged in passages: after a lead-in said in Kitten's voice (a piece that ends with a colon: "Here is the email
 from José:", also one that came in the same piece as the passage's first sentence), and from the first sentence that may
 be another language's in an answer that looked English so far ("Okay, reading it now."), what follows is judged by
 itself, from its own first 60 letters, and waits until then unless it is clearly English: counted with the lead-in, whose
 English short words outnumber a first sentence's, a Spanish, Italian or Portuguese email was read by Kitten for 14 of
 16 ordinary lead-ins and layouts (now none; an Italian or Portuguese passage's first sentence with no accent still is,
-after a lead-in without a colon or on the same line). A passage is judged without the clearly English pieces it ends
+after a lead-in without a colon or on the same line). A message's header lines at the start of what is judged ("From:
+José", "To:", "Subject: Proyecto", "Date:": `HEADER`) are Kitten's, each said as it comes, when the value is in no
+other language and its only accented letters are in a name (a subject's first word counts as its own: "Subject: Reunión
+del lunes", "From: Иван" and "Subject: 会议" are judged with the message, since Kitten reads only English:
+r10-voice-x10-2), and so is a lead-in in no
+other language whose only accented letters are in a name ("José's email says:": `leadsIn`); the message after them is
+judged by itself. Judged as its first letters, the sender and subject diluted its short words, and a Spanish or Italian
+email was Kitten's with English sounds in 22 of 44 cases for "**From:** José / **Subject:** Proyecto", and after
+"José's email says:" in 3 of 5 languages (voice-speaking-r10-2, voice-speaking-c10-1; now none). A passage is judged without the clearly English pieces it ends
 with: counted with Ember's own "Shall I reply to it?", a chat message of two sentences was Kitten's for 15 of 15 (now
 6: a passage under 60 letters still needs two different short words of its language, or Spanish's "¿" or "¡", so
 "Ciao Alex, come stai? Ci vediamo domani." and "Olá Alex, tudo bem? Até amanhã no escritório." are Kitten's). Until then a piece that may be another language's ("Bien sûr !", with letters

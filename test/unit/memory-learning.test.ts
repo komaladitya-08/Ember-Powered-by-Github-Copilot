@@ -1895,3 +1895,14 @@ describe("a Forget holds its words back from the turns around it (memory-x7-5, m
     expect(s.list()).toEqual([]);
   });
 });
+
+describe("Forget everything leaves nothing of what the person asked (companion-r10-4)", () => {
+  it("empties the Ask box's history with the session's words, so ↑ brings back none of their requests", () => {
+    const main = fs.readFileSync(path.join(__dirname, "../../app/main/main.ts"), "utf8");
+    const forget = main.slice(main.indexOf("const forgetSessionWords = () => {"), main.indexOf("};", main.indexOf("const forgetSessionWords = () => {")));
+    expect(forget).toContain("askHistory = [];");
+    // Forget everything, sign-out and an account change each forget the session's words, and with them the history.
+    const handler = main.slice(main.indexOf("ipcMain.handle(IPC.memoryForgetAll,"), main.indexOf("ipcMain.handle(IPC.memoryIntroduce,"));
+    expect(handler).toContain("forgetSessionWords();");
+  });
+});

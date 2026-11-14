@@ -6,6 +6,7 @@
  * as computers-copy.ts is. Sentence case, British spelling, curly quotes around names. Renderer-safe.
  */
 
+import type { ApprovalMode } from "../../shared/approvals";
 import type { Installed, Kind, Marketplace, MarketplaceEntry, ToolInfo } from "../../shared/extensions";
 
 export const EXTENSIONS_HEADING = "Extensions";
@@ -267,6 +268,15 @@ export const INSTALLED_TAG = "Added";
 export const CONNECTORS_HEADING = "Connectors";
 export const CONNECTORS_EMPTY = "GitHub-hosted connectors aren't available in Ember yet.";
 export const CONNECTORS_HINT = "To use an MCP server, add its plugin's marketplace above. Ember loads the plugin's MCP tools and asks before tools that can change things, except in Autopilot.";
+/**
+ * The hint in the approval mode in force (null: below Interactive), true in each (home-c10-2): the extensions gate asks
+ * in every mode but Autopilot, where its questions are announced instead (app/main/extensions/gate.ts).
+ */
+export function connectorsHint(mode: ApprovalMode | null): string {
+  return mode === "autopilot"
+    ? "To use an MCP server, add its plugin's marketplace above. Ember loads the plugin's MCP tools, and in Autopilot uses those that can change things without asking, telling you as it goes."
+    : CONNECTORS_HINT;
+}
 
 /** A connector's row: its state and its one button. */
 export interface ConnectorRow {

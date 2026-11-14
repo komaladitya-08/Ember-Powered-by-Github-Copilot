@@ -68,6 +68,11 @@ export interface TargetSummary {
    * shows on. Absent otherwise.
    */
   privileged?: true;
+  /**
+   * A WSL distro Podman uses: every command there asks in every approval mode, Autopilot included (wsl-service's
+   * userAskEvery), so the settings window's switch shows on and locked (r10-modes-copy-x10-4). Absent otherwise.
+   */
+  toolOwned?: true;
 }
 
 /**
