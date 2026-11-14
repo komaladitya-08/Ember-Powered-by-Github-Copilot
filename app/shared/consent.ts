@@ -78,7 +78,7 @@ export function consentChangesSince(agreed: number): string[] {
  * still asks there, a distro Podman uses and Project work, which 3 left out (integ-x-2). `extensions` 5 (2026-11-14):
  * its cards say that in Assisted a tool that changes or sends goes ahead, announced, when Assisted's check finds the
  * call in what the user asked, where 4 said only Autopilot went ahead, and `assisted` 4 names what its check is sent
- * of such a call: the extension's tool, its description and what it is given (integrations-r12-1).
+ * of such a call: the extension's tool and what it is given, never the tool's description (integrations-r12-1).
  */
 export const FEATURE_CONSENT_VERSION = { wsl: 1, ssh: 1, commands: 2, memory: 4, routines: 1, extensions: 5, autonomy: 5, provider: 1, updates: 1, assisted: 4, autopilot: 4 } as const;
 
