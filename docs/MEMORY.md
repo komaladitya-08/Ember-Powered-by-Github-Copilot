@@ -298,11 +298,27 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
     handle where people give theirs ("GitHub: octocat2"), a product named for what it is ("VPN: NordVPN2"), a
     standard, a speed, a band and a user at a computer named by words ("admin@localhost") are no password. Of the
     1,998 sentences the memory tests keep as facts, it refuses none; of 65 more everyday facts about services, two,
-    both refused before it ("The Wi-Fi is BT-Hub-6A", "Prefers tokens over passwords"). Still kept: a dictionary word
-    said as what a service "is" ("My Netflix is sunshine"), a capitalised word after a verb of signing in ("Logs in
-    with Sunshine"), and a word shaped like a product's name after the thing it is for with no colon or dash
-    ("Remember Pinecone7 for the Wi-Fi"), which can't be told from "Uses Figma2 for Slack", and a word in lower case
-    where people give their handle ("Discord: hunter2"), which can't be told from "GitHub: octocat2".
+    both refused before it ("The Wi-Fi is BT-Hub-6A", "Prefers tokens over passwords").
+  - a password said in a sign-in's own form, and a wallet's seed words (memory-r12-1, memory-c12-1, memory-c12-2;
+    `signInForm`): one word in lower case, or one shaped like a password, said as what an account "is" or "uses"
+    ("My Netflix is sunshine", "The Bitwarden one is tangerine", "Netflix account uses dragonfly"), after any sign-in
+    thing and a colon or a dash ("Spotify: marmalade"), or alone after a service ("Netflix dragonfly"); a word used for
+    a service or to unlock a password manager ("Use dragonfly for Netflix", "Uses tangerine to unlock their password
+    manager"); a capitalised word after a verb of signing in, but a browser's or a sign-in app's name ("Logs in with
+    Sunshine", never "…with Chrome"); a value shaped like a password, or like a product's name that isn't a known
+    product's with its version, used everywhere, for everything or on every site ("Uses Dragonfly88 everywhere",
+    never "Uses Windows11 everywhere") or for the Wi-Fi, a VPN, a router, a NAS or a service ("Remember Pinecone7 for
+    the Wi-Fi", never "Uses Figma2 for Slack"); a user and a value with only a space or "with" between them after a
+    sign-in thing or a login ("Amazon login: ram@example.com Biscuit99", "Signs in to PayPal as ram@example.com with
+    Biscuit99"); and a wallet's seed words by their shape, twelve or more lower-case words of three to eight letters
+    with no grammar between them anywhere, or four or more where seed words are named ("Their seed phrase starts with
+    abandon ability able about"). A network, a router, a bank or a database "is" what it is ("The Wi-Fi is mesh",
+    "Their bank is local"), a capitalised word there is a brand's ("The VPN is GlobalProtect"), an adjective or a
+    verb's form is a state ("The Wi-Fi is unreliable"), and talk about keeping seed words is kept ("The 24 words are
+    stored offline somewhere safe"). The memory tests' sentences are all kept as before, and of 66 more everyday facts
+    about the same services, networks and wallets none is refused. Still kept: a word in lower case where people give
+    their handle ("Discord: hunter2"), which can't be told from "GitHub: octocat2", and one word in lower case said as
+    what a Wi-Fi network "is" ("The cabin Wi-Fi is dragonfly"), which can't be told from its network's name.
 
   A value is read as `guard.ts` reads a login's (`LOGIN_VALUE`: a digit or a symbol, never an address, a scheme such
   as OAuth2 or 2FA, a version, a date or a hyphenated word), four to eight digits where a code goes, and where a tool

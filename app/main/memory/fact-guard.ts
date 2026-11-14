@@ -333,6 +333,128 @@ function credentialValue(text: string): "key" | "password" | null {
   return DIGITS_EVERYWHERE.test(text) ? "password" : null;
 }
 
+// ───── A password said in a sign-in's own form, and a wallet's seed words (memory-r12-1, memory-c12-1, memory-c12-2) ─────
+//
+// The rules above read a lone word as a password after a credential's name or a password's shape. A dictionary word
+// said where a sign-in's value goes ("My Netflix is sunshine", "Discord: hunter2", "Netflix account uses dragonfly"), a
+// value reused everywhere ("Uses Dragonfly88 everywhere"), a user and a value with only a space between them ("Amazon
+// login: ram@example.com Biscuit99") and a wallet's seed words said any way ("Their wallet words are abandon ability…")
+// are read here by the saying's form and the words' shape, never by a dictionary of passwords.
+
+/** What says a sign-in thing is fine, slow, shared or paid for, never its password ("The Wi-Fi is patchy", "Spotify is cheaper"). */
+const STATE_WORD = new Set(String.raw`fast quick slow good bad great awful terrible flaky patchy spotty weak strong poor fine ok okay decent solid
+  rubbish brilliant excellent amazing perfect useless lovely nice cheap expensive dear pricey free paid busy quiet loud dead off on out up down
+  back gone working broken unreliable reliable laggy buggy glitchy iffy dodgy shaky better worse cheaper faster slower bigger smaller best worst
+  ours mine theirs yours his hers private public open closed locked full empty great fab awesome cool meh crap pants`.split(/\s+/).filter(Boolean));
+/** A word's ending that makes it an adjective or a verb's form ("unreliable", "dangerous", "shared", "buffering"), never a lone password. */
+const STATE_ENDING = /(?:able|ible|ous|ful|less|ive|ish|ed|ing|est)$/i;
+/** Products named with their version, which a person may use everywhere ("Windows11", "Office365"): a pass for VALUE_EVERYWHERE's product shape. */
+const KNOWN_PRODUCT = /^(?:windows|win|office|iphone|ipad|pixel|galaxy|fedora|ubuntu|debian|rhel|centos|rocky|alma|python|java|jdk|node|php|perl|ruby|excel|photoshop|macos|ios|android|xbox|ps|playstation|switch|canon|nikon|sony|kotlin|swift|net|dotnet|vue|react|angular|django|rails|postgres|mysql|redis|chrome|firefox|safari|edge|opera|vim|emacs|vscode|outlook|teams|zoom|figma|tailwind|bootstrap|gpt|llama|gemini|kde|gnome|plasma|qt|gtk|lua|go|rust|cuda|opengl|vulkan|directx|dx|hdmi|usb|wifi|wpa|bt|ipv|http|tls|ssl)\d/i;
+/** A browser or an app a person signs in through, never a password ("Logs in with Chrome", "Signs in with Duo"). */
+const SIGN_IN_APP = /^(?:chrome|firefox|safari|edge|brave|opera|duo|authy|facebook|twitter|linkedin|amazon|passkeys?|sso|saml|oauth|okta|google|apple|microsoft|github|gitlab|yubikey|touch|face|windows|hello|keycard|badge|email|e-mail|phone|sms|text)$/i;
+/** Grammar after a user, which goes on the sentence and is no value ("…is ram@example.com too"). */
+const PAIR_GRAMMAR = /^(?:too|also|now|today|again|please|thanks|then|still|though|here|there|usually|mostly|normally|at|for|and|or|but|so)$/i;
+/** Words that name a thing rather than sign in to it ("Their home Wi-Fi is called VirginMedia5G"): never a user. */
+const NAMING = /^(?:called|named|known|titled|labelled|labeled|listed|set|shared|registered|linked|tied|under|in|on|at|by|with|via|through|from)$/i;
+
+/** Is `raw` a lone word that a sign-in thing's own form may hold as its value (not a state, a tool, a service, grammar)? */
+function signInWord(raw: string): boolean {
+  const v = word(raw), w = v.toLowerCase();
+  if (!w || w.length < 3 || !loneValue(v, "thing") || STATE_WORD.has(w) || TOOL_NAME.test(w) || SERVICE_WORD.test(w) || SIGN_IN_APP.test(w)) return false;
+  if (AMOUNT.test(v) || /^[A-Z][A-Z0-9]*(?:[-/][A-Z0-9]+)+$/.test(v) || /^(?:www\.|https?:)/i.test(v) || /\.[a-z]{2,}$/i.test(v)) return false;
+  // A word shaped like a password is one whatever its ending. A plain word only in lower case (a capitalised one is a
+  // brand's or a network's name: "The VPN is GlobalProtect", "Their router is Netgear"), never a name joined by "_" or
+  // "-" ("atlas_prod_eu"), and only when no adjective's or verb's ending says it is a state.
+  if (passwordShaped(v)) return true;
+  return /^[a-z][a-z'’]*\d*$/.test(v) && !STATE_ENDING.test(w);
+}
+
+/**
+ * The accounts that "is" a word may be the password of ("My Netflix is sunshine"): services and password managers,
+ * never a network, a router, a bank or a database, which "is" what they are ("The Wi-Fi is mesh", "Their bank is local").
+ */
+const SIGN_IN_ACCOUNT = String.raw`(?:netflix|spotify|hulu|disney\+?|amazon|prime\s+video|gmail|outlook|hotmail|yahoo|icloud|apple\s+id|paypal|venmo|ebay|steam|xbox|playstation|psn|nintendo|uber|airbnb|dropbox|facebook|instagram|twitter|linkedin|reddit|discord|github|gitlab|jira|slack|zoom|bitwarden|1password|lastpass|keepass(?:xc)?|dashlane|nordpass|okta)`;
+/** "My Netflix is sunshine", "Discord: hunter2", "The cabin Wi-Fi is dragonfly", "Password manager is tangerine", "The Bitwarden one is tangerine": a sign-in thing, then one word ending the fact. */
+const THING_IS_WORD = new RegExp(String.raw`^\s*(?:${WHOSE}\s+)?(?:[\w'’-]+\s+)?(?:(?:${SIGN_IN_THING})(?:\s+(?:one|pass))?(?:\s*[:=]\s*|\s+[-–—]\s+)|(?:${SIGN_IN_ACCOUNT}|password\s+manager)(?:\s+(?:one|pass))?\s+(?:is|was|uses)\s+)["'“]?(?<v>[^\s"'”,;!?]{2,40}?)["'”]?\s*[.!]?\s*$`, "i");
+// A login's or an account's lone word may be the user's name ("The GitHub login is octocat": safety-privacy-v4-1), so
+// THING_IS_WORD takes none of those words; NAMED_LONE reads a login's lone word where it can only be the password.
+/** "Netflix dragonfly": a service and a lower-case word alone (a capitalised one is a product: "Steam Deck"). */
+const THING_THEN_WORD = new RegExp(String.raw`^\s*(?:${SERVICES}|${PASSWORDED})\s+["'“]?(?<v>[a-z][a-z0-9'’-]{2,39}|[A-Za-z]+\d+[A-Za-z0-9]*)["'”]?\s*[.!]?\s*$`, "i");
+/** "Netflix account uses dragonfly": a sign-in thing's account that "uses" one word. */
+const ACCOUNT_USES_WORD = new RegExp(String.raw`\b(?:${SIGN_IN_THING})\s+(?:account|login|one)\s+uses\s+["'“]?(?<v>[^\s"'”,;!?]{2,40}?)["'”]?\s*[.!]?\s*$`, "i");
+/** "Use dragonfly for Netflix": one lower-case word used for a service, alone. */
+const USE_WORD_FOR = new RegExp(String.raw`^\s*(?:(?:i|we|they|he|she)\s+)?(?:re)?use[sd]?\s+["'“]?(?<v>[a-z][a-z'’-]{2,39})["'”]?\s+(?:for|on)\s+(?:${WHOSE}\s+)?(?:${SERVICES})(?:\s+(?:account|login))?\s*[.!]?\s*$`, "i");
+/** "Uses tangerine to unlock their password manager": a word used to get into a password manager or a sign-in thing. */
+const USE_TO_UNLOCK = new RegExp(String.raw`\b(?:re)?use[sd]?\s+["'“]?(?<v>[^\s"'”,;!?]{2,40})["'”]?\s+to\s+(?:unlock|open|get\s+into|sign\s+in\s+to|log\s+in\s+to|log\s+into)\s+(?:${WHOSE}\s+)?(?:[\w'’-]+\s+)?(?:password\s+manager|vault|keychain|${SIGN_IN_THING})\b`, "i");
+/** "Uses Dragonfly88 everywhere", "Reuses Summer2024 on every site", "Uses the same X for every account": one value used for every sign-in. */
+const VALUE_EVERYWHERE = /\b(?:re)?use[sd]?\s+(?:the\s+same\s+)?["'“]?(?<v>[^\s"'”,;!?]{3,40})["'”]?\s+(?:everywhere|for\s+everything|(?:on|for|across)\s+(?:every|each|all(?:\s+(?:of\s+)?(?:my|our|their|his|her|your))?)\s+(?:site|website|account|login|app|service)s?)\b/i;
+/** "Summer2024 is what I use for everything". */
+const WHAT_EVERYWHERE = /^\s*["'“]?(?<v>[^\s"'”,;!?]{3,40})["'”]?\s+is\s+what\s+(?:i|we|they|he|she|you)\s+(?:re)?use[sd]?\s+(?:everywhere|for\s+everything|(?:on|for)\s+(?:every|each|all)\s+\w+)/i;
+/** "Uses Pinecone7 for the Wi-Fi", "Remember Pinecone7 for the VPN": a value for what takes a password. */
+const VALUE_FOR_NETWORK = new RegExp(String.raw`\b(?:(?:re)?use[sd]?|remember(?:s|ed)?|types?|enters?)\s+["'“]?(?<v>[^\s"'”,;!?]{3,40})["'”]?\s+(?:for|on)\s+(?:${WHOSE}\s+)?(?:[\w'’-]+\s+)?(?<thing>wi-?fi|wlan|vpn|router|hotspot|nas|${SERVICES})\b`, "i");
+/** "Amazon login: ram@example.com Biscuit99", "Their Netflix is ram@example.com with Biscuit99": a user and a value with a space or "with" between. */
+const USER_SPACE_VALUE = new RegExp(String.raw`(?:\b(?:${SIGN_IN_THING})(?:\s+(?:account|login|log-in|sign-in|credentials?))?|\b(?:logins?|log-ins?|sign-ins?|credentials?))(?:\s+(?:is|was|are)\s+|\s*[:=]\s*)["'“]?(?<user>[\w.+-]+@[\w-]+(?:\.[\w-]+)+|[A-Za-z][\w.-]{1,40})["'”]?\s+(?<with>(?:with|and|plus|pw|pwd|password|pass)\s+)?["'“]?(?<v>[^\s"'”,;:!?]{2,40}?)["'”]?\s*[.!]?\s*$`, "i");
+/** "Signs in to PayPal as ram@example.com with Biscuit99". */
+const AS_USER_WITH = new RegExp(String.raw`\b${ACCESS}\b[^.;!?\n]{0,60}?\bas\s+["'“]?[\w.+@-]{2,60}["'”]?\s+(?:with|using)\s+["'“]?(?<v>[^\s"'”,;!?]{2,40}?)["'”]?\s*[.!]?\s*$`, "i");
+/** "Logs in with Sunshine": a verb of signing in, then "with" and one capitalised word (lower case: ACCESS_WITH_WORD). */
+const ACCESS_WITH_NAME = new RegExp(String.raw`\b${ACCESS}\b[^.;!?\n]{0,80}?\b(?:with|using)\s+["'“]?(?<v>[A-Za-z][a-z'’-]{2,})["'”]?\s*[.!]?\s*$`, "i");
+
+/** A wallet's seed words named ("seed phrase", "recovery words", "wallet words", "the 24 words"). */
+const SEED_NAMED = /\b(?:(?:seed|recovery|mnemonic|backup|secret|wallet)\s+(?:phrase|words?|seed|sentence)|wallet\s+backup|(?:12|twelve|15|fifteen|18|eighteen|24|twenty[- ]four)\s+(?:secret\s+)?words)\b/i;
+/** Grammar of three letters or more, which no seed word list holds (BIP-39's words are 3 to 8 letters, none of these). */
+const SEED_STOP = /^(?:the|and|for|with|that|this|from|are|was|were|has|have|had|their|they|you|your|his|her|its|our|not|she|him|them|who|what|when|where|which|there|then|than|into|been|does|did|would|could|should|these|those|very|just)$/;
+/**
+ * A wallet's seed words, by their shape (memory-c12-2): a run of twelve or more lower-case words of three to eight
+ * letters with no grammar between them, anywhere; or, where the seed words are named, a run of four or more of which
+ * three are no talk about keeping them ("…starts with abandon ability able about").
+ */
+function seedWords(text: string): boolean {
+  const named = SEED_NAMED.test(text);
+  let run = 0, plain = 0;
+  for (const raw of text.split(/\s+/)) {
+    const w = raw.replace(/^["'“(]+|["'”),.;:!?]+$/g, "");
+    const seedLike = /^[a-z]{3,8}$/.test(w) && !SEED_STOP.test(w);
+    if (seedLike) { run++; if (!ABOUT_SECRET.has(w) && !NOT_LONE.has(w)) plain++; } else { run = 0; plain = 0; }
+    if (run >= 12 || (named && run >= 4 && plain >= 3)) return true;
+    // Punctuation after a word ends its run: a list ("hiking, camping, …") is no seed.
+    if (/[,.;:!?)]$/.test(raw)) { run = 0; plain = 0; }
+  }
+  return false;
+}
+
+/** Whether `text` says a password in a sign-in's own form, or a wallet's seed words (memory-r12-1, -c12-1, -c12-2). */
+function signInForm(text: string): boolean {
+  if (seedWords(text)) return true;
+  for (const re of [THING_IS_WORD, THING_THEN_WORD, ACCOUNT_USES_WORD, USE_WORD_FOR, USE_TO_UNLOCK]) {
+    const v = re.exec(text)?.groups?.v;
+    // A handle where people name theirs ("Their GitHub is octocat") is no password.
+    if (v && signInWord(v) && !(re === THING_IS_WORD && HANDLE_PLACE.test(text) && HANDLE.test(word(v)))) return true;
+  }
+  for (const re of [VALUE_EVERYWHERE, WHAT_EVERYWHERE]) {
+    const v = re.exec(text)?.groups?.v;
+    // A value shaped like a password, or a word with a version that is no product people use everywhere ("Windows11").
+    if (v && (passwordShaped(v) || (PRODUCT.test(word(v)) && !KNOWN_PRODUCT.test(word(v)) && !/^1password$/i.test(word(v))))) return true;
+  }
+  const net = VALUE_FOR_NETWORK.exec(text);
+  if (net) {
+    const v = word(net.groups!.v!);
+    if (passwordShaped(v) || (PRODUCT.test(v) && !KNOWN_PRODUCT.test(v) && !namesItself(v, net.groups!.thing!))) return true;
+  }
+  const pairM = USER_SPACE_VALUE.exec(text);
+  if (pairM) {
+    const v = word(pairM.groups!.v!), user = pairM.groups!.user!.toLowerCase();
+    // A plain word as the user only where a login is named or a word joins the two ("The Jira login is ram marmalade"),
+    // never two words about the thing ("Their Gmail is mostly newsletters", "Discord: mostly gaming").
+    const userShaped = !/^[a-z]+$/i.test(user) || /\b(?:logins?|log-ins?|sign-ins?|credentials?|account)\b/i.test(pairM[0]) || !!pairM.groups!.with;
+    // "Bitwarden is their password manager": grammar or talk about passwords, never a user and a value.
+    if (userShaped && !ABOUT_SECRET.has(user) && !NAMING.test(user) && !ABOUT_SECRET.has(v.toLowerCase()) && !PAIR_GRAMMAR.test(v) && loneValue(v, "pair") && !AMOUNT.test(v) && !/^[\d.]+[a-z]*$/i.test(v) && !AUTH_WORD.test(v) && !SIGN_IN_APP.test(v)) return true;
+  }
+  const asM = AS_USER_WITH.exec(text);
+  if (asM && !SIGN_IN_WAY.test(word(asM.groups!.v!)) && !SIGN_IN_APP.test(word(asM.groups!.v!))) return true;
+  const named = ACCESS_WITH_NAME.exec(text)?.groups?.v;
+  return !!named && /^[A-Z]/.test(named) && !SIGN_IN_WAY.test(named) && !SIGN_IN_APP.test(named) && loneValue(named, "thing");
+}
+
 /** An NHS, CHI, Medicare or social insurance number said with its name (PLAN §10 round 10, "left"). */
 const HEALTH_ID = /\b(?:nhs|chi|medicare|health\s+(?:and\s+care\s+)?|social\s+insurance|sin)\s+(?:number|no\.?|#)\s*(?:(?:is|was)\s+|[:=]\s*)?\d{3}[\s-]?\d{3}[\s-]?\d{3,4}(?:[\s-]?\d)?\b/i;
 
@@ -346,6 +468,7 @@ export function saidSecret(text: string): string | null {
     || SHORT_PASS.test(text) || THE_PASS.test(text) || symbolValue(text) || codeBeside(text) || adminValue(text) || NETWORK_KEY.test(text)
     || SECURITY_QUESTION.test(text) || inWordOrder(text)) return "it holds a password, PIN or code";
   if (keySaid(text)) return "it holds a password, token or key";
+  if (signInForm(text)) return "it holds a password, PIN or code";
   const credential = credentialValue(text);
   if (credential) return credential === "key" ? "it holds a password, token or key" : "it holds a password, PIN or code";
   if (HEALTH_ID.test(text)) return "it holds an account or ID number";
