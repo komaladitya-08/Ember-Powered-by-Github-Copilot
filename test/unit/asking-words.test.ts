@@ -168,7 +168,7 @@ describe("no sentence promises a question about a dangerous command the user ask
   it("no longer lists dangerous commands among what Interactive's card asks about every time, and its card asks again", () => {
     expect(AUTONOMY_CONSENT_TEXT).not.toMatch(/every time before anything risky[^.]*dangerous commands/);
     expect(AUTONOMY_CONSENT_TEXT).toContain("unless you asked for exactly that command");
-    expect(FEATURE_CONSENT_VERSION.autonomy).toBe(4);
+    expect(FEATURE_CONSENT_VERSION.autonomy).toBe(5);
   });
 
   it("says an app's grant doesn't cover anything hard to undo, true in every mode", () => {
@@ -228,5 +228,30 @@ describe("the commands card is true in every approval mode, as root too (Settled
     const shown = promptCopy.consentText({ feature: "commands", os: "linux", target: "local", targetLabel: "This computer", stopKey: "Ctrl+Alt+X", commands: { privileged: true } });
     expect(shown.body).toEqual(card.body);
     expect(FEATURE_CONSENT_VERSION.commands).toBe(2);
+  });
+});
+
+describe("the three mode cards are true to the owner's table for commands (owner decision of 2026-11-14)", () => {
+  it("Interactive's card says commands Ember doesn't know run, names what is dangerous, and that code it can't read asks", async () => {
+    const { AUTONOMY_CONSENT_TEXT: card } = await import("../../app/renderer/home/copy");
+    expect(card).toContain("runs ordinary commands and ones it doesn't know,");
+    expect(card).toContain("It asks before a dangerous command too, one that deletes, publishes, changes the system, touches passwords or keys, downloads and runs code or keeps running after you stop Ember, unless you asked for exactly that command and it only deletes, publishes or changes the system: then it shows it first, with a few seconds to stop it. It asks before code it can't read, too.");
+    expect(FEATURE_CONSENT_VERSION.autonomy).toBe(5);
+  });
+
+  it("Assisted's card no longer says its check never clears a secrets command or one that outlives Stop", async () => {
+    const { ASSISTED_CONSENT_TEXT: card } = await import("../../app/renderer/home/copy");
+    expect(card).not.toMatch(/never clears a command that would show passwords or keys/);
+    expect(card).toContain("It never clears a step you said no to or one your words for the task rule out, anything Ember refuses, such as typing a password, or what you or your organisation set to ask every time.");
+    expect(FEATURE_CONSENT_VERSION.assisted).toBe(3);
+  });
+
+  it("Autopilot's card lists no question it no longer puts, and says what it does instead", async () => {
+    const { AUTOPILOT_CONSENT_TEXT: card } = await import("../../app/renderer/home/copy");
+    expect(card).not.toMatch(/still asks before a command|one whose effect it can't tell|one you may have ruled out/);
+    expect(card).toContain("A command that shows passwords or keys runs too, but what it prints is kept from the AI model: only you see it. One that would keep running after you stop Ember runs too, and Ember says Stop won't reach it.");
+    expect(card).toContain("It asks only where your organisation, or your own “Ask me before every command” for a computer, says to, and before it turns on something you haven't agreed to yet.");
+    expect(card).toContain("It refuses, without asking, a step you said no to, what your words for the task rule out and anything that may be one of those.");
+    expect(FEATURE_CONSENT_VERSION.autopilot).toBe(3);
   });
 });

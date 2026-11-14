@@ -31,14 +31,14 @@ describe("the consent and the vault", () => {
   });
 
   it("says on Autopilot's card that Ember fills what was saved in the vault and the model never types or sees it (vault-4)", () => {
-    expect(AUTOPILOT_CONSENT_TEXT.split("\n\n")[2]).toBe("It never repeats a step you said no to, never acts in your system's sign-in and password prompts, never uses your terminals, never reads windows on your never-look list and never runs a command that touches its own settings, record or Stop. The AI model never types or sees passwords or card numbers: Ember asks you once in its Secure Form, keeps them locked in its vault for that app or site, and fills them in there itself.");
+    expect(AUTOPILOT_CONSENT_TEXT.split("\n\n")[2]).toBe("It refuses, without asking, a step you said no to, what your words for the task rule out and anything that may be one of those. It never acts in your system's sign-in and password prompts, never uses your terminals, never reads windows on your never-look list and never runs a command that touches its own settings, record or Stop. The AI model never types or sees passwords or card numbers: Ember asks you once in its Secure Form, keeps them locked in its vault for that app or site, and fills them in there itself.");
     expect(AUTOPILOT_CONSENT_TEXT).not.toMatch(/never types passwords or card numbers,/);
     expect(AUTOPILOT_CONSENT_TEXT.split("\n\n")).toHaveLength(4);
   });
 
   it("asks someone who agreed to Autopilot's old card again before Autopilot is in force (vault-4)", () => {
-    expect(FEATURE_CONSENT_VERSION.autopilot).toBe(2);
-    expect(modeCardVersion("autopilot")).toBe(2);
+    expect(FEATURE_CONSENT_VERSION.autopilot).toBe(3);
+    expect(modeCardVersion("autopilot")).toBe(3);
     const policy = AdminPolicySchema.parse({});
     const at = "2026-11-12T10:00:00.000Z";
     const card = (version: number) => ({ version, at });
@@ -49,7 +49,8 @@ describe("the consent and the vault", () => {
     expect(state.why).toBe("card");
     // An agreement that carries the old card's version is refused; the new one puts Autopilot in force.
     expect(chooseMode(agreedOld, "autopilot", 1, policy, at).ok).toBe(false);
-    const again = chooseMode(agreedOld, "autopilot", 2, policy, at);
+    expect(chooseMode(agreedOld, "autopilot", 2, policy, at).ok).toBe(false);
+    const again = chooseMode(agreedOld, "autopilot", FEATURE_CONSENT_VERSION.autopilot, policy, at);
     expect(again.ok && modeInForce(again.approvals, policy)).toBe("autopilot");
   });
 });

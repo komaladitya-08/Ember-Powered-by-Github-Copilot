@@ -67,9 +67,14 @@ export function consentChangesSince(agreed: number): string[] {
  * every command it still asks about, among them one the user may have ruled out: by their own words for the task, or
  * as what may be a command they said no to in it (integ-x-6). `extensions` 4 (2026-11-13): its cards say that in
  * Autopilot Ember uses a tool that changes or sends without asking and says so, where 3 said it always asked
- * (integrations-r10-1).
+ * (integrations-r10-1). The owner's decision of 2026-11-14 (only dangerous commands ask; Autopilot asks nothing)
+ * rewrote four cards: `commands` 2 says in one text what each mode does with a dangerous command and that Autopilot
+ * keeps a secrets command's output from the model; `autonomy` 5 says commands Ember doesn't know run and names what is
+ * dangerous; `assisted` 3 drops the commands its check "never clears" that it now may; `autopilot` 3 lists no question
+ * it no longer puts and says what it does instead (output withheld, Stop's reach named, the user's no refused, the
+ * organisation's and the user's own switch still asked).
  */
-export const FEATURE_CONSENT_VERSION = { wsl: 1, ssh: 1, commands: 2, memory: 4, routines: 1, extensions: 4, autonomy: 4, provider: 1, updates: 1, assisted: 2, autopilot: 2 } as const;
+export const FEATURE_CONSENT_VERSION = { wsl: 1, ssh: 1, commands: 2, memory: 4, routines: 1, extensions: 4, autonomy: 5, provider: 1, updates: 1, assisted: 3, autopilot: 3 } as const;
 
 /**
  * A first-use consent card (§8.4): its exact text, and a hash of it that the yes must carry back. Shown in Ember's

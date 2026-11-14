@@ -1214,6 +1214,6 @@ describe("Home's words for the choice", () => {
     // The card names the wider scope, and its version moved with each change so the user agrees to it again (S1).
     expect(AUTONOMY_CONSENT_TEXT).toMatch(/presses OK on a message box that has nothing else to choose\./);
     expect(AUTONOMY_CONSENT_TEXT).toMatch(/and any dialog that asks a question\./);
-    expect(FEATURE_CONSENT_VERSION.autonomy).toBe(3);
+    expect(FEATURE_CONSENT_VERSION.autonomy).toBe(5);
   });
 });
