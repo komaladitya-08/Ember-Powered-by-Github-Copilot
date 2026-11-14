@@ -262,7 +262,7 @@ describe("How Ember asks (Apps & privacy, modes-A10)", () => {
     expect(approvalsView(state(agreed), false).rows).toEqual([{ ...ROW, checked: true, locked: false, title: "" }, { ...ASSISTED, ...FREE }, { ...AUTOPILOT, ...FREE }]);
     expect(approvalsView(state(agreed), false).inForce).toBe("interactive");
     expect(approvalsView(state(), false).rows).toEqual([{ ...ROW, ...FREE }, { ...ASSISTED, ...FREE }, { ...AUTOPILOT, ...FREE }]);
-    expect(MODE_LINE.interactive).toBe("Ember tells you about ordinary steps as it does them, and asks before anything risky, such as sending, deleting or paying, unless it is a command you asked for exactly that only deletes or overwrites data, publishes something or changes the system: then it tells you first.");
+    expect(MODE_LINE.interactive).toBe("Ember tells you about ordinary steps as it does them, and asks before anything risky, such as sending, deleting or paying, unless you asked for exactly that command and it only deletes or overwrites data, publishes something or changes the system: then it tells you first.");
     expect(MODE_LINE.assisted).toBe("As Interactive, but before Ember asks, a lighter AI model checks the step against what you asked. If it matches, Ember goes ahead and tells you.");
     // Assisted in force is the row marked (modes-C5).
     const assisted = { mode: "assisted" as const, consent: { ...agreed.consent, assisted: { version: modeCardVersion("assisted"), at: AT } } };
@@ -325,7 +325,7 @@ describe("How Ember asks (Apps & privacy, modes-A10)", () => {
   });
 
   it("offers Autopilot with a sentence and a card that say plainly what the user accepts, and says so while it is in force (modes-D5)", () => {
-    expect(MODE_LINE.autopilot).toBe("Ember doesn't ask: it sends, deletes, pays and installs without asking, and tells you as it goes. You accept that risk when you choose it.");
+    expect(MODE_LINE.autopilot).toBe("Ember doesn't ask, except before commands where you or your organisation set them to ask every time: it sends, deletes, pays and installs without asking, and tells you as it goes. You accept that risk when you choose it.");
     const card = modeCard("autopilot");
     expect(card).toMatchObject({ title: "Before you choose Autopilot", yes: "I agree, use Autopilot", no: "Not now", text: AUTOPILOT_CONSENT_TEXT });
     // The risk, unmistakably; what it still asks; what it never does; how to stop it; that the organisation may forbid it.
@@ -354,7 +354,7 @@ describe("How Ember asks (Apps & privacy, modes-A10)", () => {
     const on = { mode: "autopilot" as const, consent: { ...agreed.consent, autopilot: { version: modeCardVersion("autopilot"), at: AT } } };
     const v = approvalsView(state(on), false);
     expect(v).toMatchObject({ inForce: "autopilot", card: null, rows: [{ mode: "interactive", checked: false }, { mode: "assisted", checked: false }, { mode: "autopilot", checked: true, locked: false }] });
-    expect(v.note).toBe("Autopilot is on: Ember sends, deletes, pays and installs without asking, and tells you as it goes. “Ember, stop” or Ember's stop shortcut stops it. You can answer a question by voice too: say “allow” or “not now” once Ember has asked, or “Ember, allow” later. To change the mode by voice, say its name, such as “Ember, switch to Interactive”: one that asks less needs its card agreed to here first.");
+    expect(v.note).toBe("Autopilot is on: Ember sends, deletes, pays and installs without asking, and tells you as it goes. It still asks before commands where you or your organisation set them to ask every time, in a distro Podman uses and in “Project work”. “Ember, stop” or Ember's stop shortcut stops it. You can answer a question by voice too: say “allow” or “not now” once Ember has asked, or “Ember, allow” later. To change the mode by voice, say its name, such as “Ember, switch to Interactive”: one that asks less needs its card agreed to here first.");
     // Chosen but capped or without its own card: the note says what is in use instead, never that Autopilot is on.
     expect(approvalsView(approvalsState(on, { ...AdminPolicySchema.parse({}), approvals: { maxMode: "interactive" } }), false)).toMatchObject({ inForce: "interactive", note: expect.stringMatching(/^Your organisation allows Interactive at most, so Interactive is in use\. /) });
     const unread = approvalsView(state({ ...on, consent: agreed.consent }), false);
