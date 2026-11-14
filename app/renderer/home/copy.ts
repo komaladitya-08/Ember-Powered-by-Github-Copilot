@@ -978,6 +978,18 @@ export function aboutYouNotKept(kept: number, notKept: readonly (keyof typeof AB
   return kept ? `${aboutYouSaved(kept)} ${why}` : why;
 }
 
+/**
+ * What "Tell Ember about you" says after Save (memory-r11-2): what was kept and which of the answers sent (`sent`)
+ * memory refused as secrets and why, or that saved memory can't be read (r11-memory-x11-4), never that every answer
+ * may hold a password because nothing could be kept.
+ */
+export function aboutYouOutcome(r: { kept: number; notKept: readonly (keyof typeof ABOUT_YOU_ANSWER)[]; unreadable?: true } | null, sent: readonly (keyof typeof ABOUT_YOU_ANSWER)[]): string {
+  if (r?.unreadable) return memoryTroubleText("unreadable");
+  const notKept = (r?.notKept ?? []).filter(k => sent.includes(k));
+  if (!r || (!r.kept && !notKept.length)) return "Couldn't save your answers. Try again.";
+  return notKept.length ? aboutYouNotKept(r.kept, notKept) : aboutYouSaved(r.kept);
+}
+
 /** Under the "Ask me questions" switch. */
 export const MEMORY_QUESTIONS_HINT = "At most one question a day, only while you're not using Ember, about someone or a project you've called yours that it knows nothing about. It's written here in Home, never said aloud. Your answer is kept as something you told it.";
 

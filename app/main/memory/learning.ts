@@ -490,13 +490,16 @@ export class MemoryLearning {
   }
 
   /**
-   * `introduce`, answer by answer: how many were kept and which weren't (memory-r11-2), so Home says which answer and
-   * why. Null when memory isn't in force or the answers aren't valid.
+   * `introduce`, answer by answer: how many were kept and which the guard refused (memory-r11-2), so Home says which
+   * answer and why, or that saved memory can't be read (r11-memory-x11-4). Null when memory isn't in force or the
+   * answers aren't valid.
    */
   introduceAnswers(sent: unknown): IntroResult | null {
     if (!this.d.inForce()) return null;
     const a = IntroSchema.safeParse(sent);
     if (!a.success) return null;
+    // Saved memory unread: nothing can be kept, and no answer is to blame (r11-memory-x11-4).
+    if (this.d.memory.unreadable) return { kept: 0, notKept: [], unreadable: true };
     const answers = a.data as Intro;
     let kept = 0;
     const notKept: IntroField[] = [];

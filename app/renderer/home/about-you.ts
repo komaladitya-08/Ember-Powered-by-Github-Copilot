@@ -12,7 +12,7 @@ import type { Settings, SettingsPatch } from "../../main/settings";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import { speakSettings } from "../../shared/speech";
 import type { IntroField, IntroResult } from "../../main/memory/intro";
-import { ABOUT_YOU, MEMORY_CONSENT_TEXT, aboutYouHint, aboutYouNotKept, aboutYouSaved, aboutYouSpoken, introFromForm } from "./copy";
+import { ABOUT_YOU, MEMORY_CONSENT_TEXT, aboutYouHint, aboutYouNotKept, aboutYouOutcome, aboutYouSaved, aboutYouSpoken, introFromForm } from "./copy";
 
 export interface AboutYouOptions {
   /** Prefix for the element ids ("ay" in Settings, "w-ay" in first run). */
@@ -168,10 +168,9 @@ export function mountAboutYou(host: HTMLElement, o: AboutYouOptions): AboutYou {
     // Spoken replies is Ember's real speaking choice, not only a remembered preference (memory-5).
     const spokenKept = a.spoken !== undefined && !notKept.includes("spoken");
     const spokenSet = spokenKept && kept ? await o.save(speakSettings(a.spoken ? "always" : "never")).catch(() => false) : false;
-    status.textContent = (!result || (!kept && !notKept.length) ? "Couldn't save your answers. Try again."
-      : notKept.length ? aboutYouNotKept(kept ?? 0, notKept) : aboutYouSaved(kept))
-        + (spokenSet && a.spoken !== undefined ? ` ${aboutYouSpoken(a.spoken)}` : "");
-    if (result) {
+    status.textContent = aboutYouOutcome(result, sent) + (spokenSet && a.spoken !== undefined ? ` ${aboutYouSpoken(a.spoken)}` : "");
+    // Memory unread: nothing was kept, so every answer stays as typed (r11-memory-x11-4).
+    if (result && !result.unreadable) {
       // What was kept leaves the form; what wasn't stays, marked, until it is changed or cleared.
       for (const k of sent) {
         const control = controls[k];
