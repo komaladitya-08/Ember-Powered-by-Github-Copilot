@@ -4712,6 +4712,21 @@ function unknownDoes(h: H, verb?: string): void {
     words.push(...split(v));
   }
   const found = (cls: DangerClass, rule: string, says: string) => h.e.add(cls, rule, says, { program: base });
+  // Its plain operands may be code it runs (`swift x.swift`, `uv run x.py`, `zzrunner ./x.zz`): each is recorded as code
+  // Ember doesn't read, so one the task wrote or downloaded asks as `python3 x.py` does; any other runs as before
+  // (r11-commands-y11-3).
+  let codeOperands = 0;
+  // A file's name handed to another program as its program (`uv run x.py`, `pwsh x.ps1`, which run it from this
+  // folder) is such code too; a bare name at the start of a line is found on the PATH.
+  if (!verb && h.sc.wrappers.length > 0 && h.nameArg.v !== null && !h.pn.isPath && /\.[A-Za-z][A-Za-z0-9]{0,5}$/.test(h.nameArg.v)) h.e.recordImplied(h.nameArg, h.sc);
+  for (const a of h.args) {
+    if (codeOperands >= 8) break;
+    const v = a.v;
+    // (Not a name through `..`, which only the target's real path could place: such a name asks for that alone.)
+    if (v === null || v === "" || v === "-" || v.startsWith("-") || a.glob || URL_LIKE.test(v) || /[=:]/.test(v.replace(/^[A-Za-z]:\\/, "")) || /(^|[\\/])\.\.([\\/]|$)/.test(v)) continue;
+    codeOperands++;
+    h.e.recordImplied(a, h.sc);
+  }
   // A word that sets a variable is handed over for the program to set (it may be a launcher): one that changes how
   // commands are found or run asks as `env NAME=value` does, and its value, or a `name:value` word's, is judged as a
   // file the program may read (`X=/etc/shadow`, `KEY=id_rsa`, `x:.env`: integ2-z-2).
@@ -7293,7 +7308,7 @@ function moduleCode(h: H, mod: string): void {
  * test runner, doctest and inspect, which imports it. What they run is code Ember doesn't read, so one the task wrote
  * asks, as `python3 a.py` does (commands-remote-r11-5). Every other module of Python's own only reads its files.
  */
-const PY_RUNS_GIVEN = new Set(["cProfile", "profile", "trace", "unittest", "doctest", "inspect"]);
+const PY_RUNS_GIVEN = new Set(["cProfile", "profile", "trace", "unittest", "doctest", "inspect", "runpy"]);
 /** The words after such a module that name code: each .py file, and each word that may be a module's name. */
 function givenCode(h: H, args: readonly Arg[]): void {
   for (const a of args) {

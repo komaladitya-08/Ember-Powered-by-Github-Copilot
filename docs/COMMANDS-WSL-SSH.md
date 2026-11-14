@@ -1002,7 +1002,8 @@ an earlier command printed text that looked like instructions.").
   downloaded always asks, and one it wrote asks when it can't be read in full; a script in another language (Python,
   Node, Ruby…, run by its interpreter or by a `#!` line naming one, or by `deno`, `bun`, `tsx`, `ts-node`, `go run`,
   `java a.java`, `python3 -m a`, Python's own runners `python3 -m cProfile`, `profile`, `trace`, `unittest`, `doctest` and
-  `inspect`, `coverage run`, `python3 - < a.py`, a plugin `pytest -p` loads, and the conftest.py or the test files pytest is given) that this task wrote by name,
+  `inspect` and `runpy`, `coverage run`, `python3 - < a.py`, a plugin `pytest -p` loads, the conftest.py or the test files pytest is
+  given, and a file handed to a program Ember doesn't know: `swift x.swift`, `uv run x.py`, `pwsh x.ps1`) that this task wrote by name,
   changed with a patch it wrote (`git apply`, `patch`) or downloaded asks, since Ember can't read it first. A script an earlier command of the
   task downloaded is asked about without being read (it is code from elsewhere either way); one the same line
   downloads is read as it stands before the download (§2.4).

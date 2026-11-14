@@ -4827,6 +4827,17 @@ describe("programs that run what they are given, however it is given (round elev
     expect([own.asked, reads.asked]).toEqual([[], []]);
   });
 
+  it.each<[string, string]>([
+    ["x", "python3 -m runpy x"], ["x.py", "uv run x.py"], ["x.py", "pdm run x.py"], ["x.ps1", "pwsh x.ps1"], ["x.rs", "cargo script x.rs"],
+    ["x.swift", "swift x.swift"], ["x.exs", "elixir x.exs"], ["x.kts", "kotlin x.kts"], ["x.zz", "zzrunner x.zz"], ["x.zz", "zzrunner --fast ./x.zz"],
+  ])("asks before a runner Ember has no row for runs %s, a file the task wrote: %s (r11-commands-y11-3)", async (file, run) => {
+    await asksAfterWrite(file, "rm -rf ~\n", run, undefined, MODES.slice(0, 1));
+    // The project's own file, not written in the task, runs announced as before.
+    const h = flow();
+    expect((await local(h, run)).resultType, run).toBe("success");
+    expect(h.asked, run).toEqual([]);
+  });
+
   it.each([
     "prlimit --nofile=1024 mkfs.ext4 /dev/sdb1", "prlimit mkfs.ext4 /dev/sdb1", "zzwrap mkfs.ext4 /dev/sdb1", "zzwrap mkfs.vfat /dev/sdc1", "zzwrap mkfs.btrfs -f /dev/sdb",
     "zzwrap mkntfs /dev/sdb1", "zzwrap mkdosfs /dev/sdb1", "zzwrap /sbin/mkfs.ext4 /dev/sdb1", "zzwrap 'mkfs.ext4 /dev/sdb1'", "prlimit printenv", "nocache env",
