@@ -1839,9 +1839,17 @@ function saysLittle(inner: string): boolean {
   return true;
 }
 /** Registries' clients and their verbs that send the names they are given to a registry (sendsContents: y10-4). */
+/** The container clients, whose `run` and `create` pull the image they name (sendsContents). */
+const IMAGE_CLIENTS = new Set(["docker", "podman", "nerdctl", "buildah"]);
+/** An image named with its registry's host (`x.io/app`, `registry:5000/app`). */
+const IMAGE_HOST = /^["']?[\w-]+(?:\.[\w-]+)+(?::\d+)?\/|^["']?[\w-]+:\d+\//;
+/** The word before a container's image: none, or an option that takes no value (`--rm`, `-it`, `--name=x`). */
+const takesNoValue = (prev: string): boolean => prev === "" || /^--[\w-]+=/.test(prev) || /^(?:--(?:rm|detach|interactive|tty|init|privileged|read-only|publish-all|quiet|no-healthcheck|sig-proxy|oom-kill-disable)|-[dtiPq]+)$/.test(prev);
+/** scp's and git's `host:path` address (`x.io:repo`, `git@x.io:ana/notes.git`), never a Windows drive or a URL. */
+const HOST_PATH = /^["']?(?:[\w.-]+@[\w.-]+|[\w-]+(?:\.[\w-]+)+):(?!\/\/)/;
 const REGISTRY_VERBS: Readonly<Record<string, ReadonlySet<string>>> = (() => {
   // (`docker inspect` and the like ask this computer's daemon; skopeo, crane, oras and regctl only ever ask a registry.)
-  const images = new Set(["pull", "push", "search", "manifest", "login"]);
+  const images = new Set(["pull", "push", "search", "manifest", "login", "run", "create"]);
   const remote = new Set(["inspect", "copy", "list-tags", "ls", "cat", "fetch", "digest", "pull", "push", "manifest", "config", "blob", "tag", "image", "repo", "artifact", "discover", "attach", "login"]);
   const node = new Set(["view", "v", "info", "show", "search", "s", "find", "install", "i", "add", "exec", "dlx", "x", "create", "init", "outdated", "dist-tag", "access", "owner", "deprecate", "publish", "unpublish"]);
   const py = new Set(["index", "download", "install", "search"]);
@@ -3928,14 +3936,30 @@ class Engine extends Classifier {
       // (`npm view x --registry=https://x.io/$(cat notes.txt)`: y10-4).
       const { own: words } = this.ownWords(args);
       const reads = (a: Arg): boolean => a.v === null && substituted(a.raw).some(inner => !saysLittle(inner));
-      if (words.some(a => reads(a) && /^(?:--?[\w-]+=)?["']?(https?|ftps?|ssh|git|docker):\/\//i.test(a.raw))) { this.add("publish", "send.contents", says); return; }
+      // So does scp's and git's `host:path` (`git ls-remote x.io:$(cat notes.txt)`, `git clone git@x.io:…`), as an
+      // `ssh://` address does (r12-commands-x12-5).
+      if (words.some(a => reads(a) && (/^(?:--?[\w-]+=)?["']?(https?|ftps?|ssh|git|docker):\/\//i.test(a.raw) || HOST_PATH.test(a.raw)))) { this.add("publish", "send.contents", says); return; }
       // A registry's client asked for an image, a package or a search by a name that holds what a command or a read
       // gave sends that to the registry (`docker pull x.io/$(cat notes.txt)`, `npm view $(cat notes.txt)`, `pip index
       // versions $(cat notes.txt)`: y10-4). Only its verbs that reach a registry: `docker stop $(docker ps -q)` talks to
       // this computer's own daemon.
       const verbs = REGISTRY_VERBS[key];
-      const verb = words.find(a => a.v !== null && !a.v.startsWith("-"))?.v ?? "";
-      if (verbs?.has(verb) && words.some(reads)) this.add("publish", "send.contents", says);
+      const plain = words.filter(a => a.v === null || !a.v.startsWith("-"));
+      let at = 0;
+      // A container client's group and its verb (`docker image pull`, `docker container create`) are that verb.
+      if (IMAGE_CLIENTS.has(key) && (plain[0]?.v === "image" || plain[0]?.v === "container")) at = 1;
+      const verb = plain[at]?.v ?? "";
+      if (!verbs?.has(verb)) return;
+      // `run` and `create` pull the image they name when it isn't here (r12-commands-x12-5): only the image's word
+      // sends, never an option's value given to the container (`-e KEY=$(cat key)`, `-v $(pwd):/src`).
+      if (IMAGE_CLIENTS.has(key) && (verb === "run" || verb === "create")) {
+        const from = words.indexOf(plain[at]);
+        const image = words.slice(from + 1).find((a, k, rest) => reads(a)
+          && (IMAGE_HOST.test(a.raw) || (!a.raw.startsWith("-") && takesNoValue(k === 0 ? "" : rest[k - 1]?.v ?? "-") && !/[=:]/.test(a.raw.replace(/\$\([^)]*\)|`[^`]*`/g, "")))));
+        if (image) this.add("publish", "send.contents", says);
+        return;
+      }
+      if (words.some(reads)) this.add("publish", "send.contents", says);
       return;
     }
     // The address a cloud computer hands out its own sign-in at (the instance metadata service): what a fetch of it
