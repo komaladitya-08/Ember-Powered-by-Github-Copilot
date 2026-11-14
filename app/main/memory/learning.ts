@@ -246,7 +246,7 @@ export class MemoryLearning {
         // or asked to be kept: a question that names it ("Am I vegetarian?") is not them saying it (memory-x9-2).
         const refs = about.length ? about : undefined;
         const theirs = rememberedSource(fact, said, refs) === "user"
-          && (!onlyAsked(fact, said) || memoryAsk(said) === "remember" || remembersWithMore(said) || !!profileSaid(fact, refs ?? [{ name: "User" }], said));
+          && (!onlyAsked(fact, said) || memoryAsk(said) === "remember" || remembersWithMore(said) || !!profileSaid(fact, refs ?? [{ name: "User" }], said, false, this.d.memory.currentName()));
         const held = this.hold.heldBack(fact, theirs ? "user" : "conversation", "tool", said);
         if (held) {
           this.d.log.info("memory.learn_skipped", { why: "forgotten_here" });
@@ -410,7 +410,7 @@ export class MemoryLearning {
   private keepLearned(found: NewFact, since: number, said: string | null, evidence: string): AddResult {
     // What to call the user or how long answers should be, told in their own words in that turn and read as a fact
     // about them alone: the profile's own fact, as the remember tool keeps it (memory-r9-5, memory-x9-1).
-    const f = (said ? profileSaid(found.text, found.about, said, found.source === "user") : null) ?? found;
+    const f = (said ? profileSaid(found.text, found.about, said, found.source === "user", this.d.memory.currentName()) : null) ?? found;
     // Forgotten or corrected in this conversation: only the user's own words bring it back (memory-r9-1), and until
     // it ends a turn teaches only what rests on them (memory-x9-3).
     if (this.hold.heldBack(f.text, f.source, said === null ? "task" : { said, evidence })) {

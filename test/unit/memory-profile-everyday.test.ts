@@ -1,7 +1,7 @@
 /**
  * A new name or answer length said the everyday way replaces the one from Tell Ember about you (memory-r10-2): "I go
  * by Raj these days, not Ram", "It's Raj, not Ram", "Call me Dr. Patel please", "My friends call me Raj, and so can
- * you", "Keep it brief", "Stop rambling", "Less waffle please", "Shorter, please". The profile goes with every request,
+ * you", "Keep it brief", "Stop rambling", "Less waffle please". The profile goes with every request,
  * so before this the old name and length went on being sent while the new fact sat beside them, unsent.
  */
 
@@ -45,7 +45,7 @@ describe("a name said the everyday way replaces the one from Tell Ember about yo
     ["Everyone calls me Raj, and you can too.", "Likes to be called Raj", "Raj"],
   ];
   it.each(NAMES)("“%s” saved as “%s” leaves one name, the new one, with every request (memory-r10-2)", async (said, fact, name) => {
-    expect(nameSaid(said)).toBe(name);
+    expect(nameSaid(said, "Ram")).toBe(name);
     const r = rig();
     r.l.introduce({ name: "Ram", length: "detailed" });
     r.day();
@@ -65,9 +65,9 @@ describe("a name said the everyday way replaces the one from Tell Ember about yo
 
 describe("an answer length said the everyday way replaces the one from Tell Ember about you (memory-r10-2)", () => {
   const LENGTHS: [string, "short" | "detailed"][] = [
-    ["Keep it brief.", "short"], ["Stop rambling.", "short"], ["Less waffle please.", "short"], ["Shorter, please.", "short"],
+    ["Keep it brief.", "short"], ["Stop rambling.", "short"], ["Less waffle please.", "short"],
     // Neighbours.
-    ["Ember, keep it short please.", "short"], ["No more waffling.", "short"], ["Much shorter, please.", "short"], ["More detail, please.", "detailed"],
+    ["Ember, keep it short please.", "short"], ["No more waffling.", "short"], ["Keep things detailed.", "detailed"],
   ];
   it.each(LENGTHS)("“%s” leaves the new length, and only it, with every request (memory-r10-2)", async (said, length) => {
     expect(lengthSaid(said)).toBe(length);
@@ -85,5 +85,33 @@ describe("an answer length said the everyday way replaces the one from Tell Embe
       "Priya said stop rambling", "The talk should be shorter", "Shorter than the last one?", "Keep it brief for the board"]) {
       expect(lengthSaid(said), said).toBeNull();
     }
+  });
+});
+
+describe("a length alone, or “It's X, not Y”, never overwrites what the user set (r10-memory-x10-3)", () => {
+  it.each([["Shorter, please.", "Prefers shorter answers"], ["Much shorter, please.", "Prefers short answers"], ["More detail, please.", "Prefers detailed answers"], ["Longer.", "Prefers longer answers"]])(
+    "“%s” alone keeps the profile's length, and “%s” stays the conversation's (r10-memory-x10-3)", async (said, fact) => {
+      expect(lengthSaid(said)).toBeNull();
+      const r = rig();
+      r.l.introduce({ name: "Ram", length: fact.includes("detail") || fact.includes("longer") ? "short" : "detailed" });
+      r.day();
+      expect(r.remember(said, fact)).not.toMatch(/replacing \[f2\]/);
+      expect(r.list()).toContain(fact.includes("detail") || fact.includes("longer") ? "user: Prefers short answers" : "user: Prefers detailed answers");
+    });
+
+  it.each([["It's Paris, not London.", "Paris"], ["It's March, not June.", "March"], ["It's Python, not Java.", "Python"], ["It's Zoom, not Teams.", "Zoom"]])(
+    "“%s” never renames the user, whose name is Ram (r10-memory-x10-3)", async (said, word) => {
+      expect(nameSaid(said, "Ram")).toBeNull();
+      expect(nameSaid(said)).toBeNull();
+      const r = rig();
+      r.l.introduce({ name: "Ram", length: "detailed" });
+      r.day();
+      expect(r.remember(said, `Likes to be called ${word}`)).not.toMatch(/replacing \[f1\]/);
+      expect(await r.profile()).toContain("- Likes to be called Ram\n");
+    });
+
+  it("still renames the user from “It's Raj, not Ram” when Ram is their name now (r10-memory-x10-3)", () => {
+    expect(nameSaid("It's Raj, not Ram.", "Ram")).toBe("Raj");
+    expect(nameSaid("It's Raj, not Sam.", "Ram")).toBeNull();
   });
 });
