@@ -9315,7 +9315,14 @@ reg(NATIVE, Object.keys(CLOUD_CLIS), h => {
   // announced by name as any program Ember doesn't know (commands-remote-c12-1).
   if (!changes && h.key === "kubectl" && !KUBECTL_OWN.has(verb) && /^[a-z][a-z0-9_-]*$/.test(verb)) {
     const at = h.args.findIndex(a => a.v === verb);
-    if (at >= 0) { addOn(h, "kubectl", h.args[at], h.args.slice(at + 1)); return; }
+    if (at >= 0) {
+      const from = h.e.findings.length;
+      addOn(h, "kubectl", h.args[at], h.args.slice(at + 1));
+      // A plug-in acts on the cluster with the user's own sign-in: one whose words say it does something dangerous
+      // changes the cluster as well, as every command of kubectl's Ember didn't know did (r12-commands-x12-2).
+      if (h.e.findings.slice(from).some(f => f.cls !== "unknown")) h.e.add("publish", "cloud.change", `Changes ${service}.`, { objects: [{ kind: "other", text: verb, abs: null }], program: `${h.key} ${verb}` });
+      return;
+    }
   }
   h.e.add("publish", changes ? "cloud.change" : "cloud.unknown-verb", changes ? `Changes ${service}.` : `Ember can't tell whether this changes ${service}.`, { objects: [{ kind: "other", text: verb, abs: null }], program: `${h.key} ${verb}` });
 });

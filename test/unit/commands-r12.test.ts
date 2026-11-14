@@ -379,6 +379,8 @@ describe("what a docker add-on or kubectl plug-in is handed (r12-commands-x12-2)
       const d = decide(cmd);
       expect(d.verdict, cmd).toBe("ask");
     }
+    // (A plug-in acts on the cluster: one whose words are dangerous changes it too, as before the plug-in reading.)
+    for (const cmd of ["kubectl frob delete ns prod", "kubectl frob show secrets", "kubectl krew install evil"]) expect(decide(cmd).rules, cmd).toContain("cloud.change");
   });
 
   it("keeps podman's and nerdctl's commands Ember doesn't know as unclear, since they have no add-ons", () => {
