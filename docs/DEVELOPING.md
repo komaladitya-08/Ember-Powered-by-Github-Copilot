@@ -1421,9 +1421,12 @@ ordinary three- or four-sentence emails were Kitten's in 12 of 40 after a plain 
 (voice-speaking-r11-1; now none of those 40 nor of 25 more, with English emails and notes still Kitten's). Told so,
 from fewer than a quarter, a passage needs two signs of its own (two different short words that aren't `ALSO_ENGLISH`,
 or one and a letter only it writes: `MARKS`) and no letters only unlisted languages write (`UNLISTED_LETTERS`: Polish
-"ł", "ś", Romanian "ș", Czech "ř", the Nordic "å", "ø"): Polish emails went to a Portuguese voice, which says nothing
-where none is installed, and Romanian and Hungarian ones to a French or Spanish voice (r11-voice-x11-4); they are
-Kitten's again. A Catalan email still goes to a Spanish voice. A message's
+"ł", "ś", Romanian "ș", Czech "ř", the Nordic "å", "ø", the "š", "č" and "ž" of Croatian, Bosnian, Serbian and Slovene,
+the Baltic "ė", "ū", "ā", "ņ"), nor two of Catalan's everyday words (`CATALAN`: "amb", "perquè", "tinc", "ahir",
+"demà", the days of the week): Polish emails went to a Portuguese voice, which says nothing where none is installed,
+Romanian and Hungarian ones to a French or Spanish voice (r11-voice-x11-4), and Croatian, Slovene and Catalan ones to an
+Italian or French voice (r11-voice-y11-3); they are Kitten's again. A Galician email goes to a Portuguese voice. A
+message's
 header lines at the start of what is judged ("From: José", "To:", "Subject: Proyecto", "Date:": `HEADER`; and any other
 one-line label of up to three words with its value, "Attachments: plan.pdf", "Received: today at 9:14", "Sender: José",
 "Priority: High": `HEADER_LABEL`, whose label Ember didn't know made the email Kitten's again in 18 of 40, or was said by

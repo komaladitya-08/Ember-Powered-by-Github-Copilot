@@ -445,10 +445,15 @@ const OWN_LETTERS: Readonly<Record<string, RegExp>> = {
 };
 /**
  * Letters that only languages outside STOPWORDS write (Polish, Czech, Slovak, Romanian, Turkish, Hungarian, the Nordic
- * languages, Croatian): a passage that writes them isn't one of the listed languages, however many short words it
- * shares with one (r11-voice-x11-4).
+ * languages, Croatian, Bosnian, Serbian, Slovene and the Baltic languages): a passage that writes them isn't one of the
+ * listed languages, however many short words it shares with one (r11-voice-x11-4, r11-voice-y11-3).
  */
-const UNLISTED_LETTERS = /[ąęłńśźżćěřůďťňľĺŕășțşţğıőűåøæðþđ]/giu;
+const UNLISTED_LETTERS = /[ąęłńśźżćěřůďťňľĺŕășțşţğıőűåøæðþđšžčėūųāēīķļņģ]/giu;
+/**
+ * Everyday words of Catalan, which STOPWORDS has no list for, that none of the listed languages writes: a passage with
+ * two of them isn't French, Italian or Spanish, however many short words it shares with them (r11-voice-y11-3).
+ */
+const CATALAN = new Set("amb els dels perquè tinc teniu vau ahir demà avui aquest aquesta això molt també doncs davant dilluns dimarts dimecres dijous divendres dissabte diumenge".split(" "));
 /** The letters of OWN_LETTERS no unlisted language writes as well (Hungarian and Czech write "á", "í", "ó" and "ú"). */
 const MARKS: Readonly<Record<string, RegExp>> = { ...OWN_LETTERS, es: /[ñ¿¡]/gu };
 /** A short word two languages write that is far commoner in one: Spanish's "and", French's "there" ("il y a"). */
@@ -535,6 +540,9 @@ function languageOf(quoting: string, minDifferent: number, prefer: string | null
   // "Hola, mañana no podré ir a la oficina…" has "la" and "ñ").
   const own = new Set(counted(words, best).filter(w => !ALSO_ENGLISH[best]?.has(w))).size + (text.match(MARKS[best] ?? /(?!)/gu) ? 1 : 0);
   if (share > 4 && own < 2) return null;
+  // Nor where it writes two of Catalan's everyday words: a Catalan email's "que", "si", "per", "les" and "de" made it
+  // French or Italian, said by such a voice or not at all where there is none (r11-voice-y11-3).
+  if (share > 4 && words.filter(w => CATALAN.has(w)).length >= 2) return null;
   return best;
 }
 

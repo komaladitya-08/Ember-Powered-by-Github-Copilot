@@ -829,6 +829,22 @@ describe("AnswerLanguage tells a passage's language from its own words, not from
     ]) expect(streamed(`Here is the email from Ana:\n\n${passage}\n\nWant me to reply?`).filter(p => p.lang !== null), passage).toEqual([]);
   });
 
+  it("never gives a Croatian, Slovene or Catalan email to an Italian or French voice by the short words they share (r11-voice-y11-3)", () => {
+    // They went to an Italian or a French voice, which says nothing where none is installed; Kitten had read them, as
+    // it reads every language it has no list for.
+    for (const passage of [
+      "Dobro jutro, šaljem ti izvještaj koji si tražio jučer. Ako imaš pitanja, javi mi. Pozdrav, Ana.",
+      "Dobar dan, šaljem ti dokumente za sastanak. Ako ti nešto treba, javi mi se. Pozdrav, Ana.",
+      "Dobro jutro, pošiljam ti poročilo, ki si ga prosil včeraj. Če imaš vprašanja, mi sporoči. Lep pozdrav, Ana.",
+      "Bon dia, us envio l'informe que em vau demanar ahir. Si teniu cap pregunta, aviseu-me. Salutacions, Joan.",
+      "Hola Alex, demà no podré venir a l'oficina perquè tinc metge. Treballaré des de casa. Una abraçada, Joan.",
+      "Bon dia, ja tinc les entrades per al concert de dissabte. Quedem a les set davant del teatre. Petons, Marta.",
+    ]) {
+      const wrong = streamed(`Here is the email from Ana:\n\n${passage}\n\nWant me to reply?`).filter(p => p.lang !== null);
+      expect(wrong, passage).toEqual([]);
+    }
+  });
+
   it("keeps a header whose label or value is in the passage's language with the passage, as before (r10-voice-x10-2)", () => {
     const said = streamed("Asunto: reunión del lunes\n\nHola Alex, mañana no puedo ir a la oficina. Te llamo por la tarde. Un abrazo, Ana.");
     expect(said.find(p => p.text.includes("reunión"))?.lang).toBe("es");
