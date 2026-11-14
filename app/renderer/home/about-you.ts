@@ -11,7 +11,7 @@
 import type { Settings, SettingsPatch } from "../../main/settings";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import { speakSettings } from "../../shared/speech";
-import { ABOUT_YOU, MEMORY_CONSENT_TEXT, aboutYouSaved, aboutYouSpoken, introFromForm } from "./copy";
+import { ABOUT_YOU, MEMORY_CONSENT_TEXT, aboutYouHint, aboutYouSaved, aboutYouSpoken, introFromForm } from "./copy";
 
 export interface AboutYouOptions {
   /** Prefix for the element ids ("ay" in Settings, "w-ay" in first run). */
@@ -23,6 +23,11 @@ export interface AboutYouOptions {
   askConsent?: () => void;
   /** The answers or the memory state changed (first run's Next label follows). */
   changed?: () => void;
+  /**
+   * Ember can tell the user's voice from its speakers here, so the spoken "get to know me" can keep answers and is
+   * offered (memory-r9-6). Asked at every draw; absent: not offered.
+   */
+  spokenVersion?: () => boolean;
 }
 
 export interface AboutYou {
@@ -121,7 +126,7 @@ export function mountAboutYou(host: HTMLElement, o: AboutYouOptions): AboutYou {
   }
   group.append(off, managedLine, pausedLine, ...fields, saveRow);
   // Settings says what the card is for under it (first run's step says it in its lead).
-  const voice = el("p", { className: "hint", textContent: o.askConsent ? `${ABOUT_YOU.lead} ${ABOUT_YOU.voice}` : ABOUT_YOU.voice });
+  const voice = el("p", { className: "hint" });
   host.replaceChildren(group, status, voice);
 
   const answers = () => introFromForm({
@@ -162,8 +167,9 @@ export function mountAboutYou(host: HTMLElement, o: AboutYouOptions): AboutYou {
     pausedLine.textContent = paused ?? "";
     pausedLine.hidden = managed || !paused;
     for (const f of [...fields, saveRow]) f.hidden = !keeps;
-    // ("Get to know me" can't keep anything either while memory is paused.)
-    voice.hidden = managed || !!paused;
+    // ("Get to know me" can't keep anything either while memory is paused, nor where Ember can't check the voice.)
+    voice.textContent = aboutYouHint(!!o.askConsent, o.spokenVersion?.() === true);
+    voice.hidden = managed || !!paused || !voice.textContent;
   }
   draw();
 

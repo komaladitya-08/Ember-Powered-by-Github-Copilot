@@ -56,6 +56,18 @@ export function projectAnswerText(o: { mode: string; patch: boolean; withheld: {
   if (o.canContinue) return ready;
   return `${ready} ${where ? "Ember won't include this answer on the next send either." : "Ember won't include this answer on the next send, as it appears to contain a password, token or key."}`;
 }
+/**
+ * What opening a saved workspace says: that it is open, that its command folder must be chosen again (moved or gone),
+ * and that its last answer was left out because it was saved before the provider's key or settings changed
+ * (integrations-r9-3: the workspace is the person's whatever the key; an answer goes only to the one that gave it).
+ */
+export function workspaceOpened(name: string, o: { folderGone: boolean; answerLeft: boolean }): string {
+  return [
+    `Opened workspace “${name}”.`,
+    ...(o.folderGone ? ["Choose the command folder again."] : []),
+    ...(o.answerLeft ? ["Its last answer was saved before this provider's key or settings changed, so Ember left it out."] : []),
+  ].join(" ");
+}
 export function projectBytes(bytes: number): string {
   return bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(bytes < 10 * 1024 ? 1 : 0)} KiB`;
 }

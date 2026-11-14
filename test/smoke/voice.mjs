@@ -17,7 +17,8 @@
 //              the models folder (482 MB: CI doesn't fetch it).
 //   match      Voice Match: enrolled from 4 clips through the settings page's own IPC (window.ember.enrolVoice, on
 //              Chromium's debugging port), then a request in another synthetic voice is said not to match, and heard (voice.rejected,
-//              reason "voice") and one in the owner's is heard.
+//              reason "voice") and one in the owner's is heard. The other voice's rendition is one Ember's voice engine
+//              hears properly off-line first (otherWake), so a wake check can't turn it away before Voice Match hears it.
 //   listen-once (opt in) opens Ask and presses its Listen once button after microphone and models are ready. One plain
 //              request is answered aloud; a second plain request does not start a turn or an automatic follow-up.
 // Needs an X display (in CI: xvfb-run -a), the speech models (node scripts/voice/prepare.mjs) and the other voice's
@@ -105,6 +106,63 @@ const heyEmberStop = () => cat(clip("wake_pause").subarray(0, at(1.52)), silence
 /** Silence before anything is said: the voice process loads its models (2–3 s) while the mic window already hears. */
 const LEAD_S = 5;
 
+/**
+ * The other voice's "Hey Ember, turn on night light." for Voice Match's scenario: the first of its renditions (wake.wav,
+ * wake-2.wav, …: prepare.mjs makes four, new ones every run) that Ember's own voice engine, on the build Ember runs
+ * (EMBER_SHERPA_CAPI's C API, else the one it picks), hears properly off-line, after `before` as the scenario's
+ * recording has it, at each of 16 placements of the microphone's 32 ms frames: woken by "Hey Ember", not taken back
+ * by a wake check, and the request heard as night light. The voice comes out a little different each time, and the
+ * wake's check takes back the wake of a rendition now and then (it heard one as "Amber turner": 3 of 600 renditions and
+ * placements on the C API), which turned the other voice away for "check" before Voice Match heard it, and failed the
+ * scenario (CI at 079e73d). Picking one Ember hears leaves what the scenario tests to Voice Match alone; none that
+ * passes fails it, with what each was heard as.
+ */
+async function otherWake(before, enrolledAt) {
+  const takes = ["wake.wav", "wake-2.wav", "wake-3.wav", "wake-4.wav"].map(f => path.join(otherVoice, f)).filter(f => existsSync(f));
+  const out = path.join(root, ".cache/voice-e2e/engine.cjs");
+  const { build } = await import("esbuild");
+  await build({
+    stdin: { contents: 'export { VoiceEngine } from "./app/voice/engine"; export { sherpaBackend } from "./app/voice/sherpa"; export { modelPaths } from "./app/voice/models";', resolveDir: root, loader: "ts" },
+    outfile: out, bundle: true, platform: "node", format: "cjs", packages: "external", logLevel: "error",
+  });
+  const { VoiceEngine, sherpaBackend, modelPaths } = createRequire(import.meta.url)(out);
+  const capiDir = process.env.EMBER_SHERPA_CAPI;
+  const backend = sherpaBackend(modelPaths(models), capiDir ? { runtime: { capiDir } } : {});
+  const heardAs = [];
+  try {
+    for (const file of takes) {
+      const take = readWav(file);
+      const recording = inRoom(cat(before, take, silence(6)));
+      const failed = [];
+      for (let placement = 0; placement < 512; placement += 32) {
+        // As the voice process hears it (process.ts): the teaching has the VAD and the engine hears only stops until it
+        // has its phrases, then both start afresh.
+        let t = 0, from = Infinity;
+        const events = [];
+        const engine = new VoiceEngine(backend, e => { if (t >= from && e.type !== "speech") events.push(e); }, { conversation: false, otherSound: null, now: () => t });
+        engine.stopsOnly(true);
+        backend.resetVad();
+        const all = cat(new Float32Array(placement), recording), enrolled = placement + at(enrolledAt), said = placement + before.length;
+        for (let i = 0; i + 512 <= all.length; i += 512, t += 32) {
+          const frame = all.subarray(i, i + 512);
+          if (i >= said) from = Math.min(from, t);
+          engine.feed(frame);
+          if (i < enrolled) { backend.vad(frame); if (i + 512 >= enrolled) { backend.resetVad(); engine.stopsOnly(false); } }
+        }
+        backend.resetVad();
+        const wake = events.find(e => e.type === "wake"), rejected = events.find(e => e.type === "rejected");
+        const request = events.find(e => e.type === "utterance");
+        if (wake?.keyword !== "hey_ember" || rejected || !/night ?light/i.test(request?.text ?? "")) {
+          failed.push(`${rejected ? `taken back for "${rejected.reason}" (heard “${rejected.heard ?? ""}”)` : wake ? `woken by ${wake.keyword}, heard “${request?.text ?? ""}”` : "never woken"} at ${placement}`);
+        }
+      }
+      if (!failed.length) return { take, file: path.basename(file), of: takes.length, backend: backend.info.backend };
+      heardAs.push(`${path.basename(file)}: ${failed.join("; ")}`);
+    }
+  } finally { backend.free(); }
+  throw new Error(`none of the other voice's ${takes.length} rendition(s) in ${otherVoice} was heard properly by Ember's voice engine off-line, so Voice Match couldn't be tested on it (${heardAs.join(" | ")}); node scripts/voice/prepare.mjs --voice ryan --clips makes new ones`);
+}
+
 // ───── Ember ─────
 const electron = createRequire(import.meta.url)("electron");
 const noSandbox = (process.platform === "linux" && process.getuid?.() === 0) || process.env.EMBER_SMOKE_NO_SANDBOX === "1" ? ["--no-sandbox"] : [];
@@ -133,7 +191,7 @@ function startEmber(name, wav, { debugPort = false, wakeWord = true, conversatio
   // the run is the same with or without parec and a sound server (it changes how "Hey Ember" over Ember's voice is taken).
   // Conversations off but in their own scenario: the rest check the follow-up window, which is what that switch leaves.
   writeFileSync(path.join(userData, "settings.json"), JSON.stringify({
-    version: 1, onboarded: true, consent: { version: 8, at: new Date().toISOString() },
+    version: 1, onboarded: true, consent: { version: 10, at: new Date().toISOString() },
     wakeWord, speak: true, voice: { consent: wakeWord, speakerRejection: false, muted: false, match: false, conversation, clearHearing },
   }));
   const env = {
@@ -486,11 +544,13 @@ const scenarios = {
 
   async match() {
     reply = "Night Light is on. Anything else?";
-    const other = readWav(path.join(otherVoice, "wake.wav"));
     // Ten seconds' silence for the enrolment to start (it's asked for once the voice process is ready), the owner's four
     // phrases, then "Hey Ember, turn on night light." in another voice, then in the owner's.
     const enrolClips = ["dnd", "chat", "remember", "followup"];
-    const inst = startEmber("match", cat(silence(10), ...enrolClips.flatMap(c => [clip(c), silence(1.5)]), silence(3), other, silence(6), clip("wake"), silence(25)), { debugPort: true });
+    const teaching = cat(silence(10), ...enrolClips.flatMap(c => [clip(c), silence(1.5)]));
+    const before = cat(teaching, silence(3));
+    const other = await otherWake(before, teaching.length / RATE);
+    const inst = startEmber("match", cat(before, other.take, silence(6), clip("wake"), silence(25)), { debugPort: true });
     try {
       await waitFor(inst, e => e.msg === "voice.ready", 40_000, "the voice process (voice.ready)");
       const started = await evaluateInSettings(inst, "window.ember.enrolVoice()");
@@ -505,7 +565,7 @@ const scenarios = {
       const heard = await waitFor(inst, e => e.msg === "voice.utterance", 30_000, "the other voice's request to be heard all the same (voice.utterance)", rejected);
       const owner = await waitFor(inst, e => e.msg === "voice.utterance", 30_000, "the owner's request after the other voice (voice.utterance)", heard + 1);
       await spoken(inst, owner);
-      console.log(`ok   match: another voice didn't match (voice.rejected reason voice, score ${inst.log[rejected].score}) and was heard unverified; the owner's request was heard and answered`);
+      console.log(`ok   match: another voice (${other.file} of ${other.of} renditions, the first heard properly off-line on ${other.backend}) didn't match (voice.rejected reason voice, score ${inst.log[rejected].score}) and was heard unverified; the owner's request was heard and answered`);
     } finally { await finish(inst); }
   },
 };

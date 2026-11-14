@@ -405,6 +405,15 @@ describe("audit journal copy (review round 3)", () => {
     expect(line).not.toMatch(/salaries|HR|layoffs|asked to remove/);
     expect(JSON.parse(line)).toMatchObject({ reason: "Reviewed: routine for the request.", reviewChars: why.length, commandChars: 44 });
   });
+
+  it("keeps what Assisted's check said of an app step, which is one of Ember's own three words (modes-C1)", async () => {
+    const { journalLine } = await import("../../app/main/policy/audit");
+    for (const review of ["match", "no-match", "none"]) {
+      expect(JSON.parse(journalLine(JSON.stringify({ event: "decision", kind: "click", verdict: "allow", autonomy: true, review })))).toMatchObject({ review });
+    }
+    // Anything else under that key is still a size only.
+    expect(JSON.parse(journalLine(JSON.stringify({ event: "decision", kind: "click", review: "match: the user asked for report.pdf" })))).toMatchObject({ reviewChars: 36 });
+  });
 });
 
 describe("policy: review round 4", () => {

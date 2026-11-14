@@ -568,6 +568,16 @@ describe("a run's tab", () => {
     expect(page().last().tabs[0].status).toBe("Finished in 3.2\u00a0s.");
   });
 
+  it("says Ember couldn't tell what was left running when the runner's look didn't all come back, never a part as the whole (review wslio-x-7)", async () => {
+    const { ctl, page } = setup();
+    const run = new FakeRun("0123456789abcdef") as FakeRun & { stragglers: Promise<string[] | null> };
+    run.stragglers = Promise.resolve(null);
+    ctl.attach(card(), run);
+    run.finish({ ended: "stopped-user", code: null, ms: 12_000 });
+    await vi.runAllTimersAsync();
+    expect(page().last().tabs[0].status).toBe("You stopped it after 12\u00a0s. What it already changed stays. Ember couldn't tell whether anything it started is still running.");
+  });
+
   it("stops a live run from its Stop and closes only a finished tab", async () => {
     const { ipc, ctl, page } = setup();
     const run = new FakeRun("0123456789abcdef");
@@ -750,6 +760,9 @@ describe("a run's tab", () => {
     expect(outcomeOf({ code: 1, signal: null, ended: "exit", ms: 1 })).toBe("failed");
     expect(outcomeOf({ code: null, signal: null, ended: "killswitch", ms: 1 })).toBe("stopped");
     expect(outcomeOf({ code: null, signal: null, ended: "lost", ms: 1 })).toBe("failed");
+    // Its own end never came: not known to be done (review wslio-x-3).
+    expect(outcomeOf({ code: 0, signal: null, ended: "exit", ms: 1, outputCut: true, endLost: true })).toBe("failed");
+    expect(outcomeOf({ code: 0, signal: null, ended: "exit", ms: 1, outputCut: true })).toBe("done");
     expect(outcomeOf(null)).toBe("failed");
   });
 });

@@ -13,7 +13,8 @@
 import type { Classification, ClassifyContext, CommandObject, Finding, GitFacts } from "./types";
 import { ALWAYS_ASK, PKG_CLEANS, PKG_PRUNES, PKG_REMOVES } from "./types";
 import { hasVerb, hasWord, joinList, nameNamed, userTokens, userWordList, verbForms } from "./words";
-import { homeDotFile, isBroadPath, isUnder, pathEnv, flavourOf, resolveTargetPath, type PathEnv } from "./paths";
+import { riskyAssignment } from "./classify";
+import { homeDotFile, isBroadPath, isUnder, pathEnv, flavourOf, resolveTargetPath, secretKind, type PathEnv } from "./paths";
 
 /** The target's OS (the contract's own type, so this file imports nothing outside the commands package). */
 type OS = ClassifyContext["os"];
@@ -1178,6 +1179,58 @@ function keepsCopyFirst(text: string, verbs: readonly string[]): boolean {
 }
 
 /**
+ * What follows the thing in the deletion's own clause and says where it came from, which Ember can't check ("that the
+ * CI made", "which the tests created", "from yesterday", "from the last run").
+ */
+const SAYS_WHICH = /(^|[^\p{L}\p{N}])((that|which)\s+[^.;!?]{0,60}?(made|created|generated|built|produced|left|wrote|downloaded|cloned|unpacked|extracted)|from\s+(yesterday|last|the\s+last|this\s+morning|earlier|the\s+previous|the\s+other))(?=$|[^\p{L}\p{N}])/iu;
+
+/** The trash or the bin as where the thing should go ("to the trash", "in the bin", "into the recycle bin"): not a permanent deletion. */
+const TO_TRASH = /(^|[^\p{L}\p{N}])(to|in|into)\s+(the\s+|my\s+)?(trash|wastebasket|(recycle\s+|recycling\s+|rubbish\s+)?bin)(?=$|[^\p{L}\p{N}])(?!\s+(folder|directory|dir)(?=$|[^\p{L}\p{N}]))/iu;
+
+/**
+ * Whether the words hold a deletion back, or narrow it, in a way keepsCopyFirst doesn't read (commands-remote-r9-10):
+ * a clause after the deletion's own asks for something first ("but copy it first", "(back it up first)", "; back it
+ * up first", "but list it first", "and before that …"), asks to keep a copy ("but keep a copy", "but make a backup"),
+ * or narrows it ("but only the logs", "but just …"); or the deletion's own clause says where the thing came from
+ * ("that the CI made", "from yesterday"), or the words send the thing to the trash, the bin or a stash, which a
+ * permanent deletion is not (commands-classes-y9-8). Ember deletes what the command names, now, so each of these asks. A step
+ * asked for after the deletion ("and back up src/", "then run the tests"), a "first" that is the deletion's own
+ * ("delete build first, then rebuild") and "only the one in frontend", which the place rules read, hold nothing back;
+ * a word that describes the thing ("the old build folder", "that is huge") and "on my laptop" are read as before
+ * (commands-remote-y7-6, x8-10).
+ */
+function heldOrNarrowed(text: string, verbs: readonly string[]): boolean {
+  let after = false;
+  for (const s of sentencesOf(text)) {
+    const question = /\?["'”’)\]]*\s*$/.test(s);
+    const polite: SentenceState = { first: false };
+    let n = 0;
+    for (const part of s.split(/[,:;()]\s*|\s+[-–—]\s+|(?<![\p{L}\p{N}])(?:and|then|but|or|so|plus|though|although)(?![\p{L}\p{N}])/iu)) {
+      const words = userWordList(part);
+      if (words.length === 0) continue;
+      const starts = clauseStarts(words, n++, question, polite);
+      const own = verbs.some(v => { const parts = v.split(" "); return starts.some(c => parts.every((p, j) => c[j] === p)); });
+      // "by moving it to trash", "but move it to the trash", "but trash it instead", "though stash it somewhere"
+      // (commands-classes-y9-8).
+      if (TO_TRASH.test(part) || (after && (words[0] === "trash" || words.includes("stash")))) return true;
+      if (own) {
+        after = true;
+        if (SAYS_WHICH.test(part)) return true;
+        continue;
+      }
+      if (!after) continue;
+      if (words.includes("first") || words.includes("beforehand") || words[0] === "before") return true;
+      // "only the logs", "just the object files"; never "only the one in frontend", which says a place.
+      if ((words[0] === "only" || words[0] === "just") && !((words.includes("one") || words.includes("1") || words.includes("ones")) && words.some(w => IN_FOLDER.has(w)))) return true;
+      // "keep a copy", "make a backup", "save a copy somewhere".
+      const k = words.findIndex(w => ["make", "take", "create", "keep", "save"].includes(w));
+      if (k >= 0 && words.slice(k + 1, k + 4).some(x => COPY_THING.has(x))) return true;
+    }
+  }
+  return false;
+}
+
+/**
  * More ways of holding the step back until the user says so (commands-remote-v5-3): "but first show me what's in it",
  * "show me the command first", "run it by me", "on my go", "upon confirmation", "hold off", "hang on", "I'll say when",
  * "I'll confirm"; "let me see" only with what holds it back ("let me see it", "… the command", "… what you'll run", "…
@@ -1204,6 +1257,8 @@ function holdsBack(userWords: string, verbs: readonly string[], destroys = false
   if (ASK_FIRST.test(said) || HELD_FIRST.test(said)) return true;
   // A step that throws something away waits on one that keeps a copy of it asked for first (commands-remote-y7-6).
   if (destroys && keepsCopyFirst(said, verbs)) return true;
+  // And on what a later clause asks for first, or narrows it to (commands-remote-r9-10).
+  if (destroys && heldOrNarrowed(said, verbs)) return true;
   const text = ownSteps(said, verbs);
   if (LATER.test(text) || LATER_TOO.test(text) || LATER_DAY.test(text) || deadline(text)) return true;
   for (const m of text.matchAll(CONDITION)) {
@@ -1613,6 +1668,148 @@ function p4Row(intent: string, verb: string, ing: string, where: string): RowFn 
 }
 
 /**
+ * Whether a program's name (and a verb after it: "cargo foo") is in the words whole, its parts in a row, as the words
+ * split ("kafka-topics" as "kafka topics"): never a part of a longer word, and never a name shorter than three letters.
+ */
+function wholeName(name: string, list: readonly string[]): boolean {
+  const parts = userWordList(name);
+  if (parts.length === 0 || parts.join("").length < 3) return false;
+  for (let k = 0; k + parts.length <= list.length; k++) if (parts.every((p, j) => list[k + j] === p)) return true;
+  return false;
+}
+
+/** Verbs that ask Ember to run a program named after them ("run dropdb", "use kafka-topics to list the topics"). */
+const RUN_VERBS = ["run", "rerun", "use", "call", "execute", "exec", "invoke", "launch", "start", "try"];
+/** Words that make a program the tool a request is done with ("drop the scratch database with dropdb"). */
+const WITH_TOOL = new Set(["with", "using", "via", "through"]);
+/** Words between a run verb, or "with", and the program it names ("run the dropdb tool", "with a quick kafka-topics"). */
+const BEFORE_TOOL = new Set(["the", "a", "an", "our", "my", "this", "that", "quick"]);
+
+/**
+ * Whether a request in the user's words asks to run a program Ember doesn't know (commands-closed-x9-1): its tool, the
+ * first word of `name`, stands as what a run verb acts on ("run dropdb", "use the kafka-topics tool") or as the tool a
+ * request is done with ("drop the scratch database with dropdb"), and every other word of `name` (the tool's verb or
+ * its first operands: "cargo watch", "rails db:drop", "dropdb scratch") is whole in the same request. A question ("what
+ * does dropdb do?"), a mention ("the docs mention dropdb", "explain dropdb") and what the user will do themselves ("I
+ * want to run dropdb myself") ask nothing. `asked` is requestStarts' clauses; the words of `others`, the command's other
+ * unknown programs, may stand between the verb and the tool ("run stack exec hpack" for `stack exec -- hpack`).
+ */
+function runAsked(name: string, asked: readonly string[][], others: readonly string[] = []): boolean {
+  const [tool, ...rest] = name.split(" ");
+  const parts = userWordList(tool);
+  if (parts.length === 0 || parts.join("").length < 3) return false;
+  // The words of the other unknown programs the command runs stand before it too ("run stack exec hpack").
+  const skip = new Set(others.flatMap(o => userWordList(o)));
+  const at = (c: readonly string[], k: number): boolean => {
+    while (BEFORE_TOOL.has(c[k] ?? "") || skip.has(c[k] ?? "")) k++;
+    return parts.every((p, j) => c[k + j] === p);
+  };
+  return asked.some(c => {
+    if (c.some(x => x === "myself" || x === "yourself" || x === "ourselves")) return false;
+    const named = (RUN_VERBS.includes(c[0]) && at(c, 1)) || c.some((x, k) => WITH_TOOL.has(x) && at(c, k + 1));
+    // What stands after "while" and its like is about something else ("on staging while prod keeps running").
+    const aside = c.findIndex(x => MEANWHILE.has(x));
+    const said = aside < 0 ? c : c.slice(0, aside);
+    return named && rest.every(r => wholeName(r, said));
+  });
+}
+/** Words after which a clause speaks of something other than what is to run (commands-closed-y9-3). */
+const MEANWHILE = new Set(["while", "whilst", "whereas", "although", "though"]);
+
+/**
+ * Whether the words hold `name` only as part of a longer name ("prod" in "prod-copy", "prod_copy" or
+ * "prod.example.com"): such words don't name it (commands-closed-y9-3).
+ */
+function insideLonger(name: string, raw: string): boolean {
+  const parts = userWordList(name);
+  return raw.split(/\s+/).some(token => {
+    const t = userWordList(token);
+    if (t.length <= parts.length) return false;
+    for (let k = 0; k + parts.length <= t.length; k++) if (parts.every((p, j) => t[k + j] === p)) return true;
+    return false;
+  });
+}
+
+/** Option names that say the program leaves the command and runs on, or shows a secret: never announced by the words. */
+const NEVER_BY_WORDS = /^(fork|detach|detached|daemon|daemonize|daemonise|background|bg|nohup)$|token|secret|password|passwd|credential|api-?key|private-?key/;
+/** A name's ending that says a host, not a file, when no folder stands before it. */
+const HOST_ENDING = /\.(com|net|org|io|dev|app|co|uk|de|fr|eu|us|ca|au|jp|cn|ru|in|local|internal|lan|corp|cloud|ai|xyz|info|biz|edu|gov|example|test|invalid|localhost)$/i;
+
+/**
+ * Whether everything a program Ember doesn't know is given, beyond the words that name it (its finding's program:
+ * the tool, its verb, its plain-word operands), is something the user's words give or a plain file in the task's
+ * folder (modes-y9-7): the words asked to run the program, not to run it with `--fork`, `-d`, `--print-token`, a
+ * port, a host or a folder elsewhere that they never said. An option counts only written out in the words as the
+ * command writes it; one whose name says the program detaches or shows a secret never counts ("in the background"
+ * and even "--daemon" make no detached run announceable: it would outlive Stop). A number, a host, an address and a
+ * path outside the folder count only written out too. A word Ember can't see never counts. Nor is a `NAME=value` or
+ * `name:value` word a file (integ2-z-2): it counts written out whole, or when its value is a plain file in the folder,
+ * and never when it sets a variable that changes how commands are found or run.
+ */
+function extrasNamed(cls: Classification, f: Finding, userWords: string, ctx: ClassifyContext): boolean {
+  const cmd = cls.commands[f.at];
+  if (!cmd) return true;
+  const win = ctx.os === "win32";
+  const sep = win ? "\\" : "/";
+  const inFolder = (word: string): boolean => {
+    if (!ctx.cwd) return false;
+    const abs = resolveTargetPath(word, { os: ctx.os, home: ctx.home, cwd: ctx.cwd });
+    const [a, c] = win ? [abs.toLowerCase(), ctx.cwd.toLowerCase()] : [abs, ctx.cwd];
+    return a === c || a.startsWith(c.endsWith(sep) ? c : c + sep);
+  };
+  const words = new Set(userWordList(userWords));
+  const named = new Set(f.program.split(" "));
+  const said = new Set(userWords.normalize("NFKC").split(/\s+/).map(t => t.replace(/^["'“”‘’(`]+|["'“”‘’)`,;:!?]+$|\.$/g, "")).filter(t => t !== ""));
+  const saidLower = new Set([...said].map(t => t.toLowerCase()));
+  const windows = cmd.family !== "posix";
+  // A plain file in the task's folder: a path written as one (`.`, `./x`, `src/main.c`, `~/proj/x`, an absolute
+  // one) that stays in the folder, or a bare name with one extension that is no host's ending. A word that starts
+  // with no path's start, or joins values with `=`, `:` or `,` after a drive (`./out=/home/x`, `src/x,https://…`),
+  // is no single file, whatever its first part (commands-runners-y9-2).
+  const plainFile = (a: string): boolean => {
+    if (/[=:,]/.test(win && /^[A-Za-z]:[/\\]/.test(a) ? a.slice(2) : a)) return false;
+    const pathLike = /^(\.{1,2}$|\.{0,2}[/\\]|~|[A-Za-z]:[/\\])/.test(a) || /^[A-Za-z0-9_][^/\\]*[/\\]/.test(a) || /^\.[A-Za-z]/.test(a);
+    const fileName = /^[A-Za-z0-9_][A-Za-z0-9_.-]*\.[A-Za-z][A-Za-z0-9]*$/.test(a) && (a.match(/\./g) ?? []).length === 1 && !HOST_ENDING.test(a);
+    return (pathLike || fileName) && !/^[a-z][a-z0-9+.-]*:\/\//i.test(a) && !a.includes("@") && inFolder(a);
+  };
+  // A variable that changes how commands are found or run, or names one the program runs, by the classifier's own
+  // lists: never announced, whatever the words write out (integ2-z-2).
+  const setsRisky = (a: string): boolean => {
+    const m = /^([A-Za-z_][A-Za-z0-9_]*)=([\s\S]*)$/.exec(a);
+    return m !== null && riskyAssignment(m[1], m[2]);
+  };
+  for (const a of cmd.args) {
+    if (a === null) return false;
+    if (a === "--" || a === "" || named.has(a)) continue;
+    if (a.startsWith("-") || (windows && /^\/[A-Za-z?]/.test(a))) {
+      const name = a.replace(/^-+|^\//, "").split(/[=:]/)[0].toLowerCase();
+      // Written out as the command writes it, or (a long option with no value) its name a word of the request ("use
+      // kafka-topics to list the topics" for `--list`).
+      if (NEVER_BY_WORDS.test(name)) return false;
+      if (!said.has(a) && !(/^--[a-z][a-z-]{2,}$/.test(a) && words.has(name))) return false;
+      continue;
+    }
+    if (saidLower.has(a.toLowerCase())) { if (setsRisky(a)) return false; continue; }
+    // `NAME=value` and `name:value` are never a plain file (integ2-z-2): the value is judged as a word of its own,
+    // and one that holds a space or a shell's word is never a file. A drive's letter is a path's start on Windows.
+    const sets = /^[A-Za-z_][A-Za-z0-9_.-]*[=:]/.exec(a);
+    if (sets && !(win && /^[A-Za-z]:[/\\]/.test(a))) {
+      // `host:file`, `s3:x`, `origin:main.ts` and a drive-relative `C:x` are another computer's, a scheme's or a
+      // drive's: counted only written out whole, above (commands-runners-x9-1).
+      if (sets[0].endsWith(":")) return false;
+      const value = a.slice(sets[0].length);
+      if (setsRisky(a) || /[\s;&|<>$`(){}'"*?!]/.test(value)) return false;
+      if (value === "" || !plainFile(value)) return false;
+      // A value that is a secret as a word of its own (`x=.env`) is no plain file (commands-runners-x9-1).
+      if (secretKind(resolveTargetPath(value, { os: ctx.os, home: ctx.home, cwd: ctx.cwd }), "read", pathEnv({ flavour: flavourOf(ctx.os), os: ctx.os, home: ctx.home || null, cwd: ctx.cwd || null, ember: [] })) !== null) return false;
+      continue;
+    }
+    if (!plainFile(a)) return false;
+  }
+  return true;
+}
+
+/**
  * Matches a dangerous command against the user's own words (§3.7): the row's announcement when every finding is
  * covered by a row the words name, else null (the command asks). Empty or whitespace words never match.
  */
@@ -1624,6 +1821,25 @@ export function matchIntent(cls: Classification, userWords: string, ctx: Classif
   if (F.some(f => ALWAYS_ASK.has(f.cls))) return null;
   if (F.some(f => f.widening.some(x => ALWAYS_BROADER.has(x)))) return null;
   if (NEGATION.test(userWords.normalize("NFKC")) || KEEPS.test(userWords.normalize("NFKC"))) return null;
+  // A program, or a verb of a tool, that Ember doesn't know (commands-closed): the user's own words naming it whole
+  // ("run dropdb on the test database", "use kafka-topics") announce it, unless they hold it back; what else the
+  // command does is matched as before.
+  const unknown = F.filter(f => f.cls === "unknown");
+  if (unknown.length > 0) {
+    const asked = requestStarts(affirmed(userWords).normalize("NFKC"));
+    const names = [...new Set(unknown.map(f => f.program.replace(/\.(exe|com|bat|cmd)(?= |$)/i, "")))];
+    if (!names.every(n => runAsked(n, asked, names.filter(o => o !== n)))) return null;
+    if (names.some(n => n.split(" ").slice(1).some(r => insideLonger(r, affirmed(userWords).normalize("NFKC"))))) return null;
+    if (holdsBack(userWords, [...RUN_VERBS, ...names.map(n => n.split(" ")[0])], false)) return null;
+    // And only with nothing else Ember can't read: every option and every other operand is one the words give, or a
+    // plain file in the task's folder (modes-y9-7).
+    if (!unknown.every(f => extrasNamed(cls, f, userWords, ctx))) return null;
+    const announce = `Running ${joinList(names)}, as you asked.`;
+    const rest = F.filter(f => f.cls !== "unknown");
+    if (rest.length === 0) return { intent: "unknown", announce };
+    const m = matchIntent({ ...cls, findings: rest }, userWords, ctx);
+    return m && { intent: `${m.intent}+unknown`, announce: `${m.announce} ${announce}` };
+  }
   const groups = new Map<string, Finding[]>();
   for (const f of F) {
     const row = rowOf(f, F);
@@ -1699,6 +1915,42 @@ export function mentioned(findings: readonly Finding[], userWords: string): bool
     const program = f.program.split(" ").pop() ?? "";
     return (program !== "" && (w.list.includes(program.toLowerCase()) || nameNamed(program, w.raw))) || (f.objects.length > 0 && objectNamed);
   });
+}
+
+/** A "wait" on its own: it holds a step back only with what it waits for, which the flow's own HOLDS_BACK reads. */
+const WAIT_WORD = /(^|[^\p{L}\p{N}])(wait|waits|waiting)(?=$|[^\p{L}\p{N}])/giu;
+/** Words before "ask me" that turn it round ("don't ask me", "no need to check with me", "without asking first"). */
+const NOT_ASKED = /(^|[^\p{L}\p{N}])(don['’]?t|do\s+not|never|needn['’]?t|no\s+need\s+to|without)(\s+(ever|even|bother\s+to|have\s+to|need\s+to))?\s+$/iu;
+
+/**
+ * Whether the user's own words, where they name one of these findings' steps, hold that step back in a way only they
+ * can lift (integ-x-3): they ask to be asked first ("delete the build folder, but ask me first", "check with me",
+ * "on my ok", "a dry run": ASK_FIRST), or, for a step that throws something away, they make it wait on a copy
+ * (keepsCopyFirst), narrow it ("but only the logs"), say which thing by where it came from, or send it to the trash, the
+ * bin or a stash, which a permanent deletion is not (heldOrNarrowed). Autopilot reads it as their no, said in advance
+ * (flow.ts wordsRuleOut). A time or a condition is not read here: the flow reads those where they name the step, and
+ * one on another step holds nothing back ("run the tests tonight, then delete build": modes-y9-y9-7).
+ */
+export function heldByWords(findings: readonly Finding[], userWords: string): boolean {
+  if (!userWords || userWords.trim() === "") return false;
+  const said = userWords.normalize("NFKC").replace(WAIT_ONLY, "");
+  const plain = said.replace(WAIT_WORD, "$1");
+  let asksFirst = false;
+  for (const m of plain.matchAll(new RegExp(ASK_FIRST.source, "giu"))) {
+    if (!NOT_ASKED.test(plain.slice(0, m.index + m[1].length))) { asksFirst = true; break; }
+  }
+  const groups = new Map<string, Finding[]>();
+  for (const f of findings) {
+    const row = rowOf(f, findings);
+    if (row) groups.set(row, [...(groups.get(row) ?? []), f]);
+  }
+  for (const [row, fs] of groups) {
+    if (!mentioned(fs, userWords)) continue;
+    if (asksFirst) return true;
+    const verbs = row.startsWith("git.push") ? ["push", "force push"] : ROW_VERBS[row] ?? [];
+    if (THROWS_AWAY.has(row) && (keepsCopyFirst(said, verbs) || heldOrNarrowed(said, verbs))) return true;
+  }
+  return false;
 }
 
 /**

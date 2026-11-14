@@ -10,7 +10,7 @@
  * was already approved or waiting for its turn.
  */
 
-import { copilotReviewer } from "./reviewer";
+import { copilotReviewer, copilotStepChecker } from "./reviewer";
 import fs from "node:fs";
 import crypto from "node:crypto";
 import { defineTool, type CopilotClient, type CopilotSession, type ProviderConfig, type Tool, type ToolResultObject } from "@github/copilot-sdk";
@@ -26,18 +26,24 @@ import { TURN_START_MS, TurnWatch, within } from "./conductor";
 import { asPasteClipboard, ClipboardTimeout, holdsPassword, type ClipboardSnapshot, type PasteClipboard, type TextClipboard } from "./clipboard";
 import { handStep, plainText, stepOf, type HandStep, type Presenter } from "./presenter";
 import { askedWords, type ActivityEvent } from "./activity";
+import { Refusals, formFieldName, noKindName, offTaskLookup, offTaskNames, riskKinds, riskNames, stepAcrossNames, stepMarksForCommands, stepNames, type RiskAsked, type Standing } from "../policy/refusals";
+import { pageBinding, pageBindingOf } from "./page-binding";
 import { cardApp } from "../../shared/activity";
 import type { Confirmer, Question } from "./confirm";
 import type { WindowTarget } from "../perception";
 import type { AxNode, AxWindow, Bounds, ActionResult, ElementInfo, PointElement } from "../perception/sidecar";
 import { helperCantRun } from "../perception/sidecar";
-import type { PolicyEngine, ActionKind, ActionRequest, Agreement, DialogControl, ReadSource, TextMode, WindowId } from "../policy/policy";
-import { riskyOnPage } from "../policy/policy";
+import { SECRET_PARTS, VAULT_FILL, VAULT_WHATS, sameDestination, savedPart, type VaultDestination, type VaultKind, type VaultPart, type VaultWhat } from "../../shared/vault";
+import { vaultTarget } from "../policy/policy";
+import { VAULT_FILL_NO_ANSWER, VAULT_FILL_UNAVAILABLE } from "../perception/sidecar";
+import type { PolicyEngine, ActionKind, ActionRequest, Agreement, Decision, DialogControl, ReadSource, TextMode, WindowId } from "../policy/policy";
+import { AUTOPILOT_WORDS, CHECKED_WORDS, isRiskyControl, riskyOnPage } from "../policy/policy";
+import type { CommandReviewer, StepChecker } from "../commands/review";
 import { afterTheStep, type AuditEntry, type AuditLog } from "../policy/audit";
 import type { AutonomyScopes } from "../policy/autonomy";
 import { inferLabels, quoteUntrusted as q, screenWord } from "../perception/elements";
 import { injectionSignals, INJECTION_NOTE } from "../perception/injection";
-import { canonicalKeys, DIALOG_TEXT_MAX, foldLabel, normalizeLabel, isActivatingKey, isEmberWindow, isSecurityWindow, keyFamily, keyLabel, MOVES_CARET, plainQuestion, reachesOut, replacesSelection, takesFormula, typedChar, typedShown } from "../policy/policy";
+import { canonicalKeys, DIALOG_TEXT_MAX, foldLabel, normalizeLabel, isActivatingKey, isEmberWindow, isSecurityWindow, keyFamily, keyLabel, MOVES_CARET, plainQuestion, reachesOut, replacesSelection, takesFormula, typedChar, typedShown, typesCharacter } from "../policy/policy";
 import { FILE_PATH_WORDS } from "../policy/vocabulary";
 import { SETTINGS, changeSetting, findApp, isTerminalApp, launchApp, listApps, programsOf, type DesktopApp, type SettingName } from "../hands/system";
 import { BorrowStopped, CursorBorrow, UserTookOver, typeableText, type Hand, type HandChecks } from "../hands/borrow";
@@ -88,13 +94,33 @@ export const LINUX_WORKER_SYSTEM: WorkerSystem = {
 
 export interface WorkerDeps {
   client: CopilotClient;
-  /** The user's "Ask only about dangerous commands" (Settings › Commands): commands that would ask are reviewed first. */
-  reviewCommands?: () => boolean;
   /**
-   * "Work without asking" (policy/autonomy.ts autonomyInForce): its scopes in force, or null while it is off. App steps
+   * Assisted is the approval mode in force (policy/autonomy.ts approvalInputs().check): a command that would ask goes
+   * to the reviewer first. App steps hear of it through the policy engine (PolicyInputs.assisted).
+   */
+  check?: () => boolean;
+  /** Assisted's check for app steps (default: a session of its own on Copilot, copilotStepChecker); tests script one. */
+  checkStep?: StepChecker;
+  /** Assisted's check for commands (default: a session of its own on Copilot, copilotReviewer); tests script one. */
+  reviewCommand?: CommandReviewer;
+  /** The lighter model Assisted's check and the command reviewer run on (the conversation's); absent: this worker's. */
+  checkModel?: string | null;
+  /**
+   * The approval mode in force (policy/autonomy.ts approvalInputs): its scopes, or null below Interactive. App steps
    * hear of it through the policy engine; this is for run_command's flow (an ordinary command carrying text from elsewhere).
    */
   autonomy?: () => AutonomyScopes | null;
+  /**
+   * Below Interactive for want of its card: the words for the first question Interactive would have announced instead,
+   * given once a run (null after, or where it doesn't apply). The host keeps the once (modes-x9p-3).
+   */
+  belowInteractiveHint?: () => string | null;
+  /**
+   * Autopilot is the approval mode in force (policy/autonomy.ts approvalInputs().autopilot): a command that would ask
+   * is announced with its Stop instead, but for the few that still ask there (commands/flow.ts autopilotCommand). App
+   * steps hear of it through the policy engine (PolicyInputs.autopilot, PolicyEngine.autopilotStep).
+   */
+  autopilot?: () => boolean;
   log: Logger;
   model: string | null;
   /** The levels the connected Copilot catalog advertises for this worker's model. */
@@ -165,8 +191,8 @@ export interface WorkerDeps {
    * so on the card after TURN_SLOW_MS and is given up on after TURN_SILENT_MS).
    */
   limits?: { maxSteps?: number; maxMs?: number; pasteWaitMs?: number; turnStartMs?: number; turnSlowMs?: number; turnSilentMs?: number };
-  /** Whether this user's inotify instances are all in use (a task's turn can't begin then; see host's inotifyUsedUp). */
-  inotifyUsedUp?: () => boolean;
+  /** Whether this user's inotify instances or watches are used up (a task's turn can't begin then; see host's inotifyUsedUp). */
+  inotifyUsedUp?: () => boolean | "watches";
   /** The OS's keys, words, apps, settings and security vocabulary (default LINUX_WORKER_SYSTEM). */
   system?: WorkerSystem;
   /** Where the task acts (default: this computer, as before targets existed). */
@@ -186,6 +212,33 @@ export interface WorkerDeps {
    * then (cross-review X5). Absent: the OS's table's (tests, the eval).
    */
   settingsKey?: () => string | null;
+  /** The vault (owner decision of 2026-11-12), for fill_from_vault on this computer's own screen. Absent: no such tool. */
+  vault?: WorkerVault;
+}
+
+/**
+ * What a worker uses of the vault (app/main/vault/service.ts) and of this computer's accessibility helper for a fill.
+ * A value never passes through the worker's tools: `use` hands it to the one call that puts it into the field (the
+ * helper's `put`, or the borrowed keyboard's typing) and answers only how that went.
+ */
+export interface WorkerVault {
+  /** The vault may be used now (the organisation, the consent and Autopilot): the tool is offered only then. */
+  usable(): boolean;
+  /** Is an entry of `kind` bound to `dest`? */
+  has(kind: VaultKind, dest: VaultDestination): boolean;
+  /** Asks the person once, in Ember's Secure Form (VaultService.ask). `via`: the app the field is in, as the window system names it. */
+  ask(kind: VaultKind, dest: VaultDestination, via: string | null): Promise<"off" | "kept" | "saved" | "cancelled" | "unavailable" | "stopped">;
+  /** Hands `part` of the entry bound to `dest` to `put` (VaultService.use). */
+  use<R>(kind: VaultKind, part: VaultPart, dest: VaultDestination, put: (value: string) => Promise<R>): Promise<{ ok: true; result: R } | { ok: false; why: "off" | "none" | "part" }>;
+  /** The addresses of the web documents around element `id`, nearest first (AtspiSidecar.pageAddress); rejects where they can't be read. */
+  pages(id: number): Promise<string[]>;
+  /**
+   * The helper is told field `id` is secret from now on (AtspiSidecar.markSecret), before a value is typed into it as
+   * keys: no read reports what it holds, and every picture blacks it out. Rejects when it couldn't be: nothing is typed.
+   */
+  mark(id: number): Promise<void>;
+  /** The helper's vault_fill (AtspiSidecar.vaultFill): rejects with one of its three fixed sentences. */
+  put(id: number, text: string): Promise<{ ok: boolean; took?: boolean }>;
 }
 
 export interface TaskSpec {
@@ -210,6 +263,12 @@ export interface TaskSpec {
    */
   typedOnly?: boolean;
   /**
+   * The user's own words for Assisted's check (PLAN.md §2 "Approvals"), when they differ from commandWords: what was
+   * heard where Ember can't tell the user from its speakers counts here, as it doesn't for commands; a suggestion Ember
+   * offered, words heard over Ember's own voice and a routine's saved steps never do. Absent: commandWords, else userWords.
+   */
+  checkWords?: string;
+  /**
    * Ember's questions the user answered in those turns with a yes or a choice: a risky step one of them names isn't
    * flagged as unasked (nor does it make every later step asked), but is asked about all the same (ActionRequest.agreed).
    */
@@ -229,7 +288,7 @@ export interface WorkerResult {
   summary: string;
   /** The user stopped it (took the mouse back, or said "Not now"): not a failure. */
   stopped?: boolean;
-  /** Stopped because the user said no to a question (or let it go unanswered), and nothing was done after that. */
+  /** Stopped because the user said no to a question, and nothing was done after that. */
   declined?: boolean;
   /** Stopped because a question ran out of time unanswered and nothing was done after that: not a "Not now". */
   expired?: boolean;
@@ -241,10 +300,60 @@ export interface WorkerResult {
   view?: ViewDoc;
 }
 
+/** What a field the vault may fill is: a password field or a plain text field (as VAULT_FILL_ROLES in the helpers). */
+const VAULT_FIELD_ROLES: ReadonlySet<string> = new Set(["password text", "text", "entry"]);
+/** What the model hears of a vault fill: whether it happened, never what was filled. */
+const FILLED = "Filled from the vault. You can't see or read what was filled, and you don't need to: go on with the task.";
+/** A picture that would show a field filled from the vault: not sent. */
+const NO_PICTURE_VAULT = "\n(No screenshot: a field Ember filled from its vault couldn't be hidden in it. Work from the text.)";
+const NOTHING_FILLED = "Nothing was filled from the vault here. Don't type it yourself or try another way; tell the user in finish_task what is left for them to fill in.";
+const NOT_SAVED = "The user closed Ember's Secure Form without saving, so nothing was filled. Don't ask again or try another way; tell the user in finish_task what is left for them to fill in.";
+const NOT_SAVED_BEFORE = "The user already closed Ember's Secure Form for this in this task, so it isn't asked again and nothing was filled. Tell the user in finish_task what is left for them to fill in.";
+/** A Secure Form couldn't keep anything on this computer (integ-z-2): why, in Ember's own fixed words, so the model says so and doesn't ask for the next field. */
+const CANT_KEEP = "This computer can't keep this in Ember's vault, so nothing was filled and Ember won't ask for it again in this task. Don't type it yourself or try another way; tell the user in finish_task that this computer can't keep it and what is left for them to fill in, and carry on with the rest of the task without it.";
+const NO_SUCH_PART = "The user's vault entry for this has no such detail saved, so nothing was filled. Don't type it yourself; tell the user in finish_task what is left for them to fill in.";
+const CHANGED_BEFORE_FILL = "The field or its page changed before Ember could fill it, so nothing was filled. Call perceive_window; if the same field is still there, you may ask once more.";
+const CANT_TYPE_IT = "This field only takes typed keys, and what the vault holds can't be typed with the keyboard here, so nothing was filled. Tell the user in finish_task.";
+const TOOK_BACK_NO_FILL = "The user took the mouse back in this task, and this field can only be filled with the keyboard, so nothing was filled. Tell the user in finish_task.";
+/**
+ * How a task ends where the user said no to a question, or one ran out of time unanswered, and nothing was done after
+ * it: stopped, as the user's choice, in the model's words where it says it didn't succeed. A success it claims stands
+ * only where a step of the task worked (`worked`): with none the task still ends declined or unanswered, never Done
+ * ("Deleted all the old notes." after a Not now is not what happened: tasks-approvals-r9-4), with Ember's own words
+ * first and then the model's, and what it found (`view`), kept: a task that read and answered before its last step
+ * was refused has the answer the user asked for, and reading is no step that "worked" (product-ui-x9-2). Null where
+ * neither applies.
+ */
+export function afterNo(f: { declined: boolean; expired: boolean; worked: boolean }, result: Pick<WorkerResult, "success" | "summary" | "view"> | null): WorkerResult | null {
+  if (!f.declined && !f.expired) return null;
+  if (result?.success && f.worked) return null;
+  const own = f.expired && !f.declined ? "My question ran out of time with no answer, so I didn't do it." : "You said not now, so I left it.";
+  const said = result?.summary.trim() ?? "";
+  const summary = !said ? own : result?.success ? `${own} ${said}` : said;
+  const view = result?.view ? { view: result.view } : {};
+  return f.expired && !f.declined ? { success: false, stopped: true, expired: true, summary, ...view } : { success: false, stopped: true, declined: true, summary, ...view };
+}
+
 const done = (text: string): ToolResultObject => ({ textResultForLlm: text, resultType: "success" });
 const fail = (text: string): ToolResultObject => ({ textResultForLlm: text, resultType: "failure", error: text });
 const denied = (text: string): ToolResultObject => ({ textResultForLlm: text, resultType: "denied" });
 const STOPPED = (): ToolResultObject => denied("Stopped. Do nothing more.");
+/** To a step whose question ran out of time: nobody said yes and nobody said no, so it wasn't taken and isn't tried another way. */
+const UNANSWERED = "Your question went unanswered: time ran out before the user answered, which is neither a yes nor a no. Nothing was approved, so the step wasn't taken. Don't retry it or work around it; finish the task now, saying that the question went unanswered and what wasn't done.";
+/**
+ * To a step the user already said no to in this task, sent again: refused without a question, a check or an
+ * announcement, in every mode (Refusals; tasks-approvals-r9-1).
+ */
+const REFUSED_BEFORE = "The user already said no to this step in this task, so Ember refused it without asking them again. Don't retry it or work around it; finish the task and say what wasn't done.";
+/** To a step whose question went unanswered, sent again before the user said anything more to the task: not asked twice. */
+const STILL_UNANSWERED = "Ember already asked the user about this step and the question went unanswered; they haven't said anything to this task since, so Ember didn't ask again and the step wasn't taken. Don't retry it or work around it; finish the task now, saying that the question went unanswered and what wasn't done.";
+/** The audit's reasons for those two refusals (Ember's own words: "What Ember did" shows them). */
+/** Why a borrow is refused in Autopilot once the user took the mouse or keyboard back from this task (refusedAfterTakeover). */
+const TOOK_BACK_REFUSED = "the user took the mouse back earlier in this task, and Autopilot doesn't ask before using it again";
+const STANDING_REASON: Readonly<Record<Standing, string>> = {
+  refused: "the user said no to this step earlier in this task",
+  waiting: "the question about this step went unanswered, and the user hasn't said anything to this task since",
+};
 /**
  * To a call the model sent in the same reply as one that then wasn't done: it was planned on that step going ahead, so
  * it does nothing (tasks-approvals-c7-1). `no`: behind a "Not now", an unanswered question or a refusal; `failed`:
@@ -340,6 +449,8 @@ export const ASKING_AGAIN = {
   menuClicked: "Clicking Allow closed the menu, so I'm asking again.",
   menu: "The menu closed while you decided, so I'm asking again.",
 } as const;
+/** What a task's bubble says while Assisted's check reads a step against the user's words, before any question (authorize). */
+export const CHECKING_STEP = "Checking this step against what you asked…";
 /** promptOpen's answer as PROMPT_REASON's and PROMPT_REFUSAL's key (true is a prompt that is open). */
 const promptKey = (open: true | "unchecked" | "helper"): keyof typeof PROMPT_REASON => (open === true ? "open" : open);
 /** Words only Ember's own announcements use (Work without asking): a model note that says them is refused. */
@@ -1225,6 +1336,10 @@ export class Worker {
   private place: DeskPlace | null = null;
   /** True while this worker holds the user's mouse and keyboard. */
   private guideStep = 0;
+  /**
+   * The user took the mouse or keyboard back from a borrow of this task: its outcome says so, and for the rest of the
+   * task no borrow goes ahead unasked (takenBack). Never cleared.
+   */
   private userTookOver = false;
   /** Aborted when the task must stop: the user's Stop, or a limit. Every tool checks it before acting. */
   private halt = new AbortController();
@@ -1244,10 +1359,16 @@ export class Worker {
   private commandWords: string;
   /** Some of the user's words were heard where Ember can't tell the user from its speakers (TaskSpec.commandWords). */
   private spokenOnly: boolean;
+  /**
+   * The user's own words Assisted's check reads a step or a command against (TaskSpec.checkWords, and their steers'):
+   * never the goal, a suggestion, a routine's saved steps or words heard over Ember's voice. "" when none: nothing is
+   * checked then, and the step asks.
+   */
+  private checkWords: string;
   /** The task's folder and downloads on its target, and whether a command is running (commands/flow.ts). */
   private readonly commandState: CommandFlowContext["state"] = { cwd: null, downloaded: new Set<string>(), running: false };
   /** The latest decision authorize() let through (gate 1's stamp for a remote step, onAuthorized). */
-  private lastAuth: { at: number; verdict: "allow" | "confirm"; approvedAt: number | null } | null = null;
+  private lastAuth: { at: number; verdict: "allow" | "confirm"; approvedAt: number | null; announced?: true } | null = null;
   /**
    * A step Work without asking let through (authorize, authorizeCells): its decisions' audit entries and its
    * announcement, held until the look right before acting has passed (act, system, withCursor: goAhead). So a step a
@@ -1258,18 +1379,35 @@ export class Worker {
   private ahead: { entries: AuditEntry[]; words: string | null } | null = null;
   /** Ember's questions the user answered with a yes or a choice, with those added since (TaskSpec.agreed). */
   private agreed: Agreement[];
-  /** The user said no to a question (or let it go unanswered), and nothing was done after that. */
+  /** The user said no to a question, and nothing was done after that. */
   private declined = false;
   /** A question ran out of time unanswered, and nothing was done after that (a timeout is not a refusal). */
   private expired = false;
+  /** A step of this task happened (an action that worked, a command that started): afterNo. */
+  private worked = false;
   /**
-   * The user said no to a question in this task (or let one expire), at any time: never cleared, unlike `declined`
-   * (which a later step resets for the task's outcome). "Work without asking" stays suspended for the rest of the task
-   * once this is set (security review of #127: a failed step after a "Not now" must not bring it back).
+   * The user said no to a question in this task, at any time ("Not now", a deny, a Stop during a command's countdown):
+   * never cleared, unlike `declined` (which a later step resets for the task's outcome). "Work without asking" stays
+   * suspended for the rest of the task once this is set (security review of #127: a failed step after a "Not now" must
+   * not bring it back). A question that ran out of time unanswered never sets it: it approved nothing and its step
+   * wasn't taken, but nobody said no (cause 10 of the investigation of the owner's report of 2026-11-12: one question
+   * missed put every later step of the task back to asking).
    */
   private saidNoThisTask = false;
+  /**
+   * The steps and commands the user said no to in this task, or left unanswered: a repeat is refused without a question
+   * (policy/refusals.ts). The command flow reads and writes the same one (commandContext).
+   */
+  private refusals = new Refusals();
   /** The last authorize() asked the user (the screen may have changed while the question was up). */
   private asked = false;
+  /**
+   * Assisted's check was asked about the last step (checkFirst): it took time, as a question does, so the step is held
+   * to what was judged before it acts (waited). Never the user's yes: nothing a yes unlocks follows from it.
+   */
+  private checked = false;
+  /** Time passed between the decision and the step, for a question or for Assisted's check: the screen may have changed. */
+  private get waited(): boolean { return this.asked || this.checked; }
   /** The step the user last said yes to (stepKey), and whether by a click on Allow (bubble or prompt window), until the next decision. */
   private yesFor: { key: string; clicked: boolean } | null = null;
   /**
@@ -1317,6 +1455,12 @@ export class Worker {
   private focusShell: string | null = null;
   /** The element refreshActionContext found to be a control of a living web page (livingPage), for this step. */
   private pageTarget: number | null = null;
+  /**
+   * The step's target is a web page's control, in no dialog, whose own surroundings could be read (page-binding.ts): its
+   * role and name as the object itself gave them. What the step is bound to before and after its question is then the
+   * page binding, not the whole tree (boundContext; cause 3b of the investigation of the owner's report of 2026-11-12).
+   */
+  private pageBound: { role: string; name: string; risky: boolean } | null = null;
   /** What that element had selected when it was found (a field typed into must still have it: checkPageTarget). */
   private pageSelection: string | undefined;
   /** The latest look for the cell with the keyboard found none because the read was cut short (a busy app): see cellWithKeyboard. */
@@ -1336,6 +1480,7 @@ export class Worker {
     this.userWords = (spec.userWords ?? spec.goal).replace(STEERED, "\n$1");
     this.commandWords = (spec.commandWords ?? spec.userWords)?.replace(STEERED, "\n$1") ?? "";
     this.spokenOnly = spec.commandWords !== undefined && !spec.typedOnly;
+    this.checkWords = (spec.checkWords ?? spec.commandWords ?? spec.userWords)?.replace(STEERED, "\n$1") ?? "";
     this.agreed = spec.agreed ?? [];
     // What Ember's conversation read on the user's screen before starting this task (its goal may carry it).
     if (spec.screen) {
@@ -1438,8 +1583,9 @@ export class Worker {
       answer = await (this.clock ? this.clock.waiting(ask) : ask());
       return answer;
     } finally {
-      // Any question of this task answered no (or let go unanswered) holds it to asking for good (saidNoThisTask).
-      if (answer === null || answer === "deny") this.saidNoThisTask = true;
+      // Any question of this task answered no holds it to asking for good (saidNoThisTask). One nobody answered (null:
+      // it ran out of time, or the task was stopped) is not the user's no, so it holds nothing (cause 10).
+      if (answer === "deny") this.saidNoThisTask = true;
       this.activity({ type: "answer", answer: this.isOver ? "stopped" : answer === null ? "expired" : answer === "deny" ? "declined"
         : answer === "once" || answer === "always" ? "allowed" : "answered" });
     }
@@ -1780,6 +1926,13 @@ export class Worker {
         async a => this.chooseOption(a.id, a.option)),
       this.tool("set_value", "Set a slider or spin button to a number.", z.object({ id, value: z.number().finite() }),
         async a => this.act("value", a.id, String(a.value), () => this.sidecar.setValue(a.id, a.value))),
+      // The vault's fill: offered only where the vault may be used when the task starts (each call is decided again),
+      // on this computer's own screen. Its arguments name a field and what it needs, and nothing else: no value, no
+      // label and no destination (PLAN.md §2 "Approvals", "The vault").
+      ...(this.offersVault() ? [this.tool("fill_from_vault",
+        "Fill a sign-in, card or contact field with what the user saved in Ember's vault for this app or site. Give the field's id and what it needs; Ember finds the saved details itself (asking the user once in its own Secure Form if none are saved yet) and fills the field. You never see, give or read the value: never type it, ask for it or look for it afterwards.",
+        z.object({ id, what: z.enum(VAULT_WHATS).describe("What the field needs") }),
+        async a => this.fillFromVault(a.id, a.what))] : []),
       // Only the settings this OS really changes and reads back; none, no tool (z.enum can't be empty).
       ...(settingNames.length ? [this.tool("change_setting", `Change a desktop setting directly: ${settingNames.map(k => `${k} (${settings[k]})`).join("; ")}.`,
         z.object({
@@ -2007,7 +2160,7 @@ export class Worker {
     return {
       task: {
         id: this.spec.id, title: goal.length > 200 ? `${goal.slice(0, 199)}…` : goal,
-        commandWords: () => this.commandWords, agreed: () => this.agreed, tainted: () => this.tainted,
+        commandWords: () => this.commandWords, checkWords: () => this.checkWords, agreed: () => this.agreed, tainted: () => this.tainted,
         spokenWords: () => (this.spokenOnly ? this.userWords : ""),
         ownWords: () => this.ownWordsLine(),
         // Output that reads like instructions: every later step (command or not) is checked with the user (§3.11).
@@ -2017,10 +2170,19 @@ export class Worker {
       service: this.d.commands!, confirmer: { ask: (q, signal) => this.ask(q, signal), howAnswered: q => this.d.confirmer.howAnswered?.(q) }, presenter: this.d.presenter,
       audit: e => this.audit(e), log: this.d.log, signal: this.overSignal, isOver: () => this.isOver,
       state: this.commandState, size: () => this.d.commandSize?.() ?? COMMAND_SIZE, emberPids: () => this.d.emberPids?.() ?? [],
-      onDeclined: (expired?: boolean) => { if (expired) this.expired = true; else this.declined = true; this.saidNoThisTask = true; },
+      // A card nobody answered is not the user's no (cause 10); "Not now" and a Stop during the countdown are.
+      onDeclined: (expired?: boolean) => { if (expired) this.expired = true; else { this.declined = true; this.saidNoThisTask = true; } },
+      refusals: this.refusals,
       // "Work without asking" holds for commands only while this task hasn't been steered or told no (as for app steps).
       autonomy: () => (this.tainted || this.saidNoThisTask ? null : this.d.autonomy?.() ?? null),
-      ...(this.d.reviewCommands?.() ? { review: copilotReviewer({ client: this.d.client, model: this.d.model, provider: this.d.provider, workDir: this.d.workDir, log: this.d.log }) } : {}),
+      // Autopilot never asks: there such a task's commands are announced too, but for the few that still ask (flow.ts).
+      autopilot: () => this.d.autopilot?.() === true,
+      // Assisted's check for commands, on the lighter model: an answer that comes once Assisted is no longer in force
+      // (the mode or the organisation's policy changed while it was asked) counts for nothing.
+      ...(this.d.check?.() ? { review: async (i, signal) => {
+        const v = await (this.d.reviewCommand ?? copilotReviewer({ client: this.d.client, model: this.d.checkModel ?? this.d.model, provider: this.d.provider, workDir: this.d.workDir, log: this.d.log }))(i, signal);
+        return this.d.check?.() ? v : null;
+      } } : {}),
     };
   }
 
@@ -2070,7 +2232,7 @@ export class Worker {
         provider: d.provider,
         tools,
         systemMessage: this.spec.mode === "guide" ? guideSystemMessage({ words: this.sys.words })
-          : workerSystemMessage({ words: this.sys.words, settings: this.sys.settings.available, desk: !!d.desk, ...(d.target ? { target: d.target } : {}), ...(this.offersCommands(tools) ? { commands: { shells: this.commandShells() ?? [] } } : {}) }),
+          : workerSystemMessage({ words: this.sys.words, settings: this.sys.settings.available, desk: !!d.desk, ...(d.target ? { target: d.target } : {}), ...(tools.some(t => t.name === "fill_from_vault") ? { vault: true } : {}), ...(this.offersCommands(tools) ? { commands: { shells: this.commandShells() ?? [] } } : {}) }),
         workingDirectory: d.workDir,
         onPermissionRequest: () => ({ kind: "reject", feedback: "Workers use only Ember's own tools." }),
       });
@@ -2123,7 +2285,7 @@ export class Worker {
           this.activity({ type: "tool-end", id: String(data.toolCallId ?? ""), ok: data.success !== false });
         }
         // A model call failed and the runtime tries again: the card says so, and stops saying it once Copilot answers.
-        if (e.type === "model.call_failure") this.activity({ type: "retry" });
+        if (e.type === "model.call_failure") this.activity({ type: "retry", ...(this.d.provider ? { ownService: true as const } : {}) });
         if (e.type === "assistant.usage" || e.type === "assistant.message") this.activity({ type: "heard" });
       });
       if (!this.halted) {
@@ -2141,7 +2303,7 @@ export class Worker {
         const watch = new TurnWatch(d.limits?.turnStartMs ?? TURN_START_MS, why => {
           d.log.warn(why === "silent" ? "worker.turn_silent" : "worker.turn_not_started");
           let full = false;
-          try { full = why === "not-started" && d.inotifyUsedUp?.() === true; } catch { /* can't be counted */ }
+          try { full = why === "not-started" && !!d.inotifyUsedUp?.(); } catch { /* can't be counted */ }
           // Named for the model service in use, never Copilot when it isn't (integrations-v1).
           this.stopNow(d.presenter.taskStopped(full ? "watchers" : why === "silent" ? "silent" : "not-started"));
         }, {
@@ -2184,8 +2346,8 @@ export class Worker {
     if (this.halted && this.haltReason === null) return { success: false, summary: this.stoppedSummary(), stopped: true };
     if (this.haltReason) return { success: false, summary: this.result?.summary ? `${this.haltReason} ${this.result.summary}` : this.haltReason, ...(this.limitHit ? { limit: true } : {}) };
     // The user said "Not now" and nothing was done after it: that's the user's choice, not a failure.
-    if (this.expired && !this.declined && !this.result?.success) return { success: false, stopped: true, expired: true, summary: this.result?.summary || "My question ran out of time with no answer, so I didn't do it." };
-    if (this.declined && !this.result?.success) return { success: false, stopped: true, declined: true, summary: this.result?.summary || "You said not now, so I left it." };
+    const no = afterNo({ declined: this.declined, expired: this.expired, worked: this.worked }, this.result);
+    if (no) return no;
     const result = this.result ?? { success: false, summary: lastWordsSummary(lastAnswer) };
     return this.userTookOver && !result.success ? { ...result, stopped: true, tookOver: true } : result;
   }
@@ -2193,10 +2355,13 @@ export class Worker {
   /**
    * The user's new instruction for this running task ("use Firefox instead"); `userWords`: what the user said in that
    * turn; `screen`: what the conversation read on the screen then; `agreed`: Ember's questions they answered (TaskSpec);
-   * `commandWords`: those words for commands, when some were heard where Ember can't tell the user (TaskSpec).
+   * `commandWords`: those words for commands, when some were heard where Ember can't tell the user (TaskSpec);
+   * `checkWords`: those words for Assisted's check, when they differ from the ones for commands (TaskSpec).
    */
-  async steer(text: string, userWords?: string, screen?: string, agreed?: Agreement[], commandWords?: string): Promise<boolean> {
+  async steer(text: string, userWords?: string, screen?: string, agreed?: Agreement[], commandWords?: string, checkWords?: string): Promise<boolean> {
     if (!this.session || this.halted || this.result) return false;
+    // The user is there again: a question nobody answered may be asked once more (what they said no to stays refused).
+    this.refusals.userSpoke();
     if (agreed?.length) this.agreed = [...this.agreed, ...agreed];
     if (screen) {
       const had = this.read.get("described")?.text;
@@ -2212,6 +2377,8 @@ export class Worker {
     const heard = commandWords ?? userWords;
     if (commandWords !== undefined) this.spokenOnly = true;
     if (heard?.trim()) this.commandWords = this.commandWords ? `${this.commandWords}\n${heard}` : heard;
+    const check = checkWords ?? heard;
+    if (check?.trim()) this.checkWords = this.checkWords ? `${this.checkWords}\n${check}` : check;
     await this.session.send({ prompt: `<user_update>The user changed the task: ${said}</user_update>`, mode: "immediate" });
     return true;
   }
@@ -2566,8 +2733,14 @@ export class Worker {
     // The raw names and text, not the formatted read: that is wrapped in Ember's own <screen> tag, with "<" escaped. Each
     // control on its own: a phrase never runs from one control's name into the next ("Ignore", "All", "Rules").
     const flagged = this.flagInjection(readText, "window", p.window.app);
-    const result: ToolResultObject = { textResultForLlm: `${p.text}${dialogNote(p.window, p.nodes, this.userWords, this.sys.os)}${flagged ? INJECTION_NOTE : ""}`, resultType: "success" };
-    if (p.capture) {
+    // A field this task filled from the vault must be blacked out of every picture for the rest of the task, as a
+    // secret field is (Perception masks what the read found secret): one the read lists as an ordinary field would
+    // show, so that picture isn't sent (fail closed).
+    const shows = !!p.capture && this.vaultFilled.size > 0
+      && p.nodes.some(n => !n.secret && !!n.bounds && this.vaultFilled.has(this.fieldOf({ role: n.role, name: this.nameOf(n.id, n) })));
+    if (shows) this.d.log.warn("worker.vault_field_unmasked", { task: this.spec.id });
+    const result: ToolResultObject = { textResultForLlm: `${p.text}${shows ? NO_PICTURE_VAULT : ""}${dialogNote(p.window, p.nodes, this.userWords, this.sys.os)}${flagged ? INJECTION_NOTE : ""}`, resultType: "success" };
+    if (p.capture && !shows) {
       // Every picture of a window sent to the model is recorded first, by its app and size (never its title), so What
       // Ember did can say it went (safety-privacy-6); one that can't be recorded isn't sent (audit() throws).
       this.audit({ event: "read", task: this.spec.id, kind: "screenshot", app: p.window.app, ok: true, bytes: p.capture.data.length, ...(this.place ? { onDesk: true } : {}) });
@@ -2672,7 +2845,9 @@ export class Worker {
   private elementOf(id: number, n: AxNode): Focus {
     const name = this.nameOf(id, n);
     const byId = (p: number) => this.known.get(p);
-    return { role: n.role, name, ...(n.secret ? { secret: true } : {}), ...(nameWithheld(n, name, this.known.values(), byId) ? { withheld: true } : {}), ...cellOf(n, byId) };
+    // A field this task filled from the vault is secret for the rest of the task, whatever a later read says of it.
+    const secret = !!n.secret || this.vaultFilled.has(this.fieldOf({ role: n.role, name }));
+    return { role: n.role, name, ...(secret ? { secret: true } : {}), ...(nameWithheld(n, name, this.known.values(), byId) ? { withheld: true } : {}), ...cellOf(n, byId) };
   }
 
   /**
@@ -2745,8 +2920,10 @@ export class Worker {
    */
   private async refreshActionContext(id: number): Promise<ToolResultObject | null> {
     this.pageTarget = null;
+    this.pageBound = null;
     // A question belongs to the step it was asked for: a look before this step's own is never "while the user decided".
     this.asked = false;
+    this.checked = false;
     const held = this.known.get(id);
     if (!held) return fail(`Element ${id} is not in your latest perceive_window. Call perceive_window and use its ids.`);
     const seen = await this.perception.read(this.target, null, undefined, { keep: false }).catch(() => null);
@@ -2764,16 +2941,21 @@ export class Worker {
     const shifted = old.length !== seen.nodes.length || old.some((n, i) => n.role !== seen.nodes[i].role
       || parentAt(n, oldAt) !== parentAt(seen.nodes[i], newAt));
     const page = this.livingPage(held);
-    if (shifted && !page) return fail("The window's controls changed, so nothing was done. Call perceive_window and use its new ids.");
+    // A page's control whose name says something risky lives on a page that changes on its own too: it may be found
+    // again in a read by its own ids, but only where its own surroundings can then be bound (bindPage), never by a twin.
+    const onPage = page || this.pageControl(held);
+    if (shifted && !onPage) return fail("The window's controls changed, so nothing was done. Call perceive_window and use its new ids.");
     // The original accessible object must still be the target at this position, not a neighbouring replacement.
     const at = oldAt.get(id)!;
     const live = await this.sidecar.readElement(id).catch(() => null);
     if (this.isOver) return STOPPED();
-    if (page && live && !isDisabled(live.states) && live.role === held.role && live.name === held.name) {
+    if (onPage && live && !isDisabled(live.states) && live.role === held.role && live.name === held.name) {
       const twins = seen.nodes.filter(n => n.role === live.role && n.name === live.name).length > 1;
-      if (!twins || PAGE_TWIN.test(live.role)) {
-        this.pageTarget = id;
-        this.pageSelection = seen.nodes.find(n => n.role === live.role && n.name === live.name)?.selection;
+      if (!twins || (page && PAGE_TWIN.test(live.role))) {
+        if (page) {
+          this.pageTarget = id;
+          this.pageSelection = seen.nodes.find(n => n.role === live.role && n.name === live.name)?.selection;
+        }
         if (shifted || twins) {
           // The page moved on, so its ids can't be mapped again: the ids it was read with stay, and what it says now is
           // still looked through. This read, by its own ids, is what a question's answer binds to (an empty or stale
@@ -2784,6 +2966,10 @@ export class Worker {
           this.actionWhole = !seen.truncated;
           this.actionOthers = JSON.stringify((seen.others ?? []).map(({ name, role, modal }) => ({ name, role, modal })));
           this.actionAt = mine >= 0 ? mine : undefined;
+          this.bindPage(held, live, w.name, !!seen.truncated);
+          // A risky-named control is never taken on less than a binding: its page moved on and its surroundings can't
+          // be bound (cut short, a window titled for money), so it is refused as before.
+          if (!page && !this.pageBound) return fail("The window's controls changed, so nothing was done. Call perceive_window and use its new ids.");
           const words = [w.name, ...seen.nodes.flatMap(n => n.secret ? [n.name] : [n.name, n.text ?? ""])];
           this.remember(w, words);
           this.flagInjection(words, "window", w.app);
@@ -2806,6 +2992,7 @@ export class Worker {
     this.knownWhole = this.actionWhole = !seen.truncated;
     this.actionOthers = JSON.stringify((seen.others ?? []).map(({ name, role, modal }) => ({ name, role, modal })));
     this.actionAt = at;
+    this.bindPage(held, live, w.name, !!seen.truncated);
     this.labels = inferLabels(this.actionTree);
     const words = [w.name, ...seen.nodes.flatMap(n => n.secret ? [n.name] : [n.name, n.text ?? ""])];
     this.remember(w, words);
@@ -2831,6 +3018,35 @@ export class Worker {
     })));
   }
 
+  /**
+   * A web page's control, in no dialog and not secret: what livingPage asks but for the name, which may say something
+   * risky. Its question's answer may bind to its own surroundings (bindPage).
+   */
+  private pageControl(node: AxNode): boolean {
+    return inWebPage(node, i => this.known.get(i)) && !this.dialogOf(node.id) && !node.secret && !node.withheld;
+  }
+
+  /**
+   * Whether this step binds as a page's control (pageBound): its target is one (`held`, as the latest perceive_window
+   * gave it; `live`, the object itself), it was found in the read the step binds to (actionTree, actionAt: never beside
+   * a twin), that read is whole, and its binding can be made there (pageBinding). Otherwise the whole tree binds.
+   */
+  private bindPage(held: AxNode, live: ElementInfo | null, title: string, truncated: boolean): void {
+    this.pageBound = null;
+    if (!live || truncated || this.actionAt === undefined || !this.pageControl(held)) return;
+    if (pageBinding(this.actionTree, this.actionAt, title) === null) return;
+    this.pageBound = { role: live.role, name: live.name, risky: isRiskyControl(live.role, live.name, this.kc.os) };
+  }
+
+  /**
+   * What a step is bound to, before its question and after: the whole tree (actionContext), or for a page's control its
+   * own surroundings (pageBound, page-binding.ts), read in `nodes` by the control's role and name. `clickedTextAt`: as
+   * for actionContext (for a page's control: its own selection may have collapsed under Ember's click).
+   */
+  private boundContext(nodes: readonly AxNode[] = this.actionTree, title: string = this.window.name, clickedTextAt?: number): string {
+    return this.pageBound ? pageBindingOf(nodes, this.pageBound, title, clickedTextAt !== undefined, this.pageBound.risky) : this.actionContext(nodes, clickedTextAt);
+  }
+
   /** Fail closed after approval, a lease or pointer movement if the approved context cannot still be established. */
   private async checkActionContext(id: number, node: AxNode, context: string, clickedTextAt?: number): Promise<ToolResultObject | null> {
     const seen = await this.perception.read(this.target, null, undefined, { keep: false }).catch(() => null);
@@ -2841,7 +3057,7 @@ export class Worker {
       || w.app !== this.window.app || w.name !== this.window.name || w.role !== this.window.role
       || (this.target.pid !== undefined && w.pid !== this.target.pid)
       || (this.target.path !== undefined && w.path !== this.target.path)
-      || (!seen.truncated !== this.actionWhole) || this.actionContext(seen.nodes, clickedTextAt) !== context
+      || (!seen.truncated !== this.actionWhole) || this.boundContext(seen.nodes, w.name, clickedTextAt) !== context
       || JSON.stringify((seen.others ?? []).map(({ name, role, modal }) => ({ name, role, modal }))) !== this.actionOthers;
     if (changed && !unread && this.spend(this.pageOf(node))) return fail(spentYes(this.pageOf(node) ? "the page" : "the window"));
     if (changed) return fail("The window or its contents changed while preparing this action, so nothing was done. Call perceive_window and ask again if it is still needed.");
@@ -2860,7 +3076,8 @@ export class Worker {
    * preview, a counter), so its tree is rarely the same twice: binding such a step to all of it refused every click on
    * YouTube, as did the check on repeated names, a video's thumbnail and title being one link twice over. The click goes to
    * the object the model named, by id. So a step that asks nothing needs only that object and the window to hold
-   * (checkPageTarget); a question still binds its answer to the whole tree, and a risky word still asks.
+   * (checkPageTarget); a question binds its answer to the control's own surroundings (pageBound, page-binding.ts), or to
+   * the whole tree where those can't be bound, and a risky word still asks.
    */
   private livingPage(node: AxNode): boolean {
     return inWebPage(node, i => this.known.get(i)) && !this.dialogOf(node.id) && !node.secret && !node.withheld && !riskyOnPage(node.role, node.name, this.kc.os);
@@ -2897,12 +3114,12 @@ export class Worker {
 
   /** What must still hold just before input: the whole context, but for a living page's control when no question was asked. */
   private stillApproved(id: number, node: AxNode, context: string, editing: boolean, clickedTextAt?: number): Promise<ToolResultObject | null> {
-    return this.pageTarget === id && !this.asked ? this.checkPageTarget(id, node, editing, clickedTextAt !== undefined) : this.checkActionContext(id, node, context, clickedTextAt);
+    return this.pageTarget === id && !this.waited ? this.checkPageTarget(id, node, editing, clickedTextAt !== undefined) : this.checkActionContext(id, node, context, clickedTextAt);
   }
 
-  /** After a question was up, the element must still be the one the user said yes to. */
+  /** After a question was up (or Assisted's check ran), the element must still be the one that was judged. */
   private async stillSame(id: number, element: Focus): Promise<ToolResultObject | null> {
-    if (!this.asked) return null;
+    if (!this.waited) return null;
     const live = await this.sidecar.readElement(id).catch(() => null);
     if (this.isOver) return STOPPED();
     const name = live ? this.nameOf(id, live) : null;
@@ -2976,6 +3193,292 @@ export class Worker {
       : r;
   }
 
+  /** Is fill_from_vault among this task's tools: a vault that may be used now, a task that acts, on this computer's own screen. */
+  private offersVault(): boolean {
+    try {
+      return !!this.d.vault && this.spec.mode !== "guide" && this.vaultLocal && this.d.vault.usable();
+    } catch {
+      return false; // a vault that can't say: no tool
+    }
+  }
+
+  /** The task acts on this computer's own screen: not in WSL or on a computer reached over SSH (the desk is asked apart). */
+  private get vaultLocal(): boolean {
+    return !this.d.target || this.d.target.kind === "local";
+  }
+
+  /**
+   * The fill as the policy is asked about it: what is asked for, and everything about the field read now, by Ember
+   * (never from the model): whether it takes text, whether it is in a page and which pages those are (the helper's read
+   * of the documents themselves, null where it can't be made), and whether the window holds a password or secret field.
+   */
+  private async vaultRequest(id: number, node: AxNode, element: Focus, kind: VaultKind, part: VaultPart): Promise<ActionRequest> {
+    const byId = (i: number) => this.known.get(i);
+    const local = this.vaultLocal && !this.place;
+    let pages: string[] | null = null;
+    if (local && this.d.vault) pages = await this.d.vault.pages(id).then(p => (Array.isArray(p) ? p : null), () => null);
+    let signIn = false, payment = false;
+    for (const n of this.known.values()) {
+      if (n.role === "password text") signIn = true;
+      if (n.role === "password text" || n.secret) payment = true;
+    }
+    // A field that is secret only because this task filled an ordinary detail into it (a user name, an email) may
+    // be filled with such a detail again (a form that came back after a failed sign-in): judged as it was before.
+    const before = this.vaultFilled.get(this.fieldOf(element));
+    const judged: Focus = before !== undefined && !SECRET_PARTS.has(before) && node.role !== "password text" ? { ...element, secret: undefined } : element;
+    return {
+      taskId: this.spec.id, kind: "vault_fill", app: this.window.app, window: this.window.name, element: judged,
+      vault: {
+        kind, part, local, pages, signIn, payment,
+        takesText: VAULT_FIELD_ROLES.has(node.role) && node.states.includes("editable") && !isDisabled(node.states),
+        inPage: inWebPage(node, byId),
+      },
+      ...this.placeOf(id, element),
+    };
+  }
+
+  /** A vault fill that isn't done: recorded as refused, with why in Ember's own words, and the model told only that nothing was filled. */
+  private vaultRefused(element: Focus | undefined, reason: string, text = NOTHING_FILLED): ToolResultObject {
+    this.ahead = null;
+    return this.refuse("vault_fill", reason, text, { ...(element ? { element } : {}), never: false });
+  }
+
+  /**
+   * fill_from_vault (owner decision of 2026-11-12; PLAN.md §2 "Approvals", "The vault"). The model names a field and
+   * what it needs; everything else is Ember's: the policy decides the step as its own kind, refusing before any
+   * question or form wherever it may not be done (PolicyEngine.vaultRefusal); what the field belongs to is read from
+   * the app (vaultTarget); with no entry bound there the person is asked once in the Secure Form, and a form closed
+   * without an answer is kept as a refusal for the rest of the task (one that could keep nothing on this computer is
+   * nobody's no, and isn't shown again in the task); right before the fill the field, its page and
+   * the decision are all looked at again, and anything that changed since means no fill; then the value goes from the
+   * vault straight to the helper's own fill, or, where the field takes none by accessibility, is typed as keys under
+   * the borrow's rules, never pasted. The model hears only whether it was filled.
+   */
+  private async fillFromVault(id: number, what: VaultWhat): Promise<ToolResultObject> {
+    const vault = this.d.vault;
+    const [kind, part] = VAULT_FILL[what];
+    if (!vault) return this.vaultRefused(undefined, "the vault isn't available here");
+    if (this.place?.userInControl()) return this.deskTaken("vault_fill");
+    const refreshed = await this.refreshActionContext(id);
+    if (refreshed) return refreshed;
+    const f = await this.fresh(id);
+    if (!("node" in f)) return f;
+    const { node, element } = f;
+    const req = await this.vaultRequest(id, node, element, kind, part);
+    if (this.isOver) return STOPPED();
+    const context = this.boundContext();
+    const before = this.pageTarget === id ? null : await this.checkActionContext(id, node, context);
+    if (before) return before;
+    // The policy first: every refusal comes before any form is opened (and is recorded there).
+    const verdict = await this.authorize(req);
+    if (verdict) return verdict;
+    const target = vaultTarget(req);
+    if (!("dest" in target)) return this.vaultRefused(element, target.why);
+    const dest = target.dest;
+    // No entry bound here yet: the person is asked once, in Ember's own form. One they closed without saving earlier in
+    // this task is never asked again in it.
+    const formStep = [`vault\n${kind}\n${"site" in dest ? `site:${dest.site}` : `app:${dest.app}`}`];
+    if (!vault.has(kind, dest)) {
+      // The field asked for goes with the form: the same detail typed or keyed into it by the model is the fill done
+      // another way, refused for the rest of the task as any step the user said no to is (integ-x-2).
+      const closed = [...formStep, ...this.namesOf({ kind: "text", element }), formFieldName(this.stepKey(element))];
+      if (this.refusals.step(formStep)) {
+        this.refusals.noteStep(closed, "refused");
+        return this.vaultRefused(element, "the user closed Ember's Secure Form for this earlier in the task", NOT_SAVED_BEFORE);
+      }
+      // A form that could keep nothing earlier in this task isn't shown again in it (integ-z-2): a login's next field
+      // would only put the same "can't keep" form up and take the keyboard once more. Nobody's no, as the first was.
+      if (this.vaultCantKeep) {
+        this.d.log.info("worker.vault_form_not_shown", { task: this.spec.id, kind });
+        return this.vaultRefused(element, "Ember's vault couldn't keep anything on this computer earlier in this task, so its Secure Form wasn't shown again", CANT_KEEP);
+      }
+      this.d.onProgress("Waiting for you in the Secure Form…");
+      // (The wait for the person doesn't count against the task's time, as a question's doesn't.)
+      const form = () => vault.ask(kind, dest, this.window.app || null).catch(() => "off" as const);
+      const asked = await (this.clock ? this.clock.waiting(form) : form());
+      // (A page that moved on meanwhile, or a field that changed, is found by the look right before the fill.)
+      if (this.isOver) return STOPPED();
+      if (asked === "cancelled") {
+        this.refusals.noteStep(closed, "refused");
+        // Closing the form is the user's no, as a "Not now" is: the task is held as one they said no in, and with
+        // nothing done after it, it ends as their choice, never as done or as a failure (afterNo: integ-x-3).
+        this.saidNoThisTask = true;
+        this.declined = true;
+        return this.vaultRefused(element, "the user closed Ember's Secure Form without saving", NOT_SAVED);
+      }
+      if (asked !== "saved" && asked !== "kept") {
+        // A form that could keep nothing (no keyring, a Save the keyring or the disk refused, no window) is nobody's
+        // no: the task isn't held as one the user said no in and nothing is kept as refused (integ-y-2).
+        if (asked !== "unavailable") return this.vaultRefused(element, "the vault can't be used now");
+        this.vaultCantKeep = true;
+        return this.vaultRefused(element, "Ember's Secure Form couldn't keep anything on this computer: it has no keyring, couldn't save or couldn't be shown", CANT_KEEP);
+      }
+    }
+    // Never while the shell's own password prompt is open, also by accessibility (safety-privacy-3).
+    const prompt = await this.promptRefusal("vault_fill", element);
+    if (prompt) return prompt;
+    const release = await this.d.lease(this.window.name || this.window.app, this.spec.id, this.overSignal);
+    let released = false;
+    const letGo = () => { if (!released) { released = true; release(); } };
+    try {
+      if (this.isOver) return STOPPED();
+      // Right before the fill, everything again as it is now (the form may have been up for minutes; a page can
+      // navigate in a moment): the field, what it belongs to and the decision. Anything else than before: no fill.
+      const changed = await this.vaultChanged(id, element, kind, part, dest);
+      if (changed) return this.vaultRefused(element, changed, CHANGED_BEFORE_FILL);
+      const changedContext = await this.stillApproved(id, node, context, true);
+      if (changedContext) { this.ahead = null; return changedContext; }
+      if (node.bounds) this.fly(node.bounds);
+      // What the audit keeps of a fill: the kind, the part and the destination. Never a value, nor its length.
+      const record = { vault: { kind, part, ...("site" in dest ? { site: dest.site } : { app: dest.app }) } };
+      let said = false;
+      const sayOnce = () => { if (!said) { said = true; this.goAhead(); } };
+      const filled = await vault.use(kind, part, dest, async value => {
+        // Only now is the fill recorded and said: the entry opened, and this part of it is there.
+        sayOnce();
+        try {
+          return { how: "accessibility" as const, ...await vault.put(id, value) };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : "";
+          if (msg !== VAULT_FILL_UNAVAILABLE) return { how: "accessibility" as const, ok: false, error: msg === VAULT_FILL_NO_ANSWER ? "no answer" as const : "refused" as const };
+        }
+        // The field takes no text by accessibility: typed as keys, under the borrow's own rules. Never pasted.
+        letGo();
+        return { how: "keys" as const, typed: await this.typeFromVault(id, node, element, part, value, context, record, () => this.vaultChanged(id, element, kind, part, dest)) };
+      });
+      if (this.isOver) return STOPPED();
+      if (!filled.ok) {
+        const reason = filled.why === "part" ? `the vault's entry for this ${"site" in dest ? "site" : "app"} holds no ${savedPart(part).replace(/^a saved /, "")}`
+          : filled.why === "none" ? "the vault's entry for this couldn't be opened" : "the vault can't be used now";
+        return this.vaultRefused(element, reason, filled.why === "part" ? NO_SUCH_PART : NOTHING_FILLED);
+      }
+      const r = filled.result;
+      if (r.how === "keys") {
+        // (withCursor recorded the step, with the borrow's own outcome.)
+        return r.typed;
+      }
+      const ok = r.ok && !("error" in r) && r.took !== false;
+      this.audit({ event: "action", task: this.spec.id, kind: "vault_fill", app: req.app, window: req.window, element, ok, ...record, via: "accessibility",
+        ...("error" in r ? { error: r.error === "no answer" ? "the app didn't answer in time" : "the app refused it" } : r.took === false ? { error: "the field didn't take all of it" } : {}) });
+      this.noteVaultFill(id, node, element, part);
+      if ("error" in r && r.error === "no answer") return fail("The app didn't answer in time, so it's unknown whether the field was filled. You can't read what it holds: tell the user in finish_task to check it.");
+      if (!r.ok || "error" in r) return fail("The app didn't take it, so the field wasn't filled from the vault. Don't type it yourself; tell the user in finish_task.");
+      if (r.took === false) return fail("The field didn't take all of what the vault holds (it may allow fewer characters). You can't read what it holds: tell the user in finish_task to check it.");
+      return done(FILLED);
+    } finally {
+      this.fly(null);
+      letGo();
+    }
+  }
+
+  /**
+   * Is the field of a vault fill still what was decided on, and where: read again now, with its pages, and decided
+   * again (not counted twice). Null when nothing changed; else why not, in Ember's own words.
+   */
+  private async vaultChanged(id: number, element: Focus, kind: VaultKind, part: VaultPart, dest: VaultDestination): Promise<string | null> {
+    const again = await this.fresh(id);
+    if (!("node" in again)) return "the field changed or went away before Ember could fill it";
+    if (again.element.role !== element.role || again.element.name !== element.name) return "the field changed before Ember could fill it";
+    const req = await this.vaultRequest(id, again.node, again.element, kind, part);
+    const now = this.d.policy.recheck({ ...req, onDesk: !!this.place, goal: this.userWords, askedIn: this.spec.target.app, windowId: this.windowId });
+    if (now.verdict !== "allow") return now.reason;
+    const target = vaultTarget(req);
+    if (!("dest" in target)) return target.why;
+    return sameDestination(target.dest, dest) ? null : "the field's page or app changed before Ember could fill it";
+  }
+
+  /**
+   * Fields this task filled from the vault (fieldOf: their window, role and name), and with which part: nothing is
+   * typed or chosen there afterwards by the task, as in any secret field (elementOf).
+   */
+  private vaultFilled = new Map<string, VaultPart>();
+
+  /**
+   * A Secure Form in this task answered that it could keep nothing on this computer (no keyring; a Save the keyring,
+   * the disk or a full vault refused, then closed). Apart from the user's no, and for this task only: while it is
+   * set no form is opened for a fill with nothing saved, and what is already saved is filled as ever (integ-z-2).
+   */
+  private vaultCantKeep = false;
+
+  /** A field was (or may have been) filled from the vault: it is secret for the rest of the task. */
+  private noteVaultFill(id: number, node: AxNode, element: Focus, part: VaultPart): void {
+    this.vaultFilled.set(this.fieldOf(element), part);
+    this.known.set(id, { ...node, secret: true, text: undefined });
+  }
+
+  /**
+   * The typed fallback of a vault fill (decision 6): the value typed as key events into the field, under the borrow's
+   * own rules (the user still, let go on any input, never after they took the mouse back in this task, never while an
+   * authentication prompt has the keyboard), and never through the clipboard. `still`: the last look at the field and
+   * its page, made once it has the keyboard and right before the first key. Nothing an error says quotes the value.
+   */
+  private async typeFromVault(id: number, node: AxNode, element: Focus, part: VaultPart, value: string, context: string, record: Record<string, unknown>, still: () => Promise<string | null>): Promise<ToolResultObject> {
+    if (this.userTookOver) return this.vaultRefused(element, "the user took the mouse back from this task, so Ember borrows nothing more in it", TOOK_BACK_NO_FILL);
+    if (this.place || !this.d.cursor || !node.bounds) return this.vaultRefused(element, "the field takes no text by accessibility, and the keyboard isn't available here");
+    if (!typeableText(value) || /[\n\t]/.test(value)) return this.vaultRefused(element, "the field takes no text by accessibility, and what the vault holds can't be typed with the keyboard", CANT_TYPE_IT);
+    const kc = this.kc;
+    // What the keyboard says of text it can't type quotes a character of it: only that it couldn't is passed on, and
+    // the keyboard's own error is attached to nothing.
+    const passes = (err: unknown) => err instanceof BorrowStopped || err instanceof UserTookOver;
+    const checkFirst = (hand: Pick<Hand, "checkKeys" | "checkTyping">) => {
+      let cant: unknown = null;
+      if (typeof hand.checkTyping === "function") { try { hand.checkTyping(value); } catch (err) { cant = err; } }
+      if (cant !== null) throw passes(cant) ? cant : new Error(CANT_TYPE_IT);
+      if (typeof hand.checkKeys === "function") for (const k of [kc.edit.selectAll, "Delete"]) hand.checkKeys(k);
+    };
+    const pre = await this.sidecar.readElement(id, { shown: true }).catch(() => null);
+    if (this.isOver) return STOPPED();
+    try {
+      const spot = this.landingSpot(id, node, element, pre);
+      await this.mustAimAt(id, pre!, spot, spot.shown);
+    } catch (err) {
+      if (err instanceof BorrowStopped) return STOPPED();
+      return this.vaultRefused(element, "the field can't be reached with the mouse");
+    }
+    this.inputValue = { ...record, via: "keys" };
+    try {
+      const result = await this.withCursor("vault_fill", element, async hand => {
+        checkFirst(hand);
+        const now = await this.sidecar.readElement(id, { shown: true }).catch(() => null);
+        const spot = this.landingSpot(id, node, element, now);
+        await hand.glideTo(spot.x, spot.y);
+        await sleep(POINTER_SETTLE_MS);
+        const there = await this.sidecar.readElement(id, { shown: true }).catch(() => null);
+        const again = this.landingSpot(id, node, element, there);
+        const aim = await this.mustAimAt(id, there!, again, again.shown);
+        if (Math.abs(aim.x - spot.x) >= 1 || Math.abs(aim.y - spot.y) >= 1) await hand.glideTo(aim.x, aim.y);
+        const changedContext = await this.stillApproved(id, node, context, true);
+        if (changedContext) throw new Error(changedContext.textResultForLlm);
+        await hand.click();
+        // Keys go wherever the keyboard is: this field must have it, and still be the one decided on, in the same page.
+        for (let i = 0; ; i++) {
+          const live = await this.sidecar.readElement(id).catch(() => null);
+          if (this.isOver) throw new BorrowStopped();
+          const same = !!live && live.role === node.role && this.nameOf(id, live) === element.name;
+          if (live && same && live.states.includes("focused") && live.states.includes("editable")) break;
+          if (!same || i >= 6) throw new Error("The field didn't get the keyboard, so Ember typed nothing (the keys would have gone somewhere else).");
+          await sleep(80);
+        }
+        const changed = await still();
+        if (changed) throw new Error("The field or its page changed before Ember could fill it, so nothing was typed.");
+        // Secret before the first key, as the helper's own fill makes it: no read from now on reports what it holds,
+        // and every picture blacks it out. A field that can't be marked is typed nothing (fail closed).
+        const marked = await (this.d.vault ? this.d.vault.mark(id) : Promise.reject(new Error("no vault"))).then(() => true, () => false);
+        if (this.isOver) throw new BorrowStopped();
+        if (!marked) throw new Error("Ember couldn't make sure the field stays out of what it reads and its screenshots, so nothing was typed.");
+        this.noteVaultFill(id, node, element, part);
+        await hand.keys(kc.edit.selectAll);
+        await hand.keys("Delete");
+        const cant: unknown = await hand.type(value).then(() => null, (err: unknown) => err ?? new Error("typing failed"));
+        if (cant !== null) throw passes(cant) ? cant : new Error(CANT_TYPE_IT);
+      }, undefined, undefined, false, checkFirst);
+      this.noteVaultFill(id, node, element, part);
+      return result.resultType === "success" ? done(`${FILLED} It was typed with the user's keyboard, which is back with them.`) : result;
+    } finally {
+      this.inputValue = {};
+    }
+  }
+
   /** Policy check, confirmation, lease, motion, action, audit: the one path every window action takes. */
   private async act(kind: ActionKind, id: number, value: string | undefined, run: () => Promise<ActionResult>, mode?: TextMode): Promise<ToolResultObject> {
     if (this.place?.userInControl()) return this.deskTaken(kind);
@@ -3017,7 +3520,7 @@ export class Worker {
     };
     // A click on text inside a link (or a row) works the link: the user is asked about what the click works.
     const req: ActionRequest = kind === "click" || kind === "toggle" ? { ...base, element: this.clickJudged(base, element, handler) } : base;
-    const context = this.actionContext();
+    const context = this.boundContext();
     const before = this.pageTarget === id ? null : await this.checkActionContext(id, node, context);
     if (before) return before;
     const verdict = await this.authorize(req);
@@ -3025,7 +3528,7 @@ export class Worker {
     const changed = await this.stillSame(id, element);
     if (changed) return changed;
     // A switch the user flipped while deciding may already be where it should be: toggling would undo it.
-    if (kind === "toggle" && this.asked) {
+    if (kind === "toggle" && this.waited) {
       const now = await this.sidecar.readElement(id).catch(() => null);
       if (this.isOver) return STOPPED();
       if (now && isOn(now.states) === (value === "on")) return done(`Already ${value}: ${describeAfter(now)}`);
@@ -3232,12 +3735,12 @@ export class Worker {
       ...(kind === "cursor_click" && selects ? { clickSelects: true } : {}),
       ...(kind === "cursor_click" && inWebPage(node, i => this.known.get(i)) ? { onPage: true } : {}),
       ...(dialog ? { dialog } : {}), ...this.placeOf(id, element) };
-    const context = this.actionContext();
+    const context = this.boundContext();
     // Append/replace explicitly choose where text goes after this click. Only the target's selection may collapse
     // under our own focus click; insert-at-caret never clicks and keeps its full selection binding.
     // Where the field is in the read the answer binds to (refreshActionContext): unknown, nothing is excused.
     const clickedTextAt = kind === "cursor_text" && clicks ? this.actionAt : undefined;
-    const afterClickContext = clickedTextAt !== undefined ? this.actionContext(undefined, clickedTextAt) : context;
+    const afterClickContext = clickedTextAt !== undefined ? this.boundContext(undefined, undefined, clickedTextAt) : context;
     const before = this.pageTarget === id ? null : await this.checkActionContext(id, node, context);
     if (before) return before;
     const verdict = await this.authorize(kind === "cursor_click" ? { ...base, element: this.clickJudged(base, element, handler) } : base);
@@ -3253,7 +3756,7 @@ export class Worker {
     }
     // A switch the user flipped while deciding may already be where it should be: a click would undo it.
     const goal = turns ?? (toggle && (value === "on" || value === "off") ? value : undefined);
-    if (goal && this.asked && isOn(live.states) === (goal === "on")) {
+    if (goal && this.waited && isOn(live.states) === (goal === "on")) {
       return done(`Already ${goal}: ${describeAfter(live)}`);
     }
     // The user's clipboard is saved before anything is borrowed: if it can't be saved in time, nothing is touched.
@@ -3653,6 +4156,7 @@ export class Worker {
    */
   private async authorizeCells(jobs: CellJob[]): Promise<ToolResultObject | null | "each"> {
     this.asked = false;
+    this.checked = false;
     this.ahead = null;
     this.yesFor = null;
     if (this.isOver) return STOPPED();
@@ -3664,7 +4168,7 @@ export class Worker {
     if (!await this.pace()) return STOPPED();
     // Judged after what was typed into the window's other fields before, as each cell would be one after the other.
     let typed = this.typedWindows.get(this.windowKey);
-    const judged = jobs.map((job, i) => {
+    let judged = jobs.map((job, i) => {
       const element: Focus = { role: "table cell", name: job.cell };
       const field = this.fieldOf(element);
       const typedHere = typed ? `${typed.text}${typed.field === field ? "" : "\n"}${job.text}` : undefined;
@@ -3672,7 +4176,12 @@ export class Worker {
         ...(job.expected !== undefined ? { currentText: job.expected, ...this.ownText(field, job.expected) } : {}) };
       if (job.text) typed = { field, text: (typedHere ?? job.text).slice(-TYPED_MAX) };
       const d = i === 0 ? this.d.policy.decide(req) : this.d.policy.recheck(req);
-      // "Work without asking" is suspended for the rest of a task the user already said no in, as for one step (authorize).
+      // Autopilot never asks: its own decision stands in a task the user said no in, and a borrow after the user took the
+      // mouse back is refused, as for one step (authorize).
+      if (this.d.policy.autopilot) return { job, req, d: d.autonomy && this.takenBack(req.kind) ? this.refusedAfterTakeover(d) : d };
+      // "Work without asking" is suspended for the rest of a task the user already said no in, as for one step (authorize),
+      // and for its borrows once the user took the mouse back.
+      if (d.autonomy && !this.saidNoThisTask && this.takenBack(req.kind)) return { job, req, d: this.askedAfterTakeover(d) };
       if (!d.autonomy || !this.saidNoThisTask) return { job, req, d };
       const { autonomy: _a, announce: _n, ...asked } = d;
       return { job, req, d: { ...asked, verdict: "confirm" as const, tier: "confirm" as const, reason: `${d.reason.replace(/; the user lets Ember work without asking$/, "")}; working without asking is suspended after the user said no` } };
@@ -3680,9 +4189,13 @@ export class Worker {
     // "What Ember did" shows the batch's decisions as one line (on the last cell's): refused (a cell isn't allowed),
     // asked (the one question), or none where no question is asked of the batch (all allowed, or each cell on its own).
     const no = judged.find(j => j.d.verdict === "deny");
-    const asks = judged.find(j => j.d.verdict !== "allow");
+    // A batch with a cell the user already said no to filling in this task (or left unanswered): refused whole, with
+    // no question, as one step is (authorize).
+    const names = judged.flatMap(j => [...this.namesOf(j.req), ...this.risksOf(j.req, j.d)]);
+    const stood = no ? null : this.refusals.step(names);
+    if (stood) return this.refusedBefore({ ...base, element: { role: "table cell", name: jobs.map(j => j.cell).join(", ") } }, { tier: "confirm" }, stood);
+    let asks = judged.find(j => j.d.verdict !== "allow");
     const alone = judged.some(j => j.d.aligned === false) || jobs.some(j => reachesOut(j.text));
-    const batchVerdict = no ? "deny" : alone || !asks ? "none" : "ask";
     // No question while the shell's own password prompt is open (or Ember can't tell), or an authentication prompt has
     // the keyboard: the borrow would refuse the batch once the user answered, as for one step (authorize;
     // safety-privacy-3, safety-privacy-v4-3). A batch going ahead without asking is looked at by the borrow alone.
@@ -3690,10 +4203,16 @@ export class Worker {
       const cells: Focus = { role: "table cell", name: jobs.map(j => j.cell).join(", ") };
       const prompt = await this.beforeBorrowQuestion("cursor_text", cells);
       if (prompt) return prompt;
+      // Assisted: one check for the batch before its one question, as for one step (authorize).
+      const checked = await this.checkFirst(judged.map(j => ({ r: j.req, d: j.d })));
+      if (this.isOver) return STOPPED();
+      judged = judged.map((j, i) => ({ ...j, d: checked[i] }));
+      asks = judged.find(j => j.d.verdict !== "allow");
     }
+    const batchVerdict = no ? "deny" : alone || !asks ? "none" : "ask";
     const entries: AuditEntry[] = judged.map(({ req, d }, i) => {
       const batch = jobs.length > 1 ? { batch: jobs.length, at: i, ...(i === jobs.length - 1 ? { batchVerdict, ...(no ?? asks ? { batchReason: (no ?? asks)!.d.reason } : {}) } : {}) } : {};
-      return { event: "decision", task: this.spec.id, kind: req.kind, app: req.app, window: req.window, element: req.element, ...auditValue(req), tier: d.tier, verdict: d.verdict, reason: d.reason, ...(d.aligned === false ? { aligned: false } : {}), ...(req.onDesk ? { onDesk: true } : {}), ...(d.autonomy ? { autonomy: true } : {}), ...batch };
+      return { event: "decision", task: this.spec.id, kind: req.kind, app: req.app, window: req.window, element: req.element, ...auditValue(req), tier: d.tier, verdict: d.verdict, reason: d.reason, ...(d.aligned === false ? { aligned: false } : {}), ...(req.onDesk ? { onDesk: true } : {}), ...(d.autonomy ? { autonomy: true } : {}), ...(d.mode ? { mode: d.mode } : {}), ...(d.review ? { review: d.review } : {}), ...batch };
     });
     // A batch going ahead without asking is recorded, and said, once the borrow's look right before acting has passed
     // (goAhead), as one step is (authorize; safety-privacy-v4-2).
@@ -3711,7 +4230,7 @@ export class Worker {
       const waived = judged.filter(j => j.d.autonomy && j.d.announce);
       const app = this.window.app ? friendlyApp(this.window.app) : "this app";
       const words = waived.length === 1 && jobs.length === 1 ? waived[0].d.announce!
-        : waived.length ? `${this.place ? "Filling" : "Using your keyboard to fill"} ${jobs.length} cells in ${app}, without asking as you let me.${this.place ? "" : " Move the mouse or press a key to take it back."}` : null;
+        : waived.length ? `${this.place ? "Filling" : "Using your keyboard to fill"} ${jobs.length} cells in ${app}, ${waived.some(j => j.d.mode === "autopilot") ? AUTOPILOT_WORDS : waived.some(j => j.d.review === "match") ? CHECKED_WORDS : "without asking as you let me."}${this.place ? "" : " Move the mouse or press a key to take it back."}` : null;
       if (ahead) this.ahead = { entries, words };
       return null;
     }
@@ -3743,7 +4262,7 @@ export class Worker {
     this.audit({ event: "confirm", task: this.spec.id, kind: "cursor_text", app: this.window.app, element: { role: "table cell", name: jobs.map(j => j.cell).join(", ") }, chars: jobs.reduce((n, j) => n + j.text.length, 0), mode: "replace", ...(this.place ? { onDesk: true } : {}), answer: this.isOver ? "stopped" : answer ?? "expired", ...this.channelOf(question) });
     if (this.isOver) return STOPPED();
     if (answer === "once") return null;
-    return this.refused(answer);
+    return this.refused(answer, names);
   }
 
   /** A cell's address as given ("b5", "$B$5"), as "B5" and its place; or why there is no such cell. */
@@ -4140,6 +4659,8 @@ export class Worker {
       const verdict = await this.authorize(req, { covered, ...(moves && !covered ? { note: "Keys that only move there after this one won't be asked about." } : {}) });
       if (verdict) return verdict;
       const said = this.asked;
+      // (Assisted's check took time too: the page is held to what was judged, but it is no yes for later keys.)
+      const waited = this.waited;
       const approved = element;
       const turn: { moved?: { to: Focus | undefined }; into?: Focus } = {};
       this.inputValue = { value: keys };
@@ -4163,7 +4684,7 @@ export class Worker {
         if (!now && activating) throw new Error("Ember can't tell what that key would activate in this window (nothing there says it has the keyboard), so nothing was pressed. Click the control you mean instead.");
         // In a living page (a video playing), with no question asked, what has the keyboard is checked just above, and the
         // shell holds what it contains.
-        if (context === null || (this.focusContext !== context && !(this.focusInPage && !said && this.focusShell === shell))) {
+        if (context === null || (this.focusContext !== context && !(this.focusInPage && !waited && this.focusShell === shell))) {
           if (context !== null && this.focusContext !== null && this.spend(this.focusInPage)) throw new Error(spentYes(this.focusInPage ? "the page" : "the window", "nothing was pressed"));
           throw new Error("The window or its contents changed while preparing these keys, so nothing was pressed. Call perceive_window and ask again if it is still needed.");
         }
@@ -4551,6 +5072,7 @@ export class Worker {
       element: element ? { role: element.role, name: element.name } : null,
       ...(req.value !== undefined ? { valueSha256: sha256Hex(req.value) } : {}),
       verdict: auth.verdict, approval: auth.approvedAt !== null ? { given: true } : null,
+      ...(auth.announced ? { announced: true as const } : {}),
       ageMs: Math.max(0, Math.round(now - (auth.approvedAt ?? auth.at))),
     });
   }
@@ -4587,7 +5109,7 @@ export class Worker {
     // be saved) is still recorded as decided before what it did, though it isn't said (goAhead).
     if (e.event === "action" && this.ahead) { const held = this.ahead.entries; this.ahead = null; for (const d of held) this.audit(d); }
     // (Only a step that happened: one that failed after the "Not now" leaves the task declined.)
-    if ((e.event === "action" && e.ok === true) || (e.event === "command" && e.phase === "started")) { this.declined = false; this.expired = false; }
+    if ((e.event === "action" && e.ok === true) || (e.event === "command" && e.phase === "started")) { this.declined = false; this.expired = false; this.worked = true; }
     try {
       this.d.audit.write(e);
     } catch (err) {
@@ -4606,6 +5128,7 @@ export class Worker {
    */
   private async authorize(request: ActionRequest, o: { note?: string; covered?: boolean } = {}): Promise<ToolResultObject | null> {
     this.asked = false;
+    this.checked = false;
     this.lastAuth = null;
     this.ahead = null;
     this.yesFor = null;
@@ -4629,16 +5152,36 @@ export class Worker {
       decision = this.d.policy.decide(req);
     }
     if (decision.aligned === false) this.tainted = true;
+    // A step the user already said no to in this task, or whose question nobody answered and they haven't spoken since:
+    // never asked about again, checked or announced, whatever the mode would do with it now (Refusals).
+    const risk = decision.risky ? this.riskOf(req, decision) : null;
+    const stood = decision.verdict === "deny" ? null : this.refusals.step([...this.namesFor(req), ...(risk?.lookup ?? [])]);
+    if (stood) return this.refusedBefore(req, decision, stood);
+    // What the step is kept under if the user says no to it (read now, from policy's own decision, before this task's
+    // holds reword it).
+    const names = [...this.namesOf(req), ...(risk?.kept ?? [])];
+    // A risky step that may be something the user said no to in this task, though Ember can't tell (a deletion in an
+    // app after a no to a command that deletes, whatever either names; a step that names no kind after a no to one of
+    // no kind; the user's own step of a kind they said no to when a page came up with it): never checked or
+    // announced. It asks; in Autopilot, which has no question to put, it is refused.
+    const like = !!risk && decision.verdict !== "deny" && this.refusals.step(risk.like) === "refused";
+    if (like && this.d.policy.autopilot) return this.refusedBefore(req, decision, "refused");
     // "Work without asking" is suspended for the rest of a task the user already said no in (fail closed): the step asks
     // as it would have. A task that was steered or went off-task is held to asking just below, as before.
-    if (decision.autonomy && this.saidNoThisTask && !this.tainted) {
+    // (Autopilot's own decision, `mode`, is no waiver of Interactive's: it stands, and is said as Autopilot's below.)
+    if (decision.autonomy && this.saidNoThisTask && !this.tainted && !decision.mode) {
       const { autonomy: _a, announce: _n, ...asked } = decision;
       decision = { ...asked, verdict: "confirm", tier: "confirm", reason: `${decision.reason.replace(/; the user lets Ember work without asking$/, "")}; working without asking is suspended after the user said no` };
     }
+    // The user took the mouse or keyboard back from this task: no later borrow of it goes ahead unasked (CLAUDE.md "Least
+    // intrusive tier first": Ember never moves the pointer again after the user takes over). Without a question nothing
+    // else would stand between a model that tries again and Ember taking the pointer a second and a half after the
+    // user lets go of it (cause 4 of the investigation of the owner's report of 2026-11-12).
+    if (decision.autonomy && this.takenBack(req.kind)) decision = this.askedAfterTakeover(decision);
     // After a step the user didn't ask for came up (a page may have steered Ember, or the model went its own way),
     // nothing more happens without the user's click, and every question says why (one that would have been asked
     // anyway too; the step that was flagged says so itself).
-    if (this.tainted && decision.verdict !== "deny" && decision.tier !== "read" && decision.aligned !== false) {
+    if (this.tainted && decision.verdict !== "deny" && decision.tier !== "read" && decision.aligned !== false && !decision.mode) {
       // An app the user already allowed for this task: the step alone is asked about, not working in the app again.
       const step = decision.stepPrompt && this.allowedApps.has(req.app.toLowerCase()) ? decision.stepPrompt : decision.prompt;
       const prompt = this.steered
@@ -4650,6 +5193,13 @@ export class Worker {
       decision = decision.verdict === "allow"
         ? { ...held, verdict: "confirm", tier: "confirm", everyTime: true, remember: false, reason: `${base}; ${this.steered ? "text on screen tried to give Ember instructions" : "a step came up that the user didn't ask for"}`, prompt }
         : { ...held, everyTime: true, remember: false, prompt };
+    }
+    // Autopilot never asks (PLAN.md §2 "Approvals"): what this task's holds turned back into a question (the task was
+    // steered, went off-task, or the user said no in it) goes ahead announced instead, recorded as Autopilot's with why
+    // it would have asked. But never a borrow after the user took the mouse or keyboard back: Ember never moves the
+    // pointer again after that, and with no question to put, the borrow is refused for the rest of the task.
+    if (decision.verdict === "confirm" && this.d.policy.autopilot) {
+      decision = this.takenBack(req.kind) ? this.refusedAfterTakeover(decision) : this.d.policy.autopilotStep(req, decision);
     }
     if (o.covered && decision.verdict === "confirm" && !this.tainted && decision.aligned !== false && this.harmlessKeys(req)) {
       decision = { ...decision, verdict: "allow", tier: "reversible", reason: "a key that only moves, after the user said yes to moving there" };
@@ -4667,8 +5217,12 @@ export class Worker {
     if (decision.verdict === "confirm" && !sessionAllowed) {
       const prompt = BORROWED.has(req.kind) ? await this.beforeBorrowQuestion(req.kind, req.element) : await this.promptRefusal(req.kind, req.element);
       if (prompt) return prompt;
+      // Assisted: the question goes to its check first, and is put up only if the check doesn't find the step in the
+      // user's own words (PolicyEngine.assist). The user never sees a question that is then withdrawn.
+      if (!like) [decision] = await this.checkFirst([{ r: req, d: decision }]);
+      if (this.isOver) return STOPPED();
     }
-    const entry: AuditEntry = { event: "decision", task: this.spec.id, kind: req.kind, app: req.app, window: req.window, element: req.element, ...auditValue(req), tier: decision.tier, verdict: sessionAllowed ? "allow" : decision.verdict, reason: decision.reason, ...(decision.aligned === false ? { aligned: false } : {}), ...(req.onDesk ? { onDesk: true } : {}), ...(decision.autonomy ? { autonomy: true } : {}) };
+    const entry: AuditEntry = { event: "decision", task: this.spec.id, kind: req.kind, app: req.app, window: req.window, element: req.element, ...auditValue(req), tier: decision.tier, verdict: sessionAllowed ? "allow" : decision.verdict, reason: decision.reason, ...(decision.aligned === false ? { aligned: false } : {}), ...(req.onDesk ? { onDesk: true } : {}), ...(decision.autonomy ? { autonomy: true } : {}), ...(decision.mode ? { mode: decision.mode } : {}), ...(decision.review ? { review: decision.review } : {}) };
     // Going ahead without asking is recorded, and said, once the look right before acting has passed (goAhead), so a
     // step that look refuses is recorded only as refused (safety-privacy-v4-2).
     if (decision.verdict === "allow" && decision.autonomy) this.ahead = { entries: [entry], words: decision.announce ?? null };
@@ -4684,7 +5238,8 @@ export class Worker {
     }
     const decidedAt = performance.now();
     if (decision.verdict === "allow" || sessionAllowed) {
-      this.lastAuth = { at: decidedAt, verdict: sessionAllowed ? "confirm" : "allow", approvedAt: null };
+      // (A step Autopilot announced instead of asking says so on a remote's stamp: gate 2 wanted a yes for it.)
+      this.lastAuth = { at: decidedAt, verdict: sessionAllowed ? "confirm" : "allow", approvedAt: null, ...(decision.mode === "autopilot" ? { announced: true as const } : {}) };
       // Going ahead without asking: Ember says what it is doing, in the bubble and on the task's card, once the look right
       // before acting has passed (goAhead).
       return null;
@@ -4705,7 +5260,10 @@ export class Worker {
     const risky = !!decision.risky || this.steered;
     const again = this.reask?.key === step ? `${this.reask.words} ` : "";
     this.reask = null;
-    const question: WhereQuestion = { title: "May I?", context, ...(taskLine !== undefined ? { taskLine } : {}), prompt: `${again}${decision.prompt}`, options, task: this.spec.id, ...(where ? { where } : {}), ...(decision.detail ? { detail: decision.detail } : {}), ...(risky ? { risky: true } : {}) };
+    // A question Interactive would have announced instead (it has waivable scopes and nothing risky): once a run, how
+    // to make such steps announced (modes-x9p-3).
+    const hint = decision.waivable?.length && !decision.risky ? this.d.belowInteractiveHint?.() ?? null : null;
+    const question: WhereQuestion = { title: "May I?", context, ...(taskLine !== undefined ? { taskLine } : {}), prompt: `${again}${decision.prompt}${hint ? ` ${hint}` : ""}`, options, task: this.spec.id, ...(where ? { where } : {}), ...(decision.detail ? { detail: decision.detail } : {}), ...(risky ? { risky: true } : {}) };
     const answer = await this.ask(question, this.overSignal, askedWords({ kind: req.kind, ...(req.app ? { app: friendlyApp(req.app) } : {}), onDesk: !!req.onDesk }));
     this.audit({ event: "confirm", task: this.spec.id, kind: req.kind, app: req.app, element: req.element, ...auditValue(req), ...(req.onDesk ? { onDesk: true } : {}), answer: this.isOver ? "stopped" : answer ?? "expired", ...this.channelOf(question) });
     if (this.isOver) return STOPPED();
@@ -4724,7 +5282,96 @@ export class Worker {
       }
       return null;
     }
-    return this.refused(answer);
+    return this.refused(answer, names);
+  }
+
+  /**
+   * Assisted's check for the steps of one question, before it is put up (PolicyEngine.assist decides whether they may be
+   * checked at all, what the check is shown and what a match becomes). The check reads the user's own words only
+   * (checkWords). A borrow after the user took the mouse or keyboard back is theirs alone to allow: never checked.
+   * While it runs the task's bubble says so, and a Stop ends the wait at once.
+   */
+  private async checkFirst(steps: readonly { r: ActionRequest; d: Decision }[]): Promise<Decision[]> {
+    if (steps.some(s => this.takenBack(s.r.kind))) return steps.map(s => s.d);
+    const check = this.d.checkStep ?? copilotStepChecker({ client: this.d.client, model: this.d.checkModel ?? this.d.model, provider: this.d.provider, workDir: this.d.workDir, log: this.d.log });
+    const t0 = performance.now();
+    const out = await this.d.policy.assistAll(steps, {
+      words: this.checkWords, check, signal: this.overSignal,
+      task: { steered: this.steered, offTask: this.tainted && !this.steered, saidNo: this.saidNoThisTask },
+      onCheck: () => {
+        this.checked = true;
+        try { this.d.presenter.progress(CHECKING_STEP); } catch (err) { this.d.log.warn("worker.checking_not_said", { err }); }
+      },
+    });
+    // (What it said and how long it took: never the step, its names or the user's words.)
+    if (this.checked) this.d.log.info("worker.step_checked", { task: this.spec.id, kind: steps[0].r.kind, steps: steps.length, review: out.find(d => d.review)?.review ?? "stopped", ms: Math.round(performance.now() - t0) });
+    return out;
+  }
+
+  /** The names `req`'s step goes by in this task's refusals (stepNames): its window and element, and how it is taken. */
+  private namesOf(req: Pick<ActionRequest, "kind" | "element" | "value">): string[] {
+    const says = req.kind === "keys" || req.kind === "open_app" || req.kind === "setting";
+    return stepNames({ kind: req.kind, key: this.stepKey(req.element), named: !!req.element?.role, ...(says ? { value: req.value ?? "" } : {}),
+      ...(req.kind === "keys" ? { activates: isActivatingKey(req.value ?? "", this.kc) } : {}) });
+  }
+
+  /**
+   * The names `req`'s step is looked up by in this task's refusals: its own, and for a key that types a character into
+   * a field, the field's once the user closed Ember's Secure Form for a fill of it (integ-x-2). Never what a no to the
+   * step is kept under (namesOf): a no to one key is no word on the others.
+   */
+  private namesFor(req: Pick<ActionRequest, "kind" | "element" | "value">): string[] {
+    const keyed = req.kind === "keys" && !!req.element?.role && typesCharacter(req.value ?? "", this.kc);
+    return [...this.namesOf(req), ...(keyed ? [formFieldName(this.stepKey(req.element))] : [])];
+  }
+
+  /** A risky step as its refusals read it: the control, policy's words for it and why, its app, and the keys of a shortcut. */
+  private riskAsked(req: Pick<ActionRequest, "element" | "app" | "kind" | "value">, d: Pick<Decision, "about" | "reason">): RiskAsked {
+    return { name: req.element?.name ?? "", about: d.about ?? "", reason: d.reason, app: req.app, ...(req.kind === "keys" ? { keys: req.value ?? "" } : {}) };
+  }
+
+  /**
+   * What a risky step does (refusals.ts riskNames: sending, deleting, paying…, in its app), by policy's own words for
+   * it, never the text it would type: after a no, the same thing done another way (a key, a menu item, another window
+   * of the app) is refused for the rest of the task, in every mode (modes-x9s-3). An ordinary step goes by its own names
+   * alone, and so does a risky one whose words name no kind: it is judged as any other step in a task the user said no
+   * in (evalfix-1).
+   */
+  private risksOf(req: Pick<ActionRequest, "element" | "app" | "kind" | "value">, d: Pick<Decision, "risky" | "about" | "reason">): string[] {
+    return d.risky ? riskNames(this.riskAsked(req, d)) : [];
+  }
+
+  /**
+   * The names of one risky step in this task's refusals. `lookup`: what makes it a refused thing done another way (its
+   * kinds in its app; the kinds refused off-task, for a step that isn't the user's own words either). `like`: what it
+   * may be, though Ember can't tell (authorize): a step of no kind after one of no kind; a step of a kind a refused
+   * command did, to whatever it was (never matched by a word of the step or its window: modes-y9-y9-4); and the
+   * user's own step of a kind they said no to when a page or the model came up with it, which that no doesn't refuse
+   * (evalfix-x9-1) but which is never checked or announced either. `kept`: what a no to it leaves behind, for app
+   * steps and, by its kinds alone, for commands (modes-y9-y9-3); a step the user didn't ask for is kept apart.
+   */
+  private riskOf(req: Pick<ActionRequest, "element" | "app" | "kind" | "value">, d: Pick<Decision, "about" | "reason" | "aligned">) {
+    const asked = this.riskAsked(req, d);
+    const { said, why } = riskKinds(asked);
+    const kinds = [...new Set([...said, ...why])];
+    const offTask = d.aligned === false;
+    return {
+      lookup: [...riskNames(asked), ...offTaskLookup(asked, offTask)],
+      like: [...(said.length === 0 ? [noKindName(req.app)] : []), ...stepAcrossNames(kinds), ...offTaskNames(asked)],
+      kept: [...(offTask ? offTaskNames(asked) : riskNames(asked)), ...(kinds.length === 0 ? [noKindName(req.app)] : []), ...stepMarksForCommands(kinds)],
+    };
+  }
+
+  /**
+   * A repeat of a step the user said no to, or left unanswered: refused without a question, recorded as refused with
+   * why, and told to the model as such. A yes spent on that step earlier has nothing left to say (reask).
+   */
+  private refusedBefore(req: Pick<ActionRequest, "kind" | "app" | "window" | "element" | "onDesk">, decision: Pick<Decision, "tier">, stood: Standing): ToolResultObject {
+    const reason = STANDING_REASON[stood];
+    this.audit({ event: "decision", task: this.spec.id, kind: req.kind, app: req.app, window: req.window, element: req.element, tier: decision.tier, verdict: "deny", reason, ...(req.onDesk ? { onDesk: true } : {}) });
+    this.activity({ type: "refused", reason });
+    if (this.reask?.key === this.stepKey(req.element)) this.reask = null;
+    return denied(stood === "refused" ? REFUSED_BEFORE : STILL_UNANSWERED);
   }
 
   /**
@@ -4800,21 +5447,54 @@ export class Worker {
     return !this.isOver;
   }
 
-  /** A question without a yes: "Not now" is the user's no; no answer (null) is a timeout, which approved nothing either. */
-  private refused(answer: string | null) {
-    this.saidNoThisTask = true;
+  /** Did the user take the mouse or keyboard back from this task, and is `kind` a step that would borrow them again? */
+  private takenBack(kind: ActionKind): boolean {
+    return this.userTookOver && !this.place && BORROWED.has(kind);
+  }
+
+  /** A borrow a mode would announce, turned back into the question it would be below Interactive, saying why it is asked. */
+  private askedAfterTakeover(d: Decision): Decision {
+    const { autonomy: _a, announce: _n, mode: _m, ...asked } = d;
+    return { ...asked, verdict: "confirm", tier: "confirm", reason: `${d.reason.replace(/; the user lets Ember work without asking$/, "")}; the user took the mouse back earlier in this task`,
+      prompt: `${d.prompt} (You took the mouse back earlier, so I'm asking before I use it again.)` };
+  }
+
+  /**
+   * That borrow in Autopilot, which never asks: refused, since Ember never moves the pointer again after the user takes
+   * over (CLAUDE.md "Least intrusive tier first") and there is no question to put. For the rest of the task.
+   */
+  private refusedAfterTakeover(d: Decision): Decision {
+    const { autonomy: _a, announce: _n, mode: _m, ...rest } = d;
+    return { ...rest, verdict: "deny", tier: "never", reason: TOOK_BACK_REFUSED };
+  }
+
+  /**
+   * A question without a yes: "Not now" is the user's no, which holds the task to asking from here on; no answer (null)
+   * is a question that ran out of time, which approved nothing either (the step isn't taken) but is nobody's no: the
+   * model is told so, to stop and say it rather than work around it, and nothing a refusal locks is locked (cause 10).
+   */
+  private refused(answer: string | null, names: readonly string[]) {
+    // The step is kept: sent again, it is refused without a question (a no for the rest of the task; no answer until the
+    // user next says something to it).
+    this.refusals.noteStep(names, answer === null ? "waiting" : "refused");
     if (answer === null) {
       this.expired = true;
-      return denied("The question timed out with no answer, so nothing was approved. Don't retry or work around it; finish the task and say what wasn't done.");
+      return denied(UNANSWERED);
     }
+    this.saidNoThisTask = true;
     this.declined = true;
     return denied("The user said no. Don't retry or work around it; finish the task and say what wasn't done.");
   }
 }
 
-/** What the audit log keeps about an action's value: keys and choices in full, typed text only as a length. */
-function auditValue(r: ActionRequest): Record<string, unknown> {
+/**
+ * What the audit log keeps about an action's value: keys and choices in full, typed text only as a length, and a key
+ * that types a character as one, so a word typed key by key isn't in the file letter by letter (as the journal's copy
+ * already counted it; safety-privacy-r9-5).
+ */
+export function auditValue(r: ActionRequest): Record<string, unknown> {
   if (r.value === undefined) return {};
   if (r.kind === "text" || r.kind === "cursor_text") return { chars: r.value.length, ...(r.mode ? { mode: r.mode } : {}) };
+  if (r.kind === "keys" && typesCharacter(r.value)) return { chars: 1 };
   return { value: r.value.slice(0, 120) };
 }

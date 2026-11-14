@@ -4,12 +4,15 @@
  * (keys, security windows, terminals judged with the remote's app catalogue), both machines' administrator policies
  * combined (the stricter wins, `combineAdmin`), a never-look list that joins the user's, both administrators' and the
  * remote OS's defaults, every action confirmed (no view of the remote screen: L4), and no "Always" grants. The remote's
- * gate 2 checks again under its own policy (§5.3.7); neither gate can loosen the other. Plain Node.
+ * gate 2 checks again under its own policy (§5.3.7); neither gate can loosen the other. In Autopilot (PLAN.md §2
+ * "Approvals", owner decision of 2026-11-12) the questions about a remote's steps are announced instead, where both
+ * administrators let it be; the remote's gate 2 still holds its own policy. Plain Node.
  */
 
 import { NEVER_LOOK_DEFAULTS } from "../../shared/never-look";
 import { KEYS, type OS } from "../../shared/shortcuts";
 import { adminSummary, combineAdmin, type AdminSummary, type LoadedAdminPolicy } from "../admin";
+import { approvalInputs, modeInForce } from "../policy/autonomy";
 import { isSecurityWindow, PolicyEngine, type PolicyInputs } from "../policy/policy";
 import type { SettingsStore } from "../settings";
 import type { DesktopAccess } from "../targets/types";
@@ -59,9 +62,23 @@ export interface RemotePolicyOptions extends NeverLookSources {
 }
 
 /**
+ * Is Autopilot in force for this remote's desktop: the PC's mode (its own settings and administrator), and neither
+ * administrator asking for a click before every action, forbidding "Always" or acting, nor a policy that can't be read?
+ * (The remote's own switch for a mode and its cap aren't in the summary it sends: its gate 2 holds those itself, and
+ * refuses a step announced where it wanted a yes.)
+ */
+export function remoteAutopilot(o: NeverLookSources): boolean {
+  const local = o.localAdmin();
+  if (!approvalInputs(modeInForce(o.settings.get().approvals, local.policy)).autopilot) return false;
+  const c = combinedAdmin(local, o.remoteAdmin());
+  return c.error === undefined && !c.confirmEveryAction && c.allowGrants !== false && c.features.actions !== false;
+}
+
+/**
  * Gate 1 for one remote (§2.6): a new PolicyEngine per connection. Acting at all needs both administrators' yes (and a
  * readable policy on each side); the rate limit is the lower of both, read again at every step (a remote's policy can
- * change while connected: `policy.changed`); Ember's own process is never on a remote (`ownPid` -1).
+ * change while connected: `policy.changed`); Ember's own process is never on a remote (`ownPid` -1). In Autopilot
+ * (remoteAutopilot) a step's question is announced instead of asked; "Always" stays off, and every refusal a refusal.
  */
 export function createRemotePolicy(o: RemotePolicyOptions): PolicyEngine {
   const combined = () => combinedAdmin(o.localAdmin(), o.remoteAdmin());
@@ -70,7 +87,9 @@ export function createRemotePolicy(o: RemotePolicyOptions): PolicyEngine {
     // No "Always" on a remote (L4): every step is asked, so no grant is ever read.
     grants: () => ({}),
     allowGrants: () => false,
-    confirmEveryAction: () => true,
+    // (L4: no view of the remote screen, so every step is confirmed; Autopilot announces each step that would ask.)
+    confirmEveryAction: () => !remoteAutopilot(o),
+    autopilot: () => remoteAutopilot(o),
     actionsAllowed: () => {
       const c = combined();
       return c.error === undefined && c.features.actions !== false && c.features.ssh !== false;

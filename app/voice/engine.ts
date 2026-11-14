@@ -24,7 +24,8 @@
  * Right after a wake, only a voice about as loud as the wake phrase is a request.
  */
 
-import { spokenAnswer } from "../shared/spoken-answer";
+import { askedYes, nearAnswer, spokenAnswer } from "../shared/spoken-answer";
+import { BandFilter, LEVEL_BAND } from "./room-band";
 
 export const SAMPLE_RATE = 16_000;
 /**
@@ -111,18 +112,21 @@ export type VoiceEvent =
    * for Voice Match to vouch for it (APPROVAL_MIN_SECONDS, match.ts); `restScore`: that part's own score against the
    * enrolled voiceprint, unrounded, when it had one (absent: too little voice to score, which is never trusted).
    * `soundUnknown` (with `overSound`): a yes to a question said without the name where nothing could tell whether other
-   * sound played (soundKnown), so it is taken as said over it.
+   * sound played (soundKnown), so it is taken as said over it. `nameDoubted` (with `overSound`): the recognizer wrote the
+   * name first, but it couldn't be told from what the speakers played (namedByUser), so the note says so rather than ask
+   * for the name the user just said (voice-safety-x9-4).
    */
-  | { type: "utterance"; text: string; ms: number; window: ListeningWindow; cut?: boolean; overEmber?: true; overSound?: true; soundUnknown?: true; verified?: true; short?: true; restScore?: number }
+  | { type: "utterance"; text: string; ms: number; window: ListeningWindow; cut?: boolean; overEmber?: true; overSound?: true; soundUnknown?: true; nameDoubted?: true; verified?: true; short?: true; restScore?: number; unchecked?: true }
   /** `voice`: Voice Match found the request wasn't the owner's (`score`: how close it came); it is heard all the same (match.ts). */
   | { type: "rejected"; keyword: string; reason: "self" | "speakers" | "check" | "voice"; heard?: string; score?: number }
   /**
    * What was said in a conversation over other sound, without the name, wasn't heard: it can't be told from the song's
    * words (match.ts, owner decision of 2026-11-05). Main says so, once a conversation (voice-listening-10). `answer`:
    * which answer it read as, in any window, never the words, so a question up says so once (owner's report of
-   * 2026-11-12); `window` "answer": from a question's answer window; `reason` "sound-unknown": see soundKnown.
+   * 2026-11-12); `window` "answer": from a question's answer window; `reason` "sound-unknown": see soundKnown;
+   * `nameDoubted`: as the utterance's.
    */
-  | { type: "dropped"; reason: "over-sound" | "sound-unknown"; window?: "answer"; answer?: "allow" | "deny" }
+  | { type: "dropped"; reason: "over-sound" | "sound-unknown"; window?: "answer"; answer?: "allow" | "deny"; nameDoubted?: true }
   /**
    * In a conversation, while one of Ember's questions is up, an answer ("Allow.", "Not now.") was said over Ember's voice
    * in words Ember was saying itself (its read-out names them): never taken, as it may be Ember's own, but no longer
@@ -206,10 +210,35 @@ export function calledByName(transcript: string): boolean {
  * The name written as an everyday word, where how the words go on says it was the name. On a real laptop's microphone
  * (2026-11-05) "Hey Ember" came out as "Hey, number." and "A number. What time is it?", and "Ember, open the calculator"
  * as "Number open the calculator": "number" is a near miss (heardOtherWord), so each real wake was taken back, the
- * owner's "it doesn't listen". After a greeting, or before a request's first word (never before "the": "I remember the…"
- * comes out as "Number, the…"). "Amber" only before a plain command: it is someone's name otherwise.
+ * owner's "it doesn't listen". Before a request's first word (never before "the": "I remember the…" comes out as
+ * "Number, the…"), or after a greeting where the wake phrase ends there or a request's first word follows: after a
+ * greeting it counted however the words went on, and "A number of people called today.", said in the room while a
+ * question's answer window was open, was a request by name once the spotter took its "number" for the name ("Of people
+ * called today." went to Copilot, and the next sentence in the conversation that opened: CI's voice step on RHEL 8,
+ * voice-roomtalk-1). After a greeting a request may start with any word once the recognizer wrote a pause after "number"
+ * ("Hey, number, remind me to call mum.", "A number, I need the calculator.": with the short list of first words only,
+ * each of those real wakes was taken back, voice-roomtalk-x9-1), but for a word that goes on with the noun ("A number,
+ * of course, …"), and with no pause written the list of first words is longer there than after the bare word. "Amber"
+ * only before a plain command: it is someone's name otherwise.
  */
-const CALLED_AS_WORD = /^\W*(?:(?:hey|hi|hay|day|a)\W+(?:a\W+)?number\b|number\b(?=\W+(?:open|close|turn|play|search|what|who|how|when|where|why|tell|show|go|set|start|send|find|call|can|could|please)\b)|amber\b(?=\W+(?:open|close|turn|play|search|show|set|start)\b)|(?:hey|hi|hay|pay|pey|ok|okay)\W+amber\b(?=\W+(?:open|close|turn|play|search|show|set|start|send|find|call)\b))\W*/i;
+const REQUEST_WORD = "open|close|turn|play|search|what|who|how|when|where|why|tell|show|go|set|start|send|find|call|can|could|please";
+const GREETED_NUMBER = String.raw`(?:hey|hi|hay|day|a)\W+(?:a\W+)?number\b`;
+const CALLED_AS_WORD = new RegExp(String.raw`^\W*(?:${GREETED_NUMBER}(?=\s*(?:[.?!…]|$)|\s*[,;:](?!\s*(?:of|or|and|but|which|that|not|though|like)\b)|\W+(?:${REQUEST_WORD}|remind|add|read|make|give|help|check|write|put|take)\b)|number\b(?=\W+(?:${REQUEST_WORD})\b)|amber\b(?=\W+(?:open|close|turn|play|search|show|set|start)\b)|(?:hey|hi|hay|pay|pey|ok|okay)\W+amber\b(?=\W+(?:open|close|turn|play|search|show|set|start|send|find|call)\b))\W*`, "i");
+
+/**
+ * A clear near miss, as the wake's check takes one back: the recognizer heard another word and not the name ("Hey Amber,
+ * what time is it?", "A number of people called today."), and neither the wake said alone as it may write it ("Hey
+ * Amber.") nor the name written as a word by how the words go on (CALLED_AS_WORD).
+ */
+function nearMiss(transcript: string, partial = false): boolean {
+  return heardOtherWord(transcript) && !NAME_ALONE.test(transcript) && !CALLED_AS_WORD.test(transcript) && !(partial && NUMBER_SO_FAR.test(transcript));
+}
+/**
+ * "Hey, number…" in what the wake's check heard a moment after the word: the request's first word is cut anywhere there
+ * ("Hey, number, re", "A number wh"), so how the words go on is for the whole of what was said to tell (handleSegment),
+ * which takes "A number of people called today." back (voice-roomtalk-x9-1).
+ */
+const NUMBER_SO_FAR = new RegExp(String.raw`^\W*${GREETED_NUMBER}`, "i");
 
 /**
  * "Hey Amber…" when the spotter heard "Hey Ember": Moonshine base writes the name so (the early check heard "Pay amber to"
@@ -228,6 +257,73 @@ const GREETED_AMBER = /^\W*(?:hey|hi|hay|pay|pey|ok|okay)\W+amber\b(?:\W+[\w']+)
  * "Member" only alone or before punctuation: sentences start with it ("Member services, how can I help?").
  */
 const MISHEARD_NAME = /^\W*(?:member(?=\s*(?:[,.?!]|$))|(?:embra|embro|embo|emba)\b(?!['’]?s\b))/i;
+
+/**
+ * Did the recognizer write the name itself where calledByName found it: "Ember, allow.", "Hey Ember, yes please."? Not
+ * its near words, which calledByName takes after the spotter ("Number, …", "Member, …", "Amber, open…", "Umber…"): on
+ * their own they are the room's talk (V2-S3: "A number of people called today." left a question's answer window as a
+ * wake's request).
+ */
+export function saidNameItself(transcript: string): boolean {
+  return calledByName(transcript) && /^(?:hey|hay|pay|pey)?ember$/i.test(NAME_LIKE.exec(transcript)?.[0] ?? "");
+}
+
+/**
+ * Did the recognizer write the wake phrase itself: "Hey Ember" in what was heard (as a cut-in must: CUT_IN_WAKE), the
+ * name itself at its start (saidNameItself), or the phrase said alone as it writes it then ("K-embler.", "K-emer", "He
+ * ember": 6 of 16 synthesized voices' lone "Hey Ember.")? What a wake that leaves a question's answer window must
+ * hold. Never its near words: "Amber", "Number", "Member", "Remember".
+ */
+export function saidWakeItself(transcript: string): boolean {
+  return CUT_IN_WAKE.test(transcript) || saidNameItself(transcript) || WAKE_ALONE.test(transcript);
+}
+const WAKE_ALONE = /^\W*(?:hey|hi|he|ok|okay|k|hay|pay|pey)[\s,.!-]*emb?[a-z]{0,2}er\W*$/i;
+
+/**
+ * Does the first speech of a wake by the whole phrase, from idle, start as the wake phrase does: the phrase or the name
+ * as the recognizer writes them, also with a near word for the name or as an everyday word ("Hey ember…", "K ember turn
+ * on…", "Tay ember", "Hey Amber, turn on…", "Hey, number.", "A number. What time…": WAKE_IN_FIRST_WORDS, calledByName,
+ * NAME_ALONE, WAKE_ALONE), a greeting with the name as some other word ("Hey, ever, turn on…", "Hey, I'm return on…":
+ * GREETED_OTHER_WORD), or a word or two of a short sound, where the recognizer makes anything of the phrase said
+ * alone (nameOnItsOwn), or no word at all (nothing to send)? The pre-roll holds the phrase, so the recognizer has it at
+ * the start of what it writes: on the real models every one of 205 wakes by the phrase from idle did, on WebAssembly
+ * and on the C API alike (8 voices: 48 clean, 64 with a pause of 0.3 to 2 s before the request, 93 in noise at 10 and 5
+ * dB or far and muffled; without NAME_IN_FIRST_WORDS, 3 of those in noise didn't). Speech that starts as none of these ("And then we can book the flights to Lisbon.", "So we went to the market.") is the
+ * room's, whatever the spotter made of it (voice-roomtalk-x9-2), and so is speech with a greeting before any other word, "they"
+ * without the name or the room's "embers" and "Emma" (ROOMS_WORD, GREETED_OTHER_WORD: voice-roomtalk-y9-1; the same 256
+ * clips came out the same on both builds with them, 235 sent of 256 before and after).
+ */
+export function startsAsWake(transcript: string, samples: number): boolean {
+  const said = transcript.replace(ROOMS_WORD, "–");
+  return WAKE_IN_FIRST_WORDS.test(said) || GREETED_OTHER_WORD.test(said) || NAME_IN_FIRST_WORDS.test(said) || calledByName(transcript) || NAME_ALONE.test(transcript)
+    || WAKE_ALONE.test(transcript) || nameOnItsOwn(transcript, samples) || !/[\p{L}\p{N}]/u.test(transcript);
+}
+
+/**
+ * "Embers", "Ember's" and "Emma" where no greeting comes right before them: the room's words ("The embers are still
+ * glowing.", "Emma said she would call later."), which the spotter takes for the phrase and which were a wake's request
+ * from idle, 4 voices of 4 each on the real models. After a greeting as the recognizer writes one they stay the name:
+ * a noisy microphone's "Okay Ember, turn on night light." came out "Ok embers turn on nightlife", "He embers what time
+ * is it?" and "3 embers, what time is it?" (voice-roomtalk-y9-1).
+ */
+const ROOMS_WORD = /(?<!\b(?:hey|hi|he|ok|okay|k|hay|pay|pey|tay|key|\d+)[\s,.!-]*)\b(?:embers|ember['’]s|emma)\b/gi;
+/**
+ * A greeting with the name as some other word, as startsAsWake takes it: "hey" at the start of what was said, or right
+ * after the end of a sentence said before it, and then a word the name is written as ("Hey, ever, turn on…", "Hey, I'm
+ * return on…", or one that starts as the name does). Not "they", which needs the name after it (WAKE_IN_FIRST_WORDS),
+ * nor a greeting later in a sentence or before any other word: "Hey, can you pass the salt?", "Hi, how are you doing
+ * today?" and "And they said we can book the flights." were each a wake's request from idle, 4 voices of 4, where the
+ * spotter took them for the phrase (voice-roomtalk-y9-1).
+ */
+const GREETED_OTHER_WORD = /^\W*(?:(?:\S+\s+){0,2}?\S*[.!?;:]\s+)?(?:hey|hi|hay|pay)[\s,.!]+(?:ever|i['’]m|[aeu]m[a-z]*)\b/i;
+
+/** The name itself in the first four words, joined to a letter or with an ending too: "K-Ember turn on…", "The K-Ember turn…", "Ok ember's turn a…" (a poor microphone's "Okay Ember, turn on…"). */
+const NAME_IN_FIRST_WORDS = /^\W*(?:\S+\s+){0,3}?(?:\S*[^a-z\s])?(?:ember|emmer)(?![a-rt-z])/i;
+
+/** The first word of what was heard that calledByName may take for the name. */
+const NAME_LIKE = /\b(?:hey|hay|pay|pey)?(?:[aeu]mber|emmer|anber|embre|number|member|emb(?:ra|ro|o|a))\b/i;
+/** The name, or what it may be written as, anywhere in what was heard: on its own or in a longer word ("Peyember", "remember", "number"). */
+const NAME_IN_WORDS = /[aeu]mber|emmer|anber|embre|emb(?:ra|ro|o|a)\b/i;
 
 /** "Ember, stop" as the recognizer writes it ("Ember stopped the task.", "Embers, please stop", "Emmer, stop the task."). */
 const EMBER_STOP = /\b(embers?|emmer)\b[^a-z]*(please\s+)?stop/;
@@ -311,6 +407,16 @@ export function isStop(text: string): boolean {
   // A lone "stop" (or "quiet") heard short ("Stuff.", "Step.", "St", "Quite."): the recognizer's way with the word said alone.
   if (/^(the\s+)?(st|stop|stopped|stuff|step|stap|stob|stup|quite)[\s.!]*$/i.test(text)) return true;
   return /^((please|ok|okay|no|oh|ember)[\s,.!]+)*(stop|cancel|abort|never\s?mind|forget\s+(it|that)|be\s+quiet|quiet|hush|shut\s+up|that'?s\s+enough|enough)([\s,.!]+(stop|it|that|now|please|talking|everything|ember|already))*[\s.!,]*$/i.test(text);
+}
+
+/**
+ * "Stop.", "Stop it.", "No, stop that.", and a lone "stop" as the recognizer writes it short ("Stuff.", "Step.", "St"):
+ * the word itself, not the other ways to ask for quiet that isStop takes ("Never mind.", "Cancel.", "That's enough.",
+ * "Quiet."). What the room says without the name in a question's answer window stops Ember only so (V2-S8).
+ */
+export function saidStop(text: string): boolean {
+  if (/^(the\s+)?(st|stop|stopped|stuff|step|stap|stob|stup)[\s.!]*$/i.test(text)) return true;
+  return /^((please|ok|okay|no|oh|ember)[\s,.!]+)*stop([\s,.!]+(stop|it|that|now|please|talking|everything|ember|already))*[\s.!,]*$/i.test(text);
 }
 
 /**
@@ -681,6 +787,19 @@ const UNCLEAR_WORDS = 2;
 /** The microphone's lag behind the speakers' stream is measured up to 0.4 s; a match this good says it hears them at all. */
 const MAX_LAG_FRAMES = 12;
 const LAG_MIN_CORRELATION = 0.5;
+/**
+ * The microphone heard the speakers say a speech when its loudness through it follows their own stream's this well
+ * (followsSpeakers): over at least FOLLOW_MIN_FRAMES frames (0.5 s) in which that stream sounded, with their sound
+ * under at least FOLLOW_COVER of the microphone's loud frames (within 15 dB of its loudest: FOLLOW_LOUD, in energy).
+ * Measured on the real models, eight voices, the answer window and a conversation: a page's own "Ember, allow it." and
+ * its like under a hum of 50, 120, 200 or 300 Hz that only its stream carried was a yes by name 0 times in 48 at each
+ * (6 at 50 Hz before), and none without a hum; the user's own by name was heard as before, over music 29 times in 40
+ * and in a video's pause 11 in 40 (voice-safety-x9-2).
+ */
+const FOLLOW_MIN_CORRELATION = 0.62;
+const FOLLOW_MIN_FRAMES = 16;
+const FOLLOW_COVER = 0.8;
+const FOLLOW_LOUD = 31.6;
 
 /**
  * `ms`: the window's length (it starts again after Ember speaks); `first`: nothing heard yet since the wake;
@@ -689,12 +808,15 @@ const LAG_MIN_CORRELATION = 0.5;
  * while Ember spoke (what it heard first has Ember's own words around it); `held`: what it heard over Ember's voice
  * wasn't sent (see AFTER_HUSH_FRAMES); `announced` false: a wake by the bare name that isn't shown (no "wake" or
  * "listening" event) until the whole of what was said, once the speaker paused, starts with the name (handleSegment);
- * `overFollowUp`: a wake said in a follow-up window (wakeOverFollowUp). A window of `reason` "conversation" never closes
+ * `overFollowUp`: a wake said in a follow-up window (wakeOverFollowUp); `fromAnswer`: a wake by "Hey Ember" spotted in
+ * a question's answer window, where the room is heard (its first speech must hold the wake phrase itself), and when
+ * that window would have ended (taken back, it opens again till then: backToAnswer); `heardWake`: the wake's check, a
+ * moment after the word, wrote the wake phrase itself (saidWakeItself). A window of `reason` "conversation" never closes
  * on a request: `until` moves on with everything said, spoken or at work (see CONVERSATION_IDLE_MS).
  */
 type Mode =
   | { kind: "idle" }
-  | { kind: "listening"; until: number; ms: number; heardSpeech: boolean; first: boolean; reason: ListeningWindow; checkAt: number | null; keyword: string; afterQuestion?: boolean; bargeIn?: boolean; held?: boolean; announced?: boolean; overFollowUp?: boolean; maybeAmber?: boolean };
+  | { kind: "listening"; until: number; ms: number; heardSpeech: boolean; first: boolean; reason: ListeningWindow; checkAt: number | null; keyword: string; afterQuestion?: boolean; bargeIn?: boolean; held?: boolean; announced?: boolean; overFollowUp?: boolean; fromAnswer?: number; maybeAmber?: boolean; heardWake?: boolean };
 
 /**
  * A spotted stop (or "Hey Ember" while Ember speaks) being checked: see VoiceEngine.pendingStop. `teaching`: the name
@@ -761,13 +883,22 @@ export class VoiceEngine {
    * (`keyword` "hey_ember": said while Ember spoke; `checked`: the speakers didn't say it, and what was said with it was
    * heard; `bargeIn`: it was "Hey Ember", so Ember was hushed to listen).
    */
-  private pendingWake: { keyword: string; at: number; paused: boolean; overFollowUp?: boolean } | null = null;
+  private pendingWake: { keyword: string; at: number; paused: boolean; overFollowUp?: boolean; fromAnswer?: number } | null = null;
   private pendingStop: PendingStop | null = null;
   /** The speakers' recent frames, when they last made a sound and last sent a frame, and whether their spotter runs. */
-  private speakers: { frame: Float32Array; at: number; sound: boolean; energy: number }[] = [];
+  private speakers: { frame: Float32Array; at: number; sound: boolean; energy: number; level: number }[] = [];
+  /** Their stream's energy as every speaker plays it (LEVEL_BAND), for followsSpeakers: one filter, as it keeps its state. */
+  private speakersLevel = new BandFilter(LEVEL_BAND);
   private monitorSoundAt = Number.NEGATIVE_INFINITY;
   private monitorFrameAt = Number.NEGATIVE_INFINITY;
   private monitorSpotting = false;
+  /**
+   * Sound in the speakers' stream up to then is Ember's own voice: all of it while the page says Ember speaks, then up to
+   * its last sound before the stream was quiet for a turn's gap (OWN_GAP_MS), and at most the tail after the page said
+   * it stopped (selfSpeaking). Not selfSpeakingUntil, which a cut-in dates from the moment the user spoke over Ember:
+   * Ember's voice, hushed a moment later, was other sound by that, and what the user went on to say was dropped.
+   */
+  private ownSoundUntil = 0;
   /** The microphone's recent frame energies (as long as the speakers' ring), and how much later it hears the speakers (ms, measured as Ember speaks). */
   private micLevels: number[] = [];
   /** Which of those frames held Ember's own voice (SELF_LAG_MS). */
@@ -834,14 +965,30 @@ export class VoiceEngine {
   private overEmber = false;
   /** Said with other sound playing and not by name: it counts only if it sounds like the owner (match.ts). */
   private overSound = false;
+  /** …though the recognizer wrote the name first (`nameDoubted` on the utterance). */
+  private nameDoubted = false;
   private cutIn = false;
   private cutInCheckedAt = 0;
   /** Ember's voice is ducked for the speech under way. */
   private ducked = false;
   /** The loudest of Ember's own voice the microphone was found to hear (energy; 0: none). */
   private echo = 0;
-  /** When the spotter last heard the name: a word or two heard then, in a conversation, is the name as the recognizer wrote it. */
+  /**
+   * When the spotter last heard the name, said by the user (names): a word or two heard then, in a conversation, is the
+   * name as the recognizer wrote it.
+   */
   private spottedAt = Number.NEGATIVE_INFINITY;
+  /**
+   * The name as the microphone's spotter heard it in a window that needs none (an answer window, a follow-up, a
+   * conversation) or in a wake's own window once it is open, and who said it, once the speakers' own stream has had its
+   * say as it has for a wake (judgeNames): `by` null until then. Only what the user said by name is "by name" there
+   * (namedByUser). No one asked that stream in these windows, so a video's, a call's or a web page's own "Ember, allow"
+   * answered the question it was heard in, where the same words at idle are rejected as the speakers' (V2-S2,
+   * voice-listening-r9-2).
+   */
+  private names: { keyword: string; at: number; by: "user" | "speakers" | null }[] = [];
+  /** What speakersSaid last found, and for which speech. */
+  private speakersRead: { from: number; heard: string; said: boolean } | null = null;
   /** The bare name came first in what was said: little sound before the spotter fired (see NAME_FIRST_FRAMES). */
   private nameFirst = false;
   /** Frames the keyword spotter actually decoded (for CPU accounting and tests). */
@@ -885,10 +1032,12 @@ export class VoiceEngine {
   /**
    * Other sound is playing: a song's or a video's words reach the microphone, and the echo canceller knows only Ember's
    * own voice. In a conversation Ember then hears only what is said to it by name, and isn't interrupted by the rest.
-   * The speakers' own stream says so too where there is one (Linux with parec), once Ember's voice has left it.
+   * The speakers' own stream says so too where there is one (Linux with parec): what sounds in it after Ember's own voice
+   * left it (ownSoundUntil) is other sound at once. It was other sound only from 1.5 s after Ember's voice, and for that
+   * long a video's or a call's lone "Okay." right after Ember read a question out was anyone's yes (V2-S1).
    */
   private soundPlaying(now: number): boolean {
-    return this.output === true || (this.hearsSpeakers(now) && now >= this.selfSpeakingUntil + OTHER_SOUND_MS && now - this.monitorSoundAt < OTHER_SOUND_MS);
+    return this.output === true || (this.hearsSpeakers(now) && this.monitorSoundAt > this.ownSoundUntil && now - this.monitorSoundAt < OTHER_SOUND_MS);
   }
 
   /** Words Ember is about to say (spokenByEmber tells them from the user's). */
@@ -1002,6 +1151,19 @@ export class VoiceEngine {
     this.emit({ type: "listening", on: true, reason: "answer", window: "answer" });
   }
 
+  /**
+   * A wake by "Hey Ember" that left a question's answer window was taken back by its check (never one the speakers'
+   * own stream said: the yes a video says with it stays unheard): the
+   * window opens again for the time it had left (`until`), while its question is still up. It went at the spot, before
+   * anything was checked, so the room's "Hey Amber, dinner's ready." or the user's own "Hey Ember." written "Hey, Amber."
+   * closed it, and the "Allow." said next went nowhere, with nothing said (voice-roomtalk-x9-3). Only an answer leaves
+   * the window, so nothing more is heard or sent for it.
+   */
+  private backToAnswer(until: number | undefined): void {
+    if (until === undefined || this.mode.kind !== "idle" || until <= this.now()) return;
+    this.answerWindow(until - this.now());
+  }
+
   /** `text` answers the question up now, yes or no (answersQuestion): false while none is. */
   private answering(text: string): boolean {
     return this.questionWaiting && answersQuestion(text);
@@ -1020,10 +1182,12 @@ export class VoiceEngine {
       if (this.selfSpeakingUntil > now) { this.tailFrom = now; this.micLag = this.measureLag() ?? this.micLag; }
       this.selfSpeakingUntil = Math.min(this.selfSpeakingUntil, now + tailMs);
       this.selfVoiceUntil = Math.min(this.selfVoiceUntil, now + SELF_LAG_MS);
+      this.ownSoundUntil = Math.min(this.ownSoundUntil, now + tailMs);
       return;
     }
     this.selfSpeakingUntil = now + SELF_SPEAKING_MAX_MS;
     this.selfVoiceUntil = now + SELF_SPEAKING_MAX_MS;
+    this.ownSoundUntil = now + SELF_SPEAKING_MAX_MS;
     this.tailFrom = 0;
     this.tail = [];
     if (this.mode.kind !== "listening") return;
@@ -1165,8 +1329,10 @@ export class VoiceEngine {
     this.monitorFrameAt = at;
     const rms = rmsOf(frame);
     const sound = rms >= (this.o.silenceRms ?? 0.0008);
+    // Ember said it stopped, and the stream has been quiet for a turn's gap since its last sound: its voice has left it.
+    if (!sound && !this.pageSpeaking && at < this.ownSoundUntil && at - this.monitorSoundAt >= OWN_GAP_MS) this.ownSoundUntil = this.monitorSoundAt;
     if (sound) this.monitorSoundAt = at;
-    this.speakers.push({ frame, at, sound, energy: rms * rms });
+    this.speakers.push({ frame, at, sound, energy: rms * rms, level: this.speakersLevel.energy(frame) });
     if (this.speakers.length > SPEAKERS_RING_FRAMES) this.speakers.shift();
     if (this.monitorSpotting) this.spotSpeakers(frame, at);
   }
@@ -1256,7 +1422,7 @@ export class VoiceEngine {
         if (!this.pendingStop) { this.pendingStop = { keyword, at: now, checkAt: now + SELF_STOP_MAX_MS, teaching: true }; this.watchSpeakers(); }
         continue;
       }
-      if (keyword !== "ember_stop" && this.inConversation) this.spottedAt = now;
+      if (keyword !== "ember_stop" && (this.nameless || this.inWakeWindow)) { this.names.push({ keyword, at: now, by: null }); this.watchSpeakers(); }
       if (keyword === "ember_stop") {
         // The kill phrase works in every state (also while Ember speaks: that's when it's needed). It goes once
         // the speakers didn't say it and the recognizer heard "Ember, stop" (not "September stopped").
@@ -1272,14 +1438,17 @@ export class VoiceEngine {
       }
       // "Hey Ember" in a question's answer window (answerWindow): the window goes, and the wake is heard and checked as one
       // from idle, so "Hey Amber, dinner's ready" is taken back as ever, never sent as a follow-up would be. (The bare name
-      // isn't a wake there: what is said with it is heard in the window.)
-      if (this.mode.kind === "listening" && this.mode.reason === "answer" && keyword !== BARE_NAME && !this.pendingWake) this.endListening("timeout");
-      if (this.mode.kind === "idle" && !this.pendingWake) { this.pendingWake = { keyword, at: now, paused }; this.watchSpeakers(); }
+      // isn't a wake there: what is said with it is heard in the window.) The window listened to the room, so the whole of
+      // what was said must hold the wake phrase itself, as the recognizer writes it (fromAnswer: handleSegment).
+      const fromAnswer = this.mode.kind === "listening" && this.mode.reason === "answer" && keyword !== BARE_NAME && !this.pendingWake ? this.mode.until : undefined;
+      if (fromAnswer !== undefined) this.endListening("timeout");
+      if (this.mode.kind === "idle" && !this.pendingWake) { this.pendingWake = { keyword, at: now, paused, ...(fromAnswer !== undefined ? { fromAnswer } : {}) }; this.watchSpeakers(); }
       // "Hey Ember" in a follow-up window is a wake (wakeOverFollowUp). The bare name isn't: a follow-up needs no name,
       // and the name is spotted inside "remember".
       else if (this.mode.kind === "listening" && this.mode.reason === "follow-up" && keyword !== BARE_NAME && !this.pendingWake) { this.pendingWake = { keyword, at: now, paused, overFollowUp: true }; this.watchSpeakers(); }
     }
     this.monitorHits = this.monitorHits.filter(h => now - h.at < 5000);
+    this.judgeNames(now);
     if (this.pendingStop && sound && now > this.pendingStop.at) this.pendingStop.spoke = true;
     this.decideStop(now);
 
@@ -1303,16 +1472,22 @@ export class VoiceEngine {
           // said out of silence is too little for the recognizer ("Emperor Tunnel Nine"), and "Hey, rem|ember to…" heard
           // as it is spotted sounds like "Hey, Ember".
           this.announceWake(w.keyword, this.o.verifyWake === false || w.keyword === BARE_NAME ? null : w.at + (this.o.checkAfterMs ?? (w.paused ? PAUSED_CHECK_MS : 0)));
+          if (w.fromAnswer !== undefined && this.o.verifyWake !== false && this.mode.kind === "listening") this.mode.fromAnswer = w.fromAnswer;
           if (this.mode.kind === "listening" && this.mode.checkAt === null) this.replayPreRoll();
         }
       }
     }
-    if (this.monitorSpotting && !this.pendingWake && !this.pendingStop) {
+    if (this.monitorSpotting && !this.pendingWake && !this.pendingStop && !this.names.some(n => !n.by)) {
       this.monitorSpotting = false;
       this.backend.resetMonitor?.();
     }
     if (this.onlyStops) return;
 
+    // A question's answer window keeps the pre-roll as idle does. "Hey Ember" spotted in it is a wake as from idle, but
+    // nothing of the window's own time was in the pre-roll: the wake's check heard only what came after the phrase, so
+    // it took nothing back, and the request lost its start (on the real models, 16 voices' "Hey Ember, what time is it?"
+    // came out whole for 8 and as "Is it?" or "Time is it." for 5: voice-roomtalk-1).
+    if (this.mode.kind === "listening" && this.mode.reason === "answer") { this.ring.push(frame); this.ringOwn = own ? 0 : this.ringOwn + 1; }
     if (this.mode.kind === "idle") {
       this.ring.push(frame);
       this.ringOwn = own ? 0 : this.ringOwn + 1;
@@ -1333,11 +1508,15 @@ export class VoiceEngine {
       } else if (heard && GREETED_AMBER.test(heard) && !NAME_ALONE.test(heard) && !CALLED_AS_WORD.test(heard)) {
         this.mode.maybeAmber = true;
         this.replayPreRoll();
-      } else if (heard && heardOtherWord(heard) && !NAME_ALONE.test(heard) && !CALLED_AS_WORD.test(heard)) {
+      } else if (heard && nearMiss(heard, true)) {
+        const answerUntil = this.mode.fromAnswer;
         this.emit({ type: "rejected", keyword: this.mode.keyword, reason: "check", heard });
         this.ring.clear();
         this.endListening("rejected");
+        this.backToAnswer(answerUntil);
       } else {
+        // (The phrase itself, written here: what the whole of it comes out as later can't make it a near miss, handleSegment.)
+        if (heard && saidWakeItself(heard)) this.mode.heardWake = true;
         this.replayPreRoll();
       }
       return;
@@ -1425,6 +1604,131 @@ export class VoiceEngine {
   /** The speakers can't have said what was spotted at `at`: their window has passed, or they were quiet all along. */
   private speakersClear(at: number, now: number): boolean {
     return !this.backend.spotMonitor || now - at >= (this.o.rejectWindowMs ?? 400) || now - this.monitorSoundAt > SPEAKERS_QUIET_MS;
+  }
+
+  /** The window hears what is said without the name: a question's answer window, a follow-up, a conversation. */
+  private get nameless(): boolean {
+    return this.mode.kind === "listening" && (this.mode.reason === "answer" || this.mode.reason === "follow-up" || this.mode.reason === "conversation");
+  }
+
+  /** A wake's own window is open: a name spotted in it is in what is said after its wake phrase (names). */
+  private get inWakeWindow(): boolean {
+    return this.mode.kind === "listening" && this.mode.reason === "wake";
+  }
+
+  /**
+   * Who said each name spotted in a window that needs none (names): the speakers, if their own stream said it too
+   * (saidBySpeakers), the user once it can't have (speakersClear), as a wake is judged. Until then it is no one's.
+   */
+  private judgeNames(now: number): void {
+    for (const n of this.names) {
+      if (n.by) continue;
+      if (this.saidBySpeakers(n.keyword, n.at)) n.by = "speakers";
+      else if (this.speakersClear(n.at, now)) {
+        n.by = "user";
+        if (this.inConversation) this.spottedAt = Math.max(this.spottedAt, n.at);
+      }
+    }
+    if (this.names.length && now - this.names[0].at > NAMES_KEPT_MS) this.names = this.names.filter(n => now - n.at <= NAMES_KEPT_MS);
+  }
+
+  /**
+   * Was what a nameless window heard (`heard`, in the speech that began at `from` and is judged at `now`) said to Ember
+   * by name, by the user? So for what a wake's own window hears after the speech that held its wake phrase. The name
+   * must start it (calledByName), and no name spotted in that speech may be the speakers' own or still be waiting on
+   * their stream (fail closed). Then either the microphone's spotter heard the name in it, as for a wake: calledByName is
+   * the second stage after the spotter, and lenient on its own ("Number, …", "Member, …", "Amber, open…" and "Umber…" are
+   * the name only where the spotter heard it). Or the recognizer wrote the name itself (saidNameItself) and the speakers
+   * can't have said it: their stream doesn't arrive, or held no sound through that speech. The spotter misses the name in
+   * a window that is already listening (measured on the real models, eight voices' "Ember, allow it." and its like where
+   * nothing can tell whether other sound plays: with its hit asked for, 48 of 80 were taken where 73 are, 32 of the
+   * answer window's 37 and 16 of a conversation's 36), and where no stream can contradict it the spotter's hit says
+   * nothing more of who spoke than the recognizer's "Ember" does. While their stream holds sound, the user's "Ember,
+   * allow" is told from the video's by the two spotters, and by what the recognizer reads in the stream (speakersSaid).
+   * `spotted`: both, the spotter's own hit and the name itself as the recognizer wrote it (a request that leaves a
+   * question's answer window, where nothing else heard is sent: with the hit and calledByName's lenient reading, the
+   * room's "A number of people called today." and "Amber, open the window please." left it whenever the spotter fired
+   * on them, 1 time in 80 on the real models: voice-roomtalk-1).
+   */
+  private namedByUser(heard: string, from: number, now: number, spotted = false): boolean {
+    if (!calledByName(heard)) return false;
+    const names = this.names.filter(n => n.at >= from);
+    if (names.some(n => n.by !== "user")) return false;
+    const sounded = this.speakersSounded(from, now);
+    if (sounded && this.speakersSaid(from, heard)) return false;
+    if (spotted) return names.length > 0 && saidNameItself(heard);
+    if (names.length) return true;
+    return saidNameItself(heard) && !sounded;
+  }
+
+  /** Did the speakers' own stream hold any sound in the speech that began at `from` (it arrives, and wasn't silent since)? */
+  private speakersSounded(from: number, now: number): boolean {
+    return this.hearsSpeakers(now) && this.monitorSoundAt >= from;
+  }
+
+  /**
+   * Did the speakers say what the microphone heard (`heard`) in the speech that began at `from`, as the recognizer reads
+   * what their own stream played since (as far back as its ring goes): the name, or what it may be written as, inside
+   * another word too ("remember", "September"), or most of the words heard with it (spokenByEmber's test)? Their spotter
+   * misses a name the microphone's heard now and then (starting afresh, it gets the video's talk before the name as
+   * well), and the recognizer drops a first "Ember" out of the stream's digital silence. Measured on the real models, a
+   * video saying "Ember, okay." and its like to a question, 80 runs: 25 were taken as the user's yes by name before any
+   * of this, 3 with the two spotters alone, none with this reading too. What reads so is theirs (fail closed).
+   * Read from where their sound began, when it was under way at `from` (up to STREAM_LEAD_FRAMES back): the VAD dates a
+   * speech from a moment into it, and of a name cut at its start the recognizer wrote nothing. And read again from their
+   * first pause on where the first reading finds nothing of it: with the end of what a video said before in front, the
+   * recognizer wrote nothing at all for 9 of 192 cuts of "Ember, allow." and its like (none from the pause on).
+   */
+  private speakersSaid(from: number, heard: string): boolean {
+    // (Asked twice of one speech, in a conversation: read once.)
+    if (this.speakersRead?.from === from && this.speakersRead.heard === heard) return this.speakersRead.said;
+    // Whatever the recognizer makes of their stream, the microphone's own loudness through that speech says so too.
+    if (this.heardSpeakers(from)) { this.speakersRead = { from, heard, said: true }; return true; }
+    const all = this.speakers;
+    let start = all.findIndex(s => s.at >= from);
+    if (start < 0) start = all.length;
+    else if (all[start].sound) {
+      let began = start;
+      for (let i = start - 1, quiet = 0; i >= Math.max(0, start - STREAM_LEAD_FRAMES) && quiet < TURN_GAP_FRAMES; i--) {
+        if (all[i].sound) { began = i; quiet = 0; } else quiet++;
+      }
+      start = Math.max(0, began - 2);
+    }
+    const frames = all.slice(start);
+    const reads = (of: typeof frames): boolean => {
+      const audio = new Float32Array(of.reduce((n, s) => n + s.frame.length, 0));
+      let at = 0;
+      for (const s of of) { audio.set(s.frame, at); at += s.frame.length; }
+      const theirs = of.some(s => s.sound) && audio.length >= MIN_TRANSCRIBE_SAMPLES ? this.backend.transcribe(audio, "request") : "";
+      return NAME_IN_WORDS.test(theirs) || spokenByEmber(stripWake(heard, true), wordsOf(theirs));
+    };
+    // Where their sound first came (back) after a turn's gap, two frames before it, as a segment has its lead.
+    let paused = 0;
+    for (let i = 0, quiet = 0; i < frames.length && !paused; i++) {
+      if (!frames[i].sound) quiet++;
+      else { if (quiet >= TURN_GAP_FRAMES) paused = i - 2; quiet = 0; }
+    }
+    const said = reads(frames) || (paused > 0 && reads(frames.slice(paused)));
+    this.speakersRead = { from, heard, said };
+    return said;
+  }
+
+  /**
+   * Did the microphone hear the speakers through the speech that began at `from`: does its loudness, frame by frame,
+   * follow their own stream's wherever that stream sounded (followsSpeakers)? A proof that needs no recognizer: both
+   * others are a recognizer's reading of the stream, and where both made nothing of it the speech was the user's. A
+   * page's own "Ember, allow it." over a hum that only the stream held was a yes by name in 6 of 48 runs on the real
+   * models (voice-safety-x9-2). What follows so is theirs (fail closed); the user's own words over music or a video's
+   * talk don't, so their answer by name stays.
+   */
+  private heardSpeakers(from: number): boolean {
+    const frames = Math.round((this.fedAt - from) / 32) + 1, ahead = Math.round((this.fedAt - this.monitorFrameAt) / 32);
+    return followsSpeakers(this.micLevels, this.speakers, frames, ahead);
+  }
+
+  /** Did the speakers' own spotter hear the name in the speech that began at `from`? What was said with it is theirs. */
+  private namedBySpeakers(from: number): boolean {
+    return this.names.some(n => n.by === "speakers" && n.at >= from);
   }
 
   private decideStop(now: number): void {
@@ -1803,6 +2107,7 @@ export class VoiceEngine {
     this.afterHush = 0;
     this.overEmber = false;
     this.overSound = false;
+    this.nameDoubted = false;
     this.soundUnknown = false;
     this.clipped = false;
     this.cutIn = false;
@@ -1888,7 +2193,7 @@ export class VoiceEngine {
     // what goes to the recognizer goes on after it: what they said themselves is the wake phrase's stretch (see handleSegment).
     const ownTo = seg.length - Math.max(0, n - 1 - closeEnd - OWN_AFTER_FRAMES) * 512;
     const own = wakePhrase && this.busyRoom && !closeAgain && ownTo > from && ownTo < from + audio.length ? seg.subarray(from, ownTo) : undefined;
-    return { audio, before: from ? seg.subarray(Math.max(0, from - RETRY_LEAD), from) : this.backend.before?.(seg) ?? null, own };
+    return { audio, before: from ? seg.subarray(Math.max(0, from - RETRY_LEAD), from) : this.backend.before?.(seg) ?? null, own, ms: (seg.length / SAMPLE_RATE) * 1000 };
   }
 
   /** `paused`: the VAD ended the segment in silence (not flushed: the speaker's voice left while sound went on, or time ran out). */
@@ -1917,10 +2222,34 @@ export class VoiceEngine {
     if (this.mode.maybeAmber) {
       this.mode.maybeAmber = false;
       if (heardOtherWord(heard) && !NAME_ALONE.test(heard) && !CALLED_AS_WORD.test(heard) && !isStop(stripWake(heard, true))) {
+        const answerUntil = this.mode.fromAnswer;
         this.emit({ type: "rejected", keyword: this.mode.keyword, reason: "check", heard });
         this.endListening("rejected");
+        this.backToAnswer(answerUntil);
         return;
       }
+    }
+    if (this.mode.first && this.mode.reason === "wake" && this.mode.announced !== false && !this.mode.bargeIn && !this.mode.overFollowUp && this.o.verifyWake !== false
+      && ((nearMiss(heard) && !(this.mode.heardWake && this.mode.fromAnswer === undefined)) || (this.mode.fromAnswer !== undefined ? !saidWakeItself(heard) : !startsAsWake(heard, clip.audio.length))) && !isStop(stripWake(heard, true))) {
+      // The wake's check again, on the whole of what was said with the phrase. The check itself runs a moment after the
+      // word, on the pre-roll, and takes back only what it heard clearly: it heard nothing in "Hey Amber, what time is
+      // it?" said in a quiet room's noise (the suite's own near-miss clip, half a second into the microphone's audio) and
+      // "A number." in "A number of people called today.", and let both by; the whole held no name, and went to Copilot
+      // as a request, with the room's next sentence in the conversation that opened (voice-roomtalk-1). A wake by the
+      // bare name is judged whole below, a cut-in and a wake over a follow-up by their own rules. (Not where the check
+      // itself wrote the wake phrase: the recognizer read the same words twice, and "Hey ember what time", then "Hey,
+      // Amber, what time is it?" for the whole, was a far, muffled real wake taken back: voice-roomtalk-x9-1.)
+      // And where the phrase was spotted in a question's answer window, which hears the room: only speech that holds
+      // "Hey Ember", or starts with "Ember", as the recognizer writes the name itself, is a wake's (saidWakeItself:
+      // "Number, can you pass the salt?" passes the check as the name written as a word).
+      // From idle the first speech must at least start as the wake phrase does, however the recognizer wrote it
+      // (startsAsWake): with no near word in it there was nothing to take back, and "And then we can book the flights to
+      // Lisbon." was a wake's request whenever the spotter fired on it, and opened a conversation (voice-roomtalk-x9-2).
+      const answerUntil = this.mode.fromAnswer;
+      this.emit({ type: "rejected", keyword: this.mode.keyword, reason: "check", heard });
+      this.endListening("rejected");
+      this.backToAnswer(answerUntil);
+      return;
     }
     if (this.mode.announced === false) {
       // The bare name, with all that was said with it: "Ember, stop" stops (the spotter takes the name, so the kill phrase
@@ -1942,14 +2271,32 @@ export class VoiceEngine {
       this.mode.overFollowUp = false;
     }
     const conversation = this.mode.reason === "conversation";
+    // Said by name, in a window that needs none: by the user, in this speech (namedByUser; its start with a moment's
+    // lead, for a frame that came late).
+    const spokenFrom = t0 - clip.ms - NAME_LEAD_MS;
+    // So in a wake's own window, for what is said after the speech that held its wake phrase (`later`): the wake was the
+    // user's, as the speakers' stream was asked of it; a name said after it may be anyone's.
+    const later = this.mode.reason === "wake" && !this.mode.first;
+    const named = (this.nameless || later) && this.namedByUser(heard, spokenFrom, t0);
     // With a song or a video on, what is said to Ember by name is for it, and so is what sounds like its owner (the voice
     // gate decides that; without a voiceprint it is dropped there). Over Ember's voice too, nothing can tell whose it is.
-    if (conversation && this.soundPlaying(t0) && t0 - this.spottedAt >= NAME_HEARD_MS && !calledByName(heard)) {
+    // (By name: as above, or the spotter heard the user say the name a moment ago, however the recognizer wrote it,
+    // unless the speakers' own stream reads as having said what was heard.)
+    const spotted = () => t0 - this.spottedAt < NAME_HEARD_MS && !(this.speakersSounded(spokenFrom, t0) && this.speakersSaid(spokenFrom, heard));
+    // A no to the question up is anyone's, over other sound too (main's voiceAnswer takes it from anyone): never marked.
+    // The answer window and a conversation marked it like everything else nameless, the voice gate dropped it, and the
+    // question stayed up, open to the next yes (V2-S7). A video's "No." declines: the safe side.
+    const no = this.questionWaiting && isAnswerWord(stripWake(heard, true));
+    if (conversation && this.soundPlaying(t0) && !named && !spotted()) {
       if (this.overEmber) { this.peak = 0; return; }
-      this.overSound = true;
+      if (!no) this.overSound = true;
     }
     // So in a question's answer window: a video's "yes" is no one's answer (owner's report of 2026-11-12).
-    if (this.mode.reason === "answer" && this.soundPlaying(t0) && !calledByName(heard)) this.overSound = true;
+    if (this.mode.reason === "answer" && this.soundPlaying(t0) && !named && !no) this.overSound = true;
+    // And what the speakers' own stream said by name is theirs: a follow-up window takes whatever is said ("Hey Ember, …"
+    // out of a video was rejected as a wake, and its words then sent as the follow-up: V2-S2). (A conversation is marked
+    // above, by the other sound that said it: it hears on through Ember's own voice, whose "remember" is no one's name.)
+    if ((this.mode.reason === "follow-up" || this.mode.reason === "answer") && this.namedBySpeakers(spokenFrom) && !no) this.overSound = true;
     if (conversation && this.overEmber && !this.cutIn) {
       // All of what was said over Ember, its end heard: Ember's own voice, a "yeah", or the user cutting in.
       if (this.peak < this.echo * ECHO_MARGIN || (BACKCHANNEL.test(heard) && !this.answering(heard))) { this.peak = 0; return; }
@@ -1993,6 +2340,8 @@ export class VoiceEngine {
     // for what follows it (match.ts afterWakePhrase).
     let withWake = this.mode.reason !== "manual" && holdsWake(heard, text, this.mode.first || conversation);
     let audio = clip.audio;
+    /** The rest of a request that trailed off: one request with what was held, the wake phrase it began with included. */
+    let joined = false;
     const held = this.held;
     if (held) {
       // The rest of a request that trailed off: one request, its audio whole for Voice Match. A cough or an "um" keeps
@@ -2010,6 +2359,7 @@ export class VoiceEngine {
       } else if (!stopped(text)) {
         text = `${held.text.replace(/[\s,.…-]+$/, "")} ${text.replace(/^[A-Z](?![A-Z.])/, c => c.toLowerCase())}`;
         withWake = held.withWake;
+        joined = true;
         audio = new Float32Array(held.audio.length + clip.audio.length);
         audio.set(held.audio);
         audio.set(clip.audio, held.audio.length);
@@ -2024,6 +2374,9 @@ export class VoiceEngine {
       // said their request yet.
       text = "";
     }
+    // "Okay, Ember." while a question waits is only the wake phrase, and answers nothing: the "Okay" comes before the
+    // name, where nothing tells whose it is (a video's or a colleague's word ran into the user's own name and was taken
+    // as their yes by name, unmarked on Windows and macOS: voice-product-y9-2). "Okay" said after it answers.
     if (!saysSomething(text)) {
       // Only the wake phrase (or a cough, or "um"): keep listening for the request.
       if (this.mode.reason !== "manual") this.mode.until = Math.max(this.mode.until, this.now() + 4000);
@@ -2035,7 +2388,12 @@ export class VoiceEngine {
       if (wakePhrase && paused && !this.busyRoom) { this.wakePeak = Math.max(this.wakePeak, this.peak); this.peak = 0; }
       return;
     }
-    if (stopped(text) || (this.mode.reason === "manual" && isStop(stripWake(text, false)))) {
+    // In a question's answer window, without the name, only "stop" itself stops (saidStop). Ember is silent there and
+    // listens to the room, whose "Never mind.", "Cancel.", "That's enough." or "Quiet." pulled the kill switch for every
+    // task (V2-S8): they go nowhere, like the rest of the room's talk. Said by name, as the recognizer wrote it, each
+    // stops as ever (stopping is the safe side).
+    const roomTalk = this.mode.reason === "answer" && !calledByName(heard);
+    if ((roomTalk ? saidStop(text) : stopped(text)) || (this.mode.reason === "manual" && isStop(stripWake(text, false)))) {
       // "Hey Ember, stop": the kill phrase in other words, handled here and never sent anywhere (once: the spotter may have heard it too).
       this.pendingStop = null;
       this.emit({ type: "stop" });
@@ -2052,10 +2410,15 @@ export class VoiceEngine {
     }
     if (this.mode.reason === "answer" && !this.answering(text)) {
       // Not an answer, in a question's answer window: the room's talk goes nowhere (nothing without the name leaves this
-      // computer here). Said by name, it is a request, as at a wake (the bare name isn't spotted as one in this window).
-      if (!calledByName(heard)) {
+      // computer here). Said by name, it is a request, as at a wake (the bare name isn't spotted as one in this window),
+      // and by a wake's two stages: the spotter heard the user say the name in it, and the recognizer wrote the name
+      // itself (saidNameItself). On the recognizer's words alone, which are lenient, "A number of people called today."
+      // and "Amber, open the window please." left as a wake's request, went to Copilot and opened a conversation that
+      // sent what was said next, against "(nothing else it hears then is sent)" (V2-S3); and so, with the spotter's hit,
+      // on the words it reads leniently after one ("A number…", "Number, …", "Member, …": voice-roomtalk-1).
+      if (!this.namedByUser(heard, spokenFrom, t0, true)) {
         this.peak = 0;
-        if (wordsOf(text).length <= UNCLEAR_WORDS) this.emit({ type: "unclear" });
+        if (wordsOf(text).length <= UNCLEAR_WORDS || nearAnswer(text) || askedYes(text)) this.emit({ type: "unclear" });
         return;
       }
       this.mode.reason = "wake";
@@ -2070,6 +2433,19 @@ export class VoiceEngine {
     if (conversation && this.now() - this.spottedAt < NAME_HEARD_MS && wordsOf(heard).length <= 2 && NAME_WRITTEN.test(heard)) {
       this.peak = 0;
       this.mode.until = Math.max(this.mode.until, this.now() + this.mode.ms);
+      return;
+    }
+    // While a question waits, a yes asked as a question ("Ember, okay?") is no yes and no request, at a wake too; and in
+    // a follow-up, a conversation or the answer window, a few words that sound like an answer ("Yes, but wait.", "Okay
+    // then.", "No, I don't want that.", "Hold on.": nearAnswer) are most likely one misheard or hedged. Neither is sent:
+    // the question says once how to answer. They went to Copilot as a request, or vanished, closers included (V2-F5,
+    // V2-F7, voice-listening-r10-1). "Why?" and "Which file?" are requests as ever. Before the closers, but never what
+    // ends a conversation: "Okay, that's all." still ends it, sending nothing (voice-product-x9-3).
+    const answerLike = this.mode.reason === "follow-up" || this.mode.reason === "answer" || conversation;
+    if (this.questionWaiting && this.mode.reason !== "manual" && !this.answering(text) && !endsConversation(text) && (askedYes(text) || (answerLike && nearAnswer(text)))) {
+      this.peak = 0;
+      this.mode.until = Math.max(this.mode.until, this.now() + this.mode.ms);
+      this.emit({ type: "unclear" });
       return;
     }
     // While one of Ember's questions is up, "No.", "Not now.", "Okay." or "That's fine." answers it (main's
@@ -2102,13 +2478,30 @@ export class VoiceEngine {
     // video's or a call's "Okay.": it is taken as said over other sound, which the voice gate drops without a voiceprint
     // (owner's report of 2026-11-12). A no is anyone's, and what is said by name is the user's, as ever. So in a follow-up
     // window where other sound is known to play: a question that comes up while one is open keeps it (answerWindow), and
-    // its "Okay." went out unmarked where the answer window's is marked above (Codex review of #211). A conversation's is
-    // judged above, by NAME_HEARD_MS.
+    // its "Okay." went out unmarked where the answer window's is marked above (Codex review of #211). So in a
+    // conversation, where a name the spotter heard in the last 3 s lets the next thing said through (NAME_HEARD_MS): a
+    // video's "…September…" let its own "Okay." after it through as anyone's yes (V2-S4). A yes is judged on its own
+    // speech, whatever was spotted before it.
     const nameless = conversation || this.mode.reason === "answer" || this.mode.reason === "follow-up";
-    if (nameless && !this.overSound && this.questionWaiting && spokenAnswer(text) === "allow" && !calledByName(heard)) {
+    if (nameless && !this.overSound && this.questionWaiting && spokenAnswer(text) === "allow" && !named) {
       if (!this.soundKnown(t0)) { this.overSound = true; this.soundUnknown = true; }
-      else if (this.mode.reason === "follow-up" && this.soundPlaying(t0)) this.overSound = true;
+      else if (this.soundPlaying(t0)) this.overSound = true;
     }
+    // So in a wake's own window, for a yes that doesn't hold the wake phrase in its own speech: after the user's "Hey
+    // Ember" and a pause, a video's "Okay." allowed the question, though the name was the user's and the yes wasn't said
+    // with it (V2-S6). Only where other sound is known to play: where nothing can tell (macOS), "Hey Ember" … "allow" in
+    // two breaths is how one answers, and stays.
+    // And for a yes whose name isn't the user's. After that "Hey Ember" and a pause, the video's "Ember, okay." held a
+    // name in its own speech, and nothing asked the speakers' stream whose (V2-S2 in this window; on the real models it
+    // allowed 28 times in 40): a name said after the wake's own speech is judged as in a window that needs none
+    // (namedByUser). And a wake is checked against that stream by the two spotters alone, whose miss now and then left a
+    // video's own "Ember, go ahead." a wake from idle and a yes by name (measured: 2 of 96): where the recognizer reads
+    // the name, or most of the words heard, in what the stream played through that speech, the yes is theirs
+    // (speakersSaid).
+    if (this.mode.reason === "wake" && !this.overSound && this.questionWaiting && spokenAnswer(text) === "allow" && this.soundPlaying(t0)) {
+      if (!withWake || (later && !joined && !named) || (this.speakersSounded(spokenFrom, t0) && this.speakersSaid(spokenFrom, heard))) this.overSound = true;
+    }
+    this.nameDoubted = this.overSound && !this.soundUnknown && !named && (this.nameless || later) && calledByName(heard);
     this.sendRequest(text, audio, withWake, cut, t0);
   }
 
@@ -2131,7 +2524,7 @@ export class VoiceEngine {
     this.followUps = window === "follow-up" ? this.followUps + 1 : window === "answer" ? this.followUps : 0;
     this.requestAudio = audio;
     this.requestWithWake = withWake;
-    this.emit({ type: "utterance", text, ms: this.now() - t0, window, ...(cut ? { cut } : {}), ...(this.overEmber ? { overEmber: true as const } : {}), ...(this.overSound ? { overSound: true as const } : {}), ...(this.soundUnknown ? { soundUnknown: true as const } : {}) });
+    this.emit({ type: "utterance", text, ms: this.now() - t0, window, ...(cut ? { cut } : {}), ...(this.overEmber ? { overEmber: true as const } : {}), ...(this.overSound ? { overSound: true as const } : {}), ...(this.soundUnknown ? { soundUnknown: true as const } : {}), ...(this.overSound && this.nameDoubted ? { nameDoubted: true as const } : {}) });
     this.echo *= ECHO_DECAY;
     if (conversation && this.mode.kind === "listening") {
       // The microphone stays with the user: the next thing they say is heard as this one was, whatever Ember does meanwhile.
@@ -2197,9 +2590,10 @@ export class VoiceEngine {
 
 /**
  * A segment as it goes to the recognizer, and a moment of what was heard before it (null: not known); `own`: right
- * after a wake, the part with the wake phrase's loudness, when sound went on after it (others' talk, or a softer request).
+ * after a wake, the part with the wake phrase's loudness, when sound went on after it (others' talk, or a softer request);
+ * `ms`: how long the whole segment was, as the VAD gave it (it ends with the frame it was handed over in).
  */
-type Clip = { audio: Float32Array; before: Float32Array | null; own?: Float32Array };
+type Clip = { audio: Float32Array; before: Float32Array | null; own?: Float32Array; ms: number };
 
 /** A word that keeps someone talking rather than stopping them: "yeah", "mm-hmm", "right". */
 const BACKCHANNEL = /^\W*(yeah|yes|yep|yup|ok|okay|right|sure|uh[- ]?huh|mm+[- ]?h?m*|hmm+|i see|got it)\W*$/i;
@@ -2290,10 +2684,31 @@ export function withoutAnnounced(heard: string, announced: readonly string[]): s
 const NAME_ALONE = /^\W*(?:(?:hey|hi|hay|ok|okay|a|day)\W+)?(?:amber|member|ember|emmer|remember|number)\W*$/i;
 /** Other sound counts as playing this long after the speakers' stream last had any (ms). */
 const OTHER_SOUND_MS = 1500;
+/**
+ * The speakers' stream quiet for this long (ms: a turn's gap, TURN_GAP_FRAMES) after Ember said it stopped speaking: its
+ * voice has left the stream, and what sounds there next is someone else's. A shorter gap is a pause in Ember's own last
+ * words, which reach the stream a moment after the page says so.
+ */
+const OWN_GAP_MS = TURN_GAP_FRAMES * 32;
 /** How the recognizer ends a name written as a word of its own: "Number.", "Andber.", "Day number.", "Embra." */
 const NAME_WRITTEN = /(?:ber|mer|bra|bro)\W*$/i;
 /** The spotter heard the name this long ago (ms) at most: what the recognizer wrote then holds it. */
 const NAME_HEARD_MS = 3000;
+/**
+ * The speakers' stream is read from up to this many frames (0.5 s) before a speech's start, where their sound was under
+ * way then (speakersSaid): the VAD hears a speech begin a moment late (measured: a video's "Ember, go ahead." was dated
+ * 0.3 s into itself, the stream's cut began inside the name, and the recognizer wrote nothing for it).
+ */
+const STREAM_LEAD_FRAMES = 16;
+/** A spotted name is kept this long (ms): longer than the longest speech it can be judged in (LONG_CAP_FRAMES). */
+const NAMES_KEPT_MS = 30_000;
+/**
+ * A name counts for the speech it was spotted in from this long before that speech's start (ms), as its segment's
+ * length dates it: the VAD hands a segment over 0.6 s after its speech ended, with 0.3 s of that quiet in it (sherpa.ts
+ * AFTER_SEGMENT), which dates the start 0.3 s late. Short of the 0.5 s and more between a name spotted in one speech and
+ * the VAD's start of the next.
+ */
+const NAME_LEAD_MS = 320;
 /**
  * At most this much sound (frames: about 1 s) before the spotter fired on the bare name: the name itself, and the 0.45 s
  * the spotter takes. The name came first, so "Open the calculator." with the name clipped off is still a call: the VAD's
@@ -2357,6 +2772,38 @@ function rmsOf(frame: Float32Array): number {
   let sum = 0;
   for (let i = 0; i < frame.length; i++) sum += frame[i] * frame[i];
   return Math.sqrt(sum / Math.max(1, frame.length));
+}
+
+/**
+ * Does the microphone's loudness over its last `frames` frames (`mic`: each frame's energy, the latest last) follow the
+ * speakers' own stream's (`speakers`, the latest last; the microphone's latest frame came `ahead` frames after theirs)?
+ * At some lag up to MAX_LAG_FRAMES (the microphone hears the speakers late), over the frames in which their stream
+ * sounded: the two loudnesses (dB) rise and fall together (FOLLOW_MIN_CORRELATION), and their sound lies under the
+ * microphone's loud frames (FOLLOW_COVER), so a speech that only began as theirs ended isn't theirs. A stream that plays
+ * on at one level says nothing (music's held chord, a fan): nothing rises and falls in it.
+ */
+export function followsSpeakers(mic: readonly number[], speakers: readonly { level: number; sound: boolean }[], frames: number, ahead: number): boolean {
+  const db = (e: number) => 10 * Math.log10(e + 1e-10);
+  const n = Math.min(frames, mic.length);
+  let top = 0;
+  for (let i = 0; i < n; i++) top = Math.max(top, mic[mic.length - 1 - i]);
+  for (let lag = 0; lag <= MAX_LAG_FRAMES; lag++) {
+    const x: number[] = [], y: number[] = [];
+    let loud = 0, under = 0;
+    for (let i = 0; i < n; i++) {
+      const m = mic[mic.length - 1 - i], isLoud = m * FOLLOW_LOUD >= top;
+      if (isLoud) loud++;
+      const k = i + lag - ahead; // frames back from the speakers' latest
+      if (k < 0 || k >= speakers.length) continue;
+      const s = speakers[speakers.length - 1 - k];
+      if (!s.sound) continue;
+      if (isLoud) under++;
+      x.push(db(s.level));
+      y.push(db(m));
+    }
+    if (x.length >= FOLLOW_MIN_FRAMES && under >= loud * FOLLOW_COVER && correlation(x, y) >= FOLLOW_MIN_CORRELATION) return true;
+  }
+  return false;
 }
 
 /** Pearson's correlation of two series of the same length (0 when either is flat). */

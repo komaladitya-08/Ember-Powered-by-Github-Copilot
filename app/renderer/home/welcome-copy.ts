@@ -9,6 +9,8 @@
 import { CONSENT_VERSION } from "../../shared/consent";
 import { needsUser, holdsBack, type SetupRow } from "../../shared/setup-attention";
 import { ownConnected } from "../../shared/provider";
+import type { FirstRunCard, FirstRunRow, FirstRunWhy } from "../../shared/first-run";
+import { AUTONOMY_CONSENT_TEXT, MEMORY_CONSENT_TEXT, SCREEN_IMAGES_TEXT } from "./copy";
 
 /** The essential first-run route; character and memory personalisation remain optional detours. */
 export const WELCOME_STEPS = ["hello", "consent", "sign-in", "checks", "try", "done"] as const;
@@ -125,11 +127,61 @@ export function consentPoints(o: { service: string; kept: string; locked: boolea
     o.locked
       ? { icon: "send", text: "While your organisation's policy locks me down, nothing is sent to a model service, so I can't answer or act." }
       : { icon: "send", text: `When you ask something, your request and what I read go to ${o.service}. Nothing is sent before you ask.` },
-    { icon: "hand", text: "I ask before acting in an app, and always before anything hard to undo. I never type passwords." },
-    { icon: "lock", text: `On this computer I keep your settings, logs and a record of what you asked and what I did (${o.kept}). If you save a workspace, I encrypt its paths and last request and answer. I send no usage statistics.` },
-    { icon: "plug", text: "The microphone, other computers and commands stay off until you turn them on. While one of my questions is up, anyone near the computer can answer it by voice, without my name right after I ask. If you teach me your voice, I keep a voiceprint I refine from your requests, and the words you correct (never audio)." },
+    { icon: "hand", text: "I ask before acting in an app unless you turn on Interactive, and always before anything hard to undo. I never let the AI model type or see passwords. Only in Autopilot, I can fill in a login, a card or contact details from my vault." },
+    { icon: "lock", text: `On this computer I keep your settings, logs and a record of what you asked and what I did (${o.kept}). If you save a workspace, I encrypt its paths and last request and answer. If you give me a login, a card or contact details in my Secure Form, I keep them in my vault, locked with your computer's keyring. I send no usage statistics.` },
+    { icon: "plug", text: "Agreeing turns on what you leave on here, and you can turn any of it off later in Settings. Other computers stay off until you turn them on. While one of my questions is up, anyone near the computer can answer it by voice, without my name right after I ask. If you teach me your voice, I keep a voiceprint I refine from your requests, and the words you correct (never audio)." },
   ];
 }
+
+/**
+ * The consent step's rows (owner decision of 2026-11-12, app/shared/first-run.ts): what the one agreement turns on, each
+ * with its own switch. `heading` over them, each row's switch label, and the line under them all.
+ */
+export const FIRST_RUN_ROWS_TEXT = {
+  heading: "What I'll turn on when you agree",
+  lead: "Each is on unless you switch it off here, and you can turn any of them off later in Settings.",
+  /** For someone who agreed to an earlier version: only Interactive's row, and their other settings stay as they are. */
+  leadAgain: "Your other settings stay as they are. Switch this off to keep me asking before ordinary steps; you can change it later in Settings.",
+  label: {
+    commands: "Run commands on this computer",
+    memory: "Remember what you tell me (memory)",
+    voice: "Listen for “Hey Ember” and speak my replies",
+    screenshots: SCREEN_IMAGES_TEXT.label,
+    interactive: "Interactive: do ordinary steps without asking first",
+  } satisfies Record<FirstRunRow, string>,
+} as const;
+
+/**
+ * Each row's own card's text, from the one place its card or switch in Settings takes it (the "same text" rule:
+ * home-first-run.test.ts): commands, this computer's card as main builds it (`commands`, its title and body); listening,
+ * the “Hey Ember” card as the page shows it (`voice`, read from its element); the others, their constants.
+ */
+export function firstRunRowText(row: FirstRunRow, o: { commands: FirstRunCard | null; voice: string }): string[] {
+  if (row === "commands") return o.commands ? [o.commands.title, ...o.commands.body] : [];
+  if (row === "memory") return [MEMORY_CONSENT_TEXT];
+  if (row === "voice") return o.voice ? [o.voice] : [];
+  if (row === "screenshots") return [SCREEN_IMAGES_TEXT.hint];
+  return [AUTONOMY_CONSENT_TEXT];
+}
+
+/** Why a row can't be turned on here, in one sentence (app/shared/first-run.ts FirstRunWhy). */
+export function firstRunWhy(why: FirstRunWhy): string {
+  if (why === "locked") return "Your organisation's policy for me has a problem, so this stays off for now.";
+  if (why === "organisation") return "Managed by your organisation, which has turned this off.";
+  if (why === "models") return "The speech models aren't on this computer yet, so this stays off for now. You can download them later in Settings › Voice, which asks you first.";
+  return "I can't turn this on here right now. You can turn it on later in Settings.";
+}
+
+/** After an agreement that was saved, the rows that couldn't be turned on (each is off, without its consent). */
+export function firstRunFailed(rows: readonly FirstRunRow[]): string {
+  if (!rows.length) return "";
+  const names = rows.map(r => FIRST_RUN_SHORT[r]);
+  const list = names.length < 2 ? names[0] : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+  return `I couldn't turn on ${list}, so ${rows.length > 1 ? "they stay" : "it stays"} off. You can turn ${rows.length > 1 ? "them" : "it"} on later in Settings.`;
+}
+const FIRST_RUN_SHORT: Readonly<Record<FirstRunRow, string>> = {
+  commands: "commands on this computer", memory: "memory", voice: "listening for “Hey Ember”", screenshots: "screenshots for tasks", interactive: "Interactive",
+};
 
 /** The consent step for someone who agreed to an earlier version: its title, lead and the heading over what changed (first-run-4). */
 export const CONSENT_AGAIN = {
@@ -146,6 +198,7 @@ export const CONSENT_TEXT = {
   agreed: "You've agreed to how I work.",
   declined: "Then I'll stay off: nothing is read, heard or sent. Agree here whenever you're ready. If you quit me now, I'll ask again the next time you open me.",
   quit: "Quit Ember",
+  notSaved: "I couldn't save your agreement, so nothing is on yet. Try again.",
 } as const;
 
 /**
@@ -155,9 +208,9 @@ export const CONSENT_TEXT = {
 export const CONSENT_SOURCES: Readonly<Record<ConsentPoint["icon"], readonly string[]>> = {
   eye: ["reads the window you're working in", "for tasks it may take a screenshot of it", "App windows on your never-look list and password prompts are never read"],
   send: ["When you ask something</b>, your request and what Ember read from the screen go to", "Nothing is sent before you ask."],
-  hand: ["It asks before acting</b> in an app, and always before anything hard to undo.", "It never types passwords."],
-  lock: ["On this computer</b> it keeps your settings, logs and a record of every task and action it took, including what you asked for", "Ember encrypts its selected paths and last completed request and answer", "It sends no usage statistics."],
-  plug: ["The microphone stays off</b> unless you turn on", "anyone near the computer can answer it by voice", "for a few seconds after it asks, it listens for that answer without its name", "it keeps your voiceprint and keeps refining it from requests it is sure are yours (numbers, never audio), and it keeps the words you correct", "Other computers and commands</b><span id=\"targets-note\"> are off until you turn them on"],
+  hand: ["It asks before acting</b> in an app unless you turn on Interactive", "always before anything hard to undo.", "It never lets the AI model type or see passwords.", "Only in Autopilot, it can fill in a login, a card or contact details from its vault, which the AI model never sees."],
+  lock: ["On this computer</b> it keeps your settings, logs and a record of every task and action it took, including what you asked for", "Ember encrypts its selected paths and last completed request and answer", "If you give Ember a login, a card or contact details in its Secure Form, it keeps them in its vault on this computer, locked with your computer's keyring", "It sends no usage statistics."],
+  plug: ["<b>Agreeing turns on</b> what you leave switched on here", "you can turn any of them off later in Settings", "anyone near the computer can answer it by voice", "for a few seconds after it asks, it listens for that answer without its name", "it keeps your voiceprint and keeps refining it from requests it is sure are yours (numbers, never audio), and it keeps the words you correct", "Other computers and commands</b><span id=\"targets-note\"> are off until you turn them on"],
 };
 
 /** Each CONSENT_CHANGES line beside the full text's words it shortens (home-welcome.test.ts checks every pair against the page). */
@@ -169,6 +222,8 @@ export const CONSENT_CHANGE_SOURCES: Readonly<Record<number, readonly string[]>>
   6: ["Once you call Ember it keeps listening through the conversation, and what it hears there goes to", "as text, without its name"],
   7: ["unless you turn on “Keep my recent conversation” under Conversation: then its latest messages stay on this computer"],
   8: ["While one of Ember's questions is up, anyone near the computer can answer it by voice", "for a few seconds after it asks, it listens for that answer without its name", "with Voice Match on, only your voice can say yes"],
+  9: ["<b>Agreeing turns on</b> what you leave switched on here", "It asks before acting</b> in an app unless you turn on Interactive", "Settings you chose before stay as they are."],
+  10: ["If you give Ember a login, a card or contact details in its Secure Form, it keeps them in its vault on this computer, locked with your computer's keyring, until you forget them", "Only in Autopilot, it can fill in a login, a card or contact details from its vault, which the AI model never sees."],
 };
 
 /**
@@ -186,7 +241,8 @@ export function signInText(o: { managed: boolean; locked?: boolean; held?: boole
       ? { title: "Restart me to use your organisation's new policy", lead: "Your organisation changed my policy while I was running, so I can't connect to a model service until you restart me." }
       : { title: "Your organisation has locked me down", lead: "Your organisation's policy for me has a problem, so I can't connect to a model service for now. Ask your administrator to fix it." };
   }
-  if (o.managed) return { title: "Connecting to your organisation's service", lead: "Your organisation runs its own model service for me, so there's nothing to sign in to." };
+  // Titled "Connecting…" only while it connects (first-run-r9-11).
+  if (o.managed) return { title: o.ownPhase === "starting" ? "Connecting to your organisation's service" : "Your organisation's model service", lead: "Your organisation runs its own model service for me, so there's nothing to sign in to." };
   if (o.own) {
     const lead = o.ownPhase === "starting" ? `I'm connecting to the model provider you set up (${o.own}). You can change it later in Settings › Models & connections.`
       : o.ownPhase === "error" ? `I can't connect to the model provider you set up (${o.own}) yet: the line below says why. You can check its details here, or later in Settings › Models & connections.`
@@ -384,6 +440,15 @@ export const TRY_TEXT = {
   voiceLater: "To talk to me, turn on “Hey Ember” later in Settings › Voice. Then say, for example, “Hey Ember, what's in this window?”",
   /** Voice is on and agreed to, but its speech models aren't here and nothing fetches them by itself (first-run-r7-2). */
   voiceNoModels: "I can't listen for “Hey Ember” yet: my speech models aren't on this computer. Download them later in Settings › Voice.",
+  /** Voice is on and agreed to, but the microphone isn't working (an "error" the microphone caused: first-run-r10-1). */
+  voiceNoMic: "“Hey Ember” is on, but I can't hear you: my microphone isn't working. Check it in Settings › Voice.",
+  /**
+   * Voice is on and agreed to, but listening failed for another reason (damaged models Ember can't replace, the voice
+   * process's error or its restarts): the microphone isn't named, and Settings › Voice says why (r10-modes-copy-x10-3).
+   */
+  voiceCantListen: "“Hey Ember” is on, but I can't listen right now. Settings › Voice says why.",
+  /** Voice is on and agreed to, but the user turned the microphone off (muted). */
+  voiceMicOff: "“Hey Ember” is on, but my microphone is off, so I can't hear you. Unmute microphone, in my handle's menu, turns it back on.",
   /** Voice is on but not listening yet (models downloading, or starting). */
   voiceWaiting: "I'm not listening yet. Once I am, say “Hey Ember”.",
 } as const;
@@ -393,15 +458,23 @@ export function askWhy(o: { locked: boolean; noSignIn: boolean }): string {
   return o.locked ? TRY_TEXT.askLocked : o.noSignIn ? TRY_TEXT.askWait : TRY_TEXT.askWhy;
 }
 
+/** Where “Hey Ember” stands on the try step and in the last step's card (voiceTry). */
+export type VoiceTry = "listening" | "waiting" | "off" | "no-models" | "no-mic" | "cant-listen" | "mic-off";
+
 /**
  * "Say “Hey Ember”" shows only while Ember listens for it: on, agreed to, allowed by the organisation
- * (`features.voice`), not muted, and the microphone open. Muted, off, not working or not allowed counts as off; on
- * with its speech models missing is "no-models": it won't listen until they are downloaded, so neither "not yet,
- * once I am" nor "On" is said (first-run-r7-2).
+ * (`features.voice`), not muted, and the microphone open. Off or not allowed counts as off; on with its speech models
+ * missing is "no-models": it won't listen until they are downloaded, so neither "not yet, once I am" nor "On" is said
+ * (first-run-r7-2). On with the microphone not working is "no-mic", and with it turned off "mic-off": the setting is
+ * on, so neither says to turn “Hey Ember” on, and each names the microphone (first-run-r10-1). An "error" the
+ * microphone didn't cause (`micFault` false: the voice process, its models) is "cant-listen", which doesn't name it
+ * (r10-modes-copy-x10-3).
  */
-export function voiceTry(o: { wakeWord: boolean; voiceConsent: boolean; state: string | null; allowed?: boolean; muted?: boolean }): "listening" | "waiting" | "off" | "no-models" {
-  if (!o.wakeWord || !o.voiceConsent || o.allowed === false || o.muted) return "off";
-  if (o.state === "off" || o.state === "muted" || o.state === "error") return "off";
+export function voiceTry(o: { wakeWord: boolean; voiceConsent: boolean; state: string | null; allowed?: boolean; muted?: boolean; micFault?: boolean }): VoiceTry {
+  if (!o.wakeWord || !o.voiceConsent || o.allowed === false) return "off";
+  if (o.muted || o.state === "muted") return "mic-off";
+  if (o.state === "error") return o.micFault ? "no-mic" : "cant-listen";
+  if (o.state === "off") return "off";
   if (o.state === "needs-models") return "no-models";
   return o.state === "waiting" || o.state === "active" ? "listening" : "waiting";
 }
@@ -414,7 +487,7 @@ export interface SummaryRow { label: string; value: string }
 
 /** The last step's card's rows: who, Copilot, voice, and the keys Ember holds (a key another app holds isn't named). */
 export function summaryRows(o: {
-  character: string; size: number; signedIn: string | null; voice: "listening" | "waiting" | "off" | "no-models";
+  character: string; size: number; signedIn: string | null; voice: VoiceTry;
   /** The keys as Ember holds them ("" while another app holds one); null until the status names this OS's. */
   keys: { ask: string; stop: string; settings: string } | null;
   /** False when the model service isn't GitHub Copilot (the user's own, the organisation's): the row isn't called Copilot (first-run-1). */
@@ -424,7 +497,7 @@ export function summaryRows(o: {
     // The size in pixels only once the user changed it: "Default size" says as much without a number to decode.
     { label: "Character", value: o.size === DEFAULT_SIZE ? `${o.character}, default size` : `${o.character}, ${o.size} px` },
     { label: o.copilot === false ? "Model service" : "Copilot", value: o.signedIn ?? "Not signed in yet" },
-    { label: "“Hey Ember”", value: o.voice === "off" ? "Off" : o.voice === "no-models" ? "Not yet: its speech models need downloading" : "On" },
+    { label: "“Hey Ember”", value: o.voice === "off" ? "Off" : o.voice === "no-models" ? "Not yet: its speech models need downloading" : o.voice === "no-mic" ? "On, but the microphone isn't working" : o.voice === "cant-listen" ? "On, but not listening right now" : o.voice === "mic-off" ? "On, but the microphone is off" : "On" },
   ];
   if (o.keys?.ask) rows.push({ label: "Ask", value: o.keys.ask });
   if (o.keys?.stop) rows.push({ label: "Stop everything", value: o.keys.stop });

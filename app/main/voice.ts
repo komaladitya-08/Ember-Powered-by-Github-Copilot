@@ -266,6 +266,8 @@ export class VoiceService {
   /** Closes the speech-only window once it has been quiet for SPEAKER_IDLE_MS. */
   private speakerIdle: NodeJS.Timeout | null = null;
   private state: MicState = "off";
+  /** Whether the current "error" came from the microphone (micFault). */
+  private micError = false;
   private muted = false;
   private wanted = false;
   /** The screen is locked: no listening and no speech until it's unlocked. */
@@ -336,7 +338,7 @@ export class VoiceService {
    * Words for the system's voice (another language's) that follow pieces Ember's own voice is still making: sent once
    * those are done, so they are never said ahead of them (voice-speaking-r1). A hush drops them.
    */
-  private afterVoice: { send: PageSend; request: SpeakRequest }[] = [];
+  private afterVoice: ({ send: PageSend; request: SpeakRequest } | { send: PageSend; own: string })[] = [];
   /** Hear Ember's sample waiting to be heard, in the speech generation it was said in (voice-speaking-r3). */
   private sampleWait: { generation: number; done: (heard: NaturalVoiceModel | "system" | "stopped" | null) => void } | null = null;
   /** Enrolment (Voice Match) is under way in the voice process, and how far it got (said if it is cut short). */
@@ -396,8 +398,8 @@ export class VoiceService {
         return;
       }
       if (paused) { this.captureGeneration++; this.cancelListenOnce(); }
-      if (s.state === "error") { this.o.log.error("voice.mic_error", { message: s.message }); this.setState("error", micHelp(s.message, this.o.micHint)); this.teardown(); }
-      else if (s.state === "lost") { this.o.log.warn("voice.mic_lost", { message: s.message }); this.micLost = true; this.interruptEnrol(); this.setState("error", `${micHelp(s.message, this.o.micHint)} Trying again…`); }
+      if (s.state === "error") { this.o.log.error("voice.mic_error", { message: s.message }); this.setState("error", micHelp(s.message, this.o.micHint), true); this.teardown(); }
+      else if (s.state === "lost") { this.o.log.warn("voice.mic_lost", { message: s.message }); this.micLost = true; this.interruptEnrol(); this.setState("error", `${micHelp(s.message, this.o.micHint)} Trying again…`, true); }
       else if (s.state === "capturing") {
         this.o.log.info("voice.mic", { device: s.device, rate: s.rate, context: s.context });
         this.micDevice = typeof s.device === "string" ? s.device.trim().slice(0, 80) : "";
@@ -465,6 +467,14 @@ export class VoiceService {
     return this.state;
   }
 
+  /**
+   * The "error" state is the microphone's (it failed, went away, sends only silence or no sound arrives), not the
+   * voice process's, its models' or a restart's, so first run names the microphone only then (r10-modes-copy-x10-3).
+   */
+  get micFault(): boolean {
+    return this.state === "error" && this.micError;
+  }
+
   /** Which microphone Ember hears through, while it captures (null: none, or the system gave no name). */
   get micLabel(): string | null {
     return this.capturing && this.micDevice ? this.micDevice : null;
@@ -495,7 +505,7 @@ export class VoiceService {
 
   /** Ember is speaking, or about to (a reply on its way to the page, or speech asked for that hasn't started yet). */
   private get talking(): boolean {
-    return this.saidSpeaking || this.ttsPending.size > 0 || this.speakingUntil > Date.now();
+    return this.saidSpeaking || this.ttsPending.size > 0 || this.afterVoice.length > 0 || this.speakingUntil > Date.now();
   }
 
   /** Ember is speaking, or about to: main stops it when speaking is turned off, and offers Stop speaking meanwhile. */
@@ -823,7 +833,7 @@ export class VoiceService {
   private openFollowUp(): void {
     if (this.followUpTimer) clearTimeout(this.followUpTimer);
     this.followUpTimer = null;
-    if ((!this.followUpMs && !this.answerMs) || this.ttsPending.size) return;
+    if ((!this.followUpMs && !this.answerMs) || this.ttsPending.size || this.afterVoice.length) return;
     const wait = this.speakingUntil - Date.now();
     if (wait > 0) { this.followUpTimer = setTimeout(() => this.openFollowUp(), wait); return; }
     if (this.followUpMs) {
@@ -973,6 +983,14 @@ export class VoiceService {
       else send(VOICE.speak, request);
       return;
     }
+    // Behind words the system voice is still to be given, Ember's own wait their turn: made at once, they reached the
+    // page first and were said before the passage they follow (voice-speaking-r9-1).
+    if (o.append && this.afterVoice.length) { this.afterVoice.push({ send, own: text }); return; }
+    this.sayOwn(text, send);
+  }
+
+  /** Gives `text` to Ember's own voice to make. */
+  private sayOwn(text: string, send: PageSend): void {
     const id = ++this.ttsId;
     this.ttsPending.set(id, { text, remaining: speechChunks(text).join(" "), send });
     this.cancelVoiceIdle();
@@ -1428,12 +1446,18 @@ export class VoiceService {
     this.openFollowUp();
   }
 
-  /** The system voice's words that waited for Ember's own (afterVoice), once it has nothing left to make. */
+  /**
+   * The words that waited for Ember's own voice (afterVoice), in the order they came, once it has nothing left to make:
+   * the system voice's go to the page, and the next of Ember's own to its voice, which what follows then waits for
+   * (to the system voice instead, once Ember's own has stopped working).
+   */
   private sendAfterVoice(): void {
-    if (this.ttsPending.size) return;
-    const waiting = this.afterVoice;
-    this.afterVoice = [];
-    for (const w of waiting) w.send(VOICE.speak, w.request);
+    while (!this.ttsPending.size && this.afterVoice.length) {
+      const w = this.afterVoice.shift()!;
+      if ("request" in w) w.send(VOICE.speak, w.request);
+      else if (this.neuralVoice) this.sayOwn(w.own, w.send);
+      else w.send(VOICE.speak, { text: w.own, append: true, ...this.rateField } satisfies SpeakRequest);
+    }
   }
 
   /** Retire optional Kokoro and append only its ungenerated suffix through baseline Kitten. */
@@ -1453,6 +1477,7 @@ export class VoiceService {
       this.ttsPending.set(next, { text, remaining: text, send: p.send });
       this.voiceProcess().postMessage({ type: "say", id: next, text, ...this.speedField });
     }
+    this.sendAfterVoice();
   }
 
   /** The mic page's address and its development audio options. */
@@ -1589,13 +1614,13 @@ export class VoiceService {
         this.o.log.warn("voice.silent", { on: m.on });
         const was = this.micSilent;
         this.micSilent = m.on;
-        if (m.on) { this.captureGeneration++; this.cancelListenOnce(); this.interruptEnrol(); this.setState("error", SILENT_TEXT); }
+        if (m.on) { this.captureGeneration++; this.cancelListenOnce(); this.interruptEnrol(); this.setState("error", SILENT_TEXT, true); }
         else if (was && this.state === "error") this.setState("waiting"); // (not another error, such as a lost microphone)
         return;
       }
       if (m.type === "stalled") {
         // The mic page says when it lost the microphone (and gets it back itself); otherwise audio just stopped.
-        if (!this.micLost) { this.o.log.warn("voice.stalled", { ms: m.ms }); this.restartLater("No sound is arriving from the microphone."); }
+        if (!this.micLost) { this.o.log.warn("voice.stalled", { ms: m.ms }); this.restartLater("No sound is arriving from the microphone.", true); }
         return;
       }
       // Every utterance the voice process sends is counted, dropped or not: a voice-sample names its request by this number.
@@ -1680,14 +1705,14 @@ export class VoiceService {
   }
 
   /** Listening broke (the voice process or the mic page died, or no sound arrives): start again after 1 s, 5 s, then every 30 s, saying so meanwhile. */
-  private restartLater(why: string): void {
+  private restartLater(why: string, mic = false): void {
     if (this.manual?.temporary) { this.cancelListenOnce(`${why} Try again.`); return; }
     this.teardown();
     if (!this.wanted || this.muted) return;
     if (this.readyAt && Date.now() - this.readyAt > 60_000) this.failures = 0; // it had been working: start the backoff over
     const ms = RESTART_MS[Math.min(this.failures++, RESTART_MS.length - 1)];
     this.o.log.warn("voice.restart", { why, inMs: ms, attempt: this.failures });
-    this.setState("error", `${why} Trying again in ${ms / 1000} s…`);
+    this.setState("error", `${why} Trying again in ${ms / 1000} s…`, mic);
     this.cancelRetry();
     this.retry = setTimeout(() => { this.retry = null; void this.start(); }, ms);
   }
@@ -1793,7 +1818,8 @@ export class VoiceService {
     if (s && (s.saying || this.speakingPage === "speaker")) this.speakingEnded();
   }
 
-  private setState(s: MicState, detail?: string): void {
+  /** `mic`: an "error" the microphone caused (micFault), not the voice process, its models or its restarts. */
+  private setState(s: MicState, detail?: string, mic = false): void {
     // While Ember learns a voice, the voice line says so whenever it has nothing of its own to say: a window that ended
     // as teaching began (a conversation's) left "Listening for “Ember”" beside the phrase to say (voice-listening-r2).
     if (s === "waiting" && detail === undefined && this.enrolling) detail = ENROL_TEXT;
@@ -1804,6 +1830,7 @@ export class VoiceService {
       if (!hearing) this.o.onLevel?.({ mic: null });
     }
     this.state = s;
+    this.micError = s === "error" && mic;
     this.o.onState(s, detail);
   }
 }

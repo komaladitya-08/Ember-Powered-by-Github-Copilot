@@ -142,5 +142,7 @@ describe("the fuse wire", () => {
     const fuses = readFuses(fs.readFileSync(electron));
     // Electron's defaults: what stage.mjs turns off is on (RunAsNode too: macOS's build turns it off, the others keep it).
     expect(fuses).toMatchObject({ RunAsNode: true, EnableNodeOptionsEnvironmentVariable: true, EnableNodeCliInspectArguments: true });
-  });
+    // The binary is some 230 MB, read whole: 0.2 s on a quiet machine, and past the default 5 s on a loaded one with a
+    // cold cache (it timed out in round nine's gate). A minute, as the other tests that read real packages take.
+  }, 60_000);
 });

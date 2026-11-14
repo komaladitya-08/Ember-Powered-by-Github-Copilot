@@ -2,7 +2,8 @@
  * What Ember keeps of the extensions the user installed: `extensions.json` (0600) in `<userData>/extensions/` (0700),
  * beside each plugin's copied files (`plugins/<id>/`) and the run folder of revocable per-launch lease files.
  * Written whole and atomically; a file that doesn't read is moved aside (`.broken`), never overwritten in place.
- * Plain Node.
+ * `off/<id>` is an empty mark for an item the user turned off or removed while the list itself couldn't be written
+ * (a full disk): the next start turns it off before anything loads (integrations-r9-4). Plain Node.
  */
 
 import fs from "node:fs";
@@ -77,6 +78,32 @@ export class ExtensionStore {
     const tmp = `${this.file}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify({ version: 1, items }) + "\n", { mode: 0o600 });
     fs.renameSync(tmp, this.file);
+  }
+
+  get offDir(): string { return path.join(this.dir, "off"); }
+
+  /**
+   * Marks `id` off beside the list, for when the list itself can't be written: an empty file needs no room on a full
+   * disk. True when the mark is on disk (where nothing can be written at all, it isn't).
+   */
+  markOff(id: string): boolean {
+    try {
+      fs.mkdirSync(this.offDir, { recursive: true, mode: 0o700 });
+      fs.writeFileSync(path.join(this.offDir, id), "", { mode: 0o600 });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** The ids marked off (none when there is no such folder). */
+  markedOff(): string[] {
+    try { return fs.readdirSync(this.offDir); } catch { return []; }
+  }
+
+  /** Drops the marks: the list on disk says it now. */
+  clearOff(): void {
+    for (const id of this.markedOff()) { try { fs.rmSync(path.join(this.offDir, id), { force: true }); } catch { /* looked at again at the next save */ } }
   }
 }
 

@@ -474,8 +474,15 @@ export class SpeechStream {
 
 /**
  * A whole answer as the pieces to say now, each with its language: what the stream said of it as it came, for an
- * answer read out afterwards ("Read it out": voice-speaking-r6-1). None for an answer with nothing to say.
+ * answer read out afterwards ("Read it out": voice-speaking-r6-1), judged without the request it answered. None for an
+ * answer with nothing to say.
  */
 export function answerPieces(answer: string): { text: string; lang: string | null }[] {
-  return new AnswerLanguage().take(new SpeechStream().finish(answer), true).filter(p => p.text.trim());
+  // Word by word through the stream, as it came: given whole, the stream makes one piece of it, which has one
+  // language, so an email read out in Spanish after an English lead-in was all the Spanish voice's, or unsaid where
+  // there is none (voice-speaking-r9-3).
+  const stream = new SpeechStream(), pieces: string[] = [];
+  for (const word of answer.split(/(?<=\s)/)) pieces.push(...stream.push(word));
+  pieces.push(...stream.finish(answer));
+  return new AnswerLanguage().take(pieces, true).filter(p => p.text.trim());
 }

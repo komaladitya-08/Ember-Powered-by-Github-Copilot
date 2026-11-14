@@ -466,6 +466,31 @@ describe("PersonalVoice", () => {
     }
   });
 
+  it("lets go of what was asked and heard at sign-out: none of the last person's requests comes back as a suggestion (memory-r9-2)", () => {
+    const { p, dir } = make();
+    try {
+      for (const said of ["Open my payslips folder", "What's the weather", "Open my payslips folder", "Hello"]) { p.asked(said); p.answered("Hi! How can I help?", { spoken: true }); }
+      const heard = p.heard("Show Doctor Patel's letter");
+      expect(p.current().map(x => x.text)).toContain("Open my payslips folder");
+      p.forgetSession();
+      expect(p.current()).toEqual([]);
+      expect(p.heardItems()).toEqual([]);
+      // What was heard can't be retyped into a learnt word by the next person.
+      expect(p.teach(heard.id, "Show Dr Patel's letter").outcome).toBe("unknown");
+      // The next person asks something: nothing of the one before is offered, now or after any later answer.
+      p.asked("Hello");
+      expect(p.answered("Hi! How can I help?", { spoken: true }).suggestions.map(x => x.text)).not.toContain("Open my payslips folder");
+      p.asked("Thanks");
+      expect(p.answered("You're welcome.", { spoken: false }).suggestions.map(x => x.text)).not.toContain("Open my payslips folder");
+      expect(p.isSuggestion("Open my payslips folder")).toBe(false);
+      // An answer that comes in for a request of the one before predicts nothing from it.
+      p.forgetSession();
+      expect(p.answered("Done.", { spoken: false }).suggestions).toEqual([]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("never lets a request heard unchecked, or a suggestion the user chose, authorise a risky suggestion (review of #145)", () => {
     const { dir } = make();
     // Memory knows Priya: a request to send something, then "Send it to Priya" if it were the user's own.
@@ -727,6 +752,14 @@ describe("main's wiring of voice personalisation (main.ts source)", () => {
     expect(MAIN).toContain("let recentAsks: { text: string; voiceUnchecked?: boolean; suggested?: boolean }[] = [];");
     expect(MAIN).toContain("recentAsks = [...recentAsks, { text, ...(how.voiceUnchecked ? { voiceUnchecked: true } : {}), ...(how.suggested ? { suggested: true } : {}) }].slice(-4);");
     expect(MAIN).toContain("void askEmber(again, { voiceUnchecked: how ? how.voiceUnchecked : true, ...(how?.suggested ? { suggested: true } : {}) });");
+  });
+  it("forgets what was asked this session at sign-out, an account change and Forget everything, with the chips showing (memory-r9-2)", () => {
+    expect(MAIN).toContain("const forgetSessionWords = () => {\n    recentAsks = [];\n    // And the Ask box's history (↑ brings back the last 20 requests): the person's own words too (companion-r10-4).\n    askHistory = [];\n    personalRef?.forgetSession();\n    if (lastState.suggest) showState({ suggest: null });\n  };");
+    expect(MAIN).toContain('onAccountChanged: () => { askHistory = []; forgetSessionWords(); forgetProject("all"); },');
+    const signOut = MAIN.slice(MAIN.indexOf("ipcMain.handle(IPC.signOut,"), MAIN.indexOf("ipcMain.handle(IPC.cancelSignIn,"));
+    expect(signOut).toContain("askHistory = [];\n            forgetSessionWords();");
+    const forgetAll = MAIN.slice(MAIN.indexOf("ipcMain.handle(IPC.memoryForgetAll,"), MAIN.indexOf("ipcMain.handle(IPC.memoryIntroduce,"));
+    expect(forgetAll).toContain("learning.forgetAll();\n    // What was asked this session is about the person too: no suggestion comes from it afterwards (memory-r9-2).\n    forgetSessionWords();");
   });
   it("pairs a Voice Match sample with the utterance it came from by its number, not the latest one heard", () => {
     expect(MAIN).toContain("const r = lastHeard && lastHeard.utterance === s.utterance ? lastHeard : null;");

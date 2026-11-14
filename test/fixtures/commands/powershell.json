@@ -4339,7 +4339,10 @@
   },
   {
    "cmd": "& 'C:\\Program Files\\x\\$name.exe'",
-   "verdict": "run"
+   "verdict": "ask",
+   "rules": [
+    "unknown.program"
+   ]
   },
   {
    "cmd": "& \"$env:ProgramFiles\\x.exe\"",
@@ -5914,11 +5917,13 @@
   },
   {
    "cmd": "mytool .",
-   "verdict": "run"
+   "verdict": "announce",
+   "words": "run mytool"
   },
   {
    "cmd": "mytool src",
-   "verdict": "run"
+   "verdict": "announce",
+   "words": "run mytool on src"
   },
   {
    "cmd": "rimraf C:\\Users\\ana",
@@ -5976,6 +5981,276 @@
    "rules": [
     "ember.path"
    ]
+  },
+  {
+   "cmd": "yarn cross-env NODE_ENV=x cat ~/.ssh/id_rsa",
+   "verdict": "ask",
+   "rules": [
+    "unclear.cmdlet",
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "yarn node -e \"require('fs').rmSync('C:/Users/ana/Documents',{recursive:true})\"",
+   "verdict": "ask",
+   "rules": [
+    "unclear.inline-code"
+   ]
+  },
+  {
+   "cmd": "pnpm rm -rf $HOME\\Documents",
+   "verdict": "ask",
+   "rules": [
+    "pkg.off-registry",
+    "pkg.language"
+   ]
+  },
+  {
+   "cmd": "npm run build -- $HOME\\.ssh\\id_rsa",
+   "verdict": "ask",
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": ".\\node_modules\\.bin\\cross-env.cmd LD_PRELOAD=x jest",
+   "verdict": "ask",
+   "rules": [
+    "unknown.program",
+    "unclear.assignment"
+   ]
+  },
+  {
+   "cmd": "node node_modules\\cross-env\\src\\bin\\cross-env.js LD_PRELOAD=x jest",
+   "verdict": "ask",
+   "rules": [
+    "unclear.cmdlet"
+   ]
+  },
+  {
+   "cmd": "yarn powershell -Command \"Remove-Item -Recurse C:\\x\"",
+   "verdict": "ask",
+   "rules": [
+    "ps.Remove-Item"
+   ]
+  },
+  {
+   "cmd": "yarn cmd /c \"del /s /q C:\\x\"",
+   "verdict": "ask",
+   "rules": [
+    "cmd.del"
+   ]
+  },
+  {
+   "cmd": "frobnicate $env:APPDATA\\ember\\settings.json",
+   "verdict": "ask",
+   "rules": [
+    "unknown.program"
+   ]
+  },
+  {
+   "cmd": "yarn frobnicate C:\\Users\\ana\\AppData\\Local\\ember\\settings.json",
+   "verdict": "refuse"
+  },
+  {
+   "cmd": "yarn frobnicate $HOME\\.ssh\\id_rsa",
+   "verdict": "ask",
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "yarn build $x",
+   "verdict": "ask",
+   "rules": [
+    "unclear.unresolved-arg"
+   ]
+  },
+  {
+   "cmd": ".\\node_modules\\.bin\\cross-env.cmd NODE_ENV=test jest",
+   "verdict": "ask",
+   "rules": [
+    "unknown.program"
+   ]
+  },
+  {
+   "cmd": ".\\node_modules\\.bin\\cross-env NODE_ENV=test jest",
+   "verdict": "ask",
+   "rules": [
+    "unclear.cmdlet"
+   ]
+  },
+  {
+   "cmd": "yarn cross-env NODE_ENV=prod npm publish",
+   "verdict": "ask",
+   "rules": [
+    "unclear.cmdlet"
+   ]
+  },
+  {
+   "cmd": ".\\node_modules\\.bin\\cross-env LD_PRELOAD=x jest",
+   "verdict": "ask",
+   "rules": [
+    "unclear.cmdlet"
+   ]
+  },
+  {
+   "cmd": "frobnicate.exe X=C:\\Windows\\x.dll",
+   "verdict": "ask",
+   "rules": [
+    "unknown.program"
+   ],
+   "words": "run frobnicate"
+  },
+  {
+   "cmd": "frobnicate.exe C:\\Users\\ana\\proj\\a.txt",
+   "verdict": "announce",
+   "rules": [
+    "unknown.program"
+   ],
+   "words": "run frobnicate"
+  },
+  {
+   "cmd": "frobnicate C:data.txt",
+   "verdict": "ask",
+   "words": "use frobnicate",
+   "rules": [
+    "unknown.program"
+   ]
+  },
+  {
+   "cmd": "frobnicate host:data.txt",
+   "verdict": "ask",
+   "words": "use frobnicate",
+   "rules": [
+    "unknown.program"
+   ]
+  },
+  {
+   "cmd": "frobnicate x=.env",
+   "verdict": "ask",
+   "words": "use frobnicate",
+   "rules": [
+    "unknown.program"
+   ]
+  },
+  {
+   "cmd": "corepack npm@10 publish",
+   "verdict": "ask",
+   "rules": [
+    "npm.publish"
+   ]
+  },
+  {
+   "cmd": "corepack yarn@4 cat ~/.ssh/id_rsa",
+   "verdict": "ask",
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "corepack pnpm@9 exec rm -rf ~/Documents",
+   "verdict": "ask",
+   "rules": [
+    "escape.npx",
+    "ps.Remove-Item"
+   ]
+  },
+  {
+   "cmd": "corepack yarn@1.22.22 cross-env LD_PRELOAD=/tmp/x.so jest",
+   "verdict": "ask",
+   "rules": [
+    "unclear.cmdlet"
+   ]
+  },
+  {
+   "cmd": "corepack pnpm@9.1.0 cross-env NODE_ENV=prod npm publish",
+   "verdict": "ask",
+   "rules": [
+    "unclear.cmdlet"
+   ]
+  },
+  {
+   "cmd": "corepack yarn@1 node -e \"require('fs').rmSync('/home/ana/Documents',{recursive:true})\"",
+   "verdict": "ask",
+   "rules": [
+    "unclear.inline-code"
+   ]
+  },
+  {
+   "cmd": ".\\node_modules\\.bin\\cross-env.ps1 NODE_OPTIONS=--require=C:\\Temp\\x.js jest",
+   "verdict": "ask",
+   "rules": [
+    "unclear.cmdlet"
+   ]
+  },
+  {
+   "cmd": "& .\\node_modules\\.bin\\cross-env.ps1 NODE_OPTIONS=--require=C:\\Temp\\x.js jest",
+   "verdict": "ask",
+   "rules": [
+    "unclear.cmdlet"
+   ]
+  },
+  {
+   "cmd": "node_modules/.bin/cross-env.ps1 NODE_OPTIONS=--require=C:\\Temp\\x.js jest",
+   "verdict": "ask",
+   "rules": [
+    "unclear.cmdlet"
+   ]
+  },
+  {
+   "cmd": ".\\node_modules\\.bin\\cross-env.ps1 NODE_ENV=test jest",
+   "verdict": "ask",
+   "rules": [
+    "unclear.cmdlet"
+   ]
+  },
+  {
+   "cmd": ".\\node_modules\\.bin\\shx.cmd rm -rf $HOME\\Documents",
+   "verdict": "ask",
+   "rules": [
+    "unclear.hidden-command",
+    "ps.Remove-Item"
+   ]
+  },
+  {
+   "cmd": ".\\node_modules\\.bin\\frobnicate.cmd npm publish",
+   "verdict": "ask",
+   "rules": [
+    "script.publish",
+    "unclear.hidden-command",
+    "npm.publish"
+   ]
+  },
+  {
+   "cmd": ".\\node_modules\\.bin\\eslint.ps1 .",
+   "verdict": "run"
+  },
+  {
+   "cmd": ".\\node_modules\\.bin\\eslint.cmd .",
+   "verdict": "run"
+  },
+  {
+   "cmd": ".\\node_modules\\.bin\\jest.cmd --ci",
+   "verdict": "run"
+  },
+  {
+   "cmd": "pnpm format D: /q /y",
+   "verdict": "ask",
+   "rules": [
+    "disk.erase"
+   ]
+  },
+  {
+   "cmd": "bun format c:",
+   "verdict": "ask",
+   "rules": [
+    "disk.erase"
+   ]
+  },
+  {
+   "cmd": "pnpm format src",
+   "verdict": "run"
   }
  ]
 }

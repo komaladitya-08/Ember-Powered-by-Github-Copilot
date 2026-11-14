@@ -190,8 +190,9 @@ const members = <T extends string>(all: Record<T, true>) => z.enum(Object.keys(a
 
 const OS_ENUM = members<OS>({ linux: true, win32: true, darwin: true });
 const SHELL = members<ShellId>({ bash: true, zsh: true, sh: true, powershell: true, cmd: true });
-const DANGER = members<DangerClass>({ destroy: true, publish: true, "remote-delete": true, secret: true, system: true, escape: true, unclear: true });
-const ACTION_KIND = members<ActionKind>({
+const DANGER = members<DangerClass>({ destroy: true, publish: true, "remote-delete": true, secret: true, system: true, escape: true, unclear: true, unknown: true });
+// (Never "vault_fill": the vault fills only on this computer's own screen, so no remote is ever sent one.)
+const ACTION_KIND = members<Exclude<ActionKind, "vault_fill">>({
   read: true, click: true, toggle: true, text: true, select: true, value: true, setting: true, open_app: true,
   cursor_click: true, cursor_text: true, keys: true, scroll: true,
 });
@@ -311,6 +312,7 @@ const ActStampSchema = z.object({
   valueSha256: sha256Hex.optional(),
   verdict: z.enum(["allow", "confirm"]),
   approval: z.object({ given: z.literal(true) }).strict().nullable(),
+  announced: z.literal(true).optional(),
   ageMs: ms,
 }).strict();
 
@@ -414,6 +416,7 @@ const CommandStampSchema = z.object({
   classes: z.array(DANGER).max(7),
   rules: z.array(plain(CAPS.str.app)).max(CAPS.paths),
   approval: z.object({ ageMs: ms }).strict().nullable(),
+  announced: z.object({ ageMs: ms }).strict().optional(),
 }).strict();
 
 const RunSpecSchema = z.object({

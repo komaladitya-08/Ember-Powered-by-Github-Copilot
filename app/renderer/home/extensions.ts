@@ -8,13 +8,14 @@
 
 import type { ExtensionsState, Status, EmberExtensionsApi } from "../../shared/ipc";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
+import { AGREE_ARM_MS, heldPress } from "../../shared/provider";
 import type { Installed, Marketplace, MarketplaceEntry } from "../../shared/extensions";
 import type { SettingsPatch } from "../../main/settings";
 import { marketplaceSource } from "../../shared/extensions-input";
 import {
   BROWSE_AGAIN, BROWSE_DONE, BROWSE_EMPTY, CONNECTORS_EMPTY, MARKETPLACES_NOT_CONNECTED, EXTENSIONS_FAILED, EXTENSIONS_LOADING, EXTENSIONS_ON_LABEL, INSTALLED_EMPTY, extensionsOnHint, INSTALLED_TAG, MARKETPLACES_EMPTY, MARKETPLACE_INVALID,
   addedMarketplace, added, addingMarketplace, agreedTo, browseLabel, browsingHeading, browsingLoading, connectOpened, connectPending, connected, connectorRow,
-  consentCard, disconnected, entryCard, extensionsBlocked, extensionsError, installedRow, marketplaceRow, reagreeCard, removeMarketplaceLabel, removeMarketplaceQuestion,
+  TOOL_INPUTS_HEADING, toolInputsLabel, consentCard, disconnected, entryCard, extensionsBlocked, extensionsError, installedRow, marketplaceRow, reagreeCard, removeMarketplaceLabel, removeMarketplaceQuestion,
   removed, removedMarketplace, toolBadge, type ConsentCard, type ItemAction,
 } from "./extensions-copy";
 
@@ -49,7 +50,14 @@ let connectorsError: string | null = null;
 /** Connectors waiting for the user in GitHub's page. */
 const pending = new Set<string>();
 /** The consent card up now: before adding or connecting an entry, or agreeing again to an installed item. */
-let asking: { kind: "entry"; entry: MarketplaceEntry } | { kind: "reagree"; item: Installed } | null = null;
+type Asking = { kind: "entry"; entry: MarketplaceEntry } | { kind: "reagree"; item: Installed };
+let asking: Asking | null = null;
+/**
+ * The card drawn last, and when it came up (performance.now()): its agree button takes no press for AGREE_ARM_MS, as
+ * Home's other consent cards don't, so a doubled or held Enter from the button that opened it agrees to nothing
+ * (accessibility-r9-2).
+ */
+let cardShown: { for: Asking | null; at: number } = { for: null, at: 0 };
 /** Requests under way, by the key of the control that started them (its button waits for the answer). */
 const busy = new Set<string>();
 /** Tool lists the user opened or closed (kept across redraws). */
@@ -205,11 +213,21 @@ function consentNode(c: ConsentCard): HTMLElement {
       const row = el("li", "ext-consent-tool");
       row.append(el("b", "", `${tool.server ? `${tool.server}: ` : ""}${tool.name}`), el("span", "", ` · ${toolBadge(tool).label}`));
       if (tool.description) row.append(el("p", "ext-tool-desc", tool.description));
+      // What the model reads of its inputs too, whole (integrations-c9-1).
+      if (tool.inputs?.length) {
+        const inputs = el("ul", "ext-tool-inputs");
+        inputs.setAttribute("aria-label", toolInputsLabel(tool.name));
+        for (const w of tool.inputs) inputs.append(el("li", "", w));
+        row.append(el("p", "ext-tool-desc", TOOL_INPUTS_HEADING), inputs);
+      }
       lines.append(row);
     }
   }
   const actions = el("div", "agent-actions");
-  const yes = button(c.yes, "btn", "consent-yes", () => void agree());
+  if (cardShown.for !== asking) cardShown = { for: asking, at: performance.now() };
+  const yes = button(c.yes, "btn", "consent-yes", () => { if (performance.now() - cardShown.at >= AGREE_ARM_MS) void agree(); });
+  // Nor a key still held from the button that opened the card, whose repeat starts about as it arms (product-ui-x9-3).
+  yes.addEventListener("keydown", e => { if (heldPress(e)) e.preventDefault(); });
   yes.setAttribute("aria-describedby", lines.id);
   const no = button(c.no, "btn quiet", "consent-no", () => { const back = askedFrom(); asking = null; draw(); focusKey(back); });
   actions.append(yes, no);
@@ -235,7 +253,7 @@ function statusLine(text: string, tone: keyof typeof PHASE): HTMLElement {
 }
 
 function installedItem(i: Installed): HTMLLIElement {
-  const r = installedRow(i, sectionOn(), state?.connected !== false);
+  const r = installedRow(i, sectionOn(), state?.connected !== false, state?.heldByVault === true);
   const li = el("li", "ext-item");
   const head = el("div", "ext-head");
   const text = el("span", "ext-text");
@@ -412,7 +430,7 @@ function draw(): void {
   $("ext-on-group").hidden = !state.allowed || !agreed;
   $("ext-on-hint").hidden = !state.allowed || !agreed;
   ($("ext-on") as HTMLInputElement).checked = sectionOn();
-  $("ext-on-hint").textContent = extensionsOnHint(sectionOn());
+  $("ext-on-hint").textContent = extensionsOnHint(sectionOn(), state.heldByVault === true);
   const key = JSON.stringify([state, browsing, connectors, connectorsError, [...pending], asking, [...busy], sectionOn()]);
   if (key === drawn) return;
   drawn = key;

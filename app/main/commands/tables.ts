@@ -2,8 +2,9 @@
  * The classifier's tables as data (design §3.5, §3.4.5, §3.4.8): the global-option grammars that find a tool's verb,
  * the wrappers that run another command, the programs that run code, fetch, launch, open full-screen or GUI windows,
  * synthesise input, read secrets, and the per-verb rows of the package, service, cloud and source-control tools.
- * classify.ts holds the logic that reads them. A program that is in no row is ordinary (D4.2) unless one of §3.4's or
- * §3.6's rules applies. Pure data.
+ * classify.ts holds the logic that reads them. A program that is in no row asks (commands-closed, the closed default),
+ * unless it is on ORDINARY_PROGRAMS or given by a path in the command's own folder; a verb of a verb-keyed tool that
+ * its row doesn't know asks too. Pure data.
  */
 
 import type { DangerClass } from "./types";
@@ -41,6 +42,12 @@ export const GLOBAL_OPTIONS: Readonly<Record<string, GlobalGrammar>> = {
     flags: ["-r", "--recursive", "-w", "--workspace-root", "-s", "--silent", "--reporter=silent", "--frozen-lockfile", "-g", "--global",
       "--offline", "--prefer-offline", "-v", "--version", "-h", "--help", "--color", "--no-color", "--aggregate-output", "--shamefully-hoist"],
     withValue: ["-C", "--dir", "--filter", "-F", "--reporter", "--loglevel", "--workspace-concurrency", "--registry", "--store-dir"],
+  },
+  // bun's own options before what it runs (`bun --bun x`, `bun --cwd web x`: commands-runners-x9-5). Never one that
+  // loads code or variables (`--preload`, `--env-file`, `-e`): those stay unknown, and what follows is read as handed on.
+  bun: {
+    flags: ["--bun", "-b", "--silent", "--smol", "--watch", "--hot", "--no-install", "--if-present", "--no-clear-screen", "-v", "--version", "-h", "--help"],
+    withValue: ["--cwd", "--filter", "-F", "--elide-lines"],
   },
   yarn: {
     flags: ["-s", "--silent", "--verbose", "--offline", "--frozen-lockfile", "--immutable", "--non-interactive", "--no-progress", "-v",
@@ -173,6 +180,12 @@ export interface WrapperRule {
   finding?: { cls: DangerClass; rule: string; says: string };
   /** With nothing after it, it is interactive (a shell). */
   aloneInteractive?: boolean;
+  /**
+   * The value options main's table listed (at 4d64d3a), for a wrapper whose table was corrected to its manual since:
+   * the command it runs is judged by that table too, and where the two differ it asks (classify.ts heldOpts,
+   * commands-held-5). Add one whenever a wrapper's value options change, with the options as they were.
+   */
+  main?: { shortValue?: string; longValue?: readonly string[] };
 }
 
 const KEEPS_RUNNING = "Keeps running after Ember stops; Stop can't end it.";
@@ -197,11 +210,14 @@ export const WRAPPERS: Readonly<Record<string, WrapperRule>> = {
   unbuffer: {},
   chronic: {},
   ifne: {},
-  fakeroot: { shortValue: "isl", longValue: ["lib", "faked"] },
+  fakeroot: { shortValue: "isl", longValue: ["lib", "faked"], main: { shortValue: "is", longValue: ["lib", "faked"] } },
   // faketime's -m and -f, numactl's -H, ltrace's -L and nsenter's namespace options take no value of their own: the next
   // word is the command (commands-remote-i5a).
-  faketime: { longValue: ["date-prog"], positional: 1 },
-  numactl: { shortValue: "CNmpPi", longValue: ["physcpubind", "cpunodebind", "membind", "preferred", "interleave", "preferred-many"] },
+  faketime: { longValue: ["date-prog"], positional: 1, main: { shortValue: "m" } },
+  numactl: {
+    shortValue: "CNmpPi", longValue: ["physcpubind", "cpunodebind", "membind", "preferred", "interleave", "preferred-many"],
+    main: { shortValue: "CNmpPiH", longValue: ["physcpubind", "cpunodebind", "membind", "preferred", "interleave"] },
+  },
   cgexec: { shortValue: "g" },
   "dbus-run-session": { longValue: ["config-file", "dbus-daemon"] },
   "dbus-launch": { longValue: ["autolaunch", "config-file"] },
@@ -219,14 +235,17 @@ export const WRAPPERS: Readonly<Record<string, WrapperRule>> = {
   "systemd-inhibit": { longValue: ["what", "who", "why", "mode"] },
   "systemd-cat": { shortValue: "tp", longValue: ["identifier", "priority", "stderr-priority", "level-prefix"] },
   valgrind: {},
-  ltrace: { shortValue: "aAeDFlnopsuwx" },
+  ltrace: { shortValue: "aAeDFlnopsuwx", main: { shortValue: "eopsuEanlLAD" } },
   strace: { shortValue: "eopsuEaIOSPXb" },
   tini: {},
   "dumb-init": {},
   chroot: { positional: 1, aloneInteractive: true, finding: { cls: "system", rule: "system.chroot", says: "Runs as an administrator (root)." } },
   sg: { positional: 1, finding: { cls: "system", rule: "system.sg", says: "Runs as another group." } },
   newgrp: { aloneInteractive: true, finding: { cls: "system", rule: "system.newgrp", says: "Runs as another group." } },
-  nsenter: { shortValue: "tSG", shortOptional: "muinpUCTrw", finding: { cls: "system", rule: "system.nsenter", says: "Runs as an administrator (root)." }, aloneInteractive: true },
+  nsenter: {
+    shortValue: "tSG", shortOptional: "muinpUCTrw", finding: { cls: "system", rule: "system.nsenter", says: "Runs as an administrator (root)." }, aloneInteractive: true,
+    main: { shortValue: "tSGmuinpUCTrw" },
+  },
   unshare: { finding: { cls: "system", rule: "system.unshare", says: "Changes how the system works." }, aloneInteractive: true },
   setpriv: { longValue: ["reuid", "regid", "groups", "inh-caps", "ambient-caps", "bounding-set", "securebits", "selinux-label", "apparmor-profile"], finding: { cls: "system", rule: "system.setpriv", says: "Runs as an administrator (root)." } },
   capsh: { finding: { cls: "system", rule: "system.capsh", says: "Runs as an administrator (root)." }, aloneInteractive: true },
@@ -262,6 +281,66 @@ export const INTERPRETERS: Readonly<Record<string, { inline: readonly string[]; 
 export const FETCHERS = new Set(["curl", "wget", "fetch", "aria2c", "invoke-webrequest", "invoke-restmethod", "iwr", "irm", "nc", "ncat", "netcat", "socat", "http", "https", "xh", "lwp-download", "lwp-request", "gsutil", "scp", "sftp", "ftp", "tftp", "bitsadmin", "certutil", "ssh", "slogin", "autossh"]);
 /** Decoders of hidden text (base64 -d and friends): piping one into an interpreter hides what runs. */
 export const DECODERS = new Set(["base64", "base32", "xxd", "openssl", "gzip", "gunzip", "zcat", "xz", "unxz", "bzip2", "bunzip2", "uudecode", "rev", "tr"]);
+
+/**
+ * Programs that only read, list, check, copy, move, pack, unpack or delete the files they are given, and the shell's
+ * own words (commands-remote-r9-5, r9-6): given a file this task downloaded they don't run it, and what they write
+ * from it carries the mark on (afterRun). Every other program that names a download, or a folder that holds one,
+ * anywhere on its line may run it, and asks. A program belongs here only when no option of it runs a file it names,
+ * or its own row asks for the options that do (sed's `e`, find's `-exec`, tar's `--to-command`, git's hooks and
+ * aliases). Lower case, as the classifier keys programs and cmdlets.
+ */
+export const DOWNLOAD_READERS: ReadonlySet<string> = new Set([
+  // The shell's own words and built-ins that run no file.
+  "if", "then", "else", "elif", "fi", "while", "until", "for", "do", "done", "case", "esac", "select", "function", "{", "}", "!", "[[", "]]", "time", "coproc",
+  "cd", "pushd", "popd", "pwd", "echo", "printf", "test", "[", "true", "false", ":", "read", "mapfile", "readarray", "wait", "exit", "return", "break", "continue", "shift",
+  "unset", "local", "readonly", "let", "type", "which", "whereis", "command", "hash", "dirs", "umask", "ulimit", "trap", "set-location", "push-location", "pop-location",
+  // Reading, listing and comparing.
+  "cat", "tac", "nl", "head", "tail", "less", "more", "most", "bat", "batcat", "wc", "sort", "uniq", "cut", "tr", "paste", "join", "column", "fold", "fmt", "rev", "expand",
+  "unexpand", "od", "hexdump", "xxd", "strings", "base64", "base32", "iconv", "dos2unix", "unix2dos", "grep", "egrep", "fgrep", "rg", "ag", "ack", "sed", "awk", "gawk",
+  "mawk", "jq", "yq", "xmllint", "diff", "cmp", "comm", "sdiff", "colordiff", "delta", "file", "stat", "ls", "ll", "dir", "vdir", "tree", "du", "df", "find", "fd", "fdfind",
+  "locate", "eza", "exa", "lsd", "realpath", "readlink", "basename", "dirname", "namei", "zcat", "zless", "zgrep", "bzcat", "xzcat", "lzcat", "zstdcat", "md5sum", "sha1sum",
+  "sha224sum", "sha256sum", "sha384sum", "sha512sum", "shasum", "b2sum", "cksum", "sum", "md5", "gpg", "gpgv", "minisign", "cosign", "signify", "openssl", "ffprobe",
+  "identify", "exiftool", "pdfinfo", "pdftotext", "mediainfo", "readelf", "objdump", "nm", "size", "otool", "lipo", "codesign", "spctl", "cloc", "tokei", "scc",
+  // Copying, moving, packing and deleting.
+  "cp", "mv", "ln", "install", "rsync", "scp", "sftp", "rclone", "tar", "gtar", "bsdtar", "zip", "unzip", "gzip", "gunzip", "bzip2", "bunzip2", "xz", "unxz", "zstd", "unzstd",
+  "lz4", "7z", "7za", "7zr", "unrar", "cpio", "ar", "tee", "dd", "sponge", "split", "csplit", "touch", "mkdir", "rm", "rmdir", "unlink", "shred", "trash", "trash-put", "gio",
+  "chmod", "chown", "chgrp", "chattr", "xattr", "setfacl", "getfacl", "truncate", "mktemp", "patch", "git", "hg", "svn", "curl", "wget", "aria2c", "gh", "glab",
+  // PowerShell's cmdlets and cmd's built-ins of the same kinds.
+  "get-content", "get-item", "get-itemproperty", "get-childitem", "get-filehash", "get-acl", "select-string", "test-path", "resolve-path", "split-path", "join-path",
+  "convert-path", "measure-object", "format-hex", "copy-item", "move-item", "rename-item", "remove-item", "new-item", "expand-archive", "compress-archive", "out-file",
+  "set-content", "add-content", "tee-object", "write-output", "write-host", "invoke-webrequest", "invoke-restmethod", "compare-object", "get-authenticodesignature",
+  "copy", "xcopy", "robocopy", "move", "ren", "rename", "del", "erase", "rd", "md", "attrib", "findstr", "fc", "comp", "where", "certutil", "expand", "icacls",
+]);
+
+/**
+ * The words of those readers and of the fetch tools that make them run or load a file they are given, where the
+ * program's own row doesn't ask about the word (commands-classes-x9-3): a comparison's or a pager's program
+ * (`sdiff --diff-program=`, `ack --pager=`, `svn --diff-cmd`), a desktop entry started (`gio launch`), an engine, a
+ * provider or a config that names one (`openssl engine`, `-config`), gpg's helper programs and settings folder, a
+ * linker plugin (`ar --plugin`), a hook on a finished download. With such a word on its line the program is no reader:
+ * a download named anywhere on the line asks. GNU and gpg take a long option cut short, so these match from its start.
+ */
+export const READER_RUNS: Readonly<Record<string, RegExp>> = {
+  sdiff: /^--d[a-z-]*(=|$)/,
+  gio: /^launch$/,
+  openssl: /^(engine$|-(engine|config|provider|provider-path|provider_path|propquery|keyform)(=|$))/,
+  gpg: /^--(photo|exec|home|opt|agent|dirmngr|keyboxd|pinentry|load)/,
+  gpgv: /^--(photo|exec|home|opt|agent|dirmngr|keyboxd|pinentry|load)/,
+  svn: /^--(diff-cmd|diff3-cmd|merge-cmd|editor-cmd|config-dir|config-option)(=|$)/,
+  ack: /^--(pager|ackrc)(=|$)/,
+  ag: /^--pager(=|$)/,
+  delta: /^--(pager|config)(=|$)/,
+  rg: /^--hostname-bin(=|$)/,
+  ar: /^--plugin(=|$)/,
+  nm: /^--plugin(=|$)/,
+  cpio: /^--rsh-command(=|$)/,
+  hash: /^-[a-z]*p/,
+  aria2c: /^--(on-|conf-path)/,
+  wget: /^(-e|--execute|--config|--use-askpass)(=|$)/,
+  scp: /^-S/,
+  sftp: /^-S/,
+};
 
 /** Interactive full-screen programs (§3.5.7): unclear unless arguments make them finish. */
 export const INTERACTIVE = new Set([
@@ -317,12 +396,23 @@ export const CLIPBOARD_READERS = new Set(["wl-paste", "pbpaste", "get-clipboard"
 /** Taking pictures of the screen (§3.5.4). */
 export const SCREENSHOTTERS = new Set(["import", "scrot", "gnome-screenshot", "grim", "spectacle", "xwd", "screencapture", "maim", "flameshot", "shutter", "ksnip", "deepin-screenshot", "xfce4-screenshooter", "screenshot", "wf-recorder", "wl-screenrec", "recordmydesktop", "simplescreenrecorder", "peek", "kazam", "vokoscreen"]);
 
+/** Programs that record from the microphone or the camera whatever their arguments (commands-remote-r9-9). */
+export const RECORDERS = new Set([
+  "arecord", "parecord", "pacat-record", "parec", "pw-record", "rec", "fswebcam", "streamer", "imagesnap", "cheese", "guvcview", "termux-microphone-record",
+  "termux-camera-photo", "audiorecorder", "raspistill", "raspivid", "libcamera-still", "libcamera-vid", "rpicam-still", "rpicam-vid",
+]);
+
 /** Disk erasing and partitioning (§3.5.1): always class a. */
 export const DISK_TOOLS = new Set(["mke2fs", "mkswap", "wipefs", "fdisk", "sfdisk", "gdisk", "sgdisk", "parted", "cfdisk", "blkdiscard", "diskpart", "format-volume", "clear-disk", "initialize-disk", "remove-partition", "badblocks", "hdparm", "nvme", "zpool", "cryptsetup", "lvremove", "vgremove", "pvremove", "mdadm", "partprobe", "gparted"]);
 
 /** Script, target and package-script names (§3.5.9, L8). */
 export const NAME_PUBLISH = new Set(["deploy", "publish", "release", "push", "upload", "ship", "prod", "production", "promote"]);
-export const NAME_DESTROY = new Set(["clean", "clobber", "distclean", "reset", "wipe", "purge", "nuke", "destroy", "drop", "rollback"]);
+export const NAME_DESTROY = new Set([
+  "clean", "clobber", "distclean", "reset", "wipe", "purge", "nuke", "destroy", "drop", "rollback",
+  // The frameworks' own words for emptying a database or taking it back (commands-remote-r9-4): `manage.py flush`,
+  // `artisan migrate:fresh`, `alembic downgrade`, `db:truncate`, `teardown`.
+  "flush", "fresh", "truncate", "downgrade", "erase", "delete", "teardown",
+]);
 export const NAME_SYSTEM = new Set(["install", "setup", "bootstrap", "provision"]);
 
 /**
@@ -519,4 +609,293 @@ export const PS_CMDLETS: Readonly<Record<string, PsCmdletSpec>> = {
   "start-bitstransfer": { params: { Source: "v", Destination: "v", TransferType: "v", Asynchronous: "s", Credential: "v", DisplayName: "v", Description: "v", Priority: "v", ProxyUsage: "v", ProxyList: "v", Authentication: "v", Suspended: "s", RetryInterval: "v", RetryTimeout: "v", Dynamic: "s" }, pos: ["Source", "Destination"] },
   "write-output": { params: { InputObject: "v", NoEnumerate: "s" }, pos: ["InputObject"] },
   "write-host": { params: { Object: "v", NoNewline: "s", Separator: "v", ForegroundColor: "v", BackgroundColor: "v" }, pos: ["Object"] },
+};
+
+/**
+ * The programs Ember has no row for that run with no question (commands-closed): single-purpose tools that read, list,
+ * measure, convert, compile, test or build within the folders they are given, and have no way to run a command given
+ * as an argument, delete, publish, change the system or read secrets. Their operands are still judged (paths, secrets,
+ * Ember's files, broad folders). Any other program with no row asks ("It runs a program Ember doesn't know."). Keys
+ * as classify.ts looks them up (lower case where the target's names are; a version suffix is dropped first).
+ */
+export const ORDINARY_PROGRAMS: ReadonlySet<string> = new Set([
+  // POSIX and GNU coreutils, findutils, diffutils and the text tools.
+  "cat", "tac", "nl", "od", "base32", "base64", "basenc", "fmt", "pr", "fold", "head", "tail", "split", "csplit", "cut", "paste",
+  "join", "sort", "uniq", "comm", "tsort", "ptx", "wc", "sum", "cksum", "b2sum", "md5sum", "sha1sum", "sha224sum", "sha256sum",
+  "sha384sum", "sha512sum", "shasum", "md5", "expand", "unexpand", "tr", "ls", "dir", "vdir", "dircolors", "du", "df", "stat", "file",
+  "readlink", "realpath", "pathchk", "basename", "dirname", "printf", "echo", "seq", "factor", "numfmt", "date", "cal", "ncal", "uname",
+  "hostname", "hostid", "nproc", "arch", "id", "groups", "whoami", "logname", "users", "who", "w", "uptime", "tty",
+  "printenv", "pwd", "true", "false", "test", "expr", "yes", "sleep", "diff", "diff3", "sdiff", "cmp", "grep", "egrep", "fgrep",
+  "zgrep", "zegrep", "zfgrep", "zcat", "zless", "zmore", "zdiff", "zcmp", "bzcat", "bzgrep", "bzless", "xzcat", "xzgrep", "xzless",
+  "lzcat", "lz4cat", "zstdcat", "look", "strings", "hexdump", "hd", "xxd", "column", "colrm", "rev", "iconv", "uconv", 
+  "fc-match", "getconf", "locale", "tput", "infocmp", "toe", "tabs", "envsubst", "gettext", "ngettext",
+  "msgfmt", "msgmerge", "msgunfmt", "msginit", "xgettext", "units", "bc", "mktemp", "which", "whereis", "whatis", "apropos",
+  "locate", "mlocate", "plocate", "lsattr", "getfacl", "namei", "tree", "dos2unix", "unix2dos",
+  "mac2unix", "unix2mac", "wdiff", "colordiff", "cloc", "tokei", "scc", "sloccount", "cmark", "markdown", "asciidoctor", "rst2html",
+  "history", "wl-copy", "pbcopy", "clip", "desktop-file-validate", "mode", "spell", "codespell", "typos", "vale", "write-good", "proselint",
+  // Modern equivalents and structured-data tools.
+  "rg", "ripgrep", "ag", "ack", "ack-grep", "pt", "sift", "fd", "fdfind", "bat", "batcat", "eza", "exa", "lsd", "dust",
+  "duf", "gdu", "erd", "erdtree", "choose", "hck",
+  "jq", "gojq", "jaq", "jo", "gron", "yq", "tomlq", "xq", "dasel", "jless", "jp", "xsv", "csvlook",
+  "csvstat", "csvcut", "csvgrep", "csvsort", "csvjson", "in2csv", "csvformat", "csvjoin", "csvstack", "q",
+  "xmllint", "xml", "pup", "htmlq", "hq", "delta", "difft", "difftastic", "icdiff", "hexyl", 
+  "tldr", "tealdeer", "glow", "mdcat", "lowdown", "frogmouth", "pv", "numbat", "qalc", "datamash", "rs",
+  // Compilers, assemblers, linkers and the binary tools.
+  "gcc", "g++", "cc", "c++", "c89", "c99", "cpp", "clang", "clang++", "clang-cl", "clang-format", "clang-tidy", "clangd", "cl", "link",
+  "lib", "ml", "ml64", "nasm", "yasm", "as", "ld", "ld.bfd", "ld.gold", "ld.lld", "lld", "gold", "ar", "ranlib", "nm", "objdump",
+  "objcopy", "readelf", "size", "strip", "addr2line", "c++filt", "elfedit", "ldd", "otool", "lipo", "dumpbin", "file2c", "gfortran",
+  "f77", "f95", "gnat", "gnatmake", "gccgo", "gdc", "dmd", "ldc2", "rustc", "rustfmt", "rust-analyzer", "javac", "jar", "javap",
+  "jdeps", "jlink", "kotlinc", "kotlin-native", "scalac", "groovyc", 
+  "ocamlc", "ocamlopt", "fpc", "odin", "swiftc", "swift-format", "csc", "vbc",
+  "fsc", "mcs", "tsc", "esbuild", "swc", "babel", "rollup", "webpack", "vite", "parcel", "tsup", "terser", "uglifyjs", "postcss",
+  "sass", "lessc", "stylus", "elm-format", "protoc", "flatc", "thrift", "bison", "yacc", "flex", "lex",
+  "re2c", "ragel", "autoconf", "autoheader", "automake", "autoreconf", "aclocal", "autoscan", "libtoolize", "pkg-config",
+  "pkgconf", "glslc", "glslangvalidator", "spirv-val", "dxc", "fxc", "nvcc", "hipcc", "llc", "opt", "llvm-ar", "llvm-nm",
+  "llvm-objdump", "llvm-readelf", "llvm-strip", "llvm-config", "llvm-cov", "llvm-profdata", "llvm-symbolizer", "wasm-opt",
+  "wasm-ld", "wasm2wat", "wat2wasm", "wasm-objdump", "emcc", "em++", "tinygo", "solc", "vyper", "verilator", "iverilog", "yosys",
+  "ghdl", "sdcc", "avr-gcc", "arm-none-eabi-gcc", "xelatex", "pdflatex", "lualatex", "latex", "bibtex", "biber", "makeindex",
+  "dvipdf", "typst", "pandoc", "asciidoc", "doxygen", "sphinx-apidoc", "javadoc", "rustdoc", "godoc",
+  "mandoc", "groff", "nroff", "troff", "texi2any", "makeinfo",
+  // Linters, formatters and type checkers.
+  "eslint", "prettier", "biome", "oxlint", "dprint", "stylelint", "markdownlint", "markdownlint-cli2", "htmlhint", "jshint", "standard",
+  "black", "isort", "ruff", "flake8", "pyflakes", "pycodestyle", "pydocstyle", "pylint", "mypy", "pyright", "pyre", "pytype",
+  "bandit", "vulture", "radon", "yapf", "autopep8", "shellcheck", "shfmt", "hadolint", "yamllint", "jsonlint", "taplo", "actionlint",
+  "gofmt", "goimports", "golint", "staticcheck", "golangci-lint", "revive", "errcheck", "govulncheck", "rubocop", "standardrb",
+  "phpcs", "phpstan", "psalm", "php-cs-fixer", "ktlint", "detekt", "checkstyle", "pmd", "spotbugs", "swiftlint", "clippy-driver",
+  "cppcheck", "cpplint", "include-what-you-use", "iwyu", "luacheck", "stylua", "selene", "hlint", "ormolu", "fourmolu",
+  "sqlfluff", "sqlformat", "pgformatter", "pg_format", "tflint", "tfsec", "checkov", "kubeval", "kubeconform",
+  "kube-linter", "editorconfig-checker", "ec", "commitlint", "cspell", "lychee", "markdown-link-check", "ansible-lint", "pip-audit",
+  "pip-compile",
+  // Test runners and coverage.
+  "nox", "prove", "pytest", "py.test", "nose2", "jest", "vitest", "mocha", "ava", "tap", "jasmine", "karma", "rspec", "minitest",
+  "phpunit", "pest", "ctest", "bats", "shunit2", "busted", "gcov", "gcovr", "lcov", "genhtml", "llvm-cov",
+  "coverage", 
+  // Build tools that build what the folder holds.
+  "ninja", "samu", "meson", "cmake", "qmake", "qmake6", "premake5", 
+  "scons", "nmake",
+  "jom", 
+  "cython", "cythonize", "f2py", "pybind11-config", "python-config", "python3-config",
+  // Images, audio, video, documents and fonts: converted or measured where they are given.
+  "convert", "magick", "identify", "montage", "composite", "compare", "vips", "vipsthumbnail", "ffprobe", 
+  "mediainfo", "optipng", "pngquant", "pngcrush", "oxipng", "advpng", "jpegoptim", "jpegtran", "cjpeg",
+  "djpeg", "mozjpeg", "cwebp", "dwebp", "gif2webp", "img2webp", "avifenc", "avifdec", "heif-convert", "heif-enc", "gifsicle", "svgo",
+  "rsvg-convert", "potrace", "pdftotext", "pdfinfo", "pdffonts", "pdfimages", "pdftoppm", "pdftocairo", "pdfseparate",
+  "pdfunite", "qpdf", "pdftk", "ps2pdf", "pdf2ps", "img2pdf", "ocrmypdf", "tesseract", "soxi",
+  "flac", "metaflac", "lame", "oggenc", "oggdec", "opusenc", "opusdec", "mpg123", "mp3info", "id3v2", "x264", "x265",
+  "handbrakecli", "mkvmerge", "mkvinfo", "mkvextract", "mp4box", "atomicparsley", "fc-scan", "fc-query", "otfinfo",
+  "ttx", "pyftsubset", "fonttools", "woff2_compress", "woff2_decompress", "dot", "neato", "circo", "fdp", "sfdp", "twopi", 
+  "graph-easy", "qrencode", "zbarimg", 
+  "textutil", "sips", "afconvert", "afinfo", "mdls", "mdfind", "fc-list", "fc-match",
+  // Documentation builders: they build the project's docs into the folder they are given.
+  "sphinx-build",
+  // Archives and compression (their own rows judge where they write).
+  "gzip", "gunzip", "lbzip2", "lbunzip2", "zcmp", "bzip2", "bunzip2", "xz", "unxz", "lzma", "unlzma", "lz4", "unlz4", "zstd", "unzstd", "brotli", "pigz",
+  "pbzip2", "pixz", "lzop", "7z", "7za", "7zr", "unzip", "zipinfo", "unar", "lsar", "cabextract", "cpio", "gzcat",
+  // System information: what the computer has and does, read only.
+  "lsb_release", "lscpu", "lsblk", "lspci", "lsusb", "lsmod", "lshw", "lsipc", "lslocks", "lslogins", "lsns", "lsscsi", "lsinitrd",
+  "lsof", "free", "vmstat", "iostat", "mpstat", "pidstat", "sar", "nstat", "ifstat", "dstat", "uptime", "tload", "slabtop", "ps",
+  "pstree", "pgrep", "pidof", "pmap", "pwdx", "prtstat", "nvidia-smi", "nvtop",
+  "radeontop", "intel_gpu_top", "rocm-smi", "sensors", "inxi", "neofetch", "fastfetch", "screenfetch", "hwinfo", "dmidecode", "lsdev",
+  "procinfo", "upower", "journalctl", "dmesg", "last", "lastb", "lastlog", "faillog", "finger", "getent", 
+  "systemd-analyze", "systemd-detect-virt", "systemd-cgls", "systemd-cgtop", "systemd-path",
+  "ss", "netstat", "ping", "ping6", "traceroute",
+  "traceroute6", "tracepath", "mtr", "dig", "nslookup", "host", "drill", "whois", "getmac", "ipconfig", "systeminfo", "tasklist",
+  "tracert", "pathping", "driverquery", "quser", "qwinsta", "query", "gpresult", "ver", "vol", "sw_vers",
+  "system_profiler", "vm_stat", "ioreg", "machinfo", "getprop", "dpkg-query",
+  "apt-cache", "apt-file", "repoquery", "vulkaninfo", "glxinfo", "eglinfo", "clinfo", "xdpyinfo", "uuidgen", "findmnt", "blkid",
+  
+  // Windows' own read-only programs.
+  "findstr", "where", "fc", "comp", "sort", "whoami", "hostname", "chcp", "tree", 
+  
+]);
+
+/** A verb-keyed tool's known verbs (ORDINARY_VERBS). */
+export interface OrdinaryVerbs {
+  /** The verbs known to only read, build, test or run the project's own code. */
+  verbs: readonly string[];
+  /** Options before the verb that take the next word. */
+  values?: readonly string[];
+  /** A verb whose next word is a verb of its own: only these of them (`pip config list`, `go mod tidy`). */
+  sub?: Readonly<Record<string, readonly string[]>>;
+  /** Options that make a known verb change a setting later commands obey (`go env -w`). */
+  asks?: Readonly<Record<string, readonly string[]>>;
+  /** Every operand is a command of the tool (`sbt clean test`, `ant clean dist`), each `;`-separated part too. */
+  all?: boolean;
+  /** A verb that is a file of these extensions is the project's own, run as the tool runs a file (`deno main.ts`). */
+  files?: RegExp;
+  /** The tool with no verb acts (`vercel` deploys): it asks. */
+  bare?: "asks";
+}
+
+const CONDA_VERBS: OrdinaryVerbs = { verbs: ["list", "info", "search", "create", "install", "update", "upgrade", "env", "run", "activate", "deactivate", "doctor", "compare", "--version", "-V", "help", "notices"], sub: { env: ["list", "create", "export", "update", "config"] } };
+const BUNDLE_VERBS: OrdinaryVerbs = {
+    verbs: ["install", "update", "exec", "check", "list", "show", "info", "outdated", "init", "add", "remove", "lock", "binstubs", "package", "cache", "platform", "doctor",
+      "gem", "version", "help", "--version", "-v"],
+  };
+
+/**
+ * The verbs Ember knows of the verb-keyed tools (commands-closed, the closed default): the verbs that read, build,
+ * test or run the project's own code. A tool Ember has no row for runs only with one of these (and asks with no verb);
+ * a tool with a row asks for a verb off the list that its row judged ordinary (`cargo zzz` runs `cargo-zzz`, `mix
+ * ecto.drop`, `tmux send-keys`, `stack exec`), "It runs cargo zzz, a command of cargo that Ember doesn't know." What a row
+ * judges dangerous it still says in its own words. Never a verb that writes shell start-up files (`conda init`), a
+ * home-wide default (`sdk default`, `asdf set -u`), or empties a cache or an environment (`pip cache purge`, `poetry env
+ * remove`): those ask as a prune does (commands-closed-x9-5).
+ */
+export const ORDINARY_VERBS: Readonly<Record<string, OrdinaryVerbs>> = {
+  // Tools with no row.
+  swift: { verbs: ["build", "test", "run", "--version", "-version", "--help"] },
+  jekyll: { verbs: ["build", "b", "doctor", "--version", "-v", "help", "--help"] },
+  rebar3: { verbs: ["compile", "eunit", "ct", "xref", "dialyzer", "edoc", "tree", "deps", "clean", "cover", "proper", "version", "help", "--version"] },
+  zig: { verbs: ["build", "test", "run", "fmt", "version", "env", "targets", "cc", "c++", "build-exe", "build-lib", "build-obj", "ast-check", "translate-c", "help", "zen", "init", "init-exe", "init-lib"] },
+  dune: { verbs: ["build", "test", "runtest", "fmt", "clean", "describe", "rules", "init", "promote", "--version", "--help"], values: ["--root", "--profile"] },
+  xmake: { verbs: ["build", "b", "run", "r", "config", "f", "clean", "c", "test", "project", "show", "--version", "--help"] },
+  meson: { verbs: ["setup", "configure", "compile", "test", "introspect", "dist", "init", "format", "fmt", "wrap", "subprojects", "env2mfile", "build", "builddir", "_build", "--version", "-v", "--help", "-h"] },
+  waf: { verbs: ["configure", "build", "clean", "distclean", "dist", "distcheck", "list", "step", "--help", "--version"], all: true,
+    values: ["--prefix", "--out", "-o", "--top", "-t", "--destdir", "--targets", "-j", "--jobs"] },
+  buck2: { verbs: ["build", "test", "run", "query", "cquery", "uquery", "aquery", "targets", "audit", "clean", "log", "docs", "init", "--version", "--help"] },
+  pants: { verbs: ["test", "lint", "fmt", "fix", "check", "package", "run", "peek", "list", "dependencies", "dependents", "filedeps", "roots", "help", "version", "tailor", "generate-lockfiles", "count-loc", "export-codegen", "paths", "update-build-files"], all: true },
+  maturin: { verbs: ["build", "develop", "sdist", "list-python", "generate-ci", "--version", "-V", "--help", "-h"] },
+  elm: { verbs: ["make", "init", "reactor", "install", "bump", "diff", "repl", "--version", "--help"] },
+  purs: { verbs: ["compile", "bundle", "docs", "graph", "ide", "repl", "--version", "--help"] },
+  xcodebuild: {
+    verbs: ["-version", "-list", "-showsdks", "-showBuildSettings", "-showdestinations", "-help", "-usage", "build", "test", "clean", "analyze", "archive",
+      "build-for-testing", "test-without-building", "docbuild"],
+    values: ["-project", "-workspace", "-scheme", "-target", "-configuration", "-sdk", "-destination", "-derivedDataPath", "-arch", "-resultBundlePath",
+      "-xcconfig", "-testPlan", "-only-testing", "-skip-testing", "-archivePath", "-jobs"],
+    asks: { "": ["-exportArchive", "-exportNotarizedApp", "-allowProvisioningUpdates", "-allowProvisioningDeviceRegistration"] },
+  },
+  "xcode-select": { verbs: ["-p", "--print-path", "-v", "--version", "-h", "--help"] },
+  xcrun: {
+    verbs: ["--show-sdk-path", "--show-sdk-version", "--show-sdk-build-version", "--show-sdk-platform-path", "--show-sdk-platform-version", "--find", "-f", "clang",
+      "clang++", "swift", "swiftc", "cc", "c++", "ld", "lipo", "otool", "nm", "strip", "size", "dsymutil", "--version", "-h", "--help"],
+    values: ["--sdk", "-sdk", "--toolchain"],
+  },
+  mkdocs: { verbs: ["build", "serve", "new", "--version", "-V", "--help", "-h", "get-deps"] },
+  buf: { verbs: ["build", "lint", "format", "breaking", "ls-files", "convert", "--version", "--help"] },
+  // The project's own files and tasks (commands-closed-y9-7): a TypeScript file run as node runs one, and the build,
+  // test and lint commands of the web and monorepo tools. Never their deploy, publish, exec or version commands.
+  tsx: { verbs: ["--version", "-v", "--help", "-h"], files: /\.(m|c)?(j|t)sx?$/i },
+  "ts-node": { verbs: ["--version", "-v", "-vv", "--help", "-h"], files: /\.(m|c)?(j|t)sx?$/i, values: ["-P", "--project", "-O", "--compiler-options", "--cwd", "--scope-dir"] },
+  next: { verbs: ["build", "dev", "lint", "info", "--version", "-v", "--help", "-h"] },
+  ng: { verbs: ["build", "b", "test", "t", "lint", "version", "v", "help", "--version", "--help"] },
+  turbo: { verbs: ["run", "build", "test", "lint", "typecheck", "check", "dev", "ls", "--version", "--help"] },
+  nx: { verbs: ["build", "test", "lint", "run", "run-many", "affected", "show", "list", "report", "format:check", "--version", "--help"] },
+  lerna: { verbs: ["run", "list", "ls", "ll", "la", "changed", "diff", "info", "--version", "--help"] },
+  zola: { verbs: ["build", "check", "--version", "-V", "--help"] },
+  "pre-commit": { verbs: ["run", "validate-config", "validate-manifest", "sample-config", "--version", "-V", "help", "--help"] },
+  // Tools with a row: the verbs their rows judge ordinary that are.
+  stack: { verbs: ["build", "test", "bench", "haddock", "run", "ls", "path", "query", "ide", "clean", "purge", "init", "new", "templates", "dot", "list", "setup", "--version", "--help"], values: ["--stack-yaml", "--resolver", "--work-dir"] },
+  cabal: { verbs: ["build", "test", "bench", "run", "haddock", "check", "list", "info", "sdist", "clean", "freeze", "outdated", "configure", "update", "gen-bounds", "init", "repl", "v2-build", "v2-test", "v2-run", "new-build", "new-test", "new-run", "--version", "--help"], values: ["--project-file", "--builddir", "--config-file"] },
+  mix: { verbs: ["compile", "test", "format", "deps.get", "deps.compile", "deps.tree", "deps.clean", "deps.unlock", "deps.update", "run", "phx.server", "phx.routes", "help", "docs", "dialyzer", "credo", "xref", "release", "escript.build", "archive.build", "clean", "new", "hex.info", "hex.outdated", "hex.search", "--version"] },
+  sbt: { verbs: ["compile", "test", "run", "package", "clean", "assembly", "update", "doc", "scalafmt", "scalafmtCheck", "scalafmtAll", "test:compile", "Test/compile", "testOnly", "testQuick", "dependencyTree", "about", "reload", "--version", "-version", "--help"], all: true },
+  lein: { verbs: ["compile", "test", "run", "uberjar", "jar", "check", "deps", "clean", "javac", "pom", "version", "help", "new", "classpath", "repl"] },
+  bazel: { verbs: ["build", "test", "run", "query", "cquery", "aquery", "info", "version", "help", "clean", "fetch", "coverage", "sync", "mod", "dump", "canonicalize-flags", "print_action", "license", "shutdown"] },
+  tox: { verbs: ["run", "r", "run-parallel", "p", "depends", "de", "list", "l", "config", "c", "quickstart", "q", "legacy", "le", "devenv", "--version", "--help", "-h"], values: ["-e", "-c", "--conf", "--workdir", "--root", "-m", "-f", "-x", "--override", "--installpkg"] },
+  ant: { verbs: ["build", "compile", "test", "jar", "war", "dist", "clean", "javadoc", "all", "init", "-p", "-projecthelp", "-version", "-help", "-diagnostics"], values: ["-f", "-buildfile", "-file", "-logfile", "-l", "-lib", "-propertyfile"], all: true },
+  cargo: {
+    verbs: ["build", "b", "check", "c", "test", "t", "bench", "run", "r", "doc", "d", "clean", "fmt", "clippy", "fix", "tree", "metadata", "locate-project", "pkgid",
+      "verify-project", "read-manifest", "version", "--version", "-V", "help", "search", "info", "update", "fetch", "generate-lockfile", "new", "init", "add", "remove", "rm",
+      "vendor", "package", "report", "nextest", "llvm-cov", "tarpaulin", "audit", "deny", "outdated", "expand", "insta", "machete", "udeps", "bloat", "asm", "hack",
+      "msrv", "sort", "about", "criterion", "fuzz", "miri", "rustc", "rustdoc", "semver-checks", "zigbuild", "xtask", "--list"],
+  },
+  go: {
+    verbs: ["build", "test", "run", "vet", "fmt", "mod", "get", "install", "env", "generate", "clean", "list", "doc", "version", "fix", "tool", "work", "help"],
+    sub: { mod: ["tidy", "download", "graph", "why", "verify", "init", "edit", "vendor", "help"], work: ["init", "use", "sync", "edit", "vendor"] },
+    asks: { env: ["-w", "-u"] },
+  },
+  rustup: {
+    verbs: ["show", "which", "check", "doc", "help", "--version", "-V", "target", "component", "toolchain", "update", "completions"],
+    sub: { target: ["list", "add"], component: ["list", "add"], toolchain: ["list", "install"] },
+  },
+  pip: {
+    verbs: ["install", "download", "freeze", "list", "show", "check", "search", "config", "cache", "index", "wheel", "hash", "completion", "debug", "inspect", "help", "--version", "-V", "lock"],
+    sub: { config: ["list", "get", "debug"], cache: ["dir", "info", "list"], index: ["versions"] },
+  },
+  pipx: { verbs: ["list", "environment", "completions", "--version", "help"] },
+  uv: {
+    verbs: ["run", "sync", "lock", "add", "remove", "tree", "pip", "venv", "build", "init", "export", "cache", "version", "help", "--version", "-V", "python", "format"],
+    sub: { python: ["list", "find", "install", "pin", "dir"], cache: ["dir"] },
+  },
+  poetry: {
+    verbs: ["install", "update", "add", "remove", "lock", "show", "build", "check", "run", "shell", "env", "version", "about", "help", "init", "new", "search", "export", "debug", "list", "cache", "sync", "--version", "-V"],
+    sub: { env: ["info", "list", "use", "activate"], cache: ["list"] },
+    values: ["-C", "--directory", "-P", "--project"],
+  },
+  pdm: { verbs: ["install", "add", "remove", "update", "lock", "list", "show", "build", "run", "sync", "init", "info", "venv", "export", "import", "cache", "fix", "outdated", "use", "search", "--version", "-V", "help"], sub: { cache: ["info", "list"], venv: ["list", "create", "activate"] } },
+  conda: CONDA_VERBS,
+  mamba: CONDA_VERBS,
+  micromamba: CONDA_VERBS,
+  hatch: { verbs: ["build", "test", "run", "env", "fmt", "version", "shell", "project", "status", "new", "clean", "dep", "python", "--version", "help"], sub: { python: ["show", "find", "install"] } },
+  rye: { verbs: ["sync", "add", "remove", "lock", "run", "build", "fetch", "list", "show", "init", "pin", "fmt", "lint", "test", "toolchain", "version", "help", "--version"], sub: { toolchain: ["list", "fetch"] } },
+  dotnet: {
+    files: /\.dll$/i,
+    verbs: ["build", "test", "run", "restore", "clean", "publish", "pack", "new", "add", "remove", "list", "sln", "format", "watch", "--info", "--version", "--list-sdks",
+      "--list-runtimes", "help", "-h", "--help", "msbuild", "vstest", "sdk", "build-server", "workload"],
+    sub: { workload: ["list", "search", "restore"], sdk: ["check"] },
+  },
+  gem: {
+    verbs: ["list", "search", "info", "specification", "spec", "contents", "which", "environment", "env", "help", "--version", "-v", "build", "query", "dependency",
+      "outdated", "check", "stale", "lock", "install", "update", "fetch", "unpack", "rdoc"],
+  },
+  bundle: BUNDLE_VERBS,
+  bundler: BUNDLE_VERBS,
+  systemctl: {
+    verbs: ["status", "show", "cat", "list-units", "list-unit-files", "list-sockets", "list-timers", "list-jobs", "list-dependencies", "list-machines",
+      "list-automounts", "list-paths", "is-active", "is-enabled", "is-failed", "is-system-running", "get-default", "show-environment", "help", "--version"],
+  },
+  launchctl: {
+    verbs: ["list", "print", "print-cache", "print-disabled", "blame", "procinfo", "hostinfo", "help", "version", "managerpid", "manageruid", "managername", "error", "dumpstate"],
+  },
+  svn: {
+    verbs: ["status", "st", "stat", "diff", "di", "log", "info", "list", "ls", "cat", "blame", "praise", "annotate", "ann", "update", "up", "checkout", "co", "help",
+      "--version", "proplist", "pl", "plist", "propget", "pg", "pget", "mergeinfo", "add", "resolve", "resolved", "cleanup", "changelist", "cl", "export", "upgrade"],
+  },
+  hg: {
+    verbs: ["status", "st", "diff", "log", "summary", "sum", "heads", "branches", "tags", "bookmarks", "annotate", "blame", "cat", "files", "grep", "help", "version",
+      "identify", "id", "incoming", "in", "outgoing", "out", "paths", "root", "tip", "parents", "manifest", "add", "addremove", "commit", "ci", "update", "up",
+      "checkout", "co", "pull", "clone", "merge", "resolve", "shelve", "unshelve", "export", "archive", "locate", "--version"],
+  },
+  p4: {
+    verbs: ["info", "opened", "changes", "describe", "files", "fstat", "have", "where", "filelog", "annotate", "diff", "diff2", "print", "sync", "clients", "users",
+      "labels", "branches", "streams", "workspaces", "status", "help", "edit", "add", "changelists", "counters", "dirs", "grep", "sizes", "reconcile", "-V", "--version"],
+  },
+  pyenv: { verbs: ["versions", "version", "which", "whence", "root", "prefix", "global", "local", "shell", "install", "rehash", "init", "commands", "help", "--version", "latest", "version-name", "version-file", "virtualenvs", "activate", "deactivate", "virtualenv", "doctor"] },
+  // Not `init`: since rbenv 1.3 it writes the shell's start-up file with no `-` (commands-closed-y9-6).
+  rbenv: { verbs: ["versions", "version", "which", "whence", "root", "prefix", "global", "local", "shell", "install", "rehash", "commands", "help", "--version", "version-name", "version-file"] },
+  // nodenv has no row to judge `global` (a home-wide default), so it isn't listed here.
+  nodenv: { verbs: ["versions", "version", "which", "whence", "root", "prefix", "local", "shell", "install", "rehash", "commands", "help", "--version", "version-name"] },
+  asdf: { verbs: ["list", "current", "which", "where", "plugin", "install", "latest", "help", "version", "--version", "info", "reshim", "set", "local", "global", "shim-versions"], sub: { plugin: ["list", "add", "update"] }, asks: { set: ["-u", "--home", "-p", "--parent"] } },
+  nvm: { verbs: ["ls", "list", "ls-remote", "current", "which", "version", "version-remote", "use", "install", "alias", "cache", "--version", "help", "run"], sub: { cache: ["dir"] } },
+  fnm: { verbs: ["list", "ls", "list-remote", "ls-remote", "current", "use", "install", "env", "alias", "completions", "--version", "help"] },
+  volta: { verbs: ["list", "which", "install", "pin", "fetch", "help", "--version", "-v"] },
+  opam: { verbs: ["list", "show", "info", "search", "install", "switch", "env", "init", "update", "upgrade", "pin", "var", "--version", "help", "lint", "source"], sub: { switch: ["list", "show", "create", "set"] } },
+  pipenv: { verbs: ["install", "lock", "sync", "update", "graph", "check", "requirements", "run", "shell", "--venv", "--where", "--py", "--version", "clean", "verify", "scripts", "--help"] },
+  sdk: { verbs: ["list", "ls", "current", "c", "use", "u", "install", "i", "home", "h", "env", "version", "v", "help", "update", "offline"] },
+  dart: { verbs: ["analyze", "compile", "create", "doc", "fix", "format", "info", "pub", "run", "test", "--version", "help"], sub: { pub: ["get", "upgrade", "add", "remove", "deps", "outdated", "downgrade", "global", "run", "cache"] }, files: /\.dart$/i },
+  flutter: { verbs: ["analyze", "build", "clean", "create", "devices", "doctor", "drive", "emulators", "gen-l10n", "install", "logs", "pub", "run", "test", "--version", "help", "precache", "attach", "assemble"], sub: { pub: ["get", "upgrade", "add", "remove", "deps", "outdated", "downgrade", "run", "cache"] } },
+  vcpkg: { verbs: ["install", "search", "list", "depend-info", "help", "version", "integrate", "x-update-baseline", "new", "add", "format-manifest", "owns", "update"], sub: { integrate: ["project", "install"] } },
+  conan: { verbs: ["install", "create", "build", "export", "search", "list", "inspect", "graph", "profile", "new", "version", "help", "lock", "source", "test", "editable", "cache"], sub: { cache: ["path", "check-integrity"] } },
+  nuget: { verbs: ["restore", "install", "pack", "list", "search", "locals", "help", "spec", "sources", "update", "config"], sub: { sources: ["list"], locals: ["list", "-list"], config: ["-asPath"] } },
+  luarocks: { verbs: ["install", "build", "make", "list", "search", "show", "doc", "path", "pack", "lint", "test", "init", "help", "--version", "config", "which", "download", "write_rockspec", "new_version", "unpack"], sub: { config: ["--list"] } },
+  vercel: { verbs: ["dev", "build", "ls", "list", "inspect", "logs", "whoami", "help", "--version", "-v", "--help", "-h"], bare: "asks" },
+  deno: {
+    verbs: ["run", "task", "test", "bench", "fmt", "lint", "check", "compile", "doc", "info", "repl", "add", "remove", "outdated", "init", "serve", "coverage",
+      "types", "completions", "cache", "clean", "vendor", "help", "--version", "-V", "-v"],
+    files: /\.(m|c)?(j|t)sx?$/i,
+  },
+  tmux: {
+    asks: { "": ["-f", "-c"] },
+    values: ["-L", "-S", "-f", "-c", "-T"],
+    verbs: ["ls", "list-sessions", "list-windows", "lsw", "list-panes", "lsp", "list-clients", "lsc", "list-buffers", "lsb", "list-commands", "lscm", "list-keys", "lsk",
+      "has-session", "has", "info", "server-info", "display-message", "display", "show-options", "show", "show-window-options", "showw", "-V"],
+  },
+  // The other ways into a terminal or an editor of the user's (commands-remote-r9-1): only what lists runs. What
+  // names the user's tabs and sessions or what runs in them is no such list (integ-x-1): a terminal names a tab from
+  // the command and the folder in it, so zellij's `action query-tab-names`, `list-clients` and `dump-layout` and
+  // it2api's `list-sessions`, `show-hierarchy` and `show-focus` have no row and ask, as they did before these rows.
+  zellij: { verbs: ["list-sessions", "ls", "--version", "-V", "--help", "-h"], values: ["-s", "--session", "-l", "--layout", "-c", "--config", "--config-dir", "--data-dir"], bare: "asks" },
+  kitten: { verbs: ["@", "--version", "--help"], sub: { "@": ["ls", "get-colors"] }, bare: "asks" },
+  nvr: { verbs: ["--serverlist", "--version", "--help", "-h"], bare: "asks" },
+  it2api: { verbs: ["--help", "-h"], bare: "asks" },
 };

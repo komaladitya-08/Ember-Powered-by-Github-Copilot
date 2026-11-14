@@ -19,9 +19,11 @@ export const SHELL_FAMILY: Readonly<Record<ShellId, ShellFamily>> = { bash: "pos
  * c "remote-delete" (deleting from source control or a remote service), d "secret" (credentials, secrets, the
  * clipboard, screen pictures, shell history), e "system" (privilege and system changes, package installs, other users'
  * processes, anything that runs later: shell start-up files, git hooks and code-running git settings), f "escape"
- * (download-and-run, or outliving the kill switch), g "unclear" (Ember can't classify it confidently).
+ * (download-and-run, or outliving the kill switch), g "unclear" (Ember can't classify it confidently), h "unknown" (a
+ * program, or a verb of a tool Ember knows, that Ember has no row for: commands-closed, the closed default; the user's
+ * own words naming it announce it).
  */
-export type DangerClass = "destroy" | "publish" | "remote-delete" | "secret" | "system" | "escape" | "unclear";
+export type DangerClass = "destroy" | "publish" | "remote-delete" | "secret" | "system" | "escape" | "unclear" | "unknown";
 
 /** Classes that always ask, even when the user's own words asked for it (D4.4). */
 export const ALWAYS_ASK: ReadonlySet<DangerClass> = new Set(["secret", "escape", "unclear"]);
@@ -292,6 +294,13 @@ export interface CommandStamp {
    * on the PC when the request is sent (no clock is compared across machines: critique integration-6). null: no yes.
    */
   approval: { ageMs: number } | null;
+  /**
+   * Autopilot on the PC announced the command with its Stop countdown instead of asking, and the user didn't stop it:
+   * how long ago the countdown ended, measured as an approval's age is. Never a yes: gate 2 lets it stand in for one
+   * only where its own administrator allows Autopilot, and never for a command that would read or print secrets,
+   * outlive the kill switch or that it can't tell the effect of (commands/autopilot.ts askedOfFinding).
+   */
+  announced?: { ageMs: number };
 }
 
 /** How a run ended. */
@@ -302,6 +311,18 @@ export interface RunExit {
   ms: number;
   /** failed-to-start and refused-remote: why, in plain words. */
   error?: string;
+  /**
+   * exit: the run ended, but the end of its output never came back (WSL1's relay lost it, or a remote's last bytes
+   * didn't arrive in time), so the output is incomplete and is never reported as all of it.
+   */
+  outputCut?: boolean;
+  /**
+   * exit: the run's own end never came back (a WSL run without its launcher's end marker): the command may not have
+   * finished, and its exit code is only wsl.exe's. Always with outputCut.
+   */
+  endLost?: boolean;
+  /** endLost: the WSL distro was no longer running when the run ended (it stopped, or was stopped, meanwhile). */
+  targetStopped?: boolean;
   /** refused-remote: the remote would run it after the user's yes (gate 2's needs_confirm). */
   needsConfirm?: boolean;
   /** refused-remote: the card lines the remote's own check produced (untrusted text, shown quoted). */
@@ -362,6 +383,8 @@ export interface CommandCard {
   classes?: DangerClass[];
   /** An announcement the AI review cleared (commands/review.ts), not one the user's own words asked for exactly. */
   reviewed?: boolean;
+  /** An announcement Autopilot made (commands/autopilot.ts), of a command the user didn't ask for exactly: its heading says so. */
+  autopilot?: boolean;
   /**
    * The target's home folder, for a POSIX shell: the header says it as ~ ("in ~/src/app", commands-remote-8). Shown
    * only; the approval binds the whole `cwd`.

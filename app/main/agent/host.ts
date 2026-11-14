@@ -25,7 +25,8 @@ import { hasConsent, type SettingsStore } from "../settings";
 import type { BubbleState, EmberState } from "../../shared/overlay";
 import type { ConversationContext } from "../../shared/ipc";
 import { TaskManager, handedElsewhere, taskOutcome, titleOf, type KeptCard, type RetriedWords, type StopCause, type Task, type WorkerLike } from "./tasks";
-import { LINUX_WORKER_SYSTEM, Worker, type TaskSpec, type WorkerDeps, type WorkerSystem } from "./worker";
+import { redactingClient, type ModelRedactor } from "./redacting-client";
+import { LINUX_WORKER_SYSTEM, Worker, type TaskSpec, type WorkerDeps, type WorkerSystem, type WorkerVault } from "./worker";
 import type { Confirmer } from "./confirm";
 import type { WindowTarget } from "../perception";
 import type { Bounds } from "../perception/sidecar";
@@ -44,6 +45,7 @@ import type { SignInWith } from "./github-app";
 import { SessionToolsTimeoutError, type SessionExtensions } from "./session-config";
 import { copilotOneShot } from "./one-shot";
 import { PROJECT_SYSTEM, ProjectModelError, projectFailureText, type ProjectModelFailure } from "./project";
+import { workspaceOwners } from "./project-workspaces";
 import { runCommandTool } from "../commands/flow";
 import { DEFAULT_TERM_SIZE } from "../commands/window";
 import { afterTheStep } from "../policy/audit";
@@ -58,9 +60,11 @@ import { clearRuntimeTemp, runtimeTempDir, runtimeTempEnv } from "./runtime-temp
 import { LOCKED_DESCRIBE, lockedOutSystem } from "../screen-lock";
 import { Reminders, whenWords, type Reminder } from "./reminders";
 import type { RoutineBook } from "./routines";
-import { AUTONOMY_NOT_SAVED, autonomyIntent, planAutonomyIntent } from "./autonomy-intent";
+import { AUTONOMY_NOT_SAVED, modeIntent, planModeIntent, type ModeIntentState } from "./autonomy-intent";
+import type { ApprovalMode } from "../../shared/approvals";
 import type { TaskVoiceTrust } from "./voice-answer";
-import { autonomyInForce } from "../policy/autonomy";
+import { BELOW_INTERACTIVE_HINT, approvalInputs, belowInteractiveForCard, modeInForce } from "../policy/autonomy";
+import { WATCHES_NEEDED } from "../doctor";
 import { CATCH_UP_MS, catchUpQuestion, catchUpReply, healthQuestion, healthReply, type Health, READ_OUT_REPLY, readOutRequest, resultsReply, resultsRequest, retryRequest, statusQuestion, statusReply, stopRequest } from "./status";
 import { CONVERSATION_LIMIT, retainedConversationText, type ConversationTurn, type ConversationTurnEnd } from "../../shared/conversation";
 import type { HistoryStore } from "./conversation-store";
@@ -229,6 +233,11 @@ export interface HostOptions {
      * change what's saved. Null for anything else.
      */
     rememberNote?(text: string): MemoryNote | null;
+    /**
+     * The conversation ended (New conversation, sign-out, another account, another model service): what the user had
+     * Ember forget in it is no longer held back from the next, which holds none of it (memory-r9-1).
+     */
+    conversationEnded?(): void;
   };
   /** A reminder the user set is due: main says it aloud (when replies are spoken) and notifies if the user is away. */
   onReminder?: (r: Reminder) => void;
@@ -246,26 +255,29 @@ export interface HostOptions {
   health?: () => Pick<Health, "mic" | "speaks">;
   /**
    * Says `text` (Ember's last answer) aloud now, for "read it out" (voice-speaking-r6-1). False where Ember isn't
-   * speaking replies (speaking off, the organisation, no voice at all): nothing is said. Absent: never said.
+   * speaking replies (speaking off, the organisation): nothing is said. "no-voice" where no voice here can say it
+   * (voice-speaking-r9-3): nothing is said either, and the conversation says so. Absent: never said.
    */
-  readOut?: (text: string) => boolean;
+  readOut?: (text: string) => boolean | "no-voice";
   /**
    * Which tasks the owner asked for in a verified voice (voice-answer.ts TaskVoiceTrust): a task started in a turn whose
    * request Voice Match verified is granted it, and a task changed by a request it didn't verify loses it. Absent: none.
    */
   voiceTrust?: Pick<TaskVoiceTrust, "grant" | "end">;
   /**
-   * "Work without asking" by voice (autonomy-intent.ts): its state, turning it on or off, and opening its switch (with
-   * its card) in Settings. Absent: the words go to the conversation like any others.
+   * The approval mode by voice or typed words (autonomy-intent.ts: a mode named, "work without asking", "ask me first
+   * again"): how the modes stand (main builds it from the settings, with Voice Match's switch), choosing a mode or
+   * withdrawing every card's agreement ("asking"), and opening Home's choice at a mode's row or its card. Absent: the
+   * words go to the conversation like any others.
    */
   autonomy?: {
-    state(): { on: boolean; consented: boolean; managed: boolean };
+    state(): ModeIntentState;
     /**
      * `how`: spoken (and whether Voice Match verified it) or typed, for the audit entry. False when it couldn't be made
-     * so (its audit entry couldn't be written, so a turn on was undone).
+     * so (its audit entry couldn't be written, so a mode that asks less was undone).
      */
-    set(on: boolean, how: { via: "voice" | "typed"; verified: boolean }): boolean;
-    open(consent: boolean): void;
+    set(to: ApprovalMode | "asking", how: { via: "voice" | "typed"; verified: boolean }): boolean;
+    open(mode: ApprovalMode, card: boolean): void;
   };
   /**
    * Tasks that do the work show it on their cards in the corner, and the bubble beside the cursor only while they use
@@ -349,8 +361,10 @@ export interface HostOptions {
    */
   signedOutWhy?: () => string | null;
   /**
-   * The host whose card the user's own provider waits for (on, allowed and with an address, not agreed to for it), or
-   * null: signed out then, agreeing to it is the way on, not a GitHub sign-in (integrations-r3-1).
+   * The host whose card the user's own provider waits for (on, allowed and with an address, not agreed to for it, or its
+   * yes withdrawn or held at start: provider-record.ts), or null. Agreeing to it is the way on, not a GitHub sign-in
+   * (integrations-r3-1), and while it waits nothing connects to Copilot either, signed in or not: the user chose their
+   * own provider, so their words go nowhere rather than to GitHub (r10-safety-x10-1).
    */
   providerWaiting?: () => string | null;
   /**
@@ -380,8 +394,8 @@ export interface HostOptions {
   turnSlowMs?: number;
   /** How long a turn under way may hear nothing before it is given up on (ms; TURN_SILENT_MS). */
   turnSilentMs?: number;
-  /** Whether this user's inotify instances are all in use (inotifyUsedUp; tests pass their own). */
-  inotifyUsedUp?: () => boolean;
+  /** Whether this user's inotify instances, or its watches ("watches"), are used up (inotifyUsedUp; tests pass their own). */
+  inotifyUsedUp?: () => boolean | "watches";
   /** Where tasks act (§2): the targets runtime's view for the host (absent: this computer only, as before). */
   targets?: TargetsForAgent;
   /** The audit log and Confirmer tasks use when there are no `hands` (no window system: commands-only targets, §2.6). */
@@ -411,6 +425,16 @@ export interface HostOptions {
   settingsKey?: () => string | null;
   /** The stop chord as Ember holds it now, or null: an announcement names it only then (cross-review X0). As settingsKey. */
   stopKey?: () => string | null;
+  /**
+   * The vault, for tasks on this computer's own screen (fill_from_vault; owner decision of 2026-11-12). Never handed to
+   * a task in WSL or on a computer reached over SSH. Absent: no task has the tool.
+   */
+  vault?: WorkerVault;
+  /**
+   * The vault's redactor (app/main/vault/redact.ts): the runtime client is wrapped in it (redactingClient), so no
+   * prompt, system message or tool result of any session holds a value the vault filled. Absent: nothing is filled.
+   */
+  redact?: ModelRedactor;
   /**
    * How much the bubble's type is scaled now (the user's text size: page-prefs' textScale): an answer that needs more
    * than the bubble's six lines at that size offers Read all (cross-review X2). Default 1.
@@ -469,6 +493,10 @@ function followStatus(runner: unknown, show: (text: string) => void): () => void
 const NO_GUIDE = "Ember can't point at things in this session (no desktop access). Explain the steps in words instead.";
 
 /** What a task cut off by a runtime that stopped says (it didn't finish, and the user didn't stop it). */
+/** What a task stopped because the organisation's policy changed says, in place of "Stopped." (tasks-approvals-r9-5). */
+export const POLICY_CHANGED_STOP = "Your organisation changed my policy, so I stopped this.";
+/** What a task this computer's screen lock stopped says (tasks-approvals-r9-5). */
+export const SCREEN_LOCKED_STOP = "The screen locked, so I stopped this.";
 export const CUT_OFF = "Copilot stopped unexpectedly; the task didn't finish.";
 /** The same when the runtime was reconnected because it stopped answering the conversation (it didn't stop). */
 export const CUT_OFF_STALLED = "Copilot didn't answer; the task didn't finish.";
@@ -489,6 +517,11 @@ const BUSY_HEALTH_MS = 2500;
 const NOT_ANSWERING = "Copilot isn't answering. I'm reconnecting; ask me again in a moment.";
 /** The same while tasks are at work: Copilot is reconnected once they're done. */
 const NOT_ANSWERING_AFTER_TASKS = "Copilot isn't answering. I'll reconnect when the tasks that are running finish; ask me again then.";
+/**
+ * Signed out, and it couldn't be saved (the saved sign-in is still on disk, or the signed-out note couldn't be
+ * written): what Models & connections says in place of "sign in below" (reliability-r9-2).
+ */
+export const SIGN_OUT_NOT_KEPT = "You're signed out for now, but Ember couldn't save that: its data folder can't be written. Until it can, Ember may sign in again by itself the next time it starts.";
 /** The same, with this user's inotify instances used up (the runtime can't begin a turn then). */
 const NO_WATCHERS = "Copilot can't work right now: this computer has run out of file watchers. Close a few apps, then ask me again.";
 const NO_WATCHERS_WHY = "Copilot isn't answering: the system's limit on file watchers (fs.inotify.max_user_instances) is used up. Close some apps, or ask IT to raise the limit.";
@@ -538,37 +571,59 @@ export function runtimeWords(service: ServiceKind) {
   };
 }
 
+/** The inotify use of one user: instances, and the files and folders they watch where those can be counted. */
+export interface InotifyUse { used: number; max: number; watches?: { used: number; max: number } }
+
 /**
  * This user's inotify instances in use and the limit (fs.inotify.max_user_instances: 128 on RHEL 8, and every app
  * takes some; Ember's Copilot runtime takes one per conversation or task), or null when they can't be counted.
- * Counted in `proc`: the instances held by processes of `uid`.
+ * Counted in `proc`: the instances held by processes of `uid`. `watches`: the files and folders those instances watch
+ * (each "inotify wd:" line of an instance's fdinfo) against fs.inotify.max_user_watches (8,192 on RHEL 8, which an
+ * editor, a sync client or the desktop's file indexer can use up) or the user namespace's own lower limit
+ * (user.max_inotify_watches); left out where there is no limit to read. With the watches used up the runtime took a
+ * request and never began it, as with the instances, while the count of instances said all was well (reliability-r9-1).
  */
-export function inotifyUse(proc = "/proc", uid = process.getuid?.()): { used: number; max: number } | null {
+export function inotifyUse(proc = "/proc", uid = process.getuid?.()): InotifyUse | null {
   try {
     const max = Number(fs.readFileSync(path.join(proc, "sys/fs/inotify/max_user_instances"), "utf8"));
     if (!(max > 0)) return null;
-    let n = 0;
+    let n = 0, watched = 0;
     for (const pid of fs.readdirSync(proc)) {
       if (!/^\d+$/.test(pid)) continue;
       const dir = path.join(proc, pid, "fd");
       try {
         if (uid !== undefined && fs.statSync(path.join(proc, pid)).uid !== uid) continue;
         for (const fd of fs.readdirSync(dir)) {
-          try { if (fs.readlinkSync(path.join(dir, fd)) === "anon_inode:inotify") n++; } catch { /* closed meanwhile */ }
+          try {
+            if (fs.readlinkSync(path.join(dir, fd)) !== "anon_inode:inotify") continue;
+            n++;
+            watched += (fs.readFileSync(path.join(proc, pid, "fdinfo", fd), "utf8").match(/^inotify wd:/gm) ?? []).length;
+          } catch { /* closed meanwhile */ }
         }
       } catch { /* gone, or another user's */ }
     }
-    return { used: n, max };
+    const limits = ["sys/fs/inotify/max_user_watches", "sys/user/max_inotify_watches"].flatMap(file => {
+      try { const v = Number(fs.readFileSync(path.join(proc, file), "utf8")); return Number.isFinite(v) && v >= 0 ? [v] : []; } catch { return []; /* no such limit here */ }
+    });
+    return { used: n, max, ...(limits.length ? { watches: { used: watched, max: Math.min(...limits) } } : {}) };
   } catch {
     return null;
   }
 }
 
-/** Whether they are all in use: the Copilot runtime then takes requests but never begins them. */
-export function inotifyUsedUp(proc = "/proc", uid = process.getuid?.()): boolean {
+/**
+ * Whether they are all in use: the Copilot runtime then takes requests but never begins them. "watches" when it is the
+ * watched files and folders that are used up (fewer than WATCHES_NEEDED free), not the instances.
+ */
+export function inotifyUsedUp(proc = "/proc", uid = process.getuid?.()): boolean | "watches" {
   const u = inotifyUse(proc, uid);
-  return !!u && u.used >= u.max;
+  if (!u) return false;
+  if (u.used >= u.max) return true;
+  return u.watches && u.watches.max - u.watches.used < WATCHES_NEEDED ? "watches" : false;
 }
+
+/** runtimeWords' noWatchersWhy, for the watched files and folders: the limit an administrator raises is another one. */
+const watchesWhy = (why: string) => why.replace("file watchers (fs.inotify.max_user_instances)", "watched files and folders (fs.inotify.max_user_watches)");
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 /** A promise and the call that settles it: a Stop's word to a request that waits (AgentHost.stopSignal). */
@@ -879,6 +934,11 @@ interface UserRequest {
    * the user's own words for commands either (no announce-with-Stop for a dangerous command it names); not voice.
    */
   suggested?: boolean;
+  /**
+   * Heard while Ember was speaking, or where Ember can't tell its own voice from the user's and had spoken since it
+   * began to listen: never the user's own words for Assisted's check (PLAN.md §2 "Approvals").
+   */
+  overEmber?: boolean;
   /** Spoken and verified by Voice Match as the owner's, at this time (a task it starts holds voice trust from then). */
   verifiedAt?: number;
   /** "Remember…" while memory can't keep it: said behind its turn's answer (memory-c1-1). */
@@ -997,6 +1057,8 @@ export class AgentHost {
   private active: ActiveProvider | null = null;
   /** What providerNow() said as this connection started (providerKey), to see a change since. */
   private startedProvider = "";
+  /** This connection held Copilot back while the user's own provider waits for its card (providerWaiting). */
+  private ownWaits = false;
   /** Requests asked after the model service changed while a turn or a task was under way: sent to the new one later. */
   private held: { text: string; context: Parameters<AgentHost["ask"]>[1]; epoch: number; how: Parameters<AgentHost["ask"]>[3] }[] = [];
   /** Requests asked that wait for a connection, or for a silent turn to end, before they are sent (conversationTurn). */
@@ -1078,6 +1140,8 @@ export class AgentHost {
   private readonly voiceUnchecked = new WeakSet<TranscriptEntry>();
   /** The user's requests that were Ember's suggestions they chose (UserRequest.suggested). */
   private readonly suggested = new WeakSet<TranscriptEntry>();
+  /** The user's lines that were heard over Ember's own voice (UserRequest.overEmber). */
+  private readonly overEmber = new WeakSet<TranscriptEntry>();
   /**
    * Lines of the user's words a task was refused for because they named the terminal, and the request whose turn
    * refused it: a later turn (the user answering how else) isn't held to them again.
@@ -1144,6 +1208,11 @@ export class AgentHost {
   /** The answer streaming now (Home shows it as it comes); null between answers. */
   private stream: { id: number; text: string; unsaved: boolean } | null = null;
   private streamSeq = 0;
+  /**
+   * The answer Home was showing when Ember began to quit, kept then as a line (stop()): its own message may still come
+   * while Ember quits, and it is that line, never a second one.
+   */
+  private keptAtQuit: TranscriptEntry | null = null;
   /** A "New conversation" under way: a second one joins it. */
   private resetting: Promise<void> | null = null;
   private readonly stateFile: string;
@@ -1170,6 +1239,18 @@ export class AgentHost {
     };
   }
 
+  /** Said once a run (BELOW_INTERACTIVE_HINT); taken by the first question it is added to. */
+  private belowInteractiveTold = false;
+  /**
+   * The words for the first question Interactive would have announced instead, while Ember is below Interactive for
+   * want of its card (an existing user after the update): once a run (modes-x9p-3).
+   */
+  private belowInteractiveHint(): string | null {
+    if (this.belowInteractiveTold || !belowInteractiveForCard(this.o.settings.get().approvals, this.o.admin?.() ?? null)) return null;
+    this.belowInteractiveTold = true;
+    return BELOW_INTERACTIVE_HINT;
+  }
+
   /** The user's own model service in use runs on this computer (Ollama, LM Studio): unreachable, it is asked about as not running. */
   private ownServiceHere(): boolean {
     const p = this.active ?? this.providerNow();
@@ -1188,7 +1269,7 @@ export class AgentHost {
     const c = this.confirmer;
     this.owner = new BubbleOwner(c ? { up: () => c.waiting, answered: () => c.settled().then(() => this.dropAnnouncement()) } : undefined);
     // Every change of the conversation's bubble may change what Home says of its turn (its stall: home-c1-1).
-    this.presenter = new Presenter(patch => { o.setState(patch); this.turnChanged(); }, undefined, () => "Ember", this.owner, text => this.remember("ember", text, undefined, undefined, this.stream?.id, this.stream?.unsaved), () => this.serviceKind(),
+    this.presenter = new Presenter(patch => { o.setState(patch); this.turnChanged(); }, undefined, () => "Ember", this.owner, text => this.rememberAnswer(text), () => this.serviceKind(),
       { onEvent: e => this.conversationEvent(e), onProblem: text => this.rememberProblem(text), ...this.bubbleOptions });
     this.noticeBoard = new Presenter(o.setState, undefined, () => "Ember", this.owner, undefined, () => this.serviceKind(), this.bubbleOptions);
     this.offerBoard = new Presenter(o.setState, undefined, () => "Ember", this.owner, undefined, () => this.serviceKind(), this.bubbleOptions);
@@ -1361,6 +1442,21 @@ export class AgentHost {
    * notice gives the bubble back itself after this long (ten times its usual time with More time to read and answer):
    * held that long, and the 30 seconds count from then (cross-review X4).
    */
+  /**
+   * What Ember does without asking outside a task, said in the conversation's bubble with its "Without asking" tag: the
+   * extensions gate's announcement in Autopilot (extensions/gate.ts gateAnnouncement: Ember's own words, never a
+   * model's). Whether it was said: the gate asks instead when it wasn't.
+   */
+  announceUnasked(words: string): boolean {
+    try {
+      this.presenter.workedWithoutAsking(words);
+      return true;
+    } catch (err) {
+      this.o.log.warn("agent.announce_failed", { err });
+      return false;
+    }
+  }
+
   claimBubble(o: { pin?: boolean; ms?: number } = {}): void {
     this.owner.claim(this.mainBubble);
     this.presenter.letGo();
@@ -1590,11 +1686,15 @@ export class AgentHost {
    * a call or a video can say "delete the build folder"), present only when some were left out. Commands hear these.
    * `typedOnly`: commandWords leaves out only a routine's steps, nothing heard by voice (the command card doesn't say
    * the user asked by voice).
+   * `checkWords`: the words Assisted's check reads a step against (PLAN.md §2 "Approvals"), present only when they
+   * differ from the ones commands hear: what was heard unchecked counts here, but never a suggestion the user chose
+   * (Ember's words), words heard over Ember's own voice, or a routine's saved steps (the request that ran it counts).
    */
-  private userWordsOf(r: UserRequest | null, o: { routine?: boolean } = {}): { words?: string; agreed?: Agreement[]; commandWords?: string; typedOnly?: boolean; retried?: { task: string; partWay?: boolean } } {
+  private userWordsOf(r: UserRequest | null, o: { routine?: boolean } = {}): { words?: string; agreed?: Agreement[]; commandWords?: string; typedOnly?: boolean; checkWords?: string; retried?: { task: string; partWay?: boolean } } {
     if (!r) return {};
     const said = [r.words];
     const typed = r.voiceUnchecked || r.suggested ? [] : [r.words];
+    const checked = r.suggested || r.overEmber ? [] : [r.words];
     // Left out for being heard where Ember can't tell (the card then says so), not only for being a suggestion.
     let heardLeft = !!r.voiceUnchecked;
     const agreed: Agreement[] = [];
@@ -1610,6 +1710,7 @@ export class AgentHost {
       const ended = (w: string) => (/[.!?…]\s*$/.test(w) || !w.trim() ? w.trim() : `${w.trim()}.`);
       said.unshift(ended(again.userWords));
       if (typed.length) typed.unshift(ended(again.commandWords ?? again.userWords));
+      if (checked.length) checked.unshift(ended(again.checkWords ?? again.commandWords ?? again.userWords));
       // What they agreed to for it goes too, as its card's Try again carries it (tasks-approvals-c1-3).
       if (again.agreed) agreed.push(...again.agreed);
       at = 0;
@@ -1630,6 +1731,7 @@ export class AgentHost {
       said.unshift(/[.!?]\s*$/.test(before.text) ? before.text.trim() : `${before.text.trim()}.`);
       if (!this.voiceUnchecked.has(before) && !this.suggested.has(before)) typed.unshift(said[0]);
       else if (this.voiceUnchecked.has(before)) heardLeft = true;
+      if (!this.suggested.has(before) && !this.overEmber.has(before)) checked.unshift(said[0]);
       at = k;
     }
     const left = typed.length < said.length || again?.commandWords !== undefined;
@@ -1640,10 +1742,13 @@ export class AgentHost {
     // command they didn't say does), so commandWords is always given then, without them (the worker would otherwise
     // fall back to the words, steps and all). `routine`: false leaves them out (a steer).
     const steps = o.routine !== false && r === this.turn ? this.conductor?.routineSaid ?? "" : "";
+    // What the worker would take for the check without being told (commandWords, else the words): given only when it differs.
+    const forCommands = left || steps ? typed.join("\n") : said.join("\n");
     if (steps) said.push(steps);
     return {
       words: said.join("\n"), ...(agreed.length ? { agreed } : {}),
       ...(left || steps ? { commandWords: typed.join("\n") } : {}),
+      ...(checked.join("\n") !== forCommands ? { checkWords: checked.join("\n") } : {}),
       ...((steps || left) && !voiced ? { typedOnly: true } : {}),
       ...(again ? { retried: { task: again.task, ...(again.partWay ? { partWay: true } : {}) } } : {}),
     };
@@ -1689,7 +1794,8 @@ export class AgentHost {
 
   /** A word of the answer (of the chat `chat`: a retired chat's late words are dropped). */
   private streamDelta(delta: string, chat: number): void {
-    if (chat !== this.conversationEpoch || !delta) return;
+    // (Quitting: the answer Home showed was kept as it stood; no words are shown after it.)
+    if (chat !== this.conversationEpoch || !delta || this.quitting) return;
     if (!this.stream) {
       if (!delta.trim()) return;
       this.stream = { id: ++this.streamSeq, text: "", unsaved: this.staleSource() };
@@ -1699,15 +1805,35 @@ export class AgentHost {
   }
 
   /** The answer open now is complete or stopped short; `chat` undefined: ended by this chat's own doing. */
-  private endStream(state: "done" | "interrupted", chat?: number): void {
+  private endStream(state: "done" | "interrupted", chat?: number): TranscriptEntry | undefined {
     const s = this.stream;
-    if (!s || (chat !== undefined && chat !== this.conversationEpoch)) return;
+    if (!s || (chat !== undefined && chat !== this.conversationEpoch)) return undefined;
     this.stream = null;
     const text = plainText(s.text);
     // The words said so far are kept in the transcript (the host's record, so a reopened Home shows them), before the
     // stream's own event so Home never sees the row go and come back.
-    if (state === "interrupted" && text.trim()) this.remember("ember", text, undefined, true, s.id, s.unsaved);
+    const kept = state === "interrupted" && text.trim() ? this.remember("ember", text, undefined, true, s.id, s.unsaved) : undefined;
     this.o.onAnswerStream?.({ id: s.id, text, state });
+    return kept;
+  }
+
+  /**
+   * A finished answer, from the presenter (after its words streamed to Home). Quitting after the words Home showed were
+   * kept (stop()), it is that line: the same words mark it whole (no longer stopped short), and words Home never
+   * showed are not kept. Nothing else is said while Ember quits.
+   */
+  private rememberAnswer(text: string): void {
+    const kept = this.keptAtQuit;
+    if (!this.quitting || !kept) { this.remember("ember", text, undefined, undefined, this.stream?.id, this.stream?.unsaved); return; }
+    const at = this.transcript.indexOf(kept);
+    if (at < 0 || !kept.stopped || retainedConversationText(text).text.trim() !== kept.text.trim()) return;
+    const whole: TranscriptEntry = { ...kept };
+    delete whole.stopped;
+    this.transcript[at] = whole;
+    if (this.unsaved.has(kept)) this.unsaved.add(whole);
+    this.keptAtQuit = whole;
+    this.o.onTranscript?.(this.getTranscript());
+    this.saveHistory();
   }
 
   private remember(who: TranscriptEntry["who"], text: string, heardId?: number, stopped?: true, answerId?: number, fenced = false): TranscriptEntry {
@@ -1806,10 +1932,15 @@ export class AgentHost {
    */
   start(token: string | null, source?: string, how: "user" | "auto" = "user", name?: string): Promise<AgentPhase> {
     this.quitting = false;
+    this.keptAtQuit = null;
     this.sourceName = source === "environment" ? name : undefined;
     const automatic = source === "environment" || source === "github-cli";
+    // A start after Ember gave up on a runtime that kept stopping is someone's own try (Check again, a sign-in): the
+    // count starts afresh, or one more stop within ten minutes gave up again without a single try (reliability-r9-5).
+    if (this.gaveUp) { this.gaveUp = false; this.crashes = []; }
     if (token && how === "user") this.setSignedOut(false);
-    else if (token && automatic && readAgentState(this.stateFile).signedOut) token = null;
+    // (Signed out in this run counts whatever the disk kept of it: reliability-r9-2.)
+    else if (token && automatic && (this.signedOutNow || readAgentState(this.stateFile).signedOut)) token = null;
     return this.launch(token, source);
   }
 
@@ -1834,9 +1965,26 @@ export class AgentHost {
     }
   }
 
+  /**
+   * The user signed out, or signed in again. Kept for this run whatever the disk says: a sign-out whose flag couldn't
+   * be written (a read-only or broken disk) still holds a GitHub CLI or environment sign-in back until Ember closes,
+   * and the status says it wasn't saved (signOutUnsaved), as the next start can't know of it (reliability-r9-2).
+   */
   private setSignedOut(on: boolean): void {
-    try { writeAgentState(this.stateFile, { signedOut: on }); } catch (err) { this.o.log.warn("agent.state_not_saved", { err }); }
+    this.signedOutNow = on;
+    try {
+      writeAgentState(this.stateFile, { signedOut: on });
+      this.signOutUnsaved = false;
+    } catch (err) {
+      this.signOutUnsaved = on;
+      this.o.log.warn("agent.state_not_saved", { err });
+    }
   }
+  private signedOutNow = false;
+  /** Ember stopped reconnecting after the runtime kept stopping (lost): the next start() begins the count again. */
+  private gaveUp = false;
+  /** The last sign-out couldn't be saved: the next start may use a sign-in it finds, and the status says so. */
+  signOutUnsaved = false;
 
   /**
    * Disconnects for good (quit): the conversation is deleted first, within about two seconds and while
@@ -1844,6 +1992,9 @@ export class AgentHost {
    */
   stop(): Promise<void> {
     this.quitting = true;
+    // An answer whose words Home shows is kept as they stand (if the person keeps their conversation), whether or not its
+    // own message comes before the runtime goes: quitting in that gap lost an answer the person had read (CI el8).
+    this.keptAtQuit = this.endStream("interrupted") ?? null;
     // Requests held for a new model service go with Ember (not doStop, which every reconnect runs: the switch itself).
     this.dropHeld();
     const halted = this.halt(true);
@@ -1870,12 +2021,17 @@ export class AgentHost {
     const refused = this.o.refuseConnect?.() ?? null;
     if (refused) {
       this.setStatus({ phase: "error", reason: "policy", detail: refused, login: undefined, source: undefined, service: undefined });
-      this.o.memory?.pauseAccount?.("unverified");
+      // Said as what it is: memory waits for the policy, not for a GitHub check that comes back on its own (memory-r9-3).
+      this.o.memory?.pauseAccount?.("lockdown");
       this.dropHanded();
       return;
     }
-    if (!token && !provider) {
-      this.setStatus({ phase: "signed-out", detail: this.o.signedOutWhy?.() ?? this.signedOut, login: undefined, source: undefined, service: undefined });
+    // The user's own provider waits for its card: no Copilot in its place, whatever sign-in there is (r10-safety-x10-1).
+    const waitsFor = provider ? null : this.o.providerWaiting?.() ?? null;
+    this.ownWaits = !!waitsFor;
+    if ((!token && !provider) || waitsFor) {
+      const why = waitsFor && token ? providerWaitingWhy(waitsFor) : this.o.signedOutWhy?.() ?? (this.signOutUnsaved ? SIGN_OUT_NOT_KEPT : this.signedOut);
+      this.setStatus({ phase: "signed-out", detail: why, login: undefined, source: undefined, service: undefined });
       this.o.memory?.pauseAccount?.("signed-out");
       this.dropHanded();
       return;
@@ -1904,7 +2060,9 @@ export class AgentHost {
       let login: string | undefined;
       for (let attempt = 1; ; attempt++) {
         // The sign-in goes to the runtime in one place only, and no inherited GitHub credential goes with it (runtime-env.ts).
-        client = new CopilotClient(runtimeClientOptions({ userData: this.o.userData, runtimePath: this.o.runtimePath, token, provider: !!provider, env }));
+        const runtime = new CopilotClient(runtimeClientOptions({ userData: this.o.userData, runtimePath: this.o.runtimePath, token, provider: !!provider, env }));
+        // Every session of this client sends its text through the vault's redactor (PLAN.md §2 "Approvals", "The vault").
+        client = this.o.redact ? redactingClient(runtime, this.o.redact) : runtime;
         // Known before it starts, so a stop() that comes meanwhile stops it too.
         this.client = client;
         await startStep(client.start(), "start");
@@ -2117,8 +2275,15 @@ export class AgentHost {
             provider: provider?.config, workDir: path.join(this.o.userData, "copilot", "empty-workdir"),
             perception: h.perception, sidecar: h.sidecar, policy: h.policy, confirmer: h.confirmer, audit: h.audit,
             settings: this.o.settings, presenter,
-            reviewCommands: () => this.o.settings.get().trust.reviewCommands && this.o.admin?.().features.aiReview !== false,
-            autonomy: () => autonomyInForce(this.o.settings.get().autonomy, this.o.admin?.() ?? null),
+            // The approval mode in force (policy/autonomy.ts), read at each step: in Assisted a step or a command that
+            // would ask goes to its check first, on the conversation's lighter model; in Autopilot it is announced
+            // instead, but for the few commands that still ask there; Interactive and above give every scope; below
+            // Interactive, none of these.
+            check: () => approvalInputs(modeInForce(this.o.settings.get().approvals, this.o.admin?.() ?? null)).check,
+            checkModel: this.status.conductorModel,
+            autonomy: () => approvalInputs(modeInForce(this.o.settings.get().approvals, this.o.admin?.() ?? null)).scopes,
+            autopilot: () => approvalInputs(modeInForce(this.o.settings.get().approvals, this.o.admin?.() ?? null)).autopilot,
+            belowInteractiveHint: () => this.belowInteractiveHint(),
             lease: (key, owner, signal) => this.tasks!.lease(h.leaseKey(key), owner, signal),
             flyTo: h.flyTo, cursor: h.cursor, clipboard: h.clipboard, pointer: h.pointer, activationKey: h.activationKey,
             desk: h.desk, onDesk: h.onDesk, onProgress: progress, onUpdate: update, onActivity: activity, onUsage: (i, o) => this.recordUsage(i, o),
@@ -2127,6 +2292,8 @@ export class AgentHost {
             system: h.system, target: h.binding, commands: h.commands, grantKey: h.grantKey, onAuthorized: h.onAuthorized,
             ...(this.o.emberPids ? { emberPids: this.o.emberPids } : {}),
             ...(this.o.settingsKey ? { settingsKey: this.o.settingsKey } : {}),
+            // The vault fills only on this computer's own screen.
+            ...(this.o.vault && id === "local" ? { vault: this.o.vault } : {}),
           }, spec);
         },
       }) : null;
@@ -2215,18 +2382,19 @@ export class AgentHost {
           this.queued = [];
           this.turnChanged();
           const full = why === "not-started" && (this.o.inotifyUsedUp ?? inotifyUsedUp)();
-          const reason = why === "silent" ? "turn went silent and didn't end" : full ? "turn didn't start: inotify instances used up" : "turn didn't start";
+          const reason = why === "silent" ? "turn went silent and didn't end" : full === "watches" ? "turn didn't start: inotify watches used up" : full ? "turn didn't start: inotify instances used up" : "turn didn't start";
           // Named for the service in use, never Copilot when it isn't (integrations-v1).
           const words = reconnectWords(this.serviceKind());
           const runtime = runtimeWords(this.serviceKind());
-          const noWatchersDetail = `${runtime.noWatchersWhy} Reconnecting…`;
+          const noWatchersWhy = full === "watches" ? watchesWhy(runtime.noWatchersWhy) : runtime.noWatchersWhy;
+          const noWatchersDetail = `${noWatchersWhy} Reconnecting…`;
           if (this.tasksAtWork()) {
             this.o.log.warn("agent.reconnect_after_tasks", { why: reason });
             // (A silent turn: the conductor said Copilot didn't answer.)
             if (why === "not-started") this.presenter.fail(full ? runtime.noWatchers : words.notAnsweringAfterTasks);
             // (Set first: the status says the reconnect waits for the tasks, so settings doesn't offer one that stops them.)
             this.reconnectAfterTasks = () => { this.reconnectAfterTasks = null; this.lost(gen, reason, undefined, why === "silent" ? words.noAnswerDetail : full ? noWatchersDetail : words.notAnsweringDetail, asked, runtime.cutOffStalled); };
-            this.setStatus({ phase: "error", reason: "not-answering", detail: full ? `${runtime.noWatchersWhy} ${AFTER_TASKS}` : `${words.notAnsweringNow} ${AFTER_TASKS}` });
+            this.setStatus({ phase: "error", reason: "not-answering", detail: full ? `${noWatchersWhy} ${AFTER_TASKS}` : `${words.notAnsweringNow} ${AFTER_TASKS}` });
             return;
           }
           if (why === "silent") this.lost(gen, reason, noAnswer(this.serviceKind()), words.noAnswerDetail, asked, runtime.cutOffStalled);
@@ -2277,6 +2445,7 @@ export class AgentHost {
           const t = tasks.start(goal, {
             target: this.contextFor(r, binding), userWords: said.words, agreed: said.agreed, screen: r?.screen.join("\n") || undefined,
             ...(said.commandWords !== undefined ? { commandWords: said.commandWords } : {}), ...(said.typedOnly ? { typedOnly: true } : {}),
+            ...(said.checkWords !== undefined ? { checkWords: said.checkWords } : {}),
             ...(binding ? { targetId: binding.id } : {}), ...(where ? { where } : {}),
             // A "try again" of a task that did part of the work: the new worker is told so, as its card's Try again does.
             ...(said.retried?.partWay ? { partWay: true } : {}),
@@ -2347,7 +2516,7 @@ export class AgentHost {
             const said = this.userWordsOf(this.turn, { routine: false });
             // Changed by a request Voice Match didn't verify (typed, or another voice's): its short yeses are no longer trusted.
             if (this.turn?.verifiedAt === undefined) this.o.voiceTrust?.end(id, "steered");
-            return tasks.steer(id, text, said.words, this.turn?.screen.join("\n") || undefined, said.agreed, said.commandWords);
+            return tasks.steer(id, text, said.words, this.turn?.screen.join("\n") || undefined, said.agreed, said.commandWords, said.checkWords);
           },
         } : undefined,
       });
@@ -2567,6 +2736,7 @@ export class AgentHost {
           this.gaveUpShown = said.gaveUpBubble;
           this.problemNow(w => w.gaveUp);
         }
+        this.gaveUp = true;
         void this.halt(false);
         return;
       }
@@ -2807,7 +2977,9 @@ export class AgentHost {
 
   /** The endpoint in force is no longer the one this connection started with. */
   private providerMoved(): boolean {
-    return providerKey(this.providerNow()) !== this.startedProvider;
+    // (The user's own provider starting or ending its wait for a card moves Copilot out or back in: r10-safety-x10-1.)
+    const now = this.providerNow();
+    return providerKey(now) !== this.startedProvider || this.ownWaits !== (!now && !!this.o.providerWaiting?.());
   }
 
   /**
@@ -2977,13 +3149,14 @@ export class AgentHost {
    * Answers `text` with Ember's own `reply`, without a Copilot turn: kept in the conversation, shown and spoken as an
    * answer, and (asked by voice) followed by the usual follow-up window.
    */
-  private answerLocally(text: string, reply: string, how: { voiceUnchecked?: boolean; suggested?: boolean; heardId?: number; spoken?: boolean; manual?: true }): void {
+  private answerLocally(text: string, reply: string, how: { voiceUnchecked?: boolean; suggested?: boolean; overEmber?: boolean; heardId?: number; spoken?: boolean; manual?: true }): void {
     // The request is kept as it was asked: heard unchecked, a chosen suggestion and a heard one keep what they were (a later
     // "yes please" that reads back over this line must not take Ember's suggested words, or words heard from the speakers,
     // for the user's own: review of #145).
     const asked = this.remember("you", text, how.heardId);
     if (how.voiceUnchecked) this.voiceUnchecked.add(asked);
     if (how.suggested) this.suggested.add(asked);
+    if (how.overEmber) this.overEmber.add(asked);
     this.interruptAnswer();
     this.o.onTurnStart?.({ text, spoken: !!how.spoken, ...(how.manual ? { manual: true } : {}) });
     this.presenter.say(reply);
@@ -3024,6 +3197,7 @@ export class AgentHost {
    */
   /**
    * `how.voiceUnchecked`: heard where Ember can't tell the user from its speakers (UserRequest.voiceUnchecked).
+   * `how.overEmber`: heard over Ember's own voice (UserRequest.overEmber).
    * Resolves true when the request is answered (here, or by a conductor turn), false when it was dropped or went
    * unanswered (stopped, not connected, never sent): main's acknowledgement is then not said.
    */
@@ -3032,7 +3206,7 @@ export class AgentHost {
    * behind a turn under way), just before it is sent: main's acknowledgement waits for it, so "On it." never comes
    * while the request still waits, nor over another turn's answer.
    */
-  async ask(text: string, context?: { target: WindowTarget & { app?: string }; text: string; targetId?: TargetId } | null, epoch = this.stopEpoch, how: { voiceUnchecked?: boolean; verified?: boolean; spoken?: boolean; manual?: true; short?: boolean; onSent?: () => void; released?: boolean; suggested?: boolean; heardId?: number; replaces?: boolean } = {}): Promise<boolean> {
+  async ask(text: string, context?: { target: WindowTarget & { app?: string }; text: string; targetId?: TargetId } | null, epoch = this.stopEpoch, how: { voiceUnchecked?: boolean; verified?: boolean; spoken?: boolean; manual?: true; short?: boolean; onSent?: () => void; released?: boolean; suggested?: boolean; heardId?: number; replaces?: boolean; overEmber?: boolean } = {}): Promise<boolean> {
     // A request that waits (for a silent turn's end, or a connection) is answering, for Home, until it is queued or
     // dropped: never a moment's "idle" between its waits and its turn (home-r2-2: Home took that for its turn's end, and
     // said no reply was written as the reply came).
@@ -3056,17 +3230,22 @@ export class AgentHost {
     // Its turn begins at once only when no turn was under way or waiting as it was asked (before its own "Thinking…"):
     // otherwise main's acknowledgement would be said over the earlier turn's answer, so one queued behind gets none.
     const first = this.betweenTurns();
-    // "Work without asking" / "ask me first again": the switch, set here and never by the conductor (it has no tool for
-    // it). On only from the owner's verified voice with its card agreed to; off from anyone (autonomy-intent.ts).
-    const mode = this.o.autonomy ? autonomyIntent(text) : null;
+    // The approval mode by its name, "work without asking" or "ask me first again": set here and never by the
+    // conductor (it has no tool for it). To a mode that asks less only by voice, from anyone heard while Voice Match is
+    // off and only from the owner's verified voice while it is on, never over Ember's voice, and only with that mode's
+    // card agreed to in Home; to one that asks more, from anyone (autonomy-intent.ts).
+    const mode = this.o.autonomy ? modeIntent(text) : null;
     if (mode && this.o.autonomy) {
-      const plan = planAutonomyIntent(mode, { ...this.o.autonomy.state(), verified: how.verified === true, short: how.short === true });
+      // A suggestion pressed is no one's voice: as typed.
+      const spoken = how.spoken === true && !how.suggested;
+      let plan: ReturnType<typeof planModeIntent> = { reply: AUTONOMY_NOT_SAVED };
       let saved = true;
       try {
-        if (plan.set !== undefined) saved = this.o.autonomy.set(plan.set, { via: how.spoken ? "voice" : "typed", verified: how.verified === true });
-        if (plan.open) this.o.autonomy.open(plan.open.consent);
+        plan = planModeIntent(mode, this.o.autonomy.state(), { spoken, verified: how.verified === true, short: how.short === true, overEmber: how.overEmber === true });
+        if (plan.set !== undefined) saved = this.o.autonomy.set(plan.set, { via: spoken ? "voice" : "typed", verified: how.verified === true });
+        if (plan.open) this.o.autonomy.open(plan.open.mode, plan.open.card);
       } catch (err) { saved = false; this.o.log.warn("agent.autonomy_not_saved", { err }); }
-      this.o.log.info("agent.autonomy_switch", { intent: mode, set: plan.set ?? null, saved, opened: !!plan.open, verified: how.verified === true });
+      this.o.log.info("agent.autonomy_switch", { intent: mode.kind, ...(mode.kind === "to" || mode.kind === "off" ? { mode: mode.mode } : {}), set: plan.set ?? null, saved, opened: !!plan.open, verified: how.verified === true });
       // Said only once it is so: a change that couldn't be saved or recorded says that instead (review of #127).
       this.answerLocally(text, saved ? plan.reply : AUTONOMY_NOT_SAVED, how);
       return true;
@@ -3085,10 +3264,10 @@ export class AgentHost {
     // over Ember's voice doesn't count, so the request is the conversation's as any other is then (voice-speaking-x7-4).
     if (readOutRequest(text) && this.betweenTurns() && !this.confirmer?.waiting) {
       const last = this.lastAnswer({ readable: true });
-      let said = false;
+      let said: boolean | "no-voice" = false;
       try { said = !!last && (this.o.readOut?.(last) ?? false); } catch (err) { this.o.log.warn("agent.read_out_failed", { err }); }
       this.o.log.info("agent.read_out", { said, answer: !!last });
-      if (!said) this.answerLocally(text, last ? READ_OUT_REPLY.silent : READ_OUT_REPLY.none, how);
+      if (said !== true) this.answerLocally(text, !last ? READ_OUT_REPLY.none : said === "no-voice" ? READ_OUT_REPLY.noVoice : READ_OUT_REPLY.silent, how);
       // No line and no turn of the model's come for it: Home is told it was answered, or its composer says
       // "Thinking…" for good (voice-speaking-x7-2). With a turn told and not yet over, that turn's end says it.
       else if (this.turnTold === "idle" && !this.turnEnding) {
@@ -3207,6 +3386,7 @@ export class AgentHost {
       const asked = this.remember("you", text, how.heardId);
       if (how.voiceUnchecked) this.voiceUnchecked.add(asked);
       if (how.suggested) this.suggested.add(asked);
+      if (how.overEmber) this.overEmber.add(asked);
       this.remember("problem", `${title}: ${why}`);
       return false;
     }
@@ -3216,12 +3396,14 @@ export class AgentHost {
     const asked = this.remember("you", text, how.heardId);
     if (how.voiceUnchecked) this.voiceUnchecked.add(asked);
     if (how.suggested) this.suggested.add(asked);
+    if (how.overEmber) this.overEmber.add(asked);
     // Its turn may start only after the one running now: it takes this context then (see conversationEvent).
     const request: UserRequest = {
       target: context?.target ?? null, words: text, screen: context?.text ? [context.text] : [], ...(context?.targetId ? { targetId: context.targetId } : {}),
       ...(how.spoken ? { spoken: true } : {}),
       ...(how.manual ? { manual: true } : {}),
-      ...(how.voiceUnchecked ? { voiceUnchecked: true } : {}), ...(how.suggested ? { suggested: true } : {}), ...(how.spoken && how.verified ? { verifiedAt: Date.now() } : {}),
+      ...(how.voiceUnchecked ? { voiceUnchecked: true } : {}), ...(how.suggested ? { suggested: true } : {}), ...(how.overEmber ? { overEmber: true } : {}),
+      ...(how.spoken && how.verified ? { verifiedAt: Date.now() } : {}),
     };
     // "Remember…" (or "forget…" with more) while memory can't: the conversation takes it, and Ember says after the answer
     // what memory won't do.
@@ -3254,13 +3436,22 @@ export class AgentHost {
     return true;
   }
 
-  /** The signed-in identity or provider credential that owns the current workspace library. */
+  /**
+   * Whose a Projects answer is: the signed-in account, or the provider's whole config with its key (workspaceOwners'
+   * holder). An answer goes to no other.
+   */
   projectWorkspaceScope(): string | null {
+    return this.projectOwners()?.holder ?? null;
+  }
+
+  /** Whose the saved workspaces are: the signed-in account or the model service, never its key (integrations-r9-3). */
+  projectLibraryScope(): string | null {
+    return this.projectOwners()?.library ?? null;
+  }
+
+  private projectOwners(): { library: string; holder: string } | null {
     if (this.status.phase !== "ready" || this.providerMoved()) return null;
-    const provider = this.providerNow();
-    const owner = provider ? JSON.stringify([provider.kind, provider.config])
-      : this.githubAccountId === null ? null : `github:${this.githubAccountId}`;
-    return owner === null ? null : createHash("sha256").update(owner).digest("hex");
+    return workspaceOwners(this.providerNow(), this.githubAccountId);
   }
 
   /** Project commands use the same classifier, review card, runner and audit as desktop tasks. */
@@ -3317,12 +3508,13 @@ export class AgentHost {
    * was asked (`how`: heard unchecked, a suggestion, the request heard), and that everything stopped (home-c1-1: the
    * "stop" vanished from Home, which went on waiting for a reply that never comes).
    */
-  stopsNow(text: string, how: { voiceUnchecked?: boolean; suggested?: boolean; heardId?: number } = {}): boolean {
+  stopsNow(text: string, how: { voiceUnchecked?: boolean; suggested?: boolean; overEmber?: boolean; heardId?: number } = {}): boolean {
     if (!this.stopsWith(text) || !this.o.stopEverything) return false;
     this.o.log.info("agent.stop_local");
     const asked = this.remember("you", text, how.heardId);
     if (how.voiceUnchecked) this.voiceUnchecked.add(asked);
     if (how.suggested) this.suggested.add(asked);
+    if (how.overEmber) this.overEmber.add(asked);
     this.o.stopEverything();
     this.remember("ember", STOPPED_EVERYTHING);
     return true;
@@ -3439,6 +3631,15 @@ export class AgentHost {
   /** The organisation lets tasks act (its policy's features.actions); a failed card's Try again shows only then. */
   private actionsAllowed(): boolean {
     return this.o.admin?.().features.actions !== false;
+  }
+
+  /**
+   * Every task running or waiting now is about to be stopped for `why` (the organisation's policy changed: the kill
+   * switch follows): each one's result says so, and "What did I miss?" too, instead of "you stopped it"
+   * (tasks-approvals-r9-5).
+   */
+  stoppingBecause(why: string): void {
+    for (const t of this.tasks?.list() ?? []) if (t.status === "running" || t.status === "queued") this.stoppedWhy.set(t.id, why);
   }
 
   /**
@@ -3650,6 +3851,8 @@ export class AgentHost {
     this.setConversationContext(undefined);
     // An extension's result that read as instructions tainted that conversation (across its reconnects); it ends here.
     this.o.extensions?.conversationEnded?.();
+    // What the user had Ember forget was held back from this conversation, which still knew it; the next doesn't (memory-r9-1).
+    try { this.o.memory?.conversationEnded?.(); } catch (err) { this.o.log.warn("agent.memory_not_told", { err: err instanceof Error ? err.message : String(err) }); }
     this.convoCaps = null;
     try {
       if (this.conductor) await this.conductor.forget(ms);

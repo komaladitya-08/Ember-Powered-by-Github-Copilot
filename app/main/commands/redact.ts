@@ -1,7 +1,8 @@
 /**
  * Best-effort secret redaction for command output and command lines (design §3.11 step 4, §3.5.4's "tokens on the
- * command line"). Pure and synchronous: the PC shapes every run's output with it before the model sees it, and the
- * classifier uses the same patterns to notice a token typed into a command. It can miss secrets (that is stated to the
+ * command line"). Pure: the PC shapes every run's output with it before the model sees it (a run's end in steps, with
+ * Ember's main thread given back between passes: redactSteps), and the classifier uses the same patterns to notice a
+ * token typed into a command. It can miss secrets (that is stated to the
  * model and in the commands consent card); what it never does is reach for anything outside its argument.
  */
 
@@ -12,7 +13,7 @@ export const SECRET_HIDDEN = "[secret hidden]";
  * Private key blocks. Hidden by hidePrivateKeys, not by a global replace: the regex engine retries every later BEGIN
  * line when no END follows, which is quadratic on output that repeats one (a hostile remote can print that).
  */
-const PRIVATE_KEY = /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g;
+const PRIVATE_KEY = /-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY(?: BLOCK)?-----/g;
 
 /**
  * Whole-match token patterns (§3.11 step 4), in the order they are applied. Each one runs in time linear in its input:
@@ -47,6 +48,20 @@ export const TOKEN_PATTERNS: readonly RegExp[] = [
   /\bSG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])/g,
   /\bdo[opr]_v1_[a-f0-9]{64}\b/g,
   /\bSK[0-9a-f]{32}\b/g,
+  // More fixed shapes (commands-remote-r9-9): age keys, PyPI, Vault, Google OAuth, 1Password service and Doppler
+  // tokens, Telegram and Discord bot tokens, and a password hash as /etc/shadow and htpasswd write it.
+  /\bAGE-SECRET-KEY-1[A-Z0-9]{50,}\b/g,
+  /\bpypi-[A-Za-z0-9_-]{50,}/g,
+  /\bhv[sbr]\.[A-Za-z0-9_-]{24,}/g,
+  /\bya29\.[A-Za-z0-9_-]{20,}/g,
+  /\bops_[A-Za-z0-9+/=_-]{50,}/g,
+  /\bdp\.(?:st|ct|pt|sa|scim|audit)\.[A-Za-z0-9._-]{20,}/g,
+  // A Telegram bot's token, in its API's address too (`api.telegram.org/bot<id>:<token>/`: r10-commands-y10-7).
+  /(?:\b|(?<=\/bot))\d{8,10}:[A-Za-z0-9_-]{35}(?![A-Za-z0-9_-])/g,
+  /\b[MNO][A-Za-z0-9_-]{23,25}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,40}(?![A-Za-z0-9_-])/g,
+  /\$(?:1|2[aby]?|5|6|y|apr1|argon2(?:id|i|d)?)\$[A-Za-z0-9./$=,+-]{20,}/g,
+  // Django's generated secret key (commands-remote-r10-6).
+  /\bdjango-insecure-[^\s"',;]{8,}/g,
 ];
 
 /**
@@ -55,12 +70,53 @@ export const TOKEN_PATTERNS: readonly RegExp[] = [
  */
 export const TOKEN_SHAPES: readonly RegExp[] = TOKEN_PATTERNS.filter(re => re !== PRIVATE_KEY);
 
+/**
+ * An Azure Key Vault secret's value in `az keyvault secret show`'s JSON (VALUE_PATTERNS says how), and in the REST
+ * API's shape, value first. Each looks up to 4,000 steps on from every secret id, so 4 MiB of ids took one pass about
+ * 1.6 s; neither can match without both `vault.azure.net/secrets/` and `"value"` in the text, which VALUE_NEEDS checks
+ * first (stop-yield-x9-left-1).
+ */
+const VAULT_VALUE = /(vault\.azure\.net\/secrets\/[^"]{0,200}"(?:[^{}]|\{[^{}]{0,4000}\}){0,4000}?"value"\s{0,8}:\s{0,8}")(?:[^"\\]|\\.)*(?=")/g;
+const VAULT_VALUE_FIRST = /("value"\s{0,8}:\s{0,8}")(?:[^"\\]|\\.)*(?="(?:\s{0,8},\s{0,8}"\w{1,40}"\s{0,8}:\s{0,8}(?:"(?:[^"\\]|\\.){0,200}"|[\w.+-]{1,40})){0,3}\s{0,8},\s{0,8}"id"\s{0,8}:\s{0,8}"[^"]{0,200}vault\.azure\.net\/secrets\/)/g;
+/**
+ * Text a value pattern can't match without, whole: a pass whose text lacks any of it is the text as it was, the same
+ * bytes, without the pattern's search (UNGUARDED_PASSES is the proof's other side).
+ */
+const VALUE_NEEDS: ReadonlyMap<RegExp, readonly string[]> = new Map([
+  [VAULT_VALUE, ["vault.azure.net/secrets/", '"value"']],
+  [VAULT_VALUE_FIRST, ["vault.azure.net/secrets/", '"value"']],
+]);
+
 /** Patterns whose first group is kept and whose value is hidden. */
+/** The words before `_KEY` that say the key is a secret one (`SECRET_KEY`, `API_KEY`, `SIGNING_KEY`: r10-commands-y10-6). */
+const SECRET_KEY_WORDS =
+  "SECRET|API|PRIVATE|ACCESS|SIGNING|ENCRYPTION|ENC|MASTER|CLIENT|SESSION|LICENSE|LICENCE|ACCOUNT|SERVICE|DEPLOY|HMAC|JWT|AUTH|APP|CRYPTO|CIPHER|SSH|GPG|PGP|" +
+  "secret|api|private|access|signing|encryption|enc|master|client|session|license|licence|account|service|deploy|hmac|jwt|auth|app|crypto|cipher|ssh|gpg|pgp";
+/**
+ * A value that looks like a key or a scheme's credential: 8 or more letters, digits and `+/=_.-` with a letter and a
+ * digit among them, to the value's end (`created_at`, `id`, `on` and `D` are not: r10-commands-y10-6).
+ */
+const KEY_SHAPED = String.raw`["']?(?:(?:Basic|Bearer|Token|Digest|Negotiate|basic|bearer|token)[ \t]+|(?=[A-Za-z+/=_.-]{0,255}\d)(?=[0-9+/=_.-]{0,255}[A-Za-z])[A-Za-z0-9+/=_.-]{8,}(?![^\s"',;}\]]))`;
+
 const VALUE_PATTERNS: readonly RegExp[] = [
   /(aws_secret_access_key\s*[=:]\s*)\S+/gi,
   /(AccountKey=)[^;\s]+/g,
   /(SharedAccessSignature=)[^;\s]+/g,
   /(Authorization:\s*(?:Bearer|Basic|token)\s+)\S+/gi,
+  // An Azure SAS signature, a session cookie a server sets, a Wi-Fi key as nmcli and netsh print it, and the value of
+  // an Azure Key Vault secret in `az keyvault secret show`'s JSON (commands-remote-r9-9).
+  /([?&;]sig=)[A-Za-z0-9%+/=_-]{20,}/g,
+  /(set-cookie:[ \t]*[^=;\s]{0,64}=)[^;\s]+/gi,
+  /((?:802-11-wireless-security|wifi-sec)\.(?:psk|wep-key\d|leap-password)[ \t]*:[ \t]*)\S+/g,
+  /(Key Content[ \t]*:[ \t]*)\S+/g,
+  // Between the id and the value stand the secret's other fields, its tags among them, which are an object of their
+  // own (`"tags": {}`, `{"env": "prod"}`): each is stepped over whole, so a tag named "value" is never taken for the
+  // secret's, and the value ends at its closing quote, not at one written `\"` inside it (commands-classes-x9-7).
+  VAULT_VALUE,
+  // The REST API's shape (`az rest`, curl against the vault) prints the value first, then the secret's id, with at most
+  // a few plain fields between (`"contentType": "text/plain"`): each look is bounded, so a run of values stays linear
+  // (merge review integ-y-3).
+  VAULT_VALUE_FIRST,
   // A Docker config's `"auth": "<base64 of user:password>"`, and a .netrc entry written on one line
   // (`machine host login bob password …`); a password on a line of its own is not told from prose (safety-privacy-r7-3).
   // An entry is told by its login, or with none by a dotted host: "the default password is admin" and "machine learning
@@ -68,6 +124,37 @@ const VALUE_PATTERNS: readonly RegExp[] = [
   // (regression review of round seven, safety-privacy-x7-2).
   /("auth"\s{0,8}:\s{0,8}")[A-Za-z0-9+/]{16,}={0,2}(?=")/g,
   /(\b(?:(?:machine[ \t]+\S+|default)(?:[ \t]+(?:login|account)[ \t]+\S+){1,2}|machine[ \t]+[\w-]+(?:\.[\w-]+)+)[ \t]+password[ \t]+)\S+/g,
+  // A webhook's address is its own key: whoever has it can post (Slack, Discord, Teams; commands-remote-r10-6).
+  /(hooks\.slack\.com\/(?:services|workflows|triggers)\/)[A-Za-z0-9_/-]+/g,
+  /(discord(?:app)?\.com\/api\/webhooks\/\d{1,30}\/)[A-Za-z0-9_-]+/g,
+  /(\.webhook\.office\.com\/webhookb2\/)[^\s"'<>]+/g,
+  // Outlook's older connector address and Zapier's catch hook (r10-commands-y10-7).
+  /(outlook\.office(?:365)?\.com\/webhook\/)[^\s"'<>]+/g,
+  /(hooks\.zapier\.com\/hooks\/catch\/)[A-Za-z0-9_/-]+/g,
+  // A `value` whose sibling `name` says a secret, as Kubernetes and Azure print an environment (`- name: DB_PASSWORD`
+  // then `value: …`, `{"name": "API_TOKEN", "value": "…"}`): the name a bounded look, on its line or the next
+  // (r10-commands-y10-7).
+  new RegExp(String.raw`((?:^|\n|[{,])[ \t]*(?:-[ \t]+)?(?<nq>["']?)name\k<nq>[ \t]*:[ \t]*(?<vq>["']?)[A-Za-z0-9_.-]{0,64}?(?:PASSWORD|PASSWD|PASSPHRASE|SECRET|TOKEN|CREDENTIALS?|_PASS|_PW|_PWD|_AUTH|(?:SECRET|API|PRIVATE|ACCESS|SIGNING|ENCRYPTION|MASTER|CLIENT)_KEY|[Pp]assword|[Ss]ecret|[Tt]oken)\k<vq>[ \t]*,?[ \t]*(?:\r?\n[ \t]*)?(?<q>["']?)value\k<q>[ \t]*:[ \t]*["']?)(?![$%{<*[])[^\s"',;}\]]+`, "g"),
+  // A variable as `env`, `ps e` and a .env file print it whose name ends in a short secret word after a `_` or is that
+  // word (`DB_PASS=`, `REDIS_AUTH=`, `MYSQL_PW=`, `SIGNING_KEY=`, `AUTH=`, `PASSPHRASE=`), which KEY_VALUE's words
+  // miss; never a variable, a placeholder or what is already hidden, nor PWD and OLDPWD, which are folders, nor a
+  // filter's or a renderer's LOW_PASS, HIGH_PASS, BAND_PASS or RENDER_PASS (memory-x6-5; commands-remote-r10-6). The
+  // name is at most 64 characters before its word, so each start is a bounded look.
+  // An authorisation scheme's credential is hidden with it (`AUTH=Basic dXNl…`, `HTTP_AUTH=Bearer …`: r10-commands-x10-5).
+  // A KEY is hidden when its name says it is a secret one (`SECRET_KEY`, `STRIPE_API_KEY`, `SIGNING_KEY`); any other
+  // KEY, and AUTH or KEY alone, only when its value looks like a key (8 or more letters and digits, both) or a scheme's
+  // credential: `SORT_KEY=created_at`, `PRIMARY_KEY=id`, `?key=abc` and `AUTH=on` are ordinary facts, and memory refused
+  // them as secrets (r10-commands-y10-6). PUBLIC_, SORT_, PRIMARY_ and FOREIGN_KEY are never hidden.
+  new RegExp(String.raw`((?<![A-Za-z0-9_.-])(?!(?:OLD)?PWD=|(?:LOW|HIGH|BAND|ALL|RENDER)_PASS=|(?:[A-Za-z0-9_]{0,64}_)?(?:PUBLIC|SORT|PRIMARY|FOREIGN|public|sort|primary|foreign)_(?:KEY|key)=)(?:(?:(?:[A-Za-z0-9_]{0,64}_)?(?:PASS|PASSPHRASE|PW|PWD|pass|passphrase|pw|pwd)|[A-Za-z0-9_]{0,64}_(?:AUTH|auth)|(?:[A-Za-z0-9_]{0,64}_)?(?:${SECRET_KEY_WORDS})_(?:KEY|key))=["']?|(?:[A-Za-z0-9_]{0,64}_)?(?:KEY|key|AUTH|auth)=["']?(?=${KEY_SHAPED})))(?![$%{<*[])(?:(?:Basic|Bearer|Token|Digest|Negotiate|basic|bearer|token)[ \t]+)?[^\s"',;]+`, "g"),
+  // The same names as YAML and JSON print them (`docker compose config`'s `DB_PASS: hunter2`, `"REDIS_AUTH": "abc"`):
+  // at a line's start, after a list's `- `, or after `{`, `[` or `,`, so prose keeps its words; a bare lower-case `key:`,
+  // `pass:` or `auth:` (a selector's key, a field) needs a prefix (r10-commands-x10-5).
+  new RegExp(String.raw`((?:^|\n|[{[,])[ \t]*(?:-[ \t]+)?(?<q>["']?)(?!(?:OLD)?PWD\k<q>[ \t]*:|(?:LOW|HIGH|BAND|ALL|RENDER)_PASS\k<q>[ \t]*:|(?:[A-Za-z0-9_]{0,64}_)?(?:PUBLIC|SORT|PRIMARY|FOREIGN|public|sort|primary|foreign)_(?:KEY|key)\k<q>[ \t]*:)(?:(?:[A-Za-z0-9_]{0,64}_(?:PASS|PASSPHRASE|AUTH|PW|PWD|PASSWD|pass|passphrase|auth|pw|pwd|passwd)|(?:[A-Za-z0-9_]{0,64}_)?(?:${SECRET_KEY_WORDS})_(?:KEY|key)|PASS|PASSPHRASE|PW|PASSWD|passphrase)\k<q>[ \t]*:[ \t]*["']?|(?:[A-Za-z0-9_]{0,64}_(?:KEY|key)|KEY|AUTH)\k<q>[ \t]*:[ \t]*["']?(?=${KEY_SHAPED})))(?![$%{<*[])(?:(?:Basic|Bearer|Token|Digest|Negotiate|basic|bearer|token)[ \t]+)?[^\s"',;}\]]+`, "g"),
+  // A table's row whose first column names a secret, as `pulumi config --show-secrets`, `pulumi stack output` and
+  // `netlify env:list` print them (`dbPassword   Tr0ub4dor&3`, `│ DB_PASSWORD │ hunter2 │`): the next column is hidden
+  // (commands-remote-c10-1), or a single tab (`DB_PASSWORD\thunter2`: r10-commands-x10-5). Only at a line's start, the
+  // name a bounded look.
+  /((?:^|\n)[ \t]*(?:[│|][ \t]*)?[A-Za-z0-9_.-]{0,64}?(?:[Pp]assword|PASSWORD|[Pp]asswd|PASSWD|[Pp]assphrase|PASSPHRASE|[Ss]ecret|SECRET|[Tt]oken|TOKEN|[Cc]redentials?|CREDENTIALS?|(?<=[a-z0-9])Key|(?<=[_.-])(?:[Kk]ey|KEY|[Pp]ass|PASS|[Pp]wd|PWD|[Aa]uth|AUTH))(?![A-Za-z0-9_.-])(?:[ \t]{2,}|\t|[ \t]*[│|][ \t]*))(?![│|[])[^\s│|]+/g,
   // The same secret-named options OPTION_SECRET notices (`--db-pass=x`): the option name with its `=` stays, the
   // value is hidden. The leading space or quote is kept too, prose words like "compass" never reach a value this way.
   /((?:^|[\s"'])--?(?:[A-Za-z0-9]+[-_.])*(?:password|passwd|pass|pwd|token|secret|api[-_]?key|access[-_]?key|private[-_]?key|client[-_]?secret)=)[^\s"',;]+/gi,
@@ -231,8 +318,8 @@ function inMapping(text: string, at: number, end: number, q: string): boolean {
   return /:[ \t]*$/.test(text.slice(Math.max(0, at - 32), at)) && new RegExp(String.raw`^${q}[ \t]*:`).test(text.slice(end, end + 34));
 }
 
-/** URL credentials: `://user:pass@` becomes `://[secret hidden]@`. */
-const URL_CREDENTIALS = /:\/\/[^/\s:@]+:[^/\s@]+@/g;
+/** URL credentials: `://user:pass@` (and `://:pass@`, a password with no user: commands-remote-r10-6) becomes `://[secret hidden]@`. */
+const URL_CREDENTIALS = /:\/\/[^/\s:@]*:[^/\s@]+@/g;
 
 /**
  * Key-value pairs whose key names a secret: `password=…`, `token: …`, `"api_key": "…"` (the value only). The key may
@@ -254,22 +341,94 @@ const KEY_VALUE =
  */
 export function redactSecrets(text: string): string {
   let out = text;
-  for (const re of TOKEN_PATTERNS) out = re === PRIVATE_KEY ? hidePrivateKeys(out) : out.replace(re, SECRET_HIDDEN);
-  for (const re of VALUE_PATTERNS) out = out.replace(re, (_m, keep: string) => keep + SECRET_HIDDEN);
-  for (const re of OPTION_PASSWORDS) {
-    out = out.replace(re, (_m, keep: string, quote: string, _value: string, after?: string) => `${keep}${quote}${SECRET_HIDDEN}${quote}${typeof after === "string" ? after : ""}`);
-  }
-  for (const re of LIST_PASSWORDS) {
-    out = out.replace(re, (...m) => {
-      const g = m[m.length - 1] as { keep: string; value: string; q?: string; option?: string };
-      const [match, at, whole] = [String(m[0]), m[m.length - 3] as number, m[m.length - 2] as string];
-      const leave = g.option !== undefined && (ownName(g.option, g.value) || inMapping(whole, at, at + match.length, g.q ?? ""));
-      return leave ? match : `${g.keep}${SECRET_HIDDEN}`;
-    });
-  }
-  out = out.replace(URL_CREDENTIALS, `://${SECRET_HIDDEN}@`);
-  out = out.replace(KEY_VALUE, (m, keep: string, _suffix: string, value: string) => (value.startsWith("[secret") ? m : keep + SECRET_HIDDEN));
+  for (const pass of REDACT_PASSES) out = pass(out);
   return out;
+}
+
+/**
+ * redactSecrets's passes, in order: each reads and replaces in the whole text it is given, as redactSecrets folds them.
+ * A pass can match across lines (a private key block, a list's `\n- ` separator), so the text is never cut into
+ * slices; a caller that must keep Ember's main thread free between passes runs them one at a time
+ * (redactSecretsYielding) and gets the same bytes, since it is the same list (merge review integ-y-2).
+ */
+const passes = (guarded: boolean): readonly ((text: string) => string)[] => [
+  ...TOKEN_PATTERNS.map(re => (re === PRIVATE_KEY ? hidePrivateKeys : (t: string) => t.replace(re, SECRET_HIDDEN))),
+  ...VALUE_PATTERNS.map(re => (t: string) => (guarded && !(VALUE_NEEDS.get(re) ?? []).every(n => t.includes(n)) ? t : t.replace(re, (_m, keep: string) => keep + SECRET_HIDDEN))),
+  ...OPTION_PASSWORDS.map(re => (t: string) => t.replace(re, (_m, keep: string, quote: string, _value: string, after?: string) => `${keep}${quote}${SECRET_HIDDEN}${quote}${typeof after === "string" ? after : ""}`)),
+  ...LIST_PASSWORDS.map(re => (t: string) => t.replace(re, (...m) => {
+    const g = m[m.length - 1] as { keep: string; value: string; q?: string; option?: string };
+    const [match, at, whole] = [String(m[0]), m[m.length - 3] as number, m[m.length - 2] as string];
+    const leave = g.option !== undefined && (ownName(g.option, g.value) || inMapping(whole, at, at + match.length, g.q ?? ""));
+    return leave ? match : `${g.keep}${SECRET_HIDDEN}`;
+  })),
+  t => t.replace(URL_CREDENTIALS, `://${SECRET_HIDDEN}@`),
+  t => t.replace(KEY_VALUE, (m, keep: string, _suffix: string, value: string) => (value.startsWith("[secret") ? m : keep + SECRET_HIDDEN)),
+];
+/** redactSecrets's passes (above), each value pattern checked first for the text it can't match without (VALUE_NEEDS). */
+export const REDACT_PASSES: readonly ((text: string) => string)[] = passes(true);
+/** The same passes without VALUE_NEEDS's check: what REDACT_PASSES must equal byte for byte (commands-redact.test.ts). */
+export const UNGUARDED_PASSES: readonly ((text: string) => string)[] = passes(false);
+
+/**
+ * redactSecrets as steps: a step before each of REDACT_PASSES, so a caller can let other work run between them
+ * (output.ts cleanOutputAsync). Nothing but this generator holds the text between steps.
+ */
+export function* redactSteps(text: string): Generator<void, string, void> {
+  let out = text;
+  for (const pass of REDACT_PASSES) {
+    yield;
+    out = pass(out);
+  }
+  return out;
+}
+
+/** Runs steps to their end at once: what the synchronous functions return. */
+export function runSteps<T>(steps: Generator<void, T, void>): T {
+  for (;;) {
+    const r = steps.next();
+    if (r.done) return r.value;
+  }
+}
+
+/** One macrotask: whatever is waiting on Ember's main thread (the stop shortcut's handler, a timer) runs first. */
+const turn = (): Promise<void> => new Promise(resolve => setImmediate(resolve));
+
+/**
+ * How long steps run before a macrotask is given (ms): a step is a whole-text pass, often well under a millisecond on
+ * short output, and a turn for each would add up where a run printed many secret prompts.
+ */
+export const STEP_SLICE_MS = 8;
+
+/**
+ * Runs steps, giving a macrotask once STEP_SLICE_MS has passed since the last, and stops at the first step where
+ * `stopped()` says so: null then, and nothing of the text the steps held goes anywhere (merge review integ-y-2: the
+ * kill switch's handler must get the thread within 300 ms while up to 4 MiB of a run's output is cleaned). `work`
+ * counts the steps run and the macrotasks given.
+ */
+export async function runStepsYielding<T>(steps: Generator<void, T, void>, stopped: () => boolean, work?: { steps: number; turns: number }): Promise<T | null> {
+  let since = performance.now();
+  for (;;) {
+    if (stopped()) {
+      steps.return(undefined as never);
+      return null;
+    }
+    const r = steps.next();
+    if (work) work.steps++;
+    if (r.done) return r.value;
+    if (performance.now() - since >= STEP_SLICE_MS) {
+      await turn();
+      if (work) work.turns++;
+      since = performance.now();
+    }
+  }
+}
+
+/**
+ * redactSecrets with Ember's main thread given back between its passes: the same bytes, or null once `stopped()`
+ * says so.
+ */
+export function redactSecretsYielding(text: string, stopped: () => boolean, work?: { steps: number; turns: number }): Promise<string | null> {
+  return runStepsYielding(redactSteps(text), stopped, work);
 }
 
 /**
@@ -277,8 +436,9 @@ export function redactSecrets(text: string): string {
  * value; once a BEGIN has no END after it, no later one has either, so the search stops there.
  */
 function hidePrivateKeys(text: string): string {
-  const begin = /-----BEGIN [A-Z ]*PRIVATE KEY-----/g;
-  const end = /-----END [A-Z ]*PRIVATE KEY-----/g;
+  // PGP's armour says "PRIVATE KEY BLOCK" (commands-remote-r9-9).
+  const begin = /-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----/g;
+  const end = /-----END [A-Z ]*PRIVATE KEY(?: BLOCK)?-----/g;
   let out = "";
   let at = 0;
   for (;;) {

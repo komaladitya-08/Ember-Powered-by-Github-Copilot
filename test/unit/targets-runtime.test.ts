@@ -1202,7 +1202,7 @@ describe("WSL targets", () => {
     expect(r.t.agent.handsFor("wsl:Ubuntu")).toEqual({ ok: false, why: "Set up Ubuntu first: open it from the Start menu once." });
   });
 
-  it("asks before every command in Podman's distro and in a distro whose user is root", async () => {
+  it("asks before every command in Podman's distro and in a distro whose user is root, and tells the settings window of Podman's (r10-modes-copy-x10-4)", async () => {
     const r = rig({ os: "win32", wslFacts: wslFacts([ubuntu({ defaultUid: 0 }), ubuntu({ name: "podman-machine-default", isDefault: false, tool: "podman" })]), settings: { ...wslOnSettings, commands: { "wsl:Ubuntu": { on: true, askEvery: false, consent: { version: 1, at: SINCE } }, "wsl:podman-machine-default": { on: true, askEvery: false, consent: { version: 1, at: SINCE } } } } });
     await flush();
     const root = r.t.agent.handsFor("wsl:Ubuntu");
@@ -1212,6 +1212,11 @@ describe("WSL targets", () => {
     expect(pod.hands.commands!.capability().askEvery).toBe("tool");
     expect(pod.hands.commands!.userAskEvery()).toBe(true);
     expect(pod.hands.binding.desktop).toBe("none");
+    // The settings window is told, so its switch shows every command asks there in every mode (r10-modes-copy-x10-4).
+    const summary = (id: string) => r.t.summaries().find(t => t.id === id);
+    expect(summary("wsl:podman-machine-default")).toMatchObject({ toolOwned: true });
+    expect(summary("wsl:Ubuntu")).not.toHaveProperty("toolOwned");
+    expect(summary("local")).not.toHaveProperty("toolOwned");
   });
 });
 
@@ -2624,5 +2629,34 @@ describe("Commands-off revokes pending flows", () => {
       expect(other.signal.aborted).toBe(true);
       expect(local.signal.aborted).toBe(false);
     } finally { ubuntuPending.dispose(); other.dispose(); local.dispose(); r.t.dispose(); }
+  });
+});
+
+describe("first run's commands row", () => {
+  it("shows this computer's card exactly as the command flow asks with it, and records its yes as that card's (slice4-19)", () => {
+    const r = rig();
+    const card = r.t.firstRunCommandsCard();
+    expect(card).toEqual(commandsConsent({ os: "linux", target: "local", targetLabel: "This computer", facts: { kind: "local", privileged: false, windows: false, podman: false, byok: false } }));
+    expect(r.t.agreeFirstRunCommands(card!.sha256)).toBe(true);
+    expect(r.settings.own().commands.local).toEqual({ on: true, askEvery: false, consent: { version: 1, at: "2026-10-22T12:00:00.000Z" } });
+    // The flow's own card reads the same once commands are on.
+    const got = r.t.agent.handsFor("local");
+    if (!got.ok) throw new Error(got.why);
+    expect(r.t.agent.caps().commands).toBe(true);
+  });
+
+  it("says an elevated Ember asks before every command, as the card does (slice4-20)", () => {
+    const r = rig({ elevated: () => true });
+    expect(r.t.firstRunCommandsCard()!.body).toContain("Commands here run as the administrator, so Ember asks before every one.");
+  });
+
+  it("records nothing for another card's hash, nor where the organisation turned commands off (slice4-21)", () => {
+    const r = rig();
+    expect(r.t.agreeFirstRunCommands("0".repeat(64))).toBe(false);
+    expect(r.settings.own().commands.local).toBeUndefined();
+    const managed = rig({ admin: { policy: AdminPolicySchema.parse({}), source: "/etc/ember/policy.json" } });
+    expect(managed.t.firstRunCommandsCard()).toBeNull();
+    expect(managed.t.agreeFirstRunCommands(r.t.firstRunCommandsCard()!.sha256)).toBe(false);
+    expect(managed.settings.own().commands.local).toBeUndefined();
   });
 });

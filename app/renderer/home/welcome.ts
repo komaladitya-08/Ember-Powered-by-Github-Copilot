@@ -11,6 +11,7 @@
 import type { AgentStatus } from "../../main/agent/host";
 import type { Settings, SettingsPatch } from "../../main/settings";
 import { CONSENT_VERSION, consentChangesSince } from "../../shared/consent";
+import { FIRST_RUN_ROWS, firstRunDefaults, type FirstRunRow, type FirstRunView } from "../../shared/first-run";
 import type { ProviderState, ProviderTest, Status, VoiceStatus } from "../../shared/ipc";
 import { AGREE_ARM_MS, endpointHost, endpointProblem, keyNeeded, latestOnly, MODEL_ID, type ProviderType } from "../../shared/provider";
 import { LEVEL_STEPS } from "../../shared/level";
@@ -25,7 +26,7 @@ import {
 } from "./first-run-copy";
 import {
   CHECK_AGAIN, CHECKS_DETAIL, recheckMessage, CONSENT_AGAIN, CONSENT_TEXT, checkState, checksNext, NAV, signInText, SKIP_OWN, SKIP_SIGN_IN, START_LABEL, STEP_TEXT, SUMMARY_NOTE, TRY_TEXT, WELCOME_STEPS, checksHeadline, checksLater, switchedLine,
-  DEFAULT_SIZE, aboutNext, askWhy, consentPoints, firstStep, gated, plainChecks, serviceSummary, signInView, stepAfter, stepBefore, stepCount, stepLanding, stepPosition, summaryRows, voiceTry, type WelcomeStep,
+  DEFAULT_SIZE, FIRST_RUN_ROWS_TEXT, aboutNext, askWhy, consentPoints, firstRunFailed, firstRunRowText, firstRunWhy, firstStep, gated, plainChecks, serviceSummary, signInView, stepAfter, stepBefore, stepCount, stepLanding, stepPosition, summaryRows, voiceTry, type WelcomeStep,
 } from "./welcome-copy";
 
 /** What the settings window lends the welcome. */
@@ -89,7 +90,12 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
   let voice: VoiceStatus | null = null;
   let signingIn = false;
   /** `github`: what a GitHub sign-in said, which says nothing about the user's own provider once that is in use (first-run-c7-3). */
-  let signInMessage: { text: string; tone: string; github?: boolean } | null = null;
+  /**
+   * What the sign-in step's line says in place of the status. `github`: a GitHub sign-in's outcome, never said under
+   * "Your own model provider". `untilStatus`: true only until the connection has an outcome (Try again's "Found …;
+   * connecting…"): it goes once main's status is ready or an error (first-run-r9-2).
+   */
+  let signInMessage: { text: string; tone: string; github?: boolean; untilStatus?: boolean } | null = null;
   let saving = false;
   let navigation = 0;
   /** The page main offers while it waits for a sign-in made elsewhere ("Open cli.github.com"), or null. */
@@ -100,6 +106,18 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
    * AGREE_ARM_MS is dropped, so a double click on Get started or Not now lands on neither (first-run-c1-1).
    */
   const shownAt = { agree: -Infinity, quit: -Infinity };
+  /**
+   * First run's rows (owner decision of 2026-11-12, app/shared/first-run.ts): main's view of them, read again when what
+   * decides them changes (`rowsKey`), and the switches as the user left them (each offered row starts on).
+   */
+  let rowsView: FirstRunView | null = null;
+  let rowsKey = "";
+  let rowsAsk = 0;
+  const choice: Record<FirstRunRow, boolean> = { commands: false, memory: false, voice: false, screenshots: false, interactive: false };
+  /** The rows already drawn (their keys), so a redraw keeps the switch and the focus where they are. */
+  let rowsDrawn = "";
+  /** What the agreement said, under the rows: it couldn't be saved, or the rows it couldn't turn on. */
+  let agreeNote = "";
   const armed = (at: number) => performance.now() - at >= AGREE_ARM_MS;
   /** What the sign-in step's main button does: an action on the connection, or just go on. */
   let signInPrimary: FailureAction | "continue" = "continue";
@@ -152,7 +170,10 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
   /** What changed since an earlier agreement, while it isn't agreed again (first-run-4); none for a first agreement. */
   const changes = () => (consented() ? [] : consentChangesSince(settings?.consent.version ?? 0));
   // "Tell me about you" (optional): memory's note inline, its answers saved by this step's main button.
-  const about = mountAboutYou($("w-about"), { id: "w-ay", save: deps.save, ownSave: false, changed: () => { if (active && step === "about") render(); } });
+  const about = mountAboutYou($("w-about"), {
+    id: "w-ay", save: deps.save, ownSave: false, changed: () => { if (active && step === "about") render(); },
+    spokenVersion: () => status?.platform?.speakerRejection === true && settings?.voice.speakerRejection !== false,
+  });
   const memoryManaged = () => status?.admin.features.memory === false;
   const live = (text: string) => { $("w-try-live").textContent = text; };
 
@@ -276,10 +297,94 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     if (JSON.stringify(changed) !== JSON.stringify([...$("w-changes-list").children].map(li => li.textContent))) {
       $("w-changes-list").replaceChildren(...changed.map(text => el("li", { textContent: text })));
     }
-    const note = consented() ? CONSENT_TEXT.agreed : declined ? CONSENT_TEXT.declined : "";
+    renderRows();
+    const note = consented() ? [CONSENT_TEXT.agreed, agreeNote].filter(Boolean).join(" ") : declined ? CONSENT_TEXT.declined : agreeNote;
     if ($("w-consent-note").textContent !== note) $("w-consent-note").textContent = note;
     if (consented()) return { label: NAV.next, why: "", alt: "" };
-    return { label: CONSENT_TEXT.agree, why: "", alt: declined ? CONSENT_TEXT.quit : CONSENT_TEXT.notNow };
+    // The rows say what the agreement turns on: it waits for them (main's answer comes at once).
+    return { label: CONSENT_TEXT.agree, why: rowsView ? "" : "Getting ready…", alt: declined ? CONSENT_TEXT.quit : CONSENT_TEXT.notNow };
+  }
+
+  /** The “Hey Ember” card's text as Home's Voice section shows it (its own element), without its download sentence. */
+  function voiceCardText(): string {
+    const card = document.getElementById("consent-text");
+    if (!card) return "";
+    const copy = card.cloneNode(true) as HTMLElement;
+    for (const gone of copy.querySelectorAll("[hidden], #consent-models")) gone.remove();
+    return (copy.textContent ?? "").replace(/\s+/g, " ").trim();
+  }
+
+  /** Asks main for the rows again when what decides them changed (the policy, the speech models, the settings). */
+  function readRows(): void {
+    if (consented()) { rowsView = null; rowsKey = ""; return; }
+    const key = JSON.stringify([status?.admin ?? null, voice?.modelsReady ?? null, settings?.consent.version ?? 0, settings?.approvals ?? null, status?.platform?.os ?? null]);
+    if (key === rowsKey) return;
+    rowsKey = key;
+    const ask = ++rowsAsk;
+    const shown = (v: FirstRunView) => {
+      if (ask !== rowsAsk) return;
+      const first = rowsView === null;
+      // Each offered row starts on; one the user switched keeps their choice; one no longer offered is off.
+      const was = rowsView ? new Set(rowsView.rows.filter(r => r.offered).map(r => r.row)) : new Set<FirstRunRow>();
+      const on = firstRunDefaults(v.rows);
+      for (const r of FIRST_RUN_ROWS) choice[r] = on[r] && (was.has(r) ? choice[r] : true);
+      rowsView = v;
+      // The rows push Agree down as they come: a press meant for what was there before agrees to nothing (first-run-c1-1).
+      if (first && v.rows.length) shownAt.agree = performance.now();
+      if (active && step === "consent") render();
+    };
+    let asked: Promise<FirstRunView>;
+    try { asked = window.ember.firstRunView(); } catch { asked = Promise.reject(new Error("no bridge")); }
+    // Without main's answer no row is shown, so the agreement turns nothing on (fail closed).
+    asked.then(shown, () => shown({ rows: [], commands: null }));
+  }
+
+  /** The rows, each with its switch and its own card's full text, drawn again only when they change. */
+  function renderRows(): void {
+    readRows();
+    const v = consented() ? null : rowsView;
+    const rows = v?.rows ?? [];
+    $("w-rows").hidden = !rows.length;
+    if (!rows.length) return;
+    $("w-rows-h").textContent = FIRST_RUN_ROWS_TEXT.heading;
+    $("w-rows-lead").textContent = changes().length ? FIRST_RUN_ROWS_TEXT.leadAgain : FIRST_RUN_ROWS_TEXT.lead;
+    const voiceText = voiceCardText();
+    const drawn = JSON.stringify([rows, v?.commands ?? null, voiceText]);
+    if (drawn !== rowsDrawn) {
+      rowsDrawn = drawn;
+      $("w-rows-list").replaceChildren(...rows.map(r => {
+        const id = (part = ""): string => `w-row-${r.row as string}${part}`;
+        const box = el("div", { className: "w-row" });
+        box.dataset.row = r.row;
+        const label: HTMLLabelElement = document.createElement("label");
+        label.className = "switch-row";
+        const input: HTMLInputElement = document.createElement("input");
+        input.type = "checkbox";
+        input.id = id();
+        input.setAttribute("role", "switch");
+        input.setAttribute("aria-describedby", `${id("-why")} ${id("-text")}`);
+        input.addEventListener("change", () => { choice[r.row] = input.checked; });
+        const name: HTMLSpanElement = document.createElement("span");
+        name.id = id("-label");
+        name.textContent = FIRST_RUN_ROWS_TEXT.label[r.row];
+        label.append(input, name);
+        const why = el("p", { className: "row-note", id: id("-why") });
+        const text = el("div", { className: "w-row-text", id: id("-text") });
+        text.append(...firstRunRowText(r.row, { commands: v?.commands ?? null, voice: voiceText }).map(t => el("p", { textContent: t })));
+        box.append(label, why, text);
+        return box;
+      }));
+    }
+    for (const r of rows) {
+      const input = $(`w-row-${r.row as string}`) as HTMLInputElement;
+      input.disabled = !r.offered || saving;
+      input.checked = r.offered && choice[r.row];
+      input.closest("label")?.classList.toggle("locked", !r.offered);
+      const why = r.why ? firstRunWhy(r.why) : "";
+      const line = $(`w-row-${r.row as string}-why`);
+      if (line.textContent !== why) line.textContent = why;
+      line.hidden = !why;
+    }
   }
 
   /** Asks main for the microphone's level, or stops, only when that changes. */
@@ -316,6 +421,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     if (signingIn || v.primary !== "sign-in") switchedSaid = false;
     // A device code on screen is the line while it waits; otherwise the status (or what went wrong) is.
     // A GitHub sign-in's outcome isn't the line under "Your own model provider": it is kept for Copilot's step (first-run-c7-3).
+    if (signInMessage?.untilStatus && (agent?.phase === "ready" || agent?.phase === "error")) signInMessage = null;
     const said = signInMessage?.github && ownInUse() && !signingIn ? null : signInMessage;
     const detail = said?.text ?? (agent?.phase === "error" && !signingIn ? agent.detail : switchedSaid ? switchedLine(agent?.signInWith) : v.line);
     line.className = `w-status ${said?.tone ?? (agent?.phase === "error" ? "error" : v.tone)}`;
@@ -775,7 +881,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
 
   const voiceState = () => voiceTry({
     wakeWord: !!settings?.wakeWord, voiceConsent: !!settings?.voice.consent, state: voice?.state ?? null,
-    allowed: status?.admin.features.voice !== false, muted: !!settings?.voice.muted,
+    allowed: status?.admin.features.voice !== false, muted: !!settings?.voice.muted, micFault: !!voice?.micFault,
   });
   const signedIn = () => agent?.phase === "ready";
 
@@ -806,9 +912,9 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     chord("ask", "w-ask-keys");
     mark("w-try-stop", tried.stop, tried.stop ? TRY_TEXT.stop.done : stopHeld ? TRY_TEXT.stop.ask : TRY_TEXT.stop.fallback);
     const vs = voiceState();
-    $("w-try-voice").hidden = vs === "off" || vs === "no-models";
+    $("w-try-voice").hidden = vs !== "listening" && vs !== "waiting";
     $("w-voice-later").hidden = !$("w-try-voice").hidden;
-    $("w-voice-later").textContent = vs === "no-models" ? TRY_TEXT.voiceNoModels : TRY_TEXT.voiceLater;
+    $("w-voice-later").textContent = vs === "no-models" ? TRY_TEXT.voiceNoModels : vs === "no-mic" ? TRY_TEXT.voiceNoMic : vs === "cant-listen" ? TRY_TEXT.voiceCantListen : vs === "mic-off" ? TRY_TEXT.voiceMicOff : TRY_TEXT.voiceLater;
     mark("w-try-voice", tried.voice, tried.voice ? TRY_TEXT.voice.done : vs === "listening" ? TRY_TEXT.voice.ask : TRY_TEXT.voiceWaiting);
     $("w-meter").classList.toggle("off", vs !== "listening");
     // (While Ember finishes before it moves to Copilot, there is no sign-in to do yet: first-run-v4-1.)
@@ -852,9 +958,21 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     if (step === "consent" && !consented()) {
       // Drawn just now where Get started was: a double click's second press agrees to nothing (first-run-c1-1).
       if (!armed(shownAt.agree)) return;
+      if (!rowsView) return;
       declined = false;
-      // Not saved: the notice at the top says why (review #84), so it is brought into view.
-      void saveStep(() => deps.save({ consent: { version: CONSENT_VERSION, at: new Date().toISOString() } }), "sign-in");
+      agreeNote = "";
+      // Only the rows shown and offered can be on; main reads the facts again and records the consent first, then each
+      // row left on through its own card's record (app/main/first-run.ts).
+      const shown = new Set(rowsView.rows.filter(r => r.offered).map(r => r.row));
+      const sent = Object.fromEntries(FIRST_RUN_ROWS.map(r => [r, shown.has(r) && choice[r]])) as Record<FirstRunRow, boolean>;
+      const sha = sent.commands ? rowsView.commands?.sha256 ?? null : null;
+      void saveStep(async () => {
+        const done = await window.ember.agreeFirstRun(sent, sha).catch(() => ({ ok: false, failed: [] as FirstRunRow[] }));
+        if (!done.ok) { agreeNote = CONSENT_TEXT.notSaved; return false; }
+        agreeNote = firstRunFailed(done.failed);
+        // A row that couldn't be turned on is said here before going on.
+        return done.failed.length === 0;
+      }, "sign-in").then(() => { if (active && step === "consent" && agreeNote) $("w-consent-note").focus(); });
       return;
     }
     // Sign in is the step's button only while signing in can help (not with the organisation's own service, nor locked).
@@ -905,16 +1023,18 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     const checking = { text: "Checking…", tone: "" };
     signInMessage = checking;
     render();
-    const show = (text: string, tone: string) => {
+    const show = (text: string, tone: string, github = false, untilStatus = false) => {
       if (signInMessage !== checking) return;
-      signInMessage = { text: inMyVoice(text), tone };
+      signInMessage = { text: inMyVoice(text), tone, ...(github ? { github } : {}), ...(untilStatus ? { untilStatus } : {}) };
       render();
     };
     window.ember.retrySignIn().then(r => {
       // The user's own provider reconnects too, but a GitHub sign-in found or not says nothing about it: its own
       // status line follows (first-run-1).
       if (r.provider || ownInUse()) { if (signInMessage === checking) { signInMessage = null; render(); } return; }
-      show(retryMessage(r, r.found && agent?.phase === "ready"), r.found ? "" : "error");
+      // A sign-in found is GitHub's, and "connecting…" holds only until the connection has an outcome (first-run-r9-2).
+      const connected = r.found && agent?.phase === "ready";
+      show(retryMessage(r, connected), r.found ? "" : "error", true, r.found && !connected);
     }, err => show(ipcErrorText(err), "error"));
   }
   $("w-stop").addEventListener("click", () => { void window.ember.stopEverything(); });

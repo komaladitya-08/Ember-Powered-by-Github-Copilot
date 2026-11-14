@@ -247,7 +247,8 @@ function homePatterns(env: PathEnv): string[] {
 const SECRET_HOME_POSIX = [
   ".ssh/", ".gnupg/", ".aws/", ".azure/", ".kube/", ".config/gh/", ".config/hub", ".docker/config.json", ".netrc",
   "_netrc", ".npmrc", ".yarnrc.yml", ".pypirc", ".git-credentials", ".config/git/credentials", ".pgpass", ".my.cnf",
-  ".vault-token", ".terraform.d/credentials.tfrc.json", ".cargo/credentials", ".cargo/credentials.toml",
+  ".vault-token", ".boto", ".s3cfg", ".composer/auth.json", ".config/composer/auth.json", ".purple/", ".config/filezilla/",
+  ".config/hub", ".terraform.d/credentials.tfrc.json", ".cargo/credentials", ".cargo/credentials.toml",
   ".gem/credentials", ".m2/settings-security.xml", ".gradle/gradle.properties", ".config/rclone/rclone.conf",
   ".local/share/keyrings/", ".password-store/", ".config/Bitwarden*/", ".config/1Password/", ".mozilla/",
   "snap/firefox/", ".config/google-chrome/", ".config/chromium/", ".config/BraveSoftware/", ".config/microsoft-edge/",
@@ -313,6 +314,12 @@ function secretBasename(name: string, ci: boolean): boolean {
   if (l === "credentials.json" || /^secrets\.ya?ml$/.test(l)) return true;
   // A Kerberos ticket cache (`/tmp/krb5cc_1000`, wherever KRB5CCNAME puts it: review #173).
   if (/^krb5cc(_|$)/.test(l)) return true;
+  // A file named for the password or secret it holds (commands-remote-r9-9): `password.txt`, `passwords.csv`,
+  // `secrets.txt`, `credentials.txt`, Ansible's `.vault_pass`, `.htpasswd`. Never `/etc/passwd`, a bare `credentials`
+  // (a project's own file: only the ones under a home's secret folders count) or a design's `tokens.json`.
+  if (/^\.?(passwords?|secrets?)(\.(txt|csv|json|ya?ml|ini|cfg|conf|md|bak|old))?$/.test(l)) return true;
+  if (/^\.?(credentials?|api[-_]?keys?|tokens?)\.(txt|csv|ini|cfg|conf|bak|old)$/.test(l)) return true;
+  if (/^\.(vault[-_]?pass(word)?(\.txt)?|htpasswd|pgpass|boto|s3cfg)$/.test(l)) return true;
   return false;
 }
 

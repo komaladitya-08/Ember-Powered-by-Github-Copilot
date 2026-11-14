@@ -105,13 +105,13 @@ vi.mock("@github/copilot-sdk", async importOriginal => {
   return { ...real, CopilotClient: FakeClient, RuntimeConnection: { forStdio: () => ({}) } };
 });
 
-import { ACCOUNT_CHANGED_FORGOT, AgentHost, CUT_OFF, START_TIMEOUT_DETAIL, PROVIDER_MOVED_TASK, PROVIDER_SWITCH_TITLE, idleWord, proxyFromChromium, unansweredWord, startErrorReason, type AgentStatus, type HostOptions } from "../../app/main/agent/host";
+import { ACCOUNT_CHANGED_FORGOT, AgentHost, CUT_OFF, SIGN_OUT_NOT_KEPT, START_TIMEOUT_DETAIL, PROVIDER_MOVED_TASK, PROVIDER_SWITCH_TITLE, idleWord, proxyFromChromium, unansweredWord, startErrorReason, type AgentStatus, type HostOptions } from "../../app/main/agent/host";
 import type { ActiveProvider } from "../../app/main/provider";
 import { unavailableLine } from "../../app/renderer/ask/chips";
 import { AdminPolicySchema } from "../../app/main/admin";
 import { Conductor } from "../../app/main/agent/conductor";
 import { LOST_GAVE_UP, LOST_RECONNECTED, LOST_RECONNECTING, Presenter, RECONNECTED_RETRY, TRY_AGAIN, expandedBubble } from "../../app/main/agent/presenter";
-import { Confirmer } from "../../app/main/agent/confirm";
+import { Confirmer, questionPausesAnswer } from "../../app/main/agent/confirm";
 import { PolicyEngine, type Agreement } from "../../app/main/policy/policy";
 import { SettingsStore } from "../../app/main/settings";
 import { FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
@@ -587,6 +587,29 @@ describe("connecting and signing in", () => {
     expect(answers).toEqual(["The event is updated."]);
     expect(ends).toEqual([false]);
     expect(session.sent).toHaveLength(1);
+    await host.stop();
+  });
+
+  it("keeps the conversation's answer, whole, when a task's question comes up while it is being written (tasks-approvals-r9-2)", async () => {
+    const deltas: string[] = [], answers: string[] = [], ends: boolean[] = [];
+    const { host, screen } = makeHost({ onAnswerDelta: text => deltas.push(text), onAnswer: text => answers.push(text), onTurnEnd: aborted => ends.push(aborted) });
+    const confirmer = new Confirmer(() => undefined, { armMs: 0, gapMs: 0, onChange: q => { if (q && questionPausesAnswer(q.question)) host.pauseAnswer(); } });
+    await host.start(TOKEN, "stored");
+    await host.ask("What is the capital of France?");
+    const session = conductorSession();
+    session.emit("assistant.message_delta", { messageId: "answer", deltaContent: "The capital of " });
+    // A background task's step asks meanwhile: its question is the task's, not this turn's tool's.
+    const permission = confirmer.ask({ title: "May I?", prompt: "Delete the old notes?", task: "1-abc", options: [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }] });
+    session.emit("assistant.message_delta", { messageId: "answer", deltaContent: "France is Paris." });
+    session.emit("assistant.message", { messageId: "answer", content: "The capital of France is Paris." });
+    session.emit("session.idle");
+    expect(confirmer.answerKey("primary")).toBe(true);
+    await permission;
+    expect(deltas).toEqual(["The capital of ", "France is Paris."]);
+    expect(answers).toEqual(["The capital of France is Paris."]);
+    expect(host.getTranscript().map(e => e.text)).toContain("The capital of France is Paris.");
+    expect(ends).toEqual([false]);
+    expect(screen().bubble?.thought).toBe("The capital of France is Paris.");
     await host.stop();
   });
 
@@ -1167,6 +1190,24 @@ describe("new conversation", () => {
     expect(host.getTranscript()).toEqual([]);
     await host.stop();
   });
+
+  it("tells memory when a conversation ends, before a sign-out erases memory, so what was forgotten in it is held back from no other (memory-r9-1)", async () => {
+    const memory = { remember: vi.fn(() => ""), context: vi.fn(() => ""), forget: vi.fn(() => false), forgetAll: vi.fn((): void => undefined), conversationEnded: vi.fn() };
+    const { host } = makeHost({ memory });
+    await host.start(TOKEN, "stored");
+    await host.ask("Explain this");
+    conductorSession().emit("assistant.message", { content: "Here you go." });
+    conductorSession().emit("session.idle");
+    expect(memory.conversationEnded).not.toHaveBeenCalled();
+    await host.newConversation();
+    expect(memory.conversationEnded).toHaveBeenCalledTimes(1);
+    await host.ask("Hello");
+    await host.forgetConversation();
+    expect(memory.conversationEnded).toHaveBeenCalledTimes(2);
+    // The conversation goes first: a Forget everything that follows it holds nothing back from the next account's.
+    expect(memory.conversationEnded.mock.invocationCallOrder[1]).toBeLessThan(memory.forgetAll.mock.invocationCallOrder[0]!);
+    await host.stop();
+  });
 });
 
 describe("sign-out", () => {
@@ -1496,6 +1537,27 @@ describe("a runtime that dies or hangs", () => {
     expect(problems).not.toContain(LOST_RECONNECTING);
     expect(LOST_GAVE_UP).toBe("Copilot stopped unexpectedly and keeps stopping, so I've stopped reconnecting. Press Check again in Models & connections to try once more, or restart me.");
     expect(screen().bubble).toMatchObject({ visible: true, mood: "error", thought: "Copilot keeps stopping, so I've stopped reconnecting. Open settings to try again, or restart me.", actions: [{ id: "ui:settings", label: "Open settings" }] });
+    await host.stop();
+  });
+
+  it("starts the count of stops afresh at Check again after giving up: one more stop reconnects, as the first did (reliability-r9-5)", async () => {
+    vi.useFakeTimers();
+    let crashes = 0;
+    const { host } = makeHost({ healthMs: 1000 });
+    await host.start(TOKEN, "stored");
+    sim.ping = async () => { if (crashes < 6) { crashes++; throw new Error("Connection is disposed."); } return {}; };
+    await vi.advanceTimersByTimeAsync(12_000);
+    expect(crashes).toBe(6);
+    expect(host.getStatus().detail).toBe("Copilot keeps stopping. Press Check again to retry, or restart Ember.");
+    // Check again: connected.
+    expect(await host.start(TOKEN, "stored")).toBe("ready");
+    const clients = sim.clients.length;
+    // One more stop within the ten minutes: reconnected, not given up on without a try.
+    crashes = 5;
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(crashes).toBe(6);
+    expect(sim.clients.length).toBe(clients + 1);
+    expect(host.getStatus().phase).toBe("ready");
     await host.stop();
   });
 
@@ -3163,7 +3225,8 @@ describe("review round 6: a task's bubbles say whose they are", () => {
   it("its work and its question name the task (the corner card pairs them with its row and Stop), titled as its card is", async () => {
     const bubbles: BubbleState[] = [];
     const confirmer = new Confirmer(p => { if (p.bubble) bubbles.push(p.bubble); }, { armMs: 0, gapMs: 0 });
-    const policy = { decide: () => ({ verdict: "confirm", tier: "confirm", reason: "test", prompt: "Turn on Night Light?", needsGrant: false, remember: false }) };
+    // (A stand-in engine: it asks about everything, and has no check to send a question to first.)
+    const policy = { decide: () => ({ verdict: "confirm", tier: "confirm", reason: "test", prompt: "Turn on Night Light?", needsGrant: false, remember: false }), assistAll: async (steps: { d: unknown }[]) => steps.map(s => s.d) };
     const { host } = makeHost({ hands: { ...hands(), confirmer, policy } as never });
     await host.start(TOKEN, "stored");
     await host.ask("turn on night light");
@@ -3308,6 +3371,57 @@ describe("review round 7: a request the runtime takes but never begins", () => {
     // No limit to read: nothing is blamed on it.
     fs.rmSync(path.join(proc, "sys"), { recursive: true });
     expect(inotifyUsedUp(proc, uid)).toBe(false);
+    fs.rmSync(proc, { recursive: true, force: true });
+  });
+
+  it("out of inotify watches (the runtime can't begin a turn then either): Ember says so, and names that limit, not the instances' (reliability-r9-1)", async () => {
+    vi.useFakeTimers();
+    const { host, screen, statuses } = makeHost({ inotifyUsedUp: () => "watches" });
+    await host.start(TOKEN, "stored");
+    sim.stall = () => true;
+    await host.ask("what time is it?");
+    await vi.advanceTimersByTimeAsync(20_500);
+    expect(screen().bubble).toMatchObject({ mood: "error", thought: "Copilot can't work right now: this computer has run out of file watchers. Close a few apps, then ask me again." });
+    expect(statuses.map(x => x.detail)).toContainEqual("Copilot isn't answering: the system's limit on watched files and folders (fs.inotify.max_user_watches) is used up. Close some apps, or ask IT to raise the limit. Reconnecting…");
+    expect(statuses.map(x => x.detail).join(" ")).not.toMatch(/max_user_instances/);
+    await host.stop();
+  });
+
+  // Linux only, as above.
+  it.skipIf(process.platform !== "linux")("this user's inotify watches are counted in /proc against the system's and the user namespace's limit (reliability-r9-1)", async () => {
+    const { inotifyUse, inotifyUsedUp } = await import("../../app/main/agent/host");
+    const proc = fs.mkdtempSync(path.join(os.tmpdir(), "ember-proc-"));
+    fs.mkdirSync(path.join(proc, "sys/fs/inotify"), { recursive: true });
+    fs.mkdirSync(path.join(proc, "sys/user"), { recursive: true });
+    fs.writeFileSync(path.join(proc, "sys/fs/inotify/max_user_instances"), "128\n");
+    fs.writeFileSync(path.join(proc, "sys/fs/inotify/max_user_watches"), "8192\n");
+    const watching = (pid: string, watches: number) => {
+      fs.mkdirSync(path.join(proc, pid, "fd"), { recursive: true });
+      fs.mkdirSync(path.join(proc, pid, "fdinfo"), { recursive: true });
+      fs.symlinkSync("anon_inode:inotify", path.join(proc, pid, "fd", "5"));
+      fs.symlinkSync("/dev/null", path.join(proc, pid, "fd", "6"));
+      fs.writeFileSync(path.join(proc, pid, "fdinfo", "5"), `pos:\t0\nflags:\t02004000\nmnt_id:\t17\nino:\t26\n${Array.from({ length: watches }, (_x, i) => `inotify wd:${i + 1} ino:${i + 14} sdev:fe00000 mask:fc6 ignored_mask:0 fhandle-bytes:8 fhandle-type:1 f_handle:1400000000000000\n`).join("")}`);
+      fs.writeFileSync(path.join(proc, pid, "fdinfo", "6"), "pos:\t0\ninotify wd:1 in a file that is no inotify instance\n");
+    };
+    const uid = process.getuid!();
+    watching("10", 3);
+    watching("11", 4);
+    expect(inotifyUse(proc, uid)).toEqual({ used: 2, max: 128, watches: { used: 7, max: 8192 } });
+    expect(inotifyUsedUp(proc, uid)).toBe(false);
+    // Another app holds nearly all of them: the runtime's few can't be added.
+    watching("12", 8183);
+    expect(inotifyUse(proc, uid)?.watches).toEqual({ used: 8190, max: 8192 });
+    expect(inotifyUsedUp(proc, uid)).toBe("watches");
+    expect(inotifyUsedUp(proc, uid + 1)).toBe(false);
+    fs.rmSync(path.join(proc, "12"), { recursive: true });
+    // A user namespace's own, lower limit counts (a container, a sandboxed session).
+    fs.writeFileSync(path.join(proc, "sys/user/max_inotify_watches"), "0\n");
+    expect(inotifyUse(proc, uid)?.watches).toEqual({ used: 7, max: 0 });
+    expect(inotifyUsedUp(proc, uid)).toBe("watches");
+    // No watch limit to read: only the instances are judged, as before.
+    fs.rmSync(path.join(proc, "sys/user"), { recursive: true });
+    fs.rmSync(path.join(proc, "sys/fs/inotify/max_user_watches"));
+    expect(inotifyUse(proc, uid)).toEqual({ used: 2, max: 128 });
     fs.rmSync(proc, { recursive: true, force: true });
   });
 
@@ -4930,6 +5044,18 @@ describe("memory erasure at account boundaries", () => {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
+  it("tells memory the organisation's policy stopped the connection, never that GitHub couldn't be checked (memory-r9-3)", async () => {
+    const why: string[] = [];
+    const memory = { ...failingMemory(), pauseAccount: (reason?: string) => { why.push(`pause:${reason ?? "checking"}`); } };
+    const { host } = makeHost({ memory, refuseConnect: () => "Your organisation's Ember policy has a problem, so Ember won't send anything to a model service until it's fixed." });
+    try {
+      expect(await host.start(TOKEN, "stored")).toBe("error");
+      expect(why.at(-1)).toBe("pause:lockdown");
+    } finally {
+      await host.stop();
+    }
+  });
+
   it("tells memory why it can't check the owner: signed out, a model provider in force, or GitHub not answering (memory-2, integrations-2)", async () => {
     const why: string[] = [];
     const memory = {
@@ -5041,6 +5167,60 @@ describe("memory erasure at account boundaries", () => {
   });
 });
 
+describe("a sign-out while Ember's data folder can't be written (reliability-r9-2)", () => {
+  /** agent.json can't be written or replaced: a folder with something in it is where the file goes. */
+  const blockState = (dir: string) => {
+    const file = path.join(dir, "agent.json");
+    fs.rmSync(file, { force: true });
+    fs.mkdirSync(file);
+    fs.writeFileSync(path.join(file, "in-the-way"), "");
+  };
+
+  it("holds for this run: a GitHub CLI or environment sign-in isn't used on its own, and the status says the sign-out wasn't saved", async () => {
+    const { host, dir, statuses } = makeHost();
+    expect(await host.start(TOKEN, "github-cli", "auto")).toBe("ready");
+    blockState(dir);
+    await host.forgetConversation();
+    expect(host.signOutUnsaved).toBe(true);
+    expect(await host.start(null)).toBe("signed-out");
+    expect(statuses.at(-1)).toMatchObject({ phase: "signed-out", detail: SIGN_OUT_NOT_KEPT });
+    expect(SIGN_OUT_NOT_KEPT).toBe("You're signed out for now, but Ember couldn't save that: its data folder can't be written. Until it can, Ember may sign in again by itself the next time it starts.");
+    const clients = sim.clients.length;
+    // Check again, a retry, anything of Ember's own: the old sign-in stays unused.
+    expect(await host.start(TOKEN, "github-cli", "auto")).toBe("signed-out");
+    expect(await host.start(TOKEN, "environment", "auto", "GH_TOKEN")).toBe("signed-out");
+    expect(sim.clients).toHaveLength(clients);
+    expect(host.getStatus().detail).toBe(SIGN_OUT_NOT_KEPT);
+    // The user's own sign-in is theirs to make, and ends it (the disk can be written again).
+    fs.rmSync(path.join(dir, "agent.json"), { recursive: true });
+    expect(await host.start(TOKEN, "stored", "user")).toBe("ready");
+    expect(host.signOutUnsaved).toBe(false);
+    await host.stop();
+  });
+
+  it("says nothing of it, and keeps the flag, where the sign-out was saved", async () => {
+    const { host, statuses, agentJson } = makeHost();
+    expect(await host.start(TOKEN, "github-cli", "auto")).toBe("ready");
+    await host.forgetConversation();
+    expect(host.signOutUnsaved).toBe(false);
+    expect(await host.start(null)).toBe("signed-out");
+    expect(statuses.at(-1)!.detail).not.toBe(SIGN_OUT_NOT_KEPT);
+    expect(agentJson().signedOut).toBe(true);
+    await host.stop();
+  });
+
+  it("lets main's own reason stand first, then says a saved sign-in couldn't be removed", async () => {
+    let why: string | null = null;
+    const { host } = makeHost({ signedOutWhy: () => why });
+    await host.start(TOKEN, "stored");
+    await host.forgetConversation();
+    why = SIGN_OUT_NOT_KEPT;
+    expect(await host.start(null)).toBe("signed-out");
+    expect(host.getStatus().detail).toBe(SIGN_OUT_NOT_KEPT);
+    await host.stop();
+  });
+});
+
 describe("keeping the recent conversation across restarts (opt-in)", () => {
   const SHALL_I = "I can delete the 12 installers there older than a month. Shall I?";
   /** A host as main builds it: the saved copy in the data folder, the account lookup, the setting a switch. */
@@ -5076,6 +5256,69 @@ describe("keeping the recent conversation across restarts (opt-in)", () => {
     expect(sends).toEqual([]);
     expect(heard.at(-1)).toHaveLength(2);
     await second.host.stop();
+  });
+
+  it("keeps an answer whose words Home showed when Ember quits before the answer's own message comes, once (CI el8 conversation-history-live)", async () => {
+    const dir = tmpDir();
+    const first = kept(dir);
+    await first.host.start(TOKEN, "stored");
+    await first.host.ask("Please repeat the marker.");
+    conductorSession().emit("assistant.message_delta", { messageId: "m", deltaContent: "Noted: answer-history-marker." });
+    // Quit in the gap: Home shows the words, the presenter hasn't recorded the answer yet.
+    await first.host.stop();
+    const saved = JSON.parse(fs.readFileSync(first.file, "utf8")).entries as { who: string; text: string; stopped?: true }[];
+    expect(saved.map(e => [e.who, e.text])).toEqual([["you", "Please repeat the marker."], ["ember", "Noted: answer-history-marker."]]);
+    // Ember didn't see it finish: kept as an answer stopped short, as Stop keeps one, so it is never "the last answer".
+    expect(saved[1].stopped).toBe(true);
+    expect(fs.readFileSync(first.file, "utf8")).not.toMatch(/answerId|heardId/);
+
+    // The answer's own message arrives while Ember is quitting: still one line, no longer marked stopped short.
+    const second = kept(fs.mkdtempSync(path.join(os.tmpdir(), "ember-keep-")));
+    await second.host.start(TOKEN, "stored");
+    await second.host.ask("Again?");
+    const session = conductorSession();
+    session.emit("assistant.message_delta", { messageId: "n", deltaContent: "Yes, again." });
+    const quitting = second.host.stop();
+    session.emit("assistant.message", { messageId: "n", content: "Yes, again." });
+    session.emit("session.idle", {});
+    await quitting;
+    const lines = JSON.parse(fs.readFileSync(second.file, "utf8")).entries as { who: string; text: string; stopped?: true }[];
+    expect(lines.map(e => [e.who, e.text])).toEqual([["you", "Again?"], ["ember", "Yes, again."]]);
+    expect(lines[1].stopped).toBeUndefined();
+  });
+
+  it("at quit keeps only the words Home showed, never a later message's further words, and nothing after Forget everything or with the switch off", async () => {
+    const dir = tmpDir();
+    const k = kept(dir);
+    await k.host.start(TOKEN, "stored");
+    await k.host.ask("Tell me more");
+    const session = conductorSession();
+    session.emit("assistant.message_delta", { messageId: "m", deltaContent: "The first part" });
+    const quitting = k.host.stop();
+    session.emit("assistant.message_delta", { messageId: "m", deltaContent: " and words never shown" });
+    session.emit("assistant.message", { messageId: "m", content: "The first part and words never shown" });
+    session.emit("session.idle", {});
+    await quitting;
+    const lines = JSON.parse(fs.readFileSync(k.file, "utf8")).entries as { who: string; text: string; stopped?: true }[];
+    expect(lines.map(e => [e.who, e.text, e.stopped])).toEqual([["you", "Tell me more", undefined], ["ember", "The first part", true]]);
+
+    // Forget everything mid-answer: the shown words are not saved at quit either.
+    const f = kept(tmpDir());
+    await f.host.start(TOKEN, "stored");
+    await f.host.ask("secret-ish question");
+    await f.store.flush();
+    conductorSession().emit("assistant.message_delta", { messageId: "x", deltaContent: "forgotten-answer-marker" });
+    f.host.forgetHistory();
+    await f.host.stop();
+    expect(fs.existsSync(f.file) ? fs.readFileSync(f.file, "utf8") : "").not.toContain("forgotten-answer-marker");
+
+    // The switch off: nothing is written at quit.
+    const off = kept(tmpDir(), { on: () => false });
+    await off.host.start(TOKEN, "stored");
+    await off.host.ask("hello");
+    conductorSession().emit("assistant.message_delta", { messageId: "y", deltaContent: "hi there" });
+    await off.host.stop();
+    expect(fs.existsSync(off.file)).toBe(false);
   });
 
   it("marks the lines it brought back as restored for Home, and none said since (home-8)", async () => {
@@ -5492,9 +5735,14 @@ describe("keeping the recent conversation across restarts (opt-in)", () => {
     };
     /** What Sign out told Projects to forget (integrations-c2-1: from the handler, never from the status after it). */
     let projectForgot: string[] = [];
+    /** How often what was asked this session was let go of (memory-r9-2). */
+    let sessionWordsForgotten = 0;
+    /** How often the vault was forgotten whole (vault-6). */
+    let vaultForgotten = 0;
     const signOutHandler = (agent: AgentHost) => handlerOf(slice("ipcMain.handle(IPC.signOut,", "ipcMain.handle(IPC.cancelSignIn,"), {
       agent, tokens: { clear() {} }, keeper: { use() {} }, providers: { forget() {} }, refusedTokens: { clear() {} }, resetAnswerSpeech() {},
-      forgetProject: (what: string) => { projectForgot.push(what); },
+      forgetProject: (what: string) => { projectForgot.push(what); }, forgetSessionWords: () => { sessionWordsForgotten++; },
+      vault: { forgetAll: () => { vaultForgotten++; return true; } },
     });
 
     it("Sign out deletes conversation.json although the switch is off by then", async () => {
@@ -5507,8 +5755,14 @@ describe("keeping the recent conversation across restarts (opt-in)", () => {
       expect(fs.existsSync(k.file)).toBe(true);
       k.flag.on = false; // the setting turned off, the listener not yet run
       projectForgot = [];
+      sessionWordsForgotten = 0;
+      vaultForgotten = 0;
       await signOutHandler(k.host)();
       expect(projectForgot).toEqual(["all"]);
+      // And what the vault keeps goes with the account (vault-6).
+      expect(vaultForgotten).toBe(1);
+      // What the person asked this session goes too: none of it is suggested to the next one (memory-r9-2).
+      expect(sessionWordsForgotten).toBe(1);
       expect(fs.existsSync(k.file)).toBe(false);
       await k.store.flush();
       expect(fs.existsSync(k.file)).toBe(false);
@@ -5535,11 +5789,13 @@ describe("keeping the recent conversation across restarts (opt-in)", () => {
       await k.store.flush();
       const calls: string[] = [];
       const run = handlerOf(slice("ipcMain.handle(IPC.memoryForgetAll,", '// "Tell Ember about you"'), {
-        learning: { forgetAll: () => calls.push("learning") }, agent: k.host,
+        learning: { forgetAll: () => calls.push("learning") }, agent: k.host, forgetSessionWords: () => calls.push("session words"),
         memoryOwner: { clear: () => calls.push("owner.clear"), refresh: () => undefined }, memoryConfigured: () => true, publishMemoryOwner: () => undefined,
+        vault: { forgetAll: () => { calls.push("vault"); return true; } },
       });
       await run();
-      expect(calls).toEqual(["learning", "owner.clear"]);
+      // The vault goes too (vault-6).
+      expect(calls).toEqual(["learning", "session words", "vault", "owner.clear"]);
       expect(fs.existsSync(k.file)).toBe(false);
       expect(k.host.getTranscript().map(e => e.text)).toEqual(["old question", "old answer"]);
       await k.host.ask("after forgetting");

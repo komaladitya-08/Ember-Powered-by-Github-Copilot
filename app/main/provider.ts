@@ -49,7 +49,15 @@ export interface ActiveProvider {
  * The user's saved key and the endpoint host it was entered for. `keyId`: a random non-secret id made whenever a key
  * is saved (so a replaced key has another one); null for a key saved before ids existed.
  */
-export interface StoredKey { key: string; host: string; keyId?: string | null }
+export interface StoredKey {
+  key: string; host: string; keyId?: string | null;
+  /**
+   * A key an earlier build saved though it can't go in a request's header (a hidden character: integrations-x9-8). It
+   * is there, so Home says a key is saved and the check says what is wrong with it; it is never sent or given to the
+   * runtime (keyFor), and stays in `key` only so the log's redaction knows it.
+   */
+  unsendable?: true;
+}
 
 /** Where a connection's model requests go, for the setup check and Home: whose, and the host only (never the key). */
 export interface ProviderSummary { kind: ActiveProvider["kind"]; host: string }
@@ -72,13 +80,15 @@ export function userProviderInForce(s: Settings, loaded: LoadedAdminPolicy): Use
 }
 
 /**
- * The host whose card the user's own provider waits for: on and allowed, with a usable address that isn't agreed to;
- * null otherwise. Signed out then, agreeing to it is the way on, not a GitHub sign-in (integrations-r3-1).
+ * The host whose card the user's own provider waits for: on and allowed, with a usable address that isn't agreed to,
+ * or whose yes the record holds back (`held`: provider-record.ts, until its seal is read or its coming into force is
+ * audited); null otherwise. Agreeing to it is the way on, not a GitHub sign-in (integrations-r3-1), and while it waits
+ * Ember connects to nothing, Copilot included (r10-safety-x10-1).
  */
-export function providerWaitingHost(s: Settings, loaded: LoadedAdminPolicy): string | null {
+export function providerWaitingHost(s: Settings, loaded: LoadedAdminPolicy, held = false): string | null {
   if (loaded.error !== undefined || !userProviderAllowed(loaded.policy)) return null;
   const host = endpointHost(s.provider.baseUrl);
-  return s.provider.on && host && !providerAgreed(s.provider) ? host : null;
+  return s.provider.on && host && (held || !providerAgreed(s.provider)) ? host : null;
 }
 
 /**
@@ -110,7 +120,7 @@ export function ownProviderAuth(settingsText: string | null, loaded: LoadedAdmin
 /** The key, only when it was entered for the host `baseUrl` names (never one entered for another host). */
 export function keyFor(baseUrl: string, stored: StoredKey | null): string | null {
   const host = endpointHost(baseUrl);
-  return stored && host && stored.host === host ? stored.key : null;
+  return stored && host && stored.host === host && !stored.unsendable ? stored.key : null;
 }
 
 /**
@@ -161,12 +171,24 @@ export function providerSummary(p: ActiveProvider | null): ProviderSummary | nul
   return { kind: p.kind, host };
 }
 
+/**
+ * Said of a key that holds anything but printable ASCII (integrations-r9-5): a zero-width space, a word joiner, curly
+ * quotes or a look-alike letter picked up from a chat message, a document or a page that wraps long strings. Such a
+ * key was saved, and Electron's fetch then refused the header before sending ("Cannot convert argument to a
+ * ByteString"), which every check read as nothing answering: the address and the network were blamed. Never with the
+ * key or the character in it.
+ */
+export const KEY_HIDDEN_CHARACTER = "That key has a character an API key can't hold, such as a hidden character or curly quotes picked up in copying. Copy it again from your provider.";
+/** Said of a key in use that can't go in a request's header at all: nothing was sent, and the address isn't at fault. */
+export const keyUnsendable = (host: string): string => `The saved API key has a character that can't be sent to ${host}. Replace the key.`;
+
 /** Why `key` can't be saved as an API key, in one plain sentence, or null when it can. */
 export function apiKeyProblem(key: unknown): string | null {
   if (typeof key !== "string" || !key.trim()) return "Enter the API key first.";
   if (key.length > MAX_API_KEY) return "That key is too long to be an API key.";
   // eslint-disable-next-line no-control-regex -- control characters and spaces are exactly what's refused here
   if (/[\u0000- \u007f-\u009f]/.test(key.trim())) return "An API key has no spaces or line breaks in it. Copy it again from your provider.";
+  if (/[^\u0021-\u007e]/.test(key.trim())) return KEY_HIDDEN_CHARACTER;
   return null;
 }
 
@@ -259,7 +281,12 @@ export class ProviderKeyStore {
       const text = this.opts.asyncKeyring && this.box.decryptStringAsync ? (await this.box.decryptStringAsync(raw)).result : this.box.decryptString(raw);
       if (revision !== this.revision) return null;
       const v = JSON.parse(text) as { host?: unknown; key?: unknown; id?: unknown };
-      if (typeof v.host !== "string" || !v.host || typeof v.key !== "string" || apiKeyProblem(v.key) !== null) return null;
+      if (typeof v.host !== "string" || !v.host || typeof v.key !== "string") return null;
+      const problem = apiKeyProblem(v.key);
+      // Saved by an earlier build with a character no header can hold (integrations-x9-8: dropped here, the check
+      // then went out with no key and said the service needs one, while Home said a key was saved).
+      if (problem === KEY_HIDDEN_CHARACTER) return { key: v.key, host: v.host, keyId: null, unsendable: true };
+      if (problem !== null) return null;
       return { key: v.key, host: v.host, keyId: typeof v.id === "string" && /^[0-9a-f-]{36}$/.test(v.id) ? v.id : null };
     } catch {
       return null; // the keyring refused, or the file isn't one of these: as if none were saved
@@ -291,7 +318,7 @@ export class ProviderKeyStore {
  * What Home's Model provider group shows (PROVIDER_IPC.state). The keyring is asked only while the provider is on and no
  * key is saved for its host (the one case where Home must say whether one can be kept); otherwise it is never touched.
  */
-export async function providerStateOf(o: { settings: Settings; admin: LoadedAdminPolicy; keys: Pick<ProviderKeyStore, "savedHost" | "canPersist"> }): Promise<ProviderState> {
+export async function providerStateOf(o: { settings: Settings; admin: LoadedAdminPolicy; keys: Pick<ProviderKeyStore, "savedHost" | "canPersist">; held?: boolean }): Promise<ProviderState> {
   const p = o.settings.provider;
   const allowed = o.admin.error === undefined && userProviderAllowed(o.admin.policy);
   const host = endpointHost(p.baseUrl);
@@ -301,9 +328,12 @@ export async function providerStateOf(o: { settings: Settings; admin: LoadedAdmi
     managed: allowed ? null : o.admin.policy.provider ? "organisation" : "off",
     keySaved,
     keyring: allowed && p.on && !keySaved ? await o.keys.canPersist().catch(() => false) : true, // a keyring that fails must not hide inForce and host
-    inForce: userProviderInForce(o.settings, o.admin) !== null,
+    // A yes the record holds back (provider-record.ts: its seal not read yet, or a forged one it couldn't put back) is
+    // neither in force nor agreed: Home shows the card, and Test connection waits (integ-x-1).
+    inForce: !o.held && userProviderInForce(o.settings, o.admin) !== null,
     host,
-    agreed: providerAgreed(p),
+    agreed: !o.held && providerAgreed(p),
+    held: !!o.held,
   };
 }
 
@@ -385,6 +415,11 @@ export interface ProviderServiceDeps {
   /** The endpoint in force may have changed (a key saved, removed, read or deleted): main reconnects and tells Home. */
   changed: () => void;
   now?: () => Date;
+  /**
+   * The record of the card's yes (provider-record.ts): the yes is written through it, as Ember's own, and sealed; a yes
+   * that reaches settings.json any other way is put back (safety-privacy-c10-1).
+   */
+  record?: { as<T>(change: () => T): T; held?(): boolean };
 }
 
 /** Said when the card's yes names another host than the endpoint in settings now (it changed meanwhile). */
@@ -410,6 +445,11 @@ export function createProviderService(d: ProviderServiceDeps) {
   const retire = () => { if (stored && !retired.includes(stored.key)) retired.push(stored.key); stored = null; };
   const allowed = () => { const a = d.admin(); return a.error === undefined && userProviderAllowed(a.policy); };
   const hostNow = () => endpointHost(d.settings.get().provider.baseUrl);
+  /**
+   * The card's yes as Ember recorded it: none while the record holds the file's yes back (its seal not read yet, or a
+   * forged one it couldn't put back, or not audited), so nothing goes to that host, Test connection included (integ-x-1).
+   */
+  const agreedNow = (p: Settings["provider"]) => !(d.record?.held?.() ?? false) && providerAgreed(p);
 
   /** Reads the saved key when it is for the endpoint now and not read yet; `always`: even with the provider off (a test). */
   const readKey = (always = false): Promise<void> => {
@@ -441,7 +481,7 @@ export function createProviderService(d: ProviderServiceDeps) {
       if (problem) return { ok: false, why: problem };
       if (!(await d.keys.canPersist())) return { ok: false, why: KEY_NO_KEYRING };
       key = { key: draft.key.trim(), host };
-    } else if (hostNow() === host && providerAgreed(d.settings.get().provider)) {
+    } else if (hostNow() === host && agreedNow(d.settings.get().provider)) {
       await readKey(true);
       key = stored;
     }
@@ -486,7 +526,7 @@ export function createProviderService(d: ProviderServiceDeps) {
       retire();
     },
     api: {
-      state: () => providerStateOf({ settings: d.settings.get(), admin: d.admin(), keys: d.keys }),
+      state: () => providerStateOf({ settings: d.settings.get(), admin: d.admin(), keys: d.keys, held: d.record?.held?.() ?? false }),
       saveKey: async (key: string): Promise<KeySave> => {
         if (!allowed()) return { ok: false, why: PROVIDER_MANAGED };
         const host = hostNow();
@@ -530,7 +570,8 @@ export function createProviderService(d: ProviderServiceDeps) {
         if (!allowed()) return { ok: false, why: PROVIDER_MANAGED };
         const own = d.settings.own().provider;
         if (endpointHost(move?.baseUrl ?? own.baseUrl) !== host) return { ok: false, why: PROVIDER_HOST_CHANGED };
-        d.settings.update({ provider: { ...own, ...move, on: true, consent: { version: FEATURE_CONSENT_VERSION.provider, at: (d.now?.() ?? new Date()).toISOString(), host } } });
+        const yes = () => d.settings.update({ provider: { ...own, ...move, on: true, consent: { version: FEATURE_CONSENT_VERSION.provider, at: (d.now?.() ?? new Date()).toISOString(), host } } });
+        if (d.record) d.record.as(yes); else yes();
         d.log.info("provider.agreed", {});
         return { ok: true };
       },
@@ -541,8 +582,11 @@ export function createProviderService(d: ProviderServiceDeps) {
         const started = revision;
         const p = d.settings.get().provider;
         // Checked before the keyring is asked: nothing at all for a host whose card isn't agreed.
+        // A yes the record holds back is no yes: nothing goes to that host (integ-x-1).
+        const host = endpointHost(p.baseUrl);
+        if (host && providerAgreed(p) && !agreedNow(p)) return { ok: false, why: providerNotAgreed(host) };
         if (providerAgreed(p)) await readKey(true);
-        if (started !== revision || !d.consented() || !allowed() || p !== d.settings.get().provider) return { ok: false, why: PROVIDER_HOST_CHANGED };
+        if (started !== revision || !d.consented() || !allowed() || p !== d.settings.get().provider || (providerAgreed(p) && !agreedNow(p))) return { ok: false, why: PROVIDER_HOST_CHANGED };
         const r = await testConnection(p, stored, d.fetch);
         d.log.info("provider.tested", { ok: r.ok });
         return r;
@@ -563,7 +607,10 @@ const AZURE_TEST_VERSION = "2024-10-21";
 /**
  * The one small request "Test connection" makes: the service's model list (GET, no request body, nothing of the user's).
  * OpenAI-compatible: {base}/models with a bearer key; Azure: {base}/openai/models with api-key; Anthropic: {base}/v1/models
- * with x-api-key.
+ * with x-api-key. `{base}` is the address as typed, a query included: the runtime puts its own path after the whole
+ * address too (measured: "POST /v1?tenant=a/chat/completions"), so the list is asked where chat will be, and an address
+ * whose requests can't answer never tests as connected (integrations-x9-5: with the query moved behind "/models" it
+ * did, and a forwarder that takes the service's address as its query was asked the wrong one).
  */
 export function testRequest(p: Pick<UserProviderSettings, "type" | "baseUrl" | "azureApiVersion">, key: string | null): { url: string; headers: Record<string, string> } {
   const base = p.baseUrl.replace(/\/+$/, "");
@@ -594,8 +641,11 @@ export function testRequest(p: Pick<UserProviderSettings, "type" | "baseUrl" | "
  */
 export type TestResult = { ok: true; host: string; models: number | null; ids?: string[]; more?: true } | { ok: false; why: string; cause?: "refused" | "timeout" | "unreachable" | "no-list" };
 
-/** The most model ids the test passes on for the model fields' suggestions. */
-export const TEST_IDS_MAX = 50;
+/**
+ * The most model ids the test passes on: first run checks the names typed against all of them, so a list of more than
+ * 50 (OpenAI's is one page of many) is checked whole (first-run-r9-1); the model fields suggest the first 50.
+ */
+export const TEST_IDS_MAX = 1000;
 
 /**
  * The model ids a model list names (`data[].id`, as OpenAI, Azure and Anthropic write them; `models[].name` or `.model`,
@@ -662,6 +712,9 @@ export async function testConnection(p: UserProviderSettings, stored: StoredKey 
   if (!host) return { ok: false, why: PROVIDER_NO_ADDRESS };
   if (!providerAgreed(p)) return { ok: false, why: providerNotAgreed(host) };
   const key = keyFor(p.baseUrl, stored);
+  // A key that can't go in a header: said as the key's trouble, with nothing sent (integrations-r9-5), for one an
+  // earlier build saved too (integrations-x9-8).
+  if ((key && apiKeyProblem(key)) || (stored?.unsendable && stored.host === host)) return { ok: false, why: keyUnsendable(host) };
   const { url, headers } = testRequest(p, key);
   try {
     const res = await fetch(url, { method: "GET", headers, redirect: "error", signal: AbortSignal.timeout(timeoutMs) });
@@ -680,6 +733,9 @@ export async function testConnection(p: UserProviderSettings, stored: StoredKey 
     const msg = err instanceof Error ? `${err.name} ${err.message} ${(err as { cause?: { code?: string } }).cause?.code ?? ""}` : String(err);
     if (/TimeoutError|AbortError/i.test(msg)) return { ok: false, why: `${host} didn't answer within ${Math.round(timeoutMs / 1000)} seconds.`, cause: "timeout" };
     if (/redirect/i.test(msg)) return { ok: false, why: `${host} sent Ember to another address. Enter the address it moved to.` };
+    // The request never left: fetch refused a header's value, and the key is the only one that isn't Ember's own text.
+    // No cause, so nothing downstream says the address or the network (or "Start it" for a server on this computer).
+    if (/ByteString|header (?:value|content)|Invalid character in header/i.test(msg)) return { ok: false, why: keyUnsendable(host) };
     if (/certificate|self.signed|ERR_CERT_/i.test(msg)) return { ok: false, why: `Ember can't verify ${host}'s certificate.` };
     // Electron's fetch says net::ERR_CONNECTION_REFUSED (ERR_ADDRESS_UNREACHABLE for an ::1 with no IPv6), Node's ECONNREFUSED.
     const refused = /ECONNREFUSED|ERR_CONNECTION_REFUSED|ERR_ADDRESS_UNREACHABLE/.test(msg);

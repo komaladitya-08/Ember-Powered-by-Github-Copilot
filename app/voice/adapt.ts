@@ -33,8 +33,8 @@ import { VOICE_MATCH_THRESHOLD, averagePrint, similarity, unit } from "./voicepr
  * - `anchorFloor`: a request must match the enrolment by this much too to be heard, whatever the print learnt. Against
  *   200 crafted samples per pair that each passed every limit (an attacker who already sounds 0.86 like the owner), it
  *   held other voices to 4.0 % (6.3 % at 0.72; 98 % with no limits at all).
- * - `verifiedFloor`: to be `verified` (what may answer a question by voice or turn Work without asking on), the
- *   enrolment's own threshold, as before Voice Match learnt: what it learnt can never lower that bar (review of #145).
+ * - `verifiedFloor`: to be `verified` (what may answer a question by voice or choose a mode that asks less, while
+ *   Voice Match is on), the enrolment's own threshold, as before Voice Match learnt: what it learnt can never lower that bar (review of #145).
  * - `minVoicedSeconds`: a sample has at least this much voice (a short answer says too little to learn a voice from,
  *   whatever APPROVAL_MIN_SECONDS asks of an answer).
  * - `minGapMs`: at most one sample in this long (a busy minute of talk teaches no more than one request).

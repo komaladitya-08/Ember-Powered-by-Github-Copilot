@@ -483,6 +483,21 @@ describe("README.md", () => {
   const readme = read("README.md");
   const version = (JSON.parse(read("package.json")) as { version: string }).version;
 
+  it("explains the approval modes in a section of their own, and never says Ember asks before every app step or dangerous command (install-docs-r10-3)", () => {
+    const modes = flat(section(readme, "How Ember asks"));
+    for (const m of ["**Interactive**", "**Assisted**", "**Autopilot**"]) expect(modes).toContain(m);
+    // What each mode still asks for, and what the organisation can do, as CLAUDE.md "Approval modes" says.
+    expect(modes).toMatch(/default/);
+    expect(modes).toMatch(/passwords or keys/);
+    expect(modes).toMatch(/keep running after you stop it/);
+    expect(modes).toMatch(/organisation/);
+    expect(modes).toMatch(/“Ember, stop”/);
+    // The two sentences that said Ember always asks first now point at the modes.
+    expect(flat(readme)).not.toContain("asks \"May I?\" before it does something in an app.");
+    expect(flat(section(readme, "First steps"))).toContain("How Ember asks");
+    expect(flat(section(readme, "Commands, WSL and other computers"))).toMatch(/In Interactive, the default, Ember stops and asks before anything that deletes/);
+  });
+
   it("says where to download every file a release has, and how to check it", () => {
     const download = flat(section(readme, "Download"));
     expect(download).toMatch(/\[Releases page\]\(https:\/\/github\.com\/[^/]+\/[^/]+\/releases\)/);
@@ -968,8 +983,8 @@ describe("README.md's Accessibility section, against the release it describes", 
 
   it.runIf(released)("quotes what the bubble tells a screen reader about answering, as the bubble says it", () => {
     const view = { visible: true, mood: "attention", title: "May I?", thought: "Click “Save”?", streaming: false, step: "Ctrl+Alt+Y allow · Ctrl+Alt+N not now" };
-    expect(announcement(view as BubbleView)).toContain("Ctrl+Alt+Y allow; Ctrl+Alt+N not now");
-    expect(a11y).toContain("(\"Ctrl+Alt+Y allow; Ctrl+Alt+N not now\")");
+    expect(announcement(view as BubbleView)).toContain("To allow, press Ctrl+Alt+Y; for not now, press Ctrl+Alt+N");
+    expect(a11y).toContain("(\"To allow, press Ctrl+Alt+Y; for not now, press Ctrl+Alt+N\")");
     const where = (targetCopy as { panelHint?: (kind: "command" | "consent", os: "linux" | "win32" | "darwin") => string }).panelHint;
     expect(where?.("command", "linux")).toMatch(/: press Alt\+Tab to go there\.$/);
     expect(a11y).toContain("(\"press Alt+Tab to go there\")");
@@ -1317,5 +1332,20 @@ describe("CHANGELOG.md", () => {
     // In the words the commands guide uses for it (§2.5).
     expect(rule).toMatch(/spoken[^.]*only where Ember can tell your voice from what your speakers play \(Linux with speaker rejection on and parec installed\)/);
     expect(notes).toMatch(/On Windows, on macOS and on Linux without it, a dangerous command you asked for by voice asks/);
+  });
+});
+
+describe("what the docs say Interactive does in the system's Settings (modes-x9p-7)", () => {
+  it("says what the engine decides there: a switch and an unasked first step ask, another page in a task asked for there doesn't", async () => {
+    const { PolicyEngine } = await import("../../app/main/policy/policy");
+    const { approvalInputs } = await import("../../app/main/policy/autonomy");
+    const i = approvalInputs("interactive");
+    const e = new PolicyEngine({ neverLook: () => [], grants: () => ({}), trustAskedApps: () => i.askedApps, autonomy: () => i.scopes });
+    const at = { taskId: "t", app: "gnome-control-center", window: "Settings", goal: "make the text bigger", askedIn: "gnome-control-center" };
+    expect(e.decide({ ...at, kind: "click", element: { role: "page tab", name: "Accessibility" } }).verdict).toBe("allow");
+    expect(e.decide({ ...at, kind: "toggle", element: { role: "toggle button", name: "Large Text" }, value: "on" }).verdict).toBe("confirm");
+    expect(e.decide({ ...at, askedIn: "gedit", kind: "click", element: { role: "page tab", name: "Accessibility" } }).verdict).toBe("confirm");
+    for (const f of ["docs/DEVELOPING.md", "CLAUDE.md"]) expect(fs.readFileSync(f, "utf8"), f).not.toMatch(/(Steps|steps) in the system's Settings and security apps (always )?ask/);
+    expect(fs.readFileSync("docs/DEVELOPING.md", "utf8")).toContain("In the system's Settings and security apps it asks more often: a switch or a choice there asks every time,");
   });
 });

@@ -27,7 +27,7 @@ const BEFORE_WORDS = String.raw`its(?=${CLAUSE_WORD}[ \t,]*${CLAUSE_WORD}${CLAUS
  * "Password: changed yesterday"): a value is anything else ("hunter2", "correct-horse"). A Wi-Fi key's state is no
  * value only after a Wi-Fi key's name (withoutKeyStates).
  */
-const NOT_A_VALUE = [
+export const NOT_A_VALUE = [
   "the", "a", "an", "my", "your", "our", "their", "his", "her", "this", "that", "it", "not", "no", "now", "being", "been", "changed",
   "required", "needed", "reset", "set", "saved", "stored", "updated", "expired", "protected", "managed", "forgotten", "wrong", "strong",
   "weak", "pinned", "hidden", "secret", "private", "in", "on", "at", "for", "to", "from", "with", "by", "of", "and", "or", "same",
@@ -131,7 +131,7 @@ const REFERENCE = /^(?:\$\{|\$\(|\{\{|\{%|<%|env:|\$[A-Z_][A-Z0-9_]*(?![\w$])|%[
 const VERSION = /^(?:[~^<>=]*v?\d+(?:\.(?:\d+|x|\*))+(?:[-+][\w.]+)?|\*|latest|workspace:\S*)$/i;
 
 /** Whether `s`, a quoted literal in code, is shaped like a password or a token rather than a name, a path or a version. */
-function secretShaped(s: string): boolean {
+export function secretShaped(s: string): boolean {
   if (s.length < 6 || /\s/.test(s)) return false;
   // An address, an email, a path, a file, a host and port, a version, a constant's or an algorithm's name, a colour, or
   // lowercase words joined ("bert-base-uncased", "gpt-4o", "us-east-1").
@@ -809,14 +809,14 @@ const VALUE = String.raw`["'“]?(?!(?:${NOT_A_VALUE})(?:[\s.,;!?"'”]|$))(?!\d
  * What may stand between a secret's name and "is": a short phrase that says what it is for ("for the HR portal", "at
  * home", "to unlock it"), a preposition and one to four words. A hyphen inside a word ("e-mail") isn't a separator.
  */
-const FOR_WHAT = String.raw`(?:\s+(?:for|to|at|on|of|in|into|with|from)(?:\s+[^\s:=]+){1,4}?)?`;
+export const FOR_WHAT = String.raw`(?:\s+(?:for|to|at|on|of|in|into|with|from)(?:\s+[^\s:=]+){1,4}?)?`;
 /**
  * "is", "'s", "was", "are", "is:", or ":", "=", a spaced "-", "–" or "—" or one before a digit ("PIN-4821"), or ", it's"
  * and "? it's" ("my wifi password, it's BlueSky99": memory-i4).
  */
 const SAYS_IS = String.raw`\s*[:=]|\s*[-–—](?=\s|\d)|['’]s\s|\s+(?:is|was|are|were)(?:\s*[:=])?\s`;
 const SAYS_IT = String.raw`\s*[,?]\s*(?:it|that)(?:['’]s|\s+is)\s`;
-const SAYS = String.raw`(?:${SAYS_IS}|${SAYS_IT})\s*`;
+export const SAYS = String.raw`(?:${SAYS_IS}|${SAYS_IT})\s*`;
 /**
  * SAYS before a value that may be a word: ", it's" only before one with a digit or a symbol ("my netflix password? it's
  * hunter2"), never "your password, it's personal" or "a long passphrase, it's easier to remember" (memory-v4-6).
@@ -838,7 +838,7 @@ const PLACE_NAMES = String.raw`door|front door|back door|gate|garage|alarm|safe|
  * hunter2", "The PIN is also 4821"), so "The password is now required" and "The PIN is now 6 digits" stay facts:
  * memory-r5-1.
  */
-const NOW = String.raw`(?:(?:now|still|also|currently|actually|really|then|just)\s+)?`;
+export const NOW = String.raw`(?:(?:now|still|also|currently|actually|really|then|just)\s+)?`;
 const TOLD_SECRET = new RegExp(
   String.raw`\b${SECRET_NAMES}s?\b(?:["'](?=\s*[:=]))?${FOR_WHAT}(?:\s+(?:everywhere|anywhere|here|there|now|too|also|always|usually|still|today|currently))?${SAYS_VALUE}${NOW}${VALUE}`,
   "i",
@@ -1039,7 +1039,7 @@ const LOGIN_PAIR = new RegExp(
  * name says no secret and its value isn't shaped like one (`toldLogin`; never "MY_PASS=hunter2": memory-v5-4).
  */
 const AUTH_SCHEME = String.raw`oauth|saml|fido|ntlm|ntlmv|kerberos|krb|ldaps?|openid|oidc|u2f|webauthn|totp|hotp|2fa|mfa|sso|pkce|tls|ssl|base|sha|md5|aes|rsa|hmac|utf|jwt|x509`;
-const LOGIN_VALUE = String.raw`["'“]?(?!(?:${NOT_A_VALUE})(?:[\s"'”]|$))(?![^\s@"'”]+@[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}(?:[\s.,;!?"'”]|$))`
+export const LOGIN_VALUE = String.raw`["'“]?(?!(?:${NOT_A_VALUE})(?:[\s"'”]|$))(?![^\s@"'”]+@[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}(?:[\s.,;!?"'”]|$))`
   + String.raw`(?![a-z_][\w.-]*@(?:\d{1,3}(?:\.\d{1,3}){3}|localhost)(?::\d{1,5})?(?:[\s.,;!?)"'”]|$))(?!@[a-z_][a-z_.-]*(?:[\s.,;!?)"'”]|$))`
   + String.raw`(?![a-z_][\w.-]*@[a-z0-9][\w.-]*:\d{1,5}(?:[\s.,;!?)"'”]|$))(?![a-z][a-z._-]+@[a-z][a-z-]*(?:[\s.,;!?)"'”]|$))`
   + String.raw`(?!v\d+(?:\.\d+)*(?:[-+][\w.]+)?(?:[\s.,;!?)"'”]|$))(?!#\d+(?:[\s.,;!?)"'”]|$))`
@@ -1093,7 +1093,7 @@ const WIFI_KEY = /\bwi-?fi\b\s*[:=]\s*["'“]?(?=[^\s"'”]{0,64}[0-9!@#$%^&*])[
  * required. 4 digits. 4821"): memory-z6-5.
  */
 const STATE_LENGTH = String.raw`(?:(?:min(?:imum)?|max(?:imum)?|at\s+least|up\s+to)\s+)?\d+\+?[-\s]*(?:digits?|characters?|chars?|letters?|numbers?|words?|days?|weeks?|months?|years?|minutes?|hours?|seconds?|times|attempts|tries)\b(?:[ \t]+long\b)?`;
-const STATE_ALGORITHM = String.raw`(?:(?:sha|aes|rsa|des|md|hs|rs|es|ps|blake|crc)-?\d+|argon2(?:id|i|d)?|bcrypt\w*|scrypt|pbkdf2\w*|base(?:16|32|58|64)(?:url)?|utf-?(?:8|16))`
+export const STATE_ALGORITHM = String.raw`(?:(?:sha|aes|rsa|des|md|hs|rs|es|ps|blake|crc)-?\d+|argon2(?:id|i|d)?|bcrypt\w*|scrypt|pbkdf2\w*|base(?:16|32|58|64)(?:url)?|utf-?(?:8|16))`
   + String.raw`(?:[- ](?:hashed|encoded|encrypted|signed|salted|based))?(?![^\s"'”,.;:)])`;
 const STATE_THEN = new RegExp(String.raw`\b${SECRET_NAMES}s?\b${FOR_WHAT}${SAYS}${NOW}[A-Za-z][A-Za-z'’-]*[ \t]*[,;.][ \t]*`
   + String.raw`(?:(?:${STATE_LENGTH}|${STATE_ALGORITHM})[ \t]*[,;:.]?[ \t]*){0,3}(?:(?:but|and|so|though|yet|which\s+is)\s+)?`
@@ -1228,7 +1228,7 @@ function loginPass(text: string): boolean {
  */
 const OWN_PLACE = String.raw`(?:my|our|your|his|her|their|the|[a-z]+['’]s)\s+(?:house|home|office)`;
 // Places let or shared by a code ("the Airbnb code is 4821", "the gym code", "the storage unit code"): memory-1.
-const PLACES = String.raw`door|front door|back door|gate|garage|alarm|safe|lock|bike lock|locker|entry|access|backup|one-time|recovery|unlock|security|building|keypad|key ?safe|key ?box|lockbox|padlock|vault|flat|apartment|`
+export const PLACES = String.raw`door|front door|back door|gate|garage|alarm|safe|lock|bike lock|locker|entry|access|backup|one-time|recovery|unlock|security|building|keypad|key ?safe|key ?box|lockbox|padlock|vault|flat|apartment|`
   + String.raw`airbnb|gym|cabin|cottage|chalet|caravan|shed|storage unit|storage locker|mailbox|letterbox|lift|elevator|${OWN_PLACE}`;
 /** Places that only lock, so a code for one is a lock's whatever word comes before it ("the bank code for the vault"). */
 const LOCKS = String.raw`door|front door|back door|side door|gate|garage|alarm|safe|bike lock|locker|keypad|key ?safe|key ?box|lockbox|padlock|vault`;

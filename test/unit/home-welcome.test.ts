@@ -63,8 +63,10 @@ describe("first run's steps", () => {
     expect(gated(firstStep(1), false)).toBe("consent");
   });
 
-  it("goes forward from the consent step only once the agreement is saved", () => {
-    expect(SCRIPT).toContain('void saveStep(() => deps.save({ consent: { version: CONSENT_VERSION, at: new Date().toISOString() } }), "sign-in");');
+  it("goes forward from the consent step only once the agreement is saved, and turned on every row left on (slice4-24)", () => {
+    expect(SCRIPT).toContain("const done = await window.ember.agreeFirstRun(sent, sha).catch(() => ({ ok: false, failed: [] as FirstRunRow[] }));");
+    expect(SCRIPT).toContain("return done.failed.length === 0;");
+    expect(SCRIPT).not.toContain("deps.save({ consent:");
     expect(SCRIPT).toContain("step = gated(to, consented());");
   });
 
@@ -95,9 +97,15 @@ describe("the consent in short", () => {
       ["eye", /I read the window you're working in, and for tasks I may take a screenshot of it\./, "reads the window you're working in"],
       ["eye", /Never password prompts, or apps on your never-look list\./, "App windows on your never-look list and password prompts are never read"],
       ["send", /your request and what I read go to GitHub Copilot\. Nothing is sent before you ask\./, "Nothing is sent before you ask."],
-      ["hand", /I ask before acting in an app, and always before anything hard to undo\. I never type passwords\./, "It never types passwords."],
-      ["lock", /On this computer I keep your settings, logs and a record of what you asked and what I did \(kept 30 days\)\. If you save a workspace, I encrypt its paths and last request and answer\. I send no usage statistics\./, "It sends no usage statistics."],
-      ["plug", /The microphone, other computers and commands stay off until you turn them on\. While one of my questions is up, anyone near the computer can answer it by voice, without my name right after I ask\. If you teach me your voice, I keep a voiceprint I refine from your requests, and the words you correct \(never audio\)\./, "The microphone stays off</b> unless you turn on"],
+      ["hand", /I ask before acting in an app unless you turn on Interactive, and always before anything hard to undo\. I never let the AI model type or see passwords\./, "It never lets the AI model type or see passwords."],
+      // The vault fills a login itself in Autopilot, so the line says so beside the password promise (merge review integ-x-2).
+      ["hand", /Only in Autopilot, I can fill in a login, a card or contact details from my vault\.$/, "Only in Autopilot, it can fill in a login, a card or contact details from its vault, which the AI model never sees."],
+      ["hand", /unless you turn on Interactive/, "It asks before acting</b> in an app unless you turn on Interactive"],
+      ["lock", /On this computer I keep your settings, logs and a record of what you asked and what I did \(kept 30 days\)\. If you save a workspace, I encrypt its paths and last request and answer\. If you give me a login, a card or contact details in my Secure Form, I keep them in my vault, locked with your computer's keyring\. I send no usage statistics\./, "It sends no usage statistics."],
+      // The vault keeps something new on this computer (CONSENT_VERSION 10), so the summary says so too (merge review integ-y-6).
+      ["lock", /in my Secure Form, I keep them in my vault, locked with your computer's keyring\./, "If you give Ember a login, a card or contact details in its Secure Form, it keeps them in its vault on this computer, locked with your computer's keyring"],
+      ["plug", /^Agreeing turns on what you leave on here, and you can turn any of it off later in Settings\. Other computers stay off until you turn them on\. While one of my questions is up, anyone near the computer can answer it by voice, without my name right after I ask\. If you teach me your voice, I keep a voiceprint I refine from your requests, and the words you correct \(never audio\)\.$/, "<b>Agreeing turns on</b> what you leave switched on here"],
+      ["plug", /you can turn any of it off later in Settings/, "you can turn any of them off later in Settings"],
       ["plug", /If you teach me your voice, I keep a voiceprint I refine from your requests/, "it keeps your voiceprint and keeps refining it from requests it is sure are yours (numbers, never audio), and it keeps the words you correct"],
       // Said plainly at setup (owner decision B of 2026-11-12).
       ["plug", /While one of my questions is up, anyone near the computer can answer it by voice/, "anyone near the computer can answer it by voice"],
@@ -128,7 +136,7 @@ describe("the consent in short", () => {
     expect(locked[3].text).toContain("(none deleted until your organisation fixes its policy)");
   });
 
-  it("tells someone who agreed to an earlier version what changed since, each line from the full text (first-run-4, safety-privacy-8)", () => {
+  it("tells someone who agreed to an earlier version what changed since, each line from the full text and true for them (first-run-4, safety-privacy-8, slice4-x9-3)", () => {
     const full = PAGE.slice(PAGE.indexOf("<details class=\"w-more\" id=\"w-full\">"), PAGE.indexOf("</details>", PAGE.indexOf("id=\"w-full\"")));
     // Every bump has its line, so a bump can't ship without one, and every line is paired with the full text's words.
     for (let v = 2; v <= CONSENT_VERSION; v++) {
@@ -137,11 +145,17 @@ describe("the consent in short", () => {
       for (const source of CONSENT_CHANGE_SOURCES[v]) expect(full, `${v}: ${source}`).toContain(source);
     }
     expect(Object.keys(CONSENT_CHANGES).map(Number).every(v => v >= 2 && v <= CONSENT_VERSION)).toBe(true);
-    expect(consentChangesSince(6)).toEqual([CONSENT_CHANGES[7], CONSENT_CHANGES[8]]);
+    expect(consentChangesSince(6)).toEqual([CONSENT_CHANGES[7], CONSENT_CHANGES[8], CONSENT_CHANGES[9], CONSENT_CHANGES[10]]);
     expect(consentChangesSince(6)[0]).toContain("“Keep my recent conversation”");
-    expect(consentChangesSince(4)).toEqual([CONSENT_CHANGES[5], CONSENT_CHANGES[6], CONSENT_CHANGES[7], CONSENT_CHANGES[8]]);
+    expect(consentChangesSince(4)).toEqual([CONSENT_CHANGES[5], CONSENT_CHANGES[6], CONSENT_CHANGES[7], CONSENT_CHANGES[8], CONSENT_CHANGES[9], CONSENT_CHANGES[10]]);
     // Setup says plainly that anyone near the computer can answer Ember by voice (owner decision B of 2026-11-12).
-    expect(consentChangesSince(7)).toEqual(["While one of my questions is up, anyone near the computer can answer it by voice, and for a few seconds after I ask, I listen for that answer without my name. With Voice Match on, only your voice can say yes."]);
+    expect(consentChangesSince(7)[0]).toBe("While one of my questions is up, anyone near the computer can answer it by voice, and for a few seconds after I ask, I listen for that answer without my name. With Voice Match on, only your voice can say yes.");
+    // Version 9, said truthfully to someone who agreed before: their settings stay, and they are asked about Interactive
+    // only while its card isn't agreed and their organisation allows it, when its row shows (slice4-25, slice4-x9-3).
+    expect(consentChangesSince(8)[0]).toBe("If you haven't agreed to Interactive yet, agreeing now turns it on unless you switch it off here or your organisation keeps it off, so I don't ask before ordinary steps in an app. Your other settings stay as they are.");
+    // Version 10: what the vault keeps, and that only Autopilot fills it in (vault-4).
+    expect(consentChangesSince(8)).toHaveLength(2);
+    expect(consentChangesSince(9)).toEqual([CONSENT_CHANGES[10]]);
     expect(consentChangesSince(0)).toEqual([]);
     expect(consentChangesSince(CONSENT_VERSION)).toEqual([]);
     for (const line of Object.values(CONSENT_CHANGES)) expect(line, line).not.toMatch(/\bwe\b|\bus\b|\bour\b|"/i);
@@ -247,8 +261,14 @@ describe("the sign-in step", () => {
     expect(signInView({ phase: "ready", signingIn: false, managedProvider: false, service: { kind: "user", host: "api.example.com", listed: true } }).line).toBe("Using your own provider (api.example.com).");
   });
 
+  it("titles the organisation's step for what is so: connecting while it connects, its service once connected (first-run-r9-11)", () => {
+    expect(signInText({ managed: true, ownPhase: "ready" }).title).toBe("Your organisation's model service");
+    expect(signInText({ managed: true, ownPhase: "error" }).title).toBe("Your organisation's model service");
+    expect(signInText({ managed: true, ownPhase: "starting" }).title).toBe("Connecting to your organisation's service");
+  });
+
   it("never offers sign-in with the organisation's own service, under lockdown, or when the policy refused (review of #124)", () => {
-    expect(signInText({ managed: true }).title).toBe("Connecting to your organisation's service");
+    expect(signInText({ managed: true, ownPhase: "starting" }).title).toBe("Connecting to your organisation's service");
     expect(signInText({ managed: false })).toBe(STEP_TEXT["sign-in"]);
     expect(signInView({ phase: "starting", signingIn: false, managedProvider: true })).toMatchObject({ primary: "continue", why: "Still connecting to your organisation's model service." });
     expect(signInView({ phase: "error", signingIn: false, managedProvider: true })).toMatchObject({ primary: "continue", why: "", retry: false });
@@ -385,21 +405,57 @@ describe("the try step", () => {
     // Ember”." for good, and the last step said "“Hey Ember”: On".
     expect(voiceTry({ wakeWord: true, voiceConsent: true, state: "needs-models" })).toBe("no-models");
     expect(TRY_TEXT.voiceNoModels).toBe("I can't listen for “Hey Ember” yet: my speech models aren't on this computer. Download them later in Settings › Voice.");
-    const row = (voice: "listening" | "waiting" | "off" | "no-models") => summaryRows({ character: "Cinder", size: 60, signedIn: null, voice, keys: null })[2];
+    const row = (voice: Parameters<typeof summaryRows>[0]["voice"]) => summaryRows({ character: "Cinder", size: 60, signedIn: null, voice, keys: null })[2];
     expect(row("no-models")).toEqual({ label: "“Hey Ember”", value: "Not yet: its speech models need downloading" });
     expect(row("waiting").value).toBe("On");
     expect(row("off").value).toBe("Off");
     // The try isn't drawn, and its line under the tries says why.
-    expect(SCRIPT).toContain('$("w-try-voice").hidden = vs === "off" || vs === "no-models";');
-    expect(SCRIPT).toContain('$("w-voice-later").textContent = vs === "no-models" ? TRY_TEXT.voiceNoModels : TRY_TEXT.voiceLater;');
   });
 
-  it("counts voice as off when the organisation turned it off, it is muted, or the microphone isn't working (review of #124)", () => {
+  it("counts voice as off when the organisation turned it off or listening is off, and doesn't offer the try while the microphone is off or not working (review of #124)", () => {
     const on = { wakeWord: true, voiceConsent: true, state: "waiting" };
     expect(voiceTry({ ...on, allowed: false })).toBe("off");
-    expect(voiceTry({ ...on, muted: true })).toBe("off");
-    for (const state of ["off", "muted", "error"]) expect(voiceTry({ ...on, state }), state).toBe("off");
+    expect(voiceTry({ ...on, allowed: false, state: "error" })).toBe("off");
+    expect(voiceTry({ ...on, state: "off" })).toBe("off");
+    expect(voiceTry({ ...on, muted: true })).toBe("mic-off");
+    expect(voiceTry({ ...on, state: "muted" })).toBe("mic-off");
+    expect(voiceTry({ ...on, state: "error", micFault: true })).toBe("no-mic");
     expect(SCRIPT).toContain("allowed: status?.admin.features.voice !== false, muted: !!settings?.voice.muted,");
+  });
+
+  it("names the microphone when listening is on but the microphone isn't working or is off, never telling the user to turn “Hey Ember” on (first-run-r10-1)", () => {
+    // Agreed with listening left on, on a computer whose microphone doesn't work: it said to turn “Hey Ember” on later
+    // and that it was Off.
+    expect(TRY_TEXT.voiceNoMic).toBe("“Hey Ember” is on, but I can't hear you: my microphone isn't working. Check it in Settings › Voice.");
+    expect(TRY_TEXT.voiceMicOff).toBe("“Hey Ember” is on, but my microphone is off, so I can't hear you. Unmute microphone, in my handle's menu, turns it back on.");
+    const row = (voice: Parameters<typeof summaryRows>[0]["voice"]) => summaryRows({ character: "Cinder", size: 60, signedIn: null, voice, keys: null })[2];
+    expect(row("no-mic")).toEqual({ label: "“Hey Ember”", value: "On, but the microphone isn't working" });
+    expect(row("mic-off")).toEqual({ label: "“Hey Ember”", value: "On, but the microphone is off" });
+    expect(SCRIPT).toContain('$("w-try-voice").hidden = vs !== "listening" && vs !== "waiting";');
+    expect(SCRIPT).toContain('$("w-voice-later").textContent = vs === "no-models" ? TRY_TEXT.voiceNoModels : vs === "no-mic" ? TRY_TEXT.voiceNoMic : vs === "cant-listen" ? TRY_TEXT.voiceCantListen : vs === "mic-off" ? TRY_TEXT.voiceMicOff : TRY_TEXT.voiceLater;');
+  });
+
+  it("names the microphone only when the microphone is what failed, and otherwise says Ember can't listen and Settings says why (r10-modes-copy-x10-3)", () => {
+    // Every voice "error" was "no-mic": damaged models Ember can't replace, the voice process's own error and its
+    // restarts were all called a microphone that isn't working.
+    const on = { wakeWord: true, voiceConsent: true };
+    expect(voiceTry({ ...on, state: "error", micFault: true })).toBe("no-mic");
+    expect(voiceTry({ ...on, state: "error" })).toBe("cant-listen");
+    expect(voiceTry({ ...on, state: "error", micFault: false })).toBe("cant-listen");
+    expect(TRY_TEXT.voiceCantListen).toBe("“Hey Ember” is on, but I can't listen right now. Settings › Voice says why.");
+    expect(TRY_TEXT.voiceCantListen).not.toMatch(/microphone/i);
+    const row = (voice: Parameters<typeof summaryRows>[0]["voice"]) => summaryRows({ character: "Cinder", size: 60, signedIn: null, voice, keys: null })[2];
+    expect(row("cant-listen")).toEqual({ label: "“Hey Ember”", value: "On, but not listening right now" });
+    expect(SCRIPT).toContain("muted: !!settings?.voice.muted, micFault: !!voice?.micFault,");
+    expect(SCRIPT).toContain('vs === "cant-listen" ? TRY_TEXT.voiceCantListen');
+    expect(MAIN).toContain("...(voice?.micFault ? { micFault: true } : {}),");
+  });
+
+  it("names the handle menu's item as it reads while the microphone is off (r10-modes-copy-x10-2)", () => {
+    // While muted the item reads "Unmute microphone", so first run named an item the user wouldn't find.
+    expect(MAIN).toContain('keyed(voice.isMuted ? "Unmute microphone" : "Mute microphone", sc.mute)');
+    expect(TRY_TEXT.voiceMicOff).toContain("Unmute microphone, in my handle's menu");
+    expect(TRY_TEXT.voiceMicOff).not.toMatch(/(^|[^n])Mute microphone/);
   });
 
   it("hears the stop shortcut and the microphone's level from main, never audio", () => {

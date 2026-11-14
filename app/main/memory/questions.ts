@@ -9,6 +9,7 @@
  */
 
 import { APP_NAMES } from "../../shared/apps";
+import { LEARNED_UNDO_MS } from "../../shared/ipc";
 import type { NewFact } from "./graph";
 import { soundsLikeInstruction } from "./learn";
 import type { MemoryOwnerReason } from "./owner";
@@ -20,8 +21,8 @@ export const GAP_MISSES = 2;
 export const QUESTION_EVERY_MS = 24 * 3_600_000;
 /** How long a question waits for its answer (ms). */
 export const ANSWER_WAIT_MS = 10 * 60_000;
-/** "Forget that" reaches back this far (ms). */
-export const FORGET_THAT_MS = 10 * 60_000;
+/** "Forget that" reaches back this far (ms): as long as Home's "Ember learned" line says Undo (memory-r9-10). */
+export const FORGET_THAT_MS = LEARNED_UNDO_MS;
 
 /** Capitalised words that are seldom names. */
 const COMMON = new Set([
@@ -36,29 +37,165 @@ export const MAX_NAME_WORDS = 3;
 
 /** The names in a request: capitalised words not at its start (and runs of them: "Priya Shah"). */
 export function namesIn(request: string): string[] {
-  const out: string[] = [];
+  return [...new Set(namedIn(request).map(n => n.name))].slice(0, 5);
+}
+
+/**
+ * `namesIn`, each name with the words of its sentence before it (folded), nearest last, the word after it, and whether
+ * it is someone's ("Priya's review").
+ */
+function namedIn(request: string): { name: string; before: string[]; after: string; owns: boolean }[] {
+  const out: { name: string; before: string[]; after: string; owns: boolean }[] = [];
   for (const sentence of request.split(/[.!?\n]+/)) {
-    const words = sentence.trim().split(/\s+/);
+    const raws = sentence.trim().split(/\s+/);
+    const words = raws.map(raw => raw.replace(/^[^\p{L}]+|[^\p{L}\p{N}]+$/gu, "").replace(/['’]s$/, ""));
     let run: string[] = [];
+    let from = 0;
     // At most three words: a longer capitalised run is a title or a heading, not a name (review of PR #142).
-    const end = () => { if (run.length && run.length <= MAX_NAME_WORDS) out.push(run.join(" ")); run = []; };
-    words.forEach((raw, i) => {
-      const w = raw.replace(/^[^\p{L}]+|[^\p{L}\p{N}]+$/gu, "").replace(/'s$/, "");
-      if (i > 0 && /^\p{Lu}[\p{L}\p{N}-]{1,30}$/u.test(w) && !COMMON.has(fold(w))) run.push(w);
-      else end();
+    const end = (at: number) => {
+      if (run.length && run.length <= MAX_NAME_WORDS) {
+        out.push({ name: run.join(" "), before: words.slice(0, from).map(fold), after: fold(words[at] ?? ""), owns: /['’]s\W*$/.test(raws[at - 1] ?? "") });
+      }
+      run = [];
+    };
+    words.forEach((w, i) => {
+      if (i > 0 && /^\p{Lu}[\p{L}\p{N}-]{1,30}$/u.test(w) && !COMMON.has(fold(w))) { if (!run.length) from = i; run.push(w); }
+      else end(i);
     });
-    end();
+    end(words.length);
+  }
+  return out;
+}
+
+/**
+ * Names everyone knows, which Ember never asks "who or what is that?" about (memory-r9-8), beside NOT_SOMEONE's apps,
+ * days, folders and devices: more sites and apps, a setting's words ("Dark Mode", "Night Light") and places people
+ * ask the weather, the time or a flight for. Any word of a name counts: asking less costs nothing.
+ */
+const EVERYDAY = new Set([
+  "youtube", "wikipedia", "instagram", "linkedin", "whatsapp", "tiktok", "pinterest", "paypal", "ebay", "bing", "yahoo", "duckduckgo",
+  "notepad", "paint", "calculator", "explorer", "powerpoint", "onenote", "onedrive", "sharepoint", "libreoffice", "writer", "calc",
+  "impress", "vscode", "xcode", "intellij", "pycharm", "eclipse", "vim", "emacs", "nano", "bash", "zsh", "powershell", "npm", "yarn", "pip",
+  "android", "iphone", "ipad", "ios", "macos", "gnome", "kde", "wayland", "xorg", "rhel", "debian", "centos", "rocky", "alma", "messenger",
+  "snapchat", "twitch", "hulu", "disney", "icloud", "itunes", "airdrop", "airplay", "cortana", "bixby", "internet", "web", "cloud",
+  "mode", "dark", "light", "night", "focus", "disturb", "airplane", "volume", "brightness", "wallpaper", "screenshot", "clipboard", "taskbar",
+  "dock", "launcher", "notifications", "accessibility", "magnifier", "narrator", "voiceover", "caps", "lock", "wifi",
+  "london", "berlin", "madrid", "rome", "lisbon", "dublin", "amsterdam", "brussels", "vienna", "zurich", "geneva", "prague", "warsaw", "budapest",
+  "athens", "stockholm", "oslo", "copenhagen", "helsinki", "moscow", "istanbul", "dubai", "delhi", "mumbai", "bangalore", "bengaluru", "chennai",
+  "hyderabad", "kolkata", "pune", "tokyo", "osaka", "kyoto", "seoul", "beijing", "shanghai", "singapore", "bangkok", "jakarta", "manila",
+  "melbourne", "brisbane", "auckland", "toronto", "vancouver", "montreal", "ottawa", "york", "boston", "chicago", "seattle", "dallas", "houston",
+  "denver", "miami", "atlanta", "philadelphia", "francisco", "angeles", "vegas", "cairo", "lagos", "nairobi", "johannesburg", "manchester",
+  "birmingham", "leeds", "liverpool", "glasgow", "edinburgh", "cardiff", "belfast", "bristol", "oxford", "cambridge",
+  "england", "scotland", "wales", "ireland", "britain", "uk", "usa", "america", "canada", "australia", "zealand", "japan", "france", "germany",
+  "spain", "italy", "portugal", "netherlands", "belgium", "switzerland", "austria", "sweden", "norway", "denmark", "finland", "poland", "greece",
+  "turkey", "russia", "brazil", "argentina", "egypt", "nigeria", "africa", "europe", "asia",
+]);
+/** Verbs whose object is an app, a site or a setting Ember is asked to work in, never someone to ask about. */
+const APP_VERB = /^(?:open|launch|start|run|close|quit|exit|restart|reopen|install|uninstall|update|play|pause|resume|stop|search|google|watch|visit|browse|mute|unmute|enable|disable|toggle)$/;
+/** Words that say where or with what: "in Notepad", "on YouTube", "using Krita". */
+const WHERE = /^(?:in|on|using|via|inside|within|onto|into)$/;
+/** Words before "to" that make what follows a place ("flights to Lisbon", "the train to Leeds"). */
+const TRAVEL = /^(?:flights?|trains?|bus|buses|coach|trips?|travel|travelling|traveling|go|goes|going|went|drive|driving|fly|flying|directions|route|way|navigate|tickets?|journey|move|moving|commute|get|getting)$/;
+const DETERMINER_BEFORE = /^(?:the|my|our|a|an|this|that|your)$/;
+/** Verbs whose object is someone ("Ask Alma", "Ping Dallas"), and titles ("Mr Lock"): an everyday word there is a name (memory-x9-9). */
+const PEOPLE_VERB = /^(?:ask|message|email|e-mail|ping|text|call|phone|ring|tell|thank|remind|invite|meet|cc|dm|congratulate|introduce)$/;
+const TITLE = /^(?:mr|mrs|ms|miss|mx|dr|prof|sir|dame|lady|lord)$/;
+/** Words before "on" that make what follows someone or a project ("check in on Priya", "working on Atlas", "an update on Atlas"). */
+const ABOUT_ON = /^(?:check|checking|checked|work|works|working|worked|update|updates|news|progress|status|report|notes|feedback|thoughts|follow|following|focus|focusing|wait|waiting|count|counting|depend|depending|rely|relying)$/;
+
+/** Words before a name that make it someone ("a note to Priya", "dinner with Sam", "the report from Priya", "notes for Bob"). */
+const PERSON_BEFORE = /^(?:with|to|from|cc|bcc|about|for)$/;
+/** Verbs whose object is a thing to be found, never someone to ask about ("Search for StepChange", "Look for Al-Anon"). */
+const FIND_VERB = /^(?:find|search|look|looking|lookup|google|research|locate|browse|check)$/;
+/** Words after a name that make it a project ("the Atlas notes", "Email Priya the Atlas plan"). */
+const PROJECT_AFTER = /^(?:project|projects|team|notes|plan|plans|review|update|updates|report|doc|docs|deck|spec|specs|launch|roadmap|budget|board|repo|sprint|release|milestone|proposal|slides|draft|backlog|migration|tickets|issues|workstream|programme|program|rollout)$/;
+
+/**
+ * Whether a name stands where someone or a project does (r10-memory-x10-2): after "with", "to", "from", "about" or
+ * "for" (never "search for", "look for"), after "on" or "of" behind a word of work ("working on Atlas", "the status of
+ * Atlas"), told about something ("Update Priya on the launch"), or before a project's word ("the Atlas notes").
+ * Anything else, "Find Narcotics meetings", "Is Mounjaro covered?", "Book me in at Marie Stopes", is never asked about.
+ */
+function personOrProject(near: readonly string[], after: string): boolean {
+  const last = near.at(-1) ?? "";
+  if (PERSON_BEFORE.test(last)) return !((last === "for" || last === "about") && FIND_VERB.test(near.at(-2) ?? ""));
+  if ((last === "on" || last === "of") && (ABOUT_ON.test(near.at(-2) ?? "") || (near.at(-2) === "in" && ABOUT_ON.test(near.at(-3) ?? "")))) return true;
+  if (last === "update" && /^(?:on|about)$/.test(after)) return true;
+  return PROJECT_AFTER.test(after);
+}
+
+/**
+ * The names in a request that Ember may ask about (memory-r9-8): `namesIn`, without what everyone knows (NOT_SOMEONE,
+ * EVERYDAY, but after a verb whose object is someone or a title: "Ask Alma", "Mr Lock"), an app installed on this
+ * computer (`apps`: its whole name or its first word), and what stands where an app, a site, a setting or a place does:
+ * the object of "open", "close", "play", "search"…, after "in", "on" or "using", and after "to" behind a word of travel.
+ * People and projects are named otherwise ("Email Priya", "a note to Priya about Atlas", "Priya's review", "working on
+ * Atlas", "Update Priya on the launch"): memory-x9-9. Where it can't tell, it doesn't ask.
+ */
+export function askableNames(request: string, apps: readonly string[] = []): string[] {
+  // An app by its whole name or its first word ("Visual Studio Code", "Visual"), never a later word or someone's
+  // ("Grace Hopper Simulator" leaves Hopper, "Sam's Club" leaves Sam: memory-x9-9).
+  const installed = new Set(apps.flatMap(a => {
+    const first = a.trim().split(/\s+/)[0] ?? "";
+    return [fold(a), ...(/['’]s$/.test(first) || fold(first).length < 3 ? [] : [fold(first)])];
+  }));
+  const out: string[] = [];
+  for (const { name, before, after, owns } of namedIn(request)) {
+    const words = fold(name).split(/\s+/);
+    const near = before.filter(w => w && !DETERMINER_BEFORE.test(w));
+    const last = near.at(-1) ?? "";
+    const someone = PEOPLE_VERB.test(last) || TITLE.test(words[0] ?? "");
+    if (installed.has(fold(name)) || words.some(w => NOT_SOMEONE.has(w) || (!someone && EVERYDAY.has(w)) || installed.has(w))) continue;
+    // Someone's ("Start Priya's review"), and someone told about something ("Update Priya on the launch").
+    if (!owns && !someone && APP_VERB.test(last) && !(last === "update" && /^(?:on|about)$/.test(after))) continue;
+    if (!owns && WHERE.test(last) && !(last === "on" && ABOUT_ON.test(near.at(-2) ?? "") || (near.at(-2) === "in" && ABOUT_ON.test(near.at(-3) ?? "")))) continue;
+    if (!owns && last === "to" && TRAVEL.test(near.at(-2) ?? "")) continue;
+    // Only where someone or a project stands (r10-memory-x10-2): a word list can't name every clinic, group or medicine.
+    if (!owns && !someone && !personOrProject(near, after)) continue;
+    out.push(name);
   }
   return [...new Set(out)].slice(0, 5);
 }
 
+/**
+ * Words that make a request private (memory-c10-1): health and sexual health, medicines, mental health, addiction, a
+ * crisis line, the law, money trouble, dating and sexuality, and faith. The daily question is shown beside the cursor
+ * and spoken by default while Ember has nothing to do, which says nothing of who can see or hear it, so no name from
+ * such a request is ever asked about. Any word counts: asking less costs nothing.
+ */
+const SENSITIVE = new RegExp(String.raw`\b(?:`
+  + String.raw`clinics?|hospitals?|hospice|doctors?|gp|nurses?|surgery|symptoms?|diagnos\w*|treat(?:ed|ment|ments|ing)?|therap\w*|counsell?(?:ing|or|ors)|psychiatr\w*|psycholog\w*`
+  + String.raw`|dr|doctor|\w+olog(?:ist|ists|y)|\w+iatrist|gyna?e\w*|obstetric\w*|midwi\w*|smears?|scans?|mri|biops\w*|jabs?|injections?|hormones?|hrt|testosterone|oestrogen|estrogen|gender|weigh-?ins?|weight\s+(?:loss|watchers)`
+  + String.raw`|prescri\w*|pharmacy|chemist|medication|medicines?|meds|pills?|tablets?\s+for|doses?|side[-\s]effects?|antibiotics?|antidepressants?|test\s+results?|blood\s+tests?|scan\s+results?`
+  + String.raw`|std|stds|sti|stis|sexual\s+health|pregnan\w*|abortion|contracepti\w*|morning\s+after|fertility|ivf|miscarriage|cancer|chemo\w*|tumou?rs?|hiv|aids|hepatitis|herpes|chlamydia|gonorrh?oea|syphilis`
+  + String.raw`|depress\w*|anxiety|panic\s+attacks?|bipolar|schizophreni\w*|adhd|autis\w*|ocd|ptsd|eating\s+disorders?|anorexi\w*|bulimi\w*|self[-\s]harm\w*|suicid\w*`
+  + String.raw`|rehab|addict\w*|alcoholi\w*|anonymous|\w*-anon|narcotics?|gamblers?|gambling|sober|sobriety|relapse|detox|overdose|methadone|suboxone|naloxone`
+  + String.raw`|prozac|sertraline|zoloft|fluoxetine|citalopram|escitalopram|lexapro|venlafaxine|mirtazapine|xanax|valium|diazepam|lorazepam|adderall|ritalin|lithium|viagra|cialis|truvada|prep|ozempic|wegovy|insulin|metformin`
+  + String.raw`|samaritans|crisis|helplines?|hotlines?|domestic\s+(?:violence|abuse)|abuse|abusive|refuge|shelter`
+  + String.raw`|lawyers?|solicitors?|attorneys?|divorc\w*|custody|court|courts|tribunal|arrest\w*|police|probation|lawsuit|sued|suing|immigration|asylum|deport\w*`
+  + String.raw`|debts?|overdrafts?|overdrawn|arrears|bankrupt\w*|insolven\w*|payday\s+loans?|bailiffs?|foreclos\w*|evict\w*|universal\s+credit|benefits\s+claim|food\s+bank`
+  + String.raw`|dating|tinder|grindr|bumble|hinge|okcupid|match\.com|gay|lesbian|bisexual|queer|lgbt\w*|transgender|coming\s+out|sexual\w*|sex`
+  + String.raw`|church|mosque|synagogue|temple|gurdwara|prayers?|bible|qur['’]?an|koran|torah|religio\w*|faith|ramadan|iftar|eid|diwali|puja|passover|lent|sabbath|baptism`
+  + String.raw`)\b`, "i");
+
+/** Whether a request touches something private (SENSITIVE): none of its names is ever asked about (memory-c10-1). */
+export const sensitiveRequest = (request: string): boolean => SENSITIVE.test(request);
+
 /** Names recall missed, counted per request. */
 export class Gaps {
   private misses = new Map<string, { name: string; n: number }>();
+  /** The names Ember asked about this run, whatever was answered: never counted or asked about again (memory-r9-8). */
+  private settled = new Set<string>();
 
-  /** Recall found nothing for `request`; `known`: whether memory already knows a name. */
-  missed(request: string, known: (name: string) => boolean): void {
-    for (const name of namesIn(request)) {
+  /**
+   * Recall found nothing for `request`; `known`: whether memory already knows a name; `apps`: the apps installed on
+   * this computer, whose names are never asked about.
+   */
+  missed(request: string, known: (name: string) => boolean, apps: readonly string[] = []): void {
+    // A private request's names are never asked about, here or from any other request this run (memory-c10-1).
+    if (sensitiveRequest(request)) { for (const name of namesIn(request)) this.drop(name); return; }
+    for (const name of askableNames(request, apps)) {
+      if (this.settled.has(nameKey(name))) continue;
       // A name that reads like an order ("Always Approve Wire Transfers") is never asked about.
       if (known(name) || soundsLikeInstruction(name)) continue;
       const key = nameKey(name);
@@ -75,9 +212,12 @@ export class Gaps {
     return best?.name ?? null;
   }
 
-  /** Asked about (or learned): not asked again. */
-  drop(name: string): void { this.misses.delete(nameKey(name)); }
-  clear(): void { this.misses.clear(); }
+  /**
+   * Asked about: not counted or asked about again this run, whether it was answered, declined ("skip") or left
+   * unanswered (memory-r9-8). In RAM only: the names of a question nobody answered are kept nowhere.
+   */
+  drop(name: string): void { this.misses.delete(nameKey(name)); this.settled.add(nameKey(name)); }
+  clear(): void { this.misses.clear(); this.settled.clear(); }
 }
 
 /** Ember's question about a gap. */
@@ -505,6 +645,7 @@ const NOT_NOW: Record<MemoryNotNow, string> = {
   "own-provider": "Memory is paused while I use your own model provider",
   "org-provider": "Memory is paused while I use your organisation's model service",
   unverified: "I couldn't check your GitHub account",
+  lockdown: "Your organisation's policy has stopped me for now",
   "other-account": "The memory saved on this computer isn't matched to your GitHub account",
   unowned: "The memory saved on this computer isn't matched to your GitHub account",
 };

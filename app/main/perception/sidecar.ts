@@ -465,6 +465,13 @@ interface Helper {
   held: string[];
 }
 
+/** What a vault fill that the helper couldn't do rejects with: fixed words, never the helper's or the app's. */
+export const VAULT_FILL_FAILED = "the field couldn't be filled by accessibility";
+/** The field takes no text by accessibility: the keyboard is the only way. */
+export const VAULT_FILL_UNAVAILABLE = "background_unavailable: the field takes no text by accessibility";
+/** The app (or the helper) didn't answer in time: it may still have taken the text. */
+export const VAULT_FILL_NO_ANSWER = "the app did not answer in time";
+
 /** A secret field's accessible: its app's bus name and its object path. */
 type SecretKey = [string, string];
 
@@ -764,7 +771,7 @@ export class AtspiSidecar {
    * aren't acted on (what has the keyboard before a key): it doesn't push the reads acted on out of the sidecar's
    * last few, so the ids of the latest perceive_window stay known. `focusBefore`: the ask box's quick look (FocusBefore).
    */
-  readWindow(params: { pid?: number; title?: string; path?: string; maxDepth?: number; maxNodes?: number; neverLook?: string[]; skipPids?: number[]; ownPid?: number; keep?: boolean; cells?: string[]; focusBefore?: FocusBefore } = {}): Promise<ReadWindowResult> {
+  readWindow(params: { pid?: number; title?: string; path?: string; maxDepth?: number; maxNodes?: number; neverLook?: string[]; skipPids?: number[]; ownPid?: number; keep?: boolean; cells?: string[]; focusBefore?: FocusBefore; probeSkip?: string } = {}): Promise<ReadWindowResult> {
     return this.request<ReadWindowResult & { secretKeys?: unknown; withheldKeys?: unknown }>("read_window", params).then(({ secretKeys, withheldKeys, ...r }) => {
       this.remember(secretKeys);
       this.remember(withheldKeys, this.withheld);
@@ -832,6 +839,36 @@ export class AtspiSidecar {
   }
   setValue(id: number, value: number): Promise<ActionResult> {
     return this.request<ActionResult>("set_value", { id, value }).then(r => this.physicalResult(id, r));
+  }
+  /**
+   * The addresses of the web documents around element `id`, the nearest first, as their app reports them now (the
+   * helper's page_address): [] outside any page, "" for a document that reports none. Rejects where the helper can't
+   * tell, which its caller takes as unreadable. Ember binds a vault entry to a site by these, never by the page's words.
+   */
+  pageAddress(id: number): Promise<string[]> {
+    return this.request<{ urls?: unknown }>("page_address", { id }).then(r => {
+      if (!Array.isArray(r.urls) || r.urls.length > 64 || !r.urls.every(u => typeof u === "string")) throw new Error("the helper's answer about the page isn't one");
+      return r.urls as string[];
+    });
+  }
+  /**
+   * The vault's fill (the helper's vault_fill): `text` replaces what field `id` holds, a password or secret field
+   * included. The one call that writes into a secret field, which only main's vault makes, never a worker's tool with
+   * a model's text. The value goes to the helper on its stdio and nowhere else: it is in no log line, and the answer
+   * holds only whether the app took it (`ok`) and whether the field now holds that many characters (`took`; absent:
+   * it can't be told). The field is secret from then on (remembered for the next helper process too). A failure says
+   * only one of the helper's own plain sentences, never the app's words.
+   */
+  vaultFill(id: number, text: string): Promise<{ ok: boolean; took?: boolean }> {
+    return this.request<{ ok?: unknown; took?: unknown; keys?: unknown; withheldKeys?: unknown }>("vault_fill", { id, text }).then(r => {
+      this.remember(r.keys);
+      this.remember(r.withheldKeys, this.withheld);
+      return { ok: r.ok === true, ...(typeof r.took === "boolean" ? { took: r.took } : {}) };
+    }, (err: unknown) => {
+      // Only which of three things happened is passed on, in fixed words: never the helper's or the app's own.
+      const msg = err instanceof Error ? err.message : "";
+      throw new Error(msg.startsWith("background_unavailable") ? VAULT_FILL_UNAVAILABLE : /did not answer/.test(msg) ? VAULT_FILL_NO_ANSWER : VAULT_FILL_FAILED);
+    });
   }
   selectOption(id: number, option: string): Promise<ActionResult> {
     return this.request<ActionResult>("select_option", { id, option }).then(r => this.physicalResult(id, r));

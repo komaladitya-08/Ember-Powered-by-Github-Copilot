@@ -434,7 +434,8 @@ describe("the Linux rows stay frozen copies", () => {
   });
 
   it("keeps the Linux never-look list, clipboard rule, words and terminal id words", () => {
-    expect(NEVER_LOOK_DEFAULTS.linux).toEqual(["keepassxc", "seahorse", "passwords and keys", "1password", "bitwarden", "polkit"]);
+    // The six it had, then the password managers the other OSes' lists have (safety-privacy-r9-3).
+    expect(NEVER_LOOK_DEFAULTS.linux).toEqual(["keepassxc", "seahorse", "passwords and keys", "1password", "bitwarden", "polkit", "keepass", "lastpass", "dashlane", "enpass", "proton pass", "kwallet"]);
     const OS = (x: string) => `electron application/osclipboard;format="${x}"`;
     for (const t of ["text/plain", OS("PIXMAP"), OS("x-kde-passwordManagerHint"), "x-kde-passwordManagerHint", OS("ExcludeClipboardContentFromMonitorProcessing")]) {
       expect(CLIPBOARD_FORMATS.linux.savable(t), t).toBe(savableFormat(t));

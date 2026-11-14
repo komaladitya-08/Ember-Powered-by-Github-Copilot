@@ -66,6 +66,7 @@ describe("RemoteRunner: a run on the remote (§5.5)", () => {
     link.bytes(20, enc("done\n."));
     await settle();
     expect([ended, out]).toEqual([true, "done\n."]);
+    expect(await run.done).not.toHaveProperty("outputCut");
   });
 
   it("waits on after the exit while the last bytes still come (a slow link drains the agent's queue), within a limit", async () => {
@@ -84,15 +85,16 @@ describe("RemoteRunner: a run on the remote (§5.5)", () => {
     expect([(await run.done).ended, out]).toEqual(["exit", "abcdefghi"]);
   });
 
-  it("ends a moment after the exit when the last bytes never come", async () => {
+  it("ends a moment after the exit when the last bytes never come, saying its output is incomplete (never the part as the whole)", async () => {
     vi.useFakeTimers();
     const { link, runner } = setup();
     const spec = specOf();
     const run = runner.start(spec);
     await settle();
+    link.bytes(20, enc("part"));
     link.emit("cmd.exit", exitOf(spec.runId, {}, 100));
     vi.advanceTimersByTime(2040);
-    expect((await run.done).ended).toBe("exit");
+    expect(await run.done).toMatchObject({ ended: "exit", code: 0, outputCut: true });
   });
 
   it("leaves no listener on a channel whose held bytes end the run while it subscribes (the exit came first)", async () => {

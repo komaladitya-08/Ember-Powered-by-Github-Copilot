@@ -123,12 +123,12 @@ const MAC: StatusPlatform = {
 const TODAY = {
   "permissions-note": "It reads the window you're working in through the desktop's accessibility service, and for tasks it may take a screenshot of it. App windows on your never-look list and password prompts are never read. The list is in settings, and common password managers are on it already.",
   // What the audit log keeps of each task (its request and how it went) is said, not denied (review #87).
-  "data-dir": "On this computer it keeps your settings, logs and a record of every task and action it took, including what you asked for and how it went (kept 30 days), in ~/.config/ember. The rest of your conversation with Ember is kept only while it runs, unless you turn on “Keep my recent conversation” under Conversation: then its latest messages stay on this computer, for you to read, until you turn it off, start a new conversation, sign out or choose Forget everything. If you save a project workspace, Ember encrypts its selected paths and last completed request and answer on this computer until you forget the workspace. It sends no usage statistics.",
+  "data-dir": "On this computer it keeps your settings, logs and a record of every task and action it took, including what you asked for and how it went (kept 30 days), in ~/.config/ember. The rest of your conversation with Ember is kept only while it runs, unless you turn on “Keep my recent conversation” under Conversation: then its latest messages stay on this computer, for you to read, until you turn it off, start a new conversation, sign out or choose Forget everything. If you save a project workspace, Ember encrypts its selected paths and last completed request and answer on this computer until you forget the workspace. If you give Ember a login, a card or contact details in its Secure Form, it keeps them in its vault on this computer, locked with your computer's keyring, until you forget them, sign out or choose Forget everything. It sends no usage statistics.",
   "mic-indicator": "Ember will keep the microphone open while it runs, listening only for its name (“Ember”, or “Hey Ember”) and “Ember, stop”. That listening happens on this computer: no audio leaves it, and nothing is recorded. After you say “Ember”, what you say next is turned into text on this computer, and only that text is sent to Copilot. After that the microphone stays open for the conversation: what you say next, without its name and also while Ember talks or works, is turned into text and sent too, until you say “That's all” or 30 seconds after everything has gone quiet. Voice settings can turn this off. If you teach Ember your voice, it keeps your voiceprint and keeps refining it from requests it is sure are yours (numbers, never audio), and it keeps the words you correct when it mishears you, on this computer until you forget them. While one of Ember's questions is up, anyone near the computer can answer it out loud, also without its name for a few seconds after it asks; with Voice Match on, only your voice can say yes. To tell its own voice and your speakers apart from you, Ember also listens to what your speakers play (on this computer only), which keeps the sound output from going idle while Ember listens. GNOME shows a microphone icon while Ember listens. Ctrl+Alt+M turns the microphone off and on.",
   "audit-dir": "Every decision and action is also in ~/.config/ember/audit/ and in the system journal (journalctl -t ember-audit).",
 } as const;
 const CHORD_SENTENCES: Record<ShortcutId, string> = {
-  stop: "It asks before acting in an app, and always before anything hard to undo. It never types passwords. Ctrl+Alt+X stops everything at once.",
+  stop: "It asks before acting in an app unless you turn on Interactive, when you agree or later in settings, and always before anything hard to undo. It never lets the AI model type or see passwords. Only in Autopilot, it can fill in a login, a card or contact details from its vault, which the AI model never sees. Ctrl+Alt+X stops everything at once.",
   settings: "Press Ctrl+Alt+E any time to come back here, or click Ember's handle in the bottom-right corner.",
   ask: "Ask Ember anything with Ctrl+Alt+Space.",
   mute: TODAY["mic-indicator"],
@@ -189,8 +189,9 @@ describe("the settings window before a status names an OS", () => {
     expect(describeEntry({ t, event: "stop", source: "hotkey" })?.what).toBe("Everything stopped (stop shortcut)");
     expect(describeEntry({ t, event: "stop", source: "voice" })?.what).toBe("Everything stopped (“Ember, stop”)");
     expect(entryWords(undefined)).toBe(LINUX_ENTRY_WORDS);
-    expect([...NEVER_LOOK_DEFAULTS]).toEqual(["keepassxc", "seahorse", "passwords and keys", "1password", "bitwarden", "polkit"]);
-    expect(missingDefaults(["Bitwarden"])).toEqual(["keepassxc", "seahorse", "passwords and keys", "1password", "polkit"]);
+    // The six it had, then the password managers the other OSes' lists have (safety-privacy-r9-3).
+    expect([...NEVER_LOOK_DEFAULTS]).toEqual(["keepassxc", "seahorse", "passwords and keys", "1password", "bitwarden", "polkit", "keepass", "lastpass", "dashlane", "enpass", "proton pass", "kwallet"]);
+    expect(missingDefaults(["Bitwarden"])).toEqual(["keepassxc", "seahorse", "passwords and keys", "1password", "polkit", "keepass", "lastpass", "dashlane", "enpass", "proton pass", "kwallet"]);
   });
 
   it("names where Stop everything was pressed: the handle's menu or settings", () => {
@@ -243,6 +244,16 @@ describe("the settings window with a Windows or macOS status", () => {
     expect(visible(around(root, "journal-hint"))).not.toMatch(/journal/);
     expect(byId(root, "speaker-note").attrs).toHaveProperty("hidden");
     expect(byId(root, "autostart-note").attrs).toHaveProperty("hidden");
+  });
+
+  it("says per platform where a bare answer needs no name, and for how long (V2-F3; voice-listening-r9-7)", () => {
+    const hint = (p: StatusPlatform) => visible(byId(apply(page(), homePatches(p)), "voice-answer-hint"));
+    // Linux keeps the page's own words (the speakers' stream tells another sound apart, where PulseAudio's parec is there).
+    expect(hint(LINUX)).toBe(visible(byId(page(), "voice-answer-hint")));
+    expect(hint(LINUX)).toBe("To answer one of Ember's questions, say “allow” or “not now” in the few seconds after it asks, no name needed, and later “Ember, allow” or “Ember, not now”. Where Ember can't hear what your speakers play (without PulseAudio's parec), a yes always needs its name.");
+    expect(hint(WINDOWS)).toBe("To answer one of Ember's questions, say “allow” or “not now” in the few seconds after it asks, no name needed, and later “Ember, allow” or “Ember, not now”.");
+    // macOS can't tell whether something else plays, so a nameless yes is never taken there.
+    expect(hint(MAC)).toBe("To answer one of Ember's questions, say “Ember, allow”, or “not now” in the few seconds after it asks: Ember can't tell here whether something else is playing, so a yes needs its name.");
   });
 
   it("shows the Mac's chords, folder, permissions and orange dot, and the login note when there is one", () => {
@@ -412,12 +423,12 @@ describe("Computers and Commands before the targets runtime answers", () => {
     // The onboarding line sits in "Before Ember starts" (new users only), with no chord for the OS patches to change.
     const plug = elements(byId(root, "welcome")).filter(e => e.attrs["data-icon"] === "plug");
     expect(plug).toHaveLength(1);
-    expect(visible(plug[0])).toBe("Other computers and commands are off until you turn them on: Ember can work on computers you reach over SSH, and run commands in its own window. Each asks you first.");
+    expect(visible(plug[0])).toBe("Other computers and commands are off until you turn them on: Ember can work on computers you reach over SSH, and run commands in its own window. Each asks you first. Commands on this computer have their own switch here.");
     expect(elements(plug[0]).some(e => e.attrs.class === "chord")).toBe(false);
     // WSL is named on Windows only (review #221).
     const win = apply(page(), homePatches(WINDOWS));
     const winPlug = elements(byId(win, "welcome")).filter(e => e.attrs["data-icon"] === "plug")[0];
-    expect(visible(winPlug)).toBe("Other computers and commands are off until you turn them on: Ember can work in WSL, on computers you reach over SSH, and run commands in its own window. Each asks you first.");
+    expect(visible(winPlug)).toBe("Other computers and commands are off until you turn them on: Ember can work in WSL, on computers you reach over SSH, and run commands in its own window. Each asks you first. Commands on this computer have their own switch here.");
     for (const os of [MAC, LINUX]) expect(visible(byId(apply(page(), homePatches(os)), "welcome")), os.os).not.toMatch(/WSL/);
   });
 });

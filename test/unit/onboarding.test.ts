@@ -74,9 +74,9 @@ describe("WSL in the onboarding line", () => {
   it("is named only on Windows, the one OS that has it (review #221)", () => {
     // The page's own markup is Linux's: no WSL. Linux's and macOS's statuses keep it so; Windows' adds WSL.
     const note = /<li data-icon="plug"><b>Other computers and commands<\/b><span id="targets-note">([^<]*)<\/span><\/li>/.exec(PAGE)?.[1];
-    expect(note).toBe(" are off until you turn them on: Ember can work on computers you reach over SSH, and run commands in its own window. Each asks you first.");
+    expect(note).toBe(" are off until you turn them on: Ember can work on computers you reach over SSH, and run commands in its own window. Each asks you first. Commands on this computer have their own switch here.");
     for (const os of ["linux", "darwin"] as const) expect(patchedText(homePatches(platformOf(os)), "#targets-note"), os).toBe(note);
-    expect(patchedText(homePatches(platformOf("win32")), "#targets-note")).toBe(" are off until you turn them on: Ember can work in WSL, on computers you reach over SSH, and run commands in its own window. Each asks you first.");
+    expect(patchedText(homePatches(platformOf("win32")), "#targets-note")).toBe(" are off until you turn them on: Ember can work in WSL, on computers you reach over SSH, and run commands in its own window. Each asks you first. Commands on this computer have their own switch here.");
     // The Computers intro is the settings package's (review #198: computers.ts writes it from the status), not a patch.
     for (const os of ["linux", "darwin", "win32"] as const) expect(homePatches(platformOf(os)).some(x => x.selector === "#computers-intro"), os).toBe(false);
   });
@@ -124,7 +124,7 @@ describe("the first-run window", () => {
     for (const os of ["linux", "win32", "darwin"] as const) expect(NEVER_LOOK_DEFAULTS[os], os).toEqual(expect.arrayContaining(["1password", "bitwarden"]));
     // Settings' own pin (review #164) holds within it.
     expect(welcome).toContain("App windows on your never-look list and password prompts are never read.");
-    expect(welcome).toContain("<b>The microphone stays off</b> unless you turn on “Hey Ember” in settings or choose Listen once for one request.");
+    expect(welcome).toContain("<b>The microphone stays off</b> unless you turn on “Hey Ember”, when you agree or later in settings, or choose Listen once for one request.");
   });
 });
 
@@ -297,7 +297,7 @@ describe("Ember's hello once it starts", () => {
     expect(hello(at({ phase: "signed-out", providerWaiting: null }))).toEqual(hello(at({ phase: "signed-out" })));
     // main gives the hello the host the note waits for, as it gives the host's answers (providerWaiting), signed out only.
     const greet = MAIN.slice(MAIN.indexOf("  const greet = () => {"), MAIN.indexOf("  const busyTasks = "));
-    expect(greet).toContain("const providerWaiting = phase === \"signed-out\" && !fixedProvider ? providerWaitingHost(settings.get(), admin) : null;");
+    expect(greet).toContain("const providerWaiting = phase === \"signed-out\" ? ownProviderWaiting() : null;");
     expect(greet).toMatch(/hello\(\{[^}]*\bproviderWaiting, service, cannotWork \}\)/);
   });
 

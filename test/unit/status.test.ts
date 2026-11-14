@@ -307,6 +307,27 @@ describe("AgentHost's status answer", () => {
     expect(settings.get().speakResults).toBe(false);
   });
 
+  it("says in the conversation that no voice can read the answer out, never that it is reading it (voice-speaking-r9-3)", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-status-"));
+    const settings = new SettingsStore(path.join(dir, "settings.json"));
+    settings.load();
+    const answers: string[] = [], turns: string[] = [];
+    const host = new AgentHost({
+      userData: dir, runtimePath: "/nowhere/copilot-runtime", settings, log: quiet,
+      setState: () => undefined, onStatus: () => undefined, onAnswer: t => answers.push(t), health: () => ({ mic: "off", speaks: true }),
+      readOut: () => "no-voice", onConversationTurn: (state, why) => turns.push(why ? `${state}:${why}` : state),
+    });
+    await host.ask("status?");
+    await host.ask("read it out");
+    expect(answers.at(-1)).toBe(READ_OUT_REPLY.noVoice);
+    expect(READ_OUT_REPLY.noVoice).toBe("I can't read it out: no voice on this computer can say it right now. Voice in settings says why.");
+    expect(turns).not.toContain("idle:read-out");
+    // A second ask still means the answer, not that line.
+    const before = answers.length;
+    await host.ask("read it out");
+    expect(answers.slice(before)).toEqual([READ_OUT_REPLY.noVoice]);
+  });
+
   /** A host that reads out through `read`, telling Home's turn through `turns`; `waiting`: a question is up. */
   const reader = (o: { waiting?: () => boolean } = {}) => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-status-"));
@@ -423,6 +444,12 @@ describe("stopRequest", () => {
 
   it("hears the other short ways people type a stop of what Ember is doing (tasks-approvals-v2)", () => {
     for (const t of ["stop typing", "Stop doing that!", "stop working", "stop what you're doing", "abort", "halt", "stop stop", "no, stop", "wait stop", "Ember, abort the task"]) expect(stopRequest(t), t).toBe(true);
+  });
+
+  it("hears a run of stops, “just stop”, “can you stop” and a stop of this task or its command (tasks-approvals-r9-6)", () => {
+    for (const t of ["stop stop stop", "stop, stop, stop", "Stop!! Stop!!", "just stop", "stop this task", "stop immediately", "can you stop", "you can stop now", "stop the command", "stop running", "wait wait stop", "no no no stop", "could you please stop", "STOP NOW!!"]) expect(stopRequest(t), t).toBe(true);
+    // Still never a stop of something else, nor a question about stopping.
+    for (const t of ["can you stop the music", "you can stop worrying", "just stop the timer", "stop running the tests at 5", "can you stop a task by voice?"]) expect(stopRequest(t), t).toBe(false);
   });
 
   it("leaves a stop of something else to the conversation", () => {

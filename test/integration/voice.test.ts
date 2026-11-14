@@ -252,13 +252,14 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1" && process.env.EM
   const inRoom = (s: Float32Array) => { let seed = 5; return s.map(x => x + ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff - 0.5) * 0.001 / 0.2887); };
   /**
    * One engine fed in turns (`hear`), with the speakers' stream when given, and what it said (`at`: when, in ms).
-   * `speakers`: the session feeds the speakers' stream (it runs on forSpeakers()).
+   * `speakers`: the session feeds the speakers' stream (it runs on forSpeakers()); `conversation`: conversations are on,
+   * as by default in Ember (a wake's request opens one); `backend`: the recognizers to run on instead.
    */
-  const session = (o: { speakers?: boolean } = {}) => {
+  const session = (o: { speakers?: boolean; conversation?: boolean; backend?: typeof backend } = {}) => {
     const events: (VoiceEvent & { at: number })[] = [];
     let t = 0;
-    const b = o.speakers ? forSpeakers() : backend;
-    const engine = new VoiceEngine(b, e => { if (e.type !== "speech") events.push({ ...e, at: t }); }, { now: () => t });
+    const b = o.backend ?? (o.speakers ? forSpeakers() : backend);
+    const engine = new VoiceEngine(b, e => { if (e.type !== "speech") events.push({ ...e, at: t }); }, { now: () => t, ...(o.conversation ? { conversation: true } : {}) });
     const hear = (mic: Float32Array, o: { speakers?: Float32Array; onFrame?: (frame: number) => void } = {}) => {
       for (let i = 0, k = 0; i + 512 <= mic.length; i += 512, k++) {
         o.onFrame?.(k);
@@ -740,9 +741,11 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1" && process.env.EM
     expect(sent.map(e => e.type)).toEqual(["utterance"]);
   });
 
-  // The test-only Ryan voice reads the prompts (node scripts/voice/prepare.mjs --voice ryan): skipped without it.
+  // The test-only Ryan voice reads the prompts (node scripts/voice/prepare.mjs --voice ryan). Under EMBER_VOICE_TEST=1 (the
+  // gate and CI) its tests fail without it rather than skip: no job fetched it, so they never ran (V2-F6).
   const readerVoice = path.join(dir, "vits-piper-en_US-ryan-low");
-  it.skipIf(!fs.existsSync(path.join(readerVoice, "en_US-ryan-low.onnx")))("doesn't wake when a screen reader reads the Teach button Home moved focus to, or the composer's line on a typed send (voice-listening-r6-2, voice-listening-q6-1, voice-listening-r6-1)", () => {
+  const noReader = !fs.existsSync(path.join(readerVoice, "en_US-ryan-low.onnx")) && process.env.EMBER_VOICE_TEST !== "1";
+  it.skipIf(noReader)("doesn't wake when a screen reader reads the Teach button Home moved focus to, or the composer's line on a typed send (voice-listening-r6-2, voice-listening-q6-1, voice-listening-r6-1)", () => {
     // Where Ember can't hear its speakers (Windows, macOS, Linux without parec), "Teach Ember my voice, button. Ember
     // hears anyone who talks to it. Teach it your voice…" woke Ember and was sent as a request in 18 of 20 placements,
     // the button's name alone in 14 of 20, and "Thinking… Ember's reply will appear above." in 2 of 24.
@@ -771,7 +774,7 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1" && process.env.EM
     expect(woke).toEqual([]);
   }, 600_000);
 
-  it.skipIf(!fs.existsSync(path.join(readerVoice, "en_US-ryan-low.onnx")))("hears a bare answer said once one of Ember's questions is asked, without the name, and nothing of the room's talk then (owner's report of 2026-11-12)", () => {
+  it.skipIf(noReader)("hears a bare answer said once one of Ember's questions is asked, without the name, and nothing of the room's talk then (owner's report of 2026-11-12)", () => {
     const tts = sherpa.createOfflineTts({ offlineTtsModelConfig: { offlineTtsVitsModelConfig: { model: path.join(readerVoice, "en_US-ryan-low.onnx"), tokens: path.join(readerVoice, "tokens.txt"), dataDir: path.join(readerVoice, "espeak-ng-data") }, numThreads: 1, debug: 0 }, maxNumSentences: 1 });
     expect(tts.sampleRate).toBe(16000);
     const rms = (x: Float32Array) => Math.sqrt(x.reduce((n, v) => n + v * v, 0) / x.length);
@@ -784,37 +787,50 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1" && process.env.EM
       const level = 0.1 / rms(raw.subarray(a, b));
       return inRoom(cat(silence(0.5), raw.slice(a, b).map(x => x * level), silence(2)));
     };
+    /** What the window did with `audio`, and what the recognizer wrote the request as there (`written`). */
     const asked = (audio: Float32Array) => {
       const s = session();
-      s.engine.questionUp(true);
-      s.engine.answerWindow(8000);
-      s.hear(audio);
-      s.end();
-      return s.events;
+      const written: string[] = [];
+      const transcribe = backend.transcribe;
+      backend.transcribe = (x, purpose) => { const w = transcribe.call(backend, x, purpose); if (purpose !== "keyword") written.push(w); return w; };
+      try {
+        s.engine.questionUp(true);
+        s.engine.answerWindow(8000);
+        s.hear(audio);
+        s.end();
+      } finally { backend.transcribe = transcribe; }
+      return { events: s.events, written };
     };
     // (In this test-only voice Moonshine writes a lone "Allow." as "Hello", which is no answer, and "Go ahead." and a lone
     // "Yes." as other words: the window's part is tested on what it writes as said. "Not now." comes out "No, no.".)
     const answers = [["Allow it.", "allow"], ["Allow, please.", "allow"], ["Okay, go with it.", "allow"], ["Yes, please.", "allow"], ["I accept.", "allow"], ["Sounds good.", "allow"], ["No, thanks.", "deny"], ["Not now.", "deny"], ["No.", "deny"]] as const;
-    // This voice comes out a little different each time, and now and then the recognizer writes one rendition as other
-    // words, which leave nothing (no answer): up to four renditions are tried, and none may leave as anything else. With
-    // one each, the test failed in 4 of 8 runs, on 64a6405 as on later commits ("Allow it.", "Not now.", "No.").
+    // This voice comes out a little different each time, and the recognizer writes some renditions as other words, which
+    // leave nothing (no answer): "Allow it." as "Lollet", "Lalet" or "Low it" in about one in four (51 of 200 saved
+    // renditions on WebAssembly, 52 on the C API, and the same, rendition for rendition, on 1550bdf), "Allow, please." 15
+    // of 60, "Not now." 12 of 60. Four renditions tried blind failed in CI's WebAssembly run at 13292a3 (all four of
+    // "Allow it." written so). So the window is checked against what the recognizer wrote in it: a rendition written as
+    // the answer leaves as that answer, once, and any other leaves nothing; renditions are made until one is written as
+    // the answer (the recognizer's part: in 800 runs of those 200, the window sent "allow" exactly when it was written so).
     for (const [text, answer] of answers) {
-      const heard: string[] = [];
-      for (let take = 0; take < 4 && !heard.length; take++) {
-        const events = asked(said(text));
+      const writtenAs: string[] = [];
+      let answered = false;
+      for (let take = 0; take < 16 && !answered; take++) {
+        const { events, written } = asked(said(text));
         const u = sent(events);
-        expect(u.map(e => e.window), text).toEqual(u.length ? ["answer"] : []);
-        for (const e of u) { expect(spokenAnswer(e.text), `${text} heard as “${e.text}”`).toBe(answer); heard.push(e.text); }
+        answered = written.some(w => spokenAnswer(w) !== null);
+        writtenAs.push(...written);
+        expect(u.map(e => e.window), `${text} written as ${JSON.stringify(written)}`).toEqual(answered ? ["answer"] : []);
+        for (const e of u) expect(spokenAnswer(e.text), `${text} heard as “${e.text}”`).toBe(answer);
         // No conversation opens after it: what is said next needs the name again.
         expect(events.some(e => e.type === "listening" && e.window === "conversation"), text).toBe(false);
       }
-      expect(heard, `${text}: never heard as an answer in four renditions`).toHaveLength(1);
+      expect(answered, `${text}: the recognizer wrote none of 16 renditions as an answer (${writtenAs.join(" / ")})`).toBe(true);
     }
     // The room's talk said then, in the clips' voice and in another: nothing leaves the window.
-    for (const room of [inRoom(cat(silence(0.5), trimmed("chat"), silence(2))), said("Let's meet at the station after lunch.")]) expect(sent(asked(room))).toEqual([]);
+    for (const room of [inRoom(cat(silence(0.5), trimmed("chat"), silence(2))), said("Let's meet at the station after lunch.")]) expect(sent(asked(room).events)).toEqual([]);
   }, 120_000);
 
-  it.skipIf(!fs.existsSync(path.join(readerVoice, "en_US-ryan-low.onnx")))("never takes a refusal said as Ember stops reading its question for a yes, and hears an answer said just after it whole (owner's report of 2026-11-12)", () => {
+  it.skipIf(noReader)("never takes a refusal said as Ember stops reading its question for a yes, and hears an answer said just after it whole (owner's report of 2026-11-12)", () => {
     // As on Windows and macOS: the microphone hears Ember's read-out (an echo 10 dB under the user) until 0.1 s after the
     // page says it stopped, when main opens the answer window (or a follow-up). The answer starts `on` s from "stopped".
     const tts = sherpa.createOfflineTts({ offlineTtsModelConfig: { offlineTtsVitsModelConfig: { model: path.join(readerVoice, "en_US-ryan-low.onnx"), tokens: path.join(readerVoice, "tokens.txt"), dataDir: path.join(readerVoice, "espeak-ng-data") }, numThreads: 1, debug: 0 }, maxNumSentences: 1 });
@@ -858,17 +874,236 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1" && process.env.EM
     // Begun after a moment's quiet (a turn's gap): heard whole, though it starts in the tail. (On 64a6405 nothing
     // begun within 0.4 s of "stopped" was heard whole.) Phrases this voice is written right in nearly every time: its
     // "Allow it." often comes out "Lollet", and a lone "Okay." now and then "Oh, today.".
+    // This voice comes out a little different each time, and the recognizer writes a rendition in forty or so as other
+    // words ("Yes, we.", "Guess please.", "Well, thanks."), which leave nothing and are asked for again: up to four
+    // renditions are tried, as in the test above, and none may leave as anything else or be taken for cut. With one
+    // each this failed in CI's C API run at a3cf645 (voice-answer-take-1). Measured on 40 kept renditions of each, on
+    // the C API and on WebAssembly alike, and the same on 681c36a: "Yes, please." 2 written wrong, "No, thanks." 1,
+    // "Okay, go with it." none. The three takes were whole (from 40 to 65 ms before the answer to 0.35 s after it,
+    // none of Ember's voice in them), and the recognizer wrote those renditions wrong on their own too.
     for (const [text, answer] of [["Yes, please.", "allow"], ["Okay, go with it.", "allow"], ["No, thanks.", "deny"]] as const) {
-      const events = heard(voiced(text, 0.1), 0.3);
-      const u = sent(events);
-      expect(u.map(e => e.window), `${text}: ${JSON.stringify(events)}`).toEqual(["answer"]);
-      expect(spokenAnswer(u[0].text), `${text} heard as “${u[0].text}”`).toBe(answer);
+      const whole: string[] = [];
+      for (let take = 0; take < 4 && !whole.length; take++) {
+        const events = heard(voiced(text, 0.1), 0.3);
+        const u = sent(events);
+        expect(u.map(e => e.window), `${text}: ${JSON.stringify(events)}`).toEqual(u.length ? ["answer"] : []);
+        for (const e of u) { expect(spokenAnswer(e.text), `${text} heard as “${e.text}”`).toBe(answer); whole.push(e.text); }
+        // Never taken for begun under Ember's voice (that is the first part's, and says "say it again" for nothing here).
+        expect(events.filter(e => e.type === "answer-over"), `${text}: ${JSON.stringify(events)}`).toEqual([]);
+      }
+      expect(whole, `${text}: never heard as an answer in four renditions`).toHaveLength(1);
     }
     // Ember's own read-out, and nothing after it: nothing, and nothing to say it again for.
     expect(heard(null, 0).filter(e => e.type === "utterance" || e.type === "answer-over")).toEqual([]);
   }, 180_000);
 
-  it.skipIf(!fs.existsSync(path.join(readerVoice, "en_US-ryan-low.onnx")))("learns the owner's voice, not a screen reader's reading each prompt aloud 14 dB down just before each phrase (voice-listening-r4-1)", async () => {
+  /**
+   * Words in one of the default voice's speakers (Kitten, which comes with the listening models: nothing more to fetch),
+   * on the WebAssembly build, at 16 kHz, cut to the words, at `level` RMS: other voices than the clips', for what a video,
+   * a call or the room says. Each rendition comes out a little different.
+   */
+  let kitten: { generate(o: { text: string; sid: number; speed: number }): { samples: Float32Array; sampleRate: number } } | null = null;
+  const speak = (text: string, sid: number, level: number): Float32Array => {
+    const { kind: _kind, ...files } = kittenSpec(path.join(dir, "models", DEFAULT_VOICE.target));
+    kitten ??= sherpa.createOfflineTts({ offlineTtsModelConfig: { offlineTtsKittenModelConfig: files, numThreads: 1, debug: 0, provider: "cpu" }, maxNumSentences: 1 });
+    const a = kitten!.generate({ text, sid, speed: 1 });
+    const raw = new Float32Array(Math.floor(a.samples.length * 16000 / a.sampleRate));
+    for (let i = 0; i < raw.length; i++) { const x = i * a.sampleRate / 16000, k = Math.floor(x), f = x - k; raw[i] = a.samples[k] * (1 - f) + (a.samples[Math.min(k + 1, a.samples.length - 1)] ?? 0) * f; }
+    let from = 0, to = raw.length;
+    while (from < to && Math.abs(raw[from]) < 0.01) from++;
+    while (to > from && Math.abs(raw[to - 1]) < 0.01) to--;
+    const cut = raw.subarray(from, to);
+    const gain = level / Math.sqrt(cut.reduce((n, v) => n + v * v, 0) / Math.max(1, cut.length));
+    return cut.map(x => x * gain);
+  };
+  /** `x` added into `into` from sample `from`, at `gain`. */
+  const mix = (into: Float32Array, x: Float32Array, from: number, gain = 1) => { for (let i = 0; i < x.length && from + i < into.length; i++) into[from + i] += x[i] * gain; };
+  /** The microphone hears the speakers 64 ms after their own stream has the sound. */
+  const SPEAKERS_LAG = at(0.064);
+  /** The utterances that read as a yes and carry no mark: what main would take from anyone heard. */
+  const yeses = (events: VoiceEvent[]) => sent(events).filter(e => spokenAnswer(e.text) === "allow" && !e.overSound && !e.overEmber);
+
+  it("takes a video's or a call's lone yes begun right after Ember reads its question out for no one's, where the speakers' own stream says it played (Linux with parec; V2-S1)", () => {
+    // A video is on (its last sentence 2 s before the question), Ember reads the question out through the speakers
+    // (their stream has it; the microphone hears it 12 dB down), the page says it stopped as its audio ends and main
+    // opens the answer window. Then a lone yes, `on` s after Ember's voice: the video's (in the stream, and in the
+    // microphone 6 dB down), or the user's own (the microphone only).
+    const ember = speak("To allow, press Control Alt Y; for not now, press Control Alt N.", 0, 0.1);
+    const before = speak("And then we can book the flights to Lisbon.", 3, 0.1);
+    const tAsk = 0.5 + before.length / 16000 + 2, tStop = tAsk + ember.length / 16000;
+    const after = (yes: Float32Array, on: number, by: "video" | "user") => {
+      const total = at(tStop + on + yes.length / 16000 + 3);
+      const speakers = new Float32Array(total), mic = new Float32Array(total);
+      mix(speakers, before, at(0.5)); mix(mic, before, at(0.5) + SPEAKERS_LAG, 0.5);
+      mix(speakers, ember, at(tAsk)); mix(mic, ember, at(tAsk) + SPEAKERS_LAG, 0.25);
+      if (by === "user") mix(mic, yes, at(tStop + on));
+      else { mix(speakers, yes, at(tStop + on)); mix(mic, yes, at(tStop + on) + SPEAKERS_LAG, 0.5); }
+      const s = session({ speakers: true });
+      const asks = Math.round(at(tAsk) / 512), stops = Math.round(at(tStop) / 512);
+      s.hear(inRoom(mic), { speakers, onFrame: k => {
+        if (k === asks - 30) s.engine.questionUp(true);
+        if (k === asks) s.engine.selfSpeaking(true);
+        if (k === stops) { s.engine.selfSpeaking(false); s.engine.answerWindow(8000); }
+      } });
+      s.end();
+      return s.events;
+    };
+    // (On 01493d0 nothing in the stream counted as other sound for 1.5 s after Ember's voice: "Yes." and "Sure." begun
+    // 0.2 to 0.3 s after it went out unmarked, 7 of 72 runs with a video quiet between its sentences.)
+    const taken: string[] = [];
+    for (const [text, sid] of [["Yes.", 3], ["Yes.", 5], ["Sure.", 3], ["Sure.", 5]] as const) {
+      const yes = speak(text, sid, 0.1);
+      for (const on of [0.2, 0.3, 0.4]) for (const e of yeses(after(yes, on, "video"))) taken.push(`${text} (voice ${sid}) ${on} s after Ember: “${e.text}”`);
+    }
+    expect(taken).toEqual([]);
+    // The user's own, with nothing else in the stream then, is taken as before (a rendition the recognizer writes as
+    // other words leaves nothing: up to four are tried).
+    let own = 0;
+    for (let take = 0; take < 4 && !own; take++) own = yeses(after(speak("Yes, please.", 5, 0.1), 0.3, "user")).length;
+    expect(own).toBe(1);
+  }, 300_000);
+
+  it("never takes “Ember, allow it.” out of the speakers for a yes said by name, in a question's answer window (Linux with parec; V2-S2, voice-listening-r9-2)", () => {
+    // A video is on (in the speakers' stream and, 6 dB down and 64 ms late, in the microphone) while a question is up and
+    // its answer window open. Then the name and a yes: the video's own (the stream and the microphone), or the user's
+    // (the microphone only, the stream silent meanwhile).
+    const talk = speak("And then we can book the flights to Lisbon.", 3, 0.1);
+    const tSay = 0.7 + talk.length / 16000 + 0.9;
+    const after = (said: Float32Array, by: "video" | "user") => {
+      const total = at(tSay + said.length / 16000 + 3);
+      const speakers = new Float32Array(total), mic = new Float32Array(total);
+      mix(speakers, talk, at(0.7)); mix(mic, talk, at(0.7) + SPEAKERS_LAG, 0.5);
+      if (by === "user") mix(mic, said, at(tSay));
+      else { mix(speakers, said, at(tSay)); mix(mic, said, at(tSay) + SPEAKERS_LAG, 0.5); }
+      const s = session({ speakers: true });
+      s.hear(inRoom(mic), { speakers, onFrame: k => { if (k === 6) s.engine.questionUp(true); if (k === 8) s.engine.answerWindow(8000); } });
+      s.end();
+      return s.events;
+    };
+    // (Before, the recognizer's "Ember, …" alone exempted it from every other-sound mark: taken 16 of 16 here, where the
+    // same words at idle are rejected as the speakers'. With the two spotters and the name read in the stream, one was
+    // still taken in 2 of 5 such runs: the recognizer wrote the stream's "Ember, yes please." as "Yes, please.".)
+    const taken: string[] = [];
+    for (const text of ["Ember, allow it.", "Ember, yes please."]) for (const sid of [0, 1, 2, 4, 5, 6, 7, 3]) {
+      for (const e of yeses(after(speak(text, sid, 0.1), "video"))) taken.push(`${text} (voice ${sid}): “${e.text}”`);
+    }
+    expect(taken).toEqual([]);
+    // The user's own, with nothing in the stream then, is taken as before (up to four renditions, as above).
+    let own = 0;
+    for (let take = 0; take < 4 && !own; take++) own = yeses(after(speak("Ember, allow it.", 5, 0.1), "user")).length;
+    expect(own).toBe(1);
+  }, 300_000);
+
+  it("never takes “Ember, allow it.” out of the speakers for a yes said by name after the user's own “Hey Ember” and a pause (Linux with parec; V2-S2 and voice-listening-r9-2 in a wake's own window)", () => {
+    // A question is up and no window open. The user says "Hey Ember." (the microphone only) and pauses; 1.5 s later
+    // the name and a yes: a video's own (the speakers' stream and, 6 dB down and 64 ms late, the microphone), or the
+    // user's (the microphone only, the stream silent).
+    const after = (wake: Float32Array, said: Float32Array, by: "video" | "user") => {
+      const tSay = 0.7 + wake.length / 16000 + 1.5;
+      const total = at(tSay + said.length / 16000 + 3);
+      const speakers = new Float32Array(total), mic = new Float32Array(total);
+      mix(mic, wake, at(0.7));
+      if (by === "user") mix(mic, said, at(tSay));
+      else { mix(speakers, said, at(tSay)); mix(mic, said, at(tSay) + SPEAKERS_LAG, 0.5); }
+      const s = session({ speakers: true });
+      s.hear(inRoom(mic), { speakers, onFrame: k => { if (k === 3) s.engine.questionUp(true); } });
+      s.end();
+      return s.events;
+    };
+    // (Before, a wake's own window asked the speakers' stream nothing once it was open, and the name in the video's words
+    // made them a yes said by name: taken 28 times in 40 such runs, where the same words in the answer window are theirs.)
+    const taken: string[] = [];
+    for (const text of ["Ember, allow it.", "Ember, okay."]) for (const sid of [2, 3, 4, 5, 6, 7]) {
+      for (const e of yeses(after(speak("Hey Ember.", (sid + 3) % 8, 0.1), speak(text, sid, 0.1), "video"))) taken.push(`${text} (voice ${sid}): “${e.text}”`);
+    }
+    expect(taken).toEqual([]);
+    // The user's own, with nothing in the stream then, is taken as before (up to four renditions, as above).
+    let own = 0;
+    for (let take = 0; take < 4 && !own; take++) own = yeses(after(speak("Hey Ember.", 0, 0.1), speak("Ember, allow it.", 5, 0.1), "user")).length;
+    expect(own).toBe(1);
+  }, 300_000);
+
+  it("sends nothing of the room's talk that starts like the name from a question's answer window or from idle, and opens no conversation on it, though the spotter takes it for the name (V2-S3, voice-listening-r9-3, voice-roomtalk-1, voice-roomtalk-x9-2)", () => {
+    // Conversations are on, as by default; the microphone only. Someone says a sentence that never names Ember, and
+    // another after it: while a question is up and its answer window open, or with Ember idle.
+    const next = speak("And then we can book the flights to Lisbon.", 3, 0.1);
+    /**
+     * `alarm`: the spotter's false alarm, as CI's el8 run drew it for one rendition in voice 7 (the bare name at the first
+     * pause after "A number"; it depends on all the spotter's stream heard before, and came once in 80 renditions here):
+     * the spotter says this keyword once, 0.6 s into the talk, whatever it made of the rendition itself.
+     */
+    const room = (talk: Float32Array, where: "answer" | "idle", alarm?: "ember" | "hey_ember") => {
+      let due = false, rang = false;
+      const ring = (heard: string[]) => (alarm && due && !rang ? (rang = true, [...heard, alarm]) : heard);
+      const s = session({ conversation: true, backend: { ...backend, spot: f => ring(backend.spot(f)) } });
+      if (where === "answer") { s.engine.questionUp(true); s.engine.answerWindow(8000); }
+      s.hear(inRoom(cat(silence(0.5), talk, silence(1.2), next, silence(2))), { onFrame: k => { due = k >= Math.round(1.1 / 0.032); } });
+      s.end();
+      expect(!alarm || rang, "the false alarm was rung").toBe(true);
+      return s.events;
+    };
+    /**
+     * What matters: nothing of it is sent, no conversation opens, and no wake stands. (The cue of a wake by the whole
+     * phrase shows before its check and is taken back at once, as from idle: the eval counts those. By the bare name in
+     * the answer window nothing shows at all.)
+     */
+    const left = (events: VoiceEvent[], label: string) => {
+      const out: string[] = [];
+      events.forEach((e, i) => {
+        if (e.type === "utterance") out.push(`${label}: sent “${e.text}”`);
+        if (e.type === "listening" && e.on && e.window === "conversation") out.push(`${label}: a conversation opened`);
+        if (e.type === "wake" && (e.keyword === "ember" || !events.slice(i + 1, i + 3).some(x => x.type === "rejected" && x.reason === "check"))) out.push(`${label}: a wake by ${e.keyword} stood`);
+      });
+      return out;
+    };
+    // (Before V2-S3, the recognizer's words alone made these a request by name, "Number, …" as it writes them: 8 of 8
+    // left the answer window as a wake's request, and the next sentence went to Copilot in the conversation that opened.
+    // After it, so whenever the spotter fired on one too: by itself for 1 rendition of 80, and with the alarm in 16
+    // runs of 16 in the answer window and, for "A number of…", 8 of 8 from idle.)
+    const leaked: string[] = [];
+    for (const sid of [1, 4, 5, 7]) {
+      for (const text of ["A number of people called today.", "Number, can you pass the salt?"]) {
+        const talk = speak(text, sid, 0.1);
+        leaked.push(...left(room(talk, "answer"), `${text} (voice ${sid})`));
+        for (const alarm of ["ember", "hey_ember"] as const) leaked.push(...left(room(talk, "answer", alarm), `${text} (voice ${sid}), spotted as ${alarm}`));
+      }
+      // From idle the name written as a word is still the name where the words go on as to Ember ("Number, can you…":
+      // CALLED_AS_WORD), never where they go on as a sentence.
+      const talk = speak("A number of people called today.", sid, 0.1);
+      leaked.push(...left(room(talk, "idle"), `A number of people called today. (voice ${sid}) from idle`));
+      for (const alarm of ["ember", "hey_ember"] as const) leaked.push(...left(room(talk, "idle", alarm), `A number of people called today. (voice ${sid}) from idle, spotted as ${alarm}`));
+      // And talk that starts as no wake phrase at all, where the spotter takes it for the whole phrase from idle: there
+      // was no near word in it to take back, so it went to Copilot, and the next sentence in the conversation that opened
+      // (4 runs of 4 before; voice-roomtalk-x9-2). So with a greeting, "they", "embers" or "Emma" in its first words: each
+      // of these went as a wake's request with its start cut off, 4 voices of 4 ("You pass the salt?": voice-roomtalk-y9-1).
+      for (const text of ["So we went to the market on Sunday.", "And they said we can book the flights.", "Hey, can you pass the salt?", "Hi, how are you doing today?", "The embers are still glowing.", "Emma said she would call later."]) {
+        leaked.push(...left(room(speak(text, sid, 0.1), "idle", "hey_ember"), `${text} (voice ${sid}) from idle, spotted as hey_ember`));
+      }
+    }
+    // "Hey Amber, what time is it?" (the suite's near-miss clip) in the room's noise: the spotter takes it for the phrase,
+    // and the wake's check, a moment after the word, hears nothing in it. (Before, "What time is it?" went to Copilot
+    // from idle and from the answer window, where the check heard none of the phrase, and the next sentence after it.)
+    for (const where of ["answer", "idle"] as const) leaked.push(...left(room(read("amber"), where), `Hey Amber, what time is it? (${where})`));
+    expect(leaked).toEqual([]);
+    // The user's own "Hey Ember, …" and "Ember, …" still leave the answer window as a wake's request, whole. (The spotter
+    // misses a name now and then in a window that is already listening, by all its stream heard before: up to four
+    // tries, each a little later, and the first that shows a wake is the one judged: a wake shown and then taken back
+    // fails here: voice-roomtalk-y9-2.)
+    for (const clip of ["wake", "name_wake"]) {
+      let requests: string[] | undefined;
+      for (let take = 0; take < 4 && !requests; take++) {
+        const s = session({ conversation: true });
+        s.engine.questionUp(true);
+        s.engine.answerWindow(8000);
+        s.hear(inRoom(cat(silence(0.5 + take * 0.21), read(clip), silence(2))));
+        s.end();
+        if (s.events.some(e => e.type === "wake")) requests = sent(s.events).map(e => `${e.text} (${e.window})`);
+      }
+      expect(requests ?? [], clip).toEqual([expect.stringMatching(/^Turn on night ?light\.? \(wake\)$/i)]);
+    }
+  }, 900_000);
+
+  it.skipIf(noReader)("learns the owner's voice, not a screen reader's reading each prompt aloud 14 dB down just before each phrase (voice-listening-r4-1)", async () => {
     // Over speakers, the teaching microphone heard Home's prompts as a screen reader read them, and took them for
     // phrases: the owner's held-out clips then scored 0.47-0.66 against the voiceprint, the screen reader's 0.70-0.82.
     const ort = createRequire(import.meta.url)("onnxruntime-web");

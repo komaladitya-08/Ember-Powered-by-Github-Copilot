@@ -403,8 +403,11 @@ describe("Home's panes and its Task activity channel", () => {
     expect(IPC.tasks).toBe("tasks:activity");
     expect(IPC.tasksChanged).toBe("tasks:activity-changed");
     expect(TASKS_PUSH_MS).toBe(500);
-    expect(MAIN).toContain("ipcMain.handle(IPC.tasks, guard(() => agent?.taskActivities() ?? []));");
-    expect(MAIN).toContain("const pushTasks = pushLater(TASKS_PUSH_MS, () => { if (home && !home.isDestroyed()) home.webContents.send(IPC.tasksChanged, agent?.taskActivities() ?? []); });");
+    expect(MAIN).toContain("const taskEntries = () => withQuestionUp(agent?.taskActivities() ?? [], confirmer?.currentTask);");
+    expect(MAIN).toContain("ipcMain.handle(IPC.tasks, guard(taskEntries));");
+    expect(MAIN).toContain("const pushTasks = pushLater(TASKS_PUSH_MS, () => { if (home && !home.isDestroyed()) home.webContents.send(IPC.tasksChanged, taskEntries()); });");
+    // A question coming up or going pushes them too: it may be another task's (tasks-approvals-r9-3).
+    expect(MAIN).toContain("    tasksShown();\n    presenceChanged();");
     expect(MAIN).toContain("tasksShown = () => { if (home && !home.isDestroyed()) pushTasks(); };");
     expect(MAIN).toContain("if (next.tasks) tasksShown();");
     expect(preload).toContain("tasks: () => ipcRenderer.invoke(IPC.tasks),");

@@ -3588,6 +3588,101 @@ def set_text(params):
     return res
 
 
+# What the vault's fill may be put into: a password field or a plain text field, never a document, a terminal, a
+# spin button or a drop-down.
+VAULT_FILL_ROLES = frozenset(["password text", "text", "entry"])
+# How far up the web documents around a field are looked for (see page_address).
+PAGE_LEVELS = 200
+# The names a web document's own address goes by in its Document interface: Firefox reports "DocURL" (Gecko's
+# nsMaiInterfaceDocument.cpp), Chromium, so Chrome and Electron, "URI" (ax_platform_node_auralinux.cc's
+# GetDocumentAttributeValue, its AXTreeData url), and at-spi2-atk answers "" for a name the app doesn't know. Reading
+# only "DocURL" left every Chromium page reporting none (CI's el8 job, vault-leak.test.ts, at 16f5ee2).
+DOC_URL_KEYS = ("DocURL", "URI")
+
+
+def doc_url(acc):
+    """A web document's own address as its app reports it (the Document interface's DocURL or URI), or "" where it
+    doesn't. Never its title or anything else the page writes freely; a document that answers both names with
+    different addresses, or fails to answer one, reports none."""
+    found = set()
+    try:
+        doc = acc.queryDocument()
+        for key in DOC_URL_KEYS:
+            url = doc.getAttributeValue(key)
+            if isinstance(url, str) and url:
+                found.add(url)
+    except Exception:
+        return ""
+    return found.pop() if len(found) == 1 else ""
+
+
+def page_address(params):
+    """The addresses of the web documents around element `id`, the nearest first (its page, and the pages that page's
+    frame sits in), as their app reports them now ("" for one that reports none); none outside any page. Read from the
+    document itself, never from what the page shows. Ember binds a vault entry to a site by them, so an element whose
+    ancestors can't be walked to its application is an error (it then fills nothing), never an empty answer."""
+    acc = SNAPSHOTS.get(int(params["id"]))
+    urls = []
+    cur = acc
+    for _ in range(PAGE_LEVELS):
+        if cur is None:
+            raise RuntimeError("the element's window can't be found")
+        role = cur.getRoleName()
+        if role == "application":
+            return {"urls": urls}
+        if role == "document web":
+            urls.append(doc_url(cur)[:4096])
+        cur = cur.parent
+    raise RuntimeError("the element lies too deep to tell which page it is in")
+
+
+def vault_fill(params):
+    """The vault's fill, which Ember's main process alone asks for (never a model): `text` replaces what field `id`
+    holds, a password or secret field included; this is the one method that writes into one (set_text, set_value and
+    select_option refuse them as before). Only a password field or a plain text field, usable now. The field counts as
+    secret from here on, so nothing reads what it holds, and the names around it that say so are withheld (`keys`,
+    `withheldKeys`: for Ember to hand to a later helper). `took`: the field now holds as many characters as were put
+    in; what it holds is never read back, logged or returned, and no error here quotes it."""
+    nid = int(params["id"])
+    acc = usable(nid)
+    role = acc.getRoleName()
+    if role not in VAULT_FILL_ROLES:
+        raise RuntimeError("background_unavailable: this element is no field the vault can fill")
+    text = params.get("text")
+    if not isinstance(text, str) or not text:
+        raise ValueError("nothing to fill")
+    key = object_key(acc)
+    if key is None:
+        raise RuntimeError("the field can't be told apart from others, so nothing was filled")
+    # Secret before anything is written: no read from now on reports what it holds.
+    SECRETS.add(key)
+    et = editable_text(acc)
+    slow = False
+    try:
+        ok = on_link(et, "SetTextContents", (text,), lambda: et.setTextContents(text))
+    except Exception as err:
+        # Only whether the app answered: its own words aren't passed on (they could quote what was sent to it).
+        ok = None
+        slow = "did not answer" in str(err)
+    if ok is None:
+        raise RuntimeError("the app did not answer in time (it may still do it)" if slow else "the app refused the text")
+    settle()
+    took = None
+    try:
+        took = acc.queryText().characterCount == len(text)
+    except Exception:
+        pass  # can't be told: Ember says so
+    held = []
+    try:
+        held = [list(k) for k in withhold_around(acc, role)]
+    except Exception:
+        pass  # the names around it are checked again at the next read
+    out = {"ok": bool(ok), "keys": [list(key)], "withheldKeys": held}
+    if took is not None:
+        out["took"] = took
+    return out
+
+
 def set_value(params):
     acc = usable(int(params["id"]))
     refuse_secret(acc)
@@ -4291,6 +4386,8 @@ METHODS = {
     "can_do": can_do,
     "do_action": do_action,
     "set_text": set_text,
+    "page_address": page_address,
+    "vault_fill": vault_fill,
     "set_value": set_value,
     "select_option": select_option,
     "list_options": list_options,
@@ -5213,6 +5310,7 @@ def load_atspi_again():
 
 def handle(line):
     req_id = None
+    name = None
     try:
         req = json.loads(line)
         req_id = req.get("id")
@@ -5229,6 +5327,9 @@ def handle(line):
         result = method(req.get("params") or {})
         return {"jsonrpc": "2.0", "id": req_id, "result": result}
     except Exception as e:
+        if name == "vault_fill":
+            # No traceback for the vault's fill: nothing about that call is said beyond its own plain message.
+            return {"jsonrpc": "2.0", "id": req_id, "error": {"message": str(e)}}
         return {"jsonrpc": "2.0", "id": req_id, "error": {"message": str(e), "detail": traceback.format_exc(limit=3)}}
 
 

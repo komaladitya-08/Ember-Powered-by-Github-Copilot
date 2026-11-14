@@ -1387,6 +1387,27 @@ describe("VoiceService keeps listening going", () => {
     expect(electron.procs).toHaveLength(2);
   });
 
+  it("says the error is the microphone's only when the microphone caused it, not when the voice process or its models did (r10-modes-copy-x10-3)", async () => {
+    vi.useFakeTimers();
+    const { v, states } = service();
+    await v.setWanted(true);
+    electron.procs[0].emit("message", { type: "ready", loadMs: 900 });
+    micStatus({ state: "lost", message: "The microphone was disconnected." });
+    expect(states.at(-1)?.s).toBe("error");
+    expect(v.micFault).toBe(true);
+    micStatus({ state: "capturing", device: "USB Headset", rate: 16000, context: "running" });
+    expect(v.micFault).toBe(false);
+    electron.procs[0].emit("message", { type: "stalled", ms: 3100 });
+    expect(states.at(-1)?.detail).toBe("No sound is arriving from the microphone. Trying again in 1 s…");
+    expect(v.micFault).toBe(true);
+    await vi.advanceTimersByTimeAsync(1000);
+    electron.procs[1].emit("message", { type: "ready", loadMs: 900 });
+    // The voice process's own error, and its dying, are an error that isn't the microphone's.
+    electron.procs[1].emit("message", { type: "error", message: "The speech recognizer failed." });
+    expect(states.at(-1)).toEqual({ s: "error", detail: "The speech recognizer failed." });
+    expect(v.micFault).toBe(false);
+  });
+
   it("keeps the mic page while it waits for a microphone that isn't there yet (no headset, PulseAudio late at login)", async () => {
     vi.useFakeTimers();
     const { v, states } = service();
@@ -1928,6 +1949,42 @@ describe("speech models", () => {
       electron.procs[0].emit("message", { type: "done", id: 2 });
       await flush();
       expect(speech.webContents.send).not.toHaveBeenCalledWith(VOICE.speak, expect.objectContaining({ text: "Hasta luego, y gracias por todo." }));
+    });
+
+    it("sends Ember's closing English words to its own voice only after the passage the system voice was given, never ahead of it (voice-speaking-r9-1)", async () => {
+      const { v } = service(true, { neuralVoice: true });
+      v.speak("The message reads:", { lang: null });
+      v.speak("Bonjour Alex, comment vas-tu ?", { append: true, lang: "fr" });
+      v.speak("Shall I reply to it?", { append: true, lang: null });
+      await flush();
+      const tts = electron.procs[0], speech = electron.windows.find(w => w.title === "Ember speech")!;
+      // The whole answer streamed before Ember's voice had made the lead-in: only the lead-in is with the speech process.
+      expect(posted(tts, "say").map(m => (m as { text?: string }).text)).toEqual(["The message reads:"]);
+      expect(v.speaking).toBe(true);
+      tts.emit("message", { type: "ready", loadMs: 900, rate: 22_050 });
+      tts.emit("message", { type: "audio", id: 1, samples: new Float32Array(4), rate: 22_050, remaining: "" });
+      tts.emit("message", { type: "done", id: 1 });
+      await flush();
+      expect(posted(tts, "say").map(m => (m as { text?: string }).text)).toEqual(["The message reads:", "Shall I reply to it?"]);
+      tts.emit("message", { type: "audio", id: 2, samples: new Float32Array(4), rate: 22_050, remaining: "" });
+      tts.emit("message", { type: "done", id: 2 });
+      await flush();
+      const order = speech.webContents.send.mock.calls.filter(c => c[0] === VOICE.audio || c[0] === VOICE.speak).map(c => c[0] === VOICE.audio ? `own ${(c[1] as { id: number }).id}` : `system ${(c[1] as { text: string }).text}`);
+      expect(order).toEqual(["own 1", "system Bonjour Alex, comment vas-tu ?", "own 2"]);
+    });
+
+    it("says in the system voice what waited behind a passage for Ember's own voice, once that voice has stopped working (voice-speaking-r9-1)", async () => {
+      const { v } = service(true, { neuralVoice: true });
+      v.speak("The message reads:", { lang: null });
+      v.speak("Bonjour Alex, comment vas-tu ?", { append: true, lang: "fr" });
+      v.speak("Shall I reply to it?", { append: true, lang: null });
+      await flush();
+      const tts = electron.procs[0], speech = electron.windows.find(w => w.title === "Ember speech")!;
+      tts.emit("message", { type: "error", message: "no model", reason: "load" });
+      await flush();
+      expect(speech.webContents.send.mock.calls.filter(c => c[0] === VOICE.speak).map(c => (c[1] as { text: string }).text)).toEqual(["The message reads:", "Bonjour Alex, comment vas-tu ?", "Shall I reply to it?"]);
+      // A hush drops what waits.
+      v.hush();
     });
 
     it("loads the voice and its speak-only page when a request is likely, once, and lets them go when idle (voice-speaking-1)", async () => {

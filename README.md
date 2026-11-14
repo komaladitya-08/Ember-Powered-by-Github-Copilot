@@ -105,8 +105,8 @@ menu, so run the file again to start Ember again or to open its settings while i
 entry, which also has **Ask Ember** when you right-click it.
 
 The AppImage carries the speech models too, as the RPM does, so nothing is downloaded when voice is turned on. Should
-Kitten (63.8 MB) or Voice Match (26.5 MB) be missing or damaged, Ember still listens, replies in the system's voice or
-takes no spoken yes meanwhile, and settings offers just that one to download. The AppImage needs `fusermount` to start
+Kitten (63.8 MB) or Voice Match (26.5 MB) be missing or damaged, Ember still listens, replies in the system's voice or, while “Only my voice can
+say yes” is on, takes no spoken yes meanwhile, and settings offers just that one to download. The AppImage needs `fusermount` to start
 (`sudo dnf install fuse`; without it, it stops with "No suitable fusermount binary found"). Where you can't install
 that, run it unpacked: `APPIMAGE_EXTRACT_AND_RUN=1 ./Ember-0.1.1-x86_64.AppImage`. Where user namespaces are off
 (STIG-hardened computers), it runs without Chromium's sandbox: install the RPM there instead.
@@ -216,18 +216,51 @@ open -n -W --stdout ~/ember-doctor.txt -a /Applications/Ember.app --args --docto
 
 1. Start Ember from your apps (Linux), the Start menu (Windows) or Applications (macOS); the AppImage by running the
    file, and the npm launcher with `ember`. Its first window takes you
-   through 6 steps: a hello, **What I do, and what I don't** (nothing is read, heard or sent until you agree), **Sign
+   through 6 steps: a hello, **What I do, and what I don't** (nothing is read, heard or sent until you agree; the one
+   agreement turns on commands on this computer, memory, “Hey Ember” with spoken replies, screenshots for tasks and
+   Interactive, each with its own switch and its own card's words, so you can switch any off there or later), **Sign
    in to GitHub** (or **Use my own provider**), **Checking this computer** (what to fix, with a button where Ember can
    do it), **Try me out** (stop Ember, ask it something, and say “Hey Ember” if you like) and **Ready to start**, a
    summary of what you chose.
 2. To ask, press Ctrl+Alt+Space (on Windows Win+Alt+Space, on a Mac Control+Shift+Command+Space; see **Shortcuts**),
-   type your request and press Enter. Ember answers in its bubble beside your cursor, and asks "May I?" before it does
-   something in an app.
+   type your request and press Enter. Ember answers in its bubble beside your cursor. When and how it asks "May I?"
+   before it acts in an app is your choice: see **How Ember asks**, below.
 3. To stop, press Ctrl+Alt+X (on Windows Win+Alt+X, on a Mac Control+Shift+Command+X) or say “Ember, stop”:
    everything stops at once.
 4. If something doesn't work, run the setup check (`ember doctor`, the AppImage's `doctor`, `.\ember-doctor.cmd` on
    Windows, or the `open` command above on a Mac), or open Ember's settings with Ctrl+Alt+E (on Windows Win+Alt+E, on
    a Mac Control+Shift+Command+E) or by starting Ember again.
+
+## How Ember asks
+
+How much Ember asks before it acts is your choice, in Settings › **Apps & privacy** › **How Ember asks**. Each mode
+has its own card that says what it means, and a mode is in use only once you agree to its card.
+
+- **Interactive** is the default (first run turns it on with its card; switch it off there if you like). For ordinary
+  steps, such as a first step in an app, using your mouse and keyboard or moving text from another window, Ember tells
+  you what it's doing instead of asking. It asks every time before anything risky: sending, posting, sharing,
+  deleting, overwriting, paying, installing, signing out, changing security settings or answering a dialog's question,
+  and before a command that deletes, publishes, touches passwords or keys, changes the system or downloads and runs
+  code (unless you asked for exactly that command: then it tells you and gives you 4 seconds to stop it).
+- **Assisted** is Interactive with a check: before Ember asks, a lighter AI model reads the step against what you
+  asked, in your own words. When it matches, Ember goes ahead and tells you, a risky step included; otherwise it asks.
+  A command that would touch passwords or keys, keep running after you stop it, run a program Ember doesn't know or
+  do what your own words for the task rule out always asks, and so does every command wherever you or your
+  organisation set commands to ask every time, or on a computer reached over SSH whose own administrator doesn't allow
+  the check there.
+- **Autopilot** doesn't ask. Ember sends, deletes, pays, installs and runs dangerous commands, as an administrator
+  too, and tells you as it goes, with a few seconds to stop each dangerous command: a risk you accept on its card. It
+  still asks before a command that would show passwords or keys, keep running after you stop it, or whose effect it
+  can't tell, one your own words for the task rule out, and wherever you or your organisation set commands to ask
+  every time or the administrator of a computer reached over SSH doesn't allow Autopilot there. Only in Autopilot
+  does Ember fill in logins and cards from its vault (below).
+
+In every mode “Ember, stop” or the stop shortcut stops everything at once, Ember never retries a step you said no to,
+never acts in your system's password prompts or your terminals, never lets the AI model see a password, and **What
+Ember did** lists every step. Until you agree to Interactive's card, or where your organisation keeps Ember there,
+Ember also asks before its first step in an app, before using your mouse and keyboard, before pressing OK on an app's
+message box and before moving text between apps. Your organisation can cap the mode or turn the modes off. You can
+also change mode by voice ("Ember, switch to Assisted"; see **Shortcuts**).
 
 ## Hear about new versions
 
@@ -368,8 +401,8 @@ and VoiceOver on a Mac. While one runs:
 - Ember speaks its questions and results itself, unless you choose otherwise in Settings › **Voice** › **Speak
   replies, questions and results out loud**: **When a screen reader runs**, **Always** (the default) or **Never**.
   When your organisation turns speaking off, Ember never speaks.
-- The bubble's words are read out as they change: a question with the keys that answer it ("Ctrl+Alt+Y allow;
-  Ctrl+Alt+N not now") and all of a long text it would type (then "You can allow it once all of it has been shown.
+- The bubble's words are read out as they change: a question with the keys that answer it ("To allow, press
+  Ctrl+Alt+Y; for not now, press Ctrl+Alt+N") and all of a long text it would type (then "You can allow it once all of it has been shown.
   Ctrl+Alt+Y shows the next part", and "You can allow it now" once it has), and for a question shown in another of
   Ember's windows, how to get there ("press Alt+Tab to go there").
 - The command window reads out what a command prints, and its lines can be read again one by one. A dangerous command
@@ -385,7 +418,7 @@ and VoiceOver on a Mac. While one runs:
 | Open settings | The settings shortcut, or start Ember again from your apps, the AppImage, `ember`, the Start menu or Applications |
 | What the handle's menu does | Settings' **Home**: **Ask Ember…** and **Stop everything**. Settings › **Your Ember › Ember on screen**: **Hide Ember until it needs me** for **Hide Ember**, **Follow my cursor** for **Stay put**, **Handle position** for **Move to the other side**, and **Quit Ember**. The microphone: its shortcut, or **Voice** in settings. **Read the last answer** and a long answer's **Read all**: settings' **Conversation**. **Bring Ember to a computer…**, **Disconnect** and **Cancel connecting**: settings' **Computers**. **Work on**: name the computer in your request ("on build-01, …") |
 | A command card (**Allow**, **Not now**) | Alt+Tab to **Ember commands** and Tab to the button; or Ember's allow and not-now keys, once the card has shown the whole command; or say “allow” or “not now” once Ember has asked (“Ember, allow” later), then (with **Only my voice can say yes (Voice Match)** on, only your voice can say yes) |
-| Any question of Ember's | Say “allow” or “not now” once Ember has asked (no name needed for a few seconds; “Ember, allow” later): anyone near the computer can answer by voice, unless you turn on **Only my voice can say yes (Voice Match)**, which then takes a yes only from your voice. Never “Always” by voice. **Apps & privacy › Work without asking** has Ember tell you instead of asking before routine steps; risky ones still ask |
+| Any question of Ember's | Say “allow” or “not now” once Ember has asked (no name needed for a few seconds; “Ember, allow” later; on macOS, and on Linux without PulseAudio's parec, where Ember can't tell whether something else is playing, a yes always needs the name): anyone near the computer can answer by voice, unless you turn on **Only my voice can say yes (Voice Match)**, which then takes a yes only from your voice. Never “Always” by voice. **Apps & privacy › How Ember asks › Interactive** has Ember tell you instead of asking before routine steps; risky ones still ask. **Assisted** adds a check: before Ember asks, a lighter AI model reads the step against what you asked, and when it matches Ember goes ahead and tells you. **Autopilot** doesn't ask: Ember sends, deletes, pays, installs and runs dangerous commands without asking and tells you as it goes, a risk you accept on its card; it still asks before a command that would show passwords, keep running after you stop it or that it can't tell the effect of, and your organisation can turn it off. Say “Ember, switch to Autopilot” (or Assisted, or “go back to Interactive”) to change the mode once its card is agreed to in Settings: by voice by the same rule as a yes; typed only to a mode that asks more |
 | The command window | Tab and Shift+Tab move between the tabs, the buttons and the command's terminal, never into the command (Ctrl+I types a Tab for a program that wants one); Ctrl+Shift+C copies (Command+C on a Mac), and **Copy output** copies all a command printed |
 | Bubble buttons for other computers (**Bring Ember**, **Reconnect**, **Try again**) | Settings › **Computers** has the same; the bubble says so |
 | Sign-in and consent cards | Their window takes the keyboard; where the system keeps it in another app, a card you type into says so, and Alt+Tab reaches the card. Tab to a button, Enter presses the highlighted one, Esc cancels (**Not now** on a consent card). A consent card's yes counts once you have read all of it: Tab to its words and scroll with the arrow keys or Page Down. It is answered there only, never with Ember's keys or by voice |
@@ -397,7 +430,7 @@ and the password and consent cards), **Glass** (Clear, Regular or Solid: how muc
 bubble, cards, handle and ask box; solid in Calm mode and when your system asks for less transparency or more contrast),
 **Calm mode** (no hops, bounces or fidgets; also on when your system asks for less motion; Ember's bubble and cards still fade in and out) and **More
 time to read and answer** (messages stay ten times as long, also ones that waited behind another or were covered for a
-while, and Ember's own notices; a question waits 20 minutes instead of 2 before it counts as **Not now**, and one with a
+while, and Ember's own notices; a question waits 20 minutes instead of 2 before it ends unanswered, and one with a
 long text to read 10 minutes more instead of 1 for every 1000 characters of it). At Large and
 Larger, an answer that needs more than six lines at that size offers **Read all**. Windows' contrast themes keep
 switches, edges, focus and state visible, and the handle's microphone and computer badges change shape as well as
@@ -419,16 +452,35 @@ other side** in the handle's menu. The task cards go with it, and on Linux Ember
 - On Windows, a command can't take typing (§2.9 of [docs/COMMANDS-WSL-SSH.md](docs/COMMANDS-WSL-SSH.md)). On a Mac,
   Command+Tab doesn't list the command window: answer a command card with Ember's allow and not-now keys.
 
+## Passwords, cards and contact details: the vault
+
+The AI model never types or sees a password or a card number. In Autopilot, when a task comes to a
+sign-in, a card or a contact field, Ember asks you once in its own **Secure Form**, keeps what you give it in its
+vault on this computer (locked with your computer's keyring, and bound to that one app or site) and fills it in there
+itself from then on. It fills nothing in your computer's own password prompts, and nothing in any other mode.
+
+- What it filled is hidden from then on in everything Ember reads, sends to the model, logs and records, and blacked
+  out of its screenshots.
+- Once Ember has filled something, it uses no extension until you start it again: what an extension reads could
+  hold what was filled.
+- **Settings › Apps & privacy › Vault** lists what is kept (never the values) with **Forget**; Sign out and Forget
+  everything forget it all.
+- It needs a keyring: where your computer has none, the form says so and keeps nothing.
+- An organisation can turn it off (`features.vault` in its policy).
+
 ## Commands, WSL and other computers
 
-Ember can also run commands, work in WSL on Windows, and work on other computers you reach over SSH. Each is off until
-you turn it on in settings (**Commands**, **Computers**) and accept the card that says what it means.
+Ember can also run commands, work in WSL on Windows, and work on other computers you reach over SSH. Commands on this
+computer are on from first run, whose agreement shows their card (switch them off there, or later in **Commands**);
+the others are off until you turn them on in settings (**Commands**, **Computers**) and accept the card that says what
+it means.
 
 - **Commands** run in Ember's own **Ember commands** window, never in your terminal, where you can watch and stop
-  them. Most run straight away. Ember stops and asks before anything that deletes or overwrites data, pushes or
-  publishes anywhere, touches passwords or keys, changes the system, or downloads and runs code; when you asked for
-  exactly that yourself ("delete build/", "can you delete build/?", but not a question, a how-to or something already
-  done), it says so and gives you 4 seconds to stop it. Asked for by voice, such a command asks instead on Windows, on
+  them. Most run straight away. In Interactive, the default, Ember stops and asks before anything that deletes or
+  overwrites data, pushes or publishes anywhere, touches passwords or keys, changes the system, or downloads and runs
+  code; when you asked for exactly that yourself ("delete build/", "can you delete build/?", but not a question, a
+  how-to or something already done), it says so and gives you 4 seconds to stop it. Assisted and Autopilot ask less
+  (**How Ember asks**, above). Asked for by voice, such a command asks instead on Windows, on
   macOS and on Linux without parec, where Ember can't tell your voice from what your speakers play. It reads a shell
   script before running it: a script that does any of that always asks, and so does one it can't read in full, as most
   real build and install scripts are. It never runs a command that would read or change its own safety

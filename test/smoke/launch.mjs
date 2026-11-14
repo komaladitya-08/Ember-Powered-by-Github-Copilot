@@ -53,7 +53,7 @@ const windowMs = Number(process.env.EMBER_SMOKE_TIMEOUT_MS) || (process.platform
 /** The OS whose launcher entry the run requires (its own; the unit test's stand-in names another). */
 const os = process.env.EMBER_SMOKE_PLATFORM || process.platform;
 // Set up, as after onboarding (the consent version is shared/consent.ts's): a launcher's --ask opens the box only then.
-writeFileSync(path.join(userData, "settings.json"), JSON.stringify({ version: 1, onboarded: true, wakeWord: false, consent: { version: 8, at: new Date().toISOString() } }));
+writeFileSync(path.join(userData, "settings.json"), JSON.stringify({ version: 1, onboarded: true, wakeWord: false, consent: { version: 10, at: new Date().toISOString() } }));
 
 function launch(name, extra = []) {
   const debug = copied && name === "first" ? ["--remote-debugging-port=0"] : [];

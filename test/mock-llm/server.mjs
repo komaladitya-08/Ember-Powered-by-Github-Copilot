@@ -44,7 +44,9 @@ export async function startMockLlm(opts = {}) {
     const tools = (json.tools ?? []).map(t => t.function?.name).filter(Boolean);
     // `at`, `doneAt`: when the request came and its answer was all sent (Date.now(): timings for scripts/perf/latency.mjs);
     // `authorization`: the key header it came with (the own model provider tests check the key goes there and only there).
-    const entry = { messages, tools, model: json.model, reasoningEffort: json.reasoning_effort, authorization: req.headers.authorization ?? null, at: Date.now() };
+    // `descriptions`: each tool's description as this request carried it (the extensions tests check what the model is shown).
+    const descriptions = Object.fromEntries((json.tools ?? []).filter(t => t.function?.name).map(t => [t.function.name, String(t.function.description ?? "")]));
+    const entry = { messages, tools, descriptions, model: json.model, reasoningEffort: json.reasoning_effort, authorization: req.headers.authorization ?? null, at: Date.now() };
     requests.push(entry);
     const reply = (opts.respond ?? defaultRespond)(messages, tools);
     if (reply.tools?.length) reply.tool = reply.tools[0];

@@ -6,7 +6,7 @@ import { factsCount } from "../../app/renderer/home/forget-confirm";
 describe("Sign out and Forget everything copy", () => {
   it("tells the user Sign out stops tasks and clears conversation, facts, reminders and routines, with counts", () => {
     const t = signOutScope({ tasks: 2, facts: 5, reminders: 1, routines: 3 });
-    expect(t).toBe("Sign out? This stops 2 tasks that are running or waiting, and clears this conversation (and the copy saved on this computer, if you keep one), 5 saved facts, 1 reminder and 3 routines.");
+    expect(t).toBe("Sign out? This stops 2 tasks that are running or waiting, and clears this conversation (and the copy saved on this computer, if you keep one), 5 saved facts, 1 reminder and 3 routines. It also forgets what you saved in the vault.");
   });
   it("uses the singular and says 0 plainly", () => {
     expect(signOutScope({ tasks: 1, facts: 1, reminders: 0, routines: 1 })).toContain("1 task that is running or waiting");
@@ -14,7 +14,7 @@ describe("Sign out and Forget everything copy", () => {
   });
   it("tells the user Forget everything removes only saved memory and leaves the rest", () => {
     expect(forgetEverythingScope({ tasks: 2, facts: 5, reminders: 1, routines: 0 }))
-      .toBe("Forget everything? This removes 5 saved facts, what Ember learned from them and the conversation saved on this computer, if you keep one. 2 tasks, 1 reminder and 0 routines stay as they are, and so do the lines on screen now, but they aren't saved again.");
+      .toBe("Forget everything? This removes 5 saved facts, what Ember learned from them and the conversation saved on this computer, if you keep one. It also forgets what you saved in the vault. 2 tasks, 1 reminder and 0 routines stay as they are, and so do the lines on screen now, but they aren't saved again.");
   });
   it("says a count is unknown, not zero, when it couldn't be read", () => {
     const t = signOutScope({ tasks: 0, facts: null, reminders: 1, routines: 0 });
@@ -25,11 +25,11 @@ describe("Sign out and Forget everything copy", () => {
   });
   it("starts Forget everything's second sentence with a capital when the task count is unknown (memory-r7-3)", () => {
     expect(forgetEverythingScope({ tasks: null, facts: 3, reminders: 0, routines: null }))
-      .toBe("Forget everything? This removes 3 saved facts, what Ember learned from them and the conversation saved on this computer, if you keep one. An unknown number of tasks, 0 reminders and an unknown number of routines stay as they are, and so do the lines on screen now, but they aren't saved again. Ember couldn't count everything right now, so those numbers are unknown, not zero.");
+      .toBe("Forget everything? This removes 3 saved facts, what Ember learned from them and the conversation saved on this computer, if you keep one. It also forgets what you saved in the vault. An unknown number of tasks, 0 reminders and an unknown number of routines stay as they are, and so do the lines on screen now, but they aren't saved again. Ember couldn't count everything right now, so those numbers are unknown, not zero.");
   });
   it("says saved memory Ember can't match to this account stays, rather than promising to clear it (memory-11)", () => {
     const t = signOutScope({ tasks: 0, facts: null, reminders: 1, routines: 0, kept: true });
-    expect(t).toBe("Sign out? This stops 0 tasks that are running or waiting, and clears this conversation (and the copy saved on this computer, if you keep one), 1 reminder and 0 routines. Saved memory Ember can't match to this account stays on this computer; Forget everything in Memory removes it.");
+    expect(t).toBe("Sign out? This stops 0 tasks that are running or waiting, and clears this conversation (and the copy saved on this computer, if you keep one), 1 reminder and 0 routines. Saved memory Ember can't match to this account stays on this computer; Forget everything in Memory removes it. It also forgets what you saved in the vault.");
     expect(t).not.toContain("unknown");
   });
   it("counts kept memory only from a view that says sign-out leaves it (memory-11)", () => {

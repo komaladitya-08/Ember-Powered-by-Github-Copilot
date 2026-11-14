@@ -19,12 +19,14 @@ import { loginItemFollower } from "./autostart";
 import { watchCrashes } from "./crash-log";
 import { endRun, previousRun, startRun } from "./run-marker";
 import { readTextFile } from "./text-file";
-import { SettingsStore, checkHomePatch, hasConsent, plainSaveError, withOwnExtensions, withOwnProvider, withOwnTrust, type Settings, type SettingsPatch } from "./settings";
-import { auditRetentionDays, autonomyAllowed, heldUntilRestart, homeAdmin, modelServiceRefusal } from "./admin";
-import { autonomyConsented, autonomyHeld, autonomyInForce, holdAutonomyOff, releaseAutonomyHold, ALL_SCOPES } from "./policy/autonomy";
-import { TaskVoiceTrust, heardAnswer, heardUnchecked, refusalEndsTrust, refusalLine, refusalNote, rejectionEndsTrust, voiceAnswer, voiceAnswerSaid, type VoiceAnswerNote, type VoiceAnswerOutcome } from "./agent/voice-answer";
+import { SettingsStore, checkHomePatch, hasConsent, plainSaveError, withOwnExtensions, withOwnProvider, withOwnWhereForced, type Settings, type SettingsPatch } from "./settings";
+import { auditRetentionDays, commandMode, heldUntilRestart, homeAdmin, modelServiceRefusal, vaultAllowed } from "./admin";
+import { approvalInputs, approvalsState, autonomyPermitted, chooseMode, modeAgreed, modeInForce } from "./policy/autonomy";
+import { ANSWER_CLOSED_STATUS, TaskVoiceTrust, VoiceRefusals, answerStatusOnQuestion, answerWindowStatus, heardAnswer, heardUnchecked, refusalEndsTrust, rejectionEndsTrust, voiceAnswer, type VoiceAnswerNote, type VoiceAnswerOutcome } from "./agent/voice-answer";
+import { ModeRecord, modeIntents } from "./policy/mode-record";
+import { ModeSeal } from "./policy/mode-seal";
 import { inspectEnvironment, keyboardRoute, sessionGreeting, type EnvReport } from "./environment";
-import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSender, keepClearOf, quitQuestion, setTextScale, settingsFromHome, setUpAppChrome } from "./windows";
+import { createCommandWindow, createHomeWindow, createPromptWindow, createVaultWindow, isTrustedSender, keepClearOf, quitQuestion, setTextScale, settingsFromHome, setUpAppChrome } from "./windows";
 import { UPDATED_QUESTION, createUpdateCheck, restartAfterUpdate, updatedDetail } from "./install-watch";
 import { IPC, TASKS_PUSH_MS, type Status, type SignInProgress, type AskContext, type ListenOnceStatus, type VoiceMatchStatus, type ProjectSelection, type ProjectResult, type ProjectWorkspaceReply, type HearResult, type RetryResult } from "../shared/ipc";
 import { OVERLAY, IDLE_BUBBLE, answerEndShown, askSuggestions, askSuggestionsComing, bubbleBoxOf, suggestOf, suggestionsShown, wholeSeenOf, type EmberState, type Rect } from "../shared/overlay";
@@ -35,14 +37,15 @@ import { HandleWindow } from "./handle";
 import { otherSide } from "../shared/handle-place";
 import { revive } from "./revive";
 import { memoryReport } from "./memory-report";
-import { useAppNames } from "../shared/apps";
+import { friendlyApp, useAppNames } from "../shared/apps";
 import { AtspiSidecar, type FocusBefore } from "./perception/sidecar";
-import { isNeverLook } from "./perception/elements";
+import { isNeverLook, setQuoteRedactor } from "./perception/elements";
+import { setOutputRedactor } from "./commands/output";
 import { Perception, type QuickContext } from "./perception";
 import { warmText } from "./perception/capture";
 import { TEXT_WARM_DELAY_MS, scheduleTextWarm } from "./perception/text-warm";
 import { AskWindow, MAC_SETTLE_MS, WAIT_TIP_OPENINGS, showsWaitTip, stepsAsideFor } from "./ask";
-import { focusBeforeNow, openAskInOrder, userWindowsNow } from "./ask-open";
+import { askReadPlan, focusBeforeNow, openAskInOrder, probeReadParams, readAsPlanned, userWindowsNow } from "./ask-open";
 import { notificationBody } from "./notification";
 import { askSees } from "./ask-sees";
 import { LISTEN_CUT_BY_QUESTION, LISTEN_ONCE_STOPS_ANSWER, VoiceService, cutByQuestion, electronDownloader, heldByQuestion, listenOnceInSettings, questionHoldsListen, voicePermissions } from "./voice";
@@ -55,8 +58,9 @@ import { KillSwitch, stillStoppingWords } from "./agent/killswitch";
 import { PolicyEngine, isRiskyLabel } from "./policy/policy";
 import { remoteSurfaceCheck } from "./policy/remote-surface";
 import { restartOptions, runningAppImage, watchAdminPolicy } from "./policy/admin-watch";
-import { ANSWER_MS, Confirmer, EXPIRED_MS, answerSettler, guardWhileAsking, hidesAgainAfter } from "./agent/confirm";
+import { ANSWER_MS, Confirmer, EXPIRED_MS, answerSettler, guardWhileAsking, hidesAgainAfter, questionPausesAnswer } from "./agent/confirm";
 import { taskNotice } from "./agent/tasks";
+import { withQuestionUp } from "../shared/activity";
 import { CursorBorrow } from "./hands/borrow";
 import { isTerminalWindowApp } from "./hands/system";
 import { freshAskPress, holdShortcuts } from "./hotkey";
@@ -65,11 +69,11 @@ import { ALWAYS_HELD, FALLBACK_SHORTCUTS, heldShortcuts, shownShortcuts, type Sh
 import type { DeskPlace } from "./desk/place";
 import { DeskView } from "./desk/view";
 import { createTaskWindowControl, taskControl } from "./agent/task-controls";
-import { AgentHost, explainSignInError, gitHubReachable, idleWord, STOPPED_EVERYTHING, unansweredWord, type Hands, type TranscriptEntry } from "./agent/host";
+import { AgentHost, explainSignInError, gitHubReachable, idleWord, POLICY_CHANGED_STOP, SCREEN_LOCKED_STOP, SIGN_OUT_NOT_KEPT, STOPPED_EVERYTHING, unansweredWord, type Hands, type TranscriptEntry } from "./agent/host";
 import { composerSendRefusal } from "./agent/composer-refusal";
 import { CONVERSATION_TEXT_LIMIT, conversationRequest } from "../shared/conversation";
-import { projectAfterStatus, projectJobStops, projectMay, projectCommandFolder, projectCommandProblem, projectCommandText, projectNames, projectSelection, projectStopped, removeProjectFile, projectPrompt, projectTurnRequest, ProjectInputError, ProjectModelError, PROJECT_MODEL_FAILED, PROJECT_PREVIOUS_ELSEWHERE, type ProjectSource } from "./agent/project";
-import { projectUnavailable } from "../renderer/home/project-copy";
+import { projectAfterStatus, projectChoice, projectJobStops, projectMay, projectCommandFolder, projectCommandProblem, projectCommandText, projectNames, projectRefusedText, projectSelection, projectStopped, removeProjectFile, projectPrompt, projectTurnRequest, ProjectInputError, ProjectModelError, PROJECT_MODEL_FAILED, PROJECT_PREVIOUS_ELSEWHERE, type ProjectSource } from "./agent/project";
+import { projectUnavailable, workspaceOpened } from "../renderer/home/project-copy";
 import { exportProjectText } from "./agent/project-export";
 import { applyNaturalVoicePreference, naturalVoiceChoices, naturalVoiceWanted } from "./voice-choice";
 import { applyProjectPatch, readProjectPatch, type ProjectPatch } from "./agent/project-patch";
@@ -109,18 +113,30 @@ import { hello, keysLine } from "./hello";
 import { TurnLatency } from "./turn-latency";
 import { ACK_MS, acknowledgement, afterAck } from "./acknowledge";
 import { MemoryService } from "./memory/service";
+import { memoryViewOf } from "./memory/view";
 import { githubMemoryAccount, MemoryEpochAccount, MemoryOwner, type MemoryWait } from "./memory/owner";
+import { endOfSession } from "./session-end";
 import { MemoryLearning, linesAfterAskedForget, linesAfterForget, linesAfterRestore, withLearned, type MemoryLine } from "./memory/learning";
 import type { OneShot } from "./memory/learn";
 import { memoryActionOpens } from "./memory/questions";
 import { BetterRecall } from "./memory/better-recall";
-import { FEATURE_CONSENT_VERSION } from "../shared/consent";
+import { CONSENT_VERSION, FEATURE_CONSENT_VERSION } from "../shared/consent";
 import { installKind, releasePage, UpdateChecker, updateNotice } from "./updates";
 import { ExtensionsService } from "./extensions/service";
 import { registerExtensionsIpc } from "./extensions-ipc";
 import { registerProviderIpc } from "./provider-ipc";
-import { PROVIDER_KEY_FILE, ProviderKeyStore, activeProvider, checkAgain, createProviderService, ownProviderAuth, providerSummary, providerWaitingHost, redactingLogger, type ActiveProvider, type FetchLike } from "./provider";
+import { VAULT_FILE, VaultStore } from "./vault/store";
+import { createVaultForm, type VaultFormController } from "./vault/form";
+import { VaultService, registerVaultHomeIpc } from "./vault/service";
+import { VaultRedactor } from "./vault/redact";
+import { VAULT_IPC } from "../shared/vault";
+import { registerApprovalsIpc } from "./approvals-ipc";
+import { registerFirstRunIpc } from "./first-run";
+import { firstRunAllowsVoice } from "../shared/first-run";
+import { PROVIDER_SEAL_FILE, ProviderRecord, ProviderSeal, type ProviderRecordDeps } from "./provider-record";
+import { PROVIDER_KEY_FILE, ProviderKeyStore, activeProvider, userProviderInForce, checkAgain, createProviderService, ownProviderAuth, providerSummary, providerWaitingHost, redactingLogger, type ActiveProvider, type FetchLike } from "./provider";
 import { PROVIDER_IPC } from "../shared/ipc";
+import { APPROVALS_IPC, modeCardVersion, modeRank } from "../shared/approvals";
 import { recentLimit } from "../shared/ipc";
 import { endpointHost } from "../shared/provider";
 import { demoExtensionsApi, demoVariant } from "./extensions-demo";
@@ -198,9 +214,17 @@ try { fs.mkdirSync(userData, { recursive: true, mode: 0o700 }); fs.chmodSync(use
 
 // Any case; a name that isn't a level means info, said in the log (review #90).
 const wantedLevel = logLevel(process.env.EMBER_LOG_LEVEL);
+// The vault's redactor (app/main/vault/redact.ts): every value the vault fills is noted here, in memory only, and
+// replaced wherever text leaves for a model, the audit log or the logs. Made before the logger, which passes every line through it.
+const vaultRedactor = new VaultRedactor();
+// Screen text is redacted whole before it is cut short for a model: a value the cut fell in would pass the boundary (vault-3-x9-2).
+setQuoteRedactor(text => vaultRedactor.text(text));
+// And so is a command's output, before its lines are cut (vault-3-y9-1).
+setOutputRedactor(text => vaultRedactor.text(text), text => vaultRedactor.textSteps(text));
 const log = createLogger({
   dir: path.join(userData, "logs"),
   level: wantedLevel.level,
+  redact: text => vaultRedactor.text(text),
   // `ember doctor` prints a report; log lines would get in its way.
   stdout: !process.argv.includes("--doctor") && (process.env.EMBER_LOG_STDOUT === "1" || !app.isPackaged),
 });
@@ -545,19 +569,19 @@ function start(): void {
   /** Ember greets once settings closes (first run while Copilot isn't connected yet). */
   let greetOnClose = false;
   /** Ember's own approval windows (made through the targets runtime's factories below), and whether a command card is up. */
-  const approvals: { prompt: BrowserWindow | null; command: BrowserWindow | null } = { prompt: null, command: null };
+  const approvals: { prompt: BrowserWindow | null; command: BrowserWindow | null; vault: BrowserWindow | null } = { prompt: null, command: null, vault: null };
   let commandCardUp = false;
   const shownWindow = (w: BrowserWindow | null) => (w && !w.isDestroyed()
     ? { visible: w.isVisible(), minimized: w.isMinimized(), focused: w.isFocused(), bounds: w.getBounds() } : null);
   const stepAside = () => {
     // Settings while the user works in it; Ember's approval windows while they ask (review #125).
-    const { aside, avoid } = keepClearOf({ home: shownWindow(home), prompt: shownWindow(approvals.prompt), command: shownWindow(approvals.command), commandCard: commandCardUp });
+    const { aside, avoid } = keepClearOf({ home: shownWindow(home), prompt: shownWindow(approvals.prompt), command: shownWindow(approvals.command), commandCard: commandCardUp, vault: shownWindow(approvals.vault) });
     overlay?.stepAside(aside);
     // The bubble keeps off the windows too.
     if (JSON.stringify(lastState.avoid ?? []) !== JSON.stringify(avoid)) showState({ avoid });
   };
   /** An approval window the targets runtime had main make: Ember and its bubble keep clear of it while it asks. */
-  const keepClear = <W extends BrowserWindow>(which: "prompt" | "command", win: W): W => {
+  const keepClear = <W extends BrowserWindow>(which: "prompt" | "command" | "vault", win: W): W => {
     approvals[which] = win;
     for (const e of ["move", "resize", "minimize", "restore", "hide", "show"] as const) win.on(e as "show", stepAside);
     win.on("closed", () => { if (approvals[which] === win) approvals[which] = null; stepAside(); });
@@ -633,6 +657,7 @@ function start(): void {
     unexpectedExit: lastRun ? { startedAt: lastRun.startedAt, version: lastRun.version } : null,
     admin: homeAdmin(admin),
     platform: platformStatus(),
+    approvals: approvalsState(settings.own().approvals, policy, modes.notes()),
     };
   }));
   // Every entry the log keeps: the window shows the newest 80 it has lines for (a command writes several entries).
@@ -651,10 +676,12 @@ function start(): void {
     const { patch, dropped } = settingsFromHome(checkHomePatch(sent));
     if (dropped.length) log.warn("settings.update_refused", { keys: dropped });
     const sizeOnly = !!patch && typeof patch === "object" && Object.keys(patch).length === 1 && "size" in patch;
-    // A save that failed reaches the window as one plain sentence (review #84). A change to Work without asking is Home's
-    // (its audit entry says so; one found in the file otherwise is "file").
-    if (patch && typeof patch === "object" && "autonomy" in patch) autonomyChangedBy = { via: "home", verified: false };
-    try { return settings.update(ownNeverLook(withOwnExtensions(withOwnProvider(withOwnTrust(patch, settings.own().trust), settings.own().provider), settings.own().extensions)), { soon: sizeOnly }); } catch (err) { throw plainSaveError(err); } finally { autonomyChangedBy = null; }
+    // A save that failed reaches the window as one plain sentence (review #84). The approval mode never comes this way
+    // (settingsFromHome drops it): it changes only with the agreement to its card (APPROVALS_IPC.choose).
+    // Home sends a section whole as it was shown it, with the organisation's values in it: built on the user's own
+    // (withOwnWhereForced), so none of them is written into settings.json (home-r9-1).
+    const mine = withOwnWhereForced(patch, settings.own(), settings.get());
+    try { return settings.update(ownNeverLook(withOwnExtensions(withOwnProvider(mine, settings.own().provider), settings.own().extensions)), { soon: sizeOnly }); } catch (err) { throw plainSaveError(err); }
   }));
   // Only the fixes this OS offers (Linux: turning on GNOME's accessibility switch), and the targets runtime's
   // wsl-a11y:<distro> (§8.8); any other id is refused before anything runs.
@@ -793,7 +820,7 @@ function start(): void {
     // The user's own provider or the organisation's service is named, never GitHub or Copilot (first-run-r1).
     const service = agent?.getStatus().service;
     // Signed out while the user's own provider waits for its card: agreeing is the way on (integrations-v4-3).
-    const providerWaiting = phase === "signed-out" && !fixedProvider ? providerWaitingHost(settings.get(), admin) : null;
+    const providerWaiting = phase === "signed-out" ? ownProviderWaiting() : null;
     const h = hello({ phase, waiting, overlay: !!overlay, keys, settingsKey: keyName("settings"), settingsOpen, rows: connected ? setupRows() : [], providerWaiting, service, cannotWork });
     const bubble = { ...IDLE_BUBBLE, visible: true, mood: h.mood, title: "Hi, I'm Ember!", thought: h.thought, actions: h.actions };
     setState({ emotion: "happy", talking: true, bubble });
@@ -1030,7 +1057,7 @@ function start(): void {
    * Settings › Memory: at its list for a forget request, else at its note's words (shown while memory is off or waits
    * for it). Never at the note's "I agree, remember", where an Enter or a space typed on would agree (memory-r7).
    */
-  const openMemory = (at: "list" | "note" = "note") => { showHome(); sendToHome(IPC.focusSection, at === "list" ? "memory:memory-query" : "memory:memory-consent-text"); };
+  const openMemory = (at: "list" | "note" | "about" = "note") => { showHome(); sendToHome(IPC.focusSection, at === "list" ? "memory:memory-query" : at === "about" ? "memory:about-you" : "memory:memory-consent-text"); };
 
   const sendToHome = (channel: string, value: unknown) => {
     const send = () => { if (home && !home.isDestroyed()) home.webContents.send(channel, value); };
@@ -1078,11 +1105,16 @@ function start(): void {
     voice?.questionUp(q !== null);
     questionIsUp = q !== null;
     syncOutputWatch();
+    // The answer window's line goes with its question (voice-product-x9-4).
+    const after = answerStatusOnQuestion(statusBy.listen);
+    if (after !== undefined) setStatus("listen", after);
     // "Answer Ember's question first." comes and goes with it (Listen once takes no press while it holds: companion-3).
     syncListenOnce();
     // So do the Ask box's suggestions: "Yes, please" there would only seem to answer it (companion-r2-1).
     askOffersChanged();
     targets?.questionChanged(q);
+    // Home's Task activity: the question up now may be another task's (tasks-approvals-r9-3).
+    tasksShown();
     presenceChanged();
     stepAside();
     if (!q) {
@@ -1106,7 +1138,7 @@ function start(): void {
     // A question with a whole text to read (review #116): the approve key shows its next part until all of it has been shown.
     const aloud = questionAloud(q.question, { keys: (q.question.detail ? readKeyWords(heldKeys()) : heldKeys()).map(k => k.say), spoken: spokenText });
     voice?.cancelListenOnce();
-    pauseAnswerSpeech();
+    pauseAnswerSpeech(questionPausesAnswer(q.question));
     if (maySpeak()) voice?.speak(words ?? aloud.say);
     // Then a moment for its answer without the name (owner's report of 2026-11-12): once Ember has said it, or at once
     // where it says nothing; only an answer leaves that window, through voiceAnswer's rules and the echo guard.
@@ -1150,6 +1182,11 @@ function start(): void {
    * transcript, and it is still the answer (the suggestions, Read the last answer: voice-speaking-c1-1).
    */
   let answerHushed = false;
+  /**
+   * A task's question came up while this answer was being written (pauseAnswerSpeech(false)): that question is not the
+   * turn's own, so the answer that ends under it is still the answer, unsaid, not a stopped turn (product-ui-x9-4).
+   */
+  let answerUnderQuestion = false;
   let answerEpoch = 0;
   /** How long each spoken request takes to be answered aloud, step by step: one `voice.latency` line, times only. */
   const turnLatency = new TurnLatency({ log: times => log.info("voice.latency", { ...times }) });
@@ -1213,6 +1250,7 @@ function start(): void {
     turnAnswer = "";
     lastReply = "";
     answerHushed = false;
+    answerUnderQuestion = false;
     voice?.hush();
   };
   /**
@@ -1230,24 +1268,35 @@ function start(): void {
    * "Read it out": Ember's last answer said once, as it would have been said (code and addresses left to the bubble, its
    * language's voice), in place of whatever Ember is saying. False, and nothing said, where Ember may not speak now
    * (voice-speaking-r6-1), or while a question is up, as no answer is said then: its own voice isn't cut
-   * (voice-speaking-x7-4).
+   * (voice-speaking-x7-4). "no-voice", and nothing said, where no voice can say any of it: the system's voice was last
+   * found not to speak, and Ember's own, which reads only English, isn't there or has none of it to read. Home said
+   * "Reading the last answer out." over silence (voice-speaking-r9-3).
    */
-  const readOut = (answer: string): boolean => {
+  const readOut = (answer: string): boolean | "no-voice" => {
     if (!voice || !maySpeak() || confirmer?.waiting) return false;
     const pieces = answerPieces(answer);
     if (!pieces.length) return false;
+    const own = voice.nextVoice !== "system";
+    if (speechHeard === false && !pieces.some(p => own && !p.lang)) return "no-voice";
     resetAnswerSpeech();
     pieces.forEach((p, i) => voice?.speak(p.text, { append: i > 0, lang: p.lang }));
     return true;
   };
-  /** A permission card pauses this request; the tool's later reply still belongs to its original spoken turn. */
-  const pauseAnswerSpeech = () => {
+  /**
+   * A permission card pauses this request; the tool's later reply still belongs to its original spoken turn. A task's
+   * question (`own` false) comes from outside the turn: the answer being written goes on unsaid, as after Stop speaking,
+   * and its words still reach the bubble, Home and the transcript (tasks-approvals-r9-2).
+   */
+  const pauseAnswerSpeech = (own = true) => {
     const spoken = lastAskByVoice, interrupted = answerInterrupted, hushed = answerHushed;
+    const open = !!agent?.answerOpen;
     resetAnswerSpeech();
     lastAskByVoice = spoken;
-    answerInterrupted = interrupted;
-    answerHushed = hushed;
-    agent?.pauseAnswer();
+    if (own) {
+      answerInterrupted = interrupted;
+      answerHushed = hushed;
+      agent?.pauseAnswer();
+    } else answerUnderQuestion = answerHushed = open && (!interrupted || hushed); // (already unsaid, by Stop speaking or an earlier task's question: still the answer)
   };
 
   // ───── Copilot brain ─────
@@ -1359,6 +1408,17 @@ function start(): void {
    */
   let personalRef: PersonalVoice | null = null;
   /**
+   * Sign-out, another account or Forget everything: what the person asked this session goes, so the next one is never
+   * offered it as a suggestion, and the chips showing go with it (memory-r9-2).
+   */
+  const forgetSessionWords = () => {
+    recentAsks = [];
+    // And the Ask box's history (↑ brings back the last 20 requests): the person's own words too (companion-r10-4).
+    askHistory = [];
+    personalRef?.forgetSession();
+    if (lastState.suggest) showState({ suggest: null });
+  };
+  /**
    * What the Ask box suggests now (askSuggestions): none while a question is up, those that follow the answer only
    * while it shows, and those that answer its last words only while those show: opened in full, once the overlay says
    * its end has, or without a compositor the corner card (companion-r2-1, companion-c2-2, companion-v6-2,
@@ -1381,7 +1441,8 @@ function start(): void {
    * `how.suggested`: one of Ember's suggestions the user chose (never their own words for commands: host.ts
    * UserRequest.suggested); `how.heardId`: the request Ember heard, for "That's not what I said" (personal/service.ts).
    */
-  const askEmber = async (text: string, how: { voiceUnchecked?: boolean; spoken?: boolean; manual?: true; verified?: boolean; short?: boolean; suggested?: boolean; heardId?: number; replaces?: boolean } = {}, read = callContext, stillCurrent?: () => boolean) => {
+  /** `how.overEmber`: heard over Ember's own voice (never the user's own words for Assisted's check: host.ts UserRequest.overEmber). */
+  const askEmber = async (text: string, how: { voiceUnchecked?: boolean; spoken?: boolean; manual?: true; verified?: boolean; short?: boolean; suggested?: boolean; heardId?: number; replaces?: boolean; overEmber?: boolean } = {}, read = callContext, stillCurrent?: () => boolean) => {
     if (!consented()) { showHome(); return; }
     recentAsks = [...recentAsks, { text, ...(how.voiceUnchecked ? { voiceUnchecked: true } : {}), ...(how.suggested ? { suggested: true } : {}) }].slice(-4);
     // What the user might say next is worked out again once this is answered (app/main/personal/predict.ts).
@@ -1391,7 +1452,7 @@ function start(): void {
     // who sees it (the lock read wrongly) knows why nothing happened.
     if (screenLock?.locked) { log.info("ask.refused", { reason: "screen_locked" }); showNotice(LOCKED_ASK, 6000); return; }
     // A typed "stop" while a task is at work stops everything at once, before any screen read (tasks-approvals-v2).
-    if (agent?.stopsNow(text, { voiceUnchecked: how.voiceUnchecked, suggested: how.suggested, heardId: how.heardId })) return;
+    if (agent?.stopsNow(text, { voiceUnchecked: how.voiceUnchecked, suggested: how.suggested, overEmber: how.overEmber, heardId: how.heardId })) return;
     // A hidden Ember shows itself for the answer to a question the user just asked (and hides again after).
     if ((overlay ? overlay.isHidden() : keptHidden) && !shownForAnswer) { shownForAnswer = true; overlay?.setHidden(false); syncHandle(); }
     // A Stop while the screen is read (or the brain connects) drops the request.
@@ -1402,7 +1463,7 @@ function start(): void {
     if (stillCurrent && (!stillCurrent() || !consented() || screenLock?.locked)) return;
     if (how.spoken) turnLatency.mark("sent");
     if (!agent) return;
-    return agent.ask(text, context, epoch, { voiceUnchecked: how.voiceUnchecked, ...(how.replaces ? { replaces: true } : {}), ...(how.spoken ? { spoken: true } : {}), ...(how.manual ? { manual: true } : {}), ...(how.verified ? { verified: true } : {}), ...(how.short ? { short: true } : {}), ...(how.suggested ? { suggested: true } : {}), ...(how.heardId ? { heardId: how.heardId } : {}) }).catch(err => { log.error("ask.failed", { err }); });
+    return agent.ask(text, context, epoch, { voiceUnchecked: how.voiceUnchecked, ...(how.replaces ? { replaces: true } : {}), ...(how.spoken ? { spoken: true } : {}), ...(how.manual ? { manual: true } : {}), ...(how.verified ? { verified: true } : {}), ...(how.short ? { short: true } : {}), ...(how.suggested ? { suggested: true } : {}), ...(how.heardId ? { heardId: how.heardId } : {}), ...(how.overEmber ? { overEmber: true } : {}) }).catch(err => { log.error("ask.failed", { err }); });
   };
   /**
    * `look: false`: what the user is in was read already (the handle's menu reads it before taking focus), and
@@ -1436,7 +1497,11 @@ function start(): void {
       holding: !!platform.keyboardHold, look,
       activeWindow: () => where?.active ?? null,
       keyboard: () => where?.keyboard ?? 0,
-      read: (active, before) => captureContext(active, before),
+      // EMBER_TEST_ASK_READ (development only, cifix-x9-9): the Windows suite's probe delays or skips this read.
+      read: (active, before) => {
+        callContext = readAsPlanned(askReadPlan(devEnv("EMBER_TEST_ASK_READ")), () => { captureContext(active, before); return callContext; },
+          (run, ms) => { setTimeout(run, ms); }, () => log.info("ask.read_started"));
+      },
       // The first few openings where Ember can't hold the letters typed meanwhile say to wait for the box (review #78).
       show: () => askWindow.show(overlay ? { ...overlay.position, size: settings.get().size } : null, {
         sees: null, history: askHistory, target: askTarget(), tip: showsWaitTip(!!platform.keyboardHold, settings.get().askOpened), listenOnce: listenOnceStatus("ask"),
@@ -1464,6 +1529,7 @@ function start(): void {
   let extensionsRef: ExtensionsService | null = null;
   let learningRef: MemoryLearning | null = null;
   let betterRecallRef: BetterRecall | null = null;
+  let vaultRef: VaultService | null = null;
   const killSwitch = new KillSwitch(() => [
     { name: "borrow", stop: () => borrowRef?.stop() },
     { name: "speech", stop: () => voice?.hush() },
@@ -1475,6 +1541,8 @@ function start(): void {
     { name: "project", stop: () => projectJob?.abort() },
     // Every extension call is refused from now on, its questions dropped, and every extension server ended.
     { name: "extensions", stop: () => extensionsRef?.stopPart().stop() },
+    // The vault's Secure Form closes, and nothing more is asked in it.
+    { name: "vault", stop: () => vaultRef?.stopPart().stop() },
     // The user's take-over of the desk ends too (its keys are released).
     { name: "desk", stop: () => deskViewRef?.handBack() },
     { name: "motion", stop: () => { overlay?.setBorrowing(false); deskViewRef?.setDriving(false); showState({ focus: null, gesture: null }); } },
@@ -1551,7 +1619,7 @@ function start(): void {
     if (!voice || !consented() || policy.features.voice === false) return;
     voice.setMuted(!voice.isMuted);
     // Remembered: a restart (or login) doesn't quietly open the microphone again.
-    try { settings.update({ voice: { ...settings.get().voice, muted: voice.isMuted } }); } catch (err) { log.warn("voice.mute_not_saved", { err }); }
+    try { settings.update({ voice: { ...settings.own().voice, muted: voice.isMuted } }); } catch (err) { log.warn("voice.mute_not_saved", { err }); }
     setStatus("mic", voice.isMuted ? "Microphone off" : null);
     if (voice.isMuted) setTimeout(() => { if (voice?.isMuted) setStatus("mic", null); }, 2500);
   };
@@ -1585,6 +1653,7 @@ function start(): void {
   };
   const voiceStatus = (detail?: string) => ({
     state: voice?.micState ?? "off", detail: detail ?? null,
+    ...(voice?.micFault ? { micFault: true } : {}),
     ...(voice?.micLabel ? { micLabel: voice.micLabel } : {}),
     modelsReady: voice?.modelsReady ?? false,
     modelsMissing: (voice?.missingModels ?? VOICE_MODELS).map(m => m.id), modelsBytes: voice ? modelsBytes(voice.missingModels) : VOICE_MODELS_BYTES,
@@ -1662,13 +1731,8 @@ function start(): void {
     if (!memoryOn()) learningRef?.stopNow();
     betterRecall.settingsChanged();
   });
-  const memoryView = () => ({
-    // What holds now, then what is no longer true: it is kept and can reach the model, so it is shown too (memory-c7-2).
-    rows: memoryAllowed() && consented() && memoryOwner.ready ? memory.review() : [],
-    ownership: memoryOwner.state, epoch: memoryEpoch, reason: memoryOwner.reason, erasesOnSignOut: memoryOwner.mayEraseOnSignOut,
-    // After the rows, which read memory.json first: what was wrong with it, only for the account's open memory (memory-r2).
-    trouble: memoryOwner.ready ? memory.trouble : null,
-  });
+  // The verified account's saved facts, also while the organisation has memory off: theirs to see and forget (memory-r9-3).
+  const memoryView = () => memoryViewOf({ consented: consented(), owner: memoryOwner, epoch: memoryEpoch, memory });
   const memory: MemoryService = new MemoryService({ dir: userData, log: log.child("memory"), semantic: betterRecall.semantic, inForce: memoryOn, onChange: () => broadcast(IPC.memoryChanged, memoryView()) });
   const publishMemoryOwner = () => {
     if (!memoryOn()) learningRef?.stopNow();
@@ -1706,8 +1770,10 @@ function start(): void {
     paused: () => (memoryConfigured() ? (memoryOwner.ready ? null : memoryOwner.reason ?? "checking")
       : consented() && memoryAllowed() && memoryNoteOutdated(settings.get().memory) ? "note" : null),
     questionsOn: () => settings.get().memory.questions,
+    // Ember never asks who or what an installed app is (memory-r9-8).
+    apps: () => sys.apps.list().map(a => a.name),
     askedAt: () => settings.get().memory.askedAt,
-    setAskedAt: at => { try { settings.update({ memory: { ...settings.get().memory, askedAt: at } }); } catch (err) { log.warn("memory.asked_not_saved", { err }); } },
+    setAskedAt: at => { try { settings.update({ memory: { ...settings.own().memory, askedAt: at } }); } catch (err) { log.warn("memory.asked_not_saved", { err }); } },
     idle: () => agent?.idle ?? false,
     // Fail closed: without a lock watcher the screen counts as locked (nothing runs while away).
     locked: () => screenLock?.locked ?? true,
@@ -1765,14 +1831,19 @@ function start(): void {
     taskDone: (title: string, result: string, asked?: number) => learning.taskDone(title, result, asked),
     intent: (text: string, how: { own: boolean }) => learning.intent(text, how),
     rememberNote: (text: string) => learning.rememberNote(text),
+    conversationEnded: () => learning.conversationEnded(),
   };
   // Extensions (app/main/extensions/, docs/DEVELOPING.md "Extensions"): plugins' MCP tools, used only while the user has
   // them on and agreed, and the organisation allows them. Home's Extensions section calls this (ExtensionsApi).
   const extensions = new ExtensionsService({
     dir: path.join(userData, "extensions"), copilotHome: path.join(userData, "copilot"),
     settings, admin: () => policy, client: () => agent?.copilotClient ?? null, confirmer: () => confirmer, audit: () => audit,
+    // Autopilot: a call the gate would ask about is said in the conversation's bubble instead (never unsaid: it asks).
+    autopilot: () => approvalsNow().autopilot, announce: words => agent?.announceUnasked(words) ?? false,
+    // After a fill from the vault no extension is called: a failed call's text reaches the model unredacted (vault-3-x9-4).
+    vaultFilled: () => vaultRedactor.active,
     log: log.child("extensions"), os: platform.os,
-    // macOS never runs Ember as plain Node (PLAN.md §2 "Node mode"): no launcher, so no stdio servers there.
+    // macOS never runs Ember as plain Node (PLAN.md §2 "Node mode"): no launcher, so no extension's server, stdio or remote, runs there.
     launcher: platform.os === "darwin" ? null : { execPath: process.execPath, script: path.join(__dirname, "mcp-launch.cjs") },
     fetch: (u, i) => net.fetch(String(u), i as RequestInit),
     allowLocal: devEnv("EMBER_EXTENSIONS_LOCAL") === "1",
@@ -1812,34 +1883,33 @@ function start(): void {
   };
   const ownerPrint = () => (settings.get().voice.match ? voiceprints.read() : null);
   /**
-   * "Work without asking" turned on or off is an audit entry (security review of #127): by voice or typed words (the host's
-   * intent says which, just before it saves), else from Home's switch or card.
+   * The approval mode in force (policy/autonomy.ts): every change of it is an audit entry (security review of #127),
+   * by Home's choice, voice or typed words (the host's intent says which, as it saves), the file or the policy; one to
+   * a mode that asks less that can't be recorded is undone (policy/mode-record.ts).
    */
-  let autonomyChangedBy: { via: "voice" | "typed" | "home"; verified: boolean } | null = null;
-  let autonomyWasOn = autonomyInForce(settings.get().autonomy, policy) !== null;
-  /** Turned off before the audit log was opened (before the app was ready): written once it is. */
-  const autonomyBeforeAudit: { on: boolean; via: string; verified: boolean }[] = [];
-  settings.onChange(s => {
-    // Seen off: the hold (autonomy.ts holdAutonomyOff) has done its work; a new turn on is audited afresh.
-    if (s.autonomy.on !== true) releaseAutonomyHold();
-    const on = autonomyInForce(s.autonomy, policy) !== null;
-    // Whoever marked a change takes it with them, whether or not it changed anything (review of #127).
-    const how = autonomyChangedBy ?? { via: "file" as const, verified: false };
-    autonomyChangedBy = null;
-    if (on === autonomyWasOn) return;
-    autonomyWasOn = on;
-    const entry = { on, via: how.via, verified: how.verified };
-    try {
-      // No audit log yet: a turn on is refused (it can't be recorded), a turn off is kept for the log.
-      if (!audit) { if (on) throw new Error("the audit log isn't open yet"); autonomyBeforeAudit.push(entry); } else audit.write({ event: "autonomy", ...entry });
-    } catch (err) {
-      // Not recorded: it isn't turned on (fail closed); a turn off stands.
-      log.warn("autonomy.audit_failed", { err });
-      if (on) { try { settings.update({ autonomy: { ...s.autonomy, on: false } }); } catch (e) { holdAutonomyOff(); log.warn("autonomy.off_not_saved", { err: e }); } }
-      return;
-    }
-    log.info("autonomy.changed", { on, via: how.via });
-  });
+  const modes = new ModeRecord({ settings, admin: () => policy, log,
+    // A mode that can't be sealed lasts until Ember closes, and a start that put the choice back says why (reliability-r10-1).
+    onNotes: () => tellApprovals(),
+    // What Ember recorded itself, sealed with the keyring: a mode above Interactive is taken from settings.json at start
+    // only where it matches (modes-x9s-2). On macOS the keychain is asked off the main thread, as the sign-in's is.
+    seal: new ModeSeal(path.join(userData, "approvals-seal.bin"), safeStorage, { asyncKeyring: platform.os === "darwin" }) });
+  /** What the mode in force gives the policy engines and the workers: read at each decision, never kept. */
+  const approvalsNow = () => approvalInputs(modeInForce(settings.get().approvals, policy));
+  /**
+   * An open settings window is told when the modes stand differently (a choice, a hand edit, the policy, a change that
+   * couldn't be recorded): after the record has had its say, so what it undid is never shown as chosen.
+   */
+  let approvalsTold = "";
+  const tellApprovals = () => {
+    const state = approvalsState(settings.own().approvals, policy, modes.notes());
+    const now = JSON.stringify(state);
+    if (now === approvalsTold) return;
+    approvalsTold = now;
+    sendToHome(APPROVALS_IPC.changed, state);
+  };
+  settings.onChange(tellApprovals);
+  // The vault's Secure Form closes once Autopilot isn't the mode in force or the consent went (a Save would keep nothing).
+  settings.onChange(() => vaultRef?.recheck());
   /** When the request being heard began (its wake, or a follow-up window opening): Ember's own voice since then is an echo. */
   let heardFrom = 0;
   /**
@@ -1852,6 +1922,8 @@ function start(): void {
   let heardOverFor: number | null = null;
   /** A question's answer window is open (engine.ts answerWindow): its speech dates each answer, and shows nothing. */
   let answerListening = false;
+  /** A follow-up window is open: each thing said in it dates from its own start too (the "speech" case). */
+  let followUpListening = false;
   /** The question Ember last said an answer over other sound wasn't taken for (said once a question). */
   let overSoundFor: number | null = null;
   /** The question Ember last said it didn't catch an answer to (engine.ts "unclear", said once a question). */
@@ -1897,17 +1969,14 @@ function start(): void {
    * A spoken answer (`answer`) wasn't taken (`why`): the question stays up, its bubble says why and what to do instead,
    * and so does Ember, aloud, where it speaks (a fixed sentence: never Ember's own voice taken as an answer after it, as
    * the echo guard dates each request from its wake, and the voice process hears nothing while Ember speaks). A yes to a
-   * question locked to clicks and keys is told so, never to say it again (refusalNote).
+   * question locked to clicks and keys is told so, never to say it again (refusalNote). Each line is said aloud once a
+   * question (VoiceRefusals: V2-F2).
    */
-  const refuseVoiceAnswer = (why: VoiceAnswerNote, answer: "allow" | "deny") => {
-    if (!confirmer) return;
-    const note = refusalNote(why, { answer, locked: confirmer.voiceLocked, unready: settings.get().voice.match && !matchNow() });
-    if (!confirmer.note(refusalLine(note, heldKeys().length > 0))) return;
-    // (The keys stay under the note in the bubble; said aloud, they are named after it: tasks-approvals-6.)
-    if (maySpeak()) voice?.speak(voiceAnswerSaid(note, heldKeys().map(k => k.say)));
-    // "Say it again now": heard without the name once Ember has said why (the answer window, as after the question).
-    voice?.answerWindow();
-  };
+  const refusals = new VoiceRefusals({
+    confirmer: () => confirmer, unready: () => settings.get().voice.match && !matchNow(), keys: heldKeys, maySpeak,
+    speak: t => voice?.speak(t), answerWindow: () => voice?.answerWindow(),
+  });
+  const refuseVoiceAnswer = (why: VoiceAnswerNote, answer: "allow" | "deny") => refusals.refuse(why, answer);
   let enrolling: VoiceMatchStatus["enrolling"] = null;
   /** How the last teaching ended (settings says so; forgotten when it closes or teaching starts again). */
   let enrolEnded: VoiceMatchStatus["ended"];
@@ -1963,6 +2032,7 @@ function start(): void {
     switch (e.type) {
       case "wake":
         answerListening = false;
+        followUpListening = false;
         heardFrom = Date.now();
         speechStarts();
         beforeWake = { emotion: lastState.emotion, bubble: lastState.bubble };
@@ -1975,10 +2045,17 @@ function start(): void {
         setState({ emotion: "listening", talking: false, bubble: { visible: true, mood: "listening", title: "Listening…", thought: "", step: null, streaming: true, actions: [] } });
         break;
       case "listening":
-        // A question's answer window (engine.ts answerWindow): nothing shows for it, as the question is up meanwhile, and
+        // A question's answer window (engine.ts answerWindow): the bubble shows nothing of it, as the question is up, and
         // nothing of the bubble is taken or let go; each answer is dated from its own start (the "speech" case).
         answerListening = e.window === "answer" && e.on;
-        if (e.window === "answer") break;
+        followUpListening = e.window === "follow-up" && e.on;
+        if (e.window === "answer") {
+          // Only the status line says so (V2-F4): while it listens, and for a few seconds after it closed unanswered.
+          const next = answerWindowStatus(e, { status: statusBy.listen, questionUp: !!confirmer?.waiting, conversing, yesByVoice: !!confirmer?.yesByVoice && !(settings.get().voice.match && !matchNow()) });
+          if (next !== undefined) setStatus("listen", next);
+          if (next === ANSWER_CLOSED_STATUS) setTimeout(() => { if (statusBy.listen === ANSWER_CLOSED_STATUS) setStatus("listen", null); }, 8000).unref?.();
+          break;
+        }
         if (e.window === "conversation") {
           // The microphone stays open through replies and tasks: nothing here may take the bubble from them.
           conversationOpen(e.on);
@@ -2025,7 +2102,8 @@ function start(): void {
         // It read as an answer, in a question's answer window, a follow-up or a conversation over a playing video (the
         // default): the question says so, once, and how to be heard, rather than nothing at all (owner's report of
         // 2026-11-12). ("sound-unknown": nothing could tell whether other sound played, macOS say, so a yes needed the name.)
-        if (e.answer && confirmer?.waiting && overSoundFor !== confirmer.currentNumber) { overSoundFor = confirmer.currentNumber; refuseVoiceAnswer(e.reason, e.answer); }
+        // (`nameDoubted`: the user said the name first, and it couldn't be told from the speakers: voice-safety-x9-4.)
+        if (e.answer && confirmer?.waiting && overSoundFor !== confirmer.currentNumber) { overSoundFor = confirmer.currentNumber; refuseVoiceAnswer(e.nameDoubted && e.reason === "over-sound" ? "name-doubted" : e.reason, e.answer); }
         if (e.reason !== "over-sound" || !conversing || overSoundSaid || statusBy.listen !== CONVERSATION_STATUS) break;
         overSoundSaid = true;
         setStatus("listen", OVER_SOUND_STATUS);
@@ -2039,8 +2117,12 @@ function start(): void {
         if (conversing) { if (e.on) { heardFrom = Date.now(); speechStarts(); } break; }
         // So in a question's answer window, which shows nothing of its own while the question is up.
         if (answerListening) { if (e.on) { heardFrom = Date.now(); speechStarts(); } break; }
-        // In a follow-up window the speech itself starts later than the window: the answer is tied to then.
-        if (e.on && saidFrom < heardFrom + 1) speechStarts();
+        // In a follow-up window the speech itself starts later than the window: the answer is tied to then, and so is the
+        // echo guard, as in a conversation and the answer window. Dated from the window's opening, a question that came up
+        // and was read out after it made the first answer one "said over Ember", long after Ember had stopped, and a no
+        // took two tries (V2-S9). What began under Ember's voice is the voice process's to refuse (engine.ts `clipped`).
+        if (e.on && followUpListening) { heardFrom = Date.now(); speechStarts(); }
+        else if (e.on && saidFrom < heardFrom + 1) speechStarts();
         if (e.on) agent?.claimBubble();
         if (e.on) setState({ bubble: { visible: true, mood: "listening", title: "Listening…", thought: "…", step: null, streaming: true, actions: [] } });
         break;
@@ -2074,7 +2156,7 @@ function start(): void {
           const taskTrust = voiceTrust.holds(confirmer?.currentTask);
           // (voiceAnswer reads the raw words, e.text, never personal.heard()'s corrected ones.)
           const spokenReply = voiceAnswer({
-            text: e.text, questionUp: confirmer?.waiting ?? false, matchOn, matchOff, verified: e.verified === true, short: e.short === true,
+            text: e.text, questionUp: confirmer?.waiting ?? false, matchOn, matchOff, verified: e.verified === true, unchecked: e.unchecked === true, short: e.short === true,
             ...(e.restScore !== undefined ? { restScore: e.restScore } : {}), taskTrust, selfSpoke: e.overEmber === true || (voice?.selfSpokeSince(heardFrom) ?? true),
           });
           // A spoken answer to a question is never learnt from (Voice Match learns from requests only).
@@ -2084,7 +2166,7 @@ function start(): void {
           if (spokenReply.kind === "none" && e.window === "answer") break;
           // A follow-up (no wake word) keeps the context from the last call. Without speaker rejection, a call, a video or
           // Ember's own voice can say it: it doesn't count as the user's own words for a dangerous command (OWNER V1).
-          // `verified`: Voice Match matched the owner's voice (what may turn "Work without asking" on).
+          // `verified`: Voice Match matched the owner's voice (what may choose a mode that asks less while it is on).
           turnLatency.heard(e.ms);
           // Near-misses corrected against the user's own words (personal/correct.ts): never into a risky request.
           const heard = personal.heard(e.text);
@@ -2094,7 +2176,10 @@ function start(): void {
           // Said while a reply was on its way: that reply stops, and this is answered with it in mind (host.ts replaceTurn).
           // A permission question stays up: its tool is waiting, and only its own answer ends it.
           const replaces = e.window === "conversation" && !confirmer?.waiting;
-          void askEmber(heard.text, { heardId: heard.id, voiceUnchecked: heardUnchecked(e, !!manual, !!voice?.rejectsSpeakers), spoken: true, ...(replaces ? { replaces: true } : {}), ...(manual ? { manual: true } : {}), ...(matchOn && e.verified === true ? { verified: true } : {}), ...(matchOn && e.short === true ? { short: true } : {}) }, manual?.context, stillCurrent);
+          void askEmber(heard.text, { heardId: heard.id, voiceUnchecked: heardUnchecked(e, !!manual, !!voice?.rejectsSpeakers), spoken: true, ...(replaces ? { replaces: true } : {}), ...(manual ? { manual: true } : {}), ...(matchOn && e.verified === true ? { verified: true } : {}), ...(matchOn && e.short === true ? { short: true } : {}),
+            // Said over Ember's own voice (or, where Ember can't tell its voice from the user's, since it last spoke): never
+            // the user's own words for Assisted's check, as it is never a yes to a question.
+            ...(e.overEmber === true || (voice?.selfSpokeSince(heardFrom) ?? true) ? { overEmber: true } : {}) }, manual?.context, stillCurrent);
         }
         break;
       }
@@ -2127,7 +2212,7 @@ function start(): void {
         if (rejectionEndsTrust(e.reason)) voiceTrust.endAll("other-voice");
         if (e.reason === "voice" && confirmer?.lockVoice()) {
           log.info("voice.answer_locked");
-          confirmer.note(refusalLine("locked", heldKeys().length > 0));
+          confirmer.note(refusals.line("locked"));
         }
         // "Ember, allow" said while Ember read the question out, where it can't tell its voice from the user's (Windows,
         // macOS): the wake was turned away, silently until now. It is never taken (it may be Ember's own words): Ember
@@ -2147,17 +2232,43 @@ function start(): void {
   // Never logged (the agent's log is redacted), audited, shown or passed on. The keyring is asked only once the user's
   // provider is on with a key saved for its host: never otherwise, and on macOS only off the main thread (a Keychain
   // prompt there would hold Ember, and a second Ember waiting to hand over to it).
+  // The card's yes for the user's own provider is taken from settings.json only as Ember recorded it (sealed with the
+  // keyring; a yes the file gains while Ember runs is put back), and every change of the provider in force is audited
+  // (provider-record.ts, safety-privacy-c10-1). Until the seal is read at start, no provider of the user's is in force.
+  const providerRecord = new ProviderRecord({ settings: settings as unknown as ProviderRecordDeps["settings"], log: log.child("provider"),
+    inForce: () => { const p = userProviderInForce(settings.get(), admin); return p ? endpointHost(p.baseUrl) : null; },
+    seal: new ProviderSeal(path.join(userData, PROVIDER_SEAL_FILE), safeStorage, { asyncKeyring: platform.os === "darwin" }),
+    heldChanged: () => { void agent?.providerChanged(); sendToHome(PROVIDER_IPC.changed, null); } });
   const providers = createProviderService({
-    settings, admin: () => admin, consented: () => consented(),
+    settings, admin: () => admin, consented: () => consented(), record: providerRecord,
     keys: new ProviderKeyStore(path.join(userData, PROVIDER_KEY_FILE), safeStorage, { asyncKeyring: platform.os === "darwin" }),
     // Electron's fetch follows the system's proxy, as the runtime does.
     fetch: (url, init) => net.fetch(url, init) as unknown as ReturnType<FetchLike>,
     log: log.child("provider"),
     changed: () => { void agent?.providerChanged(); sendToHome(PROVIDER_IPC.changed, null); },
   });
+  // The vault (app/main/vault/, owner decision of 2026-11-12): logins, cards and contact details, each sealed in
+  // vault.json apart from the settings and bound to one app or site. Its values come in once, from the Secure Form's
+  // own page, and are never logged, audited, shown or sent to any page again. The keyring is asked only when a form is
+  // about to open or a Save arrives: never for Home's list, and on macOS only off the main thread.
+  let vaultForm: VaultFormController | null = null;
+  const vault = new VaultService({
+    store: new VaultStore(path.join(userData, VAULT_FILE), safeStorage, { asyncKeyring: platform.os === "darwin" }),
+    // The form is made once Electron is ready (whenReady); before that nothing can ask for one.
+    form: { ask: req => vaultForm?.ask(req) ?? Promise.resolve("unavailable" as const), stop: () => vaultForm?.stop() },
+    allowed: () => vaultAllowed(admin), consented: () => consented(), autopilot: () => approvalsNow().autopilot,
+    appName: friendlyApp, log: log.child("vault"),
+    changed: () => sendToHome(VAULT_IPC.changed, null),
+    // Every value is noted by the redactor before it is put anywhere (nothing read back holds it).
+    // Extensions stop at the first fill (gate.ts VAULT_FILLED): the conversation reloads without them and Home says so.
+    filling: (part, value) => { vaultRedactor.note(part, value); extensionsRef?.vaultFilledNow(); },
+  });
+  vaultRef = vault;
   /** The endpoint in force now: the administrator's (or a development test server) once main has set it, else the user's own. */
   let fixedProvider: ActiveProvider | null = null;
-  const providerNow = (): ActiveProvider | null => activeProvider({ fixed: fixedProvider, settings: settings.get(), admin, key: providers.key() });
+  const providerNow = (): ActiveProvider | null => (!fixedProvider && providerRecord.held() ? null : activeProvider({ fixed: fixedProvider, settings: settings.get(), admin, key: providers.key() }));
+  /** The host whose card the user's own provider waits for, its yes held back included: nothing connects meanwhile (r10-safety-x10-1). */
+  const ownProviderWaiting = (): string | null => (fixedProvider ? null : providerWaitingHost(settings.get(), admin, providerRecord.held()));
   /** Sign-ins Copilot refused this run (a stale GH_TOKEN, an expired one): the next source is used instead, until Sign out (review #139). */
   const refusedTokens = new Set<string>();
   /**
@@ -2204,9 +2315,9 @@ function start(): void {
     },
     told: () => settings.get().updates.told,
     lastChecked: () => settings.get().updates.checkedAt,
-    checked: at => { try { settings.update({ updates: { ...settings.get().updates, checkedAt: at } }); } catch (err) { log.warn("updates.not_saved", { err }); } },
+    checked: at => { try { settings.update({ updates: { ...settings.own().updates, checkedAt: at } }); } catch (err) { log.warn("updates.not_saved", { err }); } },
     announce: version => {
-      try { settings.update({ updates: { ...settings.get().updates, told: version } }); } catch (err) { log.warn("updates.told_not_saved", { err }); }
+      try { settings.update({ updates: { ...settings.own().updates, told: version } }); } catch (err) { log.warn("updates.told_not_saved", { err }); }
       const notice = updateNotice(version);
       notify(notice.title, notice.body, () => { showHome(); sendToHome(IPC.focusSection, notice.section); });
     },
@@ -2229,7 +2340,7 @@ function start(): void {
     // Still starting, offline or reconnecting is said as such: Models & connections can't help with those. Signed out
     // while the user's own provider waits for its note, the host it waits for is named (integrations-r4-3).
     const status = agent?.getStatus() ?? { phase: "signed-out" as const };
-    const refusal = composerSendRefusal(status, stops, status.phase === "signed-out" && !fixedProvider ? providerWaitingHost(settings.get(), admin) : null, !!admin.held);
+    const refusal = composerSendRefusal(status, stops, status.phase === "signed-out" ? ownProviderWaiting() : null, !!admin.held);
     if (refusal) throw new Error(refusal);
     // Home is Ember's own window. Its composer shares only the user's explicit request, never Home or stale app context.
     void askEmber(text, {}, Promise.resolve(null));
@@ -2249,11 +2360,13 @@ function start(): void {
   }));
   // Home's Task activity (in memory only): asked for by the settings window alone, and pushed to it alone when the cards
   // change, at most every TASKS_PUSH_MS (a task's steps can come many a second; a closed window is sent nothing).
-  ipcMain.handle(IPC.tasks, guard(() => agent?.taskActivities() ?? []));
+  // Which task's question is up now goes with them: Home says where to answer in that task's group (tasks-approvals-r9-3).
+  const taskEntries = () => withQuestionUp(agent?.taskActivities() ?? [], confirmer?.currentTask);
+  ipcMain.handle(IPC.tasks, guard(taskEntries));
   ipcMain.handle(IPC.openApproval, guard(() => targets?.openApproval() ?? false));
   ipcMain.handle(IPC.historyProblem, guard(() => historyStore?.problem ?? null));
   ipcMain.handle(IPC.taskControl, guard((raw: unknown) => taskControl(agent, raw)));
-  const pushTasks = pushLater(TASKS_PUSH_MS, () => { if (home && !home.isDestroyed()) home.webContents.send(IPC.tasksChanged, agent?.taskActivities() ?? []); });
+  const pushTasks = pushLater(TASKS_PUSH_MS, () => { if (home && !home.isDestroyed()) home.webContents.send(IPC.tasksChanged, taskEntries()); });
   tasksShown = () => { if (home && !home.isDestroyed()) pushTasks(); };
   ipcMain.handle(IPC.signOut, guard(async () => {
     signOuts++;
@@ -2263,6 +2376,9 @@ function start(): void {
     // Projects' work goes here, at once: the "signed-out" status that follows also means a provider waiting for its
     // card, which keeps it (integrations-c2-1).
     forgetProject("all");
+    // The vault goes whole with the account, at once and whatever fails below: its open form closes, a Save still
+    // being sealed keeps nothing, and its file is removed.
+    const vaultGone = vault.forgetAll();
     // While still connected: delete this account's conversation so the next sign-in starts fresh.
     try {
       await agent?.forgetConversation();
@@ -2277,6 +2393,7 @@ function start(): void {
           finally {
             refusedTokens.clear();
             askHistory = [];
+            forgetSessionWords();
             await agent?.start(null);
           }
         }
@@ -2286,6 +2403,8 @@ function start(): void {
         accountErasures--;
       }
     }
+    // Told after the rest is done: the sign-out itself held.
+    if (!vaultGone) throw new Error("Ember couldn't finish deleting the vault's file on this computer. You are signed out; Forget all in Apps & privacy tries again.");
   }));
   ipcMain.handle(IPC.cancelSignIn, guard(() => { signInAbort?.abort(); progress({ state: "cancelled" }); }));
   /** The page of the sign-in under way, opened again on request (GitHub's own pages, or the GitHub CLI's download page). */
@@ -2456,14 +2575,17 @@ function start(): void {
       // Not connected now (integrations-r1): the selection Home shows stays.
       if (!projectAvailable()) return { ...await projectSelection(previous), error: projectRefusal(false) };
       if (selected.canceled) return await projectSelection(previous);
-      const next = await projectSelection(selected.filePaths);
+      // The files Projects takes are chosen, and the others named with their reasons (integrations-r9-2): one file
+      // of the wrong kind dropped the whole choice. A choice with none it takes leaves the last one as it was.
+      const choice = projectChoice(selected.filePaths);
+      const next = await projectSelection(choice.files);
       if (home !== owner || projectFiles !== previous) return { names: [] };
       if (!projectAvailable()) return { ...await projectSelection(previous), error: projectRefusal(false) };
-      projectFiles = selected.filePaths;
+      projectFiles = choice.files;
       projectPatch = null;
       projectExchange = null;
       projectOutput = null;
-      return { ...next, changed: true };
+      return { ...next, changed: true, ...(choice.refused.length ? { error: projectRefusedText(choice.refused, choice.files.length) } : {}) };
     } catch (err) {
       return { names: home === owner && projectFiles === previous ? names : [], error: err instanceof ProjectInputError ? err.message : "Couldn't choose project files." };
     } finally {
@@ -2621,12 +2743,15 @@ function start(): void {
     const host = agent;
     const owner = home;
     if (!host || !owner || !projectAvailable() || projectPicking || projectJob) return { message: projectRefusal() };
+    // Whose the library is (the account or the model service, never its key: integrations-r9-3), and whose a saved
+    // answer is (`scope`: the account, or the provider's whole config with its key), which goes to no other.
     const scope = host.projectWorkspaceScope();
-    if (!scope) return { message: "Connect with a verified GitHub account or model provider to use saved workspaces." };
+    const library = host.projectLibraryScope();
+    if (!scope || !library) return { message: "Connect with a verified GitHub account or model provider to use saved workspaces." };
     const run = projectJob = new AbortController();
-    const current = () => !run.signal.aborted && home === owner && agent === host && projectAvailable() === true && host.projectWorkspaceScope() === scope;
+    const current = () => !run.signal.aborted && home === owner && agent === host && projectAvailable() === true && host.projectWorkspaceScope() === scope && host.projectLibraryScope() === library;
     try {
-      const entries = await projectWorkspaces.list(scope);
+      const { entries, left } = await projectWorkspaces.read(library, scope);
       if (!current()) return { message: "Workspace request cancelled." };
       const names = entries.map(entry => entry.name);
       const request = input.data;
@@ -2635,8 +2760,8 @@ function start(): void {
       const other = entries.filter(entry => entry.name !== name);
       if (request.action === "save") {
         if (!projectFiles.length && !projectFolder?.current()) return { names, message: "Choose project files or a command folder first." };
-        const entry = { name, files: projectFiles, folder: projectFolder?.current() ? projectFolder.path : null, exchange: projectExchange };
-        await projectWorkspaces.write(scope, [entry, ...other], current);
+        const entry = { name, files: projectFiles, folder: projectFolder?.current() ? projectFolder.path : null, exchange: projectExchangeScope === scope ? projectExchange : null };
+        await projectWorkspaces.write(library, [entry, ...other], current, scope);
         return { names: [name, ...other.map(saved => saved.name)], message: `Saved workspace “${name}”.` };
       }
       const entry = entries.find(saved => saved.name === name);
@@ -2647,7 +2772,7 @@ function start(): void {
           buttons: ["Cancel", "Forget workspace"], defaultId: 0, cancelId: 0, signal: run.signal,
         });
         if (response !== 1 || !current()) return { names, message: "Workspace kept." };
-        await projectWorkspaces.write(scope, other, current);
+        await projectWorkspaces.write(library, other, current, scope);
         return { names: other.map(saved => saved.name), message: `Forgot workspace “${name}”.` };
       }
       const selection = await projectSelection(entry.files);
@@ -2665,7 +2790,7 @@ function start(): void {
       projectPatch = null;
       return {
         names, opened: { files: selection.names, sizes: selection.sizes, folder: folder?.path ?? null, previous: projectExchange },
-        message: entry.folder && !folder ? `Opened workspace “${name}”. Choose the command folder again.` : `Opened workspace “${name}”.`,
+        message: workspaceOpened(name, { folderGone: !!entry.folder && !folder, answerLeft: left.includes(name) }),
       };
     } catch (err) {
       return { message: run.signal.aborted ? "Workspace request cancelled." : err instanceof ProjectInputError ? err.message : "Couldn't read or save the workspace library." };
@@ -2704,7 +2829,7 @@ function start(): void {
     personal.forgetVoice();
     // A task's voice trust was granted against the voiceprint that is gone (voice-answer.ts TaskVoiceTrust).
     voiceTrust.endAll("voice-changed");
-    try { settings.update({ voice: { ...settings.get().voice, match: false } }); } catch (err) { log.warn("voice.match_off_not_saved", { err }); }
+    try { settings.update({ voice: { ...settings.own().voice, match: false } }); } catch (err) { log.warn("voice.match_off_not_saved", { err }); }
     voice?.setVoiceprint(null);
     log.info("voice.match_forgotten");
     broadcast(IPC.voiceStatus, voiceStatus(voiceDetail));
@@ -2754,14 +2879,19 @@ function start(): void {
   // Through learning: what waits to be learned, the "Ember learned" lines and Better recall's vectors go too.
   ipcMain.handle(IPC.memoryForgetAll, guard(() => {
     learning.forgetAll();
+    // What was asked this session is about the person too: no suggestion comes from it afterwards (memory-r9-2).
+    forgetSessionWords();
     // The saved copy of the conversation is part of what Ember keeps about the person: it goes too.
     const savedGone = agent?.forgetHistory() ?? true;
+    // And what the vault keeps: its open form closes and its file is removed.
+    const vaultGone = vault.forgetAll();
     memoryOwner.clear();
     memoryOwner.refresh(memoryConfigured());
     memoryEpoch++;
     publishMemoryOwner();
     // Told after the rest is done (Home shows a sentence that starts like this as it is).
     if (!savedGone) throw new Error("Ember couldn't finish deleting the saved conversation on this computer. Try Forget again.");
+    if (!vaultGone) throw new Error("Ember couldn't finish deleting the vault's file on this computer. Try Forget again.");
   }));
   // "Tell Ember about you": checked whole (IntroSchema, every string bounded) and kept only while memory is in force.
   ipcMain.handle(IPC.memoryIntroduce, guard((answers: unknown) => learning.introduce(answers)));
@@ -2821,6 +2951,65 @@ function start(): void {
     const url = event.senderFrame?.url ?? "";
     return isTrustedSender(url) && !!home && !home.isDestroyed() && event.sender === home.webContents;
   }, providers.api, { log: log.child("provider") });
+  // The vault's list (Home › Apps & privacy): the settings window's own page only, as guard. Kind, destination and date
+  // only, with Forget; no answer ever holds a value.
+  registerVaultHomeIpc(ipcMain, event => {
+    const url = event.senderFrame?.url ?? "";
+    return isTrustedSender(url) && !!home && !home.isDestroyed() && event.sender === home.webContents;
+  }, vault);
+  // The approval mode (Home › Apps & privacy): the settings window's own page only, as guard. It changes only here,
+  // together with the agreement to the mode's card, or by the host's own intents; never by a model or a settings patch.
+  registerApprovalsIpc(ipcMain, event => {
+    const url = event.senderFrame?.url ?? "";
+    return isTrustedSender(url) && !!home && !home.isDestroyed() && event.sender === home.webContents;
+  }, {
+    state: () => approvalsState(settings.own().approvals, policy, modes.notes()),
+    choose: (mode, version) => {
+      const next = chooseMode(settings.own().approvals, mode, version, policy, new Date().toISOString());
+      if (!next.ok) return { ok: false, why: next.why, state: approvalsState(settings.own().approvals, policy, modes.notes()) };
+      modes.as({ via: "home", verified: false }, () => settings.update({ approvals: next.approvals }));
+      // Chosen only once it is in force: a mode whose audit entry couldn't be written was undone.
+      const state = approvalsState(settings.own().approvals, policy, modes.notes());
+      return state.inForce === mode ? { ok: true, state } : { ok: false, why: "not-recorded", state };
+    },
+  }, { log: log.child("approvals") });
+  // First run's one agreement (owner decision of 2026-11-12): the settings window's own page only, as guard. It records
+  // the consent first, then each row left on through its own card's record (app/main/first-run.ts).
+  registerFirstRunIpc(ipcMain, event => {
+    const url = event.senderFrame?.url ?? "";
+    return isTrustedSender(url) && !!home && !home.isDestroyed() && event.sender === home.webContents;
+  }, {
+    consented: () => consented(),
+    facts: () => {
+      const own = settings.own();
+      const agreed = own.consent.version;
+      const card = (() => { try { return targets?.firstRunCommandsCard() ?? null; } catch { return null; } })();
+      return {
+        returning: agreed > 0 && agreed < CONSENT_VERSION,
+        locked: !!admin.error || !!admin.held,
+        allowed: {
+          commands: commandMode(admin, "local") !== "off", memory: memoryAllowed(), voice: firstRunAllowsVoice(policy.features),
+          screenshots: policy.features.screenImages !== false, interactive: autonomyPermitted(policy),
+        },
+        modelsReady: voice?.modelsReady ?? false,
+        interactiveAgreed: modeAgreed(own.approvals, "interactive"),
+        commandsCard: card !== null,
+      };
+    },
+    commandsCard: () => { const c = targets?.firstRunCommandsCard() ?? null; return c ? { title: c.title, body: c.body, sha256: c.sha256 } : null; },
+    agreeCommands: sha256 => targets?.agreeFirstRunCommands(sha256) ?? false,
+    chooseInteractive: () => {
+      const own = settings.own().approvals;
+      const next = chooseMode(own, "interactive", modeCardVersion("interactive"), policy, new Date().toISOString());
+      if (!next.ok) return false;
+      // A mode the user chose above Interactive stays their choice: only Interactive's card is added to it.
+      const approvals = modeRank(own.mode) > modeRank("interactive") ? { ...next.approvals, mode: own.mode } : next.approvals;
+      modes.as({ via: "home", verified: false }, () => settings.update({ approvals }));
+      // In force only once its audit entry was written (the record undoes it otherwise).
+      return modeRank(approvalsState(settings.own().approvals, policy).inForce) >= modeRank("interactive");
+    },
+    settings, now: () => new Date(), log: log.child("first-run"),
+  });
   // Any settings change may move the endpoint in force (the switch, its address, its models, its card): the host
   // reconnects when nothing would be cut off, else as soon as the turn and the tasks under way are done.
   settings.onChange(() => { providers.settingsChanged(); void agent?.providerChanged(); });
@@ -3025,7 +3214,8 @@ function start(): void {
 
   /**
    * The session ends (log-off, shut down) without will-quit on Windows and macOS (G10), and on Linux as the X server
-   * goes: settings are saved and whatever Ember holds is let go of at once, as quitting would.
+   * goes: settings are saved and whatever Ember holds is let go of at once, as quitting would. The agent stops as
+   * quitting stops it, and the saved conversation and memory are written before this returns (app/main/session-end.ts).
    */
   let sessionEnding = false;
   const endSession = (source: string) => {
@@ -3034,6 +3224,7 @@ function start(): void {
     log.info("app.session_end", { source });
     endThisRun("session-end");
     try { settings.flush(); } catch (err) { log.warn("settings.not_saved", { err }); }
+    endOfSession({ agent, history: historyStore, learning, memory, log });
     // With the display gone there is no pointer or key to let go of, and asking X would end Ember mid-way.
     if (source !== "display-gone") {
       borrowRef?.stop();
@@ -3252,6 +3443,23 @@ function start(): void {
     const privacy = wslAwarePrivacy({ isSecurityWindow: sys.privacy.isSecurityWindow, isTerminalApp: a => isTerminalWindowApp(a.name ?? a.id, sys.apps, platform.os) });
     const wslOptions = { os: platform.os, log: log.child("wsl"), ws: () => wsRef, wsl: () => targets?.wsl ?? null, settings };
     const seenBy = wrapForWsl(sidecar, wslOptions);
+    // EMBER_TEST_ASK_READ=skip:<stage> (development only, cifix-x9-10): the Windows suite's probe leaves one stage of
+    // the reads out to find which hands the foreground to the window read. Without it nothing here is changed.
+    const askProbe = askReadPlan(devEnv("EMBER_TEST_ASK_READ"));
+    if (askProbe.kind === "skip") {
+      const readWindow = seenBy.readWindow.bind(seenBy);
+      seenBy.readWindow = params => {
+        const asked = probeReadParams(askProbe, params ?? {});
+        log.info("ask.read_probe", { skip: askProbe.stage });
+        if (!asked) return Promise.resolve({ window: null, nodes: [], ms: 0 });
+        // The text looks' times (role and times only, never what was read): "time-texts" (cifix-x9-11).
+        return readWindow(asked).then(r => {
+          const looks = (r as { probeTexts?: unknown }).probeTexts;
+          if (Array.isArray(looks)) log.info("ask.read_probe_texts", { looks: JSON.stringify(looks).slice(0, 8_000) });
+          return r;
+        });
+      };
+    }
     const wsSeen = ws && wrapWindowsForWsl(ws, wslOptions);
     wsSeenRef = wsSeen;
     // The host's status for the setup checks (why it couldn't start, PowerShell's language mode), asked after the cold
@@ -3282,6 +3490,9 @@ function start(): void {
       neverLook: () => settings.get().privacy.neverLook,
       // Every display in the window system's units; Electron's displays (X11's arithmetic) when none opened.
       screenBounds: () => (ws ? ws.screenBounds() : primaryScaledUnion(screen)),
+      // What Ember filled from its vault is dropped from every read and blacked out of every picture (redact.ts).
+      holdsVaultValue: text => vaultRedactor.holds(text), vaultShown: () => vaultRedactor.shown,
+      vaultFilled: () => vaultRedactor.active,
       words: sys.words,
       isSecurityWindow: privacy.isSecurityWindow,
       // Linux: a pinentry, ssh-askpass or polkit agent's window, focused or not, stops all reading (safety-privacy-3).
@@ -3316,16 +3527,12 @@ function start(): void {
     const seeing = perception;
     // Hands: the policy engine decides every action; the confirmer asks the user with bubble buttons.
     audit = new AuditLog(path.join(userData, "audit"), undefined, sys.auditSink(err => log.warn("audit.journal_failed", { err })),
-      err => log.warn("audit.write_failed", { err }));
-    // Work without asking as the log opens: turned off before now, and on as found in settings.json at start (by hand, or
-    // from the last run): recorded, or else turned off (fail closed).
-    for (const e of autonomyBeforeAudit.splice(0)) { try { audit.write({ event: "autonomy", ...e }); } catch (err) { log.warn("autonomy.audit_failed", { err }); } }
-    if (autonomyWasOn) {
-      try { audit.write({ event: "autonomy", on: true, via: "file", verified: false, atStart: true }); } catch (err) {
-        log.warn("autonomy.audit_failed", { err });
-        try { settings.update({ autonomy: { ...settings.get().autonomy, on: false } }); } catch (e) { holdAutonomyOff(); log.warn("autonomy.off_not_saved", { err: e }); }
-      }
-    }
+      err => log.warn("audit.write_failed", { err }), entry => vaultRedactor.deep(entry));
+    // The approval mode as the log opens: changes made before now, and the mode found in force in settings.json at start
+    // (by hand, or from the last run): recorded, or else not in force (fail closed).
+    modes.opened(audit);
+    providerRecord.opened(audit);
+    tellApprovals();
     // Nothing is pruned while the policy can't be used: its retention can't be read then.
     const keepDays = auditRetentionDays(admin);
     try { if (keepDays !== null) audit.prune(keepDays); } catch (err) { log.warn("audit.prune_failed", { err }); }
@@ -3418,9 +3625,15 @@ function start(): void {
         actionsAllowed: () => policy.features.actions !== false,
         confirmEveryAction: () => policy.confirmEveryAction,
         allowGrants: () => policy.allowGrants,
-        trustAskedApps: () => settings.get().trust.askedApps,
-        // "Work without asking" (policy/autonomy.ts): only with its card agreed to and where the organisation allows it.
-        autonomy: () => autonomyInForce(settings.get().autonomy, policy),
+        // The approval mode in force (policy/autonomy.ts): only with its card agreed to and where the organisation
+        // allows it; below Interactive, every ordinary step asks.
+        trustAskedApps: () => approvalsNow().askedApps,
+        autonomy: () => approvalsNow().scopes,
+        assisted: () => approvalsNow().check,
+        autopilot: () => approvalsNow().autopilot,
+        // The vault's fill (PLAN.md §2 "Approvals", "The vault"): only on this screen's engine, where the organisation
+        // lets the vault be used; every other engine (a remote's, WSL's) is told nothing, so it never fills.
+        vaultAllowed: () => vaultAllowed(admin),
         // On macOS also by the installed app with that name's bundle id (Terminal renamed is still Terminal); a WSLg
         // app's also as a Linux app (§4.5).
         isTerminalApp: name => privacy.isTerminalApp({ id: name, name }),
@@ -3474,6 +3687,21 @@ function start(): void {
         });
       },
     };
+    // The vault's Secure Form: a window of its own for each form, which takes the keyboard as the prompt window does
+    // (secrets are typed into it), and which Ember and its bubble keep clear of while it asks. Its channels hear only
+    // that window's own page, for the form on screen.
+    vaultForm = createVaultForm({
+      ipc, log: log.child("vault"),
+      create: kind => keepClear("vault", createVaultWindow(platform.os, kind, {
+        takeKeyboard: win => {
+          bringToFront(win);
+          if (!sys.lifecycle.activateOwnWithInput) return;
+          const id = ownId(win);
+          try { if (id) inputRef?.focusInput?.(id); } catch { /* best effort, as bringToFront's activation */ }
+        },
+      })),
+      keep: (kind, dest, values) => vault.keep(kind, dest, values),
+    });
     let elevatedNow: boolean | undefined;
     targets = createTargets({
       log: log.child("targets"), os: platform.os, sys, userData, appDir: __dirname, resourcesPath: process.resourcesPath,
@@ -3571,9 +3799,10 @@ function start(): void {
       // Not while this screen is locked: a turn still running then would read it for the model (cross-review X9).
       describeScreen: () => seeing.describe(), screenLocked: () => screenLock?.locked ?? false, hands,
       // The keyring refused Ember's saved sign-in (macOS's keychain prompt after an update answered Deny): said so.
-      signedOutWhy: () => (tokens?.unreadable ? sys.words.savedSignInRefused ?? null : null),
+      // (A Sign out whose saved sign-in couldn't be removed is said, never passed over: reliability-r9-2.)
+      signedOutWhy: () => (tokens?.unreadable ? sys.words.savedSignInRefused ?? null : tokens?.uncleared ? SIGN_OUT_NOT_KEPT : null),
       // Signed out while the user's own provider waits for its card: agreeing is the way on (integrations-r3-1).
-      providerWaiting: () => (fixedProvider ? null : providerWaitingHost(settings.get(), admin)),
+      providerWaiting: ownProviderWaiting,
       // Spoken without code or full addresses ("code shown in the bubble"), which nobody wants read out, sentence by
       // sentence as the answer streams in: Ember starts talking while Copilot is still writing, as a voice assistant does.
       onTurnStart: turn => {
@@ -3592,11 +3821,12 @@ function start(): void {
       onAnswerInterrupted: resetAnswerSpeech,
       onAnswerDelta: delta => { if (answerInterrupted || confirmer?.waiting) return; cancelAck(); turnLatency.mark("firstToken"); sayStreamed(answerSpeech.push(delta)); },
       // An answer whose voice Stop speaking silenced is still the answer, unsaid (voice-speaking-c1-1).
-      onAnswerEnd: text => { if ((answerInterrupted && !answerHushed) || confirmer?.waiting) return; cancelAck(); lastReply = text; if (!answerHushed) sayStreamed(answerSpeech.finish(text), true, true); },
-      onAnswer: text => { if ((answerInterrupted && !answerHushed) || confirmer?.waiting) return; cancelAck(); turnAnswer = text; lastReply = text; if (!answerHushed) sayStreamed(answerSpeech.finish(text), true); },
+      // Nor is one a task's question came up over, though that question is still up (product-ui-x9-4).
+      onAnswerEnd: text => { if ((answerInterrupted && !answerHushed) || (confirmer?.waiting && !answerUnderQuestion)) return; cancelAck(); lastReply = text; if (!answerHushed) sayStreamed(answerSpeech.finish(text), true, true); },
+      onAnswer: text => { if ((answerInterrupted && !answerHushed) || (confirmer?.waiting && !answerUnderQuestion)) return; cancelAck(); turnAnswer = text; lastReply = text; if (!answerHushed) sayStreamed(answerSpeech.finish(text), true); },
       // A spoken request gets a short follow-up window: no need to say "Hey Ember" again.
       onTurnEnd: aborted => {
-        aborted ||= (answerInterrupted && !answerHushed) || !!confirmer?.waiting;
+        aborted ||= (answerInterrupted && !answerHushed) || (!!confirmer?.waiting && !answerUnderQuestion);
         cancelAck();
         // Nothing will be heard of a turn that was stopped, or not spoken: it is logged as it stands.
         if (aborted || !answerSpoken) turnLatency.end();
@@ -3604,17 +3834,19 @@ function start(): void {
         // after a spoken reply when a follow-up is likely.
         const task = aborted ? null : agent?.tasks?.list().filter(t => t.started >= askedAt).at(-1);
         const next = aborted ? null : personal.answered(lastReply || turnAnswer, { spoken: answerSpoken, speaks: !!voice && maySpeak(), task: task ? { status: task.status === "cancelled" ? "stopped" : task.status === "queued" ? "running" : task.status } : null });
-        if (next?.suggestions.length && lastState.bubble.visible) showState({ suggest: { thought: lastState.bubble.thought, items: next.suggestions.map(s => s.text) } });
+        // (Not over a question that is still up: the bubble is the question's, and so is what is heard next.)
+        if (next?.suggestions.length && lastState.bubble.visible && !confirmer?.waiting) showState({ suggest: { thought: lastState.bubble.thought, items: next.suggestions.map(s => s.text) } });
         lastReply = "";
         answerSpeech.reset();
         answerLanguage.reset();
         answerSpoken = false;
         ackSaid = null;
-        if (lastAskByVoice && !aborted) voice?.followUp(next?.followUpMs ?? 8000, { afterQuestion: endsWithQuestion(turnAnswer) });
+        if (lastAskByVoice && !aborted && !confirmer?.waiting) voice?.followUp(next?.followUpMs ?? 8000, { afterQuestion: endsWithQuestion(turnAnswer) });
         lastAskByVoice = false;
         turnAnswer = "";
         answerInterrupted = true;
         answerHushed = false;
+        answerUnderQuestion = false;
         syncListenOnce();
       },
       onStatus: status => {
@@ -3651,7 +3883,7 @@ function start(): void {
         broadcast(IPC.conversationChanged, conversationNow(entries));
       },
       // Another account signed in: its conversation went, and with it what the ask box remembers (as at sign-out).
-      onAccountChanged: () => { askHistory = []; forgetProject("all"); },
+      onAccountChanged: () => { askHistory = []; forgetSessionWords(); forgetProject("all"); },
       // A reminder the user set is due (reminders.ts): said too when replies are spoken, and a notification while away.
       onReminder: r => {
         // After what Ember is saying (an answer under way), not cutting it off.
@@ -3663,18 +3895,14 @@ function start(): void {
       // The voice's side of "Ember, systems check": listening off counts as off, whatever the microphone was doing.
       health: () => ({ mic: settings.get().wakeWord && voice ? voice.micState : "off", speaks: maySpeak() }),
       readOut,
-      // "Work without asking" by voice (autonomy-intent.ts): turned on with all four scopes, its card opened in Settings.
       voiceTrust,
+      // The approval mode by voice or typed words (autonomy-intent.ts: a mode named, "work without asking", "ask me first
+      // again"): a mode that asks less only by voice, by Voice Match's switch as a spoken yes is, and only once its card
+      // is agreed to in Settings (opened at it otherwise); "ask me first again" takes Ember below Interactive by
+      // withdrawing every card's agreement, so the cards are read again before a mode.
       autonomy: {
-        state: () => ({ on: !autonomyHeld() && settings.get().autonomy.on && autonomyConsented(settings.get().autonomy), consented: autonomyConsented(settings.get().autonomy), managed: !autonomyAllowed(policy) }),
-        // True once it is as asked and recorded (a turn on whose audit entry can't be written is undone: say so, not "Okay").
-        set: (on, how) => {
-          autonomyChangedBy = how;
-          const a = settings.get().autonomy;
-          try { settings.update({ autonomy: { ...a, on, ...(on ? { scopes: { ...ALL_SCOPES } } : {}) } }); } finally { autonomyChangedBy = null; }
-          return (autonomyInForce(settings.get().autonomy, policy) !== null) === on;
-        },
-        open: consent => { showHome(); sendToHome(IPC.focusSection, consent ? "privacy:autonomy-yes" : "privacy:autonomy-on"); },
+        ...modeIntents({ settings, modes, admin: () => policy, voiceMatch: () => (!settings.get().voice.match ? "off" : matchNow() ? "on" : "unready") }),
+        open: (mode, card) => { showHome(); sendToHome(IPC.focusSection, `privacy:${mode === "interactive" ? "autonomy" : mode}-${card ? "yes" : "on"}`); },
       },
       // A typed "stop" while a task is at work: the kill switch, as "Ember, stop" is (tasks-approvals-v2).
       stopEverything: () => stopEverything("typed"),
@@ -3705,6 +3933,18 @@ function start(): void {
       // the chord it holds: the fallback while another app holds the default (D-45b).
       settingsKey: () => keyName("settings"),
       stopKey: () => keyName("stop"),
+      // The vault's fill, for tasks on this screen: the service hands a value only to the helper's own vault_fill (or
+      // to the borrow's typing), and only this computer's own helper is ever asked (never a WSL distro's: its ids
+      // aren't this one's).
+      redact: vaultRedactor,
+      vault: {
+        usable: () => vault.usable(), has: (kind, dest) => vault.has(kind, dest),
+        ask: (kind, dest, via) => vault.ask(kind, dest, via ? friendlyApp(via) : null),
+        use: (kind, part, dest, put) => vault.use(kind, part, dest, put),
+        pages: id => (sidecar.ownsId(id) ? sidecar.pageAddress(id) : Promise.reject(new Error("not this computer's element"))),
+        put: (id, text) => (sidecar.ownsId(id) ? sidecar.vaultFill(id, text) : Promise.reject(new Error("not this computer's element"))),
+        mark: id => (sidecar.ownsId(id) ? sidecar.markSecret([id]) : Promise.reject(new Error("not this computer's element"))),
+      },
     });
     // The network came back (or the computer woke): a connection waiting to retry tries now. (Electron's
     // main process has no online/offline event; a VPN coming up is covered by asking, which retries too.)
@@ -3720,6 +3960,9 @@ function start(): void {
       if (brainStarted || !consented()) return;
       brainStarted = true;
       const since = signOuts;
+      // The user's own provider's yes is checked against its seal first (provider-record.ts): no provider of theirs
+      // before that. (A sign-out meanwhile is still seen: `since` is taken before.)
+      await providerRecord.sealed;
       // macOS asks for the login keychain password before Ember may read its saved sign-in (after every update of an
       // ad-hoc-signed Ember). The read is asynchronous there, and Ember's windows still come up first, with a status that
       // says what the prompt is for (review #241). Only on the first start of a new version: other starts read at once,
@@ -3743,7 +3986,8 @@ function start(): void {
       // the next source. Signed out while it looked (the settings window is up during a keychain prompt or a slow
       // renewal): nothing found then is connected (final review S1).
       const { phase } = provider ? { phase: await agent?.start(null, undefined, "auto") } : await connectWith(found, "auto", since);
-      if (phase === "signed-out") { currentToken = null; keeper.use(null); }
+      // (Held back for the user's own provider's card, the sign-in found is kept for when it is turned off: r10-safety-x10-1.)
+      if (phase === "signed-out" && !ownProviderWaiting()) { currentToken = null; keeper.use(null); }
     };
     brainStart = startBrain();
     settings.onChange(() => { const p = startBrain(); if (brainStarted) brainStart = brainStart.then(() => p); });
@@ -3821,7 +4065,7 @@ function start(): void {
             voiceprints.write(p.print);
             // Taught again: trust granted against the old voiceprint ends with it.
             voiceTrust.endAll("voice-changed");
-            settings.update({ voice: { ...settings.get().voice, match: true } });
+            settings.update({ voice: { ...settings.own().voice, match: true } });
             voice?.setVoiceprint(p.print);
             log.info("voice.match_enrolled", { phrases: p.got });
             enrolEnded = "learnt";
@@ -3916,12 +4160,19 @@ function start(): void {
         log.warn("admin_policy.changed", { file: next.source, error: next.error ?? null, note: "held locked down until Ember restarts" });
         admin = heldUntilRestart(next);
         policy = admin.policy;
+        // Held locked down, Ember is below Interactive: the record says the mode changed, and by what.
+        modes.changed({ via: "policy", verified: false });
+        tellApprovals();
         // An open settings window says so at once, as a fresh one would (safety-privacy-w5-1).
         sendToHome(IPC.adminChanged, homeAdmin(admin));
+        // And its list of the vault says the vault is off (the pull below closes an open Secure Form).
+        sendToHome(VAULT_IPC.changed, null);
         wanted = false;
         void voice?.setWanted(false);
         // The connection goes too: the host's refuseConnect now says why, so nothing reconnects until the restart.
         void agent?.start(null);
+        // Each task stopped says the policy stopped it, not the user (tasks-approvals-r9-5).
+        agent?.stoppingBecause(POLICY_CHANGED_STOP);
         void killSwitch.pull("policy").then(() => {
           const bubble = { ...IDLE_BUBBLE, visible: true, mood: "attention" as const, title: "Your organisation changed my policy",
             thought: "I've stopped everything, and I won't act, listen or answer until you restart me.", actions: [{ id: "ui:restart", label: "Restart Ember" }] };
@@ -3936,7 +4187,7 @@ function start(): void {
     // Ember stops listening and speaking, takes no requests, its hands refuse this screen, and the tasks working on its
     // desktop stop, as on a remote computer whose screen locks. What stopped is said once the user is back.
     const lockControl = new LockController({
-      stopDesktopTasks: () => agent?.cancelTasksOn("local", "desktop") ?? 0,
+      stopDesktopTasks: () => agent?.cancelTasksOn("local", "desktop", SCREEN_LOCKED_STOP) ?? 0,
       setLocked: locked => { if (locked) projectJob?.abort(); voice?.setLocked(locked); },
       showNotice: n => showNotice(n, 8000),
     });

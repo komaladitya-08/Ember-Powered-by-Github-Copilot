@@ -215,15 +215,21 @@ const worth = (n: string, scale?: string) => Number(n.replace(/,/g, "")) * (scal
  * paragraph" keep their words; a footnote's mark only right after the word or stop it notes ("the regex [^abc]" is
  * said), and its definition's "[^1]:" at the start of a line.
  */
-const EYE_ONLY = /(`+)(?!`)[^\n]*?(?<!`)\1(?!`)|<(br)\s*\/?>|<(?:b|i|u|s|em|strong|sub|sup|kbd|span|mark|small|del|ins|p|div|font|center)(?:\s+[\w:-]+=(?:"[^"<>\n]*"|'[^'<>\n]*'|[^\s"'<>=]+))*\s*>(?=[^\s.,;:!?)])|(?<=\S)<\/(?:b|i|u|s|em|strong|sub|sup|kbd|span|mark|small|del|ins|p|div|font|center)>|(?<=[A-Za-z0-9\u00C0-\u024F.,;:!?)"”’])\[\^[\w-]{1,24}\](?!:)|^[ \t]*\[\^[\w-]{1,24}\]:[ \t]*|&(amp|lt|gt|quot|apos|nbsp|#39);/gim;
-const ENTITY: Readonly<Record<string, string>> = { amp: "&", lt: "<", gt: ">", quot: "\"", apos: "'", "#39": "'", nbsp: " " };
+const EYE_ONLY = /(`+)(?!`)[^\n]*?(?<!`)\1(?!`)|<(br)\s*\/?>|<(?:b|i|u|s|em|strong|sub|sup|kbd|span|mark|small|del|ins|p|div|font|center)(?:\s+[\w:-]+=(?:"[^"<>\n]*"|'[^'<>\n]*'|[^\s"'<>=]+))*\s*>(?=[^\s.,;:!?)])|(?<=\S)<\/(?:b|i|u|s|em|strong|sub|sup|kbd|span|mark|small|del|ins|p|div|font|center)>|(?<=[A-Za-z0-9\u00C0-\u024F.,;:!?)"”’])\[\^[\w-]{1,24}\](?!:)|^[ \t]*\[\^[\w-]{1,24}\]:[ \t]*|&(amp|lt|gt|quot|apos|nbsp|#39|mdash|ndash|hellip|copy|reg|trade|rarr|larr|times|deg|lsquo|rsquo|ldquo|rdquo|bull|middot);/gim;
+const ENTITY: Readonly<Record<string, string>> = {
+  amp: "&", lt: "<", gt: ">", quot: "\"", apos: "'", "#39": "'", nbsp: " ",
+  // The common named ones, as the marks they stand for (said letter by letter before: voice-speaking-r9-6).
+  mdash: "—", ndash: "–", hellip: "…", copy: "©", reg: "®", trade: "™", rarr: "→", larr: "←", times: "×", deg: "°",
+  lsquo: "\u2018", rsquo: "\u2019", ldquo: "“", rdquo: "”", bull: "•", middot: "·",
+};
 const withoutEyeOnly = (text: string): string =>
   text.replace(EYE_ONLY, (m: string, code: string | undefined, br: string | undefined, entity: string | undefined) => (code ? m : br ? " " : entity ? ENTITY[entity.toLowerCase()] : ""));
 /**
  * A task list's box: an open one is unsaid, a ticked one is "Done:" (it was read "x": voice-speaking-r7-3), unless its
- * item says so itself ("[x] Done: paid rent" was "Done: Done:": voice-speaking-x7-5).
+ * item says so itself ("[x] Done: paid rent" was "Done: Done:": voice-speaking-x7-5), in bold or italics too
+ * ("[x] **Done**: paid rent": voice-speaking-r9-6).
  */
-const TASK_BOX = /^([ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+)\[([ xX])\][ \t]+(?=(done\b)|\S)/gim;
+const TASK_BOX = /^([ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+)\[([ xX])\][ \t]+(?=((?:\*{1,3}|_{1,3})?done(?![a-z0-9]))|\S)/gim;
 
 /** What is written for the eye said for the ear (voice-speaking-2): money, clock times, paths, "~75%", "#45", "2h 15m". */
 function sayable(text: string): string {
@@ -544,6 +550,40 @@ function englishOnly(text: string, lang: string): boolean {
   return englishClearly(text) && !stopwords(wordsBesidesNames(text), lang).length && !/[^\p{Script=Latin}\P{L}]/u.test(text);
 }
 
+/**
+ * Words of Ember's own closing offers and questions that the other languages here seldom write ("Want me to reply?",
+ * "Anything else?", "Should I translate it?": ownClosing). Not "a", "me", "no" or "do", which Italian, Spanish and
+ * Portuguese write too.
+ */
+const CLOSING_WORDS = new Set("want would should shall like reply anything else answer translate translation draft leave forward send something more help or to you it your the".split(" "));
+/**
+ * The closing words a piece of one word must hold (ownClosing): ones no other language here writes as a word of its
+ * own. "Help!" ends a Dutch or German email too, and went to Kitten (r10-voice-x10-3).
+ */
+const CLOSING_ALONE = new Set("reply translate anything forward draft".split(" "));
+
+/**
+ * Whether `text`, a piece of an answer in `lang` because of a passage it read out, is Ember's own English closing words:
+ * a short piece with one of CLOSING_WORDS (of CLOSING_ALONE, if it is one word), or English's pronoun "I" after its
+ * first word (Italian's "i" is lower case),
+ * and nothing of `lang`'s: none of its short words, no letter with an accent outside a name (a capitalised word after
+ * the first), no mark English seldom writes and no letter of another script. englishOnly wants two different English
+ * short words, so "Want me to reply?", "Shall I reply?" and "Anything else?" took the passage's voice, or went unsaid
+ * without one, while the follow-up window opened for them (voice-speaking-r10-1). A passage's own sign-off ("Grazie
+ * mille, Marco.", "Merci, Marie.") has none of these words.
+ */
+function ownClosing(text: string, lang: string): boolean {
+  if (/[^\p{Script=Latin}\P{L}]/u.test(text) || FOREIGN_MARKS.test(text)) return false;
+  const tokens = text.split(/\s+/u).map(t => t.replace(/^[^\p{L}]+|[^\p{L}']+$/gu, "")).filter(t => /\p{L}/u.test(t));
+  if (!tokens.length || tokens.length > 10) return false;
+  const own = tokens.filter((t, i) => i === 0 || !/^\p{Lu}/u.test(t));
+  if (ACCENTED.test(own.join(" "))) return false;
+  const lower = own.map(t => t.toLowerCase());
+  if (stopwords(lower, lang).length) return false;
+  if (tokens.length === 1) return CLOSING_ALONE.has(lower[0]);
+  return lower.some(w => CLOSING_WORDS.has(w)) || tokens.some((t, i) => i > 0 && t === "I");
+}
+
 /** An answer's language is decided from this many of its letters, or from all of a shorter one (voice-speaking-r1). */
 export const DECIDE_LETTERS = 60;
 /** Letters English seldom writes, outside names ("Café Nero", "São Paulo": voice-speaking-r2-2): "Bien sûr", "Natürlich". */
@@ -552,6 +592,42 @@ const ACCENTED = /[\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u024F]/u;
 const FOREIGN_MARKS = /[¡¿«»]|\s[!?:;»](?=\s|$)/u;
 /** A short piece that may be in another language, and isn't clearly English ("your résumé" is). */
 const mayBeAnother = (text: string) => (FOREIGN_MARKS.test(text) || ACCENTED.test(wordsBesidesNames(text).join(" "))) && !englishClearly(text);
+
+/** A piece that leads in to what follows it: it ends with a colon ("The message reads:"). */
+const LEAD_IN = /[:：]["”’'*_)\]]*\s*$/u;
+/** A message's header line ("From: José.", "Subject: Proyecto.", as the stream writes "**From:** José"). */
+const HEADER = /^\s*(?:from|to|cc|bcc|subject|date|sent|re|reply-to)\s*[:：]/iu;
+
+/**
+ * Whether `piece`, which starts what is being judged, is Ember's own and leads in to a passage: a message's header line
+ * (HEADER) whose value is in no other language, or a lead-in (LEAD_IN) in no other language whose only letters with an accent are in a name ("José's email
+ * says:"). Judged as the passage's first letters, a sender and a subject diluted its short words and the whole Spanish
+ * or Italian email was Kitten's with English sounds, in 22 of 44 cases for "**From:** José / **Subject:** Proyecto"
+ * (voice-speaking-r10-2), and so after "José's email says:" in 3 of 5 languages (voice-speaking-c10-1). A name is a
+ * capitalised word after the first, or one with "'s".
+ */
+function leadsIn(piece: string): boolean {
+  const header = HEADER.exec(piece);
+  if (header) {
+    // Only a header whose value is Ember's too: a sender's name ("José García") or a subject in no other language, with
+    // an accent only in a name. "Subject: Встреча в понедельник.", "From: 小王." and "Subject: Reunión del lunes." are
+    // the passage's, and were given to Kitten, which reads only English (r10-voice-x10-2).
+    const value = piece.slice(header[0].length).replace(/[*_]/g, " ");
+    if (FOREIGN_MARKS.test(value) || /[^\p{Script=Latin}\P{L}]/u.test(value) || languageOf(value, 1) !== null) return false;
+    if (/^\s*(?:from|to|cc|bcc|reply-to)\s*[:：]/iu.test(header[0])) return true;
+    const tokens = value.split(/\s+/u).filter(t => /\p{L}/u.test(t));
+    return !ACCENTED.test(tokens.filter((t, i) => i === 0 || !/^\p{Lu}/u.test(t)).join(" "));
+  }
+  if (!LEAD_IN.test(piece) || FOREIGN_MARKS.test(piece) || languageOf(piece, 1) !== null) return false;
+  const tokens = piece.split(/\s+/u).filter(t => /\p{L}/u.test(t));
+  // A first word before a saying verb is a name too ("José wrote:"): r10-voice-y10-1.
+  const named = /['’]s\W*$/u.test(tokens[0] ?? "") || /^(?:wrote|writes|says|said)\W*$/u.test(tokens[1] ?? "");
+  const own = tokens.filter((t, i) => !/^\p{Lu}/u.test(t) || (i === 0 && !named));
+  return !ACCENTED.test(own.join(" ")) && !/[^\p{Script=Latin}\P{L}]/u.test(piece);
+}
+
+/** A short lead-in and what it leads in to, in one piece ("It says: Hola Alex, ¿cómo estás?"). */
+const INLINE_LEAD = /^([^:：\n]{1,80}[:：])\s+(\S[\s\S]*)$/u;
 
 /**
  * The language each piece of a streamed answer is said in (null: English, in Ember's own voice), decided once for the
@@ -565,7 +641,10 @@ const mayBeAnother = (text: string) => (FOREIGN_MARKS.test(text) || ACCENTED.tes
  * ends shorter decides nothing for the messages after it (voice-speaking-r2-1: "Sure, one moment." had fixed a whole
  * turn to the request's language). Once an answer is in another language, a piece of it that is English and nothing
  * else outside what it quotes is still said in Ember's own voice (voice-speaking-c7-3, voice-speaking-x7-1), however
- * the answer opened ("Sure.", "José wrote:": voice-speaking-y7-1).
+ * the answer opened ("Sure.", "José wrote:": voice-speaking-y7-1). And the answer is judged in passages: after a lead-in
+ * said in Ember's own voice (a piece ending with a colon), and where an answer that looked English so far first may be
+ * another language's, what follows is judged by itself, from its first DECIDE_LETTERS letters (voice-speaking-r9-2), and
+ * without the clearly English pieces it ends with (beforeClosing: product-platform-x9-1).
  */
 export class AnswerLanguage {
   private text = "";
@@ -573,30 +652,69 @@ export class AnswerLanguage {
   private lang: string | null | undefined;
   /** The request's language, when it was clearly another (requestLanguage of what the user typed). */
   private asked: string | null = null;
+  /** Pieces of what is being judged were said in Ember's own voice already (they looked English). */
+  private spoken = false;
+  /** What is being judged follows a lead-in, or began where the answer first looked like another language. */
+  private passage = false;
 
   /** A new answer, to `request` (the user's words). */
   reset(request = ""): void {
     this.text = "";
     this.held = [];
     this.lang = undefined;
+    this.spoken = false;
+    this.passage = false;
     this.asked = requestLanguage(request);
   }
 
   /**
    * The pieces to say now, each with its language: `pieces` just made, `end` when the message is complete, `more` when
-   * more messages of this answer may follow it (it ended before a tool call).
+   * more messages of this answer may follow it (it ended before a tool call). Each piece is taken on its own, in order,
+   * so a whole answer given at once ("Read it out") is said as it was when it streamed (voice-speaking-r9-3).
    */
   take(pieces: readonly string[], end = false, more = false): { text: string; lang: string | null }[] {
-    for (const p of pieces) if (p.trim()) { this.held.push(p); this.text += ` ${p}`; }
+    const said = pieces.filter(p => p.trim());
+    const out = said.flatMap((p, i) => this.one(p, end && i === said.length - 1, more));
+    return said.length || !end ? out : this.one(null, true, more);
+  }
+
+  /** take, for one piece (null: none, the message only ended). */
+  private one(piece: string | null, end: boolean, more: boolean): { text: string; lang: string | null }[] {
+    const another = (text: string) => mayBeAnother(text) || speechLanguage(text, this.asked) !== null;
+    if (piece !== null && this.lang === undefined && !this.asked && !this.held.length && !(end && !more) && leadsIn(piece)) {
+      // A header line or a lead-in of Ember's own at the start of what is judged: said in Ember's voice, and what follows
+      // it is judged by itself (leadsIn).
+      this.text = "";
+      this.spoken = false;
+      this.passage = true;
+      return [{ text: piece, lang: null }];
+    }
+    if (piece !== null && !this.lang && !this.asked) {
+      // A lead-in and the passage's first sentence in one piece ("It says: Hola Alex, ¿cómo estás?"): each on its own.
+      // Not after a request in another language, whose answer is judged whole ("Hecho: abrí «Ventas.xlsx».").
+      const cut = INLINE_LEAD.exec(piece);
+      if (cut && !another(cut[1]) && another(cut[2])) return [...this.one(cut[1], false, more), ...this.one(cut[2], end, more)];
+    }
+    if (piece !== null) { this.held.push(piece); this.text += ` ${piece}`; }
     let lang = this.lang;
     if (lang === undefined) {
       if (!this.text.trim()) return [];
-      const found = speechLanguage(this.text, this.asked);
+      // What Ember's voice has said of this answer already looked English, and isn't counted against what may be another
+      // language's: a passage after "Okay, reading it now." is judged from its first such sentence.
+      if (this.spoken && piece !== null && another(this.held.join(" "))) this.passageFromHeld();
+      const found = speechLanguage(this.text, this.asked) ?? this.beforeClosing(end);
       if ((this.text.match(/\p{L}/gu) ?? []).length >= DECIDE_LETTERS) lang = this.lang = found;
       else if (end) {
         lang = found ?? this.followsRequest();
         if (!more) this.lang = lang;
-      } else if (found || (this.asked && !englishClearly(outsideQuotes(this.text))) || mayBeAnother(this.text)) return [];
+      } else if (this.passage) {
+        // After a lead-in, what follows waits to be judged, unless it is clearly English: said at once, as before.
+        if (found || !englishClearly(outsideQuotes(this.text))) return [];
+        lang = this.lang = null;
+      } else if (found || (this.asked && !englishClearly(outsideQuotes(this.text))) || mayBeAnother(this.text)) {
+        if (this.spoken) this.passageFromHeld();
+        return [];
+      } else this.spoken = true;
     }
     // An answer in another language's voice because of a passage it read out says its own clearly English pieces (its
     // closing "Shall I reply to it?") in Ember's voice: said by the passage's voice, or unsaid with none installed,
@@ -605,9 +723,48 @@ export class AnswerLanguage {
     // language's short words or a letter of another script ("Il s'appelle Gone with the Wind.", "Ошибка: The file was
     // not found.": voice-speaking-x7-1). Not by how the answer opened: most open too short to tell ("Sure.", "José
     // wrote:"), and their closing question went back to the passage's voice (voice-speaking-y7-1).
-    const out = this.held.map(text => ({ text, lang: lang && englishOnly(text.replace(QUOTED, " "), lang) ? null : lang ?? null }));
+    const out = this.held.map(text => {
+      const unquoted = text.replace(QUOTED, " ");
+      return { text, lang: lang && (englishOnly(unquoted, lang) || (this.passage && ownClosing(unquoted, lang))) ? null : lang ?? null };
+    });
     this.held = [];
+    // A lead-in said in Ember's own voice ("Here is the email from José:") ends what was judged: the passage after it
+    // is judged by itself. Counted with the lead-in, whose English short words outnumber a first sentence's, a Spanish
+    // email was read by Kitten with English sounds (voice-speaking-r9-2). Not in an answer that is in another language
+    // itself: its own list after a colon stays in its voice.
+    const last = out.at(-1);
+    if (last && last.lang === null && LEAD_IN.test(last.text) && !(end && !more)) {
+      this.lang = undefined;
+      this.text = "";
+      this.spoken = false;
+      this.passage = true;
+    }
     return out;
+  }
+
+  /**
+   * The language of a passage that waits to be said, less the clearly English pieces it ends with, or null (also for
+   * an answer that isn't read out after a lead-in: "C'est la vie, as they say." stays English): a short message read
+   * out is judged without Ember's own closing question ("Shall I reply to it?"), whose English short words outnumber
+   * the message's, so that a chat message of two sentences was Kitten's for 15 of 15 (product-platform-x9-1). The
+   * question is then said in Ember's own voice, as any English-only piece of such an answer is. At the `end` of a
+   * passage too short for two short words of its language, Spanish's opening marks tell: English never writes them.
+   */
+  private beforeClosing(end: boolean): string | null {
+    if (!this.passage) return null;
+    let n = this.held.length;
+    while (n > 1 && englishClearly(this.held[n - 1].replace(QUOTED, " "))) n--;
+    const rest = this.held.slice(0, n).join(" ");
+    if (!rest.trim()) return null;
+    const found = n < this.held.length ? speechLanguage(rest, this.asked) : null;
+    return found ?? (end && /[¿¡]/u.test(outsideQuotes(rest)) && !englishClearly(rest) ? "es" : null);
+  }
+
+  /** What waits to be said is judged by itself from here on, without what was said before it. */
+  private passageFromHeld(): void {
+    this.text = ` ${this.held.join(" ")}`;
+    this.spoken = false;
+    this.passage = true;
   }
 
   /**

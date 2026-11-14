@@ -47,6 +47,18 @@ describe("ember doctor", () => {
     expect(doctorChecks({ ...probes(), fileWatchers: null }).some(c => c.id === "file-watchers")).toBe(false);
   });
 
+  it("has a row for the files and folders being watched, and fails it when Copilot can't watch its own (reliability-r9-1)", () => {
+    const row = (used: number, max = 8192) => byId(doctorChecks({ ...probes(), fileWatchers: { used: 3, max: 128, watches: { used, max } } }), "file-watches");
+    expect(row(7)).toEqual({ id: "file-watches", status: "ok", label: "Watched files and folders", detail: "7 of 8,192 in use." });
+    expect(row(8150)).toMatchObject({ status: "warn", detail: "8,150 of 8,192 in use: Copilot needs to watch a few for each conversation and task, and stops answering without." });
+    expect(row(8150).fix).toBe("sudo sysctl -w fs.inotify.max_user_watches=524288, and put fs.inotify.max_user_watches=524288 in /etc/sysctl.d/90-ember.conf to keep it");
+    expect(row(8192)).toMatchObject({ status: "fail", detail: "All 8,192 are in use, so Copilot can't answer: it needs to watch a few for each conversation and task." });
+    expect(row(7, 0)).toMatchObject({ status: "fail", detail: "This session may watch none, so Copilot can't answer: it needs to watch a few for each conversation and task." });
+    // The instances' row is still its own, and without a count there is no row.
+    expect(byId(doctorChecks({ ...probes(), fileWatchers: { used: 3, max: 128, watches: { used: 8192, max: 8192 } } }), "file-watchers").status).toBe("ok");
+    expect(doctorChecks({ ...probes(), fileWatchers: { used: 3, max: 128 } }).some(c => c.id === "file-watches")).toBe(false);
+  });
+
   it("is all green on a well set-up RHEL 8.4 GNOME on Xorg desktop", () => {
     const checks = doctorChecks(probes());
     expect(checks.filter(c => c.status !== "ok")).toEqual([]);
@@ -166,6 +178,11 @@ describe("the RPM", () => {
     // The README beside it names every key the policy takes, and the rule about `commands`.
     const readme = fs.readFileSync(path.resolve("packaging/policy.README"), "utf8");
     for (const key of Object.keys(AdminPolicySchema.shape)) expect(readme, key).toContain(`"${key}"`);
+    // And every key of the provider, down to Azure's API version: a guess at one locks every Ember down (install-docs-r9-7).
+    const provider = AdminPolicySchema.shape.provider.unwrap().shape;
+    for (const key of [...Object.keys(provider), ...Object.keys(provider.azure.unwrap().shape)]) expect(readme, `provider's ${key}`).toContain(`"${key}"`);
+    const admins = fs.readFileSync(path.resolve("docs/DEVELOPING.md"), "utf8").split("\n").find(l => l.startsWith("| `provider` |"))!;
+    for (const key of ["wireApi", "azure", "apiVersion"]) expect(admins, key).toContain(`\`${key}\``);
     expect(readme).toMatch(/without "commands" turns commands off/);
     expect(readme).toMatch(/"ssh": \{ "allowedHosts": \[/);
     for (const f of ["policy.example.json", "policy.README"]) {
@@ -741,6 +758,23 @@ describe("staging in CI", () => {
     expect(el8).toContain("EMBER_VOICE_BACKEND=wasm npm run test:integration -- test/integration/voice.test.ts");
     expect(el8).toContain('EMBER_SHERPA_CAPI="$(node scripts/voice/fetch-capi.mjs)" npm run test:integration -- test/integration/voice.test.ts');
   });
+  it("gives the checks job the time its slowest measured run needs, so a passing gate isn't cancelled (install-docs-r10-1)", () => {
+    // Its integration step took up to 16 min 24 s and the renderer journeys up to 7 min 20 s, so 25 minutes cancelled
+    // it with nothing failing; the limit says what it was measured from.
+    const checks = ci.slice(ci.indexOf("\n  checks:\n"), ci.indexOf("\n  el8:\n"));
+    const minutes = Number(/\n {4}timeout-minutes: (\d+)\n/.exec(checks)?.[1]);
+    expect(minutes).toBeGreaterThanOrEqual(40);
+    expect(checks).toMatch(/\n {4}# 40, not 25: [^\n]*\d+ min \d+ s/);
+  });
+
+  it("measures the checks job's limit from its slowest run, the one 25 minutes cancelled (r10-install-x10-2)", () => {
+    // Run 43515013454's integration step ran 22:02:10 to 22:18:34 and the job was cancelled at 25 min 15 s; a
+    // renderer journey cut off by the limit is not a duration, so the finished ones (up to 7 min 20 s) are quoted.
+    const checks = ci.slice(ci.indexOf("\n  # The checks job's slowest run"), ci.indexOf("\n  el8:\n"));
+    expect(checks).toMatch(/^\n {2}# The checks job's slowest run \(43515013454, d41898c\)[^\n]*16 min 24 s/);
+    expect(checks).toContain("up to 7 min 20 s");
+    expect(checks).toContain("\n  checks:\n");
+  });
   it("lets rpm.sh build another release of the same version (an upgrade to test)", () => {
     const spec = fs.readFileSync(path.resolve("packaging/rpm/ember.spec"), "utf8");
     expect(spec).toMatch(/^Release:\s+%\{\?ember_release\}%\{!\?ember_release:1\}%\{\?dist\}$/m);
@@ -843,6 +877,19 @@ describe("the Windows and macOS CI jobs", () => {
     for (const name of ["checks", "package", "voice-e2e", "eval", "macos-x64"]) {
       expect(job(name), name).not.toContain("--kitten");
     }
+  });
+
+  it("fetches the second test voice in every job that runs the real-model voice suite, so its tests run rather than skip (V2-F6)", () => {
+    for (const name of ["checks", "el8", "windows", "macos"]) {
+      const j = job(name);
+      expect(j, name).toContain("node scripts/voice/prepare.mjs --voice ryan");
+      expect(j.indexOf("node scripts/voice/prepare.mjs --voice ryan"), name).toBeLessThan(j.lastIndexOf("EMBER_VOICE_TEST"));
+      // Its own cache key, so a cache saved without the voice by another job is never restored here.
+      expect(j, name).toMatch(/key: voice-(?:models-)?ryan-/);
+    }
+    const suite = fs.readFileSync(path.join(__dirname, "../../test/integration/voice.test.ts"), "utf8");
+    expect(suite).toContain('const noReader = !fs.existsSync(path.join(readerVoice, "en_US-ryan-low.onnx")) && process.env.EMBER_VOICE_TEST !== "1";');
+    expect(suite).not.toContain('it.skipIf(!fs.existsSync(path.join(readerVoice');
   });
 
   it("compile the bridge by running it as Ember runs it, stdin closed, on every run (W21)", () => {

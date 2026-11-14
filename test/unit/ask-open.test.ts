@@ -9,7 +9,7 @@
 
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
-import { focusBeforeNow, openAskInOrder, userWindowsNow } from "../../app/main/ask-open";
+import { askReadPlan, focusBeforeNow, openAskInOrder, probeReadParams, readAsPlanned, userWindowsNow } from "../../app/main/ask-open";
 import { Perception } from "../../app/main/perception";
 import type { AtspiSidecar, AxWindow } from "../../app/main/perception/sidecar";
 import type { PerceptionWindows, X11Window } from "../../app/main/platform/types";
@@ -67,7 +67,7 @@ describe("the ask box's opening from the keyboard (review #78)", () => {
     const openAsk = /const openAsk = [\s\S]*?\n {2}};\n/.exec(MAIN)?.[0] ?? "";
     expect(openAsk).toContain("openAskInOrder({\n      holding: !!platform.keyboardHold, look,");
     expect(openAsk).toContain("keyboard: () => where?.keyboard ?? 0,");
-    expect(openAsk).toContain("read: (active, before) => captureContext(active, before),");
+    expect(openAsk).toContain("read: (active, before) => {\n        callContext = readAsPlanned(askReadPlan(devEnv(\"EMBER_TEST_ASK_READ\")), () => { captureContext(active, before); return callContext; },");
     // Nothing else reads the screen there, before the box or after it.
     expect(openAsk.match(/captureContext\(/g)).toHaveLength(1);
     // The quick look reads the window taken before the box opened, when there is one.
@@ -224,5 +224,69 @@ describe("the user's window on Windows with WSLg, as Perception names it (review
     expect(openAsk).toContain("askOver = !look ? over : where ? noteFocus(where.focus).id : focusNow().id;");
     expect(openAsk).toContain("activeWindow: () => where?.active ?? null,");
     expect(openAsk).not.toMatch(/wsRef\?\.activeWindow\(\)/);
+  });
+});
+
+describe("the probe's switch for the box's read (EMBER_TEST_ASK_READ, cifix-x9-9)", () => {
+  it("reads at once, as always, without the switch, when packaged (devEnv gives nothing) or with a value it doesn't know", () => {
+    for (const v of [undefined, "", "now", "delay", "delay:", "delay:-5", "delay:40000", "delay:5s", "OFF", " off"]) expect(askReadPlan(v)).toEqual({ kind: "now" });
+  });
+
+  it("skips the read for \"off\" and delays it for \"delay:<ms>\" up to 30 s", () => {
+    expect(askReadPlan("off")).toEqual({ kind: "off" });
+    expect(askReadPlan("delay:4000")).toEqual({ kind: "delay", ms: 4000 });
+    expect(askReadPlan("delay:30000")).toEqual({ kind: "delay", ms: 30_000 });
+  });
+
+  it("starts the read at once for \"now\" and gives its own answer, scheduling nothing", async () => {
+    const answer = Promise.resolve("seen");
+    let starts = 0, scheduled = 0, told = 0;
+    const got = readAsPlanned({ kind: "now" }, () => { starts++; return answer; }, () => { scheduled++; }, () => { told++; });
+    expect(starts).toBe(1);
+    expect(got).toBe(answer);
+    expect([scheduled, told]).toEqual([0, 0]);
+  });
+
+  it("never reads for \"off\", and reads once, late, for \"delay\"", async () => {
+    let starts = 0;
+    expect(await readAsPlanned({ kind: "off" }, () => { starts++; return Promise.resolve("seen"); }, () => undefined)).toBeNull();
+    expect(starts).toBe(0);
+    let run: (() => void) | null = null, after = -1, told = 0;
+    const later = readAsPlanned({ kind: "delay", ms: 4000 }, () => { starts++; return Promise.resolve("seen"); }, (r, ms) => { run = r; after = ms; }, () => { told++; });
+    expect([starts, after, told]).toEqual([0, 4000, 0]);
+    run!();
+    expect(await later).toBe("seen");
+    expect([starts, told]).toEqual([1, 1]);
+  });
+
+  it("is read through devEnv, which a packaged Ember answers with nothing", () => {
+    const MAIN = readFileSync(new URL("../../app/main/main.ts", import.meta.url), "utf8");
+    expect(MAIN).toContain("const devEnv = (name: string): string | undefined => (app.isPackaged ? undefined : process.env[name]);");
+    expect(MAIN.match(/EMBER_TEST_ASK_READ/g)?.length).toBe(4);
+    expect(MAIN.match(/devEnv\("EMBER_TEST_ASK_READ"\)/g)?.length).toBe(2);
+    // The reads are changed only for a stage named.
+    expect(MAIN).toContain('if (askProbe.kind === "skip") {\n      const readWindow = seenBy.readWindow.bind(seenBy);');
+    expect(MAIN).toContain('askReadPlan(devEnv("EMBER_TEST_ASK_READ"))');
+  });
+});
+
+describe("the probe's stages of the read (EMBER_TEST_ASK_READ=skip:<stage>, cifix-x9-10)", () => {
+  it("names one stage to leave out, and reads at once otherwise", () => {
+    for (const stage of ["read", "lookup", "texts", "looks", "time-texts"]) expect(askReadPlan(`skip:${stage}`)).toEqual({ kind: "skip", stage });
+    for (const v of ["skip:", "skip:all", "skip:Read", "skip:texts,looks"]) expect(askReadPlan(v)).toEqual({ kind: "now" });
+  });
+
+  it("starts the read at once when a stage is left out", () => {
+    let starts = 0;
+    void readAsPlanned({ kind: "skip", stage: "texts" }, () => { starts++; return Promise.resolve(null); }, () => { throw new Error("scheduled"); });
+    expect(starts).toBe(1);
+  });
+
+  it("makes no host read for \"read\", names the host's stage for the others, and leaves the parameters alone otherwise", () => {
+    const params = { pid: 30, title: "Ember Bench (Windows)" };
+    expect(probeReadParams({ kind: "skip", stage: "read" }, params)).toBeNull();
+    expect(probeReadParams({ kind: "skip", stage: "lookup" }, params)).toEqual({ ...params, probeSkip: "lookup" });
+    expect(probeReadParams({ kind: "now" }, params)).toBe(params);
+    expect(probeReadParams({ kind: "delay", ms: 4000 }, params)).toBe(params);
   });
 });

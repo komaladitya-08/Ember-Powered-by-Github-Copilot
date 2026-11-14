@@ -1597,13 +1597,20 @@ describe("review round 3: what Ember asks about is what it does", () => {
 
         it("a formula that fetches from the internet is asked about every time, saying so, also on the desk; a sum isn't (SEC8-2)", async () => {
           const sheet = calc({ A1: "Item" });
-          plan("Total column B", [perceive, ...[`=WEBSERVICE("http://127.0.0.1:18765/plain")`, "=SUM(B1:B3)"].map(text => ({ tool: { name: "type_text", args: { cell: "C3", text, mode: "replace" } } }))]);
+          // The fetching formula into C3 (the user says no), a sum into C4 (yes), and then a sum into C3 after all.
+          plan("Total column B", [perceive, ...([["C3", `=WEBSERVICE("http://127.0.0.1:18765/plain")`], ["C4", "=SUM(B1:B3)"], ["C3", "=SUM(B1:B3)"]] as const)
+            .map(([cell, text]) => ({ tool: { name: "type_text", args: { cell, text, mode: "replace" } } }))]);
           const asked: { prompt: string; options: string[] }[] = [];
-          await makeWorker(sheet.screen, "Total column B", { grants: { testapp: "act" }, confirmer: asking(["deny", "once"], asked), cursor: sheet.cursor }).run(new AbortController().signal);
+          await makeWorker(sheet.screen, "Total column B", { grants: { testapp: "act" }, confirmer: asking(["deny", "once", "once"], asked), cursor: sheet.cursor }).run(new AbortController().signal);
           // The question shows the formula as it will be typed, its straight double quotes included, and gives the text's length
           // after Ember's closing mark, so a quote mark in typed text can't pass for the end of Ember's quote (review #116).
-          expect(asked.map(a => a.prompt)[0]).toBe("Borrow your keyboard to type “=WEBSERVICE(\"http://127.0.0.1:18765/plain\")” (43 characters) into cell C3 in Testapp? This formula can fetch from the internet or read other files.");
-          expect(sheet.text("C3")).not.toMatch(/WEBSERVICE/);
+          // The sum's question says nothing of fetching. C3 is the cell the user said no to: typing something else into it
+          // is the step they refused, done another way, so it is refused without a question (tasks-approvals-r9-1).
+          expect(asked.map(a => a.prompt)).toEqual([
+            "Borrow your keyboard to type “=WEBSERVICE(\"http://127.0.0.1:18765/plain\")” (43 characters) into cell C3 in Testapp? This formula can fetch from the internet or read other files.",
+            "Borrow your keyboard to type “=SUM(B1:B3)” into cell C4 in Testapp?"]);
+          expect(sheet.text("C3") ?? "").toBe("");
+          expect(toolResults("Total column B")).toContainEqual(expect.stringMatching(/^The user already said no to this step in this task, so Ember refused it without asking them again\./));
         });
       });
     });

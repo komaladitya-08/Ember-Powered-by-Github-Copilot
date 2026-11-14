@@ -2785,7 +2785,8 @@
   },
   {
    "cmd": "mytool src",
-   "verdict": "run"
+   "verdict": "announce",
+   "words": "run mytool on src"
   },
   {
    "cmd": "rimraf build",
@@ -2800,6 +2801,166 @@
    "rules": [
     "path.startup"
    ]
+  },
+  {
+   "cmd": "yarn cross-env NODE_ENV=x type %USERPROFILE%\\.ssh\\id_rsa",
+   "verdict": "ask",
+   "rules": [
+    "unknown.program",
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "yarn node -e \"require('fs').rmSync('C:/Users/ana/Documents',{recursive:true})\"",
+   "verdict": "ask",
+   "rules": [
+    "unclear.inline-code"
+   ]
+  },
+  {
+   "cmd": "npm run build -- %USERPROFILE%\\.ssh\\id_rsa",
+   "verdict": "ask",
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "node_modules\\.bin\\cross-env LD_PRELOAD=x jest",
+   "verdict": "ask",
+   "rules": [
+    "unknown.program",
+    "unclear.assignment"
+   ]
+  },
+  {
+   "cmd": "node node_modules\\cross-env\\src\\bin\\cross-env.js LD_PRELOAD=x jest",
+   "verdict": "ask",
+   "rules": [
+    "unknown.program",
+    "unclear.assignment"
+   ]
+  },
+  {
+   "cmd": "yarn cmd /c \"del /s /q C:\\x\"",
+   "verdict": "ask",
+   "rules": [
+    "cmd.del"
+   ]
+  },
+  {
+   "cmd": "pnpm npm publish",
+   "verdict": "ask",
+   "rules": [
+    "npm.publish"
+   ]
+  },
+  {
+   "cmd": "node_modules\\.bin\\cross-env.cmd NODE_ENV=test jest",
+   "verdict": "ask",
+   "rules": [
+    "unknown.program"
+   ]
+  },
+  {
+   "cmd": "yarn time",
+   "verdict": "ask",
+   "rules": [
+    "unclear.interactive"
+   ]
+  },
+  {
+   "cmd": "yarn cross-env NODE_ENV=prod npm publish",
+   "verdict": "ask",
+   "rules": [
+    "unknown.program",
+    "unclear.hidden-command",
+    "npm.publish"
+   ]
+  },
+  {
+   "cmd": "frobnicate X=C:\\Windows\\x.dll",
+   "verdict": "ask",
+   "rules": [
+    "unknown.program"
+   ],
+   "words": "run frobnicate"
+  },
+  {
+   "cmd": "frobnicate C:data.txt",
+   "verdict": "ask",
+   "words": "use frobnicate",
+   "rules": [
+    "unknown.program"
+   ]
+  },
+  {
+   "cmd": "frobnicate host:data.txt",
+   "verdict": "ask",
+   "words": "use frobnicate",
+   "rules": [
+    "unknown.program"
+   ]
+  },
+  {
+   "cmd": "frobnicate x=.env",
+   "verdict": "ask",
+   "words": "use frobnicate",
+   "rules": [
+    "unknown.program"
+   ]
+  },
+  {
+   "cmd": ".\\node_modules\\.bin\\shx.cmd rm -rf %USERPROFILE%\\Documents",
+   "verdict": "ask",
+   "rules": [
+    "unclear.hidden-command",
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "node_modules\\.bin\\shx.cmd rm -rf %USERPROFILE%\\Documents",
+   "verdict": "ask",
+   "rules": [
+    "unclear.hidden-command",
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "node_modules\\.bin\\cross-env.cmd NODE_OPTIONS=--require=C:\\Temp\\x.js jest",
+   "verdict": "ask",
+   "rules": [
+    "unknown.program",
+    "unclear.assignment"
+   ]
+  },
+  {
+   "cmd": "node_modules\\.bin\\eslint.cmd .",
+   "verdict": "run"
+  },
+  {
+   "cmd": "pnpm format c: /fs:ntfs",
+   "verdict": "ask",
+   "rules": [
+    "disk.erase"
+   ]
+  },
+  {
+   "cmd": "pnpm format D: /q /y",
+   "verdict": "ask",
+   "rules": [
+    "disk.erase"
+   ]
+  },
+  {
+   "cmd": "bun format D: /q /y",
+   "verdict": "ask",
+   "rules": [
+    "disk.erase"
+   ]
+  },
+  {
+   "cmd": "pnpm format --check",
+   "verdict": "run"
   }
  ]
 }

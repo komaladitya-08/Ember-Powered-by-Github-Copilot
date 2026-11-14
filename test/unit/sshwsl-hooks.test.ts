@@ -58,7 +58,7 @@ const { PolicyEngine, isEmberWindow, runsIn, runsOf } = await import("../../app/
 const { targetRules } = await import("../../app/main/policy/target-rules");
 const { Perception, describeText, openWindowLines, openWindowsBlock, perceivedText, quickContextText } = await import("../../app/main/perception");
 const { journalLine } = await import("../../app/main/policy/audit");
-const { createCommandWindow, createPromptWindow, quitQuestion, settingsFromHome } = await import("../../app/main/windows");
+const { createCommandWindow, createPromptWindow, createVaultWindow, quitQuestion, settingsFromHome } = await import("../../app/main/windows");
 const { KEYS } = await import("../../app/shared/shortcuts");
 
 import type { EmberState } from "../../app/shared/overlay";
@@ -460,6 +460,24 @@ describe("the policy's seams for other targets (critique integration-17)", () =>
     }
   });
 
+  it("knows Ember's prompt window, titled “Ember needs you”, as one of Ember's own by its title alone (product-ui-x9-1)", () => {
+    // Its title is the layer that holds when the window's process isn't known: it shows passwords, host keys and consent cards.
+    expect(isEmberWindow({ name: "Ember needs you", pid: null }, 999)).toBe(true);
+    expect(isEmberWindow({ app: "electron", name: "Ember needs you" }, 999)).toBe(true);
+    expect(isEmberWindow({ app: "", name: " Ember Needs You ", pid: null }, 999)).toBe(true);
+    // Another program's window that is only titled so isn't one.
+    expect(isEmberWindow({ app: "gedit", name: "Ember needs you", pid: 1234 }, 999)).toBe(false);
+    for (const os of ["linux", "win32", "darwin"] as const) {
+      for (const app of ["electron", ""]) {
+        expect(engine(os).decide(req("click", app, "Ember needs you", { element: { role: "push button", name: "Allow" } })))
+          .toMatchObject({ tier: "never", verdict: "deny", reason: "Ember's own windows are for the user only" });
+      }
+    }
+    // The title the window is made with and the one its page sets are the one the policy knows.
+    expect(fs.readFileSync("app/main/windows.ts", "utf8")).toContain('title: "Ember needs you"');
+    expect(fs.readFileSync("app/renderer/prompt/index.html", "utf8")).toContain("<title>Ember needs you</title>");
+  });
+
   it("has a targetRules (WB's) that decides nothing but tier 3 in WSLg apps on Windows, which it refuses", () => {
     const tier3 = new Set(["cursor_click", "cursor_text", "keys", "scroll"]);
     for (const os of ["linux", "win32", "darwin"] as const) {
@@ -682,12 +700,28 @@ describe("the command and prompt windows' factories (§3.10, §8.6)", () => {
     for (const os of ["linux", "win32", "darwin"] as const) {
       createPromptWindow(os);
       const { options, calls } = made();
-      expect(options).toMatchObject({ width: 440, height: 300, resizable: false, title: "Ember", show: false, alwaysOnTop: true, skipTaskbar: false, webPreferences: secure });
+      expect(options).toMatchObject({ width: 440, height: 300, resizable: false, title: "Ember needs you", show: false, alwaysOnTop: true, skipTaskbar: false, webPreferences: secure });
       expect(options).not.toHaveProperty("focusable");
       expect(String((options.webPreferences as { preload: string }).preload).split(path.sep).slice(-2)).toEqual(["preload", "prompt.cjs"]);
       expect(calls.find(c => c[0] === "loadURL")?.[1]).toMatch(/^file:\/\/.*\/renderer\/prompt\/index\.html$/);
       expect(calls).toContainEqual(["setAlwaysOnTop", true, "floating"]);
       expect(calls.some(c => c[0] === "setContentProtection" && c[1] === true), os).toBe(os !== "linux");
+    }
+  });
+
+  it("makes the vault's Secure Form a window of its own: fixed, always on top, sandboxed, titled Ember, with its own preload and page (vault-2)", () => {
+    for (const os of ["linux", "win32", "darwin"] as const) {
+      for (const [kind, height] of [["login", 400], ["card", 520], ["contact", 560]] as const) {
+        const win = createVaultWindow(os, kind);
+        const { options, calls } = made();
+        expect(options).toMatchObject({ width: 440, height, useContentSize: true, resizable: false, minimizable: false, maximizable: false, title: "Ember", show: false, alwaysOnTop: true, skipTaskbar: false, webPreferences: secure });
+        expect(String((options.webPreferences as { preload: string }).preload).split(path.sep).slice(-2)).toEqual(["preload", "vault.cjs"]);
+        expect(calls.find(c => c[0] === "loadURL")?.[1]).toMatch(/^file:\/\/.*\/renderer\/vault\/index\.html$/);
+        expect(calls).toContainEqual(["setAlwaysOnTop", true, "floating"]);
+        // Left out of screen captures where the OS can (Linux: Ember never captures its own windows).
+        expect(calls.some(c => c[0] === "setContentProtection" && c[1] === true), os).toBe(os !== "linux");
+        expect(typeof win.takeKeyboard).toBe("function");
+      }
     }
   });
 });
