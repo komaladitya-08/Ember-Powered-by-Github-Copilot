@@ -90,7 +90,7 @@ function makeJudge(o: {
 }
 
 /** A run that prints `output` and ends with `exit` (or never ends: `hang`). */
-function scriptedRun(spec: RunSpec, o: { output?: string[]; exit?: RunExit; hang?: boolean; interactive?: boolean; typed?: string[] } = {}) {
+function scriptedRun(spec: RunSpec, o: { output?: string[]; exit?: RunExit; hang?: boolean; interactive?: boolean; typed?: string[]; stopExit?: RunExit } = {}) {
   const listeners = new Set<(c: Uint8Array) => void>();
   const stops: string[] = [];
   const inputs: Uint8Array[] = [];
@@ -103,7 +103,7 @@ function scriptedRun(spec: RunSpec, o: { output?: string[]; exit?: RunExit; hang
     input: b => { inputs.push(b); },
     typedLines: () => (forgot ? [] : o.typed ?? []),
     forgetTyped: () => { forgot = true; },
-    stop: why => { stops.push(why); finish({ code: null, signal: "SIGINT", ended: why === "user" ? "stopped-user" : why === "timeout" ? "timeout" : why === "killswitch" ? "killswitch" : "stopped-task", ms: 50 }); },
+    stop: why => { stops.push(why); if (o.stopExit) return finish(o.stopExit); finish({ code: null, signal: "SIGINT", ended: why === "user" ? "stopped-user" : why === "timeout" ? "timeout" : why === "killswitch" ? "killswitch" : "stopped-task", ms: 50 }); },
     done, stops, inputs, forgot: () => forgot,
   };
   setTimeout(() => {
@@ -2075,6 +2075,15 @@ describe("running and what comes back (§3.8.3 steps 12-14, §3.8.6)", () => {
       expect(r.textResultForLlm.startsWith(`It ran and ended with exit code ${code}, but the end of its output was lost on the way back, so the output below is incomplete. Don't run it again only to see the rest.\n<command_output`)).toBe(true);
       expect(h.audit.find(e => e.phase === "ended")).toMatchObject({ ended: "exit", code, outputCut: true });
     }
+    // Without the run's own end (a WSL run without its launcher's end marker), "it ran and ended" would be a guess.
+    for (const targetStopped of [false, true]) {
+      const h = harness({ run: () => ({ output: ["first part\n"], exit: exitOk({ code: 0, outputCut: true, endLost: true, ...(targetStopped ? { targetStopped } : {}) }) }) });
+      const r = await call(h);
+      expect(r.resultType).toBe("failure");
+      expect(r.textResultForLlm.startsWith(`Ember didn't get the end of this run, so the command may not have finished${targetStopped ? " (build-01 stopped meanwhile)" : ""}, and the output below is incomplete. Check what it did before you run it again.\n<command_output`), r.textResultForLlm).toBe(true);
+      expect(r.textResultForLlm).not.toContain("It ran and ended");
+      expect(h.audit.find(e => e.phase === "ended")).toMatchObject({ ended: "exit", code: 0, outputCut: true, endLost: true, ...(targetStopped ? { targetStopped } : {}) });
+    }
     // A whole run's audit says nothing of it.
     const whole = harness();
     await call(whole);
@@ -2102,6 +2111,15 @@ describe("running and what comes back (§3.8.3 steps 12-14, §3.8.6)", () => {
     expect(r.textResultForLlm).toMatch(/^Ember couldn't show the command in its command window, so it stopped it at once/);
     expect(h.runs[0].stops).toEqual(["task"]);
     await vi.waitFor(() => expect(phases(h)).toEqual(["decided", "started", "ended"]));
+  });
+
+  it("audits a late end whose output didn't all come back as such, as the main path does (review wslio-x-5)", async () => {
+    makeJudge();
+    const late = exitOk({ code: 0, outputCut: true, endLost: true, targetStopped: true });
+    const h = harness({ run: () => ({ hang: true, stopExit: late }) });
+    h.ctx.service.window.attach = () => { throw new Error("no window"); };
+    await call(h);
+    await vi.waitFor(() => expect(h.audit.find(e => e.phase === "ended")).toMatchObject({ ended: "exit", outputCut: true, endLost: true, targetStopped: true }));
   });
 
   it("keeps the user's typing out: typed lines go to shaping and are forgotten, Enter reaches the secret tracker", async () => {

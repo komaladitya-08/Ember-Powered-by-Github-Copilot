@@ -18,8 +18,8 @@
  * - An end marker decides whether all of the output came back: wsl.exe's relay on WSL1 can lose the last 64 KiB of a
  *   Linux process's output as it exits (remote.yml's WSL1 job, run 43532157051). Each marker carries a nonce made for
  *   that run or script call, which nothing the command or the script reads can hold (review wslio-x-4, -x-6). A run
- *   that ends by itself without wslRunEnd's marker ends with `outputCut`, and a fixed script's output that doesn't end
- *   with scriptEnd's is no answer at all.
+ *   that ends by itself without wslRunEnd's marker ends with `outputCut` and `endLost` (the command may not have
+ *   finished), and a fixed script's output that doesn't end with scriptEnd's is no answer at all.
  * - Stop: `\x03` through the job host's stdin (PTY) or the in-distro sweep with INT (pipes), then sweeps with TERM and
  *   KILL, and only then the job host (killing wsl.exe first would orphan the Linux tree; critique wsl-16).
  * - A distro whose first-run set-up is pending, a hidden tool distro and a name discovery doesn't list are refused.
@@ -451,9 +451,10 @@ export interface WslRunningCommand extends RunningCommand {
   /**
    * Programs carrying the run's marker that were still there at the last sweep ("1 program it started is still running:
    * <name>"), as RUN's runs report them (KeptRun.stragglers): known after the ladder's last sweep, or after the look a run
-   * that ended by itself gets; [] when nothing was looked for.
+   * that ended by itself gets; [] when nothing was looked for; null when the look's answer didn't all come back, so what
+   * is left running is unknown (review wslio-x-7).
    */
-  readonly stragglers: Promise<string[]>;
+  readonly stragglers: Promise<string[] | null>;
 }
 
 /** The WSL runner beyond CommandRunner (extension: the targets runtime and WB use it). */
@@ -618,7 +619,8 @@ export function createWslRunner(d: WslRunnerDeps): WslRunner {
     return !r.error && !r.timedOut && r.code === 0;
   };
 
-  const sweep = async (signal: "INT" | "TERM" | "KILL" | "0", runId: string): Promise<string[]> => {
+  /** A sweep's names, or null when its output didn't all come back (or it failed): what was left is then unknown. */
+  const sweep = async (signal: "INT" | "TERM" | "KILL" | "0", runId: string): Promise<string[] | null> => {
     let args: [string, string];
     try {
       // RUN's two words for the script: the signal (0: only look) and the run id, each checked.
@@ -628,10 +630,11 @@ export function createWslRunner(d: WslRunnerDeps): WslRunner {
     }
     const end = endNonce();
     const r = await d.exec.run(["-d", name, "--exec", "/bin/sh", "-s", "--", ...args], { stdin: scriptInput(SWEEP_SCRIPT, { end }), timeoutMs: SWEEP_TIMEOUT_MS, inDistro: true });
-    const whole = scriptDone(r.stdout, end);
-    // What came is still named when the end was lost (a sweep's names are only reported, never acted on).
-    const names = sweptNames((whole?.out ?? r.stdout).toString("utf8"));
-    d.log.debug("wsl.sweep", { distro: name, signal, code: r.code, found: names.length, timedOut: r.timedOut, error: r.error, whole: whole !== null });
+    const whole = r.error || r.timedOut ? null : scriptDone(r.stdout, end);
+    // The signal is sent either way; only the list of what was left needs the whole output (review wslio-x-7): a part
+    // of it is never reported as all that is left running.
+    const names = whole ? sweptNames(whole.out.toString("utf8")) : null;
+    d.log.debug("wsl.sweep", { distro: name, signal, code: r.code, found: names?.length ?? null, timedOut: r.timedOut, error: r.error, whole: whole !== null });
     return names;
   };
 
@@ -700,7 +703,7 @@ export function createWslRunner(d: WslRunnerDeps): WslRunner {
 interface RunnerParts {
   factsAndLines: () => Promise<{ facts: RunnerFacts; lines: FactsLines }>;
   usable: () => Promise<WslDistro>;
-  sweep: (signal: "INT" | "TERM" | "KILL" | "0", runId: string) => Promise<string[]>;
+  sweep: (signal: "INT" | "TERM" | "KILL" | "0", runId: string) => Promise<string[] | null>;
   /** Starts the stopped distro with a no-op ("Starting <distro>…" meanwhile); false when it didn't start. */
   boot: () => Promise<boolean>;
   now: () => number;
@@ -723,6 +726,8 @@ class Run {
   /** This run's end marker nonce (EMBER_END), and the marker it makes. */
   private readonly endId = endNonce();
   private readonly endRe = endMarker(this.endId);
+  /** Ended by itself without its marker: whether the distro still runs is being read before the run ends. */
+  private checking = false;
   /** The last bytes of stdout so far (latin1), so a marker split between chunks is found. */
   private endCarry = "";
   private readonly t0: number;
@@ -738,8 +743,8 @@ class Run {
   private typed: string[] = [];
   private typing = "";
   private typedBytes = 0;
-  private readonly stragglers: Promise<string[]>;
-  private setStragglers!: (names: string[]) => void;
+  private readonly stragglers: Promise<string[] | null>;
+  private setStragglers!: (names: string[] | null) => void;
   private readonly timers: ReturnType<typeof setTimeout>[] = [];
   private ladder: Promise<void> | null = null;
 
@@ -748,7 +753,7 @@ class Run {
     this.pty = r.lastFacts()?.pty ?? false;
     this.tracker = (d.trackSecrets ?? trackSecretPrompts)({ interactive: this.pty });
     this.done = new Promise<RunExit>(resolve => { this.resolveDone = resolve; });
-    this.stragglers = new Promise<string[]>(resolve => { this.setStragglers = resolve; });
+    this.stragglers = new Promise<string[] | null>(resolve => { this.setStragglers = resolve; });
     // eslint-disable-next-line @typescript-eslint/no-this-alias -- the handle's methods close over the run
     const run = this;
     this.handle = {
@@ -918,7 +923,8 @@ class Run {
 
   /** Stop, the kill switch or the time limit: the WSL ladder once the command runs (step 1 synchronously). */
   stop(why: "user" | "task" | "killswitch" | "timeout"): void {
-    if (this.ended || this.stopWhy) return;
+    // `checking`: it has already ended by itself, and only how is still being read: nothing is left to stop.
+    if (this.ended || this.stopWhy || this.checking) return;
     this.stopWhy = why;
     if (!this.child) {
       // Still checking, reading facts or starting the distro: it never spawns.
@@ -991,7 +997,7 @@ class Run {
       this.timers.push(setTimeout(() => {
         void this.r.sweep("KILL", runId).then(names => {
           this.setStragglers(names);
-          if (names.length) this.d.log.warn("commands.straggler", { distro: this.d.distro, runId, count: names.length });
+          if (names?.length) this.d.log.warn("commands.straggler", { distro: this.d.distro, runId, count: names.length });
           resolve();
           // A job host that outlives TerminateProcess can't hold the run open: it ends as stopped all the same.
           this.timers.push(setTimeout(() => {
@@ -1022,30 +1028,47 @@ class Run {
       return;
     }
     const exit: Partial<RunExit> & { ended: RunExit["ended"] } = { ended: this.stopWhy ? ENDED[this.stopWhy] : "exit", code, signal };
-    if (!this.stopWhy && !this.endSeen) {
-      // Ended by itself, yet the launcher's last word never came: the end of the output was lost on the way (WSL1's
-      // relay), and what came is reported as incomplete, never as all of it. A stopped run needs no marker: it was cut.
-      exit.outputCut = true;
-      this.d.log.warn("wsl.output_cut", { distro: this.d.distro, runId: this.spec.runId, code, outBytes: this.outBytes });
-    }
     if (this.ladder) {
-      // Done once the last sweep has named what outlived the run (at most its own time limit later).
+      // Done once the last sweep has named what outlived the run (at most its own time limit later). A stopped run
+      // needs no end marker: the stop cut it.
       void this.ladder.then(() => this.end(exit));
       this.exitedQuietly();
       return;
     }
+    if (!this.stopWhy && !this.endSeen) {
+      // Ended by itself, yet the launcher's last word never came: the end of the output was lost on the way (WSL1's
+      // relay), or the launcher's shell never got to say it (the distro stopped, the shell was killed), so the command
+      // may not have finished (review wslio-x-3). Whether the distro still runs is read first, to say so.
+      exit.outputCut = true;
+      exit.endLost = true;
+      this.checking = true;
+      void this.d.runningNow().then(set => set.has(this.d.distro), () => null).then(running => {
+        this.checking = false;
+        if (running === false) exit.targetStopped = true;
+        this.d.log.warn("wsl.output_cut", { distro: this.d.distro, runId: this.spec.runId, code, outBytes: this.outBytes, running });
+        this.end(exit);
+        this.lookForStragglers(running);
+      });
+      return;
+    }
     this.end(exit);
-    // A natural end: report (without waiting) anything still carrying the run's marker; nothing is killed. Only while
-    // the distro still runs: a command that shut it down (`poweroff`, `wsl.exe --terminate` through interop) leaves
-    // nothing behind, and a sweep would start it again.
+    this.lookForStragglers(null);
+  }
+
+  /**
+   * A natural end: report (without waiting) anything still carrying the run's marker; nothing is killed. Only while the
+   * distro still runs (`running`, when just read; else it is read now): a command that shut it down (`poweroff`,
+   * `wsl.exe --terminate` through interop) leaves nothing behind, and a sweep would start it again.
+   */
+  private lookForStragglers(running: boolean | null): void {
     void (async () => {
-      if (!(await this.d.runningNow()).has(this.d.distro)) {
+      if (running === false || !(running ?? (await this.d.runningNow()).has(this.d.distro))) {
         this.d.log.debug("wsl.straggler_look_skipped", { distro: this.d.distro, why: "not running" });
         return this.setStragglers([]);
       }
       const names = await this.r.sweep("0", this.spec.runId);
       this.setStragglers(names);
-      if (names.length) this.d.log.warn("commands.straggler", { distro: this.d.distro, runId: this.spec.runId, count: names.length });
+      if (names?.length) this.d.log.warn("commands.straggler", { distro: this.d.distro, runId: this.spec.runId, count: names.length });
     })().catch(err => {
       this.setStragglers([]);
       this.d.log.warn("wsl.straggler_check_failed", { distro: this.d.distro, err });
@@ -1069,7 +1092,7 @@ class Run {
     if (this.ladder || e.ended !== "exit") this.setStragglers([]);
     for (const t of this.timers) clearTimeout(t);
     this.exitedQuietly();
-    const exit: RunExit = { code: e.code ?? null, signal: e.signal ?? null, ended: e.ended, ms: Math.max(0, this.r.now() - this.t0), ...(e.error ? { error: e.error } : {}), ...(e.outputCut ? { outputCut: true } : {}) };
+    const exit: RunExit = { code: e.code ?? null, signal: e.signal ?? null, ended: e.ended, ms: Math.max(0, this.r.now() - this.t0), ...(e.error ? { error: e.error } : {}), ...(e.outputCut ? { outputCut: true } : {}), ...(e.endLost ? { endLost: true } : {}), ...(e.targetStopped ? { targetStopped: true } : {}) };
     this.d.log.info("wsl.run_ended", { distro: this.d.distro, runId: this.spec.runId, ended: exit.ended, code: exit.code, ms: exit.ms, outBytes: this.outBytes, error: exit.error, outputCut: exit.outputCut === true });
     this.resolveDone(exit);
   }

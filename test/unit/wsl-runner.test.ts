@@ -303,6 +303,8 @@ function distro(o: {
   runningNowWait?: Promise<void>;
   /** Every fixed script's output loses this many of its last bytes on the way back (WSL1's relay; its end marker first). */
   cutLast?: number;
+  /** Only the sweeps' output is cut (the rest comes back whole). */
+  cutSweepsOnly?: boolean;
 } = {}) {
   const runs: SpawnCall[] = [];
   const sweeps: { signal: string; call: SpawnCall; at: number }[] = [];
@@ -310,8 +312,8 @@ function distro(o: {
   const uids: number[] = [];
   const boots: SpawnCall[] = [];
   let running = o.running ?? true;
-  const reply = (call: SpawnCall, r: Parameters<typeof answerScript>[1]) => {
-    if (!o.cutLast) return answerScript(call, r);
+  const reply = (call: SpawnCall, r: Parameters<typeof answerScript>[1], sweep = false) => {
+    if (!o.cutLast || (o.cutSweepsOnly && !sweep)) return answerScript(call, r);
     // What answerScript would print, less its last bytes, from wsl.exe that still exits with the script's code.
     const whole = Buffer.concat([Buffer.isBuffer(r.stdout) ? r.stdout : Buffer.from(r.stdout ?? "", "utf8"), scriptEndBytes(call, r.code ?? 0)]);
     answerWith(call, { ...r, stdout: whole.subarray(0, Math.max(0, whole.length - o.cutLast)) });
@@ -326,7 +328,7 @@ function distro(o: {
           sweeps.push({ signal: tail[3], call, at: Date.now() });
           if (o.hang?.includes(tail[3] as "KILL")) return;
           const names = o.sweepNames?.[tail[3]] ?? [];
-          reply(call, { stdout: names.map((n, i) => `${4242 + i} ${n}\n`).join("") });
+          reply(call, { stdout: names.map((n, i) => `${4242 + i} ${n}\n`).join("") }, true);
         } else if (script.includes(FACTS_SCRIPT.split("\n")[0])) {
           if (o.factsFail) answerWith(call, o.factsFail);
           else if (!o.hang?.includes("facts")) reply(call, { stdout: o.facts ?? FACTS_OUT });
@@ -468,6 +470,50 @@ describe("WSL runner: starting a command", () => {
     }
   });
 
+  it("says the command may not have finished, and that the distro stopped, when the run's own end never came (review wslio-x-3)", async () => {
+    const w = distro();
+    const run = w.runner.start(spec());
+    await until(() => w.runs.length === 1);
+    w.runs[0].child.out(`${MARKER}half of it\n`);
+    // `wsl --shutdown` meanwhile: the launcher's shell never got to say its end.
+    w.setRunning(false);
+    w.runs[0].child.exit(1);
+    // A Stop while Ember reads whether the distro still runs has nothing left to stop.
+    run.stop("user");
+    const exit = await run.done;
+    expect(exit).toMatchObject({ ended: "exit", code: 1, outputCut: true, endLost: true, targetStopped: true });
+    expect(w.sweeps).toHaveLength(0);
+    // Nothing is looked for in a distro that isn't running (a look would start it again).
+    await expect(run.stragglers).resolves.toEqual([]);
+    const still = distro();
+    const r2 = still.runner.start(spec());
+    await until(() => still.runs.length === 1);
+    still.runs[0].child.out(MARKER);
+    still.runs[0].child.exit(0);
+    expect(await r2.done).not.toHaveProperty("targetStopped");
+  });
+
+  it("never names a part of what was left running as all of it when the sweep's answer didn't all come back (review wslio-x-7)", async () => {
+    const w = distro({ sweepNames: { "0": ["sleep", "make"] } });
+    const run = w.runner.start(spec());
+    await until(() => w.runs.length === 1);
+    w.runs[0].child.out(MARKER);
+    w.runs[0].child.out(runEndBytes(w.runs[0], 0));
+    w.runs[0].child.exit(0);
+    await run.done;
+    await expect(run.stragglers).resolves.toEqual(["sleep", "make"]);
+    // The sweep's last 40 bytes lost: "4243 make" and its end marker.
+    const cut = distro({ sweepNames: { "0": ["sleep", "make"] }, cutLast: 40, cutSweepsOnly: true });
+    const r2 = cut.runner.start(spec());
+    await until(() => cut.runs.length === 1);
+    cut.runs[0].child.out(MARKER);
+    cut.runs[0].child.out(runEndBytes(cut.runs[0], 0));
+    cut.runs[0].child.exit(0);
+    await r2.done;
+    await expect(r2.stragglers).resolves.toBeNull();
+    expect(cut.sweeps).toHaveLength(1);
+  });
+
   it("finds the end marker on stdout only, not in what stderr printed", async () => {
     const w = distro();
     const run = w.runner.start(spec());
@@ -490,7 +536,7 @@ describe("WSL runner: starting a command", () => {
     w.runs[0].child.out(`\x1b]777;ember-end;${nonce.replace(/^./, c => (c === "0" ? "1" : "0"))};0\x07`);
     w.runs[0].child.out("x".repeat(10_000));
     w.runs[0].child.exit(0);
-    expect(await run.done).toMatchObject({ ended: "exit", code: 0, outputCut: true });
+    expect(await run.done).toMatchObject({ ended: "exit", code: 0, outputCut: true, endLost: true });
     const other = distro();
     const second = other.runner.start(spec());
     await until(() => other.runs.length === 1);

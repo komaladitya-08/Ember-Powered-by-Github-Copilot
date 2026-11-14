@@ -2799,14 +2799,18 @@ downloads it on first use per target and checks it before sending.
   Linux process's output as it exits, with exit code 0 (remote.yml's WSL1 job, run 43532157051). A WSL run's launcher
   (`wslRunEnd` in `app/main/commands/run/shells.ts`) runs the command's text in a fresh shell of the same program, the
   text in its environment only (never a subshell: `$$`, `exit`, `exec`, traps and Ctrl+C keep their meaning, and
-  `kill $$` can't leave the rest running past the run), and every fixed script ends with `scriptEnd`
-  (`app/main/wsl/runner.ts`), each printing `ESC ] 777;ember-end;<nonce>;<code> BEL` last. The nonce is random per run
-  (`EMBER_END`, read and unset by the launcher, never exported) or per script call, so no output can hold it.
-  `test/unit/wsl-launcher-shells.test.ts` runs the launcher in bash, dash, zsh, mksh and busybox sh where installed. A run that ends by itself without it
-  ends with `outputCut`, which the model gets as a failure saying the output is incomplete, and the command window as
-  "The end of its output didn't come back, so what shows here is incomplete."; a fixed script's output without it is no
-  answer (facts unreadable, no script read, unknown paths). A remote run whose last bytes don't arrive within the tail's
-  wait ends with `outputCut` too. Anything new that carries data through wsl.exe needs the marker or SSH's frames.
+  `kill $$` can't leave the rest running past the run), then prints `ESC ] 777;ember-end;<nonce>;<code> BEL` last;
+  every fixed script ends with `scriptEnd` (`app/main/wsl/runner.ts`). The nonce is random per run (`EMBER_END`, read
+  and unset by the launcher, never exported) or per script call, so no output can hold it. A run that ends by itself
+  without its marker ends with `outputCut` and `endLost` (and `targetStopped` when the distro no longer runs): the model
+  is told Ember didn't get the end of the run, that the command may not have finished and to check before running it
+  again, the audit's ended record carries the same fields, and the command window says "Ember didn't get the end of
+  this run after …: the command may not have finished. What shows here is incomplete.". A fixed script's output
+  without its marker is no answer (facts unreadable, no script read, unknown paths), and a sweep's makes what was left
+  running unknown ("Ember couldn't tell whether anything it started is still running."). A remote run whose last
+  bytes don't arrive within the tail's wait ends with `outputCut` alone (its agent did see it end).
+  `test/unit/wsl-launcher-shells.test.ts` runs the launcher in bash, dash, zsh, mksh and busybox sh where they are
+  installed. Anything new that carries data through wsl.exe needs the marker or SSH's frames.
 - **A target's paths use the target's rules**: `node:path/posix` or `node:path/win32`, or `resolveTargetPath`, never
   `node:path`, in `app/main/commands/**`, `app/main/wsl/runner.ts`, `app/main/wsl/service.ts`, `app/main/remote/**`
   and `app/remote/**` (ESLint enforces it): a Windows PC runs commands on Linux targets.
