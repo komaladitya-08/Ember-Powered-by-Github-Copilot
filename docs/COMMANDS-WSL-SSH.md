@@ -194,7 +194,8 @@ Ember stops and asks before a command that:
   reads it first and judges it as the client's own text (for `sqlcmd`, its `!!` and `:` commands and T-SQL's
   `xp_cmdshell`, `OPENROWSET`, `BULK INSERT` and dynamic `EXEC(…)` ask; for `clickhouse-client`, table functions that
   reach files, addresses, other servers or programs such as `url(…)`, `file(…)` and `executable(…)`), and one this
-  task wrote that it can't read asks;
+  task wrote that it can't read asks, as does a file of commands the task wrote for a client whose commands Ember
+  doesn't read from a file (`redis-cli < cmds.txt`, `mongosh app < a.js`, `cqlsh -f a.cql`);
 - **submits or publishes anywhere**: `git push`, pull requests, releases and repository changes on GitHub (`gh pr
   create`, `gh release create`, `gh api` with a write), `p4 submit`, `p4 shelve`, publishing packages (`npm publish`,
   `twine upload`, `docker push`), copying files or sending data to another computer or service (`scp`, `rsync host:`,

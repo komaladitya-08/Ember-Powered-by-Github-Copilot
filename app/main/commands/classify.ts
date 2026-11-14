@@ -5544,7 +5544,9 @@ function stdinFile(h: H, client?: SqlClient): void {
     if (r.kind !== "read" || !r.target) continue;
     if (h.e.isDownloaded(r.target, h.sc)) h.e.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
     else if (r.target.v) nameCheck(h, r.target.v);
-    if (client === undefined) continue;
+    // A client whose commands Ember doesn't read (redis-cli, mongosh) runs the file as code: one the task wrote asks, as
+    // a Python script it wrote does (r10-commands-y10-3).
+    if (client === undefined) { if (r.target.v !== null && !STREAM_NAME.test(r.target.v)) h.e.recordScript(r.target, "code", h.sc); continue; }
     if (r.target.v === null) h.e.unclear("unclear.sql", "It runs database commands from a file Ember can't name.");
     else if (!STREAM_NAME.test(r.target.v)) h.e.recordScript(r.target, client, h.sc);
   }
@@ -5741,7 +5743,12 @@ reg(NATIVE, ["psql", "sqlite3", "sqlite", "duckdb", "sqlcmd", "cqlsh", "clickhou
     // What they read from their input (`clickhouse-client < a.sql`, `sqlcmd <<< …`) is judged the same way.
     if (!inline.length && !files.length) sqlFromStdin(h, client);
   }
-  else if (k === "cqlsh") databaseText(h, inlineSql(h, ["e"], ["execute"]));
+  else if (k === "cqlsh") {
+    databaseText(h, inlineSql(h, ["e"], ["execute"]));
+    // The CQL file it runs, which Ember doesn't read: one the task wrote asks (r10-commands-y10-3).
+    for (const f of inlineSql(h, ["f"], ["file"])) if (f !== null && !STDIN_NAME.test(f) && !STREAM_NAME.test(f)) h.e.recordScript(lit(f), "code", h.sc);
+    if (h.s.stdin === "file") stdinFile(h);
+  }
   else if (k === "sqlite3" || k === "sqlite" || k === "duckdb") {
     // -cmd's and -init's values are not the database or its SQL.
     const ops = h.args.filter((a, j) => !isOption(a) && !/^--?(cmd|init)$/.test(h.args[j - 1]?.v ?? ""));

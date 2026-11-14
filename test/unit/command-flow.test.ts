@@ -4373,6 +4373,25 @@ describe("SQL files and scripts in other languages a command runs (commands-remo
     expect(h0rules(t)).toContain("unclear.script-code");
   });
 
+  it("asks before redis-cli, mongosh or cqlsh runs a file of commands the task wrote, which Ember doesn't read (r10-commands-y10-3)", async () => {
+    for (const [write, run, file] of [
+      ["echo FLUSHALL > a.txt", "redis-cli < a.txt", "a.txt"], ["echo 'DROP TABLE x;' > a.cql", "cqlsh -f a.cql", "a.cql"],
+      ["echo 'DROP TABLE x;' > a.cql", "cqlsh --file=a.cql", "a.cql"], ["echo 'db.dropDatabase()' > a.txt", "mongosh app < a.txt", "a.txt"],
+    ] as const) {
+      const h = flow();
+      expect((await local(h, write)).resultType, write).toBe("success");
+      h.existing.add(`/home/ana/proj/${file}`);
+      expect((await local(h, run)).resultType, run).toBe("denied");
+      expect(h0rules(h), run).toContain("unclear.script-code");
+    }
+    // The project's own file still runs.
+    for (const run of ["redis-cli < cmds.txt", "cqlsh -f schema.cql"]) {
+      const ok = flow();
+      ok.existing.add("/home/ana/proj/cmds.txt"); ok.existing.add("/home/ana/proj/schema.cql");
+      expect((await local(ok, run)).resultType, run).toBe("success");
+    }
+  });
+
   it("follows a #! interpreter given by path, so a shell script the task wrote there is read and asks (r10-commands-x10-1)", async () => {
     for (const [shebang, interp] of [
       ["#!/home/ana/proj/bin/python3\nprint(1)\n", "/home/ana/proj/bin/python3"], ["#!/usr/bin/env ./bin/python3\nprint(1)\n", "/home/ana/proj/bin/python3"],
