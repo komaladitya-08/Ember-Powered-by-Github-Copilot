@@ -203,11 +203,11 @@ describe.skipIf(!run)("Ember over SSH, end to end on this machine (INT)", { time
     expect(sshRun(`test -e "$HOME/${work}/build" && echo there || echo gone`).stdout.trim()).toBe("gone");
   });
 
-  it("announces a dangerous command the user's own words asked for, and still asks for a broader one (D4.4)", async () => {
+  it("asks before a requested dangerous delete in Interactive, and also asks for a broader one (owner rule of 14 November)", async () => {
     asked.length = 0;
     const said = await runCommand(target, "rm -r cache", { words: "delete the cache folder" });
+    expect(pcAsked().map(a => a.card)).toEqual([expect.objectContaining({ mode: "ask", command: "rm -r cache", unasked: false })]);
     expect(said.resultType).toBe("success");
-    expect(pcAsked()).toEqual([]);
     expect(sshRun(`test -e "$HOME/${work}/cache" && echo there || echo gone`).stdout.trim()).toBe("gone");
     // Beyond what the words named: asked (and here refused by the user's stand-in saying no would be the same card).
     asked.length = 0;
