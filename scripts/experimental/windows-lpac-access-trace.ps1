@@ -68,15 +68,17 @@ try {
     if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch '(?:^|,\s*)O=Microsoft Corporation(?:,|$)') { throw 'The monitor is not validly Microsoft signed.' }
     $toolVerified = $true
 
-    $phase = 'fixture-handshake'
+    $phase = 'fixture-launch'
     $earlierHandshake = [Environment]::GetEnvironmentVariable('EMBER_LPAC_TRACE_HANDSHAKE', 'Process')
     [Environment]::SetEnvironmentVariable('EMBER_LPAC_TRACE_HANDSHAKE', $traceRoot, 'Process')
     try { $testProcess = Start-Logged (Get-Command node -CommandType Application).Source @('scripts/run-integration.mjs', 'test/integration/experimental-windows-lpac-native.test.ts') 'fixture' $env:GITHUB_WORKSPACE }
     finally { [Environment]::SetEnvironmentVariable('EMBER_LPAC_TRACE_HANDSHAKE', $earlierHandshake, 'Process') }
+    $phase = 'fixture-handshake'
     $metadataFile = [IO.Path]::Combine($traceRoot, 'fixture.json')
     $deadline = [DateTime]::UtcNow.AddSeconds(80)
     while (-not [IO.File]::Exists($metadataFile)) {
-        if ($testProcess.HasExited -or [DateTime]::UtcNow -gt $deadline) { throw 'The suspended fixture handshake was unavailable.' }
+        if ($testProcess.HasExited) { $testExit = $testProcess.ExitCode; throw 'The suspended fixture handshake was unavailable.' }
+        if ([DateTime]::UtcNow -gt $deadline) { throw 'The suspended fixture handshake was unavailable.' }
         Start-Sleep -Milliseconds 50
     }
     if ((Get-Item -LiteralPath $metadataFile).Length -gt 1024) { throw 'The fixture metadata exceeded its bound.' }
@@ -141,6 +143,10 @@ public static class EmberLpacTraceImage {
 } catch {
     # Do not print a raw tool/CSV exception, which could contain unrelated capture data.
     Write-Output ('The bounded own-fixture trace failed during ' + $phase + '; no raw trace was published.')
+    # These are type names and numeric source positions/codes, never exception messages, tool output or trace fields.
+    $diagnostic = [ordered]@{ exceptionType = $_.Exception.GetType().Name; scriptLine = $_.InvocationInfo.ScriptLineNumber; testExit = $testExit }
+    if ($_.Exception -is [ComponentModel.Win32Exception]) { $diagnostic.win32Error = $_.Exception.NativeErrorCode }
+    Write-Output ($diagnostic | ConvertTo-Json -Compress)
     $failed = $true
 } finally {
     if ($fixtureProcess) { try { $fixtureProcess.Dispose() } catch { $cleanupFailed = $true } }
