@@ -46,11 +46,29 @@ describe.skipIf(!windows)("experimental LPAC real Windows enforcement", () => {
 
   it("runs only in capability-free LPAC, denies generic AppContainer files/host process access, and observes descendants before releasing results", async () => {
     const api = loadExperimentalWindowsLpacApi();
-    let expectedLocalAppData = "";
+    let expectedLocalAppData = "", fixturePid = 0;
     const fixture = ExperimentalWindowsLpacFixture.prepare(directory, executable, { ...api, profileLocalAppDataBase(profile) {
       const base = api.profileLocalAppDataBase(profile);
       expectedLocalAppData = path.join(base, "Packages", profile.name, "AC");
       return base;
+    }, createSuspended(profile, program, command, cwd, env) {
+      const child = api.createSuspended(profile, program, command, cwd, env); fixturePid = child.pid; return child;
+    }, resume(thread) {
+      const trace = process.env.EMBER_LPAC_TRACE_HANDSHAKE;
+      if (trace !== undefined) {
+        if (process.env.GITHUB_ACTIONS !== "true" || !path.isAbsolute(trace) || !fs.lstatSync(trace).isDirectory())
+          throw new Error("The optional trace handshake requires a host-created CI directory.");
+        fs.writeFileSync(path.join(trace, "fixture.pending"), JSON.stringify({ pid: fixturePid, image: "fixture.exe" }), { flag: "wx" });
+        fs.renameSync(path.join(trace, "fixture.pending"), path.join(trace, "fixture.json"));
+        const deadline = performance.now() + 30_000, pause = new Int32Array(new SharedArrayBuffer(4));
+        for (;;) {
+          try { if (fs.readFileSync(path.join(trace, "ready"), "utf8") === "ready") break; }
+          catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+          if (performance.now() >= deadline) throw new Error("The bounded native trace did not become ready.");
+          Atomics.wait(pause, 0, 0, 20);
+        }
+      }
+      api.resume(thread);
     } });
     let closed = false;
     let cleanupFailure: unknown;
@@ -106,5 +124,5 @@ describe.skipIf(!windows)("experimental LPAC real Windows enforcement", () => {
       }
     }
     if (cleanupFailure) throw cleanupFailure;
-  }, 45_000);
+  }, process.env.EMBER_LPAC_TRACE_HANDSHAKE ? 60_000 : 45_000);
 });
