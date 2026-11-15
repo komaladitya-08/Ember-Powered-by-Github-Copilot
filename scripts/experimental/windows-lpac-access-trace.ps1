@@ -139,7 +139,21 @@ public static class EmberLpacTraceImage {
     $csv = [IO.Path]::Combine($traceRoot, 'private.csv')
     $export = Start-Logged $toolExe @('/AcceptEula', '/Quiet', '/Minimized', '/OpenLog', $pml, '/SaveAs', $csv) 'export'
     if ((Wait-Bounded $export 30000) -ne 0 -or -not [IO.File]::Exists($csv) -or (Get-Item -LiteralPath $csv).Length -gt 128MB) { throw 'The monitor did not export a bounded trace.' }
-    $own = @(Import-Csv -LiteralPath $csv | Own-FixtureRows -expectedPid $fixturePid)
+    $csvRows = 0; $ownPidRows = 0; $ownImageRows = 0; $csvSchemaValid = $true
+    $own = @(Import-Csv -LiteralPath $csv | ForEach-Object {
+        $csvRows++
+        if ($csvRows -eq 1) {
+            $columns = @($_.PSObject.Properties.Name)
+            foreach ($column in @('PID', 'Process Name', 'Operation', 'Result', 'Path')) {
+                if ($column -notin $columns) { $csvSchemaValid = $false }
+            }
+        }
+        if ([string]$_.PID -eq [string]$fixturePid) { $ownPidRows++ }
+        if ([string]$_.'Process Name' -eq 'fixture.exe') { $ownImageRows++ }
+        $_
+    } | Own-FixtureRows -expectedPid $fixturePid)
+    # Counts and expected-schema presence reveal capture/parsing failures without publishing a single rejected row.
+    Write-Output ([ordered]@{ csvRows = $csvRows; csvSchemaValid = $csvSchemaValid; ownPidRows = $ownPidRows; ownImageRows = $ownImageRows; ownRows = $own.Count; rootExited = $rootExited } | ConvertTo-Json -Compress)
     if ($own.Count -eq 0 -or $own.Count -gt 10000) { throw 'The trace contains no bounded own-fixture control.' }
     # Raw CSV/PML and all detail/command-line/value fields remain private and are deleted. Only exact PID+image
     # rows are published, using a narrow field list; registry contents and unrelated processes never enter output.
