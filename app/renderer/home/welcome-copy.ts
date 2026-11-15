@@ -226,6 +226,7 @@ export const CONSENT_SOURCES: Readonly<Record<ConsentPoint["icon"], readonly str
 
 /** Each CONSENT_CHANGES line beside the full text's words it shortens (home-welcome.test.ts checks every pair against the page). */
 export const CONSENT_CHANGE_SOURCES: Readonly<Record<number, readonly string[]>> = {
+  13: ["If you choose Save projects, Ember encrypts project names, goals and session outcomes on this computer until you choose Forget saved projects or Forget everything. Opening a checkpoint never resumes work."],
   2: ["it keeps your voiceprint and keeps refining it from requests it is sure are yours", "it keeps the words you correct"],
   3: ["or choose Listen once for one request"],
   4: ["In Project work, Send selected files shares your request and the contents of those files with the connected model."],

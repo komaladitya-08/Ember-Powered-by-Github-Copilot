@@ -22,6 +22,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
+import { consentVersion } from "../../scripts/consent-version.mjs";
 
 const argv = process.argv.slice(2);
 const USAGE = "usage: node test/smoke/launch.mjs [--exe <path> | --folder <name>] [--forbid <event>]...";
@@ -53,7 +54,7 @@ const windowMs = Number(process.env.EMBER_SMOKE_TIMEOUT_MS) || (process.platform
 /** The OS whose launcher entry the run requires (its own; the unit test's stand-in names another). */
 const os = process.env.EMBER_SMOKE_PLATFORM || process.platform;
 // Set up, as after onboarding (the consent version is shared/consent.ts's): a launcher's --ask opens the box only then.
-writeFileSync(path.join(userData, "settings.json"), JSON.stringify({ version: 1, onboarded: true, wakeWord: false, consent: { version: 11, at: new Date().toISOString() } }));
+writeFileSync(path.join(userData, "settings.json"), JSON.stringify({ version: 1, onboarded: true, wakeWord: false, consent: { version: consentVersion, at: new Date().toISOString() } }));
 
 function launch(name, extra = []) {
   const debug = copied && name === "first" ? ["--remote-debugging-port=0"] : [];

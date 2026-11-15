@@ -14,6 +14,19 @@ Ember runs on:
 
 Ember's desk, a private display where Ember can work out of your way, is Linux-only.
 
+### Projects and delegated sessions (development branch)
+
+In **Projects → Projects & sessions**, create a named project and ask the conductor to plan or delegate work.
+Desktop tasks appear as named sessions with live status, outcomes and individual Stop controls. Selecting another
+project does not reassign work already requested. The cursor companion names a single active task and distinguishes
+working sessions from queued ones. Projects and session records last for this run unless you choose **Save projects**. This keeps an encrypted local
+checkpoint until **Forget saved projects** or **Forget everything**. **Open saved projects** restores records, with
+interrupted sessions stopped; it never resumes work. Quitting or signing out clears the live board.
+
+Native coding sessions remain unavailable while filesystem and credential isolation are completed. Selected-file
+review and patch drafting are separate existing features. See the [progress and remaining work](docs/CONDUCTOR-PROGRESS.md),
+[product research](docs/COMPANION_RESEARCH.md) and [Windows acceptance checks](docs/WINDOWS-CONDUCTOR-ACCEPTANCE.md).
+
 ## What you need
 
 - A **GitHub account with Copilot** (for Copilot Business or Enterprise, your organisation must also turn on the

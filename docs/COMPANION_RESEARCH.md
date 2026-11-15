@@ -1,0 +1,35 @@
+# Conductor and desktop companion research
+
+Research date: 15 November 2026. These are observations from public first-party pages and repositories, not hands-on product tests. The recommendations below interpret the requested Ember experience; they do not imply that Ember's gated native coding path is ready.
+
+## Relevant products
+
+| Product and source | Observed experience | Useful direction for Ember |
+|---|---|---|
+| [Tiki for Windows](https://github.com/apiservicesac/tiki) | A notch assistant with projects, tasks, reminders, meeting information and recorded sessions. Its face reflects work needing attention, and it stays quiet during calls and focus time. | Keep projects and work history durable; let the small companion communicate what needs attention without requiring Home to stay open. |
+| [HeyClicky](https://www.heyclicky.com/) and its [original open-source project](https://github.com/farzaa/clicky) | A Mac and Windows buddy summoned by a hotkey. Its current FAQ distinguishes spoken guidance and on-screen drawing from agents doing tasks. Screen capture is user-triggered according to that FAQ. | Make asking about the current app and starting longer work feel connected. Show screen/context use clearly and return a concrete result when delegated work finishes. |
+| [Conductor: parallel agents](https://www.conductor.build/docs/concepts/parallel-agents) | Independent tasks use separate branches and working trees. Sessions cooperating on the same change can share a workspace, including implementation, review and test repair. | Give every task a project and explicit workspace. Show whether sessions share files or work independently, and retain a review path for changes. |
+| [Thuki](https://www.thuki.app/) | A keyboard-summoned floating panel, selected text as context and explicit screen capture; local model inference supports short interactions. | Preserve a fast typed path alongside voice. Let the user dismiss the companion panel and continue working while the task remains accessible. |
+| [ThukiWin](https://github.com/ayzekhdawy/thukiwin) | Its README describes a Windows overlay, a screenshot/action loop for desktop tasks, Stop, and a compact minibar that remains visible when the user switches apps. | Keep current action, Stop and a way back to the task visible without a full conversation window. Validate native input and display behaviour on Windows. |
+| [ClickyX](https://github.com/unn-Known1/clickyX) | Its README describes a Tauri companion with per-screen overlays, voice, background agent sessions and computer-use actions. | Treat overlays, sessions and computer actions as one coordinated lifecycle. Multi-monitor routing and cancellation deserve explicit acceptance checks. |
+
+The name **Tiki** is not sufficient to establish which product the request refers to. The Windows notch assistant above is an actual matching-name product, but its documented role is organising work, rather than coding or general PC control. HeyClicky is the closest documented match to the cursor companion and delegated-action description. These products inform the experience without assuming the user meant a different name.
+
+## Proposed Ember experience
+
+1. **Start from the current context.** A spoken or typed request begins with the selected project and target computer visible. If it concerns the open app, Ember can explain, point or act through its desktop worker. Choosing or inspecting a project should not require enabling native code execution.
+2. **One conductor, named sessions.** The conductor turns the goal into bounded tasks with a clear outcome. Each task has a project, session, status and result. Dependencies and failures remain visible so the user can understand why later work has not started.
+3. **Keep the companion small.** The handle communicates listening, working, needing an answer and completion. A brief action/result and Stop are available near the cursor; fuller session history and files belong in Home. Background research or coding should not repeatedly take focus.
+4. **Coordinate real resources.** Two sessions can work independently on different files or computers, but the user's mouse, keyboard and a particular app window are shared resources. Scheduling and the existing window/input leases must decide who can use them. Parallel sessions must not race desktop input.
+5. **Make completion reviewable.** A coding result should name changed files and the checks actually run. A desktop result should identify the changed app/document and observed outcome. A model saying it finished is not sufficient evidence. Show partial and interrupted outcomes plainly.
+6. **Continue after interruption.** Persist project/task metadata and outcomes. On restart, reconcile unfinished sessions and workspace ownership before resuming work; never present interrupted work as completed or silently replay desktop actions.
+
+These are product recommendations, not new approval rules. Ember's current modes and the owner's decisions in [APPROVALS.md](APPROVALS.md) remain authoritative. Research products' confirmation policies should not be copied into Ember.
+
+## Work order and release evidence
+
+The existing desktop conductor and workers can support project organisation and clearer session progress now. Keep native coding unavailable until the credential and filesystem isolation issues in [HYBRID-CODING-STATUS.md](HYBRID-CODING-STATUS.md) have an enforced, tested solution. A copied workspace or a successful mock run alone cannot establish that boundary.
+
+The first useful acceptance story is: create a project, ask the conductor to split a goal into two sessions, inspect each status and result, interrupt one, restart Ember and find an accurate project history. Exercise this with deterministic offline workers before testing a real provider.
+
+The Windows acceptance story then adds a real editor/browser/document app, cursor companion positioning at multiple display scales, successful UI Automation interaction, human input interrupting borrowed control, Stop during a pending tool, screen lock/unlock, and microphone/speaker recovery. Verify foreground focus and the absence of actions after Stop, rather than relying on status text. Record the exact commit, machine, provider and result for each story before merging to main.

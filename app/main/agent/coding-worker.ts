@@ -8,6 +8,7 @@ import { CodingSession } from "./coding-session";
 import { CodingRuntime, CodingRuntimeCleanupError, type CodingRuntimeInput } from "./coding-runtime";
 import { codingRecommendations, createCodingPermissionHandler } from "./coding-permission";
 import { createCodingSafety } from "./coding-safety";
+import { CodingBudget } from "./coding-budget";
 import { handoffContext } from "./handoff-context";
 import type { TaskSpec, WorkerResult } from "./worker";
 
@@ -44,6 +45,7 @@ export class CodingWorker {
   private completedForHandoff = false;
   private runtime: CodingRuntime | null = null;
   private unsafeCleanup = false;
+  private disposing: Promise<void> | null = null;
   private finishDisposed!: (ok: boolean) => void;
   /** Settles only after the runtime session has disconnected and its abort has completed. */
   readonly disposed = new Promise<boolean>(resolve => { this.finishDisposed = resolve; });
@@ -58,7 +60,9 @@ export class CodingWorker {
     const startingMode = this.o.mode();
     const local = new AbortController();
     let invalid = "";
+    let limit = "";
     const stop = () => { this.o.onRetiring?.(); local.abort(); };
+    const budget = new CodingBudget(reason => { limit = reason; stop(); });
     signal.addEventListener("abort", stop, { once: true });
     const check = () => {
       try {
@@ -78,7 +82,7 @@ export class CodingWorker {
       const reviews = codingRecommendations();
       const safety = createCodingSafety({ workspace: workspace.path, home: this.o.home, os: this.o.os, ember });
       const permission = createCodingPermissionHandler({
-        mode: this.o.mode, confirmer: this.o.confirmer, signal: local.signal,
+        mode: this.o.mode, confirmer: { ask: (question, signal) => budget.waiting(() => this.o.confirmer.ask(question, signal)) }, signal: local.signal,
         task: { id: this.spec.id, title: this.spec.goal, goal: this.spec.userWords ?? this.spec.goal },
         commandPolicy: this.o.commandPolicy, workspace: workspace.path, home: this.o.home, os: this.o.os, ember, recommendation: reviews.recommendation, requiresHuman: reviews.requiresHuman,
       });
@@ -92,12 +96,13 @@ export class CodingWorker {
         mode: startingMode, canAllowAll: false, permission, signal: local.signal, protectedPaths: ember.paths, requireCompletion: this.spec.codingCompletion === true,
         preToolUse: async input => {
           if (local.signal.aborted || !workspace.current() || this.o.mode() !== startingMode) return "The workspace or approval mode changed.";
+          if (!budget.tool()) return limit || "The coding task stopped.";
           if (/^(?:builtin:)?(?:bash|powershell)$/.test(input.toolName) && this.o.commandPolicy().state !== "on") return "Commands are turned off or need consent.";
           return safety(input);
         },
         ...(this.o.clarify ? { onUserInputRequest: async request => {
           if (!validCodingClarification(request)) throw new Error("The clarification is too long or invalid to show safely.");
-          const answer = await this.o.clarify!(request, local.signal);
+          const answer = await budget.waiting(() => this.o.clarify!(request, local.signal));
           if (!answer || local.signal.aborted || !answer.answer.trim() || answer.answer.length > 1024 ||
               (answer.wasFreeform ? request.allowFreeform === false || /[\0\r\n]/.test(answer.answer) : !request.choices?.includes(answer.answer))) {
             throw new Error("The clarification was cancelled or invalid.");
@@ -113,6 +118,7 @@ export class CodingWorker {
       if (!workspace.current() || this.o.mode() !== startingMode) { await session.stop(); return { success: false, summary: "The workspace or approval mode changed. Start the task again." }; }
       if (session.modeStatus.warning) this.o.progress(session.modeStatus.warning);
       const answer = await session.run(this.spec.goal + handoffContext(this.spec.handoffSummary), local.signal);
+      if (limit) return { success: false, limit: true, summary: limit };
       if (this.spec.codingCompletion) {
         const result = session.handoffResult();
         if (!result) return { success: false, summary: "I couldn't confirm that the coding part finished, so I didn't start the desktop part." };
@@ -123,9 +129,11 @@ export class CodingWorker {
       return { success: true, summary: answer || "The coding task finished." };
     } catch (err) {
       if (signal.aborted) return { success: false, stopped: true, summary: "Stopped." };
+      if (limit) return { success: false, limit: true, summary: limit };
       if (invalid) return { success: false, summary: invalid };
       throw err;
     } finally {
+      budget.stop();
       clearInterval(watch);
       off?.();
       signal.removeEventListener("abort", stop);
@@ -134,15 +142,19 @@ export class CodingWorker {
 
   async steer(): Promise<boolean> { return false; }
   handoffSafe(): boolean { return this.completedForHandoff; }
-  async dispose(): Promise<void> {
+  dispose(): Promise<void> {
+    if (this.disposing) return this.disposing;
     this.o.onRetiring?.();
-    let failure: unknown;
-    try { await this.session?.close(); } catch (err) { failure = err; }
-    try { await this.runtime?.close(); } catch (err) { failure ??= err; }
-    if (failure || this.unsafeCleanup) {
-      this.finishDisposed(false);
-      throw new CodingRuntimeCleanupError();
-    }
-    this.finishDisposed(true);
+    this.disposing = (async () => {
+      let failure: unknown;
+      try { await this.session?.close(); } catch (err) { failure = err; }
+      try { await this.runtime?.close(); } catch (err) { failure ??= err; }
+      if (failure || this.unsafeCleanup) {
+        this.finishDisposed(false);
+        throw new CodingRuntimeCleanupError();
+      }
+      this.finishDisposed(true);
+    })();
+    return this.disposing;
   }
 }

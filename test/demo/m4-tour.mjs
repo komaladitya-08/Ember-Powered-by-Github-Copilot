@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
+import { consentVersion } from "../../scripts/consent-version.mjs";
 import readline from "node:readline";
 import { startMockLlm } from "../mock-llm/server.mjs";
 
@@ -74,7 +75,7 @@ const benchEvents = [];
 const bench = spawn(python, [path.join(root, "test/fixtures/gtk3_bench.py")], { env, stdio: ["ignore", "pipe", "ignore"] });
 readline.createInterface({ input: bench.stdout }).on("line", l => { try { benchEvents.push(JSON.parse(l)); } catch { /* not json */ } });
 const userData = mkdtempSync(path.join(tmpdir(), "ember-m4-"));
-writeFileSync(path.join(userData, "settings.json"), JSON.stringify({ version: 1, character: "cinder", size: 64, speak: false, wakeWord: true, onboarded: true, consent: { version: 6, at: "2026-10-15T00:00:00.000Z" } }));
+writeFileSync(path.join(userData, "settings.json"), JSON.stringify({ version: 1, character: "cinder", size: 64, speak: false, wakeWord: true, onboarded: true, consent: { version: consentVersion, at: "2026-10-15T00:00:00.000Z" } }));
 execFileSync("gsettings", ["set", "org.gnome.desktop.notifications", "show-banners", "true"], { env });
 await sleep(2500);
 xdo("search", "--sync", "--name", "Ember Test Bench", "windowactivate", "--sync");

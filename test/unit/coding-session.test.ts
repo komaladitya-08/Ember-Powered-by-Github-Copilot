@@ -22,7 +22,7 @@ function fake() {
   const reply = deferred<{ data: { content: string } }>();
   const api = {
     sessionId: "coding-1", on: (f: (event: SessionEvent) => void) => { listeners.add(f); return () => { listeners.delete(f); }; },
-    send: vi.fn(async () => "message-1"), sendAndWait: vi.fn(() => reply.promise), abort: vi.fn(async (): Promise<void> => undefined), disconnect: vi.fn(async () => undefined),
+    send: vi.fn(async () => "message-1"), sendAndWait: vi.fn(() => reply.promise), abort: vi.fn(async (): Promise<void> => undefined), disconnect: vi.fn(async (): Promise<void> => undefined),
     rpc: {
       permissions: { setMode: vi.fn(async ({ mode }: { mode: string }) => { permissionMode = mode; return { success: true, mode }; }) },
       mode: { set: vi.fn(async ({ mode }: { mode: string }) => { agentMode = mode; return { modeApplied: true }; }), get: vi.fn(async () => agentMode) },
@@ -211,6 +211,29 @@ describe("native coding session", () => {
     expect(await run).toBeInstanceOf(Error);
     await expect(session.close()).rejects.toThrow("did not confirm");
     expect(f.api.disconnect).toHaveBeenCalledOnce();
+  });
+
+  it("makes every close caller wait for the same teardown and preserves a failed teardown", async () => {
+    const f = fake(), disconnected = deferred<void>();
+    f.api.disconnect.mockImplementation(() => disconnected.promise);
+    const session = await CodingSession.create({ client: f.client, workspace: folder(), mode: "interactive", protectedPaths: [folder()], preToolUse: () => null, permission: () => ({ kind: "reject" }) });
+    const first = session.close(), second = session.close();
+    expect(second).toBe(first);
+    let settled = false;
+    void second.then(() => { settled = true; });
+    await vi.waitFor(() => expect(f.api.disconnect).toHaveBeenCalledOnce());
+    expect(settled).toBe(false);
+    disconnected.resolve();
+    await Promise.all([first, second]);
+    expect(f.client.deleteSession).toHaveBeenCalledOnce();
+
+    const g = fake();
+    g.api.disconnect.mockRejectedValueOnce(new Error("disconnect failed"));
+    const failed = await CodingSession.create({ client: g.client, workspace: folder(), mode: "interactive", protectedPaths: [folder()], preToolUse: () => null, permission: () => ({ kind: "reject" }) });
+    await expect(failed.close()).rejects.toThrow("disconnect failed");
+    await expect(failed.close()).rejects.toThrow("disconnect failed");
+    expect(g.api.disconnect).toHaveBeenCalledOnce();
+    expect(g.client.deleteSession).toHaveBeenCalledOnce();
   });
 
   it("serializes concurrent changes so a later Interactive switch cannot leave allow-all enabled", async () => {

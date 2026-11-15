@@ -33,3 +33,23 @@ describe("start_task's goal (review #149)", () => {
     expect(await start({ goal: "x" })).toMatch(/^Invalid arguments for start_coding/);
   });
 });
+
+describe("conductor project coordination", () => {
+  it("offers metadata tools only when wired and keeps task/session naming separate from permissions", async () => {
+    const settings = new SettingsStore(path.join(fs.mkdtempSync(path.join(os.tmpdir(), "ember-project-tools-")), "settings.json"));
+    settings.load();
+    const calls: unknown[][] = [];
+    const tools = conductorTools(settings, (...a) => Promise.resolve(String(a)), (...a) => { calls.push(a); return "Started"; }, undefined, undefined, undefined, {}, undefined, undefined, undefined, undefined, undefined, {
+      create: (name, goal) => `${name}: ${goal}`, select: id => String(id), list: () => "<projects untrusted=\"true\">[]</projects>",
+    });
+    const call = (name: string, raw: unknown) => tools.find(t => t.name === name)!.handler!(raw, { sessionId: "test", toolCallId: name, toolName: name, arguments: raw });
+    expect(conductorTools(settings).map(t => t.name)).not.toContain("create_project");
+    expect(await call("create_project", { name: "Release", goal: "Check the announcement" })).toBe("Release: Check the announcement");
+    expect(await call("create_project", { name: "Release", folder: "/untrusted" })).toMatch(/^Invalid arguments/);
+    expect(await call("select_project", { id: "../folder" })).toMatch(/^Invalid arguments/);
+    expect(await call("select_project", { id: null })).toBe("null");
+    expect(await call("list_projects", {})).toContain('untrusted="true"');
+    expect(await call("start_task", { goal: "Check the announcement in the browser", sessionName: "Review copy" })).toBe("Started");
+    expect(calls).toEqual([["Check the announcement in the browser", undefined, "Review copy"]]);
+  });
+});

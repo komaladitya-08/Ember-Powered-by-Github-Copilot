@@ -2,9 +2,9 @@
  * The whole command path on this computer, end to end (INT-A): the run_command flow with CL's real classifier and
  * decision, TG's command service, RUN's real POSIX runner (script(1), signals, the sweep), UI's real command window
  * controller (with a fake window and a fake page that reads the card and answers on it), and a real Confirmer. What the
- * owner's decision 4 promises: an ordinary command runs without asking; `rm -r build` asks; with the user's own words
- * "delete build/" (D4.4's example: a folder, as §3.7 wants for a recursive delete) it is announced, then runs, while
- * "delete build" alone still asks; with those words `rm -rf ~` never runs (refused here, where Ember's own files live
+ * owner's current rule promises (docs/APPROVALS.md, 14 November): an ordinary command runs without asking;
+ * `rm -r build` asks in Interactive even when the user's own words say "delete build/". The card records that the
+ * user asked, but deletion proceeds only after Allow. With those words `rm -rf ~` never runs (refused here, where Ember's own files live
  * in the home folder) and `rm -rf ~/proj` asks; a command that would change Ember's settings is refused; the kill
  * switch stops `sleep 100` within its budget; words that name another computer make a requested command ask (the
  * wrong-target guard); root asks before every command; and a script named through a real symbolic link and `..`
@@ -26,7 +26,7 @@ import type { Logger } from "../../app/main/logger";
 import { AdminPolicySchema, type LoadedAdminPolicy } from "../../app/main/admin";
 import { Confirmer, type Question } from "../../app/main/agent/confirm";
 import type { Presenter } from "../../app/main/agent/presenter";
-import { ANNOUNCE_MS, runCommandTool, setCommandJudge, type CommandFlowContext } from "../../app/main/commands/flow";
+import { runCommandTool, setCommandJudge, type CommandFlowContext } from "../../app/main/commands/flow";
 import { createLocalRunner } from "../../app/main/commands/run/local";
 import { createCommandWindowController, type CommandWindowController } from "../../app/main/commands/window";
 import type { CommandCard, CommandRunner, RunCommandArgs } from "../../app/main/commands/types";
@@ -332,18 +332,17 @@ describe.skipIf(!required || !usable)("the local command path, end to end (OWNER
     expect(fs.existsSync(path.join(w.work, "build"))).toBe(false);
   }, 20_000);
 
-  it("announces `rm -r build` when the user's own words asked to delete build/, then runs it after the countdown", async () => {
-    const { result, ms } = await run("rm -r build", "delete build/");
-    expect(w.cards).toEqual([]);
-    expect(w.announced).toHaveLength(1);
-    expect(w.announced[0]).toMatch(/as you asked/i);
-    expect(ms).toBeGreaterThanOrEqual(ANNOUNCE_MS - 50);
+  it("asks before a dangerous delete in Interactive even when the user's own words request it, then runs after Allow", async () => {
+    const { result } = await run("rm -r build", "delete build/");
+    expect(w.cards).toHaveLength(1);
+    expect(w.cards[0]).toMatchObject({ mode: "ask", command: "rm -r build", cwd: w.work, unasked: false });
+    expect(w.announced).toEqual([]);
     expect(result.resultType).toBe("success");
     expect(fs.existsSync(path.join(w.work, "build"))).toBe(false);
-    expect(w.audit.find(e => e.phase === "decided")).toMatchObject({ verdict: "announce", requested: "user" });
+    expect(w.audit.find(e => e.phase === "decided")).toMatchObject({ verdict: "ask", classes: expect.arrayContaining(["destroy"]) });
   }, 20_000);
 
-  it("still asks when the words don't say build is a folder (§3.7: a recursive delete needs a folder word)", async () => {
+  it("keeps the folder on deny when the user's delete request does not identify it as a folder", async () => {
     w.verdicts = () => "deny";
     const { result } = await run("rm -r build", "delete build");
     expect(w.announced).toEqual([]);

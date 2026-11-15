@@ -536,7 +536,9 @@ describe("the conversation's caps and trusted line (§2.6, §3.15)", () => {
     let caps: PromptCaps = { commands: false, targets: true };
     const { t } = fakeTargets({ caps: () => caps, line: () => "(Ember is set to work on build-01, connected as deploy: commands only. Commands: on for build-01.)" });
     const { host, session, tool } = await started({ hands: hands(), targets: t });
-    expect(session.config.systemMessage).toEqual(emberSystemMessage(PLATFORM_WORDS.linux, { commands: false, targets: true }));
+    const original = emberSystemMessage(PLATFORM_WORDS.linux, { commands: false, targets: true });
+    expect(session.config.systemMessage).toEqual({ ...original, content: expect.any(String) });
+    expect(session.config.systemMessage.content).toContain("list_projects");
     expect(session.config.tools.map((x: any) => x.name)).toEqual(expect.arrayContaining(["list_computers", "offer_connect"]));
     caps = { commands: true, targets: true };
     await host.ask("what can you do?", { target: { title: "Mail" }, text: "<context>Mail</context>" });

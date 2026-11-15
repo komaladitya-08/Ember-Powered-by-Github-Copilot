@@ -7,6 +7,7 @@
  * Linux, or without a build, except with EMBER_ATSPI_TEST=1 (RHEL 8 CI, which builds first): there a missing one fails.
  */
 
+import { CONSENT_VERSION } from "../../app/shared/consent";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createRequire } from "node:module";
@@ -72,7 +73,7 @@ describe.skipIf(!required && (!xvfb || !built))("the handle's menu on a real X s
     });
     userData = fs.mkdtempSync(path.join(os.tmpdir(), "ember-menu-"));
     const at = new Date().toISOString();
-    fs.writeFileSync(path.join(userData, "settings.json"), JSON.stringify({ version: 1, onboarded: true, consent: { version: 11, at }, wakeWord: false }));
+    fs.writeFileSync(path.join(userData, "settings.json"), JSON.stringify({ version: 1, onboarded: true, consent: { version: CONSENT_VERSION, at }, wakeWord: false }));
     const { _electron } = requireCjs("playwright-core") as { _electron: { launch(o: object): Promise<ElectronApp> } };
     app = await _electron.launch({
       executablePath: requireCjs("electron") as unknown as string,

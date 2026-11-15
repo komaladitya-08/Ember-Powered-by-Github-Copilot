@@ -5855,14 +5855,18 @@ describe("keeping the recent conversation across restarts (opt-in)", () => {
       say("old answer");
       await k.store.flush();
       const calls: string[] = [];
+      k.host.projectSessionsAction({ action: "create", name: "Forget this project" });
       const run = handlerOf(slice("ipcMain.handle(IPC.memoryForgetAll,", '// "Tell Ember about you"'), {
+        projectJob: { abort: () => calls.push("project.stop") },
+        projectSessionStore: { forgetAll: async (current: () => boolean) => { expect(current()).toBe(true); calls.push("projects"); } },
         learning: { forgetAll: () => calls.push("learning") }, agent: k.host, forgetSessionWords: () => calls.push("session words"),
         memoryOwner: { clear: () => calls.push("owner.clear"), refresh: () => undefined }, memoryConfigured: () => true, publishMemoryOwner: () => undefined,
         vault: { forgetAll: () => { calls.push("vault"); return true; } },
       });
       await run();
       // The vault goes too (vault-6).
-      expect(calls).toEqual(["learning", "session words", "vault", "owner.clear"]);
+      expect(calls).toEqual(["project.stop", "projects", "learning", "session words", "vault", "owner.clear"]);
+      expect(k.host.projectSessionsState().projects).toEqual([]);
       expect(fs.existsSync(k.file)).toBe(false);
       expect(k.host.getTranscript().map(e => e.text)).toEqual(["old question", "old answer"]);
       await k.host.ask("after forgetting");
