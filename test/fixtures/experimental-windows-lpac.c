@@ -49,6 +49,8 @@ static WCHAR descriptorText[MAX_CHARS];
 static ULONGLONG tokenBuffer[128];
 static ULONGLONG privilegeBuffer[128];
 static DWORD report[12];
+static PSECURITY_DESCRIPTOR childSecurity;
+static SECURITY_ATTRIBUTES childAttributes;
 static const BYTE workBytes[] = { 'l', 'p', 'a', 'c', '-', 'f', 'i', 'x', 't', 'u', 'r', 'e' };
 
 static DWORD lengthOf(const WCHAR *text)
@@ -210,6 +212,32 @@ cleanup:
     return result;
 }
 
+/* Do not rely on the token's default DACL when creating NEW private process/thread kernel objects.
+ * The kernel supplies their owner/group from this token; only this user, SYSTEM and this package get access. */
+static BOOL prepareChildSecurity(HANDLE token)
+{
+    LPWSTR userSid = NULL, packageSid = NULL;
+    DWORD bytes = 0;
+    BOOL result = FALSE;
+    if (!GetTokenInformation(token, TokenUser, tokenBuffer, sizeof(tokenBuffer), &bytes)
+        || !ConvertSidToStringSidW(((TOKEN_USER *)tokenBuffer)->User.Sid, &userSid)) goto cleanup;
+    if (!GetTokenInformation(token, TOKEN_APP_CONTAINER_SID, tokenBuffer, sizeof(tokenBuffer), &bytes)
+        || !ConvertSidToStringSidW(*(PSID *)tokenBuffer, &packageSid)) goto cleanup;
+    descriptorText[0] = 0;
+    if (!append(descriptorText, L"D:P(A;;GA;;;") || !append(descriptorText, userSid)
+        || !append(descriptorText, L")(A;;GA;;;SY)(A;;GA;;;") || !append(descriptorText, packageSid)
+        || !append(descriptorText, L")")) goto cleanup;
+    if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(descriptorText, SDDL_REVISION_1, &childSecurity, NULL)) goto cleanup;
+    childAttributes.nLength = sizeof(childAttributes);
+    childAttributes.lpSecurityDescriptor = childSecurity;
+    childAttributes.bInheritHandle = FALSE;
+    result = TRUE;
+cleanup:
+    if (packageSid != NULL) LocalFree(packageSid);
+    if (userSid != NULL) LocalFree(userSid);
+    return result;
+}
+
 /* Each right is tested separately; a combined mask could hide one unexpectedly permitted operation. */
 static BOOL processRightDenied(DWORD right, DWORD processId)
 {
@@ -230,7 +258,7 @@ static BOOL spawnChild(DWORD flags, PROCESS_INFORMATION *process, DWORD *error)
         *error = ERROR_FILENAME_EXCED_RANGE;
         return FALSE;
     }
-    if (!CreateProcessW(selfPath, commandLine, NULL, NULL, FALSE, flags | CREATE_NO_WINDOW,
+    if (!CreateProcessW(selfPath, commandLine, &childAttributes, &childAttributes, FALSE, flags | CREATE_NO_WINDOW,
                         NULL, NULL, &startup, process)) {
         *error = GetLastError();
         return FALSE;
@@ -280,8 +308,9 @@ void __cdecl mainCRTStartup(void)
             memcpy(&groups, tokenBuffer, sizeof(groups));
             report[3] = groups == 0;
         }
+        if (!prepareChildSecurity(token)) { recordFailure(25, GetLastError()); CloseHandle(token); ExitProcess(25); }
         CloseHandle(token);
-    }
+    } else { recordFailure(26, GetLastError()); ExitProcess(26); }
     count = GetEnvironmentVariableW(L"GH_TOKEN", argument, (DWORD)(sizeof(argument) / sizeof(argument[0])));
     report[4] = count == 0;
 
@@ -322,7 +351,8 @@ void __cdecl mainCRTStartup(void)
         CloseHandle(file);
     }
 
-    if (!spawnChild(0, &child, &error)) { recordFailure(18, error); ExitProcess(18); }
+    if (!spawnChild(0, &child, &error)) { recordFailure(18, error); LocalFree(childSecurity); ExitProcess(18); }
+    LocalFree(childSecurity); childSecurity = NULL; childAttributes.lpSecurityDescriptor = NULL;
     report[9] = child.dwProcessId;
     if (environmentPath(L"LOCALAPPDATA", localAppDataPath) && environmentPath(L"TEMP", tempPath)
         && writeTextReport(L"\\local-app-data-path.txt", localAppDataPath)
