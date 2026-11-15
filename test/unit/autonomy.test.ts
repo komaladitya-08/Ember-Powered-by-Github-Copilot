@@ -192,7 +192,7 @@ describe("Interactive's card (FEATURE_CONSENT_VERSION.autonomy, modes-A9)", () =
     expect(AUTONOMY_CONSENT_TEXT).toMatch(/While Voice Match is off, anyone near the computer can answer Ember's questions by voice\.$/);
     // Under the choice too: anyone heard may answer while Voice Match is off, its default (owner's report of 2026-11-12): no "(with Voice Match on)".
     const inForce = { chosen: "interactive" as const, inForce: "interactive" as const, why: null, offered: ["interactive" as const], agreed: ["interactive" as const], cap: null };
-    expect(approvalsNote(inForce, false)).toBe("You can answer a question by voice too: say “allow” or “not now” once Ember has asked, or “Ember, allow” later. To change the mode by voice, say its name, such as “Ember, switch to Interactive”: one that asks less needs its card agreed to here first.");
+    expect(approvalsNote(inForce, false)).toBe("You can answer a question by voice too: say “allow” or “not now” once Ember has asked, or “Ember, allow” later. To change the mode by voice, say its name, such as “Ember, switch to Interactive”: one that asks less needs its card agreed to here first, and isn't taken from “Listen once” unless Voice Match is on.");
     expect(approvalsNote(inForce, false)).not.toMatch(/with Voice Match on/);
     expect(approvalsNote(inForce, true)).toMatch(/^Managed by your organisation/);
   });
@@ -206,7 +206,15 @@ describe("Interactive's card (FEATURE_CONSENT_VERSION.autonomy, modes-A9)", () =
     expect(answerByVoiceText({ checked: false, match: false })).not.toMatch(/switch to/);
     // Where the words are checked, or Voice Match can verify the owner's voice, the mode can still be said.
     for (const hearing of [{ checked: true, match: false }, { checked: false, match: true }, null]) {
-      expect(approvalsNote(inForce, false, null, {}, hearing), JSON.stringify(hearing)).toMatch(/To change the mode by voice, say its name, such as “Ember, switch to Interactive”: one that asks less needs its card agreed to here first\.$/);
+      expect(approvalsNote(inForce, false, null, {}, hearing), JSON.stringify(hearing)).toMatch(/To change the mode by voice, say its name, such as “Ember, switch to Interactive”: one that asks less needs its card agreed to here first, and isn't taken from “Listen once” unless Voice Match is on\.$/);
+    }
+  });
+
+  it("doesn't offer a spoken switch to a mode that asks less from Listen once, which is never checked (integ-y-3)", () => {
+    // autonomy-intent.ts refuses that switch on unchecked words unless Voice Match verified the owner; Listen once is
+    // always unchecked, also on Linux with the speakers' check.
+    for (const hearing of [{ checked: true, match: false }, { checked: false, match: true }, null]) {
+      expect(answerByVoiceText(hearing), JSON.stringify(hearing)).toContain("isn't taken from “Listen once” unless Voice Match is on");
     }
   });
 

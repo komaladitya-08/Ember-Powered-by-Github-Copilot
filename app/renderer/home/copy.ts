@@ -1073,7 +1073,7 @@ const AUTOPILOT_ON = `${MODE_NAME.autopilot} is on: Ember sends, deletes, pays a
  * a mode can be chosen by saying its name (app/main/agent/autonomy-intent.ts: one that asks less only with its card
  * agreed to here).
  */
-const ANSWER_BY_VOICE = "You can answer a question by voice too: say “allow” or “not now” once Ember has asked, or “Ember, allow” later. To change the mode by voice, say its name, such as “Ember, switch to Interactive”: one that asks less needs its card agreed to here first.";
+const ANSWER_BY_VOICE = "You can answer a question by voice too: say “allow” or “not now” once Ember has asked, or “Ember, allow” later. To change the mode by voice, say its name, such as “Ember, switch to Interactive”: one that asks less needs its card agreed to here first, and isn't taken from “Listen once” unless Voice Match is on.";
 
 /**
  * What Home knows of how Ember hears on this computer: `checked`, a spoken request is checked against Ember's own
