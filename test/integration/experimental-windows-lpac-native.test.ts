@@ -72,8 +72,10 @@ describe.skipIf(!windows)("experimental LPAC real Windows enforcement", () => {
         let diagnostic = "";
         try {
           const bytes = fs.readFileSync(path.join(fixture.paths.state, "failure.bin"));
-          if (bytes.length !== 8) throw new Error("Invalid native fixture failure report.", { cause: error });
-          diagnostic = ` Native stage ${bytes.readUInt32LE(0)}, Windows error ${bytes.readUInt32LE(4)}.`;
+          if (bytes.length !== 80) throw new Error("Invalid native fixture failure report.", { cause: error });
+          const words = Array.from({ length: 20 }, (_, i) => bytes.readUInt32LE(i * 4));
+          diagnostic = ` Native failure ${JSON.stringify({ stage: words[0], error: words[1], checks: words.slice(2, 14),
+            imageExecute: words.slice(14, 16), selfCreateProcess: words.slice(16, 18), childPolicy: words.slice(18, 20) })}.`;
         } catch (failure) { if ((failure as NodeJS.ErrnoException).code !== "ENOENT") throw failure; }
         throw new Error(`${error instanceof Error ? error.message : "The native report failed."} Root ${root}.${diagnostic}`, { cause: error });
       }
