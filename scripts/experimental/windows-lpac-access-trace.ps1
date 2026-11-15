@@ -9,6 +9,7 @@ $traceRoot = [IO.Path]::Combine($env:RUNNER_TEMP, 'ember-lpac-trace-' + [guid]::
 [IO.Directory]::CreateDirectory($traceRoot) | Out-Null
 $launched = [Collections.Generic.List[Diagnostics.Process]]::new()
 $phase = 'setup'; $failed = $false; $cleanupFailed = $false; $testExit = 1; $toolExe = $null; $fixtureProcess = $null
+$toolVerified = $false; $monitorStarted = $false
 
 function Start-Logged([string]$program, [string[]]$commandArguments, [string]$label, [string]$workingDirectory = $traceRoot) {
     $quoted = foreach ($argument in $commandArguments) {
@@ -65,6 +66,7 @@ try {
     if ((Get-FileHash -LiteralPath $toolExe -Algorithm SHA256).Hash.ToLowerInvariant() -ne $pin.executableSha256) { throw 'The monitor executable did not match its pin.' }
     $signature = Get-AuthenticodeSignature -LiteralPath $toolExe
     if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch '(?:^|,\s*)O=Microsoft Corporation(?:,|$)') { throw 'The monitor is not validly Microsoft signed.' }
+    $toolVerified = $true
 
     $phase = 'fixture-handshake'
     $earlierHandshake = [Environment]::GetEnvironmentVariable('EMBER_LPAC_TRACE_HANDSHAKE', 'Process')
@@ -107,6 +109,7 @@ public static class EmberLpacTraceImage {
     $phase = 'capture'
     $pml = [IO.Path]::Combine($traceRoot, 'private.pml')
     $capture = Start-Logged $toolExe @('/AcceptEula', '/Quiet', '/Minimized', '/BackingFile', $pml, '/Runtime', '20') 'capture'
+    $monitorStarted = $true
     $phase = 'capture-ready'
     $idle = Start-Logged $toolExe @('/AcceptEula', '/Quiet', '/WaitForIdle') 'idle'
     if ((Wait-Bounded $idle 15000) -ne 0) { throw 'The monitor did not become ready.' }
@@ -140,12 +143,15 @@ public static class EmberLpacTraceImage {
     Write-Output ('The bounded own-fixture trace failed during ' + $phase + '; no raw trace was published.')
     $failed = $true
 } finally {
-    if ($fixtureProcess) { $fixtureProcess.Dispose() }
-    if ($toolExe -and [IO.File]::Exists($toolExe)) {
+    if ($fixtureProcess) { try { $fixtureProcess.Dispose() } catch { $cleanupFailed = $true } }
+    if ($toolVerified -and $monitorStarted -and [IO.File]::Exists($toolExe)) {
         try { $stop = Start-Logged $toolExe @('/AcceptEula', '/Quiet', '/Terminate') 'final-stop'; Wait-Bounded $stop 10000 | Out-Null } catch { $cleanupFailed = $true }
     }
     foreach ($childProcess in $launched) {
-        try { if (-not $childProcess.HasExited) { $childProcess.Kill($true); $childProcess.WaitForExit(5000) | Out-Null }; $childProcess.Dispose() } catch { $cleanupFailed = $true }
+        try {
+            if (-not $childProcess.HasExited) { $childProcess.Kill($true); if (-not $childProcess.WaitForExit(5000)) { $cleanupFailed = $true } }
+            $childProcess.Dispose()
+        } catch { $cleanupFailed = $true }
     }
     try { Remove-Item -LiteralPath $traceRoot -Recurse -Force } catch { $cleanupFailed = $true }
 }
