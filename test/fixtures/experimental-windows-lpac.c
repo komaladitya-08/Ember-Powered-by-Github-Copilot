@@ -257,8 +257,8 @@ static BOOL prepareChildSecurity(HANDLE token)
     BOOL result = FALSE;
     if (!GetTokenInformation(token, TokenUser, tokenBuffer, sizeof(tokenBuffer), &bytes)
         || !ConvertSidToStringSidW(((TOKEN_USER *)tokenBuffer)->User.Sid, &userSid)) goto cleanup;
-    if (!GetTokenInformation(token, TOKEN_APP_CONTAINER_SID, tokenBuffer, sizeof(tokenBuffer), &bytes)
-        || !ConvertSidToStringSidW(*(PSID *)tokenBuffer, &packageSid)) goto cleanup;
+    if (!GetTokenInformation(token, TOKEN_APP_CONTAINER_SID, parentSidBuffer, sizeof(parentSidBuffer), &bytes)
+        || !ConvertSidToStringSidW(*(PSID *)parentSidBuffer, &packageSid)) goto cleanup;
     descriptorText[0] = 0;
     if (!append(descriptorText, L"D:P(A;;GA;;;") || !append(descriptorText, userSid)
         || !append(descriptorText, L")(A;;GA;;;SY)(A;;GA;;;") || !append(descriptorText, packageSid)
@@ -286,10 +286,13 @@ static BOOL processRightDenied(DWORD right, DWORD processId)
 static BOOL spawnChild(DWORD flags, PROCESS_INFORMATION *process, DWORD *error)
 {
     STARTUPINFOEXW startup;
+    SECURITY_CAPABILITIES capabilities;
     SIZE_T bytes = 0;
     DWORD policy = 1;
     BOOL created;
     memset(&startup, 0, sizeof(startup));
+    memset(&capabilities, 0, sizeof(capabilities));
+    capabilities.AppContainerSid = *(PSID *)parentSidBuffer;
     memset(process, 0, sizeof(*process));
     startup.StartupInfo.cb = sizeof(startup);
     commandLine[0] = 0;
@@ -297,15 +300,17 @@ static BOOL spawnChild(DWORD flags, PROCESS_INFORMATION *process, DWORD *error)
         *error = ERROR_FILENAME_EXCED_RANGE;
         return FALSE;
     }
-    if (InitializeProcThreadAttributeList(NULL, 1, 0, &bytes) || GetLastError() != ERROR_INSUFFICIENT_BUFFER
+    if (InitializeProcThreadAttributeList(NULL, 2, 0, &bytes) || GetLastError() != ERROR_INSUFFICIENT_BUFFER
         || bytes == 0 || bytes > 65536) { *error = ERROR_INVALID_DATA; return FALSE; }
     startup.lpAttributeList = (LPPROC_THREAD_ATTRIBUTE_LIST)LocalAlloc(LPTR, bytes);
     if (startup.lpAttributeList == NULL) { *error = ERROR_NOT_ENOUGH_MEMORY; return FALSE; }
-    if (!InitializeProcThreadAttributeList(startup.lpAttributeList, 1, 0, &bytes)) {
+    if (!InitializeProcThreadAttributeList(startup.lpAttributeList, 2, 0, &bytes)) {
         *error = GetLastError(); LocalFree(startup.lpAttributeList); return FALSE;
     }
-    /* Explicitly retain the stricter AAP opt-out. Capabilities and package identity still inherit unchanged. */
-    if (!UpdateProcThreadAttribute(startup.lpAttributeList, 0, (DWORD_PTR)0x2000f, &policy, sizeof(policy), NULL, NULL)) {
+    /* Repeat the documented LPAC launch attributes with this exact parent package and no capabilities. */
+    if (!UpdateProcThreadAttribute(startup.lpAttributeList, 0, PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES,
+                                   &capabilities, sizeof(capabilities), NULL, NULL)
+        || !UpdateProcThreadAttribute(startup.lpAttributeList, 0, (DWORD_PTR)0x2000f, &policy, sizeof(policy), NULL, NULL)) {
         *error = GetLastError(); DeleteProcThreadAttributeList(startup.lpAttributeList); LocalFree(startup.lpAttributeList); return FALSE;
     }
     created = CreateProcessW(selfPath, commandLine, &childAttributes, &childAttributes, FALSE,
