@@ -52,6 +52,7 @@ function tree() {
   const writes: { file: string; bytes: Buffer; sddl: string }[] = [];
   const api: WindowsLpacApi = {
     createProfile: vi.fn(name => ({ name, sid: 9n, sidText: "S-1-15-2-1234" })), deleteProfile: vi.fn(),
+    profileLocalAppDataBase: () => "C:\\owner\\AppData\\Local",
     ownerSid: () => "S-1-5-21-1234", windowsDirectory: () => "C:\\Windows", volumeFileSystem: () => "NTFS",
     pinDirectory: vi.fn(() => handle++), close: vi.fn(), createDirectory: vi.fn(),
     writeNewFile: (file, bytes, sddl) => { writes.push({ file, bytes, sddl }); },
