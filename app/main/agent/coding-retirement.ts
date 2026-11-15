@@ -1,3 +1,11 @@
+/** Retains only disposal witnesses; it carries no session, prompt, or Host authority. */
+export interface CodingCleanupReceipt { wait(): Promise<void> }
+
+/** No Host or raw exception is retained when a cleanup owner could not even issue its disposal witness. */
+export function unconfirmedCodingCleanupReceipt(): CodingCleanupReceipt {
+  return Object.freeze({ wait: async () => { throw new Error("Ember couldn't confirm that the coding runtime stopped. Coding remains unavailable."); } });
+}
+
 /** Tracks coding runtimes until their processes and private state have actually been retired. */
 export class CodingRetirement {
   private readonly live = new Set<Promise<boolean>>();
@@ -29,6 +37,11 @@ export class CodingRetirement {
     if (this.live.has(done)) this.retiring.add(done);
   }
 
+  /** A retained retry must not retain the Host and its conversations alongside these boolean witnesses. */
+  cleanupReceipt(stopVerified = true): CodingCleanupReceipt {
+    return retirementCleanupReceipt(this, stopVerified);
+  }
+
   /** A timeout is not a success. Late confirmed cleanup releases the hold; a failed cleanup stays blocked. */
   async wait(ms: number): Promise<boolean> {
     this.retire();
@@ -41,4 +54,11 @@ export class CodingRetirement {
       return done && !this.failed && !this.retiring.size;
     } finally { if (timer) clearTimeout(timer); }
   }
+}
+
+function retirementCleanupReceipt(retirement: CodingRetirement, stopVerified: boolean): CodingCleanupReceipt {
+  return Object.freeze({ wait: async () => {
+    const retired = await retirement.wait(5000).catch(() => false);
+    if (!stopVerified || !retired) throw new Error("Ember couldn't confirm that the coding runtime stopped. Coding remains unavailable.");
+  } });
 }

@@ -70,6 +70,7 @@ import type { DeskPlace } from "./desk/place";
 import { DeskView } from "./desk/view";
 import { createTaskWindowControl, taskControl } from "./agent/task-controls";
 import { AgentHost, codingAvailable, CODING_UNAVAILABLE, explainSignInError, gitHubReachable, idleWord, POLICY_CHANGED_STOP, SCREEN_LOCKED_STOP, SIGN_OUT_NOT_KEPT, STOPPED_EVERYTHING, unansweredWord, type Hands, type TranscriptEntry } from "./agent/host";
+import { unconfirmedCodingCleanupReceipt, type CodingCleanupReceipt } from "./agent/coding-retirement";
 import { composerSendRefusal } from "./agent/composer-refusal";
 import { CONVERSATION_TEXT_LIMIT, conversationRequest } from "../shared/conversation";
 import { projectAfterStatus, projectChoice, projectJobStops, projectMay, projectCommandFolder, projectCommandProblem, projectCommandText, projectNames, projectRefusedText, projectSelection, projectStopped, removeProjectFile, projectPrompt, projectTurnRequest, ProjectInputError, ProjectModelError, PROJECT_MODEL_FAILED, PROJECT_PREVIOUS_ELSEWHERE, type ProjectSource } from "./agent/project";
@@ -2383,6 +2384,9 @@ function start(): void {
   let codingResources: ProjectCodingResources | null = null;
   let codingCleanupPending = 0;
   let codingCleanupFailed = false;
+  const codingCleanupReceipts = new Set<CodingCleanupReceipt>();
+  const codingCleanupReceiptsByHost = new WeakMap<AgentHost, Set<CodingCleanupReceipt>>();
+  let codingCleanupAttempt = 0;
   const projectCodingChanged = () => tasksShown();
   const codingResourcesReady = ProjectCodingResources.create({
     userData, folders: projectCodingFolders,
@@ -2399,15 +2403,34 @@ function start(): void {
       ? { available: false, message: "Coding cleanup could not finish yet. Forget everything tries again before new coding work." }
       : codingResources?.availability() ?? { available: false, message: "Checking the isolated coding tools on this computer." };
   const resetProjectCoding = (): Promise<void> => {
-    agent?.codingWorkspaceChanged();
-    projectCodingFolders.ownerReset();
+    const attempt = ++codingCleanupAttempt;
+    const host = agent;
+    const failed = () => Promise.reject(new Error("Ember couldn't finish clearing its private coding work. Try Forget everything again."));
+    if (host) {
+      // Capture fresh Stop authority before releasing the earlier witness for this same retirement tracker.
+      try {
+        const receipt = host.codingCleanupReceipt(), previous = codingCleanupReceiptsByHost.get(host);
+        codingCleanupReceipts.add(receipt); codingCleanupReceiptsByHost.set(host, new Set([receipt]));
+        for (const prior of previous ?? []) codingCleanupReceipts.delete(prior);
+      } catch {
+        const receipt = unconfirmedCodingCleanupReceipt(), previous = codingCleanupReceiptsByHost.get(host) ?? new Set();
+        codingCleanupReceipts.add(receipt); previous.add(receipt); codingCleanupReceiptsByHost.set(host, previous);
+      }
+    }
+    // Old connections retain only boolean disposal witnesses, never their Host, conversations, or tool contents.
+    const controllerCleanup = [...codingCleanupReceipts].map(receipt => {
+      try { return receipt.wait().then(() => { codingCleanupReceipts.delete(receipt); }); } catch { return failed(); }
+    });
     codingCleanupPending++;
-    const ipcCleanup = projectCoding?.reset() ?? Promise.resolve();
-    const cleanup = Promise.all([ipcCleanup, codingResourcesReady.then(resources => resources.invalidate())]).then(() => {
-      codingCleanupFailed = false;
-    }, () => {
-      codingCleanupFailed = true;
-      throw new Error("Ember couldn't finish clearing its private coding work. Try Forget everything again.");
+    let foldersCleanup = Promise.resolve();
+    try { projectCodingFolders.ownerReset(); } catch { foldersCleanup = failed(); }
+    const ipcCleanup = (() => { try { return projectCoding?.reset() ?? Promise.resolve(); } catch { return failed(); } })();
+    const cleanup = Promise.allSettled([...controllerCleanup, foldersCleanup, ipcCleanup, codingResourcesReady.then(resources => resources.invalidate())]).then(results => {
+      if (results.some(result => result.status === "rejected") || codingCleanupReceipts.size > 0) {
+        if (attempt === codingCleanupAttempt) codingCleanupFailed = true;
+        throw new Error("Ember couldn't finish clearing its private coding work. Try Forget everything again.");
+      }
+      if (attempt === codingCleanupAttempt) codingCleanupFailed = false;
     }).finally(() => { codingCleanupPending--; projectCodingChanged(); });
     projectCodingChanged();
     return cleanup;
@@ -4122,7 +4145,7 @@ function start(): void {
       },
       onStatus: status => {
         codingContextChanged();
-        if (status.phase === "ready") queueMicrotask(() => { void restoreCoding(); });
+        if (status.phase === "ready" && codingAvailable()) queueMicrotask(() => { void restoreCoding(); });
         codingChanged();
         // Projects' work goes only where it must (integrations-r1): a reconnect stops a request under way, but keeps the
         // files, the request, the answer and its diff; the lockdown forgets it all (Sign out and an account change do

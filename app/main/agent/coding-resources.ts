@@ -33,6 +33,7 @@ interface Authority {
   taskId: string; owner: string; projectId: string; source: string; title: string; ownerCurrent: () => boolean;
   publicationEpoch: number; projectRevision: number;
   publishing?: boolean;
+  retired?: boolean;
   workspace?: IsolatedCommandWorkspace;
   output?: IsolatedCommandReview;
 }
@@ -81,6 +82,8 @@ export class ProjectCodingResources {
   #authorities = new WeakMap<TaskSpec, Authority>();
   #tasks = new Map<string, Authority>();
   #active = new Map<IsolatedCommandWorkspace, Authority>();
+  #backendClosing = new WeakMap<IsolatedCommandWorkspace, Promise<void>>();
+  #invalidationPending = 0;
   #creating = new Set<Promise<IsolatedCommandWorkspace>>();
   #publishing = new Set<Promise<unknown>>();
   #unadopted = new Map<string, string>();
@@ -132,8 +135,8 @@ export class ProjectCodingResources {
   get reviewBase(): string { return this.#reviews; }
   results(): Promise<CodingResultsAccess> { return Promise.resolve(this.#results); }
   availability(): { available: boolean; message: string; nodePath?: string } {
-    const available = !this.#closed && !this.#failed && !this.#artifactCleanupFailed && this.#supported && this.#node !== null;
-    return { available, message: this.#closed ? "Coding resources are closed." : this.#artifactCleanupFailed && !this.#failed
+    const available = !this.#closed && !this.#invalidationPending && !this.#failed && !this.#artifactCleanupFailed && this.#supported && this.#node !== null;
+    return { available, message: this.#closed ? "Coding resources are closed." : this.#invalidationPending ? "Private coding work is being closed and removed." : this.#artifactCleanupFailed && !this.#failed
       ? "Private coding reviews could not be removed. Retry Forget everything; coding resumes after verified cleanup." : this.#message,
       ...(available ? { nodePath: this.#node! } : {}),
       ...(available ? { message: `${this.#message} ${SOURCE_DISCLOSURE}` } : {}) };
@@ -277,7 +280,7 @@ export class ProjectCodingResources {
         const backend = await IsolatedCommandWorkspace.create({ source: path, baseDir: this.#copies, protectedPaths: this.#roots, scope,
           binding: { owner, session: randomUUID(), snapshot: randomUUID() }, nodePath: this.#node!, signal, admit: current });
         authority.workspace = backend; this.#active.set(backend, authority);
-        if (!current()) { await backend.stop(); await backend.close(); this.#active.delete(backend); authority.workspace = undefined; throw stale(); }
+        if (!current()) { await backend.stop(); await this.#closeBackend(backend); throw stale(); }
         return this.#wrapped(backend, authority);
       } catch {
         if (authority.workspace && this.#active.has(authority.workspace)) this.#failure();
@@ -303,18 +306,31 @@ export class ProjectCodingResources {
     return { excludeRoots: SOURCE_EXCLUSIONS, dependencies: Object.freeze({ path: dependencies, current }) };
   }
 
+  #closeBackend(backend: IsolatedCommandWorkspace): Promise<void> {
+    const existing = this.#backendClosing.get(backend); if (existing) return existing;
+    const authority = this.#active.get(backend);
+    let resolve!: () => void, reject!: (error: unknown) => void;
+    const closing = new Promise<void>((yes, no) => { resolve = yes; reject = no; });
+    this.#backendClosing.set(backend, closing);
+    try {
+      void Promise.resolve(backend.close()).then(() => {
+        this.#active.delete(backend);
+        if (authority) { authority.workspace = undefined; if (!authority.output) this.#tasks.delete(authority.taskId); }
+        resolve();
+      }, error => { this.#failure(); reject(error); });
+    } catch (error) { this.#failure(); reject(error); }
+    return closing;
+  }
   #wrapped(backend: IsolatedCommandWorkspace, authority: Authority): IsolatedCommandWorkspace {
-    let closing: Promise<void> | null = null;
-    const close = () => closing ??= backend.close().then(() => {
-      this.#active.delete(backend);
-      if (!authority.output) this.#tasks.delete(authority.taskId);
-    }, error => { this.#failure(); throw error; });
+    const close = () => this.#closeBackend(backend);
     return new Proxy(backend, { get: (target, key) => {
       if (key === "close") return close;
       if (key === "exportReview") return (base: string) => {
         if (base !== this.#reviews) return Promise.reject(stale());
         const pending = target.exportReview(base); this.#exporting.add(pending);
-        void pending.then(output => { authority.output = output; this.#exporting.delete(pending); }, () => this.#exporting.delete(pending));
+        void pending.then(output => {
+          authority.output = authority.retired ? undefined : output; this.#unadopted.set(output.directory, authority.projectId); this.#exporting.delete(pending);
+        }, () => this.#exporting.delete(pending));
         return pending;
       };
       const value = Reflect.get(target, key, target); return typeof value === "function" ? value.bind(target) : value;
@@ -368,7 +384,10 @@ export class ProjectCodingResources {
   async #resetRegistry(): Promise<void> {
     const registry = this.#registry ?? (this.#registryOpening ? await this.#registryOpening : this.#unadopted.size ? await this.#registryValue() : null);
     if (!registry) return;
-    await registry.reset(); await this.#discardUnadopted(registry);
+    let failed = false;
+    try { await registry.reset(); } catch { failed = true; }
+    try { await this.#discardUnadopted(registry); } catch { failed = true; }
+    if (failed) throw cleanupFailed();
   }
   async #forgetRegistryProject(projectId: string): Promise<void> {
     const registry = this.#registry ?? (this.#registryOpening ? await this.#registryOpening : [...this.#unadopted.values()].includes(projectId) ? await this.#registryValue() : null);
@@ -381,15 +400,45 @@ export class ProjectCodingResources {
   }
   #retryRegistryReset(): Promise<void> { return this.#registryCleanup(this.#resetRegistry()); }
 
+  async #drainResults(): Promise<void> {
+    for (;;) {
+      const pending = [...this.#exporting, ...this.#publishing];
+      if (!pending.length) return;
+      await Promise.allSettled(pending);
+    }
+  }
+  async #emptyPrivateRoles(): Promise<void> {
+    if (!this.#private) return;
+    await this.#storageCurrent();
+    for (const directory of [this.#copies, this.#reviews]) {
+      if (!directory) continue;
+      try {
+        if ((await fs.readdir(directory)).length && !(directory === this.#reviews && this.#artifactCleanupFailed)) throw cleanupFailed();
+      } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+    }
+  }
   invalidate(): Promise<void> {
-    this.#epoch++; this.#publicationEpoch++; this.folders.ownerReset();
-    const stops = [...this.#active.keys()].map(backend => { try { return backend.stop(); } catch { return Promise.reject(cleanupFailed()); } });
+    this.#epoch++; this.#publicationEpoch++; this.folders.ownerReset(); this.#invalidationPending++;
+    for (const authority of this.#tasks.values()) { authority.retired = true; authority.output = undefined; }
     const creations = [...this.#creating].map(pending => pending.then(() => undefined, () => undefined));
-    const pending = Promise.allSettled([...stops, ...creations]).then(async results => {
-      if (results.some(result => result.status === "rejected")) this.#failure();
-      await this.#retryRegistryReset();
-      if (this.#cleanupFailed) throw cleanupFailed();
-    });
+    const backends = [...this.#active.keys()];
+    const stops = backends.map(backend => { try { return backend.stop(); } catch { return Promise.reject(cleanupFailed()); } });
+    const closes = backends.map(backend => this.#closeBackend(backend));
+    const pending = (async () => {
+      try {
+        const results = await Promise.allSettled([...stops, ...closes, ...creations]);
+        if (results.some(result => result.status === "rejected")) this.#failure();
+        const remaining = await Promise.allSettled([...this.#active.keys()].map(backend => this.#closeBackend(backend)));
+        if (remaining.some(result => result.status === "rejected")) this.#failure();
+        await this.#drainResults();
+        for (const authority of this.#tasks.values()) { authority.output = undefined; authority.workspace = undefined; }
+        this.#tasks.clear(); this.#authorities = new WeakMap();
+        let artifactFailure = false;
+        try { await this.#retryRegistryReset(); } catch { artifactFailure = true; }
+        try { await this.#emptyPrivateRoles(); } catch { this.#failure(); }
+        if (this.#cleanupFailed || artifactFailure) throw cleanupFailed();
+      } finally { this.#invalidationPending--; this.#changed(); }
+    })();
     this.#changed(); return pending;
   }
   close(): Promise<void> {
@@ -400,9 +449,9 @@ export class ProjectCodingResources {
         let failed = false;
         try { await invalidated; } catch { failed = true; }
         await this.#discovery;
-        await Promise.allSettled([...this.#exporting, ...this.#publishing]);
+        await this.#drainResults();
         for (const backend of [...this.#active.keys()]) {
-          try { await backend.stop(); await backend.close(); this.#active.delete(backend); } catch { failed = true; }
+          try { await backend.stop(); await this.#closeBackend(backend); } catch { failed = true; }
         }
         try { if (this.#registryOpening) await (await this.#registryOpening).close(); } catch { failed = true; }
         if (!failed && this.#private) {

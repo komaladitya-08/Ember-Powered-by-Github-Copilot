@@ -222,6 +222,27 @@ it("blocks new coding until a retired worker's cleanup is confirmed", async () =
   worker.releaseCleanup();
 });
 
+it("awaits the exact trusted worker's held cleanup before an account-wide coding erasure succeeds", async () => {
+  const h = await setup(); h.create("One"); await h.host.ask("Fix first source");
+  await h.tool("start_coding", { goal: "Repair first source" }); const worker = sim.workers[0];
+  sim.holdCleanup = true; let complete = false;
+  const cleanup = h.host.awaitCodingCleanup().then(() => { complete = true; });
+  expect(worker.invalidated).toBe(true); expect(worker.options.current()).toBe(false);
+  await Promise.resolve(); expect(complete).toBe(false);
+  worker.releaseCleanup(); await cleanup; expect(complete).toBe(true);
+});
+
+it("never confirms coding erasure when a trusted worker reports failed shutdown", async () => {
+  const h = await setup(); h.create("One"); await h.host.ask("Fix first source");
+  await h.tool("start_coding", { goal: "Repair first source" }); const worker = sim.workers[0];
+  worker.dispose = async () => { worker.resolveDisposed(false); throw new Error("private SDK prompt cleanup canary"); };
+  await expect(h.host.awaitCodingCleanup()).rejects.toThrow("Ember couldn't confirm that the coding runtime stopped. Coding remains unavailable.");
+  await expect(h.host.awaitCodingCleanup()).rejects.not.toThrow("canary");
+  // The inert fixture is fully stopped, but its failed proof remains a failure even on Host.stop().
+  hosts.splice(hosts.indexOf(h.host), 1);
+  await expect(h.host.stop()).rejects.toThrow("couldn't confirm that the coding runtime stopped");
+});
+
 it("retains no credential or account authority when the provider changes before a coding callback", async () => {
   let provider: ActiveProvider = { kind: "user", config: { type: "openai", baseUrl: "http://localhost:9001", apiKey: "fake-key" }, models: { conductor: "gpt-5-mini", worker: "gpt-5-mini" } };
   const h = await setup({ provider: () => provider }); h.create("Provider app"); await h.host.ask("Repair the app");

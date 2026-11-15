@@ -97,7 +97,7 @@ export class IsolatedCommandWorkspace {
   private active: { cancel(): void } | null = null;
   private constructor(private readonly source: string, private readonly sourceIdentity: RootIdentity, private readonly baseDir: string, private readonly roots: string[],
     private readonly snapshot: CodingSnapshot, private readonly scratch: string, private readonly rootfs: string,
-    private readonly baseline: CodingExportTree, private readonly limits: IsolatedCommandLimits, readonly nodeAvailable: boolean,
+    private baseline: CodingExportTree, private readonly limits: IsolatedCommandLimits, readonly nodeAvailable: boolean,
     private readonly admit?: () => boolean, readonly excludedRoots: readonly CodingExcludedRoot[] = [],
     private readonly manifest?: CodingProjectManifest, private readonly dependencies?: CodingDependencySnapshot) {}
   get scopeManifest(): CodingProjectManifest | undefined { return this.manifest ? codingProjectManifest(this.manifest) : undefined; }
@@ -360,7 +360,7 @@ export class IsolatedCommandWorkspace {
     if (this.lease.getStore()) return Promise.reject(new Error("Close cannot wait inside its own workspace lease."));
     if (!this.closing) {
       this.retired = true; this.epoch++; this.active?.cancel(); const pending = this.tail;
-      this.closing = pending.then(() => this.cleanupFiles());
+      this.closing = pending.then(async () => { try { await this.cleanupFiles(); } finally { this.baseline = { binding: this.baseline.binding, entries: [] }; this.exporting = null; } });
     }
     return this.closing;
   }
