@@ -1076,6 +1076,22 @@ const AUTOPILOT_ON = `${MODE_NAME.autopilot} is on: Ember sends, deletes, pays a
 const ANSWER_BY_VOICE = "You can answer a question by voice too: say “allow” or “not now” once Ember has asked, or “Ember, allow” later. To change the mode by voice, say its name, such as “Ember, switch to Interactive”: one that asks less needs its card agreed to here first.";
 
 /**
+ * What Home knows of how Ember hears on this computer: `checked`, a spoken request is checked against Ember's own
+ * speakers (Linux with the speakers' check on: the facts about-you.ts's spokenVersion reads); `match`, Voice Match is on.
+ */
+export interface HearingFacts { checked: boolean; match: boolean }
+
+/**
+ * ANSWER_BY_VOICE for this computer (integ-x-5). Where a spoken request isn't checked and Voice Match is off (Windows
+ * and macOS, Linux without the speakers' check), autonomy-intent.ts takes a switch to a mode that asks less from no
+ * spoken words at all, so the note says to choose it here; elsewhere, or with the facts unknown, ANSWER_BY_VOICE.
+ */
+export function answerByVoiceText(hearing: HearingFacts | null): string {
+  if (!hearing || hearing.checked || hearing.match) return ANSWER_BY_VOICE;
+  return "You can answer a question by voice too: say “allow” or “not now” once Ember has asked, or “Ember, allow” later. To have Ember ask more often, say so, such as “Ember, ask me first again”. Choose a mode that asks less here: on this computer Ember can't be sure spoken words are yours unless Voice Match is on.";
+}
+
+/**
  * Under the modes: what is in force and, where that isn't the mode chosen, why in one sentence; then that questions
  * can be answered by voice. `managed`: the organisation keeps Ember below Interactive (Home knows it from the policy
  * before main's state comes). `elevated`: Ember runs as an administrator or as root (elevationOf), so every command
@@ -1084,20 +1100,21 @@ const ANSWER_BY_VOICE = "You can answer a question by voice too: say “allow”
 /** The organisation's switches that say more than "managed" under the modes: actions off, or every action asked. */
 export interface OrgSwitches { actionsOff?: boolean; everyAction?: boolean }
 
-export function approvalsNote(state: ApprovalsState | null, managed: boolean, elevated: "administrator" | "maybe-administrator" | "root" | null = null, org: OrgSwitches = {}): string {
+export function approvalsNote(state: ApprovalsState | null, managed: boolean, elevated: "administrator" | "maybe-administrator" | "root" | null = null, org: OrgSwitches = {}, hearing: HearingFacts | null = null): string {
+  const answer = answerByVoiceText(hearing);
   // A card that isn't agreed to as it reads now (a newer one, or none): its mode's row opens it again (modes-x9p-6).
   const unread = (m: ApprovalMode, inForce: ApprovalMode) => `${MODE_NAME[m]}'s card isn't agreed to as it reads now, so ${MODE_NAME[inForce]} is in use: choose ${MODE_NAME[m]} to read it.`;
   const base = managed || state?.why === "organisation" ? `Managed by your organisation: ${org.actionsOff ? "Ember doesn't act in your apps" : org.everyAction ? "Ember asks before every action" : ASKS_BEFORE}.`
     : !state ? ""
     : state.why === "not-recorded" ? `Ember couldn't save or record your choice, so it isn't in use: ${ASKS_BEFORE}. Choose it again to try once more.`
     : state.inForce === "asking" ? `Until you agree to ${MODE_NAME.interactive}, ${ASKS_BEFORE}.`
-    : state.why === "cap" && state.cap && modeRank(state.inForce) < modeRank(state.cap) ? `Your organisation allows ${MODE_NAME[state.cap]} at most, and ${unread(state.cap, state.inForce)} ${ANSWER_BY_VOICE}`
-    : state.why === "cap" ? `Your organisation allows ${MODE_NAME[state.cap ?? state.inForce]} at most, so ${MODE_NAME[state.inForce]} is in use. ${ANSWER_BY_VOICE}`
-    : state.why === "check-off" ? `${CHECK_OFF_TEXT}, so ${MODE_NAME[state.inForce]} is in use. ${ANSWER_BY_VOICE}`
-    : state.why === "card" && modeRank(state.chosen) > modeRank(state.inForce) ? `${unread(state.chosen, state.inForce)} ${ANSWER_BY_VOICE}`
-    : state.why ? `${MODE_NAME[state.inForce]} is in use. ${ANSWER_BY_VOICE}`
-    : state.inForce === "autopilot" ? `${AUTOPILOT_ON} ${ANSWER_BY_VOICE}`
-    : ANSWER_BY_VOICE;
+    : state.why === "cap" && state.cap && modeRank(state.inForce) < modeRank(state.cap) ? `Your organisation allows ${MODE_NAME[state.cap]} at most, and ${unread(state.cap, state.inForce)} ${answer}`
+    : state.why === "cap" ? `Your organisation allows ${MODE_NAME[state.cap ?? state.inForce]} at most, so ${MODE_NAME[state.inForce]} is in use. ${answer}`
+    : state.why === "check-off" ? `${CHECK_OFF_TEXT}, so ${MODE_NAME[state.inForce]} is in use. ${answer}`
+    : state.why === "card" && modeRank(state.chosen) > modeRank(state.inForce) ? `${unread(state.chosen, state.inForce)} ${answer}`
+    : state.why ? `${MODE_NAME[state.inForce]} is in use. ${answer}`
+    : state.inForce === "autopilot" ? `${AUTOPILOT_ON} ${answer}`
+    : answer;
   if (!base) return base;
   // A row the organisation locks without it being the mode chosen says why here too (the note describes the rows).
   const below = managed || state?.why === "organisation";
@@ -1105,7 +1122,7 @@ export function approvalsNote(state: ApprovalsState | null, managed: boolean, el
     : state.cap && (state.why !== "cap" || state.inForce === "asking") && state.offered.some(m => modeRank(m) > modeRank(state.cap)) ? ` Your organisation allows ${MODE_NAME[state.cap]} at most.` : "";
   // That the mode in force lasts only until Ember closes goes before how to answer by voice, beside what is on.
   const kept = below || !state ? "" : sealKeptLine(state);
-  const told = kept && base.includes(ANSWER_BY_VOICE) ? base.replace(ANSWER_BY_VOICE, `${kept} ${ANSWER_BY_VOICE}`) : kept ? `${base} ${kept}` : base;
+  const told = kept && base.includes(answer) ? base.replace(answer, `${kept} ${answer}`) : kept ? `${base} ${kept}` : base;
   const said = `${below || !state ? "" : sealStartLine(state)}${told}${lockedRow}`;
   // Autopilot doesn't ask for that (commands/autopilot.ts autopilotAsks: root is no reason to ask there): say what
   // happens instead (modes-x9p-1).
@@ -1161,7 +1178,7 @@ export interface ModeRowView { mode: ApprovalMode; name: string; line: string; c
  * and the card to show ready to agree, which is Interactive's while no mode is in force and nothing but its agreement
  * is missing. `managed`: as approvalsNote. Before main's state has come, the rows show unmarked and nothing is offered.
  */
-export function approvalsView(state: ApprovalsState | null, managed: boolean, elevated: "administrator" | "maybe-administrator" | "root" | null = null, org: OrgSwitches = {}): { rows: ModeRowView[]; note: string; card: ApprovalMode | null; inForce: ApprovalMode | null } {
+export function approvalsView(state: ApprovalsState | null, managed: boolean, elevated: "administrator" | "maybe-administrator" | "root" | null = null, org: OrgSwitches = {}, hearing: HearingFacts | null = null): { rows: ModeRowView[]; note: string; card: ApprovalMode | null; inForce: ApprovalMode | null } {
   const below = managed || state?.why === "organisation";
   const inForce = !state || below || state.inForce === "asking" ? null : state.inForce;
   const offered = APPROVAL_MODES.filter(m => (state?.offered ?? ["interactive"]).includes(m) && MODE_LINE[m] !== undefined);
@@ -1171,7 +1188,7 @@ export function approvalsView(state: ApprovalsState | null, managed: boolean, el
     return { mode, name: MODE_NAME[mode], line: MODE_LINE[mode] ?? "", checked: inForce === mode, locked, title: !locked ? "" : checkOff && !below ? CHECK_OFF_TEXT : "Managed by your organisation" };
   });
   const card = state && !below && state.inForce === "asking" && state.why !== "not-recorded" && rows.some(r => r.mode === "interactive" && !r.locked) ? "interactive" : null;
-  return { rows, note: approvalsNote(state, managed, elevated, org), card, inForce };
+  return { rows, note: approvalsNote(state, managed, elevated, org, hearing), card, inForce };
 }
 
 /**

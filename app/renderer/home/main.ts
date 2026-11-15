@@ -179,6 +179,8 @@ function applySettings(s: Settings): void {
     if (!on) c.rig.setEmotion("neutral");
   }
   if (!sliding && document.activeElement !== size) showSize(s.size);
+  // How Ember asks says whether a mode can be chosen by voice here, which follows Voice Match (integ-x-5).
+  renderApprovals();
   applyMemorySettings(s);
   applyRoutineSettings(s);
   applyUpdateSettings(s);
@@ -533,6 +535,7 @@ function renderPlatform(p: StatusPlatform | undefined): void {
   if (!platform) useAppNames(p.os);
   platform = p;
   for (const patch of homePatches(p)) applyPatch(patch);
+  renderApprovals();
   // Keep the voice choice available while platform capabilities are refreshed.
   renderNatural();
   if (updatesNow) renderUpdates(updatesNow);
@@ -2209,7 +2212,9 @@ function closeModeCard(focus: boolean): void {
   if (focus || held) (row && !row.disabled ? row : $("approvals-h")).focus();
 }
 function renderApprovals(): void {
-  const view = approvalsView(approvalsNow, managed.has("autonomy"), elevationOf(checksNow), { actionsOff, everyAction: confirmEvery });
+  // Whether a spoken mode switch can be taken here (integ-x-5): the facts spokenVersion reads, and Voice Match.
+  const hearing = platform && settings ? { checked: platform.speakerRejection === true && settings.voice.speakerRejection !== false, match: settings.voice.match === true } : null;
+  const view = approvalsView(approvalsNow, managed.has("autonomy"), elevationOf(checksNow), { actionsOff, everyAction: confirmEvery }, hearing);
   const group = $("approvals");
   // Drawn anew only when the modes offered change: a row under the pointer or the keyboard stays the one it was.
   if ([...group.children].map(c => (c as HTMLElement).dataset.mode).join() !== view.rows.map(r => r.mode).join()) {

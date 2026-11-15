@@ -11,7 +11,7 @@ import { ALL_SCOPES, covers, movingWords, type AutonomyScope, type AutonomyScope
 import { FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
 import { autonomousCommand } from "../../app/main/commands/flow";
 import type { CommandDecision } from "../../app/main/commands/types";
-import { ASSISTED_CONSENT_TEXT, AUTONOMY_CONSENT_TEXT, MODE_CARD_TEXT, approvalsNote, modeCard } from "../../app/renderer/home/copy";
+import { ASSISTED_CONSENT_TEXT, AUTONOMY_CONSENT_TEXT, MODE_CARD_TEXT, answerByVoiceText, approvalsNote, approvalsView, modeCard } from "../../app/renderer/home/copy";
 import { Worker, type WorkerDeps } from "../../app/main/agent/worker";
 import type { AxNode } from "../../app/main/perception/sidecar";
 import { Presenter } from "../../app/main/agent/presenter";
@@ -195,6 +195,19 @@ describe("Interactive's card (FEATURE_CONSENT_VERSION.autonomy, modes-A9)", () =
     expect(approvalsNote(inForce, false)).toBe("You can answer a question by voice too: say “allow” or “not now” once Ember has asked, or “Ember, allow” later. To change the mode by voice, say its name, such as “Ember, switch to Interactive”: one that asks less needs its card agreed to here first.");
     expect(approvalsNote(inForce, false)).not.toMatch(/with Voice Match on/);
     expect(approvalsNote(inForce, true)).toMatch(/^Managed by your organisation/);
+  });
+
+  it("says to choose a mode that asks less here where Ember takes no spoken words for it: unchecked speech without Voice Match (integ-x-5)", () => {
+    const inForce = { chosen: "interactive" as const, inForce: "interactive" as const, why: null, offered: ["interactive" as const, "assisted" as const], agreed: ["interactive" as const], cap: null };
+    const here = "You can answer a question by voice too: say “allow” or “not now” once Ember has asked, or “Ember, allow” later. To have Ember ask more often, say so, such as “Ember, ask me first again”. Choose a mode that asks less here: on this computer Ember can't be sure spoken words are yours unless Voice Match is on.";
+    // Windows and macOS, or Linux without the speakers' check (autonomy-intent.ts refuses the switch on unchecked words).
+    expect(approvalsNote(inForce, false, null, {}, { checked: false, match: false })).toBe(here);
+    expect(approvalsView(inForce, false, null, {}, { checked: false, match: false }).note).toBe(here);
+    expect(answerByVoiceText({ checked: false, match: false })).not.toMatch(/switch to/);
+    // Where the words are checked, or Voice Match can verify the owner's voice, the mode can still be said.
+    for (const hearing of [{ checked: true, match: false }, { checked: false, match: true }, null]) {
+      expect(approvalsNote(inForce, false, null, {}, hearing), JSON.stringify(hearing)).toMatch(/To change the mode by voice, say its name, such as “Ember, switch to Interactive”: one that asks less needs its card agreed to here first\.$/);
+    }
   });
 
   it("is true of what Interactive decides: the steps it names go ahead, the risky ones it lists ask (modes-A9)", () => {
