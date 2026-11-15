@@ -97,13 +97,21 @@ certify Windows 10/11 desktops even where kernel families overlap. The separate 
 hash-pinned, Microsoft-signed Process Monitor and publishes only this exact fixture PID/image's bounded operation,
 result and masked path fields; raw traces, details and unrelated process rows are deleted without upload.
 
-The own-PID trace at `2c31989d5d598fb1f7d329aa672eae90ceb54626`, run `43770802690`, captured 33 events for the
-Server 2025 fixture. It observed denied `RegOpenKey` operations at `HKLM\System\CurrentControlSet\Control\Nls\CodePage`,
-`HKLM\System\CurrentControlSet\Control\Session Manager` and twice at
-`HKLM\Software\Microsoft\Windows NT\CurrentVersion\Image File Execution Options`. These are candidate dependencies,
-not a demonstrated causal call stack for the child-creation failure. The same run's Server 2022 export contained no
-events and failed its positive control, so it supplies no registry evidence. Further stack export remains diagnostic;
-it does not authorize adding `registryRead`, modifying existing registry ACLs or bypassing process/security policy.
+The own-PID trace at `c6111b8c0d3c05d42747a878c3aa86661c2a3d26`, run `43772198110`, completed on both kernels.
+Its Server 2022 export contained 287 events, all for the exact fixture PID/image, and five selected denial stacks;
+Server 2025 contained 295 owned events and nine stacks. Both roots exited with fixture code 18. The canary file's
+denial was observed, alongside denied registry opens at Image File Execution Options, Session Manager's
+NamespaceSeparation/Memory Management keys and Safer's CodeIdentifiers policy key. Selected stacks contain the
+fixture's caller frames and kernel32, KernelBase and ntdll module/offset chains. No remote symbols were requested;
+exact internal function names are unresolved, and no single denied key is established as the sole cause of failure.
+
+The diagnostic's private PID/image PMC configuration reduces capture and applies the same filter before stack
+export. PMC is an experimental, reverse-engineered file format; independent PID/image publication checks and size
+bounds still apply if Procmon ignores it. Raw XML was bounded to 1.89/2.13 MB in that run and deleted with the other
+private trace files. The workflow remains failing because the underlying native descendant fixture fails, preserving
+the required success contract. This evidence does not authorize adding `registryRead`, modifying existing registry
+ACLs, bypassing process/security policy or enabling Windows coding. Inherited child environment behavior and the
+actual redirected temporary path/write remain unobserved until a fixture can reach those checks.
 
 This fixture does not run the pinned Copilot runtime, Node, a shell or a general toolchain. It has no credential broker,
 model transport or real provider authentication. Zero capabilities are configured and checked, but network connection,
