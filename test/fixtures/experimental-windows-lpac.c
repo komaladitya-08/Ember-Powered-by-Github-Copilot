@@ -49,9 +49,14 @@ static WCHAR descriptorText[MAX_CHARS];
 static ULONGLONG tokenBuffer[128];
 static ULONGLONG privilegeBuffer[128];
 static ULONGLONG defaultAclBuffer[256];
+static ULONGLONG parentSidBuffer[128];
+static ULONGLONG childSidBuffer[128];
 static DWORD report[12];
 static PSECURITY_DESCRIPTOR childSecurity;
 static SECURITY_ATTRIBUTES childAttributes;
+typedef LONG (WINAPI *LAST_NT_STATUS)(void);
+static LAST_NT_STATUS getLastNtStatus;
+static DWORD childNtStatus;
 static const BYTE workBytes[] = { 'l', 'p', 'a', 'c', '-', 'f', 'i', 'x', 't', 'u', 'r', 'e' };
 
 static DWORD lengthOf(const WCHAR *text)
@@ -174,9 +179,9 @@ cleanup:
 
 static void recordFailure(DWORD stage, DWORD error)
 {
-    DWORD diagnostic[24], written = 0, i, policy = 0;
+    DWORD diagnostic[25], written = 0, i, policy = 0;
     HANDLE file, probe;
-    for (i = 0; i < 24; i++) diagnostic[i] = 0;
+    for (i = 0; i < 25; i++) diagnostic[i] = 0;
     diagnostic[0] = stage; diagnostic[1] = error;
     for (i = 0; i < 12; i++) diagnostic[i + 2] = report[i];
     probe = CreateFileW(selfPath, GENERIC_READ | GENERIC_EXECUTE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
@@ -189,6 +194,7 @@ static void recordFailure(DWORD stage, DWORD error)
     if (GetProcessMitigationPolicy(GetCurrentProcess(), (PROCESS_MITIGATION_POLICY)13, &policy, sizeof(policy))) diagnostic[18] = policy;
     else { diagnostic[18] = MAXDWORD; diagnostic[19] = GetLastError(); }
     defaultDaclDiagnostic(diagnostic + 20);
+    diagnostic[24] = childNtStatus;
     if (!pathFor(statePath, L"\\failure.bin")) return;
     file = CreateFileW(filePath, GENERIC_WRITE, 0, NULL, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, NULL);
     if (file == INVALID_HANDLE_VALUE) return;
@@ -279,22 +285,58 @@ static BOOL processRightDenied(DWORD right, DWORD processId)
 
 static BOOL spawnChild(DWORD flags, PROCESS_INFORMATION *process, DWORD *error)
 {
-    STARTUPINFOW startup;
+    STARTUPINFOEXW startup;
+    SIZE_T bytes = 0;
+    DWORD policy = 1;
+    BOOL created;
     memset(&startup, 0, sizeof(startup));
     memset(process, 0, sizeof(*process));
-    startup.cb = sizeof(startup);
+    startup.StartupInfo.cb = sizeof(startup);
     commandLine[0] = 0;
     if (!append(commandLine, L"\"") || !append(commandLine, selfPath) || !append(commandLine, L"\" child")) {
         *error = ERROR_FILENAME_EXCED_RANGE;
         return FALSE;
     }
-    if (!CreateProcessW(selfPath, commandLine, &childAttributes, &childAttributes, FALSE, flags | CREATE_NO_WINDOW,
-                        NULL, NULL, &startup, process)) {
-        *error = GetLastError();
-        return FALSE;
+    if (InitializeProcThreadAttributeList(NULL, 1, 0, &bytes) || GetLastError() != ERROR_INSUFFICIENT_BUFFER
+        || bytes == 0 || bytes > 65536) { *error = ERROR_INVALID_DATA; return FALSE; }
+    startup.lpAttributeList = (LPPROC_THREAD_ATTRIBUTE_LIST)LocalAlloc(LPTR, bytes);
+    if (startup.lpAttributeList == NULL) { *error = ERROR_NOT_ENOUGH_MEMORY; return FALSE; }
+    if (!InitializeProcThreadAttributeList(startup.lpAttributeList, 1, 0, &bytes)) {
+        *error = GetLastError(); LocalFree(startup.lpAttributeList); return FALSE;
     }
-    *error = ERROR_SUCCESS;
-    return TRUE;
+    /* Explicitly retain the stricter AAP opt-out. Capabilities and package identity still inherit unchanged. */
+    if (!UpdateProcThreadAttribute(startup.lpAttributeList, 0, (DWORD_PTR)0x2000f, &policy, sizeof(policy), NULL, NULL)) {
+        *error = GetLastError(); DeleteProcThreadAttributeList(startup.lpAttributeList); LocalFree(startup.lpAttributeList); return FALSE;
+    }
+    created = CreateProcessW(selfPath, commandLine, &childAttributes, &childAttributes, FALSE,
+                             flags | CREATE_NO_WINDOW | CREATE_SUSPENDED | EXTENDED_STARTUPINFO_PRESENT,
+                             NULL, NULL, &startup.StartupInfo, process);
+    *error = created ? ERROR_SUCCESS : GetLastError();
+    childNtStatus = created ? 0 : getLastNtStatus ? (DWORD)getLastNtStatus() : MAXDWORD;
+    DeleteProcThreadAttributeList(startup.lpAttributeList); LocalFree(startup.lpAttributeList);
+    return created;
+}
+
+/* The ordinary child must retain this exact package, zero capabilities and the AAP denial before its first instruction. */
+static BOOL confinedChild(HANDLE process)
+{
+    HANDLE parent = NULL, child = NULL;
+    DWORD bytes = 0;
+    BOOL result = FALSE;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &parent)
+        || !OpenProcessToken(process, TOKEN_QUERY | TOKEN_DUPLICATE, &child)) goto cleanup;
+    if (!tokenFlag(child, TOKEN_IS_APP_CONTAINER)
+        || !GetTokenInformation(parent, TOKEN_APP_CONTAINER_SID, parentSidBuffer, sizeof(parentSidBuffer), &bytes)
+        || !GetTokenInformation(child, TOKEN_APP_CONTAINER_SID, childSidBuffer, sizeof(childSidBuffer), &bytes)
+        || *(PSID *)parentSidBuffer == NULL || *(PSID *)childSidBuffer == NULL
+        || !EqualSid(*(PSID *)parentSidBuffer, *(PSID *)childSidBuffer)
+        || !GetTokenInformation(child, TOKEN_CAPABILITIES_CLASS, tokenBuffer, sizeof(tokenBuffer), &bytes)
+        || bytes < sizeof(DWORD) || *(DWORD *)tokenBuffer != 0) goto cleanup;
+    result = packageAccessWitness(child);
+cleanup:
+    if (child != NULL) CloseHandle(child);
+    if (parent != NULL) CloseHandle(parent);
+    return result;
 }
 
 static BOOL endUnexpectedChild(PROCESS_INFORMATION *process)
@@ -323,6 +365,7 @@ void __cdecl mainCRTStartup(void)
     }
     parent = hostPid();
     if (!parent || parent == GetCurrentProcessId()) ExitProcess(12);
+    getLastNtStatus = (LAST_NT_STATUS)GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "RtlGetLastNtStatus");
     count = GetModuleFileNameW(NULL, selfPath, MAX_CHARS);
     if (!count || count >= MAX_CHARS) ExitProcess(13);
     if (!environmentPath(L"EMBER_LPAC_STATE", statePath)
@@ -383,6 +426,8 @@ void __cdecl mainCRTStartup(void)
 
     if (!spawnChild(0, &child, &error)) { recordFailure(18, error); LocalFree(childSecurity); ExitProcess(18); }
     LocalFree(childSecurity); childSecurity = NULL; childAttributes.lpSecurityDescriptor = NULL;
+    if (!confinedChild(child.hProcess)) { recordFailure(27, GetLastError()); endUnexpectedChild(&child); ExitProcess(27); }
+    if (ResumeThread(child.hThread) != 1) { recordFailure(28, GetLastError()); endUnexpectedChild(&child); ExitProcess(28); }
     report[9] = child.dwProcessId;
     if (environmentPath(L"LOCALAPPDATA", localAppDataPath) && environmentPath(L"TEMP", tempPath)
         && writeTextReport(L"\\local-app-data-path.txt", localAppDataPath)

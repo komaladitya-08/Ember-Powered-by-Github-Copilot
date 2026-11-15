@@ -213,7 +213,15 @@ export function bindExperimentalWindowsLpacApi(koffi: Pick<typeof Koffi, "sizeof
     createJob() {
       const job = handle(fn.CreateJobObjectW(null, null), "CreateJobObjectW");
       const limits = Buffer.alloc(144); limits.writeUInt32LE(LPAC_KILL_ON_CLOSE, 16);
-      try { if (!fn.SetInformationJobObject(job, 9, limits, limits.length)) throw error("SetInformationJobObject"); return job; }
+      try {
+        if (!fn.SetInformationJobObject(job, 9, limits, limits.length)) throw error("SetInformationJobObject");
+        const observed = Buffer.alloc(144), ui = Buffer.alloc(4);
+        if (!fn.QueryInformationJobObject(job, 9, observed, observed.length, null) || !fn.QueryInformationJobObject(job, 4, ui, ui.length, null))
+          throw error("QueryInformationJobObject(initial limits)");
+        if (observed.readUInt32LE(16) !== LPAC_KILL_ON_CLOSE || observed.readUInt32LE(40) !== 0 || ui.readUInt32LE(0) !== 0)
+          throw new Error("The new private fixture job has unexpected limits.");
+        return job;
+      }
       catch (err) { close(job); throw err; }
     },
     createSuspended(profile, program, command, cwd, env) {
