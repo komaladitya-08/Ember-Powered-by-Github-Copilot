@@ -41,6 +41,7 @@ import { VAULT_FILE, VaultStore } from "../../app/main/vault/store";
 import type { OS } from "../../app/shared/shortcuts";
 import { leakyEmber } from "../fixtures/vault/ember";
 import { CANARY, FIELDS, REFRESH, TYPED_FIELD, box, canariesIn, fieldBounds, filesUnder } from "../fixtures/vault/leaky";
+import { canariesInRuntimeFile } from "../fixtures/vault/runtime-scan";
 
 type Msg = { role: string; content: unknown };
 type Reply = { text?: string; tool?: { name: string; args: Record<string, unknown> } };
@@ -130,7 +131,13 @@ describe("the canary test on the real runtime (vault-3)", () => {
     const tops = new Set(files.map(f => f.file.split(path.sep)[0]));
     expect(during.some(f => f.file.startsWith("copilot"))).toBe(true);
     for (const top of ["audit", "logs", "vault.json"]) expect(tops, top).toContain(top);
-    for (const f of files) expect(canariesIn(f.text), f.file).toEqual([]);
+    // The runtime's event UUIDs can randomly contain the four-digit canary. Only known UUID identity fields are
+    // excluded there; all user/model/tool payloads and every other file remain subject to the complete scan.
+    for (const f of files) {
+      const matches = canariesInRuntimeFile(f.file, f.text);
+      const context = matches.length ? f.text.match(/.{0,80}8642.{0,80}/g)?.slice(0, 3) : undefined;
+      expect(matches, `${f.file}${context ? `: synthetic security-code match context ${JSON.stringify(context)}` : ""}`).toEqual([]);
+    }
     const audited = files.filter(f => f.file.startsWith("audit")).flatMap(f => f.text.split("\n").filter(Boolean).map(l => JSON.parse(l) as Record<string, unknown>));
     expect(audited.filter(a => a.event === "action" && a.kind === "vault_fill" && a.ok === true).length).toBeGreaterThanOrEqual(FIELDS.length - 1);
     expect(e.app.state.clipboard).toBe(0);
