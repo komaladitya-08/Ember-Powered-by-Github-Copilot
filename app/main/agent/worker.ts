@@ -3397,6 +3397,9 @@ export class Worker {
       let said = false;
       const sayOnce = () => { if (!said) { said = true; this.goAhead(); } };
       const filled = await vault.use(kind, part, dest, async value => {
+        // The keyring may have taken its time (macOS asks it off the main thread, and may ask the person): a task
+        // stopped meanwhile says and fills nothing (codex-212-p1).
+        if (this.isOver) return { how: "stopped" as const };
         // Only now is the fill recorded and said: the entry opened, and this part of it is there.
         sayOnce();
         try {
@@ -3405,6 +3408,8 @@ export class Worker {
           const msg = err instanceof Error ? err.message : "";
           if (msg !== VAULT_FILL_UNAVAILABLE) return { how: "accessibility" as const, ok: false, error: msg === VAULT_FILL_NO_ANSWER ? "no answer" as const : "refused" as const };
         }
+        // Stopped while the helper was asked: no key is typed (codex-212-p1).
+        if (this.isOver) return { how: "stopped" as const };
         // The field takes no text by accessibility: typed as keys, under the borrow's own rules. Never pasted.
         letGo();
         return { how: "keys" as const, typed: await this.typeFromVault(id, node, element, part, value, context, record, () => this.vaultChanged(id, element, kind, part, dest)) };
@@ -3416,6 +3421,7 @@ export class Worker {
         return this.vaultRefused(element, reason, filled.why === "part" ? NO_SUCH_PART : NOTHING_FILLED);
       }
       const r = filled.result;
+      if (r.how === "stopped") return STOPPED();
       if (r.how === "keys") {
         // (withCursor recorded the step, with the borrow's own outcome.)
         return r.typed;

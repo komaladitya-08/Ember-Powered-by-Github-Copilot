@@ -64,6 +64,8 @@ interface Opts {
   mark?: (id: number) => Promise<void>;
   /** What a read with a picture says of the window's elements (default: as the harness's nodes), with a picture. */
   pictured?: () => AxNode[];
+  /** A keyring asked off the main thread (macOS's asyncKeyring), in place of the plain one. */
+  keyring?: Partial<SecretBox>;
 }
 
 async function worker(o: Opts = {}) {
@@ -84,7 +86,7 @@ async function worker(o: Opts = {}) {
   const log = { debug: note, info: note, warn: note, error: note, child() { return log; } } as unknown as Logger;
   const on = o.autopilot ?? (() => true);
   const allowed = o.vaultAllowed ?? (() => true);
-  const store = new VaultStore(path.join(dir, VAULT_FILE), box);
+  const store = o.keyring ? new VaultStore(path.join(dir, VAULT_FILE), { ...box, ...o.keyring }, { asyncKeyring: true }) : new VaultStore(path.join(dir, VAULT_FILE), box);
   for (const [kind, dest, values] of o.saved ?? []) expect((await store.add(kind, dest, values)).ok).toBe(true);
   const answers = [...(o.form ?? [])];
   const service: VaultService = new VaultService({
@@ -643,6 +645,48 @@ describe("fill_from_vault where the field takes no text by accessibility (vault-
     const short = await worker({ saved: [LOGIN], put: async () => ({ ok: true, took: false }) });
     await short.call("perceive_window", {});
     expect((await short.call("fill_from_vault", { id: 2, what: "password" })).textResultForLlm).toMatch(/didn't take all of what the vault holds/);
+  });
+});
+
+describe("fill_from_vault and Stop while the keyring is asked (codex-212-p1)", () => {
+  /** macOS's keyring, asked off the main thread: it answers only when the test lets it. */
+  const slowKeyring = () => {
+    const gate: { asked: boolean; answer: () => void } = { asked: false, answer: () => {} };
+    const keyring: Partial<SecretBox> = {
+      isAsyncEncryptionAvailable: async () => true,
+      encryptStringAsync: async s => box.encryptString(s),
+      decryptStringAsync: b => new Promise(r => { gate.asked = true; gate.answer = () => r({ result: box.decryptString(b), shouldReEncrypt: false }); }),
+    };
+    return { gate, keyring };
+  };
+  const until = async (ok: () => boolean) => { for (let i = 0; i < 200 && !ok(); i++) await new Promise(r => setTimeout(r, 2)); expect(ok()).toBe(true); };
+
+  it("fills nothing and announces nothing when the task is stopped while the keyring opens the entry, and the model is told it stopped (codex-212-p1)", async () => {
+    const { gate, keyring } = slowKeyring();
+    const h = await worker({ saved: [LOGIN], keyring });
+    await h.call("perceive_window", {});
+    const pending = h.call("fill_from_vault", { id: 2, what: "password" });
+    await until(() => gate.asked);
+    h.inner.stopNow();
+    gate.answer();
+    const r = await pending;
+    expect(r.resultType).toBe("denied");
+    expect(r.textResultForLlm).toBe("Stopped. Do nothing more.");
+    expect(h.put).toEqual([]);
+    expect(h.said).toEqual([]);
+    expect(h.state.borrows).toBe(0);
+    expect(h.actions()).toEqual([]);
+    expect(h.everything([r])).not.toContain(CANARY);
+  });
+
+  it("types no key when the task is stopped while the helper's own fill was being tried (codex-212-p1)", async () => {
+    const h = await worker({ saved: [LOGIN], put: async () => { h.inner.stopNow(); throw new Error(VAULT_FILL_UNAVAILABLE); } });
+    await h.call("perceive_window", {});
+    const r = await h.call("fill_from_vault", { id: 2, what: "password" });
+    expect(r.textResultForLlm).toBe("Stopped. Do nothing more.");
+    expect(h.put).toEqual([{ id: 2, text: CANARY, how: "accessibility" }]);
+    expect(h.state.borrows).toBe(0);
+    expect(h.hand).toEqual([]);
   });
 });
 
