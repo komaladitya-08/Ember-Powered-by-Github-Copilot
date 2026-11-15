@@ -62,7 +62,14 @@ describe.skipIf(!windows)("experimental LPAC real Windows enforcement", () => {
         `D:P(A;;FA;;;${api.ownerSid()})(A;;FA;;;SY)(A;;FR;;;AC)S:(ML;;NW;;;ME)`);
       expect(fs.readFileSync(path.join(fixture.paths.root, "all-app-packages.txt"), "utf8")).toBe("disposable LPAC canary");
       await fixture.launch([String(process.pid)]);
-      const observed = await report(path.join(fixture.paths.state, "report.bin"));
+      let observed: number[];
+      try { observed = await report(path.join(fixture.paths.state, "report.bin")); }
+      catch (error) {
+        let root = "not observed exited";
+        try { await fixture.waitRootExited(0); root = `exited with code 0x${fixture.exitCode().toString(16)}`; }
+        catch { /* Diagnostic only: root observation never releases results or bypasses Stop. */ }
+        throw new Error(`${error instanceof Error ? error.message : "The native report failed."} Root ${root}.`, { cause: error });
+      }
       expect(observed.slice(0, 9)).toEqual([1, 1, 1, 1, 1, 1, 1, 1, 1]);
       expect(observed[9]).toBeGreaterThan(0);
       expect(observed[10]).toBe(1);
