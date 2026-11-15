@@ -8872,7 +8872,7 @@
   {
    "cmd": "rm -r build",
    "words": "can you delete build/?",
-   "verdict": "announce",
+   "verdict": "ask",
    "classes": [
     "destroy"
    ]
@@ -8880,7 +8880,7 @@
   {
    "cmd": "rm -r build",
    "words": "I want to delete build/",
-   "verdict": "announce",
+   "verdict": "ask",
    "classes": [
     "destroy"
    ]
@@ -8888,7 +8888,7 @@
   {
    "cmd": "rm -r build",
    "words": "I need to delete build/",
-   "verdict": "announce",
+   "verdict": "ask",
    "classes": [
     "destroy"
    ]
@@ -8896,7 +8896,7 @@
   {
    "cmd": "rm -r build",
    "words": "I'd like to delete build/",
-   "verdict": "announce",
+   "verdict": "ask",
    "classes": [
     "destroy"
    ]
@@ -8944,7 +8944,7 @@
   {
    "cmd": "git push origin feature-x",
    "words": "commit and push feature-x to origin",
-   "verdict": "announce",
+   "verdict": "ask",
    "classes": [
     "publish"
    ]
@@ -8984,7 +8984,7 @@
   {
    "cmd": "rm -rf src/build",
    "words": "delete the src/build folder",
-   "verdict": "announce",
+   "verdict": "ask",
    "classes": [
     "destroy"
    ]
@@ -8992,7 +8992,7 @@
   {
    "cmd": "rm -rf packages/app/build",
    "words": "delete the build folder in packages/app",
-   "verdict": "announce",
+   "verdict": "ask",
    "classes": [
     "destroy"
    ]
@@ -9008,7 +9008,7 @@
   {
    "cmd": "rm ../build.log",
    "words": "delete ../build.log",
-   "verdict": "announce",
+   "verdict": "ask",
    "classes": [
     "destroy"
    ]
@@ -9024,7 +9024,7 @@
   {
    "cmd": "ls > out.txt",
    "words": "write the list to out.txt",
-   "verdict": "announce",
+   "verdict": "ask",
    "classes": [
     "destroy"
    ]
@@ -9064,7 +9064,7 @@
   {
    "cmd": "p4 submit -c 123",
    "words": "submit changelist 123",
-   "verdict": "announce",
+   "verdict": "ask",
    "classes": [
     "publish"
    ]
@@ -9080,7 +9080,7 @@
   {
    "cmd": "docker push myimg:latest",
    "words": "push the image myimg",
-   "verdict": "announce",
+   "verdict": "ask",
    "classes": [
     "publish"
    ]
@@ -9112,7 +9112,7 @@
   {
    "cmd": "pkill node",
    "words": "kill node",
-   "verdict": "announce",
+   "verdict": "ask",
    "classes": [
     "system"
    ]
@@ -9128,7 +9128,7 @@
   {
    "cmd": "git checkout -- a.ts",
    "words": "discard changes to a.ts",
-   "verdict": "announce",
+   "verdict": "ask",
    "classes": [
     "destroy"
    ]
@@ -9144,7 +9144,7 @@
   {
    "cmd": "scp notes.txt build-01:",
    "words": "copy notes.txt to build-01",
-   "verdict": "announce",
+   "verdict": "ask",
    "classes": [
     "publish"
    ]
@@ -10266,7 +10266,7 @@
   {
    "cmd": "yarn npm publish",
    "words": "publish this package to npm",
-   "verdict": "announce",
+   "verdict": "ask",
    "classes": [
     "publish"
    ],
@@ -16856,7 +16856,7 @@
   {
    "cmd": "rm -rf frontend/build",
    "words": "delete the build folder at the root of frontend/",
-   "verdict": "announce",
+   "verdict": "ask",
    "rules": [
     "posix.rm"
    ]
@@ -16864,7 +16864,7 @@
   {
    "cmd": "rm -rf build",
    "words": "delete the build folder at the root of the project",
-   "verdict": "announce",
+   "verdict": "ask",
    "rules": [
     "posix.rm"
    ]
@@ -18896,7 +18896,7 @@
   {
    "cmd": "rimraf build",
    "words": "delete the build folder",
-   "verdict": "announce",
+   "verdict": "ask",
    "rules": [
     "posix.rm"
    ]
@@ -18995,7 +18995,7 @@
   {
    "cmd": "rm -rf build",
    "words": "delete the build folder that production uses",
-   "verdict": "announce",
+   "verdict": "ask",
    "rules": [
     "posix.rm"
    ]
@@ -19051,7 +19051,7 @@
   {
    "cmd": "rm -rf build",
    "words": "delete the build folder before I commit",
-   "verdict": "announce",
+   "verdict": "ask",
    "rules": [
     "posix.rm"
    ]
@@ -19059,7 +19059,7 @@
   {
    "cmd": "rm -rf build",
    "words": "before committing, delete the build folder",
-   "verdict": "announce",
+   "verdict": "ask",
    "rules": [
     "posix.rm"
    ]
@@ -19075,7 +19075,7 @@
   {
    "cmd": "rm -rf build",
    "words": "I've backed up everything, delete build/",
-   "verdict": "announce",
+   "verdict": "ask",
    "rules": [
     "posix.rm"
    ]
@@ -19091,7 +19091,7 @@
   {
    "cmd": "rm -rf build",
    "words": "delete build/ as before",
-   "verdict": "announce",
+   "verdict": "ask",
    "rules": [
     "posix.rm"
    ]
@@ -19099,7 +19099,7 @@
   {
    "cmd": "rm -rf build",
    "words": "delete the build folder like before",
-   "verdict": "announce",
+   "verdict": "ask",
    "rules": [
     "posix.rm"
    ]
@@ -19123,7 +19123,7 @@
   {
    "cmd": "rm -rf build",
    "words": "delete the cache and build folders",
-   "verdict": "announce",
+   "verdict": "ask",
    "rules": [
     "posix.rm"
    ]
@@ -19139,7 +19139,7 @@
   {
    "cmd": "rm -rf build",
    "words": "delete the build/ folder",
-   "verdict": "announce",
+   "verdict": "ask",
    "rules": [
     "posix.rm"
    ]
@@ -19147,7 +19147,7 @@
   {
    "cmd": "rm -rf build",
    "words": "delete the folder build/",
-   "verdict": "announce",
+   "verdict": "ask",
    "rules": [
     "posix.rm"
    ]
@@ -19155,7 +19155,7 @@
   {
    "cmd": "rm -rf build",
    "words": "delete the build folder in proj",
-   "verdict": "announce",
+   "verdict": "ask",
    "rules": [
     "posix.rm"
    ]
@@ -19163,7 +19163,7 @@
   {
    "cmd": "rm -rf build",
    "words": "delete the proj build folder",
-   "verdict": "announce",
+   "verdict": "ask",
    "rules": [
     "posix.rm"
    ]
@@ -19179,7 +19179,7 @@
   {
    "cmd": "git reset --hard",
    "words": "reset hard",
-   "verdict": "announce"
+   "verdict": "ask"
   },
   {
    "cmd": "git push origin feature-x",
@@ -19194,7 +19194,7 @@
   {
    "cmd": "git branch -D old-ui",
    "words": "merge it then delete the branch old-ui",
-   "verdict": "announce"
+   "verdict": "ask"
   },
   {
    "cmd": "git branch -D old-ui",
@@ -19204,12 +19204,12 @@
   {
    "cmd": "git branch -D old-ui",
    "words": "delete the old branch old-ui",
-   "verdict": "announce"
+   "verdict": "ask"
   },
   {
    "cmd": "git stash drop",
    "words": "drop the stash",
-   "verdict": "announce"
+   "verdict": "ask"
   },
   {
    "cmd": "rm -rf node_modules",
@@ -19222,7 +19222,7 @@
   {
    "cmd": "rm -rf node_modules",
    "words": "delete the node_modules folder",
-   "verdict": "announce",
+   "verdict": "ask",
    "rules": [
     "posix.rm"
    ]
@@ -19230,7 +19230,7 @@
   {
    "cmd": "rm -rf .cache",
    "words": "delete the .cache folder",
-   "verdict": "announce",
+   "verdict": "ask",
    "rules": [
     "posix.rm"
    ]
@@ -19270,7 +19270,7 @@
   {
    "cmd": "rm -rf build",
    "words": "delete the build folder",
-   "verdict": "announce",
+   "verdict": "ask",
    "rules": [
     "posix.rm"
    ]
@@ -19326,7 +19326,7 @@
   {
    "cmd": "rm -rf build",
    "words": "delete the build folder on my laptop",
-   "verdict": "announce",
+   "verdict": "ask",
    "rules": [
     "posix.rm"
    ]
@@ -19398,7 +19398,7 @@
   {
    "cmd": "rm -rf build",
    "words": "delete the old build folder",
-   "verdict": "announce",
+   "verdict": "ask",
    "rules": [
     "posix.rm"
    ]
@@ -19406,7 +19406,7 @@
   {
    "cmd": "rm -rf build",
    "words": "delete the stale build folder",
-   "verdict": "announce",
+   "verdict": "ask",
    "rules": [
     "posix.rm"
    ]
@@ -19414,7 +19414,7 @@
   {
    "cmd": "rm -rf build",
    "words": "delete the whole build folder",
-   "verdict": "announce",
+   "verdict": "ask",
    "rules": [
     "posix.rm"
    ]
@@ -19422,7 +19422,7 @@
   {
    "cmd": "rm -rf build",
    "words": "delete the entire build folder",
-   "verdict": "announce",
+   "verdict": "ask",
    "rules": [
     "posix.rm"
    ]
@@ -19430,7 +19430,7 @@
   {
    "cmd": "rm -rf build",
    "words": "delete the generated build folder",
-   "verdict": "announce",
+   "verdict": "ask",
    "rules": [
     "posix.rm"
    ]
@@ -19438,7 +19438,7 @@
   {
    "cmd": "rm -rf build",
    "words": "delete the build folder now",
-   "verdict": "announce",
+   "verdict": "ask",
    "rules": [
     "posix.rm"
    ]
@@ -19446,7 +19446,7 @@
   {
    "cmd": "rm -rf build",
    "words": "please delete the build folder",
-   "verdict": "announce",
+   "verdict": "ask",
    "rules": [
     "posix.rm"
    ]
@@ -19470,7 +19470,7 @@
   {
    "cmd": "rm -rf build",
    "words": "delete the build directory",
-   "verdict": "announce",
+   "verdict": "ask",
    "rules": [
     "posix.rm"
    ]
@@ -19478,7 +19478,7 @@
   {
    "cmd": "rm -rf build",
    "words": "can you delete the build folder?",
-   "verdict": "announce",
+   "verdict": "ask",
    "rules": [
     "posix.rm"
    ]
@@ -19486,7 +19486,7 @@
   {
    "cmd": "rm -rf build",
    "words": "delete my build folder",
-   "verdict": "announce",
+   "verdict": "ask",
    "rules": [
     "posix.rm"
    ]
@@ -19526,7 +19526,7 @@
   {
    "cmd": "rm -rf staging/build",
    "words": "delete the staging build folder",
-   "verdict": "announce",
+   "verdict": "ask",
    "rules": [
     "posix.rm"
    ]
@@ -19614,7 +19614,7 @@
   {
    "cmd": "rm -rf build",
    "words": "delete the build folder and then rebuild",
-   "verdict": "announce",
+   "verdict": "ask",
    "rules": [
     "posix.rm"
    ]
@@ -19622,7 +19622,7 @@
   {
    "cmd": "rm -rf build",
    "words": "delete the build folder and rebuild",
-   "verdict": "announce",
+   "verdict": "ask",
    "rules": [
     "posix.rm"
    ]
@@ -19630,7 +19630,7 @@
   {
    "cmd": "rm -rf build",
    "words": "clean up the build folder",
-   "verdict": "announce",
+   "verdict": "ask",
    "rules": [
     "posix.rm"
    ]
@@ -19638,7 +19638,7 @@
   {
    "cmd": "rm -rf build",
    "words": "delete the build folder, then run the tests",
-   "verdict": "announce",
+   "verdict": "ask",
    "rules": [
     "posix.rm"
    ]
@@ -19646,7 +19646,7 @@
   {
    "cmd": "rm -rf dist",
    "words": "delete the dist folder",
-   "verdict": "announce",
+   "verdict": "ask",
    "rules": [
     "posix.rm"
    ]
@@ -19662,7 +19662,7 @@
   {
    "cmd": "rm notes.txt",
    "words": "delete notes.txt",
-   "verdict": "announce",
+   "verdict": "ask",
    "rules": [
     "posix.rm"
    ]
@@ -19670,7 +19670,7 @@
   {
    "cmd": "rm notes.txt",
    "words": "delete the old notes.txt",
-   "verdict": "announce",
+   "verdict": "ask",
    "rules": [
     "posix.rm"
    ]
@@ -19806,7 +19806,7 @@
   {
    "cmd": "rm -rf build",
    "words": "delete the empty build folder",
-   "verdict": "announce",
+   "verdict": "ask",
    "rules": [
     "posix.rm"
    ]
@@ -19814,7 +19814,7 @@
   {
    "cmd": "rm -rf build",
    "words": "delete the build folder here",
-   "verdict": "announce",
+   "verdict": "ask",
    "rules": [
     "posix.rm"
    ]
@@ -19822,7 +19822,7 @@
   {
    "cmd": "rm -rf build",
    "words": "delete the build folder in this project",
-   "verdict": "announce",
+   "verdict": "ask",
    "rules": [
     "posix.rm"
    ]
@@ -19838,7 +19838,7 @@
   {
    "cmd": "rm -rf build",
    "words": "delete the build folder before you do anything else",
-   "verdict": "announce",
+   "verdict": "ask",
    "rules": [
     "posix.rm"
    ]
@@ -20029,7 +20029,7 @@
   {
    "cmd": "rm -rf build",
    "words": "before building, delete the build folder",
-   "verdict": "announce",
+   "verdict": "ask",
    "rules": [
     "posix.rm"
    ]
@@ -20037,7 +20037,7 @@
   {
    "cmd": "rm -rf build",
    "words": "delete the build folder before you build",
-   "verdict": "announce",
+   "verdict": "ask",
    "rules": [
     "posix.rm"
    ]
@@ -20045,7 +20045,7 @@
   {
    "cmd": "rm -rf dist",
    "words": "before you build, delete the dist folder",
-   "verdict": "announce",
+   "verdict": "ask",
    "rules": [
     "posix.rm"
    ]
@@ -20101,7 +20101,7 @@
   {
    "cmd": "rm -rf build dist",
    "words": "delete the build and dist folders",
-   "verdict": "announce",
+   "verdict": "ask",
    "rules": [
     "posix.rm"
    ]
@@ -20109,7 +20109,7 @@
   {
    "cmd": "rm -rf build",
    "words": "delete build/ before you build",
-   "verdict": "announce",
+   "verdict": "ask",
    "rules": [
     "posix.rm"
    ]
@@ -20133,7 +20133,7 @@
   {
    "cmd": "rm -rf out",
    "words": "before you build, delete the out folder",
-   "verdict": "announce",
+   "verdict": "ask",
    "rules": [
     "posix.rm"
    ]
@@ -20141,7 +20141,7 @@
   {
    "cmd": "rm -rf build",
    "words": "delete the build folder, then build",
-   "verdict": "announce",
+   "verdict": "ask",
    "rules": [
     "posix.rm"
    ]
@@ -20596,7 +20596,7 @@
   {
    "cmd": "rm -rf node_modules",
    "words": "delete the node_modules folder before npm install",
-   "verdict": "announce",
+   "verdict": "ask",
    "rules": [
     "posix.rm"
    ]
@@ -20604,7 +20604,7 @@
   {
    "cmd": "rm -rf node_modules",
    "words": "delete the node_modules folder before running npm install",
-   "verdict": "announce",
+   "verdict": "ask",
    "rules": [
     "posix.rm"
    ]
@@ -20612,7 +20612,7 @@
   {
    "cmd": "rm -rf node_modules",
    "words": "delete node_modules/ before you run npm ci",
-   "verdict": "announce",
+   "verdict": "ask",
    "rules": [
     "posix.rm"
    ]
@@ -20620,7 +20620,7 @@
   {
    "cmd": "rm -rf build",
    "words": "delete the build folder before I run make",
-   "verdict": "announce",
+   "verdict": "ask",
    "rules": [
     "posix.rm"
    ]
@@ -20628,7 +20628,7 @@
   {
    "cmd": "rm -rf build",
    "words": "delete the build folder before we start",
-   "verdict": "announce",
+   "verdict": "ask",
    "rules": [
     "posix.rm"
    ]
@@ -20636,7 +20636,7 @@
   {
    "cmd": "rm -rf build",
    "words": "delete the build folder before we begin",
-   "verdict": "announce",
+   "verdict": "ask",
    "rules": [
     "posix.rm"
    ]
@@ -20644,7 +20644,7 @@
   {
    "cmd": "rm -rf build",
    "words": "delete the build folder before that",
-   "verdict": "announce",
+   "verdict": "ask",
    "rules": [
     "posix.rm"
    ]
@@ -20652,7 +20652,7 @@
   {
    "cmd": "rm -rf build",
    "words": "delete the build folder as we did before",
-   "verdict": "announce",
+   "verdict": "ask",
    "rules": [
     "posix.rm"
    ]
@@ -20660,7 +20660,7 @@
   {
    "cmd": "rm -rf build",
    "words": "delete the build folder like we did before",
-   "verdict": "announce",
+   "verdict": "ask",
    "rules": [
     "posix.rm"
    ]
@@ -20668,7 +20668,7 @@
   {
    "cmd": "rm -rf dist",
    "words": "delete the dist folder like we did before",
-   "verdict": "announce",
+   "verdict": "ask",
    "rules": [
     "posix.rm"
    ]
@@ -20676,7 +20676,7 @@
   {
    "cmd": "rm -rf build",
    "words": "delete the build folder before cargo build",
-   "verdict": "announce",
+   "verdict": "ask",
    "rules": [
     "posix.rm"
    ]
@@ -20684,7 +20684,7 @@
   {
    "cmd": "rm -rf build",
    "words": "delete the build folder before running make",
-   "verdict": "announce",
+   "verdict": "ask",
    "rules": [
     "posix.rm"
    ]
@@ -20740,7 +20740,7 @@
   {
    "cmd": "rm -rf build",
    "words": "before npm install, delete the build folder",
-   "verdict": "announce",
+   "verdict": "ask",
    "rules": [
     "posix.rm"
    ]
@@ -20753,7 +20753,7 @@
   {
    "cmd": "git reset --hard",
    "words": "reset hard before we start",
-   "verdict": "announce"
+   "verdict": "ask"
   },
   {
    "cmd": "rm -rf build",
@@ -20790,7 +20790,7 @@
   {
    "cmd": "rm -rf node_modules",
    "words": "delete the node_modules folder before npm install finishes",
-   "verdict": "announce",
+   "verdict": "ask",
    "rules": [
     "posix.rm"
    ]
@@ -20798,7 +20798,7 @@
   {
    "cmd": "rm -rf build",
    "words": "delete the build folder before running make install",
-   "verdict": "announce",
+   "verdict": "ask",
    "rules": [
     "posix.rm"
    ]
@@ -20806,7 +20806,7 @@
   {
    "cmd": "rm -rf build",
    "words": "delete the build folder before you run go test",
-   "verdict": "announce",
+   "verdict": "ask",
    "rules": [
     "posix.rm"
    ]
@@ -22892,7 +22892,7 @@
   },
   {
    "cmd": "frobnicate app:build",
-   "verdict": "announce",
+   "verdict": "ask",
    "rules": [
     "unknown.program"
    ],

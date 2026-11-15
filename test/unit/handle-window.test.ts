@@ -63,7 +63,7 @@ vi.mock("electron", () => {
   return {
     BrowserWindow,
     screen: {
-      getPrimaryDisplay: () => ({ id: 1, bounds: workArea, workArea }),
+      getPrimaryDisplay: () => ({ id: 1, bounds: workArea, workArea, workAreaSize: workArea }),
       on: (e: string, fn: () => void) => { screenHandlers.set(e, [...(screenHandlers.get(e) ?? []), fn]); },
       off: (e: string, fn: () => void) => { screenHandlers.set(e, (screenHandlers.get(e) ?? []).filter(f => f !== fn)); },
     },
@@ -138,7 +138,7 @@ describe("the handle window", () => {
       expect(cardWin.bounds.height).toBe(476);
       workArea.height = 300;
       card.fit(998);
-      expect(cardWin.bounds.height).toBe(360);
+      expect(cardWin.bounds.height).toBe(276);
     } finally { Object.assign(workArea, usual); }
   });
 

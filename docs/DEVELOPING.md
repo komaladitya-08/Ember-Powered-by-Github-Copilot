@@ -1211,11 +1211,10 @@ a wake carries is the speakers' where the recognizer reads it in what their stre
 now, and your own “Hey Ember, allow it.” over a video's talk is taken as before, 7 of 8). A request said without the
 name in a follow-up window while other sound plays, or in a follow-up or a conversation where nothing can tell, and one
 said after your “Hey Ember” and a pause while other sound is known to play (your own too: Ember can't tell your second
-breath over music from a video's, so a command you name then asks in Interactive, and memory doesn't keep it as yours;
+breath over music from a video's, so memory doesn't keep it as yours;
 say it in one breath with the name to have it count: r12-voice-x12-3), is heard and sent as ever (held for its rest
 too when it trails off, “…, um.”, with its mark: r12-voice-x12-1, r12-voice-x12-4), but never counts as your own words
-for a command (`heardOverSound`, `heardUnchecked`): a video's “Delete the old reports folder.” then asks in Interactive rather than
-being announced as you asked, and memory doesn't keep it as yours (voice-listening-r12-2). Assisted's check still reads
+for a command (`heardOverSound`, `heardUnchecked`): a video's “Delete the old reports folder.” doesn't count as your own words, and memory doesn't keep it as yours. Dangerous commands ask in Interactive even when you requested them (voice-listening-r12-2). Assisted's check still reads
 it, as it reads every unchecked spoken request, so it may still go ahead there when the check finds the step in it
 (r12-voice-x12-2). The first
 time something said then without the name isn't heard, the status line says “Music or a video is playing: say “Ember”
@@ -1930,7 +1929,7 @@ The vault (app/main/vault/, owner decision of 2026-11-12, PLAN.md §2 "Approvals
 details the user gives Ember in its own **Secure Form**, each bound to one destination.
 
 - **What it keeps.** Three kinds of entry (app/shared/vault.ts): a login (user name, password), a card (name on the
-  card, number, expiry, security code) and contact details (name, email, phone, address). A destination is one app, by
+  card, number, expiry) and contact details (name, email, phone, address); security codes are not requested. A destination is one app, by
   its program name folded (`vaultAppKey`: "Firefox", "firefox.desktop" and "firefox.exe" are one), or one site, by its
   origin (`siteOrigin`: scheme, host and port as the URL parser gives them, so a look-alike host is another site).
   One entry of a kind for a destination, 200 entries at most.
@@ -1995,11 +1994,9 @@ details the user gives Ember in its own **Secure Form**, each bound to one desti
   its month and year however written ("08/2029", "8/29", "2029-08"; never a part of a longer date), white space of
   any length (an address's lines joined by commas too) and, for the parts
   that aren't secret, any letter case; such a part is replaced only where it stands alone ("ada", never inside
-  "adamant"), a password or card number wherever it stands. A secret shorter than six characters (a card's security
-  code, a very short password) is not looked for in other text at all: a mark in place of three digits tells anyone
-  who knows the text around it which three they are, on any page for the rest of the run, so such a value is kept
-  by its field alone, which is secret from the fill on (never read, black in every picture); a page that repeats a
-  security code outside its field is not covered. Text cut short in the middle of a value
+  "adamant"), a password or card number wherever it stands. A secret shorter than six characters (including card
+  security codes) is refused before filling: a redaction mark could reveal it in predictable text. Existing entries
+  remain readable, but those values are never sent to a field. Users enter them after Ember stops working. Text cut short in the middle of a value
   before it gets there isn't recognised, so screen text is redacted whole before it is cut: every title, name and
   text quoted for a model goes through perception/elements.ts's quoting (`quoteUntrusted`, `serializeElements`,
   the worker's `list_windows` and a click's landing place, Assisted's description of a step), which main hands the
@@ -2025,7 +2022,7 @@ details the user gives Ember in its own **Secure Form**, each bound to one desti
   and task card show the person of their own screen (an element's name).
 - **The leak test.** test/unit/vault-leak.test.ts fills every kind of entry through the worker's real path, by
   accessibility and as keys, on each OS's keys and words, into a pretend app that repeats everything it is given
-  but the card's security code (test/fixtures/vault/), then looks for the canary values in everything a model is handed, the audit log, the
+  (test/fixtures/vault/). It checks that no security code reaches the app, then looks for the canary values in everything a model is handed, the audit log, the
   logs at debug level, settings.json, every other file in the data folder, Home's answers, the announcements and
   the clipboard, and checks every filled field is black in every picture. test/integration/vault-leak.test.ts does
   the same on the real runtime with the scripted model (its own record of every request; it runs anywhere), and

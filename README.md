@@ -243,9 +243,7 @@ has its own card that says what it means, and a mode is in use only once you agr
   It asks every time before anything risky: sending, posting, sharing, deleting, overwriting, paying, installing,
   signing out, changing security settings or answering a dialog's question. It asks before a dangerous command too:
   one that deletes, publishes, touches passwords or keys, changes the system or runs as an administrator, downloads
-  and runs code or would keep running after you stop it, and before code it can't read. If you asked for exactly that
-  command and it only deletes or overwrites data, publishes something or changes the system, and Ember isn't running
-  as an administrator, it tells you instead and gives you 4 seconds to stop it.
+  and runs code or would keep running after you stop it, and before code it can't read, even if you asked for it.
 - **Assisted** is Interactive with a check: before Ember asks, a lighter AI model reads the step against what you
   asked, in your own words. When it matches, Ember goes ahead and tells you, a risky step or a dangerous command
   included, a command as root or an administrator too, and an extension's tool that changes or sends something;
@@ -467,10 +465,10 @@ other side** in the handle's menu. The task cards go with it, and on Linux Ember
 The AI model never types or sees a password or a card number. In Autopilot, when a task comes to a
 sign-in, a card or a contact field, Ember asks you once in its own **Secure Form**, keeps what you give it in its
 vault on this computer (locked with your computer's keyring, and bound to that one app or site) and fills it in there
-itself from then on. It fills nothing in your computer's own password prompts, and nothing in any other mode.
+itself from then on. Card security codes and passwords shorter than six characters cannot be filled safely; enter them yourself after stopping all Ember tasks. It fills nothing in your computer's own password prompts, and nothing in any other mode.
 
-- What it filled is hidden from then on in everything Ember reads, sends to the model, logs and records, and blacked
-  out of its screenshots.
+- Ember redacts filled values from text it sends to the model or writes to logs and records, and hides recognised
+  instances in screenshots. It cannot recognise every transformation or a value drawn without accessibility information.
 - Once Ember has filled something, it uses no extension until you start it again: what an extension reads could
   hold what was filled.
 - **Settings › Apps & privacy › Vault** lists what is kept (never the values) with **Forget**; Sign out and Forget
@@ -488,13 +486,8 @@ it means.
 - **Commands** run in Ember's own **Ember commands** window, never in your terminal, where you can watch and stop
   them. Most run straight away; one Ember doesn't know runs too, after it names it and gives you 4 seconds to stop
   it. In Interactive, the default, Ember stops and asks before anything that deletes or overwrites data, pushes or
-  publishes anywhere, touches passwords or keys, changes the system, or downloads and runs code. When you asked for
-  exactly that yourself ("delete build/", "can you delete build/?", but not a question, a how-to or something already
-  done) and it only deletes or overwrites data, publishes something or changes the system, it says so and gives you 4
-  seconds to stop it instead; one that touches passwords or keys or downloads and runs code still asks. Assisted and
-  Autopilot ask less (**How Ember asks**, above). Asked for by voice, such a command asks instead on Windows, on
-  macOS and on Linux without parec, where Ember can't tell your voice from what your speakers play, and wherever you
-  said it without Ember's name while other sound plays. It reads a shell
+  publishes anywhere, touches passwords or keys, changes the system, or downloads and runs code, even if you asked for
+  it. Assisted and Autopilot ask less (**How Ember asks**, above). It reads a shell
   script before running it: in Interactive a script that does any of that asks, and so does one it can't read in full,
   as most real build and install scripts are. It never runs a command that would read or change its own safety
   settings, records or programs, or press keys in its own windows.

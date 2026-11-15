@@ -30,6 +30,19 @@ export function exportProjectText(destination: string, text: string, privateDir:
       live.size !== before.size || live.mtimeMs !== before.mtimeMs || live.ctimeMs !== before.ctimeMs : live !== null) {
       throw new ProjectInputError("The export destination changed. Export again to review the destination.");
     }
+    // String comparison alone misses aliases such as differently cased names on APFS. Check the actual file
+    // identities on both passes, including immediately before rename, as a selected path can change meanwhile.
+    if (live) for (const file of protectedFiles) {
+      let selected: fs.Stats;
+      try { selected = fs.statSync(file); }
+      catch (err) {
+        if ((err as NodeJS.ErrnoException).code === "ENOENT") continue;
+        throw new ProjectInputError("Could not check a selected project file. Export again after it is accessible.");
+      }
+      if (selected.dev === live.dev && selected.ino === live.ino) {
+        throw new ProjectInputError("Export to a different file. Selected project files are changed only by an approved patch.");
+      }
+    }
   };
   const temporary = path.join(parent, ".ember-export-" + crypto.randomUUID());
   try {

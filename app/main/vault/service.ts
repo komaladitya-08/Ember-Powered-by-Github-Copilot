@@ -12,11 +12,12 @@
 import type { Logger } from "../logger";
 import type { StopPart } from "../agent/killswitch";
 import {
-  VAULT_IPC, VAULT_KINDS, VAULT_PARTS, sameDestination, siteLabel, validDestination,
+  VAULT_IPC, VAULT_KINDS, VAULT_PARTS, checkNewValues, sameDestination, siteLabel, validDestination,
   type VaultDestination, type VaultEntryRow, type VaultHomeState, type VaultKind, type VaultPart,
 } from "../../shared/vault";
 import type { VaultAnswer, VaultFormController } from "./form";
 import type { VaultKept, VaultMeta, VaultStore } from "./store";
+import { canWatchVaultValue } from "./redact";
 
 /** The part of the store the service uses. */
 export type VaultStoreLike = Pick<VaultStore, "list" | "find" | "forget" | "forgetAll" | "canPersist" | "add" | "open"> & Partial<Pick<VaultStore, "unreadable" | "leftInPlace">>;
@@ -24,9 +25,10 @@ export type VaultStoreLike = Pick<VaultStore, "list" | "find" | "forget" | "forg
 /**
  * What using an entry came to: what `put` answered, or why nothing was handed to it. `off`: the vault can't be used now
  * (the organisation, the consent, the mode); `none`: no entry of that kind is bound there, or it couldn't be opened
- * (the keyring refused, the file was edited); `part`: the entry holds no such part (a login saved without a user name).
+ * (the keyring refused, the file was edited); `part`: the entry holds no such part (a login saved without a user name);
+ * `short`: the secret cannot be protected safely if repeated outside its field.
  */
-export type VaultUse<R> = { ok: true; result: R } | { ok: false; why: "off" | "none" | "part" };
+export type VaultUse<R> = { ok: true; result: R } | { ok: false; why: "off" | "none" | "part" | "short" };
 
 export interface VaultServiceOptions {
   store: VaultStoreLike;
@@ -46,7 +48,7 @@ export interface VaultServiceOptions {
    * A value is about to be handed to a field (use): the redactor notes it first (redact.ts), so nothing read back
    * after the fill reaches a model, the audit log or the logs. If it can't be noted, nothing is filled.
    */
-  filling?: (part: VaultPart, value: string) => void;
+  filling?: (part: VaultPart, value: string) => void | Promise<void>;
 }
 
 /**
@@ -141,7 +143,7 @@ export class VaultService {
    * Checked at this moment, so nothing is handed over once the organisation turned the vault off, the consent went or
    * Autopilot is no longer the mode in force. The entry's own destination, as sealed with it, must be `dest`.
    */
-  async use<R>(kind: VaultKind, part: VaultPart, dest: VaultDestination, put: (value: string) => Promise<R>): Promise<VaultUse<R>> {
+  async use<R>(kind: VaultKind, part: VaultPart, dest: VaultDestination, put: (value: string, current: () => boolean) => Promise<R>): Promise<VaultUse<R>> {
     if (!VAULT_KINDS.includes(kind) || !validDestination(dest) || !(VAULT_PARTS[kind] as readonly string[]).includes(part)) return { ok: false, why: "none" };
     if (!this.usable()) return { ok: false, why: "off" };
     const meta = this.o.store.find(kind, dest);
@@ -150,11 +152,20 @@ export class VaultService {
     // Checked again once the keyring answered (it may have asked the person), and what was opened is that entry.
     if (!this.usable()) return { ok: false, why: "off" };
     if (!opened || opened.meta.kind !== kind || !sameDestination(opened.meta.dest, dest)) return { ok: false, why: "none" };
+    // Security codes are always too short to redact safely, including when a newer entry does not store one.
+    if (part === "securityCode") return { ok: false, why: "short" };
     const value = opened.values[part];
     if (typeof value !== "string" || !value) return { ok: false, why: "part" };
+    if (!canWatchVaultValue(part, value)) return { ok: false, why: "short" };
     // Noted before it is on any screen. A redactor that can't take it means no fill (fail closed).
-    try { this.o.filling?.(part, value); } catch { return { ok: false, why: "off" }; }
-    const result = await put(value);
+    try { await this.o.filling?.(part, value); } catch { return { ok: false, why: "off" }; }
+    // A fallback may wait for focus or the pointer after opening the keyring. Bind it to the exact entry opened,
+    // rather than accepting a new entry saved for the same destination during that wait.
+    const current = () => {
+      try { return this.usable() && this.o.store.find(kind, dest)?.id === opened.meta.id; } catch { return false; }
+    };
+    if (!current()) return { ok: false, why: "none" };
+    const result = await put(value, current);
     this.o.log.info("vault.used", { kind, part, site: "site" in dest });
     return { ok: true, result };
   }
@@ -165,6 +176,7 @@ export class VaultService {
    */
   async keep(kind: VaultKind, dest: VaultDestination, values: unknown): Promise<VaultKept | { ok: false; why: "gone" }> {
     if (!this.usable()) return { ok: false, why: "gone" };
+    if (!checkNewValues(kind, values).ok) return { ok: false, why: "invalid" };
     const kept = await this.o.store.add(kind, dest, values);
     if (kept.ok) { this.o.log.info("vault.kept", { kind, site: "site" in dest }); this.o.changed?.(); }
     return kept;

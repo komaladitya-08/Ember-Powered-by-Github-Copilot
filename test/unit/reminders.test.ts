@@ -46,6 +46,28 @@ describe("reminderTime", () => {
     expect(reminderTime({}, NOW)).toMatch(/minutes or at/);
   });
 
+  it("does not silently move a nonexistent local time through a daylight-saving gap", () => {
+    // Run with TZ=America/New_York to exercise the transition on every platform that provides this timezone.
+    const gap = new Date(2026, 2, 8, 2, 30);
+    if (gap.getHours() !== 3) return;
+    const before = new Date(2026, 2, 8, 1, 0).getTime();
+    const after = new Date(2026, 2, 8, 3, 0).getTime();
+    expect(reminderTime({ at: "2:30" }, before)).toMatch(/does not exist/);
+    expect(reminderTime({ at: "2:30" }, after)).toBe(new Date(2026, 2, 9, 2, 30).getTime());
+    expect(reminderTime({ at: "2:30" }, new Date(2026, 2, 7, 3).getTime())).toMatch(/does not exist/);
+  });
+
+  it("chooses the next occurrence of a repeated local time instead of firing early", () => {
+    // America/New_York repeats 01:00 on 1 November 2026. Skip where that timezone isn't installed/selected.
+    const first = new Date(2026, 10, 1, 1, 30).getTime();
+    const second = first + 60 * 60_000;
+    if (new Date(second).getHours() !== 1 || new Date(second).getMinutes() !== 30) return;
+    expect(reminderTime({ at: "1:30" }, first - 15 * 60_000)).toBe(first);
+    expect(reminderTime({ at: "1:30" }, first + 15 * 60_000)).toBe(second);
+    expect(reminderTime({ at: "1:30" }, second - 15 * 60_000)).toBe(second);
+    expect(reminderTime({ at: "1:30" }, second + 15 * 60_000)).toBe(new Date(2026, 10, 2, 1, 30).getTime());
+  });
+
   it("says when it is due the way people do", () => {
     expect(whenWords(at(15, 30), NOW)).toMatch(/^today at 3:30/);
     expect(whenWords(at(9, 0, 1), NOW)).toMatch(/^tomorrow at 9:00/);
@@ -107,6 +129,61 @@ describe("Reminders", () => {
     vi.advanceTimersByTime(MAX_REMINDERS * 60_000 + 1);
     expect(due).toEqual([]);
   });
+
+  it("only confirms creation and cancellation after the durable write succeeds", () => {
+    let fail = true;
+    let saved: Reminder[] = [];
+    const r = new Reminders({ onDue: () => undefined, onChange: list => { if (fail) throw new Error("disk full"); saved = list; } });
+    expect(r.add("call Priya", NOW + 60_000, "remind me to call Priya")).toMatch(/Not set.*couldn't save/);
+    expect(r.list()).toEqual([]);
+    fail = false;
+    const item = r.add("call Priya", NOW + 60_000, "remind me to call Priya") as Reminder;
+    expect(saved).toEqual([item]);
+    fail = true;
+    expect(r.cancel(item.id)).toMatch(/Not cancelled.*couldn't save/);
+    expect(r.list()).toEqual([item]);
+    expect(saved).toEqual([item]);
+    fail = false;
+    expect(r.cancel(item.id)).toBe(true);
+    expect(saved).toEqual([]);
+  });
+
+  it("delivers a due reminder despite a failed write, warns, then retries saving its removal", () => {
+    let fail = false;
+    let saved: Reminder[] = [];
+    const due: Reminder[] = [];
+    const warning = vi.fn();
+    const r = new Reminders({ onDue: x => due.push(x), onPersistenceError: warning, onChange: list => { if (fail) throw new Error("disk full"); saved = list; } });
+    const item = r.add("call Priya", NOW + 60_000, "remind me to call Priya") as Reminder;
+    fail = true;
+    vi.advanceTimersByTime(60_000);
+    expect(due).toEqual([item]);
+    expect(warning).toHaveBeenCalledOnce();
+    expect(saved).toEqual([item]);
+    expect(r.list()).toEqual([]);
+    fail = false;
+    vi.advanceTimersByTime(60_000);
+    expect(saved).toEqual([]);
+    expect(due).toEqual([item]);
+  });
+
+  it("does not revive a cancelled retry after a subsequent saved edit or persistence is disabled", () => {
+    let fail = false;
+    let writes = 0;
+    const r = new Reminders({ onDue: () => undefined, onChange: () => { writes++; if (fail) throw new Error("disk full"); } });
+    r.add("call Priya", NOW + 60_000, "remind me to call Priya");
+    const waiting = r.add("stand up", NOW + 180_000, "remind me to stand up") as Reminder;
+    fail = true;
+    vi.advanceTimersByTime(60_000);
+    fail = false;
+    expect(r.change(waiting, null, () => { writes++; })).toBe(true);
+    const afterEdit = writes;
+    vi.advanceTimersByTime(60_000);
+    expect(writes).toBe(afterEdit);
+    r.setOnChange(null);
+    vi.advanceTimersByTime(120_000);
+    expect(writes).toBe(afterEdit);
+  });
 });
 
 describe("Reminders' ids and notifications (audit of the conversation features)", () => {
@@ -167,6 +244,17 @@ describe("the conductor's reminder tools", () => {
     expect(await handler(tools, "cancel_reminder")({ id: first.id })).toMatch(/^Cancelled/);
     expect(await handler(tools, "cancel_reminder")({ id: second.id })).toMatch(/^Cancelled/);
     expect(store.list()).toEqual([]);
+  });
+
+  it("tells the model when a durable cancellation fails instead of claiming success", async () => {
+    let fail = false;
+    const store = new Reminders({ onDue: () => undefined, onChange: () => { if (fail) throw new Error("disk full"); } });
+    const item = store.add("call Priya", Date.now() + 60_000, "remind me to call Priya") as Reminder;
+    const tools = conductorTools(settings, undefined, undefined, undefined, undefined, undefined, {}, undefined, { store, said: () => "cancel the reminder to call Priya" });
+    fail = true;
+    expect(await handler(tools, "cancel_reminder")({ id: item.id })).toMatch(/Not cancelled.*couldn't save/);
+    expect(store.list()).toEqual([item]);
+    store.clear();
   });
 
   it("does not let a saved routine's steps cancel a reminder without the user's current request", async () => {

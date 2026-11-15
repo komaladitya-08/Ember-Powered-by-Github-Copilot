@@ -48,11 +48,26 @@ export function reminderTime(a: { minutes?: number; at?: string }, now: number):
   const half = m[3]?.toLowerCase().replace(/\./g, "");
   if (half) { if (h < 1 || h > 12) return "That isn't a time of day."; h = (h % 12) + (half === "pm" ? 12 : 0); }
   if (h > 23 || min > 59) return "That isn't a time of day.";
-  const d = new Date(now);
-  d.setHours(h, min, 0, 0);
-  // Already past today: the same time tomorrow.
-  if (d.getTime() <= now) d.setDate(d.getDate() + 1);
-  return d.getTime();
+  const current = new Date(now);
+  // setHours picks the first occurrence of a repeated clock time and normalizes a nonexistent one forward.
+  const today = new Date(current.getFullYear(), current.getMonth(), current.getDate(), 12);
+  today.setHours(h, min, 0, 0);
+  if (today.getHours() === h && today.getMinutes() === min) {
+    if (today.getTime() > now) return today.getTime();
+    // During a fall-back transition there can be a second occurrence later today, even if the first is past.
+    // Search real minutes, not wall-clock arithmetic, so non-hour changes work too.
+    for (let ms = today.getTime() + 60_000; ms <= today.getTime() + 26 * 60 * 60_000; ms += 60_000) {
+      const candidate = new Date(ms);
+      if (candidate.getDate() !== current.getDate() || candidate.getMonth() !== current.getMonth() || candidate.getFullYear() !== current.getFullYear()) break;
+      if (ms > now && candidate.getHours() === h && candidate.getMinutes() === min) return ms;
+    }
+  } else if (h * 60 + min > current.getHours() * 60 + current.getMinutes()) {
+    return "That local time does not exist because the clock changes. Please choose another time.";
+  }
+  const tomorrow = new Date(current.getFullYear(), current.getMonth(), current.getDate() + 1, 12);
+  tomorrow.setHours(h, min, 0, 0);
+  if (tomorrow.getHours() !== h || tomorrow.getMinutes() !== min) return "That local time does not exist because the clock changes. Please choose another time.";
+  return tomorrow.getTime();
 }
 
 /**
@@ -77,6 +92,8 @@ export interface RemindersOptions {
   onDue: (r: Reminder) => void;
   /** The reminders waiting changed (one set, cancelled or due): routines keep them for the next run. */
   onChange?: (list: Reminder[]) => void;
+  /** A due reminder was delivered, but its removal could not yet be saved. */
+  onPersistenceError?: () => void;
   /** Local UI observes the live list independently of the optional persistence callback. */
   onList?: (list: Reminder[]) => void;
   now?: () => number;
@@ -88,6 +105,8 @@ export class Reminders {
   private items = new Map<string, { r: Reminder; timer: ReturnType<typeof setTimeout> }>();
   private readonly now: () => number;
   private readonly timers: { set: typeof setTimeout; clear: typeof clearTimeout };
+  private retry: ReturnType<typeof setTimeout> | undefined;
+  private persistenceReady = true;
 
   constructor(private o: RemindersOptions) {
     this.now = o.now ?? Date.now;
@@ -111,8 +130,9 @@ export class Reminders {
     let id = crypto.randomBytes(3).toString("hex");
     while (this.items.has(id)) id = crypto.randomBytes(3).toString("hex");
     const r: Reminder = { id, text: t, at: Math.max(at, now), created: now };
+    try { this.persist([...this.list(), r]); } catch { return "Not set: Ember couldn't save the reminder. Check storage and try again."; }
     this.items.set(r.id, { r, timer: this.arm(r, now) });
-    this.changed();
+    this.notifyList();
     return r;
   }
 
@@ -127,17 +147,42 @@ export class Reminders {
       const r: Reminder = { id: kept.id, text: kept.text, at: kept.at, created: kept.created, ...(kept.at < now ? { missed: true } : {}) };
       this.items.set(r.id, { r, timer: this.arm(r, now) });
     }
-    this.o.onList?.(this.list());
+    this.notifyList();
   }
 
   /** Where the list goes when it changes (null: nowhere, routines off). */
   setOnChange(fn: ((list: Reminder[]) => void) | null): void {
     this.o.onChange = fn ?? undefined;
+    if (!fn) this.cancelRetry();
   }
 
-  private changed(): void {
-    this.o.onChange?.(this.list());
-    this.notifyList();
+  /** Block all durable edits until an unreadable saved list has been restored. */
+  setPersistenceReady(ready: boolean): void { this.persistenceReady = ready; }
+
+  /** Reconcile an already restored list, retrying a failed write in the background. */
+  sync(): boolean {
+    try { this.persist(this.list()); return true; }
+    catch { this.retryPersistence(); return false; }
+  }
+
+  private cancelRetry(): void {
+    if (this.retry !== undefined) this.timers.clear(this.retry);
+    this.retry = undefined;
+  }
+
+  private persist(list: Reminder[]): void {
+    if (!this.persistenceReady) throw new Error("Reminders could not be restored");
+    this.o.onChange?.(list);
+    this.cancelRetry();
+  }
+
+  private retryPersistence(): void {
+    if (this.retry !== undefined || !this.o.onChange) return;
+    this.retry = this.timers.set(() => {
+      this.retry = undefined;
+      try { this.persist(this.list()); } catch { this.retryPersistence(); }
+    }, CHECK_MS);
+    (this.retry as { unref?: () => void }).unref?.();
   }
 
   /** A broken observer cannot undo a committed timer or falsely report that a durable edit failed. */
@@ -151,12 +196,13 @@ export class Reminders {
   }
 
   /** Cancels one by its id; false when there is none. */
-  cancel(id: string): boolean {
+  cancel(id: string): boolean | string {
     const i = this.items.get(id);
     if (!i) return false;
+    try { this.persist(this.list().filter(r => r.id !== id)); } catch { return "Not cancelled: Ember couldn't save the change. Check storage and try again."; }
     this.timers.clear(i.timer);
     this.items.delete(id);
-    this.changed();
+    this.notifyList();
     return true;
   }
 
@@ -167,12 +213,14 @@ export class Reminders {
   change(expected: Reminder, replacement: { text: string; at: number } | null, save: (next: Reminder[]) => void): boolean {
     const item = this.items.get(expected.id);
     if (!item || item.r.text !== expected.text || item.r.at !== expected.at || item.r.created !== expected.created) return false;
+    if (!this.persistenceReady) throw new Error("Reminders could not be restored");
     const text = replacement?.text.trim().replace(/\s+/g, " ") ?? "";
     if (replacement && (!text || text.length > MAX_TEXT || !Number.isSafeInteger(replacement.at)
       || replacement.at <= this.now() || replacement.at - this.now() > MAX_AHEAD_MS)) throw new Error("Choose reminder words and a future time within one week.");
     const updated = replacement ? { ...item.r, text, at: replacement.at } : null;
     const next = this.list().flatMap(r => r.id === expected.id ? updated ? [updated] : [] : [r]);
     save(next);
+    this.cancelRetry();
     this.timers.clear(item.timer);
     this.items.delete(expected.id);
     if (updated) this.items.set(updated.id, { r: updated, timer: this.arm(updated, this.now()) });
@@ -183,6 +231,7 @@ export class Reminders {
 
   /** Every reminder goes (sign-out, quit). */
   clear(): void {
+    this.cancelRetry();
     for (const i of this.items.values()) this.timers.clear(i.timer);
     this.items.clear();
     // Quit intentionally leaves the lasting reminders on disk; observers still need an empty live list.
@@ -203,7 +252,11 @@ export class Reminders {
     const now = this.now();
     if (now < i.r.at) { i.timer = this.arm(i.r, now); return; }
     this.items.delete(id);
-    this.changed();
+    try { this.persist(this.list()); } catch {
+      this.retryPersistence();
+      try { this.o.onPersistenceError?.(); } catch { /* A failed notice must never stop delivery. */ }
+    }
+    this.notifyList();
     this.o.onDue(i.r);
   }
 }

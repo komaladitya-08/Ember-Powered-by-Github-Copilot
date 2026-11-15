@@ -120,25 +120,45 @@ export class ProjectWorkspaceStore {
       throw err;
     }
     let bytes: Buffer;
+    let opened: fs.Stats;
     try {
-      const stat = fs.fstatSync(fd);
-      if (!stat.isFile() || stat.size > MAX_BYTES) throw new Error("Invalid workspace file");
-      bytes = Buffer.alloc(stat.size + 1);
-      if (fs.readSync(fd, bytes) !== stat.size) throw new Error("Workspace file changed");
-      bytes = bytes.subarray(0, stat.size);
+      opened = fs.fstatSync(fd);
+      if (!opened.isFile() || opened.size > MAX_BYTES) throw new Error("Invalid workspace file");
+      bytes = Buffer.alloc(opened.size + 1);
+      if (fs.readSync(fd, bytes) !== opened.size || !sameWorkspaceFile(opened, fs.fstatSync(fd))) throw new Error("Workspace file changed");
+      bytes = bytes.subarray(0, opened.size);
     } finally {
       fs.closeSync(fd);
     }
     await this.requireKeyring();
+    let text: string;
     try {
-      const text = this.asyncKeyring && this.box.decryptStringAsync
+      text = this.asyncKeyring && this.box.decryptStringAsync
         ? (await this.box.decryptStringAsync(bytes)).result : this.box.decryptString(bytes);
+    } catch {
+      // A locked or transiently unavailable keyring is indistinguishable from bad ciphertext. Keep the original in
+      // place so a later retry can recover it, rather than treating a keyring failure as damage.
+      throw new ProjectInputError("I couldn't decrypt your saved workspaces. Check your system keyring and try again; the saved file was left in place.");
+    }
+    try {
       return library.parse(JSON.parse(text));
     } catch {
-      // Damaged, or from a keyring that is gone: every action reads the library first, so left in place it could never be
-      // replaced or forgotten. Moved aside, not deleted, as memory does (memory/store.ts).
-      fs.renameSync(file, `${file}.broken`);
-      throw new ProjectInputError("I couldn't read your saved workspaces, so I set them aside. You can save new ones.");
+      // Preserve every corrupt library without replacing an earlier recovery copy. Recheck the opened file after the
+      // asynchronous keyring operation and before removing it, so a newer library isn't moved out of the way.
+      let live: fs.Stats;
+      try { live = fs.lstatSync(file); } catch { throw new ProjectInputError("The saved workspace file changed. Try again."); }
+      if (!sameWorkspaceFile(opened, live)) throw new ProjectInputError("The saved workspace file changed. Try again.");
+      let backup = `${file}.broken`;
+      try { fs.writeFileSync(backup, bytes, { flag: "wx", mode: 0o600, flush: true }); }
+      catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+        backup = `${file}.broken-${randomUUID()}`;
+        fs.writeFileSync(backup, bytes, { flag: "wx", mode: 0o600, flush: true });
+      }
+      try { live = fs.lstatSync(file); } catch { throw new ProjectInputError("The saved workspace file changed. Try again."); }
+      if (!sameWorkspaceFile(opened, live)) throw new ProjectInputError("The saved workspace file changed. Try again.");
+      fs.unlinkSync(file);
+      throw new ProjectInputError(`I couldn't read your saved workspaces, so I set them aside in ${path.basename(backup)} in Ember's data folder. You can save new ones.`);
     }
   }
 
@@ -168,4 +188,8 @@ export class ProjectWorkspaceStore {
       fs.rmSync(temporary, { force: true });
     }
   }
+}
+
+function sameWorkspaceFile(a: fs.Stats, b: fs.Stats): boolean {
+  return b.isFile() && a.dev === b.dev && a.ino === b.ino && a.size === b.size && a.mtimeMs === b.mtimeMs && a.ctimeMs === b.ctimeMs;
 }

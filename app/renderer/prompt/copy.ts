@@ -202,6 +202,17 @@ export function promptView(card: PromptCard): PromptView {
     }
     case "touch":
       return { title: ["Touch your security key"], body: [p("Touch your security key to connect to ", { v: card.host }, ".")], field: null, buttons: [cancel("Cancel", { isDefault: true })] };
+    case "clarification":
+      return {
+        title: ["Ember needs an answer"],
+        body: [{ kind: "quote", text: card.question }, p("Your answer goes to the connected model. Don't include passwords or other secrets.")],
+        field: card.allowFreeform ? { label: "Your answer", masked: false } : null,
+        buttons: [
+          ...(card.allowFreeform ? [ok("Send answer")] : []),
+          ...(card.choices ?? []).map((label, i) => ({ id: `choice:${i}`, label, primary: false, isDefault: false, armed: false })),
+          cancel(),
+        ],
+      };
     case "consent":
     case "consent-direct":
       // Click (or Tab and Space) only: Enter presses nothing on a consent card.
@@ -336,7 +347,7 @@ export const consentHashText = (c: { title: string; body: readonly string[] }): 
 /** What pressing a card's button does: cancel it, answer it, hash a consent card's text first, or nothing yet. */
 export type PressResult =
   | { kind: "cancel"; id: string }
-  | { kind: "answer"; answer: { id: string; ok: true; value?: string } }
+  | { kind: "answer"; answer: { id: string; ok: true; value?: string; choice?: number } }
   | { kind: "consent"; id: string; title: string; body: string[]; sha256: string }
   | { kind: "wait"; focusField: boolean };
 
@@ -360,6 +371,21 @@ export function pressResult(card: PromptCard, button: ButtonView, field: { value
     if (!value) return { kind: "wait", focusField: true };
     field.value = "";
     return { kind: "answer", answer: { id: card.id, ok: true, value } };
+  }
+  if (card.kind === "clarification") {
+    if (button.id.startsWith("choice:")) {
+      const i = Number(button.id.slice(7));
+      if (!Number.isInteger(i) || i < 0 || i >= (card.choices?.length ?? 0)) return { kind: "wait", focusField: false };
+      field.value = "";
+      return { kind: "answer", answer: { id: card.id, ok: true, value: card.choices![i], choice: i } };
+    }
+    if (button.id === "ok" && card.allowFreeform) {
+      const value = field.value.trim();
+      if (!value) return { kind: "wait", focusField: true };
+      field.value = "";
+      return { kind: "answer", answer: { id: card.id, ok: true, value } };
+    }
+    return { kind: "wait", focusField: false };
   }
   if (card.kind === "host-key") return { kind: "answer", answer: { id: card.id, ok: true } };
   return { kind: "cancel", id: card.id };

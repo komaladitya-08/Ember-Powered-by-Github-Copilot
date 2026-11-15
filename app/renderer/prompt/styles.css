@@ -41,7 +41,7 @@ body { background: var(--surface-0); font: var(--type-body); letter-spacing: -0.
 .notice { flex: none; margin: 0; padding: 0 16px 12px; font: var(--type-footnote); color: var(--label); }
 @media (forced-colors: active) { .risk { forced-color-adjust: none; color: CanvasText; background: Canvas; border: 1px solid CanvasText; } .btn.caution { border: 2px solid CanvasText; } }
 .hint { flex: none; margin: 0; font: var(--type-footnote); color: var(--label-2); }
-.buttons { flex: none; display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.buttons { flex: 0 1 auto; min-height: 0; overflow-y: auto; display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
 
 /* Windows contrast themes (forced colours; tokens and focus in ember.css): the field and the boxes keep their edges,
    and a character you wouldn't see keeps its box (its tint is gone). */

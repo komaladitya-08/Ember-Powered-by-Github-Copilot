@@ -217,20 +217,22 @@ function show(next: PromptCard | null): void {
   // and a host name or an SSH prompt never goes into a window title other programs read. The dialog is named by its h1.
   words.replaceChildren(...view.body.map(b => blockNode(b, legend)));
   words.scrollTop = 0;
-  $("legend").replaceChildren(...[...legend].map(l => el("p", "", l)));
-  $("legend").hidden = legend.size === 0;
   $("form").hidden = !view.field;
   if (view.field) {
     $("field-label").textContent = view.field.label;
     field.type = view.field.masked ? "password" : "text";
   }
   buttons = view.buttons.map(v => {
-    const b = el("button", v.primary && !view.risky ? "btn" : "btn quiet", v.label);
+    const b = el("button", v.primary && !view.risky ? "btn" : "btn quiet");
+    if (next.kind === "clarification" && v.id.startsWith("choice:")) b.append(...visible(v.label, legend));
+    else b.textContent = v.label;
     if (v.primary && view.risky) b.classList.add("caution");
     b.type = "button";
     b.addEventListener("click", e => { if (e.isTrusted) void press(v); });
     return { view: v, el: b };
   });
+  $("legend").replaceChildren(...[...legend].map(l => el("p", "", l)));
+  $("legend").hidden = legend.size === 0;
   // The affirmative button last (on the right), in reading and Tab order alike.
   $("buttons").replaceChildren(...[...buttons].reverse().map(b => b.el));
   judge();

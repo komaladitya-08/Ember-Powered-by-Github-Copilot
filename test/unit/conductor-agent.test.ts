@@ -25,4 +25,11 @@ describe("start_task's goal (review #149)", () => {
     const start = handler(conductorTools(settings, undefined, (g, t) => `started ${g.length} ${t}`, undefined, undefined, undefined, { caps: { commands: false, targets: true } }), "start_task");
     expect(await start({ goal: "y".repeat(3000), target: "build-01" })).toBe("started 3000 build-01");
   });
+
+  it("offers coding only when enabled and routes its goal without a model-chosen path", async () => {
+    expect(conductorTools(settings).map(t => t.name)).not.toContain("start_coding");
+    const start = handler(conductorTools(settings, undefined, undefined, undefined, undefined, undefined, {}, undefined, undefined, undefined, g => `coding ${g}`), "start_coding");
+    expect(await start({ goal: "fix the failing test", workspace: "/untrusted" })).toBe("coding fix the failing test");
+    expect(await start({ goal: "x" })).toMatch(/^Invalid arguments for start_coding/);
+  });
 });

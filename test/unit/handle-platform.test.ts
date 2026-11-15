@@ -21,7 +21,7 @@ vi.mock("electron", () => {
     destroy() {}
   }
   const workArea = { x: 0, y: 0, width: 1280, height: 800 };
-  return { BrowserWindow, screen: { getPrimaryDisplay: () => ({ id: 1, bounds: workArea, workArea }), on() {}, off() {} } };
+  return { BrowserWindow, screen: { getPrimaryDisplay: () => ({ id: 1, bounds: workArea, workArea, workAreaSize: workArea }), on() {}, off() {} } };
 });
 
 const { HandleWindow } = await import("../../app/main/handle");

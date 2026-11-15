@@ -453,7 +453,7 @@ describe("cleaning a run's kept output a pass at a time (merge review integ-y-2)
     const v = new VaultRedactor();
     v.note("user", CANARY.login.user);
     v.note("password", CANARY.login.password);
-    for (const [part, value] of Object.entries(CANARY.card)) v.note(part as VaultPart, value);
+    for (const [part, value] of Object.entries(CANARY.card)) if (part !== "securityCode") v.note(part as VaultPart, value);
     for (const [part, value] of Object.entries(CANARY.contact)) v.note(part as VaultPart, value);
     return v;
   };

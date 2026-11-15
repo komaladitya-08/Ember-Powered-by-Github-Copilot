@@ -93,7 +93,7 @@ jobs:
         run: |
           browser_path="$(command -v google-chrome || command -v chromium || command -v chromium-browser)"
           test -n "$browser_path"
-          EMBER_CHROMIUM_PATH="$browser_path" npm run test:integration -- test/integration/ask-renderer.test.ts test/integration/home-conversation-renderer.test.ts test/integration/home-streaming-renderer.test.ts test/integration/home-memory-renderer.test.ts test/integration/home-signout-forget-renderer.test.ts test/integration/home-mic-recipient-renderer.test.ts test/integration/home-speech-consent-renderer.test.ts test/integration/reminders-desk-renderer.test.ts test/integration/home-natural-voice-renderer.test.ts test/integration/home-first-run-renderer.test.ts test/integration/home-integrations-renderer.test.ts test/integration/home-panes-renderer.test.ts test/integration/home-status-race-renderer.test.ts test/integration/vault-form-renderer.test.ts test/integration/home-vault-renderer.test.ts
+          EMBER_CHROMIUM_PATH="$browser_path" npm run test:integration -- test/integration/ask-renderer.test.ts test/integration/prompt-clarification-renderer.test.ts test/integration/home-conversation-renderer.test.ts test/integration/home-streaming-renderer.test.ts test/integration/home-memory-renderer.test.ts test/integration/home-signout-forget-renderer.test.ts test/integration/home-mic-recipient-renderer.test.ts test/integration/home-speech-consent-renderer.test.ts test/integration/reminders-desk-renderer.test.ts test/integration/home-natural-voice-renderer.test.ts test/integration/home-first-run-renderer.test.ts test/integration/home-integrations-renderer.test.ts test/integration/home-panes-renderer.test.ts test/integration/home-status-race-renderer.test.ts test/integration/vault-form-renderer.test.ts test/integration/home-vault-renderer.test.ts
       - run: npm run build:lab
       - name: The built-in GitHub App client id starts a sign-in (GitHub answers with a device code, never printed)
         run: node scripts/check-client-id.mjs
@@ -1110,6 +1110,7 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: write
+      actions: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1117,6 +1118,11 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
+      - name: Require remote safety checks for this exact tag and commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EMBER_ARM64_RUNNER: ${{ vars.EMBER_ARM64_RUNNER }}
+        run: node scripts/package/release-gate.mjs remote "$GITHUB_REF_NAME" "$(git rev-parse HEAD)"
       - name: "Release files: ember-packages"
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -1152,7 +1158,14 @@ jobs:
       - name: Publish the release with its files and SHA256SUMS
         env:
           GH_TOKEN: ${{ github.token }}
+          EMBER_ARM64_RUNNER: ${{ vars.EMBER_ARM64_RUNNER }}
         run: |
+          set -euo pipefail
+          node scripts/package/release-gate.mjs remote "$GITHUB_REF_NAME" "$(git rev-parse HEAD)"
+          live_sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_REF_NAME" --jq .sha)
+          if [ "$live_sha" != "$(git rev-parse HEAD)" ]; then
+            echo "::error::The release tag moved after the checks"; exit 1
+          fi
           v="${GITHUB_REF_NAME#v}"
           gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag \
             --title "Ember $v" --notes-file dist/release-notes.md dist/release/*

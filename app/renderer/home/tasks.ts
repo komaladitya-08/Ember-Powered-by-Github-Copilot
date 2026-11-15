@@ -373,16 +373,6 @@ function tick(): void {
   }
 }
 
-/**
- * Where Home says a waiting question is answered, in view: a filter that hides the waiting task (Working, Ended) goes
- * back to All first. Null when no task waits.
- */
-export function revealAsking(): HTMLElement | null {
-  if (!latest.some(t => t.status === "waiting")) return null;
-  if (askingNote.hidden) { filter = "all"; render(given); }
-  return askingNote.hidden ? null : askingNote;
-}
-
 /** Starts Task activity: the list now, and again whenever main pushes it. `onChange` hears every list (the status panel). */
 export function startTasks(onChange?: (tasks: TaskEntry[]) => void): void {
   if (onChange) listeners = [...listeners, onChange];

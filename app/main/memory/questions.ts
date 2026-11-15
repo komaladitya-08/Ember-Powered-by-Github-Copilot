@@ -741,8 +741,6 @@ export function forgetReply(why: MemoryNotNow): { text: string; open: boolean } 
 
 /** What Ember says to "forget…" while memory is off; Settings › Memory opens at its list. */
 export const FORGET_OFF = forgetReply("off").text;
-/** And to "forget…" while the organisation has turned memory off. */
-export const FORGET_MANAGED = forgetReply("managed").text;
 /** "Get to know me" while memory.json can't be read: no interview whose answers couldn't be kept (memory-r7-1). */
 export const MEMORY_UNREADABLE = "I can't read my saved memory right now, so I can't keep what you tell me until I start again.";
 /** And to "get to know me" while memory waits for its updated note to be reviewed (memory-r4). */

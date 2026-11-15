@@ -44,6 +44,7 @@ function wiring() {
     const signInAbort = { abort() {} }, keeper = { use() {} }, tokens = { clear() {} }, providers = { forget() {} }, refusedTokens = new Set();
     const conversationNow = (entries = []) => entries;
     const forgetProject = () => {};
+    const forgetCurrentCoding = async () => undefined;
     const forgetSessionWords = () => {};
     const vault = { forgetAll: () => true };
     ${speech}

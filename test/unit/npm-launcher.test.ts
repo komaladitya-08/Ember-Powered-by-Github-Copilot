@@ -1383,7 +1383,7 @@ describe(".github/workflows/npm.yml", () => {
   });
   it("can't write to the repository, and may mint an OIDC token for trusted publishing and provenance", () => {
     expect(wf).not.toMatch(/contents: write/);
-    expect(wf).toMatch(/permissions:\n {6}contents: read\n {6}id-token: write/);
+    expect(wf).toMatch(/permissions:\n {6}contents: read\n {6}actions: read\n {6}id-token: write/);
     expect(wf).toMatch(/npm install -g npm@(\d+)\.(\d+)/);
     const [, major, minor] = /npm install -g npm@(\d+)\.(\d+)/.exec(wf)!.map(Number);
     expect(major * 100 + minor).toBeGreaterThanOrEqual(1105);

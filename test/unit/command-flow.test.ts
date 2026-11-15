@@ -1863,11 +1863,11 @@ describe("a place that looks like a computer Ember doesn't know (the lead's ruli
       expect(h.announced, o.command).toEqual([]);
       expect(h.asked, o.command).toHaveLength(1);
     }
-    // The path in the folder named still announces.
+    // A path named exactly is dangerous too, so it still asks.
     const h = harness({ binding: LOCAL, words: "delete build/ in my-app", paths: there, state: { cwd: "/home/ana/my-app", downloaded: new Set<string>(), running: false } });
     await call(h, { target: "this computer", command: "rm -r build" });
-    expect(h.asked).toEqual([]);
-    expect(h.announced).toHaveLength(1);
+    expect(h.asked).toHaveLength(1);
+    expect(h.announced).toHaveLength(0);
   });
 
   it("leaves ordinary commands alone: they run anywhere", async () => {
@@ -1893,12 +1893,12 @@ describe("words heard where Ember can't tell the user from its speakers (review 
     expect(card.unasked).toBe(false);
   });
 
-  it("typed words still announce, and a task whose spoken words didn't name it still says the user didn't ask", async () => {
+  it("typed words still ask, and a task whose spoken words didn't name it still says the user didn't ask", async () => {
     setCommandJudge(null);
     const typed = harness({ binding: LOCAL, words: "delete build/", spoken: "delete build/\nand show me the logs" });
     await call(typed, { target: "this computer", command: "rm -r build" });
-    expect(typed.asked).toEqual([]);
-    expect(typed.windowAnnounce).toHaveLength(1);
+    expect(typed.asked).toHaveLength(1);
+    expect(typed.windowAnnounce).toHaveLength(0);
     const other = harness({ binding: LOCAL, words: "", spoken: "show me the logs", answers: ["deny"] });
     await call(other, { target: "this computer", command: "rm -r build" });
     const card = (other.asked[0].panel as { card: CommandCard }).card;
@@ -3749,12 +3749,12 @@ describe("a command that would ask, in Autopilot (autopilot.ts; modes-D2, modes-
       expect(h.starts[0].stamp).toMatchObject({ verdict: "announce", classes: ["destroy"], approval: null });
       expect(h.starts[0].stamp.rules).toEqual(expect.arrayContaining(["posix.rm", "autopilot"]));
       expect(h.starts[0].stamp.announced!.ageMs).toBeGreaterThanOrEqual(0);
-      // An announcement the user's own words asked for, outside Autopilot, says nothing of the kind.
+      // Outside Autopilot the same explicitly requested dangerous command asks.
       const own = harness({ words: "delete the build folder" });
       await call(own, { command: "rm -rf build" });
-      expect(own.starts[0].stamp).toMatchObject({ verdict: "announce", approval: null });
+      expect(own.starts[0].stamp.verdict).toBe("ask");
       expect(own.starts[0].stamp.announced).toBeUndefined();
-      expect(own.windowAnnounce[0].card.autopilot).toBeUndefined();
+      expect(own.asked).toHaveLength(1);
     });
 
     it.each([["secret.env"], ["path.secret"], ["in-script:secret.env"], ["service.unit", "secret.token-arg"]])("announces the remote's question where its rules say %s, keeping the output from the model (the owner's decision of 2026-11-14)", async (...rules) => {
@@ -3963,12 +3963,22 @@ describe("a command that would ask, in Autopilot (autopilot.ts; modes-D2, modes-
 });
 
 describe("live command permission revocation", () => {
+  it("does not run a reviewed command if Assisted is switched off during its countdown", async () => {
+    let assisted = true;
+    const h = harness({ binding: LOCAL, words: "delete the build folder", review: async () => ({ run: true, why: "requested", does: "Deletes build." }) });
+    h.ctx.reviewActive = () => assisted;
+    h.ctx.service.window.announce = async () => { assisted = false; return true; };
+    const result = await call(h, { target: "local", command: "rm -r build" });
+    expect(result.resultType).toBe("denied");
+    expect(h.starts).toHaveLength(0);
+  });
+
   it.each([LOCAL, WSL, REMOTE])("rechecks $id after a countdown, using the real classifier", async binding => {
     let on = true;
     const h = harness({ binding, words: "delete the build folder", cap: () => ({ state: on ? "on" : "off", askEvery: null }) });
     h.ctx.state.cwd = "/home/ana/proj";
     h.ctx.service.window.announce = async () => { on = false; return true; };
-    const r = await call(h, { target: binding.kind === "local" ? "local" : binding.label, command: "rm -r build" });
+    const r = await call(h, { target: binding.kind === "local" ? "local" : binding.label, command: "mystery-tool" });
     expect(r.resultType).toBe("denied");
     expect(h.starts).toHaveLength(0);
   });
@@ -4001,7 +4011,7 @@ describe("live command permission revocation", () => {
       } });
       h.ctx.state.cwd = "/home/ana/proj";
       h.ctx.service.window.announce = async () => { changed = true; return true; };
-      expect((await call(h, { target: "local", command: "rm -r build" })).resultType).toBe("denied");
+      expect((await call(h, { target: "local", command: "mystery-tool" })).resultType).toBe("denied");
       expect(h.starts).toHaveLength(0);
     }
   });
@@ -4217,8 +4227,8 @@ describe("a loop or an if that changes the folder, sets a variable or asks, as t
       expect(got.rules, command).toContain("posix.rm");
       expect(loopWords(got.rules), command).toBe(true);
     }
-    // Written out once, the user's words announce it as before.
-    expect(await judged("rm -rf build", "delete the build folder")).toMatchObject({ result: "success", asked: 0, announced: 1, ran: 1 });
+    // Written out once also asks, even when the user named it.
+    expect(await judged("rm -rf build", "delete the build folder")).toMatchObject({ result: "denied", asked: 1, announced: 0, ran: 0 });
   });
 
   it("asks with the loop's or the if's words before one sets a variable, whatever from (commands-b7-3)", async () => {

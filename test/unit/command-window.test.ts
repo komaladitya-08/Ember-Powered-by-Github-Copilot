@@ -1239,6 +1239,8 @@ describe("where the window comes up (review #272)", () => {
     const area = { x: 1920, y: 0, width: 1600, height: 900 };
     expect(placeOnDisplay({ x: 580, y: 300, width: 760, height: 480 }, area)).toEqual({ x: 2340, y: 210, width: 760, height: 480 });
     expect(placeOnDisplay({ x: 2000, y: 100, width: 760, height: 480 }, area)).toBeNull();
+    expect(placeOnDisplay({ x: 3000, y: 100, width: 760, height: 480 }, area)).toEqual({ x: 2760, y: 100, width: 760, height: 480 });
+    expect(placeOnDisplay({ x: -20, y: -10, width: 800, height: 600 }, { x: 0, y: 0, width: 640, height: 480 })).toEqual({ x: 0, y: 0, width: 640, height: 480 });
     expect(placeOnDisplay({ x: -3000, y: 0, width: 2000, height: 1200 }, { x: 0, y: 0, width: 1280, height: 720 })).toEqual({ x: 0, y: 0, width: 1280, height: 720 });
     // Negative coordinates are real displays (left of the primary on Windows and macOS).
     expect(placeOnDisplay({ x: 100, y: 100, width: 760, height: 480 }, { x: -1600, y: -200, width: 1600, height: 900 })).toEqual({ x: -1180, y: 10, width: 760, height: 480 });

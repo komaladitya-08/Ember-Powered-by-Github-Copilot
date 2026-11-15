@@ -140,6 +140,10 @@ export const IPC = {
   projectRunCommand: "project:run-command",
   projectWorkspace: "project:workspace",
   projectForgot: "project:forgot",
+  codingState: "coding:state",
+  codingChooseWorkspace: "coding:choose-workspace",
+  codingClearWorkspace: "coding:clear-workspace",
+  codingStateChanged: "coding:state-changed",
   /** Long-term memory (docs/MEMORY.md): what Ember remembers, and forgetting one fact or all of it. */
   memoryList: "memory:list",
   memoryChanged: "memory:changed",
@@ -456,6 +460,9 @@ export type ConversationContext =
   | { kind: "usage"; currentTokens: number; tokenLimit?: number }
   | { kind: "compacting" };
 
+/** Coding's independently authorised workspace; a branch can be unavailable for a non-Git folder. */
+export interface CodingWorkspaceState { folder: string | null; branch: string | null; running: boolean; available?: boolean; error?: string }
+
 export interface EmberHomeApi {
   getStatus(): Promise<Status>;
   updateSettings(patch: SettingsPatch): Promise<Settings>;
@@ -465,6 +472,10 @@ export interface EmberHomeApi {
   /** Reads the setup check again (Check again), a probe that waits between tries included; returns the new report. */
   recheckSetup(): Promise<EnvReport>;
   agentStatus(): Promise<AgentStatus>;
+  codingState(): Promise<CodingWorkspaceState>;
+  codingChooseWorkspace(): Promise<CodingWorkspaceState>;
+  codingClearWorkspace(): Promise<CodingWorkspaceState>;
+  onCodingState(fn: (s: CodingWorkspaceState) => void): () => void;
   projectPick(): Promise<ProjectSelection>;
   projectRemove(name: string): Promise<ProjectSelection>;
   projectExport(kind: "answer" | "diff"): Promise<{ message: string }>;

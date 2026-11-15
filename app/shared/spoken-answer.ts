@@ -70,6 +70,12 @@ export const SPOKEN_YES: ReadonlySet<string> = new Set([
   // "Accepted." weren't). None of them reads both ways; "You can" alone still isn't one.
   "you may go ahead", "you can go ahead", "i approve", "accepted", "go right ahead", "yes okay", "yeah okay", "sure okay",
   "yeah fine", "yes of course", "i agree",
+  // Everyday affirmative replies to the question currently waiting. Corrections, holds and questions remain separate.
+  "definitely", "certainly", "absolutely", "agreed", "by all means", "of course go ahead", "thanks go ahead", "just do it",
+  "hell yes", "keep going", "you bet", "roger that", "be my guest", "perfect", "sounds great", "okay then", "great",
+  "that works", "fair enough", "it's fine", "granted", "make it so", "alright then", "okay cool", "fine then",
+  "absolutely go ahead", "yes definitely", "sure go for it", "yeah that's fine", "totally do it", "of course go on",
+  "yes of course go ahead", "no problem go ahead", "no worries go ahead", "go on then", "just go ahead", "carry on", "yes please do it",
   // Misheard (Moonshine): "allow" as "aloud", "a loud", "a low" or "allowed"; "go ahead" as "go a head".
   "aloud", "a loud", "a low", "allowed", "yes aloud", "go a head", "yes go a head",
   // Longer ways to say it, so Voice Match has enough of the voice to vouch for it (match.ts APPROVAL_MIN_SECONDS).
@@ -165,7 +171,7 @@ const STOP_WORDS = new Set(["stop", "cancel", "abort", "halt"]);
 const NO_WORDS = new Set(["no", "not", "don't", "dont", "never", "nope", "nah"]);
 /** A hold, said whole ("Wait.", "Hang on a second."): the user hasn't answered yet (nearAnswer). */
 const HOLD = /^(?:(?:no|okay|ok|um|uh|oh|well|just|so)\s+)*(?:wait|hold on|hang on|one moment|one sec|one second|just a moment|just a second|give me a (?:moment|second|sec|minute))(?:\s+(?:a\s+)?(?:moment|second|sec|minute|please))*$/;
-/** The words of an assent that isn't a yes ("Okay then.", "Perfect.", "Sounds great.": nearAnswer). */
+/** Words that can form an assent: an unlisted combination is held as a near-miss. */
 const ASSENT = new Set(["okay", "ok", "alright", "all", "right", "great", "perfect", "cool", "nice", "awesome", "wonderful", "excellent", "good", "fine", "sounds", "works", "got", "it", "that's", "that", "then", "so", "oh", "well", "um", "uh", "very", "for", "me"]);
 const ASSENT_CORE = new Set(["okay", "ok", "alright", "right", "great", "perfect", "cool", "nice", "awesome", "wonderful", "excellent", "good", "fine", "works", "got"]);
 /**
@@ -197,7 +203,7 @@ const YES_LEADS = new Set(["yes", "yeah", "yep", "yup", "sure", "okay", "ok", "f
 /**
  * What makes a few words a request Ember can act on, not an answer: a verb of what it does, the words of main's own
  * requests ("Status.", "Once more.", "Catch me up.": status.ts), and what asks something. A short utterance with none of
- * these while a question waits is held as a near-miss by default ("Agreed.", "By all means.", "Be my guest.": an assent
+ * these while a question waits is held as a near-miss by default ("I think so.": an assent
  * that isn't on the list, never taken on a guess and never sent: r11-voice-x11-2), so a new way to say yes falls on the
  * safe side, and at worst a short request without such a word is held with the note.
  */
@@ -246,13 +252,13 @@ export function assentSound(text: string): boolean {
  * - up to six with a no word anywhere, or a no of more than one word ("leave it"), not asked as a question: "No, I
  *   don't want that.", "That's not what I meant.", "Leave it, I said." (voice-listening-r10-1, r10-voice-x10-1: they
  *   went to Copilot as a request while the question waited);
- * - a hold ("Wait.", "Hold on.") or an assent that isn't a yes ("Okay then.", "Perfect.", "Sounds great."), which
+ * - a hold ("Wait.", "Hold on.") or an assent that isn't a listed yes, which
  *   vanished as closers.
  * - up to six words that are all an answer's words, one of them saying so (ANSWER_WORDS, SAYS_SO): an everyday yes
- *   that isn't on the list ("Of course, go ahead.", "Just do it.", "Definitely."), which is never taken as one on a
+ *   that isn't on the list ("Yes, definitely."), which is never taken as one on a
  *   guess (voice-listening-r11-1).
  * - up to four words with nothing in them that asks Ember to do something or asks it something (REQUEST_WORDS, ASKS,
- *   TELLS): an assent that isn't on the list ("Agreed.", "By all means.", "You bet.", "Be my guest."), by name or not,
+ *   TELLS): an assent that isn't on the list ("I think so."), by name or not,
  *   held by default so a new way to say yes is never sent as a request (r11-voice-x11-2); a short request with no verb
  *   Ember knows is held so too, and the note says how to answer.
  * Said by name (`named`: the user called Ember in this speech), the first two only for a yes that leads ("Ember, yes,
@@ -296,7 +302,7 @@ export function nearAnswer(text: string, named = false): boolean {
   if (named && rest.length <= 4 && YES_LEADS.has(rest[0]) && !acts && !rest.some(w => CORRECTS.has(w))) return true;
   // By name, what holds a no and more is a correction or a report ("Ember, it's not loading."): a request.
   if (named && rest.some(w => NO_WORDS.has(w))) return false;
-  // Up to four words with no request in them, without the name ("Agreed.", "By all means.", "You bet."): an assent that
+  // Up to four words with no request in them, without the name ("I think so."): an assent that
   // isn't on the list, held by default rather than sent (r11-voice-x11-2); by name, what isn't an answer is a request
   // ("Hey Ember, kill the task.", "Hey Ember, dark mode.": r11-voice-y11-2). Courtesies and sounds alone ("Thanks.",
   // "Um.") aren't held, nor what tells of something ("I told you.": the room's talk goes nowhere in an answer window). A

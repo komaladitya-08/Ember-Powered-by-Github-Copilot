@@ -36,6 +36,7 @@ vi.mock("electron", () => ({
     on() { /* not what these tests look at */ }
   },
   // The command window lets a quit through its close guard (app's before-quit).
+  screen: { getPrimaryDisplay: () => ({ workAreaSize: { width: 1920, height: 1040 } }), on() {}, off() {} },
   Menu: {}, nativeTheme: { shouldUseDarkColors: true }, app: { on() { /* not what these tests look at */ }, removeListener() { /* nor this */ } },
 }));
 

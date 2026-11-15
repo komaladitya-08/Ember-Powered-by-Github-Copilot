@@ -60,7 +60,6 @@ export const LEGEND_MIXED = "Letters from another alphabet are underlined.";
 export const LEGEND_RTL = "Right-to-left text is shown in the order it runs.";
 /** Under a run that takes typing: where typing goes, how to paste there (review #264), and that Ember never sees it. */
 export const typingHintFor = (os: OS) => `Type here to answer the command; paste with ${os === "darwin" ? "Command+V" : "Ctrl+V"}. Ember never sees what you type.`;
-export const TYPING_HINT = typingHintFor("linux");
 export const NO_TYPING_HINT = "This command can't take typing here.";
 /** The question when the user closes the window while commands run (review #262): "A command is still running". */
 export function closeHeading(running: number): string {

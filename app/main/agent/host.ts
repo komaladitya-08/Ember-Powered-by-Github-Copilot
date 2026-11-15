@@ -26,7 +26,11 @@ import type { BubbleState, EmberState } from "../../shared/overlay";
 import type { ConversationContext } from "../../shared/ipc";
 import { TaskManager, handedElsewhere, taskOutcome, titleOf, type KeptCard, type RetriedWords, type StopCause, type Task, type WorkerLike } from "./tasks";
 import { redactingClient, type ModelRedactor } from "./redacting-client";
-import { CHECKING_STEP, LINUX_WORKER_SYSTEM, Worker, type TaskSpec, type WorkerDeps, type WorkerSystem, type WorkerVault } from "./worker";
+import { CHECKING_STEP, LINUX_WORKER_SYSTEM, Worker, type TaskSpec, type WorkerDeps, type WorkerResult, type WorkerSystem, type WorkerVault } from "./worker";
+import { CodingWorker } from "./coding-worker";
+import { CodingRetirement } from "./coding-retirement";
+import { MixedHandoffs } from "./mixed-handoff";
+import os from "node:os";
 import type { Confirmer } from "./confirm";
 import type { WindowTarget } from "../perception";
 import type { Bounds } from "../perception/sidecar";
@@ -73,6 +77,10 @@ import type { HistoryStore } from "./conversation-store";
 
 /** The words a task was refused for are known by these (userWordsOf adds a full stop to an earlier request). */
 const refusedKey = (l: string) => l.trim().replace(/\.$/, "");
+
+/** Native SDK file tools do not yet guard hardlink aliases to Ember's private data. */
+export const CODING_UNAVAILABLE = "Coding work is temporarily unavailable while its file-access protection is being completed. Desktop tasks still work.";
+export function codingAvailable(): boolean { return false; }
 
 /** The worker for a task its target can't take (the targets runtime said why): it ends at once with that, and no session is made. */
 const refusedWorker = (_spec: TaskSpec, why: string): WorkerLike => ({
@@ -199,6 +207,10 @@ export interface TranscriptEntry {
 const ACCOUNT_RETRY_MS: readonly number[] = [1000, 3000];
 
 export interface HostOptions {
+  /** An explicitly selected and consented coding workspace, or null. */
+  codingWorkspace?: () => { path: string; current(): boolean } | null;
+  onCodingRunning?: (running: boolean) => void;
+  codingClarify?: (request: { question: string; choices?: string[]; allowFreeform?: boolean }, signal: AbortSignal) => Promise<{ answer: string; wasFreeform: boolean } | null>;
   /**
    * The saved copy of the conversation (conversation-store.ts), used only while `enabled()` (settings `keepConversation`).
    * Restored lines are for the person to read: inert, never model context.
@@ -991,6 +1003,28 @@ const agrees = (reply: string, asked: string): boolean => {
 };
 
 export class AgentHost {
+  private readonly codingTasks = new Set<string>();
+  private readonly codingRetirement = new CodingRetirement();
+  private vaultFillHolds = 0;
+  private readonly mixedHandoffs = new MixedHandoffs<WorkerResult | null>();
+
+  /** A changed or withdrawn workspace invalidates queued and running coding work immediately. */
+  codingWorkspaceChanged(): void {
+    this.codingRetirement.retire();
+    this.mixedHandoffs.clear();
+    for (const id of this.codingTasks) this.tasks?.cancel(id);
+  }
+
+  /** Stop and fully dispose native coding sessions before a vault value can reach a field. */
+  async prepareForVaultFill(): Promise<boolean> {
+    this.vaultFillHolds++;
+    this.codingWorkspaceChanged();
+    if (!await this.codingRetirement.wait(5000)) { this.finishVaultFill(); return false; }
+    return true;
+  }
+
+  /** Release the start hold after the redactor has recorded the value or refused the fill. */
+  finishVaultFill(): void { this.vaultFillHolds = Math.max(0, this.vaultFillHolds - 1); }
   private projectModel: ((system: string, prompt: string, signal: AbortSignal, onFailure?: (f: ProjectModelFailure) => void) => Promise<string | null>) | null = null;
   /** The model service project requests go to, for the words of their errors. */
   private projectService: ServiceKind = false;
@@ -1295,7 +1329,14 @@ export class AgentHost {
    * The user's reminders (reminders.ts): set only from their own words, kept in memory only, and when one is due it is
    * shown in the bubble (main also says it and notifies): it never starts anything.
    */
-  readonly reminders = new Reminders({ onDue: r => this.reminderDue(r), onList: rows => this.o.onRemindersChanged?.(rows) });
+  readonly reminders = new Reminders({
+    onDue: r => this.reminderDue(r), onList: rows => this.o.onRemindersChanged?.(rows),
+    onPersistenceError: () => {
+      const text = "I couldn't save that a reminder was delivered. I'll retry; it may appear again after a restart. Check storage.";
+      this.remember("ember", text);
+      this.noticeBoard.post({ title: "Reminder storage", thought: text, actions: [], mood: "attention" }, { ms: 60_000, emotion: "curious" });
+    },
+  });
 
   private reminderDue(r: Reminder): void {
     this.o.log.info("agent.reminder_due", { late: Math.max(0, Date.now() - r.at) });
@@ -2192,7 +2233,7 @@ export class AgentHost {
       this.models = models;
       // Sessions of tasks from an earlier run (Ember crashed or was killed before it could delete them).
       // Housekeeping must not hold up the first answer: sweep alongside the session setup, not before it.
-      void this.sweepTaskSessions(client);
+      const sweepingTasks = this.sweepTaskSessions(client);
 
       const hands = this.o.hands;
       // Without a window system tasks still run where a target takes them (commands; SSH and WSL targets: §2.6), and
@@ -2205,7 +2246,7 @@ export class AgentHost {
         && this.o.admin?.().features.screenImages !== false && this.o.settings.get().screenImages !== false;
       const takesTasks = !!hands || (!!targets && this.targetsTakeTasks());
       const carried = this.handOn(service, takesTasks);
-      this.tasks = takesTasks ? new TaskManager({
+      this.tasks = (takesTasks || !!this.o.codingWorkspace) ? new TaskManager({
         log: this.o.log.child("tasks"),
         ...(this.o.readTime ? { readTime: this.o.readTime } : {}),
         ...(this.o.taskWindow ? { taskWindow: this.o.taskWindow } : {}),
@@ -2216,7 +2257,18 @@ export class AgentHost {
         deleteSession: id => client.deleteSession(id),
         audit: hands?.audit ?? this.o.taskBase?.audit,
         settingsKey: this.o.settingsKey ?? this.sys.shortcuts?.settings.label,
+        beforeFinish: task => {
+          const handoff = this.mixedHandoffs.finish(task.id, task.status, task.result);
+          if (handoff === "failed") this.o.log.warn("agent.mixed_handoff_failed", { id: task.id });
+          if ((handoff === "failed" || handoff === "skipped") && task.status === "done" && task.result) {
+            task.result.summary = `${task.result.summary} The next part didn't start because the task context changed or it couldn't be started.`.trim();
+          }
+          if (handoff === "skipped" && task.status === "failed" && task.result && !task.result.summary.includes("didn't start the desktop part")) {
+            task.result.summary = `${task.result.summary} The next part didn't start.`.trim();
+          }
+        },
         onFinished: task => {
+          if (this.codingTasks.delete(task.id)) this.o.onCodingRunning?.(this.codingTasks.size > 0);
           this.finishedLately = [...this.finishedLately.filter(t => t !== task && Date.now() - (t.finished ?? 0) <= CATCH_UP_MS), task].slice(-FINISHED_KEPT);
           // Copilot is to be reconnected once the tasks are done: this may have been the last one.
           if (this.reconnectAfterTasks) void Promise.resolve().then(() => { if (!this.tasksAtWork()) this.reconnectAfterTasks?.(); });
@@ -2280,6 +2332,34 @@ export class AgentHost {
           // The model service changed since this connection started: no task starts on the one before (a queued task, or
           // one a turn already under way asked for). Tasks running now finish where they started.
           if (this.providerMoved() || this.handing !== null) return refusedWorker(spec, PROVIDER_MOVED_TASK);
+          if (spec.codingWorkspace) {
+            if (!codingAvailable()) return refusedWorker(spec, CODING_UNAVAILABLE);
+            if (this.codingRetirement.blocked) return refusedWorker(spec, "A previous coding task is still stopping or could not be stopped safely.");
+            if (this.vaultFillHolds || this.o.redact?.active) return refusedWorker(spec, "Coding is unavailable after a vault fill until Ember restarts.");
+            const confirmer = this.confirmer;
+            if (!confirmer) return refusedWorker(spec, "Ember can't ask about coding permissions here.");
+            const worker = new CodingWorker(spec, {
+              runtime: { userData: this.o.userData, runtimePath: this.o.runtimePath, env },
+              ...(!provider && token ? { gitHubToken: token } : {}), model: this.status.workerModel, provider: provider?.config,
+              mode: () => modeInForce(this.o.settings.get().approvals, this.o.admin?.() ?? null),
+              onModeChange: notify => this.o.settings.onChange(notify),
+              confirmer, home: os.homedir(), os: this.sys.os, progress, clarify: this.o.codingClarify,
+              ember: async () => {
+                const local = targets?.handsFor("local");
+                if (local?.ok && local.hands.commands) return (await local.hands.commands.runner.facts()).ember;
+                return { paths: [this.o.userData], pids: this.o.emberPids?.() ?? [], names: /\bember\b/i };
+              },
+              beforeStart: () => sweepingTasks,
+              onRetiring: () => this.codingRetirement.retire(),
+              commandPolicy: () => {
+                const local = targets?.handsFor("local");
+                const cap = local?.ok ? local.hands.commands?.capability() : undefined;
+                return { state: cap?.state ?? "off", askEvery: !!cap?.askEvery || (local?.ok ? local.hands.commands?.userAskEvery() === true : false) };
+              },
+            });
+            this.codingRetirement.track(worker.disposed);
+            return worker;
+          }
           // The hands of the task's target now (its state may have changed while the task waited), or why it can't take
           // the task (it ends at once, saying so). Without a targets runtime (tests, the eval): this screen's, as before,
           // and only for a task on this computer: one bound elsewhere never runs on this screen's hands (fail closed).
@@ -2431,7 +2511,72 @@ export class AgentHost {
           if (why === "silent") this.lost(gen, reason, noAnswer(this.serviceKind()), words.noAnswerDetail, asked, runtime.cutOffStalled);
           else this.lost(gen, reason, full ? runtime.noWatchers : words.notAnswering, full ? noWatchersDetail : undefined, asked, runtime.cutOffStalled);
         },
-        startTask: tasks ? (goal, choice) => {
+        startCoding: tasks && this.o.codingWorkspace ? goal => {
+          if (!codingAvailable()) return CODING_UNAVAILABLE;
+          if (this.o.admin?.().features.actions === false) return "Your organisation has turned off Ember's actions. Tell the user.";
+          const r = this.turn;
+          if (!r) return "No user request belongs to this turn. Ask the user to repeat it.";
+          if (this.vaultFillHolds || this.o.redact?.active) return "Coding is unavailable after a vault fill until Ember restarts. Tell the user.";
+          const workspace = this.o.codingWorkspace?.();
+          if (!workspace || !workspace.current()) return "No coding workspace is selected. Ask the user to choose a folder in Home under Coding workspace, then ask again. Do not start a desktop task instead.";
+          const said = this.userWordsOf(r);
+          const t = tasks.start(goal, { target: {}, codingWorkspace: workspace, where: `in ${path.basename(workspace.path)}`, userWords: said.words, ...(said.checkWords !== undefined ? { checkWords: said.checkWords } : {}) });
+          if (t.status === "running" || t.status === "queued") {
+            this.codingTasks.add(t.id);
+            this.o.onCodingRunning?.(true);
+          }
+          touch(r, t.id);
+          if (t.status !== "running" && t.status !== "queued") return `Coding task ${t.id} could not start: ${t.result?.summary ?? "an error occurred"}. Tell the user.`;
+          return t.status === "queued" ? `Coding task ${t.id} is queued in the selected workspace. Tell the user it hasn't started yet.` : `Coding task ${t.id} started in the selected workspace. It has a task card and Stop. Tell the user you're on it.`;
+        } : undefined,
+        startMixed: tasks && takesTasks && this.o.codingWorkspace ? (first, firstGoal, secondGoal) => {
+          if (!codingAvailable()) return CODING_UNAVAILABLE;
+          if (this.o.admin?.().features.actions === false) return "Your organisation has turned off Ember's actions. Tell the user.";
+          const r = this.turn;
+          if (!r) return "No user request belongs to this turn. Ask the user to repeat it.";
+          if (this.vaultFillHolds || this.o.redact?.active) return "Coding is unavailable after a vault fill until Ember restarts. Tell the user.";
+          const workspace = this.o.codingWorkspace?.();
+          if (!workspace || !workspace.current()) return "Choose a folder in Home under Coding workspace, then ask again.";
+          const said = this.userWordsOf(r);
+          let binding: TargetBinding | undefined;
+          if (targets) {
+            const selected = targets.bind({ userWords: said.words ?? "" });
+            if (!selected.ok) return selected.why;
+            const hands = targets.handsFor(selected.binding.id);
+            if (!hands.ok) return hands.why;
+            binding = selected.binding;
+          }
+          const target = this.contextFor(r, binding);
+          const screen = r.screen.join("\n") || undefined;
+          const mode = modeInForce(this.o.settings.get().approvals, this.o.admin?.() ?? null);
+          const epoch = this.stopEpoch, generation = this.gen;
+          const current = () => this.tasks === tasks && this.gen === generation && this.stopEpoch === epoch && !this.vaultFillHolds && !this.o.redact?.active && workspace.current()
+            && this.o.admin?.().features.actions !== false && modeInForce(this.o.settings.get().approvals, this.o.admin?.() ?? null) === mode;
+          const start = (kind: "coding" | "desktop", goal: string, handoffSummary?: string, deferHandoff = false) => {
+            if (!current()) throw new Error("The task context changed.");
+            const t = tasks.start(goal, {
+              target: kind === "coding" ? {} : target, userWords: said.words, agreed: said.agreed, ...(handoffSummary ? { handoffSummary } : {}), ...(deferHandoff ? { deferHandoff: true as const } : {}),
+              ...(said.commandWords !== undefined ? { commandWords: said.commandWords } : {}),
+              ...(said.checkWords !== undefined ? { checkWords: said.checkWords } : {}),
+              ...(said.typedOnly ? { typedOnly: true } : {}),
+              ...(kind === "coding" ? { codingWorkspace: workspace, ...(first === "coding" ? { codingCompletion: true as const } : {}), where: `in ${path.basename(workspace.path)}` }
+                : { ...(screen ? { screen } : {}), ...(binding ? { targetId: binding.id, where: whereWords(binding) } : {}) }),
+            });
+            if (kind === "coding" && (t.status === "running" || t.status === "queued")) { this.codingTasks.add(t.id); this.o.onCodingRunning?.(true); }
+            if (kind === "desktop" && binding) this.taskBindings.set(t.id, binding);
+            if (r.verifiedAt !== undefined) this.o.voiceTrust?.grant(t.id, r.verifiedAt);
+            touch(r, t.id);
+            return t;
+          };
+          const t = start(first, firstGoal, undefined, true);
+          if (t.status !== "running" && t.status !== "queued") return `The first part could not start: ${t.result?.summary ?? "an error occurred"}. Tell the user.`;
+          this.mixedHandoffs.arm(t.id, current, result => {
+            const next = start(first === "coding" ? "desktop" : "coding", secondGoal, result?.summary);
+            if (next.status !== "running" && next.status !== "queued") throw new Error("The next part could not start.");
+          });
+          return `Task ${t.id} started. The second part will start after the first succeeds. Tell the user briefly.`;
+        } : undefined,
+        startTask: tasks && takesTasks ? (goal, choice) => {
           // With actions turned off by the administrator, Ember can still answer and guide, never act.
           if (this.o.admin?.().features.actions === false) return "Your organisation has turned off Ember acting in apps. Tell the user, and offer to show them how (show_me) instead.";
           // Risky steps are checked against what the user said in this turn's request (and the one it answers), not the
@@ -2778,7 +2923,7 @@ export class AgentHost {
 
   private async sweepTaskSessions(client: CopilotClient): Promise<void> {
     try {
-      const old = (await client.listSessions()).filter(m => /^ember-(?:task|project)-/.test(m.sessionId));
+      const old = (await client.listSessions()).filter(m => /^ember-(?:task|project|coding)-/.test(m.sessionId));
       await Promise.all(old.map(m => client.deleteSession(m.sessionId).catch(err => this.o.log.warn("agent.sweep_failed", { sessionId: m.sessionId, err }))));
       if (old.length) this.o.log.info("agent.swept_task_sessions", { count: old.length });
     } catch (err) {
@@ -3074,6 +3219,15 @@ export class AgentHost {
   private routinesOn = false;
   /** The kept reminders were put back this run (once: a reconnect doesn't put back what already fired). */
   private remindersRestored = false;
+  private reminderCleanupPending = false;
+  private reminderStorageWarning = false;
+
+  private warnReminderStorage(text: string): void {
+    if (this.reminderStorageWarning) return;
+    this.reminderStorageWarning = true;
+    this.remember("ember", text);
+    this.noticeBoard.post({ title: "Reminder storage", thought: text, actions: [], mood: "attention" }, { ms: 60_000, emotion: "curious" });
+  }
 
   /** Routines are on, agreed to, and allowed (settings.get() has the administrator's switch applied). */
   private routinesWanted(): boolean {
@@ -3087,23 +3241,51 @@ export class AgentHost {
    */
   private keepRoutines(): RoutineBook | undefined {
     const book = this.routinesWanted() ? this.o.routines : undefined;
+    const wasOn = this.routinesOn;
     this.routinesOn = !!book;
     if (!book) {
       this.reminders.setOnChange(null);
+      this.reminders.setPersistenceReady(true);
       // Turned off after this run's reminders were kept: the file lets go of them (they last in memory only now).
       // Left there, one told this run would be put back at the next start with routines on and told again, as missed.
-      if (this.remindersRestored && this.o.routines) {
-        this.remindersRestored = false;
-        try { this.o.routines.setReminders([]); } catch (err) { this.o.log.warn("agent.reminders_not_kept", { err }); }
+      if ((this.remindersRestored || wasOn || this.reminderCleanupPending) && this.o.routines) {
+        try { this.o.routines.setReminders([]); this.remindersRestored = false; this.reminderCleanupPending = false; this.reminderStorageWarning = false; }
+        catch (err) {
+          this.reminderCleanupPending = true;
+          this.o.log.warn("agent.reminders_not_kept", { err });
+          this.warnReminderStorage("I couldn't remove saved reminders from storage. They may return if routines are turned on again. Check storage.");
+        }
       }
       return undefined;
     }
+    this.reminders.setOnChange(list => {
+      try {
+        // Never overwrite unread reminders after a failed restore.
+        if (!this.remindersRestored || !this.routinesWanted()) throw new Error("Reminders are not available for saving");
+        book.setReminders(list);
+      } catch (err) { this.o.log.warn("agent.reminders_not_kept", { err }); throw err; }
+    });
     try {
-      if (!this.remindersRestored) { this.remindersRestored = true; this.reminders.restore(book.reminders()); }
-      this.reminders.setOnChange(list => { try { book.setReminders(list); } catch (err) { this.o.log.warn("agent.reminders_not_kept", { err }); } });
-      book.setReminders(this.reminders.list());
+      if (this.reminderCleanupPending) {
+        // Turning routines off requested removal of the saved list. Do not restore an unread stale list if the user
+        // turns routines back on before that removal succeeds; preserve any reminders still live in this run.
+        this.reminders.setPersistenceReady(false);
+        book.setReminders([]);
+        this.reminderCleanupPending = false;
+        this.remindersRestored = true;
+      }
+      if (!this.remindersRestored) {
+        this.reminders.setPersistenceReady(false);
+        this.reminders.restore(book.reminders());
+        this.remindersRestored = true;
+      }
+      this.reminders.setPersistenceReady(true);
+      if (!this.reminders.sync()) throw new Error("Reminder save failed");
+      this.reminderCleanupPending = false;
+      this.reminderStorageWarning = false;
     } catch (err) {
       this.o.log.warn("agent.routines_unreadable", { err });
+      this.warnReminderStorage("I couldn't restore or save reminders. Check storage; saved reminders may be unavailable or may return after a restart.");
     }
     return book;
   }
@@ -3704,6 +3886,7 @@ export class AgentHost {
   async forgetConversation(): Promise<void> {
     // (The start that follows sign-out replaces this connection anyway: the tasks ending here don't reconnect it.)
     this.reconnectAfterTasks = null;
+    const codingRetired = this.codingRetirement.wait(5000);
     this.tasks?.cancelAll();
     this.confirmer?.cancelAll();
     await this.tasks?.drain(2500);
@@ -3737,6 +3920,7 @@ export class AgentHost {
     // Everything else is done; the person is told if the saved copy is still there (sign-out shows the sentence as it is).
     const stuck = this.historyDeleteProblem();
     if (stuck) throw new Error(stuck);
+    if (!await codingRetired) throw new Error("Ember couldn't confirm that the coding runtime stopped. Coding remains unavailable.");
   }
 
   /**
@@ -3914,7 +4098,9 @@ export class AgentHost {
     this.keepCards = false;
     // Nothing keeps acting or asking once the brain goes away (sign-out, restart, quit). Cut off by a runtime
     // that stopped (or stopped answering), tasks end as failed.
+    const codingRetired = this.codingRetirement.wait(5000);
     this.tasks?.cancelAll(cutOff ?? undefined);
+    this.mixedHandoffs.clear();
     this.confirmer?.cancelAll();
     // First, while the runtime surely still runs (quitting doesn't wait long).
     if (forget) await this.forgetCurrent(2000);
@@ -3946,6 +4132,7 @@ export class AgentHost {
     const client = this.client;
     this.client = null;
     if (client) await this.stopClient(client);
+    if (!await codingRetired) throw new Error("Ember couldn't confirm that the coding runtime stopped. Coding remains unavailable.");
   }
 
   /** Stops the runtime; one that doesn't answer (hung) is killed. */

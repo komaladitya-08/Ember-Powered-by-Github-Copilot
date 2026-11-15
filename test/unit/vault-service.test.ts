@@ -265,6 +265,7 @@ describe("main's wiring of the vault", () => {
   /** Main's own handler source, run with fakes (as host.test.ts runs them with the real host). */
   const handlerOf = (src: string, deps: Record<string, unknown>) => {
     let run!: () => Promise<void>;
+    deps = { forgetCurrentCoding: async () => undefined, ...deps };
     const names = Object.keys(deps);
     new Function("ipcMain", "IPC", "guard", ...names, `let signOuts = 0, accountErasures = 0, signInAbort = null, currentToken = "t", askHistory = [], memoryEpoch = 0;\n${src}`)(
       { handle: (_c: string, h: () => Promise<void>) => { run = h; } }, { signOut: "s", memoryForgetAll: "m" }, (fn: unknown) => fn, ...names.map(n => deps[n]));
@@ -303,7 +304,20 @@ describe("main's wiring of the vault", () => {
     const src = slice("ipcMain.handle(IPC.memoryForgetAll,", '// "Tell Ember about you"');
     await handlerOf(src, deps(true))();
     expect(calls).toEqual(["learning", "session words", "vault", "owner.clear"]);
-    expect(() => handlerOf(src, deps(false))()).toThrow("Ember couldn't finish deleting the vault's file on this computer. Try Forget again.");
+    await expect(handlerOf(src, deps(false))()).rejects.toThrow("Ember couldn't finish deleting the vault's file on this computer. Try Forget again.");
+  });
+
+  it("finishes signing out even when deleting the coding grant fails", async () => {
+    const calls: string[] = [];
+    const src = slice("ipcMain.handle(IPC.signOut,", "ipcMain.handle(IPC.cancelSignIn,");
+    const run = handlerOf(src, {
+      forgetCurrentCoding: async () => { throw new Error("read only"); },
+      agent: { forgetConversation: async () => undefined, start: async () => { calls.push("signed out"); } },
+      tokens: { clear() {} }, keeper: { use() {} }, providers: { forget() {} }, refusedTokens: { clear() {} },
+      resetAnswerSpeech() {}, forgetProject() {}, forgetSessionWords() {}, vault: { forgetAll: () => { calls.push("vault forgotten"); return true; } },
+    });
+    await expect(run()).rejects.toThrow("Ember signed out, but couldn't remove its saved coding workspace");
+    expect(calls).toEqual(["vault forgotten", "signed out"]);
   });
 
   it("closes the Secure Form when the mode or the settings change so that the vault can't be used, and redraws Home's list when the policy changes (vault-7)", () => {

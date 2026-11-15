@@ -44,6 +44,7 @@ import type { CommandReviewer, StepChecker } from "../commands/review";
 import { afterTheStep, type AuditEntry, type AuditLog } from "../policy/audit";
 import type { AutonomyScopes } from "../policy/autonomy";
 import { inferLabels, quoteUntrusted as q, screenWord } from "../perception/elements";
+import { handoffContext } from "./handoff-context";
 import { injectionSignals, INJECTION_NOTE } from "../perception/injection";
 import { canonicalKeys, DIALOG_TEXT_MAX, foldLabel, normalizeLabel, isActivatingKey, isEmberWindow, isSecurityWindow, keyFamily, keyLabel, MOVES_CARET, plainQuestion, reachesOut, replacesSelection, takesFormula, typedChar, typedShown, typesCharacter } from "../policy/policy";
 import { FILE_PATH_WORDS } from "../policy/vocabulary";
@@ -231,7 +232,7 @@ export interface WorkerVault {
   /** Asks the person once, in Ember's Secure Form (VaultService.ask). `via`: the app the field is in, as the window system names it. */
   ask(kind: VaultKind, dest: VaultDestination, via: string | null): Promise<"off" | "kept" | "saved" | "cancelled" | "unavailable" | "stopped">;
   /** Hands `part` of the entry bound to `dest` to `put` (VaultService.use). */
-  use<R>(kind: VaultKind, part: VaultPart, dest: VaultDestination, put: (value: string) => Promise<R>): Promise<{ ok: true; result: R } | { ok: false; why: "off" | "none" | "part" }>;
+  use<R>(kind: VaultKind, part: VaultPart, dest: VaultDestination, put: (value: string, current: () => boolean) => Promise<R>): Promise<{ ok: true; result: R } | { ok: false; why: "off" | "none" | "part" | "short" }>;
   /** The addresses of the web documents around element `id`, nearest first (AtspiSidecar.pageAddress); rejects where they can't be read. */
   pages(id: number): Promise<string[]>;
   /**
@@ -246,6 +247,14 @@ export interface WorkerVault {
 export interface TaskSpec {
   id: string;
   goal: string;
+  /** Coding tasks use the workspace the user selected, never one named by the model. */
+  codingWorkspace?: { path: string; current(): boolean };
+  /** A coding-first mixed task needs an explicit result before continuing to the desktop. */
+  codingCompletion?: true;
+  /** Result of the prior part of a mixed task; untrusted, never user authority. */
+  handoffSummary?: string;
+  /** The first part of a mixed task must retire its worker before the next part can start. */
+  deferHandoff?: true;
   /** The target the task acts on, fixed for its life (absent: "local"). */
   targetId?: TargetId;
   /**
@@ -313,6 +322,7 @@ const NOT_SAVED = "The user closed Ember's Secure Form without saving, so nothin
 const NOT_SAVED_BEFORE = "The user already closed Ember's Secure Form for this in this task, so it isn't asked again and nothing was filled. Tell the user in finish_task what is left for them to fill in.";
 /** A Secure Form couldn't keep anything on this computer (integ-z-2): why, in Ember's own fixed words, so the model says so and doesn't ask for the next field. */
 const CANT_KEEP = "This computer can't keep this in Ember's vault, so nothing was filled and Ember won't ask for it again in this task. Don't type it yourself or try another way; tell the user in finish_task that this computer can't keep it and what is left for them to fill in, and carry on with the rest of the task without it.";
+const SHORT_VAULT_SECRET = "This saved secret cannot be filled safely because it is too short to protect if the app repeats it. Do not type it or try another way. Finish the task and tell the user to enter it themselves after stopping all Ember tasks.";
 const NO_SUCH_PART = "The user's vault entry for this has no such detail saved, so nothing was filled. Don't type it yourself; tell the user in finish_task what is left for them to fill in.";
 const CHANGED_BEFORE_FILL = "The field or its page changed before Ember could fill it, so nothing was filled. Call perceive_window; if the same field is still there, you may ask once more.";
 const CANT_TYPE_IT = "This field only takes typed keys, and what the vault holds can't be typed with the keyboard here, so nothing was filled. Tell the user in finish_task.";
@@ -334,6 +344,11 @@ export function afterNo(f: { declined: boolean; expired: boolean; worked: boolea
   const summary = !said ? own : result?.success ? `${own} ${said}` : said;
   const view = result?.view ? { view: result.view } : {};
   return f.expired && !f.declined ? { success: false, stopped: true, expired: true, summary, ...view } : { success: false, stopped: true, declined: true, summary, ...view };
+}
+
+/** A mixed task may not continue after any refused, unanswered or failed step, even if other work succeeded. */
+export function handoffCanContinue(f: { declined: boolean; expired: boolean; saidNo: boolean; undone: number; tookOver: boolean; limit: boolean }, result: WorkerResult | null): boolean {
+  return result?.success === true && !f.declined && !f.expired && !f.saidNo && f.undone === 0 && !f.tookOver && !f.limit;
 }
 
 const done = (text: string): ToolResultObject => ({ textResultForLlm: text, resultType: "success" });
@@ -1551,6 +1566,12 @@ export class Worker {
       // Its goal may carry that text: written as instructions to an AI agent, every step asks from the start.
       this.flagInjection(spec.screen, "described");
     }
+    // A previous worker result is equally untrusted and must not silently become authority for desktop actions.
+    if (spec.handoffSummary) {
+      const prior = this.read.get("described")?.text;
+      this.read.set("described", { app: "", window: "", text: [prior, spec.handoffSummary].filter(Boolean).join("\n").slice(0, READ_TEXT_MAX), described: true });
+      this.flagInjection(spec.handoffSummary, "described");
+    }
     this.window = { app: spec.target.app ?? "", name: spec.target.title ?? "" };
     this.clipboard = d.clipboard ? asPasteClipboard(d.clipboard) : null;
   }
@@ -2240,6 +2261,7 @@ export class Worker {
       autonomy: () => (this.tainted || this.saidNoThisTask ? null : this.d.autonomy?.() ?? null),
       // Autopilot never asks: there such a task's commands are announced too, but for the few that still ask (flow.ts).
       autopilot: () => this.d.autopilot?.() === true,
+      reviewActive: () => this.d.check?.() === true,
       // Assisted's check for commands, on the lighter model: an answer that comes once Assisted is no longer in force
       // (the mode or the organisation's policy changed while it was asked) counts for nothing.
       ...(this.d.check?.() ? { review: async (i, signal) => {
@@ -2384,7 +2406,7 @@ export class Worker {
         };
         try {
           let wait = idle();
-          await send(taskPrompt(this.spec.goal, !!this.spec.partWay, where));
+          await send(taskPrompt(this.spec.goal, !!this.spec.partWay, where) + handoffContext(this.spec.handoffSummary));
           await wait;
           if (!this.result && !this.halted) {
             this.wrappingUp = true;
@@ -2447,8 +2469,23 @@ export class Worker {
   }
 
   async dispose(): Promise<void> {
-    // A hung runtime isn't waited for.
-    if (this.session) await within(this.session.disconnect().catch(() => undefined), 3000);
+    if (!this.spec.deferHandoff) {
+      // A hung runtime isn't waited for by ordinary tasks.
+      if (this.session) await within(this.session.disconnect().catch(() => undefined), 3000);
+      return;
+    }
+    // A next mixed-task part must not start while a session or a tool call from this worker can still act.
+    // Disconnect and drain are both bounded; a failure or timeout is reported as a failed first part.
+    const disconnected = this.session ? await within(this.session.disconnect().then(() => true, () => false), 3000) : true;
+    if (disconnected !== true) throw new Error("Could not confirm that the desktop session disconnected.");
+    const drained = await within(this.toolTurn.then(() => true, () => false), 3000);
+    if (drained !== true) throw new Error("Could not confirm that the desktop tools stopped.");
+  }
+
+  /** Read after dispose has drained pending tool calls, so a late refusal cannot authorize the next part. */
+  handoffSafe(): boolean {
+    return handoffCanContinue({ declined: this.declined, expired: this.expired, saidNo: this.saidNoThisTask,
+      undone: this.undone, tookOver: this.userTookOver, limit: this.limitHit }, this.result);
   }
 
   /**
@@ -3396,7 +3433,7 @@ export class Worker {
       const record = { vault: { kind, part, ...("site" in dest ? { site: dest.site } : { app: dest.app }) } };
       let said = false;
       const sayOnce = () => { if (!said) { said = true; this.goAhead(); } };
-      const filled = await vault.use(kind, part, dest, async value => {
+      const filled = await vault.use(kind, part, dest, async (value, current) => {
         // The keyring may have taken its time (macOS asks it off the main thread, and may ask the person): a task
         // stopped meanwhile says and fills nothing (codex-212-p1).
         if (this.isOver) return { how: "stopped" as const };
@@ -3414,14 +3451,14 @@ export class Worker {
         letGo();
         // The last look before the first key also asks that the entry is still saved: one forgotten while the field
         // was being reached is typed nothing (codex-212-p2).
-        const still = async () => (await this.vaultChanged(id, element, kind, part, dest)) ?? (vault.has(kind, dest) ? null : "the vault's entry for this was forgotten");
-        return { how: "keys" as const, typed: await this.typeFromVault(id, node, element, part, value, context, record, still) };
+        const still = async () => (await this.vaultChanged(id, element, kind, part, dest)) ?? (current() ? null : "the vault's entry for this was changed or forgotten");
+        return { how: "keys" as const, typed: await this.typeFromVault(id, node, element, part, value, context, record, still, current) };
       });
       if (this.isOver) return STOPPED();
       if (!filled.ok) {
-        const reason = filled.why === "part" ? `the vault's entry for this ${"site" in dest ? "site" : "app"} holds no ${savedPart(part).replace(/^a saved /, "")}`
+        const reason = filled.why === "short" ? "this secret is too short to protect if the app repeats it" : filled.why === "part" ? `the vault's entry for this ${"site" in dest ? "site" : "app"} holds no ${savedPart(part).replace(/^a saved /, "")}`
           : filled.why === "none" ? "the vault's entry for this couldn't be opened" : "the vault can't be used now";
-        return this.vaultRefused(element, reason, filled.why === "part" ? NO_SUCH_PART : NOTHING_FILLED);
+        return this.vaultRefused(element, reason, filled.why === "short" ? SHORT_VAULT_SECRET : filled.why === "part" ? NO_SUCH_PART : NOTHING_FILLED);
       }
       const r = filled.result;
       if (r.how === "stopped") return STOPPED();
@@ -3484,7 +3521,7 @@ export class Worker {
    * authentication prompt has the keyboard), and never through the clipboard. `still`: the last look at the field and
    * its page, made once it has the keyboard and right before the first key. Nothing an error says quotes the value.
    */
-  private async typeFromVault(id: number, node: AxNode, element: Focus, part: VaultPart, value: string, context: string, record: Record<string, unknown>, still: () => Promise<string | null>): Promise<ToolResultObject> {
+  private async typeFromVault(id: number, node: AxNode, element: Focus, part: VaultPart, value: string, context: string, record: Record<string, unknown>, still: () => Promise<string | null>, current: () => boolean): Promise<ToolResultObject> {
     if (this.userTookOver) return this.vaultRefused(element, "the user took the mouse back from this task, so Ember borrows nothing more in it", TOOK_BACK_NO_FILL);
     if (this.place || !this.d.cursor || !node.bounds) return this.vaultRefused(element, "the field takes no text by accessibility, and the keyboard isn't available here");
     if (!typeableText(value) || /[\n\t]/.test(value)) return this.vaultRefused(element, "the field takes no text by accessibility, and what the vault holds can't be typed with the keyboard", CANT_TYPE_IT);
@@ -3538,6 +3575,7 @@ export class Worker {
         const marked = await (this.d.vault ? this.d.vault.mark(id) : Promise.reject(new Error("no vault"))).then(() => true, () => false);
         if (this.isOver) throw new BorrowStopped();
         if (!marked) throw new Error("Ember couldn't make sure the field stays out of what it reads and its screenshots, so nothing was typed.");
+        if (!current()) throw new Error("The vault's entry changed or was forgotten before Ember could fill it, so nothing was typed.");
         this.noteVaultFill(id, node, element, part);
         await hand.keys(kc.edit.selectAll);
         await hand.keys("Delete");

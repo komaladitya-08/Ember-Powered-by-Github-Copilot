@@ -73,6 +73,17 @@ require("node:readline").createInterface({ input: process.stdin }).on("line", li
   else process.exit(139);
 });
 `);
+/** A successful reconnect probe is not proof that the process will remain alive. */
+const crashAfterStatus = path.join(dir, "crash_after_status.cjs");
+fs.writeFileSync(crashAfterStatus, `
+if (process.env.EMBER_FAKE_STARTS) require("node:fs").appendFileSync(process.env.EMBER_FAKE_STARTS, process.pid + "\\n");
+require("node:readline").createInterface({ input: process.stdin }).on("line", line => {
+  const req = JSON.parse(line);
+  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: req.id, result: req.method === "ping" ? { version: 3 } : { apps: 0 } }) + "\\n", () => {
+    if (req.method === "status") process.exit(139);
+  });
+});
+`);
 
 function logger() {
   const lines: { level: string; msg: string; fields?: Record<string, unknown> }[] = [];
@@ -229,6 +240,17 @@ describe("AtspiSidecar", () => {
     const before = started();
     expect(await failure(s.request("status"))).toMatch(/stopped/);
     expect(started()).toBe(before + 1);
+  });
+
+  it("backs off even if each recovery status answers just before the helper crashes", async () => {
+    const starts = path.join(dir, `status-crashes-${Date.now()}.log`);
+    const { s, lines } = sidecar(crashAfterStatus, process.execPath, { ...process.env, EMBER_FAKE_STARTS: starts });
+    await expect(s.request("status")).resolves.toEqual({ apps: 0 });
+    for (let i = 0; i < 100 && !lines.some(l => l.msg === "sidecar.revive_backoff"); i++) await new Promise(r => setTimeout(r, 40));
+    const started = fs.readFileSync(starts, "utf8").trim().split("\n").length;
+    expect(started).toBe(2);
+    expect(lines.filter(l => l.msg === "sidecar.revive_backoff")).toHaveLength(1);
+    s.stop();
   });
 
   it("survives writing to a helper that died at once (EPIPE)", async () => {

@@ -15,7 +15,7 @@
  * still match the enrolment itself by ADAPT.anchorFloor (gateMatches): what was learnt can lower neither bar for long.
  */
 
-import { VOICE_MATCH_THRESHOLD, averagePrint, similarity, unit } from "./voiceprint";
+import { VOICE_MATCH_THRESHOLD, similarity, unit } from "./voiceprint";
 
 /**
  * The limits (measured on LibriSpeech dev-clean, 40 speakers, 12 requests learnt from and 8 tried each:
@@ -175,6 +175,3 @@ export function adaptGuard(c: SampleContext): null | "off" | "unverified" | "sho
   if (c.lastAt && c.now - c.lastAt < ADAPT.minGapMs) return "too-soon";
   return null;
 }
-
-/** Enrolment's own average, for tests and the measurements: the anchor a state starts from. */
-export const enrolmentPrint = (prints: ArrayLike<number>[]): Float32Array => averagePrint(prints);

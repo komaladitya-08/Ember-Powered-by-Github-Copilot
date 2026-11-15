@@ -4717,32 +4717,32 @@
   },
   {
    "cmd": "Remove-Item -Recurse build",
-   "verdict": "announce",
+   "verdict": "ask",
    "words": "Delete the build folder"
   },
   {
    "cmd": "Remove-Item notes.txt",
-   "verdict": "announce",
+   "verdict": "ask",
    "words": "please delete notes.txt"
   },
   {
    "cmd": "git push origin feature-x",
-   "verdict": "announce",
+   "verdict": "ask",
    "words": "push feature-x to origin"
   },
   {
    "cmd": "npm publish",
-   "verdict": "announce",
+   "verdict": "ask",
    "words": "publish this package to npm"
   },
   {
    "cmd": "git reset --hard",
-   "verdict": "announce",
+   "verdict": "ask",
    "words": "reset my changes hard, throw them away"
   },
   {
    "cmd": "npm install lodash",
-   "verdict": "announce",
+   "verdict": "ask",
    "words": "install lodash"
   },
   {
@@ -4755,7 +4755,7 @@
   },
   {
    "cmd": "Remove-Item -Recurse build -Force",
-   "verdict": "announce",
+   "verdict": "ask",
    "words": "Delete the build folder"
   },
   {

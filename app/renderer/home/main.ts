@@ -46,6 +46,7 @@ import { targetsFoldRest } from "./computers-copy";
 import { ACTIVITY_EARLIER, ACTIVITY_LINES, activityLines, activityNote, activityProblemText, grantRemovedText, neverLookRemovedText, withEarlier } from "./copy";
 import { ACTIVITY_ENTRIES, ACTIVITY_MAX_ENTRIES } from "../../shared/ipc";
 import { mountProject } from "./project";
+import { mountCodingWorkspace } from "./coding-workspace";
 import { homeConnectionView, ownProviderOffer, taskModelChoices } from "./first-run-copy";
 import { checkState, fixCommand, recheckMessage } from "./welcome-copy";
 import { holdsBack } from "../../shared/setup-attention";
@@ -905,6 +906,7 @@ function renderTaskReasoning(): void {
 }
 
 const projectReady = mountProject();
+mountCodingWorkspace();
 function renderAgent(a: AgentStatus | null): void {
   if (!a) return;
   // Connected again after a send was refused for want of a connection: its reason no longer holds (reliability-c7-2).

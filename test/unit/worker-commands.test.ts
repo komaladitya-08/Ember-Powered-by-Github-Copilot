@@ -256,7 +256,7 @@ describe("the command flow hears the user's own words only (critique security-1)
     // Said by the user themselves, typed, it is only announced (the 4 s Stop).
     const own = makeWorker({ target: REMOTE, commands: commandService(REMOTE), spec: { goal: "delete the build folder", userWords: "delete the build folder" } });
     await own.call("run_command", { target: "build-01", command: "rm -rf build", why: "to delete the build folder" });
-    expect(verdicts).toEqual(["ask", "ask", "announce"]);
+    expect(verdicts).toEqual(["ask", "ask", "ask"]);
   });
 
   it("a task the user steered with words but started without them gets only the steer's words", async () => {

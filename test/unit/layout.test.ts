@@ -3,7 +3,7 @@
 import { describe, expect, it } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
-import { PLATFORM_FAMILIES, TARGETS, VOICE_NATIVE_DIR, artifactNames, layoutFor, npmInvocation, packageNameOf, prodPackageDirs, selectPackages } from "../../scripts/package/layout.mjs";
+import { PLATFORM_FAMILIES, TARGETS, VOICE_NATIVE_DIR, artifactNames, copilotToolAsset, layoutFor, npmInvocation, packageNameOf, prodPackageDirs, selectPackages } from "../../scripts/package/layout.mjs";
 import { archivePlan } from "../../scripts/package/archive.mjs";
 import { askpassSourceCandidates } from "../../app/main/remote/askpass-win";
 
@@ -25,9 +25,9 @@ describe("the Linux layout", () => {
     expect(linux.sidecarDist).toEqual([]);
   });
 
-  it("keeps the glibc x64 builds and prunes what the old stage.mjs pruned", () => {
+  it("keeps the glibc x64 builds and Copilot native-tool assets", () => {
     expect(linux.platformPackages).toEqual(["@github/copilot-sdk-linux-x64", "@img/sharp-linux-x64", "@img/sharp-libvips-linux-x64", "@koromix/koffi-linux-x64"]);
-    expect(linux.prune.filter(p => !p.startsWith("onnxruntime-web/"))).toEqual(["@koromix/koffi-linux-x64/musl_x64", ...["ripgrep", "tgrep", "plugins", "builtin-skills"].map(d => `@github/copilot-sdk-linux-x64/${d}`)]);
+    expect(linux.prune.filter(p => !p.startsWith("onnxruntime-web/"))).toEqual(["@koromix/koffi-linux-x64/musl_x64"]);
   });
 
   it("prunes onnxruntime-web to its Node build and that build's WebAssembly (Voice Match), on every target", () => {
@@ -100,7 +100,7 @@ describe("the Windows layout", () => {
 
     it(`keeps sharp's own Windows build, which carries libvips (${arch})`, () => {
       expect(win.platformPackages).toEqual([`@github/copilot-sdk-win32-${arch}`, `@img/sharp-win32-${arch}`, `@koromix/koffi-win32-${arch}`, `sherpa-onnx-win-${arch}`]);
-      expect(win.prune).toEqual(expect.arrayContaining([`@koromix/koffi-win32-${arch}/win32_${arch}/koffi.lib`, `@github/copilot-sdk-win32-${arch}/ripgrep`]));
+      expect(win.prune).toEqual(expect.arrayContaining([`@koromix/koffi-win32-${arch}/win32_${arch}/koffi.lib`]));
       expect(win.prune.some(p => p.endsWith("koffi.node"))).toBe(false);
     });
 
@@ -154,6 +154,20 @@ describe("the macOS layout", () => {
 
 describe("every target", () => {
   const layouts = TARGETS.map(t => layoutFor(t.split("-")[0], t.split("-")[1]));
+
+  it("keeps SDK coding helpers and skill instructions for every target", () => {
+    for (const l of layouts) {
+      const pkg = `/repo/node_modules/@github/copilot-sdk-${l.target}`;
+      for (const asset of ["ripgrep/bin/tool", "tgrep/bin/tool", "plugins/browser/skills/use/SKILL.md", "builtin-skills/skill/SKILL.md"]) {
+        expect(copilotToolAsset(pkg, asset), `${l.target}: ${asset}`).toBe(true);
+        expect(l.prune.some(p => p === `@github/copilot-sdk-${l.target}/${asset.split("/")[0]}`)).toBe(false);
+      }
+      expect(copilotToolAsset(pkg, "docs/README.md")).toBe(false);
+      expect(copilotToolAsset("/repo/node_modules/some-other-package", "builtin-skills/skill/SKILL.md")).toBe(false);
+    }
+    expect(copilotToolAsset("C:\\repo\\node_modules\\@github\\copilot-sdk-win32-x64", "builtin-skills\\skill\\SKILL.md")).toBe(true);
+    expect(fs.readFileSync(path.resolve("scripts/package/stage.mjs"), "utf8")).toContain("if (copilotToolAsset(src, r)) return true;");
+  });
 
   it("refuses a target Ember isn't staged for", () => {
     for (const [p, a] of [["linux", "arm64"], ["win32", "ia32"], ["darwin", "universal"], ["freebsd", "x64"]]) expect(() => layoutFor(p, a)).toThrow(/isn't staged for/);

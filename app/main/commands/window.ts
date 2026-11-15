@@ -115,8 +115,12 @@ export interface Rect { x: number; y: number; width: number; height: number }
  */
 export function placeOnDisplay(bounds: Rect, area: Rect): Rect | null {
   const cx = bounds.x + bounds.width / 2, cy = bounds.y + bounds.height / 2;
-  if (cx >= area.x && cx < area.x + area.width && cy >= area.y && cy < area.y + area.height) return null;
   const width = Math.min(bounds.width, area.width), height = Math.min(bounds.height, area.height);
+  if (cx >= area.x && cx < area.x + area.width && cy >= area.y && cy < area.y + area.height) {
+    const x = Math.max(area.x, Math.min(bounds.x, area.x + area.width - width));
+    const y = Math.max(area.y, Math.min(bounds.y, area.y + area.height - height));
+    return x === bounds.x && y === bounds.y && width === bounds.width && height === bounds.height ? null : { x, y, width, height };
+  }
   return { x: area.x + Math.round((area.width - width) / 2), y: area.y + Math.round((area.height - height) / 2), width, height };
 }
 

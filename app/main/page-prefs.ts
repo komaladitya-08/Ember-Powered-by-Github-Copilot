@@ -38,13 +38,13 @@ export function textScale(size: Settings["textSize"] | undefined): number {
 
 /**
  * A window's size for the text size: each length times `scale`, rounded, but no larger than `room` (the work area)
- * where that is smaller; never smaller than the usual size, so the default size is exactly as before.
+ * where that is smaller.
  */
 export function scaledSize<T extends Record<string, number>>(size: T, scale: number, room?: { width: number; height: number }): T {
   const out: Record<string, number> = {};
   for (const [k, v] of Object.entries(size)) {
     const max = room ? (/width/i.test(k) ? room.width : room.height) : Infinity;
-    out[k] = Math.max(v, Math.min(Math.round(v * scale), max));
+    out[k] = Math.min(Math.round(v * scale), max);
   }
   return out as T;
 }

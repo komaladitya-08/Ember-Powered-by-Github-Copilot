@@ -119,6 +119,8 @@ export interface CommandFlowContext {
    * when the reviewer finds it in the user's own words.
    */
   review?: CommandReviewer;
+  /** Recheck Assisted after a review or countdown, since its consent or policy may change while waiting. */
+  reviewActive?: () => boolean;
   /**
    * Autopilot is the approval mode in force (policy/autonomy.ts approvalInputs().autopilot), read at each command: one
    * that would ask announces with its Stop instead, in a task that was steered or told no too, but for the few that
@@ -1413,7 +1415,7 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
       const v = await Promise.race([asked, stopped]).finally(() => ctx.signal.removeEventListener("abort", stop));
       if (ctx.isOver()) return STOPPED();
       ctx.log.info("commands.reviewed", { task, target, verdict: v ? (v.run ? "run" : "ask") : "none", ms: Math.round(performance.now() - t0) });
-      if (v?.run) {
+      if (v?.run && (ctx.reviewActive?.() ?? true)) {
         // Cleared without a question: a secret's output is kept from the model, and what outlives Stop says so, as in
         // Autopilot (the owner's decision of 2026-11-14).
         const all = [...cls.findings, ...hidden];
@@ -1541,6 +1543,9 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
       try { live = svc.capability(); } catch { return denied("Couldn't check whether commands are still allowed. Finish the task saying so."); }
       if (live.state !== "on") return denied(`${live.why ?? `Commands are off on ${place}.`} Don't try another way; tell the user in finish_task.`);
       if (svc.binding.id !== target || svc.runner.target !== target) return denied("The command's computer changed. Finish the task saying so.");
+      if (approvedAt === null && d.requested?.intent === "ai-review" && !(ctx.reviewActive?.() ?? true)) {
+        return denied("Command permissions changed while this command was waiting. It did not run. Ask the user for a new request.");
+      }
       // (Autopilot's announcement stands while Autopilot does: there root alone is no reason to ask, as when it was decided.)
       // (Assisted's check cleared it under root's rule: root still alone is no reason to ask, as when it was decided;
       // any other rule, or root arriving after, still is: r12-commands-x12-1.)

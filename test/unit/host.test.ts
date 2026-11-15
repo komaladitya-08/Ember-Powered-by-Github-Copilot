@@ -2492,6 +2492,31 @@ describe("review round 6: a request sent while the conversation is busy waits fo
   const mail = { target: { pid: 1, title: "Mail" }, text: "<screen>Mail: Inbox (3)</screen>" };
   const terminal = { target: { pid: 2, title: "Terminal" }, text: "<screen>Terminal</screen>" };
 
+  it("does not launch coding or mixed tasks while private-file protection is unverified, while desktop tasks remain available", async () => {
+    const workspace = { path: os.tmpdir(), current: () => true };
+    const { host, specs, tool } = await withTasks({ codingWorkspace: () => workspace });
+    await host.ask("Fix my code and open the app");
+    const sessionsBefore = sim.sessions.length;
+    expect(await tool("start_coding")({ goal: "Fix my code" })).toMatch(/coding work is temporarily unavailable/i);
+    expect(await tool("start_mixed")({ first: "coding", firstGoal: "Fix my code", secondGoal: "Open the app" })).toMatch(/coding work is temporarily unavailable/i);
+    expect(specs).toEqual([]);
+    expect(sim.sessions).toHaveLength(sessionsBefore);
+    expect(await tool("start_task")({ goal: "Open the app" })).toMatch(/started/i);
+    await vi.waitFor(() => expect(specs).toHaveLength(1));
+    await host.stop();
+  });
+
+  it("refuses even a directly queued coding worker while its file-access gate is closed", async () => {
+    const { host } = makeHost({ hands: hands(), codingWorkspace: () => ({ path: os.tmpdir(), current: () => true }) });
+    await host.start(TOKEN, "stored");
+    const sessionsBefore = sim.sessions.length;
+    const task = host.tasks!.start("Fix my code", { codingWorkspace: { path: os.tmpdir(), current: () => true } });
+    await vi.waitFor(() => expect(task.status).toBe("failed"));
+    expect(task.result?.summary).toMatch(/coding work is temporarily unavailable/i);
+    expect(sim.sessions).toHaveLength(sessionsBefore);
+    await host.stop();
+  });
+
   it.each([
     ["first request", "second request"],
     ["request", "a longer request"],
@@ -5769,6 +5794,7 @@ describe("keeping the recent conversation across restarts (opt-in)", () => {
     const slice = (from: string, to: string) => { const a = main.indexOf(from); expect(a).toBeGreaterThan(-1); return main.slice(a, main.indexOf(to, a)); };
     const handlerOf = (src: string, deps: Record<string, unknown>) => {
       let run!: () => Promise<void>;
+      deps = { forgetCurrentCoding: async () => undefined, ...deps };
       const names = Object.keys(deps);
       new Function("ipcMain", "IPC", "guard", ...names, `let signOuts = 0, accountErasures = 0, signInAbort = null, currentToken = "t", askHistory = [], memoryEpoch = 0;\n${src}`)(
         { handle: (_c: string, h: () => Promise<void>) => { run = h; } }, { signOut: "s", memoryForgetAll: "m" }, (fn: unknown) => fn, ...names.map(n => deps[n]));

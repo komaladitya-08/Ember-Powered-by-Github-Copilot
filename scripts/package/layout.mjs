@@ -36,8 +36,12 @@ export const REMOTE_PARTS_DIR = "remote-parts";
 /** Packages never bundled: tslib is only @emnapi's, and @emnapi is only sharp's wasm fallback's. */
 const NEVER_BUNDLED = name => name === "tslib" || name.startsWith("@emnapi/");
 
-/** The Copilot runtime's helpers for its own built-in tools, pruned on every target (see stage.mjs). */
-const COPILOT_TOOLS = ["ripgrep", "tgrep", "plugins", "builtin-skills"];
+/** Native coding uses these runtime-owned files, including SKILL.md, which is executable guidance rather than package documentation. */
+export function copilotToolAsset(packageDir, relative) {
+  const name = packageNameOf(packageDir);
+  return /^@github\/copilot-sdk-(?:linux|win32|darwin)-(?:x64|arm64)$/.test(name ?? "") &&
+    /^(?:ripgrep|tgrep|plugins|builtin-skills)(?:[\\/]|$)/.test(relative);
+}
 
 /**
  * onnxruntime-web's builds Voice Match and Better recall don't use (WebGPU, WebGL, browser bundles and their source
@@ -77,7 +81,7 @@ export function layoutFor(platform, arch) {
   const copilot = `@github/copilot-sdk-${target}`;
   const koffi = `@koromix/koffi-${target}`;
   const koffiDir = `${koffi}/${platform}_${arch}`;
-  const tools = [...COPILOT_TOOLS.map(d => `${copilot}/${d}`), ...ORT_UNUSED];
+  const tools = ORT_UNUSED;
   if (platform === "linux") {
     return {
       platform, arch, target, label: target,

@@ -61,7 +61,7 @@ describe("the Secure Form's view", () => {
       id: "id-1", kind: "login", keyring: true,
       title: "Login for github.com",
       where: "Asked in Firefox. Ember fills it in only on github.com, in any browser.",
-      lead: "Ember keeps it locked with your computer's keyring and uses it only in Autopilot. It never shows it to you again, and the AI model never sees it.",
+      lead: "Ember keeps it locked with your computer's keyring and uses it only in Autopilot. It never shows it to you again, and the AI model never sees it. Passwords shorter than six characters cannot be kept for filling; enter those yourself after stopping all Ember tasks.",
       parts: [
         { part: "user", label: "User name or email", secret: false, required: false, max: 256, multiline: false },
         { part: "password", label: "Password", secret: true, required: true, max: 1024, multiline: false },
@@ -69,7 +69,7 @@ describe("the Secure Form's view", () => {
     });
     const card = formView("c", req({ kind: "card", dest: { app: "thunderbird" }, where: "Thunderbird", via: "Firefox" }));
     expect(card.where).toBe("Ember fills it in only in Thunderbird.");
-    expect(card.parts.filter(p => p.secret).map(p => p.part)).toEqual(["cardNumber", "securityCode"]);
+    expect(card.parts.filter(p => p.secret).map(p => p.part)).toEqual(["cardNumber"]);
     expect(formView("a", req({ kind: "contact" })).parts.find(p => p.part === "address")?.multiline).toBe(true);
     for (const k of VAULT_KINDS) expect(VAULT_FORM_SIZE[k].width).toBe(440);
   });

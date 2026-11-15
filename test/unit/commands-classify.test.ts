@@ -302,7 +302,7 @@ describe("deleting with a tool Ember had no row for (commands-remote-c8-2)", () 
   });
 
   it("announces rimraf of a folder the user's own words named, as rm's row does (commands-remote-c8-2)", () => {
-    expect(runCase({ cmd: "rimraf build", verdict: "run", words: "delete the build folder" }, { shell: "bash", context: "linux" }).decision.verdict).toBe("announce");
+    expect(runCase({ cmd: "rimraf build", verdict: "run", words: "delete the build folder" }, { shell: "bash", context: "linux" }).decision.verdict).toBe("ask");
     // A pattern rimraf expands itself is never announced.
     expect(runCase({ cmd: "rimraf 'build/*'", verdict: "run", words: "delete build/*" }, { shell: "bash", context: "linux" }).decision.verdict).toBe("ask");
   });

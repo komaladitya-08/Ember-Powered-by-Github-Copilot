@@ -16,7 +16,7 @@ import { randomUUID } from "node:crypto";
 import type { Logger } from "../logger";
 import type { BrowserWindowLike, IpcLike, WebContentsLike } from "../targets/types";
 import {
-  PART_SPEC, SECRET_PARTS, VAULT_IPC, VAULT_KINDS, VAULT_PARTS, checkValues, formWords, validDestination,
+  PART_SPEC, SECRET_PARTS, VAULT_IPC, VAULT_KINDS, VAULT_PARTS, checkNewValues, formWords, validDestination,
   type VaultDestination, type VaultFormView, type VaultKind, type VaultSubmitResult,
 } from "../../shared/vault";
 import type { VaultKept } from "./store";
@@ -89,7 +89,7 @@ export function formView(id: string, req: VaultFormRequest): VaultFormView {
   const words = formWords(req.kind, req.where, site, site ? req.via : null);
   return {
     id, kind: req.kind, ...words, keyring: req.keyring,
-    parts: VAULT_PARTS[req.kind].map(part => ({
+    parts: VAULT_PARTS[req.kind].filter(part => part !== "securityCode").map(part => ({
       part, label: PART_SPEC[part].label, secret: SECRET_PARTS.has(part), required: PART_SPEC[part].required, max: PART_SPEC[part].max, multiline: PART_SPEC[part].multiline === true,
     })),
   };
@@ -184,7 +184,7 @@ export function createVaultForm(o: VaultFormOptions): VaultFormController {
       if (!head.req.keyring) return { ok: false, why: "keyring" };
       // Checked whole here (the store checks again): only this kind's parts, each a bounded string. A refusal names the
       // part, never its value.
-      const checked = checkValues(head.req.kind, values);
+      const checked = checkNewValues(head.req.kind, values);
       if (!checked.ok) return { ok: false, why: "invalid", ...(checked.part ? { part: checked.part } : {}) };
       saving = true;
       closedSaving = false;

@@ -73,6 +73,12 @@ describe("room for a whole text to count as seen", () => {
     expect(cardClear(room(60, [Number.NaN]))).toBe(false);
     expect(cardClear({ ...room(60), wordsEnd: Number.POSITIVE_INFINITY })).toBe(false);
   });
+
+  it("does not allow when scrolling the card moves the question's sentence out of view", () => {
+    expect(cardClear({ ...room(60), viewport: { top: 5, bottom: 65, height: 100 } })).toBe(true);
+    expect(cardClear({ ...room(60), viewport: { top: -1, bottom: 59, height: 100 } })).toBe(false);
+    expect(cardClear({ ...room(60), viewport: { top: 50, bottom: 110, height: 100 } })).toBe(false);
+  });
 });
 
 describe("a question's answers on a card too small for its sentence", () => {

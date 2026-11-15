@@ -62,7 +62,7 @@ body.fallback[data-autonomous="true"] .auto { display: inline-flex; }
 .actions[hidden] { display: none; }
 
 /* ── No compositor: the card is Ember's only surface (what it says, its questions, the running task) ── */
-body.fallback { background: var(--glass-solid); display: flex; flex-direction: column; box-shadow: var(--glass-rim); }
+body.fallback { background: var(--glass-solid); display: flex; flex-direction: column; overflow-y: auto; box-shadow: var(--glass-rim); }
 /* Face and words on top, sized to what they hold; the buttons come straight after the words. Never shorter than
    the face (96 px and the padding): a squeezed top row would put the face over a question's buttons. Words that still
    don't fit are cut off at its foot, never drawn over the buttons (and a whole text doesn't count as seen then). */

@@ -9,7 +9,6 @@
 import type { ApprovalMode } from "../../shared/approvals";
 import type { Installed, Kind, Marketplace, MarketplaceEntry, ToolInfo } from "../../shared/extensions";
 
-export const EXTENSIONS_HEADING = "Extensions";
 export const EXTENSIONS_INTRO = "Extensions give Ember more tools through plugins from marketplaces you add. Only you can add them, here.";
 
 /** Why the section shows nothing to use. */
@@ -175,7 +174,6 @@ export function installedRow(i: Installed, on = true, connected = true, heldByVa
 export const removeQuestion = (name: string) => `Remove “${name}”? Ember stops using its tools at once.`;
 export const disconnectQuestion = (name: string) => `Disconnect “${name}”? Ember stops using its tools at once.`;
 
-export const INSTALLED_HEADING = "Added";
 export const INSTALLED_EMPTY = "Nothing added yet. Browse a marketplace below.";
 
 /** The section's own switch, shown once extensions are agreed to: off stops every server and uses no tool. */
@@ -188,14 +186,12 @@ export function extensionsOnHint(on: boolean, heldByVault = false): string {
 
 // ───── Marketplaces ─────
 
-export const MARKETPLACES_HEADING = "Marketplaces";
 export const MARKETPLACES_EMPTY = "No marketplaces yet. Add one by its GitHub repository or its address.";
 /** While Ember isn't connected the runtime can't list marketplaces (Copilot's own included), nor add one. */
 export const MARKETPLACES_NOT_CONNECTED = "Marketplaces appear once Ember is connected to Copilot or your model provider.";
 /** Short enough to show whole in a narrow window (the field is labelled for screen readers). */
 export const MARKETPLACE_PLACEHOLDER = "owner/repo or https://…";
 export const MARKETPLACE_FIELD_LABEL = "Marketplace's GitHub repository or address";
-export const MARKETPLACE_ADD = "Add";
 export const MARKETPLACE_INVALID = "Type a GitHub repository as owner/repo, or an address that starts with https://.";
 export const MARKETPLACES_HINT = "Browse fetches a marketplace's list: from GitHub for one built into Copilot, else from the address you added. Nothing from it runs until you add an item and agree.";
 /** Why Remove was refused: Copilot keeps its own, and the organisation's managed settings keep theirs (integrations-4). */
@@ -271,7 +267,6 @@ export const INSTALLED_TAG = "Added";
 
 // ───── Connectors ─────
 
-export const CONNECTORS_HEADING = "Connectors";
 export const CONNECTORS_EMPTY = "GitHub-hosted connectors aren't available in Ember yet.";
 export const CONNECTORS_HINT = "To use an MCP server, add its plugin's marketplace above. Ember loads the plugin's MCP tools and asks before tools that can change things.";
 /**

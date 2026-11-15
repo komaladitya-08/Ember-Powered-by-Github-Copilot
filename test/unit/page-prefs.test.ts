@@ -270,9 +270,10 @@ describe("the text size", () => {
     const usual = { width: 760, height: 480, minWidth: 480, minHeight: 280 };
     expect(scaledSize(usual, 1)).toEqual(usual);
     expect(scaledSize(usual, 1.3)).toEqual({ width: 988, height: 624, minWidth: 624, minHeight: 364 });
-    // No larger than the work area, and never smaller than the usual size (a small screen keeps today's window).
+    // Fit even when the work area is smaller than the usual size.
     expect(scaledSize(usual, 1.3, { width: 1024, height: 560 })).toEqual({ width: 988, height: 560, minWidth: 624, minHeight: 364 });
-    expect(scaledSize(usual, 1.3, { width: 700, height: 400 })).toEqual({ width: 760, height: 480, minWidth: 624, minHeight: 364 });
+    expect(scaledSize(usual, 1.3, { width: 700, height: 400 })).toEqual({ width: 700, height: 400, minWidth: 624, minHeight: 364 });
+    expect(scaledSize(usual, 1, { width: 320, height: 200 })).toEqual({ width: 320, height: 200, minWidth: 320, minHeight: 200 });
   });
 
   it("grows an open window when the text size changes, keeping a size the user chose in proportion (review #57)", () => {

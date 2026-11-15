@@ -39,7 +39,7 @@ vi.mock("electron", () => ({
     }
     setBounds(b: { x: number; y: number; width: number; height: number }) { this.rec.setBounds.push(b); this.rec.bounds = { ...b }; }
   },
-  screen: { getDisplayMatching: () => ({ workArea: electron.workArea }) },
+  screen: { getDisplayMatching: () => ({ workArea: electron.workArea }), getPrimaryDisplay: () => ({ workAreaSize: electron.workArea }), on() {}, off() {} },
 }));
 
 const { createPromptWindow } = await import("../../app/main/windows");

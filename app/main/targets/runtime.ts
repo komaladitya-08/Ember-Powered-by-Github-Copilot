@@ -417,6 +417,8 @@ export interface TargetsDepsExtra {
 
 /** What the runtime offers main beyond TargetsRuntime (an extension of the contract). */
 export interface TargetsRuntimeExtra {
+  /** Ask a model's clarification through Ember's own window; null means it was cancelled or unavailable. */
+  codingClarify(request: { question: string; choices?: string[]; allowFreeform?: boolean }, signal: AbortSignal): Promise<{ answer: string; wasFreeform: boolean } | null>;
   /** The existing command flow for Home project work, always on this computer. */
   localProjectCommands(): CommandService | null;
   /** Under a question shown in a window of Ember's own, how to reach that window from the keyboard (target-copy's panelHint). */
@@ -2056,6 +2058,21 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       const r = await turnOnLinuxAccessibility(svc.runner, name);
       log.info("targets.wsl_a11y_fix", { ok: r.ok });
       return r;
+    },
+    codingClarify: async (request, signal) => {
+      if (disposed || signal.aborted) return null;
+      const id = `coding-question-${crypto.randomUUID()}`;
+      const dismiss = () => promptWindow.dismiss(id);
+      signal.addEventListener("abort", dismiss, { once: true });
+      try {
+        if (signal.aborted) return null;
+        const result = await promptWindow.ask({ id, kind: "clarification", question: request.question,
+          ...(request.choices ? { choices: request.choices } : {}), allowFreeform: request.allowFreeform !== false });
+        if (signal.aborted || !result.ok || typeof result.value !== "string") return null;
+        return { answer: result.value, wasFreeform: result.choice === undefined };
+      } finally {
+        signal.removeEventListener("abort", dismiss);
+      }
     },
     dispose: async () => {
       if (disposed) return;

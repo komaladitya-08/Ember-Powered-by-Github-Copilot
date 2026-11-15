@@ -21,7 +21,6 @@ export const STATUS_WORDS = {
   /** A stopped task whose question went unanswered: the user stopped nothing (tasks-approvals-r1). */
   unanswered: "No answer in time",
 } as const;
-export type StatusWord = keyof typeof STATUS_WORDS;
 
 /** What an activity item is. */
 export type ActivityKind =

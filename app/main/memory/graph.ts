@@ -2,7 +2,7 @@
  * Ember's long-term memory as a graph: entities (people, projects, apps, places, topics) joined by facts, each fact a
  * short sentence about one or two entities. It follows Graphiti's temporal knowledge graph (Zep, arXiv 2501.13956): a
  * fact that a newer one contradicts is closed (`invalidAt`), never deleted, so Ember knows what *was* true and when,
- * and a near-duplicate reinforces the fact already there instead of adding another. Recall is in ./recall.ts and the
+ * and an identical fact reinforces the fact already there instead of adding another. Recall is in ./recall.ts and the
  * sleep-time upkeep in ./consolidate.ts.
  *
  * Plain data and pure methods, with no I/O and no Electron: ./store.ts loads and saves it. Every fact passes
@@ -29,7 +29,7 @@ export type Source = (typeof SOURCES)[number];
 export const MAX_FACT_CHARS = 400;
 /** The most facts kept (open and closed together); consolidation prunes below it. */
 export const MAX_FACTS = 5000;
-/** Facts with the same polarity at least this alike (./text.ts similarity) about the same entities are one fact. */
+/** Similarity threshold used to identify possible contradictions, not to merge facts. */
 export const DUPLICATE = 0.8;
 /** The most facts one of Ember's own notes (a summary or a reflection) records it was made from: a pass reads 40. */
 export const MAX_DERIVED = 40;
@@ -191,7 +191,7 @@ export class MemoryGraph {
   }
 
   /**
-   * Remembers a fact: refused if it holds a secret, a reinforcement of an open near-duplicate about the same
+   * Remembers a fact: refused if it holds a secret, a reinforcement of the same open fact about the same
    * entities, or a new fact that closes the open ones it replaces (`single`).
    */
   add(input: NewFact): AddResult {
@@ -207,7 +207,10 @@ export class MemoryGraph {
     const confidence = Math.min(1, Math.max(0, input.confidence ?? START_CONFIDENCE[input.source]));
 
     const polarity = negated(text);
-    const same = this.allFacts(true).find(f => sameEntities(f.entities, entities) && similarity(f.text, text) >= DUPLICATE && negated(f.text) === polarity);
+    // A fact learned without a relation can acquire one when the user repeats the exact statement. Named
+    // relations otherwise need to agree: a similar sentence alone cannot establish that two relations match.
+    const same = this.allFacts(true).find(f => sameFact(f, { entities, text, predicate }) ||
+      (!f.predicate && !!predicate && !!input.single && sameFact(f, { entities, text, predicate: "" })));
     if (same) {
       // Said again: surer (the stronger source wins), and fresh. A note made again records what it rests on now too.
       const from = mergeDerived(same.derivedFrom, input.derivedFrom);
@@ -362,7 +365,7 @@ export class MemoryGraph {
       if (this.facts.has(f.id)) continue;
       const ids = [...new Set(f.entities.map(id => moved.get(id) ?? id))];
       if (!ids.every(id => this.entities.has(id))) continue;
-      const same = f.invalidAt ? undefined : this.allFacts(true).find(o => sameEntities(o.entities, ids) && similarity(o.text, f.text) >= DUPLICATE && negated(o.text) === negated(f.text));
+      const same = f.invalidAt ? undefined : this.allFacts(true).find(o => sameFact(o, { ...f, entities: ids }));
       if (same) {
         again.set(f.id, same.id);
         this.facts.set(same.id, { ...same, confidence: Math.max(same.confidence, f.confidence), uses: same.uses + 1, source: stronger(same.source, f.source) });
@@ -429,7 +432,19 @@ export class MemoryGraph {
   }
 }
 
-const sameEntities = (a: string[], b: string[]) => a.length === b.length && a.every(id => b.includes(id));
+/** Only merge statements whose wording and relationship are the same. A bag of similar words can reverse an actor,
+ * change a number, or turn private into public, and must never acquire a stronger source's authority. */
+// These established profile relation names describe the same relation; arbitrary model-generated names do not.
+const RELATION_ALIASES = new Map([["preferred_name", "called"], ["home_city", "lives_in"], ["based_in", "lives_in"], ["employer", "works_at"]]);
+export function factIdentity(f: Pick<Fact, "text" | "entities" | "predicate">): string {
+  // Preserve case and compatibility characters: e.g. US and us can mean different things. NFC only combines
+  // canonically equivalent representations; clean() has already normalised ordinary whitespace at insertion.
+  const wording = f.text.normalize("NFC").trim().replace(/\s+/gu, " ").replace(/\.$/u, "");
+  return JSON.stringify([f.entities, RELATION_ALIASES.get(f.predicate) ?? f.predicate, wording]);
+}
+export function sameFact(a: Pick<Fact, "text" | "entities" | "predicate">, b: Pick<Fact, "text" | "entities" | "predicate">): boolean {
+  return factIdentity(a) === factIdentity(b);
+}
 
 /** The words that only turn a statement round or date it ("doesn't", "any more"), left out to compare what it says. */
 const POLARITY_WORDS = /\b(?:not|no|never|doesn['’]?t|don['’]?t|didn['’]?t|isn['’]?t|aren['’]?t|wasn['’]?t|weren['’]?t|won['’]?t|can['’]?t|cannot|any\s*more|no\s+longer|now|again)\b/giu;

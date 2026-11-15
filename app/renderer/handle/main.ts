@@ -166,9 +166,11 @@ const wordRows = (): HTMLElement[] => [...$("handle").querySelector<HTMLElement>
 function wordsClear(): boolean {
   const handleEl = $("handle");
   const end = handleEl.getBoundingClientRect().bottom - px(getComputedStyle(handleEl).paddingBottom);
+  const sentence = thoughtEl.getBoundingClientRect();
   return cardClear({
     sentence: { clientHeight: thoughtEl.clientHeight, scrollHeight: thoughtEl.scrollHeight, lineHeight: px(getComputedStyle(thoughtEl).lineHeight) },
     wordsEnd: end, rowsEnd: wordRows().map(el => el.getBoundingClientRect().bottom),
+    viewport: { top: sentence.top, bottom: sentence.bottom, height: window.innerHeight },
   });
 }
 /** Measured (a layout read) while it waits to be read: main told the first time all of it is in view on the shown card. */
@@ -188,6 +190,7 @@ function judgeWhole(): void {
 wholeEl.addEventListener("scroll", judgeWhole, { passive: true });
 // Fitted by main (or squeezed by a short work area): the question's sentence may show whole now, or no longer.
 window.addEventListener("resize", () => { paintWhole(); judgeWhole(); });
+document.body.addEventListener("scroll", () => { paintWhole(); judgeWhole(); }, { passive: true });
 document.fonts.addEventListener("loadingdone", judgeWhole);
 
 // ── An answer opened in full ("Read all") on the card: main told once its last line has been in view (all of it, or

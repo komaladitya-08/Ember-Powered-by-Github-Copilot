@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
-import { EXTENSIONS_IPC, IPC, PROVIDER_IPC, type EmberExtensionsApi, type EmberHomeApi, type EmberProviderApi, type Presence, type ReminderRow, type UpdateStatus, type RoutineRow, type SignInProgress, type Status, type VoiceStatus, type VoiceWord } from "../shared/ipc";
+import { EXTENSIONS_IPC, IPC, PROVIDER_IPC, type CodingWorkspaceState, type EmberExtensionsApi, type EmberHomeApi, type EmberProviderApi, type Presence, type ReminderRow, type UpdateStatus, type RoutineRow, type SignInProgress, type Status, type VoiceStatus, type VoiceWord } from "../shared/ipc";
 import type { Settings } from "../main/settings";
 import type { ConversationTurnChange, HistoryProblemKind } from "../shared/conversation";
 import type { AgentStatus, AnswerStream, TranscriptEntry } from "../main/agent/host";
@@ -24,6 +24,10 @@ const api: EmberHomeApi = {
   applyFix: fix => ipcRenderer.invoke(IPC.applyFix, fix),
   recheckSetup: () => ipcRenderer.invoke(IPC.recheckSetup),
   agentStatus: () => ipcRenderer.invoke(IPC.agentStatus),
+  codingState: () => ipcRenderer.invoke(IPC.codingState),
+  codingChooseWorkspace: () => ipcRenderer.invoke(IPC.codingChooseWorkspace),
+  codingClearWorkspace: () => ipcRenderer.invoke(IPC.codingClearWorkspace),
+  onCodingState: fn => listen<CodingWorkspaceState>(IPC.codingStateChanged, fn),
   projectPick: () => ipcRenderer.invoke(IPC.projectPick),
   projectRemove: name => ipcRenderer.invoke(IPC.projectRemove, name),
   projectExport: kind => ipcRenderer.invoke(IPC.projectExport, kind),

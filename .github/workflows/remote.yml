@@ -1,7 +1,6 @@
 # SSH, WSL and commands on GitHub's runners (design §10.2): the SSH/WSL unit files on every OS, and the integration
 # suites that need a real sshd, WSL, script(1) or a desktop session. Each integration file skips without its variable
-# and fails when the variable is "1" and the facility is missing; a test file that doesn't exist yet is skipped here
-# (run-integration.mjs --allow-missing), so every job is green or skipped until its package lands.
+# and fails when the variable is "1" and the facility is missing. Required suites fail if a test file is missing.
 #
 # Each job's owner (named above it) edits only that job's set-up steps; ci.yml is not touched by any SSH/WSL package.
 # It runs on pull requests and pushes to main that change a file its suites load, run or read (the paths below:
@@ -222,7 +221,7 @@ jobs:
           pgrep --version | head -1
           git --version
       - name: Commands with util-linux script, pipes without it, the stop ladder and the sweep
-        run: node scripts/run-integration.mjs --allow-missing test/integration/commands-local.test.ts test/integration/commands-flow-local.test.ts
+        run: node scripts/run-integration.mjs test/integration/commands-local.test.ts test/integration/commands-flow-local.test.ts
         env:
           EMBER_COMMANDS_TEST: "1"
 
@@ -268,7 +267,7 @@ jobs:
         run: |
           chown -R ci .
           sudo -u ci env "PATH=$PATH" HOME=/home/ci EMBER_COMMANDS_TEST=1 \
-            node scripts/run-integration.mjs --allow-missing test/integration/commands-local.test.ts test/integration/commands-flow-local.test.ts
+            node scripts/run-integration.mjs test/integration/commands-local.test.ts test/integration/commands-flow-local.test.ts
 
   # Owner: SB (SA adds its file). sshd on 127.0.0.1:2222 and a jump host on 2223, the runner's own key authorised;
   # a GTK 3 window under Xvfb and a session bus for the desktop part.
@@ -336,7 +335,7 @@ jobs:
       - name: The remote agent's parts (dist/remote-parts), as the suites install them
         run: node scripts/package/remote-parts.mjs
       - name: Transport (ssh -G, batch and interactive connects, host keys, passwords, ProxyJump, ControlMaster) and the agent
-        run: node scripts/run-integration.mjs --allow-missing test/integration/ssh-transport.test.ts test/integration/remote-ssh.test.ts test/integration/remote-e2e.test.ts
+        run: node scripts/run-integration.mjs test/integration/ssh-transport.test.ts test/integration/remote-ssh.test.ts test/integration/remote-e2e.test.ts
         env:
           EMBER_SSH_TEST: "1"
           EMBER_TEST_ALLOW_LOOPBACK_SSH: "1"
@@ -345,7 +344,7 @@ jobs:
       - name: The remote desktop child against Xvfb (discovery inputs injected; logind isn't available on runners)
         run: >-
           dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24"
-          node scripts/run-integration.mjs --allow-missing test/integration/remote-desktop.test.ts
+          node scripts/run-integration.mjs test/integration/remote-desktop.test.ts
         env:
           EMBER_SSH_TEST: "1"
           EMBER_TEST_ALLOW_LOOPBACK_SSH: "1"
@@ -392,7 +391,7 @@ jobs:
       - name: The remote agent's parts (dist/remote-parts), as the suite installs them
         run: node scripts/package/remote-parts.mjs
       - name: The real bootstrap on glibc 2.28 (install, serve, commands, headless desktop "none", a racing install)
-        run: node scripts/run-integration.mjs --allow-missing test/integration/remote-el8.test.ts
+        run: node scripts/run-integration.mjs test/integration/remote-el8.test.ts
         env:
           EMBER_SSH_TEST: "1"
 
@@ -521,7 +520,7 @@ jobs:
             # Until its socket exists: mutter took 4.4 s to open it in run 1, so a fixed sleep 3 started GTK too early.
             for i in $(seq 1 60); do [ -S "$XDG_RUNTIME_DIR/ember-wl" ] && break; sleep 0.5; done
             [ -S "$XDG_RUNTIME_DIR/ember-wl" ] || { echo "mutter never opened its Wayland socket" >&2; exit 1; }
-            WAYLAND_DISPLAY=ember-wl node scripts/run-integration.mjs --allow-missing test/integration/remote-wayland.test.ts'
+            WAYLAND_DISPLAY=ember-wl node scripts/run-integration.mjs test/integration/remote-wayland.test.ts'
         env:
           EMBER_SSH_TEST: "1"
           EMBER_TEST_ALLOW_LOOPBACK_SSH: "1"
@@ -599,17 +598,17 @@ jobs:
       - run: npm ci
       - run: npm run build
       - name: WSL discovery, facts and the WSL runner (WA)
-        run: node scripts/run-integration.mjs --allow-missing test/integration/wsl.test.ts
+        run: node scripts/run-integration.mjs test/integration/wsl.test.ts
         env:
           EMBER_WSL_TEST: "1"
       - name: Windows PowerShell commands under the job host (RUN)
-        run: node scripts/run-integration.mjs --allow-missing test/integration/commands-local.test.ts
+        run: node scripts/run-integration.mjs test/integration/commands-local.test.ts
         env:
           EMBER_COMMANDS_TEST: "1"
       - name: The remote agent's parts (dist/remote-parts), so the connect-and-hello test runs too
         run: node scripts/package/remote-parts.mjs
       - name: Win32-OpenSSH to the WSL1 sshd through the mux (SA); WSL1's 4.4 kernel refused before anything is installed
-        run: node scripts/run-integration.mjs --allow-missing test/integration/ssh-windows.test.ts
+        run: node scripts/run-integration.mjs test/integration/ssh-windows.test.ts
         env:
           EMBER_SSH_TEST: "1"
           EMBER_TEST_ALLOW_LOOPBACK_SSH: "1"
@@ -670,7 +669,7 @@ jobs:
       - run: npm ci
       - run: npm run build
       - name: WSL2 discovery, facts, the runner and the job host ladder (WA)
-        run: node scripts/run-integration.mjs --allow-missing test/integration/wsl.test.ts
+        run: node scripts/run-integration.mjs test/integration/wsl.test.ts
         env:
           EMBER_WSL_TEST: "1"
       # Windows SSH to this distro from here on, set up only now: the WSL tests above want it stopped at start and
@@ -782,7 +781,7 @@ jobs:
       - run: npm run build
       - name: Probe WSLg (RAIL windows, UIA tree, session buses, AT-SPI extents); says so and skips where WSLg is absent
         continue-on-error: true
-        run: node scripts/run-integration.mjs --allow-missing test/integration/wslg-probe.test.ts
+        run: node scripts/run-integration.mjs test/integration/wslg-probe.test.ts
         env:
           EMBER_WSL_TEST: "1"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -829,11 +828,11 @@ jobs:
       - name: The remote agent's parts (dist/remote-parts), as the suite installs them
         run: node scripts/package/remote-parts.mjs
       - name: Commands on macOS (zsh, BSD script's exit status, the ps -E sweep, Homebrew on PATH)
-        run: node scripts/run-integration.mjs --allow-missing test/integration/commands-local.test.ts test/integration/commands-flow-local.test.ts
+        run: node scripts/run-integration.mjs test/integration/commands-local.test.ts test/integration/commands-flow-local.test.ts
         env:
           EMBER_COMMANDS_TEST: "1"
       - name: The agent on macOS over SSH (commands only; a two-archive install)
-        run: node scripts/run-integration.mjs --allow-missing test/integration/remote-ssh.test.ts
+        run: node scripts/run-integration.mjs test/integration/remote-ssh.test.ts
         env:
           EMBER_TEST_ALLOW_LOOPBACK_SSH: "1"
 

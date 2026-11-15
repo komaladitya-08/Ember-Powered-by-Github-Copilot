@@ -18,6 +18,10 @@ const TAB = { width: 56, height: 56 };
 const CARD = { width: 360, height: 150 };
 
 describe("the handle's corner", () => {
+  it("clamps oversized windows to the work area's origin", () => {
+    const area = { x: -320, y: 40, width: 320, height: 300 };
+    expect(handleCorner("bottom-right", { width: 360, height: 360 }, area)).toEqual({ x: -320, y: 40 });
+  });
   it("is the bottom right by default, 12 px in from the work area's edges", () => {
     const wa = { x: 0, y: 0, width: 1920, height: 1040 };
     expect(HANDLE_MARGIN).toBe(12);

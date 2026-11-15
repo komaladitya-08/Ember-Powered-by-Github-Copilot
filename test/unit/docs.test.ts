@@ -430,7 +430,7 @@ describe("docs/COMMANDS-WSL-SSH.md", () => {
     expect(s23).toContain("Anything else that isn't a danger runs too, announced by name with a few seconds to stop it");
     // §2.4 says first what its "asks" means in each mode.
     const s24 = flat(doc.slice(doc.indexOf("### 2.4 What asks first"), doc.indexOf("### 2.5 ")));
-    expect(s24).toMatch(/^### 2\.4 What asks first This section says what asks in Interactive, the default\./);
+    expect(s24).toMatch(/^### 2\.4 What asks first This section says what asks in Interactive, the default, even when you requested the command\./);
   });
 
   it("says in §2.5b what Autopilot does instead of the questions it no longer puts (r11-copy-x11-5; owner decision of 2026-11-14)", () => {
@@ -521,10 +521,10 @@ describe("README.md", () => {
     expect(modes).toContain("A command that shows passwords or keys runs too, but what it prints is kept from the AI model (you see it in the command window), and one that would also save them to a file is refused.");
   });
 
-  it("gives the 4 s exception only to the commands EXACT_ONLY names, and says a command Ember doesn't know waits for its Stop (accessibility-r12-3, install-docs-r12-1)", () => {
+  it("says dangerous commands ask even when requested and unknown commands wait for Stop", () => {
     const commands = flat(section(readme, "Commands, WSL and other computers"));
     expect(commands).toContain("one Ember doesn't know runs too, after it names it and gives you 4 seconds to stop it.");
-    expect(commands).toContain("and it only deletes or overwrites data, publishes something or changes the system, it says so and gives you 4 seconds to stop it instead; one that touches passwords or keys or downloads and runs code still asks.");
+    expect(commands).toContain("changes the system, or downloads and runs code, even if you asked for it.");
     expect(commands).not.toMatch(/a script that does any of that always asks/);
   });
 
@@ -1169,7 +1169,7 @@ describe("round 2's docs lines (bubble2)", () => {
     expect(read("app/renderer/command/copy.ts")).toContain('"Or press Alt+Tab to go there."');
     expect(s22).toContain(`(Needs you) with **Show**, which brings the command window up with the keyboard in the command, and "Or press Alt+Tab to go there." under it on Linux and Windows`);
     expect(s22).toContain(`A command the kill switch ended says "Stopped with everything else after 2 s. What it already changed stays." It names no chord`);
-    expect(flat(section(guide, "2.5 When you asked for exactly that"))).toContain(`neither the bubble nor the command window names it: **Stop** is the way, as the spoken "Press Stop to cancel." says`);
+    expect(flat(section(guide, "2.5 Command announcements and Stop"))).toContain(`neither the bubble nor the command window names it: **Stop** is the way, as the spoken "Press Stop to cancel." says`);
     expect(read("app/voice/spoken.ts")).toContain('"Press Stop to cancel."');
     expect(flat(section(guide, "4.1 Connecting"))).toContain(`An offer to work on another computer that you didn't ask for waits while "Lost build-01" or "Can't connect to build-01" is up`);
     // Read all at the user's text size (presenter.ts) and the routes while a shortcut is held elsewhere (target-copy.ts).

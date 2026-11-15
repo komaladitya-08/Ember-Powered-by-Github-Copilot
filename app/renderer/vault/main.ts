@@ -8,7 +8,7 @@
  */
 
 import {
-  VAULT_FOCUS_GRACE_MS, VAULT_FORM_BUTTONS, VAULT_KEYBOARD_ELSEWHERE, VAULT_NO_KEYRING, VAULT_NOTHING_TYPED, VAULT_SAVING, checkValues, partLabel, partProblemText, vaultSaveProblem,
+  VAULT_FOCUS_GRACE_MS, VAULT_FORM_BUTTONS, VAULT_KEYBOARD_ELSEWHERE, VAULT_NO_KEYRING, VAULT_NOTHING_TYPED, VAULT_SAVING, checkNewValues, partLabel, partProblemText, vaultSaveProblem,
   type VaultFormView, type VaultPart, type VaultValues,
 } from "../../shared/vault";
 import type { VaultFormApi } from "./api";
@@ -133,7 +133,7 @@ async function submit(): Promise<void> {
   for (const part of boxes.keys()) mark(part, "");
   const values = typed();
   // The page's own check, so a slip is said before anything leaves it; main's check is the one that counts.
-  const checked = checkValues(shown.kind, values);
+  const checked = checkNewValues(shown.kind, values);
   if (!checked.ok) {
     if (!checked.part && !Object.keys(values).length) { problem.textContent = VAULT_NOTHING_TYPED; boxes.values().next().value?.focus(); return; }
     refuse(checked.part, vaultSaveProblem("invalid"));

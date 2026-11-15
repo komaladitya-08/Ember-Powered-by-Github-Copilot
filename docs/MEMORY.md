@@ -39,7 +39,7 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
 - `graph.ts`: entities (`person`, `organisation`, `project`, `app`, `place`, `topic`, `thing`) with aliases.
   - Facts carry a source (`user`, `conversation`, `task`, `observed`, `connector`), a confidence, validity times and
     use counts.
-  - A near-duplicate reinforces the fact already there.
+  - The same statement about the same ordered entities and relation reinforces the fact already there. Similar wording alone is not enough: a changed number, actor or qualifier can change its meaning and authority.
   - A `single` predicate (`works_at`, `lives_in`) closes the open facts it replaces. So does the same statement about
     the same subject said the other way round ("Likes Teams" → "Doesn't like Teams any more": opposite polarity, 0.8
     alike without the words that turn it round), and a preference whose one word changed before the same thing in the
@@ -68,7 +68,7 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
     a request to 15–23 ms on a busy 4-vCPU machine, and a question that matches nothing from 25–32 ms to 3 ms
     (memory-14; memory.test.ts pins both).
 - `consolidate.ts`: the model-free sleep-time pass.
-  - Merges entities that answer to one name and folds near-duplicate facts together.
+  - Merges entities that answer to one name and folds identical facts with the same ordered entities and relation together.
   - Forgets history older than 180 days and unsure, unused guesses older than 90 days, and keeps the graph under
     5,000 facts.
   - What the user said is never dropped for age.

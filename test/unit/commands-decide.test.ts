@@ -132,11 +132,10 @@ describe("decideCommand: the rules in order", () => {
     expect(decide("ls -la")).toEqual({ verdict: "run", reason: "An ordinary command.", classes: [], rules: [], says: [], unasked: false, armMs: 0 });
   });
 
-  it("10: the user's own words announce exactly what they named", () => {
+  it("asks before dangerous commands even when the user named them exactly", () => {
     const d = decide("rm notes.txt", { words: "delete notes.txt" });
-    expect(d).toMatchObject({ verdict: "announce", classes: ["destroy"], rules: ["posix.rm"], requested: { intent: "delete.paths", announce: "Deleting notes.txt, as you asked." }, armMs: 0 });
-    expect(d.reason).toBe("The user's own words asked for this (delete.paths).");
-    expect(decide("git push", { words: "push feature-x", git: { branch: "feature-x", pushDefault: "simple", upstream: "origin/feature-x" } }).verdict).toBe("announce");
+    expect(d).toMatchObject({ verdict: "ask", classes: ["destroy"], rules: ["posix.rm"], armMs: ARM_ASK_MS, unasked: false });
+    expect(decide("git push", { words: "push feature-x", git: { branch: "feature-x", pushDefault: "simple", upstream: "origin/feature-x" } }).verdict).toBe("ask");
     expect(decide("git push", { words: "push feature-x" }).verdict).toBe("ask");
   });
 

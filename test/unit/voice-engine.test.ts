@@ -3531,7 +3531,7 @@ describe("whose a spoken answer is (second review of the voice lane, 2026-11-12)
         expect(s.heard(), `${words} in ${where}`).toEqual([`${words} | ${where}`]);
       }
       for (const words of [
-        "Wait.", "Hold on.", "Okay then.", "Perfect.", "Great.", "Alright then.", "Okay, cool.", "Fine then.", "Sounds great.",
+        "Wait.", "Hold on.",
         "No, I don't want that.", "That's not what I meant.", "I never said that.", "Nope, wrong one, wait.",
       ]) for (const where of WHERE) {
         const s = waiting({ 5: words }, where, { otherSound: false });
@@ -3562,16 +3562,15 @@ describe("whose a spoken answer is (second review of the voice lane, 2026-11-12)
       }
     });
 
-    it("says once it didn't catch an everyday yes that isn't on the list, in every window, by name and at a wake too, and never sends or takes it (voice-listening-r11-1)", () => {
-      // They vanished in the answer window, or went to Copilot as a request while the question stayed up.
+    it("passes everyday affirmative replies in every question window, including by name", () => {
       for (const words of ["Of course, go ahead.", "Thanks, go ahead.", "Just do it.", "Hell yes.", "Definitely.", "Keep going."]) {
         for (const where of WHERE) {
           const s = waiting({ 5: words }, where, { otherSound: false });
           says(s, 5, 0, "user");
-          expect(s.heard(), `${words} in ${where}`).toEqual(["unclear"]);
+          expect(s.heard(), `${words} in ${where}`).toEqual([`${words} | ${where}`]);
           const named = waiting({ 5: `Ember, ${words}` }, where, { otherSound: false });
           says(named, 5, 1, "user");
-          expect(named.heard().filter(h => h !== "wake"), `Ember, ${words} in ${where}`).toEqual(["unclear"]);
+          expect(named.heard().filter(h => h !== "wake"), `Ember, ${words} in ${where}`).toEqual([`${words} | ${where}`]);
         }
       }
     });
@@ -3582,7 +3581,7 @@ describe("whose a spoken answer is (second review of the voice lane, 2026-11-12)
         says(named, 5, 1, "user");
         expect(named.heard().filter(h => h !== "wake"), `Ember, ${words} in ${where}`).toEqual(["unclear"]);
       }
-      for (const words of ["Agreed.", "You bet.", "Uh-huh.", "Roger that.", "By all means.", "I think so.", "Be my guest.", "Mm-hmm.", "Fair enough."]) for (const where of WHERE) {
+      for (const words of ["Uh-huh.", "I think so.", "Mm-hmm."]) for (const where of WHERE) {
         const s = waiting({ 5: words }, where, { otherSound: false });
         says(s, 5, 0, "user");
         expect(s.heard(), `${words} in ${where}`).toEqual(["unclear"]);

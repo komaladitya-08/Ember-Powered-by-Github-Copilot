@@ -36,7 +36,7 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { specLicenceIds, suppliedLicence, uncoveredLicences } from "./licences.mjs";
 import { EMBER_FUSES, flipFuses, fuseMismatches } from "./fuses.mjs";
-import { layoutFor, npmInvocation, prodPackageDirs, REMOTE_PARTS_DIR, RUNTIME_BUNDLE, selectPackages } from "./layout.mjs";
+import { copilotToolAsset, layoutFor, npmInvocation, prodPackageDirs, REMOTE_PARTS_DIR, RUNTIME_BUNDLE, selectPackages } from "./layout.mjs";
 import { writeIco, writeIconset } from "./icon.mjs";
 import { exeResourceMismatches, readExeResources, rewriteExeResources } from "./exe-resources.mjs";
 import { finishMacBundle } from "./mac-bundle.mjs";
@@ -192,6 +192,8 @@ for (const src of prod) {
     recursive: true,
     filter: s => {
       const r = path.relative(src, s);
+      // The SDK uses these shipped helpers, plugin manifests and skill Markdown at runtime for native coding tools.
+      if (copilotToolAsset(src, r)) return true;
       // Nested node_modules are copied on their own.
       if (/(^|[\\/])node_modules([\\/]|$)/.test(r)) return false;
       if (isNotice(src, r)) return true;
@@ -200,10 +202,8 @@ for (const src of prod) {
     },
   });
 }
-// Inside the platform builds: koffi's musl build or link-time files, libvips's headers, and the Copilot runtime's
-// helpers for its own built-in tools (search, browser plugin, skills). Ember's sessions turn every built-in tool off
-// (app/main/agent/session-config.ts), and the runtime runs without them (checked: the conductor integration test
-// against a runtime pruned like this).
+// Inside the platform builds, remove only unused architecture builds, link-time files and libvips's headers.
+// The Copilot runtime's search helpers, plugins and skills remain for the coding session.
 for (const p of layout.prune) fs.rmSync(path.join(appDir, "node_modules", p), { recursive: true, force: true });
 
 // 3. The accessibility sidecar files (main.ts looks for them under resources/ when packaged).

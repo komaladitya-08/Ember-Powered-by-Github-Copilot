@@ -83,6 +83,27 @@ beforeEach(() => { logs.length = 0; });
 afterEach(() => { vi.useRealTimers(); });
 
 describe("the prompt window's queue", () => {
+  it("returns only a displayed choice or a permitted freeform answer for a clarification", async () => {
+    const { ipc, ctl, page } = setup();
+    const card = { id: "q1", kind: "clarification", question: "Which?", choices: ["one", "two"], allowFreeform: false } as const;
+    const first = ctl.ask({ ...card, choices: [...card.choices] });
+    ipc.send(PROMPT_IPC.answer, page(), { id: "q1", ok: true, value: "forged", choice: 0 });
+    await expect(first).resolves.toEqual({ id: "q1", ok: false });
+    const second = ctl.ask({ ...card, id: "q2", choices: [...card.choices] });
+    ipc.send(PROMPT_IPC.answer, page(), { id: "q2", ok: true, value: "two", choice: 1 });
+    await expect(second).resolves.toEqual({ id: "q2", ok: true, value: "two", choice: 1 });
+    const third = ctl.ask({ id: "q3", kind: "clarification", question: "Where?", allowFreeform: true });
+    ipc.send(PROMPT_IPC.answer, page(), { id: "q3", ok: true, value: "the project folder" });
+    await expect(third).resolves.toEqual({ id: "q3", ok: true, value: "the project folder" });
+    const fourth = ctl.ask({ id: "q4", kind: "clarification", question: "Where?", allowFreeform: true });
+    ctl.dismiss("q4");
+    await expect(fourth).resolves.toEqual({ id: "q4", ok: false });
+    expect(JSON.stringify(logs)).not.toContain("the project folder");
+    expect(validPromptCard({ id: "q5", kind: "clarification", question: "Which?", choices: [], allowFreeform: false })).toBe(false);
+    expect(validPromptCard({ id: "q6", kind: "clarification", question: "x".repeat(2001), allowFreeform: true })).toBe(false);
+    expect(validPromptCard({ id: "q7", kind: "clarification", question: "Which?", choices: ["x".repeat(201)], allowFreeform: false })).toBe(false);
+  });
+
   it("shows one card at a time, in the order asked, and hides when none is left", async () => {
     const { ipc, ctl, win, page } = setup();
     const a = ctl.ask(password("a"));
@@ -353,6 +374,16 @@ describe("the page's buttons (pure press logic)", () => {
   const ok = (card: PromptCard) => promptView(card).buttons.find(b => b.id === "ok")!;
   const cancel = (card: PromptCard) => promptView(card).buttons.find(b => b.id === "cancel")!;
 
+  it("clearly sends a typed answer to the model, or sends an exact choice", () => {
+    const card: PromptCard = { id: "q", kind: "clarification", question: "Pick one", choices: ["alpha", "beta"], allowFreeform: true };
+    const view = promptView(card);
+    expect(JSON.stringify(view.body)).toContain("connected model");
+    const field = { value: "custom" };
+    expect(pressResult(card, ok(card), field, 0, 0, true)).toEqual({ kind: "answer", answer: { id: "q", ok: true, value: "custom" } });
+    expect(field.value).toBe("");
+    expect(pressResult(card, view.buttons.find(b => b.id === "choice:1")!, field, 0, 0, true)).toEqual({ kind: "answer", answer: { id: "q", ok: true, value: "beta", choice: 1 } });
+  });
+
   it("empties the field the moment a secret is sent, and waits for one to be typed", () => {
     const field = { value: "" };
     expect(pressResult(password(), ok(password()), field, 0, 0, true)).toEqual({ kind: "wait", focusField: true });
@@ -520,7 +551,7 @@ describe("the window's size", () => {
     // A small screen (or a display left of the primary): capped to it, never off it.
     expect(fitBounds({ x: -1000, y: 100, width: 440, height: 300 }, PROMPT_SIZE.consent, { x: -1280, y: 0, width: 1280, height: 480 }))
       .toEqual({ x: -1000 + 220 - 260, y: 16, width: 520, height: 448 });
-    expect(fitBounds({ x: 0, y: 0, width: 440, height: 300 }, PROMPT_SIZE.consent, { x: 0, y: 0, width: 20, height: 20 })).toMatchObject({ width: 1, height: 1 });
+    expect(fitBounds({ x: 0, y: 0, width: 440, height: 300 }, PROMPT_SIZE.consent, { x: -10, y: 20, width: 10, height: 20 })).toEqual({ x: -6, y: 29, width: 2, height: 2 });
   });
 });
 

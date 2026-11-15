@@ -700,6 +700,19 @@ describe("fill_from_vault and Stop while the keyring is asked (codex-212-p1)", (
     expect(h.hand.filter(x => x.startsWith("keys") || x === "type")).toEqual([]);
     expect(h.everything([r])).not.toContain(CANARY);
   });
+
+  it.each(["replace", "forget"] as const)("types no old value after %s during secret-field marking", async change => {
+    const h = await worker({ saved: [LOGIN], put: async () => { throw new Error(VAULT_FILL_UNAVAILABLE); }, mark: async () => {
+      if (change === "replace") expect((await h.service.keep("login", GITHUB, { user: USER, password: "new-password-123" })).ok).toBe(true);
+      else expect(h.service.forgetAll()).toBe(true);
+    } });
+    await h.call("perceive_window", {});
+    const r = await h.call("fill_from_vault", { id: 2, what: "password" });
+    expect(r.resultType).not.toBe("success");
+    expect(h.put.filter(p => p.how === "keys")).toEqual([]);
+    expect(h.hand.filter(x => x.startsWith("keys") || x === "type")).toEqual([]);
+    expect(h.everything([r])).not.toContain(CANARY);
+  });
 });
 
 describe("after a fill from the vault (vault-3)", () => {

@@ -442,8 +442,8 @@ which answer its last words, only while those show: not while the bubble cuts it
 full only once its last line has been in view, also past its first 600 characters: `askSuggestions`, and
 only in a box that opened with some, in no more rows than it opened with, so its field never moves),
 captioned "Ember suggests". A click sends them as the user's choice of Ember's words (`suggested`): the usual policy
-applies, and they never count as the user's own words for a command (no announce-with-Stop: host.ts
-`UserRequest.suggested`). After a spoken reply that asked something the follow-up window is 12 s instead of 8 (no
+applies, and they never count as the user's own words for a command (host.ts `UserRequest.suggested`). Dangerous commands
+still ask in Interactive. After a spoken reply that asked something the follow-up window is 12 s instead of 8 (no
 change to wake detection).
 
 

@@ -128,7 +128,7 @@ const TODAY = {
   "audit-dir": "Every decision and action is also in ~/.config/ember/audit/ and in the system journal (journalctl -t ember-audit).",
 } as const;
 const CHORD_SENTENCES: Record<ShortcutId, string> = {
-  stop: "It asks before acting in an app unless you turn on Interactive, when you agree or later in settings, and then still before anything risky there. It asks before a command it knows is dangerous and before code it can't read, unless you asked for exactly that command and it only deletes or overwrites data, publishes something or changes the system (it shows it first, with a few seconds to stop it). A command it doesn't know runs, and it tells you. Assisted and Autopilot, if you choose them later in settings, ask less. It never lets the AI model type or see passwords. Only in Autopilot, it can fill in a login, a card or contact details from its vault, which the AI model never sees. Ctrl+Alt+X stops everything at once.",
+  stop: "It asks before acting in an app unless you turn on Interactive, when you agree or later in settings, and then still before anything risky there. It asks before a command it knows is dangerous and before code it can't read. A command it doesn't know runs, and it tells you. Assisted and Autopilot, if you choose them later in settings, ask less. It never lets the AI model type or see passwords. Only in Autopilot, it can fill in a login, a card or contact details from its vault, which the AI model never sees. Ctrl+Alt+X stops everything at once.",
   settings: "Press Ctrl+Alt+E any time to come back here, or click Ember's handle in the bottom-right corner.",
   ask: "Ask Ember anything with Ctrl+Alt+Space.",
   mute: TODAY["mic-indicator"],

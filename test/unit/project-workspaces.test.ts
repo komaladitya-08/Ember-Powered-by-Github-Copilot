@@ -64,6 +64,55 @@ it("leaves the library alone while the keyring is unavailable", async () => {
   expect(await fs.readFile(saved, "utf8")).toBe("invalid");
 });
 
+it("preserves each unreadable library and permits a new save", async () => {
+  const saved = path.join(dir, `project-workspaces-${first}.bin`);
+  const storage = new ProjectWorkspaceStore(dir, box(), false);
+  for (const broken of ["invalid A", "invalid B"]) {
+    await fs.writeFile(saved, broken);
+    await expect(storage.list(first)).rejects.toThrow("set them aside");
+  }
+  const copies = (await fs.readdir(dir)).filter(name => name.startsWith(path.basename(saved) + ".broken"));
+  expect(copies).toHaveLength(2);
+  expect((await Promise.all(copies.map(name => fs.readFile(path.join(dir, name), "utf8")))).sort()).toEqual(["invalid A", "invalid B"]);
+  await storage.write(first, [entry], allow);
+  expect(await storage.list(first)).toEqual([entry]);
+  expect(await storage.list(other)).toEqual([]);
+});
+
+it("leaves an encrypted library in place when a keyring fails after its availability check", async () => {
+  const working = box();
+  const storage = new ProjectWorkspaceStore(dir, working, false);
+  const saved = path.join(dir, `project-workspaces-${first}.bin`);
+  await storage.write(first, [entry], allow);
+  const original = await fs.readFile(saved);
+  const failing = { ...working, decryptString: () => { throw new Error("keyring locked"); } };
+  await expect(new ProjectWorkspaceStore(dir, failing, false).list(first)).rejects.toThrow("keyring");
+  expect(await fs.readFile(saved)).toEqual(original);
+  expect(await fs.readdir(dir)).toEqual([path.basename(saved)]);
+  expect(await storage.list(first)).toEqual([entry]);
+});
+
+it("does not quarantine a replacement made while asynchronous decryption is pending", async () => {
+  const saved = path.join(dir, `project-workspaces-${first}.bin`);
+  const original = box();
+  const storage = new ProjectWorkspaceStore(dir, original, false);
+  await fs.writeFile(saved, "invalid A");
+  let release!: (value: { result: string; shouldReEncrypt: boolean }) => void;
+  let started!: () => void;
+  const waiting = new Promise<void>(resolve => { started = resolve; });
+  const slow = { ...original, isAsyncEncryptionAvailable: async () => true, decryptStringAsync: () => {
+    started();
+    return new Promise<{ result: string; shouldReEncrypt: boolean }>(resolve => { release = resolve; });
+  } };
+  const pending = new ProjectWorkspaceStore(dir, slow, true).list(first);
+  await waiting;
+  await storage.write(first, [entry], allow);
+  release({ result: "invalid A", shouldReEncrypt: false });
+  await expect(pending).rejects.toThrow("changed");
+  expect(await storage.list(first)).toEqual([entry]);
+  expect(await fs.readdir(dir)).toEqual([path.basename(saved)]);
+});
+
 // integrations-r9-3: the library's owner was a hash of the provider's whole config, its API key included, so replacing
 // the key (or removing it, or changing the wire API) left every saved workspace in a file nothing listed or removed.
 const owners = (o: { key?: string | null; baseUrl?: string; type?: "openai" | "azure" | "anthropic"; wireApi?: "completions" | "responses"; kind?: "user" | "admin" } = {}) => {

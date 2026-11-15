@@ -39,7 +39,7 @@ vi.mock("electron", () => ({
   },
   // The command window's close guard listens for Ember quitting (review #262); its placement reads the screen (#272).
   app: { on: () => undefined, removeListener: () => undefined },
-  screen: {},
+  screen: { getPrimaryDisplay: () => ({ workAreaSize: { width: 1920, height: 1080 } }), on() {}, off() {} },
 }));
 
 /** targetRules as main's policy calls it: S0a's stub, unless a test puts a rule of its own in. */

@@ -130,7 +130,6 @@ export type ViewLeafNode =
 
 /** One node of a checked view (flat form: a layout node names its children by id). */
 export type ViewNode = ViewLayoutNode | ViewLeafNode;
-export type ViewKind = ViewNode["kind"];
 
 /** The layout kinds: the only ones with children. */
 export const LAYOUT_KINDS: ReadonlySet<string> = new Set(["stack", "row", "grid", "card", "section"]);

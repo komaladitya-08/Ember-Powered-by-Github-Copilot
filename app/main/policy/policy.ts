@@ -2775,6 +2775,16 @@ const onPaymentPage = (window: string): Risk | null => {
   const what = word === "billing" ? "billing" : word === "payment" ? "a payment" : "a checkout";
   return { reason: `this is in a window whose title mentions ${what}, where it may pay for something`, note: `The window's title mentions ${what}, so this may pay for something.` };
 };
+/** Generic progression labels can commit the operation described by the page title. Keep this narrow: links and
+ * controls with descriptive names need their own rules, and Back/Cancel/read-only routes must remain usable. */
+const PAGE_PROCEED = /^\s*(next|finish|done|complete)(?:\s*(?:[.!…:>›»→]+|\([^)]*\)))?\s*$/;
+const PAGE_EXIT = /^\s*(cancel|back|go back|read[- ]only|open read[- ]only)\s*[.!]?\s*$/;
+const ORDER_REVIEW = /\b(review|confirm|place|submit|complete)\s+(?:your\s+|the\s+|an?\s+)?order\b/;
+const pageProceedRisk = (r: ActionRequest, role: string, name: string, os: OS): Risk | null => {
+  if (!(r.inPage || r.onPage) || !ACTIVATING_ROLES.test(role) || !PAGE_PROCEED.test(normalizeLabel(name))) return null;
+  if (!(isRiskyLabel(r.window, os) || isRiskyActLabel(r.window) || ORDER_REVIEW.test(normalizeLabel(r.window)))) return null;
+  return { reason: "this may complete an action described by the page's title", about: `${name} ${r.window}`, note: "This control may go ahead with the action in the page's title." };
+};
 /** A window or dialog titled for a protection of the account or the computer, and the bare answers that turn one off there. */
 const PROTECTION_TITLE = /\b(two[- ]factor|two[- ]step|2[- ]step|2fa|multi[- ]factor|mfa|firewall|antivirus|security|protection|verification|passkeys?|encryption)\b/;
 const TURNS_OFF = /^[^a-z0-9]*(disable|turn (it )?off|switch (it )?off|deactivate)\b/;
@@ -3524,11 +3534,13 @@ export class PolicyEngine {
     const answersDefault: Risk = { reason: "this answers a dialog's question or warning with one of its buttons, and Ember can't tell which", note: `I can't tell which of the dialog's buttons this presses.${note ? ` ${note}` : ""}` };
     // Any control of a page (or an Electron app's window) whose title mentions a payment: it may buy something whatever its
     // label says. The question says why, in words true of a title that only mentions one (a mail's subject, a file's name).
-    const payment = ACTIVATING_ROLES.test(role) && (r.inPage || r.onPage) ? onPaymentPage(r.window) : null;
+    const payment = ACTIVATING_ROLES.test(role) && (r.inPage || r.onPage) && !PAGE_EXIT.test(normalizeLabel(name)) ? onPaymentPage(r.window) : null;
+    const pageProceed = pageProceedRisk(r, role, name, os);
     switch (r.kind) {
       case "click": case "toggle": case "cursor_click":
         if (named && !lone && !committing) return { reason: NAMED_RISK, about: name };
         if (payment) return { ...payment, about: name };
+        if (pageProceed) return pageProceed;
         // Its name was withheld (it may say what a secret field holds): what it does can't be shown, so it is asked.
         if (r.element?.withheld) return WITHHELD;
         if (around) return BARE_IN(around);
@@ -3603,6 +3615,8 @@ export class PolicyEngine {
           // does what the item does (judged as a click on it that does something of its own: riskyContent).
           if (content && named) return { reason: "this opens or uses an item whose name says it may be hard to undo or visible to others", about: name };
           if (ACTIVATING_ROLES.test(role) && named && !lone && !committing) return { reason: PRESSED_RISK, about: name };
+          if (payment) return { ...payment, about: name };
+          if (pageProceed) return pageProceed;
           if (r.element?.withheld) return WITHHELD;
           if (ACTIVATING_ROLES.test(role) && answer) return { ...answer, reason: settings ? answer.reason : "this answers a dialog, and Ember can't be sure what it agrees to" };
           if (ACTIVATING_ROLES.test(role) && conflict) return goesAhead;

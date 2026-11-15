@@ -1,7 +1,7 @@
 /**
  * Messages between main and Ember's prompt window ("Ember needs you", §8.6): host keys, passwords and codes for SSH, a security
- * key touch, and the first-use consent cards. Renderer-safe: names and types only. What the user types there goes
- * only to ssh (through Ember's askpass), never to a log or the model.
+ * key touch, first-use consent cards and coding clarifications. Renderer-safe: names and types only. SSH answers go
+ * only to ssh (through Ember's askpass); clarification answers go to the connected model as the card explains.
  */
 
 import type { ConsentPanel } from "./consent";
@@ -41,6 +41,8 @@ export type PromptCard =
   | { id: string; kind: "consent"; n: number; consent: ConsentPanel }
   /** A first-use consent card asked directly (settings' switches), not through a question. */
   | { id: string; kind: "consent-direct"; consent: ConsentPanel }
+  /** A coding agent's question; unlike SSH secrets, the answer is sent to the connected model. */
+  | { id: string; kind: "clarification"; question: string; choices?: string[]; allowFreeform: boolean }
   | { id: string; kind: "approval"; n: number; title: string; prompt: string; detail?: string; where?: string; risky?: boolean; context?: string;
       options: { id: string; label: string; primary?: boolean }[] };
 
@@ -52,7 +54,7 @@ export interface ApprovalResult { ok: boolean; reason?: ApprovalRefusal }
 export type ApprovalCard = Extract<PromptCard, { kind: "approval" }>;
 
 /**
- * The page's answer to a card: `value` is the secret typed (never logged); `sha256` echoes a consent card's hash.
+ * The page's answer to a card: `value` is the typed or selected answer (never logged); `sha256` echoes a consent card's hash.
  * `refused` is main's own no, never the user's: the card couldn't be shown (no window, or a card it won't show).
  */
-export type PromptAnswer = { id: string; ok: boolean; value?: string; sha256?: string; refused?: true };
+export type PromptAnswer = { id: string; ok: boolean; value?: string; choice?: number; sha256?: string; refused?: true };
