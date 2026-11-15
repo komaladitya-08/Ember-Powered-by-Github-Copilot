@@ -7,7 +7,7 @@ import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import { chromium, type Browser, type Page } from "playwright-core";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { DEFAULT_SETTINGS } from "../../app/main/settings";
 import type { ExtensionsState } from "../../app/shared/ipc";
 import { AGREE_ARM_MS } from "../../app/shared/provider";
@@ -57,6 +57,7 @@ beforeAll(async () => {
   port = (server.address() as { port: number }).port;
 });
 afterAll(async () => { if (gate) return; await browser.close(); server.close(); });
+afterEach(async () => { if (!gate) await Promise.all(browser.contexts().map(context => context.close())); });
 
 /** Home after first run, on `pane`, with Extensions answering from `seed`. */
 async function open(pane: string, seed: Seed = {}): Promise<Page> {
