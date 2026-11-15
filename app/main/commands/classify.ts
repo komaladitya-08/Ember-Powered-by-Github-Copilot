@@ -9164,13 +9164,20 @@ const OC_CREATE_KINDS = /^(build|buildconfig|bc|clusterresourcequota|clusterquot
 const KUBE_CREATE_VALUE = ["filename", "output", "namespace", "selector", "kustomize", "field-manager", "template", "context", "cluster", "user", "kubeconfig", "server", "from-file", "from-env-file", "from-literal", "image", "type", "cert", "key", "port", "schedule", "rule", "resource", "verb", "role", "clusterrole", "serviceaccount", "group", "hard", "scopes", "tcp", "docker-server", "docker-username", "docker-password", "docker-email"];
 
 /**
+ * The words after `kubectl|oc create` that aren't options or their values (`create -n ns secret generic k`: secret,
+ * generic, k), lowercased; null for a word Ember can't read (integ-y-1).
+ */
+function kubeCreateWords(rest: readonly Arg[]): (string | null)[] {
+  return parseOpts(rest.slice(1), { shortValue: "fonlk", longValue: KUBE_CREATE_VALUE }).operands.map(a => a.v === null ? null : a.v.toLowerCase());
+}
+/**
  * Whether `kubectl|oc create …` is one of their own: a kind they have (`create secret generic`), or no kind at all
  * (`create -f k.yaml`). A word Ember reads as neither, a value it can't place included, may be a plug-in's name.
  */
-function kubeCreatesBuiltIn(key: string, verbs: readonly string[], rest: readonly Arg[]): boolean {
-  if (verbs.length > 1) return KUBE_CREATE_KINDS.test(verbs[1] ?? "") || (key === "oc" && OC_CREATE_KINDS.test(verbs[1] ?? ""));
-  const p = parseOpts(rest.slice(1), { shortValue: "fonlk", longValue: KUBE_CREATE_VALUE });
-  return p.operands.length === 0;
+function kubeCreatesBuiltIn(key: string, words: readonly (string | null)[]): boolean {
+  const kind = words[0];
+  if (kind === undefined) return true;
+  return kind !== null && (KUBE_CREATE_KINDS.test(kind) || (key === "oc" && OC_CREATE_KINDS.test(kind)));
 }
 
 /** heroku run's options that take a value written apart (`-a app`, `--size standard-2x`). */
@@ -9351,23 +9358,45 @@ reg(NATIVE, Object.keys(CLOUD_CLIS), h => {
   // its own words, and keeps its reading.
   const kube = h.key === "kubectl" || h.key === "oc";
   const dryValue = lastLongFlag(h.args, "dry-run");
-  const dryVerb = kube ? KUBE_DRY_VERBS.test(verbs[0] ?? "") && (verbs[0] !== "create" || kubeCreatesBuiltIn(h.key, verbs, rest))
+  const created = kube && verbs[0] === "create" ? kubeCreateWords(rest) : [];
+  // `--edit` opens an editor on what it would send, and waits there: never a dry run that only reads.
+  const editValue = kube ? lastLongFlag(h.args, "edit") : undefined;
+  const dryVerb = kube ? KUBE_DRY_VERBS.test(verbs[0] ?? "") && (verbs[0] !== "create" || kubeCreatesBuiltIn(h.key, created))
+      && (editValue === undefined || editValue === "false")
     : h.key === "helm" && HELM_DRY_VERBS.test(verbs[0] ?? "");
   const dryRun = dryVerb && dryValue !== undefined && dryValue !== null && /^(|client|server|true)$/.test(dryValue);
+  // The files these verbs read (`-f`, `--filename`; a folder too) go into what they print (`-o yaml`, a decode error
+  // quoting the file): each one is judged as a read of it, so `-f ~/.docker/config.json` or `-f .env` is a secret; one
+  // Ember can't read is a secret too. `-f -` and an address aren't local files. A kustomization (`-k`) is judged as a
+  // folder read, and its secretGenerator may put any file's values in what `-o` prints (integ-y-1).
+  if (kube && KUBE_DRY_VERBS.test(verbs[0] ?? "")) {
+    const fp = parseOpts(rest, { shortValue: "fkon", longValue: ["filename", "kustomize", "output", "namespace"] });
+    for (const f of values(fp, "f", "filename")) {
+      if (f === null) h.e.add("secret", "secret.cloud", SAYS.secrets, { program: `${h.key} ${verbs[0]}` });
+      else if (!STDIN_NAME.test(f) && !/^https?:\/\//i.test(f)) h.e.usePath(lit(f), "readTree", h.sc);
+    }
+    const kust = values(fp, "k", "kustomize");
+    for (const k of kust) {
+      if (k === null) h.e.add("secret", "secret.cloud", SAYS.secrets, { program: `${h.key} ${verbs[0]}` });
+      else if (!/^(https?:\/\/|git@|github\.com\/)/i.test(k)) h.e.usePath(lit(k), "readTree", h.sc);
+    }
+    if (dryRun && kust.length > 0 && values(fp, "o", "output").length > 0) h.e.add("secret", "secret.cloud", SAYS.secrets, { program: `${h.key} ${verbs[0]} -k` });
+  }
   // `create secret|configmap --from-file / --from-env-file` reads local files into what it prints (a dry run's `-o
   // yaml` is the file, base64): each one is judged as a read of that file, so a key or a `.env` is a secret (integ-y-1).
-  if (kube && verbs[0] === "create" && /^(secret|configmap|cm)$/.test(verbs[1] ?? "")) {
+  // The kind is the first word that isn't one of create's options or their values (`create -n ns secret …`).
+  if (kube && /^(secret|configmap|cm)$/.test(created[0] ?? "")) {
     const cp = parseOpts(rest, { longValue: ["from-file", "from-env-file", "cert", "key"] });
     for (const f of values(cp, "from-file")) {
-      if (f === null) h.e.add("secret", "secret.cloud", SAYS.secrets, { program: `${h.key} create ${verbs[1]}` });
+      if (f === null) h.e.add("secret", "secret.cloud", SAYS.secrets, { program: `${h.key} create ${created[0]}` });
       else h.e.usePath(lit(f.includes("=") ? f.slice(f.indexOf("=") + 1) : f), "readTree", h.sc);
     }
-    for (const f of [...values(cp, "from-env-file"), ...(verbs[2] === "tls" ? values(cp, "cert", "key") : [])]) {
-      if (f === null) h.e.add("secret", "secret.cloud", SAYS.secrets, { program: `${h.key} create ${verbs[1]}` });
+    for (const f of [...values(cp, "from-env-file"), ...(created[1] === "tls" ? values(cp, "cert", "key") : [])]) {
+      if (f === null) h.e.add("secret", "secret.cloud", SAYS.secrets, { program: `${h.key} create ${created[0]}` });
       else h.e.usePath(lit(f), "read", h.sc);
     }
     // A dry run of a Secret prints it whole.
-    if (dryRun && verbs[1] === "secret") h.e.add("secret", "secret.cloud", SAYS.secrets, { program: `${h.key} create secret` });
+    if (dryRun && created[0] === "secret") h.e.add("secret", "secret.cloud", SAYS.secrets, { program: `${h.key} create secret` });
   }
   const listValue = kube && verbs[0] === "set" && verbs[1] === "env" ? lastLongFlag(h.args, "list") : undefined;
   const listsEnv = listValue !== undefined && listValue !== null && /^(|true)$/.test(listValue);

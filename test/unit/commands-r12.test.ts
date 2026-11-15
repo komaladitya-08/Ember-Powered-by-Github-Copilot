@@ -575,6 +575,35 @@ describe("read-only and everyday commands that asked (commands-remote-r12-4)", (
     expect(decide("kubectl create configmap c --from-file=a.txt --dry-run=client -o yaml").verdict).not.toBe("ask");
   });
 
+  it("reads the local file or folder a dry run's `-f` or `-k` names, and finds `create`'s kind after its options (integ-y-1 re-review)", () => {
+    for (const cmd of [
+      "kubectl apply -f ~/.docker/config.json --dry-run=client", "kubectl apply -f .env --dry-run=client", "kubectl apply --filename=.env --dry-run=client -o yaml",
+      "kubectl create --filename /home/ana/.ssh/id_rsa --dry-run=client", "kubectl delete -f /home/ana/proj/.env --dry-run=server", "kubectl replace -f .env --dry-run=client",
+      "kubectl apply -f \"$F\" --dry-run=client", "kubectl apply -k /home/ana/.ssh --dry-run=client", "kubectl apply -k overlays/prod --dry-run=client -o yaml",
+      "kubectl create -n ns configmap c --from-file=/root/.netrc --dry-run=client -o yaml",
+      "kubectl create -n ns secret generic k --from-file=/home/ana/.ssh/id_rsa --dry-run=client -o yaml",
+    ]) {
+      const r = result(cmd);
+      expect(r.decision.verdict, cmd).toBe("ask");
+      expect(keptQuestion(r.decision, r.cls.findings), cmd).toBe("secret");
+      const d = autopilotCommand(r.decision, { findings: r.cls.findings, mode: "on", askEvery: null, userAskEvery: false });
+      expect(d?.verdict, cmd).toBe("announce");
+      expect(d?.withheld, cmd).toBe(true);
+    }
+    // Not a local file, an ordinary one, a kustomization that prints no values, a kind kubectl has after its options.
+    for (const cmd of [
+      "kubectl apply -f - --dry-run=client", "kubectl apply -f https://x.example/k.yaml --dry-run=client", "kubectl apply -f k.yaml --dry-run=client",
+      "kubectl apply -k overlays/prod --dry-run=client", "kubectl create -n ns deployment web --image=nginx --dry-run=client -o yaml",
+      "kubectl create -f k.yaml --edit=false --dry-run=client",
+    ]) expect(decide(cmd).verdict, cmd).not.toBe("ask");
+    // `--edit` waits in an editor, and a kind kubectl hasn't, after the options too, may be a plug-in: as without the flag.
+    for (const cmd of ["kubectl apply -f k.yaml --edit --dry-run=client", "kubectl create deployment web --image=nginx --edit --dry-run=client", "kubectl create -n ns frob x --dry-run=client"]) {
+      const d = decide(cmd);
+      expect(d.verdict, cmd).toBe("ask");
+      expect(d.rules, cmd).toEqual(decide(cmd.replace(/ --dry-run=client$/, "")).rules);
+    }
+  });
+
   it("reads env-cmd's own options as options, so the command it runs is the one named (commands-remote-r12-4)", () => {
     for (const cmd of ["env-cmd -e test npm test", "env-cmd --environments test npm test", "env-cmd -f .env.test npm test"]) {
       expect(decide(cmd).reason + decide(cmd).says.join(" "), cmd).not.toMatch(/runs (test|\.env\.test)\b/);
