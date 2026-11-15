@@ -40,6 +40,8 @@ static WCHAR commandLine[MAX_CHARS];
 static WCHAR statePath[MAX_CHARS];
 static WCHAR workPath[MAX_CHARS];
 static WCHAR toolsPath[MAX_CHARS];
+static WCHAR localAppDataPath[MAX_CHARS];
+static WCHAR tempPath[MAX_CHARS];
 static WCHAR filePath[MAX_CHARS];
 static WCHAR argument[64];
 static ULONGLONG tokenBuffer[128];
@@ -121,6 +123,19 @@ static BOOL environmentPath(const WCHAR *name, WCHAR *output)
 {
     DWORD count = GetEnvironmentVariableW(name, output, MAX_CHARS);
     return count > 0 && count < MAX_CHARS;
+}
+
+static BOOL writeTextReport(const WCHAR *suffix, const WCHAR *text)
+{
+    HANDLE file;
+    DWORD written = 0, bytes = lengthOf(text) * sizeof(WCHAR);
+    BOOL result;
+    if (!pathFor(statePath, suffix)) return FALSE;
+    file = CreateFileW(filePath, GENERIC_WRITE, 0, NULL, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (file == INVALID_HANDLE_VALUE) return FALSE;
+    result = WriteFile(file, text, bytes, &written, NULL) && written == bytes;
+    CloseHandle(file);
+    return result;
 }
 
 static BOOL tokenFlag(HANDLE token, TOKEN_INFORMATION_CLASS informationClass)
@@ -244,7 +259,17 @@ void __cdecl mainCRTStartup(void)
 
     if (!spawnChild(0, &child, &error)) ExitProcess(18);
     report[9] = child.dwProcessId;
-    report[11] = 0;
+    if (environmentPath(L"LOCALAPPDATA", localAppDataPath) && environmentPath(L"TEMP", tempPath)
+        && writeTextReport(L"\\local-app-data-path.txt", localAppDataPath)
+        && writeTextReport(L"\\temp-path.txt", tempPath)
+        && pathFor(tempPath, L"\\fixture-temp.bin")) {
+        file = CreateFileW(filePath, GENERIC_WRITE, 0, NULL, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, NULL);
+        if (file != INVALID_HANDLE_VALUE) {
+            count = 0;
+            report[11] = WriteFile(file, workBytes, sizeof(workBytes), &count, NULL) && count == sizeof(workBytes);
+            CloseHandle(file);
+        }
+    }
     if (!pathFor(statePath, L"\\report.bin")) {
         if (!endUnexpectedChild(&child)) ExitProcess(19);
         ExitProcess(20);

@@ -46,7 +46,12 @@ describe.skipIf(!windows)("experimental LPAC real Windows enforcement", () => {
 
   it("runs only in capability-free LPAC, denies generic AppContainer files/host process access, and observes descendants before releasing results", async () => {
     const api = loadExperimentalWindowsLpacApi();
-    const fixture = ExperimentalWindowsLpacFixture.prepare(directory, executable, api);
+    let expectedLocalAppData = "";
+    const fixture = ExperimentalWindowsLpacFixture.prepare(directory, executable, { ...api, profileLocalAppDataBase(profile) {
+      const base = api.profileLocalAppDataBase(profile);
+      expectedLocalAppData = path.join(base, "Packages", profile.name, "AC");
+      return base;
+    } });
     let closed = false;
     let cleanupFailure: unknown;
     const earlier = process.env.GH_TOKEN;
@@ -61,11 +66,19 @@ describe.skipIf(!windows)("experimental LPAC real Windows enforcement", () => {
       expect(observed.slice(0, 9)).toEqual([1, 1, 1, 1, 1, 1, 1, 1, 1]);
       expect(observed[9]).toBeGreaterThan(0);
       expect(observed[10]).toBe(1);
+      expect(observed[11]).toBe(1);
       await fixture.waitRootExited(15_000); // The report is written before ExitProcess; observe the exact handle.
       await expect(fixture.waitStopped(100)).rejects.toThrow(/descendants|root process/);
       const lease = await fixture.stop();
       lease.requireStopped();
       expect(fixture.exitCode()).toBe(0);
+      // Observe real Windows redirection, not merely the parent environment we supplied. The profile path was
+      // obtained from GetAppContainerFolderPath for this newly created SID; no profile ancestor gets an ACL grant.
+      for (const [file, expected] of [["local-app-data-path.txt", expectedLocalAppData], ["temp-path.txt", path.join(expectedLocalAppData, "Temp")]]) {
+        const bytes = fs.readFileSync(path.join(fixture.paths.state, file));
+        expect(bytes.length).toBeLessThan(16 * 1024);
+        expect(bytes.toString("utf16le").toLowerCase()).toBe(expected.toLowerCase());
+      }
       await fixture.close(); closed = true;
       expect(() => lease.requireStopped()).toThrow();
     } finally {

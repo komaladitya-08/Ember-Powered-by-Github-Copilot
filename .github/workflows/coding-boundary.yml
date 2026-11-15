@@ -1,0 +1,47 @@
+name: coding-boundary
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/coding-boundary.yml"
+      - "app/main/agent/experimental-windows-lpac*.ts"
+      - "app/main/agent/isolated-windows-command*.ts"
+      - "test/fixtures/experimental-windows-lpac.c"
+      - "test/integration/experimental-windows-lpac-native.test.ts"
+      - "test/integration/isolated-windows-command-powershell-native.test.ts"
+      - "test/unit/experimental-windows-lpac*.test.ts"
+      - "test/unit/isolated-windows-command*.test.ts"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: coding-boundary-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-boundary:
+    name: Windows coding boundary experiments
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm install -g npm@11.6.2
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      # Keep native experiment diagnostics independent of the full app's speech and packaging checks.
+      # The main Windows CI job still runs these fixtures too; this job never certifies the product coding gate.
+      - name: Native LPAC token, ACL, job and descendant shutdown
+        timeout-minutes: 2
+        run: node scripts/run-integration.mjs test/integration/experimental-windows-lpac-native.test.ts
+      - name: PowerShell compatibility with fresh package-specific assets
+        if: ${{ !cancelled() && hashFiles('test/integration/isolated-windows-command-powershell-native.test.ts') != '' }}
+        timeout-minutes: 5
+        run: node scripts/run-integration.mjs test/integration/isolated-windows-command-powershell-native.test.ts

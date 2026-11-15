@@ -28,6 +28,7 @@ export interface WindowsLpacApi {
   deleteProfile(profile: WindowsLpacProfile): void;
   ownerSid(): string;
   windowsDirectory(): string;
+  profileLocalAppDataBase(profile: WindowsLpacProfile): string;
   volumeFileSystem(root: string): string;
   createDirectory(file: string, sddl: string): void;
   writeNewFile(file: string, bytes: Buffer, sddl: string): void;
@@ -81,7 +82,9 @@ export const WINDOWS_LPAC_FUNCTIONS = {
   userenv: [
     "int32_t __stdcall CreateAppContainerProfile(const char16_t *name, const char16_t *display, const char16_t *description, void *capabilities, uint32_t count, _Out_ void **sid)",
     "int32_t __stdcall DeleteAppContainerProfile(const char16_t *name)",
+    "int32_t __stdcall GetAppContainerFolderPath(const char16_t *sidText, _Out_ void **path)",
   ],
+  ole32: ["void __stdcall CoTaskMemFree(void *memory)"],
 } as const;
 
 const functionName = (prototype: string) => /\b(\w+)\s*\(/.exec(prototype)![1];
@@ -141,6 +144,22 @@ export function bindExperimentalWindowsLpacApi(koffi: Pick<typeof Koffi, "sizeof
       const text = Buffer.alloc(32768 * 2), size = Number(fn.GetWindowsDirectoryW(text, 32768));
       if (size < 1 || size >= 32768) throw error("GetWindowsDirectoryW");
       return text.toString("utf16le", 0, size * 2);
+    },
+    profileLocalAppDataBase(profile) {
+      const output: unknown[] = [null];
+      const hr = Number(fn.GetAppContainerFolderPath(profile.sidText, output));
+      if (hr !== 0) throw new Error(`GetAppContainerFolderPath failed (HRESULT ${hr >>> 0}).`);
+      const pointer = handle(output[0], "AppContainer profile path");
+      try {
+        const folder = koffi.decode.string16(pointer), suffix = `\\Packages\\${profile.name}\\AC`;
+        if (!/^[A-Za-z]:\\/.test(folder) || /[\0\r\n]/.test(folder) || !folder.toLowerCase().endsWith(suffix.toLowerCase()))
+          throw new Error("The AppContainer profile path does not match this newly created profile.");
+        const base = folder.slice(0, -suffix.length);
+        if (base.length <= 3) throw new Error("The AppContainer profile has no ordinary local app-data base.");
+        // Windows requires this entry to construct the child's redirected profile environment. A path string
+        // grants no access: never change ACLs on this base, its ancestors, or the shared Packages directory.
+        return base;
+      } finally { fn.CoTaskMemFree(pointer); }
     },
     volumeFileSystem(root) {
       if (Number(fn.GetDriveTypeW(root)) !== 3) throw new Error("The fixture requires a local fixed volume.");

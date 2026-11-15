@@ -1,14 +1,15 @@
 import { expect, it } from "vitest";
 import { bindExperimentalWindowsLpacApi, LPAC_ATTRIBUTES, LPAC_CREATE_FLAGS, LPAC_KILL_ON_CLOSE, WINDOWS_LPAC_FUNCTIONS } from "../../app/main/agent/experimental-windows-lpac-api";
 
-function setup(failure = "") {
+function setup(failure = "", decoded = "S-1-15-2-1234") {
   const calls: { name: string; args: unknown[] }[] = [];
-  const native = { sizeof: () => 8, address: () => 0xabcden, decode: { string16: () => "S-1-15-2-1234" } } as unknown as Parameters<typeof bindExperimentalWindowsLpacApi>[0];
+  const native = { sizeof: () => 8, address: () => 0xabcden, decode: { string16: () => decoded } } as unknown as Parameters<typeof bindExperimentalWindowsLpacApi>[0];
   const api = bindExperimentalWindowsLpacApi(native, () => ({ func: prototype => {
     const name = /\b(\w+)\s*\(/.exec(prototype)![1];
     return (...args: unknown[]) => {
       calls.push({ name, args: name === "UpdateProcThreadAttribute" ? args.map(value => Buffer.isBuffer(value) ? Buffer.from(value) : value) : args });
       if (name === "GetLastError") return 122;
+      if (name === "GetAppContainerFolderPath") { (args[1] as unknown[])[0] = 60n; return failure === "profile path" ? -2147024809 : 0; }
       if (name === "GetDriveTypeW") return failure === "mapped" ? 4 : 3;
       if (name === "WaitForSingleObject") return failure === "unobserved" ? 258 : 0;
       if (name === "DeleteProcThreadAttributeList" && (failure === "cleanup" || failure === "unobserved")) throw new Error("attribute cleanup failed");
@@ -46,6 +47,21 @@ it("binds LPAC opt-out and capability-free SECURITY_CAPABILITIES, mutable UTF16 
   expect(startup.length).toBe(112); expect(startup.readUInt32LE(0)).toBe(112); expect(startup.readBigUInt64LE(104)).toBe(0xabcden);
   expect(s.calls.at(-1)?.name).toBe("DeleteProcThreadAttributeList");
   expect(s.calls.some(c => c.name === "UpdateProcThreadAttribute" && c.args[2] === 0x20002)).toBe(false);
+});
+
+it("derives only this profile's app-data base from the OS folder API and frees its string with CoTaskMemFree", () => {
+  const profile = { name: "Ember.Experimental.new", sid: 55n, sidText: "S-1-15-2-1234" };
+  const s = setup("", "C:\\owner\\AppData\\Local\\Packages\\ember.experimental.new\\AC");
+  expect(s.api.profileLocalAppDataBase(profile)).toBe("C:\\owner\\AppData\\Local");
+  expect(s.calls.find(c => c.name === "GetAppContainerFolderPath")?.args[0]).toBe(profile.sidText);
+  expect(s.calls.at(-1)).toEqual({ name: "CoTaskMemFree", args: [60n] });
+  expect(s.calls.some(c => c.name === "LocalFree" || c.name === "FreeSid" || c.name === "CreateDirectoryW")).toBe(false);
+  for (const folder of ["C:\\owner\\AppData\\Local", "C:\\owner\\AppData\\Local\\Packages\\another-profile\\AC", "C:\\owner\\AppData\\Local\\Packages\\Ember.Experimental.new\\LocalState", "\\\\server\\share\\Packages\\Ember.Experimental.new\\AC"]) {
+    const other = setup("", folder);
+    expect(() => other.api.profileLocalAppDataBase(profile)).toThrow("does not match");
+    expect(other.calls.at(-1)).toEqual({ name: "CoTaskMemFree", args: [60n] });
+  }
+  expect(() => setup("profile path").api.profileLocalAppDataBase(profile)).toThrow("GetAppContainerFolderPath failed");
 });
 
 it("refuses failed LPAC policy setup before process creation, and frees initialized attributes", () => {

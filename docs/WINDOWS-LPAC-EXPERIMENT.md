@@ -18,6 +18,13 @@ zero capability count checked before its first thread resumes. Unsupported APIs 
 AppContainer fallback. A post-create failure kills and observes the suspended process before releasing its handles;
 unverified cleanup preserves diagnostics and blocks further experiments in that host process.
 
+Windows also creates this session's own disposable profile beneath its managed Packages directory. The launcher
+queries that profile through `GetAppContainerFolderPath`, validates the exact newly created profile name, and supplies
+the preceding local-app-data base as the required `LOCALAPPDATA` entry. Windows redirects the child's `LOCALAPPDATA`,
+`TEMP` and `TMP` into that isolated profile. This passes a path string, not inherited environment contents or an ACL
+grant on the user's profile, the local-app-data base, or shared Packages directory. The launcher deletes its profile
+after verified process shutdown; its work/state paths remain the explicit copied scratch directories.
+
 `waitRootExited()` observes the exact root process handle but supplies no result authority. `waitStopped()` and
 `stop()` issue a scoped receipt only after root exit and empty job accounting plus an empty process list. A root PID
 exit alone is insufficient. Concurrent Stop/close calls share their pending operation; closing invalidates receipts.
@@ -43,6 +50,9 @@ reads that canary as a positive control. The fixture separately probes denied VM
 parent-process rights on its host, alongside a successful self-process query. It attempts breakaway creation, then
 starts an ordinary child which outlives the root. The test observes root exit before verifying that a result receipt
 is still unavailable until Stop ends the child. Reports contain numeric fixture results, not secrets.
+After verified Stop, the test also compares the child's actual local-app-data and temporary paths with the fresh
+OS-managed profile and confirms that its temporary directory was writable. Those disposable path reports contain
+only the test profile's paths and are removed with test scratch.
 
 Portable failure/order tests run with:
 
