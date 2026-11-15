@@ -15,7 +15,7 @@ import { HandleLive, micOpen, questionOf } from "./live";
 import { LIVE_SETTLE_MS } from "../shared/held-live";
 import { mayRest } from "./rest";
 import { watchPixels } from "../shared/pixels";
-import { handleLine, pillLine } from "./line";
+import { handleLine, handleSummary, pillLine } from "./line";
 
 declare global { interface Window { emberHandle: HandleApi } }
 
@@ -287,8 +287,8 @@ api.onState(s => {
     // The pill: one line. An answer's title is the character's name, already shown above: the line shows what it said.
     const line = pillLine(s, name, idle);
     $("line").textContent = line;
-    // Hovering the pill shows the whole line (it is cut off with an ellipsis when long).
-    $("handle").title = line;
+    // The full line and the delegated tasks stay available when the pill has room only for an ellipsis.
+    $("handle").title = handleSummary(line, s.tasks);
     return;
   }
   announce(b, s.status ?? null, micNews);

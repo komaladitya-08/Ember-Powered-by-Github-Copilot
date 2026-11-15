@@ -106,4 +106,51 @@ describe("coding worker runtime ownership", () => {
     expect(closeRuntime).toHaveBeenCalledOnce();
     expect(await worker.disposed).toBe(false);
   });
+
+  it("shares disposal with concurrent callers and never turns a failed disposal into success", async () => {
+    const f = fixture(), release = deferred<void>(), closeSession = vi.fn(() => release.promise), closeRuntime = vi.fn(async () => undefined);
+    const session = { modeStatus: {}, close: closeSession, run: async () => "Done" } as unknown as CodingSession;
+    vi.spyOn(CodingRuntime, "start").mockResolvedValue({ client: {} as CopilotClient, close: closeRuntime } as unknown as CodingRuntime);
+    vi.spyOn(CodingSession, "create").mockResolvedValue(session);
+    const worker = new CodingWorker(f.spec, f.options);
+    await worker.run(new AbortController().signal);
+    const first = worker.dispose(), second = worker.dispose();
+    expect(second).toBe(first);
+    expect(closeSession).toHaveBeenCalledOnce();
+    expect(closeRuntime).not.toHaveBeenCalled();
+    release.resolve();
+    await Promise.all([first, second]);
+    expect(closeRuntime).toHaveBeenCalledOnce();
+    expect(await worker.disposed).toBe(true);
+
+    const broken = new CodingWorker(f.spec, f.options);
+    closeSession.mockRejectedValueOnce(new Error("not disconnected"));
+    await broken.run(new AbortController().signal);
+    await expect(broken.dispose()).rejects.toBeInstanceOf(CodingRuntimeCleanupError);
+    await expect(broken.dispose()).rejects.toBeInstanceOf(CodingRuntimeCleanupError);
+    expect(closeSession).toHaveBeenCalledTimes(2);
+    expect(closeRuntime).toHaveBeenCalledTimes(2);
+    expect(await broken.disposed).toBe(false);
+  });
+
+  it("denies the 151st native tool call, stops its session, and prevents a successful handoff", async () => {
+    const f = fixture();
+    f.spec.codingCompletion = true;
+    const session = { modeStatus: {}, close: async () => undefined, handoffResult: vi.fn(() => ({ success: true, summary: "Done" })), run: vi.fn((_prompt: string, signal: AbortSignal) => new Promise<string>((_resolve, reject) => {
+      signal.addEventListener("abort", () => reject(new Error("stopped")), { once: true });
+    })) } as unknown as CodingSession;
+    vi.spyOn(CodingRuntime, "start").mockResolvedValue({ client: {} as CopilotClient, close: async () => undefined } as CodingRuntime);
+    const create = vi.spyOn(CodingSession, "create").mockResolvedValue(session);
+    const worker = new CodingWorker(f.spec, f.options), run = worker.run(new AbortController().signal);
+    await vi.waitFor(() => expect(session.run).toHaveBeenCalledOnce());
+    const check = create.mock.calls[0][0].preToolUse;
+    // Unknown native tool names still consume host budget, irrespective of the runtime's own accounting.
+    const input = { toolName: "native_tool", toolArgs: {}, sessionId: "coding-1", timestamp: new Date(), workingDirectory: "/project" };
+    for (let i = 0; i < 150; i++) expect(await check(input)).toBeNull();
+    expect(await check(input)).toContain("150 tool calls");
+    expect(await run).toMatchObject({ success: false, limit: true, summary: expect.stringContaining("150 tool calls") });
+    expect(worker.handoffSafe()).toBe(false);
+    expect(session.handoffResult).not.toHaveBeenCalled();
+    await worker.dispose();
+  });
 });

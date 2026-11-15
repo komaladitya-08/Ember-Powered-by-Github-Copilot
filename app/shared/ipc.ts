@@ -144,6 +144,9 @@ export const IPC = {
   codingChooseWorkspace: "coding:choose-workspace",
   codingClearWorkspace: "coding:clear-workspace",
   codingStateChanged: "coding:state-changed",
+  projectSessionsState: "projects:sessions-state",
+  projectSessionsAction: "projects:sessions-action",
+  projectSessionsCheckpoint: "projects:sessions-checkpoint",
   /** Long-term memory (docs/MEMORY.md): what Ember remembers, and forgetting one fact or all of it. */
   memoryList: "memory:list",
   memoryChanged: "memory:changed",
@@ -476,6 +479,9 @@ export interface EmberHomeApi {
   codingChooseWorkspace(): Promise<CodingWorkspaceState>;
   codingClearWorkspace(): Promise<CodingWorkspaceState>;
   onCodingState(fn: (s: CodingWorkspaceState) => void): () => void;
+  projectSessionsState(): Promise<import("./project-sessions").ProjectSessionsState>;
+  projectSessionsAction(input: unknown): Promise<import("./project-sessions").ProjectSessionsState>;
+  projectSessionsCheckpoint(action: "save" | "open" | "forget"): Promise<{ state: import("./project-sessions").ProjectSessionsState; message: string }>;
   projectPick(): Promise<ProjectSelection>;
   projectRemove(name: string): Promise<ProjectSelection>;
   projectExport(kind: "answer" | "diff"): Promise<{ message: string }>;

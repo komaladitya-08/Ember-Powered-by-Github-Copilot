@@ -54,6 +54,7 @@ export class CodingSession {
   readonly workspace: string;
   private stopped = false;
   private closed = false;
+  private closing: Promise<void> | null = null;
   private running = false;
   private generation = 0;
   private modeReady = false;
@@ -308,19 +309,22 @@ export class CodingSession {
     if (this.abortFailure) throw this.abortFailure;
   }
 
-  async close(): Promise<void> {
-    if (this.closed) return;
+  close(): Promise<void> {
+    if (this.closing) return this.closing;
     this.closed = true;
     this.modeReady = false;
-    let failure: unknown;
-    try { await this.stop(); } catch (err) { failure = err; }
-    await this.modeQueue;
-    this.off();
-    try { await this.session.disconnect(); }
-    catch (err) { failure ??= err; }
-    try { if (!this.retain) await this.client.deleteSession(this.sessionId); }
-    catch (err) { failure ??= err; }
-    if (failure) throw failure;
+    this.closing = (async () => {
+      let failure: unknown;
+      try { await this.stop(); } catch (err) { failure = err; }
+      await this.modeQueue;
+      this.off();
+      try { await this.session.disconnect(); }
+      catch (err) { failure ??= err; }
+      try { if (!this.retain) await this.client.deleteSession(this.sessionId); }
+      catch (err) { failure ??= err; }
+      if (failure) throw failure;
+    })();
+    return this.closing;
   }
 }
 

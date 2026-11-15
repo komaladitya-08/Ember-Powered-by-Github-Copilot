@@ -74,6 +74,8 @@ import { WATCHES_NEEDED } from "../doctor";
 import { CATCH_UP_MS, catchUpQuestion, catchUpReply, healthQuestion, healthReply, type Health, READ_OUT_REPLY, readOutRequest, resultsReply, resultsRequest, retryRequest, statusQuestion, statusReply, stopRequest } from "./status";
 import { CONVERSATION_LIMIT, retainedConversationText, type ConversationTurn, type ConversationTurnEnd } from "../../shared/conversation";
 import type { HistoryStore } from "./conversation-store";
+import { ProjectSessionBook } from "./project-sessions";
+import type { ProjectSessionsState } from "../../shared/project-sessions";
 
 /** The words a task was refused for are known by these (userWordsOf adds a full stop to an earlier request). */
 const refusedKey = (l: string) => l.trim().replace(/\.$/, "");
@@ -939,6 +941,8 @@ const FINISHED_KEPT = 20;
  * read on the screen in its turn (the context sent with it, describe_screen's answers).
  */
 interface UserRequest {
+  /** Selected at intake, before any connection or prior-turn wait; never execution authority. */
+  projectId?: string | null;
   /** The exact prompt prepared for this request; unset until dispatch, never matched by user-text suffix. */
   prompt?: string;
   target: (WindowTarget & { app?: string }) | null;
@@ -1003,6 +1007,9 @@ const agrees = (reply: string, asked: string): boolean => {
 };
 
 export class AgentHost {
+  private readonly sessionProjects = new ProjectSessionBook();
+  /** A provider credential/key identity is private, like the conversation; never sent or logged. */
+  private sessionProjectsHolder: string | null = null;
   private readonly codingTasks = new Set<string>();
   private readonly codingRetirement = new CodingRetirement();
   private vaultFillHolds = 0;
@@ -2164,6 +2171,7 @@ export class AgentHost {
       const service = serviceOf(provider);
       if (this.conversation && this.conversationService !== null && service !== this.conversationService) {
         this.o.log.info("agent.service_changed", { kind: provider?.kind ?? "copilot" });
+        this.sessionProjects.clear();
         await this.forgetCurrent(RUNTIME_WAIT_MS);
         this.carried = [];
       }
@@ -2188,6 +2196,9 @@ export class AgentHost {
       if (gen !== this.gen) return;
       if (this.memoryDeletionPending) this.forgetKept();
       if (!provider) { this.githubLogin = login; this.githubAccountId = accountId; }
+      const projectHolder = provider ? createHash("sha256").update(providerCredentials(provider)).digest("hex") : workspaceOwners(null, accountId)?.holder ?? null;
+      if (this.sessionProjectsHolder !== null && this.sessionProjectsHolder !== projectHolder) this.sessionProjects.clear();
+      this.sessionProjectsHolder = projectHolder;
       this.accountUnresolved = !provider && accountId === null;
       this.restoreHistory();
       // This connection's generation: what it says after the saved copy is invalidated again is never saved (underGen).
@@ -2282,6 +2293,7 @@ export class AgentHost {
           // ("What did I miss?" then says why, not "you stopped it".)
           if (why) task.stopReason = why;
           const summary = why ?? task.result?.summary ?? "";
+          this.sessionProjects.refresh([{ id: task.id, title: task.title, status: task.status === "cancelled" ? "stopped" : task.status, summary }]);
           // A task failed on a refused sign-in: is it still signed in (checkSignIn)?
           if (task.status === "failed" && summary === SIGN_IN_REFUSED) void this.checkSignIn(gen);
           const text = why ? `${task.title}: ${why}` : taskOutcome(task);
@@ -2511,6 +2523,25 @@ export class AgentHost {
           if (why === "silent") this.lost(gen, reason, noAnswer(this.serviceKind()), words.noAnswerDetail, asked, runtime.cutOffStalled);
           else this.lost(gen, reason, full ? runtime.noWatchers : words.notAnswering, full ? noWatchersDetail : undefined, asked, runtime.cutOffStalled);
         },
+        projects: {
+          create: (name, goal) => {
+            if (!this.turn) return "No user request belongs to this turn. Ask the user to repeat it.";
+            try {
+              const state = this.projectSessionsAction({ action: "create", name, goal });
+              this.turn.projectId = state.selectedProjectId;
+              return `Project ${state.selectedProjectId} created and selected for this request. Start related desktop sessions with start_task and a short sessionName. Coding remains unavailable while its protection is completed.`;
+            } catch (err) { return err instanceof Error ? err.message : "The project could not be created."; }
+          },
+          select: id => {
+            if (!this.turn) return "No user request belongs to this turn. Ask the user to repeat it.";
+            try {
+              this.projectSessionsAction({ action: "select", id });
+              this.turn.projectId = id;
+              return id ? `Project ${id} selected for this request.` : "This request will start sessions outside a project.";
+            } catch (err) { return err instanceof Error ? err.message : "The project could not be selected."; }
+          },
+          list: () => `<projects untrusted="true">${JSON.stringify({ ...this.projectSessionsState(), requestProjectId: this.turn?.projectId ?? null }).replace(/</g, "‹")}</projects>`,
+        },
         startCoding: tasks && this.o.codingWorkspace ? goal => {
           if (!codingAvailable()) return CODING_UNAVAILABLE;
           if (this.o.admin?.().features.actions === false) return "Your organisation has turned off Ember's actions. Tell the user.";
@@ -2576,7 +2607,7 @@ export class AgentHost {
           });
           return `Task ${t.id} started. The second part will start after the first succeeds. Tell the user briefly.`;
         } : undefined,
-        startTask: tasks && takesTasks ? (goal, choice) => {
+        startTask: tasks && takesTasks ? (goal, choice, sessionName) => {
           // With actions turned off by the administrator, Ember can still answer and guide, never act.
           if (this.o.admin?.().features.actions === false) return "Your organisation has turned off Ember acting in apps. Tell the user, and offer to show them how (show_me) instead.";
           // Risky steps are checked against what the user said in this turn's request (and the one it answers), not the
@@ -2614,6 +2645,9 @@ export class AgentHost {
               return "The user asked to use the terminal. Ember doesn't act in terminals, and must not do the task in another app instead. Tell the user plainly that Ember can't use the terminal, and offer to guide them through it (show_me) or ask how else they want it done.";
             }
           }
+          let projectId: string | null;
+          try { projectId = this.sessionProjects.destination(r.projectId ?? null); }
+          catch { return "The project selected for this request was closed. Ask the user to select a project and ask again."; }
           const binding = bound?.binding;
           const where = binding ? whereWords(binding) : undefined;
           // When its request was asked, for memory: a Forget since then keeps its result from being learned (memory-x8-4).
@@ -2629,6 +2663,7 @@ export class AgentHost {
             // Try again may start from it on another model service, unless the turn touches another task (integrations-w5-1).
             ...(said.words === r.words && !said.agreed?.length ? { alone: true as const } : {}),
           });
+          this.sessionProjects.attach(projectId, t, "desktop", sessionName);
           touch(r, t.id);
           // That task's card goes, as its Try again's does: a press of it can't start a second attempt (tasks-approvals-r2).
           if (said.retried) tasks.dismiss(said.retried.task);
@@ -3421,12 +3456,12 @@ export class AgentHost {
     // A request that waits (for a silent turn's end, or a connection) is answering, for Home, until it is queued or
     // dropped: never a moment's "idle" between its waits and its turn (home-r2-2: Home took that for its turn's end, and
     // said no reply was written as the reply came).
-    const waiting = { counted: false };
+    const waiting = { counted: false, projectId: this.sessionProjects.state().selectedProjectId };
     try { return await this.asking(text, context, epoch, how, waiting); } finally { if (waiting.counted) { this.waitingAsks--; this.turnChanged(); } }
   }
 
   /** ask() itself. `waiting.counted`: it counts in waitingAsks, from its first wait until it is queued (or ask ends). */
-  private async asking(text: string, context: Parameters<AgentHost["ask"]>[1], epoch: number, how: NonNullable<Parameters<AgentHost["ask"]>[3]>, waiting: { counted: boolean }): Promise<boolean> {
+  private async asking(text: string, context: Parameters<AgentHost["ask"]>[1], epoch: number, how: NonNullable<Parameters<AgentHost["ask"]>[3]>, waiting: { counted: boolean; projectId: string | null }): Promise<boolean> {
     if (epoch !== this.stopEpoch) return false;
     if (this.stopsNow(text, how)) return true;
     // Said over a reply still on its way (a conversation): that reply goes, and this one is answered knowing why.
@@ -3613,6 +3648,7 @@ export class AgentHost {
     }
     // Its turn may start only after the one running now: it takes this context then (see conversationEvent).
     const request: UserRequest = {
+      projectId: waiting.projectId,
       target: context?.target ?? null, words: text, screen: context?.text ? [context.text] : [], ...(context?.targetId ? { targetId: context.targetId } : {}),
       ...(how.spoken ? { spoken: true } : {}),
       ...(how.manual ? { manual: true } : {}),
@@ -3821,6 +3857,27 @@ export class AgentHost {
     return this.tasks?.activities() ?? this.earlierTasks;
   }
 
+  /** Named metadata lasts this run only; SDK worker conversations are still deleted at finish. */
+  projectSessionsState(): ProjectSessionsState {
+    this.sessionProjects.refresh(this.taskActivities());
+    return this.sessionProjects.state();
+  }
+
+  /** Explicit Forget everything removes project metadata too; it never starts or replays a task. */
+  forgetProjectSessions(): void { this.sessionProjects.clear(); }
+
+  /** Project metadata never changes consent, folders, task permissions or original request words. */
+  projectSessionsAction(raw: unknown): ProjectSessionsState {
+    this.sessionProjects.refresh(this.taskActivities());
+    return this.sessionProjects.apply(raw);
+  }
+
+  /** An explicit encrypted checkpoint opens as history, never as resumed task authority. */
+  projectSessionsRestore(snapshot: ProjectSessionsState, expected?: ProjectSessionsState): ProjectSessionsState {
+    this.sessionProjects.refresh(this.taskActivities());
+    return this.sessionProjects.restore(snapshot, expected);
+  }
+
   /**
    * Try again was pressed on the conversation's problem: the request it offers (that turn's own, never a newer one asked
    * while it ran), taken once, the button going with it, so a second press asks nothing twice. Null when none is offered.
@@ -3884,6 +3941,7 @@ export class AgentHost {
    * its own (start(…, "auto")) until the user signs in again.
    */
   async forgetConversation(): Promise<void> {
+    this.sessionProjects.clear();
     // (The start that follows sign-out replaces this connection anyway: the tasks ending here don't reconnect it.)
     this.reconnectAfterTasks = null;
     const codingRetired = this.codingRetirement.wait(5000);
@@ -3991,6 +4049,7 @@ export class AgentHost {
    * how its tasks ended and what Ember kept about its person go with it.
    */
   private async accountChanged(eraseKept = true): Promise<void> {
+    this.sessionProjects.clear();
     this.o.log.info("agent.account_changed");
     await this.forgetCurrent(RUNTIME_WAIT_MS);
     this.carried = [];

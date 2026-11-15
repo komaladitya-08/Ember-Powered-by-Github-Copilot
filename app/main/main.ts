@@ -80,6 +80,7 @@ import { applyNaturalVoicePreference, naturalVoiceChoices, naturalVoiceWanted } 
 import { applyProjectPatch, readProjectPatch, type ProjectPatch } from "./agent/project-patch";
 import { ProjectWorkspaceStore, workspaceAction, type ProjectExchange } from "./agent/project-workspaces";
 import { CodingWorkspaceStore, codingBranch, type CodingWorkspace } from "./agent/coding-workspace";
+import { ProjectSessionStore } from "./agent/project-session-store";
 import { memoryRefusal } from "./memory/guard";
 import { correctMemoryRequest } from "./memory/correction";
 import { expandedBubble, expandedSuggest, keysLanding, questionAloud, readKeyWords, readTimeOf } from "./agent/presenter";
@@ -2324,6 +2325,7 @@ function start(): void {
   };
   // Coding gets a separate, explicitly agreed workspace: the older selected-files project grant is not one.
   const codingStore = new CodingWorkspaceStore(userData, safeStorage, platform.os === "darwin");
+  const projectSessionStore = new ProjectSessionStore(userData, safeStorage, platform.os === "darwin");
   let codingFolder: CodingWorkspace | null = null;
   let codingScope: string | null = null;
   let codingLoadedScope: string | null = null;
@@ -2423,6 +2425,13 @@ function start(): void {
   // Which task's question is up now goes with them: Home says where to answer in that task's group (tasks-approvals-r9-3).
   const taskEntries = () => withQuestionUp(agent?.taskActivities() ?? [], confirmer?.currentTask);
   ipcMain.handle(IPC.tasks, guard(taskEntries));
+  ipcMain.handle(IPC.projectSessionsState, guard(() => agent?.projectSessionsState() ?? { projects: [], selectedProjectId: null }));
+  ipcMain.handle(IPC.projectSessionsAction, guard((input: unknown) => {
+    if (!consented()) throw new Error("Finish setup before organising projects.");
+    if (screenLock?.locked) throw new Error("Unlock your screen before organising projects.");
+    if (!agent) throw new Error("Ember is still starting. Try again in a moment.");
+    return agent.projectSessionsAction(input);
+  }));
   ipcMain.handle(IPC.openApproval, guard(() => targets?.openApproval() ?? false));
   ipcMain.handle(IPC.historyProblem, guard(() => historyStore?.problem ?? null));
   ipcMain.handle(IPC.taskControl, guard((raw: unknown) => taskControl(agent, raw)));
@@ -2617,6 +2626,31 @@ function start(): void {
   const projectRefusal = (busy = projectPicking || !!projectJob) => projectUnavailable({ managed: policy.features.actions === false && admin.error === undefined, busy });
   /** Project work may start: also with the settings window in view, where it is asked for. */
   const projectAvailable = () => projectContinues() && home?.isVisible() && !home.isMinimized();
+  ipcMain.handle(IPC.projectSessionsCheckpoint, guard(async (action: unknown) => {
+    if (action !== "save" && action !== "open" && action !== "forget") throw new Error("Choose Save, Open or Forget saved projects.");
+    const host = agent, owner = home;
+    if (!host || !owner || !projectAvailable() || projectJob || projectPicking) throw new Error("Connect Ember and open Projects before using saved projects.");
+    const library = host.projectLibraryScope(), holder = host.projectWorkspaceScope();
+    if (!library || !holder) throw new Error("Connect with a verified account or model provider before using saved projects.");
+    const run = projectJob = new AbortController();
+    const erased = accountErasures;
+    const current = () => !run.signal.aborted && accountErasures === erased && home === owner && agent === host && projectAvailable() === true && host.projectLibraryScope() === library && host.projectWorkspaceScope() === holder;
+    try {
+      if (action === "save") {
+        await projectSessionStore.save({ library, holder }, host.projectSessionsState(), current);
+        return { state: host.projectSessionsState(), message: "Saved an encrypted project checkpoint on this computer. Save again to update it; no work resumes automatically." };
+      }
+      if (action === "forget") {
+        await projectSessionStore.forget({ library, holder }, current);
+        return { state: host.projectSessionsState(), message: "Saved project checkpoint forgotten. This run's projects and your files are unchanged." };
+      }
+      const before = host.projectSessionsState();
+      const saved = await projectSessionStore.load({ library, holder }, current);
+      if (!current()) throw new Error("Project checkpoint request cancelled.");
+      if (!saved) return { state: host.projectSessionsState(), message: "No saved project checkpoint for this account or model provider." };
+      return { state: host.projectSessionsRestore(saved, before), message: "Opened the saved checkpoint. Interrupted sessions are stopped records; ask the conductor to start fresh work." };
+    } finally { if (projectJob === run) projectJob = null; }
+  }));
   ipcMain.handle(IPC.codingState, guard(async (): Promise<CodingWorkspaceState> => {
     await restoreCoding();
     return codingState();
@@ -2979,6 +3013,9 @@ function start(): void {
   })));
   // Through learning: what waits to be learned, the "Ember learned" lines and Better recall's vectors go too.
   ipcMain.handle(IPC.memoryForgetAll, guard(async () => {
+    projectJob?.abort();
+    agent?.forgetProjectSessions();
+    const projectsGone = projectSessionStore.forgetAll(() => true).then(() => true, () => false);
     const codingGone = forgetCurrentCoding().then(() => true, () => false);
     learning.forgetAll();
     // What was asked this session is about the person too: no suggestion comes from it afterwards (memory-r9-2).
@@ -2995,6 +3032,7 @@ function start(): void {
     if (!savedGone) throw new Error("Ember couldn't finish deleting the saved conversation on this computer. Try Forget again.");
     if (!vaultGone) throw new Error("Ember couldn't finish deleting the vault's file on this computer. Try Forget again.");
     if (!await codingGone) throw new Error("Ember couldn't finish deleting the saved coding workspace on this computer. Try Forget again.");
+    if (!await projectsGone) throw new Error("Ember couldn't finish deleting saved projects on this computer. Try Forget again.");
   }));
   // "Tell Ember about you": checked whole (IntroSchema, every string bounded) and kept only while memory is in force.
   ipcMain.handle(IPC.memoryIntroduce, guard((answers: unknown) => learning.introduceAnswers(answers)));
