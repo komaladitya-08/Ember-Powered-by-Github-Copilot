@@ -232,6 +232,9 @@ public static class EmberLpacTraceImage {
             if ($null -eq $resultNode -or $resultNode.InnerText -ne 'ACCESS DENIED') { continue }
             $operationNode = $event.SelectSingleNode('Operation'); $pathNode = $event.SelectSingleNode('Path')
             if ($null -eq $operationNode -or $null -eq $pathNode) { throw 'The own-event stack schema is incomplete.' }
+            # Focus the bounded stack budget on observed process-creation dependencies, rather than repeated
+            # early startup/localization probes which would otherwise consume all ten slots before IFEO.
+            if ($pathNode.InnerText -notmatch '\\Image File Execution Options$|\\Safer\\CodeIdentifiers$|\\Session Manager\\(?:NamespaceSeparation|Memory Management)$') { continue }
             $frames = @($event.SelectNodes('stack/frame') | Select-Object -First 32 | ForEach-Object {
                 $moduleNode = $_.SelectSingleNode('path'); $locationNode = $_.SelectSingleNode('location')
                 [ordered]@{ module = if ($moduleNode) { Safe-Path ([IO.Path]::GetFileName($moduleNode.InnerText)) } else { '<unresolved>' }; location = if ($locationNode) { Safe-Path $locationNode.InnerText } else { '<unresolved>' } }
