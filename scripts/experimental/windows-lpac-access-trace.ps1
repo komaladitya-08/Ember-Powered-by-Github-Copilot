@@ -89,7 +89,7 @@ using System;
 using System.Runtime.InteropServices;
 using System.Text;
 public static class EmberLpacTraceImage {
-    [DllImport("kernel32.dll", ExactSpelling=true, SetLastError=true)]
+    [DllImport("kernel32.dll", ExactSpelling=true, CharSet=CharSet.Unicode, SetLastError=true)]
     [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool QueryFullProcessImageNameW(IntPtr process, uint flags, StringBuilder text, ref uint size);
