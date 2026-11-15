@@ -141,6 +141,29 @@ static BOOL writeTextReport(const WCHAR *suffix, const WCHAR *text)
     return result;
 }
 
+static void recordFailure(DWORD stage, DWORD error)
+{
+    DWORD diagnostic[20], written = 0, i, policy = 0;
+    HANDLE file, probe;
+    for (i = 0; i < 20; i++) diagnostic[i] = 0;
+    diagnostic[0] = stage; diagnostic[1] = error;
+    for (i = 0; i < 12; i++) diagnostic[i + 2] = report[i];
+    probe = CreateFileW(selfPath, GENERIC_READ | GENERIC_EXECUTE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                       NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    diagnostic[14] = probe != INVALID_HANDLE_VALUE;
+    if (probe != INVALID_HANDLE_VALUE) CloseHandle(probe); else diagnostic[15] = GetLastError();
+    probe = OpenProcess(PROCESS_CREATE_PROCESS, FALSE, GetCurrentProcessId());
+    diagnostic[16] = probe != NULL;
+    if (probe != NULL) CloseHandle(probe); else diagnostic[17] = GetLastError();
+    if (GetProcessMitigationPolicy(GetCurrentProcess(), (PROCESS_MITIGATION_POLICY)13, &policy, sizeof(policy))) diagnostic[18] = policy;
+    else { diagnostic[18] = MAXDWORD; diagnostic[19] = GetLastError(); }
+    if (!pathFor(statePath, L"\\failure.bin")) return;
+    file = CreateFileW(filePath, GENERIC_WRITE, 0, NULL, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (file == INVALID_HANDLE_VALUE) return;
+    WriteFile(file, diagnostic, sizeof(diagnostic), &written, NULL);
+    CloseHandle(file);
+}
+
 static BOOL tokenFlag(HANDLE token, TOKEN_INFORMATION_CLASS informationClass)
 {
     DWORD value = 0, bytes = 0;
@@ -299,7 +322,7 @@ void __cdecl mainCRTStartup(void)
         CloseHandle(file);
     }
 
-    if (!spawnChild(0, &child, &error)) ExitProcess(18);
+    if (!spawnChild(0, &child, &error)) { recordFailure(18, error); ExitProcess(18); }
     report[9] = child.dwProcessId;
     if (environmentPath(L"LOCALAPPDATA", localAppDataPath) && environmentPath(L"TEMP", tempPath)
         && writeTextReport(L"\\local-app-data-path.txt", localAppDataPath)

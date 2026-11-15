@@ -68,7 +68,16 @@ describe.skipIf(!windows)("experimental LPAC real Windows enforcement", () => {
         let root = "not observed exited";
         try { await fixture.waitRootExited(0); root = `exited with code 0x${fixture.exitCode().toString(16)}`; }
         catch { /* Diagnostic only: root observation never releases results or bypasses Stop. */ }
-        throw new Error(`${error instanceof Error ? error.message : "The native report failed."} Root ${root}.`, { cause: error });
+        const lease = await fixture.stop(); lease.requireStopped();
+        let diagnostic = "";
+        try {
+          const bytes = fs.readFileSync(path.join(fixture.paths.state, "failure.bin"));
+          if (bytes.length !== 80) throw new Error("Invalid native fixture failure report.", { cause: error });
+          const words = Array.from({ length: 20 }, (_, i) => bytes.readUInt32LE(i * 4));
+          diagnostic = ` Native failure ${JSON.stringify({ stage: words[0], error: words[1], checks: words.slice(2, 14),
+            imageExecute: words.slice(14, 16), selfCreateProcess: words.slice(16, 18), childPolicy: words.slice(18, 20) })}.`;
+        } catch (failure) { if ((failure as NodeJS.ErrnoException).code !== "ENOENT") throw failure; }
+        throw new Error(`${error instanceof Error ? error.message : "The native report failed."} Root ${root}.${diagnostic}`, { cause: error });
       }
       expect(observed.slice(0, 9)).toEqual([1, 1, 1, 1, 1, 1, 1, 1, 1]);
       expect(observed[9]).toBeGreaterThan(0);
