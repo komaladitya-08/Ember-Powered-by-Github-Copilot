@@ -41,11 +41,16 @@ describe.skipIf(process.platform !== "win32")("isolated Windows PowerShell comma
     const executable = path.join(assetRoot, "pwsh.exe");
     // Test setup vouches for the preinstalled distribution from the trusted hosted-runner image. A hash measured
     // from a model-selected directory is not a trust root. This host signature check never invokes that directory.
-    const windowsPowerShell = path.join(api.windowsDirectory(), "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+    const systemPowerShell = path.join(api.windowsDirectory(), "System32", "WindowsPowerShell", "v1.0");
+    const windowsPowerShell = path.join(systemPowerShell, "powershell.exe"), systemModules = path.join(systemPowerShell, "Modules");
+    const securityModule = path.join(systemModules, "Microsoft.PowerShell.Security", "Microsoft.PowerShell.Security.psd1").replace(/'/g, "''");
     const selected = executable.replace(/'/g, "''");
+    // The workflow itself runs under PS7. Its inherited PSModulePath must never direct Windows PS5 to PS7 assemblies.
+    const signatureEnvironment = Object.fromEntries(Object.entries(process.env).filter(([name]) => name.toUpperCase() !== "PSMODULEPATH"));
+    signatureEnvironment.PSModulePath = systemModules;
     execFileSync(windowsPowerShell, ["-NoProfile", "-NonInteractive", "-Command",
-      `$s=Get-AuthenticodeSignature -LiteralPath '${selected}'; if($s.Status -ne 'Valid' -or $s.SignerCertificate.Subject -notmatch '(?:^|, )O=Microsoft Corporation(?:,|$)') { throw 'The configured system PowerShell toolchain is not Microsoft signed.' }`],
-    { timeout: 30_000, windowsHide: true, stdio: "pipe" });
+      `$ErrorActionPreference='Stop'; Import-Module -Name '${securityModule}' -ErrorAction Stop; $s=Microsoft.PowerShell.Security\\Get-AuthenticodeSignature -LiteralPath '${selected}'; if($s.Status -ne 'Valid' -or $s.SignerCertificate.Subject -notmatch '(?:^|, )O=Microsoft Corporation(?:,|$)') { throw 'The configured system PowerShell toolchain is not Microsoft signed.' }`],
+    { timeout: 30_000, windowsHide: true, stdio: "pipe", env: signatureEnvironment });
     const manifest = measureWindowsPowerShellToolchain(assetRoot);
     console.info("Trusted PS7 distribution snapshot", JSON.stringify({ root: assetRoot, ...manifest }));
     const parent = fs.mkdtempSync(path.join(os.tmpdir(), "ember-ps7-lpac-"));
