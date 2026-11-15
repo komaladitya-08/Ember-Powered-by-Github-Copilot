@@ -4821,7 +4821,9 @@ fill's callback now checks the task's stop state before it says or fills anythin
 fallback, and the model is told the task stopped. codex-212-p2 (P2): an entry forgotten (Forget, Forget all, or saved
 again) while the keyring opened it was still filled; VaultStore.open reads the file again once the keyring answers and
 opens nothing unless the same entry, sealed the same, is still there, and the typed fallback's last look before the
-first key asks that the entry is still saved.
+first key asks that the entry is still saved. Left open: a Stop or Forget that lands while the helper's own fill
+is already under way can't undo it (a Stop is still reported); an entry saved again for the same destination during
+the typed fallback still passes its last look, so the earlier value is typed.
 
 **Left.** CI on r9/r12merge (pushed by the integrator after this merge). By package, the lists above; the re-rate's
 P3s no package took up stay open as their reports list them.
