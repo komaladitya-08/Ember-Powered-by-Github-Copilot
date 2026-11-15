@@ -4,7 +4,7 @@
 //   as plain Node)
 // and the remote agent into dist/remote: ember-remote.cjs (plain Node, run on computers reached over SSH) and
 // meta.json (esbuild's metafile, which the agent's bundle test checks).
-import { build } from "esbuild";
+import { build, buildSync } from "esbuild";
 import { cp, mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,7 +12,11 @@ import { fileURLToPath } from "node:url";
 const root = new URL("../", import.meta.url);
 const out = new URL("dist/app/", root);
 const remoteOut = new URL("dist/remote/", root);
-const common = { bundle: true, sourcemap: true, logLevel: "info", absWorkingDir: fileURLToPath(root) };
+// A fixed trusted worker program embedded in the app, with no runtime path/source fallback or project-code loader.
+const privacyWorker = buildSync({ entryPoints: ["app/main/agent/coding-privacy-worker.ts"], absWorkingDir: fileURLToPath(root),
+  bundle: true, platform: "node", format: "cjs", target: "node22", write: false, logLevel: "silent" }).outputFiles[0].text;
+const common = { bundle: true, sourcemap: true, logLevel: "info", absWorkingDir: fileURLToPath(root),
+  define: { __EMBER_CODING_PRIVACY_WORKER_SOURCE__: JSON.stringify(privacyWorker) } };
 
 const pages = ["home", "overlay", "handle", "ask", "mic", "desk", "command", "prompt", "vault"];
 

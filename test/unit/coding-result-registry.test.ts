@@ -111,6 +111,73 @@ describe.skipIf(process.platform !== "linux")("the host-only coding result regis
     for (const name of ["review.json", "changes.patch"]) expect((await fs.readFile(path.join(exported.directory!, name))).equals(await fs.readFile(path.join(input.output.directory, name)))).toBe(true);
   });
 
+  it("forgets one private result immediately, preserving other results, original files and completed exports", async () => {
+    const first = await registration(), a = await registry.put(first);
+    const b = await registry.put(await registration(review("second\n")));
+    const c = await registry.put(await registration(review("other project\n"), { projectId: "project-two" }));
+    const exported = await registry.export(a.id, destination, () => true);
+    expect(exported.ok).toBe(true);
+    const forgetting = registry.forgetResult(a.id);
+    expect(registry.state("project-one")).toEqual([b]);
+    expect(await registry.review(a.id)).toBeNull();
+    await forgetting;
+    expect(await fs.readdir(base)).toHaveLength(2);
+    expect(await registry.review(b.id)).not.toBeNull(); expect(await registry.review(c.id)).not.toBeNull();
+    expect(await fs.readdir(exported.directory!)).toEqual(["changes.patch", "review.json"]);
+    expect(await fs.readFile(path.join(source, "app.ts"), "utf8")).toBe("original\n");
+    await expect(registry.forgetResult(a.id)).rejects.toMatchObject({ code: "stale" });
+    await expect(registry.forgetResult(source)).rejects.toMatchObject({ code: "stale" });
+    expect(registry.state("project-one")).toEqual([b]);
+  });
+
+  it("revokes an in-flight review by record identity without retiring another result or a pending publication", async () => {
+    const first = await registration(), a = await registry.put(first);
+    const next = await registration(review("second\n"));
+    const entered = deferred<void>(), resume = deferred<void>(), realOpen = fs.open.bind(fs); let held = false;
+    vi.spyOn(fs, "open").mockImplementation((async (file: unknown, ...args: unknown[]) => {
+      const handle = await Reflect.apply(realOpen, fs, [file, ...args]);
+      if (!held && typeof file === "string" && file.endsWith("/" + path.basename(first.output.directory))) {
+        held = true; const close = handle.close.bind(handle);
+        vi.spyOn(handle, "close").mockImplementation(async () => { await close(); entered.resolve(); await resume.promise; });
+      }
+      return handle;
+    }) as typeof fs.open);
+    const reading = registry.review(a.id); await entered.promise;
+    const publishing = registry.put(next), forgetting = registry.forgetResult(a.id);
+    expect(registry.state("project-one")).toEqual([]);
+    resume.resolve();
+    expect(await reading).toBeNull(); const b = await publishing; await forgetting;
+    expect(registry.state("project-one")).toEqual([b]); expect(await registry.review(b.id)).not.toBeNull();
+  });
+
+  it("cancels an export at its first write when that exact result is forgotten and removes the partial export", async () => {
+    const a = await registry.put(await registration()), b = await registry.put(await registration(review("keep\n")));
+    const entered = deferred<void>(), resume = deferred<void>(), realOpen = fs.open.bind(fs); let held = false;
+    vi.spyOn(fs, "open").mockImplementation((async (file: unknown, ...args: unknown[]) => {
+      const handle = await Reflect.apply(realOpen, fs, [file, ...args]);
+      if (!held && typeof file === "string" && file.endsWith("/changes.patch") && typeof args[0] === "number" && (args[0] & 1)) {
+        held = true; const write = handle.writeFile.bind(handle);
+        vi.spyOn(handle, "writeFile").mockImplementation((async (...input: unknown[]) => {
+          const reply = await Reflect.apply(write, handle, input); entered.resolve(); await resume.promise; return reply;
+        }) as typeof handle.writeFile);
+      }
+      return handle;
+    }) as typeof fs.open);
+    const exporting = registry.export(a.id, destination, () => true); await entered.promise;
+    const forgetting = registry.forgetResult(a.id); resume.resolve();
+    expect((await exporting).ok).toBe(false); await forgetting;
+    expect(await fs.readdir(destination)).toEqual([]); expect(registry.state("project-one")).toEqual([b]);
+  });
+
+  it("retains failed per-result cleanup receipts and retries all unretained artifacts on a later Forget", async () => {
+    const a = await registry.put(await registration()), b = await registry.put(await registration(review("second\n")));
+    const unlink = vi.spyOn(fs, "unlink").mockRejectedValueOnce(new Error("private path must not escape"));
+    await expect(registry.forgetResult(a.id)).rejects.toMatchObject({ code: "cleanup" });
+    expect(registry.state("project-one")).toEqual([b]); expect(await fs.readdir(base)).toHaveLength(2);
+    unlink.mockRestore(); await registry.forgetResult(b.id);
+    expect(await fs.readdir(base)).toEqual([]);
+  });
+
   it("reports every omitted change explicitly rather than silently cutting paths or diagnostics", async () => {
     const binding = { owner: A, session: randomUUID(), snapshot: randomUUID() }, empty: CodingExportTree = { binding, entries: [] };
     const proposed: CodingExportTree = { binding, entries: Array.from({ length: 250 }, (_, i) => ({ path: `file-${i}.ts`, kind: "file", bytes: Buffer.from("value\n"), executable: false })) };
@@ -279,6 +346,9 @@ describe.skipIf(process.platform !== "linux")("the host-only coding result regis
     for (let i = 0; i < 32; i++) await registry.put(await registration(review(), { taskId: `task-${i}` }));
     const refused = await registration();
     await expect(registry.put(refused)).rejects.toMatchObject({ code: "limit" });
+    expect(registry.state("project-one")).toHaveLength(32); expect(await fs.readdir(base)).toHaveLength(32);
+    await registry.forgetResult(registry.state("project-one")[0].id);
+    await registry.put(await registration());
     expect(registry.state("project-one")).toHaveLength(32); expect(await fs.readdir(base)).toHaveLength(32);
   }, 15_000);
 

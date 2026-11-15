@@ -12,7 +12,7 @@ export interface ProjectCodingIpcDeps {
   handle(channel: string, handler: (...args: unknown[]) => unknown): void;
   projects(): ProjectSessionsState;
   folders: ProjectCodingWorkspaces;
-  results(): Promise<Pick<CodingResultRegistry, "state" | "review" | "export" | "reset" | "forgetProject">>;
+  results(): Promise<Pick<CodingResultRegistry, "state" | "review" | "export" | "reset" | "forgetProject" | "forgetResult">>;
   canUse(): boolean;
   availability(): { available: boolean; message: string };
   chooseFolder(title: string): Promise<string | null>;
@@ -180,6 +180,25 @@ export function registerProjectCodingIpc(d: ProjectCodingIpcDeps): ProjectCoding
       return { ok: false, message: safe(owner) ? "Couldn't export this coding review. Choose another ordinary local folder and try again." : STALE };
     } finally {
       if (projectId && token && pickers.get(projectId) === token) { pickers.delete(projectId); changed(); }
+    }
+  });
+  d.handle(IPC.codingResultForget, async (...args): Promise<{ ok: boolean; message: string }> => {
+    const id = idFrom(args), owner = capability();
+    if (!safe(owner)) return { ok: false, message: UNAVAILABLE };
+    const projects = projectCapabilities();
+    try {
+      const registry = await registryForUse(); assertCurrent(owner);
+      const found = locate(registry, id);
+      if (!found) return { ok: false, message: RESULT_GONE };
+      const current = projects.get(found.projectId) ?? (() => false);
+      assertCurrent(current);
+      // The registry revokes membership before its first await, also cancelling this result's pending review/export.
+      const clearing = registry.forgetResult(id); changed();
+      await clearing;
+      assertCurrent(() => safe(owner) && safe(current));
+      return { ok: true, message: "Private coding review forgotten. Exported copies and project history are unchanged." };
+    } catch {
+      return { ok: false, message: safe(owner) ? "Couldn't finish clearing this private coding review. Forget everything tries again. Exported copies and project history are unchanged." : STALE };
     }
   });
 

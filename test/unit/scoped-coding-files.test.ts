@@ -5,9 +5,11 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import {
-  ScopedCodingFiles, ScopedCodingFileError, codingWorkspaceFileProblem,
+  ScopedCodingFiles, ScopedCodingFileError, codingWorkspaceFileProblem, codingWorkspaceFileProblemAsync, codingWorkspaceFilePathProblem,
   type ScopedCodingFileLimits, type ScopedCodingWorkspace,
 } from "../../app/main/agent/scoped-coding-files";
+
+import { CodingPrivacyScanner, CodingPrivacyCleanupError, retireCodingPrivacyScanners } from "../../app/main/agent/coding-privacy-scanner";
 
 const FAKE_SECRET = "ghp_" + "A".repeat(36);
 const initial = "export const answer = 1;\n// Find this literal: a.*b\n";
@@ -277,6 +279,16 @@ describe.skipIf(process.platform !== "linux")("scoped coding files over real pri
     await expect(broker.list()).rejects.toMatchObject({ code: "cancelled" });
   });
 
+  it("does not acquire a fresh privacy generation when global Forget races a granted file lease", async () => {
+    const waiting = deferred<void>(), entered = deferred<void>();
+    const workspace: ScopedCodingWorkspace = { files: async operation => {
+      const result = await operation(copy); entered.resolve(); await waiting.promise; return result;
+    } };
+    const creating = ScopedCodingFiles.create({ workspace, signal: owner.signal }).catch(error => error);
+    await entered.promise; await retireCodingPrivacyScanners(); waiting.resolve();
+    expect(await creating).toMatchObject({ code: "cancelled" });
+  });
+
   it("captures the host file capability once and does not retarget to a replacement method", async () => {
     const workspace: ScopedCodingWorkspace = { files: async operation => operation(copy) };
     const broker = await open(undefined, workspace);
@@ -327,6 +339,35 @@ describe.skipIf(process.platform !== "linux")("scoped coding files over real pri
     await closing; expect(closed).toBe(true);
   });
 
+  it("cancels an off-thread write scan before any mutation and preserves the original copy", async () => {
+    const broker = await open();
+    const writing = broker.writeText("src/app.ts", "sk-".repeat(100_000)).catch(error => error);
+    owner.abort();
+    expect(await writing).toMatchObject({ code: "cancelled" }); await broker.close();
+    expect(await fs.readFile(path.join(copy, "src", "app.ts"), "utf8")).toBe(initial);
+    expect(await fs.readFile(path.join(source, "src", "app.ts"), "utf8")).toBe(initial);
+  });
+
+  it("drains auditing leases before reporting a typed scanner cleanup failure", async () => {
+    const broker = await open(), waiting = deferred<void>(), entered = deferred<void>();
+    const realRead = fs.readFile.bind(fs), realClose = CodingPrivacyScanner.prototype.close; let first = true;
+    vi.spyOn(fs, "readFile").mockImplementation((async (file: unknown, ...args: unknown[]) => {
+      if (first && typeof file === "string" && file.startsWith("/proc/self/fdinfo/")) { first = false; entered.resolve(); await waiting.promise; }
+      return Reflect.apply(realRead, fs, [file, ...args]);
+    }) as typeof fs.readFile);
+    const reading = broker.readText("src/app.ts").catch(error => error); await entered.promise;
+    vi.spyOn(CodingPrivacyScanner.prototype, "close").mockImplementationOnce(async function (this: CodingPrivacyScanner) {
+      await realClose.call(this); throw new CodingPrivacyCleanupError();
+    });
+    let settled = false;
+    const closing = broker.close().catch(error => { settled = true; return error; });
+    await Promise.resolve(); await Promise.resolve(); expect(settled).toBe(false);
+    waiting.resolve(); expect(await reading).toMatchObject({ code: "cancelled" });
+    expect(await closing).toBeInstanceOf(CodingPrivacyCleanupError);
+    // The injected error followed a real successful worker close; the expected cached failure is already asserted.
+    brokers.splice(brokers.indexOf(broker), 1);
+  });
+
   it("sanitizes backend and filesystem failures without exposing host paths or contents", async () => {
     let fail = false;
     const broker = await open(undefined, { files: async operation => { if (fail) throw new Error(`${temp}: ${FAKE_SECRET}`); return operation(copy); } });
@@ -337,6 +378,26 @@ describe.skipIf(process.platform !== "linux")("scoped coding files over real pri
 });
 
 describe("credential admission shared with isolated commands", () => {
+  it("keeps the awaited whole-content policy identical, including BOM, binary and credential paths", async () => {
+    const scanner = new CodingPrivacyScanner();
+    try {
+      for (const [name, bytes] of [
+        ["app.ts", Buffer.from("export const value = 1;\n")], ["app.ts", Buffer.from(`\ufeffconst value = "${FAKE_SECRET}";`)],
+        ["app.ts", Buffer.from("ordinary\npassword=hunter2")], ["image.bin", Buffer.from([0, 255])], ["private.key", Buffer.from([0, 255])],
+      ] as const) expect(await codingWorkspaceFileProblemAsync(name, bytes, scanner)).toBe(codingWorkspaceFileProblem(name, bytes));
+      expect(codingWorkspaceFilePathProblem(".env.local")).toBe("credential-path");
+      expect(codingWorkspaceFilePathProblem(".github/workflows/check.yml")).toBeNull();
+      const aborted = new AbortController(); aborted.abort();
+      await expect(codingWorkspaceFileProblemAsync("image.bin", Buffer.from([0, 255]), scanner, { signal: aborted.signal })).rejects.toMatchObject({ code: "cancelled" });
+      await expect(codingWorkspaceFileProblemAsync("app.ts", Buffer.from("safe"), scanner, { current: () => false })).rejects.toMatchObject({ code: "stale" });
+      await expect(codingWorkspaceFileProblemAsync("image.bin", Buffer.from([0, 255]), scanner, {
+        current: () => { void scanner.close(); return true; },
+      })).rejects.toMatchObject({ code: "cancelled" });
+      await scanner.close();
+      await expect(codingWorkspaceFileProblemAsync("image.bin", Buffer.from([0, 255]), scanner)).rejects.toMatchObject({ code: "cancelled" });
+    } finally { await scanner.close(); }
+  });
+
   it.each([".env", ".env.local", "nested/.env.example", ".ssh/config", ".aws/credentials", ".kube/config", "server.key", "client.p12", "id_rsa", ".npmrc", ".git-credentials", "credentials.json", ".config/gh/hosts.yml", "privatekeys/entry", ".credentials/store"])("refuses credential-bearing paths before a namespace sees them: %s", name => {
     expect(codingWorkspaceFileProblem(name, Buffer.from("not sent"))).toBe("credential-path");
   });

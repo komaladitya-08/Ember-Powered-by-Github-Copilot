@@ -4,6 +4,7 @@ import { ScopedCodingWorker, type ScopedCodingWorkerOptions } from "../../app/ma
 import type { IsolatedCommandWorkspace } from "../../app/main/agent/isolated-command-workspace";
 import type { CommandService } from "../../app/main/commands/types";
 import type { TaskSpec } from "../../app/main/agent/worker";
+import { CodingPrivacyCleanupError } from "../../app/main/agent/coding-privacy-scanner";
 
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; }
 function fixture() {
@@ -68,4 +69,11 @@ it("does not start a worker which was disposed before run", async () => {
   const f = fixture(); await f.worker.dispose();
   expect(await f.worker.run(new AbortController().signal)).toMatchObject({ success: false, stopped: true });
   expect(f.createWorkspace).not.toHaveBeenCalled(); expect(await f.worker.disposed).toBe(true);
+});
+
+it("retains an unknown privacy-worker exit during startup as an unsafe disposal receipt", async () => {
+  const f = fixture(); f.createWorkspace.mockRejectedValueOnce(new CodingPrivacyCleanupError());
+  expect(await f.worker.run(new AbortController().signal)).toMatchObject({ success: false, summary: expect.stringContaining("blocked") });
+  expect(await f.worker.disposed).toBe(false); expect(f.worker.handoffSafe()).toBe(false);
+  await expect(f.worker.dispose()).rejects.toThrow("verified as closed"); expect(f.facts).not.toHaveBeenCalled();
 });

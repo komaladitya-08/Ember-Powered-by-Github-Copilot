@@ -13,6 +13,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { HOST_PLATFORM } from "../platform/os";
 import { memoryRefusal } from "../memory/guard";
 import { projectFileProblem } from "./project";
+import { CodingPrivacyScanner, CodingPrivacyScanError, CodingPrivacyCleanupError, captureCodingPrivacyScope, assertCodingPrivacyScope, type CodingPrivacyScope, type CodingPrivacyScanOptions } from "./coding-privacy-scanner";
+import { CODING_PRIVACY_MAX_TEXT_BYTES } from "./coding-privacy-protocol";
 import type { PathFact } from "../commands/types";
 
 import { ScopedCodingFileError } from "./coding-platform";
@@ -70,7 +72,7 @@ function privacy(path: string, directory = false): "hidden" | "sensitive" | "uns
  * excluded wholesale. This detects conventional credential stores and recognized secret text, not every possible
  * secret or compressed history; callers still need isolated commands and guarded output.
  */
-export function codingWorkspaceFileProblem(relativePath: string, bytes: Uint8Array): "credential-path" | "credential-text" | null {
+export function codingWorkspaceFilePathProblem(relativePath: string): "credential-path" | null {
   const parts = relativePath.split("/").map(part => part.toLowerCase());
   const name = parts.at(-1) ?? "";
   if (parts.some(part => [".ssh", ".aws", ".azure", ".kube", ".gnupg", ".pki", ".password-store", ".credentials", "privatekeys", "private-keys", "private_keys"].includes(part)) ||
@@ -79,9 +81,35 @@ export function codingWorkspaceFileProblem(relativePath: string, bytes: Uint8Arr
       /^(?:credentials?(?:\.json|\.txt|\.ya?ml)?|secrets?\.(?:json|ya?ml|txt)|passwords?\.(?:txt|csv|json|ya?ml|ini|conf)|application_default_credentials\.json|service[-_]account\.json|\.npmrc|\.netrc|\.pgpass|\.htpasswd|\.vault_pass|\.git-credentials|\.boto|\.s3cfg|\.dockercfg|wp-config\.php|rclone\.conf|sitemanager\.xml|logins\.(?:csv|json|txt)|login data|cookies(?:\.sqlite)?|key4\.db)$/.test(name) ||
       (parts.includes(".docker") && name === "config.json") ||
       (parts.includes(".config") && parts.some(part => ["gcloud", "gh", "hub"].includes(part)))) return "credential-path";
+  return null;
+}
+
+/** Compatibility oracle for existing policy tests. Coding data paths use the awaited full-content check below. */
+export function codingWorkspaceFileProblem(relativePath: string, bytes: Uint8Array): "credential-path" | "credential-text" | null {
+  if (codingWorkspaceFilePathProblem(relativePath)) return "credential-path";
   let text: string;
   try { text = new TextDecoder("utf8", { fatal: true }).decode(bytes); } catch { return null; }
   return memoryRefusal(text) ? "credential-text" : null;
+}
+
+/** Whole-file command/capture check: no source text is scanned by regex on the main thread. */
+export async function codingWorkspaceFileProblemAsync(relativePath: string, bytes: Uint8Array, scanner: CodingPrivacyScanner,
+  options: CodingPrivacyScanOptions = {}): Promise<"credential-path" | "credential-text" | null> {
+  const check = () => {
+    scanner.assertCurrent();
+    if (options.signal?.aborted) throw new CodingPrivacyScanError("cancelled");
+    try { if (options.current && options.current() !== true) throw new CodingPrivacyScanError("stale"); }
+    catch { throw new CodingPrivacyScanError("stale"); }
+    scanner.assertCurrent();
+    if (options.signal?.aborted) throw new CodingPrivacyScanError("cancelled");
+  };
+  check();
+  if (codingWorkspaceFilePathProblem(relativePath)) return "credential-path";
+  if (bytes.byteLength > CODING_PRIVACY_MAX_TEXT_BYTES) throw new CodingPrivacyScanError("limit");
+  let text: string;
+  try { text = new TextDecoder("utf8", { fatal: true }).decode(bytes); } catch { return null; }
+  const refused = await scanner.refusal(text, options); check();
+  return refused ? "credential-text" : null;
 }
 
 async function mountId(file: fs.FileHandle): Promise<string> {
@@ -119,12 +147,16 @@ export class ScopedCodingFiles {
   #closing: Promise<void> | null = null;
   #abort: () => void;
   #excluded: readonly string[];
+  #privacy: CodingPrivacyScanner;
+  #privacyScope: CodingPrivacyScope;
 
-  private constructor(options: { files: ScopedCodingWorkspace["files"]; signal: AbortSignal }, limits: ScopedCodingFileLimits,
+  private constructor(options: { files: ScopedCodingWorkspace["files"]; signal: AbortSignal; privacyScope: CodingPrivacyScope }, limits: ScopedCodingFileLimits,
     root: fs.FileHandle, path: string, identity: BigIntStats, mount: string, excluded: readonly string[]) {
     this.#files = options.files; this.#signal = options.signal; this.#limits = Object.freeze(limits);
     this.#root = root; this.#rootPath = path; this.#identity = identity; this.#mount = mount;
     this.#excluded = Object.freeze([...excluded]);
+    this.#privacyScope = options.privacyScope;
+    this.#privacy = new CodingPrivacyScanner({ signal: options.signal, scope: this.#privacyScope });
     this.#abort = () => { void this.close().catch(() => undefined); };
     options.signal.addEventListener("abort", this.#abort, { once: true });
     if (options.signal.aborted) this.#abort();
@@ -135,6 +167,7 @@ export class ScopedCodingFiles {
     const limits = { ...DEFAULTS, ...options.limits };
     if (Object.entries(limits).some(([key, value]) => !Object.hasOwn(CAPS, key) || !Number.isSafeInteger(value) || value < 1 || value > CAPS[key as keyof ScopedCodingFileLimits])) throw new ScopedCodingFileError("limit");
     try {
+      const privacyScope = captureCodingPrivacyScope();
       const excluded = options.workspace.excludedRoots ?? [];
       if (!Array.isArray(excluded) || excluded.length > 2 || new Set(excluded).size !== excluded.length || excluded.some(value => value !== ".git" && value !== "node_modules")) throw new ScopedCodingFileError("unsupported");
       const scope = [...excluded];
@@ -146,11 +179,17 @@ export class ScopedCodingFiles {
           const identity = await root.stat({ bigint: true }), mount = await mountId(root);
           if (options.signal.aborted) throw new ScopedCodingFileError("cancelled");
           if (!identity.isDirectory() || identity.uid !== BigInt(process.getuid!()) || (identity.mode & 0o077n) !== 0n) throw new ScopedCodingFileError("boundary");
-          return new ScopedCodingFiles({ files, signal }, limits, root, path, identity, mount, scope);
-        } catch (error) { await root.close(); throw error; }
+          return new ScopedCodingFiles({ files, signal, privacyScope }, limits, root, path, identity, mount, scope);
+        } catch (error) {
+          try { await root.close(); } catch (failure) { if (!(error instanceof CodingPrivacyCleanupError)) throw failure; }
+          throw error;
+        }
       });
-      broker.#current();
-      return broker;
+      try { broker.#current(); return broker; }
+      catch (error) {
+        try { await broker.close(); } catch (failure) { if (!(error instanceof CodingPrivacyCleanupError)) throw failure; }
+        throw error;
+      }
     } catch (error) { throw sanitize(error); }
   }
 
@@ -158,13 +197,19 @@ export class ScopedCodingFiles {
     this.#closed = true;
     this.#signal.removeEventListener("abort", this.#abort);
     this.#closing ??= (async () => {
+      let privacyFailure: unknown = null;
+      try { await this.#privacy.close(); } catch (error) { privacyFailure = error; }
       if (this.#active) await new Promise<void>(resolve => this.#idle.push(resolve));
-      try { await this.#root.close(); } catch (error) { throw sanitize(error); }
+      try { await this.#root.close(); } catch (error) { if (!privacyFailure) throw sanitize(error); }
+      if (privacyFailure) throw privacyFailure;
     })();
     return this.#closing;
   }
 
-  #current(): void { if (this.#closed || this.#signal.aborted) throw new ScopedCodingFileError("cancelled"); }
+  #current(): void {
+    if (this.#closed || this.#signal.aborted) throw new ScopedCodingFileError("cancelled");
+    assertCodingPrivacyScope(this.#privacyScope);
+  }
   async #wait<T>(pending: Promise<T>): Promise<T> { const result = await pending; this.#current(); return result; }
   #result<T>(value: T): T {
     if (Buffer.byteLength(JSON.stringify(value)) > this.#limits.resultBytes) throw new ScopedCodingFileError("limit");
@@ -295,7 +340,7 @@ export class ScopedCodingFiles {
         let text: string;
         try { text = new TextDecoder("utf8", { fatal: true, ignoreBOM: true }).decode(data); } catch { throw new ScopedCodingFileError("binary"); }
         if (/[\p{Cc}]/u.test(text.replace(/[\t\r\n]/g, ""))) throw new ScopedCodingFileError("binary");
-        if (memoryRefusal(text.replace(/^\ufeff/, ""))) throw new ScopedCodingFileError("secret");
+        if (await this.#wait(this.#privacy.refusal(text.replace(/^\ufeff/, "")))) throw new ScopedCodingFileError("secret");
         return { text, bytes: data, sha256: digest(data) };
       } finally { await file.close(); }
     } finally { await parent.directory.close(); }
@@ -351,7 +396,7 @@ export class ScopedCodingFiles {
         (options.expectedSha256 !== undefined && (typeof options.expectedSha256 !== "string" || !/^[a-f0-9]{64}$/.test(options.expectedSha256)))) throw new ScopedCodingFileError("path");
     if (typeof text !== "string" || Buffer.byteLength(text) > this.#limits.fileBytes || Buffer.from(text).toString("utf8") !== text) throw new ScopedCodingFileError("limit");
     if (/[\p{Cc}]/u.test(text.replace(/[\t\r\n]/g, ""))) throw new ScopedCodingFileError("binary");
-    if (memoryRefusal(text.replace(/^\ufeff/, ""))) throw new ScopedCodingFileError("secret");
+    if (await this.#wait(this.#privacy.refusal(text.replace(/^\ufeff/, "")))) throw new ScopedCodingFileError("secret");
     const entry = entries.get(path), bytes = Buffer.from(text);
     if (entry) {
       if (options.createOnly) throw new ScopedCodingFileError("exists");
@@ -433,7 +478,7 @@ export class ScopedCodingFiles {
   searchLiteral(query: string, path = "/work"): Promise<ScopedCodingSearchResult> {
     return this.#lease(async entries => {
       if (typeof query !== "string" || !query || Buffer.byteLength(query) > 1024 || /[\r\n\0]/.test(query)) throw new ScopedCodingFileError("path");
-      if (memoryRefusal(query)) throw new ScopedCodingFileError("secret");
+      if (await this.#wait(this.#privacy.refusal(query))) throw new ScopedCodingFileError("secret");
       const relative = normalized(path), selected = relative ? this.#entry(relative, entries) : null;
       const result: ScopedCodingSearchResult = { path: virtual(relative), matches: [], files: 0, withheld: withheld(), ...(this.#excluded.length ? { excludedRoots: [...this.#excluded] } : {}) };
       for (const entry of [...entries.values()].sort((a, b) => a.path.localeCompare(b.path, "en"))) {
@@ -458,7 +503,9 @@ export class ScopedCodingFiles {
   }
 }
 
-function sanitize(error: unknown): ScopedCodingFileError {
+function sanitize(error: unknown): ScopedCodingFileError | CodingPrivacyCleanupError {
+  if (error instanceof CodingPrivacyCleanupError) return error;
+  if (error instanceof CodingPrivacyScanError) return new ScopedCodingFileError(error.code === "cancelled" || error.code === "stale" ? "cancelled" : error.code === "limit" || error.code === "timeout" ? "limit" : "io");
   if (error instanceof ScopedCodingFileError) return new ScopedCodingFileError(error.code);
   const code = (error as NodeJS.ErrnoException | null)?.code;
   return new ScopedCodingFileError(code === "ENOENT" ? "missing" : code === "EEXIST" ? "exists" : "io");

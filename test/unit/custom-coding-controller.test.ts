@@ -3,12 +3,17 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { CopilotSession } from "@github/copilot-sdk";
 import { CodingControllerCleanupError, CustomCodingController, type CustomCodingControllerOptions } from "../../app/main/agent/custom-coding-controller";
 import { ScopedCodingFileError, type CodingFileTools } from "../../app/main/agent/coding-platform";
+import { CodingPrivacyCleanupError } from "../../app/main/agent/coding-privacy-scanner";
 
-const sim = vi.hoisted(() => ({ sessions: [] as any[], inputs: [] as any[], drive: null as null | ((session: any) => Promise<void>), stops: 0, calls: 0, createFailure: false }));
+const sim = vi.hoisted(() => ({ sessions: [] as any[], inputs: [] as any[], drive: null as null | ((session: any) => Promise<void>), stops: 0, calls: 0, createFailure: false,
+  runtimeCloseGate: null as Promise<void> | null, runtimeCloseFailure: false }));
 vi.mock("../../app/main/agent/private-controller-runtime", () => ({ PrivateControllerRuntime: {
   start: async (input: unknown) => {
     sim.inputs.push(input);
-    return { workingDirectory: "/private/coding-cwd", close: async () => { sim.stops++; }, client: {
+    return { workingDirectory: "/private/coding-cwd", close: async () => {
+      sim.stops++; if (sim.runtimeCloseGate) await sim.runtimeCloseGate;
+      if (sim.runtimeCloseFailure) throw new Error("synthetic private runtime cleanup canary");
+    }, client: {
       createSession: async (config: any) => {
         if (sim.createFailure) throw new Error("An upstream initialization error echoed a synthetic provider secret");
         const listeners = new Set<(event: any) => void>();
@@ -25,7 +30,9 @@ vi.mock("../../app/main/agent/private-controller-runtime", () => ({ PrivateContr
 } }));
 
 const controllers: CustomCodingController[] = [];
-beforeEach(() => { sim.sessions = []; sim.inputs = []; sim.drive = null; sim.stops = 0; sim.calls = 0; sim.createFailure = false; });
+beforeEach(() => { sim.sessions = []; sim.inputs = []; sim.drive = null; sim.stops = 0; sim.calls = 0; sim.createFailure = false;
+  sim.runtimeCloseGate = null; sim.runtimeCloseFailure = false;
+});
 afterEach(async () => { for (const owner of controllers.splice(0)) await owner.close(); vi.useRealTimers(); });
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; }
 const fileRead = () => ({ path: "/work/a.ts", text: "old", sha256: "0".repeat(64), bytes: 3, totalLines: 1, startLine: 1, endLine: 1 });
@@ -83,6 +90,41 @@ it("cleans up a failed initialization without exposing upstream exception text",
 it("preserves a typed cleanup failure when initialization fails before the controller can be returned", async () => {
   const f = fixture(); sim.createFailure = true; f.files.close.mockRejectedValueOnce(new Error("untrusted cleanup diagnostic"));
   await expect(CustomCodingController.start(f.options)).rejects.toBeInstanceOf(CodingControllerCleanupError);
+});
+
+it("preserves a file-factory privacy cleanup failure after awaiting normal controller retirement", async () => {
+  const failure = new CodingPrivacyCleanupError(), retired = deferred<void>();
+  const f = fixture({ files: async () => { throw failure; } });
+  sim.runtimeCloseGate = retired.promise;
+  let settled = false;
+  const starting = CustomCodingController.start(f.options).then(() => { settled = true; return undefined; }, error => { settled = true; return error; });
+  try {
+    await vi.waitFor(() => expect(sim.stops).toBe(1));
+    expect(settled).toBe(false); expect(sim.sessions).toHaveLength(0);
+    expect(f.files.close).not.toHaveBeenCalled(); // The factory rejected before assigning a broker to the controller.
+    retired.resolve();
+    expect(await starting).toBe(failure);
+  } finally { retired.resolve(); await starting; }
+});
+
+it("retains controller cleanup failure precedence over a file-factory privacy failure", async () => {
+  const privacyFailure = new CodingPrivacyCleanupError();
+  const f = fixture({ files: async () => { throw privacyFailure; } }); sim.runtimeCloseFailure = true;
+  const failure = await CustomCodingController.start(f.options).catch((error: unknown) => error);
+  expect(failure).toBeInstanceOf(CodingControllerCleanupError);
+  expect(failure).not.toBe(privacyFailure);
+  expect(String(failure)).not.toContain("synthetic private runtime cleanup canary");
+  expect(sim.stops).toBe(1); expect(sim.sessions).toHaveLength(0);
+});
+
+it("sanitizes an unrelated file-factory initialization error", async () => {
+  const f = fixture({ files: async () => { throw new Error("private file factory path canary"); } });
+  const failure = await CustomCodingController.start(f.options).catch((error: unknown) => error);
+  expect(failure).toBeInstanceOf(Error);
+  expect(failure).not.toBeInstanceOf(CodingPrivacyCleanupError);
+  expect(failure).toEqual(expect.objectContaining({ message: "The coding controller could not be initialized safely." }));
+  expect(String(failure)).not.toContain("private file factory path canary");
+  expect(sim.stops).toBe(1); expect(sim.sessions).toHaveLength(0);
 });
 
 it("rejects invalid tool arguments before a broker or command callback can run", async () => {

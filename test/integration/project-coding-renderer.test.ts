@@ -57,6 +57,10 @@ describe.skipIf(process.env.EMBER_UIUX_TEST !== "1")("Project coding folders and
           if (method === "codingResultsState") return answer(`results:${args[0]}`, h.results[args[0]] ?? []);
           if (method === "codingResultReview") return answer("review", h.reviews[args[0]]);
           if (method === "codingResultExport") return answer("export", { ok: true, message: "Review exported. The original project is unchanged." });
+          if (method === "codingResultForget") {
+            for (const key of Object.keys(h.results)) h.results[key] = h.results[key].filter(result => result.id !== args[0]);
+            return answer("forget", { ok: true, message: "Private coding review forgotten. Exported copies and project history are unchanged." });
+          }
           throw new Error(`Unexpected preload call: ${method}`);
         };
       } }) as never;
@@ -66,10 +70,13 @@ describe.skipIf(process.env.EMBER_UIUX_TEST !== "1")("Project coding folders and
   }
   const selected = (page: Page, id: string | null) => page.evaluate(id => window.dispatchEvent(new CustomEvent("ember-project-changed", { detail: { projectId: id } })), id);
 
-  it("hides without a project and allows folder preparation while execution remains unavailable", async () => {
+  it("guides project creation without reading a folder and allows preparation while execution remains unavailable", async () => {
     const page = await open({ selected: null });
-    expect(await page.locator("#project-coding").isHidden()).toBe(true);
-    expect(await page.locator("#coding-workspace").isVisible()).toBe(true);
+    expect(await page.locator("#project-coding").isVisible()).toBe(true);
+    expect(await page.locator("#project-coding-folder").textContent()).toContain("Create or select a project above");
+    expect(await page.locator("#project-coding-choose").isDisabled()).toBe(true);
+    expect(await page.locator("#coding-workspace").isHidden()).toBe(true);
+    expect(await page.evaluate(() => window.__codingBoard.calls)).toEqual([]);
     await selected(page, "one");
     await expect.poll(() => page.locator("#project-coding-choose").isEnabled()).toBe(true);
     expect(await page.locator("#coding-workspace").isHidden()).toBe(true);
@@ -141,7 +148,7 @@ describe.skipIf(process.env.EMBER_UIUX_TEST !== "1")("Project coding folders and
     await button.click();
     await page.waitForFunction(() => !!window.__codingBoard.resolve.review);
     await page.evaluate(old => { const h = window.__codingBoard; h.emit("onConversationForgotten"); h.resolve.review({ ...old, projectId: "two", title: "Previous account private review" }); }, old);
-    expect(await page.locator("#project-coding").isHidden()).toBe(true);
+    expect(await page.locator("#project-coding-choose").isDisabled()).toBe(true);
     expect(await page.locator("#project-coding-review-title").textContent()).toBe("");
     expect(await page.locator("#project-coding-results").textContent()).not.toContain("Previous account");
     await page.close();
@@ -152,14 +159,14 @@ describe.skipIf(process.env.EMBER_UIUX_TEST !== "1")("Project coding folders and
     await page.waitForFunction(() => !!window.__codingBoard.resolve.initial);
     await selected(page, null);
     await page.evaluate(() => window.__codingBoard.resolve.initial({ projects: [], selectedProjectId: "one" }));
-    expect(await page.locator("#project-coding").isHidden()).toBe(true);
+    expect(await page.locator("#project-coding-choose").isDisabled()).toBe(true);
     await selected(page, "one");
     await expect.poll(() => page.locator("#project-coding-choose").isEnabled()).toBe(true);
     await page.evaluate(() => { window.__codingBoard.deferred.projectCodingWorkspaceChoose = true; });
     await page.locator("#project-coding-choose").click();
     await page.waitForFunction(() => !!window.__codingBoard.resolve.projectCodingWorkspaceChoose);
     await page.evaluate(() => { const h = window.__codingBoard; h.emit("onConversationForgotten"); h.resolve.projectCodingWorkspaceChoose({ projectId: "one", folder: { path: "/private/source", label: "Private", valid: true }, available: true, canChoose: true, message: "Private folder" }); });
-    expect(await page.locator("#project-coding").isHidden()).toBe(true);
+    expect(await page.locator("#project-coding-choose").isDisabled()).toBe(true);
     expect(await page.locator("#project-coding-folder").textContent()).not.toContain("/private/source");
     await page.close();
   }, 30_000);
@@ -186,8 +193,8 @@ describe.skipIf(process.env.EMBER_UIUX_TEST !== "1")("Project coding folders and
   it("does not show a late export message after switching projects", async () => {
     const review = result();
     const page = await open({ results: { one: [review] }, reviews: { [review.id]: review }, deferred: { export: true } });
-    await expect.poll(() => page.locator("#project-coding-results button").isEnabled()).toBe(true);
-    await page.locator("#project-coding-results button").click();
+    await expect.poll(() => page.getByRole("button", { name: /^Review result:/ }).isEnabled()).toBe(true);
+    await page.getByRole("button", { name: /^Review result:/ }).click();
     await expect.poll(() => page.locator("#project-coding-export").isEnabled()).toBe(true);
     await page.locator("#project-coding-export").click();
     await page.waitForFunction(() => !!window.__codingBoard.resolve.export);
@@ -200,12 +207,61 @@ describe.skipIf(process.env.EMBER_UIUX_TEST !== "1")("Project coding folders and
     await page.close();
   }, 30_000);
 
+  it("forgets a private result explicitly, clears its open preview and preserves other results and keyboard focus", async () => {
+    const first = result(), second = result("one", "result-two"); second.title = "Another result";
+    const page = await open({ results: { one: [first, second] }, reviews: { [first.id]: first, [second.id]: second } });
+    const review = page.getByRole("button", { name: "Review result: Improve the app", exact: true });
+    await expect.poll(() => review.isEnabled()).toBe(true); await review.click();
+    await expect.poll(() => page.locator("#project-coding-review").isVisible()).toBe(true);
+    await page.getByRole("button", { name: "Forget private result: Improve the app", exact: true }).click();
+    await expect.poll(() => page.locator("#project-coding-status").textContent()).toContain("Private coding review forgotten");
+    expect(await page.locator("#project-coding-review").isHidden()).toBe(true);
+    expect(await page.locator("#project-coding-review-source").textContent()).toBe("");
+    expect(await page.getByRole("button", { name: "Review result: Improve the app", exact: true }).count()).toBe(0);
+    expect(await page.getByRole("button", { name: "Forget private result: Another result", exact: true }).evaluate(element => element === document.activeElement)).toBe(true);
+    expect(await page.evaluate(() => window.__codingBoard.calls.filter(c => /Forget|Export/.test(c.method)))).toEqual([{ method: "codingResultForget", args: [first.id] }]);
+    expect(await page.locator("#project-coding-status").textContent()).toContain("Exported copies and project history are unchanged");
+    await page.close();
+  }, 30_000);
+
+  it.each(["review", "export"])("does not restore a forgotten result through a late %s reply", async operation => {
+    const original = result();
+    const page = await open({ results: { one: [original] }, reviews: { [original.id]: original }, deferred: { [operation]: true } });
+    const button = page.getByRole("button", { name: /^Review result:/ });
+    await expect.poll(() => button.isEnabled()).toBe(true); await button.click();
+    if (operation === "export") {
+      await expect.poll(() => page.locator("#project-coding-export").isEnabled()).toBe(true);
+      await page.locator("#project-coding-export").click();
+    }
+    await page.waitForFunction(operation => !!window.__codingBoard.resolve[operation], operation);
+    await page.getByRole("button", { name: /^Forget private result:/ }).click();
+    await expect.poll(() => page.locator("#project-coding-status").textContent()).toContain("Private coding review forgotten");
+    await page.evaluate(({ operation, original }) => window.__codingBoard.resolve[operation](operation === "review" ? original : { ok: true, message: "OLD private export" }), { operation, original });
+    expect(await page.locator("#project-coding-review").isHidden()).toBe(true);
+    expect(await page.locator("#project-coding-review-title").textContent()).toBe("");
+    expect(await page.locator("#project-coding-results h4").count()).toBe(0);
+    expect(await page.locator("#project-coding-status").textContent()).toContain("Private coding review forgotten");
+    await page.close();
+  }, 30_000);
+
+  it("does not publish a late Forget message into another account", async () => {
+    const original = result();
+    const page = await open({ results: { one: [original] }, deferred: { forget: true } });
+    const button = page.getByRole("button", { name: /^Forget private result:/ });
+    await expect.poll(() => button.isEnabled()).toBe(true); await button.click();
+    await page.waitForFunction(() => !!window.__codingBoard.resolve.forget);
+    await page.evaluate(() => { const h = window.__codingBoard; h.emit("onConversationForgotten"); h.resolve.forget({ ok: true, message: "OLD account result title" }); });
+    expect(await page.locator("#project-coding-status").textContent()).toBe("");
+    expect(await page.locator("#project-coding-choose").isDisabled()).toBe(true);
+    await page.close();
+  }, 30_000);
+
   it("keeps long paths and patch previews within a narrow window using the actual Home styles", async () => {
     const review = result(); review.changes[0].path = "src/" + "a".repeat(250) + ".ts";
     review.textPatch = "+" + "x".repeat(2000);
     const page = await open({ results: { one: [review] }, reviews: { [review.id]: review } });
-    await expect.poll(() => page.locator("#project-coding-results button").isEnabled()).toBe(true);
-    await page.locator("#project-coding-results button").click();
+    await expect.poll(() => page.getByRole("button", { name: /^Review result:/ }).isEnabled()).toBe(true);
+    await page.getByRole("button", { name: /^Review result:/ }).click();
     await expect.poll(() => page.locator("#project-coding-review").isVisible()).toBe(true);
     await page.evaluate(() => {
       document.documentElement.classList.add("content"); document.documentElement.dataset.textSize = "larger";
@@ -221,6 +277,8 @@ describe.skipIf(process.env.EMBER_UIUX_TEST !== "1")("Project coding folders and
       await page.evaluate(() => document.fonts.ready);
       expect(await page.evaluate(() => document.body.scrollWidth <= innerWidth)).toBe(true);
       if (process.env.EMBER_UI_EVIDENCE) {
+        await page.locator("#project-coding-patch").scrollIntoViewIfNeeded();
+        await page.evaluate(() => { scrollTo(0, 0); return new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))); });
         fs.mkdirSync(process.env.EMBER_UI_EVIDENCE, { recursive: true });
         await page.screenshot({ path: path.join(process.env.EMBER_UI_EVIDENCE, `project-coding-${width}.png`), fullPage: true });
       }

@@ -8,11 +8,12 @@ import { HOST_ARCH, HOST_PLATFORM } from "../platform/os";
 import { ProjectCodingWorkspaces } from "./project-coding-workspaces";
 import { discoverCodingToolchain } from "./coding-toolchain";
 import { IsolatedCommandWorkspace, type IsolatedCommandReview } from "./isolated-command-workspace";
-import { CodingResultRegistry } from "./coding-result-registry";
+import { CodingResultRegistry, CodingResultRegistryError } from "./coding-result-registry";
 import type { CodingWorkspace } from "./coding-workspace";
 import type { TaskSpec } from "./worker";
 import type { ScopedCodingChecks } from "./scoped-coding-worker";
 import { titleOf } from "./tasks";
+import { CodingPrivacyCleanupError, captureCodingPrivacyScope, retireCodingPrivacyScanners, codingPrivacyCleanupFailure, type CodingPrivacyScope } from "./coding-privacy-scanner";
 import type { CodingProjectScope, CodingExcludedRoot } from "./coding-project-scope";
 
 export interface ProjectCodingResourcesOptions {
@@ -27,7 +28,7 @@ export interface ProjectCodingResourcesOptions {
   /** Main may create this synchronously while these filesystem resources initialize asynchronously. */
   folders?: ProjectCodingWorkspaces;
 }
-export type CodingResultsAccess = Pick<CodingResultRegistry, "state" | "review" | "export" | "reset" | "forgetProject">;
+export type CodingResultsAccess = Pick<CodingResultRegistry, "state" | "review" | "export" | "reset" | "forgetProject" | "forgetResult">;
 interface Pin { path: string; handle: fs.FileHandle; stat: BigIntStats; mount: string }
 interface Authority {
   taskId: string; owner: string; projectId: string; source: string; title: string; ownerCurrent: () => boolean;
@@ -100,6 +101,10 @@ export class ProjectCodingResources {
       review: id => this.#registry?.review(id) ?? Promise.resolve(null),
       export: (id, destination, current) => this.#registry?.export(id, destination, current) ?? Promise.resolve({ ok: false, message: "No coding review is available to export." }),
       reset: () => { this.#publicationEpoch++; return this.#retryRegistryReset(); },
+      forgetResult: id => {
+        const pending = this.#registry ? this.#registry.forgetResult(id) : this.#registryOpening ? this.#registryOpening.then(registry => registry.forgetResult(id)) : Promise.resolve();
+        return this.#registryCleanup(pending, true);
+      },
       forgetProject: projectId => {
         this.#projectRevisions.set(projectId, (this.#projectRevisions.get(projectId) ?? 0) + 1);
         return this.#registryCleanup(this.#forgetRegistryProject(projectId));
@@ -135,8 +140,9 @@ export class ProjectCodingResources {
   get reviewBase(): string { return this.#reviews; }
   results(): Promise<CodingResultsAccess> { return Promise.resolve(this.#results); }
   availability(): { available: boolean; message: string; nodePath?: string } {
-    const available = !this.#closed && !this.#invalidationPending && !this.#failed && !this.#artifactCleanupFailed && this.#supported && this.#node !== null;
-    return { available, message: this.#closed ? "Coding resources are closed." : this.#invalidationPending ? "Private coding work is being closed and removed." : this.#artifactCleanupFailed && !this.#failed
+    const privacyFailure = codingPrivacyCleanupFailure();
+    const available = !this.#closed && !this.#invalidationPending && !this.#failed && !this.#artifactCleanupFailed && !privacyFailure && this.#supported && this.#node !== null;
+    return { available, message: this.#closed ? "Coding resources are closed." : this.#invalidationPending ? "Private coding work is being closed and removed." : privacyFailure ? "Earlier coding privacy work could not be verified as stopped. Further coding is unavailable." : this.#artifactCleanupFailed && !this.#failed
       ? "Private coding reviews could not be removed. Retry Forget everything; coding resumes after verified cleanup." : this.#message,
       ...(available ? { nodePath: this.#node! } : {}),
       ...(available ? { message: `${this.#message} ${SOURCE_DISCLOSURE}` } : {}) };
@@ -262,6 +268,9 @@ export class ProjectCodingResources {
   createWorkspace(spec: TaskSpec, signal: AbortSignal, admit: () => boolean): Promise<IsolatedCommandWorkspace> {
     const workspace = spec.codingWorkspace, projectId = workspace?.projectId, owner = this.#owner();
     if (!this.availability().available || !workspace || !projectId || !this.#project(projectId) || !owner || this.#tasks.has(spec.id)) return Promise.reject(stale());
+    let privacyScope: CodingPrivacyScope;
+    try { privacyScope = captureCodingPrivacyScope(); }
+    catch (error) { if (error instanceof CodingPrivacyCleanupError) this.#failure(); return Promise.reject(error); }
     const path = workspace.path, sourceCurrent = workspace.current.bind(workspace), selected = this.folders.capture(projectId);
     const ownerCurrent = this.folders.ownerCurrent(), epoch = this.#epoch;
     const authority: Authority = { taskId: spec.id, owner, projectId, source: path,
@@ -277,14 +286,16 @@ export class ProjectCodingResources {
         await this.validateSource({ path, current: sourceCurrent }); if (!current()) throw stale();
         await this.#storageCurrent(); if (!current()) throw stale();
         const scope = await this.#sourceScope(path, current); if (!current()) throw stale();
-        const backend = await IsolatedCommandWorkspace.create({ source: path, baseDir: this.#copies, protectedPaths: this.#roots, scope,
-          binding: { owner, session: randomUUID(), snapshot: randomUUID() }, nodePath: this.#node!, signal, admit: current });
+        const backend = await IsolatedCommandWorkspace.create({ source: path, baseDir: this.#copies, protectedPaths: this.#roots, scope, privacyScope,
+          binding: { owner, session: randomUUID(), snapshot: randomUUID() }, nodePath: this.#node!, signal, admit: current,
+          reviewCurrent: () => this.#reviewCurrent(authority) });
         authority.workspace = backend; this.#active.set(backend, authority);
         if (!current()) { await backend.stop(); await this.#closeBackend(backend); throw stale(); }
         return this.#wrapped(backend, authority);
-      } catch {
-        if (authority.workspace && this.#active.has(authority.workspace)) this.#failure();
+      } catch (error) {
+        if (error instanceof CodingPrivacyCleanupError || (authority.workspace && this.#active.has(authority.workspace))) this.#failure();
         if (!authority.workspace) { this.#tasks.delete(spec.id); this.#authorities.delete(spec); }
+        if (error instanceof CodingPrivacyCleanupError) throw error;
         throw fixed("The coding copy could not be created under its current project grant.");
       }
     })();
@@ -349,12 +360,15 @@ export class ProjectCodingResources {
     }
     return this.#registryOpening;
   }
+  #reviewCurrent(authority: Authority): boolean {
+    return !this.#closed && this.#owner() === authority.owner && safeCall(authority.ownerCurrent) && this.#project(authority.projectId) &&
+      this.#publicationEpoch === authority.publicationEpoch && (this.#projectRevisions.get(authority.projectId) ?? 0) === authority.projectRevision;
+  }
   publish(spec: TaskSpec, output: IsolatedCommandReview, status: "done" | "failed" | "stopped", checks: ScopedCodingChecks) {
     const authority = this.#authorities.get(spec);
     if (!authority || authority.publishing || this.#tasks.get(spec.id) !== authority || authority.output !== output) return Promise.reject(stale());
     authority.publishing = true;
-    const current = () => !this.#closed && this.#owner() === authority.owner && safeCall(authority.ownerCurrent) &&
-      this.#publicationEpoch === authority.publicationEpoch && (this.#projectRevisions.get(authority.projectId) ?? 0) === authority.projectRevision;
+    const current = () => this.#reviewCurrent(authority);
     this.#unadopted.set(output.directory, authority.projectId);
     const pending = (async () => {
       try {
@@ -394,9 +408,12 @@ export class ProjectCodingResources {
     if (!registry) return;
     await registry.forgetProject(projectId); await this.#discardUnadopted(registry, projectId);
   }
-  async #registryCleanup(pending: Promise<void>): Promise<void> {
+  async #registryCleanup(pending: Promise<void>, allowMissingResult = false): Promise<void> {
     try { await pending; this.#artifactCleanupFailed = this.#unadopted.size > 0; this.#changed(); }
-    catch { this.#artifactCleanupFailed = true; this.#changed(); throw cleanupFailed(); }
+    catch (error) {
+      if (allowMissingResult && error instanceof CodingResultRegistryError && (error.code === "stale" || error.code === "invalid")) throw error;
+      this.#artifactCleanupFailed = true; this.#changed(); throw cleanupFailed();
+    }
   }
   #retryRegistryReset(): Promise<void> { return this.#registryCleanup(this.#resetRegistry()); }
 
@@ -421,12 +438,13 @@ export class ProjectCodingResources {
     this.#epoch++; this.#publicationEpoch++; this.folders.ownerReset(); this.#invalidationPending++;
     for (const authority of this.#tasks.values()) { authority.retired = true; authority.output = undefined; }
     const creations = [...this.#creating].map(pending => pending.then(() => undefined, () => undefined));
+    const privacy = retireCodingPrivacyScanners();
     const backends = [...this.#active.keys()];
     const stops = backends.map(backend => { try { return backend.stop(); } catch { return Promise.reject(cleanupFailed()); } });
     const closes = backends.map(backend => this.#closeBackend(backend));
     const pending = (async () => {
       try {
-        const results = await Promise.allSettled([...stops, ...closes, ...creations]);
+        const results = await Promise.allSettled([...stops, ...closes, ...creations, privacy]);
         if (results.some(result => result.status === "rejected")) this.#failure();
         const remaining = await Promise.allSettled([...this.#active.keys()].map(backend => this.#closeBackend(backend)));
         if (remaining.some(result => result.status === "rejected")) this.#failure();
@@ -454,6 +472,8 @@ export class ProjectCodingResources {
           try { await backend.stop(); await this.#closeBackend(backend); } catch { failed = true; }
         }
         try { if (this.#registryOpening) await (await this.#registryOpening).close(); } catch { failed = true; }
+        // File tools own their pure scanner too. Account/app cleanup waits for every source-holding worker heap.
+        try { await retireCodingPrivacyScanners(); } catch { failed = true; }
         if (!failed && this.#private) {
           try { await this.#markClosed(); } catch { failed = true; }
         }

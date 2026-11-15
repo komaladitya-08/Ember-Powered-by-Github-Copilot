@@ -6,6 +6,7 @@
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
+import { build } from "esbuild";
 import { chromium, type Browser, type Page } from "playwright-core";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { DEFAULT_SETTINGS } from "../../app/main/settings";
@@ -41,12 +42,15 @@ interface Seed { extensions?: Partial<ExtensionsState>; entries?: MarketplaceEnt
 let browser: Browser;
 let server: http.Server;
 let port = 0;
+let legacyCodingScript: string;
 
 beforeAll(async () => {
   if (gate) return;
+  legacyCodingScript = (await build({ stdin: { contents: 'import { mountCodingWorkspace } from "./app/renderer/home/coding-workspace"; mountCodingWorkspace();', resolveDir: process.cwd() }, bundle: true, platform: "browser", write: false })).outputFiles[0].text;
   browser = await chromium.launch({ executablePath: process.env.EMBER_CHROMIUM_PATH ?? "/usr/bin/chromium", headless: true, args: ["--no-sandbox"] });
-  const dist = path.resolve("dist");
+  const dist = path.resolve(process.env.EMBER_HOME_INTEGRATIONS_DIST ?? "dist");
   server = http.createServer((req, res) => {
+    if (req.url === "/legacy-coding-fixture.js") { res.setHeader("content-type", "text/javascript"); res.end(legacyCodingScript); return; }
     const file = path.resolve(dist, `.${decodeURIComponent((req.url ?? "/").split("?")[0])}`);
     if (!file.startsWith(dist + path.sep) || !fs.existsSync(file) || !fs.statSync(file).isFile()) { res.writeHead(404); res.end(); return; }
     const mime: Record<string, string> = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".woff2": "font/woff2" };
@@ -90,7 +94,7 @@ async function open(pane: string, seed: Seed = {}): Promise<Page> {
       if (name === "agentStatus") return async () => agent;
       if (name === "updateSettings") return async (patch: Record<string, unknown>) => { window.__ixCalls.push(`save:${JSON.stringify(patch)}`); };
       if (name === "conversation") return async () => [];
-      if (name === "codingState") return () => codingStateDeferred ? new Promise(resolve => { window.__ixResolveCoding = resolve; }) : Promise.resolve({ folder: null, branch: null, running: false });
+      if (name === "codingState") return () => { window.__ixCalls.push("coding:state"); return codingStateDeferred ? new Promise(resolve => { window.__ixResolveCoding = resolve; }) : Promise.resolve({ folder: null, branch: null, running: false }); };
       if (name === "codingChooseWorkspace") return async () => { window.__ixCalls.push("coding:choose"); if (window.__ixCodingFails) throw new Error("picker failed"); return { folder: "/work/example", branch: "main", running: false }; };
       if (name === "codingClearWorkspace") return async () => { window.__ixCalls.push("coding:clear"); return { folder: null, branch: null, running: false }; };
       // Projects, as main answers when connected: one file chosen, a drafted patch.
@@ -142,6 +146,16 @@ async function open(pane: string, seed: Seed = {}): Promise<Page> {
 }
 
 const calls = (p: Page) => p.evaluate(() => window.__ixCalls);
+/** The retired workspace module is exercised only when a fixture explicitly mounts it on its own. */
+async function openLegacyCoding(seed: Seed = {}): Promise<Page> {
+  const page = await open("project", seed);
+  await page.evaluate(() => {
+    document.getElementById("project-coding")!.hidden = true;
+    document.getElementById("coding-workspace")!.hidden = false;
+  });
+  await page.addScriptTag({ url: `http://127.0.0.1:${port}/legacy-coding-fixture.js` });
+  return page;
+}
 const focused = (p: Page) => p.evaluate(() => (document.activeElement as HTMLElement | null)?.dataset?.key ?? document.activeElement?.tagName ?? "");
 /** With EMBER_UI_EVIDENCE set, a screenshot for the render check (in light, then dark). */
 async function evidence(p: Page, name: string): Promise<void> {
@@ -157,8 +171,17 @@ async function evidence(p: Page, name: string): Promise<void> {
 }
 
 describe.skipIf(gate)("Home's Projects, as the person sets up a command (2026-11-07 product audit)", () => {
+  it("shows project coding guidance without loading the retired global workspace", async () => {
+    const page = await open("project");
+    expect(await page.locator("#coding-workspace").isHidden()).toBe(true);
+    expect(await page.locator("#project-coding").isVisible()).toBe(true);
+    expect(await page.locator("#project-coding-folder").innerText()).toContain("Create or select a project above");
+    expect(await page.locator("#project-coding-choose").isDisabled()).toBe(true);
+    expect(await calls(page)).not.toContain("coding:state");
+    await page.close();
+  });
   it("keeps a newer workspace update when an older initial read resolves", async () => {
-    const page = await open("project", { codingStateDeferred: true });
+    const page = await openLegacyCoding({ codingStateDeferred: true });
     await page.evaluate(() => {
       window.__ixEmit("onCodingState", { folder: "/new", branch: "main", running: false });
       window.__ixResolveCoding({ folder: "/old", branch: null, running: false });
@@ -166,8 +189,8 @@ describe.skipIf(gate)("Home's Projects, as the person sets up a command (2026-11
     await expect.poll(() => page.locator("#coding-workspace-folder").innerText()).toBe("Active folder: /new");
     await page.close();
   });
-  it("shows the coding workspace separately, and keeps its controls in step with the running task", async () => {
-    const page = await open("project");
+  it("keeps the standalone legacy workspace controls in step with the running task", async () => {
+    const page = await openLegacyCoding();
     const choose = page.locator("#coding-workspace-choose");
     await expect.poll(() => choose.isEnabled()).toBe(true);
     expect(await page.locator("#coding-workspace-folder").innerText()).toBe("No coding folder selected.");
