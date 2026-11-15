@@ -34,6 +34,7 @@ function setup() {
     export: vi.fn(async (_id: string, _destination: string, current: () => boolean) => ({ ok: current(), message: "Export finished.", directory: "/native/export/result" })),
     reset: vi.fn(async () => { records = []; }),
     forgetProject: vi.fn(async (id: string) => { records = records.filter(item => item.projectId !== id); }),
+    forgetResult: vi.fn(async (id: string) => { records = records.filter(item => item.id !== id); }),
   };
   const results = vi.fn(async () => registry);
   const chooseFolder = vi.fn(async (_title: string): Promise<string | null> => source);
@@ -54,9 +55,9 @@ function setup() {
 }
 
 describe("Home's project coding IPC", () => {
-  it("registers only the six bounded metadata/review channels and prepares a folder without executing or reading source files", async () => {
+  it("registers only bounded metadata/review channels and prepares a folder without executing or reading source files", async () => {
     const f = setup();
-    expect([...f.handlers.keys()]).toEqual([IPC.projectCodingWorkspaceState, IPC.projectCodingWorkspaceChoose, IPC.projectCodingWorkspaceForget, IPC.codingResultsState, IPC.codingResultReview, IPC.codingResultExport]);
+    expect([...f.handlers.keys()]).toEqual([IPC.projectCodingWorkspaceState, IPC.projectCodingWorkspaceChoose, IPC.projectCodingWorkspaceForget, IPC.codingResultsState, IPC.codingResultReview, IPC.codingResultExport, IPC.codingResultForget]);
     const before = fs.readFileSync(path.join(f.source, "unchanged.txt"), "utf8");
     const state = await f.call<ProjectCodingWorkspaceState>(IPC.projectCodingWorkspaceState, f.first);
     expect(state).toMatchObject({ available: false, canChoose: true, folder: null });
@@ -91,6 +92,7 @@ describe("Home's project coding IPC", () => {
     expect(await f.call(IPC.codingResultsState, f.first)).toEqual([]);
     await expect(f.call(IPC.codingResultReview, f.record)).rejects.toThrow("Connect Ember");
     expect(await f.call(IPC.codingResultExport, f.record)).toMatchObject({ ok: false });
+    expect(await f.call(IPC.codingResultForget, f.record)).toMatchObject({ ok: false });
     expect(f.results).not.toHaveBeenCalled(); expect(f.chooseFolder).not.toHaveBeenCalled();
     f.allowed(true); f.owner(null);
     expect(await f.call(IPC.codingResultsState, f.first)).toEqual([]);
@@ -219,6 +221,42 @@ describe("Home's project coding IPC", () => {
     const exported = f.call<{ ok: boolean }>(IPC.codingResultExport, f.record);
     f.folders.clear(f.first); second.resolve(f.registry);
     expect((await exported).ok).toBe(false); expect(f.chooseFolder).not.toHaveBeenCalled();
+  });
+
+  it("forgets only a current host-minted result while keeping folders, live sessions and project history", async () => {
+    const f = setup(), other = { ...f.review, id: randomUUID(), projectId: f.second };
+    f.records([f.review, other]); f.live(f.first, "running");
+    f.folders.bind(f.first, projectCommandFolder(f.source, f.privateDir), f.folders.ownerCurrent(f.first));
+    const folder = f.folders.capture(f.first)!, history = structuredClone(f.state);
+    expect(await f.call(IPC.codingResultForget, randomUUID())).toMatchObject({ ok: false, message: expect.stringContaining("no longer available") });
+    expect(f.registry.forgetResult).not.toHaveBeenCalled();
+    expect(await f.call(IPC.codingResultForget, f.record)).toEqual({ ok: true, message: expect.stringContaining("Exported copies and project history are unchanged") });
+    expect(f.registry.forgetResult).toHaveBeenCalledExactlyOnceWith(f.record);
+    expect(f.state).toEqual(history); expect(folder.current()).toBe(true);
+    expect(f.registry.reset).not.toHaveBeenCalled(); expect(f.registry.forgetProject).not.toHaveBeenCalled(); expect(f.folderChanged).not.toHaveBeenCalled();
+    expect(await f.call(IPC.codingResultsState, f.second)).toEqual([other]);
+    expect(f.chooseFolder).not.toHaveBeenCalled();
+  });
+
+  it("revokes pending review and native export replies when the same result is explicitly forgotten", async () => {
+    const f = setup(), reading = deferred<CodingResultReview | null>(), picker = deferred<string | null>();
+    f.registry.review.mockReturnValueOnce(reading.promise); f.chooseFolder.mockReturnValueOnce(picker.promise);
+    const review = f.call(IPC.codingResultReview, f.record), exporting = f.call<{ ok: boolean }>(IPC.codingResultExport, f.record);
+    await vi.waitFor(() => expect(f.chooseFolder).toHaveBeenCalled());
+    expect(await f.call(IPC.codingResultForget, f.record)).toMatchObject({ ok: true });
+    reading.resolve(f.review); picker.resolve("/native/chosen");
+    await expect(review).rejects.toThrow("no longer available"); expect((await exporting).ok).toBe(false);
+    expect(f.registry.export).not.toHaveBeenCalled();
+  });
+
+  it("fences Forget across lazy account/project changes and hides private cleanup errors", async () => {
+    const f = setup(), opening = deferred<typeof f.registry>(); f.results.mockReturnValueOnce(opening.promise);
+    const forgetting = f.call<{ ok: boolean }>(IPC.codingResultForget, f.record);
+    f.folders.clear(f.first); opening.resolve(f.registry);
+    expect((await forgetting).ok).toBe(false); expect(f.registry.forgetResult).not.toHaveBeenCalled();
+    f.registry.forgetResult.mockRejectedValueOnce(new Error("secret=/private/review"));
+    const failed = await f.call<{ ok: boolean; message: string }>(IPC.codingResultForget, f.record);
+    expect(failed.ok).toBe(false); expect(failed.message).toContain("Forget everything tries again"); expect(failed.message).not.toContain("secret=");
   });
 
   it("cancels stale exports across folder replacement, lock and owner reset and hides raw backend paths", async () => {

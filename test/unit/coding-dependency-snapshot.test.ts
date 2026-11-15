@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createCodingDependencySnapshot } from "../../app/main/agent/coding-dependency-snapshot";
+import { CodingPrivacyScanner, CodingPrivacyCleanupError } from "../../app/main/agent/coding-privacy-scanner";
 
 const roots: string[] = [];
 afterEach(async () => { vi.restoreAllMocks(); for (const root of roots.splice(0)) await fs.rm(root, { recursive: true, force: true }); });
@@ -68,5 +69,15 @@ describe.skipIf(process.platform !== "linux")("read-only dependency snapshot pri
     });
     await expect(createCodingDependencySnapshot(f.input)).rejects.toThrow("changed");
     expect(reads).toEqual([4, 1]); expect(await fs.readdir(f.baseDir)).toEqual([]);
+  });
+  it("preserves an unknown privacy-worker exit even when private-copy filesystem cleanup also fails", async () => {
+    const f = await fixture(); await fs.writeFile(path.join(f.source, "ordinary.js"), "module.exports = 1;\n");
+    const close = CodingPrivacyScanner.prototype.close, remove = fs.rm;
+    vi.spyOn(CodingPrivacyScanner.prototype, "close").mockImplementation(async function (this: CodingPrivacyScanner) {
+      await close.call(this); throw new CodingPrivacyCleanupError();
+    });
+    vi.spyOn(fs, "rm").mockImplementation((target, options) => String(target).includes("ember-coding-dependencies-") ?
+      Promise.reject(new Error("Synthetic filesystem cleanup failure")) : remove(target, options));
+    await expect(createCodingDependencySnapshot(f.input)).rejects.toBeInstanceOf(CodingPrivacyCleanupError);
   });
 });

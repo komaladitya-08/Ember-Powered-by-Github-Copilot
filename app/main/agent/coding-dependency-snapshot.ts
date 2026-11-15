@@ -4,7 +4,9 @@ import { constants, type BigIntStats } from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { HOST_PLATFORM } from "../platform/os";
-import { codingWorkspaceFileProblem } from "./scoped-coding-files";
+import { setImmediate as yieldToLoop } from "node:timers/promises";
+import { codingWorkspaceFilePathProblem, codingWorkspaceFileProblemAsync } from "./scoped-coding-files";
+import { CodingPrivacyScanner, CodingPrivacyCleanupError, captureCodingPrivacyScope, assertCodingPrivacyScope, type CodingPrivacyScope } from "./coding-privacy-scanner";
 import type { CodingWorkspace } from "./coding-workspace";
 import type { CodingDependencyManifest } from "./coding-project-scope";
 
@@ -21,6 +23,12 @@ const FILE = constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK;
 const within = (file: string, root: string) => { const rel = path.relative(root, file); return rel === "" || (rel !== ".." && !rel.startsWith("../") && !path.isAbsolute(rel)); };
 const stable = (a: BigIntStats, b: BigIntStats) => a.dev === b.dev && a.ino === b.ino && a.mode === b.mode && a.nlink === b.nlink && a.size === b.size && a.mtimeNs === b.mtimeNs && a.ctimeNs === b.ctimeNs;
 const identity = (a: BigIntStats, b: BigIntStats) => a.dev === b.dev && a.ino === b.ino;
+async function closeHandles(handles: readonly Promise<unknown>[], unsafeCleanup?: CodingPrivacyCleanupError): Promise<void> {
+  const closed = await Promise.allSettled(handles);
+  if (unsafeCleanup) throw unsafeCleanup;
+  const failed = closed.find((result): result is PromiseRejectedResult => result.status === "rejected");
+  if (failed) throw failed.reason;
+}
 
 function name(bytes: Buffer): string {
   const text = bytes.toString("utf8");
@@ -47,19 +55,21 @@ async function openDirectory(value: string): Promise<fs.FileHandle> {
 
 /** Materialises only links whose final target is inside this separately granted tree, never outside it. */
 export async function createCodingDependencySnapshot(input: {
-  source: CodingWorkspace; baseDir: string; protectedPaths: readonly string[]; signal?: AbortSignal; limits?: Partial<CodingDependencyLimits>;
+  source: CodingWorkspace; baseDir: string; protectedPaths: readonly string[]; signal?: AbortSignal; limits?: Partial<CodingDependencyLimits>; privacyScope?: CodingPrivacyScope;
 }): Promise<CodingDependencySnapshot> {
   if (HOST_PLATFORM !== "linux") throw new Error("Dependency snapshots require Linux.");
+  const privacyScope = input.privacyScope ?? captureCodingPrivacyScope(), signal = input.signal;
   const sourceGrant = Object.freeze({ path: input.source.path, current: input.source.current.bind(input.source) });
-  const current = () => { try { return !input.signal?.aborted && sourceGrant.current() === true; } catch { return false; } };
-  const check = () => { if (!current()) throw new Error("The dependency grant is no longer current."); };
+  const current = () => { try { assertCodingPrivacyScope(privacyScope); return !signal?.aborted && sourceGrant.current() === true; } catch { return false; } };
+  const check = () => { assertCodingPrivacyScope(privacyScope); if (!current()) throw new Error("The dependency grant is no longer current."); };
   check();
   const limits = { ...LIMITS, ...input.limits };
   if (Object.entries(limits).some(([key, value]) => !Object.hasOwn(LIMITS, key) || !Number.isSafeInteger(value) || value < 1 || value > LIMITS[key as keyof CodingDependencyLimits])) throw new Error("Invalid dependency snapshot limits.");
   if (!input.protectedPaths.length || !path.isAbsolute(input.baseDir) || input.protectedPaths.some(value => !path.isAbsolute(value))) throw new Error("Dependency copies require absolute private and protected paths.");
   const root = await openDirectory(sourceGrant.path);
-  let directory: string | undefined;
+  let directory: string | undefined, privacy: CodingPrivacyScanner | undefined, unsafeCleanup: CodingPrivacyCleanupError | undefined;
   try {
+    privacy = new CodingPrivacyScanner({ signal, scope: privacyScope });
     check();
     const original = await root.stat({ bigint: true }), source = await fs.realpath(`/proc/self/fd/${root.fd}`), rootMount = await mount(root.fd);
     const base = await fs.realpath(input.baseDir), baseStat = await fs.stat(base, { bigint: true });
@@ -81,7 +91,7 @@ export async function createCodingDependencySnapshot(input: {
     const receipts: { path: string; kind: string; sha256?: string; executable?: boolean }[] = [], links: CodingDependencyManifest["materializedLinks"] = [];
     let entries = 0, bytes = 0, files = 0;
     const target = async (relative: string): Promise<fs.FileHandle> => {
-      if (codingWorkspaceFileProblem(relative, Buffer.alloc(0))) throw new Error("A dependency link reaches a credential-bearing path.");
+      if (codingWorkspaceFilePathProblem(relative)) throw new Error("A dependency link reaches a credential-bearing path.");
       const parts = relative.split("/"); let parent = await fs.open(`/proc/self/fd/${root.fd}/.`, DIR);
       try {
         for (const part of parts.slice(0, -1)) {
@@ -99,7 +109,7 @@ export async function createCodingDependencySnapshot(input: {
       check();
       if (++entries > limits.entries || depth > limits.depth || Buffer.byteLength(relative) > 4096) throw new Error("The dependency tree exceeds its entry or depth limit.");
       const before = await file.stat({ bigint: true }); await verify(file, before);
-      if (codingWorkspaceFileProblem(relative, Buffer.alloc(0))) throw new Error("The dependency tree contains credential-bearing paths.");
+      if (codingWorkspaceFilePathProblem(relative)) throw new Error("The dependency tree contains credential-bearing paths.");
       if (before.isDirectory()) {
         const key = `${before.dev}:${before.ino}`;
         if (ancestors.has(key)) throw new Error("The dependency tree contains a cyclic directory link.");
@@ -126,6 +136,7 @@ export async function createCodingDependencySnapshot(input: {
           }
           try { await copy(child, childPath, path.join(destination, childName), depth + 1, parents); }
           finally { await child.close(); }
+          await yieldToLoop(); check();
         }
       } else if (before.isFile()) {
         if (before.nlink !== 1n || before.size < 0n || before.size > BigInt(limits.fileBytes) || before.size > BigInt(limits.bytes - bytes)) throw new Error("The dependency tree contains a hardlinked or oversized file.");
@@ -135,9 +146,15 @@ export async function createCodingDependencySnapshot(input: {
           if (!read.bytesRead) throw new Error("A dependency file shrank while copying."); offset += read.bytesRead;
         }
         const extra = await file.read(Buffer.alloc(1), 0, 1, content.length); check();
-        if (extra.bytesRead || codingWorkspaceFileProblem(relative, content)) throw new Error("The dependency tree changed or contains secret text.");
+        if (extra.bytesRead) throw new Error("The dependency tree changed while copying.");
+        const problem = await codingWorkspaceFileProblemAsync(relative, content, privacy!, { signal, current });
+        check();
+        if (problem) throw new Error("The dependency tree contains secret text.");
+        if (!stable(before, await file.stat({ bigint: true }))) throw new Error("The dependency tree changed while copying.");
+        check();
         bytes += content.length; files++;
         await fs.writeFile(destination, content, { flag: "wx", mode: (before.mode & 0o111n) ? 0o700 : 0o600 });
+        check();
         receipts.push({ path: relative, kind: "file", sha256: createHash("sha256").update(content).digest("hex"), executable: (before.mode & 0o111n) !== 0n });
       } else throw new Error("The dependency tree contains an unsupported link target.");
       if (!stable(before, await file.stat({ bigint: true }))) throw new Error("The dependency tree changed while copying.");
@@ -150,13 +167,26 @@ export async function createCodingDependencySnapshot(input: {
     receipts.sort((a, b) => a.path.localeCompare(b.path)); links.sort((a, b) => a.path.localeCompare(b.path));
     const manifest: CodingDependencyManifest = { access: "copied-read-only", mount: "/work/node_modules", files, bytes,
       sha256: createHash("sha256").update(JSON.stringify(receipts)).digest("hex"), materializedLinks: links };
+    await privacy.close(); check();
     const result = directory, outputIdentity = await fs.lstat(result, { bigint: true }); let disposed = false;
+    check();
     return { directory: result, manifest, current, dispose: async () => {
       if (disposed) return;
       const live = await fs.lstat(result, { bigint: true });
       if (!live.isDirectory() || !identity(live, outputIdentity)) throw new Error("The private dependency copy changed before cleanup.");
       await fs.rm(result, { recursive: true, force: true }); disposed = true;
     } };
-  } catch (error) { if (directory) await fs.rm(directory, { recursive: true, force: true }); throw error; }
-  finally { await root.close(); }
+  } catch (error) {
+    if (error instanceof CodingPrivacyCleanupError) unsafeCleanup = error;
+    let privacyFailure: unknown;
+    try { await privacy?.close(); } catch (failure) { privacyFailure = failure; if (failure instanceof CodingPrivacyCleanupError) unsafeCleanup = failure; }
+    const cleaned = await Promise.allSettled([directory ? fs.rm(directory, { recursive: true, force: true }) : Promise.resolve()]);
+    if (unsafeCleanup) throw unsafeCleanup;
+    const failed = cleaned.find((result): result is PromiseRejectedResult => result.status === "rejected");
+    if (failed) throw failed.reason;
+    if (privacyFailure) throw privacyFailure; throw error;
+  }
+  finally {
+    await closeHandles([root.close()], unsafeCleanup);
+  }
 }

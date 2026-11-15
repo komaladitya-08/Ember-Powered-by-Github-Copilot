@@ -13,6 +13,7 @@ const sim = vi.hoisted(() => ({ discover: vi.fn(), create: vi.fn() }));
 vi.mock("../../app/main/agent/coding-toolchain", () => ({ discoverCodingToolchain: sim.discover }));
 vi.mock("../../app/main/agent/isolated-command-workspace", () => ({ IsolatedCommandWorkspace: { create: sim.create } }));
 import { ProjectCodingResources, type ProjectCodingResourcesOptions } from "../../app/main/agent/coding-resources";
+import { CodingPrivacyCleanupError, CodingPrivacyScanError } from "../../app/main/agent/coding-privacy-scanner";
 
 const A = "a".repeat(64), B = "b".repeat(64), P = "11111111-1111-4111-8111-111111111111", Q = "22222222-2222-4222-8222-222222222222";
 const verified = { available: true, nodePath: "/usr/bin/node", version: "v24.1.0", message: "Verified fixture tools." };
@@ -75,7 +76,7 @@ resourceIt("uses one supplied folder manager and keeps unused result access meta
   const results = await value.results();
   expect(results.state(P)).toEqual([]); expect(await results.review("unknown")).toBeNull();
   expect((await results.export("unknown", source, () => true)).ok).toBe(false);
-  await results.reset(); await results.forgetProject(P); await value.invalidate();
+  await results.reset(); await results.forgetProject(P); await results.forgetResult("unknown"); await value.invalidate();
   expect(factory).not.toHaveBeenCalled();
 });
 
@@ -171,8 +172,9 @@ resourceIt("keeps published partial results bound to the old source while Stop a
   const value = await open(); await ready(value); await bind(value);
   const task = spec(value), signal = new AbortController(), workspace = await value.createWorkspace(task, signal.signal, () => true);
   signal.abort(); await workspace.stop();
+  expect(backends[0].input.reviewCurrent?.()).toBe(true);
   const next = path.join(temp, "next-source"); await fs.mkdir(next, { mode: 0o700 }); await bind(value, P, next);
-  expect(backends[0].input.admit?.()).toBe(false);
+  expect(backends[0].input.admit?.()).toBe(false); expect(backends[0].input.reviewCurrent?.()).toBe(true);
   const output = await workspace.exportReview(value.reviewBase);
   const result = await value.publish(task, output, "stopped", { ran: 1, passed: 0, failed: 1 });
   expect(result).toMatchObject({ sourcePath: source, status: "stopped", checks: { ran: 1, passed: 0, failed: 1 } });
@@ -185,6 +187,7 @@ resourceIt("cleans a stopped old-owner output after owner ABA without publishing
   const task = spec(value), workspace = await value.createWorkspace(task, new AbortController().signal, () => true);
   const output = await workspace.exportReview(value.reviewBase);
   owner = B; await value.invalidate(); owner = A; await value.invalidate();
+  expect(backends[0].input.reviewCurrent?.()).toBe(false);
   await expect(value.publish(task, output, "stopped", { ran: 0, passed: 0, failed: 0 })).rejects.toThrow();
   expect((await value.results()).state(P)).toEqual([]); expect(await fs.readdir(value.reviewBase)).toEqual([]);
   expect(value.workspace(P)).toBeNull(); await workspace.close();
@@ -196,6 +199,7 @@ resourceIt("latches per-project result invalidation before a lazy registry exist
   const a = await value.createWorkspace(first, new AbortController().signal, () => true), b = await value.createWorkspace(second, new AbortController().signal, () => true);
   const one = await a.exportReview(value.reviewBase), two = await b.exportReview(value.reviewBase);
   const results = await value.results(); await results.forgetProject(P);
+  expect(backends[0].input.reviewCurrent?.()).toBe(false); expect(backends[1].input.reviewCurrent?.()).toBe(true);
   await expect(value.publish(first, one, "stopped", { ran: 0, passed: 0, failed: 0 })).rejects.toThrow();
   const result = await value.publish(second, two, "done", { ran: 1, passed: 1, failed: 0 });
   expect(results.state(P)).toEqual([]); expect(results.state(Q)).toEqual([result]);
@@ -212,6 +216,94 @@ resourceIt("revokes pending creation synchronously and treats its clean cancella
   expect(await creating).toBeInstanceOf(Error); await expect(invalidated).resolves.toBeUndefined();
   expect(backends[0].stop).toHaveBeenCalled(); expect(backends[0].close).toHaveBeenCalled();
   expect(value.availability().available).toBe(true); expect(value.workspace(P)).toBeNull();
+});
+
+resourceIt("retains private storage and hard-blocks an unverified privacy-thread exit during copy creation", async () => {
+  const value = await open(); await ready(value); await bind(value);
+  sim.create.mockRejectedValueOnce(new CodingPrivacyCleanupError());
+  await expect(value.createWorkspace(spec(value), new AbortController().signal, () => true)).rejects.toBeInstanceOf(CodingPrivacyCleanupError);
+  expect(value.availability().available).toBe(false);
+  const privateRoot = path.dirname(value.reviewBase);
+  await expect(value.close()).rejects.toThrow("retained");
+  expect(await fs.readdir(privateRoot)).not.toContain("cleanup-complete.json");
+});
+
+resourceIt("does not classify an ordinary completed-scan failure as uncertain thread cleanup", async () => {
+  const value = await open(); await ready(value); await bind(value);
+  sim.create.mockRejectedValueOnce(new CodingPrivacyScanError("timeout"));
+  await expect(value.createWorkspace(spec(value), new AbortController().signal, () => true)).rejects.toThrow("could not be created");
+  expect(value.availability().available).toBe(true);
+});
+
+resourceIt("binds privileged review authority to project existence independently of task Stop", async () => {
+  let exists = true;
+  const value = await open({ projectExists: id => id === P && exists }); await ready(value); await bind(value);
+  const task = spec(value), workspace = await value.createWorkspace(task, new AbortController().signal, () => true);
+  expect(backends[0].input.privacyScope).toBeDefined(); expect(backends[0].input.reviewCurrent?.()).toBe(true);
+  exists = false; expect(backends[0].input.reviewCurrent?.()).toBe(false);
+  await workspace.close();
+});
+
+resourceIt("waits for verified backend close and blocks fresh admission before global Forget succeeds", async () => {
+  const value = await open(); await ready(value); await bind(value);
+  const task = spec(value), workspace = await value.createWorkspace(task, new AbortController().signal, () => true);
+  const directory = path.join(backends[0].input.baseDir, "held-private-copy");
+  await fs.mkdir(directory, { mode: 0o700 }); await fs.writeFile(path.join(directory, "app.ts"), "retained until verified close");
+  const entered = deferred<void>(), release = deferred<void>();
+  backends[0].close.mockImplementation(async () => { entered.resolve(); await release.promise; await fs.rm(directory, { recursive: true }); });
+  let completed = false;
+  const invalidating = value.invalidate().then(() => { completed = true; });
+  await entered.promise; expect(completed).toBe(false); expect(value.availability().available).toBe(false);
+  expect(await fs.readFile(path.join(directory, "app.ts"), "utf8")).toBe("retained until verified close");
+  await bind(value); const selected = value.folders.capture(P)!;
+  const later: TaskSpec = { id: randomUUID(), goal: "new request", target: {}, codingWorkspace: { ...selected, projectId: P } };
+  await expect(value.createWorkspace(later, new AbortController().signal, () => true)).rejects.toThrow();
+  const joined = workspace.close(); expect(backends[0].close).toHaveBeenCalledTimes(1);
+  release.resolve(); await Promise.all([invalidating, joined]);
+  expect(completed).toBe(true); await expect(fs.lstat(directory)).rejects.toMatchObject({ code: "ENOENT" });
+  expect(backends[0].close).toHaveBeenCalledTimes(1); expect(value.availability().available).toBe(true);
+});
+
+resourceIt("drains a held export and removes a stopped artifact before its publisher ever resumes", async () => {
+  const value = await open(); await ready(value); await bind(value);
+  const task = spec(value), workspace = await value.createWorkspace(task, new AbortController().signal, () => true);
+  const render = backends[0].exportReview.getMockImplementation()!, entered = deferred<void>(), release = deferred<void>();
+  backends[0].exportReview.mockImplementationOnce(async base => { const output = await render(base); entered.resolve(); await release.promise; return output; });
+  const exporting = workspace.exportReview(value.reviewBase); await entered.promise;
+  let completed = false; const invalidating = value.invalidate().then(() => { completed = true; });
+  await Promise.resolve(); expect(completed).toBe(false); expect((await fs.readdir(value.reviewBase)).length).toBe(1);
+  release.resolve(); const output = await exporting; await invalidating;
+  expect(await fs.readdir(value.reviewBase)).toEqual([]);
+  await expect(value.publish(task, output, "stopped", { ran: 0, passed: 0, failed: 0 })).rejects.toThrow();
+  expect(await fs.readdir(value.reviewBase)).toEqual([]);
+});
+
+resourceIt("waits for an in-flight publication and its artifact cleanup before global Forget completes", async () => {
+  const value = await open(); await ready(value); await bind(value);
+  const task = spec(value), workspace = await value.createWorkspace(task, new AbortController().signal, () => true);
+  const output = await workspace.exportReview(value.reviewBase), entered = deferred<void>(), release = deferred<void>();
+  const original = CodingResultRegistry.prototype.put;
+  vi.spyOn(CodingResultRegistry.prototype, "put").mockImplementationOnce(async function (this: CodingResultRegistry, input) {
+    entered.resolve(); await release.promise; return original.call(this, input);
+  });
+  const publishing = value.publish(task, output, "done", { ran: 1, passed: 1, failed: 0 }).catch(error => error);
+  await entered.promise;
+  let completed = false; const invalidating = value.invalidate().then(() => { completed = true; });
+  await Promise.resolve(); expect(completed).toBe(false);
+  release.resolve(); expect(await publishing).toBeInstanceOf(Error); await invalidating;
+  expect((await value.results()).state(P)).toEqual([]); expect(await fs.readdir(value.reviewBase)).toEqual([]);
+});
+
+resourceIt("does not claim global Forget erased residue from a failed startup with no returned backend", async () => {
+  const value = await open(); await ready(value); await bind(value);
+  let leftover = "";
+  sim.create.mockImplementationOnce(async (input: IsolatedCommandWorkspaceInput) => {
+    leftover = path.join(input.baseDir, "unverified-startup-copy"); await fs.mkdir(leftover, { mode: 0o700 });
+    await fs.writeFile(path.join(leftover, "app.ts"), "keep failed startup data"); throw new Error("startup failed before ownership returned");
+  });
+  await expect(value.createWorkspace(spec(value), new AbortController().signal, () => true)).rejects.toThrow();
+  await expect(value.invalidate()).rejects.toThrow("retained"); expect(value.availability().available).toBe(false);
+  expect(await fs.readFile(path.join(leftover, "app.ts"), "utf8")).toBe("keep failed startup data");
 });
 
 resourceIt("blocks future coding and retains the private base when a known backend cannot prove shutdown", async () => {
@@ -262,6 +354,17 @@ resourceIt("keeps only a blocked cleanup receipt when failed publication output 
   await workspace.close();
 });
 
+resourceIt("removes one private result through the lazy facade without treating a stale id as uncertain cleanup", async () => {
+  const value = await open(); await ready(value); await bind(value);
+  const task = spec(value), workspace = await value.createWorkspace(task, new AbortController().signal, () => true);
+  const output = await workspace.exportReview(value.reviewBase);
+  const published = await value.publish(task, output, "done", { ran: 1, passed: 1, failed: 0 });
+  const results = await value.results(); await results.forgetResult(published.id);
+  expect(results.state(P)).toEqual([]); expect(await fs.readdir(value.reviewBase)).toEqual([]);
+  await expect(results.forgetResult(published.id)).rejects.toMatchObject({ code: "stale" });
+  expect(value.availability().available).toBe(true); await workspace.close();
+});
+
 resourceIt("shares backend close, removes only known empty directories and leaves unknown leftovers private", async () => {
   const value = await open(); await ready(value); await bind(value);
   const workspace = await value.createWorkspace(spec(value), new AbortController().signal, () => true);
@@ -286,7 +389,7 @@ it("keeps unsupported-platform folder metadata and empty result reset usable wit
   expect(value.availability().available).toBe(false); expect(value.availability().message).toContain("metadata only");
   const folder = await value.validateSource({ path: source, current: () => true });
   value.folders.bind(P, folder, value.folders.ownerCurrent(P)); expect(value.folders.state(P)).toMatchObject({ path: source, valid: true });
-  const results = await value.results(); await results.reset(); await results.forgetProject(P);
+  const results = await value.results(); await results.reset(); await results.forgetProject(P); await results.forgetResult("unknown");
   expect(results.state(P)).toEqual([]); expect(await results.review("unknown")).toBeNull();
   expect((await results.export("unknown", source, () => true)).ok).toBe(false);
   expect(sim.discover).not.toHaveBeenCalled(); expect(sim.create).not.toHaveBeenCalled();

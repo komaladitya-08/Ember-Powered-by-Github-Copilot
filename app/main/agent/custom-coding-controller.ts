@@ -9,6 +9,7 @@ import { hardenedSessionConfig, verifySessionTools } from "./session-config";
 import { emberSections } from "./persona";
 import { CodingBudget } from "./coding-budget";
 import { CodingCompletion } from "./coding-completion";
+import { CodingPrivacyCleanupError } from "./coding-privacy-scanner";
 
 export interface CodingControllerToolContext {
   signal: AbortSignal;
@@ -159,8 +160,10 @@ export class CustomCodingController {
       }, 100);
       owner.watch.unref?.();
       return owner;
-    } catch {
+    } catch (error) {
       try { await owner.close(); } catch { throw new CodingControllerCleanupError(); }
+      if (error instanceof CodingPrivacyCleanupError) throw error;
+      // eslint-disable-next-line preserve-caught-error -- Upstream initialization errors may contain credentials or private paths.
       throw new Error("The coding controller could not be initialized safely.");
     }
   }

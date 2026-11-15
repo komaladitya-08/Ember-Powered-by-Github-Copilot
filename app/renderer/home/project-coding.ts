@@ -6,7 +6,7 @@ import { ipcErrorText } from "./copy";
 export function mountProjectCoding(): void {
   const root = document.getElementById("project-coding")!;
   const legacyWorkspace = document.getElementById("coding-workspace");
-  const legacyHidden = legacyWorkspace?.hidden === true;
+  if (legacyWorkspace) legacyWorkspace.hidden = true;
   const find = <T extends HTMLElement>(id: string) => root.querySelector<T>(`#project-coding-${id}`)!;
   const folder = find<HTMLParagraphElement>("folder");
   const stateText = find<HTMLParagraphElement>("state");
@@ -34,6 +34,8 @@ export function mountProjectCoding(): void {
   let readEpoch = 0;
   let initialEpoch = 0;
   let reviewEpoch = 0;
+  let actionEpoch = 0;
+  const forgotten = new Set<string>();
   let drawn = "";
 
   const plain = (tag: string, text: string, className = "") => {
@@ -49,19 +51,18 @@ export function mountProjectCoding(): void {
     choose.disabled = pending || !workspace?.canChoose;
     forget.disabled = pending || !workspace?.folder || !workspace.canChoose;
     exportReview.disabled = pending || !opened || opened.projectId !== projectId || !ready;
-    for (const button of results.querySelectorAll<HTMLButtonElement>("button")) button.disabled = pending || !ready;
+    for (const button of results.querySelectorAll<HTMLButtonElement>("button")) button.disabled = !ready || (pending && !button.dataset.forgetResult);
   };
   const render = () => {
-    root.hidden = projectId === null;
-    if (legacyWorkspace) legacyWorkspace.hidden = legacyHidden || projectId !== null;
-    folder.textContent = workspace?.folder ? `${workspace.folder.label}: ${workspace.folder.path}${workspace.folder.valid ? "" : " (folder unavailable)"}` : "No coding folder selected for this project.";
-    stateText.textContent = !ready ? "Connect Ember to manage coding folders and review results." : workspace?.message || (workspace?.available ? "Coding work uses a private copy. Your original project stays unchanged." : "Coding work is currently unavailable. You can prepare a folder when Choose folder is available.");
+    root.hidden = false;
+    folder.textContent = !projectId ? "Create or select a project above to choose its coding folder." : workspace?.folder ? `${workspace.folder.label}: ${workspace.folder.path}${workspace.folder.valid ? "" : " (folder unavailable)"}` : "No coding folder selected for this project.";
+    stateText.textContent = !projectId ? "Each project keeps its own folder choice and coding reviews." : !ready ? "Connect Ember to manage coding folders and review results." : workspace?.message || (workspace?.available ? "Coding work uses a private copy. Your original project stays unchanged." : "Coding work is currently unavailable. You can prepare a folder when Choose folder is available.");
     const signature = JSON.stringify(summaries);
     if (signature !== drawn) {
       drawn = signature;
       const focused = results.contains(document.activeElement) && document.activeElement instanceof HTMLElement ? document.activeElement.dataset.resultControl : undefined;
       results.replaceChildren();
-      if (!summaries.length) results.append(plain("li", "No coding results for this project yet.", "hint"));
+      if (!summaries.length) results.append(plain("li", projectId ? "No coding results for this project yet." : "Select a project to see its coding results.", "hint"));
       for (const result of summaries) {
         const item = document.createElement("li");
         item.append(plain("h4", result.title), plain("p", `${STATUS_WORDS[result.status]} · ${counts(result)}${result.patchComplete ? "" : " · Patch has limitations"}`, "hint"));
@@ -72,7 +73,13 @@ export function mountProjectCoding(): void {
         button.setAttribute("aria-label", `Review result: ${result.title}`);
         button.dataset.resultControl = result.id;
         button.addEventListener("click", () => { if (!button.disabled) void openResult(result.id); });
-        item.append(button); results.append(item);
+        const discard = document.createElement("button");
+        discard.type = "button"; discard.className = "btn quiet small"; discard.textContent = "Forget result";
+        discard.setAttribute("aria-label", `Forget private result: ${result.title}`);
+        discard.dataset.resultControl = `forget:${result.id}`; discard.dataset.forgetResult = result.id;
+        discard.addEventListener("click", () => { if (!discard.disabled) void forgetResult(result.id); });
+        const actions = document.createElement("div"); actions.className = "agent-actions"; actions.append(button, discard);
+        item.append(actions); results.append(item);
       }
       if (focused) [...results.querySelectorAll<HTMLButtonElement>("[data-result-control]")].find(button => button.dataset.resultControl === focused)?.focus({ preventScroll: true });
     }
@@ -84,37 +91,40 @@ export function mountProjectCoding(): void {
     const replies = await Promise.allSettled([window.ember.projectCodingWorkspaceState(id), window.ember.codingResultsState(id)]);
     if (!current(owner, id) || ticket !== readEpoch) return;
     if (replies[0].status === "fulfilled" && replies[0].value.projectId === id) workspace = replies[0].value;
-    if (replies[1].status === "fulfilled") summaries = replies[1].value.filter(result => result.projectId === id);
+    if (replies[1].status === "fulfilled") {
+      summaries = replies[1].value.filter(result => result.projectId === id && !forgotten.has(result.id));
+      if (opened && !summaries.some(result => result.id === opened!.id)) clearReview();
+    }
     if (replies.some(reply => reply.status === "rejected")) status.textContent = "Couldn't refresh coding work. Reopen Projects to try again.";
     render();
   };
   const selectProject = (id: string | null) => {
     if (projectId === id) return;
-    generation++; readEpoch++; initialEpoch++;
+    generation++; readEpoch++; initialEpoch++; actionEpoch++; forgotten.clear();
     projectId = id; workspace = null; summaries = []; pending = false; drawn = "";
     status.textContent = ""; clearReview(); render();
     void load();
   };
-  const folderAction = async (action: "choose" | "forget") => {
+  const folderAction = async (kind: "choose" | "forget") => {
     if (!projectId || pending) return;
-    const id = projectId, owner = generation;
-    status.textContent = action === "choose" ? "Choose a coding folder in the folder picker." : "Forgetting this project's folder choice…";
+    const id = projectId, owner = generation, action = ++actionEpoch;
+    status.textContent = kind === "choose" ? "Choose a coding folder in the folder picker." : "Forgetting this project's folder choice…";
     readEpoch++; pending = true; render();
     try {
-      const next = action === "choose" ? await window.ember.projectCodingWorkspaceChoose(id) : await window.ember.projectCodingWorkspaceForget(id);
-      if (!current(owner, id) || next.projectId !== id) return;
+      const next = kind === "choose" ? await window.ember.projectCodingWorkspaceChoose(id) : await window.ember.projectCodingWorkspaceForget(id);
+      if (!current(owner, id) || action !== actionEpoch || next.projectId !== id) return;
       workspace = next; status.textContent = next.message;
-    } catch (error) { if (current(owner, id)) status.textContent = ipcErrorText(error); }
-    finally { if (current(owner, id)) { pending = false; render(); } }
+    } catch (error) { if (current(owner, id) && action === actionEpoch) status.textContent = ipcErrorText(error); }
+    finally { if (current(owner, id) && action === actionEpoch) { pending = false; render(); } }
   };
   const openResult = async (id: string) => {
     if (!projectId || pending || !ready) return;
-    const project = projectId, owner = generation, focused = document.activeElement, ticket = ++reviewEpoch;
+    const project = projectId, owner = generation, focused = document.activeElement, ticket = ++reviewEpoch, action = ++actionEpoch;
     status.textContent = "Loading this coding review…";
     readEpoch++; pending = true; render();
     try {
       const result = await window.ember.codingResultReview(id);
-      if (!current(owner, project) || ticket !== reviewEpoch || result.projectId !== project || result.id !== id) return;
+      if (!current(owner, project) || action !== actionEpoch || ticket !== reviewEpoch || forgotten.has(id) || result.projectId !== project || result.id !== id) return;
       opened = result;
       reviewTitle.textContent = result.title;
       reviewSummary.textContent = `${STATUS_WORDS[result.status]} · ${counts(result)}`;
@@ -138,8 +148,22 @@ export function mountProjectCoding(): void {
       review.hidden = false;
       status.textContent = "Review ready. Export it to keep a copy.";
       if (document.activeElement === focused && results.contains(focused)) reviewTitle.focus({ preventScroll: true });
-    } catch (error) { if (current(owner, project)) status.textContent = ipcErrorText(error); }
-    finally { if (current(owner, project)) { pending = false; render(); } }
+    } catch (error) { if (current(owner, project) && action === actionEpoch) status.textContent = ipcErrorText(error); }
+    finally { if (current(owner, project) && action === actionEpoch) { pending = false; render(); } }
+  };
+  const forgetResult = async (id: string) => {
+    if (!projectId || !ready || forgotten.has(id) || !summaries.some(result => result.id === id)) return;
+    const project = projectId, owner = generation, action = ++actionEpoch;
+    const focused = document.activeElement instanceof HTMLElement && document.activeElement.dataset.forgetResult === id;
+    readEpoch++; forgotten.add(id); summaries = summaries.filter(result => result.id !== id);
+    if (opened?.id === id) clearReview();
+    pending = true; status.textContent = "Forgetting this private coding review…"; render();
+    if (focused) (results.querySelector<HTMLButtonElement>("[data-forget-result]") ?? root.querySelector<HTMLElement>("h3"))?.focus({ preventScroll: true });
+    try {
+      const reply = await window.ember.codingResultForget(id);
+      if (current(owner, project) && action === actionEpoch) status.textContent = reply.message;
+    } catch (error) { if (current(owner, project) && action === actionEpoch) status.textContent = ipcErrorText(error); }
+    finally { if (current(owner, project) && action === actionEpoch) { pending = false; render(); void load(); } }
   };
   choose.addEventListener("click", () => { if (!choose.disabled) void folderAction("choose"); });
   forget.addEventListener("click", () => { if (!forget.disabled) void folderAction("forget"); });
@@ -149,24 +173,24 @@ export function mountProjectCoding(): void {
   });
   exportReview.addEventListener("click", () => {
     if (!opened || !projectId || exportReview.disabled) return;
-    const id = opened.id, project = projectId, owner = generation;
+    const id = opened.id, project = projectId, owner = generation, action = ++actionEpoch;
     status.textContent = "Choose a folder for the exported review.";
     pending = true; render();
     void window.ember.codingResultExport(id).then(reply => {
-      if (current(owner, project)) status.textContent = reply.message;
-    }).catch(error => { if (current(owner, project)) status.textContent = ipcErrorText(error); }).finally(() => {
-      if (current(owner, project)) { pending = false; render(); }
+      if (current(owner, project) && action === actionEpoch && !forgotten.has(id)) status.textContent = reply.message;
+    }).catch(error => { if (current(owner, project) && action === actionEpoch) status.textContent = ipcErrorText(error); }).finally(() => {
+      if (current(owner, project) && action === actionEpoch) { pending = false; render(); }
     });
   });
   window.addEventListener("ember-project-changed", event => {
     const detail = (event as CustomEvent<{ projectId?: unknown }>).detail;
     if (detail && (detail.projectId === null || typeof detail.projectId === "string")) { initialEpoch++; selectProject(detail.projectId); }
   });
-  window.ember.onConversationForgotten(() => { initialEpoch++; generation++; readEpoch++; projectId = null; workspace = null; summaries = []; pending = false; drawn = ""; status.textContent = ""; clearReview(); render(); });
+  window.ember.onConversationForgotten(() => { initialEpoch++; generation++; readEpoch++; actionEpoch++; forgotten.clear(); projectId = null; workspace = null; summaries = []; pending = false; drawn = ""; status.textContent = ""; clearReview(); render(); });
   let statusEpoch = 0;
   const agentState = (phase: string | undefined) => {
     const nextReady = phase === "ready";
-    if (ready !== nextReady) { generation++; readEpoch++; pending = false; clearReview(); workspace = null; summaries = []; }
+    if (ready !== nextReady) { generation++; readEpoch++; actionEpoch++; forgotten.clear(); pending = false; clearReview(); workspace = null; summaries = []; }
     ready = nextReady; render(); void load();
   };
   window.ember.onAgentStatus(next => { statusEpoch++; agentState(next.phase); });

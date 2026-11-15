@@ -31,7 +31,7 @@ import { CodingWorker } from "./coding-worker";
 import { ScopedCodingWorker, type ScopedCodingChecks } from "./scoped-coding-worker";
 import type { CodingCommandWorkspace, CodingWorkspaceReview, CodingPlatformAdapter } from "./coding-platform";
 import type { CodingResultSummary } from "../../shared/project-coding";
-import { CodingRetirement } from "./coding-retirement";
+import { CodingRetirement, type CodingCleanupReceipt } from "./coding-retirement";
 import { MixedHandoffs } from "./mixed-handoff";
 import os from "node:os";
 import type { Confirmer } from "./confirm";
@@ -1071,6 +1071,18 @@ export class AgentHost {
       scope?.revoke(); scope?.worker?.invalidate(); this.tasks?.cancel(id);
     }
   }
+
+  /** Start account-wide Stop synchronously, then retain only its trusted-session disposal witnesses. */
+  codingCleanupReceipt(): CodingCleanupReceipt {
+    const retirement = this.codingRetirement;
+    retirement.retire();
+    let stopped = true;
+    try { this.codingWorkspaceChanged(); } catch { stopped = false; }
+    return retirement.cleanupReceipt(stopped);
+  }
+
+  /** Account-wide erasure also waits for the trusted sessions, not just their isolated command copies. */
+  awaitCodingCleanup(): Promise<void> { return this.codingCleanupReceipt().wait(); }
 
   private retireStaleCoding(): void {
     for (const intake of this.codingIntakes()) if (!intake.current()) intake.revoke();

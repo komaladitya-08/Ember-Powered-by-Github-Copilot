@@ -16,6 +16,18 @@ check runs again before each command and before exporting its proposed result, s
 known credential file in the copy and have another command encode it. This detection is best effort, using the shared
 scoped-file credential policy; binary content and arbitrary encodings are not a complete secret detector.
 
+Complete UTF-8 privacy checks run in a fixed, trusted worker thread using the existing `memoryRefusal` rules over
+the entire accepted file, without chunk gaps or truncation. Project text is data, never worker code, a path, an
+import or a process argument. The bounded worker queue, cancellation and checks after each awaited result let Stop
+remain responsive while a complete 4 MiB source or 8 MiB dependency file is checked. This thread is a computation
+boundary, not an OS sandbox. Ordinary task scans close on Stop; an inert partial export uses a separate short lifetime.
+Global Forget retires the captured privacy generation so an old workspace cannot reopen a fresh export scanner.
+The independent owner/project review capability also fences per-project Forget without stopping other projects.
+An unverified worker exit blocks later work and prevents a fully-closed cleanup receipt.
+Forget everything also waits for the captured trusted coding controller's disposal, including its private SDK session.
+The existing five-second retirement timeout reports failure; a later retry retains only disposal witnesses for an old connection.
+Terminal workspace close drops its owned baseline and cached review references after in-flight work settles; this does not erase other retained copies.
+
 Each `run(command, cwd, onOutput, signal)` uses a new Bubblewrap user/PID/mount/network namespace with only the private
 project copy and a copied minimal toolchain. The virtual root is `/work`. The namespace receives fixed non-secret
 environment values, a private `/proc` and an ephemeral `/tmp`. It has no network or broad host filesystem mounts.

@@ -7,7 +7,7 @@ import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import { chromium, type Browser, type Page } from "playwright-core";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { AdminPolicySchema, auditRetentionDays, commandMode, heldUntilRestart, homeAdmin, managedKeys } from "../../app/main/admin";
 import { DEFAULT_SETTINGS } from "../../app/main/settings";
 import { approvalsState, type ApprovalsSetting } from "../../app/main/policy/autonomy";
@@ -30,6 +30,7 @@ declare global {
       limits: number[];
       /** With `provider` seeded: main's provider-state reads, each waiting until the test answers it. */
       providerReads: ((state: unknown) => void)[];
+      checks: NonNullable<Seed["checks"]>;
     };
   }
 }
@@ -60,6 +61,7 @@ beforeAll(async () => {
   port = (server.address() as { port: number }).port;
 });
 afterAll(async () => { if (gate) return; await browser.close(); server.close(); });
+afterEach(async () => { if (!gate) await Promise.all(browser.contexts().map(context => context.close())); });
 
 /** Home after first run, on `pane`. */
 async function open(pane: string, seed: Seed = {}): Promise<Page & { errors: string[] }> {
@@ -81,6 +83,7 @@ async function open(pane: string, seed: Seed = {}): Promise<Page & { errors: str
       reads: 0,
       limits: [] as number[],
       providerReads: [] as ((state: unknown) => void)[],
+      checks,
     };
     // Main's provider bridge, as in Electron: each state read answers when the test says (home-mic-recipient's pattern).
     if (provider) (window as unknown as { emberProvider: unknown }).emberProvider = { state: () => new Promise(resolve => { h.providerReads.push(resolve); }), onChanged: () => () => undefined };
@@ -89,10 +92,11 @@ async function open(pane: string, seed: Seed = {}): Promise<Page & { errors: str
       if (name === "list") return () => new Promise(resolve => setTimeout(() => resolve([{ id: "local", kind: "local", label: "This computer", state: "ready" }]), targets));
       return () => new Promise(() => undefined);
     } });
-    const status = () => ({ appVersion: "0.1.1", settings, environment: { checks, versions: { node: "24", electron: "44", chrome: "152" } }, logFile: "/test/ember.log", settingsNotice: null, admin, ...(platform ? { platform } : {}), ...(approvals ? { approvals } : {}) });
+    const status = () => ({ appVersion: "0.1.1", settings, environment: { checks: h.checks, versions: { node: "24", electron: "44", chrome: "152" } }, logFile: "/test/ember.log", settingsNotice: null, admin, ...(platform ? { platform } : {}), ...(approvals ? { approvals } : {}) });
     window.ember = new Proxy({}, { get: (_t, name: string) => {
       if (name.startsWith("on")) return (fn: (v: unknown) => void) => { (subs[name] ??= []).push(fn); return () => undefined; };
       if (name === "getStatus") return async () => status();
+      if (name === "recheckSetup") return async () => status().environment;
       if (name === "updates" && updates) return async () => updates;
       if (name === "updateSettings") return async (patch: Record<string, unknown>) => { h.calls.push(`save:${JSON.stringify(patch)}`); return {}; };
       // Main's answer to a choice of mode: recorded and in force, as it says with the state.
@@ -497,6 +501,28 @@ describe.skipIf(gate)("Home's What Ember did, as the person looks back (2026-11-
     await page.waitForTimeout(200);
     expect(await page.evaluate(() => document.getElementById("jump")!.scrollLeft)).toBe(0);
     await page.evaluate(() => { localStorage.removeItem("ember.home.pane"); });
+    expect(page.errors).toEqual([]);
+    await page.close();
+  });
+
+  it("keeps the open Setup link whole when its badge grows after the narrow row was positioned", async () => {
+    const page = await open("checks", { viewport: { width: 500, height: 800 },
+      checks: [{ id: "atspi", status: "fail", label: "Accessibility", detail: "Ember can't read apps.", fix: "Turn on assistive technologies." }] });
+    await page.evaluate(() => document.fonts.ready);
+    const current = () => page.evaluate(() => {
+      const row = document.getElementById("jump")!.getBoundingClientRect();
+      const link = document.querySelector("#jump a[aria-current]")!.getBoundingClientRect();
+      return Math.max(0, Math.round(row.left - link.left)) + Math.max(0, Math.round(link.right - row.right));
+    });
+    await expect.poll(current).toBe(0);
+    expect(await page.locator("#jump .jump-badge [aria-hidden]").innerText()).toBe("1");
+    const rowSize = await page.locator("#jump").evaluate(el => ({ width: el.clientWidth, height: el.clientHeight }));
+    await page.evaluate(() => { window.__pane.checks = Array.from({ length: 100 }, (_, i) => ({ id: `check-${i}`, status: "fail", label: `Check ${i}`, detail: "Needs attention." })); });
+    await page.locator("#checks-again").click();
+    await expect.poll(() => page.locator("#jump .jump-badge [aria-hidden]").innerText()).toBe("100");
+    // Only a link grew: the existing observer of the row itself receives no size change.
+    expect(await page.locator("#jump").evaluate(el => ({ width: el.clientWidth, height: el.clientHeight }))).toEqual(rowSize);
+    await expect.poll(current).toBe(0);
     expect(page.errors).toEqual([]);
     await page.close();
   });

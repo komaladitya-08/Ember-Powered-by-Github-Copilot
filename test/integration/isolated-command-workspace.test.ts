@@ -48,6 +48,10 @@ it.skipIf(process.platform !== "linux" || process.arch !== "x64")("runs useful c
     expect(exported.cleanup).toBe("complete");
     expect(exported.review.proposed.find(e => e.path === "project.txt")).toMatchObject({ base64: Buffer.from("proposed").toString("base64") });
     expect(fs.readFileSync(path.join(exported.directory, "review.json"), "utf8")).not.toContain("HOST_ENV_CANARY");
+    await workspace.close();
+    await expect(workspace.exportReview(f.exports)).rejects.toThrow("closing or already exporting");
+    expect(exported.review.proposed.find(e => e.path === "project.txt")).toMatchObject({ base64: Buffer.from("proposed").toString("base64") });
+    expect(fs.readFileSync(path.join(exported.directory, "review.json"), "utf8")).toContain("project.txt");
   } finally { await workspace.close(); if (previous === undefined) delete process.env.EMBER_COMMAND_CANARY; else process.env.EMBER_COMMAND_CANARY = previous; }
 }, 30_000);
 

@@ -10,6 +10,7 @@ import { IsolatedCodingCommandRunner } from "./isolated-coding-command-runner";
 import type { PrivateControllerRuntimeInput } from "./private-controller-runtime";
 import type { TaskSpec, WorkerResult } from "./worker";
 import { handoffContext } from "./handoff-context";
+import { CodingPrivacyCleanupError } from "./coding-privacy-scanner";
 
 export interface ScopedCodingChecks { ran: number; passed: number; failed: number }
 export interface ScopedCodingWorkerOptions {
@@ -166,7 +167,7 @@ export class ScopedCodingWorker {
       result = await this.controller.run(this.spec.goal + handoffContext(this.spec.handoffSummary), this.lifetime.signal);
     } catch (error) {
       pipelineFailed = true;
-      if (error instanceof CodingControllerCleanupError) this.cleanupFailed = true;
+      if (error instanceof CodingControllerCleanupError || error instanceof CodingPrivacyCleanupError) this.cleanupFailed = true;
       if (this.invalid) result = { success: false, stopped: true, summary: "The coding context changed, so I stopped this task." };
       else if (signal.aborted || (this.lifetime.signal.aborted && !this.commandFailed)) result = { success: false, stopped: true, summary: "Stopped." };
       else if (this.commandFailed) result = { success: false, summary: "A command was refused, stopped or could not be fully observed. The coding task stopped." };
@@ -186,7 +187,7 @@ export class ScopedCodingWorker {
           const changed = this.invalid || signal.aborted || this.commandStopped || (this.lifetime.signal.aborted && !this.commandFailed);
           await this.o.publish(output, changed ? "stopped" : result.success && !pipelineFailed && !this.commandFailed ? "done" : "failed", checks);
           published = true;
-        } catch { pipelineFailed = true; }
+        } catch (error) { if (error instanceof CodingPrivacyCleanupError) this.cleanupFailed = true; pipelineFailed = true; }
       }
       try { await this.workspace?.close(); } catch { this.cleanupFailed = true; }
       if (!this.current() && !this.lifetime.signal.aborted) this.invalidate();

@@ -153,6 +153,7 @@ export const IPC = {
   codingResultsState: "coding:results-state",
   codingResultReview: "coding:result-review",
   codingResultExport: "coding:result-export",
+  codingResultForget: "coding:result-forget",
   /** Long-term memory (docs/MEMORY.md): what Ember remembers, and forgetting one fact or all of it. */
   memoryList: "memory:list",
   memoryChanged: "memory:changed",
@@ -494,6 +495,7 @@ export interface EmberHomeApi {
   codingResultsState(projectId: string): Promise<import("./project-coding").CodingResultSummary[]>;
   codingResultReview(id: string): Promise<import("./project-coding").CodingResultReview>;
   codingResultExport(id: string): Promise<{ ok: boolean; message: string }>;
+  codingResultForget(id: string): Promise<{ ok: boolean; message: string }>;
   projectPick(): Promise<ProjectSelection>;
   projectRemove(name: string): Promise<ProjectSelection>;
   projectExport(kind: "answer" | "diff"): Promise<{ message: string }>;

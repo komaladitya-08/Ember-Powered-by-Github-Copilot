@@ -46,7 +46,6 @@ import { targetsFoldRest } from "./computers-copy";
 import { ACTIVITY_EARLIER, ACTIVITY_LINES, activityLines, activityNote, activityProblemText, grantRemovedText, neverLookRemovedText, withEarlier } from "./copy";
 import { ACTIVITY_ENTRIES, ACTIVITY_MAX_ENTRIES } from "../../shared/ipc";
 import { mountProject } from "./project";
-import { mountCodingWorkspace } from "./coding-workspace";
 import { mountProjectSessions } from "./project-sessions";
 import { mountProjectCoding } from "./project-coding";
 import { homeConnectionView, ownProviderOffer, taskModelChoices } from "./first-run-copy";
@@ -908,7 +907,6 @@ function renderTaskReasoning(): void {
 }
 
 const projectReady = mountProject();
-mountCodingWorkspace();
 mountProjectSessions();
 mountProjectCoding();
 function renderAgent(a: AgentStatus | null): void {
@@ -2515,7 +2513,9 @@ const linksMoved = new MutationObserver(changes => {
   if (changes.some(c => c.attributeName === "hidden")) showCurrentLink();
 });
 for (const a of jumpLinks) linksMoved.observe(a, { attributes: true, attributeFilter: ["hidden", "class"] });
-new ResizeObserver(() => { placeHighlight(false); showCurrentLink(); }).observe($("jump"));
+// Badge text and a font arriving can widen links without resizing the row itself (home-c7-1).
+const jumpSizes = new ResizeObserver(() => { placeHighlight(false); showCurrentLink(); });
+for (const el of [$("jump"), ...jumpLinks]) jumpSizes.observe(el, { box: "border-box" });
 
 // ───── Search settings: at the top of the sidebar, it narrows the panes to those that hold the words typed, and
 // Enter goes to the first setting found (System Settings' search, HIG/search-fields) ─────
@@ -2826,7 +2826,7 @@ function renderVoice(v: VoiceStatus): void {
   // Teaching Ember a voice: its prompts are what screen readers hear; the voice line only when it changes.
   const said = renderMatch();
   if (said) voiceLive(said);
-  if (said || v.state === "active") clearTimeout(voiceLineSoon);
+  if (said || v.state === "active" || !$("consent-error").hidden) clearTimeout(voiceLineSoon);
   else if (v.state !== "downloading" && text !== voiceLine) { clearTimeout(voiceLineSoon); voiceLineSoon = setTimeout(() => voiceLive(text), VOICE_LINE_SETTLE_MS); }
   // Emptied, unsaid, while a window is open: browse mode read "Listening for “Ember”" there beside "Hearing you…"
   // (voice-listening-v4-2). An emptied status line says nothing.
@@ -2956,7 +2956,11 @@ $("wake").addEventListener("change", e => {
  */
 let consentRun = 0;
 let consentSaving = false;
-const consentError = (text: string) => { $("consent-error").textContent = text; $("consent-error").hidden = !text; if (text) voiceLive(text); };
+const consentError = (text: string) => {
+  $("consent-error").textContent = text; $("consent-error").hidden = !text;
+  // An older status must not replace the save failure after its one-second announcement settles.
+  if (text) { clearTimeout(voiceLineSoon); voiceLive(text); }
+};
 const consentClosed = () => { consentRun++; consentSaving = false; consentError(""); $("consent-yes").removeAttribute("aria-busy"); };
 $("consent-yes").addEventListener("click", () => {
   if ($("consent-yes").getAttribute("aria-disabled") === "true" || consentSaving || !agreeArmed("consent-yes")) return;

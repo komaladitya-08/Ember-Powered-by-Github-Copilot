@@ -328,7 +328,7 @@
       <div class="group" id="project-sessions" aria-labelledby="project-sessions-title">
         <h3 class="sub" id="project-sessions-title">Projects &amp; sessions</h3>
         <p class="hint" id="project-sessions-hint">Give a project a goal, then ask Ember to plan and delegate work. Follow each session's progress and outcome here. Independent tasks can run together; ordered steps wait for each session to finish safely.</p>
-        <p class="hint">Desktop sessions can work in your apps. Coding sessions are currently unavailable.</p>
+        <p class="hint">Desktop sessions can work in your apps. Choose a project's coding folder below to check coding support on this computer.</p>
         <details class="disclose" id="project-sessions-retention"><summary>What is saved?</summary><p class="hint">Projects, ordered goals and session outcomes stay only until Ember quits or you sign out, unless you choose Save projects. That keeps an encrypted checkpoint on this computer until you choose Forget saved projects. Save again to keep later progress. Opening it restores records without resuming work; review unfinished goals to prepare a new request.</p></details>
         <form id="project-sessions-create">
           <label for="project-sessions-name">New project name</label>
@@ -364,10 +364,11 @@
         <div id="project-sessions-plans" aria-label="Ordered desktop plans" hidden></div>
         <ol id="project-sessions-list" aria-label="Delegated sessions"></ol>
       </div>
-      <div class="group" id="project-coding" aria-labelledby="project-coding-title" hidden>
-        <h3 class="sub" id="project-coding-title">Coding folder &amp; results</h3>
+      <div class="group" id="project-coding" aria-labelledby="project-coding-title">
+        <h3 class="sub" id="project-coding-title" tabindex="-1">Coding folder &amp; results</h3>
         <p class="hint">Choose a folder for the active project. Each coding session starts from this folder in an independent private copy; your original files stay unchanged. File contents and command output may be sent to your connected model when you send a coding request. Commands follow your approval settings.</p>
         <p class="hint">Folder choices and results last for this run and model connection. Export a review to keep a result. Exports include all captured project files, including unchanged files, and stay in your chosen folder until you remove them. Reviewing or exporting never runs a task or changes the original project.</p>
+        <p class="hint">Forget result removes its private review from Ember. Exported copies and project or session history stay.</p>
         <p id="project-coding-folder">No coding folder selected for this project.</p>
         <div class="agent-actions">
           <button id="project-coding-choose" type="button" class="btn quiet" aria-describedby="project-coding-folder project-coding-state" disabled>Choose folder…</button>
@@ -390,7 +391,7 @@
           </div>
         </section>
       </div>
-      <div class="group" id="coding-workspace" aria-labelledby="coding-workspace-title">
+      <div class="group" id="coding-workspace" aria-labelledby="coding-workspace-title" hidden>
         <h3 class="sub" id="coding-workspace-title">Coding workspace</h3>
         <p class="hint" id="coding-workspace-hint">Choose a folder for coding requests. Copilot can read and change files and run commands using its tools. The connected model may receive files and command output, including sensitive content. Commands may access other folders and the network. Ember follows your approval settings and shows its work in Task activity.</p>
         <p id="coding-workspace-folder">Checking the active folder…</p>

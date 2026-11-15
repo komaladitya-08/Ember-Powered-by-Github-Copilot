@@ -53,7 +53,7 @@ interface Artifact {
 }
 interface QuarantinedDirectory { directory: string; parent: string; name: string; parentStat: BigIntStats; mount: string; stat: BigIntStats | null }
 interface RecordEntry { owner: string; epoch: number; projectRevision: number; source: string; sourceStat: BigIntStats | null; sourceMount: string | null; summary: CodingResultSummary; review: CodingResultReview; artifact: Artifact }
-interface Context { owner: string; projectId: string; epoch: number; projectRevision: number; current: () => boolean }
+interface Context { owner: string; projectId: string; epoch: number; projectRevision: number; current: () => boolean; record?: { id: string; entry: RecordEntry } }
 const hash = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 const identity = (a: BigIntStats, b: BigIntStats) => a.dev === b.dev && a.ino === b.ino;
 const stable = (a: BigIntStats, b: BigIntStats) => identity(a, b) && a.mode === b.mode && a.size === b.size && a.nlink === b.nlink && a.mtimeNs === b.mtimeNs && a.ctimeNs === b.ctimeNs;
@@ -186,7 +186,8 @@ export class CodingResultRegistry {
     try {
       return !this.#closed && this.#syncOwner() === context.owner && this.#epoch === context.epoch &&
         this.#exists(context.projectId) && (this.#projectRevisions.get(context.projectId) ?? 0) === context.projectRevision &&
-        context.current() === true && this.#readOwner() === context.owner && this.#epoch === context.epoch;
+        context.current() === true && this.#readOwner() === context.owner && this.#epoch === context.epoch &&
+        (!context.record || this.#records.get(context.record.id) === context.record.entry);
     }
     catch { return false; }
   }
@@ -309,12 +310,17 @@ export class CodingResultRegistry {
     const owner = this.#syncOwner(), record = this.#records.get(id);
     if (!record || !owner || record.owner !== owner || record.epoch !== this.#epoch || !this.#exists(record.summary.projectId)) return null;
     return { record, context: { owner, projectId: record.summary.projectId, epoch: this.#epoch,
-      projectRevision: record.projectRevision, current: () => true } };
+      projectRevision: record.projectRevision, current: () => true, record: { id, entry: record } } };
   }
   review(id: string): Promise<CodingResultReview | null> {
     const found = this.#record(id); if (!found) return Promise.resolve(null);
     return this.#queue(async () => {
-      try { this.#assert(found.context); await this.#capture(found.record.artifact.directory, () => this.#assert(found.context), found.record.artifact); return structuredClone(found.record.review); }
+      try {
+        this.#assert(found.context);
+        await this.#capture(found.record.artifact.directory, () => this.#assert(found.context), found.record.artifact);
+        this.#assert(found.context);
+        return structuredClone(found.record.review);
+      }
       catch { return null; }
     });
   }
@@ -454,6 +460,14 @@ export class CodingResultRegistry {
   forgetProject(projectId: string): Promise<void> {
     if (!plain(projectId, 200)) return Promise.reject(new CodingResultRegistryError("invalid"));
     this.#retireProject(projectId);
+    return this.#queue(() => this.#cleanup());
+  }
+  /** Explicit Home action: revoke this minted result immediately, without stopping work or retiring its project. */
+  forgetResult(id: string): Promise<void> {
+    const found = this.#record(id);
+    if (!found || !this.#valid(found.context)) return Promise.reject(new CodingResultRegistryError("stale"));
+    this.#records.delete(id);
+    // Retry every unretained artifact, preserving failed receipts and completed user exports as reset does.
     return this.#queue(() => this.#cleanup());
   }
   async #removeQuarantine(directory: QuarantinedDirectory): Promise<void> {
