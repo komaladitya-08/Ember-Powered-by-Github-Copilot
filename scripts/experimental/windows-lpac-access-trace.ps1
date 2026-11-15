@@ -71,9 +71,16 @@ try {
     $toolVerified = $true
 
     $phase = 'fixture-launch'
+    # Windows can expose more than one application match for an extensionless command. Never coerce a collection
+    # of Source paths to one space-joined executable name; select the first explicit executable chosen by PATH.
+    $nodeCandidates = @(Get-Command node.exe -CommandType Application -All)
+    if ($nodeCandidates.Count -lt 1 -or $nodeCandidates.Count -gt 20) { throw 'A bounded host Node executable could not be selected.' }
+    $nodeProgram = [string]$nodeCandidates[0].Source
+    if ([IO.Path]::GetFileName($nodeProgram) -ne 'node.exe') { throw 'The selected host runtime is not Node.' }
+    Write-Output ([ordered]@{ hostNodeCandidates = $nodeCandidates.Count; hostNode = Safe-Path $nodeProgram } | ConvertTo-Json -Compress)
     $earlierHandshake = [Environment]::GetEnvironmentVariable('EMBER_LPAC_TRACE_HANDSHAKE', 'Process')
     [Environment]::SetEnvironmentVariable('EMBER_LPAC_TRACE_HANDSHAKE', $traceRoot, 'Process')
-    try { $testProcess = Start-Logged (Get-Command node -CommandType Application).Source @('scripts/run-integration.mjs', 'test/integration/experimental-windows-lpac-native.test.ts') 'fixture' $env:GITHUB_WORKSPACE }
+    try { $testProcess = Start-Logged $nodeProgram @('scripts/run-integration.mjs', 'test/integration/experimental-windows-lpac-native.test.ts') 'fixture' $env:GITHUB_WORKSPACE }
     finally { [Environment]::SetEnvironmentVariable('EMBER_LPAC_TRACE_HANDSHAKE', $earlierHandshake, 'Process') }
     $phase = 'fixture-handshake'
     $metadataFile = [IO.Path]::Combine($traceRoot, 'fixture.json')
