@@ -6,6 +6,7 @@
     "fixture": "bench"
   },
   "user": {
+    "mode": "asking",
     "answer": "deny"
   },
   "script": [

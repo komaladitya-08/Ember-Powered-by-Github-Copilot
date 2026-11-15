@@ -1,0 +1,40 @@
+/* The Secure Form (the vault): a small opaque window with one form, sized to its kind. The words and boxes scroll when
+   they don't fit; what went wrong, the keyboard's line and the buttons stay at the bottom. */
+html, body, main { margin: 0; height: 100%; }
+main { display: flex; flex-direction: column; }
+body { background: var(--surface-0); font: var(--type-body); letter-spacing: -0.006em; color: var(--label); overflow: hidden; }
+[hidden] { display: none !important; }
+.card { box-sizing: border-box; flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 10px; padding: 16px; margin: 0; }
+.card > * { min-width: 0; }
+.words { flex: 1; min-height: 0; overflow-y: auto; display: grid; align-content: start; gap: 8px; margin: -4px; padding: 4px; }
+/* The title takes focus only so a screen reader starts at the form's words when nothing can be typed: no ring. */
+.title { margin: 0; font: var(--type-title-2); letter-spacing: -0.009em; text-wrap: balance; overflow-wrap: anywhere; outline: none; }
+.where { margin: 0; font: var(--type-callout); font-weight: 600; overflow-wrap: anywhere; text-wrap: pretty; }
+.lead { margin: 0; font: var(--type-footnote); color: var(--label-2); text-wrap: pretty; }
+.fields { display: grid; gap: 10px; margin-top: 4px; }
+.field { display: grid; gap: 4px; }
+.field label { font: var(--type-footnote); color: var(--label-2); }
+.field input, .field textarea {
+  box-sizing: border-box; width: 100%; min-height: calc(30px * var(--text-scale)); padding: 4px 10px; border-radius: var(--r-sm); border: 0; outline: none; margin: 0;
+  font: var(--type-body); color: var(--label); background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--control-edge); caret-color: var(--accent);
+}
+.field textarea { resize: none; min-height: calc(64px * var(--text-scale)); padding: 6px 10px; }
+.field input:focus-visible, .field textarea:focus-visible { box-shadow: inset 0 0 0 1px var(--control-edge), var(--focus-ring); }
+/* A box that can't be kept as it is: a firmer edge, and its own line under it says why in words (never colour alone). */
+.field [aria-invalid="true"] { box-shadow: inset 0 0 0 1.5px var(--red-text); }
+.field [aria-invalid="true"]:focus-visible { box-shadow: inset 0 0 0 1.5px var(--red-text), var(--focus-ring); }
+.field .error { margin: 0; font: var(--type-footnote); color: var(--red-text); }
+.field .error:empty { display: none; }
+/* What went wrong and the keyboard's line: emptied, never hidden, so a screen reader hears what fills them. Empty, they
+   take no room (the card's gap around them is taken back). */
+.notes { flex: none; display: grid; gap: 4px; }
+.notes:not(:has(p:not(:empty))) { margin-top: -10px; }
+.problem, .hint { margin: 0; font: var(--type-footnote); color: var(--label); text-wrap: pretty; }
+.hint { color: var(--label-2); }
+.buttons { flex: none; display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+
+/* Windows contrast themes (forced colours; tokens and focus in ember.css): the boxes keep their edges. */
+@media (forced-colors: active) {
+  .field input, .field textarea { border: 1px solid ButtonText; }
+  .field [aria-invalid="true"] { border: 2px solid CanvasText; }
+}

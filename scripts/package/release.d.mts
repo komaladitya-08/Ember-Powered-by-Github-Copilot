@@ -4,3 +4,5 @@ export declare function releaseNotes(changelog: string, version: string, o: { re
 export declare function releaseProblems(present: string[], version: string): string[];
 export declare function readmeProblems(readme: string, version: string): string[];
 export declare function unwrap(lines: string[]): string[];
+export declare const RELEASE_BODY_LIMIT: number;
+export declare function notesProblems(notes: string): string[];

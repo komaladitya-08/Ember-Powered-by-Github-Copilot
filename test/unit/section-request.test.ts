@@ -4,6 +4,7 @@
  * settings" left the window at the top. The request now waits for the section, and names the control to focus.
  */
 
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { LATEST_ANSWER, PendingSection, sectionRequest } from "../../app/renderer/home/section-request";
 
@@ -23,6 +24,12 @@ describe("a section request from main", () => {
     expect(sectionRequest("memory:memory-query")).toEqual({ section: "memory", control: "memory-query" });
     // The settings key while the bubble says Ember is still waiting: at Stop response, as its step says (accessibility-visual-2).
     expect(sectionRequest("conversation:stop")).toEqual({ section: "conversation", control: "conversation-stop" });
+  });
+
+  it("opens Voice at its Download for Ask's “Set up voice in Settings…”, which main asks for by that name (home-r9-7)", () => {
+    expect(sectionRequest("voice:voice-download")).toEqual({ section: "voice", control: "voice-download" });
+    const main = readFileSync("app/main/main.ts", "utf8");
+    expect(main).toContain('"voice:voice-download"');
   });
 
   it("opens the conversation at its newest answer for \"Read the last answer\", not at its oldest message (home-v1)", () => {

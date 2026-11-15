@@ -247,7 +247,8 @@ function homePatterns(env: PathEnv): string[] {
 const SECRET_HOME_POSIX = [
   ".ssh/", ".gnupg/", ".aws/", ".azure/", ".kube/", ".config/gh/", ".config/hub", ".docker/config.json", ".netrc",
   "_netrc", ".npmrc", ".yarnrc.yml", ".pypirc", ".git-credentials", ".config/git/credentials", ".pgpass", ".my.cnf",
-  ".vault-token", ".terraform.d/credentials.tfrc.json", ".cargo/credentials", ".cargo/credentials.toml",
+  ".vault-token", ".boto", ".s3cfg", ".composer/auth.json", ".config/composer/auth.json", ".purple/", ".config/filezilla/",
+  ".config/hub", ".terraform.d/credentials.tfrc.json", ".cargo/credentials", ".cargo/credentials.toml",
   ".gem/credentials", ".m2/settings-security.xml", ".gradle/gradle.properties", ".config/rclone/rclone.conf",
   ".local/share/keyrings/", ".password-store/", ".config/Bitwarden*/", ".config/1Password/", ".mozilla/",
   "snap/firefox/", ".config/google-chrome/", ".config/chromium/", ".config/BraveSoftware/", ".config/microsoft-edge/",
@@ -258,6 +259,16 @@ const SECRET_HOME_POSIX = [
   ".config/heroku/", ".config/op/", ".oci/", ".config/helm/", ".m2/settings.xml", ".Xauthority", ".ICEauthority",
   ".config/Slack/", ".config/discord/", ".config/Signal/", ".config/Code/User/globalStorage/", ".config/vivaldi/",
   ".config/opera/",
+  // Mail, chat and download clients that keep a password in their own settings file, in plain text or a format the
+  // redactor can't always read (`password X`, `Pass X`, hexchat's `P=`, curl's `user = name:password`):
+  // commands-remote-r12-1.
+  ".msmtprc", ".config/msmtp/", ".mbsyncrc", ".config/isyncrc", ".fetchmailrc", ".offlineimaprc", ".config/offlineimap/",
+  ".authinfo*", ".config/aerc/accounts.conf", ".muttrc", ".mutt/muttrc", ".config/mutt/", ".curlrc", ".wgetrc",
+  ".config/hexchat/servlist.conf", ".xchat2/servlist_.conf",
+  // Subversion's cached logins (a K/V record), SMB mount credentials, Ivy's and sbt's repository logins, getmail's and
+  // neomutt's settings (r12-commands-x12-8).
+  ".subversion/auth/", ".smbcredentials", ".ivy2/.credentials", ".sbt/.credentials", ".getmail/", ".config/getmail/",
+  ".neomuttrc", ".config/neomutt/",
   // macOS.
   "Library/Keychains/", "Library/Cookies/", "Library/Application Support/Google/Chrome/",
   "Library/Application Support/Firefox/", "Library/Application Support/1Password/",
@@ -300,6 +311,13 @@ const SECRET_ABSOLUTE_POSIX = [
   "/run/user/*/krb5cc*", "/run/user/*/gdm/Xauthority",
   // Keyboards and mice as devices: reading one records what is typed, passwords included.
   "/dev/input/",
+  // Secrets given to a container or a service by where they are mounted, whose bare values the redactor can't tell
+  // apart from other text: Docker's and Kubernetes' secrets, systemd's credentials, a Vault agent's, TLS private keys
+  // and a cluster's own keys and admin sign-in (commands-remote-r11-4).
+  "/run/secrets/", "/var/run/secrets/", "/run/credentials/", "/etc/credstore/", "/etc/credstore.encrypted/", "/run/keys/", "/vault/secrets/",
+  "/var/lib/kubelet/pods/*/volumes/kubernetes.io~secret/", "/etc/kubernetes/pki/", "/etc/kubernetes/admin.conf", "/etc/rancher/k3s/k3s.yaml",
+  "/var/lib/rancher/k3s/server/token", "/var/lib/rancher/k3s/server/cred/", "/etc/ssl/private/", "/etc/pki/tls/private/",
+  "/var/lib/systemd/credential.secret",
 ];
 
 /** Secret basenames anywhere (§3.6.1). */
@@ -313,6 +331,16 @@ function secretBasename(name: string, ci: boolean): boolean {
   if (l === "credentials.json" || /^secrets\.ya?ml$/.test(l)) return true;
   // A Kerberos ticket cache (`/tmp/krb5cc_1000`, wherever KRB5CCNAME puts it: review #173).
   if (/^krb5cc(_|$)/.test(l)) return true;
+  // A file named for the password or secret it holds (commands-remote-r9-9): `password.txt`, `passwords.csv`,
+  // `secrets.txt`, `credentials.txt`, Ansible's `.vault_pass`, `.htpasswd`. Never `/etc/passwd`, a bare `credentials`
+  // (a project's own file: only the ones under a home's secret folders count) or a design's `tokens.json`.
+  if (/^\.?(passwords?|secrets?)(\.(txt|csv|json|ya?ml|ini|cfg|conf|md|bak|old))?$/.test(l)) return true;
+  if (/^\.?(credentials?|api[-_]?keys?|tokens?)\.(txt|csv|ini|cfg|conf|bak|old)$/.test(l)) return true;
+  if (/^\.(vault[-_]?pass(word)?(\.txt)?|htpasswd|pgpass|boto|s3cfg)$/.test(l)) return true;
+  // WordPress's settings file is its database password and its signing keys (commands-remote-r12-1); its sample isn't.
+  if (l === "wp-config.php") return true;
+  // Wi-Fi keys: NetworkManager's keyfiles, wpa_supplicant's and an access point's settings (r12-commands-y12-4).
+  if (/\.nmconnection$/.test(l) || /^(wpa_supplicant|hostapd)[\w.-]*\.conf$/.test(l)) return true;
   return false;
 }
 
@@ -492,6 +520,8 @@ export function secretKind(p: string, use: PathUse, env: PathEnv): "secret" | "h
     if (underEntries(p, homes, SECRET_HOME_EITHER, env, true)) return sshReadOk(p, use, env) ? null : "secret";
     const sysRoot = env.windows?.systemRoot ?? "C:\\Windows";
     if (isUnder(p, `${sysRoot}\\System32\\config`, env)) return "secret";
+    // A Windows container's Docker secrets (commands-remote-r11-4).
+    if (isUnder(p, "C:\\ProgramData\\Docker\\secrets", env)) return "secret";
     return secretBasename(name, true) ? "secret" : null;
   }
   if (underEntries(p, homes, HISTORY_HOME, env, ci)) return "history";

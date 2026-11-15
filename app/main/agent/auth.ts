@@ -153,6 +153,8 @@ export class TokenStore {
       this.unreadable = false;
       return this.held;
     }
+    // Signed out, with the file still on disk: it is the account that signed out, and is never read again.
+    if (this.left) { this.remove(); return null; }
     const read = this.changes;
     let raw: Buffer;
     try {
@@ -247,6 +249,7 @@ export class TokenStore {
     try {
       fs.writeFileSync(tmp, sealed, { mode: 0o600 });
       fs.renameSync(tmp, this.file);
+      this.left = false;
       this.unreadable = false;
       this.stamp();
       return "kept";
@@ -256,12 +259,35 @@ export class TokenStore {
     }
   }
 
-  clear(): void {
+  /**
+   * Forgets the sign-in (Sign out). False when the saved file couldn't be removed (a read-only or broken disk, a file
+   * that isn't the user's): it is then never read again in this run (`uncleared`), each later read tries once more to
+   * remove it, and the caller says the sign-out wasn't saved. Every error used to be taken for "already gone", so a
+   * Sign out on a read-only home left the sign-in for the next start, and nobody was told (reliability-r9-2).
+   */
+  clear(): boolean {
     this.epoch++;
     this.changes++;
     this.unreadable = false;
     this.held = null;
-    try { fs.rmSync(this.file); } catch { /* already gone */ }
+    return this.remove();
+  }
+
+  /** Whether a cleared sign-in is still on disk: it couldn't be removed, and the next start may read it. */
+  get uncleared(): boolean {
+    return this.left;
+  }
+  private left = false;
+
+  /** Removes the saved file; true when it is gone (or was never there). */
+  private remove(): boolean {
+    try {
+      fs.rmSync(this.file, { force: true });
+      this.left = false;
+    } catch {
+      this.left = true;
+    }
+    return !this.left;
   }
 }
 

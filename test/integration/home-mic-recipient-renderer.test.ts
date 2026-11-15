@@ -5,6 +5,8 @@ import path from "node:path";
 import { chromium } from "playwright-core";
 import { expect, it } from "vitest";
 import { DEFAULT_SETTINGS } from "../../app/main/settings";
+// Its I agree takes no press until the card has been up AGREE_ARM_MS (accessibility-r9-2).
+import { AGREE_ARM_MS } from "../../app/shared/provider";
 import { FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
 
 declare global { interface Window { __calls: string[]; __emit: (name: string, value: unknown) => void; __provider: unknown; __providerChanged: () => void; __settings: unknown; __reads: { resolve: (v: unknown) => void; reject: (e: unknown) => void }[] } }
@@ -57,7 +59,7 @@ it.skipIf(process.env.EMBER_MIC_RECIPIENT_TEST !== "1")("names the active model 
       window.__emit("onSettingsChanged", s); window.__providerChanged();
     }, { own, state });
     const note = async () => (await page.locator("#consent-text").innerText()).replace(/\s+/g, " ");
-    const open = async () => { await page.locator('a[href="#voice-h"]').click(); await page.evaluate(() => (document.getElementById("wake") as HTMLInputElement).click()); await expect.poll(() => page.locator("#consent").isVisible()).toBe(true); };
+    const open = async () => { await page.locator('a[href="#voice-h"]').click(); await page.evaluate(() => (document.getElementById("wake") as HTMLInputElement).click()); await expect.poll(() => page.locator("#consent").isVisible()).toBe(true); await page.waitForTimeout(AGREE_ARM_MS + 50); };
 
     // Personal provider in force: its host, never the path.
     await page.evaluate(() => window.__emit("onSettingsChanged", window.__settings));
@@ -171,7 +173,7 @@ it.skipIf(process.env.EMBER_MIC_RECIPIENT_TEST !== "1")("never calls an unread p
     const note = async () => (await page.locator("#consent-text").innerText()).replace(/\s+/g, " ");
     const listed = () => page.locator("#w-full .model-recipient").first().innerText();
     const yesDisabled = () => page.locator("#consent-yes").evaluate(el => el.getAttribute("aria-disabled") === "true");
-    const open = async () => { await page.locator('a[href="#voice-h"]').click(); await page.evaluate(() => (document.getElementById("wake") as HTMLInputElement).click()); await expect.poll(() => page.locator("#consent").isVisible()).toBe(true); };
+    const open = async () => { await page.locator('a[href="#voice-h"]').click(); await page.evaluate(() => (document.getElementById("wake") as HTMLInputElement).click()); await expect.poll(() => page.locator("#consent").isVisible()).toBe(true); await page.waitForTimeout(AGREE_ARM_MS + 50); };
     await page.evaluate(() => window.__emit("onSettingsChanged", window.__settings));
     await expect.poll(reads).toBeGreaterThan(0);
 

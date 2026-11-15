@@ -13,9 +13,9 @@
 import type { EmberProviderApi, ProviderMove, ProviderState } from "../../shared/ipc";
 import type { Settings, SettingsPatch } from "../../main/settings";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
-import { AZURE_API_VERSION, AgreeGuard, agreeAction, endpointHost, endpointProblem, heldAnswer, latestOnly, MODEL_ID, type ProviderType } from "../../shared/provider";
+import { AZURE_API_VERSION, AgreeGuard, agreeAction, endpointHost, endpointProblem, heldAnswer, heldPress, latestOnly, MODEL_ID, type ProviderType } from "../../shared/provider";
 import { noteProviderChoice } from "./provider-choice";
-import { type OwnProvider, PROVIDER_NO_KEYRING, PROVIDER_WORDS, providerAgreedChecked, providerAgreedText, providerAgreedUnlisted, providerCardShown, providerConsentText, providerHeldChecking, providerHeldHint, providerHeldKept, providerHeldKey, providerHeldUnlisted, providerHint, providerTestText, providerTestWaits } from "./copy";
+import { type OwnProvider, PROVIDER_NO_KEYRING, PROVIDER_WORDS, providerSealLine, providerAgreedChecked, providerAgreedText, providerAgreedUnlisted, providerCardShown, providerConsentText, providerHeldChecking, providerHeldHint, providerHeldKept, providerHeldKey, providerHeldUnlisted, providerHint, providerTestText, providerTestWaits } from "./copy";
 import { providerFailField, providerKeepLabel } from "./first-run-copy";
 
 declare global { interface Window { emberProvider?: EmberProviderApi } }
@@ -84,8 +84,11 @@ function say(text: string, error = false): void {
   el.classList.toggle("error", error);
 }
 
-/** The user agreed to the card for this very host. */
-const agreedFor = (p: Own, host: string | null) => !!host && p.consent.version >= FEATURE_CONSENT_VERSION.provider && p.consent.host === host;
+/**
+ * The user agreed to the card for this very host, and main hasn't said that yes is held back (its seal not read yet, or
+ * a forged one: the settings the page holds still show it, integ-x-1).
+ */
+const agreedFor = (p: Own, host: string | null) => !!host && p.consent.version >= FEATURE_CONSENT_VERSION.provider && p.consent.host === host && !(state?.held && state.host === host);
 
 /**
  * Saves the fields changed, and only those: main merges them into the user's own settings (withOwnProvider), so values
@@ -275,6 +278,10 @@ function draw(): void {
   $("byok-no-keyring").hidden = keyring || saved;
   $("byok-no-keyring").textContent = PROVIDER_NO_KEYRING;
   $("byok-hint").textContent = held ? providerHeldHint(held.from, host) : providerHint({ managed, inForce: !!state?.inForce, on, host, signedOut });
+  // Why the yes lasts only until Ember closes, or why this start withdrew it (reliability-r11-1).
+  const sealLine = on && !held ? providerSealLine({ host, agreed: agreedFor(p, host), ...(state?.seal ? { seal: state.seal } : {}) }) : null;
+  $("byok-seal").hidden = sealLine === null;
+  $("byok-seal").textContent = sealLine ?? "";
   onDestination();
 }
 
@@ -356,7 +363,8 @@ export function startProvider(saveSettings: (patch: SettingsPatch) => Promise<bo
   // The host is taken as "I agree" is pressed: pressing blurs the address field, whose save can redraw the card for
   // another host before the click lands, and then nothing is agreed.
   $("byok-yes").addEventListener("pointerdown", () => agreeGuard.press());
-  $("byok-yes").addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") agreeGuard.press(); });
+  // (A held key's repeat is no press: product-ui-x9-3.)
+  $("byok-yes").addEventListener("keydown", e => { if (heldPress(e)) { e.preventDefault(); return; } if (e.key === "Enter" || e.key === " ") agreeGuard.press(); });
   $("byok-yes").addEventListener("click", () => {
     const pressedFor = agreeGuard.activate();
     if (!pressedFor) return;

@@ -39,7 +39,7 @@ vi.mock("electron", () => ({
   Menu: {}, nativeTheme: { shouldUseDarkColors: true }, app: { on() { /* not what these tests look at */ }, removeListener() { /* nor this */ } },
 }));
 
-const { WINDOW_ICON, ZOOM, aboutPanel, appMenuTemplate, createCommandWindow, createHomeWindow, createPromptWindow, lockDevTools, quitQuestion, setUpAppChrome, windowIconFor, zoomLevelFor } = await import("../../app/main/windows");
+const { WINDOW_ICON, ZOOM, aboutPanel, appMenuTemplate, createCommandWindow, createHomeWindow, createPromptWindow, createVaultWindow, lockDevTools, quitQuestion, setUpAppChrome, windowIconFor, zoomLevelFor } = await import("../../app/main/windows");
 
 /** main.ts without its comments, every run of white space made one space. */
 const MAIN = fs.readFileSync(path.resolve("app/main/main.ts"), "utf8")
@@ -175,7 +175,7 @@ describe("the native theme (review #245)", () => {
     // themeSource doesn't reach a GTK window: Mutter reads the window's _GTK_THEME_VARIANT, which darkTheme sets.
     // Windows and macOS ignore the option.
     for (const os of ["linux", "win32", "darwin"] as OS[]) {
-      for (const [name, make] of [["settings", () => createHomeWindow(os)], ["command", () => createCommandWindow(os)], ["prompt", () => createPromptWindow(os)]] as const) {
+      for (const [name, make] of [["settings", () => createHomeWindow(os)], ["command", () => createCommandWindow(os)], ["prompt", () => createPromptWindow(os)], ["vault", () => createVaultWindow(os, "login")]] as const) {
         make();
         expect(electron.made.at(-1)!.options.darkTheme, `${name} on ${os}`).toBe(true);
       }

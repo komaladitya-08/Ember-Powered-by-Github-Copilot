@@ -122,7 +122,7 @@ describe("a placeholder in a light window", () => {
 
 describe("which windows are light", () => {
   it("is the content windows alone: the floating layer stays dark over any app", () => {
-    for (const page of ["home", "command", "prompt"]) expect(read(`app/renderer/${page}/index.html`), page).toContain('<html lang="en" class="content">');
+    for (const page of ["home", "command", "prompt", "vault"]) expect(read(`app/renderer/${page}/index.html`), page).toContain('<html lang="en" class="content">');
     for (const page of ["overlay", "handle", "ask", "desk", "mic"]) expect(read(`app/renderer/${page}/index.html`), page).not.toContain('class="content"');
   });
   it("gives every wash and keycap token a light value, so no white wash is left on a light window", () => {

@@ -130,3 +130,42 @@ describe("what a timed-out question says to do next (tasks-approvals-r1)", () =>
     expect(EXPIRED_TASK_STEP).not.toMatch(/^To review it, choose Try again/);
   });
 });
+
+describe("the Confirmer's no", () => {
+  it("tells main which task's question the user said no to, so the extensions gate holds back only while it runs (integ-x-4)", async () => {
+    const told: (string | undefined)[] = [];
+    const c = new Confirmer(() => undefined, { armMs: 0, gapMs: 0, timeoutMs: 1000, onDeny: task => told.push(task) });
+    const q = c.ask({ ...Q, task: "t7" });
+    expect(c.answer("q1:deny")).toBe(true);
+    await q;
+    const { task: _task, ...untasked } = Q;
+    const own = c.ask(untasked);
+    expect(c.answer("q2:deny")).toBe(true);
+    await own;
+    expect(told).toEqual(["t7", undefined]);
+  });
+
+  it("tells main of a “Not now” by click, key or voice, before the asker hears it, and never of a yes or a question nobody answered (integrations-c11-1)", async () => {
+    vi.useFakeTimers();
+    try {
+      const told: string[] = [];
+      const c = new Confirmer(() => undefined, { armMs: 0, gapMs: 0, timeoutMs: 1000, onDeny: () => told.push("no") });
+      const heard = (q: Promise<string | null>) => q.then(a => { told.push(`answer ${a}`); });
+      let q = heard(c.ask(Q));
+      expect(c.answer("q1:deny")).toBe(true);
+      await q;
+      q = heard(c.ask(Q));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(c.answerKey("deny")).toBe(true);
+      await q;
+      q = heard(c.ask(Q));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(c.answer("q3:once")).toBe(true);
+      await q;
+      q = heard(c.ask(Q));
+      await vi.advanceTimersByTimeAsync(1500);
+      await q;
+      expect(told).toEqual(["no", "answer deny", "no", "answer deny", "answer once", "answer null"]);
+    } finally { vi.useRealTimers(); }
+  });
+});

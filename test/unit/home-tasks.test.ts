@@ -6,8 +6,8 @@
 
 import { describe, expect, it } from "vitest";
 import { ActivityLog, askedWords } from "../../app/main/agent/activity";
-import { FILTER_EMPTY, NOTE_TAG, TASKS_EMPTY, TASK_FILTER_FROM, droppedText, filterLabel, filterTasks, offersRetry, offsetText, offsetWords, stateWord, stepsLine, taskAnnouncement, taskMeta, timelineRows } from "../../app/renderer/home/tasks-copy";
-import type { ActivityItem, TaskActivity } from "../../app/shared/activity";
+import { FILTER_EMPTY, NOTE_TAG, askingTask, TASKS_EMPTY, TASK_FILTER_FROM, droppedText, filterLabel, filterTasks, offersRetry, offsetText, offsetWords, stateWord, stepsLine, taskAnnouncement, taskMeta, timelineRows } from "../../app/renderer/home/tasks-copy";
+import { withQuestionUp, type ActivityItem, type TaskActivity, type TaskEntry } from "../../app/shared/activity";
 
 const step = (id: string, at: number, group: ActivityItem["group"], app: string, state: ActivityItem["state"] = "done", words = `${group} in ${app}`): ActivityItem =>
   ({ id, kind: "step", at, state, words, group, app });
@@ -136,3 +136,29 @@ describe("what a question asked, kept for Home (review of PR #125)", () => {
   });
 });
 
+
+describe("which task Home says is asking, when two wait for an answer", () => {
+  const waiting = (id: string, extra: Partial<TaskEntry> = {}): TaskEntry => ({
+    id, title: id, status: "waiting",
+    activity: { startedAt: 0, items: [], dropped: 0, steps: 0, failedSteps: 0, counts: {}, questions: 1, approvals: 0, asking: true, retry: 0, slow: false, nearLimit: false, live: "" },
+    ...extra,
+  });
+
+  it("is the task whose question is up now, as main marks it, not the newest that waits (tasks-approvals-r9-3)", () => {
+    // Main lists newest first: task 2 asked second, and the question up now is task 1's (the Confirmer's oldest first).
+    const entries = withQuestionUp([waiting("2-new"), waiting("1-old")], "1-old");
+    expect(entries.map(e => e.asking)).toEqual([undefined, true]);
+    expect(askingTask(entries)?.id).toBe("1-old");
+  });
+
+  it("is the oldest that waits where main hasn't said, as the questions come up oldest first (tasks-approvals-r9-3)", () => {
+    expect(askingTask([waiting("2-new"), waiting("1-old")])?.id).toBe("1-old");
+    expect(askingTask(withQuestionUp([waiting("2-new"), waiting("1-old")], undefined))?.id).toBe("1-old");
+    expect(askingTask([{ ...waiting("3"), status: "running" }])).toBeUndefined();
+  });
+
+  it("never marks a task that isn't listed, or one that has stopped waiting (tasks-approvals-r9-3)", () => {
+    expect(withQuestionUp([waiting("2")], "9").map(e => e.asking)).toEqual([undefined]);
+    expect(withQuestionUp([{ ...waiting("2"), status: "stopped" }], "2").map(e => e.asking)).toEqual([undefined]);
+  });
+});

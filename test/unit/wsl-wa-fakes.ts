@@ -126,6 +126,30 @@ export function answerWith(call: SpawnCall, o: { stdout?: string | Buffer; stder
   });
 }
 
+/**
+ * A fixed script (runner.ts's scriptInput) that ran to its end in the distro: what it printed, then SCRIPT_END's end
+ * marker with its exit code, as `/bin/sh -s` prints it, and wsl.exe exits with that code.
+ */
+export function answerScript(call: SpawnCall, o: { stdout?: string | Buffer; stderr?: string | Buffer; code?: number }): void {
+  const code = o.code ?? 0;
+  const out = o.stdout === undefined ? Buffer.alloc(0) : Buffer.isBuffer(o.stdout) ? o.stdout : Buffer.from(o.stdout, "utf8");
+  answerWith(call, { ...o, stdout: Buffer.concat([out, scriptEndBytes(call, code)]), code });
+}
+
+/** The end marker the script Ember wrote to this call's stdin prints (its nonce is in the script's last lines). */
+export function scriptEndBytes(call: SpawnCall, code: number): Buffer {
+  const nonce = /ember-end;([0-9a-f]{16});%s/.exec(call.child.stdinText())?.[1];
+  if (!nonce) throw new Error("no end marker in the script");
+  return Buffer.from(`\x1b]777;ember-end;${nonce};${code}\x07`, "latin1");
+}
+
+/** The end marker a WSL run's launcher prints, with the nonce Ember gave it (EMBER_END in its environment). */
+export function runEndBytes(call: SpawnCall, code: number): Buffer {
+  const nonce = call.options.env?.EMBER_END;
+  if (!nonce) throw new Error("no EMBER_END in the run's environment");
+  return Buffer.from(`\x1b]777;ember-end;${nonce};${code}\x07`, "latin1");
+}
+
 /** Text as UTF-16LE (what the inbox wsl.exe prints), with or without a byte-order mark. */
 export function utf16(text: string, bom = false): Buffer {
   const body = Buffer.from(text, "utf16le");

@@ -19,6 +19,7 @@ export const ChildPolicySchema = z.object({
   neverLook: z.array(z.string().max(200)).max(1000),
   actionsAllowed: z.boolean(),
   confirmEveryAction: z.boolean(),
+  autopilotOk: z.boolean().optional(),
   maxActionsPerMinute: z.number().int().min(1).max(40).optional(),
   screenImages: z.boolean(),
 }).strict();
@@ -41,6 +42,11 @@ export interface ChildPolicy {
   /** This computer's administrator: acting in apps at all, a yes for every action, the rate limit, screen images. */
   actionsAllowed: boolean;
   confirmEveryAction: boolean;
+  /**
+   * Both administrators let Autopilot be in force here: the PC's announcement of a step may stand in for a yes
+   * (gateStep). Absent: no (fail closed).
+   */
+  autopilotOk?: boolean;
   maxActionsPerMinute?: number;
   screenImages: boolean;
 }

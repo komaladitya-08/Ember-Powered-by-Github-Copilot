@@ -23,7 +23,7 @@ import type { SecretBox } from "../../app/main/agent/auth";
 import type { Logger } from "../../app/main/logger";
 import { friendlyError } from "../../app/main/agent/presenter";
 import { settingsFromHome } from "../../app/main/windows";
-import { AGREE_ARM_MS, AgreeGuard, agreeAction, heldAnswer } from "../../app/shared/provider";
+import { AGREE_ARM_MS, AgreeGuard, agreeAction, heldAnswer, heldPress } from "../../app/shared/provider";
 
 const KEY = "sk-" + "r".repeat(40); // not a real key
 const NONE: LoadedAdminPolicy = { policy: AdminPolicySchema.parse({}), source: null };
@@ -120,6 +120,38 @@ describe("Test connection and a host the card wasn't agreed for (B1)", () => {
     const noConsent = service({ settings: { baseUrl: "https://a.example/v1" }, consented: false });
     expect(await noConsent.s.api.test({ type: "openai", baseUrl: "https://b.example/v1", host: "b.example" })).toMatchObject({ ok: false });
     for (const f of [fetch, noKeyring.fetch, noConsent.fetch]) expect(f).not.toHaveBeenCalled();
+  });
+
+  it("says a key an earlier build saved with a hidden character can't be sent, and sends nothing, where it said the service needs a key (integrations-x9-8)", async () => {
+    // The key file as the earlier build wrote it: a zero-width space after the key, which it then took.
+    const dir = tmp();
+    const kr = box();
+    const file = path.join(dir, "provider-key.bin");
+    const hidden = "sk-proj-abcdefghijklmnop\u200b";
+    fs.writeFileSync(file, kr.box.encryptString(JSON.stringify({ v: 1, host: "api.openai.com", key: hidden, id: "00000000-0000-4000-8000-000000000000" })));
+    fs.writeFileSync(path.join(dir, "provider-key.host"), "api.openai.com");
+    const needsKey = vi.fn<FetchLike>(async () => ({ ok: false, status: 401, json: async () => ({ error: { message: "You didn't provide an API key." } }) }));
+    const t = service({ settings: { baseUrl: "https://api.openai.com/v1", consent: agreedFor("api.openai.com") }, keyFile: file, keyring: kr, fetch: needsKey });
+    // Home's row says a key is saved, and so it is.
+    expect((await t.s.api.state()).keySaved).toBe(true);
+    // The check says what is wrong with it, and nothing goes out: not with the key, and not without it.
+    expect(await t.s.api.test()).toEqual({ ok: false, why: "The saved API key has a character that can't be sent to api.openai.com. Replace the key." });
+    expect(needsKey).not.toHaveBeenCalled();
+    // It is never given to the runtime either, and stays out of the log.
+    const stored = t.s.key();
+    expect(stored).toMatchObject({ host: "api.openai.com", unsendable: true });
+    expect(keyFor("https://api.openai.com/v1", stored)).toBeNull();
+    expect(userProviderConfig(t.settings.get().provider, stored)).toEqual({ type: "openai", baseUrl: "https://api.openai.com/v1" });
+    expect(t.s.secrets()).toEqual([hidden]);
+    // A key that is none at all (empty, or with a space) is still as if none were saved.
+    fs.writeFileSync(file, kr.box.encryptString(JSON.stringify({ v: 1, host: "api.openai.com", key: "sk bad key" })));
+    expect(await new ProviderKeyStore(file, kr.box).load()).toBeNull();
+    // Replacing it saves a key that can be sent, and the check goes out with it.
+    expect(await t.s.api.saveKey(KEY)).toEqual({ ok: true });
+    const listed = ok200();
+    const again = service({ settings: { baseUrl: "https://api.openai.com/v1", consent: agreedFor("api.openai.com") }, keyFile: file, keyring: kr, fetch: listed });
+    expect(await again.s.api.test()).toMatchObject({ ok: true });
+    expect(listed.mock.calls[0][1].headers).toEqual({ authorization: `Bearer ${KEY}` });
   });
 
   it("keeps Home's Test connection button disabled until the card is agreed for the endpoint", () => {
@@ -388,6 +420,17 @@ describe("the card's I agree, armed as Ember's questions are (third review #136)
     g.press();
     expect(g.activate()).toBe("b.example");
     expect(AGREE_ARM_MS).toBe(500);
+  });
+
+  it("knows a held Enter's or Space's repeat from a press of its own, which is what an agree button takes (product-ui-x9-3)", () => {
+    expect(heldPress({ key: "Enter", repeat: true })).toBe(true);
+    expect(heldPress({ key: " ", repeat: true })).toBe(true);
+    expect(heldPress({ key: "Enter", repeat: false })).toBe(false);
+    expect(heldPress({ key: " ", repeat: false })).toBe(false);
+    // Other keys held (Tab moving on) are left to do what they do.
+    expect(heldPress({ key: "Tab", repeat: true })).toBe(false);
+    // Each of Home's agree buttons drops them: the cards' shared listener, Extensions' card and the provider's.
+    for (const f of ["main.ts", "extensions.ts", "provider.ts"]) expect(fs.readFileSync(`app/renderer/home/${f}`, "utf8")).toMatch(/if \(heldPress\(e\)[^\n]*e\.preventDefault\(\)/);
   });
 
   it("agrees to nothing when the card was redrawn at all between the press and the click, even for the same host (fourth review #136)", () => {

@@ -65,7 +65,7 @@ export interface DoctorProbes {
   /** Chromium's sandbox (Linux); null where the OS provides it (the row is left out). appImage: running as an AppImage. */
   sandbox: { userNamespaces: boolean; suidHelper: boolean; appImage?: boolean } | null;
   /** This user's file watchers (inotify instances) in use and the limit; null when they can't be counted. */
-  fileWatchers?: { used: number; max: number } | null;
+  fileWatchers?: { used: number; max: number; watches?: { used: number; max: number } } | null;
   /** Windows and macOS: the shared accessibility helper's status answer (null: it didn't answer); its own row. */
   helper?: HelperStatus | null;
   /** Rows the platform adds in doctor wording (permissions, PowerShell, elevation…), before the Copilot row. */
@@ -78,18 +78,25 @@ export interface DoctorProbes {
   policyLocation?: string;
 }
 
+/**
+ * What the Mouse and keyboard row says of borrowing, true in every approval mode (install-docs-r10-4): below Interactive
+ * Ember asks first, Interactive and Assisted announce an ordinary borrow and Autopilot every one, so it never says
+ * "with your OK".
+ */
+const BORROWS = "Ember can borrow the mouse and keyboard when it needs to. It tells you when it does, and moving the mouse or pressing a key takes it back.";
+
 /** Each OS's own name and wording for the rows that differ off Linux. */
 const OFF_LINUX: Record<"win32" | "darwin", { name: string; input: { ok: string; no: string; fix?: string }; voices: string; helperFix: string; sessionFix: string }> = {
   win32: {
     name: "Windows",
-    input: { ok: "SendInput is available (Ember can borrow the mouse, with your OK).", no: "Windows didn't give Ember its input functions, so Ember can only act through accessibility." },
+    input: { ok: `SendInput is available: ${BORROWS}`, no: "Windows didn't give Ember its input functions, so Ember can only act through accessibility." },
     voices: "Uses Windows' voices.",
     helperFix: "Check the PowerShell row below; if it is fine, reinstall Ember.",
     sessionFix: "Sign in to Windows and start Ember from the Start menu.",
   },
   darwin: {
     name: "macOS",
-    input: { ok: "Ember may post mouse and keyboard events (it borrows them only with your OK).",
+    input: { ok: `Mouse and keyboard events are allowed: ${BORROWS}`,
       no: "macOS isn't letting Ember borrow the mouse and keyboard (it needs the Accessibility permission, and no app may be holding secure input).",
       fix: "Allow Ember in System Settings › Privacy & Security › Accessibility." },
     voices: "Uses macOS voices.",
@@ -188,7 +195,7 @@ export function doctorChecks(p: DoctorProbes): DoctorCheck[] {
     out.push(p.xtest === null
       ? { id: "xtest", status: "warn", label: "Mouse and keyboard", detail: "No X display to check." }
       : p.xtest
-        ? { id: "xtest", status: "ok", label: "Mouse and keyboard", detail: "XTest is available (Ember can borrow the mouse, with your OK)." }
+        ? { id: "xtest", status: "ok", label: "Mouse and keyboard", detail: `XTest is available: ${BORROWS}` }
         : { id: "xtest", status: "warn", label: "Mouse and keyboard", detail: "XTest isn't available, so Ember can only act through accessibility.", fix: "sudo dnf install libXtst" });
   }
 
@@ -235,14 +242,15 @@ export function doctorChecks(p: DoctorProbes): DoctorCheck[] {
   const missing = VOICE_MODELS.filter(m => (p.voiceModelsMissing ?? (p.voiceModels === "missing" ? VOICE_MODELS.map(x => x.id) : [])).includes(m.id));
   const mb = (n: number) => `${Math.max(1, Math.round(n / 1e6))} MB`;
   const optional = missing.filter(m => !LISTENING_MODELS.includes(m.id));
-  const without = optional.map(m => m.id === "tts" ? "Ember's own voice (replies use the system's voice)" : "Voice Match (your voice can't answer questions)").join(" and ");
+  const without = optional.map(m => m.id === "tts" ? "Ember's own voice (replies use the system's voice)" : "Voice Match (while “Only my voice can say yes” is on, Ember takes no spoken yes)").join(" and ");
   out.push(p.voiceModels === "missing"
     ? { id: "voice-models", status: "warn", label: "Speech models", detail: "Not downloaded yet. Only needed for “Hey Ember”.", fix: `Turn on “Hey Ember” in Ember's settings and download them (${mb(modelsBytes(missing.length ? missing : VOICE_MODELS))}, once)${linux ? ", or unzip the release's Ember-voice-models zip into /usr/share/ember" : ""}.` }
     : { id: "voice-models", status: "ok", label: "Speech models", detail: `${p.voiceModels === "bundled" ? "Installed with Ember." : "Downloaded."}${optional.length ? ` Without ${without} until ${optional.length > 1 ? "they're" : "it's"} downloaded in Ember's settings (${mb(modelsBytes(optional))}).` : ""}` });
   // Recognition can use WebAssembly; Kitten Nano requires native speech, with a local system voice otherwise.
   if (p.speechBackend) out.push(p.speechBackend.backend === "native"
     ? { id: "speech-engine", status: "ok", label: "Speech", detail: "On this computer (native)." }
-    : { id: "speech-engine", status: "ok", label: "Speech", detail: `Recognition uses WebAssembly (${p.speechBackend.why}). Replies use the system's voice.` });
+    // The system's voice only where there is one: the Speaking row below says when there isn't (install-docs-c12-1).
+    : { id: "speech-engine", status: "ok", label: "Speech", detail: `Recognition uses WebAssembly (${p.speechBackend.why}). ${p.speechDispatcher ? "Replies use the system's voice." : "Replies need the system's voice, which isn't available (see Speaking)."}` });
   // Kitten Nano speaks where its native speech and model are in: speech-dispatcher (a Recommends of the RPM) is then
   // only its fallback, never a reason to warn that Ember can't speak (voice-speaking-9).
   const ownVoice = linux && p.speechBackend?.backend === "native" && p.voiceModels !== "missing" && !missing.some(m => m.id === "tts");
@@ -285,8 +293,29 @@ export function doctorChecks(p: DoctorProbes): DoctorCheck[] {
     : w.used >= w.max
       ? { id: "file-watchers", status: "fail", label: watchers.label, detail: `All ${w.max} are in use, ${watchers.none} a free one for each conversation and task.`, fix: watchersFix }
       : { id: "file-watchers", status: "warn", label: watchers.label, detail: `${w.used} of ${w.max} in use: ${watchers.low} a free one for each conversation and task, and stops answering without.`, fix: watchersFix });
+  // The files and folders those watchers watch have a limit of their own (8,192 on RHEL 8), which an editor, a sync
+  // client or the desktop's file indexer can use up: the runtime then never begins a request, and the row above said
+  // all was well (reliability-r9-1).
+  const f = w?.watches;
+  if (f) {
+    const n = (v: number) => v.toLocaleString("en-GB");
+    const free = f.max - f.used;
+    const watchesFix = "sudo sysctl -w fs.inotify.max_user_watches=524288, and put fs.inotify.max_user_watches=524288 in /etc/sysctl.d/90-ember.conf to keep it";
+    const needs = `${other ? "so Ember can't answer: its model connection needs" : "so Copilot can't answer: it needs"} to watch a few for each conversation and task.`;
+    out.push(free >= 64
+      ? { id: "file-watches", status: "ok", label: "Watched files and folders", detail: `${n(f.used)} of ${n(f.max)} in use.` }
+      : free < WATCHES_NEEDED
+        ? { id: "file-watches", status: "fail", label: "Watched files and folders", detail: `${f.max <= 0 ? "This session may watch none" : free <= 0 ? `All ${n(f.max)} are in use` : `${n(f.used)} of ${n(f.max)} in use`}, ${needs}`, fix: watchesFix }
+        : { id: "file-watches", status: "warn", label: "Watched files and folders", detail: `${n(f.used)} of ${n(f.max)} in use: ${watchers.low} to watch a few for each conversation and task, and stops answering without.`, fix: watchesFix });
+  }
   return out;
 }
+
+/**
+ * The Copilot runtime adds a few inotify watches for each conversation and task (three, measured): with fewer than
+ * this many free it can't begin a request (host.ts inotifyUsedUp), and the setup check fails its row.
+ */
+export const WATCHES_NEEDED = 8;
 
 const MARK: Record<DoctorStatus, string> = { ok: "ok  ", warn: "warn", fail: "FAIL" };
 

@@ -8,6 +8,8 @@ export interface LocalSpeechDeps<V extends VoiceInfo> {
   /** `lang`: a reply in another language, said in that language. */
   speak(text: string, voice: V, lang?: string): void;
   unavailable(): void;
+  /** Words were given up on after the wait for a voice (what waits behind them can go on). */
+  dropped?(): void;
   setTimer(fn: () => void, ms: number): unknown;
   clearTimer(timer: unknown): void;
 }
@@ -34,6 +36,7 @@ export class LocalSpeech<V extends VoiceInfo> {
         const failed = this.pending.some(p => !p.lang);
         this.pending = [];
         if (failed) this.d.unavailable();
+        this.d.dropped?.();
       }, 3000);
       return;
     }
@@ -46,6 +49,9 @@ export class LocalSpeech<V extends VoiceInfo> {
       if (v) this.d.speak(p.text, v, p.lang);
     }
   }
+
+  /** Whether words still wait here: for Ember's own voice to end, or for the system's voices to load. */
+  get waiting(): boolean { return this.pending.length > 0; }
 
   cancel(): void {
     if (this.timer !== null) this.d.clearTimer(this.timer);

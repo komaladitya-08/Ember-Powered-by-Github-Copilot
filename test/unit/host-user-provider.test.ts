@@ -65,6 +65,8 @@ function makeHost(provider: () => ActiveProvider | null, probeProvider?: () => P
 const until = async (cond: () => boolean, ms = 5000) => { for (const t0 = Date.now(); !cond() && Date.now() - t0 < ms;) await new Promise(r => setTimeout(r, 10)); return cond(); };
 /** A model server on this computer (Ollama's address shape), with no key. */
 const LOCAL: ActiveProvider = { kind: "user", config: { type: "openai", baseUrl: "http://127.0.0.1:18109/v1" }, models: { conductor: "llama3.2:3b", worker: null } };
+/** The same server, answering. */
+const LOCAL_READY: ActiveProvider = { ...LOCAL, config: { ...LOCAL.config, baseUrl: "https://models.example.com/v1" } };
 const REFUSED: TestResult = { ok: false, why: "Ember can't reach 127.0.0.1:18109. Check the address and the network.", cause: "refused" };
 
 describe("AgentHost with the user's own model provider", () => {
@@ -184,6 +186,34 @@ describe("AgentHost with the user's own model provider", () => {
     waiting = null;
     await host.ask("What time is it?");
     expect(states.at(-1)?.bubble).toMatchObject({ title: NOTICE_TITLE["signed-out"], thought: "Connect your GitHub account in settings, then ask me again." });
+  });
+
+  it("never sends my words to Copilot instead while my own provider waits for my yes (withdrawn at start, held, or a new address), signed in or not (r10-safety-x10-1)", async () => {
+    sim.clients = []; sim.sessions = [];
+    let waiting: string | null = "127.0.0.1:11434";
+    let now: ActiveProvider | null = null;
+    const states: EmberState[] = [];
+    const { host } = makeHost(() => now, undefined, { providerWaiting: () => (now ? null : waiting), setState: (s: EmberState) => states.push(structuredClone(s)) });
+    // A GitHub sign-in is found (an earlier sign-in, the GitHub CLI): nothing connects to Copilot with it.
+    expect(await host.start(TOKEN, "github-cli", "auto")).toBe("signed-out");
+    expect(sim.clients).toHaveLength(0);
+    await host.ask("What time is it?");
+    expect(sim.clients).toHaveLength(0);
+    expect(states.at(-1)?.bubble).toMatchObject({ title: "Your provider needs your OK", thought: "Agree to use 127.0.0.1:11434 in settings, or turn off “Use my own model provider”, then ask me again." });
+    // Agreed in Home: the provider connects.
+    now = LOCAL_READY;
+    expect(await host.providerChanged()).toBe("ready");
+    expect(sim.clients.at(-1).opts.gitHubToken).toBeUndefined();
+    // Its address changed and waits for a yes again: Ember disconnects from it and connects to nothing else.
+    const before = sim.clients.length;
+    now = null;
+    expect(await host.providerChanged()).toBe("signed-out");
+    expect(sim.clients).toHaveLength(before);
+    // Turned off: Copilot is the service again, with the sign-in Ember had.
+    waiting = null;
+    expect(await host.providerChanged()).toBe("ready");
+    expect(sim.clients.at(-1).opts.gitHubToken).toBe(TOKEN);
+    await host.stop();
   });
 
   it("says the model server on this computer isn't running instead of Connected, and connects once it answers (integrations-1)", async () => {

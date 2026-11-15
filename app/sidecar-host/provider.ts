@@ -183,11 +183,20 @@ export interface Snapshot { nodes: RawNode[]; truncated: boolean; cut: string[];
  * Text read from an element: none of it for a password field (`secret`). `truncated`: there was more than asked for.
  * `caret`: where the caret (the selection's start) is in `text`; `caretAtEnd`: it is after the last character.
  */
-export interface TextInfo { text?: string; truncated?: boolean; selection?: string; caret?: number; caretAtEnd?: boolean; secret?: boolean }
+export interface TextInfo {
+  text?: string; truncated?: boolean; selection?: string; caret?: number; caretAtEnd?: boolean; secret?: boolean;
+  /** With `probe` asked (a development probe, cifix-x9-11): when each step of the read began, ms since 1970. */
+  probe?: { step: string; t: number }[];
+}
 
 /** What `perform` can be asked to do (see RawNode.actions). */
 export type PerformOp = "invoke" | "toggle" | "select" | "addToSelection" | "removeFromSelection" | "expand" | "collapse"
-  | "setValue" | "setRange" | "focus" | "legacy" | "scrollIntoView";
+  | "setValue" | "setRange" | "focus" | "legacy" | "scrollIntoView"
+  /**
+   * The vault's fill: sets a field's text whole as setValue does, a password field's too. Only the host's vault_fill
+   * asks for it, for Ember's main process; no element lists it among its `actions`.
+   */
+  | "fillValue";
 
 /**
  * A platform's accessibility. Every call may throw a ProviderError; anything else thrown counts as "failed". Calls are
@@ -240,7 +249,8 @@ export interface AxProvider {
   /** Its first `max` children as they are now (offscreen ones too: a closed drop-down's options). */
   children(h: Handle, max: number): Promise<RawNode[]>;
   perform(h: Handle, op: PerformOp, value?: unknown): Promise<void>;
-  textInfo(h: Handle, maxChars: number): Promise<TextInfo>;
+  /** `o.probe`: also say when each step began (TextInfo.probe), where the provider can (UI Automation). */
+  textInfo(h: Handle, maxChars: number, o?: { probe?: boolean }): Promise<TextInfo>;
   /** These handles won't be used again (any from an earlier generation are ignored: they died with it). */
   release(hs: Handle[]): void;
   /** Stops for good (the host is exiting). */

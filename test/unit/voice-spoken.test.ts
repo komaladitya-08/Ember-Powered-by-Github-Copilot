@@ -221,6 +221,13 @@ describe("spokenText leaves markup that is only for the eye unsaid, and says a p
     // A ticked item that says it is done isn't told twice.
     ["* [x] Done: paid rent", "Done: paid rent."],
     ["1. [x] Done already\n2. [ ] Not yet", "1. Done already.\n2. Not yet."],
+    // Nor one that says so in bold or italics (voice-speaking-r9-6).
+    ["- [x] **Done**: paid rent", "Done: paid rent."],
+    ["- [x] __Done__: paid rent\n- [x] *done* already", "Done: paid rent.\ndone already."],
+    ["- [x] **Paid** rent", "Done: Paid rent."],
+    // The common named entities are said as the marks they stand for, never letter by letter (voice-speaking-r9-6).
+    ["Fish &amp; chips &mdash; today&hellip;", "Fish and chips — today…"],
+    ["Pages 3&ndash;5, &copy; 2026 Ember &rarr; next.", "Pages 3 to 5, © 2026 Ember to next."],
     // Markup around words is still unsaid.
     ["<b>Important.</b> Press <kbd>Ctrl</kbd>, then <span style=\"color:red\">red</span>.", "Important. Press Ctrl, then red."],
   ])("says %j as %j, dropping no words that only look like markup (voice-speaking-x7-5)", (text, said) => expect(spokenText(text)).toBe(said));
@@ -501,6 +508,434 @@ describe("speechLanguage tells Spanish from French, which share their commonest 
     "La réunion est à quinze heures.", "J'ai fermé la fenêtre et enregistré le fichier.", "Il y a trois fichiers dans le dossier.",
     "On y va : la fenêtre de la calculatrice se ferme.", "J'ai ouvert la fenêtre de la calculatrice.",
   ])("still says %j with a French voice (voice-speaking-c7-1)", text => expect(speechLanguage(text)).toBe("fr"));
+});
+
+describe("AnswerLanguage judges a passage read out after an English lead-in by the passage, through the real stream (voice-speaking-r9-2)", () => {
+  const LEADS = ["José wrote:", "Here is the email from José:", "Sure. The email from José says:", "Here's what the note says:", "The message reads:", "Sure, here is the email that José sent you this morning:", "I found it. It says:"];
+  const PASSAGES: Record<string, string> = {
+    es: "Hola Alex, ¿cómo estás? Espero que todo vaya bien con el proyecto. Nos vemos el lunes en la oficina para hablar de los detalles. Un abrazo, José.",
+    fr: "Bonjour Alex, j'espère que tu vas bien. Je voulais te dire que la réunion de lundi est reportée à mardi. Peux-tu apporter les documents du projet ? Merci, Marie.",
+    de: "Hallo Alex, ich hoffe, es geht dir gut. Das Treffen am Montag wurde auf Dienstag verschoben. Kannst du bitte die Unterlagen für das Projekt mitbringen? Viele Grüße, Hans.",
+    it: "Ciao Alex, spero che tu stia bene. La riunione di lunedì è stata spostata a martedì. Puoi portare i documenti del progetto? Grazie mille, Marco.",
+    pt: "Olá Alex, espero que esteja tudo bem. A reunião de segunda-feira foi adiada para terça. Pode trazer os documentos do projeto? Obrigado, João.",
+    nl: "Hallo Alex, ik hoop dat alles goed met je gaat. De vergadering van maandag is verplaatst naar dinsdag. Kun je de documenten van het project meenemen? Groetjes, Jan.",
+    ru: "Привет, Алекс! Надеюсь, у тебя всё хорошо. Встреча в понедельник перенесена на вторник. Пожалуйста, принеси документы по проекту. Спасибо, Иван.",
+    zh: "你好，亚历克斯。希望你一切都好。周一的会议改到周二了。请带上项目的文件。谢谢，小王。",
+  };
+  /** The answer word by word through the stream, as main says it: each piece with the voice it is given. */
+  const streamed = (answer: string, request = "read me the latest email") => {
+    const stream = new SpeechStream(100_000), language = new AnswerLanguage();
+    language.reset(request);
+    const said: { text: string; lang: string | null }[] = [];
+    for (const word of answer.split(/(?<=\s)/)) said.push(...language.take(stream.push(word)));
+    said.push(...language.take(stream.finish(answer), true));
+    return said;
+  };
+  const flat = (text: string) => text.replace(/\s+/g, " ").trim();
+
+  it.each(Object.keys(PASSAGES).flatMap(lang => LEADS.map(lead => [lang, lead] as const)))("reads a %s passage in that language's voice after “%s”, with the lead-in and the closing question in Ember's own", (lang, lead) => {
+    const said = streamed(`${lead}\n\n${PASSAGES[lang]}\n\nShall I reply to it?`);
+    const letters = (text: string) => text.replace(/[^\p{L}]+/gu, "");
+    expect(letters(said.map(p => p.text).join(""))).toBe(letters(`${lead}${PASSAGES[lang]}Shall I reply to it?`));
+    for (const p of said) {
+      const where = flat(lead).includes(flat(p.text)) ? "lead-in" : flat(p.text) === "Shall I reply to it?" ? "question" : "passage";
+      // A lead-in that is a name with an accent and one word can't be told from the passage's language, and waits for
+      // it, as before: "José escribió:" would be Kitten's otherwise.
+      if (where === "lead-in" && lead === "José wrote:") continue;
+      expect([where, flat(p.text), p.lang]).toEqual([where, flat(p.text), where === "passage" ? lang : null]);
+    }
+    expect(said.some(p => p.lang === lang)).toBe(true);
+  });
+
+  // A chat message is seldom 60 letters: counted with the closing question, whose English short words outnumber its
+  // own, a short one was Kitten's for 15 of 15 (product-platform-x9-1).
+  const SHORT: Record<string, string> = {
+    es: "Hola Alex, ¿cómo estás? Nos vemos mañana.",
+    fr: "Salut Alex, ça va ? On se voit demain à midi.",
+    de: "Hallo Alex, wie geht's? Bis morgen im Büro.",
+  };
+  const SHORT_LEADS = ["The message reads:", "Here is the latest message from José:", "I found it. It says:"];
+  it.each(Object.keys(SHORT).flatMap(lang => SHORT_LEADS.flatMap(lead => ["\n\nShall I reply to it?", ""].map(close => [lang, lead, close] as const))))("reads a short %s message in that language's voice after “%s”, judged without the closing question (%j) (product-platform-x9-1)", (lang, lead, close) => {
+    const said = streamed(`${lead}\n\n${SHORT[lang]}${close}`, "read me the latest message");
+    const passage = said.filter(p => !flat(lead).includes(flat(p.text)) && flat(p.text) !== "Shall I reply to it?");
+    expect(passage.map(p => [flat(p.text), p.lang])).toEqual(passage.map(p => [flat(p.text), lang]));
+    expect(flat(passage.map(p => p.text).join(" "))).toBe(flat(SHORT[lang]));
+    expect(said.filter(p => !passage.includes(p)).map(p => p.lang).filter(Boolean)).toEqual([]);
+  });
+
+  it("reads a message that reaches 60 letters only with the closing question in its own voice, and asks the question in Ember's (product-platform-x9-1)", () => {
+    const said = streamed("The message reads:\nHola Alex, ¿cómo estás? Nos vemos mañana en la oficina.\nShall I reply to it?", "read me the latest message");
+    expect(said.map(p => p.lang)).toEqual([null, "es", "es", null]);
+  });
+
+  it.each([
+    ["Your note says:\n\nBuy jalapeños.\n\nShall I add it to your list?"],
+    ["The message reads:\n\nSee you at Café Nero.\n\nShall I reply to it?"],
+    ["It says:\n\nRunning late!\n\nDo you want to answer it?"],
+  ])("still says a short English message and its closing question wholly in Ember's own voice (%j) (product-platform-x9-1)", answer => {
+    expect(streamed(answer, "read me the latest message").map(p => p.lang).filter(Boolean)).toEqual([]);
+  });
+
+  it("reads the passage in its own voice from its second sentence at the latest where the lead-in ends without a colon", () => {
+    const said = streamed(`Okay, reading it now.\n\n${PASSAGES.es}\n\nShall I reply to it?`);
+    expect(said.map(p => p.lang)).toEqual([null, "es", "es", "es", "es", null]);
+  });
+
+  it.each(["es", "fr", "ru", "zh"])("reads a %s passage in its own voice where the lead-in and its first sentence came as one piece", lang => {
+    const said = streamed(`I found it. It says: ${PASSAGES[lang]}\n\nShall I reply to it?`);
+    expect(said.map(p => [flat(p.text), p.lang]).slice(0, 2)).toEqual([["I found it.", null], ["It says:", null]]);
+    expect(said.slice(2, -1).map(p => p.lang).every(l => l === lang)).toBe(true);
+    expect(said.at(-1)).toEqual({ text: "Shall I reply to it?", lang: null });
+  });
+
+  it("reads a second passage in its own language after an English lead-in, not in the first passage's voice", () => {
+    const said = streamed(`The email from José reads:\n\n${PASSAGES.es}\n\nAnd the note from Marie says:\n\n${PASSAGES.fr}`);
+    expect([...new Set(said.map(p => p.lang))]).toEqual([null, "es", "fr"]);
+    expect(said.filter(p => p.lang === "fr").map(p => flat(p.text)).join(" ")).toBe(flat(PASSAGES.fr));
+  });
+
+  it.each([
+    ["Here are three films you might like:\n\n1. La La Land.\n2. The Thing.\n3. Amélie.\n\nWant me to open one?"],
+    ["Here is what I found:\n\nThe file is in your Downloads folder, and it was changed this morning."],
+    ["The steps are:\n\n1. Open Settings.\n2. Click Displays.\n3. Turn Night Light on."],
+    ["Your note says:\n\nBuy milk, call the dentist and pay the rent before Friday."],
+    ["Note: the café on the corner is closed today, and the one by the station is open."],
+    ["Done. Tip: you can also press Ctrl+S to save the résumé you are working on."],
+  ])("still says an English answer with a colon wholly in Ember's own voice (%j)", answer => {
+    expect(streamed(answer, "what do you suggest?").map(p => p.lang).filter(Boolean)).toEqual([]);
+  });
+
+  it("says the clearly English first words after a colon at once, without waiting for more of the answer", () => {
+    const stream = new SpeechStream(100_000), language = new AnswerLanguage();
+    language.reset("where is my file?");
+    expect(language.take(stream.push("Here is what I found:\n\n"))).toEqual([{ text: "Here is what I found:", lang: null }]);
+    expect(language.take(stream.push("The file is in your Downloads folder. "))).toEqual([{ text: "The file is in your Downloads folder.", lang: null }]);
+  });
+
+  it("keeps a Spanish answer's own list after its colon in the Spanish voice", () => {
+    const said = streamed("Aquí tienes los archivos que pediste esta mañana, con todo lo que hay en la carpeta:\n\nInforme.pdf y notas.txt.", "¿qué archivos hay en la carpeta de descargas?");
+    expect(said.map(p => p.lang)).toEqual(["es", "es", "es"]);
+  });
+
+  // The closing questions a model ends a read-out with. Only "Shall I reply to it?" was tested; the rest have one
+  // English short word or none, or one another language shares ("I" is Italian's "i"), and took the passage's voice, or
+  // went unsaid without one, while the follow-up window opened for them (voice-speaking-r10-1).
+  const CLOSING = ["Shall I reply to it?", "Shall I reply?", "Want me to reply?", "Should I reply?", "Do you want me to answer?", "Want me to draft a reply?", "Anything else?", "Would you like me to reply to José?", "Should I translate it?", "Want a translation?", "Reply, or leave it?"];
+  const LATIN = ["es", "fr", "de", "it", "pt", "nl"];
+  it.each(LATIN.flatMap(lang => CLOSING.map(close => [lang, close] as const)))("asks the closing question in Ember's own voice after a %s passage: %j (voice-speaking-r10-1)", (lang, close) => {
+    const said = streamed(`Here is the email from José:\n\n${PASSAGES[lang]}\n\n${close}`);
+    expect(said.at(-1)).toEqual({ text: close, lang: null });
+    expect(said.slice(1, -1).map(p => p.lang)).toEqual(said.slice(1, -1).map(() => lang));
+  });
+
+  // A lead-in that opens with a name with an accent and a saying verb ("José wrote:") wasn't counted as Ember's, so the
+  // passage was judged with it and the closing took the passage's voice in 28 of 44 cases (r10-voice-y10-1).
+  const NAMED = ["José wrote:", "José says:", "José writes:", "Ángel wrote:", "Zoë said:"];
+  it.each(LATIN.flatMap(lang => NAMED.flatMap(lead => ["Shall I reply?", "Want me to reply?", "Anything else?"].map(close => [lang, lead, close] as const))))("asks the closing question in Ember's own voice after a %s passage led in by %j: %j (r10-voice-y10-1)", (lang, lead, close) => {
+    const said = streamed(`${lead}\n\n${PASSAGES[lang]}\n\n${close}`);
+    expect(said.at(-1)).toEqual({ text: close, lang: null });
+    expect(said.slice(1, -1).map(p => p.lang)).toEqual(said.slice(1, -1).map(() => lang));
+  });
+
+  // A passage's own one-word line that is also one of Ember's closing words ("Help!", which Dutch and German write too)
+  // went to Kitten (r10-voice-x10-3).
+  it.each([
+    ["nl", "Hallo Jan, kun je me helpen met het project? Help!"],
+    ["nl", "Hallo Jan, ik hoop dat alles goed met je gaat. Kun je de documenten meenemen? Help!"],
+    ["de", "Hallo Alex, ich hoffe, es geht dir gut. Kannst du bitte die Unterlagen mitbringen? Help!"],
+  ])("keeps a %s passage's own one-word line in its voice (%j) (r10-voice-x10-3)", (lang, passage) => {
+    const said = streamed(`Here is the email:\n\n${passage}\n\nWant me to reply?`);
+    expect(said.find(p => flat(p.text).endsWith("Help!"))?.lang).toBe(lang);
+    expect(said.at(-1)).toEqual({ text: "Want me to reply?", lang: null });
+  });
+
+  // An email shown with its sender and subject lines: they were judged as the passage's first letters, which they
+  // diluted, and the message was Kitten's with English sounds in 22 of 44 cases for "**From:** José / **Subject:**
+  // Proyecto" (voice-speaking-r10-2). So for a lead-in whose only word with an accent is a name ("José's email says:"),
+  // which was held and judged with the email (voice-speaking-c10-1).
+  const HEADERS = [
+    "**From:** José\n**Subject:** Proyecto\n\n", "From: José\nSubject: Proyecto\n\n", "From: José\nSubject: Project update\n\n",
+    "From: **José**\nSubject: **Proyecto**\n\n", "**From:** Marco Rossi\n**Subject:** Progetto\n\n", "From: José García\nSubject: Proyecto\n\n",
+    "From: Ana\nDate: Monday\nSubject: Hola\n\n", "Here is the email:\n\n**From:** José\n**To:** Alex\n**Subject:** Proyecto\n\n", "José's email says:\n\n",
+    "Sure. José's email says:\n\n",
+  ];
+  it.each(LATIN.flatMap(lang => HEADERS.map(head => [lang, head] as const)))("reads a %s email in its own voice after the header lines or lead-in %j, said in Ember's (voice-speaking-r10-2)", (lang, head) => {
+    const said = streamed(`${head}${PASSAGES[lang]}\n\nWant me to reply?`);
+    const passage = said.filter(p => flat(PASSAGES[lang]).includes(flat(p.text)) && !flat(head).includes(flat(p.text)));
+    expect(flat(passage.map(p => p.text).join(" "))).toBe(flat(PASSAGES[lang]));
+    expect(passage.map(p => [flat(p.text), p.lang])).toEqual(passage.map(p => [flat(p.text), lang]));
+    expect(said.filter(p => !passage.includes(p)).map(p => [flat(p.text), p.lang])).toEqual(said.filter(p => !passage.includes(p)).map(p => [flat(p.text), null]));
+  });
+
+  // A header line's value in the passage's language was given to Kitten, which reads only English: a Russian or
+  // Chinese sender and subject were said in English sounds or not at all, a Spanish subject in English sounds
+  // (r10-voice-x10-2). Only a header whose value passes a lead-in's checks is Ember's.
+  it.each([
+    ["ru", "From: Иван\nSubject: Встреча в понедельник\n\n", ["Иван", "Встреча в понедельник"]],
+    ["zh", "From: 小王\nSubject: 会议\n\n", ["小王", "会议"]],
+    ["es", "Subject: Reunión del lunes\n\n", ["Reunión del lunes"]],
+    ["es", "From: José\nSubject: Reunión del lunes\n\n", ["Reunión del lunes"]],
+    ["it", "**From:** Marco Rossi\n**Subject:** Riunione di lunedì\n\n", ["Riunione di lunedì"]],
+    ["ru", "**From:** Иван\n**Subject:** Встреча\n\n", ["Иван", "Встреча"]],
+  ])("says a %s header's value in the passage's voice, never Kitten's (%j) (r10-voice-x10-2)", (lang, head, values) => {
+    const said = streamed(`${head}${PASSAGES[lang]}\n\nWant me to reply?`);
+    for (const value of values) {
+      const piece = said.find(p => p.text.includes(value));
+      expect([value, piece?.lang]).toEqual([value, lang]);
+    }
+    for (const p of said.filter(p => flat(PASSAGES[lang]).includes(flat(p.text)))) expect([flat(p.text), p.lang]).toEqual([flat(p.text), lang]);
+    expect(said.at(-1)).toEqual({ text: "Want me to reply?", lang: null });
+  });
+
+  it.each([
+    ["From: Sam\nSubject: Lunch\n\nAre we still on for lunch on Friday? Let me know.\n\nWant me to reply?"],
+    ["Subject: the café meeting is moved to Monday, and the room is booked."],
+    ["Here is the email:\n\nFrom: José\nSubject: Résumé\n\nThanks for sending your résumé, I will read it tonight.\n\nAnything else?"],
+  ])("still says an English email with header lines wholly in Ember's own voice (%j) (voice-speaking-r10-2)", answer => {
+    expect(streamed(answer, "read me the latest email").map(p => p.lang).filter(Boolean)).toEqual([]);
+  });
+});
+
+describe("AnswerLanguage tells a passage's language from its own words, not from its lead-in or a header's label (voice-speaking-r11-1, voice-speaking-r11-2)", () => {
+  /** Ordinary short emails: the round's re-rate's (by language) and others written for the fix, none like the tests' one passage. */
+  const EMAILS: Record<string, string[]> = {
+    es: [
+      "Buenos días. Te envío el informe que me pediste ayer. Si tienes alguna pregunta, avísame. Saludos, Ana.",
+      "Hola Alex, ya tengo las entradas para el concierto del sábado. Quedamos a las siete delante del teatro. Besos, Lucía.",
+      "Estimado Alex, adjunto la factura de marzo. Agradecería el pago antes del día quince. Atentamente, Carlos.",
+      "Hola, mañana no podré ir a la oficina porque tengo médico. Trabajaré desde casa. Un saludo, Pedro.",
+      "Alex, gracias por tu ayuda con la presentación. Todo salió muy bien y el equipo está contento.",
+      "Buenas tardes, confirmo la reserva para cuatro personas el viernes a las nueve. Gracias, Restaurante Sol.",
+      "Hola Alex, ¿puedes revisar el documento antes de la reunión? Necesito tus comentarios hoy. Gracias, Marta.",
+      "Querido Alex, feliz cumpleaños. Espero que pases un día maravilloso con tu familia. Abrazos, tía Rosa.",
+    ],
+    it: [
+      "Buongiorno, ti mando il rapporto che mi hai chiesto ieri. Se hai domande, fammi sapere. Saluti, Giulia.",
+      "Ciao Alex, ho preso i biglietti per il concerto di sabato. Ci vediamo alle sette davanti al teatro. Baci, Chiara.",
+      "Gentile Alex, allego la fattura di marzo. Gradirei il pagamento entro il quindici. Cordiali saluti, Paolo.",
+      "Ciao, domani non posso venire in ufficio perché ho il medico. Lavoro da casa. Un saluto, Luca.",
+      "Alex, grazie per l'aiuto con la presentazione. È andato tutto benissimo e il gruppo è contento.",
+      "Buonasera, confermo la prenotazione per quattro persone venerdì alle nove. Grazie, Ristorante Sole.",
+      "Ciao Alex, puoi rivedere il documento prima della riunione? Mi servono i tuoi commenti oggi. Grazie, Marta.",
+      "Caro Alex, buon compleanno! Spero che tu passi una giornata meravigliosa con la tua famiglia. Abbracci, zia Rosa.",
+    ],
+    pt: [
+      "Bom dia, envio o relatório que você pediu ontem. Se tiver dúvidas, me avise. Abraços, Ana.",
+      "Oi Alex, comprei os ingressos para o show de sábado. Nos encontramos às sete na frente do teatro. Beijos, Luísa.",
+      "Prezado Alex, segue em anexo a fatura de março. Agradeço o pagamento até o dia quinze. Atenciosamente, Carlos.",
+      "Oi, amanhã não vou ao escritório porque tenho médico. Vou trabalhar de casa. Um abraço, Pedro.",
+      "Alex, obrigado pela ajuda com a apresentação. Correu tudo muito bem e a equipe está contente.",
+      "Boa tarde, confirmo a reserva para quatro pessoas na sexta às nove. Obrigado, Restaurante Sol.",
+      "Oi Alex, pode revisar o documento antes da reunião? Preciso dos seus comentários hoje. Obrigada, Marta.",
+      "Querido Alex, feliz aniversário! Espero que tenha um dia maravilhoso com a sua família. Abraços, tia Rosa.",
+    ],
+  };
+  const MORE: Record<string, string[]> = {
+    es: [
+      "Hola Alex, no te olvides de traer las llaves del coche mañana. Te espero a las ocho. Un beso, Carmen.",
+      "Buenas, si puedes, mándame el contrato firmado antes del jueves. Me hace falta para el banco. Gracias, Jorge.",
+      "Alex, mi vuelo llega tarde y no voy a poder cenar contigo. Lo siento mucho. Hablamos mañana, Elena.",
+      "Hola a todos, el lunes no hay clase porque es fiesta. Nos vemos el martes a la misma hora. Profesora Ruiz.",
+      "Te escribo para decirte que ya pagué la luz y el agua de este mes. Si falta algo, me dices. Pablo.",
+    ],
+    it: [
+      "Ciao Alex, non dimenticare di portare le chiavi della macchina domani. Ti aspetto alle otto. Un bacio, Carla.",
+      "Salve, se puoi mandami il contratto firmato entro giovedì. Mi serve per la banca. Grazie, Giorgio.",
+      "Alex, il mio volo arriva tardi e non riesco a cenare con te. Mi dispiace tanto. Ci sentiamo domani, Elena.",
+      "Ciao a tutti, lunedì non c'è lezione perché è festa. Ci vediamo martedì alla stessa ora. Professoressa Rossi.",
+      "Ti scrivo per dirti che ho già pagato la luce e l'acqua di questo mese. Se manca qualcosa, dimmi pure. Paolo.",
+    ],
+    pt: [
+      "Oi Alex, não esquece de trazer as chaves do carro amanhã. Te espero às oito. Um beijo, Carla.",
+      "Olá, se puder me manda o contrato assinado até quinta. Preciso dele para o banco. Obrigado, Jorge.",
+      "Alex, o meu voo chega atrasado e não vou conseguir jantar com você. Sinto muito. Falamos amanhã, Helena.",
+      "Oi pessoal, na segunda não tem aula porque é feriado. Nos vemos na terça no mesmo horário. Professora Lima.",
+      "Te escrevo para dizer que já paguei a luz e a água deste mês. Se faltar alguma coisa, me fala. Paulo.",
+    ],
+    fr: [
+      "Salut Alex, n'oublie pas d'apporter les clés de la voiture demain. Je t'attends à huit heures. Bisous, Carole.",
+      "Bonjour, si possible, envoie-moi le contrat signé avant jeudi. J'en ai besoin pour la banque. Merci, Georges.",
+      "Alex, mon vol arrive en retard et je ne pourrai pas dîner avec toi. Je suis désolée. On se parle demain, Hélène.",
+      "Bonjour à tous, lundi il n'y a pas cours car c'est férié. On se voit mardi à la même heure. Madame Roux.",
+      "Je t'écris pour te dire que j'ai déjà payé l'électricité et l'eau ce mois-ci. S'il manque quelque chose, dis-moi. Paul.",
+    ],
+    de: [
+      "Hallo Alex, vergiss nicht, morgen die Autoschlüssel mitzubringen. Ich warte um acht auf dich. Kuss, Karla.",
+      "Guten Tag, schick mir bitte den unterschriebenen Vertrag bis Donnerstag. Ich brauche ihn für die Bank. Danke, Jörg.",
+      "Alex, mein Flug kommt spät an und ich schaffe das Abendessen mit dir nicht. Es tut mir leid. Bis morgen, Helene.",
+      "Hallo zusammen, am Montag ist kein Unterricht, weil Feiertag ist. Wir sehen uns am Dienstag zur gleichen Zeit. Frau Roth.",
+      "Ich schreibe dir, weil ich Strom und Wasser für diesen Monat schon bezahlt habe. Wenn noch etwas fehlt, sag es mir. Paul.",
+    ],
+  };
+  const all = ["es", "it", "pt"].flatMap(lang => EMAILS[lang].map(p => [lang, p] as const)).concat(Object.entries(MORE).flatMap(([lang, ps]) => ps.map(p => [lang, p] as const)));
+  const streamed = (answer: string) => {
+    const stream = new SpeechStream(100_000), language = new AnswerLanguage();
+    language.reset("read me the email");
+    const said: { text: string; lang: string | null }[] = [];
+    for (const word of answer.split(/(?<=\s)/)) said.push(...language.take(stream.push(word)));
+    said.push(...language.take(stream.finish(answer), true));
+    return said;
+  };
+  const flat = (text: string) => text.replace(/\s+/g, " ").trim();
+  /** Each piece of the passage in its language's voice, and the rest (lead-in, header lines, closing question) in Ember's. */
+  const voices = (before: string, passage: string, lang: string) => {
+    const said = streamed(`${before}\n\n${passage}\n\nWant me to reply?`);
+    return said.map(p => [flat(p.text), flat(passage).includes(flat(p.text)) && flat(p.text).length > 3 ? lang : null]).filter(([, want], i) => said[i].lang !== want);
+  };
+
+  it.each(["Here is the email from Ana:", "Here's the email from Alex's colleague:", "The message reads:"])("reads every ordinary Spanish, Italian, Portuguese, French and German email in its own voice after “%s” (voice-speaking-r11-1)", lead => {
+    // Kitten read 12 of the re-rate's 40 wholly with English sounds: their first 60 letters had too few short words.
+    for (const [lang, passage] of all) expect(voices(lead, passage, lang), `${lang}: ${passage}`).toEqual([]);
+  });
+
+  it.each([
+    "From: Sam\nSubject: Hi\nAttachments: a.pdf", "From: José\nReceived: today at 9:14", "Time: 9:14\nSender: José",
+    "**Sender:** José\n**Priority:** High", "From: Ana\nLabels: Work, Family\nFolder: Inbox", "Importance: Normal\nAttachment: plan.pdf",
+  ])("says header lines it doesn't know (%j) in Ember's voice, and the email after them in its own (voice-speaking-r11-2, voice-speaking-c11-1)", header => {
+    // A label outside the seven Ember knew was judged with the passage: the email went back to Kitten (18 of 40), or,
+    // once told, the English label was said by the passage's voice.
+    for (const [lang, passage] of all) expect(voices(header, passage, lang), `${lang}: ${passage}`).toEqual([]);
+  });
+
+  it("still says an English email, note or answer with labels and lead-ins wholly in Ember's own voice", () => {
+    for (const answer of [
+      "Here is the email from Ana:\n\nHi Alex, I can't make it to the meeting tomorrow. Can you send me the notes after? Thanks, Ana.\n\nWant me to reply?",
+      "Here is the email from Bob:\n\nNo worries about the delay. Do let me know if you need a hand with the slides. Cheers, Bob.",
+      "The message reads:\n\nCall me when you're in. I'm at the office till six, per usual.",
+      "Note: I saved the file in your Documents folder. Do you want me to open it?",
+      "Status: done. I moved 3 files to the Archive folder and left a note for you.",
+      "From: Sam\nSubject: Lunch\nAttachments: menu.pdf\n\nHey, want to grab lunch at noon? The new place on Main Street does a great burrito. Let me know! Sam",
+      "From: Ana\nPriority: High\n\nPlease sign the contract by Friday and send me a copy. I need it for the bank. Thanks.",
+      "Here's the note from Mum:\n\nNo need to bring anything, I have it all. See you at 7 o'clock.",
+      "Here is the email from Tom:\n\nMe and the team are in Lisbon next week. Do you want to meet up? Tom",
+      "Your next meeting: Design review at 3 pm in Room 4, with Ana and Tom.",
+    ]) expect(streamed(answer).filter(p => p.lang !== null), answer).toEqual([]);
+    for (const t of ["Tell me a joke.", "No, do it in a minute.", "Send me a copy per email.", "Do me a favour.", "O no, me again."]) expect(speechLanguage(t), t).toBeNull();
+  });
+
+  it.each(["Here is the email from Davide:", "Here's the message:", "From: Sam\nSubject: Hi"])("reads an everyday Italian email that opens with a greeting or holds few short words in the Italian voice after “%s” (voice-speaking-r12-1)", lead => {
+    // A second set, written apart from round eleven's: the re-rate's own (Kitten read 7 of 30 of them with English sounds)
+    // and the fix's. "Caro Alex" and "Ciao Alex" were taken for a name, "l'", "dal" and "suo" weren't counted, and a
+    // long second sentence left the first's short words under a sixth.
+    for (const passage of [
+      "Caro Alex, complimenti per la promozione! Festeggiamo sabato sera in pizzeria? Un abbraccio, Davide.",
+      "Ciao Alex, grazie mille per ieri sera. Cena buonissima e compagnia fantastica. Alla prossima! Elisa.",
+      "Gentile cliente, il suo ordine numero 4521 è stato spedito oggi. Arriverà entro tre giorni lavorativi.",
+      "Salve, vorrei disdire l'abbonamento a partire dal prossimo mese. Potete confermare? Distinti saluti, Carla.",
+      "Ciao Alex, in allegato il contratto firmato. Per qualsiasi dubbio scrivimi. Buon fine settimana. Sergio.",
+      "Ciao, domani piove, porta l'ombrello. Ci vediamo in ufficio.",
+      "Gentile utente, la sua password scadrà tra cinque giorni. Può cambiarla dal suo profilo.",
+      "Ciao, ho trovato un appartamento vicino all'ufficio. Due camere, balcone, affitto ragionevole. Che ne pensi?",
+      "Caro collega, allego il verbale dell'ultima riunione. Fammi sapere se manca qualcosa.",
+      "Ciao, la nonna sta meglio. L'hanno dimessa stamattina. Domani andiamo a trovarla insieme?",
+    ]) expect(voices(lead, passage, "it"), passage).toEqual([]);
+  });
+
+  it("says a passage's own one-word label (“Promemoria:”, “Avviso:”, “Recordatorio:”, “Aviso:”) in the passage's voice, never Kitten's (voice-speaking-r12-2)", () => {
+    for (const [passage, lang] of [
+      ["Promemoria: pagamento affitto in scadenza lunedì. Grazie per la puntualità.", "it"],
+      ["Avviso: domani manutenzione dalle otto alle dieci. Ci scusiamo per il disagio.", "it"],
+      ["Recordatorio: la cita con el dentista es el martes a las diez.", "es"],
+      ["Aviso: a reunião foi adiada para quinta-feira.", "pt"],
+    ] as const) expect(voices("Here is the email:", passage, lang), passage).toEqual([]);
+    // An English one stays Ember's, and so do a header and a lead-in of its own.
+    for (const answer of [
+      "Here is the email:\n\nReminder: the meeting moved to Thursday at ten. Please confirm.\n\nShould I write back?",
+      "Here are your notes:\n\nUpdate:\nThe build is green and the release is ready.",
+      "Here's the summary:\n\nNote: I saved the file in Documents.",
+      "The error says:\n\nWarning: disk almost full.",
+      "Here is the email from Ana:\n\nFrom: Ana\nSubject: Lunch\n\nAre we still on for Friday?",
+    ]) expect(streamed(answer).filter(p => p.lang !== null), answer).toEqual([]);
+  });
+
+  it("says an English label on its own line before a passage in another language in Ember's own voice, as the docs say (r12-voice-x12-6)", () => {
+    // LONE_LABEL took any lone word and a colon for the passage's own: "Reminder:" before an Italian notice was said
+    // with Italian sounds.
+    for (const [label, passage, lang] of [
+      ["Reminder:", "La riunione è spostata a martedì alle dieci. Grazie a tutti.", "it"],
+      ["Note:", "La riunione è spostata a martedì alle dieci. Grazie a tutti.", "it"],
+      ["**Update:**", "La cita con el dentista es el martes a las diez.", "es"],
+      ["Important:", "A reunião foi adiada para quinta-feira de manhã.", "pt"],
+      ["Warning:", "Le serveur sera arrêté ce soir à minuit pour la maintenance.", "fr"],
+    ] as const) {
+      const said = streamed(`Here's the message:\n\n${label}\n\n${passage}\n\nWant me to reply?`);
+      expect(said.filter(p => p.text.includes(label.replace(/\*/g, ""))).map(p => p.lang), label).toEqual([null]);
+      expect(said.filter(p => p.lang !== null).map(p => p.lang), `${label} ${passage}`).toContain(lang);
+    }
+    // The passage's own label in its language is still said in its voice (voice-speaking-r12-2).
+    const own = streamed("Here's the message:\n\nPromemoria:\n\nLa riunione è spostata a martedì alle dieci. Grazie a tutti.\n\nWant me to reply?");
+    expect(own.filter(p => p.text.includes("Promemoria")).map(p => p.lang)).toEqual(["it"]);
+  });
+
+  it("still says an English email with an Italian greeting, dish or place in it wholly in Ember's own voice (voice-speaking-r12-1)", () => {
+    for (const passage of [
+      "Ciao Alex, just confirming the payment arrived. Thanks!",
+      "I need the slides by five. Can you make it? Grazie mille!",
+      "We'll miss you so much. Good luck with the new job in London! Baci, Sofia.",
+      "Dinner at my parents' is at eight. Don't forget the bottle of Chianti we bought, and the tiramisù.",
+      "Your subscription to La Gazzetta has been renewed. Thanks for staying with us another year.",
+      "Caro, the meeting is at the Palazzo Vecchio at ten. Scusa for the short notice!",
+    ]) expect(streamed(`Here is the email from Ana:\n\n${passage}\n\nWant me to reply?`).filter(p => p.lang !== null), passage).toEqual([]);
+  });
+
+  it("never reads an English email that only opens with an Italian greeting or a sung “tra la la” in the Italian voice (r12-voice-x12-7)", () => {
+    // GREETINGS and the new short words ("tra", "mia") were enough on their own: the whole English sentence went to the
+    // Italian voice, which says nothing where none is installed.
+    for (const passage of [
+      "Cara mia, happy birthday!",
+      "Tra la la, the bakery is open again.",
+      "Cordiali saluti, Marco Rossi, Sales Manager.",
+      "Caro amico, long time no see. Lunch next week?",
+      "Buongiorno! Coffee at nine?",
+      "Scusa scusa, I forgot. Sending it now.",
+      "Ciao ciao, see you tomorrow.",
+      "La la land is on tonight, the late show.",
+    ]) expect(streamed(`Here is the email from Ana:\n\n${passage}\n\nWant me to reply?`).filter(p => p.lang !== null), passage).toEqual([]);
+    // An Italian one whose greeting comes with Italian after it is still Italian's (voice-speaking-r12-1).
+    for (const passage of [
+      "Cara mia, ci vediamo stasera alle otto.",
+      "Ciao, domani piove, porta l'ombrello.",
+      "Cordiali saluti, e grazie per la pazienza.",
+      "Tra cinque giorni la sua password scadrà.",
+    ]) expect(streamed(`Here is the email from Ana:\n\n${passage}\n\nWant me to reply?`).map(p => p.lang), passage).toContain("it");
+  });
+
+  it("never gives an email in a language it has no list for to a listed language's voice by the short words they share (r11-voice-x11-4)", () => {
+    // Polish emails went to a Portuguese voice ("o", "do", "na"), which says nothing where none is installed, and a
+    // Romanian one to a French voice; Kitten had read them.
+    for (const passage of [
+      "Cześć Alex, nie zapomnij jutro przynieść kluczy do samochodu. Czekam na ciebie o ósmej. Pozdrawiam, Karolina.",
+      "Hej, spotkanie zostało przeniesione na wtorek o dziesiątej. Daj znać, czy pasuje. Kasia.",
+      "Bună Alex, nu uita să aduci cheile de la mașină mâine. Te aștept la opt. Cu drag, Carmen.",
+      // Neighbours the review didn't give.
+      "Dzień dobry, przesyłam fakturę za marzec. Proszę o płatność do piętnastego. Pozdrawiam, Tomasz.",
+      "Ahoj Alexi, zítra nezapomeň přinést klíče od auta. Čekám na tebe v osm. Pa, Petra.",
+      "Hei Alex, husk å ta med bilnøklene i morgen. Jeg venter på deg klokka åtte. Klem, Kari.",
+      "Merhaba Alex, yarın arabanın anahtarlarını getirmeyi unutma. Seni saat sekizde bekliyorum. Sevgiler, Ayşe.",
+      "Szia Alex, ne felejtsd el holnap elhozni a kocsikulcsot. Nyolckor várlak. Puszi, Kati.",
+    ]) expect(streamed(`Here is the email from Ana:\n\n${passage}\n\nWant me to reply?`).filter(p => p.lang !== null), passage).toEqual([]);
+  });
+
+  it("never gives a Croatian, Slovene or Catalan email to an Italian or French voice by the short words they share (r11-voice-y11-3)", () => {
+    // They went to an Italian or a French voice, which says nothing where none is installed; Kitten had read them, as
+    // it reads every language it has no list for.
+    for (const passage of [
+      "Dobro jutro, šaljem ti izvještaj koji si tražio jučer. Ako imaš pitanja, javi mi. Pozdrav, Ana.",
+      "Dobar dan, šaljem ti dokumente za sastanak. Ako ti nešto treba, javi mi se. Pozdrav, Ana.",
+      "Dobro jutro, pošiljam ti poročilo, ki si ga prosil včeraj. Če imaš vprašanja, mi sporoči. Lep pozdrav, Ana.",
+      "Bon dia, us envio l'informe que em vau demanar ahir. Si teniu cap pregunta, aviseu-me. Salutacions, Joan.",
+      "Hola Alex, demà no podré venir a l'oficina perquè tinc metge. Treballaré des de casa. Una abraçada, Joan.",
+      "Bon dia, ja tinc les entrades per al concert de dissabte. Quedem a les set davant del teatre. Petons, Marta.",
+    ]) {
+      const wrong = streamed(`Here is the email from Ana:\n\n${passage}\n\nWant me to reply?`).filter(p => p.lang !== null);
+      expect(wrong, passage).toEqual([]);
+    }
+  });
+
+  it("keeps a header whose label or value is in the passage's language with the passage, as before (r10-voice-x10-2)", () => {
+    const said = streamed("Asunto: reunión del lunes\n\nHola Alex, mañana no puedo ir a la oficina. Te llamo por la tarde. Un abrazo, Ana.");
+    expect(said.find(p => p.text.includes("reunión"))?.lang).toBe("es");
+  });
 });
 
 describe("AnswerLanguage says an English answer's own closing words in Ember's voice after a passage it read out in another language", () => {

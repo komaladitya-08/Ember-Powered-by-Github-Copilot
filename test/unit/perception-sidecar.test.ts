@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
-import { AtspiSidecar, boundedLines, ID_BLOCK, MAX_LINE_BYTES, reviveDelay } from "../../app/main/perception/sidecar";
+import { AtspiSidecar, boundedLines, ID_BLOCK, MAX_LINE_BYTES, reviveDelay, VAULT_FILL_FAILED, VAULT_FILL_NO_ANSWER, VAULT_FILL_UNAVAILABLE } from "../../app/main/perception/sidecar";
 import type { Logger } from "../../app/main/logger";
 
 /**
@@ -41,6 +41,14 @@ readline.createInterface({ input: process.stdin }).on("line", line => {
     case "read_window": return ok({ window: null, nodes: [], ms: 1, secretKeys: [[":1.42", "/org/a11y/atspi/accessible/" + req.params.n]], withheldKeys: [[":1.42", "/row/" + req.params.n]] });
     case "mark_secret": return ok({ keys: req.params.ids.map(id => [":1.7", "/x/" + id]), withheldKeys: req.params.ids.map(id => [":1.7", "/cell/" + id]) });
     case "at_point": return ok({ chain: [], ms: 1, withheldKeys: [[":1.9", "/p"]] });
+    case "page_address": return ok(req.params.id === 7 ? { urls: ["https://pay.example/frame", "https://shop.example/"] } : req.params.id === 8 ? { urls: "https://x.example" } : { urls: [] });
+    case "self": return ok({ argv: process.argv, env: process.env });
+    case "vault_fill":
+      if (req.params.id === 1) return ok({ ok: true, took: true, keys: [[":1.5", "/field/1"]], withheldKeys: [[":1.5", "/row/1"]], echoed: req.params.text });
+      if (req.params.id === 2) return send({ jsonrpc: "2.0", id: req.id, error: { message: "background_unavailable: no EditableText for '" + req.params.text + "'" } });
+      if (req.params.id === 3) return send({ jsonrpc: "2.0", id: req.id, error: { message: "the app did not answer in time: '" + req.params.text + "'", detail: req.params.text } });
+      if (req.params.id === 4) return send({ jsonrpc: "2.0", id: req.id, error: { message: "GDBus.Error: could not set " + req.params.text } });
+      return;
     case "read_element": return ok({ role: "push button", name: "Save", states: [], bounds: { x: 10, y: 20, width: 30, height: 40 } });
     case "do_action": {
       const info = { role: "push button", name: "Save", states: [], bounds: { x: 10, y: 20, width: 30, height: 40 } };
@@ -187,7 +195,9 @@ describe("AtspiSidecar", () => {
     // lists the desktop: a helper killed for taking too long, or crashed, is replaced and connects right away.
     const log = path.join(dir, `status-${Date.now()}.log`);
     const { s } = sidecar(fake, process.execPath, { ...process.env, EMBER_FAKE_STATUS_LOG: log });
-    const asked = () => (fs.existsSync(log) ? fs.readFileSync(log, "utf8").trim().split("\n").map(Number) : []);
+    // Whole lines only: the file exists a moment before the helper's line is in it, and an empty read is no helper
+    // (macOS at bc47669 read it then, and took 0 for the new helper).
+    const asked = () => (fs.existsSync(log) ? fs.readFileSync(log, "utf8").split("\n").slice(0, -1).filter(l => l !== "").map(Number) : []);
     const waitAsked = async (n: number) => { for (let i = 0; i < 50 && asked().length < n; i++) await new Promise(r => setTimeout(r, 40)); return asked(); };
     const first = await s.request<Who>("whoami");
     expect(await failure(s.request("hang", {}, 100))).toMatch(/did not answer/);
@@ -295,5 +305,45 @@ describe("AtspiSidecar", () => {
     // A restarted helper gets a new range too.
     await failure(a.request("die"));
     expect(Number((await a.request<Who>("whoami")).base)).not.toBe(bases[0]);
+  });
+});
+
+describe("the vault's two calls to the helper (vault-2)", () => {
+  const CANARY = "s3cret-CANARY-71";
+
+  it("hands the value to the helper and passes on only whether it went in, with nothing of it in a log line", async () => {
+    const { s, lines } = sidecar();
+    const r = await s.vaultFill(1, CANARY);
+    expect(r).toEqual({ ok: true, took: true });
+    expect(JSON.stringify(r)).not.toContain(CANARY);
+    expect(JSON.stringify(lines)).not.toContain(CANARY);
+    // The field it filled is secret for the next helper process too.
+    await failure(s.request("die"));
+    expect(await s.request("remembered")).toEqual([[":1.5", "/field/1"]]);
+    expect(await s.request("withheld")).toEqual([[":1.5", "/row/1"]]);
+  });
+
+  it("gives the helper the value on its stdin only: never on its command line or in its environment (vault-3)", async () => {
+    const { s } = sidecar();
+    await s.vaultFill(1, CANARY);
+    const self = await s.request<{ argv: string[]; env: Record<string, string> }>("self");
+    expect(self.argv.length).toBeGreaterThan(1);
+    expect(JSON.stringify(self)).not.toContain(CANARY);
+  });
+
+  it("says which of three things went wrong in fixed words, never the helper's or the app's own", async () => {
+    const { s, lines } = sidecar();
+    expect(await failure(s.vaultFill(2, CANARY))).toBe(VAULT_FILL_UNAVAILABLE);
+    expect(await failure(s.vaultFill(3, CANARY))).toBe(VAULT_FILL_NO_ANSWER);
+    expect(await failure(s.vaultFill(4, CANARY))).toBe(VAULT_FILL_FAILED);
+    expect(JSON.stringify(lines)).not.toContain(CANARY);
+  });
+
+  it("reads a field's pages as the helper lists them, and takes no other shape of answer", async () => {
+    const { s } = sidecar();
+    expect(await s.pageAddress(7)).toEqual(["https://pay.example/frame", "https://shop.example/"]);
+    expect(await s.pageAddress(1)).toEqual([]);
+    expect(await failure(s.pageAddress(8))).toMatch(/isn't one/);
+    expect(await failure(s.request("fail"))).toBe("no such element");
   });
 });

@@ -1,6 +1,6 @@
 /**
- * Voice Match (in Voice) and "When Ember asks first" (in Apps & privacy): what the settings window shows, says to screen
- * readers and focuses for each state, as plain data. home/main.ts applies it to the page; the tests read it without a DOM.
+ * Voice Match (in Voice): what the settings window shows, says to screen readers and focuses for each state, as plain
+ * data. home/main.ts applies it to the page; the tests read it without a DOM.
  */
 import type { VoiceMatchStatus } from "../../shared/ipc";
 
@@ -10,7 +10,9 @@ export const MATCH_TEXT = {
   // Off, its default, anyone heard can answer a question by voice; on, only the owner's voice can say yes, and anyone
   // can still say no (owner decision of 2026-11-12, PLAN.md §2 "Approvals").
   none: "Ember hears anyone who talks to it, and anyone near the computer can answer its questions out loud. Teach it your voice, and only yours can agree to them. “Ember, stop” works for anyone.",
-  on: "On: only your voice can agree to Ember's questions out loud; anyone can still say “not now”. Ember still hears everyone. Your voiceprint stays on this computer.",
+  // A one-word yes holds too little voice to verify, and turned away it locks the question to clicks and keys: the
+  // owner's own "Yes." did so 4 of 4 with real models, "Yes, please go ahead" never (V2-F1).
+  on: "On: only your voice can agree to Ember's questions out loud, so answer them in a few words: one word is too short for Ember to tell it's you. Anyone can still say “not now”. Ember still hears everyone. Your voiceprint stays on this computer.",
   off: "Off: anyone near the computer can answer Ember's questions out loud. Ember keeps your voiceprint until you forget it.",
   /**
    * enrolVoice() said no: Ember isn't listening just now (muted, starting, or the microphone not working, which the voice
@@ -60,7 +62,7 @@ export const MATCH_TEXT = {
 export const MATCH_SAID = {
   none: "Requests from any voice are heard, and any voice can answer questions out loud. Teach your voice again, and only yours can agree to them.",
   teach: "Requests from any voice are heard, and any voice can answer questions out loud. Teach your voice, and only yours can agree to them.",
-  on: "On: only your voice can agree to questions out loud. Everyone is still heard. Your voiceprint stays on this computer.",
+  on: "On: only your voice can agree to questions out loud. Answer in a few words: one word is too short to tell it's you. Everyone is still heard. Your voiceprint stays on this computer.",
   off: "Off: any voice can answer questions out loud. Your voiceprint is kept until you forget it.",
   noModel: "Voice Match's model is missing or was damaged. Download it above to put that right.",
   learnt: "Your voice is learnt.",
@@ -188,30 +190,6 @@ export function matchAnnouncement(prev: VoiceMatchStatus | undefined, m: VoiceMa
   return null;
 }
 
-// ───── When Ember asks first ─────
-
-/** The settings keys behind the two switches; admin.ts managedKeys locks each one (allowGrants false, aiReview false). */
-export const TRUST_ROWS = [
-  { id: "trust-apps", key: "askedApps" },
-  { id: "trust-commands", key: "reviewCommands" },
-] as const;
-export const TRUST_TEXT = {
-  heading: "When Ember asks first",
-  apps: "Don't ask before working in an app I asked for help with",
-  appsHint: "The app you were in when you asked, or one your request names. Ember still asks before anything hard to undo, such as sending or deleting.",
-  commands: "Ask only about dangerous commands",
-  commandsHint: "A command Ember would ask about is first reviewed by Copilot against your request. A routine one runs in Ember's command window, where you can stop it during its countdown. Commands that touch passwords or keys or change the system always ask.",
-} as const;
 /** Said (and shown as the tooltip) on a row the organisation set, as on Ember's other managed rows. */
 export const MANAGED_TEXT = "Managed by your organisation";
 
-export interface TrustRowView { id: string; checked: boolean; disabled: boolean; locked: boolean; title: string; describedBy: string }
-
-export function trustView(trust: { askedApps: boolean; reviewCommands: boolean }, managed: ReadonlySet<string>): TrustRowView[] {
-  return TRUST_ROWS.map(({ id, key }) => {
-    const locked = managed.has(key);
-    // aria-describedby wins over the title, so the managed note is one of the descriptions too.
-    // Off while the organisation turns it off, as in force (the settings may still hold it on: safety-privacy-w5-2).
-    return { id, checked: trust[key] && !locked, disabled: locked, locked, title: locked ? MANAGED_TEXT : "", describedBy: locked ? `${id}-hint trust-managed` : `${id}-hint` };
-  });
-}

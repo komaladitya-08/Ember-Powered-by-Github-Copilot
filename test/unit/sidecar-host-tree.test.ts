@@ -107,6 +107,17 @@ describe("a read's nodes", () => {
     expect(readText("a￼b")).toBe("a￼b");
   });
 
+  it("says when a field's text was cut to what a read gives, and when it was read and found empty (r11-safety-x11-1, r11-safety-x11-2)", () => {
+    const b = build(snapshot(["Window", "W", {}, [
+      ["Edit", "Long", { value: "y".repeat(201), editable: true }], ["Edit", "Full", { value: "y".repeat(200), editable: true }],
+      ["Edit", "Empty", { value: "", editable: true }], ["Edit", "Unknown", { editable: true }],
+    ]]));
+    expect(b.nodes[1].textCut).toBe(true);
+    expect(b.nodes[2].textCut).toBeUndefined();
+    expect(b.nodes[3].empty).toBe(true);
+    expect(b.nodes[4].empty).toBeUndefined();
+  });
+
   it("asks for the focused field's selection, never a secret one's", () => {
     const b = build(snapshot(["Window", "W", {}, [
       ["Edit", "Name", { value: "Ada", focused: true }], ["Edit", "Password", { password: true, focused: true }],

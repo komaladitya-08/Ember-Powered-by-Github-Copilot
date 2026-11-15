@@ -336,7 +336,10 @@ class RemoteRun implements RemoteRunningCommand {
     if (this.stopWhy && STOP_ENDINGS.has(ended)) ended = ENDED_BY[this.stopWhy];
     const said = e.error ? remoteWords(e.error, 300) : "";
     const error = ended === "failed-to-start" ? (said ? `${label} said ${said}` : `${label} couldn't start it`) : said ? `${label} said ${said}` : undefined;
-    this.end({ code: e.code, signal: e.signal, ended, ms: this.elapsed(), ...(error ? { error } : {}) });
+    // The agent counted more bytes than came within the tail's wait: the output is incomplete, and says so.
+    const cut = ended === "exit" && this.received < d.outBytes;
+    if (cut) this.ctx.o.log.warn("remote.cmd_output_cut", { runId: this.runId, received: this.received, outBytes: d.outBytes });
+    this.end({ code: e.code, signal: e.signal, ended, ms: this.elapsed(), ...(error ? { error } : {}), ...(cut ? { outputCut: true } : {}) });
   }
 
   /** Ends the run before anything was sent, saying why. */

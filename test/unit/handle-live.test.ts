@@ -60,7 +60,7 @@ describe("the corner card's live region", () => {
     const text = "Dear team, the figures are attached. Bye";
     expect(live.bubble(ask({ whole: text, wholeSeen: false }), 2)).toContain(text);
     expect(live.bubble(listening, null)).toBe("");
-    expect(live.bubble(ask({ whole: text, wholeSeen: true }), 2)).toBe(`${WHOLE_READ_SAID} Ctrl+Alt+Y allow; Ctrl+Alt+N not now.`);
+    expect(live.bubble(ask({ whole: text, wholeSeen: true }), 2)).toBe(`${WHOLE_READ_SAID} To allow, press Ctrl+Alt+Y; for not now, press Ctrl+Alt+N.`);
     expect(live.bubble(carryingOn, null)).toBe("");
     expect(live.bubble(ask({ whole: text, wholeSeen: true }), 2)).toBeNull();
   });
@@ -101,7 +101,7 @@ describe("the corner card's live region", () => {
     const live = new HandleLive();
     const text = "Dear team, the figures are attached. Bye";
     expect(live.bubble(ask({ whole: text, wholeSeen: false }), 4)).toContain(text);
-    expect(live.bubble(ask({ whole: text, wholeSeen: true }), 4)).toBe(`${WHOLE_READ_SAID} Ctrl+Alt+Y allow; Ctrl+Alt+N not now.`);
+    expect(live.bubble(ask({ whole: text, wholeSeen: true }), 4)).toBe(`${WHOLE_READ_SAID} To allow, press Ctrl+Alt+Y; for not now, press Ctrl+Alt+N.`);
     // Another question about the same text, already read: the question, not "You can allow it now" alone.
     const again = live.bubble(ask({ whole: text, wholeSeen: true }), 5);
     expect(again).toMatch(/^Ember needs you: /);
@@ -195,5 +195,34 @@ describe("the corner card's live region", () => {
     expect(page).toContain('<div id="task-live" class="sr" role="status" aria-live="polite" aria-atomic="true"></div>');
     expect(main).toContain("const news = live.taskNews(tasksNow, newsHeld);");
     expect(main).toContain("newsSoon = setTimeout(() => { newsSoon = undefined; newsHeld = false; sayTasks(); }, LIVE_SETTLE_MS);");
+  });
+
+  it("says a task's end in the pill's region on a composited desktop too, where the overlay's cards say it to no one (accessibility-r9-1)", () => {
+    const main = readFileSync("app/renderer/handle/main.ts", "utf8");
+    const at = main.indexOf("  if (!fallback) {");
+    expect(at).toBeGreaterThan(0);
+    // Before the pill's early return, not only on the corner card's path.
+    const said = main.indexOf("  tasksNews(s);\n");
+    expect(said).toBeGreaterThan(0);
+    expect(said).toBeLessThan(at);
+    expect(main.indexOf("  tasksNews(s);\n", at)).toBe(-1);
+  });
+});
+
+describe("Ember's announcement of a step it took without asking (companion-r10-1)", () => {
+  const auto: BubbleView = { visible: true, mood: "acting", title: "Ember", thought: "Clicking in Thunderbird, without asking: Autopilot is on.", streaming: false, autonomous: true };
+
+  it("is said in the card's live region, once, and leaves it when Ember works on", () => {
+    const live = new HandleLive();
+    expect(live.bubble(auto, null)).toBe("Ember says: Clicking in Thunderbird, without asking: Autopilot is on.");
+    expect(live.bubble(auto, null)).toBeNull();
+    expect(live.bubble(carryingOn, null)).toBe("");
+  });
+
+  it("reaches the live region from the card and from the overlay's bubble, which pass the tag on", () => {
+    const handle = readFileSync(new URL("../../app/renderer/handle/main.ts", import.meta.url), "utf8");
+    expect(handle).toContain("...(b.autonomous ? { autonomous: true } : {})");
+    const bubble = readFileSync(new URL("../../packages/bubble/src/bubble.ts", import.meta.url), "utf8");
+    expect(bubble).toContain("...(this.root.dataset.autonomous === \"true\" ? { autonomous: true } : {})");
   });
 });

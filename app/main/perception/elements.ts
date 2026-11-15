@@ -15,7 +15,7 @@ const INTERACTIVE = new Set(["push button", "toggle button", "check box", "radio
 /** Text that labels a control: GTK's and Qt's labels, Chromium's plain text. Keep in step with LABEL_ROLES in ember_atspi.py. */
 const LABEL_ROLES = new Set(["label", "static", "caption"]);
 /** Input fields, whose label can make their contents secret (documents and terminals are not judged by name). */
-const FIELD_ROLES = new Set(["text", "entry", "password text", "spin button", "combo box"]);
+export const FIELD_ROLES = new Set(["text", "entry", "password text", "spin button", "combo box"]);
 /**
  * Controls a label on their row names (a label beside a link or a button is usually a heading).
  * Keep in step with LABELLED_ROLES in ember_atspi.py.
@@ -217,7 +217,7 @@ export function secretIds(nodes: AxNode[], labels = inferLabels(nodes, { anyAbov
 }
 
 /** The window itself (its title is reported as the window's): where looking up from a field stops. */
-const WINDOW_ROLES = new Set(["frame", "window", "dialog", "alert", "file chooser", "desktop frame", "application"]);
+export const WINDOW_ROLES = new Set(["frame", "window", "dialog", "alert", "file chooser", "desktop frame", "application"]);
 /** How far up from a secret field its containers are looked at. Keep in step with WITHHELD_LEVELS in ember_atspi.py. */
 const WITHHELD_LEVELS = 12;
 /** Text as a secret's value is looked for in a name: normalised, without whitespace or U+FFFC (see squash in ember_atspi.py). */
@@ -320,8 +320,26 @@ export function insideSecrets(nodes: AxNode[], secret: Set<number>): Set<number>
   return out;
 }
 
+/**
+ * What screen text passes before it is cut short for a model (main: the vault's redactor, app/main/vault/redact.ts).
+ * Where text leaves for a model a value the vault filled is replaced, but a value the cut fell in is no longer the
+ * value there, and its first part would go on (a window's title cut at 100 characters in the middle of the address
+ * that was filled: review vault-3-x9-2). So the whole text is redacted here, and then cut. Unset (the tests, Ember's
+ * agent on another computer, where nothing is filled): text is quoted as it is.
+ */
+let beforeCut: ((text: string) => string) | null = null;
+/** Sets (or, with null, clears) what every quoted screen text passes before it is cut. Main calls it once, before any read. */
+export function setQuoteRedactor(redact: ((text: string) => string) | null): void {
+  beforeCut = redact;
+}
+/** `s` as it may be cut: nothing of a text that couldn't be checked. */
+function whole(s: string): string {
+  if (!beforeCut) return s;
+  try { return beforeCut(s); } catch { return ""; }
+}
+
 /** JSON-quoted and truncated; "<" is escaped so screen text can't close the <screen> wrapper. */
-const quote = (s: string, max: number) => JSON.stringify(s.length > max ? s.slice(0, max) + "…" : s).replace(/</g, "\\u003c");
+const quote = (text: string, max: number) => { const s = whole(text); return JSON.stringify(s.length > max ? s.slice(0, max) + "…" : s).replace(/</g, "\\u003c"); };
 /** The same quoting for screen text that reaches the model anywhere else (titles, names, values). */
 export const quoteUntrusted = (s: string, max = 120) => quote(s, max);
 /**

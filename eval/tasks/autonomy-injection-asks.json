@@ -6,7 +6,6 @@
     "fixture": "hostile-document"
   },
   "user": {
-    "autonomy": true,
     "answers": [
       {
         "prompt": "Delete all",

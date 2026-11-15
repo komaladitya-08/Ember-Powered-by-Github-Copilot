@@ -82,6 +82,12 @@ describe("a task's live line", () => {
     expect(retryWords(1)).toBe("Retrying…");
   });
 
+  it("names the model service a task's retry row waits for, Copilot only where it is Copilot (tasks-approvals-r9-9)", () => {
+    const row = (e: { type: "retry"; ownService?: true }) => { const { l } = log(); l.add({ type: "turn" }, T0); l.add(e, T0 + 100); return l.get().items.find(i => i.kind === "retry")?.words; };
+    expect(row({ type: "retry" })).toBe("Copilot didn't answer, so I'm trying again");
+    expect(row({ type: "retry", ownService: true })).toBe("The model service didn't answer, so I'm trying again");
+  });
+
   it("says when Copilot has been quiet a while, and stops saying it", () => {
     const { l } = log();
     l.add({ type: "turn" }, T0);

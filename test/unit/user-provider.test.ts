@@ -5,6 +5,7 @@
  */
 
 import { problemInHome } from "../../app/renderer/home/copy";
+import { providerModelMissing } from "../../app/renderer/home/first-run-copy";
 import { describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
@@ -21,6 +22,7 @@ import { FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
 import { PROVIDER_IPC } from "../../app/shared/ipc";
 import type { SecretBox } from "../../app/main/agent/auth";
 import { friendlyError, problemTitle } from "../../app/main/agent/presenter";
+import { providerFailField } from "../../app/renderer/home/first-run-copy";
 import { doctorChecks } from "../../app/main/doctor";
 import { wslConsent } from "../../app/main/targets/consent";
 
@@ -131,6 +133,17 @@ describe("which endpoint is in force", () => {
     expect(providerWaitingHost(withProvider({ consent: { version: 0, at: null, host: "" } }), parseAdminPolicy("{", "/etc/ember/policy.json"))).toBeNull();
   });
 
+  it("waits for its card too while the record holds an agreed yes back, so nothing goes to Copilot in its place (r10-safety-x10-1)", () => {
+    expect(providerWaitingHost(withProvider(), NONE, true)).toBe("models.example.com");
+    expect(providerWaitingHost(withProvider({ on: false }), NONE, true)).toBeNull();
+    expect(providerWaitingHost(withProvider(), policy({ features: { userProvider: false } }), true)).toBeNull();
+    // main gives the agent, the hello and Home's composer that wait, held included, and keeps a sign-in found meanwhile.
+    const main = fs.readFileSync("app/main/main.ts", "utf8");
+    expect(main).toContain("const ownProviderWaiting = (): string | null => (fixedProvider ? null : providerWaitingHost(settings.get(), admin, providerRecord.held()));");
+    expect(main).toContain("providerWaiting: ownProviderWaiting,");
+    expect(main).toContain('if (phase === "signed-out" && !ownProviderWaiting()) { currentToken = null; keeper.use(null); }');
+  });
+
   it("gives way to the organisation's own provider, which always wins", () => {
     const admin = policy({ provider: { type: "azure", baseUrl: "https://corp.openai.azure.com" } });
     const fixed = { kind: "admin" as const, config: { type: "azure" as const, baseUrl: "https://corp.openai.azure.com" } };
@@ -227,6 +240,41 @@ describe("the API key's store", () => {
     expect(apiKeyProblem("k".repeat(9000))).not.toBeNull();
     expect(apiKeyProblem(42)).not.toBeNull();
     expect(apiKeyProblem(KEY)).toBeNull();
+  });
+
+  it("refuses a key pasted with a hidden character or curly quotes, in words about the key and without it, before anything is saved or sent (integrations-r9-5)", async () => {
+    const HIDDEN = "That key has a character an API key can't hold, such as a hidden character or curly quotes picked up in copying. Copy it again from your provider.";
+    // As they come out of a chat message, a document or a page that wraps long strings: a zero-width space, curly
+    // quotes, a word joiner, a full-width letter, a letter with an accent.
+    const pasted = ["sk-proj-abcdefghijklmnop\u200b", "\u201csk-proj-abcdefghijklmnop\u201d", "sk-proj-abcd\u2060efghijklmnop", "sk-proj-abcdefghijklmno\uff50", "sk-proj-abc\u00e9defghijklmnop", "sk-proj-\u00a0abcdefghijklmnop"];
+    const dir = tmp();
+    const store = new ProviderKeyStore(path.join(dir, "k.bin"), box());
+    for (const key of pasted) {
+      // Each was saved, and every check then said "Ember can't reach api.openai.com. Check the address and the network."
+      expect(apiKeyProblem(key)).toBe(HIDDEN);
+      expect(await store.save(key, "api.openai.com")).toEqual({ ok: false, why: HIDDEN });
+      // A check of a key just typed (first run's, Home's held edit): refused before the keyring or the network.
+      const fetch = vi.fn<FetchLike>();
+      expect(await testConnection(withProvider({ baseUrl: "https://api.openai.com/v1" }).provider, { key, host: "api.openai.com" }, fetch)).toEqual({ ok: false, why: "The saved API key has a character that can't be sent to api.openai.com. Replace the key." });
+      expect(fetch).not.toHaveBeenCalled();
+    }
+    expect(fs.readdirSync(dir)).toEqual([]);
+    // The sentence says what is wrong without the key or the character, and first run puts the focus on the key.
+    expect(HIDDEN).not.toMatch(/sk-|\u200b|\u201c/);
+    expect(providerFailField({ why: HIDDEN })).toBe("key");
+    expect(providerFailField({ why: "The saved API key has a character that can't be sent to api.openai.com. Replace the key." })).toBe("key");
+    // Spaces a paste leaves around the key are cut as before, a byte-order mark in front too; a key is still a key.
+    for (const key of [` ${KEY}\n`, `\ufeff${KEY}`, "sk-ant-api03-AbC_dEf-123", "0123456789abcdef0123456789abcdef", "a.b~c+d/e=="]) expect(apiKeyProblem(key)).toBeNull();
+  });
+
+  it("never blames the address or the network for a request its own key header stopped (integrations-r9-5)", async () => {
+    // Electron's fetch, as measured in this tree's Electron: a header value above U+00FF throws this before sending.
+    const refused = vi.fn<FetchLike>(async () => { throw new TypeError("Cannot convert argument to a ByteString because the character at index 26 has a value of 8203 which is greater than 255."); });
+    const r = await testConnection(withProvider().provider, STORED, refused);
+    expect(r).toEqual({ ok: false, why: "The saved API key has a character that can't be sent to models.example.com. Replace the key." });
+    // No cause: the start doesn't say "Start it" for a server on this computer, and the address isn't what gets the focus.
+    expect(providerDown(r, "localhost:11434", true)).toBeNull();
+    expect(providerFailField(r as { why: string })).toBe("key");
   });
 
   it("gives null for a key the keyring won't open, keeping the file to try again", async () => {
@@ -352,6 +400,26 @@ describe("Test connection", () => {
     expect(testRequest(settings({ baseUrl: "http://localhost:11434/v1" }), null)).toEqual({ url: "http://localhost:11434/v1/models", headers: {} });
   });
 
+  it("asks an address with a query where the runtime will ask it, so it never says Connected for one whose requests go elsewhere (integrations-x9-5)", async () => {
+    // The runtime puts its own path after the address as typed (measured on the bundled runtime, in
+    // test/integration/user-provider.test.ts: "POST /v1?tenant=a/chat/completions"), and so does the check. Moving the
+    // query behind "/models" asked a path the runtime never uses, and said "Connected" where no request could answer.
+    expect(testRequest(settings({ baseUrl: "https://gw.example.com/v1?tenant=a" }), null).url).toBe("https://gw.example.com/v1?tenant=a/models");
+    // A forwarder that takes the service's address as its query is asked for that service's list, as chat will be.
+    expect(testRequest(settings({ baseUrl: "https://fwd.example.com/to?url=https://api.openai.com/v1" }), null).url).toBe("https://fwd.example.com/to?url=https://api.openai.com/v1/models");
+    // A gateway that answers /v1/models and /v1/chat/completions and nothing else, as the review's did.
+    const asked: string[] = [];
+    const gateway: FetchLike = async url => {
+      asked.push(url);
+      const ok = new URL(url).pathname === "/v1/models";
+      return { ok, status: ok ? 200 : 404, json: async () => ({ object: "list", data: [{ id: "gpt-4.1" }] }) };
+    };
+    const p = settings({ baseUrl: "https://gw.example.com/v1?tenant=a" });
+    expect(await testConnection(p, null, gateway)).toEqual({ ok: false, why: "gw.example.com answered, but has no model list at that address. Check the endpoint and the provider.", cause: "no-list" });
+    expect(asked).toEqual(["https://gw.example.com/v1?tenant=a/models"]);
+    expect(await testConnection(settings({ baseUrl: "https://gw.example.com/v1" }), null, gateway)).toMatchObject({ ok: true, models: 1 });
+  });
+
   it("makes one GET that refuses redirects, so the key goes nowhere but the address entered", async () => {
     const fetch = answer(200, { data: [{ id: "a" }, { id: "b" }] });
     expect(await testConnection(settings(), STORED, fetch)).toEqual({ ok: true, host: "models.example.com", models: 2, ids: ["a", "b"] });
@@ -409,14 +477,29 @@ describe("Test connection", () => {
     expect(await testConnection(settings(), STORED, electron)).toMatchObject({ ok: false, cause: "refused" });
   });
 
-  it("names the models it lists, as suggestions, keeping only real ids and at most 50 (integrations-9)", async () => {
+  it("fails first run's check on a mistyped name against a service that lists more than 50 models (first-run-r9-1)", async () => {
+    // OpenAI's list is one unpaged page of many more than 50: "gpt4.1" for "gpt-4.1" passed as Connected, and the try
+    // step's first question then failed with "The model I'm set to use isn't available".
+    const sixty = [{ id: "gpt-4.1" }, { id: "gpt-4.1-mini" }, ...Array.from({ length: 58 }, (_, i) => ({ id: `m-${i}` }))];
+    const tried = await testConnection(settings(), STORED, answer(200, { data: sixty }));
+    if (!tried.ok) throw new Error(tried.why);
+    expect(tried.models).toBe(60);
+    expect(providerModelMissing(tried, { type: "openai", conductor: "gpt4.1", worker: "" })?.field).toBe("conductor");
+    expect(providerModelMissing(tried, { type: "openai", conductor: "gpt-4.1", worker: "m-57" })).toBeNull();
+    // Its line still names only a few of them.
+    expect(providerModelMissing(tried, { type: "openai", conductor: "gpt4.1", worker: "" })?.line).toBe("models.example.com answered, but it doesn't list gpt4.1. It lists 60 models, such as gpt-4.1, gpt-4.1-mini, m-0 and m-1. Enter a name it lists.");
+  });
+
+  it("names the models it lists, as suggestions, keeping only real ids and at most 1,000 (integrations-9, first-run-r9-1)", async () => {
     const shown = await testConnection(settings(), STORED, answer(200, { data: [{ id: "gpt-4.1" }, { id: "has space" }, { id: "<b>x</b>" }, { id: "gpt-4.1" }, { id: 7 }, {}, { id: "o3-mini" }] }));
     expect(shown).toEqual({ ok: true, host: "models.example.com", models: 7, ids: ["gpt-4.1", "o3-mini"] });
     // Ollama's own list names them by name.
     expect(listedModelIds([{ name: "llama3.2:3b" }, { model: "qwen2.5:7b" }])).toEqual(["llama3.2:3b", "qwen2.5:7b"]);
-    const many = Array.from({ length: 80 }, (_, i) => ({ id: `m-${i}` }));
+    // All of a list of 80 are kept, for first run's check (first-run-r9-1); the fields suggest the first 50.
+    expect(listedModelIds(Array.from({ length: 80 }, (_, i) => ({ id: `m-${i}` })))).toHaveLength(80);
+    const many = Array.from({ length: 1200 }, (_, i) => ({ id: `m-${i}` }));
     expect(listedModelIds(many)).toHaveLength(TEST_IDS_MAX);
-    expect(TEST_IDS_MAX).toBe(50);
+    expect(TEST_IDS_MAX).toBe(1000);
     // A list with none it can name says only how many.
     expect(await testConnection(settings(), STORED, answer(200, { data: [{ object: "model" }] }))).toEqual({ ok: true, host: "models.example.com", models: 1 });
   });

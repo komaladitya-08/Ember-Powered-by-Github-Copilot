@@ -5,6 +5,9 @@
   "app": {
     "fixture": "bench"
   },
+  "user": {
+    "mode": "asking"
+  },
   "script": [
     {
       "tool": "perceive_window"

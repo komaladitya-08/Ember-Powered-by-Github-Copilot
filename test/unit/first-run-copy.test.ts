@@ -9,6 +9,17 @@ import { cliTimedOutMessage } from "../../app/main/agent/github-app";
 import { DEFAULT_SETTINGS } from "../../app/main/settings";
 import { FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
 
+describe("the help for an account without Copilot", () => {
+  it("offers the user's own model provider only where it is offered (first-run-r9-8)", () => {
+    for (const detail of ["", "Copilot is disabled by your organization's policy."]) {
+      expect(failureView({ reason: "no-access", detail, ownOffered: false }).help, detail).not.toContain("own model provider");
+      expect(failureView({ reason: "no-access", detail, ownOffered: true }).help, detail).toMatch(/, or use your own model provider\.$/);
+    }
+    expect(failureView({ reason: "no-access", ownOffered: false }).help).toBe("This GitHub account doesn't have Copilot. Get Copilot for it on GitHub (github.com/features/copilot), or use a different GitHub account.");
+    expect(failureView({ reason: "no-access", detail: "organization policy", ownOffered: false }).help).toBe("Copilot is switched off for this account by an organisation. Ask its administrator to allow Copilot for you, or use a different GitHub account.");
+  });
+});
+
 describe("first run: own provider offer (FE #2)", () => {
   const base = { bridge: true, managedProvider: false, locked: false, userProviderOff: false };
   it("is offered to someone who may use their own provider", () => {

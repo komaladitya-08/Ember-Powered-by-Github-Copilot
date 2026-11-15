@@ -6,6 +6,9 @@ import type { AgentStatus, AnswerStream, TranscriptEntry } from "../main/agent/h
 import type { MemoryModelStatus } from "../main/memory/better-recall";
 import type { TaskEntry } from "../shared/activity";
 import { TARGETS_IPC, type TargetSummary } from "../shared/targets";
+import { APPROVALS_IPC, type ApprovalsState } from "../shared/approvals";
+import { FIRST_RUN_IPC } from "../shared/first-run";
+import { VAULT_IPC, type EmberVaultHomeApi } from "../shared/vault";
 import type { EmberTargetsApi } from "../renderer/home/computers-copy";
 
 const listen = <T>(channel: string, fn: (v: T) => void) => {
@@ -102,6 +105,10 @@ const api: EmberHomeApi = {
   onPresence: fn => listen<Presence>(IPC.presenceChanged, fn),
   onSettingsNotice: fn => listen<string | null>(IPC.settingsNotice, fn),
   onAdminChanged: fn => listen<Status["admin"]>(IPC.adminChanged, fn),
+  onApprovals: fn => listen<ApprovalsState>(APPROVALS_IPC.changed, fn),
+  chooseMode: (mode, version) => ipcRenderer.invoke(APPROVALS_IPC.choose, mode, version),
+  firstRunView: () => ipcRenderer.invoke(FIRST_RUN_IPC.view),
+  agreeFirstRun: (choice, sha256) => ipcRenderer.invoke(FIRST_RUN_IPC.agree, choice, sha256),
   onVisibility: fn => listen<boolean>(IPC.homeVisibility, v => fn(v !== false)),
   quit: () => ipcRenderer.invoke(IPC.quit),
   restart: () => ipcRenderer.invoke(IPC.restart),
@@ -154,3 +161,13 @@ const provider: EmberProviderApi = {
   test: draft => (draft ? ipcRenderer.invoke(PROVIDER_IPC.test, draft) : ipcRenderer.invoke(PROVIDER_IPC.test)),
 };
 contextBridge.exposeInMainWorld("emberProvider", provider);
+
+// The vault's list (Home › Apps & privacy): its Home channels only (the Secure Form's are its own window's). What comes
+// back is each entry's kind, destination and date, never a value; main takes them only from this window.
+const vault: EmberVaultHomeApi = {
+  state: () => ipcRenderer.invoke(VAULT_IPC.list),
+  onChanged: fn => listen<null>(VAULT_IPC.changed, () => fn()),
+  forget: id => ipcRenderer.invoke(VAULT_IPC.forget, id),
+  forgetAll: () => ipcRenderer.invoke(VAULT_IPC.forgetAll),
+};
+contextBridge.exposeInMainWorld("emberVault", vault);

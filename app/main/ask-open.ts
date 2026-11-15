@@ -95,3 +95,57 @@ function keyboardIn(ws: Pick<UserWindows<unknown>, "keyboardFocus"> | null): num
     return 0; // Can't be told: the read finds what it can.
   }
 }
+
+/**
+ * How the box's read of the window it opened over runs (cifix-x9-9, a probe's switch only): at once, as always
+ * ("now"), not at all ("off"), or `ms` after the box shows ("delay"). The Windows suite opens the box with each to see
+ * whether the app underneath taking the foreground back moves with that read. Anything but "off" or "delay:<ms>" (0 to
+ * 30 s) is "now", and main reads the switch through devEnv, so a packaged Ember always reads at once.
+ */
+export type AskReadPlan = { kind: "now" } | { kind: "off" } | { kind: "delay"; ms: number } | { kind: "skip"; stage: AskReadStage };
+
+/**
+ * A stage of the read the probe may leave out, one per opening ("skip:<stage>", cifix-x9-10), to find which part of it
+ * hands the foreground to the window read: "read", the accessibility host's read_window call itself (what is left is
+ * main's own part); in the host, "lookup", all after listing the windows and finding the one read (no tree walk);
+ * "texts", the text and selection reads of its fields; "looks", the looks at fields around secret ones, with nothing of
+ * the read given back at all (no field is then left unredacted). Each only reads less and gives back less.
+ * "time-texts" leaves nothing out: the host times each text look and its steps, and main logs them (cifix-x9-11).
+ */
+export const ASK_READ_STAGES = ["read", "lookup", "texts", "looks", "time-texts"] as const;
+export type AskReadStage = typeof ASK_READ_STAGES[number];
+
+/** The plan for `value`, EMBER_TEST_ASK_READ as devEnv gives it (undefined when packaged or unset). */
+export function askReadPlan(value: string | undefined): AskReadPlan {
+  if (value === "off") return { kind: "off" };
+  const skip = value === undefined ? null : /^skip:([a-z-]+)$/.exec(value);
+  if (skip && (ASK_READ_STAGES as readonly string[]).includes(skip[1])) return { kind: "skip", stage: skip[1] as AskReadStage };
+  const m = value === undefined ? null : /^delay:(\d{1,5})$/.exec(value);
+  const ms = m ? Number(m[1]) : NaN;
+  return m && ms <= 30_000 ? { kind: "delay", ms } : { kind: "now" };
+}
+
+/**
+ * Runs the read as `plan` says and gives what it will answer: `start` begins the read and gives its answer (main's
+ * captureContext), at once for "now" (the same promise, nothing else done); never for "off" (null); after `later`'s
+ * delay for "delay", telling `started` when it begins.
+ */
+export function readAsPlanned<C>(plan: AskReadPlan, start: () => Promise<C | null>, later: (run: () => void, ms: number) => void,
+  started?: () => void): Promise<C | null> {
+  if (plan.kind === "now" || plan.kind === "skip") return start();
+  if (plan.kind === "off") return Promise.resolve(null);
+  return new Promise<C | null>(resolve => later(() => {
+    started?.();
+    start().then(resolve, () => resolve(null));
+  }, plan.ms));
+}
+
+/**
+ * The read_window parameters for `plan` (cifix-x9-10): null to make no host read at all ("skip:read"), the host's
+ * stage named as `probeSkip` for the stages it leaves out, else `params` themselves, unchanged.
+ */
+export function probeReadParams<P extends object>(plan: AskReadPlan, params: P): (P & { probeSkip?: AskReadStage }) | null {
+  if (plan.kind !== "skip") return params;
+  if (plan.stage === "read") return null;
+  return { ...params, probeSkip: plan.stage };
+}

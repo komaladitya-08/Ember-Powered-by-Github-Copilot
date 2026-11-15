@@ -6,6 +6,8 @@
  * no Electron and no Node, so both load it.
  */
 
+import { modeIntent } from "../main/agent/autonomy-intent";
+
 /** The name as the recognizer may write it. */
 const NAMES = new Set(["ember", "amber", "emma"]);
 /** Words that only lead into an answer: one of them may ("Okay, go ahead"), never a run of them (review of #143). */
@@ -29,7 +31,10 @@ function withoutLead(words: string[]): string[] {
   return words.slice(i);
 }
 
-/** The answer without what trails it: "please", "thanks" or "thank you", and the name, each at most once. */
+/**
+ * The answer without what trails it: "please", "thanks" or "thank you", and the name, each at most once. Taken off
+ * before what leads it (withoutLead), so a filler left as the last word is the answer itself ("Okay, thanks.").
+ */
 function withoutTail(words: string[]): string[] {
   const w = [...words];
   const seen = new Set<string>();
@@ -61,6 +66,10 @@ export const SPOKEN_YES: ReadonlySet<string> = new Set([
   "okay", "ok", "alright", "all right", "fine", "sounds good", "that sounds good", "go on", "yes go on",
   "go with it", "yes go with it", "let's go with it", "accept", "accept it", "i accept", "yes i accept", "continue", "yes continue",
   "confirm", "i confirm", "yes confirm", "confirmed",
+  // The symmetric forms of those already here (V2-F7: "You may." and "Approved." were answers, "You may go ahead." and
+  // "Accepted." weren't). None of them reads both ways; "You can" alone still isn't one.
+  "you may go ahead", "you can go ahead", "i approve", "accepted", "go right ahead", "yes okay", "yeah okay", "sure okay",
+  "yeah fine", "yes of course", "i agree",
   // Misheard (Moonshine): "allow" as "aloud", "a loud", "a low" or "allowed"; "go ahead" as "go a head".
   "aloud", "a loud", "a low", "allowed", "yes aloud", "go a head", "yes go a head",
   // Longer ways to say it, so Voice Match has enough of the voice to vouch for it (match.ts APPROVAL_MIN_SECONDS).
@@ -74,7 +83,48 @@ export const SPOKEN_NO: ReadonlySet<string> = new Set([
   "not now", "no", "no no", "no thanks", "no thank you", "nope", "nah", "no way", "don't", "do not", "don't do it", "no don't", "no don't do it",
   "deny", "deny it", "not now thanks", "no not now", "not yet", "no not yet", "not right now", "no not right now",
   "don't allow", "don't allow it", "don't allow that", "do not allow it", "no don't allow it",
+  // The symmetric forms (V2-F7: "Don't do it." and "Deny." were answers, "Don't do that." and "Denied." weren't).
+  "don't do that", "do not do it", "do not do that", "denied", "do not allow", "do not allow that", "don't allow this",
+  "absolutely not", "not today", "no no no",
+  // Everyday refusals that don't start with a no word (voice-listening-r10-1): they vanished in the answer window, or
+  // went to Copilot as a request while the question waited. A no is anyone's and declining is the safe side, so noes
+  // are heard more widely than yeses.
+  "of course not", "certainly not", "definitely not", "hell no", "i said no", "i said not now", "i said don't", "never", "no never",
+  "leave it", "no leave it", "leave it alone", "not at all", "rather not", "i'd rather not", "i would rather not", "better not",
+  "i don't think so", "no i don't think so", "not a chance", "no chance",
 ]);
+
+/**
+ * The ways `words` may read as an answer: without what leads and trails it, and without a "please" that leads it, which
+ * leads many answers ("please go ahead") and is part of one ("please do"). (The tail first: a lone "okay" before
+ * "thanks" is the answer, not a filler leading into one. "Okay, thanks." was no answer where "Sounds good, thanks." was
+ * one: V2-S10.)
+ */
+function coresOf(spoken: string[]): string[] {
+  const words = withoutLead(withoutTail(spoken));
+  return [words.join(" "), ...(words[0] === "please" ? [words.slice(1).join(" ")] : [])];
+}
+
+/** What may lead a no and no yes ("Just leave it.", "I said leave it.", "Thanks, leave it."): r10-voice-x10-1. */
+const NO_LEADS = [["just"], ["i", "said"], ["thanks"], ["thank", "you"]];
+/** What may trail a no and no yes ("Leave it for now.", "Leave it be."): r10-voice-x10-1. */
+const NO_TAILS = [["for", "now"], ["be"], ["alone"]];
+
+/**
+ * The ways `spoken` may read as a no: as an answer (coresOf), and without a word or two around it that only a no takes
+ * here, each at most once. Only for noes: "Thanks, go ahead." and "Just do it." are no more a yes than before, so a
+ * refusal is heard more widely than an assent, the safe side.
+ */
+function noCoresOf(spoken: string[]): string[] {
+  const cores = coresOf(spoken);
+  let words = withoutLead(withoutTail(spoken));
+  for (const lead of NO_LEADS) if (lead.every((w, i) => words[i] === w) && words.length > lead.length) words = words.slice(lead.length);
+  for (const tail of NO_TAILS) if (tail.every((w, i) => words[words.length - tail.length + i] === w) && words.length > tail.length) words = words.slice(0, -tail.length);
+  return [...cores, words.join(" ")];
+}
+
+/** The noes of more than one word ("leave it", "rather not"), found inside a near-miss (nearAnswer). */
+const NO_PHRASES = [...SPOKEN_NO].filter(n => n.includes(" ")).map(n => ` ${n} `);
 
 /** Lower case, straight apostrophes, no closing punctuation, single spaces. */
 const norm = (text: string) => text.trim().toLowerCase().replace(/[‘’]/g, "'").replace(/[\s?!.…]+$/u, "").replace(/\s+/g, " ").replace(/,(?=\S)/g, ", ");
@@ -88,13 +138,175 @@ export function spokenAnswer(text: string): "allow" | "deny" | null {
   if (!t || t.length > 60) return null;
   // Punctuation first ("Hey, Ember. Allow."), then what leads and trails the answer.
   const spoken = t.replace(/[,.!;:]/g, " ").split(/\s+/).filter(Boolean);
-  const words = withoutTail(withoutLead(spoken));
-  // "Please" leads many answers ("please go ahead"), and is part of one ("please do").
-  const cores = [words.join(" "), ...(words[0] === "please" ? [words.slice(1).join(" ")] : [])];
-  if (cores.some(c => SPOKEN_NO.has(c))) return "deny";
+  const cores = coresOf(spoken);
+  if (noCoresOf(spoken).some(c => SPOKEN_NO.has(c))) return "deny";
+  // A no said in short parts, each a no ("No thank you, leave it.", "Nope, not today."): a refusal (voice-listening-r10-1).
+  // Only noes: a yes said so ("Yes, go on, do it.") is no more one than before, and a no with a yes or a request in it
+  // ("No, do it.", "No, leave it open and send it.") is no answer.
+  // ("Hey Ember, no thanks, leave it.", "Not now, thanks, leave it.": a part that only calls Ember or thanks it is no part
+  // of the answer.)
+  const parts = t.split(/[,.!;:]/).map(p => p.trim().split(/\s+/).filter(Boolean)).filter(p => p.length && withoutTail(p).length);
+  while (parts.length > 1 && withoutLead(parts[0]).length === 0) parts.shift();
+  if (parts.length > 1 && parts.every(p => noCoresOf(p).some(c => SPOKEN_NO.has(c)))) return "deny";
   if (!cores.some(c => SPOKEN_YES.has(c))) return null;
   // "Please" once in all: "please please do" pads a short yes past the length check (security review of #143).
   if (spoken.filter(w => w === "please").length > 1) return null;
   // Asked as a question, whatever follows the "?" ("Allow it?!", "Allow?."): not a yes.
   return /[?？]$/.test(text.trim().replace(/[\s.!…"”’')\]]+$/u, "")) ? null : "allow";
+}
+
+/** The words a near-miss answer starts with (nearAnswer). */
+const ANSWER_LEADS = new Set(["yes", "yeah", "yep", "okay", "ok", "sure", "fine", "allow", "no", "nope", "don't", "not", "absolutely", "deny"]);
+
+/** The words main's stop takes (stopRequest in app/main/agent/status.ts): what holds one is never a near-miss answer. */
+const STOP_WORDS = new Set(["stop", "cancel", "abort", "halt"]);
+
+/** The words that hold a no wherever they come (nearAnswer): "That's not what I meant.", "I never said that." */
+const NO_WORDS = new Set(["no", "not", "don't", "dont", "never", "nope", "nah"]);
+/** A hold, said whole ("Wait.", "Hang on a second."): the user hasn't answered yet (nearAnswer). */
+const HOLD = /^(?:(?:no|okay|ok|um|uh|oh|well|just|so)\s+)*(?:wait|hold on|hang on|one moment|one sec|one second|just a moment|just a second|give me a (?:moment|second|sec|minute))(?:\s+(?:a\s+)?(?:moment|second|sec|minute|please))*$/;
+/** The words of an assent that isn't a yes ("Okay then.", "Perfect.", "Sounds great.": nearAnswer). */
+const ASSENT = new Set(["okay", "ok", "alright", "all", "right", "great", "perfect", "cool", "nice", "awesome", "wonderful", "excellent", "good", "fine", "sounds", "works", "got", "it", "that's", "that", "then", "so", "oh", "well", "um", "uh", "very", "for", "me"]);
+const ASSENT_CORE = new Set(["okay", "ok", "alright", "right", "great", "perfect", "cool", "nice", "awesome", "wonderful", "excellent", "good", "fine", "works", "got"]);
+/**
+ * Words that say yes or no by themselves, or press one ("Definitely.", "Of course, go ahead.", "Keep going."): one of
+ * them makes an utterance of answer words only a near-miss (voice-listening-r11-1).
+ */
+const SAYS_SO = new Set([
+  ...[...SPOKEN_YES, ...SPOKEN_NO].filter(a => !a.includes(" ")), ...NO_WORDS, "course", "go", "do", "agree", "definitely",
+  "certainly", "absolutely", "totally", "indeed", "exactly", "correct", "affirmative", "gladly", "going", "carry",
+]);
+/**
+ * The words an answer is made of and nothing more: every word of every yes and no, the fillers, courtesies and emphases
+ * around one, and an assent's words. An utterance of these only, with one that says so (SAYS_SO), asks or tells Ember
+ * nothing but an answer, however it is put, so while a question waits it is a near-miss: "Just do it.", "Hell yes.",
+ * "Thanks, go ahead." vanished in the answer window or went to Copilot as a request while the question stayed up
+ * (voice-listening-r11-1). Never a yes: a word that isn't here ("Go ahead and send it.") makes it a request again.
+ */
+const ANSWER_WORDS = new Set([
+  ...[...SPOKEN_YES, ...SPOKEN_NO].flatMap(a => a.split(" ")), ...FILLERS, ...ASSENT, ...SAYS_SO, "hey", ...NAMES,
+  "just", "hell", "thanks", "thank", "you", "please", "really", "on", "keep", "then", "but", "wait", "hold", "hang", "problem",
+  "worries", "objection", "objections",
+]);
+
+/** The words a near-miss answer by name may start with and still be a yes, put with more (r11-voice-x11-1). */
+/** Words that make what a yes leads a correction ("Okay, email Sam instead."): r11-voice-y11-2. */
+const CORRECTS = new Set(["instead", "rather", "but"]);
+const YES_LEADS = new Set(["yes", "yeah", "yep", "yup", "sure", "okay", "ok", "fine", "allow", "alright"]);
+
+/**
+ * What makes a few words a request Ember can act on, not an answer: a verb of what it does, the words of main's own
+ * requests ("Status.", "Once more.", "Catch me up.": status.ts), and what asks something. A short utterance with none of
+ * these while a question waits is held as a near-miss by default ("Agreed.", "By all means.", "Be my guest.": an assent
+ * that isn't on the list, never taken on a guess and never sent: r11-voice-x11-2), so a new way to say yes falls on the
+ * safe side, and at worst a short request without such a word is held with the note.
+ */
+const REQUEST_WORDS = new Set([
+  "open", "close", "quit", "exit", "send", "email", "mail", "text", "message", "reply", "respond", "forward", "write", "type",
+  "draft", "compose", "read", "show", "tell", "say", "find", "search", "look", "check", "see", "list", "count", "add",
+  "remove", "delete", "erase", "clear", "save", "print", "copy", "paste", "cut", "move", "rename", "create", "start",
+  "launch", "run", "play", "pause", "resume", "skip", "turn", "switch", "set", "change", "put", "use", "try", "retry",
+  "repeat", "call", "ring", "phone", "schedule", "book", "remind", "translate", "summarise", "summarize", "explain",
+  "describe", "help", "give", "get", "take", "bring", "fetch", "download", "upload", "install", "uninstall", "update",
+  "share", "post", "attach", "edit", "fix", "undo", "redo", "scroll", "click", "press", "select", "choose", "pick", "fill",
+  "sign", "log", "buy", "order", "pay", "hide", "minimise", "minimize", "maximise", "maximize", "zoom", "increase",
+  "decrease", "raise", "lower", "mute", "unmute", "speak", "talk", "listen", "lock", "unlock", "empty", "sort", "filter",
+  "highlight", "format", "insert", "replace", "merge", "split", "join", "connect", "disconnect", "mark", "flag", "archive",
+  "star", "pin", "unpin", "reload", "refresh", "restart", "reboot", "shut", "compare", "calculate", "convert", "organise",
+  "organize", "plan", "note", "record", "remember", "watch", "ask", "keep", "catch", "want", "need", "meant", "make",
+  "status", "progress", "again", "more", "miss", "missed", "screen", "louder", "quieter", "slower", "faster", "back", "next",
+  "previous", "instead", "anything", "new", "happen", "happened",
+  // A statement, not an assent ("Number five is ready."): the room's talk, which goes nowhere in the answer window.
+  "is", "are", "was", "were", "isn't", "aren't", "wasn't", "weren't",
+]);
+/** What tells of something done ("I told you.", "We finished.", "She called."): the room's talk, not an assent. */
+const TELLS = /^(?:i|we|you|he|she|they|it)\s+(?:\S+ed|told|said|saw|went|came|left|had|made|took|gave|knew|thought|found|did|got|sent|wrote|read)\b/;
+/** The words that make a verb after them a noun ("your call", "good call", "a plan"). */
+const OWNED = new Set(["your", "my", "our", "their", "his", "her", "good", "fair", "a", "an", "the"]);
+/** What asks something, said without its question mark ("What's new", "Do you agree", "Can you do it": r11-voice-x11-3). */
+const ASKS = /^(?:(?:what|why|how|which|where|who|whom|whose|when)(?:'s|'re|'d|'ll)?\b(?! not$)|(?:do|did)\s+(?:you|i|we|he|she|they)\b|(?:does|can|could|would|will|should|shall|may|might|is|are|was|were|am|have|has|had)\s+(?:you|i|we|it|that|this|there|he|she|they|anything|everything)\b)/;
+/** Courtesies and sounds alone ("Thanks.", "Thank you so much.", "Um."): no answer, and a closer as ever. */
+const SOUNDS = new Set(["um", "uh", "hmm", "er", "erm", "ah", "oh", "well", "hey", ...NAMES]);
+const COURTESY = new Set(["thanks", "thank", "please", "cheers", "ta"]);
+const NO_ANSWER_WORDS = new Set([...SOUNDS, ...COURTESY, "you", "much", "so", "very", "a", "lot"]);
+const noAnswer = (words: string[]) => words.every(w => NO_ANSWER_WORDS.has(w)) && (words.some(w => COURTESY.has(w)) || words.every(w => SOUNDS.has(w)));
+/** An assent said as a sound ("Mm-hmm.", "Uh-huh.", "Mhm."): the recognizer's fillers, but a yes while a question waits. */
+const ASSENT_SOUND = /^\W*(?:m+-?h+m+|m+h+m+|uh-? ?huh)\W*$/i;
+
+/** Whether `text` is an assent said as a sound ("Mm-hmm."), which the voice process otherwise takes for a filler. */
+export function assentSound(text: string): boolean {
+  return ASSENT_SOUND.test(text.trim());
+}
+
+/**
+ * A few words that sound like an answer and aren't one, which while a question waits are most likely one misheard or
+ * hedged: the voice process sends nothing and the question says once how to answer (V2-F5). They are:
+ * - up to four words, after "hey" and the name, the first a yes or no word ("do not" too): "Yes, but wait.", "No, hang
+ *   on.", "Sure, why?";
+ * - up to six with a no word anywhere, or a no of more than one word ("leave it"), not asked as a question: "No, I
+ *   don't want that.", "That's not what I meant.", "Leave it, I said." (voice-listening-r10-1, r10-voice-x10-1: they
+ *   went to Copilot as a request while the question waited);
+ * - a hold ("Wait.", "Hold on.") or an assent that isn't a yes ("Okay then.", "Perfect.", "Sounds great."), which
+ *   vanished as closers.
+ * - up to six words that are all an answer's words, one of them saying so (ANSWER_WORDS, SAYS_SO): an everyday yes
+ *   that isn't on the list ("Of course, go ahead.", "Just do it.", "Definitely."), which is never taken as one on a
+ *   guess (voice-listening-r11-1).
+ * - up to four words with nothing in them that asks Ember to do something or asks it something (REQUEST_WORDS, ASKS,
+ *   TELLS): an assent that isn't on the list ("Agreed.", "By all means.", "You bet.", "Be my guest."), by name or not,
+ *   held by default so a new way to say yes is never sent as a request (r11-voice-x11-2); a short request with no verb
+ *   Ember knows is held so too, and the note says how to answer.
+ * Said by name (`named`: the user called Ember in this speech), the first two only for a yes that leads ("Ember, yes,
+ * send it.", "Ember, yes sir.": r11-voice-x11-1): what holds a no and more ("Hey Ember, don't email Bob, email Sam.",
+ * "Ember, no, I meant the other file.", "Ember, it's not loading.") is a request, as it is at a wake, and was held as a
+ * near-miss, never sent, in a conversation while any question waited (voice-listening-r11-2).
+ * A question is a request, with its mark or without it ("Do you agree": r11-voice-x11-3), but "Why not.", an assent.
+ * "Why?", "Why not?" and "Which file?" are requests as ever. Never words that hold a stop ("No, stop the task.", "Okay,
+ * stop typing."): main stops everything on those while a task is at work, and as near-misses they stopped nothing
+ * (voice-product-y9-1).
+ */
+export function nearAnswer(text: string, named = false): boolean {
+  if (spokenAnswer(text) !== null) return false;
+  // A mode change ("Autopilot off.", "Interactive mode.") is main's own request: never held (r11-voice-y11-1).
+  if (modeIntent(text) !== null) return false;
+  const words = norm(text).replace(/[,.!;:?？]/g, " ").split(/\s+/).filter(Boolean);
+  let i = 0;
+  if (words[i] === "hey") i++;
+  if (NAMES.has(words[i])) i++;
+  const rest = words.slice(i);
+  if (!rest.length || rest.length > 6) return false;
+  if (rest.some(w => STOP_WORDS.has(w))) return false;
+  // "No, never mind." stays a near-miss as before, said once in the answer window (r10-voice-y10-2); elsewhere the
+  // engine stops on it first.
+  if (!named && rest.length <= 4 && (ANSWER_LEADS.has(rest[0]) || (rest[0] === "do" && rest[1] === "not"))) return true;
+  // ("Never mind." is a request of its own, as "cancel" is: review of #127.)
+  if (/\bnever mind\b/.test(rest.join(" "))) return false;
+  if (HOLD.test(rest.join(" "))) return true;
+  if (rest.length <= 4 && rest.every(w => ASSENT.has(w)) && rest.some(w => ASSENT_CORE.has(w))) return true;
+  if (/[?？]/.test(text)) return false;
+  const said = rest.join(" ");
+  // Asked without its question mark ("Do you agree", "Can you do it"): a request (r11-voice-x11-3).
+  if (ASKS.test(said)) return false;
+  if (rest.every(w => ANSWER_WORDS.has(w)) && rest.some(w => SAYS_SO.has(w))) return true;
+  // "Why not.", "Sure, why not.": an assent, not a no.
+  if (/^(?:\S+ )?why not$/.test(said)) return true;
+  const acts = rest.some((w, j) => REQUEST_WORDS.has(w) && !OWNED.has(rest[j - 1])) || /\bgo (?:to|into|back|home|through|up|down)\b/.test(said) || TELLS.test(said);
+  // By name, a yes led with a word or two more that asks nothing ("Ember, yes sir."): the user's yes, put so
+  // (r11-voice-x11-1). What acts or corrects ("Ember, sure, open Firefox.", "okay, email Sam instead") is a request, as
+  // what is said by name and isn't an answer is (r11-voice-y11-2).
+  if (named && rest.length <= 4 && YES_LEADS.has(rest[0]) && !acts && !rest.some(w => CORRECTS.has(w))) return true;
+  // By name, what holds a no and more is a correction or a report ("Ember, it's not loading."): a request.
+  if (named && rest.some(w => NO_WORDS.has(w))) return false;
+  // Up to four words with no request in them, without the name ("Agreed.", "By all means.", "You bet."): an assent that
+  // isn't on the list, held by default rather than sent (r11-voice-x11-2); by name, what isn't an answer is a request
+  // ("Hey Ember, kill the task.", "Hey Ember, dark mode.": r11-voice-y11-2). Courtesies and sounds alone ("Thanks.",
+  // "Um.") aren't held, nor what tells of something ("I told you.": the room's talk goes nowhere in an answer window). A
+  // verb after "your", "my", "good" or "a" is a noun: "Your call.", "Sounds like a plan."
+  if (!named && rest.length <= 4 && (!acts || said === "make it so") && !noAnswer(rest)) return true;
+  // A no of more than one word inside, too ("Please just leave it there.", "Leave it, I said."): r10-voice-x10-1.
+  return !named && (rest.some(w => NO_WORDS.has(w)) || NO_PHRASES.some(n => ` ${said} `.includes(n)));
+}
+
+/** A yes asked as a question ("Okay?", "Ember, go ahead?"): never a yes (spokenAnswer), and never a request either (V2-F7). */
+export function askedYes(text: string): boolean {
+  return spokenAnswer(text) === null && /[?？]/.test(text) && spokenAnswer(text.replace(/[?？]/g, ".")) === "allow";
 }

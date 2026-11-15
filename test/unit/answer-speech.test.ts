@@ -20,7 +20,7 @@ function wiring() {
   const signOut = source.slice(source.indexOf("  ipcMain.handle(IPC.signOut,"), source.indexOf("  ipcMain.handle(IPC.cancelSignIn,"));
   expect(speech.length).toBeGreaterThan(500);
   expect(callbacks.length).toBeGreaterThan(500);
-  const voice = { speak: vi.fn(), hush: vi.fn(), followUp: vi.fn(), cancelListenOnce: vi.fn(), warmSpeech: vi.fn(), micState: "waiting", speaking: false };
+  const voice = { speak: vi.fn(), hush: vi.fn(), followUp: vi.fn(), cancelListenOnce: vi.fn(), warmSpeech: vi.fn(), micState: "waiting", speaking: false, nextVoice: "kitten" as "kitten" | "system" };
   /** The speaking choice (always, as by default here) and whether a screen reader runs. */
   const prefs = { speak: true, speakWithScreenReader: true, reader: true };
   const agent = { answerOpen: false, tasks: null, pauseAnswer: vi.fn(), interruptAnswer: vi.fn(), abortAll: vi.fn(), forgetConversation: vi.fn(async (): Promise<void> => undefined), start: vi.fn(async (): Promise<void> => undefined) };
@@ -33,6 +33,7 @@ function wiring() {
     const log = { info() {} }, policy = { features: {} }, screenLock = null;
     const sys = { a11y: { screenReaderOn: () => prefs.reader } };
     let askedAt = 0;
+    let speechHeard = null;
     let manualCall = null;
     const syncListenOnce = () => {};
     const lastState = { bubble: { visible: false } }, showState = () => {};
@@ -43,12 +44,15 @@ function wiring() {
     const signInAbort = { abort() {} }, keeper = { use() {} }, tokens = { clear() {} }, providers = { forget() {} }, refusedTokens = new Set();
     const conversationNow = (entries = []) => entries;
     const forgetProject = () => {};
+    const forgetSessionWords = () => {};
+    const vault = { forgetAll: () => true };
     ${speech}
     ${signOut}
     return {
       ${callbacks} ${taskCallback} ${transcriptCallback} ${learnedForgot}
       interrupt: resetAnswerSpeech, pause: pauseAnswerSpeech, readOut, signOut: () => signOutHandler(), silenceIfOff, stopSpeaking,
       manualListening: on => { manualCall = on ? { source: "ask" } : null; },
+      speechWorks: ok => { speechHeard = ok; },
     };
   `, { target: ts.ScriptTarget.ES2022 });
   const run = new Function("SpeechStream", "answerPieces", "AnswerLanguage", "TurnLatency", "ACK_MS", "acknowledgement", "afterAck", "endsWithQuestion", "spokenText", "speaksAloud", "speechSilenced", "IPC", "broadcast", "voicePreference", "voice", "personal", "agent", "confirmer", "taskNotice", "prefs", code);
@@ -63,8 +67,9 @@ function wiring() {
     onForgotAll(): void;
     signOut(): Promise<void>;
     interrupt(): void;
-    pause(): void;
-    readOut(answer: string): boolean;
+    pause(own?: boolean): void;
+    readOut(answer: string): boolean | "no-voice";
+    speechWorks(ok: boolean | null): void;
     silenceIfOff(): boolean;
     stopSpeaking(source: "menu"): void;
     manualListening(on: boolean): void;
@@ -119,6 +124,40 @@ describe("main's answer speech ownership", () => {
     w.prefs.speakWithScreenReader = false;
     expect(w.readOut("Opened Notes.")).toBe(false);
     expect(w.voice.speak).not.toHaveBeenCalled();
+  });
+
+  it("says that no voice can read the answer out, and sends nothing to be said, where speech has failed and Ember's own voice isn't there (voice-speaking-r9-3)", () => {
+    const w = wiring();
+    w.voice.nextVoice = "system";
+    w.speechWorks(false);
+    expect(w.readOut("Opened Notes.")).toBe("no-voice");
+    expect(w.voice.hush).not.toHaveBeenCalled();
+    expect(w.voice.speak).not.toHaveBeenCalled();
+    // Ember's own voice still reads English, and only English: a reply all in another language has no voice either.
+    w.voice.nextVoice = "kitten";
+    expect(w.readOut("J'ai ouvert le fichier que vous avez demandé dans le dossier des documents.")).toBe("no-voice");
+    expect(w.voice.speak).not.toHaveBeenCalled();
+    expect(w.readOut("Opened Notes.")).toBe(true);
+    // Speech that works, or hasn't been tried: read out as ever.
+    w.voice.nextVoice = "system";
+    w.speechWorks(true);
+    expect(w.readOut("Opened Notes.")).toBe(true);
+    w.speechWorks(null);
+    expect(w.readOut("Opened Notes.")).toBe(true);
+  });
+
+  it("reads an answer with a passage in another language out as it was said the first time: the lead-in and the closing question in Ember's own voice (voice-speaking-r9-3)", () => {
+    const w = wiring();
+    const answer = "Here is the email from José:\n\nHola Alex, ¿cómo estás? Espero que todo vaya bien con el proyecto. Nos vemos el lunes en la oficina para hablar de los detalles.\n\nShall I reply to it?";
+    w.onTurnStart({ text: "read me the email from José", spoken: false });
+    for (const word of answer.split(/(?<=\s)/)) w.onAnswerDelta(word);
+    w.onAnswerEnd(answer);
+    w.onTurnEnd(false);
+    const streamed = w.voice.speak.mock.calls.map(c => [c[0], (c[1] as { lang: string | null }).lang]);
+    expect(streamed.map(c => c[1])).toEqual([null, "es", "es", "es", null]);
+    w.voice.speak.mockClear();
+    expect(w.readOut(answer)).toBe(true);
+    expect(w.voice.speak.mock.calls.map(c => [c[0], (c[1] as { lang: string | null }).lang])).toEqual(streamed);
   });
 
   it("never reads an answer out while a question is up, as no answer is said then: the question's voice isn't cut (voice-speaking-x7-4)", () => {
@@ -193,6 +232,62 @@ describe("main's answer speech ownership", () => {
     expect(w.agent.pauseAnswer).toHaveBeenCalledOnce();
     expect(w.voice.speak).toHaveBeenCalledExactlyOnceWith("The event is updated.", { append: false, lang: null });
     expect(w.voice.followUp).toHaveBeenCalledExactlyOnceWith(8000, { afterQuestion: false });
+  });
+
+  it("keeps the answer being written under a task's question, unsaid, and still its answer (tasks-approvals-r9-2)", () => {
+    vi.useFakeTimers();
+    const w = wiring();
+    w.onTurnStart({ text: "What is the capital of France?", spoken: true });
+    w.agent.answerOpen = true;
+    w.onAnswerDelta("The capital");
+    w.confirmer.waiting = true;
+    w.pause(false);
+    expect(w.agent.pauseAnswer).not.toHaveBeenCalled();
+    w.onAnswerDelta(" of France is Paris.");
+    w.confirmer.waiting = false;
+    w.onAnswerDelta(" It is on the Seine.");
+    w.onAnswer("The capital of France is Paris. It is on the Seine.");
+    w.onTurnEnd(false);
+    // Nothing of it is said from mid-sentence after the question, and the turn wasn't stopped: it is still the answer.
+    expect(w.voice.speak).not.toHaveBeenCalled();
+    expect(w.personal.answered).toHaveBeenCalledOnce();
+    expect((w.personal.answered.mock.calls[0] as unknown[])[0]).toBe("The capital of France is Paris. It is on the Seine.");
+  });
+
+  it("counts an answer that ends while a task's question is still up as the answer, with no follow-up window over the question (product-ui-x9-4)", () => {
+    vi.useFakeTimers();
+    const w = wiring();
+    w.onTurnStart({ text: "What is the capital of France?", spoken: true });
+    w.agent.answerOpen = true;
+    w.onAnswerDelta("The capital");
+    w.confirmer.waiting = true;
+    w.pause(false);
+    // The usual order: the answer finishes before the user answers the task's question. A second task's question
+    // over the same answer leaves it the answer too.
+    w.onAnswerDelta(" of France is Paris.");
+    w.pause(false);
+    w.onAnswer("The capital of France is Paris.");
+    w.onTurnEnd(false);
+    expect(w.voice.speak).not.toHaveBeenCalled();
+    expect(w.personal.answered).toHaveBeenCalledOnce();
+    expect((w.personal.answered.mock.calls[0] as unknown[])[0]).toBe("The capital of France is Paris.");
+    // Nothing more is heard for it while the question is up: its own answer window is the only one.
+    expect(w.voice.followUp).not.toHaveBeenCalled();
+    // The turn's own question still retires its answer: a later turn stopped by its own card is no answer.
+    w.confirmer.waiting = false;
+    w.onTurnStart({ text: "Delete the old notes", spoken: true });
+    w.agent.answerOpen = true;
+    w.confirmer.waiting = true;
+    w.pause();
+    w.onAnswer("A reply under its own question.");
+    w.onTurnEnd(false);
+    expect(w.personal.answered).toHaveBeenCalledOnce();
+    expect(w.voice.followUp).not.toHaveBeenCalled();
+  });
+
+  it("retires the answer only for a question of the conversation's own turn, never a task's (tasks-approvals-r9-2)", () => {
+    const source = fs.readFileSync("app/main/main.ts", "utf8");
+    expect(source).toContain("    pauseAnswerSpeech(questionPausesAnswer(q.question));\n");
   });
 
   it("does not let an old permission closing restore interrupted or newer turn ownership", () => {

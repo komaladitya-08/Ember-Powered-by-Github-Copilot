@@ -12,7 +12,6 @@
     }
   ],
   "user": {
-    "autonomy": true,
     "answer": "deny"
   },
   "hands": [

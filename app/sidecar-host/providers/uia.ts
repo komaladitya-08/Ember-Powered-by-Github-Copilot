@@ -736,11 +736,12 @@ export class UiaProvider implements AxProvider {
     await this.call("perform", { op: bridgeOp, ...(value !== undefined ? { value } : {}) }, this.deadlineMs, h);
   }
 
-  async textInfo(h: Handle, maxChars: number): Promise<TextInfo> {
-    const { value: r } = await this.call<TextInfo | null>("textInfo", { maxChars: Math.min(100_000, Math.max(1, maxChars)) }, this.deadlineMs, h);
+  async textInfo(h: Handle, maxChars: number, o: { probe?: boolean } = {}): Promise<TextInfo> {
+    const { value: r } = await this.call<TextInfo | null>("textInfo", { maxChars: Math.min(100_000, Math.max(1, maxChars)), ...(o.probe ? { probe: true } : {}) }, this.deadlineMs, h);
     if (!r) return {};
     if (r.secret) return { secret: true };
     const out: TextInfo = {};
+    if (o.probe && Array.isArray(r.probe)) out.probe = r.probe.filter(m => m && typeof m.step === "string" && typeof m.t === "number").slice(0, 32).map(m => ({ step: m.step.slice(0, 40), t: m.t }));
     if (typeof r.text === "string") out.text = r.text;
     if (r.truncated === true) out.truncated = true;
     if (typeof r.selection === "string") out.selection = r.selection;

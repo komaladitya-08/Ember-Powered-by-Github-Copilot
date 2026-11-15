@@ -5,7 +5,7 @@ import path from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { projectSelection, removeProjectFile } from "../../app/main/agent/project";
 import { exportProjectText } from "../../app/main/agent/project-export";
-import { PROJECT_ACTIONS_MANAGED, projectManagedOff, projectUnavailable, PROJECT_COMMANDS_MANAGED, PROJECT_COMMANDS_OFF, projectAnswerParts, projectAnswerText, projectCommandsState, projectBytes, projectCommandsOn, projectConnectionText, projectSelectionText } from "../../app/renderer/home/project-copy";
+import { PROJECT_ACTIONS_MANAGED, projectManagedOff, projectUnavailable, PROJECT_COMMANDS_MANAGED, PROJECT_COMMANDS_OFF, projectAnswerParts, projectAnswerText, projectCommandsState, projectBytes, projectCommandsOn, projectConnectionText, projectSelectionText, workspaceOpened } from "../../app/renderer/home/project-copy";
 
 let dir: string;
 let privateDir: string;
@@ -127,4 +127,11 @@ it("recognises complete fenced code while keeping HTML, incomplete fences and la
   ]);
   expect(projectAnswerParts("```ts\nincomplete")).toEqual([{ kind: "text", text: "```ts\nincomplete" }]);
   expect(projectAnswerParts("<script>bad()</script>")).toEqual([{ kind: "text", text: "<script>bad()</script>" }]);
+});
+
+it("says what opening a saved workspace restored: its folder to choose again, and an answer left out since the provider's key changed (integrations-r9-3)", () => {
+  expect(workspaceOpened("Greeting", { folderGone: false, answerLeft: false })).toBe("Opened workspace “Greeting”.");
+  expect(workspaceOpened("Greeting", { folderGone: true, answerLeft: false })).toBe("Opened workspace “Greeting”. Choose the command folder again.");
+  expect(workspaceOpened("Greeting", { folderGone: false, answerLeft: true })).toBe("Opened workspace “Greeting”. Its last answer was saved before this provider's key or settings changed, so Ember left it out.");
+  expect(workspaceOpened("Greeting", { folderGone: true, answerLeft: true })).toBe("Opened workspace “Greeting”. Choose the command folder again. Its last answer was saved before this provider's key or settings changed, so Ember left it out.");
 });

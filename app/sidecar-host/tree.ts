@@ -203,6 +203,9 @@ export function buildNodes(raw: RawNode[], o: BuildOptions): Built {
         } else {
           if (text) node.text = text;
           else if (n.hasText && role !== "combo box") wants.text = true;
+          // Cut, or read and empty: a field's held text is known whole only so (r11-safety-x11-1, -x11-2).
+          if (text && (n.value?.length ?? 0) > NODE_TEXT) node.textCut = true;
+          else if (n.value === "" && n.editable && !n.hasText) node.empty = true;
           if (focused) wants.selection = true;
           if (chosen) node.selected = chosen;
         }

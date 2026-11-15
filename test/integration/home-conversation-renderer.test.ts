@@ -263,7 +263,15 @@ describe.skipIf(process.env.EMBER_CONVERSATION_TEST !== "1")("Home's conversatio
       } }) as EmberHomeApi;
     }, seed);
     await page.goto(`${base}/app/renderer/home/index.html`);
-    await page.evaluate(() => document.body.classList.remove("loading", "first-run"));
+    // Home as it stands once its pane has come in: leaving the first run starts the pane's entrance, a 6 px rise over
+    // 420 ms (styles.css, "A pane coming into view"), and a place measured during it moved by the rest of the rise
+    // when it ended (1.55 px in CI, 145 ms in; home-1).
+    await page.evaluate(() => {
+      document.body.classList.remove("loading", "first-run");
+      for (const a of document.getAnimations()) {
+        if (a instanceof CSSTransition && a.effect instanceof KeyframeEffect && a.effect.target?.matches(".home > [data-pane]")) a.finish();
+      }
+    });
     if (seed.length) await expect.poll(() => page.locator("#conversation li").count()).toBeGreaterThan(0);
     return { page, errors };
   }

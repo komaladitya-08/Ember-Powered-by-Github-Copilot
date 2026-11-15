@@ -31,6 +31,7 @@ import { commandEnv, mergeEnv } from "./env";
 import { localFacts, SAFE_POSIX_PATH } from "./facts";
 import { gitRunner, readGitFacts } from "./git-facts";
 import { inspectPaths, readScriptText } from "./inspect";
+import { redactedWhole } from "../output";
 import { trackSecretPrompts, type SecretTracker } from "../prompts";
 import { REAL_TIMERS, startLadder, type Ladder, type LadderKind, type LadderOps, type Timers } from "./kill";
 import { BSD_SCRIPT_LAUNCH, NO_RC, PS_INNER, WSL_CD, WSL_EVAL, posixBody, posixInner } from "./shells";
@@ -76,7 +77,7 @@ const WINDOWS_PROGRAM = /^[A-Za-z]:\\[^"\0\r\n<>|?*]+$/;
  * What crosses into a distro for every WSL run (WSLENV, each `/u`: from Windows into WSL only). PWD is the run's
  * folder as Ember named it (posixPwd), never Windows' own.
  */
-export const WSLENV_RUN: readonly string[] = ["EMBER_INNER", "EMBER_CMD_B64", "EMBER_RUN_ID", "EMBER_CWD", "EMBER_COLS", "EMBER_ROWS", "TERM", "PWD"];
+export const WSLENV_RUN: readonly string[] = ["EMBER_INNER", "EMBER_CMD_B64", "EMBER_RUN_ID", "EMBER_END", "EMBER_CWD", "EMBER_COLS", "EMBER_ROWS", "TERM", "PWD"];
 /**
  * The PWD a POSIX run's shell starts with: its folder as Ember judged it. A POSIX shell keeps an inherited PWD that
  * names its current folder (through links too) and otherwise starts from the folder's real path, so with the task's
@@ -101,7 +102,7 @@ const size = (n: number, fallback: number) => (Number.isFinite(n) && n >= 1 ? St
 export function launchArgv(
   spec: RunSpec,
   facts: RunnerFacts,
-  o: { jobHost: JobHostRef | null; wsl?: { exe: string; distro: string } },
+  o: { jobHost: JobHostRef | null; wsl?: { exe: string; distro: string; end: string } },
 ): { command: string; args: string[]; options: LaunchOptions; env: Record<string, string> } {
   if (!RUN_ID.test(spec.runId)) throw new LaunchError("The run has no valid id.");
   if (typeof spec.command !== "string" || spec.command.includes("\0")) throw new LaunchError("The command holds a NUL character, which can't be handed to a shell.");
@@ -128,9 +129,11 @@ export function launchArgv(
     if (!DISTRO_NAME.test(o.wsl.distro)) throw new LaunchError("Ember can't pass that distribution's name to WSL.");
     if (!WINDOWS_PROGRAM.test(o.wsl.exe)) throw new LaunchError("Ember can't find wsl.exe.");
     if (WSL_CWD_BAD.test(spec.cwd) || !spec.cwd.startsWith("/")) throw new LaunchError("Ember can't pass that folder to WSL.");
+    // The end marker's nonce (wslRunEnd): random per run, so no output can hold this run's marker ahead of it.
+    if (!/^[0-9a-f]{16}$/.test(o.wsl.end)) throw new LaunchError("The run has no valid end marker.");
     const { shell, path } = posixPath();
     const pty = safeScript?.kind === "util-linux";
-    const inner = `${WSL_CD}; ${pty ? posixInner(shell, path, "b64") : posixBody({ pty: false, from: "b64" })}`;
+    const inner = `${WSL_CD}; ${pty ? posixInner(shell, path, "b64") : posixBody({ pty: false, from: "b64", shell, path })}`;
     const rest = pty
       ? ["-d", o.wsl.distro, "--cd", "/", "--exec", "/usr/bin/env", "SHELL=/bin/sh", safeScript.path, "-q", "-e", "-f", "-c", WSL_EVAL, "/dev/null"]
       : ["-d", o.wsl.distro, "--cd", "/", "--exec", path, ...NO_RC[shell], "-c", WSL_EVAL];
@@ -145,6 +148,7 @@ export function launchArgv(
         EMBER_INNER: inner,
         EMBER_CMD_B64: Buffer.from(spec.command, "utf8").toString("base64"),
         EMBER_RUN_ID: spec.runId,
+        EMBER_END: o.wsl.end,
         // WSL_CD's folder: the run's, as decided.
         EMBER_CWD: spec.cwd,
         ...(pty ? { EMBER_COLS: cols, EMBER_ROWS: rows } : {}),
@@ -787,16 +791,20 @@ class LocalRun implements KeptRun {
     if (this.failure !== null) return { ...base, ended: "failed-to-start", error: this.failure };
     if (this.stopWhy) return { ...base, ended: STOP_ENDED[this.stopWhy] };
     if (this.kind === "windows" && this.exitCode === JOB_FAILED && this.stderrText.startsWith(JOB_FAILED_PREFIX)) {
-      const why = this.stderrText.slice(JOB_FAILED_PREFIX.length).split(/\r?\n/)[0].trim().slice(0, 300);
+      const why = redactedWhole(this.stderrText.slice(JOB_FAILED_PREFIX.length).split(/\r?\n/)[0].trim()).slice(0, 300);
       return { ...base, ended: "failed-to-start", error: `Ember couldn't start the command safely, so it didn't run${why ? ` (${why})` : ""}.` };
     }
     if (this.kind !== "windows" && !this.markerSeen) return { ...base, ended: "failed-to-start", error: this.startFailure() };
     return { ...base, ended: "exit" };
   }
 
-  /** A POSIX start failure's reason: its stderr, else what the PTY showed, else the exit status. */
+  /**
+   * A POSIX start failure's reason: its stderr, else what the PTY showed, else the exit status. What the vault filled
+   * is taken out of the whole text before it is cut to 500 characters, so no part of a value the cut fell in goes on
+   * (integ-x-1).
+   */
   private startFailure(): string {
-    const clean = (s: string) => s.replace(TERMINAL_CODES, "").replace(OTHER_CONTROLS, "").trim();
+    const clean = (s: string) => redactedWhole(s.replace(TERMINAL_CODES, "").replace(OTHER_CONTROLS, "").trim());
     const text = clean(this.stderrText) || clean(new TextDecoder().decode(this.keep.head()));
     if (text) return `The command couldn't start: ${text.length > 500 ? `${text.slice(0, 500)}…` : text}`;
     return `The command couldn't start${this.exitCode !== null ? ` (exit code ${this.exitCode})` : this.exitSignal ? ` (${this.exitSignal})` : ""}.`;

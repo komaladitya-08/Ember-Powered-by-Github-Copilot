@@ -1,5 +1,6 @@
 /** `ember doctor` on Windows and macOS (doctor.ts, design §4.14, §9.9): the `os` field decides the advice, never a check's text. */
 
+import fs from "node:fs";
 import { describe, expect, it } from "vitest";
 import { doctorChecks, formatDoctor, type DoctorProbes } from "../../app/main/doctor";
 import { inspectEnvironment, type EnvInputs } from "../../app/main/environment";
@@ -47,7 +48,10 @@ describe("ember doctor's Speech models row", () => {
     expect(row({ voiceModels: "downloaded", voiceModelsMissing: [] })).toMatchObject({ status: "ok", detail: "Downloaded." });
     expect(row({ voiceModels: "bundled", voiceModelsMissing: ["tts"] })).toEqual({ id: "voice-models", status: "ok", label: "Speech models",
       detail: "Installed with Ember. Without Ember's own voice (replies use the system's voice) until it's downloaded in Ember's settings (64 MB)." });
-    expect(row({ voiceModels: "downloaded", voiceModelsMissing: ["speaker"] }).detail).toBe("Downloaded. Without Voice Match (your voice can't answer questions) until it's downloaded in Ember's settings (27 MB).");
+    expect(row({ voiceModels: "downloaded", voiceModelsMissing: ["speaker"] }).detail).toBe("Downloaded. Without Voice Match (while “Only my voice can say yes” is on, Ember takes no spoken yes) until it's downloaded in Ember's settings (27 MB).");
+    // Never that nobody can answer by voice: with that switch off, its default, anyone heard can (install-docs-r9-3).
+    expect(row({ voiceModels: "downloaded", voiceModelsMissing: ["speaker"] }).detail).not.toMatch(/can't answer questions/);
+    expect(fs.readFileSync("README.md", "utf8")).toMatch(/replies in the system's voice or, while “Only my voice can\nsay yes” is on, takes no spoken yes meanwhile/);
     expect(row({ voiceModels: "downloaded", voiceModelsMissing: ["tts", "speaker"] }).detail).toMatch(/Ember's own voice .* and Voice Match .* until they're downloaded in Ember's settings \(90 MB\)\.$/);
   });
 });
@@ -62,6 +66,13 @@ describe("ember doctor's Speech row (which build runs speech on Linux)", () => {
   it("distinguishes WebAssembly recognition from the system voice fallback", () => {
     expect(byId(doctorChecks(base({ speechBackend: { backend: "wasm", why: "this processor lacks avx2" } })), "speech-engine"))
       .toEqual({ id: "speech-engine", status: "ok", label: "Speech", detail: "Recognition uses WebAssembly (this processor lacks avx2). Replies use the system's voice." });
+  });
+
+  it("never says replies use the system's voice where the Speaking row says Ember can't read replies aloud (install-docs-c12-1)", () => {
+    const none = doctorChecks(base({ speechBackend: { backend: "wasm", why: "this processor lacks avx2" }, speechDispatcher: false }));
+    expect(byId(none, "speech-engine")!.detail).toBe("Recognition uses WebAssembly (this processor lacks avx2). Replies need the system's voice, which isn't available (see Speaking).");
+    expect(byId(none, "speech")!.detail).toBe("speech-dispatcher is missing, so Ember can't read replies aloud.");
+    expect(formatDoctor(none)).not.toMatch(/Replies use the system's voice/);
   });
 
   it("says Ember speaks in its own voice when Kitten runs natively, with speech-dispatcher only its fallback (voice-speaking-9)", () => {
@@ -206,4 +217,15 @@ describe("ember doctor on macOS", () => {
     expect(byId(checks, "screen-recording")).toEqual({ id: "screen-recording", status: "warn", label: "Screen Recording", detail: "Not allowed.", fix: "System Settings › Privacy & Security › Screen Recording" });
     expect(byId(checks, "secure-input")).not.toHaveProperty("fix");
   });
+});
+
+describe("ember doctor's Mouse and keyboard row, in every approval mode (install-docs-r10-4)", () => {
+  it.each<[string, DoctorProbes]>([["Linux", base()], ["Windows", windows()], ["macOS", macos()]])(
+    "never promises a question before every borrow on %s, which Interactive announces instead, and names Ember once (r11-copy-y11-6)", (_os, probes) => {
+      const detail = byId(doctorChecks(probes), "xtest")!.detail;
+      expect(detail).not.toMatch(/\bOK\b|only with|permission|asks? (you )?first|every time/i);
+      expect(detail).toMatch(/tells you when it does, and moving the mouse or pressing a key takes it back/);
+      // Ember is named once in the line (r11-copy-y11-6).
+      expect(detail.match(/\bEmber\b/g)).toHaveLength(1);
+    });
 });

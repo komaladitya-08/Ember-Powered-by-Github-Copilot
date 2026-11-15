@@ -59,6 +59,8 @@ describe("the settings window under a lockdown", () => {
   it("names every switch the organisation turned off in words, never as a raw key such as “routines”", () => {
     const keys = Object.keys(AdminPolicySchema.shape.features.unwrap().shape);
     expect(keys).toEqual(expect.arrayContaining(["memory", "routines", "aiReview", "speak"]));
+    // The organisation's switch for the approval modes is named as Home names the modes (modes-E3).
+    expect(FEATURE_TEXT.autonomy).toBe("choosing how Ember asks (Interactive, Assisted or Autopilot)");
     for (const k of keys) expect(FEATURE_TEXT[k], k).toBeTruthy();
     const off = turnedOffWords(Object.fromEntries(keys.map(k => [k, false])), "win32");
     expect(off).toHaveLength(keys.length);

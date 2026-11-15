@@ -11,7 +11,7 @@
 
 import crypto from "node:crypto";
 import { z } from "zod";
-import { memoryRefusal } from "./guard";
+import { factRefusal } from "./fact-guard";
 import { fold, nameKey, negated, similarity, terms } from "./text";
 
 export const ENTITY_KINDS = ["person", "organisation", "project", "app", "place", "topic", "thing"] as const;
@@ -199,7 +199,7 @@ export class MemoryGraph {
     if (!text) return { kind: "refused", reason: "it is empty" };
     if (text.length > MAX_FACT_CHARS) return { kind: "refused", reason: `it is longer than ${MAX_FACT_CHARS} characters` };
     if (!input.about.length || input.about.some(r => !nameKey(r.name))) return { kind: "refused", reason: "it isn't about anything named" };
-    const secret = memoryRefusal(text) ?? input.about.map(r => memoryRefusal(r.name)).find(Boolean) ?? null;
+    const secret = factRefusal(text) ?? input.about.map(r => factRefusal(r.name)).find(Boolean) ?? null;
     if (secret) return { kind: "refused", reason: secret };
     const now = this.clock.now().toISOString();
     const entities = [...new Set(input.about.slice(0, 8).map(r => this.resolve(r).id))];
@@ -211,8 +211,21 @@ export class MemoryGraph {
     if (same) {
       // Said again: surer (the stronger source wins), and fresh. A note made again records what it rests on now too.
       const from = mergeDerived(same.derivedFrom, input.derivedFrom);
-      const fact: Fact = { ...same, confidence: Math.max(same.confidence, confidence), uses: same.uses + 1, lastUsedAt: now, source: stronger(same.source, input.source), ...(from ? { derivedFrom: from } : {}) };
+      // Said again as the one value of a relation ("Call me Sam", typed, after the conversation kept "Likes to be
+      // called Sam" from speech it couldn't check): it takes that relation, and what held it before is closed as a new
+      // fact would close it (memory-r9-5). Only when the fact had no relation, or a stronger source says it now: a
+      // relation is never re-labelled by its own source or a weaker one, since the profile and a later "single" fact
+      // find it by that name ("I like to be called Sam, as you know", read as `preferred_name`, left nothing under
+      // `called` to go with requests: memory-x9-5).
+      const takes = !!input.single && !!predicate && same.predicate !== predicate && (!same.predicate || rank(input.source) < rank(same.source));
+      const fact: Fact = { ...same, confidence: Math.max(same.confidence, confidence), uses: same.uses + 1, lastUsedAt: now, source: stronger(same.source, input.source), ...(from ? { derivedFrom: from } : {}), ...(takes ? { predicate } : {}) };
       this.facts.set(fact.id, fact);
+      if (takes) {
+        for (const f of this.allFacts(true)) {
+          if (f.id === fact.id || f.entities[0] !== fact.entities[0] || f.predicate !== predicate || rank(fact.source) > rank(f.source)) continue;
+          this.facts.set(f.id, { ...f, invalidAt: now, supersededBy: fact.id });
+        }
+      }
       return { kind: "reinforced", fact };
     }
 
@@ -332,7 +345,9 @@ export class MemoryGraph {
 
   /**
    * Puts back what a Forget removed (Undo: MemoryService.restore): the entities first, then the facts, each only if
-   * nothing has its id now. An entity whose name another one has taken since gives its facts to that one.
+   * nothing has its id now. An entity whose name another one has taken since gives its facts to that one. A fact
+   * said again since the Forget is there already: the one put back is that one, surer for it, never a second copy,
+   * and the notes made from it rest on that one (memory-r9-9).
    */
   putBack(entities: Entity[], facts: Fact[]): void {
     const moved = new Map<string, string>();
@@ -342,10 +357,19 @@ export class MemoryGraph {
       if (taken) moved.set(e.id, taken);
       else this.putEntity(e);
     }
+    const again = new Map<string, string>();
     for (const f of facts) {
       if (this.facts.has(f.id)) continue;
       const ids = [...new Set(f.entities.map(id => moved.get(id) ?? id))];
-      if (ids.every(id => this.entities.has(id))) this.facts.set(f.id, { ...f, entities: ids });
+      if (!ids.every(id => this.entities.has(id))) continue;
+      const same = f.invalidAt ? undefined : this.allFacts(true).find(o => sameEntities(o.entities, ids) && similarity(o.text, f.text) >= DUPLICATE && negated(o.text) === negated(f.text));
+      if (same) {
+        again.set(f.id, same.id);
+        this.facts.set(same.id, { ...same, confidence: Math.max(same.confidence, f.confidence), uses: same.uses + 1, source: stronger(same.source, f.source) });
+        continue;
+      }
+      const from = f.derivedFrom?.map(id => again.get(id) ?? id);
+      this.facts.set(f.id, { ...f, entities: ids, ...(from ? { derivedFrom: from } : {}) });
     }
   }
 

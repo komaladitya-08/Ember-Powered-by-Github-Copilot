@@ -143,13 +143,21 @@ describe("main.ts's Step 0b hooks (§11.3), for the packages that replace S0a's 
     expect(local).toBeGreaterThan(remote);
   });
 
+  it("says in the signed-out status that a Sign out's saved sign-in couldn't be removed, after the keyring's own reason (reliability-r9-2)", () => {
+    expect(MAIN).toContain("signedOutWhy: () => (tokens?.unreadable ? sys.words.savedSignInRefused ?? null : tokens?.uncleared ? SIGN_OUT_NOT_KEPT : null),");
+    // Sign out clears the stored sign-in before the status that says so is made.
+    const handler = MAIN.slice(MAIN.indexOf("ipcMain.handle(IPC.signOut,"), MAIN.indexOf("ipcMain.handle(IPC.cancelSignIn,"));
+    expect(handler.indexOf("tokens?.clear()")).toBeGreaterThan(0);
+    expect(handler.indexOf("tokens?.clear()")).toBeLessThan(handler.indexOf("await agent?.start(null)"));
+  });
+
   it("refuses Sign in under a lockdown with the lockdown's own sentence, before any request to GitHub (safety-privacy-c7-3)", () => {
     const handler = MAIN.slice(MAIN.indexOf("ipcMain.handle(IPC.signIn,"), MAIN.indexOf("ipcMain.handle(IPC.voiceStatus,"));
     const refuses = handler.indexOf('const lockedDown = modelServiceRefusal(admin); if (lockedDown) { progress({ state: "error", message: lockedDown }); return; }');
     expect(refuses).toBeGreaterThan(handler.indexOf("if (!consented())"));
     for (const later of ["signInAbort = ac", "cliWaitStart(", "startDeviceFlow(", "openSignInPage()"]) expect(handler.indexOf(later)).toBeGreaterThan(refuses);
     // Home's composer says a held lockdown's own way on (a restart), not that the policy has a problem.
-    expect(MAIN).toContain("providerWaitingHost(settings.get(), admin) : null, !!admin.held);");
+    expect(MAIN).toContain("status.phase === \"signed-out\" ? ownProviderWaiting() : null, !!admin.held);");
   });
 
   it("lets the kill switch stop commands right after the agent", () => {

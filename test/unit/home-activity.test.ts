@@ -154,7 +154,7 @@ describe("What Ember did: tags and names (safety-privacy-10, safety-privacy-v2)"
   it("tells a lasting grant from a one-off yes, and says what it changes", () => {
     const send = { t, event: "confirm", kind: "click", app: "gedit", element: { role: "push button", name: "Save" } };
     expect(describeEntry({ ...send, answer: "once" })).toEqual({ tag: "You allowed", cls: "ok", what: "Click “Save” in gedit" });
-    expect(describeEntry({ ...send, answer: "always" })).toEqual({ tag: "Always allowed", cls: "ok", what: "Click “Save” in gedit", why: "From now on Ember may act in gedit without asking first, but it still asks before anything hard to undo." });
+    expect(describeEntry({ ...send, answer: "always" })).toEqual({ tag: "Always allowed", cls: "ok", what: "Click “Save” in gedit", why: "From now on Ember may act in gedit without asking first, but that doesn't cover anything hard to undo." });
   });
 
   it("says when a picture of a window went to the model, and of which app (safety-privacy-6)", () => {

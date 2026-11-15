@@ -64,7 +64,7 @@ describe("the simulated user", () => {
 
   it("answers each question the way the task says, quickly, one after another", async () => {
     const questions: string[] = [];
-    const confirmer = simulatedUser(task({ user: { answer: "allow", answers: [{ prompt: "Delete", answer: "deny" }], grants: [], autonomy: false } }), questions);
+    const confirmer = simulatedUser(task({ user: { answer: "allow", answers: [{ prompt: "Delete", answer: "deny" }], grants: [], mode: "interactive" } }), questions);
     const t0 = Date.now();
     const answers = await Promise.all([
       confirmer.ask({ title: "May I?", prompt: "Click “Save”?", options }),
@@ -86,6 +86,21 @@ describe("the missed-wakes gate (target < 5 %)", () => {
     expect(missedWakesStatus(1, 78)).toBe("not-measured");
     expect(missedWakesStatus(2, 3)).toBe("fail");
     expect(missedWakesStatus(20, 100)).toBe("fail");
+  });
+});
+
+describe("node eval/run.mjs with an option it doesn't know", () => {
+  it("says so and stops with exit 2, instead of ignoring it and running the whole suite with the gates (install-docs-r9-9)", () => {
+    for (const args of [["--bogus"], ["--no-gate"], ["--olny", "x"], ["--only", "reads-a-window", "extra"], ["-x"]]) {
+      const r = spawnSync(process.execPath, ["eval/run.mjs", ...args], { encoding: "utf8", timeout: 20_000 });
+      expect(r.status, args.join(" ")).toBe(2);
+      expect(r.stderr, args.join(" ")).toBe(`eval/run.mjs doesn't know "${args.find(a => !["--only", "reads-a-window"].includes(a))}". Run node eval/run.mjs --help for its options.\n`);
+      expect(r.stdout).toBe("");
+    }
+    // Every option main.ts reads is known, with its value where it takes one.
+    const main = fs.readFileSync("eval/src/main.ts", "utf8"), run = fs.readFileSync("eval/run.mjs", "utf8");
+    for (const m of main.matchAll(/\bflag\("([a-z-]+)"\)/g)) expect(run, m[1]).toMatch(new RegExp(`FLAGS = \\[[^\\]]*"--${m[1]}"`));
+    for (const m of main.matchAll(/\bopt\("([a-z-]+)"\)/g)) expect(run, m[1]).toMatch(new RegExp(`VALUES = \\[[^\\]]*"--${m[1]}"`));
   });
 });
 

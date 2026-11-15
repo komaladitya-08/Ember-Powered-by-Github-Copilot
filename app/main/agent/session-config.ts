@@ -53,8 +53,11 @@ export interface SessionExtensions {
   preToolUse(input: PreToolUseHookInput): Promise<PreToolUseHookOutput>;
   /** The result as the model gets it (wrapped as untrusted, scanned). */
   postToolUse(input: PostToolUseHookInput): Promise<PostToolUseHookOutput | void>;
-  /** What the session shows of its extension tools, checked against their pins (verifySessionTools). */
-  verify(shown: ShownTool[]): void;
+  /**
+   * What the session shows of its extension tools, checked against their pins (verifySessionTools). Settles once a
+   * tool that differs is out of the session, so the session's first request never carries it.
+   */
+  verify(shown: ShownTool[]): void | Promise<void>;
   /**
    * A failed call's text (only `additionalContext` can be added: the SDK doesn't let a failure be rewritten, so the raw
    * failure reaches the model and this says it is untrusted data).
@@ -64,12 +67,19 @@ export interface SessionExtensions {
    * Gives the gate the session's live tool list (verifySessionTools): a server may change a tool mid-session
    * (notifications/tools/list_changed), so every call is checked against what the model is shown at that moment.
    */
-  bind?(shown: () => Promise<ShownTool[]>, stop?: (servers: string[]) => Promise<void>): void;
+  bind?(shown: () => Promise<ShownTool[]>, stop?: (servers: string[]) => Promise<void>, served?: (server: string) => Promise<unknown>): void;
   /**
-   * A server said its tool list changed (`mcp.tools.list_changed`). The runtime's metadata has no hints, so a change
-   * of hints alone can't be checked against the pin: that server's tools ask from then on in this session.
+   * A server said its tool list changed (`mcp.tools.list_changed`). The runtime will ask it again as it builds its
+   * next request and show the model the answer, so that word is the change: the gate takes the server out of the
+   * session at once, without asking it anything (integrations-x9-1). Heard from the session's first moment
+   * (`onEvent` in the session's config), also before the gate is bound.
    */
   listChanged?(serverName: string): void;
+  /**
+   * Settles once every server the gate is taking out of the session is out, or its wait for the runtime has run out
+   * (at once when there is none). The session's hooks wait for it, so the runtime builds no request meanwhile.
+   */
+  settled?(): Promise<void>;
   /** A new request from the user: the tools they refused in the last turn may be asked about again. */
   newTurn?(): void;
 }
@@ -99,18 +109,26 @@ export function hardenedSessionConfig(o: HardenedOptions): SessionConfig {
   const ext = o.extensions;
   const admitted = admittedExtensionTools(granted, ext);
   const onPreToolUse: NonNullable<SessionHooks["onPreToolUse"]> = async (input, invocation) => {
+    if (ext?.settled) await ext.settled();
     if (granted.has(input.toolName)) return o.hooks?.onPreToolUse?.(input, invocation);
     // An extension tool: Ember's gate decides (allow, ask the user, or deny), never the SDK.
     if (ext && admitted.has(input.toolName)) return ext.preToolUse(input);
     return { permissionDecision: "deny", permissionDecisionReason: "Ember grants only its own tools." };
   };
   const onPostToolUse: NonNullable<SessionHooks["onPostToolUse"]> = async (input, invocation) => {
+    if (ext?.settled) await ext.settled();
     if (ext && admitted.has(input.toolName)) return ext.postToolUse(input);
     return o.hooks?.onPostToolUse?.(input, invocation);
   };
   const onPostToolUseFailure: NonNullable<SessionHooks["onPostToolUseFailure"]> = async (input, invocation) => {
+    if (ext?.settled) await ext.settled();
     if (ext && admitted.has(input.toolName)) return ext.postToolUseFailure?.(input);
     return o.hooks?.onPostToolUseFailure?.(input, invocation);
+  };
+  // A new request waits too: its first model call would carry a changed tool's text (integrations-r9-1).
+  const onUserPromptSubmitted: NonNullable<SessionHooks["onUserPromptSubmitted"]> = async (input, invocation) => {
+    if (ext?.settled) await ext.settled();
+    return o.hooks?.onUserPromptSubmitted?.(input, invocation);
   };
   // Only the admitted tools load from each server, and only servers with one.
   const servers: Record<string, MCPServerConfig> = {};
@@ -125,6 +143,10 @@ export function hardenedSessionConfig(o: HardenedOptions): SessionConfig {
     }
   }
   const withExt = admitted.size > 0;
+  // Registered before the session exists, so a server's first word that its tools changed is never missed.
+  const onEvent: NonNullable<SessionConfig["onEvent"]> = e => {
+    if (e.type === "mcp.tools.list_changed") ext?.listChanged?.(String((e.data as { serverName?: unknown }).serverName ?? ""));
+  };
   return {
     ...(o.sessionId ? { sessionId: o.sessionId } : {}),
     ...(o.model ? { model: o.model } : {}),
@@ -141,7 +163,8 @@ export function hardenedSessionConfig(o: HardenedOptions): SessionConfig {
     systemMessage: o.systemMessage,
     workingDirectory: o.workingDirectory,
     onPermissionRequest: o.onPermissionRequest,
-    hooks: { ...(o.hooks ?? {}), onPreToolUse, ...(withExt ? { onPostToolUse, onPostToolUseFailure } : {}) },
+    hooks: { ...(o.hooks ?? {}), onPreToolUse, ...(withExt ? { onPostToolUse, onPostToolUseFailure, onUserPromptSubmitted } : {}) },
+    ...(withExt && ext?.listChanged ? { onEvent } : {}),
     infiniteSessions: { enabled: true },
   } as SessionConfig;
 }
@@ -191,15 +214,17 @@ export async function verifySessionTools(session: CopilotSession, granted: strin
     const extra = meta.tools.filter(t => !isOwn(t) && !isAdmitted(t)).map(t => t.name);
     if (extra.length) throw new UngrantedToolsError(extra);
     if (ext && admitted.size) {
-      ext.verify(meta.tools.filter(isAdmitted));
+      // Bound first: the pins' check takes a tool that differs out of this session (it disables its server) before
+      // the session is anyone's to ask.
       ext.bind?.(async () => {
         const now = await session.rpc.tools.getCurrentMetadata();
         if (!Array.isArray(now.tools)) throw new Error("the runtime did not report its tools");
         return now.tools.filter(isAdmitted);
-      }, async servers => { await Promise.all(servers.map(serverName => session.rpc.mcp.disable({ serverName }))); });
-      if (ext.listChanged && typeof session.on === "function") {
-        session.on(e => { if (e.type === "mcp.tools.list_changed") ext.listChanged?.(String((e.data as { serverName?: unknown }).serverName ?? "")); });
-      }
+      }, async servers => { await Promise.all(servers.map(serverName => session.rpc.mcp.disable({ serverName }))); },
+      // The server's own tools/list now, as its running process answers Ember (name, description, schema and hints):
+      // never proof of what the runtime shows the model, which is the runtime's own list.
+      serverName => session.rpc.mcp.listTools({ serverName }));
+      await ext.verify(meta.tools.filter(isAdmitted));
     }
     return names;
   })(), timeoutMs);

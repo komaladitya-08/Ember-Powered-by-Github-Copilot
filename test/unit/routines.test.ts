@@ -266,15 +266,92 @@ describe("routines and the user's own words (audit of the conversation features)
     // Heard where Ember can't tell the user from its speakers: commands hear nothing at all (OWNER V1).
     const spoken = { target: null, words: "clean up", screen: [], voiceUnchecked: true };
     inner.turn = spoken;
-    expect(inner.userWordsOf(spoken)).toEqual({ words: "clean up\ndelete the build folder", commandWords: "" });
+    // (Assisted's check still reads what they said, never the steps: modes-C6.)
+    expect(inner.userWordsOf(spoken)).toEqual({ words: "clean up\ndelete the build folder", commandWords: "", checkWords: "clean up" });
     // A change of plan is the user's own words only.
-    expect(inner.userWordsOf(spoken, { routine: false })).toEqual({ words: "clean up", commandWords: "" });
+    expect(inner.userWordsOf(spoken, { routine: false })).toEqual({ words: "clean up", commandWords: "", checkWords: "clean up" });
     // And TaskManager hands the worker that, typedOnly included.
     const specs: Record<string, unknown>[] = [];
     const tm = new TaskManager({ log: quiet, currentWindow: () => null, deleteSession: async () => undefined, setCards: () => undefined, makeWorker: spec => { specs.push(spec as never); return { run: () => new Promise(() => undefined), dispose: async () => undefined, sessionId: null } as never; } });
     tm.start("delete the build folder", { userWords: "clean up\ndelete the build folder", commandWords: "clean up", typedOnly: true });
     await vi.waitFor(() => expect(specs).toHaveLength(1));
     expect(specs[0]).toMatchObject({ commandWords: "clean up", typedOnly: true });
+    tm.cancelAll();
+  });
+});
+
+describe("the user's own words for Assisted's check (modes-C6; PLAN.md §10 \"Settled\" (2), (8))", () => {
+  const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as unknown as Logger;
+  const host = async () => {
+    const { AgentHost } = await import("../../app/main/agent/host");
+    const { SettingsStore } = await import("../../app/main/settings");
+    const dir = tmp();
+    const store = new SettingsStore(path.join(dir, "settings.json"));
+    store.load();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the turn under way, without Copilot
+    return new AgentHost({ userData: dir, runtimePath: "/nowhere", settings: store, log: quiet, setState: () => undefined, onStatus: () => undefined }) as any;
+  };
+  const request = (words: string, how: Record<string, unknown> = {}) => ({ target: null, words, screen: [], ...how });
+
+  it("are every word the user typed or said, unchecked speech included, with nothing kept apart while they are the words commands hear", async () => {
+    const inner = await host();
+    // Typed, or spoken where Ember can tell the user's voice: the task's words stand for commands and the check alike.
+    expect(inner.userWordsOf(request("delete the old drafts"))).toEqual({ words: "delete the old drafts" });
+    // Heard where Ember can't tell the user from its speakers (every spoken request on Windows and macOS, every Listen
+    // once): never words for commands, but the check's.
+    expect(inner.userWordsOf(request("delete the old drafts", { voiceUnchecked: true }))).toEqual({ words: "delete the old drafts", commandWords: "", checkWords: "delete the old drafts" });
+  });
+
+  it("are never a suggestion chip's words, nor words heard over Ember's own voice", async () => {
+    const inner = await host();
+    // A chip: the user's click, Ember's words. Nothing differs from what commands hear (none), so nothing is kept apart.
+    expect(inner.userWordsOf(request("delete the old drafts", { suggested: true }))).toEqual({ words: "delete the old drafts", commandWords: "", typedOnly: true });
+    // Heard over Ember's voice: the policy still reads them, but the check gets none of them, verified or not.
+    expect(inner.userWordsOf(request("delete the old drafts", { overEmber: true }))).toEqual({ words: "delete the old drafts", checkWords: "" });
+    expect(inner.userWordsOf(request("delete the old drafts", { overEmber: true, voiceUnchecked: true }))).toEqual({ words: "delete the old drafts", commandWords: "" });
+    // main marks a request so when it was said while Ember spoke, or since Ember last spoke where it can't tell its own
+    // voice from the user's: the same test a spoken yes to a question must pass.
+    const main = fs.readFileSync("app/main/main.ts", "utf8");
+    expect(main).toContain("...(e.overEmber === true || (voice?.selfSpokeSince(heardFrom) ?? true) ? { overEmber: true } : {}) }, manual?.context, stillCurrent);");
+    expect(main).toContain("...(how.heardId ? { heardId: how.heardId } : {}), ...(how.overEmber ? { overEmber: true } : {}) })");
+  });
+
+  it("are the request that ran a routine, never its saved steps", async () => {
+    const inner = await host();
+    inner.conductor = { routineSaid: "open Mail\nsend the report to Priya" };
+    const typed = request("start my day");
+    inner.turn = typed;
+    // (Commands hear "start my day" too, so the check's words are the same and aren't kept apart.)
+    expect(inner.userWordsOf(typed)).toEqual({ words: "start my day\nopen Mail\nsend the report to Priya", commandWords: "start my day", typedOnly: true });
+    const spoken = request("start my day", { voiceUnchecked: true });
+    inner.turn = spoken;
+    expect(inner.userWordsOf(spoken)).toMatchObject({ commandWords: "", checkWords: "start my day" });
+    const chip = request("start my day", { suggested: true });
+    inner.turn = chip;
+    expect(inner.userWordsOf(chip)).toEqual({ words: "start my day\nopen Mail\nsend the report to Priya", commandWords: "", typedOnly: true });
+  });
+
+  it("go with the task to its worker, and with every change the user makes to it", async () => {
+    const { TaskManager } = await import("../../app/main/agent/tasks");
+    const specs: Record<string, unknown>[] = [];
+    const steers: unknown[][] = [];
+    const tm = new TaskManager({ log: quiet, currentWindow: () => null, deleteSession: async () => undefined, setCards: () => undefined,
+      makeWorker: spec => { specs.push(spec as never); return { run: () => new Promise(() => undefined), dispose: async () => undefined, steer: async (...a: unknown[]) => { steers.push(a); return true; }, sessionId: "s" } as never; } });
+    const t = tm.start("delete the old drafts", { userWords: "delete the old drafts", commandWords: "", checkWords: "delete the old drafts" });
+    await vi.waitFor(() => expect(specs).toHaveLength(1));
+    expect(specs[0]).toMatchObject({ commandWords: "", checkWords: "delete the old drafts" });
+    // A change heard unchecked: the worker is told its words for the check, and a new try starts with all of them.
+    expect(await tm.steer(t.id, "and the sent ones", "and the sent ones", undefined, undefined, "", "and the sent ones")).toBe(true);
+    expect(steers[0].slice(4)).toEqual(["", "and the sent ones"]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- what a retry would start from
+    expect((tm as any).specs.get(t.id).opts).toMatchObject({ commandWords: "", checkWords: "delete the old drafts\nand the sent ones" });
+    // A task whose words never differed keeps none apart, until a change brings some that do.
+    const plain = tm.start("rename it", { userWords: "rename it" });
+    await vi.waitFor(() => expect(specs).toHaveLength(2));
+    expect((specs[1] as { checkWords?: string }).checkWords).toBeUndefined();
+    expect(await tm.steer(plain.id, "to notes", "to notes", undefined, undefined, "", "to notes")).toBe(true);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- what a retry would start from
+    expect((tm as any).specs.get(plain.id).opts).toMatchObject({ commandWords: "rename it", checkWords: "rename it\nto notes" });
     tm.cancelAll();
   });
 });

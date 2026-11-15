@@ -15,10 +15,13 @@ import { writeAllSync } from "../write-all";
 export interface AuditEntry {
   task?: string;
   /**
-   * `autonomy`: "Work without asking" turned on or off (`on`), and how (`via`: home, voice or typed; `verified`).
+   * `autonomy`: the approval mode in force changed (`mode`, and `before`), and how (`via`: home, voice, typed, file
+   * or policy; `verified`); `atStart`: as found in force at start. Entries from before the modes say `on` instead.
    * `read`: a picture of a window went to the model (`kind: "screenshot"`, its app and size, never its title).
+   * `provider`: the user's own model provider in force changed (`host`, null for none of theirs; `before`; `via`: home,
+   * settings or start: provider-record.ts).
    */
-  event: "decision" | "action" | "confirm" | "task" | "stop" | "command" | "remote" | "wsl" | "extension" | "autonomy" | "read";
+  event: "decision" | "action" | "confirm" | "task" | "stop" | "command" | "remote" | "wsl" | "extension" | "autonomy" | "read" | "provider";
   [key: string]: unknown;
 }
 
@@ -47,8 +50,12 @@ export class AuditLog {
   /** The last write failed: the next failure isn't reported again until a write works. */
   private failing = false;
 
-  /** `onError`: told when writes start failing (once, until one works again). */
-  constructor(private dir: string, private now: () => Date = () => new Date(), private sink?: (line: string) => void, private onError?: (err: unknown) => void) {
+  /**
+   * `onError`: told when writes start failing (once, until one works again). `redact`: a pass over every entry before
+   * it is written (the vault's redactor: a value the vault filled is never audited, whatever name or title holds it).
+   */
+  constructor(private dir: string, private now: () => Date = () => new Date(), private sink?: (line: string) => void, private onError?: (err: unknown) => void,
+    private redact?: <T>(entry: T) => T) {
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   }
 
@@ -66,7 +73,8 @@ export class AuditLog {
    * unrecorded rely on that, and those that only keep a record catch it. The journal gets the line either way.
    */
   write(e: AuditEntry): void {
-    const line = JSON.stringify({ t: this.now().toISOString(), ...e });
+    // A redactor that throws writes nothing: the caller hears it as any write that failed.
+    const line = JSON.stringify({ t: this.now().toISOString(), ...(this.redact ? this.redact(e) : e) });
     try {
       this.append(line);
     } catch (err) {
@@ -81,14 +89,25 @@ export class AuditLog {
     try { this.sink?.(line); } catch { /* the journal is a copy; the file is the record */ }
   }
 
+  /**
+   * One line, whole or not at all (reliability-c11-1): a write the disk cut short is taken back to where the file
+   * ended, and a file that ends part-way through a line (a power cut) gets its newline first, so the next entry never
+   * joins a torn line that readers skip.
+   */
   private append(line: string): void {
+    const file = this.file;
+    const size = sizeOf(file);
+    const text = (size !== null && size > 0 && !endsWithNewline(file, size) ? "\n" : "") + line + "\n";
     try {
-      fs.appendFileSync(this.file, line + "\n", { mode: 0o600 });
+      fs.appendFileSync(file, text, { mode: 0o600 });
     } catch (err) {
+      if (size !== null && (err as NodeJS.ErrnoException).code !== "ENOENT") {
+        try { if ((sizeOf(file) ?? size) > size) fs.truncateSync(file, size); } catch { /* the next write starts a line of its own anyway */ }
+      }
       // A folder removed while Ember runs (a clean-up tool) is made again: writing works without a restart (review #117).
       if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
       fs.mkdirSync(this.dir, { recursive: true, mode: 0o700 });
-      fs.appendFileSync(this.file, line + "\n", { mode: 0o600 });
+      fs.appendFileSync(file, line + "\n", { mode: 0o600 });
     }
   }
 
@@ -324,6 +343,8 @@ export function journalSink(onError: (err: unknown) => void = () => undefined): 
   };
 }
 
+/** What Assisted's check said of an app step (Decision.review): Ember's own fixed words, never the model's. */
+const STEP_REVIEWS: ReadonlySet<string> = new Set(["match", "no-match", "none"]);
 /** Values that say nothing private: key combinations, scroll directions, Ember's own settings, app names, on/off. */
 const PLAIN_VALUE_KINDS = new Set(["keys", "scroll", "setting", "open_app", "toggle"]);
 
@@ -334,6 +355,7 @@ const PLAIN_VALUE_KINDS = new Set(["keys", "scroll", "setting", "open_app", "tog
  * A key that types a character goes there as a count like typed text (letters typed one by one would spell it out);
  * shortcuts and keys that edit or move stay. Reasons stay: they are Ember's own words and app names. A command
  * review's words (`review`) are the model's, and can name the file and the request: a size only (safety-privacy-v1).
+ * What Assisted's check said of an app step is one of Ember's three fixed words (Decision.review): it stays.
  */
 export function journalLine(line: string): string {
   try {
@@ -341,7 +363,8 @@ export function journalLine(line: string): string {
     const size = (o: Record<string, unknown>, k: string) => {
       if (typeof o[k] === "string") { o[`${k}Chars`] = (o[k] as string).length; delete o[k]; }
     };
-    for (const k of ["goal", "summary", "window", "error", "cwd", "review"]) size(e, k);
+    for (const k of ["goal", "summary", "window", "error", "cwd"]) size(e, k);
+    if (!STEP_REVIEWS.has(String(e.review))) size(e, "review");
     // A command's text goes as its size only, as typed text does; the size its entry already gives (before redaction
     // and the 2000-character cut, §3.12) stays.
     if (typeof e.command === "string") { if (typeof e.commandChars !== "number") e.commandChars = e.command.length; delete e.command; }
@@ -358,5 +381,24 @@ export function journalLine(line: string): string {
     return JSON.stringify(e);
   } catch {
     return line;
+  }
+}
+
+/** The file's size, or null when it isn't there (or can't be asked). */
+function sizeOf(file: string): number | null {
+  try { return fs.statSync(file).size; } catch { return null; /* not there yet: the append makes it */ }
+}
+
+/** Does the file's last byte end a line? A file that can't be read is taken as whole (nothing is added to it). */
+function endsWithNewline(file: string, size: number): boolean {
+  let fd: number | null = null;
+  try {
+    fd = fs.openSync(file, "r");
+    const b = Buffer.alloc(1);
+    return fs.readSync(fd, b, 0, 1, size - 1) === 1 ? b[0] === 0x0a : true;
+  } catch {
+    return true; // can't be read: the append says whether it can be written
+  } finally {
+    if (fd !== null) { try { fs.closeSync(fd); } catch { /* closing a read handle can't lose anything */ } }
   }
 }

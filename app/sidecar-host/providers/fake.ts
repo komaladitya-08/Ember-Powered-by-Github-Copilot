@@ -156,6 +156,8 @@ export class FakeProvider implements AxProvider {
   generation = 1;
   windows: FakeElement[] = [];
   readonly log: FakeLogLine[] = [];
+  /** What the vault's fill put into each password field (fillValue): kept apart, as a real one's is never reported. */
+  readonly filled = new Map<FakeElement, string>();
   /** Handles given back (all of them, in order). */
   readonly released: Handle[] = [];
   started = 0;
@@ -413,6 +415,13 @@ export class FakeProvider implements AxProvider {
         s.value = String(value);
         s.text = undefined;
         this.record(op, el, String(value).length);
+        return;
+      case "fillValue":
+        // The vault's fill: a password field takes it too (what it holds is kept apart: nothing reports it).
+        if (!s.password) need("setValue");
+        if (s.editable === false) throw new ProviderError("failed", "unsupported:fillValue");
+        if (s.password) this.filled.set(el, String(value)); else { s.value = String(value); s.text = undefined; }
+        this.record(op, el, undefined);
         return;
       case "setRange":
         need("setRange");

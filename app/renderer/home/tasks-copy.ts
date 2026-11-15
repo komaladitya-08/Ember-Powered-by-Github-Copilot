@@ -137,6 +137,15 @@ export function askedWhere(items: readonly Pick<ActivityItem, "kind" | "state" |
   return items.findLast(i => i.kind === "question" && i.state === "waiting")?.askedIn ?? "bubble";
 }
 
+/**
+ * The waiting task whose question is up now: the one main marks `asking`, else the oldest that waits (the list is
+ * newest first, and the questions come up oldest first). Undefined when none waits (tasks-approvals-r9-3).
+ */
+export function askingTask<T extends Pick<TaskEntry, "status" | "asking">>(tasks: readonly T[]): T | undefined {
+  const waiting = tasks.filter(t => t.status === "waiting");
+  return waiting.find(t => t.asking) ?? waiting.at(-1);
+}
+
 /** Which tasks the list shows, once there are many (TASK_FILTER_FROM): all, those that need the user, at work, ended. */
 export type TaskFilter = "all" | "needs" | "working" | "ended";
 export const TASK_FILTER_FROM = 5;

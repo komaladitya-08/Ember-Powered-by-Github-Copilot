@@ -5,9 +5,6 @@
   "app": {
     "none": true
   },
-  "user": {
-    "autonomy": true
-  },
   "hands": [
     "commands"
   ],

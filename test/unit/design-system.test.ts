@@ -7,7 +7,7 @@ const read = (f: string) => readFileSync(new URL(`../../${f}`, import.meta.url),
 const shared = read("app/renderer/shared/ember.css");
 /** Views' own sheet (app/renderer/shared/view.css), linked by every page that shows views. */
 const viewCss = read("app/renderer/shared/view.css");
-const PAGES = ["home", "overlay", "handle", "ask", "desk", "command", "prompt"];
+const PAGES = ["home", "overlay", "handle", "ask", "desk", "command", "prompt", "vault"];
 
 /** A token's value in the shared stylesheet's :root (the first one: the dark appearance). */
 const token = (name: string) => {
@@ -225,6 +225,13 @@ describe("every window", () => {
     const line = Number(/line-height: (\d+)px/.exec(meta)![1]) + 2 * Number(/padding: (\d+)px/.exec(meta)![1]) + 2 * border;
     expect(/const SIZE = \{ width: 560, height: 92 \}/.test(read("app/main/ask.ts"))).toBe(true);
     expect(2 * inset + field + gap + line).toBeLessThanOrEqual(92);
+  });
+});
+
+describe("Home at its narrowest", () => {
+  it("wraps a long path in the privacy list and a hint, so Larger text at 420 px never scrolls sideways (accessibility-r12-2)", () => {
+    // Measured in Chrome at 420 px with Larger text: a Windows data folder in a .terms code was 455 px wide, a Mac's 432.
+    expect(read("app/renderer/home/styles.css")).toContain(".terms code, .hint code { font: 12px var(--ember-mono); overflow-wrap: anywhere; }");
   });
 });
 
@@ -599,7 +606,7 @@ describe("HIG pass (Apple's Human Interface Guidelines, checked surface by surfa
   });
 
   it("keeps line heights on whole pixels at every text size, in every window but the Ask box (which main sizes exactly)", () => {
-    for (const p of ["home", "overlay", "handle", "desk", "command", "prompt"]) expect(page(p), p).not.toMatch(/line-height: calc\(/);
+    for (const p of ["home", "overlay", "handle", "desk", "command", "prompt", "vault"]) expect(page(p), p).not.toMatch(/line-height: calc\(/);
   });
 
   it("puts a tone's words in the label on Clear glass, where no state colour is both a colour and 4.5:1, and its mark in the colour", () => {

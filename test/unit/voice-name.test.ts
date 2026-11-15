@@ -4,7 +4,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { calledByName, stripWake } from "../../app/voice/engine";
+import { calledByName, saidWakeItself, startsAsWake, stripWake } from "../../app/voice/engine";
 import { recognizerPieces, withoutRepeats } from "../../app/voice/sherpa";
 
 describe("calledByName", () => {
@@ -54,6 +54,28 @@ describe("calledByName", () => {
     expect(calledByName(t)).toBe(true);
   });
 
+  // "Number" for the name after a greeting (a real laptop's microphone, 2026-11-05), only where the words go on as to
+  // Ember: the wake phrase's own end, or a request's first word. "A number of people…" is the room's talk (CI's voice
+  // step on RHEL 8 took it for a wake, voice-roomtalk-1).
+  it.each(["Hey, number.", "A number.", "A number. What time is it?", "Hey number, what time is it?", "Hey a number, open the calculator.", "Number open the calculator"])("takes %j, the name written as a word, by how the words go on", t => {
+    expect(calledByName(t)).toBe(true);
+  });
+  // …and so before any request once the recognizer wrote a pause after it, or a request's first word from a longer list:
+  // the wake a laptop writes "Hey, number." is as often followed by "remind me…" as by "what…" (voice-roomtalk-x9-1).
+  it.each(["Hey, number, remind me to call mum.", "Hey, number, add milk to my list.", "Hey, number, is it going to rain?", "Hey, number, read my last email.", "A number, I need the calculator.", "Hey number remind me at five.", "A number, wh", "Hey, number, re"])("takes %j: a pause after “number”, or a request's first word (voice-roomtalk-x9-1)", t => {
+    expect(calledByName(t)).toBe(true);
+  });
+  it("leaves the request of such a wake whole (voice-roomtalk-x9-1)", () => {
+    expect(stripWake("Hey, number, remind me to call mum.", true)).toBe("Remind me to call mum.");
+    expect(stripWake("A number, I need the calculator.", true)).toBe("I need the calculator.");
+  });
+  it.each(["A number of people called today.", "Hey, number five is ready.", "A number, of course, called.", "A number of us can open the door.", "A number, or two, came up.", "A number, and a name.", "Hey, a number of us read it.", "Hi, number crunching is my job."])("doesn't take %j: “number” goes on as a word (voice-roomtalk-1)", t => {
+    expect(calledByName(t)).toBe(false);
+    // …and nothing is taken out of it where a wake's first words are stripped (a conversation sent "Of people called
+    // today."). ("Hey" and the word after it still go, as the wake phrase misheard: "Hey, ever, turn on…".)
+    if (t.startsWith("A ")) expect(stripWake(t, true)).toBe(t);
+  });
+
   it("leaves the request once the name is stripped", () => {
     expect(stripWake("Ember, turn on night light.", true)).toBe("Turn on night light.");
     expect(stripWake("Okay. Ember, open the terminal.", true)).toBe("Open the terminal.");
@@ -61,6 +83,45 @@ describe("calledByName", () => {
     // Ember's own possessive isn't the name said: "Ember's own…" never becomes "'s own…".
     expect(stripWake("Ember's own next sentence.", true)).toBe("Ember's own next sentence.");
     expect(stripWake("Embra.", true)).toBe("");
+  });
+});
+
+describe("saidWakeItself (what “Hey Ember” spotted in a question's answer window must be written as; voice-roomtalk-1)", () => {
+  it.each(["Hey, Ember, what time is it?", "Hey ember, what time is it?", "Ok ember turn on night light", "K ember turn on night light", "Lunch. Hey Ember, open my mail.", "Ember, open my mail.", "Hey ember", "K-embler.", "K-emer", "He ember"])("takes %j", t => {
+    expect(saidWakeItself(t)).toBe(true);
+  });
+  it.each(["Number, can you pass the salt?", "A number. What time is it?", "Hey Amber, what time is it?", "Hey, number.", "Member, open Notepad.", "Hey, remember.", "Umber, open the terminal.", "What time is it?", "And then we can book the flights to Lisbon.", "He remembers.", "Okay, embers.", ""])("doesn't take %j: the room's talk, or a near word", t => {
+    expect(saidWakeItself(t)).toBe(false);
+  });
+});
+
+describe("startsAsWake (what the first speech of a wake by “Hey Ember” from idle must start as; voice-roomtalk-x9-2)", () => {
+  const LONG = 3 * 16_000;
+  // As the real models wrote the phrase from idle, as a laptop's microphone did, and the name as some other word.
+  it.each(["Hey, Ember, what time is it?", "Hey ember", "K ember turn on night light", "Ok ember turn a Night light", "K-embler", "K-emer", "He ember", "Tay ember", "Hey Amber, turn on night light.", "Hey, number.",
+    "A number. What time is it?", "Hey, number, remind me to call mum.", "Hey, ever, turn on night light.", "Hey, I'm return on night light.", "Lunch. Hey Ember, open my mail.", "Member, what time is it?",
+    // …and as a noisy microphone had "Okay Ember, turn on night light." written.
+    "Ok ember's turn a nightlight", "K-Ember turn on nightlight", "The K-Ember turn on nightlight."])("takes %j", t => {
+    expect(startsAsWake(t, LONG)).toBe(true);
+  });
+  it.each(["And then we can book the flights to Lisbon.", "So we went to the market.", "What time is the meeting tomorrow?", "Okay, let's go then.", "I think we should leave at five.", "Turn on night light.", "I remember the first time we met.", "In September we went to the market."])("doesn't take %j: the room's talk", t => {
+    expect(startsAsWake(t, LONG)).toBe(false);
+  });
+  // What the real models wrote of room talk the spotter took for the phrase, 4 voices of 4 each: all were a wake's request.
+  it.each(["And they said we can book the flights.", "Hey, can you pass the salt?", "Hi, how are you doing today?", "The embers are still glowing.", "Emma said she would call later.", "I think they went home.",
+    "So they called today.", "Pay the bill tomorrow please.", "Hey, did you see that?", "Embers were all that was left.", "Tell Ember's team we are late."])("doesn't take %j: a greeting before any word, “they”, “embers” or “Emma” (voice-roomtalk-y9-1)", t => {
+    expect(startsAsWake(t, LONG)).toBe(false);
+  });
+  // …and what a noisy microphone had real wakes written as stays: the name's ending after a greeting, the name after "they".
+  it.each(["Ok embers turn on nightlife", "Okay embers turn on night light", "He embers what time is it?", "3 embers, what time is it?", "Ok ember's turn on nightlocks", "They ember what time is it?", "The ember, what time is it?",
+    "Hey Emma, what time is it?", "Lunch. Hey, ever, turn on night light.", "Hey, I'm return on night light."])("still takes %j (voice-roomtalk-y9-1)", t => {
+    expect(startsAsWake(t, LONG)).toBe(true);
+  });
+  it("takes a word or two of a short sound, or nothing made out, as the phrase said alone", () => {
+    expect(startsAsWake("I'm there.", 16_000)).toBe(true);
+    expect(startsAsWake("", LONG)).toBe(true);
+    expect(startsAsWake("…", LONG)).toBe(true);
+    expect(startsAsWake("Thank you.", LONG)).toBe(false);
   });
 });
 

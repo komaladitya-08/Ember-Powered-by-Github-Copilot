@@ -12,7 +12,7 @@ import { PLAN_WORD, type PlanStep } from "../../shared/view";
 import { rowWord } from "../../shared/activity";
 import { renderView } from "../shared/view-dom";
 import { LIVE_SETTLE_MS } from "../shared/held-live";
-import { askedWhere, FILTER_EMPTY, TASK_FILTERS, TASK_FILTER_FROM, filterLabel, filterTasks, type TaskFilter, NOTE_TAG, TASKS_EMPTY, droppedText, offersRetry, offsetText, offsetWords, stateWord, stepsLine, taskAnnouncement, taskMeta, timelineRows, type TimelineRow } from "./tasks-copy";
+import { askedWhere, askingTask, FILTER_EMPTY, TASK_FILTERS, TASK_FILTER_FROM, filterLabel, filterTasks, type TaskFilter, NOTE_TAG, TASKS_EMPTY, droppedText, offersRetry, offsetText, offsetWords, stateWord, stepsLine, taskAnnouncement, taskMeta, timelineRows, type TimelineRow } from "./tasks-copy";
 
 const $ = (id: string) => document.getElementById(id)!;
 const el = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: string): HTMLElementTagNameMap[K] => {
@@ -318,7 +318,8 @@ function render(sent: TaskEntry[]): void {
   // A task waits for the user's answer: Home says where it is asked, and with which keys, in that task's own group (it
   // never answers itself); otherwise the note waits, hidden, above the list.
   const asking = askingNote;
-  const waiting = tasks.find(t => t.status === "waiting");
+  // The question up now is one task's: with two waiting, the note goes in that one's group (tasks-approvals-r9-3).
+  const waiting = askingTask(tasks);
   const body = waiting ? drawn.get(waiting.id)?.node.querySelector(":scope > .task-body") : null;
   asking.hidden = !body;
   // Its words say where: the bubble (with the keys), the command window, or a consent card's own window.

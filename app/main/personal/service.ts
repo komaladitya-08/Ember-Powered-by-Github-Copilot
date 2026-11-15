@@ -181,6 +181,18 @@ export class PersonalVoice {
     this.heardList = [];
   }
 
+  /**
+   * Sign-out, another account or Forget everything: what was asked and heard this session was the person's who is
+   * leaving. None of it is suggested to the next one, kept for "That's not what I said", or left showing (memory-r9-2).
+   * The words learnt and the voiceprint stay: they have their own Forget.
+   */
+  forgetSession(): void {
+    this.history = [];
+    this.heardList = [];
+    this.suggestions = [];
+    this.last = null;
+  }
+
   /** Forget my voice: the voiceprint and all it learnt, and the words learnt from what the user said, go. */
   forgetVoice(): void {
     this.o.voiceprints.forget();

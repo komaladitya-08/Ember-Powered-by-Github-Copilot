@@ -421,7 +421,7 @@ describe("the Linux rows stay frozen copies", () => {
   const same = (a: RegExp | null, b: RegExp) => expect([a?.source, a?.flags]).toEqual([b.source, b.flags]);
 
   it("keeps the policy vocabulary's Linux rows as the expressions they were", () => {
-    same(SECURITY_APP.linux, /polkit|gcr-prompter|pinentry|ssh-askpass|ksshaskpass|^firewall-config$|(^|\s)gnome-shell(\s|$)/i);
+    same(SECURITY_APP.linux, /polkit|policykit|gcr-prompter|pinentry|ssh-askpass|ksshaskpass|kdesu|lxqt-sudo|lxsudo|gksu|^firewall-config$|(^|\s)gnome-shell(\s|$)/i);
     same(SECURITY_TITLE.linux, /^\s*(authenticat(e|ion)\b.*\b(required|request)\b|authenticate\s*$|(password|passphrase|pin) (required|request(ed)?)\b|enter (the |your |a )?(password|passphrase|pin)\b|unlock\b.*\b(keyring|private key|password|passphrase)\b|\[sudo\]|sudo password\b)/);
     same(TABBED_APP.linux, /firefox|chrom(e|ium)|epiphany|^web$|falkon|midori|opera|brave|vivaldi|konqueror|librewolf|seamonkey|thunderbird|evolution|geary|claws|mail|slack|teams|discord|element|mattermost|rocket\.?chat|signal|telegram/i);
     same(WEB_APP.linux, /firefox|chrom(e|ium)|epiphany|^web$|falkon|midori|opera|brave|vivaldi|konqueror|librewolf|seamonkey|electron|slack|teams|discord|element|mattermost|rocket\.?chat|signal|telegram|whatsapp/i);
@@ -434,7 +434,8 @@ describe("the Linux rows stay frozen copies", () => {
   });
 
   it("keeps the Linux never-look list, clipboard rule, words and terminal id words", () => {
-    expect(NEVER_LOOK_DEFAULTS.linux).toEqual(["keepassxc", "seahorse", "passwords and keys", "1password", "bitwarden", "polkit"]);
+    // The six it had, then the password managers the other OSes' lists have (safety-privacy-r9-3).
+    expect(NEVER_LOOK_DEFAULTS.linux).toEqual(["keepassxc", "seahorse", "passwords and keys", "1password", "bitwarden", "polkit", "keepass", "lastpass", "dashlane", "enpass", "proton pass", "kwallet", "org.gnome.world.secrets"]);
     const OS = (x: string) => `electron application/osclipboard;format="${x}"`;
     for (const t of ["text/plain", OS("PIXMAP"), OS("x-kde-passwordManagerHint"), "x-kde-passwordManagerHint", OS("ExcludeClipboardContentFromMonitorProcessing")]) {
       expect(CLIPBOARD_FORMATS.linux.savable(t), t).toBe(savableFormat(t));

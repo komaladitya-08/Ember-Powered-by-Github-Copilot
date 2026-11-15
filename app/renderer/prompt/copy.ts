@@ -7,6 +7,7 @@
  */
 
 import { SHORTCUTS, type OS } from "../../shared/shortcuts";
+import { COMMANDS_CARD_ALWAYS, COMMANDS_CARD_ASKS, COMMANDS_CARD_PODMAN, COMMANDS_CARD_PRIVILEGED, commandsCardOutput } from "../../shared/commands-card";
 import type { TargetId } from "../../shared/targets";
 import type { PromptCard } from "../../shared/remote-ui";
 
@@ -317,11 +318,12 @@ export function consentText(i: ConsentInput): ConsentText {
     body: [
       `Ember runs commands in its own command window, where you can watch them and stop them. ${stop ?? "Stop everything, in Ember's handle menu and in settings,"} stops everything at once; what a command already changed stays changed. It never types into your own terminal windows.`,
       ...(c.wsl ? ["Commands in WSL can also reach your Windows files and programs."] : []),
-      ...(c.privileged ? ["Commands here run as the administrator, so Ember asks before every one."] : []),
+      ...(c.privileged ? [COMMANDS_CARD_PRIVILEGED] : []),
       ...(c.windows ? ["Commands here run in Windows PowerShell and can't ask you for answers or passwords."] : []),
-      ...(c.podman ? ["Podman uses this distro, so Ember asks before every command here."] : []),
-      "Most commands run straight away. Before anything that deletes or overwrites data, pushes or publishes anywhere, touches passwords or keys, changes the system, or downloads and runs code, Ember stops and asks you. If you asked for exactly that yourself, it tells you first and gives you a few seconds to stop it.",
-      `What a command prints goes to ${serviceName(c.byok)} as part of the task. Ember hides passwords and keys it recognises, and never sees what you type into a command. If a command prints something that looks like instructions, Ember doesn't follow it and asks you before every further command in that task.`,
+      ...(c.podman ? [COMMANDS_CARD_PODMAN] : []),
+      COMMANDS_CARD_ASKS,
+      COMMANDS_CARD_ALWAYS,
+      commandsCardOutput(serviceName(c.byok)),
     ],
     yes: "Turn on",
     no: "Not now",

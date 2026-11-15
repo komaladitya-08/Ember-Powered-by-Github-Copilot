@@ -1045,6 +1045,10 @@ export function doPerform(s: AxSession, el: AxRef, f: Facts, op: PerformOp, valu
       if (isSecure(f)) throw new ProviderError("denied", "a password field's value isn't set");
       s.set(el, "AXValue", String(value ?? ""), "set its text");
       return;
+    case "fillValue":
+      // The vault's fill (the host's vault_fill, for Ember's main process alone): a secure field's text is set too.
+      s.set(el, "AXValue", String(value ?? ""), "set its text");
+      return;
     case "setRange": {
       // A secure field's value is never written, whatever the request says it holds (nor read, as stepping would).
       if (isSecure(f)) throw new ProviderError("denied", "a password field's value isn't set");

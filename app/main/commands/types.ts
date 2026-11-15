@@ -19,9 +19,11 @@ export const SHELL_FAMILY: Readonly<Record<ShellId, ShellFamily>> = { bash: "pos
  * c "remote-delete" (deleting from source control or a remote service), d "secret" (credentials, secrets, the
  * clipboard, screen pictures, shell history), e "system" (privilege and system changes, package installs, other users'
  * processes, anything that runs later: shell start-up files, git hooks and code-running git settings), f "escape"
- * (download-and-run, or outliving the kill switch), g "unclear" (Ember can't classify it confidently).
+ * (download-and-run, or outliving the kill switch), g "unclear" (Ember can't classify it confidently), h "unknown" (a
+ * program, or a verb of a tool Ember knows, that Ember has no row for: commands-closed, the closed default; the user's
+ * own words naming it announce it).
  */
-export type DangerClass = "destroy" | "publish" | "remote-delete" | "secret" | "system" | "escape" | "unclear";
+export type DangerClass = "destroy" | "publish" | "remote-delete" | "secret" | "system" | "escape" | "unclear" | "unknown";
 
 /** Classes that always ask, even when the user's own words asked for it (D4.4). */
 export const ALWAYS_ASK: ReadonlySet<DangerClass> = new Set(["secret", "escape", "unclear"]);
@@ -34,6 +36,47 @@ export interface CommandObject {
   /** Absolute path on the target, normalised with the target's path rules (for paths and globs); absent when it can't be known. */
   resolved?: string;
 }
+
+/**
+ * The rule of a deletion or a write whose target Ember can't resolve (commands-remote-c11-3): never reviewed by
+ * Assisted's check (review.ts notReviewable), and refused in Autopilot (autopilot.ts autopilotRefuses).
+ */
+export const UNRESOLVED_TARGET_RULE = "unclear.unresolved-target";
+/**
+ * The rules that say a command reaches a place Ember can't name (a variable, a substitution, a folder `cd` moved to
+ * by one, a download's unnamed file): Autopilot refuses it and Assisted's check never sees it, as it may be Ember's own
+ * records (commands-remote-c11-3, r11-commands-y11-4).
+ */
+export const UNRESOLVED_RULES: ReadonlySet<string> = new Set([UNRESOLVED_TARGET_RULE, "unclear.folder", "download.unnamed"]);
+/** Programs that write or delete the files they are given in place (`dd of=$F`, `sed -i … "$F"`, `rsync --delete a/ "$D"`). */
+const WRITES_GIVEN = new Set(["dd", "sed", "gsed", "perl", "rsync", "tee", "sponge"]);
+/**
+ * Deleters and copiers whose targets the classifier resolves itself, a loop's variable over a pattern included, and
+ * files UNRESOLVED_TARGET_RULE for where it can't (commands-remote-c11-3).
+ */
+const RESOLVES_OWN = new Set(["rm", "rmdir", "unlink", "shred", "cp", "mv", "install", "truncate", "ln", "find"]);
+
+/**
+ * A deletion or a write in a command whose words Ember can't all resolve (`git -C "$D" clean -fdx`, `unzip -d "$D"`, `dd of=$F`), or
+ * whose operands come from its input (`xargs rm < list`): what it deletes or writes may be Ember's own records, so it
+ * counts as UNRESOLVED_RULES do (r11-commands-y11-4).
+ */
+export function unnamedTarget(cls: Pick<Classification, "findings" | "commands">): boolean {
+  // A program that writes what it is given, with a word Ember can't resolve, whatever was found of it.
+  if (cls.commands.some(c => WRITES_GIVEN.has(c.program.split(/[\\/]/).pop() ?? "") && c.args.some(a => a === null))) return true;
+  return cls.findings.some(f => {
+    if (f.cls !== "destroy") return false;
+    const c = cls.commands[f.at];
+    if (c === undefined) return false;
+    if (c.wrappers.some(w => /^(xargs|parallel)\b/.test(w))) return true;
+    return !RESOLVES_OWN.has(c.program.split(/[\\/]/).pop() ?? "") && c.args.some(a => a === null);
+  });
+}
+/**
+ * The rule of a terminal's or an editor's remote-control command Ember doesn't know, which may act in the user's own
+ * terminals (classify.ts toolVerbs): never reviewed by Assisted's check, and refused in Autopilot, as a never.
+ */
+export const TERMINAL_VERB_RULE = "unclear.terminal-verb";
 
 /** One reason a command is dangerous. */
 export interface Finding {
@@ -210,6 +253,13 @@ export interface CommandDecision {
    * request, so it is audited in a field of its own, which the system journal keeps as a size only (safety-privacy-v1).
    */
   review?: string;
+  /**
+   * Announced without a question though it reads or prints secrets (Autopilot, or Assisted's check): its output is
+   * withheld from the model, which is told only that it ran and how it ended (the owner's decision of 2026-11-14).
+   */
+  withheld?: boolean;
+  /** Announced without a question though it would outlive the kill switch: its announcement and audit say so. */
+  outlivesStop?: boolean;
 }
 
 /** Everything decideCommand reads. */
@@ -292,6 +342,13 @@ export interface CommandStamp {
    * on the PC when the request is sent (no clock is compared across machines: critique integration-6). null: no yes.
    */
   approval: { ageMs: number } | null;
+  /**
+   * Autopilot on the PC announced the command with its Stop countdown instead of asking, and the user didn't stop it:
+   * how long ago the countdown ended, measured as an approval's age is. Never a yes: gate 2 lets it stand in for one
+   * only where its own administrator allows Autopilot, and never for a command that would read or print secrets,
+   * outlive the kill switch or that it can't tell the effect of (commands/autopilot.ts askedOfFinding).
+   */
+  announced?: { ageMs: number };
 }
 
 /** How a run ended. */
@@ -302,6 +359,18 @@ export interface RunExit {
   ms: number;
   /** failed-to-start and refused-remote: why, in plain words. */
   error?: string;
+  /**
+   * exit: the run ended, but the end of its output never came back (WSL1's relay lost it, or a remote's last bytes
+   * didn't arrive in time), so the output is incomplete and is never reported as all of it.
+   */
+  outputCut?: boolean;
+  /**
+   * exit: the run's own end never came back (a WSL run without its launcher's end marker): the command may not have
+   * finished, and its exit code is only wsl.exe's. Always with outputCut.
+   */
+  endLost?: boolean;
+  /** endLost: the WSL distro was no longer running when the run ended (it stopped, or was stopped, meanwhile). */
+  targetStopped?: boolean;
   /** refused-remote: the remote would run it after the user's yes (gate 2's needs_confirm). */
   needsConfirm?: boolean;
   /** refused-remote: the card lines the remote's own check produced (untrusted text, shown quoted). */
@@ -362,6 +431,13 @@ export interface CommandCard {
   classes?: DangerClass[];
   /** An announcement the AI review cleared (commands/review.ts), not one the user's own words asked for exactly. */
   reviewed?: boolean;
+  /** An announcement Autopilot made (commands/autopilot.ts), of a command the user didn't ask for exactly: its heading says so. */
+  autopilot?: boolean;
+  /**
+   * An announcement of a command the user's words didn't ask for: a program Ember doesn't know, or an ordinary command
+   * carrying text from another window. Its heading never says "as you asked" (accessibility-r12-1).
+   */
+  unrequested?: boolean;
   /**
    * The target's home folder, for a POSIX shell: the header says it as ~ ("in ~/src/app", commands-remote-8). Shown
    * only; the approval binds the whole `cwd`.

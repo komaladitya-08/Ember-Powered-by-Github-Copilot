@@ -145,7 +145,7 @@ describe("Home's streaming answer row", () => {
     const main = readFileSync(join(__dirname, "../../app/main/main.ts"), "utf8");
     expect(main).toMatch(/onAnswerStream: e => broadcast\(IPC\.conversationStream, e\)/);
     expect(readFileSync(join(__dirname, "../../app/preload/home.ts"), "utf8")).toMatch(/IPC\.conversationStream/);
-    for (const p of ["ask", "overlay", "handle", "mic", "desk", "command", "prompt"]) {
+    for (const p of ["ask", "overlay", "handle", "mic", "desk", "command", "prompt", "vault"]) {
       expect(readFileSync(join(__dirname, `../../app/preload/${p}.ts`), "utf8")).not.toMatch(/conversationStream/);
     }
   });

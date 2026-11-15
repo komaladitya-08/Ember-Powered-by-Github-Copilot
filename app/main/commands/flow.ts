@@ -20,6 +20,7 @@ import type { Confirmer, Question } from "../agent/confirm";
 import type { Presenter } from "../agent/presenter";
 import type { AuditEntry } from "../policy/audit";
 import type { Agreement, ReadSource } from "../policy/policy";
+import { commandActs, commandNamed, type CommandAsked, type Refusals } from "../policy/refusals";
 import { placeMentions, placesNamed } from "../targets/resolve";
 import type { TargetBinding } from "../targets/types";
 import type { ConsentPanel } from "../../shared/consent";
@@ -27,22 +28,27 @@ import type { OS } from "../../shared/shortcuts";
 import type { TargetId } from "../../shared/targets";
 import { pendingCommand } from "./pending";
 import { carriedText } from "./carried";
-import { notReviewable, reviewedDecision, type CommandReviewer } from "./review";
-import { classifyCommand } from "./classify";
-import { LINES, decideCommand } from "./decide";
+import { notReviewable, outlivesStop, reviewedDecision, type CommandReviewer } from "./review";
+import {
+  AUTOPILOT_LINE, AUTOPILOT_REFUSES, AUTOPILOT_RULE, OUTLIVES_LINE, WITHHELD_LINE, askedOfFinding, autopilotCommand, autopilotRefuses, handedSecrets,
+  outlivesKillSwitch, printsSecrets, readsSecrets,
+} from "./autopilot";
+import { AUTOPILOT_WORDS } from "../policy/policy";
+import { classifyCommand, type ClassificationExtra } from "./classify";
+import { LINES, UNKNOWN_ANNOUNCED, decideCommand } from "./decide";
 import { covers, type AutonomyScopes } from "../policy/autonomy";
-import { mentioned, namedKind, ruledOut } from "./intent";
-import { capLines, cleanOutput, shapeOutput, type ShapeOptions } from "./output";
+import { heldByWords, mentioned, namedKind, namesUnknown, ruledOut } from "./intent";
+import { capLines, cleanOutput, cleanOutputAsync, clearCutSteps, CUT_SLACK, redactedWhole, shapeCleaned, shapeOutput, type ShapeOptions } from "./output";
 import { resolveTargetPath } from "./paths";
 import { trackSecretPrompts, type SecretTracker } from "./prompts";
-import { redactSecrets } from "./redact";
+import { redactSecrets, redactSecretsYielding, runSteps, runStepsYielding } from "./redact";
 import { judgeScripts, newTaskWrites, noteWrites, withoutReadFlow, type ScriptIo, type TaskWrites } from "./scripts";
 import { outputTaint } from "./taint";
 import {
   ALWAYS_ASK,
   type Classification, type ClassifyContext, type CommandCapability, type CommandCard, type CommandDecision, type CommandMode, type CommandRunner,
-  type CommandService, type DecideInput, type GitFacts, type PathFact, type RunCommandArgs, type RunExit, type RunnerFacts, type RunningCommand,
-  type RunSpec, SHELL_FAMILY, type ShellId, standingFindings,
+  type CommandService, type DecideInput, type Finding, type GitFacts, type PathFact, type RunCommandArgs, type RunExit, type RunnerFacts, type RunningCommand,
+  type RunSpec, SHELL_FAMILY, type ShellId, standingFindings, unnamedTarget,
 } from "./types";
 import { judgedText } from "./unroll";
 
@@ -58,6 +64,12 @@ export interface CommandFlowContext {
      * never count for an announcement, but the card says the user asked by voice rather than "You didn't ask for this."
      */
     spokenWords?: () => string;
+    /**
+     * The user's own words for Assisted's check (Worker.checkWords): what the reviewer reads a command against, spoken
+     * requests heard unchecked included, never a suggestion's, a routine's saved steps or words heard over Ember's
+     * voice. Absent: commandWords.
+     */
+    checkWords?: () => string;
     /**
      * The user's own words for this task, quoted on one line (Worker.ownWordsLine), or "" for none: the "Your task:" line
      * of a question about a command they didn't ask for, or of any in a task that was steered (Question.taskLine;
@@ -75,9 +87,9 @@ export interface CommandFlowContext {
   /** `howAnswered` (optional): how the card was answered, for the audit (a spoken answer, and whether Voice Match verified it). */
   confirmer: Pick<Confirmer, "ask"> & { howAnswered?: Confirmer["howAnswered"] };
   /**
-   * "Work without asking" (policy/autonomy.ts): its scopes in force for this task, or null (off, or the task was steered or
-   * told no). With commands and crossWindow on, an ordinary command that asks only because it carries text read
-   * elsewhere announces instead (autonomousCommand).
+   * The approval mode in force (policy/autonomy.ts): its scopes for this task, or null (below Interactive, or the task
+   * was steered or told no). With commands and crossWindow on, as every mode has them, an ordinary command that asks
+   * only because it carries text read elsewhere announces instead (autonomousCommand).
    */
   autonomy?: () => AutonomyScopes | null;
   presenter: Presenter;
@@ -91,20 +103,36 @@ export interface CommandFlowContext {
    * (a command's output tainted the task, so the card says so in its own words, §3.8.4) and `written` (what the task's
    * commands wrote, so a script of its own that can't be read in full asks: L8's padding bypass).
    */
-  state: { cwd: string | null; downloaded: Set<string>; running: boolean; outputTainted?: boolean; written?: TaskWrites };
+  state: { cwd: string | null; downloaded: Set<string>; running: boolean; outputTainted?: boolean; written?: TaskWrites; withheldSecrets?: boolean };
   /** The command window's size for new runs. */
   size: () => { cols: number; rows: number };
   /** Ember's own pids now (D4.5; main's live list, §3.6.2). */
   emberPids: () => number[];
-  /** The user said no to a question of this flow (or let it go unanswered): the worker's `declined` (extension, AG). */
+  /**
+   * The user said no to a question of this flow, or (`expired`) let it go unanswered: the worker's `declined` or
+   * `expired` (extension, AG). Only a no holds the task to asking afterwards.
+   */
   onDeclined?: (expired?: boolean) => void;
   /**
-   * AI review (review.ts), while the user's "Ask only about dangerous commands" is on: a command that would ask, and
-   * that no hard rule makes ask, is reviewed first, and runs with its announcement when the reviewer finds it routine.
+   * Assisted's check for commands (review.ts), while Assisted is the approval mode in force: a command that would ask,
+   * and that may be reviewed at all (notReviewable), is shown to the reviewer first, and runs with its announcement
+   * when the reviewer finds it in the user's own words.
    */
   review?: CommandReviewer;
+  /**
+   * Autopilot is the approval mode in force (policy/autonomy.ts approvalInputs().autopilot), read at each command: one
+   * that would ask announces with its Stop instead, in a task that was steered or told no too, but for the few that
+   * still ask there (autopilot.ts autopilotAsks). Absent or false: nothing changes.
+   */
+  autopilot?: () => boolean;
   /** Home project commands always need the exact command card, with the chosen folder still present at launch. */
   projectFolderCurrent?: () => boolean;
+  /**
+   * What the user said no to in this task, or left unanswered (the worker's, policy/refusals.ts): a command they turned
+   * down, sent again or reworded, is refused without a card, a review or an announcement, and a card nobody answered
+   * isn't shown again until they next say something to the task (commands-remote-r9-8). Absent: nothing is kept.
+   */
+  refusals?: Refusals;
 }
 
 export type { SecretTracker, ShapeOptions };
@@ -146,6 +174,9 @@ let judge: CommandJudge = CL_JUDGE;
 export function setCommandJudge(j: CommandJudge | null): void {
   judge = j ?? CL_JUDGE;
 }
+
+/** What a task's bubble says while Assisted's check reads a command against the user's words, before any card (flow). */
+export const CHECKING_COMMAND = "Checking this command against what you asked…";
 
 /** The card's line when the user asked for it by voice where Ember can't tell their voice from the speakers (OWNER V1). */
 export const SPOKEN_LINE = "You asked by voice. Ember can't tell your voice from what your speakers play, so it checks first.";
@@ -308,7 +339,12 @@ const fail = (text: string): ToolResultObject => ({ textResultForLlm: text, resu
 const denied = (text: string): ToolResultObject => ({ textResultForLlm: text, resultType: "denied" });
 const STOPPED = (): ToolResultObject => denied("Stopped. Do nothing more.");
 const SAID_NO = "The user said no. Don't run it again or work around it; finish the task saying what wasn't done.";
-const TIMED_OUT = "The question timed out with no answer, so nothing was approved and it didn't run. Don't run it again or work around it; finish the task saying what wasn't done.";
+/** To a command whose card ran out of time: nobody said yes and nobody said no (the worker's UNANSWERED says the same of a step). */
+const TIMED_OUT = "Your question went unanswered: time ran out before the user answered, which is neither a yes nor a no. Nothing was approved, so the command didn't run. Don't run it again or work around it; finish the task now, saying that the question went unanswered and what wasn't done.";
+/** To a command the user already said no to in this task, sent again or reworded: refused without a card (Refusals). */
+const REFUSED_BEFORE = "The user already said no to this command in this task, or to one that does the same to the same thing, so Ember refused it without asking them again. Don't run it another way; finish the task saying what wasn't done.";
+/** To a command whose card went unanswered, sent again before the user said anything more to the task: not asked twice. */
+const STILL_UNANSWERED = "Ember already asked the user about this command, or one that does the same to the same thing, and the question went unanswered; they haven't said anything to this task since, so Ember didn't ask again and it didn't run. Don't run it another way; finish the task now, saying that the question went unanswered and what wasn't done.";
 const STOPPED_BEFORE = "The user stopped it before it ran. Don't run it again; finish the task saying so.";
 const UNSHOWN_BEFORE = "Ember's command window couldn't show the countdown to the end, so the command didn't run (commands only run where the user can watch them). Don't run it again; finish the task saying so.";
 const UNSEEN = "Ember couldn't show the command in its command window, so it stopped it at once (commands only run where the user can watch them). Don't run it again; finish the task saying so.";
@@ -317,6 +353,9 @@ const UNSEEN = "Ember couldn't show the command in its command window, so it sto
 export const CARD_LINES = {
   root: "Commands here run as root (the administrator), so each one asks first.",
   admin: "Ember is running as an administrator here, so each command asks first.",
+  /** The same two facts on Autopilot's announcement, where root is no reason to ask (tasks-approvals-r10-1). */
+  rootAutopilot: "Commands here run as root (the administrator).",
+  adminAutopilot: "Ember is running as an administrator here.",
   adminAsk: "Your organisation asks you to approve every command.",
   userAsk: "You asked Ember to check every command with you.",
   tool: "Podman uses this distro: Ember asks before every command here.",
@@ -459,9 +498,18 @@ const TERMINAL_CODES = /\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\
  * (the middle counted, not kept), and where its secret prompts were (the tracker sees every character and every Enter
  * the user pressed, never what they typed). The tail is a list of chunks, cut back to size only when it holds twice
  * what is kept: cutting a single string per chunk copied 4 MiB each time and saturated the main thread.
+ *
+ * The cut between the two comes before the output is cleaned, and so before the vault's redactor reads it: a value
+ * the cut fell in would go on as a fragment nothing recognises (integ-x-1). So the text each side of the cut is kept
+ * too (CUT_SLACK characters after the head, and the last of what was left out), and `kept` moves the cut off any
+ * value it would fall in (output.ts clearCut), counting what that gives up as left out. Exported for its tests.
  */
-class OutputKeeper {
+export class OutputKeeper {
   private head = "";
+  /** What the run printed right after the head, up to CUT_SLACK characters (kept or not). */
+  private afterHead = "";
+  /** The last CUT_SLACK characters left out before the tail. */
+  private beforeTail = "";
   private tail: string[] = [];
   private tailLength = 0;
   private dropped = 0;
@@ -488,6 +536,7 @@ class OutputKeeper {
       text = text.slice(take);
     }
     if (!text) return;
+    if (this.afterHead.length < CUT_SLACK) this.afterHead += text.slice(0, CUT_SLACK - this.afterHead.length);
     this.tail.push(text);
     this.tailLength += text.length;
     if (this.tailLength > 2 * (KEEP_CHARS - HEAD_CHARS)) this.trim();
@@ -498,8 +547,10 @@ class OutputKeeper {
     const room = KEEP_CHARS - HEAD_CHARS;
     let tail = this.tail.join("");
     if (tail.length > room) {
-      this.dropped += tail.length - room;
-      tail = tail.slice(tail.length - room);
+      const cut = tail.length - room;
+      this.dropped += cut;
+      this.beforeTail = cut >= CUT_SLACK ? tail.slice(cut - CUT_SLACK, cut) : (this.beforeTail + tail.slice(0, cut)).slice(-CUT_SLACK);
+      tail = tail.slice(cut);
     }
     this.tail = [tail];
     this.tailLength = tail.length;
@@ -508,19 +559,40 @@ class OutputKeeper {
 
   /** The text kept, with a note where the middle went, and `spans` (positions in everything printed) moved into it. */
   kept(spans: { from: number; to: number }[]): { text: string; spans: { from: number; to: number }[] } {
-    const tail = this.trim();
-    const h = this.head.length;
+    return runSteps(this.keptSteps(spans));
+  }
+
+  /**
+   * `kept` as steps, a step before each of the redactor's passes in the two cuts: a run's end gives Ember's main thread
+   * back between them (merge review integ-y-2). `kept` runs the same steps at once.
+   */
+  *keptSteps(spans: { from: number; to: number }[]): Generator<void, { text: string; spans: { from: number; to: number }[] }, void> {
+    let tail = this.trim();
     if (!this.dropped) return { text: this.head + tail, spans };
-    const note = `\n[… ${this.dropped} characters of output left out …]\n`;
-    const end = h + this.dropped;
-    const from = (p: number) => (p < h ? p : p < end ? h : p - this.dropped + note.length);
-    const to = (p: number) => (p <= h ? p : p < end ? h + note.length : p - this.dropped + note.length);
-    return { text: this.head + note + tail, spans: spans.map(s => ({ from: from(s.from), to: to(s.to) })).filter(s => s.to > s.from) };
+    // Neither end of what is left out may fall in a value the vault filled (integ-x-1): the head ends before one, the
+    // tail starts after one, and a side with no such place is not kept at all.
+    const lose = (yield* clearCutSteps(this.head.slice(-CUT_SLACK), this.afterHead, "before")) ?? this.head.length;
+    // (What stands before the tail: the last of what was left out, with the head's end where less than that was.)
+    const lead = this.dropped < CUT_SLACK ? (this.head + this.beforeTail).slice(-CUT_SLACK) : this.beforeTail;
+    const skip = (yield* clearCutSteps(lead, tail.slice(0, CUT_SLACK), "after")) ?? tail.length;
+    const head = lose ? this.head.slice(0, this.head.length - lose) : this.head;
+    if (skip) tail = tail.slice(skip);
+    const dropped = this.dropped + lose + skip;
+    const h = head.length;
+    const note = `\n[… ${dropped} characters of output left out …]\n`;
+    const end = h + dropped;
+    const from = (p: number) => (p < h ? p : p < end ? h : p - dropped + note.length);
+    const to = (p: number) => (p <= h ? p : p < end ? h + note.length : p - dropped + note.length);
+    return { text: head + note + tail, spans: spans.map(s => ({ from: from(s.from), to: to(s.to) })).filter(s => s.to > s.from) };
   }
 }
 
-/** The text a run printed with its secret spans and the user's typed lines taken out, for the taint check. */
-function checkedText(text: string, spans: { from: number; to: number }[], typed: string[]): string {
+/**
+ * The text a run printed with its secret spans and the user's typed lines taken out, for the taint check, a whole-text
+ * operation a step: each typed line's removal is a pass over up to 4 MiB, and a run keeps up to 1,000 of them, about
+ * 0.8 s at once (stop-yield-y9-1).
+ */
+function* checkedTextSteps(text: string, spans: { from: number; to: number }[], typed: string[]): Generator<void, string, void> {
   let out = "";
   let at = 0;
   for (const s of [...spans].sort((a, b) => a.from - b.from)) {
@@ -528,9 +600,15 @@ function checkedText(text: string, spans: { from: number; to: number }[], typed:
     at = Math.max(at, s.to);
   }
   out += text.slice(at);
-  for (const t of typed.map(l => l.trim()).filter(l => l.length >= 3)) out = out.split(t).join(" ");
+  yield;
+  for (const t of typed.map(l => l.trim()).filter(l => l.length >= 3)) {
+    out = out.split(t).join(" ");
+    yield;
+  }
+  out = out.replace(TERMINAL_CODES, "");
+  yield;
   // Lines cut as cleanOutput cuts them: what is past that can't reach the model, and reading it costs main-thread time.
-  return capLines(out.replace(TERMINAL_CODES, ""));
+  return capLines(out);
 }
 
 /** A question with S0b's panel fields (confirm.ts §3.9.1): `where`, `armMs`, `panel`, `clickOnly`. */
@@ -591,7 +669,9 @@ export function heldDecision(d: CommandDecision, r: AskReasons, kind: TargetBind
     policyOnly = false;
     for (const f of left) if (f.says.trim() && !lines.includes(f.says)) lines.push(f.says);
   }
-  const unrequested = d.verdict === "announce" && (!r.words.trim() || !d.requested);
+  // A program Ember doesn't know, and nothing else, is announced without the user's words (decide.ts UNKNOWN_ANNOUNCED).
+  const unknownOnly = d.requested?.intent === UNKNOWN_ANNOUNCED && d.classes.every(c => c === "unknown") && left.every(f => f.cls === "unknown");
+  const unrequested = d.verdict === "announce" && !unknownOnly && (!r.words.trim() || !d.requested);
   if (!lines.length && !unrequested && !missed) return d;
   return {
     ...d, verdict: "ask", requested: undefined,
@@ -601,6 +681,281 @@ export function heldDecision(d: CommandDecision, r: AskReasons, kind: TargetBind
     unasked: d.unasked || !r.words.trim(),
     armMs: Math.max(d.armMs, ordinary && policyOnly && !unrequested ? 500 : 1500),
   };
+}
+
+/** What the model is told when Autopilot refuses a command that may be one the user said no to earlier in the task. */
+export const LIKE_REFUSED_AUTOPILOT = "Not allowed: the user said no to something like this earlier in this task. Don't try another way; tell the user in finish_task.";
+
+/**
+ * A decision's root or administrator line made true for the mode that decided (tasks-approvals-r10-1, -r11-1, -c11-1).
+ * "…so each one asks first" is a reason to ask only where root asks: wherever the command is announced (Autopilot's,
+ * Assisted's check, any announcement) and on every card of Autopilot's, where root is no reason to ask, it states the
+ * fact alone. On Autopilot's question it also goes after the lines that are the reason it asks (a secret, the user's
+ * earlier no), so the bubble, which says the card's first line, gives that reason. Wording only: the verdict stands.
+ */
+export function rootFactOnly(d: CommandDecision, autopilot: boolean): CommandDecision {
+  if (d.verdict !== "announce" && !(autopilot && d.verdict === "ask")) return d;
+  const facts = new Map<string, string>([[CARD_LINES.root, CARD_LINES.rootAutopilot], [CARD_LINES.admin, CARD_LINES.adminAutopilot]]);
+  if (!d.says.some(l => facts.has(l))) return d;
+  const says = d.says.map(l => facts.get(l) ?? l);
+  if (d.verdict === "ask") {
+    const plain = new Set(facts.values());
+    const rest = says.filter(l => !plain.has(l));
+    // (Behind the reasons, before the card's closing lines: "You didn't ask for this." and its like.)
+    const at = rest.findIndex(l => l === LINES.unasked || l === LINES.inexact || l === LINES.windows);
+    const shown = says.filter(l => plain.has(l));
+    return { ...d, says: at < 0 ? [...rest, ...shown] : [...rest.slice(0, at), ...shown, ...rest.slice(at)] };
+  }
+  return { ...d, says };
+}
+
+/** The card's line, and the rule, of a command that may be one the user said no to earlier in the task (Refusals.commandLike). */
+export const LIKE_REFUSED_LINE = "You said no to something like this earlier in this task.";
+export const LIKE_REFUSED_RULE = "refused-like";
+
+/** Words that turn a part of a request round: "do not push", "don't delete src", "never force", "everything except build". */
+const SAYS_NOT = /(^|[^\p{L}\p{N}])(do\s+not|don['’]?t|does\s+not|doesn['’]?t|never|not|without|except|no|nothing|avoid|(?:stop|quit)\s+using|refrain\s+from)(?=$|[^\p{L}\p{N}])/giu;
+
+/**
+ * Words that hold a part of a request back without a "not": "leave the build folder alone", "keep build", "hold off on
+ * publishing", "wait before pushing", "push later", "skip build", "leave it as it is for now" (modes-y9-4); by a time
+ * or a condition ("push main next week", "on Monday", "in an hour", "after the review", "once CI is green", "when I
+ * say so"); and by a keeping phrase ("build is off limits", "build must survive", "I still need build", "the push is
+ * mine to do", "I'll do the push") (modes-y9-y9-7). It only ever keeps a question, so it errs wide.
+ */
+const HOLDS_BACK = /(^|[^\p{L}\p{N}])(leave|leaving|keep|keeping|preserve|spare|hold|holding|wait|waiting|not\s+yet|later|tomorrow|until|skip|skipping|untouched|stays?|staying|remains?|as\s+(it|they)\s+(is|are)|hands\s+off|stay\s+away|for\s+now|myself|by\s+hand|after|once|when|tonight|next\s+(week|month|year|time)|(on\s+)?(mon|tues|wednes|thurs|fri|satur|sun)day|in\s+(an?|\d+|a\s+few)\s+(minutes?|hours?|days?|weeks?)|off[\s-]+limits|surviv(e|es|ing)|still\s+need|mine|(i\s+will|i['’]ll)\s+do)(?=$|[^\p{L}\p{N}])/iu;
+/**
+ * Where one part of a request ends and the next begins. A full stop or a colon ends a part only before a space or at
+ * the end: "notes.txt", "./build" and ".ssh" are one word each (modes-y9-x9-4).
+ */
+const PARTS = /[,;!?()\n]+|[.:]+(?=\s|$)|\s+(?:but|and|then|though|however)\s+/iu;
+/** The card's line where the user's own words hold the command back (wordsRuleOut's HOLDS_BACK), in Autopilot. */
+export const HELD_BACK_LINE = "Your words say to leave this or to wait, so Ember asks first.";
+
+/**
+ * Does this part of the user's words name what a finding acts on: a branch, a package, a service, or any part of a
+ * path as the command writes it, up to its first wildcard (`~/Downloads/*` is in Downloads, `build/tmp` in build:
+ * what lies in the folder they said to leave is theirs to leave too)?
+ */
+function namesObject(findings: readonly Finding[], part: string): boolean {
+  // (A word with a dot in it whole, and in its pieces: "build.Keep src", typed without its space, still names build.)
+  const said = new Set(part.toLowerCase().split(/[^\p{L}\p{N}._-]+/u).flatMap(w => [w.replace(/\.+$/, ""), ...w.split(".")]).filter(Boolean));
+  return findings.some(f => f.objects.some(o => {
+    const names = o.text.toLowerCase().split(/[\\/]+/).filter(Boolean);
+    const cut = names.findIndex(n => /[*?[\]{}]/.test(n));
+    return (cut < 0 ? names : names.slice(0, cut)).some(n => n.length >= 2 && n !== ".." && said.has(n));
+  }));
+}
+
+/** A plain no in a part of the user's words ("don't", "dont", "never", "nothing should be…", "push nothing"). */
+const NEGATED = /(?:^|[^\p{L}])(?:don[’']?t|do not|never|nothing|none|not|no|(?:stop|quit)\s+using|refrain\s+from)(?![\p{L}])/iu;
+/** The verbs that name a kind of step, by the finding's class (r10-commands-y10-9). */
+const KIND_VERBS: Readonly<Partial<Record<Finding["cls"], RegExp>>> = {
+  destroy: /(?:^|[^\p{L}])(?:delet|remov|eras|wipe|purg|discard|destroy|drop|rm(?![\p{L}]))/iu,
+  "remote-delete": /(?:^|[^\p{L}])(?:delet|remov|unpublish|destroy|drop)/iu,
+  publish: /(?:^|[^\p{L}])(?:publish|releas|upload|push|deploy|ship)/iu,
+};
+/** Words that keep the work on this computer ("keep it local", "local only"): a no to publishing. */
+const KEEP_LOCAL = /\bkeep\b.*\blocal(?:ly)?\b|\blocal(?:ly)? only\b|\bstays? local\b/iu;
+/** Words that name no particular thing: a no said with only these, a negation and a verb is a no to the whole kind. */
+const GENERIC = new Set(("anything everything nothing any all it them this that these those the a an my our files file stuff things changes code package packages "
+  + "branch branches release releases please just yet ever should be been is are was will would i we you to of up out here there now today any more else at all").split(" "));
+/**
+ * Does a part of the user's words say no to the kind of step a finding is, by a verb that names it and nothing in
+ * particular ("tidy up, don't delete anything", "dont push", "push nothing", "don't upload anything", "keep it local")?
+ * The plain refusals the matchers above missed (r10-commands-y10-9); a no that names something else ("don't delete
+ * src") is left to them. Like them, it only ever keeps a question.
+ */
+function negatedKind(findings: readonly Finding[], words: string): boolean {
+  return words.split(PARTS).some(part => findings.some(f => {
+    const verb = KIND_VERBS[f.cls];
+    if (verb === undefined) return false;
+    if (f.cls === "publish" && KEEP_LOCAL.test(part)) return true;
+    if (!NEGATED.test(part) || !verb.test(part)) return false;
+    // ("stop using", "refrain from" are one no: r11-commands-y11-7.)
+    const rest = part.toLowerCase().replace(/(stop|quit)\s+using|refrain\s+from/gu, "not").split(/[^\p{L}\p{N}'’_.-]+/u).filter(w => w !== "" && !NEGATED.test(w) && !verb.test(w) && !GENERIC.has(w));
+    return rest.length === 0;
+  }));
+}
+
+/**
+ * A no said as people say it, before what it turns round: "don't", "do not", "never", "no", "without", "avoid", "stop
+ * before", "check with me before" (commands-remote-r12-2), and the modal no: "mustn't", "shouldn't", "can't", "you're
+ * not allowed to", "I forbid" (r12-commands-y12-1). Never a reminder or a go-ahead ("don't forget to", "don't hesitate
+ * to", "I don't mind if", "never ask me before", "it won't hurt to"), nor a bare "not", which states a fact as often as
+ * it refuses ("it's not working").
+ */
+const SAYS_NO = /(?:^|[^\p{L}])(?:don[’']?t|do\s+not|never|no|without|avoid|forbid|prohibit|(?:must|should|shall|could)n[’']?t|(?:must|should|shall|may|can|could|will)\s+not|can[’']?t|cannot|won[’']?t|not\s+(?:allowed|permitted|supposed)\s+to|(?:stop|halt|pause)\s+(?:right\s+)?before|(?<!(?:never|don[’']?t|not)\s+)(?:check|confirm)\s+with\s+me(?:\s+first)?\s+before)(?![\p{L}])(?!\s+(?:ever\s+)?(?:forget|hesitate|fail|mind|care|worry|wait|stop\s+until|ask|bother|(?:check|confirm)\s+with|hurt|harm|matter|go\s+wrong|be\s+(?:a\s+|an\s+)?(?:problem|issue))(?![\p{L}]))/iu;
+/** A kind of step as a no names it, beyond KIND_VERBS: installing software, root or an administrator, and printing secrets. */
+const NO_KIND_VERBS: readonly { when: (f: Finding) => boolean; verb: RegExp }[] = [
+  { when: f => /^pkg\./.test(f.rule), verb: /(?:^|[^\p{L}])(?:install|reinstall|uninstall|upgrad|downgrad|add\s+(?:any\s+)?(?:new\s+|more\s+)?(?:packag|dependenc|librar|modules?))/iu },
+  { when: f => /(^|\.)(sudo|doas|pkexec|su|runas|privileged|admin|elevat\w*)(\.|$)/.test(f.rule), verb: /(?:^|[^\p{L}])(?:root|sudo|doas|pkexec|admin|administrator|elevat|superuser|su(?![\p{L}]))/iu },
+  { when: f => f.cls === "secret", verb: /(?:^|[^\p{L}])(?:read|print|show|display|reveal|expose|cat(?![\p{L}])|look\s+(?:at|in))/iu },
+];
+/** Words a no may name beside its step that stand for every one of its kind ("any files", "my work", "to GitHub", "system-wide"). */
+const WHOLE_KIND = new Set([...GENERIC, ..."files folders folder directories directory data work stuff things everything changes code system system-wide wide github gitlab bitbucket remote remotes origin upstream server servers npm pypi registry registries prod production live internet web cloud rights privileges permissions deletions deletion pushes pushing publishing new more under circumstances whatever right first with me before need there".split(" ")]);
+
+/**
+ * Does a part of the user's words say no to the kind of step a finding is, in ordinary words, whatever it names after
+ * the verb (commands-remote-r12-2): a no (SAYS_NO) with the step's kind after it ("do not push the changes", "don't
+ * push to GitHub", "do not remove any files", "don't install any packages", "don't use root", "stop before
+ * publishing"). A no that names another thing beside a request that names this step's own thing ("delete build/ but
+ * don't delete src/") leaves it asked. A doubt counts as ruled out: it only ever keeps the user's no.
+ */
+function saysNoTo(findings: readonly Finding[], words: string): boolean {
+  const parts = noParts(words);
+  // What the words ask for: each part up to its no ("delete build without removing src" asks to delete build).
+  const asked = parts.map(p => { const n = SAYS_NO.exec(p) ?? NEGATED.exec(p); return n ? p.slice(0, n.index) : p; }).join(". ");
+  return parts.some(part => findings.some(f => {
+    const verbs = [KIND_VERBS[f.cls], ...NO_KIND_VERBS.filter(k => k.when(f)).map(k => k.verb)].filter((v): v is RegExp => v !== undefined);
+    if (verbs.length === 0) return false;
+    // The remote left alone is a no to sending anything to it (r12-commands-x12-4).
+    if ((f.cls === "publish" || f.cls === "remote-delete") && LEAVES_REMOTE.test(part)) return true;
+    // The step's own word with a no after it ("pushing is not allowed", "nothing gets pushed": r12-commands-x12-4).
+    if (verbs.some(v => passiveNo(part, v))) return true;
+    for (const no of part.matchAll(SAYS_NO_ALL)) {
+      // ("no problem", "no worries": an idiom that turns nothing down, r12-commands-x12-3.)
+      if (NO_IDIOM.test(part.slice(no.index))) continue;
+      const after = part.slice(no.index + no[0].length);
+      // A bare "No" said as an answer before the request ("No, push it", "No — delete build"), and the user's own
+      // habit or ability with the step's verb straight after ("I never push without tests", "I can't push from
+      // here"): r12-commands-y12-2.
+      if (BARE_NO.test(no[0]) && /^\s*[,.;:!?—–-]/u.test(after)) continue;
+      if (HABIT_NO.test(no[0]) && /(?:^|[^\p{L}])(?:i|we)\s*$/iu.test(part.slice(0, no.index + 1))
+        && verbs.some(v => new RegExp(v.source, "iu").exec(after)?.index === 0)) continue;
+      if (!verbs.some(v => governs(after, v))) continue;
+      // What else the no names: a thing of its own, unless the words only stand for the whole kind.
+      const names = after.toLowerCase().split(/[^\p{L}\p{N}'’_./~-]+/u).filter(w => w !== "" && !WHOLE_KIND.has(w) && !verbs.some(v => v.test(w)) && !NEGATED.test(w) && !/^(use|using|touch|do|make|be|go|run|any|of)$/.test(w));
+      if (!(names.length > 0 && !namesObject([f], after) && f.objects.some(o => o.text !== "") && namesObject([f], asked))) return true;
+    }
+    return false;
+  }));
+}
+
+/** A no that is the bare word "no" (r12-commands-y12-2). */
+const BARE_NO = /^[^\p{L}]?no$/iu;
+/** A no that, after "I" or "we", may tell a habit or an ability ("I never push…", "I can't push…"): r12-commands-y12-2. */
+const HABIT_NO = /^[^\p{L}]?(?:never|can[’']?t|cannot|couldn[’']?t)$/iu;
+/** Every no in a part (SAYS_NO, found again and again). */
+const SAYS_NO_ALL = new RegExp(SAYS_NO.source, "giu");
+/** "no" in an idiom that turns nothing down ("no problem", "no worries", "no rush"): r12-commands-x12-3. */
+const NO_IDIOM = /^no\s+(?:problems?|probs?|worr(?:y|ies)|rush|hurry|biggie|matter|doubt|question|pressure|sweat|stress|fuss)(?![\p{L}])/iu;
+/**
+ * Words between a no and a step's verb that start another clause ("without a PR just push", "I don't need a review so
+ * push it", "no rush, go ahead and publish"): the no is to something else (r12-commands-x12-3).
+ */
+const TURNS = /(?:^|[^\p{L}])(?:so|just|go|ahead|then|instead|anyway|simply|therefore|hence|thus|and|but)(?![\p{L}])/iu;
+/** A no that states a fact ("I don't have root", "I don't know the tests"), not a refusal (r12-commands-x12-3). */
+const NO_FACT = /^\s*(?:have|own|know)(?![\p{L}])/iu;
+/** Does the no govern a verb of the step: the verb after it, with no fact and no turn to another clause between? */
+function governs(after: string, verb: RegExp): boolean {
+  if (NO_FACT.test(after)) return false;
+  const m = new RegExp(verb.source, "giu");
+  for (const v of after.matchAll(m)) if (!TURNS.test(after.slice(0, v.index))) return true;
+  return false;
+}
+/** Asides that may stand between a no and its step ("Do not, under any circumstances, push"; "Never, ever, push"). */
+const NO_ASIDE = /^(?:\s*(?:under\s+any\s+circumstances|ever|please|whatever\s+happens|at\s+all|at\s+any\s+point|really|seriously|i\s+repeat|repeat|again|okay|ok)\s*)*$/iu;
+/**
+ * The parts of the words, with a no whose step comes after an aside joined to it: PARTS splits at the commas
+ * (r12-commands-x12-4).
+ */
+function noParts(words: string): string[] {
+  const raw = words.split(PARTS);
+  const parts: string[] = [];
+  for (let i = 0; i < raw.length; i++) {
+    let p = raw[i];
+    // (Never a bare "No" said as an answer: "No, push it to main" is a request, r12-commands-y12-2.)
+    const endsInNo = (t: string) => [...t.matchAll(SAYS_NO_ALL)].some(n => !BARE_NO.test(n[0]) && NO_ASIDE.test(t.slice(n.index + n[0].length)));
+    while (i + 1 < raw.length && endsInNo(p)) p = `${p} ${raw[++i]}`;
+    parts.push(p);
+  }
+  return parts;
+}
+/**
+ * The step's word with its no after it: "pushing is not allowed", "pushes are forbidden", "nothing gets pushed",
+ * "nothing should be deleted" (r12-commands-x12-4).
+ */
+function passiveNo(part: string, verb: RegExp): boolean {
+  const m = new RegExp(verb.source, "giu");
+  for (const v of part.matchAll(m)) {
+    const at = v.index + v[0].length;
+    const tail = part.slice(at).replace(/^[\p{L}]*/u, "");
+    if (/^\s+(?:is|are|was|were|will\s+be)\s+(?:not|never)\s+(?:allowed|permitted|ok|okay|wanted|an\s+option)(?![\p{L}])/iu.test(tail)) return true;
+    if (/^\s+(?:isn[’']t|aren[’']t|won[’']t\s+be)\s+(?:allowed|permitted|ok|okay|wanted|an\s+option)(?![\p{L}])/iu.test(tail)) return true;
+    if (/^\s+(?:is|are)\s+(?:forbidden|prohibited|banned|off\s+the\s+table)(?![\p{L}])/iu.test(tail)) return true;
+    const before = part.slice(0, v.index);
+    if (/(?:^|[^\p{L}])nothing\s+(?:gets?|got|is|was|should(?:\s+(?:be|get))?|must(?:\s+(?:be|get))?|may\s+be|will(?:\s+(?:be|get))?|can\s+be)\s*$/iu.test(before)) return true;
+  }
+  return false;
+}
+/** Words that leave the remote alone ("leave the remote alone", "don't touch origin"): a no to sending (r12-commands-x12-4). */
+const LEAVES_REMOTE = /(?:^|[^\p{L}])(?:(?:leave|leaving)\s+(?:the\s+|my\s+|our\s+)?(?:remotes?|origin|upstream|github|gitlab|bitbucket|registry|server)\s+(?:alone|untouched|be)|(?:don[’']?t|do\s+not|never)\s+touch\s+(?:the\s+|my\s+|our\s+)?(?:remotes?|origin|upstream|github|gitlab|bitbucket|registry|server))(?![\p{L}])/iu;
+
+/**
+ * A part that keeps every one of a kind of thing ("keep all files", "keep everything", "preserve my data"): a no to
+ * deleting anything (commands-remote-r12-2). Never a keep of something named or of what Ember is doing ("keep going").
+ */
+const KEEPS_ALL = /^(?:\s*(?:please|and|but|just|also))*\s*(?:keep|preserve|spare)\s+(?:all|every|everything|any|my|our|the)?\s*(?:of\s+)?(?:the\s+|my\s+|our\s+)?(?:files?|folders?|directories|data|work|everything|code|stuff|things)(?:\s+(?:intact|safe|as\s+(?:it|they)\s+(?:is|are)))?\s*$/iu;
+
+/** Does a part of the user's words hold back what these findings act on, or the kind of step they are (HOLDS_BACK)? */
+function wordsHoldBack(findings: readonly Finding[], words: string): boolean {
+  return words.split(PARTS).some(part => (HOLDS_BACK.test(part) && (namesObject(findings, part) || namedKind(findings, part) || mentioned(findings, part) || namesUnknown(findings, part)))
+    || (KEEPS_ALL.test(part) && findings.some(f => f.cls === "destroy")));
+}
+
+/**
+ * Do the user's own words rule out what these findings say the command does? What the card's "You didn't ask for
+ * this." already reads (intent.ts ruledOut: a part that says not to names the kind of step and nothing else), and also
+ * a step the words name only where they say not to ("do not push feature-x to GitHub yet": read without its "not" the
+ * words name the push, read as said they don't), and a part that holds back what the command acts on or the kind of
+ * step it is ("leave the build folder alone", "hold off on publishing": HOLDS_BACK), and words that name the step and
+ * ask to be asked first, or that narrow a deletion or send it to the trash instead (intent.ts heldByWords). Autopilot
+ * keeps the question for such a command: the user's no, said in advance. It only ever keeps a question, so a doubt
+ * counts as ruled out.
+ */
+export function wordsRuleOut(findings: readonly Finding[], words: string): boolean {
+  if (!words.trim() || findings.length === 0) return false;
+  if (ruledOut(findings, words) || negatedKind(findings, words) || saysNoTo(findings, words)) return true;
+  if (!mentioned(findings, words) && mentioned(findings, words.replace(SAYS_NOT, "$1 "))) return true;
+  // Their asking to be asked first, and a deletion they narrow or send to the trash or a stash instead (integ-x-3).
+  return wordsHoldBack(findings, words) || heldByWords(findings, words);
+}
+
+/** A bare program name: no path, option, assignment or quoting. */
+const BARE_PROGRAM = /^[A-Za-z_][\w.+-]*$/;
+/** A word as a POSIX shell would take it back whole. */
+const shellWord = (a: string) => (/^[\w@%+=:,./-]+$/.test(a) ? a : `'${a.replace(/'/g, "'\\''")}'`);
+
+/**
+ * What a wrapper may hide where the classifier read its options wrongly (the brief's `sudo -h host printenv`: at this
+ * commit `host` is taken for the program and the command behind it goes unjudged, so the decision says only that it
+ * runs as an administrator, which Autopilot announces). For each POSIX command run behind a wrapper about whose own
+ * program the classifier found nothing, every trailing part of its words that starts with a bare program name is
+ * judged as a command of its own (`judge`: the classifier, which this only calls), and a finding there that would read
+ * or print secrets or outlive the kill switch is returned, for Autopilot to keep the question. It can only add a
+ * question (`sudo ls env` asks): never used to let anything through. A part that can't be judged counts as unclear.
+ */
+export function behindWrappers(cls: Pick<Classification, "commands" | "findings">, judge: (text: string) => readonly Pick<Finding, "cls" | "rule">[]): Pick<Finding, "cls" | "rule">[] {
+  const out: Pick<Finding, "cls" | "rule">[] = [];
+  cls.commands.forEach((c, k) => {
+    if (c.family !== "posix" || c.wrappers.length === 0 || c.args.some(a => a === null)) return;
+    // Judged already: a finding about the program itself, not only about the wrapper it runs behind.
+    if (cls.findings.some(f => f.at === k && !c.wrappers.includes(f.program.split(" ")[0]))) return;
+    const args = c.args as string[];
+    for (let i = 0; i < Math.min(args.length, 16); i++) {
+      if (!BARE_PROGRAM.test(args[i])) continue;
+      try {
+        for (const f of judge(args.slice(i).map(shellWord).join(" "))) {
+          const why = askedOfFinding(f);
+          if (why === "secret" || why === "outlives-stop") out.push({ cls: f.cls, rule: f.rule });
+        }
+      } catch {
+        out.push({ cls: "unclear", rule: "unclear.behind-wrapper" }); // not judged: it asks
+      }
+    }
+  });
+  return out;
 }
 
 /**
@@ -623,12 +978,40 @@ export function autonomousCommand(d: CommandDecision, o: { scopes: AutonomyScope
   };
 }
 
+/**
+ * What an announcement's card says of why it runs, for its heading: the AI review cleared it, Autopilot announced it
+ * (its own or a remote's question: both end on AUTOPILOT_LINE), or the user's words didn't ask for it (a program Ember
+ * doesn't know, an ordinary command carrying text from another window: accessibility-r12-1). None: their words asked
+ * for exactly it. Pure.
+ */
+export function announceFlags(d: Pick<CommandDecision, "requested">, says: readonly string[]): Pick<CommandCard, "reviewed" | "autopilot" | "unrequested"> {
+  if (d.requested?.intent === "ai-review") return { reviewed: true };
+  if (says.includes(AUTOPILOT_LINE)) return { autopilot: true };
+  if (d.requested?.intent === UNKNOWN_ANNOUNCED || d.requested?.intent === "autonomy") return { unrequested: true };
+  return {};
+}
+
+/** What the audit's ended record says of a run whose output (or own end) didn't all come back (review wslio-x-5). */
+function cutFields(exit: RunExit): { outputCut?: true; endLost?: true; targetStopped?: true } {
+  return { ...(exit.outputCut ? { outputCut: true } : {}), ...(exit.endLost ? { endLost: true } : {}), ...(exit.targetStopped ? { targetStopped: true } : {}) };
+}
+
 /** The result the model gets for how a run ended (§3.8.6). */
 function resultOf(exit: RunExit, shaped: string, o: { label: string; timeoutS: number; redact: (s: string) => string }): ToolResultObject {
   switch (exit.ended) {
-    case "exit":
+    case "exit": {
+      const how = exit.code !== null ? `exit code ${exit.code}` : exit.signal ? `signal ${exit.signal}` : "no exit code";
+      // Never "done" on output known to be incomplete: the model would take the part for the whole. Without the run's
+      // own end Ember doesn't know the command finished at all (review wslio-x-3): it says so, and to look first.
+      if (exit.endLost) {
+        // wsl.exe's own code is said as WSL's (review wslio-y-2): the command's may never have come.
+        const said = [exit.code !== null ? `WSL reported exit code ${exit.code}` : exit.signal ? `WSL reported signal ${exit.signal}` : "", exit.targetStopped ? `${o.label} stopped meanwhile` : ""].filter(Boolean);
+        return fail(`Ember didn't get the end of this run, so the command may not have finished${said.length ? ` (${said.join("; ")})` : ""}, and the output below is incomplete. Check what it did before you run it again.\n${shaped}`);
+      }
+      if (exit.outputCut) return fail(`It ran and ended with ${how}, but the end of its output was lost on the way back, so the output below is incomplete. Don't run it again only to see the rest.\n${shaped}`);
       if (exit.code === 0) return done(shaped);
-      return fail(`It ended with ${exit.code !== null ? `exit code ${exit.code}` : exit.signal ? `signal ${exit.signal}` : "no exit code"}.\n${shaped}`);
+      return fail(`It ended with ${how}.\n${shaped}`);
+    }
     case "stopped-user":
       return fail(`The user stopped it after ${seconds(exit.ms)} s. Don't run it again unless they ask.\n${shaped}`);
     case "stopped-task":
@@ -639,7 +1022,7 @@ function resultOf(exit: RunExit, shaped: string, o: { label: string; timeoutS: n
     case "lost":
       return fail(`The connection to ${o.label} dropped and the command was stopped there. What it already did stays.`);
     case "failed-to-start":
-      return fail(`It couldn't start: ${o.redact(exit.error ?? "an unknown error").replace(/</g, "‹").replace(/[.\s]+$/, "").slice(0, 300)}.`);
+      return fail(`It couldn't start: ${o.redact(redactedWhole(exit.error ?? "an unknown error")).replace(/</g, "‹").replace(/[.\s]+$/, "").slice(0, 300)}.`);
     case "refused-remote":
       return denied(`${o.label} refused it: ${forModel(o.redact(exit.error ?? "no reason given"))}. Don't try another way; tell the user in finish_task.`);
   }
@@ -650,6 +1033,80 @@ const remoteRules = (exit: RunExit) => {
   const r = (exit as RunExit & { rules?: unknown }).rules;
   return Array.isArray(r) ? r.filter((x): x is string => typeof x === "string").slice(0, 32) : [];
 };
+
+/** The kinds of step the user's words can say no to by a verb (wordsRuleOut's KIND_VERBS): each one, where a rule's kind can't be told. */
+const WORDS_KINDS: readonly Finding["cls"][] = ["destroy", "remote-delete", "publish"];
+/** Rule ids by the kinds of step the classifier files them under (a rule may match more than one: each counts). */
+const REMOTE_DELETES = /^cloud\.delete|remote-delete|unpublish|obliterate|^(p4|svn)\.delete|^p4\.(revert|spec\.delete|shelve\.delete)|^gh\.api\.delete|delete-branch|deploy-key|^git\.push\.(delete|force|mirror|prune)|^docker\.cluster\.delete|delete-remote/i;
+const PUBLISHES = /^(send|net|upload|gh)\.|(^|[.-])(push|publish|upload|release|deploy|deploys|submit|shelve|unshelve|commit|dcommit|send-email|cvsexportcommit|daemon|registry)([.-]|$)|^cloud\.change$|^p4\.spec$|^docker\.cluster$/i;
+const DESTROYS = /(^|[.-])(rm|rmdir|unlink|del|delkey|rd|remove-item|remove-files|delete|clean|cleanup|reset|discard|restore|checkout|switch|drop|clear|revert|resolve|overwrite|tee|out-file|set-content|new-item|cp|mv|dd|copy-item|move-item|robocopy|rsync|trash|truncate|wipe|purge|erase|history|in-place|unpack|unregister|mount|backups|archive|cache|destroy|force|write|change|disk)([.-]|$)|^(redirect|download|archive|disk|db|sqlite)\.|^git\.branch\.[DM]$/i;
+const SYSTEM_CHANGES = /^(system|service|pkg|kill|path|wsl|tool|script)\.|(^|\.)(config|admin|context|privileged|tailscale)(\.|$)/i;
+
+/**
+ * The kinds of step a rule a remote's gate 2 sent back names, by its id alone (gate 2 sends rules and its own lines,
+ * no classes): every kind its id may be filed under; none where the id doesn't say.
+ */
+function kindsOfRule(rule: string): Finding["cls"][] {
+  const kinds: Finding["cls"][] = [];
+  if (readsSecrets(rule)) kinds.push("secret");
+  if (outlivesStop(rule) || /^escape\.|off-registry/.test(rule)) kinds.push("escape");
+  if (rule.startsWith("unclear.") || rule === "internal") kinds.push("unclear");
+  // (A program Ember doesn't know, given words of a kind it does: `unknown-words.secret`.)
+  const words = /^unknown-words\.(destroy|publish|remote-delete|secret|system|escape)$/.exec(rule);
+  if (words) kinds.push(words[1] as Finding["cls"]);
+  if (rule.startsWith("unknown.") || words) kinds.push("unknown");
+  if (REMOTE_DELETES.test(rule)) kinds.push("remote-delete");
+  if (PUBLISHES.test(rule)) kinds.push("publish");
+  if (DESTROYS.test(rule)) kinds.push("destroy");
+  if (SYSTEM_CHANGES.test(rule)) kinds.push("system");
+  return kinds;
+}
+
+/**
+ * What a remote's gate 2 found beyond the PC's own findings, as findings the user's words and the task's refusals are
+ * read against (integ-x-1): each rule (its `in-script:` dropped) under every kind its id may be, on nothing named.
+ * Where its kind can't be told, it stands for each kind of step words can say no to and counts as unread for the
+ * refusals: a doubt keeps it from going ahead, never lets it. Pure.
+ */
+export function remoteFindings(rules: readonly string[]): { findings: Finding[]; unread: boolean } {
+  const findings: Finding[] = [];
+  let unread = false;
+  for (const r of rules) {
+    const rule = r.replace(/^in-script:/, "");
+    if (rule.startsWith("admin.")) continue; // the organisation's: it asks anyway
+    let kinds = [...new Set(kindsOfRule(rule))];
+    if (kinds.length === 0 || kinds.includes("unclear") || kinds.includes("unknown")) unread = true;
+    if (kinds.length === 0) kinds = [...WORDS_KINDS];
+    for (const cls of kinds) findings.push({ cls, rule, says: "", program: "", objects: [], widening: [], at: 0 });
+  }
+  return { findings, unread };
+}
+
+/** Words that keep a named thing as it is ("leave src alone", "keep main", "src is off limits"): HOLDS_BACK's keeping part, with no time in it. */
+const KEEPS = /(^|[^\p{L}\p{N}])(leave|leaving|keep|keeping|preserve|spare|skip|skipping|untouched|hands\s+off|stay\s+away|off[\s-]+limits|surviv(e|es|ing)|still\s+need|as\s+(it|they)\s+(is|are))(?=$|[^\p{L}\p{N}])/giu;
+/** Verbs that act on a thing, for a no that names one ("don't touch main", "never restart nginx"). */
+const ACTS_ON = /(?:^|[^\p{L}])(?:touch|chang|modif|edit|alter|overwrit|mess|break|delet|remov|eras|wipe|purg|discard|destroy|drop|rm|clean|clear|reset|publish|releas|upload|push|deploy|ship|send|commit|move|renam|restart|kill)\p{L}*/giu;
+/** Words left beside a keeping word or a no that name nothing: "leave it alone", "keep going", "keep me posted". */
+const NAMES_NOTHING = new Set("alone intact safe as is well me us posted informed updated eye mind short quiet simple sure in on with off for".split(" "));
+
+/**
+ * Do the user's words keep, or say no to acting on, something they name ("run the cleanup script, leave src alone",
+ * "don't touch main")? For what a remote's gate 2 found, which comes back with no objects (integ-y-1): where Ember can't
+ * tell what the step acts on, it can't tell that the named thing is not it, and a doubt counts as ruled out. Words with
+ * neither (a plain request, a time, "tell me when it's done") never count. Pure.
+ */
+export function keepsNamed(words: string): boolean {
+  return words.split(PARTS).some(whole => {
+    // ("Keep going", "keep trying until it passes": a keep of what Ember is doing, not of a thing.)
+    const part = whole.replace(/(^|[^\p{L}])keep(?:ing)?\s+(?:on\s+)?\p{L}+ing(?![\p{L}])/giu, "$1 ");
+    const keeps = new RegExp(KEEPS.source, "iu").test(part);
+    const acts = NEGATED.test(part) && new RegExp(ACTS_ON.source, "iu").test(part);
+    if (!keeps && !acts) return false;
+    const rest = part.toLowerCase().replace(KEEPS, "$1 ").replace(ACTS_ON, " ").split(/[^\p{L}\p{N}'’_./~-]+/u)
+      .filter(w => w.length >= 2 && !NEGATED.test(` ${w}`) && !GENERIC.has(w) && !NAMES_NOTHING.has(w) && !/ing$/.test(w));
+    return rest.length > 0;
+  });
+}
 
 /** Runs one run_command call to the end; returns the tool result (done, denied or fail). */
 export async function runCommandTool(a: RunCommandArgs, ctx: CommandFlowContext): Promise<ToolResultObject> {
@@ -694,6 +1151,15 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
   // Step 2: the target's commands now; the first-use card when they wait for it.
   let cap = svc.capability();
   if (cap.state === "needs-consent") {
+    // The card the user already said no to in this task (or left unanswered) isn't put up again for every command.
+    const stood = ctx.refusals?.commandsConsent ?? null;
+    if (stood) {
+      audit({ phase: "decided", commandChars: a.command.length, verdict: "refuse", classes: [], rules: [stood === "refused" ? "refused-before" : "unanswered-before"],
+        reason: stood === "refused" ? "The user said no to turning on commands here earlier in this task." : "The question about turning on commands here went unanswered, and the user hasn't said anything to this task since." });
+      return denied(stood === "refused"
+        ? `The user already said no to turning on commands on ${place} in this task, so Ember didn't ask again. Finish the task saying so.`
+        : `Ember already asked the user to turn on commands on ${place} and the question went unanswered; they haven't said anything to this task since, so Ember didn't ask again. Finish the task now, saying that the question went unanswered.`);
+    }
     const consent = (svc as CommandService & Partial<CommandConsentSource>).consentPanel?.() ?? null;
     if (!consent) return denied(`Commands aren't turned on for ${place} yet: the user can turn them on in Ember's settings, under Commands. Finish the task saying so.`);
     const q: PanelQuestion = {
@@ -706,6 +1172,7 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
     if (ctx.isOver()) return STOPPED();
     if (answer !== "once") {
       ctx.onDeclined?.(answer === null);
+      ctx.refusals?.noteConsent(answer === null ? "waiting" : "refused");
       return denied(`The user didn't turn on commands on ${place}. Finish the task saying so.`);
     }
     svc.consented();
@@ -802,9 +1269,21 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
       armMs: Math.max(d.armMs, 1500),
     };
   }
+  const spoken = ctx.task.spokenWords?.() ?? "";
+  // A program Ember doesn't know is announced without words, but never over the user's words against it, wherever they
+  // were heard ("leave frobtool alone", "don't run frobtool" by voice): it asks, and Autopilot refuses it below
+  // (r11-commands-x11-1).
+  if (d.verdict === "announce" && d.requested?.intent === UNKNOWN_ANNOUNCED) {
+    const left = standingFindings(cls.findings, paths);
+    if (wordsRuleOut(left, words) || wordsRuleOut(left, spoken)) {
+      d = {
+        ...d, verdict: "ask", requested: undefined, unasked: true, says: [...d.says.filter(l => l !== LINES.unasked), LINES.unasked],
+        reason: "It asks first: the user's own words rule it out.", armMs: Math.max(d.armMs, 1500),
+      };
+    }
+  }
   // Words heard where Ember can't tell the user from its speakers didn't count (OWNER V1): when they named it, the card
   // says so instead of "You didn't ask for this."
-  const spoken = ctx.task.spokenWords?.() ?? "";
   if (d.verdict === "ask" && d.unasked && spoken.trim() && !ruledOut(cls.findings, spoken) && (mentioned(cls.findings, spoken) || namedKind(cls.findings, spoken))) {
     const says = d.says.includes(LINES.unasked) ? d.says.map(l => (l === LINES.unasked ? SPOKEN_LINE : l)) : [...d.says];
     if (!says.includes(SPOKEN_LINE)) says.splice(says.includes(LINES.windows) ? says.indexOf(LINES.windows) : says.length, 0, SPOKEN_LINE);
@@ -814,34 +1293,152 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
     const lines = [...(places.length ? [unknownPlaceLine(places, here)] : []), ...(others.length ? [wrongTargetLine(others, here)] : [])];
     d = { ...d, says: [...lines, ...d.says.filter(l => !lines.includes(l))] };
   }
-  // "Work without asking": an ordinary command that asks only for the text it carries announces instead (its Stop
-  // countdown and the card still show where the text came from).
-  const autonomous = autonomousCommand(d, { scopes: ctx.autonomy?.() ?? null, words, tainted: tainted || !!ctx.state.outputTainted, carried, elsewhere: others.length > 0 || places.length > 0, kind: binding.kind });
-  if (autonomous) d = autonomous;
-  // AI review: a command that asks only by the danger rules is shown to the reviewer with the user's words; one it finds
-  // routine runs with its announcement (Stop countdown) instead. The hard asks are never reviewed (review.ts).
-  if (ctx.review && d.verdict === "ask") {
-    const blocked = notReviewable(d, {
-      words, privileged: facts.privileged, mode, askEvery: cap.askEvery, userAskEvery, tainted, carried, elsewhere: others.length > 0 || places.length > 0,
-    });
-    if (blocked === null) {
-      const t0 = performance.now();
-      const v = await ctx.review({
-        userWords: words, command: a.command, shell, cwd, where: binding.label || place, os: facts.os, why: a.why, findings: d.says,
-      }, ctx.signal).catch(() => null);
-      if (ctx.isOver()) return STOPPED();
-      ctx.log.info("commands.reviewed", { task, target, verdict: v ? (v.run ? "run" : "ask") : "none", ms: Math.round(performance.now() - t0) });
-      if (v?.run) d = reviewedDecision(d, v);
-      else if (v?.why) d = { ...d, says: [...d.says, `Ember's review: ${v.why.replace(/[.\s]+$/, "")}.`] };
+  // A download-and-run handed a key, credentials or a token (`npx -y tool ~/.ssh/id_rsa`): the classifier says only that
+  // it downloads and runs code, so the question says the rest, and no mode announces or clears it (modes-y9-5).
+  // One pointed at Ember's own settings, record or programs is refused, as any command that touches them is: the
+  // classifier's own refusal of that word, read as a file (modes-y9-y9-9: Autopilot announced `npx -y json -I -f
+  // ~/.config/ember/settings.json …`).
+  if (d.verdict === "ask" || d.verdict === "announce") {
+    let tampers: Classification["refuse"] | null = null;
+    const handed = handedSecrets(cls, a.command, shell, text => { const c = j.classifyCommand(text, shell, cctx); tampers ??= c.refuse ?? null; return c.findings; });
+    const refuse = tampers as Classification["refuse"] | null;
+    if (refuse) d = { ...d, verdict: "refuse", reason: refuse.says, rules: [...new Set([...d.rules, refuse.rule])], requested: undefined };
+    else if (handed.length && d.verdict === "ask") {
+      d = {
+        ...d, classes: [...new Set(["secret" as const, ...d.classes])], rules: [...new Set([...d.rules, ...handed.map(f => f.rule)])],
+        says: [...handed.map(f => f.says).filter(l => !d.says.includes(l)), ...d.says],
+      };
     }
   }
+  // A command the user already said no to in this task, sent again or reworded (the same danger to the same thing), or
+  // one whose card nobody answered and they haven't spoken since: never asked about again, reviewed or announced,
+  // whatever the mode would do with it now (CLAUDE.md "After a deny or “Not now”…"; commands-remote-r9-8). Ember's own
+  // refusal (tampering, the organisation's "off") is said as itself.
+  const sha256 = commandSha256(target, shell, cwd, a.command);
+  const stand = standingFindings(cls.findings, paths);
+  const about: CommandAsked = { sha256, cwd, command: a.command, acts: commandActs(stand, facts.os), named: commandNamed(stand, cls.commands), os: facts.os, home };
+  const stood = d.verdict === "refuse" ? null : ctx.refusals?.command(about) ?? null;
+  if (stood) {
+    endPending();
+    audit({
+      phase: "decided", shell, cwd, commandChars: a.command.length, verdict: "refuse", classes: d.classes, rules: [...d.rules, stood === "refused" ? "refused-before" : "unanswered-before"],
+      reason: stood === "refused" ? "The user said no to this command, or to one that does the same, earlier in this task."
+        : "The question about this command, or one that does the same, went unanswered, and the user hasn't said anything to this task since.",
+    });
+    ctx.log.info("commands.decided", { task, target, verdict: "refuse", classes: d.classes, chars: a.command.length, stood });
+    return denied(stood === "refused" ? REFUSED_BEFORE : STILL_UNANSWERED);
+  }
+  // A command that may be something the user said no to in this task, though it isn't recognisably the same: one with
+  // a danger of a class the refused command had, whatever either names (a push by the remote's URL after a refused
+  // push by its name: modes-y9-y9-1), any danger after a refused command Ember couldn't read (modes-y9-y9-2), one
+  // Ember can't read at all; and a deletion or a push by command after a no to that kind of step in an app. It asks,
+  // in every mode: never announced (by the user's earlier words, Interactive or Autopilot) and never shown to
+  // Assisted's check. The user's yes is theirs to give (modes-y9-9, y9-2).
+  const like = d.verdict !== "refuse" && d.verdict !== "run" && (ctx.refusals?.commandLike(about) ?? false);
+  // Autopilot has no question to put: what may be the refused thing is refused (the owner's decision of 2026-11-14).
+  if (like && ctx.autopilot?.()) {
+    endPending();
+    audit({ phase: "decided", shell, cwd, commandChars: a.command.length, verdict: "refuse", classes: d.classes, rules: [...d.rules, LIKE_REFUSED_RULE, AUTOPILOT_RULE], reason: "The user said no to something like this earlier in this task, and Autopilot asks nothing." });
+    ctx.log.info("commands.decided", { task, target, verdict: "refuse", classes: d.classes, chars: a.command.length, like: true });
+    return denied(LIKE_REFUSED_AUTOPILOT);
+  }
+  if (like) {
+    d = {
+      ...d, verdict: "ask", requested: undefined, rules: [...new Set([...d.rules, LIKE_REFUSED_RULE])], says: [LIKE_REFUSED_LINE, ...d.says.filter(l => l !== LIKE_REFUSED_LINE)],
+      reason: d.verdict === "ask" ? d.reason : "It asks first: the user said no to something like this earlier in this task.", armMs: Math.max(d.armMs, 1500),
+    };
+  }
+  // "Work without asking": an ordinary command that asks only for the text it carries announces instead (its Stop
+  // countdown and the card still show where the text came from).
+  const autonomous = like ? null : autonomousCommand(d, { scopes: ctx.autonomy?.() ?? null, words, tainted: tainted || !!ctx.state.outputTainted, carried, elsewhere: others.length > 0 || places.length > 0, kind: binding.kind });
+  if (autonomous) d = autonomous;
+  // Autopilot: a command that still asks is announced with its Stop countdown instead, whatever the task was held to
+  // asking for (steered, off-task: the refused command itself, and what may be it, were refused above), as an
+  // administrator too, secrets (its output then withheld from the model) and what outlives Stop (said so) included.
+  // Only what the organisation's or the user's own "ask every command" requires still asks; one the user's own words
+  // rule out, and one whose target Ember can't name, are refused (autopilot.ts; the owner's decision of 2026-11-14).
+  // What a wrapper may hide where the classifier read its options wrongly: judged apart, for Autopilot and for
+  // Assisted's check alike, so a secret behind it is still withheld and what outlives Stop is still said.
+  const hidden = d.verdict === "ask" && (ctx.autopilot?.() || ctx.review) ? behindWrappers(cls, text => j.classifyCommand(text, shell, cctx).findings) : [];
+  if (ctx.autopilot?.() && d.verdict === "ask" && !like) {
+    // (Their own words against it count wherever they were heard: where Ember can't tell the user from its speakers too.)
+    const standing = standingFindings(cls.findings, paths);
+    const input = { findings: [...cls.findings, ...hidden], mode, askEvery: cap.askEvery, userAskEvery, ruledOut: wordsRuleOut(standing, words) || wordsRuleOut(standing, spoken), unnamed: unnamedTarget(cls) };
+    // A secret's output is withheld from the model; one saved to a file a later command could read is refused instead
+    // (r11-commands-y11-1).
+    const refusal = autopilotRefuses(d, input) ?? (printsSecrets(d, input.findings) && savesFiles(cls) ? "secret-saved" : null);
+    if (refusal) {
+      endPending();
+      audit({ phase: "decided", shell, cwd, commandChars: a.command.length, verdict: "refuse", classes: d.classes, rules: [...d.rules, AUTOPILOT_RULE], reason: refusal === "ruled-out" ? "The user's own words for the task rule this command out, and Autopilot asks nothing." : refusal === "terminal" ? "It may act in the user's own terminals, and Autopilot asks nothing." : refusal === "secret-saved" ? "It saves secrets to a file a later command could show the model, and Autopilot asks nothing." : "It deletes or changes something Ember can't name, and Autopilot asks nothing." });
+      ctx.log.info("commands.decided", { task, target, verdict: "refuse", classes: d.classes, chars: a.command.length, autopilot: refusal });
+      return denied(`Not allowed: ${AUTOPILOT_REFUSES[refusal]}`);
+    }
+    const auto = autopilotCommand(d, input);
+    // (Its root or administrator line, "each one asks first", is made true for Autopilot below: rootFactOnly.)
+    if (auto) d = auto;
+    // The card says why it still asks where their words held it back: after "You didn't ask for this." (which the
+    // card keeps), and in place of "your words don't name exactly this", a doubt of Ember's (modes-y9-x9-6).
+    else if (wordsHoldBack(standing, words) || wordsHoldBack(standing, spoken)) {
+      const at = d.says.findIndex(l => l === LINES.unasked || l === LINES.inexact || l === LINES.windows);
+      const [keep, drop] = at < 0 ? [d.says.length, 0] : d.says[at] === LINES.unasked ? [at + 1, 0] : d.says[at] === LINES.inexact ? [at, 1] : [at, 0];
+      d = { ...d, says: [...d.says.slice(0, keep), HELD_BACK_LINE, ...d.says.slice(keep + drop)] };
+    }
+  }
+  // Assisted's check: a command that asks is shown to the reviewer with the user's own words and what the rules found
+  // (the card's lines: an administrator's command, a steered task, carried text and another computer named say so
+  // there); one it finds in those words runs with its announcement (Stop countdown) instead, a secret's output withheld
+  // and what outlives Stop said so. What the organisation's or the user's own "ask every command" requires, what the
+  // user's words rule out and a place Ember can't name are never reviewed (review.ts notReviewable). The task's bubble
+  // says it is checking; a Stop doesn't wait for the answer.
+  if (ctx.review && d.verdict === "ask" && !like) {
+    const checkWords = ctx.task.checkWords?.() ?? words;
+    // The user's own words against it (their no, said in advance, or a step they hold back) are held in code, as
+    // Autopilot holds them: never left to the check's reading of a negation (commands-remote-c10-3).
+    const standing = standingFindings(cls.findings, paths);
+    const ruledOut = [words, spoken, checkWords].some(w => wordsRuleOut(standing, w));
+    const blocked = notReviewable(d, { words: checkWords, mode, askEvery: cap.askEvery, userAskEvery, command: a.command, findings: [...cls.findings, ...hidden], ruledOut, unnamed: unnamedTarget(cls) });
+    if (ruledOut && [words, spoken, checkWords].some(w => wordsHoldBack(standing, w)) && !d.says.includes(HELD_BACK_LINE)) {
+      const at = d.says.findIndex(l => l === LINES.unasked || l === LINES.inexact || l === LINES.windows);
+      const [keep, drop] = at < 0 ? [d.says.length, 0] : d.says[at] === LINES.unasked ? [at + 1, 0] : d.says[at] === LINES.inexact ? [at, 1] : [at, 0];
+      d = { ...d, says: [...d.says.slice(0, keep), HELD_BACK_LINE, ...d.says.slice(keep + drop)] };
+    }
+    if (blocked === null) {
+      const t0 = performance.now();
+      try { ctx.presenter.progress(CHECKING_COMMAND); } catch (err) { ctx.log.warn("commands.checking_not_said", { err }); }
+      const asked = Promise.resolve().then(() => ctx.review!({
+        userWords: checkWords, command: a.command, shell, cwd, where: binding.label || place, os: facts.os, why: a.why, findings: d.says,
+      }, ctx.signal)).catch(() => null);
+      let stop!: () => void;
+      const stopped = new Promise<null>(resolve => { stop = () => resolve(null); ctx.signal.addEventListener("abort", stop, { once: true }); });
+      const v = await Promise.race([asked, stopped]).finally(() => ctx.signal.removeEventListener("abort", stop));
+      if (ctx.isOver()) return STOPPED();
+      ctx.log.info("commands.reviewed", { task, target, verdict: v ? (v.run ? "run" : "ask") : "none", ms: Math.round(performance.now() - t0) });
+      if (v?.run) {
+        // Cleared without a question: a secret's output is kept from the model, and what outlives Stop says so, as in
+        // Autopilot (the owner's decision of 2026-11-14).
+        const all = [...cls.findings, ...hidden];
+        // One that saves the secret to a file a later command could read isn't cleared: it asks (r11-commands-y11-1).
+        if (printsSecrets(d, all) && savesFiles(cls)) d = { ...d, says: [...d.says, SECRET_SAVED_LINE] };
+        else {
+          d = reviewedDecision(d, v);
+          if (printsSecrets(d, all)) d = { ...d, withheld: true, says: [...d.says, WITHHELD_LINE] };
+          if (outlivesKillSwitch(d, all)) d = { ...d, outlivesStop: true, says: [...d.says, OUTLIVES_LINE] };
+        }
+      } else if (v?.why) d = { ...d, says: [...d.says, `Ember's review: ${v.why.replace(/[.\s]+$/, "")}.`] };
+    }
+  }
+  // The card's and the bubble's reasons are true in the mode that decided (rootFactOnly).
+  d = rootFactOnly(d, !!ctx.autopilot?.());
   // The checks are done: a boot from here on happens in the run, whose tab shows it (followStatus).
   endPending();
   const refused = d.verdict === "refuse";
   audit({
     phase: "decided", shell, cwd, ...(refused ? {} : { command: j.redactSecrets(a.command).slice(0, AUDIT_COMMAND_CHARS) }), commandChars: a.command.length,
-    verdict: d.verdict, classes: d.classes, rules: d.rules, ...(d.requested ? { requested: "user", intent: d.requested.intent } : {}), reason: d.reason,
+    verdict: d.verdict, classes: d.classes, rules: d.rules, ...(d.requested ? { requested: d.requested.intent === UNKNOWN_ANNOUNCED ? "unknown" : "user", intent: d.requested.intent } : {}), reason: d.reason,
+    ...(d.requested?.intent === AUTOPILOT_RULE ? { mode: "autopilot" } : {}),
     ...(d.review ? { review: d.review } : {}),
+    ...(d.withheld ? { outputWithheld: true } : {}),
+    ...(d.outlivesStop ? { outlivesStop: true } : {}),
   });
   ctx.log.info("commands.decided", { task, target, verdict: d.verdict, classes: d.classes, chars: a.command.length });
 
@@ -849,13 +1446,12 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
   if (refused) return denied(`Not allowed: ${d.reason} Don't try another way; tell the user in finish_task.`);
 
   let runId = newRunId();
-  const sha256 = commandSha256(target, shell, cwd, a.command);
   const why = `Why: ${shownQuote(a.why, 200)}`;
   const card = (cardMode: CommandCard["mode"], says: string[]): CommandCard => ({
     runId, target, targetLabel: binding.label, ...(binding.login ? { login: binding.login } : {}), shell, cwd, command: a.command, sha256, taskId: task,
     taskTitle: ctx.task.title, mode: cardMode, says, unasked: cardMode === "ask" && d.unasked, armMs: d.armMs,
     ...(cardMode !== "run" && d.classes.length ? { classes: d.classes } : {}),
-    ...(cardMode === "announce" && d.requested?.intent === "ai-review" ? { reviewed: true } : {}),
+    ...(cardMode === "announce" ? announceFlags(d, says) : {}),
     // The header says the home folder as ~ in a POSIX shell (commands-remote-8).
     ...(shell !== "powershell" && home ? { home } : {}),
   });
@@ -875,6 +1471,8 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
     if (ctx.isOver()) return "stopped";
     if (answer === "once") return "once";
     ctx.onDeclined?.(answer === null);
+    // Kept for the task: the same command, or one that does the same, isn't asked about again (Refusals).
+    ctx.refusals?.noteCommand(about, answer === null ? "waiting" : "refused");
     return answer === null ? "expired" : "no";
   };
 
@@ -893,34 +1491,48 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
   const timeoutS = Math.min(MAX_TIMEOUT_S, Math.max(1, Math.round(a.timeoutSeconds ?? DEFAULT_TIMEOUT_S)));
   const release = await slotOn(svc.runner, ctx.signal);
   if (!release) return STOPPED();
+  /**
+   * An announcement with its Stop window (D4.4): `words` in the task's bubble, `says` on the card that counts down in
+   * the command window. True once it ran out unstopped; otherwise the result that ends this call.
+   */
+  const countdown = async (words: string, says: string[]): Promise<true | ToolResultObject> => {
+    const stopId = `ui:cmdstop:${runId}`;
+    const ms = announceTime(svc.window);
+    ctx.presenter.announce(words, stopId, ms);
+    let go = false;
+    try {
+      go = await svc.window.announce(card("announce", [...says, why]), ms, ctx.signal);
+    } catch (err) {
+      ctx.log.warn("commands.announce_failed", { task, err });
+    } finally {
+      ctx.presenter.endAnnouncement(stopId);
+    }
+    if (ctx.isOver()) return STOPPED();
+    if (go) return true;
+    // Its page crashed or the window closed during the countdown: the user didn't stop it (cross-review S2).
+    const unshown = announceGone(svc.window, runId);
+    audit({ phase: "answered", answer: unshown ? "unseen" : "deny", q: "announce" });
+    // The user stopped it: a no, which holds the task to asking from now on (Work without asking too; review of #127).
+    if (!unshown) { ctx.onDeclined?.(); ctx.refusals?.noteCommand(about, "refused"); }
+    return denied(unshown ? UNSHOWN_BEFORE : STOPPED_BEFORE);
+  };
+  // When Autopilot's announcement of this command last ran out unstopped (a remote's gate 2 hears of it on the stamp,
+  // never as a yes); null: none.
+  let announcedAt: number | null = null;
   try {
-    // Step 11: an announcement with its Stop window (D4.4).
+    // Step 11.
     if (d.verdict === "announce" && d.requested) {
-      const stopId = `ui:cmdstop:${runId}`;
-      const ms = announceTime(svc.window);
-      ctx.presenter.announce(d.requested.announce, stopId, ms);
-      let go = false;
-      try {
-        go = await svc.window.announce(card("announce", [...d.says, why]), ms, ctx.signal);
-      } catch (err) {
-        ctx.log.warn("commands.announce_failed", { task, err });
-      } finally {
-        ctx.presenter.endAnnouncement(stopId);
-      }
-      if (ctx.isOver()) return STOPPED();
-      if (!go) {
-        // Its page crashed or the window closed during the countdown: the user didn't stop it (cross-review S2).
-        const unshown = announceGone(svc.window, runId);
-        audit({ phase: "answered", answer: unshown ? "unseen" : "deny", q: "announce" });
-        // The user stopped it: a no, which holds the task to asking from now on (Work without asking too; review of #127).
-        if (!unshown) ctx.onDeclined?.();
-        return denied(unshown ? UNSHOWN_BEFORE : STOPPED_BEFORE);
-      }
+      const went = await countdown(d.requested.announce, d.says);
+      if (went !== true) return went;
+      if (d.requested.intent === AUTOPILOT_RULE) announcedAt = performance.now();
     }
 
     // Steps 12-14: run (a remote's own check may ask once more), then shape what it printed.
     let rules = d.rules;
     let asked = false;
+    let toldRemote = false;
+    // Its output is kept from the model: a secret's, announced without a question (autopilot.ts printsSecrets).
+    let withheld = d.withheld === true;
     for (;;) {
       // Every await above can outlive consent or a switch change. Fail closed on tightening; a new request
       // gets a new decision/card rather than treating an old announcement as approval.
@@ -929,13 +1541,20 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
       try { live = svc.capability(); } catch { return denied("Couldn't check whether commands are still allowed. Finish the task saying so."); }
       if (live.state !== "on") return denied(`${live.why ?? `Commands are off on ${place}.`} Don't try another way; tell the user in finish_task.`);
       if (svc.binding.id !== target || svc.runner.target !== target) return denied("The command's computer changed. Finish the task saying so.");
-      if (svc.mode() === "off" || (approvedAt === null && (live.askEvery !== null || svc.userAskEvery() || svc.mode() === "ask"))) {
+      // (Autopilot's announcement stands while Autopilot does: there root alone is no reason to ask, as when it was decided.)
+      // (Assisted's check cleared it under root's rule: root still alone is no reason to ask, as when it was decided;
+      // any other rule, or root arriving after, still is: r12-commands-x12-1.)
+      const rootCleared = d.requested?.intent === "ai-review" && cap.askEvery === "root";
+      const everyAsks = announcedAt !== null
+        ? !ctx.autopilot?.() || (live.askEvery !== null && live.askEvery !== "root")
+        : live.askEvery !== null && !(rootCleared && live.askEvery === "root");
+      if (svc.mode() === "off" || (approvedAt === null && (everyAsks || svc.userAskEvery() || svc.mode() === "ask"))) {
         return denied("Command permissions changed while this command was waiting. It did not run. Ask the user for a new request.");
       }
       if (ctx.projectFolderCurrent && !ctx.projectFolderCurrent()) return denied("The chosen command folder changed. Choose it again.");
       const run = await runOnce(ctx, j, {
         runId, shell, cwd, command: a.command, timeoutS, card: card("run", d.verdict === "run" ? [] : [...d.says, why]),
-        stamp: { taskId: task, sha256, verdict: d.verdict === "announce" ? "announce" : d.verdict === "ask" ? "ask" : "run", classes: d.classes, rules, approvedAt },
+        stamp: { taskId: task, sha256, verdict: d.verdict === "announce" ? "announce" : d.verdict === "ask" ? "ask" : "run", classes: d.classes, rules, approvedAt, announcedAt },
       }, pending.started);
       if (run === "stopped") { noteDownloads(ctx, cls); return STOPPED(); }
       if (run === "unseen") { noteDownloads(ctx, cls); return fail(UNSEEN); }
@@ -948,12 +1567,59 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
         // Gate 2 found more than the PC did: the user sees its own lines, quoted, and says yes once more or not.
         pending.waiting();
         if (ctx.isOver()) { reaskEnded(svc, runId, "stopped"); return STOPPED(); }
-        asked = true;
         const theirs = (exit.remoteSays ?? []).filter(l => typeof l === "string").slice(0, 10).map(l => shownQuote(l));
         // In the card's order (§3.8.4): the remote's own lines come before "You didn't ask for this." and the Windows line.
         const own = [`${binding.label}'s own check also found:`, ...theirs];
         const at = d.says.findIndex(l => l === LINES.unasked || l === LINES.inexact || l === LINES.windows);
         const lines = at < 0 ? [...d.says, ...own] : [...d.says.slice(0, at), ...own, ...d.says.slice(at)];
+        // Autopilot: the remote's own question is announced instead of asked, once, with its lines on a countdown of its
+        // own, also where its rules say the command would read or print secrets (its output then kept from the model),
+        // outlive Stop (said so) or can't be told, but for what is refused just below (the owner's decision of
+        // 2026-11-14). Only an organisation's rule (`admin.*`: the remote's own administrator's policy) and the user's
+        // own "ask every command" there go to the card below, as does whatever the remote still wants a yes for after
+        // the announcement.
+        const extra = remoteRules(exit);
+        // What Autopilot refuses on this computer it refuses where the remote's own check found it too: a deletion or a
+        // write of what can't be named, a terminal's remote-control verb (r11-commands-x11-2). No question to put.
+        // And what the user's own words for the task rule out, and what may be something they said no to in this task,
+        // read against what the remote found as they are against the PC's own findings (integ-x-1).
+        const found = remoteFindings(extra);
+        // Gate 2 sends no objects back, so words that keep or say no to a named thing rule it out too (integ-y-1).
+        const unnamed = found.findings.some(f => f.objects.length === 0);
+        const ruledOutThere = [words, spoken].some(w => wordsRuleOut(found.findings, w) || (unnamed && keepsNamed(w)));
+        const refusal = ctx.autopilot?.() ? autopilotRefuses({ rules: extra }, { findings: [], ruledOut: ruledOutThere }) : null;
+        const likeThere = !refusal && !!ctx.autopilot?.() && found.findings.length > 0 && (ctx.refusals?.commandLike({
+          ...about, acts: [...about.acts, ...commandActs(found.findings, facts.os)],
+          named: [...(about.named ?? []), ...found.findings.map(f => ({ cls: f.cls, rule: f.rule, bare: true, opaque: found.unread || f.cls === "unclear" || f.cls === "unknown", words: [] }))],
+        }) ?? false);
+        if (refusal || likeThere) {
+          reaskEnded(svc, runId, "refused");
+          audit({ phase: "answered", answer: "refused", q: "remote", mode: "autopilot" });
+          ctx.log.info("commands.decided", { task, target, verdict: "refuse", classes: d.classes, chars: a.command.length, autopilot: refusal ?? "like-refused", remote: true });
+          return denied(refusal ? `Not allowed: ${AUTOPILOT_REFUSES[refusal]}` : LIKE_REFUSED_AUTOPILOT);
+        }
+        if (!toldRemote && ctx.autopilot?.()&& svc.mode() !== "ask" && !svc.userAskEvery() && extra.every(r => askedOfFinding({ rule: r }) !== "organisation")) {
+          toldRemote = true;
+          // What the remote found that reads or prints secrets keeps the output from the model; what outlives Stop says so.
+          const secretThere = extra.some(r => readsSecrets(r));
+          const outlivesThere = extra.some(r => outlivesStop(r.replace(/^in-script:/, "")));
+          if (secretThere) withheld = true;
+          let went: true | ToolResultObject | null = null;
+          try {
+            went = await countdown(`Running a command that ${binding.label}'s own check asked about, ${AUTOPILOT_WORDS}`,
+              [...lines.filter(l => l !== AUTOPILOT_LINE && l !== WITHHELD_LINE && l !== OUTLIVES_LINE), ...(withheld ? [WITHHELD_LINE] : []), ...(outlivesThere || d.outlivesStop ? [OUTLIVES_LINE] : []), AUTOPILOT_LINE]);
+          } finally {
+            // No run is coming for this tab: it says so instead of waiting for one.
+            if (went !== true) reaskEnded(svc, runId, ctx.isOver() ? "stopped" : "no");
+          }
+          if (went !== true) return went;
+          audit({ phase: "answered", answer: "announced", q: "remote", mode: "autopilot", ...(secretThere ? { outputWithheld: true } : {}), ...(outlivesThere ? { outlivesStop: true } : {}) });
+          announcedAt = performance.now();
+          rules = [...new Set([...rules, ...extra])];
+          runId = newRunId();
+          continue;
+        }
+        asked = true;
         let answer: "once" | "no" | "expired" | "stopped" = "stopped";
         try {
           answer = await askCard(lines, "remote",
@@ -975,7 +1641,7 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
       // The retry sent back too: that is the remote's refusal, and its tab says so (review #274).
       if (exit.ended === "refused-remote" && exit.needsConfirm) reaskEnded(svc, runId, "refused");
       if (exit.ended === "refused-remote") return resultOf(exit, "", { label: binding.label, timeoutS, redact: j.redactSecrets });
-      return finishRun(ctx, j, run, { cls, label: binding.label, shell, timeoutS, runId });
+      return await finishRun(ctx, j, run, { cls, label: binding.label, shell, timeoutS, runId, withheld });
     }
   } finally {
     release();
@@ -1009,7 +1675,7 @@ interface RunOutcome { exit: RunExit; out: OutputKeeper; tracker: SecretTracker;
  */
 async function runOnce(ctx: CommandFlowContext, j: CommandJudge, o: {
   runId: string; shell: ShellId; cwd: string; command: string; timeoutS: number; card: CommandCard;
-  stamp: { taskId: string; sha256: string; verdict: "run" | "announce" | "ask"; classes: CommandDecision["classes"]; rules: string[]; approvedAt: number | null };
+  stamp: { taskId: string; sha256: string; verdict: "run" | "announce" | "ask"; classes: CommandDecision["classes"]; rules: string[]; approvedAt: number | null; announcedAt?: number | null };
 }, started: () => void): Promise<RunOutcome | "stopped" | "unseen"> {
   if (ctx.isOver()) return "stopped";
   const svc = ctx.service;
@@ -1019,6 +1685,7 @@ async function runOnce(ctx: CommandFlowContext, j: CommandJudge, o: {
     stamp: {
       taskId: o.stamp.taskId, sha256: o.stamp.sha256, verdict: o.stamp.verdict, classes: o.stamp.classes, rules: o.stamp.rules,
       approval: o.stamp.approvedAt === null ? null : { ageMs: Math.max(0, Math.round(performance.now() - o.stamp.approvedAt)) },
+      ...(typeof o.stamp.announcedAt === "number" ? { announced: { ageMs: Math.max(0, Math.round(performance.now() - o.stamp.announcedAt)) } } : {}),
     },
   };
   started();
@@ -1050,7 +1717,7 @@ async function runOnce(ctx: CommandFlowContext, j: CommandJudge, o: {
       if (!exit) return;
       ctx.audit({
         event: "command", phase: "ended", task: o.stamp.taskId, target: svc.binding.id, runId: o.runId, ended: exit.ended, code: exit.code, signal: exit.signal,
-        ms: exit.ms, outBytes: out.bytes, secretSpans: tracker.spans().length, typedLines: typed,
+        ms: exit.ms, outBytes: out.bytes, secretSpans: tracker.spans().length, typedLines: typed, ...cutFields(exit),
       });
     });
   };
@@ -1243,34 +1910,102 @@ function noteDownloads(ctx: CommandFlowContext, cls: Classification): void {
   noteWrites(ctx.state.written ??= newTaskWrites(), cls);
 }
 
-/** Steps 14: shape, check for instructions, note downloads, audit the end, and say how it went. */
-function finishRun(ctx: CommandFlowContext, j: CommandJudge, run: RunOutcome, o: { cls: Classification; label: string; shell: ShellId; timeoutS: number; runId: string }): ToolResultObject {
+/** Does the command write a file Ember can name (a redirect, tee, a copy's target, -o)? A secret saved there may be read later. */
+function savesFiles(cls: Classification): boolean {
+  const w = (cls as Partial<ClassificationExtra>).writes;
+  return Array.isArray(w) && w.length > 0;
+}
+
+/** The card's line where Assisted's check found the request asks for a secret's command that saves it to a file. */
+export const SECRET_SAVED_LINE = "It saves passwords or keys to a file, so Ember asks even though your request names it.";
+
+/** One macrotask: the stop shortcut's handler, waiting on Ember's main thread, runs first (merge review integ-y-2). */
+const nextTurn = (): Promise<void> => new Promise(resolve => setImmediate(resolve));
+
+/**
+ * Steps 14: shape, check for instructions, note downloads, audit the end, and say how it went. A run keeps up to 4 MiB
+ * of output, and cleaning it held Ember's main thread about 1 s (1.7 s with three of each vault entry filled) where
+ * Stop must answer within 300 ms (merge review integ-y-2): the cut, CL's own cleaning, and the check copy's making
+ * (each typed line taken out, stop-yield-y9-1) and redaction run a whole-text operation a step (stop-yield-x9-1),
+ * with a macrotask between two steps once 8 ms of them have run (runStepsYielding), and a Stop seen between them ends
+ * the call as stopped, with nothing of the output, cleaned or not, for the model, the audit or the log. Measured on 4 MiB of coloured build output with a login, a card and
+ * contact details filled, one to three of each: the longest stretch went from 1,163-1,901 ms to 134-175 ms (132-188
+ * ms with nothing filled); with a colour code on every character, 115-216 ms; with 1,000 typed lines, 135-190 ms
+ * (872 ms before their removal was stepped). The instructions check (outputTaint) is one step, about 190-230 ms on
+ * Ember.js build output that says "ember" on every line. One known pass is longer still: the Key Vault value pattern over 4 MiB of secret
+ * ids with no value, about 1.6 s.
+ */
+/**
+ * What the model is told in place of a command's output that was withheld from it: a command that reads or prints
+ * secrets, announced without a question (the owner's decision of 2026-11-14). The user sees the output in the command
+ * window; the model learns only that it ran and how it ended.
+ */
+export const WITHHELD_OUTPUT = "(Its output may hold passwords or keys, so Ember kept it from you: the user can see it in the command window. Don't run it again or another way to see it.)";
+
+async function finishRun(ctx: CommandFlowContext, j: CommandJudge, run: RunOutcome, o: { cls: Classification; label: string; shell: ShellId; timeoutS: number; runId: string; withheld?: boolean }): Promise<ToolResultObject> {
   const { exit, out, tracker, running } = run;
   const typed = running.typedLines();
   running.forgetTyped();
-  // The run's own tracker, when its runner keeps one, adds its spans: a secret hidden by either stays hidden.
-  const theirs = (running as RunningCommand & { secretSpans?: () => { from: number; to: number }[] }).secretSpans?.() ?? [];
-  const kept = out.kept([...tracker.spans(), ...theirs]);
-  const raw = new TextEncoder().encode(kept.text);
-  const shaped = j.shapeOutput(raw, { target: ctx.service.binding.id, label: o.label, shell: o.shell, exit, typed, secretSpans: kept.spans });
   const task = ctx.task.id;
   const target = ctx.service.binding.id;
+  /** The end of a run Stop came to while its output was cleaned: what it may have written is noted, its end audited. */
+  const stopped = (): ToolResultObject => {
+    if (exit.ended !== "failed-to-start") noteDownloads(ctx, o.cls);
+    ctx.audit({
+      event: "command", phase: "ended", task, target, runId: o.runId, ended: exit.ended, code: exit.code, signal: exit.signal, ms: exit.ms,
+      outBytes: out.bytes, typedLines: typed.length, stopped: true,
+    });
+    ctx.log.info("commands.ended", { task, target, ended: exit.ended, code: exit.code, ms: exit.ms, outBytes: out.bytes, stopped: true });
+    return STOPPED();
+  };
+  if (ctx.isOver()) return stopped();
+  // The run's own tracker, when its runner keeps one, adds its spans: a secret hidden by either stays hidden.
+  const theirs = (running as RunningCommand & { secretSpans?: () => { from: number; to: number }[] }).secretSpans?.() ?? [];
+  const kept = await runStepsYielding(out.keptSteps([...tracker.spans(), ...theirs]), () => ctx.isOver());
+  if (kept === null || ctx.isOver()) return stopped();
+  // The cut's last step, encoding and decoding are each a whole-text pass: a turn between them (stop-yield-x9-1).
+  await nextTurn();
+  if (ctx.isOver()) return stopped();
+  const raw = new TextEncoder().encode(kept.text);
+  await nextTurn();
+  if (ctx.isOver()) return stopped();
   // What it printed is checked whole, before shaping cuts it to size (CL's cleaned text, as the model's copy is made
   // from it; and the flow's own copy, which keeps what a carriage return overwrote), and as the model gets it.
-  const clean = j.cleanOutput ? j.cleanOutput(raw, { typed, secretSpans: kept.spans }) : null;
-  const taint = (clean !== null ? j.outputTaint(clean) : null) ?? j.outputTaint(j.redactSecrets(checkedText(kept.text, kept.spans, typed))) ?? j.outputTaint(shaped);
+  const own = j.cleanOutput === cleanOutput;
+  const clean = own ? await cleanOutputAsync(raw, { typed, secretSpans: kept.spans }, () => ctx.isOver()) : j.cleanOutput ? j.cleanOutput(raw, { typed, secretSpans: kept.spans }) : null;
+  if (ctx.isOver()) return stopped();
+  const shape: ShapeOptions = { target, label: o.label, shell: o.shell, exit, typed, secretSpans: kept.spans };
+  // CL's own shaping is that same cleaned text bounded and wrapped: made from it, so the kept output (up to 4 MiB) is
+  // cleaned once on Ember's main thread, not twice (integ-y-2). A judge a test passes shapes as it does.
+  const shaped = clean !== null && j.shapeOutput === shapeOutput && own ? shapeCleaned(clean, shape) : j.shapeOutput(raw, shape);
+  await nextTurn();
+  if (ctx.isOver()) return stopped();
+  let taint = clean !== null ? j.outputTaint(clean) : null;
+  if (taint === null) {
+    await nextTurn();
+    if (ctx.isOver()) return stopped();
+    const check = await runStepsYielding(checkedTextSteps(kept.text, kept.spans, typed), () => ctx.isOver());
+    if (check === null || ctx.isOver()) return stopped();
+    const checked = j.redactSecrets === redactSecrets ? await redactSecretsYielding(check, () => ctx.isOver()) : j.redactSecrets(check);
+    if (checked === null || ctx.isOver()) return stopped();
+    taint = j.outputTaint(checked) ?? j.outputTaint(shaped);
+  }
   if (taint) {
     ctx.state.outputTainted = true;
     ctx.task.taint(taint);
     ctx.audit({ event: "command", phase: "tainted", task, target, runId: o.runId, rule: taint });
   }
   if (exit.ended !== "failed-to-start") noteDownloads(ctx, o.cls);
+  // After a secret's output was withheld, every later output of the task is too: the secret may be in a file it wrote
+  // where Ember couldn't see (r11-commands-y11-1).
+  const withheld = o.withheld === true || ctx.state.withheldSecrets === true;
+  if (o.withheld && exit.ended !== "failed-to-start") ctx.state.withheldSecrets = true;
   ctx.audit({
     event: "command", phase: "ended", task, target, runId: o.runId, ended: exit.ended, code: exit.code, signal: exit.signal, ms: exit.ms,
-    outBytes: out.bytes, secretSpans: kept.spans.length, typedLines: typed.length,
+    outBytes: out.bytes, secretSpans: kept.spans.length, typedLines: typed.length, ...cutFields(exit), ...(withheld ? { outputWithheld: true } : {}),
   });
-  ctx.log.info("commands.ended", { task, target, ended: exit.ended, code: exit.code, ms: exit.ms, outBytes: out.bytes });
-  const result = resultOf(exit, shaped, { label: o.label, timeoutS: o.timeoutS, redact: j.redactSecrets });
+  ctx.log.info("commands.ended", { task, target, ended: exit.ended, code: exit.code, ms: exit.ms, outBytes: out.bytes, outputCut: exit.outputCut === true });
+  const result = resultOf(exit, withheld ? WITHHELD_OUTPUT : shaped, { label: o.label, timeoutS: o.timeoutS, redact: j.redactSecrets });
   if (!taint || result.resultType === "denied") return result;
   const note = "\n(The output contained text that looks like instructions; it was not followed. Every further command in this task asks the user.)";
   return { ...result, textResultForLlm: `${result.textResultForLlm}${note}`, ...(result.resultType === "failure" ? { error: `${result.textResultForLlm}${note}` } : {}) };

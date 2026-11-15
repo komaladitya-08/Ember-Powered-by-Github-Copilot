@@ -5,6 +5,8 @@ import path from "node:path";
 import { chromium, type Browser, type Page } from "playwright-core";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { DEFAULT_SETTINGS } from "../../app/main/settings";
+// Its I agree takes no press until the card has been up AGREE_ARM_MS (accessibility-r9-2).
+import { AGREE_ARM_MS } from "../../app/shared/provider";
 
 declare global { interface Window { __calls: string[]; __saves: { resolve: (v: unknown) => void; reject: (e: unknown) => void }[]; __provider: unknown; __providerChanged: () => void; __emit: (n: string, v: unknown) => void } }
 
@@ -66,7 +68,7 @@ describe.skipIf(process.env.EMBER_SPEECH_CONSENT_TEST !== "1")("Home speech cons
     await page.evaluate(() => { document.body.classList.remove("loading", "first-run"); });
     await page.evaluate(() => { const b = document.getElementById("voice-download") as HTMLButtonElement; b.hidden = false; });
     const calls = (prefix: string) => page.evaluate(p => window.__calls.filter(c => c.startsWith(p)).length, prefix);
-    const open = async () => { await page.locator('a[href="#voice-h"]').click(); await page.evaluate(() => (document.getElementById("wake") as HTMLInputElement).click()); await expect.poll(() => page.locator("#consent").isVisible()).toBe(true); };
+    const open = async () => { await page.locator('a[href="#voice-h"]').click(); await page.evaluate(() => (document.getElementById("wake") as HTMLInputElement).click()); await expect.poll(() => page.locator("#consent").isVisible()).toBe(true); await page.waitForTimeout(AGREE_ARM_MS + 50); };
     const settle = (i: number, how: "ok" | "reject" | "false") => page.evaluate(([i, how]) => { const s = window.__saves[i as number]; if (how === "ok") s.resolve({}); else if (how === "false") s.resolve(false); else s.reject(new Error("Error invoking remote method 'ember:update-settings': Error: Ember couldn't save your settings: the disk is full.")); }, [i, how] as const);
     return { page, errors, calls, open, settle, error: () => page.locator("#consent-error") };
   }

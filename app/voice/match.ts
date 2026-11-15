@@ -48,7 +48,7 @@ export const ENROL_LIMITS = { quietMs: 45_000, totalMs: 180_000 } as const;
 
 /**
  * The least voice what follows the wake phrase needs for Voice Match to vouch for it (`verified`, what a spoken yes and
- * turning "Work without asking" on need), checked on its own at VOICE_MATCH_THRESHOLD (owner decision of 2026-11-03;
+ * a mode that asks less, chosen by voice, need), checked on its own at VOICE_MATCH_THRESHOLD (owner decision of 2026-11-03;
  * it was 1.5 s, which almost no natural yes reached). Measured on LibriSpeech dev-clean (33 speakers, enrolled from four
  * 3 s phrases, pieces cut by voiced length): at 0.5 s another voice passes 0.5 % of the time and the owner's is turned
  * away 52 %; at 1.5 s, 1.9 % and 6.5 %. A shorter piece makes another voice no easier to pass, only the owner's harder.
@@ -186,7 +186,7 @@ export class VoiceGate {
     // main says so on a question up, once (owner's report of 2026-11-12: in a conversation over a video, the default, a
     // nameless "allow" vanished). `reason` "sound-unknown": a yes where nothing could tell whether other sound played.)
     const answer = e.type === "utterance" ? spokenAnswer(e.text) : null;
-    const dropped: VoiceEvent = { type: "dropped", reason: e.type === "utterance" && e.soundUnknown ? "sound-unknown" : "over-sound", ...(e.type === "utterance" && e.window === "answer" ? { window: "answer" as const } : {}), ...(answer ? { answer } : {}) };
+    const dropped: VoiceEvent = { type: "dropped", reason: e.type === "utterance" && e.soundUnknown ? "sound-unknown" : "over-sound", ...(e.type === "utterance" && e.window === "answer" ? { window: "answer" as const } : {}), ...(answer ? { answer } : {}), ...(e.type === "utterance" && e.nameDoubted ? { nameDoubted: true as const } : {}) };
     if (e.type === "utterance" && e.overSound && (!owner || !audio?.length)) { this.send(dropped); return; }
     if (e.type !== "utterance" || e.overEmber || !owner || !audio?.length) { this.send(e); return; }
     // Capture one immutable configuration for the whole request, including its post-wake check.
@@ -207,7 +207,8 @@ export class VoiceGate {
         if (generation !== this.revision) return;
         // The model failed: the request is heard (Voice Match failing must not leave Ember deaf), and main is told.
         this.onError(err);
-        if (!e.overSound) this.send(e);
+        // Marked, so a spoken yes in it is refused as not checked, not as another voice (V2-F8).
+        if (!e.overSound) this.send(e.type === "utterance" ? { ...e, unchecked: true } : e);
         return;
       }
       if (e.overSound && score < OVER_SOUND_MATCH) { if (generation === this.revision) this.send(dropped); return; }
@@ -233,7 +234,8 @@ export class VoiceGate {
    * The owner's request (it matched as a whole) as main gets it: `verified` when what follows the wake phrase holds at
    * least APPROVAL_MIN_SECONDS of voice and matches the owner on its own; otherwise `short`, with that part's own score
    * (`restScore`) when it held SCORE_MIN_SECONDS of voice or more (`print`: the whole request's voiceprint, which is that
-   * part's when there was no wake phrase). A check that fails says neither (heard, but it can't approve anything).
+   * part's when there was no wake phrase). A check that fails says neither, and `unchecked` (heard, but it can't approve
+   * anything).
    *
    * `verified` needs `matches(…, strict)` (adapt.ts): the learnt print at its raised threshold AND the enrolment at its own
    * threshold, so what Voice Match learnt never lowers the bar for a spoken yes. `restScore` goes out unrounded and is
@@ -256,7 +258,8 @@ export class VoiceGate {
       restPrint = await this.printer().print(rest);
     } catch (err) {
       if (generation === this.revision) this.onError(err);
-      return e;
+      // Marked as the whole's failure is (V2-F8): unmarked, a yes in it was refused as another voice (voice-product-x9-2).
+      return { ...e, unchecked: true };
     }
     return voiced >= APPROVAL_MIN_SECONDS && matches(restPrint, true) ? { ...e, verified: true } : { ...e, short: true, restScore: scored(restPrint) };
   }

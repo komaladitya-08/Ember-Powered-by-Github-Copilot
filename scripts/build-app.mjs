@@ -14,7 +14,7 @@ const out = new URL("dist/app/", root);
 const remoteOut = new URL("dist/remote/", root);
 const common = { bundle: true, sourcemap: true, logLevel: "info", absWorkingDir: fileURLToPath(root) };
 
-const pages = ["home", "overlay", "handle", "ask", "mic", "desk", "command", "prompt"];
+const pages = ["home", "overlay", "handle", "ask", "mic", "desk", "command", "prompt", "vault"];
 
 // The remote agent's bundle takes app/remote/capture-stub.ts wherever code imports app/main/perception/capture.ts, so
 // sharp's loader never enters it (§5.2.2). esbuild's own `alias` maps package names only, so this plugin maps the file.

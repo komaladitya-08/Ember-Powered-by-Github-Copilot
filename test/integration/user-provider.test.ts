@@ -6,10 +6,12 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import http from "node:http";
 import { CopilotClient, RuntimeConnection } from "@github/copilot-sdk";
 // @ts-expect-error -- plain JS test helper
 import { startMockLlm } from "../mock-llm/server.mjs";
 import { AgentHost } from "../../app/main/agent/host";
+import { Conductor } from "../../app/main/agent/conductor";
 import { Worker } from "../../app/main/agent/worker";
 import { Confirmer } from "../../app/main/agent/confirm";
 import { Presenter } from "../../app/main/agent/presenter";
@@ -195,4 +197,50 @@ describe("the user's own model provider on the real Copilot runtime", () => {
     const r = await testConnection(agreed, { key: KEY, host }, globalThis.fetch as unknown as FetchLike);
     expect(r).toEqual({ ok: true, host, models: 1, ids: ["mock-model"] });
   });
+
+  it("tests an address with a query where the runtime then asks it, and never says Connected for it (integrations-x9-5)", async () => {
+    // A gateway as real ones are: /v1/models and /v1/chat/completions, and nothing else is found.
+    const asked: string[] = [];
+    const gateway = http.createServer((req, res) => {
+      req.resume();
+      asked.push(`${req.method} ${req.url}`);
+      const at = new URL(req.url!, "http://gateway").pathname;
+      if (at === "/v1/models") { res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify({ object: "list", data: [{ id: "mock-model", object: "model" }] })); return; }
+      res.writeHead(404, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: { message: "Not found" } }));
+    });
+    await new Promise<void>(r => gateway.listen(0, "127.0.0.1", r));
+    const baseUrl = `http://127.0.0.1:${(gateway.address() as { port: number }).port}/v1?tenant=a`;
+    const host = endpointHost(baseUrl)!;
+    const settings = new SettingsStore(path.join(dir, "query.json"));
+    settings.load();
+    settings.update({ provider: { ...settings.get().provider, on: true, type: "openai", baseUrl, conductor: "mock-model", consent: { version: FEATURE_CONSENT_VERSION.provider, at: new Date().toISOString(), host } } });
+    const provider = activeProvider({ fixed: null, settings: settings.get(), admin: NONE, key: null })!;
+    const runtime = locateRuntime({ appPath: process.cwd(), runtimeId, exe });
+    const client = new CopilotClient({
+      mode: "empty", baseDirectory: path.join(dir, "copilot-query"), useLoggedInUser: false, connection: RuntimeConnection.forStdio({ path: runtime.path }),
+      env: { ...process.env, NO_PROXY: "127.0.0.1,localhost", no_proxy: "127.0.0.1,localhost" },
+    });
+    await client.start();
+    const states: Partial<EmberState>[] = [];
+    const conductor = new Conductor({
+      client, settings, presenter: new Presenter(p => states.push(p)), log: createLogger({ dir: path.join(dir, "logs") }),
+      stateFile: path.join(dir, "agent-query.json"), workDir: path.join(dir, "empty"), model: "mock-model", provider: provider.config,
+    });
+    try {
+      // Test connection asks one address, and it has no model list: not "Connected".
+      const tested = await testConnection(settings.get().provider, null, globalThis.fetch as unknown as FetchLike);
+      expect(tested).toMatchObject({ ok: false, cause: "no-list" });
+      expect(asked).toEqual(["GET /v1?tenant=a/models"]);
+      // The runtime builds its own address the same way, after the address as typed: the check asked where chat does.
+      await conductor.start();
+      await conductor.ask("Hello?").catch(() => undefined);
+      await expect.poll(() => asked.filter(a => a.startsWith("POST ")).length, { timeout: 30_000 }).toBeGreaterThan(0);
+      expect(asked.find(a => a.startsWith("POST "))).toBe("POST /v1?tenant=a/chat/completions");
+    } finally {
+      await conductor.stop().catch(() => undefined);
+      await client.stop();
+      gateway.close();
+    }
+  }, 90_000);
 });

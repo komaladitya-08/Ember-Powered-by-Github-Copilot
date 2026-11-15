@@ -93,6 +93,13 @@ describe("VoiceGate", () => {
     expect(sent).toEqual([{ type: "dropped", reason: "over-sound", answer: "allow" }, { type: "dropped", reason: "over-sound", answer: "allow" }, { type: "dropped", reason: "over-sound" }]);
   });
 
+  it("says when the answer it dropped over other sound began with a name that couldn't be told from the speakers, so the question doesn't ask for the name just said (voice-safety-x9-4)", () => {
+    const sent: VoiceEvent[] = [];
+    const g = new VoiceGate(() => fakePrinter(), e => sent.push(e), () => undefined);
+    g.event({ type: "utterance", text: "Allow it.", ms: 100, window: "answer", overSound: true, nameDoubted: true }, Float32Array.from([0, 1]));
+    expect(sent).toEqual([{ type: "dropped", reason: "over-sound", window: "answer", answer: "allow", nameDoubted: true }]);
+  });
+
   it("says when the yes it dropped was dropped because nothing could tell whether other sound played, so the question says that (owner's report of 2026-11-12)", () => {
     const sent: VoiceEvent[] = [];
     const g = new VoiceGate(() => fakePrinter(), e => sent.push(e), () => undefined);
@@ -258,13 +265,27 @@ describe("VoiceGate", () => {
     }
   });
 
-  it("hears the request when the model fails (Voice Match failing never leaves Ember deaf), unverified, and says so", async () => {
+  it("hears the request when the model fails (Voice Match failing never leaves Ember deaf), unverified and marked unchecked, and says so (V2-F8)", async () => {
     const sent: VoiceEvent[] = [], errors: unknown[] = [];
     const g = new VoiceGate(() => fakePrinter(true), e => sent.push(e), err => errors.push(err));
     g.setOwner(owner);
     g.event(utterance("Open the terminal."), Float32Array.from([0, 1]));
     await flush();
-    expect(sent).toEqual([utterance("Open the terminal.")]);
+    expect(sent).toEqual([{ ...utterance("Open the terminal."), unchecked: true }]);
+    expect(errors).toHaveLength(1);
+  });
+
+  it("marks a request unchecked when the model fails on what follows the wake phrase, not only on the whole (voice-product-x9-2)", async () => {
+    // The whole matched the owner; the second print, of what follows "Hey Ember", failed: it went out unmarked, and its
+    // yes was refused as another voice ("That didn't sound like you…").
+    const sent: VoiceEvent[] = [], errors: unknown[] = [];
+    let prints = 0;
+    const printer: Printer = { print: async s => { if (prints++) throw new Error("no model"); return fakePrinter().print(s); } };
+    const g = new VoiceGate(() => printer, e => sent.push(e), err => errors.push(err));
+    g.setOwner(owner);
+    g.event(utterance("Allow it."), ownerAudio(2.6), true);
+    await flush();
+    expect(sent).toEqual([{ ...utterance("Allow it."), unchecked: true }]);
     expect(errors).toHaveLength(1);
   });
 });

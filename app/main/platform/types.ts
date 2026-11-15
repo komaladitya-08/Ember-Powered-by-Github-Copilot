@@ -458,7 +458,7 @@ export interface PlatformDoctorProbes {
   /** Linux only; null elsewhere (the check is left out). appImage: running as an AppImage, which has no setuid helper. */
   sandbox: { userNamespaces: boolean; suidHelper: boolean; appImage?: boolean } | null;
   /** Linux only (inotify); null elsewhere. */
-  fileWatchers: { used: number; max: number } | null;
+  fileWatchers: { used: number; max: number; watches?: { used: number; max: number } } | null;
   /** Linux only (DeskManager.available()); null elsewhere. */
   desk: { ok: boolean; missing: string[] } | null;
   /** win32/darwin rows in doctor wording (permissions, PowerShell language mode, elevation, location). linux: []. */

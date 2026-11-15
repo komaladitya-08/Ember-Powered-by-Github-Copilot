@@ -128,7 +128,7 @@ describe("run_command is offered only with commands (§3.2)", () => {
   it("describes where it runs and takes only the target's shells", () => {
     const { tool } = makeWorker({ target: REMOTE, commands: commandService(REMOTE, { shells: ["bash", "sh", "cmd"] }) });
     const t = tool("run_command");
-    expect(t.description).toBe("Run one command on build-01 in Ember's own command window, where the user watches it and can stop it. Shells here: bash, sh (default bash). Most commands run straight away; ones that delete or overwrite data, push or publish anywhere, touch passwords or keys, change the system, or download and run code stop and ask the user first. Never put a password, token or key in a command. The output comes back as untrusted text.");
+    expect(t.description).toBe("Run one command on build-01 in Ember's own command window, where the user watches it and can stop it. Shells here: bash, sh (default bash). Most commands run straight away; ones that delete or overwrite data, push or publish anywhere, touch passwords or keys, change the system, or download and run code are dangerous: the user is asked, or told before it runs, as their settings say. Never put a password, token or key in a command. The output comes back as untrusted text.");
     const schema = t.parameters as z.ZodObject<z.ZodRawShape>;
     expect(Object.keys(schema.shape)).toEqual(["target", "command", "shell", "cwd", "timeoutSeconds", "why"]);
     expect(schema.safeParse({ target: "build-01", command: "ls", why: "to look", shell: "cmd" }).success).toBe(false);
@@ -510,8 +510,9 @@ describe("a no to a command is the task's no", () => {
       return { verdict, declined: f.declined, expired: f.expired, said: f.saidNoThisTask };
     };
     const timedOut = await asks(null);
-    expect(timedOut).toMatchObject({ declined: false, expired: true, said: true });
-    expect(timedOut.verdict).toMatchObject({ resultType: "denied", textResultForLlm: expect.stringMatching(/timed out with no answer, so nothing was approved/) });
+    // Nobody said no: the task isn't held to asking for it (cause 10 of the owner's report of 2026-11-12).
+    expect(timedOut).toMatchObject({ declined: false, expired: true, said: false });
+    expect(timedOut.verdict).toMatchObject({ resultType: "denied", textResultForLlm: expect.stringMatching(/went unanswered: .*neither a yes nor a no\. Nothing was approved/) });
     const no = await asks("deny");
     expect(no).toMatchObject({ declined: true, expired: false, said: true });
     expect(no.verdict.textResultForLlm).toMatch(/said no/);

@@ -305,7 +305,7 @@ async function act(s: ChildState, rpc: LineRpc, a: OpArgs<"act">): Promise<unkno
   const { value, mode } = valueOf(a);
   const g = gateStep({
     stamp: a.stamp, op: a.op, ...(value !== undefined ? { value } : {}), ...(mode ? { mode } : {}),
-    element, window: where ? window : null, actionsAllowed: s.policy.actionsAllowed, decide: r => s.engine.decide(r),
+    element, window: where ? window : null, actionsAllowed: s.policy.actionsAllowed, decide: r => s.engine.decide(r), autopilotOk: s.policy.autopilotOk,
   });
   const base = { event: "action" as const, task: a.stamp.taskId, op: a.opId, kind: a.stamp.kind, app: window?.app ?? a.stamp.app, window: window?.title ?? a.stamp.window, element: a.stamp.element };
   if (g.status !== "ok") {
@@ -334,7 +334,7 @@ async function launch(s: ChildState, rpc: LineRpc, a: OpArgs<"apps.launch">): Pr
   const app: DesktopApp | undefined = listApps(process.env).find(x => x.id === a.appId);
   if (!app) return { status: "changed" };
   if (isTerminalApp(app)) return { status: "deny", reason: "Ember doesn't open terminals or apps that run commands." };
-  const g = gateStep({ stamp: a.stamp, op: "open_app", value: app.name, element: null, window: null, actionsAllowed: s.policy.actionsAllowed, decide: r => s.engine.decide(r) });
+  const g = gateStep({ stamp: a.stamp, op: "open_app", value: app.name, element: null, window: null, actionsAllowed: s.policy.actionsAllowed, decide: r => s.engine.decide(r), autopilotOk: s.policy.autopilotOk });
   const base = { event: "action" as const, task: a.stamp.taskId, kind: "open_app", app: app.name, value: app.id };
   if (g.status !== "ok") return g;
   const w = await audited(rpc, { ...base, phase: "start" }, a.epoch);

@@ -12,6 +12,7 @@ import path from "node:path";
 import { z } from "zod";
 import { applyAdminPolicy, type AdminPolicy } from "./admin";
 import { CONSENT_VERSION } from "../shared/consent";
+import { APPROVAL_MODES } from "../shared/approvals";
 import { NEVER_LOOK_DEFAULTS } from "../shared/never-look";
 import { DISTRO_NAME, HOST_ID, parseTargetId, type TargetId } from "../shared/targets";
 import { HANDLE_POSITIONS } from "../shared/handle-place";
@@ -33,6 +34,29 @@ const migrateVoiceChoice = (value: unknown): unknown => {
   if (voice.naturalModel === "kitten" || (voice.natural !== true && (voice.naturalModel === "kokoro" || voice.naturalModel === "supertonic"))) return { ...voice, natural: false, naturalModel: "kitten" };
   return value;
 };
+
+/** The last version of Work without asking's card, which Interactive's card replaced (FEATURE_CONSENT_VERSION.autonomy 3). */
+const LAST_AUTONOMY_CARD = 2;
+
+/**
+ * A settings file from before the approval modes (owner decision of 2026-11-12), read as one from now: its `autonomy`
+ * (Work without asking, with its scopes) and `trust` (the two narrower switches) are read once here and are gone with
+ * Ember's next save. Nothing in them is agreement to a new card, and none chooses a mode: only the record of Work
+ * without asking's card is kept, as Interactive's, at the version it was agreed to and never above that card's last
+ * (2), which is below Interactive's, so such a user is below Interactive until they agree to the new card. A file that
+ * already has `approvals` keeps it. Anything else comes back as it was.
+ */
+export function migrateApprovals(json: unknown): unknown {
+  if (!json || typeof json !== "object" || Array.isArray(json)) return json;
+  const file = json as Record<string, unknown>;
+  if (!("autonomy" in file) && !("trust" in file)) return json;
+  const { autonomy, trust: _trust, ...rest } = file;
+  if (rest.approvals !== undefined) return rest;
+  const was = autonomy && typeof autonomy === "object" && !Array.isArray(autonomy) ? (autonomy as { consent?: unknown }).consent : null;
+  const { version, at } = (was && typeof was === "object" ? was : {}) as { version?: unknown; at?: unknown };
+  if (typeof version !== "number" || !Number.isInteger(version) || version < 1) return rest;
+  return { ...rest, approvals: { consent: { interactive: { version: Math.min(version, LAST_AUTONOMY_CARD), at: typeof at === "string" ? at : null } } } };
+}
 
 export const CHARACTERS = ["cinder", "wisp", "glassling", "glint"] as const;
 
@@ -239,16 +263,6 @@ export const SettingsSchema = z.object({
     /** This Ember install's id (§5.1.13): 32 hex digits the targets runtime makes at first use; "" until then. */
     pcId: z.string().regex(/^(?:[0-9a-f]{32})?$/).default(""),
   }).default({ active: "local", offerSsh: true, dismissedOffers: [], hosts: [], wsl: { on: false, consent: { version: 0, at: null } }, pcId: "" }),
-  /**
-   * How often Ember asks: `askedApps` (on by default), no "Let me work in …?" in an app the user asked for help in (they
-   * were in it, or named it; risky steps still ask); `reviewCommands` (off by default until the reviewer passes its
-   * evaluation, eval/src/review-gate.ts), a command that would ask is reviewed by the model first, and one it finds
-   * routine for the request runs with its Stop countdown instead (commands/review.ts).
-   */
-  trust: z.object({
-    askedApps: z.boolean().default(true),
-    reviewCommands: z.boolean().default(false),
-  }).default({ askedApps: true, reviewCommands: false }),
   /** Commands per target id (§3.9.3): off until the user turns them on with the commands card. */
   commands: z.partialRecord(z.string().refine(isTargetId), TargetCommands).default({}),
   /**
@@ -284,21 +298,17 @@ export const SettingsSchema = z.object({
     checkedAt: z.string().max(40).nullable().default(null),
   }).default({ on: false, consent: { version: 0, at: null }, told: null, checkedAt: null }),
   /**
-   * "Work without asking" (app/main/policy/autonomy.ts, PLAN.md §2 Approvals): off until the user turns it on and agrees
-   * to its card in Home (`consent`, FEATURE_CONSENT_VERSION.autonomy). While on, ordinary steps in the enabled `scopes`
-   * (using apps, ordinary commands with carried text, borrowing the mouse and keyboard, moving text between apps) are
-   * announced instead of asked; risky steps still ask every time.
+   * How Ember asks (app/main/policy/autonomy.ts, PLAN.md §2 "Approvals"): the approval mode the user chose, and each
+   * mode's own card as agreed to (FEATURE_CONSENT_VERSION `autonomy` for Interactive, `assisted`, `autopilot`). A mode
+   * is in force only with its own card agreed to as it reads now (modeInForce); until then Ember is below Interactive
+   * and asks before ordinary steps. It changes only together with the agreement to a card (APPROVALS_IPC.choose) or by
+   * the host's own voice and typed intents, never by a general settings change or a model.
    */
-  autonomy: z.object({
-    on: z.boolean().default(false),
-    scopes: z.object({
-      apps: z.boolean().default(true),
-      commands: z.boolean().default(true),
-      cursor: z.boolean().default(true),
-      crossWindow: z.boolean().default(true),
-    }).default({ apps: true, commands: true, cursor: true, crossWindow: true }),
-    consent: ConsentRecord,
-  }).default({ on: false, scopes: { apps: true, commands: true, cursor: true, crossWindow: true }, consent: { version: 0, at: null } }),
+  approvals: z.object({
+    mode: z.enum(APPROVAL_MODES).default("interactive"),
+    consent: z.object({ interactive: ConsentRecord, assisted: ConsentRecord, autopilot: ConsentRecord })
+      .default({ interactive: { version: 0, at: null }, assisted: { version: 0, at: null }, autopilot: { version: 0, at: null } }),
+  }).default({ mode: "interactive", consent: { interactive: { version: 0, at: null }, assisted: { version: 0, at: null }, autopilot: { version: 0, at: null } } }),
 });
 
 export type Settings = z.infer<typeof SettingsSchema>;
@@ -321,18 +331,6 @@ export function checkHomePatch(sent: unknown): SettingsPatch {
   try { size = Buffer.byteLength(JSON.stringify(sent), "utf8"); } catch { throw new Error("That change isn't a setting Ember knows."); }
   if (size > MAX_HOME_PATCH) throw new Error("That change is too large to save.");
   return sent as SettingsPatch;
-}
-
-/**
- * A change to `trust` from the settings window carries only the switch the user flipped: the other is taken from the
- * user's own settings (`own`, SettingsStore.own()), never from what Home shows, which has the administrator's forced
- * values applied (they would otherwise be written into the user's file and outlive the policy).
- */
-export function withOwnTrust(patch: SettingsPatch, own: Settings["trust"]): SettingsPatch {
-  const t = (patch as { trust?: unknown }).trust;
-  if (!t || typeof t !== "object" || Array.isArray(t)) return patch;
-  const sent = t as Partial<Settings["trust"]>;
-  return { ...patch, trust: { ...own, ...(sent.askedApps !== undefined ? { askedApps: sent.askedApps } : {}), ...(sent.reviewCommands !== undefined ? { reviewCommands: sent.reviewCommands } : {}) } };
 }
 
 /** The provider fields the settings window may change itself (its card's record only through PROVIDER_IPC.agree). */
@@ -360,6 +358,27 @@ export function withOwnExtensions(patch: SettingsPatch, own: Settings["extension
   if (!e || typeof e !== "object" || Array.isArray(e)) return patch;
   const on = (e as { on?: unknown }).on;
   return { ...patch, extensions: { ...own, ...(typeof on === "boolean" ? { on } : {}), consent: own.consent } };
+}
+
+const plain = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
+const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+
+/**
+ * A change sent as Home was shown the settings (the settings in force, `inForce`), built on the user's own (`own`,
+ * SettingsStore.own()) instead: a value it sends that is the one the organisation's policy forces (it differs from the
+ * user's own) is the user's own again, field by field, so a change of one field (Speaking speed under a policy that
+ * turns listening off) never writes the forced values (the voice choice, Hear me more clearly) into settings.json,
+ * where they would outlive the policy (home-r9-1). A value the user set themselves is kept; the policy still holds in
+ * force (applyAdminPolicy), so nothing it turns off comes on.
+ */
+export function withOwnWhereForced(patch: SettingsPatch, own: Settings, inForce: Settings): SettingsPatch {
+  const merge = (sent: Record<string, unknown>, mine: Record<string, unknown>, forced: Record<string, unknown>): Record<string, unknown> =>
+    Object.fromEntries(Object.entries(sent).map(([k, v]) => {
+      const m = mine[k], f = forced[k];
+      if (plain(v) && plain(m) && plain(f)) return [k, merge(v, m, f)];
+      return [k, m !== undefined && same(v, f) && !same(f, m) ? m : v];
+    }));
+  return merge(patch as Record<string, unknown>, own as unknown as Record<string, unknown>, inForce as unknown as Record<string, unknown>) as SettingsPatch;
 }
 
 export const DEFAULT_SETTINGS: Settings = SettingsSchema.parse({});
@@ -628,6 +647,8 @@ export class SettingsStore {
         return { settings: this.current };
       }
     }
+    // A file from before the approval modes is read as one from now (its old keys go with the next save).
+    json = migrateApprovals(json);
     const parsed = SettingsSchema.safeParse(json);
     if (parsed.success && strict) {
       this.current = parsed.data;

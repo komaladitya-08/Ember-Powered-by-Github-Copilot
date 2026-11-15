@@ -382,6 +382,7 @@ Params: `{handle, op, value?, deadlineMs?}`. Result: `{"ok": true}` once the cal
 | `expand` | `ExpandCollapsePattern.Expand()` | |
 | `collapse` | `ExpandCollapsePattern.Collapse()` | |
 | `setValue` | `ValuePattern.SetValue(value)` | `value` is a string. **`denied` when the element is a password field** (or that can't be checked) |
+| `fillValue` | `ValuePattern.SetValue(value)` | The vault's fill: `value` is a string, set into a password field too. Only the host's `vault_fill` sends it, for Ember's main process; the bridge never logs or echoes `value` |
 | `setRange` | `RangeValuePattern.SetValue(value)` | `value` is a finite number |
 | `focus` | `AutomationElement.SetFocus()` | brings the window to the front: the host decides when that is allowed |
 | `scrollIntoView` | `ScrollItemPattern.ScrollIntoView()` | |
@@ -392,7 +393,7 @@ Errors: `failed` `unsupported:<op>` (no such pattern), `failed` `<ExceptionType>
 
 ### `textInfo`
 
-Params: `{handle, maxChars?: 2000, deadlineMs?}` (`maxChars` 1-100000). Result, from `TextPattern` when the element
+Params: `{handle, maxChars?: 2000, probe?: false, deadlineMs?}` (`maxChars` 1-100000). Result, from `TextPattern` when the element
 has it, otherwise from `ValuePattern`:
 
 | field | meaning |
@@ -404,6 +405,14 @@ has it, otherwise from `ValuePattern`:
 | `caret` | offset of the selection's start in `text`, when the selection is a single range that starts within the first `maxChars` characters (TextPattern only) |
 | `selectionLength` | length of that single selection, 0 for a bare caret |
 | `caretAtEnd` | whether that single selection ends at the end of the document |
+| `probe` | with `probe: true` only (a development probe): `[{step, t}]`, when each step of the read began, ms since 1970 |
 
 `{"secret": true}` and nothing else for a password field (`IsPassword`, an `Edit` with the protected state, or
 `IsPassword` unreadable). `{}` when the element has neither pattern. Errors: `gone`, `busy`.
+
+A plain native Edit of the element's own process (`Edit` or WinForms' `WindowsForms10.EDIT.*`, a child window,
+single-line or multi-line, not a password field) is read from the control itself: its value (`source: "value"`) and
+`EM_GETSEL`'s selection, a bare caret included, never TextPattern's ranges. Their caret arithmetic (Clone,
+`MoveEndpointByRange`, `GetText`, `CompareEndpoints`) made the app being read take the foreground from Ember's Ask box
+on Windows (cifix-x9-12). Where `EM_GETSEL` doesn't answer or the text is over 64 K characters, TextPattern gives the
+text and selection and no `caret`, `selectionLength` or `caretAtEnd`.

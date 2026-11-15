@@ -6,6 +6,7 @@
     "fixture": "bench"
   },
   "user": {
+    "mode": "asking",
     "grants": [
       "gtk3_bench.py"
     ]

@@ -20,7 +20,7 @@ import { launchArgv } from "../main/commands/run/local";
 /** CL: what a command does (pure). */
 export type ClassifyCommand = (text: string, shell: ShellId, ctx: ClassifyContext) => Classification;
 /** RUN: the exact argv, spawn options and the run's own environment additions (§3.3; pure). */
-export type LaunchArgv = (spec: RunSpec, facts: RunnerFacts, o: { jobHost: JobHostRef | null; wsl?: { exe: string; distro: string } }) => {
+export type LaunchArgv = (spec: RunSpec, facts: RunnerFacts, o: { jobHost: JobHostRef | null; wsl?: { exe: string; distro: string; end: string } }) => {
   command: string;
   args: string[];
   options: { detached: boolean; windowsHide?: boolean; stdio: ["pipe" | "ignore", "pipe", "pipe"] };

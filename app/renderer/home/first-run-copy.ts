@@ -63,9 +63,11 @@ export function failureView(o: { reason?: string; detail?: string; ownOffered: b
   switch (o.reason) {
     case "no-access": {
       const org = ORGANISATION.test(o.detail ?? "");
+      // The user's own provider only where it is offered (first-run-r9-8).
+      const ways = own ? ", use a different GitHub account, or use your own model provider." : ", or use a different GitHub account.";
       const help = org
-        ? "Copilot is switched off for this account by an organisation. Ask its administrator to allow Copilot for you, use a different GitHub account, or use your own model provider."
-        : "This GitHub account doesn't have Copilot. Get Copilot for it on GitHub (github.com/features/copilot), use a different GitHub account, or use your own model provider.";
+        ? `Copilot is switched off for this account by an organisation. Ask its administrator to allow Copilot for you${ways}`
+        : `This GitHub account doesn't have Copilot. Get Copilot for it on GitHub (github.com/features/copilot)${ways}`;
       return own
         ? { help, primary: "own-provider", others: ["switch-account", "retry"] }
         : { help, primary: "switch-account", others: ["retry"] };
@@ -291,7 +293,7 @@ function namesListed(id: string, typed: string): boolean {
 /**
  * A model name typed on the provider step that the service, which answered, doesn't list: the check fails on that
  * field and names what is listed, instead of passing a name the first request then fails on ("That model isn't
- * available.", first-run-c7-1). Only where the list was read whole (every model's id, at most main's 50, and no word
+ * available.", first-run-c7-1). Only where the list was read whole (every model's id, at most main's 1,000, and no word
  * from the service that more follow on another page: `more`, first-run-x7-1) and holds
  * model names: Azure asks for a deployment's name, which its list doesn't hold, and a list of model files
  * (MODEL_FILE) says nothing of the names taken. A name the service may still take (namesListed) passes. Null when nothing is known to be missing.

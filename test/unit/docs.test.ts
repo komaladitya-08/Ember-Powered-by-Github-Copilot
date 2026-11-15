@@ -189,6 +189,10 @@ describe("docs/DEVELOPING.md", () => {
     const names = new Set(files("app").flatMap(f => [...read(f).matchAll(/devEnv\("([A-Z0-9_]+)"\)/g)].map(m => m[1])));
     expect(names.size).toBeGreaterThan(10);
     for (const n of names) expect(dev, n).toMatch(new RegExp(`\\b${n}\\b`));
+    // And ember-remote's own development switches, read from its environment, not through devEnv (install-docs-c12-3).
+    const remote = new Set(files("app/remote").flatMap(f => [...read(f).matchAll(/env\.(EMBER_REMOTE_[A-Z0-9_]+)/g)].map(m => m[1])));
+    expect([...remote].sort()).toEqual(expect.arrayContaining(["EMBER_REMOTE_DEV", "EMBER_REMOTE_PARTS_ID", "EMBER_REMOTE_TEST_DESKTOP", "EMBER_REMOTE_WAYLAND"]));
+    for (const n of remote) expect(dev, n).toMatch(new RegExp(`\\| \`${n}`));
     // Repository layout holds the layout and nothing else.
     const layout = section(dev, "Repository layout");
     expect(layout.split("\n").filter(l => /^#{2,} /.test(l) && !l.startsWith("## Repository layout"))).toEqual([]);
@@ -419,6 +423,27 @@ describe("what the docs say about consent versions and memory, against the code 
 describe("docs/COMMANDS-WSL-SSH.md", () => {
   const doc = read("docs/COMMANDS-WSL-SSH.md");
 
+  it("says in §2.3 that a program or a tool's command Ember doesn't know runs announced, never that it asks (accessibility-c12-1)", () => {
+    const at = doc.indexOf("### 2.3 What runs straight away");
+    const s23 = flat(doc.slice(at, doc.indexOf("### 2.4", at)));
+    expect(s23).not.toMatch(/Anything else asks/);
+    expect(s23).toContain("Anything else that isn't a danger runs too, announced by name with a few seconds to stop it");
+    // §2.4 says first what its "asks" means in each mode.
+    const s24 = flat(doc.slice(doc.indexOf("### 2.4 What asks first"), doc.indexOf("### 2.5 ")));
+    expect(s24).toMatch(/^### 2\.4 What asks first This section says what asks in Interactive, the default\./);
+  });
+
+  it("says in §2.5b what Autopilot does instead of the questions it no longer puts (r11-copy-x11-5; owner decision of 2026-11-14)", () => {
+    const at = doc.indexOf("### 2.5b When you chose Autopilot");
+    const b = flat(doc.slice(at, doc.indexOf("### 2.6", at)));
+    expect(b).not.toMatch(/It still asks, with the card of §2\.4, before/);
+    expect(b).not.toMatch(/still wants your yes for a command it finds would read secrets/);
+    expect(b).toContain("Autopilot asks before no command for what the command does");
+    expect(b).toContain("what it prints is kept from the model");
+    expect(b).toContain("Stop won't reach what this command leaves running.");
+    expect(b).toContain("It asks, with the card of §2.4, only:");
+  });
+
   it("lists printf's escapes that Ember can't see as escapes, never a plain full stop (commands-y6-5)", () => {
     const listed = /other than a line break, a tab and `\\0`\s*\(([^)]*)\)/.exec(flat(doc))?.[1] ?? "";
     expect([...listed.matchAll(/`([^`]*)`/g)].map(m => m[1])).toEqual(["\\056", "\\x2e", "\\u002e"]);
@@ -482,6 +507,41 @@ describe("docs/COMMANDS-WSL-SSH.md", () => {
 describe("README.md", () => {
   const readme = read("README.md");
   const version = (JSON.parse(read("package.json")) as { version: string }).version;
+
+  it("never says, anywhere, that Autopilot still asks before a secrets command, one that outlives Stop or one it can't tell the effect of (install-docs-r12-1)", () => {
+    const all = flat(readme);
+    expect(all).not.toMatch(/still asks before a command/);
+    expect(all).not.toMatch(/can't tell the effect of/);
+    // The keyboard table's row says what How Ember asks says: only the user's or the organisation's "ask every time".
+    expect(all).toContain("**Autopilot** doesn't ask: Ember sends, deletes, pays, installs and runs dangerous commands without asking and tells you as it goes, a risk you accept on its card; a command that shows passwords or keys runs with what it prints kept from the AI model, it asks only where you or your organisation set commands to ask every time");
+  });
+
+  it("says Autopilot refuses a command that would save passwords or keys to a file, as the code does (install-docs-c12-2)", () => {
+    const modes = flat(section(readme, "How Ember asks"));
+    expect(modes).toContain("A command that shows passwords or keys runs too, but what it prints is kept from the AI model (you see it in the command window), and one that would also save them to a file is refused.");
+  });
+
+  it("gives the 4 s exception only to the commands EXACT_ONLY names, and says a command Ember doesn't know waits for its Stop (accessibility-r12-3, install-docs-r12-1)", () => {
+    const commands = flat(section(readme, "Commands, WSL and other computers"));
+    expect(commands).toContain("one Ember doesn't know runs too, after it names it and gives you 4 seconds to stop it.");
+    expect(commands).toContain("and it only deletes or overwrites data, publishes something or changes the system, it says so and gives you 4 seconds to stop it instead; one that touches passwords or keys or downloads and runs code still asks.");
+    expect(commands).not.toMatch(/a script that does any of that always asks/);
+  });
+
+  it("explains the approval modes in a section of their own, and never says Ember asks before every app step or dangerous command (install-docs-r10-3)", () => {
+    const modes = flat(section(readme, "How Ember asks"));
+    for (const m of ["**Interactive**", "**Assisted**", "**Autopilot**"]) expect(modes).toContain(m);
+    // What each mode still asks for, and what the organisation can do, as CLAUDE.md "Approval modes" says.
+    expect(modes).toMatch(/default/);
+    expect(modes).toMatch(/passwords or keys/);
+    expect(modes).toMatch(/keep running after you stop it/);
+    expect(modes).toMatch(/organisation/);
+    expect(modes).toMatch(/“Ember, stop”/);
+    // The two sentences that said Ember always asks first now point at the modes.
+    expect(flat(readme)).not.toContain("asks \"May I?\" before it does something in an app.");
+    expect(flat(section(readme, "First steps"))).toContain("How Ember asks");
+    expect(flat(section(readme, "Commands, WSL and other computers"))).toMatch(/In Interactive, the default, Ember stops and asks before anything that deletes/);
+  });
 
   it("says where to download every file a release has, and how to check it", () => {
     const download = flat(section(readme, "Download"));
@@ -968,8 +1028,8 @@ describe("README.md's Accessibility section, against the release it describes", 
 
   it.runIf(released)("quotes what the bubble tells a screen reader about answering, as the bubble says it", () => {
     const view = { visible: true, mood: "attention", title: "May I?", thought: "Click “Save”?", streaming: false, step: "Ctrl+Alt+Y allow · Ctrl+Alt+N not now" };
-    expect(announcement(view as BubbleView)).toContain("Ctrl+Alt+Y allow; Ctrl+Alt+N not now");
-    expect(a11y).toContain("(\"Ctrl+Alt+Y allow; Ctrl+Alt+N not now\")");
+    expect(announcement(view as BubbleView)).toContain("To allow, press Ctrl+Alt+Y; for not now, press Ctrl+Alt+N");
+    expect(a11y).toContain("(\"To allow, press Ctrl+Alt+Y; for not now, press Ctrl+Alt+N\")");
     const where = (targetCopy as { panelHint?: (kind: "command" | "consent", os: "linux" | "win32" | "darwin") => string }).panelHint;
     expect(where?.("command", "linux")).toMatch(/: press Alt\+Tab to go there\.$/);
     expect(a11y).toContain("(\"press Alt+Tab to go there\")");
@@ -1297,6 +1357,16 @@ describe("CHANGELOG.md", () => {
     expect(createHash("sha256").update(published).digest("hex")).toBe("5277a56b459959d94a200f51f02477aebc9d9d65358c1d3fcc875b275442e4c6");
   });
 
+  it("says in this version's notes that a WSL run whose end never came back is said to be incomplete (install-docs-r11-1)", () => {
+    // flow.ts tells the model, and copy.ts the command window, when a WSL run ended without its end marker.
+    expect(read("app/main/commands/flow.ts")).toContain("Ember didn't get the end of this run, so the command may not have finished");
+    expect(read("app/renderer/command/copy.ts")).toContain("but Ember didn't get its end: the command may not have finished");
+    expect(read("app/main/commands/flow.ts")).toContain("but the end of its output was lost on the way back, so the output below is incomplete");
+    const notes = flat(releaseNotes(changelog, version, { repo: "o/r", ref: `v${version}` }));
+    expect(notes).toContain("**A WSL command's output is never taken as whole without its end.**");
+    expect(notes).toMatch(/the command window and the AI model are told that the command may not have finished and the output is incomplete/);
+  });
+
   it("names the same best-effort computers as the README", () => {
     const readme = flat(read("README.md"));
     const where = /- \*\*Where it runs\*\*: ([^]*?)(?= - \*\*)/.exec(flat(changelog))?.[1] ?? "";
@@ -1317,5 +1387,20 @@ describe("CHANGELOG.md", () => {
     // In the words the commands guide uses for it (§2.5).
     expect(rule).toMatch(/spoken[^.]*only where Ember can tell your voice from what your speakers play \(Linux with speaker rejection on and parec installed\)/);
     expect(notes).toMatch(/On Windows, on macOS and on Linux without it, a dangerous command you asked for by voice asks/);
+  });
+});
+
+describe("what the docs say Interactive does in the system's Settings (modes-x9p-7)", () => {
+  it("says what the engine decides there: a switch and an unasked first step ask, another page in a task asked for there doesn't", async () => {
+    const { PolicyEngine } = await import("../../app/main/policy/policy");
+    const { approvalInputs } = await import("../../app/main/policy/autonomy");
+    const i = approvalInputs("interactive");
+    const e = new PolicyEngine({ neverLook: () => [], grants: () => ({}), trustAskedApps: () => i.askedApps, autonomy: () => i.scopes });
+    const at = { taskId: "t", app: "gnome-control-center", window: "Settings", goal: "make the text bigger", askedIn: "gnome-control-center" };
+    expect(e.decide({ ...at, kind: "click", element: { role: "page tab", name: "Accessibility" } }).verdict).toBe("allow");
+    expect(e.decide({ ...at, kind: "toggle", element: { role: "toggle button", name: "Large Text" }, value: "on" }).verdict).toBe("confirm");
+    expect(e.decide({ ...at, askedIn: "gedit", kind: "click", element: { role: "page tab", name: "Accessibility" } }).verdict).toBe("confirm");
+    for (const f of ["docs/DEVELOPING.md", "CLAUDE.md"]) expect(fs.readFileSync(f, "utf8"), f).not.toMatch(/(Steps|steps) in the system's Settings and security apps (always )?ask/);
+    expect(fs.readFileSync("docs/DEVELOPING.md", "utf8")).toContain("In the system's Settings and security apps it asks more often: a switch or a choice there asks every time,");
   });
 });

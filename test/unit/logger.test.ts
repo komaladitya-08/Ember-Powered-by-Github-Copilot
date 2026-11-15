@@ -30,6 +30,32 @@ describe("logger", () => {
 });
 
 describe("logger robustness", () => {
+  it("makes its folder again when it was removed under a running Ember, and goes on logging (reliability-r9-4)", () => {
+    const dir = path.join(tmp(), "logs");
+    const log = createLogger({ dir });
+    log.info("before");
+    fs.rmSync(dir, { recursive: true });
+    log.info("after.one");
+    log.info("after.two");
+    expect(fs.readFileSync(path.join(dir, "ember.log"), "utf8").trim().split("\n").map(l => JSON.parse(l).msg)).toEqual(["after.one", "after.two"]);
+    if (process.platform !== "win32") expect(fs.statSync(dir).mode & 0o777).toBe(0o700);
+  });
+
+  it("goes on writing while a rotation can't be done whole, giving up an older file instead of every line to come (reliability-r9-4)", () => {
+    const dir = tmp();
+    // Something that can't be renamed over sits where the oldest kept file goes.
+    fs.mkdirSync(path.join(dir, "ember.log.3"));
+    fs.writeFileSync(path.join(dir, "ember.log.3", "in-the-way"), "");
+    const log = createLogger({ dir, maxBytes: 200, keep: 3 });
+    for (let i = 0; i < 40; i++) log.info("line", { i, pad: "x".repeat(40) });
+    const kept = ["ember.log", "ember.log.1", "ember.log.2"].flatMap(f => { try { return fs.readFileSync(path.join(dir, f), "utf8").trim().split("\n"); } catch { return []; } });
+    // Before: the first 6 of the 40 lines (three files of 224 bytes), and nothing after. Now the newest are there,
+    // in files that still rotate.
+    expect(kept.map(l => JSON.parse(l).i)).toContain(39);
+    expect(kept.map(l => JSON.parse(l).i)).not.toContain(0);
+    expect(fs.statSync(path.join(dir, "ember.log")).size).toBeLessThan(200 + 150);
+  });
+
   it("never throws on circular values, BigInts or nested errors, and keeps codes", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-log-"));
     const log = createLogger({ dir });

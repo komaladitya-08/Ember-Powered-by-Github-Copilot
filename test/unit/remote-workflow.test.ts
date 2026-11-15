@@ -13,6 +13,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { classifyCommand } from "../../app/main/commands/classify";
+import { withoutReadFlow } from "../../app/main/commands/scripts";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const wf = fs.readFileSync(path.join(root, ".github/workflows/remote.yml"), "utf8");
@@ -205,5 +207,47 @@ describe("Windows SSH to a real Linux kernel, in remote.yml's WSL2 job (release 
     expect(wsl1).toContain('EMBER_SSH_TEST_EXPECT_HELLO: "0"');
     const test = fs.readFileSync(path.join(root, "test/integration/ssh-windows.test.ts"), "utf8");
     expect(test).toContain("process.env.EMBER_SSH_TEST_EXPECT_HELLO");
+  });
+});
+
+describe("the local commands suite on a Mac, where commands run in zsh (install-docs-r9-1)", () => {
+  // The two command lines commands-flow-local.test.ts runs "without asking": bash's and sh's plain `if` is read and
+  // runs; zsh's always asks (scripts.ts FLOW_SHELLS, docs/COMMANDS-WSL-SSH.md), and remote.yml's macOS job, which pull
+  // requests never run, failed on every push to main from 9 November for expecting no card there.
+  const LINES = [
+    "if [ -d build ]; then echo built; fi; read -r a b <<'EOF'\nzq3 got-b\nEOF\necho \"$a $b\"",
+    "if read -r l <<< ' a '; then echo \"got-[$l]\"; fi",
+  ];
+  const judged = (line: string, os: "linux" | "darwin", shell: "bash" | "zsh") => {
+    const home = os === "darwin" ? "/Users/u" : "/home/u";
+    // As run_command's flow judges it: the classifier, then the flow words a shell's own reading makes ordinary.
+    return withoutReadFlow(classifyCommand(line, shell, { os, home, cwd: `${home}/proj`, ember: { paths: [], pids: [], names: /^ember$/ }, downloaded: new Set() }), shell);
+  };
+
+  it("asks before zsh's plain if, by design, where bash's runs: what the suite must expect in each shell", () => {
+    for (const line of LINES) {
+      expect(judged(line, "linux", "bash").findings, line).toEqual([]);
+      expect(judged(line, "darwin", "bash").findings, line).toEqual([]);
+      const zsh = judged(line, "darwin", "zsh");
+      expect(zsh.refuse, line).toBeFalsy();
+      expect([...new Set(zsh.findings.map(f => f.cls))], line).toEqual(["unclear"]);
+      // The sentence the suite looks for on the card.
+      expect(zsh.findings.map(f => f.says), line).toContain("Ember can't tell exactly what this does.");
+    }
+  });
+
+  it("expects those lines' card by the shell the run used, never no card on every computer", () => {
+    const suite = fs.readFileSync(path.join(root, "test/integration/commands-flow-local.test.ts"), "utf8");
+    for (const line of LINES) {
+      const at = suite.indexOf(`run(${JSON.stringify(line)}, "")`);
+      expect(at, line).toBeGreaterThan(0);
+      const after = suite.slice(at, suite.indexOf("\n", at) + 400);
+      expect(after, line).toContain("expectFlowCard(zsh)");
+      expect(after, line).not.toMatch(/^\s*expect\(w\.cards\)\.toEqual\(\[\]\);/m);
+    }
+    expect(suite).toContain('const zsh = (await shellHere()) === "zsh";');
+    // The macOS job still runs that suite, required.
+    const mac = wf.slice(wf.indexOf("\n  ssh-macos:\n"));
+    expect(mac).toMatch(/run: node scripts\/run-integration\.mjs --allow-missing test\/integration\/commands-local\.test\.ts test\/integration\/commands-flow-local\.test\.ts\n\s+env:\n\s+EMBER_COMMANDS_TEST: "1"/);
   });
 });
