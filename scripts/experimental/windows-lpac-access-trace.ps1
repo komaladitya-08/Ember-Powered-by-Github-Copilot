@@ -148,9 +148,11 @@ public static class EmberLpacTraceImage {
                 if ($column -notin $columns) { $csvSchemaValid = $false }
             }
         }
-        if ([string]$_.PID -eq [string]$fixturePid) { $ownPidRows++ }
-        if ([string]$_.'Process Name' -eq 'fixture.exe') { $ownImageRows++ }
-        $_
+        if ($csvSchemaValid) {
+            if ([string]$_.PID -eq [string]$fixturePid) { $ownPidRows++ }
+            if ([string]$_.'Process Name' -eq 'fixture.exe') { $ownImageRows++ }
+            $_
+        }
     } | Own-FixtureRows -expectedPid $fixturePid)
     # Counts and expected-schema presence reveal capture/parsing failures without publishing a single rejected row.
     Write-Output ([ordered]@{ csvRows = $csvRows; csvSchemaValid = $csvSchemaValid; ownPidRows = $ownPidRows; ownImageRows = $ownImageRows; ownRows = $own.Count; rootExited = $rootExited } | ConvertTo-Json -Compress)
