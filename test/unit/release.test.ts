@@ -206,6 +206,14 @@ describe("release.mjs", () => {
     expect(notes).toContain("If you already use Ember, your settings stay and only Interactive is offered.");
   });
 
+  it("says the commands card is agreed again on every computer, and that without a keyring extensions ask at every start (integ-x-6)", () => {
+    // FEATURE_CONSENT_VERSION.commands 2 → 3 withdraws every target's agreement (targets/consent.ts consentCurrent), and
+    // extensions/seal.ts seals nothing where safeStorage's backend is basic_text.
+    const notes = flat(releaseNotes(read("CHANGELOG.md"), version, { repo: "o/r", ref: `v${version}` }));
+    expect(notes).toContain("everyone who uses commands agrees to it again, on every computer");
+    expect(notes).toContain("On a computer without a keyring Ember can use, nothing is sealed, so an agreement lasts only until Ember quits and each extension asks again at every start.");
+  });
+
   it("says Ember ends what it finds a WSL run left running, not that it always can (r11-notes-x11-2)", () => {
     // app/main/wsl/runner.ts sweeps only when it could read the running distros; one it can't tell about is never swept.
     const notes = flat(releaseNotes(read("CHANGELOG.md"), version, { repo: "o/r", ref: `v${version}` }));

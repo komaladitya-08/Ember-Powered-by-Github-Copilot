@@ -487,9 +487,11 @@ tests don't stand in for them. **Known issues and limits**, at the end, lists wh
   an AI, hides characters or looks like Ember's own markup makes every later call ask; an ordinary failure (a 404, a
   timeout) doesn't. A failed call's text reaches the model only inside Ember's untrusted tag. In Assisted, a call that
   would ask goes to its check first (above). A question nobody answered isn't a no.
-- **Only the extensions you agreed to start.** Ember seals its list of extensions with your computer's keyring, and one
-  it didn't write there (a list pasted into its folder) stays off until you review and agree to it again. **When you
-  first start this version, each extension you added before asks you to agree once more.**
+- **Only the extensions you agreed to start.** Ember seals its list of extensions with your computer's keyring, and
+  one it didn't write there (a list pasted into its folder) stays off until you review and agree to it again. **When
+  you first start this version, each extension you added before asks you to agree once more.** On a computer without a
+  keyring Ember can use, nothing is sealed, so an agreement lasts only until Ember quits and each extension asks again
+  at every start.
 - **Changed tools stop**: Ember remembers each tool as you agreed to it, and compares it as a conversation loads and
   when its server says its list changed; a changed one never reaches the model, is marked “Changed since you agreed”
   with **Review tools**, and a server that says so twice sits out the rest of the conversation.
@@ -651,9 +653,9 @@ tests don't stand in for them. **Known issues and limits**, at the end, lists wh
   pytest`) instead of sourcing `activate`, which asked every time.
 - **Where commands run as root or an administrator,** every command is dangerous: it asks in Interactive, where
   Settings shows **Ask me before every command** on and locked, saying so; in Assisted the check may clear one your
-  request was about (the commands card says so and is agreed again), also on a computer reached over SSH, and in
-  Autopilot each command runs after a few seconds to stop it; in both the switch is yours, and turning it on makes every
-  command ask.
+  request was about (the commands card says so, and since it changed, everyone who uses commands agrees to it again,
+  on every computer), also on a computer reached over SSH, and in Autopilot each command runs after a few seconds to
+  stop it; in both the switch is yours, and turning it on makes every command ask.
 - **A WSL command's output is never taken as whole without its end.** Each WSL run now ends with a mark of its own. When
   that mark doesn't come back (wsl.exe can lose the last of a long output), Ember ends whatever it finds the run left
   running, as Stop does, and the command window and the AI model are told that the command may not have finished and
