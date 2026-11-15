@@ -1445,19 +1445,6 @@ export class AgentHost {
   }
 
   /**
-   * Main writes the bubble itself next ("Listening…", the kill switch's message): no presenter's timer hides
-   * it, and neither the conversation nor a task replaces it until main gives it back (releaseBubble), the user
-   * asks something, or 30 seconds pass. A task's work shows on its card meanwhile. The answer or result it
-   * covers doesn't run out of time underneath (main may put it back: a wake that was another word). `ms`: main's own
-   * notice gives the bubble back itself after this long (ten times its usual time with More time to read and answer):
-   * held that long, and the 30 seconds count from then (cross-review X4).
-   */
-  /**
-   * What Ember does without asking outside a task, said in the conversation's bubble with its "Without asking" tag: the
-   * extensions gate's announcement in Autopilot (extensions/gate.ts gateAnnouncement: Ember's own words, never a
-   * model's). Whether it was said: the gate asks instead when it wasn't.
-   */
-  /**
    * Assisted's check of one extension call in the conversation (extensions/service.ts checkCall; integrations-r12-1):
    * `step`, Ember's own description of the call (gate.ts callForCheck), against the user's own words for the turn now
    * as a task's check reads them (userWordsOf's checkWords: unchecked speech included, never a suggestion pressed, words
@@ -1476,6 +1463,11 @@ export class AgentHost {
   }
   private callCheck: StepChecker | null = null;
 
+  /**
+   * What Ember does without asking outside a task, said in the conversation's bubble with its "Without asking" tag: the
+   * extensions gate's announcement in Autopilot (extensions/gate.ts gateAnnouncement: Ember's own words, never a
+   * model's). Whether it was said: the gate asks instead when it wasn't.
+   */
   announceUnasked(words: string): boolean {
     try {
       this.presenter.workedWithoutAsking(words);
@@ -1486,6 +1478,14 @@ export class AgentHost {
     }
   }
 
+  /**
+   * Main writes the bubble itself next ("Listening…", the kill switch's message): no presenter's timer hides
+   * it, and neither the conversation nor a task replaces it until main gives it back (releaseBubble), the user
+   * asks something, or 30 seconds pass. A task's work shows on its card meanwhile. The answer or result it
+   * covers doesn't run out of time underneath (main may put it back: a wake that was another word). `ms`: main's own
+   * notice gives the bubble back itself after this long (ten times its usual time with More time to read and answer):
+   * held that long, and the 30 seconds count from then (cross-review X4).
+   */
   claimBubble(o: { pin?: boolean; ms?: number } = {}): void {
     this.owner.claim(this.mainBubble);
     this.presenter.letGo();

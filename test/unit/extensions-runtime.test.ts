@@ -2858,3 +2858,20 @@ describe("the launcher between the runtime and a server", () => {
     expect(stops).toBe(1);
   });
 });
+
+describe("the extension code's own comments (integ-x-7)", () => {
+  it("keeps each of the host's doc comments on its method, the extension check's and announceUnasked's among them", () => {
+    const host = fs.readFileSync(path.resolve("app/main/agent/host.ts"), "utf8");
+    // Two doc comments in a row leave the first on nothing (the merge put checkExtensionCall's after announceUnasked's).
+    expect(host).toMatch(/\n\n {2}\/\*\*\n {3}\* Assisted's check of one extension call in the conversation/);
+    expect(host).toMatch(/held that long, and the 30 seconds count from then \(cross-review X4\)\.\n {3}\*\/\n {2}claimBubble\(/);
+    expect(host).toMatch(/the gate asks instead when it wasn't\.\n {3}\*\/\n {2}announceUnasked\(words: string\): boolean \{/);
+  });
+
+  it("doesn't claim the seal catches a plugin's changed files, which is still open (r12-safety-x12-4)", () => {
+    const copy = fs.readFileSync(path.resolve("app/renderer/home/extensions-copy.ts"), "utf8");
+    const doc = copy.slice(0, copy.indexOf("export const EXTENSION_UNSEALED")).split("/**").pop() ?? "";
+    expect(doc).not.toMatch(/plugin's files changed since/);
+    expect(doc).toContain("The seal covers the list, not a\n * plugin's own files (r12-safety-x12-4, open).");
+  });
+});
