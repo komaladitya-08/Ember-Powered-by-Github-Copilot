@@ -13,10 +13,19 @@ user profile or system root. Tool access is read/execute; workspace/state access
 
 Preparation creates a unique AppContainer profile. `launch()` requires both security-capabilities and LPAC opt-out
 attributes. It supplies zero capabilities, an explicit clean environment and no inherited handles. The process starts suspended,
-joins a private kill-on-close job with neither breakaway flag, and has its package SID, AppContainer/LPAC flags and
-zero capability count checked before its first thread resumes. Unsupported APIs and failed checks have no ordinary
+joins a private kill-on-close job with neither breakaway flag, and has its package SID, AppContainer flag and
+zero capability count checked before its first thread resumes. A query-only impersonation duplicate must pass a
+synthetic own-package access check and be denied an otherwise identical All Application Packages access check.
+Both `AccessCheck` calls must succeed; an API error never counts as denial. Unsupported APIs and failed checks have no ordinary
 AppContainer fallback. A post-create failure kills and observes the suspended process before releasing its handles;
 unverified cleanup preserves diagnostics and blocks further experiments in that host process.
+
+Windows also creates this session's own disposable profile beneath its managed Packages directory. The launcher
+queries that profile through `GetAppContainerFolderPath`, validates the exact newly created profile name, and supplies
+the preceding local-app-data base as the required `LOCALAPPDATA` entry. Windows redirects the child's `LOCALAPPDATA`,
+`TEMP` and `TMP` into that isolated profile. This passes a path string, not inherited environment contents or an ACL
+grant on the user's profile, the local-app-data base, or shared Packages directory. The launcher deletes its profile
+after verified process shutdown; its work/state paths remain the explicit copied scratch directories.
 
 `waitRootExited()` observes the exact root process handle but supplies no result authority. `waitStopped()` and
 `stop()` issue a scoped receipt only after root exit and empty job accounting plus an empty process list. A root PID
@@ -43,6 +52,17 @@ reads that canary as a positive control. The fixture separately probes denied VM
 parent-process rights on its host, alongside a successful self-process query. It attempts breakaway creation, then
 starts an ordinary child which outlives the root. The test observes root exit before verifying that a result receipt
 is still unavailable until Stop ends the child. Reports contain numeric fixture results, not secrets.
+After verified Stop, the test also compares the child's actual local-app-data and temporary paths with the fresh
+OS-managed profile and confirms that its temporary directory was writable. Those disposable path reports contain
+only the test profile's paths and are removed with test scratch.
+
+The native Server 2022 runner rejected the Win32 `TokenIsLessPrivilegedAppContainer` query (class 46) with error 87.
+The experiment therefore checks the LPAC creation opt-out and the observed own-package/AAP access behavior before
+resume and again inside the fixture, plus the actual file canary. This is a behavioral witness, not a documented
+user-mode LPAC identity-query contract. [Microsoft's LPAC launch documentation](https://learn.microsoft.com/en-us/windows/win32/secauthz/implementing-an-appcontainer)
+describes the AAP exclusion; [AccessCheck](https://learn.microsoft.com/en-us/windows/win32/api/securitybaseapi/nf-securitybaseapi-accesscheck)
+defines the authorization operation. The distinction and unsupported class-46 result are discussed in this
+[Microsoft Q&A investigation](https://learn.microsoft.com/en-us/answers/questions/6011619/gettokeninformation-supported-contract-for-tokenis).
 
 Portable failure/order tests run with:
 

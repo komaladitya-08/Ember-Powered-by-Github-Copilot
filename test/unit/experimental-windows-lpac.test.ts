@@ -11,7 +11,7 @@ function setup(fail = "") {
   let rootExited = false, active = 1, next = 100n;
   const api: WindowsLpacApi = {
     createProfile: name => { calls.push("profile"); return { name, sid: 9n, sidText: "S-1-15-2-1234" }; },
-    deleteProfile: () => { calls.push("delete profile"); }, ownerSid: () => "S-1-5-21-1234", windowsDirectory: () => "C:\\Windows", volumeFileSystem: () => "NTFS",
+    deleteProfile: () => { calls.push("delete profile"); }, ownerSid: () => "S-1-5-21-1234", windowsDirectory: () => "C:\\Windows", profileLocalAppDataBase: () => "C:\\owner\\AppData\\Local", volumeFileSystem: () => "NTFS",
     createDirectory: (_file, sddl) => { calls.push("directory " + sddl); },
     writeNewFile: (_file, bytes, sddl) => { calls.push("copied " + sddl); expect(bytes).toBe(executable); },
     pinDirectory: () => { calls.push("pin"); return next++; }, createJob: () => { calls.push("job"); return 1n; },
@@ -69,9 +69,15 @@ it("uses clean literal paths and narrow protected package ACLs, never write-DAC/
   expect(sddl).not.toContain("FA;;;S-1-15-2-1234");
   expect(() => experimentalWindowsSddl("bad;SID", "S-1-15-2-1234", "read", false)).toThrow();
   const paths = { root: "C:\\scratch", tools: "C:\\scratch\\tools", work: "C:\\scratch\\work", state: "C:\\scratch\\state", program: "C:\\scratch\\tools\\fixture.exe" };
-  const env = experimentalWindowsEnvironment(paths, "C:\\Windows").toString("utf16le");
-  expect(env.endsWith("\0\0")).toBe(true); expect(env).not.toMatch(/TOKEN|KEY|USERPROFILE|APPDATA/);
-  expect(() => experimentalWindowsEnvironment({ ...paths, state: "\\\\host\\share" }, "C:\\Windows")).toThrow();
+  const env = experimentalWindowsEnvironment(paths, "C:\\Windows", "C:\\owner\\AppData\\Local").toString("utf16le");
+  expect(env.endsWith("\0\0")).toBe(true); expect(env).not.toMatch(/TOKEN|KEY|USERPROFILE/);
+  expect(env.split("\0").filter(Boolean).sort()).toEqual([
+    "EMBER_LPAC_STATE=C:\\scratch\\state", "EMBER_LPAC_TOOLS=C:\\scratch\\tools", "EMBER_LPAC_WORK=C:\\scratch\\work",
+    "LOCALAPPDATA=C:\\owner\\AppData\\Local", "PATH=C:\\scratch\\tools", "SystemRoot=C:\\Windows",
+    "TEMP=C:\\scratch\\state", "TMP=C:\\scratch\\state", "WINDIR=C:\\Windows",
+  ].sort());
+  expect(() => experimentalWindowsEnvironment({ ...paths, state: "\\\\host\\share" }, "C:\\Windows", "C:\\owner\\AppData\\Local")).toThrow();
+  expect(() => experimentalWindowsEnvironment(paths, "C:\\Windows", "\\\\host\\share")).toThrow();
 });
 
 it("shares concurrent Stop and close completion without double-close or early receipt release", async () => {

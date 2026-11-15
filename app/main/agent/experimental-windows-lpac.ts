@@ -20,8 +20,10 @@ export function experimentalWindowsSddl(owner: string, packageSid: string, acces
 }
 
 /** Fixed clean environment; it never copies the host's environment or accepts arbitrary credential variable names. */
-export function experimentalWindowsEnvironment(paths: WindowsFixturePaths, windows: string): Buffer {
-  const values = { SystemRoot: windows, WINDIR: windows, PATH: paths.tools, TEMP: paths.state, TMP: paths.state,
+export function experimentalWindowsEnvironment(paths: WindowsFixturePaths, windows: string, profileLocalAppDataBase: string): Buffer {
+  // CreateProcessW rewrites LOCALAPPDATA/TEMP/TMP to this session's OS-created AppContainer profile.
+  // Missing LOCALAPPDATA fails with ERROR_ENVVAR_NOT_FOUND, even when SystemRoot and TEMP are present.
+  const values = { SystemRoot: windows, WINDIR: windows, LOCALAPPDATA: profileLocalAppDataBase, PATH: paths.tools, TEMP: paths.state, TMP: paths.state,
     EMBER_LPAC_WORK: paths.work, EMBER_LPAC_STATE: paths.state, EMBER_LPAC_TOOLS: paths.tools };
   for (const value of Object.values(values)) if (!/^[A-Za-z]:\\/.test(value) || /[\0\r\n]/.test(value)) throw new Error("The fixture environment requires ordinary absolute Windows paths.");
   return Buffer.from(Object.entries(values).sort(([a], [b]) => a.toUpperCase().localeCompare(b.toUpperCase(), "en")).map(([key, value]) => `${key}=${value}\0`).join("") + "\0", "utf16le");
@@ -119,7 +121,7 @@ export class ExperimentalWindowsLpacFixture {
     try {
       this.job = this.api.createJob();
       this.process = this.api.createSuspended(this.profile, this.paths.program, commandLine(this.paths.program, args), this.paths.work,
-        experimentalWindowsEnvironment(this.paths, this.api.windowsDirectory()));
+        experimentalWindowsEnvironment(this.paths, this.api.windowsDirectory(), this.api.profileLocalAppDataBase(this.profile)));
       this.threadOpen = true;
       this.api.assign(this.job, this.process.process);
       this.api.verifyToken(this.profile, this.process.process);
