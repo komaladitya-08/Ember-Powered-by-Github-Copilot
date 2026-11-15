@@ -55,7 +55,8 @@ starts an ordinary child which outlives the root. Both attempts use the same exp
 attributes for their new process/thread objects, granting only the user, SYSTEM and exact session package SID.
 This does not change the host token or any existing object. The test observes root exit before verifying that a result receipt
 is still unavailable until Stop ends the child. Reports contain numeric fixture results, not secrets.
-The fixture's child launches explicitly retain the LPAC AAP opt-out and start suspended. The child's exact parent
+The fixture's child launches explicitly repeat the exact parent package SID, zero capabilities and LPAC AAP opt-out,
+then start suspended. The child's exact parent
 package SID, zero capabilities and own-package/AAP access witness must pass before its first thread is resumed.
 This tests explicit propagation; it does not establish compatibility with tools that launch their own subprocesses
 using default startup attributes. Failed creation records Win32 and immediate native thread status for diagnosis.
