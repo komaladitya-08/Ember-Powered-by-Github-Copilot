@@ -120,6 +120,12 @@ h2[tabindex="-1"]:focus, .w-lead:focus { outline: none; }
 #project-sessions-list h4 { margin: 0; font: var(--type-headline); }
 #project-sessions-list p { margin: 6px 0 0; white-space: pre-wrap; }
 #project-sessions-list .agent-actions { margin-top: 8px; }
+#project-sessions-plans details + details { margin-top: 12px; }
+#project-sessions-plans :is(summary, li), #project-sessions-recovery { min-width: 0; overflow-wrap: anywhere; }
+#project-sessions-plans li { padding-block: 8px; }
+#project-sessions-plans h4, #project-sessions-recovery h4 { margin: 0; font: var(--type-headline); }
+#project-sessions-plans p { margin: 6px 0; white-space: pre-wrap; }
+#project-sessions-recovery:not([hidden]) { display: grid; gap: 8px; }
 @media (forced-colors: active) {
   #project-sessions :is(input[type="text"], textarea, select), #project-sessions-list li + li { border-color: ButtonText; }
 }

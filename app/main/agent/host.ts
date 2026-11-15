@@ -75,7 +75,7 @@ import { CATCH_UP_MS, catchUpQuestion, catchUpReply, healthQuestion, healthReply
 import { CONVERSATION_LIMIT, retainedConversationText, type ConversationTurn, type ConversationTurnEnd } from "../../shared/conversation";
 import type { HistoryStore } from "./conversation-store";
 import { ProjectSessionBook } from "./project-sessions";
-import type { ProjectSessionsState } from "../../shared/project-sessions";
+import type { ProjectSessionsState, ProjectSequenceReason } from "../../shared/project-sessions";
 
 /** The words a task was refused for are known by these (userWordsOf adds a full stop to an earlier request). */
 const refusedKey = (l: string) => l.trim().replace(/\.$/, "");
@@ -1016,6 +1016,14 @@ export class AgentHost {
   private readonly codingRetirement = new CodingRetirement();
   private vaultFillHolds = 0;
   private readonly mixedHandoffs = new MixedHandoffs<WorkerResult | null>();
+  private readonly desktopHandoffs = new MixedHandoffs<WorkerResult | null>();
+  private readonly desktopSequences = new Map<string, { release(reason?: ProjectSequenceReason | null): void }>();
+
+  private clearDesktopSequences(reason: ProjectSequenceReason = "context-changed"): void {
+    for (const sequence of this.desktopSequences.values()) sequence.release(reason);
+    this.desktopSequences.clear();
+    this.desktopHandoffs.clear();
+  }
 
   /** A changed or withdrawn workspace invalidates queued and running coding work immediately. */
   codingWorkspaceChanged(): void {
@@ -2271,7 +2279,11 @@ export class AgentHost {
         audit: hands?.audit ?? this.o.taskBase?.audit,
         settingsKey: this.o.settingsKey ?? this.sys.shortcuts?.settings.label,
         beforeFinish: task => {
-          const handoff = this.mixedHandoffs.finish(task.id, task.status, task.result);
+          const sequence = this.desktopSequences.get(task.id);
+          this.desktopSequences.delete(task.id);
+          const desktopHandoff = this.desktopHandoffs.finish(task.id, task.status, task.result);
+          const handoff = desktopHandoff === "absent" ? this.mixedHandoffs.finish(task.id, task.status, task.result) : desktopHandoff;
+          if (sequence && handoff !== "started") sequence.release(task.status === "failed" ? "failed" : task.status === "cancelled" ? "stopped" : "context-changed");
           if (handoff === "failed") this.o.log.warn("agent.mixed_handoff_failed", { id: task.id });
           if ((handoff === "failed" || handoff === "skipped") && task.status === "done" && task.result) {
             task.result.summary = `${task.result.summary} The next part didn't start because the task context changed or it couldn't be started.`.trim();
@@ -2617,6 +2629,94 @@ export class AgentHost {
           });
           return `Task ${t.id} started. The second part will start after the first succeeds. Tell the user briefly.`;
         } : undefined,
+        startSequence: tasks && takesTasks ? (steps, choice) => {
+          if (!projectsCurrent() || !this.turn) return projectsStale;
+          if (this.o.admin?.().features.actions === false) return "Your organisation has turned off Ember's actions.";
+          if (!Array.isArray(steps) || steps.length < 2 || steps.length > 8 || steps.some(s => !s || typeof s.name !== "string" || !s.name.trim() || s.name.length > 80 || /[\p{Cc}\p{Cf}]/u.test(s.name) || typeof s.goal !== "string" || s.goal.trim().length < 3 || s.goal.length > 4000)) return "A sequence needs 2–8 named desktop steps.";
+          const r = this.turn, projectId = r.projectId;
+          if (!projectId) return "Select or create a project for this request before starting a sequence.";
+          try { this.sessionProjects.destination(projectId); } catch { return "The project selected for this request is no longer available."; }
+          const plan = steps.map(s => ({ name: s.name.trim(), goal: s.goal }));
+          const original = this.userWordsOf(r);
+          const said = { ...original, ...(original.agreed ? { agreed: original.agreed.slice() } : {}) };
+          let bound: TargetHands | null = null;
+          if (targets) {
+            const selected = targets.bind({ userWords: said.words ?? "", ...(choice !== undefined ? { choice } : {}) });
+            if (!selected.ok) return selected.why;
+            const got = targets.handsFor(selected.binding.id);
+            if (!got.ok) return got.why;
+            bound = got.hands;
+          }
+          const terminal = terminalRequest(this.sys.os, this.wslOn());
+          if (said.words && !(bound?.commands && bound.commands.capability().state !== "off") && terminal.asks.test(said.words.replace(terminal.refuses, " "))) {
+            return "The user asked to use the terminal, but commands are off. Do not replace that request with application steps; offer to turn commands on or explain the steps.";
+          }
+          const binding = bound?.binding ? { ...bound.binding } : undefined;
+          const bindingKey = binding ? JSON.stringify(binding) : "";
+          const target = { ...this.contextFor(r, binding) };
+          const screen = r.screen.join("\n") || undefined;
+          const epoch = this.stopEpoch;
+          const mode = modeInForce(this.o.settings.get().approvals, this.o.admin?.() ?? null);
+          const mark = this.conductor?.askedMark ?? this.o.memory?.asked?.();
+          let sequenceId: string;
+          try { sequenceId = this.sessionProjects.beginSequence(projectId, plan); }
+          catch (err) { return err instanceof Error ? err.message : "The sequence could not be recorded."; }
+          let active = true;
+          let unsubscribe = () => undefined as void;
+          const release = (reason: ProjectSequenceReason | null = "context-changed") => {
+            active = false; unsubscribe(); unsubscribe = () => undefined;
+            if (reason !== null) {
+              try { this.sessionProjects.retireSequence(projectId, sequenceId, reason); } catch { /* The user may have forgotten the project. */ }
+            }
+          };
+          const sequence = { release };
+          unsubscribe = this.o.settings.onChange(() => {
+            if (modeInForce(this.o.settings.get().approvals, this.o.admin?.() ?? null) !== mode || this.providerMoved()) release();
+          });
+          const current = () => {
+            if (!active || this.tasks !== tasks || gen !== this.gen || this.status.phase !== "ready" || this.providerMoved() || epoch !== this.stopEpoch
+              || this.o.screenLocked?.() || this.o.admin?.().features.actions === false || modeInForce(this.o.settings.get().approvals, this.o.admin?.() ?? null) !== mode) return false;
+            try { this.sessionProjects.destination(projectId); } catch { return false; }
+            if (binding && targets) {
+              const got = targets.handsFor(binding.id);
+              if (!got.ok || JSON.stringify(got.hands.binding) !== bindingKey) return false;
+            }
+            return true;
+          };
+          const start = (index: number, summary?: string): Task => {
+            if (!current()) throw new Error("The sequence context changed.");
+            this.sessionProjects.refresh(this.taskActivities());
+            const step = plan[index];
+            const more = index < plan.length - 1;
+            const t = tasks.start(step.goal, {
+              target, userWords: said.words, agreed: said.agreed,
+              ...(screen ? { screen } : {}), ...(summary ? { handoffSummary: summary } : {}), ...(more ? { deferHandoff: true as const } : {}),
+              ...(said.commandWords !== undefined ? { commandWords: said.commandWords } : {}), ...(said.checkWords !== undefined ? { checkWords: said.checkWords } : {}),
+              ...(said.typedOnly ? { typedOnly: true } : {}), ...(said.retried?.partWay ? { partWay: true } : {}),
+              ...(binding ? { targetId: binding.id, where: whereWords(binding) } : {}),
+            });
+            this.sessionProjects.attach(projectId, t, "desktop", step.name);
+            this.sessionProjects.linkSequenceStep(projectId, sequenceId, index, t.id);
+            touch(r, t.id);
+            if (binding) this.taskBindings.set(t.id, binding);
+            if (mark !== undefined) this.taskMarks.set(t.id, mark);
+            if (r.verifiedAt !== undefined) this.o.voiceTrust?.grant(t.id, r.verifiedAt);
+            this.announced.add(t.id);
+            if (t.status !== "running" && t.status !== "queued") throw new Error("The sequence task could not start.");
+            if (more) {
+              this.desktopSequences.set(t.id, sequence);
+              if (!this.desktopHandoffs.arm(t.id, current, result => { start(index + 1, result?.summary); })) {
+                tasks.cancel(t.id); this.desktopSequences.delete(t.id); throw new Error("The sequence could not be scheduled.");
+              }
+            } else release(null); // The final observed outcome, not its launch, completes the recorded plan.
+            return t;
+          };
+          try {
+            const first = start(0);
+            if (said.retried) tasks.dismiss(said.retried.task);
+            return `Desktop sequence of ${plan.length} sessions ${first.status === "queued" ? "queued" : "started"}; first task ${first.id}. Each next session starts only after explicit success and confirmed cleanup. Stop the current task or Stop everything to retire the remaining steps.`;
+          } catch { release("failed"); return "The sequence could not start because its task context changed or a worker could not start. No further session will start."; }
+        } : undefined,
         startTask: tasks && takesTasks ? (goal, choice, sessionName) => {
           // With actions turned off by the administrator, Ember can still answer and guide, never act.
           if (this.o.admin?.().features.actions === false) return "Your organisation has turned off Ember acting in apps. Tell the user, and offer to show them how (show_me) instead.";
@@ -2731,13 +2831,23 @@ export class AgentHost {
           cancel: id => { touch(this.turn, id); const t = tasks.get(id); if (!t || (t.status !== "running" && t.status !== "queued")) return false; tasks.cancel(id); return true; },
           // What the user said for the change, as for a task started in this turn ("work" answering "Which account?").
           // (A change of plan is the user's own words: a routine run this turn doesn't steer a task.)
-          steer: (id, text) => {
-            if (!this.turn) return Promise.resolve(false);
+          steer: async (id, text) => {
+            if (!projectsCurrent() || !this.turn) return false;
             touch(this.turn, id);
             const said = this.userWordsOf(this.turn, { routine: false });
             // Changed by a request Voice Match didn't verify (typed, or another voice's): its short yeses are no longer trusted.
             if (this.turn?.verifiedAt === undefined) this.o.voiceTrust?.end(id, "steered");
-            return tasks.steer(id, text, said.words, this.turn?.screen.join("\n") || undefined, said.agreed, said.commandWords, said.checkWords);
+            const sequence = this.desktopSequences.get(id);
+            // The user's change of plan retires the tail even if delivery fails or races the current task's finish.
+            sequence?.release("steered");
+            this.sessionProjects.steerTask(id);
+            try {
+              const accepted = await tasks.steer(id, text, said.words, this.turn?.screen.join("\n") || undefined, said.agreed, said.commandWords, said.checkWords);
+              return sequence ? accepted ? "sequence-stopped" as const : "sequence-steer-failed" as const : accepted;
+            } catch (err) {
+              if (sequence) return "sequence-steer-failed" as const;
+              throw err;
+            }
           },
         } : undefined,
       });
@@ -3216,6 +3326,9 @@ export class AgentHost {
     if (this.quitting) return null;
     // Put back as it was before the switch could happen: nothing waits any more.
     if (!this.providerMoved()) { this.waitForSwitch(false); return null; }
+    // A credential change can arrive without a settings event while work delays the reconnect. Retire now so
+    // restoring the previous key before a phase finishes cannot revive its original automatic continuation.
+    this.clearDesktopSequences();
     if (this.status.phase === "ready" && (!this.quietForSwitch() || this.held.length > 0)) {
       // (A connect already under way reads the service in force as it starts: nothing waits for it.)
       if (this.starting === 0) this.waitForSwitch(true);
@@ -3787,6 +3900,7 @@ export class AgentHost {
 
   /** A Stop: requests asked before it are dropped (stopEpoch), those still waiting at once (stopSignal, home-r3-1). */
   private stopped(): void {
+    this.clearDesktopSequences("stopped");
     this.stops++;
     const was = this.stopSignal;
     this.stopSignal = signal();
@@ -4169,6 +4283,7 @@ export class AgentHost {
     // that stopped (or stopped answering), tasks end as failed.
     const codingRetired = this.codingRetirement.wait(5000);
     this.tasks?.cancelAll(cutOff ?? undefined);
+    this.clearDesktopSequences();
     this.mixedHandoffs.clear();
     this.confirmer?.cancelAll();
     // First, while the runtime surely still runs (quitting doesn't wait long).

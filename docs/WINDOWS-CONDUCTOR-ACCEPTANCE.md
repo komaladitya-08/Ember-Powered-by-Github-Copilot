@@ -5,9 +5,11 @@ display scales, input language, model/provider and approval mode with each resul
 not certify real app focus, microphone quality, cursor ownership or a coding execution boundary.
 
 The Projects & sessions board groups desktop tasks. Explicit Save projects keeps an encrypted checkpoint; Open
-saved projects restores inert records and marks interrupted sessions stopped. It never resumes model sessions. Native coding is unavailable on every platform; do not remove its gate to
-perform this acceptance pass. Automatic checkpoint/restart recovery, safe coding isolation and conflict-safe coding
-change reconciliation remain implementation work, not laptop tests waiting to be checked off.
+saved projects restores inert records, ordered goals and observed outcomes and marks interrupted work stopped.
+Review remaining steps prepares a fresh editable request without replaying actions. Save again to retain later progress.
+It never resumes model sessions. Native coding is unavailable on every platform; do not remove its gate to perform
+this acceptance pass. Whole-runtime coding integration, platform isolation and project workspace binding remain
+implementation work, not laptop tests waiting to be checked off. Automatic crash checkpointing is not implemented.
 
 ## Prepare the checkout
 
@@ -36,6 +38,7 @@ prompt, fixture or screenshot.
 |---|---|---|
 | Project creation | In Projects, create “Laptop acceptance” with a goal. Select it. | The name and goal appear; creating the record starts no app action. |
 | Conductor delegation | Ask the conductor to create a harmless note in Notepad and inspect an ordinary browser page as separate tasks, naming each session. | Delegated tasks appear beneath the active project and in Task activity. Worker sessions use the existing task scheduler and approval rules. |
+| Ordered sessions | Ask for a two-step desktop sequence, then test failure, Stop during cleanup, a mode change and a steering request that fails to deliver. | The next named session starts only after observed success and confirmed cleanup. Stop/steering/authority changes retire the rest; no previous model output becomes permission. |
 | Parallel work | Keep two tasks occupied and request a third independent task. | At most two workers run; the next session visibly waits its turn. Two workers do not act in the same window together. |
 | Companion progress | Work in another app while one task runs, two run, and a task is queued. Hover over the companion. | Compact status distinguishes running and queued work and identifies a single task. The fuller description names task states. Updates do not steal keyboard focus. |
 | Approval waiting | In Interactive, request an action that genuinely requires approval under [APPROVALS.md](APPROVALS.md). | The question and waiting state agree across the companion, session board and Task activity. Approval controls remain reachable and ordinary commands do not acquire extra questions. |
@@ -46,6 +49,7 @@ prompt, fixture or screenshot.
 | Completion and failure | Complete one task; refuse another or close its target app. | Success, failure and Stop are distinct, with a readable outcome. Model prose alone does not turn failed work into a successful result. |
 | Forget and identity | Try forgetting a project with active work; then stop it and forget it. Sign out and reconnect. | Active work cannot be silently orphaned by forgetting. Forgotten records disappear; another account sees none of the previous account's project records. |
 | Quit and reopen | Quit normally, then reopen Ember. | The live board is empty. Open saved projects restores an explicitly saved checkpoint, with interrupted sessions stopped and no executable old task references. No old task resumes with old authority. |
+| Review interrupted goals | Save a plan after its first completed step and during its next step, restart, open it, and review remaining steps. Repeat with a long plan and an existing unsent request. | Full goals and outcomes remain visible. Only the contiguous completed prefix is omitted. Partial effects are called out. Review does not execute or silently replace a draft; edit/use the request, then explicitly Send with current approvals. Oversized goals are not truncated and can be reviewed one step at a time. |
 | Coding refusal | Ask for autonomous file editing or a coding-to-desktop sequence. | Ember explains coding is unavailable and does not launch native coding tools or claim the coding part completed. Selected-file review and patch drafting retain their separate existing flow. |
 
 ## Check native laptop behaviour
