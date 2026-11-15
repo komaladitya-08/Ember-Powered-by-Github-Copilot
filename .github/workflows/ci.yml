@@ -55,13 +55,13 @@ jobs:
       - name: Trusted Node and namespaces for isolated coding proofs
         run: |
           sudo apt-get update
-          sudo apt-get install -y bubblewrap
+          sudo apt-get install -y bubblewrap xvfb dbus-x11
           # setup-node may place its authenticated download in a runner-writable cache. The tested sandbox accepts
           # only root-owned, non-writable tool ancestors, so keep a fresh copy before running repository code.
           coding_node_source="$(readlink -f "$(command -v node)")"
           sudo install -d -m 755 -o root -g root /opt/node /opt/node/bin
           sudo install -m 755 -o root -g root "$coding_node_source" /opt/node/bin/node
-          echo "/opt/node/bin" >> "$GITHUB_PATH"
+          # Tests select this isolated-command asset explicitly. Keep setup-node's writable npm prefix for npm setup.
       # The release's notes link the README at the tag: fail the tag's run at once if it says this version isn't out,
       # or if GitHub would refuse the notes, which the release job finds only after every other job.
       - name: The tagged README describes this version and its notes fit a release (docs/DEVELOPING.md §15 step 1)
@@ -92,6 +92,17 @@ jobs:
         env:
           EMBER_VOICE_TEST: "1"
       - run: npm run build
+      - name: Real Electron project coding, approvals, review, export and Forget
+        timeout-minutes: 5
+        env:
+          EMBER_ELECTRON_CODING_TEST: "1"
+          CHROME_DEVEL_SANDBOX: "/opt/ember-test-electron/chrome-sandbox"
+        run: |
+          node node_modules/electron/install.js
+          # Use Electron's normal sandbox with a fresh root-owned helper, as the Linux package does.
+          sudo install -d -m 755 -o root -g root /opt/ember-test-electron
+          sudo install -m 4755 -o root -g root node_modules/electron/dist/chrome-sandbox /opt/ember-test-electron/chrome-sandbox
+          dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24" npm run test:integration -- test/integration/project-coding-electron.test.ts
       - name: Conversation, Ask, memory, first-run and local inventory renderer journeys
         env:
           EMBER_BROWSER_TEST: "1"
