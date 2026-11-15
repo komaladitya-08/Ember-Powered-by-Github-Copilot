@@ -9373,9 +9373,9 @@ reg(NATIVE, Object.keys(CLOUD_CLIS), h => {
   const listsEnv = listValue !== undefined && listValue !== null && /^(|true)$/.test(listValue);
   // What they print holds secrets (integ-x-2): a workload's environment values (`--resolve` adds those of the Secrets
   // it names), as `describe` of a workload does, and helm's dry run prints the release's rendered Secrets, as `helm get
-  // manifest` does. Cloud Run's describe prints its service's or job's environment values.
+  // manifest` does. Cloud Run's describe prints its service's, job's or revision's environment values (integ-y-2).
   if (listsEnv || (dryRun && h.key === "helm" && /^(install|upgrade)$/.test(verbs[0] ?? ""))
-    || (h.key === "gcloud" && /^(?:(?:alpha|beta) )?run (services|jobs) describe\b/.test(all))) h.e.add("secret", "secret.cloud", SAYS.secrets, { program: `${h.key} ${verb}` });
+    || (h.key === "gcloud" && /^(?:(?:alpha|beta) )?run (services|jobs|revisions) describe\b/.test(all))) h.e.add("secret", "secret.cloud", SAYS.secrets, { program: `${h.key} ${verb}` });
   const dry = dryRun || listsEnv;
   const read = !fetchesProviders && (dry || CLOUD_READ.has(verb) || /^(describe|list|get)-/.test(verb) || CLOUD_READ_PHRASES.some(p => all === p || all.startsWith(`${p} `)));
   if (read) return;

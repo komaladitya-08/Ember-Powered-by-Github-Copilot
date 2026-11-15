@@ -498,7 +498,8 @@ describe("read-only and everyday commands that asked (commands-remote-r12-4)", (
   it("reads a listing or a description that prints a workload's environment as secrets: asked, and kept from the model in Autopilot (integ-x-2)", () => {
     for (const cmd of [
       "kubectl set env deploy/web --list", "kubectl set env deploy/web --list --resolve", "oc set env dc/web --list", "gcloud run services describe web",
-      "gcloud beta run jobs describe j", "helm upgrade web ./chart --dry-run", "helm install web ./chart --dry-run=server",
+      "gcloud beta run jobs describe j", "gcloud run revisions describe web-0001", "gcloud beta run revisions describe web-0001 --region=x",
+      "helm upgrade web ./chart --dry-run", "helm install web ./chart --dry-run=server",
     ]) {
       const r = result(cmd);
       expect(r.decision.verdict, cmd).toBe("ask");
