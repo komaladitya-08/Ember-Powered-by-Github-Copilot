@@ -138,9 +138,11 @@ export class VaultStore {
 
   /**
    * One entry's values, for main's fill only, or null: no such entry, the keyring refused, or what is sealed isn't
-   * that entry (another id, kind or destination: an edited file). Never throws.
+   * that entry (another id, kind or destination: an edited file), or it is no longer saved as it was once the keyring
+   * answered (forgotten, everything forgotten, saved again or changed meanwhile: codex-212-p2). Never throws.
    */
   async open(id: string): Promise<{ meta: VaultMeta; values: VaultValues } | null> {
+    const before = this.forgotten;
     const e = this.read().find(x => x.id === id);
     if (!e) return null;
     try {
@@ -150,6 +152,9 @@ export class VaultStore {
       if (v.v !== 1 || v.id !== e.id || v.kind !== e.kind || !validDestination(v.dest) || !sameDestination(v.dest, e.dest)) return null;
       const checked = checkValues(e.kind, v.values);
       if (!checked.ok) return null;
+      // The keyring may have taken its time (macOS asks it off the main thread): what was forgotten or replaced
+      // meanwhile is never handed over, so the file is read again and the entry must still be there, sealed the same.
+      if (before !== this.forgotten || !this.read().some(x => x.id === e.id && x.sealed === e.sealed)) return null;
       return { meta: { id: e.id, kind: e.kind, dest: e.dest, savedAt: e.savedAt }, values: checked.values };
     } catch {
       return null; // the keyring refused, or the text isn't one of these

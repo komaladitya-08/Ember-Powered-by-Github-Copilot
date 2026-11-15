@@ -4815,5 +4815,13 @@ the current kube context) runs announced, as `kubectx prod` did, while `kubectl 
 (a) code Ember can't read in Interactive, (c) a distro Podman uses and Project work asking in Autopilot, (d) unreadable
 native file dialogs, (e) Autopilot refusing a target it can't name; (b), root in Assisted, is built to the table.
 
+**Codex's review of PR #212** (branch r9/codexfix from 794e1a2). codex-212-p1 (P1, 571bba7): a vault fill whose
+entry the keyring opened only after Stop (macOS asks it off the main thread) announced and filled it all the same; the
+fill's callback now checks the task's stop state before it says or fills anything, and again before the typed
+fallback, and the model is told the task stopped. codex-212-p2 (P2): an entry forgotten (Forget, Forget all, or saved
+again) while the keyring opened it was still filled; VaultStore.open reads the file again once the keyring answers and
+opens nothing unless the same entry, sealed the same, is still there, and the typed fallback's last look before the
+first key asks that the entry is still saved.
+
 **Left.** CI on r9/r12merge (pushed by the integrator after this merge). By package, the lists above; the re-rate's
 P3s no package took up stay open as their reports list them.

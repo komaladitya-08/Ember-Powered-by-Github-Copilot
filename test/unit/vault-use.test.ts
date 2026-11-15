@@ -101,6 +101,34 @@ describe("using a vault entry for a fill (vault-2)", () => {
     expect(await service.use("login", "password", GITHUB, async () => { throw new Error("handed a value"); })).toEqual({ ok: false, why: "off" });
   });
 
+  it("hands nothing over when the entry was forgotten while the keyring was asked (codex-212-p2)", async () => {
+    for (const how of ["forget", "forgetAll"] as const) {
+      const gate: { answer: () => void } = { answer: () => {} };
+      let held = false;
+      const keyring = box({
+        isAsyncEncryptionAvailable: async () => true,
+        decryptStringAsync: b => (held ? new Promise(r => { gate.answer = () => r({ result: box().decryptString(b), shouldReEncrypt: false }); })
+          : Promise.resolve({ result: box().decryptString(b), shouldReEncrypt: false })),
+      });
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-vault-use-"));
+      dirs.push(dir);
+      const store = new VaultStore(path.join(dir, VAULT_FILE), keyring, { asyncKeyring: true });
+      const service = new VaultService({ store, form: { ask: async () => "cancelled", stop: () => {} }, allowed: () => true, consented: () => true, autopilot: () => true,
+        appName: k => k, log: { info() {}, warn() {}, error() {}, debug() {} } as never });
+      const kept = await store.add("login", GITHUB, { password: CANARY });
+      if (!kept.ok) throw new Error("not kept");
+      held = true;
+      const handed: string[] = [];
+      const pending = service.use("login", "password", GITHUB, async v => { handed.push(v); return "filled"; });
+      await new Promise(r => setTimeout(r, 5));
+      if (how === "forget") expect(service.forget(kept.id)).toBe(true);
+      else expect(service.forgetAll()).toBe(true);
+      gate.answer();
+      expect([how, await pending]).toEqual([how, { ok: false, why: "none" }]);
+      expect(handed).toEqual([]);
+    }
+  });
+
   it("opens nothing from a file edited to move an entry to another destination", async () => {
     const h = await make();
     const file = JSON.parse(fs.readFileSync(h.file, "utf8"));

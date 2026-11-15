@@ -3412,7 +3412,10 @@ export class Worker {
         if (this.isOver) return { how: "stopped" as const };
         // The field takes no text by accessibility: typed as keys, under the borrow's own rules. Never pasted.
         letGo();
-        return { how: "keys" as const, typed: await this.typeFromVault(id, node, element, part, value, context, record, () => this.vaultChanged(id, element, kind, part, dest)) };
+        // The last look before the first key also asks that the entry is still saved: one forgotten while the field
+        // was being reached is typed nothing (codex-212-p2).
+        const still = async () => (await this.vaultChanged(id, element, kind, part, dest)) ?? (vault.has(kind, dest) ? null : "the vault's entry for this was forgotten");
+        return { how: "keys" as const, typed: await this.typeFromVault(id, node, element, part, value, context, record, still) };
       });
       if (this.isOver) return STOPPED();
       if (!filled.ok) {

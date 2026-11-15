@@ -328,6 +328,50 @@ describe("VaultStore", () => {
     expect((await store.add("login", GITHUB, login)).ok).toBe(true);
   });
 
+  it("opens nothing when the entry was forgotten, everything was, or it was saved again while the keyring answered (codex-212-p2)", async () => {
+    for (const meanwhile of ["forget", "forgetAll", "saved again"] as const) {
+      const gate: { answer: () => void } = { answer: () => {} };
+      let held = false;
+      const { store } = make({
+        isAsyncEncryptionAvailable: async () => true,
+        encryptStringAsync: async s => box().encryptString(s),
+        decryptStringAsync: b => (held ? new Promise(r => { gate.answer = () => r({ result: box().decryptString(b), shouldReEncrypt: false }); })
+          : Promise.resolve({ result: box().decryptString(b), shouldReEncrypt: false })),
+      }, { asyncKeyring: true });
+      const kept = await store.add("login", GITHUB, login);
+      if (!kept.ok) throw new Error("not kept");
+      held = true;
+      const pending = store.open(kept.id);
+      await new Promise(r => setTimeout(r, 5));
+      if (meanwhile === "forget") expect(store.forget(kept.id)).toBe(true);
+      else if (meanwhile === "forgetAll") expect(store.forgetAll()).toBe(true);
+      else expect((await store.add("login", GITHUB, { user: "quillon", password: "new-one" })).ok).toBe(true);
+      gate.answer();
+      expect([meanwhile, await pending]).toEqual([meanwhile, null]);
+    }
+  });
+
+  it("opens nothing when the entry's sealed value was changed in the file while the keyring answered (codex-212-p2)", async () => {
+    const gate: { answer: () => void } = { answer: () => {} };
+    let held = false;
+    const { file, store } = make({
+      isAsyncEncryptionAvailable: async () => true,
+      encryptStringAsync: async s => box().encryptString(s),
+      decryptStringAsync: b => (held ? new Promise(r => { gate.answer = () => r({ result: box().decryptString(b), shouldReEncrypt: false }); })
+        : Promise.resolve({ result: box().decryptString(b), shouldReEncrypt: false })),
+    }, { asyncKeyring: true });
+    const kept = await store.add("login", GITHUB, login);
+    if (!kept.ok) throw new Error("not kept");
+    held = true;
+    const pending = store.open(kept.id);
+    await new Promise(r => setTimeout(r, 5));
+    const v = JSON.parse(fs.readFileSync(file, "utf8"));
+    v.entries[0].sealed = box().encryptString(JSON.stringify({ v: 1, id: kept.id, kind: "login", dest: GITHUB, values: { password: "other" } })).toString("base64");
+    fs.writeFileSync(file, JSON.stringify(v));
+    gate.answer();
+    expect(await pending).toBeNull();
+  });
+
   it("says a write failed, keeps what was there and leaves no temporary file (vault-1)", async () => {
     const dir = tmp();
     const file = path.join(dir, "gone", VAULT_FILE);

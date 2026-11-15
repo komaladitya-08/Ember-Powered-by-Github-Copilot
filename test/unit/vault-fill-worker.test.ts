@@ -688,6 +688,18 @@ describe("fill_from_vault and Stop while the keyring is asked (codex-212-p1)", (
     expect(h.state.borrows).toBe(0);
     expect(h.hand).toEqual([]);
   });
+
+  it("types no key once the entry was forgotten while the field was being reached (codex-212-p2)", async () => {
+    let forgot = false;
+    const h = await worker({ saved: [LOGIN], put: async () => { throw new Error(VAULT_FILL_UNAVAILABLE); },
+      checkTyping: () => { if (!forgot) { forgot = true; h.service.forgetAll(); } } });
+    await h.call("perceive_window", {});
+    const r = await h.call("fill_from_vault", { id: 2, what: "password" });
+    expect(r.resultType).not.toBe("success");
+    expect(h.put.filter(p => p.how === "keys")).toEqual([]);
+    expect(h.hand.filter(x => x.startsWith("keys") || x === "type")).toEqual([]);
+    expect(h.everything([r])).not.toContain(CANARY);
+  });
 });
 
 describe("after a fill from the vault (vault-3)", () => {
