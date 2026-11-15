@@ -76,10 +76,23 @@ describes those data flows and retention. The legacy native-SDK coding gate stay
 
 Real-runtime tests demonstrate a failing Node test, private-copy repair, successful rerun and stopped review export
 with unchanged source. A composed Chromium/IPC/Host/controller test covers that complete flow plus Forget/account
-cleanup and explicit-export retention; Electron sender/native picker boundaries and the account/model are fixtures.
+cleanup and explicit-export retention. An actual Electron journey additionally exercises the genuine preload and
+sender guard, native command approval window, isolated commands, review/export, per-result Forget, the main Forget
+everything handler and normal shutdown. Its model and native source/export picker selections are fixtures; live
+authentication and the operating system's picker UI remain unverified.
 Compatible preinstalled packages can be copied read-only, with explicit `.git`/`node_modules` source omissions,
 validated manifests and dependency receipts. Packaged/native-provider verification and broader toolchains remain;
 this is not a Windows-ready coding feature.
+
+Complete-file privacy scans now run in a bounded trusted worker thread. Stop and global erasure await its actual
+exit; an unverified exit prevents further coding. Forget everything also drains private copies, late exports and
+trusted controller sessions. Failed older connection cleanup remains a barrier after account replacement, using
+disposal-only receipts. Per-result Forget revokes pending access to that review without changing project history or
+completed exports.
+
+The disabled [Windows file foundation](EXPERIMENTAL-WINDOWS-CODING-FILES.md) and separate
+[direct Node LPAC diagnostic](WINDOWS-NODE-LPAC-PROOF.md) have portable source checks. Their Windows enforcement
+workflows must run before any native compatibility claim. Neither supplies or enables a production Windows adapter.
 
 ## What still needs implementation
 

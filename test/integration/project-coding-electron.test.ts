@@ -8,6 +8,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
+import type { ChildProcess } from "node:child_process";
 import { _electron, type ElectronApplication, type Page } from "playwright-core";
 import { expect, it } from "vitest";
 import { CONSENT_VERSION, FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
@@ -68,6 +69,7 @@ it.skipIf(process.env.EMBER_ELECTRON_CODING_TEST !== "1" || process.platform !==
       return { text: "Ready for review." };
     } });
     let app: ElectronApplication | undefined;
+    let mainProcess: ChildProcess | undefined;
     let home: Page | undefined;
     try {
       const env: NodeJS.ProcessEnv = { ...process.env, EMBER_USER_DATA: userData, EMBER_TEST_PROVIDER_URL: model.baseUrl, TMPDIR: temporary, TMP: temporary, TEMP: temporary,
@@ -76,6 +78,7 @@ it.skipIf(process.env.EMBER_ELECTRON_CODING_TEST !== "1" || process.platform !==
       const childEnv = Object.fromEntries(Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined));
       app = await _electron.launch({ executablePath: requireCjs("electron") as string,
         args: [appRoot, "--show-settings"], env: childEnv, timeout: 45_000 });
+      mainProcess = app.process();
       // The OS chooser is the only Electron API replaced. Production folder validation and IPC still own all paths.
       await app.evaluate(({ dialog }, folders) => {
         const calls: string[] = [];
@@ -103,7 +106,10 @@ it.skipIf(process.env.EMBER_ELECTRON_CODING_TEST !== "1" || process.platform !==
       expect(model.requests.length).toBe(0); // Creating/binding metadata does not send source or ask the model.
       await expect.poll(() => home!.evaluate(() => window.ember.projectSessionsState().then(state => state.selectedProjectId))).not.toBeNull();
       const projectId = (await home.evaluate(() => window.ember.projectSessionsState())).selectedProjectId!;
-      expect((await home.evaluate(id => window.ember.projectCodingWorkspaceState(id), projectId)).available).toBe(true);
+      await expect.poll(async () => {
+        const state = await home!.evaluate(id => window.ember.projectCodingWorkspaceState(id), projectId);
+        return { available: state.available, message: state.available ? "ready" : state.message };
+      }, { timeout: 30_000, message: "Wait for the production toolchain and coding storage checks before sending work" }).toEqual({ available: true, message: "ready" });
 
       // A different webContents with the genuine preload does not inherit Home's IPC authority.
       const foreign = await app.evaluate(async ({ BrowserWindow, app: electronApp }) => {
@@ -160,14 +166,29 @@ it.skipIf(process.env.EMBER_ELECTRON_CODING_TEST !== "1" || process.platform !==
       expect(await home.locator("#project-coding-review").isHidden()).toBe(true);
       expect(fs.readFileSync(path.join(source, "test.cjs"), "utf8")).toBe(original);
       expect(fs.existsSync(path.join(destination, "review.json"))).toBe(true);
+      expect((await home.evaluate(id => window.ember.projectCodingWorkspaceState(id), projectId)).folder?.path).toBe(source);
+      // Exercise the real Home preload/main erasure barrier. The native confirmation UI is outside this IPC proof.
+      await home.evaluate(() => window.ember.forgetAllMemory());
+      expect(await home.evaluate(() => window.ember.projectSessionsState())).toEqual({ projects: [], selectedProjectId: null });
+      await expect.poll(() => home!.locator("#project-sessions-select").inputValue()).toBe("");
+      await expect.poll(() => home!.locator("#project-sessions-list h4").count()).toBe(0);
+      expect(await home.evaluate(id => window.ember.projectCodingWorkspaceState(id), projectId)).toMatchObject({ folder: null, available: false, canChoose: false });
+      expect(await home.evaluate(id => window.ember.codingResultsState(id), projectId)).toEqual([]);
+      await expect(home.evaluate(id => window.ember.codingResultReview(id), results[0].id)).rejects.toThrow("no longer available");
+      await expect.poll(() => home!.locator("#project-coding-choose").isDisabled()).toBe(true);
+      expect(fs.existsSync(path.join(destination, "review.json"))).toBe(true);
+      expect(fs.readFileSync(path.join(destination, "changes.patch"), "utf8")).toContain("1 + 1, 2");
+      expect(fs.readFileSync(path.join(source, "test.cjs"), "utf8")).toBe(original);
       expect(fs.readdirSync(path.join(userData, "coding-controllers"))).toEqual([]);
       expect(await app.evaluate(() => (globalThis as typeof globalThis & { __codingPickerCalls: string[] }).__codingPickerCalls)).toEqual(["Choose a coding folder", "Export coding review"]);
     } finally {
       const forced = app ? await closeTestElectron(app) : false;
       await model.close();
-      if (app && !forced) fs.rmSync(root, { recursive: true, force: true });
+      const exitedCleanly = !!mainProcess && !forced && mainProcess.exitCode === 0 && mainProcess.signalCode === null;
+      if (exitedCleanly) fs.rmSync(root, { recursive: true, force: true });
       else console.error(`Unverified native coding test cleanup; private fixture retained at ${root}`);
       expect(forced, `The app must complete normal shutdown; uncertain private work is retained at ${root}`).toBe(false);
+      if (app) { expect(mainProcess).toBeDefined(); expect(mainProcess!.exitCode).toBe(0); expect(mainProcess!.signalCode).toBeNull(); }
     }
   }, 180_000,
 );

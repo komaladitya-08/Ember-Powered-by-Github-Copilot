@@ -34,6 +34,7 @@ its independent result. Source/dependency limits and exclusions are shown in Pro
 and retained in the review. Existing compatible dependencies may be copied read-only; npm, Git, compilers and network
 installs are not supplied. Folder choices and unexported coding reviews last for the current connection. This remains
 a limited offline coding environment, with deterministic local-model verification rather than live-provider acceptance.
+**Forget result** removes one private review while preserving project history and copies you already exported.
 
 Windows/macOS coding and the legacy native-SDK coding path remain unavailable. The Windows command prototype still
 has native compatibility failures under investigation in CI. Selected-file
