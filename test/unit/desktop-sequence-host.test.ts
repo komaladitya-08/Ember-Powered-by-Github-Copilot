@@ -41,6 +41,7 @@ import type { TaskSpec, WorkerResult } from "../../app/main/agent/worker";
 import type { ActiveProvider } from "../../app/main/provider";
 import type { TargetBinding, TargetHands, TargetsForAgent } from "../../app/main/targets/types";
 import { modeCardVersion } from "../../app/shared/approvals";
+import { projectRecoveryDraft } from "../../app/shared/project-recovery";
 
 const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as unknown as Logger;
 const token = "gho_" + "x".repeat(36);
@@ -341,4 +342,68 @@ it("does not revive a desktop plan when provider credentials change away and bac
   await vi.waitFor(() => expect(s.host.tasks!.get(s.workers[0].spec.id)?.status).toBe("done"));
   expect(s.workers[0].disposed).toBe(true);
   expect(s.workers).toHaveLength(1);
+});
+
+it("records the ordered plan and observed outcomes for explicit checkpoint recovery", async () => {
+  const s = await setup(); await s.begin();
+  let plan = s.host.projectSessionsState().projects[0].sequences![0];
+  expect(plan).toMatchObject({ status: "active", steps: steps.map((step, index) => ({ ...step, status: index === 0 ? "running" : "pending" })) });
+  s.workers[0].outcome.resolve({ success: true, summary: "Observed first page." });
+  await vi.waitFor(() => expect(s.workers).toHaveLength(2));
+  plan = s.host.projectSessionsState().projects[0].sequences![0];
+  expect(plan.status).toBe("active");
+  expect(plan.steps.map(step => step.status)).toEqual(["done", "running"]);
+  expect(plan.steps[0].summary).toBe("Observed first page.");
+  s.workers[1].outcome.resolve({ success: true, summary: "Observed title." });
+  await vi.waitFor(() => expect(s.host.projectSessionsState().projects[0].sequences![0].status).toBe("completed"));
+});
+
+it("preserves a steered plan as uncertain original goals for a fresh reviewed request", async () => {
+  const s = await setup(); await s.begin();
+  await s.host.ask("Change the current task; don't continue with the next step");
+  await s.tool("steer_task", { id: s.workers[0].spec.id, instruction: "Inspect another page instead" });
+  s.workers[0].outcome.resolve({ success: true, summary: "Inspected the replacement page." });
+  await vi.waitFor(() => expect(s.host.tasks!.get(s.workers[0].spec.id)?.status).toBe("done"));
+  const plan = s.host.projectSessionsState().projects[0].sequences![0];
+  expect(plan).toMatchObject({ status: "retired", reason: "steered" });
+  expect(plan.steps[0]).toMatchObject({ goal: steps[0].goal, status: "interrupted" });
+  expect(plan.steps[1]).toMatchObject({ goal: steps[1].goal, status: "pending" });
+  expect(s.workers).toHaveLength(1);
+});
+
+it("keeps the final original goal uncertain when its worker is steered after the continuation listener is released", async () => {
+  const s = await setup(); await s.begin();
+  s.workers[0].outcome.resolve({ success: true, summary: "Observed first page." });
+  await vi.waitFor(() => expect(s.workers).toHaveLength(2));
+  await s.host.ask("Change the final task to inspect another page instead");
+  await s.tool("steer_task", { id: s.workers[1].spec.id, instruction: "Inspect another page instead" });
+  s.workers[1].outcome.resolve({ success: true, summary: "Inspected the replacement page." });
+  await vi.waitFor(() => expect(s.host.tasks!.get(s.workers[1].spec.id)?.status).toBe("done"));
+  const plan = s.host.projectSessionsState().projects[0].sequences![0];
+  expect(plan).toMatchObject({ status: "retired", reason: "steered" });
+  expect(plan.steps.map(step => step.status)).toEqual(["done", "interrupted"]);
+  expect(plan.steps[1].goal).toBe(steps[1].goal);
+});
+
+it("preserves the completed prefix when a context-retired worker is later steered and reports success", async () => {
+  const s = await setup();
+  const project = s.create();
+  const plan = [...steps, { name: "Record title", goal: "Write the observed title into the notes app" }];
+  await s.host.ask("Open the page, check its title, then record the title in my notes");
+  await s.tool("start_sequence", { steps: plan });
+  await vi.waitFor(() => expect(s.workers).toHaveLength(1));
+  s.workers[0].outcome.resolve({ success: true, summary: "The requested page was opened." });
+  await vi.waitFor(() => expect(s.workers).toHaveLength(2));
+  s.settings.update({ approvals: { ...s.settings.get().approvals, mode: "interactive", consent: { ...s.settings.get().approvals.consent,
+    interactive: { version: modeCardVersion("interactive"), at: new Date().toISOString() } } } });
+  expect(s.host.projectSessionsState().projects[0].sequences![0]).toMatchObject({ status: "retired", reason: "context-changed" });
+  await s.host.ask("Change the current task to inspect a different page instead");
+  await s.tool("steer_task", { id: s.workers[1].spec.id, instruction: "Inspect a different page instead" });
+  s.workers[1].outcome.resolve({ success: true, summary: "Inspected the replacement page." });
+  await vi.waitFor(() => expect(s.host.tasks!.get(s.workers[1].spec.id)?.status).toBe("done"));
+  const state = s.host.projectSessionsState(), saved = state.projects[0].sequences![0];
+  expect(saved).toMatchObject({ status: "retired", reason: "steered" });
+  expect(saved.steps.map(step => step.status)).toEqual(["done", "interrupted", "pending"]);
+  expect(projectRecoveryDraft(state, project, saved.id).remaining.map(step => step.goal)).toEqual(plan.slice(1).map(step => step.goal));
+  expect(s.workers).toHaveLength(2);
 });

@@ -229,3 +229,102 @@ describe("explicit project board checkpoints", () => {
     await expect(new ProjectSessionStore(linked, box(), false).save(owner, snapshot(), current)).rejects.toThrow("folder is unavailable");
   });
 });
+
+describe("ordered plan checkpoint recovery", () => {
+  function withPlan(status: "queued" | "running" | "waiting" = "running"): ProjectSessionsState {
+    const state = snapshot(), project = state.projects[0];
+    const liveSession = project.sessions.find(session => session.status === status)!;
+    const doneSession = project.sessions.find(session => session.status === "done")!;
+    project.sequences = [{
+      id: randomUUID(), createdAt: 10, status: "active",
+      steps: Array.from({ length: 8 }, (_, index) => ({
+        name: `Review page ${index + 1}`, goal: `Inspect browser page ${index + 1} and verify its title`,
+        status: index === 0 ? "done" as const : index === 1 ? status : "pending" as const,
+        ...(index === 0 ? { sessionId: doneSession.id, summary: "Page one was reviewed.", startedAt: 20, finishedAt: 30 } : {}),
+        ...(index === 1 ? { sessionId: liveSession.id, summary: "The page may already be open.", startedAt: 40 } : {}),
+      })),
+    }];
+    return state;
+  }
+
+  it("keeps v1 checkpoints without ordered plans backwards compatible", async () => {
+    const crypto = box(), store = new ProjectSessionStore(dir, crypto, false), state = snapshot();
+    await store.save(owner, state, current);
+    const saved = JSON.parse(crypto.decryptString(fs.readFileSync(filename())));
+    expect(saved.version).toBe(1);
+    expect(saved.state.projects[0]).not.toHaveProperty("sequences");
+    const loaded = (await store.load(owner, current))!;
+    expect(loaded.projects[0]).not.toHaveProperty("sequences");
+    expect(loaded.projects[0].name).toBe(state.projects[0].name);
+    expect(loaded.projects[0].sessions[3].summary).toBe(state.projects[0].sessions[3].summary);
+  });
+
+  for (const status of ["queued", "running", "waiting"] as const) {
+    it(`restores an eight-step ${status} plan as inert interrupted progress without losing its remaining goals`, async () => {
+      const crypto = box(), store = new ProjectSessionStore(dir, crypto, false), state = withPlan(status);
+      const before = structuredClone(state), original = state.projects[0], originalPlan = original.sequences![0];
+      await store.save(owner, state, current);
+      expect(fs.readFileSync(filename()).includes(Buffer.from(originalPlan.steps[7].goal))).toBe(false);
+      const loaded = (await store.load(owner, current))!, project = loaded.projects[0], plan = project.sequences![0];
+      expect(loaded.selectedProjectId).toBe(project.id);
+      expect(project.id).not.toBe(original.id);
+      expect(plan.id).not.toBe(originalPlan.id);
+      expect(plan).toMatchObject({ status: "interrupted", reason: "interrupted", createdAt: 10 });
+      expect(plan.steps.map(step => step.goal)).toEqual(originalPlan.steps.map(step => step.goal));
+      expect(plan.steps.map(step => step.name)).toEqual(originalPlan.steps.map(step => step.name));
+      expect(plan.steps.map(step => step.status)).toEqual(["done", "interrupted", "pending", "pending", "pending", "pending", "pending", "pending"]);
+      expect(plan.steps[0]).toMatchObject({ summary: "Page one was reviewed.", startedAt: 20, finishedAt: 30 });
+      expect(plan.steps[1]).toMatchObject({ summary: "The page may already be open.", startedAt: 40, finishedAt: expect.any(Number) });
+      expect(plan.steps[0].sessionId).toBe(project.sessions.find(session => session.title === "Task 3")!.id);
+      expect(plan.steps[1].sessionId).toBe(project.sessions.find(session => session.title === original.sessions.find(session => session.status === status)!.title)!.id);
+      expect(plan.steps[0].sessionId).not.toBe(originalPlan.steps[0].sessionId);
+      expect(plan.steps[1].sessionId).not.toBe(originalPlan.steps[1].sessionId);
+      expect(project.sessions.every(session => session.taskId === "")).toBe(true);
+      expect(plan.steps.slice(2).every(step => step.sessionId === undefined && step.startedAt === undefined)).toBe(true);
+      expect(state).toEqual(before);
+      const again = (await store.load(owner, current))!;
+      expect(again.projects[0].sequences![0].id).not.toBe(plan.id);
+    });
+  }
+
+  it("preserves completed and deliberately retired plans and self-contained outcomes after session rows are evicted", async () => {
+    const state = snapshot(), project = state.projects[0];
+    project.sessions = [];
+    project.sequences = [
+      { id: randomUUID(), createdAt: 10, status: "completed", steps: [
+        { name: "Read", goal: "Inspect the browser page", status: "done", summary: "Read the page.", startedAt: 20, finishedAt: 30 },
+        { name: "Verify", goal: "Check the page title", status: "done", summary: "The title matched.", startedAt: 40, finishedAt: 50 },
+      ] },
+      { id: randomUUID(), createdAt: 60, status: "retired", reason: "steered", steps: [
+        { name: "Prepare", goal: "Prepare the message draft", status: "done", summary: "Draft prepared.", startedAt: 70, finishedAt: 80 },
+        { name: "Review", goal: "Review the prepared message", status: "pending" },
+      ] },
+    ];
+    const before = structuredClone(state), store = new ProjectSessionStore(dir, box(), false);
+    await store.save(owner, state, current);
+    const loaded = (await store.load(owner, current))!, plans = loaded.projects[0].sequences!;
+    expect(plans.map(plan => plan.status)).toEqual(["completed", "retired"]);
+    expect(plans[1].reason).toBe("steered");
+    expect(plans[0].steps).toEqual(project.sequences[0].steps);
+    expect(plans[1].steps).toEqual(project.sequences[1].steps);
+    expect(plans.every((plan, index) => plan.id !== project.sequences![index].id)).toBe(true);
+    expect(state).toEqual(before);
+  });
+
+  it("refuses plan fields that could restore authority, duplicate plan identities or another project's session link", async () => {
+    const state = withPlan(), store = new ProjectSessionStore(dir, box(), false);
+    const invalid = (change: (copy: ProjectSessionsState) => void) => { const copy = structuredClone(state); change(copy); return copy; };
+    const cases = [
+      invalid(copy => Object.assign(copy.projects[0].sequences![0], { permissions: ["send"] })),
+      invalid(copy => Object.assign(copy.projects[0].sequences![0].steps[1], { taskId: "old-executable-task" })),
+      invalid(copy => { copy.projects[0].sequences!.push(structuredClone(copy.projects[0].sequences![0])); }),
+      invalid(copy => {
+        const other = snapshot().projects[0];
+        copy.projects.push(other);
+        copy.projects[0].sequences![0].steps[1].sessionId = other.sessions[0].id;
+      }),
+    ];
+    for (const copy of cases) await expect(store.save(owner, copy, current)).rejects.toThrow();
+    expect(fs.readdirSync(dir)).toEqual([]);
+  });
+});

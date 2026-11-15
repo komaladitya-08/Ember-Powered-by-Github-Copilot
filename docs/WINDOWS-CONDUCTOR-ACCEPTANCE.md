@@ -5,9 +5,11 @@ display scales, input language, model/provider and approval mode with each resul
 not certify real app focus, microphone quality, cursor ownership or a coding execution boundary.
 
 The Projects & sessions board groups desktop tasks. Explicit Save projects keeps an encrypted checkpoint; Open
-saved projects restores inert records and marks interrupted sessions stopped. It never resumes model sessions. Native coding is unavailable on every platform; do not remove its gate to
-perform this acceptance pass. Automatic checkpoint/restart recovery, safe coding isolation and conflict-safe coding
-change reconciliation remain implementation work, not laptop tests waiting to be checked off.
+saved projects restores inert records, ordered goals and observed outcomes and marks interrupted work stopped.
+Review remaining steps prepares a fresh editable request without replaying actions. Save again to retain later progress.
+It never resumes model sessions. Native coding is unavailable on every platform; do not remove its gate to perform
+this acceptance pass. Whole-runtime coding integration, platform isolation and project workspace binding remain
+implementation work, not laptop tests waiting to be checked off. Automatic crash checkpointing is not implemented.
 
 ## Prepare the checkout
 
@@ -47,6 +49,7 @@ prompt, fixture or screenshot.
 | Completion and failure | Complete one task; refuse another or close its target app. | Success, failure and Stop are distinct, with a readable outcome. Model prose alone does not turn failed work into a successful result. |
 | Forget and identity | Try forgetting a project with active work; then stop it and forget it. Sign out and reconnect. | Active work cannot be silently orphaned by forgetting. Forgotten records disappear; another account sees none of the previous account's project records. |
 | Quit and reopen | Quit normally, then reopen Ember. | The live board is empty. Open saved projects restores an explicitly saved checkpoint, with interrupted sessions stopped and no executable old task references. No old task resumes with old authority. |
+| Review interrupted goals | Save a plan after its first completed step and during its next step, restart, open it, and review remaining steps. Repeat with a long plan and an existing unsent request. | Full goals and outcomes remain visible. Only the contiguous completed prefix is omitted. Partial effects are called out. Review does not execute or silently replace a draft; edit/use the request, then explicitly Send with current approvals. Oversized goals are not truncated and can be reviewed one step at a time. |
 | Coding refusal | Ask for autonomous file editing or a coding-to-desktop sequence. | Ember explains coding is unavailable and does not launch native coding tools or claim the coding part completed. Selected-file review and patch drafting retain their separate existing flow. |
 
 ## Check native laptop behaviour

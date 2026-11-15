@@ -22,12 +22,15 @@ work, the conductor can start a sequence of two to eight named sessions: a later
 previous session succeeds and its tools have finished shutting down. Stop or steering retires the remaining steps. Selecting another
 project does not reassign work already requested. The cursor companion names a single active task and distinguishes
 working sessions from queued ones. Projects and session records last for this run unless you choose **Save projects**. This keeps an encrypted local
-checkpoint until **Forget saved projects** or **Forget everything**. **Open saved projects** restores records, with
-interrupted sessions stopped; it never resumes work. Quitting or signing out clears the live board.
+checkpoint until **Forget saved projects** or **Forget everything**. Save again to retain later progress.
+**Open saved projects** restores records and ordered goals, with interrupted sessions stopped; it never resumes work.
+**Review remaining steps** prepares an editable new request. Review and Send it to request work again with current
+permissions. Quitting or signing out clears the live board.
 
 Native coding sessions remain unavailable while filesystem and credential isolation are completed. Selected-file
 review and patch drafting are separate existing features. See the [progress and remaining work](docs/CONDUCTOR-PROGRESS.md),
-[product research](docs/COMPANION_RESEARCH.md) and [Windows acceptance checks](docs/WINDOWS-CONDUCTOR-ACCEPTANCE.md).
+[product research](docs/COMPANION_RESEARCH.md), [experimental coding exports](docs/CODING-RESULT-EXPORT.md) and
+[Windows acceptance checks](docs/WINDOWS-CONDUCTOR-ACCEPTANCE.md).
 
 ## What you need
 

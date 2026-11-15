@@ -13,7 +13,7 @@ import { HOST_PLATFORM } from "../platform/os";
 
 export interface SnapshotLimits { files: number; bytes: number; fileBytes: number; depth: number }
 export interface SnapshotEntry { path: string; size: number; digest: string; executable: boolean }
-export interface CodingSnapshot { directory: string; entries: SnapshotEntry[]; dispose(): Promise<void> }
+export interface CodingSnapshot { directory: string; entries: SnapshotEntry[]; directories: string[]; dispose(): Promise<void> }
 
 const DEFAULT_LIMITS: SnapshotLimits = { files: 10_000, bytes: 100 * 1024 * 1024, fileBytes: 8 * 1024 * 1024, depth: 64 };
 const DIR = constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW | constants.O_NONBLOCK;
@@ -95,6 +95,7 @@ export async function createCodingSnapshot(source: string, baseDir: string, prot
     directory = await fs.mkdtemp(path.join(base, "ember-coding-snapshot-"));
     await fs.chmod(directory, 0o700);
     const entries: SnapshotEntry[] = [];
+    const directories: string[] = [];
     let count = 0, bytes = 0;
     const walk = async (dir: fs.FileHandle, dest: string, prefix: string, depth: number): Promise<void> => {
       if (depth > limits.depth) throw new Error("The project is too deeply nested to copy.");
@@ -118,6 +119,7 @@ export async function createCodingSnapshot(source: string, baseDir: string, prot
             if (!live.isDirectory() || live.dev !== listed.dev || live.ino !== listed.ino) throw new Error("The project changed while copying.");
             const target = path.join(dest, name);
             await fs.mkdir(target, { mode: 0o700 });
+            directories.push(relative);
             await walk(child, target, relative, depth + 1);
           } finally { await child.close(); }
         } else if (listed.isFile()) {
@@ -157,7 +159,7 @@ export async function createCodingSnapshot(source: string, baseDir: string, prot
     };
     await walk(root, directory, "", 0);
     const resultDir = directory;
-    return { directory: resultDir, entries, dispose: async () => {
+    return { directory: resultDir, entries, directories, dispose: async () => {
       if (disposed) return;
       await fs.rm(resultDir, { recursive: true, force: true });
       disposed = true;

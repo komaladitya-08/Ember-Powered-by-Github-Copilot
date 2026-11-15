@@ -104,15 +104,29 @@ export class ProjectSessionStore {
     const ids = new Map(data.state.projects.map(project => [project.id, randomUUID()]));
     return {
       selectedProjectId: data.state.selectedProjectId === null ? null : ids.get(data.state.selectedProjectId)!,
-      projects: data.state.projects.map(project => ({
-        ...project, id: ids.get(project.id)!,
-        sessions: project.sessions.map(session => {
-          const interrupted = session.status === "queued" || session.status === "running" || session.status === "waiting";
-          return { ...session, id: randomUUID(), taskId: "", ...(interrupted ? {
-            status: "stopped" as const, detail: "Interrupted checkpoint. Start a new request to continue.", finishedAt: now,
-          } : {}) };
-        }),
-      })),
+      projects: data.state.projects.map(project => {
+        const sessionIds = new Map(project.sessions.map(session => [session.id, randomUUID()]));
+        return {
+          ...project, id: ids.get(project.id)!,
+          sessions: project.sessions.map(session => {
+            const interrupted = session.status === "queued" || session.status === "running" || session.status === "waiting";
+            return { ...session, id: sessionIds.get(session.id)!, taskId: "", ...(interrupted ? {
+              status: "stopped" as const, detail: "Interrupted checkpoint. Start a new request to continue.", finishedAt: now,
+            } : {}) };
+          }),
+          ...(project.sequences ? { sequences: project.sequences.map(sequence => ({
+            ...sequence, id: randomUUID(),
+            ...(sequence.status === "active" ? { status: "interrupted" as const, reason: "interrupted" as const } : {}),
+            steps: sequence.steps.map(step => {
+              const interrupted = step.status === "queued" || step.status === "running" || step.status === "waiting";
+              return { ...step,
+                ...(step.sessionId ? { sessionId: sessionIds.get(step.sessionId)! } : {}),
+                ...(interrupted ? { status: "interrupted" as const, finishedAt: now } : {}),
+              };
+            }),
+          })) } : {}),
+        };
+      }),
     };
   }
 

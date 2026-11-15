@@ -12,12 +12,30 @@ export interface ProjectSession {
   startedAt: number;
   finishedAt?: number;
 }
+export type ProjectSequenceReason = "stopped" | "steered" | "context-changed" | "failed" | "interrupted";
+export interface ProjectSequenceStep {
+  name: string;
+  goal: string;
+  status: "pending" | "interrupted" | ProjectSessionStatus;
+  sessionId?: string;
+  summary?: string;
+  startedAt?: number;
+  finishedAt?: number;
+}
+export interface ProjectSequence {
+  id: string;
+  createdAt: number;
+  status: "active" | "completed" | "interrupted" | "retired";
+  reason?: ProjectSequenceReason;
+  steps: ProjectSequenceStep[];
+}
 export interface ProjectSessionProject {
   id: string;
   name: string;
   goal: string;
   createdAt: number;
   sessions: ProjectSession[];
+  sequences?: ProjectSequence[];
 }
 export interface ProjectSessionsState {
   projects: ProjectSessionProject[];

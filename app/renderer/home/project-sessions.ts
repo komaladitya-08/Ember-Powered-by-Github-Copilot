@@ -2,6 +2,7 @@
 import type { ProjectSession, ProjectSessionsState } from "../../shared/project-sessions";
 import { STATUS_WORDS } from "../../shared/activity";
 import { ipcErrorText } from "./copy";
+import { projectRecoveryDraft } from "../../shared/project-recovery";
 
 export function mountProjectSessions(): void {
   const root = document.querySelector<HTMLElement>("#project-sessions")!;
@@ -21,6 +22,12 @@ export function mountProjectSessions(): void {
   const save = find<HTMLButtonElement>("save");
   const open = find<HTMLButtonElement>("open");
   const forgetSaved = find<HTMLButtonElement>("forget-saved");
+  const plans = find<HTMLDivElement>("plans");
+  const review = find<HTMLElement>("recovery");
+  const reviewNote = find<HTMLParagraphElement>("recovery-note");
+  const reviewDraft = find<HTMLTextAreaElement>("recovery-draft");
+  const reviewUse = find<HTMLButtonElement>("recovery-use");
+  const reviewReplace = find<HTMLParagraphElement>("recovery-replace");
   let state: ProjectSessionsState = { projects: [], selectedProjectId: null };
   let loaded = false;
   let connected = false;
@@ -28,6 +35,8 @@ export function mountProjectSessions(): void {
   let epoch = 0;
   let accountEpoch = 0;
   let drawn = "";
+  let plansDrawn = "";
+  let reviewed: { projectId: string; sequenceId: string; signature: string } | undefined;
 
   const active = () => state.projects.find(p => p.id === state.selectedProjectId);
   const ongoing = (session: ProjectSession) => !["done", "failed", "stopped"].includes(session.status);
@@ -39,6 +48,29 @@ export function mountProjectSessions(): void {
     result.addEventListener("click", clicked);
     return result;
   };
+  const closeReview = () => {
+    reviewed = undefined;
+    review.hidden = true;
+    reviewDraft.value = "";
+    reviewNote.textContent = "";
+  };
+  const updateReview = () => {
+    reviewUse.disabled = !reviewed || pending || !reviewDraft.value.trim() || reviewDraft.value.length > 2000;
+    reviewUse.textContent = request.value ? "Replace request draft" : "Use in request";
+    reviewReplace.textContent = request.value ? "Using this review will replace the text currently in Ask the conductor." : "Using this review fills Ask the conductor. You decide when to send it.";
+  };
+  const prepareReview = (projectId: string, sequenceId: string, stepIndex?: number) => {
+    try {
+      const result = projectRecoveryDraft(state, projectId, sequenceId, stepIndex);
+      const sequence = state.projects.find(p => p.id === projectId)?.sequences?.find(s => s.id === sequenceId);
+      reviewed = { projectId, sequenceId, signature: JSON.stringify(sequence) };
+      reviewNote.textContent = result.message;
+      reviewDraft.value = result.draft ?? "";
+      review.hidden = false;
+      updateReview();
+      reviewDraft.focus();
+    } catch (error) { status.textContent = error instanceof Error ? error.message : "Couldn't prepare these goals. Write a new request."; }
+  };
   const render = () => {
     const project = active();
     const options = [{ id: "", name: "No active project" }, ...state.projects];
@@ -49,20 +81,82 @@ export function mountProjectSessions(): void {
     select.value = state.selectedProjectId ?? "";
     select.disabled = !loaded || pending;
     add.disabled = !loaded || pending;
-    forget.disabled = !project || pending || project.sessions.some(ongoing);
+    forget.disabled = !project || pending || project.sessions.some(ongoing) || !!project.sequences?.some(plan => plan.status === "active");
     request.disabled = !project || !connected || pending;
     send.disabled = request.disabled;
     save.disabled = !loaded || !connected || pending || !state.projects.length;
-    open.disabled = !loaded || !connected || pending || state.projects.some(p => p.sessions.some(ongoing));
+    open.disabled = !loaded || !connected || pending || state.projects.some(p => p.sessions.some(ongoing) || p.sequences?.some(plan => plan.status === "active"));
     forgetSaved.disabled = !loaded || !connected || pending;
     goalText.textContent = project?.goal ?? "";
     goalText.hidden = !project?.goal;
+    if (reviewed && (reviewed.projectId !== project?.id || reviewed.signature !== JSON.stringify(project.sequences?.find(s => s.id === reviewed!.sequenceId)))) {
+      closeReview();
+      status.textContent = "The project or plan changed. Review its current goals again before preparing a request.";
+    }
+    updateReview();
     // Keep focused session controls in place unless their actual state changes.
-    const signature = JSON.stringify([project?.id, project?.sessions]);
+    const signature = JSON.stringify([project?.id, project?.sessions, project?.sequences, pending]);
     if (signature === drawn) return;
     drawn = signature;
     const focused = list.contains(document.activeElement) && document.activeElement instanceof HTMLElement
       ? document.activeElement.dataset.sessionControl : undefined;
+    const planSignature = JSON.stringify([project?.id, project?.sequences, pending]);
+    if (planSignature !== plansDrawn) {
+      plansDrawn = planSignature;
+      const openPlans = new Set([...plans.querySelectorAll<HTMLDetailsElement>("details[open]")].map(detail => detail.dataset.sequence));
+      const focusedPlan = plans.contains(document.activeElement) && document.activeElement instanceof HTMLElement
+        ? document.activeElement.dataset.planControl : undefined;
+      plans.replaceChildren();
+      plans.hidden = !project?.sequences?.length;
+      for (const sequence of project?.sequences ?? []) {
+        const item = document.createElement("details");
+        item.className = "disclose";
+        item.dataset.sequence = sequence.id;
+        item.open = openPlans.has(sequence.id);
+        const heading = document.createElement("summary");
+        const done = sequence.steps.filter(step => step.status === "done").length;
+        heading.textContent = `Desktop plan · ${sequence.status} · ${done} of ${sequence.steps.length} completed`;
+        heading.dataset.planControl = `${sequence.id}:summary`;
+        item.append(heading);
+        const steps = document.createElement("ol");
+        const reviewable = sequence.status !== "active" && !sequence.steps.some(step => ["queued", "running", "waiting"].includes(step.status));
+        let prefix = 0;
+        while (sequence.steps[prefix]?.status === "done") prefix++;
+        sequence.steps.forEach((step, index) => {
+          const row = document.createElement("li");
+          const title = document.createElement("h4");
+          title.textContent = step.name;
+          const detail = document.createElement("p");
+          detail.className = "hint";
+          detail.textContent = step.status === "pending" ? "Not started" : step.status === "interrupted" ? "Interrupted" : STATUS_WORDS[step.status];
+          const goal = document.createElement("p");
+          goal.textContent = step.goal;
+          row.append(title, detail, goal);
+          if (step.summary) {
+            const outcome = document.createElement("p");
+            outcome.textContent = `Recorded outcome: ${step.summary}`;
+            row.append(outcome);
+          }
+          if (index >= prefix && reviewable) {
+            const one = button(`Review step ${index + 1}`, () => prepareReview(project!.id, sequence.id, index));
+            one.dataset.planControl = `${sequence.id}:${index}`;
+            one.disabled = pending;
+            row.append(one);
+          }
+          steps.append(row);
+        });
+        item.append(steps);
+        if (reviewable && prefix < sequence.steps.length) {
+          const remaining = button("Review remaining steps", () => prepareReview(project!.id, sequence.id));
+          remaining.dataset.planControl = `${sequence.id}:remaining`;
+          remaining.disabled = pending;
+          item.append(remaining);
+        }
+        plans.append(item);
+      }
+      if (focusedPlan) [...plans.querySelectorAll<HTMLElement>("[data-plan-control]")]
+        .find(control => control.dataset.planControl === focusedPlan)?.focus({ preventScroll: true });
+    }
     list.replaceChildren();
     if (!project?.sessions.length) {
       const item = document.createElement("li");
@@ -166,6 +260,18 @@ export function mountProjectSessions(): void {
     if (forget.disabled || !active()) return;
     void change({ action: "forget", id: active()!.id }).then(ok => { if (ok) status.textContent = "Project record forgotten. Your files are unchanged."; });
   });
+  request.addEventListener("input", updateReview);
+  reviewDraft.addEventListener("input", updateReview);
+  find<HTMLButtonElement>("recovery-cancel").addEventListener("click", closeReview);
+  reviewUse.addEventListener("click", () => {
+    if (reviewUse.disabled || !reviewed) return;
+    const sequence = active()?.sequences?.find(s => s.id === reviewed!.sequenceId);
+    if (active()?.id !== reviewed.projectId || JSON.stringify(sequence) !== reviewed.signature) { closeReview(); return; }
+    request.value = reviewDraft.value;
+    closeReview();
+    status.textContent = connected ? "Review your new request, then send it to the conductor." : "Request prepared. Connect a model, review it, then send it to the conductor.";
+    if (!request.disabled) request.focus();
+  });
   requestForm.addEventListener("submit", event => {
     event.preventDefault();
     if (send.disabled || !request.value.trim()) return;
@@ -221,6 +327,7 @@ export function mountProjectSessions(): void {
     epoch++;
     pending = false;
     state = { projects: [], selectedProjectId: null };
+    closeReview();
     name.value = ""; goal.value = ""; request.value = "";
     status.textContent = "";
     render();

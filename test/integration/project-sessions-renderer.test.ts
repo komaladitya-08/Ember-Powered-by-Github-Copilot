@@ -4,7 +4,7 @@ import path from "node:path";
 import { build } from "esbuild";
 import { chromium, type Browser, type Page } from "playwright-core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import type { ProjectSession, ProjectSessionsAction, ProjectSessionsState } from "../../app/shared/project-sessions";
+import type { ProjectSequence, ProjectSession, ProjectSessionsAction, ProjectSessionsState } from "../../app/shared/project-sessions";
 
 interface BoardHarness {
   state: ProjectSessionsState;
@@ -29,6 +29,15 @@ declare global { interface Window { __projectBoard: BoardHarness } }
 const empty: ProjectSessionsState = { projects: [], selectedProjectId: null };
 const session = (status: ProjectSession["status"], title = "Check the app"): ProjectSession => ({ id: "session-1", taskId: "task-1", title, kind: "desktop", status, detail: "Reading the app", startedAt: 1 });
 const populated = (sessions: ProjectSession[] = []): ProjectSessionsState => ({ projects: [{ id: "project-1", name: "App project", goal: "Ship a useful app", createdAt: 1, sessions }], selectedProjectId: "project-1" });
+const recoverable = (): ProjectSessionsState => {
+  const state = populated();
+  state.projects[0].sequences = [{ id: "plan-1", createdAt: 1, status: "interrupted", reason: "stopped", steps: [
+    { name: "Inspect", goal: "Inspect the preferences", status: "done", summary: "Observed the preferences" },
+    { name: "Update", goal: "Change the display preference", status: "interrupted", summary: "UNTRUSTED OLD OUTCOME" },
+    { name: "Verify", goal: "Verify the display preference", status: "pending" },
+  ] }];
+  return state;
+};
 
 describe.skipIf(process.env.EMBER_UIUX_TEST !== "1")("Projects and delegated sessions in Chromium", () => {
   let browser: Browser;
@@ -274,13 +283,102 @@ describe.skipIf(process.env.EMBER_UIUX_TEST !== "1")("Projects and delegated ses
     await page.close();
   });
 
+  it("reviews remaining goals without sending or replacing a draft until explicitly chosen", async () => {
+    const page = await open(recoverable());
+    await page.locator("#project-sessions-request").fill("My existing request");
+    await page.locator("#project-sessions-plans summary").click();
+    expect(await page.locator("#project-sessions-plans").innerText()).toContain("UNTRUSTED OLD OUTCOME");
+    await page.getByRole("button", { name: "Review remaining steps", exact: true }).click();
+    expect(await page.locator("#project-sessions-recovery-note").innerText()).toContain("partly completed");
+    const draft = await page.locator("#project-sessions-recovery-draft").inputValue();
+    expect(draft).toContain("Change the display preference");
+    expect(draft).toContain("Verify the display preference");
+    expect(draft).not.toContain("Inspect the preferences");
+    expect(draft).not.toContain("UNTRUSTED OLD OUTCOME");
+    expect(await page.locator("#project-sessions-request").inputValue()).toBe("My existing request");
+    expect(await page.evaluate(() => window.__projectBoard.sent)).toEqual([]);
+    await page.locator("#project-sessions-recovery-draft").fill("Inspect the current app, then update only the display.");
+    await page.getByRole("button", { name: "Replace request draft", exact: true }).click();
+    expect(await page.locator("#project-sessions-request").inputValue()).toBe("Inspect the current app, then update only the display.");
+    expect(await page.evaluate(() => window.__projectBoard.sent)).toEqual([]);
+    await page.locator("#project-sessions-send").click();
+    await expect.poll(() => page.evaluate(() => window.__projectBoard.sent)).toEqual(["Inspect the current app, then update only the display."]);
+    expect(await page.evaluate(() => window.__projectBoard.controls)).toEqual([]);
+    await page.close();
+  });
+
+  it("keeps oversized goals visible and lets the user review a single full step", async () => {
+    const state = recoverable();
+    state.projects[0].sequences![0].steps[1].goal = "A".repeat(1800);
+    state.projects[0].sequences![0].steps[2].goal = "B".repeat(1800);
+    const page = await open(state);
+    await page.locator("#project-sessions-plans summary").click();
+    await page.getByRole("button", { name: "Review remaining steps", exact: true }).click();
+    expect(await page.locator("#project-sessions-recovery-note").innerText()).toContain("nothing was truncated");
+    expect(await page.locator("#project-sessions-recovery-draft").inputValue()).toBe("");
+    expect(await page.locator("#project-sessions-recovery-use").isDisabled()).toBe(true);
+    expect(await page.locator("#project-sessions-plans").innerText()).toContain("A".repeat(1800));
+    expect(await page.locator("#project-sessions-plans").innerText()).toContain("B".repeat(1800));
+    await page.getByRole("button", { name: "Review step 3", exact: true }).click();
+    expect(await page.locator("#project-sessions-recovery-note").innerText()).toContain("Earlier unfinished steps");
+    expect(await page.locator("#project-sessions-recovery-draft").inputValue()).toContain("B".repeat(1800));
+    expect(await page.locator("#project-sessions-recovery-draft").inputValue()).not.toContain("A".repeat(1800));
+    expect(await page.evaluate(() => window.__projectBoard.sent)).toEqual([]);
+    await page.close();
+  });
+
+  it("invalidates a review on changed progress and forgets its private draft on account change", async () => {
+    const page = await open(recoverable());
+    await page.locator("#project-sessions-plans summary").click();
+    await page.getByRole("button", { name: "Review remaining steps", exact: true }).click();
+    await page.evaluate(() => {
+      window.__projectBoard.state.projects[0].sequences![0].steps[1].status = "done";
+      window.__projectBoard.emit("onTasks");
+    });
+    await expect.poll(() => page.locator("#project-sessions-recovery").isHidden()).toBe(true);
+    expect(await page.locator("#project-sessions-recovery-draft").inputValue()).toBe("");
+    await page.getByRole("button", { name: "Review remaining steps", exact: true }).click();
+    await page.evaluate(() => {
+      window.__projectBoard.state = { projects: [], selectedProjectId: null };
+      window.__projectBoard.emit("onConversationForgotten");
+    });
+    expect(await page.locator("#project-sessions-recovery").isHidden()).toBe(true);
+    expect(await page.locator("#project-sessions-recovery-draft").inputValue()).toBe("");
+    expect(await page.locator("#project-sessions-request").inputValue()).toBe("");
+    expect(await page.evaluate(() => window.__projectBoard.sent)).toEqual([]);
+    await page.close();
+  });
+
+  it("shows active and completed plans without offering replay, including plain text goals", async () => {
+    const state = recoverable();
+    const sequence = state.projects[0].sequences![0];
+    sequence.status = "active";
+    sequence.steps[1].goal = '<img src=x onerror="window.injected=true">';
+    const done: ProjectSequence = { ...structuredClone(sequence), id: "done", status: "completed", steps: sequence.steps.map(step => ({ ...step, status: "done" })) };
+    const retiring: ProjectSequence = { ...structuredClone(sequence), id: "retiring", status: "retired", reason: "context-changed" };
+    retiring.steps[1].status = "running";
+    state.projects[0].sequences!.push(done, retiring);
+    const page = await open(state);
+    for (const summary of await page.locator("#project-sessions-plans summary").all()) await summary.click();
+    expect(await page.locator("#project-sessions-plans img").count()).toBe(0);
+    expect(await page.locator("#project-sessions-plans").innerText()).toContain('<img src=x onerror="window.injected=true">');
+    expect(await page.getByRole("button", { name: /^Review (remaining|step)/ }).count()).toBe(0);
+    expect(await page.evaluate(() => window.__projectBoard.sent)).toEqual([]);
+    await page.close();
+  });
+
   it("fits the actual Home styles at wide and narrow window sizes", async () => {
     const tasks: ProjectSession[] = [
       { ...session("running", "Inspect the app and compare the current settings"), id: "one", taskId: "one" },
       { ...session("queued", "Verify the next change in a separate session"), id: "two", taskId: "two", detail: "Waiting for a worker slot" },
       { ...session("done", "Review the project plan"), id: "three", taskId: "three", summary: "The remaining work and acceptance checks are recorded." },
     ];
-    const page = await open(populated(tasks));
+    const state = recoverable();
+    state.projects[0].sessions = tasks;
+    state.projects[0].sequences![0].steps[1].goal = "A very long unbroken app identifier: " + "a".repeat(400);
+    const page = await open(state);
+    await page.locator("#project-sessions-plans summary").click();
+    await page.getByRole("button", { name: "Review remaining steps", exact: true }).click();
     const source = fs.readFileSync("app/renderer/home/index.html", "utf8");
     const nav = source.slice(source.indexOf('<nav class="jump'), source.indexOf("</nav>") + 6);
     await page.evaluate(nav => {

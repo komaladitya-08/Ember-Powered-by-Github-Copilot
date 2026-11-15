@@ -1,0 +1,267 @@
+/*
+ * Offline LPAC probe. Build as native C, without a CRT:
+ *   cl /nologo /TC /O2 /GS- /Zl experimental-windows-lpac.c /link
+ *      /NODEFAULTLIB /ENTRY:mainCRTStartup /SUBSYSTEM:CONSOLE kernel32.lib advapi32.lib
+ *
+ * This is a disposable fixture, never a production launcher. It receives no credentials and prints nothing.
+ * The parent grants only its copied executable, work and state directories. A normal child deliberately remains
+ * in the private job after the parent exits, so Stop must observe the entire job rather than just this process.
+ */
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <stddef.h>
+
+/* Keep compiler-generated aggregate copies/fills from introducing a CRT dependency. */
+void * __cdecl memset(void *target, int value, size_t count);
+void * __cdecl memcpy(void *target, const void *source, size_t count);
+#pragma function(memset)
+#pragma function(memcpy)
+void * __cdecl memset(void *target, int value, size_t count)
+{
+    volatile unsigned char *bytes = (volatile unsigned char *)target;
+    while (count--) *bytes++ = (unsigned char)value;
+    return target;
+}
+void * __cdecl memcpy(void *target, const void *source, size_t count)
+{
+    volatile unsigned char *to = (volatile unsigned char *)target;
+    const volatile unsigned char *from = (const volatile unsigned char *)source;
+    while (count--) *to++ = *from++;
+    return target;
+}
+
+#define MAX_CHARS 32768
+#define TOKEN_IS_APP_CONTAINER ((TOKEN_INFORMATION_CLASS)29)
+#define TOKEN_CAPABILITIES_CLASS ((TOKEN_INFORMATION_CLASS)30)
+#define TOKEN_IS_LPAC ((TOKEN_INFORMATION_CLASS)46)
+
+static WCHAR selfPath[MAX_CHARS];
+static WCHAR commandLine[MAX_CHARS];
+static WCHAR statePath[MAX_CHARS];
+static WCHAR workPath[MAX_CHARS];
+static WCHAR toolsPath[MAX_CHARS];
+static WCHAR filePath[MAX_CHARS];
+static WCHAR argument[64];
+static ULONGLONG tokenBuffer[128];
+static DWORD report[12];
+static const BYTE workBytes[] = { 'l', 'p', 'a', 'c', '-', 'f', 'i', 'x', 't', 'u', 'r', 'e' };
+
+static DWORD lengthOf(const WCHAR *text)
+{
+    DWORD length = 0;
+    while (text[length]) length++;
+    return length;
+}
+
+static BOOL append(WCHAR *target, const WCHAR *text)
+{
+    DWORD used = lengthOf(target), extra = lengthOf(text), i;
+    if (used >= MAX_CHARS || extra >= MAX_CHARS || used + extra >= MAX_CHARS) return FALSE;
+    for (i = 0; i <= extra; i++) target[used + i] = text[i];
+    return TRUE;
+}
+
+static BOOL pathFor(const WCHAR *directory, const WCHAR *suffix)
+{
+    filePath[0] = 0;
+    return append(filePath, directory) && append(filePath, suffix);
+}
+
+/* The launcher supplies exactly one argument, a decimal host PID. Child mode uses the literal word child. */
+static BOOL readArgument(void)
+{
+    const WCHAR *cursor = GetCommandLineW();
+    BOOL quoted = FALSE;
+    DWORD count = 0;
+    while (*cursor) {
+        if (*cursor == L'"') quoted = !quoted;
+        else if (!quoted && (*cursor == L' ' || *cursor == L'\t')) break;
+        cursor++;
+    }
+    if (quoted) return FALSE;
+    while (*cursor == L' ' || *cursor == L'\t') cursor++;
+    if (!*cursor) return FALSE;
+    quoted = FALSE;
+    while (*cursor) {
+        if (*cursor == L'"') quoted = !quoted;
+        else {
+            if (!quoted && (*cursor == L' ' || *cursor == L'\t')) break;
+            if (count + 1 >= (DWORD)(sizeof(argument) / sizeof(argument[0]))) return FALSE;
+            argument[count++] = *cursor;
+        }
+        cursor++;
+    }
+    argument[count] = 0;
+    if (quoted || count == 0) return FALSE;
+    while (*cursor == L' ' || *cursor == L'\t') cursor++;
+    return *cursor == 0;
+}
+
+static BOOL childArgument(void)
+{
+    static const WCHAR expected[] = L"child";
+    DWORD i = 0;
+    while (argument[i] && argument[i] == expected[i]) i++;
+    return argument[i] == 0 && expected[i] == 0;
+}
+
+static DWORD hostPid(void)
+{
+    DWORD value = 0, digit, i = 0;
+    while (argument[i]) {
+        if (argument[i] < L'0' || argument[i] > L'9') return 0;
+        digit = (DWORD)(argument[i++] - L'0');
+        if (value > (MAXDWORD - digit) / 10) return 0;
+        value = value * 10 + digit;
+    }
+    return value;
+}
+
+static BOOL environmentPath(const WCHAR *name, WCHAR *output)
+{
+    DWORD count = GetEnvironmentVariableW(name, output, MAX_CHARS);
+    return count > 0 && count < MAX_CHARS;
+}
+
+static BOOL tokenFlag(HANDLE token, TOKEN_INFORMATION_CLASS informationClass)
+{
+    DWORD value = 0, bytes = 0;
+    return GetTokenInformation(token, informationClass, &value, sizeof(value), &bytes)
+        && bytes == sizeof(value) && value == 1;
+}
+
+/* Each right is tested separately; a combined mask could hide one unexpectedly permitted operation. */
+static BOOL processRightDenied(DWORD right, DWORD processId)
+{
+    HANDLE process = OpenProcess(right, FALSE, processId);
+    DWORD error = GetLastError();
+    if (process != NULL) CloseHandle(process);
+    return process == NULL && error == ERROR_ACCESS_DENIED;
+}
+
+static BOOL spawnChild(DWORD flags, PROCESS_INFORMATION *process, DWORD *error)
+{
+    STARTUPINFOW startup;
+    memset(&startup, 0, sizeof(startup));
+    memset(process, 0, sizeof(*process));
+    startup.cb = sizeof(startup);
+    commandLine[0] = 0;
+    if (!append(commandLine, L"\"") || !append(commandLine, selfPath) || !append(commandLine, L"\" child")) {
+        *error = ERROR_FILENAME_EXCED_RANGE;
+        return FALSE;
+    }
+    if (!CreateProcessW(selfPath, commandLine, NULL, NULL, FALSE, flags | CREATE_NO_WINDOW,
+                        NULL, NULL, &startup, process)) {
+        *error = GetLastError();
+        return FALSE;
+    }
+    *error = ERROR_SUCCESS;
+    return TRUE;
+}
+
+static BOOL endUnexpectedChild(PROCESS_INFORMATION *process)
+{
+    BOOL ended;
+    if (WaitForSingleObject(process->hProcess, 0) != WAIT_OBJECT_0)
+        TerminateProcess(process->hProcess, 125);
+    ended = WaitForSingleObject(process->hProcess, 5000) == WAIT_OBJECT_0;
+    CloseHandle(process->hThread);
+    CloseHandle(process->hProcess);
+    return ended;
+}
+
+void __cdecl mainCRTStartup(void)
+{
+    HANDLE token = NULL, file, host;
+    DWORD count, needed = 0, error, parent, groups;
+    PROCESS_INFORMATION unexpected, child;
+    BYTE signature[2];
+    BOOL wrote, selfControl, readDenied, duplicateDenied, parentDenied;
+
+    if (!readArgument()) ExitProcess(10);
+    if (childArgument()) {
+        Sleep(INFINITE);
+        ExitProcess(11);
+    }
+    parent = hostPid();
+    if (!parent || parent == GetCurrentProcessId()) ExitProcess(12);
+    count = GetModuleFileNameW(NULL, selfPath, MAX_CHARS);
+    if (!count || count >= MAX_CHARS) ExitProcess(13);
+    if (!environmentPath(L"EMBER_LPAC_STATE", statePath)
+        || !environmentPath(L"EMBER_LPAC_WORK", workPath)
+        || !environmentPath(L"EMBER_LPAC_TOOLS", toolsPath)) ExitProcess(14);
+
+    report[0] = 1;
+    if (OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) {
+        report[1] = tokenFlag(token, TOKEN_IS_APP_CONTAINER);
+        report[2] = tokenFlag(token, TOKEN_IS_LPAC);
+        if (GetTokenInformation(token, TOKEN_CAPABILITIES_CLASS, tokenBuffer, sizeof(tokenBuffer), &needed)
+            && needed >= sizeof(DWORD)) {
+            memcpy(&groups, tokenBuffer, sizeof(groups));
+            report[3] = groups == 0;
+        }
+        CloseHandle(token);
+    }
+    count = GetEnvironmentVariableW(L"GH_TOKEN", argument, (DWORD)(sizeof(argument) / sizeof(argument[0])));
+    report[4] = count == 0;
+
+    if (!pathFor(statePath, L"\\..\\all-app-packages.txt")) ExitProcess(15);
+    file = CreateFileW(filePath, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                       NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    error = GetLastError();
+    report[5] = file == INVALID_HANDLE_VALUE && error == ERROR_ACCESS_DENIED;
+    if (file != INVALID_HANDLE_VALUE) CloseHandle(file);
+
+    file = CreateFileW(selfPath, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                       NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (file != INVALID_HANDLE_VALUE) {
+        count = 0;
+        report[6] = ReadFile(file, signature, sizeof(signature), &count, NULL)
+            && count == sizeof(signature) && signature[0] == 'M' && signature[1] == 'Z';
+        CloseHandle(file);
+    }
+
+    host = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, FALSE, GetCurrentProcessId());
+    selfControl = host != NULL && GetProcessId(host) == GetCurrentProcessId();
+    if (host != NULL) CloseHandle(host);
+    readDenied = processRightDenied(PROCESS_VM_READ, parent);
+    duplicateDenied = processRightDenied(PROCESS_DUP_HANDLE, parent);
+    parentDenied = processRightDenied(PROCESS_CREATE_PROCESS, parent);
+    report[7] = selfControl && readDenied && duplicateDenied && parentDenied;
+
+    if (spawnChild(CREATE_BREAKAWAY_FROM_JOB, &unexpected, &error)) {
+        report[8] = 0;
+        if (!endUnexpectedChild(&unexpected)) ExitProcess(16);
+    } else report[8] = error == ERROR_ACCESS_DENIED;
+
+    if (!pathFor(workPath, L"\\fixture-write.bin")) ExitProcess(17);
+    file = CreateFileW(filePath, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (file != INVALID_HANDLE_VALUE) {
+        count = 0;
+        report[10] = WriteFile(file, workBytes, sizeof(workBytes), &count, NULL) && count == sizeof(workBytes);
+        CloseHandle(file);
+    }
+
+    if (!spawnChild(0, &child, &error)) ExitProcess(18);
+    report[9] = child.dwProcessId;
+    report[11] = 0;
+    if (!pathFor(statePath, L"\\report.bin")) {
+        if (!endUnexpectedChild(&child)) ExitProcess(19);
+        ExitProcess(20);
+    }
+    file = CreateFileW(filePath, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (file == INVALID_HANDLE_VALUE) {
+        if (!endUnexpectedChild(&child)) ExitProcess(21);
+        ExitProcess(22);
+    }
+    count = 0;
+    wrote = WriteFile(file, report, sizeof(report), &count, NULL) && count == sizeof(report);
+    CloseHandle(file);
+    if (!wrote) {
+        if (!endUnexpectedChild(&child)) ExitProcess(23);
+        ExitProcess(24);
+    }
+    CloseHandle(child.hThread);
+    CloseHandle(child.hProcess);
+    ExitProcess(0);
+}

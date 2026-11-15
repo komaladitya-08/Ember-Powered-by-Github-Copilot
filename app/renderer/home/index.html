@@ -326,7 +326,9 @@
       <h2 id="project-h" tabindex="-1">Projects</h2>
       <div class="group" id="project-sessions" aria-labelledby="project-sessions-title">
         <h3 class="sub" id="project-sessions-title">Projects &amp; sessions</h3>
-        <p class="hint" id="project-sessions-hint">Give a project a goal, then ask Ember to plan and delegate work. Independent tasks can run together; ordered desktop steps can continue automatically after each session succeeds and stops safely. Each task has its own session, progress and Stop. Projects and session records stay only until Ember quits or you sign out, unless you choose Save projects. That keeps an encrypted checkpoint on this computer until you choose Forget saved projects. Opening it restores records without resuming work. Coding sessions are unavailable while their execution boundary is being completed; desktop sessions can work in your apps.</p>
+        <p class="hint" id="project-sessions-hint">Give a project a goal, then ask Ember to plan and delegate work. Follow each session's progress and outcome here. Independent tasks can run together; ordered steps wait for each session to finish safely.</p>
+        <p class="hint">Desktop sessions can work in your apps. Coding sessions are currently unavailable.</p>
+        <details class="disclose" id="project-sessions-retention"><summary>What is saved?</summary><p class="hint">Projects, ordered goals and session outcomes stay only until Ember quits or you sign out, unless you choose Save projects. That keeps an encrypted checkpoint on this computer until you choose Forget saved projects. Save again to keep later progress. Opening it restores records without resuming work; review unfinished goals to prepare a new request.</p></details>
         <form id="project-sessions-create">
           <label for="project-sessions-name">New project name</label>
           <input id="project-sessions-name" type="text" maxlength="64" required autocomplete="off">
@@ -348,8 +350,17 @@
             <button id="project-sessions-forget" type="button" class="btn quiet" disabled>Forget project</button>
           </div>
         </form>
+        <section id="project-sessions-recovery" aria-labelledby="project-sessions-recovery-title" hidden>
+          <h4 id="project-sessions-recovery-title">Review a new request</h4>
+          <p id="project-sessions-recovery-note" class="hint" role="status"></p>
+          <label for="project-sessions-recovery-draft">Edit the goals to request</label>
+          <textarea id="project-sessions-recovery-draft" rows="5" maxlength="2000" aria-describedby="project-sessions-recovery-note project-sessions-recovery-replace" placeholder="Write a shorter request if the full goals do not fit."></textarea>
+          <p id="project-sessions-recovery-replace" class="hint"></p>
+          <div class="agent-actions"><button id="project-sessions-recovery-use" type="button" class="btn quiet">Use in request</button><button id="project-sessions-recovery-cancel" type="button" class="btn quiet">Close review</button></div>
+        </section>
         <div class="agent-actions"><button id="project-sessions-save" type="button" class="btn quiet" disabled>Save projects</button><button id="project-sessions-open" type="button" class="btn quiet" disabled>Open saved projects</button><button id="project-sessions-forget-saved" type="button" class="btn quiet" disabled>Forget saved projects</button></div>
         <p id="project-sessions-status" class="hint" role="status" aria-live="polite"></p>
+        <div id="project-sessions-plans" aria-label="Ordered desktop plans" hidden></div>
         <ol id="project-sessions-list" aria-label="Delegated sessions"></ol>
       </div>
       <div class="group" id="coding-workspace" aria-labelledby="coding-workspace-title">
