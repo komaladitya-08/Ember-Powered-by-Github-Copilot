@@ -1,0 +1,42 @@
+name: experimental-windows-lpac-trace
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/experimental-windows-lpac-trace.yml"
+      - "scripts/experimental/windows-lpac-*"
+      - "test/fixtures/experimental-windows-lpac.c"
+      - "test/integration/experimental-windows-lpac-native.test.ts"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: experimental-windows-lpac-trace-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  trace:
+    name: Own-fixture access trace (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm install -g npm@11.6.2
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      - name: Bounded signed-Procmon diagnostic; no raw artifacts
+        timeout-minutes: 4
+        shell: pwsh
+        run: ./scripts/experimental/windows-lpac-access-trace.ps1
