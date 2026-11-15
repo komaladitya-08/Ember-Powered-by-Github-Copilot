@@ -59,15 +59,40 @@ describe.skipIf(process.platform !== "win32")("isolated Windows PowerShell comma
     try {
       staged = await prepareWindowsPowerShellProof(parent, { assetRoot, manifestSha256: manifest.sha256 });
       expect(staged.manifest).toEqual(manifest);
-      await staged.fixture.launch(["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")]);
+      const started = new Date().toISOString();
+      const rootPid = await staged.fixture.launch(["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")]);
       await staged.fixture.waitRootExited(60_000);
       const lease = await staged.fixture.waitStopped(15_000); lease.requireStopped();
       const exitCode = staged.fixture.exitCode();
       const runtime = boundedText(path.join(staged.fixture.paths.state, "runtime.json"));
       const command = boundedText(path.join(staged.fixture.paths.state, "command.json"));
       const failure = boundedText(path.join(staged.fixture.paths.state, "failure.txt"));
-      if (exitCode !== 0 || runtime === null || command === null)
-        throw new Error(`PowerShell is incompatible with this capability-free LPAC configuration: exit=0x${exitCode.toString(16)}, runtime=${runtime ?? "absent"}, command=${command ?? "absent"}, diagnostic=${failure ?? "absent"}. No ACL/capability/AppContainer fallback is permitted.`);
+      if (exitCode !== 0 || runtime === null || command === null) {
+        // Read host diagnostics only after the real stopped-writer lease. Never print another process's events:
+        // the native event PID, exact fixture image name and bounded launch/stop interval must all match.
+        const stopped = new Date().toISOString(), image = path.basename(staged.fixture.paths.program).replace(/'/g, "''");
+        const diagnosticsModule = path.join(systemModules, "Microsoft.PowerShell.Diagnostics", "Microsoft.PowerShell.Diagnostics.psd1").replace(/'/g, "''");
+        let startupEvent = "absent (no strictly matching event or query unavailable)";
+        try {
+          const query = `$ErrorActionPreference='Stop'; Import-Module -Name '${diagnosticsModule}' -ErrorAction Stop;
+$begin=[DateTime]::Parse('${started}').ToUniversalTime(); $end=[DateTime]::Parse('${stopped}').ToUniversalTime();
+$events=Microsoft.PowerShell.Diagnostics\\Get-WinEvent -FilterHashtable @{LogName='Application';ProviderName='.NET Runtime';Id=1026;StartTime=$begin;EndTime=$end} -MaxEvents 10 -ErrorAction Stop;
+foreach($event in $events) {
+  $xml=[xml]$event.ToXml();
+  if([string]$xml.Event.System.Execution.ProcessID -eq '${rootPid}' -and $event.TimeCreated.ToUniversalTime() -ge $begin -and $event.TimeCreated.ToUniversalTime() -le $end) {
+    $text=$event.Message;
+    if($text -match ('(?im)^Application:\\s*'+[regex]::Escape('${image}')+'\\s*$')) {
+      if($text.Length -gt 16384) { $text=$text.Substring(0,16384)+' [event truncated]'; }
+      [Console]::WriteLine($text); break;
+    }
+  }
+}`;
+          const matching = execFileSync(windowsPowerShell, ["-NoProfile", "-NonInteractive", "-Command", query],
+            { timeout: 10_000, maxBuffer: 64 * 1024, encoding: "utf8", windowsHide: true, stdio: "pipe", env: signatureEnvironment }).trim();
+          if (matching) startupEvent = matching;
+        } catch { /* A missing event or unavailable log never establishes the startup exception's cause. */ }
+        throw new Error(`PowerShell is incompatible with this capability-free LPAC configuration: exit=0x${exitCode.toString(16)}, runtime=${runtime ?? "absent"}, command=${command ?? "absent"}, diagnostic=${failure ?? "absent"}, startupEvent=${startupEvent}. No ACL/capability/AppContainer fallback is permitted.`);
+      }
       expect(JSON.parse(runtime)).toMatchObject({ ok: true, version: expect.stringMatching(/^7\./) });
       expect(JSON.parse(command)).toEqual({ ok: true, entries: 0 });
     } catch (error) { failure = error; }
