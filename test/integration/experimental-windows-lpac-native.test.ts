@@ -22,7 +22,8 @@ function compileFixture(): Buffer {
   const source = path.resolve("test/fixtures/experimental-windows-lpac.c"), output = path.join(directory, "fixture.exe"), object = path.join(directory, "fixture.obj");
   const script = path.join(directory, "compile.cmd");
   fs.writeFileSync(script, `@echo off\r\ncall "${path.join(installation, "VC", "Auxiliary", "Build", "vcvars64.bat")}" >nul\r\nif errorlevel 1 exit /b 1\r\ncl.exe /nologo /O1 /GS- /Zl /Fo"${object}" /Fe"${output}" "${source}" /link /NODEFAULTLIB /ENTRY:mainCRTStartup /SUBSYSTEM:CONSOLE kernel32.lib advapi32.lib\r\n`, "utf8");
-  const build = spawnSync("cmd.exe", ["/d", "/s", "/c", `"${script}"`], { encoding: "utf8", windowsHide: true, timeout: 60_000 });
+  // cmd.exe parses its own quoting: /s removes the outer pair, leaving the quoted batch path intact.
+  const build = spawnSync("cmd.exe", ["/d", "/s", "/c", `""${script}""`], { encoding: "utf8", windowsVerbatimArguments: true, windowsHide: true, timeout: 60_000 });
   if (build.status !== 0) throw new Error(`The LPAC fixture did not compile: ${build.stdout}\n${build.stderr}`);
   return fs.readFileSync(output);
 }
