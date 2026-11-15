@@ -10,10 +10,11 @@ import { constants, type BigIntStats } from "node:fs";
 import crypto from "node:crypto";
 import path from "node:path";
 import { HOST_PLATFORM } from "../platform/os";
+import type { CodingExcludedRoot, CodingScopeOmission } from "./coding-project-scope";
 
 export interface SnapshotLimits { files: number; bytes: number; fileBytes: number; depth: number }
 export interface SnapshotEntry { path: string; size: number; digest: string; executable: boolean }
-export interface CodingSnapshot { directory: string; entries: SnapshotEntry[]; directories: string[]; dispose(): Promise<void> }
+export interface CodingSnapshot { directory: string; entries: SnapshotEntry[]; directories: string[]; excluded: CodingScopeOmission[]; dispose(): Promise<void> }
 
 const DEFAULT_LIMITS: SnapshotLimits = { files: 10_000, bytes: 100 * 1024 * 1024, fileBytes: 8 * 1024 * 1024, depth: 64 };
 const DIR = constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW | constants.O_NONBLOCK;
@@ -44,7 +45,8 @@ function unchanged(a: BigIntStats, b: BigIntStats): boolean {
 
 /**
  * Copies a selected project to a new private directory. Links, mount crossings, special files, oversized projects,
- * and changes detected during the copy are rejected; no exclusions are silently applied. Source traversal is relative
+ * and changes detected during the copy are rejected. Optional fixed root exclusions return explicit type receipts;
+ * none are silently applied. Source traversal is relative
  * to open directory handles, with O_NOFOLLOW on every child, and mount ID checks on every opened inode.
  *
  * The base directory must be owned by the current user and inaccessible to other Unix users; ACLs and other processes
@@ -53,13 +55,15 @@ function unchanged(a: BigIntStats, b: BigIntStats): boolean {
  * guarantees. Future copyback must independently
  * verify the original files and handle conflicts. No production code should enable coding on this result alone.
  */
-export async function createCodingSnapshot(source: string, baseDir: string, protectedPaths: readonly string[], override: Partial<SnapshotLimits> = {}): Promise<CodingSnapshot> {
+export async function createCodingSnapshot(source: string, baseDir: string, protectedPaths: readonly string[], override: Partial<SnapshotLimits> = {}, excludeRoots: readonly CodingExcludedRoot[] = []): Promise<CodingSnapshot> {
   if (HOST_PLATFORM !== "linux") throw new Error("Isolated project copies are not supported on this platform.");
   if (!path.isAbsolute(source) || !path.isAbsolute(baseDir) || !protectedPaths.length || protectedPaths.some(p => !path.isAbsolute(p))) {
     throw new Error("Choose absolute project, snapshot and protected paths.");
   }
   const limits = { ...DEFAULT_LIMITS, ...override };
   if (Object.values(limits).some(v => !Number.isSafeInteger(v) || v < 1)) throw new Error("Invalid project copy limits.");
+  if (!Array.isArray(excludeRoots) || excludeRoots.length > 2 || new Set(excludeRoots).size !== excludeRoots.length || excludeRoots.some(name => name !== ".git" && name !== "node_modules")) throw new Error("Invalid explicit project exclusions.");
+  const exclusions = new Set(excludeRoots);
   const base = await fs.realpath(baseDir);
   const baseStat = await fs.stat(base);
   if (!baseStat.isDirectory() || baseStat.uid !== process.getuid?.() || (baseStat.mode & 0o077) !== 0) {
@@ -68,16 +72,17 @@ export async function createCodingSnapshot(source: string, baseDir: string, prot
   // The protected roots must already exist and resolve: treating an unverifiable root as absent is unsafe.
   const protectedRoots = await Promise.all(protectedPaths.map(async p => {
     const real = await fs.realpath(p);
-    const stat = await fs.stat(real, { bigint: true });
-    return { real, dev: stat.dev, ino: stat.ino };
+    const handle = await fs.open(real, FILE);
+    try { const stat = await handle.stat({ bigint: true }); return { real: await fs.realpath(`/proc/self/fd/${handle.fd}`), dev: stat.dev, ino: stat.ino, mount: await mountId(handle.fd) }; }
+    finally { await handle.close(); }
   }));
   const checkProtected = async (handle: fs.FileHandle): Promise<void> => {
     const actual = await fs.realpath(`/proc/self/fd/${handle.fd}`);
-    const stat = await handle.stat({ bigint: true });
+    const stat = await handle.stat({ bigint: true }), mounted = await mountId(handle.fd);
     if (protectedRoots.some(p => {
       const rel = path.relative(p.real, actual);
-      return (stat.dev === p.dev && stat.ino === p.ino) || !rel || (rel !== ".." && !rel.startsWith("../") && !path.isAbsolute(rel));
-    })) throw new Error("The project reaches Ember's protected data.");
+      return (stat.dev === p.dev && (stat.ino === p.ino || mounted !== p.mount)) || !rel || (rel !== ".." && !rel.startsWith("../") && !path.isAbsolute(rel));
+    })) throw new Error("The project reaches Ember's protected data or a protected filesystem boundary.");
   };
   const root = await fs.open(source, DIR);
   let directory: string | undefined;
@@ -96,6 +101,7 @@ export async function createCodingSnapshot(source: string, baseDir: string, prot
     await fs.chmod(directory, 0o700);
     const entries: SnapshotEntry[] = [];
     const directories: string[] = [];
+    const excluded: CodingScopeOmission[] = [];
     let count = 0, bytes = 0;
     const walk = async (dir: fs.FileHandle, dest: string, prefix: string, depth: number): Promise<void> => {
       if (depth > limits.depth) throw new Error("The project is too deeply nested to copy.");
@@ -111,6 +117,12 @@ export async function createCodingSnapshot(source: string, baseDir: string, prot
         const childPath = `/proc/self/fd/${dir.fd}/${name}`;
         // lstat identifies the type without following a link; the subsequent open still checks O_NOFOLLOW and fstat.
         const listed = await fs.lstat(childPath, { bigint: true });
+        if (!prefix && exclusions.has(name as CodingExcludedRoot)) {
+          const kind = listed.isSymbolicLink() ? "link" : listed.isDirectory() ? "directory" : listed.isFile() ? "file" : null;
+          if (!kind) throw new Error("An excluded project root is a special file.");
+          excluded.push({ path: name as CodingExcludedRoot, kind });
+          continue;
+        }
         if (listed.isSymbolicLink()) throw new Error("The project contains a symbolic link; it cannot be copied safely.");
         if (listed.isDirectory()) {
           const child = await fs.open(childPath, DIR);
@@ -159,7 +171,7 @@ export async function createCodingSnapshot(source: string, baseDir: string, prot
     };
     await walk(root, directory, "", 0);
     const resultDir = directory;
-    return { directory: resultDir, entries, directories, dispose: async () => {
+    return { directory: resultDir, entries, directories, excluded: excluded.sort((a, b) => a.path.localeCompare(b.path)), dispose: async () => {
       if (disposed) return;
       await fs.rm(resultDir, { recursive: true, force: true });
       disposed = true;

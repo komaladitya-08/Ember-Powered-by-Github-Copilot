@@ -56,16 +56,44 @@ main was `85b5bd56`. This follow-up deliberately retains the native coding gate 
   limits of 150 tools and 20 active minutes; permission/clarification waits pause the time budget. None enables coding.
 - [Primary-source research](COMPANION_RESEARCH.md) compares Tiki, HeyClicky, Conductor and related projects.
 
+## Custom-tool coding follow-up
+
+The next branch uses a fresh trusted SDK controller with Ember's custom file and command tools. Its process and
+session start in private empty directories; native SDK shell/edit/fetch, plugins, hooks, skills, extensions and
+subagents remain disabled. This is necessary in addition to inspecting the advertised tool inventory: positive-control
+tests demonstrated that an explicitly loaded plugin hook could execute without appearing as a tool.
+
+Only copied project code enters the [isolated command workspace](ISOLATED-COMMAND-WORKSPACE.md). Credentials and the
+controller remain in the trusted host. Commands pass through the existing command flow, approval modes, refusals,
+audit and output redactor. Each Linux command uses fresh namespaces and has a real stopped-writer witness. File tools
+operate through an exclusive handle-checked lease. Failed, fully observed checks can be repaired and rerun; an unrelated
+successful command cannot clear the earlier failure.
+
+Per-project folder grants, reviews and explicit full-file exports now connect Home and AgentHost. They
+remain connection-scoped and are invalidated on account/provider changes, Forget and restored checkpoints. The original
+folder is never written; exports contain all captured baseline/proposed files, including unchanged files. Consent 14
+describes those data flows and retention. The legacy native-SDK coding gate stays false.
+
+Real-runtime tests demonstrate a failing Node test, private-copy repair, successful rerun and stopped review export
+with unchanged source. A composed Chromium/IPC/Host/controller test covers that complete flow plus Forget/account
+cleanup and explicit-export retention; Electron sender/native picker boundaries and the account/model are fixtures.
+Compatible preinstalled packages can be copied read-only, with explicit `.git`/`node_modules` source omissions,
+validated manifests and dependency receipts. Packaged/native-provider verification and broader toolchains remain;
+this is not a Windows-ready coding feature.
+
 ## What still needs implementation
 
-1. **Production coding isolation.** Demonstrate an OS-enforced boundary around the entire runtime, native tools and all
-   descendants. Existing path denials allow hardlink aliases; moving credentials to session configuration does not
-   isolate them from runtime memory. The Linux experiment is not a production solution. Windows/macOS need their own
-   enforced implementations and canary tests. Do not enable coding by changing `codingAvailable()`.
-2. **Coding product integration.** Connect an enforced platform backend, scoped credential adapter, stopped result
-   capture and review/export to the ordinary CodingWorker/session lifecycle. Its existing direct workspace/credential
-   path remains gated. Bind a chosen workspace to each project instead of the separate global coding-folder choice.
-   The experiment's artifact API alone does not provide that user flow. Automatic application additionally requires
+1. **Production coding isolation and toolchains.** Finish the custom-tool product path and its enforced command backend
+   on each supported platform. Linux currently supplies a small offline bash/Node environment; npm, arbitrary compilers
+   and ordinary repositories containing dependency links need explicit supported-copy/toolchain design. Packaged
+   Electron is not a substitute for a real Node binary. Windows/macOS need their own stopped-writer and filesystem
+   implementations and canary tests. Windows CI still exposes child-process creation and PowerShell runtime failures
+   in the native prototype; see [the current proof](ISOLATED-WINDOWS-COMMAND-PROOF.md). Do not enable coding by changing
+   `codingAvailable()` or interpret a small native fixture as the production backend.
+2. **Coding product integration.** Complete packaged/native-provider verification of per-project grants, real
+   policy-controlled workers, stopped capture, review/export and lifecycle erasure. The deterministic composed flow
+   passes; the legacy direct workspace/credential path remains gated.
+   Automatic application additionally requires
    a demonstrated concurrent-writer contract and recovery, as [the copy-back design](CODING-COPYBACK-DESIGN.md)
    explains. Export-only review can avoid automatic source writes; an ordinary hash-then-rename cannot protect an editor.
 3. **Recovery limits.** Explicit encrypted checkpoints and fresh-request continuation are implemented. Changes after

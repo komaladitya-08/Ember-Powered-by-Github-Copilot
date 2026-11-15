@@ -147,6 +147,12 @@ export const IPC = {
   projectSessionsState: "projects:sessions-state",
   projectSessionsAction: "projects:sessions-action",
   projectSessionsCheckpoint: "projects:sessions-checkpoint",
+  projectCodingWorkspaceState: "projects:coding-workspace-state",
+  projectCodingWorkspaceChoose: "projects:coding-workspace-choose",
+  projectCodingWorkspaceForget: "projects:coding-workspace-forget",
+  codingResultsState: "coding:results-state",
+  codingResultReview: "coding:result-review",
+  codingResultExport: "coding:result-export",
   /** Long-term memory (docs/MEMORY.md): what Ember remembers, and forgetting one fact or all of it. */
   memoryList: "memory:list",
   memoryChanged: "memory:changed",
@@ -482,6 +488,12 @@ export interface EmberHomeApi {
   projectSessionsState(): Promise<import("./project-sessions").ProjectSessionsState>;
   projectSessionsAction(input: unknown): Promise<import("./project-sessions").ProjectSessionsState>;
   projectSessionsCheckpoint(action: "save" | "open" | "forget"): Promise<{ state: import("./project-sessions").ProjectSessionsState; message: string }>;
+  projectCodingWorkspaceState(projectId: string): Promise<import("./project-coding").ProjectCodingWorkspaceState>;
+  projectCodingWorkspaceChoose(projectId: string): Promise<import("./project-coding").ProjectCodingWorkspaceState>;
+  projectCodingWorkspaceForget(projectId: string): Promise<import("./project-coding").ProjectCodingWorkspaceState>;
+  codingResultsState(projectId: string): Promise<import("./project-coding").CodingResultSummary[]>;
+  codingResultReview(id: string): Promise<import("./project-coding").CodingResultReview>;
+  codingResultExport(id: string): Promise<{ ok: boolean; message: string }>;
   projectPick(): Promise<ProjectSelection>;
   projectRemove(name: string): Promise<ProjectSelection>;
   projectExport(kind: "answer" | "diff"): Promise<{ message: string }>;

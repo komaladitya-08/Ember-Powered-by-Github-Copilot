@@ -5,6 +5,7 @@
  */
 import { createHash } from "node:crypto";
 import { z } from "zod";
+import { codingProjectManifest, codingProjectScopeDisclosure, type CodingProjectManifest } from "./coding-project-scope";
 
 export interface CodingExportBinding { owner: string; session: string; snapshot: string }
 export type CodingExportEntry = { path: string; kind: "directory" } |
@@ -19,6 +20,7 @@ export interface CodingExportInput {
   current?: CodingExportTree;
   limits?: Partial<CodingExportLimits>;
   signal?: AbortSignal;
+  scope?: CodingProjectManifest;
 }
 export type ExportedCodingEntry = { path: string; kind: "directory" } |
   { path: string; kind: "file"; base64: string; sha256: string; size: number; executable: boolean };
@@ -43,6 +45,7 @@ export interface CodingReviewExport {
   textPatch: string;
   patchComplete: boolean;
   limitations: string[];
+  scope?: CodingProjectManifest;
 }
 
 const DEFAULT_LIMITS: CodingExportLimits = { entries: 10_000, bytes: 32 * 1024 * 1024, fileBytes: 8 * 1024 * 1024, depth: 64, outputBytes: 64 * 1024 * 1024 };
@@ -151,6 +154,8 @@ export function createCodingReviewExport(input: CodingExportInput): { review: Co
   const budget = { bytes: 0 };
   const baseline = capture(input.baseline, binding, limits, budget, input.signal), proposed = capture(input.proposed, binding, limits, budget, input.signal);
   const current = input.current ? capture(input.current, binding, limits, budget, input.signal) : null;
+  const scope = input.scope === undefined ? undefined : codingProjectManifest(input.scope);
+  if (scope && [...baseline, ...proposed, ...(current ?? [])].some(entry => scope.source.excludedRoots.some(root => entry.path === root || entry.path.startsWith(root + "/")))) throw new Error("An excluded source root was included in a scoped capture.");
   const aliases = new Map<string, string>();
   for (const entry of [...baseline, ...proposed, ...(current ?? [])]) {
     const alias = entry.path.toUpperCase().toLowerCase().normalize("NFC"), prior = aliases.get(alias);
@@ -202,7 +207,9 @@ export function createCodingReviewExport(input: CodingExportInput): { review: Co
       "Only content, entry type, empty directories and executable bits are represented. Ownership, ACLs, other permission bits, timestamps and extended attributes are unsupported.",
       "The portable format does not certify inode or mount identity; identity-only replacement needs a separate host comparison.",
       "All retained bytes are untrusted project data; do not execute them as part of reviewing this export.",
+      ...(scope ? [codingProjectScopeDisclosure(scope.source.excludedRoots, scope.dependencies !== null), "The review covers the declared source scope only. Excluded paths and dependency trees are not automatically archived; copied or derived source outputs may contain dependency bytes. A dependency digest is a receipt, not an archive."] : []),
     ],
+    ...(scope ? { scope } : {}),
   };
   const json = JSON.stringify(review, null, 2);
   if (Buffer.byteLength(json, "utf8") > limits.outputBytes) throw new Error("The review export is too large.");

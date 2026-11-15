@@ -40,6 +40,10 @@ jobs:
     # 40, not 25: at d41898c the integration step (the speech tests among them) took 16 min 24 s, and the job ran
     # out of time 2 min 43 s into the renderer journeys with nothing failing (install-docs-r10-1).
     timeout-minutes: 40
+    env:
+      # Missing kernel/toolchain support must fail the configured coding proofs rather than silently skip them.
+      EMBER_REQUIRE_CODING_ISOLATION: "1"
+      EMBER_TEST_CODING_NODE: "/opt/node/bin/node"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -48,6 +52,16 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - name: Trusted Node and namespaces for isolated coding proofs
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap
+          # setup-node may place its authenticated download in a runner-writable cache. The tested sandbox accepts
+          # only root-owned, non-writable tool ancestors, so keep a fresh copy before running repository code.
+          coding_node_source="$(readlink -f "$(command -v node)")"
+          sudo install -d -m 755 -o root -g root /opt/node /opt/node/bin
+          sudo install -m 755 -o root -g root "$coding_node_source" /opt/node/bin/node
+          echo "/opt/node/bin" >> "$GITHUB_PATH"
       # The release's notes link the README at the tag: fail the tag's run at once if it says this version isn't out,
       # or if GitHub would refuse the notes, which the release job finds only after every other job.
       - name: The tagged README describes this version and its notes fit a release (docs/DEVELOPING.md §15 step 1)
@@ -93,7 +107,7 @@ jobs:
         run: |
           browser_path="$(command -v google-chrome || command -v chromium || command -v chromium-browser)"
           test -n "$browser_path"
-          EMBER_CHROMIUM_PATH="$browser_path" npm run test:integration -- test/integration/ask-renderer.test.ts test/integration/prompt-clarification-renderer.test.ts test/integration/home-conversation-renderer.test.ts test/integration/home-streaming-renderer.test.ts test/integration/home-memory-renderer.test.ts test/integration/home-signout-forget-renderer.test.ts test/integration/home-mic-recipient-renderer.test.ts test/integration/home-speech-consent-renderer.test.ts test/integration/reminders-desk-renderer.test.ts test/integration/home-natural-voice-renderer.test.ts test/integration/home-first-run-renderer.test.ts test/integration/home-integrations-renderer.test.ts test/integration/project-sessions-renderer.test.ts test/integration/project-coordination-runtime.test.ts test/integration/home-panes-renderer.test.ts test/integration/home-status-race-renderer.test.ts test/integration/vault-form-renderer.test.ts test/integration/home-vault-renderer.test.ts
+          EMBER_CHROMIUM_PATH="$browser_path" npm run test:integration -- test/integration/ask-renderer.test.ts test/integration/prompt-clarification-renderer.test.ts test/integration/home-conversation-renderer.test.ts test/integration/home-streaming-renderer.test.ts test/integration/home-memory-renderer.test.ts test/integration/home-signout-forget-renderer.test.ts test/integration/home-mic-recipient-renderer.test.ts test/integration/home-speech-consent-renderer.test.ts test/integration/reminders-desk-renderer.test.ts test/integration/home-natural-voice-renderer.test.ts test/integration/home-first-run-renderer.test.ts test/integration/home-integrations-renderer.test.ts test/integration/project-sessions-renderer.test.ts test/integration/project-coding-renderer.test.ts test/integration/project-coding-runtime.test.ts test/integration/project-coordination-runtime.test.ts test/integration/home-panes-renderer.test.ts test/integration/home-status-race-renderer.test.ts test/integration/vault-form-renderer.test.ts test/integration/home-vault-renderer.test.ts
       - run: npm run build:lab
       - name: The built-in GitHub App client id starts a sign-in (GitHub answers with a device code, never printed)
         run: node scripts/check-client-id.mjs

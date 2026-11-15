@@ -1,6 +1,14 @@
 # Native coding work in progress
 
-The coding entry points are deliberately unavailable. The current implementation is not ready to merge or release. Desktop tasks continue through their existing worker. Do not open the coding gate merely because the ordinary unit tests pass.
+The legacy native-SDK coding entry points are deliberately unavailable. That implementation is not ready to merge or
+release. Desktop tasks continue through their existing worker. Do not open the native coding gate merely because the
+ordinary unit tests pass.
+
+The development follow-up adds a separate [custom-tool controller and isolated command workspace](ISOLATED-COMMAND-WORKSPACE.md)
+on Linux. Native SDK coding tools remain disabled, the trusted controller/credentials stay outside the command
+namespace, and results are reviewed/exported without source writes. Its per-project integration and remaining limits
+are tracked in [CONDUCTOR-PROGRESS.md](CONDUCTOR-PROGRESS.md); it does not turn this older path into an enforced backend
+or establish Windows/macOS coding support.
 
 The real bundled runtime tests demonstrate two unresolved boundaries:
 
