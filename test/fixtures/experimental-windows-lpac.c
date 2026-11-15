@@ -48,6 +48,7 @@ static WCHAR argument[64];
 static WCHAR descriptorText[MAX_CHARS];
 static ULONGLONG tokenBuffer[128];
 static ULONGLONG privilegeBuffer[128];
+static ULONGLONG defaultAclBuffer[256];
 static DWORD report[12];
 static PSECURITY_DESCRIPTOR childSecurity;
 static SECURITY_ATTRIBUTES childAttributes;
@@ -143,11 +144,39 @@ static BOOL writeTextReport(const WCHAR *suffix, const WCHAR *text)
     return result;
 }
 
+/* Read-only test of the token's defaults for future kernel objects. This does not change any token or object. */
+static void defaultDaclDiagnostic(DWORD *output)
+{
+    HANDLE token = NULL, duplicate = NULL;
+    SECURITY_DESCRIPTOR descriptor;
+    GENERIC_MAPPING mapping = { READ_CONTROL, READ_CONTROL, SYNCHRONIZE, 0x1fffff };
+    DWORD bytes = 0, privilegeBytes = sizeof(privilegeBuffer), granted = 0;
+    BOOL allowed = FALSE, checked;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY | TOKEN_DUPLICATE, &token)) goto failed;
+    if (!GetTokenInformation(token, TokenDefaultDacl, defaultAclBuffer, sizeof(defaultAclBuffer), &bytes)) goto failed;
+    if (!GetTokenInformation(token, TokenUser, tokenBuffer, sizeof(tokenBuffer), &bytes)) goto failed;
+    if (!InitializeSecurityDescriptor(&descriptor, SECURITY_DESCRIPTOR_REVISION)
+        || !SetSecurityDescriptorOwner(&descriptor, ((TOKEN_USER *)tokenBuffer)->User.Sid, FALSE)
+        || !SetSecurityDescriptorGroup(&descriptor, ((TOKEN_USER *)tokenBuffer)->User.Sid, FALSE)
+        || !SetSecurityDescriptorDacl(&descriptor, TRUE, ((TOKEN_DEFAULT_DACL *)defaultAclBuffer)->DefaultDacl, FALSE)
+        || !DuplicateTokenEx(token, TOKEN_QUERY, NULL, SecurityImpersonation, TokenImpersonation, &duplicate)) goto failed;
+    checked = AccessCheck(&descriptor, duplicate, MAXIMUM_ALLOWED, &mapping, (PPRIVILEGE_SET)privilegeBuffer,
+                          &privilegeBytes, &granted, &allowed);
+    output[0] = checked; output[1] = allowed; output[2] = granted;
+    if (!checked) output[3] = GetLastError();
+    goto cleanup;
+failed:
+    output[3] = GetLastError();
+cleanup:
+    if (duplicate != NULL) CloseHandle(duplicate);
+    if (token != NULL) CloseHandle(token);
+}
+
 static void recordFailure(DWORD stage, DWORD error)
 {
-    DWORD diagnostic[20], written = 0, i, policy = 0;
+    DWORD diagnostic[24], written = 0, i, policy = 0;
     HANDLE file, probe;
-    for (i = 0; i < 20; i++) diagnostic[i] = 0;
+    for (i = 0; i < 24; i++) diagnostic[i] = 0;
     diagnostic[0] = stage; diagnostic[1] = error;
     for (i = 0; i < 12; i++) diagnostic[i + 2] = report[i];
     probe = CreateFileW(selfPath, GENERIC_READ | GENERIC_EXECUTE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
@@ -159,6 +188,7 @@ static void recordFailure(DWORD stage, DWORD error)
     if (probe != NULL) CloseHandle(probe); else diagnostic[17] = GetLastError();
     if (GetProcessMitigationPolicy(GetCurrentProcess(), (PROCESS_MITIGATION_POLICY)13, &policy, sizeof(policy))) diagnostic[18] = policy;
     else { diagnostic[18] = MAXDWORD; diagnostic[19] = GetLastError(); }
+    defaultDaclDiagnostic(diagnostic + 20);
     if (!pathFor(statePath, L"\\failure.bin")) return;
     file = CreateFileW(filePath, GENERIC_WRITE, 0, NULL, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, NULL);
     if (file == INVALID_HANDLE_VALUE) return;
