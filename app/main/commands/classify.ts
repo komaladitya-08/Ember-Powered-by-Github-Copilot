@@ -9150,6 +9150,29 @@ function lastLongFlag(args: readonly Arg[], name: string): string | null | undef
   return got;
 }
 
+/** kubectl's and oc's own verbs that honour `--dry-run` and only change the cluster (integ-y-1); never a plug-in. */
+const KUBE_DRY_VERBS = /^(apply|create|delete|patch|replace|scale|label|annotate|set|expose|autoscale|drain|cordon|uncordon|taint|rollout)$/;
+/** helm's own verbs that honour `--dry-run` (integ-y-1); a helm plug-in (`helm secrets`, `helm plugin`) never. */
+const HELM_DRY_VERBS = /^(install|upgrade|uninstall|rollback)$/;
+/**
+ * `kubectl create`'s and `oc create`'s own kinds. kubectl runs `kubectl-create-<name>` for a kind it doesn't have, a
+ * plug-in, so a dry run counts only for one of these (`token` is left out: it prints a credential).
+ */
+const KUBE_CREATE_KINDS = /^(clusterrole|clusterrolebinding|configmap|cm|cronjob|cj|deployment|deploy|ingress|ing|job|namespace|ns|poddisruptionbudget|pdb|priorityclass|pc|quota|resourcequota|role|rolebinding|secret|service|svc|serviceaccount|sa)$/;
+const OC_CREATE_KINDS = /^(build|buildconfig|bc|clusterresourcequota|clusterquota|deploymentconfig|dc|identity|imagestream|is|imagestreamtag|istag|route|user|useridentitymapping)$/;
+/** kubectl's options that take a value written apart, for reading what `create` names. */
+const KUBE_CREATE_VALUE = ["filename", "output", "namespace", "selector", "kustomize", "field-manager", "template", "context", "cluster", "user", "kubeconfig", "server", "from-file", "from-env-file", "from-literal", "image", "type", "cert", "key", "port", "schedule", "rule", "resource", "verb", "role", "clusterrole", "serviceaccount", "group", "hard", "scopes", "tcp", "docker-server", "docker-username", "docker-password", "docker-email"];
+
+/**
+ * Whether `kubectl|oc create …` is one of their own: a kind they have (`create secret generic`), or no kind at all
+ * (`create -f k.yaml`). A word Ember reads as neither, a value it can't place included, may be a plug-in's name.
+ */
+function kubeCreatesBuiltIn(key: string, verbs: readonly string[], rest: readonly Arg[]): boolean {
+  if (verbs.length > 1) return KUBE_CREATE_KINDS.test(verbs[1] ?? "") || (key === "oc" && OC_CREATE_KINDS.test(verbs[1] ?? ""));
+  const p = parseOpts(rest.slice(1), { shortValue: "fonlk", longValue: KUBE_CREATE_VALUE });
+  return p.operands.length === 0;
+}
+
 /** heroku run's options that take a value written apart (`-a app`, `--size standard-2x`). */
 const HEROKU_RUN_VALUE = /^(-a|--app|-r|--remote|-s|--size|-e|--env|--type|-x|--exit-code-file)$/;
 /** A word as the shell would hand it on: plain, or single-quoted; one Ember can't resolve as written. */
@@ -9323,12 +9346,29 @@ reg(NATIVE, Object.keys(CLOUD_CLIS), h => {
   const fetchesProviders = (h.key === "terraform" || h.key === "tofu") && verb === "providers" && verbs.length > 1 && verbs[1] !== "schema";
   // A dry run changes nothing (`kubectl apply --dry-run=client`, `helm upgrade --dry-run`), and `kubectl set env --list`
   // only lists (commands-remote-r12-4). The flag counts as pflag reads it (integ-x-1): its last value before `--` (the
-  // words after it are the pod's), dry only as client, server, true or bare; `exec`, `run`, `debug`, `cp` and `attach`
-  // run something whatever it says.
+  // words after it are the pod's), dry only as client, server, true or bare. Only the built-in verbs that honour it
+  // count (integ-y-1): a plug-in, `rsh`, `rsync`, `process` or a verb Ember doesn't know is handed the flag as one of
+  // its own words, and keeps its reading.
   const kube = h.key === "kubectl" || h.key === "oc";
   const dryValue = lastLongFlag(h.args, "dry-run");
-  const dryRun = (kube || h.key === "helm") && !(kube && /^(exec|run|debug|cp|attach)$/.test(verbs[0] ?? ""))
-    && dryValue !== undefined && dryValue !== null && /^(|client|server|true)$/.test(dryValue);
+  const dryVerb = kube ? KUBE_DRY_VERBS.test(verbs[0] ?? "") && (verbs[0] !== "create" || kubeCreatesBuiltIn(h.key, verbs, rest))
+    : h.key === "helm" && HELM_DRY_VERBS.test(verbs[0] ?? "");
+  const dryRun = dryVerb && dryValue !== undefined && dryValue !== null && /^(|client|server|true)$/.test(dryValue);
+  // `create secret|configmap --from-file / --from-env-file` reads local files into what it prints (a dry run's `-o
+  // yaml` is the file, base64): each one is judged as a read of that file, so a key or a `.env` is a secret (integ-y-1).
+  if (kube && verbs[0] === "create" && /^(secret|configmap|cm)$/.test(verbs[1] ?? "")) {
+    const cp = parseOpts(rest, { longValue: ["from-file", "from-env-file", "cert", "key"] });
+    for (const f of values(cp, "from-file")) {
+      if (f === null) h.e.add("secret", "secret.cloud", SAYS.secrets, { program: `${h.key} create ${verbs[1]}` });
+      else h.e.usePath(lit(f.includes("=") ? f.slice(f.indexOf("=") + 1) : f), "readTree", h.sc);
+    }
+    for (const f of [...values(cp, "from-env-file"), ...(verbs[2] === "tls" ? values(cp, "cert", "key") : [])]) {
+      if (f === null) h.e.add("secret", "secret.cloud", SAYS.secrets, { program: `${h.key} create ${verbs[1]}` });
+      else h.e.usePath(lit(f), "read", h.sc);
+    }
+    // A dry run of a Secret prints it whole.
+    if (dryRun && verbs[1] === "secret") h.e.add("secret", "secret.cloud", SAYS.secrets, { program: `${h.key} create secret` });
+  }
   const listValue = kube && verbs[0] === "set" && verbs[1] === "env" ? lastLongFlag(h.args, "list") : undefined;
   const listsEnv = listValue !== undefined && listValue !== null && /^(|true)$/.test(listValue);
   // What they print holds secrets (integ-x-2): a workload's environment values (`--resolve` adds those of the Secrets

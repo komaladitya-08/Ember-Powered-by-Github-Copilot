@@ -538,6 +538,42 @@ describe("read-only and everyday commands that asked (commands-remote-r12-4)", (
     }
   });
 
+  it("counts a dry run only for kubectl's, oc's and helm's own verbs that honour it: a plug-in, rsh, rsync or process keeps its reading (integ-y-1)", () => {
+    for (const cmd of [
+      "oc rsh mypod sh -c 'rm -rf /data' --dry-run=client", "kubectl frob --delete all --dry-run=client", "kubectl krew install evil --dry-run=client",
+      "kubectl myplug wipe --dry-run=client", "helm plugin install https://x.example/p --dry-run", "helm secrets decrypt secrets.yaml --dry-run",
+      "kubectl delete-all --dry-run=client", "oc process -f t.yaml --dry-run=client", "oc rsync ./d pod:/x --dry-run=client",
+      "kubectl create frob x --dry-run=client", "kubectl create -n x frob y --dry-run=client", "kubectl create token sa --dry-run=client",
+    ]) {
+      const d = decide(cmd);
+      expect(d.verdict, cmd).toBe("ask");
+      // The same reading as without the flag: the flag is only one of a plug-in's words.
+      expect(d.rules, cmd).toEqual(decide(cmd.replace(/ --dry-run(=client)?$/, "")).rules);
+    }
+    for (const cmd of [
+      "kubectl rollout undo deploy/web --dry-run=client", "kubectl create -f k.yaml -o yaml --dry-run=client", "kubectl create deployment web --image=nginx --dry-run=client -o yaml",
+      "kubectl scale deploy/web --replicas=3 --dry-run=server", "helm uninstall web --dry-run", "helm rollback web 1 --dry-run",
+    ]) expect(decide(cmd).verdict, cmd).not.toBe("ask");
+  });
+
+  it("reads the local files `create secret|configmap` puts in what it prints, so a key or a .env is a secret kept from the model (integ-y-1)", () => {
+    for (const cmd of [
+      "kubectl create secret generic k --from-file=id=/home/ana/.ssh/id_rsa --dry-run=client -o yaml",
+      "kubectl create configmap c --from-env-file=/home/ana/proj/.env --dry-run=client -o yaml",
+      "kubectl create secret generic k --from-file /home/ana/.ssh/id_rsa --dry-run=client -o yaml",
+      "kubectl create secret tls t --cert=c.crt --key=/home/ana/.ssh/id_rsa --dry-run=client -o yaml",
+      "kubectl create secret generic s --from-literal=a=b --dry-run=client -o yaml",
+    ]) {
+      const r = result(cmd);
+      expect(r.decision.verdict, cmd).toBe("ask");
+      expect(keptQuestion(r.decision, r.cls.findings), cmd).toBe("secret");
+      const d = autopilotCommand(r.decision, { findings: r.cls.findings, mode: "on", askEvery: null, userAskEvery: false });
+      expect(d?.verdict, cmd).toBe("announce");
+      expect(d?.withheld, cmd).toBe(true);
+    }
+    expect(decide("kubectl create configmap c --from-file=a.txt --dry-run=client -o yaml").verdict).not.toBe("ask");
+  });
+
   it("reads env-cmd's own options as options, so the command it runs is the one named (commands-remote-r12-4)", () => {
     for (const cmd of ["env-cmd -e test npm test", "env-cmd --environments test npm test", "env-cmd -f .env.test npm test"]) {
       expect(decide(cmd).reason + decide(cmd).says.join(" "), cmd).not.toMatch(/runs (test|\.env\.test)\b/);
