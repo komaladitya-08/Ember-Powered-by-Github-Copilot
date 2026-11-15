@@ -50,7 +50,9 @@ The native fixture checks its token, confirms a synthetic host token variable wa
 executable, writes its workspace, and is denied a canary readable by ordinary All Application Packages. The host first
 reads that canary as a positive control. The fixture separately probes denied VM-read, handle-duplication and
 parent-process rights on its host, alongside a successful self-process query. It attempts breakaway creation, then
-starts an ordinary child which outlives the root. The test observes root exit before verifying that a result receipt
+starts an ordinary child which outlives the root. Both attempts use the same explicit, noninheritable security
+attributes for their new process/thread objects, granting only the user, SYSTEM and exact session package SID.
+This does not change the host token or any existing object. The test observes root exit before verifying that a result receipt
 is still unavailable until Stop ends the child. Reports contain numeric fixture results, not secrets.
 After verified Stop, the test also compares the child's actual local-app-data and temporary paths with the fresh
 OS-managed profile and confirms that its temporary directory was writable. Those disposable path reports contain
