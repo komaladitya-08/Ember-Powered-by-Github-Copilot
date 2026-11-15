@@ -141,6 +141,18 @@ static BOOL writeTextReport(const WCHAR *suffix, const WCHAR *text)
     return result;
 }
 
+static void recordFailure(DWORD stage, DWORD error)
+{
+    DWORD diagnostic[2], written = 0;
+    HANDLE file;
+    diagnostic[0] = stage; diagnostic[1] = error;
+    if (!pathFor(statePath, L"\\failure.bin")) return;
+    file = CreateFileW(filePath, GENERIC_WRITE, 0, NULL, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (file == INVALID_HANDLE_VALUE) return;
+    WriteFile(file, diagnostic, sizeof(diagnostic), &written, NULL);
+    CloseHandle(file);
+}
+
 static BOOL tokenFlag(HANDLE token, TOKEN_INFORMATION_CLASS informationClass)
 {
     DWORD value = 0, bytes = 0;
@@ -299,7 +311,7 @@ void __cdecl mainCRTStartup(void)
         CloseHandle(file);
     }
 
-    if (!spawnChild(0, &child, &error)) ExitProcess(18);
+    if (!spawnChild(0, &child, &error)) { recordFailure(18, error); ExitProcess(18); }
     report[9] = child.dwProcessId;
     if (environmentPath(L"LOCALAPPDATA", localAppDataPath) && environmentPath(L"TEMP", tempPath)
         && writeTextReport(L"\\local-app-data-path.txt", localAppDataPath)
