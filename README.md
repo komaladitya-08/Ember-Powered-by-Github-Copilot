@@ -17,7 +17,9 @@ Ember's desk, a private display where Ember can work out of your way, is Linux-o
 ### Projects and delegated sessions (development branch)
 
 In **Projects → Projects & sessions**, create a named project and ask the conductor to plan or delegate work.
-Desktop tasks appear as named sessions with live status, outcomes and individual Stop controls. Selecting another
+Desktop tasks appear as named sessions with live status, outcomes and individual Stop controls. For ordered desktop
+work, the conductor can start a sequence of two to eight named sessions: a later session begins only after the
+previous session succeeds and its tools have finished shutting down. Stop or steering retires the remaining steps. Selecting another
 project does not reassign work already requested. The cursor companion names a single active task and distinguishes
 working sessions from queued ones. Projects and session records last for this run unless you choose **Save projects**. This keeps an encrypted local
 checkpoint until **Forget saved projects** or **Forget everything**. **Open saved projects** restores records, with

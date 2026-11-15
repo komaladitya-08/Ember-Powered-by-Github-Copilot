@@ -25,6 +25,10 @@ main was `85b5bd56`. This follow-up deliberately retains the native coding gate 
 - The conductor can create/select/list projects and name each delegated desktop session. Project selection is captured
   when a request arrives, so switching projects while the conductor responds cannot misattribute its eventual tasks.
   The existing scheduler, approvals and original user words remain the execution authority.
+- The conductor can run ordered desktop sequences of two to eight named sessions. It preserves the original request
+  and selected project/computer, waits for successful completion and confirmed cleanup, and gives the next worker
+  only a quoted untrusted summary. Stop, steering or an authority change retires remaining steps. Selecting another
+  project for new work does not reassign an accepted sequence. This does not enable native coding.
 - The cursor companion identifies a single task, differentiates queued/running/waiting/stopping work, and exposes
   fuller task progress through its existing menu description and hover text without taking keyboard focus.
 - Native coding cleanup callers share the actual teardown promise, including failures. Coding work also has host-owned
@@ -43,11 +47,16 @@ main was `85b5bd56`. This follow-up deliberately retains the native coding gate 
 3. **Automatic session recovery.** Explicit encrypted board checkpoints now retain metadata/outcomes across restarts
    and restore interrupted work as inert stopped records. Automatic checkpointing, workspace identity reconciliation
    and a fresh-authority continuation flow remain to implement. Checkpoints do not restore worker conversations.
-4. **Full conductor coordination.** Current workers execute independently; their reports reach the conductor with the
-   next user message. Native coding/desktop sequencing is gated. A general dependent-session scheduler, automatic
-   result-driven continuation and persistent cross-session artefacts are still needed for the complete experience.
+4. **Richer coordination.** Independent tasks and bounded ordered desktop sequences are supported. The conductor
+   receives ordinary background reports with the next user message; an accepted sequence itself can continue without
+   another turn. General branching dependency graphs, dynamic replanning and persistent cross-session artefacts remain
+   future work. Native coding/desktop sequencing remains gated.
 5. **Real-provider verification.** Offline mock-provider tests establish deterministic behavior, not successful live
    authentication, provider tool compatibility or useful task completion. Verify those on the chosen account/provider.
+
+The [Windows coding boundary plan](WINDOWS-CODING-BOUNDARY-PLAN.md) turns the isolation blocker into explicit native
+acceptance gates. AppContainer/LPAC plus an external credential broker is a candidate to test, not an implemented
+or certified execution boundary.
 
 ## What needs the Windows laptop
 
