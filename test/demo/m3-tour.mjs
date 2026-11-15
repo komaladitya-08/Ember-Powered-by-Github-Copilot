@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
+import { consentVersion } from "../../scripts/consent-version.mjs";
 import { startMockLlm } from "../mock-llm/server.mjs";
 
 const out = path.resolve(process.argv[2] ?? "dist/demo");
@@ -57,7 +58,7 @@ const mock = await startMockLlm({
 
 const bench = spawn(python, [path.join(root, "test/fixtures/gtk3_bench.py")], { env, stdio: "ignore" });
 const userData = mkdtempSync(path.join(tmpdir(), "ember-m3-"));
-writeFileSync(path.join(userData, "settings.json"), JSON.stringify({ version: 1, character: "wisp", size: 64, speak: false, wakeWord: true, onboarded: true, consent: { version: 6, at: "2026-10-15T00:00:00.000Z" } }));
+writeFileSync(path.join(userData, "settings.json"), JSON.stringify({ version: 1, character: "wisp", size: 64, speak: false, wakeWord: true, onboarded: true, consent: { version: consentVersion, at: "2026-10-15T00:00:00.000Z" } }));
 await sleep(2500);
 xdo("search", "--sync", "--name", "Ember Test Bench", "windowactivate", "--sync");
 

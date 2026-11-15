@@ -240,13 +240,19 @@ export function conductorTools(settings: SettingsStore, describeScreen?: (target
     other
       ? checkedTool("start_task", "Start a task in the user's applications (opening apps, clicking, typing, changing settings). It runs in the background; the user keeps working. Results arrive with the user's next message.",
         z.object({
-          goal, sessionName,
+          goal, ...(projects ? { sessionName } : {}),
           target: TARGET_ARG.optional().describe("The computer the user named for this task, exactly as they said it (\"build-01\", \"Ubuntu\", \"this computer\"). Leave it out to use the one Ember is set to."),
         }),
-        async ({ goal: g, target, sessionName }) => startTask ? startTask(g, target, sessionName) : noTasks)
+        async ({ goal: g, target, sessionName }) => {
+          if (!startTask) return noTasks;
+          return typeof sessionName === "string" ? startTask(g, target, sessionName) : startTask(g, target);
+        })
       : checkedTool("start_task", "Start a task in the user's applications (opening apps, clicking, typing, changing settings). It runs in the background; the user keeps working. Results arrive with the user's next message.",
-        z.object({ goal, sessionName }),
-        async ({ goal: g, sessionName }) => startTask ? startTask(g, undefined, sessionName) : noTasks),
+        z.object({ goal, ...(projects ? { sessionName } : {}) }),
+        async ({ goal: g, sessionName }) => {
+          if (!startTask) return noTasks;
+          return typeof sessionName === "string" ? startTask(g, undefined, sessionName) : startTask(g);
+        }),
     ...(projects ? [
       checkedTool("create_project", "Create and select a named project for coordinating related sessions in this run. Use a name and objective from the user's request. A project does not select a folder or grant permission. Desktop sessions started with start_task belong to this project; use distinct sessionName labels for desktop research, app work or validation. Projects are kept only until Ember quits.",
         z.object({ name: z.string().trim().min(1).max(80), goal: z.string().trim().max(4000).optional() }).strict(),

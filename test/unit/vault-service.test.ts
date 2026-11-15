@@ -297,13 +297,15 @@ describe("main's wiring of the vault", () => {
   it("Forget everything forgets the vault and says when its file couldn't be removed (vault-6)", async () => {
     const calls: string[] = [];
     const deps = (gone: boolean) => ({
-      learning: { forgetAll: () => calls.push("learning") }, agent: { forgetHistory: () => true }, forgetSessionWords: () => calls.push("session words"),
+      projectJob: { abort: () => calls.push("project.stop") },
+      projectSessionStore: { forgetAll: async () => { calls.push("projects"); } },
+      learning: { forgetAll: () => calls.push("learning") }, agent: { forgetHistory: () => true, forgetProjectSessions: () => calls.push("projects.clear") }, forgetSessionWords: () => calls.push("session words"),
       memoryOwner: { clear: () => calls.push("owner.clear"), refresh: () => undefined }, memoryConfigured: () => true, publishMemoryOwner: () => undefined,
       vault: { forgetAll: () => { calls.push("vault"); return gone; } },
     });
     const src = slice("ipcMain.handle(IPC.memoryForgetAll,", '// "Tell Ember about you"');
     await handlerOf(src, deps(true))();
-    expect(calls).toEqual(["learning", "session words", "vault", "owner.clear"]);
+    expect(calls).toEqual(["project.stop", "projects.clear", "projects", "learning", "session words", "vault", "owner.clear"]);
     await expect(handlerOf(src, deps(false))()).rejects.toThrow("Ember couldn't finish deleting the vault's file on this computer. Try Forget again.");
   });
 

@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
+import { consentVersion } from "../../scripts/consent-version.mjs";
 import { startMockLlm } from "../mock-llm/server.mjs";
 
 const require = createRequire(import.meta.url);
@@ -66,7 +67,7 @@ mkdirSync(path.join(userData, "models"), { recursive: true });
 for (const f of readdirSync(path.join(voiceDir, "models"), { withFileTypes: true })) {
   if (!f.name.startsWith(".download")) symlinkSync(path.join(voiceDir, "models", f.name), path.join(userData, "models", f.name));
 }
-writeFileSync(path.join(userData, "settings.json"), JSON.stringify({ version: 1, character: "wisp", size: 64, speak: false, wakeWord: true, onboarded: true, consent: { version: 6, at: "2026-10-15T00:00:00.000Z" }, voice: { consent: true, speakerRejection: true } }));
+writeFileSync(path.join(userData, "settings.json"), JSON.stringify({ version: 1, character: "wisp", size: 64, speak: false, wakeWord: true, onboarded: true, consent: { version: consentVersion, at: "2026-10-15T00:00:00.000Z" }, voice: { consent: true, speakerRejection: true } }));
 gs("set", "org.gnome.desktop.notifications", "show-banners", "true");
 gs("set", "org.gnome.desktop.interface", "text-scaling-factor", "1.0");
 

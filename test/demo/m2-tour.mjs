@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
+import { consentVersion } from "../../scripts/consent-version.mjs";
 import { startMockLlm } from "../mock-llm/server.mjs";
 
 const out = path.resolve(process.argv[2] ?? "dist/demo");
@@ -41,7 +42,7 @@ const mock = await startMockLlm({
 });
 
 const userData = mkdtempSync(path.join(tmpdir(), "ember-m2-"));
-writeFileSync(path.join(userData, "settings.json"), JSON.stringify({ version: 1, character: "cinder", size: 64, speak: false, wakeWord: true, onboarded: true, consent: { version: 6, at: "2026-10-15T00:00:00.000Z" } }));
+writeFileSync(path.join(userData, "settings.json"), JSON.stringify({ version: 1, character: "cinder", size: 64, speak: false, wakeWord: true, onboarded: true, consent: { version: consentVersion, at: "2026-10-15T00:00:00.000Z" } }));
 const recorder = spawn("ffmpeg", ["-loglevel", "error", "-y", "-f", "x11grab", "-video_size", "1280x800", "-framerate", "30", "-i", display,
   "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-pix_fmt", "yuv420p", path.join(out, "m2-tour.mp4")], { stdio: ["pipe", "inherit", "inherit"] });
 

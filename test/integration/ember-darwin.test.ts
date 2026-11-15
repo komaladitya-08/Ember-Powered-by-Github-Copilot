@@ -27,6 +27,7 @@
  * EMBER_PACKAGED_APP set) the packaged app is missing.
  */
 
+import { CONSENT_VERSION } from "../../app/shared/consent";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { _electron as electron, type ElectronApplication } from "playwright-core";
 import { spawnSync } from "node:child_process";
@@ -136,7 +137,7 @@ describe.skipIf(!onMac && !required)("Ember on a real Mac", { timeout: 180_000 }
     const userData = path.join(dir, "userData");
     fs.mkdirSync(userData, { recursive: true });
     fs.writeFileSync(path.join(userData, "settings.json"), JSON.stringify({
-      version: 1, character: "cinder", size: 60, speak: false, wakeWord: false, onboarded: true, consent: { version: 11, at: "2026-10-15T00:00:00.000Z" },
+      version: 1, character: "cinder", size: 60, speak: false, wakeWord: false, onboarded: true, consent: { version: CONSENT_VERSION, at: "2026-10-15T00:00:00.000Z" },
     }));
     const env: Record<string, string> = {};
     for (const [k, v] of Object.entries(process.env)) if (v !== undefined && k !== "ELECTRON_RUN_AS_NODE") env[k] = v;

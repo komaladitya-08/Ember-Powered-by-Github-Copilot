@@ -174,3 +174,64 @@ it("clears the project board when a different GitHub account signs in", async ()
   expect(await host.start(token, "stored")).toBe("ready");
   expect(host.projectSessionsState()).toEqual({ projects: [], selectedProjectId: null });
 });
+
+for (const change of ["provider", "account"] as const) {
+  it(`fences every retained project callback after a ${change} change, even when SDK shutdown cannot revoke it`, async () => {
+    let provider: ActiveProvider = { kind: "user", config: { type: "openai", baseUrl: "http://localhost:8001", apiKey: "fake-key-1" }, models: { conductor: "gpt-5-mini", worker: "gpt-5-mini" } };
+    const { host, tool: oldTool, create } = await setup(change === "provider" ? { provider: () => provider } : {});
+    await host.ask("Create and inspect the first account's projects");
+    // Keep both the registered SDK handlers and the host callbacks: a stopped SDK must not be the only fence.
+    const oldHostCallbacks = (host as any).conductor.deps.projects;
+    create("Old account board");
+    if (change === "provider") {
+      provider = { ...provider, config: { ...provider.config, apiKey: "fake-key-2" } };
+      // A changed provider can wait for running work before reconnecting: same gen and ready are insufficient.
+      const pending = host.projectSessionsState();
+      expect(oldHostCallbacks.list()).toMatch(/no longer current/);
+      expect(oldHostCallbacks.create("Pending switch injection")).toMatch(/no longer current/);
+      expect(oldHostCallbacks.select(null)).toMatch(/no longer current/);
+      expect(host.projectSessionsState()).toEqual(pending);
+    } else sim.login = "second";
+    expect(await host.start(token, "stored")).toBe("ready");
+    const selected = create("New account private project");
+    const other = create("New account other project");
+    host.projectSessionsAction({ action: "select", id: selected });
+    await host.ask("Inspect my new private project");
+    const before = host.projectSessionsState();
+    expect(await oldTool("list_projects")).toMatch(/no longer current/);
+    expect(oldHostCallbacks.list()).toMatch(/no longer current/);
+    expect(oldHostCallbacks.create("Injected project", "Injected goal")).toMatch(/no longer current/);
+    expect(oldHostCallbacks.select(other)).toMatch(/no longer current/);
+    await oldTool("create_project", { name: "Stale SDK project" });
+    await oldTool("select_project", { id: other });
+    expect(host.projectSessionsState()).toEqual(before);
+    const freshSession = sim.sessions.findLast(s => s.sessionId.startsWith("ember-conductor-"));
+    const freshList = await freshSession.config.tools.find((t: any) => t.name === "list_projects").handler({}, {});
+    expect(freshList).toContain("New account private project");
+    expect(freshList).not.toContain("Old account board");
+  });
+}
+
+it("invalidates project reads and mutations immediately on Stop while an SDK abort is still pending", async () => {
+  const { host, tool, session, create } = await setup();
+  const first = create("Visible project"), other = create("Other project");
+  host.projectSessionsAction({ action: "select", id: first });
+  await host.ask("Inspect the visible project's sessions");
+  const callbacks = (host as any).conductor.deps.projects;
+  let release!: () => void;
+  const originalAbort = session.abort.bind(session);
+  session.abort = () => new Promise<void>(resolve => { release = resolve; });
+  const before = host.projectSessionsState();
+  const stopped = host.stopAnswer();
+  expect(callbacks.list()).toMatch(/no longer current/);
+  expect(callbacks.create("Late project")).toMatch(/no longer current/);
+  expect(callbacks.select(other)).toMatch(/no longer current/);
+  expect(await tool("list_projects")).toMatch(/no longer current/);
+  expect(host.projectSessionsState()).toEqual(before);
+  release();
+  await stopped;
+  session.abort = originalAbort;
+  session.emit("session.idle", { aborted: true });
+  await host.ask("Inspect the visible project again");
+  expect(await tool("list_projects")).toContain("Visible project");
+});

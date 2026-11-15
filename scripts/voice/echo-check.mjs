@@ -17,6 +17,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { consentVersion } from "../consent-version.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const arg = (name, fallback) => { const i = process.argv.indexOf(`--${name}`); return i > 0 ? process.argv[i + 1] : fallback; };
@@ -61,7 +62,7 @@ async function measure(mode) {
   const userData = mkdtempSync(path.join(tmpdir(), `ember-echo-${mode}-`));
   // Voice on and agreed, replies spoken, speaker rejection off: the raw case, as barge-in would face it.
   writeFileSync(path.join(userData, "settings.json"), JSON.stringify({
-    version: 1, onboarded: true, consent: { version: 6, at: new Date().toISOString() },
+    version: 1, onboarded: true, consent: { version: consentVersion, at: new Date().toISOString() },
     wakeWord: true, speak: true, voice: { consent: true, speakerRejection: false, muted: false, match: false },
   }));
   const dump = path.join(userData, "heard.f32");

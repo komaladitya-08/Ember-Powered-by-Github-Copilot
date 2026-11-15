@@ -943,6 +943,8 @@ const FINISHED_KEPT = 20;
 interface UserRequest {
   /** Selected at intake, before any connection or prior-turn wait; never execution authority. */
   projectId?: string | null;
+  /** A Stop invalidates project callbacks even if the SDK has not acknowledged its abort. */
+  projectEpoch?: number;
   /** The exact prompt prepared for this request; unset until dispatch, never matched by user-text suffix. */
   prompt?: string;
   target: (WindowTarget & { app?: string }) | null;
@@ -2419,6 +2421,10 @@ export class AgentHost {
         },
       }) : null;
       const tasks = this.tasks;
+      // SDK shutdown is best effort: a saved callback from an old connection must never see a new owner's board.
+      const projectsCurrent = () => gen === this.gen && this.status.phase === "ready" && !this.providerMoved()
+        && this.turn !== null && this.turn.projectEpoch === this.stopEpoch;
+      const projectsStale = "This project request is no longer current. Ask again on the current connection.";
       // Turn `r` asked for, steered or stopped task `id`: once it has touched two, none of its tasks' words is that task's
       // alone, so their cards' Try again doesn't go on to another model service (StartOptions.alone, integrations-w5-1).
       const touch = (r: UserRequest | null, id: string) => {
@@ -2525,6 +2531,7 @@ export class AgentHost {
         },
         projects: {
           create: (name, goal) => {
+            if (!projectsCurrent()) return projectsStale;
             if (!this.turn) return "No user request belongs to this turn. Ask the user to repeat it.";
             try {
               const state = this.projectSessionsAction({ action: "create", name, goal });
@@ -2533,6 +2540,7 @@ export class AgentHost {
             } catch (err) { return err instanceof Error ? err.message : "The project could not be created."; }
           },
           select: id => {
+            if (!projectsCurrent()) return projectsStale;
             if (!this.turn) return "No user request belongs to this turn. Ask the user to repeat it.";
             try {
               this.projectSessionsAction({ action: "select", id });
@@ -2540,7 +2548,9 @@ export class AgentHost {
               return id ? `Project ${id} selected for this request.` : "This request will start sessions outside a project.";
             } catch (err) { return err instanceof Error ? err.message : "The project could not be selected."; }
           },
-          list: () => `<projects untrusted="true">${JSON.stringify({ ...this.projectSessionsState(), requestProjectId: this.turn?.projectId ?? null }).replace(/</g, "‹")}</projects>`,
+          list: () => projectsCurrent()
+            ? `<projects untrusted="true">${JSON.stringify({ ...this.projectSessionsState(), requestProjectId: this.turn?.projectId ?? null }).replace(/</g, "‹")}</projects>`
+            : projectsStale,
         },
         startCoding: tasks && this.o.codingWorkspace ? goal => {
           if (!codingAvailable()) return CODING_UNAVAILABLE;
@@ -3648,7 +3658,7 @@ export class AgentHost {
     }
     // Its turn may start only after the one running now: it takes this context then (see conversationEvent).
     const request: UserRequest = {
-      projectId: waiting.projectId,
+      projectId: waiting.projectId, projectEpoch: epoch,
       target: context?.target ?? null, words: text, screen: context?.text ? [context.text] : [], ...(context?.targetId ? { targetId: context.targetId } : {}),
       ...(how.spoken ? { spoken: true } : {}),
       ...(how.manual ? { manual: true } : {}),

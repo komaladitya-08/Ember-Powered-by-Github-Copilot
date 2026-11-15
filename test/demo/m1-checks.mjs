@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
+import { consentVersion } from "../../scripts/consent-version.mjs";
 
 const [out, mode] = [path.resolve(process.argv[2] ?? "dist/demo"), process.argv[3] ?? "interactive"];
 mkdirSync(out, { recursive: true });
@@ -16,7 +17,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const xdo = (...a) => execFileSync("xdotool", a, { env: process.env }).toString();
 const userData = mkdtempSync(path.join(tmpdir(), "ember-check-"));
-writeFileSync(path.join(userData, "settings.json"), JSON.stringify({ version: 1, character: "cinder", size: 60, speak: false, wakeWord: true, onboarded: true, consent: { version: 6, at: "2026-10-15T00:00:00.000Z" } }));
+writeFileSync(path.join(userData, "settings.json"), JSON.stringify({ version: 1, character: "cinder", size: 60, speak: false, wakeWord: true, onboarded: true, consent: { version: consentVersion, at: "2026-10-15T00:00:00.000Z" } }));
 
 const app = await electron.launch({
   executablePath: createRequire(import.meta.url)("electron"),
