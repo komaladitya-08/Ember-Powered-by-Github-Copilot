@@ -1,6 +1,6 @@
 # Offline Windows LPAC fixture experiment
 
-This is an experimental native-process foundation, separate from the product coding path. Native coding remains
+This is an experimental native-process foundation, separate from the product coding path. Windows native coding remains
 unavailable. The full Windows runtime/broker design is in [WINDOWS-CODING-BOUNDARY-PLAN.md](WINDOWS-CODING-BOUNDARY-PLAN.md).
 
 ## What exists
@@ -96,6 +96,14 @@ also fails. The experiment remains failing on Windows and is unavailable to the 
 certify Windows 10/11 desktops even where kernel families overlap. The separate hosted-CI diagnostic workflow uses a
 hash-pinned, Microsoft-signed Process Monitor and publishes only this exact fixture PID/image's bounded operation,
 result and masked path fields; raw traces, details and unrelated process rows are deleted without upload.
+
+The own-PID trace at `2c31989d5d598fb1f7d329aa672eae90ceb54626`, run `43770802690`, captured 33 events for the
+Server 2025 fixture. It observed denied `RegOpenKey` operations at `HKLM\System\CurrentControlSet\Control\Nls\CodePage`,
+`HKLM\System\CurrentControlSet\Control\Session Manager` and twice at
+`HKLM\Software\Microsoft\Windows NT\CurrentVersion\Image File Execution Options`. These are candidate dependencies,
+not a demonstrated causal call stack for the child-creation failure. The same run's Server 2022 export contained no
+events and failed its positive control, so it supplies no registry evidence. Further stack export remains diagnostic;
+it does not authorize adding `registryRead`, modifying existing registry ACLs or bypassing process/security policy.
 
 This fixture does not run the pinned Copilot runtime, Node, a shell or a general toolchain. It has no credential broker,
 model transport or real provider authentication. Zero capabilities are configured and checked, but network connection,

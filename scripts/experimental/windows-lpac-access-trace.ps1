@@ -77,16 +77,6 @@ try {
     if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch '(?:^|,\s*)O=Microsoft Corporation(?:,|$)') { throw 'The monitor is not validly Microsoft signed.' }
     $toolVerified = $true
 
-    # Start before fixture creation so the monitor observes process registration as well as resumed instructions.
-    # Even a slow compiler/handshake is bounded; unrelated capture rows still never enter the publication filters.
-    $phase = 'capture'
-    $pml = [IO.Path]::Combine($traceRoot, 'private.pml')
-    $capture = Start-Logged $toolExe @('/AcceptEula', '/Quiet', '/Minimized', '/NoFilter', '/BackingFile', $pml, '/Runtime', '90') 'capture'
-    $monitorStarted = $true
-    $phase = 'capture-ready'
-    $idle = Start-Logged $toolExe @('/AcceptEula', '/Quiet', '/WaitForIdle') 'idle'
-    if ((Wait-Bounded $idle 15000) -ne 0) { throw 'The monitor did not become ready.' }
-
     $phase = 'fixture-launch'
     # Windows can expose more than one application match for an extensionless command. Never coerce a collection
     # of Source paths to one space-joined executable name; select the first explicit executable chosen by PATH.
@@ -134,10 +124,22 @@ public static class EmberLpacTraceImage {
     $fixtureImage = [EmberLpacTraceImage]::Read($fixtureProcess.Handle)
     if ([IO.Path]::GetFileName($fixtureImage) -ne 'fixture.exe') { throw 'The fixture image does not match.' }
 
+    # Compile/host setup precedes capture: tracing the compiler generated hundreds of thousands of unrelated rows
+    # and exhausted bounded stack export. The verified fixture remains suspended until the monitor is ready.
+    $phase = 'capture'
+    $pml = [IO.Path]::Combine($traceRoot, 'private.pml')
+    $capture = Start-Logged $toolExe @('/AcceptEula', '/Quiet', '/Minimized', '/BackingFile', $pml, '/Runtime', '20') 'capture'
+    $monitorStarted = $true
+    $phase = 'capture-ready'
+    $idle = Start-Logged $toolExe @('/AcceptEula', '/Quiet', '/WaitForIdle') 'idle'
+    if ((Wait-Bounded $idle 15000) -ne 0) { throw 'The monitor did not become ready.' }
+    Start-Sleep -Milliseconds 1000
     $phase = 'fixture-resume'
     [IO.File]::WriteAllText([IO.Path]::Combine($traceRoot, 'ready'), 'ready')
     $rootExited = $fixtureProcess.WaitForExit(10000)
+    $rootExitCode = if ($rootExited) { $fixtureProcess.ExitCode } else { $null }
     $fixtureProcess.Dispose(); $fixtureProcess = $null
+    Start-Sleep -Milliseconds 1000
     $phase = 'capture-stop'
     $terminate = Start-Logged $toolExe @('/AcceptEula', '/Quiet', '/Terminate') 'terminate'
     Wait-Bounded $terminate 15000 | Out-Null
@@ -166,7 +168,7 @@ public static class EmberLpacTraceImage {
         }
     } | Own-FixtureRows -expectedPid $fixturePid)
     # Counts and expected-schema presence reveal capture/parsing failures without publishing a single rejected row.
-    Write-Output ([ordered]@{ csvRows = $csvRows; csvSchemaValid = $csvSchemaValid; ownPidRows = $ownPidRows; ownImageRows = $ownImageRows; ownRows = $own.Count; rootExited = $rootExited } | ConvertTo-Json -Compress)
+    Write-Output ([ordered]@{ csvRows = $csvRows; csvSchemaValid = $csvSchemaValid; ownPidRows = $ownPidRows; ownImageRows = $ownImageRows; ownRows = $own.Count; rootExited = $rootExited; rootExitCode = $rootExitCode } | ConvertTo-Json -Compress)
     if ($own.Count -eq 0 -or $own.Count -gt 10000) { throw 'The trace contains no bounded own-fixture control.' }
     # Raw CSV/PML and all detail/command-line/value fields remain private and are deleted. Only exact PID+image
     # rows are published, using a narrow field list; registry contents and unrelated processes never enter output.
@@ -182,7 +184,7 @@ public static class EmberLpacTraceImage {
     $phase = 'stack-export'
     $xml = [IO.Path]::Combine($traceRoot, 'private.xml')
     $stackExport = Start-Logged $toolExe @('/AcceptEula', '/Quiet', '/Minimized', '/OpenLog', $pml, '/SaveAs1', $xml) 'stack-export'
-    if ((Wait-Bounded $stackExport 30000) -ne 0 -or -not [IO.File]::Exists($xml) -or (Get-Item -LiteralPath $xml).Length -gt 128MB) { throw 'The monitor did not export bounded stacks.' }
+    if ((Wait-Bounded $stackExport 60000) -ne 0 -or -not [IO.File]::Exists($xml) -or (Get-Item -LiteralPath $xml).Length -gt 128MB) { throw 'The monitor did not export bounded stacks.' }
     $settings = [Xml.XmlReaderSettings]::new()
     $settings.DtdProcessing = [Xml.DtdProcessing]::Prohibit; $settings.XmlResolver = $null; $settings.MaxCharactersInDocument = 128MB
     $reader = [Xml.XmlReader]::Create($xml, $settings); $ownStacks = 0
