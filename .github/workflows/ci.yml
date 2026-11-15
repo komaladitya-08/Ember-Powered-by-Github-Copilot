@@ -571,6 +571,9 @@ jobs:
       - name: Experimental LPAC fixture (native token, private job, ACL and descendant shutdown)
         timeout-minutes: 5
         run: node scripts/run-integration.mjs test/integration/experimental-windows-lpac-native.test.ts
+      - name: Isolated PowerShell toolchain compatibility (fresh LPAC-only assets)
+        timeout-minutes: 5
+        run: node scripts/run-integration.mjs test/integration/isolated-windows-command-powershell-native.test.ts
       # The speech models go inside the app, so one download carries everything Ember runs on the computer (network-
       # restricted PCs never need github.com for voice).
       - name: Speech models to bundle (cached; verified by SHA-256)
