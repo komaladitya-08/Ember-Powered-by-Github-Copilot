@@ -45,6 +45,10 @@ function Safe-Path([string]$value) {
     if ($value.Length -gt 1200) { return $value.Substring(0, 1200) + '<bounded>' }
     return $value
 }
+function Own-XmlEvent([Xml.XmlElement]$event, [int]$expectedPid) {
+    $pidNode = $event.SelectSingleNode('PID'); $nameNode = $event.SelectSingleNode('Process_Name')
+    return $null -ne $pidNode -and $null -ne $nameNode -and $pidNode.InnerText -eq [string]$expectedPid -and $nameNode.InnerText -eq 'fixture.exe'
+}
 
 try {
     # A negative control ensures no row from another PID or image survives the publication filter.
@@ -55,6 +59,9 @@ try {
     )
     $filtered = @($control | Own-FixtureRows -expectedPid 4242)
     if ($filtered.Count -ne 1 -or $filtered[0].Path -ne 'owned') { throw 'The trace publication filter failed.' }
+    [xml]$xmlControl = '<events><event><PID>4242</PID><Process_Name>fixture.exe</Process_Name></event><event><PID>4343</PID><Process_Name>fixture.exe</Process_Name></event><event><PID>4242</PID><Process_Name>other.exe</Process_Name></event></events>'
+    $xmlFiltered = @($xmlControl.events.event | Where-Object { Own-XmlEvent $_ 4242 })
+    if ($xmlFiltered.Count -ne 1) { throw 'The stack publication filter failed.' }
     if (@(Get-Process -Name 'Procmon*' -ErrorAction SilentlyContinue).Count -ne 0) { throw 'Another monitor is already running.' }
 
     $phase = 'download-and-verify'
@@ -69,6 +76,16 @@ try {
     $signature = Get-AuthenticodeSignature -LiteralPath $toolExe
     if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch '(?:^|,\s*)O=Microsoft Corporation(?:,|$)') { throw 'The monitor is not validly Microsoft signed.' }
     $toolVerified = $true
+
+    # Start before fixture creation so the monitor observes process registration as well as resumed instructions.
+    # Even a slow compiler/handshake is bounded; unrelated capture rows still never enter the publication filters.
+    $phase = 'capture'
+    $pml = [IO.Path]::Combine($traceRoot, 'private.pml')
+    $capture = Start-Logged $toolExe @('/AcceptEula', '/Quiet', '/Minimized', '/NoFilter', '/BackingFile', $pml, '/Runtime', '90') 'capture'
+    $monitorStarted = $true
+    $phase = 'capture-ready'
+    $idle = Start-Logged $toolExe @('/AcceptEula', '/Quiet', '/WaitForIdle') 'idle'
+    if ((Wait-Bounded $idle 15000) -ne 0) { throw 'The monitor did not become ready.' }
 
     $phase = 'fixture-launch'
     # Windows can expose more than one application match for an extensionless command. Never coerce a collection
@@ -117,13 +134,7 @@ public static class EmberLpacTraceImage {
     $fixtureImage = [EmberLpacTraceImage]::Read($fixtureProcess.Handle)
     if ([IO.Path]::GetFileName($fixtureImage) -ne 'fixture.exe') { throw 'The fixture image does not match.' }
 
-    $phase = 'capture'
-    $pml = [IO.Path]::Combine($traceRoot, 'private.pml')
-    $capture = Start-Logged $toolExe @('/AcceptEula', '/Quiet', '/Minimized', '/BackingFile', $pml, '/Runtime', '20') 'capture'
-    $monitorStarted = $true
-    $phase = 'capture-ready'
-    $idle = Start-Logged $toolExe @('/AcceptEula', '/Quiet', '/WaitForIdle') 'idle'
-    if ((Wait-Bounded $idle 15000) -ne 0) { throw 'The monitor did not become ready.' }
+    $phase = 'fixture-resume'
     [IO.File]::WriteAllText([IO.Path]::Combine($traceRoot, 'ready'), 'ready')
     $rootExited = $fixtureProcess.WaitForExit(10000)
     $fixtureProcess.Dispose(); $fixtureProcess = $null
@@ -165,6 +176,38 @@ public static class EmberLpacTraceImage {
         Write-Output ([ordered]@{ operation = [string]$row.Operation; result = 'ACCESS DENIED'; path = Safe-Path ([string]$row.Path) } | ConvertTo-Json -Compress)
     }
     if ($denied.Count -eq 0) { Write-Output 'No own-fixture filesystem/registry ACCESS DENIED rows were observed; this does not identify every kernel-object denial.' }
+
+    # /SaveAs1 includes recorded frames without requesting remote symbol resolution. Bound the XML on disk and
+    # in its parser; never deserialize processlist, Detail, registry contents or rejected events into public output.
+    $phase = 'stack-export'
+    $xml = [IO.Path]::Combine($traceRoot, 'private.xml')
+    $stackExport = Start-Logged $toolExe @('/AcceptEula', '/Quiet', '/Minimized', '/OpenLog', $pml, '/SaveAs1', $xml) 'stack-export'
+    if ((Wait-Bounded $stackExport 30000) -ne 0 -or -not [IO.File]::Exists($xml) -or (Get-Item -LiteralPath $xml).Length -gt 128MB) { throw 'The monitor did not export bounded stacks.' }
+    $settings = [Xml.XmlReaderSettings]::new()
+    $settings.DtdProcessing = [Xml.DtdProcessing]::Prohibit; $settings.XmlResolver = $null; $settings.MaxCharactersInDocument = 128MB
+    $reader = [Xml.XmlReader]::Create($xml, $settings); $ownStacks = 0
+    try {
+        while ($reader.Read()) {
+            if ($reader.NodeType -ne [Xml.XmlNodeType]::Element -or $reader.LocalName -ne 'event') { continue }
+            $subtree = $reader.ReadSubtree()
+            try { $document = [Xml.XmlDocument]::new(); $document.XmlResolver = $null; $document.Load($subtree) }
+            finally { $subtree.Dispose() }
+            $event = $document.DocumentElement
+            if (-not (Own-XmlEvent $event $fixturePid)) { continue }
+            $resultNode = $event.SelectSingleNode('Result')
+            if ($null -eq $resultNode -or $resultNode.InnerText -ne 'ACCESS DENIED') { continue }
+            $operationNode = $event.SelectSingleNode('Operation'); $pathNode = $event.SelectSingleNode('Path')
+            if ($null -eq $operationNode -or $null -eq $pathNode) { throw 'The own-event stack schema is incomplete.' }
+            $frames = @($event.SelectNodes('stack/frame') | Select-Object -First 32 | ForEach-Object {
+                $moduleNode = $_.SelectSingleNode('path'); $locationNode = $_.SelectSingleNode('location')
+                [ordered]@{ module = if ($moduleNode) { Safe-Path ([IO.Path]::GetFileName($moduleNode.InnerText)) } else { '<unresolved>' }; location = if ($locationNode) { Safe-Path $locationNode.InnerText } else { '<unresolved>' } }
+            })
+            Write-Output ([ordered]@{ stackOperation = Safe-Path $operationNode.InnerText; path = Safe-Path $pathNode.InnerText; frames = $frames } | ConvertTo-Json -Compress -Depth 5)
+            $ownStacks++
+            if ($ownStacks -ge 10) { break }
+        }
+    } finally { $reader.Dispose() }
+    Write-Output ([ordered]@{ ownDeniedStacks = $ownStacks } | ConvertTo-Json -Compress)
 } catch {
     # Do not print a raw tool/CSV exception, which could contain unrelated capture data.
     Write-Output ('The bounded own-fixture trace failed during ' + $phase + '; no raw trace was published.')
