@@ -7,7 +7,7 @@ import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import { chromium, type Browser, type Page } from "playwright-core";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { USER_PROVIDER_NO_MODEL } from "../../app/main/agent/host";
 import { DEFAULT_SETTINGS } from "../../app/main/settings";
 import { AGREE_ARM_MS } from "../../app/shared/provider";
@@ -67,6 +67,8 @@ beforeAll(async () => {
   port = (server.address() as { port: number }).port;
 });
 afterAll(async () => { if (gate) return; await browser.close(); server.close(); });
+// A case may open several Home windows; retire their animation loops before the next case starts.
+afterEach(async () => { if (!gate) await Promise.all(browser.contexts().map(context => context.close())); });
 
 async function open(seed: Seed = {}): Promise<Page> {
   const settings = structuredClone(DEFAULT_SETTINGS);
@@ -1032,8 +1034,14 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     await p.locator("#w-alt").click();
     await expect.poll(() => calls(p)).toContain(off);
     expect(await p.locator("#welcome").getAttribute("data-step")).toBe("sign-in");
-    // Failing: its details, opened from the sign-in step, show the connection's own words, as mine (first-run-r4-2);
-    // Back leaves it on.
+    expect((p as Page & { errors: string[] }).errors).toEqual([]);
+  });
+
+  it("(aa2) a failing provider's own details explain the connection and Back leaves it in use (first-run-r4-2)", async () => {
+    const provider = { on: true, baseUrl: "https://api.example.com/v1", conductor: "gpt-4.1", consent: { version: 1, at: "2026-11-07T12:00:00Z", host: "api.example.com" } };
+    const inForce = { inForce: true, host: "api.example.com", agreed: true, keySaved: true };
+    const off = `save:${JSON.stringify({ provider: { on: false } })}`;
+    // This independent failing-connection journey has its own case and browser context.
     const detail = "Ember can't reach the model server on this computer (localhost:11434). Start it, and Ember will connect in a moment.";
     const mine = "I can't reach the model server on this computer (localhost:11434). Start it, and I'll connect in a moment.";
     const local = { ...provider, baseUrl: "http://localhost:11434/v1", consent: { ...provider.consent, host: "localhost:11434" } };
@@ -1047,7 +1055,6 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect(await q.locator("#w-title").innerText()).toBe("Your own model provider");
     await q.waitForTimeout(100);
     expect(await calls(q)).not.toContain(off);
-    expect((p as Page & { errors: string[] }).errors).toEqual([]);
     expect((q as Page & { errors: string[] }).errors).toEqual([]);
   });
 
@@ -1765,7 +1772,7 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect(await p.locator("#w-count").innerText()).toBe("Step 2 of 6");
     expect(await p.locator("#w-changes").isVisible()).toBe(true);
     const changed = await p.locator("#w-changes-list li").allInnerTexts();
-    expect(changed).toHaveLength(5);
+    expect(changed).toHaveLength(7);
     expect(changed[0]).toContain("“Keep my recent conversation”");
     // Version 8 (owner decision of 2026-11-12): anyone near the computer can answer Ember's questions by voice.
     expect(changed[1]).toContain("anyone near the computer can answer it by voice");
@@ -1774,7 +1781,11 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     // Version 10: what the vault keeps, and that only Autopilot fills it in (vault-4).
     expect(changed[3]).toBe("If you give me a login, a card or contact details in my Secure Form, I keep them in a vault on this computer, locked with your computer's keyring, until you forget them. Only Autopilot fills them in, and the AI model never sees them.");
     // Version 11: what asks, and that a command Ember doesn't know runs (Settled 28, accessibility-c11-1, r11-copy-x11-3).
-    expect(changed[4]).toBe("I say plainly what I ask before: anything risky in an app, and a command I know is dangerous or code I can't read, unless you asked for exactly that command and it only deletes or overwrites data, publishes something or changes the system. A command I don't know runs, and I tell you, and Assisted and Autopilot, if you choose them later, ask less.");
+    expect(changed[4]).toBe("I say plainly what I ask before: anything risky in an app, and a command I know is dangerous or code I can't read, even if you asked for it. A command I don't know runs, and I tell you, and Assisted and Autopilot, if you choose them later, ask less.");
+    // Version 12: Interactive asks even for an explicitly requested dangerous command.
+    expect(changed[5]).toBe("In Interactive, I ask before a dangerous command even when you asked for it.");
+    // Version 13: project checkpoints are explicit, encrypted and never resume work automatically.
+    expect(changed[6]).toBe("If you choose Save projects, I encrypt project names, goals and session outcomes on this computer until you choose Forget saved projects or Forget everything. Opening a checkpoint never resumes work.");
     expect(await p.locator(".w-row").evaluateAll(rows => rows.map(r => (r as HTMLElement).dataset.row))).toEqual(["interactive"]);
     expect(await p.locator("#w-row-interactive").isChecked()).toBe(true);
     // The usual points and the full text are still there; nothing goes on until Agree is saved.

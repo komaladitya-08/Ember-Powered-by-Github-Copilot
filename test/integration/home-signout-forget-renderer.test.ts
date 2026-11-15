@@ -103,7 +103,7 @@ it.skipIf(process.env.EMBER_SIGNOUT_FORGET_TEST !== "1")("asks before Sign out a
     await page.evaluate(() => { window.__counts = { tasks: 2, facts: 4, reminders: 2, routines: 1 }; });
     await page.locator("#memory-forget-all").click();
     await expect.poll(() => page.locator("#forget-all-confirm").isVisible()).toBe(true);
-    expect(await page.locator("#forget-all-scope").innerText()).toBe("Forget everything? This removes 4 saved facts, what Ember learned from them and the conversation saved on this computer, if you keep one. It also forgets what you saved in the vault. 2 tasks, 2 reminders and 1 routine stay as they are, and so do the lines on screen now, but they aren't saved again.");
+    expect(await page.locator("#forget-all-scope").innerText()).toBe("Forget everything? This removes 4 saved facts, what Ember learned from them and the conversation saved on this computer, if you keep one. It also forgets what you saved in the vault. It also removes project records and all saved project checkpoints on this computer. 2 tasks, 2 reminders and 1 routine stay as they are, and so do the lines on screen now, but they aren't saved again.");
     await page.keyboard.press("Escape");
     expect(await focusedId()).toBe("memory-forget-all");
     expect(await calls()).toEqual(["signOut"]);

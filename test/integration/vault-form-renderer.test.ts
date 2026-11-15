@@ -89,7 +89,7 @@ it.skipIf(!on)("names a login's form and its boxes for a screen reader, with the
     '- dialog "Login for github.com":',
     '  - heading "Login for github.com" [level=1]',
     "  - paragraph: Asked in Firefox. Ember fills it in only on github.com, in any browser.",
-    "  - paragraph: Ember keeps it locked with your computer's keyring and uses it only in Autopilot. It never shows it to you again, and the AI model never sees it.",
+    "  - paragraph: Ember keeps it locked with your computer's keyring and uses it only in Autopilot. It never shows it to you again, and the AI model never sees it. Passwords shorter than six characters cannot be kept for filling; enter those yourself after stopping all Ember tasks.",
     "  - text: User name or email (optional)",
     '  - textbox "User name or email (optional)"',
     "  - text: Password",
@@ -139,16 +139,20 @@ it.skipIf(!on)("Enter in a box saves, and a missing password is said at its box 
   expect(await calls(page)).toEqual([]);
   expect(await focused(page)).toBe("f-password");
   expect(await page.locator("#f-password").getAttribute("aria-invalid")).toBe("true");
-  expect(await page.locator("#e-password").innerText()).toBe("Type the password.");
+  expect(await page.locator("#e-password").innerText()).toBe("Type a password of at least six characters.");
   expect(await page.locator("#f-password").getAttribute("aria-describedby")).toBe("e-password");
   expect(await page.locator("#problem").innerText()).toBe(vaultSaveProblem("invalid"));
   await shot(page, "vault-form-login-missing");
   // Typing clears the box's own line.
-  await page.keyboard.type("x");
+  await page.keyboard.type("abcde");
   expect(await page.locator("#f-password").getAttribute("aria-invalid")).toBeNull();
   expect(await page.locator("#e-password").innerText()).toBe("");
   await page.keyboard.press("Enter");
-  await expect.poll(() => calls(page)).toEqual([["submit", "form-1", { user: "ada", password: "x" }]]);
+  expect(await calls(page)).toEqual([]);
+  expect(await page.locator("#e-password").innerText()).toBe("Type a password of at least six characters.");
+  await page.keyboard.type("f");
+  await page.keyboard.press("Enter");
+  await expect.poll(() => calls(page)).toEqual([["submit", "form-1", { user: "ada", password: "abcdef" }]]);
   await page.close();
 });
 
@@ -202,7 +206,9 @@ it.skipIf(!on)("says what main refused: a part it names, a file it couldn't writ
   const { page } = await open(view("card"));
   await page.locator("#f-cardNumber").fill("4242 4242 4242 4242");
   await page.locator("#f-expiry").fill("08/29");
-  await page.locator("#f-securityCode").fill("123");
+  // Short security codes cannot safely be filled, so the form never asks for one.
+  expect(await page.locator("#f-securityCode").count()).toBe(0);
+  expect(await page.locator("#lead").innerText()).toContain("Ember cannot safely fill the security code; enter it yourself after stopping all Ember tasks.");
   await page.evaluate(() => { window.__vaultNext = { ok: false, why: "invalid", part: "expiry" }; });
   await page.locator("#save").click();
   await expect.poll(() => page.locator("#e-expiry").innerText()).toBe("Type the expiry date as MM/YY, for example 08/29.");
