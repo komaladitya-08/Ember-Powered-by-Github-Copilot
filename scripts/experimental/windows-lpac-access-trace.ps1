@@ -12,6 +12,8 @@ $phase = 'setup'; $failed = $false; $cleanupFailed = $false; $testExit = 1; $too
 $toolVerified = $false; $monitorStarted = $false
 
 function Start-Logged([string]$program, [string[]]$commandArguments, [string]$label, [string]$workingDirectory = $traceRoot) {
+    if (-not [IO.Path]::IsPathFullyQualified($program) -or -not [IO.File]::Exists($program)) { throw 'The host diagnostic executable is unavailable.' }
+    if (-not [IO.Directory]::Exists($workingDirectory)) { throw 'The host diagnostic working directory is unavailable.' }
     $quoted = foreach ($argument in $commandArguments) {
         if ($argument -match '["\x00-\x1f]' -or $argument.EndsWith('\')) { throw 'Unsupported diagnostic argument.' }
         '"' + $argument + '"'
@@ -146,6 +148,11 @@ public static class EmberLpacTraceImage {
     # These are type names and numeric source positions/codes, never exception messages, tool output or trace fields.
     $diagnostic = [ordered]@{ exceptionType = $_.Exception.GetType().Name; scriptLine = $_.InvocationInfo.ScriptLineNumber; testExit = $testExit }
     if ($_.Exception -is [ComponentModel.Win32Exception]) { $diagnostic.win32Error = $_.Exception.NativeErrorCode }
+    if ($phase -eq 'fixture-launch' -and -not $monitorStarted) {
+        # Only the fixed host Node launch can reach this branch, before a capture exists. Its masked setup error is
+        # not helper output or captured process data; it cannot contain a trace row or unrelated command argument.
+        $diagnostic.hostLaunchError = Safe-Path $_.Exception.Message
+    }
     Write-Output ($diagnostic | ConvertTo-Json -Compress)
     $failed = $true
 } finally {

@@ -43,15 +43,15 @@ node scripts/run-integration.mjs test/integration/experimental-windows-lpac-nati
 ```
 
 The test locates Visual Studio with `vswhere`, calls `vcvars64.bat`, and compiles the small C fixture with no CRT and
-only kernel32/advapi32 imports. GitHub's `windows-2022` runner is the initial CI target. Non-Windows runs skip this
+only kernel32/advapi32 imports. The dedicated CI matrix uses GitHub's `windows-2022` and `windows-2025` runners. Non-Windows runs skip this
 native case. A missing compiler, unsupported LPAC configuration, missing report or failed native assertion on Windows
 fails the test; none is converted into a skip or a broader grant.
 
 The native fixture checks its token, confirms a synthetic host token variable was not inherited, reads its copied
 executable, writes its workspace, and is denied a canary readable by ordinary All Application Packages. The host first
 reads that canary as a positive control. The fixture separately probes denied VM-read, handle-duplication and
-parent-process rights on its host, alongside a successful self-process query. It attempts breakaway creation, then
-starts an ordinary child which outlives the root. Both attempts use the same explicit, noninheritable security
+parent-process rights on its host, alongside a successful self-process query. Its required success path attempts breakaway creation, then
+starts an ordinary child which outlives the root; the observed failure below prevents that success path today. Both attempts use the same explicit, noninheritable security
 attributes for their new process/thread objects, granting only the user, SYSTEM and exact session package SID.
 This does not change the host token or any existing object. The test observes root exit before verifying that a result receipt
 is still unavailable until Stop ends the child. Reports contain numeric fixture results, not secrets.
@@ -80,8 +80,22 @@ npx vitest run test/unit/experimental-windows-lpac.test.ts test/unit/experimenta
 
 ## Evidence and remaining boundaries
 
-The portable tests pass in the Linux workspace. Windows compilation and native enforcement are pending CI evidence;
-portable mocks are not LPAC certification. Record the exact commit and native result before making enforcement claims.
+The portable tests pass in the Linux workspace; portable mocks are not LPAC certification. The native matrix at
+`2e36bcb2003858ad1768c618455921072f01b91f`, run `43768393425`, compiled and launched the root fixture on both
+Windows Server 2022 (kernel 20348) and Windows Server 2025 (kernel 26100). Both runs failed at ordinary child
+creation, fixture stage 18: `CreateProcessW` returned error 5 and immediate native status `0xc0000022`.
+The root's AppContainer/zero-capability/own-package-versus-AAP checks, clean token-marker environment, copied-image
+read, host-process-right denials and workspace write had passed before that failure. Its image was openable for
+read/execute, its self process allowed `PROCESS_CREATE_PROCESS`, the observed child-process mitigation flags were
+zero, and a read-only check of the token's default DACL did not show an access denial. None of these observations
+establish why process creation failed. No capability or existing-object ACL was broadened to bypass it.
+
+Consequently there is no successful descendant-containment, child-token propagation or actual redirected temporary
+path/write result yet. A breakaway failure cannot prove the job blocked escape while the equivalent ordinary child
+also fails. The experiment remains failing on Windows and is unavailable to the product. These server runs do not
+certify Windows 10/11 desktops even where kernel families overlap. The separate hosted-CI diagnostic workflow uses a
+hash-pinned, Microsoft-signed Process Monitor and publishes only this exact fixture PID/image's bounded operation,
+result and masked path fields; raw traces, details and unrelated process rows are deleted without upload.
 
 This fixture does not run the pinned Copilot runtime, Node, a shell or a general toolchain. It has no credential broker,
 model transport or real provider authentication. Zero capabilities are configured and checked, but network connection,
