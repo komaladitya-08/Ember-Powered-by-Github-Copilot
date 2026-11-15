@@ -10,6 +10,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <stddef.h>
+#include <sddl.h>
 
 /* Keep compiler-generated aggregate copies/fills from introducing a CRT dependency. */
 void * __cdecl memset(void *target, int value, size_t count);
@@ -33,7 +34,7 @@ void * __cdecl memcpy(void *target, const void *source, size_t count)
 #define MAX_CHARS 32768
 #define TOKEN_IS_APP_CONTAINER ((TOKEN_INFORMATION_CLASS)29)
 #define TOKEN_CAPABILITIES_CLASS ((TOKEN_INFORMATION_CLASS)30)
-#define TOKEN_IS_LPAC ((TOKEN_INFORMATION_CLASS)46)
+#define TOKEN_APP_CONTAINER_SID ((TOKEN_INFORMATION_CLASS)31)
 
 static WCHAR selfPath[MAX_CHARS];
 static WCHAR commandLine[MAX_CHARS];
@@ -44,7 +45,9 @@ static WCHAR localAppDataPath[MAX_CHARS];
 static WCHAR tempPath[MAX_CHARS];
 static WCHAR filePath[MAX_CHARS];
 static WCHAR argument[64];
+static WCHAR descriptorText[MAX_CHARS];
 static ULONGLONG tokenBuffer[128];
+static ULONGLONG privilegeBuffer[128];
 static DWORD report[12];
 static const BYTE workBytes[] = { 'l', 'p', 'a', 'c', '-', 'f', 'i', 'x', 't', 'u', 'r', 'e' };
 
@@ -145,6 +148,45 @@ static BOOL tokenFlag(HANDLE token, TOKEN_INFORMATION_CLASS informationClass)
         && bytes == sizeof(value) && value == 1;
 }
 
+/* A query error is never a denial witness. Owner and group are required by AccessCheck. */
+static BOOL checkedAccess(HANDLE token, const WCHAR *userSid, const WCHAR *packageSid, BOOL expected)
+{
+    PSECURITY_DESCRIPTOR descriptor = NULL;
+    GENERIC_MAPPING mapping = { 1, 2, 4, 7 };
+    DWORD bytes = sizeof(privilegeBuffer), granted = 0;
+    BOOL allowed = FALSE, result;
+    descriptorText[0] = 0;
+    if (!append(descriptorText, L"O:SYG:SYD:P(A;;0x1;;;") || !append(descriptorText, userSid)
+        || !append(descriptorText, L")(A;;0x1;;;") || !append(descriptorText, packageSid)
+        || !append(descriptorText, L")")) return FALSE;
+    if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(descriptorText, SDDL_REVISION_1, &descriptor, NULL)) return FALSE;
+    result = AccessCheck(descriptor, token, 1, &mapping, (PPRIVILEGE_SET)privilegeBuffer, &bytes, &granted, &allowed);
+    LocalFree(descriptor);
+    return result && (expected ? (allowed && granted == 1) : (!allowed && granted == 0));
+}
+
+/* LPAC creation opts out of ALL APPLICATION PACKAGES. Observe that behavior against an own-package control,
+ * rather than using unsupported Win32 token class 46. This does not claim a formal LPAC identity-query contract. */
+static BOOL packageAccessWitness(HANDLE token)
+{
+    HANDLE duplicate = NULL;
+    LPWSTR userSid = NULL, packageSid = NULL;
+    DWORD bytes = 0;
+    BOOL result = FALSE;
+    if (!GetTokenInformation(token, TokenUser, tokenBuffer, sizeof(tokenBuffer), &bytes)
+        || !ConvertSidToStringSidW(((TOKEN_USER *)tokenBuffer)->User.Sid, &userSid)) goto cleanup;
+    if (!GetTokenInformation(token, TOKEN_APP_CONTAINER_SID, tokenBuffer, sizeof(tokenBuffer), &bytes)
+        || !ConvertSidToStringSidW(*(PSID *)tokenBuffer, &packageSid)) goto cleanup;
+    if (!DuplicateTokenEx(token, TOKEN_QUERY, NULL, SecurityImpersonation, TokenImpersonation, &duplicate)) goto cleanup;
+    result = checkedAccess(duplicate, userSid, packageSid, TRUE)
+        && checkedAccess(duplicate, userSid, L"S-1-15-2-1", FALSE);
+cleanup:
+    if (duplicate != NULL) CloseHandle(duplicate);
+    if (packageSid != NULL) LocalFree(packageSid);
+    if (userSid != NULL) LocalFree(userSid);
+    return result;
+}
+
 /* Each right is tested separately; a combined mask could hide one unexpectedly permitted operation. */
 static BOOL processRightDenied(DWORD right, DWORD processId)
 {
@@ -207,9 +249,9 @@ void __cdecl mainCRTStartup(void)
         || !environmentPath(L"EMBER_LPAC_TOOLS", toolsPath)) ExitProcess(14);
 
     report[0] = 1;
-    if (OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) {
+    if (OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY | TOKEN_DUPLICATE, &token)) {
         report[1] = tokenFlag(token, TOKEN_IS_APP_CONTAINER);
-        report[2] = tokenFlag(token, TOKEN_IS_LPAC);
+        report[2] = packageAccessWitness(token);
         if (GetTokenInformation(token, TOKEN_CAPABILITIES_CLASS, tokenBuffer, sizeof(tokenBuffer), &needed)
             && needed >= sizeof(DWORD)) {
             memcpy(&groups, tokenBuffer, sizeof(groups));

@@ -74,7 +74,9 @@ export const WINDOWS_LPAC_FUNCTIONS = {
   ],
   advapi32: [
     "int __stdcall OpenProcessToken(void *process, uint32_t access, _Out_ void **token)",
+    "int __stdcall DuplicateTokenEx(void *existing, uint32_t access, void *security, int level, int kind, _Out_ void **token)",
     "int __stdcall GetTokenInformation(void *token, int kind, void *information, uint32_t size, _Out_ uint32_t *returned)",
+    "int __stdcall AccessCheck(void *descriptor, void *token, uint32_t desired, void *mapping, void *privileges, _Inout_ uint32_t *privilegeSize, _Out_ uint32_t *granted, _Out_ int *allowed)",
     "int __stdcall ConvertSidToStringSidW(void *sid, _Out_ void **text)",
     "int __stdcall ConvertStringSecurityDescriptorToSecurityDescriptorW(const char16_t *text, uint32_t revision, _Out_ void **descriptor, void *size)",
     "void * __stdcall FreeSid(void *sid)",
@@ -107,9 +109,9 @@ export function bindExperimentalWindowsLpacApi(koffi: Pick<typeof Koffi, "sizeof
     const pointer = handle(output[0], "ConvertSidToStringSidW");
     try { return koffi.decode.string16(pointer); } finally { fn.LocalFree(pointer); keepAlive?.fill(0); }
   };
-  const withToken = <T>(process: unknown, action: (token: WindowsHandle) => T): T => {
+  const withToken = <T>(process: unknown, action: (token: WindowsHandle) => T, access = TOKEN_QUERY): T => {
     const output: unknown[] = [null];
-    if (!fn.OpenProcessToken(process, TOKEN_QUERY, output)) throw error("OpenProcessToken");
+    if (!fn.OpenProcessToken(process, access, output)) throw error("OpenProcessToken");
     const token = handle(output[0], "OpenProcessToken");
     try { return action(token); } finally { close(token); }
   };
@@ -118,12 +120,33 @@ export function bindExperimentalWindowsLpacApi(koffi: Pick<typeof Koffi, "sizeof
     if (!fn.GetTokenInformation(token, kind, bytes, size, returned) || returned[0] > size) throw error(`GetTokenInformation(${kind})`);
     return bytes;
   };
-  const withSecurity = <T>(sddl: string, action: (security: Buffer) => T): T => {
+  const withDescriptor = <T>(sddl: string, action: (descriptor: WindowsHandle) => T): T => {
     const output: unknown[] = [null];
     if (!fn.ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl, 1, output, null)) throw error("ConvertStringSecurityDescriptorToSecurityDescriptorW");
     const descriptor = handle(output[0], "security descriptor");
+    try { return action(descriptor); } finally { fn.LocalFree(descriptor); }
+  };
+  const withSecurity = <T>(sddl: string, action: (security: Buffer) => T): T => withDescriptor(sddl, descriptor => {
     const security = Buffer.alloc(24); security.writeUInt32LE(24, 0); security.writeBigUInt64LE(descriptor, 8);
-    try { return action(security); } finally { fn.LocalFree(descriptor); }
+    return action(security);
+  });
+  const accessWitness = (token: WindowsHandle, userSid: string, packageSid: string): void => {
+    const output: unknown[] = [null];
+    // AccessCheck requires an impersonation token. Its handle has QUERY only; we never impersonate this token.
+    if (!fn.DuplicateTokenEx(token, TOKEN_QUERY, null, 2, 2, output)) throw error("DuplicateTokenEx(access witness)");
+    const duplicate = handle(output[0], "DuplicateTokenEx");
+    try {
+      const check = (packageGrant: string) => withDescriptor(`O:SYG:SYD:P(A;;0x1;;;${userSid})(A;;0x1;;;${packageGrant})`, descriptor => {
+        const mapping = Buffer.alloc(16);
+        for (const [index, value] of [1, 2, 4, 7].entries()) mapping.writeUInt32LE(value, index * 4);
+        const privileges = Buffer.alloc(1024), size = [privileges.length], granted = [0], allowed = [0];
+        if (!fn.AccessCheck(descriptor, duplicate, 1, mapping, privileges, size, granted, allowed)) throw error("AccessCheck(LPAC witness)");
+        return { allowed: allowed[0], granted: granted[0] };
+      });
+      const ownPackage = check(packageSid), allPackages = check("S-1-15-2-1");
+      if (ownPackage.allowed !== 1 || ownPackage.granted !== 1 || allPackages.allowed !== 0 || allPackages.granted !== 0)
+        throw new Error("The suspended token did not satisfy the own-package/AAP access witness.");
+    } finally { close(duplicate); }
   };
   return {
     createProfile(name) {
@@ -247,9 +270,13 @@ export function bindExperimentalWindowsLpacApi(koffi: Pick<typeof Koffi, "sizeof
     verifyToken(profile, process) {
       withToken(process, token => {
         const info = tokenInfo(token, 31, 64);
-        if (tokenInfo(token, 29, 4).readUInt32LE(0) !== 1 || tokenInfo(token, 46, 4).readUInt32LE(0) !== 1 || tokenInfo(token, 30, 4096).readUInt32LE(0) !== 0 ||
-            sidText(info.readBigUInt64LE(0), info) !== profile.sidText) throw new Error("The suspended token is not the expected capability-free LPAC.");
-      });
+        if (tokenInfo(token, 29, 4).readUInt32LE(0) !== 1 || tokenInfo(token, 30, 4096).readUInt32LE(0) !== 0 ||
+            sidText(info.readBigUInt64LE(0), info) !== profile.sidText) throw new Error("The suspended token is not the expected capability-free AppContainer.");
+        const user = tokenInfo(token, 1, 4096);
+        // Win32 class 46 is rejected on the native CI target. This witnesses the documented AAP exclusion
+        // behavior with positive own-package control; it is not a formal token-class identity query.
+        accessWitness(token, sidText(user.readBigUInt64LE(0), user), profile.sidText);
+      }, TOKEN_QUERY | 0x2);
     },
     resume(thread) { if (Number(fn.ResumeThread(thread)) !== 1) throw error("ResumeThread"); },
     terminateJob(job) { if (!fn.TerminateJobObject(job, 125)) throw error("TerminateJobObject"); },

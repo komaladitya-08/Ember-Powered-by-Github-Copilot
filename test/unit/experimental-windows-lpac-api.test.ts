@@ -3,12 +3,33 @@ import { bindExperimentalWindowsLpacApi, LPAC_ATTRIBUTES, LPAC_CREATE_FLAGS, LPA
 
 function setup(failure = "", decoded = "S-1-15-2-1234") {
   const calls: { name: string; args: unknown[] }[] = [];
-  const native = { sizeof: () => 8, address: () => 0xabcden, decode: { string16: () => decoded } } as unknown as Parameters<typeof bindExperimentalWindowsLpacApi>[0];
+  const descriptors = new Map<bigint, string>();
+  let nextDescriptor = 300n;
+  const native = { sizeof: () => 8, address: () => 0xabcden, decode: { string16: (pointer: bigint) => pointer === 201n ? "S-1-15-2-1234" : pointer === 202n ? "S-1-5-21-1234" : decoded } } as unknown as Parameters<typeof bindExperimentalWindowsLpacApi>[0];
   const api = bindExperimentalWindowsLpacApi(native, () => ({ func: prototype => {
     const name = /\b(\w+)\s*\(/.exec(prototype)![1];
     return (...args: unknown[]) => {
       calls.push({ name, args: name === "UpdateProcThreadAttribute" ? args.map(value => Buffer.isBuffer(value) ? Buffer.from(value) : value) : args });
       if (name === "GetLastError") return 122;
+      if (name === "OpenProcessToken") { (args[2] as unknown[])[0] = 9n; return 1; }
+      if (name === "DuplicateTokenEx") { (args[5] as unknown[])[0] = 8n; return failure === "duplicate" ? 0 : 1; }
+      if (name === "GetTokenInformation") {
+        const kind = args[1] as number, buffer = args[2] as Buffer;
+        if (kind === 1 || kind === 31) buffer.writeBigUInt64LE(kind === 1 ? 102n : 101n, 0);
+        else buffer.writeUInt32LE(kind === 29 ? 1 : 0, 0);
+        (args[4] as number[])[0] = kind === 1 || kind === 31 ? 8 : 4;
+        return 1;
+      }
+      if (name === "ConvertSidToStringSidW") { (args[1] as unknown[])[0] = args[0] === 101n ? 201n : 202n; return 1; }
+      if (name === "ConvertStringSecurityDescriptorToSecurityDescriptorW") {
+        const pointer = nextDescriptor++;
+        descriptors.set(pointer, args[0] as string); (args[2] as unknown[])[0] = pointer; return 1;
+      }
+      if (name === "AccessCheck") {
+        if (failure === "access API") return 0;
+        const isAllPackages = descriptors.get(args[0] as bigint)!.includes("S-1-15-2-1)"), allowed = isAllPackages ? failure === "AAP allowed" : failure !== "own denied";
+        (args[6] as number[])[0] = allowed ? 1 : 0; (args[7] as number[])[0] = allowed ? 1 : 0; return 1;
+      }
       if (name === "GetAppContainerFolderPath") { (args[1] as unknown[])[0] = 60n; return failure === "profile path" ? -2147024809 : 0; }
       if (name === "GetDriveTypeW") return failure === "mapped" ? 4 : 3;
       if (name === "WaitForSingleObject") return failure === "unobserved" ? 258 : 0;
@@ -47,6 +68,25 @@ it("binds LPAC opt-out and capability-free SECURITY_CAPABILITIES, mutable UTF16 
   expect(startup.length).toBe(112); expect(startup.readUInt32LE(0)).toBe(112); expect(startup.readBigUInt64LE(104)).toBe(0xabcden);
   expect(s.calls.at(-1)?.name).toBe("DeleteProcThreadAttributeList");
   expect(s.calls.some(c => c.name === "UpdateProcThreadAttribute" && c.args[2] === 0x20002)).toBe(false);
+});
+
+it("requires a successful own-package positive access check and AAP denial before accepting the suspended token", () => {
+  const profile = { name: "new-profile", sid: 55n, sidText: "S-1-15-2-1234" }, s = setup();
+  s.api.verifyToken(profile, 20n);
+  expect(s.calls.find(c => c.name === "OpenProcessToken")?.args.slice(0, 2)).toEqual([20n, 0xa]);
+  expect(s.calls.find(c => c.name === "DuplicateTokenEx")?.args.slice(0, 5)).toEqual([9n, 8, null, 2, 2]);
+  expect(s.calls.filter(c => c.name === "ConvertStringSecurityDescriptorToSecurityDescriptorW").map(c => c.args[0])).toEqual([
+    "O:SYG:SYD:P(A;;0x1;;;S-1-5-21-1234)(A;;0x1;;;S-1-15-2-1234)",
+    "O:SYG:SYD:P(A;;0x1;;;S-1-5-21-1234)(A;;0x1;;;S-1-15-2-1)",
+  ]);
+  expect(s.calls.filter(c => c.name === "AccessCheck")).toHaveLength(2);
+  expect(s.calls.filter(c => c.name === "GetTokenInformation").map(c => c.args[1])).not.toContain(46);
+  expect(s.calls.filter(c => c.name === "CloseHandle").map(c => c.args[0])).toEqual([8n, 9n]);
+  for (const failure of ["access API", "own denied", "AAP allowed", "duplicate"]) {
+    const other = setup(failure);
+    expect(() => other.api.verifyToken(profile, 20n)).toThrow();
+    expect(other.calls.at(-1)).toEqual({ name: "CloseHandle", args: [9n] });
+  }
 });
 
 it("derives only this profile's app-data base from the OS folder API and frees its string with CoTaskMemFree", () => {
