@@ -23,6 +23,7 @@ $env:POWERSHELL_TELEMETRY_OPTOUT = '1'
 Assert-Hash $patch $manifest.patchSha256
 & git init --quiet $source; Assert-Native
 & git -C $source config core.autocrlf false; Assert-Native
+& git -C $source config core.eol lf; Assert-Native
 & git -C $source remote add origin https://github.com/PowerShell/PowerShell.git; Assert-Native
 & git -C $source fetch --depth=1 origin $manifest.sourceCommit; Assert-Native
 & git -C $source checkout --detach --quiet $manifest.sourceCommit; Assert-Native
