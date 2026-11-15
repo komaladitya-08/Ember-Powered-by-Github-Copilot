@@ -2,7 +2,7 @@
 # Microsoft CLI reference: https://learn.microsoft.com/en-us/troubleshoot/windows-client/shell-experience/troubleshoot-apps-start-failure-use-process-monitor
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-if (-not $IsWindows -or $env:GITHUB_ACTIONS -ne 'true' -or [string]::IsNullOrEmpty($env:RUNNER_TEMP)) {
+if (-not $IsWindows -or $env:GITHUB_ACTIONS -ne 'true' -or [string]::IsNullOrEmpty($env:RUNNER_TEMP) -or [string]::IsNullOrEmpty($env:GITHUB_WORKSPACE)) {
     throw 'This diagnostic requires a disposable hosted Windows CI runner.'
 }
 $traceRoot = [IO.Path]::Combine($env:RUNNER_TEMP, 'ember-lpac-trace-' + [guid]::NewGuid().ToString('N'))
@@ -10,12 +10,12 @@ $traceRoot = [IO.Path]::Combine($env:RUNNER_TEMP, 'ember-lpac-trace-' + [guid]::
 $launched = [Collections.Generic.List[Diagnostics.Process]]::new()
 $phase = 'setup'; $failed = $false; $cleanupFailed = $false; $testExit = 1; $toolExe = $null; $fixtureProcess = $null
 
-function Start-Logged([string]$program, [string[]]$commandArguments, [string]$label) {
+function Start-Logged([string]$program, [string[]]$commandArguments, [string]$label, [string]$workingDirectory = $traceRoot) {
     $quoted = foreach ($argument in $commandArguments) {
         if ($argument -match '["\x00-\x1f]' -or $argument.EndsWith('\')) { throw 'Unsupported diagnostic argument.' }
         '"' + $argument + '"'
     }
-    $childProcess = Start-Process -FilePath $program -ArgumentList ($quoted -join ' ') -PassThru -WindowStyle Hidden `
+    $childProcess = Start-Process -FilePath $program -ArgumentList ($quoted -join ' ') -WorkingDirectory $workingDirectory -PassThru -WindowStyle Hidden `
         -RedirectStandardOutput ([IO.Path]::Combine($traceRoot, $label + '.stdout')) `
         -RedirectStandardError ([IO.Path]::Combine($traceRoot, $label + '.stderr'))
     $launched.Add($childProcess)
@@ -69,7 +69,7 @@ try {
     $phase = 'fixture-handshake'
     $earlierHandshake = [Environment]::GetEnvironmentVariable('EMBER_LPAC_TRACE_HANDSHAKE', 'Process')
     [Environment]::SetEnvironmentVariable('EMBER_LPAC_TRACE_HANDSHAKE', $traceRoot, 'Process')
-    try { $testProcess = Start-Logged (Get-Command node -CommandType Application).Source @('scripts/run-integration.mjs', 'test/integration/experimental-windows-lpac-native.test.ts') 'fixture' }
+    try { $testProcess = Start-Logged (Get-Command node -CommandType Application).Source @('scripts/run-integration.mjs', 'test/integration/experimental-windows-lpac-native.test.ts') 'fixture' $env:GITHUB_WORKSPACE }
     finally { [Environment]::SetEnvironmentVariable('EMBER_LPAC_TRACE_HANDSHAKE', $earlierHandshake, 'Process') }
     $metadataFile = [IO.Path]::Combine($traceRoot, 'fixture.json')
     $deadline = [DateTime]::UtcNow.AddSeconds(80)
