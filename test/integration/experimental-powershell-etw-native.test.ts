@@ -27,7 +27,7 @@ function text(file: string): string | null {
 const literal = (value: string) => value.replace(/'/g, "''");
 
 describe.skipIf(process.platform !== "win32" || !configured)("pinned source PowerShell ETW compatibility experiment", () => {
-  it("retains normal host ETW, explicitly reports denied LPAC ETW, and attempts a normal cmdlet without changing WDAC or capability policy", async () => {
+  it.each(["encoded", "file"] as const)("retains host ETW and observes restricted runtime without changing policy (%s entry)", async entry => {
     const root = process.env.EMBER_EXPERIMENTAL_PS7_ROOT;
     if (!root || process.arch !== "x64") throw new Error("The configured experiment requires its built Windows x64 toolchain.");
     const pin = JSON.parse(fs.readFileSync(path.resolve("scripts/experimental/powershell-lpac-etw.json"), "utf8"));
@@ -66,12 +66,15 @@ describe.skipIf(process.platform !== "win32" || !configured)("pinned source Powe
       staged = await prepareWindowsPowerShellProof(parent, { assetRoot: root, manifestSha256: manifest.sha256 }, diagnosticApi);
       if (!readSecurity) throw new Error("No exact package read ACL for the fixed diagnostic.");
       api.writeNewFile(path.join(staged.fixture.paths.tools, "ember-startup-hook.dll"), hook, readSecurity);
-      await staged.fixture.launch(["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")]);
+      const scriptFile = path.join(staged.fixture.paths.tools, "fixed-probe.ps1");
+      if (entry === "file") api.writeNewFile(scriptFile, Buffer.from(script, "utf8"), readSecurity);
+      const entryArgs = entry === "file" ? ["-File", scriptFile] : ["-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")];
+      await staged.fixture.launch(["-NoLogo", "-NoProfile", "-NonInteractive", ...entryArgs]);
       await staged.fixture.waitRootExited(60_000); (await staged.fixture.waitStopped(15_000)).requireStopped();
       const provider = text(path.join(staged.fixture.paths.state, "provider.json")), command = text(path.join(staged.fixture.paths.state, "command.json"));
       const startup = text(path.join(staged.fixture.paths.state, "startup-exception.txt")), failure = text(path.join(staged.fixture.paths.state, "failure.txt"));
-      console.info("Experimental host audit: stopped LPAC runtime", JSON.stringify({ sourceCommit: pin.sourceCommit, patchSha256: pin.patchSha256, manifest, provider, command, startup, failure, exit: staged.fixture.exitCode() }));
-      if (provider === null) throw new Error(`Source-built PowerShell did not complete ETW observation: exit=0x${staged.fixture.exitCode().toString(16)}, startup=${startup ?? "absent"}.`);
+      console.info("Experimental host audit: stopped LPAC runtime", JSON.stringify({ entry, sourceCommit: pin.sourceCommit, patchSha256: pin.patchSha256, manifest, provider, command, startup, failure, exit: staged.fixture.exitCode() }));
+      if (provider === null) throw new Error(`Source-built PowerShell (${entry} entry) did not complete ETW observation: exit=0x${staged.fixture.exitCode().toString(16)}, startup=${startup ?? "absent"}.`);
       expect(JSON.parse(provider)).toEqual({ registrationStatus: 5, available: false, write: false, lastWriteError: 3 });
       if (staged.fixture.exitCode() !== 0 || command === null) throw new Error(`ETW denial was observed, but normal PowerShell commands remain incompatible: ${failure ?? startup ?? "no command report"}`);
       expect(JSON.parse(command)).toEqual({ ok: true, entries: 0 });
