@@ -36,6 +36,13 @@ function setup(failure = "", decoded = "S-1-15-2-1234") {
       if (name === "DeleteProcThreadAttributeList" && (failure === "cleanup" || failure === "unobserved")) throw new Error("attribute cleanup failed");
       if (name === "CreateJobObjectW") return 10n;
       if (name === "SetInformationJobObject") return failure === "job" ? 0 : 1;
+      if (name === "QueryInformationJobObject") {
+        if (args[1] === 9) {
+          (args[2] as Buffer).writeUInt32LE(LPAC_KILL_ON_CLOSE | (failure === "quota" ? 8 : 0), 16);
+          (args[2] as Buffer).writeUInt32LE(failure === "quota" ? 1 : 0, 40);
+        }
+        return 1;
+      }
       if (name === "InitializeProcThreadAttributeList") { (args[3] as bigint[])[0] = 128n; return args[0] ? 1 : 0; }
       if (name === "UpdateProcThreadAttribute") return failure === "policy" && args[2] === LPAC_ATTRIBUTES.allApplicationPackagesPolicy ? 0 : 1;
       if (name === "CreateProcessW") {
@@ -117,6 +124,13 @@ it("enables kill-on-close without either breakaway flag, and closes failed job s
   expect((set.args[2] as Buffer).readUInt32LE(16)).toBe(LPAC_KILL_ON_CLOSE);
   expect(LPAC_KILL_ON_CLOSE & (0x800 | 0x1000)).toBe(0);
   expect(s.calls.at(-1)).toEqual({ name: "CloseHandle", args: [10n] });
+});
+
+it("reads back exact private job limits and rejects an unexpected active-process quota", () => {
+  const s = setup(); expect(s.api.createJob()).toBe(10n);
+  expect(s.calls.filter(c => c.name === "QueryInformationJobObject").map(c => c.args[1])).toEqual([9, 4]);
+  const quota = setup("quota"); expect(() => quota.api.createJob()).toThrow("unexpected limits");
+  expect(quota.calls.at(-1)).toEqual({ name: "CloseHandle", args: [10n] });
 });
 
 it("does not adopt an existing profile or bind a derivation fallback", () => {

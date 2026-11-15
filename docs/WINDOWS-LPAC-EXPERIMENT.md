@@ -13,7 +13,8 @@ user profile or system root. Tool access is read/execute; workspace/state access
 
 Preparation creates a unique AppContainer profile. `launch()` requires both security-capabilities and LPAC opt-out
 attributes. It supplies zero capabilities, an explicit clean environment and no inherited handles. The process starts suspended,
-joins a private kill-on-close job with neither breakaway flag, and has its package SID, AppContainer flag and
+joins a private kill-on-close job with neither breakaway flag, whose exact limits are read back as kill-only with
+no active-process quota or UI restrictions, and has its package SID, AppContainer flag and
 zero capability count checked before its first thread resumes. A query-only impersonation duplicate must pass a
 synthetic own-package access check and be denied an otherwise identical All Application Packages access check.
 Both `AccessCheck` calls must succeed; an API error never counts as denial. Unsupported APIs and failed checks have no ordinary
@@ -54,6 +55,10 @@ starts an ordinary child which outlives the root. Both attempts use the same exp
 attributes for their new process/thread objects, granting only the user, SYSTEM and exact session package SID.
 This does not change the host token or any existing object. The test observes root exit before verifying that a result receipt
 is still unavailable until Stop ends the child. Reports contain numeric fixture results, not secrets.
+The fixture's child launches explicitly retain the LPAC AAP opt-out and start suspended. The child's exact parent
+package SID, zero capabilities and own-package/AAP access witness must pass before its first thread is resumed.
+This tests explicit propagation; it does not establish compatibility with tools that launch their own subprocesses
+using default startup attributes. Failed creation records Win32 and immediate native thread status for diagnosis.
 After verified Stop, the test also compares the child's actual local-app-data and temporary paths with the fresh
 OS-managed profile and confirms that its temporary directory was writable. Those disposable path reports contain
 only the test profile's paths and are removed with test scratch.
