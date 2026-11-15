@@ -49,6 +49,33 @@ function Own-XmlEvent([Xml.XmlElement]$event, [int]$expectedPid) {
     $pidNode = $event.SelectSingleNode('PID'); $nameNode = $event.SelectSingleNode('Process_Name')
     return $null -ne $pidNode -and $null -ne $nameNode -and $pidNode.InnerText -eq [string]$expectedPid -and $nameNode.InnerText -eq 'fixture.exe'
 }
+function Write-OwnProcmonConfiguration([string]$file, [int]$expectedPid) {
+    if ($expectedPid -le 0) { throw 'Invalid monitor configuration identity.' }
+    # Performance/privacy reduction only, never the publication boundary. PMC is not a Microsoft stable API;
+    # its record/rule layout is documented at github.com/eronnen/procmon-parser/blob/main/docs/PMC%20Format.md.
+    # If Procmon ignores/changes this format, independent CSV/XML PID+image gates and size bounds still fail closed.
+    $rulesStream = [IO.MemoryStream]::new(); $rules = [IO.BinaryWriter]::new($rulesStream)
+    try {
+        $rules.Write([byte]1); $rules.Write([uint32]2)
+        foreach ($rule in @(@(40054, [string]$expectedPid, $expectedPid), @(40053, 'fixture.exe', 0))) {
+            $value = [Text.Encoding]::Unicode.GetBytes([string]$rule[1] + [char]0)
+            $rules.Write([uint32]$rule[0]); $rules.Write([uint32]0); $rules.Write([byte]1)
+            $rules.Write([uint32]$value.Length); $rules.Write([byte[]]$value); $rules.Write([uint32]$rule[2]); $rules.Write([uint32]0)
+        }
+        $rules.Flush(); $rulesBytes = $rulesStream.ToArray()
+    } finally { $rules.Dispose(); $rulesStream.Dispose() }
+    $configStream = [IO.MemoryStream]::new(); $writer = [IO.BinaryWriter]::new($configStream)
+    try {
+        foreach ($record in @(@('FilterRules', $rulesBytes), @('DestructiveFilter', [byte[]]@(1, 0, 0, 0)))) {
+            $name = [Text.Encoding]::Unicode.GetBytes([string]$record[0] + [char]0); $data = [byte[]]$record[1]
+            $writer.Write([uint32](16 + $name.Length + $data.Length)); $writer.Write([uint32]16)
+            $writer.Write([uint32](16 + $name.Length)); $writer.Write([uint32]$data.Length); $writer.Write([byte[]]$name); $writer.Write([byte[]]$data)
+        }
+        $writer.Flush(); $configuration = $configStream.ToArray()
+        if ($configuration.Length -gt 2048) { throw 'The diagnostic filter exceeded its bound.' }
+        [IO.File]::WriteAllBytes($file, $configuration)
+    } finally { $writer.Dispose(); $configStream.Dispose() }
+}
 
 try {
     # A negative control ensures no row from another PID or image survives the publication filter.
@@ -128,7 +155,9 @@ public static class EmberLpacTraceImage {
     # and exhausted bounded stack export. The verified fixture remains suspended until the monitor is ready.
     $phase = 'capture'
     $pml = [IO.Path]::Combine($traceRoot, 'private.pml')
-    $capture = Start-Logged $toolExe @('/AcceptEula', '/Quiet', '/Minimized', '/BackingFile', $pml, '/Runtime', '20') 'capture'
+    $configuration = [IO.Path]::Combine($traceRoot, 'own-fixture.pmc')
+    Write-OwnProcmonConfiguration $configuration $fixturePid
+    $capture = Start-Logged $toolExe @('/AcceptEula', '/Quiet', '/Minimized', '/LoadConfig', $configuration, '/BackingFile', $pml, '/Runtime', '20') 'capture'
     $monitorStarted = $true
     $phase = 'capture-ready'
     $idle = Start-Logged $toolExe @('/AcceptEula', '/Quiet', '/WaitForIdle') 'idle'
@@ -150,7 +179,7 @@ public static class EmberLpacTraceImage {
 
     $phase = 'export-and-filter'
     $csv = [IO.Path]::Combine($traceRoot, 'private.csv')
-    $export = Start-Logged $toolExe @('/AcceptEula', '/Quiet', '/Minimized', '/OpenLog', $pml, '/SaveAs', $csv) 'export'
+    $export = Start-Logged $toolExe @('/AcceptEula', '/Quiet', '/Minimized', '/OpenLog', $pml, '/LoadConfig', $configuration, '/SaveApplyFilter', '/SaveAs', $csv) 'export'
     if ((Wait-Bounded $export 30000) -ne 0 -or -not [IO.File]::Exists($csv) -or (Get-Item -LiteralPath $csv).Length -gt 128MB) { throw 'The monitor did not export a bounded trace.' }
     $csvRows = 0; $ownPidRows = 0; $ownImageRows = 0; $csvSchemaValid = $true
     $own = @(Import-Csv -LiteralPath $csv | ForEach-Object {
@@ -183,8 +212,11 @@ public static class EmberLpacTraceImage {
     # in its parser; never deserialize processlist, Detail, registry contents or rejected events into public output.
     $phase = 'stack-export'
     $xml = [IO.Path]::Combine($traceRoot, 'private.xml')
-    $stackExport = Start-Logged $toolExe @('/AcceptEula', '/Quiet', '/Minimized', '/OpenLog', $pml, '/SaveAs1', $xml) 'stack-export'
-    if ((Wait-Bounded $stackExport 60000) -ne 0 -or -not [IO.File]::Exists($xml) -or (Get-Item -LiteralPath $xml).Length -gt 128MB) { throw 'The monitor did not export bounded stacks.' }
+    $stackExport = Start-Logged $toolExe @('/AcceptEula', '/Quiet', '/Minimized', '/OpenLog', $pml, '/LoadConfig', $configuration, '/SaveApplyFilter', '/SaveAs1', $xml) 'stack-export'
+    $stackExit = Wait-Bounded $stackExport 60000
+    $stackBytes = if ([IO.File]::Exists($xml)) { (Get-Item -LiteralPath $xml).Length } else { 0 }
+    Write-Output ([ordered]@{ stackExportExit = $stackExit; stackXmlBytes = $stackBytes } | ConvertTo-Json -Compress)
+    if ($stackExit -ne 0 -or $stackBytes -le 0 -or $stackBytes -gt 128MB) { throw 'The monitor did not export bounded stacks.' }
     $settings = [Xml.XmlReaderSettings]::new()
     $settings.DtdProcessing = [Xml.DtdProcessing]::Prohibit; $settings.XmlResolver = $null; $settings.MaxCharactersInDocument = 128MB
     $reader = [Xml.XmlReader]::Create($xml, $settings); $ownStacks = 0
