@@ -1,0 +1,49 @@
+# Fixed child-process policy witness
+
+This separate experiment observes creation-time child policy, self-setter attempts and fixed ordinary child creation. It does not enable a product executor, provide a broker, modify the source-Node experiment or establish generic process admission. The canonical LPAC APIs and their original assertions remain unchanged.
+
+The existing baseline is [a1f10fc5 / run 43838983895](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43838983895): all six zero-capability LPAC `CreateProcessW` variants refused with Win32 error 5 / NTSTATUS `0xc0000022`, without an intended child. They varied explicit/inherited capability setup, AAP-only setup, security descriptors and window flags. None tested `CHILD_PROCESS_POLICY` or `OVERRIDE 2`. The unrelated AAP attribute `0x2000f` must not be confused with child-policy attribute `0x2000e`.
+
+## Fixed scope
+
+The repository C asset runs as a root or an inert literal `--leaf`, with no caller-supplied command, script, image or provider. The independently inspected ordinary host uses the original verified build image; LPAC uses its readonly LOW copy. Existing package SID, zero capabilities, AAP opt-out, exact image, two incoming stdio handles, host-only canary and Stop/cleanup rules remain. LPAC must be denied `PROCESS_CREATE_PROCESS` and `PROCESS_VM_WRITE` access to the privileged parent process; the ordinary host supplies corresponding positive handle-open controls. No memory write or injection is attempted.
+
+A separate helper changes only the fresh experimental private job from kill-on-close to kill-on-close plus `ACTIVE_PROCESS=2`, verifies both limits and rejects breakaway/UI flags. Thus a one-process job cap cannot manufacture the child-policy denial. Each created child is checked while suspended against the fixed image, caller token/user/package/integrity, zero-capability/AAP facts for LPAC, policy query and job association; only the same fixed leaf may then resume. C checks association through `IsProcessInJob(child,NULL)`; this is not a claim of exact private-job membership. The trusted parent owns the exact private job and requires its final active/listed count zero.
+
+The host constructor supplies the child-policy attribute only for the fixed birth cases. Before a restricted root resumes, the trusted parent reads `ProcessChildProcessPolicy` from the owned suspended process handle and requires flags exactly 1 (NoChild on, audit/secure off). A requested birth `OVERRIDE 2` is issued only after the actual trusted creator reports no child restriction. Case 0 and case 2 record observed flags empirically.
+
+| Case | Root birth request | Root self-setter request |
+| --- | --- | --- |
+| 0 | Attribute omitted | None |
+| 1 | RESTRICTED 1 | None |
+| 2 | OVERRIDE 2 from unrestricted trusted creator | None |
+| 3 | RESTRICTED 1 | Clear 0 |
+| 4 | RESTRICTED 1 | Audit-only 2 |
+| 5 | RESTRICTED 1 | Secure-exception 4 |
+| 6 | RESTRICTED 1 | Enforce plus audit 3 |
+| 7 | RESTRICTED 1 | Enforce plus secure 5 |
+| 8 | Attribute omitted, broker-created inert LPAC leaf | No root observations |
+
+Each root records a plain fixed-image child attempt and a child `OVERRIDE 2` attempt. The ordinary case 0 must successfully exercise both routes before subsequent cases launch. Restricted cases require no ordinary child after the mutation/override attempts. Case 2 is a new optional control, not a promised solution to the known LPAC refusal. An LPAC refusal has no policy-causality claim without an independently successful same-route control. A broker-created LPAC leaf proves image/leaf compatibility only; it does not replace direct creation.
+
+Microsoft's public setter documentation does not completely specify Child policy clear/set behavior. Setter BOOL/error and before/after masks are therefore observations; the report marks setter validity and policy causality `not-established`. Unsupported setters do not prove immutability. An ordinary leaf is not a secure/protected process, so these cases do not demonstrate secure-process eligibility. Direct `NtCreateUserProcess` is deferred: no independently validated exact ABI control exists, and an invalid-parameter/access-denied result would not prove policy enforcement.
+
+## Ownership and output
+
+A successful creation must yield a valid distinct process/thread pair and IDs, survive exact fixed-image/token checks, resume once, exit 0 and close both handles once. FALSE with any unexpected process information, ambiguous ownership/query/resume/wait/close state or report-close uncertainty terminalizes the C root until the trusted parent's bounded Stop. There is no uncertain retry. The host owner permanently fences native uncertainty and retains its owners; no report is acquired or decoded after a root deadline, missing stopped-job lease or nonzero exit.
+
+The exact 320 byte private report carries only fixed case/route enums, BOOL/error or mask facts and known-cleanup states. It contains no paths, process IDs, SIDs, handles, arbitrary native strings or entropy. The parent validates framing and cross-field semantics, root exit 0, private-job zero, unchanged canary, empty native stdio and complete teardown before publishing numeric observations. All cases use fresh profiles and private state. Native scratch is a canonical, validated sibling under hosted `RUNNER_TEMP`, disjoint from managed `os.tmpdir()` in both ancestor directions, with no fallback. A missing natural-completion proof permanently revokes disposal even if a later non-disposing Stop succeeds; the integration runner then preserves the complete scratch tree. No registry/global mitigation, real-host application policy, driver, network capability or ACL expansion is introduced.
+
+The separate repository-source issuer and build receipt bind the three fixed compile inputs, hosted VS 17/18 selection, shared v143 14.44.35207 / SDK 10.0.26100.0, before/after tool hashes and a bounded x64 console PE. They make no OpenJS signature or Node-source authority claim.
+
+## Evidence and limits
+
+Local portable contracts cover the decoder, clean environment, exact birth attribute, policy query fencing, two-process job limits and lifecycle. A Linux-only mock compiles the actual C ownership helpers and injects faults; it establishes helper logic, not Windows ABI or policy behavior. Actual Windows Server 2022/2025 runs remain pending frozen review; no native dispatch has occurred.
+
+Primary sources:
+
+- [UpdateProcThreadAttribute](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-updateprocthreadattribute): restriction is a token property; override requires an unrestricted creator; privileged other-process handles can defeat the intended sandbox condition.
+- [Child-process policy structure](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntddk/ns-ntddk-_process_mitigation_child_process_policy): NoChild/audit/secure bits and their distinct semantics.
+- [GetProcessMitigationPolicy](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getprocessmitigationpolicy): query rights and typed buffer contract.
+- [SetProcessMitigationPolicy](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-setprocessmitigationpolicy): calling-process setter, without complete Child self-clear guarantees.
+- [SeTokenSetNoChildProcessRestricted](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/nf-ntifs-setokensetnochildprocessrestricted): documented kernel audit-to-enforce direction, not a complete user-mode immutability proof.
