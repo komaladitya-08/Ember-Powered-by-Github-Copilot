@@ -51,11 +51,13 @@ it("rejects malformed UTF16, zero identities, negative sizes and path-namespace 
 });
 
 /** Fault injection for resource ownership only. Native enforcement is exercised in the Windows integration lane. */
-function failedCreationNative(options: { descriptorFree?: boolean; invalidCreatedInfo?: boolean; createdClose?: boolean; wrongById?: boolean; byIdFailure?: boolean; deleteClose?: boolean }) {
+function failedCreationNative(options: { descriptorFree?: boolean; invalidCreatedInfo?: boolean; createdClose?: boolean; wrongById?: boolean; byIdFailure?: boolean; deleteClose?: boolean; wrongNamed?: boolean }) {
   const pointers = new Map<bigint, Buffer>(), strings = new Map<bigint, string>();
-  const objects = new Map<bigint, { id: bigint; name: string; directory: boolean; created: boolean; byId: boolean; access: number }>();
+  type ObjectIdentity = { id: bigint; name: string; relative: string; directory: boolean; key: string };
+  const names = new Map<string, ObjectIdentity>(), objects = new Map<bigint, ObjectIdentity & { created: boolean; byId: boolean; access: number }>();
   const rolledBack: bigint[] = [], closed: bigint[] = [], created: bigint[] = [];
-  const opened: { raw: bigint; access: number; share: number; fresh: boolean }[] = [];
+  const rejectedByIdDisposition: bigint[] = [];
+  const opened: { raw: bigint; parent: bigint; name: string; access: number; share: number; fresh: boolean }[] = [];
   const byId: { raw: bigint; hint: bigint; descriptor: Buffer; access: number; share: number; flags: number }[] = [];
   let nextPointer = 1_000n, nextHandle = 100n, nextString = 50_000n, securityDirectory = false;
   const handlers: Record<string, (...args: unknown[]) => unknown> = {
@@ -64,9 +66,12 @@ function failedCreationNative(options: { descriptorFree?: boolean; invalidCreate
     NtCreateFile: (...args) => {
       const attributes = args[2] as Buffer, unicode = pointers.get(attributes.readBigUInt64LE(16))!;
       const text = pointers.get(unicode.readBigUInt64LE(8))!, name = text.toString("utf16le", 0, unicode.readUInt16LE(0));
-      const handle = nextHandle++, fresh = args[7] === 2;
-      objects.set(handle, { id: fresh ? handle : 1n, name, directory: !!(Number(args[8]) & 1), created: fresh, byId: false, access: Number(args[1]) }); if (fresh) created.push(handle);
-      opened.push({ raw: handle, access: Number(args[1]), share: Number(args[6]), fresh });
+      const handle = nextHandle++, fresh = args[7] === 2, parent = attributes.readBigUInt64LE(8), parentObject = objects.get(parent), key = parent ? `${parentObject!.id}:${name}` : "drive";
+      let identity = names.get(key);
+      if (fresh || !parent) { identity = { id: fresh ? handle : 1n, name, relative: parentObject ? `${parentObject.relative ? parentObject.relative + "\\" : ""}${name}` : "", directory: !!(Number(args[8]) & 1), key }; names.set(key, identity); }
+      if (!identity) return 0xc0000034;
+      objects.set(handle, { ...identity, id: identity.id + (!fresh && Number(args[1]) === 0x1300a0 && options.wrongNamed ? 1n : 0n), created: fresh, byId: false, access: Number(args[1]) }); if (fresh) created.push(handle);
+      opened.push({ raw: handle, parent, name, access: Number(args[1]), share: Number(args[6]), fresh });
       (args[0] as unknown[])[0] = handle; return 0;
     },
     OpenFileById: (...args) => {
@@ -89,7 +94,7 @@ function failedCreationNative(options: { descriptorFree?: boolean; invalidCreate
       const row = objects.get(args[0] as bigint)!;
       // MS-FSA FileNormalizedNameInformation requires FILE_TRAVERSE on an open-by-ID handle.
       if (row.byId && !(row.access & 0x20)) return 0;
-      const location = "\\\\?\\Volume{12345678-1234-1234-1234-123456789abc}\\" + (row.name.startsWith("\\??\\") ? "" : row.name);
+      const location = "\\\\?\\Volume{12345678-1234-1234-1234-123456789abc}\\" + row.relative;
       (args[1] as Buffer).write(location, "utf16le"); return location.length;
     },
     GetCurrentProcess: () => -1n,
@@ -106,11 +111,16 @@ function failedCreationNative(options: { descriptorFree?: boolean; invalidCreate
     GetAce: (...args) => { (args[2] as unknown[])[0] = 10_000n + BigInt(Number(args[1]) * 100); return 1; },
     GetLastError: () => 5,
     LocalFree: (...args) => options.descriptorFree && args[0] === 93n ? 93n : 0n,
-    NtSetInformationFile: (...args) => { rolledBack.push(args[0] as bigint); return 0; },
+    NtSetInformationFile: (...args) => {
+      const raw = args[0] as bigint, value = objects.get(raw)!;
+      // Observed NTFS c0b14060 behavior: a disposition through the by-ID file object rejects with INVALID_PARAMETER.
+      if (value.byId) { rejectedByIdDisposition.push(raw); return 0xc000000d; }
+      rolledBack.push(raw); names.delete(value.key); return 0;
+    },
     CloseHandle: (...args) => {
       const handle = args[0] as bigint; closed.push(handle);
       const value = objects.get(handle);
-      if (value?.created && options.createdClose || value?.byId && (value.access & 0x10000) && options.deleteClose) return 0;
+      if (value?.created && options.createdClose || value && !value.created && value.directory && (value.access & 0x10000) && options.deleteClose) return 0;
       objects.delete(handle); return 1;
     },
   };
@@ -121,7 +131,7 @@ function failedCreationNative(options: { descriptorFree?: boolean; invalidCreate
       { string16: (pointer: bigint) => strings.get(pointer)! }),
   } as unknown as Parameters<typeof import("../../app/main/agent/windows-coding-native").bindWindowsCodingNative>[0];
   const load = () => ({ func(prototype: string) { const name = /\b(\w+)\s*\(/.exec(prototype)![1]; return handlers[name] ?? (() => { throw new Error(`Unexpected test native call: ${name}`); }); } });
-  return { native, load, rolledBack, closed, created, opened, byId };
+  return { native, load, rolledBack, closed, created, opened, byId, rejectedByIdDisposition, live: () => [...objects.keys()] };
 }
 
 it("retains a fresh handle before descriptor disposal and rolls it back before closing on LocalFree failure", async () => {
@@ -162,8 +172,9 @@ it("transfers fresh directory ownership to a distinct verified non-DELETE file o
   expect(fake.byId[0].descriptor.readUInt32LE(0)).toBe(24); expect(fake.byId[0].descriptor.readUInt32LE(4)).toBe(0);
   expect(fake.byId[0].descriptor.readBigUInt64LE(8)).toBe(fake.created[0]);
   expect(fake.closed).toContain(fake.created[0]); expect(api.info(directory).id).toBe(fake.created[0].toString(16).padStart(16, "0"));
-  api.remove(directory); expect(fake.byId[1]).toMatchObject({ hint: fake.byId[0].raw, access: 0x1300a0, share: 7, flags: 0x02200000 });
-  expect(fake.rolledBack).toEqual([fake.byId[1].raw]); expect(fake.closed).toContain(fake.byId[1].raw);
+  api.remove(directory); const deleting = fake.opened.at(-1)!;
+  expect(fake.byId).toHaveLength(1); expect(deleting).toMatchObject({ parent: fake.opened.find(open => open.access === 0x1200af)!.raw, name: "fresh-copy", access: 0x1300a0, share: 7, fresh: false });
+  expect(fake.rolledBack).toEqual([deleting.raw]); expect(fake.closed).toContain(deleting.raw); expect(fake.rejectedByIdDisposition).toEqual([]);
   expect(() => api.info(directory)).toThrow(); api.close(directory); for (const handle of base.handles.slice().reverse()) api.close(handle);
 });
 
@@ -189,7 +200,26 @@ it("retains terminal failure when the exact transient deletion handle cannot be 
   const api = module.bindWindowsCodingNative(fake.native, fake.load), base = api.pin("C:\\", "base"), directory = api.create(base.handle, "fresh-copy", "directory");
   expect(() => api.remove(base.handle)).toThrow(); expect(fake.byId).toHaveLength(1);
   expect(() => api.remove(directory)).toThrow(module.WindowsCodingCleanupError);
-  expect(fake.rolledBack).toEqual([fake.byId[1].raw]); expect(fake.closed.filter(handle => handle === fake.byId[1].raw)).toHaveLength(1);
+  const deleting = fake.opened.at(-1)!.raw;
+  expect(fake.rolledBack).toEqual([deleting]); expect(fake.closed.filter(handle => handle === deleting)).toHaveLength(1);
   expect(() => api.info(directory)).toThrow(module.WindowsCodingCleanupError); api.close(directory);
   for (const handle of base.handles.slice().reverse()) api.close(handle);
+});
+
+it("closes a mismatched named candidate without disposition and retains the original identity", async () => {
+  vi.resetModules(); const module = await import("../../app/main/agent/windows-coding-native"), fake = failedCreationNative({ wrongNamed: true });
+  const api = module.bindWindowsCodingNative(fake.native, fake.load), base = api.pin("C:\\", "base"), directory = api.create(base.handle, "fresh-copy", "directory"), before = api.info(directory);
+  expect(() => api.remove(directory)).toThrowError(expect.objectContaining({ code: "boundary" }));
+  expect(fake.rolledBack).toEqual([]); expect(fake.closed).toContain(fake.opened.at(-1)!.raw); expect(api.info(directory)).toEqual(before);
+  api.close(directory); for (const handle of base.handles.slice().reverse()) api.close(handle); expect(fake.live()).toEqual([]);
+});
+
+it("rejects an expired traversal parent before any named reopen or deletion fallback", async () => {
+  vi.resetModules(); const module = await import("../../app/main/agent/windows-coding-native"), fake = failedCreationNative({});
+  const api = module.bindWindowsCodingNative(fake.native, fake.load), base = api.pin("C:\\", "base"), root = api.create(base.handle, "fresh-copy", "directory");
+  const parent = api.create(root, "parent", "directory"), child = api.create(parent, "child", "directory"); api.close(parent);
+  const opened = fake.opened.length, byId = fake.byId.length;
+  expect(() => api.remove(child)).toThrowError(expect.objectContaining({ code: "boundary" }));
+  expect(fake.opened).toHaveLength(opened); expect(fake.byId).toHaveLength(byId); expect(fake.rolledBack).toEqual([]);
+  api.close(child); api.close(root); for (const handle of base.handles.slice().reverse()) api.close(handle); expect(fake.live()).toEqual([]);
 });

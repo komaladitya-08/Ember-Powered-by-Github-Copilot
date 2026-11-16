@@ -40,7 +40,8 @@ export interface WindowsCodingNative {
 }
 
 type NativeFunction = (...args: unknown[]) => unknown;
-type Lease = { raw: bigint; kind: WindowsCodingKind; capability: "read" | "base" | "copy"; root?: bigint; created: boolean; written: boolean; removed: boolean; poisoned: boolean };
+type Lease = { raw: bigint; kind: WindowsCodingKind; capability: "read" | "base" | "copy"; root?: bigint; readonly parent?: bigint; readonly name?: string;
+  created: boolean; written: boolean; removed: boolean; poisoned: boolean };
 const MAX_FILE = 128 * 1024 * 1024, MAX_CHUNK = 1024 * 1024, MAX_ENTRIES = 10_000;
 const READ = 0x120089, DIRECTORY_READ = 0x1200a9, ALL = 0x1f01ff, DELETE = 0x10000;
 // A by-ID normalized-name query also requires FILE_TRAVERSE (MS-FSA 2.1.5.12.30).
@@ -270,18 +271,19 @@ export function bindWindowsCodingNative(native: Pick<typeof Koffi, "sizeof" | "a
   const sameInfo = (a: WindowsCodingInfo, b: WindowsCodingInfo): boolean =>
     (["id", "volume", "finalPath", "kind", "attributes", "links", "size", "created", "written", "changed"] as const).every(key => a[key] === b[key]);
   /** Open a distinct file object by its held NTFS identity; never resolve a new pathname or release the identity pin. */
-  const openDirectoryIdentity = (original: bigint, access: number): bigint => {
+  const openDirectoryIdentity = (original: bigint): bigint => {
     const selected = state(original);
-    if (selected.capability !== "copy" || selected.kind !== "directory" || (access !== COPY_DIRECTORY && access !== DELETE_QUERY)) fail("boundary");
+    if (selected.capability !== "copy" || selected.kind !== "directory" || selected.parent === undefined || selected.name === undefined) fail("boundary");
     const before = info(original); assertPrivate(original);
     const identifier = Buffer.alloc(24); // FILE_ID_DESCRIPTOR, FileIdType (Win64 union alignment is eight bytes).
     identifier.writeUInt32LE(24, 0); identifier.writeUInt32LE(0, 4); identifier.writeBigUInt64LE(BigInt(`0x${before.id}`), 8);
     let raw: unknown;
-    try { raw = functions.OpenFileById(selected.raw, identifier, access, 7, null, 0x02200000); }
+    try { raw = functions.OpenFileById(selected.raw, identifier, COPY_DIRECTORY, 7, null, 0x02200000); }
     catch { throw cleanupFailure ??= new WindowsCodingCleanupError(); } // Native handle ownership is unknown.
     if (typeof raw !== "bigint" || raw === 0n || raw === -1n || raw === INVALID_HANDLE) return win("OpenFileById");
     const handle = nextLease++;
-    pool.set(handle, { raw, kind: "directory", capability: "copy", root: selected.root, created: false, written: false, removed: false, poisoned: false });
+    pool.set(handle, { raw, kind: "directory", capability: "copy", root: selected.root, parent: selected.parent, name: selected.name,
+      created: false, written: false, removed: false, poisoned: false });
     try {
       if (!sameInfo(before, info(handle)) || !sameInfo(before, info(original))) fail("boundary");
       assertPrivate(handle); return handle;
@@ -289,6 +291,7 @@ export function bindWindowsCodingNative(native: Pick<typeof Koffi, "sizeof" | "a
   };
   const openRaw = (parent: bigint | null, name: string, kind: WindowsCodingKind, access: number, share: number, create: boolean, security: bigint | null,
     capability: Lease["capability"], root?: bigint): bigint => {
+    const namedParent = capability === "copy" && kind === "directory" && parent !== null ? { parent, name: component(name) } : {};
     const text = Buffer.from(name + "\0", "utf16le");
     if (text.length > 65534) fail("path");
     const unicode = Buffer.alloc(16), attributes = Buffer.alloc(48), io = Buffer.alloc(16), output: unknown[] = [null];
@@ -308,7 +311,7 @@ export function bindWindowsCodingNative(native: Pick<typeof Koffi, "sizeof" | "a
       nt(status, "NtCreateFile");
     }
     const raw = rawPointer(output[0]), handle = nextLease++;
-    pool.set(handle, { raw, kind, capability, root, created: create, written: false, removed: false, poisoned: false });
+    pool.set(handle, { raw, kind, capability, root, ...namedParent, created: create, written: false, removed: false, poisoned: false });
     try { info(handle); return handle; } catch (error) { if (create) return discardCreated(handle, error); close(handle); throw error; }
   };
   const opened = (parent: bigint, name: string, kind: WindowsCodingKind, mode: "source" | "copy"): bigint => {
@@ -318,6 +321,22 @@ export function bindWindowsCodingNative(native: Pick<typeof Koffi, "sizeof" | "a
     const mutable = mode === "copy";
     const access = mutable ? (kind === "directory" ? COPY_DIRECTORY : READ | DELETE) : kind === "directory" ? DIRECTORY_READ : READ;
     return openRaw(parent, name, kind, access, kind === "directory" ? (mutable ? 7 : 3) : 1, false, null, mutable ? "copy" : "read", mutable ? selected.root : undefined);
+  };
+  /** Observed by-ID disposition returned INVALID_PARAMETER; reopen only the recorded component under its live parent. */
+  const openNamedDirectoryDeletion = (original: bigint): bigint => {
+    const selected = state(original);
+    if (selected.capability !== "copy" || selected.kind !== "directory" || selected.parent === undefined || selected.name === undefined || selected.root === undefined) fail("boundary");
+    const parent = state(selected.parent), root = selected.root === original;
+    if (parent.kind !== "directory" || (root ? parent.capability !== "base" : parent.capability !== "copy" || parent.root !== selected.root)) fail("boundary");
+    const before = info(original), parentBefore = info(selected.parent);
+    if (before.volume !== parentBefore.volume) fail("boundary");
+    assertPrivate(original); if (parent.capability === "copy") assertPrivate(selected.parent);
+    const handle = openRaw(selected.parent, component(selected.name), "directory", DELETE_QUERY, 7, false, null, "copy", selected.root);
+    try {
+      assertPrivate(handle);
+      if (!sameInfo(before, info(handle)) || !sameInfo(before, info(original)) || !sameInfo(parentBefore, info(selected.parent))) fail("boundary");
+      return handle;
+    } catch (error) { close(handle); throw error; }
   };
   const api: WindowsCodingNative = {
     get ownerSid() { return ownerSid(); },
@@ -381,7 +400,7 @@ export function bindWindowsCodingNative(native: Pick<typeof Koffi, "sizeof" | "a
         if (kind === "directory") {
           // A persistent DELETE directory open conflicts with Windows' internal destination-parent rename open.
           // Keep the creation handle for exact rollback, then transfer ownership to a separately verified file object.
-          persistent = openDirectoryIdentity(handle!, COPY_DIRECTORY);
+          persistent = openDirectoryIdentity(handle!);
           if (selected.capability === "base") state(persistent).root = persistent;
           close(handle!); handle = undefined; return persistent;
         }
@@ -432,7 +451,7 @@ export function bindWindowsCodingNative(native: Pick<typeof Koffi, "sizeof" | "a
     remove(handle) {
       const value = state(handle); if (value.capability !== "copy") fail("boundary");
       assertPrivate(handle);
-      const deleting = value.kind === "directory" ? openDirectoryIdentity(handle, DELETE_QUERY) : undefined;
+      const deleting = value.kind === "directory" ? openNamedDirectoryDeletion(handle) : undefined;
       let problem: unknown, failed = false;
       try {
         const target = deleting === undefined ? value : state(deleting), disposition = Buffer.alloc(4), io = Buffer.alloc(16); disposition.writeUInt32LE(1);
