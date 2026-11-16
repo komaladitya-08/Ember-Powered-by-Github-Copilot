@@ -54,16 +54,20 @@ export function windowsNodeAssetCreationSecurity(owner: string, packageSid: stri
 export class WindowsNodeAssetEnforcementObservationError extends Error {
   readonly preludeStage: number; readonly cExit: number; readonly errorClass: number;
   readonly probeObject: number; readonly probeRight: number; readonly probeOutcome: number;
-  constructor(readonly mode: WindowsNodeAssetEnforcementMode, readonly phase: number, preludeStage = 0, cExit = 0, errorClass = 0, probeObject = 0, probeRight = 0, probeOutcome = 0) {
+  readonly probeMatrix: readonly number[];
+  constructor(readonly mode: WindowsNodeAssetEnforcementMode, readonly phase: number, preludeStage = 0, cExit = 0, errorClass = 0, probeObject = 0, probeRight = 0, probeOutcome = 0, probeMatrix: readonly number[] = []) {
     const stage = Number.isInteger(preludeStage) && preludeStage >= 0 && preludeStage <= 14 ? preludeStage : 0;
     const code = Number.isInteger(cExit) && (cExit === 19 || cExit >= 201 && cExit <= 209) ? cExit : 0;
     const kind = Number.isInteger(errorClass) && errorClass >= 0 && errorClass <= 8 ? errorClass : 0;
     const object = Number.isInteger(probeObject) && probeObject >= 1 && probeObject <= 3 ? probeObject : 0;
     const right = Number.isInteger(probeRight) && probeRight >= 1 && probeRight <= 3 ? probeRight : 0;
     const outcome = Number.isInteger(probeOutcome) && probeOutcome >= 1 && probeOutcome <= 5 ? probeOutcome : 0;
-    super(`The fixed native Node asset witness was refused in ${mode} at phase ${phase} (prelude ${stage}, C exit ${code}, error class ${kind}, probe ${object}/${right}/${outcome}).`);
+    const matrix = Array.isArray(probeMatrix) && probeMatrix.length === 18 && probeMatrix.every(value => Number.isInteger(value) && value >= 1 && value <= 5)
+      ? Object.freeze([...probeMatrix]) : Object.freeze(Array<number>(18).fill(0));
+    super(`The fixed native Node asset witness was refused in ${mode} at phase ${phase} (prelude ${stage}, C exit ${code}, error class ${kind}, probe ${object}/${right}/${outcome}, matrix ${matrix.join("")}).`);
     this.preludeStage = stage; this.cExit = code; this.errorClass = kind;
     this.probeObject = object; this.probeRight = right; this.probeOutcome = outcome;
+    this.probeMatrix = matrix;
     this.name = "WindowsNodeAssetEnforcementObservationError"; this.stack = `${this.name}: ${this.message}`;
   }
 }
@@ -77,14 +81,18 @@ export function windowsNodeAssetPreludeExit(loaded: Pick<Bundle, "requireWindows
 export function windowsNodeAssetPreludeProbe(loaded: Pick<Bundle, "requireWindowsCommandRootOnlyCompleted" | "requireWindowsCommandOutputClosed">,
   input: { completed: unknown; closed: unknown; run: WindowsCommandRootOnlyRunRef; launch: WindowsCommandOutputLaunchRef; stderr: Buffer }) {
   const completed = loaded.requireWindowsCommandRootOnlyCompleted(input.completed, input.run), closed = loaded.requireWindowsCommandOutputClosed(input.closed, input.launch, input.run);
-  const unknown = () => Object.freeze({ object: 0, right: 0, outcome: 0 });
+  const unknown = () => Object.freeze({ object: 0, right: 0, outcome: 0, matrix: Object.freeze(Array<number>(18).fill(0)) });
   if (completed.outcome !== "natural-exit" || completed.exitCode !== 205 || !closed.complete || closed.reason !== "none" || closed.stdoutBytes !== 0) return unknown();
-  const frame = input.stderr, prefix = Buffer.from("EMBER_ASSET_PROBE_V1:"), offset = prefix.length;
-  if (closed.stderrBytes !== frame.length || frame.length !== offset + 6 || !frame.subarray(0, offset).equals(prefix) ||
+  const frame = input.stderr, prefix = Buffer.from("EMBER_ASSET_PROBE_V1:"), offset = prefix.length, matrixPrefix = Buffer.from("EMBER_ASSET_MATRIX_V1:"),
+    matrixStart = offset + 6, matrixOffset = matrixStart + matrixPrefix.length;
+  if (closed.stderrBytes !== frame.length || frame.length !== matrixOffset + 19 || !frame.subarray(0, offset).equals(prefix) ||
       frame[offset + 1] !== 58 || frame[offset + 3] !== 58 || frame[offset + 5] !== 10) return unknown();
   const object = frame[offset] - 48, right = frame[offset + 2] - 48, outcome = frame[offset + 4] - 48;
   if (object < 1 || object > 3 || right < 1 || right > 3 || outcome < 1 || outcome > 5) return unknown();
-  return Object.freeze({ object, right, outcome });
+  if (!frame.subarray(matrixStart, matrixOffset).equals(matrixPrefix) || frame[matrixOffset + 18] !== 10) return unknown();
+  const matrix = [...frame.subarray(matrixOffset, matrixOffset + 18)].map(value => value - 48);
+  if (matrix.some(value => value < 1 || value > 5)) return unknown();
+  return Object.freeze({ object, right, outcome, matrix: Object.freeze(matrix) });
 }
 type DiagnosticClasses = Pick<Bundle, "WindowsRootOnlyCommandCopyCleanupError" | "WindowsCommandCopyCleanupError" | "WindowsCommandRootOnlyCleanupError" |
   "WindowsCommandOutputCleanupError" | "WindowsCommandCreatorProfileCleanupError" | "WindowsCommandCopyProofCleanupError" |
@@ -153,7 +161,8 @@ export function bindWindowsNodeAssetEnforcement(dependencies: WindowsNodeAssetEn
     if (terminal) throw terminal;
     if (busy || !MODES.includes(mode)) { terminal = new WindowsNodeAssetEnforcementObservationError(MODES.includes(mode) ? mode : "natural", 1); throw terminal; }
     busy = true;
-    let phase = 1, preludeStage = 0, cExit = 0, probe = { object: 0, right: 0, outcome: 0 }, loaded: Bundle | undefined, proof: ReturnType<Bundle["loadWindowsCommandCopyProofNative"]> | undefined,
+    let phase = 1, preludeStage = 0, cExit = 0, probe: Readonly<{ object: number; right: number; outcome: number; matrix: readonly number[] }> = { object: 0, right: 0, outcome: 0, matrix: Object.freeze(Array<number>(18).fill(0)) },
+      loaded: Bundle | undefined, proof: ReturnType<Bundle["loadWindowsCommandCopyProofNative"]> | undefined,
       security: ReturnType<Bundle["loadWindowsNodeAssetEnforcementNative"]> | undefined,
       targetPins: ReturnType<ReturnType<Bundle["loadWindowsNodeAssetEnforcementNative"]>["pinTargets"]> | undefined,
       api: ReturnType<Bundle["loadExperimentalWindowsLpacApi"]> | undefined, profile: ReturnType<Bundle["createFreshWindowsCommandCreatorProfile"]> | undefined,
@@ -286,7 +295,7 @@ export function bindWindowsNodeAssetEnforcement(dependencies: WindowsNodeAssetEn
         stdinEof: mode === "precreate" || mode === "preresume" || mode === "sharedcreate" ? 0 : 1, rootOnlyStop: 1, snapshot: 1, seedUnchanged: 1,
         assetCleanup: 1, privateCleanup: 1, profileCleanup: 1, emittedCjs: 1 });
     } catch (error) {
-      live = false; terminal ??= new WindowsNodeAssetEnforcementObservationError(mode, phase, preludeStage, cExit, windowsNodeAssetErrorClass(loaded, error), probe.object, probe.right, probe.outcome); retained.push(graph);
+      live = false; terminal ??= new WindowsNodeAssetEnforcementObservationError(mode, phase, preludeStage, cExit, windowsNodeAssetErrorClass(loaded, error), probe.object, probe.right, probe.outcome, probe.matrix); retained.push(graph);
       for (const value of launches) try { loaded!.retainWindowsCommandOutput(value); } catch { /* Same-graph quarantine supplies no disposal receipt. */ }
       for (const owner of owners) try { owner.retainStop(); } catch { /* Request exact Stop only; never retry cleanup or certify disposal. */ }
       throw terminal;

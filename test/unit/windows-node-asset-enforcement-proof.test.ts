@@ -55,13 +55,16 @@ it("diagnostic exit projection rejects structural/foreign completion and run ref
   expect(() => windowsNodeAssetPreludeExit(loaded, input.completed, { ...input.run })).toThrow();
   expect(() => windowsNodeAssetPreludeExit(loaded, input.completed, foreign.input.run)).toThrow();
 });
-const unknownProbe = { object: 0, right: 0, outcome: 0 };
-const probeFrame = (object = 1, right = 1, outcome = 1) => Buffer.from(`EMBER_ASSET_PROBE_V1:${object}:${right}:${outcome}\n`);
+const matrixValues = Object.freeze(Array.from({ length: 18 }, (_value, index) => index % 5 + 1));
+const unknownProbe = { object: 0, right: 0, outcome: 0, matrix: Array<number>(18).fill(0) };
+const tupleFrame = (object = 1, right = 1, outcome = 1) => Buffer.from(`EMBER_ASSET_PROBE_V1:${object}:${right}:${outcome}\n`);
+const matrixFrame = (values: readonly number[] = matrixValues) => Buffer.from(`EMBER_ASSET_MATRIX_V1:${values.join("")}\n`);
+const probeFrame = (object = 1, right = 1, outcome = 1, matrix: readonly number[] = matrixValues) => Buffer.concat([tupleFrame(object, right, outcome), matrixFrame(matrix)]);
 it.each([[1, 1, 1], [3, 3, 5]])("projects only the authenticated closed205 probe tuple %s/%s/%s", async (object, right, outcome) => {
   const { input } = await natural(true, 205, { stdout: Buffer.alloc(0), stderr: probeFrame(object, right, outcome) });
   const probe = windowsNodeAssetPreludeProbe(loaded, input);
-  expect(probe).toEqual({ object, right, outcome }); expect(Object.isFrozen(probe)).toBe(true);
-  expect(Object.keys(probe).sort()).toEqual(["object", "outcome", "right"]);
+  expect(probe).toEqual({ object, right, outcome, matrix: matrixValues }); expect(Object.isFrozen(probe)).toBe(true); expect(Object.isFrozen(probe.matrix)).toBe(true);
+  expect(Object.keys(probe).sort()).toEqual(["matrix", "object", "outcome", "right"]);
   expect(() => requireWindowsNodeAssetOutputFacts(loaded, input)).toThrow();
 });
 it.each([
@@ -78,6 +81,24 @@ it.each([
   const { input } = await natural(true, 205, { stdout: Buffer.alloc(0), stderr });
   expect(windowsNodeAssetPreludeProbe(loaded, input)).toEqual(unknownProbe);
   expect(() => requireWindowsNodeAssetOutputFacts(loaded, input)).toThrow();
+});
+it.each([Array<number>(18).fill(1), Array<number>(18).fill(5)].map(matrix => ({ matrix })))("authenticated matrix preserves all eighteen boundary enums %#", async ({ matrix }) => {
+  const { input } = await natural(true, 205, { stdout: Buffer.alloc(0), stderr: probeFrame(1, 1, 2, matrix) });
+  expect(windowsNodeAssetPreludeProbe(loaded, input)).toEqual({ object: 1, right: 1, outcome: 2, matrix });
+  expect(() => requireWindowsNodeAssetOutputFacts(loaded, input)).toThrow();
+});
+it.each(Array.from({ length: 18 }, (_value, index) => index))("an invalid matrix enum at cell %s suppresses the complete diagnostic projection", async cell => {
+  const frame = probeFrame(1, 1, 2), offset = tupleFrame().length + Buffer.byteLength("EMBER_ASSET_MATRIX_V1:"); frame[offset + cell] = cell % 2 ? 54 : 48;
+  const { input } = await natural(true, 205, { stdout: Buffer.alloc(0), stderr: frame });
+  expect(windowsNodeAssetPreludeProbe(loaded, input)).toEqual(unknownProbe);
+});
+it.each([
+  ["tuple only", tupleFrame()], ["matrix only", matrixFrame()], ["reversed frames", Buffer.concat([matrixFrame(), tupleFrame()])],
+  ["duplicated matrix", Buffer.concat([probeFrame(), matrixFrame()])], ["short matrix", probeFrame(1, 1, 2, matrixValues.slice(0, 17))],
+  ["long matrix", probeFrame(1, 1, 2, [...matrixValues, 1])], ["matrix prefix", Buffer.concat([tupleFrame(), Buffer.from("EMBER_ASSET_MATRIX_V2:123451234512345123\n")])],
+  ["matrix CRLF", Buffer.concat([probeFrame().subarray(0, -1), Buffer.from("\r\n")])], ["matrix suffix", Buffer.concat([probeFrame(), Buffer.from("x")])],
+])("closed205 %s cannot project either the first tuple or matrix", async (_name, stderr) => {
+  const { input } = await natural(true, 205, { stdout: Buffer.alloc(0), stderr }); expect(windowsNodeAssetPreludeProbe(loaded, input)).toEqual(unknownProbe);
 });
 it("genuine205 closure cannot certify changed supplied counts or nonempty stdout", async () => {
   const { input } = await natural(true, 205, { stdout: Buffer.alloc(0), stderr: probeFrame() });
@@ -112,10 +133,12 @@ it("probe authentication never reads claimed completion or closure getters", asy
   expect(read).not.toHaveBeenCalled();
 });
 it("diagnostic fields are bounded fixed enums and cannot carry raw errors or unlisted exits", () => {
-  const known = new WindowsNodeAssetEnforcementObservationError("natural", 4, 11, 205, 3, 3, 3, 5);
-  expect(known).toMatchObject({ phase: 4, preludeStage: 11, cExit: 205, errorClass: 3, probeObject: 3, probeRight: 3, probeOutcome: 5 });
+  const supplied = [...matrixValues], known = new WindowsNodeAssetEnforcementObservationError("natural", 4, 11, 205, 3, 3, 3, 5, supplied);
+  expect(known).toMatchObject({ phase: 4, preludeStage: 11, cExit: 205, errorClass: 3, probeObject: 3, probeRight: 3, probeOutcome: 5, probeMatrix: matrixValues });
+  supplied[0] = 99; expect(known.probeMatrix).toEqual(matrixValues); expect(Object.isFrozen(known.probeMatrix)).toBe(true);
   const unknown = new WindowsNodeAssetEnforcementObservationError("natural", 4, Infinity, 0xc0000005, 99, 4, -1, Infinity);
-  expect(unknown).toMatchObject({ preludeStage: 0, cExit: 0, errorClass: 0, probeObject: 0, probeRight: 0, probeOutcome: 0 });
+  expect(unknown).toMatchObject({ preludeStage: 0, cExit: 0, errorClass: 0, probeObject: 0, probeRight: 0, probeOutcome: 0, probeMatrix: Array<number>(18).fill(0) });
+  expect(new WindowsNodeAssetEnforcementObservationError("natural", 4, 11, 205, 0, 1, 1, 2, [...matrixValues.slice(0, -1), 99]).probeMatrix).toEqual(unknown.probeMatrix);
   expect(unknown.stack).toBe(`${unknown.name}: ${unknown.message}`);
 });
 it("diagnostic error classes require the exact constructors and never coerce claimed names, messages or causes", () => {

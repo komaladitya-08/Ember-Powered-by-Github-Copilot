@@ -97,7 +97,7 @@ Diagnostic run `43973341231` at `34372b2c7e2c34910acc7fa7aa1df1265ca8e18f` also 
 Both Windows 2022 and Windows 2025 cases reached phase 4, prelude stage 11, genuine C exit 205, and unknown error class zero.
 Completion, output close and Stop had authenticated before the unchanged success facts rejected that exit.
 Exit 205 covers the first loop over the parent, asset root and Node image, so it does not identify a failed access
-probe. This append changes only diagnostic evidence: the C program preserves the same access rights, flags,
+probe. The tuple append changed only diagnostic evidence: the C program preserves the same access rights, flags,
 short-circuit order, success frames and return 205. On that first-loop failure it attempts one fixed stderr tuple
 only after any acquired handle closes positively. An unknown close emits nothing and keeps the process held.
 
@@ -109,3 +109,18 @@ can project three bounded enums. Objects are 1 parent, 2 asset root, 3 Node imag
 never makes exit 205 satisfy the original success facts, grants cleanup, or exposes raw Windows errors or output.
 Linux portable C contracts compile the actual witness body against fixed test-only Windows API stubs; their
 numeric observations establish control flow and closed-handle ordering, never Windows ABI or access enforcement.
+
+Finer-probe run `43976314956` failed on both images with prelude stage 11, C exit 205 and tuple 1/1/2:
+READ_CONTROL on the borrowed parent returned access denied. This contradicts the original expected positive
+READ_CONTROL probe; it observes no production write escalation and establishes no MIC-control success.
+The failure-only matrix append preserves that original first tuple and the original failed assertion. Only after
+return 205 is already selected does it measure the fixed six objects, each in READ_CONTROL, WRITE_DAC, WRITE_OWNER
+order, using the existing open/GetHandleInformation/positive-close helper. The six rows are parent, asset root,
+Node image, Low host-only directory, Low full-package directory and Low full-package file. No ACL, contents, source
+file, creation probe or success path changes. All eighteen queried handles must close positively before either
+diagnostic frame is attempted; an unknown close emits neither frame and remains held.
+
+The host now requires the exact first-tuple frame immediately followed by the exact fixed eighteen-enum matrix
+frame, with the same genuine completion/closure authentication and zero-stdout condition. Every matrix cell uses
+the bounded outcome enum above. Any incomplete, extra, malformed or out-of-range frame projects an unknown tuple
+and eighteen unknown zeros. The preserved tuple and matrix never make exit 205 pass or grant cleanup.
