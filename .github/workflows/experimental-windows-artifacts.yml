@@ -16,6 +16,7 @@ on:
       - "app/main/agent/windows-coding-review.ts"
       - "app/main/agent/windows-file-only-workspace.ts"
       - "app/main/agent/windows-coding-resources.ts"
+      - "app/main/agent/windows-coding-continuation-seed.ts"
       - "app/main/agent/project-coding-backend.ts"
       - "app/main/agent/windows-scoped-coding-files.ts"
       - "app/main/agent/coding-privacy*.ts"
@@ -29,6 +30,7 @@ on:
       - "test/unit/windows-coding-sealed-copy.test.ts"
       - "test/unit/windows-file-only-workspace.test.ts"
       - "test/unit/windows-coding-resources.test.ts"
+      - "test/unit/windows-coding-continuation-seed.test.ts"
       - "test/unit/project-coding-backend.test.ts"
       - "test/unit/coding-artifact-registry.test.ts"
       - "test/unit/windows-coding-artifact-store.test.ts"
@@ -62,12 +64,12 @@ jobs:
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
       - name: Shared registry contract and native artifact ownership faults
-        run: npm test -- test/unit/coding-artifact-registry.test.ts test/unit/windows-coding-artifact-store.test.ts test/unit/windows-coding-review.test.ts test/unit/windows-coding-sealed-copy.test.ts test/unit/windows-file-only-workspace.test.ts test/unit/windows-coding-resources.test.ts test/unit/project-coding-backend.test.ts --maxWorkers=1
-      # File-only proof: this does not imply a command runtime, stopped writer, or production adapter is available.
+        run: npm test -- test/unit/coding-artifact-registry.test.ts test/unit/windows-coding-artifact-store.test.ts test/unit/windows-coding-review.test.ts test/unit/windows-coding-sealed-copy.test.ts test/unit/windows-file-only-workspace.test.ts test/unit/windows-coding-resources.test.ts test/unit/windows-coding-continuation-seed.test.ts test/unit/project-coding-backend.test.ts --maxWorkers=1
+      # File-only proof: no command runtime, command-writer lease or package grant is established.
       - name: Exact private artifacts, opaque ownership, explicit export and Forget
         timeout-minutes: 8
         run: node scripts/run-integration.mjs test/integration/windows-coding-artifacts-native.test.ts
-      # Separate post-Stop host captures; no command process exists and production availability remains disabled.
+      # Separate captures after controller/broker closure; no command process exists.
       - name: Sealed Windows baseline, proposal, original-source comparison and opaque review ownership
         timeout-minutes: 8
         run: node scripts/run-integration.mjs test/integration/windows-coding-review-native.test.ts

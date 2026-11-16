@@ -122,8 +122,9 @@ the file worker without a local command service, and tells the conductor that co
 unavailable. Results remain private-copy reviews with zero executed checks; a mixed coding/app request still waits
 for successful completion and verified worker cleanup before its next part. An omitted mode preserves the existing
 command-backed path, including its local service, policy context, original permission words and presenter. Missing
-command support never selects file-only work automatically. This host adapter seam does not enable a Windows
-production resource backend; the native SDK prototype remains disabled by `codingAvailable()`.
+command support never selects file-only work automatically. The Windows development candidate now connects this
+Host seam to its explicit native copied-file resources through `project-coding-backend.ts`; Linux retains the command
+backend. The legacy native SDK prototype remains disabled by `codingAvailable()`.
 The Host also supplies the selected mode as trusted conductor metadata: a file-only `start_coding` tool describes
 private-copy edits/review and unavailable commands/tests, while omitted or command mode preserves the existing
 description. No model tool argument selects or upgrades that mode.
@@ -2419,7 +2420,7 @@ NTFS fixtures on Server 2022 and 2025 without driving the desktop. Run the seale
 node scripts/run-integration.mjs test/integration/windows-coding-review-native.test.ts
 ```
 
-This disabled foundation captures a complete privacy-scanned baseline at intake, then permanently retires ordinary
+The Windows file foundation captures a complete privacy-scanned baseline at intake, then permanently retires ordinary
 file leases before a separate host-only baseline/proposal/current review. Its host must attest that the controller
 and file broker finished closing. The review retains the original intake source identity, creates only fresh native
 artifacts, and transfers an opaque producer capability before registry publication. Account or privacy revocation
@@ -2429,8 +2430,8 @@ Only explicit `.git` and `node_modules` exclusions are supported; excluded depen
 folding also matches mixed-case spellings of those top-level roots; omission receipts retain their
 canonical names. Folded duplicate names are refused before omission. File tools disclose the excluded roots and refuse
 to recreate or inspect them through another casing. Review-enabled copies are bounded to
-10 MiB per tree, 4 MiB per file and 10,000 entries. These tests establish no command runtime, descendant-stop proof,
-Windows controller storage policy or production coding availability.
+10 MiB per tree, 4 MiB per file and 10,000 entries. These file primitives establish no command runtime or
+descendant-stop proof; the separate controller/product checks below supply their own evidence.
 
 The separate `experimental-windows-controller` workflow checks the trusted SDK control plane on Server 2022 and
 2025. It starts the pinned SDK with a synthetic model and no real credentials, tests private NTFS storage and
@@ -2450,7 +2451,53 @@ full-control ACEs and explicit or inherited flags. No owner is injected, no admi
 no source, host or SDK-descendant ACL is changed to pass cleanup. The copy/artifact native guards are unchanged.
 Unknown prior state, failed SDK shutdown or uncertain native cleanup retains the private owner and blocks further
 admission. Its typed cleanup failure also survives startup before a custom controller receives its runtime, so a
-worker cannot claim safe retirement after that failure. These checks do not enable Windows production coding.
+worker cannot claim safe retirement after that failure.
+
+The files-only product candidate connects that controller, native files/review/export and Host lifecycle. Commands,
+tests and dependency installation remain unavailable; current consent version 14 covers copied-folder reviews and
+retention. At `0f70a7f7`, [run 43812314219](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43812314219)
+passed 97 portable cases, three native controller cases including the actual SDK contract and one real Electron
+two-fresh-session journey on each Server 2022/2025 image, zero skips. The journey retained the normal OS sandbox,
+absent Node globals and normal exit, with mock provider and picker answers. Native continuation at `7eabd077` also
+passed [run 43813240393](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43813240393),
+410 cases across both images with zero skips. The actual Home three-session continuation at `fac7c0a3` also passed
+[run 43812927368](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43812927368): per
+image, 97 portable, three native controller and one real Electron case, zero skips/failures. Electron completed in
+16.393/15.970 seconds with the normal OS sandbox, sender guards and unforced exit `0`. Continuation read `43`, produced
+`44` against baseline/current `41`, survived predecessor Forget and preserved completed `42`/`44` exports after global
+erasure. Public #223 is `7eabd077` with the same production source and `canContinue: true`; its exact-head native
+matrix above is green while ordinary CI is blocked by the known Windows LPAC child-launch case.
+See [current progress](CONDUCTOR-PROGRESS.md) for exact scope and remaining software,
+live-provider and physical Windows acceptance. These candidate results do not authorise a merge or release.
+
+The independent `packaged-controller` job builds the normal Windows ZIP, extracts it, checks unchanged fuses and
+packaged debugging/development-provider guards, and runs the ordinary packaged launch/window/handover smoke. The
+provider guard requires the real startup authentication source to be `none` with an empty synthetic profile. Shell
+launch preserves Windows' real `HOME`, `USERPROFILE`, `APPDATA` and `LOCALAPPDATA`; only Ember's profile, GitHub config
+and credential environment are isolated. Paired run `43816454071` showed that redirecting the OS profile broke
+jump-list registration. One Server image also reported the documented mute fallback; the owner of that chord was
+not identified. The explicit smoke option accepts only the exact Windows mute fallback with no missing IDs or no
+unavailable events. Missing, extra or malformed shortcut receipts still fail, and ordinary smoke runs remain strict
+without that option. The separate SDK/native helper keeps its own isolated home and profile. A separate
+fixed test bundle then uses the extracted `Ember.exe`'s supported Node mode with the shipped SDK, Koffi and native
+runtime to edit a private NTFS copy and verify disposal. This is packaged dependency/ABI proof, separate from the
+development Home/preload/IPC journey; it does not automate packaged Home or establish a live account session.
+
+Build with `npm run package:win`, then run on Windows x64:
+
+```powershell
+$env:EMBER_PACKAGED_WINDOWS_CODING_TEST = "1"
+node scripts/run-integration.mjs test/integration/windows-packaged-coding-native.test.ts --maxWorkers=1
+```
+
+The dedicated job treats missing Windows/archive prerequisites as failures. A successful job retains only its original
+Windows ZIP for three days; no fixture, profile or private review is uploaded. At `4db67491`,
+[run 43817687919](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43817687919) passed
+this packaged case on both Server 2022 and 2025 (about 15.2/13.1 seconds). Both completed the fixed shipped-dependency
+edit and verified SDK-child/controller/copy cleanup. Server 2025 used only the exact registered mute fallback with
+no missing IDs; Server 2022 held all defaults. The ordinary launch smoke's forced cleanup is not a native shutdown
+receipt; only the separate helper's actual stopped-child/native cleanup supplies that narrower proof. This remains
+separate from packaged Home-to-Host, live-account and physical Windows client acceptance.
 
 ### 10.4 The accessibility helper (UI Automation)
 

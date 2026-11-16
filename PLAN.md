@@ -4828,7 +4828,7 @@ the typed fallback still passes its last look, so the earlier value is typed.
 **Left.** CI on r9/r12merge (pushed by the integrator after this merge). By package, the lists above; the re-rate's
 P3s no package took up stay open as their reports list them.
 
-**Disabled Windows sealed-review foundation (2026-11-16).** A review-enabled `WindowsCodingCopy` captures the complete
+**Windows sealed-review foundation (2026-11-16).** A review-enabled `WindowsCodingCopy` captures the complete
 privacy-scanned baseline and same-store source provenance before admitting file tools. A separate host-only export
 retires ordinary leases permanently, drains them, and requires the host's attestation of awaited controller/file-broker
 teardown. It captures the proposal and compares only the original source identity, uses the portable review formatter,
@@ -4836,24 +4836,24 @@ and creates an opaque one-use producer in `WindowsCodingArtifactStore`. A caller
 awaiting publication; untransferred artifacts remain owned until exact discard or copy close. Revoked account/privacy
 authority and unknown cleanup never reopen ordinary tools. Raw review buffers are cleared after write, failure or
 close. Explicit `.git`/`node_modules` omissions and 10 MiB/tree, 4 MiB/file, 10,000-entry bounds are documented and tested.
-The dedicated Server 2022/2025 artifact matrix includes the native sealed-review suite. This is file-only storage and
-review work: Windows production coding, commands, controller storage and SDK execution-boundary proofs remain disabled
-or unfinished; no command process is started or claimed stopped by this primitive.
+The dedicated Server 2022/2025 artifact matrix includes the native sealed-review suite. This primitive supplies
+file-only storage/review, not command execution or a project process-stop claim. The later controller/product candidate
+below connects separate Windows storage, SDK admission and Host evidence; the legacy native-SDK gate remains false.
 
 The Windows exclusion follow-up folds only the explicitly declared top-level roots and retains canonical omission
 names. Duplicate folded names are refused before omission, and file tools disclose and enforce that same scope,
 including attempts to recreate an excluded root with different casing. Similar names and nested folders stay in the
 declared source tree. Portable regressions and the native matrix cover canonical and mixed-case roots.
 
-**2026-11-16, explicit file-only Host capability (draft, no production backend selection).** The Host can accept a
+**2026-11-16, explicit file-only Host capability.** The Host can accept a
 trusted `scopedCoding.mode: "files-only"` adapter and carries its captured mode, source factory and guarded file
 broker with the request's existing project/folder grant. It creates that worker without a local command service,
 command policy context or command presenter; the omitted mode keeps the existing command-backed path. No failed
 command backend silently selects the restricted mode. The conductor receives a fixed per-request statement that
 coding commands/tests are unavailable and cannot be replaced by desktop work. Original request words, approval,
-provider/project revocation, retirement and mixed-task cleanup checks remain in force. The native SDK prototype and
-production resource factory remain unchanged; this does not enable Windows coding. Portable Host regressions and a
-real Linux Host/conductor/custom-SDK fixture cover file-only edits, zero executed checks, original preservation,
+provider/project revocation, retirement and mixed-task cleanup checks remain in force. The legacy native SDK prototype
+stays disabled. The later fixed platform selector connects this seam to the Windows files-only candidate. Portable
+Host regressions and a real Linux Host/conductor/custom-SDK fixture cover file-only edits, zero executed checks, original preservation,
 verified teardown and a folder revoked while creation waits.
 
 **Windows trusted-controller storage foundation (2026-11-16).** Windows controller cwd/home/state/tmp use fresh,
@@ -4864,15 +4864,28 @@ No ACL is changed and the existing copy/artifact native guards remain exact. Dis
 preserves per-controller uncertainty through concurrent closes, and keeps failed SDK/native cleanup terminal. A typed
 failure before runtime assignment now survives custom-controller startup sanitization. The dedicated Server
 2022/2025 controller matrix checks the pinned SDK's explicit files-only tools, native copied-file edits, execution and
-ambient-configuration negatives, and disposable native/plugin positive controls. Windows product availability and
-Host/resources wiring remain separate work; this foundation does not claim a command runtime or project process-stop
-proof.
+ambient-configuration negatives, and disposable native/plugin positive controls. The files-only candidate below now
+connects Host/resources wiring; this foundation does not claim a command runtime or project process-stop proof.
 
 **Windows files-only product candidate (2026-11-16, draft).** The fixed platform selector now connects the Windows
 resource owner, private trusted controller, native file-only workspace and ordinary project/Host lifecycle without
 requiring local command services. Windows work edits a fresh private source copy and publishes a sealed review after
 awaited controller/file disposal; explicit export and Forget retain exact native ownership. Its UI/tool metadata
-discloses unavailable commands, tests, dependencies and result continuation. Linux command behavior and the legacy
-disabled SDK gate remain unchanged. Dedicated Server 2022/2025 tests cover resource lifecycle, actual SDK admission
-and real Electron Home/preload/IPC sessions with commands off; their exact candidate results and Windows 10/11 client
-acceptance remain required. No main merge or release is authorized by portable tests alone.
+discloses unavailable commands, tests and dependencies. Linux command behaviour and the legacy disabled SDK gate
+remain unchanged. Current consent version 14 covers copied-folder review/retention. Exact `0f70a7f7`
+[run 43812314219](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43812314219) passed
+97 portable cases, three native controller cases including the actual SDK contract, and one genuine Electron
+two-fresh-session journey per Server 2022/2025 image, zero skips. Electron retained the normal OS sandbox and absent
+Node globals, with no bypass, and exited normally in 13.267/14.744 seconds. Provider and picker answers are fixtures.
+Public native continuation at `7eabd077` passed
+[run 43813240393](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43813240393): per image,
+147 portable, 30 artifact, 23 sealed-copy/review and five resource cases, 410 total with zero skips. The actual Home
+three-session continuation at `fac7c0a3` passed
+[run 43812927368](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43812927368): per
+image, 97 portable, three native controller and one genuine Electron case, zero skips/failures. Electron completed
+in 16.393/15.970 seconds with the normal OS sandbox, sender guards and unforced exit `0`. Continue first read proposal
+`43`, produced `44` against cumulative baseline/current `41`, survived predecessor Forget and preserved completed
+`42`/`44` exports after global erasure. Public #223 advanced to `7eabd077` with the same production source and
+`canContinue: true`; its exact-head native matrix above is green while ordinary CI is blocked by the known Windows LPAC child-launch case.
+Command-runtime software blockers, live-provider verification and Windows 10/11 laptop acceptance
+remain separate requirements. No main merge or release is authorised by these candidate proofs.

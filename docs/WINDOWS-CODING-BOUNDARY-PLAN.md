@@ -1,10 +1,10 @@
 # Windows native coding boundary: validation plan
 
-Reviewed 16 November 2026. This document does not enable a Windows backend. The current product uses a trusted SDK controller with custom tools; Windows commands, file grants and export still need a complete enforced adapter. The open findings in [HYBRID-CODING-STATUS.md](HYBRID-CODING-STATUS.md) and the export-first contract in [CODING-COPYBACK-DESIGN.md](CODING-COPYBACK-DESIGN.md) remain relevant. The legacy native-SDK coding gate stays false.
+Reviewed 16 November 2026. The draft product now has an explicit Windows files-only backend with folder grants, copied-file editing, review, continuation, export and Forget. Windows commands, tests and dependency installation remain unavailable. This plan covers the additional command boundary; it does not enable one. The open findings in [HYBRID-CODING-STATUS.md](HYBRID-CODING-STATUS.md) and the export-first contract in [CODING-COPYBACK-DESIGN.md](CODING-COPYBACK-DESIGN.md) remain relevant. The legacy native-SDK coding gate stays false.
 
 ## Candidate boundary
 
-The current candidate isolates **project commands and every tool descendant** in a fresh zero-capability Less-Privileged AppContainer (LPAC) and private job. The dedicated SDK controller stays in the trusted host with native tools, plugins, hooks, skills, extensions and subagents disabled. Its working/configuration directories are private and empty; project code never runs in that process. The earlier entire-SDK experiment remains a separate comparison path.
+The proposed command candidate must isolate **project commands and every project-code descendant** in a fresh zero-capability Less-Privileged AppContainer (LPAC) and private job. The dedicated SDK controller stays in the trusted host with native tools, plugins, hooks, skills, extensions and subagents disabled. Its working/configuration directories are private and empty; project code never runs in that process. The earlier entire-SDK experiment remains a separate comparison path.
 
 Ordinary AppContainer is not a silent fallback if LPAC fails. Microsoft documents AppContainer access as the intersection of user and package/capability rights; LPAC additionally opts out of resources granted to All Application Packages. The application's grants, inherited handles, services and brokers determine the actual boundary. [Microsoft: launching AppContainer and LPAC](https://learn.microsoft.com/en-us/windows/win32/secauthz/implementing-an-appcontainer)
 
@@ -12,7 +12,48 @@ Low integrity alone is insufficient: the default mandatory policy prevents writi
 
 If the selected command toolchain cannot operate within a narrowly granted container, keep it unavailable while evaluating a separately reviewed implementation. Do not solve compatibility by granting the user's profile, Ember data directory, unrestricted host services or credentials to project code.
 
-The [file-only foundation](EXPERIMENTAL-WINDOWS-CODING-FILES.md) currently grants fresh copies only owner/SYSTEM access; it does not grant command-package access. That grant/revocation and stopped-writer lease must be implemented and verified before combining it with a launcher. The [direct Node diagnostic](WINDOWS-NODE-LPAC-PROOF.md) independently tests a possible command asset; it is not that integration.
+The verified [file-only backend](EXPERIMENTAL-WINDOWS-PROJECT-RESOURCES.md) grants fresh copies only owner/SYSTEM access; it does not grant command-package access. That grant/revocation and stopped-writer lease must be implemented and verified before combining it with a launcher. The [direct Node diagnostic](WINDOWS-NODE-LPAC-PROOF.md) independently tests a possible command asset; it is not that integration.
+
+## Current evidence and remaining compatibility work
+
+At submitted product head `60ec77d1`, the dedicated Server 2022/2025 workflows passed 708 checks with no failures or
+skips: [controller/app/ZIP](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43818240426)
+204, [artifacts/continuation](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43818240422)
+410 and [native files](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43818240486) 94.
+These establish their respective file-only scopes, including actual SDK execution denial, genuine development
+Home/preload/IPC flows and separate extracted-ZIP launch/dependency proof. They do not execute project commands or
+certify physical Windows clients or live accounts. Ordinary CI remains red at the existing LPAC child-launch fixture.
+
+The command experiments remain separate:
+
+- The fixed C/libuv [probe #218](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/218) completed
+  local I/O, timer, work-queue, thread and loop operations on both Server images. Its independent ordinary-host
+  controls retain the parent's observed security context. It is not Node or an arbitrary-code command backend.
+- Official signed Node still fails capability-free LPAC startup at `WSAStartup / 10107`. The separate verified-source
+  [Node probe #225](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/225) compiled successfully
+  and completed its fixed file/async-read/timer workload on the ordinary host. Its LPAC process aborted with exit 134
+  before the first checkpoint. A separate native-only diagnostic reuses the exact authenticated build; useful Node
+  work in LPAC remains unproved. Omitting the initializer also leaves networking globals unset; fixed-workload
+  success cannot establish general offline API behavior, safe network errors or ordinary tests.
+- The [child probe #224](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/224) independently
+  reproduces both explicit-capability and plain inherited creation denial. It now accounts for console helpers as
+  contained writers while selecting exactly one intended image, and requires all held process handles and the job to
+  stop before readout. The AAP-only creation variant also reproduced the same access denial on both Server images.
+  A subsequent observational diagnostic examines the exact supplied process/thread descriptors without changing
+  creation inputs; no successful child launch or repair is established.
+- The reviewed Node source's default test runner uses process isolation and three stdio pipes. Its pinned libuv pipe
+  implementation lacks the documented `LOCAL` namespace and retries access denial. The independent fixed-C
+  [namespace probe #226](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/226) passed 251 portable
+  and four native cases per Server image: both ordinary-host pairs connected; LPAC refused the original prefix
+  with access denied, while the `LOCAL` pair connected and closed. This establishes a namespace prerequisite only.
+  Actual Node/libuv transport, child and default-test-runner proofs remain required.
+- PowerShell's ETW patch is insufficient: mandatory machine-environment and GPO policy reads are denied under the
+  zero-capability contract. There is no reviewed supported policy-preserving startup opt-out. A host-authoritative
+  policy transport would require explicit design and proof; denial cannot become absent policy or broader grants.
+  See [the recorded compatibility proof](ISOLATED-WINDOWS-COMMAND-PROOF.md).
+
+These are software investigations that can continue through hosted Windows. A laptop is needed later for the
+physical client/app/focus/input/audio/display story; it does not repair these compatibility failures.
 
 ## Prototype contracts
 
@@ -64,4 +105,4 @@ Every gate needs the exact source commit, packaged runtime hashes, Windows build
 | Export and recovery | Export handles supported changes and refuses hostile paths/objects; concurrent editing in the original project remains untouched. Test interruption at copy/export/cleanup, disk full, permissions, restart and two sessions. No automatic apply. |
 | Live provider | After earlier gates pass, verify actual GitHub and BYOK authentication in the trusted controller, streaming, quota, error handling and cancellation. Prove project commands cannot obtain those credentials and the pinned SDK cannot enable native project execution. |
 
-Remaining Windows work is the command/file/export adapter, minimum LPAC support, exact toolchain and fresh-copy package grants, recovery ownership proof and any future controlled network access. Broker transport is additional work only for the entire-SDK alternative. Windows CI can establish kernel and filesystem evidence; Windows 10/11 client acceptance remains separate. Passing Linux tests does not satisfy the Windows gates, and Windows success would not establish the corresponding Linux/macOS boundaries.
+Remaining command work is the enforced command adapter, useful toolchain compatibility, exact fresh-copy package grants, verified stopped project-code writers, recovery ownership proof and any future controlled network access. The files-only owner, sealed review, export and continuation already have their separate evidence above. Broker transport is additional work only for the entire-SDK alternative. Windows CI can establish kernel and filesystem evidence; Windows 10/11 client acceptance remains separate. Passing Linux tests does not satisfy the Windows gates, and Windows success would not establish the corresponding Linux/macOS boundaries.

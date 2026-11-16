@@ -3,6 +3,8 @@ import { afterEach, expect, it, vi } from "vitest";
 import path from "node:path/win32";
 import type { WindowsCodingNative, WindowsCodingInfo, WindowsCodingPin } from "../../app/main/agent/windows-coding-native";
 import type { CodingExcludedRoot } from "../../app/main/agent/coding-project-scope";
+import type { CodingArtifactSourceRef } from "../../app/main/agent/coding-artifact-store";
+import type { CodingWorkspaceContinuation } from "../../app/main/agent/coding-seed-snapshot";
 
 afterEach(() => { vi.doUnmock("../../app/main/platform/os"); vi.doUnmock("../../app/main/agent/windows-coding-native"); vi.restoreAllMocks(); vi.resetModules(); });
 
@@ -77,9 +79,10 @@ async function setup() {
   const binding = { owner: "a".repeat(64), session: "11111111-1111-4111-8111-111111111111", snapshot: "22222222-2222-4222-8222-222222222222" };
   let current = true, controllerClosed = true;
   const signal = new AbortController();
-  const create = (excludeRoots?: readonly CodingExcludedRoot[]) => WindowsCodingCopy.create({ source: "C:\\project", privateBase: "C:\\copies", protectedPaths: ["C:\\protected"], signal: signal.signal, current: () => true,
+  const create = (excludeRoots?: readonly CodingExcludedRoot[], sourceBoundary?: CodingArtifactSourceRef, continuation?: CodingWorkspaceContinuation) => WindowsCodingCopy.create({ source: "C:\\project", privateBase: "C:\\copies", protectedPaths: ["C:\\protected"], signal: signal.signal, current: () => true,
     ...(excludeRoots ? { scope: { excludeRoots } } : {}),
-    review: { store, binding, current: () => current, controllerClosed: () => controllerClosed } });
+    ...(continuation ? { continuation } : {}),
+    review: { store, binding, sourceBoundary, current: () => current, controllerClosed: () => controllerClosed } });
   return { api, nodes, handles, location, put, create, store, binding, createCodingReviewExport, decodeCodingReviewExport, WindowsScopedCodingFiles,
     directory: (absolute: string) => node(location(absolute), "directory"),
     revoke: () => { current = false; }, closeController: (closed: boolean) => { controllerClosed = closed; },
@@ -111,6 +114,44 @@ it("refuses a source rebound between its original provenance receipt and the cop
   const f = await setup(); f.rebindAfterIntake();
   await expect(f.create()).rejects.toMatchObject({ code: "boundary" });
   expect([...f.nodes.values()].filter(row => row.info.finalPath.startsWith(f.location("C:\\copies") + "\\"))).toEqual([]);
+  await f.store.close(); expect(f.handles.size).toBe(0);
+});
+
+it("refuses a replaced source after a host captures its expected receipt, even with an always-current folder callback", async () => {
+  const f = await setup(), expected = await f.store.sourceBoundary("C:\\project", () => undefined);
+  expect(expected).not.toBeNull(); f.directory("C:\\project"); f.put("C:\\project\\app.ts", "replacement source\n");
+  await expect(f.create(undefined, expected!)).rejects.toMatchObject({ code: "boundary" });
+  expect([...f.nodes.values()].some(row => row.info.finalPath.startsWith(f.location("C:\\copies") + "\\"))).toBe(false);
+  expect(f.nodes.get(f.location("C:\\project\\app.ts").toLowerCase())!.bytes.toString()).toBe("replacement source\n");
+  await f.store.close(); expect(f.handles.size).toBe(0);
+});
+
+it("clones a complete continuation before the first await and preserves its baseline after caller erasure and predecessor Forget", async () => {
+  const f = await setup(), first = await f.create(), firstFiles = await f.WindowsScopedCodingFiles.create({ copy: first, signal: new AbortController().signal });
+  await firstFiles.replaceText("app.ts", "41", "42"); await firstFiles.close(); await first.stop();
+  const producer = await first.exportReview(), output = producer.transfer(), receipt = await f.store.claim(output, () => undefined);
+  const bytes = await f.store.read(receipt, "review.json", 64 * 1024 * 1024, () => undefined), decoded = f.decodeCodingReviewExport(bytes, f.binding);
+  bytes.fill(0); await first.close();
+  const expected = await f.store.sourceBoundary("C:\\project", () => undefined); let predecessor = true;
+  const opening = f.create(undefined, expected!, { baseline: decoded.baseline, proposed: decoded.proposed, scope: decoded.scope, current: () => predecessor });
+  for (const tree of [decoded.baseline, decoded.proposed, decoded.current]) for (const entry of tree?.entries ?? []) if (entry.kind === "file") entry.bytes.fill(0);
+  const second = await opening; predecessor = false; await f.store.cleanup(new Set());
+  const secondFiles = await f.WindowsScopedCodingFiles.create({ copy: second, signal: new AbortController().signal });
+  expect((await secondFiles.readText("app.ts")).text).toBe("export const answer = 42;\n");
+  await secondFiles.replaceText("app.ts", "42", "43"); await secondFiles.close(); await second.stop();
+  const continued = await second.exportReview(), review = continued.output.review;
+  const before = review.baseline.find(entry => entry.path === "app.ts")!, proposed = review.proposed.find(entry => entry.path === "app.ts")!;
+  expect(before.kind === "file" && Buffer.from(before.base64, "base64").toString()).toBe("export const answer = 41;\n");
+  expect(proposed.kind === "file" && Buffer.from(proposed.base64, "base64").toString()).toBe("export const answer = 43;\n");
+  expect(review.current).toEqual(review.baseline);
+  expect(f.nodes.get(f.location("C:\\project\\app.ts").toLowerCase())!.bytes.toString()).toBe("export const answer = 41;\n");
+  await continued.discard(); await second.close(); await f.store.close(); expect(f.handles.size).toBe(0);
+});
+
+it("refuses a continuation without its host-captured original source capability before creating any copy", async () => {
+  const f = await setup(), tree = { binding: f.binding, entries: [] };
+  await expect(f.create(undefined, undefined, { baseline: tree, proposed: tree, current: () => true })).rejects.toMatchObject({ code: "boundary" });
+  expect([...f.nodes.values()].some(row => row.info.finalPath.startsWith(f.location("C:\\copies") + "\\"))).toBe(false);
   await f.store.close(); expect(f.handles.size).toBe(0);
 });
 
