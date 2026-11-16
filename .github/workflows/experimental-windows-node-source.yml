@@ -24,7 +24,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || github.head_ref != 'ember-improve/20261116-source-node-native-reuse'
     name: Source Node feasibility (windows-2022)
     runs-on: windows-2022
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -48,7 +48,7 @@ jobs:
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
       - name: Source preparation, compile recipe and bounded receipt contracts
-        run: npm test -- test/unit/windows-node-source.test.ts test/unit/windows-node-source-build.test.ts test/unit/windows-node-source-program.test.ts test/unit/windows-node-source-report.test.ts test/unit/windows-node-source-ownership.test.ts --maxWorkers=1
+        run: npm test -- test/unit/windows-node-source.test.ts test/unit/windows-node-source-build.test.ts test/unit/windows-node-source-program.test.ts test/unit/windows-node-source-report.test.ts test/unit/windows-node-source-ownership.test.ts test/unit/windows-node-source-fatal.test.ts test/unit/windows-node-source-child-program.test.ts test/unit/windows-node-source-child-host.test.ts test/unit/windows-node-source-child-io.test.ts test/unit/windows-node-source-child-observer.test.ts --maxWorkers=1
       - name: Prepare the unchanged independently pinned official Node control
         timeout-minutes: 3
         shell: pwsh
@@ -94,7 +94,7 @@ jobs:
           "EMBER_NODE_SOURCE_BUILD_COMMIT=$env:GITHUB_SHA" >> $env:GITHUB_ENV
       - name: Build the source Node feasibility image and inert bootstrap with the fixed recipe
         id: build
-        timeout-minutes: 45
+        timeout-minutes: 70
         shell: pwsh
         run: node scripts/experimental/build-windows-node-source.mjs --source-archive "$env:EMBER_NODE_SOURCE_ARCHIVE" --nasm-archive "$env:EMBER_NODE_SOURCE_NASM_ARCHIVE" --destination "$env:EMBER_NODE_SOURCE_BUILD_ROOT" --python "$env:EMBER_NODE_SOURCE_PYTHON"
       - name: Independent official controls and source-built fixed operations after verified job stop

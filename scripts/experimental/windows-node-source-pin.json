@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "issuer": "ember-experimental-source-node-feasibility",
+  "issuer": "ember-experimental-source-node-cng-pipes-feasibility",
   "version": "22.23.5",
   "sourceArchive": {
     "url": "https://nodejs.org/dist/v22.23.5/node-v22.23.5.tar.xz",
@@ -37,9 +37,9 @@
     "files": 29212,
     "directories": 3399,
     "stockBytes": 554315497,
-    "offlineBytes": 554315680,
+    "offlineBytes": 554317214,
     "stockManifestSha256": "018a89c7504cb7bda4ccf6493f219d2da9344bb2c3f191d5ab7b6216c9049b7f",
-    "offlineManifestSha256": "8c185aeadfb6177c38573a52b22a6f66061b42a06271b05bacbcc58471a1f081",
+    "offlineManifestSha256": "a3bc33c2eab801055ec81a0dab309ac20407d128ad985c8424811c4429eff4b6",
     "directoryManifestSha256": "d1df9ce1a91031b0660733f2c69663a9c3409762a94236ec7e960b571f3741f5",
     "directoriesExcludeArchiveRoot": true
   },
@@ -57,7 +57,8 @@
     "needle": "  /* Initialize winsock */\n  uv__winsock_init();",
     "replacement": "  /* Fixed-probe offline build omits network initialization; the stock control is unchanged. */\n#if !defined(EMBER_UV_FIXED_PROBE_OFFLINE) || EMBER_UV_FIXED_PROBE_OFFLINE != 1\n  /* Initialize winsock */\n  uv__winsock_init();\n#endif",
     "macro": "EMBER_UV_FIXED_PROBE_OFFLINE",
-    "value": 1
+    "value": 1,
+    "kind": "fixed-offline-initialization-guard"
   },
   "nasmTool": {
     "version": "2.16.03",
@@ -92,5 +93,44 @@
       }
     ],
     "extractPrefix": "nasm-2.16.03/"
-  }
+  },
+  "patches": [
+    {
+      "file": "deps/uv/src/win/core.c",
+      "beforeBytes": 18494,
+      "beforeSha256": "3026f2888b3360e65a2e2662508eef6ba9b1af17735391ca6f79dc06887b8b23",
+      "afterBytes": 18677,
+      "afterSha256": "143dffcfb49431866d97017d71d108aeffac7c35ca1de1f82b9106f554aa6c52",
+      "needle": "  /* Initialize winsock */\n  uv__winsock_init();",
+      "replacement": "  /* Fixed-probe offline build omits network initialization; the stock control is unchanged. */\n#if !defined(EMBER_UV_FIXED_PROBE_OFFLINE) || EMBER_UV_FIXED_PROBE_OFFLINE != 1\n  /* Initialize winsock */\n  uv__winsock_init();\n#endif",
+      "macro": "EMBER_UV_FIXED_PROBE_OFFLINE",
+      "value": 1,
+      "kind": "fixed-offline-initialization-guard"
+    },
+    {
+      "file": "deps/openssl/openssl/providers/implementations/rands/seeding/rand_win.c",
+      "needle": "#include \"internal/cryptlib.h\"\n",
+      "replacement": "/* Fixed Windows source experiment: select the existing OS CNG branch in this TU only. */\n#if defined(EMBER_NODE_FIXED_PROBE_CNG) && EMBER_NODE_FIXED_PROBE_CNG == 1\n# if !defined(_WIN32) || !defined(_MSC_VER) || _MSC_VER <= 1500 || defined(_WIN32_WCE)\n#  error \"The fixed CNG source experiment requires the attested Windows MSVC target\"\n# endif\n# if defined(_WIN32_WINNT) && _WIN32_WINNT < 0x0600\n#  error \"The fixed CNG source experiment refuses a conflicting legacy target\"\n# endif\n# if !defined(_WIN32_WINNT)\n#  define _WIN32_WINNT 0x0600\n# endif\n#endif\n\n#include \"internal/cryptlib.h\"\n",
+      "macro": "EMBER_NODE_FIXED_PROBE_CNG",
+      "value": 1,
+      "kind": "translation-unit-only-standard-cng-selector",
+      "beforeBytes": 4793,
+      "beforeSha256": "3735ea8b46a826522e9a99d9977a5d86f6f1ae61d90d091b297d403b60de4e6a",
+      "afterBytes": 5351,
+      "afterSha256": "e31f888dfcce8674011c49d95b433b04533110844e4b696dd621e654512e1dda"
+    },
+    {
+      "file": "deps/uv/src/win/pipe.c",
+      "needle": "}\n\n\nstatic void uv__unique_pipe_name(unsigned long long ptr, char* name, size_t size) {\n  snprintf(name, size, \"\\\\\\\\?\\\\pipe\\\\uv\\\\%llu-%lu\", ptr, GetCurrentProcessId());\n}\n\n\n",
+      "replacement": "}\n\n\nstatic int uv_is_app_container_;\nstatic uv_once_t uv_is_app_container_guard_ = UV_ONCE_INIT;\n\n\n/* Is this process running under Windows AppContainer? */\n/* Detection algorithm from https://learn.microsoft.com/en-us/windows/win32/secauthz/appcontainer-for-legacy-applications- */\nstatic void uv__init__is_app_container(void) {\n  HANDLE token;\n  DWORD ac;\n  DWORD len;\n  int ok;\n\n  if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) {\n    uv_is_app_container_ = 0;\n    return;\n  }\n  ac = 0;\n  len = sizeof(ac);\n  ok = GetTokenInformation(token, TokenIsAppContainer, &ac, len, &len);\n  CloseHandle(token);\n  uv_is_app_container_ = ok && ac != 0;\n}\n\n\n/* Is this process running under Windows AppContainer? */\n/* Cached form for repeated use in the process. */\nstatic int uv__is_appcontainer(void) {\n  uv_once(&uv_is_app_container_guard_, uv__init__is_app_container);\n  return uv_is_app_container_;\n}\n\n\nstatic void uv__unique_pipe_name(unsigned long long ptr, char* name, size_t size) {\n  snprintf(name, size, \"\\\\\\\\?\\\\pipe\\\\%suv\\\\%llu-%lu\",\n           uv__is_appcontainer() ? \"LOCAL\\\\\" : \"\",\n           ptr, GetCurrentProcessId());\n}\n\n\n",
+      "kind": "exact-upstream-local-runtime-backport",
+      "upstreamCommit": "2cadaa40167050baf7c6905ac897e6fb57afb2c6",
+      "upstreamUrl": "https://github.com/libuv/libuv/commit/2cadaa40167050baf7c6905ac897e6fb57afb2c6",
+      "upstreamPatchSha256": "69c9776d5d93346620e71019ad8931e949427d06d4dca1213f3f517af9027327",
+      "beforeBytes": 80675,
+      "beforeSha256": "4d370ce0bc10f8ae429f8acb2c7688d74b753e0177f347f5f3d337647e77ca38",
+      "afterBytes": 81651,
+      "afterSha256": "0739cb731a3e21eb23a7ee69ba2f1251542f34a06838cd115aa69e4a4bcc7b54"
+    }
+  ]
 }

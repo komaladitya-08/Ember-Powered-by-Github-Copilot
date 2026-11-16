@@ -9,6 +9,8 @@ import { inspectWindowsNodeFatalOutput } from "../fixtures/windows-node-lpac-fat
 import { WindowsNodeSourceOwnership, WindowsNodeSourceOwnershipError } from "../fixtures/windows-node-source-ownership";
 import { runWindowsSourceNodeProbe, readWindowsNodeSourceBootstrap, windowsSourceNodeFailureReceipt,
   WindowsNodeSourceProbeCleanupError } from "../fixtures/windows-node-source-proof";
+import { runWindowsSourceNodeChildProbe, windowsSourceNodeChildFailureReceipt,
+  WindowsNodeSourceChildProbeCleanupError } from "../fixtures/windows-node-source-child-proof";
 
 const required = process.env.EMBER_NODE_SOURCE_PROBE === "1";
 const available = required && process.platform === "win32" && process.arch === "x64";
@@ -99,4 +101,34 @@ describe.skipIf(!available && !required)("separate verified-source Node fixed us
     expect(result.lpac.report).toMatchObject({ role: 1, status: 1, stage: 7, features: 31, fileRemoved: 1 });
     expect(result.lpac.output).toEqual({ output: { status: "no-location", bytes: 0 } });
   }, 90_000);
+  const childOutcome = async (mode: "spawn" | "test") => {
+    if (retained) throw new WindowsNodeSourceProbeCleanupError();
+    const prerequisite = await sourceOutcome();
+    if (prerequisite.host.exitCode !== 0 || prerequisite.lpac.exitCode !== 0 || prerequisite.lpac.report?.status !== 1 ||
+        prerequisite.lpac.report.features !== 31 || prerequisite.lpac.output.output.bytes !== 0)
+      throw new Error("The required source FS/async/timer proof did not pass; child probes remain blocked.");
+    try {
+      const result = await runWindowsSourceNodeChildProbe({ parent: fs.mkdtempSync(path.join(parent, `child-${mode}-`)), buildRoot, buildCommit, runCommit, mode }, loadExperimentalWindowsLpacApi());
+      console.info("Fixed source-Node child stopped result", JSON.stringify(result)); return result;
+    } catch (error) {
+      if (error instanceof WindowsNodeSourceChildProbeCleanupError) retained = true;
+      const receipt = windowsSourceNodeChildFailureReceipt(error);
+      if (receipt) console.info("Fixed source-Node child stopped failure", JSON.stringify(receipt));
+      throw error;
+    }
+  };
+  it("requires default child_process spawn with three pipes, observed token and fixed stdin/stdout transport", async () => {
+    const result = await childOutcome("spawn");
+    expect(result.host.report).toMatchObject({ role: 0, mode: "spawn", complete: true, stdinBytes: 12, stdoutBytes: 14, stderrBytes: 0 });
+    expect(result.lpac.exitCode).toBe(0); expect(result.lpac.jobStopped).toBe(true);
+    expect(result.lpac.report).toMatchObject({ role: 1, mode: "spawn", complete: true, stdinBytes: 12, stdoutBytes: 14, stderrBytes: 0 });
+    expect(result.lpac.testOutput.accepted).toBe(true);
+  }, 120_000);
+  it("requires default node --test process isolation and exactly one passing fixed test", async () => {
+    const result = await childOutcome("test");
+    expect(result.host.report).toMatchObject({ role: 0, mode: "test", complete: true });
+    expect(result.lpac.exitCode).toBe(0); expect(result.lpac.jobStopped).toBe(true);
+    expect(result.lpac.report).toMatchObject({ role: 1, mode: "test", complete: true });
+    expect(result.lpac.testOutput).toEqual({ accepted: true, tests: 1, passed: 1 });
+  }, 120_000);
 });

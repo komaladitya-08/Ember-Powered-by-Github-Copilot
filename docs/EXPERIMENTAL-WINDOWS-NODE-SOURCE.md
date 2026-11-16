@@ -1,5 +1,9 @@
 # Separate source-built Node feasibility
 
+This page records the original one-guard build and its fixed FS proof. The separately issued
+[CNG and LOCAL-pipe candidate](EXPERIMENTAL-WINDOWS-NODE-CNG-PIPES.md) has three authenticated source deltas and
+additional required child/default-test gates; its fresh Windows outcomes are pending.
+
 This experiment builds Node 22.23.5 from its verified release source and runs only two fixed JavaScript literals.
 It follows the [completed fixed C feasibility result](EXPERIMENTAL-WINDOWS-LIBUV-OFFLINE.md); it does not enable a
 Windows coding backend, accept project code or establish a general offline runtime. The first verified Windows
@@ -102,8 +106,10 @@ failed and remains in place. This is a startup blocker, not useful Node executio
 
 The build's four public files were uploaded as artifact 14207138723. Its authenticated ZIP is 38,423,911 bytes,
 SHA-256 `34fd4ffd22e81b7927b99663f10c06d9a3086782b5462a394d654bb2f998c5be`; it contains no private runtime data.
-A [separate native-only reuse lane](EXPERIMENTAL-WINDOWS-NODE-NATIVE-REUSE.md) diagnoses that exact image without
-another source build or a source/runtime policy change.
+A [separate native-only reuse lane](EXPERIMENTAL-WINDOWS-NODE-NATIVE-REUSE.md) has now authenticated and rerun
+that exact image without another source build. It identifies the LPAC abort as the public startup assertion
+`ncrypto::CSPRNG(nullptr, 0)` at `src/node.cc:1266`. The concrete RNG/provider failure and useful LPAC work remain
+unproved; secure seeding and the original capability/policy boundary remain required.
 
 Even eventual fixed-program success would cover only the stated operations.
 The binary retains general Node/libuv interfaces, including network and UNC paths whose initialization/denial

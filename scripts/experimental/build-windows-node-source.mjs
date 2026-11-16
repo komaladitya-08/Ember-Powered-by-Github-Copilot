@@ -27,7 +27,8 @@ const equal = (actual, expected) => {
 const sourceSummary = () => ({ stockManifestSha256: sourcePin.inventory.stockManifestSha256, offlineManifestSha256: sourcePin.inventory.offlineManifestSha256,
   directoryManifestSha256: sourcePin.inventory.directoryManifestSha256, files: sourcePin.inventory.files, directories: sourcePin.inventory.directories,
   directoriesExcludeArchiveRoot: true, stockBytes: sourcePin.inventory.stockBytes, offlineBytes: sourcePin.inventory.offlineBytes,
-  patchBeforeSha256: sourcePin.patch.beforeSha256, patchAfterSha256: sourcePin.patch.afterSha256 });
+  patchBeforeSha256: sourcePin.patch.beforeSha256, patchAfterSha256: sourcePin.patch.afterSha256,
+  patches: sourcePin.patches.map(({ file, beforeSha256, afterSha256, kind }) => ({ file, beforeSha256, afterSha256, kind })) });
 const version = value => typeof value === "string" && /^[0-9]{1,6}(?:\.[0-9]{1,6}){2,3}$/.test(value);
 const observations = ["visualStudioVersion", "compilerVersion", "linkerVersion", "msbuildVersion", "pythonVersion", "nasmVersion"];
 function versions(value) {
@@ -102,6 +103,58 @@ export function windowsNodeSourceImageFingerprint(bytes, maximum) {
   if (!executableEntry) fail();
   return { bytes: bytes.length, sha256: hash(bytes) };
 }
+/** Bounded regular-import check for the staged executable; no loader/DLL execution or arbitrary names escape. */
+export function windowsNodeSourceEntropyImports(bytes) {
+  windowsNodeSourceImageFingerprint(bytes, buildPin.maximumNodeBytes);
+  const pe = bytes.readUInt32LE(0x3c), optional = pe + 24, optionalSize = bytes.readUInt16LE(pe + 20), sections = bytes.readUInt16LE(pe + 6);
+  if (optionalSize < 240 || bytes.readUInt32LE(optional + 108) !== 16 || bytes.readUInt32LE(optional + 216) || bytes.readUInt32LE(optional + 220)) fail();
+  const ranges = [];
+  for (let index = 0; index < sections; index++) {
+    const at = optional + optionalSize + index * 40;
+    ranges.push({ address: bytes.readUInt32LE(at + 12), size: bytes.readUInt32LE(at + 16), offset: bytes.readUInt32LE(at + 20) });
+  }
+  const location = (rva, length) => {
+    if (!Number.isSafeInteger(rva) || rva < 1 || !Number.isSafeInteger(length) || length < 1 || rva + length > 0x100000000) fail();
+    const matches = ranges.filter(range => rva >= range.address && rva + length <= range.address + range.size);
+    if (matches.length !== 1) fail();
+    const offset = matches[0].offset + rva - matches[0].address;
+    if (offset < 0 || offset + length > bytes.length) fail(); return offset;
+  };
+  const ascii = (rva, maximum) => {
+    let value = "";
+    for (let index = 0; index <= maximum; index++) {
+      const code = bytes[location(rva + index, 1)];
+      if (code === 0) { if (!value) fail(); return value; }
+      if (code < 33 || code > 126 || index === maximum) fail(); value += String.fromCharCode(code);
+    }
+    fail();
+  };
+  const table = bytes.readUInt32LE(optional + 120), size = bytes.readUInt32LE(optional + 124);
+  if (!table || size < 40 || size > 64 * 1024) fail();
+  let completed = false, required = 0, legacy = 0, symbols = 0;
+  for (let index = 0; index < 64 && index * 20 + 20 <= size; index++) {
+    const offset = location(table + index * 20, 20), fields = Array.from({ length: 5 }, (_, field) => bytes.readUInt32LE(offset + field * 4));
+    if (fields.every(value => value === 0)) { completed = true; break; }
+    const module = ascii(fields[3], 128).toLowerCase();
+    if (!/^[a-z0-9_-]+\.dll$/.test(module)) fail();
+    const thunk = fields[0] || fields[4]; if (!thunk) fail();
+    let terminated = false;
+    for (let symbol = 0; symbol < 4096; symbol++) {
+      const value = bytes.readBigUInt64LE(location(thunk + symbol * 8, 8));
+      if (value === 0n) { terminated = true; break; }
+      if (++symbols > 4096) fail();
+      if (value & (1n << 63n)) continue;
+      if (value > 0xffffffffn) fail();
+      const name = ascii(Number(value) + 2, 256);
+      if (name.toLowerCase() === "cryptgenrandom") legacy++;
+      if (name === "BCryptGenRandom") { if (module !== buildPin.entropyImportPolicy.module) fail(); required++; }
+    }
+    if (!terminated) fail();
+  }
+  if (!completed || required !== 1 || legacy !== 0) fail();
+  return freeze({ module: buildPin.entropyImportPolicy.module, required: buildPin.entropyImportPolicy.required, requiredCount: required, legacyCryptGenRandomCount: legacy });
+}
+
 function inputBytes(file, maximum, pe = false) {
   const before = fs.lstatSync(file); if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1 || before.size < 1 || before.size > maximum) fail();
   const fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
@@ -154,8 +207,28 @@ export function windowsNodeSourceBuildBatch(paths) {
     `"${paths.linker}" ${buildPin.bootstrapLinkArguments.join(" ")} /OUT:"${paths.bootstrapOutput}" "${paths.bootstrapObject}" kernel32.lib`,
     "if errorlevel 1 exit /b 1", "exit /b 0", ""].join("\r\n");
 }
+/** Closed child outcome only: no error message, signal name, command, output or host path is retained. */
+export function windowsNodeSourceCompileOutcome(result) {
+  const outcome = (name, exitCode = null) => freeze({ schema: 1, outcome: name, exitCode });
+  try {
+    if (!result || typeof result !== "object" || Array.isArray(result) || !Object.hasOwn(result, "status") || !Object.hasOwn(result, "signal")) return outcome("malformed");
+    const status = result.status, signal = result.signal, error = result.error;
+    if (status !== null && (!Number.isInteger(status) || status < -0x80000000 || status > 0xffffffff) ||
+        signal !== null && (typeof signal !== "string" || signal.length < 1 || signal.length > 64) ||
+        error !== undefined && error !== null && (typeof error !== "object" || Array.isArray(error))) return outcome("malformed");
+    if (error) {
+      if (status !== null) return outcome("malformed");
+      return outcome(error.code === "ETIMEDOUT" ? "timeout" : "spawn");
+    }
+    if (signal !== null) return status === null ? outcome("signal") : outcome("malformed");
+    if (status === null) return outcome("malformed");
+    return outcome(status === 0 ? "success" : "exit", status);
+  } catch { return outcome("malformed"); }
+}
+let compileOutcome;
 let buildStage = "inputs";
 export async function buildWindowsNodeSource({ sourceArchivePath, nasmArchivePath, destination, pythonPath }) {
+  buildStage = "inputs"; compileOutcome = undefined;
   if (process.platform !== "win32" || process.arch !== "x64") fail();
   for (const value of [sourceArchivePath, nasmArchivePath, destination, pythonPath]) ordinary(value);
   pythonPath = trustedWindowsNodeSourcePythonPath(pythonPath);
@@ -203,7 +276,9 @@ export async function buildWindowsNodeSource({ sourceArchivePath, nasmArchivePat
   const batch = path.join(destination, "build-source.cmd"); fs.writeFileSync(batch, windowsNodeSourceBuildBatch(batchPaths), { flag: "wx" });
   buildStage = "compile";
   const result = spawnSync(env.ComSpec, ["/d", "/s", "/v:off", "/c", batch], { env, cwd: destination, stdio: "inherit", timeout: buildPin.nodeBuildTimeoutMs, windowsHide: true });
-  if (result.error || result.status !== 0 || result.signal) fail();
+  compileOutcome = windowsNodeSourceCompileOutcome(result);
+  if (compileOutcome.outcome !== "success") fail();
+  buildStage = "post-batch-tool-identity";
   for (const [name, expected] of [["compiler", toolsPaths.compiler], ["python", pythonPath], ["nasm", nasm.nasmPath]]) {
     for (const suffix of ["Before", "After"]) if (firstPath(batchPaths[`${name}${suffix}`]).toLowerCase() !== expected.toLowerCase()) fail();
   }
@@ -214,8 +289,12 @@ export async function buildWindowsNodeSource({ sourceArchivePath, nasmArchivePat
   const assets = {};
   for (const [key, file, name, maximum] of [["node", path.join(source.workingDir, "out", "Release", "node.exe"), "source-node.exe", buildPin.maximumNodeBytes],
     ["bootstrap", batchPaths.bootstrapOutput, "bootstrap.exe", buildPin.maximumBootstrapBytes]]) {
-    const bytes = inputBytes(file, maximum, true), destinationFile = path.join(destination, name); fs.writeFileSync(destinationFile, bytes, { flag: "wx" });
-    const readback = inputBytes(destinationFile, maximum, true); if (!bytes.equals(readback)) fail(); assets[key] = { name, bytes: bytes.length, sha256: hash(readback) };
+    const bytes = inputBytes(file, maximum, true), destinationFile = path.join(destination, name);
+    if (key === "node") windowsNodeSourceEntropyImports(bytes);
+    fs.writeFileSync(destinationFile, bytes, { flag: "wx" });
+    const readback = inputBytes(destinationFile, maximum, true); if (!bytes.equals(readback)) fail();
+    if (key === "node") windowsNodeSourceEntropyImports(readback);
+    assets[key] = { name, bytes: bytes.length, sha256: hash(readback) };
   }
   fs.writeFileSync(path.join(destination, "LICENSE"), inputBytes(path.join(source.baselineDir, "LICENSE"), 1024 * 1024), { flag: "wx" });
   buildStage = "final-receipt";
@@ -232,5 +311,5 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     if (args.length !== 8 || args[0] !== "--source-archive" || args[2] !== "--nasm-archive" || args[4] !== "--destination" || args[6] !== "--python") fail();
     const receipt = await buildWindowsNodeSource({ sourceArchivePath: args[1], nasmArchivePath: args[3], destination: args[5], pythonPath: args[7] });
     console.log(JSON.stringify({ issuer: receipt.issuer, version: receipt.sourceVersion, compilerVersion: receipt.build.compilerVersion, nodeBytes: receipt.assets.node.bytes, bootstrapBytes: receipt.assets.bootstrap.bytes }));
-  } catch { console.error(JSON.stringify({ status: "failed", stage: buildStage })); process.exitCode = 1; }
+  } catch { console.error(JSON.stringify({ status: "failed", stage: buildStage, ...(compileOutcome ? { compile: compileOutcome } : {}) })); process.exitCode = 1; }
 }

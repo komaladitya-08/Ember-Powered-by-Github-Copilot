@@ -6,8 +6,8 @@ import { spawnSync } from "node:child_process";
 import { afterEach, describe, expect, it } from "vitest";
 // @ts-expect-error -- fixed trusted-host JavaScript artifact authority
 import { artifactPin, validateSourceArtifactOrigin, sourceArtifactBlobUrl, downloadSourceArtifact, validateSourceArtifactFiles, parseSourceArtifactExtractionRefusal, sourceArtifactExtractionRefusal, verifyPinnedSourceArtifactMembers } from "../../scripts/experimental/stage-windows-node-source-artifact.mjs";
-// @ts-expect-error -- unchanged trusted compile-recipe authority
-import { buildPin, windowsNodeSourceBuildRecipe } from "../../scripts/experimental/build-windows-node-source.mjs";
+// @ts-expect-error -- current trusted compile-recipe authority
+import { buildPin, windowsNodeSourceBuildRecipe, windowsNodeSourceEntropyImports } from "../../scripts/experimental/build-windows-node-source.mjs";
 import sourcePin from "../../scripts/experimental/windows-node-source-pin.json";
 
 const directories: string[] = [];
@@ -120,18 +120,23 @@ describe("independently authenticated literal artifact-member pins", () => {
 describe("post-ZIP four-file receipt and PE verification", () => {
   const digest = (value: string | Buffer) => createHash("sha256").update(value).digest("hex");
   const fixture = () => {
-    const directory = temporary(), pe = Buffer.alloc(1024);
+    const directory = temporary(), pe = Buffer.alloc(2048);
     pe.writeUInt16LE(0x5a4d); pe.writeUInt32LE(128, 0x3c); pe.writeUInt32LE(0x4550, 128); pe.writeUInt16LE(0x8664, 132); pe.writeUInt16LE(1, 134);
     pe.writeUInt16LE(240, 148); pe.writeUInt16LE(0x22, 150); pe.writeUInt16LE(0x20b, 152); pe.writeUInt16LE(3, 220);
-    pe.writeUInt32LE(0x1000, 168); pe.writeUInt32LE(0x2000, 208); pe.writeUInt32LE(512, 212); pe.writeUInt32LE(256, 400);
-    pe.writeUInt32LE(0x1000, 404); pe.writeUInt32LE(512, 408); pe.writeUInt32LE(512, 412); pe.writeUInt32LE(0x60000020, 428);
+    pe.writeUInt32LE(0x1000, 168); pe.writeUInt32LE(0x2000, 208); pe.writeUInt32LE(512, 212); pe.writeUInt32LE(1536, 400);
+    pe.writeUInt32LE(0x1000, 404); pe.writeUInt32LE(1536, 408); pe.writeUInt32LE(512, 412); pe.writeUInt32LE(0x60000020, 428);
+    pe.writeUInt32LE(16, 260); pe.writeUInt32LE(0x1100, 272); pe.writeUInt32LE(40, 276);
+    pe.writeUInt32LE(0x1180, 0x300); pe.writeUInt32LE(0x1150, 0x30c); pe.writeUInt32LE(0x1180, 0x310);
+    pe.write("bcrypt.dll\0", 0x350, "ascii"); pe.writeBigUInt64LE(0x11c0n, 0x380); pe.write("BCryptGenRandom\0", 0x3c2, "ascii");
+    windowsNodeSourceEntropyImports(pe);
     for (const name of ["source-node.exe", "bootstrap.exe"]) fs.writeFileSync(path.join(directory, name), pe);
     fs.writeFileSync(path.join(directory, "LICENSE"), "public synthetic license");
     const tool = () => ({ bytes: 2048, sha256: "b".repeat(64) }), nasm = sourcePin.nasmTool.files.find(value => value.path === "nasm.exe")!;
     const receipt = { schema: 1, issuer: sourcePin.issuer, sourceVersion: sourcePin.version, sourceArchiveSha256: sourcePin.sourceArchive.sha256, sourceCommit: sourcePin.provenance.commit,
       source: { stockManifestSha256: sourcePin.inventory.stockManifestSha256, offlineManifestSha256: sourcePin.inventory.offlineManifestSha256, directoryManifestSha256: sourcePin.inventory.directoryManifestSha256,
         files: sourcePin.inventory.files, directories: sourcePin.inventory.directories, directoriesExcludeArchiveRoot: true, stockBytes: sourcePin.inventory.stockBytes, offlineBytes: sourcePin.inventory.offlineBytes,
-        patchBeforeSha256: sourcePin.patch.beforeSha256, patchAfterSha256: sourcePin.patch.afterSha256 },
+        patchBeforeSha256: sourcePin.patch.beforeSha256, patchAfterSha256: sourcePin.patch.afterSha256,
+        patches: sourcePin.patches.map(({ file, beforeSha256, afterSha256, kind }) => ({ file, beforeSha256, afterSha256, kind })) },
       build: { ...buildPin, visualStudioVersion: "17.14.37906.3", compilerVersion: "19.44.35211.0", linkerVersion: "14.44.35211.0", msbuildVersion: "17.14.23.30406", pythonVersion: "3.12.10", nasmVersion: "2.16.03" },
       tools: { compiler: tool(), linker: tool(), msbuild: tool(), vcvars: tool(), vswhere: tool(), python: tool(), nasm: { bytes: nasm.bytes, sha256: nasm.sha256 } },
       recipe: windowsNodeSourceBuildRecipe(), commit: artifactPin.compileCommit,
@@ -143,9 +148,13 @@ describe("post-ZIP four-file receipt and PE verification", () => {
     };
     return { directory, receipt, writeReceipt, extraction };
   };
-  it("independently revalidates the original full receipt, current compile recipe, both PE assets and all four derived hashes", () => {
+  it("validates a synthetic current-recipe receipt, CNG PE assets and derived hashes without reissuing the original artifact", () => {
     const value = fixture(), result = validateSourceArtifactFiles(value.directory, value.extraction());
     expect(result.compileCommit).toBe(artifactPin.compileCommit); expect(result.files).toHaveLength(4); expect(Object.isFrozen(result.files[0])).toBe(true);
+  });
+  it("refuses the legacy source issuer under the new three-delta candidate even with coherent synthetic current assets", () => {
+    const value = fixture(); value.receipt.issuer = "ember-experimental-source-node-feasibility"; value.writeReceipt();
+    expect(() => validateSourceArtifactFiles(value.directory, value.extraction())).toThrow("source, recipe or issuer contract");
   });
   it.each(["foreign-source", "foreign-commit", "recipe", "asset", "pe", "extra-file", "derived-hash"])("refuses coherent but foreign staged data: %s", change => {
     const value = fixture();
@@ -153,7 +162,7 @@ describe("post-ZIP four-file receipt and PE verification", () => {
     if (change === "foreign-commit") value.receipt.commit = "0".repeat(40);
     if (change === "recipe") value.receipt.recipe[0].sha256 = "0".repeat(64);
     if (change === "asset") value.receipt.assets.node.sha256 = "0".repeat(64);
-    if (change === "pe") { const bad = Buffer.alloc(1024); fs.writeFileSync(path.join(value.directory, "source-node.exe"), bad); value.receipt.assets.node.sha256 = digest(bad); }
+    if (change === "pe") { const bad = Buffer.alloc(value.receipt.assets.node.bytes); fs.writeFileSync(path.join(value.directory, "source-node.exe"), bad); value.receipt.assets.node.sha256 = digest(bad); }
     if (change === "extra-file") fs.writeFileSync(path.join(value.directory, "private-extra"), "synthetic");
     value.writeReceipt(); const extraction = value.extraction(); if (change === "derived-hash") extraction.files[0].sha256 = "0".repeat(64);
     expect(() => validateSourceArtifactFiles(value.directory, extraction)).toThrow();

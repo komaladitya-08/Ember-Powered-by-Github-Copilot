@@ -84,5 +84,27 @@ floating timestamps. The exact hosted Python admission, archive hash/count, four
 exclusive extraction and original compile/source/tool/PE checks remain mandatory. No default clock or
 unsupported-interpreter fallback is added.
 
-Windows staging with this corrected comparison and subsequent native fatal classification remain pending.
-This repair does not establish useful LPAC Node or default child/test-runner execution.
+## Completed Windows reuse and secure-seeding blocker
+
+[Run43836843382](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43836843382)
+at `287da65e6d632eaf9cb4c7f589bc25bdeadecc82` passed 230 portable contracts with one expected privilege skip.
+The [completed Server 2022 job133195481650](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43836843382/job/133195481650)
+authenticated the fixed archive, extracted it with the corrected clock fence, and validated the full original
+source/tool/recipe/PE receipt, four exact hashes and manifest. No source rebuild or compiled-input change occurred.
+
+Three of four native assertions passed: unchanged official-host startup, unchanged stock LPAC `WSAStartup / 10107`
+refusal, and source-built ordinary-host FS/async/timer work. The source host again matched the parent at integrity
+RID 12288, AppContainer 0 and no restricting SIDs, and completed feature mask 31 with 24-byte reads, one read
+callback, one timer, cleanup and six checkpoints.
+
+The source-built LPAC still exited 134 before producing a report. Its 1,157 captured bytes returned only finite
+diagnostics: format 1, site 1, line 1266, check 5, nine native frames and no matched public frame IDs. These map
+exactly to [Node's startup assertion `ncrypto::CSPRNG(nullptr, 0)`](https://github.com/nodejs/node/blob/60553651579ec33ca1aef9e1eedab2c3855f1f7e/src/node.cc#L1266).
+Captured text, addresses, paths and arguments were never returned or uploaded. The root exited and its private
+job stopped; cleanup was verified before these facts were released. The required LPAC success assertion failed
+and remains unchanged.
+
+This proves authenticated build reuse and identifies the failing secure-seeding check. It does not identify
+which RNG/provider/configuration API failed, and it does not establish useful LPAC Node or default child/test
+execution. The next investigation must identify that concrete failure while retaining secure seeding and the
+existing policy/capability boundary.

@@ -21,7 +21,8 @@ import hashlib,importlib.util,io,json,os,pathlib,shutil,sys,tarfile
 spec=importlib.util.spec_from_file_location("node_source",sys.argv[1]);m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
 c=json.loads(sys.argv[2]);root=pathlib.Path(sys.argv[3]);dest=root/"prepared";dest.mkdir();pin=m._pin();prefix=pin["sourceArchive"]["extractPrefix"]
 core="  /* Initialize winsock */\n  uv__winsock_init();\n".replace("\\n","\n")
-entries=c.get("entries",[{"path":"deps/uv/src/win/core.c","text":core},{"path":"README.md","text":"safe"}])
+texts=dict((patch["file"],patch["needle"]+"\n") for patch in pin["patches"]);texts[pin["patch"]["file"]]=core
+entries=c.get("entries",[{"path":name,"text":text} for name,text in texts.items()]+[{"path":"README.md","text":"safe"}])
 directories=set(["empty-dir"])
 for e in entries:
  if e.get("kind")=="directory":directories.add(e["path"])
@@ -31,9 +32,12 @@ for e in entries:
 files=sorted([{"path":e["path"],"bytes":len(e.get("text","").encode()),"sha256":hashlib.sha256(e.get("text","").encode()).hexdigest()} for e in entries if e.get("kind","file")=="file"],key=lambda e:e["path"])
 directories=sorted(directories)
 pin["inventory"]={"entries":len(entries)+len(directories)+1,"files":len(files),"directories":len(directories),"stockBytes":sum(e["bytes"] for e in files),"stockManifestSha256":m._file_manifest(files),"directoryManifestSha256":m._directory_manifest(directories)}
-patch=pin["patch"];patch["beforeBytes"]=len(core.encode());patch["beforeSha256"]=hashlib.sha256(core.encode()).hexdigest()
-changed=core.replace(patch["needle"],patch["replacement"]).encode();patch["afterBytes"]=len(changed);patch["afterSha256"]=hashlib.sha256(changed).hexdigest()
-offline=[dict(e,bytes=len(changed),sha256=patch["afterSha256"]) if e["path"]==patch["file"] else e for e in files]
+changed={}
+for patch in pin["patches"]:
+ data=texts[patch["file"]].encode();patch["beforeBytes"]=len(data);patch["beforeSha256"]=hashlib.sha256(data).hexdigest()
+ body=data.replace(patch["needle"].encode(),patch["replacement"].encode());patch["afterBytes"]=len(body);patch["afterSha256"]=hashlib.sha256(body).hexdigest();changed[patch["file"]]=patch
+pin["patch"]=pin["patches"][0]
+offline=[dict(e,bytes=changed[e["path"]]["afterBytes"],sha256=changed[e["path"]]["afterSha256"]) if e["path"] in changed else e for e in files]
 pin["inventory"]["offlineBytes"]=sum(e["bytes"] for e in offline);pin["inventory"]["offlineManifestSha256"]=m._file_manifest(offline)
 pin["limits"].update(c.get("limits",{}));m._pin=lambda:pin
 buffer=io.BytesIO()
@@ -51,6 +55,9 @@ with tarfile.open(fileobj=buffer,mode="w") as archive:
   else:t.size=len(data)
   archive.addfile(t,io.BytesIO(data) if kind=="file" else None)
 buffer.seek(0)
+if c.get("scenario")=="patch-list-count":pin["patches"].pop()
+if c.get("scenario")=="patch-list-foreign":pin["patches"][1]["file"]="README.md"
+if c.get("scenario")=="patch-list-order":pin["patches"][1:]=list(reversed(pin["patches"][1:]))
 try:
  if c.get("existing"):(dest/"baseline").mkdir();(dest/"baseline"/"owner.txt").write_text("owner")
  with tarfile.open(fileobj=buffer,mode="r:") as archive:m._extract_members(archive,str(dest),pin)
@@ -60,6 +67,8 @@ try:
   (target/"out").mkdir();(target/"out"/"generated.txt").write_text("generated")
   if scenario=="working-generated-alias":(root/"outside").mkdir();(target/"Release").symlink_to(root/"outside",target_is_directory=True)
  if scenario=="alter-input":(working/"README.md").write_text("evil")
+ if scenario=="alter-cng":working.joinpath(*pin["patches"][1]["file"].split("/")).write_text("evil")
+ if scenario=="alter-local":working.joinpath(*pin["patches"][2]["file"].split("/")).write_text("evil")
  if scenario=="hardlink-input":
   (root/"outside.txt").write_text("safe");(working/"README.md").unlink();os.link(str(root/"outside.txt"),str(working/"README.md"))
  if scenario=="directory-alias":
@@ -70,15 +79,18 @@ try:
   elif scenario=="catalog-hash":catalog["files"][0]["sha256"]="0"*64
   elif scenario=="catalog-path":catalog["files"][0]["path"]="../outside"
   elif scenario=="catalog-directory":catalog["directories"][0]="invented"
+  elif scenario=="catalog-patch":
+   for entry in catalog["files"]:
+    if entry["path"]==pin["patches"][1]["file"]:entry["sha256"]=pin["patches"][1]["afterSha256"]
   q.write_text(json.dumps(catalog))
  a=m.validate_source_inputs(str(baseline),"stock",scenario=="baseline-generated")
- b=m.validate_source_inputs(str(working),"offline",scenario in ("working-generated","working-generated-alias","alter-input","hardlink-input","directory-alias"))
+ b=m.validate_source_inputs(str(working),"offline",scenario in ("working-generated","working-generated-alias","alter-input","alter-cng","alter-local","hardlink-input","directory-alias"))
  print(json.dumps({"ok":True,"baseline":a,"working":b,"catalogOutsideTrees":(dest/"source-inputs.json").is_file()}))
 except m.SourceError as error:print(json.dumps({"ok":False,"stage":str(error),"baselineExists":(dest/"baseline").exists(),"ownerRetained":(dest/"baseline"/"owner.txt").is_file()}))
 `;
 function exercise(config: object) {
   const result = spawnSync(python, ["-B", "-c", fixture, extractor, JSON.stringify(config), temporary()], { encoding: "utf8", windowsHide: true, timeout: 5000, maxBuffer: 4096 });
-  expect(result.status, result.stderr).toBe(0);
+  expect(result.status, "The fixed source fixture must complete without forwarding private interpreter errors.").toBe(0);
   return JSON.parse(result.stdout) as { ok: boolean; stage?: string; baselineExists?: boolean; ownerRetained?: boolean; baseline?: { allowGenerated: boolean }; working?: { allowGenerated: boolean }; catalogOutsideTrees?: boolean };
 }
 
@@ -86,7 +98,7 @@ it("pins the signed full source and exact three Unicode exceptions without a che
   expect(sourcePin.sourceArchive).toMatchObject({ bytes: 50_529_596, sha256: "6cce7c58bf058700c643944903d60a325e8c9ceede1f5c2c088b435f2ada091a", extractPrefix: "node-v22.23.5/" });
   expect(sourcePin.inventory).toMatchObject({ entries: 32612, files: 29212, directories: 3399, stockBytes: 554315497,
     stockManifestSha256: "018a89c7504cb7bda4ccf6493f219d2da9344bb2c3f191d5ab7b6216c9049b7f",
-    offlineManifestSha256: "8c185aeadfb6177c38573a52b22a6f66061b42a06271b05bacbcc58471a1f081" });
+    offlineManifestSha256: "a3bc33c2eab801055ec81a0dab309ac20407d128ad985c8424811c4429eff4b6" });
   expect(sourcePin.unicodePaths).toEqual(["test/fixtures/copy/utf/新建文件夹", "test/fixtures/copy/utf/新建文件夹/experimental.json", "test/fixtures/copy/utf/新建文件夹/index.js"]);
   expect(Object.isFrozen(sourcePin)).toBe(true); expect(Object.isFrozen(sourcePin.inventory)).toBe(true); expect(Object.isFrozen(sourcePin.unicodePaths)).toBe(true);
   expect(sourcePin).not.toHaveProperty("files");
@@ -131,11 +143,11 @@ it.skipIf(!available)("leaves an existing baseline and owner file intact", () =>
   expect(exercise({ existing: true })).toMatchObject({ ok: false, stage: "destination", ownerRetained: true });
 });
 
-it.skipIf(!available).each(["catalog-omit", "catalog-hash", "catalog-path", "catalog-directory"])("authenticates the entire mutable catalog before trusting it: %s", scenario => {
+it.skipIf(!available).each(["catalog-omit", "catalog-hash", "catalog-path", "catalog-directory", "catalog-patch"])("authenticates the entire mutable catalog before trusting it: %s", scenario => {
   expect(exercise({ scenario }).ok).toBe(false);
 });
 
-it.skipIf(!available).each(["baseline-extra", "working-generated-exact", "baseline-generated", "alter-input", "hardlink-input"])("retains original-input checks despite generated-output support: %s", scenario => {
+it.skipIf(!available).each(["baseline-extra", "working-generated-exact", "baseline-generated", "alter-input", "alter-cng", "alter-local", "hardlink-input"])("retains original-input checks despite generated-output support: %s", scenario => {
   expect(exercise({ scenario }).ok).toBe(false);
 });
 
@@ -174,7 +186,7 @@ except m.SourceError as error:print(json.dumps({"ok":False,"stage":str(error),"d
 `;
 function nasm(config: object) {
   const result = spawnSync(python, ["-I", "-B", "-c", nasmFixture, extractor, JSON.stringify(config), temporary()], { encoding: "utf8", windowsHide: true, timeout: 5000, maxBuffer: 4096 });
-  expect(result.status, result.stderr).toBe(0);
+  expect(result.status, "The fixed source fixture must complete without forwarding private interpreter errors.").toBe(0);
   return JSON.parse(result.stdout) as { ok: boolean; stage?: string; destinationExists?: boolean; files?: string[]; verifiedArchiveFiles?: number; signatureVerified?: boolean };
 }
 
@@ -193,4 +205,20 @@ it.skipIf(!available)("verifies the complete NASM ZIP while staging only the com
 
 it.skipIf(!available).each(["path", "symlink", "privileged", "encrypted", "unstaged-tamper", "extra"])("rejects unsafe NASM metadata or bytes before staging: %s", scenario => {
   expect(nasm({ scenario })).toMatchObject({ ok: false, destinationExists: false });
+});
+
+it("allows exactly the reviewed three source changes and scopes CNG before internal headers", () => {
+  expect(sourcePin.patches.map((entry: { file: string }) => entry.file)).toEqual([
+    "deps/uv/src/win/core.c", "deps/openssl/openssl/providers/implementations/rands/seeding/rand_win.c", "deps/uv/src/win/pipe.c",
+  ]);
+  expect(sourcePin.patch).toEqual(sourcePin.patches[0]);
+  expect(sourcePin.patches[1]).toMatchObject({ beforeSha256: "3735ea8b46a826522e9a99d9977a5d86f6f1ae61d90d091b297d403b60de4e6a", afterSha256: "e31f888dfcce8674011c49d95b433b04533110844e4b696dd621e654512e1dda" });
+  expect(sourcePin.patches[1].replacement).toContain("#  define _WIN32_WINNT 0x0600");
+  expect(sourcePin.patches[1].replacement.indexOf("#  define _WIN32_WINNT")).toBeLessThan(sourcePin.patches[1].replacement.indexOf('#include "internal/cryptlib.h"'));
+  expect(sourcePin.patches[2]).toMatchObject({ upstreamCommit: "2cadaa40167050baf7c6905ac897e6fb57afb2c6", beforeSha256: "4d370ce0bc10f8ae429f8acb2c7688d74b753e0177f347f5f3d337647e77ca38", afterSha256: "0739cb731a3e21eb23a7ee69ba2f1251542f34a06838cd115aa69e4a4bcc7b54" });
+  expect(sourcePin.inventory.offlineBytes).toBe(554317214);
+});
+
+it.skipIf(!available).each(["patch-list-count", "patch-list-foreign", "patch-list-order"])("refuses any alternative source patch allowlist: %s", scenario => {
+  expect(exercise({ scenario }).ok).toBe(false);
 });

@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import sourcePin from "../../scripts/experimental/windows-node-source-pin.json";
 // @ts-expect-error -- shared trusted-host JavaScript compile recipe and portable bounded receipt parser
-import { buildPin, parseWindowsNodeSourceBuildReceipt, windowsNodeSourceBuildRecipe, windowsNodeSourceBuildEnvironment, windowsNodeSourceBuildBatch, windowsNodeSourceImageFingerprint, trustedWindowsNodeSourcePythonPath, attestWindowsNodeSourcePython } from "../../scripts/experimental/build-windows-node-source.mjs";
+import { buildPin, parseWindowsNodeSourceBuildReceipt, windowsNodeSourceBuildRecipe, windowsNodeSourceBuildEnvironment, windowsNodeSourceBuildBatch, windowsNodeSourceImageFingerprint, windowsNodeSourceEntropyImports, windowsNodeSourceCompileOutcome, trustedWindowsNodeSourcePythonPath, attestWindowsNodeSourcePython } from "../../scripts/experimental/build-windows-node-source.mjs";
 // @ts-expect-error -- trusted-host JavaScript source-preparation API
 import { validateSourceInputs } from "../../scripts/experimental/windows-node-source.mjs";
 
@@ -24,7 +24,8 @@ function receipt() {
     source: { stockManifestSha256: sourcePin.inventory.stockManifestSha256, offlineManifestSha256: sourcePin.inventory.offlineManifestSha256,
       directoryManifestSha256: sourcePin.inventory.directoryManifestSha256, files: sourcePin.inventory.files, directories: sourcePin.inventory.directories,
       directoriesExcludeArchiveRoot: true, stockBytes: sourcePin.inventory.stockBytes, offlineBytes: sourcePin.inventory.offlineBytes,
-      patchBeforeSha256: sourcePin.patch.beforeSha256, patchAfterSha256: sourcePin.patch.afterSha256 },
+      patchBeforeSha256: sourcePin.patch.beforeSha256, patchAfterSha256: sourcePin.patch.afterSha256,
+      patches: sourcePin.patches.map(({ file, beforeSha256, afterSha256, kind }) => ({ file, beforeSha256, afterSha256, kind })) },
     build: { ...buildPin, visualStudioVersion: "17.14.37906.3", compilerVersion: "19.44.35211.0", linkerVersion: "14.44.35211.0", msbuildVersion: "17.14.23.30406", pythonVersion: "3.12.10", nasmVersion: "2.16.03" },
     tools: { compiler: tool(), linker: tool(), msbuild: tool(), vcvars: tool(), vswhere: tool(), python: tool(), nasm: { bytes: nasm.bytes, sha256: nasm.sha256 } },
     recipe: windowsNodeSourceBuildRecipe() as { file: string; sha256: string }[], commit: compileCommit,
@@ -42,7 +43,7 @@ it.each(["issuer", "sourceVersion", "sourceArchiveSha256", "sourceCommit", "comm
   expect(() => parse({ ...receipt(), [field]: "private arbitrary value" })).toThrow("exact source, recipe or issuer contract");
 });
 
-it.each(["stockManifestSha256", "offlineManifestSha256", "directoryManifestSha256", "files", "directories", "directoriesExcludeArchiveRoot", "stockBytes", "offlineBytes", "patchBeforeSha256", "patchAfterSha256"])("binds every original-source and patch witness: %s", field => {
+it.each(["stockManifestSha256", "offlineManifestSha256", "directoryManifestSha256", "files", "directories", "directoriesExcludeArchiveRoot", "stockBytes", "offlineBytes", "patchBeforeSha256", "patchAfterSha256", "patches"])("binds every original-source and patch witness: %s", field => {
   const value = receipt(); Object.assign(value.source, { [field]: "changed" }); expect(() => parse(value)).toThrow();
 });
 
@@ -109,7 +110,7 @@ it("generates only the pinned vcbuild and inert-bootstrap recipe without feature
   const fields = ["vcvars", "compiler", "linker", "source", "bootstrapSource", "bootstrapObject", "bootstrapOutput", "compilerBefore", "pythonBefore", "nasmBefore", "compilerAfter", "pythonAfter", "nasmAfter"];
   const paths = Object.fromEntries(fields.map(name => [name, `D:\\fixed\\${name}`])); const batch = windowsNodeSourceBuildBatch(paths);
   expect(batch).toContain("call vcbuild.bat x64 vs2022 no-cctest nonpm nocorepack");
-  expect(batch).toContain('set "CL=/DEMBER_UV_FIXED_PROBE_OFFLINE=1"');
+  expect(batch).toContain('set "CL=/DEMBER_UV_FIXED_PROBE_OFFLINE=1 /DEMBER_NODE_FIXED_PROBE_CNG=1"');
   expect(batch).toContain("/GS /Zl /c"); expect(batch).toContain("/NODEFAULTLIB /ENTRY:mainCRTStartup /SUBSYSTEM:CONSOLE /MACHINE:X64");
   expect(batch).not.toMatch(/\/GS-|without-intl|openssl-no-asm|no-NODE-OPTIONS|jitless|no-sandbox|ExecutionPolicy|registryRead/);
   expect(() => windowsNodeSourceBuildBatch({ ...paths, extra: "D:\\other" })).toThrow();
@@ -198,4 +199,59 @@ it("hands the same clean environment and fresh cwd to the isolated source valida
   await expect(validateSourceInputs(baseline, "stock", { pythonPath: buildPin.pythonExecutable, executionEnv: env, cwd: root })).resolves.toEqual(facts);
   expect(child.async.mock.calls[0][2]).toMatchObject({ env, cwd: root });
   expect(child.async.mock.calls[0][1].slice(0, 2)).toEqual(["-I", "-B"]);
+});
+
+function entropyImage() {
+  const data = Buffer.alloc(2048); image().copy(data);
+  const optional = 0x58, section = optional + 0xf0;
+  data.writeUInt32LE(1536, section + 8); data.writeUInt32LE(1536, section + 16);
+  data.writeUInt32LE(16, optional + 108); data.writeUInt32LE(0x1100, optional + 120); data.writeUInt32LE(40, optional + 124);
+  const descriptor = 0x300;
+  data.writeUInt32LE(0x1180, descriptor); data.writeUInt32LE(0x1150, descriptor + 12); data.writeUInt32LE(0x1180, descriptor + 16);
+  data.write("bcrypt.dll\0", 0x350, "ascii"); data.writeBigUInt64LE(0x11c0n, 0x380); data.write("BCryptGenRandom\0", 0x3c2, "ascii");
+  return data;
+}
+it("requires the actual named CNG import in a bounded mapped PE and refuses legacy entropy imports", () => {
+  expect(windowsNodeSourceEntropyImports(entropyImage())).toEqual({ module: "bcrypt.dll", required: "BCryptGenRandom", requiredCount: 1, legacyCryptGenRandomCount: 0 });
+  for (const mutate of [
+    (data: Buffer) => data.write("foreign.dll\0", 0x350, "ascii"),
+    (data: Buffer) => { data.fill(0, 0x3c2, 0x3e0); data.write("CryptGenRandom\0", 0x3c2, "ascii"); },
+    (data: Buffer) => { data.writeBigUInt64LE(0x1200n, 0x388); data.write("CryptGenRandom\0", 0x402, "ascii"); },
+    (data: Buffer) => data.writeBigUInt64LE(0x8000000000000001n, 0x380),
+    (data: Buffer) => data.writeBigUInt64LE(0x200000000n, 0x380),
+    (data: Buffer) => data.writeUInt32LE(0x5000, 0x300),
+    (data: Buffer) => data.writeUInt32LE(20, 0x58 + 124),
+    (data: Buffer) => data.writeUInt32LE(0x1100, 0x58 + 216),
+    (data: Buffer) => data.writeUInt32LE(0x1100, 0x314),
+    (data: Buffer) => data.fill(65, 0x350, 0x3d2),
+  ]) { const data = entropyImage(); mutate(data); expect(() => windowsNodeSourceEntropyImports(data)).toThrow("exact source, recipe or issuer"); }
+});
+
+it.each([
+  [{ status: 0, signal: null }, { outcome: "success", exitCode: 0 }],
+  [{ status: 1, signal: null }, { outcome: "exit", exitCode: 1 }],
+  [{ status: 0xffffffff, signal: null }, { outcome: "exit", exitCode: 0xffffffff }],
+  [{ status: -1073741819, signal: null }, { outcome: "exit", exitCode: -1073741819 }],
+  [{ status: null, signal: "SIGTERM", error: Object.assign(new Error("private host path"), { code: "ETIMEDOUT" }) }, { outcome: "timeout", exitCode: null }],
+  [{ status: null, signal: null, error: Object.assign(new Error("private host path"), { code: "ENOENT" }) }, { outcome: "spawn", exitCode: null }],
+  [{ status: null, signal: "private signal name" }, { outcome: "signal", exitCode: null }],
+])("classifies only finite compile outcome facts for injected result %#", (result, expected) => {
+  const observed = windowsNodeSourceCompileOutcome(result);
+  expect(observed).toEqual({ schema: 1, ...expected }); expect(Object.isFrozen(observed)).toBe(true);
+  expect(JSON.stringify(observed)).not.toMatch(/private|ETIMEDOUT|ENOENT|SIGTERM/);
+});
+it.each([null, [], {}, { status: 0 }, { status: 0, signal: "SIGTERM" }, { status: null, signal: null },
+  { status: "private", signal: null }, { status: 1.5, signal: null }, { status: 0x100000000, signal: null },
+  { status: 0, signal: null, error: "private" }, { status: null, signal: "" }, { status: null, signal: true },
+  { status: 0, signal: null, error: { code: "ETIMEDOUT" } }, { get status() { throw new Error("private property"); }, signal: null },
+])("refuses malformed or contradictory compile outcome %# without forwarding private data", result => {
+  expect(windowsNodeSourceCompileOutcome(result)).toEqual({ schema: 1, outcome: "malformed", exitCode: null });
+});
+it("extends only the trusted compiler budget while preserving the native workflow deadline", () => {
+  expect(buildPin.nodeBuildTimeoutMs).toBe(3_600_000);
+  const workflow = fs.readFileSync(new URL("../../.github/workflows/experimental-windows-node-source.yml", import.meta.url), "utf8");
+  expect(workflow).toMatch(/source-node:[\s\S]*?timeout-minutes: 90/);
+  expect(workflow).toMatch(/name: Build the source Node[\s\S]*?timeout-minutes: 70/);
+  expect(workflow).toMatch(/name: Independent official controls[\s\S]*?timeout-minutes: 5/);
+  expect(buildPin.compilerEnvironment).toBe("/DEMBER_UV_FIXED_PROBE_OFFLINE=1 /DEMBER_NODE_FIXED_PROBE_CNG=1");
 });
