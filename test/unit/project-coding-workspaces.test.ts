@@ -27,9 +27,9 @@ describe("this run's project coding folders", () => {
     f.workspaces.bind(f.first, f.folder(), f.workspaces.ownerCurrent(f.first));
     const captured = f.workspaces.capture(f.first)!;
     f.workspaces.bind(f.second, f.folder(secondFolder), f.workspaces.ownerCurrent(f.second));
-    expect(captured.path).toBe(fs.realpathSync(firstFolder)); expect(captured.current()).toBe(true);
-    expect(f.workspaces.capture(f.second)?.path).toBe(fs.realpathSync(secondFolder));
-    expect(f.workspaces.state(f.first)).toEqual({ path: fs.realpathSync(firstFolder), label: "first", valid: true });
+    expect(captured.path).toBe(fs.realpathSync.native(firstFolder)); expect(captured.current()).toBe(true);
+    expect(f.workspaces.capture(f.second)?.path).toBe(fs.realpathSync.native(secondFolder));
+    expect(f.workspaces.state(f.first)).toEqual({ path: fs.realpathSync.native(firstFolder), label: "first", valid: true });
     expect(Object.isFrozen(captured)).toBe(true);
     expect(fs.readdirSync(privateDir)).toEqual([]);
     expect(JSON.stringify(f.workspaces)).toBe("{}");
@@ -39,7 +39,7 @@ describe("this run's project coding folders", () => {
     const f = fixture(), selected = `${firstFolder}${path.sep}.`;
     f.workspaces.bind(f.first, f.folder(selected), f.workspaces.ownerCurrent(f.first));
     const captured = f.workspaces.capture(f.first)!;
-    expect(captured.path).toBe(fs.realpathSync(firstFolder)); expect(captured.path).not.toBe(selected);
+    expect(captured.path).toBe(fs.realpathSync.native(firstFolder)); expect(captured.path).not.toBe(selected);
     expect(captured.current()).toBe(true);
   });
 
@@ -65,7 +65,7 @@ describe("this run's project coding folders", () => {
     const captured = f.workspaces.capture(f.first)!;
     fs.renameSync(firstFolder, firstFolder + "-old"); fs.mkdirSync(firstFolder);
     expect(captured.current()).toBe(false); expect(f.workspaces.capture(f.first)).toBeNull();
-    expect(f.workspaces.state(f.first)).toEqual({ path: fs.realpathSync(firstFolder), label: "first", valid: false });
+    expect(f.workspaces.state(f.first)).toEqual({ path: fs.realpathSync.native(firstFolder), label: "first", valid: false });
   });
 
   it("rejects unknown or removed projects and stale, throwing or unavailable owners", () => {

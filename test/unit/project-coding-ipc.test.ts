@@ -63,7 +63,7 @@ describe("Home's project coding IPC", () => {
     expect(state).toMatchObject({ available: false, canChoose: true, folder: null });
     const chosen = await f.call<ProjectCodingWorkspaceState>(IPC.projectCodingWorkspaceChoose, f.first);
     expect(f.folderChanged).toHaveBeenLastCalledWith(f.first);
-    expect(chosen.folder).toEqual({ path: fs.realpathSync(f.source), label: "source", valid: true });
+    expect(chosen.folder).toEqual({ path: fs.realpathSync.native(f.source), label: "source", valid: true });
     expect(chosen.available).toBe(false); expect(chosen.canChoose).toBe(true);
     expect(f.chooseFolder).toHaveBeenCalledWith("Choose a coding folder");
     expect(f.validateFolder).toHaveBeenCalledWith(f.source);
@@ -78,7 +78,7 @@ describe("Home's project coding IPC", () => {
     const f = setup(), selected = `${f.source}${path.sep}.`; f.chooseFolder.mockResolvedValueOnce(selected);
     const chosen = await f.call<ProjectCodingWorkspaceState>(IPC.projectCodingWorkspaceChoose, f.first);
     expect(f.validateFolder).toHaveBeenCalledWith(selected);
-    expect(chosen.folder).toEqual({ path: fs.realpathSync(f.source), label: "source", valid: true });
+    expect(chosen.folder).toEqual({ path: fs.realpathSync.native(f.source), label: "source", valid: true });
     expect(chosen.folder?.path).not.toBe(selected);
     expect(f.folders.capture(f.first)?.current()).toBe(true);
     expect(f.results).not.toHaveBeenCalled();
@@ -114,9 +114,9 @@ describe("Home's project coding IPC", () => {
     expect(await f.call(IPC.projectCodingWorkspaceState, f.first)).toMatchObject({ canChoose: false });
     await expect(f.call(IPC.projectCodingWorkspaceChoose, f.first)).rejects.toThrow("Stop this project's coding");
     await expect(f.call(IPC.projectCodingWorkspaceForget, f.first)).rejects.toThrow("Stop this project's coding");
-    expect((await f.call<ProjectCodingWorkspaceState>(IPC.projectCodingWorkspaceChoose, f.second)).folder?.path).toBe(fs.realpathSync(f.source));
+    expect((await f.call<ProjectCodingWorkspaceState>(IPC.projectCodingWorkspaceChoose, f.second)).folder?.path).toBe(fs.realpathSync.native(f.source));
     f.live(f.first, "running", "desktop");
-    expect((await f.call<ProjectCodingWorkspaceState>(IPC.projectCodingWorkspaceChoose, f.first)).folder?.path).toBe(fs.realpathSync(f.source));
+    expect((await f.call<ProjectCodingWorkspaceState>(IPC.projectCodingWorkspaceChoose, f.first)).folder?.path).toBe(fs.realpathSync.native(f.source));
   });
 
   it("permits one chooser per project, leaves other projects usable and keeps cancellation non-mutating", async () => {
@@ -129,8 +129,8 @@ describe("Home's project coding IPC", () => {
     await expect(f.call(IPC.projectCodingWorkspaceChoose, f.first)).rejects.toThrow("folder picker");
     const second = f.call<ProjectCodingWorkspaceState>(IPC.projectCodingWorkspaceChoose, f.second);
     a.resolve(null); b.resolve(f.other);
-    expect((await first).folder?.path).toBe(fs.realpathSync(f.source)); expect(original.current()).toBe(true);
-    expect((await second).folder?.path).toBe(fs.realpathSync(f.other));
+    expect((await first).folder?.path).toBe(fs.realpathSync.native(f.source)); expect(original.current()).toBe(true);
+    expect((await second).folder?.path).toBe(fs.realpathSync.native(f.other));
     expect(f.validateFolder).toHaveBeenCalledTimes(1);
   });
 
@@ -138,7 +138,7 @@ describe("Home's project coding IPC", () => {
     const f = setup(); f.folders.bind(f.first, projectCommandFolder(f.source, f.privateDir), f.folders.ownerCurrent(f.first));
     f.validateFolder.mockImplementationOnce(() => { throw new Error("secret=/private/raw/source"); });
     await expect(f.call(IPC.projectCodingWorkspaceChoose, f.first)).rejects.toThrow("Choose an ordinary local folder");
-    expect(f.folders.capture(f.first)?.path).toBe(fs.realpathSync(f.source));
+    expect(f.folders.capture(f.first)?.path).toBe(fs.realpathSync.native(f.source));
   });
 
   it("rechecks live work and folder revisions after the native picker, without binding a stale choice", async () => {
@@ -153,7 +153,7 @@ describe("Home's project coding IPC", () => {
     f.folders.bind(f.first, projectCommandFolder(f.other, f.privateDir), f.folders.ownerCurrent(f.first));
     nextPicker.resolve(f.source);
     await expect(old).rejects.toThrow("choice changed");
-    expect(f.folders.capture(f.first)?.path).toBe(fs.realpathSync(f.other));
+    expect(f.folders.capture(f.first)?.path).toBe(fs.realpathSync.native(f.other));
   });
 
   it("invalidates an owner ABA and pending chooser synchronously on reset, before cleanup resolves", async () => {
@@ -177,7 +177,7 @@ describe("Home's project coding IPC", () => {
     f.folders.bind(f.first, projectCommandFolder(f.other, f.privateDir), f.folders.ownerCurrent(f.first));
     validation.resolve(projectCommandFolder(f.source, f.privateDir));
     await expect(old).rejects.toThrow("choice changed");
-    expect(f.folders.capture(f.first)?.path).toBe(fs.realpathSync(f.other));
+    expect(f.folders.capture(f.first)?.path).toBe(fs.realpathSync.native(f.other));
     expect(f.folderChanged).not.toHaveBeenCalled();
   });
 
@@ -295,7 +295,7 @@ describe("Home's project coding IPC", () => {
     const next = f.call<ProjectCodingWorkspaceState>(IPC.projectCodingWorkspaceChoose, f.first);
     first.resolve(f.source); await expect(old).rejects.toThrow("choice changed");
     expect(await f.call(IPC.projectCodingWorkspaceState, f.first)).toMatchObject({ canChoose: false });
-    second.resolve(f.other); expect((await next).folder?.path).toBe(fs.realpathSync(f.other));
+    second.resolve(f.other); expect((await next).folder?.path).toBe(fs.realpathSync.native(f.other));
   });
 
   it("treats a never-created unsupported registry as absent, while surfacing every actual cleanup failure", async () => {
@@ -316,7 +316,7 @@ describe("Home's project coding IPC", () => {
     const events: string[] = [];
     f.changed.mockImplementation(() => { events.push("render"); });
     f.folderChanged.mockImplementation(id => {
-      if (id) expect(f.folders.state(id)?.path).toBe(fs.realpathSync(f.source));
+      if (id) expect(f.folders.state(id)?.path).toBe(fs.realpathSync.native(f.source));
       events.push("host");
     });
     await f.call(IPC.projectCodingWorkspaceChoose, f.first);

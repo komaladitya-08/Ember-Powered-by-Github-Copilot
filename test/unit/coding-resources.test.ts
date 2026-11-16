@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import fs from "node:fs/promises";
+import fsSync from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -401,6 +402,50 @@ it("keeps unsupported-platform folder metadata and empty result reset usable wit
   expect((await results.export("unknown", source, () => true)).ok).toBe(false);
   expect(sim.discover).not.toHaveBeenCalled(); expect(sim.create).not.toHaveBeenCalled();
   expect(await fs.readdir(temporary)).toEqual([]);
+});
+
+it.skipIf(process.platform !== "win32")("accepts a Windows case-variant picker grant with the resource validator's native canonical identity", async () => {
+  const alias = path.join(path.dirname(source), path.basename(source).toUpperCase());
+  const original = await fs.stat(source, { bigint: true }), aliased = await fs.stat(alias, { bigint: true });
+  const legacy = fsSync.realpathSync(alias), native = fsSync.realpathSync.native(alias), promised = await fs.realpath(alias);
+  const selected = projectCommandFolder(alias, userData);
+  const observations = {
+    aliasSameDirectory: original.dev === aliased.dev && original.ino === aliased.ino,
+    legacyMatchesNative: legacy === native,
+    nativeMatchesPromise: native === promised,
+    grantMatchesNative: selected.path === native,
+  };
+  // Only booleans leave the fixture: no native profile, temporary or selected path is logged.
+  console.info("Windows folder canonicalisation", observations);
+  expect(observations).toEqual({ aliasSameDirectory: true, legacyMatchesNative: false, nativeMatchesPromise: true, grantMatchesNative: true });
+  const value = await open();
+  expect(value.availability().available).toBe(false);
+  const accepted = await value.validateSource(selected);
+  expect(accepted.path === native).toBe(true); expect(accepted.current()).toBe(true);
+  value.folders.bind(P, accepted, value.folders.ownerCurrent(P));
+  expect(value.folders.state(P)?.path === promised).toBe(true);
+  const protectedAlias = path.join(path.dirname(userData), path.basename(userData).toUpperCase());
+  expect(() => projectCommandFolder(protectedAlias, userData)).toThrow("outside");
+  expect(sim.discover).not.toHaveBeenCalled(); expect(sim.create).not.toHaveBeenCalled();
+  expect(await fs.readdir(temporary)).toEqual([]);
+});
+
+it.skipIf(process.platform !== "win32")("rejects a Windows native alias of the private coding parent selected through a case-variant temp directory", async () => {
+  const tempAlias = path.join(path.dirname(temporary), path.basename(temporary).toUpperCase());
+  vi.mocked(os.tmpdir).mockReturnValue(tempAlias);
+  const storage = selectCodingStorageBase(), name = `ember-coding-${process.getuid?.() ?? "unsupported"}`;
+  expect(storage.common === path.join(await fs.realpath(temporary), name)).toBe(true);
+  expect(storage.protectedPaths.includes(path.join(tempAlias, name))).toBe(true);
+  expect(storage.protectedPaths.includes(storage.common!)).toBe(true);
+  // This directory belongs to the fixture; unsupported resources themselves still allocate no storage.
+  await fs.mkdir(storage.common!);
+  const privateAlias = path.join(tempAlias, name.toUpperCase()), grant = projectCommandFolder(privateAlias, userData);
+  const common = await fs.stat(storage.common!, { bigint: true }), selected = await fs.stat(grant.path, { bigint: true });
+  expect(common.dev === selected.dev && common.ino === selected.ino).toBe(true);
+  const value = await open({ storage });
+  await expect(value.validateSource(grant)).rejects.toThrow("Choose a project folder outside Ember's data, application and private coding storage.");
+  expect(await fs.readdir(storage.common!)).toEqual([]);
+  expect(sim.discover).not.toHaveBeenCalled(); expect(sim.create).not.toHaveBeenCalled();
 });
 
 resourceIt("allocates only in the same selected storage base already registered with desktop gates", async () => {

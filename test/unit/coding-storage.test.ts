@@ -17,7 +17,7 @@ it("selects frozen logical and canonical roots before allocation, without creati
   fs.mkdirSync(real); fs.symlinkSync(real, alias, "junction");
   vi.spyOn(os, "tmpdir").mockReturnValue(alias);
   const storage = selectCodingStorageBase(), name = `ember-coding-${process.getuid?.() ?? "unsupported"}`;
-  expect(storage.common).toBe(path.join(fs.realpathSync(real), name));
+  expect(storage.common).toBe(path.join(fs.realpathSync.native(real), name));
   expect(storage.protectedPaths).toEqual([path.join(alias, name), storage.common]);
   expect(Object.isFrozen(storage)).toBe(true); expect(Object.isFrozen(storage.protectedPaths)).toBe(true);
   expect(fs.readdirSync(real)).toEqual([]);
@@ -34,6 +34,16 @@ it("retains the logical protection but disables allocation when canonical temp r
   const storage = selectCodingStorageBase();
   expect(storage.common).toBeNull(); expect(storage.protectedPaths).toHaveLength(1);
   expect(storage.protectedPaths[0].startsWith(missing + path.sep)).toBe(true); expect(fs.existsSync(missing)).toBe(false);
+});
+
+it("does not fall back to the JavaScript resolver when native canonicalisation of an existing temp directory fails", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-storage-selection-")); dirs.push(dir);
+  vi.spyOn(os, "tmpdir").mockReturnValue(dir);
+  vi.spyOn(fs.realpathSync, "native").mockImplementation(() => { throw new Error("synthetic native resolution refusal"); });
+  const storage = selectCodingStorageBase();
+  expect(storage.common).toBeNull(); expect(storage.protectedPaths).toHaveLength(1);
+  expect(storage.protectedPaths[0].startsWith(dir + path.sep)).toBe(true);
+  expect(fs.readdirSync(dir)).toEqual([]);
 });
 
 const roots = Object.freeze(["/tmp/ember-coding-123", "/private/tmp/ember-coding-123"]);

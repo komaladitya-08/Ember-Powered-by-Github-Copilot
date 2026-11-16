@@ -15,6 +15,6 @@ export function selectCodingStorageBase(): CodingStorageBase {
   const temporary = path.resolve(os.tmpdir());
   const logical = path.join(temporary, name);
   let common: string | null = null;
-  try { common = path.join(fs.realpathSync(temporary), name); } catch { /* No canonical location: no allocation. */ }
+  try { common = path.join(fs.realpathSync.native(temporary), name); } catch { /* No canonical location: no allocation. */ }
   return Object.freeze({ common, protectedPaths: Object.freeze([...new Set([logical, ...(common ? [common] : [])])]) });
 }
