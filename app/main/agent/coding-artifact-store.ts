@@ -9,7 +9,8 @@ declare const artifactReference: unique symbol;
 declare const sourceReference: unique symbol;
 export interface CodingArtifactRef { readonly [artifactReference]: true }
 export interface CodingArtifactSourceRef { readonly [sourceReference]: true }
-export interface CodingArtifactInput { readonly directory: string; readonly artifact?: CodingArtifactRef }
+/** Intake wrappers remain mutable for legacy callers; stores snapshot both fields before admitting work. */
+export interface CodingArtifactInput { directory: string; artifact?: CodingArtifactRef }
 export interface CodingArtifactReceipt {
   readonly ref: CodingArtifactRef;
   readonly directory: string;
