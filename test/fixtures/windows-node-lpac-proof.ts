@@ -45,7 +45,8 @@ export function compileWindowsNodeBootstrap(parent: string): Buffer {
 
 type NativeFunction = (...args: unknown[]) => unknown;
 interface PinnedFile { file: string; bytes: number; unchanged(): void; close(): void }
-function nativeChecks(api: WindowsLpacApi) {
+/** Shared test-only image/token/file primitives; callers still verify their own distinct asset issuer. */
+export function nativeChecks(api: WindowsLpacApi) {
   const koffi = createRequire(import.meta.url)("koffi") as typeof Koffi, kernel = koffi.load("kernel32.dll");
   const fn: Record<string, NativeFunction> = {};
   for (const prototype of [
