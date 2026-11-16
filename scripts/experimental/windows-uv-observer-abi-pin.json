@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "issuer": "ember-experimental-windows-uv-observer-abi-control",
+  "image": "windows-2022",
+  "baseHead": "9bcd829ff758c847aac515d02b91336c916f3d91",
+  "baseRecipeSha256": "d0db5ef89ede4d8d66e9245ee0427c2072ae5daa8a1dc834246bdcacd1241e29",
+  "reportBytes": 256,
+  "cases": 96,
+  "checks": 127,
+  "runtimeTimeoutMs": 15000,
+  "maximumExecutableBytes": 16777216,
+  "maximumObjectBytes": 16777216,
+  "maximumReceiptBytes": 65536,
+  "maximumProjectBytes": 1048576,
+  "maximumToolBytes": 67108864,
+  "maximumImportModules": 64,
+  "maximumImports": 2048
+}
