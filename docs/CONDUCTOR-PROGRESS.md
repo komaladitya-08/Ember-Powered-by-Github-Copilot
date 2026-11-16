@@ -242,6 +242,14 @@ ordinary-host controls but still exited 1 in LPAC without a report or output. Re
 refusal did not prove module loading. These diagnostic drafts remain separate from the integrated product and do
 not establish a laptop-only remaining checklist. See the boundary plan for the finite command milestone and bridge.
 
+The later explicit module-resolution [experiment #245](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/245)
+passed [its first matrix](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43932197397) on
+both Server images. With the two documented preserve-symlink flags and explicit single-process test isolation, the
+fixed CommonJS import, async read, timer and Node test completed with exit 0, empty output, genuine job Stop and
+known cleanup. The earlier unflagged failures remain unchanged. This is useful compatibility evidence for a declared
+invocation, not command-backend integration; bounded live output, genuine stopped proposal transfer and complete
+product journeys still need implementation and proof.
+
 Automatic checkpoints, general dependency graphs, future wakeups, automatic source writeback and macOS coding
 are separate extensions. They do not add requirements to this Windows milestone; the implemented limits must
 remain explicit in the product and acceptance results.

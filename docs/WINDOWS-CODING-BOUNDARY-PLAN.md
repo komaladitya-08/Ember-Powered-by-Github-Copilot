@@ -63,6 +63,15 @@ subprocesses, npm and network installation unavailable. Pinned Node 22.23.5 requ
 `--experimental-test-isolation=none` flag for that test mode. It must appear in the requested invocation; never insert
 it into an approved `node --test` command or reinterpret an npm script.
 
+The separate [explicit module-flag experiment #245](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/245)
+also requests the documented `--preserve-symlinks` and `--preserve-symlinks-main`. Its
+[first matrix](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43932197397) passed both
+ordinary-host and LPAC tests on both Server images: fixed CommonJS import, 21-byte async read, timer and one
+single-process test, with natural exit 0, empty output, genuine job Stop and complete known cleanup. Each image
+also passed 766 portable cases with one expected skip. This establishes that explicit fixed invocation. The flags
+change module-resolution semantics and must stay visible in the requested argument array; never insert them into
+another approved command. It does not prove the stricter root-only command tree or a usable product backend.
+
 The separate [in-process diagnostic #242](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/242)
 preserves the original six assertions and source artifact. A bounded comparison identified the original 144-byte
 output as the pinned Node file-discovery refusal. Selecting the same fixed test by its verified relative sibling
@@ -84,7 +93,8 @@ two wrappers; these are lexical counts, not dynamic call or LastError evidence. 
 and the native execution guard stays false. A separate ordinary-host ABI control is being prepared without altering
 that observer object, source, workflow or guard.
 
-After native feasibility passes, the finite product bridge still needs these changes:
+The fixed Node workload is feasible under those explicit flags. The independent root-only command tree and the
+finite product bridge still need these changes:
 
 - Keep `WindowsCodingCopy` as the sole canonical proposal, original baseline and source authority. Capture detached,
   privacy-validated complete command input under its file lease. Import a complete stopped command snapshot through
