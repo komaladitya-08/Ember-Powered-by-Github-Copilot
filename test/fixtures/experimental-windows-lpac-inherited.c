@@ -14,6 +14,21 @@
 #if EMBER_LPAC_CHILD_AAP_ONLY != 0 && EMBER_LPAC_CHILD_AAP_ONLY != 1
 #error The fixed child-creation probe accepts only its two reviewed variants.
 #endif
+#ifndef EMBER_LPAC_CHILD_NULL_SECURITY
+#define EMBER_LPAC_CHILD_NULL_SECURITY 0
+#endif
+#ifndef EMBER_LPAC_CHILD_DETACHED
+#define EMBER_LPAC_CHILD_DETACHED 0
+#endif
+#if (EMBER_LPAC_CHILD_NULL_SECURITY != 0 && EMBER_LPAC_CHILD_NULL_SECURITY != 1) || (EMBER_LPAC_CHILD_DETACHED != 0 && EMBER_LPAC_CHILD_DETACHED != 1)
+#error The fixed child-creation observations accept only literal selectors.
+#endif
+#if (EMBER_LPAC_CHILD_NULL_SECURITY || EMBER_LPAC_CHILD_DETACHED) && !EMBER_LPAC_CHILD_AAP_ONLY
+#error Each isolated comparison requires the existing AAP-only policy branch.
+#endif
+#if EMBER_LPAC_CHILD_NULL_SECURITY && EMBER_LPAC_CHILD_DETACHED
+#error The object-security and console observations must remain separate.
+#endif
 
 #if EMBER_LPAC_CHILD_AAP_ONLY
 static DWORD aapNativeError(void)
@@ -55,6 +70,15 @@ static BOOL spawnInherited(DWORD flags, PROCESS_INFORMATION *process, DWORD *err
     SIZE_T bytes = 0;
     DWORD policy = 1;
     BOOL created;
+    SECURITY_ATTRIBUTES *processSecurity = &childAttributes, *threadSecurity = &childAttributes;
+    DWORD childConsoleFlags = CREATE_NO_WINDOW;
+#if EMBER_LPAC_CHILD_NULL_SECURITY
+    processSecurity = NULL;
+    threadSecurity = NULL;
+#endif
+#if EMBER_LPAC_CHILD_DETACHED
+    childConsoleFlags = DETACHED_PROCESS;
+#endif
     memset(&startup, 0, sizeof(startup));
     memset(process, 0, sizeof(*process));
     childNtStatus = MAXDWORD;
@@ -79,8 +103,8 @@ static BOOL spawnInherited(DWORD flags, PROCESS_INFORMATION *process, DWORD *err
         if (LocalFree(startup.lpAttributeList) != NULL) failure = aapNativeError();
         aapCreationRefusal(32, failure);
     }
-    created = CreateProcessW(selfPath, commandLine, &childAttributes, &childAttributes, FALSE,
-                             flags | CREATE_NO_WINDOW | CREATE_SUSPENDED | EXTENDED_STARTUPINFO_PRESENT,
+    created = CreateProcessW(selfPath, commandLine, processSecurity, threadSecurity, FALSE,
+                             flags | childConsoleFlags | CREATE_SUSPENDED | EXTENDED_STARTUPINFO_PRESENT,
                              NULL, NULL, &startup.StartupInfo, process);
     *error = created ? ERROR_SUCCESS : GetLastError();
     childNtStatus = created ? 0 : getLastNtStatus ? (DWORD)getLastNtStatus() : MAXDWORD;
@@ -93,7 +117,9 @@ static BOOL spawnInherited(DWORD flags, PROCESS_INFORMATION *process, DWORD *err
         }
         aapCreationRefusal(32, failure);
     }
+#if !EMBER_LPAC_CHILD_NULL_SECURITY
     if (!created && flags == 0) writeChildSdAccessDiagnostic();
+#endif
     return created;
 #else
     STARTUPINFOW startup;

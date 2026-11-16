@@ -56,7 +56,7 @@ $env:EMBER_LPAC_INHERITED_CHILD_TEST = "1"
 node scripts/run-integration.mjs test/integration/windows-lpac-inherited-child-native.test.ts
 ```
 
-`experimental-windows-lpac-inherited-child.yml` runs all three variants on Server 2022 and 2025. An explicitly configured
+`experimental-windows-lpac-inherited-child.yml` runs all five variants on Server 2022 and 2025. An explicitly configured
 unsupported host, missing compiler, unexpected original-control outcome or failed inherited assertion fails; none is
 converted into a skip. Native outcomes remain pending until an exact workflow commit completes. A positive result
 would establish this fixed inherited-child sequence, not arbitrary Node child-process, named-pipe or toolchain support.
@@ -68,7 +68,8 @@ The Server 2025 image's installed VS 2026 version is recorded in the runner mani
 
 Setup refusals print only fixed numeric operation/domain/code fields and `launchAttempted:false`. Build stages are
 1 scratch, 2 environment/image declaration, 3 compiler discovery, 4 discovery-path validation, 5 fixed batch creation,
-6 compiler child completion, and 7 executable readback. Variant 1 is the original control, 2 plain inherited and 3 AAP-only.
+6 compiler child completion, and 7 executable readback. Variants 1–5 are original, plain inherited, AAP-only,
+AAP with NULL object security, and AAP with a detached child respectively.
 Preparation operation 1 is volume type, 2 ancestor pin, 3 profile creation, 4 owner query, 5 directory creation,
 6 fixed executable creation, 7 handle close and 8 profile removal; operation 0 means an unclassified host validation.
 Domain 0 is unknown, 1 is the fixed Node errno ordinal (EACCES, EPERM, ENOENT, EEXIST, ENOTDIR, ELOOP, ETIMEDOUT,
@@ -112,10 +113,10 @@ an unexpected breakaway creation from becoming an apparent access-denied control
 or handle close exits 31; the host's additional readout gate blocks every report/path reader and retains all owners
 and pins on that status. The ordinary child never resumes after such a cleanup failure.
 
-Each of the three compiler children retains its 60-second bound. Setup allows their combined bounds plus discovery;
+Each of the five compiler children retains its 60-second bound. Setup allows their combined bounds plus discovery;
 root, acknowledgement, admission, independent-stop and runtime test deadlines remain unchanged.
 
-The two instrumented variants additionally write a separate 80-byte child-object diagnostic only after the ordinary
+Variants with instrumented explicit descriptors additionally write a separate 80-byte child-object diagnostic only after the ordinary
 `CreateProcessW` call returned FALSE and its original Win32/NT statuses were saved. Creation inputs, object security,
 labels, flags, token and capabilities remain unchanged. The original explicit source remains untouched.
 The helper copies the exact supplied process/thread DACLs, preserving ACE order, types, flags and SID bytes, then
@@ -140,6 +141,21 @@ after whole-job and independent-handle Stop. Writer failure 33 prevents invoking
 it remains an ordinary failed experiment with known cleanup. Uncertain native close 31 blocks all payload readers
 and retains owners/pins. Existing launch and positive confinement assertions remain mandatory.
 
+Two further separately compiled comparisons keep the existing three cases and their assertions intact. `aap-null-sa`
+sets only the child process/thread `SECURITY_ATTRIBUTES` arguments to NULL; it keeps AAP opt-out and console flags.
+`aap-detached` keeps the explicit descriptors and AAP opt-out, replacing only the child's `CREATE_NO_WINDOW` with
+`DETACHED_PROCESS`. Root creation is unchanged. Compile guards prohibit combining these two axes or enabling either
+without the AAP-only branch. Each comparison still needs the exact suspended-child image/token/AAP/job checks,
+acknowledgement, all original positive report checks, post-wait child survival and full Stop/readout gates.
+
+The NULL-security case emits no supplied-descriptor diagnostic, since the explicit `childAttributes` descriptor is
+not passed to that creation call. Its absence is expected rather than relabelled as default-object evidence.
+Microsoft's [console-allocation specification](https://github.com/microsoft/terminal/blob/f6de9e0618015def1c9dda5b82f9d3abf03eb799/doc/specs/%237335%20-%20Console%20Allocation%20Policy.md#L103)
+distinguishes an invisible console host under `CREATE_NO_WINDOW` from no console host under `DETACHED_PROCESS`.
+That motivates the isolated comparison without identifying the actual denied operation. The root can still own its
+existing console helper. Node's default spawn additionally differs in console flags, handle inheritance and stdio;
+neither comparison is an exact Node-spawn or generic-runtime compatibility proof.
+
 At `5dff8e203462e6f3f65ffcfc461cbc4013142f39`, [run 43819235798](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43819235798)
 passed 82 portable tests and the original explicit-attribute denial control on each Server image. Both inherited
 cases stopped cleanly after a host-side admission refusal, with no C result/failure report. That outcome establishes
@@ -159,3 +175,8 @@ At `5c04bf33961ce0a4b8d0f34e2a71e2706907a152`, [run 43826611127](https://github.
 passed 119 portable tests and both denial controls per image. The AAP-only call also naturally returned stage 18,
 error 5 and status `0xc0000022` on both images, with the same root checks and known Stop/cleanup. This policy-only
 combination did not resolve creation; no child admission or Node compatibility was established.
+At `e0832acc367505308f6e7c52a1ee2831b62524af`, [run 43830963334](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43830963334)
+passed 159 portable tests per image and both existing denial controls. Both instrumented variants produced complete
+stage-8 diagnostics: process and thread checks succeeded, allowed and granted concrete `0x1fffff`, with actual
+owner/group source classes 4/5 and known token closes. Creation still returned stage 18/error 5/`0xc0000022`.
+This weakens the supplied-DACL-rights hypothesis in memory; it does not establish kernel creation success.

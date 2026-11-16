@@ -8,7 +8,7 @@ import { beforeAll, afterAll, describe, expect, it } from "vitest";
 import { ExperimentalWindowsLpacFixture } from "../../app/main/agent/experimental-windows-lpac";
 import { loadExperimentalWindowsLpacApi, type WindowsLpacProfile, type WindowsHandle, type WindowsSuspendedProcess } from "../../app/main/agent/experimental-windows-lpac-api";
 import { loadInheritedChildObserver, InheritedChildCleanupError, inheritedChildNumericFailure, inheritedChildCompilerFailure, inheritedChildVisualStudioRange,
-  INHERITED_CHILD_VARIANTS, inheritedChildReadout, inheritedChildVariantDefine, type InheritedChildVariant } from "../fixtures/windows-lpac-inherited-child";
+  INHERITED_CHILD_VARIANTS, inheritedChildReadout, inheritedChildVariantDefine, inheritedChildSuppliedSdDiagnostic, type InheritedChildVariant } from "../fixtures/windows-lpac-inherited-child";
 import { nativeChecks, WindowsNodeProofCleanupError } from "../fixtures/windows-node-lpac-proof";
 import { parseWindowsLpacChildSdDiagnostic, readWindowsLpacChildSdDiagnostic, WINDOWS_LPAC_CHILD_SD_BYTES, type WindowsLpacChildSdDiagnostic } from "../fixtures/windows-lpac-child-sd-diagnostic";
 
@@ -103,7 +103,7 @@ describe.skipIf(!supported && !required)("separate LPAC inherited-token child ex
       // eslint-disable-next-line preserve-caught-error -- Compiler/native errors may contain private paths; only the closed numeric receipt may leave this fixture.
       throw new Error("The fixed inherited-child fixture compilation failed; synthetic build scratch retained.");
     }
-  }, 210_000); // Three independent compiler children retain their existing 60s limits, plus discovery/setup.
+  }, 330_000); // Five independent compiler children retain their existing 60s limits, plus discovery/setup.
   afterAll(() => {
     for (const bytes of executables.values()) bytes.fill(0);
     if (root && safeToRemove) try { fs.rmSync(root, { recursive: true, force: true }); }
@@ -203,7 +203,7 @@ describe.skipIf(!supported && !required)("separate LPAC inherited-token child ex
         outcome = inheritedChildReadout(rootExit, () => {
         const report = reportWords(path.join(fixture.paths.state, "report.bin"), 12), diagnostic = reportWords(path.join(fixture.paths.state, "failure.bin"), 25);
         let sdAccess: WindowsLpacChildSdDiagnostic | null = null, sdAccessInvalid = false;
-        if (variant !== "explicit") try {
+        if (inheritedChildSuppliedSdDiagnostic(variant)) try {
           sdAccess = readWindowsLpacChildSdDiagnostic(rootExit, () => {
             const sdBytes = boundedRead(path.join(fixture.paths.state, "child-sd-access.bin"), WINDOWS_LPAC_CHILD_SD_BYTES);
             if (!sdBytes) return null;
@@ -229,7 +229,7 @@ describe.skipIf(!supported && !required)("separate LPAC inherited-token child ex
     }
     if (unsafe) throw new InheritedChildCleanupError();
     if (!outcome) throw fixedFailure();
-    const sdAccessMissing = variant !== "explicit" && outcome.failure?.[0] === 18 && outcome.failure?.[24] !== 0xffffffff && !outcome.sdAccess;
+    const sdAccessMissing = inheritedChildSuppliedSdDiagnostic(variant) && outcome.failure?.[0] === 18 && outcome.failure?.[24] !== 0xffffffff && !outcome.sdAccess;
     if (sdAccessMissing || outcome.sdAccessInvalid) failed = true;
     if (failed || outcome.failure) {
       console.info("Stopped inherited-child refusal", JSON.stringify({ mode: variant, rootExit: outcome.rootExit, jobStopped: true, stage: outcome.failure?.[0] ?? null,
@@ -249,13 +249,13 @@ describe.skipIf(!supported && !required)("separate LPAC inherited-token child ex
     expect(result.failure?.[11] === 0).toBe(true); expect(result.failure?.slice(12, 14)).toEqual([1, 0]);
     expect(result.admitted).toBe(false); expect(result.descendantRemained).toBe(false);
   }, 45_000);
-  it("admits only a suspended exact-package AAP-only inherited child and observes it outlive the root before Stop", async () => {
-    const result = await run("aap-only"); expect(result.rootExit).toBe(0); expect(result.failure === null).toBe(true);
+  it.each(["aap-only", "aap-null-sa", "aap-detached"] as const)("admits only a suspended exact-package %s child and observes it outlive the root before Stop", async variant => {
+    const result = await run(variant); expect(result.rootExit).toBe(0); expect(result.failure === null).toBe(true);
     expect(result.report?.slice(0, 9)).toEqual([1, 1, 1, 1, 1, 1, 1, 1, 1]); expect((result.report?.[9] ?? 0) > 0).toBe(true);
     expect(result.report?.slice(10)).toEqual([1, 1]);
     expect({ admitted: result.admitted, descendantRemained: result.descendantRemained, profilePaths: result.profilePaths,
       jobStopped: result.jobStopped, membersStopped: result.membersStopped }).toEqual({ admitted: true, descendantRemained: true, profilePaths: true, jobStopped: true, membersStopped: true });
-    console.info("Stopped inherited child result", JSON.stringify({ mode: "aap-only", rootExit: 0, jobStopped: true, membersStopped: true, admitted: true, descendantRemained: true, allChecks: true, profilePaths: true }));
+    console.info("Stopped inherited child result", JSON.stringify({ mode: variant, rootExit: 0, jobStopped: true, membersStopped: true, admitted: true, descendantRemained: true, allChecks: true, profilePaths: true }));
   }, 45_000);
 });
 
