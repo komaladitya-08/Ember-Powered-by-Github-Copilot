@@ -4,18 +4,20 @@ import type * as Koffi from "koffi";
 import { HOST_ARCH, HOST_PLATFORM } from "../platform/os";
 import type { WindowsHandle, WindowsLpacApi, WindowsSuspendedProcess } from "./experimental-windows-lpac-api";
 import { WindowsCodingCleanupError } from "./windows-coding-native";
+import { loadWindowsCommandRootOnlyExitNative, type WindowsCommandRootOnlyExitNative } from "./windows-command-exit-native";
 
 const LIMITS = 0x2008, MAX_STOP = 15_000;
 const refuse = () => new Error("The Windows root-only command writer contract was refused.");
 const handle = (value: unknown): value is WindowsHandle => typeof value === "bigint" && value > 0n && value < 0x8000000000000000n;
 const dword = (value: unknown): value is number => typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 0xffffffff;
 const bool = (value: unknown): value is number => typeof value === "number" && Number.isInteger(value) && value >= -0x80000000 && value <= 0x7fffffff;
-type FailureStage = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13;
+type FailureStage = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14;
 type FailureOperation = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;
 type FailurePredicate = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11;
 type FailureConstraint = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 21;
 // Stages 1..13: load, job create, configure/readback, initial state, creator, preassign, assign,
-// attest, postattest, resume, Stop request, completion, close. Operations 1..7 follow the fixed prototypes below.
+// attest, postattest, resume, Stop request, completion, close; stage 14 is optional held-root exit observation.
+// Operations 1..7 follow the unchanged fixed Stop prototypes below; the optional exit binding is separate.
 // Predicates 1..11: call throw, ABI, returned failure, limit readback, job state, identity,
 // ownership, authority, deadline, close, invariant. Zero operation/constraint means no known site/span.
 export interface WindowsCommandRootOnlyFailure {
@@ -48,12 +50,21 @@ export class WindowsCommandRootOnlyCleanupError extends WindowsCodingCleanupErro
   constructor() { super(); this.name = "WindowsCommandRootOnlyCleanupError"; this.message = "Windows root-only command writer cleanup could not be verified."; }
 }
 export interface WindowsCommandRootOnlyStopFence { failure?: WindowsCommandRootOnlyCleanupError; retained: unknown[] }
+const firstStopFailures = new WeakMap<WindowsCommandRootOnlyStopFence, WindowsCommandRootOnlyCleanupError>();
 const processFence: WindowsCommandRootOnlyStopFence = { retained: [] };
 const liveOwners = new WeakMap<WindowsCommandRootOnlyStopFence, Set<{ state: { requestStop(): void }; retained: boolean }>>();
 declare const stoppedBrand: unique symbol;
 export interface WindowsCommandRootOnlyStoppedRef { readonly scope: "root-only"; readonly [stoppedBrand]: true }
 const receipts = new WeakMap<object, object>();
 const completionFacts = new WeakMap<object, Readonly<{ rootPresent: 0 | 1 }>>();
+declare const naturalExitBrand: unique symbol;
+export interface WindowsCommandRootOnlyNaturalExitRef { readonly scope: "root-only-natural-exit"; readonly [naturalExitBrand]: true }
+const naturalExits = new WeakMap<object, { binding: object; facts: Readonly<{ exitCode: number }> }>();
+/** A genuine natural exit is observed on the held root before any Stop request or handle close. */
+export function requireWindowsCommandRootOnlyNaturalExit(ref: unknown, binding: object): Readonly<{ exitCode: number }> {
+  if (!ref || typeof ref !== "object" || !binding || typeof binding !== "object") throw refuse();
+  const value = naturalExits.get(ref); if (!value || value.binding !== binding) throw refuse(); return value.facts;
+}
 declare const attestingBrand: unique symbol;
 export interface WindowsCommandRootOnlyAttestingRef { readonly scope: "root-only-attesting"; readonly [attestingBrand]: true }
 const attestations = new WeakMap<object, { binding: object; root: Readonly<WindowsSuspendedProcess>; current(): boolean; owns(value: WindowsHandle): boolean; live: boolean; claimed: boolean }>();
@@ -187,6 +198,8 @@ export interface WindowsCommandRootOnlyStopOwner {
   launch(create: () => WindowsSuspendedProcess, attest: (root: Readonly<WindowsSuspendedProcess>) => void, current: () => boolean,
     capture?: (ref: WindowsCommandRootOnlyAttestingRef) => void): Promise<number>;
   stop(timeoutMs?: number): Promise<WindowsCommandRootOnlyStoppedRef>;
+  /** Optional additive capability. Observation never occupies or delays the Stop queue. Null means no natural observation. */
+  observeNaturalExit?(signal: AbortSignal): Promise<WindowsCommandRootOnlyNaturalExitRef | null>;
   /** External file/ACL uncertainty retires the entire shared boundary without disposal, queries or a receipt. */
   retainStop(): void;
 }
@@ -194,14 +207,18 @@ type StopApi = Pick<WindowsLpacApi, "createJob" | "assign" | "resume" | "termina
 /** No profile is issued here. The caller's synchronous attestation owns exact image/token/fresh-profile authority. */
 export function createWindowsCommandRootOnlyStopOwner(binding: object, api: StopApi,
   native: WindowsCommandRootOnlyStopNative = loadWindowsCommandRootOnlyStopNative(), clock: () => number = () => performance.now(),
-  fence: WindowsCommandRootOnlyStopFence = processFence): WindowsCommandRootOnlyStopOwner {
+  fence: WindowsCommandRootOnlyStopFence = processFence,
+  exitNative: () => WindowsCommandRootOnlyExitNative = loadWindowsCommandRootOnlyExitNative): WindowsCommandRootOnlyStopOwner {
   if (!binding || typeof binding !== "object" || !api || !native || typeof clock !== "function") throw refuse();
-  if (fence.failure) throw fence.failure;
+  if (firstStopFailures.has(fence) || fence.failure) throw firstStopFailures.get(fence) ?? fence.failure;
   if (issuedBindings.has(binding)) throw refuse();
   issuedBindings.add(binding); // An inert/older receipt must never authorize a later live owner sharing a binding.
   let job: WindowsHandle | undefined, root: Readonly<WindowsSuspendedProcess> | undefined, rawRoot: unknown, knownProcess: WindowsHandle | undefined, knownThread: WindowsHandle | undefined;
   let launched = false, retired = false, closed = false, rootStop = false, jobStop = false, disposalStarted = false, history = 0;
   let stopping: Promise<WindowsCommandRootOnlyStoppedRef> | undefined;
+  let resumed = false, launchedCurrent: (() => boolean) | undefined;
+  let observing: Promise<WindowsCommandRootOnlyNaturalExitRef | null> | undefined;
+  let wakeObservation: (() => void) | undefined;
   const closeAttempted = new Set<WindowsHandle>(), callbacks: unknown[] = [];
   let active = liveOwners.get(fence); if (!active) { active = new Set(); liveOwners.set(fence, active); }
   const record = { retained: false, state: { binding, api, native, callbacks, closeAttempted, requestStop: () => requestStop(),
@@ -220,18 +237,20 @@ export function createWindowsCommandRootOnlyStopOwner(binding: object, api: Stop
   };
   const terminal = (extra?: unknown, stopPeers = false, stage: FailureStage = 11, predicate: FailurePredicate = 11): never => {
     retired = true;
+    fence.failure = firstStopFailures.get(fence) ?? fence.failure;
     if (!fence.failure) {
       fence.failure = new WindowsCommandRootOnlyCleanupError();
       const source = windowsCommandRootOnlyFailure(extra);
       remember(fence.failure, source ? Object.freeze({ ...source, stage }) : observation(stage, predicate));
     }
+    firstStopFailures.set(fence, fence.failure);
     for (const owner of active!) if (!owner.retained) { owner.retained = true; fence.retained.push(owner.state); }
     // The opaque thrown value is retained privately; outward errors never copy native/callback messages or causes.
     if (extra !== undefined) callbacks.push(extra);
     if (stopPeers) for (const owner of active!) owner.state.requestStop(); else requestStop();
     throw fence.failure;
   };
-  const usable = () => { if (fence.failure) return terminal(); if (closed) throw refuse(); };
+  const usable = () => { if (firstStopFailures.has(fence) || fence.failure) return terminal(); if (closed) throw refuse(); };
   const state = () => {
     const value = native.state(job!);
     if (!value || !dword(value.total) || value.total > 1 || !dword(value.active) || value.active > value.total || !Array.isArray(value.pids) ||
@@ -256,6 +275,7 @@ export function createWindowsCommandRootOnlyStopOwner(binding: object, api: Stop
       capture?: (ref: WindowsCommandRootOnlyAttestingRef) => void) {
       usable(); if (launched || retired || typeof create !== "function" || typeof attest !== "function" || typeof current !== "function" || capture !== undefined && typeof capture !== "function") throw refused(5, 8);
       launched = true; callbacks.push(create, attest, current);
+      launchedCurrent = current;
       // Reserve admission before any callback; pre-create revocation still permits an inert closed-job receipt.
       try { const admitted = current(); usable(); if (admitted !== true || retired) throw refused(5, 8); }
       catch (error) { retired = true; if (fence.failure) return terminal(error); throw refused(5, 8); }
@@ -306,13 +326,57 @@ export function createWindowsCommandRootOnlyStopOwner(binding: object, api: Stop
         if (native.processId(root.process) !== root.pid || native.threadProcessId(root.thread) !== root.pid || !native.member(root.process, job!)) throw refused(9, 6);
         const final = current(); usable();
         if (final !== true || retired) throw refused(9, 8);
-        launchStage = 10; api.resume(root.thread); return root.pid;
+        launchStage = 10; api.resume(root.thread); resumed = true; return root.pid;
       } catch (error) { return terminal(error, false, launchStage, 1); }
+    },
+    observeNaturalExit(signal: AbortSignal) {
+      if (firstStopFailures.has(fence) || fence.failure) { try { usable(); } catch (error) { return Promise.reject(error); } }
+      if (observing) return observing;
+      if (!(signal instanceof AbortSignal) || !resumed || !root || !launchedCurrent) return Promise.reject(refused(14, 8));
+      const held = root, current = launchedCurrent;
+      const wake = () => wakeObservation?.();
+      signal.addEventListener("abort", wake, { once: true });
+      const available = () => {
+        if (firstStopFailures.has(fence) || fence.failure) return terminal(undefined, false, 14, 7);
+        if (signal.aborted || retired || closed || disposalStarted || rootStop || jobStop || root !== held) return false;
+        let admitted: unknown; try { admitted = current(); } catch { return false; }
+        if (firstStopFailures.has(fence) || fence.failure) return terminal(undefined, false, 14, 7);
+        return admitted === true && !signal.aborted && !retired && !closed && !disposalStarted && !rootStop && !jobStop && root === held;
+      };
+      observing = Promise.resolve().then(async () => {
+        try {
+          for (;;) {
+            if (!available()) return null;
+            const waited = native.wait(held.process);
+            if (waited !== 0 && waited !== 258) throw refused(14, 2, 6);
+            if (!available()) return null;
+            if (waited === 0) {
+              callbacks.push(exitNative);
+              const reader = exitNative(); callbacks.push(reader);
+              if (!available()) return null;
+              const code = reader.exitCode(held.process);
+              if (!dword(code)) throw refused(14, 2);
+              if (!available()) return null;
+              const ref = Object.freeze({ scope: "root-only-natural-exit" as const }) as WindowsCommandRootOnlyNaturalExitRef;
+              naturalExits.set(ref, { binding, facts: Object.freeze({ exitCode: code }) }); return ref;
+            }
+            await new Promise<void>(resolve => {
+              const timer = setTimeout(() => finish(), 10);
+              const finish = () => { clearTimeout(timer); wakeObservation = undefined; resolve(); };
+              wakeObservation = finish;
+              if (signal.aborted || retired) finish();
+            });
+          }
+        } catch (error) { return terminal(error, false, 14, 1); }
+        finally { signal.removeEventListener("abort", wake); }
+      });
+      return observing;
     },
     stop(timeoutMs = MAX_STOP) {
       if (stopping) return stopping;
       if (!Number.isInteger(timeoutMs) || timeoutMs < 0 || timeoutMs > MAX_STOP) return Promise.reject(refused(11, 9));
       retired = true; // Revoke admission synchronously, before the first await or native request.
+      wakeObservation?.();
       let previous = 0, invalidStart = false;
       try { previous = clock(); if (!Number.isFinite(previous) || previous < 0) throw refused(11, 9); }
       catch (error) { invalidStart = true; callbacks.push(error); }
