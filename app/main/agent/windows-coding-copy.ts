@@ -139,6 +139,7 @@ export class WindowsCodingCopy implements ScopedCodingWorkspace {
   #commandReceiver: WindowsCodingCommandReceiverRef;
   #commandAdoption?: CommandAdoption;
   #claimingCommand = false;
+  #releasingCommand = false;
   get directory(): string { return this.#active.identity.finalPath; }
   /** Host-only revision; opening or finishing a read lease does not change content. */
   get contentRevision(): bigint { return this.#contentRevision; }
@@ -389,6 +390,36 @@ export class WindowsCodingCopy implements ScopedCodingWorkspace {
     if (this.#failure !== undefined) throw windowsCodingSafeError(this.#failure);
     if (this.#reviewRevoked || this.#reviewClosing || this.#reviewStarted || this.#closed) throw new ScopedCodingFileError("cancelled");
   };
+
+  /** Review only: release an untouched capture or the genuine positively closed owner that never issued a run. */
+  releaseUnstartedForReview(): Promise<void> {
+    if (this.#lease.getStore() !== undefined || this.#claimingCommand || this.#releasingCommand || this.#commandAdoption) return Promise.reject(new ScopedCodingFileError("boundary"));
+    this.#releasingCommand = true;
+    const pending = this.#tail.then(() => {
+      const ref = this.#commandInput, input = ref ? commandInputs.get(ref) : undefined;
+      if (!ref || !input || input.owner !== this || this.#commandAdoption || !this.#retired) throw new ScopedCodingFileError("boundary");
+      const unused = input.state === "ready" && !input.intake ? input.entries : undefined;
+      if (!unused && input.state !== "taken" || commandReceivers.get(this.#commandReceiver) !== this) throw new ScopedCodingFileError("boundary");
+      // A genuinely untouched capture has no producer. A taken input needs its exact positively closed no-run owner.
+      // Native uncertainty must reject before any canonical root query or publication callback.
+      if (!unused) input.module.requireWindowsCommandUnstartedInput(ref);
+      input.checkRecipient(); this.#reviewCheck(); input.checkRecipient();
+      assertCodingPrivacyScope(this.#privacyScope);
+      if (this.#failure !== undefined) throw windowsCodingSafeError(this.#failure);
+      if (!this.#retired || this.#closed || this.#reviewClosing || this.#reviewRevoked || this.#reviewStarted || this.#commandInput !== ref || input.revision !== this.#contentRevision) throw new ScopedCodingFileError("cancelled");
+      if (unused) {
+        if (input.state !== "ready" || input.intake || input.entries !== unused) throw new ScopedCodingFileError("boundary");
+        clearWindowsCodingTree({ entries: unused }); input.entries = undefined; commandInputs.delete(ref);
+      } else input.module.releaseWindowsCommandUnstartedInput(ref, this.#commandReceiver);
+      // No callback or await follows the one-shot genuine claim. Old inputs cannot create execution later.
+      this.#commandInput = undefined; this.#epoch++;
+    });
+    this.#tail = pending.then(() => undefined, () => undefined);
+    return pending.catch(error => {
+      if (cleanupFailure(error)) { this.#failure = error; this.#retire(); retainedCommandTransfers.push({ owner: this }); }
+      throw windowsCodingSafeError(error);
+    }).finally(() => { this.#releasingCommand = false; });
+  }
 
   /** Synchronous one-shot claim. A snapshot chooses neither its receiver nor its content revision. */
   acceptStoppedCommand(snapshot: WindowsCommandStoppedSnapshotRef): WindowsCodingCommandAdoptionRef {

@@ -85,7 +85,7 @@ export interface WindowsCommandTransferHostOptions {
   packageCurrent(): boolean;
 }
 const transferIntakes = new WeakMap<object, { active: boolean; requireOwner(): void }>();
-const inputProducers = new WeakMap<object, { requireClosed(): void; discardSnapshot(): void }>();
+const inputProducers = new WeakMap<object, { requireClosed(): void; discardSnapshot(): void; requireUnstarted(): void; releaseUnstarted(): void }>();
 /** Only the exact synchronously initializing owner can receive a complete canonical capture. */
 export function requireWindowsCommandTransferIntake(ref: unknown): void {
   if (!ref || typeof ref !== "object") throw new ScopedCodingFileError("boundary");
@@ -105,6 +105,17 @@ export function discardWindowsCommandInputSnapshot(input: WindowsCodingCommandIn
   if (!input || typeof input !== "object") throw new ScopedCodingFileError("boundary");
   const value = inputProducers.get(input); if (!value) throw new ScopedCodingFileError("boundary");
   value.requireClosed(); requireWindowsCodingCommandReceiverForCleanup(receiver, input); value.discardSnapshot();
+}
+/** Observation only: a positively closed owner that never issued a run or snapshot may release old review bytes. */
+export function requireWindowsCommandUnstartedInput(input: WindowsCodingCommandInputRef): void {
+  if (!input || typeof input !== "object") throw new ScopedCodingFileError("boundary");
+  const value = inputProducers.get(input); if (!value) throw new ScopedCodingFileError("boundary"); value.requireUnstarted();
+}
+/** One-shot reservation release only. No bytes, stopped proof, imported tree or execution authority is issued. */
+export function releaseWindowsCommandUnstartedInput(input: WindowsCodingCommandInputRef, receiver: WindowsCodingCommandReceiverRef): void {
+  if (!input || typeof input !== "object") throw new ScopedCodingFileError("boundary");
+  const value = inputProducers.get(input); if (!value) throw new ScopedCodingFileError("boundary");
+  value.requireUnstarted(); requireWindowsCodingCommandReceiverForCleanup(receiver, input); value.releaseUnstarted();
 }
 declare const launchContextBrand: unique symbol;
 export interface WindowsCommandRootOnlyLaunchContext { readonly scope: "root-only-launch"; readonly [launchContextBrand]: true }
@@ -166,6 +177,7 @@ export class WindowsRootOnlyCommandCopy {
   #run: Run | undefined;
   #lastRun: Run | undefined;
   #snapshotIssued = false;
+  #unstartedReleased = false;
   #snapshot?: StoppedSnapshot;
   #lease = new AsyncLocalStorage<boolean>();
   #tail: Promise<void> = Promise.resolve();
@@ -193,6 +205,10 @@ export class WindowsRootOnlyCommandCopy {
   #requireProducerClosed(): void {
     if (firstCopyFailures.has(this.#fence) || this.#fence.failure || this.#unsafe) throw this.#poison();
     if (!this.#closed || !this.#canonicalInput) throw new ScopedCodingFileError("boundary");
+  }
+  #requireUnstarted(): void {
+    this.#requireProducerClosed();
+    if (this.#lastRun || this.#run || this.#snapshotIssued || this.#snapshot || this.#unstartedReleased) throw new ScopedCodingFileError("boundary");
   }
   #discardSnapshot(): void {
     const value = this.#snapshot; if (!value || value.phase === "used") return;
@@ -229,7 +245,8 @@ export class WindowsRootOnlyCommandCopy {
     try {
       data = takeWindowsCodingCommandInput(input, intake);
       // No callback or await separates the parent's one-shot claim from the exact producer ledger.
-      inputProducers.set(input, { requireClosed: () => owner.#requireProducerClosed(), discardSnapshot: () => owner.#discardSnapshot() });
+      inputProducers.set(input, { requireClosed: () => owner.#requireProducerClosed(), discardSnapshot: () => owner.#discardSnapshot(),
+        requireUnstarted: () => owner.#requireUnstarted(), releaseUnstarted: () => { owner.#requireUnstarted(); owner.#unstartedReleased = true; } });
       const { entries: _entries, ...captured } = data;
       owner.#canonicalInput = { ref: input, data: captured }; state.active = false;
       owner.#initialize({ parent: data.parent, protectedPaths: data.protectedPaths, entries: data.entries,

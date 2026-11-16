@@ -1,8 +1,9 @@
 /** Genuine canonical/default Native/Stop/output issuers over fixed DLL models. No Windows execution claim. */
 import { vi } from "vitest";
+import type { CodingFileBroker } from "../../app/main/agent/coding-platform";
 import { setupWindowsCodingSealedCopy } from "./windows-coding-sealed-copy-fake";
 
-export async function setupWindowsCommandTransfer() {
+export async function setupWindowsCommandTransfer(options: { beforeCapture?(broker: CodingFileBroker): Promise<void> } = {}) {
   const dependency: { ffi?: unknown } = {};
   // Only the fixed DLL boundary is replaced. Every public factory, owner and opaque-ref issuer stays real.
   vi.doMock("node:module", async () => ({ ...await vi.importActual<typeof import("node:module")>("node:module"),
@@ -51,6 +52,7 @@ export async function setupWindowsCommandTransfer() {
   for (const folder of ["C:\\copies", "C:\\protected"]) s.source.add(folder, "directory");
   const copy = await canonical.create(), broker = await canonical.WindowsScopedCodingFiles.create({ copy, signal: copy.signal });
   s.options.signal = copy.signal;
+  if (options.beforeCapture) await options.beforeCapture(broker);
   const input = await copy.captureCommandInput();
   const producer = await import("../../app/main/agent/windows-command-copy");
   const profiles = await import("../../app/main/agent/windows-command-creator-profile");
