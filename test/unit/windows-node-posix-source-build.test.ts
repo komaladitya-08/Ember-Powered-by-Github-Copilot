@@ -30,7 +30,7 @@ function receipt() {
     build: { ...buildPin, visualStudioVersion: "17.14.37906.3", compilerVersion: "19.44.35211.0", linkerVersion: "14.44.35211.0", msbuildVersion: "17.14.23.30406", pythonVersion: "3.12.10", nasmVersion: "2.16.03" },
     tools: { compiler: tool(), linker: tool(), msbuild: tool(), vcvars: tool(), vswhere: tool(), python: tool(), nasm: { bytes: nasm.bytes, sha256: nasm.sha256 } },
     recipe: windowsNodePosixSourceBuildRecipe() as { file: string; sha256: string }[], commit: compileCommit,
-    renameAbi: { schema: 1, adapterSha256: createHash("sha256").update(sourcePin.patches[3].replacement).digest("hex"), sourceSha256: (windowsNodePosixSourceBuildRecipe() as {file:string;sha256:string}[]).find(row => row.file === buildPin.renameAbi.source)!.sha256, targets: buildPin.renameAbi.targets.map((target: {winnt:number;ntddi:number}) => ({ ...target, compileOnly: true, object: tool() })) },
+    renameAbi: { schema: 1, languageStandard: buildPin.renameAbi.languageStandard, adapterSha256: createHash("sha256").update(sourcePin.patches[3].replacement).digest("hex"), sourceSha256: (windowsNodePosixSourceBuildRecipe() as {file:string;sha256:string}[]).find(row => row.file === buildPin.renameAbi.source)!.sha256, targets: buildPin.renameAbi.targets.map((target: {winnt:number;ntddi:number}) => ({ ...target, compileOnly: true, object: tool() })) },
     assets: { node: { name: "source-node.exe", bytes: 1024, sha256: digest }, bootstrap: { name: "bootstrap.exe", bytes: 1024, sha256: digest } } };
 }
 const parse = (value: unknown, commit = compileCommit) => parseWindowsNodePosixSourceBuildReceipt(Buffer.from(JSON.stringify(value)), commit);
@@ -264,9 +264,11 @@ it("requires both ABI compile targets, original target selectors and the exact a
   expect(validateWindowsNodePosixRenameAbiReceipt(value)).toBe(value);
   expect(Object.isFrozen(value)).toBe(true); expect(Object.isFrozen(value.targets[0].object)).toBe(true);
 });
-it.each(["missing", "old-three", "adapter", "source", "order", "count", "compileOnly", "object", "target", "extra"])("rejects an incomplete or foreign ABI witness: %s", kind => {
+it.each(["missing", "language-missing", "language-changed", "old-three", "adapter", "source", "order", "count", "compileOnly", "object", "target", "extra"])("rejects an incomplete or foreign ABI witness: %s", kind => {
   const value = receipt();
   if (kind === "missing") delete (value as { renameAbi?: unknown }).renameAbi;
+  if (kind === "language-missing") delete (value.renameAbi as { languageStandard?: string }).languageStandard;
+  if (kind === "language-changed") value.renameAbi.languageStandard = "c17";
   if (kind === "old-three") value.source.patches.pop();
   if (kind === "adapter") value.renameAbi.adapterSha256 = digest;
   if (kind === "source") value.renameAbi.sourceSha256 = digest;
@@ -281,10 +283,16 @@ it.each(["missing", "old-three", "adapter", "source", "order", "count", "compile
 it("only compiles the actual adapter with two isolated target selectors, never links or executes it", () => {
   const paths = { vcvars: "C:\\VS\\vcvarsall.bat", compiler: "C:\\VS\\cl.exe", working: "D:\\working", source: "D:\\abi\\check.c", include: "D:\\abi", object0: "D:\\abi\\win8.obj", object1: "D:\\abi\\sdk.obj" };
   const batch = windowsNodePosixRenameAbiBatch(paths, 1) + windowsNodePosixRenameAbiBatch(paths, 2);
-  expect(batch.match(/\/TC \/c /g)).toHaveLength(2);
+  expect(batch.match(/\/TC \/std:c11 \/c /g)).toHaveLength(2);
   expect(batch).toContain("/D_WIN32_WINNT=0x602 /DNTDDI_VERSION=0x6020000 /DEMBER_POSIX_ABI_SDK=0");
   expect(batch).toContain("/D_WIN32_WINNT=0xa00 /DNTDDI_VERSION=0xa000002 /DEMBER_POSIX_ABI_SDK=1");
   expect(batch).not.toMatch(/\/link|vcbuild|\.obj"\r?\n/);
   expect(batch).toContain('set "CL="');
   expect(() => windowsNodePosixRenameAbiBatch({ ...paths, compiler: "C:\\bad&injected.exe" }, 1)).toThrow();
+});
+
+it("keeps C11 confined to ABI probes without changing production compiler flags", () => {
+  expect(buildPin.renameAbi.languageStandard).toBe("c11");
+  expect(buildPin.compilerEnvironment).toBe("/DEMBER_UV_FIXED_PROBE_OFFLINE=1 /DEMBER_NODE_FIXED_PROBE_CNG=1");
+  expect(buildPin.vcbuildArguments).toEqual(["x64", "vs2022", "no-cctest", "nonpm", "nocorepack"]);
 });

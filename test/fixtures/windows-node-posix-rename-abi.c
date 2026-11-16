@@ -2,6 +2,13 @@
 #include <assert.h>
 #include <stddef.h>
 #include <string.h>
+#if !defined(__STDC_VERSION__) || __STDC_VERSION__ != 201112L
+#error The ABI probe requires ISO C11.
+#endif
+#ifndef static_assert
+#error The real assert.h C11 static_assert macro is required.
+#endif
+static_assert(__STDC_VERSION__ == 201112L, "The ABI probe requires standard C11 assertions.");
 #include "uv.h"
 #include "uv-common.h"
 

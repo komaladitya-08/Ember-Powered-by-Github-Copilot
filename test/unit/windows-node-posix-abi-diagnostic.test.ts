@@ -49,7 +49,7 @@ it("retains each original compile target and flags with fixed batch milestones",
   const paths = { vcvars: "C:\\VS\\vcvarsall.bat", compiler: "C:\\VS\\cl.exe", working: "D:\\working", source: "D:\\abi\\check.c", include: "D:\\abi", object0: "D:\\abi\\win8.obj", object1: "D:\\abi\\sdk.obj" };
   for (const target of [1, 2]) {
     const text = windowsNodePosixRenameAbiBatch(paths, target);
-    expect(text.match(/\/W4 \/WX \/TC \/c /g)).toHaveLength(1);
+    expect(text.match(/\/W4 \/WX \/TC \/std:c11 \/c /g)).toHaveLength(1);
     const markers = phases.map(marker => text.indexOf(`echo ${marker}`));
     expect(markers[0]).toBeLessThan(text.indexOf('call "')); expect(markers[1]).toBeLessThan(text.indexOf('/W4 /WX'));
     expect(markers[2]).toBeGreaterThan(text.indexOf('/W4 /WX')); expect(text).not.toMatch(/vcbuild|\/link/);

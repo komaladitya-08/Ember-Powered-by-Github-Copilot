@@ -166,3 +166,33 @@ next reviewed ABI-only outcome remains pending. The frozen launcher follow-up
 passed all 321 composed contracts (203 new-producer and 118 unchanged producer
 cases), scoped lint, syntax, Root/independent review and normal full
 `npm run typecheck` (session `39684`).
+
+## Actual compiler refusal and C11 probe correction
+
+The sole corrected-launcher ABI-only run `43973801571` at
+`2241f8fffb81f7f4f713ca5c2cb1ad805cec64e2` reached target 1, phase 2 and refused
+with child exit 1 and compiler codes C2220/C4210 (overflow 0, unknown lines 6).
+Windows contracts passed 174 with 29 expected skips. This establishes compiler
+entry and a warning-as-error refusal, not either SDK target or a Node build.
+Microsoft documents C4210 as the level-4 block function-declaration extension.
+Pinned uv-common.h's non-C11 STATIC_ASSERT fallback declares such a function,
+including inside its inline functions and this adapter. This is an evidenced
+lead, without an exact compiler-line attribution.
+
+Only the two compile-only ABI probes now explicitly select `/std:c11`, while
+retaining `/W4 /WX` and both original Win8/Win10RS1 header selectors. The real
+assert.h and uv-common.h remain included; the fixture requires the exact C11
+version and an active real static_assert macro, then uses that assertion. No
+warning is disabled. Language `c11` is mandatory in the new ABI build pin and
+receipt, alongside both object proofs, adapter/source hashes and recipe.
+The production Node compiler options and all four patches remain unchanged.
+In particular, the stock common.gypi C11 setting is conditional on clang; this
+experiment does not claim that the ordinary MSVC producer already uses C11.
+Microsoft documents C11 mode as also enabling its conforming preprocessor; that
+change is confined to these short compile-only probes. The next ABI-only result
+remains pending. The frozen correction passed 324 composed contracts (206 new
+producer and 118 unchanged producer cases), scoped lint, syntax, Root/independent
+review and normal full `npm run typecheck` (session `25211`).
+
+- [Microsoft C4210](https://learn.microsoft.com/en-us/cpp/error-messages/compiler-warnings/compiler-warning-level-4-c4210)
+- [Microsoft C language modes](https://learn.microsoft.com/en-us/cpp/build/reference/std-specify-language-standard-version#c-standards-support)
