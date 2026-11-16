@@ -1,10 +1,11 @@
 /** Regression for the actual global test teardown: uncertain native scratch must live outside its deletion tree. */
 import { describe, expect, it } from "vitest";
-import { beginWindowsCommandCopyProof, observeWindowsCommandCopyBoundary, observeWindowsCommandCopyFactory, observeWindowsCommandCopyStopOwner,
-  observeWindowsCommandCopyTree, requireWindowsCommandCopyScratchParent } from "../fixtures/windows-command-copy-proof";
+import { beginWindowsCommandCopyProof, classifyWindowsCommandCopyFileFailure, observeWindowsCommandCopyBoundary, observeWindowsCommandCopyFactory, observeWindowsCommandCopyStopOwner,
+  observeWindowsCommandCopyTree, requireWindowsCommandCopyNaturalExit, requireWindowsCommandCopyScratchParent } from "../fixtures/windows-command-copy-proof";
 import type { FreshWindowsCommandTree, FreshWindowsCommandTreeInput } from "../../app/main/agent/windows-command-copy-native";
 import type { CodingExportEntry } from "../../app/main/agent/coding-result-export";
 import type { WindowsCommandRootOnlyStoppedRef, WindowsCommandRootOnlyStopOwner } from "../../app/main/agent/windows-command-stop";
+import { ScopedCodingFileError, type ScopedCodingFileFailure } from "../../app/main/agent/coding-platform";
 
 describe("native root-only witness scratch lifetime", () => {
   it.each([
@@ -99,8 +100,76 @@ describe("first copy phase failure witness", () => {
       expect(copy).toBe(actual); calls.push("launch"); if (refused === 3) throw error;
     }, value => { phases.push(value); });
     if (refused) await expect(running).rejects.toBe(error); else await expect(running).resolves.toBe(actual);
-    expect(phases).toEqual(Array.from({ length: refused || 3 }, (_, i) => i + 1));
+    expect(phases).toEqual(Array.from({ length: refused || 4 }, (_, i) => i + 1));
     expect(calls).toEqual(["factory", "snapshot", "launch"].slice(0, refused || 3));
+  });
+  it.each([false, true])("enters postlaunch subphase4 only after successful launch settlement, rejects=%s", async rejects => {
+    let resolve!: () => void, reject!: (error: Error) => void, entered!: () => void;
+    const launch = new Promise<void>((yes, no) => { resolve = yes; reject = no; }), atLaunch = new Promise<void>(yes => { entered = yes; });
+    const phases: number[] = [], error = new Error("Fixed launch failure");
+    const selected = { async files<T>(operation: (entries: readonly CodingExportEntry[]) => Promise<T>): Promise<T> {
+      return operation(Array.from({ length: 6 }, (_, i) => ({ path: `fixed-${i}`, kind: "directory" })));
+    } };
+    const running = beginWindowsCommandCopyProof(async () => ({ selected }), () => launch, phase => { phases.push(phase); if (phase === 3) entered(); });
+    await atLaunch; expect(phases).toEqual([1, 2, 3]);
+    if (rejects) { reject(error); await expect(running).rejects.toBe(error); expect(phases).toEqual([1, 2, 3]); }
+    else { resolve(); await running; expect(phases).toEqual([1, 2, 3, 4]); }
+  });
+});
+
+describe("closed exact-constructor file failure classification", () => {
+  const codes: ScopedCodingFileFailure[] = ["unavailable", "cancelled", "path", "boundary", "unsupported", "privacy", "binary", "secret", "limit", "missing", "exists", "conflict", "ambiguous", "not-empty", "io"];
+  it.each(codes)("classifies only the known own data code %s", code => {
+    expect(classifyWindowsCommandCopyFileFailure(new ScopedCodingFileError(code), ScopedCodingFileError)).toBe(codes.indexOf(code) + 1);
+  });
+  it.each([null, undefined, 1, "boundary", {}, { name: "ScopedCodingFileError", code: "boundary" }, Object.assign(new Error("Fixed secret"), { name: "ScopedCodingFileError", code: "boundary" })])("refuses structural/foreign error values %#", value => {
+    expect(classifyWindowsCommandCopyFileFailure(value, ScopedCodingFileError)).toBe(0);
+  });
+  it.each(["unknown-private-code", "__proto__", "constructor", "toString"])("does not forward unknown code %s", value => {
+    const error = new ScopedCodingFileError("boundary"); Object.defineProperty(error, "code", { value });
+    expect(classifyWindowsCommandCopyFileFailure(error, ScopedCodingFileError)).toBe(0);
+  });
+  it("does not invoke code/message getters or coerce a malformed code", () => {
+    let reads = 0; const error = new ScopedCodingFileError("boundary");
+    Object.defineProperty(error, "message", { get() { reads++; throw new Error("Private message"); } });
+    expect(classifyWindowsCommandCopyFileFailure(error, ScopedCodingFileError)).toBe(4);
+    Object.defineProperty(error, "code", { get() { reads++; throw new Error("Private code"); }, configurable: true });
+    expect(classifyWindowsCommandCopyFileFailure(error, ScopedCodingFileError)).toBe(0);
+    Object.defineProperty(error, "code", { value: { toString() { reads++; return "boundary"; } } });
+    expect(classifyWindowsCommandCopyFileFailure(error, ScopedCodingFileError)).toBe(0); expect(reads).toBe(0);
+  });
+  it("refuses trapping proxies without replacing the authoritative original error", () => {
+    const prototypeTrap = new Proxy({}, { getPrototypeOf() { throw new Error("Private prototype"); } });
+    const descriptorTrap = new Proxy(new ScopedCodingFileError("boundary"), { getOwnPropertyDescriptor() { throw new Error("Private descriptor"); } });
+    expect(classifyWindowsCommandCopyFileFailure(prototypeTrap, ScopedCodingFileError)).toBe(0);
+    expect(classifyWindowsCommandCopyFileFailure(descriptorTrap, ScopedCodingFileError)).toBe(0);
+  });
+});
+
+describe("existing exact-zero natural exit gate", () => {
+  it.each([0, -0])("preserves zero acceptance and the single returned value %#", value => {
+    let calls = 0; const seen: number[] = [];
+    expect(() => requireWindowsCommandCopyNaturalExit(() => { calls++; return value; }, code => { seen.push(code); })).not.toThrow();
+    expect(calls).toBe(1); expect(seen).toHaveLength(1); expect(Object.is(seen[0], value)).toBe(true);
+  });
+  it.each([1, 101, 0xc0000142, 0xffffffff])("captures returned DWORD%s while retaining the original refusal", value => {
+    let calls = 0; const seen: number[] = [];
+    expect(() => requireWindowsCommandCopyNaturalExit(() => { calls++; return value; }, code => { seen.push(code); })).toThrow("fixed root-only observation");
+    expect(calls).toBe(1); expect(seen).toEqual([value]);
+  });
+  it.each([undefined, null, true, false, "0", 0n, -1, 0.5, NaN, Infinity, 0x100000000, {}, new Proxy({}, { get() { throw new Error("Private getter"); } })])("omits malformed status without coercion or altered acceptance %#", value => {
+    let calls = 0; const seen: number[] = [];
+    expect(() => requireWindowsCommandCopyNaturalExit(() => { calls++; return value; }, code => { seen.push(code); })).toThrow("fixed root-only observation");
+    expect(calls).toBe(1); expect(seen).toEqual([]);
+  });
+  it("preserves a query/getter exception exactly without recording a guessed status", () => {
+    const error = new Error("Fixed private query failure"), record = { get code(): number { throw error; } }, seen: number[] = []; let caught: unknown;
+    try { requireWindowsCommandCopyNaturalExit(() => record.code, code => { seen.push(code); }); } catch (failure) { caught = failure; }
+    expect(caught).toBe(error); expect(seen).toEqual([]);
+  });
+  it.each([0, 1])("diagnostic callback failure cannot change the zero gate for%s", value => {
+    const run = () => requireWindowsCommandCopyNaturalExit(() => value, () => { throw new Error("Fixed observer failure"); });
+    if (value === 0) expect(run).not.toThrow(); else expect(run).toThrow("fixed root-only observation");
   });
 });
 

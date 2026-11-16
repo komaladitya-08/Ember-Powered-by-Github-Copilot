@@ -192,7 +192,62 @@ priority (`0x20`) and scheduling (`0x80`) flags, and every other time, workset, 
 memory and UI check remains in place. No native query, access mask, Stop deadline or positive completion proof
 changes. Constraint IDs 10/11 remain historical reservations; current remaining constraints retain their IDs.
 Varying ignored fields are accepted only with the flags absent, while each remaining limit byte and forbidden
-flag, memory and UI mutation must still refuse. A fourth native matrix has not run.
+flag, memory and UI mutation must still refuse. The subsequent fourth matrix is recorded below.
 
 The reviewed repair passes 644 focused contracts, including 240 Stop cases, final composed TypeScript,
 scoped lint and diff checks. Native useful-work and complete cleanup acceptance remain pending.
+
+The fourth manual matrix at `c77c170a`,
+[run 43876373197](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43876373197),
+passed 643 portable cases per image plus the expected unsupported-host guard skip. Both native cases failed at
+phase `3`, subphase `3`, ownership `0`, boundary `0`, without a branded native-tree or Stop failure. That earlier
+subphase included both the coordinator's first launch and the following wait/exit check, so it did not establish
+which boundary failed or whether the creator ran. No grant, useful edits, positive Stop or complete cleanup is
+claimed from this result.
+
+A portable composition regression now connects the real coordinator, native tree binding and Stop owner through
+fake Win32 operations, with the same six staged entries, deeper ancestry, four protected paths and actual observer
+facade. It passes grant/callback/Resume/Stop/revoke/private-review ordering; no deterministic current/phase mismatch
+was reproduced. These fake operations are not Windows execution evidence.
+
+The next observation-only change exports the actual `ScopedCodingFileError` constructor as the fixed twelfth CJS
+export. It classifies only known own data-property codes after that constructor check; error names, messages,
+getters, unknown codes and foreign-module errors are not forwarded. The result is diagnostic, never cleanup or
+execution authority. Subphase `4` is entered immediately after the launch promise succeeds, before the existing
+process-presence/wait/exit check. A rejected launch remains in subphase `3`; every guard and native call is unchanged.
+
+The closed `fileCode` mapping is:
+
+| ID | File error |
+| --- | --- |
+| 0 | Unknown, unsupported descriptor or nonmatching constructor |
+| 1 | unavailable |
+| 2 | cancelled |
+| 3 | path |
+| 4 | boundary |
+| 5 | unsupported |
+| 6 | privacy |
+| 7 | binary |
+| 8 | secret |
+| 9 | limit |
+| 10 | missing |
+| 11 | exists |
+| 12 | conflict |
+| 13 | ambiguous |
+| 14 | not-empty |
+| 15 | io |
+
+A fifth native matrix has not run; the fourth failure's cause remains unclassified.
+
+Before publication, the diagnostic also captures only the validated DWORD returned by the same existing guarded
+`original.exitCode` call for the admitted fixed C image. Optional `exit.code` is an integer from 0 through
+`0xffffffff`; `exit.phase=1` means the useful root and `2` means the revoked-access control. The old exact-zero
+gate, including `-0`, remains unchanged. The capture is cleared before each new process/wait, omitted on malformed
+returns or query/getter exceptions, and never authorises report readout or Stop. No extra native query is issued.
+The writer still uses its existing explicit Stop path and supplies no natural-exit receipt. This prevents a later
+process from inheriting an unrelated previous exit observation. Within a process phase this remains the last
+natural-exit observation: a recorded zero can coexist with a later ACL, snapshot or review failure and does not
+identify that failure's cause.
+
+The frozen classification/exit-observation candidate passes 697 focused contracts, final composed TypeScript,
+scoped lint and diff checks. Root's actual-file review closed. No fifth native result is claimed.

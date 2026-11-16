@@ -8,6 +8,10 @@ import { expect, it } from "vitest";
 import { bindWindowsCommandCopyNative, createFreshWindowsCommandTree, WindowsCommandCopyCleanupError, windowsCommandCopyNativeFailure, type FreshWindowsCommandTreeInput } from "../../app/main/agent/windows-command-copy-native";
 import { ScopedCodingFileError } from "../../app/main/agent/coding-platform";
 import type { CodingExportEntry } from "../../app/main/agent/coding-result-export";
+import { WindowsRootOnlyCommandCopy } from "../../app/main/agent/windows-command-copy";
+import { createWindowsCommandRootOnlyStopOwner, type WindowsCommandRootOnlyStopNative } from "../../app/main/agent/windows-command-stop";
+import type { WindowsLpacApi } from "../../app/main/agent/experimental-windows-lpac-api";
+import { observeWindowsCommandCopyFactory } from "../fixtures/windows-command-copy-proof";
 const OWNER = "S-1-5-21-1-2-3-1001", SYSTEM = "S-1-5-18", PACKAGE = "S-1-15-2-1234-5678";
 const VOLUME = "\\\\?\\Volume{12345678-1234-1234-1234-123456789abc}\\";
 type Security = { owner: string; package?: string; inherited: boolean; low: boolean; extra?: boolean; badMask?: boolean };
@@ -106,6 +110,39 @@ async function rejected(work: Promise<unknown>): Promise<unknown> {
   try { await work; } catch (error) { return error; }
   throw new Error("Expected the fixed native fault to refuse.");
 }
+
+it("composes the real coordinator/native grant callbacks with a real root-only Stop owner before private review", async () => {
+  const s = setup(), events: string[] = []; let assigned = false, exited = false, current = true;
+  const root = { process: 50001n, thread: 50002n, pid: 50003 };
+  const api = { createJob: () => 50000n, assign() { assigned = true; events.push("assign"); }, resume() { events.push("resume"); },
+    terminateProcess() { exited = true; events.push("terminate-root"); }, terminateJob() { exited = true; events.push("terminate-job"); } } as unknown as WindowsLpacApi;
+  const native: WindowsCommandRootOnlyStopNative = {
+    configure() { events.push("limits"); }, assertLimits() {},
+    state: () => ({ total: assigned ? 1 : 0, active: assigned && !exited ? 1 : 0, pids: assigned && !exited ? [root.pid] : [] }),
+    processId: () => root.pid, threadProcessId: () => root.pid, member: () => assigned,
+    wait: () => exited ? 0 : 258, close() { events.push("close"); },
+  };
+  for (const folder of ["C:\\scratch\\outer", "C:\\scratch\\outer\\trees", "C:\\scratch\\outer\\fixture", "C:\\build"]) s.add(folder, "directory");
+  s.add("C:\\canary.txt", "file", Buffer.from("fixed private canary"));
+  const entries: CodingExportEntry[] = [
+    ...[["seed.txt", "EMBER_COMMAND_SEED\n"], ["move.txt", "EMBER_COMMAND_MOVE\n"], ["replace.txt", "EMBER_COMMAND_OLD\n"], ["remove.txt", "EMBER_COMMAND_REMOVE\n"]]
+      .map(([path, bytes]) => ({ path, kind: "file" as const, bytes: Buffer.from(bytes), executable: false })),
+    { path: "staged-folder", kind: "directory" }, { path: "staged-folder/child.txt", kind: "file", bytes: Buffer.from("EMBER_COMMAND_CHILD\n"), executable: false },
+  ];
+  const failures: unknown[] = [], input = { ...s.input(entries), parent: "C:\\scratch\\outer\\trees", protectedPaths: ["C:\\source", "C:\\canary.txt", "C:\\scratch\\outer\\fixture", "C:\\build"] };
+  const copy = await WindowsRootOnlyCommandCopy.create({ ...input, packageSid: PACKAGE,
+    current: () => current, packageCurrent: () => true, reviewCurrent: () => true }, {
+    api, fence: { retained: [] }, createTree: actual => observeWindowsCommandCopyFactory(actual, selected => s.binding.createFreshWindowsCommandTree(selected), error => { failures.push(error); }),
+    createStopOwner: binding => createWindowsCommandRootOnlyStopOwner(binding, api, native, () => 100, { retained: [] }),
+  });
+  await copy.files(async snapshot => { expect(snapshot).toHaveLength(6); expect(snapshot.find(entry => entry.path === "seed.txt")).toEqual(entries[0]); });
+  expect(await copy.launchRootOnly(() => { events.push("create"); return root; }, () => { events.push("attest"); })).toBe(root.pid);
+  expect(events).toEqual(["limits", "create", "assign", "attest", "resume"]); expect(s.root().security.package).toBe(PACKAGE);
+  await copy.files(async snapshot => { expect(snapshot).toHaveLength(6); expect(s.root().security.package).toBeUndefined(); events.push("private-read"); });
+  expect(events.indexOf("private-read")).toBeGreaterThan(events.lastIndexOf("close"));
+  current = false; await copy.stop(); await copy.review(async snapshot => { expect(snapshot).toHaveLength(6); });
+  await copy.close(); expect(s.handles.size).toBe(0); expect(failures).toEqual([]);
+});
 
 it("exposes only branded frozen first-failure numbers without reading foreign error properties", async () => {
   const foreign = new Proxy({}, { get() { throw new Error("must not inspect foreign properties"); } });

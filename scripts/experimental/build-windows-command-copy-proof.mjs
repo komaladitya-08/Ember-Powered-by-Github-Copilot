@@ -16,7 +16,8 @@ const FIXED_INPUTS = [C_SOURCE, BUILDER, ...MODULES, "package.json", "package-lo
 const WRAPPER = 'export { WindowsRootOnlyCommandCopy, WindowsRootOnlyCommandCopyCleanupError } from "./app/main/agent/windows-command-copy.ts";\n' +
   'export { createWindowsCommandRootOnlyStopOwner, requireWindowsCommandRootOnlyStopped, WindowsCommandRootOnlyCleanupError, windowsCommandRootOnlyFailure } from "./app/main/agent/windows-command-stop.ts";\n' +
   'export { WindowsCommandCopyCleanupError, createFreshWindowsCommandTree, windowsCommandCopyNativeFailure } from "./app/main/agent/windows-command-copy-native.ts";\n' +
-  'export { loadWindowsCommandCopyProofNative, WindowsCommandCopyProofCleanupError } from "./test/fixtures/windows-command-copy-proof-native.ts";\n';
+  'export { loadWindowsCommandCopyProofNative, WindowsCommandCopyProofCleanupError } from "./test/fixtures/windows-command-copy-proof-native.ts";\n' +
+  'export { ScopedCodingFileError } from "./app/main/agent/coding-platform.ts";\n';
 const digest = bytes => createHash("sha256").update(bytes).digest("hex");
 const brands = new WeakMap(), retainedDescriptors = [];
 export class WindowsCommandCopyBuildError extends Error {
