@@ -5,6 +5,7 @@ import { HOST_ARCH, HOST_PLATFORM } from "../platform/os";
 import type { WindowsHandle, WindowsLpacApi, WindowsSuspendedProcess } from "./experimental-windows-lpac-api";
 import { WindowsCodingCleanupError } from "./windows-coding-native";
 import { loadWindowsCommandRootOnlyExitNative, type WindowsCommandRootOnlyExitNative } from "./windows-command-exit-native";
+import { requireWindowsCommandOutputLaunch, releaseWindowsCommandOutputPI, type WindowsCommandOutputLaunchRef } from "./windows-command-output";
 
 const LIMITS = 0x2008, MAX_STOP = 15_000;
 const refuse = () => new Error("The Windows root-only command writer contract was refused.");
@@ -68,6 +69,34 @@ export function requireWindowsCommandRootOnlyNaturalExit(ref: unknown, binding: 
 declare const attestingBrand: unique symbol;
 export interface WindowsCommandRootOnlyAttestingRef { readonly scope: "root-only-attesting"; readonly [attestingBrand]: true }
 const attestations = new WeakMap<object, { binding: object; root: Readonly<WindowsSuspendedProcess>; current(): boolean; owns(value: WindowsHandle): boolean; live: boolean; claimed: boolean }>();
+declare const outputMatchBrand: unique symbol;
+export interface WindowsCommandRootOnlyOutputMatchRef { readonly scope: "root-only-output-match"; readonly [outputMatchBrand]: true }
+const outputMatches = new WeakMap<object, { binding: object; launch: WindowsCommandOutputLaunchRef; witness: WindowsCommandRootOnlyAttestingRef }>();
+const matchedOutputs = new WeakMap<object, WindowsCommandOutputLaunchRef>();
+/** Non-consuming: the creator token may still use its original one-shot witness independently. */
+export function matchWindowsCommandRootOnlyOutput(witness: WindowsCommandRootOnlyAttestingRef, binding: object,
+  launch: WindowsCommandOutputLaunchRef): WindowsCommandRootOnlyOutputMatchRef {
+  requireWindowsCommandRootOnlyAttestingCurrent(witness, binding);
+  const actual = attestations.get(witness)!, expected = requireWindowsCommandOutputLaunch(launch);
+  if (matchedOutputs.has(binding) || actual.root.process !== expected.root.process || actual.root.thread !== expected.root.thread || actual.root.pid !== expected.root.pid) throw refuse();
+  for (const handle of expected.handles) requireWindowsCommandRootOnlyTokenHandle(witness, binding, handle);
+  requireWindowsCommandRootOnlyAttestingCurrent(witness, binding);
+  const ref = Object.freeze({ scope: "root-only-output-match" as const }) as WindowsCommandRootOnlyOutputMatchRef;
+  outputMatches.set(ref, { binding, launch, witness }); matchedOutputs.set(binding, launch); return ref;
+}
+export function requireWindowsCommandRootOnlyOutputMatch(ref: unknown, launch: WindowsCommandOutputLaunchRef): void {
+  if (!ref || typeof ref !== "object") throw refuse(); const value = outputMatches.get(ref);
+  if (!value || value.launch !== launch) throw refuse(); requireWindowsCommandRootOnlyAttestingCurrent(value.witness, value.binding);
+}
+export function requireWindowsCommandRootOnlyOutputStopped(ref: unknown, binding: object, launch: WindowsCommandOutputLaunchRef): void {
+  requireWindowsCommandRootOnlyStopped(ref, binding);
+  if (matchedOutputs.get(binding) !== launch) throw refuse();
+}
+/** Native output uses this genuine receipt to retire only its already-closed PI numbers from the alias ledger. */
+export function requireWindowsCommandRootOnlyOutputStoppedLaunch(ref: unknown, launch: WindowsCommandOutputLaunchRef): void {
+  if (!ref || typeof ref !== "object") throw refuse(); const binding = receipts.get(ref);
+  if (!binding || matchedOutputs.get(binding) !== launch) throw refuse();
+}
 const preparingOwners = new WeakMap<object, () => boolean>();
 const issuedBindings = new WeakSet<object>();
 /** Only the issuing owner, after all native closes, can authorize this exact grant generation's revocation. */
@@ -419,7 +448,9 @@ export function createWindowsCommandRootOnlyStopOwner(binding: object, api: Stop
             closeAttempted.add(owner); if (native.close(owner) !== undefined) throw refused(13, 10); within();
           }
           closed = true; active!.delete(record); const receipt = Object.freeze({ scope: "root-only" as const }) as WindowsCommandRootOnlyStoppedRef;
-          receipts.set(receipt, binding); completionFacts.set(receipt, Object.freeze({ rootPresent: root ? 1 : 0 })); return receipt;
+          receipts.set(receipt, binding); completionFacts.set(receipt, Object.freeze({ rootPresent: root ? 1 : 0 }));
+          const output = matchedOutputs.get(binding); if (output) releaseWindowsCommandOutputPI(output, receipt);
+          return receipt;
         } catch (error) { return terminal(error, false, stopStage, 1); }
       });
       return stopping;

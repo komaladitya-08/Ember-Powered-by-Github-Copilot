@@ -8,8 +8,10 @@ import { createFreshWindowsCommandTree, type FreshWindowsCommandTree, type Windo
 import { windowsCommandCreatorProfile, type WindowsCommandCreatorProfileRef } from "./windows-command-creator-profile";
 import { createWindowsCommandRootOnlyStopOwner, requireWindowsCommandRootOnlyStopped,
   requireWindowsCommandRootOnlyCompletion, requireWindowsCommandRootOnlyNaturalExit,
+  matchWindowsCommandRootOnlyOutput, requireWindowsCommandRootOnlyOutputStopped,
   type WindowsCommandRootOnlyNaturalExitRef, type WindowsCommandRootOnlyStoppedRef,
   type WindowsCommandRootOnlyStopOwner } from "./windows-command-stop";
+import { requireWindowsCommandOutputLaunch, activateWindowsCommandOutput, retainWindowsCommandOutput, type WindowsCommandOutputLaunchRef } from "./windows-command-output";
 
 export class WindowsRootOnlyCommandCopyCleanupError extends WindowsCodingCleanupError {
   constructor() { super(); this.name = "WindowsRootOnlyCommandCopyCleanupError"; }
@@ -59,13 +61,20 @@ export interface WindowsCommandRootOnlyCompletedRef { readonly scope: "root-only
 export interface WindowsCommandRootOnlyCompletedFacts { readonly outcome: "natural-exit" | "cancelled" | "terminated"; readonly exitCode: number | null }
 type Run = { binding: object; owner: WindowsCommandRootOnlyStopOwner; granted: boolean; creator?: WindowsCommandCreatorGrantRef;
   cancelled?: boolean; interrupted?: boolean; natural?: WindowsCommandRootOnlyNaturalExitRef; stopped?: WindowsCommandRootOnlyStoppedRef;
-  revoked?: boolean; completing?: Promise<WindowsCommandRootOnlyCompletedRef> };
+  revoked?: boolean; completing?: Promise<WindowsCommandRootOnlyCompletedRef>; output?: WindowsCommandOutputLaunchRef; removeOutputAbort?: () => void };
 const runs = new WeakMap<object, { owner: WindowsRootOnlyCommandCopy; run: Run }>();
 const completedRuns = new WeakMap<object, { run: WindowsCommandRootOnlyRunRef; facts: Readonly<WindowsCommandRootOnlyCompletedFacts> }>();
 /** Observation only, never source, file, launch or publication authority. Serialized or foreign records cannot match. */
 export function requireWindowsCommandRootOnlyCompleted(ref: unknown, run: WindowsCommandRootOnlyRunRef): Readonly<WindowsCommandRootOnlyCompletedFacts> {
   if (!ref || typeof ref !== "object") throw new ScopedCodingFileError("boundary");
   const value = completedRuns.get(ref); if (!value || value.run !== run) throw new ScopedCodingFileError("boundary"); return value.facts;
+}
+/** Authenticates the native factory's exact returned PI, live match and genuine completed Stop/revoke generation. */
+export function requireWindowsCommandRootOnlyCompletedOutput(ref: unknown, runRef: WindowsCommandRootOnlyRunRef,
+  launch: WindowsCommandOutputLaunchRef): Readonly<WindowsCommandRootOnlyCompletedFacts> {
+  const facts = requireWindowsCommandRootOnlyCompleted(ref, runRef), selected = runs.get(runRef);
+  if (!selected || selected.run.output !== launch || !selected.run.stopped || !selected.run.revoked) throw new ScopedCodingFileError("boundary");
+  requireWindowsCommandRootOnlyOutputStopped(selected.run.stopped, selected.run.binding, launch); return facts;
 }
 const processFence: WindowsRootOnlyCommandCopyFence = { retained: [] };
 const activeOwners = new WeakMap<WindowsRootOnlyCommandCopyFence, Set<WindowsRootOnlyCommandCopy>>();
@@ -137,6 +146,7 @@ export class WindowsRootOnlyCommandCopy {
       this.#fence.retained.push(owner); // Every callback/native tree/profile binding survives a shared failure.
       // Shared uncertainty removes disposal authority. Stop only the exact known unclosed root/job handles.
       if (owner.#run) try { owner.#run.owner.retainStop(); } catch { /* Every owner remains retained. */ }
+      if (owner.#run?.output) retainWindowsCommandOutput(owner.#run.output);
     }
     return this.#fence.failure;
   }
@@ -185,6 +195,7 @@ export class WindowsRootOnlyCommandCopy {
       }
       this.#usable();
       run.stopped = proof; run.revoked = true;
+      run.removeOutputAbort?.();
       this.#run = undefined; // Only a verified closed job and complete revocation permit a later generation.
     } catch { throw this.#poison(); }
   }
@@ -195,6 +206,20 @@ export class WindowsRootOnlyCommandCopy {
   /** Additive host lifecycle; it supplies no command grammar, assets, source grant or model tool. */
   launchRootOnlyWithContext(create: (context: WindowsCommandRootOnlyLaunchContext) => WindowsSuspendedProcess,
     attest: (root: Readonly<WindowsSuspendedProcess>) => void): Promise<WindowsCommandRootOnlyRunRef> {
+    return this.#launchWithContext(create, attest);
+  }
+  /** Only the sealed native output factory can supply the returned PI; no caller handle list is accepted. */
+  launchRootOnlyWithOutput(create: (context: WindowsCommandRootOnlyLaunchContext) => WindowsCommandOutputLaunchRef,
+    attest: (root: Readonly<WindowsSuspendedProcess>) => void): Promise<WindowsCommandRootOnlyRunRef> {
+    if (typeof create !== "function" || !this.#input.creatorProfile) return Promise.reject(new ScopedCodingFileError("boundary"));
+    let output: WindowsCommandOutputLaunchRef | undefined;
+    return this.#launchWithContext(context => {
+      output = create(context); const actual = requireWindowsCommandOutputLaunch(output);
+      if (actual.profile !== this.#input.creatorProfile || actual.context !== context) throw new ScopedCodingFileError("boundary"); return actual.root;
+    }, attest, () => output!).catch(error => { if (output) retainWindowsCommandOutput(output); throw error; });
+  }
+  #launchWithContext(create: (context: WindowsCommandRootOnlyLaunchContext) => WindowsSuspendedProcess,
+    attest: (root: Readonly<WindowsSuspendedProcess>) => void, output?: () => WindowsCommandOutputLaunchRef): Promise<WindowsCommandRootOnlyRunRef> {
     if (typeof create !== "function" || typeof attest !== "function") return Promise.reject(new ScopedCodingFileError("boundary"));
     let issued: WindowsCommandRootOnlyRunRef | undefined, generation: Run | undefined;
     return this.#launchRootOnly(() => {
@@ -216,7 +241,7 @@ export class WindowsRootOnlyCommandCopy {
       generation = run;
       issued = Object.freeze({ scope: "root-only-run" as const }) as WindowsCommandRootOnlyRunRef;
       runs.set(issued, { owner: this, run });
-    }).then(() => issued!);
+    }, output).then(() => issued!);
   }
   /** Waiting is deliberately outside the native/file queue, so cancellation can always enqueue Stop immediately. */
   completeRootOnly(ref: WindowsCommandRootOnlyRunRef, signal: AbortSignal): Promise<WindowsCommandRootOnlyCompletedRef> {
@@ -255,7 +280,7 @@ export class WindowsRootOnlyCommandCopy {
     return run.completing;
   }
   #launchRootOnly(create: () => WindowsSuspendedProcess, attest: (root: Readonly<WindowsSuspendedProcess>) => void,
-    issued?: (run: Run) => void): Promise<number> {
+    issued?: (run: Run) => void, output?: () => WindowsCommandOutputLaunchRef): Promise<number> {
     if (typeof create !== "function" || typeof attest !== "function") return Promise.reject(new ScopedCodingFileError("boundary"));
     const capturedCreate = create, capturedAttest = attest;
     if (!this.#workCurrent()) return Promise.reject(this.#unsafe ?? new ScopedCodingFileError("cancelled"));
@@ -275,9 +300,20 @@ export class WindowsRootOnlyCommandCopy {
           if (capturedAttest(root) !== undefined) throw new ScopedCodingFileError("boundary");
           this.#checkWork();
         };
-        if (run.creator) return await run.owner.launch(capturedCreate, verified, () => this.#workCurrent(), witness => {
+        if (run.creator || output) return await run.owner.launch(capturedCreate, verified, () => this.#workCurrent(), witness => {
           this.#checkWork();
-          if (this.#tree.captureCreator!(run.creator!, witness) !== undefined) throw new ScopedCodingFileError("boundary");
+          if (run.creator && this.#tree.captureCreator!(run.creator, witness) !== undefined) throw new ScopedCodingFileError("boundary");
+          if (output) {
+            const launch = output(), match = matchWindowsCommandRootOnlyOutput(witness, binding, launch), actual = requireWindowsCommandOutputLaunch(launch);
+            run.output = launch;
+            const abort = () => { if (this.#run === run) {
+              run.cancelled = true;
+              // Output timers inherit the trusted launch's async context; internal Stop must escape that lease.
+              this.#lease.exit(() => { void this.stop().catch(() => undefined); });
+            } };
+            actual.signal.addEventListener("abort", abort, { once: true }); run.removeOutputAbort = () => actual.signal.removeEventListener("abort", abort);
+            if (actual.signal.aborted) abort(); this.#checkWork(); activateWindowsCommandOutput(launch, match);
+          }
           this.#checkWork();
         });
         return await run.owner.launch(capturedCreate, verified, () => this.#workCurrent());
