@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "issuer": "ember-experimental-libuv-fixed-probe",
+  "generator": "Visual Studio 17 2022",
+  "toolset": "v143,version=14.44.35207",
+  "toolsetDirectory": "14.44.35207",
+  "compilerVersionPrefix": "19.44.",
+  "sdk": "10.0.26100.0",
+  "cmakeVersion": "3.31.6",
+  "configuration": "Release",
+  "platform": "x64",
+  "runtimeLibrary": "MultiThreaded",
+  "maximumExecutableBytes": 16777216
+}

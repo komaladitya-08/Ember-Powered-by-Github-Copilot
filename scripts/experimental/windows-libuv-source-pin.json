@@ -1,0 +1,833 @@
+{
+  "schema": 1,
+  "issuer": "ember-experimental-libuv-fixed-probe",
+  "version": "22.23.5",
+  "sourceArchive": {
+    "url": "https://nodejs.org/dist/v22.23.5/node-v22.23.5.tar.xz",
+    "bytes": 50529596,
+    "sha256": "6cce7c58bf058700c643944903d60a325e8c9ceede1f5c2c088b435f2ada091a",
+    "extractPrefix": "node-v22.23.5/deps/uv/"
+  },
+  "provenance": {
+    "manifestUrl": "https://nodejs.org/dist/v22.23.5/SHASUMS256.txt",
+    "signatureUrl": "https://nodejs.org/dist/v22.23.5/SHASUMS256.txt.sig",
+    "manifestSha256": "658770bd465343e4bf441d22e89e7d944244b37041695f3f2a85b53d1a84b53f",
+    "signatureSha256": "4d73b8d2bfb07f874a8fc426abbb317cf83e8dee8d9e14ad9837aa700b0700c7",
+    "signingFingerprint": "5BE8A3F6C8A5C01D106C0AD820B1A390B168D356",
+    "keyRepositoryCommit": "481637f813e912c4aa3622d7964ab426c97b8e8d",
+    "keyPath": "keys/5BE8A3F6C8A5C01D106C0AD820B1A390B168D356.asc",
+    "tag": "v22.23.5",
+    "tagObject": "7f419acfafbd284978a13f7d65487ed3f98f523f",
+    "commit": "60553651579ec33ca1aef9e1eedab2c3855f1f7e",
+    "verifiedAtUtc": "2026-11-16T03:58:11.843450+00:00",
+    "manifestSignatureVerified": true,
+    "tagSignatureVerified": true
+  },
+  "limits": {
+    "selectedBytes": 33554432,
+    "files": 1000,
+    "fileBytes": 4194304,
+    "archiveEntries": 100000
+  },
+  "directories": [
+    "cmake-toolchains",
+    "img",
+    "include",
+    "include/uv",
+    "m4",
+    "src",
+    "src/unix",
+    "src/win",
+    "tools"
+  ],
+  "files": [
+    {
+      "path": ".gitattributes",
+      "bytes": 42,
+      "sha256": "93c92aa595207c22fc62e33aa842fb78baa6bac52167172184c21c4aaa3161f7"
+    },
+    {
+      "path": ".gitignore",
+      "bytes": 896,
+      "sha256": "7ad97f8c51fd92235342c23b408837628f37f4afffe6ba92a4d250ffbd4b6571"
+    },
+    {
+      "path": ".mailmap",
+      "bytes": 3673,
+      "sha256": "678962d790c44c1a2d0c529829a76614921356e11831c4157fd4e5bca08a2fa1"
+    },
+    {
+      "path": ".readthedocs.yaml",
+      "bytes": 213,
+      "sha256": "cb9fb79c68d3b2d266e39f98cba5efd70845b5733ebcb8803d0ef482be8e5745"
+    },
+    {
+      "path": "AUTHORS",
+      "bytes": 22977,
+      "sha256": "93de6853ee49c271282569aaca1e7875dbb4f0b72fd26324cde0edb448c661ae"
+    },
+    {
+      "path": "BUILD.gn",
+      "bytes": 627,
+      "sha256": "5325bc06f189cbf4d5fc6f74e8c70aec44f24a0ef3b494eaa71a7b2adb081868"
+    },
+    {
+      "path": "CMakeLists.txt",
+      "bytes": 28127,
+      "sha256": "dcdb12ffcb8bd44fb4cb5db08ffdeb573caaeaf2ae00005ef72941192a9c1dca"
+    },
+    {
+      "path": "CONTRIBUTING.md",
+      "bytes": 5740,
+      "sha256": "0bcb9159beff49698e149e0c890a66f4bedcbd7bf3785547d71013a5d8a8605c"
+    },
+    {
+      "path": "ChangeLog",
+      "bytes": 194854,
+      "sha256": "5aa9efdc7ccbf99437098cbda84438c35bca1986190f2dedbdc8d77e8aeaa3d9"
+    },
+    {
+      "path": "LICENSE",
+      "bytes": 1079,
+      "sha256": "16de0c32b265cb7d46a6d3bd614f259dd4d693a5e26b3407b04aae8d73041f0c"
+    },
+    {
+      "path": "LICENSE-docs",
+      "bytes": 18652,
+      "sha256": "cce5d01fa4a83b794271bd2c28cffdf99afd43c803e6ddefddae39b591ea7448"
+    },
+    {
+      "path": "LICENSE-extra",
+      "bytes": 1603,
+      "sha256": "262c44bd2cdba037e6d2a82fba15f5800d292bc993a6f5d6b6ea487744d02836"
+    },
+    {
+      "path": "LINKS.md",
+      "bytes": 7654,
+      "sha256": "6980133a6468c7f2659cbd8796e655d47353d6a1a93d695483ec69033bbf0787"
+    },
+    {
+      "path": "MAINTAINERS.md",
+      "bytes": 2628,
+      "sha256": "33910a51888aedd124de6015e86c254bfbd1119fc089974efa134940d1a80852"
+    },
+    {
+      "path": "Makefile.am",
+      "bytes": 22030,
+      "sha256": "c06d545843f3f3843fa7f1d37751f47e6f4872a092ea4889cfc3c7525d92f663"
+    },
+    {
+      "path": "README.md",
+      "bytes": 9971,
+      "sha256": "d6fdd136a14c081605bef4ade2371181733ebbc5ce194537bbecb39f88b8cc89"
+    },
+    {
+      "path": "SECURITY.md",
+      "bytes": 1302,
+      "sha256": "afa6583c912fcfc76b536f220377d729d9c38d3c0f3295ed1620a7082136d333"
+    },
+    {
+      "path": "SUPPORTED_PLATFORMS.md",
+      "bytes": 2720,
+      "sha256": "3f1d5506c646ca8f6dad101a4dfc7b2ac90bddf823e871a9ce14c094e898b736"
+    },
+    {
+      "path": "autogen.sh",
+      "bytes": 2489,
+      "sha256": "9936a8a1b1a01676c9a7ca738c84bbe59db5d9ed9b12246298f41ef0f85fb130"
+    },
+    {
+      "path": "cmake-toolchains/cross-mingw32.cmake",
+      "bytes": 554,
+      "sha256": "278535ebd20c2ad126b198e530595ca61e82faf68941ecbc3b6f8a328599bfd3"
+    },
+    {
+      "path": "common.gypi",
+      "bytes": 7143,
+      "sha256": "d8a40b9eba05f4c544ed010c9f68ebc1f1f3039cef804d88a9f7bb7ebea5fbc1"
+    },
+    {
+      "path": "configure.ac",
+      "bytes": 4478,
+      "sha256": "9915f370789460be66e9400e9fcd0df1da3cc0a762c135aaa2826087fe371755"
+    },
+    {
+      "path": "img/banner.png",
+      "bytes": 44102,
+      "sha256": "3038305d28cd1b6a2fb0f70f804841a3c7e55e638cbfd99665a978b5aabbf8a7"
+    },
+    {
+      "path": "img/logos.svg",
+      "bytes": 65172,
+      "sha256": "5d831019e44633b3e88d9cde1bb776a08968a95882472cdcf56c7f199aff655d"
+    },
+    {
+      "path": "include/uv.h",
+      "bytes": 72810,
+      "sha256": "fddec8c096616675b4578d85222663c8624dce3ee67f5be1c33ba83eb02a827c"
+    },
+    {
+      "path": "include/uv/aix.h",
+      "bytes": 1615,
+      "sha256": "bed77e4cf6c06f1224e681cbe607eff04713ca0c1e1f4a102e6a6565ee3f02aa"
+    },
+    {
+      "path": "include/uv/bsd.h",
+      "bytes": 1641,
+      "sha256": "963533ff4b16f72a204a8c760896a857c54d0ac50570f1793e3bef1f2ae8b35f"
+    },
+    {
+      "path": "include/uv/darwin.h",
+      "bytes": 3213,
+      "sha256": "222b6dd3ce67cfbb735b14b1662f065fc23570d6969acf463b39d946b7590d8c"
+    },
+    {
+      "path": "include/uv/errno.h",
+      "bytes": 11216,
+      "sha256": "4242edf790e4569ef349026ab4c6e31093334ee5fc02b16ed7a0d9fbacdffd16"
+    },
+    {
+      "path": "include/uv/linux.h",
+      "bytes": 1781,
+      "sha256": "adce0ed0821c8466a87a0a4c9e0df9ea7e4a4b24d099c7d7ed196f72a13f669d"
+    },
+    {
+      "path": "include/uv/os390.h",
+      "bytes": 1553,
+      "sha256": "98388ae32ce2c4390b82c3529539d2a476c44f590e960ed30a79f72b807ecd02"
+    },
+    {
+      "path": "include/uv/posix.h",
+      "bytes": 1606,
+      "sha256": "e9d7218b34e6e89b7b412891b7e2aa8b3a561c5ce9714c1f4def6c8a8593a6a6"
+    },
+    {
+      "path": "include/uv/sunos.h",
+      "bytes": 1985,
+      "sha256": "29d4b4ef48dc3c3ab32d75e0a85bcb80e084d42b32aae40d67fc1d882b93298a"
+    },
+    {
+      "path": "include/uv/threadpool.h",
+      "bytes": 1505,
+      "sha256": "09ae41099af710289155be012df45c2fce04da6a02e813278b4558935e645938"
+    },
+    {
+      "path": "include/uv/tree.h",
+      "bytes": 36117,
+      "sha256": "34393c74082c71ddd5bd9ec4afe30ef03df7fa7bb64be5a50ae070cdfebb5c43"
+    },
+    {
+      "path": "include/uv/unix.h",
+      "bytes": 20057,
+      "sha256": "a246095a1476d76631f5ec85be171aee8107eb0423007546ec91c58887c28f02"
+    },
+    {
+      "path": "include/uv/version.h",
+      "bytes": 1831,
+      "sha256": "aef7fb55ffcece76db9cb7f87d0632e432369747f329679779616cd0721981da"
+    },
+    {
+      "path": "include/uv/win.h",
+      "bytes": 33836,
+      "sha256": "51b6bf729c4c3e66cd89e0b0b0d734998776e675fe0a5eda9db77b634eb83ef0"
+    },
+    {
+      "path": "libuv-static.pc.in",
+      "bytes": 287,
+      "sha256": "2ec52a0b39abc4edea141386333d960e0bac8c94764500c95c3d11c2b5699551"
+    },
+    {
+      "path": "libuv.pc.in",
+      "bytes": 317,
+      "sha256": "207211332937097fdedb8b76cf230a06c039b695bb049a05bc9478fdc8f35bb5"
+    },
+    {
+      "path": "m4/.gitignore",
+      "bytes": 91,
+      "sha256": "d3af7b8bdf33a8008d7e1df8fef68f0cbc7b0695dc3dd056f02947300892afa4"
+    },
+    {
+      "path": "m4/as_case.m4",
+      "bytes": 515,
+      "sha256": "b3ef17cdde2e6b85e532fa7534ab6225abf0c0cbb736ff66a11d623951886a4e"
+    },
+    {
+      "path": "m4/ax_pthread.m4",
+      "bytes": 20818,
+      "sha256": "3c84ad5b7c2cacb880686b0a1bf9975f2381daf3a133c79efe5139c4b5694bde"
+    },
+    {
+      "path": "m4/libuv-check-flags.m4",
+      "bytes": 11038,
+      "sha256": "a1403b2b37c42995830ae895fd7e34295eb95efd5ebb59a5870ffa7439150b99"
+    },
+    {
+      "path": "src/fs-poll.c",
+      "bytes": 7681,
+      "sha256": "e4869036bc54bc5a881794ca6aac044c9c567361fff48dd7f02f3a4640e6d271"
+    },
+    {
+      "path": "src/heap-inl.h",
+      "bytes": 7053,
+      "sha256": "e8dbafbe40150143a740e9b1aff03c4e623ebfe5d6b5e1834a09626a303ddbc2"
+    },
+    {
+      "path": "src/idna.c",
+      "bytes": 12836,
+      "sha256": "8dda206c0a115d54ba0c447d44cd734dae7811a91b8527d110e82957b7bfbc9e"
+    },
+    {
+      "path": "src/idna.h",
+      "bytes": 1449,
+      "sha256": "d72fc711db6309e6c6ec0fc777cb0bcbcfa3942262be25d315ac469db2787559"
+    },
+    {
+      "path": "src/inet.c",
+      "bytes": 8068,
+      "sha256": "ff244db2646274941af96691e085826fa041adff56326fe28c26ab5610a96e48"
+    },
+    {
+      "path": "src/queue.h",
+      "bytes": 2671,
+      "sha256": "abdeddeefb025fcdeff7737d4d465d89081ab2c3cc08a423c042ee2093b8695a"
+    },
+    {
+      "path": "src/random.c",
+      "bytes": 3418,
+      "sha256": "4cdc8899cb6aae59896f0d949d2efa8c5b128e9b3671c567a72497e2023a1679"
+    },
+    {
+      "path": "src/strscpy.c",
+      "bytes": 1449,
+      "sha256": "0058568b1a47d2a35ce3dd32d52463af5e066c1065fbb6dc28dd68107a978c1c"
+    },
+    {
+      "path": "src/strscpy.h",
+      "bytes": 1748,
+      "sha256": "e3e5f81613b169ccd76eee4972d37e7cd5d875ac20d578467b2e42ee5c7f4051"
+    },
+    {
+      "path": "src/strtok.c",
+      "bytes": 1656,
+      "sha256": "fdcd8971cef7aff15ed950c8d71521888eb57ab48b62196e1f4170b4cf522d2c"
+    },
+    {
+      "path": "src/strtok.h",
+      "bytes": 1271,
+      "sha256": "2bb2ed731c7afb0efb14670854bc47fe435d72e93cb7b5a1ba99fc5d0548467f"
+    },
+    {
+      "path": "src/thread-common.c",
+      "bytes": 3941,
+      "sha256": "0ce1ce99b53c1e453439fae0be62c417fca8a1850cd97be65ace5b36b306a7b9"
+    },
+    {
+      "path": "src/threadpool.c",
+      "bytes": 11121,
+      "sha256": "e0db34c1bf86f020cc49285a5c3fcc383e9bd2ed7b0b959b5462624705d5322e"
+    },
+    {
+      "path": "src/timer.c",
+      "bytes": 5214,
+      "sha256": "6c23b86920e312253888c0126611c9499e79e73c65e8d75975d5c3dbf87abec2"
+    },
+    {
+      "path": "src/unix/aix-common.c",
+      "bytes": 3012,
+      "sha256": "61a1cbb342c5e334622ba194927ec9cff8642e5dea7c5972c17f531123c3ebcf"
+    },
+    {
+      "path": "src/unix/aix.c",
+      "bytes": 33863,
+      "sha256": "26abd4962b5c14a1bf3a7b3e5243575617d843d135a442af89f06cd9a0cde3ca"
+    },
+    {
+      "path": "src/unix/async.c",
+      "bytes": 11551,
+      "sha256": "445e8582d88068d63bde2dd52dc48ef6c215fa90f7ddeb2e40dcae971df499ea"
+    },
+    {
+      "path": "src/unix/bsd-ifaddrs.c",
+      "bytes": 5067,
+      "sha256": "d3a0267988f2bdf889dba097c00949bc5af80153fc00b4356dc657fdd47b5dc2"
+    },
+    {
+      "path": "src/unix/bsd-proctitle.c",
+      "bytes": 2691,
+      "sha256": "de7a812d80445c3dc10d4a25f5436c73630e2b0da2f8cfb642bacb8e068cdfad"
+    },
+    {
+      "path": "src/unix/core.c",
+      "bytes": 48102,
+      "sha256": "bebf5062eefb617a1d03e5e78f864b6384e14fb7055d534c3a092fc2132f4ac4"
+    },
+    {
+      "path": "src/unix/cygwin.c",
+      "bytes": 2382,
+      "sha256": "37adeb8e987535f9585883cdee0403cad0af4a9d7cf384401ae968f72b80a8b1"
+    },
+    {
+      "path": "src/unix/darwin-proctitle.c",
+      "bytes": 6760,
+      "sha256": "f68470f2a5ee9361d49083f0ec4c42e2a01a082907f9be983f31ab405e77b49d"
+    },
+    {
+      "path": "src/unix/darwin-stub.h",
+      "bytes": 3810,
+      "sha256": "d397fe8920a057dbf335b5eb91c82122e0f0b61281cd0dcb9fd45420bd9de7d8"
+    },
+    {
+      "path": "src/unix/darwin-syscalls.h",
+      "bytes": 437,
+      "sha256": "9edc5b8872c8c718cffd43b02ff9730276f7f55d7585f9c080e0065c08aaa872"
+    },
+    {
+      "path": "src/unix/darwin.c",
+      "bytes": 6557,
+      "sha256": "f6a172ce185e547e141945d36ab1e172685d37b763895b31136cfc02d6377bc0"
+    },
+    {
+      "path": "src/unix/dl.c",
+      "bytes": 2272,
+      "sha256": "fe5d987911461b7f680474ee3886884a6f3325dff0a4bc038734a088ee227ff1"
+    },
+    {
+      "path": "src/unix/freebsd.c",
+      "bytes": 7172,
+      "sha256": "39a81bbe51f4007af20c75c4385a2b235b40ccdaf1edda6bb56d556102a71af6"
+    },
+    {
+      "path": "src/unix/fs.c",
+      "bytes": 59847,
+      "sha256": "ffe2cd709c894083d4e470bce5248eee71c5e5594418be3d7a6d80e44d723a61"
+    },
+    {
+      "path": "src/unix/fsevents.c",
+      "bytes": 28183,
+      "sha256": "6d6b9e50ac30ce6c4d0ac046352fc308229f36774b092c3e4e99f434f50d5ca3"
+    },
+    {
+      "path": "src/unix/getaddrinfo.c",
+      "bytes": 6576,
+      "sha256": "c069c71fe9044bd95d4748990382432ef04d72284bd5dfb5181e347a5aad7dae"
+    },
+    {
+      "path": "src/unix/getnameinfo.c",
+      "bytes": 3651,
+      "sha256": "558b560c07b47db60cd04b182cbe10ced589753a904197a9120440fc23be61e5"
+    },
+    {
+      "path": "src/unix/haiku.c",
+      "bytes": 4417,
+      "sha256": "9b14ba20e072d2d4b36200c3c91e476ab28d34c0ee9fe6f9ef65f2f0e88f901b"
+    },
+    {
+      "path": "src/unix/hurd.c",
+      "bytes": 4335,
+      "sha256": "16b53fdde1ae273690bccfa8b7c3c4c22a72c4f4bc8773622dcc2344d7eb5987"
+    },
+    {
+      "path": "src/unix/ibmi.c",
+      "bytes": 16507,
+      "sha256": "450cf7178f4d3b7c3c157ed1bd4c8130941323bd799bc7696fe91d56243ed18c"
+    },
+    {
+      "path": "src/unix/internal.h",
+      "bytes": 16658,
+      "sha256": "6139bb4e3e0fa3668a2d0742a10e9aedcba6045c4f85ef35c8a8946def062977"
+    },
+    {
+      "path": "src/unix/kqueue.c",
+      "bytes": 18628,
+      "sha256": "499e0de21ff7ef39978186ef10af6070ad3e1e8e2dc71532cf6f398f38d7827a"
+    },
+    {
+      "path": "src/unix/linux.c",
+      "bytes": 73847,
+      "sha256": "d527b1b7330c474f60b363b0ec8ccea50bc2f1b7ae7e185fc97b6943bf993d99"
+    },
+    {
+      "path": "src/unix/loop-watcher.c",
+      "bytes": 4433,
+      "sha256": "352e6272f340f424fba5ff6e28705b0b22c3a8903913d0ea6bbb6ba7c2293fb5"
+    },
+    {
+      "path": "src/unix/loop.c",
+      "bytes": 6050,
+      "sha256": "f0edd21e3445ba0531c99c7e370d0201f23e966accd90edace04384eb9904b2a"
+    },
+    {
+      "path": "src/unix/netbsd.c",
+      "bytes": 6697,
+      "sha256": "1f9479148b091dfc89c23e1c59e33c9571618f64484d5fbfcb98b2a0266d7762"
+    },
+    {
+      "path": "src/unix/no-fsevents.c",
+      "bytes": 1577,
+      "sha256": "9d91a46c8477fd7145eac8b668da1041a69f5b12812b18888ad3eae85397d987"
+    },
+    {
+      "path": "src/unix/no-proctitle.c",
+      "bytes": 1534,
+      "sha256": "65a37c263a39f59943856e3d6bf2119692cfaacdde13f05112411cd3edd15ec5"
+    },
+    {
+      "path": "src/unix/openbsd.c",
+      "bytes": 6347,
+      "sha256": "9509f6b8db29cb18ec8a591b30cc72e57c1196b2feaa1ab1e20c1250a4b0b6a6"
+    },
+    {
+      "path": "src/unix/os390-proctitle.c",
+      "bytes": 3570,
+      "sha256": "627cd81bf8925ced5e39ededce1fa50c9b77dba581a35383113a1520e015478d"
+    },
+    {
+      "path": "src/unix/os390-syscalls.c",
+      "bytes": 12268,
+      "sha256": "76c5779fa2be1665b8d82c1e010eb37a9b216f8bdbdbd1a48f8c4f8985edc3d6"
+    },
+    {
+      "path": "src/unix/os390-syscalls.h",
+      "bytes": 2666,
+      "sha256": "a0f585c827df219b526b9786caebc8c21fd4db9ea8d568c07264f24a266cd4f9"
+    },
+    {
+      "path": "src/unix/os390.c",
+      "bytes": 27948,
+      "sha256": "594a6d34d4529fd1b9aedbecf0b6284e4a11f1d631ff06a273ef67a7adc5ce46"
+    },
+    {
+      "path": "src/unix/pipe.c",
+      "bytes": 13749,
+      "sha256": "48f5743581a1caf62369a3db6b36c0c86860308d4086ed9cbc670fff105aa5a1"
+    },
+    {
+      "path": "src/unix/poll.c",
+      "bytes": 4353,
+      "sha256": "e04cbf1cbeb67da8ceab2d86e47eca5fb35524725c316d859b0772debf409c35"
+    },
+    {
+      "path": "src/unix/posix-hrtime.c",
+      "bytes": 1411,
+      "sha256": "e0b6901588b417222c48c6b321d642f53f6b3ccd2512d86f3f5898dcd95b3671"
+    },
+    {
+      "path": "src/unix/posix-poll.c",
+      "bytes": 10590,
+      "sha256": "79668ed80622686315b3be017c2da60ff8c7cbcc711d25177be312cf7c12be59"
+    },
+    {
+      "path": "src/unix/process.c",
+      "bytes": 31333,
+      "sha256": "cedc79cb473c0dde5c270ff2ee7b7956cbdfe0b3aceba19597b9a75a21e119f0"
+    },
+    {
+      "path": "src/unix/procfs-exepath.c",
+      "bytes": 1525,
+      "sha256": "56136e384f79f6691f8cc2976cd01d0a02019802d4be619d7c91cb21d413ada6"
+    },
+    {
+      "path": "src/unix/proctitle.c",
+      "bytes": 4060,
+      "sha256": "16ff3c208dcce3798dc80bf596828a93f6ac42b1732e1ba75c331dfa3e90fffe"
+    },
+    {
+      "path": "src/unix/qnx.c",
+      "bytes": 3695,
+      "sha256": "10108ddca17400c7f684745ee6ca2a58ce4728804068373c8d34462ab21c2e16"
+    },
+    {
+      "path": "src/unix/random-devurandom.c",
+      "bytes": 2551,
+      "sha256": "e774597ce4da739ad57317041aa0aaf00ae48b04f2359940188ab04475613420"
+    },
+    {
+      "path": "src/unix/random-getentropy.c",
+      "bytes": 1968,
+      "sha256": "9bf7967967b6609810f42c72229edd086890864d4b78ed8c3269064a72769fe3"
+    },
+    {
+      "path": "src/unix/random-getrandom.c",
+      "bytes": 2508,
+      "sha256": "149b6b2b9b9213f1355651c618e17b4dd2599ccafa1619ac3a8d7916a471f2a5"
+    },
+    {
+      "path": "src/unix/random-sysctl-linux.c",
+      "bytes": 2847,
+      "sha256": "c5a344dfdd20029700c0686c3ca685e8e67931fa2a35d84b01b10b5a8ad812a0"
+    },
+    {
+      "path": "src/unix/signal.c",
+      "bytes": 15410,
+      "sha256": "010aafee4b3cb7d70626cee3c5ddbf564251b521231f26dddf9d3e7c8204d71f"
+    },
+    {
+      "path": "src/unix/stream.c",
+      "bytes": 41252,
+      "sha256": "dac76e73caef1d01c7122f5d42f5e2d0a06b6a60bf4d83d26849d03aec805733"
+    },
+    {
+      "path": "src/unix/sunos.c",
+      "bytes": 22634,
+      "sha256": "0892b9ba39055ac10eaa785bf348d6aecafe10f3da2124f5e1c72c23a8277b1b"
+    },
+    {
+      "path": "src/unix/sysinfo-loadavg.c",
+      "bytes": 1456,
+      "sha256": "cd11de556cfa6371860a694e2d302037349d94b7b446506e721d412e97ea0334"
+    },
+    {
+      "path": "src/unix/sysinfo-memory.c",
+      "bytes": 1536,
+      "sha256": "d0fc16262a6406a9dd547044895475d9a3b1f1e11bb3b23e4880cf5945121272"
+    },
+    {
+      "path": "src/unix/tcp.c",
+      "bytes": 17999,
+      "sha256": "1f7aea48a4c4b8ae005af27188a9f08c63122493c812c54582c9b4a9e1771da7"
+    },
+    {
+      "path": "src/unix/thread.c",
+      "bytes": 21718,
+      "sha256": "69f6814b5cf8e3bf9709dbfa84ff58358e3ac6c7f9193819860017c2d7ea0a46"
+    },
+    {
+      "path": "src/unix/tty.c",
+      "bytes": 14299,
+      "sha256": "65b98df1215c32ddd87e7b89e2d8d78c7e79a02e2bf4a53e1860f61d00bf431a"
+    },
+    {
+      "path": "src/unix/udp.c",
+      "bytes": 40586,
+      "sha256": "779f1b3cd1550772d753f112c68056bc4de3a36ca1a78f886f5667e9af733955"
+    },
+    {
+      "path": "src/uv-common.c",
+      "bytes": 23928,
+      "sha256": "c311e17ae0f891c9eba52626adf9ea33a91b7459654eb1c20e56c24d30d6b446"
+    },
+    {
+      "path": "src/uv-common.h",
+      "bytes": 18411,
+      "sha256": "7524f791d5648f3e135340ac61bcb242028947a81a5b8b32042f8561848a5397"
+    },
+    {
+      "path": "src/uv-data-getter-setters.c",
+      "bytes": 3126,
+      "sha256": "ce7fab84519adc0f9b63c268fcb5a73e643a4d9a22db125cf58db88a6acd38ee"
+    },
+    {
+      "path": "src/version.c",
+      "bytes": 1751,
+      "sha256": "53296d9934d952545064673758e3ed46c10ab52e34ce540fbab4c595a0b44bfa"
+    },
+    {
+      "path": "src/win/async.c",
+      "bytes": 2869,
+      "sha256": "1e5ada382b401de43aa64e31212bbdb2c6c33d576ae6f19959c7e216a99b3243"
+    },
+    {
+      "path": "src/win/atomicops-inl.h",
+      "bytes": 2293,
+      "sha256": "6e49ffc21c8d8d67d2ba754a64d53ee6129de0c71ebd8cc6a272eee0e0c9b79b"
+    },
+    {
+      "path": "src/win/core.c",
+      "bytes": 18494,
+      "sha256": "3026f2888b3360e65a2e2662508eef6ba9b1af17735391ca6f79dc06887b8b23"
+    },
+    {
+      "path": "src/win/detect-wakeup.c",
+      "bytes": 2264,
+      "sha256": "914143627a1a97fafbf64a71564dce389a877b2e5aa9797f12dbc2811bd71d7a"
+    },
+    {
+      "path": "src/win/dl.c",
+      "bytes": 4396,
+      "sha256": "2b5c586518c6e3b02108e5a47c0ae481a5059dbd2af4031bcc5402b16b013048"
+    },
+    {
+      "path": "src/win/error.c",
+      "bytes": 8817,
+      "sha256": "c804f3da1436393d1170688cb9d0210638174c0f1af03013360a7d0a7eb945a8"
+    },
+    {
+      "path": "src/win/fs-event.c",
+      "bytes": 18447,
+      "sha256": "166e80fd373b44796658f7bd1cdc91f87a623e63bbd9d662f6a47137f0cdc96d"
+    },
+    {
+      "path": "src/win/fs-fd-hash-inl.h",
+      "bytes": 6886,
+      "sha256": "1365f18d01c4117b0f42cfb2e0065f37ad62e4f5214b150cbf660f986955bb2d"
+    },
+    {
+      "path": "src/win/fs.c",
+      "bytes": 105366,
+      "sha256": "60c76976514f427fa0be21c1c7986c2ab1d9e2e77b9d5bcf8c7ab99ed36b0693"
+    },
+    {
+      "path": "src/win/getaddrinfo.c",
+      "bytes": 12223,
+      "sha256": "dcef491fbb292b2fda6d7256c0f1222d79dd2507fd7875bd84aee95e558ab5db"
+    },
+    {
+      "path": "src/win/getnameinfo.c",
+      "bytes": 4069,
+      "sha256": "c002f8d434ea01952671117dcc4f36bcb74cebcaf4f16b60de997afecfdac39b"
+    },
+    {
+      "path": "src/win/handle-inl.h",
+      "bytes": 6723,
+      "sha256": "0b8763a63a0c000820e92fbb52faf6d4df46569f839e3d4471eac12dd7537b5c"
+    },
+    {
+      "path": "src/win/handle.c",
+      "bytes": 3987,
+      "sha256": "36778077a3ad0fb0ee55ccdba904e7393f74601be72be989110be4ee26ff753d"
+    },
+    {
+      "path": "src/win/internal.h",
+      "bytes": 10455,
+      "sha256": "dacd1827aab6d1cd63325fae179f377041e758157469939d81a5804526406e45"
+    },
+    {
+      "path": "src/win/loop-watcher.c",
+      "bytes": 7998,
+      "sha256": "b349a8ebf8f330418f7d15739441fdbd648b96ae7c4161a3d1145494a0c46c3a"
+    },
+    {
+      "path": "src/win/pipe.c",
+      "bytes": 80675,
+      "sha256": "4d370ce0bc10f8ae429f8acb2c7688d74b753e0177f347f5f3d337647e77ca38"
+    },
+    {
+      "path": "src/win/poll.c",
+      "bytes": 17211,
+      "sha256": "b58fcd1b028358f9ff9d2406de6b987aadca7a3c414e9a3b5aff9b12e0975235"
+    },
+    {
+      "path": "src/win/process-stdio.c",
+      "bytes": 12646,
+      "sha256": "7367280da2315b8cf16d42870a972164763b1967f8e39bd141b27726237872d8"
+    },
+    {
+      "path": "src/win/process.c",
+      "bytes": 42052,
+      "sha256": "39516fc8c2316ec53b853a67301958796372676fb1b27d4ec76ec51217ae6f26"
+    },
+    {
+      "path": "src/win/req-inl.h",
+      "bytes": 8161,
+      "sha256": "cf0669d86fe4706ca683cba2a05d01b6130081375ef34fb308276950ab66e4ae"
+    },
+    {
+      "path": "src/win/signal.c",
+      "bytes": 8203,
+      "sha256": "7cbe1ec895c1fa5c974e6d59e55e6a6d7180e9c83ffbffa12691c24c44fdf1f0"
+    },
+    {
+      "path": "src/win/snprintf.c",
+      "bytes": 1546,
+      "sha256": "2596b168ad64f54e94b95779f654326c107f43e0645efa11185f8e9b04ec2f6f"
+    },
+    {
+      "path": "src/win/stream-inl.h",
+      "bytes": 2005,
+      "sha256": "071341e25de533dc19eeb3ee3ff3985caae7578c8da9109ffcf08b6574584712"
+    },
+    {
+      "path": "src/win/stream.c",
+      "bytes": 6579,
+      "sha256": "c6bbfd9ae2948bfd4409d547f5f07b6c8495e4f0ae8e3f5d5c0117918e35b822"
+    },
+    {
+      "path": "src/win/tcp.c",
+      "bytes": 50168,
+      "sha256": "858d50be27eababdb8c17388b3b25d05da0bc8d0c390b8be76f1e8814705ea1d"
+    },
+    {
+      "path": "src/win/thread.c",
+      "bytes": 13356,
+      "sha256": "d674e3a3484034d2b97f892bf6acf6f7ac734df0f340b3aaa63c7edd53358129"
+    },
+    {
+      "path": "src/win/tty.c",
+      "bytes": 79053,
+      "sha256": "5df3f88899bc4c6d85f80b54d4f4f14453359996a2c42693de38ef90c5b9941d"
+    },
+    {
+      "path": "src/win/udp.c",
+      "bytes": 35208,
+      "sha256": "6750811851045125553b3828f8149291d9b14f51f22f0d7ccc86dfcbc82fd57d"
+    },
+    {
+      "path": "src/win/util.c",
+      "bytes": 44633,
+      "sha256": "216adf1d26666ea84277addbc597b0bcb5f079b66fac6567f80d793b977b152a"
+    },
+    {
+      "path": "src/win/winapi.c",
+      "bytes": 5212,
+      "sha256": "4f0421148d21d1a91561d105458d5ab3d283aafb13d8db5a8cb30317d4af30a4"
+    },
+    {
+      "path": "src/win/winapi.h",
+      "bytes": 130048,
+      "sha256": "5e8414cc8f3eefcb8389fd61bea6b9bfe74c057d899a6c9c2b3cdb43f6a3ef16"
+    },
+    {
+      "path": "src/win/winsock.c",
+      "bytes": 15726,
+      "sha256": "f9621966b332d29926ac6471b0aa08ef4f46be0b58cde852155592dc4de88590"
+    },
+    {
+      "path": "src/win/winsock.h",
+      "bytes": 5497,
+      "sha256": "9f95386162246a166dcb2557e3e6b0bf663053975ac19abdf470db6d50adee61"
+    },
+    {
+      "path": "tools/make_dist_html.py",
+      "bytes": 2623,
+      "sha256": "7906c3fa43b71886ef443d13bbee6d25e7296d7705e82bb35e19d6ae90876f31"
+    },
+    {
+      "path": "tools/vswhere_usability_wrapper.cmd",
+      "bytes": 1312,
+      "sha256": "42d17374dc38f04e03a6b61fa81a162050a2ef6f1d8a1c5b95260b2d463547cd"
+    },
+    {
+      "path": "tsansupp.txt",
+      "bytes": 89,
+      "sha256": "abf4f1522f243102e7209426cf699c0ceb72c3851415a9d2dc50a9cbc88cfa5d"
+    },
+    {
+      "path": "unofficial.gni",
+      "bytes": 2875,
+      "sha256": "1d17563a2590913dd1d74dbbec221bae5fcd8b530e108ad984186fbf1a077412"
+    },
+    {
+      "path": "uv.gyp",
+      "bytes": 10943,
+      "sha256": "5dc464a84a8fb3dc3798325869db22ab3cd0d8815bb463580d182323929a7dec"
+    },
+    {
+      "path": "uv_win_longpath.manifest",
+      "bytes": 426,
+      "sha256": "b6890e27512e19bc7461589465f297d669ed4432a0b55d735916c0954f7ac678"
+    }
+  ],
+  "stockManifestSha256": "6ee6635ed5ddf6df0ee39bd9766f1b7d0a459613af77a3f94b0757615e914568",
+  "offlineManifestSha256": "97fba34c3030424ecf90078de2916f405e3a84a5c39b397a032263f78dc23bab",
+  "patch": {
+    "file": "src/win/core.c",
+    "beforeBytes": 18494,
+    "beforeSha256": "3026f2888b3360e65a2e2662508eef6ba9b1af17735391ca6f79dc06887b8b23",
+    "afterBytes": 18677,
+    "afterSha256": "143dffcfb49431866d97017d71d108aeffac7c35ca1de1f82b9106f554aa6c52",
+    "needle": "  /* Initialize winsock */\n  uv__winsock_init();",
+    "replacement": "  /* Fixed-probe offline build omits network initialization; the stock control is unchanged. */\n#if !defined(EMBER_UV_FIXED_PROBE_OFFLINE) || EMBER_UV_FIXED_PROBE_OFFLINE != 1\n  /* Initialize winsock */\n  uv__winsock_init();\n#endif",
+    "macro": "EMBER_UV_FIXED_PROBE_OFFLINE",
+    "value": 1
+  }
+}

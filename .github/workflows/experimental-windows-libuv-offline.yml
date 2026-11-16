@@ -1,0 +1,79 @@
+name: experimental-windows-libuv-offline
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/experimental-windows-libuv-offline.yml"
+      - "scripts/experimental/*libuv*"
+      - "test/fixtures/windows-libuv*"
+      - "test/fixtures/windows-libuv-probe-build/**"
+      - "test/fixtures/windows-node-lpac-io.ts"
+      - "test/fixtures/windows-node-lpac-proof.ts"
+      - "test/fixtures/windows-node-lpac-startup.ts"
+      - "test/integration/windows-libuv-offline-native.test.ts"
+      - "test/unit/windows-libuv*"
+      - "app/main/agent/experimental-windows-lpac*.ts"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: experimental-windows-libuv-offline-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fixed-probe:
+    name: Fixed libuv C probe (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - name: Select the trusted host Python (standard library extractor only)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $python = (Get-Command python.exe -ErrorAction Stop).Source
+          & $python -c "import sys; assert sys.version_info >= (3, 11)"
+          if ($LASTEXITCODE -ne 0) { throw 'The fixed extractor requires Python 3.11 or later.' }
+          "EMBER_LIBUV_PYTHON=$python" >> $env:GITHUB_ENV
+      - run: npm install -g npm@11.6.2
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      - name: Source mutation, numeric report and existing native lifecycle/privacy contracts
+        run: npm test -- test/unit/windows-libuv-source.test.ts test/unit/windows-libuv-probe-report.test.ts test/unit/windows-libuv-probe-disposal.test.ts test/unit/windows-libuv-build-receipt.test.ts test/unit/windows-libuv-build-environment.test.ts test/unit/windows-node-lpac-startup.test.ts test/unit/windows-node-lpac-io.test.ts test/unit/windows-node-lpac-fatal.test.ts --maxWorkers=1
+      - name: Fetch only the signed-manifest-pinned Node source archive
+        timeout-minutes: 3
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $pin = Get-Content -LiteralPath scripts/experimental/windows-libuv-source-pin.json -Raw | ConvertFrom-Json
+          $parent = Join-Path $env:RUNNER_TEMP ('ember-libuv-source-' + [Guid]::NewGuid().ToString())
+          [IO.Directory]::CreateDirectory($parent) | Out-Null
+          $archive = Join-Path $parent 'node-v22.23.5.tar.xz'
+          Invoke-WebRequest -Uri $pin.sourceArchive.url -OutFile $archive -TimeoutSec 120
+          if ((Get-Item -LiteralPath $archive).Length -ne $pin.sourceArchive.bytes -or (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne $pin.sourceArchive.sha256) { throw 'The source archive differs from its signed manifest pin.' }
+          "EMBER_LIBUV_SOURCE_ARCHIVE=$archive" >> $env:GITHUB_ENV
+          "EMBER_LIBUV_BUILD_ROOT=$(Join-Path $parent 'build')" >> $env:GITHUB_ENV
+      - name: Build only the fixed C programs and static libuv with the exact reviewed recipe
+        timeout-minutes: 9
+        shell: pwsh
+        run: node scripts/experimental/build-windows-libuv-probe.mjs --archive "$env:EMBER_LIBUV_SOURCE_ARCHIVE" --destination "$env:EMBER_LIBUV_BUILD_ROOT" --python "$env:EMBER_LIBUV_PYTHON"
+      - name: Independent stock/offline host and zero-capability LPAC outcomes after native job stop
+        timeout-minutes: 5
+        run: node scripts/run-integration.mjs test/integration/windows-libuv-offline-native.test.ts
+        env:
+          EMBER_LPAC_LIBUV_PROBE: "1"
+      # No raw native output, source content, private scratch, profile, trace or dump is uploaded.
+      # This fixed-operation feasibility probe is not Node or a closed general offline-runtime implementation.
