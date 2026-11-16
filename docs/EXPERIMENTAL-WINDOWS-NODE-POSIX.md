@@ -78,8 +78,11 @@ authority; source hashes and receipts are not standalone publisher signatures or
 exclusion of hostile concurrent same-user writers.
 
 The new workflow registers portable contracts on the dedicated PR branch.
-A long Windows build requires a reviewed explicit manual dispatch on that exact
-branch, after portable success. The ABI gate is mandatory inside the builder
+Dispatch now defaults to the fixed `abi-only` scope. It performs the same attested
+source/tool preparation and both mandatory ABI compilations, then returns before
+vcbuild, bootstrap compilation, asset staging or upload. A long Windows build
+requires an explicit reviewed `source-build` dispatch on that exact branch after
+portable success; that route still requires both ABI successes and COFF checks. The ABI gate is mandatory inside the builder
 before vcbuild; it cannot be waived by workflow inputs. Existing 60-minute
 compiler, 70-minute build-step and 90-minute job budgets are unchanged. Only
 source-node.exe, bootstrap.exe, build-receipt.json and LICENSE can be uploaded
@@ -112,3 +115,36 @@ Primary contracts used by the adapter and gate:
 - [FILE_RENAME_INFO path forms](https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_rename_info)
 - [POSIX replacement with existing target handles](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_rename_information)
 - [Pinned libuv source rename and target](https://github.com/nodejs/node/blob/60553651579ec33ca1aef9e1eedab2c3855f1f7e/deps/uv/src/win/fs.c#L2266)
+
+## First Windows attempt and ABI-only follow-up
+
+The sole first source attempt was run `43968426268`, compile commit
+`4d0522318b6ffdb028e06c5b5c59b43c5a3a8eaf`. Its portable job passed all
+160 contracts. The completed Windows job `133654617530` refused at
+`compile-rename-abi`, before vcbuild. Captured compiler output had been discarded,
+so no compiler or header cause was established and no Node artifact was produced.
+
+The follow-up preserves the actual rename block, both target selectors, `/W4
+/WX`, and the current cmd invocation. Each target now has an independent fixed
+batch with phase markers before vcvars (1), before cl (2) and after successful
+cl (3). Only exact ordered whole stdout lines project a phase; 0 means no such
+entry was observed. Failure observations include target ordinal 1/2 (0 when
+not target-specific), validated primitive DWORD child exit or null, at most eight
+sorted unique numeric C diagnostic IDs, and bounded overflow/unknown-line counts.
+`failurePhase` is 1 for child execution, 2 for COFF validation and 3 for copied
+source/recipe readback. The first observation is immutable. These fields are
+observations only: child exit 0 or phase 3 cannot substitute for positive COFF,
+source, tool, recipe or asset checks. Raw lines, symbols, paths and source values
+are discarded. ABI-only results have a distinct issuer suffix and no asset
+receipt; they cannot admit a Node image.
+
+Pinned source inspection confirms the fixture's request macros match fs.c, while
+Node's ordinary GYP warnings differ from this stricter preflight. The original
+producer passes a plain batch argument; this preflight uses doubled cmd quotes
+without the verbatim-arguments option used by another repository fixture. These
+are investigation leads, not observed causes. No warning suppression, quoting
+repair or header change is included. The ABI-only Windows outcome remains pending. All 306 composed portable
+contracts pass (188 new-producer and 118 unchanged producer cases), as do scoped
+lint, script syntax, YAML and Root/independent review. TypeScript session `48709`
+was lost during environment migration and is not a pass. The fresh normal full
+`npm run typecheck` recapture `38371` passed on the unchanged reviewed code.

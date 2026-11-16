@@ -280,11 +280,11 @@ it.each(["missing", "old-three", "adapter", "source", "order", "count", "compile
 });
 it("only compiles the actual adapter with two isolated target selectors, never links or executes it", () => {
   const paths = { vcvars: "C:\\VS\\vcvarsall.bat", compiler: "C:\\VS\\cl.exe", working: "D:\\working", source: "D:\\abi\\check.c", include: "D:\\abi", object0: "D:\\abi\\win8.obj", object1: "D:\\abi\\sdk.obj" };
-  const batch = windowsNodePosixRenameAbiBatch(paths);
+  const batch = windowsNodePosixRenameAbiBatch(paths, 1) + windowsNodePosixRenameAbiBatch(paths, 2);
   expect(batch.match(/\/TC \/c /g)).toHaveLength(2);
   expect(batch).toContain("/D_WIN32_WINNT=0x602 /DNTDDI_VERSION=0x6020000 /DEMBER_POSIX_ABI_SDK=0");
   expect(batch).toContain("/D_WIN32_WINNT=0xa00 /DNTDDI_VERSION=0xa000002 /DEMBER_POSIX_ABI_SDK=1");
   expect(batch).not.toMatch(/\/link|vcbuild|\.obj"\r?\n/);
   expect(batch).toContain('set "CL="');
-  expect(() => windowsNodePosixRenameAbiBatch({ ...paths, compiler: "C:\\bad&injected.exe" })).toThrow();
+  expect(() => windowsNodePosixRenameAbiBatch({ ...paths, compiler: "C:\\bad&injected.exe" }, 1)).toThrow();
 });

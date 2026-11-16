@@ -78,18 +78,47 @@ export function validateWindowsNodePosixRenameAbiReceipt(value) {
   }
   return freeze(value);
 }
-/** Fixed compiler commands only; neither target changes any production compiler/header selector. */
-export function windowsNodePosixRenameAbiBatch(paths) {
-  if (!strict(paths, ["vcvars", "compiler", "working", "source", "include", "object0", "object1"])) fail();
-  for (const value of Object.values(paths)) ordinary(value);
-  const lines = ["@echo off", "setlocal", `call "${paths.vcvars}" amd64 ${buildPin.sdk} -vcvars_ver=${buildPin.toolsetDirectory}`,
-    "if errorlevel 1 exit /b 1", `if not "%VisualStudioVersion%"=="17.0" exit /b 1`, `if not "%VCToolsVersion%"=="${buildPin.toolsetDirectory}" exit /b 1`,
-    `if not "%WindowsSDKVersion%"=="${buildPin.sdk}\\" exit /b 1`, 'set "CL="', 'set "_CL_="', 'set "LINK="', 'set "_LINK_="'];
-  for (let index = 0; index < 2; index++) {
-    const target = buildPin.renameAbi.targets[index];
-    lines.push(`"${paths.compiler}" /nologo /W4 /WX /TC /c /utf-8 /D_WIN32_WINNT=0x${target.winnt.toString(16)} /DNTDDI_VERSION=0x${target.ntddi.toString(16)} /DEMBER_POSIX_ABI_SDK=${index} /I"${path.win32.join(paths.working, "deps", "uv", "include")}" /I"${path.win32.join(paths.working, "deps", "uv", "src")}" /I"${paths.include}" /Fo"${paths[`object${index}`]}" "${paths.source}"`, "if errorlevel 1 exit /b 1");
+/** Read only own data fields from child results; compiler text is never public output. */
+const own = (value, key) => { try { return value && typeof value === "object" ? Object.getOwnPropertyDescriptor(value, key)?.value : undefined; } catch { return undefined; } };
+export function windowsNodePosixRenameAbiObservation(target, result) {
+  let phase = 0, unknownLines = 0; const codes = new Set();
+  for (const key of ["stdout", "stderr"]) {
+    const value = own(result, key); let text;
+    try {
+      if (typeof value === "string" && Buffer.byteLength(value, "utf8") <= 65_536) text = value;
+      else if (Buffer.isBuffer(value) && value.length <= 65_536) text = value.toString("utf8");
+      else if (value !== undefined && value !== null) unknownLines++;
+    } catch { unknownLines++; }
+    if (text === undefined) continue;
+    for (const line of text.split(/\r?\n/)) {
+      if (!line) continue;
+      const marker = /^EMBER_NODE_POSIX_ABI_PHASE=([123])$/.exec(line);
+      if (key === "stdout" && marker && Number(marker[1]) === phase + 1) { phase++; continue; }
+      const diagnostic = /\b(?:fatal error|error|warning) C([1-9][0-9]{3}):/.exec(line);
+      if (diagnostic) codes.add(Number(diagnostic[1])); else unknownLines++;
+    }
   }
-  return [...lines, "exit /b 0", ""].join("\r\n");
+  const status = own(result, "status"), sorted = [...codes].sort((a, b) => a - b);
+  return freeze({ schema: 1, target: target === 1 || target === 2 ? target : 0, phase,
+    exitCode: Number.isInteger(status) && status >= 0 && status <= 0xffffffff ? status : null,
+    compilerCodes: sorted.slice(0, 8), overflow: Math.min(65_535, Math.max(0, sorted.length - 8)), unknownLines: Math.min(65_535, unknownLines) });
+}
+let renameAbiObservation;
+function abiRefusal(target, failurePhase, result) {
+  if (!renameAbiObservation) renameAbiObservation = freeze({ ...windowsNodePosixRenameAbiObservation(target, result), failurePhase });
+  fail();
+}
+/** Fixed compiler commands only; neither target changes a production compiler/header selector. */
+export function windowsNodePosixRenameAbiBatch(paths, target) {
+  if (!strict(paths, ["vcvars", "compiler", "working", "source", "include", "object0", "object1"]) || target !== 1 && target !== 2) fail();
+  for (const value of Object.values(paths)) ordinary(value);
+  const index = target - 1, selector = buildPin.renameAbi.targets[index];
+  return ["@echo off", "setlocal", "echo EMBER_NODE_POSIX_ABI_PHASE=1", `call "${paths.vcvars}" amd64 ${buildPin.sdk} -vcvars_ver=${buildPin.toolsetDirectory}`,
+    "if errorlevel 1 exit /b 1", `if not "%VisualStudioVersion%"=="17.0" exit /b 1`, `if not "%VCToolsVersion%"=="${buildPin.toolsetDirectory}" exit /b 1`,
+    `if not "%WindowsSDKVersion%"=="${buildPin.sdk}\\" exit /b 1`, 'set "CL="', 'set "_CL_="', 'set "LINK="', 'set "_LINK_="',
+    "echo EMBER_NODE_POSIX_ABI_PHASE=2",
+    `"${paths.compiler}" /nologo /W4 /WX /TC /c /utf-8 /D_WIN32_WINNT=0x${selector.winnt.toString(16)} /DNTDDI_VERSION=0x${selector.ntddi.toString(16)} /DEMBER_POSIX_ABI_SDK=${index} /I"${path.win32.join(paths.working, "deps", "uv", "include")}" /I"${path.win32.join(paths.working, "deps", "uv", "src")}" /I"${paths.include}" /Fo"${paths[`object${index}`]}" "${paths.source}"`,
+    "if errorlevel 1 exit /b 1", "echo EMBER_NODE_POSIX_ABI_PHASE=3", "exit /b 0", ""].join("\r\n");
 }
 function compileWindowsNodePosixRenameAbi(destination, working, tools, env) {
   const directory = path.join(destination, "rename-abi"); fs.mkdirSync(directory, { mode: 0o700 });
@@ -98,16 +127,20 @@ function compileWindowsNodePosixRenameAbi(destination, working, tools, env) {
   if (!sourcePinEntry || hash(sourceBytes) !== sourcePinEntry.sha256) fail();
   const source = path.join(directory, "rename-abi.c"), adapter = path.join(directory, "node-posix-adapter.inc"), adapterBytes = Buffer.from(sourcePin.patches[3].replacement);
   fs.writeFileSync(source, sourceBytes, { flag: "wx" }); fs.writeFileSync(adapter, adapterBytes, { flag: "wx" });
-  const objects = [path.join(directory, "win8.obj"), path.join(directory, "win10-rs1.obj")];
-  const batch = path.join(directory, "compile-abi.cmd");
-  fs.writeFileSync(batch, windowsNodePosixRenameAbiBatch({ vcvars: tools.vcvars, compiler: tools.compiler, working, source, include: directory, object0: objects[0], object1: objects[1] }), { flag: "wx" });
-  captured(env.ComSpec, ["/d", "/s", "/v:off", "/c", `""${batch}""`], env, directory, 120_000);
-  const targets = objects.map((file, index) => {
-    const bytes = inputBytes(file, 1024 * 1024);
-    if (bytes.length < 20 || bytes.readUInt16LE(0) !== 0x8664 || bytes.readUInt16LE(2) < 1 || bytes.readUInt16LE(2) > 96 || bytes.readUInt16LE(16) !== 0) fail();
-    return { ...buildPin.renameAbi.targets[index], compileOnly: true, object: { bytes: bytes.length, sha256: hash(bytes) } };
-  });
-  if (!sourceBytes.equals(inputBytes(source, 64 * 1024)) || !adapterBytes.equals(inputBytes(adapter, 64 * 1024)) || !equal(currentRecipe, windowsNodePosixSourceBuildRecipe())) fail();
+  const objects = [path.join(directory, "win8.obj"), path.join(directory, "win10-rs1.obj")], targets = [];
+  for (let index = 0; index < 2; index++) {
+    const batch = path.join(directory, `compile-abi-${index + 1}.cmd`);
+    fs.writeFileSync(batch, windowsNodePosixRenameAbiBatch({ vcvars: tools.vcvars, compiler: tools.compiler, working, source, include: directory, object0: objects[0], object1: objects[1] }, index + 1), { flag: "wx" });
+    try { execFileSync(env.ComSpec, ["/d", "/s", "/v:off", "/c", `""${batch}""`], { env, cwd: directory, encoding: "utf8", timeout: 120_000, maxBuffer: 65_536, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] }); }
+    catch (error) { abiRefusal(index + 1, 1, error); }
+    let bytes;
+    try { bytes = inputBytes(objects[index], 1024 * 1024); } catch { abiRefusal(index + 1, 2); }
+    if (bytes.length < 20 || bytes.readUInt16LE(0) !== 0x8664 || bytes.readUInt16LE(2) < 1 || bytes.readUInt16LE(2) > 96 || bytes.readUInt16LE(16) !== 0) abiRefusal(index + 1, 2);
+    targets.push({ ...buildPin.renameAbi.targets[index], compileOnly: true, object: { bytes: bytes.length, sha256: hash(bytes) } });
+  }
+  try {
+    if (!sourceBytes.equals(inputBytes(source, 64 * 1024)) || !adapterBytes.equals(inputBytes(adapter, 64 * 1024)) || !equal(currentRecipe, windowsNodePosixSourceBuildRecipe())) abiRefusal(0, 3);
+  } catch { abiRefusal(0, 3); }
   return validateWindowsNodePosixRenameAbiReceipt({ schema: 1, adapterSha256: hash(adapterBytes), sourceSha256: hash(sourceBytes), targets });
 }
 
@@ -277,8 +310,8 @@ export function windowsNodePosixSourceCompileOutcome(result) {
 }
 let compileOutcome;
 let buildStage = "inputs";
-export async function buildWindowsNodePosixSource({ sourceArchivePath, nasmArchivePath, destination, pythonPath }) {
-  buildStage = "inputs"; compileOutcome = undefined;
+async function prepareWindowsNodePosixSourceBuild({ sourceArchivePath, nasmArchivePath, destination, pythonPath }) {
+  buildStage = "inputs"; compileOutcome = undefined; renameAbiObservation = undefined;
   if (process.platform !== "win32" || process.arch !== "x64") fail();
   for (const value of [sourceArchivePath, nasmArchivePath, destination, pythonPath]) ordinary(value);
   pythonPath = trustedWindowsNodePosixSourcePythonPath(pythonPath);
@@ -322,6 +355,16 @@ export async function buildWindowsNodePosixSource({ sourceArchivePath, nasmArchi
   buildStage = "compile-rename-abi";
   const renameAbi = compileWindowsNodePosixRenameAbi(destination, source.workingDir, toolsPaths, env);
   if (!equal(tools, Object.fromEntries(Object.entries(toolsPaths).map(([name, file]) => [name, snapshot(file)])))) fail();
+  return { destination, compileCommit, recipe, env, source, execution, toolsPaths, tools, observed, vcvars, pythonPath, nasm, renameAbi };
+}
+/** ABI-only returns before any vcbuild/bootstrap/staging operation; this result cannot be a source-build receipt. */
+export async function checkWindowsNodePosixRenameAbi(options) {
+  const { renameAbi, compileCommit, recipe, tools } = await prepareWindowsNodePosixSourceBuild(options);
+  if (!equal(recipe, windowsNodePosixSourceBuildRecipe())) fail();
+  return freeze({ schema: 1, issuer: `${sourcePin.issuer}-abi-only`, commit: compileCommit, renameAbi, recipe, tools });
+}
+export async function buildWindowsNodePosixSource(options) {
+  const { destination, compileCommit, recipe, env, source, execution, toolsPaths, tools, observed, vcvars, pythonPath, nasm, renameAbi } = await prepareWindowsNodePosixSourceBuild(options);
   const bootstrapSource = ordinary(path.join(root, "test/fixtures/windows-node-source-bootstrap.c"));
   const batchPaths = { vcvars, compiler: toolsPaths.compiler, linker: toolsPaths.linker, source: source.workingDir, bootstrapSource,
     bootstrapObject: path.join(destination, "bootstrap.obj"), bootstrapOutput: path.join(destination, "bootstrap-built.exe") };
@@ -358,11 +401,21 @@ export async function buildWindowsNodePosixSource({ sourceArchivePath, nasmArchi
   return receipt;
 }
 
+/** Only the exact optional diagnostic literal selects a short run; no caller may skip ABI in a full build. */
+export function windowsNodePosixSourceCliArguments(args) {
+  if (!Array.isArray(args) || args.length !== 8 && args.length !== 9 || args[0] !== "--source-archive" || args[2] !== "--nasm-archive" || args[4] !== "--destination" || args[6] !== "--python" ||
+      args.length === 9 && args[8] !== "--abi-only" || ![args[1], args[3], args[5], args[7]].every(value => typeof value === "string")) fail();
+  return { abiOnly: args.length === 9, options: { sourceArchivePath: args[1], nasmArchivePath: args[3], destination: args[5], pythonPath: args[7] } };
+}
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
-    const args = process.argv.slice(2);
-    if (args.length !== 8 || args[0] !== "--source-archive" || args[2] !== "--nasm-archive" || args[4] !== "--destination" || args[6] !== "--python") fail();
-    const receipt = await buildWindowsNodePosixSource({ sourceArchivePath: args[1], nasmArchivePath: args[3], destination: args[5], pythonPath: args[7] });
-    console.log(JSON.stringify({ issuer: receipt.issuer, version: receipt.sourceVersion, compilerVersion: receipt.build.compilerVersion, nodeBytes: receipt.assets.node.bytes, bootstrapBytes: receipt.assets.bootstrap.bytes }));
-  } catch { console.error(JSON.stringify({ status: "failed", stage: buildStage, ...(compileOutcome ? { compile: compileOutcome } : {}) })); process.exitCode = 1; }
+    const { abiOnly, options } = windowsNodePosixSourceCliArguments(process.argv.slice(2));
+    if (abiOnly) {
+      const receipt = await checkWindowsNodePosixRenameAbi(options);
+      console.log(JSON.stringify({ status: "abi-only-success", issuer: receipt.issuer, targets: receipt.renameAbi.targets.map(({ winnt, ntddi, compileOnly }) => ({ winnt, ntddi, compileOnly })) }));
+    } else {
+      const receipt = await buildWindowsNodePosixSource(options);
+      console.log(JSON.stringify({ issuer: receipt.issuer, version: receipt.sourceVersion, compilerVersion: receipt.build.compilerVersion, nodeBytes: receipt.assets.node.bytes, bootstrapBytes: receipt.assets.bootstrap.bytes }));
+    }
+  } catch { console.error(JSON.stringify({ status: "failed", stage: buildStage, ...(compileOutcome ? { compile: compileOutcome } : {}), ...(renameAbiObservation ? { renameAbi: renameAbiObservation } : {}) })); process.exitCode = 1; }
 }
