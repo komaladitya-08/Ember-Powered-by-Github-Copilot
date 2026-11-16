@@ -120,6 +120,13 @@ export function windowsNodePosixRenameAbiBatch(paths, target) {
     `"${paths.compiler}" /nologo /W4 /WX /TC /c /utf-8 /D_WIN32_WINNT=0x${selector.winnt.toString(16)} /DNTDDI_VERSION=0x${selector.ntddi.toString(16)} /DEMBER_POSIX_ABI_SDK=${index} /I"${path.win32.join(paths.working, "deps", "uv", "include")}" /I"${path.win32.join(paths.working, "deps", "uv", "src")}" /I"${paths.include}" /Fo"${paths[`object${index}`]}" "${paths.source}"`,
     "if errorlevel 1 exit /b 1", "echo EMBER_NODE_POSIX_ABI_PHASE=3", "exit /b 0", ""].join("\r\n");
 }
+/** Fixed cmd invocation: preserve its quoted command string instead of applying CRT argument escaping. */
+export function windowsNodePosixRenameAbiInvocation(program, batch, env, cwd) {
+  for (const value of [program, batch, cwd]) ordinary(value);
+  return Object.freeze({ program, args: Object.freeze(["/d", "/s", "/v:off", "/c", `""${batch}""`]),
+    options: Object.freeze({ env, cwd, encoding: "utf8", timeout: 120_000, maxBuffer: 65_536, windowsHide: true,
+      windowsVerbatimArguments: true, stdio: Object.freeze(["ignore", "pipe", "pipe"]) }) });
+}
 function compileWindowsNodePosixRenameAbi(destination, working, tools, env) {
   const directory = path.join(destination, "rename-abi"); fs.mkdirSync(directory, { mode: 0o700 });
   const sourcePath = ordinary(path.join(root, buildPin.renameAbi.source)), sourceBytes = inputBytes(sourcePath, 64 * 1024);
@@ -131,7 +138,8 @@ function compileWindowsNodePosixRenameAbi(destination, working, tools, env) {
   for (let index = 0; index < 2; index++) {
     const batch = path.join(directory, `compile-abi-${index + 1}.cmd`);
     fs.writeFileSync(batch, windowsNodePosixRenameAbiBatch({ vcvars: tools.vcvars, compiler: tools.compiler, working, source, include: directory, object0: objects[0], object1: objects[1] }, index + 1), { flag: "wx" });
-    try { execFileSync(env.ComSpec, ["/d", "/s", "/v:off", "/c", `""${batch}""`], { env, cwd: directory, encoding: "utf8", timeout: 120_000, maxBuffer: 65_536, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] }); }
+    const command = windowsNodePosixRenameAbiInvocation(env.ComSpec, batch, env, directory);
+    try { execFileSync(command.program, command.args, command.options); }
     catch (error) { abiRefusal(index + 1, 1, error); }
     let bytes;
     try { bytes = inputBytes(objects[index], 1024 * 1024); } catch { abiRefusal(index + 1, 2); }

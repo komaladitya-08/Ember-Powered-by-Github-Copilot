@@ -2,7 +2,7 @@
 import fs from "node:fs";
 import { expect, it } from "vitest";
 // @ts-expect-error -- host-only JavaScript recipe and numeric observation boundary
-import { windowsNodePosixRenameAbiObservation, windowsNodePosixRenameAbiBatch, windowsNodePosixSourceCliArguments, parseWindowsNodePosixSourceBuildReceipt } from "../../scripts/experimental/build-windows-node-posix-source.mjs";
+import { windowsNodePosixRenameAbiObservation, windowsNodePosixRenameAbiBatch, windowsNodePosixSourceCliArguments, windowsNodePosixRenameAbiInvocation, parseWindowsNodePosixSourceBuildReceipt } from "../../scripts/experimental/build-windows-node-posix-source.mjs";
 
 const phases = [1, 2, 3].map(value => `EMBER_NODE_POSIX_ABI_PHASE=${value}`);
 const empty = { schema: 1, target: 1, phase: 0, exitCode: null, compilerCodes: [], overflow: 0, unknownLines: 0 };
@@ -60,4 +60,21 @@ it("defaults workflow dispatch to ABI-only and prevents diagnostic artifact uplo
   const workflow = fs.readFileSync(new URL("../../.github/workflows/experimental-windows-node-posix-source.yml", import.meta.url), "utf8");
   expect(workflow).toContain("default: abi-only"); expect(workflow).toContain("steps.build.outcome == 'success' && inputs.probe == 'source-build'");
   expect(workflow).toContain("$arguments += '--abi-only'");
+});
+
+it.each(["D:\\fresh\\compile-abi-1.cmd", "D:\\trusted directory\\compile abi.cmd"])("passes one quoted batch command verbatim for trusted path %s", batch => {
+  const env = { SystemRoot: "C:\\Windows" }, cwd = "D:\\trusted directory";
+  const command = windowsNodePosixRenameAbiInvocation("C:\\Windows\\System32\\cmd.exe", batch, env, cwd);
+  expect(command.program).toBe("C:\\Windows\\System32\\cmd.exe");
+  expect(command.args).toEqual(["/d", "/s", "/v:off", "/c", `""${batch}""`]);
+  expect(command.options).toEqual({ env, cwd, encoding: "utf8", timeout: 120_000, maxBuffer: 65_536, windowsHide: true, windowsVerbatimArguments: true, stdio: ["ignore", "pipe", "pipe"] });
+  expect(command.options.env).toBe(env); expect(Object.isFrozen(env)).toBe(false);
+  expect(Object.isFrozen(command)).toBe(true); expect(Object.isFrozen(command.args)).toBe(true); expect(Object.isFrozen(command.options)).toBe(true); expect(Object.isFrozen(command.options.stdio)).toBe(true);
+});
+it.each([null, 1, {}, "D:\\bad&command.cmd", "D:\\bad%PATH%.cmd", "D:\\bad!value.cmd", "D:\\bad^escape.cmd", "D:\\bad;command.cmd", 'D:\\bad"quoted.cmd', "D:\\file:stream", "D:\\dir\\..\\escape.cmd", "\\\\server\\share\\file.cmd", "D:\\bad\nline.cmd"])("refuses malformed or command-bearing invocation paths %#", value => {
+  for (const index of [0, 1, 2]) {
+    const paths: unknown[] = ["C:\\Windows\\System32\\cmd.exe", "D:\\fresh\\compile.cmd", "D:\\fresh"];
+    paths[index] = value;
+    expect(() => windowsNodePosixRenameAbiInvocation(paths[0], paths[1], {}, paths[2])).toThrow();
+  }
 });

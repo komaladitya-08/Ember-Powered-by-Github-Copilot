@@ -124,8 +124,8 @@ The sole first source attempt was run `43968426268`, compile commit
 `compile-rename-abi`, before vcbuild. Captured compiler output had been discarded,
 so no compiler or header cause was established and no Node artifact was produced.
 
-The follow-up preserves the actual rename block, both target selectors, `/W4
-/WX`, and the current cmd invocation. Each target now has an independent fixed
+The first diagnostic follow-up preserved the actual rename block, both target
+selectors, `/W4 /WX`, and the then-current cmd invocation. Each target now has an independent fixed
 batch with phase markers before vcvars (1), before cl (2) and after successful
 cl (3). Only exact ordered whole stdout lines project a phase; 0 means no such
 entry was observed. Failure observations include target ordinal 1/2 (0 when
@@ -148,3 +148,21 @@ contracts pass (188 new-producer and 118 unchanged producer cases), as do scoped
 lint, script syntax, YAML and Root/independent review. TypeScript session `48709`
 was lost during environment migration and is not a pass. The fresh normal full
 `npm run typecheck` recapture `38371` passed on the unchanged reviewed code.
+
+The sole ABI-only run `43971356498` at `67c1f0be79ccf838e2c87426a43a56f3efd18ab2`
+completed with target 1, phase 0, child exit 1, no C diagnostic codes, overflow 0,
+unknown lines 2 and failurePhase 1. Its Linux contracts passed 188/188; Windows
+contracts passed 159 with 29 expected environment skips. No batch-entry marker
+was observed, and no compiler cause or Node build was established.
+
+The next narrow launcher correction retains the exact doubled-quote final batch
+argument and adds `windowsVerbatimArguments: true`, matching successful fixed
+repository builders. The actual executor uses a tested fixed invocation helper
+with unchanged cmd switches, timeout, output bounds and private pipes. Trusted
+space-containing paths are preserved; malformed and command-bearing paths
+refuse. No rename, compiler warning, header selector or ABI acceptance check
+changes. This corrects invocation semantics under the launcher hypothesis; the
+next reviewed ABI-only outcome remains pending. The frozen launcher follow-up
+passed all 321 composed contracts (203 new-producer and 118 unchanged producer
+cases), scoped lint, syntax, Root/independent review and normal full
+`npm run typecheck` (session `39684`).
