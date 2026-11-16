@@ -1,100 +1,48 @@
 # Fixed libuv initialization feasibility probe
 
-This is a separate trusted C program, not Node, a project-code runner or a general offline-runtime boundary.
-Server 2022 has compiled both programs; useful native operation results remain pending. It does not enable any Windows coding gate.
+The fixed verified-source C program now completes local file, loop, timer, worker and thread operations in
+capability-free LPAC on Windows Server 2022 and 2025. This is a bounded C feasibility result. It does not establish
+Node compatibility, a project-code runner or a general offline-runtime boundary, and enables no Windows coding gate.
 
-The first [Server 2022/2025 run](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43804801904)
-at `28ecd028` passed 315 contracts per job (one symlink-privilege case skipped) and verified/extracted the exact source.
-Server 2022 selected the pinned tools, then stopped during stock CMake configuration because a backslash `-D` path
-was parsed as an escape. Typed PATH/FILEPATH definitions now receive forward slashes after strict local-path validation.
-Server 2025 stopped at tool selection; its actual published image contains VS2026 and CMake 4.4.5, differing from
-the initial VS2022 recipe. Separate explicit image recipes now retain the same v143 compiler pin while selecting
-the published Visual Studio/CMake family for each server. Neither C program was compiled or launched in that run.
+## Completed native evidence
 
-At `0d938c14`, [the next run](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43805335292)
-compiled both C programs on Server 2022 after 316 passing contracts (one expected symlink skip). Its native harness
-then failed during the host phase without an exit/report receipt; no useful-work or LPAC success was established.
-The harness now distinguishes fixed host substages and retains only stopped numeric host/report facts in a branded
-failure receipt, after verified teardown. Missing stopped reports are explicit rather than losing the observed exit.
+Run [43814351971](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43814351971)
+tested exact commit `91de031cad2d53aa014037cd6eb9e8de8743a9fb`. Each Windows image passed **400 portable contracts**
+with **one expected symlink-privilege skip**, then **all four native cases**. The separately enabled macOS portable
+job was skipped in this run; earlier run [43810605648](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43810605648)
+passed 177 portable contracts on macOS, including all 37 source cases.
 
-At `3780c8ae`, [both servers](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43806418378)
-compiled both programs with the selected v143 family (observed compiler servicing versions 19.44.35229.0 and
-19.44.35230.0, separately hash-recorded). All 318 contracts passed per server, with the one expected symlink skip.
-Both ordinary-host variants exited 10 with no report, which identifies the C program's compound pre-libuv bootstrap
-guard, not a libuv/LPAC outcome. That guard now has fixed distinct exits: 10 for argument count; 100/200 plus a
-closed directory-validation reason for work/state; 300 for equal folders. Reasons identify missing/oversized values,
-root/component/character rules, fixed-drive type or directory attributes without returning paths or argument text.
-The original validation predicates are unchanged.
+| Case, on both Windows images | Observed stopped outcome |
+| --- | --- |
+| Stock host | Exit 0; all six useful features; complete callbacks, loop and cleanup witnesses |
+| Offline host | Exit 0; the same complete useful-work witnesses |
+| Stock LPAC | Preserved `0x80000003`, closed `WSAStartup / 10107` signature, checkpoint before loop initialization |
+| Offline LPAC | Exit 0; all six features (`63`), 24-byte sync/async reads, every callback/join once, loop codes 0, cleanup `15`, zero stdio bytes |
 
-Run [43807658696](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43807658696)
-at `f7a7bc363112980c89cb9ad79b684fc293f36cc9` built both programs on both images; each job passed 318 portable
-contracts with one platform privilege skip. Both ordinary-host variants then exited 132 with no report: work
-directory `GetFileAttributesW` returned `INVALID_FILE_ATTRIBUTES`, after the syntax and fixed-drive checks passed.
-No LPAC process launched. Its immediate Win32 error is now encoded as `0xe1010000 | error` for work or
-`0xe1020000 | error` for state when the error fits 16 bits; larger errors produce the fixed `0xe1ffffff` or
-`0xe2ffffff` refusal. These stopped numeric bootstrap diagnostics expose no path or native message and do not
-change any acceptance check.
+Both ordinary-host controls matched their parents' user, High integrity RID (`12288`), AppContainer absence and
+restricting-SID absence. Every result followed root exit, private-job zero and verified fixture cleanup. Raw native
+text, private scratch, traces and dumps were not published.
 
-Probe-only run [43808299610](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43808299610)
-at `0aa005e26b64f460e7299840bdca8acb237d6e2d` returned `0xe1010005` for all four ordinary-host variants:
-the immediate work-directory error is `ERROR_ACCESS_DENIED` (5). Both images built successfully and each passed
-318 contracts with one privilege skip. No LPAC process launched. Subsequent diagnostics preserve that refusal
-and add only fixed token predicates and failure-path directory facts. Exit bits 18 through 22 record successful
-current-directory query, its equality to the selected directory, an exact attributes-only directory open,
-ordinary non-reparse directory metadata, and successful handle close. The alternate open requests the same
-attributes access and read/write sharing as the retained parent pins; its result never authorizes useful work.
-The exact suspended host's token is also compared with the parent process token using query-only handles:
-receipts contain only user-equality, restricting-SID presence, AppContainer booleans and integrity RIDs. SID pointers must be
-wholly contained in their bounded token buffers; raw SIDs are never returned. Unknown token ownership or close
-failure quarantines the diagnostic. Facts are published only after native root/job stop and verified fixture cleanup.
-No path, SID, native text, ACL or privilege change is involved. The access-denial cause remains pending.
+The host control executes the original hash-verified build asset. Earlier run
+[43813233759](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43813233759)
+showed that executing the deliberately LOW-labelled LPAC copy changed an ordinary host from High to Low, after
+which work-directory metadata was denied. The [MIC process-creation contract](https://learn.microsoft.com/en-us/windows/win32/secauthz/mandatory-integrity-control)
+explains the observed integrity change; the precise access-denial mechanism was not inferred. The corrected host
+image selection preserves every LPAC label, ACL, capability, handle and workload.
 
-Run [43809707531](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43809707531)
-at `cb24de36f48538f36d3011f98faaa1719b7e761c` built both variants on both Windows images and passed
-386 portable contracts with one privilege skip per image. Its new token inspector refused before host resume;
-neither C bootstrap facts nor LPAC work were observed. The inspector now returns only a branded closed stage/reason
-and immediate bounded Win32 error on native FALSE, after verified cleanup. Its acceptance predicates are unchanged.
+The token diagnostic uses [IsTokenRestricted](https://learn.microsoft.com/en-us/windows/win32/api/securitybaseapi/nf-securitybaseapi-istokenrestricted)
+only for restricting-SID presence. Both native images returned one byte for `TokenHasRestrictions` in
+[43811722242](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43811722242), despite
+its documented DWORD description; that layout is not accepted or interpreted. The BOOL query uses the existing
+TOKEN_QUERY handles, and FALSE requires immediate zero error after clearing only the thread-local diagnostic error.
+SID pointers remain bounded inside token buffers. Unknown ownership or close failure quarantines the diagnostic.
+No SID, token, policy, ACL or privilege change is exposed or performed.
 
-Run [43810605648](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43810605648)
-at `b73261c50be3a6c08c2a59095feaa79ed9499cf8` passed all 177 portable contracts on actual macOS, including all
-37 source cases. Both Windows images built both executables and passed 388 contracts with one privilege skip;
-their inspector refused at `parent-restricted / contract` before resume. The diagnostic had incorrectly treated
-`TokenHasRestrictions` as a canonical 0/1 value. Microsoft's [documented information-class contract](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ne-winnt-token_information_class)
-defines a nonzero DWORD predicate for whether a token has ever been filtered. The decoder now preserves that
-DWORD and derives the documented predicate; exact returned sizes, SID bounds and ordinary-AppContainer admission
-stay enforced. This changes no process token or access grant. A malformed returned count is reported only as a
-bounded numeric refusal. Actual token values and C directory facts remain pending.
-
-Run [43811722242](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43811722242)
-at `2f2fcd2ae6b663d92bd3e632aac389784d46c2e9` proved that both Windows images actually return one byte for
-`TokenHasRestrictions`, despite the documented DWORD description. Each image passed 391 contracts with one
-privilege skip; the strict inspector refused before resume. The diagnostic now uses the separately documented
-[IsTokenRestricted](https://learn.microsoft.com/en-us/windows/win32/api/securitybaseapi/nf-securitybaseapi-istokenrestricted)
-BOOL API on the same query-only handles. It reports only whether restricting SIDs are present, rather than token
-filtering history or disabled privileges. FALSE is accepted only with immediate zero `GetLastError` after clearing
-that thread-local diagnostic value; a nonzero error or invalid native BOOL still refuses. The one-byte query format
-is never accepted or interpreted. No token, policy, ACL or privilege is changed. Actual token and C facts remain pending.
-
-Run [43813233759](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43813233759)
-at `48fab2c6ea79731fe74cd73cdd92ccc01b01658c` produced the same stopped facts for both variants on both images:
-parent integrity RID 12288 (High), host RID 4096 (Low), equal users, neither token in AppContainer and neither
-containing restricting SIDs. The C current-directory query succeeded and matched work, but both ordinary attributes
-and the attributes-only handle open were denied. Each image passed 400 portable contracts with one privilege skip.
-No report or LPAC launch occurred. Microsoft's [MIC process-creation contract](https://learn.microsoft.com/en-us/windows/win32/secauthz/mandatory-integrity-control)
-explains why the deliberately LOW-labelled fixture executable lowered the host control's integrity. These facts do
-not identify the precise directory access-denial cause.
-
-The independent host control now executes the original verified build asset, held read-only under the same exact
-receipt/hash and pinned ancestry. Exact PID/image checks follow that original path; the LPAC launch still uses only
-its separately checked LOW-labelled fixture copy. The host must complete every useful operation, stop its private
-job and match the parent's observed user, integrity and restricting-SID facts before LPAC admission. No LPAC label,
-ACL, capability, stdio handle or C operation changed. Native useful-work outcomes for this control correction remain pending.
-
-The official Node experiment identified `WSAStartup / 10107` on both pinned versions and both Windows Server images,
-with successful ordinary-host controls. See [the bounded native receipts](WINDOWS-NODE-LPAC-PROOF.md).
-The immediate question is whether a few useful local libuv operations can run in the same capability-free LPAC
-when unused Winsock initialization is omitted at compile time. Ignoring a failed attempted initialization, spoofing
-Safe Mode, adding capabilities or changing host resource permissions would answer a different question.
+The official Node experiment still identifies `WSAStartup / 10107` on both pinned versions and both Windows Server
+images, with successful host startup controls. See [the Node receipts](WINDOWS-NODE-LPAC-PROOF.md). The fixed C
+result answers whether its small set of local operations survives compile-time omission of unused Winsock
+initialization. Ignoring a failed attempted initialization, spoofing Safe Mode, adding capabilities or changing
+host resource permissions is outside this experiment.
 
 ## Exact source and separate build authority
 
@@ -146,8 +94,9 @@ callback counts and cleanup observations. A checkpoint is flushed before loop in
 the program is running. Successful records require all six feature bits, exact fixed byte counts, every callback/join
 witness, loop return codes and cleanup flags. Malformed, oversized, wrong-build/token or inconsistent records fail.
 
-Stock and offline host/LPAC pairs are separate. Each host uses an ordinary inspected token and its own private job;
-its complete useful-work record and zero private stdio bytes are prerequisites for its LPAC launch. The LPAC root is
+Stock and offline host/LPAC pairs are separate. Each host uses the original pinned build image and its own private
+job. Exact PID/image checks follow that path; its observed user, integrity and restricting-SID facts must match the
+parent. Its complete useful-work record and zero private stdio bytes are prerequisites for its LPAC launch. The LPAC root is
 created suspended with zero capabilities and AAP opt-out, assigned to its job, and checked for exact image/PID/token
 before resume. Compiled and staged images stay pinned and hash-checked. Exactly two fresh private stdio handles are
 inherited; no credential, console, source-project or SDK handle is supplied.
