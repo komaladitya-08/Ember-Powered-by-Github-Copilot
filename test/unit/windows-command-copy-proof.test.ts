@@ -1,8 +1,10 @@
 /** Regression for the actual global test teardown: uncertain native scratch must live outside its deletion tree. */
 import { describe, expect, it } from "vitest";
-import { beginWindowsCommandCopyProof, observeWindowsCommandCopyFactory, observeWindowsCommandCopyTree, requireWindowsCommandCopyScratchParent } from "../fixtures/windows-command-copy-proof";
+import { beginWindowsCommandCopyProof, observeWindowsCommandCopyBoundary, observeWindowsCommandCopyFactory, observeWindowsCommandCopyStopOwner,
+  observeWindowsCommandCopyTree, requireWindowsCommandCopyScratchParent } from "../fixtures/windows-command-copy-proof";
 import type { FreshWindowsCommandTree, FreshWindowsCommandTreeInput } from "../../app/main/agent/windows-command-copy-native";
 import type { CodingExportEntry } from "../../app/main/agent/coding-result-export";
+import type { WindowsCommandRootOnlyStoppedRef, WindowsCommandRootOnlyStopOwner } from "../../app/main/agent/windows-command-stop";
 
 describe("native root-only witness scratch lifetime", () => {
   it.each([
@@ -24,6 +26,65 @@ describe("native root-only witness scratch lifetime", () => {
     ["C:\\native\n", "D:\\managed"],
   ])("refuses managed teardown overlap or unsupported scratch %s", (parent, managed) => {
     expect(() => requireWindowsCommandCopyScratchParent(parent, managed)).toThrow("native scratch parent");
+  });
+});
+
+describe("real Stop/creator/attester error observation", () => {
+  it.each([1, 3, 4] as const)("preserves synchronous boundary%i success/error identity even when observation fails", boundary => {
+    const result = Object.freeze({ synthetic: true }), error = new Error("Fixed private synthetic error"), seen: unknown[] = [];
+    expect(observeWindowsCommandCopyBoundary(boundary, () => result, () => { throw new Error("Success must not notify."); })).toBe(result);
+    let caught: unknown;
+    try { observeWindowsCommandCopyBoundary(boundary, () => { throw error; }, (kind, original) => { seen.push([kind, original]); throw new Error("Fixed diagnostic failure"); }); }
+    catch (value) { caught = value; }
+    expect(caught).toBe(error); expect(seen).toEqual([[boundary, error]]);
+  });
+  function setup(fault?: "launch" | "stop" | "retainStop", synchronous = false, observerFails = false) {
+    const calls: { method: string; args: unknown[]; sameReceiver: boolean }[] = [], seen: unknown[] = [], error = new Error("Fixed Stop failure");
+    const receipt = Object.freeze({ scope: "root-only" }) as WindowsCommandRootOnlyStoppedRef;
+    const actual: WindowsCommandRootOnlyStopOwner = {
+      scope: "root-only",
+      launch(...args) { calls.push({ method: "launch", args, sameReceiver: this === actual }); if (fault === "launch") { if (synchronous) throw error; return Promise.reject(error); } return Promise.resolve(7); },
+      stop(...args) { calls.push({ method: "stop", args, sameReceiver: this === actual }); if (fault === "stop") return Promise.reject(error); return Promise.resolve(receipt); },
+      retainStop() { calls.push({ method: "retainStop", args: [], sameReceiver: this === actual }); if (fault === "retainStop") throw error; },
+    };
+    const observed = observeWindowsCommandCopyStopOwner(actual, (boundary, original) => { seen.push([boundary, original]); if (observerFails) throw new Error("Fixed diagnostic failure"); });
+    return { actual, observed, calls, seen, receipt, error };
+  }
+  const create = () => ({ process: 10n, thread: 11n, pid: 7 }), attest = () => undefined, current = () => true;
+  it("preserves exact receiver/arguments, numeric result and the same opaque receipt with no speculative call", async () => {
+    const state = setup(); expect(await state.observed.launch(create, attest, current)).toBe(7);
+    expect(await state.observed.stop(15000)).toBe(state.receipt); expect(await state.observed.stop()).toBe(state.receipt);
+    expect(state.observed.retainStop()).toBeUndefined(); expect(state.observed.scope).toBe("root-only");
+    expect(state.calls).toEqual([{ method: "launch", args: [create, attest, current], sameReceiver: true }, { method: "stop", args: [15000], sameReceiver: true },
+      { method: "stop", args: [], sameReceiver: true }, { method: "retainStop", args: [], sameReceiver: true }]); expect(state.seen).toEqual([]);
+  });
+  it.each([false, true])("preserves original launch rejection when observerThrows=%s", async observerFails => {
+    const state = setup("launch", false, observerFails); await expect(state.observed.launch(create, attest, current)).rejects.toBe(state.error);
+    expect(state.calls).toEqual([{ method: "launch", args: [create, attest, current], sameReceiver: true }]); expect(state.seen).toEqual([[2, state.error]]);
+  });
+  it("preserves a synchronous launch error without an extra Stop or close", () => {
+    const state = setup("launch", true, true); let caught: unknown;
+    try { state.observed.launch(create, attest, current); } catch (error) { caught = error; }
+    expect(caught).toBe(state.error); expect(state.calls).toHaveLength(1); expect(state.seen).toEqual([[2, state.error]]);
+  });
+  it("records a stopped-owner rejection without inventing a launch boundary or consuming the receipt", async () => {
+    const state = setup("stop", false, true); await expect(state.observed.stop(15000)).rejects.toBe(state.error);
+    expect(state.calls).toEqual([{ method: "stop", args: [15000], sameReceiver: true }]); expect(state.seen).toEqual([[0, state.error]]);
+  });
+  it("preserves a retainStop error without retry or another native operation", () => {
+    const state = setup("retainStop", false, true); let caught: unknown;
+    try { state.observed.retainStop(); } catch (error) { caught = error; }
+    expect(caught).toBe(state.error); expect(state.calls).toEqual([{ method: "retainStop", args: [], sameReceiver: true }]); expect(state.seen).toEqual([[0, state.error]]);
+  });
+  it.each([3, 4] as const)("keeps inner boundary%i before the outer launch rejection", async boundary => {
+    const error = new Error("Fixed inner boundary error"), seen: unknown[] = []; let first = 0;
+    const capture = (kind: number, original: unknown) => { if (!first && kind) first = kind; seen.push([kind, original]); };
+    const actual: WindowsCommandRootOnlyStopOwner = { scope: "root-only", async launch(create, attest) { const root = create(); attest(root); return root.pid; },
+      async stop() { throw new Error("The observer must not stop a failed launch."); }, retainStop() { throw new Error("The observer must not retain a failed launch."); } };
+    const observed = observeWindowsCommandCopyStopOwner(actual, capture);
+    await expect(observed.launch(() => boundary === 3 ? observeWindowsCommandCopyBoundary(3, () => { throw error; }, capture) : create(),
+      root => { expect(root.pid).toBe(7); observeWindowsCommandCopyBoundary(4, () => { throw error; }, capture); }, current)).rejects.toBe(error);
+    expect(first).toBe(boundary); expect(seen).toEqual([[boundary, error], [2, error]]);
   });
 });
 

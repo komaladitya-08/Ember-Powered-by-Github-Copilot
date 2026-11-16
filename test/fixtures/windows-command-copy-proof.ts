@@ -10,7 +10,7 @@ import { loadExperimentalWindowsLpacApi } from "../../app/main/agent/experimenta
 import { ExperimentalWindowsLpacFixture, experimentalWindowsEnvironment, experimentalWindowsSddl } from "../../app/main/agent/experimental-windows-lpac";
 import type { WindowsCommandCopyProofNative, WindowsCommandCopyProofPin } from "./windows-command-copy-proof-native";
 import type { FreshWindowsCommandTree, FreshWindowsCommandTreeInput, WindowsCommandCopyNativeFailure } from "../../app/main/agent/windows-command-copy-native";
-import type { WindowsCommandRootOnlyStopOwner } from "../../app/main/agent/windows-command-stop";
+import type { WindowsCommandRootOnlyFailure, WindowsCommandRootOnlyStopOwner } from "../../app/main/agent/windows-command-stop";
 import type { WindowsRootOnlyCommandCopy } from "../../app/main/agent/windows-command-copy";
 import { parseWindowsCommandCopyReport, WINDOWS_COMMAND_COPY_HEARTBEAT_MAGIC, type WindowsCommandCopyProofMode } from "./windows-command-copy-report";
 
@@ -21,6 +21,25 @@ const retained: unknown[] = [];
 const notifyFailure = (error: unknown, failed: (error: unknown) => void) => {
   try { failed(error); } catch { /* Diagnostic failure cannot replace the authoritative native error. */ }
 };
+export type WindowsCommandCopyBoundary = 0 | 1 | 2 | 3 | 4;
+type BoundaryObserver = (boundary: WindowsCommandCopyBoundary, error: unknown) => void;
+/** Constructor/creator/attester observation never replaces the original synchronous return or error. */
+export function observeWindowsCommandCopyBoundary<T>(boundary: 1 | 3 | 4, operation: () => T, failed: BoundaryObserver): T {
+  try { return operation(); }
+  catch (error) { notifyFailure(error, original => failed(boundary, original)); throw error; }
+}
+/** Delegates the real Stop owner; only its actual opaque receipt can cross the existing coordinator barrier. */
+export function observeWindowsCommandCopyStopOwner(owner: WindowsCommandRootOnlyStopOwner, failed: BoundaryObserver): WindowsCommandRootOnlyStopOwner {
+  const observe = <T>(boundary: WindowsCommandCopyBoundary, operation: () => Promise<T>): Promise<T> => {
+    try { return operation().catch(error => { notifyFailure(error, original => failed(boundary, original)); throw error; }); }
+    catch (error) { notifyFailure(error, original => failed(boundary, original)); throw error; }
+  };
+  return Object.freeze({ scope: owner.scope,
+    launch: (...args: Parameters<WindowsCommandRootOnlyStopOwner["launch"]>) => observe(2, () => owner.launch(...args)),
+    stop: (...args: Parameters<WindowsCommandRootOnlyStopOwner["stop"]>) => observe(0, () => owner.stop(...args)),
+    retainStop: () => { try { return owner.retainStop(); } catch (error) { notifyFailure(error, original => failed(0, original)); throw error; } },
+  });
+}
 /** Catch-only observation of actual native methods; arguments, result/error identity and native-call counts are preserved. */
 export function observeWindowsCommandCopyTree(tree: FreshWindowsCommandTree, failed: (error: unknown) => void): FreshWindowsCommandTree {
   const observe = <T>(operation: () => Promise<T>): Promise<T> => {
@@ -73,15 +92,17 @@ const command = (program: string, args: readonly string[]) => {
 };
 /** Only phase numbers leave this fixture; all source/data/path/error material stays in its private retained graph. */
 export class WindowsCommandCopyObservationError extends Error {
-  constructor(readonly phase: number, readonly subphase: number, readonly ownership: number, readonly native?: WindowsCommandCopyNativeFailure) {
-    super(`The root-only native observation was refused at phase ${phase}, subphase ${subphase}, ownership ${ownership}${native ? `, native ${JSON.stringify(native)}` : ""}.`);
+  constructor(readonly phase: number, readonly subphase: number, readonly ownership: number, readonly native?: WindowsCommandCopyNativeFailure,
+    readonly boundary: WindowsCommandCopyBoundary = 0, readonly stop?: WindowsCommandRootOnlyFailure) {
+    super(`The root-only native observation was refused at phase ${phase}, subphase ${subphase}, ownership ${ownership}, boundary ${boundary}${native ? `, native ${JSON.stringify(native)}` : ""}${stop ? `, stop ${JSON.stringify(stop)}` : ""}.`);
     this.name = "WindowsCommandCopyObservationError"; this.stack = `${this.name}: ${this.message}`;
   }
 }
 
 /** Uses the actual emitted CJS default Koffi loaders/factories and a separately verified, host-built fixed C image. */
 export async function observeWindowsCommandCopy(asset: WindowsCommandCopyBuiltAsset, verifyBuild: () => void, scratchParent: string) {
-  let phase = 1, subphase = 0, nativeFailure: WindowsCommandCopyNativeFailure | undefined, emitted: Emitted | undefined, native: WindowsCommandCopyProofNative | undefined, fixture: ExperimentalWindowsLpacFixture | undefined,
+  let phase = 1, subphase = 0, firstBoundary: WindowsCommandCopyBoundary = 0, stopFailure: WindowsCommandRootOnlyFailure | undefined,
+    nativeFailure: WindowsCommandCopyNativeFailure | undefined, emitted: Emitted | undefined, native: WindowsCommandCopyProofNative | undefined, fixture: ExperimentalWindowsLpacFixture | undefined,
     copy: WindowsRootOnlyCommandCopy | undefined, profile: WindowsLpacProfile | undefined, profileDeleted = false, root = "";
   const owners: WindowsCommandRootOnlyStopOwner[] = [], pins: WindowsCommandCopyProofPin[] = [], issued: unknown[] = [];
   try {
@@ -90,7 +111,7 @@ export async function observeWindowsCommandCopy(asset: WindowsCommandCopyBuiltAs
     emitted = createRequire(asset.module)(asset.module) as Emitted;
     const loaded = emitted;
     for (const key of ["WindowsRootOnlyCommandCopy", "createWindowsCommandRootOnlyStopOwner", "requireWindowsCommandRootOnlyStopped", "createFreshWindowsCommandTree",
-      "loadWindowsCommandCopyProofNative", "WindowsCommandCopyProofCleanupError", "WindowsCommandCopyCleanupError", "WindowsCommandRootOnlyCleanupError", "WindowsRootOnlyCommandCopyCleanupError", "windowsCommandCopyNativeFailure"] as const)
+      "loadWindowsCommandCopyProofNative", "WindowsCommandCopyProofCleanupError", "WindowsCommandCopyCleanupError", "WindowsCommandRootOnlyCleanupError", "WindowsRootOnlyCommandCopyCleanupError", "windowsCommandCopyNativeFailure", "windowsCommandRootOnlyFailure"] as const)
       ensure(typeof loaded[key] === "function");
     native = loaded.loadWindowsCommandCopyProofNative();
     const guarded = native;
@@ -126,10 +147,17 @@ export async function observeWindowsCommandCopy(asset: WindowsCommandCopyBuiltAs
     const toolPin = guarded.pin(paths.program, 16 * 1024 * 1024); pins.push(toolPin);
     ensure(toolPin.read().equals(executablePin.read()));
     const recheck = () => { verifyBuild(); for (const pin of pins) pin.unchanged(); };
-    const attest = (selected: Readonly<WindowsSuspendedProcess>) => {
-      guarded.guard(() => original.verifyToken(profile!, selected.process)); guarded.image(selected.process, selected.pid, paths.program); recheck();
+    const captureStop: BoundaryObserver = (boundary, error) => {
+      if (!firstBoundary && boundary) firstBoundary = boundary;
+      stopFailure ??= loaded.windowsCommandRootOnlyFailure(error);
     };
-    const createOwner = (binding: object) => { const selected = loaded.createWindowsCommandRootOnlyStopOwner(binding, api); owners.push(selected); return selected; };
+    const attest = (selected: Readonly<WindowsSuspendedProcess>) => observeWindowsCommandCopyBoundary(4, () => {
+      guarded.guard(() => original.verifyToken(profile!, selected.process)); guarded.image(selected.process, selected.pid, paths.program); recheck();
+    }, captureStop);
+    const createOwner = (binding: object) => observeWindowsCommandCopyBoundary(1, () => {
+      const selected = loaded.createWindowsCommandRootOnlyStopOwner(binding, api); owners.push(selected);
+      return observeWindowsCommandCopyStopOwner(selected, captureStop);
+    }, captureStop);
     const captureNative = (error: unknown) => { nativeFailure ??= loaded.windowsCommandCopyNativeFailure(error); };
     const makeCopy = async () => {
       subphase = 1;
@@ -142,10 +170,10 @@ export async function observeWindowsCommandCopy(asset: WindowsCommandCopyBuiltAs
       } });
       issued.push(selected); ensure(directory.length > 0); return { selected, directory };
     };
-    const create = (mode: WindowsCommandCopyProofMode, directory: string, report: string, ready: string) => {
+    const create = (mode: WindowsCommandCopyProofMode, directory: string, report: string, ready: string) => observeWindowsCommandCopyBoundary(3, () => {
       recheck(); return guarded.guard(() => original.createSuspended(profile!, paths.program,
         command(paths.program, [mode, directory, source, canary, report, ready]), paths.work, environment));
-    };
+    }, captureStop);
     const waitExited = async (selected: WindowsSuspendedProcess) => {
       const end = performance.now() + 15_000;
       while (!guarded.guard(() => original.exited(selected.process))) { ensure(performance.now() < end); await delay(); }
@@ -227,6 +255,6 @@ export async function observeWindowsCommandCopy(asset: WindowsCommandCopyBuiltAs
       emitted.WindowsCommandCopyCleanupError, emitted.WindowsCommandCopyProofCleanupError].entries()) {
       if (typeof constructor === "function" && error instanceof constructor) { ownership = index + 1; break; }
     }
-    throw new WindowsCommandCopyObservationError(phase, subphase, ownership, nativeFailure);
+    throw new WindowsCommandCopyObservationError(phase, subphase, ownership, nativeFailure, firstBoundary, stopFailure);
   }
 }

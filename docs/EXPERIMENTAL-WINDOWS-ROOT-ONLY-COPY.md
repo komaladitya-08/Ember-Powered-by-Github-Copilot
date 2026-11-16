@@ -97,8 +97,9 @@ child-capable lease, no outside-job service/broker proof and no ordinary coding-
 Portable phase/native-binding tests check exact grant/revoke ordering, opaque receipt provenance, callback and
 input capture, cancellation, private review authority, limits, identities, process/handle completion and terminal
 retention. They are contract tests, not Windows execution. The reviewed fixed native grant/write/revoke/denial
-harness is now implemented separately from the product. Its native execution and actual supported Windows
-acceptance are pending. Product mode, shell/toolchain availability and the original file-only verifier remain unchanged.
+harness is now implemented separately from the product. Successful native acceptance remains pending; the actual
+failed runs and their limited positive facts are recorded below. Product mode, shell/toolchain availability and the
+original file-only verifier remain unchanged.
 
 The dedicated `experimental-windows-command-copy` workflow registers portable contract checks on pull requests.
 Only explicit workflow dispatch runs the hosted Server 2022/2025 native matrix. It builds one fixed C program
@@ -132,7 +133,7 @@ Initial local verification at `d745b196` passed 449 contracts across the root St
 native tree binding (75), fixed build/CJS source graph (68), report decoder (47), strict proof-native helper (110)
 and scratch lifetime (12). The final composed TypeScript check, scoped lint, workflow parsing/dispatch checks and the app build passed. The ordinary
 Linux invocation skips the Windows case; an explicitly required Linux invocation fails the suite as intended.
-Neither result is Windows execution evidence. The real two-image matrix must complete before this prerequisite
+Neither result is Windows execution evidence. A successful real two-image matrix is required before this prerequisite
 can be recorded as natively verified.
 
 The first manual matrix at `d745b196`,
@@ -140,7 +141,7 @@ The first manual matrix at `d745b196`,
 passed 448 portable contracts per image plus one expected unsupported-host guard skip. Both native cases failed
 with phase `3`, ownership `1`: the real emitted coordinator's cleanup error. The fixed C build/CJS setup completed,
 but that phase still includes fresh-tree construction, the initial private snapshot and first launch. It establishes
-neither useful native edits nor a particular NTFS/ACL failure. No second matrix has run.
+neither useful native edits nor a particular NTFS/ACL failure. No additional native cause was exposed by that run.
 
 The follow-up preserves every native call, predicate, access mask, fence and cleanup rule while adding a first-error
 WeakMap receipt. It records only closed stage/operation/predicate IDs and already-returned, bounded NTSTATUS/BOOL
@@ -153,4 +154,24 @@ authority and cannot replace a successful Stop or a native acceptance result.
 
 The frozen diagnostic follow-up passes 507 focused contracts, final composed TypeScript, scoped lint and diff
 checks. Independent actual-file review closed after a regression proved that a throwing factory observer must
-preserve the original failure. The diagnostic native matrix is still pending.
+preserve the original failure. Its subsequent native result is recorded below.
+
+The second manual matrix at `3d010e7a`,
+[run 43868304953](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43868304953),
+passed 506 portable cases per image plus the expected unsupported-host guard skip. Both native cases reached
+phase `3`, subphase `3`, ownership `1`, without a branded native-tree failure. Thus the real fresh-tree factory
+and initial private six-entry snapshot completed on both images, but the first launch failed. No useful edits,
+successful native Stop/revoke or completed scratch/profile cleanup were established.
+
+The next code-only diagnostic follows the actual Stop constructor/launch and guarded creator/attester boundaries.
+It preserves their original return/receipt/error identity and retains the first branded Stop failure. A closed
+constraint ID may identify the first mismatching span only after the existing complete limit predicate failed;
+no value, process ID, pointer, count, access mask or additional native query is exposed. In particular, Microsoft's
+[basic limit contract](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-jobobject_basic_limit_information)
+says SchedulingClass is ignored without its flag and defaults to `5`. This is a possible explanation for a
+whole-buffer zero comparison, not an observed cause. Every acceptance predicate remains unchanged pending
+actual boundary evidence; a third native matrix has not run.
+
+The frozen launch-boundary diagnostic passes 576 focused contracts, final composed TypeScript, scoped lint and
+diff checks. Root's independent actual-file review closed without an acceptance, call-order or retention change.
+No third native result or successful whole-copy lifecycle is claimed by those portable checks.

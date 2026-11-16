@@ -14,7 +14,7 @@ const PROOF_NATIVE = "test/fixtures/windows-command-copy-proof-native.ts";
 const MODULES = ["app/main/agent/windows-command-copy.ts", "app/main/agent/windows-command-stop.ts", "app/main/agent/windows-command-copy-native.ts", PROOF_NATIVE];
 const FIXED_INPUTS = [C_SOURCE, BUILDER, ...MODULES, "package.json", "package-lock.json", "tsconfig.json"];
 const WRAPPER = 'export { WindowsRootOnlyCommandCopy, WindowsRootOnlyCommandCopyCleanupError } from "./app/main/agent/windows-command-copy.ts";\n' +
-  'export { createWindowsCommandRootOnlyStopOwner, requireWindowsCommandRootOnlyStopped, WindowsCommandRootOnlyCleanupError } from "./app/main/agent/windows-command-stop.ts";\n' +
+  'export { createWindowsCommandRootOnlyStopOwner, requireWindowsCommandRootOnlyStopped, WindowsCommandRootOnlyCleanupError, windowsCommandRootOnlyFailure } from "./app/main/agent/windows-command-stop.ts";\n' +
   'export { WindowsCommandCopyCleanupError, createFreshWindowsCommandTree, windowsCommandCopyNativeFailure } from "./app/main/agent/windows-command-copy-native.ts";\n' +
   'export { loadWindowsCommandCopyProofNative, WindowsCommandCopyProofCleanupError } from "./test/fixtures/windows-command-copy-proof-native.ts";\n';
 const digest = bytes => createHash("sha256").update(bytes).digest("hex");

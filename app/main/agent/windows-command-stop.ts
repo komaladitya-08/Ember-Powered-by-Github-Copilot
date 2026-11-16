@@ -10,6 +10,38 @@ const refuse = () => new Error("The Windows root-only command writer contract wa
 const handle = (value: unknown): value is WindowsHandle => typeof value === "bigint" && value > 0n && value < 0x8000000000000000n;
 const dword = (value: unknown): value is number => typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 0xffffffff;
 const bool = (value: unknown): value is number => typeof value === "number" && Number.isInteger(value) && value >= -0x80000000 && value <= 0x7fffffff;
+type FailureStage = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13;
+type FailureOperation = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;
+type FailurePredicate = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11;
+type FailureConstraint = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14;
+// Stages 1..13: load, job create, configure/readback, initial state, creator, preassign, assign,
+// attest, postattest, resume, Stop request, completion, close. Operations 1..7 follow the fixed prototypes below.
+// Predicates 1..11: call throw, ABI, returned failure, limit readback, job state, identity,
+// ownership, authority, deadline, close, invariant. Zero operation/constraint means no known site/span.
+export interface WindowsCommandRootOnlyFailure {
+  readonly stage: FailureStage; readonly operation: FailureOperation; readonly predicate: FailurePredicate;
+  readonly domain: 0 | 1; readonly code: number; readonly constraint: FailureConstraint;
+}
+const failures = new WeakMap<object, WindowsCommandRootOnlyFailure>();
+/** Fixed first-failure facts only; foreign objects and serialized errors have no diagnostic authority. */
+export function windowsCommandRootOnlyFailure(error: unknown): WindowsCommandRootOnlyFailure | undefined {
+  return typeof error === "object" && error !== null ? failures.get(error) : undefined;
+}
+const observation = (stage: FailureStage, predicate: FailurePredicate, operation: FailureOperation = 0, constraint: FailureConstraint = 0,
+  status?: unknown): WindowsCommandRootOnlyFailure => {
+  const knownBool = (operation === 1 || operation === 2 || operation === 5 || operation === 7) &&
+    typeof status === "number" && Number.isInteger(status) && status >= -0x80000000 && status <= 0xffffffff;
+  return Object.freeze({ stage, operation, predicate, constraint, domain: knownBool ? 1 : 0, code: knownBool ? (status as number) >>> 0 : 0 });
+};
+const remember = (error: unknown, failure: WindowsCommandRootOnlyFailure) => {
+  if (typeof error === "object" && error !== null && !failures.has(error)) failures.set(error, failure);
+};
+const refused = (stage: FailureStage, predicate: FailurePredicate, operation: FailureOperation = 0, constraint: FailureConstraint = 0, status?: unknown) => {
+  const error = refuse(); remember(error, observation(stage, predicate, operation, constraint, status)); return error;
+};
+// Constraints 1..14: process/job time, flags, padding20, min/max workset, active limit, padding44,
+// affinity, priority, scheduling, process/job memory, UI. These existing spans never expose values.
+const LIMIT_SPANS = [[0, 8], [8, 16], [16, 20], [20, 24], [24, 32], [32, 40], [40, 44], [44, 48], [48, 56], [56, 60], [60, 64]] as const;
 export class WindowsCommandRootOnlyCleanupError extends WindowsCodingCleanupError {
   constructor() { super(); this.name = "WindowsCommandRootOnlyCleanupError"; this.message = "Windows root-only command writer cleanup could not be verified."; }
 }
@@ -51,55 +83,67 @@ export function bindWindowsCommandRootOnlyStopNative(koffi: Pick<typeof Koffi, "
   load: (name: string) => { func(prototype: string): unknown }): WindowsCommandRootOnlyStopNative {
   const functions: Record<string, NativeFunction> = {}, retained = new Set<unknown>();
   try {
-    if (koffi.sizeof("void *") !== 8) throw refuse();
+    if (koffi.sizeof("void *") !== 8) throw refused(1, 2);
     const library = load("kernel32.dll");
     for (const prototype of WINDOWS_COMMAND_ROOT_ONLY_STOP_FUNCTIONS) {
-      const value = library.func(prototype); if (typeof value !== "function") throw refuse();
+      const value = library.func(prototype); if (typeof value !== "function") throw refused(1, 2);
       functions[/\b(\w+)\s*\(/.exec(prototype)![1]] = value as NativeFunction;
     }
-  } catch { throw refuse(); }
-  const checked = (value: unknown) => { if (!bool(value) || value === 0) throw refuse(); };
-  const query = (job: WindowsHandle, kind: number, size: number): Buffer => {
+  } catch (error) { const failure = windowsCommandRootOnlyFailure(error); throw refused(1, failure?.predicate ?? 1); }
+  const call = (stage: FailureStage, operation: FailureOperation, name: string, args: unknown[]) => {
+    try { return functions[name](...args); } catch (error) { remember(error, observation(stage, 1, operation)); throw error; }
+  };
+  const checked = (value: unknown, stage: FailureStage, operation: FailureOperation) => {
+    if (!bool(value) || value === 0) throw refused(stage, !bool(value) ? 2 : 3, operation, 0, value);
+  };
+  const query = (job: WindowsHandle, kind: number, size: number, stage: FailureStage): Buffer => {
     const bytes = Buffer.alloc(size); retained.add(bytes);
-    checked(functions.QueryInformationJobObject(job, kind, bytes, size, null)); return bytes;
+    checked(call(stage, 2, "QueryInformationJobObject", [job, kind, bytes, size, null]), stage, 2); return bytes;
   };
   const release = (bytes: Buffer) => { bytes.fill(0); retained.delete(bytes); };
   const native: WindowsCommandRootOnlyStopNative = {
     configure(job) {
       const bytes = Buffer.alloc(144); bytes.writeUInt32LE(LIMITS, 16); bytes.writeUInt32LE(1, 40); retained.add(bytes);
-      checked(functions.SetInformationJobObject(job, 9, bytes, bytes.length)); release(bytes); native.assertLimits(job);
+      checked(call(3, 1, "SetInformationJobObject", [job, 9, bytes, bytes.length]), 3, 1); release(bytes); native.assertLimits(job);
     },
     assertLimits(job) {
-      const observed = query(job, 9, 144), ui = query(job, 4, 4);
+      const observed = query(job, 9, 144, 3), ui = query(job, 4, 4, 3);
       // Accounting/peak usage is dynamic; all limit fields must remain exactly the configured zero/one values.
       const expected = Buffer.alloc(64); expected.writeUInt32LE(LIMITS, 16); expected.writeUInt32LE(1, 40);
-      if (!observed.subarray(0, 64).equals(expected) || observed.readBigUInt64LE(112) !== 0n || observed.readBigUInt64LE(120) !== 0n || ui.readUInt32LE(0) !== 0) throw refuse();
+      if (!observed.subarray(0, 64).equals(expected) || observed.readBigUInt64LE(112) !== 0n || observed.readBigUInt64LE(120) !== 0n || ui.readUInt32LE(0) !== 0) {
+        // Observation only, after the complete original predicate refused. No field value leaves this module.
+        const first = LIMIT_SPANS.findIndex(([start, end]) => !observed.subarray(start, end).equals(expected.subarray(start, end)));
+        const constraint = first >= 0 ? first + 1 : observed.readBigUInt64LE(112) !== 0n ? 12 : observed.readBigUInt64LE(120) !== 0n ? 13 : ui.readUInt32LE(0) !== 0 ? 14 : 0;
+        throw refused(3, 4, 2, constraint as FailureConstraint);
+      }
       release(observed); release(ui);
     },
     state(job) {
-      const accounting = query(job, 1, 48), list = query(job, 3, 16);
+      const accounting = query(job, 1, 48, 4), list = query(job, 3, 16, 4);
       const total = accounting.readUInt32LE(36), active = accounting.readUInt32LE(40), terminated = accounting.readUInt32LE(44);
       const assigned = list.readUInt32LE(0), listed = list.readUInt32LE(4);
-      if (total > 1 || active > total || terminated > total || assigned !== listed || active !== listed || listed > 1) throw refuse();
+      if (total > 1 || active > total || terminated > total || assigned !== listed || active !== listed || listed > 1) throw refused(4, 5, 2);
       const pids: number[] = [];
-      if (listed) { const value = list.readBigUInt64LE(8); if (value < 1n || value > 0xffffffffn) throw refuse(); pids.push(Number(value)); }
+      if (listed) { const value = list.readBigUInt64LE(8); if (value < 1n || value > 0xffffffffn) throw refused(4, 5, 2); pids.push(Number(value)); }
       release(accounting); release(list); return { total, active, pids };
     },
-    processId(process) { const value = functions.GetProcessId(process); if (!dword(value) || value === 0) throw refuse(); return value; },
-    threadProcessId(thread) { const value = functions.GetProcessIdOfThread(thread); if (!dword(value) || value === 0) throw refuse(); return value; },
+    processId(process) { const value = call(6, 3, "GetProcessId", [process]); if (!dword(value) || value === 0) throw refused(6, 6, 3); return value; },
+    threadProcessId(thread) { const value = call(6, 4, "GetProcessIdOfThread", [thread]); if (!dword(value) || value === 0) throw refused(6, 6, 4); return value; },
     member(process, job) {
-      const inside: unknown[] = [0]; retained.add(inside); checked(functions.IsProcessInJob(process, job, inside));
-      if (inside[0] !== 0 && inside[0] !== 1) throw refuse(); retained.delete(inside); return inside[0] === 1;
+      const inside: unknown[] = [0]; retained.add(inside); checked(call(6, 5, "IsProcessInJob", [process, job, inside]), 6, 5);
+      if (inside[0] !== 0 && inside[0] !== 1) throw refused(6, 2, 5); retained.delete(inside); return inside[0] === 1;
     },
-    wait(owner) { const value = functions.WaitForSingleObject(owner, 0); if (value !== 0 && value !== 258) throw refuse(); return value; },
-    close(owner) { checked(functions.CloseHandle(owner)); },
+    wait(owner) { const value = call(12, 6, "WaitForSingleObject", [owner, 0]); if (value !== 0 && value !== 258) throw refused(12, 2, 6); return value; },
+    close(owner) { checked(call(13, 7, "CloseHandle", [owner]), 13, 7); },
   };
   return native;
 }
 export function loadWindowsCommandRootOnlyStopNative(): WindowsCommandRootOnlyStopNative {
-  if (HOST_PLATFORM !== "win32" || HOST_ARCH !== "x64") throw refuse();
-  const koffi = createRequire(__filename)("koffi") as typeof Koffi;
-  return bindWindowsCommandRootOnlyStopNative(koffi, name => koffi.load(name));
+  if (HOST_PLATFORM !== "win32" || HOST_ARCH !== "x64") throw refused(1, 8);
+  try {
+    const koffi = createRequire(__filename)("koffi") as typeof Koffi;
+    return bindWindowsCommandRootOnlyStopNative(koffi, name => koffi.load(name));
+  } catch (error) { remember(error, observation(1, 1)); throw error; }
 }
 export interface WindowsCommandRootOnlyStopOwner {
   readonly scope: "root-only";
@@ -137,9 +181,13 @@ export function createWindowsCommandRootOnlyStopOwner(binding: object, api: Stop
     if (knownProcess && !rootStop && !closeAttempted.has(knownProcess)) { rootStop = true; try { api.terminateProcess(knownProcess); } catch {} }
     if (job && !jobStop && !closeAttempted.has(job)) { jobStop = true; try { api.terminateJob(job); } catch {} }
   };
-  const terminal = (extra?: unknown, stopPeers = false): never => {
+  const terminal = (extra?: unknown, stopPeers = false, stage: FailureStage = 11, predicate: FailurePredicate = 11): never => {
     retired = true;
-    if (!fence.failure) fence.failure = new WindowsCommandRootOnlyCleanupError();
+    if (!fence.failure) {
+      fence.failure = new WindowsCommandRootOnlyCleanupError();
+      const source = windowsCommandRootOnlyFailure(extra);
+      remember(fence.failure, source ? Object.freeze({ ...source, stage }) : observation(stage, predicate));
+    }
     for (const owner of active!) if (!owner.retained) { owner.retained = true; fence.retained.push(owner.state); }
     // The opaque thrown value is retained privately; outward errors never copy native/callback messages or causes.
     if (extra !== undefined) callbacks.push(extra);
@@ -150,103 +198,110 @@ export function createWindowsCommandRootOnlyStopOwner(binding: object, api: Stop
   const state = () => {
     const value = native.state(job!);
     if (!value || !dword(value.total) || value.total > 1 || !dword(value.active) || value.active > value.total || !Array.isArray(value.pids) ||
-      value.pids.length !== value.active || value.pids.length > 1 || value.total < history || value.pids.some(pid => !dword(pid) || !pid || !root || pid !== root.pid) || (!root && value.total !== 0)) throw refuse();
+      value.pids.length !== value.active || value.pids.length > 1 || value.total < history || value.pids.some(pid => !dword(pid) || !pid || !root || pid !== root.pid) || (!root && value.total !== 0)) throw refused(4, 5);
     history = value.total;
     return value;
   };
+  let initialStage: FailureStage = 2;
   try {
-    const created = api.createJob(); if (!handle(created) || peerOwns(created)) return terminal(created); job = created;
+    const created = api.createJob(); if (!handle(created) || peerOwns(created)) return terminal(created, false, 2, 7); job = created;
     usable();
-    native.configure(job); native.assertLimits(job); const initial = state(); if (initial.total !== 0 || initial.active !== 0) throw refuse();
-  } catch (error) { return terminal(error); }
+    initialStage = 3; native.configure(job); native.assertLimits(job); initialStage = 4; const initial = state(); if (initial.total !== 0 || initial.active !== 0) throw refused(4, 5);
+  } catch (error) { return terminal(error, false, initialStage, 1); }
   return Object.freeze({
     scope: "root-only" as const,
     retainStop() {
-      try { terminal(undefined, true); }
+      try { terminal(undefined, true, 11, 7); }
       catch (error) { if (error !== fence.failure) throw new WindowsCommandRootOnlyCleanupError(); }
     },
     async launch(create: () => WindowsSuspendedProcess, attest: (root: Readonly<WindowsSuspendedProcess>) => void, current: () => boolean) {
-      usable(); if (launched || retired || typeof create !== "function" || typeof attest !== "function" || typeof current !== "function") throw refuse();
+      usable(); if (launched || retired || typeof create !== "function" || typeof attest !== "function" || typeof current !== "function") throw refused(5, 8);
       launched = true; callbacks.push(create, attest, current);
       // Reserve admission before any callback; pre-create revocation still permits an inert closed-job receipt.
-      try { const admitted = current(); usable(); if (admitted !== true || retired) throw refuse(); }
-      catch (error) { retired = true; if (fence.failure) return terminal(error); throw refuse(); }
+      try { const admitted = current(); usable(); if (admitted !== true || retired) throw refused(5, 8); }
+      catch (error) { retired = true; if (fence.failure) return terminal(error); throw refused(5, 8); }
+      let launchStage: FailureStage = 5;
       try {
         rawRoot = create();
         const value = rawRoot as WindowsSuspendedProcess;
-        if (!value) throw refuse();
+        if (!value) throw refused(5, 7);
         const process = value.process;
-        if (!handle(process) || process === job || peerOwns(process)) throw refuse();
+        if (!handle(process) || process === job || peerOwns(process)) throw refused(5, 7);
         knownProcess = process; // Capture the known owned process before any further fallible property access.
         const thread = value.thread;
-        if (!handle(thread) || process === thread || thread === job || peerOwns(thread)) throw refuse();
+        if (!handle(thread) || process === thread || thread === job || peerOwns(thread)) throw refused(5, 7);
         knownThread = thread;
-        const pid = value.pid; if (!dword(pid) || !pid) throw refuse();
+        const pid = value.pid; if (!dword(pid) || !pid) throw refused(5, 6);
         root = Object.freeze({ process, thread, pid });
         usable();
-        if (retired) throw refuse();
-        if (native.processId(root.process) !== root.pid || native.threadProcessId(root.thread) !== root.pid || native.member(root.process, job!)) throw refuse();
-        native.assertLimits(job!); if (state().total !== 0) throw refuse();
-        api.assign(job!, root.process);
-        if (!native.member(root.process, job!)) throw refuse();
-        const assigned = state(); if (assigned.total !== 1 || assigned.active !== 1 || assigned.pids[0] !== root.pid) throw refuse();
+        if (retired) throw refused(5, 8);
+        launchStage = 6;
+        if (native.processId(root.process) !== root.pid || native.threadProcessId(root.thread) !== root.pid || native.member(root.process, job!)) throw refused(6, 6);
+        native.assertLimits(job!); if (state().total !== 0) throw refused(6, 5);
+        launchStage = 7; api.assign(job!, root.process);
+        if (!native.member(root.process, job!)) throw refused(7, 6);
+        const assigned = state(); if (assigned.total !== 1 || assigned.active !== 1 || assigned.pids[0] !== root.pid) throw refused(7, 5);
+        launchStage = 8;
         const attested = attest(root); usable();
-        if (attested !== undefined || retired) throw refuse();
+        if (attested !== undefined || retired) throw refused(8, 8);
+        launchStage = 9;
         const admitted = current(); usable();
-        if (admitted !== true || retired) throw refuse();
+        if (admitted !== true || retired) throw refused(9, 8);
         native.assertLimits(job!);
-        if (native.processId(root.process) !== root.pid || native.threadProcessId(root.thread) !== root.pid || !native.member(root.process, job!)) throw refuse();
+        if (native.processId(root.process) !== root.pid || native.threadProcessId(root.thread) !== root.pid || !native.member(root.process, job!)) throw refused(9, 6);
         const final = current(); usable();
-        if (final !== true || retired) throw refuse();
-        api.resume(root.thread); return root.pid;
-      } catch (error) { return terminal(error); }
+        if (final !== true || retired) throw refused(9, 8);
+        launchStage = 10; api.resume(root.thread); return root.pid;
+      } catch (error) { return terminal(error, false, launchStage, 1); }
     },
     stop(timeoutMs = MAX_STOP) {
       if (stopping) return stopping;
-      if (!Number.isInteger(timeoutMs) || timeoutMs < 0 || timeoutMs > MAX_STOP) return Promise.reject(refuse());
+      if (!Number.isInteger(timeoutMs) || timeoutMs < 0 || timeoutMs > MAX_STOP) return Promise.reject(refused(11, 9));
       retired = true; // Revoke admission synchronously, before the first await or native request.
       let previous = 0, invalidStart = false;
-      try { previous = clock(); if (!Number.isFinite(previous) || previous < 0) throw refuse(); }
+      try { previous = clock(); if (!Number.isFinite(previous) || previous < 0) throw refused(11, 9); }
       catch (error) { invalidStart = true; callbacks.push(error); }
       const deadline = previous + timeoutMs; // Includes time awaiting the first microtask and every later yield.
       // Defer native work so a trusted callback's synchronous Stop revocation cannot close its in-flight launch handles.
       stopping = Promise.resolve().then(async () => {
         usable();
+        let stopStage: FailureStage = 11;
         try {
-          if (invalidStart) throw refuse();
-          const within = () => { const now = clock(); if (!Number.isFinite(now) || now < previous || now > deadline) throw refuse(); previous = now; };
+          if (invalidStart) throw refused(11, 9);
+          const within = () => { const now = clock(); if (!Number.isFinite(now) || now < previous || now > deadline) throw refused(stopStage, 9); previous = now; };
           within(); native.assertLimits(job!); within();
           if (root) {
             const status = native.wait(root.process);
-            if (status !== 0 && status !== 258) throw refuse();
+            if (status !== 0 && status !== 258) throw refused(11, 2);
             if (status === 258) { rootStop = true; api.terminateProcess(root.process); }
           }
           jobStop = true; api.terminateJob(job!); within();
+          stopStage = 12;
           // Yield rather than block Electron's main thread; every poll addresses the same retained objects.
           for (;;) {
             within(); const observed = state(); within();
             if (observed.active === 0) {
               let ready = true;
               for (const owner of root ? [root.process, root.thread] : []) {
-                const status = native.wait(owner); if (status !== 0 && status !== 258) throw refuse(); if (status === 258) ready = false; within();
+                const status = native.wait(owner); if (status !== 0 && status !== 258) throw refused(12, 2); if (status === 258) ready = false; within();
               }
               if (ready) break;
             }
-            if (previous === deadline) throw refuse();
+            if (previous === deadline) throw refused(12, 9);
             await new Promise<void>(resolve => setImmediate(resolve));
             usable();
           }
-          native.assertLimits(job!); const final = state(); if (final.active !== 0) throw refuse();
-          for (const owner of root ? [root.process, root.thread] : []) if (native.wait(owner) !== 0) throw refuse();
+          native.assertLimits(job!); const final = state(); if (final.active !== 0) throw refused(12, 5);
+          for (const owner of root ? [root.process, root.thread] : []) if (native.wait(owner) !== 0) throw refused(12, 5);
           within();
           // No later handle is touched after any uncertain close, including by best-effort Stop.
-          disposalStarted = true;
+          stopStage = 13; disposalStarted = true;
           for (const owner of root ? [root.thread, root.process, job!] : [job!]) {
-            closeAttempted.add(owner); if (native.close(owner) !== undefined) throw refuse(); within();
+            closeAttempted.add(owner); if (native.close(owner) !== undefined) throw refused(13, 10); within();
           }
           closed = true; active!.delete(record); const receipt = Object.freeze({ scope: "root-only" as const }) as WindowsCommandRootOnlyStoppedRef;
           receipts.set(receipt, binding); return receipt;
-        } catch (error) { return terminal(error); }
+        } catch (error) { return terminal(error, false, stopStage, 1); }
       });
       return stopping;
     },

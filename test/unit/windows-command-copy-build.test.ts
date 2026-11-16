@@ -179,13 +179,16 @@ it("captures and reconciles the actual graph, excludes node_modules, and bundles
     expect(() => capture.reconcile(uncaptured)).toThrow(WindowsCommandCopyBuildError);
     expect(built.outputFiles).toHaveLength(1); fs.writeFileSync(output, built.outputFiles![0].contents, { flag: "wx" });
     const actual = createRequire(import.meta.url)(output);
-    expect(Object.keys(actual).sort()).toEqual(["WindowsCommandCopyCleanupError", "WindowsCommandRootOnlyCleanupError", "WindowsRootOnlyCommandCopy", "WindowsRootOnlyCommandCopyCleanupError", "createWindowsCommandRootOnlyStopOwner", "requireWindowsCommandRootOnlyStopped", "loadWindowsCommandCopyProofNative", "WindowsCommandCopyProofCleanupError", "createFreshWindowsCommandTree", "windowsCommandCopyNativeFailure"].sort());
+    expect(Object.keys(actual).sort()).toEqual(["WindowsCommandCopyCleanupError", "WindowsCommandRootOnlyCleanupError", "WindowsRootOnlyCommandCopy", "WindowsRootOnlyCommandCopyCleanupError", "createWindowsCommandRootOnlyStopOwner", "requireWindowsCommandRootOnlyStopped", "loadWindowsCommandCopyProofNative", "WindowsCommandCopyProofCleanupError", "createFreshWindowsCommandTree", "windowsCommandCopyNativeFailure", "windowsCommandRootOnlyFailure"].sort());
     expect(typeof actual.WindowsRootOnlyCommandCopy.create).toBe("function"); expect(typeof actual.createWindowsCommandRootOnlyStopOwner).toBe("function");
     expect(typeof actual.loadWindowsCommandCopyProofNative).toBe("function");
     expect(typeof actual.createFreshWindowsCommandTree).toBe("function");
     expect(typeof actual.windowsCommandCopyNativeFailure).toBe("function");
     expect(actual.windowsCommandCopyNativeFailure(new Error(SECRET))).toBeUndefined();
     expect(actual.windowsCommandCopyNativeFailure(new actual.WindowsCommandCopyCleanupError())).toBeUndefined();
+    expect(typeof actual.windowsCommandRootOnlyFailure).toBe("function");
+    expect(actual.windowsCommandRootOnlyFailure(new Error(SECRET))).toBeUndefined();
+    expect(actual.windowsCommandRootOnlyFailure(new actual.WindowsCommandRootOnlyCleanupError())).toBeUndefined();
     expect(() => actual.requireWindowsCommandRootOnlyStopped({}, {})).toThrow();
   } finally { fs.rmSync(directory, { recursive: true, force: true }); }
 });

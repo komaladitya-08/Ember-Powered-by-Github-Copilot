@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   bindWindowsCommandRootOnlyStopNative, createWindowsCommandRootOnlyStopOwner, requireWindowsCommandRootOnlyStopped,
   WindowsCommandRootOnlyCleanupError, WINDOWS_COMMAND_ROOT_ONLY_STOP_FUNCTIONS,
+  windowsCommandRootOnlyFailure,
   type WindowsCommandRootOnlyJobState, type WindowsCommandRootOnlyStopFence,
 } from "../../app/main/agent/windows-command-stop";
 import { WindowsCodingCleanupError } from "../../app/main/agent/windows-coding-native";
@@ -36,6 +37,7 @@ function harness(issuedRoot: WindowsSuspendedProcess = root, job = 10n) {
 type H = ReturnType<typeof harness>;
 const launch = (h: H, owner: ReturnType<H["owner"]>) => owner.launch(h.create, h.attest, h.current);
 const cleanup = async (promise: Promise<unknown>) => { const error = await promise.catch(error => error as unknown); expect(error).toBeInstanceOf(WindowsCommandRootOnlyCleanupError); expect(error).toBeInstanceOf(WindowsCodingCleanupError); expect(String(error)).not.toContain(PRIVATE); return error; };
+const caught = (work: () => unknown): unknown => { try { work(); } catch (error) { return error; } throw new Error("Expected the fixed Stop fault to refuse."); };
 
 describe("root-only stopped-writer authority", () => {
   it("closes a never-launched empty job and issues only an exact-bound immutable root-only receipt", async () => {
@@ -339,5 +341,156 @@ describe("root-only Win64 FFI contracts", () => {
   it.each([1, -1])("accepts only a validated nonzero native BOOL close %s", result => {
     const f = ffi(), calls: unknown[][] = []; f.functions.CloseHandle = (...args) => { calls.push(args); return result; };
     expect(f.bind().close(20n)).toBeUndefined(); expect(calls).toEqual([[20n]]);
+  });
+});
+
+describe("root-only first-failure observations", () => {
+  it("returns only a frozen branded numeric record and never inspects foreign error properties", () => {
+    const foreign = new Proxy({}, { get() { throw new Error(PRIVATE); } });
+    for (const error of [null, undefined, 1, PRIVATE, {}, foreign, new Error(PRIVATE), new WindowsCommandRootOnlyCleanupError()]) expect(windowsCommandRootOnlyFailure(error)).toBeUndefined();
+    const f = ffi(); f.functions.SetInformationJobObject = () => 0;
+    const error = caught(() => f.bind().configure(10n)), failure = windowsCommandRootOnlyFailure(error);
+    expect(failure).toEqual({ stage: 3, operation: 1, predicate: 3, domain: 1, code: 0, constraint: 0 });
+    expect(Object.isFrozen(failure)).toBe(true); expect(Object.keys(failure!).sort()).toEqual(["code", "constraint", "domain", "operation", "predicate", "stage"]);
+    expect(Object.values(failure!).every(value => Number.isInteger(value) && value >= 0 && value <= 0xffffffff)).toBe(true);
+    expect(windowsCommandRootOnlyFailure({ ...error as object })).toBeUndefined(); expect(windowsCommandRootOnlyFailure(JSON.parse(JSON.stringify(error)))).toBeUndefined();
+    expect(windowsCommandRootOnlyFailure(failure)).toBeUndefined(); expect(windowsCommandRootOnlyFailure(error)).toBe(failure);
+    expect(f.prototypes).toEqual(WINDOWS_COMMAND_ROOT_ONLY_STOP_FUNCTIONS); expect(f.prototypes.some(value => value.includes("GetLastError"))).toBe(false);
+  });
+  it.each([[0, 1], [8, 2], [16, 3], [20, 4], [24, 5], [32, 6], [40, 7], [44, 8], [48, 9], [56, 10], [60, 11], [112, 12], [120, 13], [-1, 14]])("labels only existing mismatching limit span %s as constraint %s", (offset, constraint) => {
+    const f = ffi(), original = f.functions.QueryInformationJobObject, calls: unknown[][] = []; let armed = false;
+    f.functions.QueryInformationJobObject = (...args) => { calls.push(args); original(...args); if (armed && offset === -1 && args[1] === 4) (args[2] as Buffer).writeUInt32LE(1); return 1; };
+    const native = f.bind(); native.configure(10n); armed = true; calls.length = 0;
+    if (offset >= 0) f.limits()[offset] ^= 1;
+    const failure = windowsCommandRootOnlyFailure(caught(() => native.assertLimits(10n)));
+    expect(failure).toEqual({ stage: 3, operation: 2, predicate: 4, domain: 0, code: 0, constraint });
+    expect(calls.map(args => [args[0], args[1], args[3], args[4]])).toEqual([[10n, 9, 144, null], [10n, 4, 4, null]]);
+  });
+  it("reports the first existing mismatching span and keeps scheduling values private", () => {
+    const f = ffi(), native = f.bind(); native.configure(10n);
+    f.limits().writeUInt32LE(5, 60);
+    expect(windowsCommandRootOnlyFailure(caught(() => native.assertLimits(10n)))).toEqual({ stage: 3, operation: 2, predicate: 4, domain: 0, code: 0, constraint: 11 });
+    f.limits().writeUInt32LE(1, 20);
+    expect(windowsCommandRootOnlyFailure(caught(() => native.assertLimits(10n)))?.constraint).toBe(4);
+  });
+  it("keeps the original successful predicate read order without diagnostic comparisons", () => {
+    const f = ffi(), original = f.functions.QueryInformationJobObject, reads: string[] = []; let armed = false;
+    f.functions.QueryInformationJobObject = (...args) => {
+      original(...args); const bytes = args[2] as Buffer;
+      if (armed && args[1] === 9) {
+        const subarray = bytes.subarray.bind(bytes), read = bytes.readBigUInt64LE.bind(bytes);
+        vi.spyOn(bytes, "subarray").mockImplementation((...args) => { reads.push("prefix"); return subarray(...args); });
+        vi.spyOn(bytes, "readBigUInt64LE").mockImplementation(offset => { reads.push(`memory:${offset}`); return read(offset); });
+      } else if (armed && args[1] === 4) { const read = bytes.readUInt32LE.bind(bytes); vi.spyOn(bytes, "readUInt32LE").mockImplementation(offset => { reads.push(`ui:${offset}`); return read(offset); }); }
+      return 1;
+    };
+    const native = f.bind(); native.configure(10n); armed = true;
+    native.assertLimits(10n); expect(reads).toEqual(["prefix", "memory:112", "memory:120", "ui:0"]);
+  });
+  it.each([undefined, false, null, PRIVATE, NaN, Infinity, 0.5, 0n, -2147483649, 0x100000000, Buffer.from(PRIVATE)])("does not coerce malformed BOOL return %#", result => {
+    const f = ffi(); f.functions.SetInformationJobObject = () => result;
+    expect(windowsCommandRootOnlyFailure(caught(() => f.bind().configure(10n)))).toEqual({ stage: 3, operation: 1, predicate: 2, domain: 0, code: 0, constraint: 0 });
+    expect(f.prototypes).toEqual(WINDOWS_COMMAND_ROOT_ONLY_STOP_FUNCTIONS);
+  });
+  it.each([0x80000000, 0xffffffff])("retains the original signed BOOL admission refusal for returned u32 %s", result => {
+    const f = ffi(); f.functions.SetInformationJobObject = () => result;
+    expect(windowsCommandRootOnlyFailure(caught(() => f.bind().configure(10n)))).toEqual({ stage: 3, operation: 1, predicate: 2, domain: 1, code: result, constraint: 0 });
+  });
+  it.each(["set", "query", "member", "close"] as const)("observes only existing %s BOOL failure without an extra call", operation => {
+    const f = ffi(), calls: string[] = []; let retained: unknown;
+    const name = ({ set: "SetInformationJobObject", query: "QueryInformationJobObject", member: "IsProcessInJob", close: "CloseHandle" })[operation];
+    f.functions[name] = (...args) => { calls.push(name); retained = args[2]; return 0; };
+    const native = f.bind(), error = caught(() => operation === "set" ? native.configure(10n) : operation === "query" ? native.assertLimits(10n) : operation === "member" ? native.member(20n, 10n) : native.close(20n));
+    expect(windowsCommandRootOnlyFailure(error)).toMatchObject({ operation: ({ set: 1, query: 2, member: 5, close: 7 })[operation], predicate: 3, domain: 1, code: 0, constraint: 0 });
+    expect(calls).toEqual([name]);
+    if (operation === "set") expect((retained as Buffer).readUInt32LE(16)).toBe(0x2008);
+  });
+  it.each(["pid", "thread", "wait", "member-output"] as const)("keeps %s identity/count/status values out of numeric error codes", operation => {
+    const f = ffi(); f.functions.GetProcessId = () => 0; f.functions.GetProcessIdOfThread = () => 0; f.functions.WaitForSingleObject = () => 0x12345678;
+    f.functions.IsProcessInJob = (_process, _job, inside) => { (inside as unknown[])[0] = 0x12345678; return 1; };
+    const native = f.bind(), error = caught(() => operation === "pid" ? native.processId(20n) : operation === "thread" ? native.threadProcessId(21n) : operation === "wait" ? native.wait(20n) : native.member(20n, 10n));
+    expect(windowsCommandRootOnlyFailure(error)).toMatchObject({ domain: 0, code: 0, constraint: 0 });
+  });
+  it("rethrows exact opaque FFI errors, retains argument buffers, and copies only numeric evidence into the owner fence", () => {
+    const f = ffi(), original = new Error(PRIVATE); let bytes: Buffer | undefined;
+    f.functions.SetInformationJobObject = (_job, _kind, value) => { bytes = value as Buffer; throw original; };
+    const native = f.bind(); expect(caught(() => native.configure(10n))).toBe(original);
+    expect(bytes?.readUInt32LE(16)).toBe(0x2008);
+    const h = harness(), error = caught(() => createWindowsCommandRootOnlyStopOwner(h.binding, h.api, native, h.clock, h.fence));
+    expect(windowsCommandRootOnlyFailure(error)).toEqual({ stage: 3, operation: 1, predicate: 1, domain: 0, code: 0, constraint: 0 });
+    expect(h.fence.retained).toHaveLength(1); expect((h.fence.retained[0] as { callbacks: unknown[] }).callbacks).toContain(original);
+    expect(h.api.close).not.toHaveBeenCalled(); expect(String(error)).not.toContain(PRIVATE);
+  });
+  it.each(["width", "load", "binding"] as const)("attributes %s loading refusal without touching a job", point => {
+    const f = ffi();
+    if (point === "width") f.koffi.sizeof.mockReturnValue(4);
+    if (point === "load") f.load.mockImplementation(() => { throw new Error(PRIVATE); });
+    if (point === "binding") delete f.functions.CloseHandle;
+    const error = caught(f.bind);
+    expect(windowsCommandRootOnlyFailure(error)).toEqual({ stage: 1, operation: 0, predicate: point === "load" ? 1 : 2, domain: 0, code: 0, constraint: 0 });
+    expect(String(error)).not.toContain(PRIVATE);
+  });
+  it("copies the precise failed readback constraint into the first owner error without another query or release", () => {
+    const f = ffi(), set = f.functions.SetInformationJobObject, query = f.functions.QueryInformationJobObject, queries: unknown[][] = [];
+    f.functions.SetInformationJobObject = (...args) => { const result = set(...args); f.limits().writeUInt32LE(5, 60); return result; };
+    f.functions.QueryInformationJobObject = (...args) => { queries.push(args); return query(...args); };
+    const h = harness(), error = caught(() => createWindowsCommandRootOnlyStopOwner(h.binding, h.api, f.bind(), h.clock, h.fence));
+    expect(windowsCommandRootOnlyFailure(error)).toEqual({ stage: 3, operation: 2, predicate: 4, domain: 0, code: 0, constraint: 11 });
+    expect(queries.map(args => args[1])).toEqual([9, 4]); expect(h.fence.retained).toHaveLength(1);
+    expect(h.api.terminateJob).toHaveBeenCalledTimes(1); expect(h.api.close).not.toHaveBeenCalled();
+    const before = queries.length; expect(caught(h.owner)).toBe(error); expect(queries).toHaveLength(before);
+  });
+  it.each(["throw", "pointer"] as const)("attributes %s job creation without publishing a handle", point => {
+    const h = harness(); h.api.createJob.mockImplementation(() => { if (point === "throw") throw new Error(PRIVATE); return 0n; });
+    const error = caught(h.owner);
+    expect(windowsCommandRootOnlyFailure(error)).toEqual({ stage: 2, operation: 0, predicate: point === "throw" ? 1 : 7, domain: 0, code: 0, constraint: 0 });
+    expect(h.native.configure).not.toHaveBeenCalled(); expect(h.api.close).not.toHaveBeenCalled();
+  });
+  it("classifies initial job-state refusal without publishing accounting or identity", () => {
+    const h = harness(); h.native.state.mockReturnValue({ total: 1, active: 0, pids: [] });
+    const error = caught(h.owner);
+    expect(windowsCommandRootOnlyFailure(error)).toEqual({ stage: 4, operation: 0, predicate: 5, domain: 0, code: 0, constraint: 0 });
+    expect(h.native.state).toHaveBeenCalledTimes(1); expect(h.api.close).not.toHaveBeenCalled();
+  });
+  it.each(["creator", "preassign", "assign", "attest", "postattest", "resume"] as const)("attributes owner %s refusal without new native queries", async point => {
+    const h = harness(), owner = h.owner();
+    if (point === "creator") h.create.mockImplementation(() => { throw new Error(PRIVATE); });
+    if (point === "preassign") h.native.processId.mockReturnValue(201);
+    if (point === "assign") h.api.assign.mockImplementation(() => { throw new Error(PRIVATE); });
+    if (point === "attest") h.attest.mockImplementation(() => { throw new Error(PRIVATE); });
+    if (point === "postattest") h.current.mockReturnValueOnce(true).mockReturnValue(false);
+    if (point === "resume") h.api.resume.mockImplementation(() => { throw new Error(PRIVATE); });
+    const error = await cleanup(launch(h, owner)), before = h.events.slice();
+    expect(windowsCommandRootOnlyFailure(error)).toEqual({ stage: ({ creator: 5, preassign: 6, assign: 7, attest: 8, postattest: 9, resume: 10 })[point], operation: 0,
+      predicate: point === "preassign" ? 6 : point === "postattest" ? 8 : 1, domain: 0, code: 0, constraint: 0 });
+    expect(windowsCommandRootOnlyFailure(error)).toBe(windowsCommandRootOnlyFailure(error));
+    await expect(owner.stop()).rejects.toBe(error); expect(h.events).toEqual(before);
+  });
+  it("keeps the first peer fence diagnostic when an attestation callback poisons and throws", async () => {
+    const a = harness(), b = harness({ process: 40n, thread: 41n, pid: 400 }, 30n), first = a.owner();
+    const second = createWindowsCommandRootOnlyStopOwner(b.binding, b.api, b.native, b.clock, a.fence); await launch(b, second);
+    let firstFailure: ReturnType<typeof windowsCommandRootOnlyFailure>, queries = 0;
+    a.attest.mockImplementation(() => { second.retainStop(); firstFailure = windowsCommandRootOnlyFailure(a.fence.failure); queries = a.native.state.mock.calls.length; throw new Error(PRIVATE); });
+    const error = await cleanup(launch(a, first));
+    expect(windowsCommandRootOnlyFailure(error)).toEqual({ stage: 11, operation: 0, predicate: 7, domain: 0, code: 0, constraint: 0 });
+    expect(windowsCommandRootOnlyFailure(error)).toBe(firstFailure); expect(a.native.state).toHaveBeenCalledTimes(queries);
+    expect(a.api.resume).not.toHaveBeenCalled(); expect(a.api.close).not.toHaveBeenCalled(); expect(a.fence.retained).toHaveLength(2);
+  });
+  it.each(["request", "completion", "close", "deadline"] as const)("attributes Stop %s refusal and retains every still-owned object", async point => {
+    const h = harness(), owner = h.owner(); await launch(h, owner);
+    if (point === "request") h.api.terminateProcess.mockImplementation(() => { throw new Error(PRIVATE); });
+    if (point === "completion") h.native.state.mockReturnValue({ total: 2, active: 0, pids: [] });
+    if (point === "close") h.native.close.mockImplementation(() => false as unknown as void);
+    const work = owner.stop(point === "deadline" ? 1 : undefined); if (point === "deadline") h.time(2);
+    const error = await cleanup(work), calls = h.events.slice();
+    expect(windowsCommandRootOnlyFailure(error)).toEqual({ stage: point === "completion" ? 12 : point === "close" ? 13 : 11, operation: 0,
+      predicate: point === "request" ? 1 : point === "completion" ? 5 : point === "close" ? 10 : 9, domain: 0, code: 0, constraint: 0 });
+    expect(h.api.close).toHaveBeenCalledTimes(0); expect(h.fence.retained).toHaveLength(1);
+    await expect(owner.stop()).rejects.toBe(error); expect(h.events).toEqual(calls);
+  });
+  it("does not invent a diagnostic for a previously failed unbranded foreign fence", async () => {
+    const h = harness(), owner = h.owner(), original = new WindowsCommandRootOnlyCleanupError(); h.fence.failure = original;
+    const before = h.events.slice(); expect(await cleanup(owner.stop())).toBe(original); expect(windowsCommandRootOnlyFailure(original)).toBeUndefined();
+    expect(h.events.slice(before.length)).toEqual(["terminateJob"]); expect(h.api.close).not.toHaveBeenCalled();
   });
 });
