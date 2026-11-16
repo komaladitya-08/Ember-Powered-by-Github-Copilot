@@ -29,6 +29,18 @@
 #if EMBER_LPAC_CHILD_NULL_SECURITY && EMBER_LPAC_CHILD_DETACHED
 #error The object-security and console observations must remain separate.
 #endif
+#ifndef EMBER_LPAC_CHILD_INHERIT_CONSOLE
+#define EMBER_LPAC_CHILD_INHERIT_CONSOLE 0
+#endif
+#if EMBER_LPAC_CHILD_INHERIT_CONSOLE != 0 && EMBER_LPAC_CHILD_INHERIT_CONSOLE != 1
+#error The fixed inherited-console observation accepts only literal selectors.
+#endif
+#if EMBER_LPAC_CHILD_INHERIT_CONSOLE && !EMBER_LPAC_CHILD_AAP_ONLY
+#error The inherited-console comparison requires the existing AAP-only policy branch.
+#endif
+#if EMBER_LPAC_CHILD_INHERIT_CONSOLE && (EMBER_LPAC_CHILD_NULL_SECURITY || EMBER_LPAC_CHILD_DETACHED)
+#error The inherited-console comparison must remain separate from the other input changes.
+#endif
 
 #if EMBER_LPAC_CHILD_AAP_ONLY
 static DWORD aapNativeError(void)
@@ -78,6 +90,9 @@ static BOOL spawnInherited(DWORD flags, PROCESS_INFORMATION *process, DWORD *err
 #endif
 #if EMBER_LPAC_CHILD_DETACHED
     childConsoleFlags = DETACHED_PROCESS;
+#endif
+#if EMBER_LPAC_CHILD_INHERIT_CONSOLE
+    childConsoleFlags = 0;
 #endif
     memset(&startup, 0, sizeof(startup));
     memset(process, 0, sizeof(*process));

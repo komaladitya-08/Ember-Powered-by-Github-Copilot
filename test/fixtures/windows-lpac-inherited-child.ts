@@ -4,7 +4,7 @@ import type * as Koffi from "koffi";
 import type { WindowsHandle } from "../../app/main/agent/experimental-windows-lpac-api";
 
 type NativeFunction = (...args: unknown[]) => unknown;
-export const INHERITED_CHILD_VARIANTS = ["explicit", "inherited", "aap-only", "aap-null-sa", "aap-detached"] as const;
+export const INHERITED_CHILD_VARIANTS = ["explicit", "inherited", "aap-only", "aap-null-sa", "aap-detached", "aap-inherit-console"] as const;
 export type InheritedChildVariant = (typeof INHERITED_CHILD_VARIANTS)[number];
 /** The fixed C program could not prove an already-created child's termination/handle cleanup. Never read its payload. */
 export const INHERITED_CHILD_UNCERTAIN_CLEANUP_EXIT = 31;
@@ -14,10 +14,11 @@ export function inheritedChildVariantDefine(value: unknown): string {
   if (value === "aap-only") return "/DEMBER_LPAC_CHILD_AAP_ONLY=1";
   if (value === "aap-null-sa") return "/DEMBER_LPAC_CHILD_AAP_ONLY=1 /DEMBER_LPAC_CHILD_NULL_SECURITY=1";
   if (value === "aap-detached") return "/DEMBER_LPAC_CHILD_AAP_ONLY=1 /DEMBER_LPAC_CHILD_DETACHED=1";
+  if (value === "aap-inherit-console") return "/DEMBER_LPAC_CHILD_AAP_ONLY=1 /DEMBER_LPAC_CHILD_INHERIT_CONSOLE=1";
   throw new Error("Select one fixed reviewed LPAC child variant.");
 }
 export function inheritedChildSuppliedSdDiagnostic(value: InheritedChildVariant): boolean {
-  return value === "inherited" || value === "aap-only" || value === "aap-detached";
+  return value === "inherited" || value === "aap-only" || value === "aap-detached" || value === "aap-inherit-console";
 }
 /** Closed host-side diagnostics. No native text, path, SID or arbitrary errno string is returned. */
 export function inheritedChildNumericFailure(error: unknown): { domain: number; code: number } {

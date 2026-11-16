@@ -56,7 +56,7 @@ $env:EMBER_LPAC_INHERITED_CHILD_TEST = "1"
 node scripts/run-integration.mjs test/integration/windows-lpac-inherited-child-native.test.ts
 ```
 
-`experimental-windows-lpac-inherited-child.yml` runs all five variants on Server 2022 and 2025. An explicitly configured
+`experimental-windows-lpac-inherited-child.yml` runs all six variants on Server 2022 and 2025. An explicitly configured
 unsupported host, missing compiler, unexpected original-control outcome or failed inherited assertion fails; none is
 converted into a skip. Native outcomes remain pending until an exact workflow commit completes. A positive result
 would establish this fixed inherited-child sequence, not arbitrary Node child-process, named-pipe or toolchain support.
@@ -69,7 +69,7 @@ The Server 2025 image's installed VS 2026 version is recorded in the runner mani
 Setup refusals print only fixed numeric operation/domain/code fields and `launchAttempted:false`. Build stages are
 1 scratch, 2 environment/image declaration, 3 compiler discovery, 4 discovery-path validation, 5 fixed batch creation,
 6 compiler child completion, and 7 executable readback. Variants 1–5 are original, plain inherited, AAP-only,
-AAP with NULL object security, and AAP with a detached child respectively.
+AAP with NULL object security, and AAP with a detached child respectively. Variant 6 inherits the root's console.
 Preparation operation 1 is volume type, 2 ancestor pin, 3 profile creation, 4 owner query, 5 directory creation,
 6 fixed executable creation, 7 handle close and 8 profile removal; operation 0 means an unclassified host validation.
 Domain 0 is unknown, 1 is the fixed Node errno ordinal (EACCES, EPERM, ENOENT, EEXIST, ENOTDIR, ELOOP, ETIMEDOUT,
@@ -113,7 +113,7 @@ an unexpected breakaway creation from becoming an apparent access-denied control
 or handle close exits 31; the host's additional readout gate blocks every report/path reader and retains all owners
 and pins on that status. The ordinary child never resumes after such a cleanup failure.
 
-Each of the five compiler children retains its 60-second bound. Setup allows their combined bounds plus discovery;
+Each of the six compiler children retains its 60-second bound. Setup allows their combined bounds plus discovery;
 root, acknowledgement, admission, independent-stop and runtime test deadlines remain unchanged.
 
 Variants with instrumented explicit descriptors additionally write a separate 80-byte child-object diagnostic only after the ordinary
@@ -156,6 +156,14 @@ That motivates the isolated comparison without identifying the actual denied ope
 existing console helper. Node's default spawn additionally differs in console flags, handle inheritance and stdio;
 neither comparison is an exact Node-spawn or generic-runtime compatibility proof.
 
+The sixth `aap-inherit-console` comparison drops only the child's `CREATE_NO_WINDOW` modifier, without adding
+`DETACHED_PROCESS`. It keeps explicit process/thread security, the one AAP opt-out attribute, suspension and extended
+startup flags, NULL environment/current-directory inputs and zero inherited handles. The root's Unicode environment
+and console creation are unchanged. The existing child code has no Unicode-environment flag because its environment
+argument is NULL; the comparison adds no extra bit. Compile guards keep normal console inheritance exclusive of
+both NULL-security and detached selections. All five earlier cases and their assertions remain intact. This tests
+console mode only, without reproducing Node's NULL security, CRT stdio buffer or default child-spawn path.
+
 At `5dff8e203462e6f3f65ffcfc461cbc4013142f39`, [run 43819235798](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43819235798)
 passed 82 portable tests and the original explicit-attribute denial control on each Server image. Both inherited
 cases stopped cleanly after a host-side admission refusal, with no C result/failure report. That outcome establishes
@@ -180,3 +188,8 @@ passed 159 portable tests per image and both existing denial controls. Both inst
 stage-8 diagnostics: process and thread checks succeeded, allowed and granted concrete `0x1fffff`, with actual
 owner/group source classes 4/5 and known token closes. Creation still returned stage 18/error 5/`0xc0000022`.
 This weakens the supplied-DACL-rights hypothesis in memory; it does not establish kernel creation success.
+At `b0bd8f992bab662256dcd17d194cf4517771eb52`, [run 43833578768](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43833578768)
+passed 161 portable tests and both denial controls on each image. AAP-only, NULL-security and detached child calls
+all returned the same natural stage 18/error 5/`0xc0000022`; every contained writer stopped and closed normally.
+The detached case retained full mapped process/thread DACL grants, while NULL security correctly had no supplied-SD
+payload. Neither isolated input change was sufficient to create the intended child.

@@ -8,15 +8,16 @@ import { bindInheritedChildObserver, INHERITED_CHILD_FUNCTIONS, InheritedChildCl
 
 describe("inherited-child closed setup diagnostics", () => {
   it("isolates every fixed creation selector without combining the security/console comparisons", () => {
-    expect(INHERITED_CHILD_VARIANTS).toEqual(["explicit", "inherited", "aap-only", "aap-null-sa", "aap-detached"]);
+    expect(INHERITED_CHILD_VARIANTS).toEqual(["explicit", "inherited", "aap-only", "aap-null-sa", "aap-detached", "aap-inherit-console"]);
     expect(inheritedChildVariantDefine("explicit")).toBe(""); expect(inheritedChildVariantDefine("inherited")).toBe("");
     expect(inheritedChildVariantDefine("aap-only")).toBe("/DEMBER_LPAC_CHILD_AAP_ONLY=1");
     expect(inheritedChildVariantDefine("aap-null-sa")).toBe("/DEMBER_LPAC_CHILD_AAP_ONLY=1 /DEMBER_LPAC_CHILD_NULL_SECURITY=1");
     expect(inheritedChildVariantDefine("aap-detached")).toBe("/DEMBER_LPAC_CHILD_AAP_ONLY=1 /DEMBER_LPAC_CHILD_DETACHED=1");
+    expect(inheritedChildVariantDefine("aap-inherit-console")).toBe("/DEMBER_LPAC_CHILD_AAP_ONLY=1 /DEMBER_LPAC_CHILD_INHERIT_CONSOLE=1");
     for (const value of [null, {}, "aap-only /DPRIVATE=1", "other"]) expect(() => inheritedChildVariantDefine(value)).toThrow("fixed reviewed");
   });
   it("never publishes an explicit-supplied-DACL observation for the NULL-security or original-source paths", () => {
-    expect(INHERITED_CHILD_VARIANTS.map(inheritedChildSuppliedSdDiagnostic)).toEqual([false, true, true, false, true]);
+    expect(INHERITED_CHILD_VARIANTS.map(inheritedChildSuppliedSdDiagnostic)).toEqual([false, true, true, false, true, true]);
   });
   it.each([31, NaN, -1, 0x100000000])("fences terminal/unknown C cleanup before invoking any payload reader (%s)", code => {
     const read = vi.fn(() => "synthetic private payload");
@@ -353,6 +354,17 @@ describe("separate fixed inherited-child C fixture", () => {
     expect(inherited).toContain("#if (EMBER_LPAC_CHILD_NULL_SECURITY || EMBER_LPAC_CHILD_DETACHED) && !EMBER_LPAC_CHILD_AAP_ONLY");
     expect(policy).toContain("#if !EMBER_LPAC_CHILD_NULL_SECURITY\n    if (!created && flags == 0) writeChildSdAccessDiagnostic();\n#endif");
     expect(policy).not.toMatch(/CREATE_NEW_CONSOLE|CREATE_NEW_PROCESS_GROUP|SetTokenInformation|SetSecurityInfo/);
+  });
+  it("drops only the child console modifier for its independent inherited-console comparison", () => {
+    const wrapper = inherited.slice(inherited.indexOf("static BOOL spawnInherited("), inherited.indexOf("static BOOL awaitInheritedChildAdmission("));
+    const policy = wrapper.slice(wrapper.indexOf("#if EMBER_LPAC_CHILD_AAP_ONLY"), wrapper.indexOf("#else\n"));
+    const selection = policy.slice(policy.indexOf("#if EMBER_LPAC_CHILD_INHERIT_CONSOLE"), policy.indexOf("#endif", policy.indexOf("#if EMBER_LPAC_CHILD_INHERIT_CONSOLE")));
+    expect(selection).toBe("#if EMBER_LPAC_CHILD_INHERIT_CONSOLE\n    childConsoleFlags = 0;\n");
+    expect(inherited).toContain("#if EMBER_LPAC_CHILD_INHERIT_CONSOLE && !EMBER_LPAC_CHILD_AAP_ONLY");
+    expect(inherited).toContain("#if EMBER_LPAC_CHILD_INHERIT_CONSOLE && (EMBER_LPAC_CHILD_NULL_SECURITY || EMBER_LPAC_CHILD_DETACHED)");
+    expect(policy).toContain("flags | childConsoleFlags | CREATE_SUSPENDED | EXTENDED_STARTUPINFO_PRESENT,");
+    expect(policy).toContain("NULL, NULL, &startup.StartupInfo, process)");
+    expect(policy).not.toContain("CREATE_UNICODE_ENVIRONMENT"); // NULL child environment; the root's Unicode flag is separate and unchanged.
   });
   it("never returns a born child as a FALSE/expected-denial after attribute cleanup failure", () => {
     const wrapper = inherited.slice(inherited.indexOf("static BOOL spawnInherited("), inherited.indexOf("static BOOL awaitInheritedChildAdmission("));

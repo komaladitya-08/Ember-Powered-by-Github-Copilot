@@ -103,7 +103,7 @@ describe.skipIf(!supported && !required)("separate LPAC inherited-token child ex
       // eslint-disable-next-line preserve-caught-error -- Compiler/native errors may contain private paths; only the closed numeric receipt may leave this fixture.
       throw new Error("The fixed inherited-child fixture compilation failed; synthetic build scratch retained.");
     }
-  }, 330_000); // Five independent compiler children retain their existing 60s limits, plus discovery/setup.
+  }, 390_000); // Six independent compiler children retain their existing 60s limits, plus discovery/setup.
   afterAll(() => {
     for (const bytes of executables.values()) bytes.fill(0);
     if (root && safeToRemove) try { fs.rmSync(root, { recursive: true, force: true }); }
@@ -249,7 +249,7 @@ describe.skipIf(!supported && !required)("separate LPAC inherited-token child ex
     expect(result.failure?.[11] === 0).toBe(true); expect(result.failure?.slice(12, 14)).toEqual([1, 0]);
     expect(result.admitted).toBe(false); expect(result.descendantRemained).toBe(false);
   }, 45_000);
-  it.each(["aap-only", "aap-null-sa", "aap-detached"] as const)("admits only a suspended exact-package %s child and observes it outlive the root before Stop", async variant => {
+  it.each(["aap-only", "aap-null-sa", "aap-detached", "aap-inherit-console"] as const)("admits only a suspended exact-package %s child and observes it outlive the root before Stop", async variant => {
     const result = await run(variant); expect(result.rootExit).toBe(0); expect(result.failure === null).toBe(true);
     expect(result.report?.slice(0, 9)).toEqual([1, 1, 1, 1, 1, 1, 1, 1, 1]); expect((result.report?.[9] ?? 0) > 0).toBe(true);
     expect(result.report?.slice(10)).toEqual([1, 1]);
