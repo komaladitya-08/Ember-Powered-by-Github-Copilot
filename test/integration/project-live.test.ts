@@ -577,7 +577,32 @@ it.skipIf(process.env.EMBER_PROJECT_TEST !== "1")("resumes a saved workspace aft
     await home.locator("#project-workspaces summary").focus();
     await home.keyboard.press("Enter");
     await home.getByLabel("Workspace name").fill("Resume demo");
-    await home.locator("#project-workspace-save").click();
+    try {
+      await home.locator("#project-workspace-save").click();
+    } catch (error) {
+      // A hosted failure left Save disabled. Keep only readiness facts before closing the app: no names, paths,
+      // previous answers, provider details or arbitrary DOM text enter the diagnostic.
+      const readiness = await home.evaluate(() => {
+        const name = document.querySelector<HTMLInputElement>("#project-workspace-name")!;
+        const status = document.querySelector("#project-workspace-status")!.textContent ?? "";
+        const folder = document.querySelector("#project-folder")!.textContent ?? "";
+        const provider = document.querySelector<HTMLElement>("#project-provider")!;
+        return {
+          schema: 1, observed: true,
+          workspaceOpen: document.querySelector<HTMLDetailsElement>("#project-workspaces")!.open,
+          nameCharacters: name.value.length, nameDisabled: name.disabled,
+          saveDisabled: document.querySelector<HTMLButtonElement>("#project-workspace-save")!.disabled,
+          selectedFiles: document.querySelector("#project-files")!.childElementCount,
+          commandFolderSelected: folder !== "" && folder !== "No command folder selected.",
+          requestBusy: document.querySelector("#project-form")!.getAttribute("aria-busy") === "true",
+          connected: (provider.textContent ?? "").startsWith("Next send uses "), providerHidden: provider.hidden,
+          workspaceStatus: status === "" ? 0 : status === "Checking saved workspaces…" ? 1
+            : status === "No saved workspaces." ? 2 : status === "Couldn't open saved workspaces." ? 3 : 4,
+        };
+      }).catch(() => ({ schema: 1, observed: false }));
+      console.info("Workspace save readiness", JSON.stringify(readiness));
+      throw error;
+    }
     await expect.poll(() => home.locator("#project-workspace-status").innerText()).toContain("Saved workspace");
     const saved = fs.readdirSync(userData).find(f => /^project-workspaces-.*\.bin$/.test(f))!;
     const raw = fs.readFileSync(path.join(userData, saved), "utf8");
