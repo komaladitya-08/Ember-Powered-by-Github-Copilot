@@ -38,7 +38,7 @@ jobs:
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
       - name: Source, ABI shim, report and retained-owner contracts without Windows execution
-        run: npm test -- test/unit/windows-uv-spawn-source.test.ts test/unit/windows-uv-spawn-build.test.ts test/unit/windows-uv-spawn-emission.test.ts test/unit/windows-uv-spawn-observe.test.ts test/unit/windows-uv-spawn-report.test.ts test/unit/windows-uv-spawn-native.test.ts test/unit/windows-uv-spawn-host.test.ts test/unit/windows-uv-spawn-ownership.test.ts test/unit/windows-uv-spawn-proof.test.ts test/unit/windows-uv-spawn-contract.test.ts --maxWorkers=1
+        run: npm test -- test/unit/windows-uv-spawn-source.test.ts test/unit/windows-uv-spawn-build.test.ts test/unit/windows-uv-spawn-build-diagnostic.test.ts test/unit/windows-uv-spawn-emission.test.ts test/unit/windows-uv-spawn-observe.test.ts test/unit/windows-uv-spawn-report.test.ts test/unit/windows-uv-spawn-native.test.ts test/unit/windows-uv-spawn-host.test.ts test/unit/windows-uv-spawn-ownership.test.ts test/unit/windows-uv-spawn-proof.test.ts test/unit/windows-uv-spawn-contract.test.ts --maxWorkers=1
 
   compile-only:
     name: Fixed uv_spawn compile and emission (windows-2022)
@@ -65,7 +65,7 @@ jobs:
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
       - name: Require portable source, receipt, scalar-observer and lifetime contracts first
-        run: npm test -- test/unit/windows-uv-spawn-source.test.ts test/unit/windows-uv-spawn-build.test.ts test/unit/windows-uv-spawn-emission.test.ts test/unit/windows-uv-spawn-observe.test.ts test/unit/windows-uv-spawn-report.test.ts test/unit/windows-uv-spawn-native.test.ts test/unit/windows-uv-spawn-host.test.ts test/unit/windows-uv-spawn-ownership.test.ts test/unit/windows-uv-spawn-proof.test.ts test/unit/windows-uv-spawn-contract.test.ts --maxWorkers=1
+        run: npm test -- test/unit/windows-uv-spawn-source.test.ts test/unit/windows-uv-spawn-build.test.ts test/unit/windows-uv-spawn-build-diagnostic.test.ts test/unit/windows-uv-spawn-emission.test.ts test/unit/windows-uv-spawn-observe.test.ts test/unit/windows-uv-spawn-report.test.ts test/unit/windows-uv-spawn-native.test.ts test/unit/windows-uv-spawn-host.test.ts test/unit/windows-uv-spawn-ownership.test.ts test/unit/windows-uv-spawn-proof.test.ts test/unit/windows-uv-spawn-contract.test.ts --maxWorkers=1
       - name: Fetch only the signed-manifest-pinned source archive
         timeout-minutes: 3
         shell: pwsh

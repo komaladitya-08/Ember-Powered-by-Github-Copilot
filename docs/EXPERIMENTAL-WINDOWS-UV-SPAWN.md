@@ -99,10 +99,29 @@ code or enable Ember's Windows coding gate.
 
 ## Verification state
 
+The first automatic compile-only run
+[43894712995](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43894712995), at head
+`73a65938520ac39d0eda93ebab5548d70d4d17b0`, passed all 263 Linux portable tests. Windows passed 241 tests and skipped
+the 22 Linux-only observer/ABI cases, then verified the source archive's fixed size and SHA-256. Its build entry step
+returned exit 1 after 39 seconds with only the fixed build-contract refusal. There was no finer accepted checkpoint,
+public compiler code, verified build receipt/PE or emission artifact; upload was skipped. The elapsed time does not establish
+whether compilation ran or which check refused. Neither job executed the fixed C image or a native probe.
+
+The follow-up adds only private first-failure branding and a closed numeric build checkpoint. It does not inspect
+foreign error properties or publish caught errors, stdout, stderr, commands, paths or assembly. Configure and compiler
+execution have separate checkpoints from their subsequent metadata/readback checks. This is evidence collection,
+with the same source, flags, tools, timeouts and native hold; it is not a presumed fix for the first refusal.
+The [fixed checkpoint catalogue](../scripts/experimental/windows-uv-spawn-build-diagnostic.mjs) defines 0 as unknown
+and 1–20 as the owned input, setup, source/tool, compiler, emitted-output and receipt boundaries. Only the invocation's
+earliest privately branded failure is projected into `{schema:1,status:"failed",checkpoint:<number>}`.
+The follow-up passed 293 affected tests across eleven suites, scoped lint, syntax, YAML and diff checks. A fresh
+typecheck passed before a subsequent assertion-only correction that prevents unexpected CLI streams from printing
+on test failure; the same exact JSON/status predicates remain, and all 30 diagnostic tests and lint passed afterward.
+
 Portable source, recipe, decoder, actual observer C-shim and native-owner fault tests are implemented. The Linux shim
 uses test-only Win32 declarations around the production observer; it is not Windows ABI, policy or native evidence.
-The final affected batch passed 263 tests across ten suites with no skips. Scoped ESLint, final `tsc --noEmit`,
+The initial frozen affected batch passed 263 tests across ten suites with no skips. Scoped ESLint, final `tsc --noEmit`,
 YAML/action pins/job-scope and diff checks passed. New source preparation against the existing authenticated archive also passed: both 155-file
 stock/working trees were independently revalidated against the exact manifests above, without a download or build.
-The actual Windows compiler emission, source build and all native outcomes remain pending. The first reviewed CI may
+The Windows build/emission verification and all native outcomes remain pending. The reviewed workflow may
 compile and publish only the public fixed PE, licence, compact receipt and closed unreviewed emission metadata.

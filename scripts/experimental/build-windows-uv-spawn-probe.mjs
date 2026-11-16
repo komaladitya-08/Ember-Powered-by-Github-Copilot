@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { prepareWindowsUvSpawnSource, validateWindowsUvSpawnSource, sourcePin } from "./windows-uv-spawn-source.mjs";
 import { inspectWindowsUvSpawnEmission, parseWindowsUvSpawnEmission, emissionLimits } from "./windows-uv-spawn-emission.mjs";
+import { createUvSpawnBuildDiagnostic, classifyUvSpawnBuildFailure, uvSpawnBuildCheckpoints as checkpoints } from "./windows-uv-spawn-build-diagnostic.mjs";
 export { sourcePin };
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const freeze = value => { if (value && typeof value === "object") { for (const item of Object.values(value)) freeze(item); Object.freeze(value); } return value; };
@@ -20,7 +21,7 @@ const equal = (actual, expected) => {
 };
 const fixedFiles = ["scripts/experimental/build-windows-uv-spawn-probe.mjs", "scripts/experimental/windows-uv-spawn-build-pin.json",
   "scripts/experimental/windows-uv-spawn-source.mjs", "scripts/experimental/windows-uv-spawn-source-pin.json",
-  "scripts/experimental/windows-uv-spawn-emission.mjs",
+  "scripts/experimental/windows-uv-spawn-emission.mjs", "scripts/experimental/windows-uv-spawn-build-diagnostic.mjs",
   "scripts/experimental/extract-node-libuv-source.py", "scripts/experimental/windows-libuv-source-pin.json",
   "test/fixtures/windows-uv-spawn-build/CMakeLists.txt", "test/fixtures/windows-uv-spawn-probe.c",
   "test/fixtures/windows-uv-spawn-observe.h", "test/fixtures/windows-uv-spawn-observe.c"];
@@ -196,80 +197,104 @@ export function windowsUvSpawnProjectWitness(bytes, target) {
 
 /** Fixed Windows-only MSVC producer. This definition does not run until the separately reviewed workflow invokes it. */
 export async function buildWindowsUvSpawnProbe({ archivePath, destination, pythonPath }) {
-  if (process.platform !== "win32" || process.arch !== "x64") fail();
-  for (const value of [archivePath, destination, pythonPath]) ordinary(value);
-  pythonPath = trustedWindowsUvSpawnPythonPath(pythonPath);
-  if (fs.existsSync(destination)) fail();
-  const commit = process.env.GITHUB_SHA; if (!/^[a-f0-9]{40}$/.test(commit ?? "")) fail();
-  fs.mkdirSync(destination, { mode: 0o700 });
-  const directories = { temporary: path.join(destination, "temporary"), profile: path.join(destination, "profile"),
-    local: path.join(destination, "profile", "Local"), roaming: path.join(destination, "profile", "Roaming") };
-  for (const folder of Object.values(directories)) fs.mkdirSync(folder, { mode: 0o700 });
-  const env = windowsUvSpawnBuildEnvironment(process.env, directories, path.dirname(pythonPath));
-  const recipe = windowsUvSpawnRecipe(), python = attestWindowsUvSpawnPython(pythonPath, env, destination);
-  const sources = await prepareWindowsUvSpawnSource({ archivePath, destination: path.join(destination, "source"), pythonPath: python.pythonPath, executionEnv: env, cwd: destination });
-  if (!equal(python.fingerprint, snapshot(pythonPath))) fail();
-  const vswhere = ordinary(path.join(env["ProgramFiles(x86)"] ?? "C:\\Program Files (x86)", "Microsoft Visual Studio", "Installer", "vswhere.exe"));
-  const vswhereBefore = snapshot(vswhere);
-  const selection = ["-latest", "-version", buildPin.visualStudioRange, "-products", "*", "-requires", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64"];
-  const installation = ordinary(captured(vswhere, [...selection, "-property", "installationPath"], env, destination));
-  const toolDirectory = path.join(installation, "VC", "Tools", "MSVC", buildPin.toolsetDirectory, "bin", "Hostx64", "x64");
-  const toolPaths = { compiler: ordinary(path.join(toolDirectory, "cl.exe")), linker: ordinary(path.join(toolDirectory, "link.exe")),
-    msbuild: ordinary(path.join(installation, "MSBuild", "Current", "Bin", "amd64", "MSBuild.exe")),
-    vcvars: ordinary(path.join(installation, "VC", "Auxiliary", "Build", "vcvarsall.bat")), vswhere,
-    python: pythonPath, cmake: ordinary(path.join(env.ProgramFiles ?? "C:\\Program Files", "CMake", "bin", "cmake.exe")) };
-  const tools = Object.fromEntries(Object.entries(toolPaths).map(([name, file]) => [name, snapshot(file)]));
-  if (!equal(tools.python, python.fingerprint) || !equal(tools.vswhere, vswhereBefore)) fail();
-  const metadata = JSON.parse(captured(path.join(env.SystemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
-    ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "$ErrorActionPreference='Stop';[pscustomobject]@{compilerVersion=[Diagnostics.FileVersionInfo]::GetVersionInfo($env:EMBER_BUILD_COMPILER).FileVersion;linkerVersion=[Diagnostics.FileVersionInfo]::GetVersionInfo($env:EMBER_BUILD_LINKER).FileVersion}|ConvertTo-Json -Compress"],
-    { ...env, EMBER_BUILD_COMPILER: toolPaths.compiler, EMBER_BUILD_LINKER: toolPaths.linker }, destination));
-  if (!strict(metadata, ["compilerVersion", "linkerVersion"])) fail();
-  const cmakeVersion = captured(toolPaths.cmake, ["--version"], env, destination).split(/\r?\n/, 1)[0];
-  if (cmakeVersion !== `cmake version ${buildPin.cmakeVersion}`) fail();
-  const observed = versions({ visualStudioVersion: captured(vswhere, [...selection, "-property", "installationVersion"], env, destination),
-    compilerVersion: metadata.compilerVersion, linkerVersion: metadata.linkerVersion,
-    msbuildVersion: captured(toolPaths.msbuild, ["-version", "-nologo"], env, destination), pythonVersion: python.version, cmakeVersion: buildPin.cmakeVersion });
-  await validateWindowsUvSpawnSource(sources.stockDir, "stock"); await validateWindowsUvSpawnSource(sources.workingDir, "working");
-  const projectDirectory = ordinary(path.join(root, "test", "fixtures", "windows-uv-spawn-build")), buildDirectory = ordinary(path.join(destination, "build"));
-  const cmakePath = value => ordinary(value).replaceAll("\\", "/");
-  captured(toolPaths.cmake, ["-S", cmakePath(projectDirectory), "-B", cmakePath(buildDirectory), "-G", buildPin.generator, "-A", buildPin.platform, "-T", buildPin.toolset,
-    `-DCMAKE_GENERATOR_INSTANCE:PATH=${cmakePath(installation)}`, `-DCMAKE_SYSTEM_VERSION=${buildPin.sdk}`, `-DCMAKE_MSVC_RUNTIME_LIBRARY=${buildPin.runtimeLibrary}`,
-    `-DEMBER_UV_SOURCE:PATH=${cmakePath(sources.workingDir)}`, `-DEMBER_PROBE_C:FILEPATH=${cmakePath(path.join(root, "test/fixtures/windows-uv-spawn-probe.c"))}`,
-    `-DEMBER_OBSERVER_C:FILEPATH=${cmakePath(path.join(root, "test/fixtures/windows-uv-spawn-observe.c"))}`,
-    `-DEMBER_OBSERVER_HEADER:FILEPATH=${cmakePath(path.join(root, "test/fixtures/windows-uv-spawn-observe.h"))}`], env, destination, buildPin.configureTimeoutMs);
-  const compilerMetadata = inputBytes(path.join(buildDirectory, "CMakeFiles", buildPin.cmakeVersion, "CMakeCCompiler.cmake"), 64 * 1024).toString("utf8");
-  const compilerPaths = [...compilerMetadata.matchAll(/^set\(CMAKE_C_COMPILER "([^"\r\n]+)"\)\r?$/gm)];
-  const compilerVersions = [...compilerMetadata.matchAll(/^set\(CMAKE_C_COMPILER_VERSION "([0-9.]+)"\)\r?$/gm)];
-  if (compilerPaths.length !== 1 || compilerVersions.length !== 1 || compilerPaths[0][1].replaceAll("/", "\\").toLowerCase() !== toolPaths.compiler.toLowerCase() ||
-      !compilerVersions[0][1].startsWith(buildPin.compilerVersionPrefix)) fail();
-  const generatedProjects = [windowsUvSpawnProjectWitness(inputBytes(path.join(buildDirectory, "uv", "uv_a.vcxproj"), buildPin.maximumProjectBytes), "uv_a"),
-    windowsUvSpawnProjectWitness(inputBytes(path.join(buildDirectory, "ember_uv_spawn_probe.vcxproj"), buildPin.maximumProjectBytes), "ember_uv_spawn_probe")];
-  captured(toolPaths.cmake, ["--build", buildDirectory, "--config", buildPin.configuration, "--target", "ember_uv_spawn_probe", "--parallel", "2", "--",
-    `/p:VCToolsVersion=${buildPin.toolsetDirectory}`, `/p:WindowsTargetPlatformVersion=${buildPin.sdk}`, "/p:ImportDirectoryBuildProps=false", "/p:ImportDirectoryBuildTargets=false", "/nodeReuse:false"], env, destination, buildPin.compileTimeoutMs);
-  await validateWindowsUvSpawnSource(sources.stockDir, "stock"); await validateWindowsUvSpawnSource(sources.workingDir, "working");
-  if (!equal(recipe, windowsUvSpawnRecipe()) || !equal(tools, Object.fromEntries(Object.entries(toolPaths).map(([name, file]) => [name, snapshot(file)])))) fail();
-  const afterProjects = [windowsUvSpawnProjectWitness(inputBytes(path.join(buildDirectory, "uv", "uv_a.vcxproj"), buildPin.maximumProjectBytes), "uv_a"),
-    windowsUvSpawnProjectWitness(inputBytes(path.join(buildDirectory, "ember_uv_spawn_probe.vcxproj"), buildPin.maximumProjectBytes), "ember_uv_spawn_probe")];
-  if (!equal(generatedProjects, afterProjects)) fail();
-  const listing = inputBytes(path.join(buildDirectory, "observer.asm"), buildPin.maximumListingBytes);
-  const observerListing = { bytes: listing.length, sha256: hash(listing), review: "not-reviewed" };
-  const emissionBytes = Buffer.from(JSON.stringify(inspectWindowsUvSpawnEmission(listing)) + "\n");
-  const emission = parseWindowsUvSpawnEmission(emissionBytes), emissionFile = path.join(destination, "observer-emission.json");
-  fs.writeFileSync(emissionFile, emissionBytes, { flag: "wx" });
-  const emissionReadback = inputBytes(emissionFile, emissionLimits.artifactBytes); if (!emissionBytes.equals(emissionReadback)) fail();
-  parseWindowsUvSpawnEmission(emissionReadback);
-  const observerEmission = { name: "observer-emission.json", bytes: emissionReadback.length, sha256: hash(emissionReadback), schema: 1, review: "not-reviewed", status: emission.status };
-  const object = inputBytes(path.join(buildDirectory, "ember_uv_spawn_probe.dir", buildPin.configuration, "windows-uv-spawn-observe.obj"), buildPin.maximumObjectBytes);
-  const observerObject = { bytes: object.length, sha256: hash(object) };
-  const bytes = inputBytes(path.join(buildDirectory, buildPin.configuration, "ember_uv_spawn_probe.exe"), buildPin.maximumExecutableBytes, true);
-  const staged = path.join(destination, "uv-spawn-probe.exe"); fs.writeFileSync(staged, bytes, { flag: "wx" });
-  const readback = inputBytes(staged, buildPin.maximumExecutableBytes, true); if (!bytes.equals(readback)) fail();
-  const assets = { probe: { name: "uv-spawn-probe.exe", ...windowsUvSpawnImageFingerprint(readback, buildPin.maximumExecutableBytes) } };
-  fs.writeFileSync(path.join(destination, "LICENSE"), inputBytes(path.join(sources.stockDir, "LICENSE"), 64 * 1024), { flag: "wx" });
-  const receipt = { schema: 1, issuer: sourcePin.issuer, sourceVersion: sourcePin.version, sourceArchiveSha256: sourcePin.sourceArchive.sha256, sourceCommit: sourcePin.provenance.commit,
-    source: sourceSummary(), build: { ...buildPin, ...observed, generatedProjects, observerListing, observerObject, observerEmission }, tools, recipe, commit, assets };
-  const receiptBytes = Buffer.from(JSON.stringify(receipt, null, 2) + "\n"); parseWindowsUvSpawnBuildReceipt(receiptBytes, commit);
-  fs.writeFileSync(path.join(destination, "build-receipt.json"), receiptBytes, { flag: "wx" }); return receipt;
+  const diagnostic = createUvSpawnBuildDiagnostic();
+  try {
+    diagnostic.checkpoint(checkpoints.input);
+    if (process.platform !== "win32" || process.arch !== "x64") fail();
+    for (const value of [archivePath, destination, pythonPath]) ordinary(value);
+    pythonPath = trustedWindowsUvSpawnPythonPath(pythonPath);
+    if (fs.existsSync(destination)) fail();
+    const commit = process.env.GITHUB_SHA; if (!/^[a-f0-9]{40}$/.test(commit ?? "")) fail();
+    diagnostic.checkpoint(checkpoints.setup);
+    fs.mkdirSync(destination, { mode: 0o700 });
+    const directories = { temporary: path.join(destination, "temporary"), profile: path.join(destination, "profile"),
+      local: path.join(destination, "profile", "Local"), roaming: path.join(destination, "profile", "Roaming") };
+    for (const folder of Object.values(directories)) fs.mkdirSync(folder, { mode: 0o700 });
+    const env = windowsUvSpawnBuildEnvironment(process.env, directories, path.dirname(pythonPath));
+    const recipe = windowsUvSpawnRecipe();
+    diagnostic.checkpoint(checkpoints.python);
+    const python = attestWindowsUvSpawnPython(pythonPath, env, destination);
+    diagnostic.checkpoint(checkpoints.source);
+    const sources = await prepareWindowsUvSpawnSource({ archivePath, destination: path.join(destination, "source"), pythonPath: python.pythonPath, executionEnv: env, cwd: destination });
+    if (!equal(python.fingerprint, snapshot(pythonPath))) fail();
+    diagnostic.checkpoint(checkpoints.visualStudio);
+    const vswhere = ordinary(path.join(env["ProgramFiles(x86)"] ?? "C:\\Program Files (x86)", "Microsoft Visual Studio", "Installer", "vswhere.exe"));
+    const vswhereBefore = snapshot(vswhere);
+    const selection = ["-latest", "-version", buildPin.visualStudioRange, "-products", "*", "-requires", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64"];
+    const installation = ordinary(captured(vswhere, [...selection, "-property", "installationPath"], env, destination));
+    diagnostic.checkpoint(checkpoints.tools);
+    const toolDirectory = path.join(installation, "VC", "Tools", "MSVC", buildPin.toolsetDirectory, "bin", "Hostx64", "x64");
+    const toolPaths = { compiler: ordinary(path.join(toolDirectory, "cl.exe")), linker: ordinary(path.join(toolDirectory, "link.exe")),
+      msbuild: ordinary(path.join(installation, "MSBuild", "Current", "Bin", "amd64", "MSBuild.exe")),
+      vcvars: ordinary(path.join(installation, "VC", "Auxiliary", "Build", "vcvarsall.bat")), vswhere,
+      python: pythonPath, cmake: ordinary(path.join(env.ProgramFiles ?? "C:\\Program Files", "CMake", "bin", "cmake.exe")) };
+    const tools = Object.fromEntries(Object.entries(toolPaths).map(([name, file]) => [name, snapshot(file)]));
+    if (!equal(tools.python, python.fingerprint) || !equal(tools.vswhere, vswhereBefore)) fail();
+    diagnostic.checkpoint(checkpoints.versions);
+    const metadata = JSON.parse(captured(path.join(env.SystemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
+      ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "$ErrorActionPreference='Stop';[pscustomobject]@{compilerVersion=[Diagnostics.FileVersionInfo]::GetVersionInfo($env:EMBER_BUILD_COMPILER).FileVersion;linkerVersion=[Diagnostics.FileVersionInfo]::GetVersionInfo($env:EMBER_BUILD_LINKER).FileVersion}|ConvertTo-Json -Compress"],
+      { ...env, EMBER_BUILD_COMPILER: toolPaths.compiler, EMBER_BUILD_LINKER: toolPaths.linker }, destination));
+    if (!strict(metadata, ["compilerVersion", "linkerVersion"])) fail();
+    const cmakeVersion = captured(toolPaths.cmake, ["--version"], env, destination).split(/\r?\n/, 1)[0];
+    if (cmakeVersion !== `cmake version ${buildPin.cmakeVersion}`) fail();
+    const observed = versions({ visualStudioVersion: captured(vswhere, [...selection, "-property", "installationVersion"], env, destination),
+      compilerVersion: metadata.compilerVersion, linkerVersion: metadata.linkerVersion,
+      msbuildVersion: captured(toolPaths.msbuild, ["-version", "-nologo"], env, destination), pythonVersion: python.version, cmakeVersion: buildPin.cmakeVersion });
+    diagnostic.checkpoint(checkpoints.sourceBefore);
+    await validateWindowsUvSpawnSource(sources.stockDir, "stock"); await validateWindowsUvSpawnSource(sources.workingDir, "working");
+    const projectDirectory = ordinary(path.join(root, "test", "fixtures", "windows-uv-spawn-build")), buildDirectory = ordinary(path.join(destination, "build"));
+    const cmakePath = value => ordinary(value).replaceAll("\\", "/");
+    diagnostic.checkpoint(checkpoints.configure);
+    captured(toolPaths.cmake, ["-S", cmakePath(projectDirectory), "-B", cmakePath(buildDirectory), "-G", buildPin.generator, "-A", buildPin.platform, "-T", buildPin.toolset,
+      `-DCMAKE_GENERATOR_INSTANCE:PATH=${cmakePath(installation)}`, `-DCMAKE_SYSTEM_VERSION=${buildPin.sdk}`, `-DCMAKE_MSVC_RUNTIME_LIBRARY=${buildPin.runtimeLibrary}`,
+      `-DEMBER_UV_SOURCE:PATH=${cmakePath(sources.workingDir)}`, `-DEMBER_PROBE_C:FILEPATH=${cmakePath(path.join(root, "test/fixtures/windows-uv-spawn-probe.c"))}`,
+      `-DEMBER_OBSERVER_C:FILEPATH=${cmakePath(path.join(root, "test/fixtures/windows-uv-spawn-observe.c"))}`,
+      `-DEMBER_OBSERVER_HEADER:FILEPATH=${cmakePath(path.join(root, "test/fixtures/windows-uv-spawn-observe.h"))}`], env, destination, buildPin.configureTimeoutMs);
+    diagnostic.checkpoint(checkpoints.compilerSelection);
+    const compilerMetadata = inputBytes(path.join(buildDirectory, "CMakeFiles", buildPin.cmakeVersion, "CMakeCCompiler.cmake"), 64 * 1024).toString("utf8");
+    const compilerPaths = [...compilerMetadata.matchAll(/^set\(CMAKE_C_COMPILER "([^"\r\n]+)"\)\r?$/gm)];
+    const compilerVersions = [...compilerMetadata.matchAll(/^set\(CMAKE_C_COMPILER_VERSION "([0-9.]+)"\)\r?$/gm)];
+    if (compilerPaths.length !== 1 || compilerVersions.length !== 1 || compilerPaths[0][1].replaceAll("/", "\\").toLowerCase() !== toolPaths.compiler.toLowerCase() ||
+        !compilerVersions[0][1].startsWith(buildPin.compilerVersionPrefix)) fail();
+    diagnostic.checkpoint(checkpoints.generatedProject);
+    const generatedProjects = [windowsUvSpawnProjectWitness(inputBytes(path.join(buildDirectory, "uv", "uv_a.vcxproj"), buildPin.maximumProjectBytes), "uv_a"),
+      windowsUvSpawnProjectWitness(inputBytes(path.join(buildDirectory, "ember_uv_spawn_probe.vcxproj"), buildPin.maximumProjectBytes), "ember_uv_spawn_probe")];
+    diagnostic.checkpoint(checkpoints.msbuild);
+    captured(toolPaths.cmake, ["--build", buildDirectory, "--config", buildPin.configuration, "--target", "ember_uv_spawn_probe", "--parallel", "2", "--",
+      `/p:VCToolsVersion=${buildPin.toolsetDirectory}`, `/p:WindowsTargetPlatformVersion=${buildPin.sdk}`, "/p:ImportDirectoryBuildProps=false", "/p:ImportDirectoryBuildTargets=false", "/nodeReuse:false"], env, destination, buildPin.compileTimeoutMs);
+    diagnostic.checkpoint(checkpoints.sourceAfter);
+    await validateWindowsUvSpawnSource(sources.stockDir, "stock"); await validateWindowsUvSpawnSource(sources.workingDir, "working");
+    diagnostic.checkpoint(checkpoints.postValidation);
+    if (!equal(recipe, windowsUvSpawnRecipe()) || !equal(tools, Object.fromEntries(Object.entries(toolPaths).map(([name, file]) => [name, snapshot(file)])))) fail();
+    const afterProjects = [windowsUvSpawnProjectWitness(inputBytes(path.join(buildDirectory, "uv", "uv_a.vcxproj"), buildPin.maximumProjectBytes), "uv_a"),
+      windowsUvSpawnProjectWitness(inputBytes(path.join(buildDirectory, "ember_uv_spawn_probe.vcxproj"), buildPin.maximumProjectBytes), "ember_uv_spawn_probe")];
+    if (!equal(generatedProjects, afterProjects)) fail();
+    diagnostic.checkpoint(checkpoints.listing);
+    const listing = inputBytes(path.join(buildDirectory, "observer.asm"), buildPin.maximumListingBytes);
+    const observerListing = { bytes: listing.length, sha256: hash(listing), review: "not-reviewed" };
+    diagnostic.checkpoint(checkpoints.emission);
+    const emissionBytes = Buffer.from(JSON.stringify(inspectWindowsUvSpawnEmission(listing)) + "\n");
+    const emission = parseWindowsUvSpawnEmission(emissionBytes), emissionFile = path.join(destination, "observer-emission.json");
+    fs.writeFileSync(emissionFile, emissionBytes, { flag: "wx" });
+    const emissionReadback = inputBytes(emissionFile, emissionLimits.artifactBytes); if (!emissionBytes.equals(emissionReadback)) fail();
+    parseWindowsUvSpawnEmission(emissionReadback);
+    const observerEmission = { name: "observer-emission.json", bytes: emissionReadback.length, sha256: hash(emissionReadback), schema: 1, review: "not-reviewed", status: emission.status };
+    diagnostic.checkpoint(checkpoints.object);
+    const object = inputBytes(path.join(buildDirectory, "ember_uv_spawn_probe.dir", buildPin.configuration, "windows-uv-spawn-observe.obj"), buildPin.maximumObjectBytes);
+    const observerObject = { bytes: object.length, sha256: hash(object) };
+    diagnostic.checkpoint(checkpoints.pe);
+    const bytes = inputBytes(path.join(buildDirectory, buildPin.configuration, "ember_uv_spawn_probe.exe"), buildPin.maximumExecutableBytes, true);
+    diagnostic.checkpoint(checkpoints.readback);
+    const staged = path.join(destination, "uv-spawn-probe.exe"); fs.writeFileSync(staged, bytes, { flag: "wx" });
+    const readback = inputBytes(staged, buildPin.maximumExecutableBytes, true); if (!bytes.equals(readback)) fail();
+    const assets = { probe: { name: "uv-spawn-probe.exe", ...windowsUvSpawnImageFingerprint(readback, buildPin.maximumExecutableBytes) } };
+    fs.writeFileSync(path.join(destination, "LICENSE"), inputBytes(path.join(sources.stockDir, "LICENSE"), 64 * 1024), { flag: "wx" });
+    diagnostic.checkpoint(checkpoints.receipt);
+    const receipt = { schema: 1, issuer: sourcePin.issuer, sourceVersion: sourcePin.version, sourceArchiveSha256: sourcePin.sourceArchive.sha256, sourceCommit: sourcePin.provenance.commit,
+      source: sourceSummary(), build: { ...buildPin, ...observed, generatedProjects, observerListing, observerObject, observerEmission }, tools, recipe, commit, assets };
+    const receiptBytes = Buffer.from(JSON.stringify(receipt, null, 2) + "\n"); parseWindowsUvSpawnBuildReceipt(receiptBytes, commit);
+    fs.writeFileSync(path.join(destination, "build-receipt.json"), receiptBytes, { flag: "wx" }); return receipt;
+  } catch (error) { throw diagnostic.failure(error); }
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
@@ -278,5 +303,5 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     if (args.length !== 6 || args[0] !== "--archive" || args[2] !== "--destination" || args[4] !== "--python") fail();
     const value = await buildWindowsUvSpawnProbe({ archivePath: args[1], destination: args[3], pythonPath: args[5] });
     process.stdout.write(JSON.stringify({ issuer: value.issuer, sourceVersion: value.sourceVersion, bytes: value.assets.probe.bytes }) + "\n");
-  } catch { process.stderr.write("The fixed uv_spawn build failed its closed contract.\n"); process.exitCode = 1; }
+  } catch (error) { process.stderr.write(JSON.stringify(classifyUvSpawnBuildFailure(error)) + "\n"); process.exitCode = 1; }
 }
