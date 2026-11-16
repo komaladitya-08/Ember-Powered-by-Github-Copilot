@@ -77,6 +77,18 @@ every residual CR, including runs of three or more before LF; sequential replace
 Control bytes, private/unknown source paths, malformed or duplicate headers and release-specific membership retain
 their existing refusals. Native public-location or `no-location` results after this normalization remain pending.
 
+At `3d922cad`, [run 43798869479](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43798869479)
+passed all 237 contracts per job. Normalization returned `no-location` for all four 48-byte artifacts; the private-stdio
+host controls passed and LPAC still exited `0x80000003`. No V8 source location was recovered.
+
+Both pinned releases' [libuv fatal handler](https://github.com/nodejs/node/blob/v22.23.5/deps/uv/src/win/error.c#L35)
+prints a static syscall name, numeric error and dynamic `FormatMessageA` text, then calls `DebugBreak`. Its source
+notes that the system message already contains a newline. An inspection may now recognize only that complete
+single-line grammar and emit a release-pinned syscall enum plus a positive signed-32-bit error code; system text is
+discarded. The allowlist comes from the pinned libuv `core.c`, `winsock.c`, `util.c`, `thread.c` and `winapi.c` literals, including
+the releases' distinct `GetModuleHandleA`/`GetModuleHandleW` spelling. This preserves `no-location`; it does not infer
+a public callsite or identify the observed error before a native receipt matches. Native signature results remain pending.
+
 No result or copied content is read by the host until the real root handle has exited and both private job counters are zero. Unverified shutdown retains its scratch and pins. No ACL, AppContainer, network, PowerShell, CLR or registry compatibility fallback is permitted. PowerShell runs only as a trusted host-side signature or event observer, outside the LPAC job; Node is the executable under test inside that job.
 
 The dedicated workflow is `experimental-windows-node-lpac.yml`; it explicitly sets `EMBER_LPAC_NODE_PROOF=1` and the exact asset/version inputs, so its configured Windows jobs must execute or fail. Unconfigured general integration runs skip this separate diagnostic.

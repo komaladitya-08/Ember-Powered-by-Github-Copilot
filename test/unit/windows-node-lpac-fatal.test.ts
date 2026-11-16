@@ -84,6 +84,45 @@ it("retains private-path, duplicate-header, malformed-header and control-byte re
   }
 });
 
+it.each(["22.23.5", "24.21.0"])("recognizes only the pinned libuv single-line syscall and numeric code, discarding message text: %s", release => {
+  for (const operation of ["WSAStartup", "GetProcAddress", "QueryPerformanceFrequency", "QueryPerformanceCounter", "DuplicateHandle", "GetQueuedCompletionStatusEx"]) {
+    const text = `${operation}: (12345) private-env C:\\private\\message 0xdeadbeef\r\r\n`;
+    const inspection = inspectWindowsNodeFatalOutput(Buffer.from(text), release);
+    expect(inspection).toEqual({ output: { status: "no-location", bytes: Buffer.byteLength(text) }, nativeFailure: { family: "libuv-win32", operation, code: 12345 } });
+    expect(parse(text, release)).toEqual(inspection.output); // Public-source output never becomes an inferred location.
+    expect(JSON.stringify(inspection)).not.toMatch(/private|env|message|deadbeef|C:/);
+    expect(Buffer.byteLength(JSON.stringify(inspection))).toBeLessThan(256);
+  }
+});
+
+it("pins the module-handle syscall spelling to the exact Node/libuv release", () => {
+  for (const [release, accepted, rejected] of [["22.23.5", "GetModuleHandleA", "GetModuleHandleW"], ["24.21.0", "GetModuleHandleW", "GetModuleHandleA"]]) {
+    const inspect = (operation: string) => inspectWindowsNodeFatalOutput(Buffer.from(`${operation}: (5) private-system-text\n`), release);
+    expect(inspect(accepted).nativeFailure).toEqual({ family: "libuv-win32", operation: accepted, code: 5 });
+    expect(inspect(rejected).nativeFailure).toBeUndefined();
+  }
+});
+
+it.each([
+  "PrivateOperation: (5) private-message\n", "prefix WSAStartup: (5) private-message\n", " WSAStartup: (5) private-message\n",
+  "WSAStartup: (0) private-message\n", "WSAStartup: (-5) private-message\n", "WSAStartup: (05) private-message\n",
+  "WSAStartup: (2147483648) private-message\n", "WSAStartup: (99999999999) private-message\n", "WSAStartup: (5.0) private-message\n",
+  "WSAStartup: (5) \n", "WSAStartup: (5) private\tmessage\n", "WSAStartup: (5) private\nmessage\n",
+  "WSAStartup: (5) private-message\n\n", "WSAStartup: (5) private-message\nDuplicateHandle: (6) private-message\n",
+])("withholds unknown, malformed, unbounded or embedded native signatures: %s", text => {
+  const inspection = inspectWindowsNodeFatalOutput(Buffer.from(text), version);
+  expect(inspection.nativeFailure).toBeUndefined();
+  expect(JSON.stringify(inspection)).not.toMatch(/private|PrivateOperation|message|prefix|2147483648|99999999999/);
+});
+
+it("retains complete encoding/control and newline validation before looking for a native signature", () => {
+  for (const text of ["WSAStartup: (5) private\0message\n", "WSAStartup: (5) private-message\r", "WSAStartup: (5) private-message\r\r\r\n"]) {
+    const inspection = inspectWindowsNodeFatalOutput(Buffer.from(text), version);
+    expect(inspection.output.status).toBe("unreadable"); expect(inspection.nativeFailure).toBeUndefined();
+    expect(JSON.stringify(inspection)).not.toMatch(/private|message|WSAStartup/);
+  }
+});
+
 it("returns only the pinned public filename and bounded line from a captured fatal header", () => {
   const text = "\n#\n" + header("C:\\private-user\\build-42\\node\\deps\\v8\\src\\base\\platform\\platform-win32.cc") +
     "# Check failed: private-user token=do-not-print\n#FailureMessage Object: 0xdeadbeef\nstack C:\\private-stack\\secret.cc\n";
