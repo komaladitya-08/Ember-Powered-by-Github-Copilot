@@ -1,0 +1,57 @@
+name: experimental-windows-node-cng-inprocess
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/experimental-windows-node-cng-inprocess.yml"
+      - "test/fixtures/windows-node-cng-inprocess*"
+      - "test/unit/windows-node-cng-inprocess*"
+      - "test/integration/windows-node-cng-inprocess-native.test.ts"
+permissions:
+  contents: read
+concurrency:
+  group: experimental-windows-node-cng-inprocess-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  fixed-pair:
+    if: github.event_name == 'workflow_dispatch' || github.head_ref == 'ember-improve/20261116-source-node-inprocess'
+    name: Fixed source Node in-process tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm install -g npm@11.6.2
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      - name: Portable immutable-artifact, source and in-process lifecycle contracts
+        run: npm test -- test/unit/windows-node-cng-artifact.test.ts test/unit/windows-node-source.test.ts test/unit/windows-node-source-build.test.ts test/unit/windows-node-source-program.test.ts test/unit/windows-node-source-report.test.ts test/unit/windows-node-source-ownership.test.ts test/unit/windows-node-source-fatal.test.ts test/unit/windows-node-source-child-program.test.ts test/unit/windows-node-source-child-host.test.ts test/unit/windows-node-source-child-io.test.ts test/unit/windows-node-source-child-observer.test.ts test/unit/windows-node-source-child-failure.test.ts test/unit/windows-node-source-child-failure-read.test.ts test/unit/windows-node-source-child-failure-proof.test.ts test/unit/windows-node-cng-inprocess-program.test.ts test/unit/windows-node-cng-inprocess-report.test.ts test/unit/windows-node-cng-inprocess-proof.test.ts --maxWorkers=1
+      - name: Authenticate only the exact unchanged CNG source artifact
+        timeout-minutes: 5
+        shell: pwsh
+        env:
+          EMBER_NODE_CNG_ARTIFACT_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $inprocessRoot = Join-Path $env:RUNNER_TEMP ('ember-cng-inprocess-artifact-' + [Guid]::NewGuid().ToString())
+          node scripts/experimental/stage-windows-node-cng-artifact.mjs --destination $inprocessRoot
+          if ($LASTEXITCODE -ne 0) { throw 'The exact existing CNG source artifact could not be authenticated.' }
+      - name: Require the separate explicit in-process ordinary-host and LPAC tests
+        timeout-minutes: 5
+        env:
+          EMBER_NODE_CNG_INPROCESS_TEST: "1"
+        run: node scripts/run-integration.mjs test/integration/windows-node-cng-inprocess-native.test.ts
+      # No source rebuild, product gate, arbitrary program, raw TAP, report or private output upload.
