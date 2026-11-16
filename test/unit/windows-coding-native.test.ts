@@ -86,7 +86,10 @@ function failedCreationNative(options: { descriptorFree?: boolean; invalidCreate
       bytes.writeBigUInt64LE(1n, 0); bytes.writeBigUInt64LE(2n, 16); bytes.writeBigUInt64LE(3n, 24); bytes.writeUInt32LE(row.directory ? 0x10 : 0x80, 32); return 1;
     },
     GetFinalPathNameByHandleW: (...args) => {
-      const row = objects.get(args[0] as bigint)!, location = "\\\\?\\Volume{12345678-1234-1234-1234-123456789abc}\\" + (row.name.startsWith("\\??\\") ? "" : row.name);
+      const row = objects.get(args[0] as bigint)!;
+      // MS-FSA FileNormalizedNameInformation requires FILE_TRAVERSE on an open-by-ID handle.
+      if (row.byId && !(row.access & 0x20)) return 0;
+      const location = "\\\\?\\Volume{12345678-1234-1234-1234-123456789abc}\\" + (row.name.startsWith("\\??\\") ? "" : row.name);
       (args[1] as Buffer).write(location, "utf16le"); return location.length;
     },
     GetCurrentProcess: () => -1n,
@@ -159,7 +162,7 @@ it("transfers fresh directory ownership to a distinct verified non-DELETE file o
   expect(fake.byId[0].descriptor.readUInt32LE(0)).toBe(24); expect(fake.byId[0].descriptor.readUInt32LE(4)).toBe(0);
   expect(fake.byId[0].descriptor.readBigUInt64LE(8)).toBe(fake.created[0]);
   expect(fake.closed).toContain(fake.created[0]); expect(api.info(directory).id).toBe(fake.created[0].toString(16).padStart(16, "0"));
-  api.remove(directory); expect(fake.byId[1]).toMatchObject({ hint: fake.byId[0].raw, access: 0x130080, share: 7, flags: 0x02200000 });
+  api.remove(directory); expect(fake.byId[1]).toMatchObject({ hint: fake.byId[0].raw, access: 0x1300a0, share: 7, flags: 0x02200000 });
   expect(fake.rolledBack).toEqual([fake.byId[1].raw]); expect(fake.closed).toContain(fake.byId[1].raw);
   expect(() => api.info(directory)).toThrow(); api.close(directory); for (const handle of base.handles.slice().reverse()) api.close(handle);
 });

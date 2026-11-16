@@ -12,25 +12,25 @@ import * as native from "../../app/main/agent/windows-coding-native";
 
 const SECRET = "ghp_" + "A".repeat(36), ORIGINAL = "export const answer = 41;\n";
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; }
-/** Emit one fixed, path-free native receipt before the host's public error sanitizer removes its cause. */
-function captureNativeRenameFailure(): void {
-  const load = native.loadWindowsCodingNative; let remaining = 1;
+/** Emit one fixed, path-free native receipt per method before public sanitization/cleanup retirement removes its cause. */
+function captureNativeMutationFailure(): void {
+  const load = native.loadWindowsCodingNative, reported = new Set<"replace" | "remove">();
+  const receipt = (method: "replace" | "remove", error: unknown) => {
+    const cause = (error as { cause?: { operation?: unknown; status?: unknown } } | null)?.cause;
+    const allowed = ["NtSetInformationFile(rename)", "NtSetInformationFile(disposition)", "OpenFileById", "NtCreateFile", "GetFileInformationByHandle", "GetFinalPathNameByHandleW", "GetSecurityInfo"];
+    if (reported.has(method) || typeof cause?.operation !== "string" || !allowed.includes(cause.operation) || typeof cause.status !== "number" ||
+        !Number.isInteger(cause.status) || cause.status < 0 || cause.status > 0xffffffff) return;
+    reported.add(method);
+    console.error(`Native file mutation failure: ${JSON.stringify({ operation: cause.operation, status: `0x${cause.status.toString(16).padStart(8, "0")}` })}`);
+  };
   vi.spyOn(native, "loadWindowsCodingNative").mockImplementation(() => {
-    const api = load(), replace = api.replace;
+    const api = load(), replace = api.replace, remove = api.remove;
     api.replace = (...args) => {
       try { return replace.apply(api, args); }
-      catch (error) {
-        if (remaining-- > 0) {
-          const cause = (error as { cause?: { operation?: unknown; status?: unknown } } | null)?.cause;
-          const allowed = ["NtSetInformationFile(rename)", "NtCreateFile", "GetFileInformationByHandle", "GetFinalPathNameByHandleW", "GetSecurityInfo"];
-          const operation = typeof cause?.operation === "string" && allowed.includes(cause.operation) ? cause.operation : "unavailable";
-          const status = typeof cause?.status === "number" && Number.isInteger(cause.status) && cause.status >= 0 && cause.status <= 0xffffffff
-            ? `0x${cause.status.toString(16).padStart(8, "0")}` : "unavailable";
-          console.error(`Native rename failure: ${JSON.stringify({ operation, status })}`);
-        }
-        throw error;
-      }
+      catch (error) { receipt("replace", error); throw error; }
     };
+    // Retained on the copy's API object after restoreAllMocks restores only the module loader in afterEach.
+    api.remove = (...args) => { try { return remove.apply(api, args); } catch (error) { receipt("remove", error); throw error; } };
     return api;
   });
 }
@@ -67,6 +67,7 @@ describe.skipIf(process.platform !== "win32")("native Windows private coding-cop
   });
 
   it("copies fresh NTFS identities, preserves the selected source, and exposes only structural /work results", async () => {
+    captureNativeMutationFailure();
     const { workspace, broker } = await open(), api = native.loadWindowsCodingNative(), pinned = api.pin(source, "read");
     try {
       const folder = api.open(pinned.handle, "src", "directory", "source"), file = api.open(folder, "app.ts", "file", "source");
@@ -103,7 +104,7 @@ describe.skipIf(process.platform !== "win32")("native Windows private coding-cop
     try {
       fs.renameSync(original, moved); relocated = true;
       fs.mkdirSync(original); replacement = true; fs.writeFileSync(path.join(original, "canary.txt"), "replacement-must-stay-untouched");
-      await expect(workspace.withTree(async tree => { invoked = true; tree.api.create(tree.root, "must-not-exist.ts", "file"); })).rejects.toMatchObject({ code: "boundary" });
+      await expect(workspace.withTree(async () => { invoked = true; })).rejects.toMatchObject({ code: "boundary" });
       expect(invoked).toBe(false); expect(fs.readdirSync(original)).toEqual(["canary.txt"]);
       expect(fs.readFileSync(path.join(original, "canary.txt"), "utf8")).toBe("replacement-must-stay-untouched");
     } finally {
@@ -115,7 +116,7 @@ describe.skipIf(process.platform !== "win32")("native Windows private coding-cop
   });
 
   it("performs create, literal replacement, atomic overwrite, search, mkdir and exact deletion inside the copy", async () => {
-    captureNativeRenameFailure();
+    captureNativeMutationFailure();
     const { workspace, broker } = await open();
     const before = await broker.readText("src/app.ts");
     await expect(broker.writeText("src/app.ts", "bad", { expectedSha256: "0".repeat(64) })).rejects.toMatchObject({ code: "conflict" });
@@ -134,7 +135,7 @@ describe.skipIf(process.platform !== "win32")("native Windows private coding-cop
   });
 
   it("validates real atomic replacement while the old exact native target remains open, and rejects expired handle tokens", async () => {
-    captureNativeRenameFailure();
+    captureNativeMutationFailure();
     const workspace = await copy(); let stale: { api: native.WindowsCodingNative; handle: bigint } | undefined;
     await workspace.withTree(async tree => {
       const before = tree.entries.get("README.md")!, temporary = tree.api.create(tree.root, ".atomic-fixture.tmp", "file");

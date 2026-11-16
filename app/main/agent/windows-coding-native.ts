@@ -43,7 +43,8 @@ type NativeFunction = (...args: unknown[]) => unknown;
 type Lease = { raw: bigint; kind: WindowsCodingKind; capability: "read" | "base" | "copy"; root?: bigint; created: boolean; written: boolean; removed: boolean; poisoned: boolean };
 const MAX_FILE = 128 * 1024 * 1024, MAX_CHUNK = 1024 * 1024, MAX_ENTRIES = 10_000;
 const READ = 0x120089, DIRECTORY_READ = 0x1200a9, ALL = 0x1f01ff, DELETE = 0x10000;
-const COPY_DIRECTORY = DIRECTORY_READ | 2 | 4, DELETE_QUERY = DELETE | 0x120080;
+// A by-ID normalized-name query also requires FILE_TRAVERSE (MS-FSA 2.1.5.12.30).
+const COPY_DIRECTORY = DIRECTORY_READ | 2 | 4, DELETE_QUERY = DELETE | 0x120080 | 0x20;
 const INVALID_HANDLE = 0xffffffffffffffffn;
 const SPECIAL = 0x5640 | 0x40000 | 0x400000;
 let nextLease = 1n;
