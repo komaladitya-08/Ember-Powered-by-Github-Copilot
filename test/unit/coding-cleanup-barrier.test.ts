@@ -2,6 +2,8 @@
 import fs from "node:fs";
 import { afterEach, expect, it, vi } from "vitest";
 import { CodingRetirement, unconfirmedCodingCleanupReceipt, type CodingCleanupReceipt } from "../../app/main/agent/coding-retirement";
+import { wipeCodingTree } from "../../app/main/agent/coding-seed-snapshot";
+import type { CodingExportTree } from "../../app/main/agent/coding-result-export";
 
 function deferred<T>() { let resolve!: (value: T) => void; let reject!: (error: unknown) => void; const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; }
 interface HostBarrier { codingRetirement: CodingRetirement; codingWorkspaceChanged(): void }
@@ -179,30 +181,35 @@ it("each reset takes a fresh Stop receipt and an older success cannot clear the 
 
 interface ReferenceBackend {
   lease: { getStore(): boolean }; retired: boolean; epoch: number; active: null; tail: Promise<void>; closing: Promise<void> | null;
-  baseline: { binding: object; entries: unknown[] }; exporting: Promise<unknown> | null; closeTaskPrivacy(): Promise<void>; cleanupFiles(): Promise<void>;
+  baseline: CodingExportTree; exporting: Promise<unknown> | null; closeTaskPrivacy(): Promise<void>; cleanupFiles(): Promise<void>;
 }
 const backendSource = fs.readFileSync("app/main/agent/isolated-command-workspace.ts", "utf8");
 const closeStart = backendSource.lastIndexOf("  close(): Promise<void> {");
 const closeMethod = backendSource.slice(closeStart, backendSource.lastIndexOf("\n}"));
-const closeBackend = new Function(`return function() ${closeMethod.slice(closeMethod.indexOf("{"))}`)() as (this: ReferenceBackend) => Promise<void>;
+const closeBackend = new Function("wipeCodingTree", `return function() ${closeMethod.slice(closeMethod.indexOf("{"))}`)(wipeCodingTree) as (this: ReferenceBackend) => Promise<void>;
 
 it("keeps baseline bytes until in-flight work drains, then drops owned references without altering external bytes", async () => {
   const drained = deferred<void>(), cleanup = deferred<void>(), original = Buffer.from("owned baseline source");
   const externalReview = { bytes: original };
+  const owned = Buffer.from(original), entry = { path: "source.txt", kind: "file" as const, bytes: owned, executable: false };
   const backend: ReferenceBackend = { lease: { getStore: () => false }, retired: false, epoch: 0, active: null, tail: drained.promise, closing: null,
-    baseline: { binding: { owner: "fixture" }, entries: [original] }, exporting: Promise.resolve(externalReview), closeTaskPrivacy: async () => undefined, cleanupFiles: vi.fn(() => cleanup.promise) };
+    baseline: { binding: { owner: "fixture", session: "fixture", snapshot: "fixture" }, entries: [entry] }, exporting: Promise.resolve(externalReview), closeTaskPrivacy: async () => undefined, cleanupFiles: vi.fn(() => cleanup.promise) };
   const closed = closeBackend.call(backend); expect(closeBackend.call(backend)).toBe(closed);
-  expect(backend.baseline.entries).toEqual([original]); expect(backend.cleanupFiles).not.toHaveBeenCalled();
-  drained.resolve(); await Promise.resolve(); expect(backend.baseline.entries).toEqual([original]);
+  expect(backend.baseline.entries).toEqual([entry]); expect(owned.equals(original)).toBe(true); expect(backend.cleanupFiles).not.toHaveBeenCalled();
+  drained.resolve(); await Promise.resolve(); expect(backend.baseline.entries).toEqual([entry]); expect(owned.equals(original)).toBe(true);
   cleanup.resolve(); await closed;
-  expect(backend.baseline.entries).toEqual([]); expect(backend.exporting).toBeNull(); expect(externalReview.bytes.toString()).toBe("owned baseline source");
+  expect(backend.baseline.entries).toEqual([]); expect(backend.exporting).toBeNull(); expect(owned).toEqual(Buffer.alloc(owned.length));
+  expect(externalReview.bytes.toString()).toBe("owned baseline source");
 });
 
 it("drops terminal baseline references even when cleanup fails while retaining the shared failed-close receipt", async () => {
   const failure = new Error("private-copy cleanup failed");
+  const owned = Buffer.from("owned source"), externalReview = { bytes: Buffer.from("owned review") };
   const backend: ReferenceBackend = { lease: { getStore: () => false }, retired: false, epoch: 0, active: null, tail: Promise.resolve(), closing: null,
-    baseline: { binding: { owner: "fixture" }, entries: [Buffer.from("owned source")] }, exporting: Promise.resolve({ bytes: Buffer.from("owned review") }), closeTaskPrivacy: async () => undefined,
+    baseline: { binding: { owner: "fixture", session: "fixture", snapshot: "fixture" }, entries: [{ path: "source.txt", kind: "file", bytes: owned, executable: false }] },
+    exporting: Promise.resolve(externalReview), closeTaskPrivacy: async () => undefined,
     cleanupFiles: async () => { throw failure; } };
   const closed = closeBackend.call(backend); await expect(closed).rejects.toBe(failure);
   expect(backend.baseline.entries).toEqual([]); expect(backend.exporting).toBeNull(); expect(closeBackend.call(backend)).toBe(closed);
+  expect(owned).toEqual(Buffer.alloc(owned.length)); expect(externalReview.bytes.toString()).toBe("owned review");
 });

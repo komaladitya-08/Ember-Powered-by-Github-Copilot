@@ -22,7 +22,7 @@ function setup() {
   for (const directory of [source, other, privateDir]) fs.mkdirSync(directory);
   fs.writeFileSync(path.join(source, "unchanged.txt"), "The original is unchanged.");
   const first = randomUUID(), second = randomUUID(), record = randomUUID();
-  let owner: string | null = "owner-a", allowed = true;
+  let owner: string | null = "owner-a", allowed = true, available = false;
   const state: ProjectSessionsState = { selectedProjectId: first, projects: [first, second].map(id => ({ id, name: id, goal: "", createdAt: 1, sessions: [] })) };
   const folders = new ProjectCodingWorkspaces({ projectExists: id => state.projects.some(project => project.id === id), currentOwner: () => owner });
   const review: CodingResultReview = { id: record, projectId: first, taskId: randomUUID(), title: "Improve the app", sourcePath: source, status: "done", files: 1, conflicts: 0,
@@ -41,23 +41,79 @@ function setup() {
   const validateFolder = vi.fn<(selected: string) => CodingWorkspace | Promise<CodingWorkspace>>(selected => projectCommandFolder(selected, privateDir));
   const changed = vi.fn();
   const folderChanged = vi.fn<(projectId?: string) => void>();
+  const continueResult = vi.fn(async (_id: string, _projectId: string, _request: string) => true);
   const handlers = new Map<string, (...args: unknown[]) => unknown>();
   const api = registerProjectCodingIpc({ handle: (channel, handler) => handlers.set(channel, handler), projects: () => state, folders, results,
-    canUse: () => allowed, availability: () => ({ available: false, message: "Coding work is unavailable, but a folder can be prepared." }),
+    canUse: () => allowed, availability: () => ({ available, message: "Coding work is unavailable, but a folder can be prepared." }), continueResult,
     chooseFolder, validateFolder, folderChanged, changed });
   const call = async <T>(channel: string, ...args: unknown[]): Promise<T> => await handlers.get(channel)!(...args) as T;
   const live = (id: string, status: ProjectSession["status"], kind: ProjectSession["kind"] = "coding") => {
     state.projects.find(project => project.id === id)!.sessions = [{ id: randomUUID(), taskId: randomUUID(), title: "Work", kind, status, detail: "", startedAt: 1 }];
   };
   return { root, source, other, privateDir, first, second, record, review, state, folders, registry, results, chooseFolder, validateFolder, folderChanged, changed, handlers, api, call, live,
+    continueResult, available: (value: boolean) => { available = value; },
     owner: (value: string | null) => { owner = value; }, allowed: (value: boolean) => { allowed = value; },
     records: (value: CodingResultSummary[]) => { records = value; } };
 }
 
 describe("Home's project coding IPC", () => {
+  const prepareContinuation = (f: ReturnType<typeof setup>) => {
+    f.available(true); f.folders.bind(f.first, projectCommandFolder(f.source, f.privateDir), f.folders.ownerCurrent(f.first));
+  };
+  it("captures only an explicit selected result and exact new request without waiting for the conductor", async () => {
+    const f = setup(); prepareContinuation(f);
+    const pending = deferred<boolean>(), request = "  Continue the parser fix\nRun its focused test.  "; f.continueResult.mockReturnValueOnce(pending.promise);
+    expect(await f.call(IPC.codingResultContinue, f.record, f.first, request)).toMatchObject({ ok: true, message: expect.stringContaining("Requested a new coding session") });
+    expect(f.continueResult).toHaveBeenCalledExactlyOnceWith(f.record, f.first, request);
+    expect(f.chooseFolder).not.toHaveBeenCalled(); expect(f.validateFolder).not.toHaveBeenCalled(); expect(f.registry.export).not.toHaveBeenCalled();
+    pending.resolve(true); expect(fs.readFileSync(path.join(f.source, "unchanged.txt"), "utf8")).toBe("The original is unchanged.");
+  });
+
+  it("rejects malformed continuation arguments, blank or oversized goals, and renderer-supplied extra authority", async () => {
+    const f = setup(); prepareContinuation(f);
+    for (const args of [[f.record, f.first, ""], [f.record, f.first, "  \n"], [f.record, f.first, "x".repeat(2001)],
+      ["../result", f.first, "Repair source"], [f.record, "../project", "Repair source"], [f.record, f.first, { goal: "Repair source", directory: f.source }],
+      [f.record, f.first, "Repair source", { artifact: "invented" }]]) {
+      await expect(f.call(IPC.codingResultContinue, ...args)).rejects.toThrow("Choose an existing project or coding result.");
+    }
+    expect(f.continueResult).not.toHaveBeenCalled(); expect(f.results).not.toHaveBeenCalled();
+  });
+
+  it("requires current coding availability, a valid chosen folder and the result's selected project", async () => {
+    const f = setup();
+    expect(await f.call(IPC.codingResultContinue, f.record, f.first, "Repair source")).toMatchObject({ ok: false });
+    f.available(true); expect(await f.call(IPC.codingResultContinue, f.record, f.first, "Repair source")).toMatchObject({ ok: false });
+    prepareContinuation(f); f.state.selectedProjectId = f.second;
+    expect(await f.call(IPC.codingResultContinue, f.record, f.first, "Repair source")).toMatchObject({ ok: false });
+    f.state.selectedProjectId = f.first; f.records([{ ...f.review, projectId: f.second }]);
+    expect(await f.call(IPC.codingResultContinue, f.record, f.first, "Repair source")).toMatchObject({ ok: false });
+    expect(f.continueResult).not.toHaveBeenCalled();
+  });
+
+  it.each(["selection", "folder", "owner", "result"] as const)("rechecks %s after a delayed registry lookup before capturing continuation intake", async change => {
+    const f = setup(); prepareContinuation(f); const registry = deferred<typeof f.registry>(); f.results.mockReturnValueOnce(registry.promise);
+    const pending = f.call(IPC.codingResultContinue, f.record, f.first, "Repair source");
+    if (change === "selection") f.state.selectedProjectId = f.second;
+    if (change === "folder") f.folders.bind(f.first, projectCommandFolder(f.other, f.privateDir), f.folders.ownerCurrent(f.first));
+    if (change === "owner") { f.owner("other"); f.folders.ownerReset(); f.owner("owner-a"); }
+    if (change === "result") f.records([]);
+    registry.resolve(f.registry); expect(await pending).toMatchObject({ ok: false }); expect(f.continueResult).not.toHaveBeenCalled();
+  });
+
+  it("sanitizes synchronous host admission failures and absorbs only late submission failures", async () => {
+    const f = setup(); prepareContinuation(f);
+    f.continueResult.mockImplementationOnce(() => { throw new Error("private=/native/secret"); });
+    const refused = await f.call<{ ok: boolean; message: string }>(IPC.codingResultContinue, f.record, f.first, "Repair source");
+    expect(refused.ok).toBe(false); expect(refused.message).not.toContain("secret");
+    f.continueResult.mockRejectedValueOnce(new Error("private=/native/secret"));
+    const accepted = await f.call<{ ok: boolean; message: string }>(IPC.codingResultContinue, f.record, f.first, "Repair source");
+    expect(accepted).toMatchObject({ ok: true, message: expect.stringContaining("Requested") });
+    await Promise.resolve(); expect(JSON.stringify(accepted)).not.toContain("secret");
+  });
+
   it("registers only bounded metadata/review channels and prepares a folder without executing or reading source files", async () => {
     const f = setup();
-    expect([...f.handlers.keys()]).toEqual([IPC.projectCodingWorkspaceState, IPC.projectCodingWorkspaceChoose, IPC.projectCodingWorkspaceForget, IPC.codingResultsState, IPC.codingResultReview, IPC.codingResultExport, IPC.codingResultForget]);
+    expect([...f.handlers.keys()]).toEqual([IPC.projectCodingWorkspaceState, IPC.projectCodingWorkspaceChoose, IPC.projectCodingWorkspaceForget, IPC.codingResultsState, IPC.codingResultReview, IPC.codingResultExport, IPC.codingResultForget, IPC.codingResultContinue]);
     const before = fs.readFileSync(path.join(f.source, "unchanged.txt"), "utf8");
     const state = await f.call<ProjectCodingWorkspaceState>(IPC.projectCodingWorkspaceState, f.first);
     expect(state).toMatchObject({ available: false, canChoose: true, folder: null });

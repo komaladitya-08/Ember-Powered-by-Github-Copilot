@@ -4,6 +4,7 @@
  * establish those boundaries before capturing the baseline/result; a model's assertion of completion is insufficient.
  */
 import { createHash } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import { codingProjectManifest, codingProjectScopeDisclosure, type CodingProjectManifest } from "./coding-project-scope";
 
@@ -53,6 +54,11 @@ const bindingSchema = z.object({ owner: z.string().regex(/^[0-9a-f]{64}$/), sess
 const reserved = /^(?:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/i;
 const equalBinding = (a: CodingExportBinding, b: CodingExportBinding) => a.owner === b.owner && a.session === b.session && a.snapshot === b.snapshot;
 const digest = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
+function exportLimits(input?: Partial<CodingExportLimits>): CodingExportLimits {
+  const limits = { ...DEFAULT_LIMITS, ...input };
+  if (Object.entries(limits).some(([key, value]) => !Object.hasOwn(DEFAULT_LIMITS, key) || !Number.isSafeInteger(value) || value < 1 || value > DEFAULT_LIMITS[key as keyof CodingExportLimits])) throw new Error("Invalid result export limits.");
+  return limits;
+}
 
 function validPath(value: string, limits: CodingExportLimits): void {
   if (typeof value !== "string" || !value || Buffer.byteLength(value) > 4096 || Buffer.from(value).toString("utf8") !== value ||
@@ -149,8 +155,7 @@ function patch(file: string, before: CodingExportEntry | undefined, after: Codin
  */
 export function createCodingReviewExport(input: CodingExportInput): { review: CodingReviewExport; json: string } {
   input.signal?.throwIfAborted();
-  const binding = bindingSchema.parse(input.binding), limits = { ...DEFAULT_LIMITS, ...input.limits };
-  if (Object.entries(limits).some(([key, value]) => !Number.isSafeInteger(value) || value < 1 || value > DEFAULT_LIMITS[key as keyof CodingExportLimits])) throw new Error("Invalid result export limits.");
+  const binding = bindingSchema.parse(input.binding), limits = exportLimits(input.limits);
   const budget = { bytes: 0 };
   const baseline = capture(input.baseline, binding, limits, budget, input.signal), proposed = capture(input.proposed, binding, limits, budget, input.signal);
   const current = input.current ? capture(input.current, binding, limits, budget, input.signal) : null;
@@ -215,4 +220,94 @@ export function createCodingReviewExport(input: CodingExportInput): { review: Co
   if (Buffer.byteLength(json, "utf8") > limits.outputBytes) throw new Error("The review export is too large.");
   input.signal?.throwIfAborted();
   return { review, json };
+}
+
+export interface CodingReviewDecodeOptions { limits?: Partial<CodingExportLimits>; signal?: AbortSignal }
+const decodeFailure = () => new Error("The complete coding review could not be decoded or verified.");
+function exactKeys(value: unknown, fields: readonly string[]): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value) &&
+    Object.keys(value).sort().join("\0") === [...fields].sort().join("\0");
+}
+
+/** JSON.parse discards duplicate properties. Reject those, escaped aliases and excessive nesting before parsing. */
+function reviewJson(text: string, limits: CodingExportLimits, signal?: AbortSignal): unknown {
+  const stack: { kind: "object" | "array"; keys: Set<string>; key: boolean }[] = [];
+  let containers = 0;
+  for (let index = 0; index < text.length; index++) {
+    if (index % 65_536 === 0) signal?.throwIfAborted();
+    const char = text[index];
+    if (char === '"') {
+      const start = index;
+      for (index++; index < text.length && text[index] !== '"'; index++) if (text[index] === "\\") index++;
+      if (index >= text.length) throw decodeFailure();
+      const parent = stack.at(-1);
+      if (parent?.kind === "object" && parent.key) {
+        if (index - start > 256) throw decodeFailure();
+        const key: unknown = JSON.parse(text.slice(start, index + 1));
+        if (typeof key !== "string" || parent.keys.has(key)) throw decodeFailure();
+        parent.keys.add(key); parent.key = false;
+      }
+    } else if (char === "{" || char === "[") {
+      if (stack.length >= 32 || ++containers > limits.entries * 12 + 1024) throw decodeFailure();
+      stack.push({ kind: char === "{" ? "object" : "array", keys: new Set(), key: char === "{" });
+    } else if (char === "}" || char === "]") {
+      if (stack.pop()?.kind !== (char === "}" ? "object" : "array")) throw decodeFailure();
+    } else if (char === ",") {
+      const parent = stack.at(-1); if (parent?.kind === "object") parent.key = true;
+    }
+  }
+  if (stack.length) throw decodeFailure(); signal?.throwIfAborted(); return JSON.parse(text);
+}
+
+/**
+ * Decode a complete host-held review into independent captured bytes, retaining its original baseline and binding.
+ * This supplies no provenance, filesystem authority, new session binding, writer exclusion or permission to execute.
+ * Revalidating the regenerated review also prevents accepting a preview or metadata that disagrees with its trees.
+ */
+export function decodeCodingReviewExport(document: Buffer, expectedBinding: CodingExportBinding, options: CodingReviewDecodeOptions = {}): CodingExportInput {
+  const signal = options.signal;
+  try {
+    signal?.throwIfAborted(); const limits = exportLimits(options.limits), expected = bindingSchema.parse(expectedBinding);
+    if (!Buffer.isBuffer(document) || typeof SharedArrayBuffer !== "undefined" && document.buffer instanceof SharedArrayBuffer ||
+        document.length < 2 || document.length > limits.outputBytes) throw decodeFailure();
+    const text = document.toString("utf8");
+    if (!Buffer.from(text, "utf8").equals(document)) throw decodeFailure();
+    const parsed = reviewJson(text, limits, signal);
+    const fields = ["version", "purpose", "binding", "metadata", "baseline", "proposed", "current", "changes", "textPatch", "patchComplete", "limitations"];
+    if (parsed !== null && typeof parsed === "object" && Object.hasOwn(parsed, "scope")) fields.push("scope");
+    if (!exactKeys(parsed, fields) || parsed.version !== 1 || parsed.purpose !== "review-only" || parsed.metadata !== "content-and-executable-only" ||
+        !Array.isArray(parsed.changes) || parsed.changes.length > limits.entries * 2 || typeof parsed.textPatch !== "string" || typeof parsed.patchComplete !== "boolean" ||
+        !Array.isArray(parsed.limitations) || parsed.limitations.length > 8 || parsed.limitations.some(value => typeof value !== "string")) throw decodeFailure();
+    const binding = bindingSchema.parse(parsed.binding);
+    if (!equalBinding(binding, expected)) throw decodeFailure();
+    const budget = { bytes: 0 };
+    const decodeTree = (entries: unknown): CodingExportTree => {
+      if (!Array.isArray(entries) || entries.length > limits.entries) throw decodeFailure();
+      const decoded: CodingExportEntry[] = [];
+      for (const entry of entries) {
+        signal?.throwIfAborted();
+        const fileFields = ["path", "kind", "base64", "sha256", "size", "executable"];
+        if (!exactKeys(entry, entry?.kind === "directory" ? ["path", "kind"] : fileFields) || typeof entry.path !== "string") throw decodeFailure();
+        validPath(entry.path, limits);
+        if (entry.kind === "directory") { decoded.push({ path: entry.path, kind: "directory" }); continue; }
+        if (entry.kind !== "file" || typeof entry.base64 !== "string" || typeof entry.sha256 !== "string" || !/^[0-9a-f]{64}$/.test(entry.sha256) ||
+            typeof entry.executable !== "boolean" || typeof entry.size !== "number" || !Number.isSafeInteger(entry.size) || entry.size < 0 || entry.size > limits.fileBytes ||
+            (budget.bytes += entry.size) > limits.bytes || entry.base64.length !== Math.ceil(entry.size / 3) * 4) throw decodeFailure();
+        // The declared decoded size, aggregate budget and exact encoded length are checked before allocation.
+        const bytes = Buffer.from(entry.base64, "base64");
+        if (bytes.length !== entry.size || bytes.toString("base64") !== entry.base64 || digest(bytes) !== entry.sha256) throw decodeFailure();
+        decoded.push({ path: entry.path, kind: "file", bytes, executable: entry.executable });
+      }
+      return { binding: { ...binding }, entries: decoded };
+    };
+    const result: CodingExportInput = { binding, baseline: decodeTree(parsed.baseline), proposed: decodeTree(parsed.proposed),
+      ...(parsed.current === null ? {} : { current: decodeTree(parsed.current) }),
+      ...(Object.hasOwn(parsed, "scope") ? { scope: codingProjectManifest(parsed.scope) } : {}), limits,
+      ...(signal ? { signal } : {}) };
+    signal?.throwIfAborted();
+    if (!isDeepStrictEqual(parsed, createCodingReviewExport(result).review)) throw decodeFailure();
+    signal?.throwIfAborted(); return result;
+  } catch {
+    signal?.throwIfAborted(); throw decodeFailure();
+  }
 }

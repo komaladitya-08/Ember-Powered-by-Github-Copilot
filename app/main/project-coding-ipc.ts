@@ -15,6 +15,8 @@ export interface ProjectCodingIpcDeps {
   results(): Promise<Pick<CodingResultRegistry, "state" | "review" | "export" | "reset" | "forgetProject" | "forgetResult">>;
   canUse(): boolean;
   availability(): { available: boolean; message: string };
+  /** Calls the host's synchronous intake capture, then returns its ordinary conversation submission. */
+  continueResult?(id: string, projectId: string, request: string): Promise<boolean>;
   chooseFolder(title: string): Promise<string | null>;
   validateFolder(path: string): CodingWorkspace | Promise<CodingWorkspace>;
   /** Synchronous host cancellation after a folder capability changes; undefined invalidates every project. */
@@ -31,6 +33,7 @@ export interface ProjectCodingIpc {
 
 const idSchema = z.string().max(36).uuid();
 const argsSchema = z.tuple([idSchema]);
+const continuationArgsSchema = z.tuple([idSchema, idSchema, z.string().min(1).max(2000).refine(value => !!value.trim())]);
 const UNAVAILABLE = "Connect Ember and open Projects to use coding work.";
 const STALE = "The account, project or folder choice changed. Try again.";
 const BUSY = "Stop this project's coding sessions before changing its folder.";
@@ -200,6 +203,24 @@ export function registerProjectCodingIpc(d: ProjectCodingIpcDeps): ProjectCoding
     } catch {
       return { ok: false, message: safe(owner) ? "Couldn't finish clearing this private coding review. Forget everything tries again. Exported copies and project history are unchanged." : STALE };
     }
+  });
+  d.handle(IPC.codingResultContinue, async (...args): Promise<{ ok: boolean; message: string }> => {
+    const parsed = continuationArgsSchema.safeParse(args);
+    if (!parsed.success) throw new Error("Choose an existing project or coding result.");
+    const [id, projectId, request] = parsed.data, owner = capability(), current = capability(projectId);
+    const selected = () => d.projects().selectedProjectId === projectId;
+    const available = () => d.availability().available === true && d.folders.state(projectId)?.valid === true && !pickers.has(projectId);
+    if (!d.continueResult || !safe(() => safe(owner) && safe(current) && selected() && available())) return { ok: false, message: UNAVAILABLE };
+    try {
+      const registry = await registryForUse();
+      assertCurrent(() => safe(owner) && safe(current) && selected() && available());
+      const found = locate(registry, id);
+      if (!found || found.projectId !== projectId) return { ok: false, message: RESULT_GONE };
+      // No await separates the final result/owner checks from the host's opaque intake capture.
+      assertCurrent(() => safe(owner) && safe(current) && selected() && available() && locate(registry, id)?.projectId === projectId);
+      void d.continueResult(id, projectId, request).catch(() => undefined);
+      return { ok: true, message: "Requested a new coding session from this review. Watch Conversation for progress." };
+    } catch { return { ok: false, message: safe(owner) && safe(current) ? RESULT_GONE : STALE }; }
   });
 
   return {

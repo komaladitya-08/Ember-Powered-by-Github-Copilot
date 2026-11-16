@@ -248,7 +248,9 @@ export interface TaskSpec {
   id: string;
   goal: string;
   /** Host-selected folder grant; projectId pins scoped coding to the request's project, never a model-supplied path. */
-  codingWorkspace?: { path: string; projectId?: string; current(): boolean };
+  codingWorkspace?: { path: string; projectId?: string; current(): boolean;
+    /** Host-minted prior-result selection, never a model or renderer-supplied capability. */
+    continuation?: import("./coding-continuation").CodingContinuationRef };
   /** A coding-first mixed task needs an explicit result before continuing to the desktop. */
   codingCompletion?: true;
   /** Result of the prior part of a mixed task; untrusted, never user authority. */

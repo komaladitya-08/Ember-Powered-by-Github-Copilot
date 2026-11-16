@@ -20,6 +20,8 @@ import { codingWorkspaceFilePathProblem, codingWorkspaceFileProblemAsync } from 
 import { CodingPrivacyScanner, CodingPrivacyCleanupError, CodingPrivacyScanError, captureCodingPrivacyScope, assertCodingPrivacyScope, type CodingPrivacyScope } from "./coding-privacy-scanner";
 import { codingProjectManifest, type CodingProjectManifest, type CodingProjectScope, type CodingExcludedRoot } from "./coding-project-scope";
 import { createCodingDependencySnapshot, type CodingDependencySnapshot } from "./coding-dependency-snapshot";
+import { createCodingSeedSnapshot, prepareCodingContinuation, wipeCodingTree, CodingSeedCleanupError, type CodingWorkspaceContinuation } from "./coding-seed-snapshot";
+export type { CodingWorkspaceContinuation } from "./coding-seed-snapshot";
 
 export interface IsolatedCommandLimits { commandBytes: number; outputBytes: number; maxMs: number; proofMs: number }
 export interface IsolatedCommandWorkspaceInput {
@@ -36,6 +38,8 @@ export interface IsolatedCommandWorkspaceInput {
   privacyScope?: CodingPrivacyScope;
   /** Publication owner/project capability, independent of task Stop or a replaced source folder. */
   reviewCurrent?: () => boolean;
+  /** Host-held predecessor bytes only. This never grants a path, source write or SDK conversation. */
+  continuation?: CodingWorkspaceContinuation;
 }
 export interface IsolatedCommandResult {
   exitCode: number | null; signal: string | null; stopped: boolean; timedOut: boolean; outputLimited: boolean; output: string; observed: true;
@@ -120,6 +124,19 @@ export class IsolatedCommandWorkspace {
   get scopeManifest(): CodingProjectManifest | undefined { return this.manifest ? codingProjectManifest(this.manifest) : undefined; }
 
   static async create(input: IsolatedCommandWorkspaceInput): Promise<IsolatedCommandWorkspace> {
+    const binding = { ...input.binding }, privacyScope = input.privacyScope ?? captureCodingPrivacyScope();
+    const selected = input.continuation, hostAdmit = input.admit?.bind(input);
+    if (selected && typeof selected.current !== "function") throw new Error("The coding continuation is no longer current.");
+    const continuationCurrent = selected?.current.bind(selected);
+    const captured = { ...input, binding, privacyScope, ...(continuationCurrent ? { admit: () => (!hostAdmit || hostAdmit() === true) && continuationCurrent() === true } : {}) };
+    createCodingReviewExport({ binding, baseline: { binding, entries: [] }, proposed: { binding, entries: [] } });
+    const prepared = selected ? prepareCodingContinuation(selected, binding, input.scope?.excludeRoots ?? [], input.signal) : undefined;
+    let workspace: IsolatedCommandWorkspace | undefined;
+    try { workspace = await this.createPrepared(captured, prepared); return workspace; }
+    finally { wipeCodingTree(prepared?.proposed); if (!workspace) wipeCodingTree(prepared?.baseline); }
+  }
+
+  private static async createPrepared(input: IsolatedCommandWorkspaceInput, continuation?: ReturnType<typeof prepareCodingContinuation>): Promise<IsolatedCommandWorkspace> {
     if (HOST_PLATFORM !== "linux" || HOST_ARCH !== "x64") throw new Error("Isolated command workspaces require Linux x64.");
     const privacyScope = input.privacyScope ?? captureCodingPrivacyScope(), reviewCurrent = input.reviewCurrent?.bind(input);
     const signal = input.signal, hostAdmit = input.admit?.bind(input), excludedRoots = Object.freeze([...(input.scope?.excludeRoots ?? [])]);
@@ -147,6 +164,7 @@ export class IsolatedCommandWorkspace {
     admitted();
     const sourceHandle = await fs.open(input.source, DIRECTORY);
     let baseHandle: fs.FileHandle | undefined, snapshot: CodingSnapshot | undefined, scratch: string | undefined, workspace: IsolatedCommandWorkspace, dependencies: CodingDependencySnapshot | undefined, privacy: CodingPrivacyScanner | undefined;
+    let baseline: CodingExportTree | undefined;
     let unsafeCleanup: CodingPrivacyCleanupError | undefined;
     try {
       privacy = new CodingPrivacyScanner({ signal, scope: privacyScope });
@@ -163,10 +181,18 @@ export class IsolatedCommandWorkspace {
       snapshot = await createCodingSnapshot(`/proc/self/fd/${sourceHandle.fd}/.`, base, roots, { bytes: 10 * 1024 * 1024, fileBytes: 4 * 1024 * 1024 }, excludedRoots);
       admitted();
       if (!await sameRoot(source, sourceIdentity) || !await sameRoot(base, baseIdentity)) throw new Error("The project or private coding folder changed while copying.");
-      const binding = { ...input.binding }, baseline = await treeBytes(snapshot, binding, admitted);
+      const binding = { ...input.binding }; baseline = await treeBytes(snapshot, binding, admitted);
       admitted();
       await refuseCredentialTree(baseline, privacy, admitted, signal);
       admitted();
+      if (continuation) {
+        await refuseCredentialTree(continuation.baseline, privacy, admitted, signal); admitted();
+        await refuseCredentialTree(continuation.proposed, privacy, admitted, signal); admitted();
+        const originalCopy = snapshot;
+        snapshot = await createCodingSeedSnapshot(continuation.proposed, base, originalCopy.excluded, admitted);
+        try { await originalCopy.dispose(); } catch { throw new CodingSeedCleanupError(); }
+        wipeCodingTree(baseline); baseline = continuation.baseline; admitted();
+      }
       if (dependencyGrant) dependencies = await createCodingDependencySnapshot({ source: dependencyGrant, baseDir: base, protectedPaths: roots, signal, privacyScope });
       admitted();
       const manifest = input.scope ? codingProjectManifest({ version: 1, source: { excludedRoots: [...excludedRoots], omitted: snapshot.excluded, byteLimit: 10 * 1024 * 1024 }, dependencies: dependencies?.manifest ?? null }) : undefined;
@@ -193,6 +219,7 @@ export class IsolatedCommandWorkspace {
       if (error instanceof CodingPrivacyCleanupError) unsafeCleanup = error;
       let privacyFailure: unknown;
       try { await privacy?.close(); } catch (failure) { privacyFailure = failure; if (failure instanceof CodingPrivacyCleanupError) unsafeCleanup = failure; }
+      wipeCodingTree(baseline);
       const cleaned = await Promise.allSettled([scratch ? fs.rm(scratch, { recursive: true, force: true }) : Promise.resolve(), dependencies?.dispose(), snapshot?.dispose()]);
       if (unsafeCleanup) throw unsafeCleanup;
       const failed = cleaned.find((result): result is PromiseRejectedResult => result.status === "rejected");
@@ -442,7 +469,7 @@ export class IsolatedCommandWorkspace {
       const privacy = this.closeTaskPrivacy(); void privacy.catch(() => undefined);
       this.closing = pending.then(async () => {
         try { await this.cleanupFiles(); }
-        finally { this.baseline = { binding: this.baseline.binding, entries: [] }; this.exporting = null; }
+        finally { wipeCodingTree(this.baseline); this.baseline = { binding: this.baseline.binding, entries: [] }; this.exporting = null; }
       });
     }
     return this.closing;

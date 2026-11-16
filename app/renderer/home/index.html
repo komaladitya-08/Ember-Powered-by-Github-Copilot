@@ -366,7 +366,7 @@
       </div>
       <div class="group" id="project-coding" aria-labelledby="project-coding-title">
         <h3 class="sub" id="project-coding-title" tabindex="-1">Coding folder &amp; results</h3>
-        <p class="hint">Choose a folder for the active project. Each coding session starts from this folder in an independent private copy; your original files stay unchanged. File contents and command output may be sent to your connected model when you send a coding request. Commands follow your approval settings.</p>
+        <p class="hint">Choose a folder for the active project. New coding requests start from this folder in an independent private copy. Continue from a result starts a fresh session with its private edits. Your original files stay unchanged. File contents and command output may be sent to your connected model when you send a coding request. Commands follow your approval settings.</p>
         <p class="hint">Folder choices and results last for this run and model connection. Export a review to keep a result. Exports include all captured project files, including unchanged files, and stay in your chosen folder until you remove them. Reviewing or exporting never runs a task or changes the original project.</p>
         <p class="hint">Forget result removes its private review from Ember. Exported copies and project or session history stay.</p>
         <p id="project-coding-folder">No coding folder selected for this project.</p>
@@ -387,8 +387,18 @@
           <pre id="project-coding-patch" tabindex="0" aria-label="Text patch preview" hidden></pre>
           <div class="agent-actions">
             <button id="project-coding-export" type="button" class="btn" disabled>Export review…</button>
+            <button id="project-coding-continue" type="button" class="btn quiet" aria-controls="project-coding-continue-form" aria-expanded="false" aria-describedby="project-coding-state" disabled>Continue from this result</button>
             <button id="project-coding-close" type="button" class="btn quiet">Close review</button>
           </div>
+          <form id="project-coding-continue-form" hidden>
+            <label for="project-coding-continue-request">What should Ember do next?</label>
+            <p id="project-coding-continue-hint" class="hint">Start a fresh coding session with this result's private edits. Your original project stays unchanged. Enter a new request of up to 2,000 characters.</p>
+            <textarea id="project-coding-continue-request" rows="3" maxlength="2000" aria-describedby="project-coding-continue-hint" required></textarea>
+            <div class="agent-actions">
+              <button id="project-coding-continue-send" type="submit" class="btn quiet" disabled>Start new coding session</button>
+              <button id="project-coding-continue-cancel" type="button" class="btn quiet">Cancel</button>
+            </div>
+          </form>
         </section>
       </div>
       <div class="group" id="coding-workspace" aria-labelledby="coding-workspace-title" hidden>

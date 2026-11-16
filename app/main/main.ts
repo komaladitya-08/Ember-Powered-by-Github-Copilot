@@ -2722,6 +2722,11 @@ function start(): void {
     results: async () => (await codingResourcesReady).results(),
     canUse: () => projectAvailable() === true && codingCleanupPending === 0 && !codingCleanupFailed,
     availability: scopedCodingAvailability,
+    continueResult: (id, projectId, request) => {
+      if (!agent || projectAvailable() !== true || codingCleanupPending !== 0 || codingCleanupFailed) throw new Error("Open Projects and reconnect Ember before continuing a coding result.");
+      // This method captures the reviewed result and selected folder before its first conversation wait.
+      return agent.askCodingContinuation(request, id, projectId);
+    },
     chooseFolder: async title => {
       const owner = home, host = agent;
       if (!owner || !host || projectAvailable() !== true) throw new Error("Open Projects before choosing a folder.");
@@ -4055,6 +4060,8 @@ function start(): void {
           ? "Unlock the screen before starting coding work." : policy.features.actions === false
             ? "Your organisation has turned off Ember's actions." : scopedCodingAvailability().message,
         workspace: id => id ? codingResources?.workspace(id) ?? null : null,
+        captureContinuation: (id, projectId) => codingResources?.captureContinuation(id, projectId) ?? null,
+        continuationCurrent: (ref, projectId) => codingResources?.continuationCurrent(ref, projectId) === true,
         createWorkspace: async (spec, signal, admit) => (await codingResourcesReady).createWorkspace(spec, signal, admit),
         get reviewBase() { return codingResources?.reviewBase ?? ""; },
         publish: async (spec, output, status, checks) => (await codingResourcesReady).publish(spec, output, status, checks),

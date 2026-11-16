@@ -10,6 +10,9 @@ import { IsolatedCommandWorkspace, type IsolatedCommandReview } from "./isolated
 import { CodingResultRegistry, CodingResultRegistryError } from "./coding-result-registry";
 import { CodingArtifactCleanupError, type CodingArtifactSourceRef } from "./coding-artifact-store";
 import { LinuxCodingArtifactStore } from "./linux-coding-artifact-store";
+import { clearCodingContinuation, type CodingContinuationRef } from "./coding-continuation";
+import type { CodingExportInput } from "./coding-result-export";
+import { CodingSeedCleanupError } from "./coding-seed-snapshot";
 import type { CodingWorkspace } from "./coding-workspace";
 import type { TaskSpec } from "./worker";
 import type { ScopedCodingChecks } from "./scoped-coding-worker";
@@ -271,6 +274,13 @@ export class ProjectCodingResources {
     const folder = this.folders.capture(projectId);
     return folder ? Object.freeze({ path: folder.path, projectId, current: folder.current }) : null;
   }
+  /** Only explicit Home selection may mint this context; identifiers alone are never accepted by a workspace. */
+  captureContinuation(id: string, projectId: string): CodingContinuationRef | null {
+    return this.availability().available ? this.#registry?.captureContinuation(id, projectId) ?? null : null;
+  }
+  continuationCurrent(ref: CodingContinuationRef, projectId: string): boolean {
+    return this.availability().available && this.#registry?.continuationCurrent(ref, projectId) === true;
+  }
 
   createWorkspace(spec: TaskSpec, signal: AbortSignal, admit: () => boolean): Promise<IsolatedCommandWorkspace> {
     const workspace = spec.codingWorkspace, projectId = workspace?.projectId, owner = this.#owner();
@@ -279,35 +289,47 @@ export class ProjectCodingResources {
     try { privacyScope = captureCodingPrivacyScope(); }
     catch (error) { if (error instanceof CodingPrivacyCleanupError) this.#failure(); return Promise.reject(error); }
     const path = workspace.path, sourceCurrent = workspace.current.bind(workspace), selected = this.folders.capture(projectId);
+    const continuationRef = workspace.continuation;
+    let continuationReady = false;
     const ownerCurrent = this.folders.ownerCurrent(), epoch = this.#epoch;
     const authority: Authority = { taskId: spec.id, owner, projectId, source: path,
       title: titleOf(spec.goal).replace(/[\p{Cc}\p{Cf}]/gu, value => `\\u${value.codePointAt(0)!.toString(16).padStart(4, "0")}`),
       ownerCurrent, publicationEpoch: this.#publicationEpoch, projectRevision: this.#projectRevisions.get(projectId) ?? 0, sourceBoundary: null };
     const current = () => !this.#closed && !this.#failed && this.#epoch === epoch && !signal.aborted && this.availability().available &&
       this.#owner() === owner && safeCall(ownerCurrent) && this.#project(projectId) && selected?.path === path &&
-      safeCall(selected.current) && safeCall(sourceCurrent) && safeCall(admit);
+      safeCall(selected.current) && safeCall(sourceCurrent) && safeCall(admit) &&
+      (!continuationRef || continuationReady || this.#registry?.continuationCurrent(continuationRef, projectId) === true);
     if (!current()) return Promise.reject(stale());
     this.#tasks.set(spec.id, authority); this.#authorities.set(spec, authority);
     const pending = (async () => {
+      let continuation: CodingExportInput | undefined;
       try {
         await this.validateSource({ path, current: sourceCurrent }); if (!current()) throw stale();
         await this.#storageCurrent(); if (!current()) throw stale();
         const store = await this.#artifactStoreValue(); if (!current()) throw stale();
         authority.sourceBoundary = await store.sourceBoundary(path, () => { if (!current()) throw stale(); });
         if (!current()) throw stale();
+        if (continuationRef) {
+          if (!this.#registry) throw stale();
+          continuation = await this.#registry.loadContinuation(continuationRef, projectId, authority.sourceBoundary, current);
+          if (!current()) throw stale();
+        }
         const scope = await this.#sourceScope(path, current); if (!current()) throw stale();
         const backend = await IsolatedCommandWorkspace.create({ source: path, baseDir: this.#copies, protectedPaths: this.#roots, scope, privacyScope,
           binding: { owner, session: randomUUID(), snapshot: randomUUID() }, nodePath: this.#node!, signal, admit: current,
+          ...(continuation ? { continuation: { baseline: continuation.baseline, proposed: continuation.proposed, scope: continuation.scope, current } } : {}),
           reviewCurrent: () => this.#reviewCurrent(authority) });
         authority.workspace = backend; this.#active.set(backend, authority);
         if (!current()) { await backend.stop(); await this.#closeBackend(backend); throw stale(); }
+        // This independent copy now owns its bytes. Forgetting the predecessor cannot revive or modify it.
+        continuationReady = true;
         return this.#wrapped(backend, authority);
       } catch (error) {
-        if (error instanceof CodingPrivacyCleanupError || error instanceof CodingArtifactCleanupError || (authority.workspace && this.#active.has(authority.workspace))) this.#failure();
+        if (error instanceof CodingPrivacyCleanupError || error instanceof CodingArtifactCleanupError || error instanceof CodingSeedCleanupError || (authority.workspace && this.#active.has(authority.workspace))) this.#failure();
         if (!authority.workspace) { this.#tasks.delete(spec.id); this.#authorities.delete(spec); }
-        if (error instanceof CodingPrivacyCleanupError || error instanceof CodingArtifactCleanupError) throw error;
+        if (error instanceof CodingPrivacyCleanupError || error instanceof CodingArtifactCleanupError || error instanceof CodingSeedCleanupError) throw error;
         throw fixed("The coding copy could not be created under its current project grant.");
-      }
+      } finally { clearCodingContinuation(continuation); }
     })();
     this.#creating.add(pending); void pending.then(() => this.#creating.delete(pending), () => this.#creating.delete(pending));
     return pending;

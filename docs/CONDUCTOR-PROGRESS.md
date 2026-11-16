@@ -84,6 +84,12 @@ The conductor can give coding sessions the same bounded display names as desktop
 project board label; the task goal, original permission words, captured project and folder remain separate. Offered
 coding tools still check live availability before starting, and mixed handoff guidance appears only when that tool exists.
 
+The [explicit continuation flow](CODING-CONTINUATION-MATERIALIZATION.md) carries a reviewed result's complete proposed
+files into a fresh coding session while preserving the original cumulative baseline. Home requires a new typed request;
+the host pins its result, project, account and original source before waiting. Earlier task permissions never carry over.
+Dependencies are captured anew, and the SDK conversation remains fresh. The actual sandboxed Electron journey verifies
+both sessions, four command approvals, cumulative review, selective Forget, global erasure and clean shutdown.
+
 Real-runtime tests demonstrate a failing Node test, private-copy repair, successful rerun and stopped review export
 with unchanged source. A composed Chromium/IPC/Host/controller test covers that complete flow plus Forget/account
 cleanup and explicit-export retention. An actual Electron journey additionally exercises the genuine preload and

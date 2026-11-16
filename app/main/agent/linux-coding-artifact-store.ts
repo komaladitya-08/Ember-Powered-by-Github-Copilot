@@ -63,6 +63,15 @@ function ordinaryFile(stat: BigIntStats): boolean { return stat.isFile() && stat
 function safe(error: unknown): CodingResultRegistryError | CodingArtifactCleanupError {
   return error instanceof CodingArtifactCleanupError ? error : new CodingResultRegistryError(error instanceof CodingResultRegistryError ? error.code : "artifact");
 }
+function continuationCheck(check: () => void): () => void {
+  return () => {
+    if (typeof check !== "function") throw new CodingResultRegistryError("invalid");
+    try { check(); } catch (error) {
+      if (error instanceof CodingArtifactCleanupError) throw error;
+      throw new CodingResultRegistryError("stale");
+    }
+  };
+}
 
 export class LinuxCodingArtifactStore implements CodingArtifactStore {
   #base: fs.FileHandle; #basePath: string; #baseStat: BigIntStats; #baseMount: string;
@@ -152,14 +161,16 @@ export class LinuxCodingArtifactStore implements CodingArtifactStore {
     const before = await file.stat({ bigint: true }); check();
     if (!ordinaryFile(before) || before.size > BigInt(maximum) || await mount(file) !== this.#baseMount) throw new CodingResultRegistryError("artifact"); check();
     const hashing = createHash("sha256"), buffer = Buffer.alloc(64 * 1024); let length = 0;
-    while (length < Number(before.size)) {
-      const { bytesRead } = await file.read(buffer, 0, Math.min(buffer.length, Number(before.size) - length), length); check();
-      if (!bytesRead) throw new CodingResultRegistryError("artifact");
-      const bytes = buffer.subarray(0, bytesRead); hashing.update(bytes);
-      if (write) { await write(bytes); check(); } length += bytesRead;
-    }
-    if (!stable(before, await file.stat({ bigint: true }))) throw new CodingResultRegistryError("artifact"); check();
-    return { stat: before, sha256: hashing.digest("hex") };
+    try {
+      while (length < Number(before.size)) {
+        const { bytesRead } = await file.read(buffer, 0, Math.min(buffer.length, Number(before.size) - length), length); check();
+        if (!bytesRead) throw new CodingResultRegistryError("artifact");
+        const bytes = buffer.subarray(0, bytesRead); hashing.update(bytes);
+        if (write) { await write(bytes); check(); } length += bytesRead;
+      }
+      if (!stable(before, await file.stat({ bigint: true }))) throw new CodingResultRegistryError("artifact"); check();
+      return { stat: before, sha256: hashing.digest("hex") };
+    } finally { buffer.fill(0); }
   }
   write(files: CodingArtifactFiles, check: () => void): Promise<CodingArtifactInput & { artifact: CodingArtifactRef }> {
     let captured: CodingArtifactFiles, bytes = 0, reserved = false;
@@ -238,6 +249,37 @@ export class LinuxCodingArtifactStore implements CodingArtifactStore {
     check = this.#guard(check);
     return this.#queue(async () => { const artifact = this.#resolve(receipt); await this.#capture(artifact.directory, check, artifact); check(); });
   }
+  read(receipt: CodingArtifactReceipt, name: CodingArtifactName, maximumBytes: number, check: () => void): Promise<Buffer> {
+    check = this.#guard(continuationCheck(check));
+    return this.#queue(async () => {
+      let bytes: Buffer | undefined;
+      try {
+        check(); const artifact = this.#resolve(receipt);
+        if (!NAMES.includes(name) || !Number.isSafeInteger(maximumBytes) || maximumBytes < 0 || maximumBytes > MAX_BYTES) throw new CodingResultRegistryError("invalid");
+        const expected = artifact.files[name]!;
+        if (expected.stat.size > BigInt(maximumBytes)) throw new CodingResultRegistryError("limit");
+        await this.#capture(artifact.directory, check, artifact); check();
+        let root: fs.FileHandle | undefined, file: fs.FileHandle | undefined;
+        try {
+          root = await fs.open(`/proc/self/fd/${this.#base.fd}/${artifact.name}`, DIR); check();
+          const stat = await root.stat({ bigint: true }); check();
+          if (!privateDirectory(stat) || !identity(stat, artifact.stat) || await mount(root) !== artifact.mount) throw new CodingResultRegistryError("artifact");
+          check(); file = await fs.open(`/proc/self/fd/${root.fd}/${name}`, FILE); check();
+          bytes = Buffer.alloc(Number(expected.stat.size)); let length = 0;
+          const observed = await this.#read(file, check, async chunk => {
+            if (length + chunk.length > bytes!.length) throw new CodingResultRegistryError("artifact");
+            chunk.copy(bytes!, length); length += chunk.length;
+          }, maximumBytes);
+          if (length !== bytes.length || !stable(expected.stat, observed.stat) || observed.sha256 !== expected.sha256) throw new CodingResultRegistryError("artifact");
+          const eof = Buffer.alloc(1);
+          try { const extra = await file.read(eof, 0, 1, length); check(); if (extra.bytesRead) throw new CodingResultRegistryError("artifact"); }
+          finally { eof.fill(0); }
+        } finally { await closeFiles([file, root]); }
+        check(); await this.#capture(artifact.directory, check, artifact); check();
+        if (!bytes) throw new CodingResultRegistryError("artifact"); return bytes;
+      } catch (error) { bytes?.fill(0); throw error; }
+    });
+  }
   sourceBoundary(source: string, check: () => void, expected?: CodingArtifactSourceRef | null): Promise<CodingArtifactSourceRef | null> {
     check = this.#guard(check);
     return this.#queue(async () => {
@@ -256,6 +298,30 @@ export class LinuxCodingArtifactStore implements CodingArtifactStore {
       } catch (error) { if (error instanceof CodingArtifactCleanupError) throw error; check(); }
       check(); if (!boundary) return null;
       const reference = Object.freeze({}) as CodingArtifactSourceRef; this.#sources.set(reference, boundary); return reference;
+    });
+  }
+  sameSource(original: CodingArtifactSourceRef | null, fresh: CodingArtifactSourceRef | null, check: () => void): Promise<boolean> {
+    check = this.#guard(continuationCheck(check));
+    return this.#queue(async () => {
+      check(); await this.#baseCurrent(); check();
+      const before = original && this.#sources.get(original), after = fresh && this.#sources.get(fresh);
+      if (!before || !after || before.path !== after.path || !identity(before.stat, after.stat) || before.mount !== after.mount) return false;
+      // Only filesystem failures become a negative attestation; the authority callback always propagates.
+      const native = async <T>(operation: () => Promise<T>): Promise<T | null> => {
+        try { return await operation(); } catch (error) { if (error instanceof CodingArtifactCleanupError) throw error; return null; }
+      };
+      const source = await native(() => openDirectory(before.path));
+      if (!source) { check(); return false; }
+      try {
+        check();
+        for (let pass = 0; pass < 2; pass++) {
+          const stat = await native(() => source.stat({ bigint: true })); check();
+          const id = await native(() => mount(source)); check();
+          const currentPath = await native(() => fs.realpath(`/proc/self/fd/${source.fd}`)); check();
+          if (!stat || !stat.isDirectory() || !identity(before.stat, stat) || !identity(after.stat, stat) || id !== before.mount || currentPath !== before.path) return false;
+        }
+      } finally { await closeFile(source); }
+      check(); return true;
     });
   }
   export(receipt: CodingArtifactReceipt, sourceReference: CodingArtifactSourceRef | null, destination: string, check: () => void): Promise<CodingArtifactExportResult> {

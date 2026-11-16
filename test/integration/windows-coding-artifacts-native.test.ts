@@ -318,4 +318,55 @@ describe.skipIf(process.platform !== "win32")("native Windows private review art
     await expect(store.verify({ ...receipt } as CodingArtifactReceipt, () => undefined)).rejects.toMatchObject({ code: "invalid" });
     await store.verify(receipt, () => undefined); await store.cleanup(new Set()); expect(fs.readdirSync(base)).toEqual([]);
   });
+
+  it("reads complete binary artifact bytes under the exact claimed receipt and caller budget", async () => {
+    const binary = Buffer.alloc(70_003); for (let i = 0; i < binary.length; i++) binary[i] = i % 256;
+    const output = await store.write({ "review.json": binary, "changes.patch": Buffer.alloc(0) }, () => undefined);
+    const receipt = await store.claim(output, () => undefined);
+    const read = await store.read(receipt, "review.json", binary.length, () => undefined); expect(read).toEqual(binary); read.fill(0);
+    expect(await store.read(receipt, "changes.patch", 0, () => undefined)).toEqual(Buffer.alloc(0));
+    await expect(store.read(receipt, "review.json", binary.length - 1, () => undefined)).rejects.toMatchObject({ code: "limit" });
+    await expect(store.read({ ...receipt }, "review.json", binary.length, () => undefined)).rejects.toMatchObject({ code: "invalid" });
+    expect(await store.read(receipt, "review.json", binary.length, () => undefined)).toEqual(binary);
+    expect(fs.readFileSync(path.join(source, "app.ts"), "utf8")).toBe(ORIGINAL);
+  });
+
+  it("matches current original source capabilities but refuses foreign and replaced native identities", async () => {
+    const original = await store.sourceBoundary(source, () => undefined), fresh = await store.sourceBoundary(source, () => undefined);
+    expect(original).not.toBeNull(); expect(fresh).not.toBeNull(); expect(await store.sameSource(original, fresh, () => undefined)).toBe(true);
+    const otherBase = path.join(root, "comparison-reviews"); fs.mkdirSync(otherBase);
+    const other = await WindowsCodingArtifactStore.create({ privateBase: otherBase, protectedPaths: [protectedRoot] }); additionalStores.push(other);
+    const foreign = await other.sourceBoundary(source, () => undefined);
+    expect(await store.sameSource(original, foreign, () => undefined)).toBe(false); expect(await store.sameSource(original, null, () => undefined)).toBe(false);
+    const moved = source + "-comparison-moved"; fs.renameSync(source, moved); fs.mkdirSync(source);
+    fs.writeFileSync(path.join(source, "replacement.txt"), "keep replacement source");
+    try {
+      const replacement = await store.sourceBoundary(source, () => undefined);
+      expect(await store.sameSource(original, replacement, () => undefined)).toBe(false); expect(await store.sameSource(original, fresh, () => undefined)).toBe(false);
+      expect(fs.readFileSync(path.join(moved, "app.ts"), "utf8")).toBe(ORIGINAL);
+      expect(fs.readdirSync(source)).toEqual(["replacement.txt"]);
+    } finally { fs.rmSync(source, { recursive: true }); fs.renameSync(moved, source); }
+  });
+
+  it("propagates a one-shot source comparison revocation while preserving native source identity", async () => {
+    const original = await store.sourceBoundary(source, () => undefined), fresh = await store.sourceBoundary(source, () => undefined); let checks = 0;
+    await expect(store.sameSource(original, fresh, () => { if (++checks === 2) throw new Error("owned request retired"); })).rejects.toMatchObject({ code: "stale" });
+    expect(await store.sameSource(original, fresh, () => undefined)).toBe(true);
+    expect(fs.readFileSync(path.join(source, "app.ts"), "utf8")).toBe(ORIGINAL);
+  });
+
+  it("refuses a native artifact read when its current authority retires after a payload chunk", async () => {
+    await registry.close(); const load = native.loadWindowsCodingNative; let armed = false, observed = false;
+    vi.spyOn(native, "loadWindowsCodingNative").mockImplementation(() => {
+      const api = load(), read = api.read;
+      api.read = (...args) => { const chunk = read.apply(api, args); if (armed && chunk.length) { observed = true; armed = false; current = false; } return chunk; };
+      return api;
+    });
+    store = await WindowsCodingArtifactStore.create({ privateBase: base, protectedPaths: [protectedRoot] });
+    registry = await CodingResultRegistry.create({ privateBase: base, store, currentOwner: () => owner, projectExists: () => project });
+    const input = await registration(), receipt = await store.claim(input.output, () => undefined); armed = true;
+    await expect(store.read(receipt, "review.json", 64 * 1024 * 1024, () => { if (!current) throw new Error("owned request retired"); })).rejects.toMatchObject({ code: "stale" });
+    expect(observed).toBe(true); current = true; await store.verify(receipt, () => undefined);
+    expect(fs.readFileSync(path.join(source, "app.ts"), "utf8")).toBe(ORIGINAL);
+  });
 });
