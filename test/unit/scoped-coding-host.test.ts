@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import type { Logger } from "../../app/main/logger";
 import type { ScopedCodingWorkerOptions } from "../../app/main/agent/scoped-coding-worker";
 import type { TaskSpec, WorkerResult } from "../../app/main/agent/worker";
@@ -10,9 +11,10 @@ import type { CommandService } from "../../app/main/commands/types";
 import type { TargetsForAgent } from "../../app/main/targets/types";
 import type { ActiveProvider } from "../../app/main/provider";
 import type { CodingPlatformAdapter } from "../../app/main/agent/coding-platform";
+import type { CodingContinuationRef } from "../../app/main/agent/coding-continuation";
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- scripted SDK and inert worker boundaries */
-const sim = vi.hoisted(() => ({ sessions: [] as any[], workers: [] as any[], holdTurns: false, holdCleanup: false }));
+const sim = vi.hoisted(() => ({ sessions: [] as any[], workers: [] as any[], holdTurns: false, holdCleanup: false, login: "test-user" }));
 vi.mock("@github/copilot-sdk", async original => {
   const real = await original<typeof import("@github/copilot-sdk")>();
   class Session {
@@ -29,7 +31,7 @@ vi.mock("@github/copilot-sdk", async original => {
   }
   class Client {
     async start() {} async stop() { return []; } async forceStop() {} async ping() { return {}; }
-    async getAuthStatus() { return { isAuthenticated: true, login: "test-user" }; }
+    async getAuthStatus() { return { isAuthenticated: true, login: sim.login }; }
     async listModels() { return [{ id: "gpt-5-mini", name: "Mini", capabilities: { supports: { vision: true } } }]; }
     async listSessions() { return []; } async deleteSession() {}
     async createSession(config: any) { const s = new Session(config.sessionId, config); sim.sessions.push(s); return s; }
@@ -62,7 +64,7 @@ import { modeCardVersion } from "../../app/shared/approvals";
 const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as unknown as Logger;
 const token = "gho_" + "f".repeat(36);
 const hosts: AgentHost[] = [], dirs: string[] = [];
-beforeEach(() => { sim.sessions = []; sim.workers = []; sim.holdTurns = false; sim.holdCleanup = false; });
+beforeEach(() => { sim.sessions = []; sim.workers = []; sim.holdTurns = false; sim.holdCleanup = false; sim.login = "test-user"; });
 afterEach(async () => {
   sim.holdCleanup = false;
   for (const worker of sim.workers) worker.releaseCleanup();
@@ -88,16 +90,105 @@ async function setup(extra: Partial<HostOptions> = {}) {
     return projectId ? { path: path.join(dir, projectId, `folder-${revision}`), projectId, current: () => source.current && source.revision === revision } : null;
   });
   const createWorkspace = vi.fn(), publish = vi.fn();
+  const continuation = { current: true, revision: 0 }, references = new WeakMap<CodingContinuationRef, { projectId: string; revision: number }>();
+  const captureContinuation = vi.fn((_id: string, projectId: string) => {
+    if (!continuation.current) return null;
+    const ref = Object.freeze({}) as CodingContinuationRef; references.set(ref, { projectId, revision: continuation.revision }); return ref;
+  });
+  const continuationCurrent = vi.fn((ref: CodingContinuationRef, projectId: string) => {
+    const held = references.get(ref); return continuation.current && held?.projectId === projectId && held.revision === continuation.revision;
+  });
   const host = new AgentHost({ userData: dir, settings, runtimePath: "/offline/runtime", log: quiet, setState() {}, onStatus() {},
     targets, taskBase: { audit: { write: audit } as never, confirmer: confirmer as never },
-    scopedCoding: { available: () => enabled.value, workspace, createWorkspace, reviewBase: path.join(dir, "reviews"), publish }, ...extra });
+    scopedCoding: { available: () => enabled.value, workspace, captureContinuation, continuationCurrent, createWorkspace, reviewBase: path.join(dir, "reviews"), publish }, ...extra });
   hosts.push(host); expect(await host.start(token, "stored")).toBe("ready");
   const session = sim.sessions.findLast(s => s.sessionId.startsWith("ember-conductor-"));
   const tool = (name: string, args: unknown = {}) => session.config.tools.find((t: any) => t.name === name).handler(args, {});
   const create = (name: string) => host.projectSessionsAction({ action: "create", name }).selectedProjectId!;
   const callbacks = (host as any).conductor.deps;
-  return { host, settings, session, tool, callbacks, create, source, enabled, workspace, createWorkspace, publish, service, audit, ask };
+  return { host, settings, session, tool, callbacks, create, source, enabled, workspace, createWorkspace, publish, service, audit, ask,
+    continuation, captureContinuation, continuationCurrent };
 }
+
+it("captures a continuation before waiting, keeps its original project, and uses only the new typed words as permission", async () => {
+  const h = await setup(), first = h.create("App"), id = randomUUID(), words = "  Add a parser test\nKeep the original folder unchanged.  ";
+  sim.holdTurns = true;
+  const asked = h.host.askCodingContinuation(words, id, first);
+  expect(h.captureContinuation).toHaveBeenCalledWith(id, first); expect(h.workspace).toHaveBeenCalledWith(first);
+  expect(await asked).toBe(true);
+  const second = h.create("Other"), prompt = h.session.waiting[0];
+  expect(prompt).toContain("previous coding review"); expect(prompt).not.toContain(id);
+  h.session.nextTurn();
+  expect(await h.tool("start_coding", { goal: "Model asks to publish everything" })).toMatch(/started/);
+  const worker = sim.workers[0], context = worker.options.commandContext(h.service, new AbortController().signal);
+  expect(worker.spec.codingWorkspace).toMatchObject({ projectId: first, continuation: h.captureContinuation.mock.results[0].value });
+  expect(worker.spec.userWords).toBe(words); expect(context.task.commandWords()).toBe(words); expect(context.task.checkWords()).toBe(words);
+  expect(context.task.commandWords()).not.toContain("publish"); expect(h.host.projectSessionsState().selectedProjectId).toBe(second);
+  expect((h.host as any).turn.target).toBeNull(); expect((h.host as any).turn.screen).toEqual([]);
+});
+
+it("refuses a forgotten or replaced predecessor before releasing a queued continuation", async () => {
+  const h = await setup(), project = h.create("App"); sim.holdTurns = true;
+  await h.host.askCodingContinuation("Repair the previous change", randomUUID(), project);
+  h.continuation.current = false; h.continuation.revision++; h.continuation.current = true;
+  h.session.nextTurn();
+  expect(await h.tool("start_coding", { goal: "Repair source" })).toMatch(/selected coding result is no longer current/);
+  expect(await h.tool("start_mixed", { first: "coding", firstGoal: "Repair source", secondGoal: "Show app" })).toMatch(/selected coding result is no longer current/);
+  expect(sim.workers).toEqual([]); expect(h.captureContinuation).toHaveBeenCalledTimes(1);
+});
+
+it("keeps an admitted independent coding scope current when its predecessor is later forgotten", async () => {
+  const h = await setup(), project = h.create("App");
+  await h.host.askCodingContinuation("Continue fixing the parser", randomUUID(), project);
+  await h.tool("start_coding", { goal: "Fix parser" }); const worker = sim.workers[0];
+  expect(worker.options.current()).toBe(true); h.continuation.current = false;
+  expect(worker.spec.codingWorkspace.current()).toBe(true); expect(worker.options.current()).toBe(true);
+  expect(worker.invalidated).toBe(false);
+});
+
+it.each(["try again", "yes"])("takes only the new continuation's %s words rather than the nearest failed task's permissions", async words => {
+  const h = await setup(), project = h.create("App"), selectedA = randomUUID();
+  await h.host.ask("Publish the old release B"); await h.tool("start_coding", { goal: "Publish release B" });
+  sim.workers[0].complete({ success: false, summary: "It failed. Want me to try again?" });
+  h.session.emit("assistant.message", { content: "The task could not finish." }); h.session.emit("session.idle");
+  await vi.waitFor(() => expect(h.host.getTranscript().filter(entry => entry.who === "task")).toHaveLength(1));
+  await h.host.askCodingContinuation(words, selectedA, project);
+  await h.tool("start_coding", { goal: "Repair selected result A" });
+  const worker = sim.workers[1], context = worker.options.commandContext(h.service, new AbortController().signal);
+  expect(h.captureContinuation).toHaveBeenCalledWith(selectedA, project);
+  expect(worker.spec).toMatchObject({ goal: "Repair selected result A", userWords: words });
+  expect(worker.spec.agreed).toBeUndefined(); expect(context.task.commandWords()).toBe(words); expect(context.task.checkWords()).toBe(words);
+  expect(context.task.commandWords()).not.toContain("release B"); expect(context.task.agreed()).toEqual([]);
+});
+
+it("keeps ordinary retry permission semantics outside the explicit continuation form", async () => {
+  const h = await setup(); h.create("App");
+  await h.host.ask("Publish the old release B"); await h.tool("start_coding", { goal: "Publish release B" });
+  sim.workers[0].complete({ success: false, summary: "It failed." });
+  h.session.emit("assistant.message", { content: "The task could not finish." }); h.session.emit("session.idle");
+  await vi.waitFor(() => expect(h.host.getTranscript().filter(entry => entry.who === "task")).toHaveLength(1));
+  await h.host.ask("try again"); await h.tool("start_coding", { goal: "Retry the release" });
+  expect(sim.workers[1].spec.userWords).toBe("Publish the old release B.\ntry again");
+});
+
+it("rejects invalid continuation intake synchronously with fixed errors and no conversation submission", async () => {
+  const h = await setup(), project = h.create("App"), id = randomUUID();
+  for (const [text, result, destination] of [["", id, project], [" ", id, project], ["x".repeat(2001), id, project], ["Fix source", "../result", project], ["Fix source", id, randomUUID()]]) {
+    expect(() => h.host.askCodingContinuation(text, result, destination)).toThrow("no longer ready");
+  }
+  h.enabled.value = false; expect(() => h.host.askCodingContinuation("Fix source", id, project)).toThrow("no longer ready");
+  h.enabled.value = true; h.continuation.current = false; expect(() => h.host.askCodingContinuation("Fix source", id, project)).toThrow("no longer ready");
+  expect(sim.workers).toEqual([]); expect(h.host.getTranscript()).toEqual([]);
+});
+
+it("retires a queued continuation through account ABA rather than reviving its old conductor callback", async () => {
+  const h = await setup(), project = h.create("App"); sim.holdTurns = true;
+  await h.host.askCodingContinuation("Repair the reviewed source", randomUUID(), project);
+  const previous = h.callbacks.startCoding;
+  await h.host.stop(); sim.login = "other-user"; await h.host.start(token, "stored");
+  await h.host.stop(); sim.login = "test-user"; await h.host.start(token, "stored");
+  expect(previous("Run old continuation")).toMatch(/no longer current/); expect(sim.workers).toEqual([]);
+});
 
 it("keeps the native prototype disabled and requires a chosen project folder before scoped coding intake", async () => {
   expect(codingAvailable()).toBe(false);
@@ -162,8 +253,9 @@ it("pins the request's project and folder even if Home selects another project b
   expect(h.host.projectSessionsState().projects.find(p => p.id === second)?.sessions).toEqual([]);
 });
 
-it("rejects a retained coding callback after Stop before creating a task or consulting a new folder", async () => {
-  const h = await setup(); h.create("App"); await h.host.ask("Fix the parser");
+it.each([false, true])("rejects a retained coding callback after Stop before creating a task or consulting a new folder (continuation: %s)", async continuation => {
+  const h = await setup(), project = h.create("App");
+  if (continuation) await h.host.askCodingContinuation("Fix the parser", randomUUID(), project); else await h.host.ask("Fix the parser");
   let release!: () => void; h.session.abort = () => new Promise<void>(resolve => { release = resolve; });
   const callsBeforeStop = h.workspace.mock.calls.length;
   const stopped = h.host.stopAnswer();

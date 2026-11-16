@@ -23,6 +23,11 @@ export function mountProjectCoding(): void {
   const previewMessage = find<HTMLParagraphElement>("preview-message");
   const patch = find<HTMLPreElement>("patch");
   const exportReview = find<HTMLButtonElement>("export");
+  const continueReview = find<HTMLButtonElement>("continue");
+  const continueForm = find<HTMLFormElement>("continue-form");
+  const continueRequest = find<HTMLTextAreaElement>("continue-request");
+  const continueSend = find<HTMLButtonElement>("continue-send");
+  const continueCancel = find<HTMLButtonElement>("continue-cancel");
   const closeReview = find<HTMLButtonElement>("close");
   let projectId: string | null = null;
   let workspace: ProjectCodingWorkspaceState | null = null;
@@ -45,12 +50,19 @@ export function mountProjectCoding(): void {
     return node;
   };
   const counts = (result: CodingResultSummary) => `${result.files} changed ${result.files === 1 ? "file" : "files"} · ${result.conflicts} ${result.conflicts === 1 ? "conflict" : "conflicts"} · Checks: ${result.checks.ran} run, ${result.checks.passed} passed, ${result.checks.failed} failed`;
-  const clearReview = () => { reviewEpoch++; opened = null; review.hidden = true; reviewTitle.textContent = ""; patch.textContent = ""; changes.replaceChildren(); limitations.replaceChildren(); reviewSummary.textContent = ""; reviewSource.textContent = ""; previewMessage.textContent = ""; };
+  const clearContinuation = () => { continueForm.hidden = true; continueRequest.value = ""; continueReview.setAttribute("aria-expanded", "false"); };
+  const clearReview = () => { reviewEpoch++; opened = null; clearContinuation(); review.hidden = true; reviewTitle.textContent = ""; patch.textContent = ""; changes.replaceChildren(); limitations.replaceChildren(); reviewSummary.textContent = ""; reviewSource.textContent = ""; previewMessage.textContent = ""; };
   const current = (owner: number, id: string) => generation === owner && projectId === id;
+  const continuationAvailable = () => ready && !!opened && opened.projectId === projectId && workspace?.projectId === projectId && workspace.available && workspace.folder?.valid === true;
+  const validContinuationRequest = () => !!continueRequest.value.trim() && continueRequest.value.length <= 2000;
   const controls = () => {
     choose.disabled = pending || !workspace?.canChoose;
     forget.disabled = pending || !workspace?.folder || !workspace.canChoose;
     exportReview.disabled = pending || !opened || opened.projectId !== projectId || !ready;
+    continueReview.disabled = pending || !continuationAvailable();
+    continueRequest.disabled = pending || !continuationAvailable();
+    continueCancel.disabled = pending;
+    continueSend.disabled = pending || continueForm.hidden || !continuationAvailable() || !validContinuationRequest();
     for (const button of results.querySelectorAll<HTMLButtonElement>("button")) button.disabled = !ready || (pending && !button.dataset.forgetResult);
   };
   const render = () => {
@@ -108,6 +120,7 @@ export function mountProjectCoding(): void {
   const folderAction = async (kind: "choose" | "forget") => {
     if (!projectId || pending) return;
     const id = projectId, owner = generation, action = ++actionEpoch;
+    clearContinuation();
     status.textContent = kind === "choose" ? "Choose a coding folder in the folder picker." : "Forgetting this project's folder choice…";
     readEpoch++; pending = true; render();
     try {
@@ -125,6 +138,7 @@ export function mountProjectCoding(): void {
     try {
       const result = await window.ember.codingResultReview(id);
       if (!current(owner, project) || action !== actionEpoch || ticket !== reviewEpoch || forgotten.has(id) || result.projectId !== project || result.id !== id) return;
+      clearContinuation();
       opened = result;
       reviewTitle.textContent = result.title;
       reviewSummary.textContent = `${STATUS_WORDS[result.status]} · ${counts(result)}`;
@@ -168,8 +182,32 @@ export function mountProjectCoding(): void {
   choose.addEventListener("click", () => { if (!choose.disabled) void folderAction("choose"); });
   forget.addEventListener("click", () => { if (!forget.disabled) void folderAction("forget"); });
   closeReview.addEventListener("click", () => {
-    const id = opened?.id; clearReview(); controls();
+    const id = opened?.id; clearReview(); status.textContent = ""; controls();
     [...results.querySelectorAll<HTMLButtonElement>("[data-result-control]")].find(button => button.dataset.resultControl === id)?.focus({ preventScroll: true });
+  });
+  continueReview.addEventListener("click", () => {
+    if (continueReview.disabled || !opened) return;
+    continueForm.hidden = false; continueReview.setAttribute("aria-expanded", "true"); controls();
+    continueRequest.focus({ preventScroll: true });
+  });
+  continueCancel.addEventListener("click", () => {
+    if (continueCancel.disabled) return;
+    clearContinuation(); controls(); continueReview.focus({ preventScroll: true });
+  });
+  continueRequest.addEventListener("input", controls);
+  continueForm.addEventListener("submit", event => {
+    event.preventDefault();
+    if (!opened || !projectId || continueSend.disabled || !continuationAvailable() || !validContinuationRequest()) { controls(); return; }
+    const id = opened.id, project = projectId, owner = generation, ticket = reviewEpoch, action = ++actionEpoch, request = continueRequest.value;
+    const stillOpen = () => current(owner, project) && action === actionEpoch && ticket === reviewEpoch && opened?.id === id && !forgotten.has(id);
+    status.textContent = "Sending your new coding request…"; readEpoch++; pending = true; render();
+    void window.ember.codingResultContinue(id, project, request).then(reply => {
+      if (!stillOpen()) return;
+      status.textContent = reply.message;
+      if (reply.ok) clearContinuation();
+    }).catch(error => { if (stillOpen()) status.textContent = ipcErrorText(error); }).finally(() => {
+      if (current(owner, project) && action === actionEpoch) { pending = false; render(); }
+    });
   });
   exportReview.addEventListener("click", () => {
     if (!opened || !projectId || exportReview.disabled) return;

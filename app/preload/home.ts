@@ -36,6 +36,7 @@ const api: EmberHomeApi = {
   codingResultReview: id => ipcRenderer.invoke(IPC.codingResultReview, id),
   codingResultExport: id => ipcRenderer.invoke(IPC.codingResultExport, id),
   codingResultForget: id => ipcRenderer.invoke(IPC.codingResultForget, id),
+  codingResultContinue: (id, projectId, request) => ipcRenderer.invoke(IPC.codingResultContinue, id, projectId, request),
   projectSessionsAction: input => ipcRenderer.invoke(IPC.projectSessionsAction, input),
   projectSessionsCheckpoint: action => ipcRenderer.invoke(IPC.projectSessionsCheckpoint, action),
   projectPick: () => ipcRenderer.invoke(IPC.projectPick),

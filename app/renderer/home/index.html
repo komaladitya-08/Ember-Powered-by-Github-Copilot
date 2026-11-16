@@ -387,8 +387,18 @@
           <pre id="project-coding-patch" tabindex="0" aria-label="Text patch preview" hidden></pre>
           <div class="agent-actions">
             <button id="project-coding-export" type="button" class="btn" disabled>Export review…</button>
+            <button id="project-coding-continue" type="button" class="btn quiet" aria-controls="project-coding-continue-form" aria-expanded="false" aria-describedby="project-coding-state" disabled>Continue from this result</button>
             <button id="project-coding-close" type="button" class="btn quiet">Close review</button>
           </div>
+          <form id="project-coding-continue-form" hidden>
+            <label for="project-coding-continue-request">What should Ember do next?</label>
+            <p id="project-coding-continue-hint" class="hint">Start a fresh coding session with this result's private edits. Your original project stays unchanged. Enter a new request of up to 2,000 characters.</p>
+            <textarea id="project-coding-continue-request" rows="3" maxlength="2000" aria-describedby="project-coding-continue-hint" required></textarea>
+            <div class="agent-actions">
+              <button id="project-coding-continue-send" type="submit" class="btn quiet" disabled>Start new coding session</button>
+              <button id="project-coding-continue-cancel" type="button" class="btn quiet">Cancel</button>
+            </div>
+          </form>
         </section>
       </div>
       <div class="group" id="coding-workspace" aria-labelledby="coding-workspace-title" hidden>
