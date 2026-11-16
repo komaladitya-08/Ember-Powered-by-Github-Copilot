@@ -4827,3 +4827,15 @@ the typed fallback still passes its last look, so the earlier value is typed.
 
 **Left.** CI on r9/r12merge (pushed by the integrator after this merge). By package, the lists above; the re-rate's
 P3s no package took up stay open as their reports list them.
+
+**Disabled Windows sealed-review foundation (2026-11-16).** A review-enabled `WindowsCodingCopy` captures the complete
+privacy-scanned baseline and same-store source provenance before admitting file tools. A separate host-only export
+retires ordinary leases permanently, drains them, and requires the host's attestation of awaited controller/file-broker
+teardown. It captures the proposal and compares only the original source identity, uses the portable review formatter,
+and creates an opaque one-use producer in `WindowsCodingArtifactStore`. A caller records producer transfer before
+awaiting publication; untransferred artifacts remain owned until exact discard or copy close. Revoked account/privacy
+authority and unknown cleanup never reopen ordinary tools. Raw review buffers are cleared after write, failure or
+close. Explicit `.git`/`node_modules` omissions and 10 MiB/tree, 4 MiB/file, 10,000-entry bounds are documented and tested.
+The dedicated Server 2022/2025 artifact matrix includes the native sealed-review suite. This is file-only storage and
+review work: Windows production coding, commands, controller storage and SDK execution-boundary proofs remain disabled
+or unfinished; no command process is started or claimed stopped by this primitive.
