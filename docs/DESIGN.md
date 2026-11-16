@@ -310,6 +310,14 @@ Ember is two places at once, each for one kind of work.
 
   A task in the background never writes the cursor's bubble (`PresenterOptions.corner`, turned on by main's
   `cornerTasks`). Its progress and result stay on its card, and the conversation keeps its result as words.
+- **Combining parallel results.** The conductor can wait within the current request for up to eight tasks it delegated
+  or touched, then give a combined reply. `wait_for_tasks` observes at most 20 seconds; it starts no work and does not
+  consume background reports. A finished card can precede disposal, so the join records cleanup separately and claims
+  dependent success only after successful work, fulfilled disposal and explicit positive cleanup and handoff witnesses.
+  Ordinary desktop disposal remains best effort: its summary can be joined, while cleanup stays unknown and dependent
+  success stays false. Stop, a
+  newer request, Forget or a captured project, source, target or provider change retires the wait. Timeout returns the
+  observed pending states. There is no later wakeup or restored execution; returned summaries remain untrusted data.
 - **What needs you now still comes to the cursor.** Questions and approvals (the Confirmer) and announced commands
   appear in the bubble, which names the task. Moving a background task's questions onto its card, with the same
   arming, the same allow and deny keys and the same one-at-a-time rule, is the next step.

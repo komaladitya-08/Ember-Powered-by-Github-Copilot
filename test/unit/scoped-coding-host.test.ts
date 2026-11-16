@@ -40,7 +40,7 @@ vi.mock("@github/copilot-sdk", async original => {
   return { ...real, CopilotClient: Client, RuntimeConnection: { forStdio: () => ({}) } };
 });
 vi.mock("../../app/main/agent/scoped-coding-worker", () => ({ ScopedCodingWorker: class {
-  readonly sessionId = null; invalidated = false; result: WorkerResult | null = null;
+  readonly sessionId = null; invalidated = false; cleanupDone = false; result: WorkerResult | null = null;
   resolveRun!: (r: WorkerResult) => void; resolveDisposed!: (ok: boolean) => void;
   releaseCleanup!: () => void;
   disposed = new Promise<boolean>(resolve => { this.resolveDisposed = resolve; });
@@ -52,7 +52,8 @@ vi.mock("../../app/main/agent/scoped-coding-worker", () => ({ ScopedCodingWorker
   }); }
   complete(result: WorkerResult) { if (this.result) return; this.result = result; this.options.onRetiring?.(); this.resolveRun(result); }
   invalidate() { this.invalidated = true; this.complete({ success: false, stopped: true, summary: "Context changed." }); }
-  async dispose() { if (sim.holdCleanup) await this.cleanup; this.resolveDisposed(true); }
+  async dispose() { if (sim.holdCleanup) await this.cleanup; this.cleanupDone = true; this.resolveDisposed(true); }
+  cleanupComplete() { return this.cleanupDone; }
   handoffSafe() { return this.result?.success === true && !this.invalidated; }
   async steer() { return false; }
 } }));
@@ -60,6 +61,7 @@ vi.mock("../../app/main/agent/scoped-coding-worker", () => ({ ScopedCodingWorker
 import { AgentHost, codingAvailable, type HostOptions, type ScopedCodingHost } from "../../app/main/agent/host";
 import { SettingsStore } from "../../app/main/settings";
 import { modeCardVersion } from "../../app/shared/approvals";
+import { CONSENT_VERSION } from "../../app/shared/consent";
 
 const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as unknown as Logger;
 const token = "gho_" + "f".repeat(36);
@@ -119,6 +121,21 @@ function useFilesOnly(h: Awaited<ReturnType<typeof setup>>) {
   options.scopedCoding = scoped;
   return { scoped, files };
 }
+
+it.each(["current", "source-changed", "nonlocal"])("joins copied-folder outcomes by trusted provenance after active cleanup (%s)", async state => {
+  const h = await setup(); h.settings.update({ consent: { version: CONSENT_VERSION, at: new Date().toISOString() } }); h.create("App");
+  await h.host.ask("Inspect the copied parser and report its result"); await h.tool("start_coding", { goal: "Inspect copied parser" });
+  const worker = sim.workers[0], id = worker.spec.id;
+  worker.complete({ success: true, summary: "Observed copied parser" });
+  await vi.waitFor(() => expect(h.host.tasks!.get(id)?.status).toBe("done"));
+  expect((h.host as any).codingScopes.has(id)).toBe(false); expect((h.host as any).taskBindings.has(id)).toBe(false);
+  if (state === "source-changed") h.source.revision++;
+  if (state === "nonlocal") h.host.tasks!.get(id)!.targetId = "ssh:unrelated";
+  const output = await h.tool("wait_for_tasks", { ids: [id] });
+  if (state === "current") expect(output).toContain('"dependentSuccess":true');
+  else expect(output).toMatch(/request changed|wait ended/);
+  expect(sim.workers).toHaveLength(1); expect(h.createWorkspace).not.toHaveBeenCalled();
+});
 
 it("describes the Host-selected restricted coding capability in the conductor's actual tool inventory", async () => {
   const h = await setup({ targets: undefined }, true); h.create("App");

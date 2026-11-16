@@ -72,7 +72,7 @@ it("does no startup work for a pre-aborted task and shares verified disposal", a
   expect(await f.worker.run(task.signal)).toMatchObject({ success: false, stopped: true });
   expect(f.beforeStart).not.toHaveBeenCalled(); expect(f.createWorkspace).not.toHaveBeenCalled(); expect(f.facts).not.toHaveBeenCalled();
   const disposed = f.worker.dispose(); expect(f.worker.dispose()).toBe(disposed); await disposed;
-  expect(await f.worker.disposed).toBe(true); expect(f.worker.handoffSafe()).toBe(false); expect(f.worker.sessionId).toBeNull();
+  expect(await f.worker.disposed).toBe(true); expect(f.worker.cleanupComplete()).toBe(true); expect(f.worker.handoffSafe()).toBe(false); expect(f.worker.sessionId).toBeNull();
   expect(await f.worker.steer()).toBe(false);
 });
 
@@ -97,7 +97,7 @@ it("retains a failed shutdown witness for concurrent and later disposal callers"
   expect(f.worker.dispose()).toBe(first);
   release.resolve(f.backend as unknown as IsolatedCommandWorkspace);
   expect(await running).toMatchObject({ success: false, summary: expect.stringContaining("blocked") }); await rejected;
-  expect(await f.worker.disposed).toBe(false); expect(f.worker.handoffSafe()).toBe(false);
+  expect(await f.worker.disposed).toBe(false); expect(f.worker.cleanupComplete()).toBe(false); expect(f.worker.handoffSafe()).toBe(false);
   expect(f.worker.dispose()).toBe(first);
 });
 

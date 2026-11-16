@@ -82,6 +82,8 @@ export class ScopedCodingWorker {
   constructor(private readonly spec: TaskSpec, private readonly o: CodingWorkerOptions) {}
   get sessionId(): null { return null; }
   async steer(): Promise<boolean> { return false; }
+  /** Read after dispose; independent of whether the completed work may hand off successfully. */
+  cleanupComplete(): boolean { return this.settled && !this.cleanupFailed; }
   handoffSafe(): boolean {
     if (!this.current()) this.completed = false;
     return this.completed && this.settled && !this.cleanupFailed;

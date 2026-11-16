@@ -25,6 +25,7 @@ import { hasConsent, type SettingsStore } from "../settings";
 import type { BubbleState, EmberState } from "../../shared/overlay";
 import type { ConversationContext } from "../../shared/ipc";
 import { TaskManager, handedElsewhere, taskOutcome, titleOf, type KeptCard, type RetriedWords, type StopCause, type Task, type WorkerLike } from "./tasks";
+import { waitForTaskSettlement, type TaskWaitResult } from "./task-wait";
 import { redactingClient, type ModelRedactor } from "./redacting-client";
 import { CHECKING_STEP, LINUX_WORKER_SYSTEM, Worker, type TaskSpec, type WorkerDeps, type WorkerResult, type WorkerSystem, type WorkerVault } from "./worker";
 import { CodingWorker } from "./coding-worker";
@@ -95,6 +96,7 @@ const refusedWorker = (_spec: TaskSpec, why: string): WorkerLike => ({
   run: async () => ({ success: false, summary: why }),
   steer: async () => false,
   dispose: async () => undefined,
+  cleanupComplete: () => true, // No session, tool or action was admitted.
   sessionId: null,
 });
 
@@ -996,8 +998,10 @@ interface CodingIntake {
   current(): boolean;
   revoke(): void;
 }
-interface RequestIntake { projectId: string | null; codingIntake?: CodingIntake }
+interface RequestIntake { projectId: string | null; codingIntake?: CodingIntake; waitSignal?: AbortSignal }
 interface UserRequest {
+  /** Read-only joins cannot be reopened after a newer user request arrived. Never model context. */
+  waitSignal?: AbortSignal;
   /** Selected at intake, before any connection or prior-turn wait; never execution authority. */
   projectId?: string | null;
   /** A Stop invalidates project callbacks even if the SDK has not acknowledged its abort. */
@@ -1073,6 +1077,8 @@ export class AgentHost {
   private sessionProjectsHolder: string | null = null;
   private readonly codingTasks = new Set<string>();
   private readonly codingScopes = new Map<string, CodingScope & { worker?: ScopedCodingWorker }>();
+  /** Trusted copied-folder provenance survives active-scope removal without granting a desktop/remote target. */
+  private readonly codingWaitScopes = new WeakMap<Task, () => boolean>();
   private readonly codingGrants = new WeakMap<NonNullable<TaskSpec["codingWorkspace"]>, CodingScope>();
   private readonly pendingCodingIntakes = new Set<CodingIntake>();
   private readonly mixedCodingProjects = new Map<string, string | undefined>();
@@ -1205,6 +1211,79 @@ export class AgentHost {
   private fromElsewhere = new WeakSet<Task>();
   /** The tasks each turn asked for, steered or stopped: a task's words are its alone only in a turn that touched no other (integrations-w5-1). */
   private turnTasks = new WeakMap<UserRequest, Set<string>>();
+  private taskWaitAbort = new AbortController();
+  private readonly taskWaitProjects = new WeakMap<Task, { projectId: string | null; association?: string; metadataFree?: true }>();
+
+  private taskProjectAssociations(): Map<string, string> {
+    const values = new Map<string, string>();
+    const state = this.sessionProjects.state();
+    for (const project of state.projects) for (const session of project.sessions) values.set(session.taskId, `${project.id}:${session.id}`);
+    return values;
+  }
+
+  /** Snapshot the original project/session receipt at delegation, never reconstruct it from a later board. */
+  private attachTaskProject(projectId: string | null, task: Task, kind: "desktop" | "coding", title?: string): void {
+    this.sessionProjects.attach(projectId, task, kind, title);
+    this.taskWaitProjects.set(task, { projectId, association: this.taskProjectAssociations().get(task.id) });
+  }
+
+  /** A new user request or retired conversation cannot receive an earlier join's task summaries. */
+  private retireTaskWaits(): void {
+    const previous = this.taskWaitAbort;
+    this.taskWaitAbort = new AbortController();
+    previous.abort();
+  }
+
+  private waitForCurrentTasks(manager: TaskManager, generation: number, ids: string[], timeoutMs: number): Promise<TaskWaitResult> {
+    const refused = (): TaskWaitResult => ({ reason: "cancelled", dependentSuccess: false, tasks: [] });
+    const request = this.turn, abort = this.taskWaitAbort, epoch = this.stopEpoch, conversation = this.conversationEpoch;
+    if (!request || request.waitSignal !== abort.signal || this.tasks !== manager || !ids.length || ids.length > 8 || ids.some(id => !this.turnTasks.get(request)?.has(id))) return Promise.resolve(refused());
+    const projectId = request.projectId ?? null;
+    const captured = [...new Set(ids)].map(id => {
+      const task = manager.get(id), scope = this.codingScopes.get(id);
+      const codingSource = task && this.codingWaitScopes.get(task);
+      const original = task && (this.taskBindings.get(id) ?? this.finishedTaskBindings.get(task));
+      const binding = original ? { ...original } : undefined;
+      return { id, task, target: task?.targetId, binding, bindingKey: binding ? JSON.stringify(binding) : "",
+        coding: codingSource !== undefined, project: task && this.taskWaitProjects.get(task),
+        source: codingSource ?? scope?.current.bind(scope) };
+    });
+    if (captured.some(item => item.task && this.fromElsewhere.has(item.task))) return Promise.resolve(refused());
+    const projectReceiptsCurrent = () => {
+      if (projectId !== null) this.sessionProjects.destination(projectId);
+      const projects = this.taskProjectAssociations();
+      return captured.every(item => !item.task || !!item.project && item.project.projectId === projectId && (item.project.metadataFree
+        ? !projects.has(item.id) : projects.get(item.id) === item.project.association && (projectId === null || !!item.project.association)));
+    };
+    const current = () => {
+      try {
+        if (abort.signal.aborted || this.taskWaitAbort !== abort || this.turn !== request || this.tasks !== manager || this.gen !== generation ||
+            this.stopEpoch !== epoch || this.conversationEpoch !== conversation || this.status.phase !== "ready" || this.providerMoved() ||
+            this.handing !== null || this.vaultFillHolds || this.o.redact?.active || !hasConsent(this.o.settings.get()) || (request.projectId ?? null) !== projectId) return false;
+        if (!projectReceiptsCurrent()) return false;
+        for (const item of captured) {
+          if (!this.turnTasks.get(request)?.has(item.id) || item.source && item.source() !== true) return false;
+          const task = manager.get(item.id);
+          if (task !== item.task || task && task.targetId !== item.target) return false;
+          if (item.coding) {
+            if (!item.source || item.target !== undefined && item.target !== "local") return false;
+          } else if (item.task && this.o.targets) {
+            if (!item.binding) return false;
+            const got = this.o.targets.handsFor(item.binding.id);
+            if (!got.ok || JSON.stringify(got.hands.binding) !== item.bindingKey) return false;
+          }
+        }
+        return projectReceiptsCurrent() && !abort.signal.aborted && this.taskWaitAbort === abort && this.turn === request && this.tasks === manager && this.gen === generation &&
+          this.stopEpoch === epoch && this.conversationEpoch === conversation && this.status.phase === "ready" && !this.providerMoved() &&
+          this.handing === null && !this.vaultFillHolds && !this.o.redact?.active && hasConsent(this.o.settings.get()) && (request.projectId ?? null) === projectId;
+      } catch { return false; }
+    };
+    return waitForTaskSettlement({ ids: captured.map(value => value.id), timeoutMs, signal: abort.signal, current,
+      subscribe: listener => manager.subscribeSettlement(listener),
+      snapshot: () => captured.map(item => item.task ? manager.observeSettlement(item.task)
+        : { id: item.id, status: "missing", cleanup: "unknown", handoffSafe: false, summary: "" }),
+    });
+  }
   /** The next stop is the waiting switch's own reconnect (switchWhenQuiet, releaseHeld): its cards are kept. */
   private keepCards = false;
   private status: AgentStatus;
@@ -1381,6 +1460,8 @@ export class AgentHost {
   private finishedLately: Task[] = [];
   /** The target each task started by the conversation acts on, until it finishes (its result names a remote). */
   private readonly taskBindings = new Map<string, TargetBinding>();
+  /** Preserve the original binding for read-only joins after finished-card bookkeeping releases its map entry. */
+  private readonly finishedTaskBindings = new WeakMap<Task, TargetBinding>();
   /** Memory's mark of the request that started each task the conversation started, until it finishes (memory-x8-4). */
   private readonly taskMarks = new Map<string, number>();
   /** Whether each running remote task has used its computer's desktop (a lock there stops only those, §5.3.4 step 8). */
@@ -2453,6 +2534,7 @@ export class AgentHost {
           if (task.status === "failed" && summary === SIGN_IN_REFUSED) void this.checkSignIn(gen);
           const text = why ? `${task.title}: ${why}` : taskOutcome(task);
           const binding = this.taskBindings.get(task.id);
+          if (binding) this.finishedTaskBindings.set(task, { ...binding });
           this.taskBindings.delete(task.id);
           const mark = this.taskMarks.get(task.id);
           this.taskMarks.delete(task.id);
@@ -2635,6 +2717,8 @@ export class AgentHost {
         return source?.current() ? source : null;
       };
       const recordCoding = (t: Task, workspace: NonNullable<TaskSpec["codingWorkspace"]>) => {
+        const sourceCurrent = workspace.current.bind(workspace), scope = this.codingGrants.get(workspace);
+        this.codingWaitScopes.set(t, () => sourceCurrent() && (!scope || scope.current()));
         if (t.status !== "running" && t.status !== "queued") return;
         this.codingTasks.add(t.id);
         if (!this.codingScopes.has(t.id)) {
@@ -2788,7 +2872,7 @@ export class AgentHost {
           const t = tasks.start(goal, { target: {}, codingWorkspace: workspace, where: `in ${path.basename(workspace.path)}`, userWords: said.words, agreed: said.agreed,
             ...(said.commandWords !== undefined ? { commandWords: said.commandWords } : {}), ...(said.checkWords !== undefined ? { checkWords: said.checkWords } : {}), ...(said.typedOnly ? { typedOnly: true } : {}) });
           recordCoding(t, workspace);
-          this.sessionProjects.attach(r.projectId ?? null, t, "coding", sessionName ?? titleOf(goal));
+          this.attachTaskProject(r.projectId ?? null, t, "coding", sessionName ?? titleOf(goal));
           if (r.verifiedAt !== undefined) this.o.voiceTrust?.grant(t.id, r.verifiedAt);
           touch(r, t.id);
           if (t.status !== "running" && t.status !== "queued") return `Coding task ${t.id} could not start: ${t.result?.summary ?? "an error occurred"}. Tell the user.`;
@@ -2833,7 +2917,7 @@ export class AgentHost {
                 : { ...(screen ? { screen } : {}), ...(binding ? { targetId: binding.id, where: whereWords(binding) } : {}) }),
             });
             if (kind === "coding") recordCoding(t, workspace);
-            this.sessionProjects.attach(projectId, t, kind, titleOf(goal));
+            this.attachTaskProject(projectId, t, kind, titleOf(goal));
             if (kind === "desktop" && binding) this.taskBindings.set(t.id, binding);
             if (r.verifiedAt !== undefined) this.o.voiceTrust?.grant(t.id, r.verifiedAt);
             touch(r, t.id);
@@ -2915,7 +2999,7 @@ export class AgentHost {
               ...(said.typedOnly ? { typedOnly: true } : {}), ...(said.retried?.partWay ? { partWay: true } : {}),
               ...(binding ? { targetId: binding.id, where: whereWords(binding) } : {}),
             });
-            this.sessionProjects.attach(projectId, t, "desktop", step.name);
+            this.attachTaskProject(projectId, t, "desktop", step.name);
             this.sessionProjects.linkSequenceStep(projectId, sequenceId, index, t.id);
             touch(r, t.id);
             if (binding) this.taskBindings.set(t.id, binding);
@@ -2993,7 +3077,7 @@ export class AgentHost {
             // Try again may start from it on another model service, unless the turn touches another task (integrations-w5-1).
             ...(said.words === r.words && !said.agreed?.length ? { alone: true as const } : {}),
           });
-          this.sessionProjects.attach(projectId, t, "desktop", sessionName);
+          this.attachTaskProject(projectId, t, "desktop", sessionName);
           touch(r, t.id);
           // That task's card goes, as its Try again's does: a press of it can't start a second attempt (tasks-approvals-r2).
           if (said.retried) tasks.dismiss(said.retried.task);
@@ -3035,6 +3119,7 @@ export class AgentHost {
           if (why) return `Ember can't guide here: ${why} Don't tell the user to follow Ember's pointer; explain the steps in words instead, briefly.`;
           const mark = this.conductor?.askedMark ?? this.o.memory?.asked?.();
           const t = tasks.start(goal, { target, mode: "guide" });
+          this.taskWaitProjects.set(t, { projectId: read?.projectId ?? null, metadataFree: true });
           if (mark !== undefined) this.taskMarks.set(t.id, mark);
           touch(read, t.id);
           this.announced.add(t.id);
@@ -3048,6 +3133,7 @@ export class AgentHost {
         tasks: tasks ? {
           // (Never a card from a connection on another model service: its title and words are that conversation's, integrations-v5-1.)
           list: () => tasks.list().filter(t => !this.fromElsewhere.has(t)).map(t => ({ id: t.id, title: t.title, status: t.status, detail: t.detail })),
+          wait: (ids, timeoutMs) => this.waitForCurrentTasks(tasks, gen, ids, timeoutMs),
           cancel: id => { touch(this.turn, id); const t = tasks.get(id); if (!t || (t.status !== "running" && t.status !== "queued")) return false; tasks.cancel(id); return true; },
           // What the user said for the change, as for a task started in this turn ("work" answering "Which account?").
           // (A change of plan is the user's own words: a routine run this turn doesn't steer a task.)
@@ -3546,6 +3632,7 @@ export class AgentHost {
     if (this.quitting) return null;
     // Put back as it was before the switch could happen: nothing waits any more.
     if (!this.providerMoved()) { this.waitForSwitch(false); return null; }
+    this.retireTaskWaits();
     // A credential change can arrive without a settings event while work delays the reconnect. Retire now so
     // restoring the previous key before a phase finishes cannot revive its original automatic continuation.
     this.clearDesktopSequences();
@@ -3823,6 +3910,8 @@ export class AgentHost {
 
   private async askCaptured(text: string, context: Parameters<AgentHost["ask"]>[1], epoch: number,
     how: NonNullable<Parameters<AgentHost["ask"]>[3]>, waiting: RequestIntake & { counted: boolean }): Promise<boolean> {
+    this.retireTaskWaits();
+    waiting.waitSignal = this.taskWaitAbort.signal;
     if (waiting.codingIntake) this.pendingCodingIntakes.add(waiting.codingIntake);
     try { return await this.asking(text, context, epoch, how, waiting); }
     finally {
@@ -4019,6 +4108,7 @@ export class AgentHost {
     }
     // Its turn may start only after the one running now: it takes this context then (see conversationEvent).
     const request: UserRequest = {
+      waitSignal: waiting.waitSignal,
       projectId: waiting.projectId, projectEpoch: epoch, codingIntake: waiting.codingIntake,
       target: context?.target ?? null, words: text, screen: context?.text ? [context.text] : [], ...(context?.targetId ? { targetId: context.targetId } : {}),
       ...(how.spoken ? { spoken: true } : {}),
@@ -4204,6 +4294,7 @@ export class AgentHost {
 
   /** A Stop: requests asked before it are dropped (stopEpoch), those still waiting at once (stopSignal, home-r3-1). */
   private stopped(): void {
+    this.retireTaskWaits();
     this.clearDesktopSequences("stopped");
     this.stops++;
     const was = this.stopSignal;
@@ -4292,7 +4383,7 @@ export class AgentHost {
   }
 
   /** Explicit Forget everything removes project metadata too; it never starts or replays a task. */
-  forgetProjectSessions(): void { this.sessionProjects.clear(); }
+  forgetProjectSessions(): void { this.retireTaskWaits(); this.sessionProjects.clear(); }
 
   /** Project metadata never changes consent, folders, task permissions or original request words. */
   projectSessionsAction(raw: unknown): ProjectSessionsState {
@@ -4369,6 +4460,7 @@ export class AgentHost {
    * its own (start(…, "auto")) until the user signs in again.
    */
   async forgetConversation(): Promise<void> {
+    this.retireTaskWaits();
     this.sessionProjects.clear();
     // (The start that follows sign-out replaces this connection anyway: the tasks ending here don't reconnect it.)
     this.reconnectAfterTasks = null;
@@ -4548,6 +4640,7 @@ export class AgentHost {
 
   /** Deletes this run's conversation (now, or at the next start if Copilot doesn't answer within `ms`). */
   private async forgetCurrent(ms: number): Promise<void> {
+    this.retireTaskWaits();
     this.conversationEpoch++;
     this.stream = null;
     this.conversation = null;
