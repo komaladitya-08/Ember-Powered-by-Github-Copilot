@@ -196,3 +196,27 @@ review and normal full `npm run typecheck` (session `25211`).
 
 - [Microsoft C4210](https://learn.microsoft.com/en-us/cpp/error-messages/compiler-warnings/compiler-warning-level-4-c4210)
 - [Microsoft C language modes](https://learn.microsoft.com/en-us/cpp/build/reference/std-specify-language-standard-version#c-standards-support)
+
+The sole C11 ABI-only run `43976824801` at
+`fdfa8058c5e3c76bbd95a856fa0b69edcc16e9df` progressed to target 2, phase 2 and
+refused with child exit 1 and C2220/C5287 (overflow 0, unknown lines 7). Linux
+contracts passed 206/206; Windows passed 177 with 29 expected skips. Reaching the
+second loop iteration establishes that target 1 compiled and passed fresh COFF
+checks; target 2 and the complete ABI gate were not accepted. No Node build ran.
+Microsoft documents C5287 as operands with different enum types. The SDK-only
+equality compares our anonymous enum with the SDK enum, an evidenced source
+candidate without exact compiler-line attribution.
+
+That assertion now explicitly casts both enum operands to int before retaining
+the exact equality. No value, target, flag, warning or source operation changes.
+A portable compile contract uses the actual assertion line: numeric 22 must
+compile under C11 with enum-comparison warnings treated as errors; mutated 23
+must fail. This checks assertion logic only and does not claim SDK ABI evidence.
+Both real Windows targets, all layout/flag assertions, C11 and `/W4 /WX` remain
+required. The next ABI-only outcome remains pending. The composed six-file
+gate passed 326 cases; after tightening only the new single-compile child bound
+to 2,500 ms, both new cases passed again (the other 29 rename cases were excluded
+by the explicit test-name filter). Scoped lint, Root/independent review and normal
+full `npm run typecheck` passed (session `79520`).
+
+- [Microsoft C5287 table](https://learn.microsoft.com/en-us/cpp/error-messages/compiler-warnings/compiler-warnings-c5200-through-c5399)

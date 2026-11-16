@@ -23,7 +23,7 @@ STATIC_ASSERT(offsetof(uv__fs_rename_info_ex_t, Flags) == offsetof(FILE_RENAME_I
 STATIC_ASSERT(offsetof(uv__fs_rename_info_ex_t, RootDirectory) == offsetof(FILE_RENAME_INFO, RootDirectory));
 STATIC_ASSERT(offsetof(uv__fs_rename_info_ex_t, FileNameLength) == offsetof(FILE_RENAME_INFO, FileNameLength));
 STATIC_ASSERT(offsetof(uv__fs_rename_info_ex_t, FileName) == offsetof(FILE_RENAME_INFO, FileName));
-STATIC_ASSERT(UV__FS_RENAME_INFO_EX == FileRenameInfoEx);
+STATIC_ASSERT((int) UV__FS_RENAME_INFO_EX == (int) FileRenameInfoEx);
 STATIC_ASSERT(UV__FS_RENAME_REPLACE_POSIX == (FILE_RENAME_FLAG_REPLACE_IF_EXISTS | FILE_RENAME_FLAG_POSIX_SEMANTICS));
 #endif
 
