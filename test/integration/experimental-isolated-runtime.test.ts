@@ -171,7 +171,7 @@ for (const phase of ["capture", "commit-cleanup", "capture-failure"] as const) {
     } catch (error) { bodyFailure = { error }; }
     finally {
       const drained = await drainPausedExport(() => release.resolve(), restore, exporting, async () => { await instance?.close(); });
-      if (drained.closed) {
+      if (instance && drained.closed) {
         try { fs.rmSync(root, { recursive: true, force: true }); } catch (error) { cleanupFailure = { error }; }
       }
       cleanupFailure ??= drained.failure;
