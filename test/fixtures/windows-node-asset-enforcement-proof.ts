@@ -52,11 +52,35 @@ export function windowsNodeAssetCreationSecurity(owner: string, packageSid: stri
     lowFullDirectory: descriptor(true, "full", "LW"), lowFullFile: descriptor(false, "full", "LW"), program: descriptor(false, "read", "ME") });
 }
 export class WindowsNodeAssetEnforcementObservationError extends Error {
-  constructor(readonly mode: WindowsNodeAssetEnforcementMode, readonly phase: number) {
-    super(`The fixed native Node asset witness was refused in ${mode} at phase ${phase}.`);
+  readonly preludeStage: number; readonly cExit: number; readonly errorClass: number;
+  constructor(readonly mode: WindowsNodeAssetEnforcementMode, readonly phase: number, preludeStage = 0, cExit = 0, errorClass = 0) {
+    const stage = Number.isInteger(preludeStage) && preludeStage >= 0 && preludeStage <= 14 ? preludeStage : 0;
+    const code = Number.isInteger(cExit) && (cExit === 19 || cExit >= 201 && cExit <= 209) ? cExit : 0;
+    const kind = Number.isInteger(errorClass) && errorClass >= 0 && errorClass <= 8 ? errorClass : 0;
+    super(`The fixed native Node asset witness was refused in ${mode} at phase ${phase} (prelude ${stage}, C exit ${code}, error class ${kind}).`);
+    this.preludeStage = stage; this.cExit = code; this.errorClass = kind;
     this.name = "WindowsNodeAssetEnforcementObservationError"; this.stack = `${this.name}: ${this.message}`;
   }
 }
+
+/** Diagnostic only. An authentic exact-run completion does not certify output closure or permit disposal. */
+export function windowsNodeAssetPreludeExit(loaded: Pick<Bundle, "requireWindowsCommandRootOnlyCompleted">, completed: unknown, run: WindowsCommandRootOnlyRunRef): number {
+  const value = loaded.requireWindowsCommandRootOnlyCompleted(completed, run), code = value.exitCode;
+  return value.outcome === "natural-exit" && typeof code === "number" && Number.isInteger(code) && (code === 19 || code >= 201 && code <= 209) ? code : 0;
+}
+type DiagnosticClasses = Pick<Bundle, "WindowsRootOnlyCommandCopyCleanupError" | "WindowsCommandCopyCleanupError" | "WindowsCommandRootOnlyCleanupError" |
+  "WindowsCommandOutputCleanupError" | "WindowsCommandCreatorProfileCleanupError" | "WindowsCommandCopyProofCleanupError" |
+  "WindowsNodeAssetEnforcementNativeCleanupError" | "WindowsNodeToolchainCleanupError">;
+/** The exact emitted constructors identify a bounded class; names/messages/causes never enter the projection. */
+export const windowsNodeAssetErrorClass = (loaded: DiagnosticClasses | undefined, error: unknown): number => {
+  if (!loaded) return 0;
+  try {
+    const classes = [loaded.WindowsRootOnlyCommandCopyCleanupError, loaded.WindowsCommandCopyCleanupError, loaded.WindowsCommandRootOnlyCleanupError,
+      loaded.WindowsCommandOutputCleanupError, loaded.WindowsCommandCreatorProfileCleanupError, loaded.WindowsCommandCopyProofCleanupError,
+      loaded.WindowsNodeAssetEnforcementNativeCleanupError, loaded.WindowsNodeToolchainCleanupError];
+    const index = classes.findIndex(type => error instanceof type); return index < 0 ? 0 : index + 1;
+  } catch { return 0; }
+};
 
 /** This wrapper observes the real promise and authenticates its real opaque return before signalling. */
 export function observeWindowsNodeAssetStop(owner: WindowsCommandRootOnlyStopOwner, binding: object,
@@ -111,7 +135,7 @@ export function bindWindowsNodeAssetEnforcement(dependencies: WindowsNodeAssetEn
     if (terminal) throw terminal;
     if (busy || !MODES.includes(mode)) { terminal = new WindowsNodeAssetEnforcementObservationError(MODES.includes(mode) ? mode : "natural", 1); throw terminal; }
     busy = true;
-    let phase = 1, loaded: Bundle | undefined, proof: ReturnType<Bundle["loadWindowsCommandCopyProofNative"]> | undefined,
+    let phase = 1, preludeStage = 0, cExit = 0, loaded: Bundle | undefined, proof: ReturnType<Bundle["loadWindowsCommandCopyProofNative"]> | undefined,
       security: ReturnType<Bundle["loadWindowsNodeAssetEnforcementNative"]> | undefined,
       targetPins: ReturnType<ReturnType<Bundle["loadWindowsNodeAssetEnforcementNative"]>["pinTargets"]> | undefined,
       api: ReturnType<Bundle["loadExperimentalWindowsLpacApi"]> | undefined, profile: ReturnType<Bundle["createFreshWindowsCommandCreatorProfile"]> | undefined,
@@ -182,16 +206,20 @@ export function bindWindowsNodeAssetEnforcement(dependencies: WindowsNodeAssetEn
         ensure(loaded!.requireWindowsCommandRootOnlyCompletion(stopped!.ref, stopped!.binding).rootPresent === present); };
       let prelude = 0;
       if (mode === "natural" || mode === "natural-default") {
-        phase = 4; io = native(() => loaded!.createWindowsCommandOutput(profile!, { signal: abort.signal, timeoutMs: 8_000, output: collect }));
+        phase = 4; preludeStage = 1; io = native(() => loaded!.createWindowsCommandOutput(profile!, { signal: abort.signal, timeoutMs: 8_000, output: collect }));
         const line = command([program, privateParent, root, image, lowOwner, lowFullDirectory, lowFullFile]);
         let run: WindowsCommandRootOnlyRunRef;
-        try { run = await copy.launchRootOnlyWithOutput(context => { launch = io!.createSuspended(context, program, line); launches.push(launch); return launch; }, held => {
-          native(() => api!.verifyToken(selected, held.process)); native(() => proof!.image(held.process, held.pid, program)); checkPins(); }); }
+        preludeStage = 2;
+        try { run = await copy.launchRootOnlyWithOutput(context => { preludeStage = 3; launch = io!.createSuspended(context, program, line); launches.push(launch); return launch; }, held => {
+          preludeStage = 4; native(() => api!.verifyToken(selected, held.process)); preludeStage = 5; native(() => proof!.image(held.process, held.pid, program)); preludeStage = 6; checkPins(); }); }
         finally { line.fill(0); }
-        const done = await copy.completeRootOnly(run, io.signal), closed = await io.closeOutputAfterStopped(done, run); authenticateStop(1); facts("prelude", done, closed, run);
-        native(() => targetPins!.recheck()); const created = guarded(() => files.readFileSync(path.join(lowFullDirectory, "access-create.txt")));
+        preludeStage = 7; const done = await copy.completeRootOnly(run, io.signal);
+        preludeStage = 8; cExit = windowsNodeAssetPreludeExit(loaded, done, run);
+        preludeStage = 9; const closed = await io.closeOutputAfterStopped(done, run);
+        preludeStage = 10; authenticateStop(1); preludeStage = 11; facts("prelude", done, closed, run);
+        preludeStage = 12; native(() => targetPins!.recheck()); preludeStage = 13; const created = guarded(() => files.readFileSync(path.join(lowFullDirectory, "access-create.txt")));
         try { ensure(created.equals(Buffer.from(CONTROL_CREATED))); } finally { created.fill(0); }
-        prelude = 1; stopped = undefined; launch = undefined; io = undefined;
+        preludeStage = 14; prelude = 1; stopped = undefined; launch = undefined; io = undefined;
       }
       phase = 5; verified(); native(() => targetPins!.recheck());
       let result: Readonly<{ exitCode: number | null; reason: string; complete: boolean; stdoutBytes: number; stderrBytes: number }>;
@@ -235,8 +263,8 @@ export function bindWindowsNodeAssetEnforcement(dependencies: WindowsNodeAssetEn
         actualNode: mode === "precreate" || mode === "preresume" || mode === "sharedcreate" ? 0 : 1,
         stdinEof: mode === "precreate" || mode === "preresume" || mode === "sharedcreate" ? 0 : 1, rootOnlyStop: 1, snapshot: 1, seedUnchanged: 1,
         assetCleanup: 1, privateCleanup: 1, profileCleanup: 1, emittedCjs: 1 });
-    } catch {
-      live = false; terminal ??= new WindowsNodeAssetEnforcementObservationError(mode, phase); retained.push(graph);
+    } catch (error) {
+      live = false; terminal ??= new WindowsNodeAssetEnforcementObservationError(mode, phase, preludeStage, cExit, windowsNodeAssetErrorClass(loaded, error)); retained.push(graph);
       for (const value of launches) try { loaded!.retainWindowsCommandOutput(value); } catch { /* Same-graph quarantine supplies no disposal receipt. */ }
       for (const owner of owners) try { owner.retainStop(); } catch { /* Request exact Stop only; never retry cleanup or certify disposal. */ }
       throw terminal;

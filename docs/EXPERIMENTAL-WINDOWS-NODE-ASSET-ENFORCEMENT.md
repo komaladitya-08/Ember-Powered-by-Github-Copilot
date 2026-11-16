@@ -78,3 +78,17 @@ completion/closure references, builder ownership and exact source verification. 
 Windows enforcement or product admission. Validation receipts, TypeScript exit status and subsequent native outcomes
 belong in the PR evidence for the exact source manifest. PR registration runs portable contracts only; the native
 pair requires a separately reviewed manual dispatch on the literal proof branch.
+
+The first manual pair, run `43971415844` at `c1be17874ce4b77b90f117f98c4bc53d355331a1`, failed at the
+natural case's C-prelude phase on both images. Later cases were blocked and uncertain graphs remained retained;
+those results establish no native enforcement success. The diagnostic append preserves the C program, production
+modules, expectations and quarantine. It reports only a fixed prelude-stage number and a bounded exact-graph error
+class. C exit projection first authenticates the genuine completed/run reference and then allows only 19 or
+201 through 209; every other exit or outcome maps to unknown zero. These observations confer no Stop, output-close,
+cleanup or success receipt. No raw error, native status, child bytes, path, handle or SID is projected.
+
+Prelude stages are: 0 not entered; 1 output creation; 2 launch; 3 suspended creation; 4 token attestation;
+5 image attestation; 6 held-pin attestation; 7 completion; 8 completed-reference authentication; 9 output close;
+10 Stop authentication; 11 fixed output facts; 12 security recheck; 13 known control-file read; 14 complete.
+Error classes are: 0 unknown; 1 Copy owner; 2 native Copy; 3 Stop; 4 output; 5 creator profile;
+6 proof pin; 7 security witness; 8 Node asset owner. Classes use only `instanceof` against the exact emitted graph.
