@@ -8,6 +8,8 @@ import { z } from "zod";
 import { loadExperimentalWindowsLpacApi } from "../../app/main/agent/experimental-windows-lpac-api";
 import { compileWindowsNodeBootstrap, prepareWindowsNodeProof, windowsNodeProofPin, WindowsNodeProofCleanupError, type WindowsNodeProofMode } from "../fixtures/windows-node-lpac-proof";
 import { observeWindowsNodeApplicationError } from "../fixtures/windows-node-lpac-events";
+import { parseWindowsNodeFatalOutput } from "../fixtures/windows-node-lpac-fatal";
+import { windowsNodeIoSetupReceipt } from "../fixtures/windows-node-lpac-io";
 
 const denial = z.object({ denied: z.boolean(), code: z.string().max(32).nullable() }).strict();
 const direct = z.object({ version: z.string().max(32), pid: z.number().int().positive(), environmentAbsent: z.boolean(), copiedEdit: z.boolean(),
@@ -27,8 +29,8 @@ describe.skipIf(process.platform !== "win32" || process.env.EMBER_LPAC_NODE_PROO
   }, 90_000);
   afterAll(() => { if (parent && !retained) fs.rmSync(parent, { recursive: true, force: true }); });
 
-  type StartupOutcomes = { host: { exitCode: number; jobStopped: true }; lpacExit: number };
-  let startupRun: Promise<StartupOutcomes> | undefined;
+  type StartupOutcomes = { host: { exitCode: number; jobStopped: true }; lpacExit: number; output?: ReturnType<typeof parseWindowsNodeFatalOutput> };
+  let startupRun: Promise<StartupOutcomes> | undefined, ioStartupRun: Promise<StartupOutcomes> | undefined;
   async function run(mode: WindowsNodeProofMode): Promise<StartupOutcomes | undefined> {
     if (retained) throw new Error("An earlier Node proof cleanup is unverified; no later process may start in this job.");
     const api = loadExperimentalWindowsLpacApi(), work = fs.mkdtempSync(path.join(parent, `${mode}-`));
@@ -46,10 +48,15 @@ describe.skipIf(process.platform !== "win32" || process.env.EMBER_LPAC_NODE_PROO
     try {
       proof = await prepareWindowsNodeProof({ parent: work, bootstrap, version, asset, mode, canary, port: address.port }, api);
       process.env.GH_TOKEN = "synthetic-host-GitHub-canary"; process.env.EMBER_HOST_NODE_SECRET = "synthetic-host-secret-canary";
-      if (mode === "startup") {
+      if (mode === "startup" || mode === "startup-io") {
         control = await proof.hostStartup();
-        console.info("Separate trusted-host Node startup control", JSON.stringify({ version, appContainer: false, fixedEval: true, inheritedHandles: false,
-          headless: true, explicitEnvironment: true, exitCode: `0x${control.exitCode.toString(16)}`, jobStopped: control.jobStopped }));
+        if (mode === "startup-io") {
+          console.info("Separate private-stdio Node host control", JSON.stringify({ version, appContainer: false, fixedEval: true, inheritedHandles: 2,
+            privateOutputBytes: 0, headless: true, explicitEnvironment: true, exitCode: `0x${control.exitCode.toString(16)}`, jobStopped: control.jobStopped }));
+        } else {
+          console.info("Separate trusted-host Node startup control", JSON.stringify({ version, appContainer: false, fixedEval: true, inheritedHandles: false,
+            headless: true, explicitEnvironment: true, exitCode: `0x${control.exitCode.toString(16)}`, jobStopped: control.jobStopped }));
+        }
       }
       const pid = await proof.launch();
       expect(proof.observations).toEqual({ assigned: true, token: true, image: true, resumed: true });
@@ -68,13 +75,21 @@ describe.skipIf(process.platform !== "win32" || process.env.EMBER_LPAC_NODE_PROO
         const diagnostic = observeWindowsNodeApplicationError(proof.eventIdentity(), api.windowsDirectory(), proof.fixture.paths.state);
         console.info("Node LPAC application-error diagnostic", JSON.stringify(diagnostic));
       }
-      if (mode !== "startup") {
+      if (mode !== "startup" && mode !== "startup-io") {
         const failure = proof.report("failure.json");
         if (failure !== null) throw new Error(`Pinned Node ${version} ${mode} reported a bounded probe failure: ${failure}`);
         if (exit !== 0) throw new Error(`Pinned Node ${version} ${mode} exited with code 0x${exit.toString(16)}. No compatibility grants are permitted.`);
       }
       expect(fs.readFileSync(canary, "utf8")).toBe(value); expect(connections).toBe(0);
-      if (mode === "startup") {
+      if (mode === "startup-io") {
+        // No Buffer or raw diagnostic is asserted/logged. The host closes parent writers and rechecks native stop
+        // before reading the pinned artifact; the parser returns only public catalog locations or fixed statuses.
+        const bytes = proof.readIoOutput();
+        let output: ReturnType<typeof parseWindowsNodeFatalOutput>;
+        try { output = parseWindowsNodeFatalOutput(bytes, version); } finally { bytes.fill(0); }
+        startup = { host: control!, lpacExit: exit, output };
+        console.info("Private-stdio Node LPAC", JSON.stringify({ version, fixedEval: true, inheritedHandles: 2, exitCode: `0x${exit.toString(16)}`, jobStopped: true, output }));
+      } else if (mode === "startup") {
         startup = { host: control!, lpacExit: exit };
         console.info("Startup-only Node LPAC", JSON.stringify({ version, fixedEval: true, inheritedHandles: false, exitCode: `0x${exit.toString(16)}`, jobStopped: true }));
       } else if (mode === "direct") {
@@ -107,6 +122,8 @@ describe.skipIf(process.platform !== "win32" || process.env.EMBER_LPAC_NODE_PROO
         expect(creationDenied || startupFailed).toBe(true);
       }
     } catch (error) {
+      const setupReceipt = windowsNodeIoSetupReceipt(error);
+      if (setupReceipt) console.info("Node LPAC stdio setup failure", JSON.stringify(setupReceipt));
       if (error instanceof WindowsNodeProofCleanupError) retained = true;
       failure = { error };
     } finally {
@@ -126,6 +143,9 @@ describe.skipIf(process.platform !== "win32" || process.env.EMBER_LPAC_NODE_PROO
     // for the other. Cache only stopped-and-cleaned numeric facts, not a live fixture or native handle.
     return startupRun ??= run("startup").then(result => { if (!result) throw new Error("The paired startup diagnostic returned no outcomes."); return result; });
   }
+  function ioStartupOutcomes(): Promise<StartupOutcomes> {
+    return ioStartupRun ??= run("startup-io").then(result => { if (!result) throw new Error("The separate private-stdio diagnostic returned no outcomes."); return result; });
+  }
   it("runs the same pinned startup-only eval as a separate trusted-host native control", async () => {
     expect((await startupOutcomes()).host).toEqual({ exitCode: 0, jobStopped: true });
   }, 90_000);
@@ -135,4 +155,10 @@ describe.skipIf(process.platform !== "win32" || process.env.EMBER_LPAC_NODE_PROO
   it("executes the direct official Node image with a copied edit, clean profile and explicit host/network access denials", () => run("direct"), 90_000);
   it("runs a useful Node check in-process with a file reporter and no inherited stdout handles", () => run("inprocess"), 90_000);
   it("reports ordinary child startup separately without claiming child/toolchain support", () => run("child"), 90_000);
+  it("runs the fixed eval with only two private stdio handles as a separate trusted-host control", async () => {
+    expect((await ioStartupOutcomes()).host).toEqual({ exitCode: 0, jobStopped: true });
+  }, 90_000);
+  it("runs only the fixed eval in LPAC with an explicit two-handle stdio list and parsed private output", async () => {
+    expect((await ioStartupOutcomes()).lpacExit).toBe(0);
+  }, 90_000);
 });

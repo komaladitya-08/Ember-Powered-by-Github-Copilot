@@ -145,6 +145,15 @@ requirements and relevant native acceptance are satisfied.
 
 ## Verification
 
+At `29cb624e`, [the Linux checks job](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43793162486/job/133055944521)
+passed lint, types, 19,119 unit tests (38 skipped), 297 integration tests (658 skipped), the isolated Stop deadline and
+the application build. The actual Electron journey then failed before app startup: Chromium selected the adjacent
+npm-installed `chrome-sandbox`, which was not root-owned with mode 4755. Electron 44.9.3's pinned Chromium
+[chooses an existing adjacent helper before the environment fallback](https://github.com/chromium/chromium/blob/152.0.7977.167/sandbox/linux/suid/client/setuid_sandbox_host.cc).
+CI now links that exact adjacent location to a fresh root-owned helper under `/usr/lib` and verifies its ownership and
+mode before launch. The normal Electron sandbox and all journey assertions remain enabled; successful CI execution
+of that repair is still pending. Local sandboxed Electron success does not prove the hosted runner's helper setup.
+
 Final check results are recorded with the follow-up commit/PR. The real runtime tests intentionally include successful
 reproductions of unsafe isolation behavior; a green result there means the probe behaved as expected, not that native
 coding is safe. Synthetic audio, mock providers and Chromium with a fake preload do not certify physical desktop I/O.

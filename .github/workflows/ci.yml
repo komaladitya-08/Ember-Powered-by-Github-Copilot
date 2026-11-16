@@ -105,12 +105,15 @@ jobs:
         timeout-minutes: 5
         env:
           EMBER_ELECTRON_CODING_TEST: "1"
-          CHROME_DEVEL_SANDBOX: "/opt/ember-test-electron/chrome-sandbox"
         run: |
           node node_modules/electron/install.js
-          # Use Electron's normal sandbox with a fresh root-owned helper, as the Linux package does.
-          sudo install -d -m 755 -o root -g root /opt/ember-test-electron
-          sudo install -m 4755 -o root -g root node_modules/electron/dist/chrome-sandbox /opt/ember-test-electron/chrome-sandbox
+          # Chromium chooses an existing adjacent helper before CHROME_DEVEL_SANDBOX. Point that exact
+          # location at the fresh root-owned helper, as the Linux package does; keep the normal sandbox on.
+          # /usr/lib has trusted ancestors; the hosted image's /opt may be writable by ordinary users.
+          sudo install -d -m 755 -o root -g root /usr/lib/ember-test-electron
+          sudo install -m 4755 -o root -g root node_modules/electron/dist/chrome-sandbox /usr/lib/ember-test-electron/chrome-sandbox
+          ln -sfn /usr/lib/ember-test-electron/chrome-sandbox node_modules/electron/dist/chrome-sandbox
+          test "$(stat -Lc '%u:%g:%a' node_modules/electron/dist/chrome-sandbox)" = "0:0:4755"
           dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24" npm run test:integration -- test/integration/project-coding-electron.test.ts
       - name: Conversation, Ask, memory, first-run and local inventory renderer journeys
         env:
