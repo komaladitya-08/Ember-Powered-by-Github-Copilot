@@ -52,6 +52,31 @@ it refuses payload-read, delete, append, execute, attribute-write and security-d
 `CreateFileW` still requests only `0x2`; no ACL, inherited-handle list, token or deadline changes. Native validation
 of this predicate repair and the subsequent host/LPAC launches remains pending.
 
+At `5ef69758`, [run 43796961370](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43796961370)
+passed all 218 contracts on every matrix combination. All four two-handle host controls then exited zero with zero
+output bytes after verified job stop. All four LPAC fixed evals still exited `0x80000003`; each produced a 48-byte
+private artifact that the source-location parser refused as `unreadable`. Valid private standard handles therefore
+did not resolve this observed LPAC startup failure. No public callsite was recovered.
+
+The parser now has a separate inspection receipt containing only its closed refusal stage and, for refused encoding,
+an alternating ASCII/zero byte-shape class (`utf16le-ascii`, `utf16be-ascii` or `other`). Its original output contract
+and source/encoding acceptance remain unchanged. It does not decode or log refused bytes. Native classification of
+the 48-byte artifacts remains pending; a refused representation is not evidence of any particular fatal message.
+
+At `17349a2b`, [run 43797881882](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43797881882)
+passed all 226 contracts and the private-stdio host controls on every matrix combination. All four LPAC 48-byte
+artifacts were refused at `newline`: strict ASCII validation succeeded, but
+ordinary CRLF normalization left at least one CR. This does not distinguish doubled CRLF from a bare or mixed CR.
+The inspection therefore adds only four bounded structural counts (ordinary CRLF, doubled CRLF, bare CR and LF),
+without accepting or returning any new text. Native counts remain pending.
+
+At `5f26d1df`, [run 43798408813](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43798408813)
+passed all 231 contracts per job. All four LPAC artifacts contained exactly one doubled CRLF and no ordinary CRLF,
+bare CR or LF. The parser now normalizes ordinary CRLF or this observed doubled CRLF in one pass. It still refuses
+every residual CR, including runs of three or more before LF; sequential replacement could incorrectly erase those.
+Control bytes, private/unknown source paths, malformed or duplicate headers and release-specific membership retain
+their existing refusals. Native public-location or `no-location` results after this normalization remain pending.
+
 No result or copied content is read by the host until the real root handle has exited and both private job counters are zero. Unverified shutdown retains its scratch and pins. No ACL, AppContainer, network, PowerShell, CLR or registry compatibility fallback is permitted. PowerShell runs only as a trusted host-side signature or event observer, outside the LPAC job; Node is the executable under test inside that job.
 
 The dedicated workflow is `experimental-windows-node-lpac.yml`; it explicitly sets `EMBER_LPAC_NODE_PROOF=1` and the exact asset/version inputs, so its configured Windows jobs must execute or fail. Unconfigured general integration runs skip this separate diagnostic.
