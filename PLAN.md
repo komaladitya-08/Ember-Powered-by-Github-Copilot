@@ -4839,3 +4839,8 @@ close. Explicit `.git`/`node_modules` omissions and 10 MiB/tree, 4 MiB/file, 10,
 The dedicated Server 2022/2025 artifact matrix includes the native sealed-review suite. This is file-only storage and
 review work: Windows production coding, commands, controller storage and SDK execution-boundary proofs remain disabled
 or unfinished; no command process is started or claimed stopped by this primitive.
+
+The Windows exclusion follow-up folds only the explicitly declared top-level roots and retains canonical omission
+names. Duplicate folded names are refused before omission, and file tools disclose and enforce that same scope,
+including attempts to recreate an excluded root with different casing. Similar names and nested folders stay in the
+declared source tree. Portable regressions and the native matrix cover canonical and mixed-case roots.

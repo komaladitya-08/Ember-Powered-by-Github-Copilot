@@ -254,18 +254,39 @@ describe.skipIf(process.platform !== "win32")("native Windows sealed file-only r
     expect(fs.readFileSync(path.join(source, "app.ts"), "utf8")).toBe(ORIGINAL);
   });
 
-  it("records only explicitly omitted source roots and refuses other oversize content", async () => {
-    for (const name of [".git", "node_modules"]) { fs.mkdirSync(path.join(source, name)); fs.writeFileSync(path.join(source, name, "unread-secret.txt"), "ghp_" + "A".repeat(36)); }
+  it.each([{ label: "canonical", roots: [".git", "node_modules"] }, { label: "mixed case", roots: [".GiT", "NODE_MODULES"] }])(
+    "records canonical omissions for $label source roots and refuses other oversize content", async ({ roots }) => {
+    for (const name of roots) { fs.mkdirSync(path.join(source, name)); fs.writeFileSync(path.join(source, name, "unread-secret.txt"), "ghp_" + "A".repeat(36)); }
+    for (const name of [".github", "node_modules_backup"]) { fs.mkdirSync(path.join(source, name)); fs.writeFileSync(path.join(source, name, "keep.ts"), "export const keep = true;\n"); }
+    const load = native.loadWindowsCodingNative; let excludedReads = 0;
+    vi.spyOn(native, "loadWindowsCodingNative").mockImplementation(() => {
+      const api = load(), read = api.read;
+      api.read = (...args) => { if (/\\(?:\.git|node_modules)\\unread-secret\.txt$/i.test(api.info(args[0]).finalPath)) excludedReads++; return read.apply(api, args); }; return api;
+    });
     const { workspace, broker } = await open({ scope: { excludeRoots: [".git", "node_modules"] }, limits: { workspaceBytes: 1024, fileBytes: 1024 } });
-    expect(workspace.excludedRoots).toEqual([".git", "node_modules"]); expect((await broker.list()).entries.map(entry => entry.path)).toEqual(["/work/app.ts"]);
+    expect(workspace.excludedRoots).toEqual([".git", "node_modules"]);
+    expect((await broker.list()).entries.map(entry => entry.path).sort()).toEqual(["/work/.github", "/work/app.ts", "/work/node_modules_backup"]);
     await seal(workspace); const producer = await workspace.exportReview(store), review = producer.output.review;
     expect(review.scope).toMatchObject({ version: 1, source: { excludedRoots: [".git", "node_modules"], omitted: [
       { path: ".git", kind: "directory" }, { path: "node_modules", kind: "directory" },
     ] }, dependencies: null });
-    for (const tree of [review.baseline, review.proposed, review.current!]) expect(tree.map(entry => entry.path)).toEqual(["app.ts"]);
+    for (const tree of [review.baseline, review.proposed, review.current!]) expect(tree.map(entry => entry.path)).toEqual([".github", ".github/keep.ts", "app.ts", "node_modules_backup", "node_modules_backup/keep.ts"]);
+    expect(excludedReads).toBe(0); expect(JSON.stringify(review)).not.toContain("unread-secret");
     expect(review.limitations.join(" ")).toContain("Excluded source roots: .git, node_modules."); await producer.discard();
     await workspace.close(); fs.writeFileSync(path.join(source, "large.ts"), "x".repeat(2048));
     await expect(open({ scope: { excludeRoots: [".git", "node_modules"] }, limits: { fileBytes: 1024 } })).rejects.toMatchObject({ code: "limit" });
     expect(fs.readdirSync(copiesBase)).toEqual([]); expect(fs.readFileSync(path.join(source, "large.ts"), "utf8")).toHaveLength(2048);
+  });
+
+  it.each([".GiT", "NODE_MODULES"])("refuses a recreated excluded %s root in the proposal before writing an artifact", async name => {
+    const { workspace } = await open({ scope: { excludeRoots: [".git", "node_modules"] } });
+    // Mint a genuine private object so an ACL refusal cannot stand in for the excluded-root check.
+    await workspace.withTree(async tree => {
+      const directory = tree.api.create(tree.root, name, "directory");
+      try { tree.api.assertPrivate(directory); } finally { tree.api.close(directory); }
+    });
+    await seal(workspace); await expect(workspace.exportReview(store)).rejects.toMatchObject({ code: "boundary" });
+    expect(store.size).toBe(0); expect(fs.readdirSync(reviewsBase)).toEqual([]);
+    expect(fs.readFileSync(path.join(source, "app.ts"), "utf8")).toBe(ORIGINAL); expect(fs.readdirSync(source)).toEqual(["app.ts"]);
   });
 });

@@ -3,12 +3,18 @@ import { ScopedCodingFileError, type ScopedCodingFileLimits } from "./coding-pla
 import { CodingPrivacyCleanupError } from "./coding-privacy-scanner";
 import { projectFileProblem } from "./project";
 import { WindowsCodingCleanupError, type WindowsCodingInfo } from "./windows-coding-native";
+import type { CodingExcludedRoot } from "./coding-project-scope";
 
 export const WINDOWS_CODING_CAPS: ScopedCodingFileLimits = Object.freeze({ entries: 10_000, depth: 64, fileBytes: 8 * 1024 * 1024,
   workspaceBytes: 100 * 1024 * 1024, resultBytes: 256 * 1024, searchMatches: 1000 });
 export const WINDOWS_CODING_DEFAULTS: ScopedCodingFileLimits = Object.freeze({ ...WINDOWS_CODING_CAPS, entries: 4000, depth: 32, resultBytes: 64 * 1024, searchMatches: 200 });
 export const windowsCodingFold = (value: string): string => value.toUpperCase().toLowerCase().normalize("NFC");
 export const windowsCodingVirtual = (relative: string): string => relative ? `/work/${relative}` : "/work";
+/** Match only explicit top-level omissions using the same Windows folding as native path identity checks. */
+export function windowsCodingExcludedRoot(relative: string, roots: readonly CodingExcludedRoot[]): CodingExcludedRoot | undefined {
+  const first = windowsCodingFold(relative.split("/")[0]);
+  return roots.find(root => windowsCodingFold(root) === first);
+}
 export function windowsCodingLimits(options: Partial<ScopedCodingFileLimits> = {}): Readonly<ScopedCodingFileLimits> {
   const limits = { ...WINDOWS_CODING_DEFAULTS, ...options };
   if (Object.entries(limits).some(([key, value]) => !Object.hasOwn(WINDOWS_CODING_CAPS, key) || !Number.isSafeInteger(value) || value < 1 || value > WINDOWS_CODING_CAPS[key as keyof ScopedCodingFileLimits])) throw new ScopedCodingFileError("limit");

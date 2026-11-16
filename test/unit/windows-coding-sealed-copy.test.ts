@@ -2,6 +2,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import path from "node:path/win32";
 import type { WindowsCodingNative, WindowsCodingInfo, WindowsCodingPin } from "../../app/main/agent/windows-coding-native";
+import type { CodingExcludedRoot } from "../../app/main/agent/coding-project-scope";
 
 afterEach(() => { vi.doUnmock("../../app/main/platform/os"); vi.doUnmock("../../app/main/agent/windows-coding-native"); vi.restoreAllMocks(); vi.resetModules(); });
 
@@ -76,9 +77,11 @@ async function setup() {
   const binding = { owner: "a".repeat(64), session: "11111111-1111-4111-8111-111111111111", snapshot: "22222222-2222-4222-8222-222222222222" };
   let current = true, controllerClosed = true;
   const signal = new AbortController();
-  const create = () => WindowsCodingCopy.create({ source: "C:\\project", privateBase: "C:\\copies", protectedPaths: ["C:\\protected"], signal: signal.signal, current: () => true,
+  const create = (excludeRoots?: readonly CodingExcludedRoot[]) => WindowsCodingCopy.create({ source: "C:\\project", privateBase: "C:\\copies", protectedPaths: ["C:\\protected"], signal: signal.signal, current: () => true,
+    ...(excludeRoots ? { scope: { excludeRoots } } : {}),
     review: { store, binding, current: () => current, controllerClosed: () => controllerClosed } });
   return { api, nodes, handles, location, put, create, store, binding, createCodingReviewExport, decodeCodingReviewExport, WindowsScopedCodingFiles,
+    directory: (absolute: string) => node(location(absolute), "directory"),
     revoke: () => { current = false; }, closeController: (closed: boolean) => { controllerClosed = closed; },
     onRead: (callback: () => void) => { onRead = callback; }, onWrite: (callback: (row: Node) => void) => { onWrite = callback; },
     rebindAfterIntake: () => { sourceReleased = () => { node(location("C:\\project"), "directory"); put("C:\\project\\app.ts", "replacement source\n"); }; } };
@@ -145,4 +148,48 @@ it("drains a close during the first artifact write and reclaims only its exact u
   f.onWrite(row => { if (row.info.finalPath.startsWith(f.location("C:\\reviews") + "\\") && !closing) closing = copy.close(); });
   await expect(copy.exportReview()).rejects.toBeDefined(); await closing;
   expect(f.store.size).toBe(0); await f.store.close(); expect(f.handles.size).toBe(0);
+});
+
+it("omits mixed-case roots only under explicit scope and keeps every broker operation within that scope", async () => {
+  const f = await setup();
+  for (const name of [".GiT", "NODE_MODULES"]) { f.directory(`C:\\project\\${name}`); f.put(`C:\\project\\${name}\\ordinary.txt`, "ghp_" + "A".repeat(36)); }
+  for (const name of ["NODE_MODULES_BACKUP", "src", "src\\node_modules"]) f.directory(`C:\\project\\${name}`);
+  f.put("C:\\project\\NODE_MODULES_BACKUP\\keep.txt", "ordinary source\n"); f.put("C:\\project\\src\\node_modules\\keep.txt", "nested source\n");
+  await expect(f.create()).rejects.toMatchObject({ code: "secret" });
+  const copy = await f.create([".git", "node_modules"]), broker = await f.WindowsScopedCodingFiles.create({ copy, signal: new AbortController().signal });
+  expect((await broker.list()).excludedRoots).toEqual([".git", "node_modules"]);
+  expect((await broker.searchLiteral("source")).excludedRoots).toEqual([".git", "node_modules"]);
+  expect((await broker.readText("NODE_MODULES_BACKUP/keep.txt")).text).toBe("ordinary source\n");
+  expect((await broker.readText("src/node_modules/keep.txt")).text).toBe("nested source\n");
+  await expect(broker.mkdir("NODE_MODULES")).rejects.toMatchObject({ code: "privacy" });
+  await expect(broker.writeText("NoDe_MoDuLeS/new.txt", "out of scope\n")).rejects.toMatchObject({ code: "privacy" });
+  await expect(broker.readText(".GIT/ordinary.txt")).rejects.toMatchObject({ code: "privacy" });
+  expect(await broker.inspect(["NODE_MODULES", ".GiT/ordinary.txt"])).toEqual([{ exists: null, real: null }, { exists: null, real: null }]);
+  await broker.close(); await copy.stop(); const producer = await copy.exportReview();
+  expect(producer.output.review.scope?.source.omitted).toEqual([{ path: ".git", kind: "directory" }, { path: "node_modules", kind: "directory" }]);
+  for (const tree of [producer.output.review.baseline, producer.output.review.proposed, producer.output.review.current!]) {
+    expect(tree.some(entry => entry.path === "NODE_MODULES_BACKUP/keep.txt")).toBe(true);
+    expect(tree.some(entry => entry.path === "src/node_modules/keep.txt")).toBe(true);
+    expect(tree.some(entry => entry.path.startsWith(".GiT") || entry.path.startsWith("NODE_MODULES/"))).toBe(false);
+  }
+  await producer.discard(); await copy.close(); await f.store.close(); expect(f.handles.size).toBe(0);
+});
+
+it("refuses duplicate folded native names before omitting either alias from a source capture", async () => {
+  const f = await setup(); f.directory("C:\\project\\.GiT"); const list = f.api.list.bind(f.api);
+  vi.spyOn(f.api, "list").mockImplementation((handle, maximum) => {
+    const entries = list(handle, maximum);
+    if (f.api.info(handle).finalPath === f.location("C:\\project")) entries.push({ ...entries.find(entry => entry.name === ".GiT")!, name: ".GIT", id: "ffffffffffffffff" });
+    return entries;
+  });
+  await expect(f.create([".git"])).rejects.toMatchObject({ code: "unsupported" });
+  expect([...f.nodes.values()].some(row => row.info.finalPath.startsWith(f.location("C:\\copies") + "\\"))).toBe(false);
+  await f.store.close(); expect(f.handles.size).toBe(0);
+});
+
+it.each([".GiT", "NODE_MODULES"])("refuses a fresh private %s root recreated in the stopped proposal", async name => {
+  const f = await setup(), copy = await f.create([".git", "node_modules"]);
+  await copy.withTree(async tree => { const directory = tree.api.create(tree.root, name, "directory"); tree.api.close(directory); });
+  await copy.stop(); await expect(copy.exportReview()).rejects.toMatchObject({ code: "boundary" });
+  expect(f.store.size).toBe(0); await copy.close(); await f.store.close(); expect(f.handles.size).toBe(0);
 });

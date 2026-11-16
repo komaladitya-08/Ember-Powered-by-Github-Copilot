@@ -11,7 +11,7 @@ import { ScopedCodingFileError, type ScopedCodingWorkspace, type ScopedCodingFil
 import { CodingPrivacyScanner, CodingPrivacyCleanupError, captureCodingPrivacyScope, assertCodingPrivacyScope, type CodingPrivacyScope } from "./coding-privacy-scanner";
 import { codingWorkspaceFilePathProblem, codingWorkspaceFileProblemAsync } from "./scoped-coding-files";
 import { loadWindowsCodingNative, retireWindowsCodingNative, WindowsCodingCleanupError, type WindowsCodingNative, type WindowsCodingHandle, type WindowsCodingInfo, type WindowsCodingPin } from "./windows-coding-native";
-import { windowsCodingLimits, windowsCodingRelative, windowsCodingFold, windowsCodingSame, windowsCodingWithin, windowsCodingSafeError, windowsCodingYield } from "./windows-coding-policy";
+import { windowsCodingLimits, windowsCodingRelative, windowsCodingFold, windowsCodingSame, windowsCodingWithin, windowsCodingSafeError, windowsCodingYield, windowsCodingExcludedRoot } from "./windows-coding-policy";
 import { WindowsCodingArtifactStore } from "./windows-coding-artifact-store";
 import { CodingArtifactCleanupError, type CodingArtifactSourceRef } from "./coding-artifact-store";
 import { createCodingReviewExport, type CodingExportBinding, type CodingExportEntry, type CodingExportTree } from "./coding-result-export";
@@ -194,13 +194,14 @@ export class WindowsCodingCopy implements ScopedCodingWorkspace {
       const before = api.info(src); checkInfo(before);
       for (const listed of api.list(src, this.limits.entries - count)) {
         options.check(); if (++count > this.limits.entries) throw new ScopedCodingFileError("limit");
-        if (!prefix && this.excludedRoots.includes(listed.name as CodingExcludedRoot)) {
-          omitted.push({ path: listed.name as CodingExcludedRoot, kind: listed.attributes & 0x400 ? "link" : listed.attributes & 0x10 ? "directory" : "file" }); continue;
-        }
         const relative = prefix ? `${prefix}/${listed.name}` : listed.name;
         try { windowsCodingRelative(relative, false); } catch { throw new ScopedCodingFileError("unsupported"); }
         if (relative.split("/").length > this.limits.depth) throw new ScopedCodingFileError("limit");
         const key = windowsCodingFold(relative); if (aliases.has(key)) throw new ScopedCodingFileError("unsupported"); aliases.add(key);
+        const excluded = !prefix && windowsCodingExcludedRoot(relative, this.excludedRoots);
+        if (excluded) {
+          omitted.push({ path: excluded, kind: listed.attributes & 0x400 ? "link" : listed.attributes & 0x10 ? "directory" : "file" }); continue;
+        }
         if (codingWorkspaceFilePathProblem(relative)) throw new ScopedCodingFileError("secret");
         const kind = listed.attributes & 0x10 ? "directory" : "file", file = api.open(src, listed.name, kind, "source");
         const captured: CapturedSource = { handle: file }; opened.push(captured);
@@ -331,7 +332,7 @@ export class WindowsCodingCopy implements ScopedCodingWorkspace {
         for (const entry of tree.entries.values()) {
           this.#reviewCheck();
           if (entry.info.attributes & 0x6) throw new ScopedCodingFileError("privacy");
-          if (this.excludedRoots.some(root => entry.path === root || entry.path.startsWith(root + "/"))) throw new ScopedCodingFileError("boundary");
+          if (windowsCodingExcludedRoot(entry.path, this.excludedRoots)) throw new ScopedCodingFileError("boundary");
           if (entry.info.kind === "directory") {
             if (codingWorkspaceFilePathProblem(entry.path)) throw new ScopedCodingFileError("secret");
             entries.push({ path: entry.path, kind: "directory" });
