@@ -80,6 +80,10 @@ review preview but refuses export, including export into the moved original. An 
 recaptured from a replacement path. Source capture is drained before store close, and unverified storage cleanup
 keeps coding unavailable after an ordinary Forget retry.
 
+The conductor can give coding sessions the same bounded display names as desktop sessions. A name changes only the
+project board label; the task goal, original permission words, captured project and folder remain separate. Offered
+coding tools still check live availability before starting, and mixed handoff guidance appears only when that tool exists.
+
 Real-runtime tests demonstrate a failing Node test, private-copy repair, successful rerun and stopped review export
 with unchanged source. A composed Chromium/IPC/Host/controller test covers that complete flow plus Forget/account
 cleanup and explicit-export retention. An actual Electron journey additionally exercises the genuine preload and
@@ -157,8 +161,22 @@ the application build. The actual Electron journey then failed before app startu
 npm-installed `chrome-sandbox`, which was not root-owned with mode 4755. Electron 44.9.3's pinned Chromium
 [chooses an existing adjacent helper before the environment fallback](https://github.com/chromium/chromium/blob/152.0.7977.167/sandbox/linux/suid/client/setuid_sandbox_host.cc).
 CI now links that exact adjacent location to a fresh root-owned helper under `/usr/lib` and verifies its ownership and
-mode before launch. The normal Electron sandbox and all journey assertions remain enabled; successful CI execution
-of that repair is still pending. Local sandboxed Electron success does not prove the hosted runner's helper setup.
+mode before launch. The normal Electron sandbox and all journey assertions remain enabled.
+
+At `fb846a57`, [the hosted Linux job](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43795719365/job/133063956691)
+passed lint/types, 19,261 unit tests (38 skipped), 297 integrations (660 skipped), the isolated Stop deadline, build,
+and the actual sandboxed Electron coding journey (one case, 6.73 seconds). Its separate Chromium suite passed 282
+cases and failed two. The composed coding fixture selected its CLI installation instead of the separately configured
+trusted command asset, so production discovery correctly kept coding unavailable. It now supplies the verified test
+asset to unchanged discovery and asserts that exact selection; the composed repair/review/export/erasure journey
+passes locally. Required isolation failures fail this fixture instead of being skipped. Native and product deadlines
+are unchanged. The other failure involved a delayed navigation resize notification after a manual scroll.
+
+The navigation row now remembers the layout it already positioned. A delayed resize notification for that same
+layout does not move a row the person subsequently scrolled; genuine badge, font, link and row size changes still
+bring the selected pane into view. A regression holding actual native resize deliveries reproduces the exact
+955-pixel jump with the previous renderer and passes with the repair. All 54 Home pane cases pass locally, including
+the original narrow-row assertion and the badge-growth case; no assertion or timeout was weakened.
 
 Final check results are recorded with the follow-up commit/PR. The real runtime tests intentionally include successful
 reproductions of unsafe isolation behavior; a green result there means the probe behaved as expected, not that native

@@ -1,10 +1,88 @@
 import { expect, it } from "vitest";
-import { parseWindowsNodeFatalOutput, WINDOWS_NODE_FATAL_MAX_BYTES } from "../fixtures/windows-node-lpac-fatal";
+import { inspectWindowsNodeFatalOutput, parseWindowsNodeFatalOutput, WINDOWS_NODE_FATAL_MAX_BYTES, WINDOWS_NODE_FATAL_REFUSALS } from "../fixtures/windows-node-lpac-fatal";
 import sources from "../../scripts/experimental/windows-node-lpac-sources.json";
 
 const version = "22.23.5", file = "deps/v8/src/base/platform/platform-win32.cc";
 const header = (source = file, line: string | number = 42) => `# Fatal error in ${source}, line ${line}\n`;
 const parse = (text: string, release = version) => parseWindowsNodeFatalOutput(Buffer.from(text), release);
+
+it.each([
+  ["private text\0", "encoding"], [header() + "raw\rprivate", "newline"],
+  ["# Fatal error in private malformed header\n", "header"], [header("C:\\private\\unknown.cc"), "public-source"],
+  [header(file, 100001), "line"],
+])("explains a refusal with a closed stage without exposing rejected content: %s", (text, stage) => {
+  const bytes = Buffer.from(text), inspection = inspectWindowsNodeFatalOutput(bytes, version);
+  expect(inspection.output).toEqual(parseWindowsNodeFatalOutput(bytes, version));
+  expect(inspection.refusal).toMatchObject({ stage });
+  expect(Object.keys(inspection.refusal!).every(key => ["stage", "representation", "newlines"].includes(key))).toBe(true);
+  expect(JSON.stringify(inspection)).not.toMatch(/private|unknown|malformed|100001|Fatal|C:/);
+  expect(Buffer.byteLength(JSON.stringify(inspection))).toBeLessThan(256);
+});
+
+it.each(["utf16le-ascii", "utf16be-ascii"])("classifies only the bounded %s byte shape without accepting or decoding it", representation => {
+  const text = header() + "private-message\n", bytes = Buffer.from(text, "utf16le");
+  if (representation === "utf16be-ascii") bytes.swap16();
+  const inspection = inspectWindowsNodeFatalOutput(bytes, version);
+  expect(inspection).toEqual({ output: { status: "unreadable", bytes: bytes.length }, refusal: { stage: "encoding", representation } });
+  expect(JSON.stringify(inspection)).not.toMatch(/private|message|Fatal|logging|platform/);
+});
+
+it("keeps malformed wide data opaque and refuses unknown inputs/releases before representation inspection", () => {
+  const bytes = Buffer.from([0, 0, 65, 0, 0xff, 0]);
+  expect(inspectWindowsNodeFatalOutput(bytes, version)).toEqual({ output: { status: "unreadable", bytes: 6 }, refusal: { stage: "encoding", representation: "other" } });
+  expect(inspectWindowsNodeFatalOutput(bytes, "private-release")).toEqual({ output: { status: "unreadable", bytes: 6 }, refusal: { stage: "release" } });
+  expect(inspectWindowsNodeFatalOutput("private" as unknown as Buffer, version)).toEqual({ output: { status: "unreadable", bytes: 0 }, refusal: { stage: "input" } });
+  expect(Object.isFrozen(WINDOWS_NODE_FATAL_REFUSALS)).toBe(true);
+});
+
+it.each([
+  ["private\r\r\nlast\r", { crlf: 0, doubledCrlf: 1, bareCr: 1, lf: 0 }],
+  ["private\r", { crlf: 0, doubledCrlf: 0, bareCr: 1, lf: 0 }],
+  ["private\r\r\ntext\r\nmore\nlast\r", { crlf: 1, doubledCrlf: 1, bareCr: 1, lf: 1 }],
+  ["private\r\r\r\n", { crlf: 0, doubledCrlf: 1, bareCr: 1, lf: 0 }],
+])("counts only bounded newline structures without returning their surrounding text: %s", (text, newlines) => {
+  const bytes = Buffer.from(text as string), inspection = inspectWindowsNodeFatalOutput(bytes, version);
+  expect(inspection).toEqual({ output: { status: "unreadable", bytes: bytes.length }, refusal: { stage: "newline", newlines } });
+  expect(JSON.stringify(inspection)).not.toMatch(/private|more|last|text/);
+  expect(Object.values(inspection.refusal!.newlines!).every(count => Number.isInteger(count) && count >= 0 && count <= WINDOWS_NODE_FATAL_MAX_BYTES)).toBe(true);
+});
+
+it("caps newline inspection at the existing input bound and preserves refusal of unrecognized CR runs", () => {
+  const text = header().replaceAll("\n", "\r\r\r\n");
+  expect(parse(text)).toEqual({ status: "unreadable", bytes: Buffer.byteLength(text) });
+  const bytes = Buffer.alloc(WINDOWS_NODE_FATAL_MAX_BYTES, 13), inspection = inspectWindowsNodeFatalOutput(bytes, version);
+  expect(inspection.refusal).toEqual({ stage: "newline", newlines: { crlf: 0, doubledCrlf: 0, bareCr: WINDOWS_NODE_FATAL_MAX_BYTES, lf: 0 } });
+  const oversized = inspectWindowsNodeFatalOutput(Buffer.concat([bytes, Buffer.from([13])]), version);
+  expect(oversized).toEqual({ output: { status: "oversize", bytes: WINDOWS_NODE_FATAL_MAX_BYTES + 1 } });
+});
+
+it("normalizes the observed CRCRLF without exposing private context or changing release-omitted locations", () => {
+  const text = "private-context\r\n" + header("C:\\private-build\\deps\\v8\\src\\base\\platform\\platform-win32.cc").replaceAll("\n", "\r\r\n") + "private-message\n";
+  const inspection = inspectWindowsNodeFatalOutput(Buffer.from(text), version);
+  expect(inspection).toEqual({ output: { status: "location", file, line: 42, bytes: Buffer.byteLength(text) } });
+  expect(JSON.stringify(inspection)).not.toMatch(/private|message|context|build|C:/);
+  const omitted = "# Fatal error in , line 0\r\r\nprivate-message\r\r\n";
+  expect(parse(omitted)).toEqual({ status: "no-location", bytes: Buffer.byteLength(omitted) });
+});
+
+it.each([3, 4, 5, 6])("refuses %s CR bytes before LF instead of recursively normalizing them", count => {
+  const text = header().replaceAll("\n", "\r".repeat(count) + "\n");
+  expect(parse(text)).toEqual({ status: "unreadable", bytes: Buffer.byteLength(text) });
+  expect(inspectWindowsNodeFatalOutput(Buffer.from(text), version).refusal?.stage).toBe("newline");
+});
+
+it("retains private-path, duplicate-header, malformed-header and control-byte refusals after observed newline normalization", () => {
+  const cases = [
+    [header("C:\\private\\unknown.cc"), "unreadable"], [header() + header(), "ambiguous"],
+    ["# Fatal error in private malformed header\n", "unreadable"], [header() + "private\0", "unreadable"],
+    [header() + "private\r", "unreadable"],
+  ] as const;
+  for (const [input, status] of cases) {
+    const text = input.replaceAll("\n", "\r\r\n"), output = parse(text);
+    expect(output).toEqual({ status, bytes: Buffer.byteLength(text) });
+    expect(JSON.stringify(output)).not.toMatch(/private|malformed|Fatal|C:/);
+  }
+});
 
 it("returns only the pinned public filename and bounded line from a captured fatal header", () => {
   const text = "\n#\n" + header("C:\\private-user\\build-42\\node\\deps\\v8\\src\\base\\platform\\platform-win32.cc") +

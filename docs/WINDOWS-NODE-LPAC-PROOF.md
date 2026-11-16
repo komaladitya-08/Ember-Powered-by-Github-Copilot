@@ -29,6 +29,54 @@ At probe commit `4242fae1ac9e3cfa9908a1a069a5e0a60d8620d4`, [run 43794602957](ht
 
 Setup failures now carry a branded, frozen receipt from a closed stage list. A genuine native FALSE result may add only its allowlisted operation and immediately captured unsigned Win32 error; a nonzero `NtQueryObject` status uses that returned unsigned NTSTATUS. Predicate failures carry only their stage and never sample stale `GetLastError`. The integration emits one such receipt per mode run before propagating the failure. Cleanup uncertainty still takes priority and retains the existing fences; there is no access-right or deadline change.
 
+At `55429f71`, [Node 22 / Server 2022](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43795576062/job/133063526206)
+passed all 196 contracts and reported `writer-rights / NtQueryObject / 0xc0000004` (`STATUS_INFO_LENGTH_MISMATCH`).
+The helper supplied a 64-byte buffer for the fixed `ObjectBasicInformation` class. Microsoft's documented
+[`PUBLIC_OBJECT_BASIC_INFORMATION`](https://learn.microsoft.com/en-us/windows/win32/api/winternl/nf-winternl-ntqueryobject)
+contains four 32-bit fields and ten reserved 32-bit fields: 56 bytes. The helper now supplies and requires that exact
+size. Contract bindings reproduce the size mismatch and refuse short or oversized successful receipts. Rights masks,
+token, ACLs and deadlines are unchanged; native confirmation of the repair and two-handle startup remains pending.
+
+The first Node 22 / Server 2022 job at `47cc11cb` ([run 43795955193](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43795955193/job/133064705549))
+passed 198 contracts and advanced from the failed native status to the `writer-rights` predicate. It still created
+no I/O host process. For a successful rights query only, setup may now report a fixed failure detail and one unsigned
+numeric value: returned structure bytes, missing required access, or unexpected granted access. These values contain
+no handle, path or process identity. No stale Win32 error is sampled, and the original refusal still propagates.
+
+At `1adaab9a`, [run 43796488488](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43796488488)
+passed all 200 contracts on each of the four combinations. All four successful writer-rights queries returned
+`0x100082` before any two-handle host was created. That is the requested `FILE_WRITE_DATA` plus `FILE_READ_ATTRIBUTES`
+and `SYNCHRONIZE`. Microsoft defines [attribute reading separately from file-data reading](https://learn.microsoft.com/en-us/windows/win32/fileio/file-access-rights-constants).
+The diagnostic now permits that exact additional metadata/wait subset while still requiring payload-write access;
+it refuses payload-read, delete, append, execute, attribute-write and security-descriptor modification rights.
+`CreateFileW` still requests only `0x2`; no ACL, inherited-handle list, token or deadline changes. Native validation
+of this predicate repair and the subsequent host/LPAC launches remains pending.
+
+At `5ef69758`, [run 43796961370](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43796961370)
+passed all 218 contracts on every matrix combination. All four two-handle host controls then exited zero with zero
+output bytes after verified job stop. All four LPAC fixed evals still exited `0x80000003`; each produced a 48-byte
+private artifact that the source-location parser refused as `unreadable`. Valid private standard handles therefore
+did not resolve this observed LPAC startup failure. No public callsite was recovered.
+
+The parser now has a separate inspection receipt containing only its closed refusal stage and, for refused encoding,
+an alternating ASCII/zero byte-shape class (`utf16le-ascii`, `utf16be-ascii` or `other`). Its original output contract
+and source/encoding acceptance remain unchanged. It does not decode or log refused bytes. Native classification of
+the 48-byte artifacts remains pending; a refused representation is not evidence of any particular fatal message.
+
+At `17349a2b`, [run 43797881882](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43797881882)
+passed all 226 contracts and the private-stdio host controls on every matrix combination. All four LPAC 48-byte
+artifacts were refused at `newline`: strict ASCII validation succeeded, but
+ordinary CRLF normalization left at least one CR. This does not distinguish doubled CRLF from a bare or mixed CR.
+The inspection therefore adds only four bounded structural counts (ordinary CRLF, doubled CRLF, bare CR and LF),
+without accepting or returning any new text. Native counts remain pending.
+
+At `5f26d1df`, [run 43798408813](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43798408813)
+passed all 231 contracts per job. All four LPAC artifacts contained exactly one doubled CRLF and no ordinary CRLF,
+bare CR or LF. The parser now normalizes ordinary CRLF or this observed doubled CRLF in one pass. It still refuses
+every residual CR, including runs of three or more before LF; sequential replacement could incorrectly erase those.
+Control bytes, private/unknown source paths, malformed or duplicate headers and release-specific membership retain
+their existing refusals. Native public-location or `no-location` results after this normalization remain pending.
+
 No result or copied content is read by the host until the real root handle has exited and both private job counters are zero. Unverified shutdown retains its scratch and pins. No ACL, AppContainer, network, PowerShell, CLR or registry compatibility fallback is permitted. PowerShell runs only as a trusted host-side signature or event observer, outside the LPAC job; Node is the executable under test inside that job.
 
 The dedicated workflow is `experimental-windows-node-lpac.yml`; it explicitly sets `EMBER_LPAC_NODE_PROOF=1` and the exact asset/version inputs, so its configured Windows jobs must execute or fail. Unconfigured general integration runs skip this separate diagnostic.

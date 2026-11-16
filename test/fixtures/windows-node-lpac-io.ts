@@ -16,7 +16,8 @@ export const WINDOWS_NODE_IO_SETUP_OPERATIONS = Object.freeze([
 ] as const);
 type SetupStage = (typeof WINDOWS_NODE_IO_SETUP_STAGES)[number];
 type SetupOperation = (typeof WINDOWS_NODE_IO_SETUP_OPERATIONS)[number];
-export type WindowsNodeIoSetupReceipt = Readonly<{ stage: SetupStage; operation?: SetupOperation; code?: number }>;
+export type WindowsNodeIoSetupReceipt = Readonly<{ stage: SetupStage; operation?: SetupOperation; code?: number;
+  detail?: "returned-size" | "missing-required-rights" | "unexpected-rights"; value?: number }>;
 const setupReceipts = new WeakMap<object, WindowsNodeIoSetupReceipt>();
 class WindowsNodeIoSetupError extends Error {
   constructor(receipt: WindowsNodeIoSetupReceipt) {
@@ -94,6 +95,10 @@ export function bindWindowsNodeIo(koffi: Pick<typeof Koffi, "sizeof" | "address"
     try { return failure(operation, fn.GetLastError()); } catch { return failure(); }
   };
   const ntFailure = (status: number) => failure("NtQueryObject", Number.isInteger(status) && status >= -0x80000000 && status <= 0xffffffff ? status >>> 0 : undefined);
+  const rightsFailure = (detail: "returned-size" | "missing-required-rights" | "unexpected-rights", value: unknown) => {
+    if (setupStage === undefined || typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > 0xffffffff) return failure();
+    return new WindowsNodeIoSetupError({ stage: setupStage, operation: "NtQueryObject", detail, value });
+  };
   const valid = (value: unknown): value is WindowsHandle => typeof value === "bigint" && value > 0n && value < 0x8000000000000000n;
   const handle = (value: unknown): WindowsHandle => { if (!valid(value)) throw failure(); return value; };
   let writer: WindowsHandle | undefined, stdin: WindowsHandle | undefined, pin: WindowsHandle | undefined;
@@ -127,12 +132,15 @@ export function bindWindowsNodeIo(koffi: Pick<typeof Koffi, "sizeof" | "address"
     if (observed[0] !== (inherit ? HANDLE_INHERIT : 0)) throw failure();
   };
   const granted = (value: WindowsHandle, required: number, allowed: number) => {
-    const basic = Buffer.alloc(64), returned = [0];
+    // PUBLIC_OBJECT_BASIC_INFORMATION: four ULONG fields plus Reserved[10], exactly 56 bytes.
+    // NtQueryObject rejects an oversized ObjectBasicInformation buffer with STATUS_INFO_LENGTH_MISMATCH.
+    const basic = Buffer.alloc(56), returned = [0];
     const status = fn.NtQueryObject(value, 0, basic, basic.length, returned);
     if (status !== 0) throw typeof status === "number" ? ntFailure(status) : failure();
-    if (returned[0] < 8 || returned[0] > basic.length) throw failure();
+    if (returned[0] !== basic.length) throw rightsFailure("returned-size", returned[0]);
     const access = basic.readUInt32LE(4);
-    if ((access & required) !== required || (access & ~allowed) !== 0) throw failure();
+    if ((access & required) !== required) throw rightsFailure("missing-required-rights", access);
+    if ((access & ~allowed) !== 0) throw rightsFailure("unexpected-rights", access);
   };
   const info = (value: WindowsHandle): Buffer => {
     const bytes = Buffer.alloc(52);
@@ -242,7 +250,9 @@ export function bindWindowsNodeIo(koffi: Pick<typeof Koffi, "sizeof" | "address"
       setupStage = stage; flags(value, false);
     }
     setupStage = "writer-rights";
-    granted(writer, 0x2, 0x100002); // Win32 may add SYNCHRONIZE to the requested payload-only access.
+    // All four pinned Node/server probes observed 0x100082 from desired access 0x2. Permit only the
+    // added FILE_READ_ATTRIBUTES and SYNCHRONIZE; neither grants payload read, delete or ACL changes.
+    granted(writer, 0x2, 0x100082);
     setupStage = "pin-rights";
     granted(pin, 0x81, 0x100081);
     setupStage = "null-rights";

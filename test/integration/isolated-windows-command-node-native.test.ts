@@ -8,7 +8,7 @@ import { z } from "zod";
 import { loadExperimentalWindowsLpacApi } from "../../app/main/agent/experimental-windows-lpac-api";
 import { compileWindowsNodeBootstrap, prepareWindowsNodeProof, windowsNodeProofPin, WindowsNodeProofCleanupError, type WindowsNodeProofMode } from "../fixtures/windows-node-lpac-proof";
 import { observeWindowsNodeApplicationError } from "../fixtures/windows-node-lpac-events";
-import { parseWindowsNodeFatalOutput } from "../fixtures/windows-node-lpac-fatal";
+import { inspectWindowsNodeFatalOutput, type WindowsNodeFatalOutput } from "../fixtures/windows-node-lpac-fatal";
 import { windowsNodeIoSetupReceipt } from "../fixtures/windows-node-lpac-io";
 
 const denial = z.object({ denied: z.boolean(), code: z.string().max(32).nullable() }).strict();
@@ -29,7 +29,7 @@ describe.skipIf(process.platform !== "win32" || process.env.EMBER_LPAC_NODE_PROO
   }, 90_000);
   afterAll(() => { if (parent && !retained) fs.rmSync(parent, { recursive: true, force: true }); });
 
-  type StartupOutcomes = { host: { exitCode: number; jobStopped: true }; lpacExit: number; output?: ReturnType<typeof parseWindowsNodeFatalOutput> };
+  type StartupOutcomes = { host: { exitCode: number; jobStopped: true }; lpacExit: number; output?: WindowsNodeFatalOutput };
   let startupRun: Promise<StartupOutcomes> | undefined, ioStartupRun: Promise<StartupOutcomes> | undefined;
   async function run(mode: WindowsNodeProofMode): Promise<StartupOutcomes | undefined> {
     if (retained) throw new Error("An earlier Node proof cleanup is unverified; no later process may start in this job.");
@@ -85,10 +85,11 @@ describe.skipIf(process.platform !== "win32" || process.env.EMBER_LPAC_NODE_PROO
         // No Buffer or raw diagnostic is asserted/logged. The host closes parent writers and rechecks native stop
         // before reading the pinned artifact; the parser returns only public catalog locations or fixed statuses.
         const bytes = proof.readIoOutput();
-        let output: ReturnType<typeof parseWindowsNodeFatalOutput>;
-        try { output = parseWindowsNodeFatalOutput(bytes, version); } finally { bytes.fill(0); }
-        startup = { host: control!, lpacExit: exit, output };
-        console.info("Private-stdio Node LPAC", JSON.stringify({ version, fixedEval: true, inheritedHandles: 2, exitCode: `0x${exit.toString(16)}`, jobStopped: true, output }));
+        let inspection: ReturnType<typeof inspectWindowsNodeFatalOutput>;
+        try { inspection = inspectWindowsNodeFatalOutput(bytes, version); } finally { bytes.fill(0); }
+        startup = { host: control!, lpacExit: exit, output: inspection.output };
+        console.info("Private-stdio Node LPAC", JSON.stringify({ version, fixedEval: true, inheritedHandles: 2, exitCode: `0x${exit.toString(16)}`, jobStopped: true,
+          output: inspection.output, ...(inspection.refusal ? { outputRefusal: inspection.refusal } : {}) }));
       } else if (mode === "startup") {
         startup = { host: control!, lpacExit: exit };
         console.info("Startup-only Node LPAC", JSON.stringify({ version, fixedEval: true, inheritedHandles: false, exitCode: `0x${exit.toString(16)}`, jobStopped: true }));
