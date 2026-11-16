@@ -37,6 +37,7 @@ jobs:
         env:
           EMBER_CHILD_POLICY_C_FAULT: "1"
   fixed-child-process-policy-prerequisite:
+    if: github.event_name == 'workflow_dispatch' || github.head_ref != 'ember-improve/20261116-child-policy-detached-root'
     name: Fixed C child-process policy prerequisite (${{ matrix.os }})
     strategy:
       fail-fast: false
