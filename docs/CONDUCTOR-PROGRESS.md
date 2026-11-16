@@ -1,6 +1,6 @@
 # Conductor progress and remaining work
 
-Reviewed 15 November 2026. Baseline: `audit/beta-readiness` at `76d0a2c9`, the most recently submitted remote branch;
+Reviewed 16 November 2026. Baseline: `audit/beta-readiness` at `76d0a2c9`, the most recently submitted remote branch;
 main was `85b5bd56`. This follow-up deliberately retains the native coding gate and is not a release certification.
 
 ## What was already implemented
@@ -56,16 +56,70 @@ main was `85b5bd56`. This follow-up deliberately retains the native coding gate 
   limits of 150 tools and 20 active minutes; permission/clarification waits pause the time budget. None enables coding.
 - [Primary-source research](COMPANION_RESEARCH.md) compares Tiki, HeyClicky, Conductor and related projects.
 
+## Custom-tool coding follow-up
+
+The next branch uses a fresh trusted SDK controller with Ember's custom file and command tools. Its process and
+session start in private empty directories; native SDK shell/edit/fetch, plugins, hooks, skills, extensions and
+subagents remain disabled. This is necessary in addition to inspecting the advertised tool inventory: positive-control
+tests demonstrated that an explicitly loaded plugin hook could execute without appearing as a tool.
+
+Only copied project code enters the [isolated command workspace](ISOLATED-COMMAND-WORKSPACE.md). Credentials and the
+controller remain in the trusted host. Commands pass through the existing command flow, approval modes, refusals,
+audit and output redactor. Each Linux command uses fresh namespaces and has a real stopped-writer witness. File tools
+operate through an exclusive handle-checked lease. Failed, fully observed checks can be repaired and rerun; an unrelated
+successful command cannot clear the earlier failure.
+
+Per-project folder grants, reviews and explicit full-file exports now connect Home and AgentHost. They
+remain connection-scoped and are invalidated on account/provider changes, Forget and restored checkpoints. The original
+folder is never written; exports contain all captured baseline/proposed files, including unchanged files. Consent 14
+describes those data flows and retention. The legacy native-SDK coding gate stays false.
+
+The conductor can give coding sessions the same bounded display names as desktop sessions. A name changes only the
+project board label; the task goal, original permission words, captured project and folder remain separate. Offered
+coding tools still check live availability before starting, and mixed handoff guidance appears only when that tool exists.
+
+Real-runtime tests demonstrate a failing Node test, private-copy repair, successful rerun and stopped review export
+with unchanged source. A composed Chromium/IPC/Host/controller test covers that complete flow plus Forget/account
+cleanup and explicit-export retention. An actual Electron journey additionally exercises the genuine preload and
+sender guard, native command approval window, isolated commands, review/export, per-result Forget, the main Forget
+everything handler and normal shutdown. Its model and native source/export picker selections are fixtures; live
+authentication and the operating system's picker UI remain unverified.
+Compatible preinstalled packages can be copied read-only, with explicit `.git`/`node_modules` source omissions,
+validated manifests and dependency receipts. Packaged/native-provider verification and broader toolchains remain;
+this is not a Windows-ready coding feature.
+
+Complete-file privacy scans now run in a bounded trusted worker thread. Stop and global erasure await its actual
+exit; an unverified exit prevents further coding. Forget everything also drains private copies, late exports and
+trusted controller sessions. Failed older connection cleanup remains a barrier after account replacement, using
+disposal-only receipts. Per-result Forget revokes pending access to that review without changing project history or
+completed exports.
+
+The disabled [Windows file foundation](EXPERIMENTAL-WINDOWS-CODING-FILES.md) and separate
+[direct Node LPAC diagnostic](WINDOWS-NODE-LPAC-PROOF.md) now have actual Windows Server 2022/2025 CI evidence.
+At `7942e554`, file ABI/cleanup units passed seven cases on each server and native files passed 27 of 29 cases on each;
+both remaining failures involve atomic replacement. The drive-root bootstrap passed. All twelve Node workload cases
+across versions 22/24 and both servers exited with `0x80000003`; useful Node compatibility was not established.
+Bounded native rename status and independent fixed-eval host/LPAC startup diagnostics are the next investigation steps.
+Neither experiment supplies or enables a production Windows adapter, and server evidence does not certify client Windows.
+
+The follow-up also includes the temporary coding store in desktop command, GUI and integration own-data protection,
+and denies Linux key-management syscalls in project commands. The latter closes a potential inherited-session-keyring
+surface; it does not report an observed credential leak. Settings search prioritizes the names and aliases of settings
+before explanatory project text, preserving Conversation as the first result for history.
+
 ## What still needs implementation
 
-1. **Production coding isolation.** Demonstrate an OS-enforced boundary around the entire runtime, native tools and all
-   descendants. Existing path denials allow hardlink aliases; moving credentials to session configuration does not
-   isolate them from runtime memory. The Linux experiment is not a production solution. Windows/macOS need their own
-   enforced implementations and canary tests. Do not enable coding by changing `codingAvailable()`.
-2. **Coding product integration.** Connect an enforced platform backend, scoped credential adapter, stopped result
-   capture and review/export to the ordinary CodingWorker/session lifecycle. Its existing direct workspace/credential
-   path remains gated. Bind a chosen workspace to each project instead of the separate global coding-folder choice.
-   The experiment's artifact API alone does not provide that user flow. Automatic application additionally requires
+1. **Production coding isolation and toolchains.** Finish the custom-tool product path and its enforced command backend
+   on each supported platform. Linux currently supplies a small offline bash/Node environment; npm, arbitrary compilers
+   and external or cyclic dependency links remain unsupported; validated internal links can be materialized. Packaged
+   Electron is not a substitute for a real Node binary. Windows/macOS need their own stopped-writer and filesystem
+   implementations and canary tests. Windows CI still exposes child-process creation and PowerShell runtime failures
+   in the native prototype; see [the current proof](ISOLATED-WINDOWS-COMMAND-PROOF.md). Do not enable coding by changing
+   `codingAvailable()` or interpret a small native fixture as the production backend.
+2. **Coding product integration.** Complete packaged/native-provider verification of per-project grants, real
+   policy-controlled workers, stopped capture, review/export and lifecycle erasure. The deterministic composed flow
+   passes; the legacy direct workspace/credential path remains gated.
+   Automatic application additionally requires
    a demonstrated concurrent-writer contract and recovery, as [the copy-back design](CODING-COPYBACK-DESIGN.md)
    explains. Export-only review can avoid automatic source writes; an ordinary hash-then-rename cannot protect an editor.
 3. **Recovery limits.** Explicit encrypted checkpoints and fresh-request continuation are implemented. Changes after
@@ -94,6 +148,29 @@ the coding isolation, persistent recovery and orchestration work above. Main sho
 requirements and relevant native acceptance are satisfied.
 
 ## Verification
+
+At `29cb624e`, [the Linux checks job](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43793162486/job/133055944521)
+passed lint, types, 19,119 unit tests (38 skipped), 297 integration tests (658 skipped), the isolated Stop deadline and
+the application build. The actual Electron journey then failed before app startup: Chromium selected the adjacent
+npm-installed `chrome-sandbox`, which was not root-owned with mode 4755. Electron 44.9.3's pinned Chromium
+[chooses an existing adjacent helper before the environment fallback](https://github.com/chromium/chromium/blob/152.0.7977.167/sandbox/linux/suid/client/setuid_sandbox_host.cc).
+CI now links that exact adjacent location to a fresh root-owned helper under `/usr/lib` and verifies its ownership and
+mode before launch. The normal Electron sandbox and all journey assertions remain enabled.
+
+At `fb846a57`, [the hosted Linux job](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43795719365/job/133063956691)
+passed lint/types, 19,261 unit tests (38 skipped), 297 integrations (660 skipped), the isolated Stop deadline, build,
+and the actual sandboxed Electron coding journey (one case, 6.73 seconds). Its separate Chromium suite passed 282
+cases and failed two. The composed coding fixture selected its CLI installation instead of the separately configured
+trusted command asset, so production discovery correctly kept coding unavailable. It now supplies the verified test
+asset to unchanged discovery and asserts that exact selection; the composed repair/review/export/erasure journey
+passes locally. Required isolation failures fail this fixture instead of being skipped. Native and product deadlines
+are unchanged. The other failure involved a delayed navigation resize notification after a manual scroll.
+
+The navigation row now remembers the layout it already positioned. A delayed resize notification for that same
+layout does not move a row the person subsequently scrolled; genuine badge, font, link and row size changes still
+bring the selected pane into view. A regression holding actual native resize deliveries reproduces the exact
+955-pixel jump with the previous renderer and passes with the repair. All 54 Home pane cases pass locally, including
+the original narrow-row assertion and the badge-growth case; no assertion or timeout was weakened.
 
 Final check results are recorded with the follow-up commit/PR. The real runtime tests intentionally include successful
 reproductions of unsafe isolation behavior; a green result there means the probe behaved as expected, not that native

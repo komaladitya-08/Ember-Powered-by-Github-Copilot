@@ -40,9 +40,14 @@ describe.skipIf(process.env.EMBER_SPEECH_CONSENT_TEST !== "1")("Home speech cons
   afterAll(async () => { await browser?.close(); server?.close(); });
 
   /** A fresh Home page whose saves stay pending until the test settles them. */
-  async function freshHome() {
+  async function freshHome(controlledClock = false) {
     const page = await browser.newPage({ viewport: { width: 1000, height: 800 } });
     pages.push(page);
+    if (controlledClock) {
+      const now = new Date("2026-11-15T12:00:00Z");
+      await page.clock.install({ time: now });
+      await page.clock.pauseAt(now);
+    }
     const errors: string[] = [];
     page.on("pageerror", e => errors.push(e.message));
     await page.addInitScript(seed => {
@@ -68,7 +73,7 @@ describe.skipIf(process.env.EMBER_SPEECH_CONSENT_TEST !== "1")("Home speech cons
     await page.evaluate(() => { document.body.classList.remove("loading", "first-run"); });
     await page.evaluate(() => { const b = document.getElementById("voice-download") as HTMLButtonElement; b.hidden = false; });
     const calls = (prefix: string) => page.evaluate(p => window.__calls.filter(c => c.startsWith(p)).length, prefix);
-    const open = async () => { await page.locator('a[href="#voice-h"]').click(); await page.evaluate(() => (document.getElementById("wake") as HTMLInputElement).click()); await expect.poll(() => page.locator("#consent").isVisible()).toBe(true); await page.waitForTimeout(AGREE_ARM_MS + 50); };
+    const open = async () => { await page.locator('a[href="#voice-h"]').click(); await page.evaluate(() => (document.getElementById("wake") as HTMLInputElement).click()); await expect.poll(() => page.locator("#consent").isVisible()).toBe(true); if (controlledClock) await page.clock.runFor(AGREE_ARM_MS + 50); else await page.waitForTimeout(AGREE_ARM_MS + 50); };
     const settle = (i: number, how: "ok" | "reject" | "false") => page.evaluate(([i, how]) => { const s = window.__saves[i as number]; if (how === "ok") s.resolve({}); else if (how === "false") s.resolve(false); else s.reject(new Error("Error invoking remote method 'ember:update-settings': Error: Ember couldn't save your settings: the disk is full.")); }, [i, how] as const);
     return { page, errors, calls, open, settle, error: () => page.locator("#consent-error") };
   }
@@ -105,6 +110,29 @@ describe.skipIf(process.env.EMBER_SPEECH_CONSENT_TEST !== "1")("Home speech cons
     expect(await calls("download")).toBe(0);
     expect(await page.locator("#consent").isVisible()).toBe(true);
     expect(await page.locator("#consent-yes").isEnabled()).toBe(true);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  it("keeps a refused consent save announced when an earlier voice timer or a later off status settles", async () => {
+    const { page, errors, calls, open, settle, error } = await freshHome(true);
+    await open();
+    const off = { state: "off", detail: "Still off", modelsReady: false, modelsMissing: ["vad"], modelsBytes: 1_000_000 };
+    // This status queues its one-second announcement before the user's save is refused.
+    await page.evaluate(v => window.__emit("onVoiceStatus", v), off);
+    await page.locator("#consent-yes").click();
+    await expect.poll(() => calls("save:")).toBe(1);
+    await settle(0, "reject");
+    await expect.poll(() => error().isVisible()).toBe(true);
+    const failure = await error().innerText();
+    expect(failure).toContain("couldn't be saved");
+    await page.clock.fastForward(1_100);
+    expect(await page.locator("#voice-live").innerText()).toBe(failure);
+    // A fresh status response also belongs to the still-open consent card's unchanged off state.
+    await page.evaluate(v => window.__emit("onVoiceStatus", { ...v, detail: null }), off);
+    await page.clock.fastForward(1_100);
+    expect(await page.locator("#voice-live").innerText()).toBe(failure);
+    expect(await calls("download")).toBe(0);
+    expect(await page.locator("#consent").isVisible()).toBe(true);
     expect(errors).toEqual([]);
   }, 60_000);
 

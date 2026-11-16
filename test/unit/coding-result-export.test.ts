@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { createCodingReviewExport, type CodingExportEntry, type CodingExportInput, type CodingExportTree } from "../../app/main/agent/coding-result-export";
+import type { CodingProjectManifest } from "../../app/main/agent/coding-project-scope";
 
 const binding = { owner: "a".repeat(64), session: randomUUID(), snapshot: randomUUID() };
 const file = (name: string, value: string | Buffer, executable = false): CodingExportEntry => ({ path: name, kind: "file", bytes: Buffer.isBuffer(value) ? value : Buffer.from(value), executable });
@@ -13,6 +14,15 @@ const tree = (...entries: CodingExportEntry[]): CodingExportTree => ({ binding, 
 const review = (baseline: CodingExportTree, proposed: CodingExportTree, current = baseline, extra: Partial<CodingExportInput> = {}) => createCodingReviewExport({ binding, baseline, proposed, current, ...extra });
 
 describe("portable isolated-result review formatting", () => {
+  it("preserves declared omissions and dependency receipts without presenting excluded files as captured source", () => {
+    const scope: CodingProjectManifest = { version: 1, source: { excludedRoots: [".git", "node_modules"], omitted: [{ path: ".git", kind: "link" }], byteLimit: 10 * 1024 * 1024 },
+      dependencies: { access: "copied-read-only", mount: "/work/node_modules", files: 2, bytes: 100, sha256: "a".repeat(64), materializedLinks: [] } };
+    const result = review(tree(file("a.js", "before")), tree(file("a.js", "after")), undefined, { scope });
+    expect(JSON.parse(result.json).scope).toEqual(scope); expect(result.review.limitations.join(" ")).toContain("Excluded paths and dependency trees are not automatically archived");
+    expect(result.review.patchComplete).toBe(true);
+    expect(() => review(tree(), tree(dir("node_modules")), undefined, { scope })).toThrow("excluded source root");
+  });
+
   it("records text additions, edits, deletions, empty files and directory changes without dropping anything", () => {
     const baseline = tree(file("edited.txt", "old\n"), file("removed.txt", "remove\n"), dir("old-empty"));
     const proposed = tree(file("edited.txt", "new\n"), file("added.txt", "hello\n"), file("empty.txt", ""), dir("new-empty"));

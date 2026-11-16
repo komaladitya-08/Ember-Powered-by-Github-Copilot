@@ -247,8 +247,8 @@ export interface WorkerVault {
 export interface TaskSpec {
   id: string;
   goal: string;
-  /** Coding tasks use the workspace the user selected, never one named by the model. */
-  codingWorkspace?: { path: string; current(): boolean };
+  /** Host-selected folder grant; projectId pins scoped coding to the request's project, never a model-supplied path. */
+  codingWorkspace?: { path: string; projectId?: string; current(): boolean };
   /** A coding-first mixed task needs an explicit result before continuing to the desktop. */
   codingCompletion?: true;
   /** Result of the prior part of a mixed task; untrusted, never user authority. */

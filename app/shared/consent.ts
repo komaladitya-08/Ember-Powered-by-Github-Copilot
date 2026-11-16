@@ -22,13 +22,15 @@ import type { TargetId } from "./targets";
  * 2026-11-12, app/main/vault/).
  * 12: Interactive now asks before dangerous commands even when the user asked for them.
  * 13: explicit Save projects keeps an encrypted project/session checkpoint, with no automatic work resumption.
+ * 14: requested coding work copies a chosen project folder, may send files/output to the model, and offers explicit
+ * full-file review exports; connection-scoped grants/reviews and unverified private-copy cleanup are disclosed.
  * 11 (2026-11-14): "Before Ember starts" no longer says Ember always asks before anything hard to undo: it says what
  * asks (a risky step in an app; a dangerous command or code Ember can't read, unless the user asked for exactly that
  * command and it does no more than commands-card.ts EXACT_ONLY says, shown first with a few seconds to stop it), that a
  * command Ember doesn't know runs, announced (the owner's decision of 2026-11-14), and that Assisted and Autopilot ask
  * less (PLAN.md §10 Settled 28; first-run-r10-7, -r10-8, accessibility-c11-1, r11-copy-x11-1, -x11-3).
  */
-export const CONSENT_VERSION = 13;
+export const CONSENT_VERSION = 14;
 
 /**
  * What each bump of CONSENT_VERSION changed, in Ember's words, for someone who agreed to an earlier version: first run
@@ -36,6 +38,7 @@ export const CONSENT_VERSION = 13;
  * Ember starts" says (home-welcome.test.ts pairs every line with the full text's words). A bump adds its line here.
  */
 export const CONSENT_CHANGES: Readonly<Record<number, string>> = {
+  14: "When you ask for coding work, I copy the project folder you chose and may send requested files and command output to your model, leaving the original unchanged. Exports keep all captured files, including unchanged files, until you remove them. Private copies I can't verify as removed may remain and block new coding work.",
   13: "If you choose Save projects, I encrypt project names, goals and session outcomes on this computer until you choose Forget saved projects or Forget everything. Opening a checkpoint never resumes work.",
   2: "If you teach me your voice, I keep refining your voiceprint from requests I'm sure are yours, and I keep the words you correct.",
   3: "Listen once can open the microphone for one request while “Hey Ember” is off.",

@@ -27,7 +27,17 @@ checkpoint until **Forget saved projects** or **Forget everything**. Save again 
 **Review remaining steps** prepares an editable new request. Review and Send it to request work again with current
 permissions. Quitting or signing out clears the live board.
 
-Native coding sessions remain unavailable while filesystem and credential isolation are completed. Selected-file
+This development branch adds project coding through custom file tools and isolated commands on Linux x64 with a
+verified system Node.js 22.12+ and Bubblewrap. Choose a project's coding folder, ask for work, then review/export the
+private-copy result; the original folder is unchanged. Each session starts again from that folder; exports retain
+its independent result. Source/dependency limits and exclusions are shown in Projects
+and retained in the review. Existing compatible dependencies may be copied read-only; npm, Git, compilers and network
+installs are not supplied. Folder choices and unexported coding reviews last for the current connection. This remains
+a limited offline coding environment, with deterministic local-model verification rather than live-provider acceptance.
+**Forget result** removes one private review while preserving project history and copies you already exported.
+
+Windows/macOS coding and the legacy native-SDK coding path remain unavailable. The Windows command prototype still
+has native compatibility failures under investigation in CI. Selected-file
 review and patch drafting are separate existing features. See the [progress and remaining work](docs/CONDUCTOR-PROGRESS.md),
 [product research](docs/COMPANION_RESEARCH.md), [experimental coding exports](docs/CODING-RESULT-EXPORT.md) and
 [Windows acceptance checks](docs/WINDOWS-CONDUCTOR-ACCEPTANCE.md).

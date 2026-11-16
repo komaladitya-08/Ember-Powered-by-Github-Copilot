@@ -70,6 +70,7 @@ import type { DeskPlace } from "./desk/place";
 import { DeskView } from "./desk/view";
 import { createTaskWindowControl, taskControl } from "./agent/task-controls";
 import { AgentHost, codingAvailable, CODING_UNAVAILABLE, explainSignInError, gitHubReachable, idleWord, POLICY_CHANGED_STOP, SCREEN_LOCKED_STOP, SIGN_OUT_NOT_KEPT, STOPPED_EVERYTHING, unansweredWord, type Hands, type TranscriptEntry } from "./agent/host";
+import { unconfirmedCodingCleanupReceipt, type CodingCleanupReceipt } from "./agent/coding-retirement";
 import { composerSendRefusal } from "./agent/composer-refusal";
 import { CONVERSATION_TEXT_LIMIT, conversationRequest } from "../shared/conversation";
 import { projectAfterStatus, projectChoice, projectJobStops, projectMay, projectCommandFolder, projectCommandProblem, projectCommandText, projectNames, projectRefusedText, projectSelection, projectStopped, removeProjectFile, projectPrompt, projectTurnRequest, ProjectInputError, ProjectModelError, PROJECT_MODEL_FAILED, PROJECT_PREVIOUS_ELSEWHERE, type ProjectSource } from "./agent/project";
@@ -81,6 +82,10 @@ import { applyProjectPatch, readProjectPatch, type ProjectPatch } from "./agent/
 import { ProjectWorkspaceStore, workspaceAction, type ProjectExchange } from "./agent/project-workspaces";
 import { CodingWorkspaceStore, codingBranch, type CodingWorkspace } from "./agent/coding-workspace";
 import { ProjectSessionStore } from "./agent/project-session-store";
+import { ProjectCodingWorkspaces } from "./agent/project-coding-workspaces";
+import { ProjectCodingResources } from "./agent/coding-resources";
+import { selectCodingStorageBase } from "./agent/coding-storage";
+import { registerProjectCodingIpc, type ProjectCodingIpc } from "./project-coding-ipc";
 import { memoryRefusal } from "./memory/guard";
 import { correctMemoryRequest } from "./memory/correction";
 import { expandedBubble, expandedSuggest, keysLanding, questionAloud, readKeyWords, readTimeOf } from "./agent/presenter";
@@ -96,7 +101,7 @@ import { PersonalVoice } from "./personal/service";
 import { wordsStore } from "./personal/words-store";
 import { HEAR_SAMPLE, speakSettings, speaksAloud, speechSilenced } from "../shared/speech";
 import { LOCKED_ASK, LockController, ScreenLock, holdNotice, lockAwareInput, lockedOutHands, logindLock } from "./screen-lock";
-import { readAgentState } from "./agent/conductor";
+import { readAgentState, within } from "./agent/conductor";
 import { loadPlatform, switchArgs } from "./platform";
 import { helperStatusOfError, primaryScaledUnion, toHelperStatus } from "./platform/compose";
 import type { HelperStatus, Input, OwnWindowHandle, SidecarContext, WindowSystem } from "./platform/types";
@@ -213,6 +218,8 @@ app.setPath("userData", process.env.EMBER_USER_DATA ?? sys.paths.userData(app.ge
 // Windows toasts need the app's AppUserModelId, set before ready.
 if (sys.lifecycle.appUserModelId) app.setAppUserModelId(sys.lifecycle.appUserModelId);
 const userData = app.getPath("userData");
+// One immutable logical/canonical selection feeds allocation and all local desktop self-protection gates.
+const codingStorage = selectCodingStorageBase();
 // Private: settings, logs and the audit trail mention the user's apps and windows.
 try { fs.mkdirSync(userData, { recursive: true, mode: 0o700 }); fs.chmodSync(userData, 0o700); } catch { /* reported when used */ }
 
@@ -1841,7 +1848,7 @@ function start(): void {
   // Extensions (app/main/extensions/, docs/DEVELOPING.md "Extensions"): plugins' MCP tools, used only while the user has
   // them on and agreed, and the organisation allows them. Home's Extensions section calls this (ExtensionsApi).
   const extensions = new ExtensionsService({
-    dir: path.join(userData, "extensions"), copilotHome: path.join(userData, "copilot"),
+    dir: path.join(userData, "extensions"), copilotHome: path.join(userData, "copilot"), emberPaths: codingStorage.protectedPaths,
     settings, admin: () => policy, client: () => agent?.copilotClient ?? null, confirmer: () => confirmer, audit: () => audit,
     // Autopilot: a call the gate would ask about is said in the conversation's bubble instead (never unsaid: it asks).
     autopilot: () => approvalsNow().autopilot, announce: words => agent?.announceUnasked(words) ?? false,
@@ -2241,6 +2248,8 @@ function start(): void {
   };
   let tokens: TokenStore | null = null;
   let currentToken: string | null = null;
+  // Installed after the project coding resources exist; provider notifications can arrive during startup.
+  let codingContextChanged: () => void = () => undefined;
   // The user's own model provider (app/main/provider.ts): its API key is sealed in provider-key.bin, apart from the
   // settings, for the host it was entered for, and held by the service in memory only for the runtime's provider config.
   // Never logged (the agent's log is redacted), audited, shown or passed on. The keyring is asked only once the user's
@@ -2252,7 +2261,7 @@ function start(): void {
   const providerRecord = new ProviderRecord({ settings: settings as unknown as ProviderRecordDeps["settings"], log: log.child("provider"),
     inForce: () => { const p = userProviderInForce(settings.get(), admin); return p ? endpointHost(p.baseUrl) : null; },
     seal: new ProviderSeal(path.join(userData, PROVIDER_SEAL_FILE), safeStorage, { asyncKeyring: platform.os === "darwin" }),
-    heldChanged: () => { void agent?.providerChanged(); sendToHome(PROVIDER_IPC.changed, null); },
+    heldChanged: () => { void agent?.providerChanged(); codingContextChanged(); sendToHome(PROVIDER_IPC.changed, null); },
     // A seal not kept, or a yes this start withdrew: Home says why (reliability-r11-1).
     notesChanged: () => sendToHome(PROVIDER_IPC.changed, null) });
   const providers = createProviderService({
@@ -2261,7 +2270,7 @@ function start(): void {
     // Electron's fetch follows the system's proxy, as the runtime does.
     fetch: (url, init) => net.fetch(url, init) as unknown as ReturnType<FetchLike>,
     log: log.child("provider"),
-    changed: () => { void agent?.providerChanged(); sendToHome(PROVIDER_IPC.changed, null); },
+    changed: () => { void agent?.providerChanged(); codingContextChanged(); sendToHome(PROVIDER_IPC.changed, null); },
   });
   // The vault (app/main/vault/, owner decision of 2026-11-12): logins, cards and contact details, each sealed in
   // vault.json apart from the settings and bound to one app or site. Its values come in once, from the Secure Form's
@@ -2368,6 +2377,74 @@ function start(): void {
     if (scope) await codingStore.forget(scope);
   };
   const forgetCurrentCoding = () => forgetCoding(codingScope ?? codingLoadedScope ?? codingLoadingScope ?? agent?.projectWorkspaceScope() ?? null);
+  // Folder capabilities and unexported reviews belong to this connection only. The selected project is captured by
+  // the Host when the user asks; the model never chooses a filesystem root or an export destination.
+  const projectCodingFolders = new ProjectCodingWorkspaces({
+    currentOwner: () => agent?.projectWorkspaceScope() ?? null,
+    projectExists: id => agent?.projectSessionsState().projects.some(project => project.id === id) === true,
+  });
+  let projectCoding: ProjectCodingIpc | null = null;
+  let codingResources: ProjectCodingResources | null = null;
+  let codingCleanupPending = 0;
+  let codingCleanupFailed = false;
+  const codingCleanupReceipts = new Set<CodingCleanupReceipt>();
+  const codingCleanupReceiptsByHost = new WeakMap<AgentHost, Set<CodingCleanupReceipt>>();
+  let codingCleanupAttempt = 0;
+  const projectCodingChanged = () => tasksShown();
+  const codingResourcesReady = ProjectCodingResources.create({
+    userData, folders: projectCodingFolders, storage: codingStorage,
+    protectedPaths: [userData, app.getAppPath(), process.resourcesPath],
+    currentOwner: () => agent?.projectWorkspaceScope() ?? null,
+    projectExists: id => agent?.projectSessionsState().projects.some(project => project.id === id) === true,
+    env: process.env, execPath: process.execPath, isElectron: true, changed: projectCodingChanged,
+  }).then(resources => { codingResources = resources; projectCodingChanged(); return resources; });
+  // Keep initialization errors private; availability describes the failure without exposing storage paths.
+  void codingResourcesReady.catch(() => { codingCleanupFailed = true; projectCodingChanged(); });
+  const scopedCodingAvailability = () => vaultRedactor.active
+    ? { available: false, message: "Coding is unavailable after a vault fill until Ember restarts." }
+    : codingCleanupPending || codingCleanupFailed
+      ? { available: false, message: "Coding cleanup could not finish yet. Forget everything tries again before new coding work." }
+      : codingResources?.availability() ?? { available: false, message: "Checking the isolated coding tools on this computer." };
+  const resetProjectCoding = (): Promise<void> => {
+    const attempt = ++codingCleanupAttempt;
+    const host = agent;
+    const failed = () => Promise.reject(new Error("Ember couldn't finish clearing its private coding work. Try Forget everything again."));
+    if (host) {
+      // Capture fresh Stop authority before releasing the earlier witness for this same retirement tracker.
+      try {
+        const receipt = host.codingCleanupReceipt(), previous = codingCleanupReceiptsByHost.get(host);
+        codingCleanupReceipts.add(receipt); codingCleanupReceiptsByHost.set(host, new Set([receipt]));
+        for (const prior of previous ?? []) codingCleanupReceipts.delete(prior);
+      } catch {
+        const receipt = unconfirmedCodingCleanupReceipt(), previous = codingCleanupReceiptsByHost.get(host) ?? new Set();
+        codingCleanupReceipts.add(receipt); previous.add(receipt); codingCleanupReceiptsByHost.set(host, previous);
+      }
+    }
+    // Old connections retain only boolean disposal witnesses, never their Host, conversations, or tool contents.
+    const controllerCleanup = [...codingCleanupReceipts].map(receipt => {
+      try { return receipt.wait().then(() => { codingCleanupReceipts.delete(receipt); }); } catch { return failed(); }
+    });
+    codingCleanupPending++;
+    let foldersCleanup = Promise.resolve();
+    try { projectCodingFolders.ownerReset(); } catch { foldersCleanup = failed(); }
+    const ipcCleanup = (() => { try { return projectCoding?.reset() ?? Promise.resolve(); } catch { return failed(); } })();
+    const cleanup = Promise.allSettled([...controllerCleanup, foldersCleanup, ipcCleanup, codingResourcesReady.then(resources => resources.invalidate())]).then(results => {
+      if (results.some(result => result.status === "rejected") || codingCleanupReceipts.size > 0) {
+        if (attempt === codingCleanupAttempt) codingCleanupFailed = true;
+        throw new Error("Ember couldn't finish clearing its private coding work. Try Forget everything again.");
+      }
+      if (attempt === codingCleanupAttempt) codingCleanupFailed = false;
+    }).finally(() => { codingCleanupPending--; projectCodingChanged(); });
+    projectCodingChanged();
+    return cleanup;
+  };
+  let projectCodingOwner: string | null = null;
+  codingContextChanged = () => {
+    const owner = agent?.projectWorkspaceScope() ?? null;
+    if (owner === projectCodingOwner) return;
+    projectCodingOwner = owner;
+    void resetProjectCoding().catch(() => log.warn("coding.private_cleanup_incomplete"));
+  };
   // Telling the user a newer Ember is out (app/main/updates.ts): only once they turned it on and agreed to its note.
   const updates = new UpdateChecker({
     fetch: (url, init) => net.fetch(url, init), current: app.getVersion(), log: log.child("updates"),
@@ -2426,11 +2503,21 @@ function start(): void {
   const taskEntries = () => withQuestionUp(agent?.taskActivities() ?? [], confirmer?.currentTask);
   ipcMain.handle(IPC.tasks, guard(taskEntries));
   ipcMain.handle(IPC.projectSessionsState, guard(() => agent?.projectSessionsState() ?? { projects: [], selectedProjectId: null }));
-  ipcMain.handle(IPC.projectSessionsAction, guard((input: unknown) => {
+  ipcMain.handle(IPC.projectSessionsAction, guard(async (input: unknown) => {
     if (!consented()) throw new Error("Finish setup before organising projects.");
     if (screenLock?.locked) throw new Error("Unlock your screen before organising projects.");
     if (!agent) throw new Error("Ember is still starting. Try again in a moment.");
-    return agent.projectSessionsAction(input);
+    const host = agent, owner = home, holder = host.projectWorkspaceScope(), erased = accountErasures;
+    const current = () => agent === host && home === owner && accountErasures === erased &&
+      host.projectWorkspaceScope() === holder && consented() && !screenLock?.locked;
+    const before = host.projectSessionsState();
+    const state = host.projectSessionsAction(input);
+    for (const project of before.projects) if (!state.projects.some(next => next.id === project.id)) {
+      host.codingWorkspaceChanged(project.id);
+      await projectCoding?.forgetProject(project.id);
+    }
+    if (!current()) throw new Error("The project request changed. Reopen Projects to continue.");
+    return host.projectSessionsState();
   }));
   ipcMain.handle(IPC.openApproval, guard(() => targets?.openApproval() ?? false));
   ipcMain.handle(IPC.historyProblem, guard(() => historyStore?.problem ?? null));
@@ -2446,6 +2533,7 @@ function start(): void {
     // card, which keeps it (integrations-c2-1).
     forgetProject("all");
     const codingGone = forgetCurrentCoding().then(() => true, () => false);
+    const privateCodingGone = resetProjectCoding().then(() => true, () => false);
     // The vault goes whole with the account, at once and whatever fails below: its open form closes, a Save still
     // being sealed keeps nothing, and its file is removed.
     const vaultGone = vault.forgetAll();
@@ -2476,6 +2564,7 @@ function start(): void {
     // Told after the rest is done: the sign-out itself held.
     if (!vaultGone) throw new Error("Ember couldn't finish deleting the vault's file on this computer. You are signed out; Forget all in Apps & privacy tries again.");
     if (!await codingGone) throw new Error("Ember signed out, but couldn't remove its saved coding workspace on this computer.");
+    if (!await privateCodingGone) throw new Error("Ember signed out, but couldn't finish clearing its private coding work. Forget everything tries again.");
   }));
   ipcMain.handle(IPC.cancelSignIn, guard(() => { signInAbort?.abort(); progress({ state: "cancelled" }); }));
   /** The page of the sign-in under way, opened again on request (GitHub's own pages, or the GitHub CLI's download page). */
@@ -2626,6 +2715,29 @@ function start(): void {
   const projectRefusal = (busy = projectPicking || !!projectJob) => projectUnavailable({ managed: policy.features.actions === false && admin.error === undefined, busy });
   /** Project work may start: also with the settings window in view, where it is asked for. */
   const projectAvailable = () => projectContinues() && home?.isVisible() && !home.isMinimized();
+  projectCoding = registerProjectCodingIpc({
+    handle: (channel, handler) => { ipcMain.handle(channel, guard(handler)); },
+    projects: () => agent?.projectSessionsState() ?? { projects: [], selectedProjectId: null },
+    folders: projectCodingFolders,
+    results: async () => (await codingResourcesReady).results(),
+    canUse: () => projectAvailable() === true && codingCleanupPending === 0 && !codingCleanupFailed,
+    availability: scopedCodingAvailability,
+    chooseFolder: async title => {
+      const owner = home, host = agent;
+      if (!owner || !host || projectAvailable() !== true) throw new Error("Open Projects before choosing a folder.");
+      await codingResourcesReady;
+      if (home !== owner || agent !== host || projectAvailable() !== true) throw new Error("The coding folder request changed.");
+      const selected = await dialog.showOpenDialog(owner, { title, properties: ["openDirectory"] });
+      if (home !== owner || agent !== host || projectAvailable() !== true) throw new Error("The coding folder request changed.");
+      return !selected.canceled && selected.filePaths.length === 1 ? selected.filePaths[0] : null;
+    },
+    validateFolder: async selected => {
+      if (!codingResources) throw new Error("Coding storage is still starting.");
+      return codingResources.validateSource(projectCommandFolder(selected, userData));
+    },
+    changed: projectCodingChanged,
+    folderChanged: id => agent?.codingWorkspaceChanged(id),
+  });
   ipcMain.handle(IPC.projectSessionsCheckpoint, guard(async (action: unknown) => {
     if (action !== "save" && action !== "open" && action !== "forget") throw new Error("Choose Save, Open or Forget saved projects.");
     const host = agent, owner = home;
@@ -2648,7 +2760,10 @@ function start(): void {
       const saved = await projectSessionStore.load({ library, holder }, current);
       if (!current()) throw new Error("Project checkpoint request cancelled.");
       if (!saved) return { state: host.projectSessionsState(), message: "No saved project checkpoint for this account or model provider." };
-      return { state: host.projectSessionsRestore(saved, before), message: "Opened the saved checkpoint. Interrupted sessions are stopped records; ask the conductor to start fresh work." };
+      host.projectSessionsRestore(saved, before);
+      await resetProjectCoding();
+      if (!current()) throw new Error("Project checkpoint request cancelled.");
+      return { state: host.projectSessionsState(), message: "Opened the saved checkpoint. Interrupted sessions are stopped records; choose coding folders again and ask the conductor to start fresh work." };
     } finally { if (projectJob === run) projectJob = null; }
   }));
   ipcMain.handle(IPC.codingState, guard(async (): Promise<CodingWorkspaceState> => {
@@ -3017,6 +3132,7 @@ function start(): void {
     agent?.forgetProjectSessions();
     const projectsGone = projectSessionStore.forgetAll(() => true).then(() => true, () => false);
     const codingGone = forgetCurrentCoding().then(() => true, () => false);
+    const privateCodingGone = resetProjectCoding().then(() => true, () => false);
     learning.forgetAll();
     // What was asked this session is about the person too: no suggestion comes from it afterwards (memory-r9-2).
     forgetSessionWords();
@@ -3032,6 +3148,7 @@ function start(): void {
     if (!savedGone) throw new Error("Ember couldn't finish deleting the saved conversation on this computer. Try Forget again.");
     if (!vaultGone) throw new Error("Ember couldn't finish deleting the vault's file on this computer. Try Forget again.");
     if (!await codingGone) throw new Error("Ember couldn't finish deleting the saved coding workspace on this computer. Try Forget again.");
+    if (!await privateCodingGone) throw new Error("Ember couldn't finish clearing its private coding work. Try Forget again.");
     if (!await projectsGone) throw new Error("Ember couldn't finish deleting saved projects on this computer. Try Forget again.");
   }));
   // "Tell Ember about you": checked whole (IntroSchema, every string bounded) and kept only while memory is in force.
@@ -3155,7 +3272,7 @@ function start(): void {
   });
   // Any settings change may move the endpoint in force (the switch, its address, its models, its card): the host
   // reconnects when nothing would be cut off, else as soon as the turn and the tasks under way are done.
-  settings.onChange(() => { providers.settingsChanged(); void agent?.providerChanged(); });
+  settings.onChange(() => { providers.settingsChanged(); void agent?.providerChanged(); codingContextChanged(); });
   registerExtensionsIpc(ipcMain, event => {
     const url = event.senderFrame?.url ?? "";
     return isTrustedSender(url) && !!home && !home.isDestroyed() && event.sender === home.webContents;
@@ -3364,6 +3481,12 @@ function start(): void {
   const endSession = (source: string) => {
     if (sessionEnding) return;
     sessionEnding = true;
+    // A shutdown may skip will-quit and cannot await it. Revoke admission and initiate real process-tree stops now;
+    // close retains any private data whose stopped/cleanup witness cannot finish before the OS ends the process.
+    agent?.codingWorkspaceChanged();
+    projectCodingFolders.ownerReset();
+    const codingClose = codingResources ? codingResources.close() : codingResourcesReady.then(resources => resources.close());
+    void codingClose.catch(() => log.warn("coding.private_cleanup_incomplete"));
     log.info("app.session_end", { source });
     endThisRun("session-end");
     try { settings.flush(); } catch (err) { log.warn("settings.not_saved", { err }); }
@@ -3402,7 +3525,11 @@ function start(): void {
     const clip = emberXid && clipboardBridge
       ? clipboardBridge.handOff(emberXid).then(result => log.info("clipboard.handoff", { result }), err => log.warn("clipboard.handoff_failed", { err }))
       : Promise.resolve();
-    void Promise.all([brain, clip]).finally(() => app.exit(0));
+    const codingClose = codingResources ? codingResources.close() : codingResourcesReady.then(resources => resources.close());
+    const coding = within(codingClose, 3000).then(result => {
+      if (result === "timeout") log.warn("coding.private_cleanup_incomplete");
+    }, () => log.warn("coding.private_cleanup_incomplete"));
+    void Promise.all([brain, clip, coding]).finally(() => app.exit(0));
   });
   // The display went away under Ember (a GNOME on Xorg logout ends the X server): the session is ending, not Ember
   // crashing, so this run's marker goes and the next login says nothing (reliability-performance-r1). Either Chromium
@@ -3784,7 +3911,7 @@ function start(): void {
         // On macOS also by the installed app with that name's bundle id (Terminal renamed is still Terminal); a WSLg
         // app's also as a Linux app (§4.5).
         isTerminalApp: name => privacy.isTerminalApp({ id: name, name }),
-        keys: sys.keys, os: platform.os, isSecurityWindow: privacy.isSecurityWindow,
+        keys: sys.keys, os: platform.os, isSecurityWindow: privacy.isSecurityWindow, emberPaths: codingStorage.protectedPaths,
       }),
       // The window system's units to Electron's DIP (X11: ÷ the primary scale factor).
       flyTo: b => setState({ focus: b && b.width > 2 && b.height > 2 ? wsSeen.toDip(b) : null }),
@@ -3851,7 +3978,7 @@ function start(): void {
     });
     let elevatedNow: boolean | undefined;
     targets = createTargets({
-      log: log.child("targets"), os: platform.os, sys, userData, appDir: __dirname, resourcesPath: process.resourcesPath,
+      log: log.child("targets"), os: platform.os, sys, userData, emberPaths: codingStorage.protectedPaths, appDir: __dirname, resourcesPath: process.resourcesPath,
       execPath: process.execPath, packaged: app.isPackaged, settings, admin: () => admin, audit: () => audit, confirmer: () => confirmer,
       // The user's own model provider's host while it is in force: the consent cards say what is read goes there.
       ownService: () => { const p = providerNow(); return p?.kind === "user" ? endpointHost(p.config.baseUrl) : null; },
@@ -3921,6 +4048,17 @@ function start(): void {
     });
     agent = new AgentHost({
       history,
+      scopedCoding: {
+        available: () => consented() && screenLock?.locked === false && policy.features.actions !== false &&
+          scopedCodingAvailability().available,
+        unavailable: () => !consented() ? "Finish setup before starting coding work." : screenLock?.locked !== false
+          ? "Unlock the screen before starting coding work." : policy.features.actions === false
+            ? "Your organisation has turned off Ember's actions." : scopedCodingAvailability().message,
+        workspace: id => id ? codingResources?.workspace(id) ?? null : null,
+        createWorkspace: async (spec, signal, admit) => (await codingResourcesReady).createWorkspace(spec, signal, admit),
+        get reviewBase() { return codingResources?.reviewBase ?? ""; },
+        publish: async (spec, output, status, checks) => (await codingResourcesReady).publish(spec, output, status, checks),
+      },
       codingWorkspace: codingCurrent,
       codingClarify: (request, signal) => targets?.codingClarify(request, signal) ?? Promise.resolve(null),
       onCodingRunning: running => {
@@ -4009,7 +4147,8 @@ function start(): void {
         syncListenOnce();
       },
       onStatus: status => {
-        if (status.phase === "ready") queueMicrotask(() => { void restoreCoding(); });
+        codingContextChanged();
+        if (status.phase === "ready" && codingAvailable()) queueMicrotask(() => { void restoreCoding(); });
         codingChanged();
         // Projects' work goes only where it must (integrations-r1): a reconnect stops a request under way, but keeps the
         // files, the request, the answer and its diff; the lockdown forgets it all (Sign out and an account change do
@@ -4044,7 +4183,11 @@ function start(): void {
         broadcast(IPC.conversationChanged, conversationNow(entries));
       },
       // Another account signed in: its conversation went, and with it what the ask box remembers (as at sign-out).
-      onAccountChanged: () => { askHistory = []; forgetSessionWords(); forgetProject("all"); void forgetCoding().catch(err => log.warn("coding.workspace_not_forgotten", { err })); },
+      onAccountChanged: () => {
+        askHistory = []; forgetSessionWords(); forgetProject("all");
+        void forgetCoding().catch(err => log.warn("coding.workspace_not_forgotten", { err }));
+        void resetProjectCoding().catch(() => log.warn("coding.private_cleanup_incomplete"));
+      },
       // A reminder the user set is due (reminders.ts): said too when replies are spoken, and a notification while away.
       onReminder: r => {
         // After what Ember is saying (an answer under way), not cutting it off.

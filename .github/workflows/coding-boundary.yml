@@ -7,6 +7,7 @@ on:
       - "app/main/agent/experimental-windows-lpac*.ts"
       - "app/main/agent/isolated-windows-command*.ts"
       - "test/fixtures/experimental-windows-lpac.c"
+      - "test/fixtures/isolated-windows-command-startup-hook.cs"
       - "test/integration/experimental-windows-lpac-native.test.ts"
       - "test/integration/isolated-windows-command-powershell-native.test.ts"
       - "test/unit/experimental-windows-lpac*.test.ts"

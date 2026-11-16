@@ -7,7 +7,7 @@ import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import { chromium, type Browser, type Page } from "playwright-core";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { AdminPolicySchema, auditRetentionDays, commandMode, heldUntilRestart, homeAdmin, managedKeys } from "../../app/main/admin";
 import { DEFAULT_SETTINGS } from "../../app/main/settings";
 import { approvalsState, type ApprovalsSetting } from "../../app/main/policy/autonomy";
@@ -30,13 +30,15 @@ declare global {
       limits: number[];
       /** With `provider` seeded: main's provider-state reads, each waiting until the test answers it. */
       providerReads: ((state: unknown) => void)[];
+      checks: NonNullable<Seed["checks"]>;
+      jumpResizes: (() => void)[];
     };
   }
 }
 
 const gate = process.env.EMBER_UIUX_TEST !== "1";
 
-interface Seed { /** How the approval modes stand, as main sends it with the status (absent: main sent none). */ approvals?: ApprovalsState; settings?: Record<string, unknown>; admin?: Record<string, unknown>; activity?: ActivityEntry[] | "fail"; viewport?: { width: number; height: number }; checks?: { id: string; status: string; label: string; detail: string; fix?: string }[]; platform?: StatusPlatform; updates?: UpdateStatus; provider?: boolean; /** The targets runtime, answering after this many ms as in the app (Computers and Commands show then). */ targets?: number }
+interface Seed { /** How the approval modes stand, as main sends it with the status (absent: main sent none). */ approvals?: ApprovalsState; settings?: Record<string, unknown>; admin?: Record<string, unknown>; activity?: ActivityEntry[] | "fail"; viewport?: { width: number; height: number }; checks?: { id: string; status: string; label: string; detail: string; fix?: string }[]; platform?: StatusPlatform; updates?: UpdateStatus; provider?: boolean; /** The targets runtime, answering after this many ms as in the app (Computers and Commands show then). */ targets?: number; /** Holds actual native resize deliveries until an already-positioned layout is scrolled. */ holdJumpResize?: boolean }
 
 /** Interactive chosen, its card agreed to as it reads now: the user's own setting. */
 const INTERACTIVE: ApprovalsSetting = { mode: "interactive", consent: { interactive: { version: FEATURE_CONSENT_VERSION.autonomy, at: "2026-11-04T12:00:00Z" }, assisted: { version: 0, at: null }, autopilot: { version: 0, at: null } } };
@@ -60,6 +62,7 @@ beforeAll(async () => {
   port = (server.address() as { port: number }).port;
 });
 afterAll(async () => { if (gate) return; await browser.close(); server.close(); });
+afterEach(async () => { if (!gate) await Promise.all(browser.contexts().map(context => context.close())); });
 
 /** Home after first run, on `pane`. */
 async function open(pane: string, seed: Seed = {}): Promise<Page & { errors: string[] }> {
@@ -70,7 +73,7 @@ async function open(pane: string, seed: Seed = {}): Promise<Page & { errors: str
   const page = await browser.newPage({ viewport: seed.viewport ?? { width: 1000, height: 900 } }) as Page & { errors: string[] };
   page.errors = [];
   page.on("pageerror", e => page.errors.push(e.message));
-  await page.addInitScript(({ settings, admin, activity, checks, platform, updates, provider, targets, approvals }) => {
+  await page.addInitScript(({ settings, admin, activity, checks, platform, updates, provider, targets, approvals, holdJumpResize }) => {
     const subs: Record<string, ((v: unknown) => void)[]> = {};
     // Main's list as last pushed: what a read after a task control gets.
     let tasks: unknown = [];
@@ -81,7 +84,20 @@ async function open(pane: string, seed: Seed = {}): Promise<Page & { errors: str
       reads: 0,
       limits: [] as number[],
       providerReads: [] as ((state: unknown) => void)[],
+      checks,
+      jumpResizes: [] as (() => void)[],
     };
+    if (holdJumpResize) {
+      const NativeResizeObserver = window.ResizeObserver;
+      window.ResizeObserver = class extends NativeResizeObserver {
+        constructor(callback: ResizeObserverCallback) {
+          super((entries, observer) => {
+            if (entries.some(entry => entry.target.closest("#jump"))) h.jumpResizes.push(() => callback(entries, observer));
+            else callback(entries, observer);
+          });
+        }
+      };
+    }
     // Main's provider bridge, as in Electron: each state read answers when the test says (home-mic-recipient's pattern).
     if (provider) (window as unknown as { emberProvider: unknown }).emberProvider = { state: () => new Promise(resolve => { h.providerReads.push(resolve); }), onChanged: () => () => undefined };
     if (targets !== null) (window as unknown as { emberTargets: unknown }).emberTargets = new Proxy({}, { get: (_t, name: string) => {
@@ -89,10 +105,11 @@ async function open(pane: string, seed: Seed = {}): Promise<Page & { errors: str
       if (name === "list") return () => new Promise(resolve => setTimeout(() => resolve([{ id: "local", kind: "local", label: "This computer", state: "ready" }]), targets));
       return () => new Promise(() => undefined);
     } });
-    const status = () => ({ appVersion: "0.1.1", settings, environment: { checks, versions: { node: "24", electron: "44", chrome: "152" } }, logFile: "/test/ember.log", settingsNotice: null, admin, ...(platform ? { platform } : {}), ...(approvals ? { approvals } : {}) });
+    const status = () => ({ appVersion: "0.1.1", settings, environment: { checks: h.checks, versions: { node: "24", electron: "44", chrome: "152" } }, logFile: "/test/ember.log", settingsNotice: null, admin, ...(platform ? { platform } : {}), ...(approvals ? { approvals } : {}) });
     window.ember = new Proxy({}, { get: (_t, name: string) => {
       if (name.startsWith("on")) return (fn: (v: unknown) => void) => { (subs[name] ??= []).push(fn); return () => undefined; };
       if (name === "getStatus") return async () => status();
+      if (name === "recheckSetup") return async () => status().environment;
       if (name === "updates" && updates) return async () => updates;
       if (name === "updateSettings") return async (patch: Record<string, unknown>) => { h.calls.push(`save:${JSON.stringify(patch)}`); return {}; };
       // Main's answer to a choice of mode: recorded and in force, as it says with the state.
@@ -104,7 +121,7 @@ async function open(pane: string, seed: Seed = {}): Promise<Page & { errors: str
       if (name === "activity") return async (limit?: number) => { h.reads++; h.limits.push(limit ?? 500); if (h.activity === "fail") throw new Error("EACCES: permission denied"); return h.activity.slice(0, limit ?? 500); };
       return () => new Promise(() => undefined);
     } }) as never;
-  }, { settings, admin, activity: seed.activity ?? [], checks: seed.checks ?? [], platform: seed.platform ?? null, updates: seed.updates ?? null, provider: seed.provider ?? false, targets: seed.targets ?? null, approvals: seed.approvals ?? null });
+  }, { settings, admin, activity: seed.activity ?? [], checks: seed.checks ?? [], platform: seed.platform ?? null, updates: seed.updates ?? null, provider: seed.provider ?? false, targets: seed.targets ?? null, approvals: seed.approvals ?? null, holdJumpResize: seed.holdJumpResize ?? false });
   await page.goto(`http://127.0.0.1:${port}/app/renderer/home/index.html`);
   await page.waitForSelector(`a[href='#${pane}-h']`);
   await page.evaluate(() => document.body.classList.remove("loading", "first-run"));
@@ -299,6 +316,23 @@ describe.skipIf(gate)("Home's Search settings, as the person reads the results (
     for (const q of ["shortcut", "keyboard shortcut", "hotkeys"]) expect((await results(page, q)).length, q).toBeGreaterThan(0);
     expect((await results(page, "delete")).some(r => r.startsWith("Memory: "))).toBe(true);
     expect(await page.locator("#search-none").isHidden()).toBe(true);
+    await page.close();
+  });
+
+  it("opens Conversation for history and keeps project or session history discoverable in Projects", async () => {
+    const page = await open("home");
+    expect((await results(page, "history"))[0]).toBe("Home: Conversation");
+    await page.locator("#search").press("Enter");
+    expect(await page.evaluate(() => document.activeElement?.id)).toBe("conversation-h");
+    for (const query of ["project history", "session history"]) {
+      const first = (await results(page, query))[0];
+      expect(first, query).toMatch(/^Projects: /);
+      expect(first, query).toContain("project or session history");
+    }
+    await page.locator("#search").press("Enter");
+    expect(await page.locator("#jump a[aria-current]").getAttribute("href")).toBe("#project-h");
+    expect(await page.evaluate(() => !!document.activeElement?.closest("#project-coding"))).toBe(true);
+    expect(page.errors).toEqual([]);
     await page.close();
   });
 
@@ -497,6 +531,44 @@ describe.skipIf(gate)("Home's What Ember did, as the person looks back (2026-11-
     await page.waitForTimeout(200);
     expect(await page.evaluate(() => document.getElementById("jump")!.scrollLeft)).toBe(0);
     await page.evaluate(() => { localStorage.removeItem("ember.home.pane"); });
+    expect(page.errors).toEqual([]);
+    await page.close();
+  });
+
+  it("preserves a manual row scroll when a native resize arrives for an already-positioned layout", async () => {
+    const page = await open("checks", { viewport: { width: 500, height: 800 }, targets: 300, holdJumpResize: true });
+    await page.waitForSelector("#jump-commands:not([hidden])"); await page.evaluate(() => document.fonts.ready);
+    await page.locator("#jump a[href='#checks-h']").click();
+    await expect.poll(() => page.evaluate(() => window.__pane.jumpResizes.length)).toBeGreaterThan(0);
+    await page.evaluate(() => {
+      document.getElementById("jump")!.scrollLeft = 0;
+      document.querySelector("#jump a")!.classList.toggle("probe");
+      for (const deliver of window.__pane.jumpResizes.splice(0)) deliver();
+    });
+    expect(await page.evaluate(() => document.getElementById("jump")!.scrollLeft)).toBe(0);
+    expect(await page.locator("#jump a[aria-current]").getAttribute("href")).toBe("#checks-h");
+    await page.evaluate(() => localStorage.removeItem("ember.home.pane"));
+    expect(page.errors).toEqual([]); await page.close();
+  });
+
+  it("keeps the open Setup link whole when its badge grows after the narrow row was positioned", async () => {
+    const page = await open("checks", { viewport: { width: 500, height: 800 },
+      checks: [{ id: "atspi", status: "fail", label: "Accessibility", detail: "Ember can't read apps.", fix: "Turn on assistive technologies." }] });
+    await page.evaluate(() => document.fonts.ready);
+    const current = () => page.evaluate(() => {
+      const row = document.getElementById("jump")!.getBoundingClientRect();
+      const link = document.querySelector("#jump a[aria-current]")!.getBoundingClientRect();
+      return Math.max(0, Math.round(row.left - link.left)) + Math.max(0, Math.round(link.right - row.right));
+    });
+    await expect.poll(current).toBe(0);
+    expect(await page.locator("#jump .jump-badge [aria-hidden]").innerText()).toBe("1");
+    const rowSize = await page.locator("#jump").evaluate(el => ({ width: el.clientWidth, height: el.clientHeight }));
+    await page.evaluate(() => { window.__pane.checks = Array.from({ length: 100 }, (_, i) => ({ id: `check-${i}`, status: "fail", label: `Check ${i}`, detail: "Needs attention." })); });
+    await page.locator("#checks-again").click();
+    await expect.poll(() => page.locator("#jump .jump-badge [aria-hidden]").innerText()).toBe("100");
+    // Only a link grew: the existing observer of the row itself receives no size change.
+    expect(await page.locator("#jump").evaluate(el => ({ width: el.clientWidth, height: el.clientHeight }))).toEqual(rowSize);
+    await expect.poll(current).toBe(0);
     expect(page.errors).toEqual([]);
     await page.close();
   });

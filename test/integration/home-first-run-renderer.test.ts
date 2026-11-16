@@ -55,7 +55,7 @@ let port = 0;
 beforeAll(async () => {
   if (gate) return;
   browser = await chromium.launch({ executablePath: process.env.EMBER_CHROMIUM_PATH ?? "/usr/bin/chromium", headless: true, args: ["--no-sandbox"] });
-  const dist = path.resolve("dist");
+  const dist = path.resolve(process.env.EMBER_FIRST_RUN_DIST ?? "dist");
   server = http.createServer((req, res) => {
     const file = path.resolve(dist, `.${decodeURIComponent((req.url ?? "/").split("?")[0])}`);
     if (!file.startsWith(dist + path.sep) || !fs.existsSync(file) || !fs.statSync(file).isFile()) { res.writeHead(404); res.end(); return; }
@@ -1772,7 +1772,7 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect(await p.locator("#w-count").innerText()).toBe("Step 2 of 6");
     expect(await p.locator("#w-changes").isVisible()).toBe(true);
     const changed = await p.locator("#w-changes-list li").allInnerTexts();
-    expect(changed).toHaveLength(7);
+    expect(changed).toHaveLength(8);
     expect(changed[0]).toContain("“Keep my recent conversation”");
     // Version 8 (owner decision of 2026-11-12): anyone near the computer can answer Ember's questions by voice.
     expect(changed[1]).toContain("anyone near the computer can answer it by voice");
@@ -1786,6 +1786,8 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect(changed[5]).toBe("In Interactive, I ask before a dangerous command even when you asked for it.");
     // Version 13: project checkpoints are explicit, encrypted and never resume work automatically.
     expect(changed[6]).toBe("If you choose Save projects, I encrypt project names, goals and session outcomes on this computer until you choose Forget saved projects or Forget everything. Opening a checkpoint never resumes work.");
+    // Version 14: coding copies/sends and full-file export retention are agreed before coding can start.
+    expect(changed[7]).toBe("When you ask for coding work, I copy the project folder you chose and may send requested files and command output to your model, leaving the original unchanged. Exports keep all captured files, including unchanged files, until you remove them. Private copies I can't verify as removed may remain and block new coding work.");
     expect(await p.locator(".w-row").evaluateAll(rows => rows.map(r => (r as HTMLElement).dataset.row))).toEqual(["interactive"]);
     expect(await p.locator("#w-row-interactive").isChecked()).toBe(true);
     // The usual points and the full text are still there; nothing goes on until Agree is saved.
@@ -1836,7 +1838,7 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     // A returning user after a consent bump: Ember isn't connected yet (nothing is, before the consent).
     const p = await open({ consent: 6, provider: own, providerState: inForce });
     expect(await p.locator("#w-title").innerText()).toBe("What's changed since you last agreed");
-    await expect.poll(() => send(p)).toBe("When you ask something, your request and what I read go to your own model provider (api.example.com). Nothing is sent before you ask.");
+    await expect.poll(() => send(p)).toBe("When you ask something, your request and what I read go to your own model provider (api.example.com). Nothing is sent before you ask. For coding, I use a private copy of the project folder you choose; requested files and command output may go to the connected model. Your original files stay unchanged.");
     expect(await full(p)).toBe("your own model provider (api.example.com)");
     expect(await send(p)).not.toContain("Copilot");
     // Agreed, and Back to the consent from the sign-in step: the same recipient.

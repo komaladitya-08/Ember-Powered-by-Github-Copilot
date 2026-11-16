@@ -28,7 +28,10 @@ import { TaskManager, handedElsewhere, taskOutcome, titleOf, type KeptCard, type
 import { redactingClient, type ModelRedactor } from "./redacting-client";
 import { CHECKING_STEP, LINUX_WORKER_SYSTEM, Worker, type TaskSpec, type WorkerDeps, type WorkerResult, type WorkerSystem, type WorkerVault } from "./worker";
 import { CodingWorker } from "./coding-worker";
-import { CodingRetirement } from "./coding-retirement";
+import { ScopedCodingWorker, type ScopedCodingChecks } from "./scoped-coding-worker";
+import type { CodingCommandWorkspace, CodingWorkspaceReview, CodingPlatformAdapter } from "./coding-platform";
+import type { CodingResultSummary } from "../../shared/project-coding";
+import { CodingRetirement, type CodingCleanupReceipt } from "./coding-retirement";
 import { MixedHandoffs } from "./mixed-handoff";
 import os from "node:os";
 import type { Confirmer } from "./confirm";
@@ -43,12 +46,14 @@ import type { AuditLog } from "../policy/audit";
 import { PLATFORM_WORDS } from "../../shared/words";
 import type { TargetBinding, PromptCaps } from "../targets/types";
 import type { TargetId } from "../../shared/targets";
-import { whereWords } from "../commands/flow";
+import { whereWords, type CommandFlowContext } from "../commands/flow";
+import { Refusals } from "../policy/refusals";
+import { injectionSignals } from "../perception/injection";
 import { NO_CAPS } from "./persona";
 import type { SignInWith } from "./github-app";
 import { SessionToolsTimeoutError, type SessionExtensions } from "./session-config";
 import { copilotOneShot } from "./one-shot";
-import { copilotStepChecker } from "./reviewer";
+import { copilotReviewer, copilotStepChecker } from "./reviewer";
 import type { StepChecker, StepVerdict } from "../commands/review";
 import { PROJECT_SYSTEM, ProjectModelError, projectFailureText, type ProjectModelFailure } from "./project";
 import { workspaceOwners } from "./project-workspaces";
@@ -209,6 +214,18 @@ export interface TranscriptEntry {
 const ACCOUNT_RETRY_MS: readonly number[] = [1000, 3000];
 
 export interface HostOptions {
+  /** Host-owned project folder grants and isolated command copies. Never falls back to native SDK coding. */
+  scopedCoding?: {
+    available(): boolean;
+    /** Fixed host status text only, never a raw exception, credential or filesystem path. */
+    unavailable?(): string;
+    workspace(projectId: string | null): { path: string; projectId: string; current(): boolean } | null;
+    createWorkspace(spec: TaskSpec, signal: AbortSignal, admit: () => boolean): Promise<CodingCommandWorkspace>;
+    /** A trusted backend's command facts and scoped files; absent retains the Linux implementation. */
+    platform?: CodingPlatformAdapter;
+    reviewBase: string;
+    publish(spec: TaskSpec, output: CodingWorkspaceReview, status: "done" | "failed" | "stopped", checks: ScopedCodingChecks): Promise<CodingResultSummary>;
+  };
   /** An explicitly selected and consented coding workspace, or null. */
   codingWorkspace?: () => { path: string; current(): boolean } | null;
   onCodingRunning?: (running: boolean) => void;
@@ -940,11 +957,20 @@ const FINISHED_KEPT = 20;
  * One request of the user's: where they were when they called Ember, what they said, and what the conversation
  * read on the screen in its turn (the context sent with it, describe_screen's answers).
  */
+interface CodingIntake {
+  projectId: string | null;
+  workspace: NonNullable<TaskSpec["codingWorkspace"]> | null;
+  current(): boolean;
+  revoke(): void;
+}
+interface RequestIntake { projectId: string | null; codingIntake?: CodingIntake }
 interface UserRequest {
   /** Selected at intake, before any connection or prior-turn wait; never execution authority. */
   projectId?: string | null;
   /** A Stop invalidates project callbacks even if the SDK has not acknowledged its abort. */
   projectEpoch?: number;
+  /** Captured before the first wait; later folder choices and approval changes need a fresh request. */
+  codingIntake?: CodingIntake;
   /** The exact prompt prepared for this request; unset until dispatch, never matched by user-text suffix. */
   prompt?: string;
   target: (WindowTarget & { app?: string }) | null;
@@ -1013,6 +1039,11 @@ export class AgentHost {
   /** A provider credential/key identity is private, like the conversation; never sent or logged. */
   private sessionProjectsHolder: string | null = null;
   private readonly codingTasks = new Set<string>();
+  private readonly codingScopes = new Map<string, { projectId?: string; current(): boolean; revoke(): void; worker?: ScopedCodingWorker }>();
+  private readonly codingGrants = new WeakMap<NonNullable<TaskSpec["codingWorkspace"]>, { projectId?: string; current(): boolean; revoke(): void }>();
+  private readonly pendingCodingIntakes = new Set<CodingIntake>();
+  private readonly mixedCodingProjects = new Map<string, string | undefined>();
+  private readonly mixedCodingCurrent = new Map<string, () => boolean>();
   private readonly codingRetirement = new CodingRetirement();
   private vaultFillHolds = 0;
   private readonly mixedHandoffs = new MixedHandoffs<WorkerResult | null>();
@@ -1026,10 +1057,78 @@ export class AgentHost {
   }
 
   /** A changed or withdrawn workspace invalidates queued and running coding work immediately. */
-  codingWorkspaceChanged(): void {
-    this.codingRetirement.retire();
-    this.mixedHandoffs.clear();
-    for (const id of this.codingTasks) this.tasks?.cancel(id);
+  codingWorkspaceChanged(projectId?: string): void {
+    for (const intake of this.codingIntakes()) if (projectId === undefined || intake.projectId === projectId) intake.revoke();
+    if (projectId === undefined) this.codingRetirement.retire();
+    if (projectId === undefined) { this.mixedHandoffs.clear(); this.mixedCodingProjects?.clear(); this.mixedCodingCurrent?.clear(); }
+    else for (const [id, project] of this.mixedCodingProjects ?? []) if (project === projectId) {
+      this.mixedHandoffs.cancel(id); this.mixedCodingProjects.delete(id); this.mixedCodingCurrent.delete(id);
+    }
+    for (const id of this.codingTasks) {
+      const scope = this.codingScopes?.get(id);
+      if (projectId !== undefined && scope?.projectId !== projectId) continue;
+      if (projectId !== undefined && scope?.worker) this.codingRetirement.retire(scope.worker.disposed);
+      scope?.revoke(); scope?.worker?.invalidate(); this.tasks?.cancel(id);
+    }
+  }
+
+  /** Start account-wide Stop synchronously, then retain only its trusted-session disposal witnesses. */
+  codingCleanupReceipt(): CodingCleanupReceipt {
+    const retirement = this.codingRetirement;
+    retirement.retire();
+    let stopped = true;
+    try { this.codingWorkspaceChanged(); } catch { stopped = false; }
+    return retirement.cleanupReceipt(stopped);
+  }
+
+  /** Account-wide erasure also waits for the trusted sessions, not just their isolated command copies. */
+  awaitCodingCleanup(): Promise<void> { return this.codingCleanupReceipt().wait(); }
+
+  private retireStaleCoding(): void {
+    for (const intake of this.codingIntakes()) if (!intake.current()) intake.revoke();
+    for (const [id, scope] of this.codingScopes) if (!scope.current()) {
+      scope.revoke(); scope.worker?.invalidate(); this.tasks?.cancel(id);
+    }
+    for (const [id, current] of this.mixedCodingCurrent) if (!current()) {
+      this.mixedHandoffs.cancel(id); this.mixedCodingProjects.delete(id); this.mixedCodingCurrent.delete(id);
+    }
+  }
+
+  private scopedCodingUnavailable(): string {
+    try {
+      const reason = this.o.scopedCoding?.unavailable?.();
+      if (typeof reason === "string" && reason.trim() && reason.length <= 512 && !/[\p{Cc}\p{Cf}]/u.test(reason)) return reason.trim();
+    } catch { /* A status callback cannot disclose its exception or authorize a fallback backend. */ }
+    return CODING_UNAVAILABLE;
+  }
+
+  private codingIntakes(): Set<CodingIntake> {
+    return new Set([...(this.pendingCodingIntakes ?? []), ...[this.turn, ...(this.queued ?? []), ...(this.held ?? []).map(h => h.intake)]
+      .map(r => r?.codingIntake).filter((intake): intake is CodingIntake => intake !== undefined)]);
+  }
+
+  private captureCodingIntake(projectId: string | null): CodingIntake | undefined {
+    const scoped = this.o.scopedCoding;
+    if (!scoped) return undefined;
+    const gen = this.gen, mode = modeInForce(this.o.settings.get().approvals, this.o.admin?.() ?? null);
+    let active = true;
+    let source: ReturnType<NonNullable<HostOptions["scopedCoding"]>["workspace"]> = null;
+    try { if (scoped.available()) source = scoped.workspace(projectId); } catch { active = false; }
+    const chosen = source;
+    const revoke = () => { active = false; };
+    const current = () => {
+      if (!active) return false;
+      try {
+        if (!projectId || !chosen || chosen.projectId !== projectId || gen !== this.gen || this.status.phase !== "ready" || this.providerMoved()
+          || this.handing !== null || !scoped.available() || this.vaultFillHolds || this.o.redact?.active || !this.actionsAllowed()
+          || modeInForce(this.o.settings.get().approvals, this.o.admin?.() ?? null) !== mode || !chosen.current()) active = false;
+        if (active) this.sessionProjects.destination(projectId);
+      } catch { active = false; }
+      return active;
+    };
+    const workspace = chosen && projectId && current() ? Object.freeze({ path: chosen.path, projectId, current }) : null;
+    if (workspace) this.codingGrants.set(workspace, { projectId: workspace.projectId, current, revoke });
+    return { projectId, workspace, current, revoke };
   }
 
   /** Stop and fully dispose native coding sessions before a vault value can reach a field. */
@@ -1121,7 +1220,7 @@ export class AgentHost {
   /** This connection held Copilot back while the user's own provider waits for its card (providerWaiting). */
   private ownWaits = false;
   /** Requests asked after the model service changed while a turn or a task was under way: sent to the new one later. */
-  private held: { text: string; context: Parameters<AgentHost["ask"]>[1]; epoch: number; how: Parameters<AgentHost["ask"]>[3] }[] = [];
+  private held: { text: string; context: Parameters<AgentHost["ask"]>[1]; epoch: number; how: Parameters<AgentHost["ask"]>[3]; intake: RequestIntake }[] = [];
   /** Requests asked that wait for a connection, or for a silent turn to end, before they are sent (conversationTurn). */
   private waitingAsks = 0;
   /** What Home was last told of the conversation's turn (turnChanged). */
@@ -1340,6 +1439,8 @@ export class AgentHost {
     let agreed = false;
     try { agreed = hasConsent(o.settings.get()); } catch { /* settings unread: nothing comes back yet */ }
     if (agreed && this.routinesWanted()) this.keepRoutines();
+    // Source grants, provider authority and approval mode are checked synchronously on each settings event.
+    o.settings.onChange(() => this.retireStaleCoding());
   }
 
   /**
@@ -2267,7 +2368,7 @@ export class AgentHost {
         && this.o.admin?.().features.screenImages !== false && this.o.settings.get().screenImages !== false;
       const takesTasks = !!hands || (!!targets && this.targetsTakeTasks());
       const carried = this.handOn(service, takesTasks);
-      this.tasks = (takesTasks || !!this.o.codingWorkspace) ? new TaskManager({
+      this.tasks = (takesTasks || !!this.o.codingWorkspace || !!this.o.scopedCoding) ? new TaskManager({
         log: this.o.log.child("tasks"),
         ...(this.o.readTime ? { readTime: this.o.readTime } : {}),
         ...(this.o.taskWindow ? { taskWindow: this.o.taskWindow } : {}),
@@ -2279,6 +2380,8 @@ export class AgentHost {
         audit: hands?.audit ?? this.o.taskBase?.audit,
         settingsKey: this.o.settingsKey ?? this.sys.shortcuts?.settings.label,
         beforeFinish: task => {
+          this.mixedCodingProjects.delete(task.id);
+          this.mixedCodingCurrent.delete(task.id);
           const sequence = this.desktopSequences.get(task.id);
           this.desktopSequences.delete(task.id);
           const desktopHandoff = this.desktopHandoffs.finish(task.id, task.status, task.result);
@@ -2293,6 +2396,7 @@ export class AgentHost {
           }
         },
         onFinished: task => {
+          this.codingScopes.delete(task.id);
           if (this.codingTasks.delete(task.id)) this.o.onCodingRunning?.(this.codingTasks.size > 0);
           this.finishedLately = [...this.finishedLately.filter(t => t !== task && Date.now() - (t.finished ?? 0) <= CATCH_UP_MS), task].slice(-FINISHED_KEPT);
           // Copilot is to be reconnected once the tasks are done: this may have been the last one.
@@ -2359,6 +2463,40 @@ export class AgentHost {
           // one a turn already under way asked for). Tasks running now finish where they started.
           if (this.providerMoved() || this.handing !== null) return refusedWorker(spec, PROVIDER_MOVED_TASK);
           if (spec.codingWorkspace) {
+            if (spec.codingWorkspace.projectId && this.o.scopedCoding) {
+              const scoped = this.o.scopedCoding;
+              if (!scoped.available()) return refusedWorker(spec, this.scopedCodingUnavailable());
+              if (!spec.codingWorkspace.current()) return refusedWorker(spec, "The coding folder or task context changed. Ask again.");
+              if (this.codingRetirement.blocked) return refusedWorker(spec, "A previous coding task is still stopping or could not be stopped safely.");
+              if (this.vaultFillHolds || this.o.redact?.active) return refusedWorker(spec, "Coding is unavailable after a vault fill until Ember restarts.");
+              const base = this.o.taskBase ?? (hands ? { audit: hands.audit, confirmer: hands.confirmer } : null);
+              const local = targets?.handsFor("local");
+              const commands = local?.ok ? local.hands.commands : null;
+              if (!base || !commands || commands.binding.kind !== "local" || commands.binding.id !== "local") return refusedWorker(spec, "Coding requires this computer's command service.");
+              const workspace = spec.codingWorkspace;
+              const scope = this.codingScopes.get(spec.id) ?? this.codingGrants.get(workspace) ?? { projectId: workspace.projectId,
+                current: workspace.current, revoke: () => undefined };
+              const current = () => gen === this.gen && this.status.phase === "ready" && !this.providerMoved() && this.handing === null
+                && !this.vaultFillHolds && !this.o.redact?.active && scoped.available() && scope.current();
+              if (!current()) return refusedWorker(spec, "The coding context changed. Ask again.");
+              const presenter = this.taskPresenter(spec.id, spec.goal, commands.binding, false, true);
+              const worker = new ScopedCodingWorker(spec, {
+                runtime: { userData: this.o.userData, runtimePath: this.o.runtimePath, env,
+                  ...(!provider && token ? { gitHubToken: token } : {}), ...(this.o.redact ? { redact: this.o.redact } : {}) },
+                model: this.status.workerModel, provider: provider?.config,
+                createWorkspace: (signal, admit) => scoped.createWorkspace(spec, signal, () => current() && admit()),
+                ...(scoped.platform ? { platform: scoped.platform } : {}),
+                commandService: commands,
+                commandContext: (service, signal) => this.codingCommandContext(spec, service, signal, current, client, provider?.config, presenter, base),
+                current, reviewBase: scoped.reviewBase,
+                publish: (output, status, checks) => scoped.publish(spec, output, status, checks),
+                progress, beforeStart: () => sweepingTasks, clarify: this.o.codingClarify,
+                onRetiring: () => this.codingRetirement.retire(worker.disposed),
+              });
+              this.codingScopes.set(spec.id, { ...scope, worker });
+              this.codingRetirement.track(worker.disposed);
+              return worker;
+            }
             if (!codingAvailable()) return refusedWorker(spec, CODING_UNAVAILABLE);
             if (this.codingRetirement.blocked) return refusedWorker(spec, "A previous coding task is still stopping or could not be stopped safely.");
             if (this.vaultFillHolds || this.o.redact?.active) return refusedWorker(spec, "Coding is unavailable after a vault fill until Ember restarts.");
@@ -2376,7 +2514,7 @@ export class AgentHost {
                 return { paths: [this.o.userData], pids: this.o.emberPids?.() ?? [], names: /\bember\b/i };
               },
               beforeStart: () => sweepingTasks,
-              onRetiring: () => this.codingRetirement.retire(),
+              onRetiring: () => this.codingRetirement.retire(worker.disposed),
               commandPolicy: () => {
                 const local = targets?.handsFor("local");
                 const cap = local?.ok ? local.hands.commands?.capability() : undefined;
@@ -2437,6 +2575,25 @@ export class AgentHost {
       const projectsCurrent = () => gen === this.gen && this.status.phase === "ready" && !this.providerMoved()
         && this.turn !== null && this.turn.projectEpoch === this.stopEpoch;
       const projectsStale = "This project request is no longer current. Ask again on the current connection.";
+      const codingOff = () => this.o.scopedCoding ? !this.o.scopedCoding.available() : !codingAvailable();
+      const captureCoding = (r: UserRequest): NonNullable<TaskSpec["codingWorkspace"]> | null => {
+        const scoped = this.o.scopedCoding;
+        if (scoped) {
+          const intake = r.codingIntake;
+          return intake && intake.projectId === r.projectId && intake.current() ? intake.workspace : null;
+        }
+        const source = this.o.codingWorkspace?.();
+        return source?.current() ? source : null;
+      };
+      const recordCoding = (t: Task, workspace: NonNullable<TaskSpec["codingWorkspace"]>) => {
+        if (t.status !== "running" && t.status !== "queued") return;
+        this.codingTasks.add(t.id);
+        if (!this.codingScopes.has(t.id)) {
+          const scope = this.codingGrants.get(workspace);
+          if (scope) this.codingScopes.set(t.id, scope);
+        }
+        this.o.onCodingRunning?.(true);
+      };
       // Turn `r` asked for, steered or stopped task `id`: once it has touched two, none of its tasks' words is that task's
       // alone, so their cards' Try again doesn't go on to another model service (StartOptions.alone, integrations-w5-1).
       const touch = (r: UserRequest | null, id: string) => {
@@ -2548,7 +2705,7 @@ export class AgentHost {
             try {
               const state = this.projectSessionsAction({ action: "create", name, goal });
               this.turn.projectId = state.selectedProjectId;
-              return `Project ${state.selectedProjectId} created and selected for this request. Start related desktop sessions with start_task and a short sessionName. Coding remains unavailable while its protection is completed.`;
+              return `Project ${state.selectedProjectId} created and selected for this request. Start related desktop sessions with start_task and a short sessionName. ${codingOff() ? this.o.scopedCoding ? this.scopedCodingUnavailable() : "Coding remains unavailable while its protection is completed." : "Coding sessions require a folder the user chooses for this project in Home."}`;
             } catch (err) { return err instanceof Error ? err.message : "The project could not be created."; }
           },
           select: id => {
@@ -2564,32 +2721,40 @@ export class AgentHost {
             ? `<projects untrusted="true">${JSON.stringify({ ...this.projectSessionsState(), requestProjectId: this.turn?.projectId ?? null }).replace(/</g, "‹")}</projects>`
             : projectsStale,
         },
-        startCoding: tasks && this.o.codingWorkspace ? goal => {
-          if (!codingAvailable()) return CODING_UNAVAILABLE;
+        startCoding: tasks && (this.o.scopedCoding || this.o.codingWorkspace) ? (goal, sessionName) => {
+          if (!projectsCurrent()) return projectsStale;
+          if (codingOff()) return this.scopedCodingUnavailable();
           if (this.o.admin?.().features.actions === false) return "Your organisation has turned off Ember's actions. Tell the user.";
           const r = this.turn;
           if (!r) return "No user request belongs to this turn. Ask the user to repeat it.";
           if (this.vaultFillHolds || this.o.redact?.active) return "Coding is unavailable after a vault fill until Ember restarts. Tell the user.";
-          const workspace = this.o.codingWorkspace?.();
-          if (!workspace || !workspace.current()) return "No coding workspace is selected. Ask the user to choose a folder in Home under Coding workspace, then ask again. Do not start a desktop task instead.";
+          const workspace = captureCoding(r);
+          if (!workspace || !workspace.current()) return this.o.scopedCoding
+            ? "Open Projects in Home, select a project, choose its coding folder, then ask again. Do not start a desktop task instead."
+            : "No coding workspace is selected. Ask the user to choose a folder in Home under Coding workspace, then ask again. Do not start a desktop task instead.";
           const said = this.userWordsOf(r);
-          const t = tasks.start(goal, { target: {}, codingWorkspace: workspace, where: `in ${path.basename(workspace.path)}`, userWords: said.words, ...(said.checkWords !== undefined ? { checkWords: said.checkWords } : {}) });
-          if (t.status === "running" || t.status === "queued") {
-            this.codingTasks.add(t.id);
-            this.o.onCodingRunning?.(true);
-          }
+          if (!projectsCurrent() || !workspace.current()) return projectsStale;
+          const t = tasks.start(goal, { target: {}, codingWorkspace: workspace, where: `in ${path.basename(workspace.path)}`, userWords: said.words, agreed: said.agreed,
+            ...(said.commandWords !== undefined ? { commandWords: said.commandWords } : {}), ...(said.checkWords !== undefined ? { checkWords: said.checkWords } : {}), ...(said.typedOnly ? { typedOnly: true } : {}) });
+          recordCoding(t, workspace);
+          this.sessionProjects.attach(r.projectId ?? null, t, "coding", sessionName ?? titleOf(goal));
+          if (r.verifiedAt !== undefined) this.o.voiceTrust?.grant(t.id, r.verifiedAt);
           touch(r, t.id);
           if (t.status !== "running" && t.status !== "queued") return `Coding task ${t.id} could not start: ${t.result?.summary ?? "an error occurred"}. Tell the user.`;
           return t.status === "queued" ? `Coding task ${t.id} is queued in the selected workspace. Tell the user it hasn't started yet.` : `Coding task ${t.id} started in the selected workspace. It has a task card and Stop. Tell the user you're on it.`;
         } : undefined,
-        startMixed: tasks && takesTasks && this.o.codingWorkspace ? (first, firstGoal, secondGoal) => {
-          if (!codingAvailable()) return CODING_UNAVAILABLE;
+        startMixed: tasks && takesTasks && (this.o.scopedCoding || this.o.codingWorkspace) ? (first, firstGoal, secondGoal) => {
+          if (!projectsCurrent()) return projectsStale;
+          if (codingOff()) return this.scopedCodingUnavailable();
           if (this.o.admin?.().features.actions === false) return "Your organisation has turned off Ember's actions. Tell the user.";
           const r = this.turn;
           if (!r) return "No user request belongs to this turn. Ask the user to repeat it.";
           if (this.vaultFillHolds || this.o.redact?.active) return "Coding is unavailable after a vault fill until Ember restarts. Tell the user.";
-          const workspace = this.o.codingWorkspace?.();
-          if (!workspace || !workspace.current()) return "Choose a folder in Home under Coding workspace, then ask again.";
+          const workspace = captureCoding(r);
+          if (!workspace || !workspace.current()) return this.o.scopedCoding
+            ? "Open Projects in Home, select a project, choose its coding folder, then ask again."
+            : "Choose a folder in Home under Coding workspace, then ask again.";
+          const projectId = r.projectId ?? null;
           const said = this.userWordsOf(r);
           let binding: TargetBinding | undefined;
           if (targets) {
@@ -2597,13 +2762,13 @@ export class AgentHost {
             if (!selected.ok) return selected.why;
             const hands = targets.handsFor(selected.binding.id);
             if (!hands.ok) return hands.why;
-            binding = selected.binding;
+            binding = structuredClone(selected.binding);
           }
           const target = this.contextFor(r, binding);
           const screen = r.screen.join("\n") || undefined;
           const mode = modeInForce(this.o.settings.get().approvals, this.o.admin?.() ?? null);
           const epoch = this.stopEpoch, generation = this.gen;
-          const current = () => this.tasks === tasks && this.gen === generation && this.stopEpoch === epoch && !this.vaultFillHolds && !this.o.redact?.active && workspace.current()
+          const current = () => this.tasks === tasks && this.gen === generation && this.status.phase === "ready" && !this.providerMoved() && this.stopEpoch === epoch && !this.vaultFillHolds && !this.o.redact?.active && workspace.current()
             && this.o.admin?.().features.actions !== false && modeInForce(this.o.settings.get().approvals, this.o.admin?.() ?? null) === mode;
           const start = (kind: "coding" | "desktop", goal: string, handoffSummary?: string, deferHandoff = false) => {
             if (!current()) throw new Error("The task context changed.");
@@ -2615,7 +2780,8 @@ export class AgentHost {
               ...(kind === "coding" ? { codingWorkspace: workspace, ...(first === "coding" ? { codingCompletion: true as const } : {}), where: `in ${path.basename(workspace.path)}` }
                 : { ...(screen ? { screen } : {}), ...(binding ? { targetId: binding.id, where: whereWords(binding) } : {}) }),
             });
-            if (kind === "coding" && (t.status === "running" || t.status === "queued")) { this.codingTasks.add(t.id); this.o.onCodingRunning?.(true); }
+            if (kind === "coding") recordCoding(t, workspace);
+            this.sessionProjects.attach(projectId, t, kind, titleOf(goal));
             if (kind === "desktop" && binding) this.taskBindings.set(t.id, binding);
             if (r.verifiedAt !== undefined) this.o.voiceTrust?.grant(t.id, r.verifiedAt);
             touch(r, t.id);
@@ -2627,6 +2793,8 @@ export class AgentHost {
             const next = start(first === "coding" ? "desktop" : "coding", secondGoal, result?.summary);
             if (next.status !== "running" && next.status !== "queued") throw new Error("The next part could not start.");
           });
+          this.mixedCodingProjects.set(t.id, workspace.projectId);
+          this.mixedCodingCurrent.set(t.id, current);
           return `Task ${t.id} started. The second part will start after the first succeeds. Tell the user briefly.`;
         } : undefined,
         startSequence: tasks && takesTasks ? (steps, choice) => {
@@ -3295,7 +3463,7 @@ export class AgentHost {
         // `released`: this one goes through; any other asked while it is sent queues behind. (Still answering meanwhile,
         // for Home, until it is sent or dropped.)
         this.waitingAsks++;
-        try { await this.ask(h.text, h.context, h.epoch, { ...h.how, released: true }); } finally { this.waitingAsks--; this.turnChanged(); }
+        try { await this.askCaptured(h.text, h.context, h.epoch, { ...h.how, released: true }, { ...h.intake, counted: false }); } finally { this.waitingAsks--; this.turnChanged(); }
       }
     } finally {
       if (gen === this.releaseGen) {
@@ -3329,6 +3497,7 @@ export class AgentHost {
     // A credential change can arrive without a settings event while work delays the reconnect. Retire now so
     // restoring the previous key before a phase finishes cannot revive its original automatic continuation.
     this.clearDesktopSequences();
+    this.codingWorkspaceChanged();
     if (this.status.phase === "ready" && (!this.quietForSwitch() || this.held.length > 0)) {
       // (A connect already under way reads the service in force as it starts: nothing waits for it.)
       if (this.starting === 0) this.waitForSwitch(true);
@@ -3579,12 +3748,22 @@ export class AgentHost {
     // A request that waits (for a silent turn's end, or a connection) is answering, for Home, until it is queued or
     // dropped: never a moment's "idle" between its waits and its turn (home-r2-2: Home took that for its turn's end, and
     // said no reply was written as the reply came).
-    const waiting = { counted: false, projectId: this.sessionProjects.state().selectedProjectId };
-    try { return await this.asking(text, context, epoch, how, waiting); } finally { if (waiting.counted) { this.waitingAsks--; this.turnChanged(); } }
+    const projectId = this.sessionProjects.state().selectedProjectId;
+    return this.askCaptured(text, context, epoch, how, { counted: false, projectId, codingIntake: this.captureCodingIntake(projectId) });
+  }
+
+  private async askCaptured(text: string, context: Parameters<AgentHost["ask"]>[1], epoch: number,
+    how: NonNullable<Parameters<AgentHost["ask"]>[3]>, waiting: RequestIntake & { counted: boolean }): Promise<boolean> {
+    if (waiting.codingIntake) this.pendingCodingIntakes.add(waiting.codingIntake);
+    try { return await this.asking(text, context, epoch, how, waiting); }
+    finally {
+      if (waiting.codingIntake) this.pendingCodingIntakes.delete(waiting.codingIntake);
+      if (waiting.counted) { this.waitingAsks--; this.turnChanged(); }
+    }
   }
 
   /** ask() itself. `waiting.counted`: it counts in waitingAsks, from its first wait until it is queued (or ask ends). */
-  private async asking(text: string, context: Parameters<AgentHost["ask"]>[1], epoch: number, how: NonNullable<Parameters<AgentHost["ask"]>[3]>, waiting: { counted: boolean; projectId: string | null }): Promise<boolean> {
+  private async asking(text: string, context: Parameters<AgentHost["ask"]>[1], epoch: number, how: NonNullable<Parameters<AgentHost["ask"]>[3]>, waiting: RequestIntake & { counted: boolean }): Promise<boolean> {
     if (epoch !== this.stopEpoch) return false;
     if (this.stopsNow(text, how)) return true;
     // Said over a reply still on its way (a conversation): that reply goes, and this one is answered knowing why.
@@ -3710,7 +3889,7 @@ export class AgentHost {
       // others wait goes behind them, in order. The notice is the notice board's, so the conversation's own state (a
       // turn still streaming) is left as it is.
       this.o.log.info("agent.request_held", { kind: this.providerNow()?.kind ?? "copilot", waiting: this.held.length });
-      this.held.push({ text, context, epoch, how });
+      this.held.push({ text, context, epoch, how, intake: { projectId: waiting.projectId, codingIntake: waiting.codingIntake } });
       this.turnChanged();
       // It stays for as long as anything is held (no timer): it goes when they are sent or dropped.
       this.noticeBoard.post({ title: PROVIDER_SWITCH_TITLE, thought: PROVIDER_SWITCH_WAIT, actions: [], mood: "attention" });
@@ -3771,7 +3950,7 @@ export class AgentHost {
     }
     // Its turn may start only after the one running now: it takes this context then (see conversationEvent).
     const request: UserRequest = {
-      projectId: waiting.projectId, projectEpoch: epoch,
+      projectId: waiting.projectId, projectEpoch: epoch, codingIntake: waiting.codingIntake,
       target: context?.target ?? null, words: text, screen: context?.text ? [context.text] : [], ...(context?.targetId ? { targetId: context.targetId } : {}),
       ...(how.spoken ? { spoken: true } : {}),
       ...(how.manual ? { manual: true } : {}),
@@ -3825,6 +4004,60 @@ export class AgentHost {
   private projectOwners(): { library: string; holder: string } | null {
     if (this.status.phase !== "ready" || this.providerMoved()) return null;
     return workspaceOwners(this.providerNow(), this.githubAccountId);
+  }
+
+  /** One persistent command policy context for the isolated copy, using only captured user authority. */
+  private codingCommandContext(spec: TaskSpec, service: CommandService, signal: AbortSignal, current: () => boolean,
+    client: CopilotClient, provider: ProviderConfig | undefined, presenter: Presenter,
+    base: { audit: AuditLog; confirmer: Confirmer }): CommandFlowContext {
+    const words = spec.userWords ?? "", commandWords = spec.commandWords ?? words;
+    const checkWords = spec.checkWords ?? spec.commandWords ?? words;
+    const spokenOnly = spec.commandWords !== undefined && !spec.typedOnly;
+    const agreed = structuredClone(spec.agreed ?? []), refusals = new Refusals();
+    const injection = injectionSignals([spec.screen ?? "", spec.handoffSummary ?? ""]);
+    let tainted = injection.length > 0, saidNo = false, auditFailed = false;
+    const inputs = () => approvalInputs(modeInForce(this.o.settings.get().approvals, this.o.admin?.() ?? null));
+    const live = () => !signal.aborted && !auditFailed && current();
+    const own = words.split("\n").map(l => l.trim()).filter(Boolean).map((l, i, all) => i < all.length - 1 && !/[.!?…]$/.test(l) ? `${l}.` : l).join(" ");
+    const log = this.o.log.child(`coding-command-${spec.id}`);
+    if (injection.length) log.info("coding.injection_flagged", { task: spec.id, signals: injection });
+    return {
+      task: {
+        id: spec.id, title: spec.goal.length > 200 ? `${spec.goal.slice(0, 199)}…` : spec.goal,
+        commandWords: () => commandWords, checkWords: () => checkWords, agreed: () => agreed,
+        spokenWords: () => spokenOnly ? words : "", ownWords: () => own ? `“${own.length > 200 ? `${own.slice(0, 199).trimEnd()}…` : own}”` : "",
+        tainted: () => tainted, taint: () => { tainted = true; },
+        readFrom: () => [spec.screen, spec.handoffSummary].filter((text): text is string => !!text)
+          .map(text => ({ app: "", window: "", text: text.slice(0, 100_000), described: true })),
+      },
+      service, presenter, signal, isOver: () => !live(), log,
+      confirmer: { ask: async (question, askSignal) => {
+        if (!live()) return null;
+        const answer = await base.confirmer.ask(question, askSignal ? AbortSignal.any([signal, askSignal]) : signal);
+        if (answer === "deny") saidNo = true;
+        return live() ? answer : null;
+      }, howAnswered: question => base.confirmer.howAnswered?.(question) },
+      state: { cwd: "/work", downloaded: new Set(), running: false }, size: () => DEFAULT_TERM_SIZE,
+      emberPids: () => this.o.emberPids?.() ?? [], refusals,
+      onDeclined: expired => { if (!expired) saidNo = true; },
+      autonomy: () => live() && !tainted && !saidNo ? inputs().scopes : null,
+      autopilot: () => live() && inputs().autopilot,
+      reviewActive: () => live() && inputs().check,
+      review: async (input, reviewSignal) => {
+        if (!live() || !inputs().check) return null;
+        const answer = await copilotReviewer({ client, model: this.status.conductorModel, provider,
+          workDir: path.join(this.o.userData, "copilot", "empty-workdir"), log })(input, reviewSignal);
+        return live() && inputs().check ? answer : null;
+      },
+      audit: entry => {
+        try { base.audit.write(entry); } catch (error) {
+          auditFailed = true;
+          this.codingScopes.get(spec.id)?.worker?.invalidate();
+          log.warn("coding.audit_failed", { task: spec.id, event: entry.event });
+          if (!afterTheStep(entry)) throw error;
+        }
+      },
+    };
   }
 
   /** Project commands use the same classifier, review card, runner and audit as desktop tasks. */

@@ -440,6 +440,7 @@ it("accepts a single command and binds it to the chosen local folder", async () 
   const folder = path.join(dir, "project");
   await fs.mkdir(folder);
   const selected = projectCommandFolder(folder, privateDir);
+  expect(selected.path).toBe(await fs.realpath(folder));
   expect(selected.current()).toBe(true);
   expect(() => projectCommandFolder(privateDir, privateDir)).toThrow("outside");
   expect(projectCommandText.safeParse("npm test").success).toBe(true);

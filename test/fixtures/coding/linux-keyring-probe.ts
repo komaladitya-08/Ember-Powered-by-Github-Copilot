@@ -1,0 +1,29 @@
+/** A test-only static Linux x64 executable: three invalid/nonmutating key API calls, then their raw return values. */
+export function linuxKeyringProbe(): Buffer {
+  // No compiler, loader or libc is required inside the copied command tree. Each syscall's arguments are bounded.
+  const code = Buffer.from([
+    0x48, 0x83, 0xec, 0x18, // sub rsp,24: output slots
+    0x31, 0xff, 0x31, 0xf6, 0x31, 0xd2, 0x45, 0x31, 0xd2, 0x45, 0x31, 0xc0, // zero rdi,rsi,rdx,r10,r8
+    0xb8, 0xf8, 0x00, 0x00, 0x00, 0x0f, 0x05, // add_key(NULL,NULL,NULL,0,0)
+    0x48, 0x89, 0x04, 0x24, // mov [rsp],rax
+    0xb8, 0xf9, 0x00, 0x00, 0x00, 0x0f, 0x05, // request_key(NULL,NULL,NULL,0)
+    0x48, 0x89, 0x44, 0x24, 0x08, // mov [rsp+8],rax
+    0xbf, 0x0b, 0x00, 0x00, 0x00, // KEYCTL_READ
+    0xbe, 0xfd, 0xff, 0xff, 0xff, // KEY_SPEC_SESSION_KEYRING (-3)
+    0xb8, 0xfa, 0x00, 0x00, 0x00, 0x0f, 0x05, // keyctl(READ,SESSION,NULL,0)
+    0x48, 0x89, 0x44, 0x24, 0x10, // mov [rsp+16],rax
+    0xb8, 0x01, 0x00, 0x00, 0x00, 0xbf, 0x01, 0x00, 0x00, 0x00, // write stdout
+    0x48, 0x89, 0xe6, 0xba, 0x18, 0x00, 0x00, 0x00, 0x0f, 0x05,
+    0xb8, 0x3c, 0x00, 0x00, 0x00, 0x31, 0xff, 0x0f, 0x05, // exit(0)
+  ]);
+  const image = Buffer.alloc(64 + 56 + code.length);
+  image.set([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1]); // ELF64, little endian, version1
+  image.writeUInt16LE(2, 16); image.writeUInt16LE(62, 18); image.writeUInt32LE(1, 20);
+  image.writeBigUInt64LE(0x400078n, 24); image.writeBigUInt64LE(64n, 32);
+  image.writeUInt16LE(64, 52); image.writeUInt16LE(56, 54); image.writeUInt16LE(1, 56);
+  image.writeUInt32LE(1, 64); image.writeUInt32LE(5, 68); // one read/execute PT_LOAD
+  image.writeBigUInt64LE(0x400000n, 80); image.writeBigUInt64LE(0x400000n, 88);
+  image.writeBigUInt64LE(BigInt(image.length), 96); image.writeBigUInt64LE(BigInt(image.length), 104);
+  image.writeBigUInt64LE(0x1000n, 112); code.copy(image, 120);
+  return image;
+}

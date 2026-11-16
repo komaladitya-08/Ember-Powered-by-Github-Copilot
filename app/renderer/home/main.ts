@@ -46,8 +46,8 @@ import { targetsFoldRest } from "./computers-copy";
 import { ACTIVITY_EARLIER, ACTIVITY_LINES, activityLines, activityNote, activityProblemText, grantRemovedText, neverLookRemovedText, withEarlier } from "./copy";
 import { ACTIVITY_ENTRIES, ACTIVITY_MAX_ENTRIES } from "../../shared/ipc";
 import { mountProject } from "./project";
-import { mountCodingWorkspace } from "./coding-workspace";
 import { mountProjectSessions } from "./project-sessions";
+import { mountProjectCoding } from "./project-coding";
 import { homeConnectionView, ownProviderOffer, taskModelChoices } from "./first-run-copy";
 import { checkState, fixCommand, recheckMessage } from "./welcome-copy";
 import { holdsBack } from "../../shared/setup-attention";
@@ -736,6 +736,8 @@ const activityMore = () => activityRead.length >= activityWanted && activityWant
 function drawActivity(): void {
   const list = $("activity");
   const problem = $("activity-problem");
+  // Share the locale lookup across this draw's rows, refreshing it for the next draw's locale and time zone.
+  const rowTime = new Intl.DateTimeFormat([], { hour: "numeric", minute: "2-digit" });
   const held = document.activeElement instanceof HTMLElement && list.contains(document.activeElement) ? document.activeElement.dataset.key : undefined;
   const lines = activityLines(activityRead, entryWords(platform));
   const seen = new Map<string, number>();
@@ -752,7 +754,8 @@ function drawActivity(): void {
     const li = document.createElement("li");
     li.dataset.key = `${l.t}|${n}`;
     li.dataset.line = String(i);
-    const t = Object.assign(document.createElement("time"), { textContent: time(l.t), dateTime: l.t });
+    const date = new Date(l.t);
+    const t = Object.assign(document.createElement("time"), { textContent: Number.isNaN(date.getTime()) ? time(l.t) : rowTime.format(date), dateTime: l.t });
     const tag = Object.assign(document.createElement("span"), { className: `tag ${l.view.cls}`, textContent: l.view.tag });
     const what = Object.assign(document.createElement("span"), { className: "what", textContent: l.view.what });
     if (l.view.why) what.append(Object.assign(document.createElement("span"), { className: "why", textContent: l.view.why }));
@@ -907,8 +910,8 @@ function renderTaskReasoning(): void {
 }
 
 const projectReady = mountProject();
-mountCodingWorkspace();
 mountProjectSessions();
+mountProjectCoding();
 function renderAgent(a: AgentStatus | null): void {
   if (!a) return;
   // Connected again after a send was refused for want of a connection: its reason no longer holds (reliability-c7-2).
@@ -2430,7 +2433,11 @@ function showPane(p: string, glide = false, remember = true): void {
  * and the like with the current link and its badge off to the side (home-c7-1), as did links that show after the page
  * has loaded (Computers, Commands: home-x7-1). The row alone scrolls, never the page.
  */
+let shownJumpLayout = "";
+const jumpLayout = () => [$("jump").clientWidth, $("jump").clientHeight,
+  ...jumpLinks.flatMap(a => [a.offsetLeft, a.offsetTop, a.offsetWidth, a.offsetHeight])].join(",");
 function showCurrentLink(): void {
+  shownJumpLayout = jumpLayout();
   const row = $("jump");
   const a = jumpLinks.find(l => l.getAttribute("aria-current") === "true");
   if (!a || row.scrollWidth <= row.clientWidth) return;
@@ -2513,13 +2520,20 @@ const linksMoved = new MutationObserver(changes => {
   if (changes.some(c => c.attributeName === "hidden")) showCurrentLink();
 });
 for (const a of jumpLinks) linksMoved.observe(a, { attributes: true, attributeFilter: ["hidden", "class"] });
-new ResizeObserver(() => { placeHighlight(false); showCurrentLink(); }).observe($("jump"));
+// Badge text and a font arriving can widen links without resizing the row itself (home-c7-1).
+const jumpSizes = new ResizeObserver(() => {
+  placeHighlight(false);
+  // A hidden-link mutation or pane selection may already have positioned this layout before its resize arrives.
+  // Replaying that notification must not undo a later manual scroll; actual geometry changes still follow the pane.
+  if (jumpLayout() !== shownJumpLayout) showCurrentLink();
+});
+for (const el of [$("jump"), ...jumpLinks]) jumpSizes.observe(el, { box: "border-box" });
 
 // ───── Search settings: at the top of the sidebar, it narrows the panes to those that hold the words typed, and
 // Enter goes to the first setting found (System Settings' search, HIG/search-fields) ─────
 const SEARCHED = "h2, h3.sub, label, summary, .hint, .row-note, .intro, .agent-actions > button, .pick-row label";
-function searchItems(): { pane: string; text: string; alias?: string; el: HTMLElement }[] {
-  const items: { pane: string; text: string; alias?: string; el: HTMLElement }[] = [];
+function searchItems(): { pane: string; text: string; alias?: string; description: boolean; el: HTMLElement }[] {
+  const items: { pane: string; text: string; alias?: string; description: boolean; el: HTMLElement }[] = [];
   for (const el of document.querySelectorAll<HTMLElement>(`.home > [data-pane] :is(${SEARCHED})`)) {
     const p = paneOf(el);
     // A fold's heading is found as its summary, once, by the heading's words (the note beside it isn't its name).
@@ -2530,7 +2544,8 @@ function searchItems(): { pane: string; text: string; alias?: string; el: HTMLEl
     if (!p || hiddenHere(el) || !text.trim()) continue;
     const pick = el instanceof HTMLLabelElement && el.control instanceof HTMLSelectElement ? el.control : el.querySelector("select");
     const options = pick ? [...pick.options].map(o => o.textContent ?? "").join(" ") : "";
-    items.push({ pane: p, text, alias: [SEARCH_ALIASES[(head ?? el).id], options].filter(Boolean).join(" ") || undefined, el });
+    items.push({ pane: p, text, alias: [SEARCH_ALIASES[(head ?? el).id], options].filter(Boolean).join(" ") || undefined,
+      description: el.matches(".hint, .row-note, .intro"), el });
   }
   return items;
 }
@@ -2824,7 +2839,7 @@ function renderVoice(v: VoiceStatus): void {
   // Teaching Ember a voice: its prompts are what screen readers hear; the voice line only when it changes.
   const said = renderMatch();
   if (said) voiceLive(said);
-  if (said || v.state === "active") clearTimeout(voiceLineSoon);
+  if (said || v.state === "active" || !$("consent-error").hidden) clearTimeout(voiceLineSoon);
   else if (v.state !== "downloading" && text !== voiceLine) { clearTimeout(voiceLineSoon); voiceLineSoon = setTimeout(() => voiceLive(text), VOICE_LINE_SETTLE_MS); }
   // Emptied, unsaid, while a window is open: browse mode read "Listening for “Ember”" there beside "Hearing you…"
   // (voice-listening-v4-2). An emptied status line says nothing.
@@ -2954,7 +2969,11 @@ $("wake").addEventListener("change", e => {
  */
 let consentRun = 0;
 let consentSaving = false;
-const consentError = (text: string) => { $("consent-error").textContent = text; $("consent-error").hidden = !text; if (text) voiceLive(text); };
+const consentError = (text: string) => {
+  $("consent-error").textContent = text; $("consent-error").hidden = !text;
+  // An older status must not replace the save failure after its one-second announcement settles.
+  if (text) { clearTimeout(voiceLineSoon); voiceLive(text); }
+};
 const consentClosed = () => { consentRun++; consentSaving = false; consentError(""); $("consent-yes").removeAttribute("aria-busy"); };
 $("consent-yes").addEventListener("click", () => {
   if ($("consent-yes").getAttribute("aria-disabled") === "true" || consentSaving || !agreeArmed("consent-yes")) return;

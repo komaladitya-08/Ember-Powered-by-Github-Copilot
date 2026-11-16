@@ -37,6 +37,7 @@ export function mountProjectSessions(): void {
   let drawn = "";
   let plansDrawn = "";
   let reviewed: { projectId: string; sequenceId: string; signature: string } | undefined;
+  let announcedProjectId: string | null = null;
 
   const active = () => state.projects.find(p => p.id === state.selectedProjectId);
   const ongoing = (session: ProjectSession) => !["done", "failed", "stopped"].includes(session.status);
@@ -79,6 +80,10 @@ export function mountProjectSessions(): void {
       select.dataset.options = JSON.stringify(options.map(p => [p.id, p.name]));
     }
     select.value = state.selectedProjectId ?? "";
+    if (announcedProjectId !== state.selectedProjectId) {
+      announcedProjectId = state.selectedProjectId;
+      window.dispatchEvent(new CustomEvent("ember-project-changed", { detail: { projectId: announcedProjectId } }));
+    }
     select.disabled = !loaded || pending;
     add.disabled = !loaded || pending;
     forget.disabled = !project || pending || project.sessions.some(ongoing) || !!project.sequences?.some(plan => plan.status === "active");

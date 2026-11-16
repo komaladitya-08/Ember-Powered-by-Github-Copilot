@@ -40,6 +40,10 @@ jobs:
     # 40, not 25: at d41898c the integration step (the speech tests among them) took 16 min 24 s, and the job ran
     # out of time 2 min 43 s into the renderer journeys with nothing failing (install-docs-r10-1).
     timeout-minutes: 40
+    env:
+      # Missing kernel/toolchain support must fail the configured coding proofs rather than silently skip them.
+      EMBER_REQUIRE_CODING_ISOLATION: "1"
+      EMBER_TEST_CODING_NODE: "/usr/lib/ember-coding-test-node/bin/node"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -48,6 +52,25 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - name: Trusted Node and namespaces for isolated coding proofs
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap xvfb dbus-x11
+          # setup-node may place its authenticated download in a runner-writable cache. The tested sandbox accepts
+          # only root-owned, non-writable tool ancestors, so keep a fresh copy before running repository code.
+          # The hosted image deliberately makes /opt writable, including its root; fixing only /opt/node is not enough.
+          # https://github.com/actions/runner-images/blob/ubuntu24/20261111.370/images/ubuntu/scripts/build/configure-system.sh
+          coding_node_source="$(readlink -f "$(command -v node)")"
+          sudo install -d -m 755 -o root -g root /usr/lib/ember-coding-test-node /usr/lib/ember-coding-test-node/bin
+          sudo install -m 755 -o root -g root "$coding_node_source" /usr/lib/ember-coding-test-node/bin/node
+          # Fixed paths and metadata only: distinguish an ancestor/asset problem from native namespace denial early.
+          printf '%s\n' 'coding.ci_stage=trusted_asset_metadata'
+          stat -c 'coding.asset uid=%u mode=%a links=%h %n' / /usr /usr/lib /usr/lib/ember-coding-test-node /usr/lib/ember-coding-test-node/bin /usr/lib/ember-coding-test-node/bin/node /usr/bin/bwrap
+          /usr/lib/ember-coding-test-node/bin/node --version
+          printf '%s\n' 'coding.ci_stage=namespace_probe'
+          /usr/lib/ember-coding-test-node/bin/node scripts/ci/coding-userns-preflight.mjs
+          # Tests select this isolated-command asset explicitly. Keep setup-node's writable npm prefix for npm setup.
       # The release's notes link the README at the tag: fail the tag's run at once if it says this version isn't out,
       # or if GitHub would refuse the notes, which the release job finds only after every other job.
       - name: The tagged README describes this version and its notes fit a release (docs/DEVELOPING.md §15 step 1)
@@ -78,6 +101,20 @@ jobs:
         env:
           EMBER_VOICE_TEST: "1"
       - run: npm run build
+      - name: Real Electron project coding, approvals, review, export and Forget
+        timeout-minutes: 5
+        env:
+          EMBER_ELECTRON_CODING_TEST: "1"
+        run: |
+          node node_modules/electron/install.js
+          # Chromium chooses an existing adjacent helper before CHROME_DEVEL_SANDBOX. Point that exact
+          # location at the fresh root-owned helper, as the Linux package does; keep the normal sandbox on.
+          # /usr/lib has trusted ancestors; the hosted image's /opt may be writable by ordinary users.
+          sudo install -d -m 755 -o root -g root /usr/lib/ember-test-electron
+          sudo install -m 4755 -o root -g root node_modules/electron/dist/chrome-sandbox /usr/lib/ember-test-electron/chrome-sandbox
+          ln -sfn /usr/lib/ember-test-electron/chrome-sandbox node_modules/electron/dist/chrome-sandbox
+          test "$(stat -Lc '%u:%g:%a' node_modules/electron/dist/chrome-sandbox)" = "0:0:4755"
+          dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24" npm run test:integration -- test/integration/project-coding-electron.test.ts
       - name: Conversation, Ask, memory, first-run and local inventory renderer journeys
         env:
           EMBER_BROWSER_TEST: "1"
@@ -93,7 +130,7 @@ jobs:
         run: |
           browser_path="$(command -v google-chrome || command -v chromium || command -v chromium-browser)"
           test -n "$browser_path"
-          EMBER_CHROMIUM_PATH="$browser_path" npm run test:integration -- test/integration/ask-renderer.test.ts test/integration/prompt-clarification-renderer.test.ts test/integration/home-conversation-renderer.test.ts test/integration/home-streaming-renderer.test.ts test/integration/home-memory-renderer.test.ts test/integration/home-signout-forget-renderer.test.ts test/integration/home-mic-recipient-renderer.test.ts test/integration/home-speech-consent-renderer.test.ts test/integration/reminders-desk-renderer.test.ts test/integration/home-natural-voice-renderer.test.ts test/integration/home-first-run-renderer.test.ts test/integration/home-integrations-renderer.test.ts test/integration/project-sessions-renderer.test.ts test/integration/project-coordination-runtime.test.ts test/integration/home-panes-renderer.test.ts test/integration/home-status-race-renderer.test.ts test/integration/vault-form-renderer.test.ts test/integration/home-vault-renderer.test.ts
+          EMBER_CHROMIUM_PATH="$browser_path" npm run test:integration -- test/integration/ask-renderer.test.ts test/integration/prompt-clarification-renderer.test.ts test/integration/home-conversation-renderer.test.ts test/integration/home-streaming-renderer.test.ts test/integration/home-memory-renderer.test.ts test/integration/home-signout-forget-renderer.test.ts test/integration/home-mic-recipient-renderer.test.ts test/integration/home-speech-consent-renderer.test.ts test/integration/reminders-desk-renderer.test.ts test/integration/home-natural-voice-renderer.test.ts test/integration/home-first-run-renderer.test.ts test/integration/home-integrations-renderer.test.ts test/integration/project-sessions-renderer.test.ts test/integration/project-coding-renderer.test.ts test/integration/project-coding-runtime.test.ts test/integration/project-coordination-runtime.test.ts test/integration/home-panes-renderer.test.ts test/integration/home-status-race-renderer.test.ts test/integration/vault-form-renderer.test.ts test/integration/home-vault-renderer.test.ts
       - run: npm run build:lab
       - name: The built-in GitHub App client id starts a sign-in (GitHub answers with a device code, never printed)
         run: node scripts/check-client-id.mjs
@@ -571,6 +608,9 @@ jobs:
       - name: Experimental LPAC fixture (native token, private job, ACL and descendant shutdown)
         timeout-minutes: 5
         run: node scripts/run-integration.mjs test/integration/experimental-windows-lpac-native.test.ts
+      - name: Isolated PowerShell toolchain compatibility (fresh LPAC-only assets)
+        timeout-minutes: 5
+        run: node scripts/run-integration.mjs test/integration/isolated-windows-command-powershell-native.test.ts
       # The speech models go inside the app, so one download carries everything Ember runs on the computer (network-
       # restricted PCs never need github.com for voice).
       - name: Speech models to bundle (cached; verified by SHA-256)

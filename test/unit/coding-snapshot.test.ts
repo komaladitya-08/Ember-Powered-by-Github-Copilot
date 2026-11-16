@@ -18,6 +18,21 @@ async function fixture() {
 }
 
 describe.skipIf(process.platform !== "linux")("isolated coding snapshot primitive", () => {
+  it("omits only explicitly declared root metadata/dependencies and records types without following omitted links", async () => {
+    const { source, base, secret } = await fixture();
+    await fs.writeFile(path.join(source, "main.js"), "ordinary source");
+    await fs.mkdir(path.join(source, ".git")); await fs.writeFile(path.join(source, ".git", "HEAD"), "private repository metadata");
+    await fs.symlink(secret, path.join(source, "node_modules"));
+    await expect(createCodingSnapshot(source, base, [secret])).rejects.toThrow("symbolic link");
+    const result = await createCodingSnapshot(source, base, [secret], {}, [".git", "node_modules"]);
+    try {
+      expect(result.entries.map(entry => entry.path)).toEqual(["main.js"]); expect(result.directories).toEqual([]);
+      expect(result.excluded).toEqual([{ path: ".git", kind: "directory" }, { path: "node_modules", kind: "link" }]);
+      expect(await fs.readdir(result.directory)).toEqual(["main.js"]);
+    } finally { await result.dispose(); }
+    await expect(createCodingSnapshot(source, base, [secret], {}, ["dist"] as never)).rejects.toThrow("exclusions");
+  });
+
   it("copies ordinary files to independent inodes with hashes and removes the copy", async () => {
     const { source, base, secret } = await fixture();
     await fs.mkdir(path.join(source, ".git"));
@@ -120,5 +135,22 @@ describe.skipIf(process.platform !== "linux")("isolated coding snapshot primitiv
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toMatch(/filesystem boundary/);
     expect(await fs.readdir(base)).toEqual([]);
+  }, 30_000);
+
+  it("rejects a protected subdirectory bind-mounted as either source or dependency root", async ctx => {
+    const { root, source, base, secret } = await fixture();
+    const probe = spawnSync("bwrap", ["--ro-bind", "/", "/", "--proc", "/proc", "--", process.execPath, "-e", "process.exit(0)"], { encoding: "utf8" });
+    if (probe.error || probe.status !== 0) { ctx.skip(); return; }
+    const child = path.join(secret, "nested"); await fs.mkdir(child); await fs.writeFile(path.join(child, "ordinary.js"), "private directory bytes");
+    const snapshotBundle = path.join(root, "source-reader.cjs"), dependenciesBundle = path.join(root, "dependency-reader.cjs");
+    await build({ entryPoints: [path.resolve("app/main/agent/coding-snapshot.ts")], outfile: snapshotBundle, platform: "node", format: "cjs", bundle: true, logLevel: "silent" });
+    await build({ entryPoints: [path.resolve("app/main/agent/coding-dependency-snapshot.ts")], outfile: dependenciesBundle, platform: "node", format: "cjs", bundle: true, logLevel: "silent" });
+    const script = "const [snapshot,deps,source,base,protectedRoot]=process.argv.slice(1);" +
+      "Promise.allSettled([require(snapshot).createCodingSnapshot(source,base,[protectedRoot]),require(deps).createCodingDependencySnapshot({source:{path:source,current:()=>true},baseDir:base,protectedPaths:[protectedRoot]})])" +
+      ".then(results=>{for(const r of results){if(r.status==='fulfilled'){process.exitCode=1;process.stderr.write('unexpected accepted protected alias')}else process.stdout.write(r.reason.message+'\\n')}})";
+    const result = spawnSync("bwrap", ["--ro-bind", "/", "/", "--proc", "/proc", "--ro-bind", secret, secret, "--ro-bind", child, source,
+      "--bind", base, base, "--", process.execPath, "-e", script, snapshotBundle, dependenciesBundle, source, base, secret], { encoding: "utf8", timeout: 20_000 });
+    expect(result.status, result.stderr).toBe(0); expect(result.stdout.split("\n").filter(Boolean)).toHaveLength(2);
+    expect(result.stdout).toMatch(/protected/); expect(await fs.readdir(base)).toEqual([]);
   }, 30_000);
 });

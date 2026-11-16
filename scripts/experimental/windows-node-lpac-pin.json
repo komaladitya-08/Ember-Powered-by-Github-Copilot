@@ -1,0 +1,31 @@
+{
+  "verification": "The Windows ZIP and EXE SHA256 entries below were independently copied from each official nodejs.org SHASUMS256.txt after gpg --verify reported VALIDSIG 5BE8A3F6C8A5C01D106C0AD820B1A390B168D356 (Antoine du Hamel). The public keyring is nodejs/release-keys gpg-only-active-keys/pubring.kbx at commit 481637f813e912c4aa3622d7964ab426c97b8e8d, the existing repository trust root. Verified on 2026-11-15. No Linux digest is reused for Windows. Certificate fingerprints are metadata parsed from the official Windows PE certificate directory; Windows must still verify a Valid Authenticode chain/timestamp, exact OpenJS organization and this certificate SHA256 on the staged, hash-pinned EXE before any launch. Windows execution has not been established by this manifest.",
+  "versions": {
+    "22.23.5": {
+      "version": "22.23.5",
+      "baseUrl": "https://nodejs.org/dist/v22.23.5/",
+      "archive": "node-v22.23.5-win-x64.zip",
+      "archiveBytes": 35630346,
+      "archiveSha256": "4a191082e9706866830379d577d2cc8a50c776fcd9436a8d061b063ed0d9a0e3",
+      "member": "node-v22.23.5-win-x64/node.exe",
+      "executableBytes": 87077704,
+      "executableSha256": "247e9693d316da9857e44990e5e11709f596f18112251b8026ec6eed80bdf38a",
+      "signerOrganization": "OpenJS Foundation",
+      "signerCertificateSha256": "46fcfbdd6f3dc69ed0b200aaeada3bb2316856273d81f358d66c340dc13b7d06",
+      "isolationFlag": "--experimental-test-isolation=none"
+    },
+    "24.21.0": {
+      "version": "24.21.0",
+      "baseUrl": "https://nodejs.org/dist/v24.21.0/",
+      "archive": "node-v24.21.0-win-x64.zip",
+      "archiveBytes": 37618919,
+      "archiveSha256": "158f7685b44de51f6c0df1d153526cbcd3e1bc739a8dfc607721cef75de9e541",
+      "member": "node-v24.21.0-win-x64/node.exe",
+      "executableBytes": 93580104,
+      "executableSha256": "ba4e6d110e8c1592a1ecd390f6b05f3da124b13871a5be62b341a07a853c6c32",
+      "signerOrganization": "OpenJS Foundation",
+      "signerCertificateSha256": "5c6f2342b18ca97d20dca08a4e62de9503c386ca370f7b425ce6b0373317d683",
+      "isolationFlag": "--experimental-test-isolation=none"
+    }
+  }
+}

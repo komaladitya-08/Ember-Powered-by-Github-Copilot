@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "purpose": "restricted ETW registration compatibility experiment; NOT a product runtime",
+  "powerShellVersion": "7.6.10",
+  "sourceCommit": "16ac95d24d87c61a5d8300dae2d0619db06c555c",
+  "sourceTagObject": "0aadef78a6a2e719671b63ca882331998879124f",
+  "sdkVersion": "10.0.404",
+  "archiveUrl": "https://github.com/PowerShell/PowerShell/releases/download/v7.6.10/PowerShell-7.6.10-win-x64.zip",
+  "archiveSha256": "7d871531806eb1646264e4bbabd9f0c30c23355591bc756bb9909448c29ae166",
+  "sourceFile": "src/Microsoft.PowerShell.CoreCLR.Eventing/DotNetCode/Eventing/EventProvider.cs",
+  "sourceFileSha256": "f4b7636da5aec1b5deed4a1e6827211aac9a8a3ecbbdb9683f7f39ed2b5abf36",
+  "patchedFileSha256": "67586f12f1bb744dd30b96f83400176729a1a964b25b4e1a3ca19e6f23a3cb45",
+  "patchSha256": "8e3fd0b56f7f93852e88a838ae88f919aa59b4a55e9bc1e624a0dbf7a139d420"
+}

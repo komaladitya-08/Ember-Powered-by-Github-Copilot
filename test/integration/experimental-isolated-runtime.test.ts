@@ -1,5 +1,5 @@
 // Offline Linux experiment: not a production isolation, authentication or copy-back test.
-import { expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import fsAsync from "node:fs/promises";
 import os from "node:os";
@@ -11,6 +11,41 @@ import { locateRuntime, runtimeFor } from "../../app/main/agent/runtime";
 import { startMockLlm } from "../mock-llm/server.mjs";
 
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; }
+// Capture the actual operations once. A timed-out/failed earlier test must never become the next spy's delegate.
+const originalOpen = fsAsync.open.bind(fsAsync), originalRemove = fsAsync.rm.bind(fsAsync);
+afterEach(() => { vi.restoreAllMocks(); });
+
+function waitForExportPause(paused: Promise<void>, exporting: Promise<unknown>): Promise<void> {
+  return Promise.race([paused, exporting.then(() => { throw new Error("The export finished before reaching its fixture pause."); })]);
+}
+
+async function drainPausedExport(release: () => void, restore: readonly (() => void)[], exporting: Promise<unknown> | undefined, close: () => Promise<void>) {
+  release();
+  let failure: { error: unknown } | null = null;
+  for (const undo of [...restore, () => vi.restoreAllMocks()]) {
+    try { undo(); } catch (error) { failure ??= { error }; }
+  }
+  const ended = await Promise.allSettled([exporting ?? Promise.resolve(), Promise.resolve().then(close)]);
+  const stopped = ended[1];
+  if (stopped.status === "rejected") failure ??= { error: stopped.reason };
+  return { closed: stopped.status === "fulfilled", failure };
+}
+
+it("reports an export failure before a fixture pause instead of waiting for the test deadline", async () => {
+  const paused = deferred<void>(), original = new Error("Export failed before capture");
+  await expect(waitForExportPause(paused.promise, Promise.reject(original))).rejects.toBe(original);
+  await expect(waitForExportPause(paused.promise, Promise.resolve())).rejects.toThrow("finished before reaching");
+});
+
+it("releases fixture pauses, restores every spy, and drains both owned operations even when restoration fails", async () => {
+  const exporting = deferred<void>(), closing = deferred<void>(), restorationError = new Error("restore failed");
+  const actions: string[] = []; let settled = false;
+  const drained = drainPausedExport(() => { actions.push("released"); }, [() => { actions.push("first restore"); throw restorationError; }, () => { actions.push("second restore"); }],
+    exporting.promise, () => { actions.push("close started"); return closing.promise; }).then(result => { settled = true; return result; });
+  await Promise.resolve(); expect(actions).toEqual(["released", "first restore", "second restore", "close started"]);
+  closing.resolve(); await Promise.resolve(); expect(settled).toBe(false);
+  exporting.resolve(); expect(await drained).toEqual({ closed: true, failure: { error: restorationError } });
+});
 
 it.skipIf(process.platform !== "linux" || process.arch !== "x64")("defaults to a separate network namespace and refuses non-local model endpoints", async ctx => {
   const probe = spawnSync("/usr/bin/bwrap", ["--unshare-net", "--ro-bind", "/", "/", "--", "/usr/bin/true"], { stdio: "ignore", timeout: 5000 });
@@ -51,13 +86,12 @@ it.skipIf(process.platform !== "linux" || process.arch !== "x64")("refuses an un
     expect(fs.existsSync(copy)).toBe(true); expect(fs.readdirSync(exports)).toEqual([]);
     fs.unlinkSync(path.join(copy, "alias")); fs.writeFileSync(path.join(copy, "a"), "proposal");
     fs.symlinkSync(privateFile, path.join(source, "unverifiable"));
-    const remove = fsAsync.rm.bind(fsAsync);
     let failedCleanup = false;
     const cleanupFault = vi.spyOn(fsAsync, "rm").mockImplementation(async (file, options) => {
       if (!failedCleanup && typeof file === "string" && file !== copy && path.basename(file).startsWith("ember-coding-snapshot-") && fs.readdirSync(exports).length > 0) {
         failedCleanup = true; throw new Error("Snapshot cleanup failed after the export committed");
       }
-      return remove(file, options);
+      return originalRemove(file, options);
     });
     let exported: Awaited<ReturnType<ExperimentalIsolatedRuntime["exportReview"]>>;
     try { exported = await instance.exportReview(exports); } finally { cleanupFault.mockRestore(); }
@@ -83,7 +117,8 @@ for (const phase of ["capture", "commit-cleanup", "capture-failure"] as const) {
     fs.writeFileSync(path.join(source, "a"), "original");
     const { id, exe } = runtimeFor("linux", process.arch);
     const runtimePath = locateRuntime({ appPath: process.cwd(), runtimeId: id, exe }).path;
-    let instance: ExperimentalIsolatedRuntime | undefined;
+    let instance: ExperimentalIsolatedRuntime | undefined, exporting: ReturnType<ExperimentalIsolatedRuntime["exportReview"]> | undefined;
+    let bodyFailure: { error: unknown } | null = null, cleanupFailure: { error: unknown } | null = null;
     const paused = deferred<void>(), release = deferred<void>();
     const restore: (() => void)[] = [];
     try {
@@ -92,28 +127,26 @@ for (const phase of ["capture", "commit-cleanup", "capture-failure"] as const) {
       fs.writeFileSync(path.join(copy, "a"), "proposal");
       let held = false;
       if (phase === "commit-cleanup") {
-        const remove = fsAsync.rm.bind(fsAsync);
         const spy = vi.spyOn(fsAsync, "rm").mockImplementation(async (file, options) => {
           if (!held && typeof file === "string" && path.basename(file).startsWith("ember-isolation-state-")) {
             held = true; paused.resolve(); await release.promise;
           }
-          return remove(file, options);
+          return originalRemove(file, options);
         });
         restore.push(() => spy.mockRestore());
       } else {
-        const open = fsAsync.open.bind(fsAsync);
         const spy = vi.spyOn(fsAsync, "open").mockImplementation(async (file, flags, mode) => {
           if (!held && file === copy) {
             held = true; paused.resolve(); await release.promise;
             if (phase === "capture-failure") throw new Error("Paused result capture failed");
           }
-          return open(file, flags, mode);
+          return originalOpen(file, flags, mode);
         });
         restore.push(() => spy.mockRestore());
       }
-      const exporting = instance.exportReview(exports);
+      exporting = instance.exportReview(exports);
       const observed = exporting.then(value => ({ value, error: null }), error => ({ value: null, error }));
-      await paused.promise;
+      await waitForExportPause(paused.promise, exporting);
       const closing = instance.close();
       expect(instance.close()).toBe(closing);
       let closed = false; void closing.then(() => { closed = true; });
@@ -135,10 +168,16 @@ for (const phase of ["capture", "commit-cleanup", "capture-failure"] as const) {
         const document = JSON.parse(fs.readFileSync(path.join(result.value!.directory, "review.json"), "utf8"));
         expect(document.proposed.find((e: { path: string }) => e.path === "a").base64).toBe(Buffer.from("proposal").toString("base64"));
       }
-    } finally {
-      release.resolve(); for (const undo of restore) undo();
-      await instance?.close(); fs.rmSync(root, { recursive: true, force: true });
+    } catch (error) { bodyFailure = { error }; }
+    finally {
+      const drained = await drainPausedExport(() => release.resolve(), restore, exporting, async () => { await instance?.close(); });
+      if (instance && drained.closed) {
+        try { fs.rmSync(root, { recursive: true, force: true }); } catch (error) { cleanupFailure = { error }; }
+      }
+      cleanupFailure ??= drained.failure;
     }
+    if (bodyFailure) throw bodyFailure.error;
+    if (cleanupFailure) throw cleanupFailure.error;
   }, 60_000);
 }
 

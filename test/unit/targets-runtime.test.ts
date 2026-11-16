@@ -94,6 +94,7 @@ function fakeLink(hostId: string, w: Welcome = welcome()) {
 }
 
 interface RigOptions {
+  emberPaths?: readonly string[];
   os?: OS;
   admin?: LoadedAdminPolicy;
   hands?: Hands | null;
@@ -268,6 +269,7 @@ function rig(o: RigOptions = {}) {
     execPath: "/opt/ember/ember", packaged: true, settings, admin: () => admin, audit: () => audit, confirmer: () => confirmer,
     localHands: hands, showState, notify: vi.fn(), openSettings, ipc, isHome: s => s.id === 1,
     windows: { command: windowsMade, prompt: windowsMade }, fetch: vi.fn(), devEnv: () => undefined,
+    emberPaths: o.emberPaths,
     elevated: o.elevated ?? (() => false), emberPids: () => [10, 11], extraPath: () => [], jobHost: null,
     ...(o.keyHint ? { keyHint: o.keyHint } : {}),
   };
@@ -2166,6 +2168,16 @@ describe("small helpers", () => {
     expect(hostIdFor("Build-01.Example.com", new Set())).toBe("build-01.example.com");
     expect(hostIdFor("build 01", new Set(["build-01"]))).toBe("build-01-2");
     expect(hostIdFor("__", new Set())).toBe("host");
+  });
+
+  it("passes selected private coding roots to local and host-aware WSL facts only", async () => {
+    const roots = ["C:\\Temp\\ember-coding-unsupported", "D:\\RealTemp\\ember-coding-unsupported"];
+    const r = rig({ os: "win32", emberPaths: roots });
+    expect(r.runnerOpts().ember.paths).toEqual(expect.arrayContaining(roots));
+    expect(r.wslMade).toHaveBeenCalledWith(expect.objectContaining({ ember: { winPaths: expect.arrayContaining(roots) } }));
+    roots.length = 0;
+    expect(r.runnerOpts().ember.paths).toContain("D:\\RealTemp\\ember-coding-unsupported");
+    await r.t.dispose();
   });
 
   it("names Ember's paths per OS and its process names", () => {

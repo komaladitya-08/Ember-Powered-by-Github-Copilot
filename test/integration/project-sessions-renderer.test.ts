@@ -47,8 +47,12 @@ describe.skipIf(process.env.EMBER_UIUX_TEST !== "1")("Projects and delegated ses
     const bundle = await build({ stdin: { contents: 'import { mountProjectSessions } from "./app/renderer/home/project-sessions"; mountProjectSessions();', resolveDir: process.cwd() }, bundle: true, platform: "browser", write: false });
     script = bundle.outputFiles[0].text;
     const html = fs.readFileSync("app/renderer/home/index.html", "utf8");
-    markup = html.slice(html.indexOf('<div class="group" id="project-sessions"'), html.indexOf('<div class="group" id="coding-workspace"'));
     browser = await chromium.launch({ executablePath: process.env.EMBER_CHROMIUM_PATH ?? "/usr/bin/chromium", headless: true, args: ["--no-sandbox"] });
+    const template = await browser.newPage();
+    try {
+      markup = await template.evaluate(html => new DOMParser().parseFromString(html, "text/html")
+        .getElementById("project-sessions")!.outerHTML, html);
+    } finally { await template.close(); }
   }, 60_000);
   afterAll(async () => { await browser?.close(); });
 

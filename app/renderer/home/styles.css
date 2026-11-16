@@ -126,8 +126,31 @@ h2[tabindex="-1"]:focus, .w-lead:focus { outline: none; }
 #project-sessions-plans h4, #project-sessions-recovery h4 { margin: 0; font: var(--type-headline); }
 #project-sessions-plans p { margin: 6px 0; white-space: pre-wrap; }
 #project-sessions-recovery:not([hidden]) { display: grid; gap: 8px; }
+/* Coding results stay in the project pane as plain reviewable content, with the original folder left untouched. */
+#project-coding { min-width: 0; }
+#project-coding :is(p, li, h4), #project-coding .agent-actions { min-width: 0; overflow-wrap: anywhere; }
+#project-coding .agent-actions .btn { max-width: 100%; overflow-wrap: anywhere; }
+#project-coding-results { list-style: none; padding-inline: 0; }
+#project-coding-results li { padding-block: 12px; }
+#project-coding-results li:first-child { padding-top: 0; }
+#project-coding-results li + li { border-top: 1px solid var(--line); }
+#project-coding :is(h4, p) { margin: 0; }
+#project-coding h4 { font: var(--type-headline); }
+#project-coding-results p { margin-top: 6px; white-space: pre-wrap; }
+#project-coding-results button { margin-top: 8px; }
+#project-coding-review:not([hidden]) { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
+#project-coding-review ul { margin: 0; padding-inline-start: 20px; }
+#project-coding-review li + li { margin-top: 6px; }
+#project-coding-review li p { margin-top: 4px; white-space: pre-wrap; }
+#project-coding-patch {
+  max-width: 100%; max-height: 24em; margin: 0; padding: 10px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere;
+  border: 1px solid var(--control-edge); border-radius: var(--r-xs); background: var(--surface-2); color: var(--fg);
+  font: var(--type-footnote); font-family: var(--ember-mono);
+}
+#project-coding-patch:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 @media (forced-colors: active) {
   #project-sessions :is(input[type="text"], textarea, select), #project-sessions-list li + li { border-color: ButtonText; }
+  #project-coding-patch, #project-coding-results li + li { border-color: ButtonText; }
 }
 #project-commands > summary, #project-workspaces > summary, #project-patch > summary { cursor: pointer; }
 /* A disclosure inside Projects (the patch, a command, saved workspaces): the fold's chevron, never the browser's

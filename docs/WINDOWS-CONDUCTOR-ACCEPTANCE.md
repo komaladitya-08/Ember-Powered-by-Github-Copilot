@@ -7,9 +7,11 @@ not certify real app focus, microphone quality, cursor ownership or a coding exe
 The Projects & sessions board groups desktop tasks. Explicit Save projects keeps an encrypted checkpoint; Open
 saved projects restores inert records, ordered goals and observed outcomes and marks interrupted work stopped.
 Review remaining steps prepares a fresh editable request without replaying actions. Save again to retain later progress.
-It never resumes model sessions. Native coding is unavailable on every platform; do not remove its gate to perform
-this acceptance pass. Whole-runtime coding integration, platform isolation and project workspace binding remain
-implementation work, not laptop tests waiting to be checked off. Automatic crash checkpointing is not implemented.
+It never resumes model sessions. Windows coding remains unavailable; do not remove its gate to perform this acceptance
+pass. The custom-tool coding flow has Linux command-isolation and project-folder/review integration; Windows still
+needs an enforced command/file/export backend. Native CI currently exposes child creation and PowerShell ETW startup
+failures, described in [the Windows proof](ISOLATED-WINDOWS-COMMAND-PROOF.md). Those are software requirements, rather
+than laptop tests waiting to be checked off. Automatic crash checkpointing is not implemented.
 
 ## Prepare the checkout
 
@@ -78,7 +80,8 @@ Attach the exact results and observed failures to the review. Keep cloud results
 laptop results separate. Re-run affected checks after fixes. The project's release workflow also requires the exact
 tag/commit and its platform jobs to pass; this checklist neither publishes a release nor authorises a merge.
 
-Safe native coding still requires a demonstrated boundary for the whole runtime and descendants, host-private file
-aliases, credentials and process inspection, toolchain/network behaviour, Stop and crash recovery, plus safe change
-reconciliation. The Linux canary tests currently reproduce known weaknesses. A successful Windows desktop pass
-cannot close those software requirements.
+The custom-tool controller remains in the trusted host with native SDK tools disabled. Project code needs an enforced
+boundary for commands and descendants, host-private file aliases, credentials and process inspection, toolchain/network
+behaviour, Stop and crash recovery, and safe result capture/export. The separate legacy Linux canary tests still
+reproduce unsafe native-runtime behaviours; their green probe results do not certify that older path. A successful
+Windows desktop pass cannot close the new backend's software requirements.
