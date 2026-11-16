@@ -71,7 +71,7 @@ afterEach(async () => {
   for (const host of hosts.splice(0)) await host.stop();
   for (const dir of dirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
 });
-async function setup(extra: Partial<HostOptions> = {}) {
+async function setup(extra: Partial<HostOptions> = {}, fileOnly = false) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-scoped-host-")); dirs.push(dir);
   const settings = new SettingsStore(path.join(dir, "settings.json")); settings.load();
   const source = { current: true, revision: 0 }, enabled = { value: true };
@@ -98,9 +98,11 @@ async function setup(extra: Partial<HostOptions> = {}) {
   const continuationCurrent = vi.fn((ref: CodingContinuationRef, projectId: string) => {
     const held = references.get(ref); return continuation.current && held?.projectId === projectId && held.revision === continuation.revision;
   });
+  const scopedBase = { available: () => enabled.value, workspace, captureContinuation, continuationCurrent, createWorkspace, reviewBase: path.join(dir, "reviews"), publish };
+  const scopedCoding: ScopedCodingHost = fileOnly ? { ...scopedBase, mode: "files-only", platform: { files: async () => { throw new Error("The inert Host fixture never opens a file broker"); } } } : scopedBase;
   const host = new AgentHost({ userData: dir, settings, runtimePath: "/offline/runtime", log: quiet, setState() {}, onStatus() {},
     targets, taskBase: { audit: { write: audit } as never, confirmer: confirmer as never },
-    scopedCoding: { available: () => enabled.value, workspace, captureContinuation, continuationCurrent, createWorkspace, reviewBase: path.join(dir, "reviews"), publish }, ...extra });
+    scopedCoding, ...extra });
   hosts.push(host); expect(await host.start(token, "stored")).toBe("ready");
   const session = sim.sessions.findLast(s => s.sessionId.startsWith("ember-conductor-"));
   const tool = (name: string, args: unknown = {}) => session.config.tools.find((t: any) => t.name === name).handler(args, {});
@@ -117,6 +119,16 @@ function useFilesOnly(h: Awaited<ReturnType<typeof setup>>) {
   options.scopedCoding = scoped;
   return { scoped, files };
 }
+
+it("describes the Host-selected restricted coding capability in the conductor's actual tool inventory", async () => {
+  const h = await setup({ targets: undefined }, true); h.create("App");
+  const coding = h.session.config.tools.find((tool: any) => tool.name === "start_coding");
+  expect(coding.description).toContain("inspect and edit the private project copy for review");
+  expect(coding.description).toContain("Commands and test execution are unavailable"); expect(coding.description).not.toContain("run project commands");
+  expect(JSON.stringify(h.session.config.systemMessage)).toContain("Commands and test execution are unavailable");
+  await h.host.ask("Review the copied parser"); await h.tool("start_coding", { goal: "Review parser" });
+  expect(sim.workers[0].options.mode).toBe("files-only"); expect(sim.workers[0].options.commandService).toBeUndefined();
+});
 
 it("starts explicitly file-only project work without a local command service or command presenter", async () => {
   const h = await setup({ targets: undefined }), { files } = useFilesOnly(h), project = h.create("App");

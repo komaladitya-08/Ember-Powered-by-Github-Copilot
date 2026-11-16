@@ -124,6 +124,9 @@ for successful completion and verified worker cleanup before its next part. An o
 command-backed path, including its local service, policy context, original permission words and presenter. Missing
 command support never selects file-only work automatically. This host adapter seam does not enable a Windows
 production resource backend; the native SDK prototype remains disabled by `codingAvailable()`.
+The Host also supplies the selected mode as trusted conductor metadata: a file-only `start_coding` tool describes
+private-copy edits/review and unavailable commands/tests, while omitted or command mode preserves the existing
+description. No model tool argument selects or upgrades that mode.
 
 `npm test -- test/unit/scoped-coding-host.test.ts --maxWorkers=1` checks both Host paths and their captured request
 authority. `npm run test:integration -- test/integration/scoped-coding-host-file-only.test.ts` exercises the real

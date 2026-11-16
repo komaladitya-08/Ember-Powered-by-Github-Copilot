@@ -99,6 +99,19 @@ async function conductorWith(extra: Partial<ConductorDeps>, o: { send?: (prompt:
 }
 
 describe("the conductor's session (§3.15)", () => {
+  it("keeps default coding command wording and describes a trusted file-only selection without a model mode argument", async () => {
+    const startCoding = () => "Started";
+    const original = await conductorWith({ startCoding }), commands = await conductorWith({ startCoding, codingMode: "commands" });
+    const files = await conductorWith({ startCoding, codingMode: "files-only" });
+    try {
+      const originalTool = byName(original.config().tools, "start_coding"), commandTool = byName(commands.config().tools, "start_coding"), fileTool = byName(files.config().tools, "start_coding");
+      expect(commandTool.description).toBe(originalTool.description); expect(commandTool.description).toContain("run project commands");
+      expect(fileTool.description).toContain("Commands and test execution are unavailable"); expect(fileTool.description).not.toContain("run project commands");
+      expect(shapeOf(fileTool)).toEqual(["goal"]); expect(await run(fileTool, { goal: "Inspect parser", codingMode: "commands" })).toBe("Started");
+      expect((files.config().systemMessage as { content: string }).content).toContain("Do not claim they ran or route them through desktop tasks");
+    } finally { await Promise.all([original.c.stop(), commands.c.stop(), files.c.stop()]); }
+  });
+
   it("is created with the prompt and tools its caps allow, and today's without caps", async () => {
     const today = await conductorWith({});
     expect(today.config().systemMessage).toEqual(emberSystemMessage(PLATFORM_WORDS.linux));

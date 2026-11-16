@@ -2678,6 +2678,7 @@ export class AgentHost {
         describeScreen: targets ? async (choice?: string) => { const turn = this.turn; const seen = await this.describeTarget(choice); if (seen.read) turn?.screen.push(seen.text); return seen.text; }
           : this.o.describeScreen ? async () => { const turn = this.turn; const seen = await this.describeThisScreen(); if (seen.read) turn?.screen.push(seen.text); return seen.text; } : undefined,
         caps,
+        ...(this.o.scopedCoding ? { codingMode: captureCodingCapability(this.o.scopedCoding)?.mode } : {}),
         ...(memory ? { memory } : {}),
         ...(targets ? {
           listComputers: () => targets.describeTargets(),
