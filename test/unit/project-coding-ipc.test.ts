@@ -22,7 +22,7 @@ function setup() {
   for (const directory of [source, other, privateDir]) fs.mkdirSync(directory);
   fs.writeFileSync(path.join(source, "unchanged.txt"), "The original is unchanged.");
   const first = randomUUID(), second = randomUUID(), record = randomUUID();
-  let owner: string | null = "owner-a", allowed = true, available = false;
+  let owner: string | null = "owner-a", allowed = true, available = false, canContinue: boolean | undefined;
   const state: ProjectSessionsState = { selectedProjectId: first, projects: [first, second].map(id => ({ id, name: id, goal: "", createdAt: 1, sessions: [] })) };
   const folders = new ProjectCodingWorkspaces({ projectExists: id => state.projects.some(project => project.id === id), currentOwner: () => owner });
   const review: CodingResultReview = { id: record, projectId: first, taskId: randomUUID(), title: "Improve the app", sourcePath: source, status: "done", files: 1, conflicts: 0,
@@ -44,14 +44,14 @@ function setup() {
   const continueResult = vi.fn(async (_id: string, _projectId: string, _request: string) => true);
   const handlers = new Map<string, (...args: unknown[]) => unknown>();
   const api = registerProjectCodingIpc({ handle: (channel, handler) => handlers.set(channel, handler), projects: () => state, folders, results,
-    canUse: () => allowed, availability: () => ({ available, message: "Coding work is unavailable, but a folder can be prepared." }), continueResult,
+    canUse: () => allowed, availability: () => ({ available, canContinue, message: "Coding work is unavailable, but a folder can be prepared." }), continueResult,
     chooseFolder, validateFolder, folderChanged, changed });
   const call = async <T>(channel: string, ...args: unknown[]): Promise<T> => await handlers.get(channel)!(...args) as T;
   const live = (id: string, status: ProjectSession["status"], kind: ProjectSession["kind"] = "coding") => {
     state.projects.find(project => project.id === id)!.sessions = [{ id: randomUUID(), taskId: randomUUID(), title: "Work", kind, status, detail: "", startedAt: 1 }];
   };
   return { root, source, other, privateDir, first, second, record, review, state, folders, registry, results, chooseFolder, validateFolder, folderChanged, changed, handlers, api, call, live,
-    continueResult, available: (value: boolean) => { available = value; },
+    continueResult, available: (value: boolean) => { available = value; }, canContinue: (value: boolean) => { canContinue = value; },
     owner: (value: string | null) => { owner = value; }, allowed: (value: boolean) => { allowed = value; },
     records: (value: CodingResultSummary[]) => { records = value; } };
 }
@@ -60,6 +60,16 @@ describe("Home's project coding IPC", () => {
   const prepareContinuation = (f: ReturnType<typeof setup>) => {
     f.available(true); f.folders.bind(f.first, projectCommandFolder(f.source, f.privateDir), f.folders.ownerCurrent(f.first));
   };
+  it("keeps fresh-session availability separate from unsupported continuation, including delayed capability changes", async () => {
+    const f = setup(); prepareContinuation(f); f.canContinue(false);
+    expect(await f.call(IPC.projectCodingWorkspaceState, f.first)).toMatchObject({ available: true, canContinue: false });
+    expect(await f.call(IPC.codingResultContinue, f.record, f.first, "Repair source")).toMatchObject({ ok: false });
+    expect(f.results).not.toHaveBeenCalled(); expect(f.continueResult).not.toHaveBeenCalled();
+    f.canContinue(true); const registry = deferred<typeof f.registry>(); f.results.mockReturnValueOnce(registry.promise);
+    const pending = f.call(IPC.codingResultContinue, f.record, f.first, "Repair source");
+    f.canContinue(false); registry.resolve(f.registry);
+    expect(await pending).toMatchObject({ ok: false }); expect(f.continueResult).not.toHaveBeenCalled();
+  });
   it("captures only an explicit selected result and exact new request without waiting for the conductor", async () => {
     const f = setup(); prepareContinuation(f);
     const pending = deferred<boolean>(), request = "  Continue the parser fix\nRun its focused test.  "; f.continueResult.mockReturnValueOnce(pending.promise);

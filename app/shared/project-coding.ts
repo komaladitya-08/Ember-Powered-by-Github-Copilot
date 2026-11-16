@@ -3,6 +3,8 @@ export interface ProjectCodingWorkspaceState {
   projectId: string;
   folder: { path: string; label: string; valid: boolean } | null;
   available: boolean;
+  /** A backend may support fresh copied-file sessions before it supports seeding from prior reviews. */
+  canContinue?: boolean;
   canChoose: boolean;
   message: string;
 }

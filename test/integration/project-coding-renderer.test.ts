@@ -307,6 +307,20 @@ describe.skipIf(process.env.EMBER_UIUX_TEST !== "1")("Project coding folders and
     await page.close();
   }, 30_000);
 
+  it("keeps fresh file sessions and result export available when the backend cannot seed continuation", async () => {
+    const review = result(), folder = { ...availableWorkspace(), canContinue: false, message: "Copied-file edits are available. Commands, tests and continuation are unavailable." };
+    const page = await open({ workspaces: { one: folder }, results: { one: [review] }, reviews: { [review.id]: review } });
+    const original = page.getByRole("button", { name: /^Review result:/ });
+    await expect.poll(() => original.isEnabled()).toBe(true); await original.click();
+    expect(await page.locator("#project-coding-choose").isEnabled()).toBe(true);
+    expect(await page.locator("#project-coding-export").isEnabled()).toBe(true);
+    expect(await page.locator("#project-coding-continue").isDisabled()).toBe(true);
+    expect(await page.locator("#project-coding-state").textContent()).toContain("continuation are unavailable");
+    await page.locator("#project-coding-continue-form").evaluate(element => element.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+    expect(await page.evaluate(() => window.__codingBoard.calls.some(call => call.method === "codingResultContinue"))).toBe(false);
+    await page.close();
+  }, 30_000);
+
   it("keeps a continuation draft and its focus while results refresh", async () => {
     const review = result(), page = await open({ workspaces: { one: availableWorkspace() }, results: { one: [review] }, reviews: { [review.id]: review } });
     const original = page.getByRole("button", { name: /^Review result:/ });

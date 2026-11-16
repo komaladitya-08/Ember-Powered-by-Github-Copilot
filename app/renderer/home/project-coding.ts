@@ -53,7 +53,7 @@ export function mountProjectCoding(): void {
   const clearContinuation = () => { continueForm.hidden = true; continueRequest.value = ""; continueReview.setAttribute("aria-expanded", "false"); };
   const clearReview = () => { reviewEpoch++; opened = null; clearContinuation(); review.hidden = true; reviewTitle.textContent = ""; patch.textContent = ""; changes.replaceChildren(); limitations.replaceChildren(); reviewSummary.textContent = ""; reviewSource.textContent = ""; previewMessage.textContent = ""; };
   const current = (owner: number, id: string) => generation === owner && projectId === id;
-  const continuationAvailable = () => ready && !!opened && opened.projectId === projectId && workspace?.projectId === projectId && workspace.available && workspace.folder?.valid === true;
+  const continuationAvailable = () => ready && !!opened && opened.projectId === projectId && workspace?.projectId === projectId && workspace.available && workspace.canContinue !== false && workspace.folder?.valid === true;
   const validContinuationRequest = () => !!continueRequest.value.trim() && continueRequest.value.length <= 2000;
   const controls = () => {
     choose.disabled = pending || !workspace?.canChoose;

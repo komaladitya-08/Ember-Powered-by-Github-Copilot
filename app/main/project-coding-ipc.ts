@@ -14,7 +14,7 @@ export interface ProjectCodingIpcDeps {
   folders: ProjectCodingWorkspaces;
   results(): Promise<Pick<CodingResultRegistry, "state" | "review" | "export" | "reset" | "forgetProject" | "forgetResult">>;
   canUse(): boolean;
-  availability(): { available: boolean; message: string };
+  availability(): { available: boolean; message: string; canContinue?: boolean };
   /** Calls the host's synchronous intake capture, then returns its ordinary conversation submission. */
   continueResult?(id: string, projectId: string, request: string): Promise<boolean>;
   chooseFolder(title: string): Promise<string | null>;
@@ -71,11 +71,12 @@ export function registerProjectCodingIpc(d: ProjectCodingIpcDeps): ProjectCoding
   const workspaceState = (id: string): ProjectCodingWorkspaceState => {
     const allowed = usable() && !!project(id) && safe(d.folders.ownerCurrent(id));
     if (!allowed) return { projectId: id, folder: null, available: false, canChoose: false, message: UNAVAILABLE };
-    let availability: { available: boolean; message: string };
+    let availability: { available: boolean; message: string; canContinue?: boolean };
     try { availability = d.availability(); } catch { availability = { available: false, message: "Coding work is unavailable on this computer." }; }
     const folder = d.folders.state(id), busy = liveCoding(id), picking = pickers.has(id);
     return {
       projectId: id, folder, available: availability.available,
+      ...(typeof availability.canContinue === "boolean" ? { canContinue: availability.canContinue } : {}),
       canChoose: !busy && !picking,
       message: busy ? BUSY : picking ? "Finish the folder picker for this project." : availability.message || (availability.available ? "Coding work uses a private copy. The original folder is unchanged." : "Coding work is unavailable on this computer."),
     };
@@ -209,7 +210,7 @@ export function registerProjectCodingIpc(d: ProjectCodingIpcDeps): ProjectCoding
     if (!parsed.success) throw new Error("Choose an existing project or coding result.");
     const [id, projectId, request] = parsed.data, owner = capability(), current = capability(projectId);
     const selected = () => d.projects().selectedProjectId === projectId;
-    const available = () => d.availability().available === true && d.folders.state(projectId)?.valid === true && !pickers.has(projectId);
+    const available = () => { const status = d.availability(); return status.available === true && status.canContinue !== false && d.folders.state(projectId)?.valid === true && !pickers.has(projectId); };
     if (!d.continueResult || !safe(() => safe(owner) && safe(current) && selected() && available())) return { ok: false, message: UNAVAILABLE };
     try {
       const registry = await registryForUse();
