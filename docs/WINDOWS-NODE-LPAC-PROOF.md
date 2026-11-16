@@ -70,6 +70,13 @@ ordinary CRLF normalization left at least one CR. This does not distinguish doub
 The inspection therefore adds only four bounded structural counts (ordinary CRLF, doubled CRLF, bare CR and LF),
 without accepting or returning any new text. Native counts remain pending.
 
+At `5f26d1df`, [run 43798408813](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43798408813)
+passed all 231 contracts per job. All four LPAC artifacts contained exactly one doubled CRLF and no ordinary CRLF,
+bare CR or LF. The parser now normalizes ordinary CRLF or this observed doubled CRLF in one pass. It still refuses
+every residual CR, including runs of three or more before LF; sequential replacement could incorrectly erase those.
+Control bytes, private/unknown source paths, malformed or duplicate headers and release-specific membership retain
+their existing refusals. Native public-location or `no-location` results after this normalization remain pending.
+
 No result or copied content is read by the host until the real root handle has exited and both private job counters are zero. Unverified shutdown retains its scratch and pins. No ACL, AppContainer, network, PowerShell, CLR or registry compatibility fallback is permitted. PowerShell runs only as a trusted host-side signature or event observer, outside the LPAC job; Node is the executable under test inside that job.
 
 The dedicated workflow is `experimental-windows-node-lpac.yml`; it explicitly sets `EMBER_LPAC_NODE_PROOF=1` and the exact asset/version inputs, so its configured Windows jobs must execute or fail. Unconfigured general integration runs skip this separate diagnostic.
