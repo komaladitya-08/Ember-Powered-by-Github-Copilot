@@ -57,7 +57,7 @@ vi.mock("../../app/main/agent/scoped-coding-worker", () => ({ ScopedCodingWorker
   async steer() { return false; }
 } }));
 
-import { AgentHost, codingAvailable, type HostOptions } from "../../app/main/agent/host";
+import { AgentHost, codingAvailable, type HostOptions, type ScopedCodingHost } from "../../app/main/agent/host";
 import { SettingsStore } from "../../app/main/settings";
 import { modeCardVersion } from "../../app/shared/approvals";
 
@@ -109,6 +109,75 @@ async function setup(extra: Partial<HostOptions> = {}) {
   return { host, settings, session, tool, callbacks, create, source, enabled, workspace, createWorkspace, publish, service, audit, ask,
     continuation, captureContinuation, continuationCurrent };
 }
+
+function useFilesOnly(h: Awaited<ReturnType<typeof setup>>) {
+  const options = (h.host as unknown as { o: HostOptions }).o;
+  const files = vi.fn(async () => { throw new Error("The inert Host fixture never opens a file broker"); });
+  const scoped: ScopedCodingHost = { ...options.scopedCoding!, mode: "files-only", platform: { files } };
+  options.scopedCoding = scoped;
+  return { scoped, files };
+}
+
+it("starts explicitly file-only project work without a local command service or command presenter", async () => {
+  const h = await setup({ targets: undefined }), { files } = useFilesOnly(h), project = h.create("App");
+  const presenter = vi.spyOn(h.host as any, "taskPresenter").mockImplementation(() => { throw new Error("No command presenter belongs to file-only work"); });
+  try {
+    await h.host.ask("Edit the parser copy for review without running commands");
+    expect(h.session.waiting).toEqual([]);
+    expect(await h.tool("start_coding", { goal: "Edit the copied parser", sessionName: "Implementation" })).toMatch(/started/);
+    const worker = sim.workers[0];
+    expect(worker.options).toMatchObject({ mode: "files-only" });
+    expect(worker.options.commandService).toBeUndefined(); expect(worker.options.commandContext).toBeUndefined();
+    expect(typeof worker.options.platform.files).toBe("function"); expect(files).not.toHaveBeenCalled();
+    expect(worker.spec).toMatchObject({ userWords: "Edit the parser copy for review without running commands", codingWorkspace: { projectId: project } });
+    expect(worker.options.runtime.gitHubToken).toBe(token); expect(worker.options.current()).toBe(true);
+    expect(h.host.projectSessionsState().projects.find(p => p.id === project)?.sessions).toMatchObject([{ kind: "coding", title: "Implementation" }]);
+    expect(presenter).not.toHaveBeenCalled(); expect(codingAvailable()).toBe(false);
+  } finally { presenter.mockRestore(); }
+});
+
+it("captures restricted coding authority and its truthful prompt before a queued turn can be upgraded", async () => {
+  const h = await setup({ targets: undefined }), { scoped, files } = useFilesOnly(h); h.create("App"); sim.holdTurns = true;
+  await h.host.ask("Review the copied parser");
+  expect(h.session.waiting[0]).toContain("Coding commands and test execution are unavailable");
+  expect(h.session.waiting[0]).toContain("do not use desktop tasks, shells, plugins or helpers");
+  Object.assign(scoped, { mode: "commands", platform: { facts: vi.fn(), files: vi.fn() } });
+  h.session.nextTurn(); expect(await h.tool("start_coding", { goal: "Inspect parser" })).toMatch(/started/);
+  const worker = sim.workers[0]; expect(worker.options.mode).toBe("files-only"); expect(worker.options.commandService).toBeUndefined();
+  await expect(worker.options.platform.files({}, new AbortController().signal)).rejects.toThrow("inert Host fixture");
+  expect(files).toHaveBeenCalledTimes(1);
+});
+
+it("keeps missing command services and invalid restricted adapters unavailable without choosing another mode", async () => {
+  const h = await setup({ targets: undefined }); h.create("App"); await h.host.ask("Inspect copied source");
+  expect(await h.tool("start_coding", { goal: "Inspect source" })).toMatch(/started/);
+  await vi.waitFor(() => expect(h.host.tasks!.list()[0].result?.summary).toMatch(/requires this computer's command service/));
+  expect(sim.workers).toEqual([]);
+  h.session.emit("session.idle");
+  const options = (h.host as unknown as { o: HostOptions }).o;
+  options.scopedCoding = { ...options.scopedCoding!, mode: "files-only", platform: undefined } as unknown as ScopedCodingHost;
+  await h.host.ask("Inspect the source again");
+  expect(await h.tool("start_coding", { goal: "Inspect source" })).toMatch(/choose its coding folder/);
+  expect(sim.workers).toEqual([]); expect(h.createWorkspace).not.toHaveBeenCalled();
+});
+
+it("revokes active file-only work on a folder change without granting a command fallback", async () => {
+  const h = await setup({ targets: undefined }); useFilesOnly(h); const project = h.create("App");
+  await h.host.ask("Edit only the copied parser"); await h.tool("start_coding", { goal: "Edit parser" });
+  const worker = sim.workers[0]; h.source.current = false; h.host.codingWorkspaceChanged(project);
+  expect(worker.invalidated).toBe(true); expect(worker.options.current()).toBe(false); expect(worker.options.mode).toBe("files-only");
+  expect(worker.options.commandService).toBeUndefined(); expect(worker.spec.userWords).toBe("Edit only the copied parser");
+});
+
+it("permanently retires queued file-only intake through an approval change and return", async () => {
+  const h = await setup({ targets: undefined }); useFilesOnly(h); h.create("App"); sim.holdTurns = true;
+  await h.host.ask("Review only the copied parser");
+  const previous = h.settings.get().approvals;
+  h.settings.update({ approvals: { mode: "assisted", consent: { ...previous.consent, assisted: { version: modeCardVersion("assisted"), at: new Date().toISOString() } } } });
+  h.settings.update({ approvals: previous }); h.session.nextTurn();
+  expect(await h.tool("start_coding", { goal: "Inspect parser" })).toMatch(/choose its coding folder/);
+  expect(sim.workers).toEqual([]); expect(h.createWorkspace).not.toHaveBeenCalled();
+});
 
 it("captures a continuation before waiting, keeps its original project, and uses only the new typed words as permission", async () => {
   const h = await setup(), first = h.create("App"), id = randomUUID(), words = "  Add a parser test\nKeep the original folder unchanged.  ";
@@ -370,8 +439,9 @@ it("preserves unchecked spoken words for Assisted while keeping them out of comm
   expect(context.task.spokenWords()).toBe("Run the parser test");
 });
 
-it("waits for coding cleanup before the desktop hop and keeps both sessions in the original project", async () => {
+it.each(["commands", "files-only"])("waits for coding cleanup before the desktop hop and keeps both sessions in the original project (%s)", async mode => {
   const h = await setup(); const project = h.create("App");
+  if (mode === "files-only") useFilesOnly(h);
   const desktopSpecs: TaskSpec[] = [];
   const oldFactory = (h.host.tasks as any).d.makeWorker;
   (h.host.tasks as any).d.makeWorker = (spec: TaskSpec, ...rest: any[]) => {

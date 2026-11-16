@@ -4844,3 +4844,14 @@ The Windows exclusion follow-up folds only the explicitly declared top-level roo
 names. Duplicate folded names are refused before omission, and file tools disclose and enforce that same scope,
 including attempts to recreate an excluded root with different casing. Similar names and nested folders stay in the
 declared source tree. Portable regressions and the native matrix cover canonical and mixed-case roots.
+
+**2026-11-16, explicit file-only Host capability (draft, no production backend selection).** The Host can accept a
+trusted `scopedCoding.mode: "files-only"` adapter and carries its captured mode, source factory and guarded file
+broker with the request's existing project/folder grant. It creates that worker without a local command service,
+command policy context or command presenter; the omitted mode keeps the existing command-backed path. No failed
+command backend silently selects the restricted mode. The conductor receives a fixed per-request statement that
+coding commands/tests are unavailable and cannot be replaced by desktop work. Original request words, approval,
+provider/project revocation, retirement and mixed-task cleanup checks remain in force. The native SDK prototype and
+production resource factory remain unchanged; this does not enable Windows coding. Portable Host regressions and a
+real Linux Host/conductor/custom-SDK fixture cover file-only edits, zero executed checks, original preservation,
+verified teardown and a folder revoked while creation waits.
