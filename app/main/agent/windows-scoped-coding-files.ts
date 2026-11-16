@@ -142,7 +142,7 @@ export class WindowsScopedCodingFiles implements CodingFileBroker {
       tree.api.write(temp, bytes); tree.api.flush(temp);
       const info = tree.api.info(temp), verified = await readWindowsCodingFile(tree.api, temp, info, this.#limits.fileBytes, () => { tree.check(); this.#guard(); });
       if (digest(verified) !== result.sha256 || existing && !windowsCodingSame(existing.info, tree.api.info(existing.handle))) throw new ScopedCodingFileError("conflict");
-      this.#guard(); tree.check(); tree.api.replace(temp, parent.directory, parent.name, !!existing); committed = true;
+      this.#guard(); tree.check(); tree.api.replace(temp, parent.directory, parent.name, !!existing); committed = true; tree.noteMutationApplied();
       if (tree.api.info(temp).size !== bytes.length) throw new ScopedCodingFileError("conflict"); return result;
     } finally { if (temp !== undefined) { try { if (!committed) tree.api.remove(temp); } finally { tree.api.close(temp); } } }
   }
@@ -152,14 +152,14 @@ export class WindowsScopedCodingFiles implements CodingFileBroker {
       if (entry.info.kind === "file") await this.#text(entry, tree); else if ([...tree.entries.keys()].some(name => name.startsWith(relative + "/"))) throw new ScopedCodingFileError("not-empty");
       const result = this.#result({ path: windowsCodingVirtual(relative), kind: entry.info.kind, deleted: true as const });
       this.#guard(); tree.check(); if (!windowsCodingSame(entry.info, tree.api.info(entry.handle))) throw new ScopedCodingFileError("conflict");
-      tree.api.remove(entry.handle); tree.release(entry.handle); return result;
+      tree.api.remove(entry.handle); tree.noteMutationApplied(); tree.release(entry.handle); return result;
     });
   }
   mkdir(path: string): Promise<{ path: string; created: true }> {
     return this.#lease(async tree => {
       const relative = windowsCodingRelative(path, false); this.#allow(relative, true); this.#newPath(relative, tree); if (tree.entries.has(relative)) throw new ScopedCodingFileError("exists");
       const result = this.#result({ path: windowsCodingVirtual(relative), created: true as const }), parent = this.#parent(relative, tree);
-      this.#guard(); tree.check(); const directory = tree.api.create(parent.directory, parent.name, "directory");
+      this.#guard(); tree.check(); const directory = tree.api.create(parent.directory, parent.name, "directory"); tree.noteMutationApplied();
       try { tree.api.assertPrivate(directory); return result; } finally { tree.api.close(directory); }
     });
   }
