@@ -440,7 +440,9 @@ const KEY_REACH = 300;
 const SPACES_AFTER = /[\s"'>]*/y;
 const VALUE_RUN = /[^\s"',;]*/y;
 const CUT = /[,;\s]/g;
-const OPS_PER_STEP = 65_536;
+// Span discovery also runs on the main thread. Overlapping candidate spans can cover megabytes before replacement
+// begins, so yield after a small batch even when the eventual replacement fits into one KEY_VALUE_SLICE.
+const OPS_PER_STEP = 4096;
 
 /**
  * KEY_VALUE's replace in steps of at most `slice` characters, a step yielded between them, with the same bytes as
