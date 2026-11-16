@@ -16,7 +16,7 @@ import { completeChildAccessReadout, childAccessReadoutPhase, closeChildAccessOw
 import { ChildAccessWatchdog } from "./windows-lpac-child-access-watchdog";
 
 const retained: unknown[] = [];
-type Receipt = Readonly<{ phase: number; readoutPhase: number; assetCode: number; parserCode: number; nativeStage: number; nativeOperation: number; nativeDomain: number; nativeCode: number; hostHelperLinks: number }>;
+type Receipt = Readonly<{ phase: number; readoutPhase: number; assetCode: number; parserCode: number; nativeStage: number; nativeOperation: number; nativeDomain: number; nativeCode: number; nativePredicate: number; hostHelperLinks: number }>;
 const receipts = new WeakMap<object, Receipt>();
 class ChildAccessWitnessFailure extends Error {
   constructor(receipt: Receipt) { super("The manual fixed child-access witness refused incomplete evidence; private owners were retained."); this.name = "ChildAccessWitnessFailure"; receipts.set(this, Object.freeze(receipt)); }
@@ -82,7 +82,7 @@ function compileFixedCase(build: string, environment: NodeJS.ProcessEnv, runner:
 export async function runWindowsLpacChildAccessWitness(): Promise<WindowsLpacChildAccessAggregate> {
   let phase = 1;
   const env = process.env, runner = childAccessManualGate(env, process.platform, process.arch);
-  if (retained.length) throw new ChildAccessWitnessFailure({ phase: 0, readoutPhase: 0, assetCode: 0, parserCode: 0, nativeStage: 0, nativeOperation: 0, nativeDomain: 0, nativeCode: 0, hostHelperLinks: 0 });
+  if (retained.length) throw new ChildAccessWitnessFailure({ phase: 0, readoutPhase: 0, assetCode: 0, parserCode: 0, nativeStage: 0, nativeOperation: 0, nativeDomain: 0, nativeCode: 0, nativePredicate: 0, hostHelperLinks: 0 });
   const api = loadExperimentalWindowsLpacApi(), native = loadWindowsLpacChildAccessNative(), observer = loadInheritedChildObserver();
   const tools: WindowsLpacChildAccessTool[] = [], pins: WindowsLpacChildAccessReadPin[] = [], stoppedTools = new Set<WindowsLpacChildAccessTool>();
   const directoryPins: WindowsHandle[] = [], scratch: string[] = [];
@@ -242,6 +242,7 @@ export async function runWindowsLpacChildAccessWitness(): Promise<WindowsLpacChi
     const nativeReceipt = windowsLpacChildAccessNativeReceipt(error);
     throw new ChildAccessWitnessFailure({ phase, readoutPhase: childAccessReadoutPhase(error), assetCode: error instanceof ChildAccessAssetError ? error.code : 0,
       parserCode: error instanceof WindowsLpacChildAccessParseError ? error.code : 0,
-      nativeStage: nativeReceipt?.stage ?? 0, nativeOperation: nativeReceipt?.operation ?? 0, nativeDomain: nativeReceipt?.domain ?? 0, nativeCode: nativeReceipt?.code ?? 0, hostHelperLinks });
+      nativeStage: nativeReceipt?.stage ?? 0, nativeOperation: nativeReceipt?.operation ?? 0, nativeDomain: nativeReceipt?.domain ?? 0, nativeCode: nativeReceipt?.code ?? 0,
+      nativePredicate: nativeReceipt?.predicate ?? 0, hostHelperLinks });
   } finally { executable?.fill(0); if (sources) for (const bytes of sources.values()) bytes.fill(0); }
 }

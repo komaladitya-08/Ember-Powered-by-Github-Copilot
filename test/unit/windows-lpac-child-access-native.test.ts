@@ -1,6 +1,6 @@
 /** Portable FFI ownership contracts only. No native DLL, tool, driver, download or collector is executed. */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { bindWindowsLpacChildAccessNative, WINDOWS_LPAC_CHILD_ACCESS_NATIVE_FUNCTIONS,
+import { bindWindowsLpacChildAccessNative, WINDOWS_LPAC_CHILD_ACCESS_NATIVE_FUNCTIONS, WINDOWS_LPAC_CHILD_ACCESS_NATIVE_PREDICATES,
   WindowsLpacChildAccessNativeCleanupError, windowsLpacChildAccessNativeReceipt,
   type WindowsLpacChildAccessNativeFence } from "../fixtures/windows-lpac-child-access-native";
 
@@ -362,6 +362,40 @@ describe("manual child access native owner", () => {
     const positive = f.calls.filter(call => call.name === "WaitForSingleObject" && (call.args[1] as number) > 0);
     expect(positive.map(call => call.args[0])).toContain(aux.handle); tool.closeStopped(); const count = f.calls.length; tool.closeStopped(); expect(f.calls).toHaveLength(count);
   });
+  it.each(["root-absent", "listed-signalled", "retired-unsignalled", "set-changed"] as const)("records only the existing failed membership predicate without another query (%s)", fault => {
+    const f = fixture(), { tool, asset } = f.launch(), job = f.jobs.get(tool.borrowedJob())!;
+    let expected: number, expectedCalls: string[];
+    const pinCalls = ["GetFileType", "GetFileInformationByHandle"];
+    if (fault === "root-absent") {
+      job.members = []; expected = 1; expectedCalls = [...pinCalls, "QueryInformationJobObject", "WaitForSingleObject"];
+    } else if (fault === "listed-signalled") {
+      const aux = f.addAux(); f.processes.get(aux.handle)!.alive = false; expected = 2;
+      expectedCalls = [...pinCalls, "QueryInformationJobObject", "WaitForSingleObject", "IsProcessInJob", "OpenProcess", "WaitForSingleObject"];
+    } else if (fault === "retired-unsignalled") {
+      const aux = f.addAux(); tool.sampleMembers(); job.members = job.members.filter(handle => handle !== aux.handle); expected = 3;
+      expectedCalls = [...pinCalls, "QueryInformationJobObject", "WaitForSingleObject", "IsProcessInJob", "WaitForSingleObject"];
+    } else {
+      let samples = 0; f.set("QueryInformationJobObject", (...args) => {
+        const bytes = args[2] as Buffer; bytes.fill(0);
+        if (++samples === 1) { bytes.writeUInt32LE(1, 0); bytes.writeUInt32LE(1, 4); bytes.writeBigUInt64LE(BigInt(tool.pid), 8); } return 1;
+      }); expected = 4;
+      expectedCalls = [...pinCalls, "QueryInformationJobObject", "WaitForSingleObject", "IsProcessInJob", "QueryInformationJobObject"];
+    }
+    const start = f.calls.length; expect(() => tool.sampleMembers()).toThrow(WindowsLpacChildAccessNativeCleanupError);
+    const first = f.fence.failure, receipt = windowsLpacChildAccessNativeReceipt(first);
+    expect(receipt).toMatchObject({ stage: 6, predicate: expected }); expect(f.calls.slice(start).map(call => call.name)).toEqual(expectedCalls);
+    const count = f.calls.length; expect(() => tool.waitExitedBefore(1000)).toThrow(first!); expect(() => asset.close()).toThrow(first!);
+    expect(f.calls).toHaveLength(count); expect(f.fence.failure).toBe(first); expect(windowsLpacChildAccessNativeReceipt(first)).toEqual(receipt);
+    expect(f.fence.retained).toHaveLength(1);
+  });
+  it("leaves unrelated malformed job counts unclassified and performs no later native query", () => {
+    const f = fixture(), { tool } = f.launch(); f.set("QueryInformationJobObject", (...args) => {
+      (args[2] as Buffer).writeUInt32LE(2, 0); (args[2] as Buffer).writeUInt32LE(1, 4); return 1;
+    }); const start = f.calls.length;
+    expect(() => tool.sampleMembers()).toThrow(WindowsLpacChildAccessNativeCleanupError);
+    expect(windowsLpacChildAccessNativeReceipt(f.fence.failure)?.predicate).toBe(0);
+    expect(f.calls.slice(start).map(call => call.name)).toEqual(["GetFileType", "GetFileInformationByHandle", "QueryInformationJobObject"]);
+  });
   it("never treats a known pin-handle alias as a newly acquired auxiliary process", () => {
     const f = fixture(), { tool } = f.launch(); f.addAux(); const file = [...f.files.keys()][0]; f.set("OpenProcess", () => file);
     expect(() => tool.sampleMembers()).toThrow(WindowsLpacChildAccessNativeCleanupError); expect(f.calls.at(-1)?.name).toBe("OpenProcess"); expect(f.closed).not.toContain(file);
@@ -382,6 +416,7 @@ describe("manual child access native owner", () => {
     expect(() => tool.waitExitedBefore(1000)).toThrow(WindowsLpacChildAccessNativeCleanupError);
     const calls = f.calls.slice(start), failed = calls.findIndex(call => call.name === "WaitForSingleObject");
     expect(calls.slice(failed + 1).map(call => call.name)).toEqual(result === 0xffffffff ? ["GetLastError"] : []);
+    expect(windowsLpacChildAccessNativeReceipt(f.fence.failure)).toMatchObject({ stage: 7, operation: 21, predicate: 6, domain: result === 0xffffffff ? 1 : 0, code: result === 0xffffffff ? 5 : 0 });
     const count = f.calls.length; expect(() => tool.closeStopped()).toThrow(WindowsLpacChildAccessNativeCleanupError); expect(f.calls).toHaveLength(count);
   });
   it("accepts an exactly zero remaining deadline only for already-signalled owned processes", () => {
@@ -391,6 +426,7 @@ describe("manual child access native owner", () => {
     const f = fixture(), { tool } = f.launch(); f.finish(); const start = f.calls.length;
     expect(() => tool.waitExitedBefore(deadline)).toThrow(WindowsLpacChildAccessNativeCleanupError);
     expect(f.calls).toHaveLength(start); expect(f.fence.retained).toHaveLength(1);
+    expect(windowsLpacChildAccessNativeReceipt(f.fence.failure)?.predicate).toBe(deadline === 99 ? 5 : 0);
   });
   it("consumes one decreasing wait budget across the same root and retained auxiliary", () => {
     const times = [100, 110, 120, 130, 400, 410, 500, 510], f = fixture(() => times.shift() ?? 510), { tool } = f.launch();
@@ -404,6 +440,14 @@ describe("manual child access native owner", () => {
     expect(() => tool.waitExitedBefore(1000)).toThrow(WindowsLpacChildAccessNativeCleanupError);
     const calls = f.calls.slice(start), lastWait = calls.findLastIndex(call => call.name === "WaitForSingleObject");
     expect(calls.slice(lastWait + 1)).toEqual([]); expect(f.fence.retained).toHaveLength(1);
+    expect(windowsLpacChildAccessNativeReceipt(f.fence.failure)?.predicate).toBe(finalTime === 1001 ? 5 : 0);
+  });
+  it.each([undefined, true, -1, 259, 0x100000000, "0", NaN])("records an invalid final exit status without querying or disposing another owner (%#)", result => {
+    const f = fixture(), { tool } = f.launch(); f.finish(); f.set("GetExitCodeProcess", (...args) => { (args[1] as unknown[])[0] = result; return 1; });
+    expect(() => tool.waitExitedBefore(1000)).toThrow(WindowsLpacChildAccessNativeCleanupError);
+    expect(f.calls.at(-1)?.name).toBe("GetExitCodeProcess");
+    expect(windowsLpacChildAccessNativeReceipt(f.fence.failure)).toMatchObject({ stage: 7, operation: 22, predicate: 6, domain: 0, code: 0 });
+    const count = f.calls.length; expect(() => tool.closeStopped()).toThrow(WindowsLpacChildAccessNativeCleanupError); expect(f.calls).toHaveLength(count);
   });
   it("keeps the final whole-job predicate after all positive process waits", () => {
     const f = fixture(), { tool } = f.launch(); f.finish(); f.set("WaitForSingleObject", (...args) => {
@@ -481,27 +525,42 @@ describe("manual child access native owner", () => {
     expect(JSON.stringify(receipt)).not.toMatch(/private|secret|SID|argv/); expect(windowsLpacChildAccessNativeReceipt(new Error("fake"))).toBeUndefined();
     const copy = receipt as { code: number }; copy.code = 999; expect(windowsLpacChildAccessNativeReceipt(error)?.code).toBe(0);
   });
-  it("brands only four validated numeric fields and never copies runtime extras, private causes or getters", () => {
+  it("brands only five validated numeric fields and never copies runtime extras, private causes or getters", () => {
     const inspected = vi.fn(() => { throw new Error("private extra getter"); });
-    const input = { stage: 2, operation: 4, domain: 1, code: 32, privatePath: "C:\\secret\\trace.csv", cause: { secret: "token" } };
+    const input = { stage: 2, operation: 4, domain: 1, code: 32, predicate: 3, privatePath: "C:\\secret\\trace.csv", cause: { secret: "token" } };
     Object.defineProperty(input, "privateGetter", { enumerable: true, get: inspected });
     const error = new WindowsLpacChildAccessNativeCleanupError(input), receipt = windowsLpacChildAccessNativeReceipt(error);
-    expect(receipt).toEqual({ stage: 2, operation: 4, domain: 1, code: 32 }); expect(Object.keys(receipt!)).toEqual(["stage", "operation", "domain", "code"]);
+    expect(receipt).toEqual({ stage: 2, operation: 4, domain: 1, code: 32, predicate: 3 }); expect(Object.keys(receipt!)).toEqual(["stage", "operation", "domain", "code", "predicate"]);
     expect(inspected).not.toHaveBeenCalled(); expect(JSON.stringify(receipt)).not.toMatch(/private|secret|trace|cause|token/);
   });
   it.each([
-    [{ stage: NaN, operation: Infinity, domain: 1, code: NaN }, { stage: 0, operation: 0, domain: 0, code: 0 }],
-    [{ stage: -1, operation: 31, domain: 2, code: 5 }, { stage: 0, operation: 0, domain: 0, code: 0 }],
-    [{ stage: 10, operation: 0x100000000, domain: 1, code: 0x100000000 }, { stage: 0, operation: 0, domain: 0, code: 0 }],
-    [{ stage: 1, operation: 2, domain: 0, code: 1234 }, { stage: 1, operation: 2, domain: 0, code: 0 }],
+    [{ stage: NaN, operation: Infinity, domain: 1, code: NaN, predicate: NaN }, { stage: 0, operation: 0, domain: 0, code: 0, predicate: 0 }],
+    [{ stage: -1, operation: 31, domain: 2, code: 5, predicate: -1 }, { stage: 0, operation: 0, domain: 0, code: 0, predicate: 0 }],
+    [{ stage: 10, operation: 0x100000000, domain: 1, code: 0x100000000, predicate: 7 }, { stage: 0, operation: 0, domain: 0, code: 0, predicate: 0 }],
+    [{ stage: 1, operation: 2, domain: 0, code: 1234, predicate: 6 }, { stage: 1, operation: 2, domain: 0, code: 0, predicate: 6 }],
   ])("closes nonfinite and out-of-range runtime receipt values to fixed unknowns (%#)", (input, expected) => {
     expect(windowsLpacChildAccessNativeReceipt(new WindowsLpacChildAccessNativeCleanupError(input))).toEqual(expected);
   });
-  it("converts throwing numeric getters to a complete unknown receipt without leaking their exception", () => {
-    const input = { stage: 1, operation: 2, domain: 1, code: 5 };
-    Object.defineProperty(input, "code", { get() { throw new Error("private SID path cause"); } });
+  it.each(["code", "predicate"])("converts a throwing numeric getter to a complete unknown receipt without leaking its exception (%s)", field => {
+    const input = { stage: 1, operation: 2, domain: 1, code: 5, predicate: 2 };
+    Object.defineProperty(input, field, { get() { throw new Error("private SID path cause"); } });
     let error: WindowsLpacChildAccessNativeCleanupError | undefined;
     expect(() => { error = new WindowsLpacChildAccessNativeCleanupError(input); }).not.toThrow();
-    expect(windowsLpacChildAccessNativeReceipt(error)).toEqual({ stage: 0, operation: 0, domain: 0, code: 0 });
+    expect(windowsLpacChildAccessNativeReceipt(error)).toEqual({ stage: 0, operation: 0, domain: 0, code: 0, predicate: 0 });
+  });
+  it("keeps the predicate vocabulary closed, frozen and numeric", () => {
+    expect(Object.isFrozen(WINDOWS_LPAC_CHILD_ACCESS_NATIVE_PREDICATES)).toBe(true);
+    expect(Object.values(WINDOWS_LPAC_CHILD_ACCESS_NATIVE_PREDICATES)).toEqual([0, 1, 2, 3, 4, 5, 6]);
+    expect(windowsLpacChildAccessNativeReceipt(new WindowsLpacChildAccessNativeCleanupError())?.predicate).toBe(0);
+  });
+  it.each([undefined, null, true, "1", NaN, Infinity, -1, 0.5, 7, 0xffffffff])("closes unknown or out-of-vocabulary predicate metadata to zero (%#)", predicate => {
+    const input = { stage: 7, operation: 13, domain: 0, code: 0, predicate };
+    expect(windowsLpacChildAccessNativeReceipt(new WindowsLpacChildAccessNativeCleanupError(input as never)))
+      .toEqual({ stage: 7, operation: 13, domain: 0, code: 0, predicate: 0 });
+  });
+  it("returns detached predicate metadata without changing the branded first failure", () => {
+    const error = new WindowsLpacChildAccessNativeCleanupError({ stage: 7, operation: 21, domain: 0, code: 0, predicate: 2 });
+    const receipt = windowsLpacChildAccessNativeReceipt(error) as { predicate: number }; receipt.predicate = 6;
+    expect(windowsLpacChildAccessNativeReceipt(error)?.predicate).toBe(2);
   });
 });

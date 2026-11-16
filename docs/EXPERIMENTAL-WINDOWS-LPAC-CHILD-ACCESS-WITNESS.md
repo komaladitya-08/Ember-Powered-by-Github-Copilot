@@ -149,4 +149,31 @@ The fixed-helper candidate passes **434 portable contracts**, including **147 na
 ESLint and a fresh exact-final full TypeScript check. The Linux integration imports and skips its one manual case.
 Independent native review confirms the record-only role, stable identity/link checks, unchanged generic single-link
 rules and exact launch/module binding. These checks execute no Windows API, PowerShell, vendor tool or driver;
-the native behavior of the corrected selector remains pending the reviewed manual matrix.
+the native behavior of the corrected selector remained pending that reviewed manual matrix.
+
+The third manually dispatched [run 43858254799](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43858254799),
+at `e7b90641ea7b1e6a14d899d9179fb2f66a38b66b`, passed the fixed OS-helper preflight and signature check on both
+Server images. Both observed `hostHelperLinks: 2`, then refused at phase 8/native stage 7, domain/code 0/0:
+operation 21 (`WaitForSingleObject`) on Server 2022 and operation 13 (`QueryInformationJobObject`) on Server 2025.
+The collector had been launched, but its readiness-helper completion proof failed before the LPAC root resumed.
+These receipts establish neither driver readiness nor a child-creation result. No private C, PML or CSV contents
+were decoded or published. The existing receipt did not identify the failed predicate; asynchronous process
+rundown remains a hypothesis, not a measured cause.
+
+The diagnostic follow-up adds only `nativePredicate` to the branded numeric receipt, with this closed vocabulary:
+
+| Value | Existing failed predicate |
+| --- | --- |
+| 0 | Unknown or unrelated refusal |
+| 1 | Job list omits the root while its held handle is unsignalled |
+| 2 | A listed retained member is already signalled |
+| 3 | An absent retained member is still unsignalled |
+| 4 | Complete membership sets differ across the existing queries |
+| 5 | An existing finite clock sample exceeds the shared deadline |
+| 6 | Invalid exit code or native wait return status |
+
+Each value is captured only at its existing refusal using already observed values. Unrelated malformed clock,
+count or PID facts remain 0. There is no additional native query, wait, retry or deadline, and the short-circuit
+call order, first-failure fence, stopped readout and retained ownership rules remain unchanged. The ordinal is
+bounded independently of Win32 error metadata; it does not name a denied API or authorize publication. The next
+manual matrix remains held for frozen review and Root's explicit dispatch.

@@ -7,23 +7,28 @@ type NativeFunction = (...args: unknown[]) => unknown;
 type Handle = bigint;
 type HandleRecord = { value: Handle; closed: boolean; attempted: boolean };
 export interface WindowsLpacChildAccessNativeFence { failure?: WindowsLpacChildAccessNativeCleanupError; retained: unknown[] }
-export type WindowsLpacChildAccessNativeReceipt = Readonly<{ stage: number; operation: number; domain: number; code: number }>;
+export const WINDOWS_LPAC_CHILD_ACCESS_NATIVE_PREDICATES = Object.freeze({
+  unknown: 0, rootAbsentUnsignalled: 1, listedMemberSignalled: 2, retiredMemberUnsignalled: 3,
+  membershipChanged: 4, deadlineExpired: 5, invalidExitOrWaitStatus: 6,
+} as const);
+export type WindowsLpacChildAccessNativeReceipt = Readonly<{ stage: number; operation: number; domain: number; code: number; predicate: number }>;
 const receipts = new WeakMap<object, WindowsLpacChildAccessNativeReceipt>();
 class WindowsLpacChildAccessNativeError extends Error {
   constructor(receipt: WindowsLpacChildAccessNativeReceipt) {
     super("The fixed child access witness could not verify its native contract."); this.name = "WindowsLpacChildAccessNativeError";
     const valid = (value: unknown, maximum: number): value is number => typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= maximum;
-    let closed = { stage: 0, operation: 0, domain: 0, code: 0 };
+    let closed = { stage: 0, operation: 0, domain: 0, code: 0, predicate: 0 };
     try {
-      const stage = receipt.stage, operation = receipt.operation, domain = receipt.domain, code = receipt.code;
+      const stage = receipt.stage, operation = receipt.operation, domain = receipt.domain, code = receipt.code, predicate = receipt.predicate;
       closed = { stage: valid(stage, 9) ? stage : 0, operation: valid(operation, 30) ? operation : 0,
-        domain: domain === 1 && valid(code, 0xffffffff) ? 1 : 0, code: domain === 1 && valid(code, 0xffffffff) ? code : 0 };
+        domain: domain === 1 && valid(code, 0xffffffff) ? 1 : 0, code: domain === 1 && valid(code, 0xffffffff) ? code : 0,
+        predicate: valid(predicate, 6) ? predicate : 0 };
     } catch { /* Throwing accessors are unknown metadata; never expose their error or partial receipt. */ }
     receipts.set(this, Object.freeze(closed));
   }
 }
 export class WindowsLpacChildAccessNativeCleanupError extends WindowsLpacChildAccessNativeError {
-  constructor(receipt: WindowsLpacChildAccessNativeReceipt = { stage: 0, operation: 0, domain: 0, code: 0 }) {
+  constructor(receipt: WindowsLpacChildAccessNativeReceipt = { stage: 0, operation: 0, domain: 0, code: 0, predicate: 0 }) {
     super(receipt); this.name = "WindowsLpacChildAccessNativeCleanupError";
   }
 }
@@ -113,8 +118,10 @@ export function bindWindowsLpacChildAccessNative(koffi: Pick<typeof Koffi, "size
   let stage = 1, operation = 0, domain = 0, code = 0;
   const fn: Record<string, NativeFunction> = {}, operations: Record<string, number> = {};
   const records = new Map<Handle, HandleRecord>(), borrowed = new Set<Handle>(), owners: unknown[] = [];
-  const receipt = () => ({ stage, operation, domain, code });
-  const failure = () => new WindowsLpacChildAccessNativeError(receipt());
+  const predicates = WINDOWS_LPAC_CHILD_ACCESS_NATIVE_PREDICATES;
+  const receipt = (predicate: number = predicates.unknown) => ({ stage, operation, domain, code, predicate });
+  // Predicate metadata belongs only to this refusal; it cannot leak into a later call or replace a fenced first failure.
+  const failure = (predicate: number = predicates.unknown) => new WindowsLpacChildAccessNativeError(receipt(predicate));
   const poison = (extra?: unknown): never => {
     const first = extra !== null && typeof extra === "object" ? receipts.get(extra) : undefined;
     if (!fence.failure) { fence.failure = new WindowsLpacChildAccessNativeCleanupError(first ?? receipt()); fence.retained.push({ records, owners, fn, extra }); }
@@ -201,7 +208,7 @@ export function bindWindowsLpacChildAccessNative(koffi: Pick<typeof Koffi, "size
   const liveTool = (tool: ToolState): void => { usable(); if (tool.closed) throw failure(); pinCurrent(tool.pin); };
   const wait = (record: HandleRecord, milliseconds: number): number => {
     const value = call("WaitForSingleObject", record.value, milliseconds);
-    if (value !== 0 && value !== 258) { if (value === 0xffffffff) lastError(); return poison(); }
+    if (value !== 0 && value !== 258) { if (value === 0xffffffff) lastError(); return poison(failure(predicates.invalidExitOrWaitStatus)); }
     return value;
   };
   const imageAt = (process: Handle, id: number, expected: string): void => {
@@ -235,7 +242,7 @@ export function bindWindowsLpacChildAccessNative(koffi: Pick<typeof Koffi, "size
   };
   const sample = (tool: ToolState): void => {
     liveTool(tool); const found = memberIds(tool);
-    if (wait(tool.root, 0) === 258 && !found.includes(tool.pid)) throw failure();
+    if (wait(tool.root, 0) === 258 && !found.includes(tool.pid)) throw failure(predicates.rootAbsentUnsignalled);
     for (const id of found) {
       if (id === tool.pid) { inJob(tool.root, tool); continue; }
       let record = tool.members.get(id);
@@ -243,10 +250,11 @@ export function bindWindowsLpacChildAccessNative(koffi: Pick<typeof Koffi, "size
         if (tool.members.size >= MAX_MEMBERS - 1) throw failure();
         record = acquire("OpenProcess", [0x101000, 0, id], "null"); tool.members.set(id, record);
       }
-      if (wait(record, 0) !== 258 || call("GetProcessId", record.value) !== id) throw failure(); inJob(record, tool);
+      if (wait(record, 0) !== 258) throw failure(predicates.listedMemberSignalled);
+      if (call("GetProcessId", record.value) !== id) throw failure(); inJob(record, tool);
     }
-    for (const [id, record] of tool.members) if (!found.includes(id) && wait(record, 0) !== 0) throw failure();
-    if (!sameSet(found, memberIds(tool))) throw failure();
+    for (const [id, record] of tool.members) if (!found.includes(id) && wait(record, 0) !== 0) throw failure(predicates.retiredMemberUnsignalled);
+    if (!sameSet(found, memberIds(tool))) throw failure(predicates.membershipChanged);
   };
   const jobIsEmpty = (tool: ToolState): boolean => {
     const bytes = Buffer.alloc(48);
@@ -266,8 +274,10 @@ export function bindWindowsLpacChildAccessNative(koffi: Pick<typeof Koffi, "size
     usable(); stage = 7; if (tool.closed) throw failure();
     try {
       let previous = clock();
-      if (!Number.isFinite(previous) || previous < 0 || !Number.isFinite(deadline) || deadline < previous || deadline - previous > 15_000) throw failure();
-      const now = () => { const value = clock(); if (!Number.isFinite(value) || value < previous || value > deadline) throw failure(); previous = value; return value; };
+      if (!Number.isFinite(previous) || previous < 0 || !Number.isFinite(deadline) || deadline < previous || deadline - previous > 15_000)
+        throw failure(Number.isFinite(previous) && previous >= 0 && Number.isFinite(deadline) && deadline < previous ? predicates.deadlineExpired : predicates.unknown);
+      const now = () => { const value = clock(); if (!Number.isFinite(value) || value < previous || value > deadline)
+        throw failure(Number.isFinite(value) && value > deadline ? predicates.deadlineExpired : predicates.unknown); previous = value; return value; };
       liveTool(tool);
       // Natural completion can leave an auxiliary finishing after the root. Retain every observed member while
       // positively waiting for both root completion and native job zero, without killing a successful collector.
@@ -281,7 +291,7 @@ export function bindWindowsLpacChildAccessNative(koffi: Pick<typeof Koffi, "size
       }
       stoppedProof(tool); now();
       const exit: unknown[] = [0]; requireTrue(call("GetExitCodeProcess", tool.root.value, exit));
-      if (!dword(exit[0]) || exit[0] === 259) throw failure(); now(); tool.stopped = true; return exit[0];
+      if (!dword(exit[0]) || exit[0] === 259) throw failure(predicates.invalidExitOrWaitStatus); now(); tool.stopped = true; return exit[0];
     } catch (error) { return poison(error); }
   };
   const openPinnedRecord = (file: string, maximum: number): HandleRecord => {
@@ -428,7 +438,7 @@ export function bindWindowsLpacChildAccessNative(koffi: Pick<typeof Koffi, "size
       const member: unknown[] = [0]; requireTrue(call("IsProcessInJob", input.process, input.job, member));
       if (!nativeBool(member[0])) poison(); if (member[0] === 0) throw failure();
       const state = call("WaitForSingleObject", input.process, 0);
-      if (state !== 0 && state !== 258) { if (state === 0xffffffff) lastError(); poison(); }
+      if (state !== 0 && state !== 258) { if (state === 0xffffffff) lastError(); poison(failure(predicates.invalidExitOrWaitStatus)); }
       if (state !== 258) throw failure(); pinCurrent(pin);
     },
     requireExclusiveTools(allowed) {
@@ -446,7 +456,7 @@ export function bindWindowsLpacChildAccessNative(koffi: Pick<typeof Koffi, "size
           inJob(record, tool); expected.add(id);
         }
         // Retired handles remain owned for Stop, but never authorize a later process using their former PID.
-        if (!sameSet(current, memberIds(tool))) throw failure();
+        if (!sameSet(current, memberIds(tool))) throw failure(predicates.membershipChanged);
         if (/^procmon(?:64a?|)\.exe$/i.test(path.basename(tool.program))) required.add(tool.pid);
       }
       stage = 8;
@@ -474,7 +484,7 @@ export function bindWindowsLpacChildAccessNative(koffi: Pick<typeof Koffi, "size
 }
 
 export function loadWindowsLpacChildAccessNative(): WindowsLpacChildAccessNative {
-  if (process.platform !== "win32" || process.arch !== "x64") throw new WindowsLpacChildAccessNativeError({ stage: 1, operation: 0, domain: 0, code: 0 });
+  if (process.platform !== "win32" || process.arch !== "x64") throw new WindowsLpacChildAccessNativeError({ stage: 1, operation: 0, domain: 0, code: 0, predicate: 0 });
   const koffi = createRequire(import.meta.url)("koffi") as typeof Koffi;
   return bindWindowsLpacChildAccessNative(koffi, name => koffi.load(name));
 }
