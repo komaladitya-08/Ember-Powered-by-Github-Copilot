@@ -87,6 +87,33 @@ describe.skipIf(process.platform !== "win32")("native Windows private coding-cop
     expect(fs.readFileSync(path.join(protectedRoot, "auth.txt"), "utf8")).toBe("protected-host-canary");
   });
 
+  it("keeps selected-source directory pins closed to delete sharing", () => {
+    const api = native.loadWindowsCodingNative(), pinned = api.pin(source, "read"), moved = path.join(root, "moved-source");
+    try {
+      expect(() => fs.renameSync(source, moved)).toThrow();
+      expect(fs.readFileSync(path.join(source, "src", "app.ts"), "utf8")).toBe(ORIGINAL);
+      expect(() => api.remove(pinned.handle)).toThrow(ScopedCodingFileError);
+    } finally { for (const handle of pinned.handles.slice().reverse()) api.close(handle); }
+    fs.renameSync(source, moved); fs.renameSync(moved, source); // Positive control: only the held pin forbids the actor's rename.
+  });
+
+  it("retains the private root identity and rejects a replacement namespace before admitting file tools", async () => {
+    const workspace = await copy(), original = workspace.directory, moved = path.join(base, "moved-private-copy");
+    let invoked = false, relocated = false, replacement = false;
+    try {
+      fs.renameSync(original, moved); relocated = true;
+      fs.mkdirSync(original); replacement = true; fs.writeFileSync(path.join(original, "canary.txt"), "replacement-must-stay-untouched");
+      await expect(workspace.withTree(async tree => { invoked = true; tree.api.create(tree.root, "must-not-exist.ts", "file"); })).rejects.toMatchObject({ code: "boundary" });
+      expect(invoked).toBe(false); expect(fs.readdirSync(original)).toEqual(["canary.txt"]);
+      expect(fs.readFileSync(path.join(original, "canary.txt"), "utf8")).toBe("replacement-must-stay-untouched");
+    } finally {
+      if (replacement) fs.rmSync(original, { recursive: true, force: true });
+      if (relocated) fs.renameSync(moved, original);
+    }
+    expect(await workspace.withTree(async tree => tree.entries.size)).toBe(3);
+    expect(fs.readFileSync(path.join(source, "src", "app.ts"), "utf8")).toBe(ORIGINAL);
+  });
+
   it("performs create, literal replacement, atomic overwrite, search, mkdir and exact deletion inside the copy", async () => {
     captureNativeRenameFailure();
     const { workspace, broker } = await open();
