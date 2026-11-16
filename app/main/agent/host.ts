@@ -2721,7 +2721,7 @@ export class AgentHost {
             ? `<projects untrusted="true">${JSON.stringify({ ...this.projectSessionsState(), requestProjectId: this.turn?.projectId ?? null }).replace(/</g, "‹")}</projects>`
             : projectsStale,
         },
-        startCoding: tasks && (this.o.scopedCoding || this.o.codingWorkspace) ? goal => {
+        startCoding: tasks && (this.o.scopedCoding || this.o.codingWorkspace) ? (goal, sessionName) => {
           if (!projectsCurrent()) return projectsStale;
           if (codingOff()) return this.scopedCodingUnavailable();
           if (this.o.admin?.().features.actions === false) return "Your organisation has turned off Ember's actions. Tell the user.";
@@ -2737,7 +2737,7 @@ export class AgentHost {
           const t = tasks.start(goal, { target: {}, codingWorkspace: workspace, where: `in ${path.basename(workspace.path)}`, userWords: said.words, agreed: said.agreed,
             ...(said.commandWords !== undefined ? { commandWords: said.commandWords } : {}), ...(said.checkWords !== undefined ? { checkWords: said.checkWords } : {}), ...(said.typedOnly ? { typedOnly: true } : {}) });
           recordCoding(t, workspace);
-          this.sessionProjects.attach(r.projectId ?? null, t, "coding", titleOf(goal));
+          this.sessionProjects.attach(r.projectId ?? null, t, "coding", sessionName ?? titleOf(goal));
           if (r.verifiedAt !== undefined) this.o.voiceTrust?.grant(t.id, r.verifiedAt);
           touch(r, t.id);
           if (t.status !== "running" && t.status !== "queued") return `Coding task ${t.id} could not start: ${t.result?.summary ?? "an error occurred"}. Tell the user.`;

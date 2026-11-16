@@ -74,6 +74,10 @@ remain connection-scoped and are invalidated on account/provider changes, Forget
 folder is never written; exports contain all captured baseline/proposed files, including unchanged files. Consent 14
 describes those data flows and retention. The legacy native-SDK coding gate stays false.
 
+The conductor can give coding sessions the same bounded display names as desktop sessions. A name changes only the
+project board label; the task goal, original permission words, captured project and folder remain separate. Offered
+coding tools still check live availability before starting, and mixed handoff guidance appears only when that tool exists.
+
 Real-runtime tests demonstrate a failing Node test, private-copy repair, successful rerun and stopped review export
 with unchanged source. A composed Chromium/IPC/Host/controller test covers that complete flow plus Forget/account
 cleanup and explicit-export retention. An actual Electron journey additionally exercises the genuine preload and

@@ -150,7 +150,7 @@ it("pins the request's project and folder even if Home selects another project b
   sim.holdTurns = true;
   await h.host.ask("Fix the parser and run its exact test");
   const second = h.create("Personal"); h.session.nextTurn();
-  expect(await h.tool("start_coding", { goal: "Repair parser" })).toMatch(/started/);
+  expect(await h.tool("start_coding", { goal: "Repair parser", sessionName: "Implementation" })).toMatch(/started/);
   expect(h.workspace).toHaveBeenLastCalledWith(first);
   expect(sim.workers).toHaveLength(1);
   const worker = sim.workers[0];
@@ -158,7 +158,7 @@ it("pins the request's project and folder even if Home selects another project b
   expect(worker.options.runtime.gitHubToken).toBe(token);
   expect(worker.options.current()).toBe(true);
   expect(h.host.projectSessionsState().selectedProjectId).toBe(second);
-  expect(h.host.projectSessionsState().projects.find(p => p.id === first)?.sessions).toMatchObject([{ kind: "coding", title: "Repair parser", taskId: worker.spec.id }]);
+  expect(h.host.projectSessionsState().projects.find(p => p.id === first)?.sessions).toMatchObject([{ kind: "coding", title: "Implementation", taskId: worker.spec.id }]);
   expect(h.host.projectSessionsState().projects.find(p => p.id === second)?.sessions).toEqual([]);
 });
 
