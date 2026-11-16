@@ -25,6 +25,8 @@ Hosted Server 2022/2025 evidence now includes the following exact heads; record 
 
 | Candidate proof | Completed evidence | Remaining limit |
 |---|---|---|
+| C output lifecycle `0c9bd07d`, [run 43948135820](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43948135820) | Per server: 201 portable and three actual native cases. Complete natural nonzero output, automatic overflow/cancellation Stop, drained pipes, stable snapshot and known tree/profile cleanup passed. | Fixed C proof; Windows Node/product execution and native canonical transfer remain unproved. |
+| Ordinary-host POSIX replacement `dc8b4cc4`, [run 43949773571](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43949773571) | Both unpinned and metadata-pinned targets replaced on each server; the old pinned object had links 0 and DeletePending 1. Identity/security/streams/source matching, root-only Stop and known cleanup passed. | Regular-file compatibility control only. Full LPAC workload and Node rename support remain separate software gates. |
 | Current integrated product `a970a983`, [controller run 43935924838](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43935924838) | All six Windows jobs passed, including both files-only Electron journeys. The remote matrix passed all 11 eligible jobs. Ordinary CI43935924802 completed with five successful jobs, two failures and two gated skips. | The existing Windows LPAC stage-18 refusal and a RHEL saved-workspace Save-button timeout keep CI red. The latter's test and renderer/IPC implementation are unchanged from #236 and are being investigated. Windows commands, live account and physical acceptance remain unfinished. |
 | Preceding integrated product `88106606`, [controller run 43877755446](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43877755446) | All six jobs passed. Per server: 97 portable cases, three native controller cases, one ZIP case and one genuine files-only Electron journey; zero skips. [Ordinary CI 43877755675](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43877755675) completed with all non-Windows jobs successful. | Ordinary CI remains red solely at the existing Windows LPAC stage-18 child denial (error 5, NT status `0xc0000022`). Mock providers and picker fixtures do not establish live sign-in, physical pickers or packaged Home-to-Host coding. Windows commands remain unavailable; this is not merge-ready. |
 | Controller/product `0f70a7f7`, [run 43812314219](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43812314219) | Per server: 97 portable cases, three native controller cases including the actual SDK contract, and one genuine Electron journey with two fresh sessions. Zero skips; Electron 13.267/14.744 seconds, normal exit, normal OS sandbox verified by process metrics, absent Node globals and no bypass. | Mock provider and supplied picker answers; no live authentication or native picker UI proof. |
@@ -37,6 +39,13 @@ Windows command execution remains separate software work. Native child creation/
 `10107`. Neither a fixed C/libuv experiment nor a successful files-only laptop story supplies that command boundary.
 No accepted live-provider credential was available in the development environment, so no live model request was
 attempted. Verification on the chosen account still needs sign-in; it is not intrinsically a laptop-only check.
+
+Later disabled transfer/asset foundations have passed their dedicated hosted regression workflows. The asset
+foundation's ordinary CI also passed macOS and RHEL; its Windows job retained the same old LPAC failure. RHEL's
+earlier Save-button failure did not recur, but its cause remains unknown. The redaction optimisation's Linux and
+RHEL gates passed; its macOS job was cancelled and supplies no confirmation. The current native asset lifecycle
+and Windows Node workspace are still under implementation/review. None of these results enables Windows commands
+in the product or closes live-account and physical-laptop acceptance.
 
 ## Prepare a fresh acceptance profile
 
