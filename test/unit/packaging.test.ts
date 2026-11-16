@@ -1293,6 +1293,7 @@ else if (fs.existsSync(path.join(dir, "first"))) { fs.writeFileSync(path.join(di
 else {
   fs.writeFileSync(path.join(dir, "first"), "");
   if (process.env.FAKE_EMBER_LOG) log(process.env.FAKE_EMBER_LOG);
+  if (mode !== "no-auth") log("auth.token", { source: mode === "test-provider" ? "test-provider" : "none" });
   // As Ember does once it has started: the jump list on Windows (whether setUserTasks took it), the Dock menu on a Mac.
   if (mode !== "no-launcher") { log("launcher.tasks", { ok: mode !== "tasks-refused" }); log("launcher.dock"); }
   log("window.home.shown");
@@ -1313,11 +1314,11 @@ else {
 `, { mode: 0o755 });
     return file;
   })();
-  const smoke = (mode: string, o: { args?: string[]; log?: string; os?: NodeJS.Platform } = {}) => {
+  const smoke = (mode: string, o: { args?: string[]; log?: string; os?: NodeJS.Platform; windowMs?: number } = {}) => {
     const t0 = Date.now();
     const r = spawnSync(process.execPath, [path.resolve("test/smoke/launch.mjs"), "--exe", fake, ...(o.args ?? [])], {
       encoding: "utf8", timeout: 60_000,
-      env: { ...process.env, FAKE_EMBER_MODE: mode, FAKE_EMBER_LOG: o.log ?? "", EMBER_SMOKE_TIMEOUT_MS: "20000", EMBER_SMOKE_VERBOSE: "", EMBER_SMOKE_PLATFORM: o.os ?? "linux" },
+      env: { ...process.env, FAKE_EMBER_MODE: mode, FAKE_EMBER_LOG: o.log ?? "", EMBER_SMOKE_TIMEOUT_MS: String(o.windowMs ?? 20_000), EMBER_SMOKE_VERBOSE: "", EMBER_SMOKE_PLATFORM: o.os ?? "linux" },
     });
     return { ...r, ms: Date.now() - t0 };
   };
@@ -1330,6 +1331,14 @@ else {
     expect(r.stdout).not.toMatch(/jump list|Dock menu/);
     expect(r.status).toBe(0);
   });
+
+  it("requires the actual startup auth source even when the app sends no model request", () => {
+    const args = ["--expect-auth-source", "none"];
+    expect(smoke("ok", { args })).toMatchObject({ status: 0, stdout: expect.stringContaining("the first instance used auth source none") });
+    expect(smoke("test-provider", { args })).toMatchObject({ status: 1, stderr: expect.stringContaining("unexpected auth source") });
+    expect(smoke("no-auth", { args, windowMs: 1_000 })).toMatchObject({ status: 1, stderr: expect.stringContaining("report its auth source") });
+    expect(spawnSync(process.execPath, [path.resolve("test/smoke/launch.mjs"), "--expect-auth-source"], { encoding: "utf8" })).toMatchObject({ status: 2 });
+  }, 15_000);
 
   it("requires Ask Ember in the jump list on Windows and in the Dock menu on a Mac (D-45b)", () => {
     expect(smoke("ok", { os: "win32" })).toMatchObject({ status: 0, stdout: expect.stringMatching(/ok {3}the first instance put Ask Ember in its jump list\n/) });

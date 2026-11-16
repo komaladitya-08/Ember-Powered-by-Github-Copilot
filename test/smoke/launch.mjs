@@ -12,10 +12,12 @@
 // and cleanup never fails the test. --forbid <event> (repeatable) fails the run when the first instance logged that
 // event by the time the second launch has handed over: CI's Windows job forbids "shortcut.unavailable", since the
 // runner has nothing else holding Ember's shortcuts (it proves Electron registers Super as the Windows key).
+// --expect-auth-source <source> additionally requires main's genuine auth.token.source startup log, including when
+// no model request occurs. The packaged Windows guard proof expects none with a development-provider canary set.
 // --folder <name> starts the development build from a copy of dist/app in a folder of that name (the rest of the
 // repository linked beside it), and checks that the settings window's page loaded there, by its title on Chromium's
 // debugging port: a % in the name made every window blank once (review #200).
-// usage: node test/smoke/launch.mjs [--exe <path> | --folder <name>] [--forbid <event>]...
+// usage: node test/smoke/launch.mjs [--exe <path> | --folder <name>] [--forbid <event>]... [--expect-auth-source <source>]
 import { spawn, spawnSync } from "node:child_process";
 import { cpSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -25,13 +27,15 @@ import { createRequire } from "node:module";
 import { consentVersion } from "../../scripts/consent-version.mjs";
 
 const argv = process.argv.slice(2);
-const USAGE = "usage: node test/smoke/launch.mjs [--exe <path> | --folder <name>] [--forbid <event>]...";
+const USAGE = "usage: node test/smoke/launch.mjs [--exe <path> | --folder <name>] [--forbid <event>]... [--expect-auth-source <source>]";
 const exeArg = argv.includes("--exe") ? argv[argv.indexOf("--exe") + 1] : process.env.EMBER_SMOKE_EXE;
 if (argv.includes("--exe") && !exeArg) { console.error(USAGE); process.exit(2); }
 const folder = argv.includes("--folder") ? argv[argv.indexOf("--folder") + 1] : null;
 if (argv.includes("--folder") && (!folder || folder.startsWith("--") || exeArg)) { console.error(USAGE); process.exit(2); }
 const forbidden = argv.flatMap((a, i) => (a === "--forbid" ? [argv[i + 1]] : []));
 if (forbidden.some(e => !e || e.startsWith("--"))) { console.error(USAGE); process.exit(2); }
+const expectedAuth = argv.includes("--expect-auth-source") ? argv[argv.indexOf("--expect-auth-source") + 1] : null;
+if (argv.includes("--expect-auth-source") && !/^[a-z-]{1,40}$/.test(expectedAuth ?? "")) { console.error(USAGE); process.exit(2); }
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const userData = mkdtempSync(path.join(tmpdir(), "ember-smoke-"));
 /** --folder: <tmp>/<name>/ember holds a copy of dist/app, and links to everything else in the repository. */
@@ -69,6 +73,7 @@ function launch(name, extra = []) {
   const launcher = { tasks: undefined, dock: false };
   /** The log lines of forbidden events, as the app wrote them. */
   const forbiddenLines = [];
+  const authSources = [];
   const said = { stdout: "", stderr: "" };
   let failed = null;
   let buf = "";
@@ -86,6 +91,7 @@ function launch(name, extra = []) {
         if (msg === "launcher.tasks") launcher.tasks = entry.ok;
         if (msg === "launcher.dock") launcher.dock = true;
         if (msg === "app.start_failed") failed ??= line.trim();
+        if (msg === "auth.token" && typeof entry.source === "string") authSources.push(entry.source);
         if (forbidden.includes(msg)) forbiddenLines.push(line.trim());
       } catch { /* not a log line */ }
     }
@@ -95,7 +101,7 @@ function launch(name, extra = []) {
     if (process.env.EMBER_SMOKE_VERBOSE) process.stderr.write(`[${name}] ${d}`);
   });
   child.on("error", err => { failed ??= `couldn't start ${command}: ${err.message}`; });
-  return { name, child, events, asked, launcher, forbiddenLines, said, failed: () => failed };
+  return { name, child, events, asked, launcher, forbiddenLines, authSources, said, failed: () => failed };
 }
 
 const exited = inst => inst.child.exitCode !== null || inst.child.signalCode !== null;
@@ -175,6 +181,11 @@ try {
   if (!second.events.includes("instance.handover")) throw new Error("second instance did not hand over");
   await waitFor(first, () => first.events.includes("instance.second"), 10_000, "first instance to receive second-instance");
   console.log("ok   second launch handed over and the first instance focused its window");
+  if (expectedAuth) {
+    await waitFor(first, () => first.authSources.length > 0, windowMs, "the first instance to report its auth source");
+    if (first.authSources.some(source => source !== expectedAuth)) throw new Error(`the first instance used an unexpected auth source (expected ${expectedAuth})`);
+    console.log(`ok   the first instance used auth source ${expectedAuth}`);
+  }
   // Checked once the first instance has finished starting (it answered the second launch).
   if (forbidden.length) {
     if (first.forbiddenLines.length) throw new Error(`the first instance logged ${first.forbiddenLines.join("\n")}`);

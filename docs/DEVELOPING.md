@@ -2470,6 +2470,24 @@ matrix above is green while ordinary full CI remains in progress.
 See [current progress](CONDUCTOR-PROGRESS.md) for exact scope and remaining software,
 live-provider and physical Windows acceptance. These candidate results do not authorise a merge or release.
 
+The independent `packaged-controller` job builds the normal Windows ZIP, extracts it, checks unchanged fuses and
+packaged debugging/development-provider guards, and runs the ordinary packaged launch/window/handover smoke. The
+provider guard requires the real startup authentication source to be `none` with an empty synthetic profile. A separate
+fixed test bundle then uses the extracted `Ember.exe`'s supported Node mode with the shipped SDK, Koffi and native
+runtime to edit a private NTFS copy and verify disposal. This is packaged dependency/ABI proof, separate from the
+development Home/preload/IPC journey; it does not automate packaged Home or establish a live account session.
+
+Build with `npm run package:win`, then run on Windows x64:
+
+```powershell
+$env:EMBER_PACKAGED_WINDOWS_CODING_TEST = "1"
+node scripts/run-integration.mjs test/integration/windows-packaged-coding-native.test.ts --maxWorkers=1
+```
+
+The dedicated job treats missing Windows/archive prerequisites as failures. A successful job retains only its original
+Windows ZIP for three days; no fixture, profile or private review is uploaded. Its actual packaged results remain
+pending until the configured Windows jobs complete.
+
 ### 10.4 The accessibility helper (UI Automation)
 
 Ember reads and operates apps through Windows UI Automation, in two processes. Ember starts its accessibility host,
