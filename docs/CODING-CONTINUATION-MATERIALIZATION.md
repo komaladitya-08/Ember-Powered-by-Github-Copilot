@@ -5,6 +5,10 @@ ordinary conductor and approval flow. Selecting the result alone runs nothing. T
 reference and the selected project/folder before the request can wait; the model never chooses a result id or path.
 The new request supplies its own permission words. Earlier tasks, files, retry wording and answers grant no authority.
 
+Continuation tokens retain only opaque ids and an empty generation marker, so a retained task cannot keep a forgotten
+predecessor's private preview alive. The registry resolves the live record again for every use and rejects a different
+generation, including reuse of an id. In-flight reads remain inside the cleanup barrier.
+
 The result registry reads the complete pinned review only while its account, project, epoch and original source identity
 remain current. Preview text cannot seed execution. Replaced sources, forgotten results and stale queued requests are
 refused. A successfully admitted new copy has its own lifetime: forgetting the predecessor then preserves that active
@@ -34,10 +38,11 @@ or external mounts, and unlinks symbolic links without following them. Unverifie
 
 Real Linux namespace tests cover two sessions, cumulative review, fresh dependencies, source preservation, credential
 refusal and cleanup after predecessor revocation. The combined TypeScript, full ESLint and application build pass.
-Focused combined checks pass 125 cases with two platform skips; Host/IPC tests pass 65 cases, and the renderer passes
-19 cases. Additional resource tests verify global Forget during a seed read and terminal seed-cleanup barriers.
+The consolidated twelve-suite gate passes 319 cases with two platform skips; the five-file native Linux gate passes
+30 cases with zero skips. Host/IPC and renderer cases are included or separately verified. After the token-retention
+repair, 56 registry/resource cases pass with two platform skips, and full types, build and the changed-file lint pass.
 
-The genuine Electron journey passes in 18.02 seconds with the normal sandbox: the first session repairs a failing
+The genuine Electron journey passes again in 19.64 seconds with the normal sandbox after that repair: the first session repairs a failing
 Node check; the actual continuation form starts a second controller whose first check already passes, then renames
 the test and passes again. Four native approval cards, cumulative baseline/proposed review, selective Forget of both
 results, history/export retention, main global erasure and normal exit are verified. Only the model and native picker

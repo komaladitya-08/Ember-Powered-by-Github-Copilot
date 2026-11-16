@@ -31,6 +31,8 @@ export interface CodingResultRegistryOptions {
 interface RecordEntry {
   owner: string; epoch: number; projectRevision: number; source: CodingArtifactSourceRef | null;
   binding: CodingExportBinding;
+  /** Empty identity only: a selected token must not retain this record's private preview after Forget. */
+  generation: object;
   summary: CodingResultSummary; review: CodingResultReview; artifact: CodingArtifactReceipt;
 }
 interface Context { owner: string; projectId: string; epoch: number; projectRevision: number; current: () => boolean; record?: { id: string; entry: RecordEntry } }
@@ -103,7 +105,7 @@ export class CodingResultRegistry {
   #options: CodingResultRegistryOptions;
   #epoch = 0;
   #records = new Map<string, RecordEntry>();
-  #continuations = new WeakMap<CodingContinuationRef, { record: RecordEntry; context: Context }>();
+  #continuations = new WeakMap<CodingContinuationRef, { id: string; projectId: string; generation: object }>();
   #projectRevisions = new Map<string, number>();
   #pendingProjects = new Map<string, number>();
   #missingProjects = new Set<string>();
@@ -177,7 +179,7 @@ export class CodingResultRegistry {
           }
           this.#assert(context);
           this.#records.set(id, { owner: context.owner, epoch: context.epoch, projectRevision: context.projectRevision, source,
-            binding: Object.freeze({ ...captured.output.review.binding }),
+            binding: Object.freeze({ ...captured.output.review.binding }), generation: Object.freeze({}),
             summary: rendered.summary, review: rendered.review, artifact });
           return structuredClone(rendered.summary);
         } catch (error) {
@@ -232,16 +234,22 @@ export class CodingResultRegistry {
     const found = this.#record(id);
     if (!found || found.record.summary.projectId !== projectId || !found.record.source || !this.#valid(found.context)) return null;
     const ref = Object.freeze({}) as CodingContinuationRef;
-    this.#continuations.set(ref, found); return ref;
+    this.#continuations.set(ref, { id, projectId, generation: found.record.generation }); return ref;
+  }
+  #continued(ref: CodingContinuationRef, projectId: string): { record: RecordEntry; context: Context } | null {
+    const selected = this.#continuations.get(ref);
+    if (!selected || selected.projectId !== projectId) return null;
+    const found = this.#record(selected.id);
+    return found && found.record.generation === selected.generation ? found : null;
   }
   continuationCurrent(ref: CodingContinuationRef, projectId: string): boolean {
-    const found = this.#continuations.get(ref);
-    return !!found && found.record.summary.projectId === projectId && this.#valid(found.context);
+    const found = this.#continued(ref, projectId);
+    return !!found && this.#valid(found.context);
   }
   /** Copies complete verified bytes for a new task. Preview data and arbitrary directories cannot seed execution. */
   loadContinuation(ref: CodingContinuationRef, projectId: string, source: CodingArtifactSourceRef | null, current: () => boolean): Promise<CodingExportInput> {
-    const found = this.#continuations.get(ref);
-    if (!found || found.record.summary.projectId !== projectId || !source || typeof current !== "function") return Promise.reject(new CodingResultRegistryError("stale"));
+    const found = this.#continued(ref, projectId);
+    if (!found || !source || typeof current !== "function") return Promise.reject(new CodingResultRegistryError("stale"));
     const context = { ...found.context, current };
     return this.#queue(async () => {
       const check = () => this.#assert(context);
