@@ -4,6 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import http from "node:http";
 import { randomUUID } from "node:crypto";
+import { once } from "node:events";
+import type { ChildProcess } from "node:child_process";
 import type { CopilotClient } from "@github/copilot-sdk";
 import { describe, expect, it } from "vitest";
 import { allocateWindowsControllerStorage } from "../../app/main/agent/windows-controller-storage";
@@ -22,26 +24,64 @@ import { startMockLlm } from "../mock-llm/server.mjs";
 
 function deferred() { let resolve!: () => void; const promise = new Promise<void>(done => { resolve = done; }); return { promise, resolve }; }
 const samePath = (a: string, b: string) => path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();
+const sameExistingPath = (a: string, b: string) => {
+  try { return fs.realpathSync.native(a).toLowerCase() === fs.realpathSync.native(b).toLowerCase(); }
+  catch { return false; }
+};
 /** Scan only this fixture's fresh controller tree; never follow links or inspect an ambient credential file. */
 function excludesSyntheticState(directory: string, values: readonly string[]): boolean {
   let count = 0, bytes = 0;
+  let stage: "list" | "metadata" | "read" = "list", currentDepth = 0;
+  const refuse = (reason: string, facts: Record<string, number | boolean | string> = {}): false => {
+    // Report only fixed reasons and synthetic indices/metadata; never paths, file bodies or credential values.
+    console.info("Windows synthetic state scan refusal:", { reason, stage, depth: currentDepth, ...facts });
+    return false;
+  };
   const visit = (folder: string, depth: number): boolean => {
-    if (depth > 64) return false;
+    currentDepth = depth; stage = "list";
+    if (depth > 64) return refuse("depth-limit");
     for (const name of fs.readdirSync(folder)) {
-      if (++count > 10_000) return false;
+      currentDepth = depth; stage = "metadata";
+      if (++count > 10_000) return refuse("entry-limit");
       const filename = path.join(folder, name), stat = fs.lstatSync(filename);
-      if (stat.isSymbolicLink()) return false;
+      if (stat.isSymbolicLink()) return refuse("link");
       if (stat.isDirectory()) { if (!visit(filename, depth + 1)) return false; }
       else {
-        if (!stat.isFile() || stat.nlink !== 1 || stat.size > 16 * 1024 * 1024 || (bytes += stat.size) > 64 * 1024 * 1024) return false;
+        if (!stat.isFile() || stat.nlink !== 1 || stat.size > 16 * 1024 * 1024 || (bytes += stat.size) > 64 * 1024 * 1024) {
+          return refuse("file-metadata", { file: stat.isFile(), links: stat.nlink, size: stat.size, bytes });
+        }
+        stage = "read";
         const data = fs.readFileSync(filename);
-        try { if (values.some(value => data.includes(Buffer.from(value)))) return false; }
+        try {
+          const syntheticIndex = values.findIndex(value => data.includes(Buffer.from(value)));
+          if (syntheticIndex >= 0) return refuse("synthetic-value", { syntheticIndex });
+        }
         finally { data.fill(0); }
       }
     }
     return true;
   };
-  try { return visit(directory, 0); } catch { return false; }
+  try { return visit(directory, 0); }
+  catch (error) {
+    const code = (error as { code?: unknown })?.code;
+    return refuse("io", { code: typeof code === "string" && /^E[A-Z0-9]{1,24}$/.test(code) ? code : "unknown" });
+  }
+}
+
+/** Fixture-only observation: the real SDK stops before its retained files are scanned, then normal native disposal resumes. */
+function scanStateAfterSdkStop(runtime: PrivateControllerRuntime, child: ChildProcess, values: readonly string[]): () => void {
+  const stop = runtime.client.stop.bind(runtime.client), root = path.dirname(runtime.workingDirectory);
+  let scans = 0, safe = false;
+  runtime.client.stop = async () => {
+    const errors = await stop();
+    if (errors.length) return errors;
+    if (child.exitCode === null && child.signalCode === null) await once(child, "exit", { signal: AbortSignal.timeout(5_000) });
+    expect(child.exitCode !== null || child.signalCode !== null).toBe(true);
+    expect(fs.existsSync(root)).toBe(true);
+    safe = excludesSyntheticState(root, values); scans++;
+    return errors;
+  };
+  return () => { expect(scans).toBe(1); expect(safe).toBe(true); };
 }
 const runtimePath = () => {
   const runtime = runtimeFor("win32", "x64"), located = locateRuntime({ appPath: process.cwd(), runtimeId: runtime.id, exe: runtime.exe });
@@ -155,11 +195,13 @@ describe.skipIf(process.platform !== "win32" || process.arch !== "x64")("native 
       fs.writeFileSync(path.join(base, ".copilot", "mcp-config.json"), JSON.stringify(mcp));
       fs.writeFileSync(path.join(base, ".copilot", "extensions", "fixture.mjs"), `import fs from 'node:fs';fs.writeFileSync(${JSON.stringify(marker("extension"))},'fixture');export default()=>{};`);
     }
-    for (const directory of [path.join(plugin, ".claude-plugin"), path.join(plugin, "hooks")]) fs.mkdirSync(directory, { recursive: true });
-    fs.writeFileSync(path.join(plugin, ".claude-plugin", "plugin.json"), JSON.stringify({ name: "windows-controller-fixture", version: "1.0.0" }));
-    fs.writeFileSync(path.join(plugin, "hooks", "hooks.json"), JSON.stringify({ hooks: {
-      SessionStart: [{ hooks: [{ type: "command", command: nodeCommand(marker("plugin-control")) }] }],
-      UserPromptSubmit: [{ hooks: [{ type: "command", command: nodeCommand(marker("plugin-control")) }] }],
+    // Match the pinned runtime's bundled plugin format, including its explicit Windows shell variant.
+    for (const directory of [path.join(plugin, ".plugin"), path.join(plugin, "hooks")]) fs.mkdirSync(directory, { recursive: true });
+    fs.writeFileSync(path.join(plugin, ".plugin", "plugin.json"), JSON.stringify({ name: "windows-controller-fixture", version: "1.0.0" }));
+    const pluginHook = { type: "command", bash: nodeCommand(marker("plugin-control")),
+      powershell: `$ErrorActionPreference = 'Stop'; & ${ps(process.execPath)} ${ps(writer)} ${ps(marker("plugin-control"))}; exit $LASTEXITCODE` };
+    fs.writeFileSync(path.join(plugin, "hooks", "hooks.json"), JSON.stringify({ version: 1, hooks: {
+      sessionStart: [pluginHook], userPromptSubmitted: [pluginHook],
     } }));
     const original = "export const answer = 41;\n", edited = "export const answer = 42;\n";
     fs.writeFileSync(path.join(project, "app.ts"), original);
@@ -196,8 +238,9 @@ describe.skipIf(process.platform !== "win32" || process.arch !== "x64")("native 
       positive = true;
       const { copy, controller } = await openController();
       const runtime = (controller as unknown as { runtime: PrivateControllerRuntime }).runtime;
-      const child = (runtime.client as unknown as { cliProcess: { pid?: number; exitCode: number | null; signalCode: string | null } }).cliProcess;
+      const child = (runtime.client as unknown as { cliProcess: ChildProcess }).cliProcess;
       expect(Number.isInteger(child.pid)).toBe(true);
+      const assertStoppedState = scanStateAfterSdkStop(runtime, child, synthetic);
       let before = model.requests.length;
       expect(await controller.run("Update only app.ts in the private copy and prepare the edit for review without running code.")).toEqual({ success: true,
         summary: "Updated the copied answer for review. No commands or tests were run." });
@@ -205,8 +248,7 @@ describe.skipIf(process.platform !== "win32" || process.arch !== "x64")("native 
       expect(fs.readFileSync(path.join(copy.directory, "app.ts"), "utf8")).toBe(edited);
       expect(fs.readFileSync(path.join(project, "app.ts"), "utf8")).toBe(original);
       const privateRoot = path.dirname(runtime.workingDirectory);
-      expect(excludesSyntheticState(privateRoot, synthetic)).toBe(true);
-      await controller.close(); await copy.close();
+      await controller.close(); assertStoppedState(); await copy.close();
       expect(child.exitCode !== null || child.signalCode !== null).toBe(true); expect(fs.existsSync(privateRoot)).toBe(false);
       positive = false;
       const attacks = [
@@ -231,9 +273,9 @@ describe.skipIf(process.platform !== "win32" || process.arch !== "x64")("native 
         expect(fs.readFileSync(path.join(project, "app.ts"), "utf8")).toBe(original);
         expect(fs.readFileSync(path.join(opened.copy.directory, "app.ts"), "utf8")).toBe(original);
         const ownedRuntime = (opened.controller as unknown as { runtime: PrivateControllerRuntime }).runtime;
-        const ownedRoot = path.dirname(ownedRuntime.workingDirectory), ownedChild = (ownedRuntime.client as unknown as { cliProcess: { exitCode: number | null; signalCode: string | null } }).cliProcess;
-        expect(excludesSyntheticState(ownedRoot, synthetic)).toBe(true);
-        await opened.controller.close(); await opened.copy.close();
+        const ownedRoot = path.dirname(ownedRuntime.workingDirectory), ownedChild = (ownedRuntime.client as unknown as { cliProcess: ChildProcess }).cliProcess;
+        const assertOwnedStoppedState = scanStateAfterSdkStop(ownedRuntime, ownedChild, synthetic);
+        await opened.controller.close(); assertOwnedStoppedState(); await opened.copy.close();
         expect(ownedChild.exitCode !== null || ownedChild.signalCode !== null).toBe(true); expect(fs.existsSync(ownedRoot)).toBe(false);
       }
 
@@ -256,7 +298,13 @@ describe.skipIf(process.platform !== "win32" || process.arch !== "x64")("native 
       finally { await hookSession.disconnect(); await hooks.client.deleteSession(hookSession.sessionId); }
       const observed = JSON.parse(fs.readFileSync(marker("plugin-control"), "utf8")) as { cwd: string; hasSyntheticCredential: boolean; env: Record<string, string | null> };
       const hookRoot = path.dirname(hooks.workingDirectory);
-      expect(samePath(observed.cwd, hooks.workingDirectory)).toBe(true);
+      console.info("Windows native plugin control directory facts:", {
+        lexicalPlugin: samePath(observed.cwd, plugin), canonicalPlugin: sameExistingPath(observed.cwd, plugin),
+        canonicalPrivate: sameExistingPath(observed.cwd, hooks.workingDirectory), canonicalHome: sameExistingPath(observed.cwd, path.join(hookRoot, "home")),
+        canonicalFixture: sameExistingPath(observed.cwd, f.root),
+      });
+      // Native plugin hooks run from their explicitly opted-in plugin root; the native-create control proves process cwd.
+      expect(sameExistingPath(observed.cwd, plugin)).toBe(true);
       expect(["HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA"].every(key => typeof observed.env[key] === "string" && samePath(observed.env[key]!, path.join(hookRoot, "home")))).toBe(true);
       expect(["TMP", "TEMP"].every(key => typeof observed.env[key] === "string" && samePath(observed.env[key]!, path.join(hookRoot, "tmp")))).toBe(true);
       expect(["NODE_OPTIONS", "NODE_PATH", "COPILOT_CONFIG_DIR", "GH_TOKEN", "GITHUB_TOKEN", "OPENAI_API_KEY"].every(key => observed.env[key] === null)).toBe(true);
