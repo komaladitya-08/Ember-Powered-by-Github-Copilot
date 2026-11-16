@@ -1,0 +1,98 @@
+name: experimental-windows-uv-spawn
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/experimental-windows-uv-spawn.yml"
+      - "scripts/experimental/*uv-spawn*"
+      - "test/fixtures/windows-uv-spawn*"
+      - "test/fixtures/windows-uv-spawn-build/**"
+      - "test/fixtures/windows-uv-spawn-shim/**"
+      - "test/unit/windows-uv-spawn*"
+      - "test/integration/windows-uv-spawn-native.test.ts"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: experimental-windows-uv-spawn-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  portable:
+    name: Fixed uv_spawn portable contracts
+    if: github.event_name == 'workflow_dispatch' || github.head_ref == 'ember-improve/20261116-uv-spawn-probe'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm install -g npm@11.6.2
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      - name: Source, ABI shim, report and retained-owner contracts without Windows execution
+        run: npm test -- test/unit/windows-uv-spawn-source.test.ts test/unit/windows-uv-spawn-build.test.ts test/unit/windows-uv-spawn-emission.test.ts test/unit/windows-uv-spawn-observe.test.ts test/unit/windows-uv-spawn-report.test.ts test/unit/windows-uv-spawn-native.test.ts test/unit/windows-uv-spawn-host.test.ts test/unit/windows-uv-spawn-ownership.test.ts test/unit/windows-uv-spawn-proof.test.ts test/unit/windows-uv-spawn-contract.test.ts --maxWorkers=1
+
+  compile-only:
+    name: Fixed uv_spawn compile and emission (windows-2022)
+    if: github.event_name == 'workflow_dispatch' || github.head_ref == 'ember-improve/20261116-uv-spawn-probe'
+    runs-on: windows-2022
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - name: Select the exact hosted Python identity before extraction
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $pin = Get-Content -LiteralPath scripts/experimental/windows-uv-spawn-build-pin.json -Raw | ConvertFrom-Json
+          if (-not (Test-Path -LiteralPath $pin.pythonExecutable -PathType Leaf)) { throw 'The exact hosted extractor is unavailable.' }
+          "EMBER_UV_SPAWN_PYTHON=$($pin.pythonExecutable)" >> $env:GITHUB_ENV
+      - run: npm install -g npm@11.6.2
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      - name: Require portable source, receipt, scalar-observer and lifetime contracts first
+        run: npm test -- test/unit/windows-uv-spawn-source.test.ts test/unit/windows-uv-spawn-build.test.ts test/unit/windows-uv-spawn-emission.test.ts test/unit/windows-uv-spawn-observe.test.ts test/unit/windows-uv-spawn-report.test.ts test/unit/windows-uv-spawn-native.test.ts test/unit/windows-uv-spawn-host.test.ts test/unit/windows-uv-spawn-ownership.test.ts test/unit/windows-uv-spawn-proof.test.ts test/unit/windows-uv-spawn-contract.test.ts --maxWorkers=1
+      - name: Fetch only the signed-manifest-pinned source archive
+        timeout-minutes: 3
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $pin = Get-Content -LiteralPath scripts/experimental/windows-uv-spawn-source-pin.json -Raw | ConvertFrom-Json
+          $parent = Join-Path $env:RUNNER_TEMP ('ember-uv-spawn-build-' + [Guid]::NewGuid().ToString())
+          [IO.Directory]::CreateDirectory($parent) | Out-Null
+          $archive = Join-Path $parent 'node-v22.23.5.tar.xz'
+          Invoke-WebRequest -Uri $pin.sourceArchive.url -OutFile $archive -TimeoutSec 120
+          if ((Get-Item -LiteralPath $archive).Length -ne $pin.sourceArchive.bytes -or (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne $pin.sourceArchive.sha256) { throw 'The source archive differs from its fixed signed-manifest pin.' }
+          "EMBER_UV_SPAWN_SOURCE_ARCHIVE=$archive" >> $env:GITHUB_ENV
+          "EMBER_UV_SPAWN_BUILD_ROOT=$(Join-Path $parent 'build')" >> $env:GITHUB_ENV
+      - name: Compile the fixed source and privately retain unreviewed observer emission
+        timeout-minutes: 9
+        shell: pwsh
+        run: node scripts/experimental/build-windows-uv-spawn-probe.mjs --archive "$env:EMBER_UV_SPAWN_SOURCE_ARCHIVE" --destination "$env:EMBER_UV_SPAWN_BUILD_ROOT" --python "$env:EMBER_UV_SPAWN_PYTHON"
+      # First CI is compile/listing-only regardless of recognized metadata. There is deliberately no native step.
+      # Raw compiler output, assembly, objects, source, private scratch and paths are never uploaded.
+      - name: Keep only public fixed-build assets and closed unreviewed emission metadata
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: uv-spawn-compile-only-${{ github.sha }}
+          path: |
+            ${{ env.EMBER_UV_SPAWN_BUILD_ROOT }}/uv-spawn-probe.exe
+            ${{ env.EMBER_UV_SPAWN_BUILD_ROOT }}/build-receipt.json
+            ${{ env.EMBER_UV_SPAWN_BUILD_ROOT }}/observer-emission.json
+            ${{ env.EMBER_UV_SPAWN_BUILD_ROOT }}/LICENSE
+          if-no-files-found: error
+          retention-days: 7
