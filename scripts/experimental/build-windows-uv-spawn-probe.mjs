@@ -8,6 +8,7 @@ import { prepareWindowsUvSpawnSource, validateWindowsUvSpawnSource, sourcePin } 
 import { inspectWindowsUvSpawnEmission, parseWindowsUvSpawnEmission, emissionLimits } from "./windows-uv-spawn-emission.mjs";
 import { createUvSpawnBuildDiagnostic, classifyUvSpawnBuildFailure, uvSpawnBuildCheckpoints as checkpoints, uvSpawnVersionSubcheckpoints as versionSteps } from "./windows-uv-spawn-build-diagnostic.mjs";
 import { readWindowsUvSpawnFileVersions } from "./windows-uv-spawn-file-version.mjs";
+import { createWindowsUvSpawnProjectFailure, uvSpawnProjectConstraints as projectSteps } from "./windows-uv-spawn-project-diagnostic.mjs";
 export { sourcePin };
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const freeze = value => { if (value && typeof value === "object") { for (const item of Object.values(value)) freeze(item); Object.freeze(value); } return value; };
@@ -25,6 +26,7 @@ const fixedFiles = ["scripts/experimental/build-windows-uv-spawn-probe.mjs", "sc
   "scripts/experimental/windows-uv-spawn-emission.mjs", "scripts/experimental/windows-uv-spawn-build-diagnostic.mjs",
   "scripts/experimental/windows-uv-spawn-powershell.mjs",
   "scripts/experimental/windows-uv-spawn-file-version.mjs", "scripts/experimental/windows-uv-spawn-file-version.py",
+  "scripts/experimental/windows-uv-spawn-project-diagnostic.mjs",
   "scripts/experimental/extract-node-libuv-source.py", "scripts/experimental/windows-libuv-source-pin.json",
   "test/fixtures/windows-uv-spawn-build/CMakeLists.txt", "test/fixtures/windows-uv-spawn-probe.c",
   "test/fixtures/windows-uv-spawn-observe.h", "test/fixtures/windows-uv-spawn-observe.c"];
@@ -180,30 +182,90 @@ export function windowsUvSpawnBuildEnvironment(base, directories, pythonDirector
 
 /** Inspect the selected Release x64 compile definitions without loading the generated project or executing MSBuild. */
 export function windowsUvSpawnProjectWitness(bytes, target) {
+  let constraint = projectSteps.input, unitId = 0, count = 0;
   try {
     if (!Buffer.isBuffer(bytes) || bytes.length < 1 || bytes.length > buildPin.maximumProjectBytes || !["uv_a", "ember_uv_spawn_probe"].includes(target)) fail();
-    const text = bytes.toString("utf8"); if (!Buffer.from(text, "utf8").equals(bytes) || /<!DOCTYPE|<!ENTITY/.test(text)) fail();
+    constraint = projectSteps.encoding;
+    const text = bytes.toString("utf8"); if (!Buffer.from(text, "utf8").equals(bytes) || /<!DOCTYPE|<!ENTITY|&#/.test(text)) fail();
+    constraint = projectSteps.release;
     const groups = [...text.matchAll(/<ItemDefinitionGroup\b[^>]*Condition="([^"]*)"[^>]*>([\s\S]*?)<\/ItemDefinitionGroup>/g)]
       .filter(match => match[1].replaceAll(" ", "") === "'$(Configuration)|$(Platform)'=='Release|x64'");
+    count = groups.length;
     if (groups.length !== 1) fail();
-    const definitions = [...groups[0][2].matchAll(/<PreprocessorDefinitions>([^<]*)<\/PreprocessorDefinitions>/g)];
-    if (definitions.length !== 1) fail();
-    const macros = definitions[0][1].split(";").filter(value => value.includes("_WIN32_WINNT"));
-    if (!equal(macros, ["_WIN32_WINNT=0x0602"]) || !definitions[0][1].split(";").includes(buildPin.offlineMacro) ||
-        !groups[0][2].includes("<RuntimeLibrary>MultiThreaded</RuntimeLibrary>") ||
-        groups[0][2].replace(definitions[0][0], "").includes("_WIN32_WINNT")) fail();
+    const group = groups[0][2];
+    // Fixed CMake option scopes contain balanced elements and scalar metadata. Do not match a nested node as its parent's definition.
+    const directChildren = body => {
+      const result = [], stack = []; let cursor = 0;
+      for (;;) {
+        const start = body.indexOf("<", cursor);
+        if (start < 0) break;
+        if (stack.length === 0 && body.slice(cursor, start).trim() !== "") fail();
+        const end = body.indexOf(">", start + 1); if (end < 0) fail();
+        const token = body.slice(start, end + 1), closing = /^<\/([A-Za-z][A-Za-z0-9_.:-]*)\s*>$/.exec(token);
+        if (closing) {
+          const opened = stack.pop(); if (!opened || opened.name !== closing[1]) fail();
+          if (!stack.length) result.push({ ...opened, body: body.slice(opened.content, start), raw: body.slice(opened.start, end + 1) });
+        } else {
+          const opened = /^<([A-Za-z][A-Za-z0-9_.:-]*)([^<>]*?)(\/?)>$/.exec(token); if (!opened || stack.length >= 8) fail();
+          const element = { name: opened[1], attributes: opened[2], start, content: end + 1 };
+          if (opened[3]) { if (!stack.length) result.push({ ...element, body: "", raw: token }); }
+          else stack.push(element);
+        }
+        if (result.length > 4096) fail();
+        cursor = end + 1;
+      }
+      if (stack.length || body.slice(cursor).trim() !== "") fail();
+      return result;
+    };
+    constraint = projectSteps.clBlock;
+    const sections = directChildren(group);
+    const block = (name, code) => {
+      constraint = code;
+      const matches = sections.filter(item => item.name === name);
+      count = matches.length;
+      if (matches.length !== 1 || matches[0].attributes.trim() !== "") fail();
+      return matches[0].body;
+    };
+    const cl = block("ClCompile", projectSteps.clBlock), rc = block("ResourceCompile", projectSteps.rcBlock);
+    const definitions = (body, code) => {
+      constraint = code;
+      const matches = directChildren(body).filter(item => item.name === "PreprocessorDefinitions");
+      count = matches.length;
+      if (matches.length !== 1 || matches[0].attributes.trim() !== "" || matches[0].body.includes("<")) fail();
+      return [matches[0].raw, matches[0].body];
+    };
+    const clDefinitions = definitions(cl, projectSteps.clDefinitions), rcDefinitions = definitions(rc, projectSteps.rcDefinitions);
+    const sensitive = value => /_WIN32_WINNT|EMBER_UV_FIXED_PROBE_OFFLINE/.test(value);
+    for (const [definition, code] of [[clDefinitions, projectSteps.clMacros], [rcDefinitions, projectSteps.rcMacros]]) {
+      constraint = code; count = 0;
+      const values = definition[1].split(";");
+      if (!equal(values.filter(value => value.includes("_WIN32_WINNT")), ["_WIN32_WINNT=0x0602"]) ||
+          !equal(values.filter(value => value.includes("EMBER_UV_FIXED_PROBE_OFFLINE")), [buildPin.offlineMacro])) fail();
+    }
+    constraint = projectSteps.runtime;
+    const runtime = directChildren(cl).filter(item => item.name === "RuntimeLibrary"); count = runtime.length;
+    if (runtime.length !== 1 || runtime[0].attributes.trim() !== "" || runtime[0].body !== "MultiThreaded" ||
+        [...cl.matchAll(/<RuntimeLibrary\b/g)].length !== 1 || [...cl.matchAll(/<\/RuntimeLibrary>/g)].length !== 1) fail();
+    constraint = projectSteps.remaining;
+    count = 0;
+    if (sensitive(group.replace(clDefinitions[0], "").replace(rcDefinitions[0], ""))) fail();
+    constraint = projectSteps.toolsetSdk;
     const toolset = [...text.matchAll(/<PlatformToolset>([^<]*)<\/PlatformToolset>/g)];
     const sdk = [...text.matchAll(/<WindowsTargetPlatformVersion>([^<]*)<\/WindowsTargetPlatformVersion>/g)];
     if (toolset.length < 1 || toolset.some(item => item[1] !== "v143") || sdk.length !== 1 || sdk[0][1] !== buildPin.sdk) fail();
     const units = [...text.matchAll(/<ClCompile\s+Include="([^"]+)"\s*(?:\/>|>([\s\S]*?)<\/ClCompile>)/g)];
-    let selected = 0;
+    let selected = 0; const selectedKinds = new Set();
     for (const unit of units) {
       const file = unit[1].replaceAll("\\", "/").toLowerCase(), properties = unit[2] ?? "";
-      if (properties.includes("_WIN32_WINNT")) fail();
+      unitId = /\/src\/win\/pipe\.c$/.test(file) ? 1 : /\/src\/win\/process\.c$/.test(file) ? 2 : 3;
+      constraint = projectSteps.unitMacro;
+      if (sensitive(properties)) fail();
       const kind = target === "uv_a" && /\/src\/win\/pipe\.c$/.test(file) ? "PIPE" :
         target === "uv_a" && /\/src\/win\/process\.c$/.test(file) ? "PROCESS" : null;
       if (kind) {
+        constraint = projectSteps.selectedUnit;
         selected++;
+        selectedKinds.add(kind);
         const release = [...properties.matchAll(/<(PreprocessorDefinitions|ForcedIncludeFiles|AdditionalOptions)\b([^>]*)>([^<]*)<\/\1>/g)]
           .filter(item => {
             const conditions = [...item[2].matchAll(/\bCondition="([^"]*)"/g)];
@@ -213,11 +275,26 @@ export function windowsUvSpawnProjectWitness(bytes, target) {
         const includes = release.filter(item => item[1] !== "PreprocessorDefinitions").map(item => item[3]).join(";");
         if (!definitions.split(";").includes(`EMBER_UV_SPAWN_OBSERVE_${kind}=1`) || !includes.includes("windows-uv-spawn-observe.h") ||
             properties.includes(`EMBER_UV_SPAWN_OBSERVE_${kind === "PIPE" ? "PROCESS" : "PIPE"}=1`)) fail();
-      } else if (/EMBER_UV_SPAWN_OBSERVE_|windows-uv-spawn-observe\.h/.test(properties)) fail();
+      } else {
+        constraint = projectSteps.unexpectedUnit;
+        if (/EMBER_UV_SPAWN_OBSERVE_|windows-uv-spawn-observe\.h/.test(properties)) fail();
+      }
     }
-    if (selected !== (target === "uv_a" ? 2 : 0) || units.length < (target === "uv_a" ? 2 : 2)) fail();
+    constraint = projectSteps.unitCounts; unitId = 0; count = selected;
+    if (selected !== (target === "uv_a" ? 2 : 0)) fail();
+    count = selectedKinds.size;
+    if (selectedKinds.size !== (target === "uv_a" ? 2 : 0)) fail();
+    count = units.length;
+    if (units.length < 2) fail();
     return { target, bytes: bytes.length, sha256: hash(bytes), targetMacro: buildPin.targetMacro, releaseDefinitionCount: 1 };
-  } catch { fail(); }
+  } catch { throw createWindowsUvSpawnProjectFailure(target, constraint, unitId, count); }
+}
+
+function readProjectWitness(file, target) {
+  let bytes;
+  try { bytes = inputBytes(file, buildPin.maximumProjectBytes); }
+  catch { throw createWindowsUvSpawnProjectFailure(target, projectSteps.read); }
+  return windowsUvSpawnProjectWitness(bytes, target);
 }
 
 /** Fixed Windows-only MSVC producer. This definition does not run until the separately reviewed workflow invokes it. */
@@ -294,8 +371,8 @@ export async function buildWindowsUvSpawnProbe({ archivePath, destination, pytho
     if (compilerPaths.length !== 1 || compilerVersions.length !== 1 || compilerPaths[0][1].replaceAll("/", "\\").toLowerCase() !== toolPaths.compiler.toLowerCase() ||
         !compilerVersions[0][1].startsWith(buildPin.compilerVersionPrefix)) fail();
     diagnostic.checkpoint(checkpoints.generatedProject);
-    const generatedProjects = [windowsUvSpawnProjectWitness(inputBytes(path.join(buildDirectory, "uv", "uv_a.vcxproj"), buildPin.maximumProjectBytes), "uv_a"),
-      windowsUvSpawnProjectWitness(inputBytes(path.join(buildDirectory, "ember_uv_spawn_probe.vcxproj"), buildPin.maximumProjectBytes), "ember_uv_spawn_probe")];
+    const generatedProjects = [readProjectWitness(path.join(buildDirectory, "uv", "uv_a.vcxproj"), "uv_a"),
+      readProjectWitness(path.join(buildDirectory, "ember_uv_spawn_probe.vcxproj"), "ember_uv_spawn_probe")];
     diagnostic.checkpoint(checkpoints.msbuild);
     captured(toolPaths.cmake, ["--build", buildDirectory, "--config", buildPin.configuration, "--target", "ember_uv_spawn_probe", "--parallel", "2", "--",
       `/p:VCToolsVersion=${buildPin.toolsetDirectory}`, `/p:WindowsTargetPlatformVersion=${buildPin.sdk}`, "/p:ImportDirectoryBuildProps=false", "/p:ImportDirectoryBuildTargets=false", "/nodeReuse:false"], env, destination, buildPin.compileTimeoutMs);
@@ -303,8 +380,8 @@ export async function buildWindowsUvSpawnProbe({ archivePath, destination, pytho
     await validateWindowsUvSpawnSource(sources.stockDir, "stock"); await validateWindowsUvSpawnSource(sources.workingDir, "working");
     diagnostic.checkpoint(checkpoints.postValidation);
     if (!equal(recipe, windowsUvSpawnRecipe()) || !equal(tools, Object.fromEntries(Object.entries(toolPaths).map(([name, file]) => [name, snapshot(file)])))) fail();
-    const afterProjects = [windowsUvSpawnProjectWitness(inputBytes(path.join(buildDirectory, "uv", "uv_a.vcxproj"), buildPin.maximumProjectBytes), "uv_a"),
-      windowsUvSpawnProjectWitness(inputBytes(path.join(buildDirectory, "ember_uv_spawn_probe.vcxproj"), buildPin.maximumProjectBytes), "ember_uv_spawn_probe")];
+    const afterProjects = [readProjectWitness(path.join(buildDirectory, "uv", "uv_a.vcxproj"), "uv_a"),
+      readProjectWitness(path.join(buildDirectory, "ember_uv_spawn_probe.vcxproj"), "ember_uv_spawn_probe")];
     if (!equal(generatedProjects, afterProjects)) fail();
     diagnostic.checkpoint(checkpoints.listing);
     const listing = inputBytes(path.join(buildDirectory, "observer.asm"), buildPin.maximumListingBytes);

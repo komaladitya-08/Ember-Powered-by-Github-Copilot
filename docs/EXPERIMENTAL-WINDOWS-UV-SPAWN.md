@@ -196,15 +196,49 @@ Before either real tool read, two fixed resource-only PE fixtures must pass the 
 exact selection checks. Their entry RVA is zero; they contain no imports or code and only a READ/non-EXEC resource
 section. The script treats them as data files and never passes them to a DLL loader or executes them. One covers a four-component fallback literal;
 the other covers a three-component literal and missing Translation default. The subsequent real compiler/linker
-reads exercise those same file APIs before compiler admission. This ordinary-host reader gate and the fifth
-compile-only attempt remain pending publication and actual Windows verification; no native admission is added.
+reads exercise those same file APIs before compiler admission. These are ordinary-host reader gates and add no
+native admission.
 The frozen local replacement passed all 427 affected tests across fourteen suites, including 31 parser/API-fixture
 cases and 47 process/metadata-admission cases, plus scoped lint, Python 3.6 syntax parsing, JavaScript syntax, YAML
 and diff checks. An earlier reader batch had one aggregate eight-subprocess UTF-16 fault test exceed its unchanged
 five-second test limit; the same faults were split into independent cases with the same per-process bounds, then
 all 31 reader cases and the complete 427-test batch passed. An initial typecheck found only a test's chained Vitest
 condition typing; the equivalent combined condition passed all 31 reader cases and a fresh final typecheck.
-Actual Windows fixture/API outcomes remain pending. The local mock tests do not establish Windows API or MUI behavior.
+The local mock tests alone do not establish Windows API or MUI behavior.
+
+The fifth automatic compile-only run
+[43912141191](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43912141191), at head
+`3e6c7a162d7b8ecc5a57e7a0a84aeac6545ec3fd`, passed 427 Linux tests and 404 Windows tests with 23 expected skips.
+Windows returned `{schema:1,status:"failed",checkpoint:11}` at generated-project readback. Reaching this checkpoint
+establishes that the ordinary resource-only PE fixtures, both real compiler/linker VERSION reads, Python/tool
+fingerprint rechecks and unchanged version gates passed. Source-before checks, CMake configuration and the selected
+compiler path/version checks also passed. The fixed witness's MSBuild step was not reached, although CMake may have
+run its own compiler-identification checks. Upload was skipped; no verified witness PE/receipt/emission artifact or
+native result was produced.
+
+Pinned [CMake 3.31.6 source](https://github.com/Kitware/CMake/blob/859ca5c4d7396a011a462878179bc173e1283731/Source/cmVisualStudio10TargetGenerator.cxx#L4827)
+proves a validator scope mismatch: the generator writes both ClCompile and ResourceCompile options for these targets,
+and [copies CL definitions into RC](https://github.com/Kitware/CMake/blob/859ca5c4d7396a011a462878179bc173e1283731/Source/cmVisualStudio10TargetGenerator.cxx#L3730).
+The old whole-group count required only one PreprocessorDefinitions element and rejected the expected RC copy as
+a leftover Windows target macro. This public-source proof does not reveal the actual private generated XML or
+establish that this was its only failing constraint.
+
+The scoped correction requires exactly one ClCompile and ResourceCompile block, each with one direct definition
+element. Both separately require exactly `_WIN32_WINNT=0x0602` and the fixed offline macro; unrelated definitions
+may have their generator-specific quote escaping. A bounded structural walker checks direct, disjoint scopes and
+scalar definitions; numeric character references cannot conceal an override. RuntimeLibrary must be the single
+direct unconditional MultiThreaded scalar in ClCompile. Sensitive
+definitions elsewhere in the Release group, hidden undefines, per-file overrides and misplaced observation aliases
+remain refused. SDK/toolset and unit-selection checks remain. The receipt's `releaseDefinitionCount:1` describes the
+single CL definition rather than the RC copy, and the observed units must include both distinct pipe and process
+translation units. No source patch, CMake option, compiler flag, tool pin or native guard changes.
+
+Only a privately branded actual read/validator refusal can add a closed checkpoint-11 `projectDiagnostic`: schema,
+fixed target/constraint/unit IDs and a count capped at 17 (meaning at least 17). It contains no XML, path, symbol,
+captured compiler output or foreign exception. Its constructor is internal trusted plumbing, not an authentication
+boundary. Other checkpoints retain their prior shapes; this is evidence, never compile or native admission.
+The correction passed all 447 affected tests across fifteen suites, scoped lint, syntax, YAML/native-hold and diff
+checks, a fresh final typecheck and independent review. Its actual Windows readback/build/emission outcome remains pending.
 
 Portable source, recipe, decoder, actual observer C-shim and native-owner fault tests are implemented. The Linux shim
 uses test-only Win32 declarations around the production observer; it is not Windows ABI, policy or native evidence.

@@ -1,6 +1,7 @@
 /** Per-invocation, privately branded build checkpoints. Foreign errors contribute no properties or text to diagnostics. */
 import { powerShellProcessDiagnostic } from "./windows-uv-spawn-powershell.mjs";
 import { classifyWindowsUvSpawnFileVersionFailure } from "./windows-uv-spawn-file-version.mjs";
+import { classifyWindowsUvSpawnProjectFailure } from "./windows-uv-spawn-project-diagnostic.mjs";
 export const uvSpawnBuildCheckpoints = Object.freeze({
   unknown: 0, input: 1, setup: 2, python: 3, source: 4, visualStudio: 5, tools: 6, versions: 7, sourceBefore: 8,
   configure: 9, compilerSelection: 10, generatedProject: 11, msbuild: 12, sourceAfter: 13, postValidation: 14,
@@ -19,7 +20,8 @@ const emptyTools = () => Array.from({ length: 6 }, (_, index) => ({ toolId: inde
 const output = record => Object.freeze({ schema: 1, status: "failed", checkpoint: record?.checkpoint ?? uvSpawnBuildCheckpoints.unknown,
   ...(record?.checkpoint === uvSpawnBuildCheckpoints.versions ? { versionDiagnostic: record.versionDiagnostic,
     ...(record.powerShellDiagnostic ? { powerShellDiagnostic: record.powerShellDiagnostic } : {}),
-    ...(record.fileVersionDiagnostic ? { fileVersionDiagnostic: record.fileVersionDiagnostic } : {}) } : {}) });
+    ...(record.fileVersionDiagnostic ? { fileVersionDiagnostic: record.fileVersionDiagnostic } : {}) } : {}),
+  ...(record?.checkpoint === uvSpawnBuildCheckpoints.generatedProject && record.projectDiagnostic ? { projectDiagnostic: record.projectDiagnostic } : {}) });
 
 function projectedVersion(toolId, value) {
   if (typeof value !== "string" || value.length > 64) return { toolId, state: 2, components: [] };
@@ -74,8 +76,10 @@ export function createUvSpawnBuildDiagnostic() {
         first = new Error("The fixed uv_spawn build failed its closed checkpoint contract.");
         const versionDiagnostic = current === uvSpawnBuildCheckpoints.versions ? freeze({ schema: 1, subcheckpoint,
           tools: tools.map(item => ({ ...item, components: [...item.components] })) }) : undefined;
+        const projectDiagnostic = current === uvSpawnBuildCheckpoints.generatedProject ? classifyWindowsUvSpawnProjectFailure(error) : undefined;
         brands.set(first, Object.freeze({ owner, checkpoint: current, ...(versionDiagnostic ? { versionDiagnostic,
-          ...(powerShellDiagnostic ? { powerShellDiagnostic } : {}), ...(fileVersionDiagnostic ? { fileVersionDiagnostic } : {}) } : {}) }));
+          ...(powerShellDiagnostic ? { powerShellDiagnostic } : {}), ...(fileVersionDiagnostic ? { fileVersionDiagnostic } : {}) } : {}),
+          ...(projectDiagnostic ? { projectDiagnostic } : {}) }));
       }
       return first;
     },
