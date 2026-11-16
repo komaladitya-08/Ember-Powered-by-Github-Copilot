@@ -14,6 +14,7 @@ import { spawn } from "node:child_process";
 import { build } from "esbuild";
 import { expect, it } from "vitest";
 import { readFuses, emberFuses, fuseMismatches } from "../../scripts/package/fuses.mjs";
+import { SHORTCUTS, FALLBACK_SHORTCUTS } from "../../app/shared/shortcuts";
 // @ts-expect-error -- offline JavaScript model fixture
 import { startMockLlm } from "../mock-llm/server.mjs";
 
@@ -22,9 +23,41 @@ const archive = path.join(checkout, "dist/package", `Ember-${pkg.version}-win-x6
 const required = process.env.EMBER_PACKAGED_WINDOWS_CODING_TEST === "1";
 const available = process.platform === "win32" && process.arch === "x64" && fs.existsSync(archive);
 const hash = (filename: string) => createHash("sha256").update(fs.readFileSync(filename)).digest("hex");
+interface ProcessObservation { code: number | null; signal: NodeJS.Signals | null; stdout: string; stderr: string }
+
+/** Emit only fixed smoke classifications and allowlisted shortcut/jump-list metadata, never captured app bodies. */
+function smokeFacts(smoke: ProcessObservation) {
+  const failure = smoke.stderr.split(/\r?\n/).find(line => line.startsWith("FAIL ")) ?? "";
+  const accelerators = new Set([...Object.values(SHORTCUTS.win32), ...Object.values(FALLBACK_SHORTCUTS.win32)].map(shortcut => shortcut.accel));
+  const ids = new Set(Object.keys(SHORTCUTS.win32)), taken = new Set<string>(), fallback = new Set<string>(), missing = new Set<string>(), jumpList = new Set<boolean>();
+  const collect = (value: unknown, allow: Set<string>, output: Set<string>) => {
+    if (Array.isArray(value)) for (const item of value) if (typeof item === "string" && allow.has(item)) output.add(item);
+  };
+  for (const line of [...smoke.stdout.split(/\r?\n/), ...smoke.stderr.split(/\r?\n/)]) {
+    try {
+      const at = line.indexOf("{"); if (at < 0) continue;
+      const entry = JSON.parse(line.slice(at)) as { msg?: unknown; taken?: unknown; fallback?: unknown; missing?: unknown; ok?: unknown };
+      if (entry.msg === "shortcut.unavailable") { collect(entry.taken, accelerators, taken); collect(entry.fallback, ids, fallback); collect(entry.missing, ids, missing); }
+      if (entry.msg === "launcher.tasks" && typeof entry.ok === "boolean") jumpList.add(entry.ok);
+    } catch { /* Unrelated app/log output is neither forwarded nor interpreted. */ }
+  }
+  if (smoke.stdout.includes("the first instance put Ask Ember in its jump list")) jumpList.add(true);
+  if (failure.includes("Windows refused the jump list (launcher.tasks ok: false)")) jumpList.add(false);
+  return { code: smoke.code, signal: smoke.signal,
+    authSourceMismatch: failure.includes("used an unexpected auth source"), authSourceMissing: failure.includes("report its auth source"),
+    shortcutUnavailable: failure.includes("shortcut.unavailable"), takenAccelerators: [...taken].sort(), fallbackIds: [...fallback].sort(), missingIds: [...missing].sort(), jumpList: [...jumpList],
+    appStartFailed: failure.includes('"msg":"app.start_failed"'), runtimeMissing: smoke.stderr.includes('"msg":"agent.runtime_missing"'),
+    firstInstanceExited: /first instance (?:exited with|was killed)/.test(failure), homeWindowMissing: failure.includes("waiting for home window"),
+    handoverFailed: /(?:second instance|second launch|receive second-instance)/.test(failure),
+    askFailed: /(?:third instance|third launch|open the ask box|ask box for a start)/.test(failure),
+    jumpListFailed: /(?:Windows refused the jump list|put Ask Ember in its jump list)/.test(failure),
+    homeShown: smoke.stdout.includes("first instance showed its window"), handoverReceived: smoke.stdout.includes("second launch handed over"),
+    authSourceNone: smoke.stdout.includes("the first instance used auth source none"), askShown: smoke.stdout.includes("a start with --ask handed over"),
+  };
+}
 
 /** Bounds only the process this test spawned. Any forced stop/missing exit leaves quarantine intact. */
-function run(file: string, args: string[], env: NodeJS.ProcessEnv, timeout: number): Promise<{ code: number | null; signal: NodeJS.Signals | null; stdout: string; stderr: string }> {
+function run(file: string, args: string[], env: NodeJS.ProcessEnv, timeout: number): Promise<ProcessObservation> {
   return new Promise((resolve, reject) => {
     const child = spawn(file, args, { env, cwd: checkout, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
     let stdout = "", stderr = "", late = false, overflow = false;
@@ -82,25 +115,23 @@ it.skipIf(!available && !required)("verifies the extracted Windows ZIP launch an
       expect(refused.stderr).toContain("doesn't start with debugging switches"); expect(refused.stderr).not.toMatch(/(?:Debugger|DevTools) listening/);
     }
     // Existing smoke proves ordinary launch/window/handover only; its force-stop is never a native cleanup receipt.
-    const smoke = await run(process.execPath, [path.join(checkout, "test/smoke/launch.mjs"), "--exe", exe, "--forbid", "shortcut.unavailable", "--expect-auth-source", "none"],
+    const smokeArguments = [path.join(checkout, "test/smoke/launch.mjs"), "--exe", exe, "--forbid", "shortcut.unavailable", "--expect-auth-source", "none"];
+    const smoke = await run(process.execPath, smokeArguments,
       { ...env, EMBER_TEST_PROVIDER_URL: forbiddenUrl }, 90_000);
-    if (smoke.code !== 0 || smoke.signal !== null) {
-      // These labels are derived only from fixed smoke messages. Never print its captured app bodies or paths.
-      const failure = smoke.stderr;
-      console.info("Packaged launch smoke diagnostics:", {
-        code: smoke.code, signal: smoke.signal,
-        authSourceMismatch: failure.includes("used an unexpected auth source"), authSourceMissing: failure.includes("report its auth source"),
-        shortcutUnavailable: failure.includes("shortcut.unavailable"), appStartFailed: failure.includes('"msg":"app.start_failed"'),
-        runtimeMissing: failure.includes('"msg":"agent.runtime_missing"'), firstInstanceExited: /first instance (?:exited with|was killed)/.test(failure),
-        homeWindowMissing: failure.includes("waiting for home window"), handoverFailed: /(?:second instance|second launch|receive second-instance)/.test(failure),
-        askFailed: /(?:third instance|third launch|open the ask box|ask box for a start)/.test(failure),
-        jumpListFailed: /(?:Windows refused the jump list|put Ask Ember in its jump list)/.test(failure),
-        homeShown: smoke.stdout.includes("first instance showed its window"), handoverReceived: smoke.stdout.includes("second launch handed over"),
-        authSourceNone: smoke.stdout.includes("the first instance used auth source none"), askShown: smoke.stdout.includes("a start with --ask handed over"),
-      });
+    console.info("Packaged launch smoke diagnostics (redirected profile):", smokeFacts(smoke));
+    // Control only: preserve Windows' own profile locations while GitHub config, credential environment variables
+    // and Ember's own profile stay isolated. Every packaged smoke assertion remains in force.
+    const normalProfileEnv = { ...env };
+    for (const name of ["HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA"]) {
+      const actual = Object.entries(process.env).find(([key]) => key.toUpperCase() === name)?.[1];
+      if (actual === undefined) delete normalProfileEnv[name]; else normalProfileEnv[name] = actual;
     }
+    const control = await run(process.execPath, smokeArguments, { ...normalProfileEnv, EMBER_TEST_PROVIDER_URL: forbiddenUrl }, 90_000);
+    console.info("Packaged launch smoke diagnostics (normal OS profile control):", smokeFacts(control));
     expect(smoke.code, "The extracted packaged app must pass its normal launch/window/handover smoke").toBe(0); expect(smoke.signal).toBeNull();
     expect(smoke.stdout).toContain("the first instance used auth source none");
+    expect(control.code, "The normal OS profile control must preserve every packaged smoke assertion").toBe(0); expect(control.signal).toBeNull();
+    expect(control.stdout).toContain("the first instance used auth source none");
     expect(devRequests, "Packaged main must ignore the development model endpoint").toBe(0);
     const probeDirectory = path.join(app, "test-only-packaged-probe"); fs.mkdirSync(probeDirectory);
     const probe = path.join(probeDirectory, "controller.cjs"), input = path.join(root, "probe-input.json");
