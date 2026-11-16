@@ -66,7 +66,9 @@ export function inspectWindowsNodeFatalOutput(bytes: Buffer, version: string): W
     return refuse("encoding", wideAscii(true) ? "utf16le-ascii" : wideAscii(false) ? "utf16be-ascii" : "other");
   }
   const text = bytes.toString("utf8");
-  const normalized = text.replaceAll("\r\n", "\n");
+  // Native receipts observed one CRCRLF and no bare CR. Normalize either supported sequence in one pass:
+  // separate replacements could erase a remaining CR from a three-CR run and accidentally accept malformed input.
+  const normalized = text.replaceAll(/\r\r?\n/g, "\n");
   if (normalized.includes("\r")) {
     // Fixed structural counts distinguish actual double translation from bare/mixed CR. No text is accepted.
     const newlines = { crlf: 0, doubledCrlf: 0, bareCr: 0, lf: 0 };
